@@ -1603,12 +1603,15 @@ describe("fern | sponge xaos pair", () => {
     expect(isolated.map((t) => t.id)).toEqual(
       Array.from({ length: 24 }, (_, i) => i),
     );
-    // Conjugation by translation leaves every linear part untouched: the
-    // fern maps' composed M must equal barnsleyFern's own, entry for entry,
-    // and the sponge maps' mengerSponge's.
+    // Conjugation by translation leaves every linear part untouched. The
+    // xaos showcase deliberately uses the Surface-compatible fern: only the
+    // canonical stem's singular x scale is widened to 1e-3; the other fern
+    // maps and every sponge map remain exact.
     const fern = barnsleyFern();
     const sponge = mengerSponge();
-    for (let i = 0; i < 4; i++) {
+    expect(isolated[0].scale[0]).toBe(1e-3);
+    expect(fern[0].scale[0]).toBe(0);
+    for (let i = 1; i < 4; i++) {
       expect(composeAffine(isolated[i]).m).toEqual(composeAffine(fern[i]).m);
     }
     for (let j = 0; j < 20; j++) {

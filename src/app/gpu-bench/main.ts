@@ -31,6 +31,13 @@
 import * as THREE from "three";
 import { SOFTWARE_RENDERER_RE } from "../render-backend";
 import {
+  SURFACE_CHAOS_ROW_3D,
+  SURFACE_CHAOS_ROW_4D,
+  surfaceChaosFrameAcceptance,
+  surfaceChaosKernelSpec,
+  surfaceChaosMarchAcceptance,
+} from "./chaos";
+import {
   SURFACE_SCHEDULE_ROW_3D,
   SURFACE_SCHEDULE_ROW_4D,
   surfaceScheduleFrameAcceptance,
@@ -3129,6 +3136,11 @@ interface SurfaceDeResults {
    * row must complete real work and produce a mixed hit/background raster;
    * compilation-only and empty/full frames fail as vacuous. */
   marchUnprojectSchedule?: SurfaceUnprojectRow | SkippedResult;
+  /** The shipped isolated Fern | Sponge xaos graph through the app's
+   * unproject march path. Requires a dispatched, completed, agreeing mixed
+   * hit/background result; its source is compiled with an explicit chaos
+   * spec so the classic all-paths kernel cannot satisfy this row. */
+  marchUnprojectChaos?: SurfaceUnprojectRow | SkippedResult;
   /** Leg B (informational + canvas artifact) — absent until run;
    * SkippedResult when mandelboxKifs was excluded or the renderer broke. */
   computeFrame?: SurfaceComputeFrameRow | SkippedResult;
@@ -3136,6 +3148,10 @@ interface SurfaceDeResults {
    * Gates activation/useful geometry on every adapter; a real-GPU frame
    * must also complete with HIT and MISS and no EXHAUSTED/ACTIVE rays. */
   computeFrameSchedule?: SurfaceComputeFrameRow | SkippedResult;
+  /** Production SurfaceComputeRenderer over the isolated Fern | Sponge
+   * graph. Every adapter must dispatch and find geometry; real hardware
+   * must finish with a clean HIT/MISS terminal mix. */
+  computeFrameChaos?: SurfaceComputeFrameRow | SkippedResult;
   /** Stage C: leg B over the lens field class — the PRODUCTION
    * SurfaceComputeRenderer on lensMandelboxOverAffine (affine core +
    * 81-branch mandelbox lens, branch-scaled priors). Gates like
@@ -7453,6 +7469,7 @@ async function runSurfaceUnprojectLeg(
       ? { condensation: surfaceCondensationKernelSpec(sys.de) }
       : {}),
     ...(sys.de.schedule ? { schedule: surfaceScheduleKernelSpec(sys.de) } : {}),
+    ...(sys.de.chaos ? { chaos: surfaceChaosKernelSpec(sys.de) } : {}),
   });
   const { pipeline, compileMs } = await buildSurfacePipeline(
     device,
@@ -10032,6 +10049,35 @@ async function runSurfaceDeSection(
   };
   render();
 
+  // ----- Graph-directed xaos: shipped isolated Fern | Sponge -----------
+  // This is the full 24-map preset, not a synthetic mini-graph. Its chi
+  // rows split the fern and sponge into disconnected inverse-chain
+  // components, while the chaos-game's sub-orbit re-entry samples both.
+  // The spec call is deliberately unconditional: if graph projection ever
+  // disappears, the benchmark fails before it can compile a classic kernel.
+  status(`cpu oracle: ${SURFACE_CHAOS_ROW_3D}…`);
+  activity.setState("cpu", "Surface xaos CPU oracle — 3D");
+  await new Promise<void>((resolve) => setTimeout(resolve));
+  const chaosTransforms = presetTransforms("fernSponge");
+  const chaosDe = buildSurfaceDE(chaosTransforms, null, SURFACE_NO_SYMMETRY);
+  const chaosSpec = surfaceChaosKernelSpec(chaosDe);
+  if (chaosDe.maps.length !== 24 || chaosSpec.activeStateCount !== 24) {
+    throw new Error(
+      `xaos Surface bench fixture must expose 24 active maps/states, got ` +
+        `${String(chaosDe.maps.length)}/${String(chaosSpec.activeStateCount)}`,
+    );
+  }
+  const chaosQueries = surfaceQueries(chaosTransforms, chaosDe.boundingRadius);
+  const chaosSystem: SurfaceSystemState = {
+    name: SURFACE_CHAOS_ROW_3D,
+    core: "affine",
+    de: chaosDe,
+    transforms: chaosTransforms,
+    queries: chaosQueries,
+    cpu: chaosQueries.map((q) => estimateDistanceRefined(chaosDe, q, 0)),
+  };
+  render();
+
   // ----- Escape-time systems: a SEPARATE gate + CPU oracle -----
   // `buildSurfaceDE` refuses these shapes by design (single non-contracting
   // pure-fold map — `analyzeEscapeSystem` is its deliberate complement), so
@@ -11094,6 +11140,49 @@ async function runSurfaceDeSection(
   };
   render();
 
+  // Flat 4D lift of the identical graph and the identical 3D f32 queries.
+  // Reusing the query set keeps this a controlled dimensional-parity row
+  // and avoids moving boundary probes onto a different beam-selection seam.
+  status(`cpu oracle: ${SURFACE_CHAOS_ROW_4D}…`);
+  activity.setState("cpu", "Surface xaos CPU oracle — flat 4D");
+  await new Promise<void>((resolve) => setTimeout(resolve));
+  const chaosDe4 = buildSurfaceDE4(chaosTransforms, null, SURFACE_NO_SYMMETRY);
+  const chaosSpec4 = surfaceChaosKernelSpec(chaosDe4);
+  if (chaosDe4.maps.length !== 24 || chaosSpec4.activeStateCount !== 24) {
+    throw new Error(
+      `xaos flat-4D Surface bench fixture must expose 24 active maps/states, got ` +
+        `${String(chaosDe4.maps.length)}/${String(chaosSpec4.activeStateCount)}`,
+    );
+  }
+  const chaosView4: SurfaceGpu4View = {
+    rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    w0: 0,
+    sliceHalfW: 0,
+  };
+  const chaosQueries4 = chaosQueries;
+  const chaosCpu4 = chaosQueries4.map((q) =>
+    estimateSurface4Composed(chaosDe4, chaosView4, q),
+  );
+  const chaosR4 = surface4ToleranceR(chaosDe4);
+  const chaosSystem4: Surface4SystemState = {
+    name: SURFACE_CHAOS_ROW_4D,
+    de: chaosDe4,
+    view4: chaosView4,
+    transforms: chaosTransforms,
+    queries: chaosQueries4,
+    cpu: chaosCpu4,
+    stable: chaosCpu4.map((c, i) =>
+      surface4QueryStable(
+        chaosDe4,
+        chaosView4,
+        chaosQueries4[i],
+        c,
+        surfaceEvalTol(c, chaosR4),
+      ),
+    ),
+  };
+  render();
+
   // M4: the FOLD4 core's own fixed fixture family — the same
   // "def-time eligibility gate throws" idiom as affine4SystemDefs above,
   // for the same reason (fixed fixtures; an ineligible one is a bench bug).
@@ -11806,6 +11895,52 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the scheduled 3D agreement leg");
 
+    // ----- Graph-directed 3D affine agreement — GATING -----------------
+    // A dedicated source compile is essential here: without the explicit
+    // chaos spec, packing masks alone would still run the classic all-paths
+    // descent and could turn this into a vacuous buffer-layout test.
+    {
+      const cfg = affineEvalConfig;
+      const label = `${SURFACE_CHAOS_ROW_3D} ${configLabel(cfg)}`;
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface xaos agreement — ${label}`);
+      let chaosPipeline: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "affine",
+          width: cfg.width,
+          workgroupSize: cfg.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+          chaos: surfaceChaosKernelSpec(chaosSystem.de),
+        });
+        ({ pipeline: chaosPipeline } = await buildSurfacePipeline(
+          device,
+          pipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (chaosPipeline !== null) {
+        await ensureSurfaceEvalBuffers(device, bindGroupLayout, chaosSystem);
+        const gpu = await runSurfaceEvalDispatch(
+          device,
+          chaosPipeline,
+          chaosSystem,
+          cfg.wg,
+        );
+        results.agreement.push(compareSurfaceAgreement(chaosSystem, cfg, gpu));
+      }
+      render();
+    }
+
+    await canaryCheck("the graph-directed 3D agreement leg");
+
     // ----- M8: the condensation affine-core agreement leg — GATING -----
     // Gearworks is deliberately compiled on its own: emitter ShapeSpecs are
     // code-generated, while poses, shade selectors and the inclusive depth
@@ -12401,6 +12536,66 @@ async function runSurfaceDeSection(
     }
 
     await canaryCheck("the scheduled flat-4D agreement leg");
+
+    // ----- Graph-directed flat-lift affine4 agreement — GATING ----------
+    {
+      const cfg: SurfaceKernelConfig = {
+        core: "affine4",
+        variant: "private",
+        width: SURFACE_AFFINE_LADDER_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = `${SURFACE_CHAOS_ROW_4D} ${configLabel(cfg)}`;
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface xaos agreement — ${label}`);
+      let chaosPipeline4: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "affine4",
+          width: cfg.width,
+          workgroupSize: cfg.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+          chaos: surfaceChaosKernelSpec(chaosSystem4.de),
+        });
+        ({ pipeline: chaosPipeline4 } = await buildSurfacePipeline(
+          device,
+          pipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (chaosPipeline4 !== null) {
+        await ensureSurface4EvalBuffers(device, bindGroupLayout, chaosSystem4);
+        const gpu = await runSurfaceEvalDispatch(
+          device,
+          chaosPipeline4,
+          chaosSystem4,
+          cfg.wg,
+        );
+        const row = compareSurface4Agreement(chaosSystem4, cfg, gpu);
+        results.agreement.push(row);
+        const excluded = row.excluded ?? 0;
+        if (excluded > SURFACE_AFFINE4_EXCLUDED_CAP) {
+          affine4GateFail = true;
+          results.notes.push(
+            `affine4 agreement ${chaosSystem4.name}: excluded ${String(excluded)}/${String(
+              row.n,
+            )} queries (> ${String(SURFACE_AFFINE4_EXCLUDED_CAP)}) from the ` +
+              "oracle-continuity gate",
+          );
+        }
+      }
+      render();
+    }
+
+    await canaryCheck("the graph-directed flat-4D agreement leg");
 
     // ----- M4: the FOLD4 core's agreement leg -----
     // The fold frontier one dimension up, behind the SAME view lift as M3
@@ -13739,6 +13934,42 @@ async function runSurfaceDeSection(
         results.notes.push(`march-unproject schedule: ${describeError(e)}`);
       }
       render();
+
+      // The shipped isolated Fern | Sponge graph through the same
+      // unprojected app rays. The explicit spec assertion plus the leg
+      // driver's chaos-aware source options keep this from falling back to
+      // the classic all-paths kernel.
+      try {
+        surfaceChaosKernelSpec(chaosSystem.de);
+        const row = await runSurfaceUnprojectLeg(
+          device,
+          chaosSystem,
+          acquired.software,
+          status,
+          activity,
+        );
+        results.marchUnprojectChaos = row;
+        const acceptance = surfaceChaosMarchAcceptance(row);
+        results.notes.push(
+          `march-unproject chaos ${row.system}: passes=${String(row.passes)} ` +
+            `completed=${String(acceptance.completed)} agreed=${String(acceptance.agreed)} ` +
+            `gpuHits=${String(row.gpuHits)}/${String(row.rays)} ` +
+            `cpuHits=${String(row.cpuHits)}/${String(row.rays)} ` +
+            `useful=${String(acceptance.gpuUseful && acceptance.cpuUseful)}`,
+        );
+        if (!acceptance.ok) {
+          unprojFailed = true;
+          results.notes.push(
+            "march-unproject chaos: anti-vacuity gate failed — requires passes>0, " +
+              "completion, failures=0, and a nonempty/non-full hit mix on GPU and CPU",
+          );
+        }
+      } catch (e) {
+        unprojFailed = true;
+        results.marchUnprojectChaos = { skipped: describeError(e) };
+        results.notes.push(`march-unproject chaos: ${describeError(e)}`);
+      }
+      render();
     }
 
     await canaryCheck("the march-unproject legs");
@@ -14057,6 +14288,51 @@ async function runSurfaceDeSection(
         frameFailed = true;
         results.computeFrameSchedule = { skipped: describeError(e) };
         results.notes.push(`compute frame schedule: ${describeError(e)}`);
+      }
+      render();
+
+      // Production renderer over the graph-directed field. Software
+      // truncation remains diagnostic-only, while real adapters must settle
+      // every ray into a nonempty HIT/MISS mix.
+      try {
+        surfaceChaosKernelSpec(chaosSystem.de);
+        const row = await runSurfaceComputeFrameLeg(
+          chaosSystem,
+          acquired.software,
+          dom,
+          status,
+          activity,
+        );
+        results.computeFrameChaos = row;
+        const acceptance = surfaceChaosFrameAcceptance(row, acquired.software);
+        results.notes.push(
+          `compute frame chaos ${SURFACE_CHAOS_ROW_3D} ${String(row.width)}x${String(
+            row.height,
+          )}: passes=${String(row.passes)} hit=${String(row.counts.hit)} ` +
+            `miss=${String(row.counts.miss)} exhausted=${String(row.counts.exhausted)} ` +
+            `active=${String(row.counts.active)} truncated=${String(row.truncated)} ` +
+            `activated=${String(acceptance.activated)} geometry=${String(acceptance.geometry)} ` +
+            `settled=${String(acceptance.settled)}`,
+        );
+        if (!acceptance.ok) {
+          frameFailed = true;
+          results.notes.push(
+            "compute frame chaos: acceptance failed — requires passes>0 and hit>0; " +
+              "a completed real-adapter frame also requires miss>0, exhausted=0, active=0",
+          );
+        }
+        if (row.truncated) {
+          results.notes.push(
+            `compute frame chaos: truncated at its ${acquired.software ? SURFACE_FRAME_BUDGET_SW_MS : SURFACE_FRAME_BUDGET_MS}ms budget — ` +
+              (acquired.software
+                ? "software-adapter diagnostic only; activation and visible geometry still gate"
+                : "failing the leg: a real-adapter chaos frame must complete"),
+          );
+        }
+      } catch (e) {
+        frameFailed = true;
+        results.computeFrameChaos = { skipped: describeError(e) };
+        results.notes.push(`compute frame chaos: ${describeError(e)}`);
       }
       render();
 
@@ -14735,11 +15011,13 @@ async function runSurfaceDeSection(
     canary?.destroy();
     for (const sys of systems) destroySurfaceEvalBuffers(sys);
     destroySurfaceEvalBuffers(scheduledSystem);
+    destroySurfaceEvalBuffers(chaosSystem);
     for (const sys of escapeSystems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of bulbSystems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of escape4Systems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of affine4Systems) destroySurface4EvalBuffers(sys);
     destroySurface4EvalBuffers(scheduledSystem4);
+    destroySurface4EvalBuffers(chaosSystem4);
     for (const sys of fold4Systems) destroySurface4EvalBuffers(sys);
     for (const sys of lens4AffineSystems) destroySurface4EvalBuffers(sys);
     for (const sys of lens4FoldSystems) destroySurface4EvalBuffers(sys);

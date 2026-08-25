@@ -47,9 +47,10 @@ descent.
 `SurfaceComputeRenderer`, beyond a bare eval/march pipeline. Every adapter must
 dispatch at least one pass and produce at least one hit. A completed
 real-adapter frame must additionally contain a background miss and finish with
-zero exhausted and zero active rays. A budget-truncated frame follows the
-bench's established convention but passes only when dispatch and scheduled-hit
-activation both occurred; a null frame or throw fails. Its evidence note begins
+zero exhausted and zero active rays. Only a software-diagnostic frame may use
+the bench's budget-truncated convention, and it still needs dispatch plus a
+scheduled hit; a real-adapter truncation, null frame or throw fails. Its
+evidence note begins
 `compute frame schedule scheduledSpongeOfFerns3` and records passes, the four
 terminal counts, truncation and the derived activation/geometry/settled gates.
 
@@ -68,6 +69,25 @@ runs compute/off, compute/on, WebGL/off and WebGL/on legs, proves the requested
 engine actually activated and settled, records the ray census, then requires a
 structural on/off pixel delta within each engine (`schedule-effect`).
 
+Graph-directed descent adds `xaosFernSponge3` and
+`xaosFernSponge4Flat`. Both use the shipped 24-state block-diagonal Fern |
+Sponge preset and compile dedicated graph-aware WGSL, so a classic all-paths
+kernel cannot satisfy either row. Their query cloud comes from the xaos-aware
+point sampler; the flat 4D row reuses the identical rounded 3D query set. The
+ordinary agreement gate requires `fail=0`, and the 4D continuity-exclusion cap
+is unchanged.
+
+`marchUnprojectChaos` and `computeFrameChaos` apply the schedule rows' same
+anti-vacuity discipline to that graph. The march must dispatch, complete,
+agree on every included ray and produce a nonempty/non-full hit mix on both
+CPU and GPU. The production frame must dispatch and hit geometry; on a real
+adapter it must also complete with a HIT/MISS mix and no EXHAUSTED or ACTIVE
+rays. Only a software diagnostic may report an activated, geometry-bearing
+truncation. `scripts/surface-chaos.verify.mjs` independently runs compute and
+WebGL with xaos removed/present, proves xaos is the only document difference,
+then gates settlement, ray census, temporal stability, within-engine
+`chaos-effect` and cross-engine agreement.
+
 ## Running it
 
 Add `--display=:0` for real-driver timing. Run it on a QUIET machine, never
@@ -81,14 +101,15 @@ standing advice, and the reason is the known SwiftShader false failure
 documented below. Do not raise the escape agreement cap to make a
 SwiftShader run green.
 
-For the condensation, escape-geometry and scheduled-hybrid landings, run the
-static gates before adapter evidence:
+For the condensation, escape-geometry, scheduled-hybrid and graph-directed
+landings, run the static gates before adapter evidence:
 
 ```bash
 npx vitest run src/app/gpu-bench/condensation.test.ts \
+  src/app/gpu-bench/chaos.test.ts \
   src/app/gpu-bench/schedule.test.ts \
   src/fractal/condensation-de.test.ts src/fractal/surface-de-gpu.test.ts \
-  src/fractal/surface-schedule.test.ts \
+  src/fractal/surface-schedule.test.ts src/fractal/surface-chaos.test.ts \
   src/fractal/shape-trap.test.ts src/fractal/escape-de.test.ts \
   src/fractal/escape-de-4d.test.ts \
   src/app/surface-compute.test.ts src/app/surface-eligibility.test.ts \
@@ -98,27 +119,29 @@ npx tsc --noEmit
 npm run bench:surface -- --display=:0
 ```
 
-Run the schedule presentation verifier against a separately served production
-build:
+Run both construction presentation verifiers against a separately served
+production build:
 
 ```bash
 npm run build
 npm run preview
 # In another shell:
 node scripts/surface-schedule.verify.mjs --mode=x11::0
+node scripts/surface-chaos.verify.mjs --mode=x11::0
 ```
 
-The real-display form exits 0 only after all four engine/variant legs and both
-`schedule-effect` comparisons pass. `--mode=sw` is a software diagnostic: a
+Each real-display form exits 0 only after all four engine/variant legs and its
+construction-effect comparisons pass. `--mode=sw` is a software diagnostic: a
 successful diagnostic deliberately exits 2 and is not release evidence.
 
 The benchmark run is accepted only when the Gearworks eval row, the
 condensation unproject row, both trap-geometry agreement rows and both
-`scheduledSpongeOfFerns*` eval rows report `fail=0`;
+`scheduledSpongeOfFerns*` and `xaosFernSponge*` eval rows report `fail=0`;
 `marchUnprojectSchedule` must also satisfy its completion/pass/hit-mix gate,
 `computeFrameSchedule` must satisfy the production-frame gate above, and the
-section verdict must be `pass`. The JSON artifact remains the evidence record;
-do not infer real-driver timing from SwiftShader.
+two corresponding chaos rows must satisfy the graph gates above. The section
+verdict must be `pass`. The JSON artifact remains the evidence record; do not
+infer real-driver timing from SwiftShader.
 
 Measured on real Iris (gen-12lp), both geometry rows passed with `fail=0`.
 `escChainPair+trap-geometry` reported `maxAbs=7.34e-7`, 71 excluded and
@@ -126,10 +149,25 @@ Measured on real Iris (gen-12lp), both geometry rows passed with `fail=0`.
 `esc4ChainWRot+trap-geometry` reported `maxAbs=5.81e-7`, 77 excluded and
 125/700 geometry-winning samples. The activation count gates at 32 samples,
 so a fixture that accidentally exercises only the classic escape term fails
-even if its numerical comparator is green. That pre-schedule real-Iris run's
-complete Surface section and the existing 5,184-ray condensation unproject leg
-also passed with `fail=0`; the scheduled rows require a fresh artifact under
-the criteria above, and no real-driver figures for them are recorded here yet.
+even if its numerical comparator is green. The complete Surface section and
+the existing 5,184-ray condensation unproject leg also passed with `fail=0`.
+
+The 2026-08-25 real-Iris construction run passed the full section. The 3D/4D
+schedule rows reported `maxAbs=3.44e-7` / `2.45e-7`, `fail=0`, with zero 4D
+exclusions; the corresponding xaos rows reported `maxAbs=3.85e-7` in both
+dimensions, `fail=0`, again with zero 4D exclusions. The schedule march
+completed six passes with 985/5,184 CPU and GPU hits; the xaos march completed
+seven with 966/5,184 on both sides. Neither truncated and both reported zero
+failures. Their production frames completed at 20 passes, 7,023 hits and
+29,841 misses for schedule, and 23 passes, 6,863 hits and 30,001 misses for
+xaos, with zero exhausted/active rays in both.
+
+The real production verifiers passed too. Schedule changed 38.659% of eligible
+compute pixels and 37.561% of WebGL pixels. Xaos changed 43.211% / 42.661%,
+with 97.856% overlap between engine effect masks; strong cross-engine
+disagreement stayed at 3.577% for the control and 2.895% for xaos. Every leg
+reported the real Intel/ANGLE backend, settled, drew foreground/background and
+had zero exhausted rays.
 
 ## The known SwiftShader false failure
 

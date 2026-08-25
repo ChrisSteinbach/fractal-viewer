@@ -3885,15 +3885,13 @@ describe("fold-radius rescale equivariance", () => {
 });
 
 describe("analyzeSurfaceSystem chaos rows", () => {
-  it("refuses a chi-carrying document — the descent would march the unconstrained object", () => {
+  it("admits a chi-carrying document now that descent prunes inadmissible chains", () => {
     const transforms = sierpinskiTetrahedron().map((t, i) =>
       i === 0 ? { ...t, chaos: [1, 0, 1, 1] } : t,
     );
     const analysis = analyzeSurfaceSystem(transforms);
-    expect(analysis.status).toBe("ineligible");
-    expect(analysis.reasons).toContain(
-      "chaos rows constrain the attractor (Surface would march the unconstrained object)",
-    );
+    expect(analysis.status).toBe("eligible");
+    expect(buildSurfaceDE(transforms).chaos).toBeDefined();
     // A trivial (all-1s) row is no row at all — the same document stays
     // eligible with it.
     const trivial = sierpinskiTetrahedron().map((t) => ({

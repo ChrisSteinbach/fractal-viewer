@@ -17,8 +17,8 @@ interop, the xaos construction/editor UI, scheduled post-words in every point co
 transforms, both xaos and emitter Flame GPU paths, and the escape-family shape-trap COLOR channel have
 landed. Condensation now also reaches the 3D and 4D inverse-beam Surface paths, including the WebGL and
 WebGPU tracers, an inclusive level band, 3D grid acceleration and balloon composition. Shape-trap
-GEOMETRY now reaches conformal forward fold chains in both dimensions. Still remaining are scheduled and
-graph-directed descent and Tier-3 mesh shapes. The sections below keep the original design argument, with
+GEOMETRY now reaches conformal forward fold chains in both dimensions. Scheduled and graph-directed
+inverse descent now reach both Surface shader families. Tier-3 mesh shapes remain. The sections below keep the original design argument, with
 landed paragraphs updated to describe the implementation rather than a proposal.
 
 Companion docs already in `docs/`: `quaternion-julia-brief.md`, `fold-de-performance-brief.md`,
@@ -83,6 +83,11 @@ Three constructions do what the questions actually ask:
   bytes and continuation/re-fuse semantics survive dispatch boundaries.
 - 4D uses the identical selection layer; its only extra agreement fixture combines xaos with a
   kaleidoscope so expanded-slot indexing is live.
+- Surface transposes the effective support graph into predecessor masks. A reverse chain begins as a
+  wildcard (including any scheduled B prefix), then carries the first A map's compact state and admits
+  only predecessors whose forward edge reaches it. Positive matrix magnitudes change measure, not
+  geometry; degenerate rows use the same global fallback. CPU, GLSL and WGSL implementations cover
+  affine/fold, 3D/4D, lens/slab, schedule and condensation combinations under one global bound.
 
 ### Import/export, UI, tests
 
@@ -97,7 +102,7 @@ Three constructions do what the questions actually ask:
   are automated. A reference-renderer pixel diff was unavailable in the development environment, so the
   hand-authored golden fixture's imported rows are the standing interop assertion.
 
-**Status: landed across CPU/4D, both Flame GPU kernels, `.flame` interop and the editor.**
+**Status: landed across CPU/4D, both Flame GPU kernels, both Surface shader families, `.flame` interop and the editor.**
 
 ---
 
@@ -304,11 +309,11 @@ the conformal fold family.
 
 ## Delivery sequence
 
-The shape library, C′-color, conformal forward trap-geometry, xaos, C-point, C-surface, B-point and
-scheduled descent are landed, including their CPU, GLSL and WGSL mirrors. Surface interprets the
+The shape library, C′-color, conformal forward trap-geometry, xaos, C-point, C-surface, B-point,
+scheduled descent and graph-directed descent are landed, including their CPU, GLSL and WGSL mirrors. Surface interprets the
 post-word as a finite level-dependent inverse alphabet: B alone for the first _k_ global levels, then A
-with its authored symmetry, using a bound for every remaining suffix. The remaining implementation order
-is graph-directed descent followed by Tier-3 mesh shapes. Each remains independently shippable; all must
+with its authored symmetry, using a bound for every remaining suffix, and then transposes xaos support
+into per-chain predecessor masks. The remaining implementation item is Tier-3 mesh shapes. It must
 reuse the existing shape, selection and schedule vocabularies rather than restating them.
 
 ## Validation strategy

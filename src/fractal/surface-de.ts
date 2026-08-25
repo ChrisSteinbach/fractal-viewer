@@ -2,6 +2,7 @@ import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import {
   effectiveSymmetryOrder,
+  buildChaosSelection,
   prepareSchedule,
   prepareEmitters,
   runChaosGame,
@@ -21,7 +22,7 @@ import type {
   CondensationEmitter3,
 } from "./condensation-de";
 import { mulberry32 } from "./rng";
-import { shapeBoundingRadius } from "./shapes";
+import { SHAPE_MARCH_SAFETY, shapeBoundingRadius, shapeSdf } from "./shapes";
 import {
   calibrateSurfaceNativeCarriers,
   SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
@@ -736,6 +737,9 @@ export interface SurfaceDEMap {
   /** Which input transform this slot inverts — the index into the caller's
    * `transforms`, for per-transform coloring. */
   baseIndex: number;
+  /** Compact graph-directed state. Present only when chi is non-trivial;
+   * scheduled B maps deliberately omit it because B carries wildcard. */
+  stateIndex?: number;
   /** Smallest singular value of `invM` — exactly `1 / sigma_max(M)`. With
    * {@link invTNorm} it gives the branch-and-bound's child-radius lower
    * bound `|invM·pre + t'| >= invMSigmaMin·|pre| − invTNorm` (the
@@ -811,6 +815,9 @@ export interface SurfaceDE {
    * contribute none either: {@link symmetry} replaces the old expansion, so
    * this array is base-sized at any order. */
   maps: SurfaceDEMap[];
+  /** Reverse graph-directed support, omitted for absent/all-one chi so the
+   * classic object and hot paths remain untouched. */
+  chaos?: SurfaceChaosDE;
   /** Finite B-prefix inverse maps and per-global-depth bounds. Absent keeps
    * the classic stationary A alphabet and root ball byte-for-byte. */
   schedule?: SurfaceScheduleDE;
@@ -905,10 +912,116 @@ export interface SurfaceScheduleDE {
   bounds: SurfaceLevelBound[];
 }
 
+/** Surface's compact graph-directed representation. Recursive maps occupy
+ * the first states in `maps` order; unique emitter bases follow. Mask `j`
+ * contains every predecessor state `i` for which the point sampler can take
+ * the forward edge i -> j. Symmetry copies share their base state. */
+export interface SurfaceChaosDE {
+  predecessorMasks: Uint32Array;
+  emitterStateIndices: Uint8Array;
+  activeStateCount: number;
+}
+
+/** Wildcard chain state used at the reverse root and through scheduled B. */
+export const SURFACE_CHAOS_WILDCARD = 0xffffffff;
+export const MAX_SURFACE_CHAOS_STATES = 24;
+
+/** Whether reverse candidate `predecessorState` is admitted beneath a chain
+ * whose current outer state is `currentState`. Exported for CPU mirrors and
+ * focused oracle tests; shaders use the identical bit test. */
+export function surfaceChaosAllows(
+  chaos: SurfaceChaosDE | undefined,
+  currentState: number,
+  predecessorState: number,
+): boolean {
+  return (
+    chaos === undefined ||
+    currentState === SURFACE_CHAOS_WILDCARD ||
+    (chaos.predecessorMasks[currentState] & (1 << predecessorState)) !== 0
+  );
+}
+
+/** Build binary reverse support from the point picker's exact chi domain.
+ * Positive authored magnitudes affect probability, never geometry. A row
+ * with no positive active destination falls back to global active support,
+ * exactly like `pickIndex`'s degenerate-row branch. */
+export function buildSurfaceChaosDE(
+  transforms: readonly Transform[],
+  recursiveBaseIndices: readonly number[],
+  emitterBaseIndices: readonly number[],
+  emitterCopyBaseIndices: readonly number[] = [],
+  symmetry: SymmetryParams = NO_SYMMETRY,
+): SurfaceChaosDE | undefined {
+  if (!systemHasChaos(transforms)) return undefined;
+  const activeBases = [...recursiveBaseIndices, ...emitterBaseIndices];
+  if (activeBases.length > MAX_SURFACE_CHAOS_STATES) {
+    throw new RangeError(
+      `Surface graph supports at most ${MAX_SURFACE_CHAOS_STATES} active states, got ${activeBases.length}`,
+    );
+  }
+  const stateByBase = new Map<number, number>();
+  activeBases.forEach((base, state) => stateByBase.set(base, state));
+  const order = effectiveSymmetryOrder(symmetry.order, transforms.length);
+  const blend = Math.min(1, Math.max(0, symmetry.blend ?? 1));
+  const slotWeights = new Array<number>(order * transforms.length);
+  for (let slot = 0; slot < slotWeights.length; slot++) {
+    const base = transforms[slot % transforms.length].weight ?? 1;
+    slotWeights[slot] = slot < transforms.length ? base : base * blend;
+  }
+  const selection = buildChaosSelection(
+    transforms,
+    slotWeights,
+    transforms.length,
+  )!;
+  const fallbackRows = new Set(selection.chaosFallbackRows);
+  const predecessorMasks = new Uint32Array(activeBases.length);
+  for (
+    let predecessorState = 0;
+    predecessorState < activeBases.length;
+    predecessorState++
+  ) {
+    const predecessorBase = activeBases[predecessorState];
+    const fallback = fallbackRows.has(predecessorBase);
+    for (
+      let destinationState = 0;
+      destinationState < activeBases.length;
+      destinationState++
+    ) {
+      const destinationBase = activeBases[destinationState];
+      let supported = fallback;
+      if (!supported) {
+        const row = selection.chaosRows[predecessorBase];
+        for (
+          let slot = destinationBase;
+          slot < row.length;
+          slot += transforms.length
+        ) {
+          const previous = slot === 0 ? 0 : row[slot - 1];
+          if (row[slot] > previous) {
+            supported = true;
+            break;
+          }
+        }
+      }
+      if (supported) {
+        predecessorMasks[destinationState] |= 1 << predecessorState;
+      }
+    }
+  }
+  return {
+    predecessorMasks,
+    emitterStateIndices: Uint8Array.from(
+      emitterCopyBaseIndices.map((base) => stateByBase.get(base)!),
+    ),
+    activeStateCount: activeBases.length,
+  };
+}
+
 type SurfaceNativeCarrierContext = Pick<
   SurfaceDE,
   | "maps"
   | "schedule"
+  | "chaos"
   | "symmetry"
   | "boundingRadius"
   | "boundCenter"
@@ -974,6 +1087,12 @@ function evaluateAffineSurfaceNativeCarriersRaw(
   const chainY = [sourceY, 0, 0, 0];
   const chainZ = [sourceZ, 0, 0, 0];
   const chainScale = [1, 1, 1, 1];
+  const chainState = [
+    SURFACE_CHAOS_WILDCARD,
+    SURFACE_CHAOS_WILDCARD,
+    SURFACE_CHAOS_WILDCARD,
+    SURFACE_CHAOS_WILDCARD,
+  ];
   const chainLive = [true, false, false, false];
   const key = [1e30, 1e30, 1e30, 1e30];
   const pointX = [0, 0, 0, 0];
@@ -981,6 +1100,12 @@ function evaluateAffineSurfaceNativeCarriersRaw(
   const pointZ = [0, 0, 0, 0];
   const scale = [1, 1, 1, 1];
   const radius = [0, 0, 0, 0];
+  const pointState = [
+    SURFACE_CHAOS_WILDCARD,
+    SURFACE_CHAOS_WILDCARD,
+    SURFACE_CHAOS_WILDCARD,
+    SURFACE_CHAOS_WILDCARD,
+  ];
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
     if (!chainLive[0] && !chainLive[1] && !chainLive[2] && !chainLive[3]) {
@@ -1008,6 +1133,7 @@ function evaluateAffineSurfaceNativeCarriersRaw(
     for (let chain = 0; chain < 4; chain++) {
       if (!chainLive[chain]) continue;
       const parentScale = chainScale[chain];
+      const parentState = chainState[chain];
       let sectorX = chainX[chain];
       let sectorY = chainY[chain];
       let sectorZ = chainZ[chain];
@@ -1027,6 +1153,15 @@ function evaluateAffineSurfaceNativeCarriersRaw(
           sectorZ = NATIVE_CARRIER_SWEEP[2];
         }
         for (const map of levelMaps) {
+          if (
+            !inB &&
+            !surfaceChaosAllows(de.chaos, parentState, map.stateIndex!)
+          ) {
+            continue;
+          }
+          const childState = inB
+            ? SURFACE_CHAOS_WILDCARD
+            : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
           const im = map.invM;
           const it = map.invT;
           const imageX =
@@ -1044,6 +1179,7 @@ function evaluateAffineSurfaceNativeCarriersRaw(
           let evictedZ = imageZ;
           let evictedScale = childScale;
           let evictedR = r;
+          let evictedState = childState;
 
           if (candidateKey < key[0]) {
             evictedKey = key[1];
@@ -1052,18 +1188,21 @@ function evaluateAffineSurfaceNativeCarriersRaw(
             evictedZ = pointZ[1];
             evictedScale = scale[1];
             evictedR = radius[1];
+            evictedState = pointState[1];
             key[1] = key[0];
             pointX[1] = pointX[0];
             pointY[1] = pointY[0];
             pointZ[1] = pointZ[0];
             scale[1] = scale[0];
             radius[1] = radius[0];
+            pointState[1] = pointState[0];
             key[0] = candidateKey;
             pointX[0] = imageX;
             pointY[0] = imageY;
             pointZ[0] = imageZ;
             scale[0] = childScale;
             radius[0] = r;
+            pointState[0] = childState;
           } else if (candidateKey < key[1]) {
             evictedKey = key[1];
             evictedX = pointX[1];
@@ -1071,12 +1210,14 @@ function evaluateAffineSurfaceNativeCarriersRaw(
             evictedZ = pointZ[1];
             evictedScale = scale[1];
             evictedR = radius[1];
+            evictedState = pointState[1];
             key[1] = candidateKey;
             pointX[1] = imageX;
             pointY[1] = imageY;
             pointZ[1] = imageZ;
             scale[1] = childScale;
             radius[1] = r;
+            pointState[1] = childState;
           }
 
           if (evictedKey < key[2]) {
@@ -1086,12 +1227,14 @@ function evaluateAffineSurfaceNativeCarriersRaw(
             pointZ[3] = pointZ[2];
             scale[3] = scale[2];
             radius[3] = radius[2];
+            pointState[3] = pointState[2];
             key[2] = evictedKey;
             pointX[2] = evictedX;
             pointY[2] = evictedY;
             pointZ[2] = evictedZ;
             scale[2] = evictedScale;
             radius[2] = evictedR;
+            pointState[2] = evictedState;
           } else if (evictedKey < key[3]) {
             key[3] = evictedKey;
             pointX[3] = evictedX;
@@ -1099,6 +1242,7 @@ function evaluateAffineSurfaceNativeCarriersRaw(
             pointZ[3] = evictedZ;
             scale[3] = evictedScale;
             radius[3] = evictedR;
+            pointState[3] = evictedState;
           }
         }
       }
@@ -1112,6 +1256,7 @@ function evaluateAffineSurfaceNativeCarriersRaw(
       chainY[0] = pointY[0];
       chainZ[0] = pointZ[0];
       chainScale[0] = scale[0];
+      chainState[0] = pointState[0];
       chainLive[0] = true;
     }
     if (key[1] < 1e29 && radius[1] <= escapeRadius) {
@@ -1119,6 +1264,7 @@ function evaluateAffineSurfaceNativeCarriersRaw(
       chainY[1] = pointY[1];
       chainZ[1] = pointZ[1];
       chainScale[1] = scale[1];
+      chainState[1] = pointState[1];
       chainLive[1] = true;
     }
     if (key[2] < 1e29 && radius[2] <= R) {
@@ -1126,6 +1272,7 @@ function evaluateAffineSurfaceNativeCarriersRaw(
       chainY[2] = pointY[2];
       chainZ[2] = pointZ[2];
       chainScale[2] = scale[2];
+      chainState[2] = pointState[2];
       chainLive[2] = true;
     }
     if (key[3] < 1e29 && radius[3] <= R) {
@@ -1133,6 +1280,7 @@ function evaluateAffineSurfaceNativeCarriersRaw(
       chainY[3] = pointY[3];
       chainZ[3] = pointZ[3];
       chainScale[3] = scale[3];
+      chainState[3] = pointState[3];
       chainLive[3] = true;
     }
   }
@@ -1159,6 +1307,7 @@ function evaluateFoldSurfaceNativeCarriersRaw(
   let chZ = sourceZ;
   let chScale = 1;
   let chFloor = 0;
+  let chState = SURFACE_CHAOS_WILDCARD;
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
     const inB = de.schedule !== undefined && depth < de.schedule.depth;
@@ -1180,6 +1329,7 @@ function evaluateFoldSurfaceNativeCarriersRaw(
     let lowestZ = 0;
     let lowestScale = 1;
     let lowestFloor = 0;
+    let lowestState = SURFACE_CHAOS_WILDCARD;
     const parentScale = chScale;
     const parentFloor = chFloor;
     let sectorX = chX;
@@ -1203,6 +1353,9 @@ function evaluateFoldSurfaceNativeCarriersRaw(
       }
 
       for (const map of levelMaps) {
+        if (!inB && !surfaceChaosAllows(de.chaos, chState, map.stateIndex!)) {
+          continue;
+        }
         const im = map.invM;
         const it = map.invT;
         const kind = map.foldKind;
@@ -1404,6 +1557,9 @@ function evaluateFoldSurfaceNativeCarriersRaw(
             lowestZ = imageZ;
             lowestScale = parentScale * branchSigma;
             lowestFloor = candidateFloor;
+            lowestState = inB
+              ? SURFACE_CHAOS_WILDCARD
+              : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
           }
         }
       }
@@ -1418,6 +1574,7 @@ function evaluateFoldSurfaceNativeCarriersRaw(
     chZ = lowestZ;
     chScale = lowestScale;
     chFloor = lowestFloor;
+    chState = lowestState;
   }
 
   return {
@@ -1564,18 +1721,6 @@ export function analyzeSurfaceSystem(
     reasons.push("no transforms");
   } else if (active.length === 0) {
     reasons.push("every transform has weight 0");
-  }
-
-  // Graph-directed selection (chaos rows) constrains the attractor to the
-  // SUBSET reachable through the chi digraph's paths, and this estimator's
-  // inverse-map descent enumerates EVERY composition — it would march the
-  // unconstrained, larger object, worse than a wrong picture because it is
-  // a confidently wrong one. Refused until a chi-aware descent prunes
-  // inadmissible chains (open work: fr-wo2j.13).
-  if (systemHasChaos(transforms)) {
-    reasons.push(
-      "chaos rows constrain the attractor (Surface would march the unconstrained object)",
-    );
   }
 
   transforms.forEach((t, i) => {
@@ -1816,6 +1961,7 @@ export function buildSurfaceDE(
   const preparedEmitters = transforms.some(transformHasEmitter)
     ? prepareEmitters(transforms)
     : null;
+  const hasChaos = systemHasChaos(transforms);
   const maps: SurfaceDEMap[] = [];
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
@@ -1849,6 +1995,7 @@ export function buildSurfaceDE(
       foldSigma: fold ? Math.abs(fold.weight) * sigmaMin : sigmaMin,
       foldRadii: surfaceFoldRadii(fold),
       baseIndex: i,
+      ...(hasChaos ? { stateIndex: maps.length } : {}),
       // Reciprocal singular values: sigma(inv(M)) = 1/sigma(M), so the
       // smallest of the inverse is exactly one over the largest of the
       // forward map (the branch-and-bound stage 2's bound data).
@@ -1905,6 +2052,8 @@ export function buildSurfaceDE(
   const step = (2 * Math.PI) / order;
 
   let condensation: CondensationDE3 | undefined;
+  const emitterBaseIndices: number[] = [];
+  const emitterCopyBaseIndices: number[] = [];
   if (preparedEmitters !== null) {
     const emitters: CondensationEmitter3[] = [];
     const shadeIndices = new Map<number, number>();
@@ -1912,6 +2061,7 @@ export function buildSurfaceDE(
     for (let i = 0; i < transforms.length; i++) {
       if (isActive(transforms[i]) && preparedEmitters[i]) {
         shadeIndices.set(i, nextShadeIndex++);
+        emitterBaseIndices.push(i);
       }
     }
     for (let k = 0; k < order; k++) {
@@ -1959,6 +2109,7 @@ export function buildSurfaceDE(
           // appended once and every symmetry copy points at that shade slot.
           shadeIndex: shadeIndices.get(i)!,
         });
+        emitterCopyBaseIndices.push(i);
       }
     }
     if (emitters.length > 0) {
@@ -1968,6 +2119,13 @@ export function buildSurfaceDE(
       };
     }
   }
+  const chaos = buildSurfaceChaosDE(
+    transforms,
+    maps.map((map) => map.baseIndex),
+    emitterBaseIndices,
+    emitterCopyBaseIndices,
+    symmetry,
+  );
 
   // A sampled cloud cannot certify a bounding ball: an arbitrarily small
   // positive map weight can hide a geometrically remote branch.  When C0 is
@@ -1981,62 +2139,65 @@ export function buildSurfaceDE(
   // (sector, map) copy proves B contains the least fixed set
   // A = C0 union_j F_j(A).  Fold maps use the same certified global
   // Lipschitz constants as eligibility; sector rotations are isometries.
-  const condensationInvariantRadius = condensation
-    ? (center: Vec3): number => {
-        let radius = condensationBoundingRadius3(condensation, center);
-        for (let k = 0; k < order; k++) {
-          const post =
-            k === 0 ? null : symmetryRotation(symmetry.plane, step * k);
-          for (let i = 0; i < transforms.length; i++) {
-            if (!isActive(transforms[i]) || preparedEmitters?.[i]) continue;
-            const transform = transforms[i];
-            const affine = composeAffine(transform);
-            let fx =
-              affine.m[0] * center[0] +
-              affine.m[1] * center[1] +
-              affine.m[2] * center[2] +
-              affine.t[0];
-            let fy =
-              affine.m[3] * center[0] +
-              affine.m[4] * center[1] +
-              affine.m[5] * center[2] +
-              affine.t[1];
-            let fz =
-              affine.m[6] * center[0] +
-              affine.m[7] * center[1] +
-              affine.m[8] * center[2] +
-              affine.t[2];
-            const fold = pureFoldVariation(transform);
-            let lipschitz = analysis.sigmas[i].max;
-            if (fold) {
-              const q = foldVariationFn(
-                fold.type as "boxfold" | "spherefold" | "mandelbox",
-                resolveFoldRadii(fold),
-              )(fx, fy, fz, mulberry32(0));
-              fx = fold.weight * q[0];
-              fy = fold.weight * q[1];
-              fz = fold.weight * q[2];
-              lipschitz *= foldLipschitz(fold);
+  const condensationInvariantRadius =
+    condensation || chaos
+      ? (center: Vec3): number => {
+          let radius = condensation
+            ? condensationBoundingRadius3(condensation, center)
+            : 0;
+          for (let k = 0; k < order; k++) {
+            const post =
+              k === 0 ? null : symmetryRotation(symmetry.plane, step * k);
+            for (let i = 0; i < transforms.length; i++) {
+              if (!isActive(transforms[i]) || preparedEmitters?.[i]) continue;
+              const transform = transforms[i];
+              const affine = composeAffine(transform);
+              let fx =
+                affine.m[0] * center[0] +
+                affine.m[1] * center[1] +
+                affine.m[2] * center[2] +
+                affine.t[0];
+              let fy =
+                affine.m[3] * center[0] +
+                affine.m[4] * center[1] +
+                affine.m[5] * center[2] +
+                affine.t[1];
+              let fz =
+                affine.m[6] * center[0] +
+                affine.m[7] * center[1] +
+                affine.m[8] * center[2] +
+                affine.t[2];
+              const fold = pureFoldVariation(transform);
+              let lipschitz = analysis.sigmas[i].max;
+              if (fold) {
+                const q = foldVariationFn(
+                  fold.type as "boxfold" | "spherefold" | "mandelbox",
+                  resolveFoldRadii(fold),
+                )(fx, fy, fz, mulberry32(0));
+                fx = fold.weight * q[0];
+                fy = fold.weight * q[1];
+                fz = fold.weight * q[2];
+                lipschitz *= foldLipschitz(fold);
+              }
+              if (post !== null) {
+                const rx = post[0] * fx + post[1] * fy + post[2] * fz;
+                const ry = post[3] * fx + post[4] * fy + post[5] * fz;
+                const rz = post[6] * fx + post[7] * fy + post[8] * fz;
+                fx = rx;
+                fy = ry;
+                fz = rz;
+              }
+              radius = Math.max(
+                radius,
+                Math.hypot(fx - center[0], fy - center[1], fz - center[2]) /
+                  (1 - lipschitz),
+              );
             }
-            if (post !== null) {
-              const rx = post[0] * fx + post[1] * fy + post[2] * fz;
-              const ry = post[3] * fx + post[4] * fy + post[5] * fz;
-              const rz = post[6] * fx + post[7] * fy + post[8] * fz;
-              fx = rx;
-              fy = ry;
-              fz = rz;
-            }
-            radius = Math.max(
-              radius,
-              Math.hypot(fx - center[0], fy - center[1], fz - center[2]) /
-                (1 - lipschitz),
-            );
           }
+          // Preserve a small numerical margin around the analytic fixed point.
+          return radius * RADIUS_PAD + 1e-3;
         }
-        // Preserve a small numerical margin around the analytic fixed point.
-        return radius * RADIUS_PAD + 1e-3;
-      }
-    : null;
+      : null;
 
   // Bounding radius of the RAW attractor: seeded probe of the exact plotted
   // set (full transform list + symmetry, but NO final transform — the DE
@@ -2228,6 +2389,7 @@ export function buildSurfaceDE(
   // running another chaos game or consulting the final lens below.
   const nativeCarrierContext: SurfaceNativeCarrierContext = {
     maps,
+    ...(chaos ? { chaos } : {}),
     ...(scheduleDE ? { schedule: scheduleDE } : {}),
     symmetry: {
       order,
@@ -2327,6 +2489,7 @@ export function buildSurfaceDE(
 
   return {
     maps,
+    ...(chaos ? { chaos } : {}),
     ...(scheduleDE ? { schedule: scheduleDE } : {}),
     ...(condensation ? { condensation } : {}),
     symmetry: {
@@ -2600,12 +2763,30 @@ function scheduledCondensationTerm3(
   x: number,
   y: number,
   z: number,
+  currentState = SURFACE_CHAOS_WILDCARD,
 ): number {
   if (!de.condensation) return Infinity;
   const aDepth = depth - (de.schedule?.depth ?? 0);
-  return aDepth < 0
-    ? Infinity
-    : condensationTerm3(de.condensation, aDepth, scale, x, y, z);
+  if (aDepth < 0) return Infinity;
+  if (!de.chaos || currentState === SURFACE_CHAOS_WILDCARD) {
+    return condensationTerm3(de.condensation, aDepth, scale, x, y, z);
+  }
+  const band = de.condensation.depthBand;
+  if (aDepth < band.minDepth || aDepth > band.maxDepth) return Infinity;
+  let best = Infinity;
+  for (let i = 0; i < de.condensation.emitters.length; i++) {
+    const state = de.chaos.emitterStateIndices[i];
+    if (!surfaceChaosAllows(de.chaos, currentState, state)) continue;
+    const emitter = de.condensation.emitters[i];
+    const m = emitter.invM;
+    const t = emitter.invT;
+    const qx = m[0] * x + m[1] * y + m[2] * z + t[0];
+    const qy = m[3] * x + m[4] * y + m[5] * z + t[1];
+    const qz = m[6] * x + m[7] * y + m[8] * z + t[2];
+    const value = emitter.sigmaMin * shapeSdf(emitter.shape, qx, qy, qz);
+    if (value < best) best = value;
+  }
+  return scale * SHAPE_MARCH_SAFETY * best;
 }
 
 function scheduledCondensationHasFutureDepth(
@@ -2638,6 +2819,7 @@ function refinedCertValue(
   r: number,
   childScale: number,
   depth: number,
+  currentState = SURFACE_CHAOS_WILDCARD,
 ): number {
   const { order, plane, stepCos, stepSin } = de.symmetry;
   const inB = de.schedule !== undefined && depth < de.schedule.depth;
@@ -2654,7 +2836,15 @@ function refinedCertValue(
   const bcX = childBound ? childBound.center[0] : de.boundCenter[0];
   const bcY = childBound ? childBound.center[1] : de.boundCenter[1];
   const bcZ = childBound ? childBound.center[2] : de.boundCenter[2];
-  let inner = scheduledCondensationTerm3(de, depth, 1, ix, iy, iz);
+  let inner = scheduledCondensationTerm3(
+    de,
+    depth,
+    1,
+    ix,
+    iy,
+    iz,
+    currentState,
+  );
   let sx = ix;
   let sy = iy;
   let sz = iz;
@@ -2667,6 +2857,12 @@ function refinedCertValue(
     }
     for (let j = 0; j < levelMaps.length; j++) {
       const mapJ = levelMaps[j];
+      if (
+        !inB &&
+        !surfaceChaosAllows(de.chaos, currentState, mapJ.stateIndex!)
+      ) {
+        continue;
+      }
       const imJ = mapJ.invM;
       const itJ = mapJ.invT;
       // Fold-branch sweep, one Hutchinson level deep: the inner min must
@@ -2959,12 +3155,14 @@ function descend(
   let aZ = z;
   let aScale = 1;
   let aR = startR;
+  let aState = SURFACE_CHAOS_WILDCARD;
   let aLive = true;
   let bX = 0;
   let bY = 0;
   let bZ = 0;
   let bScale = 1;
   let bR = 0;
+  let bState = SURFACE_CHAOS_WILDCARD;
   let bLive = false;
   // Validity chains carry no R field: unlike A/B they never fold a
   // terminal (see the note past the loop), and expansion re-derives every
@@ -2974,11 +3172,13 @@ function descend(
   let v1Y = 0;
   let v1Z = 0;
   let v1Scale = 1;
+  let v1State = SURFACE_CHAOS_WILDCARD;
   let v1Live = false;
   let v2X = 0;
   let v2Y = 0;
   let v2Z = 0;
   let v2Scale = 1;
+  let v2State = SURFACE_CHAOS_WILDCARD;
   let v2Live = false;
 
   for (let depth = 0; depth < maxDepth; depth++) {
@@ -2998,25 +3198,41 @@ function descend(
       if (aLive) {
         best = Math.min(
           best,
-          scheduledCondensationTerm3(de, depth, aScale, aX, aY, aZ),
+          scheduledCondensationTerm3(de, depth, aScale, aX, aY, aZ, aState),
         );
       }
       if (bLive) {
         best = Math.min(
           best,
-          scheduledCondensationTerm3(de, depth, bScale, bX, bY, bZ),
+          scheduledCondensationTerm3(de, depth, bScale, bX, bY, bZ, bState),
         );
       }
       if (v1Live) {
         best = Math.min(
           best,
-          scheduledCondensationTerm3(de, depth, v1Scale, v1X, v1Y, v1Z),
+          scheduledCondensationTerm3(
+            de,
+            depth,
+            v1Scale,
+            v1X,
+            v1Y,
+            v1Z,
+            v1State,
+          ),
         );
       }
       if (v2Live) {
         best = Math.min(
           best,
-          scheduledCondensationTerm3(de, depth, v2Scale, v2X, v2Y, v2Z),
+          scheduledCondensationTerm3(
+            de,
+            depth,
+            v2Scale,
+            v2X,
+            v2Y,
+            v2Z,
+            v2State,
+          ),
         );
       }
       if (best <= sphereBound || best * finalScale < bailBelow) {
@@ -3037,6 +3253,7 @@ function descend(
     let c1Scale = 1;
     let c1R = 0;
     let c1Cert = 0;
+    let c1State = SURFACE_CHAOS_WILDCARD;
     let c2Key = Infinity;
     let c2X = 0;
     let c2Y = 0;
@@ -3044,6 +3261,7 @@ function descend(
     let c2Scale = 1;
     let c2R = 0;
     let c2Cert = 0;
+    let c2State = SURFACE_CHAOS_WILDCARD;
     // Ranks 3/4, tracked the same way on widths 3/4 (a second insert-shift
     // ladder fed by everything the top-2 ladder evicts, so the pair holds
     // exactly the level's third- and fourth-smallest keys).
@@ -3054,6 +3272,7 @@ function descend(
     let c3Scale = 1;
     let c3R = 0;
     let c3Cert = 0;
+    let c3State = SURFACE_CHAOS_WILDCARD;
     let c4Key = Infinity;
     let c4X = 0;
     let c4Y = 0;
@@ -3061,35 +3280,41 @@ function descend(
     let c4Scale = 1;
     let c4R = 0;
     let c4Cert = 0;
+    let c4State = SURFACE_CHAOS_WILDCARD;
     for (let c = 0; c < 4; c++) {
       let pX: number;
       let pY: number;
       let pZ: number;
       let pScale: number;
+      let pState: number;
       if (c === 0) {
         if (!aLive) continue;
         pX = aX;
         pY = aY;
         pZ = aZ;
         pScale = aScale;
+        pState = aState;
       } else if (c === 1) {
         if (!bLive) continue;
         pX = bX;
         pY = bY;
         pZ = bZ;
         pScale = bScale;
+        pState = bState;
       } else if (c === 2) {
         if (!v1Live) continue;
         pX = v1X;
         pY = v1Y;
         pZ = v1Z;
         pScale = v1Scale;
+        pState = v1State;
       } else {
         if (!v2Live) continue;
         pX = v2X;
         pY = v2Y;
         pZ = v2Z;
         pScale = v2Scale;
+        pState = v2State;
       }
       // Sector sweep: the chain point turns one step per
       // kaleidoscope sector and every BASE map is applied to it there, so
@@ -3110,6 +3335,12 @@ function descend(
         }
         for (let j = 0; j < levelMaps.length; j++) {
           const map = levelMaps[j];
+          if (!inB && !surfaceChaosAllows(de.chaos, pState, map.stateIndex!)) {
+            continue;
+          }
+          const childState = inB
+            ? SURFACE_CHAOS_WILDCARD
+            : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
           const im = map.invM;
           const it = map.invT;
           const ix = im[0] * sX + im[1] * sY + im[2] * sZ + it[0];
@@ -3130,6 +3361,7 @@ function descend(
               ix,
               iy,
               iz,
+              childState,
             );
             if (shapeTerm < best) best = shapeTerm;
           }
@@ -3145,6 +3377,7 @@ function descend(
           let eScale = childScale;
           let eR = r;
           let eCert = cert;
+          let eState = childState;
           if (key < c1Key) {
             eKey = c2Key;
             eX = c2X;
@@ -3153,6 +3386,7 @@ function descend(
             eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
+            eState = c2State;
             c2Key = c1Key;
             c2X = c1X;
             c2Y = c1Y;
@@ -3160,6 +3394,7 @@ function descend(
             c2Scale = c1Scale;
             c2R = c1R;
             c2Cert = c1Cert;
+            c2State = c1State;
             c1Key = key;
             c1X = ix;
             c1Y = iy;
@@ -3167,6 +3402,7 @@ function descend(
             c1Scale = childScale;
             c1R = r;
             c1Cert = cert;
+            c1State = childState;
           } else if (key < c2Key) {
             eKey = c2Key;
             eX = c2X;
@@ -3175,6 +3411,7 @@ function descend(
             eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
+            eState = c2State;
             c2Key = key;
             c2X = ix;
             c2Y = iy;
@@ -3182,6 +3419,7 @@ function descend(
             c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
+            c2State = childState;
           }
           if (extra > 0) {
             // Spill into the rank-3/4 ladder; what THAT evicts (or the
@@ -3199,6 +3437,7 @@ function descend(
               const tScale = extra > 1 ? c4Scale : c3Scale;
               const tR = extra > 1 ? c4R : c3R;
               const tCert = extra > 1 ? c4Cert : c3Cert;
+              const tState = extra > 1 ? c4State : c3State;
               if (extra > 1) {
                 c4Key = c3Key;
                 c4X = c3X;
@@ -3207,6 +3446,7 @@ function descend(
                 c4Scale = c3Scale;
                 c4R = c3R;
                 c4Cert = c3Cert;
+                c4State = c3State;
               }
               c3Key = eKey;
               c3X = eX;
@@ -3215,6 +3455,7 @@ function descend(
               c3Scale = eScale;
               c3R = eR;
               c3Cert = eCert;
+              c3State = eState;
               eKey = tKey;
               eX = tX;
               eY = tY;
@@ -3222,6 +3463,7 @@ function descend(
               eScale = tScale;
               eR = tR;
               eCert = tCert;
+              eState = tState;
             } else if (extra > 1 && eKey < c4Key) {
               const tKey = c4Key;
               const tX = c4X;
@@ -3230,6 +3472,7 @@ function descend(
               const tScale = c4Scale;
               const tR = c4R;
               const tCert = c4Cert;
+              const tState = c4State;
               c4Key = eKey;
               c4X = eX;
               c4Y = eY;
@@ -3237,6 +3480,7 @@ function descend(
               c4Scale = eScale;
               c4R = eR;
               c4Cert = eCert;
+              c4State = eState;
               eKey = tKey;
               eX = tX;
               eY = tY;
@@ -3244,6 +3488,7 @@ function descend(
               eScale = tScale;
               eR = tR;
               eCert = tCert;
+              eState = tState;
             }
           }
           // The tuple leaving the beam frontier: escaped candidates fold
@@ -3254,7 +3499,7 @@ function descend(
           // (shrunken) residual drop the slots exist for.
           if (eR > R && eCert < best) {
             const folded = refine
-              ? refinedCertValue(de, eX, eY, eZ, eR, eScale, depth + 1)
+              ? refinedCertValue(de, eX, eY, eZ, eR, eScale, depth + 1, eState)
               : eCert;
             if (folded < best) {
               best = folded;
@@ -3303,6 +3548,7 @@ function descend(
         aZ = c1Z;
         aScale = c1Scale;
         aR = c1R;
+        aState = c1State;
         aLive = true;
       }
     }
@@ -3317,7 +3563,16 @@ function descend(
         // refining it buys nothing a marcher could see).
         if (c2R > R && c2Cert < best) {
           const folded = refine
-            ? refinedCertValue(de, c2X, c2Y, c2Z, c2R, c2Scale, depth + 1)
+            ? refinedCertValue(
+                de,
+                c2X,
+                c2Y,
+                c2Z,
+                c2R,
+                c2Scale,
+                depth + 1,
+                c2State,
+              )
             : c2Cert;
           if (folded < best) best = folded;
         } else if (futureCondensation && c2R <= R) {
@@ -3332,6 +3587,7 @@ function descend(
         bZ = c2Z;
         bScale = c2Scale;
         bR = c2R;
+        bState = c2State;
         bLive = true;
       }
     }
@@ -3339,7 +3595,16 @@ function descend(
       if (c3R > R) {
         if (c3Cert < best) {
           const folded = refine
-            ? refinedCertValue(de, c3X, c3Y, c3Z, c3R, c3Scale, depth + 1)
+            ? refinedCertValue(
+                de,
+                c3X,
+                c3Y,
+                c3Z,
+                c3R,
+                c3Scale,
+                depth + 1,
+                c3State,
+              )
             : c3Cert;
           if (folded < best) best = folded;
         }
@@ -3348,6 +3613,7 @@ function descend(
         v1Y = c3Y;
         v1Z = c3Z;
         v1Scale = c3Scale;
+        v1State = c3State;
         v1Live = true;
       }
     }
@@ -3355,7 +3621,16 @@ function descend(
       if (c4R > R) {
         if (c4Cert < best) {
           const folded = refine
-            ? refinedCertValue(de, c4X, c4Y, c4Z, c4R, c4Scale, depth + 1)
+            ? refinedCertValue(
+                de,
+                c4X,
+                c4Y,
+                c4Z,
+                c4R,
+                c4Scale,
+                depth + 1,
+                c4State,
+              )
             : c4Cert;
           if (folded < best) best = folded;
         }
@@ -3364,6 +3639,7 @@ function descend(
         v2Y = c4Y;
         v2Z = c4Z;
         v2Scale = c4Scale;
+        v2State = c4State;
         v2Live = true;
       }
     }
@@ -3392,25 +3668,41 @@ function descend(
     if (aLive) {
       best = Math.min(
         best,
-        scheduledCondensationTerm3(de, maxDepth, aScale, aX, aY, aZ),
+        scheduledCondensationTerm3(de, maxDepth, aScale, aX, aY, aZ, aState),
       );
     }
     if (bLive) {
       best = Math.min(
         best,
-        scheduledCondensationTerm3(de, maxDepth, bScale, bX, bY, bZ),
+        scheduledCondensationTerm3(de, maxDepth, bScale, bX, bY, bZ, bState),
       );
     }
     if (v1Live) {
       best = Math.min(
         best,
-        scheduledCondensationTerm3(de, maxDepth, v1Scale, v1X, v1Y, v1Z),
+        scheduledCondensationTerm3(
+          de,
+          maxDepth,
+          v1Scale,
+          v1X,
+          v1Y,
+          v1Z,
+          v1State,
+        ),
       );
     }
     if (v2Live) {
       best = Math.min(
         best,
-        scheduledCondensationTerm3(de, maxDepth, v2Scale, v2X, v2Y, v2Z),
+        scheduledCondensationTerm3(
+          de,
+          maxDepth,
+          v2Scale,
+          v2X,
+          v2Y,
+          v2Z,
+          v2State,
+        ),
       );
     }
   }
@@ -3468,6 +3760,7 @@ const fcZ = new Float64Array(FOLD_W);
 const fcScale = new Float64Array(FOLD_W);
 const fcFloor = new Float64Array(FOLD_W);
 const fcR = new Float64Array(FOLD_W);
+const fcState = new Uint32Array(FOLD_W);
 const fnKey = new Float64Array(FOLD_W);
 const fnX = new Float64Array(FOLD_W);
 const fnY = new Float64Array(FOLD_W);
@@ -3476,6 +3769,7 @@ const fnScale = new Float64Array(FOLD_W);
 const fnFloor = new Float64Array(FOLD_W);
 const fnR = new Float64Array(FOLD_W);
 const fnCert = new Float64Array(FOLD_W);
+const fnState = new Uint32Array(FOLD_W);
 const FOLD_SWEEP = [0, 0, 0];
 
 /** One frontier-insertion candidate as {@link FoldFrontierTap} reports it:
@@ -3630,6 +3924,7 @@ function descendFold(
   fcScale[0] = 1;
   fcFloor[0] = 0;
   fcR[0] = startR;
+  fcState[0] = SURFACE_CHAOS_WILDCARD;
 
   for (let depth = 0; depth < maxDepth && chainCount > 0; depth++) {
     const inB = de.schedule !== undefined && depth < de.schedule.depth;
@@ -3652,6 +3947,7 @@ function descendFold(
           fcX[c],
           fcY[c],
           fcZ[c],
+          fcState[c],
         );
         if (term < best) best = term;
       }
@@ -3672,6 +3968,7 @@ function descendFold(
     for (let c = 0; c < chainCount; c++) {
       const pScale = fcScale[c];
       const pFloor = fcFloor[c];
+      const pState = fcState[c];
       let sX = fcX[c];
       let sY = fcY[c];
       let sZ = fcZ[c];
@@ -3698,6 +3995,12 @@ function descendFold(
         }
         for (let j = 0; j < levelMaps.length; j++) {
           const map = levelMaps[j];
+          if (!inB && !surfaceChaosAllows(de.chaos, pState, map.stateIndex!)) {
+            continue;
+          }
+          const childState = inB
+            ? SURFACE_CHAOS_WILDCARD
+            : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
           const im = map.invM;
           const it = map.invT;
           // Fold-branch sweep (module doc): one candidate per inverse
@@ -4048,6 +4351,7 @@ function descendFold(
                 ix,
                 iy,
                 iz,
+                childState,
               );
               if (shapeTerm < best) best = shapeTerm;
             }
@@ -4103,6 +4407,7 @@ function descendFold(
             let evR = 0;
             let evCert = 0;
             let evFloor = 0;
+            let evState = SURFACE_CHAOS_WILDCARD;
             let evHas = false;
             if (keptCount === FOLD_W && key >= fnWorstKey) {
               evX = ix;
@@ -4112,6 +4417,7 @@ function descendFold(
               evR = r;
               evCert = cert;
               evFloor = candFloor;
+              evState = childState;
               evHas = true;
             } else {
               let slot: number;
@@ -4124,6 +4430,7 @@ function descendFold(
                 evR = fnR[slot];
                 evCert = fnCert[slot];
                 evFloor = fnFloor[slot];
+                evState = fnState[slot];
                 evHas = true;
               } else {
                 slot = keptCount;
@@ -4137,6 +4444,7 @@ function descendFold(
               fnFloor[slot] = candFloor;
               fnR[slot] = r;
               fnCert[slot] = cert;
+              fnState[slot] = childState;
               // Recompute the worst kept key once the frontier is full —
               // a fixed-bound scan of reads, first max wins.
               if (keptCount === FOLD_W) {
@@ -4163,6 +4471,7 @@ function descendFold(
                       evR,
                       evScale,
                       depth + 1,
+                      evState,
                     );
                     if (rc > folded) folded = rc;
                   }
@@ -4199,6 +4508,7 @@ function descendFold(
       fcScale[i] = fnScale[i];
       fcFloor[i] = fnFloor[i];
       fcR[i] = fnR[i];
+      fcState[i] = fnState[i];
     }
     chainCount = keptCount;
     if (foldFrontierTap !== null) {
@@ -4233,6 +4543,7 @@ function descendFold(
         fcX[c],
         fcY[c],
         fcZ[c],
+        fcState[c],
       );
       if (shapeTerm < best) best = shapeTerm;
     }

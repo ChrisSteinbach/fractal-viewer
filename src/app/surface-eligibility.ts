@@ -31,6 +31,7 @@ import {
   buildScheduleTable,
   effectiveSymmetryOrder,
   resolveScheduleDepth,
+  systemHasChaos,
   transformHasEmitter,
 } from "../fractal/chaos-game";
 import type {
@@ -200,6 +201,7 @@ export function deriveSurfaceEligibility(
 ): SurfaceEligibilityResult {
   const scheduleRecords = scheduleRecordCount(schedule);
   const hasSchedule = scheduleRecords > 0;
+  const hasChaos = systemHasChaos(transforms);
   // A 4D document routes to the 4D analysis — what used to be this gate's
   // blanket "extends into 4D" disqualifier is now the 4D tracer's
   // admission ticket.
@@ -210,11 +212,11 @@ export function deriveSurfaceEligibility(
       schedule,
     );
     if (analysis.status === "ineligible") {
-      // A schedule is defined only for inverse descent. Falling through to a
-      // forward escape renderer here would silently drop B and render a
-      // different object, so an A/B analysis refusal is terminal whenever
-      // the post-word is live.
-      if (hasSchedule) {
+      // Schedules and graph-directed chi are defined only for inverse
+      // descent. Falling through to a forward escape renderer here would
+      // silently drop B or the transition graph and render a different
+      // object, so inverse refusal is terminal whenever either is live.
+      if (hasSchedule || hasChaos) {
         return {
           status: "ineligible",
           note: analysis.reasons.join("; "),
@@ -340,10 +342,10 @@ export function deriveSurfaceEligibility(
 
   const analysis = analyzeSurfaceSystem(transforms, finalTransform, schedule);
   if (analysis.status === "ineligible") {
-    // As in 4D above, no forward renderer consumes the scheduled B word.
-    // Keep an inverse-analysis refusal terminal instead of admitting an
-    // attractive but confidently wrong A-only escape object.
-    if (hasSchedule) {
+    // As in 4D above, no forward renderer consumes a scheduled B word or
+    // graph transition state. Keep inverse refusal terminal instead of
+    // admitting an attractive but confidently wrong A-only escape object.
+    if (hasSchedule || hasChaos) {
       return {
         status: "ineligible",
         note: analysis.reasons.join("; "),

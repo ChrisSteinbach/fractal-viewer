@@ -37,7 +37,10 @@ import type {
 } from "./surface-compute";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import {
+  SURFACE_GPU_CHAOS_BYTES,
   SURFACE_GPU_HIT_FLOOR,
+  SURFACE_GPU_PARAMS4_CHAOS_BYTES,
+  SURFACE_GPU_PARAMS_CHAOS_BYTES,
   SURFACE_GPU_PARAMS4_SCHEDULE_BYTES,
   SURFACE_GPU_PARAMS_SCHEDULE_BYTES,
   SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
@@ -1602,6 +1605,64 @@ describe("SurfaceComputeRenderer scheduled-hybrid session resources", () => {
     }
     expect(harness.bufferDescriptors[0].size).toBe(
       SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
+    );
+    harness.renderer.destroy();
+  });
+});
+
+describe("SurfaceComputeRenderer reverse-chi session resources", () => {
+  const graphTransforms: Transform[] = [
+    {
+      id: 0,
+      position: [-0.3, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.4, 0.4, 0.4],
+      chaos: [1, 0],
+    },
+    {
+      id: 1,
+      position: [0.3, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.4, 0.4, 0.4],
+      chaos: [0, 1],
+    },
+  ];
+
+  it("passes graph state to both 3D kernels and allocates the appended 24-mask block", async () => {
+    const de = buildSurfaceDE(graphTransforms);
+    expect(de.chaos?.predecessorMasks).toEqual(Uint32Array.from([1, 2]));
+    const harness = await createPaletteResourceHarness(false, {
+      kind: "ifs",
+      de,
+    });
+
+    expect(harness.shaderSources).toHaveLength(2);
+    for (const source of harness.shaderSources) {
+      expect(source).toContain("fn chaosAllows(");
+      expect(source).toContain("params.chaosMask0");
+    }
+    expect(SURFACE_GPU_PARAMS_CHAOS_BYTES).toBe(288 + SURFACE_GPU_CHAOS_BYTES);
+    expect(harness.bufferDescriptors[0].size).toBe(
+      SURFACE_GPU_PARAMS_CHAOS_BYTES,
+    );
+    harness.renderer.destroy();
+  });
+
+  it("does the same for both flat-lift 4D slab variants without underallocating the forced lens-prefix ABI", async () => {
+    const de = buildSurfaceDE4(graphTransforms);
+    const harness = await createPaletteResourceHarness(false, {
+      kind: "ifs4",
+      de,
+    });
+
+    expect(harness.shaderSources).toHaveLength(4);
+    for (const source of harness.shaderSources) {
+      expect(source).toContain("fn chaosAllows(");
+      expect(source).toContain("params.chaosMask0");
+    }
+    expect(SURFACE_GPU_PARAMS4_CHAOS_BYTES).toBe(576 + SURFACE_GPU_CHAOS_BYTES);
+    expect(harness.bufferDescriptors[0].size).toBe(
+      SURFACE_GPU_PARAMS4_CHAOS_BYTES,
     );
     harness.renderer.destroy();
   });

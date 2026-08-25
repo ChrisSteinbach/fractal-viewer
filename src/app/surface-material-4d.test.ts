@@ -338,6 +338,116 @@ describe("4D GLSL finite schedule packing and source", () => {
   });
 });
 
+describe("4D GLSL reverse-chi packing and source", () => {
+  function graphDE(schedule = false): SurfaceDE4 {
+    const de: SurfaceDE4 = {
+      ...de4([map4({ stateIndex: 0 }), map4({ stateIndex: 1 })]),
+      condensation: {
+        emitters: [
+          condEmitter4(COND4_SPHERE, 2, [5, 0, 0, 0]),
+          condEmitter4(COND4_SPHERE, 2, [6, 0, 0, 0]),
+        ],
+        depthBand: { minDepth: 0, maxDepth: 8 },
+      },
+      chaos: {
+        predecessorMasks: Uint32Array.from([0b101, 0b010, 0b111]),
+        emitterStateIndices: Uint8Array.from([2, 2]),
+        activeStateCount: 3,
+      },
+    };
+    if (schedule) de.schedule = scheduled4([map4(), map4()]);
+    return de;
+  }
+
+  it("keeps absent chi byte-identical and restores it exactly after a live graph", () => {
+    const classic = surface4FragmentFor();
+    expect(surface4FragmentFor(0, 0, 0, 0, null, 0, 0)).toBe(classic);
+    expect(classic).not.toContain("surfaceChaosAllows4");
+    expect(classic).not.toContain("uChaosPredecessorMasks");
+    expect(classic).not.toContain("uniform vec4 uChaosPredecessorMasks");
+
+    const material = createSurfaceMaterial4();
+    const baseline = material.fragmentShader;
+    setSurfaceSystem4(material, graphDE(), [
+      [0, 0, 0],
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+    expect(material.defines.SURFACE4_CHAOS).toBe(1);
+    expect(material.fragmentShader).toContain("surfaceChaosAllows4");
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]]);
+    expect(material.defines.SURFACE4_CHAOS).toBeUndefined();
+    expect(material.fragmentShader).toBe(baseline);
+  });
+
+  it("packs current-state masks and shared physical emitter states outside the frozen std140 map block", () => {
+    const material = createSurfaceMaterial4();
+    setSurfaceSystem4(material, graphDE(true), [
+      [0, 0, 0],
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+    const masks = material.uniforms.uChaosPredecessorMasks
+      .value as THREE.Vector4[];
+    expect([masks[0].x, masks[0].y, masks[0].z, masks[0].w]).toEqual([
+      0b101, 0b010, 0b111, 0,
+    ]);
+    expect(material.uniforms.uCondState.value.slice(0, 2)).toEqual([2, 2]);
+    expect(material.uniforms.uShadeCount.value).toBe(3);
+    expect(material.uniforms.uCondCount.value).toBe(2);
+    expect(material.uniformsGroups[0].uniforms).toHaveLength(6);
+  });
+
+  it("keeps root/B wildcard state and filters A/refiner/condensation predecessors without symmetry-expanded state", () => {
+    const src = surface4FragmentResolvedFor(0, 0, 0, 0, [COND4_SPHERE], 1, 1);
+    expect(src).toContain("if (currentState < 0) return true;");
+    expect(src).toContain("uniform vec4 uChaosPredecessorMasks");
+    expect(src).toContain("return mod(floor(mask / bit), 2.0) >= 1.0;");
+    expect(src).toContain("if (depth < uScheduleDepth) return -1;");
+    expect(src).toContain("int aState = -1;");
+    expect(
+      src.match(/if \(!surfaceChaosAllows4\(pState, childState\)\) continue;/g),
+    ).toHaveLength(2);
+    expect(src).toContain(
+      "if (!surfaceChaosAllows4(currentState, childState)) continue;",
+    );
+    expect(src).toContain(
+      "if (!surfaceChaosAllows4(currentState, uCondState[e])) continue;",
+    );
+    expect(src).toContain("childState = surfaceChaosChildState4(depth, j)");
+    expect(src).not.toContain("childState = k");
+  });
+
+  it("keeps the largest emitted 4D chaos/schedule/condensation/lens-equivalent program below 65,536 bytes", () => {
+    const variants: string[] = [];
+    for (const balloon of [0, 1]) {
+      for (const plane of [0, 1]) {
+        if (balloon && plane) continue;
+        for (const finish of [0, 1]) {
+          for (const pattern of [0, 1]) {
+            for (const condensation of [0, 1]) {
+              for (const schedule of [0, 1]) {
+                variants.push(
+                  surface4FragmentFor(
+                    balloon,
+                    plane,
+                    finish,
+                    pattern,
+                    condensation ? [COND4_SPHERE] : null,
+                    schedule,
+                    1,
+                  ),
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(Math.max(...variants.map((src) => src.length))).toBeLessThan(65_536);
+  });
+});
+
 describe("4D GLSL condensation packing and source", () => {
   it("appends inverse records in the std140 map arrays while recursive and shade counts remain separate", () => {
     const material = createSurfaceMaterial4();

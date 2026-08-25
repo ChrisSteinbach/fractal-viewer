@@ -485,14 +485,14 @@ export function barnsleyFern(): Transform[] {
 }
 
 /**
- * Surface-compatible A system for the scheduled Sponge of Ferns showcase.
+ * Surface-compatible fern shared by the scheduled and xaos showcases.
  * Barnsley's canonical stem has an exactly zero x column, so no inverse-map
  * descent can represent it. Keep the standalone Barnsley preset exact and
- * widen only this composition's stem by one visually sub-pixel scale unit:
+ * widen only these compositions' stem by one visually sub-pixel scale unit:
  * safely above the inverse singularity floor, still 160:1 anisotropic (and
  * therefore truthfully reported as a slow/degraded Surface system).
  */
-function spongeOfFernsAttractor(): Transform[] {
+function inverseCompatibleFern(): Transform[] {
   const transforms = barnsleyFern();
   const stem = transforms[0];
   transforms[0] = {
@@ -2149,7 +2149,14 @@ const FERN_SPONGE_SPONGE_WEIGHT = 5;
  * each other in a controlled way.
  */
 function fernSpongeSystem(offBlock: number): Transform[] {
-  const fern = conjugateApart(barnsleyFern(), [-FERN_SPONGE_OFFSET, 0, 0]);
+  // Use the same imperceptibly widened stem as Sponge of Ferns so the two
+  // xaos showcases can enter inverse Surface descent. The standalone
+  // Barnsley preset remains the exact singular textbook system.
+  const fern = conjugateApart(inverseCompatibleFern(), [
+    -FERN_SPONGE_OFFSET,
+    0,
+    0,
+  ]);
   const sponge = conjugateApart(mengerSponge(), [FERN_SPONGE_OFFSET, 0, 0]);
   const fernCount = fern.length;
   const all = [...fern, ...sponge];
@@ -2267,15 +2274,16 @@ const PRESETS = {
   barnsley: barnsleyFern,
   curling: curlingFern,
   // The xaos (graph-directed selection) pair — chaos rows' reachability
-  // proof: two systems in one space, isolated and 1%-leaked. Points/flame/
-  // solid render them; the surface and escape gates refuse chi documents.
+  // proof: two systems in one space, isolated and 1%-leaked. Points, Flame,
+  // solid and inverse Surface render them; chi-blind forward escape routing
+  // remains forbidden.
   fernSponge: fernSpongeIsolated,
   fernSpongeLeak,
   // The scheduled-hybrid post-word's reachability proof, third member of
   // the fern-and-sponge family: system A alone here — the schedule block
   // (B = the sponge, depth 2) rides PRESET_SCHEDULES, exactly as a lens
   // rides PRESET_FINALS.
-  spongeOfFerns: spongeOfFernsAttractor,
+  spongeOfFerns: inverseCompatibleFern,
   // The shape-emitter (condensation) reachability proof, fourth member of
   // the multi-system family: a Sierpinski tetrahedron of gear wheels.
   gearworks,

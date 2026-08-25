@@ -28,6 +28,8 @@ import {
   SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_TRAP_BYTES,
+  SURFACE_GPU_PARAMS4_CHAOS_BYTES,
+  SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_CHAOS_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
@@ -41,6 +43,9 @@ import {
   SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_TRAP_BYTES,
+  SURFACE_GPU_CHAOS_BYTES,
+  SURFACE_GPU_PARAMS_CHAOS_BYTES,
+  SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_CHAOS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
   SURFACE_GPU_RAY_HIT,
@@ -7737,5 +7742,202 @@ describe("surfaceDeKernelWgsl hybrid schedule", () => {
         }),
       ),
     ).toThrow(/25 physical.*24/);
+  });
+});
+
+describe("graph-directed Surface GPU ABI", () => {
+  const masks = Uint32Array.from([0b101, 0b010, 0b111]);
+
+  function withChaos3(de: SurfaceDE): SurfaceDE {
+    return {
+      ...de,
+      chaos: {
+        activeStateCount: 3,
+        predecessorMasks: masks,
+        emitterStateIndices: Uint8Array.from(
+          de.condensation?.emitters.map((e) => e.shadeIndex) ?? [],
+        ),
+      },
+    };
+  }
+
+  function withChaos4(de: SurfaceDE4): SurfaceDE4 {
+    return {
+      ...de,
+      chaos: {
+        activeStateCount: 3,
+        predecessorMasks: masks,
+        emitterStateIndices: Uint8Array.from(
+          de.condensation?.emitters.map((e) => e.shadeIndex) ?? [],
+        ),
+      },
+    };
+  }
+
+  it("appends six vec4u masks after the existing 3D and forced-576 4D tails", () => {
+    expect(SURFACE_GPU_CHAOS_BYTES).toBe(96);
+    const plain3 = buildSurfaceDE([condensationTransforms()[0]]);
+    const chaos3: SurfaceDE = {
+      ...plain3,
+      chaos: {
+        activeStateCount: 1,
+        predecessorMasks: Uint32Array.of(1),
+        emitterStateIndices: new Uint8Array(),
+      },
+    };
+    const packed3 = new DataView(
+      packSurfaceGpuParams(chaos3, { itemCount: 1 }),
+    );
+    expect(packed3.byteLength).toBe(SURFACE_GPU_PARAMS_CHAOS_BYTES);
+    expect(new Uint8Array(packed3.buffer, 0, 288)).toEqual(
+      new Uint8Array(packSurfaceGpuParams(plain3, { itemCount: 1 })),
+    );
+    expect(packed3.getUint32(288, true)).toBe(1);
+    expect(packed3.getUint32(292, true)).toBe(0);
+
+    const plain4 = buildSurfaceDE4([condensationTransforms()[0]]);
+    const chaos4: SurfaceDE4 = {
+      ...plain4,
+      chaos: {
+        activeStateCount: 1,
+        predecessorMasks: Uint32Array.of(1),
+        emitterStateIndices: new Uint8Array(),
+      },
+    };
+    const packed4 = new DataView(
+      packSurface4GpuParams(chaos4, view4(), { itemCount: 1 }),
+    );
+    expect(packed4.byteLength).toBe(SURFACE_GPU_PARAMS4_CHAOS_BYTES);
+    expect(new Uint8Array(packed4.buffer, 0, 464)).toEqual(
+      new Uint8Array(packSurface4GpuParams(plain4, view4(), { itemCount: 1 })),
+    );
+    expect(Array.from(new Uint8Array(packed4.buffer, 464, 112))).toEqual(
+      new Array(112).fill(0),
+    );
+    expect(packed4.getUint32(576, true)).toBe(1);
+  });
+
+  it("places masks after combined schedule and condensation in both dimensions", () => {
+    const base3 = buildSurfaceDE(condensationTransforms(), null, undefined, {
+      condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+    });
+    const de3 = withChaos3(withSchedule3(base3));
+    const packed3 = new DataView(packSurfaceGpuParams(de3, { itemCount: 1 }));
+    expect(packed3.byteLength).toBe(
+      SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_CHAOS_BYTES,
+    );
+    expect(packed3.getUint32(304, true)).toBe(2);
+    expect(Array.from(new Uint32Array(packed3.buffer, 400, 4))).toEqual([
+      0b101, 0b010, 0b111, 0,
+    ]);
+
+    const base4 = buildSurfaceDE4(condensationTransforms(), null, undefined, {
+      condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+    });
+    const de4 = withChaos4(withSchedule4(base4));
+    const packed4 = new DataView(
+      packSurface4GpuParams(de4, view4(), { itemCount: 1 }),
+    );
+    expect(packed4.byteLength).toBe(
+      SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_CHAOS_BYTES,
+    );
+    expect(packed4.getUint32(592, true)).toBe(2);
+    expect(Array.from(new Uint32Array(packed4.buffer, 688, 4))).toEqual([
+      0b101, 0b010, 0b111, 0,
+    ]);
+  });
+
+  it("keeps missing, null, and zero-state chaos source byte-identical", () => {
+    for (const core of ["fold", "affine", "fold4", "affine4"] as const) {
+      const overrides = {
+        core,
+        mode: "shade" as const,
+        lens: true,
+        slabExt: core.endsWith("4") ? false : undefined,
+      };
+      const classic = surfaceDeKernelWgsl(kernelOpts(overrides));
+      expect(
+        surfaceDeKernelWgsl(kernelOpts({ ...overrides, chaos: null })),
+      ).toBe(classic);
+      expect(
+        surfaceDeKernelWgsl(
+          kernelOpts({
+            ...overrides,
+            chaos: { activeStateCount: 0, predecessorMasks: [] },
+          }),
+        ),
+      ).toBe(classic);
+    }
+  });
+
+  it("threads wildcard/current/child state through every value and shade core", () => {
+    const chaos = {
+      activeStateCount: 3,
+      predecessorMasks: [0b101, 0b010, 0b111],
+    };
+    const schedule = { mapCount: 2, scheduleMapCount: 1 };
+    const condensation = {
+      mapCount: 2,
+      emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 2 }],
+    };
+    for (const core of ["fold", "affine", "fold4", "affine4"] as const) {
+      for (const lens of [false, true]) {
+        const wgsl = surfaceDeKernelWgsl(
+          kernelOpts({
+            mode: "shade",
+            core,
+            lens,
+            slabExt: core.endsWith("4") ? false : undefined,
+            schedule,
+            condensation,
+            chaos,
+          }),
+        );
+        expect(wgsl).toContain("chaosMask0: vec4u");
+        expect(wgsl).toContain("fn chaosAllows(source: u32, current: u32)");
+        expect(wgsl).toContain("!chaosAllows(j, pState)");
+        expect(wgsl).toContain("chaosChildState(depth, j)");
+        expect(wgsl).toContain(
+          "select(source, CHAOS_WILDCARD, depth < params.scheduleDepth)",
+        );
+        expect(wgsl).toContain("!chaosAllows(u32(m.p0.y), currentState)");
+        expect(wgsl).toContain("if (depth == params.scheduleDepth");
+        expect(wgsl).toContain("fn surfaceDEHitInfo");
+        if (core === "fold" || core === "fold4") {
+          expect(wgsl).toContain("fcState");
+          expect(wgsl).toContain("fnState");
+        } else {
+          expect(wgsl).toContain("currentState: u32");
+          expect(wgsl).toContain("c4State");
+        }
+      }
+    }
+  });
+
+  it("validates mask shape and refuses graph selection on forward cores", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          chaos: { activeStateCount: 3, predecessorMasks: [1, 2] },
+        }),
+      ),
+    ).toThrow(/exactly 3 predecessor masks/);
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          chaos: { activeStateCount: 2, predecessorMasks: [1, 4] },
+        }),
+      ),
+    ).toThrow(/outside 0\.\.1/);
+    for (const core of ["escape", "bulb", "escape4"] as const) {
+      expect(() =>
+        surfaceDeKernelWgsl(
+          kernelOpts({
+            core,
+            chaos: { activeStateCount: 1, predecessorMasks: [1] },
+          }),
+        ),
+      ).toThrow(/graph-directed.*descent cores/);
+    }
   });
 });

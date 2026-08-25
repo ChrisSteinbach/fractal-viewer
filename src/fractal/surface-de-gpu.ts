@@ -922,6 +922,38 @@ export const SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES = 432;
 export const SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES = 400;
 export const SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES = 432;
 export const SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES = 448;
+/** Graph-directed Surface appends 24 predecessor masks as six `vec4u`
+ * lanes after every other enabled params tail. Only the first
+ * `activeStateCount` words are live; the fixed 24-word footprint keeps one
+ * WGSL struct shape for every eligible system while preserving every
+ * chaos-absent byte and offset. */
+export const SURFACE_GPU_CHAOS_BYTES = 24 * 4;
+export const SURFACE_GPU_PARAMS_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_BALLOON_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_BALLOON_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_CONDENSATION_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_SCHEDULE_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_SCHEDULE_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES +
+  SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES +
+  SURFACE_GPU_CHAOS_BYTES;
 /** Params size for `core: "affine4"` — the frozen 0..207 block plus the
  * 4D variant tail (layout contract in the module doc). The other cores'
  * structs still end at 208/288; binding the larger buffer to them would
@@ -969,6 +1001,32 @@ export const SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES = 720;
 export const SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES = 688;
 export const SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES = 720;
 export const SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES = 736;
+export const SURFACE_GPU_PARAMS4_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_LENS_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_BALLOON_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_BALLOON_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_CONDENSATION_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_SCHEDULE_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_SCHEDULE_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES + SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES +
+  SURFACE_GPU_CHAOS_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_CHAOS_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES +
+  SURFACE_GPU_CHAOS_BYTES;
 /** Params size for a 3D FORWARD core (escape, bulb) under `shapeTrap`: the
  * 336-byte plane-bearing block — the plane region declared unconditionally
  * under the trap and zero-filled when there is no floor, which is what
@@ -1034,10 +1092,64 @@ interface CondensationWireEmitter {
 interface CondensationWireDE {
   maps: readonly unknown[];
   schedule?: SurfaceScheduleWire | null;
+  chaos?: SurfaceChaosWire | null;
   condensation?: {
     emitters: readonly CondensationWireEmitter[];
     depthBand: { minDepth: number; maxDepth: number };
   };
+}
+
+interface SurfaceChaosWire {
+  predecessorMasks: ArrayLike<number>;
+  activeStateCount: number;
+}
+
+interface SurfaceChaosWireInfo {
+  predecessorMasks: Uint32Array;
+  activeStateCount: number;
+}
+
+function surfaceChaosWireInfo(de: {
+  chaos?: SurfaceChaosWire | null;
+}): SurfaceChaosWireInfo | null {
+  const chaos = de.chaos;
+  if (!chaos || chaos.activeStateCount === 0) return null;
+  if (
+    !Number.isInteger(chaos.activeStateCount) ||
+    chaos.activeStateCount < 1 ||
+    chaos.activeStateCount > SURFACE_GPU_UNIFORM_MAP_SLOTS
+  ) {
+    throw new RangeError(
+      `surface-de-gpu: chaos activeStateCount ${chaos.activeStateCount} is outside 1..${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
+    );
+  }
+  if (chaos.predecessorMasks.length !== chaos.activeStateCount) {
+    throw new RangeError(
+      `surface-de-gpu: chaos needs exactly ${chaos.activeStateCount} predecessor masks; ` +
+        `found ${chaos.predecessorMasks.length}`,
+    );
+  }
+  const validBits =
+    chaos.activeStateCount === 32
+      ? 0xffffffff
+      : (2 ** chaos.activeStateCount - 1) >>> 0;
+  const predecessorMasks = new Uint32Array(chaos.activeStateCount);
+  for (let i = 0; i < chaos.activeStateCount; i++) {
+    const mask = chaos.predecessorMasks[i];
+    if (!Number.isInteger(mask) || mask < 0 || mask > 0xffffffff) {
+      throw new RangeError(
+        `surface-de-gpu: chaos predecessor mask ${i} is not a u32 (${mask})`,
+      );
+    }
+    const u32 = mask >>> 0;
+    if ((u32 & ~validBits) !== 0) {
+      throw new RangeError(
+        `surface-de-gpu: chaos predecessor mask ${i} references a state outside 0..${chaos.activeStateCount - 1}`,
+      );
+    }
+    predecessorMasks[i] = u32;
+  }
+  return { predecessorMasks, activeStateCount: chaos.activeStateCount };
 }
 
 interface SurfaceScheduleWireMap3 {
@@ -1211,6 +1323,16 @@ function writeCondensationBlock(
   view.setUint32(offset + 4, info.depthMin, true);
   view.setUint32(offset + 8, info.depthMax, true);
   view.setUint32(offset + 12, info.shadeCount, true);
+}
+
+function writeSurfaceChaosBlock(
+  view: DataView,
+  offset: number,
+  chaos: SurfaceChaosWireInfo,
+): void {
+  for (let i = 0; i < chaos.predecessorMasks.length; i++) {
+    view.setUint32(offset + i * 4, chaos.predecessorMasks[i], true);
+  }
 }
 
 /** Shade uniform size under the pattern gate (shade mode): the 224-byte
@@ -1449,6 +1571,16 @@ export interface SurfaceGpuKernelOptions {
     mapCount: number;
     scheduleMapCount: number;
   } | null;
+  /** Graph-directed inverse-chain gate. `predecessorMasks[current]` has
+   * bit `source` set exactly when the forward edge source -> current is
+   * effective after weight support and the chaos game's degenerate-row
+   * fallback. Recursive A states occupy the first map slots; unique
+   * condensation emitters follow them and symmetry copies share a state.
+   * Missing/null/zero-state input emits the classic source byte for byte. */
+  chaos?: {
+    activeStateCount: number;
+    predecessorMasks: ArrayLike<number>;
+  } | null;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
    * the pre-shade-split generator. "unproject" derives rays the GLSL
@@ -1579,11 +1711,13 @@ export interface SurfaceGpuKernelOptions {
 export function surfaceGpuWorkgroupBytes(
   opts: Pick<
     SurfaceGpuKernelOptions,
-    "width" | "workgroupSize" | "sharedFrontier" | "core"
+    "width" | "workgroupSize" | "sharedFrontier" | "core" | "chaos"
   >,
 ): number {
   if (!opts.sharedFrontier || (opts.core ?? "fold") !== "fold") return 0;
-  return SURFACE_GPU_FRONTIER_ARRAYS * opts.width * opts.workgroupSize * 4;
+  const arrays =
+    SURFACE_GPU_FRONTIER_ARRAYS + (opts.chaos?.activeStateCount ? 2 : 0);
+  return arrays * opts.width * opts.workgroupSize * 4;
 }
 
 /** Camera/raster description for march mode — the bench packs the
@@ -1670,6 +1804,7 @@ export function packSurfaceGpuParams(
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
+  const chaos = surfaceChaosWireInfo(de);
   validateSurfacePhysicalMapCount(de, condensation?.emitterCount ?? 0);
   if (balloon && groundPlane) {
     throw new Error(
@@ -1705,30 +1840,31 @@ export function packSurfaceGpuParams(
         "until the cap accounts for the non-stationary B prefix",
     );
   }
+  const baseBytes = schedule
+    ? condensation
+      ? balloon
+        ? SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES
+          : SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES
+      : balloon
+        ? SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES
+          : SURFACE_GPU_PARAMS_SCHEDULE_BYTES
+    : condensation
+      ? balloon
+        ? SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES
+          : SURFACE_GPU_PARAMS_CONDENSATION_BYTES
+      : balloon
+        ? SURFACE_GPU_PARAMS_BALLOON_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS_PLANE_BYTES
+          : SURFACE_GPU_PARAMS_BYTES;
   const buf = new ArrayBuffer(
-    schedule
-      ? condensation
-        ? balloon
-          ? SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES
-          : groundPlane
-            ? SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES
-            : SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES
-        : balloon
-          ? SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_BYTES
-          : groundPlane
-            ? SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES
-            : SURFACE_GPU_PARAMS_SCHEDULE_BYTES
-      : condensation
-        ? balloon
-          ? SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES
-          : groundPlane
-            ? SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES
-            : SURFACE_GPU_PARAMS_CONDENSATION_BYTES
-        : balloon
-          ? SURFACE_GPU_PARAMS_BALLOON_BYTES
-          : groundPlane
-            ? SURFACE_GPU_PARAMS_PLANE_BYTES
-            : SURFACE_GPU_PARAMS_BYTES,
+    baseBytes + (chaos ? SURFACE_GPU_CHAOS_BYTES : 0),
   );
   const view = new DataView(buf);
   const rootBound = schedule ? de.schedule?.bounds[0] : undefined;
@@ -1840,6 +1976,9 @@ export function packSurfaceGpuParams(
           ? 336
           : 288;
     writeSurfaceScheduleBlock(view, scheduleOffset, schedule, 3);
+  }
+  if (chaos) {
+    writeSurfaceChaosBlock(view, baseBytes, chaos);
   }
   return buf;
 }
@@ -2242,6 +2381,7 @@ export function packSurface4GpuParams(
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
+  const chaos = surfaceChaosWireInfo(de);
   validateSurfacePhysicalMapCount(de, condensation?.emitterCount ?? 0);
   if (balloon && groundPlane) {
     throw new Error(
@@ -2267,32 +2407,35 @@ export function packSurface4GpuParams(
   // The appended blocks force the lens4 region to exist (zero-filled
   // without a lens), which is what keeps their own offset at 576 for
   // every 4D core — the 3D packer's frozen-288 rule one dimension up.
-  const buf = new ArrayBuffer(
-    schedule
-      ? condensation
-        ? balloon
-          ? SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES
-          : groundPlane
-            ? SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES
-            : SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES
-        : balloon
-          ? SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_BYTES
-          : groundPlane
-            ? SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES
-            : SURFACE_GPU_PARAMS4_SCHEDULE_BYTES
-      : condensation
-        ? balloon
-          ? SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES
-          : groundPlane
-            ? SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES
-            : SURFACE_GPU_PARAMS4_CONDENSATION_BYTES
-        : balloon
-          ? SURFACE_GPU_PARAMS4_BALLOON_BYTES
-          : groundPlane
-            ? SURFACE_GPU_PARAMS4_PLANE_BYTES
-            : lens4
+  const baseBytes = schedule
+    ? condensation
+      ? balloon
+        ? SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES
+          : SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES
+      : balloon
+        ? SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES
+          : SURFACE_GPU_PARAMS4_SCHEDULE_BYTES
+    : condensation
+      ? balloon
+        ? SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES
+          : SURFACE_GPU_PARAMS4_CONDENSATION_BYTES
+      : balloon
+        ? SURFACE_GPU_PARAMS4_BALLOON_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+          : lens4
+            ? SURFACE_GPU_PARAMS4_LENS_BYTES
+            : chaos
               ? SURFACE_GPU_PARAMS4_LENS_BYTES
-              : SURFACE_GPU_PARAMS4_BYTES,
+              : SURFACE_GPU_PARAMS4_BYTES;
+  const buf = new ArrayBuffer(
+    baseBytes + (chaos ? SURFACE_GPU_CHAOS_BYTES : 0),
   );
   const view = new DataView(buf);
   const rootBound = schedule ? de.schedule?.bounds[0] : undefined;
@@ -2438,6 +2581,9 @@ export function packSurface4GpuParams(
           ? 624
           : 576;
     writeSurfaceScheduleBlock(view, scheduleOffset, schedule, 4);
+  }
+  if (chaos) {
+    writeSurfaceChaosBlock(view, baseBytes, chaos);
   }
   return buf;
 }
@@ -3163,6 +3309,29 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "affine/fold/affine4/fold4 descent cores",
     );
   }
+  let chaos: NonNullable<SurfaceGpuKernelOptions["chaos"]> | null = null;
+  if (opts.chaos && opts.chaos.activeStateCount !== 0) {
+    // Reuse the packer's one validation rule so codegen and the wire cannot
+    // disagree about mask length, u32 range, or live-state bits.
+    const info = surfaceChaosWireInfo({
+      chaos: {
+        activeStateCount: opts.chaos.activeStateCount,
+        predecessorMasks: opts.chaos.predecessorMasks,
+      },
+    });
+    chaos = info
+      ? {
+          activeStateCount: info.activeStateCount,
+          predecessorMasks: Array.from(info.predecessorMasks),
+        }
+      : null;
+  }
+  if (chaos && forward) {
+    throw new Error(
+      "surface-de-gpu: graph-directed selection is supported only by the " +
+        "affine/fold/affine4/fold4 descent cores",
+    );
+  }
   // Stage-2's packed center-specific metadata and stationary-root radii do
   // not certify B levels. Keep the known-safe stage-1 path for schedules.
   const bnbStage2 = requestedBnbStage2 && schedule === null;
@@ -3495,11 +3664,21 @@ ${condensationShapes
   }
 }
 
-fn condensationDistance(q: ${core4 ? "vec4f" : "vec3f"}) -> CondensationHit {
+fn condensationDistance(q: ${core4 ? "vec4f" : "vec3f"}${
+        chaos ? ", currentState: u32" : ""
+      }) -> CondensationHit {
   var best = 1e30;
   var shade = 0;
   for (var e = 0u; e < params.condEmitterCount; e++) {
     let m = maps[params.mapCount${schedule ? " + params.scheduleMapCount" : ""} + e];
+${
+  chaos
+    ? `    if (!chaosAllows(u32(m.p0.y), currentState)) {
+      continue;
+    }
+`
+    : ""
+}
     let local = ${core4 ? "mapApply4(m, q)" : "mapApply(m, q)"};
     let shapeDistance = condensationShapeSdf(u32(m.p0.z), local.xyz);
     let embeddedDistance = ${
@@ -3516,7 +3695,9 @@ fn condensationDistance(q: ${core4 ? "vec4f" : "vec3f"}) -> CondensationHit {
   return CondensationHit(best, shade);
 }
 
-fn condensationTerm(q: ${core4 ? "vec4f" : "vec3f"}, scale: f32, depth: u32) -> f32 {
+fn condensationTerm(q: ${core4 ? "vec4f" : "vec3f"}, scale: f32, depth: u32${
+        chaos ? ", currentState: u32" : ""
+      }) -> f32 {
 ${
   schedule
     ? `  if (depth < params.scheduleDepth) {
@@ -3528,12 +3709,16 @@ ${
 }  if (${schedule ? "aDepth" : "depth"} < params.condDepthMin || ${schedule ? "aDepth" : "depth"} > params.condDepthMax) {
     return 1e30;
   }
-  return scale * ${wgslFloatLit(SHAPE_MARCH_SAFETY)} * condensationDistance(q).distance;
+  return scale * ${wgslFloatLit(SHAPE_MARCH_SAFETY)} * condensationDistance(q${
+    chaos ? ", currentState" : ""
+  }).distance;
 }
 ${
   mode === "shade"
     ? `
-fn condensationTermHit(q: ${core4 ? "vec4f" : "vec3f"}, scale: f32, depth: u32) -> CondensationHit {
+fn condensationTermHit(q: ${core4 ? "vec4f" : "vec3f"}, scale: f32, depth: u32${
+        chaos ? ", currentState: u32" : ""
+      }) -> CondensationHit {
 ${
   schedule
     ? `  if (depth < params.scheduleDepth) {
@@ -3545,7 +3730,7 @@ ${
 }  if (${schedule ? "aDepth" : "depth"} < params.condDepthMin || ${schedule ? "aDepth" : "depth"} > params.condDepthMax) {
     return CondensationHit(1e30, -1);
   }
-  let hit = condensationDistance(q);
+  let hit = condensationDistance(q${chaos ? ", currentState" : ""});
   return CondensationHit(
     scale * ${wgslFloatLit(SHAPE_MARCH_SAFETY)} * hit.distance,
     hit.shade,
@@ -3580,10 +3765,13 @@ ${
     scale: string,
     depth: string,
     best: string,
+    state: string,
   ): string =>
     condensationShapes
       ? `    {
-      let condensationHit = condensationTermHit(${q}, ${scale}, ${depth});
+      let condensationHit = condensationTermHit(${q}, ${scale}, ${depth}${
+        chaos ? `, ${state}` : ""
+      });
       if (condensationHit.distance < ${best}) {
         ${best} = condensationHit.distance;
         info.firstChoice = condensationHit.shade;
@@ -3597,10 +3785,11 @@ ${
     scale: string,
     depth: string,
     best: string,
+    state: string,
   ): string =>
     condensationShapes
       ? `    if (${live}) {
-${condensationHitFold(q, scale, depth, best)}    }
+${condensationHitFold(q, scale, depth, best, state)}    }
 `
       : "";
   // The shadeMaps stride token: under either material feature the buffer is 3
@@ -3625,7 +3814,8 @@ ${condensationHitFold(q, scale, depth, best)}    }
       groundPlane ||
       shapeTrap !== null ||
       condensationShapes !== null ||
-      schedule !== null);
+      schedule !== null ||
+      chaos !== null);
   // The slab's register-pressure probe (option doc).
   // Meaningful only under the 4D DESCENT cores — every other core reads
   // `true` unconditionally, so `opts.slabExt` is never even consulted for
@@ -3681,17 +3871,23 @@ ${condensationHitFold(q, scale, depth, best)}    }
     "fnFloor",
     "fnR",
     "fnCert",
+    ...(chaos ? ["fcState", "fnState"] : []),
   ];
+  const frontierArrayType = (name: string): "f32" | "u32" =>
+    name.endsWith("State") ? "u32" : "f32";
   const frontierDecls = sharedFrontier
     ? arrays
         .map(
-          (a) => `var<workgroup> ${a}: array<f32, ${width * workgroupSize}>;`,
+          (a) =>
+            `var<workgroup> ${a}: array<${frontierArrayType(a)}, ${width * workgroupSize}>;`,
         )
         .join("\n")
     : "";
   const privateDecls = sharedFrontier
     ? ""
-    : arrays.map((a) => `  var ${a}: array<f32, ${width}>;`).join("\n");
+    : arrays
+        .map((a) => `  var ${a}: array<${frontierArrayType(a)}, ${width}>;`)
+        .join("\n");
   // Transposed banking: slot-major stride keeps consecutive threads on
   // consecutive shared words. The private variant ignores `li`.
   const ixBody = sharedFrontier
@@ -3868,27 +4064,38 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   var chQ = q;
   var chScale = 1.0;
   var chFloor = 0.0;
+${chaos ? "  var chState = CHAOS_WILDCARD;\n" : ""}
   var live = true;
   let R = params.boundingRadius;
 ${condensationShapes ? "  var condensationBest = 1e30;\n" : ""}  for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!live) {
       break;
     }
-${condensationHitFold("chQ", "chScale", "depth", "condensationBest")}    var lbKey = 1e30;
+${condensationHitFold("chQ", "chScale", "depth", "condensationBest", "chState")}    var lbKey = 1e30;
     var lbMap = 0u;
     var lbR = 0.0;
     var lbAbsY = 0.0;
     var lbQ = vec3f(0.0);
     var lbScale = 1.0;
     var lbFloor = 0.0;
+${chaos ? "    var lbState = CHAOS_WILDCARD;\n" : ""}
     let pScale = chScale;
     let pFloor = chFloor;
+${chaos ? "    let pState = chState;\n" : ""}
     var sQ = chQ;
     for (var k = 0u; k < params.symOrder; k++) {
       if (k > 0u) {
         sQ = stepSector(sQ);
       }
       for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `        if (!chaosAllows(j, pState)) {
+          continue;
+        }
+`
+    : ""
+}
         let m = maps[j];
         let kind = u32(m.p0.w);
         var branchCount = 1u;
@@ -4012,11 +4219,13 @@ ${condensationHitFold("chQ", "chScale", "depth", "condensationBest")}    var lbK
             branchSigma = m.p0.z * sfSigma;
           }
           let r = length(img - params.boundCenter);
+${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}
 ${condensationHitFold(
   "img",
   "pScale * branchSigma",
   "depth + 1u",
   "condensationBest",
+  "childState",
 )}          var candFloor = pFloor;
           if (branchRd > 0.0) {
             candFloor = max(candFloor, pScale * absW * branchRd);
@@ -4033,6 +4242,7 @@ ${condensationHitFold(
             lbQ = img;
             lbScale = pScale * branchSigma;
             lbFloor = candFloor;
+${chaos ? "            lbState = childState;\n" : ""}
           }
         }
       }
@@ -4056,12 +4266,13 @@ ${condensationHitFold(
       chQ = lbQ;
       chScale = lbScale;
       chFloor = lbFloor;
+${chaos ? "      chState = lbState;\n" : ""}
     }
   }
 ${
   condensationShapes
     ? `  if (live) {
-${condensationHitFold("chQ", "chScale", "params.maxDepth", "condensationBest")}  }
+${condensationHitFold("chQ", "chScale", "params.maxDepth", "condensationBest", "chState")}  }
 `
     : ""
 }  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
@@ -4101,15 +4312,19 @@ ${
     : ""
 }  var aQ = q;
   var aScale = 1.0;
+${chaos ? "  var aState = CHAOS_WILDCARD;\n" : ""}
   var aLive = true;
   var bQ = vec3f(0.0);
   var bScale = 1.0;
+${chaos ? "  var bState = CHAOS_WILDCARD;\n" : ""}
 ${condensationShapes ? "  var bR = 0.0;\n" : ""}  var bLive = false;
   var v1Q = vec3f(0.0);
   var v1Scale = 1.0;
+${chaos ? "  var v1State = CHAOS_WILDCARD;\n" : ""}
   var v1Live = false;
   var v2Q = vec3f(0.0);
   var v2Scale = 1.0;
+${chaos ? "  var v2State = CHAOS_WILDCARD;\n" : ""}
   var v2Live = false;
   for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) {
@@ -4117,7 +4332,7 @@ ${condensationShapes ? "  var bR = 0.0;\n" : ""}  var bLive = false;
     }
 ${
   condensationShapes
-    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "depth", "best")}${condensationLiveHitFold("bLive", "bQ", "bScale", "depth", "best")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "depth", "best")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "depth", "best")}    let futureCondensation = condensationHasFuture(depth + 1u);
+    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "depth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "depth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "depth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "depth", "best", "v2State")}    let futureCondensation = condensationHasFuture(depth + 1u);
 `
     : ""
 }    var c1Key = 1e30;
@@ -4125,45 +4340,53 @@ ${
     var c1Scale = 1.0;
     var c1R = 0.0;
 ${condensationShapes ? "    var c1Cert = 0.0;\n" : ""}    var c1Map = 0u;
+${chaos ? "    var c1State = CHAOS_WILDCARD;\n" : ""}
     var c2Key = 1e30;
     var c2Q = vec3f(0.0);
     var c2Scale = 1.0;
     var c2R = 0.0;
 ${condensationShapes ? "    var c2Cert = 0.0;\n" : ""}    var c3Key = 1e30;
+${chaos ? "    var c2State = CHAOS_WILDCARD;\n" : ""}
     var c3Q = vec3f(0.0);
     var c3Scale = 1.0;
     var c3R = 0.0;
 ${condensationShapes ? "    var c3Cert = 0.0;\n" : ""}    var c4Key = 1e30;
+${chaos ? "    var c3State = CHAOS_WILDCARD;\n" : ""}
     var c4Q = vec3f(0.0);
     var c4Scale = 1.0;
     var c4R = 0.0;
-${condensationShapes ? "    var c4Cert = 0.0;\n" : ""}    for (var c = 0u; c < 4u; c++) {
+${condensationShapes ? "    var c4Cert = 0.0;\n" : ""}${chaos ? "    var c4State = CHAOS_WILDCARD;\n" : ""}    for (var c = 0u; c < 4u; c++) {
       var pQ = vec3f(0.0);
       var pScale = 1.0;
+${chaos ? "      var pState = CHAOS_WILDCARD;\n" : ""}
       if (c == 0u) {
         if (!aLive) {
           continue;
         }
         pQ = aQ;
         pScale = aScale;
+${chaos ? "        pState = aState;\n" : ""}
       } else if (c == 1u) {
         if (!bLive) {
           continue;
         }
         pQ = bQ;
         pScale = bScale;
+${chaos ? "        pState = bState;\n" : ""}
       } else if (c == 2u) {
         if (!v1Live) {
           continue;
         }
         pQ = v1Q;
         pScale = v1Scale;
+${chaos ? "        pState = v1State;\n" : ""}
       } else {
         if (!v2Live) {
           continue;
         }
         pQ = v2Q;
         pScale = v2Scale;
+${chaos ? "        pState = v2State;\n" : ""}
       }
       // Sector sweep: sector-major enumeration, the expanded
       // slot list's order, so ladder tie-breaks match the oracle's.
@@ -4173,12 +4396,20 @@ ${condensationShapes ? "    var c4Cert = 0.0;\n" : ""}    for (var c = 0u; c < 4
           sQ = stepSector(sQ);
         }
         for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `          if (!chaosAllows(j, pState)) {
+            continue;
+          }
+`
+    : ""
+}
           let m = maps[j];
           let img = mapApply(m, sQ);
           let r = length(img - params.boundCenter);
           let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
-${condensationHitFold("img", "childScale", "depth + 1u", "best")}${condensationShapes ? "          let cert = childScale * (r - R);\n" : ""}          // Top-2 insert-shift; the displaced tuple (or the candidate
+${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}${condensationHitFold("img", "childScale", "depth + 1u", "best", "childState")}${condensationShapes ? "          let cert = childScale * (r - R);\n" : ""}          // Top-2 insert-shift; the displaced tuple (or the candidate
           // itself) spills into the rank-3/4 ladder. Certificates are
           // value-side and trimmed; radii flow through — the spill
           // ladder routes on them.
@@ -4186,29 +4417,35 @@ ${condensationHitFold("img", "childScale", "depth + 1u", "best")}${condensationS
           var eQ = img;
           var eScale = childScale;
           var eR = r;
+${chaos ? "          var eState = childState;\n" : ""}
 ${condensationShapes ? "          var eCert = cert;\n" : ""}          if (key < c1Key) {
             eKey = c2Key;
             eQ = c2Q;
             eScale = c2Scale;
             eR = c2R;
+${chaos ? "            eState = c2State;\n" : ""}
 ${condensationShapes ? "            eCert = c2Cert;\n" : ""}            c2Key = c1Key;
             c2Q = c1Q;
             c2Scale = c1Scale;
             c2R = c1R;
+${chaos ? "            c2State = c1State;\n" : ""}
 ${condensationShapes ? "            c2Cert = c1Cert;\n" : ""}            c1Key = key;
             c1Q = img;
             c1Scale = childScale;
             c1R = r;
+${chaos ? "            c1State = childState;\n" : ""}
 ${condensationShapes ? "            c1Cert = cert;\n" : ""}            c1Map = j;
           } else if (key < c2Key) {
             eKey = c2Key;
             eQ = c2Q;
             eScale = c2Scale;
             eR = c2R;
+${chaos ? "            eState = c2State;\n" : ""}
 ${condensationShapes ? "            eCert = c2Cert;\n" : ""}            c2Key = key;
             c2Q = img;
             c2Scale = childScale;
             c2R = r;
+${chaos ? "            c2State = childState;\n" : ""}
 ${condensationShapes ? "            c2Cert = cert;\n" : ""}          }
           if (eKey < c3Key) {
 ${
@@ -4217,6 +4454,7 @@ ${
             let tQ = c4Q;
             let tScale = c4Scale;
             let tR = c4R;
+${chaos ? "            let tState = c4State;\n" : ""}
             let tCert = c4Cert;
 `
     : ""
@@ -4224,10 +4462,12 @@ ${
             c4Q = c3Q;
             c4Scale = c3Scale;
             c4R = c3R;
+${chaos ? "            c4State = c3State;\n" : ""}
 ${condensationShapes ? "            c4Cert = c3Cert;\n" : ""}            c3Key = eKey;
             c3Q = eQ;
             c3Scale = eScale;
             c3R = eR;
+${chaos ? "            c3State = eState;\n" : ""}
 ${
   condensationShapes
     ? `            c3Cert = eCert;
@@ -4235,6 +4475,7 @@ ${
             eQ = tQ;
             eScale = tScale;
             eR = tR;
+${chaos ? "            eState = tState;\n" : ""}
             eCert = tCert;
 `
     : ""
@@ -4245,6 +4486,7 @@ ${
             let tQ = c4Q;
             let tScale = c4Scale;
             let tR = c4R;
+${chaos ? "            let tState = c4State;\n" : ""}
             let tCert = c4Cert;
 `
     : ""
@@ -4252,6 +4494,7 @@ ${
             c4Q = eQ;
             c4Scale = eScale;
             c4R = eR;
+${chaos ? "            c4State = eState;\n" : ""}
 ${
   condensationShapes
     ? `            c4Cert = eCert;
@@ -4259,6 +4502,7 @@ ${
             eQ = tQ;
             eScale = tScale;
             eR = tR;
+${chaos ? "            eState = tState;\n" : ""}
             eCert = tCert;
 `
     : ""
@@ -4266,7 +4510,7 @@ ${
 ${
   condensationShapes
     ? `          if (eR > R && eCert < best) {
-            best = min(best, refinedCert(eQ, eR, eScale, depth + 1u));
+            best = min(best, refinedCert(eQ, eR, eScale, depth + 1u${chaos ? ", eState" : ""}));
           } else if (eKey < 1e30 && futureCondensation && eR <= R) {
             best = min(best, eScale * (eR - R));
           }
@@ -4298,6 +4542,7 @@ ${
 `
 }        aQ = c1Q;
         aScale = c1Scale;
+${chaos ? "        aState = c1State;\n" : ""}
 ${condensationShapes ? "        aR = c1R;\n" : ""}        aLive = true;
       }
     }
@@ -4312,6 +4557,7 @@ ${
 `
 }        bQ = c2Q;
         bScale = c2Scale;
+${chaos ? "        bState = c2State;\n" : ""}
 ${condensationShapes ? "        bR = c2R;\n" : ""}        bLive = true;
       }
     }
@@ -4320,7 +4566,7 @@ ${
   condensationShapes
     ? `      if (c3R > R) {
         if (c3Cert < best) {
-          best = min(best, refinedCert(c3Q, c3R, c3Scale, depth + 1u));
+          best = min(best, refinedCert(c3Q, c3R, c3Scale, depth + 1u${chaos ? ", c3State" : ""}));
         }
       } else {
 `
@@ -4328,6 +4574,7 @@ ${
 `
 }        v1Q = c3Q;
         v1Scale = c3Scale;
+${chaos ? "        v1State = c3State;\n" : ""}
         v1Live = true;
       }
     }
@@ -4336,7 +4583,7 @@ ${
   condensationShapes
     ? `      if (c4R > R) {
         if (c4Cert < best) {
-          best = min(best, refinedCert(c4Q, c4R, c4Scale, depth + 1u));
+          best = min(best, refinedCert(c4Q, c4R, c4Scale, depth + 1u${chaos ? ", c4State" : ""}));
         }
       } else {
 `
@@ -4344,13 +4591,14 @@ ${
 `
 }        v2Q = c4Q;
         v2Scale = c4Scale;
+${chaos ? "        v2State = c4State;\n" : ""}
         v2Live = true;
       }
     }
   }
 ${
   condensationShapes
-    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best")}  if (aLive) {
+    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best", "v2State")}  if (aLive) {
     best = min(best, aScale * (aR - R));
   }
   if (bLive) {
@@ -4483,6 +4731,7 @@ ${
 `
     : ``
 }  var aScale = 1.0;
+${chaos ? "  var aState = CHAOS_WILDCARD;\n" : ""}
   var aLive = true;
   var bQ = vec4f(0.0);
 ${
@@ -4491,6 +4740,7 @@ ${
 `
     : ``
 }  var bScale = 1.0;
+${chaos ? "  var bState = CHAOS_WILDCARD;\n" : ""}
 ${condensationShapes ? "  var bR = 0.0;\n" : ""}  var bLive = false;
   var v1Q = vec4f(0.0);
 ${
@@ -4499,6 +4749,7 @@ ${
 `
     : ``
 }  var v1Scale = 1.0;
+${chaos ? "  var v1State = CHAOS_WILDCARD;\n" : ""}
   var v1Live = false;
   var v2Q = vec4f(0.0);
 ${
@@ -4507,6 +4758,7 @@ ${
 `
     : ``
 }  var v2Scale = 1.0;
+${chaos ? "  var v2State = CHAOS_WILDCARD;\n" : ""}
   var v2Live = false;
   for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) {
@@ -4514,7 +4766,7 @@ ${
     }
 ${
   condensationShapes
-    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "depth", "best")}${condensationLiveHitFold("bLive", "bQ", "bScale", "depth", "best")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "depth", "best")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "depth", "best")}    let futureCondensation = condensationHasFuture(depth + 1u);
+    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "depth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "depth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "depth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "depth", "best", "v2State")}    let futureCondensation = condensationHasFuture(depth + 1u);
 `
     : ""
 }    var c1Key = 1e30;
@@ -4527,6 +4779,7 @@ ${
 }    var c1Scale = 1.0;
     var c1R = 0.0;
 ${condensationShapes ? "    var c1Cert = 0.0;\n" : ""}    var c1Map = 0u;
+${chaos ? "    var c1State = CHAOS_WILDCARD;\n" : ""}
     var c2Key = 1e30;
     var c2Q = vec4f(0.0);
 ${
@@ -4537,6 +4790,7 @@ ${
 }    var c2Scale = 1.0;
     var c2R = 0.0;
 ${condensationShapes ? "    var c2Cert = 0.0;\n" : ""}    var c3Key = 1e30;
+${chaos ? "    var c2State = CHAOS_WILDCARD;\n" : ""}
     var c3Q = vec4f(0.0);
 ${
   slabExt
@@ -4546,6 +4800,7 @@ ${
 }    var c3Scale = 1.0;
     var c3R = 0.0;
 ${condensationShapes ? "    var c3Cert = 0.0;\n" : ""}    var c4Key = 1e30;
+${chaos ? "    var c3State = CHAOS_WILDCARD;\n" : ""}
     var c4Q = vec4f(0.0);
 ${
   slabExt
@@ -4554,7 +4809,7 @@ ${
     : ``
 }    var c4Scale = 1.0;
     var c4R = 0.0;
-${condensationShapes ? "    var c4Cert = 0.0;\n" : ""}    for (var c = 0u; c < 4u; c++) {
+${condensationShapes ? "    var c4Cert = 0.0;\n" : ""}${chaos ? "    var c4State = CHAOS_WILDCARD;\n" : ""}    for (var c = 0u; c < 4u; c++) {
       var pQ = vec4f(0.0);
 ${
   slabExt
@@ -4562,6 +4817,7 @@ ${
 `
     : ``
 }      var pScale = 1.0;
+${chaos ? "      var pState = CHAOS_WILDCARD;\n" : ""}
       if (c == 0u) {
         if (!aLive) {
           continue;
@@ -4573,6 +4829,7 @@ ${
 `
     : ``
 }        pScale = aScale;
+${chaos ? "        pState = aState;\n" : ""}
       } else if (c == 1u) {
         if (!bLive) {
           continue;
@@ -4584,6 +4841,7 @@ ${
 `
     : ``
 }        pScale = bScale;
+${chaos ? "        pState = bState;\n" : ""}
       } else if (c == 2u) {
         if (!v1Live) {
           continue;
@@ -4595,6 +4853,7 @@ ${
 `
     : ``
 }        pScale = v1Scale;
+${chaos ? "        pState = v1State;\n" : ""}
       } else {
         if (!v2Live) {
           continue;
@@ -4606,6 +4865,7 @@ ${
 `
     : ``
 }        pScale = v2Scale;
+${chaos ? "        pState = v2State;\n" : ""}
       }
 ${
   slabExt
@@ -4635,6 +4895,14 @@ ${
     : ``
 }        }
         for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `          if (!chaosAllows(j, pState)) {
+            continue;
+          }
+`
+    : ""
+}
           let m = maps[j];
           let img = mapApply4(m, sQ);
 ${
@@ -4649,9 +4917,10 @@ ${
 `
 }          let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
+${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}
 ${
   condensationShapes
-    ? `${condensationHitFold("img", "childScale", "depth + 1u", "best")}          let cert = childScale * (r - R);
+    ? `${condensationHitFold("img", "childScale", "depth + 1u", "best", "childState")}          let cert = childScale * (r - R);
 `
     : ""
 }${
@@ -4676,6 +4945,7 @@ ${
     : ``
 }          var eScale = childScale;
           var eR = r;
+${chaos ? "          var eState = childState;\n" : ""}
 ${condensationShapes ? "          var eCert = cert;\n" : ""}          if (key < c1Key) {
             eKey = c2Key;
             eQ = c2Q;
@@ -4686,6 +4956,7 @@ ${
     : ``
 }            eScale = c2Scale;
             eR = c2R;
+${chaos ? "            eState = c2State;\n" : ""}
 ${condensationShapes ? "            eCert = c2Cert;\n" : ""}            c2Key = c1Key;
             c2Q = c1Q;
 ${
@@ -4695,6 +4966,7 @@ ${
     : ``
 }            c2Scale = c1Scale;
             c2R = c1R;
+${chaos ? "            c2State = c1State;\n" : ""}
 ${condensationShapes ? "            c2Cert = c1Cert;\n" : ""}            c1Key = key;
             c1Q = img;
 ${
@@ -4704,6 +4976,7 @@ ${
     : ``
 }            c1Scale = childScale;
             c1R = r;
+${chaos ? "            c1State = childState;\n" : ""}
 ${condensationShapes ? "            c1Cert = cert;\n" : ""}            c1Map = j;
           } else if (key < c2Key) {
             eKey = c2Key;
@@ -4715,6 +4988,7 @@ ${
     : ``
 }            eScale = c2Scale;
             eR = c2R;
+${chaos ? "            eState = c2State;\n" : ""}
 ${condensationShapes ? "            eCert = c2Cert;\n" : ""}            c2Key = key;
             c2Q = img;
 ${
@@ -4724,6 +4998,7 @@ ${
     : ``
 }            c2Scale = childScale;
             c2R = r;
+${chaos ? "            c2State = childState;\n" : ""}
 ${condensationShapes ? "            c2Cert = cert;\n" : ""}          }
           if (eKey < c3Key) {
 ${
@@ -4732,6 +5007,7 @@ ${
             let tQ = c4Q;
 ${slabExt ? "            let tExt = c4Ext;\n" : ""}            let tScale = c4Scale;
             let tR = c4R;
+${chaos ? "            let tState = c4State;\n" : ""}
             let tCert = c4Cert;
 `
     : ""
@@ -4744,6 +5020,7 @@ ${
     : ``
 }            c4Scale = c3Scale;
             c4R = c3R;
+${chaos ? "            c4State = c3State;\n" : ""}
 ${condensationShapes ? "            c4Cert = c3Cert;\n" : ""}            c3Key = eKey;
             c3Q = eQ;
 ${
@@ -4753,6 +5030,7 @@ ${
     : ``
 }            c3Scale = eScale;
             c3R = eR;
+${chaos ? "            c3State = eState;\n" : ""}
 ${
   condensationShapes
     ? `            c3Cert = eCert;
@@ -4760,6 +5038,7 @@ ${
             eQ = tQ;
 ${slabExt ? "            eExt = tExt;\n" : ""}            eScale = tScale;
             eR = tR;
+${chaos ? "            eState = tState;\n" : ""}
             eCert = tCert;
 `
     : ""
@@ -4770,6 +5049,7 @@ ${
             let tQ = c4Q;
 ${slabExt ? "            let tExt = c4Ext;\n" : ""}            let tScale = c4Scale;
             let tR = c4R;
+${chaos ? "            let tState = c4State;\n" : ""}
             let tCert = c4Cert;
 `
     : ""
@@ -4782,6 +5062,7 @@ ${
     : ``
 }            c4Scale = eScale;
             c4R = eR;
+${chaos ? "            c4State = eState;\n" : ""}
 ${
   condensationShapes
     ? `            c4Cert = eCert;
@@ -4789,6 +5070,7 @@ ${
             eQ = tQ;
 ${slabExt ? "            eExt = tExt;\n" : ""}            eScale = tScale;
             eR = tR;
+${chaos ? "            eState = tState;\n" : ""}
             eCert = tCert;
 `
     : ""
@@ -4796,7 +5078,7 @@ ${slabExt ? "            eExt = tExt;\n" : ""}            eScale = tScale;
 ${
   condensationShapes
     ? `          if (eR > R && eCert < best) {
-            best = min(best, refinedCert(eQ, ${slabExt ? "eExt, " : ""}eR, eScale, depth + 1u));
+            best = min(best, refinedCert(eQ, ${slabExt ? "eExt, " : ""}eR, eScale, depth + 1u${chaos ? ", eState" : ""}));
           } else if (eKey < 1e30 && futureCondensation && eR <= R) {
             best = min(best, eScale * (eR - R));
           }
@@ -4847,6 +5129,7 @@ ${
 `
     : ``
 }        aScale = c1Scale;
+${chaos ? "        aState = c1State;\n" : ""}
 ${condensationShapes ? "        aR = c1R;\n" : ""}        aLive = true;
       }
     }
@@ -4866,6 +5149,7 @@ ${
 `
     : ``
 }        bScale = c2Scale;
+${chaos ? "        bState = c2State;\n" : ""}
 ${condensationShapes ? "        bR = c2R;\n" : ""}        bLive = true;
       }
     }
@@ -4874,7 +5158,7 @@ ${
   condensationShapes
     ? `      if (c3R > R) {
         if (c3Cert < best) {
-          best = min(best, refinedCert(c3Q, ${slabExt ? "c3Ext, " : ""}c3R, c3Scale, depth + 1u));
+          best = min(best, refinedCert(c3Q, ${slabExt ? "c3Ext, " : ""}c3R, c3Scale, depth + 1u${chaos ? ", c3State" : ""}));
         }
       } else {
 `
@@ -4887,6 +5171,7 @@ ${
 `
     : ``
 }        v1Scale = c3Scale;
+${chaos ? "        v1State = c3State;\n" : ""}
         v1Live = true;
       }
     }
@@ -4895,7 +5180,7 @@ ${
   condensationShapes
     ? `      if (c4R > R) {
         if (c4Cert < best) {
-          best = min(best, refinedCert(c4Q, ${slabExt ? "c4Ext, " : ""}c4R, c4Scale, depth + 1u));
+          best = min(best, refinedCert(c4Q, ${slabExt ? "c4Ext, " : ""}c4R, c4Scale, depth + 1u${chaos ? ", c4State" : ""}));
         }
       } else {
 `
@@ -4908,13 +5193,14 @@ ${
 `
     : ``
 }        v2Scale = c4Scale;
+${chaos ? "        v2State = c4State;\n" : ""}
         v2Live = true;
       }
     }
   }
 ${
   condensationShapes
-    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best")}  if (aLive) {
+    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best", "v2State")}  if (aLive) {
     best = min(best, aScale * (aR - R));
   }
   if (bLive) {
@@ -4971,13 +5257,14 @@ ${
     : ``
 }  var chScale = 1.0;
   var chFloor = 0.0;
+${chaos ? "  var chState = CHAOS_WILDCARD;\n" : ""}
   var live = true;
   let R = params.boundingRadius;
 ${condensationShapes ? "  var condensationBest = 1e30;\n" : ""}  for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!live) {
       break;
     }
-${condensationHitFold("chQ", "chScale", "depth", "condensationBest")}    var lbKey = 1e30;
+${condensationHitFold("chQ", "chScale", "depth", "condensationBest", "chState")}    var lbKey = 1e30;
     var lbMap = 0u;
     var lbR = 0.0;
     var lbAbsY = 0.0;
@@ -4989,8 +5276,10 @@ ${
     : ``
 }    var lbScale = 1.0;
     var lbFloor = 0.0;
+${chaos ? "    var lbState = CHAOS_WILDCARD;\n" : ""}
     let pScale = chScale;
     let pFloor = chFloor;
+${chaos ? "    let pState = chState;\n" : ""}
     var sQ = chQ;
 ${
   slabExt
@@ -5009,6 +5298,14 @@ ${
     : ``
 }      }
       for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `        if (!chaosAllows(j, pState)) {
+          continue;
+        }
+`
+    : ""
+}
         let m = maps[j];
         let kind = u32(m.p0.w);
         var branchCount = 1u;
@@ -5205,11 +5502,12 @@ ${
 `
     : `          let r = length(img);
 `
-}${condensationHitFold(
+}${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}${condensationHitFold(
     "img",
     "pScale * branchSigma",
     "depth + 1u",
     "condensationBest",
+    "childState",
   )}          var candFloor = pFloor;
           if (branchRd > 0.0) {
             candFloor = max(candFloor, pScale * absW * branchRd);
@@ -5231,6 +5529,7 @@ ${
     : ``
 }            lbScale = pScale * branchSigma;
             lbFloor = candFloor;
+${chaos ? "            lbState = childState;\n" : ""}
           }
         }
       }
@@ -5273,12 +5572,13 @@ ${
     : ``
 }      chScale = lbScale;
       chFloor = lbFloor;
+${chaos ? "      chState = lbState;\n" : ""}
     }
   }
 ${
   condensationShapes
     ? `  if (live) {
-${condensationHitFold("chQ", "chScale", "params.maxDepth", "condensationBest")}  }
+${condensationHitFold("chQ", "chScale", "params.maxDepth", "condensationBest", "chState")}  }
 `
     : ""
 }  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
@@ -6931,6 +7231,13 @@ ${shadeLighting}
   scheduleBound3: vec4f,
   scheduleBound4: vec4f,
   scheduleBound5: vec4f,`;
+  const chaosStructFields = /* wgsl */ `
+  chaosMask0: vec4u,
+  chaosMask1: vec4u,
+  chaosMask2: vec4u,
+  chaosMask3: vec4u,
+  chaosMask4: vec4u,
+  chaosMask5: vec4u,`;
   const headerText = /* wgsl */ `
 struct Params {
   boundCenter: vec3f,
@@ -7053,7 +7360,7 @@ struct Params {
     groundPlane || shapeTrap ? planeStructFields : ""
   }${shapeTrap ? trapStructFields : ""}${
     condensationShapes ? condensationStructFields : ""
-  }${schedule ? scheduleStructFields : ""}`
+  }${schedule ? scheduleStructFields : ""}${chaos ? chaosStructFields : ""}`
       : core === "escape"
         ? /* wgsl */ `
   escM0: vec3f,
@@ -7088,7 +7395,12 @@ struct Params {
   padF: vec4f,${groundPlane || shapeTrap ? planeStructFields : ""}${
     shapeTrap ? trapStructFields : ""
   }`
-          : lens || balloon || groundPlane || condensationShapes || schedule
+          : lens ||
+              balloon ||
+              groundPlane ||
+              condensationShapes ||
+              schedule ||
+              chaos
             ? /* wgsl */ `
   lensM0: vec3f,
   lensT0: f32,
@@ -7106,7 +7418,7 @@ struct Params {
     groundPlane ? planeStructFields : ""
   }${condensationShapes ? condensationStructFields : ""}${
     schedule ? scheduleStructFields : ""
-  }`
+  }${chaos ? chaosStructFields : ""}`
             : ""
   }
 }${
@@ -7368,6 +7680,37 @@ fn scheduleSymOrder(depth: u32) -> u32 {
 `
     : "";
 
+  const chaosHelperText = chaos
+    ? /* wgsl */ `
+const CHAOS_WILDCARD: u32 = 0xffffffffu;
+
+fn chaosPredecessorMask(current: u32) -> u32 {
+  let lane = current & 3u;
+  switch current >> 2u {
+    case 0u: { return params.chaosMask0[lane]; }
+    case 1u: { return params.chaosMask1[lane]; }
+    case 2u: { return params.chaosMask2[lane]; }
+    case 3u: { return params.chaosMask3[lane]; }
+    case 4u: { return params.chaosMask4[lane]; }
+    default: { return params.chaosMask5[lane]; }
+  }
+}
+
+// Reverse-chain convention: predecessorMasks[current] carries source bits
+// for the effective forward edges source -> current. Root and scheduled B
+// levels carry the wildcard, so the first A inverse is unconstrained.
+fn chaosAllows(source: u32, current: u32) -> bool {
+  return current == CHAOS_WILDCARD ||
+    (source < ${chaos.activeStateCount}u &&
+      (chaosPredecessorMask(current) & (1u << source)) != 0u);
+}
+
+fn chaosChildState(depth: u32, source: u32) -> u32 {
+  return ${schedule ? "select(source, CHAOS_WILDCARD, depth < params.scheduleDepth)" : "source"};
+}
+`
+    : "";
+
   // The descent PROLOGUE both cores open with: the affine
   // final lens, the depth-0 sphere bound, the march-epsilon bail
   // threshold and the cone-footprint depth cap are the same arithmetic on either
@@ -7425,6 +7768,7 @@ ${descentPrologue}
   fcScale[frontierIx(0u, li)] = 1.0;
   fcFloor[frontierIx(0u, li)] = 0.0;
   fcR[frontierIx(0u, li)] = startR;
+${chaos ? "  fcState[frontierIx(0u, li)] = CHAOS_WILDCARD;\n" : ""}
   for (var depth = 0u; depth < maxDepth; depth++) {
     if (chainCount == 0u) {
       break;
@@ -7439,7 +7783,7 @@ ${descentPrologue}
       );
       best = min(
         best,
-        condensationTerm(rootQ, fcScale[frontierIx(rootC, li)], depth),
+        condensationTerm(rootQ, fcScale[frontierIx(rootC, li)], depth${chaos ? ", fcState[frontierIx(rootC, li)]" : ""}),
       );
     }
     if (best <= sphereBound || best * params.finalSigmaMin < bailBelow) {
@@ -7454,6 +7798,7 @@ ${descentPrologue}
     for (var c = 0u; c < chainCount; c++) {
       let pScale = fcScale[frontierIx(c, li)];
       let pFloor = fcFloor[frontierIx(c, li)];
+${chaos ? "      let pState = fcState[frontierIx(c, li)];\n" : ""}
       let sQ0 = vec3f(
         fcX[frontierIx(c, li)],
         fcY[frontierIx(c, li)],
@@ -7465,6 +7810,14 @@ ${descentPrologue}
           sQ = stepSector(sQ);
         }
         for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `          if (!chaosAllows(j, pState)) {
+            continue;
+          }
+`
+    : ""
+}
           let m = maps[j];
           let kind = u32(m.p0.w);
           var branchCount = 1u;
@@ -7620,9 +7973,10 @@ ${descentPrologue}
             }
             let r = length(img - params.boundCenter);
             let childScale = pScale * branchSigma;
+${chaos ? "            let childState = chaosChildState(depth, j);\n" : ""}
 ${
   condensationShapes
-    ? `            best = min(best, condensationTerm(img, childScale, depth + 1u));
+    ? `            best = min(best, condensationTerm(img, childScale, depth + 1u${chaos ? ", childState" : ""}));
 `
     : ""
 }            var key = pScale * (r - R);
@@ -7683,6 +8037,7 @@ ${
               fnFloor[frontierIx(slot, li)] = candFloor;
               fnR[frontierIx(slot, li)] = r;
               fnCert[frontierIx(slot, li)] = cert;
+${chaos ? "              fnState[frontierIx(slot, li)] = childState;\n" : ""}
               // Recompute the worst kept key once the frontier is full
               // — a fixed-bound scan of reads, first max wins.
               if (keptCount == ${Wstr}) {
@@ -7742,6 +8097,7 @@ ${
       fcScale[frontierIx(i2, li)] = fnScale[frontierIx(i2, li)];
       fcFloor[frontierIx(i2, li)] = fnFloor[frontierIx(i2, li)];
       fcR[frontierIx(i2, li)] = fnR[frontierIx(i2, li)];
+${chaos ? "      fcState[frontierIx(i2, li)] = fnState[frontierIx(i2, li)];\n" : ""}
     }
     chainCount = keptCount;
   }
@@ -7760,6 +8116,7 @@ ${
         terminalQ,
         fcScale[frontierIx(cc, li)],
         maxDepth,
+${chaos ? "        fcState[frontierIx(cc, li)],\n" : ""}
       ),
     );
 `
@@ -7804,7 +8161,9 @@ fn probeIx(slot: u32, li: u32) -> u32 {
 ${renameToProbe(
   descentFnText(
     `${probeWidth}u`,
-    arrays.map((a) => `  var ${a}: array<f32, ${probeWidth}>;`).join("\n"),
+    arrays
+      .map((a) => `  var ${a}: array<${frontierArrayType(a)}, ${probeWidth}>;`)
+      .join("\n"),
   ),
 )}`;
 
@@ -7827,10 +8186,12 @@ ${renameToProbe(
 // "Every map" means every (sector, base map) pair, which the sector
 // sweep spells out where the expanded slot list used to.
 fn refinedCert(img: vec3f, r: f32, childScale: f32${
-    condensationShapes || schedule ? ", depth: u32" : ""
-  }) -> f32 {
+    condensationShapes || schedule || chaos ? ", depth: u32" : ""
+  }${chaos ? ", currentState: u32" : ""}) -> f32 {
   var inner = ${
-    condensationShapes ? "condensationTerm(img, 1.0, depth)" : "1e30"
+    condensationShapes
+      ? `condensationTerm(img, 1.0, depth${chaos ? ", currentState" : ""})`
+      : "1e30"
   };
   var sImg = img;
   for (var k = 0u; k < params.symOrder; k++) {
@@ -7838,6 +8199,14 @@ fn refinedCert(img: vec3f, r: f32, childScale: f32${
       sImg = stepSector(sImg);
     }
     for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `      if (!chaosAllows(j, currentState)) {
+        continue;
+      }
+`
+    : ""
+}
       let m = maps[j];
       let jImg = mapApply(m, sImg);
       inner = min(
@@ -7860,16 +8229,20 @@ ${descentPrologue}
   var aQ = q;
   var aScale = 1.0;
   var aR = startR;
+${chaos ? "  var aState = CHAOS_WILDCARD;\n" : ""}
   var aLive = true;
   var bQ = vec3f(0.0);
   var bScale = 1.0;
   var bR = 0.0;
+${chaos ? "  var bState = CHAOS_WILDCARD;\n" : ""}
   var bLive = false;
   var v1Q = vec3f(0.0);
   var v1Scale = 1.0;
+${chaos ? "  var v1State = CHAOS_WILDCARD;\n" : ""}
   var v1Live = false;
   var v2Q = vec3f(0.0);
   var v2Scale = 1.0;
+${chaos ? "  var v2State = CHAOS_WILDCARD;\n" : ""}
   var v2Live = false;
   for (var depth = 0u; depth < maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) {
@@ -7878,16 +8251,16 @@ ${descentPrologue}
       condensationShapes
         ? `
     if (aLive) {
-      best = min(best, condensationTerm(aQ, aScale, depth));
+      best = min(best, condensationTerm(aQ, aScale, depth${chaos ? ", aState" : ""}));
     }
     if (bLive) {
-      best = min(best, condensationTerm(bQ, bScale, depth));
+      best = min(best, condensationTerm(bQ, bScale, depth${chaos ? ", bState" : ""}));
     }
     if (v1Live) {
-      best = min(best, condensationTerm(v1Q, v1Scale, depth));
+      best = min(best, condensationTerm(v1Q, v1Scale, depth${chaos ? ", v1State" : ""}));
     }
     if (v2Live) {
-      best = min(best, condensationTerm(v2Q, v2Scale, depth));
+      best = min(best, condensationTerm(v2Q, v2Scale, depth${chaos ? ", v2State" : ""}));
     }
     if (best <= sphereBound || best * params.finalSigmaMin < bailBelow) {
       return max(best, sphereBound) * params.finalSigmaMin;
@@ -7903,11 +8276,13 @@ ${descentPrologue}
     var c1Scale = 1.0;
     var c1R = 0.0;
     var c1Cert = 0.0;
+${chaos ? "    var c1State = CHAOS_WILDCARD;\n" : ""}
     var c2Key = 1e30;
     var c2Q = vec3f(0.0);
     var c2Scale = 1.0;
     var c2R = 0.0;
     var c2Cert = 0.0;
+${chaos ? "    var c2State = CHAOS_WILDCARD;\n" : ""}
     // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
     // by everything the top-2 ladder evicts, so the pair holds exactly
     // the level's third- and fourth-smallest keys.
@@ -7916,38 +8291,45 @@ ${descentPrologue}
     var c3Scale = 1.0;
     var c3R = 0.0;
     var c3Cert = 0.0;
+${chaos ? "    var c3State = CHAOS_WILDCARD;\n" : ""}
     var c4Key = 1e30;
     var c4Q = vec3f(0.0);
     var c4Scale = 1.0;
     var c4R = 0.0;
     var c4Cert = 0.0;
+${chaos ? "    var c4State = CHAOS_WILDCARD;\n" : ""}
     for (var c = 0u; c < 4u; c++) {
       var pQ = vec3f(0.0);
       var pScale = 1.0;
+${chaos ? "      var pState = CHAOS_WILDCARD;\n" : ""}
       if (c == 0u) {
         if (!aLive) {
           continue;
         }
         pQ = aQ;
         pScale = aScale;
+${chaos ? "        pState = aState;\n" : ""}
       } else if (c == 1u) {
         if (!bLive) {
           continue;
         }
         pQ = bQ;
         pScale = bScale;
+${chaos ? "        pState = bState;\n" : ""}
       } else if (c == 2u) {
         if (!v1Live) {
           continue;
         }
         pQ = v1Q;
         pScale = v1Scale;
+${chaos ? "        pState = v1State;\n" : ""}
       } else {
         if (!v2Live) {
           continue;
         }
         pQ = v2Q;
         pScale = v2Scale;
+${chaos ? "        pState = v2State;\n" : ""}
       }
       // Sector sweep: the chain point turns one step per
       // kaleidoscope sector and every BASE map is applied to it there,
@@ -7961,14 +8343,23 @@ ${descentPrologue}
           sQ = stepSector(sQ);
         }
         for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `          if (!chaosAllows(j, pState)) {
+            continue;
+          }
+`
+    : ""
+}
           let m = maps[j];
           let img = mapApply(m, sQ);
           let r = length(img - params.boundCenter);
           let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
+${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}
 ${
   condensationShapes
-    ? `          best = min(best, condensationTerm(img, childScale, depth + 1u));
+    ? `          best = min(best, condensationTerm(img, childScale, depth + 1u${chaos ? ", childState" : ""}));
 `
     : ""
 }          let cert = childScale * (r - R);
@@ -7982,33 +8373,39 @@ ${
           var eScale = childScale;
           var eR = r;
           var eCert = cert;
+${chaos ? "          var eState = childState;\n" : ""}
           if (key < c1Key) {
             eKey = c2Key;
             eQ = c2Q;
             eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
+${chaos ? "            eState = c2State;\n" : ""}
             c2Key = c1Key;
             c2Q = c1Q;
             c2Scale = c1Scale;
             c2R = c1R;
             c2Cert = c1Cert;
+${chaos ? "            c2State = c1State;\n" : ""}
             c1Key = key;
             c1Q = img;
             c1Scale = childScale;
             c1R = r;
             c1Cert = cert;
+${chaos ? "            c1State = childState;\n" : ""}
           } else if (key < c2Key) {
             eKey = c2Key;
             eQ = c2Q;
             eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
+${chaos ? "            eState = c2State;\n" : ""}
             c2Key = key;
             c2Q = img;
             c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
+${chaos ? "            c2State = childState;\n" : ""}
           }
           // Spill into the rank-3/4 ladder (unconditional at width 4);
           // what THAT evicts — or the spilled tuple itself, when it
@@ -8021,34 +8418,41 @@ ${condensationShapes ? "            let tKey = c4Key;\n" : ""}            let tQ
             let tScale = c4Scale;
             let tR = c4R;
             let tCert = c4Cert;
+${chaos ? "            let tState = c4State;\n" : ""}
             c4Key = c3Key;
             c4Q = c3Q;
             c4Scale = c3Scale;
             c4R = c3R;
             c4Cert = c3Cert;
+${chaos ? "            c4State = c3State;\n" : ""}
             c3Key = eKey;
             c3Q = eQ;
             c3Scale = eScale;
             c3R = eR;
             c3Cert = eCert;
+${chaos ? "            c3State = eState;\n" : ""}
 ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
             eScale = tScale;
             eR = tR;
             eCert = tCert;
+${chaos ? "            eState = tState;\n" : ""}
           } else if (eKey < c4Key) {
 ${condensationShapes ? "            let tKey = c4Key;\n" : ""}            let tQ = c4Q;
             let tScale = c4Scale;
             let tR = c4R;
             let tCert = c4Cert;
+${chaos ? "            let tState = c4State;\n" : ""}
             c4Key = eKey;
             c4Q = eQ;
             c4Scale = eScale;
             c4R = eR;
             c4Cert = eCert;
+${chaos ? "            c4State = eState;\n" : ""}
 ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
             eScale = tScale;
             eR = tR;
             eCert = tCert;
+${chaos ? "            eState = tState;\n" : ""}
           }
           // The tuple leaving the beam frontier: an escaped candidate
           // folds its REFINED certificate (which closes the
@@ -8059,8 +8463,8 @@ ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
           // FOUR smaller keys, the shrunken validity-slot residual drop.
           if (eR > R && eCert < best) {
             best = min(best, refinedCert(eQ, eR, eScale${
-              condensationShapes || schedule ? ", depth + 1u" : ""
-            }));
+              condensationShapes || schedule || chaos ? ", depth + 1u" : ""
+            }${chaos ? ", eState" : ""}));
             // Cutoff exit plus the value-exact sphere-floor pin:
             // the folded certificate is FINALIZED (already refined) and
             // best only falls from here, so once best is at or below
@@ -8100,6 +8504,7 @@ ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
         aQ = c1Q;
         aScale = c1Scale;
         aR = c1R;
+${chaos ? "        aState = c1State;\n" : ""}
         aLive = true;
       }
     }
@@ -8110,6 +8515,7 @@ ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
         bQ = c2Q;
         bScale = c2Scale;
         bR = c2R;
+${chaos ? "        bState = c2State;\n" : ""}
         bLive = true;
       }
     }
@@ -8117,12 +8523,13 @@ ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
       if (c3R > R) {
         if (c3Cert < best) {
           best = min(best, refinedCert(c3Q, c3R, c3Scale${
-            condensationShapes || schedule ? ", depth + 1u" : ""
-          }));
+            condensationShapes || schedule || chaos ? ", depth + 1u" : ""
+          }${chaos ? ", c3State" : ""}));
         }
       } else {
         v1Q = c3Q;
         v1Scale = c3Scale;
+${chaos ? "        v1State = c3State;\n" : ""}
         v1Live = true;
       }
     }
@@ -8130,12 +8537,13 @@ ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
       if (c4R > R) {
         if (c4Cert < best) {
           best = min(best, refinedCert(c4Q, c4R, c4Scale${
-            condensationShapes || schedule ? ", depth + 1u" : ""
-          }));
+            condensationShapes || schedule || chaos ? ", depth + 1u" : ""
+          }${chaos ? ", c4State" : ""}));
         }
       } else {
         v2Q = c4Q;
         v2Scale = c4Scale;
+${chaos ? "        v2State = c4State;\n" : ""}
         v2Live = true;
       }
     }
@@ -8160,16 +8568,16 @@ ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
 ${
   condensationShapes
     ? `  if (aLive) {
-    best = min(best, condensationTerm(aQ, aScale, maxDepth));
+    best = min(best, condensationTerm(aQ, aScale, maxDepth${chaos ? ", aState" : ""}));
   }
   if (bLive) {
-    best = min(best, condensationTerm(bQ, bScale, maxDepth));
+    best = min(best, condensationTerm(bQ, bScale, maxDepth${chaos ? ", bState" : ""}));
   }
   if (v1Live) {
-    best = min(best, condensationTerm(v1Q, v1Scale, maxDepth));
+    best = min(best, condensationTerm(v1Q, v1Scale, maxDepth${chaos ? ", v1State" : ""}));
   }
   if (v2Live) {
-    best = min(best, condensationTerm(v2Q, v2Scale, maxDepth));
+    best = min(best, condensationTerm(v2Q, v2Scale, maxDepth${chaos ? ", v2State" : ""}));
   }
 `
     : ""
@@ -8227,12 +8635,12 @@ ${
   }${
     slabExt
       ? `fn refinedCert(img: vec4f, imgExt: vec4f, r: f32, childScale: f32${
-          condensationShapes || schedule ? ", depth: u32" : ""
-        }) -> f32 {
+          condensationShapes || schedule || chaos ? ", depth: u32" : ""
+        }${chaos ? ", currentState: u32" : ""}) -> f32 {
 `
       : `fn refinedCert(img: vec4f, r: f32, childScale: f32${
-          condensationShapes || schedule ? ", depth: u32" : ""
-        }) -> f32 {
+          condensationShapes || schedule || chaos ? ", depth: u32" : ""
+        }${chaos ? ", currentState: u32" : ""}) -> f32 {
 `
   }${
     slabExt
@@ -8240,7 +8648,9 @@ ${
 `
       : ``
   }  var inner = ${
-    condensationShapes ? "condensationTerm(img, 1.0, depth)" : "1e30"
+    condensationShapes
+      ? `condensationTerm(img, 1.0, depth${chaos ? ", currentState" : ""})`
+      : "1e30"
   };
   var sImg = img;
 ${
@@ -8260,6 +8670,14 @@ ${
     : ``
 }    }
     for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `      if (!chaosAllows(j, currentState)) {
+        continue;
+      }
+`
+    : ""
+}
       let m = maps[j];
       let jImg = mapApply4(m, sImg);
 ${
@@ -8342,6 +8760,7 @@ ${
     : ``
 }  var aScale = 1.0;
   var aR = startR;
+${chaos ? "  var aState = CHAOS_WILDCARD;\n" : ""}
   var aLive = true;
   var bQ = vec4f(0.0);
 ${
@@ -8351,6 +8770,7 @@ ${
     : ``
 }  var bScale = 1.0;
   var bR = 0.0;
+${chaos ? "  var bState = CHAOS_WILDCARD;\n" : ""}
   var bLive = false;
   var v1Q = vec4f(0.0);
 ${
@@ -8359,6 +8779,7 @@ ${
 `
     : ``
 }  var v1Scale = 1.0;
+${chaos ? "  var v1State = CHAOS_WILDCARD;\n" : ""}
   var v1Live = false;
   var v2Q = vec4f(0.0);
 ${
@@ -8367,6 +8788,7 @@ ${
 `
     : ``
 }  var v2Scale = 1.0;
+${chaos ? "  var v2State = CHAOS_WILDCARD;\n" : ""}
   var v2Live = false;
   // NO cone-footprint depth cap in this core — the 4D oracle takes
   // none (packSurface4GpuParams throws on a nonzero footprint), so the
@@ -8378,16 +8800,16 @@ ${
       condensationShapes
         ? `
     if (aLive) {
-      best = min(best, condensationTerm(aQ, aScale, depth));
+      best = min(best, condensationTerm(aQ, aScale, depth${chaos ? ", aState" : ""}));
     }
     if (bLive) {
-      best = min(best, condensationTerm(bQ, bScale, depth));
+      best = min(best, condensationTerm(bQ, bScale, depth${chaos ? ", bState" : ""}));
     }
     if (v1Live) {
-      best = min(best, condensationTerm(v1Q, v1Scale, depth));
+      best = min(best, condensationTerm(v1Q, v1Scale, depth${chaos ? ", v1State" : ""}));
     }
     if (v2Live) {
-      best = min(best, condensationTerm(v2Q, v2Scale, depth));
+      best = min(best, condensationTerm(v2Q, v2Scale, depth${chaos ? ", v2State" : ""}));
     }
     if (best <= sphereBound || best * params.final4SigmaMin < bailBelow) {
       return max(best, sphereBound) * params.final4SigmaMin;
@@ -8408,6 +8830,7 @@ ${
 }    var c1Scale = 1.0;
     var c1R = 0.0;
     var c1Cert = 0.0;
+${chaos ? "    var c1State = CHAOS_WILDCARD;\n" : ""}
     var c2Key = 1e30;
     var c2Q = vec4f(0.0);
 ${
@@ -8418,6 +8841,7 @@ ${
 }    var c2Scale = 1.0;
     var c2R = 0.0;
     var c2Cert = 0.0;
+${chaos ? "    var c2State = CHAOS_WILDCARD;\n" : ""}
     // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
     // by everything the top-2 ladder evicts, so the pair holds exactly
     // the level's third- and fourth-smallest keys.
@@ -8431,6 +8855,7 @@ ${
 }    var c3Scale = 1.0;
     var c3R = 0.0;
     var c3Cert = 0.0;
+${chaos ? "    var c3State = CHAOS_WILDCARD;\n" : ""}
     var c4Key = 1e30;
     var c4Q = vec4f(0.0);
 ${
@@ -8441,6 +8866,7 @@ ${
 }    var c4Scale = 1.0;
     var c4R = 0.0;
     var c4Cert = 0.0;
+${chaos ? "    var c4State = CHAOS_WILDCARD;\n" : ""}
     for (var c = 0u; c < 4u; c++) {
       var pQ = vec4f(0.0);
 ${
@@ -8449,6 +8875,7 @@ ${
 `
     : ``
 }      var pScale = 1.0;
+${chaos ? "      var pState = CHAOS_WILDCARD;\n" : ""}
       if (c == 0u) {
         if (!aLive) {
           continue;
@@ -8460,6 +8887,7 @@ ${
 `
     : ``
 }        pScale = aScale;
+${chaos ? "        pState = aState;\n" : ""}
       } else if (c == 1u) {
         if (!bLive) {
           continue;
@@ -8471,6 +8899,7 @@ ${
 `
     : ``
 }        pScale = bScale;
+${chaos ? "        pState = bState;\n" : ""}
       } else if (c == 2u) {
         if (!v1Live) {
           continue;
@@ -8482,6 +8911,7 @@ ${
 `
     : ``
 }        pScale = v1Scale;
+${chaos ? "        pState = v1State;\n" : ""}
       } else {
         if (!v2Live) {
           continue;
@@ -8493,6 +8923,7 @@ ${
 `
     : ``
 }        pScale = v2Scale;
+${chaos ? "        pState = v2State;\n" : ""}
       }
 ${
   slabExt
@@ -8528,6 +8959,14 @@ ${
     : ``
 }        }
         for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `          if (!chaosAllows(j, pState)) {
+            continue;
+          }
+`
+    : ""
+}
           let m = maps[j];
           let img = mapApply4(m, sQ);
 ${
@@ -8545,9 +8984,10 @@ ${
 `
 }          let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
+${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}
 ${
   condensationShapes
-    ? `          best = min(best, condensationTerm(img, childScale, depth + 1u));
+    ? `          best = min(best, condensationTerm(img, childScale, depth + 1u${chaos ? ", childState" : ""}));
 `
     : ""
 }          let cert = childScale * (r - R);
@@ -8566,6 +9006,7 @@ ${
 }          var eScale = childScale;
           var eR = r;
           var eCert = cert;
+${chaos ? "          var eState = childState;\n" : ""}
           if (key < c1Key) {
             eKey = c2Key;
             eQ = c2Q;
@@ -8577,6 +9018,7 @@ ${
 }            eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
+${chaos ? "            eState = c2State;\n" : ""}
             c2Key = c1Key;
             c2Q = c1Q;
 ${
@@ -8587,6 +9029,7 @@ ${
 }            c2Scale = c1Scale;
             c2R = c1R;
             c2Cert = c1Cert;
+${chaos ? "            c2State = c1State;\n" : ""}
             c1Key = key;
             c1Q = img;
 ${
@@ -8597,6 +9040,7 @@ ${
 }            c1Scale = childScale;
             c1R = r;
             c1Cert = cert;
+${chaos ? "            c1State = childState;\n" : ""}
           } else if (key < c2Key) {
             eKey = c2Key;
             eQ = c2Q;
@@ -8608,6 +9052,7 @@ ${
 }            eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
+${chaos ? "            eState = c2State;\n" : ""}
             c2Key = key;
             c2Q = img;
 ${
@@ -8618,6 +9063,7 @@ ${
 }            c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
+${chaos ? "            c2State = childState;\n" : ""}
           }
 ${
   slabExt
@@ -8645,6 +9091,7 @@ ${
 }            let tScale = c4Scale;
             let tR = c4R;
             let tCert = c4Cert;
+${chaos ? "            let tState = c4State;\n" : ""}
             c4Key = c3Key;
             c4Q = c3Q;
 ${
@@ -8655,6 +9102,7 @@ ${
 }            c4Scale = c3Scale;
             c4R = c3R;
             c4Cert = c3Cert;
+${chaos ? "            c4State = c3State;\n" : ""}
             c3Key = eKey;
             c3Q = eQ;
 ${
@@ -8665,6 +9113,7 @@ ${
 }            c3Scale = eScale;
             c3R = eR;
             c3Cert = eCert;
+${chaos ? "            c3State = eState;\n" : ""}
 ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
 ${
   slabExt
@@ -8674,6 +9123,7 @@ ${
 }            eScale = tScale;
             eR = tR;
             eCert = tCert;
+${chaos ? "            eState = tState;\n" : ""}
           } else if (eKey < c4Key) {
 ${condensationShapes ? "            let tKey = c4Key;\n" : ""}            let tQ = c4Q;
 ${
@@ -8684,6 +9134,7 @@ ${
 }            let tScale = c4Scale;
             let tR = c4R;
             let tCert = c4Cert;
+${chaos ? "            let tState = c4State;\n" : ""}
             c4Key = eKey;
             c4Q = eQ;
 ${
@@ -8694,6 +9145,7 @@ ${
 }            c4Scale = eScale;
             c4R = eR;
             c4Cert = eCert;
+${chaos ? "            c4State = eState;\n" : ""}
 ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
 ${
   slabExt
@@ -8703,6 +9155,7 @@ ${
 }            eScale = tScale;
             eR = tR;
             eCert = tCert;
+${chaos ? "            eState = tState;\n" : ""}
           }
           // The tuple leaving the beam frontier: an escaped candidate
           // folds its REFINED certificate (which closes the
@@ -8716,12 +9169,12 @@ ${
 ${
   slabExt
     ? `            best = min(best, refinedCert(eQ, eExt, eR, eScale${
-        condensationShapes || schedule ? ", depth + 1u" : ""
-      }));
+        condensationShapes || schedule || chaos ? ", depth + 1u" : ""
+      }${chaos ? ", eState" : ""}));
 `
     : `            best = min(best, refinedCert(eQ, eR, eScale${
-        condensationShapes || schedule ? ", depth + 1u" : ""
-      }));
+        condensationShapes || schedule || chaos ? ", depth + 1u" : ""
+      }${chaos ? ", eState" : ""}));
 `
 }            // Cutoff exit plus the value-exact sphere-floor pin:
             // the folded certificate is FINALIZED (already refined) and
@@ -8767,6 +9220,7 @@ ${
     : ``
 }        aScale = c1Scale;
         aR = c1R;
+${chaos ? "        aState = c1State;\n" : ""}
         aLive = true;
       }
     }
@@ -8782,6 +9236,7 @@ ${
     : ``
 }        bScale = c2Scale;
         bR = c2R;
+${chaos ? "        bState = c2State;\n" : ""}
         bLive = true;
       }
     }
@@ -8791,12 +9246,12 @@ ${
 ${
   slabExt
     ? `          best = min(best, refinedCert(c3Q, c3Ext, c3R, c3Scale${
-        condensationShapes || schedule ? ", depth + 1u" : ""
-      }));
+        condensationShapes || schedule || chaos ? ", depth + 1u" : ""
+      }${chaos ? ", c3State" : ""}));
 `
     : `          best = min(best, refinedCert(c3Q, c3R, c3Scale${
-        condensationShapes || schedule ? ", depth + 1u" : ""
-      }));
+        condensationShapes || schedule || chaos ? ", depth + 1u" : ""
+      }${chaos ? ", c3State" : ""}));
 `
 }        }
       } else {
@@ -8807,6 +9262,7 @@ ${
 `
     : ``
 }        v1Scale = c3Scale;
+${chaos ? "        v1State = c3State;\n" : ""}
         v1Live = true;
       }
     }
@@ -8816,12 +9272,12 @@ ${
 ${
   slabExt
     ? `          best = min(best, refinedCert(c4Q, c4Ext, c4R, c4Scale${
-        condensationShapes || schedule ? ", depth + 1u" : ""
-      }));
+        condensationShapes || schedule || chaos ? ", depth + 1u" : ""
+      }${chaos ? ", c4State" : ""}));
 `
     : `          best = min(best, refinedCert(c4Q, c4R, c4Scale${
-        condensationShapes || schedule ? ", depth + 1u" : ""
-      }));
+        condensationShapes || schedule || chaos ? ", depth + 1u" : ""
+      }${chaos ? ", c4State" : ""}));
 `
 }        }
       } else {
@@ -8832,6 +9288,7 @@ ${
 `
     : ``
 }        v2Scale = c4Scale;
+${chaos ? "        v2State = c4State;\n" : ""}
         v2Live = true;
       }
     }
@@ -8856,16 +9313,16 @@ ${
 ${
   condensationShapes
     ? `  if (aLive) {
-    best = min(best, condensationTerm(aQ, aScale, params.maxDepth));
+    best = min(best, condensationTerm(aQ, aScale, params.maxDepth${chaos ? ", aState" : ""}));
   }
   if (bLive) {
-    best = min(best, condensationTerm(bQ, bScale, params.maxDepth));
+    best = min(best, condensationTerm(bQ, bScale, params.maxDepth${chaos ? ", bState" : ""}));
   }
   if (v1Live) {
-    best = min(best, condensationTerm(v1Q, v1Scale, params.maxDepth));
+    best = min(best, condensationTerm(v1Q, v1Scale, params.maxDepth${chaos ? ", v1State" : ""}));
   }
   if (v2Live) {
-    best = min(best, condensationTerm(v2Q, v2Scale, params.maxDepth));
+    best = min(best, condensationTerm(v2Q, v2Scale, params.maxDepth${chaos ? ", v2State" : ""}));
   }
 `
     : ""
@@ -8915,6 +9372,12 @@ ${
 }  var fcScale: array<f32, ${w}>;
   var fcFloor: array<f32, ${w}>;
   var fcR: array<f32, ${w}>;
+${
+  chaos
+    ? `  var fcState: array<u32, ${w}>;
+`
+    : ""
+}
   var fnKey: array<f32, ${w}>;
   var fnQ: array<vec4f, ${w}>;
 ${
@@ -8926,6 +9389,12 @@ ${
   var fnFloor: array<f32, ${w}>;
   var fnR: array<f32, ${w}>;
   var fnCert: array<f32, ${w}>;
+${
+  chaos
+    ? `  var fnState: array<u32, ${w}>;
+`
+    : ""
+}
 ${lift4Text(
   "pIn",
   slabExt
@@ -8970,6 +9439,7 @@ ${
 }  fcScale[0] = 1.0;
   fcFloor[0] = 0.0;
   fcR[0] = startR;
+${chaos ? "  fcState[0] = CHAOS_WILDCARD;\n" : ""}
   // NO cone-footprint depth cap in this core — the 4D oracle takes
   // none (packSurface4GpuParams throws on a nonzero footprint), so the
   // loop runs plain params.maxDepth.
@@ -8980,7 +9450,7 @@ ${
       condensationShapes
         ? `
     for (var rootC = 0u; rootC < chainCount; rootC++) {
-      best = min(best, condensationTerm(fcQ[rootC], fcScale[rootC], depth));
+      best = min(best, condensationTerm(fcQ[rootC], fcScale[rootC], depth${chaos ? ", fcState[rootC]" : ""}));
     }
     if (best <= sphereBound || best * params.final4SigmaMin < bailBelow) {
       return max(best, sphereBound) * params.final4SigmaMin;
@@ -8994,6 +9464,7 @@ ${
     for (var c = 0u; c < chainCount; c++) {
       let pScale = fcScale[c];
       let pFloor = fcFloor[c];
+${chaos ? "      let pState = fcState[c];\n" : ""}
       var sQ = fcQ[c];
 ${
   slabExt
@@ -9012,6 +9483,14 @@ ${
     : ``
 }        }
         for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `          if (!chaosAllows(j, pState)) {
+            continue;
+          }
+`
+    : ""
+}
           let m = maps[j];
           let kind = u32(m.p0.w);
           // Fold-branch fans ONE DIMENSION UP (foldBranchCount4): the
@@ -9273,9 +9752,10 @@ ${
     : `            let r = length(img);
 `
 }            let childScale = pScale * branchSigma;
+${chaos ? "            let childState = chaosChildState(depth, j);\n" : ""}
 ${
   condensationShapes
-    ? `            best = min(best, condensationTerm(img, childScale, depth + 1u));
+    ? `            best = min(best, condensationTerm(img, childScale, depth + 1u${chaos ? ", childState" : ""}));
 `
     : ""
 }            var key = pScale * (r - R);
@@ -9338,6 +9818,7 @@ ${
               fnFloor[slot] = candFloor;
               fnR[slot] = r;
               fnCert[slot] = cert;
+${chaos ? "              fnState[slot] = childState;\n" : ""}
               // Recompute the worst kept key once the frontier is full
               // — a fixed-bound scan of reads, first max wins.
               if (keptCount == ${w}u) {
@@ -9407,6 +9888,7 @@ ${
 }      fcScale[i2] = fnScale[i2];
       fcFloor[i2] = fnFloor[i2];
       fcR[i2] = fnR[i2];
+${chaos ? "      fcState[i2] = fnState[i2];\n" : ""}
     }
     chainCount = keptCount;
   }
@@ -9416,7 +9898,7 @@ ${
   condensationShapes
     ? `    best = min(
       best,
-      condensationTerm(fcQ[cc], fcScale[cc], params.maxDepth),
+      condensationTerm(fcQ[cc], fcScale[cc], params.maxDepth${chaos ? ", fcState[cc]" : ""}),
     );
 `
     : ""
@@ -10433,7 +10915,7 @@ ${balloonProbeWrapText}`
       }`
     : lensedBodyBlock;
 
-  return /* wgsl */ `${headerText}${scheduleHelperText}
+  return /* wgsl */ `${headerText}${scheduleHelperText}${chaosHelperText}
 
 ${trapGeometryHelperText}${condensationHelperText}${bodyBlock}
 ${entry}

@@ -317,12 +317,11 @@ export interface Transform {
    * else may re-derive either. The final transform never carries one: it
    * sits outside selection entirely (it is plot-time), exactly as in flam3.
    *
-   * Read by every chaos-game consumer (points, flame CPU, solid). The flame
-   * WGSL kernels do NOT know it yet, so a chi-carrying document forces the
-   * flame CPU backend (disclosed in the backend note), and the
-   * surface/escape-time estimator gates refuse chi documents outright: chaos
-   * rows constrain the attractor to a SUBSET, and an estimator that ignores
-   * them would march the unconstrained — wrong — object.
+   * Read by every chaos-game consumer (points, both Flame backends, solid)
+   * and by Surface's inverse descent, which transposes positive weighted
+   * support into predecessor masks. A Surface inverse-analysis refusal is
+   * terminal: routing such a document into a chi-blind forward escape core
+   * would march the unconstrained — wrong — object.
    */
   chaos?: number[];
   /**

@@ -132,6 +132,7 @@ import {
   SURFACE_GPU_PARAMS_SCHEDULE_BYTES,
   SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_TRAP_BYTES,
+  SURFACE_GPU_CHAOS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
   SURFACE_GPU_RAY_HIT,
@@ -1842,6 +1843,14 @@ export class SurfaceComputeRenderer {
                 }
               : null
             : null,
+          chaos: !isForwardTarget(target)
+            ? target.de.chaos
+              ? {
+                  activeStateCount: target.de.chaos.activeStateCount,
+                  predecessorMasks: target.de.chaos.predecessorMasks,
+                }
+              : null
+            : null,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -1906,6 +1915,9 @@ export class SurfaceComputeRenderer {
       (target.kind === "ifs" || target.kind === "ifs4") &&
       (target.de.schedule?.depth ?? 0) > 0 &&
       (target.de.schedule?.maps.length ?? 0) > 0;
+    const targetHasChaos =
+      (target.kind === "ifs" || target.kind === "ifs4") &&
+      (target.de.chaos?.activeStateCount ?? 0) > 0;
     const shadeLayout = device.createBindGroupLayout({
       entries: [
         bufferEntry(0, "uniform"),
@@ -1989,7 +2001,7 @@ export class SurfaceComputeRenderer {
         : null,
     ]);
 
-    const paramsBufferSize = isFourDTarget(target)
+    const baseParamsBufferSize = isFourDTarget(target)
       ? targetHasSchedule
         ? targetHasCondensation
           ? targetHasBalloon
@@ -2021,7 +2033,7 @@ export class SurfaceComputeRenderer {
                   ? // The escape4 variant block is the lens4
                     // block's own region, so its size is the lens size.
                     SURFACE_GPU_PARAMS4_ESCAPE_BYTES
-                  : target.de.foldFinal !== null
+                  : target.de.foldFinal !== null || targetHasChaos
                     ? // A fold FINAL grows the params with
                       // the lens block past the 4D tail.
                       SURFACE_GPU_PARAMS4_LENS_BYTES
@@ -2060,6 +2072,8 @@ export class SurfaceComputeRenderer {
                   // mutually exclusive by the codegen throw).
                   SURFACE_GPU_PARAMS_PLANE_BYTES
                 : SURFACE_GPU_PARAMS_BYTES;
+    const paramsBufferSize =
+      baseParamsBufferSize + (targetHasChaos ? SURFACE_GPU_CHAOS_BYTES : 0);
     const paramsBuf = device.createBuffer({
       // Hybrid schedules append their live depth/map-range/bound block after
       // the legacy variant regions. Use the matching host allocation for

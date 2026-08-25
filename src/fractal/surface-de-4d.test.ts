@@ -4073,15 +4073,13 @@ describe("fold-radius rescale equivariance in 4D", () => {
 });
 
 describe("analyzeSurfaceSystem4 chaos rows", () => {
-  it("refuses a chi-carrying 4D document — 3D's refusal, one dimension up", () => {
+  it("admits a chi-carrying 4D document and builds reverse support", () => {
     const transforms = pentatope().map((t, i) =>
       i === 0 ? { ...t, chaos: [1, 0, 1, 1, 1] } : t,
     );
     const analysis = analyzeSurfaceSystem4(transforms);
-    expect(analysis.status).toBe("ineligible");
-    expect(analysis.reasons).toContain(
-      "chaos rows constrain the attractor (Surface would march the unconstrained object)",
-    );
+    expect(analysis.status).toBe("eligible");
+    expect(buildSurfaceDE4(transforms).chaos).toBeDefined();
     expect(
       analyzeSurfaceSystem4(
         pentatope().map((t) => ({ ...t, chaos: [1, 1, 1, 1, 1] })),

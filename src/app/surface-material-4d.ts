@@ -269,6 +269,27 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * using the classic pair; deeper A levels clamp to slot k-1. */
   uniform vec2 uScheduleBounds[${SURFACE4_MAX_SCHEDULE_DEPTH}];
 #endif
+#if SURFACE_CHAOS
+  // Every 24-bit mask is exactly representable in fragment highp float.
+  // Float arithmetic avoids a pathological dynamic-u32 shift in Mesa's
+  // fragment compiler while preserving the same binary support test.
+  uniform vec4 uChaosPredecessorMasks[6];
+  bool surfaceChaosAllows4(int currentState, int predecessorState) {
+    if (currentState < 0) return true;
+    vec4 group = uChaosPredecessorMasks[currentState / 4];
+    float mask = currentState % 4 == 0 ? group.x :
+      (currentState % 4 == 1 ? group.y :
+      (currentState % 4 == 2 ? group.z : group.w));
+    float bit = exp2(float(predecessorState));
+    return mod(floor(mask / bit), 2.0) >= 1.0;
+  }
+  int surfaceChaosChildState4(int depth, int mapSlot) {
+#if SURFACE_SCHEDULE
+    if (depth < uScheduleDepth) return -1;
+#endif
+    return mapSlot;
+  }
+#endif
 #if SURFACE_CONDENSATION
   uniform int uCondCount;
 #if SURFACE_SCHEDULE
@@ -279,8 +300,18 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   uniform int uCondMaxDepth;
   uniform int uCondShape[MAX_MAPS];
   uniform int uCondShade[MAX_MAPS];
+#if SURFACE_CHAOS
+  uniform int uCondState[MAX_MAPS];
+#endif
   //__SURFACE_CONDENSATION_SDFS__
-  vec2 condensationTerm4(vec4 q, float scale, int depth) {
+  vec2 condensationTerm4(
+    vec4 q,
+    float scale,
+    int depth
+#if SURFACE_CHAOS
+    , int currentState
+#endif
+  ) {
 #if SURFACE_SCHEDULE
     if (depth < uScheduleDepth) return vec2(1.0e30, -1.0);
     depth -= uScheduleDepth;
@@ -291,6 +322,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     float best = 1.0e30;
     int shade = 0;
     for (int e = 0; e < uCondCount; e++) {
+#if SURFACE_CHAOS
+      if (!surfaceChaosAllows4(currentState, uCondState[e])) continue;
+#endif
 #if SURFACE_SCHEDULE
       int slot = uCondMapCount + e;
 #else
@@ -313,17 +347,36 @@ const SURFACE4_FRAGMENT = /* glsl */ `
 #endif
     return max(loopDepth + 2, uCondMinDepth) <= uCondMaxDepth;
   }
-  void condensationFold4(vec4 q, float scale, int depth, inout float best) {
-    best = min(best, condensationTerm4(q, scale, depth).x);
+  void condensationFold4(
+    vec4 q,
+    float scale,
+    int depth
+#if SURFACE_CHAOS
+    , int currentState
+#endif
+    , inout float best
+  ) {
+    best = min(best, condensationTerm4(q, scale, depth
+#if SURFACE_CHAOS
+      , currentState
+#endif
+    ).x);
   }
   void condensationFoldHit4(
     vec4 q,
     float scale,
     int depth,
+#if SURFACE_CHAOS
+    int currentState,
+#endif
     inout float best,
     inout int firstChoice
   ) {
-    vec2 hit = condensationTerm4(q, scale, depth);
+    vec2 hit = condensationTerm4(q, scale, depth
+#if SURFACE_CHAOS
+      , currentState
+#endif
+    );
     if (hit.x < best) {
       best = hit.x;
       firstChoice = int(hit.y);
@@ -596,20 +649,27 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * passed, because a free function sees no caller scope; it is the same
    * dynamically-uniform test the descent bodies hoist, so both
    * branches cost nothing across a draw. */
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
   float refinedCert4(
     vec4 img,
     vec4 imgExt,
     float r,
     float childScale,
     int depth
+#if SURFACE_CHAOS
+    , int currentState
+#endif
   ) {
 #else
   float refinedCert4(vec4 img, vec4 imgExt, float r, float childScale) {
 #endif
     bool segment = uSliceHalfW > 0.0;
 #if SURFACE_CONDENSATION
+#if SURFACE_CHAOS
+    float inner = condensationTerm4(img, 1.0, depth, currentState).x;
+#else
     float inner = condensationTerm4(img, 1.0, depth).x;
+#endif
 #else
     float inner = 1e30;
 #endif
@@ -637,6 +697,10 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       for (int j = mapBegin; j < mapEnd; j++) {
 #else
       for (int j = 0; j < uMapCount; j++) {
+#endif
+#if SURFACE_CHAOS
+        int childState = surfaceChaosChildState4(depth, j);
+        if (!surfaceChaosAllows4(currentState, childState)) continue;
 #endif
         vec4 jImg = uInvM[j] * sImg + uInvT[j];
         vec4 jExt = segment ? uInvM[j] * sExt : vec4(0.0);
@@ -844,6 +908,12 @@ uniform float uBalloonPaletteEnabled;
     vec4 v2Ext = vec4(0.0);
     float v2Scale = 1.0;
     bool v2Live = false;
+#if SURFACE_CHAOS
+    int aState = -1;
+    int bState = -1;
+    int v1State = -1;
+    int v2State = -1;
+#endif
     for (int depth = 0; depth < uMaxDepth; depth++) {
       if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
@@ -855,10 +925,26 @@ uniform float uBalloonPaletteEnabled;
       int symOrder = surface4LevelSymOrder(depth);
 #endif
 #if SURFACE_CONDENSATION
-      if (aLive) condensationFold4(aQ, aScale, depth, best);
-      if (bLive) condensationFold4(bQ, bScale, depth, best);
-      if (v1Live) condensationFold4(v1Q, v1Scale, depth, best);
-      if (v2Live) condensationFold4(v2Q, v2Scale, depth, best);
+      if (aLive) condensationFold4(aQ, aScale, depth
+#if SURFACE_CHAOS
+        , aState
+#endif
+        , best);
+      if (bLive) condensationFold4(bQ, bScale, depth
+#if SURFACE_CHAOS
+        , bState
+#endif
+        , best);
+      if (v1Live) condensationFold4(v1Q, v1Scale, depth
+#if SURFACE_CHAOS
+        , v1State
+#endif
+        , best);
+      if (v2Live) condensationFold4(v2Q, v2Scale, depth
+#if SURFACE_CHAOS
+        , v2State
+#endif
+        , best);
       if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
         return max(best, sphereBound) * uFinalSigmaMin;
       }
@@ -873,12 +959,18 @@ uniform float uBalloonPaletteEnabled;
       float c1Scale = 1.0;
       float c1R = 0.0;
       float c1Cert = 0.0;
+#if SURFACE_CHAOS
+      int c1State = -1;
+#endif
       float c2Key = 1e30;
       vec4 c2Q = vec4(0.0);
       vec4 c2Ext = vec4(0.0);
       float c2Scale = 1.0;
       float c2R = 0.0;
       float c2Cert = 0.0;
+#if SURFACE_CHAOS
+      int c2State = -1;
+#endif
       // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
       // by everything the top-2 ladder evicts, so the pair holds exactly
       // the level's third- and fourth-smallest keys.
@@ -888,16 +980,25 @@ uniform float uBalloonPaletteEnabled;
       float c3Scale = 1.0;
       float c3R = 0.0;
       float c3Cert = 0.0;
+#if SURFACE_CHAOS
+      int c3State = -1;
+#endif
       float c4Key = 1e30;
       vec4 c4Q = vec4(0.0);
       vec4 c4Ext = vec4(0.0);
       float c4Scale = 1.0;
       float c4R = 0.0;
       float c4Cert = 0.0;
+#if SURFACE_CHAOS
+      int c4State = -1;
+#endif
       for (int c = 0; c < 4; c++) {
         vec4 pQ = vec4(0.0);
         vec4 pExt = vec4(0.0);
         float pScale = 1.0;
+#if SURFACE_CHAOS
+        int pState = -1;
+#endif
         if (c == 0) {
           if (!aLive) {
             continue;
@@ -905,6 +1006,9 @@ uniform float uBalloonPaletteEnabled;
           pQ = aQ;
           pExt = aExt;
           pScale = aScale;
+#if SURFACE_CHAOS
+          pState = aState;
+#endif
         } else if (c == 1) {
           if (!bLive) {
             continue;
@@ -912,6 +1016,9 @@ uniform float uBalloonPaletteEnabled;
           pQ = bQ;
           pExt = bExt;
           pScale = bScale;
+#if SURFACE_CHAOS
+          pState = bState;
+#endif
         } else if (c == 2) {
           if (!v1Live) {
             continue;
@@ -919,6 +1026,9 @@ uniform float uBalloonPaletteEnabled;
           pQ = v1Q;
           pExt = v1Ext;
           pScale = v1Scale;
+#if SURFACE_CHAOS
+          pState = v1State;
+#endif
         } else {
           if (!v2Live) {
             continue;
@@ -926,6 +1036,9 @@ uniform float uBalloonPaletteEnabled;
           pQ = v2Q;
           pExt = v2Ext;
           pScale = v2Scale;
+#if SURFACE_CHAOS
+          pState = v2State;
+#endif
         }
         // Sector sweep, the 3D tracer's shape one dimension up: the chain
         // point — and, under a slab query, its half-extent, since the
@@ -956,6 +1069,10 @@ uniform float uBalloonPaletteEnabled;
 #else
           for (int j = 0; j < uMapCount; j++) {
 #endif
+#if SURFACE_CHAOS
+            int childState = surfaceChaosChildState4(depth, j);
+            if (!surfaceChaosAllows4(pState, childState)) continue;
+#endif
             vec4 img = uInvM[j] * sQ + uInvT[j];
             // uInvM[j] carries no translation — uInvT[j] is a separate
             // member — so this IS the inverse map's linear part, all a
@@ -969,7 +1086,11 @@ uniform float uBalloonPaletteEnabled;
 #endif
             float childScale = pScale * uMapColorSigma[j].w;
 #if SURFACE_CONDENSATION
-            condensationFold4(img, childScale, depth + 1, best);
+            condensationFold4(img, childScale, depth + 1
+#if SURFACE_CHAOS
+              , childState
+#endif
+              , best);
 #endif
 #if SURFACE_SCHEDULE
             float cert = childScale * (r - childBound.x);
@@ -987,6 +1108,9 @@ uniform float uBalloonPaletteEnabled;
             float eScale = childScale;
             float eR = r;
             float eCert = cert;
+#if SURFACE_CHAOS
+            int eState = childState;
+#endif
             if (key < c1Key) {
               eKey = c2Key;
               eQ = c2Q;
@@ -994,18 +1118,27 @@ uniform float uBalloonPaletteEnabled;
               eScale = c2Scale;
               eR = c2R;
               eCert = c2Cert;
+#if SURFACE_CHAOS
+              eState = c2State;
+#endif
               c2Key = c1Key;
               c2Q = c1Q;
               c2Ext = c1Ext;
               c2Scale = c1Scale;
               c2R = c1R;
               c2Cert = c1Cert;
+#if SURFACE_CHAOS
+              c2State = c1State;
+#endif
               c1Key = key;
               c1Q = img;
               c1Ext = imgExt;
               c1Scale = childScale;
               c1R = r;
               c1Cert = cert;
+#if SURFACE_CHAOS
+              c1State = childState;
+#endif
             } else if (key < c2Key) {
               eKey = c2Key;
               eQ = c2Q;
@@ -1013,12 +1146,18 @@ uniform float uBalloonPaletteEnabled;
               eScale = c2Scale;
               eR = c2R;
               eCert = c2Cert;
+#if SURFACE_CHAOS
+              eState = c2State;
+#endif
               c2Key = key;
               c2Q = img;
               c2Ext = imgExt;
               c2Scale = childScale;
               c2R = r;
               c2Cert = cert;
+#if SURFACE_CHAOS
+              c2State = childState;
+#endif
             }
             // Spill into the rank-3/4 ladder (unconditional at width 4);
             // what THAT evicts (or the spilled tuple itself, when it beats
@@ -1041,18 +1180,27 @@ uniform float uBalloonPaletteEnabled;
               float tScale = c4Scale;
               float tR = c4R;
               float tCert = c4Cert;
+#if SURFACE_CHAOS
+              int tState = c4State;
+#endif
               c4Key = c3Key;
               c4Q = c3Q;
               c4Ext = c3Ext;
               c4Scale = c3Scale;
               c4R = c3R;
               c4Cert = c3Cert;
+#if SURFACE_CHAOS
+              c4State = c3State;
+#endif
               c3Key = eKey;
               c3Q = eQ;
               c3Ext = eExt;
               c3Scale = eScale;
               c3R = eR;
               c3Cert = eCert;
+#if SURFACE_CHAOS
+              c3State = eState;
+#endif
 #if SURFACE_CONDENSATION
               eKey = tKey;
 #endif
@@ -1061,6 +1209,9 @@ uniform float uBalloonPaletteEnabled;
               eScale = tScale;
               eR = tR;
               eCert = tCert;
+#if SURFACE_CHAOS
+              eState = tState;
+#endif
             } else if (eKey < c4Key) {
 #if SURFACE_CONDENSATION
               float tKey = c4Key;
@@ -1070,12 +1221,18 @@ uniform float uBalloonPaletteEnabled;
               float tScale = c4Scale;
               float tR = c4R;
               float tCert = c4Cert;
+#if SURFACE_CHAOS
+              int tState = c4State;
+#endif
               c4Key = eKey;
               c4Q = eQ;
               c4Ext = eExt;
               c4Scale = eScale;
               c4R = eR;
               c4Cert = eCert;
+#if SURFACE_CHAOS
+              c4State = eState;
+#endif
 #if SURFACE_CONDENSATION
               eKey = tKey;
 #endif
@@ -1084,6 +1241,9 @@ uniform float uBalloonPaletteEnabled;
               eScale = tScale;
               eR = tR;
               eCert = tCert;
+#if SURFACE_CHAOS
+              eState = tState;
+#endif
             }
             // The tuple leaving the beam frontier: escaped candidates fold
             // their REFINED certificate (one extra Hutchinson level closes
@@ -1098,8 +1258,15 @@ uniform float uBalloonPaletteEnabled;
 #else
             if (eR > uBoundingRadius && eCert < best) {
 #endif
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
+#if SURFACE_CHAOS
+              best = min(
+                best,
+                refinedCert4(eQ, eExt, eR, eScale, depth + 1, eState)
+              );
+#else
               best = min(best, refinedCert4(eQ, eExt, eR, eScale, depth + 1));
+#endif
 #else
               best = min(best, refinedCert4(eQ, eExt, eR, eScale));
 #endif
@@ -1150,6 +1317,9 @@ uniform float uBalloonPaletteEnabled;
           aExt = c1Ext;
           aScale = c1Scale;
           aR = c1R;
+#if SURFACE_CHAOS
+          aState = c1State;
+#endif
           aLive = true;
         }
       }
@@ -1165,6 +1335,9 @@ uniform float uBalloonPaletteEnabled;
           bExt = c2Ext;
           bScale = c2Scale;
           bR = c2R;
+#if SURFACE_CHAOS
+          bState = c2State;
+#endif
           bLive = true;
         }
       }
@@ -1175,8 +1348,15 @@ uniform float uBalloonPaletteEnabled;
         if (c3R > uBoundingRadius) {
 #endif
           if (c3Cert < best) {
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
+#if SURFACE_CHAOS
+            best = min(
+              best,
+              refinedCert4(c3Q, c3Ext, c3R, c3Scale, depth + 1, c3State)
+            );
+#else
             best = min(best, refinedCert4(c3Q, c3Ext, c3R, c3Scale, depth + 1));
+#endif
 #else
             best = min(best, refinedCert4(c3Q, c3Ext, c3R, c3Scale));
 #endif
@@ -1185,6 +1365,9 @@ uniform float uBalloonPaletteEnabled;
           v1Q = c3Q;
           v1Ext = c3Ext;
           v1Scale = c3Scale;
+#if SURFACE_CHAOS
+          v1State = c3State;
+#endif
           v1Live = true;
         }
       }
@@ -1195,8 +1378,15 @@ uniform float uBalloonPaletteEnabled;
         if (c4R > uBoundingRadius) {
 #endif
           if (c4Cert < best) {
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
+#if SURFACE_CHAOS
+            best = min(
+              best,
+              refinedCert4(c4Q, c4Ext, c4R, c4Scale, depth + 1, c4State)
+            );
+#else
             best = min(best, refinedCert4(c4Q, c4Ext, c4R, c4Scale, depth + 1));
+#endif
 #else
             best = min(best, refinedCert4(c4Q, c4Ext, c4R, c4Scale));
 #endif
@@ -1205,6 +1395,9 @@ uniform float uBalloonPaletteEnabled;
           v2Q = c4Q;
           v2Ext = c4Ext;
           v2Scale = c4Scale;
+#if SURFACE_CHAOS
+          v2State = c4State;
+#endif
           v2Live = true;
         }
       }
@@ -1226,10 +1419,26 @@ uniform float uBalloonPaletteEnabled;
     // formula, PLAIN — not refined): non-positive when the chain tracked
     // the attractor all the way down.
 #if SURFACE_CONDENSATION
-    if (aLive) condensationFold4(aQ, aScale, uMaxDepth, best);
-    if (bLive) condensationFold4(bQ, bScale, uMaxDepth, best);
-    if (v1Live) condensationFold4(v1Q, v1Scale, uMaxDepth, best);
-    if (v2Live) condensationFold4(v2Q, v2Scale, uMaxDepth, best);
+    if (aLive) condensationFold4(aQ, aScale, uMaxDepth
+#if SURFACE_CHAOS
+      , aState
+#endif
+      , best);
+    if (bLive) condensationFold4(bQ, bScale, uMaxDepth
+#if SURFACE_CHAOS
+      , bState
+#endif
+      , best);
+    if (v1Live) condensationFold4(v1Q, v1Scale, uMaxDepth
+#if SURFACE_CHAOS
+      , v1State
+#endif
+      , best);
+    if (v2Live) condensationFold4(v2Q, v2Scale, uMaxDepth
+#if SURFACE_CHAOS
+      , v2State
+#endif
+      , best);
 #endif
     if (aLive) {
 #if SURFACE_SCHEDULE
@@ -1375,6 +1584,12 @@ uniform float uBalloonPaletteEnabled;
     vec4 v2Ext = vec4(0.0);
     float v2Scale = 1.0;
     bool v2Live = false;
+#if SURFACE_CHAOS
+    int aState = -1;
+    int bState = -1;
+    int v1State = -1;
+    int v2State = -1;
+#endif
     firstChoice = 0;
     trap = 0.0;
     rings = 1.0;
@@ -1394,10 +1609,26 @@ uniform float uBalloonPaletteEnabled;
       int symOrder = surface4LevelSymOrder(depth);
 #endif
 #if SURFACE_CONDENSATION
-      if (aLive) condensationFoldHit4(aQ, aScale, depth, best, firstChoice);
-      if (bLive) condensationFoldHit4(bQ, bScale, depth, best, firstChoice);
-      if (v1Live) condensationFoldHit4(v1Q, v1Scale, depth, best, firstChoice);
-      if (v2Live) condensationFoldHit4(v2Q, v2Scale, depth, best, firstChoice);
+      if (aLive) condensationFoldHit4(aQ, aScale, depth,
+#if SURFACE_CHAOS
+        aState,
+#endif
+        best, firstChoice);
+      if (bLive) condensationFoldHit4(bQ, bScale, depth,
+#if SURFACE_CHAOS
+        bState,
+#endif
+        best, firstChoice);
+      if (v1Live) condensationFoldHit4(v1Q, v1Scale, depth,
+#if SURFACE_CHAOS
+        v1State,
+#endif
+        best, firstChoice);
+      if (v2Live) condensationFoldHit4(v2Q, v2Scale, depth,
+#if SURFACE_CHAOS
+        v2State,
+#endif
+        best, firstChoice);
       bool futureCondensation = condensationFutureAfterChild4(depth);
 #endif
       float c1Key = 1e30;
@@ -1407,12 +1638,18 @@ uniform float uBalloonPaletteEnabled;
       float c1R = 0.0;
       float c1Cert = 0.0;
       int c1Map = 0;
+#if SURFACE_CHAOS
+      int c1State = -1;
+#endif
       float c2Key = 1e30;
       vec4 c2Q = vec4(0.0);
       vec4 c2Ext = vec4(0.0);
       float c2Scale = 1.0;
       float c2R = 0.0;
       float c2Cert = 0.0;
+#if SURFACE_CHAOS
+      int c2State = -1;
+#endif
       // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
       // by everything the top-2 ladder evicts, so the pair holds exactly
       // the level's third- and fourth-smallest keys.
@@ -1422,16 +1659,25 @@ uniform float uBalloonPaletteEnabled;
       float c3Scale = 1.0;
       float c3R = 0.0;
       float c3Cert = 0.0;
+#if SURFACE_CHAOS
+      int c3State = -1;
+#endif
       float c4Key = 1e30;
       vec4 c4Q = vec4(0.0);
       vec4 c4Ext = vec4(0.0);
       float c4Scale = 1.0;
       float c4R = 0.0;
       float c4Cert = 0.0;
+#if SURFACE_CHAOS
+      int c4State = -1;
+#endif
       for (int c = 0; c < 4; c++) {
         vec4 pQ = vec4(0.0);
         vec4 pExt = vec4(0.0);
         float pScale = 1.0;
+#if SURFACE_CHAOS
+        int pState = -1;
+#endif
         if (c == 0) {
           if (!aLive) {
             continue;
@@ -1439,6 +1685,9 @@ uniform float uBalloonPaletteEnabled;
           pQ = aQ;
           pExt = aExt;
           pScale = aScale;
+#if SURFACE_CHAOS
+          pState = aState;
+#endif
         } else if (c == 1) {
           if (!bLive) {
             continue;
@@ -1446,6 +1695,9 @@ uniform float uBalloonPaletteEnabled;
           pQ = bQ;
           pExt = bExt;
           pScale = bScale;
+#if SURFACE_CHAOS
+          pState = bState;
+#endif
         } else if (c == 2) {
           if (!v1Live) {
             continue;
@@ -1453,6 +1705,9 @@ uniform float uBalloonPaletteEnabled;
           pQ = v1Q;
           pExt = v1Ext;
           pScale = v1Scale;
+#if SURFACE_CHAOS
+          pState = v1State;
+#endif
         } else {
           if (!v2Live) {
             continue;
@@ -1460,6 +1715,9 @@ uniform float uBalloonPaletteEnabled;
           pQ = v2Q;
           pExt = v2Ext;
           pScale = v2Scale;
+#if SURFACE_CHAOS
+          pState = v2State;
+#endif
         }
         // Sector sweep, the 3D tracer's shape one dimension up: the chain
         // point — and, under a slab query, its half-extent, since the
@@ -1490,6 +1748,10 @@ uniform float uBalloonPaletteEnabled;
 #else
           for (int j = 0; j < uMapCount; j++) {
 #endif
+#if SURFACE_CHAOS
+            int childState = surfaceChaosChildState4(depth, j);
+            if (!surfaceChaosAllows4(pState, childState)) continue;
+#endif
             vec4 img = uInvM[j] * sQ + uInvT[j];
             // uInvM[j] carries no translation — uInvT[j] is a separate
             // member — so this IS the inverse map's linear part, all a
@@ -1507,6 +1769,9 @@ uniform float uBalloonPaletteEnabled;
               img,
               childScale,
               depth + 1,
+#if SURFACE_CHAOS
+              childState,
+#endif
               best,
               firstChoice
             );
@@ -1527,6 +1792,9 @@ uniform float uBalloonPaletteEnabled;
             float eScale = childScale;
             float eR = r;
             float eCert = cert;
+#if SURFACE_CHAOS
+            int eState = childState;
+#endif
             if (key < c1Key) {
               eKey = c2Key;
               eQ = c2Q;
@@ -1534,12 +1802,18 @@ uniform float uBalloonPaletteEnabled;
               eScale = c2Scale;
               eR = c2R;
               eCert = c2Cert;
+#if SURFACE_CHAOS
+              eState = c2State;
+#endif
               c2Key = c1Key;
               c2Q = c1Q;
               c2Ext = c1Ext;
               c2Scale = c1Scale;
               c2R = c1R;
               c2Cert = c1Cert;
+#if SURFACE_CHAOS
+              c2State = c1State;
+#endif
               c1Key = key;
               c1Q = img;
               c1Ext = imgExt;
@@ -1547,6 +1821,9 @@ uniform float uBalloonPaletteEnabled;
               c1R = r;
               c1Cert = cert;
               c1Map = j;
+#if SURFACE_CHAOS
+              c1State = childState;
+#endif
             } else if (key < c2Key) {
               eKey = c2Key;
               eQ = c2Q;
@@ -1554,12 +1831,18 @@ uniform float uBalloonPaletteEnabled;
               eScale = c2Scale;
               eR = c2R;
               eCert = c2Cert;
+#if SURFACE_CHAOS
+              eState = c2State;
+#endif
               c2Key = key;
               c2Q = img;
               c2Ext = imgExt;
               c2Scale = childScale;
               c2R = r;
               c2Cert = cert;
+#if SURFACE_CHAOS
+              c2State = childState;
+#endif
             }
             // Spill into the rank-3/4 ladder (unconditional at width 4);
             // what THAT evicts (or the spilled tuple itself, when it beats
@@ -1581,18 +1864,27 @@ uniform float uBalloonPaletteEnabled;
               float tScale = c4Scale;
               float tR = c4R;
               float tCert = c4Cert;
+#if SURFACE_CHAOS
+              int tState = c4State;
+#endif
               c4Key = c3Key;
               c4Q = c3Q;
               c4Ext = c3Ext;
               c4Scale = c3Scale;
               c4R = c3R;
               c4Cert = c3Cert;
+#if SURFACE_CHAOS
+              c4State = c3State;
+#endif
               c3Key = eKey;
               c3Q = eQ;
               c3Ext = eExt;
               c3Scale = eScale;
               c3R = eR;
               c3Cert = eCert;
+#if SURFACE_CHAOS
+              c3State = eState;
+#endif
 #if SURFACE_CONDENSATION
               eKey = tKey;
 #endif
@@ -1601,6 +1893,9 @@ uniform float uBalloonPaletteEnabled;
               eScale = tScale;
               eR = tR;
               eCert = tCert;
+#if SURFACE_CHAOS
+              eState = tState;
+#endif
             } else if (eKey < c4Key) {
 #if SURFACE_CONDENSATION
               float tKey = c4Key;
@@ -1610,12 +1905,18 @@ uniform float uBalloonPaletteEnabled;
               float tScale = c4Scale;
               float tR = c4R;
               float tCert = c4Cert;
+#if SURFACE_CHAOS
+              int tState = c4State;
+#endif
               c4Key = eKey;
               c4Q = eQ;
               c4Ext = eExt;
               c4Scale = eScale;
               c4R = eR;
               c4Cert = eCert;
+#if SURFACE_CHAOS
+              c4State = eState;
+#endif
 #if SURFACE_CONDENSATION
               eKey = tKey;
 #endif
@@ -1624,6 +1925,9 @@ uniform float uBalloonPaletteEnabled;
               eScale = tScale;
               eR = tR;
               eCert = tCert;
+#if SURFACE_CHAOS
+              eState = tState;
+#endif
             }
             // The tuple leaving the beam frontier: escaped candidates fold
             // their REFINED certificate (one extra Hutchinson level closes
@@ -1638,8 +1942,15 @@ uniform float uBalloonPaletteEnabled;
 #else
             if (eR > uBoundingRadius && eCert < best) {
 #endif
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
+#if SURFACE_CHAOS
+              best = min(
+                best,
+                refinedCert4(eQ, eExt, eR, eScale, depth + 1, eState)
+              );
+#else
               best = min(best, refinedCert4(eQ, eExt, eR, eScale, depth + 1));
+#endif
 #else
               best = min(best, refinedCert4(eQ, eExt, eR, eScale));
 #endif
@@ -1718,6 +2029,9 @@ uniform float uBalloonPaletteEnabled;
           aExt = c1Ext;
           aScale = c1Scale;
           aR = c1R;
+#if SURFACE_CHAOS
+          aState = c1State;
+#endif
           aLive = true;
         }
       }
@@ -1733,6 +2047,9 @@ uniform float uBalloonPaletteEnabled;
           bExt = c2Ext;
           bScale = c2Scale;
           bR = c2R;
+#if SURFACE_CHAOS
+          bState = c2State;
+#endif
           bLive = true;
         }
       }
@@ -1743,8 +2060,15 @@ uniform float uBalloonPaletteEnabled;
         if (c3R > uBoundingRadius) {
 #endif
           if (c3Cert < best) {
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
+#if SURFACE_CHAOS
+            best = min(
+              best,
+              refinedCert4(c3Q, c3Ext, c3R, c3Scale, depth + 1, c3State)
+            );
+#else
             best = min(best, refinedCert4(c3Q, c3Ext, c3R, c3Scale, depth + 1));
+#endif
 #else
             best = min(best, refinedCert4(c3Q, c3Ext, c3R, c3Scale));
 #endif
@@ -1753,6 +2077,9 @@ uniform float uBalloonPaletteEnabled;
           v1Q = c3Q;
           v1Ext = c3Ext;
           v1Scale = c3Scale;
+#if SURFACE_CHAOS
+          v1State = c3State;
+#endif
           v1Live = true;
         }
       }
@@ -1763,8 +2090,15 @@ uniform float uBalloonPaletteEnabled;
         if (c4R > uBoundingRadius) {
 #endif
           if (c4Cert < best) {
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
+#if SURFACE_CHAOS
+            best = min(
+              best,
+              refinedCert4(c4Q, c4Ext, c4R, c4Scale, depth + 1, c4State)
+            );
+#else
             best = min(best, refinedCert4(c4Q, c4Ext, c4R, c4Scale, depth + 1));
+#endif
 #else
             best = min(best, refinedCert4(c4Q, c4Ext, c4R, c4Scale));
 #endif
@@ -1773,15 +2107,34 @@ uniform float uBalloonPaletteEnabled;
           v2Q = c4Q;
           v2Ext = c4Ext;
           v2Scale = c4Scale;
+#if SURFACE_CHAOS
+          v2State = c4State;
+#endif
           v2Live = true;
         }
       }
     }
 #if SURFACE_CONDENSATION
-    if (aLive) condensationFoldHit4(aQ, aScale, uMaxDepth, best, firstChoice);
-    if (bLive) condensationFoldHit4(bQ, bScale, uMaxDepth, best, firstChoice);
-    if (v1Live) condensationFoldHit4(v1Q, v1Scale, uMaxDepth, best, firstChoice);
-    if (v2Live) condensationFoldHit4(v2Q, v2Scale, uMaxDepth, best, firstChoice);
+    if (aLive) condensationFoldHit4(aQ, aScale, uMaxDepth,
+#if SURFACE_CHAOS
+      aState,
+#endif
+      best, firstChoice);
+    if (bLive) condensationFoldHit4(bQ, bScale, uMaxDepth,
+#if SURFACE_CHAOS
+      bState,
+#endif
+      best, firstChoice);
+    if (v1Live) condensationFoldHit4(v1Q, v1Scale, uMaxDepth,
+#if SURFACE_CHAOS
+      v1State,
+#endif
+      best, firstChoice);
+    if (v2Live) condensationFoldHit4(v2Q, v2Scale, uMaxDepth,
+#if SURFACE_CHAOS
+      v2State,
+#endif
+      best, firstChoice);
 #endif
     if (aLive) {
 #if SURFACE_SCHEDULE
@@ -2600,6 +2953,7 @@ export function surface4FragmentFor(
   pattern = 0,
   condensation: readonly ShapeSpec[] | null = null,
   schedule = 0,
+  chaos = 0,
 ): string {
   return surfaceFragmentFor(
     0,
@@ -2615,6 +2969,7 @@ export function surface4FragmentFor(
     true,
     0,
     schedule,
+    chaos,
   );
 }
 
@@ -2630,6 +2985,7 @@ export function surface4FragmentResolvedFor(
   pattern = 0,
   condensation: readonly ShapeSpec[] | null = null,
   schedule = 0,
+  chaos = 0,
 ): string {
   return surfaceFragmentResolvedFor(
     0,
@@ -2645,6 +3001,7 @@ export function surface4FragmentResolvedFor(
     true,
     0,
     schedule,
+    chaos,
   );
 }
 
@@ -2764,6 +3121,10 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uCondMaxDepth: { value: 0 },
       uCondShape: { value: new Array<number>(SURFACE4_MAX_MAPS).fill(0) },
       uCondShade: { value: new Array<number>(SURFACE4_MAX_MAPS).fill(0) },
+      uCondState: { value: new Array<number>(SURFACE4_MAX_MAPS).fill(0) },
+      uChaosPredecessorMasks: {
+        value: Array.from({ length: 6 }, () => new THREE.Vector4()),
+      },
       // No kaleidoscope until a system says otherwise: order 1 + identity
       // is the "no symmetry" encoding, and the sweep never reads the
       // matrix at order 1.
@@ -2939,6 +3300,18 @@ export function setSurfaceSystem4(
     );
   }
   const u = material.uniforms;
+  const chaos = de.chaos ?? null;
+  if (chaos) {
+    if (
+      chaos.activeStateCount !== shadeCount ||
+      chaos.activeStateCount > SURFACE4_MAX_MAPS ||
+      chaos.predecessorMasks.length < chaos.activeStateCount ||
+      chaos.emitterStateIndices.length !== emitters.length ||
+      de.maps.some((map, j) => map.stateIndex !== j)
+    ) {
+      throw new RangeError("surface DE carries an invalid graph-state wire");
+    }
+  }
   de.maps.forEach((map, j) => {
     const m = map.invM;
     // SurfaceDE4Map.invM is ROW-major (m[row * 4 + col]); a std140 mat4 is
@@ -2975,6 +3348,7 @@ export function setSurfaceSystem4(
   });
   const condShape = u.uCondShape.value as number[];
   const condShade = u.uCondShade.value as number[];
+  const condState = u.uCondState.value as number[];
   const shapeSlots = new Map<string, number>();
   emitters.forEach((emitter, e) => {
     const slot = de.maps.length + scheduleMaps.length + e;
@@ -2994,8 +3368,19 @@ export function setSurfaceSystem4(
     }
     condShape[e] = shape;
     condShade[e] = emitter.shadeIndex;
+    condState[e] = chaos?.emitterStateIndices[e] ?? 0;
     maps.colorSigma.set(colors[emitter.shadeIndex], emitter.shadeIndex * 4);
   });
+  const chaosMasks = u.uChaosPredecessorMasks.value as THREE.Vector4[];
+  for (let group = 0; group < chaosMasks.length; group++) {
+    const at = group * 4;
+    chaosMasks[group].set(
+      chaos?.predecessorMasks[at] ?? 0,
+      chaos?.predecessorMasks[at + 1] ?? 0,
+      chaos?.predecessorMasks[at + 2] ?? 0,
+      chaos?.predecessorMasks[at + 3] ?? 0,
+    );
+  }
   u.uMapCount.value = de.maps.length;
   u.uScheduleCount.value = scheduleMaps.length;
   u.uScheduleDepth.value = schedule?.depth ?? 0;
@@ -3028,12 +3413,16 @@ export function setSurfaceSystem4(
   };
   const wantCondensation = emitters.length > 0 ? 1 : 0;
   const wantSchedule = schedule ? 1 : 0;
+  const wantChaos = chaos ? 1 : 0;
   if (
     material.defines.SURFACE4_CONDENSATION !== wantCondensation ||
     (material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0) !== wantSchedule ||
+    (material.defines.SURFACE4_CHAOS === 1 ? 1 : 0) !== wantChaos ||
     (data.surfaceCondensationShapeKey4 ?? null) !== condensationKey
   ) {
     material.defines.SURFACE4_CONDENSATION = wantCondensation;
+    if (wantChaos) material.defines.SURFACE4_CHAOS = 1;
+    else delete material.defines.SURFACE4_CHAOS;
     if (wantSchedule) material.defines.SURFACE4_SCHEDULE = 1;
     else delete material.defines.SURFACE4_SCHEDULE;
     data.surfaceCondensationShapeKey4 = condensationKey;
@@ -3045,6 +3434,7 @@ export function setSurfaceSystem4(
       material.defines.SURFACE4_PATTERN === 1 ? 1 : 0,
       condensationShapes,
       wantSchedule,
+      wantChaos,
     );
     material.needsUpdate = true;
   }
@@ -3242,6 +3632,7 @@ export function setSurface4Balloon(
       material.defines.SURFACE4_PATTERN === 1 ? 1 : 0,
       materialCondensationSpecs4(material),
       material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0,
+      material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -3285,6 +3676,7 @@ export function setSurface4GroundPlane(
           material.defines.SURFACE4_PATTERN === 1 ? 1 : 0,
           materialCondensationSpecs4(material),
           material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0,
+          material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
         );
   const u = material.uniforms;
   if (spec) {
@@ -3386,6 +3778,7 @@ export function setSurface4Materials(
       wantPattern,
       materialCondensationSpecs4(material),
       material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0,
+      material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }

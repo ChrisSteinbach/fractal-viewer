@@ -67,6 +67,34 @@ exists: affine 3D remains naturally GLSL unless another compute preference is
 present, and 4D still prefers compute. A scheduled analysis refusal is
 terminal instead of falling through to a schedule-blind forward core.
 
+## Graph-directed A descent
+
+A live xaos matrix compiles an optional graph arm into every inverse WGSL core
+(affine/fold and affine4/fold4, including lens and slab wrappers). The CPU DE
+stores `predecessorMasks[current]`: bit `i` is set exactly when the point
+engine's effective selection support contains the forward edge `i -> current`.
+Positive xaos values are therefore binary here—magnitude changes measure, not
+geometry—and a degenerate row uses global support just as `pickIndex` does.
+
+The root chain carries `0xffffffff` as a wildcard. Schedule-only B levels keep
+that value; the first A inverse records its compact source state, and every
+deeper candidate must pass the predecessor mask for the outer chain state.
+State travels beside the ordinary beam/frontier values through refinement and
+hit-info, without changing the map-record stride. Recursive states use A's map
+order. Unique emitter states follow them, symmetry copies share one state, and
+their existing packed shade index doubles as that source state when the
+condensation term is filtered.
+
+The wire appends six `vec4u` lanes (24 predecessor masks, 96 bytes) after the
+last tail enabled by schedule, condensation, balloon or plane features. The
+source generator validates the active state count and masks against the same
+24-slot ceiling, refuses graph metadata on forward escape/bulb cores, and
+omits every field/helper/state array when xaos is absent or all ones. Thus a
+classic document retains the previous WGSL text and params bytes exactly. A
+graph-only program forces the established variant prefix before that tail, so
+the pinned params sizes are 384 bytes in 3D and 672 bytes in 4D; combinations
+append the same 96 bytes after their last enabled feature block.
+
 ## Condensation shape term
 
 The affine/fold and affine4/fold4 descent cores can compile Barnsley

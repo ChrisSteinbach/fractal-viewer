@@ -437,6 +437,155 @@ describe("GLSL finite schedule packing and source", () => {
   });
 });
 
+describe("GLSL reverse-chi packing and source", () => {
+  function graphDE(schedule = false): SurfaceDE {
+    const emitters = [
+      condEmitter3(COND_SPHERE, 2, [5, 0, 0]),
+      // A physical symmetry copy shares the emitter's one logical state.
+      condEmitter3(COND_SPHERE, 2, [6, 0, 0]),
+    ];
+    return {
+      ...de3([map3({ stateIndex: 0 }), map3({ stateIndex: 1 })]),
+      schedule: schedule ? scheduled3([map3(), map3()]) : undefined,
+      condensation: {
+        emitters,
+        depthBand: { minDepth: 0, maxDepth: 8 },
+      },
+      chaos: {
+        // Entry current contains predecessor bits: 0 <- {0,2},
+        // 1 <- {1}, and emitter-state 2 <- {0,1,2}.
+        predecessorMasks: Uint32Array.from([0b101, 0b010, 0b111]),
+        emitterStateIndices: Uint8Array.from([2, 2]),
+        activeStateCount: 3,
+      },
+    };
+  }
+
+  it("keeps absent chi byte-identical and restores it exactly after a live graph", () => {
+    const classic = surfaceFragmentFor(0, 0);
+    expect(surfaceFragmentFor(0, 0, 0, 0, 0, 0, 0)).toBe(classic);
+    expect(classic).not.toContain("surfaceChaosAllows");
+    expect(classic).not.toContain("uChaosPredecessorMasks");
+    expect(classic).not.toContain("uniform vec4 uChaosPredecessorMasks");
+
+    const authored = defaultTransforms();
+    const allOnes = buildSurfaceDE(
+      authored.map((transform) => ({
+        ...transform,
+        chaos: new Array<number>(authored.length).fill(1),
+      })),
+    );
+    expect(allOnes.chaos).toBeUndefined();
+    const allOnesMaterial = createSurfaceMaterial();
+    setSurfaceSystem(
+      allOnesMaterial,
+      allOnes,
+      allOnes.maps.map(() => black),
+    );
+    expect(allOnesMaterial.defines.SURFACE_CHAOS).toBeUndefined();
+    expect(allOnesMaterial.fragmentShader).toBe(classic);
+
+    const material = createSurfaceMaterial();
+    const baseline = material.fragmentShader;
+    setSurfaceSystem(material, graphDE(), [black, black, [1, 0, 0]]);
+    expect(material.defines.SURFACE_CHAOS).toBe(1);
+    expect(material.fragmentShader).toContain("surfaceChaosAllows");
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(material.defines.SURFACE_CHAOS).toBeUndefined();
+    expect(material.fragmentShader).toBe(baseline);
+  });
+
+  it("packs current-state predecessor masks and physical emitter states without expanding logical shade state", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceSystem(material, graphDE(true), [black, black, [1, 0, 0]]);
+    const masks = material.uniforms.uChaosPredecessorMasks
+      .value as THREE.Vector4[];
+    expect([masks[0].x, masks[0].y, masks[0].z, masks[0].w]).toEqual([
+      0b101, 0b010, 0b111, 0,
+    ]);
+    expect(material.uniforms.uCondState.value.slice(0, 2)).toEqual([2, 2]);
+    expect(material.uniforms.uShadeCount.value).toBe(3);
+    expect(material.uniforms.uCondCount.value).toBe(2);
+  });
+
+  it("carries a wildcard root and B prefix, then filters A predecessors, the refiner, and condensation terminals", () => {
+    const src = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      [COND_SPHERE],
+      false,
+      0,
+      1,
+      1,
+    );
+    expect(src).toContain("if (currentState < 0) return true;");
+    expect(src).toContain("uniform vec4 uChaosPredecessorMasks");
+    expect(src).toContain("return mod(floor(mask / bit), 2.0) >= 1.0;");
+    expect(src).toContain("if (depth < uScheduleDepth) return -1;");
+    expect(src).toContain("int chState = -1;");
+    expect(src).toContain(
+      "if (!surfaceChaosAllows(chState, childState)) continue;",
+    );
+    expect(src).toContain(
+      "if (!surfaceChaosAllows(pState, childState)) continue;",
+    );
+    expect(src).toContain(
+      "if (!surfaceChaosAllows(currentState, nextState)) continue;",
+    );
+    expect(src).toContain(
+      "if (!surfaceChaosAllows(currentState, uCondState[e])) continue;",
+    );
+    // Symmetry rotates geometry only; it never manufactures another state.
+    expect(src).toContain("childState = surfaceChaosChildState(depth, j)");
+    expect(src).not.toContain("childState = k");
+  });
+
+  it("keeps the largest emitted chaos/schedule/condensation/lens program below the 65,536-byte linker ceiling", () => {
+    const variants: string[] = [];
+    for (const lens of [0, 1]) {
+      for (const balloon of [0, 1]) {
+        for (const plane of [0, 1]) {
+          if (balloon && plane) continue;
+          for (const finish of [0, 1]) {
+            for (const pattern of [0, 1]) {
+              for (const condensation of [0, 1]) {
+                for (const schedule of [0, 1]) {
+                  variants.push(
+                    surfaceFragmentFor(
+                      0,
+                      lens,
+                      balloon,
+                      plane,
+                      0,
+                      finish,
+                      pattern,
+                      undefined,
+                      null,
+                      condensation ? [COND_SPHERE] : null,
+                      false,
+                      0,
+                      schedule,
+                      1,
+                    ),
+                  );
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(Math.max(...variants.map((src) => src.length))).toBeLessThan(65_536);
+  });
+});
+
 describe("GLSL condensation packing and source", () => {
   it("appends symmetry-expanded inverse records while map and shade counts stay separate", () => {
     const material = createSurfaceMaterial();
