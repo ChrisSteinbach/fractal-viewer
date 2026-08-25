@@ -39,7 +39,9 @@ pad so that block keeps ONE offset across every 3D core:
 - params: 272 -> 288
 - balloon: 320
 - plane: 336
+- shape trap: 336 -> 400 (`SURFACE_GPU_PARAMS_TRAP_BYTES` = 400)
 - 4D lens: 576
+- 4D shape trap: 624 -> 688 (`SURFACE_GPU_PARAMS4_TRAP_BYTES` = 688)
 
 `foldRadiiOf` is emitted only where a fold branch reads it — the fold
 cores, or ANY core under the lens wrapper — so affine kernels stay
@@ -56,6 +58,14 @@ the packer when there is no lens (4D balloon -> 608, 4D plane -> 624).
 The ground plane's own 4D lift put that hazard on record: a block appended
 at offset 560 lands INSIDE the authored fold lengths' `lens4Fold` quartet
 and corrupts it.
+
+The escape family's shape-trap color channel appends after that shared
+plane region. The 3D forward cores keep the plane declaration beneath it
+even without a floor, so the trap starts at the frozen 336 and the params
+buffer ends at 400. `core:"escape4"` follows the same rule one dimension
+up: its trap starts at the frozen 624 and ends at 688. Both plane regions
+are zero-filled when unused; a conditional declaration would make the trap
+offset depend on the floor toggle and split one document across two wires.
 
 ## Seven kernel cores
 

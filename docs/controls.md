@@ -137,6 +137,24 @@ morphs into place instead of snapping (see **Presets** below).
   the panel names the renderer in every mode: everything still works, but
   renders run 10–50× slower, and the fix is usually a browser GPU setting
   rather than anything in the app.
+- **Xaos** — composes several systems without making every map act on every
+  object. **Add system as isolated block** accepts a preset, saved scene, or
+  duplicate of the current system, measures both systems' x extents, seats
+  the new one beyond the old with a gap, and writes the block-diagonal
+  transition rows automatically. **Balance weights so blocks render equally
+  dense** is on by default. Each detected block pair then gets a leak dial:
+  0% keeps the objects isolated, 1% allows occasional cross-infection, and
+  100% merges them. Block structure is derived from the transition matrix;
+  if hand edits make a pair non-uniform, the dial says **Customized** rather
+  than overwriting or inventing a value. **Advanced: chaos matrix** exposes
+  the exact rows-FROM, columns-TO numeric cells with transform color chips,
+  an all-zero-row warning, and horizontal scrolling for large systems.
+  Editing a row back to all 1s removes it from the document. Points, Solid,
+  and both Flame backends honor the same base-map transitions; the Flame GPU
+  path carries the previous base map across dispatches and consumes exactly
+  one selection draw on xaos, fallback, and ordinary paths alike. Surface
+  currently refuses xaos documents because its descent does not yet follow
+  a graph-directed frontier.
 - **✺ Flame** — the classic fractal-flame exposure: millions of chaos-game
   samples accumulated into a histogram, then tone-mapped into a soft, glowing
   image. The camera _freezes_ on entry — the render converges through the view
@@ -537,6 +555,17 @@ morphs into place instead of snapping (see **Presets** below).
   input, so author it in the explorer and then enter the mode. A map's
   per-transform **Speed** does nothing here, and is not the **Color speed**
   slider above, which fades descent levels rather than picks.
+  Forward-orbit sessions add a **Shape trap** row and a matching **Shape
+  trap** color source. Choose **Peace sign**, **Gear**, or **None**, then set
+  its orbit-space size and X/Y/Z position. **Closest approach** shades by the
+  nearest pass over the whole orbit; **First crossing** enables the
+  **Crossing bar** and colors the first dip below it. **Trap fade** biases
+  toward earlier, larger stamps. The shape choice re-enters the surface
+  session because it changes generated shader structure; mode also re-enters
+  by policy so both engines switch coherently. Pose, size, crossing bar and
+  fade remain live. The row appears only for the
+  escape-time and Mandelbulb families, and changes color only—never their
+  marched geometry. `Mandelbox Peace` is the ready-made example.
   Two persisted scene toggles round out the section. **Balloon**
   — with its **Balloon size** slider and **Inflate** button — is the same
   balloon as **Atmosphere**'s **Balloon echo** below (one setting, shared

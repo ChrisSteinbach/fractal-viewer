@@ -251,6 +251,30 @@ f32 is safe on the GPU mirrors too (worst `dr/r` 2.6e13 over 200k queries,
 twenty-five orders under 3.4e38, zero non-finite): the bailout test bounds
 `|v|` entering every link and the per-link `+ 1` floors `dr`.
 
+## Shape-trap color channel
+
+The escape family has a Pickover-style shape trap as COLOR ONLY: every
+orbit tracks the closest normalized signed distance to a posed 3D shape,
+or the first threshold crossing, with an optional iteration fade. Nothing
+in the distance estimate, march step or zero set changes. In 4D the same
+deliberately 3D shape reads the orbit's xyz coordinates; at w = 0 that path
+is bit-exact with the 3D oracle.
+
+`shape-trap.ts` owns the one vocabulary and finalization rule. The CPU
+entry points are thin wrappers over `runEscapeOrbit`, `runEscapeOrbit4`
+and `runBulbOrbit`, whose null-guarded registers collect the channel during
+the same orbit used by the estimator. WGSL mirrors all three live compute
+paths (`escape`, `bulb`, `escape4`); GLSL mirrors the two 3D forward arms.
+Each shader performs the existing post-hit orbit re-run, so the color is
+independent of intermediate marching noise and no duplicate orbit exists.
+
+Measured on the real Iris, all three new `bench:surface` agreement legs
+(`escChainPair+trap`, `bulbClassic+trap`, `esc4ChainWRot+trap`) passed with
+`fail=0`. The menu-driven escape-family gate passed all 13 presets on the
+compute engine, and toggling the trap changed 7.78% of pixels. `Mandelbox
+Peace` is the reachability case; preset trap state is absent-means-clear,
+while its paired surface palette follows the existing set-never-clear rule.
+
 ## Kaleidoscope
 
 KALEIDOSCOPE is a query-space wedge fold (`foldQueryIntoSector`), not an orbit
