@@ -626,6 +626,24 @@ by about a kilobyte, though the ~75KB monolithic-source conclusion it
 supports survives (76,627 B measured, and the argument was never close to
 its margin).
 
+### The shape-trap arm's sizes
+
+The escape-family shape trap bakes its shape SDF into the program and keeps
+the pose, mode, threshold and fade live. Measured resolved sizes after that
+arm landed, against the 65,536 B strip line:
+
+| variant            | resolved B | headroom | result                       |
+| ------------------ | ---------- | -------- | ---------------------------- |
+| 3D escape          | 60412      | 5124     | unstripped                   |
+| 3D escape + finish | 62811      | 2725     | unstripped; pairing to watch |
+| 3D bulb            | 43752      | 21784    | unstripped                   |
+| 3D escape + plane  | 67900      | —        | strips under the plane rule  |
+
+The 67,900 B plane row crossing is benign: plane-bearing variants always
+strip independently of size, so no shipped driver program approaches the
+Mesa cliff. The live margin to watch is escape + finish's 2,725 B; measure
+again before extending either forward arm.
+
 ### The finish arm's sizes
 
 The per-transform finish arm (`SURFACE_FINISH`, above) is the first

@@ -462,9 +462,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `chaosRowIsNonTrivial`/`resolveChaosEntry` the ONE definitions; picks
     stay one draw on every path; chi runs re-fuse each
     `CHAOS_SUB_ORBIT_POINTS` (a block-diagonal orbit never leaves its
-    block); chi documents force the flame CPU backend (disclosed — the
-    WGSL kernels learn chi in the epic's GPU child) and the fern|sponge
-    preset pair is the reachability proof. `HybridSchedule` (the
+    block); both Flame WGSL kernels transfer the oracle's row-major rows
+    and keep `prevBase` across dispatches, so xaos never forces CPU; the
+    fern|sponge preset pair is the reachability proof. `Transform.emitter`
+    ignores its input and spends exactly one primary draw to seed the shape
+    sampler; every point-consumer mirror carries it, while Surface refuses
+    until its condensation term lands. `HybridSchedule` (the
     scheduled-hybrid post-word): scene-level `{transforms, depth}`, B
     AFFINE-ONLY and stripped at every producer, applied at PLOT time —
     post-word THEN lens, `depth` primary-stream draws exactly when live,
@@ -495,6 +498,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     3D point, then applies the camera — never a 4D inversion.
   - `flame-gpu.ts` — WebGPU flame kernel (WGSL) + packing/dispatch/histogram
     layer. Pinned against CPU oracle by `src/app/gpu-bench/` (`npm run bench:gpu`).
+    XAOS VERDICT: one draw through chi or fallback, oracle-built cumulative
+    rows transferred, chain stride held at 32 via a spare aux lane.
+    EMITTER VERDICT: bounded device samplers reproduce the CPU MEASURE rather
+    than its rejection-loop draw sequence; one primary draw keeps selection
+    aligned, and emitters never force CPU.
     The fold family's AUTHORED lengths ride a per-TYPE Slot lane —
     `foldRadii: array<vec4f, 3>` indexed by variation type minus 12,
     `(mR², fR², wall)` — not a per-LANE one: `packVariations`' own invariant
@@ -533,7 +541,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     showcase: four corner maps under a boxfold lens, three finishes and
     one deliberately UNAUTHORED control, since a showcase that authors
     every map cannot show what absence renders) + add-transform, plus
-    five
+    seven
     `Partial<Record<Preset, …>>` SIDE TABLES main.ts's preset handler
     consumes: `PRESET_SCAFFOLDS` (4D wireframes), `PRESET_RENDER_HINTS`
     (the renderer a preset was authored for), and `PRESET_FINALS`
@@ -546,9 +554,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     five-fold query fold — on `PRESET_FINALS`'s ABSENT-MEANS-OFF rule,
     load-bearing in both directions since `analyzeBulbSystem` refuses any
     order above 1 and `analyzeEscapeSystem` refuses one that rotates into
-    4D; main.ts also clears the twist, and no entry may carry one). Five
-    tables rather than a wider `PRESETS` signature, so no preset has to
-    declare what it does not carry.
+    4D; main.ts also clears the twist, and no entry may carry one),
+    `PRESET_TRAPS` (absent means CLEAR), and `PRESET_SURFACE_PALETTES`
+    (set-never-clear). Side tables rather than a wider `PRESETS` signature
+    keep every preset from declaring what it does not carry.
   - `project4.ts` — SO(4) rotor→matrix + camera projection, `FourDView`,
     `sliceWeight`, `SLICE_GHOST_FLOOR` (`0.06`).
   - `random-system.ts` — "Surprise Me" generator: rolls random IFS (2–4 maps,
@@ -571,8 +580,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     the module doc. Measured worst Lipschitz 1.000000 on both reference
     shapes; `scripts/shapes.harness.ts` is the visual + extent proof. The
     vocabulary is deliberately 3D — each consumer decides its embedding
-    (stated in the module doc under the parity rule). No persistence/UI
-    yet: consumers own their document fields.
+    (stated in the module doc under the parity rule). Consumers own their
+    persistence and UI; no emitter-authoring UI exists.
   - `surface-de.ts` — surface render's CPU oracle: `analyzeSurfaceSystem`
     (eligibility gate: eligible/degraded/ineligible + reasons),
     `buildSurfaceDE` (BASE inverse maps + the kaleidoscope the descent
@@ -709,7 +718,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     unconditionally under either is what buys, the 3D
     `lens || balloon || groundPlane` rule one dimension up, zero-filled by
     the packer when there is no lens (4D balloon 608,
-    `SURFACE_GPU_PARAMS4_PLANE_BYTES` 624). That hazard is on record: a
+    `SURFACE_GPU_PARAMS4_PLANE_BYTES` 624). The forward shape-trap tail is
+    frozen at 336/624 and ends at `SURFACE_GPU_PARAMS_TRAP_BYTES` 400 /
+    `SURFACE_GPU_PARAMS4_TRAP_BYTES` 688; the plane region stays declared
+    and zero-filled beneath it. That hazard is on record: a
     block appended at 560 lands INSIDE the `lens4Fold` quartet and
     corrupts it.
     SEVEN KERNEL CORES, each described in full in the module doc; what a
@@ -1016,9 +1028,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     live deformation knob, classic Mandelbox at `t = 0` — so the mode
     adds NO document state and stays a render MODE over the existing
     vocabulary (morphs/mutations/persistence untouched).
-    Full record — the cycling/chaining tables, the refuted stiffness
-    prediction, the instrument corrections, and the cost, bailout and
-    step-scale figures — in `docs/escape-time-family.md`.
+    SHAPE-TRAP VERDICT: color only, one accumulator in the shared orbit
+    runners, mirrored by both 3D GLSL arms and all three forward WGSL cores.
+    Full record — including its agreement evidence — in
+    `docs/escape-time-family.md`.
   - `escape-de-4d.ts` — the escape-time chain's 4D half, for the
     systems whose maps reach out of the `w = 0` hyperplane. Everything
     structural in `escape-de.ts` is dimension-free and carries verbatim —
@@ -1389,7 +1402,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     over. Pure, tested. Full record — the A/B measurements, the reverted
     truncation attempts, the sync-tax arithmetic and the cost-ceiling
     history — in `docs/surface-strip-pipeline.md`.
-  - `state.ts` — `AppState` + pure reducers (pure, tested).
+  - `state.ts` — `AppState` + pure reducers (pure, tested). Xaos blocks are
+    derived from mutual-1 chi connectivity; the isolated-block gesture writes
+    structure, leak dials summarize uniform cross-weights, and the matrix is
+    the fine editor rather than the construction path.
   - `persist.ts` — encode/decode scene to `#v1=<base64url>` hash + localStorage.
     Strict never-throwing decoder. Document carries optional `CameraPose` and
     optional `FourDPose` (rotor pair + w-slice; malformed quietly drops to
@@ -1446,8 +1462,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `docs/flame-interop.md`). Import QR-decomposes 2D coefs onto our
     `Transform`, folds pure-linear blends/posts, degrades unsupported features
     to warnings; palette becomes 8-stop `CustomPalette`. Export writes XY
-    shadow with kaleidoscope baked into explicit xforms. DOMParser-tied (jsdom
-    tests). Pure, tested.
+    shadow with kaleidoscope baked into explicit xforms. Xaos rows parse and
+    export in raw xform order, reindex around dropped maps, and omit at unity.
+    DOMParser-tied (jsdom tests). Pure, tested.
   - `ui.ts` — control panel + transform list (`createElement`). Accordion of
     `<details name="panel-section">` sections, remembers open section per
     render mode. Mode content above the accordion (undo row, render progress).
