@@ -306,6 +306,15 @@ const CONDENSATION_BOX: ShapeSpec = {
   ],
 };
 
+const MESH_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "star-prism-v1" },
+      combine: "union",
+    },
+  ],
+};
+
 /** One recursive map plus two base emitters. Order 3 expands only the
  * emitter records (six total) while preserving two unique shade slots. */
 function condensationTransforms(): Transform[] {
@@ -6571,6 +6580,34 @@ describe("surfaceDeKernelWgsl shape trap (shapeTrap)", () => {
     }
   });
 
+  it("adds the shared mesh atlas binding exactly where a mesh-trap SDF is evaluated", () => {
+    for (const mode of ["eval", "march", "shade"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode, core: "escape", shapeTrap: MESH_SHAPE }),
+      );
+      expect(wgsl.match(/@group\(0\) @binding\(11\)/g) ?? []).toHaveLength(
+        mode === "shade" ? 1 : 0,
+      );
+      if (mode === "shade") {
+        expect(wgsl).toContain("shapeMeshSdf(0u, vec3f(");
+      }
+    }
+    const geometry = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "march",
+        core: "escape",
+        shapeTrap: MESH_SHAPE,
+        shapeTrapGeometry: {
+          geometry: true,
+          geometryLevelMin: 0,
+          geometryLevelMax: 2,
+        },
+      }),
+    );
+    expect(geometry.match(/@group\(0\) @binding\(11\)/g)).toHaveLength(1);
+    expect(geometry).toContain("shapeMeshSdf(0u, vec3f(");
+  });
+
   it("throws on every descent core — the trap is the escape family's channel", () => {
     for (const core of ["fold", "affine", "affine4", "fold4"] as const) {
       expect(() =>
@@ -7254,6 +7291,33 @@ describe("surfaceDeKernelWgsl condensation", () => {
         ),
       ).toBe(omitted);
     }
+  });
+
+  it("declares one binding-11 R32F atlas helper only for mesh-bearing condensation in 3D and 4D", () => {
+    const meshCondensation = {
+      mapCount: 1,
+      emitters: [
+        { shape: MESH_SHAPE, shadeIndex: 1 },
+        { shape: MESH_SHAPE, shadeIndex: 1 },
+      ],
+    };
+    for (const core of ["affine", "affine4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ core, condensation: meshCondensation }),
+      );
+      expect(
+        wgsl.match(
+          /@group\(0\) @binding\(11\) var shapeMeshSdfTex: texture_3d<f32>;/g,
+        ),
+      ).toHaveLength(1);
+      expect(wgsl).toContain("fn shapeMeshSdf(meshIndex: u32, p: vec3f)");
+      expect(wgsl.match(/textureLoad\(shapeMeshSdfTex/g)).toHaveLength(8);
+      expect(wgsl).toContain("return max(interpolated, boxDistance);");
+      expect(wgsl).toContain("shapeMeshSdf(0u, vec3f(");
+    }
+    expect(
+      surfaceDeKernelWgsl(kernelOpts({ core: "affine", condensation })),
+    ).not.toContain("@binding(11)");
   });
 
   it("bakes unique shapes and dispatches appended records by selector", () => {

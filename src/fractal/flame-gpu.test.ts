@@ -37,10 +37,20 @@ import { lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
 import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
+import { meshAsset } from "./mesh-shapes";
 import { VARIATION_TYPES } from "./types";
 import type { SymmetryParams, Transform, VariationType } from "./types";
 import { GEAR_SHAPE } from "./shapes";
 import type { ShapeSpec } from "./shapes";
+
+const STAR_PRISM_MESH: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "star-prism-v1" },
+      combine: "union",
+    },
+  ],
+};
 
 function makeTransforms(count: number): Transform[] {
   return Array.from({ length: count }, (_, id) => ({
@@ -633,6 +643,95 @@ describe("packGpuSystem shape emitters", () => {
     const outerArea = Math.PI * (1 + 0.22) ** 2; // GEAR_SHAPE's radius+tooth[0].
     expect(total).toBeGreaterThan(rootArea);
     expect(total).toBeLessThan(outerArea);
+  });
+
+  it("packs a mesh as kind 5 with its catalog area CDF and 3D triangle records, without growing the slot", () => {
+    const asset = meshAsset("star-prism-v1");
+    const spec: ShapeSpec = {
+      parts: [
+        {
+          ...STAR_PRISM_MESH.parts[0],
+          pose: { scale: 2 },
+        },
+      ],
+    };
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(spec)] }),
+    );
+    expect(SLOT_STRIDE_BYTES).toBe(1120);
+    const f32 = new Float32Array(packed.slots);
+    const p = EMITTER_PARTS;
+    expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
+    expect(f32[p + EP_KIND_PARAMS0 + 1]).toBe(0);
+    expect(f32[p + EP_KIND_PARAMS0 + 2]).toBe(asset.triangles.length);
+    expect(f32[p + EP_KIND_PARAMS0 + 3]).toBe(0);
+    expect(packed.gearTable).not.toBeNull();
+    const table = new Float32Array(packed.gearTable!);
+    const n = asset.triangles.length;
+    expect(table.length).toBe(n + n * 9);
+    expect(Array.from(table.slice(0, n))).toEqual(
+      Array.from(asset.triangleCumulativeAreas, Math.fround),
+    );
+    const first = asset.triangles[0];
+    expect(Array.from(table.slice(n, n + 9))).toEqual(
+      first.flatMap((vertex) =>
+        Array.from(asset.vertices[vertex], Math.fround),
+      ),
+    );
+    // Mesh measure is surface area, so the part pose contributes scale^2,
+    // unlike the scale^3 solid primitives above.
+    expect(f32[EMITTER_TOTAL_WEIGHT]).toBeCloseTo(asset.totalArea * 4, 5);
+    expect(f32[p + EP_ROT0 + 3]).toBeCloseTo(asset.totalArea * 4, 5);
+  });
+
+  it("the packed mesh CDF selects triangles in their catalog area proportions", () => {
+    const asset = meshAsset("star-prism-v1");
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(STAR_PRISM_MESH)] }),
+    );
+    const table = new Float32Array(packed.gearTable!);
+    const n = asset.triangles.length;
+    const total = table[n - 1];
+    const counts = new Uint32Array(n);
+    const rng = mulberry32(0x5a17c0de);
+    const draws = 100_000;
+    for (let draw = 0; draw < draws; draw++) {
+      const needle = rng() * total;
+      let lo = 0;
+      let hi = n - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (needle < table[mid]) hi = mid;
+        else lo = mid + 1;
+      }
+      counts[lo]++;
+    }
+    for (let i = 0; i < n; i++) {
+      const prior = i === 0 ? 0 : table[i - 1];
+      const expected = (table[i] - prior) / total;
+      if (expected === 0) {
+        expect(counts[i]).toBe(0);
+        continue;
+      }
+      const observed = counts[i] / draws;
+      const sigma = Math.sqrt((expected * (1 - expected)) / draws);
+      expect(Math.abs(observed - expected)).toBeLessThan(6 * sigma + 0.002);
+    }
+  });
+
+  it("declares one frozen binding-7 triangle table and a bounded kind-5 barycentric mesh sampler", () => {
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      "@group(0) @binding(7) var<storage, read> emitterTriangleTable: array<f32>;",
+    );
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("fn emitterDrawMesh(");
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      "let vBase = tableOffset + triCount + lo * 9u;",
+    );
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("case 5u: { // mesh:");
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      "return v0 * (1.0 - su) + v1 * ((1.0 - u2) * su) + v2 * (u2 * su);",
+    );
+    expect(FLAME_GPU_KERNEL_WGSL).not.toContain("@binding(8)");
   });
 
   it("bakes a non-identity pose (offset, rotation, scale) forward — shapes.ts's toWorld convention", () => {

@@ -5766,12 +5766,61 @@ describe("decodeScene transform shape emitters", () => {
       { primitive: { kind: "sphere", radius: 0.4 }, combine: "union" },
     ],
   };
+  const MESH: ShapeSpec = {
+    parts: [
+      {
+        primitive: { kind: "mesh", meshId: "star-prism-v1" },
+        combine: "union",
+      },
+    ],
+  };
 
   it("round-trips an authored emitter spec exactly (4-decimal values)", () => {
     const s = baseSnapshot();
     s.transforms[0] = { ...s.transforms[0], emitter: GEAR };
     const result = decodeScene(encodeScene(s));
     expect(result!.transforms[0].emitter).toEqual(GEAR);
+  });
+
+  it("round-trips a known built-in mesh by stable id without putting asset data on the v1 wire", () => {
+    const s = baseSnapshot();
+    s.transforms[0] = { ...s.transforms[0], emitter: MESH };
+    const encoded = encodeScene(s);
+    expect(decodeScene(encoded)!.transforms[0].emitter).toEqual(MESH);
+
+    const payload = decodePayload(encoded);
+    const wireEmitter = (payload.transforms as Record<string, unknown>[])[0]
+      .emitter;
+    expect(wireEmitter).toEqual(MESH);
+    // The exact rebuilt field is the persistence contract: a catalog id,
+    // never triangles, a sampling table, or the baked SDF texture.
+    expect(JSON.stringify(wireEmitter)).toBe(
+      '{"parts":[{"primitive":{"kind":"mesh","meshId":"star-prism-v1"},"combine":"union"}]}',
+    );
+  });
+
+  it("omits a live mesh emitter carrying an unknown catalog id", () => {
+    const s = baseSnapshot();
+    s.transforms[0] = {
+      ...s.transforms[0],
+      emitter: {
+        parts: [
+          {
+            primitive: {
+              kind: "mesh",
+              meshId: "not-in-this-build",
+            },
+            combine: "union",
+          },
+        ],
+      } as unknown as ShapeSpec,
+    };
+    const encoded = encodeScene(s);
+    expect(
+      "emitter" in
+        (decodePayload(encoded).transforms as Record<string, unknown>[])[0],
+    ).toBe(false);
+    expect(decodeScene(encoded)!.transforms[0].emitter).toBeUndefined();
   });
 
   it("writes NO emitter key for an unauthored document (absent byte-identity)", () => {
@@ -5873,6 +5922,22 @@ describe("decodeScene transform shape emitters", () => {
         ],
       },
       {
+        parts: [
+          {
+            primitive: { kind: "mesh", meshId: "not-in-this-build" },
+            combine: "union",
+          },
+        ],
+      },
+      {
+        parts: [
+          {
+            primitive: { kind: "mesh", meshId: 17 },
+            combine: "union",
+          },
+        ],
+      },
+      {
         parts: [{ primitive: { kind: "box", half: [1, 1] }, combine: "union" }],
       },
       {
@@ -5919,6 +5984,21 @@ describe("decodeScene transform shape emitters", () => {
 });
 
 describe("shapeTrap codec (the shape-trap color/geometry block)", () => {
+  it("round-trips a known built-in mesh id through the shared shape codec", () => {
+    const mesh: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "mesh", meshId: "star-prism-v1" },
+          combine: "union",
+        },
+      ],
+    };
+    const result = decodeScene(
+      encodeScene({ ...baseSnapshot(), shapeTrap: { shape: mesh } }),
+    );
+    expect(result!.shapeTrap).toEqual({ shape: mesh });
+  });
+
   it("round-trips a full block, round4'd, and drops nothing authored", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),

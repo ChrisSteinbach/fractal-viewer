@@ -125,6 +125,14 @@ the analytic invariant ball for the full recursive closure and folds its
 subtree certificate for an in-ball dropped branch whenever a deeper enabled
 level can still contribute.
 
+A mesh-bearing shape body calls `shapeMeshSdf(catalogIndex, p)`. Such a
+session appends no params bytes: it adds one unfilterable `r32float`
+`texture_3d` at bind-group binding 11 to the march and shade layouts. The host
+uploads the immutable 64³ built-in-catalog atlas once per renderer session;
+the generated helper uses eight explicit `textureLoad`s and trilinear mixing,
+matching the CPU lower-bound bake without relying on optional R32F filtering.
+Analytic-only programs declare and allocate none of this resource.
+
 The codegen refuses condensation on the three forward cores; the 4D packer
 and CPU oracle also refuse nonzero slab thickness for a condensation system.
 Eligibility refuses unsamplable or nearly-flat emitters, emitter-only systems

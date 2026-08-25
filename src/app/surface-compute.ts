@@ -85,7 +85,13 @@ import type { EscapeDE } from "../fractal/escape-de";
 import { resolveShapeTrap } from "../fractal/shape-trap";
 import type { ResolvedShapeTrap } from "../fractal/shape-trap";
 import type { EscapeDE4 } from "../fractal/escape-de-4d";
-import type { ShapeSpec } from "../fractal/shapes";
+import {
+  shapeMeshIds,
+  shapeSpecsMeshIds,
+  type ShapeSpec,
+} from "../fractal/shapes";
+import { meshSdfAtlas } from "../fractal/mesh-shapes";
+import type { MeshAssetId } from "../fractal/mesh-shapes";
 import type {
   SurfaceGpu4View,
   SurfaceGpuGroundPlane,
@@ -501,6 +507,18 @@ export function isForwardTarget(target: SurfaceComputeTarget): target is
     target.kind === "bulb" ||
     target.kind === "escape4"
   );
+}
+
+/** Built-in mesh assets whose conservative atlas the frozen session reads. */
+export function surfaceComputeTargetMeshIds(
+  target: SurfaceComputeTarget,
+): MeshAssetId[] {
+  if (isForwardTarget(target)) {
+    return target.shapeTrap ? shapeMeshIds(target.shapeTrap) : [];
+  }
+  const shapes =
+    target.de.condensation?.emitters.map((emitter) => emitter.shape) ?? [];
+  return shapeSpecsMeshIds(shapes);
 }
 
 /** The 4D kinds: the ones whose frame spec must carry `view4` (their
@@ -1582,6 +1600,8 @@ export interface SurfaceComputeRendererInit {
   lutTex: GPUTexture;
   /** Balloon-only LUT, allocated only for a target compiled with balloon. */
   balloonLutTex?: GPUTexture | null;
+  /** Mesh-only conservative R32F atlas at frozen binding 11. */
+  meshSdfTex?: GPUTexture | null;
   lutSamp: GPUSampler;
   /** Adapter label from create()'s requestAdapter — surfaced in the UI's
    * backend disclosure; undefined when the adapter offered no
@@ -1892,6 +1912,13 @@ export class SurfaceComputeRenderer {
       visibility: GPUShaderStage.COMPUTE,
       buffer: { type },
     });
+    const targetMeshIds = surfaceComputeTargetMeshIds(target);
+    const targetHasMesh = targetMeshIds.length > 0;
+    const meshTextureLayoutEntry: GPUBindGroupLayoutEntry = {
+      binding: 11,
+      visibility: GPUShaderStage.COMPUTE,
+      texture: { sampleType: "unfilterable-float", viewDimension: "3d" },
+    };
     // March (rays:"unproject") binds params/maps/active/states + the
     // shade uniform (invProjView + dither knobs only) + the status
     // side-channel at 5.
@@ -1903,6 +1930,7 @@ export class SurfaceComputeRenderer {
         bufferEntry(3, "storage"),
         bufferEntry(4, "uniform"),
         bufferEntry(5, "storage"),
+        ...(targetHasMesh ? [meshTextureLayoutEntry] : []),
       ],
     });
     const targetHasBalloon =
@@ -1947,6 +1975,7 @@ export class SurfaceComputeRenderer {
               },
             ]
           : []),
+        ...(targetHasMesh ? [meshTextureLayoutEntry] : []),
       ],
     });
     // An ifs4 target compiles a SECOND, slab-free kernel pair beside the
@@ -2160,6 +2189,34 @@ export class SurfaceComputeRenderer {
         { width: 256, height: 1 },
       );
     }
+    const meshAtlas = targetHasMesh ? meshSdfAtlas() : null;
+    const meshSdfTex = meshAtlas
+      ? device.createTexture({
+          size: {
+            width: meshAtlas.width,
+            height: meshAtlas.height,
+            depthOrArrayLayers: meshAtlas.depth,
+          },
+          dimension: "3d",
+          format: "r32float",
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        })
+      : null;
+    if (meshAtlas && meshSdfTex) {
+      device.queue.writeTexture(
+        { texture: meshSdfTex },
+        meshAtlas.values,
+        {
+          bytesPerRow: meshAtlas.width * Float32Array.BYTES_PER_ELEMENT,
+          rowsPerImage: meshAtlas.height,
+        },
+        {
+          width: meshAtlas.width,
+          height: meshAtlas.height,
+          depthOrArrayLayers: meshAtlas.depth,
+        },
+      );
+    }
     const lutSamp = device.createSampler({
       magFilter: "linear",
       minFilter: "linear",
@@ -2191,6 +2248,7 @@ export class SurfaceComputeRenderer {
       shadeMapsBuf,
       lutTex,
       balloonLutTex,
+      meshSdfTex,
       lutSamp,
       adapterLabel: adapterStatus.label,
       software: adapterStatus.software,
@@ -2330,6 +2388,7 @@ export class SurfaceComputeRenderer {
   private readonly shadeMapsBuf: GPUBuffer;
   private readonly lutTex: GPUTexture;
   private readonly balloonLutTex: GPUTexture | null;
+  private readonly meshSdfTex: GPUTexture | null;
   private readonly lutSamp: GPUSampler;
   /** See {@link SurfaceComputeRendererInit.adapterLabel}. */
   readonly adapterLabel: string | undefined;
@@ -2356,6 +2415,7 @@ export class SurfaceComputeRenderer {
     this.shadeMapsBuf = init.shadeMapsBuf;
     this.lutTex = init.lutTex;
     this.balloonLutTex = init.balloonLutTex ?? null;
+    this.meshSdfTex = init.meshSdfTex ?? null;
     this.lutSamp = init.lutSamp;
     this.adapterLabel = init.adapterLabel;
     this.software = init.software;
@@ -2679,6 +2739,14 @@ export class SurfaceComputeRenderer {
         { binding: 3, resource: { buffer: states } },
         { binding: 4, resource: { buffer: this.shadeBuf } },
         { binding: 5, resource: { buffer: status } },
+        ...(this.meshSdfTex
+          ? [
+              {
+                binding: 11,
+                resource: this.meshSdfTex.createView({ dimension: "3d" }),
+              },
+            ]
+          : []),
       ],
     });
     const shadeBindGroup = device.createBindGroup({
@@ -2699,6 +2767,14 @@ export class SurfaceComputeRenderer {
               {
                 binding: 10,
                 resource: this.balloonLutTex.createView(),
+              },
+            ]
+          : []),
+        ...(this.meshSdfTex
+          ? [
+              {
+                binding: 11,
+                resource: this.meshSdfTex.createView({ dimension: "3d" }),
               },
             ]
           : []),

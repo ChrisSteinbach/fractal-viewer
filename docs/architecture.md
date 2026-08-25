@@ -734,6 +734,18 @@ keeps one global enclosing ball instead of component-specific bounds. Absent
 or all-one rows allocate no graph metadata and retain the classic descent
 source and packed bytes.
 
+The shared `ShapeSpec` vocabulary also admits a built-in catalog mesh by
+stable id. `mesh-shapes.ts` validates and prepares each watertight indexed
+asset once: the exact triangle-area CDF drives CPU and Flame GPU surface
+sampling, while those same prepared triangles produce a conservative 64³
+R32F signed-distance node lattice. Surface GLSL reads the cached atlas through
+one `sampler3D`; Surface WGSL uses an unfilterable 3D texture at binding 11.
+Both perform the same explicit eight-node interpolation as the CPU oracle,
+and analytic-only programs remain resource- and source-byte-identical. Scene
+persistence carries only the catalog id. Uploaded geometry is intentionally
+outside that wire contract until collection storage and share-link semantics
+are designed together.
+
 Whether a valid DE exists at all — and how fast it can be marched — turns on
 **conformality**. For an invertible affine map with linear part `M`,
 `dist(p, f(A)) ≥ sigma_min(M) · dist(f⁻¹(p), A)`, where `sigma_min` is `M`'s

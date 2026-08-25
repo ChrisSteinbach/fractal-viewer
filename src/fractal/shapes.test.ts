@@ -5,12 +5,30 @@ import {
   SHAPE_MARCH_SAFETY,
   prepareShapeSampler,
   shapeBoundingRadius,
+  shapeMeshIds,
   shapeSdf,
   shapeSdfSource,
+  shapeSpecsMeshIds,
 } from "./shapes";
 import type { ShapePart, ShapePose, ShapePrimitive, ShapeSpec } from "./shapes";
 import { mulberry32 } from "./rng";
 import type { Rng } from "./rng";
+import {
+  bakeMeshSdf,
+  meshAsset,
+  meshAssetIdAtCatalogIndex,
+  meshUnsignedDistance,
+  sampleMeshSdf,
+} from "./mesh-shapes";
+
+const MESH_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "star-prism-v1" },
+      combine: "union",
+    },
+  ],
+};
 
 // ----------------------------------------------------- seeded spec makers
 
@@ -328,6 +346,80 @@ describe("shape sampler agreement", () => {
       const [x, y, z] = draw(rng);
       expect(Math.abs(shapeSdf(GEAR_SHAPE, x, y, z))).toBeLessThanOrEqual(1e-8);
       expect(Math.abs(z)).toBeLessThanOrEqual(0.25);
+    }
+  });
+
+  it("samples the catalog mesh's area measure from the same asset as its SDF", () => {
+    const asset = meshAsset("star-prism-v1");
+    const draw = prepareShapeSampler(MESH_SHAPE);
+    const rng = mulberry32(0x6d35a);
+    for (let i = 0; i < 500; i++) {
+      const p = draw(rng);
+      expect(meshUnsignedDistance(asset, p)).toBeLessThan(2e-8);
+      expect(shapeSdf(MESH_SHAPE, p[0], p[1], p[2])).toBeLessThanOrEqual(0);
+    }
+  });
+});
+
+describe("mesh shape vocabulary", () => {
+  it("discovers stable mesh ids without duplicating catalog entries", () => {
+    const twice: ShapeSpec = {
+      parts: [
+        MESH_SHAPE.parts[0],
+        {
+          ...MESH_SHAPE.parts[0],
+          pose: { offset: [2, 0, 0] },
+        },
+      ],
+    };
+    expect(shapeMeshIds(twice)).toEqual(["star-prism-v1"]);
+    expect(shapeSpecsMeshIds([GEAR_SHAPE, twice, MESH_SHAPE])).toEqual([
+      "star-prism-v1",
+    ]);
+  });
+
+  it("uses the prepared mesh's attained local bound through a pose", () => {
+    const radius = meshAsset("star-prism-v1").bounds.radius;
+    const posed: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "mesh", meshId: "star-prism-v1" },
+          combine: "union",
+          pose: { offset: [2, -1, 0.5], scale: 1.5 },
+        },
+      ],
+    };
+    expect(shapeBoundingRadius(posed)).toBeCloseTo(
+      Math.hypot(2, -1, 0.5) + 1.5 * radius,
+      12,
+    );
+  });
+
+  it("emits only an external catalog-indexed mesh call in both shader dialects", () => {
+    const glsl = shapeSdfSource(MESH_SHAPE, "glsl", "meshFn");
+    const wgsl = shapeSdfSource(MESH_SHAPE, "wgsl", "meshFn");
+    expect(glsl).toContain("shapeMeshSdf(0, vec3(px, py, pz))");
+    expect(wgsl).toContain("shapeMeshSdf(0u, vec3f(px, py, pz))");
+    expect(glsl.match(/shapeMeshSdf/g)).toHaveLength(1);
+    expect(wgsl.match(/shapeMeshSdf/g)).toHaveLength(1);
+  });
+
+  it("executes the JS mesh arm against the same conservative CPU bake", () => {
+    const src = shapeSdfSource(MESH_SHAPE, "js", "meshFn");
+    const helper = (catalogIndex: number, x: number, y: number, z: number) => {
+      const id = meshAssetIdAtCatalogIndex(catalogIndex);
+      return sampleMeshSdf(bakeMeshSdf(id), x, y, z);
+    };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const fn = new Function("shapeMeshSdf", `${src}\nreturn meshFn;`)(
+      helper,
+    ) as (x: number, y: number, z: number) => number;
+    const rng = mulberry32(0x6e5a5df);
+    for (let i = 0; i < 100; i++) {
+      const x = 3 * rng() - 1.5;
+      const y = 3 * rng() - 1.5;
+      const z = 3 * rng() - 1.5;
+      expect(fn(x, y, z)).toBe(shapeSdf(MESH_SHAPE, x, y, z));
     }
   });
 });

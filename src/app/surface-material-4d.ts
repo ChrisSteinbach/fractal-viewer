@@ -24,6 +24,8 @@ import {
   SURFACE_FULL_HIT_FLOOR,
   SURFACE_FULL_MARCH_STEPS,
   SURFACE_FULL_SHADOW_STEPS,
+  setSurfaceShapeMeshSdf,
+  surfaceShapeMeshSdfUniform,
   surfaceFragmentFor,
   surfaceFragmentResolvedFor,
 } from "./surface-material";
@@ -3105,6 +3107,7 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
+      uShapeMeshSdf: surfaceShapeMeshSdfUniform(),
       uMapCount: { value: 0 },
       uScheduleCount: { value: 0 },
       uScheduleDepth: { value: 0 },
@@ -3404,6 +3407,7 @@ export function setSurfaceSystem4(
   );
   const condensationShapes =
     emitters.length > 0 ? emitters.map((emitter) => emitter.shape) : null;
+  setSurfaceShapeMeshSdf(material, condensationShapes ?? []);
   const condensationKey = condensationShapes
     ? JSON.stringify(condensationShapes)
     : null;

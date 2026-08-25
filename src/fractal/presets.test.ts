@@ -8,6 +8,7 @@ import {
   systemHasEmitters,
 } from "./chaos-game";
 import { GEAR_SHAPE, shapeSdf } from "./shapes";
+import { isMeshAssetId, meshAsset, meshUnsignedDistance } from "./mesh-shapes";
 import { runChaosGame4 } from "./chaos-game-4d";
 import {
   analyzeEscapeSystem,
@@ -74,6 +75,7 @@ import {
   sixteenCellFlake,
   sixteenCellWireframe,
   spiral,
+  starFoundry,
   swirlFlame,
   dyedSpiral,
   tesseract,
@@ -1711,5 +1713,74 @@ describe("gearworks (shape-emitter condensation preset)", () => {
       const sz = (aff.m[2] * dx + aff.m[5] * dy + aff.m[8] * dz) / s2;
       expect(shapeSdf(GEAR_SHAPE, sx, sy, sz)).toBeLessThanOrEqual(1e-9);
     }
+  });
+});
+
+describe("starFoundry (Tier-3 mesh condensation preset)", () => {
+  it("is four Sierpinski corners plus one known mesh emitter in a distinct authored color", () => {
+    const transforms = starFoundry();
+    expect(transforms).toHaveLength(5);
+    const corners = transforms.slice(0, 4);
+    const emitter = transforms[4];
+    for (const corner of corners) {
+      expect(corner.emitter).toBeUndefined();
+      expect(corner.colorIndex).toBe(corners[0].colorIndex);
+    }
+    expect(emitter.emitter?.parts).toHaveLength(1);
+    const primitive = emitter.emitter!.parts[0].primitive;
+    expect(primitive).toEqual({
+      kind: "mesh",
+      meshId: "star-prism-v1",
+    });
+    if (primitive.kind !== "mesh") throw new Error("expected mesh emitter");
+    expect(isMeshAssetId(primitive.meshId)).toBe(true);
+    expect(emitter.colorIndex).toBeDefined();
+    expect(emitter.colorIndex).not.toBe(corners[0].colorIndex);
+    expect(systemHasEmitters(transforms)).toBe(true);
+    expect(corners.map((t) => t.scale)).toEqual(
+      sierpinskiTetrahedron().map((t) => t.scale),
+    );
+  });
+
+  it("is Surface-hinted and admitted by the condensation-aware gate", () => {
+    expect(PRESET_RENDER_HINTS.starFoundry).toBe("surface");
+    expect(analyzeSurfaceSystem(starFoundry()).status).toBe("eligible");
+  });
+
+  it("has a healthy seeded fresh-stamp share whose triangle samples meet the same baked SDF", () => {
+    const transforms = starFoundry();
+    const emitter = transforms[4];
+    const shape = emitter.emitter!;
+    const numPoints = 20000;
+    const { transformIndices, positions } = runChaosGame(
+      transforms,
+      numPoints,
+      mulberry32(0x57a2),
+    );
+    let emitted = 0;
+    const aff = composeAffine(emitter);
+    const s2 = emitter.scale[0] * emitter.scale[0];
+    const mesh = meshAsset("star-prism-v1");
+    for (let i = 0; i < numPoints; i++) {
+      if (transformIndices[i] !== 4) continue;
+      emitted++;
+      const dx = positions[i * 3] - aff.t[0];
+      const dy = positions[i * 3 + 1] - aff.t[1];
+      const dz = positions[i * 3 + 2] - aff.t[2];
+      const sx = (aff.m[0] * dx + aff.m[3] * dy + aff.m[6] * dz) / s2;
+      const sy = (aff.m[1] * dx + aff.m[4] * dy + aff.m[7] * dz) / s2;
+      const sz = (aff.m[2] * dx + aff.m[5] * dy + aff.m[8] * dz) / s2;
+      // The sampler's independent triangle oracle places the point on this
+      // catalog asset (modulo the float32 position buffer and inverse-pose
+      // round trip), while the shape field reaches the SAME asset's
+      // conservative, trilinearly sampled 64^3 bake. The latter's zero
+      // carries a disclosed voxel-width tolerance rather than analytic
+      // exactness.
+      expect(meshUnsignedDistance(mesh, [sx, sy, sz])).toBeLessThan(1e-6);
+      expect(Math.abs(shapeSdf(shape, sx, sy, sz))).toBeLessThan(0.08);
+    }
+    // 1.4 of 5.4 total weight, the same balanced share as Gearworks.
+    expect(emitted / numPoints).toBeGreaterThan(0.2);
+    expect(emitted / numPoints).toBeLessThan(0.33);
   });
 });

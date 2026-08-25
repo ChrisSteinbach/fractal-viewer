@@ -168,12 +168,10 @@ interface GpuProgramSpec {
    * kernel's `chaosEnabled` flag keeps the alias unread, avoiding a second
    * allocation/upload for the chi-free common case. */
   chaosRows?: ArrayBuffer;
-  /** Every gear-shaped shape-emitter part's triangulated table
-   * (`buildGearTriangleTable`'s layout, `packGpuSystem`/`packGpuSystem4`'s
-   * `gearTable`); absent aliases binding 7 to `colors`, the same idiom —
-   * each slot's own `emitterFlag`/part kind already gate whether the
-   * kernel ever indexes it, so (unlike `chaosEnabled`) no params-level
-   * flag is needed to keep the alias unread. */
+  /** Every triangulated shape-emitter part's CDF/vertex table (gear or
+   * catalog mesh; flame-gpu.ts's binding-7 `emitterTriangleTable`). The
+   * historical packer field remains `gearTable`; absent aliases binding 7
+   * to `colors`, and each slot's own flag/kind gates shader reads. */
   gearTable?: ArrayBuffer;
   chains: ArrayBuffer;
   convertSnapshot: SnapshotConverter;
@@ -756,20 +754,18 @@ async function buildBackendOnDevice(
     device.queue.writeBuffer(chaosRowsBuffer, 0, program.chaosRows);
   }
 
-  // No-gear-emitter mode binding 7 aliases the primary table, the same
-  // idiom again — every slot's own emitterFlag/part kind gates whether the
-  // kernel ever indexes this one, so there is no params flag to keep an
-  // alias unread here (unlike chaosRows' chaosEnabled); the alias is
-  // simply never reached. A gear-shaped-emitter document gets its own
-  // immutable table.
-  let gearTableBuffer = colorsBuffer;
+  // No-triangulated-emitter mode binding 7 aliases the primary table, the
+  // same idiom again — every slot's own emitterFlag/part kind gates whether
+  // the kernel reads it. A gear- or mesh-emitter document gets its own CDF
+  // and vertex table. The request field keeps its historical API name.
+  let triangleTableBuffer = colorsBuffer;
   if (program.gearTable) {
-    gearTableBuffer = device.createBuffer({
-      label: "flame-gpu emitter gear table",
+    triangleTableBuffer = device.createBuffer({
+      label: "flame-gpu emitter triangle table",
       size: program.gearTable.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    device.queue.writeBuffer(gearTableBuffer, 0, program.gearTable);
+    device.queue.writeBuffer(triangleTableBuffer, 0, program.gearTable);
   }
 
   const chainsBuffer = device.createBuffer({
@@ -898,7 +894,7 @@ async function buildBackendOnDevice(
       { binding: 4, resource: { buffer: histBuffer } },
       { binding: 5, resource: { buffer: echoColorsBuffer } },
       { binding: 6, resource: { buffer: chaosRowsBuffer } },
-      { binding: 7, resource: { buffer: gearTableBuffer } },
+      { binding: 7, resource: { buffer: triangleTableBuffer } },
     ],
   });
 

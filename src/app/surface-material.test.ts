@@ -1,5 +1,12 @@
 import type * as THREE from "three";
-import { Data3DTexture, DataTexture, Texture } from "three";
+import {
+  Data3DTexture,
+  DataTexture,
+  FloatType,
+  NearestFilter,
+  RedFormat,
+  Texture,
+} from "three";
 import {
   buildSurfaceFragment,
   createSurfaceBlitMaterial,
@@ -180,6 +187,15 @@ const COND_BOX: ShapeSpec = {
   parts: [
     {
       primitive: { kind: "box", half: [0.2, 0.3, 0.4] },
+      combine: "union",
+    },
+  ],
+};
+
+const MESH_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "star-prism-v1" },
       combine: "union",
     },
   ],
@@ -587,6 +603,84 @@ describe("GLSL reverse-chi packing and source", () => {
 });
 
 describe("GLSL condensation packing and source", () => {
+  it("adds one baked-atlas sampler and one eight-fetch interpolation helper only for mesh shapes", () => {
+    const analytic = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      [COND_SPHERE],
+    );
+    expect(analytic).not.toContain("uShapeMeshSdf");
+    expect(analytic).not.toContain("shapeMeshSdf(");
+
+    const mesh = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      [MESH_SHAPE, MESH_SHAPE],
+    );
+    expect(
+      countOccurrences(mesh, "uniform highp sampler3D uShapeMeshSdf;"),
+    ).toBe(1);
+    expect(countOccurrences(mesh, "texelFetch(uShapeMeshSdf")).toBe(8);
+    expect(mesh).toContain(
+      "boxDistance > 0.0 ? max(interpolated, boxDistance) : interpolated",
+    );
+    expect(mesh).toContain("shapeMeshSdf(0, vec3(");
+    expect(mesh).toMatch(
+      /if \(mesh == 0\) return shapeMeshSdfSample\(p, vec3\([^)]*\), vec3\([^)]*\), [^,]+, 0, 64\);/,
+    );
+  });
+
+  it("uploads the cached R32F catalog for mesh condensation and restores the 1^3 placeholder", () => {
+    const material = createSurfaceMaterial();
+    const placeholder = material.uniforms.uShapeMeshSdf.value as Data3DTexture;
+    expect(placeholder).toBeInstanceOf(Data3DTexture);
+    expect(placeholder.image).toMatchObject({ width: 1, height: 1, depth: 1 });
+    expect(placeholder.format).toBe(RedFormat);
+    expect(placeholder.type).toBe(FloatType);
+    expect(placeholder.internalFormat).toBe("R32F");
+    expect(placeholder.minFilter).toBe(NearestFilter);
+    expect(placeholder.magFilter).toBe(NearestFilter);
+
+    const de: SurfaceDE = {
+      ...de3([map3()]),
+      condensation: {
+        emitters: [condEmitter3(MESH_SHAPE, 1, [0, 0, 0])],
+        depthBand: { minDepth: 0, maxDepth: 8 },
+      },
+    };
+    setSurfaceSystem(material, de, [black, [1, 0, 0]]);
+    const atlas = material.uniforms.uShapeMeshSdf.value as Data3DTexture;
+    expect(atlas).toBeInstanceOf(Data3DTexture);
+    expect(atlas).not.toBe(placeholder);
+    expect(atlas.image).toMatchObject({ width: 64, height: 64, depth: 64 });
+    expect(atlas.image.data).toBeInstanceOf(Float32Array);
+    expect(atlas.internalFormat).toBe("R32F");
+    expect(atlas.minFilter).toBe(NearestFilter);
+    expect(atlas.magFilter).toBe(NearestFilter);
+
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(material.uniforms.uShapeMeshSdf.value).toBe(placeholder);
+    expect(material.uniforms.uShapeMeshSdf.value.image).toMatchObject({
+      width: 1,
+      height: 1,
+      depth: 1,
+    });
+  });
+
   it("appends symmetry-expanded inverse records while map and shade counts stay separate", () => {
     const material = createSurfaceMaterial();
     const de: SurfaceDE = {
@@ -3182,6 +3276,56 @@ describe("SURFACE_PATTERN variant", () => {
 });
 
 describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", () => {
+  it("shares the one mesh helper across trap parts and switches both forward material installers to the cached atlas", () => {
+    const source = surfaceFragmentResolvedFor(
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      MESH_SHAPE,
+    );
+    expect(
+      countOccurrences(source, "uniform highp sampler3D uShapeMeshSdf;"),
+    ).toBe(1);
+    expect(countOccurrences(source, "texelFetch(uShapeMeshSdf")).toBe(8);
+    expect(source).toContain("shapeMeshSdf(0, vec3(");
+
+    const escape = buildEscapeDE([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+      },
+    ]);
+    const bulb = buildBulbDE([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "bulb", weight: 1 }],
+      },
+    ]);
+    const material = createSurfaceMaterial();
+    setEscapeSystem(material, escape, black, { shape: MESH_SHAPE });
+    const atlas = material.uniforms.uShapeMeshSdf.value as Data3DTexture;
+    expect(atlas.image).toMatchObject({ width: 64, height: 64, depth: 64 });
+    setEscapeSystem(material, escape, black, null);
+    const placeholder = material.uniforms.uShapeMeshSdf.value;
+    expect(material.uniforms.uShapeMeshSdf.value.image.depth).toBe(1);
+    setBulbSystem(material, bulb, black, { shape: MESH_SHAPE });
+    expect(material.uniforms.uShapeMeshSdf.value).toBe(atlas);
+    setBulbSystem(material, bulb, black, null);
+    expect(material.uniforms.uShapeMeshSdf.value).toBe(placeholder);
+    expect(material.uniforms.uShapeMeshSdf.value.image.depth).toBe(1);
+  });
+
   it("pins the shipped trap-absent and color-only bytes while geometry is omitted or false", () => {
     const cases = [
       {

@@ -22,18 +22,21 @@
  * both structural rules throw `RangeError` (`chaos-game.ts`'s
  * `MAX_TRANSFORMS` precedent).
  *
- * THE SDF CONTRACT. Every primitive body is the exact Euclidean distance in
- * its own frame (sphere, box, torus, capsule are the standard exact forms;
- * the gear is exact by the sector-fold argument below). The pose is a
+ * THE SDF CONTRACT. Every analytic primitive body is the exact Euclidean
+ * distance in its own frame (sphere, box, torus, capsule are the standard
+ * exact forms; the gear is exact by the sector-fold argument below). A mesh
+ * is the conservative manual-trilinear lower field proved in
+ * `mesh-shapes.ts`. The pose is a
  * similarity, under which the exact conjugation
  * `d(p) = scale * sd(Rᵀ(p - offset) / scale)` stays exact. The boolean fold
  * is the standard conservative one: `min` is exact in the EXTERIOR of a
  * union (and understates interior depth where members overlap), `max` is a
  * LOWER bound on the distance to an intersection — so the composed field
  * never overestimates the distance to the surface, which is the whole
- * marching contract. Every field here is 1-Lipschitz by construction
+ * marching contract. Analytic fields are 1-Lipschitz by construction
  * (min/max of 1-Lipschitz fields, isometries and the exact similarity
- * conjugation preserve it); {@link SHAPE_MARCH_SAFETY} is the one shared
+ * conjugation preserve it); the mesh field instead lower-bounds the true
+ * signed distance directly. {@link SHAPE_MARCH_SAFETY} is the one shared
  * step factor consumers march the shape term with anyway, because the
  * gear's sector fold is only piecewise smooth (its float-rounded seam at
  * the atan2 branch cut is a hairline, not a proof) — the
@@ -78,7 +81,7 @@
  * fields are taken as authored; {@link shapeSdfSource} additionally throws
  * on any non-finite baked constant rather than emit `NaN` into a shader.
  *
- * THE SAMPLER is uniform BY VOLUME on the union, exactly: each part gets a
+ * THE SAMPLER is uniform BY VOLUME on analytic solids: each part gets a
  * closed-form measure (sphere/box/torus/capsule) or a seeded fixed-budget
  * Monte Carlo one (the gear profile's area, deterministic at prepare
  * time), a part is picked proportionally, sampled exactly in its own
@@ -107,15 +110,22 @@
  * outline/solid spec's balance is a styling choice, not a density claim —
  * and never count as containing a solid candidate (their region has no
  * volume to contain it in).
+ * Mesh parts likewise carry SURFACE measure: exact triangle-area CDF and
+ * sqrt-barycentric draws from the same prepared catalog object as the SDF
+ * bake. They weigh by `area * scale²` and never volume-shadow another part;
+ * a mixed mesh/solid spec therefore mixes area and volume as an authored
+ * styling measure.
  *
  * SHADER EMISSION is per-spec BAKED-CONSTANT CODEGEN, `surface-de-gpu.ts`'s
- * house style: {@link shapeSdfSource} emits one complete, self-contained
- * function — pose inverses with baked matrix entries, primitive bodies,
- * the boolean fold — from ONE body template shared across dialects,
+ * house style: {@link shapeSdfSource} emits one complete function — pose
+ * inverses with baked matrix entries, primitive bodies, the boolean fold —
+ * from ONE body template shared across dialects,
  * `background-shape.ts`'s dialect-parameterization. There is deliberately
  * NO params wire in this module: consumers own their wire (a trap channel,
- * a descent term and an emitter kernel all pack differently), and a baked
- * function needs none. The template is SCALAR — px/py/pz locals, no vector
+ * a descent term and an emitter kernel all pack differently). Analytic
+ * functions are self-contained; a mesh arm calls the consumer's single
+ * atlas-backed `shapeMeshSdf(catalogIndex, p)` helper. The template is
+ * SCALAR — px/py/pz locals, no vector
  * operators — which is what makes the third dialect possible: `"js"` emits
  * the SAME template as a runnable JavaScript function, so the test suite
  * EXECUTES the shared template against {@link shapeSdf} over random
@@ -147,6 +157,15 @@ import type { Vec3 } from "./types";
 import { rotationMatrixXYZ } from "./affine";
 import { mulberry32 } from "./rng";
 import type { Rng } from "./rng";
+import {
+  bakeMeshSdf,
+  isMeshAssetId,
+  meshAsset,
+  meshAssetCatalogIndex,
+  sampleMeshSdf,
+  sampleMeshSurface,
+} from "./mesh-shapes";
+import type { MeshAssetId } from "./mesh-shapes";
 
 /** Most parts one spec may hold — the future GPU packers' fixed block size,
  * `MAX_TRANSFORMS`'s role one vocabulary over. */
@@ -156,9 +175,9 @@ export const MAX_SHAPE_PARTS = 8;
  * The ONE marching safety factor every consumer steps a shape field with —
  * exported here so the trap channel, the descent term and the geometry
  * consumer share a number instead of each picking one (the
- * `sphereFoldLipschitz` discipline one family over). The fields are
- * 1-Lipschitz by construction; the margin covers the gear seam's
- * float-rounded hairline and the f32 the GPU mirrors run in.
+ * `sphereFoldLipschitz` discipline one family over). Analytic fields are
+ * 1-Lipschitz by construction; mesh fields are conservative lower bounds.
+ * The margin covers the gear seam's float-rounded hairline and GPU f32.
  */
 export const SHAPE_MARCH_SAFETY = 0.9;
 
@@ -172,6 +191,10 @@ export type ShapePrimitive =
    * sheet. */
   | { kind: "torus"; major: number; minor: number }
   | { kind: "capsule"; a: Vec3; b: Vec3; radius: number }
+  /** A stable built-in triangle mesh id. The document carries this id only;
+   * geometry, sampler CDF and conservative SDF bake share the catalog entry
+   * in `mesh-shapes.ts`. */
+  | { kind: "mesh"; meshId: MeshAssetId }
   /** The brief's parametric gear: `teeth` boxes of half-size
    * `tooth = [halfRadial, halfTangential]` centered at distance `radius`
    * (the root circle) on a body disc of the same radius, axle `hole`
@@ -212,6 +235,36 @@ export interface ShapeSpec {
   parts: ShapePart[];
 }
 
+/** Mesh ids used by one spec, de-duplicated in first-appearance order. */
+export function shapeMeshIds(spec: ShapeSpec): MeshAssetId[] {
+  validateShapeSpec(spec);
+  const ids: MeshAssetId[] = [];
+  const seen = new Set<MeshAssetId>();
+  for (const part of spec.parts) {
+    if (part.primitive.kind !== "mesh") continue;
+    if (!seen.has(part.primitive.meshId)) {
+      seen.add(part.primitive.meshId);
+      ids.push(part.primitive.meshId);
+    }
+  }
+  return ids;
+}
+
+/** Mesh ids used across several specs, with the same stable ordering. */
+export function shapeSpecsMeshIds(specs: readonly ShapeSpec[]): MeshAssetId[] {
+  const ids: MeshAssetId[] = [];
+  const seen = new Set<MeshAssetId>();
+  for (const spec of specs) {
+    for (const id of shapeMeshIds(spec)) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        ids.push(id);
+      }
+    }
+  }
+  return ids;
+}
+
 /** The emission dialects. `"js"` exists so the shared template is
  * EXECUTABLE in tests against {@link shapeSdf} (the module doc's pin
  * story); production consumers pass `"glsl"` or `"wgsl"`. */
@@ -231,6 +284,16 @@ function validateShapeSpec(spec: ShapeSpec): void {
     throw new RangeError(
       `shape part 0 must combine as "union" (there is nothing yet to intersect), got "${spec.parts[0].combine}"`,
     );
+  }
+  for (const part of spec.parts) {
+    if (
+      part.primitive.kind === "mesh" &&
+      !isMeshAssetId(part.primitive.meshId)
+    ) {
+      throw new RangeError(
+        `unknown mesh asset id: ${String(part.primitive.meshId)}`,
+      );
+    }
   }
 }
 
@@ -294,8 +357,8 @@ function gearProfileSdf(
   return d;
 }
 
-/** One primitive's exact field in its own frame — the TS mirror of the
- * emitted bodies, same operations in the same order. */
+/** One primitive's field in its own frame — exact for analytic kinds,
+ * conservative for a baked mesh, and mirrored by emitted bodies. */
 function primitiveSdf(
   prim: ShapePrimitive,
   x: number,
@@ -340,6 +403,8 @@ function primitiveSdf(
       const ez = paz - baz * h;
       return Math.sqrt(ex * ex + ey * ey + ez * ez) - prim.radius;
     }
+    case "mesh":
+      return sampleMeshSdf(bakeMeshSdf(prim.meshId), x, y, z);
     case "gear": {
       const g = gearProfileSdf(prim, x, y);
       const wz = Math.abs(z) - prim.halfHeight;
@@ -385,9 +450,9 @@ function partSdf(part: ShapePart, x: number, y: number, z: number): number {
 }
 
 /**
- * The spec's signed distance at `(x, y, z)` — the f64 CPU oracle every
- * shader emission pins to. Exact in the exterior of an all-union spec;
- * conservative (never overestimating) everywhere (module doc's contract).
+ * The spec's signed-distance lower field at `(x, y, z)` — the CPU oracle
+ * every shader emission pins to. Exact in the exterior of an analytic
+ * all-union spec; conservative (never overestimating) everywhere.
  */
 export function shapeSdf(
   spec: ShapeSpec,
@@ -423,6 +488,8 @@ function primitiveBound(prim: ShapePrimitive): number {
           Math.hypot(prim.b[0], prim.b[1], prim.b[2]),
         ) + prim.radius
       );
+    case "mesh":
+      return meshAsset(prim.meshId).bounds.radius;
     case "gear":
       // The farthest member is a tooth-box corner: radially radius + t0,
       // tangentially t1, axially halfHeight — attained, so this bound is
@@ -592,6 +659,8 @@ function primitiveDraw(prim: ShapePrimitive): (rng: Rng) => Vec3 {
         return [end[0] + bx, end[1] + by, end[2] + bz];
       };
     }
+    case "mesh":
+      return (rng) => sampleMeshSurface(meshAsset(prim.meshId), rng);
     case "gear": {
       const outer = prim.radius + prim.tooth[0];
       const hole = prim.hole > 0 ? prim.hole : 0;
@@ -672,15 +741,19 @@ function primitiveVolume(prim: ShapePrimitive): number {
       const r = Math.max(0, prim.radius);
       return Math.PI * r * r * len + (4 / 3) * Math.PI * r ** 3;
     }
+    case "mesh":
+      // Mesh parts use SURFACE measure in prepareShapeSampler, never this
+      // volume path. Returning the native area keeps this total if a future
+      // caller asks for the primitive's own authored measure directly.
+      return meshAsset(prim.meshId).totalArea;
     case "gear":
       return Math.max(0, gearProfileMeasures(prim).area * 2 * prim.halfHeight);
   }
 }
 
 /**
- * Build a uniform-by-volume point sampler over the spec (module doc:
- * per-part exact draws, volume-proportional pick, min-index acceptance on
- * union overlap — exactly uniform on the union). Throws on any
+ * Build the spec's point sampler (module doc: analytic solids use volume,
+ * mesh parts use triangle area, overlap uses min-index acceptance). Throws on any
  * `"intersect"` part (the spec is then SDF-only; see the module doc for
  * why no exact per-part scheme exists) and on a spec with no measure.
  * The returned closure draws from the caller's `rng` — unboundedly, by
@@ -702,23 +775,27 @@ export function prepareShapeSampler(
   }
   const gearOutline = opts?.gearOutline === true;
   const parts = spec.parts.map((part) => {
+    const primitive = part.primitive;
     const scale = resolvePoseScale(part.pose);
     const rot = poseRotation(part.pose);
     const off = part.pose?.offset;
-    const outline = gearOutline && part.primitive.kind === "gear";
+    const outline = gearOutline && primitive.kind === "gear";
+    const meshSurface = primitive.kind === "mesh";
     let weight: number;
-    if (outline) {
+    if (primitive.kind === "mesh") {
+      weight = meshAsset(primitive.meshId).totalArea * scale * scale;
+    } else if (outline) {
       const gear = part.primitive as Extract<ShapePrimitive, { kind: "gear" }>;
       const lateral = gearProfileMeasures(gear).perimeter * 2 * gear.halfHeight;
       weight = Math.max(0, lateral) * scale * scale;
     } else {
-      weight = primitiveVolume(part.primitive) * scale ** 3;
+      weight = primitiveVolume(primitive) * scale ** 3;
     }
     const draw = outline
       ? gearOutlineDraw(
           part.primitive as Extract<ShapePrimitive, { kind: "gear" }>,
         )
-      : primitiveDraw(part.primitive);
+      : primitiveDraw(primitive);
     const toWorld = (p: Vec3): Vec3 => {
       let x = p[0] * scale;
       let y = p[1] * scale;
@@ -740,9 +817,10 @@ export function prepareShapeSampler(
     };
     // An outline part's region has no volume, so it never contains a
     // candidate for the min-index test (module doc).
-    const contains = outline
-      ? () => false
-      : (x: number, y: number, z: number) => partSdf(part, x, y, z) <= 0;
+    const contains =
+      outline || meshSurface
+        ? () => false
+        : (x: number, y: number, z: number) => partSdf(part, x, y, z) <= 0;
     return { weight, draw, toWorld, contains };
   });
   const total = parts.reduce((acc, p) => acc + p.weight, 0);
@@ -983,6 +1061,23 @@ function emitPartLines(
         `  ${L} u${i} = ${name}_capsule(${X}, ${Y}, ${Z}, ${lit(prim.a[0])}, ${lit(prim.a[1])}, ${lit(prim.a[2])}, ${lit(prim.b[0])}, ${lit(prim.b[1])}, ${lit(prim.b[2])}, ${lit(prim.radius)});`,
       );
       break;
+    case "mesh": {
+      const catalogIndex = meshAssetCatalogIndex(prim.meshId);
+      let call: string;
+      switch (d.language) {
+        case "glsl":
+          call = `shapeMeshSdf(${catalogIndex}, vec3(${X}, ${Y}, ${Z}))`;
+          break;
+        case "wgsl":
+          call = `shapeMeshSdf(${catalogIndex}u, vec3f(${X}, ${Y}, ${Z}))`;
+          break;
+        case "js":
+          call = `shapeMeshSdf(${catalogIndex}, ${X}, ${Y}, ${Z})`;
+          break;
+      }
+      lines.push(`  ${L} u${i} = ${call};`);
+      break;
+    }
     case "gear": {
       const seg = (2 * Math.PI) / resolveGearTeeth(prim.teeth);
       lines.push(
@@ -1049,6 +1144,10 @@ export function shapeSdfSource(
         break;
       case "capsule":
         used.capsule = true;
+        break;
+      case "mesh":
+        // The consumer emits one shared shapeMeshSdf atlas helper. A shape
+        // function only calls it with the baked catalog index.
         break;
       case "gear":
         used.box2 = true;
