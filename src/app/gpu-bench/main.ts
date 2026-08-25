@@ -358,6 +358,8 @@ declare global {
     __BENCH_RESULTS__?: BenchResults;
     __BENCH_DONE__?: boolean;
     __BENCH_ERROR__?: string;
+    /** Runner-visible name of the scenario/standalone leg currently active. */
+    __BENCH_ACTIVE__?: string | null;
   }
 }
 
@@ -15448,8 +15450,10 @@ async function main(): Promise<void> {
     try {
       const dom = domByName.get(def.name);
       if (!dom) return;
+      window.__BENCH_ACTIVE__ = def.name;
       recordResult(await runScenario(def, dom, currentDuration(), activity));
     } finally {
+      window.__BENCH_ACTIVE__ = null;
       running = false;
       setButtonsDisabled(false);
     }
@@ -15458,6 +15462,7 @@ async function main(): Promise<void> {
   async function runSurfaceSection(): Promise<void> {
     // Incremental publishing: partial surface results are visible on
     // __BENCH_RESULTS__ while the (potentially long) section runs.
+    window.__BENCH_ACTIVE__ = "surface-de";
     await runSurfaceDeSection(surfaceConfig, surfaceDom, activity, (r) => {
       benchResults.surfaceDe = r;
       renderResults();
@@ -15476,6 +15481,7 @@ async function main(): Promise<void> {
         for (const def of activeScenarios) {
           const dom = domByName.get(def.name);
           if (!dom) continue;
+          window.__BENCH_ACTIVE__ = def.name;
           recordResult(
             await runScenario(def, dom, currentDuration(), activity),
           );
@@ -15487,6 +15493,7 @@ async function main(): Promise<void> {
         // and the headless runner's agreement verdict is meant to certify
         // the WHOLE kernel, not just whichever named scenarios were
         // requested.
+        window.__BENCH_ACTIVE__ = "ss1-display-downsample";
         activity.setState("gpu", "GPU ss=1 check…");
         benchResults.ss1DisplayDownsample =
           await runSs1DisplayDownsampleCheck();
@@ -15498,6 +15505,7 @@ async function main(): Promise<void> {
         await runSurfaceSection();
       }
     } finally {
+      window.__BENCH_ACTIVE__ = null;
       running = false;
       setButtonsDisabled(false);
     }
@@ -15510,6 +15518,7 @@ async function main(): Promise<void> {
     try {
       await runSurfaceSection();
     } finally {
+      window.__BENCH_ACTIVE__ = null;
       running = false;
       setButtonsDisabled(false);
     }

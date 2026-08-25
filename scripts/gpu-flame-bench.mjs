@@ -73,6 +73,10 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import {
+  shouldResetWaitOnScenarioCompletion,
+  waitForBenchCompletion,
+} from "../src/app/gpu-bench/runner-wait.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -83,14 +87,13 @@ const REPO_ROOT = path.resolve(__dirname, "..");
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_TIMEOUT_MS = 60_000;
 /**
- * Wait cap for the flame sweep — a HANG detector, not a budget: the run
- * polls for `__BENCH_DONE__` and exits the moment it lands, so a cap set
- * generously costs nothing on a healthy run and only avoids reporting a slow
- * host as a failure. Raised from 10 to 20 minutes when a fourteenth
- * scenario (`xform-color`) landed: each scenario's fixed equal-N legs are
- * ~50.3M iterations PER SIDE, which SwiftShader measured at ~45-50s apiece on
- * a busy dev box — so thirteen already sat against the old 10-minute wall and
- * the fourteenth crossed it, failing a sweep whose every scenario agreed.
+ * Flame HANG detector, not an agreement budget. An unsharded local sweep
+ * re-arms this deadline whenever a scenario finishes, so roster growth can
+ * lengthen a healthy run without making a genuinely stuck scenario take
+ * longer to name. Sharded runs (CI) retain the original whole-sweep cap: the
+ * workflow's 40-minute guard therefore stays looser and the script still
+ * trips first. Raised from 10 to 20 minutes when a fourteenth scenario
+ * (`xform-color`) landed; the rolling local policy arrived at 23 scenarios.
  */
 const BENCH_TIMEOUT_MS = 20 * 60_000;
 /** Wait cap when a surface flag is present — the surface timing matrix
@@ -532,6 +535,14 @@ async function main() {
       ? SURFACE_SHADE_AB_TIMEOUT_MS
       : SURFACE_BENCH_TIMEOUT_MS
     : BENCH_TIMEOUT_MS;
+  // fr-fnx4: only the unsharded flame sweep scales its wait with completed
+  // scenarios. CI's `--shard` contract and the surface section's separately
+  // calibrated 30/60-minute caps stay byte-for-byte in their old total-wait
+  // mode, preserving the workflow's script-trips-before-job ordering.
+  const resetWaitOnScenarioCompletion = shouldResetWaitOnScenarioCompletion(
+    surfaceRequested,
+    args.shard,
+  );
   const outDir = path.resolve(REPO_ROOT, args.out);
   await mkdir(outDir, { recursive: true });
 
@@ -665,14 +676,20 @@ async function main() {
     await screenshotBestEffort(page, path.join(outDir, "progress-2.png"));
 
     console.error(
-      `[gpu-flame-bench] waiting up to ${benchTimeoutMs}ms for __BENCH_DONE__/__BENCH_ERROR__...`,
+      resetWaitOnScenarioCompletion
+        ? `[gpu-flame-bench] waiting up to ${benchTimeoutMs}ms per completed flame scenario for __BENCH_DONE__/__BENCH_ERROR__...`
+        : `[gpu-flame-bench] waiting up to ${benchTimeoutMs}ms for __BENCH_DONE__/__BENCH_ERROR__...`,
     );
-    await page.waitForFunction(
-      () =>
-        window.__BENCH_DONE__ === true || window.__BENCH_ERROR__ !== undefined,
-      undefined,
-      { timeout: benchTimeoutMs, polling: 250 },
-    );
+    await waitForBenchCompletion(page, {
+      timeoutMs: benchTimeoutMs,
+      resetOnScenarioCompletion: resetWaitOnScenarioCompletion,
+      onScenarioCompleted: (state) => {
+        const last = state.completedScenarios.at(-1) ?? "unknown";
+        console.error(
+          `[gpu-flame-bench] completed scenario ${String(state.completedScenarios.length)} (${last}); re-arming ${String(benchTimeoutMs)}ms stall deadline`,
+        );
+      },
+    });
 
     const results = await page.evaluate(() => window.__BENCH_RESULTS__ ?? null);
     const pageError = await page.evaluate(() => window.__BENCH_ERROR__ ?? null);

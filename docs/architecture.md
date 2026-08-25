@@ -1185,15 +1185,21 @@ interactively over the LAN like any other dev page. CI runs the whole sweep:
 the `gpu-agreement` workflow executes the real WGSL kernels on
 SwiftShader (Chromium's bundled software Vulkan, so no GPU runner is
 needed), with the runner treating a skipped comparison (no WebGPU adapter)
-as a failure rather than a pass. It runs on every push/PR EXCEPT ones whose
+as a failure rather than a pass. The bare, unsharded local runner treats its
+20-minute flame wait as a rolling stall deadline: each completed scenario
+re-arms it, so a 23-scenario healthy sweep may exceed 20 minutes while a stuck
+scenario is still named within 20. CI shards retain the 20-minute whole-shard
+cap, preserving the script-before-workflow-timeout ordering, and surface runs
+retain their separately calibrated 30/60-minute waits. It runs on every
+push/PR EXCEPT ones whose
 every changed file is docs, markdown or the beads database (the
 sweep is ~18 min against 1m50s for the next-slowest job, so it is the whole
 critical path; the filter is deliberately a fail-safe `paths-ignore` rather
 than an allowlist of kernel paths, which would fail open). When it does run
-it is SHARDED four ways (`--shard=i/n`, round-robin by index), which is the
+it is SHARDED twelve ways (`--shard=i/n`, round-robin by index), which is the
 same argument in the other direction: the page partitions its own
 `SCENARIOS` list, so the union of the shards is the whole list by
-construction and a fifteenth scenario needs no CI change, where a matrix of
+construction and a new scenario needs no CI change, where a matrix of
 hand-written `--scenarios=` name lists would silently stop covering it. An
 empty shard is not a quiet pass — no comparison ran means `agreement:
 "skipped"`, which the runner already exits 2 on. The scenario list includes a

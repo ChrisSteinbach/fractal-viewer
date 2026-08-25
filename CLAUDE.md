@@ -498,6 +498,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     3D point, then applies the camera — never a 4D inversion.
   - `flame-gpu.ts` — WebGPU flame kernel (WGSL) + packing/dispatch/histogram
     layer. Pinned against CPU oracle by `src/app/gpu-bench/` (`npm run bench:gpu`).
+    The bare local runner re-arms its 20-minute flame stall deadline per
+    completed scenario; `--shard` keeps 20 minutes as a whole-run CI cap.
     XAOS VERDICT: one draw through chi or fallback, oracle-built cumulative
     rows transferred, chain stride held at 32 via a spare aux lane.
     EMITTER VERDICT: bounded device samplers reproduce the CPU MEASURE rather
