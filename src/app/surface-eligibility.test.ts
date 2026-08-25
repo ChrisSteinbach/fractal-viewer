@@ -323,22 +323,12 @@ describe("deriveSurfaceEligibility for shape-trap geometry", () => {
 });
 
 describe("deriveSurfaceEligibility chaos rows", () => {
-  it("refuses the chi presets with the surface gate's reason in the note, routing nowhere", () => {
-    // Both fern|sponge presets: contractive IFS shapes that would be
-    // Surface-eligible but for their rows — the gate refusal (not the
-    // escape/bulb complements, which refuse chi too) is what the user reads.
+  it("admits both shipped chi showcases through inverse Surface", () => {
     for (const preset of ["fernSponge", "fernSpongeLeak"] as const) {
-      const result = deriveSurfaceEligibility(
-        presetTransforms(preset),
-        null,
-        NO_SYMMETRY,
-        { computeAvailable: true },
-      );
-      expect(result.status).toBe("ineligible");
-      expect(result.kind).toBeNull();
-      expect(result.note).toContain(
-        "chaos rows constrain the attractor (Surface would march the unconstrained object)",
-      );
+      const result = derivePreset(preset);
+      expect(result.status).toBe("degraded");
+      expect(result.kind).toBe("ifs");
+      expect(result.note).toContain("Anisotropic maps");
     }
   });
 
@@ -358,7 +348,26 @@ describe("deriveSurfaceEligibility chaos rows", () => {
     });
     expect(result.status).toBe("ineligible");
     expect(result.kind).toBeNull();
-    expect(result.note).toContain("chaos rows");
+    expect(result.note).toContain("does not contract");
+  });
+
+  it("admits a live chi matrix on a genuine 4D attractor through inverse Surface", () => {
+    const transforms = presetTransforms("pentatope");
+    const graph = transforms.map((transform, row) => ({
+      ...transform,
+      chaos: transforms.map((_, predecessor) =>
+        predecessor === row || predecessor === (row + 1) % transforms.length
+          ? 1
+          : 0,
+      ),
+    }));
+    for (const computeAvailable of [false, true]) {
+      const result = deriveSurfaceEligibility(graph, null, NO_SYMMETRY, {
+        computeAvailable,
+      });
+      expect(result.status).not.toBe("ineligible");
+      expect(result.kind).toBe("ifs4");
+    }
   });
 });
 

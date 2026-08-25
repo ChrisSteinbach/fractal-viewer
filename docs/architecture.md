@@ -710,6 +710,30 @@ material. This shift is why a scheduled shader's physical record order is
 `[A][B][symmetry-expanded emitters]` while its logical shade space is still A
 plus unique emitters.
 
+A non-trivial xaos matrix makes the A half of that tree graph-directed. If a
+forward point step may select map `j` after map `i`, the support graph contains
+the edge `i -> j`; the reverse descent therefore admits predecessor `i` only
+while undoing a chain whose current outer component is `j`. The builder packs
+that transpose as one bit mask per compact active state. A root chain is a
+wildcard because no outer map has been chosen yet; a scheduled B prefix stays
+wildcard too, and the first A inverse establishes the state. Every later
+affine/fold candidate carries its chosen state through the same beam/frontier,
+refinement, slab and native-carrier paths. Symmetry copies share their base
+state, so xaos constrains logical maps rather than consuming more physical
+records.
+
+Only support matters to geometry: positive xaos magnitudes change sampling
+measure but not the attractor. A row with no positively weighted destination,
+or whose accumulated total is non-finite, uses the point engine's
+global-selection fallback, so its mask exposes every globally supported
+destination rather than becoming a dead vertex. At a condensation terminal
+the same predecessor mask filters emitter states;
+unique emitters follow recursive maps in compact state order and symmetry
+copies share that state/material slot. The first implementation deliberately
+keeps one global enclosing ball instead of component-specific bounds. Absent
+or all-one rows allocate no graph metadata and retain the classic descent
+source and packed bytes.
+
 Whether a valid DE exists at all — and how fast it can be marched — turns on
 **conformality**. For an invertible affine map with linear part `M`,
 `dist(p, f(A)) ≥ sigma_min(M) · dist(f⁻¹(p), A)`, where `sigma_min` is `M`'s
@@ -796,16 +820,18 @@ just repeats that same call, exactly like the solid render's raymarcher
 re-running each frame against its density grid, only here against an
 analytic field that has no convergence to wait on.
 
-The app passes the schedule to eligibility analysis and to the selected 3D or
-4D builder before choosing a presentation engine. A scheduled inverse refusal
-is terminal — falling through to an escape/bulb forward core would render A
-alone and is therefore forbidden. Otherwise the existing route remains in
-force: plain 3D affine systems naturally use GLSL, fold/fold-lens 3D prefers
-compute, every 4D IFS prefers compute, and their established fragment fallbacks
-remain available where that system class has one. Both shader wires enforce
-one physical 24-record cap across A, supported B and symmetry-expanded
-emitters; B does not consume a shade slot. Null and zero-depth schedules keep
-the pre-schedule source and packed bytes exact.
+The app passes schedule and xaos state to eligibility analysis and to the
+selected 3D or 4D builder before choosing a presentation engine. An inverse
+refusal with either construction is terminal — falling through to an
+escape/bulb forward core would ignore B or the graph and render a different
+object. Otherwise the existing route remains in force: plain 3D affine systems
+naturally use GLSL, fold/fold-lens 3D prefers compute, every 4D IFS prefers
+compute, and their established fragment fallbacks remain available where that
+system class has one. Both shader wires enforce one physical 24-record cap
+across A, supported B and symmetry-expanded emitters; B does not consume a
+shade slot, and xaos adds state masks rather than map records. Null/zero-depth
+schedules and absent/all-one xaos rows keep their classic source and packed
+bytes exact.
 
 Two speedups shave that per-ray cost without touching the oracle
 discipline. The march hands its own acceptance epsilon to the DE as an

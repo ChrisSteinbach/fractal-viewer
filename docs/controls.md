@@ -153,8 +153,10 @@ morphs into place instead of snapping (see **Presets** below).
   and both Flame backends honor the same base-map transitions; the Flame GPU
   path carries the previous base map across dispatches and consumes exactly
   one selection draw on xaos, fallback, and ordinary paths alike. Surface
-  currently refuses xaos documents because its descent does not yet follow
-  a graph-directed frontier.
+  follows the same support graph in reverse: the outer map chosen by a beam
+  chain determines which predecessor maps or emitter shapes may occur next.
+  Xaos magnitudes above zero change density but not Surface geometry, while an
+  all-zero effective row uses the same global fallback as the point engine.
 - **✺ Flame** — the classic fractal-flame exposure: millions of chaos-game
   samples accumulated into a histogram, then tone-mapped into a soft, glowing
   image. The camera _freezes_ on entry — the render converges through the view
@@ -282,6 +284,14 @@ morphs into place instead of snapping (see **Presets** below).
   emitter-only documents and an emitter on the final transform remain
   refused. In a 4D Surface session the 3D emitter solid is embedded at local
   w=0, so **Slice thickness** is clamped to 0 for condensation geometry.
+  A non-trivial **Xaos** matrix adds no map slots: each inverse chain carries
+  its current logical-map state and admits only graph predecessors. The root
+  is unconstrained, as is a Hybrid schedule's finite B prefix; the first A
+  inverse establishes the graph state. Symmetry copies share one state, and
+  emitter terminals use that same mask. A zero xaos entry removes geometry
+  support for that transition; any positive value restores it regardless of
+  magnitude. If the inverse analyzer refuses a xaos document, Surface does
+  not fall through to an escape-time tracer that would ignore the graph.
   **Pure-fold maps** are no longer an automatic disqualifier either: a
   map whose variation list is exactly one fold-family entry
   (`boxfold`/`spherefold`/`mandelbox`) is a composition the tracer can

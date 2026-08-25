@@ -66,6 +66,42 @@ legacy program and uniforms exactly. Generated-source gates cover schedule,
 schedule + condensation, fold lens and 3D/4D variants under the 65,536-byte
 emitted-source ceiling.
 
+## Graph-directed A descent
+
+`SURFACE_CHAOS` is the graph-directed arm shared by the 3D and 4D fragment
+tracers. The built DE supplies one 24-bit predecessor mask per compact active
+state: while a reverse chain is in outer component `j`, source state `i` is a
+candidate only when the point engine can make the forward transition `i -> j`.
+Any positive xaos scalar creates support; its magnitude affects point density
+but not the implicit set. A row whose weighted support is empty receives the
+point engine's global fallback mask rather than becoming a dead row.
+
+Each beam/frontier lane carries its state beside position, scale and
+certificate data. Root is the `0xffffffffu` wildcard. Scheduled B levels leave
+it untouched, the first A inverse establishes it, and deeper affine/fold,
+refinement, slab and hit-info paths enforce it. Recursive state indices follow
+A map order; unique emitters follow recursive maps, and all symmetry copies
+use the emitter's existing shade/state index when filtering condensation
+terminals. The single global bound remains conservative for every component.
+
+Six `vec4` uniforms carry the 24 masks only in a graph-aware program. Every
+24-bit integer mask is exactly representable in fragment `highp float`; the
+shader decodes one bit with power-of-two arithmetic, avoiding a pathological
+dynamic unsigned shift in Mesa's fragment path. The feature composes with
+schedule and condensation without changing physical map order or logical shade
+order. An absent/all-one matrix removes the define,
+uniforms and chain-state code exactly, preserving the classic shader source
+and uploads; forward escape/bulb programs never accept the arm. An exhaustive
+legal-option source sweep measured a 54,839-byte maximum in 3D and 38,086 bytes
+in 4D with graph, schedule and condensation live, below the unchanged
+65,536-byte linker ceiling.
+
+That float decode is release evidence, not a stylistic preference: the
+dynamic-`uint` version left the real-Iris 24-map WebGL presentation leg inside
+shader work past its ten-minute settle limit. With the exact float mask, the
+same graph-aware full-detail leg settled in 8.4 seconds and agreed with the
+compute effect mask at 97.856% overlap.
+
 ## Shared background shape
 
 Both tracers' `void main()` used to open with its own literal
