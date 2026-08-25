@@ -168,6 +168,13 @@ interface GpuProgramSpec {
    * kernel's `chaosEnabled` flag keeps the alias unread, avoiding a second
    * allocation/upload for the chi-free common case. */
   chaosRows?: ArrayBuffer;
+  /** Every gear-shaped shape-emitter part's triangulated table
+   * (`buildGearTriangleTable`'s layout, `packGpuSystem`/`packGpuSystem4`'s
+   * `gearTable`); absent aliases binding 7 to `colors`, the same idiom —
+   * each slot's own `emitterFlag`/part kind already gate whether the
+   * kernel ever indexes it, so (unlike `chaosEnabled`) no params-level
+   * flag is needed to keep the alias unread. */
+  gearTable?: ArrayBuffer;
   chains: ArrayBuffer;
   convertSnapshot: SnapshotConverter;
   convertDisplay: DisplayConverter;
@@ -749,6 +756,22 @@ async function buildBackendOnDevice(
     device.queue.writeBuffer(chaosRowsBuffer, 0, program.chaosRows);
   }
 
+  // No-gear-emitter mode binding 7 aliases the primary table, the same
+  // idiom again — every slot's own emitterFlag/part kind gates whether the
+  // kernel ever indexes this one, so there is no params flag to keep an
+  // alias unread here (unlike chaosRows' chaosEnabled); the alias is
+  // simply never reached. A gear-shaped-emitter document gets its own
+  // immutable table.
+  let gearTableBuffer = colorsBuffer;
+  if (program.gearTable) {
+    gearTableBuffer = device.createBuffer({
+      label: "flame-gpu emitter gear table",
+      size: program.gearTable.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(gearTableBuffer, 0, program.gearTable);
+  }
+
   const chainsBuffer = device.createBuffer({
     label: "flame-gpu chains",
     size: program.chains.byteLength,
@@ -812,6 +835,11 @@ async function buildBackendOnDevice(
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: "read-only-storage" },
       },
+      {
+        binding: 7,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
+      },
     ],
   });
   // An explicit (not "auto") pipeline layout, shared by both pipelines
@@ -870,6 +898,7 @@ async function buildBackendOnDevice(
       { binding: 4, resource: { buffer: histBuffer } },
       { binding: 5, resource: { buffer: echoColorsBuffer } },
       { binding: 6, resource: { buffer: chaosRowsBuffer } },
+      { binding: 7, resource: { buffer: gearTableBuffer } },
     ],
   });
 
@@ -1162,6 +1191,7 @@ export async function createGpuFlameBackend(
       ? packGpuColorLUT(request.echoColorLUT)
       : undefined,
     chaosRows: packed.chaosRows ?? undefined,
+    gearTable: packed.gearTable ?? undefined,
     chains: packGpuChains(NUM_CHAINS, request.seed),
     convertSnapshot: convertGpuHistogram,
     convertDisplay: convertGpuDisplayHistogram,
@@ -1229,6 +1259,7 @@ export async function createGpuFlameBackend4(
       ? packGpuColorLUT(request.echoColorLUT)
       : undefined,
     chaosRows: packed.chaosRows ?? undefined,
+    gearTable: packed.gearTable ?? undefined,
     chains: packGpuChains4(NUM_CHAINS, request.seed),
     convertSnapshot: convertGpuHistogram4,
     convertDisplay: convertGpuDisplayHistogram4,

@@ -96,21 +96,34 @@ import {
   buildScheduleTable,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  prepareEmitters,
   resolveScheduleDepth,
 } from "./chaos-game";
 import {
   COLOR_FIXED_POINT_SCALE,
+  EMITTER_PART_STRIDE_BYTES,
   HIST_U32_PER_BUCKET,
   KERNEL_VARIATION_INDEX,
   WEIGHT_FIXED_POINT_SCALE,
   WORKGROUP_SIZE,
+  buildGearTriangleTable,
+  createGearTableBuilder,
+  emitterPartWeight,
+  finishGearTableBuilder,
   packChaosRowsTable,
   packVariations,
   writeColorEntry,
+  writeEmitterPart,
 } from "./flame-gpu";
-import type { GpuFlameBalloonEchoFields } from "./flame-gpu";
+import type {
+  GearTableBuilder,
+  GearTableRegion,
+  GpuFlameBalloonEchoFields,
+} from "./flame-gpu";
 import { mulberry32 } from "./rng";
 import { isFoldVariationType, resolveFoldRadii } from "./variations";
+import { MAX_SHAPE_PARTS } from "./shapes";
+import type { ShapeSpec } from "./shapes";
 
 /**
  * Fixed-point scale for the soft w-slice weight (see the module doc): the
@@ -164,7 +177,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   rows — binding 6 is then an unread alias, the echoColors idiom) |
  *   376..383 pad
  *
- * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 336 stride);
+ * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 1168 stride);
  * slot count = transformCount + 1 + scheduleCount — the expanded transform
  * slots, then the final-transform lens slot (read only when hasFinal = 1,
  * never drawn by the transform pick), then the scheduled-hybrid post-word's
@@ -197,6 +210,18 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   reason `variations4.ts` imports `resolveFoldRadii` rather than
  *   restating it: what an absent field means must have ONE answer, or a 3D
  *   system and its 4D lift render different objects.
+ *   368 emitterFlag u32 | 372 emitterPartCount u32 | 376
+ *   emitterTotalWeight f32 | 380 pad | 384 emitterParts
+ *   array<EmitterPart, {@link MAX_SHAPE_PARTS}> (768 B) — flame-gpu.ts's
+ *   Slot entry VERBATIM, `writeSlot4Emitter` calling that module's
+ *   dimension-free `writeEmitterPart`/`buildGearTriangleTable`/
+ *   `emitterPartWeight` rather than restating them (the shape vocabulary
+ *   is 3D always, and a shared `EmitterPart` layout is what lets this
+ *   kernel and the 3D one read `emitterGearTable` (binding 7 below) the
+ *   same way): the sample is embedded at `w = 0` before this slot's OWN
+ *   4x4+t affine poses it, `stepOrbit4`'s emitter branch (module doc's own
+ *   dimensional-parity paragraph). The same min-index-overlap divergence
+ *   flame-gpu.ts's Slot doc discloses applies here unchanged.
  *
  * The stride arithmetic: the pre-symmetry 224 was exactly 14 x 16
  * with no slack — the flam3 color pair had already taken this struct's last
@@ -236,13 +261,19 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * only when `chaosEnabled` is 1; a chi-free document aliases the binding to
  * `colors` exactly as an echo-less one aliases binding 5.
  *
+ * emitterGearTable: array<f32> at binding 7 — flame-gpu.ts's
+ * `buildGearTriangleTable` layout, the SAME triangle-fan-CDF regions (this
+ * kernel's `writeSlot4Emitter` calls that module's builder directly); a
+ * document with no gear-shaped emitter part anywhere aliases the binding to
+ * `colors`, the same idiom.
+ *
  * hist: array<atomic<u32>>, `width * height * HIST_U32_PER_BUCKET`, the SAME
  * scaled 8-word emulated-u64 bucket layout as the 3D kernel. The backend
  * still reads it through the dimension-named {@link convertGpuHistogram4}
  * seam.
  */
 export const PARAMS4_BYTES = 384;
-export const SLOT4_STRIDE_BYTES = 384;
+export const SLOT4_STRIDE_BYTES = 1168;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
  * rewrites mid-session, exactly like the 3D layout's
@@ -303,6 +334,17 @@ struct Params {
   chaosEnabled: u32,
 }
 
+// flame-gpu.ts's EmitterPart verbatim — the shape vocabulary is 3D always,
+// so a slot's condensation-part data needs no dimensional lift.
+struct EmitterPart {
+  kindParams0: vec4f,
+  params1: vec4f,
+  poseOffsetScale: vec4f,
+  rot0: vec4f,
+  rot1: vec4f,
+  rot2: vec4f,
+}
+
 struct Slot {
   rowX: vec4f,
   rowY: vec4f,
@@ -326,6 +368,14 @@ struct Slot {
   // The 3D Slot's fold lane verbatim — the fold family's authored
   // lengths indexed by type - 12, (minRadius^2, fixedRadius^2, boxLimit).
   foldRadii: array<vec4f, 3>,
+  // Shape-emitter (condensation) block — the 3D Slot's entry verbatim
+  // (byte-layout doc): emitterFlag gates applySlot's whole branch, 0
+  // (every pre-emitter slot) the byte-identical old path.
+  emitterFlag: u32,
+  emitterPartCount: u32,
+  emitterTotalWeight: f32,
+  _emitterPad: f32,
+  emitterParts: array<EmitterPart, ${MAX_SHAPE_PARTS}>,
 }
 
 // "aux", not "meta": meta is a WGSL reserved identifier (3D kernel's note).
@@ -344,6 +394,10 @@ struct Chain {
 // read only when params.chaosEnabled is 1; a chi-free document aliases this
 // binding to colors exactly as an echo-less one aliases binding 5.
 @group(0) @binding(6) var<storage, read> chaosRows: array<f32>;
+// Shape-emitter gear tables (flame-gpu.ts's buildGearTriangleTable layout;
+// byte-layout doc's binding-7 entry) — a document with no gear-shaped
+// emitter part aliases this binding to colors, the same idiom.
+@group(0) @binding(7) var<storage, read> emitterGearTable: array<f32>;
 
 // Warmup dispatches run a PLOT=false specialization of this same pipeline —
 // iterate the orbit without recording, like the CPU's unrecorded warmup.
@@ -409,6 +463,191 @@ fn pcgNext(rng: ptr<function, vec2u>) -> u32 {
 // [0, 1) — identical to the 3D kernel's (top 24 bits, strictly below 1).
 fn rand01(rng: ptr<function, vec2u>) -> f32 {
   return f32(pcgNext(rng) >> 8u) * (1.0 / 16777216.0);
+}
+
+// --- shape emitter (condensation) sampling ----------------------------
+// The 3D kernel's whole emitter section VERBATIM: the shape vocabulary is
+// 3D always (shapes.ts's own parity statement), so this dimension's
+// sampling is byte-for-byte the 3D kernel's — see that module's copy of
+// this comment block for the RNG-parity/no-rejection-loops contract this
+// section follows. applySlot below is the one place that differs,
+// embedding the vec3f sample at w = 0 before this slot's 4D affine poses
+// it (stepOrbit4's own emitter branch).
+
+// chaos-game.ts's createEmitterStream (mulberry32), restated for the
+// DERIVED stream — kept separate from the primary PCG stream (pcgNext/
+// rand01) above; see this section's own doc for the output-normalization
+// note (rand01's top-24-bit convention, not mulberry32's raw division).
+fn emitterNext(state: ptr<function, u32>) -> f32 {
+  *state = (*state) + 0x6d2b79f5u;
+  let seed = *state;
+  var t: u32 = (seed ^ (seed >> 15u)) * (1u | seed);
+  t = (t + ((t ^ (t >> 7u)) * (61u | t))) ^ t;
+  return f32((t ^ (t >> 14u)) >> 8u) * (1.0 / 16777216.0);
+}
+
+// shapes.ts's drawBall: cbrt-radius, cosine-uniform direction — exact,
+// constant-draw (3), no rejection.
+fn emitterDrawBall(state: ptr<function, u32>) -> vec3f {
+  let r = pow(emitterNext(state), 1.0 / 3.0);
+  let ct = 2.0 * emitterNext(state) - 1.0;
+  let st = sqrt(max(0.0, 1.0 - ct * ct));
+  let ph = 2.0 * PI * emitterNext(state);
+  return vec3f(r * st * cos(ph), r * st * sin(ph), r * ct);
+}
+
+fn emitterDrawSphere(state: ptr<function, u32>, radius: f32) -> vec3f {
+  return emitterDrawBall(state) * radius;
+}
+
+fn emitterDrawBox(state: ptr<function, u32>, half: vec3f) -> vec3f {
+  return vec3f(
+    (2.0 * emitterNext(state) - 1.0) * half.x,
+    (2.0 * emitterNext(state) - 1.0) * half.y,
+    (2.0 * emitterNext(state) - 1.0) * half.z,
+  );
+}
+
+// shapes.ts's torus sampler's rho/theta exactly, phi's conditional density
+// (1 + e*cos(phi)) / (2*PI) inverted by a fixed six-step Newton iteration
+// on its Kepler-shaped CDF instead of the CPU's accept-reject on phi — see
+// the 3D kernel's own emitterDrawTorus doc for the full derivation.
+fn emitterDrawTorus(state: ptr<function, u32>, major: f32, minor: f32) -> vec3f {
+  let th = 2.0 * PI * emitterNext(state);
+  let rho = minor * sqrt(emitterNext(state));
+  let e = clamp(rho / max(major, 1e-9), 0.0, 1.0);
+  let m = 2.0 * PI * emitterNext(state);
+  var phi = m;
+  for (var i = 0u; i < 6u; i++) {
+    let f = phi + e * sin(phi) - m;
+    let fp = 1.0 + e * cos(phi);
+    phi = phi - f / max(fp, 1e-6);
+  }
+  let rad = major + rho * cos(phi);
+  return vec3f(rad * cos(th), rad * sin(th), rho * sin(phi));
+}
+
+// shapes.ts's capsule sampler: cylinder-vs-cap pick, then each branch's
+// own constant-draw closed form; the orthonormal basis (wz, u, v)
+// re-derived on device from (a, b).
+fn emitterDrawCapsule(state: ptr<function, u32>, a: vec3f, b: vec3f, r: f32) -> vec3f {
+  let ba = b - a;
+  let len = length(ba);
+  var wz = vec3f(0.0, 0.0, 1.0);
+  if (len > 0.0) {
+    wz = ba / len;
+  }
+  var pick = vec3f(1.0, 0.0, 0.0);
+  if (abs(wz.x) >= 0.9) {
+    pick = vec3f(0.0, 1.0, 0.0);
+  }
+  var u = cross(wz, pick);
+  u = u / length(u);
+  let v = cross(wz, u);
+  let vCyl = PI * r * r * len;
+  let vCaps = (4.0 / 3.0) * PI * r * r * r;
+  if (emitterNext(state) * (vCyl + vCaps) < vCyl) {
+    let t = emitterNext(state) * len;
+    let rho = r * sqrt(emitterNext(state));
+    let phi = 2.0 * PI * emitterNext(state);
+    return a + wz * t + u * (rho * cos(phi)) + v * (rho * sin(phi));
+  }
+  let bp = emitterDrawBall(state) * r;
+  var end = a;
+  if (dot(bp, wz) >= 0.0) {
+    end = b;
+  }
+  return end + bp;
+}
+
+// The gear profile's host-triangulated triangle-fan CDF
+// (flame-gpu.ts's buildGearTriangleTable, this module's binding-7 entry).
+fn emitterDrawGear(state: ptr<function, u32>, tableOffset: u32, triCount: u32, halfHeight: f32) -> vec3f {
+  let total = emitterGearTable[tableOffset + triCount - 1u];
+  let needle = emitterNext(state) * total;
+  var lo = 0u;
+  var hi = triCount - 1u;
+  loop {
+    if (lo >= hi) {
+      break;
+    }
+    let mid = (lo + hi) >> 1u;
+    if (needle < emitterGearTable[tableOffset + mid]) {
+      hi = mid;
+    } else {
+      lo = mid + 1u;
+    }
+  }
+  let vBase = tableOffset + triCount + lo * 6u;
+  let v0 = vec2f(emitterGearTable[vBase], emitterGearTable[vBase + 1u]);
+  let v1 = vec2f(emitterGearTable[vBase + 2u], emitterGearTable[vBase + 3u]);
+  let v2 = vec2f(emitterGearTable[vBase + 4u], emitterGearTable[vBase + 5u]);
+  let su = sqrt(emitterNext(state));
+  let u2 = emitterNext(state);
+  let aw = 1.0 - su;
+  let bw = (1.0 - u2) * su;
+  let cw = u2 * su;
+  let xy = v0 * aw + v1 * bw + v2 * cw;
+  let z = (2.0 * emitterNext(state) - 1.0) * halfHeight;
+  return vec3f(xy.x, xy.y, z);
+}
+
+// Dispatch one EmitterPart's own primitive sampler, then pose it exactly
+// as shapes.ts's toWorld: scale, rotate (row-major forward 3x3), offset.
+fn emitterSamplePart(state: ptr<function, u32>, part: EmitterPart) -> vec3f {
+  let kind = u32(part.kindParams0.x);
+  var local: vec3f;
+  switch kind {
+    case 0u: { // sphere: kindParams0.y = radius.
+      local = emitterDrawSphere(state, part.kindParams0.y);
+    }
+    case 1u: { // box: kindParams0.yzw = half extents.
+      local = emitterDrawBox(state, part.kindParams0.yzw);
+    }
+    case 2u: { // torus: kindParams0.y = major, .z = minor.
+      local = emitterDrawTorus(state, part.kindParams0.y, part.kindParams0.z);
+    }
+    case 3u: { // capsule: kindParams0.yzw = a, params1.xyz = b, .w = radius.
+      local = emitterDrawCapsule(state, part.kindParams0.yzw, part.params1.xyz, part.params1.w);
+    }
+    default: { // 4u gear: kindParams0.y = tableOffset, .z = triCount, .w = halfHeight.
+      local = emitterDrawGear(state, u32(part.kindParams0.y), u32(part.kindParams0.z), part.kindParams0.w);
+    }
+  }
+  let scaled = local * part.poseOffsetScale.w;
+  let rotated = vec3f(
+    dot(part.rot0.xyz, scaled),
+    dot(part.rot1.xyz, scaled),
+    dot(part.rot2.xyz, scaled),
+  );
+  return rotated + part.poseOffsetScale.xyz;
+}
+
+// One slot's whole emitter sample — the 3D kernel's own doc: no
+// min-index-overlap correction (an unbounded rejection loop, forbidden on
+// device), a disclosed divergence unreachable while every shipped emitter
+// is single-part.
+fn emitterSampleSlot(state: ptr<function, u32>, slotIdx: u32) -> vec3f {
+  let partCount = slots[slotIdx].emitterPartCount;
+  var pick = 0u;
+  if (partCount > 1u) {
+    let needle = emitterNext(state) * slots[slotIdx].emitterTotalWeight;
+    var lo = 0u;
+    var hi = partCount - 1u;
+    loop {
+      if (lo >= hi) {
+        break;
+      }
+      let mid = (lo + hi) >> 1u;
+      if (needle < slots[slotIdx].emitterParts[mid].rot0.w) {
+        hi = mid;
+      } else {
+        lo = mid + 1u;
+      }
+    }
+    pick = lo;
+  }
+  return emitterSamplePart(state, slots[slotIdx].emitterParts[pick]);
 }
 
 // The 4D variation registry (variations4.ts's VARIATIONS4), case-indexed by
@@ -520,34 +759,53 @@ fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>, fr: vec3f) -> vec
 // One slot's full map: 4x4 affine + translation, then the weighted variation
 // blend (left to right, so stochastic variations consume the RNG in list
 // order), then the kaleidoscope post-rotation. Mirrors accumulateFlame4's
-// inlined stepOrbit4 body.
+// inlined stepOrbit4 body — including its emitter (condensation) branch: a
+// fresh 3D shape sample embeds AT w = 0 (stepOrbit4's own dimensional
+// decision — the shape vocabulary is 3D, so the w column of this slot's
+// affine drops out of the emitted point's algebra) and this slot's OWN
+// 4x4+t affine poses THAT instead of p, with the incoming point and the
+// variation blend ignored; post-rotation is unconditional either way.
 fn applySlot(slotIdx: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
   let s = slots[slotIdx];
-  let a = vec4f(
-    dot(s.rowX, p),
-    dot(s.rowY, p),
-    dot(s.rowZ, p),
-    dot(s.rowW, p),
-  ) + s.trans;
-  var q = a;
-  if (s.varCount > 0u) {
-    var acc = vec4f(0.0);
-    for (var v = 0u; v < s.varCount; v++) {
-      // Lane reads through the STORAGE REFERENCE, not the value copy in
-      // "s" — same WGSL-implementation-portability note as the 3D kernel's
-      // applySlot.
-      let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
-      let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
-      // The fold family's own lengths, the 3D kernel's selection
-      // verbatim — explicit bounds because 15/16 would index past the
-      // three lanes.
-      var fi = 0u;
-      if (ty >= 12u && ty <= 14u) {
-        fi = ty - 12u;
+  var q: vec4f;
+  if (s.emitterFlag == 1u) {
+    // pcgNext, not rand01 — the 3D kernel's own note: the seed wants the
+    // primary stream's full 32-bit spread, not rand01's top-24-bit slice.
+    var derived = pcgNext(rng);
+    let sample = vec4f(emitterSampleSlot(&derived, slotIdx), 0.0);
+    q = vec4f(
+      dot(s.rowX, sample),
+      dot(s.rowY, sample),
+      dot(s.rowZ, sample),
+      dot(s.rowW, sample),
+    ) + s.trans;
+  } else {
+    let a = vec4f(
+      dot(s.rowX, p),
+      dot(s.rowY, p),
+      dot(s.rowZ, p),
+      dot(s.rowW, p),
+    ) + s.trans;
+    q = a;
+    if (s.varCount > 0u) {
+      var acc = vec4f(0.0);
+      for (var v = 0u; v < s.varCount; v++) {
+        // Lane reads through the STORAGE REFERENCE, not the value copy in
+        // "s" — same WGSL-implementation-portability note as the 3D kernel's
+        // applySlot.
+        let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
+        let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
+        // The fold family's own lengths, the 3D kernel's selection
+        // verbatim — explicit bounds because 15/16 would index past the
+        // three lanes.
+        var fi = 0u;
+        if (ty >= 12u && ty <= 14u) {
+          fi = ty - 12u;
+        }
+        acc += w * applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz);
       }
-      acc += w * applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz);
+      q = acc;
     }
-    q = acc;
   }
   if (s.hasPost == 1u) {
     q = vec4f(
@@ -870,7 +1128,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
  * CONTRACT with its own literal offsets, so a mistake here cannot
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 96.
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 292.
 const SLOT4_ROW_X = 0;
 const SLOT4_ROW_Y = 4;
 const SLOT4_ROW_Z = 8;
@@ -901,6 +1159,17 @@ const SLOT4_COLOR_SPEED = 80;
  * indexed by variation type MINUS 12; fold `i` sits at
  * `SLOT4_FOLD_RADII + i * 4`. */
 const SLOT4_FOLD_RADII = 84;
+/** Shape-emitter (condensation) block — the 3D Slot's entry one dimension
+ * up (byte-layout doc's Slot4 entry): header vec4 (element 99 its
+ * trailing pad) then `{@link MAX_SHAPE_PARTS}` contiguous `EmitterPart`
+ * blocks, part `i` at `SLOT4_EMITTER_PARTS + i * F32_PER_EMITTER_PART` —
+ * `F32_PER_EMITTER_PART` and every `EP_*` field offset are flame-gpu.ts's
+ * own (imported), since the part layout is dimension-free. */
+const SLOT4_EMITTER_FLAG = 96;
+const SLOT4_EMITTER_PART_COUNT = 97;
+const SLOT4_EMITTER_TOTAL_WEIGHT = 98;
+const SLOT4_EMITTER_PARTS = 100;
+const F32_PER_EMITTER_PART = EMITTER_PART_STRIDE_BYTES / 4; // 24.
 
 const F32_PER_CHAIN4 = CHAIN4_STRIDE_BYTES / 4; // 8.
 const CHAIN4_POS = 0; // pos.xyzw: the full 4D orbit point.
@@ -1023,6 +1292,10 @@ export interface PackedGpuSystem4 {
    * system with no non-trivial chi row (the kernel's chi branch never
    * engages and the backend aliases binding 6, the echoColors idiom). */
   chaosRows: ArrayBuffer | null;
+  /** Every gear-shaped emitter part's triangulated table — flame-gpu.ts's
+   * `gearTable` field, the SAME `finishGearTableBuilder`, or `null` when
+   * the system has no gear-shaped emitter part anywhere. */
+  gearTable: ArrayBuffer | null;
 }
 
 /** Entries in the `colors` table — same 256 x vec4u shape as the 3D
@@ -1159,6 +1432,15 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     (t) => t.colorSpeed ?? DEFAULT_COLOR_SPEED,
   );
 
+  // Shape emitters (condensation): flame-gpu.ts's writeSlotEmitter doc —
+  // prepareEmitters is the ONE definition of which BASE transforms are
+  // (samplable) emitters (a Transform4's emitter rides the 3D -> 4D lift
+  // verbatim, so it takes the same transforms4 list directly), and
+  // gearBuilder accumulates every gear-shaped part's table for this WHOLE
+  // system into ONE buffer (binding 7).
+  const emitters = prepareEmitters(transforms4);
+  const gearBuilder = createGearTableBuilder();
+
   // Copy-major expansion: copy 0 (unrotated) first, then copy 1, etc. — see
   // prepareChaosGame4's identical loop shape.
   const twist = symmetry.twist ?? 0;
@@ -1176,6 +1458,15 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
       slotF32[base + SLOT4_CUM_WEIGHT] = cumWeights[s];
       slotF32[base + SLOT4_COLOR_INDEX] = colorIndices[i];
       slotF32[base + SLOT4_COLOR_SPEED] = colorSpeeds[i];
+      writeSlot4Emitter(
+        slotF32,
+        slotU32,
+        base,
+        emitters !== null && emitters[i] !== null
+          ? transforms4[i].emitter
+          : undefined,
+        gearBuilder,
+      );
     }
   }
 
@@ -1249,6 +1540,7 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     chaosRows: chaos
       ? packChaosRowsTable(chaos, transformCount, baseTransformCount)
       : null,
+    gearTable: finishGearTableBuilder(gearBuilder),
   };
 }
 
@@ -1328,6 +1620,60 @@ function writeSlot4Variations(
     u32[base + SLOT4_VAR_TYPES + v] = types[v];
   }
   u32[base + SLOT4_VAR_COUNT] = types.length;
+}
+
+/**
+ * Write one slot's emitter block one dimension up — flame-gpu.ts's
+ * `writeSlotEmitter` verbatim in shape, at this module's `SLOT4_EMITTER_*`
+ * offsets, calling that module's dimension-free `buildGearTriangleTable`/
+ * `emitterPartWeight`/`writeEmitterPart` directly rather than restating
+ * them (see this file's module doc's "restated, not imported" note for
+ * what IS duplicated one dimension up, and why this is deliberately not
+ * one of those cases: the shape vocabulary has no 4D form to restate).
+ * `spec` is `undefined` for every transform `prepareEmitters` did not
+ * return a sampler for — `packGpuSystem4`'s own call resolves that,
+ * exactly like the 3D packer's.
+ */
+function writeSlot4Emitter(
+  f32: Float32Array,
+  u32: Uint32Array,
+  base: number,
+  spec: ShapeSpec | undefined,
+  gearBuilder: GearTableBuilder,
+): void {
+  if (spec === undefined) return;
+  const n = Math.min(spec.parts.length, MAX_SHAPE_PARTS);
+  if (n <= 0) return;
+  u32[base + SLOT4_EMITTER_FLAG] = 1;
+  u32[base + SLOT4_EMITTER_PART_COUNT] = n;
+  const gearRegions: (GearTableRegion | null)[] =
+    new Array<GearTableRegion | null>(n);
+  const weights = new Array<number>(n);
+  let totalWeight = 0;
+  for (let i = 0; i < n; i++) {
+    const part = spec.parts[i];
+    if (part.primitive.kind === "gear") {
+      const region = buildGearTriangleTable(part.primitive, gearBuilder);
+      gearRegions[i] = region;
+      weights[i] = emitterPartWeight(part, region.totalArea);
+    } else {
+      gearRegions[i] = null;
+      weights[i] = emitterPartWeight(part, 0);
+    }
+    totalWeight += weights[i];
+  }
+  f32[base + SLOT4_EMITTER_TOTAL_WEIGHT] = totalWeight;
+  let cum = 0;
+  for (let i = 0; i < n; i++) {
+    cum += weights[i];
+    writeEmitterPart(
+      f32,
+      base + SLOT4_EMITTER_PARTS + i * F32_PER_EMITTER_PART,
+      spec.parts[i],
+      cum,
+      gearRegions[i],
+    );
+  }
 }
 
 /**

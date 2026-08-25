@@ -99,6 +99,7 @@ import {
   buildScheduleTable,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  prepareEmitters,
   resolveScheduleDepth,
 } from "./chaos-game";
 import type { ChaosSelection } from "./chaos-game";
@@ -106,6 +107,8 @@ import { transformColors } from "./color";
 import { isFoldVariationType, resolveFoldRadii } from "./variations";
 import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
+import { MAX_SHAPE_PARTS } from "./shapes";
+import type { ShapePart, ShapePose, ShapePrimitive, ShapeSpec } from "./shapes";
 
 /** Invocations per workgroup; a dispatch is `numChains / WORKGROUP_SIZE`
  * workgroups. 128 measured well on both integrated and discrete GPUs in
@@ -183,7 +186,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   rows — binding 6 is then an unread alias, the echoColors idiom) |
  *   152..159 pad
  *
- * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 336 stride);
+ * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 1120 stride);
  * slot count = transformCount + 1 + scheduleCount — the expanded transform
  * slots, then the final-transform lens slot (read only when hasFinal = 1,
  * never drawn by the transform pick), then the scheduled-hybrid post-word's
@@ -214,6 +217,48 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   one entry per type (`packVariations`' own invariant), so three lanes
  *   cover every fold a slot can hold where seventeen would be needed to
  *   cover every lane.
+ *   336 emitterFlag u32 | 340 emitterPartCount u32 | 344 emitterTotalWeight
+ *   f32 | 348 pad — the shape-EMITTER (condensation) block
+ *   `writeSlotEmitter` appends, an emitter being per-TRANSFORM data unlike
+ *   the fold family's per-TYPE lane (`shapes.ts`'s vocabulary is per-part,
+ *   not per-variation-type, so there is no "at most one per type" invariant
+ *   to fold through). `emitterFlag` gates `applySlot`'s whole branch, the
+ *   `weighted`/`chaosEnabled` idiom: 0 (the `ArrayBuffer`'s zero default,
+ *   and every pre-emitter slot) is the byte-identical old path at zero
+ *   extra cost beyond the one flag read.
+ *   352 emitterParts array<EmitterPart, {@link MAX_SHAPE_PARTS}> (8 x 96 B
+ *   = 768 B) — one block per `shapes.ts` `ShapePart`, laid out copy for
+ *   copy with `emitterPartCount`/`emitterTotalWeight` above: part `i`'s
+ *   cumulative pick weight rides its own `rot0.w` (see `EmitterPart`
+ *   below), so a `partCount <= 1` slot (every shipped emitter, including
+ *   `GEAR_SHAPE`) never runs the multi-part search at all.
+ *   `EmitterPart` (96 B, 6 vec4f lanes):
+ *     0 kindParams0 vec4f (x = kind: 0 sphere, 1 box, 2 torus, 3 capsule,
+ *     4 gear; yzw = KIND-DEPENDENT, `emitterSamplePart`'s own table:
+ *     sphere y=radius; box yzw=half; torus y=major z=minor; capsule
+ *     yzw=a; gear y=gearTable offset z=triCount w=halfHeight)
+ *     16 params1 vec4f (capsule only: xyz=b, w=radius; unread otherwise)
+ *     32 poseOffsetScale vec4f (xyz = `ShapePose.offset`, w = resolved
+ *     `ShapePose.scale`, absent-means-identity resolved host-side exactly
+ *     like `shapes.ts`'s own `resolvePoseScale`/`poseOffset`)
+ *     48 rot0 | 64 rot1 | 80 rot2 (the baked 3x3 forward pose rotation —
+ *     `rotationMatrixXYZ`'s row-major output verbatim, `shapes.ts`'s
+ *     `toWorld` convention and NOT `partSdf`'s transpose, since the
+ *     emitter POSES a local-frame sample rather than inverting a query;
+ *     absent rotation bakes the identity so the kernel applies it
+ *     unconditionally, no branch) — rot0.w doubles as this part's
+ *     cumulative weight (the vec4 lane the 3x3 leaves spare; rot1.w/rot2.w
+ *     stay true padding).
+ *   THE MIN-INDEX OVERLAP CORRECTION IS NOT REPRODUCED: `shapes.ts`'s
+ *   sampler redraws a candidate an earlier part's SDF contains (exact
+ *   uniformity on an overlapping union), an UNBOUNDED rejection loop this
+ *   kernel's RNG-parity contract forbids on device; this kernel instead
+ *   accepts the picked part's own sample unconditionally, so an
+ *   overlapping multi-part spec's shared region samples at ELEVATED
+ *   density here relative to the CPU oracle. Disclosed, not measured —
+ *   every shipped emitter is single-part (`emitterPartCount` 1), where the
+ *   search degenerates to picking part 0 and there is no overlap to
+ *   correct, so this divergence is unreachable from any preset today.
  *
  * Chain (storage array element, {@link CHAIN_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (xyz orbit point, w color coordinate) | 16 aux vec4u (x rng
@@ -239,13 +284,32 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * `chaosEnabled` is 1. A chi-free document aliases this binding to `colors`
  * exactly as an echo-less one aliases binding 5 — bound but never read.
  *
+ * emitterGearTable: array<f32> at binding 7 — every gear-kind
+ * `EmitterPart`'s host-triangulated triangle-fan CDF
+ * ({@link buildGearTriangleTable}), concatenated back to back: one part's
+ * region is `triCount` cumulative areas (ascending, `emitterDrawGear`'s
+ * binary search) followed by `triCount` vertex triples (6 f32 each, a
+ * flattened `vec2f x 3`) — `triCount` and the region's own start
+ * (`kindParams0.y`/`.z`) live on the part, so no separate offset table is
+ * needed. A document with no gear-shaped emitter part anywhere aliases this
+ * binding to `colors`, exactly as an echo/chi-free document aliases
+ * bindings 5/6 — bound but never read, since every slot's own
+ * `emitterFlag`/part `kind` already gate whether the kernel ever indexes
+ * it (no separate params-level flag exists for this binding, unlike
+ * `chaosEnabled`: the gate is inherently per-slot already).
+ *
  * hist: array<atomic<u32>>, `width * height * HIST_U32_PER_BUCKET`,
  * bucket layout as {@link HIST_U32_PER_BUCKET} describes.
  */
 export const PARAMS_BYTES = 160;
-export const SLOT_STRIDE_BYTES = 336;
+export const SLOT_STRIDE_BYTES = 1120;
 export const CHAIN_STRIDE_BYTES = 32;
 export const COLORS_BYTES = 256 * 16;
+/** One `EmitterPart`'s stride — 6 vec4f lanes (see the Slot layout doc's
+ * `EmitterPart` entry). Exported for `flame-gpu-4d.ts`, which shares this
+ * exact part encoding (the shape vocabulary is dimension-free — 3D always
+ * — so a 4D slot's emitter block is this module's layout verbatim). */
+export const EMITTER_PART_STRIDE_BYTES = 96;
 /** Byte offset of Params.itersPerInvocation — the one field the driver
  * rewrites mid-session (warmup and final partial dispatches). */
 export const PARAMS_ITERS_OFFSET_BYTES = 64;
@@ -289,6 +353,20 @@ struct Params {
   chaosEnabled: u32,
 }
 
+// One condensation-shape part's device data (shapes.ts's ShapePart, module
+// doc's Slot entry): a kind-tagged primitive plus its similarity pose,
+// baked host-side so the kernel applies rather than resolves it.
+// kindParams0.x is the kind tag; the remaining six param lanes and rot0.w
+// are KIND-/ROLE-DEPENDENT (see emitterSamplePart/emitterSampleSlot).
+struct EmitterPart {
+  kindParams0: vec4f,
+  params1: vec4f,
+  poseOffsetScale: vec4f,
+  rot0: vec4f,
+  rot1: vec4f,
+  rot2: vec4f,
+}
+
 struct Slot {
   rowX: vec4f,
   rowY: vec4f,
@@ -311,6 +389,15 @@ struct Slot {
   // boxLimit, unused). A transform carries at most one entry per type, so
   // three lanes cover every fold a slot can hold.
   foldRadii: array<vec4f, 3>,
+  // Shape-emitter (condensation) block — writeSlotEmitter, module doc's
+  // Slot entry. emitterFlag gates applySlot's whole branch (the
+  // weighted/chaosEnabled idiom): 0, the ArrayBuffer's zero default and
+  // every pre-emitter slot, is the byte-identical old path.
+  emitterFlag: u32,
+  emitterPartCount: u32,
+  emitterTotalWeight: f32,
+  _emitterPad: f32,
+  emitterParts: array<EmitterPart, ${MAX_SHAPE_PARTS}>,
 }
 
 // "aux", not "meta": meta is a WGSL reserved identifier.
@@ -330,6 +417,10 @@ struct Chain {
 // only when params.chaosEnabled is 1; a chi-free document aliases this
 // binding to colors exactly as an echo-less one aliases binding 5.
 @group(0) @binding(6) var<storage, read> chaosRows: array<f32>;
+// Shape-emitter gear tables (module doc's binding-7 entry;
+// buildGearTriangleTable/emitterDrawGear) — a document with no gear-shaped
+// emitter part aliases this binding to colors, the same idiom.
+@group(0) @binding(7) var<storage, read> emitterGearTable: array<f32>;
 
 // Warmup dispatches run a PLOT=false specialization of this same pipeline —
 // iterate the orbit without recording, like the CPU's unrecorded warmup.
@@ -387,6 +478,222 @@ fn pcgNext(rng: ptr<function, vec2u>) -> u32 {
 // (f32(u32max) would round UP to 2^32 and return exactly 1.0).
 fn rand01(rng: ptr<function, vec2u>) -> f32 {
   return f32(pcgNext(rng) >> 8u) * (1.0 / 16777216.0);
+}
+
+// --- shape emitter (condensation) sampling ----------------------------
+//
+// chaos-game.ts's contract: an emitter step draws EXACTLY ONE value from
+// the PRIMARY stream (emitterSeed) to seed a DERIVED stream, and the
+// sampler spends UNBOUNDEDLY from that derived stream alone — so the
+// primary stream's cost per emitter step stays constant regardless of what
+// the sampler does. Below that seed draw, this kernel does NOT mirror the
+// CPU's own draw pattern (which includes an unbounded rejection loop for
+// the torus and gear primitives, and for multi-part overlap correction —
+// see the Slot layout doc's EmitterPart entry): REJECTION LOOPS ARE
+// FORBIDDEN ON DEVICE (an unbounded or data-dependent retry is a device-hang
+// hazard this codebase treats as a hard failure class elsewhere — see
+// strip-planner.ts's i915 preemption notes), so every sampler below is a
+// FIXED, bounded number of derived draws that reproduces the CPU's target
+// MEASURE (uniform by volume/area) through a different, rejection-free
+// algorithm rather than the CPU's own accept-reject one. The device
+// sampler's individual POINTS therefore do not match the CPU's draw for
+// draw — exactly the module doc's standing "statistically indistinguishable
+// render, not a byte-identical one" contract one layer further in.
+
+// chaos-game.ts's createEmitterStream (mulberry32), restated for a single
+// u32 state — the DERIVED stream, kept separate from the primary PCG
+// stream (pcgNext/rand01) above. Output normalization mirrors rand01's own
+// top-24-bit convention (guaranteeing strictly < 1) rather than
+// mulberry32's raw /2^32 division — not required to be bit-exact with the
+// CPU's derived stream (see this section's own doc).
+fn emitterNext(state: ptr<function, u32>) -> f32 {
+  *state = (*state) + 0x6d2b79f5u;
+  let seed = *state;
+  var t: u32 = (seed ^ (seed >> 15u)) * (1u | seed);
+  t = (t + ((t ^ (t >> 7u)) * (61u | t))) ^ t;
+  return f32((t ^ (t >> 14u)) >> 8u) * (1.0 / 16777216.0);
+}
+
+// shapes.ts's drawBall: cbrt-radius, cosine-uniform direction — exact,
+// constant-draw (3), no rejection; WGSL has no cbrt, but the argument is
+// always >= 0 (emitterNext's range), so pow(x, 1/3) is exact for it.
+fn emitterDrawBall(state: ptr<function, u32>) -> vec3f {
+  let r = pow(emitterNext(state), 1.0 / 3.0);
+  let ct = 2.0 * emitterNext(state) - 1.0;
+  let st = sqrt(max(0.0, 1.0 - ct * ct));
+  let ph = 2.0 * PI * emitterNext(state);
+  return vec3f(r * st * cos(ph), r * st * sin(ph), r * ct);
+}
+
+fn emitterDrawSphere(state: ptr<function, u32>, radius: f32) -> vec3f {
+  return emitterDrawBall(state) * radius;
+}
+
+fn emitterDrawBox(state: ptr<function, u32>, half: vec3f) -> vec3f {
+  return vec3f(
+    (2.0 * emitterNext(state) - 1.0) * half.x,
+    (2.0 * emitterNext(state) - 1.0) * half.y,
+    (2.0 * emitterNext(state) - 1.0) * half.z,
+  );
+}
+
+// shapes.ts's torus sampler draws (theta, rho-quantile) exactly as below,
+// then ACCEPT-REJECTS phi against the (major + rho*cos(phi)) volume
+// weight — forbidden on device (this section's doc). The conditional
+// density of phi given rho is (1 + e*cos(phi)) / (2*PI), e = rho/major;
+// its CDF phi + e*sin(phi) = 2*PI*u is Kepler's equation, inverted here
+// by a FIXED six-step Newton iteration from the mean-anomaly guess
+// (standard practice for this exact equation, and reliable over this
+// domain's e in [0, 1]) instead of rho's rejection loop — constant draws
+// (3), zero rejection, matching the sampler's MEASURE rather than its
+// algorithm.
+fn emitterDrawTorus(state: ptr<function, u32>, major: f32, minor: f32) -> vec3f {
+  let th = 2.0 * PI * emitterNext(state);
+  let rho = minor * sqrt(emitterNext(state));
+  let e = clamp(rho / max(major, 1e-9), 0.0, 1.0);
+  let m = 2.0 * PI * emitterNext(state);
+  var phi = m;
+  for (var i = 0u; i < 6u; i++) {
+    let f = phi + e * sin(phi) - m;
+    let fp = 1.0 + e * cos(phi);
+    phi = phi - f / max(fp, 1e-6);
+  }
+  let rad = major + rho * cos(phi);
+  return vec3f(rad * cos(th), rad * sin(th), rho * sin(phi));
+}
+
+// shapes.ts's capsule sampler: one draw picks the cylinder body vs. the
+// two end caps (weighted by volume — the caps are one full ball split by
+// the axial plane, exactly like the CPU closure), each branch constant-draw
+// and rejection-free already, so this needs no restatement beyond the
+// orthonormal basis (wz, u, v) — cheap to re-derive on device from (a, b)
+// rather than a third host-precomputed field.
+fn emitterDrawCapsule(state: ptr<function, u32>, a: vec3f, b: vec3f, r: f32) -> vec3f {
+  let ba = b - a;
+  let len = length(ba);
+  var wz = vec3f(0.0, 0.0, 1.0);
+  if (len > 0.0) {
+    wz = ba / len;
+  }
+  var pick = vec3f(1.0, 0.0, 0.0);
+  if (abs(wz.x) >= 0.9) {
+    pick = vec3f(0.0, 1.0, 0.0);
+  }
+  var u = cross(wz, pick);
+  u = u / length(u);
+  let v = cross(wz, u);
+  let vCyl = PI * r * r * len;
+  let vCaps = (4.0 / 3.0) * PI * r * r * r;
+  if (emitterNext(state) * (vCyl + vCaps) < vCyl) {
+    let t = emitterNext(state) * len;
+    let rho = r * sqrt(emitterNext(state));
+    let phi = 2.0 * PI * emitterNext(state);
+    return a + wz * t + u * (rho * cos(phi)) + v * (rho * sin(phi));
+  }
+  let bp = emitterDrawBall(state) * r;
+  var end = a;
+  if (dot(bp, wz) >= 0.0) {
+    end = b;
+  }
+  return end + bp;
+}
+
+// The gear profile's host-triangulated triangle-fan CDF
+// (buildGearTriangleTable, module doc's binding-7 entry): draw picks a
+// triangle by cumulative area (bounded binary search, pickSlot's own
+// idiom), then an exact uniform point within it via the standard
+// sqrt-barycentric construction — constant draws (4), zero rejection.
+fn emitterDrawGear(state: ptr<function, u32>, tableOffset: u32, triCount: u32, halfHeight: f32) -> vec3f {
+  let total = emitterGearTable[tableOffset + triCount - 1u];
+  let needle = emitterNext(state) * total;
+  var lo = 0u;
+  var hi = triCount - 1u;
+  loop {
+    if (lo >= hi) {
+      break;
+    }
+    let mid = (lo + hi) >> 1u;
+    if (needle < emitterGearTable[tableOffset + mid]) {
+      hi = mid;
+    } else {
+      lo = mid + 1u;
+    }
+  }
+  let vBase = tableOffset + triCount + lo * 6u;
+  let v0 = vec2f(emitterGearTable[vBase], emitterGearTable[vBase + 1u]);
+  let v1 = vec2f(emitterGearTable[vBase + 2u], emitterGearTable[vBase + 3u]);
+  let v2 = vec2f(emitterGearTable[vBase + 4u], emitterGearTable[vBase + 5u]);
+  let su = sqrt(emitterNext(state));
+  let u2 = emitterNext(state);
+  let aw = 1.0 - su;
+  let bw = (1.0 - u2) * su;
+  let cw = u2 * su;
+  let xy = v0 * aw + v1 * bw + v2 * cw;
+  let z = (2.0 * emitterNext(state) - 1.0) * halfHeight;
+  return vec3f(xy.x, xy.y, z);
+}
+
+// Dispatch one EmitterPart's own primitive sampler (its LOCAL-frame draw),
+// then pose it exactly as shapes.ts's toWorld: scale, then rotate
+// (part.rot0..2's baked row-major 3x3 — toWorld's FORWARD application, not
+// partSdf's transpose), then offset.
+fn emitterSamplePart(state: ptr<function, u32>, part: EmitterPart) -> vec3f {
+  let kind = u32(part.kindParams0.x);
+  var local: vec3f;
+  switch kind {
+    case 0u: { // sphere: kindParams0.y = radius.
+      local = emitterDrawSphere(state, part.kindParams0.y);
+    }
+    case 1u: { // box: kindParams0.yzw = half extents.
+      local = emitterDrawBox(state, part.kindParams0.yzw);
+    }
+    case 2u: { // torus: kindParams0.y = major, .z = minor.
+      local = emitterDrawTorus(state, part.kindParams0.y, part.kindParams0.z);
+    }
+    case 3u: { // capsule: kindParams0.yzw = a, params1.xyz = b, .w = radius.
+      local = emitterDrawCapsule(state, part.kindParams0.yzw, part.params1.xyz, part.params1.w);
+    }
+    default: { // 4u gear: kindParams0.y = tableOffset, .z = triCount, .w = halfHeight.
+      local = emitterDrawGear(state, u32(part.kindParams0.y), u32(part.kindParams0.z), part.kindParams0.w);
+    }
+  }
+  let scaled = local * part.poseOffsetScale.w;
+  let rotated = vec3f(
+    dot(part.rot0.xyz, scaled),
+    dot(part.rot1.xyz, scaled),
+    dot(part.rot2.xyz, scaled),
+  );
+  return rotated + part.poseOffsetScale.xyz;
+}
+
+// One slot's whole emitter sample: pick a part by volume-weighted
+// cumulative search (partCount <= 1 skips the search entirely — the common
+// case, GEAR_SHAPE and every shipped emitter included), then that part's
+// own sampler + pose. Deliberately does NOT reproduce shapes.ts's
+// min-index-acceptance overlap correction — see the Slot layout doc's
+// EmitterPart entry for why (an unbounded rejection loop) and its measured
+// scope (unreachable while every shipped emitter is single-part).
+fn emitterSampleSlot(state: ptr<function, u32>, slotIdx: u32) -> vec3f {
+  let partCount = slots[slotIdx].emitterPartCount;
+  var pick = 0u;
+  if (partCount > 1u) {
+    let needle = emitterNext(state) * slots[slotIdx].emitterTotalWeight;
+    var lo = 0u;
+    var hi = partCount - 1u;
+    loop {
+      if (lo >= hi) {
+        break;
+      }
+      let mid = (lo + hi) >> 1u;
+      if (needle < slots[slotIdx].emitterParts[mid].rot0.w) {
+        hi = mid;
+      } else {
+        lo = mid + 1u;
+      }
+    }
+    pick = lo;
+  }
+  return emitterSamplePart(state, slots[slotIdx].emitterParts[pick]);
 }
 
 // The variation registry (variations.ts's VARIATIONS), case-indexed by
@@ -495,37 +802,60 @@ fn applyVariation(t: u32, p: vec3f, rng: ptr<function, vec2u>, fr: vec3f) -> vec
 
 // One slot's full map: affine, then the weighted variation blend (left to
 // right, so stochastic variations consume the RNG in list order), then the
-// symmetry post-rotation. Mirrors accumulateFlame's inlined stepOrbit body.
+// symmetry post-rotation. Mirrors accumulateFlame's inlined stepOrbit body —
+// including its emitter (condensation) branch: when this slot's BASE
+// transform carries a prepared emitter, the incoming point p and the
+// variation blend are IGNORED and the new point is a fresh shape sample
+// posed by this slot's OWN affine rows (stepOrbit's applyAffine(prepared.
+// affines[idx], sample)), consuming exactly one primary rng draw beyond
+// the transform pick regardless of what the sampler spends (emitterNext's
+// own doc). Post-rotation is unconditional either way — a kaleidoscope
+// copy's post-rotation bends an emitted point exactly as it bends a
+// warped one.
 fn applySlot(slotIdx: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
   let s = slots[slotIdx];
-  let a = vec3f(
-    dot(s.rowX.xyz, p) + s.rowX.w,
-    dot(s.rowY.xyz, p) + s.rowY.w,
-    dot(s.rowZ.xyz, p) + s.rowZ.w,
-  );
-  var q = a;
-  if (s.varCount > 0u) {
-    var acc = vec3f(0.0);
-    for (var v = 0u; v < s.varCount; v++) {
-      // Lane reads go through the STORAGE REFERENCE (slots[slotIdx]), not
-      // the value copy in "s": dynamically indexing an array inside a
-      // let-bound composite VALUE is a spot where WGSL implementations
-      // disagree (Tint accepts it; Naga/Firefox is stricter) — indexing
-      // through a reference is unambiguously valid everywhere. The re-read
-      // stays in cache; "s" still serves every constant-index field.
-      let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
-      let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
-      // The fold family (12..14) reads its own authored lengths off the
-      // slot; every other type ignores the argument. Explicit bounds, not
-      // an unchecked ty - 12u: the two escape-time maps sit at 15/16 and
-      // would index past the three lanes.
-      var fi = 0u;
-      if (ty >= 12u && ty <= 14u) {
-        fi = ty - 12u;
+  var q: vec3f;
+  if (s.emitterFlag == 1u) {
+    // pcgNext, not rand01: the seed wants the PRIMARY stream's full 32-bit
+    // spread (emitterSeed's own CPU-side draw is full-width), where rand01's
+    // f32 conversion only carries the top 24 bits.
+    var derived = pcgNext(rng);
+    let sample = emitterSampleSlot(&derived, slotIdx);
+    q = vec3f(
+      dot(s.rowX.xyz, sample) + s.rowX.w,
+      dot(s.rowY.xyz, sample) + s.rowY.w,
+      dot(s.rowZ.xyz, sample) + s.rowZ.w,
+    );
+  } else {
+    let a = vec3f(
+      dot(s.rowX.xyz, p) + s.rowX.w,
+      dot(s.rowY.xyz, p) + s.rowY.w,
+      dot(s.rowZ.xyz, p) + s.rowZ.w,
+    );
+    q = a;
+    if (s.varCount > 0u) {
+      var acc = vec3f(0.0);
+      for (var v = 0u; v < s.varCount; v++) {
+        // Lane reads go through the STORAGE REFERENCE (slots[slotIdx]), not
+        // the value copy in "s": dynamically indexing an array inside a
+        // let-bound composite VALUE is a spot where WGSL implementations
+        // disagree (Tint accepts it; Naga/Firefox is stricter) — indexing
+        // through a reference is unambiguously valid everywhere. The re-read
+        // stays in cache; "s" still serves every constant-index field.
+        let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
+        let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
+        // The fold family (12..14) reads its own authored lengths off the
+        // slot; every other type ignores the argument. Explicit bounds, not
+        // an unchecked ty - 12u: the two escape-time maps sit at 15/16 and
+        // would index past the three lanes.
+        var fi = 0u;
+        if (ty >= 12u && ty <= 14u) {
+          fi = ty - 12u;
+        }
+        acc += w * applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz);
       }
-      acc += w * applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz);
+      q = acc;
     }
-    q = acc;
   }
   if (s.hasPost == 1u) {
     q = vec3f(
@@ -791,7 +1121,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
  * offsets rather than importing these, so a mistake here could not
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 84.
+const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 280.
 const SLOT_ROW_X = 0;
 const SLOT_ROW_Y = 4;
 const SLOT_ROW_Z = 8;
@@ -828,6 +1158,30 @@ const SLOT_COLOR_SPEED = 68;
  * contiguous elements, so fold `i` sits at `SLOT_FOLD_RADII + i * 4`.
  */
 const SLOT_FOLD_RADII = 72;
+/**
+ * Shape-emitter (condensation) block — `writeSlotEmitter`, byte-layout
+ * doc's Slot entry. `emitterFlag`/`emitterPartCount`/`emitterTotalWeight`
+ * are a header vec4 (element 87 its trailing pad); `emitterParts` is
+ * `{@link MAX_SHAPE_PARTS}` contiguous {@link EMITTER_PART_STRIDE_BYTES}
+ * (96 B = {@link F32_PER_EMITTER_PART} 24-element) blocks — part `i` at
+ * `SLOT_EMITTER_PARTS + i * F32_PER_EMITTER_PART`.
+ */
+const SLOT_EMITTER_FLAG = 84;
+const SLOT_EMITTER_PART_COUNT = 85;
+const SLOT_EMITTER_TOTAL_WEIGHT = 86;
+const SLOT_EMITTER_PARTS = 88;
+/** One `EmitterPart`'s element offsets within its own 24-element block
+ * (see {@link EMITTER_PART_STRIDE_BYTES}'s WGSL `EmitterPart` doc): two
+ * kind-tagged param vec4s, the pose offset+scale vec4, then the baked 3x3
+ * forward rotation across three vec4 rows — row 0's spare `.w` doubles as
+ * this part's cumulative pick weight ({@link EP_ROT0} `+ 3`). */
+const F32_PER_EMITTER_PART = EMITTER_PART_STRIDE_BYTES / 4; // 24.
+const EP_KIND_PARAMS0 = 0;
+const EP_PARAMS1 = 4;
+const EP_POSE_OFFSET_SCALE = 8;
+const EP_ROT0 = 12;
+const EP_ROT1 = 16;
+const EP_ROT2 = 20;
 
 const F32_PER_CHAIN = CHAIN_STRIDE_BYTES / 4; // 8.
 const CHAIN_POS = 0; // pos.xyzw: x, y, z, colorCoord.
@@ -1028,6 +1382,401 @@ function writeSlotVariations(
   u32[base + SLOT_VAR_COUNT] = types.length;
 }
 
+// ------------------------------------------------------- shape emitters
+//
+// Everything below is DIMENSION-FREE (the shape vocabulary is 3D always —
+// shapes.ts's own parity statement): flame-gpu-4d.ts's writeSlot4Emitter
+// calls these directly rather than restating them, exactly like
+// packChaosRowsTable/packVariations/writeColorEntry above.
+
+/** One gear-kind `EmitterPart`'s region within the shared
+ * `emitterGearTable` buffer (byte-layout doc's binding-7 entry): `offset`
+ * is where its `triCount` cumulative areas start (its `triCount` vertex
+ * triples follow immediately after — `emitterDrawGear`'s own layout).
+ * `totalArea` is the region's own measured total — `buildGearTriangleTable`'s
+ * last cumulative entry, carried out so {@link emitterPartWeight} and the
+ * device table's own total can never disagree about what this part's area
+ * is. */
+export interface GearTableRegion {
+  offset: number;
+  triCount: number;
+  totalArea: number;
+}
+
+/** Accumulates every gear-kind `EmitterPart`'s triangulated region into
+ * ONE flat buffer for a whole packed system — {@link packGpuSystem}/
+ * `packGpuSystem4` each own one instance for their own kernel's binding 7;
+ * {@link finishGearTableBuilder} converts it once, after every slot in
+ * that system has been packed. */
+export interface GearTableBuilder {
+  floats: number[];
+}
+
+export function createGearTableBuilder(): GearTableBuilder {
+  return { floats: [] };
+}
+
+/** `null` when nothing was accumulated (no gear-shaped emitter part
+ * anywhere in the system) — {@link PackedGpuSystem.gearTable}'s value, the
+ * `chaosRows`/echo-colors null-means-alias-an-existing-binding idiom one
+ * binding further (binding 7's own doc). */
+export function finishGearTableBuilder(
+  builder: GearTableBuilder,
+): ArrayBuffer | null {
+  if (builder.floats.length === 0) return null;
+  return new Float32Array(builder.floats).buffer;
+}
+
+/**
+ * Restates `shapes.ts`'s private `gearProfileSdf` (the module doc's
+ * "restated, not imported" pattern — `symmetryPostRotation`'s own
+ * precedent above), operation for operation, PURELY to triangulate the
+ * profile host-side ({@link buildGearTriangleTable}); the CPU sampler's
+ * own algorithm (`shapes.ts`'s `prepareShapeSampler`) is untouched and
+ * stays the oracle the agreement gate pins against.
+ */
+function gearProfileSdfForTable(
+  teeth: number,
+  radius: number,
+  tooth0: number,
+  tooth1: number,
+  hole: number,
+  px: number,
+  py: number,
+): number {
+  const t = Number.isFinite(teeth) ? Math.max(1, Math.round(teeth)) : 1;
+  const seg = (2 * Math.PI) / t;
+  const lp = Math.hypot(px, py);
+  const a0 = Math.atan2(py, px) + seg * 0.5;
+  const a1 = a0 - seg * Math.floor(a0 / seg) - seg * 0.5;
+  const gx = Math.cos(a1) * lp - radius;
+  const gy = Math.sin(a1) * lp;
+  const dx = Math.abs(gx) - tooth0;
+  const dy = Math.abs(gy) - tooth1;
+  const ox = Math.max(dx, 0);
+  const oy = Math.max(dy, 0);
+  const boxD = Math.sqrt(ox * ox + oy * oy) + Math.min(Math.max(dx, dy), 0);
+  let d = Math.min(lp - radius, boxD);
+  if (hole > 0) d = Math.max(d, hole - lp);
+  return d;
+}
+
+function emitterTriangleArea(
+  a: readonly [number, number],
+  b: readonly [number, number],
+  c: readonly [number, number],
+): number {
+  return (
+    Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2
+  );
+}
+
+/** Angular resolution for {@link buildGearTriangleTable}'s outer
+ * boundary — scales with tooth count (so a many-toothed gear's teeth stay
+ * resolved) inside a floor/ceiling that bounds the device table's size. */
+const GEAR_TABLE_MIN_STEPS = 64;
+const GEAR_TABLE_MAX_STEPS = 512;
+const GEAR_TABLE_STEPS_PER_TOOTH = 16;
+/** Bisection iterations for the outer-boundary root find — 40 halvings
+ * narrows any realistic bracket to far past f32 precision. */
+const GEAR_TABLE_BISECT_ITERATIONS = 40;
+
+/**
+ * Triangulate a gear primitive's solid 2D profile (byte-layout doc's
+ * binding-7 entry) into a triangle-fan CDF: {@link GEAR_TABLE_MIN_STEPS}..
+ * {@link GEAR_TABLE_MAX_STEPS} outer-boundary points found by BISECTION
+ * against {@link gearProfileSdfForTable} — robust, because the whole body
+ * disc up to `radius` is inside the profile at every angle by
+ * construction (so `radius` is always a valid "inside" low bracket) and a
+ * tooth-box corner bounds the farthest possible point (a valid "outside"
+ * high one) — paired with the inner hole circle (radius 0 when `hole` is
+ * absent, which collapses every "inner" triangle to zero area: a plain
+ * fan falls out of this quad-strip construction rather than needing its
+ * own branch) into `2 * steps` triangles, APPENDED to `builder` as
+ * [cumulative areas ascending, then `2 * steps` vertex triples] —
+ * `emitterDrawGear`'s own layout. Deterministic (no RNG, unlike
+ * `shapes.ts`'s seeded-Monte-Carlo area measure, which this module cannot
+ * reach — it is private): two calls on the same primitive always agree
+ * bit for bit.
+ */
+export function buildGearTriangleTable(
+  prim: Extract<ShapePrimitive, { kind: "gear" }>,
+  builder: GearTableBuilder,
+): GearTableRegion {
+  const teeth = Number.isFinite(prim.teeth)
+    ? Math.max(1, Math.round(prim.teeth))
+    : 1;
+  const steps = Math.max(
+    GEAR_TABLE_MIN_STEPS,
+    Math.min(GEAR_TABLE_MAX_STEPS, teeth * GEAR_TABLE_STEPS_PER_TOOTH),
+  );
+  const innerR = prim.hole > 0 ? prim.hole : 0;
+  const outerR = prim.radius + prim.tooth[0];
+  const searchHi = Math.hypot(outerR, prim.tooth[1]) * 1.001;
+  const outer: [number, number][] = new Array<[number, number]>(steps);
+  for (let i = 0; i < steps; i++) {
+    const theta = (2 * Math.PI * i) / steps;
+    const ct = Math.cos(theta);
+    const st = Math.sin(theta);
+    let lo = prim.radius;
+    let hi = searchHi;
+    for (let iter = 0; iter < GEAR_TABLE_BISECT_ITERATIONS; iter++) {
+      const mid = (lo + hi) / 2;
+      const d = gearProfileSdfForTable(
+        teeth,
+        prim.radius,
+        prim.tooth[0],
+        prim.tooth[1],
+        prim.hole,
+        mid * ct,
+        mid * st,
+      );
+      if (d <= 0) lo = mid;
+      else hi = mid;
+    }
+    outer[i] = [lo * ct, lo * st];
+  }
+  const triCount = 2 * steps;
+  const cumAreas = new Array<number>(triCount);
+  const verts: [number, number][][] = new Array<[number, number][]>(triCount);
+  let running = 0;
+  for (let i = 0; i < steps; i++) {
+    const j = (i + 1) % steps;
+    const thetaI = (2 * Math.PI * i) / steps;
+    const thetaJ = (2 * Math.PI * j) / steps;
+    const innerI: [number, number] = [
+      innerR * Math.cos(thetaI),
+      innerR * Math.sin(thetaI),
+    ];
+    const innerJ: [number, number] = [
+      innerR * Math.cos(thetaJ),
+      innerR * Math.sin(thetaJ),
+    ];
+    running += emitterTriangleArea(innerI, innerJ, outer[i]);
+    cumAreas[2 * i] = running;
+    verts[2 * i] = [innerI, innerJ, outer[i]];
+    running += emitterTriangleArea(innerJ, outer[j], outer[i]);
+    cumAreas[2 * i + 1] = running;
+    verts[2 * i + 1] = [innerJ, outer[j], outer[i]];
+  }
+  const offset = builder.floats.length;
+  for (let k = 0; k < triCount; k++) builder.floats.push(cumAreas[k]);
+  for (let k = 0; k < triCount; k++) {
+    for (const [x, y] of verts[k]) builder.floats.push(x, y);
+  }
+  return { offset, triCount, totalArea: running };
+}
+
+/** Restates `shapes.ts`'s private `resolvePoseScale`: non-finite or
+ * non-positive resolves to the identity (that module's pose-domain rule). */
+function resolveEmitterPoseScale(pose: ShapePose | undefined): number {
+  const s = pose?.scale;
+  return typeof s === "number" && Number.isFinite(s) && s > 0 ? s : 1;
+}
+
+/** Restates `shapes.ts`'s private `poseOffset`'s VALUE (not its skip
+ * optimization, which only matters for codegen): absent is the identity
+ * offset. */
+function resolveEmitterOffset(pose: ShapePose | undefined): Vec3 {
+  return pose?.offset ?? [0, 0, 0];
+}
+
+/** Restates `shapes.ts`'s private `poseRotation`, baked as an explicit
+ * row-major 3x3 (the identity when absent/zero, `rotationMatrixXYZ`'s own
+ * output otherwise) rather than returning `null`: the device applies this
+ * matrix unconditionally (byte-layout doc's `EmitterPart` entry), so an
+ * identity must be a real matrix, not a skipped step. */
+function resolveEmitterRotation(pose: ShapePose | undefined): number[] {
+  const r = pose?.rotate;
+  if (!r || (r[0] === 0 && r[1] === 0 && r[2] === 0)) {
+    return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  }
+  return rotationMatrixXYZ(r[0], r[1], r[2]);
+}
+
+/**
+ * Restates `shapes.ts`'s private `primitiveVolume(prim) * scale ** 3` —
+ * the SAME weight `prepareShapeSampler` gives each part in its
+ * volume-proportional pick, so this packer's multi-part search agrees
+ * with the CPU oracle's about which part is "big". `gearArea` is
+ * {@link buildGearTriangleTable}'s OWN measured total (not `shapes.ts`'s
+ * private seeded-Monte-Carlo `gearProfileMeasures`, which this module
+ * cannot reach), so a gear part's weight here and its device table's own
+ * total can never disagree about what "this part's area" means; ignored
+ * for every other kind.
+ */
+export function emitterPartWeight(part: ShapePart, gearArea: number): number {
+  const prim = part.primitive;
+  const scale = resolveEmitterPoseScale(part.pose);
+  let volume: number;
+  switch (prim.kind) {
+    case "sphere":
+      volume = Math.max(0, (4 / 3) * Math.PI * prim.radius ** 3);
+      break;
+    case "box":
+      volume = Math.max(0, 8 * prim.half[0] * prim.half[1] * prim.half[2]);
+      break;
+    case "torus":
+      volume = Math.max(
+        0,
+        2 * Math.PI * Math.PI * prim.major * prim.minor ** 2,
+      );
+      break;
+    case "capsule": {
+      const len = Math.hypot(
+        prim.b[0] - prim.a[0],
+        prim.b[1] - prim.a[1],
+        prim.b[2] - prim.a[2],
+      );
+      const r = Math.max(0, prim.radius);
+      volume = Math.PI * r * r * len + (4 / 3) * Math.PI * r ** 3;
+      break;
+    }
+    case "gear":
+      volume = Math.max(0, gearArea * 2 * prim.halfHeight);
+      break;
+  }
+  return volume * scale ** 3;
+}
+
+/**
+ * Write one `EmitterPart` block (byte-layout doc's `EmitterPart` entry) at
+ * `base`: the kind tag + up to seven kind-dependent params (gear's are a
+ * {@link buildGearTriangleTable} region's `offset`/`triCount` plus
+ * `halfHeight` — never the raw teeth/radius/tooth/hole; the device sampler
+ * never re-triangulates, `gearRegion` non-null exactly when `part.primitive.
+ * kind === "gear"`), the baked similarity pose (scale, `rotationMatrixXYZ`'s
+ * row-major 3x3 applied FORWARD — `shapes.ts`'s `toWorld` convention, not
+ * `partSdf`'s transpose — then offset), and this part's cumulative pick
+ * weight in `rot0`'s spare `.w` lane.
+ */
+export function writeEmitterPart(
+  f32: Float32Array,
+  base: number,
+  part: ShapePart,
+  cumWeight: number,
+  gearRegion: GearTableRegion | null,
+): void {
+  const prim = part.primitive;
+  const kp = base + EP_KIND_PARAMS0;
+  const p1 = base + EP_PARAMS1;
+  switch (prim.kind) {
+    case "sphere":
+      f32[kp] = 0;
+      f32[kp + 1] = prim.radius;
+      break;
+    case "box":
+      f32[kp] = 1;
+      f32[kp + 1] = prim.half[0];
+      f32[kp + 2] = prim.half[1];
+      f32[kp + 3] = prim.half[2];
+      break;
+    case "torus":
+      f32[kp] = 2;
+      f32[kp + 1] = prim.major;
+      f32[kp + 2] = prim.minor;
+      break;
+    case "capsule":
+      f32[kp] = 3;
+      f32[kp + 1] = prim.a[0];
+      f32[kp + 2] = prim.a[1];
+      f32[kp + 3] = prim.a[2];
+      f32[p1] = prim.b[0];
+      f32[p1 + 1] = prim.b[1];
+      f32[p1 + 2] = prim.b[2];
+      f32[p1 + 3] = prim.radius;
+      break;
+    case "gear": {
+      // gearRegion is built once by the caller's own first pass over
+      // parts (writeSlotEmitter/writeSlot4Emitter) — never rebuilt here,
+      // since buildGearTriangleTable is not free and its weight is needed
+      // ahead of any part's write (cumWeight, above).
+      const region = gearRegion as GearTableRegion;
+      f32[kp] = 4;
+      f32[kp + 1] = region.offset;
+      f32[kp + 2] = region.triCount;
+      f32[kp + 3] = prim.halfHeight;
+      break;
+    }
+  }
+  const offset = resolveEmitterOffset(part.pose);
+  const scale = resolveEmitterPoseScale(part.pose);
+  const po = base + EP_POSE_OFFSET_SCALE;
+  f32[po] = offset[0];
+  f32[po + 1] = offset[1];
+  f32[po + 2] = offset[2];
+  f32[po + 3] = scale;
+  const rot = resolveEmitterRotation(part.pose);
+  const r0 = base + EP_ROT0;
+  f32[r0] = rot[0];
+  f32[r0 + 1] = rot[1];
+  f32[r0 + 2] = rot[2];
+  f32[r0 + 3] = cumWeight;
+  const r1 = base + EP_ROT1;
+  f32[r1] = rot[3];
+  f32[r1 + 1] = rot[4];
+  f32[r1 + 2] = rot[5];
+  const r2 = base + EP_ROT2;
+  f32[r2] = rot[6];
+  f32[r2 + 1] = rot[7];
+  f32[r2 + 2] = rot[8];
+}
+
+/**
+ * Write one slot's emitter block (byte-layout doc's Slot entry) from the
+ * BASE map's raw `ShapeSpec`, or leave it at the `ArrayBuffer`'s zero
+ * default when `spec` is `undefined` — the caller (`packGpuSystem`) passes
+ * `undefined` for every transform `prepareEmitters` didn't return a
+ * sampler for (absent field OR the unsamplable-spec fallback), which is
+ * how this packer and the CPU oracle can never disagree about WHICH
+ * transforms are emitters, even though they don't share the sampling code
+ * itself (see the Slot layout doc's min-index-overlap note). Every gear
+ * part triangulates exactly once (a first pass computes every part's
+ * weight — gear's from its own fresh table — before any part is written,
+ * since `cumWeight` needs every earlier part's weight already summed).
+ */
+function writeSlotEmitter(
+  f32: Float32Array,
+  u32: Uint32Array,
+  base: number,
+  spec: ShapeSpec | undefined,
+  gearBuilder: GearTableBuilder,
+): void {
+  if (spec === undefined) return;
+  const n = Math.min(spec.parts.length, MAX_SHAPE_PARTS);
+  if (n <= 0) return;
+  u32[base + SLOT_EMITTER_FLAG] = 1;
+  u32[base + SLOT_EMITTER_PART_COUNT] = n;
+  const gearRegions: (GearTableRegion | null)[] =
+    new Array<GearTableRegion | null>(n);
+  const weights = new Array<number>(n);
+  let totalWeight = 0;
+  for (let i = 0; i < n; i++) {
+    const part = spec.parts[i];
+    if (part.primitive.kind === "gear") {
+      const region = buildGearTriangleTable(part.primitive, gearBuilder);
+      gearRegions[i] = region;
+      weights[i] = emitterPartWeight(part, region.totalArea);
+    } else {
+      gearRegions[i] = null;
+      weights[i] = emitterPartWeight(part, 0);
+    }
+    totalWeight += weights[i];
+  }
+  f32[base + SLOT_EMITTER_TOTAL_WEIGHT] = totalWeight;
+  let cum = 0;
+  for (let i = 0; i < n; i++) {
+    cum += weights[i];
+    writeEmitterPart(
+      f32,
+      base + SLOT_EMITTER_PARTS + i * F32_PER_EMITTER_PART,
+      spec.parts[i],
+      cum,
+      gearRegions[i],
+    );
+  }
+}
+
 /**
  * Write one `colors` entry: channels pre-scaled by
  * {@link COLOR_FIXED_POINT_SCALE} and rounded to the nearest integer, so the
@@ -1127,6 +1876,12 @@ export interface PackedGpuSystem {
    * chi branch never engages (`chaosEnabled` 0) and the backend aliases
    * binding 6 exactly as an echo-less one aliases binding 5. */
   chaosRows: ArrayBuffer | null;
+  /** Every gear-shaped emitter part's triangulated table
+   * ({@link buildGearTriangleTable}, byte-layout doc's binding-7 entry),
+   * concatenated by {@link finishGearTableBuilder}, or `null` when the
+   * system has no gear-shaped emitter part anywhere — the `chaosRows`
+   * `null`-means-alias-an-existing-binding idiom one binding further. */
+  gearTable: ArrayBuffer | null;
 }
 
 /**
@@ -1260,6 +2015,16 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     (t) => t.colorSpeed ?? DEFAULT_COLOR_SPEED,
   );
 
+  // Shape emitters (condensation): chaos-game.ts's prepareEmitters is the
+  // ONE definition of which BASE transforms are (samplable) emitters — the
+  // unsamplable-spec fallback lives there, so calling it here rather than
+  // re-deriving "is this spec samplable" is what keeps this packer and the
+  // CPU oracle from ever disagreeing about which slots are one (see
+  // writeSlotEmitter's doc). gearBuilder accumulates every gear-shaped
+  // part's table for the WHOLE system into ONE buffer (binding 7).
+  const emitters = prepareEmitters(transforms);
+  const gearBuilder = createGearTableBuilder();
+
   // Copy-major expansion: copy 0 (unrotated) first, then copy 1, etc. — see
   // prepareChaosGame's identical loop shape.
   for (let k = 0; k < order; k++) {
@@ -1277,6 +2042,15 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
       slotF32[base + SLOT_CUM_WEIGHT] = cumWeights[s];
       slotF32[base + SLOT_COLOR_INDEX] = colorIndices[i];
       slotF32[base + SLOT_COLOR_SPEED] = colorSpeeds[i];
+      writeSlotEmitter(
+        slotF32,
+        slotU32,
+        base,
+        emitters !== null && emitters[i] !== null
+          ? transforms[i].emitter
+          : undefined,
+        gearBuilder,
+      );
     }
   }
 
@@ -1353,6 +2127,7 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     chaosRows: chaos
       ? packChaosRowsTable(chaos, transformCount, baseTransformCount)
       : null,
+    gearTable: finishGearTableBuilder(gearBuilder),
   };
 }
 

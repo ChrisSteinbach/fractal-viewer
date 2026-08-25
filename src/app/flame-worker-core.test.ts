@@ -3093,7 +3093,7 @@ describe("FlameWorkerSession chaos rows take the GPU backend", () => {
   });
 });
 
-describe("FlameWorkerSession shape emitters force the CPU backend", () => {
+describe("FlameWorkerSession shape emitters take the GPU backend", () => {
   const EMITTER = {
     parts: [
       {
@@ -3103,7 +3103,7 @@ describe("FlameWorkerSession shape emitters force the CPU backend", () => {
     ],
   };
 
-  it("never attempts the GPU factory for an emitter document and discloses emitterForced on the backend event", async () => {
+  it("attempts the GPU factory for an emitter document — the WGSL kernels carry emitters now, so nothing forces CPU and nothing is disclosed", async () => {
     let factoryCalls = 0;
     const createGpuBackend = async (): Promise<FlameAccumBackend> => {
       factoryCalls++;
@@ -3125,15 +3125,21 @@ describe("FlameWorkerSession shape emitters force the CPU backend", () => {
     );
     await drainAsync(scheduler);
 
-    // GPU would have been attempted (auto + factory + no failure) — the
-    // emitters are the one reason it wasn't, so the event says so.
-    expect(factoryCalls).toBe(0);
+    // The CPU-force era's routing (emitter documents never reached the GPU
+    // factory) is over: the packers transfer the condensation-shape block
+    // and the kernels run applySlot's emitter branch, so an emitter
+    // document takes whatever backend the machine offers — and the backend
+    // event carries no emitterForced.
+    expect(factoryCalls).toBe(1);
     expect(backendEvents(events)).toEqual([
-      { type: "backend", backend: "cpu", emitterForced: true },
+      { type: "backend", backend: "gpu" },
     ]);
   });
 
-  it("does not blame emitters when GPU was never on the table", async () => {
+  it("takes the ordinary CPU path, with no emitter disclosure, when GPU was never on the table", async () => {
+    // No factory wired up: the CPU backend is the natural choice, and the
+    // event must NOT carry emitterForced — emitters are not a reason for
+    // anything any more, on any machine.
     const { session, events, scheduler } = harness({});
     session.handle(
       startCommand({
@@ -3150,13 +3156,17 @@ describe("FlameWorkerSession shape emitters force the CPU backend", () => {
     ]);
   });
 
-  it("forces CPU for a chi+emitter document via the emitter flag ALONE — chi is no longer a blocker, so it must not be blamed", async () => {
-    const createGpuBackend = async (): Promise<FlameAccumBackend> => ({
-      kind: "gpu",
-      accumulate: async (n) => n,
-      snapshot: async () => createFlameHistogram(8, 8),
-      destroy: () => {},
-    });
+  it("attempts the GPU factory for a chi+emitter document — both selection layers are known to the kernels now", async () => {
+    let factoryCalls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factoryCalls++;
+      return {
+        kind: "gpu",
+        accumulate: async (n) => n,
+        snapshot: async () => createFlameHistogram(8, 8),
+        destroy: () => {},
+      };
+    };
     const { session, events, scheduler } = harness({ createGpuBackend });
     session.handle(
       startCommand({
@@ -3168,16 +3178,13 @@ describe("FlameWorkerSession shape emitters force the CPU backend", () => {
     );
     await drainAsync(scheduler);
 
-    // The kernels know chi but not emitters (fr-wo2j.8 is that lift), so
-    // the emitter force still routes this document to CPU — and the event
-    // names emitters alone: a chaosForced here would claim a force that no
-    // longer exists.
+    expect(factoryCalls).toBe(1);
     expect(backendEvents(events)).toEqual([
-      { type: "backend", backend: "cpu", emitterForced: true },
+      { type: "backend", backend: "gpu" },
     ]);
   });
 
-  it("still renders the emitter document on the CPU path — accumulation completes", async () => {
+  it("still renders the emitter document — accumulation completes, GPU or CPU", async () => {
     const { session, events, scheduler } = harness({});
     session.handle(
       startCommand({

@@ -28,6 +28,8 @@ import { mulberry32 } from "./rng";
 import { VARIATION_TYPES } from "./types";
 import type { SymmetryParams, Transform4, Vec3, Vec4 } from "./types";
 import type { FourDView } from "./project4";
+import { GEAR_SHAPE } from "./shapes";
+import type { ShapeSpec } from "./shapes";
 
 function makeTransforms4(count: number): Transform4[] {
   return Array.from({ length: count }, () => ({
@@ -77,7 +79,7 @@ const COLOR_SPEED = 80; // byte 320
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
     expect(PARAMS4_BYTES).toBe(384);
-    expect(SLOT4_STRIDE_BYTES).toBe(384);
+    expect(SLOT4_STRIDE_BYTES).toBe(1168);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
     expect(WEIGHT_FIXED_POINT_SCALE).toBe(256);
@@ -323,6 +325,91 @@ describe("packGpuSystem4 fold radii", () => {
     );
     expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain(
       "clamp(p, vec4f(-1.0), vec4f(1.0))",
+    );
+  });
+});
+
+describe("packGpuSystem4 shape emitters", () => {
+  /** Element offsets restated from flame-gpu-4d.ts's byte-layout doc (the
+   * fold-radii block's own discipline above): SLOT4_EMITTER_FLAG et al. at
+   * 96-100, then flame-gpu.ts's shared 24-element EmitterPart sub-layout. */
+  const EMITTER_FLAG = 96;
+  const EMITTER_PART_COUNT = 97;
+  const EMITTER_PARTS = 100;
+  const EP_KIND_PARAMS0 = 0;
+  const EP_ROT0 = 12;
+
+  function transform4WithEmitter(emitter: ShapeSpec): Transform4 {
+    return { position: [0, 0, 0, 0], scale: [1, 1, 1, 1], emitter };
+  }
+
+  it("leaves every emitter field at zero and gearTable null for an emitter-free system", () => {
+    const packed = packGpuSystem4(
+      baseSpec4({ transforms4: makeTransforms4(2) }),
+    );
+    const u32 = new Uint32Array(packed.slots);
+    for (let s = 0; s < 2; s++) {
+      const base = s * F32_PER_SLOT4;
+      expect(u32[base + EMITTER_FLAG]).toBe(0);
+      expect(u32[base + EMITTER_PART_COUNT]).toBe(0);
+    }
+    expect(packed.gearTable).toBeNull();
+  });
+
+  it("packs a sphere part's kind tag, radius and identity pose — flame-gpu.ts's shared EmitterPart layout", () => {
+    const spec: ShapeSpec = {
+      parts: [{ primitive: { kind: "sphere", radius: 2 }, combine: "union" }],
+    };
+    const packed = packGpuSystem4(
+      baseSpec4({ transforms4: [transform4WithEmitter(spec)] }),
+    );
+    const u32 = new Uint32Array(packed.slots);
+    const f32 = new Float32Array(packed.slots);
+    expect(u32[EMITTER_FLAG]).toBe(1);
+    expect(u32[EMITTER_PART_COUNT]).toBe(1);
+    const p = EMITTER_PARTS;
+    expect(f32[p + EP_KIND_PARAMS0]).toBe(0); // sphere
+    expect(f32[p + EP_KIND_PARAMS0 + 1]).toBe(2); // radius
+    expect(Array.from(f32.slice(p + EP_ROT0, p + EP_ROT0 + 3))).toEqual([
+      1, 0, 0,
+    ]); // identity rotation row 0.
+  });
+
+  it("packs a gear part's device table region — the SAME buildGearTriangleTable helper flame-gpu.ts's kernel uses", () => {
+    const packed = packGpuSystem4(
+      baseSpec4({ transforms4: [transform4WithEmitter(GEAR_SHAPE)] }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    const p = EMITTER_PARTS;
+    expect(f32[p + EP_KIND_PARAMS0]).toBe(4); // gear
+    const triCount = f32[p + EP_KIND_PARAMS0 + 2];
+    expect(triCount).toBeGreaterThan(0);
+    expect(packed.gearTable).not.toBeNull();
+    expect(new Float32Array(packed.gearTable!).length).toBe(
+      triCount + triCount * 6,
+    );
+  });
+
+  it("replicates a base map's emitter block into every kaleidoscope copy", () => {
+    const packed = packGpuSystem4(
+      baseSpec4({
+        transforms4: [transform4WithEmitter(GEAR_SHAPE)],
+        symmetry: { order: 3, plane: "xz" },
+      }),
+    );
+    expect(packed.transformCount).toBe(3);
+    const u32 = new Uint32Array(packed.slots);
+    for (let s = 0; s < 3; s++) {
+      expect(u32[s * F32_PER_SLOT4 + EMITTER_FLAG]).toBe(1);
+    }
+  });
+
+  it("embeds the shape sample at w = 0 before this slot's own 4D affine poses it — stepOrbit4's own dimensional decision", () => {
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "let sample = vec4f(emitterSampleSlot(&derived, slotIdx), 0.0);",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "@group(0) @binding(7) var<storage, read> emitterGearTable: array<f32>;",
     );
   });
 });

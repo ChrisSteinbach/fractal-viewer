@@ -39,6 +39,8 @@ import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
 import { VARIATION_TYPES } from "./types";
 import type { SymmetryParams, Transform, VariationType } from "./types";
+import { GEAR_SHAPE } from "./shapes";
+import type { ShapeSpec } from "./shapes";
 
 function makeTransforms(count: number): Transform[] {
   return Array.from({ length: count }, (_, id) => ({
@@ -446,6 +448,371 @@ describe("packGpuSystem fold radii", () => {
     expect(FLAME_GPU_KERNEL_WGSL).not.toContain(
       "clamp(p, vec3f(-1.0), vec3f(1.0))",
     );
+  });
+});
+
+/** Every emitter-block field rides an f32 storage buffer, so a value that
+ * isn't exactly representable in f32 (0.2, 0.3, most trig/volume results)
+ * rounds on the way in — compare element-wise with a tolerance loose
+ * enough to absorb that rounding but tight enough to catch a real mistake. */
+function expectCloseArray(
+  actual: readonly number[],
+  expected: readonly number[],
+  precision = 5,
+): void {
+  expect(actual.length).toBe(expected.length);
+  for (let i = 0; i < expected.length; i++) {
+    expect(actual[i]).toBeCloseTo(expected[i], precision);
+  }
+}
+
+describe("packGpuSystem shape emitters", () => {
+  /** Slot element offsets restated directly from flame-gpu.ts's byte-layout
+   * doc (the fold-radii block's own discipline above): SLOT_EMITTER_FLAG et
+   * al. at 84-88, and one EmitterPart's own 24-element (96 B) sub-layout. */
+  const EMITTER_FLAG = 84;
+  const EMITTER_PART_COUNT = 85;
+  const EMITTER_TOTAL_WEIGHT = 86;
+  const EMITTER_PARTS = 88;
+  const EP_STRIDE = 24;
+  const EP_KIND_PARAMS0 = 0;
+  const EP_PARAMS1 = 4;
+  const EP_POSE = 8;
+  const EP_ROT0 = 12;
+  const EP_ROT1 = 16;
+  const EP_ROT2 = 20;
+
+  function transformWithEmitter(emitter: ShapeSpec | undefined): Transform {
+    return {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      emitter,
+    };
+  }
+
+  it("leaves every emitter field at zero and gearTable null for an emitter-free system", () => {
+    const packed = packGpuSystem(baseSpec({ transforms: makeTransforms(2) }));
+    const u32 = new Uint32Array(packed.slots);
+    const f32 = new Float32Array(packed.slots);
+    for (let s = 0; s < 2; s++) {
+      const base = s * F32_PER_SLOT;
+      expect(u32[base + EMITTER_FLAG]).toBe(0);
+      expect(u32[base + EMITTER_PART_COUNT]).toBe(0);
+      expect(f32[base + EMITTER_TOTAL_WEIGHT]).toBe(0);
+    }
+    expect(packed.gearTable).toBeNull();
+  });
+
+  it("packs a sphere part's kind tag and radius, with the identity pose when none is authored", () => {
+    const spec: ShapeSpec = {
+      parts: [{ primitive: { kind: "sphere", radius: 2.5 }, combine: "union" }],
+    };
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(spec)] }),
+    );
+    const u32 = new Uint32Array(packed.slots);
+    const f32 = new Float32Array(packed.slots);
+    expect(u32[EMITTER_FLAG]).toBe(1);
+    expect(u32[EMITTER_PART_COUNT]).toBe(1);
+    const p = EMITTER_PARTS;
+    expect(f32[p + EP_KIND_PARAMS0]).toBe(0); // sphere
+    expect(f32[p + EP_KIND_PARAMS0 + 1]).toBe(2.5); // radius
+    expect(Array.from(f32.slice(p + EP_POSE, p + EP_POSE + 4))).toEqual([
+      0, 0, 0, 1,
+    ]); // offset (0,0,0), scale 1
+    expect(Array.from(f32.slice(p + EP_ROT0, p + EP_ROT0 + 3))).toEqual([
+      1, 0, 0,
+    ]);
+    expect(Array.from(f32.slice(p + EP_ROT1, p + EP_ROT1 + 3))).toEqual([
+      0, 1, 0,
+    ]);
+    expect(Array.from(f32.slice(p + EP_ROT2, p + EP_ROT2 + 3))).toEqual([
+      0, 0, 1,
+    ]);
+    // A single-part spec's total weight is entirely its own, and rot0.w
+    // (the cumulative pick weight) carries it — the sphere volume formula,
+    // 4/3 * PI * r^3.
+    const expectedVolume = (4 / 3) * Math.PI * 2.5 ** 3;
+    expect(f32[EMITTER_TOTAL_WEIGHT]).toBeCloseTo(expectedVolume, 3);
+    expect(f32[p + EP_ROT0 + 3]).toBeCloseTo(expectedVolume, 3);
+  });
+
+  it("packs a box part's kind tag and half-extents", () => {
+    const spec: ShapeSpec = {
+      parts: [
+        { primitive: { kind: "box", half: [1, 2, 3] }, combine: "union" },
+      ],
+    };
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(spec)] }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    const p = EMITTER_PARTS;
+    expect(f32[p + EP_KIND_PARAMS0]).toBe(1); // box
+    expect(
+      Array.from(f32.slice(p + EP_KIND_PARAMS0 + 1, p + EP_KIND_PARAMS0 + 4)),
+    ).toEqual([1, 2, 3]);
+  });
+
+  it("packs a torus part's kind tag, major and minor radii", () => {
+    const spec: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "torus", major: 1.5, minor: 0.3 },
+          combine: "union",
+        },
+      ],
+    };
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(spec)] }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    const p = EMITTER_PARTS;
+    expect(f32[p + EP_KIND_PARAMS0]).toBe(2); // torus
+    expect(f32[p + EP_KIND_PARAMS0 + 1]).toBeCloseTo(1.5, 5); // major
+    expect(f32[p + EP_KIND_PARAMS0 + 2]).toBeCloseTo(0.3, 5); // minor
+  });
+
+  it("packs a capsule part's kind tag, both endpoints and its radius", () => {
+    const spec: ShapeSpec = {
+      parts: [
+        {
+          primitive: {
+            kind: "capsule",
+            a: [0, -1, 0],
+            b: [0, 1, 0],
+            radius: 0.2,
+          },
+          combine: "union",
+        },
+      ],
+    };
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(spec)] }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    const p = EMITTER_PARTS;
+    expect(f32[p + EP_KIND_PARAMS0]).toBe(3); // capsule
+    expectCloseArray(
+      Array.from(f32.slice(p + EP_KIND_PARAMS0 + 1, p + EP_KIND_PARAMS0 + 4)),
+      [0, -1, 0], // a
+    );
+    expectCloseArray(
+      Array.from(f32.slice(p + EP_PARAMS1, p + EP_PARAMS1 + 4)),
+      [0, 1, 0, 0.2], // b, radius
+    );
+  });
+
+  it("packs a gear part's kind tag, a non-empty device table region and halfHeight — never the raw teeth/radius/tooth/hole", () => {
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(GEAR_SHAPE)] }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    const p = EMITTER_PARTS;
+    expect(f32[p + EP_KIND_PARAMS0]).toBe(4); // gear
+    const tableOffset = f32[p + EP_KIND_PARAMS0 + 1];
+    const triCount = f32[p + EP_KIND_PARAMS0 + 2];
+    expect(tableOffset).toBe(0); // the first (only) region in a fresh table.
+    expect(triCount).toBeGreaterThan(0);
+    expect(triCount % 2).toBe(0); // 2 * angular steps, always even.
+    expect(f32[p + EP_KIND_PARAMS0 + 3]).toBe(0.25); // GEAR_SHAPE's halfHeight.
+    expect(packed.gearTable).not.toBeNull();
+    // The region's cumAreas + vertex triples: triCount + triCount*6 floats.
+    const gearFloats = new Float32Array(packed.gearTable!);
+    expect(gearFloats.length).toBe(triCount + triCount * 6);
+    // Cumulative areas are ascending and end at a positive total roughly
+    // between the hole-to-root annulus and the full outer-disc area — a
+    // coarse sanity bound, not a tight one (the profile isn't a disc).
+    for (let i = 1; i < triCount; i++) {
+      expect(gearFloats[i]).toBeGreaterThanOrEqual(gearFloats[i - 1]);
+    }
+    const total = gearFloats[triCount - 1];
+    const rootArea = Math.PI * (1 ** 2 - 0.35 ** 2); // GEAR_SHAPE's radius/hole.
+    const outerArea = Math.PI * (1 + 0.22) ** 2; // GEAR_SHAPE's radius+tooth[0].
+    expect(total).toBeGreaterThan(rootArea);
+    expect(total).toBeLessThan(outerArea);
+  });
+
+  it("bakes a non-identity pose (offset, rotation, scale) forward — shapes.ts's toWorld convention", () => {
+    const spec: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 1 },
+          combine: "union",
+          pose: { offset: [1, 2, 3], rotate: [0.4, 0.5, 0.6], scale: 2 },
+        },
+      ],
+    };
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(spec)] }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    const p = EMITTER_PARTS;
+    expectCloseArray(
+      Array.from(f32.slice(p + EP_POSE, p + EP_POSE + 4)),
+      [1, 2, 3, 2],
+    );
+    const expectedRot = rotationMatrixXYZ(0.4, 0.5, 0.6);
+    expectCloseArray(
+      Array.from(f32.slice(p + EP_ROT0, p + EP_ROT0 + 3)),
+      expectedRot.slice(0, 3),
+    );
+    expectCloseArray(
+      Array.from(f32.slice(p + EP_ROT1, p + EP_ROT1 + 3)),
+      expectedRot.slice(3, 6),
+    );
+    expectCloseArray(
+      Array.from(f32.slice(p + EP_ROT2, p + EP_ROT2 + 3)),
+      expectedRot.slice(6, 9),
+    );
+  });
+
+  it("gives every part its own cumulative weight, ascending, summing to emitterTotalWeight", () => {
+    const spec: ShapeSpec = {
+      parts: [
+        { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
+        { primitive: { kind: "sphere", radius: 2 }, combine: "union" },
+      ],
+    };
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(spec)] }),
+    );
+    const u32 = new Uint32Array(packed.slots);
+    const f32 = new Float32Array(packed.slots);
+    expect(u32[EMITTER_PART_COUNT]).toBe(2);
+    const v1 = (4 / 3) * Math.PI * 1 ** 3;
+    const v2 = (4 / 3) * Math.PI * 2 ** 3;
+    const cum0 = f32[EMITTER_PARTS + EP_ROT0 + 3];
+    const cum1 = f32[EMITTER_PARTS + EP_STRIDE + EP_ROT0 + 3];
+    expect(cum0).toBeCloseTo(v1, 6);
+    expect(cum1).toBeCloseTo(v1 + v2, 6);
+    expect(f32[EMITTER_TOTAL_WEIGHT]).toBeCloseTo(v1 + v2, 6);
+  });
+
+  it("gives a multi-kind spec's parts cumulative weights matching shapes.ts's own per-kind volumes — sphere, box, torus and capsule together", () => {
+    // The two-sphere test above only ever compares ONE formula against
+    // itself at two radii; this spec mixes all four non-gear kinds (gear's
+    // area is a seeded Monte-Carlo measure, not a closed form, so it is
+    // deliberately out of scope here) so a wrong constant in any ONE kind's
+    // volume formula — sphere, box, torus or capsule — shows up as a wrong
+    // PROPORTION between parts, which is exactly what the device's
+    // multi-part pick (emitterSampleSlot's weighted binary search) samples
+    // on: the CPU sampler and the packer must agree on each part's SHARE of
+    // the total, not just its own value in isolation.
+    const spec: ShapeSpec = {
+      parts: [
+        { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
+        { primitive: { kind: "box", half: [1, 2, 3] }, combine: "union" },
+        {
+          primitive: { kind: "torus", major: 1.5, minor: 0.3 },
+          combine: "union",
+        },
+        {
+          primitive: {
+            kind: "capsule",
+            a: [0, -1, 0],
+            b: [0, 1, 0],
+            radius: 0.4,
+          },
+          combine: "union",
+          // A pose scale on the last part alone, so the check also covers
+          // the packer's scale**3 factor rather than only the bare
+          // primitive formulas.
+          pose: { scale: 2 },
+        },
+      ],
+    };
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(spec)] }),
+    );
+    const u32 = new Uint32Array(packed.slots);
+    const f32 = new Float32Array(packed.slots);
+    expect(u32[EMITTER_PART_COUNT]).toBe(4);
+    // shapes.ts's own closed-form volumes (primitiveVolume, private —
+    // flame-gpu.ts's emitterPartWeight restates these same formulas; this
+    // test checks the restatement against the formulas themselves, written
+    // out independently, rather than against emitterPartWeight's own code).
+    const vSphere = (4 / 3) * Math.PI * 1 ** 3;
+    const vBox = 8 * 1 * 2 * 3;
+    const vTorus = 2 * Math.PI * Math.PI * 1.5 * 0.3 ** 2;
+    const vCapsule =
+      (Math.PI * 0.4 * 0.4 * 2 + (4 / 3) * Math.PI * 0.4 ** 3) * 2 ** 3;
+    const expectedCum = [
+      vSphere,
+      vSphere + vBox,
+      vSphere + vBox + vTorus,
+      vSphere + vBox + vTorus + vCapsule,
+    ];
+    for (let i = 0; i < 4; i++) {
+      const cum = f32[EMITTER_PARTS + i * EP_STRIDE + EP_ROT0 + 3];
+      expect(cum).toBeCloseTo(expectedCum[i], 3);
+    }
+    expect(f32[EMITTER_TOTAL_WEIGHT]).toBeCloseTo(expectedCum[3], 3);
+    // PROPORTIONAL, not just individually correct: a part's own SHARE of
+    // the total is the number the device's binary search actually acts on
+    // (emitterSampleSlot picks part i with probability weight[i]/total), so
+    // this is the property that keeps the GPU part-pick's measure equal to
+    // the CPU sampler's volume-proportional one.
+    for (let i = 0; i < 4; i++) {
+      const cum = f32[EMITTER_PARTS + i * EP_STRIDE + EP_ROT0 + 3];
+      expect(cum / f32[EMITTER_TOTAL_WEIGHT]).toBeCloseTo(
+        expectedCum[i] / expectedCum[3],
+        4,
+      );
+    }
+  });
+
+  it("treats an unsamplable spec (an intersect part) as no emitter at all, mirroring prepareEmitters' plain-transform fallback", () => {
+    const unsamplable: ShapeSpec = {
+      parts: [
+        { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
+        { primitive: { kind: "sphere", radius: 0.5 }, combine: "intersect" },
+      ],
+    };
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(unsamplable)] }),
+    );
+    const u32 = new Uint32Array(packed.slots);
+    expect(u32[EMITTER_FLAG]).toBe(0);
+    expect(packed.gearTable).toBeNull();
+  });
+
+  it("replicates a base map's emitter block into every kaleidoscope copy, like the color pair and cumWeight", () => {
+    const packed = packGpuSystem(
+      baseSpec({
+        transforms: [transformWithEmitter(GEAR_SHAPE)],
+        symmetry: { order: 3, plane: "xz" },
+      }),
+    );
+    expect(packed.transformCount).toBe(3);
+    const u32 = new Uint32Array(packed.slots);
+    const f32 = new Float32Array(packed.slots);
+    for (let s = 0; s < 3; s++) {
+      const base = s * F32_PER_SLOT;
+      expect(u32[base + EMITTER_FLAG]).toBe(1);
+      expect(f32[base + EMITTER_PARTS + EP_KIND_PARAMS0]).toBe(4); // gear
+    }
+    // Each copy triangulated its OWN gear region (packGpuSystem's own
+    // documented redundancy, writeSlotVariations' precedent) — three
+    // regions, not one shared.
+    const triCount = f32[EMITTER_PARTS + EP_KIND_PARAMS0 + 2];
+    expect(new Float32Array(packed.gearTable!).length).toBe(
+      3 * (triCount + triCount * 6),
+    );
+  });
+
+  it("packs no emitter block for the final-transform lens slot even when the final transform authors one", () => {
+    const packed = packGpuSystem(
+      baseSpec({
+        transforms: makeTransforms(1),
+        finalTransform: transformWithEmitter(GEAR_SHAPE),
+      }),
+    );
+    const u32 = new Uint32Array(packed.slots);
+    const finalBase = packed.transformCount * F32_PER_SLOT;
+    expect(u32[finalBase + EMITTER_FLAG]).toBe(0);
   });
 });
 
