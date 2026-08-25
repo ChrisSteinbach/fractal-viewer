@@ -30,6 +30,11 @@ import type {
   RgbStop,
 } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
+import {
+  GEAR_SHAPE,
+  STAR_PRISM_SHAPE,
+  type ShapeSpec,
+} from "../fractal/shapes";
 import { CLASSIC_FOLD_RADII, isFoldVariationType } from "../fractal/variations";
 import {
   CLASSIC_SURFACE_FINISH,
@@ -107,6 +112,9 @@ import { installSliderScrollGuard } from "./slider-scroll-guard";
 
 export type { Preset };
 
+/** Built-in condensation shapes exposed by the transform authoring UI. */
+export type BuiltinEmitterKind = "gear" | "star";
+
 /**
  * Which object a live surface session is actually marching — the routing
  * decision main.ts made at `surfaceSession.start()`, pushed in so the
@@ -154,6 +162,8 @@ type EditTarget = number | "final" | null;
 
 export interface UiHandlers {
   onAdd: () => void;
+  /** Add and select a new transform carrying the chosen built-in shape. */
+  onAddEmitter: (kind: BuiltinEmitterKind) => void;
   onRemove: () => void;
   /** Step the scene document back one edit burst. */
   onUndo: () => void;
@@ -314,6 +324,8 @@ export interface UiHandlers {
   onSelect: (index: EditTarget) => void;
   /** A panel slider edited the selected transform's geometry. */
   onTransformGeometry: (index: number, geometry: Geometry) => void;
+  /** Set or clear the selected transform's condensation shape. */
+  onTransformEmitter: (index: number, kind: BuiltinEmitterKind | null) => void;
   /** The lens toggle was flipped: enable a default final transform, or clear it. */
   onToggleFinalTransform: (checked: boolean) => void;
   /** A panel slider edited the final transform's geometry. */
@@ -1219,6 +1231,35 @@ function variationSummary(t: Transform): string[] {
   return [`Var: ${active.map((v) => v.type).join(", ")}`];
 }
 
+type EmitterSelectValue = "" | BuiltinEmitterKind | "custom";
+
+/** Resolve a document emitter to the editor's small built-in vocabulary.
+ * `custom` preserves a valid authored/shared ShapeSpec without pretending the
+ * compact first-cut editor can reproduce it. */
+function emitterSelectValue(
+  emitter: ShapeSpec | undefined,
+): EmitterSelectValue {
+  if (!emitter) return "";
+  const key = JSON.stringify(emitter);
+  if (key === JSON.stringify(GEAR_SHAPE)) return "gear";
+  if (key === JSON.stringify(STAR_PRISM_SHAPE)) return "star";
+  return "custom";
+}
+
+/** One concise shape line for a transform-list row. */
+function emitterSummary(t: Transform): string[] {
+  switch (emitterSelectValue(t.emitter)) {
+    case "gear":
+      return ["Shape: Cog"];
+    case "star":
+      return ["Shape: Star"];
+    case "custom":
+      return ["Shape: Authored"];
+    default:
+      return [];
+  }
+}
+
 /**
  * The list row's structural-color lines — one per field this map
  * actually AUTHORS (`Transform.colorIndex` / `Transform.colorSpeed`), none for
@@ -1447,6 +1488,8 @@ interface EditorState {
   mirror: HTMLButtonElement[];
   /** The selection-weight control, or `null` for the final transform (no weight). */
   weightControl: AxisControl | null;
+  /** The condensation-shape picker, or `null` for the final transform. */
+  emitterSelect: HTMLSelectElement | null;
   /** The "Color" group's rows, or `null` for the final transform —
    * which is never PICKED, so it never moves the color coordinate. */
   colorControls: ColorControls | null;
@@ -1650,6 +1693,7 @@ export class Ui {
   private readonly transformCount: HTMLElement;
   private readonly transformList: HTMLElement;
   private readonly addBtn: HTMLButtonElement;
+  private readonly addEmitterSelect: HTMLSelectElement;
   private readonly removeBtn: HTMLButtonElement;
   private readonly undoBtn: HTMLButtonElement;
   private readonly redoBtn: HTMLButtonElement;
@@ -2335,6 +2379,7 @@ export class Ui {
     this.transformCount = this.byId("transformCount");
     this.transformList = this.byId("transformList");
     this.addBtn = this.byId("addBtn");
+    this.addEmitterSelect = this.byId("addEmitterSelect");
     this.removeBtn = this.byId("removeBtn");
     this.undoBtn = this.byId("undoBtn");
     this.redoBtn = this.byId("redoBtn");
@@ -2781,6 +2826,11 @@ export class Ui {
     this.menuToggle.addEventListener("click", () => handlers.onTogglePanel());
     this.backdrop.addEventListener("click", () => handlers.onClosePanel());
     this.addBtn.addEventListener("click", () => handlers.onAdd());
+    this.addEmitterSelect.addEventListener("change", () => {
+      const kind = this.addEmitterSelect.value as BuiltinEmitterKind | "";
+      this.addEmitterSelect.value = "";
+      if (kind) handlers.onAddEmitter(kind);
+    });
     this.removeBtn.addEventListener("click", () => handlers.onRemove());
     this.undoBtn.addEventListener("click", () => handlers.onUndo());
     this.redoBtn.addEventListener("click", () => handlers.onRedo());
@@ -3331,6 +3381,9 @@ export class Ui {
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
   updateLabels(state: AppState): void {
     this.transformCount.textContent = String(state.transforms.length);
+    const transformLimitReached = state.transforms.length >= MAX_TRANSFORMS;
+    this.addBtn.disabled = transformLimitReached;
+    this.addEmitterSelect.disabled = transformLimitReached;
     this.removeBtn.disabled = state.transforms.length <= 1;
     // One table-driven sync for every scalar control (see control-spec.ts's
     // SCALAR_CONTROLS): the element's value/checked from the spec's `read`,
@@ -5459,6 +5512,7 @@ export class Ui {
             ...(t.weight !== undefined && t.weight !== 1
               ? [`Weight: ${t.weight.toFixed(2)}`]
               : []),
+            ...emitterSummary(t),
             ...colorSummary(t),
             ...finishSummary(t),
             ...patternSummary(t),
@@ -5804,12 +5858,13 @@ export class Ui {
   ): void {
     this.transformEditor.replaceChildren();
 
-    // The final transform omits Weight, Color, Finish and Pattern (see
+    // The final transform omits Weight, Shape, Color, Finish and Pattern (see
     // below), so a remembered choice of any would build an editor with
     // nothing open at all.
     const remembered =
       target === "final" &&
       (this.editorOpenGroup === "Weight" ||
+        this.editorOpenGroup === "Shape" ||
         this.editorOpenGroup === "Color" ||
         this.editorOpenGroup === "Finish" ||
         this.editorOpenGroup === "Pattern")
@@ -5820,7 +5875,12 @@ export class Ui {
     // the 4D group's rule alive for every 4D transform selected before then,
     // not just the first one the session happens to build.
     const openGroup =
-      remembered ?? (transform.w !== undefined ? "4D" : DEFAULT_EDITOR_GROUP);
+      remembered ??
+      (transform.emitter !== undefined
+        ? "Shape"
+        : transform.w !== undefined
+          ? "4D"
+          : DEFAULT_EDITOR_GROUP);
 
     const heading = this.doc.createElement("h3");
     heading.className = "editor-title";
@@ -5914,6 +5974,13 @@ export class Ui {
       target === "final"
         ? null
         : this.buildWeightControl(geometry.weight, openGroup);
+    // A condensation shape belongs to the picked map, never the final lens.
+    // Keep it beside Weight: Weight controls how often this map emits the
+    // selected shape, while the ordinary TRS groups above pose it.
+    const emitterSelect =
+      target === "final"
+        ? null
+        : this.buildEmitterGroup(transform.emitter, target, openGroup);
     // Color sits directly below Weight and above Variations: the two
     // per-map structural-color fields belong beside the other whole-map
     // property the chaos game reads when it PICKS this map, not among the
@@ -5967,6 +6034,7 @@ export class Ui {
       controls,
       mirror,
       weightControl,
+      emitterSelect,
       colorControls,
       finishControls,
       patternControls,
@@ -6049,6 +6117,53 @@ export class Ui {
     this.transformEditor.appendChild(group);
 
     return { slider, readout };
+  }
+
+  /** Build the selected map's condensation-shape picker. Choosing a shape
+   * turns this map into a fixed-shape emitter; the existing TRS controls pose
+   * it and Weight controls its selection probability. */
+  private buildEmitterGroup(
+    emitter: ShapeSpec | undefined,
+    target: number,
+    openGroup: string,
+  ): HTMLSelectElement {
+    const group = this.createEditorGroup("Shape", openGroup);
+
+    const hint = this.doc.createElement("p");
+    hint.className = "flame-hint";
+    hint.textContent =
+      "Stamp a cog or star whenever this transform is picked. Position, Rotation and Scale pose it; Weight controls how often it appears.";
+
+    const label = this.doc.createElement("label");
+    label.className = "select-label";
+    label.textContent = "Emitter";
+
+    const select = this.doc.createElement("select");
+    select.setAttribute("aria-label", "Shape emitter");
+    const choices: readonly [EmitterSelectValue, string][] = [
+      ["", "None (ordinary transform)"],
+      ["gear", "⚙ Cog"],
+      ["star", "★ Star"],
+      ["custom", "Authored shape"],
+    ];
+    for (const [value, text] of choices) {
+      const option = this.doc.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      if (value === "custom") option.hidden = true;
+      select.appendChild(option);
+    }
+    select.value = emitterSelectValue(emitter);
+    select.addEventListener("change", () => {
+      const value = select.value as EmitterSelectValue;
+      if (value === "custom") return;
+      this.handlers?.onTransformEmitter(target, value || null);
+    });
+
+    label.appendChild(select);
+    group.append(hint, label);
+    this.transformEditor.appendChild(group);
+    return select;
   }
 
   /**
@@ -7353,6 +7468,9 @@ export class Ui {
       const { weight } = editor.geometry;
       editor.weightControl.slider.value = String(weightToSlider(weight));
       editor.weightControl.readout.textContent = weight.toFixed(2);
+    }
+    if (editor.emitterSelect) {
+      editor.emitterSelect.value = emitterSelectValue(transform.emitter);
     }
     // The `typeof` narrows what the group's existence already guarantees (it
     // is built only for a numbered target) — and the derived slot is

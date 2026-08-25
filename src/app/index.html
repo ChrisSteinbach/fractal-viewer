@@ -523,6 +523,14 @@
               − Remove
             </button>
           </div>
+          <label class="select-label">
+            Add a shape emitter
+            <select id="addEmitterSelect">
+              <option value="">Choose cog or star…</option>
+              <option value="gear">⚙ Cog</option>
+              <option value="star">★ Star</option>
+            </select>
+          </label>
           <label class="checkbox-label">
             <input type="checkbox" id="autoUpdate" checked />
             Auto-update on change
@@ -1866,7 +1874,7 @@
               class="select-label"
               title="Choose which recursive word depths contain copies of an emitter shape; root is depth 0"
             >
-              Cog levels
+              Shape levels
               <select id="surfaceCondensationBandMode">
                 <option value="all">All levels</option>
                 <option value="root">Root only</option>
@@ -1913,6 +1921,7 @@
                 <option value="">None</option>
                 <option value="peace">Peace sign</option>
                 <option value="gear">Gear</option>
+                <option value="star">Star</option>
                 <option value="custom" hidden>(authored)</option>
               </select>
             </label>

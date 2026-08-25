@@ -172,7 +172,7 @@ Pruned-sibling sphere certificates keep working provided the bounding radius R b
 attractor. The implementation uses the certified fixed-point inequality
 `R(c) = max(r₀(c), maxⱼ ||fⱼ(c)-c||/(1-Lⱼ))`, including fold/symmetry copies, rather than an empirical
 chaos-game fit. This is the classic "orbit traps define the geometry" construction (Syntopia part VIII)
-transplanted into the beam-descent estimator. The **Cog levels** control supplies an inclusive word-depth
+transplanted into the beam-descent estimator. The **Shape levels** control supplies an inclusive word-depth
 band `[a,b]` (root = 0, ordinary-map children = 1); the classic setting is all depths, and finite bands
 give "cogs at one scale only."
 

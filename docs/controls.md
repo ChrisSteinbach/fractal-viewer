@@ -272,8 +272,8 @@ morphs into place instead of snapping (see **Presets** below).
   follow), which can show as faint membranes across the shape's voids.
   A transform with a samplable **shape emitter** is the other supported map
   kind: Surface marches the condensation set `C0 union f_j(A)`, so the
-  shipped **Gearworks** preset renders the master gear and every recursive
-  copy instead of refusing the document. **Cog levels** chooses all depths,
+  shipped **Gearworks** and **Star Foundry** presets render the master shape
+  and every recursive copy instead of refusing the document. **Shape levels** chooses all depths,
   root only, or a custom inclusive min/max word-depth band (root is 0).
   Emitters do not recurse and their variations are skipped; ordinary maps
   remain the recursive alphabet. In a schedule-free document the 24-slot
@@ -664,6 +664,14 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   degree of freedom, no gesture above reaches it) give exact per-axis control
   on every device. The sliders track the guide box live and stay in sync with
   the drag gestures above.
+  - **Shape → Emitter** — turns the selected transform into a **Cog** or
+    **Star** emitter, or returns it to an ordinary transform with **None**.
+    When this map is picked it stamps a fresh point from the chosen shape;
+    Position, Rotation, Scale and Shear pose the stamp, while **Weight** sets
+    how often it is picked. The transform list names the active shape. For a
+    one-step shortcut, **Transforms → Add a shape emitter** creates and selects
+    a new Cog or Star map with this group already open. The final-transform
+    lens has no Shape group because it is never picked.
   - **Color → Index / Speed** — the flam3 per-xform color pair, one
     group below **Weight**. **Index** is the palette slot this map pulls the
     flame's structural color coordinate toward; **Speed** is how far each pick

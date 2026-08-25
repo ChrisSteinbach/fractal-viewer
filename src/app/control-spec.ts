@@ -5,7 +5,11 @@ import type {
   ShapeTrapMode,
   SymmetryPlane,
 } from "../fractal/types";
-import { GEAR_SHAPE, PEACE_SIGN_SHAPE } from "../fractal/shapes";
+import {
+  GEAR_SHAPE,
+  PEACE_SIGN_SHAPE,
+  STAR_PRISM_SHAPE,
+} from "../fractal/shapes";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "../fractal/shape-trap";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
@@ -1586,7 +1590,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
               ? { shape: PEACE_SIGN_SHAPE }
               : raw === "gear"
                 ? { shape: GEAR_SHAPE }
-                : null,
+                : raw === "star"
+                  ? { shape: STAR_PRISM_SHAPE }
+                  : null,
           ),
     effect: (s, fx) => {
       fx.scene.setSurfaceShapeTrap(s.shapeTrap ?? null);
@@ -1783,12 +1789,13 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
  */
 export function shapeTrapSelectValue(
   state: AppState,
-): "" | "peace" | "gear" | "custom" {
+): "" | "peace" | "gear" | "star" | "custom" {
   const trap = state.shapeTrap;
   if (!trap) return "";
   const key = JSON.stringify(trap.shape);
   if (key === JSON.stringify(PEACE_SIGN_SHAPE)) return "peace";
   if (key === JSON.stringify(GEAR_SHAPE)) return "gear";
+  if (key === JSON.stringify(STAR_PRISM_SHAPE)) return "star";
   return "custom";
 }
 

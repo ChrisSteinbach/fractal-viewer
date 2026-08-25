@@ -1252,3 +1252,16 @@ export const GEAR_SHAPE: ShapeSpec = {
     },
   ],
 };
+
+/** The built-in five-point star prism mesh. The document carries only this
+ * stable catalog id; triangle data and the conservative SDF bake remain in
+ * `mesh-shapes.ts`. Kept beside {@link GEAR_SHAPE} so presets and authoring
+ * controls share one canonical ShapeSpec instead of recreating it. */
+export const STAR_PRISM_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "star-prism-v1" },
+      combine: "union",
+    },
+  ],
+};
