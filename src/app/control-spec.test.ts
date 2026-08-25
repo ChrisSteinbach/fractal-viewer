@@ -20,7 +20,7 @@ import {
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
 import { resolveBackground } from "./background";
-import { GEAR_SHAPE } from "../fractal/shapes";
+import { GEAR_SHAPE, STAR_PRISM_SHAPE } from "../fractal/shapes";
 
 /** Look up a table entry by its index.html element id. */
 function specById(id: string): ScalarControlSpec {
@@ -101,6 +101,17 @@ describe("applyScalarControl: parsing/mapping", () => {
     const state = applyScalarControl(initialState(true), spec, "4");
     const fx = mockEffects();
     spec.effect?.(state, fx, initialState(true));
+    expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
+  });
+
+  it("authors the built-in star through the Surface shape-trap picker", () => {
+    const spec = specById("surfaceTrapShape");
+    const state = applyScalarControl(initialState(true), spec, "star");
+
+    expect(state.shapeTrap).toEqual({ shape: STAR_PRISM_SHAPE });
+    const fx = mockEffects();
+    spec.effect?.(state, fx, initialState(true));
+    expect(fx.scene.setSurfaceShapeTrap).toHaveBeenCalledWith(state.shapeTrap);
     expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
   });
 

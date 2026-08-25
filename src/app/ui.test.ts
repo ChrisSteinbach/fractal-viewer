@@ -50,7 +50,7 @@ import {
 import { to255 } from "../fractal/vec";
 import { FOUR_D_COLOR_MODES, SYMMETRY_PLANES } from "../fractal/types";
 import type { Transform } from "../fractal/types";
-import { GEAR_SHAPE } from "../fractal/shapes";
+import { GEAR_SHAPE, STAR_PRISM_SHAPE } from "../fractal/shapes";
 // Load the production markup itself so the Ui↔DOM contract has one source of
 // truth: the constructor throws on any missing element, so renaming or removing
 // one in index.html fails these tests instead of silently breaking the app.
@@ -59,6 +59,7 @@ import indexHtml from "./index.html?raw";
 function noopHandlers(): UiHandlers {
   return {
     onAdd: vi.fn(),
+    onAddEmitter: vi.fn(),
     onRemove: vi.fn(),
     onUndo: vi.fn(),
     onRedo: vi.fn(),
@@ -99,6 +100,7 @@ function noopHandlers(): UiHandlers {
     onImportFile: vi.fn(),
     onSelect: vi.fn(),
     onTransformGeometry: vi.fn(),
+    onTransformEmitter: vi.fn(),
     onToggleFinalTransform: vi.fn(),
     onFinalTransformGeometry: vi.fn(),
     onTogglePanel: vi.fn(),
@@ -215,6 +217,33 @@ describe("Ui construction", () => {
   });
 });
 
+describe("shape-emitter add action", () => {
+  it("offers cogs and stars at the top of Transforms and resets after choosing", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const select = document.getElementById(
+      "addEmitterSelect",
+    ) as HTMLSelectElement;
+
+    expect(Array.from(select.options).map((option) => option.value)).toEqual([
+      "",
+      "gear",
+      "star",
+    ]);
+
+    select.value = "gear";
+    select.dispatchEvent(new Event("change"));
+    expect(handlers.onAddEmitter).toHaveBeenCalledWith("gear");
+    expect(select.value).toBe("");
+
+    select.value = "star";
+    select.dispatchEvent(new Event("change"));
+    expect(handlers.onAddEmitter).toHaveBeenLastCalledWith("star");
+    expect(select.value).toBe("");
+  });
+});
+
 describe("preset menu", () => {
   // Guards against the menu and the preset registry drifting apart — e.g. a
   // startup or new system that has no <option> and so can never be selected.
@@ -254,6 +283,18 @@ describe("Ui.renderTransformList", () => {
     expect(buttons).toHaveLength(5);
     expect(buttons[0].textContent).toContain("Camera View");
     expect(buttons[0].classList.contains("selected")).toBe(true);
+  });
+
+  it("names cog and star emitters in their transform rows", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const transforms = defaultTransforms().slice(0, 2);
+    transforms[0] = { ...transforms[0], emitter: GEAR_SHAPE };
+    transforms[1] = { ...transforms[1], emitter: STAR_PRISM_SHAPE };
+    ui.renderTransformList(transforms, null, null);
+
+    expect(transformButtons()[1].textContent).toContain("Shape: Cog");
+    expect(transformButtons()[2].textContent).toContain("Shape: Star");
   });
 
   it("marks the selected transform and no others", () => {
@@ -2130,7 +2171,7 @@ describe("Ui record video button", () => {
 });
 
 describe("Ui.renderTransformEditor", () => {
-  it("builds position, rotation, scale, weight, color, finish, and variation controls for the selection", () => {
+  it("builds geometry, weight, shape, color, finish, and variation controls for the selection", () => {
     const transforms = defaultTransforms();
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -2142,6 +2183,7 @@ describe("Ui.renderTransformEditor", () => {
       "Scale",
       "Shear",
       "Weight",
+      "Shape",
       "Color",
       "Finish",
       "Pattern",
@@ -2175,13 +2217,64 @@ describe("Ui.renderTransformEditor", () => {
     expect(open).toEqual(["Position"]);
   });
 
+  it("sets, switches, and clears a selected transform's shape emitter", () => {
+    const transforms = defaultTransforms();
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(transforms[1], 1, transforms.length);
+    const select = document.querySelector<HTMLSelectElement>(
+      '#transformEditor select[aria-label="Shape emitter"]',
+    )!;
+
+    expect(select.value).toBe("");
+    select.value = "gear";
+    select.dispatchEvent(new Event("change"));
+    expect(handlers.onTransformEmitter).toHaveBeenLastCalledWith(1, "gear");
+
+    select.value = "star";
+    select.dispatchEvent(new Event("change"));
+    expect(handlers.onTransformEmitter).toHaveBeenLastCalledWith(1, "star");
+
+    select.value = "";
+    select.dispatchEvent(new Event("change"));
+    expect(handlers.onTransformEmitter).toHaveBeenLastCalledWith(1, null);
+  });
+
+  it("opens Shape for an emitter and re-syncs the choice after an external edit", () => {
+    const transforms = defaultTransforms();
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      { ...transforms[0], emitter: STAR_PRISM_SHAPE },
+      0,
+      transforms.length,
+    );
+
+    const open = document.querySelector<HTMLDetailsElement>(
+      "#transformEditor details[open]",
+    );
+    const select = document.querySelector<HTMLSelectElement>(
+      '#transformEditor select[aria-label="Shape emitter"]',
+    )!;
+    expect(open?.querySelector("summary")?.textContent).toBe("Shape");
+    expect(select.value).toBe("star");
+
+    ui.renderTransformEditor(
+      { ...transforms[0], emitter: GEAR_SHAPE },
+      0,
+      transforms.length,
+    );
+    expect(select.value).toBe("gear");
+  });
+
   it("groups every editor section under one exclusive disclosure name", () => {
     const transforms = defaultTransforms();
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(transforms[0], 0, transforms.length);
 
-    // The ten top-level groups; the 4D sub-groups stay plain divs, since a
+    // The eleven top-level groups; the 4D sub-groups stay plain divs, since a
     // second level of exclusivity inside 4D would close Position W to read
     // Rotation W.
     const names = [
@@ -2189,7 +2282,7 @@ describe("Ui.renderTransformEditor", () => {
         "#transformEditor > details",
       ),
     ].map((d) => d.getAttribute("name"));
-    expect(names).toHaveLength(10);
+    expect(names).toHaveLength(11);
     expect(new Set(names).size).toBe(1);
   });
 
@@ -2712,9 +2805,9 @@ describe("Ui final transform", () => {
     ui.bind(noopHandlers());
     ui.renderTransformEditor(lens, "final", 1);
 
-    // Same channels as a transform, but no Weight group — a selection weight
-    // is meaningless for a map applied to every point. The 4D group is still
-    // there, though: both editors get it.
+    // Same channels as a transform, but no Weight or Shape group — neither a
+    // selection probability nor an emitter means anything for a lens applied
+    // to every point. The 4D group is still there: both editors get it.
     expect(editorGroupTitles()).toEqual([
       "Position",
       "Rotation",

@@ -165,6 +165,7 @@ import {
   setSymmetryTwist,
   setSymmetryOrder,
   setTransforms,
+  setTransformEmitter,
   systemIsNonFlat,
   updateTransform,
 } from "./state";
@@ -181,7 +182,11 @@ import { seedCustomStops } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import { chaosRowIsNonTrivial, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import type { ShapeTrap, Transform } from "../fractal/types";
-import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
+import {
+  GEAR_SHAPE,
+  PEACE_SIGN_SHAPE,
+  STAR_PRISM_SHAPE,
+} from "../fractal/shapes";
 
 describe("initialState", () => {
   it("starts in camera mode with the default system", () => {
@@ -844,6 +849,27 @@ describe("updateTransform", () => {
     });
     expect(moved.transforms[1].position).toEqual([2, 2, 2]);
     expect(moved.transforms[1].w).toEqual({ position: 0.4 });
+  });
+});
+
+describe("setTransformEmitter", () => {
+  it("authors one canonical built-in shape without touching other maps", () => {
+    const state = initialState(true);
+    const next = setTransformEmitter(state, 1, STAR_PRISM_SHAPE);
+
+    expect(next.transforms[1].emitter).toBe(STAR_PRISM_SHAPE);
+    expect(next.transforms[0]).toBe(state.transforms[0]);
+    expect(state.transforms[1].emitter).toBeUndefined();
+  });
+
+  it("switches shapes and clears back to true field absence", () => {
+    const state = setTransformEmitter(initialState(true), 2, GEAR_SHAPE);
+    const switched = setTransformEmitter(state, 2, STAR_PRISM_SHAPE);
+    expect(switched.transforms[2].emitter).toBe(STAR_PRISM_SHAPE);
+
+    const cleared = setTransformEmitter(switched, 2, null);
+    expect(cleared.transforms[2].emitter).toBeUndefined();
+    expect("emitter" in cleared.transforms[2]).toBe(false);
   });
 });
 

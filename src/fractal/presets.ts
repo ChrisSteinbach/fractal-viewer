@@ -1,8 +1,7 @@
 import { composeAffine } from "./affine";
 import type { FlamePaletteId, PaletteSelection } from "./palette";
 import type { Rng } from "./rng";
-import { GEAR_SHAPE, PEACE_SIGN_SHAPE } from "./shapes";
-import type { ShapeSpec } from "./shapes";
+import { GEAR_SHAPE, PEACE_SIGN_SHAPE, STAR_PRISM_SHAPE } from "./shapes";
 import type {
   HybridSchedule,
   Rotation4,
@@ -2256,18 +2255,6 @@ export function gearworks(): Transform[] {
  * both identity color and structural palette walking consume these values. */
 const STAR_FOUNDRY_STRUCTURE_SLOT = 0.66;
 const STAR_FOUNDRY_MESH_SLOT = 0.1;
-
-/** The one stable built-in mesh reference the Star Foundry preset carries.
- * Only this catalog id enters document state; triangles, the area table and
- * the baked SDF volume remain in `mesh-shapes.ts`, never in a share hash. */
-const STAR_PRISM_SHAPE: ShapeSpec = {
-  parts: [
-    {
-      primitive: { kind: "mesh", meshId: "star-prism-v1" },
-      combine: "union",
-    },
-  ],
-};
 
 /**
  * "Star Foundry" — Tier-3 mesh reachability through the same condensation

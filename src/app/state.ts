@@ -38,6 +38,7 @@ import {
 import { resolveBackground } from "./background";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
+import type { ShapeSpec } from "../fractal/shapes";
 import type {
   BackgroundGradient,
   BackgroundMode,
@@ -1522,6 +1523,25 @@ export function updateTransform(
   const transforms = state.transforms.map((t, i) =>
     i === index ? { ...t, ...geometry } : t,
   );
+  return { ...state, transforms };
+}
+
+/** Set or clear one map's condensation-shape emitter. Clearing deletes the
+ * optional field outright (rather than storing `undefined`), preserving the
+ * document model's absent-means-classic contract for subsequent edits and
+ * persistence. */
+export function setTransformEmitter(
+  state: AppState,
+  index: number,
+  emitter: ShapeSpec | null,
+): AppState {
+  const transforms = state.transforms.map((transform, i): Transform => {
+    if (i !== index) return transform;
+    if (emitter) return { ...transform, emitter };
+    const next = { ...transform };
+    delete next.emitter;
+    return next;
+  });
   return { ...state, transforms };
 }
 
