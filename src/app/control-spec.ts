@@ -640,7 +640,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     // buildColorModeLUT). Live in BOTH views (no `view` guard): the 4D
     // projection's "By 4D Radius" mode follows the same selection, so the
     // one row sits statically beneath the flat/4D color-select pair in the
-    // Appearance section (see ui.ts's rampPaletteRow gating). Recolors the
+    // Color section (see ui.ts's rampPaletteRow gating). Recolors the
     // live cloud over the cached run — like colorMode/colorGamma, never a
     // regenerate; recolor/applyFourDColor each no-op in the other view, so
     // exactly the displayed cloud re-bakes. No worker forward: the
@@ -926,8 +926,8 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, raw) => setSymmetryTwist(s, Number(raw)),
     effect: symmetryEffect,
   },
-  // ——— 4D look (non-flat systems only; the rows live in the Appearance
-  // section beside their flat siblings) ———
+  // ——— 4D look (non-flat systems only; each row lives beside its flat
+  // sibling in the Color or Atmosphere section) ———
   {
     // The 4D color select — re-points the 4D shader's color source (and
     // re-bakes the attribute for the baked modes) without re-running the

@@ -522,12 +522,14 @@ morphs into place instead of snapping (see **Presets** below).
   **W slice** cross-section of the rotor-posed 4D attractor — or, where the
   maps do not contract, of the 4D escape-time set they form instead (above)
   — and the 4D
-  pose stays live inside the mode — the tumble keeps turning, Shift-drag
-  keeps rotating the hidden planes, and the **W slice** slider sweeps the
-  cut through the shape in real time. (The slice toggle's ghosting is a
-  point-cloud affair; the surface mode always marches the current slice
-  position.) A **Slice thickness** slider sits under it, giving
-  that cut some depth — see the 4D section below. Anisotropic
+  pose stays live inside the mode — Shift-drag keeps rotating the hidden
+  planes, and the **W slice** slider sweeps the cut through the shape in real
+  time. Ambient auto-tumble parks while Surface is open so its repeated frame
+  invalidations cannot prevent the progressive render from settling; the
+  existing on/off choice takes effect again when you return to Points. (The
+  slice toggle's ghosting is a point-cloud affair; the surface mode always
+  marches the current slice position.) A **Slice thickness** slider sits under
+  it, giving that cut some depth — see the 4D section below. Anisotropic
   (non-uniformly scaled) maps are a
   softer case: the button stays enabled, but the mode's own status note
   warns that those maps are marched conservatively — a smaller step size
@@ -1390,14 +1392,16 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   slice window, and the **4D Color** choice, held for the render's whole
   life — so the tumble parks and this section's sliders hide until you
   return to Points. Surface instead keeps the rotor and W slice live per
-  frame, so the auto-tumble goes on turning under the tracer and the
-  Shift-drag / Shift-wheel gestures above still steer it — and this
-  section's own controls stay reachable there too, rather than
-  hiding with the rest: **Auto-tumble (XY+ZW)** and **Tumble speed** behave
-  exactly as in Points, and the **W slice** position slider stays live and
-  shown unconditionally, since the tracer marches a cross-section every
-  frame regardless of any toggle — joined there by **Slice thickness**,
-  which is that tracer's control alone and appears nowhere else.
+  frame, so the Shift-drag / Shift-wheel gestures above still steer it and
+  the **W slice** position slider stays live and shown unconditionally,
+  since the tracer marches a cross-section every frame regardless of any
+  toggle — joined there by **Slice thickness**, which is that tracer's
+  control alone and appears nowhere else. Ambient auto-tumble is deliberately
+  parked: continuous motion would invalidate every frame, hold the progressive
+  renderer in preview, and prevent it from settling. Its **Auto-tumble
+  (XY+ZW)** and **Tumble speed** rows hide while Surface is open, with an
+  in-panel note explaining why; the user's auto-tumble choice is left intact
+  and takes effect again on return to Points.
   The **W slice** on/off checkbox hides
   anyway — there's no off state left for it to mean — and so does
   **Slice-relative color**, since the tracer has no w-ramp palette for it to
