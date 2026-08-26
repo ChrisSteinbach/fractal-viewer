@@ -5370,9 +5370,9 @@ function main(): void {
       return { post: () => {}, terminate: () => teardownSurfaceCompute() };
     },
     clearNotes: () => {
-      // The one surface note (the degraded-march notice) is derived from
-      // the DOCUMENT, not the session — refreshSurfaceEligibility owns it,
-      // so there is nothing session-scoped to clear.
+      // The adjacent Surface eligibility note is DOCUMENT-derived, not
+      // session-scoped — refreshSurfaceEligibility owns it, so there is
+      // nothing here to clear on exit.
     },
     resetProgress: () => {
       // Instant render, but the flag must never carry stale-true across
@@ -5644,6 +5644,7 @@ function main(): void {
       eligibility.status,
       eligibility.note,
       eligibility.kind,
+      eligibility.recovery ?? null,
     );
   }
 

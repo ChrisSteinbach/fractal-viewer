@@ -731,8 +731,8 @@ body {
 /* A gated mode — the Surface segment while the system has no distance
    estimator (ui.ts's setSurfaceEligibility) — must LOOK unavailable, not
    just swallow clicks: dim it, drop the pointer affordance, and keep the
-   hover highlight off. The tooltip (and a tap's toast — see ui.ts) carries
-   the reason. */
+   hover highlight off. Adjacent #surfaceNote carries the accessible reason;
+   the tooltip and tap toast supplement it. */
 .segmented .segment:disabled {
   opacity: 0.35;
   cursor: not-allowed;
@@ -1182,8 +1182,9 @@ summary.editor-group-title {
    unreliably, so their setters toggle only TEXT and never the .hidden
    class. Empty IS the hidden state: no content means no line box, and
    zeroing the box model here makes an empty note occupy nothing.
-   (#symmetryNote keeps its .hidden toggle — deliberately not a live
-   region.) */
+   #surfaceNote sits beside the mode switch; the other four may live in
+   status blocks. (#symmetryNote keeps its .hidden toggle — deliberately
+   not a live region.) */
 .flame-note:empty,
 .flame-note-info:empty {
   margin: 0;

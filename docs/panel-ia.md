@@ -103,6 +103,15 @@ Hiding and disabling therefore mean different things. Hidden detail has no
 meaning in the parent's current state. Disabled authored state still has
 meaning, but the current consumer cannot apply or safely accept it.
 
+Renderer, dimension and active Surface-session applicability is matched by the
+pure registry in `src/app/panel-applicability.ts`. Its clauses are alternatives
+(OR); fields within a clause must all match (AND); omitted axes mean any value,
+while an explicit `null` Surface kind means pre-routing rather than a wildcard.
+The registry supplies only that three-axis answer. Feature owners still combine
+it with document and runtime predicates such as emitter weight, trap presence
+and conformal-fold restrictions, leaving one final owner for each row's hidden
+or disabled state.
+
 ## Stable order
 
 Keep active editing ahead of output and library operations. At the top level,

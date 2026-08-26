@@ -93,10 +93,11 @@ Transform** sliders that appear in the panel while a transform is selected.
 
 ## Panel controls
 
-The panel's categories — **Capture**, **Share**, **Collection**,
-**Timeline**, **Transforms**, **Presets**, **Cloud**, **Color**,
-**Atmosphere**, **Symmetry**, and **3D View**/**4D View** — are collapsible
-sections, and opening one closes the previous. The collapsed ones
+The panel's active editing categories — including **Transforms**, **Presets**,
+**Cloud**, **Color**, **Atmosphere**, **Symmetry**, and the contextual renderer
+inspector — come before **3D View**/**4D View**, then the always-available
+workflow sections **Collection**, **Timeline**, **Capture**, and **Share**.
+These are collapsible sections, and opening one closes the previous. The collapsed ones
 pack into rows of chips rather than stacking, because nine stacked
 headers cost 473px of a 727px phone screen before any control was visible.
 Measured, that keeps the panel between one and two phone screens rather than
@@ -253,10 +254,12 @@ morphs into place instead of snapping (see **Presets** below).
   view-dependent rather than sample-dependent: zoom in and the surface keeps
   resolving finer instead of showing the grain a still would at the same
   zoom. Not every system has a valid distance estimator, so the button
-  disables itself — with the reason in its tooltip — whenever any active A
+  disables itself whenever any active A
   map (or the final-transform lens) uses variations, is nearly flat
   (scale ≈ 0), or does not contract (scale ≥ 1), and also when the map
-  count exceeds the tracer's fixed uniform budget. An ordinary document
+  count exceeds the tracer's fixed uniform budget. The complete refusal is
+  shown in the status beside the mode switch for keyboard and assistive
+  technology, with the tooltip and touch toast as supplements. An ordinary document
   counts its bare active maps; a **Hybrid schedule** counts the physical
   `A | B | emitter` records together against the same 24-slot limit, for
   flat and 4D systems alike (the 4D
@@ -316,7 +319,7 @@ morphs into place instead of snapping (see **Presets** below).
   anyway: such a map has no IFS attractor at all, so Surface marches
   its **escape-time set** instead — the classic ray-marched Mandelbox
   object, in the Mandelbrot form every published render uses,
-  disclosed by the mode's status note. The transform's own offset is not
+  disclosed before entry by the status beside the mode switch. The transform's own offset is not
   the escape constant; it shifts the fold's centre, so it deforms the
   object rather than replacing it, and an offset of zero gives the
   textbook Mandelbox at whatever weight the fold carries. This render is cheap —
@@ -370,8 +373,8 @@ morphs into place instead of snapping (see **Presets** below).
   **A chain need not stay in 3D**. A non-contracting fold — or a
   chain of them — that reaches out of the `w = 0` hyperplane is marched as
   the **W slice** of its 4D escape-time set, the same way a contracting 4D
-  system is marched as the slice of its attractor, and the mode's status
-  note says which of the two you are looking at ("Escape-time render: these
+  system is marched as the slice of its attractor, and the persistent status
+  beside the mode switch says which of the two you will enter ("Escape-time render: these
   N maps reach out of the w = 0 hyperplane and do not all contract, so
   Surface marches the w-slice of the escape-time set of the chain they form
   — one link per orbit step — rather than an IFS attractor"). Everything
@@ -455,7 +458,8 @@ morphs into place instead of snapping (see **Presets** below).
   The same group's **Mandelbulb**, **Mandelbulb Offset** and **Mandelbulb
   Rotated** are the escape-time family's second object: a single
   map whose only variation is the triplex 8th power, marched the same
-  forward way and disclosed by its own status note ("Mandelbulb render").
+  forward way and disclosed before entry by the status beside the mode switch
+  ("Mandelbulb render").
   Its two knobs are the map's own — the position slider is a PRE-power
   offset that bites into the bulbs rather than sliding them (zero gives the
   textbook object), and the rotation is a genuinely different family rather
@@ -531,8 +535,8 @@ morphs into place instead of snapping (see **Presets** below).
   marches the current slice position.) A **Slice thickness** slider sits under
   it, giving that cut some depth — see the 4D section below. Anisotropic
   (non-uniformly scaled) maps are a
-  softer case: the button stays enabled, but the mode's own status note
-  warns that those maps are marched conservatively — a smaller step size
+  softer case: the button stays enabled, but the status beside the mode switch
+  warns before entry that those maps are marched conservatively — a smaller step size
   that trades some speed to stay a safe, non-overshooting bound. Its own
   **Surface Look** section holds the mode's live look: a **Color source**
   select — By Transform, the orbit-trap Palette, a Height ramp, a Radius
@@ -597,8 +601,10 @@ morphs into place instead of snapping (see **Presets** below).
   marched object on conformal fold-only escape chains; power-link and
   Mandelbulb sessions keep the color controls but do not offer this geometry
   switch, and inverse-descent Surface routes refuse an authored geometry flag
-  rather than ignore it. When a loaded document is refused, Points exposes
-  the checked switch as a recovery control. **Geometry levels** selects **All**, **Root only**, or **Custom**
+  rather than ignore it. When that flag is the disclosed refusal, the status
+  beside the mode switch offers **Turn trap geometry off**; Surface Look stays
+  Surface-only. The recovery uses the same authored edit as the checkbox and
+  preserves the trap's color state. **Geometry levels** selects **All**, **Root only**, or **Custom**
   inclusive post-link levels; custom exposes the minimum and maximum sliders
   and stores them as one sorted interval. Toggling geometry or changing its
   band restarts Surface because it changes the distance field. `Mandelbox
@@ -843,8 +849,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   and the auto-orbit / auto-tumble / W-slice view controls leave it running
   (the camera stays independent, as ever). Session-only like auto-orbit and
   auto-tumble — never persisted or shared — and unavailable while the OS
-  asks for reduced motion (the disabled button says why): no motion means no
-  drift. Between legs the show is fully idle, so it sips battery while
+  asks for reduced motion (the persistent status above the accordion says
+  why, and is associated with the disabled button): no motion means no drift.
+  Between legs the show is fully idle, so it sips battery while
   dwelling; recording a video of a drifting session works as usual.
 - **▶ Drift collection** — in the gallery modal's header: the same
   ambient show, but its legs walk YOUR saved collection in gallery order
@@ -865,7 +872,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   honored on the next leg (an emptied collection ends the show). Everything
   else matches **▶ Drift**: the same stop-on-edit rules, the same **■ Stop
   drifting** toggle, the same reduced-motion unavailability (the button also
-  disables while the collection is empty), and it is never persisted.
+  disables while the collection is empty), with either refusal written beside
+  the gallery button, and it is never persisted.
 - **Collection** — a persistent, multi-slot library of saved systems,
   layered over the same encoded-scene format as the single autosaved scene
   (see **Sharing & persistence** below). Available in every render mode,
@@ -1253,8 +1261,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   twists exist, so the value caps itself at order−1 — as you drag, and
   equally when a shared link carries a larger number (the link decoder
   applies the same cap the order itself gets). If
-  order × transform count would exceed the 256-transform budget, a note
-  under the sliders names the reduced order that actually renders. The
+  order × transform count would exceed the 256-transform budget, the persistent
+  document status above the accordion names the reduced order that actually
+  renders in every mode. The
   whole setting persists in the link, and every render mode — Points,
   Flame, Solid, Surface — renders the same kaleidoscope.
 - **Hybrid schedule** — builds a finite arrangement of one attractor from a
@@ -1269,7 +1278,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   persists in scene files and shared links; because it stores a snapshot of
   B rather than a live source reference, a reloaded picker says **System B
   (N maps)** instead of claiming it still follows the preset or saved scene
-  it came from.
+  it came from. The document status above the accordion describes the active
+  post-word and remains readable while any renderer is being inspected.
 
   Points, Flame and Solid apply the finite post-word directly. Surface
   renders the same object by reversing it: the first `k` global descent

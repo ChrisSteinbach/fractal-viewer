@@ -1,6 +1,6 @@
 /**
  * The Surface mode gate as a pure derivation: document in,
- * `{status, note, kind}` out — `legend-spec.ts`'s pattern applied to the
+ * `{status, note, kind, recovery?}` out — `legend-spec.ts`'s pattern applied to the
  * app's most consequential branch, so the routing across five analyzers is
  * TESTABLE instead of living as an untestable closure inside `main()`.
  * `main.ts`'s `refreshSurfaceEligibility` is now one call into this plus one
@@ -52,11 +52,17 @@ import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
  */
 export type SurfaceRouteKind = "ifs" | "escape" | "bulb" | "ifs4" | "escape4";
 
+/** A narrowly-scoped action the mode gate can offer to resolve the refusal
+ * it is currently disclosing. This is structured analyzer output, never
+ * inferred by matching user-facing prose. */
+export type SurfaceEligibilityRecovery = "disableShapeTrapGeometry";
+
 export interface SurfaceEligibilityResult {
   status: SurfaceEligibilityStatus;
   /** The user-facing sentence beside the gate — `null` for a clean pass. */
   note: string | null;
   kind: SurfaceRouteKind | null;
+  recovery?: SurfaceEligibilityRecovery;
 }
 
 /**
@@ -255,6 +261,7 @@ export function deriveSurfaceEligibility(
             status: "ineligible",
             note: geometryRefusal,
             kind: null,
+            recovery: "disableShapeTrapGeometry",
           };
         }
         // Compute-only, exactly as fold-shaped 4D systems are — an escape
@@ -309,6 +316,7 @@ export function deriveSurfaceEligibility(
         status: "ineligible",
         note: geometryRouteRefusal,
         kind: null,
+        recovery: "disableShapeTrapGeometry",
       };
     }
     // The 4D tracer's uniform cap. No symmetry multiplier — the 4D descent
@@ -373,7 +381,12 @@ export function deriveSurfaceEligibility(
       }
       const geometryRefusal = trapGeometryRefusal(transforms, shapeTrap, false);
       if (geometryRefusal) {
-        return { status: "ineligible", note: geometryRefusal, kind: null };
+        return {
+          status: "ineligible",
+          note: geometryRefusal,
+          kind: null,
+          recovery: "disableShapeTrapGeometry",
+        };
       }
       return {
         status: "degraded",
@@ -407,6 +420,7 @@ export function deriveSurfaceEligibility(
             "Shape-trap geometry requires a fold-only conformal escape chain; " +
             "the Mandelbulb is a power map. Turn Geometry off to keep this trap as a color source.",
           kind: null,
+          recovery: "disableShapeTrapGeometry",
         };
       }
       return {
@@ -434,6 +448,7 @@ export function deriveSurfaceEligibility(
       status: "ineligible",
       note: geometryRouteRefusal,
       kind: null,
+      recovery: "disableShapeTrapGeometry",
     };
   }
   // The tracer's uniform cap, on the BARE active-map count: the descent
