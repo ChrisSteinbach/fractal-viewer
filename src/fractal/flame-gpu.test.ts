@@ -2,6 +2,7 @@ import {
   CHAIN_STRIDE_BYTES,
   COLOR_FIXED_POINT_SCALE,
   DOWNSAMPLE_PARAMS_BYTES,
+  EMITTER_OVERLAP_ATTEMPTS,
   FLAME_GPU_KERNEL_WGSL,
   HIST_U32_PER_BUCKET,
   KERNEL_VARIATION_INDEX,
@@ -483,6 +484,7 @@ describe("packGpuSystem shape emitters", () => {
   const EMITTER_FLAG = 84;
   const EMITTER_PART_COUNT = 85;
   const EMITTER_TOTAL_WEIGHT = 86;
+  const EMITTER_FALLBACK_PART = 87;
   const EMITTER_PARTS = 88;
   const EP_STRIDE = 24;
   const EP_KIND_PARAMS0 = 0;
@@ -511,6 +513,7 @@ describe("packGpuSystem shape emitters", () => {
       expect(u32[base + EMITTER_FLAG]).toBe(0);
       expect(u32[base + EMITTER_PART_COUNT]).toBe(0);
       expect(f32[base + EMITTER_TOTAL_WEIGHT]).toBe(0);
+      expect(u32[base + EMITTER_FALLBACK_PART]).toBe(0);
     }
     expect(packed.gearTable).toBeNull();
   });
@@ -615,7 +618,7 @@ describe("packGpuSystem shape emitters", () => {
     );
   });
 
-  it("packs a gear part's kind tag, a non-empty device table region and halfHeight — never the raw teeth/radius/tooth/hole", () => {
+  it("packs a gear's table sampler plus raw profile parameters in existing spare lanes", () => {
     const packed = packGpuSystem(
       baseSpec({ transforms: [transformWithEmitter(GEAR_SHAPE)] }),
     );
@@ -628,6 +631,11 @@ describe("packGpuSystem shape emitters", () => {
     expect(triCount).toBeGreaterThan(0);
     expect(triCount % 2).toBe(0); // 2 * angular steps, always even.
     expect(f32[p + EP_KIND_PARAMS0 + 3]).toBe(0.25); // GEAR_SHAPE's halfHeight.
+    expectCloseArray(
+      Array.from(f32.slice(p + EP_PARAMS1, p + EP_PARAMS1 + 4)),
+      [1, 0.22, 0.16, 0.35], // radius, tooth.xy, hole for containment.
+    );
+    expect(f32[p + EP_ROT1 + 3]).toBeCloseTo((2 * Math.PI) / 8, 6);
     expect(packed.gearTable).not.toBeNull();
     // The region's cumAreas + vertex triples: triCount + triCount*6 floats.
     const gearFloats = new Float32Array(packed.gearTable!);
@@ -788,6 +796,51 @@ describe("packGpuSystem shape emitters", () => {
     expect(cum0).toBeCloseTo(v1, 6);
     expect(cum1).toBeCloseTo(v1 + v2, 6);
     expect(f32[EMITTER_TOTAL_WEIGHT]).toBeCloseTo(v1 + v2, 6);
+  });
+
+  it("packs the earliest positive-measure part as the bounded sampler fallback", () => {
+    const spec: ShapeSpec = {
+      parts: [
+        { primitive: { kind: "sphere", radius: 0 }, combine: "union" },
+        { primitive: { kind: "box", half: [1, 2, 3] }, combine: "union" },
+        { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
+      ],
+    };
+    const packed = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(spec)] }),
+    );
+    const u32 = new Uint32Array(packed.slots);
+    expect(u32[EMITTER_FALLBACK_PART]).toBe(1);
+    expect(SLOT_STRIDE_BYTES).toBe(1120);
+  });
+
+  it("bounds min-index overlap acceptance and keeps every posed containment formula in both dimensions", () => {
+    expect(EMITTER_OVERLAP_ATTEMPTS).toBe(64);
+    expect((7 / 8) ** EMITTER_OVERLAP_ATTEMPTS).toBeLessThan(0.000195);
+    for (const source of [FLAME_GPU_KERNEL_WGSL, FLAME_GPU_KERNEL_4D_WGSL]) {
+      expect(source).toContain("const EMITTER_OVERLAP_ATTEMPTS: u32 = 64u;");
+      expect(source).toContain("fn emitterPartContains(");
+      expect(source).toContain(
+        "part.rot0.x * shifted.x + part.rot1.x * shifted.y + part.rot2.x * shifted.z",
+      );
+      expect(source).toContain(
+        "d = emitterSdBox3(local, part.kindParams0.yzw);",
+      );
+      expect(source).toContain(
+        "let q = vec2f(length(local.xy) - part.kindParams0.y, local.z);",
+      );
+      expect(source).toContain(
+        "let h = clamp(dot(pa, ba) / max(dot(ba, ba), EPS), 0.0, 1.0);",
+      );
+      expect(source).toContain("let seg = part.rot1.w;");
+      expect(source).toContain("attempt < EMITTER_OVERLAP_ATTEMPTS");
+      expect(source).toContain(
+        "slots[slotIdx].emitterParts[slots[slotIdx].emitterFallbackPart]",
+      );
+      expect(source).toContain(
+        "if (u32(slots[slotIdx].emitterParts[pick].kindParams0.x) == 5u)",
+      );
+    }
   });
 
   it("gives a multi-kind spec's parts cumulative weights matching shapes.ts's own per-kind volumes — sphere, box, torus and capsule together", () => {

@@ -483,6 +483,64 @@ describe("shape sampler uniformity", () => {
     expect(overlap / n).toBeGreaterThan(want - 0.015);
     expect(overlap / n).toBeLessThan(want + 0.015);
   });
+
+  it("keeps a nested mesh's surface contribution independent of mesh/solid part order", () => {
+    const asset = meshAsset("star-prism-v1");
+    const solid: ShapePart = {
+      primitive: { kind: "sphere", radius: 1.1 },
+      combine: "union",
+    };
+    const mesh = MESH_SHAPE.parts[0];
+    const specs: ShapeSpec[] = [
+      { parts: [solid, mesh] },
+      { parts: [mesh, solid] },
+    ];
+    const sphereVolume = (4 / 3) * Math.PI * 1.1 ** 3;
+    const wantMesh = asset.totalArea / (asset.totalArea + sphereVolume);
+    const fractions: number[] = [];
+    for (let order = 0; order < specs.length; order++) {
+      const draw = prepareShapeSampler(specs[order]);
+      const rng = mulberry32(0x5e5face + order);
+      const n = 12000;
+      let meshDraws = 0;
+      for (let i = 0; i < n; i++) {
+        const p = draw(rng);
+        if (meshUnsignedDistance(asset, p) <= 1e-8) meshDraws++;
+      }
+      const fraction = meshDraws / n;
+      fractions.push(fraction);
+      expect(fraction).toBeGreaterThan(wantMesh - 0.02);
+      expect(fraction).toBeLessThan(wantMesh + 0.02);
+    }
+    expect(Math.abs(fractions[0] - fractions[1])).toBeLessThan(0.02);
+  });
+
+  it("keeps a nested gear outline contribution independent of outline/solid part order", () => {
+    const solid: ShapePart = {
+      primitive: { kind: "sphere", radius: 1.3 },
+      combine: "union",
+    };
+    const gear = GEAR_SHAPE.parts[0];
+    const specs: ShapeSpec[] = [
+      { parts: [solid, gear] },
+      { parts: [gear, solid] },
+    ];
+    const fractions: number[] = [];
+    for (let order = 0; order < specs.length; order++) {
+      const draw = prepareShapeSampler(specs[order], { gearOutline: true });
+      const rng = mulberry32(0x0a711e + order);
+      const n = 6000;
+      let outlineDraws = 0;
+      for (let i = 0; i < n; i++) {
+        const [x, y, z] = draw(rng);
+        if (Math.abs(shapeSdf(GEAR_SHAPE, x, y, z)) <= 1e-8) outlineDraws++;
+      }
+      const fraction = outlineDraws / n;
+      fractions.push(fraction);
+      expect(fraction).toBeGreaterThan(0.15);
+    }
+    expect(Math.abs(fractions[0] - fractions[1])).toBeLessThan(0.025);
+  });
 });
 
 // ------------------------------------------------ (c) Lipschitz disclosure

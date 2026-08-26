@@ -256,6 +256,14 @@ interface ComparisonMetrics {
   /** Mean SIGNED per-channel delta (CPU - GPU), each averaged over all pixels. */
   biasRGB: [number, number, number];
   maxAbs: number;
+  /** Total-variation distance between the NORMALIZED CPU/GPU downsampled hit
+   * fields. Unlike tone-mapped MAE this measures density directly, before
+   * log compression and color can hide a localized mass redistribution. */
+  densityTv: number;
+  /** Optional scenario-owned density bar. Absent for the historic scenarios,
+   * whose image noise floors were calibrated before this metric existed; the
+   * overlapping-emitter controlled pair sets it explicitly. */
+  densityTvThreshold?: number;
   /** `maxHits` of the ACCUMULATION (not display) histograms. */
   maxHitsCpu: number;
   maxHitsGpu: number;
@@ -264,8 +272,9 @@ interface ComparisonMetrics {
    * recorded so results.json shows the ruler, not just the verdict. */
   maeThreshold: number;
   /** `maeRGB < maeThreshold && every |biasRGB| <
-   * AGREEMENT_BIAS_THRESHOLD` — the agreement CHECK, not just a report; see
-   * `computeAgreement` for how this rolls up into the top-level verdict. */
+   * AGREEMENT_BIAS_THRESHOLD`, plus `densityTv < densityTvThreshold` when the
+   * scenario owns that optional bar — the agreement CHECK, not just a report;
+   * see `computeAgreement` for how this rolls up into the top-level verdict. */
   pass: boolean;
 }
 
@@ -404,6 +413,10 @@ interface ScenarioDef3D {
    * everyone.
    */
   maeThreshold?: number;
+  /** Optional normalized-hit-field total-variation bar. See
+   * {@link ComparisonMetrics.densityTv}: intended for a scenario whose defect
+   * is a local density redistribution that the tone-map can compress away. */
+  densityTvThreshold?: number;
 }
 
 /**
@@ -453,6 +466,8 @@ interface ScenarioDef4D {
   /** See {@link ScenarioDef3D.maeThreshold} — same scenario-owned noise
    * floor override, one dimension up. */
   maeThreshold?: number;
+  /** See {@link ScenarioDef3D.densityTvThreshold}. */
+  densityTvThreshold?: number;
 }
 
 type ScenarioDef = ScenarioDef3D | ScenarioDef4D;
@@ -479,6 +494,16 @@ const FERN_CAMERA: Pick<ScenarioDef3D, "cameraPos" | "lookAt"> = {
  * all actually depend on the 4D machinery rather than degenerating to a
  * w-dropped 3D render. */
 const BENCH_TUMBLE: Rotation4 = { xy: 0.35, xw: 0.65, yw: 0.4, zw: 0.55 };
+
+/** The overlapping-emitter pair's direct density gate. Reduced 5M-iteration,
+ * 480x270-display CPU controls read 0.0094-0.0097 in both dimensions; an
+ * intentionally UNCORRECTED part mixture reads 0.078-0.080. The real equal-N
+ * leg has ten times as many samples, so 0.03 keeps generous shot-noise margin
+ * while still refusing the old unconditional sampler by more than 2.5x.
+ * The corrected 50.3M equal-N SwiftShader run measured 0.005883 in 3D and
+ * 0.005872 in 4D (2026-08-26), both comfortably below the control-derived
+ * bar. */
+const EMITTER_OVERLAP_DENSITY_TV_THRESHOLD = 0.03;
 
 /**
  * The "variation zoo" — three contractive maps that between them
@@ -721,14 +746,16 @@ function xformColorFern(): Transform[] {
  * affine, no variations) plus one multi-part emitter transform (id 2) whose
  * `ShapeSpec` carries the FIVE primitives {@link gearworks}'s GEAR_SHAPE
  * -only fixture never reaches — sphere, box, torus, capsule, and the
- * catalog star-prism mesh — each
- * `"union"`, each posed to its own DISTINCT region: bounding-sphere
- * separated (sphere at +x, box at -x, torus at +y, capsule at -y, each
- * part's own reach well under the gap to its neighbours), so shapes.ts's
- * min-index overlap correction is never exercised here — the multi-part
- * pick's own disclosed overlap divergence (flame-gpu.ts's Slot layout doc)
- * stays out of scope for this leg, which targets the part-pick's WEIGHTS and
- * the five primitive samplers instead. The emitter transform's own weight
+ * catalog star-prism mesh. The original five islands remain separated, but a
+ * SECOND radius-0.25 sphere at x=0.65 overlaps the original x=0.55 sphere
+ * strongly. Their centre distance is 0.10: the analytic lens occupies 70.4%
+ * of either sphere and 54.32% of their union. Because the duplicate is part
+ * 1, the CPU sampler rejects 70.4% of its proposals through min-index
+ * acceptance. It owns 14.46% of this six-part spec's measure, making 10.18%
+ * of emitter proposals (6.11% of all map picks) genuine overlap rejections —
+ * material enough that the density-TV gate refuses an unconditional device
+ * sampler while the other four primitive islands retain their original
+ * coverage. The emitter transform's own weight
  * (3, against the two unit-weight contractions) keeps most plotted points a
  * recent emitter stamp, so a wrong sampler or a wrong part-pick weight
  * restructures the frame rather than hiding in a rarely-visited corner of it
@@ -741,12 +768,16 @@ function emitterMenagerie(): Transform[] {
       position: [0.55, 0, 0],
       rotation: [0, 0, 0],
       scale: [0.5, 0.5, 0.5],
+      // Ignored by the 3D preparation; makes this SAME controlled system's
+      // 4D lift contract and rotate w instead of degenerating to a flat cloud.
+      w: { position: 0.12, scale: 0.55, rotation: { xw: 0.25 } },
     },
     {
       id: 1,
       position: [-0.55, 0, 0],
       rotation: [0, 0, 0],
       scale: [0.5, 0.5, 0.5],
+      w: { position: -0.12, scale: 0.5, rotation: { yw: -0.3 } },
     },
     {
       id: 2,
@@ -754,12 +785,20 @@ function emitterMenagerie(): Transform[] {
       rotation: [0.3, 0.4, 0.15],
       scale: [0.6, 0.6, 0.6],
       weight: 3,
+      w: { position: 0.05, scale: 0.6, rotation: { zw: 0.4 } },
       emitter: {
         parts: [
           {
             primitive: { kind: "sphere", radius: 0.25 },
             combine: "union",
             pose: { offset: [0.55, 0, 0] },
+          },
+          {
+            // Same primitive measure as part 0, shifted by only 0.10: the
+            // analytic overlap witness documented above.
+            primitive: { kind: "sphere", radius: 0.25 },
+            combine: "union",
+            pose: { offset: [0.65, 0, 0] },
           },
           {
             primitive: { kind: "box", half: [0.2, 0.15, 0.1] },
@@ -785,7 +824,7 @@ function emitterMenagerie(): Transform[] {
             primitive: { kind: "mesh", meshId: "star-prism-v1" },
             combine: "union",
             // The catalog asset's radius is ~1.04; this scale keeps its
-            // +z island disjoint from all four solid parts while leaving
+            // +z island disjoint from all five solid parts while leaving
             // enough area-weighted picks to make kind 5 statistically live.
             pose: {
               offset: [0, 0, 0.55],
@@ -797,29 +836,6 @@ function emitterMenagerie(): Transform[] {
       },
     },
   ];
-}
-
-/** The existing transform-color Hyperfern fixture with one 7%-weight map
- * upgraded to the catalog mesh emitter. The original Hyperfern still runs
- * untouched in the structural-color scenario; this controlled variant keeps
- * every map/weight/w-lift while making the 4D Flame kernel's kind-5 sampler
- * and binding-7 table statistically live against accumulateFlame4. */
-function hyperfernMeshEmitter(): Transform[] {
-  return hyperfern().map((transform, index) =>
-    index === 2
-      ? {
-          ...transform,
-          emitter: {
-            parts: [
-              {
-                primitive: { kind: "mesh", meshId: "star-prism-v1" },
-                combine: "union",
-              },
-            ],
-          },
-        }
-      : transform,
-  );
 }
 
 const SCENARIOS: ScenarioDef[] = [
@@ -1131,31 +1147,30 @@ const SCENARIOS: ScenarioDef[] = [
     // emitter-gearworks's sibling: its single GEAR_SHAPE part never reaches
     // the sphere/box/torus/capsule/mesh device samplers, nor the multi-part
     // pick's weighted search (a partCount<=1 slot skips it outright). This
-    // leg's emitter is one ShapeSpec holding all five, each posed to its own
-    // non-overlapping region — see emitterMenagerie's doc.
+    // leg's emitter is one ShapeSpec holding all five kinds plus the strongly
+    // overlapping second sphere — see emitterMenagerie's doc.
     // Probed via a 200k-point bounds pass (chaos-game's own `bounds`; this
     // system has no escape tail — every emitter sample is exactly bounded —
     // so a plain min/max is as tight a frame as a percentile one would be):
-    // x ∈ [-1.09, 1.10], y ∈ [-0.44, 0.44], z ∈ [-0.26, 0.37].
+    // The extra sphere extends the old x maximum by only 0.06 after the
+    // emitter transform, so the existing camera still frames every island.
     cameraPos: [2.15, 1.55, 2.2],
     lookAt: [0, 0, 0.05],
-    // Measured control floor: the CPU oracle against ITSELF at two seeds
-    // (0xc0ffee vs 0xbadcafe) through this exact camera/downsample/tonemap
-    // pipeline, at a REDUCED 5M iterations each (a throwaway standalone
-    // script, not this file, since the equal-N harness above needs a live
-    // backend — emitter-gearworks' own procedure) — mae 0.0305. A smaller N
-    // is a NOISIER, so CONSERVATIVELY OVER-ESTIMATED floor relative to this
-    // scenario's real 50.3M-iteration equal-N run, so 2x it (0.061) is still
-    // a safe upper bound at the real scale, and it sits well below the
-    // default 1.0 — the threshold stays at the default-equivalent 1.0
-    // rather than tightening below it (schedule-sponge's convention).
+    // The reduced overlap probe's corrected CPU control reads image MAE 0.024
+    // and its deliberately uncorrected mixture only 0.059: BOTH clear 1.0.
+    // Keep the default image ruler for the primitive/color branches, and let
+    // the direct density statistic below own overlap correctness.
     maeThreshold: 1.0,
+    // Image MAE is intentionally NOT the overlap ruler: in the reduced
+    // uncorrected control it reads only 0.059 and would clear the global 1.0
+    // bar. Normalized hit-field TV reads 0.080 against a 0.0097 two-seed floor.
+    densityTvThreshold: EMITTER_OVERLAP_DENSITY_TV_THRESHOLD,
     // Uniquely pins: applySlot's emitter branch over the sphere, box, torus,
     // capsule and mesh device samplers (including emitterDrawMesh's catalog
     // area CDF + 3D triangle record) —
     // none of which emitter-gearworks' single gear part reaches — and the
-    // multi-part pick's weighted binary search over a partCount > 1 slot
-    // (emitterSampleSlot), which no other scenario here exercises at all.
+    // multi-part pick's weighted binary search and bounded min-index overlap
+    // acceptance over a partCount > 1 slot (emitterSampleSlot).
   },
   // The 4D legs: between them, all four FourDRenderColor kinds and
   // both slice states; hyperfern/doubleRotation both carry non-1 weights,
@@ -1209,8 +1224,8 @@ const SCENARIOS: ScenarioDef[] = [
   },
   {
     kind: "4d",
-    name: "hyperfern-transform",
-    system: hyperfernMeshEmitter,
+    name: "emitter-menagerie-4d",
+    system: emitterMenagerie,
     finalTransform: null,
     symmetry: { order: 1, plane: "xz" },
     rotation: BENCH_TUMBLE,
@@ -1220,10 +1235,15 @@ const SCENARIOS: ScenarioDef[] = [
     sliceCenter: 0,
     sliceWidth: 0.35,
     sliceRelativeColor: false,
-    // The structural Hyperfern leg above preserves the original geometry;
-    // this transform-color sibling also pins the mesh emitter after the
-    // document is lifted through toTransform4 (local mesh samples enter at
-    // w=0, then the ordinary 4D orbit carries them through the tumble).
+    // The 3D menagerie lifted as a controlled pair: its w overrides make the
+    // orbit genuinely 4D (the reduced explorer probe spans w [-0.245, 0.503])
+    // while every fresh local shape sample still enters at w=0 before its
+    // slot's 4D affine. Keeps transform-color and mesh-table coverage from the
+    // former hyperfern-transform row, and adds the same strong sphere overlap
+    // to the 4D kernel without growing the 50.3M-iteration scenario roster.
+    // The reduced uncorrected control reads density TV 0.078 versus a 0.0094
+    // two-seed floor; image MAE is only 0.061 and therefore cannot be its gate.
+    densityTvThreshold: EMITTER_OVERLAP_DENSITY_TV_THRESHOLD,
   },
   {
     kind: "4d",
@@ -2136,20 +2156,49 @@ function buildDiffImage(
   };
 }
 
+/** Total-variation distance between two normalized hit fields. The inputs are
+ * the CPU-downsampled equal-N histograms, not the tone-mapped images: log
+ * density and RGB averaging are valuable display operations but can compress
+ * exactly the localized mass redistribution an overlap sampler gate must see.
+ * Returning 1 when either field has no positive mass makes an accidentally
+ * empty overlap fixture fail closed. */
+function hitDensityTotalVariation(
+  cpu: FlameHistogram,
+  gpu: FlameHistogram,
+): number {
+  let cpuTotal = 0;
+  let gpuTotal = 0;
+  for (let i = 0; i < cpu.hits.length; i++) {
+    cpuTotal += cpu.hits[i];
+    gpuTotal += gpu.hits[i];
+  }
+  if (!(cpuTotal > 0) || !(gpuTotal > 0)) return 1;
+
+  let l1 = 0;
+  for (let i = 0; i < cpu.hits.length; i++) {
+    l1 += Math.abs(cpu.hits[i] / cpuTotal - gpu.hits[i] / gpuTotal);
+  }
+  return l1 / 2;
+}
+
 /** Whether this scenario's raw diff metrics clear the agreement thresholds —
  * the one place `maeThreshold`/`AGREEMENT_BIAS_THRESHOLD` are actually
  * applied. `maeThreshold` is the scenario's own bar (its `maeThreshold`
  * override, or `AGREEMENT_MAE_THRESHOLD`); bias has no scenario-dependent
  * noise floor (shot noise cancels in a SIGNED mean), so its threshold stays
- * global. */
+ * global. Density TV is likewise scenario-owned and optional: only the
+ * overlap controlled pair has a measured reason to gate on it. */
 function passesAgreement(
   maeRGB: number,
   biasRGB: [number, number, number],
   maeThreshold: number,
+  densityTv: number,
+  densityTvThreshold: number | undefined,
 ): boolean {
   return (
     maeRGB < maeThreshold &&
-    biasRGB.every((b) => Math.abs(b) < AGREEMENT_BIAS_THRESHOLD)
+    biasRGB.every((b) => Math.abs(b) < AGREEMENT_BIAS_THRESHOLD) &&
+    (densityTvThreshold === undefined || densityTv < densityTvThreshold)
   );
 }
 
@@ -2469,6 +2518,7 @@ async function runScenario(
       );
       const gpuImage = tonemapFlame(gpuDisplay, TONEMAP_PARAMS);
       drawImage(dom.gpuCanvas, gpuImage);
+      const densityTv = hitDensityTotalVariation(cpuDisplay, gpuDisplay);
       const diff = buildDiffImage(
         cpuImage,
         gpuImage,
@@ -2481,10 +2531,18 @@ async function runScenario(
         maeRGB: diff.maeRGB,
         biasRGB: diff.biasRGB,
         maxAbs: diff.maxAbs,
+        densityTv,
+        densityTvThreshold: def.densityTvThreshold,
         maxHitsCpu: cpuHist.maxHits,
         maxHitsGpu: gpuEqualN.histogram.maxHits,
         maeThreshold,
-        pass: passesAgreement(diff.maeRGB, diff.biasRGB, maeThreshold),
+        pass: passesAgreement(
+          diff.maeRGB,
+          diff.biasRGB,
+          maeThreshold,
+          densityTv,
+          def.densityTvThreshold,
+        ),
       };
       displayDownsample = gpuEqualN.gpuDisplayDownsample
         ? compareDisplayDownsample(gpuEqualN.gpuDisplayDownsample, gpuDisplay)

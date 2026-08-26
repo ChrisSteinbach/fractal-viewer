@@ -18,6 +18,7 @@ import { prepareChaosGame4 } from "./chaos-game-4d";
 import { MAX_TRANSFORMS } from "./chaos-game";
 import {
   COLOR_FIXED_POINT_SCALE,
+  EMITTER_OVERLAP_ATTEMPTS,
   HIST_U32_PER_BUCKET,
   KERNEL_VARIATION_INDEX,
   WORKGROUP_SIZE,
@@ -345,9 +346,12 @@ describe("packGpuSystem4 shape emitters", () => {
    * 96-100, then flame-gpu.ts's shared 24-element EmitterPart sub-layout. */
   const EMITTER_FLAG = 96;
   const EMITTER_PART_COUNT = 97;
+  const EMITTER_FALLBACK_PART = 99;
   const EMITTER_PARTS = 100;
   const EP_KIND_PARAMS0 = 0;
+  const EP_PARAMS1 = 4;
   const EP_ROT0 = 12;
+  const EP_ROT1 = 16;
 
   function transform4WithEmitter(emitter: ShapeSpec): Transform4 {
     return { position: [0, 0, 0, 0], scale: [1, 1, 1, 1], emitter };
@@ -362,6 +366,7 @@ describe("packGpuSystem4 shape emitters", () => {
       const base = s * F32_PER_SLOT4;
       expect(u32[base + EMITTER_FLAG]).toBe(0);
       expect(u32[base + EMITTER_PART_COUNT]).toBe(0);
+      expect(u32[base + EMITTER_FALLBACK_PART]).toBe(0);
     }
     expect(packed.gearTable).toBeNull();
   });
@@ -394,6 +399,13 @@ describe("packGpuSystem4 shape emitters", () => {
     expect(f32[p + EP_KIND_PARAMS0]).toBe(4); // gear
     const triCount = f32[p + EP_KIND_PARAMS0 + 2];
     expect(triCount).toBeGreaterThan(0);
+    expect(Array.from(f32.slice(p + EP_PARAMS1, p + EP_PARAMS1 + 4))).toEqual([
+      1,
+      Math.fround(0.22),
+      Math.fround(0.16),
+      Math.fround(0.35),
+    ]);
+    expect(f32[p + EP_ROT1 + 3]).toBeCloseTo((2 * Math.PI) / 8, 6);
     expect(packed.gearTable).not.toBeNull();
     expect(new Float32Array(packed.gearTable!).length).toBe(
       triCount + triCount * 6,
@@ -437,6 +449,39 @@ describe("packGpuSystem4 shape emitters", () => {
     const u32 = new Uint32Array(packed.slots);
     for (let s = 0; s < 3; s++) {
       expect(u32[s * F32_PER_SLOT4 + EMITTER_FLAG]).toBe(1);
+    }
+  });
+
+  it("packs the shared positive-measure fallback word without growing Slot4", () => {
+    const spec: ShapeSpec = {
+      parts: [
+        { primitive: { kind: "sphere", radius: 0 }, combine: "union" },
+        { primitive: { kind: "box", half: [1, 1, 1] }, combine: "union" },
+      ],
+    };
+    const packed = packGpuSystem4(
+      baseSpec4({ transforms4: [transform4WithEmitter(spec)] }),
+    );
+    expect(new Uint32Array(packed.slots)[EMITTER_FALLBACK_PART]).toBe(1);
+    expect(SLOT4_STRIDE_BYTES).toBe(1168);
+  });
+
+  it("uses the same bounded posed-containment policy as the 3D kernel", () => {
+    expect(EMITTER_OVERLAP_ATTEMPTS).toBe(64);
+    for (const source of [FLAME_GPU_KERNEL_4D_WGSL]) {
+      expect(source).toContain("const EMITTER_OVERLAP_ATTEMPTS: u32 = 64u;");
+      expect(source).toContain("fn emitterPartContains(");
+      expect(source).toContain(
+        "part.rot0.x * shifted.x + part.rot1.x * shifted.y + part.rot2.x * shifted.z",
+      );
+      expect(source).toContain("let seg = part.rot1.w;");
+      expect(source).toContain("attempt < EMITTER_OVERLAP_ATTEMPTS");
+      expect(source).toContain(
+        "slots[slotIdx].emitterParts[slots[slotIdx].emitterFallbackPart]",
+      );
+      expect(source).toContain(
+        "if (u32(slots[slotIdx].emitterParts[pick].kindParams0.x) == 5u)",
+      );
     }
   });
 
