@@ -40,8 +40,8 @@
  *   - The FLOOR is not special. --toggleId=surfaceBalloonCheckbox kills it
  *     the same way, and so does simply LEAVING Surface mode. Floor and
  *     Balloon are just the only two document edits reachable from INSIDE a
- *     surface session — #explorerControls, and with it the transform list
- *     carrying the radius sliders, is points-mode only — so a user "playing
+ *     surface session — the Transforms section carrying the radius sliders is
+ *     points-mode only — so a user "playing
  *     about" in Surface mode has exactly these two switches to hand, and
  *     both restart the renderer the same way a mode exit does.
  *

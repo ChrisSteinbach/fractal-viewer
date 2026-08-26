@@ -318,12 +318,18 @@
         </button>
       </div>
 
-      <!-- The always-present document sections, packed as one chip strip.
-           Separate strips exist because the mode wrappers below own the
-           display:none that gates their sections; see the .section-strip
-           block in style.css. Atmosphere is likewise its own strip because
-           it remains live across modes while its Points-only rows do not. -->
-      <div class="section-strip">
+      <!-- Panel placement is governed by docs/panel-ia.md: classify every
+           control by conceptual home (Scene / Look, Renderer, View / Device,
+           or Workflow), consumers, lifetime, and edit behavior. This HTML
+           owns that conceptual grouping and order; ui.ts owns runtime
+           applicability, not a second information architecture.
+
+           Every top-level section is a direct child of this one semantic chip
+           strip. A section owns its own mode visibility; layout wrappers must
+           not determine where its chip can pack. Direct children share the
+           exclusive `panel-section` name; nested disclosures must omit that
+           name or use a different one so they never join an ancestor's group. -->
+      <div id="panelSections" class="section-strip">
         <!-- Capture vs Share: this section is PIXELS ONLY — one-way
            snapshots of what's on screen. The scene-document traffic (link,
            JSON file, .flame, import) lives in the Share section below. -->
@@ -351,9 +357,8 @@
         <!-- Share: the current scene as a portable DOCUMENT — link, JSON
            file, .flame interop — plus the app's one import door, which
            format-sniffs every file kind (scene JSON, .flame, collection and
-           timeline backups; decodeImportFile routes). Outside
-           #explorerControls like its neighbors: all of it works while a
-           flame/solid render is showing. -->
+           timeline backups; decodeImportFile routes). Always applicable: all
+           of it works while a flame/solid render is showing. -->
         <details class="panel-section" id="shareSection" name="panel-section">
           <summary>Share</summary>
           <button class="btn btn-ghost" id="copyLinkBtn" type="button">
@@ -398,10 +403,10 @@
           </p>
         </details>
 
-        <!-- Outside #explorerControls on purpose, like Capture: saving a
-           keeper / opening the gallery works while a flame/solid render is
-           showing — the save then captures the rendered frame and tags the
-           entry with the mode it came from. -->
+        <!-- Always applicable, like Capture: saving a keeper / opening the
+           gallery works while a flame/solid render is showing — the save then
+           captures the rendered frame and tags the entry with the mode it
+           came from. -->
         <details
           class="panel-section"
           id="collectionSection"
@@ -442,8 +447,8 @@
         </details>
 
         <!-- Animation timeline: an authored sequence of keyframes played back as a
-           chain of morphs — the drift show's directed counterpart. Outside
-           #explorerControls like Collection: adding a keyframe works from a
+           chain of morphs — the drift show's directed counterpart. Always
+           applicable like Collection: adding a keyframe works from a
            flame/solid render too (the capture falls back to what's showing). -->
         <details
           class="panel-section"
@@ -505,9 +510,7 @@
             Play it — or ⏺ Export it as a video clip.
           </p>
         </details>
-      </div>
 
-      <div id="explorerControls" class="section-strip">
         <details
           class="panel-section"
           id="transformsSection"
@@ -586,6 +589,8 @@
             + Add as block
           </button>
           <div id="xaosLeakRows" class="hidden"></div>
+          <!-- Nested detail, independent of the top-level accordion: no name,
+               so opening the matrix cannot close Xaos (its ancestor). -->
           <details class="editor-group" id="xaosMatrixSection">
             <summary class="editor-group-title">Advanced: chaos matrix</summary>
             <p id="xaosMatrixNote" class="flame-note-info hidden"></p>
@@ -789,10 +794,10 @@
 
           <!-- The 4D sibling of #colorModeRow: exactly one of the two
                selects shows (flat ↔ non-flat), so #rampPaletteRow below
-               always sits directly beneath the select that gates it — the
-               exclusive-open accordion demands gate and gated share a
-               section, and keeping both color selects here satisfies that
-               statically, with no DOM re-homing. -->
+               always sits directly beneath the select that gates it. The ramp
+               is true dependent detail of the active color choice, so they
+               stay together in Color; top-level accordion exclusivity does
+               not decide that placement. -->
           <div id="fourDColorRow" class="hidden">
             <p class="flame-hint">
               W-depth color = side of our 3-space:
@@ -897,14 +902,12 @@
             </label>
           </div>
         </details>
-      </div>
 
-      <!-- Shared scene atmosphere. This stays reachable in every render
+        <!-- Shared scene atmosphere. This stays reachable in every render
            mode: Background affects all four, while #fogControls hides only
            in Flame (the one renderer with no depth fog). The first block is
            the Points renderer's own depth style and echo, so Surface/Solid/
            Flame hide it without duplicating any of the shared controls. -->
-      <div id="atmosphereControls" class="section-strip">
         <details
           class="panel-section"
           id="atmosphereSection"
@@ -1217,9 +1220,7 @@
             </div>
           </div>
         </details>
-      </div>
 
-      <div id="explorerSecondaryControls" class="section-strip">
         <details
           class="panel-section"
           id="symmetrySection"
@@ -1309,11 +1310,9 @@
           </label>
           <p id="scheduleNote" class="flame-note hidden"></p>
         </details>
-      </div>
 
-      <div id="flameControls" class="section-strip hidden">
         <details
-          class="panel-section"
+          class="panel-section hidden"
           id="flameToneSection"
           name="panel-section"
         >
@@ -1504,7 +1503,7 @@
         </details>
 
         <details
-          class="panel-section"
+          class="panel-section hidden"
           id="flameBlurSection"
           name="panel-section"
         >
@@ -1546,7 +1545,7 @@
         </details>
 
         <details
-          class="panel-section"
+          class="panel-section hidden"
           id="flameQualitySection"
           name="panel-section"
         >
@@ -1581,11 +1580,9 @@
             aria-live="polite"
           ></p>
         </details>
-      </div>
 
-      <div id="solidControls" class="section-strip hidden">
         <details
-          class="panel-section"
+          class="panel-section hidden"
           id="solidSurfaceSection"
           name="panel-section"
         >
@@ -1654,7 +1651,11 @@
             id="solidBalloonRow"
             title="Show a sphere-inverted echo of the Solid volume around the attractor"
           >
-            <input type="checkbox" id="solidBalloonCheckbox" />
+            <input
+              type="checkbox"
+              id="solidBalloonCheckbox"
+              aria-describedby="solidBalloonNote"
+            />
             Balloon echo
           </label>
           <p
@@ -1713,7 +1714,7 @@
         </details>
 
         <details
-          class="panel-section"
+          class="panel-section hidden"
           id="solidLightingSection"
           name="panel-section"
         >
@@ -1754,7 +1755,7 @@
         </details>
 
         <details
-          class="panel-section"
+          class="panel-section hidden"
           id="solidQualitySection"
           name="panel-section"
         >
@@ -1789,11 +1790,9 @@
             aria-live="polite"
           ></p>
         </details>
-      </div>
 
-      <div id="surfaceControls" class="section-strip hidden">
         <details
-          class="panel-section"
+          class="panel-section hidden"
           id="surfaceLookSection"
           name="panel-section"
         >
@@ -2103,16 +2102,27 @@
                geometry by the tracer. Binds the SAME persisted state pair, so
                one balloon carries across renderers. The 4D arm slices then
                inverts; the Points arm projects then inverts — dimensional
-               reduction first in both. Hidden only while the active session is
-               escape-shaped, where the balloon is permanently inert. -->
+               reduction first in both. A forward-orbit session keeps the
+               authored toggle visible but disabled with the adjacent reason;
+               its dependent controls hide while the balloon is refused. -->
           <label
             class="checkbox-label"
             id="surfaceBalloonRow"
             title="Enclose the render in its own sphere-inverted echo — the fractal's shadows fall on the cave wall around it"
           >
-            <input type="checkbox" id="surfaceBalloonCheckbox" />
+            <input
+              type="checkbox"
+              id="surfaceBalloonCheckbox"
+              aria-describedby="surfaceBalloonNote"
+            />
             Balloon
           </label>
+          <p
+            id="surfaceBalloonNote"
+            class="flame-note hidden"
+            role="status"
+            aria-live="polite"
+          ></p>
           <div id="surfaceBalloonPaletteRow">
             <label class="select-label">
               Balloon Palette
@@ -2261,9 +2271,7 @@
             />
           </label>
         </details>
-      </div>
 
-      <div class="section-strip">
         <details
           class="panel-section hidden"
           id="threeDControls"

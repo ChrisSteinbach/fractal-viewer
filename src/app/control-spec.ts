@@ -119,6 +119,10 @@ import type { BackgroundMode, BackgroundShape } from "./background";
  * pinned against it by a ui.test.ts test — the log-scaled point count /
  * color-contrast sliders and the detent-indexed flame quality slider map their
  * own domains onto those ranges via the helpers below.
+ *
+ * This table owns scalar binding and effects, not panel placement. Before an
+ * entry is added or moved, classify its conceptual home, consumers, lifetime,
+ * and edit behavior under the four-family contract in `docs/panel-ia.md`.
  */
 
 /**

@@ -115,8 +115,8 @@ const LENS_PRESETS = ["juliaSnowflake", "juliaPinwheel"];
  *
  * Deliberately NOT a DOM probe. The obvious one — the panel's "Lens over the
  * whole cloud" row — measures the wrong thing: the transform list lives in
- * `#explorerControls`, which HIDES outside explorer mode, and every preset
- * with a render hint switches mode as it loads. `innerText` then returns
+ * the Points-only Transforms section, which HIDES outside explorer mode, and
+ * every preset with a render hint switches mode as it loads. `innerText` then returns
  * nothing for a lens that is perfectly well installed, and the "did it clear"
  * half of the check passes vacuously for the same reason. The hash is the
  * document itself, and it is what a shared link carries.
@@ -265,8 +265,8 @@ async function loadPreset(page, key) {
   // section the panel REMEMBERS per render mode, so whether it is expanded
   // depends on where the session has been — open it explicitly rather than
   // depending on that.
-  // The menu lives in `#explorerControls`, which HIDES outside explorer mode
-  // — and a preset carrying a render hint (PRESET_RENDER_HINTS) switches mode
+  // The menu lives in the Points-only Presets section, which HIDES outside
+  // explorer mode — and a preset carrying a render hint (PRESET_RENDER_HINTS) switches mode
   // as it loads, so after loading a flame showcase the menu is gone. Return
   // to the explorer first, which is the path a user takes for the same
   // reason. Then open the accordion section the menu sits in, whose open

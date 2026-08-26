@@ -127,6 +127,12 @@ export type { Preset };
  */
 export type SurfaceSessionKind = "ifs" | "escape" | "bulb";
 
+/** One refusal, one explanation in Solid and Surface: both reject the
+ * sphere-inverted echo precisely when the rendered solid reaches the ball
+ * centre. See docs/panel-ia.md's disable-with-adjacent-reason contract. */
+const BALLOON_CENTRE_REFUSAL_REASON =
+  "Balloon unavailable — this solid fills its enclosing-ball centre.";
+
 /** The geometry (and weight/variations) a transform editor edits. `w` is the
  * optional 4D extension (see `types.ts`'s `WExtension`) — included here so
  * the single editor can be the one UI that creates/edits it, but see
@@ -1653,6 +1659,12 @@ function surfaceProgressEngine(label: string): string | null {
  * Owns the control panel and the dynamic transform list. All DOM is built with
  * `createElement`/`textContent` (never `innerHTML`) so user-influenced strings
  * can never be interpreted as markup.
+ *
+ * `index.html` owns each control's conceptual home and order; this class owns
+ * runtime applicability and disclosure across renderer, dimension, and
+ * session-kind consumers. Keep those concerns aligned with the control's
+ * lifetime and live/restart/next-entry/refused behavior as specified in
+ * `docs/panel-ia.md`.
  */
 export class Ui {
   private readonly doc: Document;
@@ -1738,9 +1750,9 @@ export class Ui {
   private gallerySceneCount = 0;
   private readonly toast: HTMLElement;
 
-  // Animation timeline: the panel's own authoring section, outside
-  // #explorerControls like Collection/Export (adding a keyframe works from a
-  // flame/solid render too). Play/Export mirror the Drift toggle's
+  // Animation timeline: an always-applicable authoring section like
+  // Collection/Export (adding a keyframe works from a flame/solid render too).
+  // Play/Export mirror the Drift toggle's
   // lit/self-explaining-disabled-title pattern — see syncTimelineButtons.
   private readonly timelineAddBtn: HTMLButtonElement;
   private readonly timelinePlayBtn: HTMLButtonElement;
@@ -1927,11 +1939,15 @@ export class Ui {
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
 
-  private readonly explorerControls: HTMLElement;
-  /** The Points-only Symmetry strip sits below the shared Atmosphere strip in
-   * the static DOM, so it has its own mode gate while Atmosphere remains
-   * reachable. */
-  private readonly explorerSecondaryControls: HTMLElement;
+  /** Top-level sections whose current behavior is mode-contextual. They are
+   * direct siblings in index.html's one #panelSections strip: each section,
+   * rather than a layout wrapper, owns its visibility. This preserves the
+   * pre-migration control placement while the panel-ia work rehomes features
+   * by conceptual family. */
+  private readonly pointsSections: readonly HTMLDetailsElement[];
+  private readonly flameSections: readonly HTMLDetailsElement[];
+  private readonly solidSections: readonly HTMLDetailsElement[];
+  private readonly surfaceLookSection: HTMLDetailsElement;
   /** The shared Atmosphere section's two mode-sensitive subsets: Points-only
    * depth/balloon effects, and fog (all modes except Flame). */
   private readonly pointsAtmosphereControls: HTMLElement;
@@ -1990,7 +2006,6 @@ export class Ui {
   // it remains available in every mode, matching the always-live shortcuts.
   private readonly flameStatus: HTMLElement;
   private readonly solidStatus: HTMLElement;
-  private readonly flameControls: HTMLElement;
   private readonly flameSupersampleNote: HTMLElement;
   private readonly flameBackendNote: HTMLElement;
   private readonly flameProgress: HTMLElement;
@@ -2003,7 +2018,6 @@ export class Ui {
   private readonly flameBalloonTintRow: HTMLElement;
   private readonly flameBalloonTintColorInput: HTMLInputElement;
 
-  private readonly solidControls: HTMLElement;
   private readonly solidResolutionNote: HTMLElement;
   private readonly solidProgress: HTMLElement;
   // Solid's view of the shared balloon fields. Its query-space remap is live,
@@ -2035,24 +2049,25 @@ export class Ui {
   private readonly surfacePreviewToggle: HTMLInputElement;
   private readonly surfaceSkipPreviewBtn: HTMLButtonElement;
   // The surface render's own settings block: lighting sliders plus the
-  // base-color source/palette selects, the same solidControls pattern one
+  // base-color source/palette selects, the same mode-section pattern one
   // render mode over. surfacePaletteRow additionally gates on colorSource
   // being "palette", "rings", or "sheets" (all three sample the
   // user-selected palette) — like glowBrightnessRow's renderStyle gate.
   // surfaceColorSpeedRow gates more narrowly, on exactly "palette": color
   // speed shapes only that source's orbit-trap blend.
-  private readonly surfaceControls: HTMLElement;
   private readonly surfacePaletteRow: HTMLElement;
   private readonly surfaceColorSpeedRow: HTMLElement;
-  // The surface balloon rows, 3D and 4D alike: hidden under a
-  // FORWARD-ORBIT session in either dimension (surfaceSessionKind — the
-  // balloon is permanently inert there, a filled solid's echo swallowing
-  // the camera), and under nothing else: a 4D IFS session balloons
-  // exactly like a 3D one, so the old fourDSurfaceLive gate is gone. The
-  // radius row additionally waits for the balloon itself, mirroring the
-  // explorer pair. Its own Inflate button binds the SAME handler as the
-  // Points and Flame buttons — one shared command with mode-specific motion.
+  // The surface balloon rows, 3D and 4D alike. A FORWARD-ORBIT session in
+  // either dimension REFUSES the authored top-level capability visibly: the
+  // checkbox stays checked but disables beside its reason, while dependent
+  // rows hide. A 4D IFS session balloons exactly like a 3D one, so the old
+  // fourDSurfaceLive gate is gone. The radius row additionally waits for the
+  // balloon itself, mirroring the explorer pair. Its own Inflate button binds
+  // the SAME handler as the Points and Flame buttons — one shared command
+  // with mode-specific motion. See docs/panel-ia.md.
   private readonly surfaceBalloonRow: HTMLElement;
+  private readonly surfaceBalloonCheckbox: HTMLInputElement;
+  private readonly surfaceBalloonNote: HTMLElement;
   /** Condensation level-band controls, visible only for an emitter-backed
    * IFS Surface session. */
   private readonly surfaceCondensationRow: HTMLElement;
@@ -2243,11 +2258,11 @@ export class Ui {
     }
   >;
 
-  /** Which accordion section is open, remembered per render mode so
-   * switching Points ↔ Flame ↔ Solid ↔ Surface restores each mode's working
-   * section instead of landing on an all-collapsed panel. `""` = the user
-   * deliberately collapsed everything in that mode. Session-only, like
-   * `renderMode` itself. */
+  /** Per-mode fallback for the accordion when the previously open section is
+   * no longer applicable after a renderer switch. A still-visible open
+   * section wins and survives the switch; otherwise this restores the mode's
+   * last contextual choice/default. `""` = the user deliberately collapsed
+   * everything in that mode. Session-only, like `renderMode` itself. */
   private readonly openSectionByMode: Record<RenderMode, string> = {
     points: "presetSection",
     flame: "flameToneSection",
@@ -2529,8 +2544,27 @@ export class Ui {
     }
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
-    this.explorerControls = this.byId("explorerControls");
-    this.explorerSecondaryControls = this.byId("explorerSecondaryControls");
+    this.pointsSections = [
+      this.byId<HTMLDetailsElement>("transformsSection"),
+      this.byId<HTMLDetailsElement>("xaosSection"),
+      this.byId<HTMLDetailsElement>("presetSection"),
+      this.byId<HTMLDetailsElement>("cloudSection"),
+      this.byId<HTMLDetailsElement>("colorSection"),
+      this.byId<HTMLDetailsElement>("symmetrySection"),
+      this.byId<HTMLDetailsElement>("scheduleSection"),
+    ];
+    this.flameSections = [
+      this.byId<HTMLDetailsElement>("flameToneSection"),
+      this.byId<HTMLDetailsElement>("flameBlurSection"),
+      this.byId<HTMLDetailsElement>("flameQualitySection"),
+    ];
+    this.solidSections = [
+      this.byId<HTMLDetailsElement>("solidSurfaceSection"),
+      this.byId<HTMLDetailsElement>("solidLightingSection"),
+      this.byId<HTMLDetailsElement>("solidQualitySection"),
+    ];
+    this.surfaceLookSection =
+      this.byId<HTMLDetailsElement>("surfaceLookSection");
     this.pointsAtmosphereControls = this.byId("pointsAtmosphereControls");
     this.fogControls = this.byId("fogControls");
     this.modeButtons = {
@@ -2548,7 +2582,6 @@ export class Ui {
     this.surfaceProgress = this.byId("surfaceProgress");
     this.surfacePreviewToggle = this.byId("surfacePreviewToggle");
     this.surfaceSkipPreviewBtn = this.byId("surfaceSkipPreviewBtn");
-    this.flameControls = this.byId("flameControls");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
     this.flameProgress = this.byId("flameProgress");
@@ -2556,7 +2589,6 @@ export class Ui {
     this.flameBalloonInflateButton = this.byId("flameBalloonInflateButton");
     this.flameBalloonTintRow = this.byId("flameBalloonTintRow");
     this.flameBalloonTintColorInput = this.byId("flameBalloonTintColor");
-    this.solidControls = this.byId("solidControls");
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
     this.solidBalloonCheckbox = this.byId("solidBalloonCheckbox");
@@ -2565,10 +2597,11 @@ export class Ui {
     this.solidBalloonInflateButton = this.byId("solidBalloonInflateButton");
     this.solidBalloonTintRow = this.byId("solidBalloonTintRow");
     this.solidBalloonTintColorInput = this.byId("solidBalloonTintColor");
-    this.surfaceControls = this.byId("surfaceControls");
     this.surfacePaletteRow = this.byId("surfacePaletteRow");
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
     this.surfaceBalloonRow = this.byId("surfaceBalloonRow");
+    this.surfaceBalloonCheckbox = this.byId("surfaceBalloonCheckbox");
+    this.surfaceBalloonNote = this.byId("surfaceBalloonNote");
     this.surfaceCondensationRow = this.byId("surfaceCondensationRow");
     this.surfaceCondensationCustom = this.byId("surfaceCondensationCustom");
     this.surfaceTrapRow = this.byId("surfaceTrapRow");
@@ -2701,8 +2734,11 @@ export class Ui {
           // A deliberate collapse (nothing left open) clears the mode's
           // memory; the auto-close half of an exclusive switch does not,
           // because the newly-opened section is already open in the DOM by
-          // the time either element's toggle event fires.
+          // the time either element's toggle event fires. Nor does an
+          // applicability close: updateLabels leaves .hidden on the section,
+          // preserving its contextual memory for when that mode returns.
           if (
+            !section.classList.contains("hidden") &&
             this.openSectionByMode[this.sectionMode] === section.id &&
             !this.panel.querySelector("details.panel-section[open]")
           ) {
@@ -3299,13 +3335,12 @@ export class Ui {
    * {@link surfaceSessionKind}) — main.ts sets it once per
    * surfaceSession.start() branch and resets it to `null` on session end,
    * mirroring {@link setFourDSlabAvailable}'s own routing-pushed pattern.
-   * Unlike that setter, this one does not self-sync: the gated rows also
-   * depend on `state.balloonEcho`, which this class doesn't cache, so the
-   * caller's next `updateLabels` call (already the established pattern —
-   * main.ts's refreshUi runs right after every surface routing decision)
-   * is what actually applies it. */
+   * The checkbox already carries the last state reflected by updateLabels,
+   * so the refusal can update immediately; the caller's established refreshUi
+   * after routing then reconciles it with the newest document state. */
   setSurfaceSessionKind(kind: SurfaceSessionKind | null): void {
     this.surfaceSessionKind = kind;
+    this.syncSurfaceBalloonRows();
   }
 
   /** Apply the active Solid session's centre-density refusal result. The
@@ -3325,9 +3360,29 @@ export class Ui {
     this.solidBalloonRadiusRow.classList.toggle("hidden", !showDependent);
     this.solidBalloonTintRow.classList.toggle("hidden", !showDependent);
     this.solidBalloonNote.textContent = refused
-      ? "Balloon unavailable — this solid fills its enclosing-ball centre."
+      ? BALLOON_CENTRE_REFUSAL_REASON
       : "";
     this.solidBalloonNote.classList.toggle("hidden", !refused);
+  }
+
+  /** Apply Surface's forward-orbit refusal without erasing the shared authored
+   * flag. The checkbox remains discoverable; palette/radius/tint are dependent
+   * controls and hide until the capability is usable again. */
+  private syncSurfaceBalloonRows(): boolean {
+    const refused =
+      this.surfaceSessionKind === "escape" ||
+      this.surfaceSessionKind === "bulb";
+    const showDependent = !refused && this.surfaceBalloonCheckbox.checked;
+    this.surfaceBalloonRow.classList.remove("hidden");
+    this.surfaceBalloonCheckbox.disabled = refused;
+    this.surfaceBalloonPaletteRow.classList.toggle("hidden", refused);
+    this.surfaceBalloonRadiusRow.classList.toggle("hidden", !showDependent);
+    this.surfaceBalloonTintRow.classList.toggle("hidden", !showDependent);
+    this.surfaceBalloonNote.textContent = refused
+      ? BALLOON_CENTRE_REFUSAL_REASON
+      : "";
+    this.surfaceBalloonNote.classList.toggle("hidden", !refused);
+    return refused;
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -3464,7 +3519,7 @@ export class Ui {
       this.modeButtons[mode].classList.toggle("active", active);
       this.modeButtons[mode].setAttribute("aria-pressed", String(active));
     }
-    // …and swap in the active mode's controls. A flame/solid render takes
+    // …and swap in the active mode's sections. A flame/solid render takes
     // over the panel — editing controls that can't affect the in-progress
     // render would just be confusing — but the segmented control itself stays,
     // so flame↔solid is a direct switch, not a round-trip through Points.
@@ -3506,19 +3561,24 @@ export class Ui {
     // ahead of the flat-only escape-time and fold/affine paths.
     this.fourDSurfaceLive = nonFlat && state.renderMode === "surface";
     this.panelTitle.textContent = nonFlat ? "4D IFS Fractal" : "3D IFS Fractal";
-    this.explorerControls.classList.toggle("hidden", rendering);
-    this.explorerSecondaryControls.classList.toggle("hidden", rendering);
+    for (const section of this.pointsSections) {
+      section.classList.toggle("hidden", rendering);
+    }
     this.pointsAtmosphereControls.classList.toggle("hidden", rendering);
     this.fogControls.classList.toggle("hidden", state.renderMode === "flame");
-    this.flameControls.classList.toggle("hidden", state.renderMode !== "flame");
+    for (const section of this.flameSections) {
+      section.classList.toggle("hidden", state.renderMode !== "flame");
+    }
     this.flameBalloonRadiusRow.classList.toggle("hidden", !state.balloonEcho);
     this.flameBalloonTintRow.classList.toggle("hidden", !state.balloonEcho);
-    this.solidControls.classList.toggle("hidden", state.renderMode !== "solid");
+    for (const section of this.solidSections) {
+      section.classList.toggle("hidden", state.renderMode !== "solid");
+    }
     // Solid's query-space echo is dimension-independent, but a session whose
     // centre-density probe refuses it temporarily disables the checkbox and
     // hides the dependent rows without mutating the shared authored flag.
     this.syncSolidBalloonRows();
-    this.surfaceControls.classList.toggle(
+    this.surfaceLookSection.classList.toggle(
       "hidden",
       state.renderMode !== "surface" && !trapGeometryRecovery,
     );
@@ -3540,33 +3600,11 @@ export class Ui {
       "hidden",
       state.surface.colorSource !== "palette",
     );
-    // The surface balloon, 3D and 4D alike, hides under a FORWARD-ORBIT
-    // session in either dimension (the balloon is PERMANENTLY inert for
-    // those filled solids — a filled interior reaches the ball center, so
-    // its echo swallows the camera — see surfaceSessionKind's own doc);
-    // the radius row additionally waits for the balloon itself to be on,
-    // mirroring the explorer pair. The 4D DIMENSION gate is gone: a 4D
-    // IFS session balloons exactly like a 3D one. The surface section as
-    // a whole already gates on renderMode above.
-    const surfaceBalloonHidden =
-      this.surfaceSessionKind === "escape" ||
-      this.surfaceSessionKind === "bulb";
-    this.surfaceBalloonRow.classList.toggle("hidden", surfaceBalloonHidden);
-    this.surfaceBalloonPaletteRow.classList.toggle(
-      "hidden",
-      surfaceBalloonHidden,
-    );
-    this.surfaceBalloonRadiusRow.classList.toggle(
-      "hidden",
-      surfaceBalloonHidden || !state.balloonEcho,
-    );
-    // The surface balloon tint waits for exactly what the radius row
-    // above waits for — the same surfaceBalloonHidden local, so a
-    // forward-orbit session hides it even with the balloon flag on.
-    this.surfaceBalloonTintRow.classList.toggle(
-      "hidden",
-      surfaceBalloonHidden || !state.balloonEcho,
-    );
+    // Forward-orbit Surface sessions preserve the authored balloon while
+    // visibly refusing it; eligible sessions show only the dependent rows
+    // whose parent state makes them meaningful. The 4D dimension gate is
+    // gone: a 4D IFS session balloons exactly like a 3D one.
+    const surfaceBalloonRefused = this.syncSurfaceBalloonRows();
     for (const row of this.surfaceGroundPlaneDependentRows) {
       row.classList.toggle("hidden", !state.groundPlane);
     }
@@ -3577,7 +3615,7 @@ export class Ui {
     // own mode.
     this.surfaceTrapRow.classList.toggle(
       "hidden",
-      !surfaceBalloonHidden && !trapGeometryRecovery,
+      !surfaceBalloonRefused && !trapGeometryRecovery,
     );
     this.surfaceTrapControls.classList.toggle("hidden", !state.shapeTrap);
     this.surfaceTrapThresholdRow.classList.toggle(
@@ -3688,9 +3726,9 @@ export class Ui {
     // is ONE row (select + custom-stop editor) serving both views: it sits
     // statically beneath the flat/4D color-select pair, exactly one of which
     // is visible per view, so it is always directly under the select that
-    // gates it — the exclusive-open accordion demands gate and gated share a
-    // section, and the static Color layout satisfies that without the
-    // old DOM re-homing.
+    // gates it. That true dependent relationship keeps the rows together in
+    // Color; top-level accordion exclusivity does not determine their
+    // conceptual placement.
     this.rampPaletteRow.classList.toggle(
       "hidden",
       nonFlat
@@ -3767,36 +3805,41 @@ export class Ui {
     if (this.surfaceBalloonTintColorInput.value !== state.balloonTint) {
       this.surfaceBalloonTintColorInput.value = state.balloonTint;
     }
-    // Accordion restore: entering a render mode re-opens the section the
-    // user last had open there (defaults: Presets / Tone / Surface / Surface
-    // Look — see openSectionByMode). Setting .open trips the details
-    // name-group exclusivity, so the previous mode's section closes by
-    // itself. Runs after the visibility gating above so the hidden check
-    // reads this update's state, and only on an actual mode change so a
-    // collapse the user makes within a mode is respected until they leave
-    // it.
+    // Accordion applicability/restore runs after every section-level gate
+    // above. Close anything now hidden, even when applicability changed
+    // without a mode switch; a hidden section must never remain open. On a
+    // mode switch, an open section that remains visible survives — sharedness
+    // is derived from current applicability, not a hardcoded family/id list.
+    // Only when none survives do we restore the destination mode's remembered
+    // contextual section/default (see openSectionByMode). A remembered `""`
+    // leaves the destination deliberately all-collapsed.
+    const openSections = Array.from(
+      this.panel.querySelectorAll<HTMLDetailsElement>(
+        "details.panel-section[open]",
+      ),
+    );
+    const stillApplicable = openSections.find(
+      (section) => !section.classList.contains("hidden"),
+    );
+    for (const open of openSections) {
+      if (open.classList.contains("hidden")) open.open = false;
+    }
+
     if (state.renderMode !== this.sectionMode) {
       this.sectionMode = state.renderMode;
-      const remembered = this.openSectionByMode[state.renderMode];
-      const target = remembered ? this.doc.getElementById(remembered) : null;
-      if (
-        target instanceof HTMLDetailsElement &&
-        !target.classList.contains("hidden")
-      ) {
-        target.open = true;
+      if (stillApplicable) {
+        // It is now the destination mode's active section too. Recording it
+        // keeps a later deliberate collapse meaningful: collapsed-all must
+        // clear this mode instead of resurrecting its older fallback.
+        this.openSectionByMode[state.renderMode] = stillApplicable.id;
       } else {
-        // Nothing to restore (the user had collapsed everything here, or the
-        // remembered section is gated away): close the outgoing mode's
-        // section ourselves — normally the exclusivity does it — so no
-        // hidden-open state lingers behind the swapped panel. The close
-        // can't clear the outgoing mode's memory: the toggle handler checks
-        // against the CURRENT mode, which this switch already changed.
-        for (const open of Array.from(
-          this.panel.querySelectorAll<HTMLDetailsElement>(
-            "details.panel-section[open]",
-          ),
-        )) {
-          open.open = false;
+        const remembered = this.openSectionByMode[state.renderMode];
+        const target = remembered ? this.doc.getElementById(remembered) : null;
+        if (
+          target instanceof HTMLDetailsElement &&
+          !target.classList.contains("hidden")
+        ) {
+          target.open = true;
         }
       }
     }

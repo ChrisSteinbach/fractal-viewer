@@ -472,6 +472,9 @@ body {
    about one phone-screen tall instead of demanding a long — and
    accident-prone, see the range-input touch-action below — scroll. Browsers
    without the name attribute degrade to independently collapsible sections.
+   Exclusivity governs open state only; it never justifies mixing conceptual
+   concerns. A drill-down within a section uses an unnamed <details>, or a
+   different name when its own nested peers must be exclusive.
    The summaries inherit the look of the h3 headings they replaced; the
    native marker is the collapsed/expanded affordance, same as the editor's
    "4D" group. */
@@ -498,15 +501,10 @@ body {
    all of it stacked above whatever you actually opened. The collapsed ones
    pack into chip rows instead; the open one takes a row to itself.
 
-   Several strips rather than one, because the sections are not siblings: the
-   mode wrappers (#explorerControls, #explorerSecondaryControls, and the
-   flame/solid/surface trio) own the display:none that gates a render mode's
-   sections. #atmosphereControls deliberately sits between the two Points
-   strips so it can remain live in every mode. Flattening these into one strip
-   would mean re-homing that gating onto every section. A strip per container
-   leaves it explicit. The cost is that chips cannot pack across a group
-   boundary — about one row — which is well under what a display:contents
-   flattening would have risked.
+   All top-level sections are direct siblings in one strip. Each section owns
+   its own render-mode visibility (see Ui.updateLabels), so layout never
+   creates an artificial chip-row boundary or doubles as an applicability
+   gate. See docs/panel-ia.md.
 
    Chips are also a bigger touch target than what they replace: ~34px against
    a bare 12px text line, on the panel this whole change exists to make
