@@ -85,11 +85,15 @@
  * closed-form measure (sphere/box/torus/capsule) or a seeded fixed-budget
  * Monte Carlo one (the gear profile's area, deterministic at prepare
  * time), a part is picked proportionally, sampled exactly in its own
- * frame, and overlap is handled by MIN-INDEX ACCEPTANCE: a candidate drawn
- * from part `i` is accepted iff no part `j < i` contains it (posed
- * `sdf <= 0`), else redrawn — which assigns every overlap region to its
- * lowest-index part and renormalizes by rejection, i.e. exactly uniform on
- * the union with no double density. Redraws are UNBOUNDED and that is
+ * frame, and VOLUME overlap is handled by MIN-INDEX ACCEPTANCE: a candidate
+ * drawn from volume part `i` is accepted iff no earlier VOLUME part `j < i`
+ * contains it (posed `sdf <= 0`), else redrawn — which assigns every volume
+ * overlap region to its lowest-index solid and renormalizes by rejection,
+ * i.e. exactly uniform on the solid union with no double density. Surface-
+ * measure candidates (mesh parts and `gearOutline` gear parts) are independent
+ * authored styling measures: they are always accepted, neither contain nor
+ * are shadowed by a volume candidate, and therefore contribute independently
+ * of their position in the part list. Redraws are UNBOUNDED and that is
  * documented policy: the emitter consumer owns the derived-stream RNG
  * discipline, so a rejection loop here consumes however many draws it
  * needs from the caller's stream. An `"intersect"` part makes the spec
@@ -108,13 +112,13 @@
  * tables so device and host sample the same measure. Outline parts weigh
  * in by lateral area (perimeter × height) rather than volume — a mixed
  * outline/solid spec's balance is a styling choice, not a density claim —
- * and never count as containing a solid candidate (their region has no
- * volume to contain it in).
+ * and neither contain a solid candidate nor get shadowed by one (their
+ * surface measure is independent of the solid union's volume measure).
  * Mesh parts likewise carry SURFACE measure: exact triangle-area CDF and
  * sqrt-barycentric draws from the same prepared catalog object as the SDF
- * bake. They weigh by `area * scale²` and never volume-shadow another part;
- * a mixed mesh/solid spec therefore mixes area and volume as an authored
- * styling measure.
+ * bake. They weigh by `area * scale²`, never volume-shadow another part and
+ * are never shadowed by one; a mixed mesh/solid spec therefore mixes area and
+ * union volume as order-independent authored styling measures.
  *
  * SHADER EMISSION is per-spec BAKED-CONSTANT CODEGEN, `surface-de-gpu.ts`'s
  * house style: {@link shapeSdfSource} emits one complete function — pose
@@ -753,11 +757,13 @@ function primitiveVolume(prim: ShapePrimitive): number {
 
 /**
  * Build the spec's point sampler (module doc: analytic solids use volume,
- * mesh parts use triangle area, overlap uses min-index acceptance). Throws on any
- * `"intersect"` part (the spec is then SDF-only; see the module doc for
- * why no exact per-part scheme exists) and on a spec with no measure.
- * The returned closure draws from the caller's `rng` — unboundedly, by
- * documented policy.
+ * mesh/outline parts use surface measure, and overlap between volume parts
+ * uses min-index acceptance). Surface candidates are always accepted and
+ * never contain another candidate, so their contribution is independent of
+ * authored part order. Throws on any `"intersect"` part (the spec is then
+ * SDF-only; see the module doc for why no exact per-part scheme exists) and
+ * on a spec with no measure. The returned closure draws from the caller's
+ * `rng` — unboundedly, by documented policy.
  */
 export function prepareShapeSampler(
   spec: ShapeSpec,
@@ -815,13 +821,13 @@ export function prepareShapeSampler(
       }
       return [x, y, z];
     };
-    // An outline part's region has no volume, so it never contains a
-    // candidate for the min-index test (module doc).
-    const contains =
-      outline || meshSurface
-        ? () => false
-        : (x: number, y: number, z: number) => partSdf(part, x, y, z) <= 0;
-    return { weight, draw, toWorld, contains };
+    // Surface measures stay independent of the volume union: they neither
+    // contain another candidate nor get shadowed by an earlier solid.
+    const surfaceMeasure = outline || meshSurface;
+    const contains = surfaceMeasure
+      ? () => false
+      : (x: number, y: number, z: number) => partSdf(part, x, y, z) <= 0;
+    return { weight, draw, toWorld, contains, surfaceMeasure };
   });
   const total = parts.reduce((acc, p) => acc + p.weight, 0);
   if (!(total > 0)) {
@@ -836,6 +842,9 @@ export function prepareShapeSampler(
         if (pick < 0) break;
       }
       const candidate = parts[index].toWorld(parts[index].draw(rng));
+      // A surface draw is one sample from an independent authored measure,
+      // not volume that an earlier solid can own.
+      if (parts[index].surfaceMeasure) return candidate;
       let shadowed = false;
       for (let j = 0; j < index; j++) {
         if (parts[j].contains(candidate[0], candidate[1], candidate[2])) {

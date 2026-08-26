@@ -101,6 +101,7 @@ import {
 } from "./chaos-game";
 import {
   COLOR_FIXED_POINT_SCALE,
+  EMITTER_OVERLAP_ATTEMPTS,
   EMITTER_PART_STRIDE_BYTES,
   HIST_U32_PER_BUCKET,
   KERNEL_VARIATION_INDEX,
@@ -212,7 +213,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   restating it: what an absent field means must have ONE answer, or a 3D
  *   system and its 4D lift render different objects.
  *   368 emitterFlag u32 | 372 emitterPartCount u32 | 376
- *   emitterTotalWeight f32 | 380 pad | 384 emitterParts
+ *   emitterTotalWeight f32 | 380 emitterFallbackPart u32 | 384 emitterParts
  *   array<EmitterPart, {@link MAX_SHAPE_PARTS}> (768 B) — flame-gpu.ts's
  *   Slot entry VERBATIM, `writeSlot4Emitter` calling that module's
  *   dimension-free `writeEmitterPart`/triangle-table builders/
@@ -221,8 +222,8 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   kernel and the 3D one read `emitterTriangleTable` (binding 7 below) the
  *   same way): the sample is embedded at `w = 0` before this slot's OWN
  *   4x4+t affine poses it, `stepOrbit4`'s emitter branch (module doc's own
- *   dimensional-parity paragraph). The same min-index-overlap divergence
- *   flame-gpu.ts's Slot doc discloses applies here unchanged.
+ *   dimensional-parity paragraph). Its 64-proposal min-index overlap
+ *   correction and positive-measure fallback are the 3D Slot's verbatim.
  *
  * The stride arithmetic: the pre-symmetry 224 was exactly 14 x 16
  * with no slack — the flam3 color pair had already taken this struct's last
@@ -284,6 +285,7 @@ export const FLAME_GPU_KERNEL_4D_WGSL = /* wgsl */ `
 const ESCAPE_LIMIT: f32 = 50.0;
 const PI: f32 = 3.14159265358979;
 const EPS: f32 = 1e-12;
+const EMITTER_OVERLAP_ATTEMPTS: u32 = ${EMITTER_OVERLAP_ATTEMPTS}u;
 // The flame's ghost-context slice floor — project4.ts's SLICE_GHOST_FLOOR
 // (the point-cloud view's floor, NOT the solid render's 0), interpolated in.
 const SLICE_FLOOR: f32 = ${SLICE_GHOST_FLOOR};
@@ -374,7 +376,7 @@ struct Slot {
   emitterFlag: u32,
   emitterPartCount: u32,
   emitterTotalWeight: f32,
-  _emitterPad: f32,
+  emitterFallbackPart: u32,
   emitterParts: array<EmitterPart, ${MAX_SHAPE_PARTS}>,
 }
 
@@ -664,31 +666,118 @@ fn emitterSamplePart(state: ptr<function, u32>, part: EmitterPart) -> vec3f {
   return rotated + part.poseOffsetScale.xyz;
 }
 
-// One slot's whole emitter sample — the 3D kernel's own doc: no
-// min-index-overlap correction (an unbounded rejection loop, forbidden on
-// device), a disclosed divergence unreachable while every shipped emitter
-// is single-part.
+fn emitterSdBox2(p: vec2f, b: vec2f) -> f32 {
+  let d = abs(p) - b;
+  return length(max(d, vec2f(0.0))) + min(max(d.x, d.y), 0.0);
+}
+
+fn emitterSdBox3(p: vec3f, b: vec3f) -> f32 {
+  let d = abs(p) - b;
+  return length(max(d, vec3f(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0);
+}
+
+// shapes.ts's partSdf containment predicate over the generic packed part.
+// Sampling uses the FORWARD rotation rows above; containment deliberately
+// multiplies by their TRANSPOSE, the inverse of the orthonormal pose.
+fn emitterPartContains(part: EmitterPart, world: vec3f) -> bool {
+  let kind = u32(part.kindParams0.x);
+  if (kind == 5u) { // Meshes carry surface measure and contain no candidate.
+    return false;
+  }
+  let shifted = world - part.poseOffsetScale.xyz;
+  let local = vec3f(
+    part.rot0.x * shifted.x + part.rot1.x * shifted.y + part.rot2.x * shifted.z,
+    part.rot0.y * shifted.x + part.rot1.y * shifted.y + part.rot2.y * shifted.z,
+    part.rot0.z * shifted.x + part.rot1.z * shifted.y + part.rot2.z * shifted.z,
+  ) / part.poseOffsetScale.w;
+  var d = 1.0;
+  switch kind {
+    case 0u: { // sphere
+      d = length(local) - part.kindParams0.y;
+    }
+    case 1u: { // box
+      d = emitterSdBox3(local, part.kindParams0.yzw);
+    }
+    case 2u: { // torus
+      let q = vec2f(length(local.xy) - part.kindParams0.y, local.z);
+      d = length(q) - part.kindParams0.z;
+    }
+    case 3u: { // capsule
+      let pa = local - part.kindParams0.yzw;
+      let ba = part.params1.xyz - part.kindParams0.yzw;
+      let h = clamp(dot(pa, ba) / max(dot(ba, ba), EPS), 0.0, 1.0);
+      d = length(pa - ba * h) - part.params1.w;
+    }
+    case 4u: { // gear: params1 = radius, tooth.xy, hole; rot1.w = sector.
+      let lp = length(local.xy);
+      let seg = part.rot1.w;
+      let a0 = atan2(local.y, local.x) + seg * 0.5;
+      let a1 = a0 - seg * floor(a0 / seg) - seg * 0.5;
+      let gp = vec2f(cos(a1) * lp - part.params1.x, sin(a1) * lp);
+      var g = min(lp - part.params1.x, emitterSdBox2(gp, part.params1.yz));
+      if (part.params1.w > 0.0) {
+        g = max(g, part.params1.w - lp);
+      }
+      let wz = abs(local.z) - part.kindParams0.w;
+      let outside = max(vec2f(g, wz), vec2f(0.0));
+      d = min(max(g, wz), 0.0) + length(outside);
+    }
+    default: {
+      d = 1.0;
+    }
+  }
+  return d <= 0.0;
+}
+
+fn emitterPickPart(state: ptr<function, u32>, slotIdx: u32, partCount: u32) -> u32 {
+  let needle = emitterNext(state) * slots[slotIdx].emitterTotalWeight;
+  var lo = 0u;
+  var hi = partCount - 1u;
+  loop {
+    if (lo >= hi) {
+      break;
+    }
+    let mid = (lo + hi) >> 1u;
+    if (needle < slots[slotIdx].emitterParts[mid].rot0.w) {
+      hi = mid;
+    } else {
+      lo = mid + 1u;
+    }
+  }
+  return lo;
+}
+
+// The 3D kernel's bounded min-index acceptance verbatim. The single-part
+// path preserves the old derived-stream sequence; a multi-part slot gets at
+// most 64 weighted proposals and then one fresh positive-measure fallback.
 fn emitterSampleSlot(state: ptr<function, u32>, slotIdx: u32) -> vec3f {
   let partCount = slots[slotIdx].emitterPartCount;
-  var pick = 0u;
-  if (partCount > 1u) {
-    let needle = emitterNext(state) * slots[slotIdx].emitterTotalWeight;
-    var lo = 0u;
-    var hi = partCount - 1u;
-    loop {
-      if (lo >= hi) {
+  if (partCount <= 1u) {
+    return emitterSamplePart(state, slots[slotIdx].emitterParts[0]);
+  }
+  for (var attempt = 0u; attempt < EMITTER_OVERLAP_ATTEMPTS; attempt++) {
+    let pick = emitterPickPart(state, slotIdx, partCount);
+    let candidate = emitterSamplePart(state, slots[slotIdx].emitterParts[pick]);
+    // Surface-measure meshes neither shadow nor are shadowed. Their selected
+    // candidate is accepted directly, matching prepareShapeSampler.
+    if (u32(slots[slotIdx].emitterParts[pick].kindParams0.x) == 5u) {
+      return candidate;
+    }
+    var shadowed = false;
+    for (var earlier = 0u; earlier < pick; earlier++) {
+      if (emitterPartContains(slots[slotIdx].emitterParts[earlier], candidate)) {
+        shadowed = true;
         break;
       }
-      let mid = (lo + hi) >> 1u;
-      if (needle < slots[slotIdx].emitterParts[mid].rot0.w) {
-        hi = mid;
-      } else {
-        lo = mid + 1u;
-      }
     }
-    pick = lo;
+    if (!shadowed) {
+      return candidate;
+    }
   }
-  return emitterSamplePart(state, slots[slotIdx].emitterParts[pick]);
+  return emitterSamplePart(
+    state,
+    slots[slotIdx].emitterParts[slots[slotIdx].emitterFallbackPart],
+  );
 }
 
 // The 4D variation registry (variations4.ts's VARIATIONS4), case-indexed by
@@ -1201,14 +1290,16 @@ const SLOT4_COLOR_SPEED = 80;
  * `SLOT4_FOLD_RADII + i * 4`. */
 const SLOT4_FOLD_RADII = 84;
 /** Shape-emitter (condensation) block — the 3D Slot's entry one dimension
- * up (byte-layout doc's Slot4 entry): header vec4 (element 99 its
- * trailing pad) then `{@link MAX_SHAPE_PARTS}` contiguous `EmitterPart`
+ * up (byte-layout doc's Slot4 entry): header vec4 (element 99 the
+ * positive-measure fallback index) then `{@link MAX_SHAPE_PARTS}`
+ * contiguous `EmitterPart`
  * blocks, part `i` at `SLOT4_EMITTER_PARTS + i * F32_PER_EMITTER_PART` —
  * `F32_PER_EMITTER_PART` and every `EP_*` field offset are flame-gpu.ts's
  * own (imported), since the part layout is dimension-free. */
 const SLOT4_EMITTER_FLAG = 96;
 const SLOT4_EMITTER_PART_COUNT = 97;
 const SLOT4_EMITTER_TOTAL_WEIGHT = 98;
+const SLOT4_EMITTER_FALLBACK_PART = 99;
 const SLOT4_EMITTER_PARTS = 100;
 const F32_PER_EMITTER_PART = EMITTER_PART_STRIDE_BYTES / 4; // 24.
 
@@ -1707,6 +1798,13 @@ function writeSlot4Emitter(
     }
     totalWeight += weights[i];
   }
+  const fallbackPart = weights.findIndex((weight) => weight > 0);
+  if (fallbackPart < 0) {
+    throw new Error(
+      "packGpuSystem4: prepared shape emitter has no positive-measure part",
+    );
+  }
+  u32[base + SLOT4_EMITTER_FALLBACK_PART] = fallbackPart;
   f32[base + SLOT4_EMITTER_TOTAL_WEIGHT] = totalWeight;
   let cum = 0;
   for (let i = 0; i < n; i++) {

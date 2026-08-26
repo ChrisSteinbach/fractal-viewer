@@ -219,7 +219,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   cover every fold a slot can hold where seventeen would be needed to
  *   cover every lane.
  *   336 emitterFlag u32 | 340 emitterPartCount u32 | 344 emitterTotalWeight
- *   f32 | 348 pad — the shape-EMITTER (condensation) block
+ *   f32 | 348 emitterFallbackPart u32 — the shape-EMITTER (condensation) block
  *   `writeSlotEmitter` appends, an emitter being per-TRANSFORM data unlike
  *   the fold family's per-TYPE lane (`shapes.ts`'s vocabulary is per-part,
  *   not per-variation-type, so there is no "at most one per type" invariant
@@ -240,7 +240,8 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *     sphere y=radius; box yzw=half; torus y=major z=minor; capsule
  *     yzw=a; gear y=triangle-table offset z=triCount w=halfHeight;
  *     mesh y=triangle-table offset z=triCount)
- *     16 params1 vec4f (capsule only: xyz=b, w=radius; unread otherwise)
+ *     16 params1 vec4f (capsule: xyz=b, w=radius; gear: radius, tooth.x,
+ *     tooth.y, hole; unread by every other kind)
  *     32 poseOffsetScale vec4f (xyz = `ShapePose.offset`, w = resolved
  *     `ShapePose.scale`, absent-means-identity resolved host-side exactly
  *     like `shapes.ts`'s own `resolvePoseScale`/`poseOffset`)
@@ -250,18 +251,18 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *     emitter POSES a local-frame sample rather than inverting a query;
  *     absent rotation bakes the identity so the kernel applies it
  *     unconditionally, no branch) — rot0.w doubles as this part's
- *     cumulative weight (the vec4 lane the 3x3 leaves spare; rot1.w/rot2.w
- *     stay true padding).
- *   THE MIN-INDEX OVERLAP CORRECTION IS NOT REPRODUCED: `shapes.ts`'s
- *   sampler redraws a candidate an earlier part's SDF contains (exact
- *   uniformity on an overlapping union), an UNBOUNDED rejection loop this
- *   kernel's RNG-parity contract forbids on device; this kernel instead
- *   accepts the picked part's own sample unconditionally, so an
- *   overlapping multi-part spec's shared region samples at ELEVATED
- *   density here relative to the CPU oracle. Disclosed, not measured —
- *   every shipped emitter is single-part (`emitterPartCount` 1), where the
- *   search degenerates to picking part 0 and there is no overlap to
- *   correct, so this divergence is unreachable from any preset today.
+ *     cumulative weight and, for gear only, rot1.w carries the resolved
+ *     sector angle used by its containment SDF (rot2.w stays padding).
+ *   MIN-INDEX OVERLAP CORRECTION: a multi-part sample gets at most
+ *   {@link EMITTER_OVERLAP_ATTEMPTS} weighted proposals. Each is accepted
+ *   only when no earlier analytic/gear part contains it; selected mesh
+ *   surfaces are accepted directly and never contain or are contained by
+ *   another part, exactly as in `prepareShapeSampler`. Exhausting the
+ *   bounded device-safe budget draws
+ *   once from `emitterFallbackPart`, the first positive-measure part packed
+ *   in the header. For at most eight positive-measure supported parts the
+ *   fallback mass is bounded by `(7/8)^64` (about 0.0194%); degenerate
+ *   authored measures still rely on the standing CPU/GPU agreement gate.
  *
  * Chain (storage array element, {@link CHAIN_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (xyz orbit point, w color coordinate) | 16 aux vec4u (x rng
@@ -311,6 +312,11 @@ export const COLORS_BYTES = 256 * 16;
  * exact part encoding (the shape vocabulary is dimension-free — 3D always
  * — so a 4D slot's emitter block is this module's layout verbatim). */
 export const EMITTER_PART_STRIDE_BYTES = 96;
+/** Maximum weighted proposals used to reproduce the CPU shape sampler's
+ * min-index overlap acceptance without an unbounded device loop. Shared by
+ * the 3D and 4D kernel source strings so their termination policy cannot
+ * drift. */
+export const EMITTER_OVERLAP_ATTEMPTS = 64;
 /** Byte offset of Params.itersPerInvocation — the one field the driver
  * rewrites mid-session (warmup and final partial dispatches). */
 export const PARAMS_ITERS_OFFSET_BYTES = 64;
@@ -327,6 +333,7 @@ export const FLAME_GPU_KERNEL_WGSL = /* wgsl */ `
 const ESCAPE_LIMIT: f32 = 50.0;
 const PI: f32 = 3.14159265358979;
 const EPS: f32 = 1e-12;
+const EMITTER_OVERLAP_ATTEMPTS: u32 = ${EMITTER_OVERLAP_ATTEMPTS}u;
 
 struct Params {
   projX: vec4f,
@@ -357,8 +364,8 @@ struct Params {
 // One condensation-shape part's device data (shapes.ts's ShapePart, module
 // doc's Slot entry): a kind-tagged primitive plus its similarity pose,
 // baked host-side so the kernel applies rather than resolves it.
-// kindParams0.x is the kind tag; the remaining six param lanes and rot0.w
-// are KIND-/ROLE-DEPENDENT (see emitterSamplePart/emitterSampleSlot).
+// kindParams0.x is the kind tag; the remaining param/padding lanes are
+// KIND-/ROLE-DEPENDENT (see emitterSamplePart/emitterPartContains).
 struct EmitterPart {
   kindParams0: vec4f,
   params1: vec4f,
@@ -397,7 +404,7 @@ struct Slot {
   emitterFlag: u32,
   emitterPartCount: u32,
   emitterTotalWeight: f32,
-  _emitterPad: f32,
+  emitterFallbackPart: u32,
   emitterParts: array<EmitterPart, ${MAX_SHAPE_PARTS}>,
 }
 
@@ -487,15 +494,15 @@ fn rand01(rng: ptr<function, vec2u>) -> f32 {
 // sampler spends UNBOUNDEDLY from that derived stream alone — so the
 // primary stream's cost per emitter step stays constant regardless of what
 // the sampler does. Below that seed draw, this kernel does NOT mirror the
-// CPU's own draw pattern (which includes an unbounded rejection loop for
-// the torus and gear primitives, and for multi-part overlap correction —
-// see the Slot layout doc's EmitterPart entry): REJECTION LOOPS ARE
-// FORBIDDEN ON DEVICE (an unbounded or data-dependent retry is a device-hang
-// hazard this codebase treats as a hard failure class elsewhere — see
-// strip-planner.ts's i915 preemption notes), so every sampler below is a
-// FIXED, bounded number of derived draws that reproduces the CPU's target
-// MEASURE (uniform by volume/area) through a different, rejection-free
-// algorithm rather than the CPU's own accept-reject one. The device
+// CPU's own draw pattern (which includes unbounded rejection loops for the
+// torus and gear primitives, and for multi-part overlap correction — see the
+// Slot layout doc's EmitterPart entry): UNBOUNDED REJECTION LOOPS ARE
+// FORBIDDEN ON DEVICE (a device-hang hazard this codebase treats as a hard
+// failure class elsewhere — see strip-planner.ts's i915 preemption notes).
+// Primitive sampling below is rejection-free; the union-overlap correction
+// uses a hard 64-proposal cap plus one known-positive-measure fallback draw.
+// Thus every sampler spends a bounded number of derived draws while matching
+// the CPU's target measure up to the documented fallback bias. The device
 // sampler's individual POINTS therefore do not match the CPU's draw for
 // draw — exactly the module doc's standing "statistically indistinguishable
 // render, not a byte-identical one" contract one layer further in.
@@ -712,34 +719,120 @@ fn emitterSamplePart(state: ptr<function, u32>, part: EmitterPart) -> vec3f {
   return rotated + part.poseOffsetScale.xyz;
 }
 
-// One slot's whole emitter sample: pick a part by volume-weighted
-// cumulative search (partCount <= 1 skips the search entirely — the common
-// case, GEAR_SHAPE and every shipped emitter included), then that part's
-// own sampler + pose. Deliberately does NOT reproduce shapes.ts's
-// min-index-acceptance overlap correction — see the Slot layout doc's
-// EmitterPart entry for why (an unbounded rejection loop) and its measured
-// scope (unreachable while every shipped emitter is single-part).
+fn emitterSdBox2(p: vec2f, b: vec2f) -> f32 {
+  let d = abs(p) - b;
+  return length(max(d, vec2f(0.0))) + min(max(d.x, d.y), 0.0);
+}
+
+fn emitterSdBox3(p: vec3f, b: vec3f) -> f32 {
+  let d = abs(p) - b;
+  return length(max(d, vec3f(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0);
+}
+
+// shapes.ts's partSdf containment predicate over the generic packed part.
+// Sampling uses the FORWARD rotation rows above; containment deliberately
+// multiplies by their TRANSPOSE, the inverse of the orthonormal pose.
+fn emitterPartContains(part: EmitterPart, world: vec3f) -> bool {
+  let kind = u32(part.kindParams0.x);
+  if (kind == 5u) { // Meshes carry surface measure and contain no candidate.
+    return false;
+  }
+  let shifted = world - part.poseOffsetScale.xyz;
+  let local = vec3f(
+    part.rot0.x * shifted.x + part.rot1.x * shifted.y + part.rot2.x * shifted.z,
+    part.rot0.y * shifted.x + part.rot1.y * shifted.y + part.rot2.y * shifted.z,
+    part.rot0.z * shifted.x + part.rot1.z * shifted.y + part.rot2.z * shifted.z,
+  ) / part.poseOffsetScale.w;
+  var d = 1.0;
+  switch kind {
+    case 0u: { // sphere
+      d = length(local) - part.kindParams0.y;
+    }
+    case 1u: { // box
+      d = emitterSdBox3(local, part.kindParams0.yzw);
+    }
+    case 2u: { // torus
+      let q = vec2f(length(local.xy) - part.kindParams0.y, local.z);
+      d = length(q) - part.kindParams0.z;
+    }
+    case 3u: { // capsule
+      let pa = local - part.kindParams0.yzw;
+      let ba = part.params1.xyz - part.kindParams0.yzw;
+      let h = clamp(dot(pa, ba) / max(dot(ba, ba), EPS), 0.0, 1.0);
+      d = length(pa - ba * h) - part.params1.w;
+    }
+    case 4u: { // gear: params1 = radius, tooth.xy, hole; rot1.w = sector.
+      let lp = length(local.xy);
+      let seg = part.rot1.w;
+      let a0 = atan2(local.y, local.x) + seg * 0.5;
+      let a1 = a0 - seg * floor(a0 / seg) - seg * 0.5;
+      let gp = vec2f(cos(a1) * lp - part.params1.x, sin(a1) * lp);
+      var g = min(lp - part.params1.x, emitterSdBox2(gp, part.params1.yz));
+      if (part.params1.w > 0.0) {
+        g = max(g, part.params1.w - lp);
+      }
+      let wz = abs(local.z) - part.kindParams0.w;
+      let outside = max(vec2f(g, wz), vec2f(0.0));
+      d = min(max(g, wz), 0.0) + length(outside);
+    }
+    default: {
+      d = 1.0;
+    }
+  }
+  return d <= 0.0;
+}
+
+fn emitterPickPart(state: ptr<function, u32>, slotIdx: u32, partCount: u32) -> u32 {
+  let needle = emitterNext(state) * slots[slotIdx].emitterTotalWeight;
+  var lo = 0u;
+  var hi = partCount - 1u;
+  loop {
+    if (lo >= hi) {
+      break;
+    }
+    let mid = (lo + hi) >> 1u;
+    if (needle < slots[slotIdx].emitterParts[mid].rot0.w) {
+      hi = mid;
+    } else {
+      lo = mid + 1u;
+    }
+  }
+  return lo;
+}
+
+// One slot's whole emitter sample. The single-part fast path preserves its
+// old derived-stream draw sequence exactly. A multi-part slot mirrors the CPU
+// sampler's min-index acceptance for at most EMITTER_OVERLAP_ATTEMPTS weighted
+// proposals, then terminates with one fresh sample from the host-packed first
+// positive-measure part rather than risking an unbounded device loop.
 fn emitterSampleSlot(state: ptr<function, u32>, slotIdx: u32) -> vec3f {
   let partCount = slots[slotIdx].emitterPartCount;
-  var pick = 0u;
-  if (partCount > 1u) {
-    let needle = emitterNext(state) * slots[slotIdx].emitterTotalWeight;
-    var lo = 0u;
-    var hi = partCount - 1u;
-    loop {
-      if (lo >= hi) {
+  if (partCount <= 1u) {
+    return emitterSamplePart(state, slots[slotIdx].emitterParts[0]);
+  }
+  for (var attempt = 0u; attempt < EMITTER_OVERLAP_ATTEMPTS; attempt++) {
+    let pick = emitterPickPart(state, slotIdx, partCount);
+    let candidate = emitterSamplePart(state, slots[slotIdx].emitterParts[pick]);
+    // Surface-measure meshes neither shadow nor are shadowed. Their selected
+    // candidate is accepted directly, matching prepareShapeSampler.
+    if (u32(slots[slotIdx].emitterParts[pick].kindParams0.x) == 5u) {
+      return candidate;
+    }
+    var shadowed = false;
+    for (var earlier = 0u; earlier < pick; earlier++) {
+      if (emitterPartContains(slots[slotIdx].emitterParts[earlier], candidate)) {
+        shadowed = true;
         break;
       }
-      let mid = (lo + hi) >> 1u;
-      if (needle < slots[slotIdx].emitterParts[mid].rot0.w) {
-        hi = mid;
-      } else {
-        lo = mid + 1u;
-      }
     }
-    pick = lo;
+    if (!shadowed) {
+      return candidate;
+    }
   }
-  return emitterSamplePart(state, slots[slotIdx].emitterParts[pick]);
+  return emitterSamplePart(
+    state,
+    slots[slotIdx].emitterParts[slots[slotIdx].emitterFallbackPart],
+  );
 }
 
 // The variation registry (variations.ts's VARIATIONS), case-indexed by
@@ -1207,7 +1300,8 @@ const SLOT_FOLD_RADII = 72;
 /**
  * Shape-emitter (condensation) block — `writeSlotEmitter`, byte-layout
  * doc's Slot entry. `emitterFlag`/`emitterPartCount`/`emitterTotalWeight`
- * are a header vec4 (element 87 its trailing pad); `emitterParts` is
+ * are a header vec4 (element 87 is the positive-measure fallback index);
+ * `emitterParts` is
  * `{@link MAX_SHAPE_PARTS}` contiguous {@link EMITTER_PART_STRIDE_BYTES}
  * (96 B = {@link F32_PER_EMITTER_PART} 24-element) blocks — part `i` at
  * `SLOT_EMITTER_PARTS + i * F32_PER_EMITTER_PART`.
@@ -1215,6 +1309,7 @@ const SLOT_FOLD_RADII = 72;
 const SLOT_EMITTER_FLAG = 84;
 const SLOT_EMITTER_PART_COUNT = 85;
 const SLOT_EMITTER_TOTAL_WEIGHT = 86;
+const SLOT_EMITTER_FALLBACK_PART = 87;
 const SLOT_EMITTER_PARTS = 88;
 /** One `EmitterPart`'s element offsets within its own 24-element block
  * (see {@link EMITTER_PART_STRIDE_BYTES}'s WGSL `EmitterPart` doc): two
@@ -1752,9 +1847,10 @@ export function emitterPartWeight(
 
 /**
  * Write one `EmitterPart` block (byte-layout doc's `EmitterPart` entry) at
- * `base`: the kind tag + up to seven kind-dependent params (gear's are a
+ * `base`: the kind tag plus kind-dependent fields (gear's are a
  * {@link buildGearTriangleTable} region's `offset`/`triCount` plus
- * `halfHeight` — never the raw teeth/radius/tooth/hole; the device sampler
+ * `halfHeight`, while params1 carries radius/tooth/hole and rot1.w the
+ * resolved sector angle for the overlap-containment SDF; the device sampler
  * never re-triangulates, `triangleRegion` non-null exactly for gear/mesh),
  * the baked similarity
  * pose (scale, `rotationMatrixXYZ`'s
@@ -1772,6 +1868,7 @@ export function writeEmitterPart(
   const prim = part.primitive;
   const kp = base + EP_KIND_PARAMS0;
   const p1 = base + EP_PARAMS1;
+  let gearSegment = 0;
   switch (prim.kind) {
     case "sphere":
       f32[kp] = 0;
@@ -1808,6 +1905,14 @@ export function writeEmitterPart(
       f32[kp + 1] = region.offset;
       f32[kp + 2] = region.triCount;
       f32[kp + 3] = prim.halfHeight;
+      f32[p1] = prim.radius;
+      f32[p1 + 1] = prim.tooth[0];
+      f32[p1 + 2] = prim.tooth[1];
+      f32[p1 + 3] = prim.hole;
+      const teeth = Number.isFinite(prim.teeth)
+        ? Math.max(1, Math.round(prim.teeth))
+        : 1;
+      gearSegment = (2 * Math.PI) / teeth;
       break;
     }
     case "mesh": {
@@ -1835,6 +1940,7 @@ export function writeEmitterPart(
   f32[r1] = rot[3];
   f32[r1 + 1] = rot[4];
   f32[r1 + 2] = rot[5];
+  if (prim.kind === "gear") f32[r1 + 3] = gearSegment;
   const r2 = base + EP_ROT2;
   f32[r2] = rot[6];
   f32[r2 + 1] = rot[7];
@@ -1886,6 +1992,13 @@ function writeSlotEmitter(
     }
     totalWeight += weights[i];
   }
+  const fallbackPart = weights.findIndex((weight) => weight > 0);
+  if (fallbackPart < 0) {
+    throw new Error(
+      "packGpuSystem: prepared shape emitter has no positive-measure part",
+    );
+  }
+  u32[base + SLOT_EMITTER_FALLBACK_PART] = fallbackPart;
   f32[base + SLOT_EMITTER_TOTAL_WEIGHT] = totalWeight;
   let cum = 0;
   for (let i = 0; i < n; i++) {
