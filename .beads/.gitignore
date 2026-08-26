@@ -7,6 +7,10 @@ bd.sock
 bd.sock.startlock
 sync-state.json
 last-touched
+last_pull
+export-state.json
+daemon.*
+*.lock
 
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
@@ -19,6 +23,16 @@ redirect
 # These files are machine-specific and should not be shared across clones
 .sync.lock
 export-state/
+
+# Alternate/local database stores
+embeddeddolt/
+proxieddb/
+*.corrupt.backup/
+
+# Local credentials and environment
+.env
+.beads-credential-key
+proxied_server_client_info.json
 
 # Ephemeral store (SQLite - wisps/molecules, intentionally not versioned)
 ephemeral.sqlite3
