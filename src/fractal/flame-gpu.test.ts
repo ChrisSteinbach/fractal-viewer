@@ -516,6 +516,7 @@ describe("packGpuSystem shape emitters", () => {
       expect(u32[base + EMITTER_FALLBACK_PART]).toBe(0);
     }
     expect(packed.gearTable).toBeNull();
+    expect(packed.multiPartEmitters).toBe(false);
   });
 
   it("packs a sphere part's kind tag and radius, with the identity pose when none is authored", () => {
@@ -550,6 +551,7 @@ describe("packGpuSystem shape emitters", () => {
     const expectedVolume = (4 / 3) * Math.PI * 2.5 ** 3;
     expect(f32[EMITTER_TOTAL_WEIGHT]).toBeCloseTo(expectedVolume, 3);
     expect(f32[p + EP_ROT0 + 3]).toBeCloseTo(expectedVolume, 3);
+    expect(packed.multiPartEmitters).toBe(false);
   });
 
   it("packs a box part's kind tag and half-extents", () => {
@@ -796,6 +798,7 @@ describe("packGpuSystem shape emitters", () => {
     expect(cum0).toBeCloseTo(v1, 6);
     expect(cum1).toBeCloseTo(v1 + v2, 6);
     expect(f32[EMITTER_TOTAL_WEIGHT]).toBeCloseTo(v1 + v2, 6);
+    expect(packed.multiPartEmitters).toBe(true);
   });
 
   it("packs the earliest positive-measure part as the bounded sampler fallback", () => {
@@ -818,7 +821,9 @@ describe("packGpuSystem shape emitters", () => {
     expect(EMITTER_OVERLAP_ATTEMPTS).toBe(64);
     expect((7 / 8) ** EMITTER_OVERLAP_ATTEMPTS).toBeLessThan(0.000195);
     for (const source of [FLAME_GPU_KERNEL_WGSL, FLAME_GPU_KERNEL_4D_WGSL]) {
-      expect(source).toContain("const EMITTER_OVERLAP_ATTEMPTS: u32 = 64u;");
+      expect(source).toContain("emitterOverlapAttempts: u32,");
+      expect(source).toContain("override MULTI_PART_EMITTERS: bool = true;");
+      expect(source).toContain("if (!MULTI_PART_EMITTERS || partCount <= 1u)");
       expect(source).toContain("fn emitterPartContains(");
       expect(source).toContain(
         "part.rot0.x * shifted.x + part.rot1.x * shifted.y + part.rot2.x * shifted.z",
@@ -833,7 +838,12 @@ describe("packGpuSystem shape emitters", () => {
         "let h = clamp(dot(pa, ba) / max(dot(ba, ba), EPS), 0.0, 1.0);",
       );
       expect(source).toContain("let seg = part.rot1.w;");
-      expect(source).toContain("attempt < EMITTER_OVERLAP_ATTEMPTS");
+      expect(source).toContain(
+        "var attemptsLeft = params.emitterOverlapAttempts;",
+      );
+      expect(source).toContain("if (attemptsLeft == 0u)");
+      expect(source).toContain("attemptsLeft -= 1u;");
+      expect(source).not.toContain("attempt < EMITTER_OVERLAP_ATTEMPTS");
       expect(source).toContain(
         "slots[slotIdx].emitterParts[slots[slotIdx].emitterFallbackPart]",
       );
@@ -929,6 +939,7 @@ describe("packGpuSystem shape emitters", () => {
     const u32 = new Uint32Array(packed.slots);
     expect(u32[EMITTER_FLAG]).toBe(0);
     expect(packed.gearTable).toBeNull();
+    expect(packed.multiPartEmitters).toBe(false);
   });
 
   it("replicates a base map's emitter block into every kaleidoscope copy, like the color pair and cumWeight", () => {
@@ -1504,6 +1515,8 @@ describe("packGpuParams", () => {
     // Optional echo absent: its full scalar/vec4 block is zero, so the WGSL
     // takes the original one-splat specialization.
     expect(Array.from(u32.slice(22, 36))).toEqual(new Array(14).fill(0));
+    expect(u32[38]).toBe(EMITTER_OVERLAP_ATTEMPTS);
+    expect(u32[39]).toBe(0); // final Params alignment pad
   });
 
   it("packs the balloon echo's f32 inversion/color block without touching the camera rows", () => {

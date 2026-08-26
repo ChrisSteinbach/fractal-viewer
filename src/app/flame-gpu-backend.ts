@@ -153,6 +153,11 @@ interface GpuProgramSpec {
   /** Names the kernel in compile-error messages (e.g. "3D kernel"). */
   label: string;
   kernel: string;
+  /** Compile-time specialization for the bounded multipart-emitter overlap
+   * correction. Keeping it false for the overwhelmingly common zero/single
+   * part case lets software WebGPU eliminate the nested retry/SDF call graph
+   * before lowering the accumulation kernel. */
+  multiPartEmitters: boolean;
   /** Packed uniform contents — `itersPerInvocation` must already be
    * {@link WARMUP_ITERATIONS}, the value the warmup dispatch reads. */
   params: ArrayBuffer;
@@ -863,14 +868,19 @@ async function buildBackendOnDevice(
 
   // Two specializations of the same entry point via the PLOT override
   // constant (see the kernels' shared doc) — warmup iterates every chain
-  // without recording into hist.
+  // without recording into hist. MULTI_PART_EMITTERS is identical in both:
+  // it is a whole-program property whose false specialization removes the
+  // bounded overlap sampler's large retry/containment call graph.
+  const pipelineConstants = {
+    MULTI_PART_EMITTERS: program.multiPartEmitters ? 1 : 0,
+  };
   const warmupPipeline = device.createComputePipeline({
     label: "flame-gpu warmup pipeline",
     layout: pipelineLayout,
     compute: {
       module: shaderModule,
       entryPoint: "accumulate",
-      constants: { PLOT: 0 },
+      constants: { PLOT: 0, ...pipelineConstants },
     },
   });
   const accumulatePipeline = device.createComputePipeline({
@@ -879,7 +889,7 @@ async function buildBackendOnDevice(
     compute: {
       module: shaderModule,
       entryPoint: "accumulate",
-      constants: { PLOT: 1 },
+      constants: { PLOT: 1, ...pipelineConstants },
     },
   });
 
@@ -1160,6 +1170,7 @@ export async function createGpuFlameBackend(
   return createBackendForProgram({
     label: "3D kernel",
     kernel: FLAME_GPU_KERNEL_WGSL,
+    multiPartEmitters: packed.multiPartEmitters,
     params: packGpuParams({
       projection: request.projection,
       width: request.width,
@@ -1225,6 +1236,7 @@ export async function createGpuFlameBackend4(
   return createBackendForProgram({
     label: "4D kernel",
     kernel: FLAME_GPU_KERNEL_4D_WGSL,
+    multiPartEmitters: packed.multiPartEmitters,
     params: packGpuParams4({
       projection: request.projection,
       width: request.width,

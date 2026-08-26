@@ -369,6 +369,7 @@ describe("packGpuSystem4 shape emitters", () => {
       expect(u32[base + EMITTER_FALLBACK_PART]).toBe(0);
     }
     expect(packed.gearTable).toBeNull();
+    expect(packed.multiPartEmitters).toBe(false);
   });
 
   it("packs a sphere part's kind tag, radius and identity pose — flame-gpu.ts's shared EmitterPart layout", () => {
@@ -388,6 +389,7 @@ describe("packGpuSystem4 shape emitters", () => {
     expect(Array.from(f32.slice(p + EP_ROT0, p + EP_ROT0 + 3))).toEqual([
       1, 0, 0,
     ]); // identity rotation row 0.
+    expect(packed.multiPartEmitters).toBe(false);
   });
 
   it("packs a gear part's device table region — the SAME buildGearTriangleTable helper flame-gpu.ts's kernel uses", () => {
@@ -464,18 +466,26 @@ describe("packGpuSystem4 shape emitters", () => {
     );
     expect(new Uint32Array(packed.slots)[EMITTER_FALLBACK_PART]).toBe(1);
     expect(SLOT4_STRIDE_BYTES).toBe(1168);
+    expect(packed.multiPartEmitters).toBe(true);
   });
 
   it("uses the same bounded posed-containment policy as the 3D kernel", () => {
     expect(EMITTER_OVERLAP_ATTEMPTS).toBe(64);
     for (const source of [FLAME_GPU_KERNEL_4D_WGSL]) {
-      expect(source).toContain("const EMITTER_OVERLAP_ATTEMPTS: u32 = 64u;");
+      expect(source).toContain("emitterOverlapAttempts: u32,");
+      expect(source).toContain("override MULTI_PART_EMITTERS: bool = true;");
+      expect(source).toContain("if (!MULTI_PART_EMITTERS || partCount <= 1u)");
       expect(source).toContain("fn emitterPartContains(");
       expect(source).toContain(
         "part.rot0.x * shifted.x + part.rot1.x * shifted.y + part.rot2.x * shifted.z",
       );
       expect(source).toContain("let seg = part.rot1.w;");
-      expect(source).toContain("attempt < EMITTER_OVERLAP_ATTEMPTS");
+      expect(source).toContain(
+        "var attemptsLeft = params.emitterOverlapAttempts;",
+      );
+      expect(source).toContain("if (attemptsLeft == 0u)");
+      expect(source).toContain("attemptsLeft -= 1u;");
+      expect(source).not.toContain("attempt < EMITTER_OVERLAP_ATTEMPTS");
       expect(source).toContain(
         "slots[slotIdx].emitterParts[slots[slotIdx].emitterFallbackPart]",
       );
@@ -483,6 +493,23 @@ describe("packGpuSystem4 shape emitters", () => {
         "if (u32(slots[slotIdx].emitterParts[pick].kindParams0.x) == 5u)",
       );
     }
+  });
+
+  it("does not enable the multipart specialization for a spec rejected by prepareEmitters", () => {
+    const unsamplable: ShapeSpec = {
+      parts: [
+        { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
+        {
+          primitive: { kind: "sphere", radius: 0.5 },
+          combine: "intersect",
+        },
+      ],
+    };
+    const packed = packGpuSystem4(
+      baseSpec4({ transforms4: [transform4WithEmitter(unsamplable)] }),
+    );
+    expect(new Uint32Array(packed.slots)[EMITTER_FLAG]).toBe(0);
+    expect(packed.multiPartEmitters).toBe(false);
   });
 
   it("embeds the shape sample at w = 0 before this slot's own 4D affine poses it — stepOrbit4's own dimensional decision", () => {
@@ -1016,6 +1043,7 @@ describe("packGpuParams4", () => {
   const ECHO_CENTER_R2 = 80;
   const ECHO_TINT_STRENGTH = 84;
   const ECHO_PALETTE_ENABLED = 88;
+  const EMITTER_OVERLAP_ATTEMPTS_WORD = 94;
 
   const VIEW: FourDView = {
     invWAmp: 2.5,
@@ -1100,6 +1128,8 @@ describe("packGpuParams4", () => {
     expect(f32[SLICE_COLOR_INV_SCALE]).toBe(1);
     // Optional echo absent: every field in its tail block stays zero.
     expect(Array.from(u32.slice(50, 92))).toEqual(new Array(42).fill(0));
+    expect(u32[EMITTER_OVERLAP_ATTEMPTS_WORD]).toBe(EMITTER_OVERLAP_ATTEMPTS);
+    expect(u32[95]).toBe(0); // final Params4 alignment pad
   });
 
   it("packs project-then-invert echo rows and its echo-only tint", () => {

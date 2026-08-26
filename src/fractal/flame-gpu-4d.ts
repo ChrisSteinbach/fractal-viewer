@@ -177,7 +177,8 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   post-word) | 360 scheduleDepth u32 | 364 scheduleWeighted u32 |
  *   368 scheduleTotalWeight f32 | 372 chaosEnabled u32 (zero = no chi
  *   rows — binding 6 is then an unread alias, the echoColors idiom) |
- *   376..383 pad
+ *   376 emitterOverlapAttempts u32 (the host-packed runtime loop bound,
+ *   `flame-gpu.ts`'s {@link EMITTER_OVERLAP_ATTEMPTS}) | 380 pad
  *
  * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 1168 stride);
  * slot count = transformCount + 1 + scheduleCount — the expanded transform
@@ -285,7 +286,6 @@ export const FLAME_GPU_KERNEL_4D_WGSL = /* wgsl */ `
 const ESCAPE_LIMIT: f32 = 50.0;
 const PI: f32 = 3.14159265358979;
 const EPS: f32 = 1e-12;
-const EMITTER_OVERLAP_ATTEMPTS: u32 = ${EMITTER_OVERLAP_ATTEMPTS}u;
 // The flame's ghost-context slice floor — project4.ts's SLICE_GHOST_FLOOR
 // (the point-cloud view's floor, NOT the solid render's 0), interpolated in.
 const SLICE_FLOOR: f32 = ${SLICE_GHOST_FLOOR};
@@ -334,6 +334,7 @@ struct Params {
   scheduleWeighted: u32,
   scheduleTotalWeight: f32,
   chaosEnabled: u32,
+  emitterOverlapAttempts: u32,
 }
 
 // flame-gpu.ts's EmitterPart verbatim — the shape vocabulary is 3D always,
@@ -402,6 +403,12 @@ struct Chain {
 // Warmup dispatches run a PLOT=false specialization of this same pipeline —
 // iterate the orbit without recording, like the CPU's unrecorded warmup.
 override PLOT: bool = true;
+// The host specializes this false only when every prepared emitter has at
+// most one part. That makes the bounded overlap sampler and its containment
+// call graph statically unreachable in the common case, so pipeline
+// compilation can eliminate their loop/register cost entirely. The true
+// default preserves full semantics for direct consumers of this WGSL.
+override MULTI_PART_EMITTERS: bool = true;
 
 // Emulated-u64 accumulate — identical to the 3D kernel's addU64 (see that
 // kernel's doc for the carry-detection argument).
@@ -752,10 +759,18 @@ fn emitterPickPart(state: ptr<function, u32>, slotIdx: u32, partCount: u32) -> u
 // most 64 weighted proposals and then one fresh positive-measure fallback.
 fn emitterSampleSlot(state: ptr<function, u32>, slotIdx: u32) -> vec3f {
   let partCount = slots[slotIdx].emitterPartCount;
-  if (partCount <= 1u) {
+  if (!MULTI_PART_EMITTERS || partCount <= 1u) {
     return emitterSamplePart(state, slots[slotIdx].emitterParts[0]);
   }
-  for (var attempt = 0u; attempt < EMITTER_OVERLAP_ATTEMPTS; attempt++) {
+  // Hoist the host-packed 64 into a function-local countdown. Unlike a WGSL
+  // const loop bound, this runtime uniform cannot invite a compiler to unroll
+  // the large sampler/containment body 64 times.
+  var attemptsLeft = params.emitterOverlapAttempts;
+  loop {
+    if (attemptsLeft == 0u) {
+      break;
+    }
+    attemptsLeft -= 1u;
     let pick = emitterPickPart(state, slotIdx, partCount);
     let candidate = emitterSamplePart(state, slots[slotIdx].emitterParts[pick]);
     // Surface-measure meshes neither shadow nor are shadowed. Their selected
@@ -1361,6 +1376,7 @@ const PARAMS4_SCHEDULE_DEPTH = 90;
 const PARAMS4_SCHEDULE_WEIGHTED = 91;
 const PARAMS4_SCHEDULE_TOTAL_WEIGHT = 92;
 const PARAMS4_CHAOS_ENABLED = 93;
+const PARAMS4_EMITTER_OVERLAP_ATTEMPTS = 94;
 
 /**
  * A 4D chaos-game system in exactly the shape {@link packGpuSystem4} needs —
@@ -1411,6 +1427,10 @@ export interface PackedGpuSystem4 {
   baseTransformCount: number;
   weighted: boolean;
   totalWeight: number;
+  /** True when at least one sampler accepted by `prepareEmitters` has more
+   * than one authored part. The backend uses this to retain the bounded
+   * overlap path only in pipelines that can actually reach it. */
+  multiPartEmitters: boolean;
   hasFinal: boolean;
   /** The post-word's scalar four — flame-gpu.ts's `PackedGpuSystem` fields
    * of the same names, through the same shared
@@ -1571,6 +1591,12 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
   // gearBuilder accumulates every gear-shaped part's table for this WHOLE
   // system into ONE buffer (binding 7).
   const emitters = prepareEmitters(transforms4);
+  const multiPartEmitters =
+    emitters !== null &&
+    emitters.some(
+      (emitter, i) =>
+        emitter !== null && (transforms4[i].emitter?.parts.length ?? 0) > 1,
+    );
   const gearBuilder = createGearTableBuilder();
 
   // Copy-major expansion: copy 0 (unrotated) first, then copy 1, etc. — see
@@ -1664,6 +1690,7 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     baseTransformCount,
     weighted,
     totalWeight,
+    multiPartEmitters,
     hasFinal,
     scheduleCount,
     scheduleDepth,
@@ -1997,6 +2024,9 @@ export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   u32[PARAMS4_SCHEDULE_WEIGHTED] = fields.scheduleWeighted ? 1 : 0;
   f32[PARAMS4_SCHEDULE_TOTAL_WEIGHT] = fields.scheduleTotalWeight;
   u32[PARAMS4_CHAOS_ENABLED] = fields.chaosEnabled ? 1 : 0;
+  // Runtime rather than WGSL-const so software compilers keep the bounded
+  // multipart overlap correction as one loop body instead of unrolling 64.
+  u32[PARAMS4_EMITTER_OVERLAP_ATTEMPTS] = EMITTER_OVERLAP_ATTEMPTS;
 
   const echo = fields.echo;
   if (echo) {
