@@ -55,6 +55,7 @@ import { buildSurfaceDE4 } from "../fractal/surface-de-4d";
 import { buildEscapeDE } from "../fractal/escape-de";
 import { buildEscapeDE4 } from "../fractal/escape-de-4d";
 import { resolveShapeTrap } from "../fractal/shape-trap";
+import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
 import {
   defaultTransforms,
   foldChain,
@@ -1470,7 +1471,26 @@ async function createPaletteResourceHarness(
 }
 
 describe("SurfaceComputeRenderer condensation session resources", () => {
-  it("uploads one R32F 3D atlas and adds binding 11 to both layouts for the mesh preset", async () => {
+  it("does not allocate, upload, or bind a mesh atlas for an analytic scene", async () => {
+    const harness = await createPaletteResourceHarness(false);
+
+    for (const source of harness.shaderSources) {
+      expect(source).not.toContain("@binding(11)");
+    }
+    for (const layout of harness.layoutDescriptors) {
+      expect(layout.entries).not.toContainEqual(
+        expect.objectContaining({ binding: 11 }),
+      );
+    }
+    expect(harness.textureDescriptors).not.toContainEqual(
+      expect.objectContaining({ format: "r32float" }),
+    );
+    // The one write is the always-present palette LUT, not a mesh slab.
+    expect(harness.textureWrites).toHaveBeenCalledTimes(1);
+    harness.renderer.destroy();
+  });
+
+  it("uploads one active R32F slab and adds binding 11 to both layouts for the mesh preset", async () => {
     const de = buildSurfaceDE(starFoundry());
     const target: SurfaceComputeTarget = { kind: "ifs", de };
     expect(surfaceComputeTargetMeshIds(target)).toEqual(["star-prism-v1"]);
@@ -1501,6 +1521,9 @@ describe("SurfaceComputeRenderer condensation session resources", () => {
       }),
     );
     expect(harness.textureWrites).toHaveBeenCalledTimes(2);
+    expect(harness.textureWrites.mock.calls[1][1]).toBe(
+      activeMeshSdfAtlas(["star-prism-v1"]).values,
+    );
     harness.renderer.destroy();
   });
 

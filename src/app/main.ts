@@ -134,7 +134,8 @@ import {
   consumeIsolationHandoff,
   saveIsolationHandoff,
 } from "./isolation-handoff";
-import { Ui, type BuiltinEmitterKind } from "./ui";
+import { Ui } from "./ui";
+import { bundledEmitterShape } from "./bundled-shapes";
 import {
   EXPORT_MODAL_SLOW_PREDICTION_MS,
   createExportProgress,
@@ -224,7 +225,6 @@ import { decodeFlameFile, encodeFlameFile } from "./flame-file";
 import { BALLOON_SWEEP_MS, hexToRgb01, MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
 import type { Bounds, Transform, Vec3, Vec4 } from "../fractal/types";
-import { GEAR_SHAPE, STAR_PRISM_SHAPE } from "../fractal/shapes";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, SPOTLIGHT_DIM } from "./build-replay";
 import { MorphTween, MORPH_TWEEN_MS, type MorphSample } from "./morph-tween";
@@ -269,12 +269,6 @@ function showError(message: string): void {
     error.style.display = "block";
   }
   console.error("Fractal Explorer:", message);
-}
-
-/** Map the UI's deliberately small emitter vocabulary to the canonical
- * document ShapeSpecs shared with the reachability presets. */
-function builtinEmitterShape(kind: BuiltinEmitterKind) {
-  return kind === "gear" ? GEAR_SHAPE : STAR_PRISM_SHAPE;
 }
 
 /**
@@ -6576,7 +6570,7 @@ function main(): void {
       applyEdit(() => {
         state = addTransform(state);
         const index = state.transforms.length - 1;
-        state = setTransformEmitter(state, index, builtinEmitterShape(kind));
+        state = setTransformEmitter(state, index, bundledEmitterShape(kind));
         state = selectTransform(state, index);
       });
     },
@@ -7466,7 +7460,7 @@ function main(): void {
         state = setTransformEmitter(
           state,
           index,
-          kind === null ? null : builtinEmitterShape(kind),
+          kind === null ? null : bundledEmitterShape(kind),
         );
       });
     },

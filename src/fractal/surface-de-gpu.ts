@@ -27,7 +27,8 @@ import {
   shapeSpecsMeshIds,
   type ShapeSpec,
 } from "./shapes";
-import { meshSdfAtlas } from "./mesh-shapes";
+import { activeMeshSdfAtlas } from "./mesh-sdf-atlas-cache";
+import type { MeshAssetId } from "./mesh-shapes";
 import {
   ESCAPE_FACTOR,
   FOOTPRINT_DEPTH_FLOOR,
@@ -888,8 +889,9 @@ import type { Vec3 } from "./types";
  *                pre-inversion source-radius coordinate when flags bit1 is
  *                set. Non-balloon targets neither declare nor bind it.
  *   @binding(11) var shapeMeshSdfTex: texture_3d<f32> — MESH SHAPES ONLY;
- *                the conservative R32F catalog atlas, manually interpolated
- *                so filtering support cannot change its lower-bound contract.
+ *                the conservative R32F active-scene atlas (shader dispatch
+ *                still uses stable catalog ids), manually interpolated so
+ *                filtering support cannot change its lower-bound contract.
  */
 
 /** Mirror of `surface-material.ts`'s `SURFACE_FULL_HIT_FLOOR` (1e-5) —
@@ -3243,16 +3245,18 @@ function wgslFloatLit(x: number): string {
 }
 
 /**
- * One binding and one manual-trilinear sampler for the built-in mesh SDF
- * atlas. Shape bodies emitted by `shapeSdfSource` call `shapeMeshSdf` with
- * the stable catalog index; keeping the resource declaration here means a
- * shader containing several trap/condensation shapes still declares the
- * texture exactly once. `textureLoad` is deliberate: R32F is not guaranteed
- * filterable, and the CPU oracle's conservative proof is over these exact
- * eight node loads.
+ * One binding and one manual-trilinear sampler for the active mesh SDF atlas.
+ * Shape bodies emitted by `shapeSdfSource` call `shapeMeshSdf` with the stable
+ * CATALOG index, while each active entry's z offset addresses its compact
+ * slab. Keeping the resource declaration here means a shader containing
+ * several trap/condensation shapes still declares the texture exactly once.
+ * `textureLoad` is deliberate: R32F is not guaranteed filterable, and the CPU
+ * oracle's conservative proof is over these exact eight node loads.
  */
-export function surfaceMeshSdfWgslSource(): string {
-  const atlas = meshSdfAtlas();
+export function surfaceMeshSdfWgslSource(
+  activeIds: readonly MeshAssetId[],
+): string {
+  const atlas = activeMeshSdfAtlas(activeIds);
   const bodies = atlas.entries
     .map((entry) => {
       const n = entry.resolution;
@@ -3609,7 +3613,7 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     ...(condensationShapes ? shapeSpecsMeshIds(condensationShapes) : []),
   ];
   const meshSdfHelperText =
-    meshIds.length > 0 ? `${surfaceMeshSdfWgslSource()}\n` : "";
+    meshIds.length > 0 ? `${surfaceMeshSdfWgslSource(meshIds)}\n` : "";
   // Per-slot finish lighting (option doc). Absent means the fixed
   // Blinn-Phong lines, so every config predating the option generates
   // byte-identical source; no throw anywhere — the flag composes with

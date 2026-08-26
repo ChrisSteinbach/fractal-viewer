@@ -1,6 +1,7 @@
 import {
   GEAR_SHAPE,
   MAX_SHAPE_PARTS,
+  ORBIT_RING_SHAPE,
   PEACE_SIGN_SHAPE,
   SHAPE_MARCH_SAFETY,
   prepareShapeSampler,
@@ -156,6 +157,34 @@ describe("shape spec validation", () => {
     expect(() => shapeSdfSource(GEAR_SHAPE, "glsl", "bad name")).toThrow(
       /identifier/,
     );
+  });
+});
+
+describe("Orbit Ring reference shape", () => {
+  it("is one analytic torus with a readable hole and no mesh dependency", () => {
+    expect(ORBIT_RING_SHAPE).toEqual({
+      parts: [
+        {
+          primitive: { kind: "torus", major: 0.78, minor: 0.26 },
+          combine: "union",
+        },
+      ],
+    });
+    expect(shapeMeshIds(ORBIT_RING_SHAPE)).toEqual([]);
+    expect(shapeSdf(ORBIT_RING_SHAPE, 0, 0, 0)).toBeCloseTo(0.52, 12);
+    expect(shapeSdf(ORBIT_RING_SHAPE, 0.52, 0, 0)).toBeCloseTo(0, 12);
+    expect(shapeSdf(ORBIT_RING_SHAPE, 0.78, 0, 0)).toBeCloseTo(-0.26, 12);
+    expect(shapeSdf(ORBIT_RING_SHAPE, 1.04, 0, 0)).toBeCloseTo(0, 12);
+  });
+
+  it("emits the existing torus source in both Surface shader dialects", () => {
+    const glsl = shapeSdfSource(ORBIT_RING_SHAPE, "glsl", "orbitRing");
+    const wgsl = shapeSdfSource(ORBIT_RING_SHAPE, "wgsl", "orbitRing");
+    for (const source of [glsl, wgsl]) {
+      expect(source).toContain("orbitRing_torus");
+      expect(source).toContain("0.78, 0.26");
+      expect(source).not.toContain("shapeMeshSdf");
+    }
   });
 });
 
@@ -323,6 +352,7 @@ describe("shape sampler agreement", () => {
   it("samples only members: sdf <= 1e-7 at every solid draw, |p| within the bound", () => {
     const rng = mulberry32(0x5a3d1e);
     const specs = [
+      ORBIT_RING_SHAPE,
       PEACE_SIGN_SHAPE,
       GEAR_SHAPE,
       randomSpec(mulberry32(0xabc1), true),
@@ -700,7 +730,12 @@ describe("shape SDF emission", () => {
         )
         .join("\n");
     const rng = mulberry32(0x704e);
-    const specs = [PEACE_SIGN_SHAPE, GEAR_SHAPE, randomSpec(rng, false)];
+    const specs = [
+      ORBIT_RING_SHAPE,
+      PEACE_SIGN_SHAPE,
+      GEAR_SHAPE,
+      randomSpec(rng, false),
+    ];
     for (const spec of specs) {
       const glsl = normalize(shapeSdfSource(spec, "glsl", "shapeFn"));
       const wgsl = normalize(shapeSdfSource(spec, "wgsl", "shapeFn"));
@@ -827,6 +862,8 @@ describe("shape SDF emission", () => {
 
 describe("shapeBoundingRadius", () => {
   it("is attained by the reference shapes' own farthest features", () => {
+    // Orbit Ring: the torus's major + minor radius.
+    expect(shapeBoundingRadius(ORBIT_RING_SHAPE)).toBeCloseTo(1.04, 12);
     // Peace sign: the ring's outer edge, major + minor.
     expect(shapeBoundingRadius(PEACE_SIGN_SHAPE)).toBeCloseTo(1.12, 12);
     // Gear: the tooth-box corner, hypot(radius + t0, t1, halfHeight).

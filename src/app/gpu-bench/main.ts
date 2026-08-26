@@ -14471,8 +14471,9 @@ async function runSurfaceDeSection(
 
       // Tier 3: Star Foundry through the production renderer rather than
       // the buffer-only direct-eval fixture. This is the path that owns the
-      // frozen binding-11 texture and uploads meshSdfAtlas(); the strided CPU
-      // march makes it an agreement gate, not a compile-only reachability leg.
+      // frozen binding-11 texture and uploads the active mesh-atlas slab; the
+      // strided CPU march makes it an agreement gate, not a compile-only
+      // reachability leg.
       if (!meshCondensationSystem) {
         frameFailed = true;
         results.computeFrameMesh = {

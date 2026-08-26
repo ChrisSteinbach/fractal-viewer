@@ -183,9 +183,15 @@ import { mulberry32 } from "../fractal/rng";
 import { chaosRowIsNonTrivial, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import type { ShapeTrap, Transform } from "../fractal/types";
 import {
+  CRESCENT_MOON_SHAPE,
+  FACETED_CRYSTAL_SHAPE,
   GEAR_SHAPE,
+  HEART_PRISM_SHAPE,
+  ORBIT_RING_SHAPE,
   PEACE_SIGN_SHAPE,
+  SNOWFLAKE_PRISM_SHAPE,
   STAR_PRISM_SHAPE,
+  TREFOIL_KNOT_SHAPE,
 } from "../fractal/shapes";
 
 describe("initialState", () => {
@@ -853,19 +859,30 @@ describe("updateTransform", () => {
 });
 
 describe("setTransformEmitter", () => {
-  it("authors one canonical built-in shape without touching other maps", () => {
-    const state = initialState(true);
-    const next = setTransformEmitter(state, 1, STAR_PRISM_SHAPE);
+  it("authors every canonical bundled mesh without touching other maps", () => {
+    for (const shape of [
+      STAR_PRISM_SHAPE,
+      FACETED_CRYSTAL_SHAPE,
+      HEART_PRISM_SHAPE,
+      CRESCENT_MOON_SHAPE,
+      SNOWFLAKE_PRISM_SHAPE,
+      TREFOIL_KNOT_SHAPE,
+    ]) {
+      const state = initialState(true);
+      const next = setTransformEmitter(state, 1, shape);
 
-    expect(next.transforms[1].emitter).toBe(STAR_PRISM_SHAPE);
-    expect(next.transforms[0]).toBe(state.transforms[0]);
-    expect(state.transforms[1].emitter).toBeUndefined();
+      expect(next.transforms[1].emitter).toBe(shape);
+      expect(next.transforms[0]).toBe(state.transforms[0]);
+      expect(state.transforms[1].emitter).toBeUndefined();
+    }
   });
 
   it("switches shapes and clears back to true field absence", () => {
     const state = setTransformEmitter(initialState(true), 2, GEAR_SHAPE);
-    const switched = setTransformEmitter(state, 2, STAR_PRISM_SHAPE);
-    expect(switched.transforms[2].emitter).toBe(STAR_PRISM_SHAPE);
+    const orbit = setTransformEmitter(state, 2, ORBIT_RING_SHAPE);
+    expect(orbit.transforms[2].emitter).toBe(ORBIT_RING_SHAPE);
+    const switched = setTransformEmitter(orbit, 2, PEACE_SIGN_SHAPE);
+    expect(switched.transforms[2].emitter).toBe(PEACE_SIGN_SHAPE);
 
     const cleared = setTransformEmitter(switched, 2, null);
     expect(cleared.transforms[2].emitter).toBeUndefined();

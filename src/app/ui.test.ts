@@ -51,6 +51,11 @@ import { to255 } from "../fractal/vec";
 import { FOUR_D_COLOR_MODES, SYMMETRY_PLANES } from "../fractal/types";
 import type { Transform } from "../fractal/types";
 import { GEAR_SHAPE, STAR_PRISM_SHAPE } from "../fractal/shapes";
+import {
+  BUNDLED_EMITTER_SHAPES,
+  BUNDLED_TRAP_SHAPES,
+  bundledShapeOptionLabel,
+} from "./bundled-shapes";
 // Load the production markup itself so the Ui↔DOM contract has one source of
 // truth: the constructor throws on any missing element, so renaming or removing
 // one in index.html fails these tests instead of silently breaking the app.
@@ -218,7 +223,7 @@ describe("Ui construction", () => {
 });
 
 describe("shape-emitter add action", () => {
-  it("offers cogs and stars at the top of Transforms and resets after choosing", () => {
+  it("offers every registered emitter exactly once and resets after choosing", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -228,19 +233,42 @@ describe("shape-emitter add action", () => {
 
     expect(Array.from(select.options).map((option) => option.value)).toEqual([
       "",
-      "gear",
-      "star",
+      ...BUNDLED_EMITTER_SHAPES.map((entry) => entry.kind),
     ]);
+    expect(
+      Array.from(select.options)
+        .slice(1)
+        .map((option) => option.textContent),
+    ).toEqual(BUNDLED_EMITTER_SHAPES.map(bundledShapeOptionLabel));
 
-    select.value = "gear";
-    select.dispatchEvent(new Event("change"));
-    expect(handlers.onAddEmitter).toHaveBeenCalledWith("gear");
-    expect(select.value).toBe("");
+    for (const entry of BUNDLED_EMITTER_SHAPES) {
+      select.value = entry.kind;
+      select.dispatchEvent(new Event("change"));
+      expect(handlers.onAddEmitter).toHaveBeenLastCalledWith(entry.kind);
+      expect(select.value).toBe("");
+    }
+    expect(handlers.onAddEmitter).toHaveBeenCalledTimes(
+      BUNDLED_EMITTER_SHAPES.length,
+    );
+  });
 
-    select.value = "star";
-    select.dispatchEvent(new Event("change"));
-    expect(handlers.onAddEmitter).toHaveBeenLastCalledWith("star");
-    expect(select.value).toBe("");
+  it("offers every registered trap exactly once before the authored sentinel", () => {
+    new Ui(document);
+    const select = document.getElementById(
+      "surfaceTrapShape",
+    ) as HTMLSelectElement;
+
+    expect(Array.from(select.options).map((option) => option.value)).toEqual([
+      "",
+      ...BUNDLED_TRAP_SHAPES.map((entry) => entry.kind),
+      "custom",
+    ]);
+    expect(
+      Array.from(select.options)
+        .slice(1, -1)
+        .map((option) => option.textContent),
+    ).toEqual(BUNDLED_TRAP_SHAPES.map(bundledShapeOptionLabel));
+    expect(select.options[select.options.length - 1].hidden).toBe(true);
   });
 });
 
@@ -285,16 +313,22 @@ describe("Ui.renderTransformList", () => {
     expect(buttons[0].classList.contains("selected")).toBe(true);
   });
 
-  it("names cog and star emitters in their transform rows", () => {
+  it("uses every registered emitter label in transform summaries", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    const transforms = defaultTransforms().slice(0, 2);
-    transforms[0] = { ...transforms[0], emitter: GEAR_SHAPE };
-    transforms[1] = { ...transforms[1], emitter: STAR_PRISM_SHAPE };
+    const base = defaultTransforms()[0];
+    const transforms = BUNDLED_EMITTER_SHAPES.map((entry, index) => ({
+      ...base,
+      id: index,
+      emitter: entry.shape,
+    }));
     ui.renderTransformList(transforms, null, null);
 
-    expect(transformButtons()[1].textContent).toContain("Shape: Cog");
-    expect(transformButtons()[2].textContent).toContain("Shape: Star");
+    for (const [index, entry] of BUNDLED_EMITTER_SHAPES.entries()) {
+      expect(transformButtons()[index + 1].textContent).toContain(
+        `Shape: ${entry.label}`,
+      );
+    }
   });
 
   it("marks the selected transform and no others", () => {
@@ -2228,17 +2262,53 @@ describe("Ui.renderTransformEditor", () => {
     )!;
 
     expect(select.value).toBe("");
-    select.value = "gear";
-    select.dispatchEvent(new Event("change"));
-    expect(handlers.onTransformEmitter).toHaveBeenLastCalledWith(1, "gear");
-
-    select.value = "star";
-    select.dispatchEvent(new Event("change"));
-    expect(handlers.onTransformEmitter).toHaveBeenLastCalledWith(1, "star");
+    expect(Array.from(select.options).map((option) => option.value)).toEqual([
+      "",
+      ...BUNDLED_EMITTER_SHAPES.map((entry) => entry.kind),
+      "custom",
+    ]);
+    for (const entry of BUNDLED_EMITTER_SHAPES) {
+      select.value = entry.kind;
+      select.dispatchEvent(new Event("change"));
+      expect(handlers.onTransformEmitter).toHaveBeenLastCalledWith(
+        1,
+        entry.kind,
+      );
+    }
 
     select.value = "";
     select.dispatchEvent(new Event("change"));
     expect(handlers.onTransformEmitter).toHaveBeenLastCalledWith(1, null);
+  });
+
+  it("preserves an imported authored shape behind the hidden sentinel", () => {
+    const transforms = defaultTransforms();
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...transforms[1],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.7312 },
+              combine: "union",
+            },
+          ],
+        },
+      },
+      1,
+      transforms.length,
+    );
+    const select = document.querySelector<HTMLSelectElement>(
+      '#transformEditor select[aria-label="Shape emitter"]',
+    )!;
+
+    expect(select.value).toBe("custom");
+    expect(select.selectedOptions[0].hidden).toBe(true);
+    select.dispatchEvent(new Event("change"));
+    expect(handlers.onTransformEmitter).not.toHaveBeenCalled();
   });
 
   it("opens Shape for an emitter and re-syncs the choice after an external edit", () => {

@@ -22,25 +22,57 @@ import {
   HIST_U32_PER_BUCKET,
   KERNEL_VARIATION_INDEX,
   WORKGROUP_SIZE,
+  packGpuSystem,
 } from "./flame-gpu";
 import { createFlameHistogram } from "./flame";
 import type { Mat4 } from "./flame";
 import { mulberry32 } from "./rng";
-import { meshAsset } from "./mesh-shapes";
+import {
+  MESH_ASSET_IDS,
+  meshAsset,
+  meshAssetCatalogIndex,
+  meshAssetIdAtCatalogIndex,
+  type MeshAssetId,
+} from "./mesh-shapes";
 import { VARIATION_TYPES } from "./types";
 import type { SymmetryParams, Transform4, Vec3, Vec4 } from "./types";
 import type { FourDView } from "./project4";
-import { GEAR_SHAPE } from "./shapes";
+import { GEAR_SHAPE, ORBIT_RING_SHAPE, PEACE_SIGN_SHAPE } from "./shapes";
 import type { ShapeSpec } from "./shapes";
 
-const STAR_PRISM_MESH: ShapeSpec = {
-  parts: [
-    {
-      primitive: { kind: "mesh", meshId: "star-prism-v1" },
-      combine: "union",
-    },
-  ],
-};
+function meshEmitterShape(meshId: MeshAssetId, posed = false): ShapeSpec {
+  return {
+    parts: [
+      {
+        primitive: { kind: "mesh", meshId },
+        combine: "union",
+        ...(posed
+          ? {
+              pose: {
+                offset: [0.1, -0.2, 0.3] as Vec3,
+                rotate: [0.2, -0.1, 0.4] as Vec3,
+                scale: 2,
+              },
+            }
+          : {}),
+      },
+    ],
+  };
+}
+
+/** Independent expectation for binding 7's mesh region: the prepared area
+ * CDF followed by every indexed triangle expanded to three vec3f vertices. */
+function expectedMeshTriangleTable(meshId: MeshAssetId): number[] {
+  const asset = meshAsset(meshId);
+  return [
+    ...Array.from(asset.triangleCumulativeAreas, Math.fround),
+    ...asset.triangles.flatMap((triangle) =>
+      triangle.flatMap((vertex) =>
+        Array.from(asset.vertices[vertex], Math.fround),
+      ),
+    ),
+  ];
+}
 
 function makeTransforms4(count: number): Transform4[] {
   return Array.from({ length: count }, () => ({
@@ -392,6 +424,39 @@ describe("packGpuSystem4 shape emitters", () => {
     expect(packed.multiPartEmitters).toBe(false);
   });
 
+  it("packs Orbit Ring through the shared torus lanes", () => {
+    const packed = packGpuSystem4(
+      baseSpec4({
+        transforms4: [transform4WithEmitter(ORBIT_RING_SHAPE)],
+      }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    const p = EMITTER_PARTS;
+    expect(f32[p + EP_KIND_PARAMS0]).toBe(2);
+    expect(f32[p + EP_KIND_PARAMS0 + 1]).toBeCloseTo(0.78, 5);
+    expect(f32[p + EP_KIND_PARAMS0 + 2]).toBeCloseTo(0.26, 5);
+    expect(packed.gearTable).toBeNull();
+    expect(packed.multiPartEmitters).toBe(false);
+  });
+
+  it("packs Peace's actual torus/capsule set and enables bounded overlap", () => {
+    const packed = packGpuSystem4(
+      baseSpec4({
+        transforms4: [transform4WithEmitter(PEACE_SIGN_SHAPE)],
+      }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    expect(
+      PEACE_SIGN_SHAPE.parts.map(
+        (_part, i) => f32[EMITTER_PARTS + i * 24 + EP_KIND_PARAMS0],
+      ),
+    ).toEqual([2, 3, 3, 3]);
+    expect(packed.multiPartEmitters).toBe(true);
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "if (!MULTI_PART_EMITTERS || partCount <= 1u)",
+    );
+  });
+
   it("packs a gear part's device table region — the SAME buildGearTriangleTable helper flame-gpu.ts's kernel uses", () => {
     const packed = packGpuSystem4(
       baseSpec4({ transforms4: [transform4WithEmitter(GEAR_SHAPE)] }),
@@ -414,31 +479,56 @@ describe("packGpuSystem4 shape emitters", () => {
     );
   });
 
-  it("packs the same kind-5 mesh CDF/3D-triangle region without growing Slot4", () => {
-    const asset = meshAsset("star-prism-v1");
-    const packed = packGpuSystem4(
-      baseSpec4({
-        transforms4: [transform4WithEmitter(STAR_PRISM_MESH)],
-      }),
-    );
-    expect(SLOT4_STRIDE_BYTES).toBe(1168);
-    const f32 = new Float32Array(packed.slots);
-    const p = EMITTER_PARTS;
-    expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
-    expect(f32[p + EP_KIND_PARAMS0 + 1]).toBe(0);
-    expect(f32[p + EP_KIND_PARAMS0 + 2]).toBe(asset.triangles.length);
-    const table = new Float32Array(packed.gearTable!);
-    const n = asset.triangles.length;
-    expect(table.length).toBe(n + n * 9);
-    expect(Array.from(table.slice(0, n))).toEqual(
-      Array.from(asset.triangleCumulativeAreas, Math.fround),
-    );
-    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("fn emitterDrawMesh(");
-    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
-      "let vBase = tableOffset + triCount + lo * 9u;",
-    );
-    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("case 5u: { // mesh:");
-  });
+  it.each(MESH_ASSET_IDS)(
+    "packs catalog mesh %s with the byte-identical 3D EmitterPart/table contract",
+    (meshId) => {
+      const asset = meshAsset(meshId);
+      const catalogIndex = meshAssetCatalogIndex(meshId);
+      expect(asset.id).toBe(meshId);
+      expect(meshAssetIdAtCatalogIndex(catalogIndex)).toBe(meshId);
+      const spec = meshEmitterShape(meshId, true);
+      const packed4 = packGpuSystem4(
+        baseSpec4({
+          transforms4: [transform4WithEmitter(spec)],
+        }),
+      );
+      const packed3 = packGpuSystem({
+        transforms: [
+          {
+            id: 0,
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            emitter: spec,
+          },
+        ],
+        finalTransform: null,
+        symmetry: { order: 1, plane: "xz" },
+        palette: "legacy",
+      });
+      expect(SLOT4_STRIDE_BYTES).toBe(1168);
+      const f32 = new Float32Array(packed4.slots);
+      const p = EMITTER_PARTS;
+      expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
+      expect(f32[p + EP_KIND_PARAMS0 + 1]).toBe(0);
+      expect(f32[p + EP_KIND_PARAMS0 + 2]).toBe(asset.triangles.length);
+      expect(Array.from(f32.slice(EMITTER_PARTS, EMITTER_PARTS + 24))).toEqual(
+        Array.from(new Float32Array(packed3.slots).slice(88, 88 + 24)),
+      );
+
+      const table4 = new Float32Array(packed4.gearTable!);
+      const table3 = new Float32Array(packed3.gearTable!);
+      const n = asset.triangles.length;
+      expect(table4.length).toBe(n + n * 9);
+      expect(Array.from(table4)).toEqual(expectedMeshTriangleTable(meshId));
+      expect(Array.from(table4)).toEqual(Array.from(table3));
+      expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("fn emitterDrawMesh(");
+      expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+        "let vBase = tableOffset + triCount + lo * 9u;",
+      );
+      expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("case 5u: { // mesh:");
+    },
+  );
 
   it("replicates a base map's emitter block into every kaleidoscope copy", () => {
     const packed = packGpuSystem4(

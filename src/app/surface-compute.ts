@@ -90,7 +90,7 @@ import {
   shapeSpecsMeshIds,
   type ShapeSpec,
 } from "../fractal/shapes";
-import { meshSdfAtlas } from "../fractal/mesh-shapes";
+import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
 import type { MeshAssetId } from "../fractal/mesh-shapes";
 import type {
   SurfaceGpu4View,
@@ -2189,7 +2189,7 @@ export class SurfaceComputeRenderer {
         { width: 256, height: 1 },
       );
     }
-    const meshAtlas = targetHasMesh ? meshSdfAtlas() : null;
+    const meshAtlas = targetHasMesh ? activeMeshSdfAtlas(targetMeshIds) : null;
     const meshSdfTex = meshAtlas
       ? device.createTexture({
           size: {

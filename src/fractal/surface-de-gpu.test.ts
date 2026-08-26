@@ -55,6 +55,7 @@ import {
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   surfaceDeKernelWgsl,
+  surfaceMeshSdfWgslSource,
   surfaceGpuWorkgroupBytes,
 } from "./surface-de-gpu";
 import {
@@ -83,6 +84,7 @@ import {
 } from "./escape-de";
 import { resolveShapeTrap } from "./shape-trap";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE, type ShapeSpec } from "./shapes";
+import { MESH_ASSET_IDS, meshAssetCatalogIndex } from "./mesh-shapes";
 import { buildEscapeDE4, SYM_PLANE_CODE4 } from "./escape-de-4d";
 import {
   buildSurfaceDE,
@@ -6553,6 +6555,34 @@ describe("box-branch decode duplication", () => {
 });
 
 describe("surfaceDeKernelWgsl shape trap (shapeTrap)", () => {
+  it("emits compact slabs while dispatching every active stable catalog id", () => {
+    const requested = [
+      MESH_ASSET_IDS.at(-1)!,
+      MESH_ASSET_IDS[0],
+      MESH_ASSET_IDS.at(-1)!,
+    ];
+    const activeIds = [...new Set(requested)].sort(
+      (a, b) => meshAssetCatalogIndex(a) - meshAssetCatalogIndex(b),
+    );
+    const wgsl = surfaceMeshSdfWgslSource(requested);
+    activeIds.forEach((id, slabIndex) => {
+      const catalogIndex = meshAssetCatalogIndex(id);
+      expect(wgsl).toContain(`case ${catalogIndex}u:`);
+      expect(wgsl).toContain(`return shapeMeshSdf${catalogIndex}(p);`);
+      expect(wgsl).toContain(`let z0 = ${String(slabIndex * 64)} + i0.z;`);
+    });
+    for (const inactiveId of MESH_ASSET_IDS.filter(
+      (id) => !activeIds.includes(id),
+    )) {
+      expect(wgsl).not.toContain(
+        `case ${String(meshAssetCatalogIndex(inactiveId))}u:`,
+      );
+    }
+    expect(wgsl.match(/fn shapeMeshSdf\d+\(p: vec3f\)/g)).toHaveLength(
+      activeIds.length,
+    );
+  });
+
   it("omitted and explicit shapeTrap:null produce identical source across every mode/core/variant — the byte-identical off state", () => {
     const cases: Partial<SurfaceGpuKernelOptions>[] = [
       { mode: "eval", width: 12 },

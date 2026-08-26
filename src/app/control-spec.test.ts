@@ -3,6 +3,7 @@ import {
   condensationBandMode,
   SCALAR_CONTROLS,
   shapeTrapGeometryBandMode,
+  shapeTrapSelectValue,
   surfaceColorLUT,
 } from "./control-spec";
 import type { ControlEffects, ScalarControlSpec } from "./control-spec";
@@ -21,6 +22,7 @@ import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
 import { resolveBackground } from "./background";
 import { GEAR_SHAPE, STAR_PRISM_SHAPE } from "../fractal/shapes";
+import { BUNDLED_TRAP_SHAPES } from "./bundled-shapes";
 
 /** Look up a table entry by its index.html element id. */
 function specById(id: string): ScalarControlSpec {
@@ -104,15 +106,41 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
   });
 
-  it("authors the built-in star through the Surface shape-trap picker", () => {
+  it("authors every registered trap and maps each canonical spec back to its kind", () => {
     const spec = specById("surfaceTrapShape");
-    const state = applyScalarControl(initialState(true), spec, "star");
+    for (const entry of BUNDLED_TRAP_SHAPES) {
+      const state = applyScalarControl(initialState(true), spec, entry.kind);
+      expect(state.shapeTrap).toEqual({ shape: entry.shape });
+      expect(shapeTrapSelectValue(state)).toBe(entry.kind);
+    }
 
+    const state = applyScalarControl(initialState(true), spec, "star");
     expect(state.shapeTrap).toEqual({ shape: STAR_PRISM_SHAPE });
     const fx = mockEffects();
     spec.effect?.(state, fx, initialState(true));
     expect(fx.scene.setSurfaceShapeTrap).toHaveBeenCalledWith(state.shapeTrap);
     expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an authored trap untouched and preserves absent-means-classic", () => {
+    const spec = specById("surfaceTrapShape");
+    const authored = setShapeTrap(initialState(true), {
+      shape: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.7312 },
+            combine: "union",
+          },
+        ],
+      },
+      fade: 0.2,
+    });
+
+    expect(shapeTrapSelectValue(authored)).toBe("custom");
+    expect(applyScalarControl(authored, spec, "custom")).toBe(authored);
+    const cleared = applyScalarControl(authored, spec, "");
+    expect(cleared.shapeTrap).toBeUndefined();
+    expect(shapeTrapSelectValue(cleared)).toBe("");
   });
 
   it("normalizes trap geometry and its all/root/custom inclusive band", () => {
