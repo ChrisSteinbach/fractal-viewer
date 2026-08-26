@@ -192,12 +192,11 @@
         </button>
       </div>
 
-      <!-- Mode-scoped content that is NOT part of any accordion section lives
-           here, above ALL the sections: floating content wedged
-           between two collapsed section headers reads as the open content of
-           the header above it. The three blocks are mutually exclusive —
-           each shows only in its own render mode, gated by updateLabels
-           exactly like the section containers further down. -->
+      <!-- Content that is NOT part of any accordion section lives here, above
+           ALL the sections: floating content wedged between two collapsed
+           section headers reads as the open content of the header above it.
+           Undo/Redo stays available in every mode; the render-status blocks
+           gate on their corresponding mode. -->
       <div class="btn-row" id="undoRedoRow">
         <button
           class="btn btn-ghost"
@@ -2232,14 +2231,14 @@
             <input type="checkbox" id="surfaceGroundPlaneCheckbox" />
             Floor
           </label>
-          <label class="select-label">
+          <label class="select-label" id="surfaceFloorPatternRow">
             Floor pattern
             <select id="surfaceFloorPatternSelect">
               <option value="solid">Solid</option>
               <option value="checker">Checkerboard</option>
             </select>
           </label>
-          <label class="select-label">
+          <label class="select-label" id="surfaceFloorTileScaleRow">
             Tile size: <span id="surfaceFloorTileScaleLabel">0.64×</span>
             <input
               type="range"
@@ -2250,7 +2249,7 @@
               value="0.64"
             />
           </label>
-          <label class="select-label">
+          <label class="select-label" id="surfaceFloorEmissionRow">
             Floor light: <span id="surfaceFloorEmissionLabel">0.00</span>
             <input
               type="range"
@@ -2299,6 +2298,11 @@
           <p class="flame-hint">
             Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll turns
             ZW.
+          </p>
+          <p class="flame-hint hidden" id="fourDSurfaceMotionHint">
+            Surface parks auto-tumble so the render can settle. Manual turns and
+            slice controls stay live; your auto-tumble setting takes effect
+            again in Points.
           </p>
           <label class="checkbox-label" id="fourDTumbleToggleRow">
             <input type="checkbox" id="fourDTumbleToggle" checked />

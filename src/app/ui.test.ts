@@ -1696,6 +1696,13 @@ describe("Ui surface ground plane row", () => {
   function surfaceGroundPlaneRow(): HTMLElement {
     return document.getElementById("surfaceGroundPlaneRow") as HTMLElement;
   }
+  function surfaceGroundPlaneDependentRows(): HTMLElement[] {
+    return [
+      document.getElementById("surfaceFloorPatternRow") as HTMLElement,
+      document.getElementById("surfaceFloorTileScaleRow") as HTMLElement,
+      document.getElementById("surfaceFloorEmissionRow") as HTMLElement,
+    ];
+  }
 
   it("shows the row for an ifs surface session", () => {
     const ui = new Ui(document);
@@ -1747,6 +1754,20 @@ describe("Ui surface ground plane row", () => {
       transforms: nonFlatTransforms(),
     });
     expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("shows the floor settings only while Floor is on", () => {
+    const ui = new Ui(document);
+
+    ui.updateLabels({ ...initialState(true), groundPlane: false });
+    for (const row of surfaceGroundPlaneDependentRows()) {
+      expect(row.classList.contains("hidden")).toBe(true);
+    }
+
+    ui.updateLabels({ ...initialState(true), groundPlane: true });
+    for (const row of surfaceGroundPlaneDependentRows()) {
+      expect(row.classList.contains("hidden")).toBe(false);
+    }
   });
 });
 
@@ -4790,7 +4811,7 @@ describe("Ui render mode switch", () => {
     expect(explorerControls().classList.contains("hidden")).toBe(true);
     expect(flameControls().classList.contains("hidden")).toBe(false);
     expect(solidControls().classList.contains("hidden")).toBe(true);
-    expect(byId("undoRedoRow").classList.contains("hidden")).toBe(true);
+    expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(false);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
     expect(modeBtn("flame").classList.contains("active")).toBe(true);
@@ -4805,7 +4826,7 @@ describe("Ui render mode switch", () => {
     expect(explorerControls().classList.contains("hidden")).toBe(true);
     expect(solidControls().classList.contains("hidden")).toBe(false);
     expect(flameControls().classList.contains("hidden")).toBe(true);
-    expect(byId("undoRedoRow").classList.contains("hidden")).toBe(true);
+    expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
     expect(modeBtn("solid").classList.contains("active")).toBe(true);
@@ -4820,7 +4841,7 @@ describe("Ui render mode switch", () => {
     expect(surfaceControls().classList.contains("hidden")).toBe(false);
     expect(flameControls().classList.contains("hidden")).toBe(true);
     expect(solidControls().classList.contains("hidden")).toBe(true);
-    expect(byId("undoRedoRow").classList.contains("hidden")).toBe(true);
+    expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("surfaceStatus").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
@@ -4890,9 +4911,9 @@ describe("Ui render mode switch", () => {
   // The accordion reads correctly only if nothing floats between section
   // headers: content wedged between two collapsed <summary> rows looks like
   // the open content of the section above it. So the mode containers hold
-  // accordion sections and nothing else — each mode's non-section content
-  // (Undo/Redo, the flame/solid status text) lives above the first section,
-  // right after the render-mode switch.
+  // accordion sections and nothing else — shared Undo/Redo and each mode's
+  // status text live above the first section, right after the render-mode
+  // switch.
   it("keeps every non-section block above the first accordion section", () => {
     for (const containerId of [
       "explorerControls",
@@ -5939,7 +5960,7 @@ describe("Ui ramp palette", () => {
   it("sits statically beneath the flat/4D color-select pair — no re-homing", () => {
     const ui = new Ui(document);
     // Flat: Color Mode shows, 4D Color hides; the ramp row sits after the
-    // pair, inside Appearance.
+    // pair, inside Color.
     ui.updateLabels({ ...initialState(true), colorMode: "height" });
     expect(el("rampPaletteRow").previousElementSibling).toBe(
       el("fourDColorRow"),
@@ -6166,10 +6187,10 @@ describe("Ui 4D view gating", () => {
     expect(el("symmetrySection").classList.contains("hidden")).toBe(false);
   });
 
-  // The 4D look controls live in Appearance beside their flat siblings
-  // — color is an Appearance concern in both views; the 4D View
-  // section keeps only the spatial tumble/slice controls.
-  it("shows the 4D Color and depth-fade rows in Appearance only while non-flat", () => {
+  // The 4D look controls live beside their flat siblings in Color and
+  // Atmosphere; the 4D View section keeps only the spatial tumble/slice
+  // controls.
+  it("gates 4D Color in Color and depth-fade in Atmosphere on non-flat", () => {
     const ui = new Ui(document);
 
     ui.updateLabels(initialState(true));
@@ -6587,6 +6608,12 @@ describe("Ui 4D surface session controls", () => {
 
     expect(el("fourDTumbleToggleRow").classList.contains("hidden")).toBe(true);
     expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
+    expect(el("fourDSurfaceMotionHint").classList.contains("hidden")).toBe(
+      false,
+    );
+    expect(el("fourDSurfaceMotionHint").textContent).toContain(
+      "auto-tumble setting takes effect",
+    );
   });
 
   it("restores the tumble controls — checkbox state untouched — after leaving surface mode", () => {
@@ -6599,6 +6626,9 @@ describe("Ui 4D surface session controls", () => {
 
     expect(el("fourDTumbleToggleRow").classList.contains("hidden")).toBe(false);
     expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(false);
+    expect(el("fourDSurfaceMotionHint").classList.contains("hidden")).toBe(
+      true,
+    );
     expect((el("fourDTumbleToggle") as HTMLInputElement).checked).toBe(true);
   });
 

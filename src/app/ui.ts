@@ -1794,7 +1794,7 @@ export class Ui {
   // "What is this?" About dialog: mirrors the gallery modal's own shape
   // (open button, backdrop, close button). aboutWatchBtn and watchBuildBtn
   // are the two "▶ Watch it build" entry points — the About dialog and the
-  // Appearance panel — both firing the same onWatchBuild handler;
+  // Cloud section — both firing the same onWatchBuild handler;
   // replayCaption is the narration pill main.ts drives during the replay
   // via setReplayCaption.
   private readonly aboutBtn: HTMLButtonElement;
@@ -1861,11 +1861,9 @@ export class Ui {
   private readonly modalStack: ModalStackEntry[] = [];
 
   private readonly glowBrightnessRow: HTMLElement;
-  // The balloon echo's rows — the checkbox has no dimension gate, and the
-  // radius row waits for state.balloonEcho. The checkbox input itself is
-  // table-driven (see SCALAR_CONTROLS); balloonInflateButton's click is
-  // bespoke, like watchBuildBtn.
-  private readonly balloonEchoRow: HTMLElement;
+  // The balloon echo's dependent rows wait for state.balloonEcho. The
+  // checkbox input itself is table-driven (see SCALAR_CONTROLS);
+  // balloonInflateButton's click is bespoke, like watchBuildBtn.
   private readonly balloonRadiusRow: HTMLElement;
   private readonly balloonInflateButton: HTMLButtonElement;
   /** The balloon echo's tint picker — same shape as fogTintColorInput
@@ -1934,9 +1932,8 @@ export class Ui {
    * the static DOM, so it has its own mode gate while Atmosphere remains
    * reachable. */
   private readonly explorerSecondaryControls: HTMLElement;
-  /** The one shared Atmosphere section and its two mode-sensitive subsets:
-   * Points-only depth/balloon effects, and fog (all modes except Flame). */
-  private readonly atmosphereControls: HTMLElement;
+  /** The shared Atmosphere section's two mode-sensitive subsets: Points-only
+   * depth/balloon effects, and fog (all modes except Flame). */
   private readonly pointsAtmosphereControls: HTMLElement;
   private readonly fogControls: HTMLElement;
   /** The render-mode segmented control's three buttons, keyed by the mode
@@ -1986,13 +1983,11 @@ export class Ui {
    */
   private surfaceAnnouncedEngine: string | null = null;
   private surfaceAntialiasingAnnounced = false;
-  // The mode-scoped blocks that are NOT part of any accordion section: Points'
-  // Undo/Redo row and the flame/solid hint + progress status blocks. They sit
-  // above ALL the sections in index.html — floating content wedged between two
-  // collapsed section headers reads as the open content of the header above it
-  // — and each shows/hides with its render mode exactly like the section
-  // containers below.
-  private readonly undoRedoRow: HTMLElement;
+  // The render-mode blocks that are NOT part of any accordion section. They
+  // sit above ALL the sections in index.html: floating content wedged between
+  // two collapsed headers reads as the open content of the header above it.
+  // Undo/Redo is also in that fixed strip, but needs no reference here because
+  // it remains available in every mode, matching the always-live shortcuts.
   private readonly flameStatus: HTMLElement;
   private readonly solidStatus: HTMLElement;
   private readonly flameControls: HTMLElement;
@@ -2003,7 +1998,6 @@ export class Ui {
   // table-driven; the Inflate button and tint-color picker share the two
   // bespoke handlers used by their Points/Surface siblings (the handler
   // itself gives Flame its one-restart rest-pose behavior).
-  private readonly flameBalloonRow: HTMLElement;
   private readonly flameBalloonRadiusRow: HTMLElement;
   private readonly flameBalloonInflateButton: HTMLButtonElement;
   private readonly flameBalloonTintRow: HTMLElement;
@@ -2015,7 +2009,6 @@ export class Ui {
   // Solid's view of the shared balloon fields. Its query-space remap is live,
   // so the radius row and tint picker use the same bespoke handlers as Points
   // and Surface without rebuilding the one accumulated voxel grid.
-  private readonly solidBalloonRow: HTMLElement;
   private readonly solidBalloonCheckbox: HTMLInputElement;
   private readonly solidBalloonNote: HTMLElement;
   private readonly solidBalloonRadiusRow: HTMLElement;
@@ -2088,15 +2081,9 @@ export class Ui {
   private readonly surfaceBalloonTintRow: HTMLElement;
   private readonly surfaceBalloonTintColorInput: HTMLInputElement;
 
-  // The surface ground plane row, 3D and 4D alike: unlike the balloon rows
-  // above, visible for EVERY surfaceSessionKind in EITHER dimension — the
-  // floor survives where the balloon degenerates (the measured escape-solid
-  // interior swallowing the camera, and the identical measurement on the
-  // Mandelbulb, never applied to a flat plane), and the w-slice it drops under
-  // is an ordinary 3D object. So it carries no gate at all. Its checkbox is
-  // table-driven (see SCALAR_CONTROLS's surfaceGroundPlaneCheckbox entry), so
-  // only the row itself needs a reference here.
-  private readonly surfaceGroundPlaneRow: HTMLElement;
+  // The floor checkbox is valid for every Surface session kind and dimension.
+  // These three rows are its dependent settings and hide while it is off.
+  private readonly surfaceGroundPlaneDependentRows: readonly HTMLElement[];
 
   // 3D VIEW controls: the auto-orbit turntable — the 3D sibling of the 4D
   // auto-tumble below, same session-only checkbox + speed-row pattern, shown
@@ -2185,6 +2172,7 @@ export class Ui {
   private readonly fourDTumbleToggle: HTMLInputElement;
   private readonly fourDTumbleToggleRow: HTMLElement;
   private readonly fourDTumbleRow: HTMLElement;
+  private readonly fourDSurfaceMotionHint: HTMLElement;
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
   /** Is the projection ACTUALLY tumbling right now (main.ts's
@@ -2200,12 +2188,12 @@ export class Ui {
   private fourDTumbleActive = true;
   private readonly colorModeRow: HTMLElement;
   /** The 4D Color select's wrapper — {@link colorModeRow}'s non-flat sibling
-   * in the Appearance section: exactly one of the pair shows, and
+   * in the Color section: exactly one of the pair shows, and
    * `#rampPaletteRow` sits statically beneath them (gate and gated
    * co-located, with no DOM re-homing). */
   private readonly fourDColorRow: HTMLElement;
   /** The 4D depth-fade toggle's wrapper — renderStyleRow's non-flat sibling
-   * in the Appearance section. */
+   * in the Atmosphere section. */
   private readonly fourDDepthFadeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
 
@@ -2461,7 +2449,6 @@ export class Ui {
     // offers the action, and takes it out again for one that does not.
     this.exportDeliverBtn.remove();
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
-    this.balloonEchoRow = this.byId("balloonEchoRow");
     this.balloonRadiusRow = this.byId("balloonRadiusRow");
     this.balloonInflateButton = this.byId("balloonInflateButton");
     this.balloonTintRow = this.byId("balloonTintRow");
@@ -2544,7 +2531,6 @@ export class Ui {
     this.transformEditor = this.byId("transformEditor");
     this.explorerControls = this.byId("explorerControls");
     this.explorerSecondaryControls = this.byId("explorerSecondaryControls");
-    this.atmosphereControls = this.byId("atmosphereControls");
     this.pointsAtmosphereControls = this.byId("pointsAtmosphereControls");
     this.fogControls = this.byId("fogControls");
     this.modeButtons = {
@@ -2555,7 +2541,6 @@ export class Ui {
     };
     this.softwareRendererNote = this.byId("softwareRendererNote");
     this.renderProgressAnnouncer = this.byId("renderProgressAnnouncer");
-    this.undoRedoRow = this.byId("undoRedoRow");
     this.flameStatus = this.byId("flameStatus");
     this.solidStatus = this.byId("solidStatus");
     this.surfaceStatus = this.byId("surfaceStatus");
@@ -2567,7 +2552,6 @@ export class Ui {
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
     this.flameProgress = this.byId("flameProgress");
-    this.flameBalloonRow = this.byId("flameBalloonRow");
     this.flameBalloonRadiusRow = this.byId("flameBalloonRadiusRow");
     this.flameBalloonInflateButton = this.byId("flameBalloonInflateButton");
     this.flameBalloonTintRow = this.byId("flameBalloonTintRow");
@@ -2575,7 +2559,6 @@ export class Ui {
     this.solidControls = this.byId("solidControls");
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
-    this.solidBalloonRow = this.byId("solidBalloonRow");
     this.solidBalloonCheckbox = this.byId("solidBalloonCheckbox");
     this.solidBalloonNote = this.byId("solidBalloonNote");
     this.solidBalloonRadiusRow = this.byId("solidBalloonRadiusRow");
@@ -2599,7 +2582,11 @@ export class Ui {
     this.surfaceBalloonInflateButton = this.byId("surfaceBalloonInflateButton");
     this.surfaceBalloonTintRow = this.byId("surfaceBalloonTintRow");
     this.surfaceBalloonTintColorInput = this.byId("surfaceBalloonTintColor");
-    this.surfaceGroundPlaneRow = this.byId("surfaceGroundPlaneRow");
+    this.surfaceGroundPlaneDependentRows = [
+      this.byId("surfaceFloorPatternRow"),
+      this.byId("surfaceFloorTileScaleRow"),
+      this.byId("surfaceFloorEmissionRow"),
+    ];
     this.fourDControls = this.byId("fourDControls");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceToggleRow = this.byId("fourDSliceToggleRow");
@@ -2619,6 +2606,7 @@ export class Ui {
     this.fourDTumbleToggle = this.byId("fourDTumbleToggle");
     this.fourDTumbleToggleRow = this.byId("fourDTumbleToggleRow");
     this.fourDTumbleRow = this.byId("fourDTumbleRow");
+    this.fourDSurfaceMotionHint = this.byId("fourDSurfaceMotionHint");
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
     this.colorModeRow = this.byId("colorModeRow");
@@ -2963,7 +2951,7 @@ export class Ui {
     this.aboutCloseBtn.addEventListener("click", () => this.closeAbout());
     this.aboutBackdrop.addEventListener("click", () => this.closeAbout());
     // Two entry points for the same replay — the About dialog's own button
-    // and the Appearance panel's — both fire the one handler.
+    // and the Cloud section's — both fire the one handler.
     this.aboutWatchBtn.addEventListener("click", () => handlers.onWatchBuild());
     this.watchBuildBtn.addEventListener("click", () => handlers.onWatchBuild());
     // The export progress modal deliberately does NOT mirror the
@@ -3243,6 +3231,10 @@ export class Ui {
   private syncFourDViewRows(): void {
     const sliceOn = this.fourDSliceToggle.checked;
     const tumbleOn = this.fourDTumbleToggle.checked;
+    this.fourDSurfaceMotionHint.classList.toggle(
+      "hidden",
+      !this.fourDSurfaceLive,
+    );
     this.fourDTumbleToggleRow.classList.toggle("hidden", this.fourDSurfaceLive);
     this.fourDTumbleRow.classList.toggle(
       "hidden",
@@ -3329,7 +3321,6 @@ export class Ui {
   private syncSolidBalloonRows(): void {
     const refused = !this.solidBalloonAvailable;
     const showDependent = !refused && this.solidBalloonCheckbox.checked;
-    this.solidBalloonRow.classList.toggle("hidden", false);
     this.solidBalloonCheckbox.disabled = refused;
     this.solidBalloonRadiusRow.classList.toggle("hidden", !showDependent);
     this.solidBalloonTintRow.classList.toggle("hidden", !showDependent);
@@ -3489,8 +3480,9 @@ export class Ui {
     // style — neither reaches the 4D projection or its own w-driven coloring;
     // symmetry, by contrast, stays put — the 4D chaos game has a kaleidoscope
     // stage of its own) hide; their 4D look siblings (the 4D Color and
-    // depth-fade rows) swap into the same Appearance slots, and the 4D View
-    // section's tumble/slice block replaces the 3D View block. All four render
+    // depth-fade rows) replace them in the corresponding Color and Atmosphere
+    // sections, and the 4D View section's tumble/slice block replaces the 3D
+    // View block. All four render
     // modes stay available while non-flat: the flame/solid renders snapshot
     // the frozen 4D view and run their own 4D accumulators, and the surface
     // tracer poses the 4D attractor live. The tumble/slice block hides under
@@ -3516,11 +3508,9 @@ export class Ui {
     this.panelTitle.textContent = nonFlat ? "4D IFS Fractal" : "3D IFS Fractal";
     this.explorerControls.classList.toggle("hidden", rendering);
     this.explorerSecondaryControls.classList.toggle("hidden", rendering);
-    this.atmosphereControls.classList.toggle("hidden", false);
     this.pointsAtmosphereControls.classList.toggle("hidden", rendering);
     this.fogControls.classList.toggle("hidden", state.renderMode === "flame");
     this.flameControls.classList.toggle("hidden", state.renderMode !== "flame");
-    this.flameBalloonRow.classList.toggle("hidden", false);
     this.flameBalloonRadiusRow.classList.toggle("hidden", !state.balloonEcho);
     this.flameBalloonTintRow.classList.toggle("hidden", !state.balloonEcho);
     this.solidControls.classList.toggle("hidden", state.renderMode !== "solid");
@@ -3577,14 +3567,9 @@ export class Ui {
       "hidden",
       surfaceBalloonHidden || !state.balloonEcho,
     );
-    // The surface ground plane is visible for EVERY session kind in both
-    // dimensions: unlike the balloon it is NOT inert for the
-    // forward-orbit solids (the floor survives where the balloon
-    // degenerates, scene.ts's enterSurfaceComputeForwardSession — a plane
-    // under a Mandelbox or a Mandelbulb is the mode's classic look), and
-    // the w-slice it drops under is an ordinary 3D object. So the row
-    // carries no gate of its own at all.
-    this.surfaceGroundPlaneRow.classList.toggle("hidden", false);
+    for (const row of this.surfaceGroundPlaneDependentRows) {
+      row.classList.toggle("hidden", !state.groundPlane);
+    }
     // The shape trap is the balloon's COMPLEMENT: it exists ONLY for the
     // forward-orbit (escape-family) sessions — the descent shaders carry
     // no trap channel — so the row shows exactly where the balloon rows
@@ -3639,11 +3624,9 @@ export class Ui {
         state.condensationDepthBand?.maxDepth === 0 ||
         state.condensationDepthBand === undefined,
     );
-    // …including each mode's non-section block above the accordion: the
-    // Undo/Redo row belongs to the explorer (a mid-render undo couldn't
-    // affect the frozen render, same reason the editing controls hide), and
-    // the flame/solid status blocks belong to their renders.
-    this.undoRedoRow.classList.toggle("hidden", rendering);
+    // …including each render's status block above the accordion. Undo/Redo
+    // remains visible in the shared strip because both the buttons and their
+    // keyboard shortcuts time-travel the document in every mode.
     this.flameStatus.classList.toggle("hidden", state.renderMode !== "flame");
     this.solidStatus.classList.toggle("hidden", state.renderMode !== "solid");
     this.surfaceStatus.classList.toggle(
@@ -3673,7 +3656,7 @@ export class Ui {
     this.threeDControls.classList.toggle("hidden", nonFlat || rendering);
     this.colorModeRow.classList.toggle("hidden", nonFlat);
     // The 4D look rows are the non-flat replacements for the color-mode and
-    // depth-style rows: color is an Appearance concern in both views, so
+    // depth-style rows: color stays in the Color section in both views, so
     // the pair swaps in place rather than living in the 4D View section
     // (which keeps only the spatial tumble/slice controls).
     this.fourDColorRow.classList.toggle("hidden", !nonFlat);
@@ -3692,10 +3675,8 @@ export class Ui {
       "hidden",
       nonFlat || state.renderStyle !== "glow",
     );
-    // The balloon echo follows the projected cloud in either dimension, so
-    // its checkbox has no dimensional gate. The radius slider + Inflate
-    // button wait only for the echo itself to be on.
-    this.balloonEchoRow.classList.toggle("hidden", false);
+    // The balloon echo follows the projected cloud in either dimension. Its
+    // radius slider + Inflate button wait only for the echo itself to be on.
     this.balloonRadiusRow.classList.toggle("hidden", !state.balloonEcho);
     // The balloon tint waits for the echo itself, exactly like
     // balloonRadiusRow above — same gate, same reason.
@@ -3708,7 +3689,7 @@ export class Ui {
     // statically beneath the flat/4D color-select pair, exactly one of which
     // is visible per view, so it is always directly under the select that
     // gates it — the exclusive-open accordion demands gate and gated share a
-    // section, and the static Appearance layout satisfies that without the
+    // section, and the static Color layout satisfies that without the
     // old DOM re-homing.
     this.rampPaletteRow.classList.toggle(
       "hidden",
