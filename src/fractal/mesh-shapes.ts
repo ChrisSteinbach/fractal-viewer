@@ -29,8 +29,23 @@
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
 
-export const MESH_ASSET_IDS = ["star-prism-v1"] as const;
+export const MESH_ASSET_IDS = [
+  "star-prism-v1",
+  "faceted-crystal-v1",
+  "heart-prism-v1",
+  "crescent-moon-v1",
+  "snowflake-prism-v1",
+  "trefoil-knot-v1",
+] as const;
 export type MeshAssetId = (typeof MESH_ASSET_IDS)[number];
+
+/**
+ * Version of the node-lattice encoding consumed by CPU and GPU samplers.
+ * Include this in any durable pre-bake/cache key. BVH implementation changes
+ * do not require a bump when they reproduce the same exact triangle queries;
+ * the version changes when padding, conservative bias, ordering or layout does.
+ */
+export const MESH_SDF_BAKE_VERSION = 1;
 
 export function isMeshAssetId(value: unknown): value is MeshAssetId {
   return (
@@ -58,6 +73,7 @@ export interface PreparedMeshAsset {
 }
 
 export interface MeshSdfBake {
+  readonly version: typeof MESH_SDF_BAKE_VERSION;
   readonly mesh: PreparedMeshAsset;
   readonly resolution: number;
   /** x-fastest node lattice, `x + n * (y + n * z)`. */
@@ -80,6 +96,7 @@ export interface MeshSdfAtlasEntry {
 }
 
 export interface MeshSdfAtlas {
+  readonly version: typeof MESH_SDF_BAKE_VERSION;
   readonly resolution: number;
   readonly width: number;
   readonly height: number;
@@ -125,6 +142,287 @@ function starPrismRaw(): {
     triangles.push([topCenter, ti, tj]);
     triangles.push([bi, bj, tj]);
     triangles.push([bi, tj, ti]);
+  }
+  return { vertices, triangles };
+}
+
+type Vec2 = readonly [number, number];
+
+function polygonSignedArea2(points: readonly Vec2[]): number {
+  let area2 = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    area2 += a[0] * b[1] - b[0] * a[1];
+  }
+  return area2;
+}
+
+function triangleCross2(a: Vec2, b: Vec2, c: Vec2): number {
+  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+}
+
+function pointInTriangle2(p: Vec2, a: Vec2, b: Vec2, c: Vec2): boolean {
+  const epsilon = 1e-12;
+  return (
+    triangleCross2(a, b, p) >= -epsilon &&
+    triangleCross2(b, c, p) >= -epsilon &&
+    triangleCross2(c, a, p) >= -epsilon
+  );
+}
+
+/** Deterministic first-ear triangulation for the small, authored CCW outlines. */
+function triangulateSimplePolygon(
+  points: readonly Vec2[],
+): [number, number, number][] {
+  if (points.length < 3 || !(polygonSignedArea2(points) > 1e-12)) {
+    throw new RangeError(
+      "mesh extrusion outline must be a nondegenerate CCW polygon",
+    );
+  }
+  const remaining = Array.from({ length: points.length }, (_, i) => i);
+  const triangles: [number, number, number][] = [];
+  while (remaining.length > 3) {
+    let found = false;
+    for (let i = 0; i < remaining.length; i++) {
+      const previous = remaining[(i + remaining.length - 1) % remaining.length];
+      const current = remaining[i];
+      const next = remaining[(i + 1) % remaining.length];
+      if (
+        triangleCross2(points[previous], points[current], points[next]) <= 1e-12
+      ) {
+        continue;
+      }
+      let containsOther = false;
+      for (const candidate of remaining) {
+        if (
+          candidate === previous ||
+          candidate === current ||
+          candidate === next
+        ) {
+          continue;
+        }
+        if (
+          pointInTriangle2(
+            points[candidate],
+            points[previous],
+            points[current],
+            points[next],
+          )
+        ) {
+          containsOther = true;
+          break;
+        }
+      }
+      if (containsOther) continue;
+      triangles.push([previous, current, next]);
+      remaining.splice(i, 1);
+      found = true;
+      break;
+    }
+    if (!found) {
+      throw new RangeError("mesh extrusion outline is not a simple polygon");
+    }
+  }
+  triangles.push([remaining[0], remaining[1], remaining[2]]);
+  return triangles;
+}
+
+/** Extrude one simple CCW silhouette. Cap and wall faces share the exact same
+ * perimeter vertices, making the result manifold without a centre-fan seam. */
+function extrudePolygonRaw(
+  points: readonly Vec2[],
+  halfHeight: number,
+): { vertices: Vec3[]; triangles: [number, number, number][] } {
+  const capTriangles = triangulateSimplePolygon(points);
+  const vertices: Vec3[] = [];
+  for (const z of [-halfHeight, halfHeight]) {
+    for (const point of points) vertices.push([point[0], point[1], z]);
+  }
+  const n = points.length;
+  const triangles: [number, number, number][] = [];
+  for (const [a, b, c] of capTriangles) {
+    triangles.push([c, b, a]);
+    triangles.push([n + a, n + b, n + c]);
+  }
+  for (let i = 0; i < n; i++) {
+    const next = (i + 1) % n;
+    triangles.push([i, next, n + next]);
+    triangles.push([i, n + next, n + i]);
+  }
+  return { vertices, triangles };
+}
+
+/** An elongated octagonal bipyramid: deliberately low-poly so its triangular
+ * faces remain legible rather than approximating a smooth ellipsoid. */
+function facetedCrystalRaw(): {
+  vertices: Vec3[];
+  triangles: [number, number, number][];
+} {
+  const ring = 8;
+  const vertices: Vec3[] = [];
+  for (let i = 0; i < ring; i++) {
+    const angle = (2 * Math.PI * i) / ring;
+    vertices.push([0.62 * Math.cos(angle), 0, 0.62 * Math.sin(angle)]);
+  }
+  const bottom = vertices.length;
+  vertices.push([0, -1.15, 0]);
+  const top = vertices.length;
+  vertices.push([0, 1.15, 0]);
+  const triangles: [number, number, number][] = [];
+  for (let i = 0; i < ring; i++) {
+    const next = (i + 1) % ring;
+    triangles.push([top, next, i]);
+    triangles.push([bottom, i, next]);
+  }
+  return { vertices, triangles };
+}
+
+/** Broad lobes, a deliberately resolvable notch and a nondegenerate tip. */
+function heartPrismRaw(): {
+  vertices: Vec3[];
+  triangles: [number, number, number][];
+} {
+  const outline: Vec2[] = [
+    [0, -1],
+    [0.7, -0.38],
+    [0.95, 0.05],
+    [0.96, 0.5],
+    [0.72, 0.85],
+    [0.36, 1],
+    [0, 0.7],
+    [-0.36, 1],
+    [-0.72, 0.85],
+    [-0.96, 0.5],
+    [-0.95, 0.05],
+    [-0.7, -0.38],
+  ];
+  return extrudePolygonRaw(outline, 0.3);
+}
+
+/** One simple crescent outline: the inner arc returns to the upper tip, so
+ * there is no boolean subtraction, hole or disconnected inner wall. */
+function crescentMoonRaw(): {
+  vertices: Vec3[];
+  triangles: [number, number, number][];
+} {
+  const outline: Vec2[] = [
+    [0.55, 0.82],
+    [0, 1],
+    [-0.58, 0.82],
+    [-0.92, 0.4],
+    [-1, 0],
+    [-0.92, -0.4],
+    [-0.58, -0.82],
+    [0, -1],
+    [0.55, -0.82],
+    [0.14, -0.53],
+    [-0.18, -0.42],
+    [-0.4, 0],
+    [-0.18, 0.42],
+    [0.14, 0.53],
+  ];
+  return extrudePolygonRaw(outline, 0.28);
+}
+
+/** Six main arms with two broad side branches each. The narrowest authored
+ * branch is 0.15 units wide, over four lattice cells at the 64^3 bake. */
+function snowflakePrismRaw(): {
+  vertices: Vec3[];
+  triangles: [number, number, number][];
+} {
+  const valleyY = 0.35 / Math.sqrt(3);
+  const arm: Vec2[] = [
+    [0.35, -valleyY],
+    [0.48, -0.2],
+    [0.62, -0.31],
+    [0.7, -0.25],
+    [0.64, -0.14],
+    [0.82, -0.1],
+    [1.05, 0],
+    [0.82, 0.1],
+    [0.64, 0.14],
+    [0.7, 0.25],
+    [0.62, 0.31],
+    [0.48, 0.2],
+  ];
+  const outline: Vec2[] = [];
+  for (let sector = 0; sector < 6; sector++) {
+    const angle = (sector * Math.PI) / 3;
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    for (const [x, y] of arm) {
+      outline.push([x * cosine - y * sine, x * sine + y * cosine]);
+    }
+  }
+  return extrudePolygonRaw(outline, 0.24);
+}
+
+const TREFOIL_PATH_SEGMENTS = 72;
+const TREFOIL_TUBE_SIDES = 10;
+const TREFOIL_TUBE_RADIUS = 0.32;
+const TREFOIL_SCALE = 0.31;
+
+/** Thick polygonal tube around a periodic (2,3) torus-knot centreline. The
+ * projected radial frame is periodic, so the final and first rings share the
+ * same twist without a closure discontinuity. */
+function trefoilKnotRaw(): {
+  vertices: Vec3[];
+  triangles: [number, number, number][];
+} {
+  const vertices: Vec3[] = [];
+  const triangles: [number, number, number][] = [];
+  const normalize = (v: Vec3): Vec3 => {
+    const length = Math.hypot(v[0], v[1], v[2]);
+    return [v[0] / length, v[1] / length, v[2] / length];
+  };
+  for (let i = 0; i < TREFOIL_PATH_SEGMENTS; i++) {
+    const t = (2 * Math.PI * i) / TREFOIL_PATH_SEGMENTS;
+    const c2 = Math.cos(2 * t);
+    const s2 = Math.sin(2 * t);
+    const c3 = Math.cos(3 * t);
+    const s3 = Math.sin(3 * t);
+    const center: Vec3 = [(2 + c3) * c2, (2 + c3) * s2, s3];
+    const tangent = normalize([
+      -3 * s3 * c2 - 2 * (2 + c3) * s2,
+      -3 * s3 * s2 + 2 * (2 + c3) * c2,
+      3 * c3,
+    ]);
+    const radialDot = tangent[0] * c2 + tangent[1] * s2;
+    const normal = normalize([
+      c2 - radialDot * tangent[0],
+      s2 - radialDot * tangent[1],
+      -radialDot * tangent[2],
+    ]);
+    const binormal: Vec3 = [
+      tangent[1] * normal[2] - tangent[2] * normal[1],
+      tangent[2] * normal[0] - tangent[0] * normal[2],
+      tangent[0] * normal[1] - tangent[1] * normal[0],
+    ];
+    for (let j = 0; j < TREFOIL_TUBE_SIDES; j++) {
+      const angle = (2 * Math.PI * j) / TREFOIL_TUBE_SIDES;
+      const normalWeight = TREFOIL_TUBE_RADIUS * Math.cos(angle);
+      const binormalWeight = TREFOIL_TUBE_RADIUS * Math.sin(angle);
+      vertices.push([
+        TREFOIL_SCALE *
+          (center[0] + normalWeight * normal[0] + binormalWeight * binormal[0]),
+        TREFOIL_SCALE *
+          (center[1] + normalWeight * normal[1] + binormalWeight * binormal[1]),
+        TREFOIL_SCALE *
+          (center[2] + normalWeight * normal[2] + binormalWeight * binormal[2]),
+      ]);
+    }
+  }
+  for (let i = 0; i < TREFOIL_PATH_SEGMENTS; i++) {
+    const nextI = (i + 1) % TREFOIL_PATH_SEGMENTS;
+    for (let j = 0; j < TREFOIL_TUBE_SIDES; j++) {
+      const nextJ = (j + 1) % TREFOIL_TUBE_SIDES;
+      const a = i * TREFOIL_TUBE_SIDES + j;
+      const b = nextI * TREFOIL_TUBE_SIDES + j;
+      const c = nextI * TREFOIL_TUBE_SIDES + nextJ;
+      const d = i * TREFOIL_TUBE_SIDES + nextJ;
+      triangles.push([a, c, b], [a, d, c]);
+    }
   }
   return { vertices, triangles };
 }
@@ -176,10 +474,38 @@ interface PreparedTriangleGeometry {
   acz: number;
 }
 
+interface MeshBvhNode {
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+  /** Children for an internal node; -1 for a leaf. */
+  left: number;
+  right: number;
+  /** Half-open range into `triangleOrder` for a leaf. */
+  start: number;
+  end: number;
+}
+
+interface PreparedMeshAcceleration {
+  readonly triangles: readonly PreparedTriangleGeometry[];
+  readonly triangleOrder: Int32Array<ArrayBuffer>;
+  readonly nodes: readonly MeshBvhNode[];
+}
+
 const TRIANGLE_GEOMETRY = new WeakMap<
   PreparedMeshAsset,
   readonly PreparedTriangleGeometry[]
 >();
+
+const MESH_ACCELERATION = new WeakMap<
+  PreparedMeshAsset,
+  PreparedMeshAcceleration
+>();
+
+const BVH_LEAF_TRIANGLES = 8;
 
 function prepareTriangleGeometry(
   vertices: readonly Vec3[],
@@ -218,6 +544,107 @@ function triangleGeometry(
     TRIANGLE_GEOMETRY.set(mesh, prepared);
   }
   return prepared;
+}
+
+/** Build a deterministic median-split BVH. Stable triangle-index tie breaks
+ * make the tree and all query results independent of engine sort stability. */
+function buildMeshAcceleration(
+  mesh: PreparedMeshAsset,
+): PreparedMeshAcceleration {
+  const triangles = triangleGeometry(mesh);
+  const order = Array.from({ length: triangles.length }, (_, i) => i);
+  const nodes: MeshBvhNode[] = [];
+
+  const build = (start: number, end: number): number => {
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    let centroidMinX = Infinity;
+    let centroidMinY = Infinity;
+    let centroidMinZ = Infinity;
+    let centroidMaxX = -Infinity;
+    let centroidMaxY = -Infinity;
+    let centroidMaxZ = -Infinity;
+    for (let i = start; i < end; i++) {
+      const tri = triangles[order[i]];
+      minX = Math.min(minX, tri.ax, tri.bx, tri.cx);
+      minY = Math.min(minY, tri.ay, tri.by, tri.cy);
+      minZ = Math.min(minZ, tri.az, tri.bz, tri.cz);
+      maxX = Math.max(maxX, tri.ax, tri.bx, tri.cx);
+      maxY = Math.max(maxY, tri.ay, tri.by, tri.cy);
+      maxZ = Math.max(maxZ, tri.az, tri.bz, tri.cz);
+      const centroidX = tri.ax + tri.bx + tri.cx;
+      const centroidY = tri.ay + tri.by + tri.cy;
+      const centroidZ = tri.az + tri.bz + tri.cz;
+      centroidMinX = Math.min(centroidMinX, centroidX);
+      centroidMinY = Math.min(centroidMinY, centroidY);
+      centroidMinZ = Math.min(centroidMinZ, centroidZ);
+      centroidMaxX = Math.max(centroidMaxX, centroidX);
+      centroidMaxY = Math.max(centroidMaxY, centroidY);
+      centroidMaxZ = Math.max(centroidMaxZ, centroidZ);
+    }
+
+    const nodeIndex = nodes.length;
+    const node: MeshBvhNode = {
+      minX,
+      minY,
+      minZ,
+      maxX,
+      maxY,
+      maxZ,
+      left: -1,
+      right: -1,
+      start,
+      end,
+    };
+    nodes.push(node);
+    if (end - start <= BVH_LEAF_TRIANGLES) return nodeIndex;
+
+    const spans = [
+      centroidMaxX - centroidMinX,
+      centroidMaxY - centroidMinY,
+      centroidMaxZ - centroidMinZ,
+    ];
+    let axis = 0;
+    if (spans[1] > spans[axis]) axis = 1;
+    if (spans[2] > spans[axis]) axis = 2;
+    const centroid = (triangleIndex: number): number => {
+      const tri = triangles[triangleIndex];
+      if (axis === 0) return tri.ax + tri.bx + tri.cx;
+      if (axis === 1) return tri.ay + tri.by + tri.cy;
+      return tri.az + tri.bz + tri.cz;
+    };
+    const sorted = order.slice(start, end).sort((a, b) => {
+      const delta = centroid(a) - centroid(b);
+      return delta === 0 ? a - b : delta;
+    });
+    order.splice(start, end - start, ...sorted);
+    const middle = start + ((end - start) >> 1);
+    node.left = build(start, middle);
+    node.right = build(middle, end);
+    node.start = -1;
+    node.end = -1;
+    return nodeIndex;
+  };
+
+  build(0, order.length);
+  return {
+    triangles,
+    triangleOrder: Int32Array.from(order),
+    nodes,
+  };
+}
+
+function meshAcceleration(mesh: PreparedMeshAsset): PreparedMeshAcceleration {
+  let acceleration = MESH_ACCELERATION.get(mesh);
+  if (!acceleration) {
+    acceleration = buildMeshAcceleration(mesh);
+    MESH_ACCELERATION.set(mesh, acceleration);
+  }
+  return acceleration;
 }
 
 /**
@@ -344,19 +771,40 @@ export function ingestMeshAsset(
   return prepared;
 }
 
-const STAR_PRISM = starPrismRaw();
-const CATALOG: Record<MeshAssetId, PreparedMeshAsset> = {
-  "star-prism-v1": ingestMeshAsset(
-    "star-prism-v1",
-    STAR_PRISM.vertices,
-    STAR_PRISM.triangles,
-  ),
+function prepareCatalogAsset(
+  id: MeshAssetId,
+  factory: () => {
+    vertices: Vec3[];
+    triangles: [number, number, number][];
+  },
+): PreparedMeshAsset {
+  const raw = factory();
+  return ingestMeshAsset(id, raw.vertices, raw.triangles);
+}
+
+const CATALOG_FACTORIES: Record<MeshAssetId, () => PreparedMeshAsset> = {
+  "star-prism-v1": () => prepareCatalogAsset("star-prism-v1", starPrismRaw),
+  "faceted-crystal-v1": () =>
+    prepareCatalogAsset("faceted-crystal-v1", facetedCrystalRaw),
+  "heart-prism-v1": () => prepareCatalogAsset("heart-prism-v1", heartPrismRaw),
+  "crescent-moon-v1": () =>
+    prepareCatalogAsset("crescent-moon-v1", crescentMoonRaw),
+  "snowflake-prism-v1": () =>
+    prepareCatalogAsset("snowflake-prism-v1", snowflakePrismRaw),
+  "trefoil-knot-v1": () =>
+    prepareCatalogAsset("trefoil-knot-v1", trefoilKnotRaw),
 };
+const CATALOG = new Map<MeshAssetId, PreparedMeshAsset>();
 
 export function meshAsset(id: MeshAssetId): PreparedMeshAsset {
   if (!isMeshAssetId(id))
     throw new RangeError(`unknown mesh asset id: ${String(id)}`);
-  return CATALOG[id];
+  let asset = CATALOG.get(id);
+  if (!asset) {
+    asset = CATALOG_FACTORIES[id]();
+    CATALOG.set(id, asset);
+  }
+  return asset;
 }
 
 export function meshAssetCatalogIndex(id: MeshAssetId): number {
@@ -460,7 +908,11 @@ function pointTriangleDistanceSquared(
   return dx * dx + dy * dy + dz * dz;
 }
 
-export function meshUnsignedDistance(mesh: PreparedMeshAsset, p: Vec3): number {
+/** Exact O(triangle-count) oracle retained for acceleration verification. */
+export function meshUnsignedDistanceExact(
+  mesh: PreparedMeshAsset,
+  p: Vec3,
+): number {
   let best = Infinity;
   for (const tri of triangleGeometry(mesh)) {
     const d = pointTriangleDistanceSquared(p[0], p[1], p[2], tri);
@@ -469,38 +921,188 @@ export function meshUnsignedDistance(mesh: PreparedMeshAsset, p: Vec3): number {
   return Math.sqrt(best);
 }
 
-function rayParity(
+function pointBoundsDistanceSquared(
+  px: number,
+  py: number,
+  pz: number,
+  node: MeshBvhNode,
+): number {
+  const dx =
+    px < node.minX ? node.minX - px : px > node.maxX ? px - node.maxX : 0;
+  const dy =
+    py < node.minY ? node.minY - py : py > node.maxY ? py - node.maxY : 0;
+  const dz =
+    pz < node.minZ ? node.minZ - pz : pz > node.maxZ ? pz - node.maxZ : 0;
+  return dx * dx + dy * dy + dz * dz;
+}
+
+function nearestDistanceSquared(
+  acceleration: PreparedMeshAcceleration,
+  nodeIndex: number,
+  px: number,
+  py: number,
+  pz: number,
+  initialBest: number,
+): number {
+  let best = initialBest;
+  const node = acceleration.nodes[nodeIndex];
+  const lowerBound = pointBoundsDistanceSquared(px, py, pz, node);
+  // The slack makes pruning conservative with respect to floating-point
+  // roundoff in the AABB lower bound. Leaf results still use the exact oracle
+  // primitive, so acceleration cannot invent a smaller triangle distance.
+  const slack = 64 * Number.EPSILON * Math.max(1, lowerBound, best);
+  if (lowerBound > best + slack) return best;
+
+  if (node.left < 0) {
+    for (let i = node.start; i < node.end; i++) {
+      const tri = acceleration.triangles[acceleration.triangleOrder[i]];
+      const distance = pointTriangleDistanceSquared(px, py, pz, tri);
+      if (distance < best) best = distance;
+    }
+    return best;
+  }
+
+  const leftBound = pointBoundsDistanceSquared(
+    px,
+    py,
+    pz,
+    acceleration.nodes[node.left],
+  );
+  const rightBound = pointBoundsDistanceSquared(
+    px,
+    py,
+    pz,
+    acceleration.nodes[node.right],
+  );
+  if (leftBound <= rightBound) {
+    best = nearestDistanceSquared(acceleration, node.left, px, py, pz, best);
+    return nearestDistanceSquared(acceleration, node.right, px, py, pz, best);
+  }
+  best = nearestDistanceSquared(acceleration, node.right, px, py, pz, best);
+  return nearestDistanceSquared(acceleration, node.left, px, py, pz, best);
+}
+
+/** Exact triangle distance accelerated by the mesh's deterministic BVH. */
+export function meshUnsignedDistance(mesh: PreparedMeshAsset, p: Vec3): number {
+  const acceleration = meshAcceleration(mesh);
+  return Math.sqrt(
+    nearestDistanceSquared(acceleration, 0, p[0], p[1], p[2], Infinity),
+  );
+}
+
+function triangleRayCrossing(
+  p: Vec3,
+  direction: Vec3,
+  tri: PreparedTriangleGeometry,
+): 0 | 1 | null {
+  const hx = direction[1] * tri.acz - direction[2] * tri.acy;
+  const hy = direction[2] * tri.acx - direction[0] * tri.acz;
+  const hz = direction[0] * tri.acy - direction[1] * tri.acx;
+  const det = tri.abx * hx + tri.aby * hy + tri.abz * hz;
+  if (Math.abs(det) < 1e-12) return 0;
+  const invDet = 1 / det;
+  const sx = p[0] - tri.ax;
+  const sy = p[1] - tri.ay;
+  const sz = p[2] - tri.az;
+  const u = (sx * hx + sy * hy + sz * hz) * invDet;
+  if (u < 0 || u > 1) return 0;
+  const qx = sy * tri.abz - sz * tri.aby;
+  const qy = sz * tri.abx - sx * tri.abz;
+  const qz = sx * tri.aby - sy * tri.abx;
+  const v =
+    (direction[0] * qx + direction[1] * qy + direction[2] * qz) * invDet;
+  if (v < 0 || u + v > 1) return 0;
+  const t = (tri.acx * qx + tri.acy * qy + tri.acz * qz) * invDet;
+  if (t <= 1e-12) return 0;
+  // A hit on a shared edge/vertex is deliberately undecided rather than
+  // double-counted. The caller retries a different irrational direction.
+  if (Math.min(u, v, 1 - u - v) < 1e-10) return null;
+  return 1;
+}
+
+function rayParityExact(
   mesh: PreparedMeshAsset,
   p: Vec3,
   direction: Vec3,
 ): boolean | null {
   let crossings = 0;
   for (const tri of triangleGeometry(mesh)) {
-    const hx = direction[1] * tri.acz - direction[2] * tri.acy;
-    const hy = direction[2] * tri.acx - direction[0] * tri.acz;
-    const hz = direction[0] * tri.acy - direction[1] * tri.acx;
-    const det = tri.abx * hx + tri.aby * hy + tri.abz * hz;
-    if (Math.abs(det) < 1e-12) continue;
-    const invDet = 1 / det;
-    const sx = p[0] - tri.ax;
-    const sy = p[1] - tri.ay;
-    const sz = p[2] - tri.az;
-    const u = (sx * hx + sy * hy + sz * hz) * invDet;
-    if (u < 0 || u > 1) continue;
-    const qx = sy * tri.abz - sz * tri.aby;
-    const qy = sz * tri.abx - sx * tri.abz;
-    const qz = sx * tri.aby - sy * tri.abx;
-    const v =
-      (direction[0] * qx + direction[1] * qy + direction[2] * qz) * invDet;
-    if (v < 0 || u + v > 1) continue;
-    const t = (tri.acx * qx + tri.acy * qy + tri.acz * qz) * invDet;
-    if (t <= 1e-12) continue;
-    // A hit on a shared edge/vertex is deliberately undecided rather than
-    // double-counted. The caller retries a different irrational direction.
-    if (Math.min(u, v, 1 - u - v) < 1e-10) return null;
-    crossings++;
+    const crossing = triangleRayCrossing(p, direction, tri);
+    if (crossing === null) return null;
+    crossings += crossing;
   }
   return (crossings & 1) === 1;
+}
+
+function rayIntersectsBounds(
+  p: Vec3,
+  direction: Vec3,
+  node: MeshBvhNode,
+): boolean {
+  let tMin = -Infinity;
+  let tMax = Infinity;
+  for (let axis = 0; axis < 3; axis++) {
+    const origin = p[axis];
+    const delta = direction[axis];
+    const lo = axis === 0 ? node.minX : axis === 1 ? node.minY : node.minZ;
+    const hi = axis === 0 ? node.maxX : axis === 1 ? node.maxY : node.maxZ;
+    if (delta === 0) {
+      if (origin < lo || origin > hi) return false;
+      continue;
+    }
+    let near = (lo - origin) / delta;
+    let far = (hi - origin) / delta;
+    if (near > far) [near, far] = [far, near];
+    tMin = Math.max(tMin, near);
+    tMax = Math.min(tMax, far);
+  }
+  const threshold = Math.max(tMin, 1e-12);
+  const slack =
+    64 * Number.EPSILON * Math.max(1, Math.abs(tMax), Math.abs(threshold));
+  return tMax + slack >= threshold;
+}
+
+function rayCrossingsAccelerated(
+  acceleration: PreparedMeshAcceleration,
+  nodeIndex: number,
+  p: Vec3,
+  direction: Vec3,
+): number | null {
+  const node = acceleration.nodes[nodeIndex];
+  if (!rayIntersectsBounds(p, direction, node)) return 0;
+  if (node.left >= 0) {
+    const left = rayCrossingsAccelerated(acceleration, node.left, p, direction);
+    if (left === null) return null;
+    const right = rayCrossingsAccelerated(
+      acceleration,
+      node.right,
+      p,
+      direction,
+    );
+    return right === null ? null : left + right;
+  }
+  let crossings = 0;
+  for (let i = node.start; i < node.end; i++) {
+    const tri = acceleration.triangles[acceleration.triangleOrder[i]];
+    const crossing = triangleRayCrossing(p, direction, tri);
+    if (crossing === null) return null;
+    crossings += crossing;
+  }
+  return crossings;
+}
+
+function rayParityAccelerated(
+  mesh: PreparedMeshAsset,
+  p: Vec3,
+  direction: Vec3,
+): boolean | null {
+  const crossings = rayCrossingsAccelerated(
+    meshAcceleration(mesh),
+    0,
+    p,
+    direction,
+  );
+  return crossings === null ? null : (crossings & 1) === 1;
 }
 
 /** Solid-angle fallback for the vanishingly rare all-rays-hit-an-edge case. */
@@ -536,15 +1138,28 @@ function windingContainsPoint(mesh: PreparedMeshAsset, p: Vec3): boolean {
   return Math.abs(omega) > 2 * Math.PI;
 }
 
-/** Robust parity sign: retry edge ties, then fall back to solid angle. */
+const SIGN_RAY_DIRECTIONS: readonly Vec3[] = [
+  [1, 0.3713906763541037, 0.127831245441423],
+  [0.193741, 1, 0.417239],
+  [0.293117, 0.173891, 1],
+];
+
+/** Exact O(triangle-count) sign oracle retained for acceleration tests. */
+export function meshContainsPointExact(
+  mesh: PreparedMeshAsset,
+  p: Vec3,
+): boolean {
+  for (const direction of SIGN_RAY_DIRECTIONS) {
+    const parity = rayParityExact(mesh, p, direction);
+    if (parity !== null) return parity;
+  }
+  return windingContainsPoint(mesh, p);
+}
+
+/** Robust parity sign accelerated by the mesh's deterministic BVH. */
 export function meshContainsPoint(mesh: PreparedMeshAsset, p: Vec3): boolean {
-  const directions: Vec3[] = [
-    [1, 0.3713906763541037, 0.127831245441423],
-    [0.193741, 1, 0.417239],
-    [0.293117, 0.173891, 1],
-  ];
-  for (const direction of directions) {
-    const parity = rayParity(mesh, p, direction);
+  for (const direction of SIGN_RAY_DIRECTIONS) {
+    const parity = rayParityAccelerated(mesh, p, direction);
     if (parity !== null) return parity;
   }
   return windingContainsPoint(mesh, p);
@@ -567,19 +1182,24 @@ export function floorMeshValueToF32(value: number): number {
   return F32[0];
 }
 
-const BAKE_CACHE = new Map<string, MeshSdfBake>();
+const BAKE_CACHE = new WeakMap<PreparedMeshAsset, Map<string, MeshSdfBake>>();
 
-export function bakeMeshSdf(
-  id: MeshAssetId,
+/** Bake one prepared object, preserving sampler/SDF geometry identity. */
+export function bakePreparedMeshSdf(
+  mesh: PreparedMeshAsset,
   resolution: number = 64,
 ): MeshSdfBake {
   if (!Number.isInteger(resolution) || resolution < 8 || resolution > 128) {
     throw new RangeError("mesh SDF resolution must be an integer in 8..128");
   }
-  const key = `${id}:${resolution}`;
-  const cached = BAKE_CACHE.get(key);
+  let meshCache = BAKE_CACHE.get(mesh);
+  if (!meshCache) {
+    meshCache = new Map<string, MeshSdfBake>();
+    BAKE_CACHE.set(mesh, meshCache);
+  }
+  const key = `${MESH_SDF_BAKE_VERSION}:${resolution}`;
+  const cached = meshCache.get(key);
   if (cached) return cached;
-  const mesh = meshAsset(id);
   const sourceSpan = Math.max(
     mesh.bounds.max[0] - mesh.bounds.min[0],
     mesh.bounds.max[1] - mesh.bounds.min[1],
@@ -620,6 +1240,7 @@ export function bakeMeshSdf(
     }
   }
   const bake: MeshSdfBake = {
+    version: MESH_SDF_BAKE_VERSION,
     mesh,
     resolution,
     values,
@@ -629,8 +1250,15 @@ export function bakeMeshSdf(
     cellRadius,
   };
   Object.freeze(bake);
-  BAKE_CACHE.set(key, bake);
+  meshCache.set(key, bake);
   return bake;
+}
+
+export function bakeMeshSdf(
+  id: MeshAssetId,
+  resolution: number = 64,
+): MeshSdfBake {
+  return bakePreparedMeshSdf(meshAsset(id), resolution);
 }
 
 function clamp(value: number, lo: number, hi: number): number {
@@ -701,6 +1329,7 @@ export function meshSdfAtlas(
     });
   });
   return Object.freeze({
+    version: MESH_SDF_BAKE_VERSION,
     resolution,
     width: resolution,
     height: resolution,

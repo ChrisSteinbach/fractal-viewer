@@ -5,11 +5,6 @@ import type {
   ShapeTrapMode,
   SymmetryPlane,
 } from "../fractal/types";
-import {
-  GEAR_SHAPE,
-  PEACE_SIGN_SHAPE,
-  STAR_PRISM_SHAPE,
-} from "../fractal/shapes";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "../fractal/shape-trap";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
@@ -17,6 +12,11 @@ import type { PaletteSelection } from "../fractal/palette";
 import type { FlameWorkerCommand } from "./flame-worker-core";
 import type { VoxelWorkerCommand } from "./voxel-worker-core";
 import { hexToRgb01 } from "./constants";
+import {
+  bundledShapeEntry,
+  bundledTrapForShape,
+  type BundledTrapKind,
+} from "./bundled-shapes";
 import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_SOLID_PALETTE,
@@ -1581,19 +1581,11 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     kind: "select",
     id: "surfaceTrapShape",
     read: (s) => shapeTrapSelectValue(s),
-    apply: (s, raw) =>
-      raw === "custom"
-        ? s
-        : setShapeTrap(
-            s,
-            raw === "peace"
-              ? { shape: PEACE_SIGN_SHAPE }
-              : raw === "gear"
-                ? { shape: GEAR_SHAPE }
-                : raw === "star"
-                  ? { shape: STAR_PRISM_SHAPE }
-                  : null,
-          ),
+    apply: (s, raw) => {
+      if (raw === "custom") return s;
+      const bundled = bundledShapeEntry(raw);
+      return setShapeTrap(s, bundled?.trap ? { shape: bundled.shape } : null);
+    },
     effect: (s, fx) => {
       fx.scene.setSurfaceShapeTrap(s.shapeTrap ?? null);
       fx.restartSurfaceRender();
@@ -1789,14 +1781,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
  */
 export function shapeTrapSelectValue(
   state: AppState,
-): "" | "peace" | "gear" | "star" | "custom" {
+): "" | BundledTrapKind | "custom" {
   const trap = state.shapeTrap;
   if (!trap) return "";
-  const key = JSON.stringify(trap.shape);
-  if (key === JSON.stringify(PEACE_SIGN_SHAPE)) return "peace";
-  if (key === JSON.stringify(GEAR_SHAPE)) return "gear";
-  if (key === JSON.stringify(STAR_PRISM_SHAPE)) return "star";
-  return "custom";
+  return bundledTrapForShape(trap.shape)?.kind ?? "custom";
 }
 
 export function condensationBandMode(

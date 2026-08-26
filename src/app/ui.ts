@@ -30,11 +30,7 @@ import type {
   RgbStop,
 } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
-import {
-  GEAR_SHAPE,
-  STAR_PRISM_SHAPE,
-  type ShapeSpec,
-} from "../fractal/shapes";
+import type { ShapeSpec } from "../fractal/shapes";
 import { CLASSIC_FOLD_RADII, isFoldVariationType } from "../fractal/variations";
 import {
   CLASSIC_SURFACE_FINISH,
@@ -109,11 +105,17 @@ import type { ExportProgressInit } from "./export-progress";
 import { videoCaptureSupported } from "./recorder";
 import { offlineExportSupported } from "./video-encode";
 import { installSliderScrollGuard } from "./slider-scroll-guard";
+import {
+  BUNDLED_EMITTER_SHAPES,
+  BUNDLED_TRAP_SHAPES,
+  bundledEmitterForShape,
+  bundledShapeEntry,
+  bundledShapeOptionLabel,
+  type BundledEmitterKind,
+  type BundledShapeDefinition,
+} from "./bundled-shapes";
 
 export type { Preset };
-
-/** Built-in condensation shapes exposed by the transform authoring UI. */
-export type BuiltinEmitterKind = "gear" | "star";
 
 /**
  * Which object a live surface session is actually marching — the routing
@@ -163,7 +165,7 @@ type EditTarget = number | "final" | null;
 export interface UiHandlers {
   onAdd: () => void;
   /** Add and select a new transform carrying the chosen built-in shape. */
-  onAddEmitter: (kind: BuiltinEmitterKind) => void;
+  onAddEmitter: (kind: BundledEmitterKind) => void;
   onRemove: () => void;
   /** Step the scene document back one edit burst. */
   onUndo: () => void;
@@ -325,7 +327,7 @@ export interface UiHandlers {
   /** A panel slider edited the selected transform's geometry. */
   onTransformGeometry: (index: number, geometry: Geometry) => void;
   /** Set or clear the selected transform's condensation shape. */
-  onTransformEmitter: (index: number, kind: BuiltinEmitterKind | null) => void;
+  onTransformEmitter: (index: number, kind: BundledEmitterKind | null) => void;
   /** The lens toggle was flipped: enable a default final transform, or clear it. */
   onToggleFinalTransform: (checked: boolean) => void;
   /** A panel slider edited the final transform's geometry. */
@@ -1231,7 +1233,7 @@ function variationSummary(t: Transform): string[] {
   return [`Var: ${active.map((v) => v.type).join(", ")}`];
 }
 
-type EmitterSelectValue = "" | BuiltinEmitterKind | "custom";
+type EmitterSelectValue = "" | BundledEmitterKind | "custom";
 
 /** Resolve a document emitter to the editor's small built-in vocabulary.
  * `custom` preserves a valid authored/shared ShapeSpec without pretending the
@@ -1240,24 +1242,14 @@ function emitterSelectValue(
   emitter: ShapeSpec | undefined,
 ): EmitterSelectValue {
   if (!emitter) return "";
-  const key = JSON.stringify(emitter);
-  if (key === JSON.stringify(GEAR_SHAPE)) return "gear";
-  if (key === JSON.stringify(STAR_PRISM_SHAPE)) return "star";
-  return "custom";
+  return bundledEmitterForShape(emitter)?.kind ?? "custom";
 }
 
 /** One concise shape line for a transform-list row. */
 function emitterSummary(t: Transform): string[] {
-  switch (emitterSelectValue(t.emitter)) {
-    case "gear":
-      return ["Shape: Cog"];
-    case "star":
-      return ["Shape: Star"];
-    case "custom":
-      return ["Shape: Authored"];
-    default:
-      return [];
-  }
+  if (!t.emitter) return [];
+  const bundled = bundledEmitterForShape(t.emitter);
+  return [`Shape: ${bundled?.label ?? "Authored"}`];
 }
 
 /**
@@ -2380,6 +2372,10 @@ export class Ui {
     this.transformList = this.byId("transformList");
     this.addBtn = this.byId("addBtn");
     this.addEmitterSelect = this.byId("addEmitterSelect");
+    this.appendBundledShapeOptions(
+      this.addEmitterSelect,
+      BUNDLED_EMITTER_SHAPES,
+    );
     this.removeBtn = this.byId("removeBtn");
     this.undoBtn = this.byId("undoBtn");
     this.redoBtn = this.byId("redoBtn");
@@ -2636,6 +2632,11 @@ export class Ui {
         label: spec.label ? this.byId(spec.label.id) : null,
       });
     }
+    this.appendBundledShapeOptions(
+      this.scalarSelect("surfaceTrapShape"),
+      BUNDLED_TRAP_SHAPES,
+      "custom",
+    );
     this.customPaletteEditors = {
       background: {
         row: this.byId("backgroundCustomPaletteRow"),
@@ -2772,6 +2773,28 @@ export class Ui {
     return input;
   }
 
+  /** Insert registry-backed options immediately before an optional sentinel.
+   * Static markup owns only classic/custom values, so an obsolete hard-coded
+   * bundled option remains visible as a duplicate and fails the exact-option
+   * contract tests instead of silently drifting from the registry. */
+  private appendBundledShapeOptions(
+    select: HTMLSelectElement,
+    entries: readonly BundledShapeDefinition[],
+    beforeValue?: string,
+  ): void {
+    const before = beforeValue
+      ? Array.from(select.options).find(
+          (option) => option.value === beforeValue,
+        )
+      : undefined;
+    for (const entry of entries) {
+      const option = this.doc.createElement("option");
+      option.value = entry.kind;
+      option.textContent = bundledShapeOptionLabel(entry);
+      select.insertBefore(option, before ?? null);
+    }
+  }
+
   private byId<T extends HTMLElement>(id: string): T {
     const el = this.doc.getElementById(id);
     if (!el) throw new Error(`Missing required element #${id}`);
@@ -2827,9 +2850,9 @@ export class Ui {
     this.backdrop.addEventListener("click", () => handlers.onClosePanel());
     this.addBtn.addEventListener("click", () => handlers.onAdd());
     this.addEmitterSelect.addEventListener("change", () => {
-      const kind = this.addEmitterSelect.value as BuiltinEmitterKind | "";
+      const entry = bundledShapeEntry(this.addEmitterSelect.value);
       this.addEmitterSelect.value = "";
-      if (kind) handlers.onAddEmitter(kind);
+      if (entry?.emitter) handlers.onAddEmitter(entry.kind);
     });
     this.removeBtn.addEventListener("click", () => handlers.onRemove());
     this.undoBtn.addEventListener("click", () => handlers.onUndo());
@@ -6131,8 +6154,7 @@ export class Ui {
 
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
-    hint.textContent =
-      "Stamp a cog or star whenever this transform is picked. Position, Rotation and Scale pose it; Weight controls how often it appears.";
+    hint.textContent = `Stamp ${BUNDLED_EMITTER_SHAPES.map((entry) => entry.label).join(" or ")} whenever this transform is picked. Position, Rotation and Scale pose it; Weight controls how often it appears.`;
 
     const label = this.doc.createElement("label");
     label.className = "select-label";
@@ -6140,10 +6162,11 @@ export class Ui {
 
     const select = this.doc.createElement("select");
     select.setAttribute("aria-label", "Shape emitter");
-    const choices: readonly [EmitterSelectValue, string][] = [
+    const choices: readonly (readonly [EmitterSelectValue, string])[] = [
       ["", "None (ordinary transform)"],
-      ["gear", "⚙ Cog"],
-      ["star", "★ Star"],
+      ...BUNDLED_EMITTER_SHAPES.map(
+        (entry) => [entry.kind, bundledShapeOptionLabel(entry)] as const,
+      ),
       ["custom", "Authored shape"],
     ];
     for (const [value, text] of choices) {
@@ -6155,9 +6178,16 @@ export class Ui {
     }
     select.value = emitterSelectValue(emitter);
     select.addEventListener("change", () => {
-      const value = select.value as EmitterSelectValue;
+      const value = select.value;
+      if (!value) {
+        this.handlers?.onTransformEmitter(target, null);
+        return;
+      }
       if (value === "custom") return;
-      this.handlers?.onTransformEmitter(target, value || null);
+      const entry = bundledShapeEntry(value);
+      if (entry?.emitter) {
+        this.handlers?.onTransformEmitter(target, entry.kind);
+      }
     });
 
     label.appendChild(select);

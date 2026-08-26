@@ -1206,6 +1206,21 @@ export function shapeSdfSource(
 // ------------------------------------------------------- reference shapes
 
 /**
+ * Orbit Ring: a deliberately chunky analytic torus that stays legible in the
+ * compact transform picker workflows and low-resolution previews. Its outer
+ * radius is 1.04 and its inner radius is 0.52, keeping it on the same roughly
+ * unit scale as the other bundled shapes without collapsing the central hole.
+ */
+export const ORBIT_RING_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "torus", major: 0.78, minor: 0.26 },
+      combine: "union",
+    },
+  ],
+};
+
+/**
  * The reference composition: the addendum's peace sign — the ring, the
  * full vertical bar, and the two lower diagonal legs, all tubes of one
  * radius in the xy plane so the icon faces +z. The diagonal legs run from
@@ -1270,6 +1285,56 @@ export const STAR_PRISM_SHAPE: ShapeSpec = {
   parts: [
     {
       primitive: { kind: "mesh", meshId: "star-prism-v1" },
+      combine: "union",
+    },
+  ],
+};
+
+/** The bundled low-poly crystal, referenced only by its stable catalog id. */
+export const FACETED_CRYSTAL_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "faceted-crystal-v1" },
+      combine: "union",
+    },
+  ],
+};
+
+/** The bundled extruded heart, referenced only by its stable catalog id. */
+export const HEART_PRISM_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "heart-prism-v1" },
+      combine: "union",
+    },
+  ],
+};
+
+/** The bundled crescent moon, referenced only by its stable catalog id. */
+export const CRESCENT_MOON_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "crescent-moon-v1" },
+      combine: "union",
+    },
+  ],
+};
+
+/** The bundled snowflake prism, referenced only by its stable catalog id. */
+export const SNOWFLAKE_PRISM_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "snowflake-prism-v1" },
+      combine: "union",
+    },
+  ],
+};
+
+/** The bundled trefoil knot, referenced only by its stable catalog id. */
+export const TREFOIL_KNOT_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "trefoil-knot-v1" },
       combine: "union",
     },
   ],

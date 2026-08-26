@@ -18,11 +18,21 @@ import {
   MIN_CUSTOM_PALETTE_STOPS,
 } from "../fractal/palette";
 import { woodGrain } from "../fractal/presets";
-import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
+import {
+  CRESCENT_MOON_SHAPE,
+  FACETED_CRYSTAL_SHAPE,
+  HEART_PRISM_SHAPE,
+  ORBIT_RING_SHAPE,
+  PEACE_SIGN_SHAPE,
+  SNOWFLAKE_PRISM_SHAPE,
+  STAR_PRISM_SHAPE,
+  TREFOIL_KNOT_SHAPE,
+} from "../fractal/shapes";
 import type { ShapeSpec } from "../fractal/shapes";
 import { VARIATION_TYPES } from "../fractal/types";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import { MAX_PHI, MAX_RADIUS, MIN_PHI, MIN_RADIUS } from "./orbit";
+import { bundledEmitterForShape } from "./bundled-shapes";
 import {
   BALLOON_PALETTE_INHERIT,
   DEFAULT_BALLOON_PALETTE,
@@ -5766,14 +5776,14 @@ describe("decodeScene transform shape emitters", () => {
       { primitive: { kind: "sphere", radius: 0.4 }, combine: "union" },
     ],
   };
-  const MESH: ShapeSpec = {
-    parts: [
-      {
-        primitive: { kind: "mesh", meshId: "star-prism-v1" },
-        combine: "union",
-      },
-    ],
-  };
+  const BUNDLED_MESHES = [
+    ["star", "star-prism-v1", STAR_PRISM_SHAPE],
+    ["faceted-crystal", "faceted-crystal-v1", FACETED_CRYSTAL_SHAPE],
+    ["heart-prism", "heart-prism-v1", HEART_PRISM_SHAPE],
+    ["crescent-moon", "crescent-moon-v1", CRESCENT_MOON_SHAPE],
+    ["snowflake-prism", "snowflake-prism-v1", SNOWFLAKE_PRISM_SHAPE],
+    ["trefoil-knot", "trefoil-knot-v1", TREFOIL_KNOT_SHAPE],
+  ] as const;
 
   it("round-trips an authored emitter spec exactly (4-decimal values)", () => {
     const s = baseSnapshot();
@@ -5782,22 +5792,57 @@ describe("decodeScene transform shape emitters", () => {
     expect(result!.transforms[0].emitter).toEqual(GEAR);
   });
 
-  it("round-trips a known built-in mesh by stable id without putting asset data on the v1 wire", () => {
-    const s = baseSnapshot();
-    s.transforms[0] = { ...s.transforms[0], emitter: MESH };
-    const encoded = encodeScene(s);
-    expect(decodeScene(encoded)!.transforms[0].emitter).toEqual(MESH);
+  it("shares Orbit Ring and Peace through existing torus/capsule wire kinds", () => {
+    for (const [kind, shape] of [
+      ["orbit-ring", ORBIT_RING_SHAPE],
+      ["peace", PEACE_SIGN_SHAPE],
+    ] as const) {
+      const s = baseSnapshot();
+      s.transforms[0] = { ...s.transforms[0], emitter: shape };
+      const encoded = encodeScene(s);
+      const decoded = decodeScene(encoded)!.transforms[0].emitter!;
+      expect(bundledEmitterForShape(decoded)?.kind).toBe(kind);
 
-    const payload = decodePayload(encoded);
-    const wireEmitter = (payload.transforms as Record<string, unknown>[])[0]
-      .emitter;
-    expect(wireEmitter).toEqual(MESH);
-    // The exact rebuilt field is the persistence contract: a catalog id,
-    // never triangles, a sampling table, or the baked SDF texture.
-    expect(JSON.stringify(wireEmitter)).toBe(
-      '{"parts":[{"primitive":{"kind":"mesh","meshId":"star-prism-v1"},"combine":"union"}]}',
-    );
+      const wireEmitter = (
+        decodePayload(encoded).transforms as Record<string, unknown>[]
+      )[0].emitter;
+      const wireText = JSON.stringify(wireEmitter);
+      expect(wireText).not.toContain("orbit-ring");
+      expect(wireText).not.toContain('"kind":"peace"');
+      if (kind === "orbit-ring") {
+        expect(wireText).toBe(
+          '{"parts":[{"primitive":{"kind":"torus","major":0.78,"minor":0.26},"combine":"union"}]}',
+        );
+      } else {
+        expect(decoded.parts[2].primitive).toMatchObject({
+          kind: "capsule",
+          b: [-0.7071, -0.7071, 0],
+        });
+      }
+    }
   });
+
+  it.each(BUNDLED_MESHES)(
+    "round-trips the %s mesh by stable id without asset data on the v1 wire",
+    (kind, meshId, shape) => {
+      const s = baseSnapshot();
+      s.transforms[0] = { ...s.transforms[0], emitter: shape };
+      const encoded = encodeScene(s);
+      const decoded = decodeScene(encoded)!.transforms[0].emitter!;
+      expect(decoded).toEqual(shape);
+      expect(bundledEmitterForShape(decoded)?.kind).toBe(kind);
+
+      const payload = decodePayload(encoded);
+      const wireEmitter = (payload.transforms as Record<string, unknown>[])[0]
+        .emitter;
+      expect(wireEmitter).toEqual(shape);
+      // Exact wire bytes remain one catalog id, never triangles, a sampling
+      // table, a catalog index, or the baked SDF texture.
+      expect(JSON.stringify(wireEmitter)).toBe(
+        `{"parts":[{"primitive":{"kind":"mesh","meshId":"${meshId}"},"combine":"union"}]}`,
+      );
+    },
+  );
 
   it("omits a live mesh emitter carrying an unknown catalog id", () => {
     const s = baseSnapshot();

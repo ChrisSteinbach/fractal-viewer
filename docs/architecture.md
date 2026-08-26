@@ -735,16 +735,22 @@ or all-one rows allocate no graph metadata and retain the classic descent
 source and packed bytes.
 
 The shared `ShapeSpec` vocabulary also admits a built-in catalog mesh by
-stable id. `mesh-shapes.ts` validates and prepares each watertight indexed
+stable id. `mesh-shapes.ts` lazily validates and prepares each watertight indexed
 asset once: the exact triangle-area CDF drives CPU and Flame GPU surface
 sampling, while those same prepared triangles produce a conservative 64³
-R32F signed-distance node lattice. Surface GLSL reads the cached atlas through
-one `sampler3D`; Surface WGSL uses an unfilterable 3D texture at binding 11.
-Both perform the same explicit eight-node interpolation as the CPU oracle,
-and analytic-only programs remain resource- and source-byte-identical. Scene
-persistence carries only the catalog id. Uploaded geometry is intentionally
-outside that wire contract until collection storage and share-link semantics
-are designed together.
+R32F signed-distance node lattice. Exact nearest and parity queries use a
+deterministic, identity-cached BVH; independent linear scans guard the
+acceleration and conservative result in tests. The versioned bake remains lazy,
+so analytic-only startup allocates neither the BVH nor its 1 MiB lattice. See
+`mesh-sdf-delivery.md` for the proof boundary, cold-start budget and measurements.
+Surface GLSL reads the active scene's compact cached atlas through one
+`sampler3D`; Surface WGSL uses an unfilterable 3D texture at binding 11. Stable
+catalog indices remain the shader dispatch values while per-atlas metadata maps
+them to dense runtime z slabs. Both perform the same explicit eight-node
+interpolation as the CPU oracle, and analytic-only programs remain resource-
+and source-byte-identical. Scene persistence carries only the catalog id.
+Uploaded geometry is intentionally outside that wire contract until collection
+storage and share-link semantics are designed together.
 
 Whether a valid DE exists at all — and how fast it can be marched — turns on
 **conformality**. For an invertible affine map with linear part `M`,

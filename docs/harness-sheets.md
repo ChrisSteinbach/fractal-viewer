@@ -672,25 +672,47 @@ box-fold link that expands regardless.
 
 ### shapes
 
-The shape library's visual + extent proof: the peace sign and gear
-reference specs plus a union+intersect die-and-ring composition marched
-through the shared tracer at `SHAPE_MARCH_SAFETY`, with the point sampler
-splatted beside each SDF so the two evaluators are judged as one object.
-Also the home of the library's fill/reach measurement (`set-extent.ts`'s
-instrument, membership = the exact SDF's sign): the root tsconfig's
-`rootDir: "src"` refuses a `src/` test importing from `scripts/`, so the
-instrument leg lives here, asserted.
+The shape library's visual + extent proof: the peace sign, Orbit Ring, gear,
+and full mesh catalog plus a union+intersect die-and-ring composition marched
+through the shared tracer at `SHAPE_MARCH_SAFETY`, with every sampler splatted
+on the same sheet so the two evaluators are judged as one object. Also the home
+of the library's fill/reach measurement (`set-extent.ts`'s instrument):
+analytic membership uses the exact SDF's sign, while meshes use exact catalog
+containment because their conservative distance field intentionally carries a
+thin negative pad outside the triangles. The root tsconfig's `rootDir: "src"`
+refuses a `src/` test importing from `scripts/`, so the instrument leg lives
+here, asserted.
 
-MEASURED VERDICT: the peace sign reads as the icon and both evaluators
-draw the same object. Renders hit 39.1 / 29.9 / 28.5% of pixels with zero
-exhausted rays; the sampled splats overlay the rendered silhouettes, the
-outline splat drawing the full gear profile — tooth flanks included.
-Peace sign fill 7.36%, reach 1.1195 against bound 1.1200 (the ring's
-outer edge — attained); gear fill 19.99%, reach 1.2495 against 1.2556
-(the tooth corner, within two shell-widths). Both fields measure worst
-finite-difference Lipschitz 1.000000 — the gear's predicted slight seam
-overshoot does not materialize, because the folded field's VALUE is
-continuous across seams (the tooth box is symmetric about the sector
-mid-plane); only the gradient direction flips there, which neither a
-central difference nor a secant reads as > 1. Sampler cost: 5.93 / 4.58 /
-16.32 rng draws per accepted sample (peace / gear solid / gear outline).
+MEASURED VERDICT: the peace sign reads as the icon, Orbit Ring keeps a
+clearly open center, the heart notch and crescent bite remain concave, all
+twelve snowflake side branches survive, the crystal facets read, the trefoil
+shows over/under depth, and every SDF/sampler pair agrees. Renders hit 39.1 /
+52.0 / 29.9 / 28.5 / 35.8 / 14.7 / 56.7 / 46.0 / 46.7 / 27.1% of pixels
+(peace / orbit / gear / die-and-ring / star / crystal / heart / crescent /
+snowflake / trefoil), all with zero exhausted rays. Exact mesh fill / reach /
+bound measured star 14.73% / 1.0229 / 1.0385, crystal 13.18% / 1.1155 /
+1.1500, heart 24.77% / 1.1447 / 1.1536, crescent 18.28% / 1.0277 / 1.0427,
+snowflake 15.71% / 1.0587 / 1.0771, and trefoil 6.16% / 1.0206 / 1.0292.
+Peace sign fill 7.36%, reach 1.1195 against bound 1.1200; Orbit Ring fill
+22.06%, reach 1.0398 against 1.0400; gear fill 19.99%, reach 1.2495 against
+1.2556. The pre-Orbit Lipschitz sweep measured
+worst finite-difference Lipschitz 1.000000 for Peace and gear — the gear's
+predicted slight seam overshoot does not materialize, because the folded
+field's VALUE is continuous across seams (the tooth box is symmetric about
+the sector mid-plane); only the gradient direction flips there, which
+neither a central difference nor a secant reads as > 1. Sampler cost: 5.93 /
+6.34 / 4.58 / 16.32 rng draws per accepted sample (peace / orbit / gear
+solid / gear outline), while every mesh costs 4.00.
+
+Peace's torus and capsules overlap deliberately. The shared device
+min-index correction was already gated by `fr-4wre` with genuinely
+overlapping-sphere fixtures: its corrected 50.3M equal-N SwiftShader run
+measured normalized density TV 0.005883 in 3D and 0.005872 in 4D, below the
+0.03 gate. Those are correction-algorithm results, not a Peace-specific live
+GPU measurement. Focused production tests instead pin the canonical Peace
+spec's CPU and packed 3D/4D inputs and exercise its actual junctions against
+the corrected CPU distribution: coarse density TV 0.029350 / 0.028950 in
+the 3D/4D packed-adjacent mirrors, with 7,369 / 7,258 rejected overlapping
+proposals and zero 64-attempt fallbacks. Those deterministic tests are not a
+live GPU claim; this sheet provides the actual-spec visual/extent evidence
+without repeating the long GPU run.

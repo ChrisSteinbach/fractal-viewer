@@ -20,7 +20,8 @@ import {
   shapeSpecsMeshIds,
   type ShapeSpec,
 } from "../fractal/shapes";
-import { meshSdfAtlas, type MeshSdfAtlas } from "../fractal/mesh-shapes";
+import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
+import type { MeshAssetId, MeshSdfAtlas } from "../fractal/mesh-shapes";
 import type { SurfaceDE } from "../fractal/surface-de";
 import {
   SPHEREFOLD_MID_MIN_R,
@@ -196,28 +197,17 @@ function condensationShapeDispatch(
         `${i === 0 ? "if" : "else if"} (shape == ${i}) return ${fnPrefix}${i}(q);`,
     )
     .join("\n  ");
-  const meshHelper =
-    shapeSpecsMeshIds(unique).length > 0 ? `${shapeMeshSdfGlsl()}\n` : "";
+  const meshIds = shapeSpecsMeshIds(unique);
+  const meshHelper = meshIds.length > 0 ? `${shapeMeshSdfGlsl(meshIds)}\n` : "";
   return `${meshHelper}${bodies}\nfloat ${dispatchName}(int shape, vec3 q) {\n  ${choices}\n  return 1.0e30;\n}`;
-}
-
-/** The one default-catalog atlas shared by source metadata and texture
- * upload. Laziness preserves the analytic program's byte and startup-cost
- * identity; the first mesh-bearing program bakes it, every later program /
- * material reuses the same immutable values. */
-let cachedShapeMeshAtlas: MeshSdfAtlas | null = null;
-
-function shapeMeshAtlas(): MeshSdfAtlas {
-  cachedShapeMeshAtlas ??= meshSdfAtlas();
-  return cachedShapeMeshAtlas;
 }
 
 /** GLSL implementation of shapes.ts's external
  * `shapeMeshSdf(catalogIndex, p)` call. There is ONE sampler and ONE manual
  * eight-texel trilinear body no matter how many authored parts reuse a mesh;
  * catalog-specific bounds, spacing and z slab are baked into the dispatch. */
-function shapeMeshSdfGlsl(): string {
-  const atlas = shapeMeshAtlas();
+function shapeMeshSdfGlsl(activeIds: readonly MeshAssetId[]): string {
+  const atlas = activeMeshSdfAtlas(activeIds);
   const entries = atlas.entries
     .map((entry) => {
       const lo = entry.min.map(glslFloatLit).join(", ");
@@ -5148,18 +5138,24 @@ function configureShapeMeshSdfTexture(texture: THREE.Data3DTexture): void {
 
 /** A complete, inert sampler binding for analytic-only programs. A fresh
  * placeholder per material avoids sharing disposal ownership; the expensive
- * catalog texture below is the one deliberately cached. */
+ * active-set textures below are the ones deliberately cached. */
 function emptyShapeMeshSdfTexture(): THREE.Data3DTexture {
   const texture = new THREE.Data3DTexture(new Float32Array(1), 1, 1, 1);
   configureShapeMeshSdfTexture(texture);
   return texture;
 }
 
-let cachedShapeMeshTexture: THREE.Data3DTexture | null = null;
+const cachedShapeMeshTextures = new WeakMap<
+  MeshSdfAtlas,
+  THREE.Data3DTexture
+>();
 
-function shapeMeshSdfTexture(): THREE.Data3DTexture {
-  if (cachedShapeMeshTexture) return cachedShapeMeshTexture;
-  const atlas = shapeMeshAtlas();
+function shapeMeshSdfTexture(
+  activeIds: readonly MeshAssetId[],
+): THREE.Data3DTexture {
+  const atlas = activeMeshSdfAtlas(activeIds);
+  const cached = cachedShapeMeshTextures.get(atlas);
+  if (cached) return cached;
   const texture = new THREE.Data3DTexture(
     atlas.values,
     atlas.width,
@@ -5167,7 +5163,7 @@ function shapeMeshSdfTexture(): THREE.Data3DTexture {
     atlas.depth,
   );
   configureShapeMeshSdfTexture(texture);
-  cachedShapeMeshTexture = texture;
+  cachedShapeMeshTextures.set(atlas, texture);
   return texture;
 }
 
@@ -5183,8 +5179,8 @@ export function surfaceShapeMeshSdfUniform(): THREE.IUniform {
   return uniform;
 }
 
-/** Select the cached catalog atlas exactly while an installed shape spec
- * needs it, otherwise restore this material's cheap 1^3 placeholder. */
+/** Select the cached atlas for exactly the installed specs' active assets,
+ * otherwise restore this material's cheap 1^3 placeholder. */
 export function setSurfaceShapeMeshSdf(
   material: THREE.ShaderMaterial,
   specs: readonly ShapeSpec[],
@@ -5195,10 +5191,9 @@ export function setSurfaceShapeMeshSdf(
   // Constructors seed this private companion value. Keep the fallback for
   // foreign/test materials that install only `{ value }` before calling us.
   uniform.placeholder ??= emptyShapeMeshSdfTexture();
+  const activeIds = shapeSpecsMeshIds(specs);
   uniform.value =
-    shapeSpecsMeshIds(specs).length > 0
-      ? shapeMeshSdfTexture()
-      : uniform.placeholder;
+    activeIds.length > 0 ? shapeMeshSdfTexture(activeIds) : uniform.placeholder;
 }
 
 /** The grid uniform trio {@link createSurfaceMaterial} seeds and
@@ -6103,8 +6098,9 @@ export function surfaceFragmentResolvedFor(
   // SURFACE_SHAPE_TRAP arms, so a trap-free resolve carries neither and
   // this replacement never runs — byte-identity by construction.
   if (trap !== null) {
+    const meshIds = shapeMeshIds(trap);
     const meshHelper =
-      shapeMeshIds(trap).length > 0 ? `${shapeMeshSdfGlsl()}\n` : "";
+      meshIds.length > 0 ? `${shapeMeshSdfGlsl(meshIds)}\n` : "";
     baked = baked
       .replace(
         "//__SURFACE_TRAP_SDF__",

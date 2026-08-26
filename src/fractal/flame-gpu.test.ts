@@ -21,7 +21,7 @@ import {
   planGpuDispatches,
 } from "./flame-gpu";
 import type { GpuFlameSystemSpec, GpuParamsFields } from "./flame-gpu";
-import { FLAME_GPU_KERNEL_4D_WGSL } from "./flame-gpu-4d";
+import { FLAME_GPU_KERNEL_4D_WGSL, packGpuSystem4 } from "./flame-gpu-4d";
 import { surfaceDeKernelWgsl } from "./surface-de-gpu";
 import { composeAffine, rotationMatrixXYZ } from "./affine";
 import {
@@ -38,20 +38,62 @@ import { lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
 import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
-import { meshAsset } from "./mesh-shapes";
+import {
+  MESH_ASSET_IDS,
+  meshAsset,
+  meshAssetCatalogIndex,
+  meshAssetIdAtCatalogIndex,
+  type MeshAssetId,
+} from "./mesh-shapes";
 import { VARIATION_TYPES } from "./types";
-import type { SymmetryParams, Transform, VariationType } from "./types";
-import { GEAR_SHAPE } from "./shapes";
+import type {
+  SymmetryParams,
+  Transform,
+  Transform4,
+  VariationType,
+} from "./types";
+import {
+  GEAR_SHAPE,
+  ORBIT_RING_SHAPE,
+  PEACE_SIGN_SHAPE,
+  prepareShapeSampler,
+  shapeSdf,
+} from "./shapes";
 import type { ShapeSpec } from "./shapes";
 
-const STAR_PRISM_MESH: ShapeSpec = {
-  parts: [
-    {
-      primitive: { kind: "mesh", meshId: "star-prism-v1" },
-      combine: "union",
-    },
-  ],
-};
+function meshEmitterShape(meshId: MeshAssetId, posed = false): ShapeSpec {
+  return {
+    parts: [
+      {
+        primitive: { kind: "mesh", meshId },
+        combine: "union",
+        ...(posed
+          ? {
+              pose: {
+                offset: [0.1, -0.2, 0.3] as [number, number, number],
+                rotate: [0.2, -0.1, 0.4] as [number, number, number],
+                scale: 2,
+              },
+            }
+          : {}),
+      },
+    ],
+  };
+}
+
+/** Independent expectation for binding 7's mesh region: the prepared area
+ * CDF followed by every indexed triangle expanded to three vec3f vertices. */
+function expectedMeshTriangleTable(meshId: MeshAssetId): number[] {
+  const asset = meshAsset(meshId);
+  return [
+    ...Array.from(asset.triangleCumulativeAreas, Math.fround),
+    ...asset.triangles.flatMap((triangle) =>
+      triangle.flatMap((vertex) =>
+        Array.from(asset.vertices[vertex], Math.fround),
+      ),
+    ),
+  ];
+}
 
 function makeTransforms(count: number): Transform[] {
   return Array.from({ length: count }, (_, id) => ({
@@ -571,23 +613,17 @@ describe("packGpuSystem shape emitters", () => {
     ).toEqual([1, 2, 3]);
   });
 
-  it("packs a torus part's kind tag, major and minor radii", () => {
-    const spec: ShapeSpec = {
-      parts: [
-        {
-          primitive: { kind: "torus", major: 1.5, minor: 0.3 },
-          combine: "union",
-        },
-      ],
-    };
+  it("packs Orbit Ring through the existing torus tag and parameter lanes", () => {
     const packed = packGpuSystem(
-      baseSpec({ transforms: [transformWithEmitter(spec)] }),
+      baseSpec({ transforms: [transformWithEmitter(ORBIT_RING_SHAPE)] }),
     );
     const f32 = new Float32Array(packed.slots);
     const p = EMITTER_PARTS;
     expect(f32[p + EP_KIND_PARAMS0]).toBe(2); // torus
-    expect(f32[p + EP_KIND_PARAMS0 + 1]).toBeCloseTo(1.5, 5); // major
-    expect(f32[p + EP_KIND_PARAMS0 + 2]).toBeCloseTo(0.3, 5); // minor
+    expect(f32[p + EP_KIND_PARAMS0 + 1]).toBeCloseTo(0.78, 5); // major
+    expect(f32[p + EP_KIND_PARAMS0 + 2]).toBeCloseTo(0.26, 5); // minor
+    expect(packed.gearTable).toBeNull();
+    expect(packed.multiPartEmitters).toBe(false);
   });
 
   it("packs a capsule part's kind tag, both endpoints and its radius", () => {
@@ -655,49 +691,42 @@ describe("packGpuSystem shape emitters", () => {
     expect(total).toBeLessThan(outerArea);
   });
 
-  it("packs a mesh as kind 5 with its catalog area CDF and 3D triangle records, without growing the slot", () => {
-    const asset = meshAsset("star-prism-v1");
-    const spec: ShapeSpec = {
-      parts: [
-        {
-          ...STAR_PRISM_MESH.parts[0],
-          pose: { scale: 2 },
-        },
-      ],
-    };
-    const packed = packGpuSystem(
-      baseSpec({ transforms: [transformWithEmitter(spec)] }),
-    );
-    expect(SLOT_STRIDE_BYTES).toBe(1120);
-    const f32 = new Float32Array(packed.slots);
-    const p = EMITTER_PARTS;
-    expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
-    expect(f32[p + EP_KIND_PARAMS0 + 1]).toBe(0);
-    expect(f32[p + EP_KIND_PARAMS0 + 2]).toBe(asset.triangles.length);
-    expect(f32[p + EP_KIND_PARAMS0 + 3]).toBe(0);
-    expect(packed.gearTable).not.toBeNull();
-    const table = new Float32Array(packed.gearTable!);
-    const n = asset.triangles.length;
-    expect(table.length).toBe(n + n * 9);
-    expect(Array.from(table.slice(0, n))).toEqual(
-      Array.from(asset.triangleCumulativeAreas, Math.fround),
-    );
-    const first = asset.triangles[0];
-    expect(Array.from(table.slice(n, n + 9))).toEqual(
-      first.flatMap((vertex) =>
-        Array.from(asset.vertices[vertex], Math.fround),
-      ),
-    );
-    // Mesh measure is surface area, so the part pose contributes scale^2,
-    // unlike the scale^3 solid primitives above.
-    expect(f32[EMITTER_TOTAL_WEIGHT]).toBeCloseTo(asset.totalArea * 4, 5);
-    expect(f32[p + EP_ROT0 + 3]).toBeCloseTo(asset.totalArea * 4, 5);
-  });
+  it.each(MESH_ASSET_IDS)(
+    "packs catalog mesh %s as kind 5 with its prepared CDF and expanded triangles",
+    (meshId) => {
+      const asset = meshAsset(meshId);
+      const catalogIndex = meshAssetCatalogIndex(meshId);
+      expect(asset.id).toBe(meshId);
+      expect(meshAssetIdAtCatalogIndex(catalogIndex)).toBe(meshId);
+      const spec = meshEmitterShape(meshId, true);
+      const packed = packGpuSystem(
+        baseSpec({ transforms: [transformWithEmitter(spec)] }),
+      );
+      expect(SLOT_STRIDE_BYTES).toBe(1120);
+      const f32 = new Float32Array(packed.slots);
+      const p = EMITTER_PARTS;
+      expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
+      expect(f32[p + EP_KIND_PARAMS0 + 1]).toBe(0);
+      expect(f32[p + EP_KIND_PARAMS0 + 2]).toBe(asset.triangles.length);
+      expect(f32[p + EP_KIND_PARAMS0 + 3]).toBe(0);
+      expect(packed.gearTable).not.toBeNull();
+      const table = new Float32Array(packed.gearTable!);
+      const n = asset.triangles.length;
+      expect(table.length).toBe(n + n * 9);
+      expect(Array.from(table)).toEqual(expectedMeshTriangleTable(meshId));
+      // Mesh measure is surface area, so the part pose contributes scale^2,
+      // unlike the scale^3 solid primitives above.
+      expect(f32[EMITTER_TOTAL_WEIGHT]).toBeCloseTo(asset.totalArea * 4, 5);
+      expect(f32[p + EP_ROT0 + 3]).toBeCloseTo(asset.totalArea * 4, 5);
+    },
+  );
 
   it("the packed mesh CDF selects triangles in their catalog area proportions", () => {
     const asset = meshAsset("star-prism-v1");
     const packed = packGpuSystem(
-      baseSpec({ transforms: [transformWithEmitter(STAR_PRISM_MESH)] }),
+      baseSpec({
+        transforms: [transformWithEmitter(meshEmitterShape("star-prism-v1"))],
+      }),
     );
     const table = new Float32Array(packed.gearTable!);
     const n = asset.triangles.length;
@@ -851,6 +880,132 @@ describe("packGpuSystem shape emitters", () => {
         "if (u32(slots[slotIdx].emitterParts[pick].kindParams0.x) == 5u)",
       );
     }
+  });
+
+  it("keeps Peace's actual torus/capsule overlaps aligned with the 3D and 4D packed bounded samplers", () => {
+    const packed3 = packGpuSystem(
+      baseSpec({ transforms: [transformWithEmitter(PEACE_SIGN_SHAPE)] }),
+    );
+    const transform4: Transform4 = {
+      position: [0, 0, 0, 0],
+      scale: [1, 1, 1, 1],
+      emitter: PEACE_SIGN_SHAPE,
+    };
+    const packed4 = packGpuSystem4({
+      transforms4: [transform4],
+      finalTransform4: null,
+      symmetry: { order: 1, plane: "xz" },
+      color: { kind: "wRamp", side: { neg: [0, 0, 0], pos: [1, 1, 1] } },
+    });
+    expect(packed3.multiPartEmitters).toBe(true);
+    expect(packed4.multiPartEmitters).toBe(true);
+
+    const cumulativeWeights = (
+      slots: ArrayBuffer,
+      partsOffset: number,
+    ): number[] => {
+      const f32 = new Float32Array(slots);
+      return PEACE_SIGN_SHAPE.parts.map(
+        (_part, i) => f32[partsOffset + i * EP_STRIDE + EP_ROT0 + 3],
+      );
+    };
+    const cum3 = cumulativeWeights(packed3.slots, EMITTER_PARTS);
+    // Slot4 starts its shared EmitterPart block at element 100; the part
+    // sub-layout itself is byte-identical to the 3D block.
+    const cum4 = cumulativeWeights(packed4.slots, 100);
+    expectCloseArray(cum4, cum3, 6);
+
+    const kinds3 = new Float32Array(packed3.slots);
+    const kinds4 = new Float32Array(packed4.slots);
+    expect(
+      PEACE_SIGN_SHAPE.parts.map(
+        (_part, i) => kinds3[EMITTER_PARTS + i * EP_STRIDE + EP_KIND_PARAMS0],
+      ),
+    ).toEqual([2, 3, 3, 3]);
+    expect(
+      PEACE_SIGN_SHAPE.parts.map(
+        (_part, i) => kinds4[100 + i * EP_STRIDE + EP_KIND_PARAMS0],
+      ),
+    ).toEqual([2, 3, 3, 3]);
+
+    const partSpecs = PEACE_SIGN_SHAPE.parts.map((part) => ({ parts: [part] }));
+    const partDraws = partSpecs.map((spec) => prepareShapeSampler(spec));
+    const histogram = (draw: () => readonly [number, number, number]) => {
+      const bins = new Uint32Array(8 * 8 * 3);
+      for (let i = 0; i < 60_000; i++) {
+        const [x, y, z] = draw();
+        const bx = Math.min(
+          7,
+          Math.max(0, Math.floor(((x + 1.12) / 2.24) * 8)),
+        );
+        const by = Math.min(
+          7,
+          Math.max(0, Math.floor(((y + 1.12) / 2.24) * 8)),
+        );
+        const bz = Math.min(
+          2,
+          Math.max(0, Math.floor(((z + 0.12) / 0.24) * 3)),
+        );
+        bins[(bz * 8 + by) * 8 + bx]++;
+      }
+      return bins;
+    };
+    const totalVariation = (a: Uint32Array, b: Uint32Array): number => {
+      const totalA = a.reduce((sum, n) => sum + n, 0);
+      const totalB = b.reduce((sum, n) => sum + n, 0);
+      let l1 = 0;
+      for (let i = 0; i < a.length; i++) {
+        l1 += Math.abs(a[i] / totalA - b[i] / totalB);
+      }
+      return l1 / 2;
+    };
+
+    const cpuRng = mulberry32(0x0eace001);
+    const cpuDraw = prepareShapeSampler(PEACE_SIGN_SHAPE);
+    const cpu = histogram(() => cpuDraw(cpuRng));
+
+    const packedHistogram = (cum: readonly number[], seed: number) => {
+      const rng = mulberry32(seed);
+      let rejected = 0;
+      let fallbacks = 0;
+      const draw = (): readonly [number, number, number] => {
+        for (let attempt = 0; attempt < EMITTER_OVERLAP_ATTEMPTS; attempt++) {
+          const target = rng() * cum[cum.length - 1];
+          let pick = 0;
+          while (target >= cum[pick]) pick++;
+          const point = partDraws[pick](rng);
+          let shadowed = false;
+          for (let earlier = 0; earlier < pick; earlier++) {
+            if (shapeSdf(partSpecs[earlier], ...point) <= 0) {
+              shadowed = true;
+              break;
+            }
+          }
+          if (!shadowed) return point;
+          rejected++;
+        }
+        fallbacks++;
+        return partDraws[0](rng);
+      };
+      return { bins: histogram(draw), rejected, fallbacks };
+    };
+
+    const adjacent3 = packedHistogram(cum3, 0x0eace003);
+    const adjacent4 = packedHistogram(cum4, 0x0eace004);
+    // This is genuinely Peace-specific: both bounded mirrors encounter the
+    // ring/bar junctions, while 64 proposals make fallback unobservable.
+    expect(adjacent3.rejected).toBeGreaterThan(500);
+    expect(adjacent4.rejected).toBeGreaterThan(500);
+    expect(adjacent3.fallbacks).toBe(0);
+    expect(adjacent4.fallbacks).toBe(0);
+    const tv3 = totalVariation(cpu, adjacent3.bins);
+    const tv4 = totalVariation(cpu, adjacent4.bins);
+    console.log(
+      `Peace packed-adjacent: 3D rejected ${adjacent3.rejected}, TV ${tv3.toFixed(6)}; ` +
+        `4D rejected ${adjacent4.rejected}, TV ${tv4.toFixed(6)}; fallbacks 0/0`,
+    );
+    expect(tv3).toBeLessThan(0.06);
+    expect(tv4).toBeLessThan(0.06);
   });
 
   it("gives a multi-kind spec's parts cumulative weights matching shapes.ts's own per-kind volumes — sphere, box, torus and capsule together", () => {

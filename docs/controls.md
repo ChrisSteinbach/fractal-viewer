@@ -582,8 +582,9 @@ morphs into place instead of snapping (see **Presets** below).
   per-transform **Speed** does nothing here, and is not the **Color speed**
   slider above, which fades descent levels rather than picks.
   Forward-orbit sessions add a **Shape trap** row and a matching **Shape
-  trap** color source. Choose **Peace sign**, **Gear**, or **None**, then set
-  its orbit-space size and X/Y/Z position. **Closest approach** shades by the
+  trap** color source. Choose any bundled trap shape or **None**, then set its
+  orbit-space size and X/Y/Z position. It uses the same shared catalog listed
+  under **Shape → Emitter** below. **Closest approach** shades by the
   nearest pass over the whole orbit; **First crossing** enables the
   **Crossing bar** and colors the first dip below it. **Trap fade** biases
   toward earlier, larger stamps. The shape choice re-enters the surface
@@ -664,13 +665,17 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   degree of freedom, no gesture above reaches it) give exact per-axis control
   on every device. The sliders track the guide box live and stay in sync with
   the drag gestures above.
-  - **Shape → Emitter** — turns the selected transform into a **Cog** or
-    **Star** emitter, or returns it to an ordinary transform with **None**.
+  - **Shape → Emitter** — turns the selected transform into any bundled
+    emitter shape, or returns it to an ordinary transform with **None**.
+    The shared catalog is **Cog**, **Star**, **Orbit Ring**, **Faceted
+    Crystal**, **Heart Prism**, **Trefoil Knot**, **Crescent Moon**,
+    **Snowflake Prism**, and **Peace sign**; every entry is also available to
+    the shape trap.
     When this map is picked it stamps a fresh point from the chosen shape;
     Position, Rotation, Scale and Shear pose the stamp, while **Weight** sets
     how often it is picked. The transform list names the active shape. For a
     one-step shortcut, **Transforms → Add a shape emitter** creates and selects
-    a new Cog or Star map with this group already open. The final-transform
+    a new shaped map with this group already open. The final-transform
     lens has no Shape group because it is never picked.
   - **Color → Index / Speed** — the flam3 per-xform color pair, one
     group below **Weight**. **Index** is the palette slot this map pulls the

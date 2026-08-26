@@ -20,6 +20,7 @@ import {
   setSurfaceGridEnabled,
   setSurfaceMaterials,
   setSurfaceGroundPlane,
+  setSurfaceShapeMeshSdf,
   setSurfaceSystem,
   surfaceFragmentFor,
   surfaceFragmentResolvedFor,
@@ -42,6 +43,12 @@ import {
 } from "../fractal/bulb-de";
 import { buildEscapeDE } from "../fractal/escape-de";
 import { shapeTrapInvNorm } from "../fractal/shape-trap";
+import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
+import {
+  MESH_ASSET_IDS,
+  meshAssetCatalogIndex,
+  type MeshAssetId,
+} from "../fractal/mesh-shapes";
 import {
   PEACE_SIGN_SHAPE,
   SHAPE_MARCH_SAFETY,
@@ -192,14 +199,18 @@ const COND_BOX: ShapeSpec = {
   ],
 };
 
-const MESH_SHAPE: ShapeSpec = {
-  parts: [
-    {
-      primitive: { kind: "mesh", meshId: "star-prism-v1" },
-      combine: "union",
-    },
-  ],
-};
+function meshShape(meshId: MeshAssetId): ShapeSpec {
+  return {
+    parts: [
+      {
+        primitive: { kind: "mesh", meshId },
+        combine: "union",
+      },
+    ],
+  };
+}
+
+const MESH_SHAPE: ShapeSpec = meshShape("star-prism-v1");
 
 function condEmitter3(shape: ShapeSpec, shadeIndex: number, invT: Vec3) {
   return {
@@ -644,7 +655,47 @@ describe("GLSL condensation packing and source", () => {
     );
   });
 
-  it("uploads the cached R32F catalog for mesh condensation and restores the 1^3 placeholder", () => {
+  it("compacts active mesh slabs while keeping stable catalog-id dispatch", () => {
+    const requested = [
+      MESH_ASSET_IDS.at(-1)!,
+      MESH_ASSET_IDS[0],
+      MESH_ASSET_IDS.at(-1)!,
+    ];
+    const source = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      requested.map(meshShape),
+    );
+    const activeIds = [...new Set(requested)].sort(
+      (a, b) => meshAssetCatalogIndex(a) - meshAssetCatalogIndex(b),
+    );
+    activeIds.forEach((id, slabIndex) => {
+      const catalogIndex = meshAssetCatalogIndex(id);
+      expect(source).toMatch(
+        new RegExp(
+          `if \\(mesh == ${String(catalogIndex)}\\) return shapeMeshSdfSample\\([^\\n]+, ${String(
+            slabIndex * 64,
+          )}, 64\\);`,
+        ),
+      );
+    });
+    for (const inactiveId of MESH_ASSET_IDS.filter(
+      (id) => !activeIds.includes(id),
+    )) {
+      expect(source).not.toContain(
+        `if (mesh == ${String(meshAssetCatalogIndex(inactiveId))})`,
+      );
+    }
+  });
+
+  it("uploads the cached active-set R32F atlas and restores the 1^3 placeholder", () => {
     const material = createSurfaceMaterial();
     const placeholder = material.uniforms.uShapeMeshSdf.value as Data3DTexture;
     expect(placeholder).toBeInstanceOf(Data3DTexture);
@@ -667,6 +718,7 @@ describe("GLSL condensation packing and source", () => {
     expect(atlas).toBeInstanceOf(Data3DTexture);
     expect(atlas).not.toBe(placeholder);
     expect(atlas.image).toMatchObject({ width: 64, height: 64, depth: 64 });
+    expect(atlas.image.data).toBe(activeMeshSdfAtlas(["star-prism-v1"]).values);
     expect(atlas.image.data).toBeInstanceOf(Float32Array);
     expect(atlas.internalFormat).toBe("R32F");
     expect(atlas.minFilter).toBe(NearestFilter);
@@ -679,6 +731,22 @@ describe("GLSL condensation packing and source", () => {
       height: 1,
       depth: 1,
     });
+  });
+
+  it("switches active asset sets without retaining a stale cached texture", () => {
+    const material = createSurfaceMaterial();
+    const ids = [...new Set([MESH_ASSET_IDS[0], MESH_ASSET_IDS.at(-1)!])];
+    const textures = ids.map((id) => {
+      setSurfaceShapeMeshSdf(material, [meshShape(id), meshShape(id)]);
+      const texture = material.uniforms.uShapeMeshSdf.value as Data3DTexture;
+      expect(texture.image).toMatchObject({ width: 64, height: 64, depth: 64 });
+      expect(texture.image.data).toBe(activeMeshSdfAtlas([id]).values);
+      return texture;
+    });
+    if (textures.length > 1) expect(textures[1]).not.toBe(textures[0]);
+
+    setSurfaceShapeMeshSdf(material, [meshShape(ids[0])]);
+    expect(material.uniforms.uShapeMeshSdf.value).toBe(textures[0]);
   });
 
   it("appends symmetry-expanded inverse records while map and shade counts stay separate", () => {
