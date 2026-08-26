@@ -1212,6 +1212,66 @@ describe("Ui surface balloon rows", () => {
   });
 });
 
+describe("Ui three-axis panel applicability", () => {
+  const hidden = (id: string): boolean =>
+    (document.getElementById(id) as HTMLElement).classList.contains("hidden");
+  const balloon = (): HTMLInputElement =>
+    document.getElementById("surfaceBalloonCheckbox") as HTMLInputElement;
+  const transformsFor = (dimension: "flat" | "nonFlat"): Transform[] =>
+    gearworks().map((transform, index) =>
+      dimension === "nonFlat" && index === 0
+        ? { ...transform, w: { position: 0.5 } }
+        : transform,
+    );
+
+  it.each(["flat", "nonFlat"] as const)(
+    "composes renderer, %s dimension, session kind and emitter weight once per row",
+    (dimension) => {
+      const ui = new Ui(document);
+      const transforms = transformsFor(dimension);
+      const state = {
+        ...initialState(true),
+        renderMode: "surface" as const,
+        transforms,
+        balloonEcho: true,
+      };
+
+      ui.setSurfaceSessionKind("ifs");
+      ui.updateLabels(state);
+      expect(balloon().disabled).toBe(false);
+      expect(hidden("surfaceTrapRow")).toBe(true);
+      expect(hidden("surfaceCondensationRow")).toBe(false);
+
+      ui.updateLabels({
+        ...state,
+        transforms: transforms.map((transform) =>
+          transform.emitter === undefined
+            ? transform
+            : { ...transform, weight: 0 },
+        ),
+      });
+      expect(hidden("surfaceCondensationRow")).toBe(true);
+
+      ui.setSurfaceSessionKind("escape");
+      ui.updateLabels(state);
+      expect(balloon().disabled).toBe(true);
+      expect(hidden("surfaceTrapRow")).toBe(false);
+      expect(hidden("surfaceCondensationRow")).toBe(true);
+
+      ui.setSurfaceSessionKind("bulb");
+      ui.updateLabels(state);
+      expect(balloon().disabled).toBe(true);
+      expect(hidden("surfaceTrapRow")).toBe(false);
+
+      // A stale Surface kind is not a wildcard outside Surface: the Points
+      // consumer owns Balloon and does not expose the Surface trap inspector.
+      ui.updateLabels({ ...state, renderMode: "points" });
+      expect(balloon().disabled).toBe(false);
+      expect(hidden("surfaceTrapRow")).toBe(true);
+    },
+  );
+});
+
 describe("Ui condensation level band", () => {
   const row = (): HTMLElement =>
     document.getElementById("surfaceCondensationRow") as HTMLElement;
@@ -1325,8 +1385,10 @@ describe("Ui shape-trap geometry", () => {
   });
 
   it.each([
+    ["valid conformal fold chain", foldChain()],
     ["power chain", hybridChainCube()],
     ["Mandelbulb", mandelbulbClassic()],
+    ["inverse descent", defaultTransforms()],
     [
       "anisotropic fold chain",
       foldChain().map((transform, i) =>
@@ -1339,7 +1401,7 @@ describe("Ui shape-trap geometry", () => {
       ),
     ],
   ] as const)(
-    "keeps the Geometry checkbox reachable in Points for loaded %s geometry",
+    "keeps the Surface inspector hidden in Points for loaded %s geometry",
     (_label, transforms) => {
       const state = setShapeTrap(
         { ...initialState(true), transforms: [...transforms] },
@@ -1352,35 +1414,103 @@ describe("Ui shape-trap geometry", () => {
         document
           .getElementById("surfaceLookSection")
           ?.classList.contains("hidden"),
-      ).toBe(false);
-      expect(row().classList.contains("hidden")).toBe(false);
-      expect(
-        (
-          document.getElementById(
-            "surfaceTrapGeometryCheckbox",
-          ) as HTMLInputElement
-        ).checked,
       ).toBe(true);
+      expect(
+        document.getElementById("surfaceTrapRow")?.classList.contains("hidden"),
+      ).toBe(true);
+      expect(row().classList.contains("hidden")).toBe(true);
     },
   );
 
-  it("lets the recovery checkbox clear an otherwise ineligible geometry flag", () => {
+  it("offers a structured gate-level recovery without putting interaction in the live region", () => {
+    const ui = new Ui(document);
+    const button = document.getElementById(
+      "surfaceEligibilityRecoveryBtn",
+    ) as HTMLButtonElement;
+    const note = document.getElementById("surfaceNote") as HTMLElement;
+
+    expect(button.closest("#panelSections")).toBeNull();
+    expect(note.contains(button)).toBe(false);
+    expect(button.getAttribute("aria-describedby")).toBe("surfaceNote");
+    expect(button.textContent?.trim()).toBe("Turn trap geometry off");
+
+    ui.setSurfaceEligibility(
+      "ineligible",
+      "Shape-trap geometry is unsupported here.",
+      null,
+      "disableShapeTrapGeometry",
+    );
+    expect(button.classList.contains("hidden")).toBe(false);
+
+    ui.setSurfaceEligibility("ineligible", "an unrelated refusal", null);
+    expect(button.classList.contains("hidden")).toBe(true);
+
+    ui.setSurfaceEligibility("eligible", null, "ifs");
+    expect(button.classList.contains("hidden")).toBe(true);
+  });
+
+  it("routes recovery through the authored scalar edit, then focuses Surface", () => {
     const state = setShapeTrap(
       { ...initialState(true), transforms: hybridChainCube() },
-      { shape: GEAR_SHAPE, geometry: true },
+      {
+        shape: GEAR_SHAPE,
+        mode: "threshold",
+        threshold: 0.4,
+        geometry: true,
+        geometryLevelMin: 2,
+        geometryLevelMax: 5,
+      },
     );
-    const { handlers, current } = scalarHandlers(state);
+    let current = state;
     const ui = new Ui(document);
+    const onScalarControl = vi.fn(
+      (spec: ScalarControlSpec, raw: string | boolean) => {
+        current = applyScalarControl(current, spec, raw);
+        ui.updateLabels(current);
+        // The real main.ts effect synchronously refreshes the analyzer before
+        // the click handler transfers focus.
+        ui.setSurfaceEligibility("degraded", "Escape-time render.", "escape");
+      },
+    );
+    const handlers = { ...noopHandlers(), onScalarControl };
     ui.bind(handlers);
     ui.updateLabels(state);
-    const checkbox = document.getElementById(
-      "surfaceTrapGeometryCheckbox",
-    ) as HTMLInputElement;
+    ui.setSurfaceEligibility(
+      "ineligible",
+      "Shape-trap geometry is unsupported here.",
+      null,
+      "disableShapeTrapGeometry",
+    );
 
-    checkbox.checked = false;
-    checkbox.dispatchEvent(new Event("change"));
+    (
+      document.getElementById(
+        "surfaceEligibilityRecoveryBtn",
+      ) as HTMLButtonElement
+    ).click();
 
-    expect(current().shapeTrap).toEqual({ shape: GEAR_SHAPE });
+    expect(onScalarControl).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "surfaceTrapGeometryCheckbox" }),
+      false,
+    );
+    expect(current.shapeTrap).toMatchObject({
+      shape: GEAR_SHAPE,
+      mode: "threshold",
+      threshold: 0.4,
+    });
+    expect(current.shapeTrap?.geometry).toBeUndefined();
+    expect(current.shapeTrap?.geometryLevelMin).toBeUndefined();
+    expect(current.shapeTrap?.geometryLevelMax).toBeUndefined();
+    expect(
+      document
+        .getElementById("surfaceEligibilityRecoveryBtn")
+        ?.classList.contains("hidden"),
+    ).toBe(true);
+    expect(
+      (document.getElementById("modeSurfaceBtn") as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(document.activeElement).toBe(
+      document.getElementById("modeSurfaceBtn"),
+    );
   });
 });
 
@@ -4792,9 +4922,8 @@ describe("Ui render mode switch", () => {
   });
 
   it("toasts the gate reason when a disabled Surface segment is tapped", () => {
-    // The tooltip is hover-only — touch would learn nothing. Pointer events
-    // are still dispatched for disabled controls, so the tap surfaces the
-    // reason as a toast (see the bind() listener).
+    // The adjacent note is persistent; pointer events are still dispatched
+    // for disabled controls, so touch gets the reason as a supplemental toast.
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.setSurfaceEligibility("ineligible", "map 1 uses variations");
@@ -4816,6 +4945,79 @@ describe("Ui render mode switch", () => {
     const toast = document.getElementById("toast") as HTMLElement;
     expect(toast.classList.contains("hidden")).toBe(true);
   });
+
+  it("associates a persistent Surface eligibility note beside the mode switch", () => {
+    const switcher = document.getElementById("renderModeSwitch");
+    const note = document.getElementById("surfaceNote");
+
+    expect(switcher?.nextElementSibling).toBe(note);
+    expect(modeBtn("surface").getAttribute("aria-describedby")).toBe(
+      "surfaceNote",
+    );
+    expect(note?.getAttribute("role")).toBe("status");
+    expect(note?.getAttribute("aria-live")).toBe("polite");
+    expect(note?.classList.contains("hidden")).toBe(false);
+    expect(note?.textContent).toBe("");
+  });
+
+  it("discloses ineligible and degraded Surface routes before entry, then clears", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(initialState(true));
+    const note = document.getElementById("surfaceNote") as HTMLElement;
+    const surfaceStatus = document.getElementById(
+      "surfaceStatus",
+    ) as HTMLElement;
+    const normalTitle = "Sphere-traced surface of the attractor";
+
+    expect(surfaceStatus.classList.contains("hidden")).toBe(true);
+    expect(surfaceStatus.contains(note)).toBe(false);
+
+    ui.setSurfaceEligibility("ineligible", "map 1 uses variations");
+    expect(modeBtn("surface").disabled).toBe(true);
+    expect(modeBtn("surface").title).toBe(
+      "Surface render unavailable: map 1 uses variations",
+    );
+    expect(note.textContent).toBe(
+      "Surface render unavailable: map 1 uses variations",
+    );
+    expect(note.closest(".hidden")).toBeNull();
+
+    const degraded =
+      "Mandelbulb render: Surface will march the forward-orbit object.";
+    ui.setSurfaceEligibility("degraded", degraded);
+    expect(modeBtn("surface").disabled).toBe(false);
+    expect(modeBtn("surface").title).toBe(normalTitle);
+    expect(note.textContent).toBe(degraded);
+    expect(note.closest(".hidden")).toBeNull();
+
+    ui.setSurfaceEligibility("eligible", null);
+    expect(modeBtn("surface").disabled).toBe(false);
+    expect(modeBtn("surface").title).toBe(normalTitle);
+    expect(note.textContent).toBe("");
+  });
+
+  it.each([
+    ["ineligible", "map 1 uses variations"],
+    ["degraded", "marched conservatively"],
+  ] as const)(
+    "does not rewrite an unchanged %s Surface live-region message",
+    (status, detail) => {
+      const ui = new Ui(document);
+      const note = document.getElementById("surfaceNote") as HTMLElement;
+      ui.setSurfaceEligibility(status, detail);
+      const observer = new MutationObserver(() => undefined);
+      observer.observe(note, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+
+      ui.setSurfaceEligibility(status, detail);
+
+      expect(observer.takeRecords()).toHaveLength(0);
+      observer.disconnect();
+    },
+  );
 
   it("fires onRenderMode with the solid mode when the solid segment is clicked", () => {
     const handlers = noopHandlers();
@@ -7392,6 +7594,27 @@ describe("panel accordion sections", () => {
     }
   });
 
+  it("keeps output and library workflow after active editing in DOM order", () => {
+    const ids = sections().map((section) => section.id);
+    const workflowIds = [
+      "collectionSection",
+      "timelineSection",
+      "captureSection",
+      "shareSection",
+    ];
+
+    expect(ids.slice(-workflowIds.length)).toEqual(workflowIds);
+    expect(ids.indexOf("transformsSection")).toBeLessThan(
+      ids.indexOf("captureSection"),
+    );
+    expect(ids.indexOf("surfaceLookSection")).toBeLessThan(
+      ids.indexOf("captureSection"),
+    );
+    expect(ids.indexOf("fourDControls")).toBeLessThan(
+      ids.indexOf("captureSection"),
+    );
+  });
+
   it("boots with exactly one section open — Presets", () => {
     const open = sections().filter((section) => section.open);
     expect(open.map((section) => section.id)).toEqual(["presetSection"]);
@@ -7483,6 +7706,32 @@ describe("panel accordion sections", () => {
     details("presetSection").open = false;
     ui.updateLabels(state);
     expect(details("presetSection").open).toBe(true);
+  });
+
+  it("does not treat authored trap geometry as a shared Surface section in Points", () => {
+    const ui = new Ui(document);
+    const surface = setShapeTrap(
+      {
+        ...initialState(true),
+        renderMode: "surface",
+        transforms: foldChain(),
+      },
+      { shape: GEAR_SHAPE, geometry: true },
+    );
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels(surface);
+    expect(details("surfaceLookSection").open).toBe(true);
+
+    // Simulate the native name-group exchange on Surface entry.
+    details("presetSection").open = false;
+    ui.updateLabels({ ...surface, renderMode: "points" });
+
+    expect(details("surfaceLookSection").classList.contains("hidden")).toBe(
+      true,
+    );
+    expect(details("surfaceLookSection").open).toBe(false);
+    expect(details("presetSection").open).toBe(true);
+    expect(hiddenOpenSections()).toEqual([]);
   });
 
   it("does not force a section back open while the mode is unchanged", () => {
@@ -9736,11 +9985,10 @@ describe("page-level heading", () => {
 });
 
 describe("mid-session status notes are live regions", () => {
-  // These five populate/change mid-session via targeted setters (software-
-  // renderer detection, CPU fallback on a flame restart, memory clamps, the
-  // surface degraded note) — a few times per session, never per frame. The
-  // slider-coupled #symmetryNote is deliberately absent: it rewrites on
-  // every drag tick, which a live region would announce as chatter.
+  // These five populate/change via targeted setters (software-renderer
+  // detection, CPU fallback, memory clamps, Surface eligibility). Surface can
+  // refresh on drag ticks but equality-guards its text; #symmetryNote is
+  // deliberately absent because it rewrites every tick without such a guard.
   const NOTE_IDS = [
     "softwareRendererNote",
     "flameBackendNote",
@@ -9764,10 +10012,8 @@ describe("mid-session status notes are live regions", () => {
     );
   });
 
-  // The full show→clear cycle for every note, the surface one included
-  // (its setter is setSurfaceEligibility, which has no describe of its
-  // own): text is the ONLY thing that changes — the element never leaves
-  // the accessibility tree at either end of the cycle.
+  // The full show→clear cycle for every note: text is the ONLY thing that
+  // changes — the element never leaves the accessibility tree at either end.
   it.each([
     [
       "softwareRendererNote",
@@ -9809,6 +10055,53 @@ describe("mid-session status notes are live regions", () => {
       clear(ui);
       expect(note?.textContent).toBe("");
       expect(note?.classList.contains("hidden")).toBe(false);
+    },
+  );
+});
+
+describe("document-level panel disclosures", () => {
+  const note = (id: string): HTMLElement =>
+    document.getElementById(id) as HTMLElement;
+
+  it.each(["symmetryNote", "scheduleNote", "driftNote"])(
+    "keeps #%s outside every mode-gated accordion section",
+    (id) => {
+      expect(note(id).closest("#panelSections")).toBeNull();
+      expect(note(id).closest("details.panel-section")).toBeNull();
+    },
+  );
+
+  it("keeps drag-coupled document prose non-live while associating Drift", () => {
+    for (const id of ["symmetryNote", "scheduleNote"]) {
+      expect(note(id).hasAttribute("role"), id).toBe(false);
+      expect(note(id).hasAttribute("aria-live"), id).toBe(false);
+    }
+    expect(
+      document.getElementById("driftBtn")?.getAttribute("aria-describedby"),
+    ).toBe("driftNote");
+  });
+
+  it.each(["points", "flame", "solid", "surface"] as const)(
+    "keeps effective document warnings readable in %s mode",
+    (renderMode) => {
+      const ui = new Ui(document);
+      const manyTransforms = Array.from({ length: 30 }, (_, id) => ({
+        ...defaultTransforms()[0],
+        id,
+      }));
+      ui.updateLabels({
+        ...initialState(true),
+        renderMode,
+        transforms: manyTransforms,
+        symmetry: { order: 9, plane: "xz" },
+        schedule: { transforms: defaultTransforms(), depth: 2 },
+      });
+      ui.setDriftAvailable(false);
+
+      for (const id of ["symmetryNote", "scheduleNote", "driftNote"]) {
+        expect(note(id).textContent).not.toBe("");
+        expect(note(id).closest(".hidden"), id).toBeNull();
+      }
     },
   );
 });
@@ -10024,18 +10317,23 @@ describe("Ui render-progress announcer", () => {
 
 // Native `disabled` pulls a button out of the tab ring, so the existing
 // title-only disabled reason (hover-only) is invisible to a keyboard/AT
-// user. driftBtn, exportCollectionBtn and the timelinePlayBtn/
-// timelineExportBtn pair each grow a role="status"/aria-live="polite" note
-// beside them — the "mid-session status notes are live regions" idiom above
-// — mirroring the same reason in prose. Unlike that block's five notes,
-// these three setters (setDriftAvailable, setCollectionCount,
+// user. driftBtn, galleryDriftBtn, exportCollectionBtn and the timeline
+// buttons each have role="status"/aria-live="polite" reason prose — the
+// "mid-session status notes are live regions" idiom above. Unlike that
+// block's five notes, these setters (setDriftAvailable, renderGallery,
+// setCollectionCount,
 // syncTimelineButtons via renderTimeline/setTimelineActive/
 // setTimelineAvailable/setTimelineExportProgress) re-run on every panel
 // refresh/timeline edit/collection change rather than only at a meaningful
 // transition, so each also gets a no-chatter pin: repeating the same
 // disabled state must not rewrite (and therefore not re-announce) the note.
 describe("disabled-reason notes for keyboard/AT users", () => {
-  it.each(["driftNote", "exportCollectionNote", "timelineNote"])(
+  it.each([
+    "driftNote",
+    "galleryDriftNote",
+    "exportCollectionNote",
+    "timelineNote",
+  ])(
     "ships #%s as a role=status/aria-live=polite region, rendered and empty",
     (id) => {
       const note = document.getElementById(id);
@@ -10095,6 +10393,59 @@ describe("disabled-reason notes for keyboard/AT users", () => {
       expect(note().textContent).toBe(
         "Unavailable: your system asks for reduced motion.",
       );
+    });
+  });
+
+  describe("galleryDriftBtn / galleryDriftNote", () => {
+    const btn = (): HTMLButtonElement =>
+      document.getElementById("galleryDriftBtn") as HTMLButtonElement;
+    const note = (): HTMLElement =>
+      document.getElementById("galleryDriftNote") as HTMLElement;
+    const saved = {
+      id: "saved",
+      encoded: "v1=saved",
+      thumbnail: "data:image/jpeg;base64,x",
+      createdAt: 1_700_000_000_000,
+    };
+
+    it("associates the modal-local adjacent reason with its disabled button", () => {
+      expect(btn().getAttribute("aria-describedby")).toBe("galleryDriftNote");
+      expect(btn().closest(".gallery-header")?.nextElementSibling).toBe(note());
+    });
+
+    it("explains both empty-collection and reduced-motion refusals", () => {
+      const ui = new Ui(document);
+      ui.renderGallery([]);
+      expect(btn().disabled).toBe(true);
+      expect(note().textContent).toBe(
+        "Save a system or two first — the show loops through this collection.",
+      );
+
+      ui.renderGallery([saved]);
+      expect(btn().disabled).toBe(false);
+      expect(note().textContent).toBe("");
+
+      ui.setDriftAvailable(false);
+      expect(btn().disabled).toBe(true);
+      expect(note().textContent).toBe(
+        "Unavailable: your system asks for reduced motion.",
+      );
+    });
+
+    it("does not rewrite an unchanged modal refusal", () => {
+      const ui = new Ui(document);
+      ui.renderGallery([]);
+      const observer = new MutationObserver(() => undefined);
+      observer.observe(note(), {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+
+      ui.renderGallery([]);
+
+      expect(observer.takeRecords()).toHaveLength(0);
+      observer.disconnect();
     });
   });
 

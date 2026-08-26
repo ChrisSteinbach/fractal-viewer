@@ -92,8 +92,16 @@ import {
 import type { ScalarControlSpec } from "./control-spec";
 import {
   surfaceTrapGeometryRestriction,
+  type SurfaceEligibilityRecovery,
   type SurfaceRouteKind,
 } from "./surface-eligibility";
+import {
+  BALLOON_CENTRE_REFUSAL_REASON,
+  resolvePanelApplicability,
+  type PanelApplicability,
+  type PanelContext,
+  type SurfaceSessionKind,
+} from "./panel-applicability";
 import { deriveLegend, lutGradient } from "./legend-spec";
 import type { LegendPaletteControl, LegendSpec } from "./legend-spec";
 import {
@@ -116,22 +124,7 @@ import {
 } from "./bundled-shapes";
 
 export type { Preset };
-
-/**
- * Which object a live surface session is actually marching — the routing
- * decision main.ts made at `surfaceSession.start()`, pushed in so the
- * panel's rows can tell the truth about what applies. `"ifs"` is the
- * inverse-descent attractor (3D or 4D); `"escape"` and `"bulb"` are the
- * two FORWARD-ORBIT escape-time objects, which share every panel
- * consequence — see {@link Ui.setSurfaceSessionKind}.
- */
-export type SurfaceSessionKind = "ifs" | "escape" | "bulb";
-
-/** One refusal, one explanation in Solid and Surface: both reject the
- * sphere-inverted echo precisely when the rendered solid reaches the ball
- * centre. See docs/panel-ia.md's disable-with-adjacent-reason contract. */
-const BALLOON_CENTRE_REFUSAL_REASON =
-  "Balloon unavailable — this solid fills its enclosing-ball centre.";
+export type { SurfaceSessionKind } from "./panel-applicability";
 
 /** The geometry (and weight/variations) a transform editor edits. `w` is the
  * optional 4D extension (see `types.ts`'s `WExtension`) — included here so
@@ -1741,6 +1734,9 @@ export class Ui {
   private readonly galleryCloseBtn: HTMLButtonElement;
   private readonly galleryDriftBtn: HTMLButtonElement;
   private readonly galleryDriftTitle: string;
+  /** Modal-local disabled reason for {@link galleryDriftBtn}; the page-level
+   * driftNote sits outside an aria-modal dialog's accessible scope. */
+  private readonly galleryDriftNote: HTMLElement;
   private readonly galleryGrid: HTMLElement;
   private readonly galleryEmpty: HTMLElement;
   /** Inputs to the "▶ Drift collection" disabled state, remembered so either
@@ -2034,12 +2030,15 @@ export class Ui {
    * authored AppState and never changes the shared checkbox value. */
   private solidBalloonAvailable = true;
 
-  // The surface render's status block: a hint paragraph, a note line
-  // (degraded-march notice while active), and the trace-progress row (see
-  // setSurfaceProgress). The mode button itself carries the eligibility
-  // gate — see setSurfaceEligibility.
+  // The surface render's mode-gated status block contains its hint and trace
+  // progress (see setSurfaceProgress). The document-derived eligibility note
+  // sits beside the mode switch instead, so it remains readable before entry.
+  // The mode button carries the gate and describes itself with that note.
   private readonly surfaceStatus: HTMLElement;
   private readonly surfaceNote: HTMLElement;
+  /** Gate-level escape hatch shown only when the analyzer says disabling the
+   * authored trap geometry resolves the refusal. Never part of Surface Look. */
+  private readonly surfaceEligibilityRecoveryBtn: HTMLButtonElement;
   private readonly surfaceProgress: HTMLElement;
   // The preview tier under user control: the quick-previews checkbox is a
   // per-BROWSER viewer pref main.ts seeds at boot
@@ -2164,6 +2163,13 @@ export class Ui {
    * balloon rows.
    */
   private surfaceSessionKind: SurfaceSessionKind | null = null;
+  /** Last document context reflected by updateLabels. Session routing can
+   * update Surface's duplicated Balloon row immediately between refreshes. */
+  private panelContext: PanelContext = {
+    renderMode: "points",
+    dimension: "flat",
+    surfaceKind: null,
+  };
   /**
    * Where the DOCUMENT would route if Surface were entered now — the gate's
    * own `kind`, pushed with every {@link setSurfaceEligibility}. This, and
@@ -2408,6 +2414,7 @@ export class Ui {
     this.galleryCloseBtn = this.byId("galleryCloseBtn");
     this.galleryDriftBtn = this.byId("galleryDriftBtn");
     this.galleryDriftTitle = this.galleryDriftBtn.title;
+    this.galleryDriftNote = this.byId("galleryDriftNote");
     this.galleryGrid = this.byId("galleryGrid");
     this.galleryEmpty = this.byId("galleryEmpty");
     this.timelineAddBtn = this.byId("timelineAddBtn");
@@ -2579,6 +2586,9 @@ export class Ui {
     this.solidStatus = this.byId("solidStatus");
     this.surfaceStatus = this.byId("surfaceStatus");
     this.surfaceNote = this.byId("surfaceNote");
+    this.surfaceEligibilityRecoveryBtn = this.byId(
+      "surfaceEligibilityRecoveryBtn",
+    );
     this.surfaceProgress = this.byId("surfaceProgress");
     this.surfacePreviewToggle = this.byId("surfacePreviewToggle");
     this.surfaceSkipPreviewBtn = this.byId("surfaceSkipPreviewBtn");
@@ -3047,6 +3057,18 @@ export class Ui {
         );
       }
     }
+    // Recovery uses the SAME table-driven checkbox path as a manual edit, so
+    // reducer, undo/save, eligibility refresh and renderer effects cannot
+    // drift. The app handler runs synchronously; once it re-enables Surface,
+    // hand focus to the action's destination.
+    this.surfaceEligibilityRecoveryBtn.addEventListener("click", () => {
+      const input = this.scalarInput("surfaceTrapGeometryCheckbox");
+      if (!(input instanceof HTMLInputElement)) {
+        throw new Error("Surface trap Geometry is not a checkbox");
+      }
+      if (input.checked) input.click();
+      this.modeButtons.surface.focus();
+    });
     this.finalTransformToggle.addEventListener("change", () =>
       handlers.onToggleFinalTransform(this.finalTransformToggle.checked),
     );
@@ -3055,11 +3077,10 @@ export class Ui {
         handlers.onRenderMode(mode),
       );
     }
-    // A disabled Surface segment swallows clicks silently, and its
-    // reason-carrying tooltip is hover-only — invisible on touch. Pointer
-    // events, unlike click/mouse events, ARE still dispatched for disabled
-    // form controls, so the tap is heard here and the tooltip text becomes
-    // a toast: every input modality learns WHY the mode is unavailable.
+    // The adjacent live-region note is the modality-independent refusal path.
+    // A disabled segment still swallows clicks, while pointer events ARE
+    // dispatched for disabled form controls, so touch also gets a transient
+    // toast as a supplement to the persistent note and hover tooltip.
     this.modeButtons.surface.addEventListener("pointerdown", () => {
       const surface = this.modeButtons.surface;
       if (surface.disabled && surface.title) this.flashToast(surface.title);
@@ -3340,7 +3361,15 @@ export class Ui {
    * after routing then reconciles it with the newest document state. */
   setSurfaceSessionKind(kind: SurfaceSessionKind | null): void {
     this.surfaceSessionKind = kind;
-    this.syncSurfaceBalloonRows();
+    this.panelContext = { ...this.panelContext, surfaceKind: kind };
+    this.syncSurfaceBalloonRows(
+      resolvePanelApplicability("balloon", {
+        ...this.panelContext,
+        // A non-null kind arrives from an active Surface session. Use that
+        // renderer immediately; updateLabels will reconcile the full context.
+        renderMode: kind === null ? this.panelContext.renderMode : "surface",
+      }),
+    );
   }
 
   /** Apply the active Solid session's centre-density refusal result. The
@@ -3368,21 +3397,20 @@ export class Ui {
   /** Apply Surface's forward-orbit refusal without erasing the shared authored
    * flag. The checkbox remains discoverable; palette/radius/tint are dependent
    * controls and hide until the capability is usable again. */
-  private syncSurfaceBalloonRows(): boolean {
-    const refused =
-      this.surfaceSessionKind === "escape" ||
-      this.surfaceSessionKind === "bulb";
-    const showDependent = !refused && this.surfaceBalloonCheckbox.checked;
-    this.surfaceBalloonRow.classList.remove("hidden");
+  private syncSurfaceBalloonRows(applicability: PanelApplicability): void {
+    const enabled = applicability.kind === "enabled";
+    const refused = applicability.kind === "disabled";
+    const showDependent = enabled && this.surfaceBalloonCheckbox.checked;
+    this.surfaceBalloonRow.classList.toggle(
+      "hidden",
+      applicability.kind === "hidden",
+    );
     this.surfaceBalloonCheckbox.disabled = refused;
-    this.surfaceBalloonPaletteRow.classList.toggle("hidden", refused);
+    this.surfaceBalloonPaletteRow.classList.toggle("hidden", !enabled);
     this.surfaceBalloonRadiusRow.classList.toggle("hidden", !showDependent);
     this.surfaceBalloonTintRow.classList.toggle("hidden", !showDependent);
-    this.surfaceBalloonNote.textContent = refused
-      ? BALLOON_CENTRE_REFUSAL_REASON
-      : "";
+    this.surfaceBalloonNote.textContent = refused ? applicability.reason : "";
     this.surfaceBalloonNote.classList.toggle("hidden", !refused);
-    return refused;
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -3547,15 +3575,14 @@ export class Ui {
     // where the tracer re-poses and re-marches every frame and those are the
     // only controls that reach it.
     const nonFlat = systemIsNonFlat(state);
+    const panelContext: PanelContext = {
+      renderMode: state.renderMode,
+      dimension: nonFlat ? "nonFlat" : "flat",
+      surfaceKind: this.surfaceSessionKind,
+    };
+    this.panelContext = panelContext;
     const frozenRender =
       state.renderMode === "flame" || state.renderMode === "solid";
-    // Recovery door for a decoded/edited document whose authored geometry
-    // makes Surface ineligible. The refusal explicitly says to turn Geometry
-    // off, so its checkbox cannot live exclusively behind the disabled mode
-    // button. Surface Look stays available in Points only for this narrow
-    // correction case and disappears again as soon as the flag is cleared.
-    const trapGeometryRecovery =
-      state.renderMode === "points" && state.shapeTrap?.geometry === true;
     // A non-flat system in Surface mode is always the 4D tracer: the session
     // routes on this same predicate (main.ts's systemPartsAreNonFlat branch),
     // ahead of the flat-only escape-time and fold/affine paths.
@@ -3578,9 +3605,13 @@ export class Ui {
     // centre-density probe refuses it temporarily disables the checkbox and
     // hides the dependent rows without mutating the shared authored flag.
     this.syncSolidBalloonRows();
+    const surfaceInspectorApplicability = resolvePanelApplicability(
+      "surfaceInspector",
+      panelContext,
+    );
     this.surfaceLookSection.classList.toggle(
       "hidden",
-      state.renderMode !== "surface" && !trapGeometryRecovery,
+      surfaceInspectorApplicability.kind !== "enabled",
     );
     // The surface palette select means anything for "palette", "rings",
     // "sheets" and "shapeTrap" — all four sample the user-selected palette
@@ -3604,18 +3635,22 @@ export class Ui {
     // visibly refusing it; eligible sessions show only the dependent rows
     // whose parent state makes them meaningful. The 4D dimension gate is
     // gone: a 4D IFS session balloons exactly like a 3D one.
-    const surfaceBalloonRefused = this.syncSurfaceBalloonRows();
+    this.syncSurfaceBalloonRows(
+      resolvePanelApplicability("balloon", panelContext),
+    );
     for (const row of this.surfaceGroundPlaneDependentRows) {
       row.classList.toggle("hidden", !state.groundPlane);
     }
-    // The shape trap is the balloon's COMPLEMENT: it exists ONLY for the
-    // forward-orbit (escape-family) sessions — the descent shaders carry
-    // no trap channel — so the row shows exactly where the balloon rows
-    // hide. Sub-rows wait for a block to exist; the crossing bar for its
-    // own mode.
+    // The shape trap independently states the same forward-orbit consumer
+    // set; it is not inferred from Balloon's complementary refusal. Sub-rows
+    // still wait for authored feature predicates below.
+    const surfaceTrapApplicability = resolvePanelApplicability(
+      "surfaceTrap",
+      panelContext,
+    );
     this.surfaceTrapRow.classList.toggle(
       "hidden",
-      !surfaceBalloonRefused && !trapGeometryRecovery,
+      surfaceTrapApplicability.kind !== "enabled",
     );
     this.surfaceTrapControls.classList.toggle("hidden", !state.shapeTrap);
     this.surfaceTrapThresholdRow.classList.toggle(
@@ -3630,11 +3665,14 @@ export class Ui {
     const trapGeometryRestriction = state.shapeTrap
       ? surfaceTrapGeometryRestriction(state.transforms, nonFlat)
       : null;
+    const trapGeometryApplicability = resolvePanelApplicability(
+      "surfaceTrapGeometry",
+      panelContext,
+    );
     const trapGeometryRelevant =
       state.shapeTrap !== undefined &&
-      (trapGeometryRecovery ||
-        (this.surfaceSessionKind === "escape" &&
-          trapGeometryRestriction === null));
+      trapGeometryApplicability.kind === "enabled" &&
+      trapGeometryRestriction === null;
     this.surfaceTrapGeometryRow.classList.toggle(
       "hidden",
       !trapGeometryRelevant,
@@ -3649,8 +3687,12 @@ export class Ui {
         state.shapeTrap?.geometry !== true ||
         shapeTrapGeometryBandMode(state) !== "custom",
     );
+    const condensationApplicability = resolvePanelApplicability(
+      "surfaceCondensation",
+      panelContext,
+    );
     const condensationLive =
-      this.surfaceSessionKind === "ifs" &&
+      condensationApplicability.kind === "enabled" &&
       state.transforms.some(
         (transform) =>
           (transform.weight ?? 1) > 0 && transform.emitter !== undefined,
@@ -4086,18 +4128,15 @@ export class Ui {
   }
 
   /**
-   * Write `text` into a disabled-reason live region — the
-   * shared guard for {@link driftNote}, {@link exportCollectionNote} and
-   * {@link timelineNote} — only when it actually differs from what the note
-   * already shows. Unlike the five status notes above (see
-   * {@link setFlameSupersampleNote}), which change only at a
-   * meaningful transition, these three setters re-run on every panel
-   * refresh/timeline edit/collection change whether or not the reason
-   * changed; a plain textContent write would re-announce an unchanged
-   * reason to a screen reader every time, the live-region chatter lesson
-   * applied to prose instead of a progress percentage.
+   * Write `text` into a frequently refreshed live region only when it differs
+   * from what the note already shows. Shared by {@link surfaceNote},
+   * {@link driftNote}, {@link galleryDriftNote},
+   * {@link exportCollectionNote} and {@link timelineNote}: their setters can
+   * re-run on every document drag/panel refresh/timeline edit/collection
+   * change whether or not the reason changed. A plain
+   * textContent write would re-announce unchanged prose to a screen reader.
    *
-   * Honest scope note (wave-5 review): two of the three notes live inside
+   * Honest scope note (wave-5 review): two of the latter four notes live inside
    * collapsible accordion sections, and a closed `<details>`' content is
    * not exposed to AT — a reason written while its section is closed is
    * not announced, and this guard means opening the section does not
@@ -4169,9 +4208,9 @@ export class Ui {
   /** Enable/disable the Drift toggle for the OS reduced-motion
    * preference: no motion means no drift, so the button explains itself
    * instead of silently doing nothing. Native `disabled` pulls the button
-   * out of the tab ring, so the title-only explanation is hover-only —
-   * {@link driftNote} mirrors the same reason in prose beside it, for
-   * keyboard/AT users who can neither reach nor hover the button. */
+   * out of the tab ring, so the title-only explanation is hover-only.
+   * {@link driftNote} mirrors the same reason in the always-applicable
+   * document-status area and aria-describedby associates it with the button. */
   setDriftAvailable(available: boolean): void {
     this.driftAvailable = available;
     this.syncGalleryDriftBtn();
@@ -4639,7 +4678,8 @@ export class Ui {
    * remembered inputs: the drift show's reduced-motion availability (shared
    * with the panel's Drift toggle) and whether there is anything saved to
    * loop over — with a title that says which one is the reason, mirroring
-   * how the Drift toggle explains itself.
+   * how the Drift toggle explains itself. The modal-local adjacent note is
+   * load-bearing visible prose because the disabled button leaves the tab ring.
    */
   private syncGalleryDriftBtn(): void {
     const empty = this.gallerySceneCount === 0;
@@ -4649,6 +4689,14 @@ export class Ui {
       : empty
         ? "Save a system or two first — the show loops through this collection"
         : this.galleryDriftTitle;
+    this.setReasonNote(
+      this.galleryDriftNote,
+      !this.driftAvailable
+        ? "Unavailable: your system asks for reduced motion."
+        : empty
+          ? "Save a system or two first — the show loops through this collection."
+          : "",
+    );
   }
 
   private galleryCard(scene: SavedScene): HTMLElement {
@@ -5355,30 +5403,37 @@ export class Ui {
 
   /**
    * Reflect the surface render's marchability (from `analyzeSurfaceSystem` +
-   * the uniform-array cap): `ineligible` disables the mode button outright
-   * with the reason in its tooltip (the mode physically can't run — no valid
-   * distance estimator); `degraded` keeps it enabled but shows `detail` as
-   * an in-mode note (anisotropic maps marched conservatively); `eligible`
-   * restores the default affordance. main.ts recomputes this on every
-   * document change, so the button tracks edits live — including while some
-   * other render is active.
+   * the uniform-array cap): `ineligible` disables the mode button and mirrors
+   * its complete reason into the persistent adjacent note; `degraded` keeps
+   * it enabled and shows the analyzer's exact detail before entry (which may
+   * describe an alternate valid object, not merely reduced fidelity);
+   * `eligible` restores the default affordance and clears stale text. main.ts
+   * recomputes this on every document change, including drag ticks, so the
+   * equality-guarded note never chatters when its text is unchanged.
    */
   setSurfaceEligibility(
     status: "eligible" | "degraded" | "ineligible",
     detail: string | null,
     kind: SurfaceRouteKind | null = null,
+    recovery: SurfaceEligibilityRecovery | null = null,
   ): void {
     const button = this.modeButtons.surface;
     const blocked = status === "ineligible";
+    const refusal = `Surface render unavailable: ${detail ?? "not marchable"}`;
+    const noteText = blocked
+      ? refusal
+      : status === "degraded" && detail
+        ? detail
+        : "";
     button.disabled = blocked;
-    button.title = blocked
-      ? `Surface render unavailable: ${detail ?? "not marchable"}`
-      : "Sphere-traced surface of the attractor";
-    // Text alone drives the note's visibility (see
-    // {@link setFlameSupersampleNote}): the element stays rendered so
-    // the live region actually announces a degrade.
-    this.surfaceNote.textContent =
-      status === "degraded" && detail ? detail : "";
+    button.title = blocked ? refusal : "Sphere-traced surface of the attractor";
+    // Text alone drives visibility; the element stays rendered so the live
+    // region announces transitions and remains outside hidden mode content.
+    this.setReasonNote(this.surfaceNote, noteText);
+    this.surfaceEligibilityRecoveryBtn.classList.toggle(
+      "hidden",
+      !blocked || recovery !== "disableShapeTrapGeometry",
+    );
     // The route kind reaches the transform editor's Finish group (see
     // surfaceRouteKind's doc): re-applied to a live editor here because the
     // gate refresh runs AFTER the editor build on every refresh path.

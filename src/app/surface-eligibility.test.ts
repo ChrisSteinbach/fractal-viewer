@@ -173,20 +173,22 @@ describe("deriveSurfaceEligibility for shape-trap geometry", () => {
   const colorTrap = { ...geometryTrap, geometry: false };
 
   it("admits the shipped conformal fold-chain geometry preset and a 4D conformal fold", () => {
-    expect(derivePreset("foldChainGear")).toMatchObject({
+    const flat = derivePreset("foldChainGear");
+    expect(flat).toMatchObject({
       status: "degraded",
       kind: "escape",
     });
-    expect(
-      deriveSurfaceEligibility(
-        presetTransforms("mandelboxBrick"),
-        null,
-        NO_SYMMETRY,
-        { computeAvailable: true },
-        null,
-        geometryTrap,
-      ),
-    ).toMatchObject({ status: "degraded", kind: "escape4" });
+    const nonFlat = deriveSurfaceEligibility(
+      presetTransforms("mandelboxBrick"),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      geometryTrap,
+    );
+    expect(nonFlat).toMatchObject({ status: "degraded", kind: "escape4" });
+    expect(flat.recovery).toBeUndefined();
+    expect(nonFlat.recovery).toBeUndefined();
   });
 
   it("refuses geometry on 3D and 4D power chains with the color-only way out", () => {
@@ -204,6 +206,7 @@ describe("deriveSurfaceEligibility for shape-trap geometry", () => {
       expect(result.note, preset).toContain("fold-only conformal escape chain");
       expect(result.note, preset).toContain("power maps are unsupported");
       expect(result.note, preset).toContain("keep this trap as a color source");
+      expect(result.recovery, preset).toBe("disableShapeTrapGeometry");
     }
   });
 
@@ -219,6 +222,7 @@ describe("deriveSurfaceEligibility for shape-trap geometry", () => {
     );
     expect(refused.status).toBe("ineligible");
     expect(refused.note).toContain("the Mandelbulb is a power map");
+    expect(refused.recovery).toBe("disableShapeTrapGeometry");
 
     const colored = deriveSurfaceEligibility(
       transforms,
@@ -253,6 +257,7 @@ describe("deriveSurfaceEligibility for shape-trap geometry", () => {
       expect(refused.note, preset).toContain(
         "keep this trap as a color source",
       );
+      expect(refused.recovery, preset).toBe("disableShapeTrapGeometry");
 
       expect(
         deriveSurfaceEligibility(
@@ -287,6 +292,7 @@ describe("deriveSurfaceEligibility for shape-trap geometry", () => {
     );
     expect(result.status).toBe("ineligible");
     expect(result.note).toContain("anisotropic (ratio 1.02)");
+    expect(result.recovery).toBe("disableShapeTrapGeometry");
   });
 
   it("refuses geometry rather than silently dropping it on 3D and 4D inverse descents", () => {
@@ -308,6 +314,7 @@ describe("deriveSurfaceEligibility for shape-trap geometry", () => {
       expect(refused.note, preset).toContain(
         "inverse-descent attractor tracer",
       );
+      expect(refused.recovery, preset).toBe("disableShapeTrapGeometry");
 
       const colored = deriveSurfaceEligibility(
         transforms,
@@ -319,6 +326,24 @@ describe("deriveSurfaceEligibility for shape-trap geometry", () => {
       );
       expect(colored.kind, preset).toBe(preset === "default" ? "ifs" : "ifs4");
     }
+  });
+
+  it("does not offer the geometry recovery for an unrelated refusal", () => {
+    const result = deriveSurfaceEligibility(
+      presetTransforms("mandelboxBrick"),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: false },
+      null,
+      geometryTrap,
+    );
+
+    expect(result).toMatchObject({
+      status: "ineligible",
+      note: "4D escape-time chains render on WebGPU compute, which is unavailable here",
+      kind: null,
+    });
+    expect(result.recovery).toBeUndefined();
   });
 });
 

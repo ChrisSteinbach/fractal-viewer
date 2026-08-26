@@ -186,11 +186,45 @@
           id="modeSurfaceBtn"
           type="button"
           aria-pressed="false"
+          aria-describedby="surfaceNote"
           title="Sphere-traced surface of the attractor"
         >
           ◈ Surface
         </button>
       </div>
+      <!-- Persistent eligibility for entering Surface. It stays outside the
+           mode-gated status block so keyboard and AT users can read a refusal
+           or degraded-route detail before entry. Tooltip and touch toast are
+           supplements; setSurfaceEligibility equality-guards live updates.
+           A structured analyzer remedy may reveal the adjacent recovery
+           button below; interactive content never enters the live region. -->
+      <p
+        id="surfaceNote"
+        class="flame-note-info"
+        role="status"
+        aria-live="polite"
+      ></p>
+      <button
+        class="btn btn-ghost hidden"
+        id="surfaceEligibilityRecoveryBtn"
+        type="button"
+        aria-describedby="surfaceNote"
+      >
+        Turn trap geometry off
+      </button>
+      <!-- Document-level disclosures stay beside the mode switch rather than
+           inside Points-only sections: every renderer is showing the same
+           effective symmetry/schedule, and reduced-motion disables Drift
+           everywhere. Symmetry and schedule are intentionally not live
+           regions because their text can change on slider drag ticks. -->
+      <p id="symmetryNote" class="flame-note hidden"></p>
+      <p id="scheduleNote" class="flame-note-info hidden"></p>
+      <p
+        id="driftNote"
+        class="flame-note-info"
+        role="status"
+        aria-live="polite"
+      ></p>
 
       <!-- Content that is NOT part of any accordion section lives here, above
            ALL the sections: floating content wedged between two collapsed
@@ -222,7 +256,7 @@
            per-mode status sections so a silently software-rendered
            session (the trigger incident: a browser-blocklisted GPU) is
            disclosed in every mode, Points included. -->
-      <!-- role="status" (here and on the four setter-driven notes below):
+      <!-- role="status" (here and on four setter-driven notes elsewhere):
            these populate/change mid-session — software-renderer detection, a
            CPU fallback on a flame restart, a memory clamp — so without a
            live region a screen-reader user gets no signal. The
@@ -232,7 +266,8 @@
            never carry .hidden: a live region entering the accessibility tree
            already populated announces unreliably, so the elements stay
            rendered, their setters toggle only TEXT, and style.css's :empty
-           rule collapses the empty state visually. -->
+           rule collapses the empty state visually. Surface eligibility can
+           also refresh on drag ticks, so its setter skips unchanged text. -->
       <p
         id="softwareRendererNote"
         class="flame-note"
@@ -296,12 +331,6 @@
           <input type="checkbox" id="surfacePreviewToggle" checked />
           Quick previews
         </label>
-        <p
-          id="surfaceNote"
-          class="flame-note-info"
-          role="status"
-          aria-live="polite"
-        ></p>
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>
         <!-- The preview tier's one-shot escape: shown only while a preview is
              actually grinding (setSurfaceProgress's skippable flag) — a WebGL
@@ -330,187 +359,6 @@
            exclusive `panel-section` name; nested disclosures must omit that
            name or use a different one so they never join an ancestor's group. -->
       <div id="panelSections" class="section-strip">
-        <!-- Capture vs Share: this section is PIXELS ONLY — one-way
-           snapshots of what's on screen. The scene-document traffic (link,
-           JSON file, .flame, import) lives in the Share section below. -->
-        <details class="panel-section" id="captureSection" name="panel-section">
-          <summary>Capture</summary>
-          <label class="select-label">
-            Capture size
-            <select
-              id="exportScale"
-              title="Resolution Save PNG renders at, as a multiple of the screen — large sizes may be capped by this device. While a Flame render is active it re-renders at the chosen size."
-            >
-              <option value="1" selected>1× (screen)</option>
-              <option value="2">2×</option>
-              <option value="4">4× (print)</option>
-            </select>
-          </label>
-          <button class="btn btn-ghost" id="savePngBtn" type="button">
-            ⤓ Save PNG
-          </button>
-          <button class="btn btn-ghost" id="recordVideoBtn" type="button">
-            ● Record video
-          </button>
-        </details>
-
-        <!-- Share: the current scene as a portable DOCUMENT — link, JSON
-           file, .flame interop — plus the app's one import door, which
-           format-sniffs every file kind (scene JSON, .flame, collection and
-           timeline backups; decodeImportFile routes). Always applicable: all
-           of it works while a flame/solid render is showing. -->
-        <details class="panel-section" id="shareSection" name="panel-section">
-          <summary>Share</summary>
-          <button class="btn btn-ghost" id="copyLinkBtn" type="button">
-            🔗 Copy link
-          </button>
-          <button
-            class="btn btn-ghost"
-            id="saveSceneFileBtn"
-            type="button"
-            title="Download the current scene as a JSON file — the file counterpart of 🔗 Copy link; load it back with ⬆ Import file on any device"
-          >
-            ⤓ Save scene file
-          </button>
-          <!-- flam3/Apophysis interop: the system's XY shadow as a
-             .flame file other flame tools can open. -->
-          <button
-            class="btn btn-ghost"
-            id="saveFlameFileBtn"
-            type="button"
-            title="Download the system as a flam3/Apophysis .flame file (its flat XY shadow) that other flame tools can open"
-          >
-            ⤓ Export .flame
-          </button>
-          <button
-            class="btn btn-ghost"
-            id="importFileBtn"
-            type="button"
-            title="Load a scene file, a flam3/Apophysis .flame file, or a timeline backup — or merge a collection backup into the gallery; you can also drop the file anywhere on the page"
-          >
-            ⬆ Import file
-          </button>
-          <input
-            type="file"
-            id="importFileInput"
-            class="hidden"
-            accept=".json,application/json,.flame,.xml,application/xml,text/xml"
-            aria-hidden="true"
-            tabindex="-1"
-          />
-          <p class="flame-hint">
-            Files also load by dropping them anywhere on the page.
-          </p>
-        </details>
-
-        <!-- Always applicable, like Capture: saving a keeper / opening the
-           gallery works while a flame/solid render is showing — the save then
-           captures the rendered frame and tags the entry with the mode it
-           came from. -->
-        <details
-          class="panel-section"
-          id="collectionSection"
-          name="panel-section"
-        >
-          <summary>Collection</summary>
-          <button class="btn btn-green" id="saveCollectionBtn" type="button">
-            ★ Save to collection
-          </button>
-          <button class="btn btn-ghost" id="galleryBtn" type="button">
-            ▦ Gallery (<span id="collectionCount">0</span>)
-          </button>
-          <!-- File backup: the collection otherwise lives only in this
-             browser profile's localStorage. Restore goes through the
-             Share section's ⬆ Import file / drag-drop. -->
-          <button
-            class="btn btn-ghost"
-            id="exportCollectionBtn"
-            type="button"
-            title="Download the whole collection as a JSON backup file — restore it with Share's ⬆ Import file"
-          >
-            ⬇ Back up collection
-          </button>
-          <!-- Native `disabled` pulls a button out of the tab ring, so its
-               title-only reason is invisible to a keyboard/AT user — this
-               mirrors it in prose beside the button, in the same
-               role="status" idiom as #surfaceNote et al. (see the
-               role="status" comment above #softwareRendererNote); the
-               setter guards against rewriting an unchanged reason so a
-               repeated refresh doesn't re-announce it. Same idiom on
-               driftNote and timelineNote below. -->
-          <p
-            id="exportCollectionNote"
-            class="flame-note-info"
-            role="status"
-            aria-live="polite"
-          ></p>
-        </details>
-
-        <!-- Animation timeline: an authored sequence of keyframes played back as a
-           chain of morphs — the drift show's directed counterpart. Always
-           applicable like Collection: adding a keyframe works from a
-           flame/solid render too (the capture falls back to what's showing). -->
-        <details
-          class="panel-section"
-          id="timelineSection"
-          name="panel-section"
-        >
-          <summary>Timeline</summary>
-          <button
-            class="btn btn-green"
-            id="timelineAddBtn"
-            type="button"
-            title="Capture the current view — system and camera — as the next keyframe"
-          >
-            📍 Add keyframe
-          </button>
-          <button
-            class="btn btn-ghost"
-            id="timelinePlayBtn"
-            type="button"
-            aria-pressed="false"
-            title="Play the timeline: morph through the keyframes in order, with each one's own timings"
-          >
-            ▶ Play timeline
-          </button>
-          <button
-            class="btn btn-ghost"
-            id="timelineExportBtn"
-            type="button"
-            title="Play the timeline while recording the canvas — downloads a video clip when it finishes"
-          >
-            ⏺ Export clip
-          </button>
-          <!-- See exportCollectionNote's comment above — same idiom,
-               SHARED between Play and Export (see the timelineNote
-               field's doc comment in ui.ts for why one note is safe: the
-               two buttons' disabled reasons never disagree at the same
-               moment). -->
-          <p
-            id="timelineNote"
-            class="flame-note-info"
-            role="status"
-            aria-live="polite"
-          ></p>
-          <!-- File backup: the timeline otherwise lives only in this
-             browser profile's localStorage. Restore goes through the Share
-             section's ⬆ Import file / drag-drop. -->
-          <button
-            class="btn btn-ghost"
-            id="exportTimelineBtn"
-            type="button"
-            title="Download the timeline as a JSON backup file — keyframes, timings, and the playback seed; restore it with Share's ⬆ Import file"
-          >
-            ⬇ Back up timeline
-          </button>
-          <div id="timelineStatus" class="timeline-status hidden"></div>
-          <div id="timelineList" class="timeline-list"></div>
-          <p id="timelineEmpty" class="timeline-empty">
-            📍 Add keyframe captures the current view. Build a sequence, then ▶
-            Play it — or ⏺ Export it as a video clip.
-          </p>
-        </details>
-
         <details
           class="panel-section"
           id="transformsSection"
@@ -686,19 +534,14 @@
             id="driftBtn"
             type="button"
             aria-pressed="false"
+            aria-describedby="driftNote"
             title="Ambient show: keep morphing into fresh random systems until you edit or toggle it off"
           >
             ▶ Drift
           </button>
-          <!-- See exportCollectionNote's comment further up (Collection
-               section) — same reason-in-prose idiom, guarded the same way
-               against re-announcing an unchanged reason. -->
-          <p
-            id="driftNote"
-            class="flame-note-info"
-            role="status"
-            aria-live="polite"
-          ></p>
+          <!-- #driftNote lives in the document-status area above the
+               accordion so reduced-motion remains disclosed in every mode;
+               aria-describedby preserves the explicit control association. -->
         </details>
 
         <!-- Appearance measured 839px with 29 controls, ~81% of it control
@@ -1260,7 +1103,6 @@
               value="0"
             />
           </label>
-          <p id="symmetryNote" class="flame-note hidden"></p>
         </details>
 
         <!-- The scheduled-hybrid post-word: system B bends every plotted
@@ -1308,7 +1150,6 @@
               value="0"
             />
           </label>
-          <p id="scheduleNote" class="flame-note hidden"></p>
         </details>
 
         <details
@@ -1905,8 +1746,9 @@
           <!-- The shape trap (Pickover shape-trapping): the escape family's
                second palette channel — the orbit's distance to a posed
                shape, stamped at every scale of the fractal. Visible only
-               for escape-family sessions (ui.setSurfaceSessionKind);
-               painted by the "Shape trap" color source above. -->
+               for escape-family sessions; panel-applicability.ts owns that
+               three-axis consumer rule. Painted by the "Shape trap" color
+               source above. -->
           <div id="surfaceTrapRow" class="hidden">
             <label
               class="select-label"
@@ -2368,6 +2210,190 @@
             </label>
           </div>
         </details>
+
+        <!-- Workflow output and library operations stay available in every
+             renderer, but follow the active editing and View / Device
+             sections in DOM and native focus order (docs/panel-ia.md). -->
+        <!-- Always applicable, like Capture: saving a keeper / opening the
+           gallery works while a flame/solid render is showing — the save then
+           captures the rendered frame and tags the entry with the mode it
+           came from. -->
+        <details
+          class="panel-section"
+          id="collectionSection"
+          name="panel-section"
+        >
+          <summary>Collection</summary>
+          <button class="btn btn-green" id="saveCollectionBtn" type="button">
+            ★ Save to collection
+          </button>
+          <button class="btn btn-ghost" id="galleryBtn" type="button">
+            ▦ Gallery (<span id="collectionCount">0</span>)
+          </button>
+          <!-- File backup: the collection otherwise lives only in this
+             browser profile's localStorage. Restore goes through the
+             Share section's ⬆ Import file / drag-drop. -->
+          <button
+            class="btn btn-ghost"
+            id="exportCollectionBtn"
+            type="button"
+            title="Download the whole collection as a JSON backup file — restore it with Share's ⬆ Import file"
+          >
+            ⬇ Back up collection
+          </button>
+          <!-- Native `disabled` pulls a button out of the tab ring, so its
+               title-only reason is invisible to a keyboard/AT user — this
+               mirrors it in prose beside the button, in the same
+               role="status" idiom as #surfaceNote et al. (see the
+               role="status" comment above #softwareRendererNote); the
+               setter guards against rewriting an unchanged reason so a
+               repeated refresh doesn't re-announce it. Same idiom on the
+               global driftNote and on timelineNote below. -->
+          <p
+            id="exportCollectionNote"
+            class="flame-note-info"
+            role="status"
+            aria-live="polite"
+          ></p>
+        </details>
+
+        <!-- Animation timeline: an authored sequence of keyframes played back as a
+           chain of morphs — the drift show's directed counterpart. Always
+           applicable like Collection: adding a keyframe works from a
+           flame/solid render too (the capture falls back to what's showing). -->
+        <details
+          class="panel-section"
+          id="timelineSection"
+          name="panel-section"
+        >
+          <summary>Timeline</summary>
+          <button
+            class="btn btn-green"
+            id="timelineAddBtn"
+            type="button"
+            title="Capture the current view — system and camera — as the next keyframe"
+          >
+            📍 Add keyframe
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="timelinePlayBtn"
+            type="button"
+            aria-pressed="false"
+            title="Play the timeline: morph through the keyframes in order, with each one's own timings"
+          >
+            ▶ Play timeline
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="timelineExportBtn"
+            type="button"
+            title="Play the timeline while recording the canvas — downloads a video clip when it finishes"
+          >
+            ⏺ Export clip
+          </button>
+          <!-- See exportCollectionNote's comment above — same idiom,
+               SHARED between Play and Export (see the timelineNote
+               field's doc comment in ui.ts for why one note is safe: the
+               two buttons' disabled reasons never disagree at the same
+               moment). -->
+          <p
+            id="timelineNote"
+            class="flame-note-info"
+            role="status"
+            aria-live="polite"
+          ></p>
+          <!-- File backup: the timeline otherwise lives only in this
+             browser profile's localStorage. Restore goes through the Share
+             section's ⬆ Import file / drag-drop. -->
+          <button
+            class="btn btn-ghost"
+            id="exportTimelineBtn"
+            type="button"
+            title="Download the timeline as a JSON backup file — keyframes, timings, and the playback seed; restore it with Share's ⬆ Import file"
+          >
+            ⬇ Back up timeline
+          </button>
+          <div id="timelineStatus" class="timeline-status hidden"></div>
+          <div id="timelineList" class="timeline-list"></div>
+          <p id="timelineEmpty" class="timeline-empty">
+            📍 Add keyframe captures the current view. Build a sequence, then ▶
+            Play it — or ⏺ Export it as a video clip.
+          </p>
+        </details>
+
+        <!-- Capture vs Share: this section is PIXELS ONLY — one-way
+           snapshots of what's on screen. The scene-document traffic (link,
+           JSON file, .flame, import) lives in the Share section below. -->
+        <details class="panel-section" id="captureSection" name="panel-section">
+          <summary>Capture</summary>
+          <label class="select-label">
+            Capture size
+            <select
+              id="exportScale"
+              title="Resolution Save PNG renders at, as a multiple of the screen — large sizes may be capped by this device. While a Flame render is active it re-renders at the chosen size."
+            >
+              <option value="1" selected>1× (screen)</option>
+              <option value="2">2×</option>
+              <option value="4">4× (print)</option>
+            </select>
+          </label>
+          <button class="btn btn-ghost" id="savePngBtn" type="button">
+            ⤓ Save PNG
+          </button>
+          <button class="btn btn-ghost" id="recordVideoBtn" type="button">
+            ● Record video
+          </button>
+        </details>
+
+        <!-- Share: the current scene as a portable DOCUMENT — link, JSON
+           file, .flame interop — plus the app's one import door, which
+           format-sniffs every file kind (scene JSON, .flame, collection and
+           timeline backups; decodeImportFile routes). Always applicable: all
+           of it works while a flame/solid render is showing. -->
+        <details class="panel-section" id="shareSection" name="panel-section">
+          <summary>Share</summary>
+          <button class="btn btn-ghost" id="copyLinkBtn" type="button">
+            🔗 Copy link
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="saveSceneFileBtn"
+            type="button"
+            title="Download the current scene as a JSON file — the file counterpart of 🔗 Copy link; load it back with ⬆ Import file on any device"
+          >
+            ⤓ Save scene file
+          </button>
+          <!-- flam3/Apophysis interop: the system's XY shadow as a
+             .flame file other flame tools can open. -->
+          <button
+            class="btn btn-ghost"
+            id="saveFlameFileBtn"
+            type="button"
+            title="Download the system as a flam3/Apophysis .flame file (its flat XY shadow) that other flame tools can open"
+          >
+            ⤓ Export .flame
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="importFileBtn"
+            type="button"
+            title="Load a scene file, a flam3/Apophysis .flame file, or a timeline backup — or merge a collection backup into the gallery; you can also drop the file anywhere on the page"
+          >
+            ⬆ Import file
+          </button>
+          <input
+            type="file"
+            id="importFileInput"
+            class="hidden"
+            accept=".json,application/json,.flame,.xml,application/xml,text/xml"
+            aria-hidden="true"
+            tabindex="-1"
+          />
+          <p class="flame-hint">
+            Files also load by dropping them anywhere on the page.
+          </p>
+        </details>
       </div>
     </div>
 
@@ -2478,6 +2504,7 @@
             id="galleryDriftBtn"
             class="btn btn-blue gallery-drift-btn"
             type="button"
+            aria-describedby="galleryDriftNote"
             title="Ambient show: loop through this collection, morphing from one saved system to the next"
           >
             ▶ Drift collection
@@ -2491,6 +2518,15 @@
             ✕
           </button>
         </div>
+        <!-- Modal-local mirror: aria-modal makes the page behind the gallery
+             inert, so the always-visible #driftNote cannot carry this
+             button's reduced-motion/empty-collection reason by itself. -->
+        <p
+          id="galleryDriftNote"
+          class="flame-note-info"
+          role="status"
+          aria-live="polite"
+        ></p>
         <p id="galleryEmpty" class="gallery-empty hidden">
           No saved systems yet. Roll “Surprise Me”, shape a system you like,
           then ★ Save to collection to keep it here.
