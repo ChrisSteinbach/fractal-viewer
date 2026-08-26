@@ -469,6 +469,9 @@ describe("conservative mesh SDF bake", () => {
     }
   });
 
+  // This is a production-resolution quality gate, not a wall-time gate.
+  // Instrumented coverage runs need more room than the separately measured
+  // cold-bake benchmark.
   it("retains all twelve snowflake side branches in the 64^3 bake", () => {
     const bake = bakeMeshSdf("snowflake-prism-v1", 64);
     for (let sector = 0; sector < 6; sector++) {
@@ -490,7 +493,7 @@ describe("conservative mesh SDF bake", () => {
         expect(sampleMeshSdf(bake, p[0], p[1], p[2])).toBeLessThan(0);
       }
     }
-  });
+  }, 30_000);
 
   it("uses the containing-box distance as a conservative far-outside floor", () => {
     const bake = bakeMeshSdf(ID, 12);

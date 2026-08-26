@@ -655,6 +655,8 @@ describe("GLSL condensation packing and source", () => {
     );
   });
 
+  // Source resolution intentionally cold-bakes the largest active asset;
+  // coverage instrumentation is much slower than the production benchmark.
   it("compacts active mesh slabs while keeping stable catalog-id dispatch", () => {
     const requested = [
       MESH_ASSET_IDS.at(-1)!,
@@ -693,7 +695,7 @@ describe("GLSL condensation packing and source", () => {
         `if (mesh == ${String(meshAssetCatalogIndex(inactiveId))})`,
       );
     }
-  });
+  }, 30_000);
 
   it("uploads the cached active-set R32F atlas and restores the 1^3 placeholder", () => {
     const material = createSurfaceMaterial();

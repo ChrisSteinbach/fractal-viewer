@@ -6555,6 +6555,10 @@ describe("box-branch decode duplication", () => {
 });
 
 describe("surfaceDeKernelWgsl shape trap (shapeTrap)", () => {
+  // This deliberately cold-bakes the largest production asset. V8 coverage
+  // instrumentation is several times slower than the separately gated
+  // production benchmark, so give the structural source assertion room to
+  // finish without weakening the benchmark's 2 s application budget.
   it("emits compact slabs while dispatching every active stable catalog id", () => {
     const requested = [
       MESH_ASSET_IDS.at(-1)!,
@@ -6581,7 +6585,7 @@ describe("surfaceDeKernelWgsl shape trap (shapeTrap)", () => {
     expect(wgsl.match(/fn shapeMeshSdf\d+\(p: vec3f\)/g)).toHaveLength(
       activeIds.length,
     );
-  });
+  }, 30_000);
 
   it("omitted and explicit shapeTrap:null produce identical source across every mode/core/variant — the byte-identical off state", () => {
     const cases: Partial<SurfaceGpuKernelOptions>[] = [
