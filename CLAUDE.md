@@ -43,6 +43,8 @@ in `docs/`. The subsystem records:
 - `docs/fold-de-performance-brief.md`, `docs/quaternion-julia-brief.md`,
   `docs/julia-sets.md`, `docs/4d-exploration.md`, `docs/flame-interop.md`,
   `docs/controls.md` — standing briefs.
+- `docs/panel-ia.md` — the accepted control-family, applicability and edit-
+  behavior contract for placing panel controls.
 
 ## Dimensional Parity — the 4D half is not a follow-up
 
@@ -119,6 +121,18 @@ different object.
 - **An unlifted gap is disclosed, not quietly filed.** A session that ends
   3D-only says so in the PR description and in its closing summary, as
   unfinished work. The bead is the tracking; it is not the disclosure.
+
+## Panel information architecture — classify before placing
+
+**Every panel control has one conceptual home — Scene / Look, Renderer,
+View / Device, or Workflow — chosen independently of its consumers, lifetime
+and edit behavior.** Keep the native exclusive-open top-level accordion;
+sections own applicability, shared open sections survive renderer changes,
+dependent details hide, dormant authored capabilities disable with an adjacent
+reason, document status never lives only under a mode gate, and every visible
+edit discloses whether it is live, restarts, applies on next entry, or is
+refused. Active editing precedes output/library controls. The placement record,
+ordering and examples are in `docs/panel-ia.md`.
 
 ## Commands
 

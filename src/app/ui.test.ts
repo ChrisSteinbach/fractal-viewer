@@ -1031,6 +1031,9 @@ describe("Ui Solid balloon rows", () => {
     expect(solidBalloonRow().classList.contains("hidden")).toBe(false);
     expect(solidBalloonCheckbox().checked).toBe(true);
     expect(solidBalloonCheckbox().disabled).toBe(true);
+    expect(solidBalloonCheckbox().getAttribute("aria-describedby")).toBe(
+      "solidBalloonNote",
+    );
     expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(true);
     expect(solidBalloonTintRow().classList.contains("hidden")).toBe(true);
     expect(solidBalloonNote().classList.contains("hidden")).toBe(false);
@@ -1067,8 +1070,22 @@ describe("Ui surface balloon rows", () => {
   function surfaceBalloonRow(): HTMLElement {
     return document.getElementById("surfaceBalloonRow") as HTMLElement;
   }
+  function surfaceBalloonCheckbox(): HTMLInputElement {
+    return document.getElementById(
+      "surfaceBalloonCheckbox",
+    ) as HTMLInputElement;
+  }
+  function surfaceBalloonNote(): HTMLElement {
+    return document.getElementById("surfaceBalloonNote") as HTMLElement;
+  }
+  function surfaceBalloonPaletteRow(): HTMLElement {
+    return document.getElementById("surfaceBalloonPaletteRow") as HTMLElement;
+  }
   function surfaceBalloonRadiusRow(): HTMLElement {
     return document.getElementById("surfaceBalloonRadiusRow") as HTMLElement;
+  }
+  function surfaceBalloonTintRow(): HTMLElement {
+    return document.getElementById("surfaceBalloonTintRow") as HTMLElement;
   }
 
   it("hides the radius row while the balloon is off", () => {
@@ -1079,7 +1096,10 @@ describe("Ui surface balloon rows", () => {
       balloonEcho: false,
     });
     expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(surfaceBalloonCheckbox().disabled).toBe(false);
+    expect(surfaceBalloonPaletteRow().classList.contains("hidden")).toBe(false);
     expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
   });
 
   it("shows the radius row while the balloon is on", () => {
@@ -1118,11 +1138,38 @@ describe("Ui surface balloon rows", () => {
     expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("hides both rows when the active surface session is escape-shaped", () => {
-    // The balloon is permanently inert for the escape solid — main.ts
-    // pushes the session's actual routing decision via
-    // setSurfaceSessionKind, independent of fourDSurfaceLive's own
-    // document-derived gate.
+  it.each(["escape", "bulb"] as const)(
+    "refuses the balloon accessibly while preserving authored state in a %s session",
+    (kind) => {
+      const ui = new Ui(document);
+      ui.setSurfaceSessionKind(kind);
+      ui.updateLabels({
+        ...initialState(true),
+        renderMode: "surface" as const,
+        balloonEcho: true,
+      });
+
+      expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
+      expect(surfaceBalloonCheckbox().checked).toBe(true);
+      expect(surfaceBalloonCheckbox().disabled).toBe(true);
+      expect(surfaceBalloonCheckbox().getAttribute("aria-describedby")).toBe(
+        "surfaceBalloonNote",
+      );
+      expect(surfaceBalloonNote().getAttribute("role")).toBe("status");
+      expect(surfaceBalloonNote().getAttribute("aria-live")).toBe("polite");
+      expect(surfaceBalloonNote().classList.contains("hidden")).toBe(false);
+      expect(surfaceBalloonNote().textContent).toBe(
+        "Balloon unavailable — this solid fills its enclosing-ball centre.",
+      );
+      expect(surfaceBalloonPaletteRow().classList.contains("hidden")).toBe(
+        true,
+      );
+      expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+      expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
+    },
+  );
+
+  it("keeps a refusal across refreshes, then restores authored rows for IFS", () => {
     const ui = new Ui(document);
     ui.setSurfaceSessionKind("escape");
     ui.updateLabels({
@@ -1130,38 +1177,24 @@ describe("Ui surface balloon rows", () => {
       renderMode: "surface" as const,
       balloonEcho: true,
     });
-    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(true);
-    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
-  });
 
-  it("shows both rows again once the session kind resets off escape", () => {
-    const ui = new Ui(document);
-    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      balloonEcho: true,
+    });
+    expect(surfaceBalloonCheckbox().checked).toBe(true);
+    expect(surfaceBalloonCheckbox().disabled).toBe(true);
+
     ui.setSurfaceSessionKind("ifs");
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "surface" as const,
-      balloonEcho: true,
-    });
     expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(surfaceBalloonCheckbox().checked).toBe(true);
+    expect(surfaceBalloonCheckbox().disabled).toBe(false);
+    expect(surfaceBalloonPaletteRow().classList.contains("hidden")).toBe(false);
     expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
-  });
-
-  it("hides both rows when the active surface session is a Mandelbulb", () => {
-    // Measured, not inherited: the Mandelbulb's interior reaches the ball
-    // centre exactly as the escape solid's does, so its echo swallows the
-    // camera and every ray hits at t ~ 0 (measured: union DE at the
-    // session's own opening eye is exactly 0 at R = 0.35 and 0.9). Same
-    // treatment as the escape kind, for the same reason.
-    const ui = new Ui(document);
-    ui.setSurfaceSessionKind("bulb");
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "surface" as const,
-      balloonEcho: true,
-    });
-    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(true);
-    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(false);
+    expect(surfaceBalloonNote().classList.contains("hidden")).toBe(true);
+    expect(surfaceBalloonNote().textContent).toBe("");
   });
 
   it("fires onBalloonInflate when the surface Inflate button is clicked", () => {
@@ -1317,7 +1350,7 @@ describe("Ui shape-trap geometry", () => {
 
       expect(
         document
-          .getElementById("surfaceControls")
+          .getElementById("surfaceLookSection")
           ?.classList.contains("hidden"),
       ).toBe(false);
       expect(row().classList.contains("hidden")).toBe(false);
@@ -1592,7 +1625,7 @@ describe("Ui balloon tint", () => {
   it("hides the Surface tint row for an escape surface session even with the balloon on", () => {
     // Mirrors surfaceBalloonRadiusRow's own test above: the balloon is
     // permanently inert for the escape solid, and the tint row rides the
-    // exact same surfaceBalloonHidden gate as the radius row.
+    // exact same Surface-refusal gate as the radius row.
     const ui = new Ui(document);
     ui.setSurfaceSessionKind("escape");
     ui.updateLabels({
@@ -4724,20 +4757,30 @@ describe("Ui render mode switch", () => {
   function renderModeSwitch(): HTMLElement {
     return document.getElementById("renderModeSwitch") as HTMLElement;
   }
-  function explorerControls(): HTMLElement {
-    return document.getElementById("explorerControls") as HTMLElement;
-  }
-  function flameControls(): HTMLElement {
-    return document.getElementById("flameControls") as HTMLElement;
-  }
-  function solidControls(): HTMLElement {
-    return document.getElementById("solidControls") as HTMLElement;
-  }
-  function surfaceControls(): HTMLElement {
-    return document.getElementById("surfaceControls") as HTMLElement;
-  }
-  function atmosphereControls(): HTMLElement {
-    return document.getElementById("atmosphereControls") as HTMLElement;
+  const POINT_SECTION_IDS = [
+    "transformsSection",
+    "xaosSection",
+    "presetSection",
+    "cloudSection",
+    "colorSection",
+    "symmetrySection",
+    "scheduleSection",
+  ] as const;
+  const FLAME_SECTION_IDS = [
+    "flameToneSection",
+    "flameBlurSection",
+    "flameQualitySection",
+  ] as const;
+  const SOLID_SECTION_IDS = [
+    "solidSurfaceSection",
+    "solidLightingSection",
+    "solidQualitySection",
+  ] as const;
+
+  function expectSectionsHidden(ids: readonly string[], hidden: boolean): void {
+    for (const id of ids) {
+      expect(byId(id).classList.contains("hidden"), id).toBe(hidden);
+    }
   }
 
   it("fires onRenderMode with the flame mode when the flame segment is clicked", () => {
@@ -4808,9 +4851,10 @@ describe("Ui render mode switch", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "flame" });
 
-    expect(explorerControls().classList.contains("hidden")).toBe(true);
-    expect(flameControls().classList.contains("hidden")).toBe(false);
-    expect(solidControls().classList.contains("hidden")).toBe(true);
+    expectSectionsHidden(POINT_SECTION_IDS, true);
+    expectSectionsHidden(FLAME_SECTION_IDS, false);
+    expectSectionsHidden(SOLID_SECTION_IDS, true);
+    expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(true);
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(false);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
@@ -4823,9 +4867,10 @@ describe("Ui render mode switch", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
 
-    expect(explorerControls().classList.contains("hidden")).toBe(true);
-    expect(solidControls().classList.contains("hidden")).toBe(false);
-    expect(flameControls().classList.contains("hidden")).toBe(true);
+    expectSectionsHidden(POINT_SECTION_IDS, true);
+    expectSectionsHidden(SOLID_SECTION_IDS, false);
+    expectSectionsHidden(FLAME_SECTION_IDS, true);
+    expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(true);
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
@@ -4837,10 +4882,10 @@ describe("Ui render mode switch", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
 
-    expect(explorerControls().classList.contains("hidden")).toBe(true);
-    expect(surfaceControls().classList.contains("hidden")).toBe(false);
-    expect(flameControls().classList.contains("hidden")).toBe(true);
-    expect(solidControls().classList.contains("hidden")).toBe(true);
+    expectSectionsHidden(POINT_SECTION_IDS, true);
+    expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(false);
+    expectSectionsHidden(FLAME_SECTION_IDS, true);
+    expectSectionsHidden(SOLID_SECTION_IDS, true);
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("surfaceStatus").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
@@ -4854,15 +4899,12 @@ describe("Ui render mode switch", () => {
     const state = initialState(true);
     const atmosphere = byId("atmosphereSection");
 
-    expect(atmosphereControls().contains(atmosphere)).toBe(true);
-    expect(explorerControls().contains(atmosphere)).toBe(false);
-    expect(surfaceControls().contains(atmosphere)).toBe(false);
+    expect(atmosphere.parentElement).toBe(byId("panelSections"));
 
     ui.updateLabels({ ...state, renderMode: "surface" });
-    expect(atmosphereControls().classList.contains("hidden")).toBe(false);
-    expect(byId("explorerSecondaryControls").classList.contains("hidden")).toBe(
-      true,
-    );
+    expect(atmosphere.classList.contains("hidden")).toBe(false);
+    expect(byId("symmetrySection").classList.contains("hidden")).toBe(true);
+    expect(byId("scheduleSection").classList.contains("hidden")).toBe(true);
     expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
       true,
     );
@@ -4870,14 +4912,14 @@ describe("Ui render mode switch", () => {
     expect(byId("fogControls").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels({ ...state, renderMode: "solid" });
-    expect(atmosphereControls().classList.contains("hidden")).toBe(false);
+    expect(atmosphere.classList.contains("hidden")).toBe(false);
     expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
       true,
     );
     expect(byId("fogControls").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels({ ...state, renderMode: "flame" });
-    expect(atmosphereControls().classList.contains("hidden")).toBe(false);
+    expect(atmosphere.classList.contains("hidden")).toBe(false);
     expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
       true,
     );
@@ -4885,9 +4927,8 @@ describe("Ui render mode switch", () => {
     expect(byId("fogControls").classList.contains("hidden")).toBe(true);
 
     ui.updateLabels(state);
-    expect(byId("explorerSecondaryControls").classList.contains("hidden")).toBe(
-      false,
-    );
+    expect(byId("symmetrySection").classList.contains("hidden")).toBe(false);
+    expect(byId("scheduleSection").classList.contains("hidden")).toBe(false);
     expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
       false,
     );
@@ -4898,9 +4939,10 @@ describe("Ui render mode switch", () => {
     const ui = new Ui(document);
     ui.updateLabels(initialState(true));
 
-    expect(explorerControls().classList.contains("hidden")).toBe(false);
-    expect(flameControls().classList.contains("hidden")).toBe(true);
-    expect(solidControls().classList.contains("hidden")).toBe(true);
+    expectSectionsHidden(POINT_SECTION_IDS, false);
+    expectSectionsHidden(FLAME_SECTION_IDS, true);
+    expectSectionsHidden(SOLID_SECTION_IDS, true);
+    expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(true);
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
@@ -4910,37 +4952,32 @@ describe("Ui render mode switch", () => {
 
   // The accordion reads correctly only if nothing floats between section
   // headers: content wedged between two collapsed <summary> rows looks like
-  // the open content of the section above it. So the mode containers hold
-  // accordion sections and nothing else — shared Undo/Redo and each mode's
-  // status text live above the first section, right after the render-mode
-  // switch.
-  it("keeps every non-section block above the first accordion section", () => {
-    for (const containerId of [
-      "explorerControls",
-      "atmosphereControls",
-      "explorerSecondaryControls",
-      "flameControls",
-      "solidControls",
-      "surfaceControls",
-    ]) {
-      const children = Array.from(byId(containerId).children);
-      expect(children.length).toBeGreaterThan(0);
-      for (const child of children) {
-        expect(
-          child.matches("details.panel-section"),
-          `#${containerId} > ${child.tagName.toLowerCase()} floats between accordion sections`,
-        ).toBe(true);
-      }
+  // the open content of the section above it. So one semantic strip owns all
+  // top-level sections and nothing else — shared Undo/Redo and each mode's
+  // status text live above it, right after the render-mode switch.
+  it("keeps every top-level section in one strip after all floating blocks", () => {
+    expect(document.querySelectorAll("#panel > .section-strip")).toHaveLength(
+      1,
+    );
+    const strip = byId("panelSections");
+    const children = Array.from(strip.children);
+    expect(children).toEqual([
+      ...document.querySelectorAll("#panel details.panel-section"),
+    ]);
+    for (const child of children) {
+      expect(
+        child.matches("details.panel-section"),
+        `#panelSections > ${child.tagName.toLowerCase()} is not a panel section`,
+      ).toBe(true);
     }
 
-    const firstSection = document.querySelector("#panel details.panel-section");
     for (const floatingId of [
       "undoRedoRow",
       "flameStatus",
       "solidStatus",
       "surfaceStatus",
     ]) {
-      const position = byId(floatingId).compareDocumentPosition(firstSection!);
+      const position = byId(floatingId).compareDocumentPosition(strip);
       expect(
         position & Node.DOCUMENT_POSITION_FOLLOWING,
         `#${floatingId} must precede the accordion`,
@@ -5968,9 +6005,9 @@ describe("Ui ramp palette", () => {
     expect(el("rampPaletteRow").closest("details")?.id).toBe("colorSection");
     expect(el("fourDColorRow").classList.contains("hidden")).toBe(true);
 
-    // Non-flat: the visible select flips; the ramp row itself never moves —
-    // the exclusive-open accordion's gate/gated co-location holds
-    // statically because exactly one of the pair shows per view.
+    // Non-flat: the visible select flips; the ramp row itself never moves.
+    // Its dependent relationship with the select — not top-level accordion
+    // exclusivity — keeps both in the Color section.
     ui.updateLabels({
       ...initialState(true),
       transforms: nonFlatTransforms(),
@@ -6239,11 +6276,11 @@ describe("Ui 4D view gating", () => {
 
     ui.updateLabels({ ...nonFlat, renderMode: "flame" as const });
     expect(el("fourDControls").classList.contains("hidden")).toBe(true);
-    expect(el("flameControls").classList.contains("hidden")).toBe(false);
+    expect(el("flameToneSection").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels({ ...nonFlat, renderMode: "solid" as const });
     expect(el("fourDControls").classList.contains("hidden")).toBe(true);
-    expect(el("solidControls").classList.contains("hidden")).toBe(false);
+    expect(el("solidSurfaceSection").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels(nonFlat);
     expect(el("fourDControls").classList.contains("hidden")).toBe(false);
@@ -6271,9 +6308,9 @@ describe("Ui 4D view gating", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
-    // explorerControls stays visible (its wrapper is not hidden), so the
-    // kept-live controls inside it remain interactive.
-    expect(el("explorerControls").classList.contains("hidden")).toBe(false);
+    // Each owning section stays visible, so the kept-live controls inside it
+    // remain interactive without relying on a wrapper gate.
+    expect(el("cloudSection").classList.contains("hidden")).toBe(false);
     expect(el("pointSizeSlider").classList.contains("hidden")).toBe(false);
     expect(el("regenerateBtn").classList.contains("hidden")).toBe(false);
     expect(el("showGuides").classList.contains("hidden")).toBe(false);
@@ -7341,15 +7378,17 @@ describe("panel accordion sections", () => {
   const sections = (): HTMLDetailsElement[] =>
     Array.from(
       document.querySelectorAll<HTMLDetailsElement>(
-        "#panel details.panel-section",
+        "#panelSections > details.panel-section",
       ),
     );
 
-  it("every section joins the one exclusive name group and has a summary", () => {
+  it("every top-level section directly joins the one exclusive name group", () => {
+    const strip = document.getElementById("panelSections");
     expect(sections().length).toBeGreaterThanOrEqual(7);
     for (const section of sections()) {
+      expect(section.parentElement).toBe(strip);
       expect(section.getAttribute("name")).toBe("panel-section");
-      expect(section.querySelector("summary")).not.toBeNull();
+      expect(section.firstElementChild?.tagName).toBe("SUMMARY");
     }
   });
 
@@ -7358,10 +7397,11 @@ describe("panel accordion sections", () => {
     expect(open.map((section) => section.id)).toEqual(["presetSection"]);
   });
 
-  // Each render mode remembers its own open section; switching modes
-  // restores it (defaults: Presets / Tone / Surface). jsdom doesn't enforce
-  // the name-group exclusivity — real browsers close the others — so these
-  // assert only what Ui itself does: open the target on a mode change.
+  // Each render mode remembers its contextual section; switching modes uses
+  // that fallback when the outgoing section becomes hidden. A still-visible
+  // open section instead survives the switch. jsdom doesn't enforce the
+  // name-group exclusivity — real browsers close the others — so tests below
+  // simulate that close when opening a different section by hand.
   const details = (id: string): HTMLDetailsElement => {
     const el = document.getElementById(id);
     if (!(el instanceof HTMLDetailsElement))
@@ -7387,25 +7427,51 @@ describe("panel accordion sections", () => {
     expect(details("surfaceLookSection").open).toBe(true);
   });
 
-  it("restores Atmosphere as Surface's remembered shared section", () => {
+  const hiddenOpenSections = (): string[] =>
+    sections()
+      .filter((section) => section.open && section.classList.contains("hidden"))
+      .map((section) => section.id);
+
+  it("keeps an open shared section through Points → Surface → Points", () => {
     const ui = new Ui(document);
     const points = initialState(true);
     const surface = { ...points, renderMode: "surface" as const };
-    ui.updateLabels(surface);
 
-    // Simulate the native exclusive-name exchange when the user opens the
-    // shared Atmosphere section in Surface mode. jsdom does not close the
-    // previously open details element itself.
-    details("surfaceLookSection").open = false;
+    // Simulate the native exclusive-name exchange when the user opens shared
+    // Atmosphere in Points mode.
+    details("presetSection").open = false;
     const atmosphere = details("atmosphereSection");
     atmosphere.open = true;
     atmosphere.dispatchEvent(new Event("toggle"));
 
-    ui.updateLabels(points);
-    atmosphere.open = false; // the browser closes it when Presets reopens
     ui.updateLabels(surface);
-
     expect(atmosphere.open).toBe(true);
+    expect(details("surfaceLookSection").open).toBe(false);
+    expect(hiddenOpenSections()).toEqual([]);
+
+    ui.updateLabels(points);
+    expect(atmosphere.open).toBe(true);
+    expect(details("presetSection").open).toBe(false);
+    expect(hiddenOpenSections()).toEqual([]);
+  });
+
+  it("restores contextual per-mode memory when the open section becomes hidden", () => {
+    const ui = new Ui(document);
+    const points = initialState(true);
+    const flame = { ...points, renderMode: "flame" as const };
+
+    ui.updateLabels(flame);
+    details("flameToneSection").open = false;
+    details("flameBlurSection").open = true;
+    details("flameBlurSection").dispatchEvent(new Event("toggle"));
+
+    ui.updateLabels({ ...points, renderMode: "solid" });
+    expect(details("solidSurfaceSection").open).toBe(true);
+    expect(hiddenOpenSections()).toEqual([]);
+
+    ui.updateLabels(flame);
+    expect(details("flameBlurSection").open).toBe(true);
+    expect(hiddenOpenSections()).toEqual([]);
   });
 
   it("returning to points restores the explorer's section", () => {
@@ -7443,9 +7509,24 @@ describe("panel accordion sections", () => {
 
     expect(details("flameToneSection").open).toBe(false);
     expect(presets.open).toBe(false);
+    expect(hiddenOpenSections()).toEqual([]);
   });
 
-  it("keeps the editor's disclosures out of any enclosing accordion group", () => {
+  it("closes a hidden-open section even without another mode change", () => {
+    const ui = new Ui(document);
+    const flame = { ...initialState(true), renderMode: "flame" as const };
+    ui.updateLabels(flame);
+
+    const presets = details("presetSection");
+    presets.open = true;
+    expect(presets.classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels({ ...flame });
+    expect(presets.open).toBe(false);
+    expect(hiddenOpenSections()).toEqual([]);
+  });
+
+  it("keeps nested disclosures out of their ancestor's accordion group", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(
@@ -7465,17 +7546,27 @@ describe("panel accordion sections", () => {
       ),
     ];
     expect(editorDetails.length).toBeGreaterThan(0);
+    expect(
+      new Set(editorDetails.map((details) => details.getAttribute("name"))),
+    ).toEqual(new Set(["transform-editor-group"]));
 
-    // The editor's groups nest INSIDE the Transforms section, and a details
-    // name group must not contain nested members — sharing a name with any
-    // ancestor disclosure would hand browsers an invalid group and make the
-    // exclusivity misfire. The groups have a name of their own, so assert
-    // the actual spec rule rather than "no name at all": no editor
-    // disclosure may share a name with a disclosure that contains it.
-    for (const details of editorDetails) {
-      const name = details.getAttribute("name");
-      expect(name).not.toBeNull();
-      const clash = details.parentElement?.closest(`details[name="${name}"]`);
+    const xaosMatrix = details("xaosMatrixSection");
+    expect(xaosMatrix.getAttribute("name")).toBeNull();
+
+    // A nested detail may be independent (Xaos matrix: no name) or form a
+    // nested exclusive sibling group (transform editor: a different name),
+    // but it must never join the top-level/ancestor group.
+    const nestedDetails = [
+      ...document.querySelectorAll<HTMLDetailsElement>(
+        "#panelSections details:not(.panel-section)",
+      ),
+    ];
+    expect(nestedDetails).toContain(xaosMatrix);
+    for (const nested of nestedDetails) {
+      const name = nested.getAttribute("name");
+      expect(name).not.toBe("panel-section");
+      if (name === null) continue;
+      const clash = nested.parentElement?.closest(`details[name="${name}"]`);
       expect(clash).toBeFalsy();
     }
   });
