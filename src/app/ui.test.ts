@@ -8783,17 +8783,16 @@ describe("visible control lifetimes", () => {
     return normalizedText(label.querySelector(".control-scope"));
   };
 
-  it("defines the three visible scope phrases and the unmarked scene default", () => {
-    const key = document.getElementById("controlScopeKey");
-    expect(key).not.toBeNull();
-    expect(key?.classList.contains("hidden")).toBe(false);
-    expect(key?.classList.contains("visually-hidden")).toBe(false);
-    expect(normalizedText(key)).toBe(
-      "Unmarked controls edit the scene. Saved view travels when you save or share. This session resets on reload. This browser is remembered only here.",
-    );
-    for (const phrase of ["Saved view", "This session", "This browser"]) {
-      expect(normalizedText(key)).toContain(phrase);
-    }
+  it("names the render-mode switch without a visible heading or legend", () => {
+    // The scope legend paragraph and the "Render mode / This session"
+    // heading row were removed from the panel header; the switch keeps its
+    // accessible name and no dangling aria reference to the removed nodes.
+    expect(document.getElementById("controlScopeKey")).toBeNull();
+    expect(document.getElementById("renderModeLabel")).toBeNull();
+    const modeSwitch = document.getElementById("renderModeSwitch");
+    expect(modeSwitch?.getAttribute("aria-label")).toBe("Render mode");
+    expect(modeSwitch?.getAttribute("aria-labelledby")).toBeNull();
+    expect(modeSwitch?.getAttribute("aria-describedby")).toBeNull();
   });
 
   it("keeps session-owned controls marked after the Performance rehome", () => {
@@ -8807,20 +8806,6 @@ describe("visible control lifetimes", () => {
     ]) {
       expect(labelledScope(id), id).toBe("This session");
     }
-
-    expect(normalizedText(document.getElementById("renderModeLabel"))).toBe(
-      "Render mode This session",
-    );
-    expect(
-      document
-        .getElementById("renderModeSwitch")
-        ?.getAttribute("aria-labelledby"),
-    ).toBe("renderModeLabel");
-    expect(
-      document
-        .getElementById("renderModeSwitch")
-        ?.getAttribute("aria-describedby"),
-    ).toBe("controlScopeKey");
   });
 
   it("marks the one auto-motion preference and Quick previews as browser-owned", () => {

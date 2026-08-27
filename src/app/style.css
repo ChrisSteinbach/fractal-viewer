@@ -804,19 +804,6 @@ input[type="range"] {
   gap: 8px;
 }
 
-.control-scope-heading {
-  margin: 0 0 5px;
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
-.scope-key {
-  margin: 0 0 9px;
-  color: var(--text-dim);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
 .control-scope {
   flex: none;
   padding: 1px 6px;
