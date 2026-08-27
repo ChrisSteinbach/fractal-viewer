@@ -403,7 +403,7 @@ describe("shared Shape catalog roles", () => {
       document
         .getElementById("trapShapeCatalogHint")
         ?.textContent?.replace(/\s+/g, " "),
-    ).toContain("Transforms → Shape → Emitter shape");
+    ).toContain("Transforms → Add emitter shape");
 
     expect(Array.from(select.options).map((option) => option.value)).toEqual([
       "",
@@ -8979,6 +8979,70 @@ describe("panel accordion sections", () => {
     expect(open.map((section) => section.id)).toEqual(["presetSection"]);
   });
 
+  // The vocabulary pin: section and control names must stay unambiguous
+  // beside the render-mode segments (fr-soag.21). A chip reading "Surface"
+  // under the ◈ Surface segment, or two "Color" chips visible together,
+  // is exactly what the epic's final audit exists to prevent.
+  it("keeps top-level section names distinct from the render-mode vocabulary", () => {
+    const titles = sections().map(
+      (section) => section.querySelector("summary")?.textContent ?? "",
+    );
+    // The one deliberate duplicate: Solid's and Surface's contextual
+    // "Lighting" chips are mutually exclusive (never co-visible) and each
+    // inspector discloses the other's independence. Every other chip title
+    // must be unique — a shared "Color" or a Solid chip reading "Surface"
+    // is exactly what the epic's final audit exists to prevent.
+    const duplicates = titles.filter(
+      (title, index) => titles.indexOf(title) !== index,
+    );
+    expect(duplicates).toEqual(["Lighting"]);
+    const solidLighting = sections().find(
+      (section) => section.id === "solidLightingSection",
+    );
+    const surfaceLighting = sections().find(
+      (section) => section.id === "surfaceLightingSection",
+    );
+    expect(solidLighting?.querySelector("summary")?.textContent).toBe(
+      "Lighting",
+    );
+    expect(surfaceLighting?.querySelector("summary")?.textContent).toBe(
+      "Lighting",
+    );
+    // Solid's first section is its iso level, not the Surface mode.
+    expect(
+      details("solidSurfaceSection").querySelector("summary")?.textContent,
+    ).toBe("Level");
+    // Surface's contextual inspector qualifies its own color home because
+    // the shared authored Color section stays visible in Surface mode.
+    expect(
+      details("surfaceColorSection").querySelector("summary")?.textContent,
+    ).toBe("Surface color");
+    // The Atmosphere backdrop's geometry is "Gradient shape", never a bare
+    // "Shape" beside the Surface inspector's shape sections.
+    const gradientShapeRow = document.getElementById("backgroundShapeRow");
+    expect(gradientShapeRow?.textContent).toContain("Gradient shape");
+    // The generated-backdrop option is named, not just the render mode.
+    const flameOption = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#background option"),
+    ).find((option) => option.value === "flame");
+    expect(flameOption?.textContent).toBe("Flame backdrop");
+  });
+
+  it("names quality and copy-level controls by their effect", () => {
+    const pointCountLabel = document
+      .getElementById("numPointsLabel")
+      ?.closest("label")?.textContent;
+    expect(pointCountLabel).toMatch(/Point count/);
+    const resolutionLabel = document
+      .getElementById("solidResolutionLabel")
+      ?.closest("label")?.textContent;
+    expect(resolutionLabel).toMatch(/Resolution/);
+    const band = document
+      .getElementById("surfaceCondensationBandMode")
+      ?.closest("label")?.textContent;
+    expect(band).toMatch(/Levels/);
+  });
+
   // Each render mode remembers its contextual section; switching modes uses
   // that fallback when the outgoing section becomes hidden. A still-visible
   // open section instead survives the switch. jsdom doesn't enforce the
@@ -8998,14 +9062,14 @@ describe("panel accordion sections", () => {
     expect(details("flameToneSection").open).toBe(true);
   });
 
-  it("entering solid mode opens its Surface section", () => {
+  it("entering solid mode opens its Level section", () => {
     const ui = new Ui(document);
     details("presetSection").open = false;
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
     expect(details("solidSurfaceSection").open).toBe(true);
   });
 
-  it("entering surface mode opens its Color section", () => {
+  it("entering surface mode opens its Surface color section", () => {
     const ui = new Ui(document);
     details("presetSection").open = false;
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
