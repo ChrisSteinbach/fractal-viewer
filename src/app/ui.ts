@@ -437,6 +437,8 @@ interface TransformButtonOptions {
 
 /** Axis labels for the three rows in every editor group. */
 const AXES = ["X", "Y", "Z"] as const;
+const SURFACE_FLOOR_BALLOON_REASON =
+  "Floor unavailable while Balloon encloses this Surface. Its saved setting is preserved; turn Balloon off to edit or show it.";
 
 /** Which geometry channel a group of editor sliders edits. */
 type Channel = "position" | "rotation" | "scale" | "shear";
@@ -2058,8 +2060,11 @@ export class Ui {
   private readonly surfaceTrapGeometryRow: HTMLElement;
   private readonly surfaceTrapGeometryLevels: HTMLElement;
   private readonly surfaceTrapGeometryCustom: HTMLElement;
-  // The floor checkbox is valid for every Surface session kind and dimension.
-  // These three rows are its dependent settings and hide while it is off.
+  // Floor remains independently authored while the effective Surface Balloon
+  // temporarily owns the enclosing geometry. The row stays discoverable; its
+  // checkbox disables beside the reason and its dependent settings collapse.
+  private readonly surfaceGroundPlaneCheckbox: HTMLInputElement;
+  private readonly surfaceGroundPlaneNote: HTMLElement;
   private readonly surfaceGroundPlaneDependentRows: readonly HTMLElement[];
 
   // 3D VIEW controls: the auto-orbit turntable — the 3D sibling of the 4D
@@ -2569,6 +2574,8 @@ export class Ui {
     this.surfaceTrapGeometryRow = this.byId("surfaceTrapGeometryRow");
     this.surfaceTrapGeometryLevels = this.byId("surfaceTrapGeometryLevels");
     this.surfaceTrapGeometryCustom = this.byId("surfaceTrapGeometryCustom");
+    this.surfaceGroundPlaneCheckbox = this.byId("surfaceGroundPlaneCheckbox");
+    this.surfaceGroundPlaneNote = this.byId("surfaceGroundPlaneNote");
     this.surfaceGroundPlaneDependentRows = [
       this.byId("surfaceFloorPatternRow"),
       this.byId("surfaceFloorTileScaleRow"),
@@ -3260,12 +3267,14 @@ export class Ui {
   setSurfaceSessionKind(kind: SurfaceSessionKind | null): void {
     this.surfaceSessionKind = kind;
     this.panelContext = { ...this.panelContext, surfaceKind: kind };
-    this.syncBalloonRows({
+    const context: PanelContext = {
       ...this.panelContext,
       // A non-null kind arrives from an active Surface session. Use that
       // renderer immediately; updateLabels will reconcile the full context.
       renderMode: kind === null ? this.panelContext.renderMode : "surface",
-    });
+    };
+    this.syncBalloonRows(context);
+    this.syncSurfaceFloorRows(context);
   }
 
   /** Apply the active Solid session's centre-density refusal result. The
@@ -3307,6 +3316,29 @@ export class Ui {
       refused || stopInputs.length >= MAX_CUSTOM_PALETTE_STOPS;
     editor.remove.disabled =
       refused || stopInputs.length <= MIN_CUSTOM_PALETTE_STOPS;
+  }
+
+  /** Reflect the renderer's existing Balloon-over-Floor composition without
+   * coupling their persisted flags. Only an applicable, enabled Surface
+   * Balloon owns the enclosure; refused escape/bulb sessions leave Floor
+   * fully usable even when the authored Balloon checkbox remains checked. */
+  private syncSurfaceFloorRows(
+    context: PanelContext = this.panelContext,
+  ): void {
+    const balloonOwnsSurface =
+      context.renderMode === "surface" &&
+      this.balloonEchoCheckbox.checked &&
+      resolvePanelApplicability("balloon", context).kind === "enabled";
+    this.surfaceGroundPlaneCheckbox.disabled = balloonOwnsSurface;
+    this.surfaceGroundPlaneNote.textContent = balloonOwnsSurface
+      ? SURFACE_FLOOR_BALLOON_REASON
+      : "";
+    this.surfaceGroundPlaneNote.classList.toggle("hidden", !balloonOwnsSurface);
+    const showDependent =
+      !balloonOwnsSurface && this.surfaceGroundPlaneCheckbox.checked;
+    for (const row of this.surfaceGroundPlaneDependentRows) {
+      row.classList.toggle("hidden", !showDependent);
+    }
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -3525,9 +3557,7 @@ export class Ui {
     // dimension changes. Surface route and Solid centre refusals disable that
     // authored editor in place without clearing its document state.
     this.syncBalloonRows(panelContext);
-    for (const row of this.surfaceGroundPlaneDependentRows) {
-      row.classList.toggle("hidden", !state.groundPlane);
-    }
+    this.syncSurfaceFloorRows(panelContext);
     // The shape trap independently states the same forward-orbit consumer
     // set; it is not inferred from Balloon's complementary refusal. Sub-rows
     // still wait for authored feature predicates below.

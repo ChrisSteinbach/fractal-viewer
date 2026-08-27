@@ -5371,6 +5371,26 @@ describe("toSnapshot / fromSnapshot fog tint", () => {
 // ---------------------------------------------------------------------------
 
 describe("decodeScene ground plane", () => {
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ] as const)(
+    "round-trips Balloon=%s and Floor=%s as independent flags",
+    (balloonEcho, groundPlane) => {
+      const result = decodeScene(
+        encodeScene({
+          ...baseSnapshot(),
+          balloonEcho,
+          groundPlane,
+        }),
+      );
+      expect(result!.balloonEcho).toBe(balloonEcho);
+      expect(result!.groundPlane).toBe(groundPlane);
+    },
+  );
+
   it("round-trips groundPlane true", () => {
     const s: SceneSnapshot = { ...baseSnapshot(), groundPlane: true };
     const result = decodeScene(encodeScene(s));

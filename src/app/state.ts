@@ -730,13 +730,16 @@ export interface AppState {
    * penumbra shadow — see `scene.ts`'s `setSurfaceGroundPlane` and
    * `surface-material.ts`'s `SurfaceGroundPlaneSpec`/WGSL `PLANE` arm.
    * Surface-mode only, render-side — unlike {@link balloonEcho} this has no
-   * explorer-echo presence in the points render. {@link balloonEcho} takes
-   * precedence while both are on: the two never compile/pack together
-   * (`surface-de-gpu.ts`'s `groundPlane`+`balloon` exclusion), so `main.ts`
-   * resolves the plane flag down to `state.groundPlane && !state.balloonEcho`
-   * at the one place both reads happen. Persisted scene content, the same
-   * treatment as `balloonEcho`/`fogDensity` — a shared link carries the
-   * floor at the state it was authored. `persist.ts`'s decoder is tolerant,
+   * explorer-echo presence in the points render. In an eligible IFS session,
+   * {@link balloonEcho} takes precedence while both are on: the two never
+   * compile/pack together (`surface-de-gpu.ts`'s `groundPlane`+`balloon`
+   * exclusion), so `main.ts` resolves the IFS plane flag down to
+   * `state.groundPlane && !state.balloonEcho`. Forward-orbit Surface sessions
+   * refuse Balloon and retain the independently authored Floor. The UI makes
+   * that effective precedence explicit without clearing either flag.
+   * Persisted scene content, the same treatment as `balloonEcho`/`fogDensity`
+   * — a shared link carries the floor at the state it was authored.
+   * `persist.ts`'s decoder is tolerant,
    * like `balloonEcho`'s (an absent/malformed value quietly falls back to
    * off), so a link predating the field still opens with the floor off,
    * exactly as it always rendered.

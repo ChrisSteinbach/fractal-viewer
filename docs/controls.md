@@ -643,16 +643,18 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   occlusion where the shape nears it, is fogged by distance like any hit
   (see **Fog** below), and fades radially into the backdrop so no disc
   edge ever shows; it is one-sided, so a camera below it looks straight
-  through. Unlike the balloon it carries no gate at all: it survives the
-  escape-time and Mandelbulb sessions — those solids cast their shadows on
-  it happily — and a 4D session drops it under the marched
+  through. Floor has no object-family refusal: it survives the escape-time
+  and Mandelbulb sessions — those solids cast their shadows on it happily —
+  and a 4D session drops it under the marched
   **W slice**, where it is an ordinary 3D plane like any other. (An
   off-centre slice shows a smaller shape floating above it, which is
   honest — it _is_ a smaller slice.) It is likewise a recompile-class
-  toggle, and
-  the two compose one way only: while both are ticked the **Balloon**
-  wins (there is no horizon to stand a floor on inside a closed shell),
-  and the floor returns when the balloon goes off. Expect the floor to
+  toggle. The two independently persisted flags compose one way only: while
+  Balloon is applicable and on in Surface, the **Floor** checkbox stays
+  visible but disables beside “Floor unavailable while Balloon encloses this
+  Surface.” Its saved check and settings are retained, and return when Balloon
+  goes off. A refused escape-time/Mandelbulb Balloon does not gate Floor; the
+  floor remains editable and visible there. Expect the floor to
   cost something on heavy fold systems — every pixel of floor used to be
   a cheap background miss and now pays a shadow march against the fractal
   — absorbed by the same bounded-progress machinery as every other
