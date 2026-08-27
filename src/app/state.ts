@@ -693,10 +693,12 @@ export interface AppState {
    * Flame carries no fog term and is unaffected. `1` reproduces the
    * pre-control fog rendering exactly — the fixed band every renderer shipped
    * with before this control existed; `0` disables depth fog for the
-   * fog-bearing styles (the balloon's far cap then shows as a hard horizon
-   * instead of fading to background — deliberate). Top-level rather than
-   * nested under {@link AppState.surface} because it spans multiple render
-   * modes, the same shape as {@link glowBrightness}. Persists like
+   * fog-bearing styles. The Balloon echo deliberately retains its smooth
+   * safety fade and stops stretching once density reaches `0.15`: that fade
+   * also bounds an inversion that otherwise runs to infinity (see
+   * `scene.ts`'s `syncBalloonEchoUniforms`). Top-level rather than nested
+   * under {@link AppState.surface} because it spans multiple render modes,
+   * the same shape as {@link glowBrightness}. Persists like
    * `glowBrightness` — not session-only.
    */
   fogDensity: number;

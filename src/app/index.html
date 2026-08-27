@@ -884,8 +884,9 @@
         </details>
 
         <!-- Shared scene atmosphere. This stays reachable in every render
-             mode: Background affects all four, while #fogControls hides only
-             in Flame (the one renderer with no depth fog). Background is
+             mode: Background affects all four, while Fog/Tint remain visible
+             as authored Look state and disable beside #fogNote when the
+             inspected renderer has no depth-fog consumer. Background is
              deliberately first and stable in every renderer. -->
         <details
           class="panel-section"
@@ -991,10 +992,9 @@
           </div>
 
           <!-- Depth-fog density: spans the points explorer's fog-bearing
-               styles, every surface tracer, and the solid render, so —
-               unlike glowBrightnessSlider's glow-only row — it is never
-               gated within those modes. Flame has no depth fog, so the
-               shared #fogControls block hides there. -->
+               styles, every surface tracer, the solid render, and the Points
+               Balloon's fade horizon. Dormant authored state stays visible
+               and disables beside the accessible scope note below. -->
           <div id="fogControls">
             <label class="select-label">
               Fog: <span id="fogLabel">1.00×</span>
@@ -1005,6 +1005,7 @@
                 max="2.5"
                 step="0.05"
                 value="1"
+                aria-describedby="fogNote"
               />
             </label>
 
@@ -1026,6 +1027,7 @@
                     id="fogTintColor"
                     value="#ffffff"
                     aria-label="Fog tint color"
+                    aria-describedby="fogNote"
                 /></label>
                 <label class="position-axis-label">
                   <input
@@ -1036,10 +1038,17 @@
                     step="0.01"
                     value="0"
                     aria-label="Fog tint strength"
+                    aria-describedby="fogNote"
                   />
                 </label>
               </div>
             </div>
+            <p
+              id="fogNote"
+              class="flame-hint hidden"
+              role="status"
+              aria-live="polite"
+            ></p>
           </div>
         </details>
 
