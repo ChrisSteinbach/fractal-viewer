@@ -1949,10 +1949,13 @@ export class Ui {
   private readonly pointsSections: readonly HTMLDetailsElement[];
   private readonly flameSections: readonly HTMLDetailsElement[];
   private readonly solidSections: readonly HTMLDetailsElement[];
-  private readonly surfaceLookSection: HTMLDetailsElement;
-  /** The shared Atmosphere section's two mode-sensitive subsets: Points-only
-   * depth effects, and fog (all modes except Flame). */
-  private readonly pointsAtmosphereControls: HTMLElement;
+  private readonly surfaceSections: readonly HTMLDetailsElement[];
+  /** Surface's two session-sensitive sections. Shape copies require an
+   * emitter-backed IFS route; Shape trap belongs to forward-orbit routes. */
+  private readonly surfaceCondensationSection: HTMLDetailsElement;
+  private readonly surfaceTrapSection: HTMLDetailsElement;
+  /** The shared Atmosphere section's one mode-sensitive subset: fog in every
+   * renderer except Flame. */
   private readonly fogControls: HTMLElement;
   /** The render-mode segmented control's three buttons, keyed by the mode
    * each one switches to — the single entry/exit surface that replaced the
@@ -2025,7 +2028,8 @@ export class Ui {
   private readonly surfaceStatus: HTMLElement;
   private readonly surfaceNote: HTMLElement;
   /** Gate-level escape hatch shown only when the analyzer says disabling the
-   * authored trap geometry resolves the refusal. Never part of Surface Look. */
+   * authored trap geometry resolves the refusal. Never part of the contextual
+   * Surface inspector sections. */
   private readonly surfaceEligibilityRecoveryBtn: HTMLButtonElement;
   private readonly surfaceProgress: HTMLElement;
   // The preview tier under user control: the quick-previews checkbox is a
@@ -2044,14 +2048,11 @@ export class Ui {
   // speed shapes only that source's orbit-trap blend.
   private readonly surfacePaletteRow: HTMLElement;
   private readonly surfaceColorSpeedRow: HTMLElement;
-  /** Condensation level-band controls, visible only for an emitter-backed
-   * IFS Surface session. */
-  private readonly surfaceCondensationRow: HTMLElement;
+  /** Condensation level-band detail, visible only for an emitter-backed IFS
+   * Surface session whose Shape copies section is applicable. */
   private readonly surfaceCondensationCustom: HTMLElement;
-  // The shape trap's rows — the balloon's COMPLEMENT: visible exactly for
-  // the forward-orbit (escape-family) session kinds, where the balloon
-  // rows hide (see updateLabels' toggle and its comment).
-  private readonly surfaceTrapRow: HTMLElement;
+  // The shape trap section is the balloon's COMPLEMENT: visible exactly for
+  // the forward-orbit (escape-family) session kinds, where Balloon refuses.
   private readonly surfaceTrapControls: HTMLElement;
   private readonly surfaceTrapThresholdRow: HTMLElement;
   /** Geometry is the trap block's optional distance-union use. Its row is
@@ -2182,7 +2183,7 @@ export class Ui {
    * co-located, with no DOM re-homing). */
   private readonly fourDColorRow: HTMLElement;
   /** The 4D depth-fade toggle's wrapper — renderStyleRow's non-flat sibling
-   * in the Atmosphere section. */
+   * in the Points Depth section. */
   private readonly fourDDepthFadeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
 
@@ -2238,7 +2239,7 @@ export class Ui {
     points: "presetSection",
     flame: "flameToneSection",
     solid: "solidSurfaceSection",
-    surface: "surfaceLookSection",
+    surface: "surfaceColorSection",
   };
 
   /** The render mode {@link updateLabels} last saw — its change is what
@@ -2526,6 +2527,7 @@ export class Ui {
       this.byId<HTMLDetailsElement>("cloudSection"),
       this.byId<HTMLDetailsElement>("colorSection"),
       this.byId<HTMLDetailsElement>("scheduleSection"),
+      this.byId<HTMLDetailsElement>("pointsDepthSection"),
     ];
     this.flameSections = [
       this.byId<HTMLDetailsElement>("flameToneSection"),
@@ -2537,9 +2539,18 @@ export class Ui {
       this.byId<HTMLDetailsElement>("solidLightingSection"),
       this.byId<HTMLDetailsElement>("solidQualitySection"),
     ];
-    this.surfaceLookSection =
-      this.byId<HTMLDetailsElement>("surfaceLookSection");
-    this.pointsAtmosphereControls = this.byId("pointsAtmosphereControls");
+    this.surfaceCondensationSection = this.byId<HTMLDetailsElement>(
+      "surfaceCondensationSection",
+    );
+    this.surfaceTrapSection =
+      this.byId<HTMLDetailsElement>("surfaceTrapSection");
+    this.surfaceSections = [
+      this.byId<HTMLDetailsElement>("surfaceColorSection"),
+      this.surfaceCondensationSection,
+      this.surfaceTrapSection,
+      this.byId<HTMLDetailsElement>("surfaceLightingSection"),
+      this.byId<HTMLDetailsElement>("surfaceFloorSection"),
+    ];
     this.fogControls = this.byId("fogControls");
     this.modeButtons = {
       points: this.byId("modePointsBtn"),
@@ -2566,9 +2577,7 @@ export class Ui {
     this.solidProgress = this.byId("solidProgress");
     this.surfacePaletteRow = this.byId("surfacePaletteRow");
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
-    this.surfaceCondensationRow = this.byId("surfaceCondensationRow");
     this.surfaceCondensationCustom = this.byId("surfaceCondensationCustom");
-    this.surfaceTrapRow = this.byId("surfaceTrapRow");
     this.surfaceTrapControls = this.byId("surfaceTrapControls");
     this.surfaceTrapThresholdRow = this.byId("surfaceTrapThresholdRow");
     this.surfaceTrapGeometryRow = this.byId("surfaceTrapGeometryRow");
@@ -3480,7 +3489,7 @@ export class Ui {
     // render would just be confusing — but the segmented control itself stays,
     // so flame↔solid is a direct switch, not a round-trip through Points.
     // Atmosphere is the deliberate exception: its one shared section remains
-    // reachable and exposes only rows the current renderer actually uses.
+    // reachable and exposes only fog when the current renderer has a depth pass.
     const rendering = state.renderMode !== "points";
     // "4D" is a DERIVED property of the system (see affine4.ts's systemIsFlat
     // via state.ts's systemIsNonFlat), NOT a fourth render mode — so this is a
@@ -3491,7 +3500,7 @@ export class Ui {
     // style — neither reaches the 4D projection or its own w-driven coloring;
     // symmetry, by contrast, stays put — the 4D chaos game has a kaleidoscope
     // stage of its own) hide; their 4D look siblings (the 4D Color and
-    // depth-fade rows) replace them in the corresponding Color and Atmosphere
+    // depth-fade rows) replace them in the corresponding Color and Depth
     // sections, and the 4D View section's tumble/slice block replaces the 3D
     // View block. All four render
     // modes stay available while non-flat: the flame/solid renders snapshot
@@ -3519,7 +3528,6 @@ export class Ui {
     for (const section of this.pointsSections) {
       section.classList.toggle("hidden", rendering);
     }
-    this.pointsAtmosphereControls.classList.toggle("hidden", rendering);
     this.fogControls.classList.toggle("hidden", state.renderMode === "flame");
     for (const section of this.flameSections) {
       section.classList.toggle("hidden", state.renderMode !== "flame");
@@ -3531,10 +3539,12 @@ export class Ui {
       "surfaceInspector",
       panelContext,
     );
-    this.surfaceLookSection.classList.toggle(
-      "hidden",
-      surfaceInspectorApplicability.kind !== "enabled",
-    );
+    for (const section of this.surfaceSections) {
+      section.classList.toggle(
+        "hidden",
+        surfaceInspectorApplicability.kind !== "enabled",
+      );
+    }
     // The surface palette select means anything for "palette", "rings",
     // "sheets" and "shapeTrap" — all four sample the user-selected palette
     // — like glowBrightnessRow, hidden whenever none of those is active.
@@ -3565,7 +3575,7 @@ export class Ui {
       "surfaceTrap",
       panelContext,
     );
-    this.surfaceTrapRow.classList.toggle(
+    this.surfaceTrapSection.classList.toggle(
       "hidden",
       surfaceTrapApplicability.kind !== "enabled",
     );
@@ -3614,7 +3624,10 @@ export class Ui {
         (transform) =>
           (transform.weight ?? 1) > 0 && transform.emitter !== undefined,
       );
-    this.surfaceCondensationRow.classList.toggle("hidden", !condensationLive);
+    this.surfaceCondensationSection.classList.toggle(
+      "hidden",
+      !condensationLive,
+    );
     this.surfaceCondensationCustom.classList.toggle(
       "hidden",
       !condensationLive ||

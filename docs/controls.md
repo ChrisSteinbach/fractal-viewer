@@ -94,8 +94,8 @@ Transform** sliders that appear in the panel while a transform is selected.
 ## Panel controls
 
 The panel's active editing categories — including **Transforms**, **Presets**,
-**Cloud**, **Color**, **Atmosphere**, **Symmetry**, and the contextual renderer
-inspector — come before **3D View**/**4D View**, then the always-available
+**Cloud**, **Color**, **Balloon**, **Atmosphere**, **Symmetry**, and the
+contextual renderer inspector — come before **3D View**/**4D View**, then the always-available
 workflow sections **Collection**, **Timeline**, **Capture**, and **Share**.
 These are collapsible sections, and opening one closes the previous. The collapsed ones
 pack into rows of chips rather than stacking, because nine stacked
@@ -103,10 +103,10 @@ headers cost 473px of a 727px phone screen before any control was visible.
 Measured, that keeps the panel between one and two phone screens rather than
 the one it used to claim: 727px with **Color** open, 1336px with
 **Transforms** open and a transform selected. The Flame, Solid, and Surface render
-modes get the same treatment — **Tone** / **Blur** / **Quality** for
-Flame, **Surface** / **Lighting** / **Quality** for Solid, and **Surface
-Look** for Surface itself (see **✺ Flame**, **◆ Solid** and **◈ Surface**
-below) — with a status block
+modes get the same treatment — **Depth** for Points, **Tone** / **Blur** /
+**Quality** for Flame, **Surface** / **Lighting** / **Quality** for Solid, and
+**Color** / **Shape copies** or **Shape trap** / **Lighting** / **Floor** for
+Surface itself (see **✺ Flame**, **◆ Solid** and **◈ Surface** below) — with a status block
 pinned above the sections (a progress readout for Flame/Solid, an instant
 hint for Surface), and the panel remembers which section was open in each
 mode, so switching Points ↔ Flame ↔ Solid ↔ Surface restores where you were.
@@ -538,16 +538,16 @@ morphs into place instead of snapping (see **Presets** below).
   (non-uniformly scaled) maps are a
   softer case: the button stays enabled, but the status beside the mode switch
   warns before entry that those maps are marched conservatively — a smaller step size
-  that trades some speed to stay a safe, non-overshooting bound. Its own
-  **Surface Look** section holds the mode's live look: a **Color source**
+  that trades some speed to stay a safe, non-overshooting bound. Its contextual
+  inspector splits independent concerns into separate sections. **Color** holds a **Color source**
   select — By Transform, the orbit-trap Palette, a Height ramp, a Radius
   ramp, Orbit rings, or Orbit sheets — with a **Palette** select underneath
   (the same named gradients as Flame/Solid, the shared **Custom** gradient
   included — see **Color**) that appears for the orbit-trap,
   rings, and sheets sources, plus a **Color speed** slider — orbit-trap
   source only, fading how quickly deeper descent levels blend into the trap
-  color — and **Light Angle**, **Light Height**, **Ambient**, and
-  **Environment** sliders.
+  color. **Lighting** holds **Light Angle**, **Light Height**, **Ambient**, and
+  **Environment**.
   Every one of them is a plain shader input, so dragging any of them
   re-renders instantly with nothing to restart. **Environment** (0–100%,
   default 35%) tints the light itself toward the **Background**
@@ -588,7 +588,9 @@ morphs into place instead of snapping (see **Presets** below).
   input, so author it in the explorer and then enter the mode. A map's
   per-transform **Speed** does nothing here, and is not the **Color speed**
   slider above, which fades descent levels rather than picks.
-  Forward-orbit sessions add a **Shape trap** row and a matching **Shape
+  An emitter-backed inverse-descent session gets a **Shape copies** section for
+  the **Shape levels** band described above. Forward-orbit sessions replace it
+  with a **Shape trap** section and a matching **Shape
   trap** color source. Choose any bundled trap shape or **None**, then set its
   orbit-space size and X/Y/Z position. It uses the same shared catalog listed
   under **Shape → Emitter** below. **Closest approach** shades by the
@@ -603,7 +605,7 @@ morphs into place instead of snapping (see **Presets** below).
   Mandelbulb sessions keep the color controls but do not offer this geometry
   switch, and inverse-descent Surface routes refuse an authored geometry flag
   rather than ignore it. When that flag is the disclosed refusal, the status
-  beside the mode switch offers **Turn trap geometry off**; Surface Look stays
+  beside the mode switch offers **Turn trap geometry off**; Shape trap stays
   Surface-only. The recovery uses the same authored edit as the checkbox and
   preserves the trap's color state. **Geometry levels** selects **All**, **Root only**, or **Custom**
   inclusive post-link levels; custom exposes the minimum and maximum sliders
@@ -633,7 +635,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   Mandelbulb — the one authored editor remains in place but disables beside
   its reason, retaining every value for recovery. Those solids are filled all
   the way to the ball's center, so an inverted echo would swallow the camera.
-  That gate is about the object, not the dimension. **Floor** puts an infinite neutral-gray floor just
+  That gate is about the object, not the dimension. The **Floor** section puts an infinite neutral-gray floor just
   below the shape to catch its shadow — the classic ray-marched-fractal
   grounding, and the scale reference fold monsters otherwise lack. The
   floor is matte-lit by the same **Light Angle** / **Light Height** /
@@ -1053,7 +1055,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   edit that same one: **Ramp Palette** here, **Palette (restarts render)** in
   Flame's **Tone** section and in Solid's **Surface** section (those two
   restart the accumulation, as their labels say, where this one and the
-  surface tracer's apply live), and **Palette** in **Surface Look**. A look
+  surface tracer's apply live), and **Palette** in Surface's **Color** section. A look
   authored in one render is therefore one select away in the others. The first
   select to reach **Custom** seeds the gradient by sampling the palette it just
   replaced, so Custom always opens as a tweakable copy of what was on screen
@@ -1063,7 +1065,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   gradients altogether: **Built-in ramp** here, **By Transform (legacy)** in
   Flame (a flat per-map hue instead of a coordinate-driven gradient), and **By
   Color Mode (legacy)** in Solid (the explorer's own **Color Mode** colors).
-  **Surface Look**'s select has none — it only appears for the color sources
+  Surface **Color**'s select has none — it only appears for the color sources
   that need a gradient, and its **By Transform** source is a sibling choice in
   **Color source** above it.
 - **Axis Colors** — appears only while **Color Mode** is **By
@@ -1079,7 +1081,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
 - **Color Contrast** — visible for the Height/Radius/Position color modes; a
   log-scale gamma on the normalized coordinate. Left (<1) spreads detail in
   the dense low end, right (>1) in the high end, center = linear.
-- **Depth Style** — how the cloud conveys depth: Depth Fade (default), Aerial
+- **Depth Style** — in Points' **Depth** section, how the cloud conveys depth:
+  Depth Fade (default), Aerial
   Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting. The backdrop color
   itself is a separate choice — see **Background**, below; Aerial Haze only
   picks the fog treatment now.
@@ -1441,7 +1444,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   anyway — there's no off state left for it to mean — and so does
   **Slice-relative color**, since the tracer has no w-ramp palette for it to
   remap. What does drop out of the panel is the flat-only look controls:
-  **Color Mode** and **Depth Style** are superseded in place by **4D
+  **Color Mode** and **Depth Style** are superseded in their **Color** and
+  **Depth** sections by **4D
   Color** and **Depth fade** above, and **Color
   Contrast** goes with them (it tunes the height / radius / position ramps,
   none of which are in play once 4D Color owns the coloring).

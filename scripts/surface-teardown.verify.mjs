@@ -394,7 +394,7 @@ async function runCase(browser, c) {
  *
  * The Floor default is the one edit a user can make from inside a surface
  * session — the transform list is points-mode only, but
- * #surfaceGroundPlaneCheckbox lives in the Surface Look section, and its
+ * #surfaceGroundPlaneCheckbox lives in the Surface Floor section, and its
  * control-spec effect is `fx.restartSurfaceRender()` -> `surfaceSession.enter()`,
  * which TERMINATES the running renderer and builds a new one — the same
  * `RenderSession.exit()`/`terminate()` path a mode exit reaches directly.
