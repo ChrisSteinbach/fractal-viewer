@@ -4730,7 +4730,6 @@ describe("Ui render mode switch", () => {
     "xaosSection",
     "presetSection",
     "cloudSection",
-    "colorSection",
     "scheduleSection",
     "pointsDepthSection",
   ] as const;
@@ -4949,6 +4948,76 @@ describe("Ui render mode switch", () => {
     expect(modeBtn("surface").classList.contains("active")).toBe(true);
     expect(modeBtn("surface").getAttribute("aria-pressed")).toBe("true");
   });
+
+  it.each([
+    ["flat", defaultTransforms()],
+    ["non-flat", nonFlatTransforms()],
+  ] as const)(
+    "keeps shared Color visible, editable, and open across every renderer for a %s document",
+    (_dimension, transforms) => {
+      const ui = new Ui(document);
+      const color = byId("colorSection") as HTMLDetailsElement;
+      (byId("presetSection") as HTMLDetailsElement).open = false;
+      color.open = true;
+      color.dispatchEvent(new Event("toggle"));
+
+      for (const renderMode of [
+        "points",
+        "flame",
+        "solid",
+        "surface",
+      ] as const) {
+        ui.updateLabels({
+          ...initialState(true),
+          renderMode,
+          transforms: [...transforms],
+        });
+
+        expect(color.classList.contains("hidden"), renderMode).toBe(false);
+        expect(color.open, renderMode).toBe(true);
+        expect(
+          document.querySelectorAll("details.panel-section.hidden[open]"),
+          renderMode,
+        ).toHaveLength(0);
+        expect(
+          Array.from(
+            color.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+              "input, select",
+            ),
+          ).every((control) => !control.disabled),
+          renderMode,
+        ).toBe(true);
+      }
+    },
+  );
+
+  it.each([
+    ["flat", defaultTransforms()],
+    ["non-flat", nonFlatTransforms()],
+  ] as const)(
+    "shows exactly the %s document's Color selector in every renderer",
+    (dimension, transforms) => {
+      const ui = new Ui(document);
+      for (const renderMode of [
+        "points",
+        "flame",
+        "solid",
+        "surface",
+      ] as const) {
+        ui.updateLabels({
+          ...initialState(true),
+          renderMode,
+          transforms: [...transforms],
+        });
+        expect(byId("colorModeRow").classList.contains("hidden")).toBe(
+          dimension === "non-flat",
+        );
+        expect(byId("fourDColorRow").classList.contains("hidden")).toBe(
+          dimension === "flat",
+        );
+      }
+    },
+  );
 
   it.each([
     ["flat", defaultTransforms()],
@@ -6335,6 +6404,41 @@ describe("Ui ramp palette", () => {
     expect(el("rampCustomPaletteRow").classList.contains("hidden")).toBe(false);
   });
 
+  it.each(
+    (["points", "flame", "solid", "surface"] as const).flatMap((renderMode) =>
+      (["flat", "non-flat"] as const).flatMap((dimension) =>
+        SURFACE_COLOR_SOURCES.map(
+          (colorSource) => [renderMode, dimension, colorSource] as const,
+        ),
+      ),
+    ),
+  )(
+    "gates the shared Surface ramp/contrast for %s, %s, source %s",
+    (renderMode, dimension, colorSource) => {
+      const ui = new Ui(document);
+      const base = initialState(true);
+      ui.updateLabels({
+        ...base,
+        renderMode,
+        transforms:
+          dimension === "non-flat" ? nonFlatTransforms() : defaultTransforms(),
+        colorMode: "transform",
+        fourDColor: "wBlueOrange",
+        surface: { ...base.surface, colorSource },
+      });
+
+      const surfaceRamp =
+        renderMode === "surface" &&
+        (colorSource === "height" || colorSource === "radius");
+      expect(el("rampPaletteRow").classList.contains("hidden")).toBe(
+        !surfaceRamp,
+      );
+      expect(el("colorGammaRow").classList.contains("hidden")).toBe(
+        !surfaceRamp,
+      );
+    },
+  );
+
   it("does not show the flame/solid custom-palette rows just because rampPaletteId is custom", () => {
     const ui = new Ui(document);
     ui.updateLabels({
@@ -6351,6 +6455,38 @@ describe("Ui ramp palette", () => {
 
     expect(el("flameCustomPaletteRow").classList.contains("hidden")).toBe(true);
     expect(el("solidCustomPaletteRow").classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("shared Color scope disclosure", () => {
+  it("is visible and ARIA-associated with every Color editor control", () => {
+    const base = initialState(true);
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...base,
+      colorMode: "height",
+      rampPaletteId: "custom",
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 0, 1],
+        ],
+      },
+    });
+
+    const hint = document.getElementById("colorTimingHint") as HTMLElement;
+    expect(hint.classList.contains("hidden")).toBe(false);
+    expect(hint.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "Points color edits apply live. An active Solid—or a 4D Flame—using its legacy palette re-accumulates. Surface Height and Radius update live. Otherwise edits prepare the next applicable view.",
+    );
+    for (const control of document.querySelectorAll<HTMLElement>(
+      "#colorSection input, #colorSection select, #colorSection button",
+    )) {
+      expect(
+        control.getAttribute("aria-describedby")?.split(/\s+/),
+        control.id,
+      ).toContain(hint.id);
+    }
   });
 });
 

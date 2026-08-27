@@ -190,8 +190,9 @@ export type VoxelWorkerCommand =
          * Gradient palette for the "radius" color mode's ramp — the
          * same `rampPaletteId` selection the explorer's 3D height/radius
          * ramps follow, resolved by the main thread; `"legacy"` = the
-         * built-in warm→cool ramp. Only the radius mode reads it;
-         * snapshotted at render entry like the rest of this block.
+         * built-in warm→cool ramp. Only the radius mode reads it; initially
+         * snapshotted at render entry, then kept current by the shared Color
+         * editor's atomic `setColorInputs` command.
          */
         rampPalette: PaletteSpec;
       };
