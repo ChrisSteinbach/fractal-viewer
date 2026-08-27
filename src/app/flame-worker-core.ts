@@ -64,10 +64,11 @@ import type { PreparedChaosGame4 } from "../fractal/chaos-game-4d";
 import { accumulateFlame4 } from "../fractal/flame-4d";
 import {
   buildColorModeLUT,
+  sameFourDRenderColorInputs,
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
-import type { FourDRenderColor } from "../fractal/color";
+import type { FourDRenderColor, RenderColorInputs } from "../fractal/color";
 import {
   composeFlameProjection4,
   composeRotorProjection4,
@@ -232,9 +233,10 @@ export type FlameWorkerCommand =
          * Gradient palette for the "radius" color mode's ramp — the
          * same `rampPaletteId` selection the explorer's 3D height/radius
          * ramps follow, resolved by the main thread; `"legacy"` = the
-         * built-in warm→cool ramp. Only the radius mode reads it; snapshotted
-         * at render entry like the rest of this block (the ramp select is
-         * unreachable while a render is active, so there is no live command).
+         * built-in warm→cool ramp. Only the radius mode reads it; initially
+         * snapshotted at render entry like the rest of this block, then kept
+         * current by the shared Color editor's atomic `setColorInputs`
+         * command.
          */
         rampPalette: PaletteSpec;
       };
@@ -283,6 +285,7 @@ export type FlameWorkerCommand =
   | { type: "setEstimatorMinimumRadius"; estimatorMinimumRadius: number }
   | { type: "setEstimatorCurve"; estimatorCurve: number }
   | { type: "setPalette"; palette: PaletteSpec }
+  | { type: "setColorInputs"; inputs: RenderColorInputs }
   | { type: "setBalloonPalette"; palette?: PaletteSpec }
   | {
       type: "setSymmetry";
@@ -330,7 +333,8 @@ export type FlameWorkerEvent =
       /**
        * Emitted synchronously, right where {@link FlameWorkerSession}'s
        * `startAccumulation` discards the in-flight accumulation —
-       * a live `setSupersample`/`setPalette`/`setSymmetry` restart, the
+       * a live `setSupersample`/`setPalette`/`setColorInputs`/`setSymmetry`
+       * restart, the
        * allocation-failure fallback, or the initial `start` (harmless there:
        * nothing stale is on screen yet to correct). The next `progress`/
        * `sharedFrame` report — the only other thing that carries
@@ -1312,6 +1316,9 @@ export class FlameWorkerSession {
       case "setPalette":
         this.setPalette(command.palette);
         break;
+      case "setColorInputs":
+        this.setColorInputs(command.inputs);
+        break;
       case "setBalloonPalette":
         this.setBalloonPalette(command.palette);
         break;
@@ -1724,6 +1731,31 @@ export class FlameWorkerSession {
     // tone-map param — this can't be re-applied to the existing accumulation;
     // it has to accumulate afresh. Same restart path setSupersample uses (the
     // size is unchanged, so this reallocates an identical-size histogram).
+    this.startAccumulation(
+      this.lastRequestedSupersample ?? this.effectiveSupersample,
+    );
+  }
+
+  /**
+   * Stage the document's latest shared color inputs. A flat Flame never reads
+   * them, and a structural primary palette overrides them, so neither case
+   * discards useful accumulation. A 4D legacy session bakes `fourDColor`
+   * (and, for radius, its ramp) into sumRGB and therefore restarts through the
+   * same accumulation-only path as `setPalette`; geometry, projection and the
+   * frozen view remain intact.
+   */
+  private setColorInputs(inputs: RenderColorInputs): void {
+    if (!this.hasGeometry()) return;
+    const unchanged = sameFourDRenderColorInputs(
+      {
+        colorMode: this.fourDColorMode,
+        rampPalette: this.fourDRampPalette,
+      },
+      inputs.fourD,
+    );
+    this.fourDColorMode = inputs.fourD.colorMode;
+    this.fourDRampPalette = inputs.fourD.rampPalette;
+    if (!this.is4D || this.paletteSpec !== "legacy" || unchanged) return;
     this.startAccumulation(
       this.lastRequestedSupersample ?? this.effectiveSupersample,
     );

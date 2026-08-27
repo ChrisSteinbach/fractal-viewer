@@ -15,8 +15,9 @@
  * ambient) is a GPU uniform the main thread changes without touching the
  * worker. Only the iteration budget, the palette (restarts accumulation
  * the same way, since baked-in colors can't be reapplied live),
- * and the symmetry (it reshapes the geometry itself, not a
- * tone-map param, so it restarts accumulation like the flame session's
+ * the shared legacy-color inputs (also baked, but staged without work under a
+ * structural palette), and the symmetry (it reshapes the geometry itself,
+ * not a tone-map param, so it restarts accumulation like the flame session's
  * `setSymmetry`) are live here.
  */
 import {
@@ -35,10 +36,16 @@ import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
 import type { PreparedChaosGame4 } from "../fractal/chaos-game-4d";
 import {
   buildColorModeLUT,
+  sameFlatRenderColorInputs,
+  sameFourDRenderColorInputs,
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
-import type { FourDRenderColor, PositionAxisColors } from "../fractal/color";
+import type {
+  FourDRenderColor,
+  PositionAxisColors,
+  RenderColorInputs,
+} from "../fractal/color";
 import { composeRotorProjection4 } from "../fractal/project4";
 import type { FourDView, RotorProjection4 } from "../fractal/project4";
 import { buildPaletteLUT } from "../fractal/palette";
@@ -72,8 +79,8 @@ export type VoxelWorkerCommand =
       /** The explorer's active color mode, carried into the voxel colors
        * — see `accumulateVoxels`' coloring doc. */
       colorMode: ColorMode;
-      /** Contrast exponent for the coordinate-normalized color modes —
-       * snapshotted at render entry exactly like `colorMode`. */
+      /** Initial contrast exponent for the coordinate-normalized color modes;
+       * the atomic `setColorInputs` command keeps it current in-session. */
       colorGamma: number;
       /**
        * Structural-coloring palette (mirroring the flame's);
@@ -88,17 +95,16 @@ export type VoxelWorkerCommand =
        * STRUCTURAL orbit gradient that overrides `colorMode` entirely, while
        * `rampPalette` recolors the height/radius ramps within the
        * colorMode-driven `"legacy"` path, and so only matters while
-       * `palette` is `"legacy"`. Snapshotted at render entry exactly like
-       * `colorMode`/`colorGamma` — the ramp select is only reachable in the
-       * points view, so there is no live command for it (unlike
-       * `setPalette`). `"legacy"` = the built-in ramps.
+       * `palette` is `"legacy"`. Initially snapshotted with
+       * `colorMode`/`colorGamma`; the shared Color editor's atomic
+       * `setColorInputs` command keeps it current while the session is live.
+       * `"legacy"` = the built-in ramps.
        */
       rampPalette: PaletteSpec;
       /**
-       * The position mode's custom axis colors — snapshotted at
-       * render entry exactly like `colorMode`/`colorGamma`; the position
-       * axis pickers are only reachable in the points view, so there is no
-       * live command for it (mirrors `rampPalette`'s doc). Only matters
+       * The position mode's custom axis colors — initially snapshotted at
+       * render entry exactly like `colorMode`/`colorGamma`, then updated by
+       * the same atomic `setColorInputs` command. Only matters
        * while `palette` is `"legacy"` (the colorMode-driven path) AND
        * `colorMode` is `"position"`; unused on the 4D path. Absent = the
        * legacy XYZ→RGB mapping.
@@ -192,6 +198,7 @@ export type VoxelWorkerCommand =
     }
   | { type: "setIterationsBudget"; iterations: number }
   | { type: "setPalette"; palette: PaletteSpec }
+  | { type: "setColorInputs"; inputs: RenderColorInputs }
   | {
       type: "setSymmetry";
       order: number;
@@ -432,6 +439,10 @@ export class VoxelWorkerSession {
   /** Gradient lookup table for structural coloring, or `null` for the
    * colorMode-driven `"legacy"` palette — see `voxel.ts`'s `accumulateVoxels`. */
   private colorLUT: Float32Array | null = null;
+  /** The primary structural palette selection. Retained separately from its
+   * LUT so a shared-color edit can stage under a nonlegacy override without
+   * restarting, then become effective if `setPalette` returns to legacy. */
+  private paletteSpec: PaletteSpec = "legacy";
   private grid: VoxelGrid | null = null;
   private bounds: VoxelBounds | null = null;
 
@@ -552,6 +563,9 @@ export class VoxelWorkerSession {
       case "setPalette":
         this.setPalette(command.palette);
         break;
+      case "setColorInputs":
+        this.setColorInputs(command.inputs);
+        break;
       case "setSymmetry":
         this.setSymmetry(command.order, command.plane, command.twist ?? 0);
         break;
@@ -608,6 +622,7 @@ export class VoxelWorkerSession {
     // null for "legacy" — accumulateVoxels/buildFourDColor then falls back
     // to colorMode/the explorer's 4D color mode respectively.
     this.colorLUT = buildPaletteLUT(cmd.palette);
+    this.paletteSpec = cmd.palette;
     this.iterationsBudget = cmd.iterationsBudget;
     this.requestedResolution = cmd.resolution;
     this.maxVoxels = cmd.maxVoxels ?? this.defaultMaxVoxels;
@@ -734,6 +749,43 @@ export class VoxelWorkerSession {
   private setPalette(palette: PaletteSpec): void {
     if (!this.hasGeometry()) return; // no active session yet.
     this.colorLUT = buildPaletteLUT(palette);
+    this.paletteSpec = palette;
+    this.startAccumulation();
+  }
+
+  /**
+   * Atomically stage every shared color input. A nonlegacy primary palette
+   * overrides this whole path, so staging under it performs no work; a later
+   * `setPalette("legacy")` restart reads these retained values. Under legacy,
+   * the current dimension bakes the inputs into avgRGB, so restart only the
+   * accumulation over the existing prepared geometry and frozen bounds.
+   */
+  private setColorInputs(inputs: RenderColorInputs): void {
+    if (!this.hasGeometry()) return;
+    const unchanged = this.is4D
+      ? sameFourDRenderColorInputs(
+          {
+            colorMode: this.fourDColorMode,
+            rampPalette: this.fourDRampPalette,
+          },
+          inputs.fourD,
+        )
+      : sameFlatRenderColorInputs(
+          {
+            colorMode: this.colorMode,
+            colorGamma: this.colorGamma,
+            rampPalette: this.rampPalette,
+            positionAxisColors: this.positionAxisColors,
+          },
+          inputs.flat,
+        );
+    this.colorMode = inputs.flat.colorMode;
+    this.colorGamma = inputs.flat.colorGamma;
+    this.rampPalette = inputs.flat.rampPalette;
+    this.positionAxisColors = inputs.flat.positionAxisColors;
+    this.fourDColorMode = inputs.fourD.colorMode;
+    this.fourDRampPalette = inputs.fourD.rampPalette;
+    if (this.paletteSpec !== "legacy" || unchanged) return;
     this.startAccumulation();
   }
 
@@ -803,7 +855,8 @@ export class VoxelWorkerSession {
    * supersample fallback. Dimension-agnostic: the grid itself (and this OOM
    * guard) doesn't care whether it's being filled by the 3D or 4D path. The
    * ONE place that actually discards a prior accumulation (shared by
-   * `start`, a live `setPalette`/`setSymmetry`, and the OOM retry above), so
+   * `start`, a live `setPalette`/`setSymmetry`/`setColorInputs`, and the OOM
+   * retry above), so
    * it's also where the `restarted` event is emitted — but only
    * once the grid is actually (re)allocated, i.e. never for a failed attempt
    * that's about to retry smaller.
