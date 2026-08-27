@@ -5606,7 +5606,7 @@ describe("Ui render mode switch", () => {
     ["flat", defaultTransforms()],
     ["non-flat", nonFlatTransforms()],
   ] as const)(
-    "shows exactly the %s document's Color selector in every renderer",
+    "shows the active %s Color selector and retains the flat selector in every renderer",
     (dimension, transforms) => {
       const ui = new Ui(document);
       for (const renderMode of [
@@ -5620,7 +5620,8 @@ describe("Ui render mode switch", () => {
           renderMode,
           transforms: [...transforms],
         });
-        expect(byId("colorModeRow").classList.contains("hidden")).toBe(
+        expect(byId("colorModeRow").classList.contains("hidden")).toBe(false);
+        expect((byId("colorMode") as HTMLSelectElement).disabled).toBe(
           dimension === "non-flat",
         );
         expect(byId("fourDColorRow").classList.contains("hidden")).toBe(
@@ -6944,7 +6945,7 @@ describe("Ui ramp palette", () => {
     // pair, inside Color.
     ui.updateLabels({ ...initialState(true), colorMode: "height" });
     expect(el("rampPaletteRow").previousElementSibling).toBe(
-      el("fourDColorRow"),
+      el("colorDimensionalRefusal"),
     );
     expect(el("rampPaletteRow").closest("details")?.id).toBe("colorSection");
     expect(el("fourDColorRow").classList.contains("hidden")).toBe(true);
@@ -6958,10 +6959,11 @@ describe("Ui ramp palette", () => {
       fourDColor: "radius",
     });
     expect(el("rampPaletteRow").previousElementSibling).toBe(
-      el("fourDColorRow"),
+      el("colorDimensionalRefusal"),
     );
     expect(el("fourDColorRow").classList.contains("hidden")).toBe(false);
-    expect(el("colorModeRow").classList.contains("hidden")).toBe(true);
+    expect(el("colorModeRow").classList.contains("hidden")).toBe(false);
+    expect((el("colorMode") as HTMLSelectElement).disabled).toBe(true);
   });
 
   it("shows the ramp custom-palette row once rampPaletteId is custom, with stops reflecting state.customPalette", () => {
@@ -7115,14 +7117,24 @@ describe("position axis colors row", () => {
     expect(el("positionColorsRow").classList.contains("hidden")).toBe(false);
   });
 
-  it("hides the row while the system is non-flat", () => {
+  it("keeps the stored row visible-disabled while the system is non-flat", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
       colorMode: "position",
       transforms: nonFlatTransforms(),
     });
-    expect(el("positionColorsRow").classList.contains("hidden")).toBe(true);
+    expect(el("positionColorsRow").classList.contains("hidden")).toBe(false);
+    for (const id of [
+      "positionAxisX",
+      "positionAxisY",
+      "positionAxisZ",
+      "positionColorsReset",
+    ]) {
+      expect((el(id) as HTMLInputElement | HTMLButtonElement).disabled).toBe(
+        true,
+      );
+    }
   });
 
   it("reflects the state's axis colors into the pickers", () => {
@@ -7221,7 +7233,7 @@ describe("Ui 4D view gating", () => {
     expect(el("panelTitle").textContent).toBe("3D IFS Fractal");
   });
 
-  it("shows the 4D controls and hides color/style — but keeps Symmetry — for a non-flat system; the render mode switch stays", () => {
+  it("shows 4D controls and retains dormant flat color/style disabled for a non-flat system", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
@@ -7230,8 +7242,16 @@ describe("Ui 4D view gating", () => {
     // segmented control is a view-independent switch, unlike the retired
     // flame/solid entry islands it replaced.
     expect(el("renderModeSwitch").classList.contains("hidden")).toBe(false);
-    expect(el("colorModeRow").classList.contains("hidden")).toBe(true);
-    expect(el("renderStyleRow").classList.contains("hidden")).toBe(true);
+    expect(el("colorModeRow").classList.contains("hidden")).toBe(false);
+    expect((el("colorMode") as HTMLSelectElement).disabled).toBe(true);
+    expect(el("renderStyleRow").classList.contains("hidden")).toBe(false);
+    expect((el("renderStyle") as HTMLSelectElement).disabled).toBe(true);
+    expect(el("colorDimensionalRefusal").classList.contains("hidden")).toBe(
+      false,
+    );
+    expect(el("depthDimensionalRefusal").classList.contains("hidden")).toBe(
+      false,
+    );
     // The Symmetry section used to hide here too; every render path sweeps
     // or expands the kaleidoscope for a 4D system, so its controls stay
     // editable.
@@ -7256,6 +7276,56 @@ describe("Ui 4D view gating", () => {
       "pointsDepthSection",
     );
     expect(el("viewControls").contains(el("fourDColorRow"))).toBe(false);
+  });
+
+  it("retains dependent flat look values disabled with their refusal, then restores them on flattening", () => {
+    const ui = new Ui(document);
+    const nonFlat = {
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      colorMode: "position" as const,
+      renderStyle: "glow" as const,
+    };
+
+    ui.updateLabels(nonFlat);
+    expect(el("positionColorsRow").classList.contains("hidden")).toBe(false);
+    expect(el("glowBrightnessRow").classList.contains("hidden")).toBe(false);
+    expect((el("positionAxisX") as HTMLInputElement).disabled).toBe(true);
+    expect((el("glowBrightnessSlider") as HTMLInputElement).disabled).toBe(
+      true,
+    );
+    expect(el("colorDimensionalRefusal").textContent).toContain(
+      "flat values stay saved",
+    );
+    expect(el("depthDimensionalRefusal").textContent).toContain(
+      "values stay saved",
+    );
+
+    ui.updateLabels({
+      ...nonFlat,
+      transforms: defaultTransforms(),
+    });
+    expect((el("colorMode") as HTMLSelectElement).disabled).toBe(false);
+    expect((el("renderStyle") as HTMLSelectElement).disabled).toBe(false);
+    expect((el("positionAxisX") as HTMLInputElement).disabled).toBe(false);
+    expect((el("glowBrightnessSlider") as HTMLInputElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("keeps Contrast enabled for a non-flat Surface Height consumer", () => {
+    const ui = new Ui(document);
+    const base = initialState(true);
+    ui.updateLabels({
+      ...base,
+      transforms: nonFlatTransforms(),
+      colorMode: "height",
+      renderMode: "surface",
+      surface: { ...base.surface, colorSource: "height" },
+    });
+
+    expect(el("colorGammaRow").classList.contains("hidden")).toBe(false);
+    expect((el("colorGammaSlider") as HTMLInputElement).disabled).toBe(false);
   });
 
   it("keeps one View shell across dimensions and hides it under frozen renders", () => {

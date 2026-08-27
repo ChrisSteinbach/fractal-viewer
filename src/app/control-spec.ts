@@ -755,8 +755,8 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   {
     kind: "select",
     id: "colorMode",
-    // colorModeRow hides while non-flat (the shader colors from the rotated
-    // w instead) — belt-and-braces.
+    // colorModeRow stays visible-disabled while non-flat (the shader colors
+    // from the rotated w instead); this guard is the mutation backstop.
     view: "flat",
     read: (s) => s.colorMode,
     apply: (s, raw) => setColorMode(s, raw as ColorMode),
@@ -803,8 +803,8 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   {
     kind: "select",
     id: "renderStyle",
-    // renderStyleRow hides while non-flat (the 4D material/render path
-    // ignores renderStyle entirely) — belt-and-braces.
+    // renderStyleRow stays visible-disabled while non-flat (the 4D material
+    // ignores it); this guard is the mutation backstop.
     view: "flat",
     read: (s) => s.renderStyle,
     apply: (s, raw) => setRenderStyle(s, raw as RenderStyle),

@@ -1916,6 +1916,7 @@ export class Ui {
   private readonly colorGammaRow: HTMLElement;
   private readonly rampPaletteRow: HTMLElement;
   private readonly positionColorsRow: HTMLElement;
+  private readonly colorDimensionalRefusal: HTMLElement;
   private readonly positionAxisInputs: {
     x: HTMLInputElement;
     y: HTMLInputElement;
@@ -2221,6 +2222,7 @@ export class Ui {
    * in the Points Depth section. */
   private readonly fourDDepthFadeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
+  private readonly depthDimensionalRefusal: HTMLElement;
 
   /**
    * The table-driven scalar controls (see control-spec.ts's SCALAR_CONTROLS),
@@ -2484,6 +2486,7 @@ export class Ui {
     this.colorGammaRow = this.byId("colorGammaRow");
     this.rampPaletteRow = this.byId("rampPaletteRow");
     this.positionColorsRow = this.byId("positionColorsRow");
+    this.colorDimensionalRefusal = this.byId("colorDimensionalRefusal");
     this.positionAxisInputs = {
       x: this.byId("positionAxisX"),
       y: this.byId("positionAxisY"),
@@ -2644,6 +2647,7 @@ export class Ui {
     this.fourDColorRow = this.byId("fourDColorRow");
     this.fourDDepthFadeRow = this.byId("fourDDepthFadeRow");
     this.renderStyleRow = this.byId("renderStyleRow");
+    this.depthDimensionalRefusal = this.byId("depthDimensionalRefusal");
     for (const spec of SCALAR_CONTROLS) {
       this.scalars.set(spec.id, {
         spec,
@@ -3746,14 +3750,19 @@ export class Ui {
       "hidden",
       this.fourDSurfaceLive || fourDColorNeedsAttribute(state.fourDColor),
     );
-    this.colorModeRow.classList.toggle("hidden", nonFlat);
-    // The 4D look rows are the non-flat replacements for the color-mode and
-    // depth-style rows: color stays in the Color section in both views, so
-    // the pair swaps in place rather than living in the 4D View section
-    // (which keeps only the spatial tumble/slice controls).
+    // Dormant flat look remains visible-disabled beside an accessible reason
+    // instead of silently disappearing. Its stored value is untouched and
+    // becomes editable again when the document returns to flat.
+    this.colorModeRow.classList.remove("hidden");
+    this.scalarInput("colorMode").disabled = nonFlat;
+    this.colorDimensionalRefusal.classList.toggle("hidden", !nonFlat);
+    // The active 4D look sits beside that dormant flat selector in the same
+    // authored Color home rather than moving into View.
     this.fourDColorRow.classList.toggle("hidden", !nonFlat);
     this.fourDDepthFadeRow.classList.toggle("hidden", !nonFlat);
-    this.renderStyleRow.classList.toggle("hidden", nonFlat);
+    this.renderStyleRow.classList.remove("hidden");
+    this.scalarInput("renderStyle").disabled = nonFlat;
+    this.depthDimensionalRefusal.classList.toggle("hidden", !nonFlat);
     // The Symmetry section deliberately does NOT gate on `nonFlat`: every
     // render path sweeps or expands the kaleidoscope for a 4D system too, so
     // the controls stay editable — and the old "parked kaleidoscope" note died
@@ -3761,12 +3770,13 @@ export class Ui {
     // or twist makes the system itself 4D). The manual brightness override
     // only means anything for the glow render style, so — like the flame/solid
     // sub-panels above — it's hidden whenever that style isn't the active one
-    // (and always while non-flat, since renderStyle itself never reaches the
-    // 4D projection either).
+    // under the stored Glow selection even while non-flat, where it remains
+    // visible-disabled with its parent refusal.
     this.glowBrightnessRow.classList.toggle(
       "hidden",
-      nonFlat || state.renderStyle !== "glow",
+      state.renderStyle !== "glow",
     );
+    this.scalarInput("glowBrightnessSlider").disabled = nonFlat;
     // The shared ramp/contrast inputs also feed Surface Height/Radius. Keep
     // those rows reachable during such a Surface session independently of
     // the Points/4D color selection shown above; otherwise the active
@@ -3784,17 +3794,24 @@ export class Ui {
     );
     // Contrast is part of Surface's normalized Height/Radius LUT in both
     // dimensions; outside that active consumer it remains flat Points detail.
+    const storedFlatGamma = colorModeUsesGamma(state.colorMode);
     this.colorGammaRow.classList.toggle(
       "hidden",
-      !activeSurfaceRamp && (nonFlat || !colorModeUsesGamma(state.colorMode)),
+      !activeSurfaceRamp && !storedFlatGamma,
     );
+    this.scalarInput("colorGammaSlider").disabled =
+      nonFlat && !activeSurfaceRamp;
     // The axis pickers only mean anything for the position mode (and never
-    // while non-flat, where colorMode itself is inert) — same gating family
-    // as the contrast slider, narrower condition.
+    // while non-flat it stays visible-disabled to disclose the retained
+    // authored dependency rather than vanishing with its parent.
     this.positionColorsRow.classList.toggle(
       "hidden",
-      nonFlat || state.colorMode !== "position",
+      state.colorMode !== "position",
     );
+    for (const input of Object.values(this.positionAxisInputs)) {
+      input.disabled = nonFlat;
+    }
+    (this.positionColorsResetBtn as HTMLButtonElement).disabled = nonFlat;
     // Sync the pickers to state — only write on change, like
     // syncCustomPaletteEditors' recolor path, so a mid-drag picker isn't
     // clobbered by its own input event's resulting state update.
