@@ -5613,7 +5613,7 @@ describe("Ui render mode switch", () => {
     ["flat", defaultTransforms()],
     ["non-flat", nonFlatTransforms()],
   ] as const)(
-    "keeps shared Color visible and open across every renderer for a %s document",
+    "keeps shared Scene color visible and open across every renderer for a %s document",
     (dimension, transforms) => {
       const ui = new Ui(document);
       const color = byId("colorSection") as HTMLDetailsElement;
@@ -7010,7 +7010,7 @@ describe("Ui ramp palette", () => {
 
     // Non-flat: the visible select flips; the ramp row itself never moves.
     // Its dependent relationship with the select — not top-level accordion
-    // exclusivity — keeps both in the Color section.
+    // exclusivity — keeps both in the Scene color section.
     ui.updateLabels({
       ...initialState(true),
       transforms: nonFlatTransforms(),
@@ -7129,7 +7129,7 @@ describe("Ui ramp palette", () => {
   });
 });
 
-describe("shared Color scope disclosure", () => {
+describe("shared Scene color scope disclosure", () => {
   it("is visible and ARIA-associated with every Color editor control", () => {
     const base = initialState(true);
     const ui = new Ui(document);
@@ -7148,7 +7148,7 @@ describe("shared Color scope disclosure", () => {
     const hint = document.getElementById("colorTimingHint") as HTMLElement;
     expect(hint.classList.contains("hidden")).toBe(false);
     expect(hint.textContent?.replace(/\s+/g, " ").trim()).toBe(
-      "Points color edits apply live. An active Solid—or a 4D Flame—using its legacy palette re-accumulates. Surface Height and Radius update live. Otherwise edits prepare the next applicable view.",
+      "The scene's authored color for Points, Solid and 4D Flame. Points edits apply live; an active Solid—or a 4D Flame—using its legacy palette re-accumulates. The Surface view is colored by its own Surface color section instead — except this section's Color Contrast, which still sharpens a Surface Height or Radius source live. Other edits prepare the next applicable view.",
     );
     for (const control of document.querySelectorAll<HTMLElement>(
       "#colorSection input, #colorSection select, #colorSection button",
@@ -7316,10 +7316,10 @@ describe("Ui 4D view gating", () => {
     expect(el("symmetrySection").classList.contains("hidden")).toBe(false);
   });
 
-  // The 4D look controls live beside their flat siblings in Color and Depth;
+  // The 4D look controls live beside their flat siblings in Scene color and Depth;
   // the 4D View section keeps only the spatial tumble/slice
   // controls.
-  it("gates 4D Color in Color and depth-fade in Depth on non-flat", () => {
+  it("gates 4D Color in Scene color and depth-fade in Depth on non-flat", () => {
     const ui = new Ui(document);
 
     ui.updateLabels(initialState(true));
@@ -8981,8 +8981,9 @@ describe("panel accordion sections", () => {
 
   // The vocabulary pin: section and control names must stay unambiguous
   // beside the render-mode segments (fr-soag.21). A chip reading "Surface"
-  // under the ◈ Surface segment, or two "Color" chips visible together,
-  // is exactly what the epic's final audit exists to prevent.
+  // under the ◈ Surface segment, or a shared chip colliding with a
+  // contextual one ("Color" vs "Surface color"), is exactly what the epic's
+  // final audit exists to prevent.
   it("keeps top-level section names distinct from the render-mode vocabulary", () => {
     const titles = sections().map(
       (section) => section.querySelector("summary")?.textContent ?? "",
@@ -9008,12 +9009,18 @@ describe("panel accordion sections", () => {
     expect(surfaceLighting?.querySelector("summary")?.textContent).toBe(
       "Lighting",
     );
+    // The shared authored color is "Scene color", named for what it is —
+    // Points/Solid/4D-Flame consumption — so the pair with Surface's own
+    // contextual "Surface color" chip reads as families, not duplicates.
+    expect(details("colorSection").querySelector("summary")?.textContent).toBe(
+      "Scene color",
+    );
     // Solid's first section is its iso level, not the Surface mode.
     expect(
       details("solidSurfaceSection").querySelector("summary")?.textContent,
     ).toBe("Level");
     // Surface's contextual inspector qualifies its own color home because
-    // the shared authored Color section stays visible in Surface mode.
+    // the shared authored Scene color section stays visible in Surface mode.
     expect(
       details("surfaceColorSection").querySelector("summary")?.textContent,
     ).toBe("Surface color");
