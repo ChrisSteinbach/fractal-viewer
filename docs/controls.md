@@ -1031,20 +1031,38 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   _is_ governed, so a slow solid trace goes soft before it goes choppy; its
   voxel grid is unaffected either way (see **Detail**). Session-only: it is a
   device preference, so it never rides in a link or scene file.
-- **Color Mode** — see [architecture.md](architecture.md#color-modes).
+- **Color** (shared Scene / Look section) — remains in the same accordion slot,
+  with the same open state, while you switch among Points, Flame, Solid, and
+  Surface. A flat system shows **Color Mode**; a non-flat system replaces it
+  with **4D Color**. See [architecture.md](architecture.md#color-modes).
+  The visible scope note summarizes when an edit is live, re-accumulates, or
+  merely prepares authored state for its next consumer. The exact contract is:
+
+  | Active renderer | Flat system                                                                                                                                                           | Non-flat system                                                                                                                                                      |
+  | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | Points          | **Color Mode**, applicable Ramp/Contrast, and Position Axis Colors update the cached cloud live.                                                                      | **4D Color** and its Radius ramp update the cached projection live.                                                                                                  |
+  | Flame           | Flat Flame's legacy look is per-transform, so shared Color edits prepare a later applicable view.                                                                     | With Flame's legacy palette, **4D Color** and its Radius ramp restart only accumulation; another primary palette keeps the edit staged for a later return to legacy. |
+  | Solid           | With Solid's legacy palette, the applicable Color Mode, Ramp/Contrast, and Position Axis Colors restart only voxel accumulation; another primary palette stages them. | With Solid's legacy palette, **4D Color** and its Radius ramp restart only voxel accumulation; another primary palette stages them.                                  |
+  | Surface         | **Height** and **Radius** sources consume Ramp Palette and Color Contrast live; other sources leave shared Color authored for another consumer.                       | The same: **Height** and **Radius** consume Ramp Palette and Color Contrast live, independent of the 4D Color selection; other sources do not.                       |
+
+  Worker color restarts retain the current geometry, bounds, projection, and
+  view; they are not a regenerate or a full render-session re-entry.
+
 - **Ramp Palette** — appears while **Color Mode** is **By Height** or
   **By Radius**, the two modes that _are_ a 1-D ramp — and, in the 4D
   projection, while **4D Color** is **By 4D Radius** — naming the
-  gradient those ramps sample. **Built-in ramp** (the default) keeps the
+  gradient those ramps sample. During an active Surface whose color source is
+  **Height** or **Radius**, the row remains visible in either dimension even
+  when the Points/4D color selection would ordinarily hide it. **Built-in
+  ramp** (the default) keeps the
   original hand-tuned formulas (height's blue→green→red, radius's warm→cool);
   the seven named gradients — **Spectrum**, **Sunset**, **Dusk**, **Lagoon**,
   **Ember**, **Aurora**, **Moss** — swap in a cosine gradient read at the same
   **Color Contrast**-mapped coordinate, and **Custom** selects your own
-  (below). The live cloud, the panel legend, and the Solid render — wherever
-  it takes its color from **Color Mode**, i.e. with its own **Palette** left
-  on **By Color Mode (legacy)** — all sample the one selection, so they can
-  never drift apart. Switching gradients recolors the cloud already on screen,
-  like **Color Mode** and **Color Contrast**; it is never a regenerate.
+  (below). Every applicable consumer in the matrix above resolves this one
+  selection, so their ramps cannot drift apart. Switching gradients recolors
+  Points or Surface live; an active legacy 4D Flame or applicable legacy Solid
+  re-accumulates over its retained geometry.
   Persists in the link and scene file, and the row simply hides again under a
   color mode with no ramp (By Transform, By Position, Uniform Cyan), holding
   your choice for the next time one is active.
@@ -1056,10 +1074,12 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   last color, so the gradient doesn't jump until you recolor the new swatch.
   A scene has exactly ONE shared primary custom gradient, and all five selects
   offering it edit that same one: **Ramp Palette** here, **Palette (restarts
-  render)** in Flame's **Tone** section and in Solid's **Surface** section
-  (those two restart accumulation, while the ramp and Surface tracer apply
-  live), **Palette** in Surface's **Color** section, and **Flame Color** for the
-  generated Flame background in **Atmosphere**. Each editor says this directly:
+  render)** in Flame's **Tone** section and in Solid's **Surface** section,
+  **Palette** in Surface's **Color** section, and **Flame Color** for the
+  generated Flame background in **Atmosphere**. The effect follows the active
+  consumer matrix above: the same Ramp Custom edit may be live, staged, or
+  re-accumulating rather than acquiring a different cost from the editor copy
+  used to make it. Each editor says this directly:
   every non-Balloon palette set to Custom uses those stops. Balloon's Custom
   gradient is explicitly Balloon-only and never changes this shared primary
   gradient. A look authored in one render is therefore one select away in the
@@ -1083,11 +1103,15 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   keeps the near corner of the bounds from fading to black, and colors sharing
   a channel deliberately wash toward their sum near the far corner rather than
   being renormalized. The live cloud, the panel legend's swatches, and the
-  Solid render all read the same three colors, and they travel in the link and
-  scene file.
+  Solid render all read the same three colors. Points updates live; an active
+  flat Solid using its legacy palette re-accumulates, while every other active
+  renderer simply preserves the edit for the next applicable view. The colors
+  travel in the link and scene file.
 - **Color Contrast** — visible for the Height/Radius/Position color modes; a
   log-scale gamma on the normalized coordinate. Left (<1) spreads detail in
-  the dense low end, right (>1) in the high end, center = linear.
+  the dense low end, right (>1) in the high end, center = linear. It also stays
+  visible for an active Surface Height/Radius source in either dimension and
+  updates that tracer's LUT live.
 - **Depth Style** — in Points' **Depth** section, how the cloud conveys depth:
   Depth Fade (default), Aerial
   Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting. The backdrop color
@@ -1444,10 +1468,12 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   (their own 4D accumulators for Flame and Solid, their own 4D tracer for
   Surface; the Surface button still gates on distance-estimator eligibility
   exactly as it does for a flat system, see **◈ Surface** above). Flame and
-  Solid _freeze_ the view they start from — one snapshot of the rotor, the
-  slice window, and the **4D Color** choice, held for the render's whole
-  life — so the tumble parks and this section's sliders hide until you
-  return to Points. Surface instead keeps the rotor and W slice live per
+  Solid _freeze_ the spatial view they start from — one snapshot of the rotor
+  and slice window held for the render's whole life — so the tumble parks and
+  this section's spatial sliders hide until you return to Points. Shared
+  **Color** remains shown: an applicable edit under the worker's legacy palette
+  re-accumulates over that retained view, while another primary palette stages
+  it. Surface instead keeps the rotor and W slice live per
   frame, so the Shift-drag / Shift-wheel gestures above still steer it and
   the **W slice** position slider stays live and shown unconditionally,
   since the tracer marches a cross-section every frame regardless of any
@@ -1464,9 +1490,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   remap. What does drop out of the panel is the flat-only look controls:
   **Color Mode** and **Depth Style** are superseded in their **Color** and
   **Depth** sections by **4D
-  Color** and **Depth fade** above, and **Color
-  Contrast** goes with them (it tunes the height / radius / position ramps,
-  none of which are in play once 4D Color owns the coloring).
+  Color** and **Depth fade** above. **Color Contrast** ordinarily goes with the
+  flat selection, but remains visible when an active 4D Surface uses its
+  **Height** or **Radius** source, whose live LUT still consumes it.
   **Symmetry** stays put: the 4D chaos game runs its own
   kaleidoscope stage, so Order, Plane, and Twist keep editing the live
   projection — and the frozen flame/solid snapshots and the live surface

@@ -615,15 +615,18 @@ portable accounting because it also includes draw synchronization and readback.
 Both renders extend to 4D. There is no separate 4D worker: the
 flame and solid `start` commands each carry an optional `fourD` block whose mere
 presence flips the session onto the 4D chaos game and `accumulateFlame4` /
-`accumulateVoxels4`. That block is a **frozen snapshot** of the current 4D view,
-captured the instant Render is clicked — the accumulated rotor, the cloud's 4D
-center and rotated-w support, the slice window (`sliceOn` / `sliceCenter` /
-`sliceWidth`) and its optional slice-relative recolor, and the lifted
-`Transform4`s. It stays valid for the render's whole life for nothing: the
+`accumulateVoxels4`. Its geometry and view fields are a **frozen snapshot** of
+the current 4D view, captured the instant Render is clicked — the accumulated
+rotor, the cloud's 4D center and rotated-w support, the slice window (`sliceOn`
+/ `sliceCenter` / `sliceWidth`) and its optional slice-relative recolor, and the
+lifted `Transform4`s. The shared Color editor is the deliberate exception:
+atomic `setColorInputs` commands keep the 4D color mode and radius-ramp palette
+current, restarting only active legacy accumulation over that retained geometry
+and view. The frozen fields stay valid for the render's whole life because the
 animation loop early-returns past the tumble step while a render is active, so
-the frozen rotor simply never advances. The 4D flame rides the same WebGPU path
-as the 3D one (see "GPU accumulation backend"), with `accumulateFlame4`
-as its CPU oracle and fallback.
+the rotor simply never advances. The 4D flame rides the same WebGPU path as the
+3D one (see "GPU accumulation backend"), with `accumulateFlame4` as its CPU
+oracle and fallback.
 
 One asymmetry is deliberate: the **soft w-slice floor**. The point cloud and the
 flame both slice with a small `SLICE_GHOST_FLOOR` (`0.06`, the single source of

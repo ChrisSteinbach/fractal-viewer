@@ -2551,7 +2551,6 @@ export class Ui {
       this.byId<HTMLDetailsElement>("xaosSection"),
       this.byId<HTMLDetailsElement>("presetSection"),
       this.byId<HTMLDetailsElement>("cloudSection"),
-      this.byId<HTMLDetailsElement>("colorSection"),
       this.byId<HTMLDetailsElement>("scheduleSection"),
       this.byId<HTMLDetailsElement>("pointsDepthSection"),
     ];
@@ -3558,13 +3557,10 @@ export class Ui {
       this.modeButtons[mode].classList.toggle("active", active);
       this.modeButtons[mode].setAttribute("aria-pressed", String(active));
     }
-    // …and swap in the active mode's sections. A flame/solid render takes
-    // over the panel — editing controls that can't affect the in-progress
-    // render would just be confusing — but the segmented control itself stays,
-    // so flame↔solid is a direct switch, not a round-trip through Points.
-    // Atmosphere is the deliberate exception: its one shared section remains
-    // reachable. Fog/Tint stay present as authored Look state and disclose
-    // dormant or partial scope in place; syncFogRows owns that finer gate.
+    // …and swap in the active mode's contextual inspectors. Color and
+    // Atmosphere are shared Scene / Look sections and remain reachable:
+    // their notes disclose live, re-accumulating, and prepared-next-view
+    // effects in place. Fog/Tint's finer gate belongs to syncFogRows.
     const rendering = state.renderMode !== "points";
     // "4D" is a DERIVED property of the system (see affine4.ts's systemIsFlat
     // via state.ts's systemIsNonFlat), NOT a fourth render mode — so this is a
@@ -3760,28 +3756,26 @@ export class Ui {
       "hidden",
       nonFlat || state.renderStyle !== "glow",
     );
-    // The ramp palette only means anything for the modes that ARE a 1-D ramp:
-    // the flat view's height/radius color modes (narrower than the contrast
-    // slider's gating, see color.ts's colorModeUsesRampPalette) and the 4D
-    // projection's "By 4D Radius" mode, which follows the same selection. It
-    // is ONE row (select + custom-stop editor) serving both views: it sits
-    // statically beneath the flat/4D color-select pair, exactly one of which
-    // is visible per view, so it is always directly under the select that
-    // gates it. That true dependent relationship keeps the rows together in
-    // Color; top-level accordion exclusivity does not determine their
-    // conceptual placement.
+    // The shared ramp/contrast inputs also feed Surface Height/Radius. Keep
+    // those rows reachable during such a Surface session independently of
+    // the Points/4D color selection shown above; otherwise the active
+    // dimensional color choice owns their ordinary dependent visibility.
+    const activeSurfaceRamp =
+      state.renderMode === "surface" &&
+      (state.surface.colorSource === "height" ||
+        state.surface.colorSource === "radius");
     this.rampPaletteRow.classList.toggle(
       "hidden",
-      nonFlat
-        ? state.fourDColor !== "radius"
-        : !colorModeUsesRampPalette(state.colorMode),
+      !activeSurfaceRamp &&
+        (nonFlat
+          ? state.fourDColor !== "radius"
+          : !colorModeUsesRampPalette(state.colorMode)),
     );
-    // Contrast only means anything for the coordinate-normalized color modes
-    // (and never while non-flat, whose color comes straight from the rotated
-    // 4th coordinate in-shader instead of colorMode).
+    // Contrast is part of Surface's normalized Height/Radius LUT in both
+    // dimensions; outside that active consumer it remains flat Points detail.
     this.colorGammaRow.classList.toggle(
       "hidden",
-      nonFlat || !colorModeUsesGamma(state.colorMode),
+      !activeSurfaceRamp && (nonFlat || !colorModeUsesGamma(state.colorMode)),
     );
     // The axis pickers only mean anything for the position mode (and never
     // while non-flat, where colorMode itself is inert) — same gating family
@@ -3976,12 +3970,12 @@ export class Ui {
    * only while their OWN render's palette select is on
    * {@link CUSTOM_PALETTE_ID}; the surface and ramp rows additionally sit
    * INSIDE a gated container (`#surfacePaletteRow`, hidden unless the
-   * surface colorSource is one of the three that sample the user palette —
-   * `palette`/`rings`/`sheets`; `#rampPaletteRow`, the per-view ramp-mode
-   * gating — flat: `colorModeUsesRampPalette`; non-flat: `fourDColor ===
-   * "radius"`), so {@link updateLabels}' container gating composes on top
-   * of the isCustom gating handled here — both must hold for those editors
-   * to actually show. All five edit the same shared slot (see `state.ts`'s
+   * surface colorSource is one of the four that sample the user palette —
+   * `palette`/`rings`/`sheets`/`shapeTrap`; `#rampPaletteRow`, the active
+   * Points/4D ramp-mode gate or an active Surface Height/Radius override), so
+   * {@link updateLabels}' container gating composes on top of the isCustom
+   * gating handled here — both must hold for those editors to actually show.
+   * All five edit the same shared slot (see `state.ts`'s
    * `AppState.customPalette`), so switching which one is "custom" never
    * loses an in-progress edit. The stop inputs are only rebuilt when their
    * count changes (add/remove, or a fresh seed) — an ordinary recolor
@@ -4033,7 +4027,12 @@ export class Ui {
           // The swatch is the input's whole visible face — no room for a
           // text label, so name it for assistive tech instead.
           input.setAttribute("aria-label", `Color stop ${i + 1}`);
-          input.setAttribute("aria-describedby", editor.disclosureId);
+          input.setAttribute(
+            "aria-describedby",
+            kind === "ramp"
+              ? `${editor.disclosureId} colorTimingHint`
+              : editor.disclosureId,
+          );
           editor.stops.appendChild(input);
         });
       } else {
