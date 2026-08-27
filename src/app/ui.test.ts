@@ -1017,8 +1017,8 @@ describe("Ui three-axis panel applicability", () => {
       ui.setSurfaceSessionKind("ifs");
       ui.updateLabels(state);
       expect(balloon().disabled).toBe(false);
-      expect(hidden("surfaceTrapRow")).toBe(true);
-      expect(hidden("surfaceCondensationRow")).toBe(false);
+      expect(hidden("surfaceTrapSection")).toBe(true);
+      expect(hidden("surfaceCondensationSection")).toBe(false);
 
       ui.updateLabels({
         ...state,
@@ -1028,31 +1028,31 @@ describe("Ui three-axis panel applicability", () => {
             : { ...transform, weight: 0 },
         ),
       });
-      expect(hidden("surfaceCondensationRow")).toBe(true);
+      expect(hidden("surfaceCondensationSection")).toBe(true);
 
       ui.setSurfaceSessionKind("escape");
       ui.updateLabels(state);
       expect(balloon().disabled).toBe(true);
-      expect(hidden("surfaceTrapRow")).toBe(false);
-      expect(hidden("surfaceCondensationRow")).toBe(true);
+      expect(hidden("surfaceTrapSection")).toBe(false);
+      expect(hidden("surfaceCondensationSection")).toBe(true);
 
       ui.setSurfaceSessionKind("bulb");
       ui.updateLabels(state);
       expect(balloon().disabled).toBe(true);
-      expect(hidden("surfaceTrapRow")).toBe(false);
+      expect(hidden("surfaceTrapSection")).toBe(false);
 
       // A stale Surface kind is not a wildcard outside Surface: the Points
       // consumer owns Balloon and does not expose the Surface trap inspector.
       ui.updateLabels({ ...state, renderMode: "points" });
       expect(balloon().disabled).toBe(false);
-      expect(hidden("surfaceTrapRow")).toBe(true);
+      expect(hidden("surfaceTrapSection")).toBe(true);
     },
   );
 });
 
 describe("Ui condensation level band", () => {
   const row = (): HTMLElement =>
-    document.getElementById("surfaceCondensationRow") as HTMLElement;
+    document.getElementById("surfaceCondensationSection") as HTMLElement;
   const custom = (): HTMLElement =>
     document.getElementById("surfaceCondensationCustom") as HTMLElement;
 
@@ -1158,8 +1158,9 @@ describe("Ui shape-trap geometry", () => {
   });
 
   it("discloses the fold-only restriction next to the checkbox", () => {
-    expect(row().textContent).toContain("conformal fold-only escape chains");
-    expect(row().textContent).toContain("Color trapping still works");
+    const text = row().textContent?.replace(/\s+/g, " ");
+    expect(text).toContain("conformal fold-only escape chains");
+    expect(text).toContain("Color trapping still works");
   });
 
   it.each([
@@ -1190,11 +1191,13 @@ describe("Ui shape-trap geometry", () => {
 
       expect(
         document
-          .getElementById("surfaceLookSection")
+          .getElementById("surfaceColorSection")
           ?.classList.contains("hidden"),
       ).toBe(true);
       expect(
-        document.getElementById("surfaceTrapRow")?.classList.contains("hidden"),
+        document
+          .getElementById("surfaceTrapSection")
+          ?.classList.contains("hidden"),
       ).toBe(true);
       expect(row().classList.contains("hidden")).toBe(true);
     },
@@ -4710,6 +4713,7 @@ describe("Ui render mode switch", () => {
     "cloudSection",
     "colorSection",
     "scheduleSection",
+    "pointsDepthSection",
   ] as const;
   const FLAME_SECTION_IDS = [
     "flameToneSection",
@@ -4720,6 +4724,18 @@ describe("Ui render mode switch", () => {
     "solidSurfaceSection",
     "solidLightingSection",
     "solidQualitySection",
+  ] as const;
+  const SURFACE_SECTION_IDS = [
+    "surfaceColorSection",
+    "surfaceCondensationSection",
+    "surfaceTrapSection",
+    "surfaceLightingSection",
+    "surfaceFloorSection",
+  ] as const;
+  const SURFACE_ALWAYS_SECTION_IDS = [
+    "surfaceColorSection",
+    "surfaceLightingSection",
+    "surfaceFloorSection",
   ] as const;
 
   function expectSectionsHidden(ids: readonly string[], hidden: boolean): void {
@@ -4871,7 +4887,7 @@ describe("Ui render mode switch", () => {
     expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
     expectSectionsHidden(FLAME_SECTION_IDS, false);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
-    expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(true);
+    expectSectionsHidden(SURFACE_SECTION_IDS, true);
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(false);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
@@ -4887,7 +4903,7 @@ describe("Ui render mode switch", () => {
     expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
     expectSectionsHidden(SOLID_SECTION_IDS, false);
     expectSectionsHidden(FLAME_SECTION_IDS, true);
-    expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(true);
+    expectSectionsHidden(SURFACE_SECTION_IDS, true);
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
@@ -4900,7 +4916,11 @@ describe("Ui render mode switch", () => {
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
 
     expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
-    expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(false);
+    expectSectionsHidden(SURFACE_ALWAYS_SECTION_IDS, false);
+    expect(
+      byId("surfaceCondensationSection").classList.contains("hidden"),
+    ).toBe(true);
+    expect(byId("surfaceTrapSection").classList.contains("hidden")).toBe(true);
     expectSectionsHidden(FLAME_SECTION_IDS, true);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
@@ -4951,42 +4971,43 @@ describe("Ui render mode switch", () => {
     },
   );
 
-  it("keeps one shared Atmosphere section live and exposes only renderer-relevant rows", () => {
+  it("keeps shared Atmosphere stable and gates the separate Points Depth section", () => {
     const ui = new Ui(document);
     const state = initialState(true);
     const atmosphere = byId("atmosphereSection");
+    const depth = byId("pointsDepthSection");
 
     expect(atmosphere.parentElement).toBe(byId("panelSections"));
+    expect(depth.parentElement).toBe(byId("panelSections"));
+    expect(document.querySelectorAll("#pointsDepthSection")).toHaveLength(1);
+    expect(document.querySelectorAll("#renderStyleRow")).toHaveLength(1);
+    expect(document.querySelectorAll("#fourDDepthFadeRow")).toHaveLength(1);
+    expect(document.querySelectorAll("#glowBrightnessRow")).toHaveLength(1);
+    expect(
+      atmosphere.querySelector(":scope > summary")?.nextElementSibling,
+    ).toBe(byId("backgroundRow"));
 
     ui.updateLabels({ ...state, renderMode: "surface" });
     expect(atmosphere.classList.contains("hidden")).toBe(false);
     expect(byId("scheduleSection").classList.contains("hidden")).toBe(true);
-    expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
-      true,
-    );
+    expect(depth.classList.contains("hidden")).toBe(true);
     expect(byId("backgroundRow").classList.contains("hidden")).toBe(false);
     expect(byId("fogControls").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels({ ...state, renderMode: "solid" });
     expect(atmosphere.classList.contains("hidden")).toBe(false);
-    expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
-      true,
-    );
+    expect(depth.classList.contains("hidden")).toBe(true);
     expect(byId("fogControls").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels({ ...state, renderMode: "flame" });
     expect(atmosphere.classList.contains("hidden")).toBe(false);
-    expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
-      true,
-    );
+    expect(depth.classList.contains("hidden")).toBe(true);
     expect(byId("backgroundRow").classList.contains("hidden")).toBe(false);
     expect(byId("fogControls").classList.contains("hidden")).toBe(true);
 
     ui.updateLabels(state);
     expect(byId("scheduleSection").classList.contains("hidden")).toBe(false);
-    expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
-      false,
-    );
+    expect(depth.classList.contains("hidden")).toBe(false);
     expect(byId("fogControls").classList.contains("hidden")).toBe(false);
   });
 
@@ -4997,7 +5018,7 @@ describe("Ui render mode switch", () => {
     expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, false);
     expectSectionsHidden(FLAME_SECTION_IDS, true);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
-    expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(true);
+    expectSectionsHidden(SURFACE_SECTION_IDS, true);
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
@@ -6279,10 +6300,10 @@ describe("Ui 4D view gating", () => {
     expect(el("symmetrySection").classList.contains("hidden")).toBe(false);
   });
 
-  // The 4D look controls live beside their flat siblings in Color and
-  // Atmosphere; the 4D View section keeps only the spatial tumble/slice
+  // The 4D look controls live beside their flat siblings in Color and Depth;
+  // the 4D View section keeps only the spatial tumble/slice
   // controls.
-  it("gates 4D Color in Color and depth-fade in Atmosphere on non-flat", () => {
+  it("gates 4D Color in Color and depth-fade in Depth on non-flat", () => {
     const ui = new Ui(document);
 
     ui.updateLabels(initialState(true));
@@ -6294,7 +6315,7 @@ describe("Ui 4D view gating", () => {
     expect(el("fourDDepthFadeRow").classList.contains("hidden")).toBe(false);
     expect(el("fourDColorRow").closest("details")?.id).toBe("colorSection");
     expect(el("fourDDepthFadeRow").closest("details")?.id).toBe(
-      "atmosphereSection",
+      "pointsDepthSection",
     );
     expect(el("fourDControls").contains(el("fourDColorRow"))).toBe(false);
   });
@@ -7460,8 +7481,9 @@ describe("Ui symmetry controls", () => {
     ) as HTMLDetailsElement;
     // Surface is the inspected renderer, but the shared scene editor is the
     // section the user opened to make the live edit.
-    (document.getElementById("surfaceLookSection") as HTMLDetailsElement).open =
-      false;
+    (
+      document.getElementById("surfaceColorSection") as HTMLDetailsElement
+    ).open = false;
     symmetrySection.open = true;
     symmetrySection.dispatchEvent(new Event("toggle"));
     expect(surfaceButton.disabled).toBe(false);
@@ -7604,12 +7626,19 @@ describe("panel accordion sections", () => {
       "captureSection",
       "shareSection",
     ];
+    const surfaceIds = [
+      "surfaceColorSection",
+      "surfaceCondensationSection",
+      "surfaceTrapSection",
+      "surfaceLightingSection",
+      "surfaceFloorSection",
+    ];
 
     expect(ids.slice(-workflowIds.length)).toEqual(workflowIds);
     expect(ids.indexOf("transformsSection")).toBeLessThan(
       ids.indexOf("captureSection"),
     );
-    expect(ids.indexOf("surfaceLookSection")).toBeLessThan(
+    expect(ids.indexOf("surfaceFloorSection")).toBeLessThan(
       ids.indexOf("captureSection"),
     );
     expect(ids.indexOf("fourDControls")).toBeLessThan(
@@ -7621,13 +7650,24 @@ describe("panel accordion sections", () => {
     expect(ids.indexOf("balloonSection")).toBeLessThan(
       ids.indexOf("atmosphereSection"),
     );
+    expect(ids.indexOf("scheduleSection")).toBeLessThan(
+      ids.indexOf("pointsDepthSection"),
+    );
+    expect(ids.indexOf("pointsDepthSection")).toBeLessThan(
+      ids.indexOf("flameToneSection"),
+    );
+    const surfaceIndices = surfaceIds.map((id) => ids.indexOf(id));
+    expect(surfaceIndices).toEqual([...surfaceIndices].sort((a, b) => a - b));
+    for (const id of surfaceIds) {
+      expect(document.querySelectorAll(`#${id}`), id).toHaveLength(1);
+    }
     // Symmetry is authored Scene composition, so its single shared editor
     // stays in the Scene / Look run before every contextual render inspector,
     // View / Device, and Workflow — it does not move with the active mode.
     for (const later of [
       "flameToneSection",
       "solidSurfaceSection",
-      "surfaceLookSection",
+      "surfaceColorSection",
       "fourDControls",
       "collectionSection",
     ]) {
@@ -7666,10 +7706,10 @@ describe("panel accordion sections", () => {
     expect(details("solidSurfaceSection").open).toBe(true);
   });
 
-  it("entering surface mode opens its Surface Look section", () => {
+  it("entering surface mode opens its Color section", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
-    expect(details("surfaceLookSection").open).toBe(true);
+    expect(details("surfaceColorSection").open).toBe(true);
   });
 
   const hiddenOpenSections = (): string[] =>
@@ -7691,7 +7731,7 @@ describe("panel accordion sections", () => {
 
     ui.updateLabels(surface);
     expect(atmosphere.open).toBe(true);
-    expect(details("surfaceLookSection").open).toBe(false);
+    expect(details("surfaceColorSection").open).toBe(false);
     expect(hiddenOpenSections()).toEqual([]);
 
     ui.updateLabels(points);
@@ -7784,17 +7824,45 @@ describe("panel accordion sections", () => {
     );
     ui.setSurfaceSessionKind("escape");
     ui.updateLabels(surface);
-    expect(details("surfaceLookSection").open).toBe(true);
+    details("surfaceColorSection").open = false;
+    const trap = details("surfaceTrapSection");
+    trap.open = true;
+    trap.dispatchEvent(new Event("toggle"));
+    expect(trap.classList.contains("hidden")).toBe(false);
 
     // Simulate the native name-group exchange on Surface entry.
     details("presetSection").open = false;
     ui.updateLabels({ ...surface, renderMode: "points" });
 
-    expect(details("surfaceLookSection").classList.contains("hidden")).toBe(
-      true,
-    );
-    expect(details("surfaceLookSection").open).toBe(false);
+    expect(trap.classList.contains("hidden")).toBe(true);
+    expect(trap.open).toBe(false);
     expect(details("presetSection").open).toBe(true);
+    expect(hiddenOpenSections()).toEqual([]);
+  });
+
+  it("closes a route-specific Surface section when the session kind changes", () => {
+    const ui = new Ui(document);
+    const state = {
+      ...initialState(true),
+      renderMode: "surface" as const,
+      transforms: gearworks(),
+    };
+    ui.setSurfaceSessionKind("ifs");
+    ui.updateLabels(state);
+    details("surfaceColorSection").open = false;
+    const copies = details("surfaceCondensationSection");
+    copies.open = true;
+    copies.dispatchEvent(new Event("toggle"));
+    expect(copies.classList.contains("hidden")).toBe(false);
+
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels(state);
+
+    expect(copies.classList.contains("hidden")).toBe(true);
+    expect(copies.open).toBe(false);
+    expect(details("surfaceTrapSection").classList.contains("hidden")).toBe(
+      false,
+    );
     expect(hiddenOpenSections()).toEqual([]);
   });
 

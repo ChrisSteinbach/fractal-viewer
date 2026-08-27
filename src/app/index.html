@@ -546,12 +546,11 @@
 
         <!-- Appearance measured 839px with 29 controls, ~81% of it control
              rows with no inert band longer than 12px — nowhere to rest a
-             thumb while scrolling it. Split three ways, along the gating
-             seam: every gate keeps the rows it reveals, so colorMode and
+             thumb while scrolling it. Split along conceptual and gating
+             seams: every gate keeps the rows it reveals, so colorMode and
              its 4D sibling stay welded to the ramp/axis/contrast rows they
-             gate. The shared Atmosphere section below keeps background with
-             its custom stops and keeps the Points-only balloon/depth pairs
-             together inside their own mode-gated block. -->
+             gate. Points depth treatment gets its own contextual section;
+             the shared Atmosphere section keeps only backdrop and fog. -->
         <details class="panel-section" id="cloudSection" name="panel-section">
           <summary>Cloud</summary>
           <label class="select-label">
@@ -885,56 +884,15 @@
         </details>
 
         <!-- Shared scene atmosphere. This stays reachable in every render
-           mode: Background affects all four, while #fogControls hides only
-           in Flame (the one renderer with no depth fog). The first block is
-           the Points renderer's own depth style, so Surface/Solid/Flame hide
-           it without duplicating any of the shared controls. -->
+             mode: Background affects all four, while #fogControls hides only
+             in Flame (the one renderer with no depth fog). Background is
+             deliberately first and stable in every renderer. -->
         <details
           class="panel-section"
           id="atmosphereSection"
           name="panel-section"
         >
           <summary>Atmosphere</summary>
-          <div id="pointsAtmosphereControls">
-            <div id="renderStyleRow">
-              <label class="select-label">
-                Depth Style
-                <select id="renderStyle">
-                  <option value="depthFade">Depth Fade</option>
-                  <option value="aerial">Aerial Haze</option>
-                  <option value="glow">Glow + Bloom</option>
-                  <option value="dof">Depth of Field</option>
-                  <option value="edl">Eye-Dome Lighting</option>
-                </select>
-              </label>
-            </div>
-
-            <!-- The 4D sibling of #renderStyleRow's depth treatment (its
-               default option IS "Depth Fade"): a persisted look preference
-               like fourDColor's, so it lives with the other look
-               controls. -->
-            <div id="fourDDepthFadeRow" class="hidden">
-              <label class="checkbox-label">
-                <input type="checkbox" id="fourDDepthFadeToggle" />
-                Depth fade (dim far points)
-              </label>
-            </div>
-
-            <div id="glowBrightnessRow" class="hidden">
-              <label class="select-label">
-                Glow Brightness: <span id="glowBrightnessLabel">1.00×</span>
-                <input
-                  type="range"
-                  id="glowBrightnessSlider"
-                  min="0.1"
-                  max="3"
-                  step="0.05"
-                  value="1"
-                />
-              </label>
-            </div>
-          </div>
-
           <!-- The scene backdrop: shown by every renderer, not just the
                explorer, so unlike Depth Style it stays live in the 4D
                view too. Flame selects the generated image source; Custom
@@ -1182,6 +1140,53 @@
               value="0"
             />
           </label>
+        </details>
+
+        <!-- Points renderer depth treatment. Flat and non-flat systems swap
+             their sibling controls in place; Glow Brightness remains true
+             dependent detail of the flat Glow + Bloom choice. -->
+        <details
+          class="panel-section"
+          id="pointsDepthSection"
+          name="panel-section"
+        >
+          <summary>Depth</summary>
+          <div id="renderStyleRow">
+            <label class="select-label">
+              Depth Style
+              <select id="renderStyle">
+                <option value="depthFade">Depth Fade</option>
+                <option value="aerial">Aerial Haze</option>
+                <option value="glow">Glow + Bloom</option>
+                <option value="dof">Depth of Field</option>
+                <option value="edl">Eye-Dome Lighting</option>
+              </select>
+            </label>
+          </div>
+
+          <!-- The 4D sibling of #renderStyleRow's depth treatment (its
+               default option IS "Depth Fade"): a persisted look preference
+               beside the renderer's flat depth style. -->
+          <div id="fourDDepthFadeRow" class="hidden">
+            <label class="checkbox-label">
+              <input type="checkbox" id="fourDDepthFadeToggle" />
+              Depth fade (dim far points)
+            </label>
+          </div>
+
+          <div id="glowBrightnessRow" class="hidden">
+            <label class="select-label">
+              Glow Brightness: <span id="glowBrightnessLabel">1.00×</span>
+              <input
+                type="range"
+                id="glowBrightnessSlider"
+                min="0.1"
+                max="3"
+                step="0.05"
+                value="1"
+              />
+            </label>
+          </div>
         </details>
 
         <details
@@ -1485,12 +1490,15 @@
           ></p>
         </details>
 
+        <!-- Surface's renderer inspector is split at its concern and session
+             seams. Color, Lighting and Floor apply across Surface sessions;
+             Shape copies and Shape trap own their mutually exclusive routes. -->
         <details
           class="panel-section hidden"
-          id="surfaceLookSection"
+          id="surfaceColorSection"
           name="panel-section"
         >
-          <summary>Surface Look</summary>
+          <summary>Color</summary>
           <label class="select-label">
             Color source
             <select id="surfaceColorSource">
@@ -1559,196 +1567,216 @@
               />
             </label>
           </div>
-          <div id="surfaceCondensationRow" class="hidden">
-            <label
-              class="select-label"
-              title="Choose which recursive word depths contain copies of an emitter shape; root is depth 0"
-            >
-              Shape levels
-              <select id="surfaceCondensationBandMode">
-                <option value="all">All levels</option>
-                <option value="root">Root only</option>
-                <option value="custom">Custom band</option>
-              </select>
+        </details>
+
+        <details
+          class="panel-section hidden"
+          id="surfaceCondensationSection"
+          name="panel-section"
+        >
+          <summary>Shape copies</summary>
+          <label
+            class="select-label"
+            title="Choose which recursive word depths contain copies of an emitter shape; root is depth 0"
+          >
+            Shape levels
+            <select id="surfaceCondensationBandMode">
+              <option value="all">All levels</option>
+              <option value="root">Root only</option>
+              <option value="custom">Custom band</option>
+            </select>
+          </label>
+          <div id="surfaceCondensationCustom" class="hidden">
+            <label class="select-label">
+              First level: <span id="surfaceCondensationMinLabel">1</span>
+              <input
+                type="range"
+                id="surfaceCondensationMinSlider"
+                min="0"
+                max="24"
+                step="1"
+                value="1"
+              />
             </label>
-            <div id="surfaceCondensationCustom" class="hidden">
-              <label class="select-label">
-                First level: <span id="surfaceCondensationMinLabel">1</span>
-                <input
-                  type="range"
-                  id="surfaceCondensationMinSlider"
-                  min="0"
-                  max="24"
-                  step="1"
-                  value="1"
-                />
-              </label>
-              <label class="select-label">
-                Last level: <span id="surfaceCondensationMaxLabel">1</span>
-                <input
-                  type="range"
-                  id="surfaceCondensationMaxSlider"
-                  min="0"
-                  max="24"
-                  step="1"
-                  value="1"
-                />
-              </label>
-            </div>
+            <label class="select-label">
+              Last level: <span id="surfaceCondensationMaxLabel">1</span>
+              <input
+                type="range"
+                id="surfaceCondensationMaxSlider"
+                min="0"
+                max="24"
+                step="1"
+                value="1"
+              />
+            </label>
           </div>
+        </details>
+
+        <details
+          class="panel-section hidden"
+          id="surfaceTrapSection"
+          name="panel-section"
+        >
+          <summary>Shape trap</summary>
           <!-- The shape trap (Pickover shape-trapping): the escape family's
                second palette channel — the orbit's distance to a posed
                shape, stamped at every scale of the fractal. Visible only
                for escape-family sessions; panel-applicability.ts owns that
                three-axis consumer rule. Painted by the "Shape trap" color
                source above. -->
-          <div id="surfaceTrapRow" class="hidden">
-            <label
-              class="select-label"
-              title="Stamp a shape across the fractal: every orbit step measures its distance to this shape, and the closest approach drives the palette"
-            >
-              Shape trap
-              <select id="surfaceTrapShape">
-                <option value="">None</option>
-                <option value="custom" hidden>(authored)</option>
-              </select>
-            </label>
-            <div id="surfaceTrapControls" class="hidden">
-              <div id="surfaceTrapGeometryRow" class="hidden">
+          <label
+            class="select-label"
+            title="Stamp a shape across the fractal: every orbit step measures its distance to this shape, and the closest approach drives the palette"
+          >
+            Shape trap
+            <select id="surfaceTrapShape">
+              <option value="">None</option>
+              <option value="custom" hidden>(authored)</option>
+            </select>
+          </label>
+          <div id="surfaceTrapControls" class="hidden">
+            <div id="surfaceTrapGeometryRow" class="hidden">
+              <label
+                class="checkbox-label"
+                title="Use the posed trap shape as distance geometry; available only for conformal fold-only escape chains"
+              >
+                <input type="checkbox" id="surfaceTrapGeometryCheckbox" />
+                Use as geometry
+              </label>
+              <p class="flame-note-info">
+                Geometry is limited to conformal fold-only escape chains. Color
+                trapping still works on power and anisotropic systems.
+              </p>
+              <div id="surfaceTrapGeometryLevels" class="hidden">
                 <label
-                  class="checkbox-label"
-                  title="Use the posed trap shape as distance geometry; available only for conformal fold-only escape chains"
+                  class="select-label"
+                  title="Choose which post-link orbit levels contain pulled-back copies of the trap shape; root is level 0"
                 >
-                  <input type="checkbox" id="surfaceTrapGeometryCheckbox" />
-                  Use as geometry
+                  Geometry levels
+                  <select id="surfaceTrapGeometryBandMode">
+                    <option value="all">All levels</option>
+                    <option value="root">Root only</option>
+                    <option value="custom">Custom band</option>
+                  </select>
                 </label>
-                <p class="flame-note-info">
-                  Geometry is limited to conformal fold-only escape chains.
-                  Color trapping still works on power and anisotropic systems.
-                </p>
-                <div id="surfaceTrapGeometryLevels" class="hidden">
-                  <label
-                    class="select-label"
-                    title="Choose which post-link orbit levels contain pulled-back copies of the trap shape; root is level 0"
-                  >
-                    Geometry levels
-                    <select id="surfaceTrapGeometryBandMode">
-                      <option value="all">All levels</option>
-                      <option value="root">Root only</option>
-                      <option value="custom">Custom band</option>
-                    </select>
+                <div id="surfaceTrapGeometryCustom" class="hidden">
+                  <label class="select-label">
+                    First level:
+                    <span id="surfaceTrapGeometryMinLabel">1</span>
+                    <input
+                      type="range"
+                      id="surfaceTrapGeometryMinSlider"
+                      min="0"
+                      max="24"
+                      step="1"
+                      value="1"
+                    />
                   </label>
-                  <div id="surfaceTrapGeometryCustom" class="hidden">
-                    <label class="select-label">
-                      First level:
-                      <span id="surfaceTrapGeometryMinLabel">1</span>
-                      <input
-                        type="range"
-                        id="surfaceTrapGeometryMinSlider"
-                        min="0"
-                        max="24"
-                        step="1"
-                        value="1"
-                      />
-                    </label>
-                    <label class="select-label">
-                      Last level:
-                      <span id="surfaceTrapGeometryMaxLabel">1</span>
-                      <input
-                        type="range"
-                        id="surfaceTrapGeometryMaxSlider"
-                        min="0"
-                        max="24"
-                        step="1"
-                        value="1"
-                      />
-                    </label>
-                  </div>
+                  <label class="select-label">
+                    Last level:
+                    <span id="surfaceTrapGeometryMaxLabel">1</span>
+                    <input
+                      type="range"
+                      id="surfaceTrapGeometryMaxSlider"
+                      min="0"
+                      max="24"
+                      step="1"
+                      value="1"
+                    />
+                  </label>
                 </div>
               </div>
+            </div>
+            <label class="select-label">
+              Trap size: <span id="surfaceTrapScaleLabel">1.00×</span>
+              <input
+                type="range"
+                id="surfaceTrapScaleSlider"
+                min="0.1"
+                max="3"
+                step="0.05"
+                value="1"
+              />
+            </label>
+            <label class="select-label">
+              Trap X: <span id="surfaceTrapXLabel">0.00</span>
+              <input
+                type="range"
+                id="surfaceTrapXSlider"
+                min="-3"
+                max="3"
+                step="0.05"
+                value="0"
+              />
+            </label>
+            <label class="select-label">
+              Trap Y: <span id="surfaceTrapYLabel">0.00</span>
+              <input
+                type="range"
+                id="surfaceTrapYSlider"
+                min="-3"
+                max="3"
+                step="0.05"
+                value="0"
+              />
+            </label>
+            <label class="select-label">
+              Trap Z: <span id="surfaceTrapZLabel">0.00</span>
+              <input
+                type="range"
+                id="surfaceTrapZSlider"
+                min="-3"
+                max="3"
+                step="0.05"
+                value="0"
+              />
+            </label>
+            <label
+              class="select-label"
+              title="Closest approach shades by how near the orbit ever came; First crossing paints only the stamps, each swept by its first dip under the bar"
+            >
+              Trap mode
+              <select id="surfaceTrapMode">
+                <option value="min">Closest approach</option>
+                <option value="threshold">First crossing</option>
+              </select>
+            </label>
+            <div id="surfaceTrapThresholdRow" class="hidden">
               <label class="select-label">
-                Trap size: <span id="surfaceTrapScaleLabel">1.00×</span>
+                Crossing bar: <span id="surfaceTrapThresholdLabel">25%</span>
                 <input
                   type="range"
-                  id="surfaceTrapScaleSlider"
-                  min="0.1"
-                  max="3"
-                  step="0.05"
-                  value="1"
-                />
-              </label>
-              <label class="select-label">
-                Trap X: <span id="surfaceTrapXLabel">0.00</span>
-                <input
-                  type="range"
-                  id="surfaceTrapXSlider"
-                  min="-3"
-                  max="3"
-                  step="0.05"
-                  value="0"
-                />
-              </label>
-              <label class="select-label">
-                Trap Y: <span id="surfaceTrapYLabel">0.00</span>
-                <input
-                  type="range"
-                  id="surfaceTrapYSlider"
-                  min="-3"
-                  max="3"
-                  step="0.05"
-                  value="0"
-                />
-              </label>
-              <label class="select-label">
-                Trap Z: <span id="surfaceTrapZLabel">0.00</span>
-                <input
-                  type="range"
-                  id="surfaceTrapZSlider"
-                  min="-3"
-                  max="3"
-                  step="0.05"
-                  value="0"
-                />
-              </label>
-              <label
-                class="select-label"
-                title="Closest approach shades by how near the orbit ever came; First crossing paints only the stamps, each swept by its first dip under the bar"
-              >
-                Trap mode
-                <select id="surfaceTrapMode">
-                  <option value="min">Closest approach</option>
-                  <option value="threshold">First crossing</option>
-                </select>
-              </label>
-              <div id="surfaceTrapThresholdRow" class="hidden">
-                <label class="select-label">
-                  Crossing bar: <span id="surfaceTrapThresholdLabel">25%</span>
-                  <input
-                    type="range"
-                    id="surfaceTrapThresholdSlider"
-                    min="0.02"
-                    max="1"
-                    step="0.01"
-                    value="0.25"
-                  />
-                </label>
-              </div>
-              <label
-                class="select-label"
-                title="Bias the channel toward the orbit's early, large stamps"
-              >
-                Trap fade: <span id="surfaceTrapFadeLabel">0%</span>
-                <input
-                  type="range"
-                  id="surfaceTrapFadeSlider"
-                  min="0"
-                  max="0.3"
+                  id="surfaceTrapThresholdSlider"
+                  min="0.02"
+                  max="1"
                   step="0.01"
-                  value="0"
+                  value="0.25"
                 />
               </label>
             </div>
+            <label
+              class="select-label"
+              title="Bias the channel toward the orbit's early, large stamps"
+            >
+              Trap fade: <span id="surfaceTrapFadeLabel">0%</span>
+              <input
+                type="range"
+                id="surfaceTrapFadeSlider"
+                min="0"
+                max="0.3"
+                step="0.01"
+                value="0"
+              />
+            </label>
           </div>
+        </details>
+
+        <details
+          class="panel-section hidden"
+          id="surfaceLightingSection"
+          name="panel-section"
+        >
+          <summary>Lighting</summary>
           <label class="select-label">
             Light Angle: <span id="surfaceLightAzimuthLabel">135°</span>
             <input
@@ -1793,6 +1821,14 @@
               value="0.35"
             />
           </label>
+        </details>
+
+        <details
+          class="panel-section hidden"
+          id="surfaceFloorSection"
+          name="panel-section"
+        >
+          <summary>Floor</summary>
           <!-- The surface ground plane: an infinite floor under the
                fractal, catching its shadow. Persisted (state.groundPlane),
                surface-mode only — no explorer-echo counterpart. Visible for

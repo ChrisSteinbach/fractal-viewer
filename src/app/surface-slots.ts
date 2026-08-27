@@ -79,7 +79,7 @@ export function surfaceSlotColors(
 /**
  * Per-slot orbit-trap palette coordinates: where on the gradient each slot
  * pulls a hit's trap color. The tracer weights these down the winning descent
- * chain (top level dominates, decayed per level by the Surface Look "Color
+ * chain (top level dominates, decayed per level by the Surface Color "Color
  * speed" slider) and uses the normalized result as the LUT coordinate — but
  * only under the "Palette" color source; every other source ignores them.
  *
@@ -101,7 +101,7 @@ export function surfaceSlotColors(
  *
  * There is deliberately no `colorSpeed` twin. That field is how far a PICK
  * moves the structural color coordinate, and the surface never picks a map —
- * it descends one. The Surface Look panel's own "Color speed" slider is a
+ * it descends one. The Surface Color panel's own "Color speed" slider is a
  * different quantity entirely (per-descent-level trap decay).
  */
 export function surfaceTrapIndices(

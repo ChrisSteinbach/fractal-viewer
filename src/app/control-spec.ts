@@ -945,7 +945,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: symmetryEffect,
   },
   // ——— 4D look (non-flat systems only; each row lives beside its flat
-  // sibling in the Color or Atmosphere section) ———
+  // sibling in the Color or Depth section) ———
   {
     // The 4D color select — re-points the 4D shader's color source (and
     // re-bakes the attribute for the baked modes) without re-running the

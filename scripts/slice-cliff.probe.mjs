@@ -167,7 +167,7 @@ async function cell(browser, scene, hash, arm, slice) {
     });
     if (!parked) out.note = "tumble not parked";
     await sleep(400);
-    // The 4D View section is collapsed by default under surfaceLookSection's
+    // The 4D View section is collapsed by default under surfaceColorSection's
     // auto-open, so reach the slider through the DOM rather than a click.
     const setSlice = (v) =>
       page.evaluate((x) => {

@@ -655,7 +655,7 @@ async function main() {
             const onShot = path.join(args.outdir, "trap-on.png");
             await page.locator("canvas").first().screenshot({ path: onShot });
             // Turn the trap off through the panel's own select — the row
-            // lives in the Surface Look accordion section, so open it the
+            // lives in the Surface Shape trap accordion section, so open it the
             // way loadPreset opens the preset menu's.
             await page.evaluate(() => {
               const sel = document.getElementById("surfaceTrapShape");

@@ -53,7 +53,7 @@
  *      screenshot and STOPS this scene's protocol — no improvised
  *      recovery, per the task brief.
  *   c. LIVENESS on the settled compute session: open the "4D View"
- *      accordion section (closed by default under `surfaceLookSection`'s
+ *      accordion section (closed by default under `surfaceColorSection`'s
  *      auto-open — see ui.ts's `openSectionByMode`), focus
  *      `#fourDSliceSlider`, press ArrowRight 30 times (keyboard, not
  *      pointer drag — avoids touch/scroll traps), assert the canvas
@@ -840,7 +840,7 @@ async function main() {
     async function testLiveness(scene, settledShot) {
       console.error(`[surface-4d] ==== ${scene.name}/liveness ====`);
       // The "4D View" accordion section is closed by default in Surface
-      // mode (surfaceLookSection auto-opens instead — ui.ts's
+      // mode (surfaceColorSection auto-opens instead — ui.ts's
       // openSectionByMode) even though the section itself is visible for
       // a non-flat document in a live (non-frozen) render — click its
       // summary to expand it, a normal user action.
