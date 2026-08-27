@@ -127,7 +127,11 @@ import {
   FractalScene,
   SurfaceCaptureCostError,
 } from "./scene";
-import { attachInteractions } from "./interactions";
+import {
+  attachInteractions,
+  canvasTransformGuidesEnabled,
+  canvasTransformTarget,
+} from "./interactions";
 import { registerServiceWorker } from "./register-sw";
 import {
   consumeIsolationHandoff,
@@ -3190,6 +3194,7 @@ function main(): void {
       // render-mode landing re-derives it — here and in the other sessions'
       // activate/deactivate.
       trackAutoBackground();
+      refreshGuides();
       refreshUi();
     },
     deactivate: () => {
@@ -3223,6 +3228,7 @@ function main(): void {
       // Whatever late thumbnail correction this render still owed is owed
       // nothing now — the mode is over.
       dropStalePendingThumbnails();
+      refreshGuides();
       refreshUi();
       // An offline export parked on this render: an early exit — worker
       // error, Back — terminated the worker, so no further progress event
@@ -3290,13 +3296,12 @@ function main(): void {
   // The solid voxel render session: accumulate a world-space density
   // volume of the current system in a fresh worker. Its enter/exit/terminate +
   // first-frame-gate choreography is shared with the flame session above
-  // through RenderSession (render-session.ts); its genuine differences are that
+  // through RenderSession (render-session.ts); its genuine difference is that
   // the volume is world-space — so, unlike the frozen flame view, the camera
-  // stays LIVE while it converges (see animate()) — and that entering drops the
-  // transform selection (the lens has no guide box in this mode, so pointer
-  // gestures should orbit the camera instead of dragging one that's no longer
-  // shown). The defensive double-entry terminate lives in RenderSession.enter,
-  // so `start` only builds and kicks off.
+  // stays LIVE while it converges (see animate()). Canvas guide targeting is
+  // gated independently of the panel's preserved transform selection. The
+  // defensive double-entry terminate lives in RenderSession.enter, so `start`
+  // only builds and kicks off.
   const solidSession = new RenderSession<VoxelWorkerCommand>({
     start: () => {
       const worker = new Worker(new URL("./voxel-worker.ts", import.meta.url), {
@@ -3383,9 +3388,6 @@ function main(): void {
       renderCoverage.solid = 0; // ...and its fraction form, likewise.
     },
     activate: () => {
-      // Drop any transform selection: the lens has no guide box in this mode,
-      // so a raycast drag should orbit the camera, not grab a hidden box.
-      state = selectTransform(state, null);
       state = setRenderMode(state, "solid");
       trackAutoBackground(); // see the flame session's activate
       refreshGuides();
@@ -3403,6 +3405,7 @@ function main(): void {
         scene.invalidate();
       }
       dropStalePendingThumbnails(); // see the flame session's deactivate
+      refreshGuides();
       refreshUi();
       // A parked offline export's early-exit wake — see the flame
       // session's deactivate.
@@ -3781,7 +3784,7 @@ function main(): void {
 
   // The compute path's first-frame gate — the compile gate's twin, one
   // async resource over: device + pipeline instead of a GLSL link. Same
-  // token discipline, same deferred selection-drop/guide-refresh
+  // token discipline, same deferred canvas-guide retirement
   // rationale (see the GLSL gate below), same failure contract — except
   // failure here FALLS BACK (memo + re-enter routes the WebGL path)
   // rather than exiting the mode: the WebGL tracer is the fallback, not
@@ -3836,7 +3839,6 @@ function main(): void {
           surfaceComputeBlock = "failed";
           surfaceSession.enter();
         };
-        state = selectTransform(state, null);
         refreshGuides();
         refreshUi();
         surfaceSession.markFirstFrame();
@@ -5318,15 +5320,13 @@ function main(): void {
             if (!scene.probeSurfaceProgram()) {
               throw new Error("surface tracer program failed to link");
             }
-            // Now that the tracer is about to take over the canvas, drop
-            // the transform selection (no guide boxes in this mode, so a
-            // raycast drag should orbit — the solid session's reasoning).
-            // Deferred to HERE rather than activate() because rebuilding
-            // guides re-links their programs, and on drivers that
-            // serialize compiles (Mesa) the gated explorer's next frame
-            // would join the queue BEHIND the multi-second fold compile —
-            // the exact stall the gate exists to avoid.
-            state = selectTransform(state, null);
+            // Now that the tracer is about to take over the canvas, retire
+            // its guide presentation. The panel selection remains authored
+            // UI state; selectedBox() independently gates hit-testing outside
+            // flat Points. Deferred to HERE because rebuilding guides
+            // re-links their programs, and on drivers that serialize compiles
+            // (Mesa) the gated explorer's next frame would join the queue
+            // BEHIND the multi-second fold compile.
             refreshGuides();
             refreshUi();
             surfaceSession.markFirstFrame();
@@ -5385,19 +5385,12 @@ function main(): void {
       renderCoverage.surface = 0; // ...and its fraction form, like the flame/solid resets.
     },
     activate: () => {
-      // NOTE the selection/guide handling other sessions do here happens in
-      // the compile gate's resolution instead (see start()): until the tracer
-      // program is ready the canvas keeps showing the explorer, which should
-      // stay EXACTLY as it was — visually and in program terms, since a guide
-      // rebuild's re-links would queue behind the fold compile on serializing
-      // drivers. A fresh session must not inherit the previous one's pending
-      // settle timer, a completed frame's validity, or a deferred settle
-      // verdict. No refreshGuides here either: updateGuides disposes and
-      // rebuilds the guide materials, whose re-links the gated explorer's
-      // next frame would then JOIN — behind the whole fold compile on
-      // serializing drivers. Nothing the guides reflect has changed yet; the
-      // compile gate's resolution refreshes them together with the selection
-      // drop.
+      // The compile gate keeps the explorer image up until the tracer is
+      // ready, but Surface already owns canvas input. Hide guide presentation
+      // immediately without rebuilding it: updateGuides disposes/re-links
+      // materials, whose compilation would queue behind the fold program on
+      // serializing drivers. The gate's resolution performs that retirement;
+      // the panel selection itself survives throughout.
       surfaceRenderTier.reset();
       surfaceWebglPreviewPending = false;
       surfaceSettled = false;
@@ -5405,6 +5398,7 @@ function main(): void {
       surfaceSettlePending = false;
       state = setRenderMode(state, "surface");
       scene.setSurfaceDisplayActive(true);
+      scene.setGuidesVisible(false);
       trackAutoBackground(); // see the flame session's activate
       refreshUi();
       // The render-complete signal — the budget-met event a holding
@@ -5457,6 +5451,7 @@ function main(): void {
         scene.invalidate();
       }
       dropStalePendingThumbnails(); // see the flame session's deactivate
+      refreshGuides();
       refreshUi();
       // A parked offline export's early-exit wake — see the flame
       // session's deactivate.
@@ -5557,15 +5552,16 @@ function main(): void {
     switchRenderMode(target);
   }
 
-  // The lens has no guide box, so map its selection (like camera) to "nothing
-  // highlighted" — only a numbered transform highlights a box or is draggable.
+  // Panel selection and canvas manipulation are separate: the shared editor
+  // keeps its target through every renderer, while only flat Points exposes a
+  // numbered guide box to highlight, hit-test, or drag. Final/camera selections
+  // still map to no box, as before.
   function selectedBox(): number | null {
-    // No draggable 3D guide boxes exist in the 4D projection, so a raycast drag
-    // must never grab a now-hidden one.
-    if (viewIs4D) return null;
-    return typeof state.selectedTransform === "number"
-      ? state.selectedTransform
-      : null;
+    return canvasTransformTarget(
+      state.renderMode,
+      viewIs4D,
+      state.selectedTransform,
+    );
   }
 
   // The guides' DISPLAYED visibility: the document's showGuides, or forced on
@@ -5577,16 +5573,16 @@ function main(): void {
   }
 
   function refreshGuides(): void {
-    const visible = guidesShown();
-    // No guide boxes in the 4D projection (an empty list; scene handles it).
+    const available = canvasTransformGuidesEnabled(state.renderMode, viewIs4D);
+    const visible = available && guidesShown();
+    // An empty list removes stale box geometry outside flat Points. Selection
+    // remains in AppState and the editor; only its canvas presentation rests.
     scene.updateGuides(
-      viewIs4D ? [] : state.transforms,
+      available ? state.transforms : [],
       selectedBox(),
       visible,
     );
-    // The grid, axes, and 4D scaffold follow the same derivation — pushed
-    // here rather than per call site, so "Show guides" (and the showcase's
-    // override of it) can never govern the boxes and the grid separately.
+    // Grid/axes/scaffold follow the same flat-Points gate as the boxes.
     scene.setGuidesVisible(visible);
   }
 

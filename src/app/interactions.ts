@@ -6,6 +6,32 @@ import { cameraKeyAction } from "./keyboard-camera";
 import { clamp } from "../fractal/vec";
 import { MIN_GUIDE_SCALE, MAX_GUIDE_SCALE } from "./constants";
 import type { Vec3 } from "../fractal/types";
+import type { RenderMode } from "./state";
+
+/** Transform boxes are a canvas interaction only in the flat Points view.
+ * The panel selection is deliberately a different fact: it survives every
+ * renderer and the 4D projection so the shared Transforms editor can keep its
+ * authored target while the canvas falls back to camera gestures. */
+export function canvasTransformGuidesEnabled(
+  renderMode: RenderMode,
+  fourDView: boolean,
+): boolean {
+  return renderMode === "points" && !fourDView;
+}
+
+/** The numbered transform, if any, that canvas hit-testing may edit. Final
+ * transform and camera selections have never owned boxes; renderer/4D gates
+ * suppress a numbered box without clearing the panel's selection. */
+export function canvasTransformTarget(
+  renderMode: RenderMode,
+  fourDView: boolean,
+  selected: number | "final" | null,
+): number | null {
+  return canvasTransformGuidesEnabled(renderMode, fourDView) &&
+    typeof selected === "number"
+    ? selected
+    : null;
+}
 
 export interface TransformGeometry {
   position: Vec3;
