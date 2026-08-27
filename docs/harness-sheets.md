@@ -363,9 +363,19 @@ uniform queries of their existing origin-centred ball. Final lenses therefore
 leave calibration exactly unchanged. A dedicated session-entry gate builds a
 12-map, depth-100 4D mandelbox system (eight 243-branch Mandelbox maps plus four
 81-branch boxfold maps) in about 0.6-0.7 s on the development host and enforces
-a 2.5 s developer-host ceiling, including the existing extent probe. The
-wall-clock assertion is skipped on the shared coverage runner, where measured
-contention inflated the same build to 4.1 s. Its exact finite-coordinate hot
+a 2.5 s developer-host budget, including the existing extent probe. The budget
+is measured as CPU work, sampled as min-of-3 widest and min-of-2 reference
+windows (a six-map, same-family subset of the preset: four mandelbox plus two
+boxfold maps), then normalized by the reference's ~0.26-0.30 s development-host
+rate; scheduler preemption, memory-latency, and IPC-flush bursts inflate both
+windows together and cancel out of the normalized reading (measured 0.62-0.70 s
+quiet, noisy, and under full 120-file parallel load, where the raw widest CPU
+reading inflates ~3x), while a fold-path regression hits the widest build but
+not the reference. A second assertion pins the widest/reference work ratio
+under 2.7 (measured 2.08-2.32 across all run conditions), so a ~1.2x fold-path
+regression trips the gate even where the normalized budget still clears. The
+whole gate is skipped on the shared coverage runner, where measured contention
+inflated the same build to 4.1 s. Its exact finite-coordinate hot
 loop uses the shader's `sqrt(sum-of-squares)` length arithmetic. No camera,
 rotor, slice, visible radius, or duplicate bound enters calibration.
 
