@@ -1521,6 +1521,9 @@ export function setTransforms(
  * editor emits `colorIndex`/`colorSpeed` only once their sliders have actually
  * been moved, so this spread preserves absence — which is what keeps an
  * unauthored map on its derived palette slot through any other edit.
+ * Finish and surfacePattern use the same whole-field replacement: the editor
+ * supplies a cloned authored block, or explicit `undefined` when returning to
+ * Classic/None so the old optional block is actually cleared by the spread.
  */
 export function updateTransform(
   state: AppState,
@@ -1536,6 +1539,8 @@ export function updateTransform(
     | "w"
     | "colorIndex"
     | "colorSpeed"
+    | "finish"
+    | "surfacePattern"
   >,
 ): AppState {
   const transforms = state.transforms.map((t, i) =>
