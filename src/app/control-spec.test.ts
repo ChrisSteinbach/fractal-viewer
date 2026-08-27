@@ -17,6 +17,7 @@ import {
   nearestFlameIterationDetentIndex,
   setShapeTrap,
   setSymmetryOrder,
+  setSymmetryPlane,
 } from "./state";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
@@ -973,6 +974,20 @@ describe("effects", () => {
       expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
     });
 
+    it("authors a 3D-to-4D symmetry edit without restarting a fixed-dimension worker incorrectly", () => {
+      const spec = specById("symmetryPlane");
+      const previous = setSymmetryOrder(initialState(true), 3);
+      const state = setSymmetryPlane(previous, "zw");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
+      expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
+      expect(fx.postFlame).not.toHaveBeenCalled();
+      expect(fx.postVoxel).not.toHaveBeenCalled();
+    });
+
     it("symmetryPlane effect posts the identical setSymmetry shape to both render workers", () => {
       const spec = specById("symmetryPlane");
       const previous = initialState(true);
@@ -988,9 +1003,12 @@ describe("effects", () => {
 
     it("symmetryTwistSlider applies through setSymmetryTwist and posts the twist in the setSymmetry command", () => {
       const spec = specById("symmetryTwistSlider");
-      // Order 5 first: setSymmetryTwist caps at order - 1, so the default
-      // order-1 state would store no twist at all.
-      const previous = setSymmetryOrder(initialState(true), 5);
+      // Start non-flat so this twist edit remains within the active worker's
+      // fixed 4D dimension; the separate test above covers a dimension flip.
+      const previous = setSymmetryPlane(
+        setSymmetryOrder(initialState(true), 5),
+        "zw",
+      );
       const state = applyScalarControl(previous, spec, "2");
       const fx = mockEffects();
 
@@ -998,7 +1016,7 @@ describe("effects", () => {
 
       expect(state.symmetry.twist).toBe(2);
       expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
-      const command = { type: "setSymmetry", order: 5, plane: "xz", twist: 2 };
+      const command = { type: "setSymmetry", order: 5, plane: "zw", twist: 2 };
       expect(fx.postFlame).toHaveBeenCalledWith(command);
       expect(fx.postVoxel).toHaveBeenCalledWith(command);
     });

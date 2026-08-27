@@ -2632,9 +2632,9 @@ describe("FlameWorkerSession GPU progressive display", () => {
 // `createGpuBackend`/`CpuFlameBackend` does; a 4D session never calls the 3D
 // factory, and a 3D session never calls the 4D one (see `createBackend`'s
 // dimension-aware dispatch). Every other command handler must still behave
-// sanely — setSymmetry becomes a no-op (symmetry is 3D-only), setPalette
-// still restarts. A plain 3D start (no fourD) must keep behaving exactly as
-// every other describe block in this file already proves.
+// sanely — same-dimension setSymmetry and setPalette both restart. A plain 3D
+// start (no fourD) must keep behaving exactly as every other describe block in
+// this file already proves.
 // ---------------------------------------------------------------------------
 
 describe("FlameWorkerSession 4D flame render", () => {

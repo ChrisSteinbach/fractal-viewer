@@ -620,10 +620,9 @@ describe("VoxelWorkerSession memory guards", () => {
 // ---------------------------------------------------------------------------
 // 4D solid render: the `fourD` start-command block drives
 // computeVoxelBounds4/accumulateVoxels4 instead of the 3D path, and every
-// command handler must still behave sanely — setSymmetry becomes a no-op
-// (symmetry is 3D-only), setPalette still restarts. A plain 3D start (no
-// fourD) must keep behaving exactly as every other describe block in this
-// file already proves.
+// command handler must still behave sanely — same-dimension setSymmetry and
+// setPalette both restart. A plain 3D start (no fourD) must keep behaving
+// exactly as every other describe block in this file already proves.
 // ---------------------------------------------------------------------------
 
 describe("VoxelWorkerSession 4D solid render", () => {

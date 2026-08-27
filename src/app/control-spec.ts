@@ -78,6 +78,7 @@ import {
   setSurfaceLightElevation,
   setSurfacePaletteId,
   setShapeTrap,
+  systemIsNonFlat,
   updateShapeTrap,
   setSymmetryPlane,
   setSymmetryOrder,
@@ -413,17 +414,28 @@ export function applyScalarControl(
     : spec.apply(state, String(raw));
 }
 
-/** The symmetry controls reshape the live point cloud (and any active
- * flame/solid render), not just a render-only setting — shared by the order
- * slider and the plane select, whose handlers were identical twins before the
- * table. */
-const symmetryEffect: ControlEffect = (state, fx) => {
+/** Symmetry's panel-IA record (`docs/panel-ia.md`): Scene / Look; consumed by
+ * Points, Flame, Solid and Surface in both dimensions; document lifetime;
+ * Points regeneration under auto-update, Flame/Solid accumulation restart
+ * within their fixed session dimension, and next-entry Surface with an
+ * immediate eligibility refresh. A dimensionality-changing edit is authored
+ * now but requires Points regeneration before render re-entry. Shared by
+ * order, plane and twist. */
+const symmetryEffect: ControlEffect = (state, fx, previous) => {
   fx.regenerateIfAutoUpdate();
   // The kaleidoscope moves the Surface gate: a w-plane or a twist makes
   // the document 4D, and any order above 1 closes the Mandelbulb arm —
   // and this pipeline deliberately never runs a full refreshUi, so the
   // button would otherwise go stale until the next unrelated edit.
   fx.refreshSurfaceEligibility();
+  // Render workers snapshot their dimension at entry. A symmetry edit that
+  // crosses 3D <-> 4D therefore cannot be represented by setSymmetry: a 3D
+  // worker would deliberately fall back to identity, while an immediate full
+  // restart would still snapshot the old, not-yet-regenerated Points view.
+  // Keep the existing frame intact and let the adjacent panel hint direct the
+  // user through Points regeneration before re-entry. Same-dimension edits
+  // retain the cheap live accumulation restart below.
+  if (systemIsNonFlat(state) !== systemIsNonFlat(previous)) return;
   const command = {
     type: "setSymmetry",
     order: state.symmetry.order,

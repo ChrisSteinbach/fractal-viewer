@@ -1064,17 +1064,27 @@
           </div>
         </details>
 
+        <!-- Authored Scene / Look state consumed by every renderer. Keep this
+             one shared editor outside renderer-specific applicability; its
+             document-level effective-order disclosure is #symmetryNote above. -->
         <details
           class="panel-section"
           id="symmetrySection"
           name="panel-section"
         >
           <summary>Symmetry</summary>
+          <p id="symmetryEditHint" class="flame-hint">
+            Active Flame and Solid renders restart for edits that stay in the
+            same dimension. If an edit switches between 3D and 4D, regenerate
+            Points before re-entering a render. Surface applies symmetry on its
+            next entry; its button explains eligibility immediately.
+          </p>
           <label class="select-label">
             Order: <span id="symmetryOrderLabel">1-fold</span>
             <input
               type="range"
               id="symmetryOrderSlider"
+              aria-describedby="symmetryEditHint"
               min="1"
               max="12"
               step="1"
@@ -1083,7 +1093,7 @@
           </label>
           <label class="select-label">
             Plane
-            <select id="symmetryPlane">
+            <select id="symmetryPlane" aria-describedby="symmetryEditHint">
               <option value="xy">XY</option>
               <option value="xz" selected>XZ</option>
               <option value="yz">YZ</option>
@@ -1097,6 +1107,7 @@
             <input
               type="range"
               id="symmetryTwistSlider"
+              aria-describedby="symmetryEditHint"
               min="0"
               max="11"
               step="1"
