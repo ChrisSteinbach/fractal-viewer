@@ -160,7 +160,7 @@ async function cell(browser, scene, hash, arm, slice) {
     // latches and the cell would time out measuring the auto-motion rather
     // than the pose.
     const parked = await page.evaluate(() => {
-      const el = document.querySelector("#fourDTumbleToggle");
+      const el = document.querySelector("#autoMotionToggle");
       if (!(el instanceof HTMLInputElement)) return false;
       if (el.checked) el.click();
       return el.checked === false;

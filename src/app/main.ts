@@ -230,7 +230,11 @@ import {
   toSnapshot,
 } from "./persist";
 import type { SceneSnapshot } from "./persist";
-import { loadViewerPrefs, updateViewerPrefs } from "./viewer-prefs";
+import {
+  loadViewerPrefs,
+  resolveAutoMotion,
+  updateViewerPrefs,
+} from "./viewer-prefs";
 import { SceneCollection, type SavedSceneMode } from "./collection";
 import {
   decodeImportFile,
@@ -837,14 +841,14 @@ function main(): void {
   // additionally pauses it while interactions reports a gesture in progress.
   let autoOrbitOn = true;
   let autoOrbitSpeed = 1;
-  // The user's explicit auto-orbit on/off choice, once they have ever touched
-  // the toggle. null = untouched, so fresh-visit resets follow the
-  // reduced-motion default; after a manual toggle they follow this instead —
-  // a preset load / Surprise Me / 4D→3D flip must not re-enable an orbit the
-  // user turned off (nor re-pause a reduced-motion user's explicit opt-in).
-  // This in-memory choice mirrors the browser preference during the current
-  // session; the tumble's twin lives inside FourDView (setTumbleUserChoice).
-  let autoOrbitUserChoice: boolean | null = null;
+  // The ONE explicit automatic-view-motion choice. undefined = untouched, so both
+  // the flat camera turntable and non-flat rotor tumble follow the reduced-
+  // motion default; once chosen, the browser-owned preference survives every
+  // dimension switch and reload. FourDView owns only the current mechanism,
+  // not a second copy of this preference.
+  let autoMotionUserChoice: boolean | undefined;
+  const autoMotionEnabled = (): boolean =>
+    resolveAutoMotion(autoMotionUserChoice, prefersReducedMotion());
 
   // The balloon echo's "Inflate" replay: non-null while the radius sweep is
   // animating, holding the ms timestamp it started at (nowMs() — see
@@ -857,20 +861,19 @@ function main(): void {
   // Restore the COMBINED auto-motion preference: a viewer who turned
   // auto-orbit or 4D-tumble off keeps it off across RELOADS, not merely
   // within the session (where the choice is already sticky). The one shared
-  // choice seeds BOTH the 3D orbit and the 4D tumble here — before the boot
-  // cloud generation (generateSync) and the boot resetAutoOrbitView() below
-  // both read these choices. Stored SEPARATELY from the scene
+  // choice drives BOTH the 3D orbit and the 4D tumble here — before the boot
+  // cloud generation and boot resetAutoOrbitView() below read it. Stored
+  // SEPARATELY from the scene
   // (viewer-prefs.ts, its own localStorage key), never in the share URL — a
   // shared link must not carry the author's motion preference. Absent = never
   // chosen = follow the reduced-motion default, exactly like the session-only
-  // null / FourDView's `tumbleUserChoice = null` do. Session independence is
-  // unchanged: this only seeds the two sticky choices; it does not couple the
-  // live toggles.
+  // undefined choice does. There is one live checkbox and one choice, while the two
+  // mechanism speeds remain independent session state.
   const viewerPrefs = loadViewerPrefs();
   if (viewerPrefs.autoMotion !== undefined) {
-    autoOrbitUserChoice = viewerPrefs.autoMotion;
-    fourDView.seedTumbleUserChoice(viewerPrefs.autoMotion);
+    autoMotionUserChoice = viewerPrefs.autoMotion;
   }
+  ui.setAutoMotionToggle(autoMotionEnabled());
 
   // The surface preview tier under user control: `false` means invalidations
   // never trace the cheap preview — the pane freezes on its last frame while
@@ -1863,10 +1866,12 @@ function main(): void {
   // a non-flat system — never on a subsequent edit to an already-4D system,
   // so nudging a slider can't throw away an in-progress tumble/slice.
   function resetFourDView(): void {
-    fourDView.reset(prefersReducedMotion());
+    const motionOn = autoMotionEnabled();
+    fourDView.reset(motionOn);
+    ui.setAutoMotionToggle(motionOn);
     pushFourDSlice();
     ui.resetFourDSlice();
-    ui.resetFourDTumble(fourDView.tumbleOn);
+    ui.resetFourDTumbleSpeed(fourDView.tumbleOn);
     // The reset can PARK the tumble (reduced motion, or a sticky "off"
     // choice), and the help box opens by naming the motion. The
     // flatness flip that brings us here painted that box BEFORE the reset ran
@@ -1914,29 +1919,29 @@ function main(): void {
     loadHints.clearPose();
   }
 
-  // The ONE auto-motion toggle logic per dimension: the panel checkboxes
-  // and the canvas Space key both land here, so the session state, the
-  // sticky user choice, the help-box wording and the persisted viewer pref
-  // can never disagree about which input flipped them. The checkbox path's
-  // DOM side ran in ui.ts before its handler fired; the Space path mirrors
-  // that with ui.setAutoMotionToggle before calling in.
-  function applyAutoOrbitToggle(checked: boolean): void {
+  // The one auto-motion path: the panel checkbox and canvas Space key both
+  // land here, so camera orbit, rotor tumble, help wording, and the persisted
+  // preference cannot diverge across dimensions.
+  function applyAutoMotionToggle(checked: boolean): void {
+    autoMotionUserChoice = checked;
     autoOrbitOn = checked;
-    autoOrbitUserChoice = checked;
-    // Persist the COMBINED auto-motion pref — the orbit sibling of
-    // applyFourDTumbleToggle below; both write the one shared choice.
-    updateViewerPrefs({ autoMotion: checked });
-  }
-  function applyFourDTumbleToggle(checked: boolean): void {
-    fourDView.setTumbleUserChoice(checked);
+    fourDView.tumbleOn = checked;
+    // A build replay may be temporarily forcing the active mechanism on. A
+    // user choice made during that override becomes the value restored at the
+    // end, while the finite showcase remains explicit and uninterrupted.
+    if (replayShowcase !== null && replayShowcase.motionWasOn !== null) {
+      replayShowcase.motionWasOn = checked;
+      if (replayShowcase.fourD) {
+        fourDView.tumbleOn = true;
+        ui.setFourDTumbleActive(true);
+      } else {
+        autoOrbitOn = true;
+      }
+    }
     // The canvas help box opens by naming the motion, so a pause has to reach
-    // it — ui.ts has already recorded the flag, this is the repaint. The
-    // panel's own row visibility is ui.ts's own business.
+    // it; ui.ts has already recorded the contextual flag on either input
+    // path, and this repaint updates the canvas wording.
     ui.updateLabels(state);
-    // Persist the COMBINED auto-motion pref: the last motion toggle the user
-    // flips — tumble or orbit — becomes the one shared choice both seed from
-    // on the next reload. Separate viewer-prefs key, never the scene /
-    // share-URL document; merge-written so the other prefs survive.
     updateViewerPrefs({ autoMotion: checked });
   }
 
@@ -1951,9 +1956,10 @@ function main(): void {
   // reset: theta IS the live camera, and yanking it would discard the user's
   // framing.
   function resetAutoOrbitView(): void {
-    autoOrbitOn = autoOrbitUserChoice ?? !prefersReducedMotion();
+    autoOrbitOn = autoMotionEnabled();
+    ui.setAutoMotionToggle(autoOrbitOn);
     autoOrbitSpeed = 1;
-    ui.resetAutoOrbit(autoOrbitOn);
+    ui.resetAutoOrbitSpeed();
   }
 
   // Re-run the chaos game: the only path that changes point positions. Use
@@ -7705,21 +7711,13 @@ function main(): void {
       fourDView.sliceRelColor = checked;
       pushFourDSlice();
     },
-    // Tumble pause/resume + speed remain live FourDView state: animate() reads
-    // them directly every frame, so there is nothing to push to the scene or
-    // undo. The toggle also writes the browser-owned autoMotion preference;
-    // speed is This-session only. Neither belongs to the Saved-view FourDPose.
-    // The toggle goes through setTumbleUserChoice (not a bare tumbleOn write)
-    // so the choice is sticky across fresh-visit resets.
-    onFourDTumbleToggle: applyFourDTumbleToggle,
+    // One browser-owned automatic-motion switch drives this tumble and the
+    // flat camera orbit. The two speed handlers remain contextual session
+    // state and neither belongs to the Saved-view FourDPose.
     onFourDTumbleSpeedInput: (value) => {
       fourDView.tumbleSpeed = value;
     },
-    // Auto-orbit pause/resume + speed: the 3D siblings of the tumble handlers
-    // above. The toggle writes the same browser autoMotion preference; speed
-    // is This-session only. The toggle also records the sticky in-memory
-    // choice resetAutoOrbitView() honors.
-    onAutoOrbitToggle: applyAutoOrbitToggle,
+    onAutoMotionToggle: applyAutoMotionToggle,
     onAutoOrbitSpeedInput: (value) => {
       autoOrbitSpeed = value;
     },
@@ -7800,28 +7798,24 @@ function main(): void {
       pushFourDSlice();
       syncFourDSliceUi();
     },
-    // Space: the same toggle logic as the panel checkboxes — never a bare
+    // Space: the same toggle logic as the panel checkbox — never a bare
     // flag flip — with ui.setAutoMotionToggle standing in for the DOM-side
     // recording the checkbox change listener does before its handler fires
     // (checkbox, row visibility, help-box flag; deliberately NOT the
     // fresh-visit reset methods, which would stomp a chosen speed).
     onToggleAutoMotion: () => {
-      // Points mode only (wave-5 review finding): the renders park the
-      // auto-motion and HIDE its checkbox rows, so a Space here would flip
-      // the sticky choice and rewrite the persisted pref with zero visible
-      // effect — surfacing as a surprise motion start on mode exit and
-      // seeding every future reload. The neighbouring onFourDRotate carries
-      // its own version of this gate.
-      if (state.renderMode !== "points") return;
-      if (viewIs4D) {
-        const on = !fourDView.tumbleOn;
-        ui.setAutoMotionToggle(true, on);
-        applyFourDTumbleToggle(on);
-      } else {
-        const on = !autoOrbitOn;
-        ui.setAutoMotionToggle(false, on);
-        applyAutoOrbitToggle(on);
-      }
+      // The shared preference remains visible in a live 4D Surface session
+      // beside its parked/next-Points disclosure, so Space updates that same
+      // visible choice there too. Other renders still hide View at this
+      // boundary and must not accept an invisible preference flip.
+      if (
+        state.renderMode !== "points" &&
+        !(state.renderMode === "surface" && viewIs4D)
+      )
+        return;
+      const on = !autoMotionEnabled();
+      ui.setAutoMotionToggle(on);
+      applyAutoMotionToggle(on);
     },
   });
 
@@ -8404,7 +8398,8 @@ function main(): void {
         // and user motion (Shift-drag rotor, slice slider) still flows
         // through setSurface4View below. The user's tumble preference is
         // untouched; the projection view resumes it on exit. The panel hides
-        // the tumble controls in-mode (ui.ts's syncFourDViewRows).
+        // the tumble speed in-mode (ui.ts's syncViewRows) and explains the
+        // parked shared preference beside it.
         if (fourDTween.active) advanceFourDPose(dt4);
         // A capture owns the tracer's uniforms: pushing a live
         // rotor/w-slice between two pump calls of a drain would trace the

@@ -473,7 +473,7 @@ async function rows(page) {
       // the same one place every other balloon row is read from.
       tint: visible("balloonTintRow"),
       checked: document.getElementById("balloonEchoCheckbox")?.checked === true,
-      tumble: document.getElementById("fourDTumbleToggle")?.checked === true,
+      tumble: document.getElementById("autoMotionToggle")?.checked === true,
       // The Balloon size the panel is showing. Read here rather than
       // inferred, because on the restored page it is the evidence that the
       // `#v1=` hash carried GATE_RADIUS — the ordering the header's
@@ -637,12 +637,12 @@ async function main() {
     await page.selectOption("#presetSelect", PRESET);
     await page.waitForFunction(
       () =>
-        !document.getElementById("fourDControls")?.classList.contains("hidden"),
+        !document.getElementById("viewControls")?.classList.contains("hidden"),
       undefined,
       { timeout: options.timeout },
     );
     await page.evaluate(() => {
-      const toggle = document.getElementById("fourDTumbleToggle");
+      const toggle = document.getElementById("autoMotionToggle");
       if (toggle?.checked) toggle.click();
     });
     const plain4 = await stableCanvas(page, options.timeout, initial);
@@ -699,7 +699,7 @@ async function main() {
     });
     await waitForPoints(page, options.timeout);
     await page.evaluate(() => {
-      const toggle = document.getElementById("fourDTumbleToggle");
+      const toggle = document.getElementById("autoMotionToggle");
       if (toggle?.checked) toggle.click();
     });
     const restored = await rows(page);

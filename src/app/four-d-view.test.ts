@@ -33,10 +33,10 @@ describe("FourDView", () => {
   });
 
   describe("reset", () => {
-    it("leaves the rotor at identity and the fields at baseline when motion is not reduced", () => {
+    it("leaves the rotor at identity and the fields at baseline when automatic motion is on", () => {
       const view = new FourDView();
 
-      view.reset(false);
+      view.reset(true);
 
       expectMatClose(view.matrix(), IDENTITY);
       expect(view.tumbleOn).toBe(true);
@@ -46,14 +46,14 @@ describe("FourDView", () => {
       expect(view.sliceRelColor).toBe(false);
     });
 
-    it("pauses the tumble but seeds a non-identity rotor under reduced motion", () => {
+    it("pauses the tumble but seeds a non-identity rotor when automatic motion is off", () => {
       const view = new FourDView();
 
-      view.reset(true);
+      view.reset(false);
 
       expect(view.tumbleOn).toBe(false);
       // A paused projection sitting exactly on the identity view would look
-      // indistinguishable from the flat 3D embed, so reset(true) pre-seeds a
+      // indistinguishable from the flat 3D embed, so reset(false) pre-seeds a
       // generic orientation instead of leaving the rotor untouched.
       expect(maxDeviationFromIdentity(view.matrix())).toBeGreaterThan(0.1);
     });
@@ -66,7 +66,7 @@ describe("FourDView", () => {
       view.tumbleOn = false;
       view.tumbleSpeed = 3;
 
-      view.reset(false);
+      view.reset(true);
 
       expect(view.sliceOn).toBe(false);
       expect(view.sliceCenter).toBe(0);
@@ -79,126 +79,16 @@ describe("FourDView", () => {
       const view = new FourDView();
       view.sliceThickness = 0.3;
 
-      view.reset(false);
-
-      expect(view.sliceThickness).toBe(0);
-    });
-  });
-
-  describe("setTumbleUserChoice", () => {
-    it("turns the tumble off immediately, without needing a reset", () => {
-      const view = new FourDView();
-
-      view.setTumbleUserChoice(false);
-
-      expect(view.tumbleOn).toBe(false);
-    });
-
-    it("keeps the tumble off across a fresh-visit reset once the user has turned it off", () => {
-      const view = new FourDView();
-      view.reset(false);
-
-      view.setTumbleUserChoice(false);
-      view.reset(false);
-
-      expect(view.tumbleOn).toBe(false);
-    });
-
-    it("still pre-seeds a non-identity rotor when a sticky off choice leaves the tumble paused after reset", () => {
-      const view = new FourDView();
-      view.reset(false);
-      view.setTumbleUserChoice(false);
-
-      view.reset(false);
-
-      // A paused projection sitting exactly on the identity view would look
-      // indistinguishable from the flat 3D embed, whether the pause comes
-      // from reduced motion or, as here, a sticky user choice.
-      expect(maxDeviationFromIdentity(view.matrix())).toBeGreaterThan(0.1);
-    });
-
-    it("honors a sticky opt-in and keeps tumbling on the next reset even under reduced motion", () => {
-      const view = new FourDView();
-      view.reset(true); // tumble starts paused under reduced motion
-
-      view.setTumbleUserChoice(true);
       view.reset(true);
 
-      expect(view.tumbleOn).toBe(true);
-    });
-
-    it("uses the most recent setTumbleUserChoice call as the sticky choice", () => {
-      const view = new FourDView();
-
-      view.setTumbleUserChoice(false);
-      view.setTumbleUserChoice(true);
-      view.reset(false);
-
-      expect(view.tumbleOn).toBe(true);
-    });
-
-    it("still resets speed and slice fields to baseline when the sticky choice keeps the tumble off", () => {
-      const view = new FourDView();
-      view.setTumbleUserChoice(false);
-      view.tumbleSpeed = 3;
-      view.sliceOn = true;
-
-      view.reset(false);
-
-      expect(view.tumbleOn).toBe(false);
-      expect(view.tumbleSpeed).toBe(1);
-      expect(view.sliceOn).toBe(false);
-    });
-
-    it("does not treat a direct tumbleOn field write as a sticky choice, unlike setTumbleUserChoice", () => {
-      const view = new FourDView();
-      view.reset(false);
-      view.tumbleOn = false; // bare field write, not through the setter
-
-      view.reset(false);
-
-      // Only setTumbleUserChoice earns stickiness; a programmatic write to
-      // the field (as here) must not survive the next fresh-visit reset the
-      // way a real user toggle would (contrast the sticky-off case above).
-      expect(view.tumbleOn).toBe(true);
-    });
-  });
-
-  describe("seedTumbleUserChoice", () => {
-    it("makes the next reset honor a remembered off choice without a prior in-session toggle", () => {
-      const view = new FourDView();
-
-      view.seedTumbleUserChoice(false);
-      view.reset(false); // not reduced motion, so the bare default would be ON
-
-      expect(view.tumbleOn).toBe(false);
-    });
-
-    it("makes the next reset keep tumbling for a remembered opt-in even under reduced motion", () => {
-      const view = new FourDView();
-
-      view.seedTumbleUserChoice(true);
-      view.reset(true); // reduced motion, so the bare default would be paused
-
-      expect(view.tumbleOn).toBe(true);
-    });
-
-    it("does not touch the live tumbleOn until a reset applies the seeded choice", () => {
-      const view = new FourDView();
-      expect(view.tumbleOn).toBe(true); // constructor default
-
-      view.seedTumbleUserChoice(false);
-
-      // Unlike setTumbleUserChoice, seeding only records the choice for the
-      // imminent boot reset to apply — it must not flip live state itself.
-      expect(view.tumbleOn).toBe(true);
+      expect(view.sliceThickness).toBe(0);
     });
   });
 
   describe("tick", () => {
     it("advances the rotor away from identity while the tumble is running", () => {
       const view = new FourDView();
-      view.reset(false);
+      view.reset(true);
 
       view.tick(1);
 
@@ -207,7 +97,7 @@ describe("FourDView", () => {
 
     it("is a no-op while the tumble is paused", () => {
       const view = new FourDView();
-      view.reset(false);
+      view.reset(true);
       view.tumbleOn = false;
 
       view.tick(10);
@@ -217,11 +107,11 @@ describe("FourDView", () => {
 
     it("rotates further at a higher tumbleSpeed", () => {
       const base = new FourDView();
-      base.reset(false);
+      base.reset(true);
       base.tick(1);
 
       const fast = new FourDView();
-      fast.reset(false);
+      fast.reset(true);
       fast.tumbleSpeed = 2;
       fast.tick(1);
 
@@ -237,7 +127,7 @@ describe("FourDView", () => {
   describe("rotate", () => {
     it("changes the rotor when given a non-zero xw delta", () => {
       const view = new FourDView();
-      view.reset(false);
+      view.reset(true);
 
       view.rotate(0.5, 0, 0);
 
@@ -246,7 +136,7 @@ describe("FourDView", () => {
 
     it("is a no-op when all three deltas are zero", () => {
       const view = new FourDView();
-      view.reset(false);
+      view.reset(true);
 
       view.rotate(0, 0, 0);
 
@@ -257,7 +147,7 @@ describe("FourDView", () => {
   describe("pose", () => {
     it("returns the current rotor pair and slice fields", () => {
       const view = new FourDView();
-      view.reset(false);
+      view.reset(true);
       view.rotate(0.3, 0, 0);
       view.sliceOn = true;
       view.sliceCenter = 0.4;
@@ -273,7 +163,7 @@ describe("FourDView", () => {
 
     it("deep-copies the rotor: mutating the snapshot leaves the view unchanged", () => {
       const view = new FourDView();
-      view.reset(false);
+      view.reset(true);
       view.rotate(0.3, 0, 0);
       const before = view.matrix();
 
@@ -288,7 +178,7 @@ describe("FourDView", () => {
   describe("applyPose", () => {
     it("round-trips: applyPose(pose()) preserves the matrix and slice fields", () => {
       const view = new FourDView();
-      view.reset(false);
+      view.reset(true);
       view.rotate(0.2, -0.4, 0.1);
       view.sliceOn = true;
       view.sliceCenter = -0.7;
@@ -306,7 +196,7 @@ describe("FourDView", () => {
 
     it("round-trips the slice slab's thickness through pose()/applyPose()", () => {
       const source = new FourDView();
-      source.reset(false);
+      source.reset(true);
       source.sliceThickness = 0.32;
 
       const target = new FourDView();
@@ -317,7 +207,7 @@ describe("FourDView", () => {
 
     it("restores a pose captured from a different view instance", () => {
       const source = new FourDView();
-      source.reset(false);
+      source.reset(true);
       source.rotate(0.5, 0, 0.2);
       source.sliceCenter = 0.3;
       const pose = source.pose();
@@ -331,7 +221,7 @@ describe("FourDView", () => {
 
     it("normalizes a hand-scaled pair to match the unscaled rotation", () => {
       const view = new FourDView();
-      view.reset(false);
+      view.reset(true);
       view.rotate(0.3, 0, 0);
       const unscaledMatrix = view.matrix();
       const pose = view.pose();
@@ -361,7 +251,7 @@ describe("FourDView", () => {
 
     it("keeps the current rotor when the pose's pair is degenerate, but still applies the slice fields", () => {
       const view = new FourDView();
-      view.reset(false);
+      view.reset(true);
       view.rotate(0.4, 0, 0);
       const before = view.matrix();
       const degeneratePose: FourDPose = {
@@ -382,7 +272,7 @@ describe("FourDView", () => {
 
     it("never touches tumbleOn/tumbleSpeed", () => {
       const view = new FourDView();
-      view.reset(false);
+      view.reset(true);
       view.tumbleOn = false;
       view.tumbleSpeed = 2.5;
       const pose = view.pose();
@@ -398,7 +288,7 @@ describe("FourDView", () => {
 describe("FourDTween", () => {
   it("snaps immediately under reduced motion", () => {
     const view = new FourDView();
-    view.reset(false);
+    view.reset(true);
     const clock = 0;
     const tween = new FourDTween(
       view,
@@ -424,7 +314,7 @@ describe("FourDTween", () => {
 
   it("snaps immediately when durationMs is 0", () => {
     const view = new FourDView();
-    view.reset(false);
+    view.reset(true);
     const clock = 0;
     const tween = new FourDTween(
       view,
@@ -447,7 +337,7 @@ describe("FourDTween", () => {
 
   it("interpolates the rotor and slice center partway through a normal glide", () => {
     const view = new FourDView();
-    view.reset(false); // rotor at identity, sliceCenter 0
+    view.reset(true); // rotor at identity, sliceCenter 0
     let clock = 0;
     const tween = new FourDTween(
       view,
@@ -482,7 +372,7 @@ describe("FourDTween", () => {
 
   it("interpolates the slice thickness partway through a normal glide", () => {
     const view = new FourDView();
-    view.reset(false); // sliceThickness 0
+    view.reset(true); // sliceThickness 0
     let clock = 0;
     const tween = new FourDTween(
       view,
@@ -509,7 +399,7 @@ describe("FourDTween", () => {
 
   it("glides the slice thickness from a widened slab back down to a target cross-section", () => {
     const view = new FourDView();
-    view.reset(false);
+    view.reset(true);
     view.sliceThickness = 0.5;
     let clock = 0;
     const tween = new FourDTween(
@@ -536,7 +426,7 @@ describe("FourDTween", () => {
 
   it("lands exactly on the target at/after the glide's duration", () => {
     const view = new FourDView();
-    view.reset(false);
+    view.reset(true);
     let clock = 0;
     const tween = new FourDTween(
       view,
@@ -562,7 +452,7 @@ describe("FourDTween", () => {
 
   it("cancel() stops the glide without moving the view further", () => {
     const view = new FourDView();
-    view.reset(false);
+    view.reset(true);
     let clock = 0;
     const tween = new FourDTween(
       view,
@@ -593,7 +483,7 @@ describe("FourDTween", () => {
 
   it("finish() snaps to the target and deactivates", () => {
     const view = new FourDView();
-    view.reset(false);
+    view.reset(true);
     let clock = 0;
     const tween = new FourDTween(
       view,
@@ -620,7 +510,7 @@ describe("FourDTween", () => {
 
   it("finish() is a no-op when idle", () => {
     const view = new FourDView();
-    view.reset(false);
+    view.reset(true);
     const before = view.matrix();
     const tween = new FourDTween(
       view,

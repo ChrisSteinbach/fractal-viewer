@@ -1,8 +1,23 @@
 import {
   loadViewerPrefs,
+  resolveAutoMotion,
   saveViewerPrefs,
   updateViewerPrefs,
 } from "./viewer-prefs";
+
+describe("resolveAutoMotion", () => {
+  it.each([
+    [undefined, false, true],
+    [undefined, true, false],
+    [true, true, true],
+    [false, false, false],
+  ] as const)(
+    "resolves choice %s with reduced motion %s to %s",
+    (choice, reduced, expected) => {
+      expect(resolveAutoMotion(choice, reduced)).toBe(expected);
+    },
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
