@@ -1453,8 +1453,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     never the URL/hash/`history`. Never-throwing load with strict validation
     (`false` is a real choice and survives); writes go through
     `updateViewerPrefs` (merge over stored — a bare save of one field would
-    drop the others). Two prefs: `autoMotion` — the shared 3D auto-orbit /
-    4D auto-tumble choice, `undefined` = never chosen, so boot follows
+    drop the others). Two prefs: `autoMotion` — one visible Automatic motion
+    checkbox and shared 3D auto-orbit / 4D auto-tumble choice, `undefined` =
+    never chosen, so boot follows
     prefers-reduced-motion — and `surfacePreview` — the surface
     quick-preview tier on/off; `false` freezes the pane during motion and
     settles straight to full detail on park (both engines), the

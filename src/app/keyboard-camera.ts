@@ -19,8 +19,8 @@
  * Shift+arrows = the Shift-drag (rotor xw/yw), Shift+PageUp/Down = the
  * Shift-wheel (rotor zw), +/- = the wheel (dolly, same 1.1 notch), [ / ] =
  * the w-slice slider (same 0.01-per-step grain, x2 for key travel), Space =
- * the auto-motion toggle both panel checkboxes drive (the 3D orbit / 4D
- * tumble shared preference). Rotor/slice actions are only produced
+ * the panel's one Automatic motion preference (3D orbit / 4D tumble).
+ * Rotor/slice actions are only produced
  * while the view is non-flat, exactly as the pointer gestures gate on
  * `fourDView()` — in a flat view those keys fall through unhandled (and
  * unprevented, so the page keeps its own semantics for them).

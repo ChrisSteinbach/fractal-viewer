@@ -113,7 +113,7 @@ function noopHandlers(): UiHandlers {
     onTogglePanel: vi.fn(),
     onClosePanel: vi.fn(),
     onRenderMode: vi.fn(),
-    onAutoOrbitToggle: vi.fn(),
+    onAutoMotionToggle: vi.fn(),
     onAutoOrbitSpeedInput: vi.fn(),
     onSurfacePreviewToggle: vi.fn(),
     onSurfaceSkipPreview: vi.fn(),
@@ -121,7 +121,6 @@ function noopHandlers(): UiHandlers {
     onFourDSliceInput: vi.fn(),
     onFourDSliceThicknessInput: vi.fn(),
     onFourDSliceRelColorToggle: vi.fn(),
-    onFourDTumbleToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
     onWatchBuild: vi.fn(),
     onBalloonInflate: vi.fn(),
@@ -7196,11 +7195,14 @@ describe("Ui 4D view gating", () => {
     return document.getElementById(id) as HTMLElement;
   }
 
-  it("hides the 4D controls for a flat system", () => {
+  it("shows the stable View section with only flat-camera framing for a flat system", () => {
     const ui = new Ui(document);
     ui.updateLabels(initialState(true));
 
-    expect(el("fourDControls").classList.contains("hidden")).toBe(true);
+    expect(el("viewControls").classList.contains("hidden")).toBe(false);
+    expect(el("threeDSavedViewScope").classList.contains("hidden")).toBe(false);
+    expect(el("fourDSavedViewScope").classList.contains("hidden")).toBe(true);
+    expect(el("fourDSliceToggleRow").classList.contains("hidden")).toBe(true);
   });
 
   // The panel's own heading tells the truth per generation: the
@@ -7223,7 +7225,7 @@ describe("Ui 4D view gating", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
-    expect(el("fourDControls").classList.contains("hidden")).toBe(false);
+    expect(el("viewControls").classList.contains("hidden")).toBe(false);
     // All three render modes stay reachable on a non-flat system — the
     // segmented control is a view-independent switch, unlike the retired
     // flame/solid entry islands it replaced.
@@ -7253,27 +7255,24 @@ describe("Ui 4D view gating", () => {
     expect(el("fourDDepthFadeRow").closest("details")?.id).toBe(
       "pointsDepthSection",
     );
-    expect(el("fourDControls").contains(el("fourDColorRow"))).toBe(false);
+    expect(el("viewControls").contains(el("fourDColorRow"))).toBe(false);
   });
 
-  // The 3D View block (auto-orbit) is the flat-system counterpart of the
-  // 4D block: exactly one of the two shows outside a render, and both
-  // hide while a render freezes the view's automatic motion.
-  it("shows the 3D auto-orbit block only for a flat system outside a render", () => {
+  it("keeps one View shell across dimensions and hides it under frozen renders", () => {
     const ui = new Ui(document);
     const flat = initialState(true);
 
     ui.updateLabels(flat);
-    expect(el("threeDControls").classList.contains("hidden")).toBe(false);
+    expect(el("viewControls").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels({ ...flat, transforms: nonFlatTransforms() });
-    expect(el("threeDControls").classList.contains("hidden")).toBe(true);
+    expect(el("viewControls").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels({ ...flat, renderMode: "flame" as const });
-    expect(el("threeDControls").classList.contains("hidden")).toBe(true);
+    expect(el("viewControls").classList.contains("hidden")).toBe(true);
 
     ui.updateLabels({ ...flat, renderMode: "solid" as const });
-    expect(el("threeDControls").classList.contains("hidden")).toBe(true);
+    expect(el("viewControls").classList.contains("hidden")).toBe(true);
   });
 
   // Flame and solid freeze the 4D view (rotor + slice) into their active
@@ -7287,15 +7286,15 @@ describe("Ui 4D view gating", () => {
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
 
     ui.updateLabels({ ...nonFlat, renderMode: "flame" as const });
-    expect(el("fourDControls").classList.contains("hidden")).toBe(true);
+    expect(el("viewControls").classList.contains("hidden")).toBe(true);
     expect(el("flameToneSection").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels({ ...nonFlat, renderMode: "solid" as const });
-    expect(el("fourDControls").classList.contains("hidden")).toBe(true);
+    expect(el("viewControls").classList.contains("hidden")).toBe(true);
     expect(el("solidSurfaceSection").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels(nonFlat);
-    expect(el("fourDControls").classList.contains("hidden")).toBe(false);
+    expect(el("viewControls").classList.contains("hidden")).toBe(false);
   });
 
   // The crucial inversion from the old 4D MODE: unlike the retired
@@ -7333,7 +7332,7 @@ describe("Ui 4D view gating", () => {
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
     ui.updateLabels(initialState(true));
 
-    expect(el("fourDControls").classList.contains("hidden")).toBe(true);
+    expect(el("viewControls").classList.contains("hidden")).toBe(false);
     expect(el("renderModeSwitch").classList.contains("hidden")).toBe(false);
     expect(el("colorModeRow").classList.contains("hidden")).toBe(false);
     expect(el("renderStyleRow").classList.contains("hidden")).toBe(false);
@@ -7376,11 +7375,11 @@ describe("Ui 4D view gating", () => {
     );
   });
 
-  it("switches the help box to the paused line after resetFourDTumble(false)", () => {
+  it("switches the help box to the paused line after resetFourDTumbleSpeed(false)", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
 
-    ui.resetFourDTumble(false);
+    ui.resetFourDTumbleSpeed(false);
     ui.updateLabels(nonFlat);
 
     expect(el("helpText").firstElementChild?.textContent).toBe(
@@ -7405,12 +7404,12 @@ describe("Ui 4D view gating", () => {
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
     ui.bind({
       ...noopHandlers(),
-      onFourDTumbleToggle: () => ui.updateLabels(nonFlat),
+      onAutoMotionToggle: () => ui.updateLabels(nonFlat),
     });
     ui.updateLabels(nonFlat);
 
-    (el("fourDTumbleToggle") as HTMLInputElement).checked = false;
-    el("fourDTumbleToggle").dispatchEvent(new Event("change"));
+    (el("autoMotionToggle") as HTMLInputElement).checked = false;
+    el("autoMotionToggle").dispatchEvent(new Event("change"));
 
     expect(el("helpText").firstElementChild?.textContent).toBe(
       "4D IFS (tumble paused)",
@@ -7424,14 +7423,14 @@ describe("Ui 4D view gating", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
 
-    ui.resetFourDTumble(false);
+    ui.resetFourDTumbleSpeed(false);
     ui.setFourDTumbleActive(true);
     ui.updateLabels(nonFlat);
 
     expect(el("helpText").firstElementChild?.textContent).toBe(
       "Auto-tumbling 4D IFS",
     );
-    expect((el("fourDTumbleToggle") as HTMLInputElement).checked).toBe(false);
+    expect((el("autoMotionToggle") as HTMLInputElement).checked).toBe(true);
   });
 
   // Unlike the old 4D mode (which forced selectedTransform back to camera
@@ -7460,10 +7459,9 @@ describe("Ui 4D view gating", () => {
 // (main.ts pushes only `sliceCenter` into setSurface4View) — so the on/off
 // toggle would be a lie there, while the position slider is the mode's
 // defining control; slice-relative color only remaps the w-depth palette the
-// tracer doesn't have, so it hides too. The TUMBLE half is the exception:
-// the ambient tumble parks in surface mode (its every tick would pin the
-// tier scheduler in preview and the settle could never arm), so its controls
-// hide whole — the user's checkbox state surviving for the projection view.
+// tracer doesn't have, so it hides too. Ambient motion parks in surface mode
+// so the speed row hides, while the one browser preference stays visible with
+// an associated next-Points disclosure.
 describe("Ui 4D surface session controls", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
@@ -7475,7 +7473,7 @@ describe("Ui 4D surface session controls", () => {
 
     ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
 
-    expect(el("fourDControls").classList.contains("hidden")).toBe(false);
+    expect(el("viewControls").classList.contains("hidden")).toBe(false);
   });
 
   it("hides the W-slice on/off toggle in a live 4D surface session", () => {
@@ -7644,63 +7642,62 @@ describe("Ui 4D surface session controls", () => {
     expect(el("fourDSliceRow").classList.contains("hidden")).toBe(true);
   });
 
-  // The ambient tumble PARKS in surface mode (main.ts skips the tick —
-  // every one would invalidate the frame and pin the tier scheduler in
-  // preview, so the settle could never arm), and a visible toggle whose
-  // motion never happens reads as a broken view — both tumble rows hide.
-  it("hides the auto-tumble toggle and speed rows in a live 4D surface session", () => {
+  it("keeps the shared preference visible with a parked hint while hiding tumble speed", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
-    (el("fourDTumbleToggle") as HTMLInputElement).checked = true;
+    (el("autoMotionToggle") as HTMLInputElement).checked = true;
 
     ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
 
-    expect(el("fourDTumbleToggleRow").classList.contains("hidden")).toBe(true);
+    expect(el("autoMotionToggleRow").classList.contains("hidden")).toBe(false);
     expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
     expect(el("fourDSurfaceMotionHint").classList.contains("hidden")).toBe(
       false,
     );
     expect(el("fourDSurfaceMotionHint").textContent).toContain(
-      "auto-tumble setting takes effect",
+      "setting takes effect again",
     );
+    expect(
+      (el("autoMotionToggle") as HTMLInputElement).getAttribute(
+        "aria-describedby",
+      ),
+    ).toContain("fourDSurfaceMotionHint");
   });
 
-  it("restores the tumble controls — checkbox state untouched — after leaving surface mode", () => {
+  it("restores tumble speed — shared checkbox state untouched — after leaving surface mode", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
-    (el("fourDTumbleToggle") as HTMLInputElement).checked = true;
+    (el("autoMotionToggle") as HTMLInputElement).checked = true;
     ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
 
     ui.updateLabels(nonFlat);
 
-    expect(el("fourDTumbleToggleRow").classList.contains("hidden")).toBe(false);
     expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(false);
     expect(el("fourDSurfaceMotionHint").classList.contains("hidden")).toBe(
       true,
     );
-    expect((el("fourDTumbleToggle") as HTMLInputElement).checked).toBe(true);
+    expect((el("autoMotionToggle") as HTMLInputElement).checked).toBe(true);
   });
 
   it("keeps the speed row hidden after surface mode when the user's tumble toggle was off", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
-    (el("fourDTumbleToggle") as HTMLInputElement).checked = false;
+    (el("autoMotionToggle") as HTMLInputElement).checked = false;
     ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
 
     ui.updateLabels(nonFlat);
 
-    expect(el("fourDTumbleToggleRow").classList.contains("hidden")).toBe(false);
     expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
   });
 
   // Guards against the gate keying on render mode alone rather than the
   // non-flat predicate main.ts actually routes a surface session on.
-  it("keeps the 4D block hidden for a flat system in surface mode", () => {
+  it("keeps the View block hidden for a flat system in surface mode at this boundary", () => {
     const ui = new Ui(document);
 
     ui.updateLabels({ ...initialState(true), renderMode: "surface" as const });
 
-    expect(el("fourDControls").classList.contains("hidden")).toBe(true);
+    expect(el("viewControls").classList.contains("hidden")).toBe(true);
   });
 });
 
@@ -7713,6 +7710,7 @@ describe("Ui 4D slice controls", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
     const toggle = el("fourDSliceToggle") as HTMLInputElement;
 
     toggle.checked = true;
@@ -7864,21 +7862,21 @@ describe("Ui 4D depth-fade control", () => {
   });
 });
 
-describe("Ui 3D auto-orbit controls", () => {
+describe("Ui automatic-motion controls", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
   }
 
-  it("hides the speed row and fires the handler when auto-orbit is toggled off", () => {
+  it("hides the contextual speed row and fires the one handler when automatic motion is toggled off", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    const toggle = el("autoOrbitToggle") as HTMLInputElement;
+    const toggle = el("autoMotionToggle") as HTMLInputElement;
 
     toggle.checked = false;
     toggle.dispatchEvent(new Event("change"));
 
-    expect(handlers.onAutoOrbitToggle).toHaveBeenCalledWith(false);
+    expect(handlers.onAutoMotionToggle).toHaveBeenCalledWith(false);
     expect(el("autoOrbitRow").classList.contains("hidden")).toBe(true);
   });
 
@@ -7895,56 +7893,47 @@ describe("Ui 3D auto-orbit controls", () => {
     expect(el("autoOrbitSpeedLabel").textContent).toBe("2.5×");
   });
 
-  it("resetAutoOrbit(true) checks the toggle, shows the row, and resets the slider to 1.0×", () => {
+  it("resetAutoOrbitSpeed resets only the orbit slider to 1.0×", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    const toggle = el("autoOrbitToggle") as HTMLInputElement;
     const slider = el("autoOrbitSpeedSlider") as HTMLInputElement;
-    toggle.checked = false;
-    toggle.dispatchEvent(new Event("change"));
     slider.value = "2.5";
     slider.dispatchEvent(new Event("input"));
 
-    ui.resetAutoOrbit(true);
+    ui.resetAutoOrbitSpeed();
 
+    expect(slider.value).toBe("1");
+    expect(el("autoOrbitSpeedLabel").textContent).toBe("1.0×");
+  });
+
+  it("keeps one checkbox while switching the contextual speed row between 3D and 4D", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const toggle = el("autoMotionToggle") as HTMLInputElement;
+
+    ui.updateLabels(initialState(true));
     expect(toggle.checked).toBe(true);
     expect(el("autoOrbitRow").classList.contains("hidden")).toBe(false);
-    expect(slider.value).toBe("1");
-    expect(el("autoOrbitSpeedLabel").textContent).toBe("1.0×");
-  });
+    expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
 
-  it("resetAutoOrbit(false) unchecks the toggle, hides the row, and resets the slider to 1.0×", () => {
-    const ui = new Ui(document);
-    ui.bind(noopHandlers());
-    const toggle = el("autoOrbitToggle") as HTMLInputElement;
-    const slider = el("autoOrbitSpeedSlider") as HTMLInputElement;
-    slider.value = "2.5";
-    slider.dispatchEvent(new Event("input"));
-
-    ui.resetAutoOrbit(false);
-
-    expect(toggle.checked).toBe(false);
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
+    expect(document.querySelectorAll("#autoMotionToggle")).toHaveLength(1);
+    expect(toggle.checked).toBe(true);
     expect(el("autoOrbitRow").classList.contains("hidden")).toBe(true);
-    expect(slider.value).toBe("1");
-    expect(el("autoOrbitSpeedLabel").textContent).toBe("1.0×");
+    expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(false);
   });
-});
 
-describe("Ui 4D tumble controls", () => {
-  function el(id: string): HTMLElement {
-    return document.getElementById(id) as HTMLElement;
-  }
-
-  it("hides the speed row and fires the handler when auto-tumble is toggled off", () => {
+  it("uses the same checkbox and handler in 4D", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    const toggle = el("fourDTumbleToggle") as HTMLInputElement;
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
+    const toggle = el("autoMotionToggle") as HTMLInputElement;
 
     toggle.checked = false;
     toggle.dispatchEvent(new Event("change"));
 
-    expect(handlers.onFourDTumbleToggle).toHaveBeenCalledWith(false);
+    expect(handlers.onAutoMotionToggle).toHaveBeenCalledWith(false);
     expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
   });
 
@@ -7961,38 +7950,33 @@ describe("Ui 4D tumble controls", () => {
     expect(el("fourDTumbleSpeedLabel").textContent).toBe("2.5×");
   });
 
-  it("resetFourDTumble(true) checks the toggle, shows the row, and resets the slider to 1.0×", () => {
+  it("resetFourDTumbleSpeed resets only the tumble slider and active help state", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    const toggle = el("fourDTumbleToggle") as HTMLInputElement;
     const slider = el("fourDTumbleSpeedSlider") as HTMLInputElement;
-    toggle.checked = false;
-    toggle.dispatchEvent(new Event("change"));
     slider.value = "2.5";
     slider.dispatchEvent(new Event("input"));
 
-    ui.resetFourDTumble(true);
+    ui.resetFourDTumbleSpeed(true);
 
-    expect(toggle.checked).toBe(true);
-    expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(false);
     expect(slider.value).toBe("1");
     expect(el("fourDTumbleSpeedLabel").textContent).toBe("1.0×");
   });
 
-  it("resetFourDTumble(false) unchecks the toggle, hides the row, and resets the slider to 1.0×", () => {
+  it("setAutoMotionToggle changes the shared checkbox without resetting either speed", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    const toggle = el("fourDTumbleToggle") as HTMLInputElement;
-    const slider = el("fourDTumbleSpeedSlider") as HTMLInputElement;
-    slider.value = "2.5";
-    slider.dispatchEvent(new Event("input"));
+    const toggle = el("autoMotionToggle") as HTMLInputElement;
+    const orbit = el("autoOrbitSpeedSlider") as HTMLInputElement;
+    const tumble = el("fourDTumbleSpeedSlider") as HTMLInputElement;
+    orbit.value = "2.5";
+    tumble.value = "2.5";
 
-    ui.resetFourDTumble(false);
+    ui.setAutoMotionToggle(false);
 
     expect(toggle.checked).toBe(false);
-    expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
-    expect(slider.value).toBe("1");
-    expect(el("fourDTumbleSpeedLabel").textContent).toBe("1.0×");
+    expect(orbit.value).toBe("2.5");
+    expect(tumble.value).toBe("2.5");
   });
 });
 
@@ -8284,7 +8268,7 @@ describe("Ui symmetry controls", () => {
       "4D IFS Fractal",
     );
     expect(
-      document.getElementById("fourDControls")?.classList.contains("hidden"),
+      document.getElementById("viewControls")?.classList.contains("hidden"),
     ).toBe(false);
   });
 
@@ -8618,12 +8602,9 @@ describe("visible control lifetimes", () => {
     ).toBe("controlScopeKey");
   });
 
-  it("marks the two current auto-motion writers and Quick previews as browser-owned", () => {
-    for (const id of [
-      "autoOrbitToggle",
-      "fourDTumbleToggle",
-      "surfacePreviewToggle",
-    ]) {
+  it("marks the one auto-motion preference and Quick previews as browser-owned", () => {
+    expect(document.querySelectorAll("#autoMotionToggle")).toHaveLength(1);
+    for (const id of ["autoMotionToggle", "surfacePreviewToggle"]) {
       expect(labelledScope(id), id).toBe("This browser");
     }
   });
@@ -8718,7 +8699,7 @@ describe("panel accordion sections", () => {
     expect(ids.indexOf("surfaceFloorSection")).toBeLessThan(
       ids.indexOf("captureSection"),
     );
-    expect(ids.indexOf("fourDControls")).toBeLessThan(
+    expect(ids.indexOf("viewControls")).toBeLessThan(
       ids.indexOf("captureSection"),
     );
     expect(ids.indexOf("colorSection")).toBeLessThan(
@@ -8745,7 +8726,7 @@ describe("panel accordion sections", () => {
       "flameToneSection",
       "solidSurfaceSection",
       "surfaceColorSection",
-      "fourDControls",
+      "viewControls",
       "collectionSection",
     ]) {
       expect(ids.indexOf("symmetrySection"), later).toBeLessThan(

@@ -1924,10 +1924,10 @@
 
         <details
           class="panel-section hidden"
-          id="threeDControls"
+          id="viewControls"
           name="panel-section"
         >
-          <summary>3D View</summary>
+          <summary>View</summary>
           <p class="flame-hint view-scope-note" id="threeDSavedViewScope">
             <span class="control-scope" aria-label="Scope: Saved view"
               >Saved view</span
@@ -1936,13 +1936,35 @@
             scene file, or add to Collection or Timeline, and is restored with
             the current scene on reload.
           </p>
-          <label class="checkbox-label">
-            <input type="checkbox" id="autoOrbitToggle" checked />
-            Auto-orbit (turntable)
+          <p class="flame-hint view-scope-note hidden" id="fourDSavedViewScope">
+            <span class="control-scope" aria-label="Scope: Saved view"
+              >Saved view</span
+            >
+            Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll turns
+            ZW. This rotation and the slice framing are included when you Copy
+            Link, save a scene file, or add to Collection or Timeline, and are
+            restored with the current scene on reload.
+          </p>
+          <p class="flame-hint hidden" id="fourDSurfaceMotionHint">
+            Surface parks automatic motion so the render can settle. Manual
+            turns and slice controls stay live; your setting takes effect again
+            in Points.
+          </p>
+          <label class="checkbox-label" id="autoMotionToggleRow">
+            <input
+              type="checkbox"
+              id="autoMotionToggle"
+              aria-describedby="autoMotionMechanismNote fourDSurfaceMotionHint"
+              checked
+            />
+            Automatic motion
             <span class="control-scope" aria-label="Scope: This browser"
               >This browser</span
             >
           </label>
+          <p class="flame-hint" id="autoMotionMechanismNote">
+            Orbits the camera in 3D; tumbles the XY + ZW planes in 4D.
+          </p>
           <div id="autoOrbitRow">
             <label class="select-label">
               <span class="control-label-line">
@@ -1963,35 +1985,6 @@
               />
             </label>
           </div>
-        </details>
-
-        <details
-          class="panel-section hidden"
-          id="fourDControls"
-          name="panel-section"
-        >
-          <summary>4D View</summary>
-          <p class="flame-hint view-scope-note" id="fourDSavedViewScope">
-            <span class="control-scope" aria-label="Scope: Saved view"
-              >Saved view</span
-            >
-            Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll turns
-            ZW. This rotation and the slice framing are included when you Copy
-            Link, save a scene file, or add to Collection or Timeline, and are
-            restored with the current scene on reload.
-          </p>
-          <p class="flame-hint hidden" id="fourDSurfaceMotionHint">
-            Surface parks auto-tumble so the render can settle. Manual turns and
-            slice controls stay live; your auto-tumble setting takes effect
-            again in Points.
-          </p>
-          <label class="checkbox-label" id="fourDTumbleToggleRow">
-            <input type="checkbox" id="fourDTumbleToggle" checked />
-            Auto-tumble (XY+ZW)
-            <span class="control-scope" aria-label="Scope: This browser"
-              >This browser</span
-            >
-          </label>
           <div id="fourDTumbleRow">
             <label class="select-label">
               <span class="control-label-line">

@@ -30,9 +30,9 @@
 /** The persistent viewer-preferences document. */
 export interface ViewerPrefs {
   /** The combined auto-motion on/off preference: the 3D auto-orbit
-   * and 4D auto-tumble share ONE remembered choice across reloads. `undefined`
-   * = never chosen, so boot follows the prefers-reduced-motion default. Set to
-   * true/false once the user flips EITHER motion toggle; seeds BOTH on next load. */
+   * and 4D auto-tumble share ONE visible control and remembered choice across
+   * reloads. `undefined` = never chosen, so boot follows the
+   * prefers-reduced-motion default. */
   autoMotion?: boolean;
   /** The surface mode's quick-preview tier on/off: `false` means
    * invalidations never trace the cheap preview — the pane holds its last
@@ -59,6 +59,16 @@ export interface ViewerPrefsDeps {
  * module's header).
  */
 const STORAGE_KEY = "fractal-viewer:prefs";
+
+/** Resolve the one automatic-motion choice. Reduced motion supplies only the
+ * untouched default; an explicit browser choice is an intentional opt-in or
+ * opt-out and therefore wins. */
+export function resolveAutoMotion(
+  choice: boolean | undefined,
+  reducedMotion: boolean,
+): boolean {
+  return choice ?? !reducedMotion;
+}
 
 // ---------------------------------------------------------------------------
 // Load / save

@@ -349,9 +349,10 @@ export interface UiHandlers {
    * too; the app treats that as a no-op.
    */
   onRenderMode: (mode: RenderMode) => void;
-  /** The 3D auto-orbit was paused or resumed — the camera-side
-   * sibling of {@link onFourDTumbleToggle}. */
-  onAutoOrbitToggle: (checked: boolean) => void;
+  /** The one browser-owned automatic-view-motion choice was changed. In a
+   * flat view it drives the camera turntable; in a non-flat view it drives
+   * the 4D rotor tumble. */
+  onAutoMotionToggle: (checked: boolean) => void;
   /** The surface mode's "Quick previews" checkbox was flipped: `false` =
    * invalidations never trace the preview tier — the pane holds its last
    * frame while the view moves and the full render starts on park. A
@@ -373,7 +374,7 @@ export interface UiHandlers {
    * HALF-thickness in the same normalized rotated-w units as
    * {@link onFourDSliceInput}'s center, [0, 0.5]. Surface-only — the row
    * is shown exactly in a live 4D surface session (see
-   * {@link Ui.syncFourDViewRows}), whose tracer renders everything within
+   * {@link Ui.syncViewRows}), whose tracer renders everything within
    * that much of the slice plane instead of the plane alone. */
   onFourDSliceThicknessInput: (value: number) => void;
   /** The slice-relative color option was toggled — recenter the w-ramp
@@ -381,8 +382,6 @@ export interface UiHandlers {
    * exactly like the slice toggle/position above; a FourDPose snapshot carries
    * all three as Saved view framing. */
   onFourDSliceRelColorToggle: (checked: boolean) => void;
-  /** The 4D auto-tumble was paused or resumed. */
-  onFourDTumbleToggle: (checked: boolean) => void;
   /** The 4D tumble-speed slider moved: `value` is the rate multiplier (×). */
   onFourDTumbleSpeedInput: (value: number) => void;
   /** "▶ Watch it build" was clicked (in the About dialog or the panel):
@@ -2097,12 +2096,15 @@ export class Ui {
   private readonly surfaceGroundPlaneNote: HTMLElement;
   private readonly surfaceGroundPlaneDependentRows: readonly HTMLElement[];
 
-  // 3D VIEW controls: the auto-orbit turntable — the 3D sibling of the 4D
-  // auto-tumble below. Both toggles write the browser-owned autoMotion pref;
-  // each speed row is This-session only. Shown exactly when the 4D block is
-  // not (flat system, no render active).
-  private readonly threeDControls: HTMLElement;
-  private readonly autoOrbitToggle: HTMLInputElement;
+  // One stable VIEW section owns the browser's single automatic-motion
+  // choice. Its contextual rows explain what that choice drives here: the
+  // flat camera turntable or the non-flat rotor tumble. Their speeds remain
+  // separate This-session mechanisms; Saved-view camera/rotor framing shares
+  // the same home without becoming part of the preference.
+  private readonly viewControls: HTMLElement;
+  private readonly threeDSavedViewScope: HTMLElement;
+  private readonly fourDSavedViewScope: HTMLElement;
+  private readonly autoMotionToggle: HTMLInputElement;
   private readonly autoOrbitRow: HTMLElement;
   private readonly autoOrbitSpeedSlider: HTMLInputElement;
   private readonly autoOrbitSpeedLabel: HTMLElement;
@@ -2113,7 +2115,6 @@ export class Ui {
   // here; its visibility (and the sub-blocks that hide alongside it — see
   // updateLabels) is a VIEW gate keyed on that same non-flatness, not a
   // separate on/off the user toggles.
-  private readonly fourDControls: HTMLElement;
   private readonly fourDSliceToggle: HTMLInputElement;
   private readonly fourDSliceToggleRow: HTMLElement;
   private readonly fourDSliceRow: HTMLElement;
@@ -2122,7 +2123,7 @@ export class Ui {
   // Slice thickness: lives inside fourDSliceRow like the rel-color row
   // below, but with the OPPOSITE surface gate — a slab only means something
   // to the tracer that marches one, so its row shows exactly in a live 4D
-  // surface session (see syncFourDViewRows).
+  // surface session (see syncViewRows).
   private readonly fourDSliceThicknessRow: HTMLElement;
   private readonly fourDSliceThicknessSlider: HTMLInputElement;
   private readonly fourDSliceThicknessLabel: HTMLElement;
@@ -2134,7 +2135,7 @@ export class Ui {
   /** True while the panel is showing a LIVE 4D surface session: a non-flat
    * system in Surface mode, where the tracer re-poses the rotor and
    * re-marches the w slice every frame. It changes what the slice block
-   * means, so {@link syncFourDViewRows} keys on it — see updateLabels. */
+   * means, so {@link syncViewRows} keys on it — see updateLabels. */
   private fourDSurfaceLive = false;
   /** False while the live 4D surface session cannot take a slab at all,
    * for either of two reasons the row's own tooltip distinguishes: its
@@ -2185,13 +2186,9 @@ export class Ui {
    * forward-orbit session reads (see {@link forwardHeadIndex}); refreshed
    * with every transform-list render, the panel's feed of the whole set. */
   private forwardHead = 0;
-  // Auto-tumble pause/resume + speed: the toggle writes the browser-owned
-  // autoMotion pref and the speed is This-session only. Neither is in the
-  // Saved-view FourDPose. The toggle's own wrapper row hides — with the speed
-  // row — in a live 4D surface session, where the ambient tumble is PARKED
-  // (see syncFourDViewRows).
-  private readonly fourDTumbleToggle: HTMLInputElement;
-  private readonly fourDTumbleToggleRow: HTMLElement;
+  // Auto-tumble speed: the shared autoMotion preference lives above; this
+  // contextual speed is This-session only and never enters FourDPose. The
+  // row hides in a live 4D surface session, where ambient motion is parked.
   private readonly fourDTumbleRow: HTMLElement;
   private readonly fourDSurfaceMotionHint: HTMLElement;
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
@@ -2200,13 +2197,16 @@ export class Ui {
    * `fourDView.tumbleOn`, whose default this matches)? Mirrored here because
    * the canvas help box names the motion and would otherwise claim a tumble
    * that is parked. Deliberately not the checkbox — unlike `sliceOn` (see
-   * updateLabels' syncFourDViewRows call), the control is not the truth: a
+   * updateLabels' syncViewRows call), the control is not the truth: a
    * build replay's showcase forces the tumble on for its duration WITHOUT
    * touching the user's control (main.ts's replayShowcase), and the help box
    * describes the canvas, not the panel. Kept in step by
-   * {@link setFourDTumbleActive}, {@link resetFourDTumble}, and the toggle's
+   * {@link setFourDTumbleActive}, {@link resetFourDTumbleSpeed}, and the toggle's
    * own change handler. */
   private fourDTumbleActive = true;
+  /** Last dimension reflected by updateLabels, used by the stable View
+   * section's contextual row sync. */
+  private viewIsNonFlat = false;
   private readonly colorModeRow: HTMLElement;
   /** The 4D Color select's wrapper — {@link colorModeRow}'s non-flat sibling
    * in the Color section: exactly one of the pair shows, and
@@ -2615,7 +2615,9 @@ export class Ui {
       this.byId("surfaceFloorTileScaleRow"),
       this.byId("surfaceFloorEmissionRow"),
     ];
-    this.fourDControls = this.byId("fourDControls");
+    this.viewControls = this.byId("viewControls");
+    this.threeDSavedViewScope = this.byId("threeDSavedViewScope");
+    this.fourDSavedViewScope = this.byId("fourDSavedViewScope");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceToggleRow = this.byId("fourDSliceToggleRow");
     this.fourDSliceRow = this.byId("fourDSliceRow");
@@ -2626,13 +2628,10 @@ export class Ui {
     this.fourDSliceThicknessLabel = this.byId("fourDSliceThicknessLabel");
     this.fourDSliceRelColorToggle = this.byId("fourDSliceRelColorToggle");
     this.fourDSliceRelColorRow = this.byId("fourDSliceRelColorRow");
-    this.threeDControls = this.byId("threeDControls");
-    this.autoOrbitToggle = this.byId("autoOrbitToggle");
+    this.autoMotionToggle = this.byId("autoMotionToggle");
     this.autoOrbitRow = this.byId("autoOrbitRow");
     this.autoOrbitSpeedSlider = this.byId("autoOrbitSpeedSlider");
     this.autoOrbitSpeedLabel = this.byId("autoOrbitSpeedLabel");
-    this.fourDTumbleToggle = this.byId("fourDTumbleToggle");
-    this.fourDTumbleToggleRow = this.byId("fourDTumbleToggleRow");
     this.fourDTumbleRow = this.byId("fourDTumbleRow");
     this.fourDSurfaceMotionHint = this.byId("fourDSurfaceMotionHint");
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
@@ -3072,13 +3071,16 @@ export class Ui {
       const surface = this.modeButtons.surface;
       if (surface.disabled && surface.title) this.flashToast(surface.title);
     });
-    this.autoOrbitToggle.addEventListener("change", () => {
-      const on = this.autoOrbitToggle.checked;
-      // Same "row hides with its toggle" pattern as the 4D tumble below.
-      // Live orbit state never enters AppState; the toggle writes the browser
-      // preference and saved documents snapshot the resulting CameraPose.
-      this.autoOrbitRow.classList.toggle("hidden", !on);
-      handlers.onAutoOrbitToggle(on);
+    this.autoMotionToggle.addEventListener("change", () => {
+      const on = this.autoMotionToggle.checked;
+      // One control owns the browser preference in both dimensions. The
+      // contextual speed reveal and help text still describe the mechanism
+      // currently visible on canvas.
+      this.syncViewRows();
+      if (this.viewIsNonFlat && !this.fourDSurfaceLive) {
+        this.fourDTumbleActive = on;
+      }
+      handlers.onAutoMotionToggle(on);
     });
     this.surfacePreviewToggle.addEventListener("change", () => {
       handlers.onSurfacePreviewToggle(this.surfacePreviewToggle.checked);
@@ -3091,18 +3093,6 @@ export class Ui {
       this.autoOrbitSpeedLabel.textContent = `${value.toFixed(1)}×`;
       handlers.onAutoOrbitSpeedInput(value);
     });
-    this.fourDTumbleToggle.addEventListener("change", () => {
-      const on = this.fourDTumbleToggle.checked;
-      // The speed slider only means anything while the tumble is running —
-      // same "row hides with its toggle" pattern as the slice below (tumble
-      // state is session-only and never enters AppState); the shared sync
-      // also keeps the surface-mode gate honest.
-      this.syncFourDViewRows();
-      // Set BEFORE the handler: main.ts answers this one with an
-      // updateLabels, which reads the flag to word the help box.
-      this.fourDTumbleActive = on;
-      handlers.onFourDTumbleToggle(on);
-    });
     this.fourDTumbleSpeedSlider.addEventListener("input", () => {
       const value = Number(this.fourDTumbleSpeedSlider.value);
       this.fourDTumbleSpeedLabel.textContent = `${value.toFixed(1)}×`;
@@ -3113,7 +3103,7 @@ export class Ui {
       // The position slider only means anything while the slice is on — a
       // pure view reveal, so the UI owns it. Slice state never enters AppState,
       // though a FourDPose snapshot carries it as Saved view framing.
-      this.syncFourDViewRows();
+      this.syncViewRows();
       handlers.onFourDSliceToggle(on);
     });
     this.fourDSliceSlider.addEventListener("input", () => {
@@ -3220,7 +3210,7 @@ export class Ui {
     thickness: number,
   ): void {
     this.fourDSliceToggle.checked = on;
-    this.syncFourDViewRows();
+    this.syncViewRows();
     this.fourDSliceSlider.value = String(center);
     this.fourDSliceLabel.textContent = center.toFixed(2);
     this.fourDSliceThicknessSlider.value = String(thickness);
@@ -3248,28 +3238,35 @@ export class Ui {
    * it shows ONLY in a live surface session. The point cloud's slice has a
    * fixed Gaussian width of its own that this control does not touch.
    *
-   * The TUMBLE rows hide whole in that session too: the ambient
-   * tumble PARKS there — every tick would invalidate the frame and pin the
-   * tier scheduler in preview, so the settle could never arm — and a
-   * visible toggle whose motion never happens reads as a broken view. The
-   * user's checkbox state survives untouched for the projection view.
+   * The contextual tumble-speed row hides in that session: ambient motion
+   * PARKS there — every tick would invalidate the frame and pin the tier
+   * scheduler in preview, so the settle could never arm. The one preference
+   * checkbox stays visible beside its parked/next-Points disclosure.
    */
-  private syncFourDViewRows(): void {
+  private syncViewRows(): void {
     const sliceOn = this.fourDSliceToggle.checked;
-    const tumbleOn = this.fourDTumbleToggle.checked;
+    const motionOn = this.autoMotionToggle.checked;
+    this.threeDSavedViewScope.classList.toggle("hidden", this.viewIsNonFlat);
+    this.fourDSavedViewScope.classList.toggle("hidden", !this.viewIsNonFlat);
+    this.autoOrbitRow.classList.toggle(
+      "hidden",
+      this.viewIsNonFlat || !motionOn,
+    );
     this.fourDSurfaceMotionHint.classList.toggle(
       "hidden",
       !this.fourDSurfaceLive,
     );
-    this.fourDTumbleToggleRow.classList.toggle("hidden", this.fourDSurfaceLive);
     this.fourDTumbleRow.classList.toggle(
       "hidden",
-      this.fourDSurfaceLive || !tumbleOn,
+      !this.viewIsNonFlat || this.fourDSurfaceLive || !motionOn,
     );
-    this.fourDSliceToggleRow.classList.toggle("hidden", this.fourDSurfaceLive);
+    this.fourDSliceToggleRow.classList.toggle(
+      "hidden",
+      !this.viewIsNonFlat || this.fourDSurfaceLive,
+    );
     this.fourDSliceRow.classList.toggle(
       "hidden",
-      !this.fourDSurfaceLive && !sliceOn,
+      !this.viewIsNonFlat || (!this.fourDSurfaceLive && !sliceOn),
     );
     // The thickness row stays VISIBLE in every live 4D surface session
     // and DISABLES with the reason when the session's fold set refuses
@@ -3318,7 +3315,7 @@ export class Ui {
   setFourDSlabAvailable(available: boolean): void {
     if (this.fourDSlabAvailable === available) return;
     this.fourDSlabAvailable = available;
-    this.syncFourDViewRows();
+    this.syncViewRows();
   }
 
   /** Which shape the active surface session actually routed to (see
@@ -3458,23 +3455,17 @@ export class Ui {
     this.setFourDSlice(false, 0, false, 0);
   }
 
-  /** Reset the auto-orbit controls on every fresh visit to the 3D view — `on`
-   * is false under prefers-reduced-motion (where the orbit starts paused but
-   * stays available as an explicit opt-in) or when the user's sticky toggle
-   * choice says so (mirrors {@link resetFourDTumble}). */
-  resetAutoOrbit(on: boolean): void {
-    this.autoOrbitToggle.checked = on;
-    this.autoOrbitRow.classList.toggle("hidden", !on);
+  /** Reset only the contextual 3D speed on a fresh flat-view visit. The
+   * browser-owned on/off choice is shared with 4D and must survive the
+   * dimension transition untouched. */
+  resetAutoOrbitSpeed(): void {
     this.autoOrbitSpeedSlider.value = "1";
     this.autoOrbitSpeedLabel.textContent = "1.0×";
   }
 
-  /** Reset the 4D tumble controls on every 4D entry — `on` is false under
-   * prefers-reduced-motion (where the tumble starts paused but stays available
-   * as an explicit opt-in) or when the user's sticky toggle choice says so. */
-  resetFourDTumble(on: boolean): void {
-    this.fourDTumbleToggle.checked = on;
-    this.syncFourDViewRows();
+  /** Reset only the contextual 4D speed and mirror the mechanism's actual
+   * activity for help text. The shared preference checkbox is not reset. */
+  resetFourDTumbleSpeed(on: boolean): void {
     this.fourDTumbleSpeedSlider.value = "1";
     this.fourDTumbleSpeedLabel.textContent = "1.0×";
     this.fourDTumbleActive = on;
@@ -3490,23 +3481,14 @@ export class Ui {
     this.fourDTumbleActive = on;
   }
 
-  /** Reflect an auto-motion flip that came from the CANVAS (the Space key)
-   * rather than the panel checkbox: exactly the DOM-side recording the
-   * change listeners perform before their handlers fire — checked state,
-   * row visibility, the help-box flag — and deliberately NOT
-   * {@link resetAutoOrbit}/{@link resetFourDTumble}, whose fresh-visit
-   * semantics would also stomp a user-chosen speed back to 1.0x. The
-   * caller (main.ts's onToggleAutoMotion) then runs the same handler logic
-   * the checkbox change would have, so the two input paths stay one
-   * path. */
-  setAutoMotionToggle(fourD: boolean, on: boolean): void {
-    if (fourD) {
-      this.fourDTumbleToggle.checked = on;
-      this.syncFourDViewRows();
+  /** Reflect the single browser-owned automatic-motion choice. Used at boot
+   * and by the canvas Space key; programmatic writes do not dispatch the DOM
+   * change handler or persist the preference themselves. */
+  setAutoMotionToggle(on: boolean): void {
+    this.autoMotionToggle.checked = on;
+    this.syncViewRows();
+    if (this.viewIsNonFlat && !this.fourDSurfaceLive) {
       this.fourDTumbleActive = on;
-    } else {
-      this.autoOrbitToggle.checked = on;
-      this.autoOrbitRow.classList.toggle("hidden", !on);
     }
   }
 
@@ -3608,6 +3590,7 @@ export class Ui {
     // where the tracer re-poses and re-marches every frame and those are the
     // only controls that reach it.
     const nonFlat = systemIsNonFlat(state);
+    this.viewIsNonFlat = nonFlat;
     const panelContext: PanelContext = {
       renderMode: state.renderMode,
       dimension: nonFlat ? "nonFlat" : "flat",
@@ -3739,12 +3722,15 @@ export class Ui {
       "hidden",
       state.renderMode !== "surface",
     );
-    this.fourDControls.classList.toggle("hidden", !nonFlat || frozenRender);
-    // The slice and tumble rows read differently in a live surface session —
-    // see syncFourDViewRows. Both are live view state the UI owns, so the
-    // checkboxes themselves are the truth it re-applies; their persistence
-    // paths differ (Saved-view slice versus browser-owned auto-motion).
-    this.syncFourDViewRows();
+    // One stable View section replaces the two mutually-exclusive homes. For
+    // this migration it preserves their established render applicability:
+    // flat View is Points-only; non-flat View also stays live in Surface but
+    // remains hidden under Flame/Solid's frozen worker snapshot.
+    this.viewControls.classList.toggle(
+      "hidden",
+      nonFlat ? frozenRender : rendering,
+    );
+    this.syncViewRows();
     // The slice-relative option only touches the w-ramp palettes, so its row
     // hides under the baked 4D color modes — the same single source of truth
     // (color.ts) the shader's bake-vs-uniform dispatch keys on — and under a
@@ -3755,12 +3741,6 @@ export class Ui {
       "hidden",
       this.fourDSurfaceLive || fourDColorNeedsAttribute(state.fourDColor),
     );
-    // The 3D View block (auto-orbit) is the flat-system counterpart of the 4D
-    // block: exactly one of the two shows outside a render. It hides during
-    // renders for the same frozen-view reason (the flame freezes the camera
-    // outright; the solid render keeps manual gestures but animate()'s early
-    // return stops the automatic motion, so the controls would be inert).
-    this.threeDControls.classList.toggle("hidden", nonFlat || rendering);
     this.colorModeRow.classList.toggle("hidden", nonFlat);
     // The 4D look rows are the non-flat replacements for the color-mode and
     // depth-style rows: color stays in the Color section in both views, so

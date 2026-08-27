@@ -191,8 +191,9 @@ const EXPECT_WEBGL_REFUSAL_BY_SCENE = { fold4: true };
 // ambient auto-tumble now PARKS during a live surface session
 // (main.ts's surface tick: `if (fourDTween.active) advanceFourDPose(dt4)`
 // — ambient ticks skipped, directed pose glides still live) and the panel
-// hides #fourDTumbleToggleRow + #fourDTumbleRow while a live 4D surface
-// session shows (ui.ts's syncFourDViewRows). Previously the tumble
+// keeps the shared #autoMotionToggleRow visible beside its parked disclosure
+// while hiding contextual #fourDTumbleRow in a live 4D surface session
+// (ui.ts's syncViewRows). Previously the tumble
 // invalidated every frame and the settle never armed WITHOUT
 // reducedMotion -- which is why every other mode in this script emulates
 // it and none of them ever saw this bug. This mode deliberately does NOT
@@ -839,14 +840,14 @@ async function main() {
      * w-slice slider and assert the canvas changes, then re-settles. */
     async function testLiveness(scene, settledShot) {
       console.error(`[surface-4d] ==== ${scene.name}/liveness ====`);
-      // The "4D View" accordion section is closed by default in Surface
+      // The "View" accordion section is closed by default in Surface
       // mode (surfaceColorSection auto-opens instead — ui.ts's
       // openSectionByMode) even though the section itself is visible for
       // a non-flat document in a live (non-frozen) render — click its
       // summary to expand it, a normal user action.
-      const summary = page.locator("#fourDControls > summary");
+      const summary = page.locator("#viewControls > summary");
       const isOpen = await page
-        .locator("#fourDControls")
+        .locator("#viewControls")
         .evaluate((el) => el.open);
       if (!isOpen) await summary.click();
       const slider = page.locator("#fourDSliceSlider");
@@ -1242,8 +1243,8 @@ async function main() {
     /**
      * TUMBLE-PARK cases 2-4, run on the ALREADY-SETTLED compute
      * session case1 leaves behind (same page, zero navigation): the
-     * tumble-row hidden state in-mode, the resume-on-exit behavior
-     * (rows reappear, checkbox state survives, the EXPLORER projection
+     * parked disclosure in-mode, the resume-on-exit behavior
+     * (speed reappears, checkbox state survives, the EXPLORER projection
      * genuinely tumbles again with zero input -- proving the park is
      * scoped to surface sessions, not a global disable), and the slice
      * slider's continued liveness after re-entering.
@@ -1251,10 +1252,10 @@ async function main() {
     async function verifyTumbleParkCases234(scene) {
       const result = { case2: null, case3: null, case4: null };
 
-      // ---- Case 2: tumble controls hidden while the surface session is live.
+      // ---- Case 2: shared preference visible; tumble speed parked.
       const rowState = await page.evaluate(() => ({
         toggleRowHidden: document
-          .getElementById("fourDTumbleToggleRow")
+          .getElementById("autoMotionToggleRow")
           ?.classList.contains("hidden"),
         speedRowHidden: document
           .getElementById("fourDTumbleRow")
@@ -1262,30 +1263,30 @@ async function main() {
       }));
       result.case2 = rowState;
       check(
-        rowState.toggleRowHidden === true,
-        `case2: #fourDTumbleToggleRow carries "hidden" while surface session is live`,
+        rowState.toggleRowHidden === false,
+        `case2: #autoMotionToggleRow stays visible while surface session is live`,
       );
       check(
         rowState.speedRowHidden === true,
         `case2: #fourDTumbleRow carries "hidden" while surface session is live`,
       );
 
-      // ---- Case 3: resume on exit -- rows reappear, checkbox state
+      // ---- Case 3: resume on exit -- speed reappears, checkbox state
       // survives, and the EXPLORER projection genuinely tumbles again.
       const checkedBefore = await page.evaluate(
-        () => document.getElementById("fourDTumbleToggle")?.checked,
+        () => document.getElementById("autoMotionToggle")?.checked,
       );
       await page.click("#modePointsBtn");
       await page.waitForTimeout(500);
       const afterExit = await page.evaluate(() => ({
         toggleRowHidden: document
-          .getElementById("fourDTumbleToggleRow")
+          .getElementById("autoMotionToggleRow")
           ?.classList.contains("hidden"),
-        checked: document.getElementById("fourDTumbleToggle")?.checked,
+        checked: document.getElementById("autoMotionToggle")?.checked,
       }));
       check(
         afterExit.toggleRowHidden === false,
-        `case3: #fourDTumbleToggleRow visible again after exiting to points mode`,
+        `case3: #autoMotionToggleRow remains visible after exiting to points mode`,
       );
       check(
         afterExit.checked === checkedBefore,
@@ -1332,9 +1333,9 @@ async function main() {
       }
       const settledShot = await canvasShot(null);
 
-      const summary = page.locator("#fourDControls > summary");
+      const summary = page.locator("#viewControls > summary");
       const isOpen = await page
-        .locator("#fourDControls")
+        .locator("#viewControls")
         .evaluate((el) => el.open);
       if (!isOpen) await summary.click();
       const slider = page.locator("#fourDSliceSlider");

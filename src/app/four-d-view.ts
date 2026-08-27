@@ -30,10 +30,9 @@ import { smoothstep } from "./orbit";
  * `tumbleOn`/`tumbleSpeed`/`sliceOn`/`sliceCenter`/`sliceThickness`/
  * `sliceRelColor`, which are plain live fields with no invariant to protect,
  * so the animate loop and UI handlers read and write them directly. One
- * exception: the UI's tumble CHECKBOX flows through
- * `setTumbleUserChoice`, not a bare `tumbleOn` write, because a manual toggle
- * must also be remembered as the sticky choice that future `reset()`s
- * respect.
+ * The shared browser-owned automatic-motion choice lives in main.ts; reset()
+ * receives its already-resolved value and this class owns only the current
+ * mechanism state.
  *
  * `viewTransition` is a free function, not a method, because it never touches
  * the rotor or the slice at all — it is main.ts's `regenerate()` deciding
@@ -120,14 +119,6 @@ export interface FourDPose {
 export class FourDView {
   private pair: RotorPair = identityRotorPair();
 
-  /** The user's explicit tumble on/off choice, once they have ever touched
-   * the checkbox. `null` = untouched, so reset() follows the
-   * reduced-motion default; after a manual toggle reset() follows this
-   * instead — a fresh visit must not re-enable a tumble the user turned off
-   * (nor re-pause a reduced-motion user's explicit opt-in). This field is the
-   * current session's mirror of the browser-owned autoMotion preference. */
-  private tumbleUserChoice: boolean | null = null;
-
   /** Tumble running? Paused (false) under reduced motion after reset(). */
   tumbleOn: boolean = true;
   /** Tumble speed multiplier (user slider); 1 = base rate. */
@@ -144,15 +135,14 @@ export class FourDView {
   sliceRelColor: boolean = false;
 
   /** Reset to the "fresh visit" baseline: rotor to identity, tumble running
-   * at default speed, slice off/centered. The tumble's on/off honors the
-   * user's sticky choice when they have made one (see setTumbleUserChoice),
-   * else the reduced-motion default. Whenever the reset leaves the tumble
-   * paused — reduced motion or sticky off — the rotor is pre-seeded on one
+   * according to the browser choice already resolved by main, speed at
+   * default, and slice off/centered. Whenever the reset leaves the tumble
+   * paused, the rotor is pre-seeded on one
    * generic orientation, because a paused projection sitting exactly on the
    * identity view would look indistinguishable from the flat 3D embed. */
-  reset(reducedMotion: boolean): void {
+  reset(autoMotion: boolean): void {
     this.pair = identityRotorPair();
-    this.tumbleOn = this.tumbleUserChoice ?? !reducedMotion;
+    this.tumbleOn = autoMotion;
     this.tumbleSpeed = 1;
     if (!this.tumbleOn) {
       // pre-seed one generic orientation so a paused projection still reads as 4D
@@ -163,27 +153,6 @@ export class FourDView {
     this.sliceCenter = 0;
     this.sliceThickness = 0;
     this.sliceRelColor = false;
-  }
-
-  /** The user flipped the tumble checkbox: apply it AND remember it as the
-   * sticky session choice that future reset()s preserve. Programmatic
-   * writes (reset itself, the animate loop) must NOT come through here — only
-   * a real user toggle earns stickiness. */
-  setTumbleUserChoice(on: boolean): void {
-    this.tumbleOn = on;
-    this.tumbleUserChoice = on;
-  }
-
-  /** Seed the sticky tumble choice at boot from a REMEMBERED viewer preference
-   * — the combined auto-motion pref that persist.ts deliberately keeps
-   * out of the scene document / share URL (see viewer-prefs.ts). Sets ONLY the
-   * remembered choice, not the live `tumbleOn`: the boot-time reset() that
-   * follows on the first 4D entry reads it as `tumbleUserChoice ?? !reducedMotion`
-   * and sets `tumbleOn` itself, so seeding never touches live state before the
-   * reset owns it. Distinct from {@link setTumbleUserChoice}, which is an
-   * in-session user toggle that must also apply immediately. */
-  seedTumbleUserChoice(on: boolean): void {
-    this.tumbleUserChoice = on;
   }
 
   /** Advance the tumble by dt seconds (no-op when paused): compose the XY- and
@@ -246,8 +215,8 @@ export class FourDView {
    * already passed this same check once, in persist.ts — the current pair is
    * left untouched rather than clobbered with garbage. The four slice
    * fields are set from `pose` UNCONDITIONALLY, independent of whether the
-   * pair validated. Never touches `tumbleOn`/`tumbleSpeed`/
-   * `tumbleUserChoice` — auto-motion is excluded from `FourDPose` by design
+   * pair validated. Never touches `tumbleOn`/`tumbleSpeed` — auto-motion is
+   * excluded from `FourDPose` by design
    * (see its doc comment). */
   applyPose(pose: FourDPose): void {
     const normalized = normalizeRotorPair(pose.pair.p, pose.pair.q);

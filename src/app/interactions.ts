@@ -70,7 +70,7 @@ export interface InteractionCallbacks {
   onFourDSliceNudge: (delta: number) => void;
   /** Space on the focused canvas toggled the shared auto-motion choice
    * (3D auto-orbit / 4D auto-tumble) — main.ts routes it through
-   * the same logic as the panel checkboxes. */
+   * the same logic as the panel's one Automatic motion checkbox. */
   onToggleAutoMotion: () => void;
 }
 

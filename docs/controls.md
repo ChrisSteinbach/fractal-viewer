@@ -14,7 +14,7 @@ the wording to the device: mouse verbs
 
 Orbit around the fractal without changing it. While the system is flat, the
 camera also orbits by itself — a slow turntable, paused whenever your hand is
-on the canvas; see **3D View** below.
+on the canvas; see **View** below.
 
 | Input            | Action                           |
 | ---------------- | -------------------------------- |
@@ -35,11 +35,11 @@ fully drivable without a pointer — for some users this is the primary path,
 not a shortcut layer. Keys act only while the canvas has focus, so they never
 fight the panel's own sliders; held keys repeat for continuous motion.
 
-| Key        | Action                                                                                                                                        |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Arrow keys | Orbit (the plain drag, one nudge at a time)                                                                                                   |
-| `+` / `-`  | Zoom in / out (one wheel notch each)                                                                                                          |
-| Space      | Pause / resume the automatic motion — 3D auto-orbit or 4D auto-tumble, the same shared choice as the panel checkboxes (see **3D View** below) |
+| Key        | Action                                                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Arrow keys | Orbit (the plain drag, one nudge at a time)                                                                                          |
+| `+` / `-`  | Zoom in / out (one wheel notch each)                                                                                                 |
+| Space      | Pause / resume Automatic motion — 3D auto-orbit or 4D auto-tumble, the same single choice as the panel checkbox (see **View** below) |
 
 Panning stays pointer-only (right-drag / two-finger drag); the orbit + zoom
 pair reaches every framing the auto-fit starts from. The key vocabulary lives
@@ -47,7 +47,7 @@ in `src/app/keyboard-camera.ts`.
 
 ## 4D projection
 
-While the current system is non-flat (see **4D View** below), the point cloud
+While the current system is non-flat (see **View** below), the point cloud
 renders as a 4D projection; plain gestures still orbit/pan/zoom it exactly as
 above. Holding **Shift** retargets the left-drag and the wheel to turn the two
 hidden rotation planes instead — Hanson's "rolling ball" scheme, restricted to
@@ -59,7 +59,7 @@ coordinate planes:
 | Shift + mouse wheel | Turn the ZW plane               |
 
 Touch devices have no Shift key, so touch always orbits; turn a map's own
-w-planes instead from its **4D** editor group, or sweep **4D View**'s **W
+w-planes instead from its **4D** editor group, or sweep **View**'s **W
 slice** slider.
 
 With the canvas focused, the same Shift convention carries to the keyboard —
@@ -101,7 +101,7 @@ Transform** sliders that appear in the panel while a transform is selected.
 
 The panel's active editing categories — including **Transforms**, **Xaos**,
 **Hybrid schedule**, **Cloud**, **Color**, **Balloon**, **Atmosphere**, **Symmetry**, and the
-contextual renderer inspector — come before **3D View**/**4D View**, then the always-available
+contextual renderer inspector — come before **View**, then the always-available
 workflow sections **Systems**, **Collection**, **Timeline**, **Capture**, and **Share**.
 These are collapsible sections, and opening one closes the previous. The collapsed ones
 pack into rows of chips rather than stacking, because nine stacked
@@ -1385,7 +1385,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   copies rotated evenly in the chosen **Plane** — any of the six coordinate
   planes. XY / XZ / YZ turn in ordinary 3-space; picking XW / YW /
   ZW turns the copies through the fourth axis, which by itself makes the
-  system 4D and hands the view to **4D View**'s tumbling projection.
+  system 4D and hands the view to **View**'s tumbling projection.
   **Twist** adds the second angle of a 4D double rotation: copy `k` also
   turns `k · twist` sectors in the plane's orthogonal complement, so 0 is a
   simple rotation, any nonzero value is 4D the same way a w-plane is, and 1
@@ -1456,13 +1456,18 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   degraded and marches at its conservative step-scale floor; point modes do
   not need that approximation for the standalone fern.
 
-- **3D View** — appears while the current system is _flat_, in the same panel
-  spot **4D View** (below) takes over for a non-flat one. **Auto-orbit
-  (turntable)** slowly circles the camera around the cloud — one revolution
+- **View** — one stable View / Device home follows the current dimension.
+  **Automatic motion** is one **This browser** preference and one checkbox:
+  it drives the 3D camera turntable for a flat system and the 4D XY+ZW rotor
+  tumble for a non-flat one. The associated note states both mechanisms, so a
+  choice made in either dimension is never a hidden change to another control.
+  **Orbit speed** and **Tumble speed** remain distinct contextual controls and
+  are each **This session** only.
+
+  In a flat view, automatic motion slowly circles the camera around the cloud — one revolution
   every ~52 s at 1× — pausing while any canvas drag is in progress and
   resuming when you let go, and **Orbit speed** scales its rate from 0.1× to
-  3×. The toggle is the **This browser** `autoMotion` preference shared with
-  4D auto-tumble; speed is **This session** only. Motion starts on by default
+  3×. Motion starts on by default
   (paused when the OS asks for reduced motion, until an explicit opt-in) and
   resets to that preference only when the system flips from non-flat to flat
   or a whole new flat system replaces it — never on a later edit, so a paused
@@ -1470,7 +1475,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   is **Saved view** framing: it is captured with links, scene files, Collection
   entries and Timeline keyframes, without turning camera motion into undoable
   scene edits.
-- **4D View** — appears once the current system is _non-flat_ (see
+
+  Once the current system is _non-flat_ (see
   [architecture.md](architecture.md#the-4d-extension)): the point cloud
   becomes an orthographic projection of a slow double rotation (XY+ZW),
   colored per the **4D Color** select, spelled out right in the
@@ -1569,9 +1575,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   control alone and appears nowhere else. Ambient auto-tumble is deliberately
   parked: continuous motion would invalidate every frame, hold the progressive
   renderer in preview, and prevent it from settling. Its **Auto-tumble
-  (XY+ZW)** and **Tumble speed** rows hide while Surface is open, with an
-  in-panel note explaining why; the user's auto-tumble choice is left intact
-  and takes effect again on return to Points.
+  speed** row hides while Surface is open; the one Automatic motion preference
+  stays visible with an associated in-panel note explaining why it is parked
+  and that the choice takes effect again on return to Points.
   The **W slice** on/off checkbox hides
   anyway — there's no off state left for it to mean — and so does
   **Slice-relative color**, since the tracer has no w-ramp palette for it to

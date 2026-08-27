@@ -404,14 +404,15 @@ so the slow auto-tumble and the Shift-drag/Shift-wheel gestures
 (`interactions.ts`) can compose new deltas on top and renormalize cheaply over an
 arbitrarily long session; it never touches the chaos game itself, which composes
 `rotationMatrix4` once per transform at generation time instead. This view
-state lives in a session-owned `FourDView`: the rotor pair, automatic-motion
-state and speed, and an optional soft w-slice (a Gaussian opacity window around
+state lives in a session-owned `FourDView`: the rotor pair, current tumble
+mechanism and speed, and an optional soft w-slice (a Gaussian opacity window around
 a chosen `w`, so a cross-section fades in without hard-culling the points
 outside it, with an opt-in slice-relative recolor that recenters the w-ramp
 palettes on the slice window — `project4.ts`'s `sliceColorRemap`). Its lifetimes
 split deliberately: a `FourDPose` snapshot of rotor + slice is **Saved view**
-framing carried by links, files, Collection and Timeline; auto-motion on/off is
-**This browser**; speed is **This session**. A pose-less fresh visit resets to a
+framing carried by links, files, Collection and Timeline. Main owns the one
+3D-orbit/4D-tumble auto-motion choice as **This browser** state; each contextual
+speed is **This session**. A pose-less fresh visit resets to a
 baseline only on a flat-to-non-flat transition or a whole-system replacement;
 a loaded Saved view restores its pose over that baseline. An ordinary parameter
 edit never resets it. The 4D presets (`pentatope`,
