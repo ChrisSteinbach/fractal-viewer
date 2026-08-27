@@ -1461,6 +1461,10 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   it drives the 3D camera turntable for a flat system and the 4D XY+ZW rotor
   tumble for a non-flat one. The associated note states both mechanisms, so a
   choice made in either dimension is never a hidden change to another control.
+  The 4D tumble deliberately replaces automatic camera orbit: rotating hidden
+  planes reveals the extra axis, while spinning only the already-projected 3D
+  result would add motion without exposing more of the 4D structure. Manual
+  camera orbit remains available in both dimensions.
   **Orbit speed** and **Tumble speed** remain distinct contextual controls and
   are each **This session** only.
 
@@ -1475,6 +1479,12 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   is **Saved view** framing: it is captured with links, scene files, Collection
   entries and Timeline keyframes, without turning camera motion into undoable
   scene edits.
+
+  The flat turntable also stays live in **Solid**: its world-space voxel
+  accumulation is independent of the inspection camera. **Surface** keeps the
+  View section and manual camera live but parks continuous automatic motion so
+  its progressive render can settle, with the reason shown beside the retained
+  preference. **Flame** freezes the camera and hides View for that render.
 
   Once the current system is _non-flat_ (see
   [architecture.md](architecture.md#the-4d-extension)): the point cloud

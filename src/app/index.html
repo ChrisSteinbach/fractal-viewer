@@ -1945,16 +1945,16 @@
             Link, save a scene file, or add to Collection or Timeline, and are
             restored with the current scene on reload.
           </p>
-          <p class="flame-hint hidden" id="fourDSurfaceMotionHint">
+          <p class="flame-hint hidden" id="automaticMotionParkedHint">
             Surface parks automatic motion so the render can settle. Manual
-            turns and slice controls stay live; your setting takes effect again
-            in Points.
+            camera turns and, in 4D, rotor and slice controls stay live; your
+            setting takes effect again in Points or Solid.
           </p>
           <label class="checkbox-label" id="autoMotionToggleRow">
             <input
               type="checkbox"
               id="autoMotionToggle"
-              aria-describedby="autoMotionMechanismNote fourDSurfaceMotionHint"
+              aria-describedby="autoMotionMechanismNote automaticMotionParkedHint"
               checked
             />
             Automatic motion
@@ -1963,7 +1963,9 @@
             >
           </label>
           <p class="flame-hint" id="autoMotionMechanismNote">
-            Orbits the camera in 3D; tumbles the XY + ZW planes in 4D.
+            Orbits the camera in 3D. In 4D, XY + ZW tumble replaces automatic
+            camera orbit to reveal the hidden axis; manual camera orbit remains
+            available.
           </p>
           <div id="autoOrbitRow">
             <label class="select-label">

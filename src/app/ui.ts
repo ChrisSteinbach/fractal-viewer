@@ -2190,7 +2190,7 @@ export class Ui {
   // contextual speed is This-session only and never enters FourDPose. The
   // row hides in a live 4D surface session, where ambient motion is parked.
   private readonly fourDTumbleRow: HTMLElement;
-  private readonly fourDSurfaceMotionHint: HTMLElement;
+  private readonly automaticMotionParkedHint: HTMLElement;
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
   /** Is the projection ACTUALLY tumbling right now (main.ts's
@@ -2207,6 +2207,10 @@ export class Ui {
   /** Last dimension reflected by updateLabels, used by the stable View
    * section's contextual row sync. */
   private viewIsNonFlat = false;
+  /** True where continuous automatic motion is deliberately parked while
+   * manual view gestures remain live (currently Surface, so refinement can
+   * settle). The shared preference remains editable for the next live home. */
+  private automaticMotionParked = false;
   private readonly colorModeRow: HTMLElement;
   /** The 4D Color select's wrapper — {@link colorModeRow}'s non-flat sibling
    * in the Color section: exactly one of the pair shows, and
@@ -2633,7 +2637,7 @@ export class Ui {
     this.autoOrbitSpeedSlider = this.byId("autoOrbitSpeedSlider");
     this.autoOrbitSpeedLabel = this.byId("autoOrbitSpeedLabel");
     this.fourDTumbleRow = this.byId("fourDTumbleRow");
-    this.fourDSurfaceMotionHint = this.byId("fourDSurfaceMotionHint");
+    this.automaticMotionParkedHint = this.byId("automaticMotionParkedHint");
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
     this.colorModeRow = this.byId("colorModeRow");
@@ -3077,7 +3081,7 @@ export class Ui {
       // contextual speed reveal and help text still describe the mechanism
       // currently visible on canvas.
       this.syncViewRows();
-      if (this.viewIsNonFlat && !this.fourDSurfaceLive) {
+      if (this.viewIsNonFlat && !this.automaticMotionParked) {
         this.fourDTumbleActive = on;
       }
       handlers.onAutoMotionToggle(on);
@@ -3250,15 +3254,15 @@ export class Ui {
     this.fourDSavedViewScope.classList.toggle("hidden", !this.viewIsNonFlat);
     this.autoOrbitRow.classList.toggle(
       "hidden",
-      this.viewIsNonFlat || !motionOn,
+      this.viewIsNonFlat || this.automaticMotionParked || !motionOn,
     );
-    this.fourDSurfaceMotionHint.classList.toggle(
+    this.automaticMotionParkedHint.classList.toggle(
       "hidden",
-      !this.fourDSurfaceLive,
+      !this.automaticMotionParked,
     );
     this.fourDTumbleRow.classList.toggle(
       "hidden",
-      !this.viewIsNonFlat || this.fourDSurfaceLive || !motionOn,
+      !this.viewIsNonFlat || this.automaticMotionParked || !motionOn,
     );
     this.fourDSliceToggleRow.classList.toggle(
       "hidden",
@@ -3487,7 +3491,7 @@ export class Ui {
   setAutoMotionToggle(on: boolean): void {
     this.autoMotionToggle.checked = on;
     this.syncViewRows();
-    if (this.viewIsNonFlat && !this.fourDSurfaceLive) {
+    if (this.viewIsNonFlat && !this.automaticMotionParked) {
       this.fourDTumbleActive = on;
     }
   }
@@ -3591,6 +3595,7 @@ export class Ui {
     // only controls that reach it.
     const nonFlat = systemIsNonFlat(state);
     this.viewIsNonFlat = nonFlat;
+    this.automaticMotionParked = state.renderMode === "surface";
     const panelContext: PanelContext = {
       renderMode: state.renderMode,
       dimension: nonFlat ? "nonFlat" : "flat",
@@ -3722,13 +3727,13 @@ export class Ui {
       "hidden",
       state.renderMode !== "surface",
     );
-    // One stable View section replaces the two mutually-exclusive homes. For
-    // this migration it preserves their established render applicability:
-    // flat View is Points-only; non-flat View also stays live in Surface but
-    // remains hidden under Flame/Solid's frozen worker snapshot.
+    // One stable View section follows every live-camera renderer. Flat Solid
+    // keeps its automatic turntable; Surface keeps manual camera/rotor/slice
+    // controls but visibly parks continuous motion so refinement can settle.
+    // Frozen Flame, plus the baked non-flat Solid snapshot, still hide here.
     this.viewControls.classList.toggle(
       "hidden",
-      nonFlat ? frozenRender : rendering,
+      state.renderMode === "flame" || (nonFlat && frozenRender),
     );
     this.syncViewRows();
     // The slice-relative option only touches the w-ramp palettes, so its row
