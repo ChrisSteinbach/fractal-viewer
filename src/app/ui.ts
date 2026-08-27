@@ -2519,15 +2519,6 @@ export class Ui {
     const schedulePresetsGroup = this.byId<HTMLOptGroupElement>(
       "scheduleSourcePresets",
     );
-    for (const option of Array.from(
-      this.presetSelect.querySelectorAll("option"),
-    )) {
-      if (!option.value) continue;
-      const clone = this.doc.createElement("option");
-      clone.value = `preset:${option.value}`;
-      clone.textContent = option.textContent;
-      schedulePresetsGroup.appendChild(clone);
-    }
     this.xaosAddSource = this.byId("xaosAddSource");
     this.xaosAddSourceSaved = this.byId("xaosAddSourceSaved");
     this.xaosBalanceWeights = this.byId("xaosBalanceWeights");
@@ -2535,22 +2526,26 @@ export class Ui {
     this.xaosLeakRows = this.byId("xaosLeakRows");
     this.xaosMatrixNote = this.byId("xaosMatrixNote");
     this.xaosMatrixContainer = this.byId("xaosMatrixContainer");
-    // The Xaos picker's Presets group is the schedule picker's own clone
-    // loop, restated: index.html's option list stays the single source of
-    // preset display names, and the same value prefix (`preset:<key>`)
-    // lets main.ts share one resolver between both pickers.
+    // Both composition pickers use independent DOM options and handlers, but
+    // share this one clone operation and source vocabulary. The preset menu
+    // remains the source of display names; main.ts's resolver reads the same
+    // `preset:<key>` values from either picker.
     const xaosPresetsGroup = this.byId<HTMLOptGroupElement>(
       "xaosAddSourcePresets",
     );
-    for (const option of Array.from(
-      this.presetSelect.querySelectorAll("option"),
-    )) {
-      if (!option.value) continue;
-      const clone = this.doc.createElement("option");
-      clone.value = `preset:${option.value}`;
-      clone.textContent = option.textContent;
-      xaosPresetsGroup.appendChild(clone);
-    }
+    const appendPresetSources = (group: HTMLOptGroupElement): void => {
+      for (const option of Array.from(
+        this.presetSelect.querySelectorAll("option"),
+      )) {
+        if (!option.value) continue;
+        const clone = this.doc.createElement("option");
+        clone.value = `preset:${option.value}`;
+        clone.textContent = option.textContent;
+        group.appendChild(clone);
+      }
+    };
+    appendPresetSources(schedulePresetsGroup);
+    appendPresetSources(xaosPresetsGroup);
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
     this.pointsSections = [
@@ -4175,15 +4170,7 @@ export class Ui {
    * not have its options replaced under the pointer).
    */
   setScheduleSavedScenes(entries: { id: string; createdAt: number }[]): void {
-    this.scheduleSourceSaved.textContent = "";
-    for (const entry of entries) {
-      const option = this.doc.createElement("option");
-      option.value = `saved:${entry.id}`;
-      // The gallery card's own caption format — a saved scene has no name,
-      // so its timestamp is its identity there and here alike.
-      option.textContent = galleryTimestamp(entry.createdAt);
-      this.scheduleSourceSaved.appendChild(option);
-    }
+    this.replaceSavedSceneOptions(this.scheduleSourceSaved, entries);
   }
 
   /** {@link setScheduleSavedScenes}'s twin for the Xaos "Add system as
@@ -4195,12 +4182,21 @@ export class Ui {
   setXaosAddSourceSavedScenes(
     entries: { id: string; createdAt: number }[],
   ): void {
-    this.xaosAddSourceSaved.textContent = "";
+    this.replaceSavedSceneOptions(this.xaosAddSourceSaved, entries);
+  }
+
+  private replaceSavedSceneOptions(
+    group: HTMLOptGroupElement,
+    entries: { id: string; createdAt: number }[],
+  ): void {
+    group.textContent = "";
     for (const entry of entries) {
       const option = this.doc.createElement("option");
       option.value = `saved:${entry.id}`;
+      // A saved scene has no name; use the gallery card's own timestamp as
+      // its identity in both independent composition pickers.
       option.textContent = galleryTimestamp(entry.createdAt);
-      this.xaosAddSourceSaved.appendChild(option);
+      group.appendChild(option);
     }
   }
 

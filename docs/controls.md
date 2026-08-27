@@ -102,7 +102,7 @@ Transform** sliders that appear in the panel while a transform is selected.
 The panel's active editing categories — including **Transforms**, **Xaos**,
 **Hybrid schedule**, **Cloud**, **Color**, **Balloon**, **Atmosphere**, **Symmetry**, and the
 contextual renderer inspector — come before **3D View**/**4D View**, then the always-available
-workflow sections **Presets**, **Collection**, **Timeline**, **Capture**, and **Share**.
+workflow sections **Systems**, **Collection**, **Timeline**, **Capture**, and **Share**.
 These are collapsible sections, and opening one closes the previous. The collapsed ones
 pack into rows of chips rather than stacking, because nine stacked
 headers cost 473px of a 727px phone screen before any control was visible.
@@ -147,12 +147,10 @@ morphs into place instead of snapping (see **Presets** below).
   the panel names the renderer in every mode: everything still works, but
   renders run 10–50× slower, and the fix is usually a browser GPU setting
   rather than anything in the app.
-- **Xaos** — composes several systems without making every map act on every
-  object. **Add system as isolated block** accepts a preset, saved scene, or
-  duplicate of the current system, measures both systems' x extents, seats
-  the new one beyond the old with a gap, and writes the block-diagonal
-  transition rows automatically. **Balance weights so blocks render equally
-  dense** is on by default. Each detected block pair then gets a leak dial:
+- **Xaos** — edits the transition graph of systems already composed without
+  making every map act on every object. Add a block under **Systems → Combine
+  systems**, then use this shared Scene editor for its links. Each detected
+  block pair gets a leak dial:
   0% keeps the objects isolated, 1% allows occasional cross-infection, and
   100% merges them. Block structure is derived from the transition matrix;
   if hand edits make a pair non-uniform, the dial says **Customized** rather
@@ -860,7 +858,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     mode's own note says when you enter it. No other shipped system can
     reach that line at all.
 - **+ Add / − Remove** — add or remove a transform (at least one always remains).
-- **Presets** — a dropdown that replaces the whole system with a named fractal,
+- **Systems → Replace with preset** — a dropdown that replaces the whole system with a named fractal,
   from the Sierpinski tetrahedron and Menger sponge to the 12-map icosahedron
   and 20-map dodecahedron flakes, plus dedicated **Flame** and **4D** groups.
   This Workflow section stays reachable from every renderer. Loading one —
@@ -870,6 +868,15 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   A renderer-authored preset enters Flame, Solid, or Surface only after that
   new cloud lands, so even two consecutive Surface presets rebuild the second
   session from its own document rather than leaving the old trace on screen.
+- **Systems → + Add isolated block** — preserves the current system, copies a
+  chosen preset, saved scene, or the current system, measures both x extents,
+  seats the copy beyond the old with a gap, and writes block-diagonal Xaos rows
+  automatically. **Balance weights so blocks render equally dense** is on by
+  default. The explicit button is intentional: unlike preset replacement or a
+  Hybrid source choice, this action has a balance option, may hit the transform
+  cap, and changes the scene extent. It rebuilds through Points and camera-fits;
+  the picker is a one-time copy, never a live source link. Tune the result in
+  the shared **Xaos** editor.
 - **Surprise Me** — rolls a whole new random system rather than a named one:
   two to four maps, a kaleidoscope about 30% of the time, a final-transform
   lens about 25% of the time, and about 25% of rolls 4D (which
@@ -1404,6 +1411,10 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   (N maps)** instead of claiming it still follows the preset or saved scene
   it came from. The document status above the accordion describes the active
   post-word and remains readable while any renderer is being inspected.
+  Source selection applies immediately because it edits persistent Schedule
+  state; the snapshot button is the separate explicit route for the current
+  system. This differs from Xaos Add's configured, fallible construction
+  action and from a preset's whole-system replacement.
 
   Points, Flame and Solid apply the finite post-word directly. Surface
   renders the same object by reversing it: the first `k` global descent

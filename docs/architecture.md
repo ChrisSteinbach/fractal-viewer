@@ -165,6 +165,16 @@ preserved or follows the analyzer refusal back to Points. The snapshot attached
 to each landed cloud includes the schedule, so a later appearance-only edit
 cannot mistake stale 4D/Balloon support for current support.
 
+The UI exposes three operations that share preset/saved-scene source names but
+not semantics. A preset replaces A; Workflow's isolated-block action preserves
+A, copies and seats B, then creates Xaos rows; Hybrid System B stores a stripped
+affine-only snapshot for the finite post-word. The first and third apply on
+selection, while block construction retains an explicit button because its
+balance option, transform-cap refusal, and camera-refitting extent change must
+be reviewed together. The two source pickers keep independent DOM state, but
+one helper clones preset labels and one helper builds saved-scene options so
+their vocabulary cannot drift.
+
 The shipped **Sponge of Ferns** composes a spread Menger B at depth 2 over
 Barnsley's A. Barnsley's exact stem has a singular zero x column, which a
 Surface inverse cannot represent, so only this showcase's private A factory

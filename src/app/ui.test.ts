@@ -441,6 +441,13 @@ describe("preset menu", () => {
   // Guards against the menu and the preset registry drifting apart — e.g. a
   // startup or new system that has no <option> and so can never be selected.
   it("offers exactly the registered presets", () => {
+    const select = document.getElementById("presetSelect") as HTMLSelectElement;
+    expect(select.closest("label")?.firstChild?.textContent?.trim()).toBe(
+      "Replace with preset",
+    );
+    expect(select.getAttribute("aria-label")).toBe(
+      "Replace system with preset",
+    );
     const values = Array.from(
       document.querySelectorAll<HTMLOptionElement>("#presetSelect option"),
     )
@@ -802,6 +809,23 @@ describe("Ui.renderXaosSection — the leak dial", () => {
 });
 
 describe("Ui Hybrid schedule controls", () => {
+  it("installs a selected source immediately and snapshots only on button press", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const source = document.getElementById(
+      "scheduleSource",
+    ) as HTMLSelectElement;
+
+    source.value = "preset:menger";
+    source.dispatchEvent(new Event("change"));
+    expect(handlers.onScheduleSource).toHaveBeenCalledWith("preset:menger");
+    expect(handlers.onScheduleSnapshot).not.toHaveBeenCalled();
+
+    document.getElementById("scheduleSnapshotBtn")?.click();
+    expect(handlers.onScheduleSnapshot).toHaveBeenCalledTimes(1);
+  });
+
   it("authors depth on input and settles once on change", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -830,6 +854,11 @@ describe("Ui Hybrid schedule controls", () => {
         id,
       ).toBe("scheduleEditHint");
     }
+    expect(
+      document
+        .getElementById("scheduleEditHint")
+        ?.textContent?.replace(/\s+/g, " "),
+    ).toContain("affine-only snapshot, not a live link");
   });
 });
 
@@ -842,7 +871,16 @@ describe("Ui Xaos add-as-block gesture", () => {
     const source = document.getElementById(
       "xaosAddSource",
     ) as HTMLSelectElement;
+    expect(source.closest("#presetSection")).not.toBeNull();
+    expect(source.closest("#xaosSection")).toBeNull();
+    for (const id of ["xaosAddSource", "xaosBalanceWeights", "xaosAddBtn"]) {
+      expect(
+        document.getElementById(id)?.getAttribute("aria-describedby"),
+      ).toBe("xaosAddHint");
+    }
     source.value = "__duplicate";
+    source.dispatchEvent(new Event("change"));
+    expect(handlers.onXaosAddBlock).not.toHaveBeenCalled();
     (
       document.getElementById("xaosBalanceWeights") as HTMLInputElement
     ).checked = false;
@@ -851,6 +889,27 @@ describe("Ui Xaos add-as-block gesture", () => {
       ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(handlers.onXaosAddBlock).toHaveBeenCalledWith("__duplicate", false);
+  });
+
+  it("labels the separate Workflow action and points back to Scene Xaos editing", () => {
+    new Ui(document);
+    const systems = document.getElementById("presetSection");
+    expect(systems?.querySelector(":scope > summary")?.textContent).toBe(
+      "Systems",
+    );
+    expect(
+      Array.from(systems?.querySelectorAll(".editor-group-title") ?? []).map(
+        (heading) => heading.textContent,
+      ),
+    ).toEqual(["Replace or explore", "Combine systems"]);
+    expect(
+      document.getElementById("xaosAddHint")?.textContent?.replace(/\s+/g, " "),
+    ).toMatch(/rebuilds through Points.*Edit its transition links under Xaos/i);
+    expect(
+      document
+        .getElementById("xaosEditHint")
+        ?.textContent?.replace(/\s+/g, " "),
+    ).toContain("Add an isolated block under Systems");
   });
 
   it("clones the preset menu's options with a preset: prefix, exactly like the schedule picker", () => {
@@ -8589,7 +8648,7 @@ describe("panel accordion sections", () => {
     }
   });
 
-  it("boots with exactly one section open — Presets", () => {
+  it("boots with exactly one section open — Systems", () => {
     const open = sections().filter((section) => section.open);
     expect(open.map((section) => section.id)).toEqual(["presetSection"]);
   });
