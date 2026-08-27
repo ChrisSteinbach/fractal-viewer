@@ -223,6 +223,103 @@ describe("Ui construction", () => {
   });
 });
 
+describe("palette field vocabulary", () => {
+  const fields = [
+    {
+      id: "rampPalette",
+      label: "Color ramp palette",
+      firstValue: "legacy",
+      firstLabel: "Classic",
+    },
+    {
+      id: "flamePalette",
+      label: "Flame palette (restarts render)",
+      firstValue: "legacy",
+      firstLabel: "Classic",
+    },
+    {
+      id: "solidPalette",
+      label: "Solid palette (restarts render)",
+      firstValue: "legacy",
+      firstLabel: "Classic",
+    },
+    {
+      id: "surfacePalette",
+      label: "Surface palette",
+      firstValue: "spectrum",
+      firstLabel: "Spectrum",
+    },
+    {
+      id: "backgroundFlamePalette",
+      label: "Backdrop flame palette",
+      firstValue: "legacy",
+      firstLabel: "Classic",
+    },
+    {
+      id: "balloonPalette",
+      label: "Balloon palette",
+      firstValue: "inherit",
+      firstLabel: "Inherit renderer color",
+    },
+  ] as const;
+
+  function directLabelText(select: HTMLSelectElement): string {
+    const label = select.closest("label");
+    if (!label) throw new Error(`No label for #${select.id}`);
+    return Array.from(label.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent ?? "")
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  it.each(fields)(
+    "$id has its consumer-specific label and first option",
+    ({ id, label, firstValue, firstLabel }) => {
+      const select = document.getElementById(id) as HTMLSelectElement;
+      expect(directLabelText(select)).toBe(label);
+      expect(select.options[0]?.value).toBe(firstValue);
+      expect(select.options[0]?.textContent).toBe(firstLabel);
+    },
+  );
+
+  it("keeps exactly four legacy wire options and presents each as Classic", () => {
+    const legacyOptions = Array.from(
+      document.querySelectorAll<HTMLOptionElement>('option[value="legacy"]'),
+    );
+    expect(legacyOptions.map((option) => option.closest("select")?.id)).toEqual(
+      ["rampPalette", "backgroundFlamePalette", "flamePalette", "solidPalette"],
+    );
+    expect(legacyOptions.map((option) => option.textContent)).toEqual([
+      "Classic",
+      "Classic",
+      "Classic",
+      "Classic",
+    ]);
+  });
+
+  it("keeps Surface gradient-only and in registry order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#surfacePalette option"),
+    ).map((option) => option.value);
+    expect(values).toEqual([
+      ...FLAME_PALETTE_IDS.filter((id) => id !== "legacy"),
+      CUSTOM_PALETTE_ID,
+    ]);
+    expect(values).not.toContain("legacy");
+  });
+
+  it("keeps Balloon's independent inherit wire value and no legacy option", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#balloonPalette option"),
+    ).map((option) => option.value);
+    expect(values).toEqual(BALLOON_PALETTE_IDS);
+    expect(values[0]).toBe("inherit");
+    expect(values).not.toContain("legacy");
+  });
+});
+
 describe("shape-emitter add action", () => {
   it("offers every registered emitter exactly once and resets after choosing", () => {
     const handlers = noopHandlers();
@@ -6261,14 +6358,14 @@ describe("Ui ramp palette", () => {
     expect(values).toEqual([...FLAME_PALETTE_IDS, CUSTOM_PALETTE_ID]);
   });
 
-  // Unlike the flame/solid selects ("By Transform (legacy)" / "By Color Mode
-  // (legacy)"), the ramp select's legacy option names the built-in ramps
-  // directly — there is no separate colorMode-driven look to defer to here.
-  it("labels the legacy option 'Built-in ramp'", () => {
+  // The vocabulary is shared with the other legacy-wire choices even though
+  // this one resolves to the hand-tuned built-in ramps rather than another
+  // color source.
+  it("labels the legacy wire option 'Classic'", () => {
     const legacyOption = document.querySelector<HTMLOptionElement>(
       '#rampPalette option[value="legacy"]',
     );
-    expect(legacyOption?.textContent).toBe("Built-in ramp");
+    expect(legacyOption?.textContent).toBe("Classic");
   });
 
   it("is hidden while the color mode is transform", () => {

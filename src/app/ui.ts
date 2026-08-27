@@ -1319,9 +1319,8 @@ function formatXaosLeak(value: number): string {
  * that picked it — index.html's option labels are the app's single source of
  * palette display names (ui.test.ts pins the option values to
  * `FLAME_PALETTE_IDS`), so the legend reuses them instead of introducing a
- * second copy that could drift. Falls back to the raw id if the option is
- * ever missing — which today also covers the `"custom"` sentinel, until
- * index.html carries a Custom `<option>` of its own (a later change).
+ * second copy that could drift. Falls back to the raw id if an option is ever
+ * missing.
  */
 function paletteDisplayName(
   select: HTMLSelectElement,
@@ -2063,7 +2062,7 @@ export class Ui {
   // The surface render's own settings block: lighting sliders plus the
   // base-color source/palette selects, the same mode-section pattern one
   // render mode over. surfacePaletteRow additionally gates on colorSource
-  // being "palette", "rings", or "sheets" (all three sample the
+  // being "palette", "rings", "sheets", or "shapeTrap" (all four sample the
   // user-selected palette) — like glowBrightnessRow's renderStyle gate.
   // surfaceColorSpeedRow gates more narrowly, on exactly "palette": color
   // speed shapes only that source's orbit-trap blend.
