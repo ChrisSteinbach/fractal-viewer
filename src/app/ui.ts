@@ -274,8 +274,8 @@ export interface UiHandlers {
   /** A gallery card's ✕ was clicked: delete that saved scene by its id. */
   onDeleteFromCollection: (id: string) => void;
   /** "📍 Add keyframe" was clicked: append the current view — scene
-   * document + camera pose + a thumbnail of what's showing — to the
-   * animation timeline. */
+   * document + camera pose + non-flat FourDPose + a thumbnail of what's
+   * showing — to the animation timeline. */
   onTimelineAddKeyframe: () => void;
   /** "▶ Play timeline" / "■ Stop" was clicked: toggle timeline playback —
    * session-only motion like the drift show; main.ts owns the policy. */
@@ -377,8 +377,9 @@ export interface UiHandlers {
    * that much of the slice plane instead of the plane alone. */
   onFourDSliceThicknessInput: (value: number) => void;
   /** The slice-relative color option was toggled — recenter the w-ramp
-   * color modes' diverging palette on the slice window. Session-only view
-   * state, exactly like the slice toggle/position above. */
+   * color modes' diverging palette on the slice window. Live FourDView state,
+   * exactly like the slice toggle/position above; a FourDPose snapshot carries
+   * all three as Saved view framing. */
   onFourDSliceRelColorToggle: (checked: boolean) => void;
   /** The 4D auto-tumble was paused or resumed. */
   onFourDTumbleToggle: (checked: boolean) => void;
@@ -2097,8 +2098,9 @@ export class Ui {
   private readonly surfaceGroundPlaneDependentRows: readonly HTMLElement[];
 
   // 3D VIEW controls: the auto-orbit turntable — the 3D sibling of the 4D
-  // auto-tumble below, same session-only checkbox + speed-row pattern, shown
-  // exactly when the 4D block is not (flat system, no render active).
+  // auto-tumble below. Both toggles write the browser-owned autoMotion pref;
+  // each speed row is This-session only. Shown exactly when the 4D block is
+  // not (flat system, no render active).
   private readonly threeDControls: HTMLElement;
   private readonly autoOrbitToggle: HTMLInputElement;
   private readonly autoOrbitRow: HTMLElement;
@@ -2183,10 +2185,11 @@ export class Ui {
    * forward-orbit session reads (see {@link forwardHeadIndex}); refreshed
    * with every transform-list render, the panel's feed of the whole set. */
   private forwardHead = 0;
-  // Auto-tumble pause/resume + speed: same session-only pattern as the
-  // slice controls above. The toggle's own wrapper row hides — with the
-  // speed row — in a live 4D surface session, where the ambient tumble
-  // is PARKED (see syncFourDViewRows).
+  // Auto-tumble pause/resume + speed: the toggle writes the browser-owned
+  // autoMotion pref and the speed is This-session only. Neither is in the
+  // Saved-view FourDPose. The toggle's own wrapper row hides — with the speed
+  // row — in a live 4D surface session, where the ambient tumble is PARKED
+  // (see syncFourDViewRows).
   private readonly fourDTumbleToggle: HTMLInputElement;
   private readonly fourDTumbleToggleRow: HTMLElement;
   private readonly fourDTumbleRow: HTMLElement;
@@ -3071,8 +3074,9 @@ export class Ui {
     });
     this.autoOrbitToggle.addEventListener("change", () => {
       const on = this.autoOrbitToggle.checked;
-      // Same "row hides with its toggle" pattern as the 4D tumble below
-      // (orbit state is session-only and never enters AppState).
+      // Same "row hides with its toggle" pattern as the 4D tumble below.
+      // Live orbit state never enters AppState; the toggle writes the browser
+      // preference and saved documents snapshot the resulting CameraPose.
       this.autoOrbitRow.classList.toggle("hidden", !on);
       handlers.onAutoOrbitToggle(on);
     });
@@ -3107,8 +3111,8 @@ export class Ui {
     this.fourDSliceToggle.addEventListener("change", () => {
       const on = this.fourDSliceToggle.checked;
       // The position slider only means anything while the slice is on — a
-      // pure view reveal, so the UI owns it (slice state is session-only and
-      // never enters AppState).
+      // pure view reveal, so the UI owns it. Slice state never enters AppState,
+      // though a FourDPose snapshot carries it as Saved view framing.
       this.syncFourDViewRows();
       handlers.onFourDSliceToggle(on);
     });
@@ -3228,8 +3232,8 @@ export class Ui {
    * Show or hide the 4D View rows for the mode the panel is in, reading the
    * toggles' own live `checked` state. Normally the position slider rides
    * the W-slice toggle and the speed slider rides the tumble toggle — pure
-   * view reveals the UI owns, since both are session-only and never enter
-   * AppState.
+   * view reveals the UI owns. Neither enters AppState: a FourDPose snapshots
+   * slice framing, auto-motion is browser-owned, and speed is session-only.
    *
    * A LIVE 4D surface session has no slice choice to offer. That
    * tracer marches a `w = w0` cross-section unconditionally — `sliceOn`
@@ -3737,8 +3741,9 @@ export class Ui {
     );
     this.fourDControls.classList.toggle("hidden", !nonFlat || frozenRender);
     // The slice and tumble rows read differently in a live surface session —
-    // see syncFourDViewRows. Both toggles are session-only view state the UI
-    // owns, so the checkboxes themselves are the truth it re-applies.
+    // see syncFourDViewRows. Both are live view state the UI owns, so the
+    // checkboxes themselves are the truth it re-applies; their persistence
+    // paths differ (Saved-view slice versus browser-owned auto-motion).
     this.syncFourDViewRows();
     // The slice-relative option only touches the w-ramp palettes, so its row
     // hides under the baked 4D color modes — the same single source of truth

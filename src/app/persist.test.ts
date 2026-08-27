@@ -3999,6 +3999,29 @@ describe("fromSnapshot camera", () => {
     const result = fromSnapshot(snapshot, initialState(true));
     expect("camera" in result).toBe(false);
   });
+
+  it("preserves session and local UI fields while restoring the authored snapshot", () => {
+    const base = {
+      ...initialState(true),
+      renderMode: "solid" as const,
+      autoUpdate: false,
+      morphDetail: "full" as const,
+      adaptiveResolution: false,
+      exportScale: 4 as const,
+      selectedTransform: 2,
+      panelOpen: true,
+    };
+
+    const result = fromSnapshot(baseSnapshot(), base);
+
+    expect(result.renderMode).toBe("solid");
+    expect(result.autoUpdate).toBe(false);
+    expect(result.morphDetail).toBe("full");
+    expect(result.adaptiveResolution).toBe(false);
+    expect(result.exportScale).toBe(4);
+    expect(result.selectedTransform).toBe(2);
+    expect(result.panelOpen).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

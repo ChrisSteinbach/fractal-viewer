@@ -132,8 +132,9 @@ export function surfaceColorSourceUsesOwnPalette(
  *
  * Adding a new scalar setting is one entry here plus one `index.html` row. The
  * bespoke dynamic widgets — the transform list/editor, variation rows, the 4D
- * editor group, the legend, and the session-only orbit/tumble/slice view
- * controls (which bind to main.ts closure state, not AppState) — stay
+ * editor group, the legend, and the live orbit/tumble/slice view controls
+ * (which bind to main.ts closure state, not AppState; their camera/FourDPose
+ * snapshots are Saved view framing) — stay
  * hand-built in ui.ts. Slider min/max/step still live on each `index.html`
  * row, but their ranges are now single-sourced by state.ts's `PARAM` table and
  * pinned against it by a ui.test.ts test — the log-scaled point count /
@@ -1076,9 +1077,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: (s, fx) => applyRenderColorInputEffects(s, fx, { points: "fourD" }),
   },
   {
-    // The 4D camera-depth fade. Unlike the session-only slice/tumble
-    // toggles (which stay hand-built in ui.ts), this edits the persisted
-    // scene document — it's a look preference like fourDColor's.
+    // The 4D camera-depth fade edits the persisted scene document — authored
+    // look like fourDColor, distinct from the optional Saved-view rotor/slice
+    // pose and the browser/session-owned automatic-motion controls, which stay
+    // hand-built in ui.ts.
     kind: "checkbox",
     id: "fourDDepthFadeToggle",
     view: "nonFlat",

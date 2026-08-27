@@ -792,6 +792,52 @@ input[type="range"] {
   font-size: 13px;
 }
 
+/* Lifetime is independent of where a control lives (docs/panel-ia.md). These
+   compact, always-visible markers call out the exceptions to authored scene
+   state without inventing a catch-all Preferences section. Keep the text in
+   index.html — not a title/pseudo-element — so touch and assistive-tech users
+   receive the same Saved view / This session / This browser vocabulary. */
+.control-label-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.control-scope-heading {
+  margin: 0 0 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.scope-key {
+  margin: 0 0 9px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.control-scope {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.checkbox-label > .control-scope {
+  margin-left: auto;
+}
+
+.view-scope-note .control-scope {
+  margin-right: 5px;
+}
+
 /* The one BARE select in the panel (every other select sits inside a
    .select-label, whose margin-bottom provides the spacing below it):
    without its own bottom margin it sat flush against the Surprise Me

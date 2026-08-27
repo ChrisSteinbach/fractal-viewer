@@ -788,7 +788,7 @@ function main(): void {
   let activeFlameNonFlat = false;
   let activeSolidNonFlat = false;
 
-  // The session-only 4D VIEW state: the accumulated rotor (tumble ticks and
+  // The session-owned live 4D VIEW state: the accumulated rotor (tumble ticks and
   // Shift-drag/Shift-wheel deltas all compose into it), the tumble
   // pause/speed, and the soft w-slice. Reset to a fresh-visit baseline by
   // resetFourDView() whenever the view starts showing a genuinely new 4D
@@ -828,10 +828,12 @@ function main(): void {
 
   // The 3D auto-orbit: the camera-side sibling of the 4D tumble above — a
   // slow turntable on the orbit camera's theta, so a flat system's cloud
-  // reads as 3D at a glance the way the tumble sells 4D. Session-only like
-  // the tumble (never persisted, never in AppState/undo), reset by
-  // resetAutoOrbitView() on a fresh visit to the 3D view. Unlike the tumble
-  // it shares its degree of freedom with the plain drag gesture, so animate()
+  // reads as 3D at a glance the way the tumble sells 4D. The running flag and
+  // speed are live state outside AppState/undo; the user's on/off choice is
+  // also written to the browser-owned autoMotion preference, while a
+  // CameraPose snapshot of the resulting framing rides a Saved view. Reset by
+  // resetAutoOrbitView() on a fresh visit to the 3D view. Unlike the tumble it
+  // shares its degree of freedom with the plain drag gesture, so animate()
   // additionally pauses it while interactions reports a gesture in progress.
   let autoOrbitOn = true;
   let autoOrbitSpeed = 1;
@@ -840,8 +842,8 @@ function main(): void {
   // reduced-motion default; after a manual toggle they follow this instead —
   // a preset load / Surprise Me / 4D→3D flip must not re-enable an orbit the
   // user turned off (nor re-pause a reduced-motion user's explicit opt-in).
-  // Session-only like the orbit itself; the tumble's twin lives inside
-  // FourDView (setTumbleUserChoice).
+  // This in-memory choice mirrors the browser preference during the current
+  // session; the tumble's twin lives inside FourDView (setTumbleUserChoice).
   let autoOrbitUserChoice: boolean | null = null;
 
   // The balloon echo's "Inflate" replay: non-null while the radius sweep is
@@ -1125,8 +1127,9 @@ function main(): void {
 
   // The ambient drift show: dwell on the current attractor, glide to a fresh
   // Surprise-Me roll over DRIFT_MORPH_MS, dwell, repeat — the
-  // Electric-Sheep-on-a-TV use case. Session-only motion like the auto-orbit
-  // and tumble, never persisted. drift.ts owns the timing loop;
+  // Electric-Sheep-on-a-TV use case. Drift itself is session-only and never
+  // persisted; unlike the browser-owned auto-motion choice, it is a show
+  // controller rather than a viewer preference. drift.ts owns the timing loop;
   // drift-policy.ts the stop/advance conduct (driftPolicy below); this file
   // the wiring: what a leg does (launchDriftLeg), the hold/resume
   // choreography around renders, and the reduced-motion gate
@@ -1405,9 +1408,9 @@ function main(): void {
     if (pose) cameraTween.glideToPose(pose, step.morphMs);
     // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
     // every load's behalf (the render-mode-hint pattern).
+    loadHints.armPose(snap.fourD ?? null);
     if (snap.fourD) {
       fourDTween.glideToPose(snap.fourD, step.morphMs);
-      loadHints.armPose(snap.fourD);
     }
     if (step.mode) {
       loadHints.armMode(step.mode);
@@ -1874,9 +1877,9 @@ function main(): void {
   // Restore a saved 4D view pose — resetFourDView's document-driven
   // sibling, and the 4D mirror of applyCameraPose: rotor + slice snap to
   // the pose, and the same scene/UI pushes the reset does keep the shader
-  // uniforms and the panel's slice controls in step. Tumble on/off/speed
-  // are deliberately untouched — they're not in the pose (they are a
-  // per-browser viewer preference). The explicit setRot4 matters on the
+  // uniforms and the panel's slice controls in step. Tumble on/off/speed are
+  // deliberately untouched — they're not in the pose (on/off is a browser
+  // viewer preference; speed is session-only). The explicit setRot4 matters on the
   // paths where animate()'s own per-4D-frame push hasn't run yet (boot's
   // synchronous first paint).
   function applyFourDPose(pose: FourDPose): void {
@@ -6091,9 +6094,10 @@ function main(): void {
       applyCameraPose(pose.camera);
       // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
       // every load's behalf (the render-mode-hint pattern).
-      if (pose.fourD) loadHints.armPose(pose.fourD);
+      loadHints.armPose(pose.fourD ?? null);
     } else {
       applyDecodedSnapshot(snap, replaced, false);
+      if (replaced) loadHints.armPose(null);
     }
   }
 
@@ -6125,7 +6129,12 @@ function main(): void {
    * instead.
    */
   function currentDocument(): SceneSnapshot {
-    return { ...toSnapshot(state), ...viewPose() };
+    const live = viewPose();
+    return {
+      ...toSnapshot(state),
+      ...live,
+      fourD: loadHints.poseForDocument(live.fourD),
+    };
   }
 
   // Session-only undo/redo plus the edit-burst / debounced-save policy layered
@@ -6187,7 +6196,7 @@ function main(): void {
     if (snap.camera) applyCameraPose(snap.camera);
     // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
     // every load's behalf (the render-mode-hint pattern).
-    if (snap.fourD) loadHints.armPose(snap.fourD);
+    loadHints.armPose(snap.fourD ?? null);
     return true;
   }
 
@@ -7210,7 +7219,7 @@ function main(): void {
     // (control-spec.ts), so a click from off plays the whole sweep instead of
     // silently jumping straight to rest — the shared control uses the
     // mode-appropriate path below.
-    // Session-only view motion, like auto-orbit: no undo checkpoint, no
+    // Session-only replay motion, like an auto-orbit tick: no undo checkpoint, no
     // stopShows (the balloon pair's OWN persistence still applies at whatever
     // the sweep is left resting on, via the next ordinary edit's debounced
     // save — this handler itself just never cuts one).
@@ -7262,8 +7271,8 @@ function main(): void {
       recorder.toggle();
     },
     // Saved-scene collection. Save/copy act on the CURRENT document (the same
-    // encodeScene(currentDocument()) the autosave uses — camera pose
-    // included, so a loaded entry restores its framing); the thumbnail is a
+    // encodeScene(currentDocument()) the autosave uses — camera and non-flat
+    // FourDPose included, so a loaded entry restores its framing); the thumbnail is a
     // downsampled snapshot of what is actually showing — reachable in every
     // render mode, so a save made from a flame/solid render captures the
     // rendered frame and tags the entry with the mode it came from (loading
@@ -7492,7 +7501,7 @@ function main(): void {
       // Build the link from CURRENT state rather than reading location.hash,
       // which the autosave only writes on its 300ms debounce (so it can lag a
       // just-made edit). origin + pathname drops any existing hash/query.
-      // currentDocument() includes the camera pose: the link opens
+      // currentDocument() includes camera + non-flat FourDPose: the link opens
       // framed exactly as the sender sees it.
       const link = `${location.origin}${location.pathname}#${encodeScene(
         currentDocument(),
@@ -7501,9 +7510,9 @@ function main(): void {
         ui.flashToast(ok ? "Link copied" : "Couldn't copy the link"),
       );
     },
-    // The file counterpart of Copy link: the SAME document bytes —
-    // camera pose included — wrapped in the JSON file envelope instead of a
-    // URL, for keeping scenes where a link doesn't fit (archives, email
+    // The file counterpart of Copy link: the SAME document bytes — camera +
+    // non-flat FourDPose included — wrapped in the JSON file envelope instead
+    // of a URL, for keeping scenes where a link doesn't fit (archives, email
     // attachments, version control).
     onSaveSceneFile: () => {
       const text = encodeSceneFile(encodeScene(currentDocument()), Date.now());
@@ -7663,7 +7672,7 @@ function main(): void {
       loadHints.clearAll();
       switchRenderMode(mode);
     },
-    // Slice state is session-only view state (like the tumble clock): it
+    // Live slice state is owned by FourDView (like the tumble clock): it
     // never touches AppState or persistence AS STATE — though a snapshot of
     // it rides the saved document as part of the 4D pose (currentDocument) —
     // so these write straight to fourDView and re-upload the slice trio to
@@ -7696,18 +7705,20 @@ function main(): void {
       fourDView.sliceRelColor = checked;
       pushFourDSlice();
     },
-    // Tumble pause/resume + speed: also session-only view state, no
-    // save — animate() reads these fields off fourDView directly every frame,
-    // so there is nothing else to push here. The toggle goes through
-    // setTumbleUserChoice (not a bare tumbleOn write) so the choice is sticky
-    // across fresh-visit resets.
+    // Tumble pause/resume + speed remain live FourDView state: animate() reads
+    // them directly every frame, so there is nothing to push to the scene or
+    // undo. The toggle also writes the browser-owned autoMotion preference;
+    // speed is This-session only. Neither belongs to the Saved-view FourDPose.
+    // The toggle goes through setTumbleUserChoice (not a bare tumbleOn write)
+    // so the choice is sticky across fresh-visit resets.
     onFourDTumbleToggle: applyFourDTumbleToggle,
     onFourDTumbleSpeedInput: (value) => {
       fourDView.tumbleSpeed = value;
     },
-    // Auto-orbit pause/resume + speed: the 3D siblings of the tumble
-    // handlers above, same session-only pattern — the toggle also records
-    // the sticky user choice resetAutoOrbitView() honors.
+    // Auto-orbit pause/resume + speed: the 3D siblings of the tumble handlers
+    // above. The toggle writes the same browser autoMotion preference; speed
+    // is This-session only. The toggle also records the sticky in-memory
+    // choice resetAutoOrbitView() honors.
     onAutoOrbitToggle: applyAutoOrbitToggle,
     onAutoOrbitSpeedInput: (value) => {
       autoOrbitSpeed = value;
@@ -8627,8 +8638,10 @@ function main(): void {
     ) {
       // Turntable: a slow rightward-drag-signed theta advance, before
       // applyCamera so it lands on this frame. Pure camera motion — no RNG,
-      // no regenerate, no save (camera is never persisted). Paused while the
-      // user's hand is on the canvas (same theta a drag writes); composes
+      // no regenerate and no per-frame save. A CameraPose snapshot is still
+      // captured whenever the current document is explicitly saved/shared
+      // (or another edit persists it). Paused while the user's hand is on the
+      // canvas (same theta a drag writes); composes
       // freely with the auto-fit tween (radius/target) — but NOT with a
       // timeline leg's pose glide, the one camera motion that owns theta
       // itself, so it pauses for that too.

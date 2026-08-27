@@ -178,9 +178,9 @@ const scene = {
     scale: [1, 1, 1],
     variations: [{ type: "mandelbox", weight: 1 }],
   },
-  // Pinned camera pose, copied verbatim from the reporter's hash — a
-  // pose-less scene auto-frames from a random seed, which would make the
-  // floor-rung-truncation precondition unreproducible run to run.
+  // Pinned camera pose, copied verbatim from the reporter's hash — a pose-less
+  // scene deterministically auto-fits, but would not reproduce the reporter's
+  // floor-rung-truncation framing.
   camera: {
     target: [-0.0005, 0.0009, 0],
     radius: 2.7997,

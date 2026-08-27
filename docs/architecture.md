@@ -404,13 +404,17 @@ so the slow auto-tumble and the Shift-drag/Shift-wheel gestures
 (`interactions.ts`) can compose new deltas on top and renormalize cheaply over an
 arbitrarily long session; it never touches the chaos game itself, which composes
 `rotationMatrix4` once per transform at generation time instead. This view
-state — the rotor pair, tumble on/off and speed, and an optional soft w-slice (a
-Gaussian opacity window around a chosen `w`, so a cross-section fades in without
-hard-culling the points outside it, with an opt-in slice-relative recolor that
-recenters the w-ramp palettes on the slice window — `project4.ts`'s
-`sliceColorRemap`) — is session-only and resets to a fresh
-baseline only on a flat-to-non-flat transition or a whole-system replacement,
-never on an ordinary parameter edit. The 4D presets (`pentatope`,
+state lives in a session-owned `FourDView`: the rotor pair, automatic-motion
+state and speed, and an optional soft w-slice (a Gaussian opacity window around
+a chosen `w`, so a cross-section fades in without hard-culling the points
+outside it, with an opt-in slice-relative recolor that recenters the w-ramp
+palettes on the slice window — `project4.ts`'s `sliceColorRemap`). Its lifetimes
+split deliberately: a `FourDPose` snapshot of rotor + slice is **Saved view**
+framing carried by links, files, Collection and Timeline; auto-motion on/off is
+**This browser**; speed is **This session**. A pose-less fresh visit resets to a
+baseline only on a flat-to-non-flat transition or a whole-system replacement;
+a loaded Saved view restores its pose over that baseline. An ordinary parameter
+edit never resets it. The 4D presets (`pentatope`,
 `doubleRotation`, and the later wave — `tesseract`, `sixteenCell`,
 `twentyFourCell`, `duoprism`, `hyperfern` — all in `presets.ts`; the earlier
 standalone `presets4.ts` is gone, merged into the same factory record every
@@ -421,13 +425,13 @@ rotation so the projection's motion reads as genuinely 4D at a glance.
 
 ## Scene persistence
 
-`persist.ts` keeps the explorer share-ready. The persistent subset of `AppState`
-(transforms, point count/size, color mode, color contrast, depth style, guide
-visibility) is serialized to a compact `v1=<base64url>` payload and written to
-both the URL hash (`history.replaceState`, so edits don't pile up in the
-back-button stack) and `localStorage`, debounced so slider drags don't thrash.
-On load the hash wins over storage — a pasted link beats the last local
-session.
+`persist.ts` keeps the explorer share-ready. A persistent projection of
+`AppState` carries authored scene and renderer settings; `main.ts` adds optional
+Saved-view framing (`CameraPose` and, for a non-flat view, `FourDPose`). The
+result is serialized to a compact `v1=<base64url>` payload and written to both
+the URL hash (`history.replaceState`, so edits don't pile up in the back-button
+stack) and `localStorage`, debounced so slider drags don't thrash. On load the
+hash wins over storage — a pasted link beats the last locally saved document.
 
 `decodeScene` is the one place that ingests untrusted input (a URL someone
 pastes), so it is a strict, **never-throwing** boundary: it rejects an unknown

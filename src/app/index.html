@@ -148,11 +148,23 @@
         ⓘ What is this?
       </button>
 
+      <p class="scope-key" id="controlScopeKey">
+        Unmarked controls edit the scene. <strong>Saved view</strong> travels
+        when you save or share. <strong>This session</strong> resets on reload.
+        <strong>This browser</strong> is remembered only here.
+      </p>
+      <p class="control-label-line control-scope-heading" id="renderModeLabel">
+        <span>Render mode</span>
+        <span class="control-scope" aria-label="Scope: This session"
+          >This session</span
+        >
+      </p>
       <div
         id="renderModeSwitch"
         class="segmented"
         role="group"
-        aria-label="Render mode"
+        aria-labelledby="renderModeLabel"
+        aria-describedby="controlScopeKey"
       >
         <button
           class="segment"
@@ -330,6 +342,9 @@
         >
           <input type="checkbox" id="surfacePreviewToggle" checked />
           Quick previews
+          <span class="control-scope" aria-label="Scope: This browser"
+            >This browser</span
+          >
         </label>
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>
         <!-- The preview tier's one-shot escape: shown only while a preview is
@@ -398,6 +413,9 @@
           <label class="checkbox-label">
             <input type="checkbox" id="autoUpdate" checked />
             Auto-update on change
+            <span class="control-scope" aria-label="Scope: This session"
+              >This session</span
+            >
           </label>
           <label class="checkbox-label">
             <input type="checkbox" id="finalTransformToggle" />
@@ -492,7 +510,12 @@
           </button>
 
           <label class="select-label">
-            Morph Detail
+            <span class="control-label-line">
+              <span>Morph Detail</span>
+              <span class="control-scope" aria-label="Scope: This session"
+                >This session</span
+              >
+            </span>
             <select
               id="morphDetail"
               title="Point density while morphing between systems: more detail updates the shape less often but keeps it bright — use Full when recording video"
@@ -514,6 +537,9 @@
           >
             <input type="checkbox" id="adaptiveResolutionCheckbox" checked />
             Adaptive resolution
+            <span class="control-scope" aria-label="Scope: This session"
+              >This session</span
+            >
           </label>
         </details>
 
@@ -1902,13 +1928,31 @@
           name="panel-section"
         >
           <summary>3D View</summary>
+          <p class="flame-hint view-scope-note" id="threeDSavedViewScope">
+            <span class="control-scope" aria-label="Scope: Saved view"
+              >Saved view</span
+            >
+            Your current camera framing is included when you Copy Link, save a
+            scene file, or add to Collection or Timeline, and is restored with
+            the current scene on reload.
+          </p>
           <label class="checkbox-label">
             <input type="checkbox" id="autoOrbitToggle" checked />
             Auto-orbit (turntable)
+            <span class="control-scope" aria-label="Scope: This browser"
+              >This browser</span
+            >
           </label>
           <div id="autoOrbitRow">
             <label class="select-label">
-              Orbit speed: <span id="autoOrbitSpeedLabel">1.0×</span>
+              <span class="control-label-line">
+                <span
+                  >Orbit speed: <span id="autoOrbitSpeedLabel">1.0×</span></span
+                >
+                <span class="control-scope" aria-label="Scope: This session"
+                  >This session</span
+                >
+              </span>
               <input
                 type="range"
                 id="autoOrbitSpeedSlider"
@@ -1927,9 +1971,14 @@
           name="panel-section"
         >
           <summary>4D View</summary>
-          <p class="flame-hint">
+          <p class="flame-hint view-scope-note" id="fourDSavedViewScope">
+            <span class="control-scope" aria-label="Scope: Saved view"
+              >Saved view</span
+            >
             Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll turns
-            ZW.
+            ZW. This rotation and the slice framing are included when you Copy
+            Link, save a scene file, or add to Collection or Timeline, and are
+            restored with the current scene on reload.
           </p>
           <p class="flame-hint hidden" id="fourDSurfaceMotionHint">
             Surface parks auto-tumble so the render can settle. Manual turns and
@@ -1939,10 +1988,21 @@
           <label class="checkbox-label" id="fourDTumbleToggleRow">
             <input type="checkbox" id="fourDTumbleToggle" checked />
             Auto-tumble (XY+ZW)
+            <span class="control-scope" aria-label="Scope: This browser"
+              >This browser</span
+            >
           </label>
           <div id="fourDTumbleRow">
             <label class="select-label">
-              Tumble speed: <span id="fourDTumbleSpeedLabel">1.0×</span>
+              <span class="control-label-line">
+                <span
+                  >Tumble speed:
+                  <span id="fourDTumbleSpeedLabel">1.0×</span></span
+                >
+                <span class="control-scope" aria-label="Scope: This session"
+                  >This session</span
+                >
+              </span>
               <input
                 type="range"
                 id="fourDTumbleSpeedSlider"
@@ -1954,7 +2014,11 @@
             </label>
           </div>
           <label class="checkbox-label" id="fourDSliceToggleRow">
-            <input type="checkbox" id="fourDSliceToggle" />
+            <input
+              type="checkbox"
+              id="fourDSliceToggle"
+              aria-describedby="fourDSavedViewScope"
+            />
             W slice (cross-section)
           </label>
           <div id="fourDSliceRow" class="hidden">
@@ -1963,6 +2027,7 @@
               <input
                 type="range"
                 id="fourDSliceSlider"
+                aria-describedby="fourDSavedViewScope"
                 min="-1"
                 max="1"
                 step="0.01"
@@ -1975,6 +2040,7 @@
                 <input
                   type="range"
                   id="fourDSliceThicknessSlider"
+                  aria-describedby="fourDSavedViewScope"
                   min="0"
                   max="0.5"
                   step="0.01"
@@ -1987,7 +2053,11 @@
               id="fourDSliceRelColorRow"
               title="Spread the W-depth palette across the slice window instead of the whole cloud — inside the slice everything sits near one w, so the whole-cloud ramp renders it nearly flat"
             >
-              <input type="checkbox" id="fourDSliceRelColorToggle" />
+              <input
+                type="checkbox"
+                id="fourDSliceRelColorToggle"
+                aria-describedby="fourDSavedViewScope"
+              />
               Slice-relative color
             </label>
           </div>
@@ -2264,7 +2334,12 @@
         <details class="panel-section" id="captureSection" name="panel-section">
           <summary>Capture</summary>
           <label class="select-label">
-            Capture size
+            <span class="control-label-line">
+              <span>Capture size</span>
+              <span class="control-scope" aria-label="Scope: This session"
+                >This session</span
+              >
+            </span>
             <select
               id="exportScale"
               title="Resolution Save PNG renders at, as a multiple of the screen — large sizes may be capped by this device. While a Flame render is active it re-renders at the chosen size."
