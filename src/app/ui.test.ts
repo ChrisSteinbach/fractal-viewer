@@ -333,7 +333,16 @@ describe("palette field vocabulary", () => {
   });
 });
 
-describe("shape-emitter add action", () => {
+describe("shared Shape catalog roles", () => {
+  it("derives today's emitter and trap doors from the same catalog vocabulary", () => {
+    expect(BUNDLED_EMITTER_SHAPES.map(({ kind }) => kind)).toEqual(
+      BUNDLED_TRAP_SHAPES.map(({ kind }) => kind),
+    );
+    expect(BUNDLED_EMITTER_SHAPES.map(bundledShapeOptionLabel)).toEqual(
+      BUNDLED_TRAP_SHAPES.map(bundledShapeOptionLabel),
+    );
+  });
+
   it("offers every registered emitter exactly once and resets after choosing", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -341,6 +350,18 @@ describe("shape-emitter add action", () => {
     const select = document.getElementById(
       "addEmitterSelect",
     ) as HTMLSelectElement;
+
+    expect(select.closest("label")?.firstChild?.textContent?.trim()).toBe(
+      "Add emitter shape",
+    );
+    expect(select.getAttribute("aria-describedby")).toBe(
+      "transformTimingHint emitterShapeCatalogHint",
+    );
+    expect(
+      document
+        .getElementById("emitterShapeCatalogHint")
+        ?.textContent?.replace(/\s+/g, " "),
+    ).toContain("Surface → Shape trap");
 
     expect(Array.from(select.options).map((option) => option.value)).toEqual([
       "",
@@ -369,6 +390,18 @@ describe("shape-emitter add action", () => {
       "surfaceTrapShape",
     ) as HTMLSelectElement;
 
+    expect(select.closest("label")?.firstChild?.textContent?.trim()).toBe(
+      "Trap shape",
+    );
+    expect(select.getAttribute("aria-describedby")).toBe(
+      "trapShapeCatalogHint",
+    );
+    expect(
+      document
+        .getElementById("trapShapeCatalogHint")
+        ?.textContent?.replace(/\s+/g, " "),
+    ).toContain("Transforms → Shape → Emitter shape");
+
     expect(Array.from(select.options).map((option) => option.value)).toEqual([
       "",
       ...BUNDLED_TRAP_SHAPES.map((entry) => entry.kind),
@@ -380,6 +413,27 @@ describe("shape-emitter add action", () => {
         .map((option) => option.textContent),
     ).toEqual(BUNDLED_TRAP_SHAPES.map(bundledShapeOptionLabel));
     expect(select.options[select.options.length - 1].hidden).toBe(true);
+  });
+
+  it("keeps both role doors discoverable in an applicable Surface session", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface",
+      transforms: foldChain(),
+    });
+
+    expect(
+      document
+        .getElementById("transformsSection")
+        ?.classList.contains("hidden"),
+    ).toBe(false);
+    expect(
+      document
+        .getElementById("surfaceTrapSection")
+        ?.classList.contains("hidden"),
+    ).toBe(false);
   });
 });
 
@@ -2424,8 +2478,15 @@ describe("Ui.renderTransformEditor", () => {
     ui.bind(handlers);
     ui.renderTransformEditor(transforms[1], 1, transforms.length);
     const select = document.querySelector<HTMLSelectElement>(
-      '#transformEditor select[aria-label="Shape emitter"]',
+      '#transformEditor select[aria-label="Emitter shape"]',
     )!;
+
+    expect(select.getAttribute("aria-describedby")).toBe(
+      "transformTimingHint transformEmitterShapeCatalogHint",
+    );
+    expect(
+      document.getElementById("transformEmitterShapeCatalogHint")?.textContent,
+    ).toContain("Surface → Shape trap");
 
     expect(select.value).toBe("");
     expect(Array.from(select.options).map((option) => option.value)).toEqual([
@@ -2468,7 +2529,7 @@ describe("Ui.renderTransformEditor", () => {
       transforms.length,
     );
     const select = document.querySelector<HTMLSelectElement>(
-      '#transformEditor select[aria-label="Shape emitter"]',
+      '#transformEditor select[aria-label="Emitter shape"]',
     )!;
 
     expect(select.value).toBe("custom");
@@ -2491,7 +2552,7 @@ describe("Ui.renderTransformEditor", () => {
       "#transformEditor details[open]",
     );
     const select = document.querySelector<HTMLSelectElement>(
-      '#transformEditor select[aria-label="Shape emitter"]',
+      '#transformEditor select[aria-label="Emitter shape"]',
     )!;
     expect(open?.querySelector("summary")?.textContent).toBe("Shape");
     expect(select.value).toBe("star");

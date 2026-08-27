@@ -381,9 +381,17 @@
               − Remove
             </button>
           </div>
+          <p class="flame-hint" id="emitterShapeCatalogHint">
+            Shape catalog: emitter shapes here and trap shapes under Surface →
+            Shape trap come from one bundled library. Adding one creates and
+            selects a new emitter map.
+          </p>
           <label class="select-label">
-            Add a shape emitter
-            <select id="addEmitterSelect">
+            Add emitter shape
+            <select
+              id="addEmitterSelect"
+              aria-describedby="transformTimingHint emitterShapeCatalogHint"
+            >
               <option value="">Choose a shape…</option>
             </select>
           </label>
@@ -1635,12 +1643,20 @@
                for escape-family sessions; panel-applicability.ts owns that
                three-axis consumer rule. Painted by the "Shape trap" color
                source above. -->
+          <p id="trapShapeCatalogHint" class="flame-hint">
+            Shape catalog: trap shapes here use the same bundled library as
+            Transforms → Shape → Emitter shape. Choosing None or a trap shape
+            re-enters Surface; size, position, mode and fade stay live.
+          </p>
           <label
             class="select-label"
             title="Stamp a shape across the fractal: every orbit step measures its distance to this shape, and the closest approach drives the palette"
           >
-            Shape trap
-            <select id="surfaceTrapShape">
+            Trap shape
+            <select
+              id="surfaceTrapShape"
+              aria-describedby="trapShapeCatalogHint"
+            >
               <option value="">None</option>
               <option value="custom" hidden>(authored)</option>
             </select>

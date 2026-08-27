@@ -6252,14 +6252,19 @@ export class Ui {
 
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
-    hint.textContent = `Stamp ${BUNDLED_EMITTER_SHAPES.map((entry) => entry.label).join(" or ")} whenever this transform is picked. Position, Rotation and Scale pose it; Weight controls how often it appears.`;
+    hint.id = "transformEmitterShapeCatalogHint";
+    hint.textContent = `Shape catalog: stamp ${BUNDLED_EMITTER_SHAPES.map((entry) => entry.label).join(" or ")} whenever this transform is picked. Surface → Shape trap uses the same library for a different role. Position, Rotation and Scale pose this emitter; Weight controls how often it appears.`;
 
     const label = this.doc.createElement("label");
     label.className = "select-label";
-    label.textContent = "Emitter";
+    label.textContent = "Emitter shape";
 
     const select = this.doc.createElement("select");
-    select.setAttribute("aria-label", "Shape emitter");
+    select.setAttribute("aria-label", "Emitter shape");
+    select.setAttribute(
+      "aria-describedby",
+      "transformTimingHint transformEmitterShapeCatalogHint",
+    );
     const choices: readonly (readonly [EmitterSelectValue, string])[] = [
       ["", "None (ordinary transform)"],
       ...BUNDLED_EMITTER_SHAPES.map(
