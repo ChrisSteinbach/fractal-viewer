@@ -46,12 +46,9 @@ export interface InteractionCallbacks {
   onTransformChange: (index: number, geometry: TransformGeometry) => void;
   /** Called once after a transform pointer gesture or wheel burst settles. */
   onTransformCommit: (index: number) => void;
-  /**
-   * True while a flame render is converging: pointer/wheel input is ignored
-   * so the frozen camera (and the transforms it is rendering) can't drift
-   * out from under it. The listeners stay attached (see the module doc
-   * comment on teardown) — this just short-circuits their effect.
-   */
+  /** True while a Flame render fixes its camera and transforms. A non-flat
+   * session still admits manual rotor/slice actions, which restart its worker
+   * after the gesture settles. */
   frozen: () => boolean;
   /** True while the view is showing the 4D projection (a DERIVED property of
    * the system, cached by `main.ts`, not a mode flag): Shift
@@ -61,6 +58,8 @@ export interface InteractionCallbacks {
   /** A Shift-retargeted gesture turned the 4D view: plane-angle deltas in
    * radians (zero for planes the gesture doesn't touch). */
   onFourDRotate: (delta: { xw: number; yw: number; zw: number }) => void;
+  /** A pointer rotor gesture or wheel/keyboard burst settled. */
+  onFourDViewCommit: () => void;
   /** Whether the w-slice is currently enabled — gates the [ / ] slice-nudge
    * keys (keyboard-camera.ts) the way {@link fourDView} gates
    * the rotor keys. */
@@ -157,8 +156,9 @@ export interface InteractionsHandle {
  * orbit/pan/zoom the {@link OrbitCamera}; with a transform selected they move,
  * rotate, and scale its guide box, reporting edits via
  * {@link InteractionCallbacks.onTransformChange}. While
- * {@link InteractionCallbacks.frozen} is true (a flame render is converging),
- * every gesture is ignored so the camera it was frozen at cannot drift.
+ * {@link InteractionCallbacks.frozen} is true, camera/transform gestures are
+ * ignored. A non-flat Flame still accepts its explicit rotor/slice grammar;
+ * the app restarts accumulation once that gesture settles.
  *
  * Listeners are attached for the page lifetime — correct for this
  * single-instance SPA; there is no teardown path.
@@ -185,6 +185,11 @@ export function attachInteractions(
    * its target so a later selection change cannot commit the wrong map. */
   let wheelCommitIndex: number | null = null;
   let wheelCommitTimer: ReturnType<typeof setTimeout> | null = null;
+  let fourDCommitTimer: ReturnType<typeof setTimeout> | null = null;
+  let fourDGestureDirty = false;
+  /** A Shift-started Flame rotor drag stays rotor-only until release even if
+   * Shift is released; it must never fall through to the frozen camera. */
+  let rotorOnly = false;
   /** True while the current orbitMode/dragging latch was begun by a touch —
    * scopes onPointerMove's stale-mouse release to mouse-owned gestures. */
   let latchFromTouch = false;
@@ -305,6 +310,22 @@ export function attachInteractions(
     wheelCommitTimer = setTimeout(flushWheelCommit, WHEEL_COMMIT_DELAY_MS);
   }
 
+  function flushFourDCommit(): void {
+    if (fourDCommitTimer !== null) {
+      clearTimeout(fourDCommitTimer);
+      fourDCommitTimer = null;
+    }
+    if (!fourDGestureDirty) return;
+    fourDGestureDirty = false;
+    callbacks.onFourDViewCommit();
+  }
+
+  function scheduleFourDCommit(): void {
+    fourDGestureDirty = true;
+    if (fourDCommitTimer !== null) clearTimeout(fourDCommitTimer);
+    fourDCommitTimer = setTimeout(flushFourDCommit, WHEEL_COMMIT_DELAY_MS);
+  }
+
   function beginCameraGesture(event: Event): void {
     const touch = touchOf(event);
     if (touch && touch.touches.length === 2) {
@@ -341,8 +362,15 @@ export function attachInteractions(
   }
 
   function onPointerDown(event: Event): void {
-    if (callbacks.frozen()) return;
     const touch = touchOf(event);
+    const mouse = touch ? null : (event as MouseEvent);
+    const frozenRotor =
+      callbacks.frozen() &&
+      callbacks.selectedTransform() === null &&
+      callbacks.fourDView() &&
+      mouse?.shiftKey === true &&
+      mouse.button === 0;
+    if (callbacks.frozen() && !frozenRotor) return;
     const { x, y } = pointerXY(event);
     setNdc(x, y);
     lastX = x;
@@ -379,6 +407,7 @@ export function attachInteractions(
       dragTransformIndex = null;
       dragTransformDirty = false;
       beginCameraGesture(event);
+      rotorOnly = frozenRotor;
       return;
     }
     dragTransformDirty = false;
@@ -396,7 +425,7 @@ export function attachInteractions(
       // way to turn the w-planes directly (there is no per-map w editor —
       // "4D" is unified into the ordinary transform editor, which does not
       // yet expose the `w` fields themselves), only the auto-tumble.
-      if (callbacks.fourDView() && mouse?.shiftKey) {
+      if (callbacks.fourDView() && (rotorOnly || mouse?.shiftKey)) {
         // Dragging toward +screen-x rolls the world +x axis into +w; screen y
         // points down while world y points up, hence the dy negation for yw
         // (a feel default — each sign is trivially negatable).
@@ -405,6 +434,7 @@ export function attachInteractions(
           yw: -dy * ROTATE_SPEED,
           zw: 0,
         });
+        fourDGestureDirty = true;
         return;
       }
       orbit.rotate(dx, dy);
@@ -459,7 +489,7 @@ export function attachInteractions(
   }
 
   function onPointerMove(event: Event): void {
-    if (callbacks.frozen()) return;
+    if (callbacks.frozen() && !rotorOnly) return;
     // A latched MOUSE gesture with no button still down behind it is stale —
     // the mouseup landed where no listener here could see it (released over
     // browser chrome, or a focus steal the blur listener below missed).
@@ -498,13 +528,20 @@ export function attachInteractions(
     dragTransformIndex = null;
     dragTransformDirty = false;
     latchFromTouch = false;
+    rotorOnly = false;
     if (commitIndex !== null) callbacks.onTransformCommit(commitIndex);
+    flushFourDCommit();
   }
 
   function onWheel(event: WheelEvent): void {
     event.preventDefault();
-    if (callbacks.frozen()) return;
     const selected = callbacks.selectedTransform();
+    const frozenRotor =
+      callbacks.frozen() &&
+      selected === null &&
+      callbacks.fourDView() &&
+      event.shiftKey;
+    if (callbacks.frozen() && !frozenRotor) return;
     if (wheelCommitIndex !== null && wheelCommitIndex !== selected) {
       flushWheelCommit();
     }
@@ -532,6 +569,7 @@ export function attachInteractions(
             FOUR_D_WHEEL_MAX,
           ),
         });
+        scheduleFourDCommit();
         return;
       }
       orbit.dolly(event.deltaY > 0 ? 1.1 : 0.9);
@@ -560,13 +598,12 @@ export function attachInteractions(
   // pointer gestures use, so the two input paths cannot drift: orbit keys
   // call the same orbit.rotate/dolly, rotor keys ride the same
   // onFourDRotate wire (inheriting main.ts's session gates and the
-  // pose-glide release), and frozen() blocks keys during a flame render
-  // exactly as it blocks drags. preventDefault fires only for a produced
+  // pose-glide release), and frozen() admits only rotor/slice/motion-choice
+  // keys during a non-flat Flame. preventDefault fires only for a produced
   // action, so unhandled keys keep their page semantics. Deliberately
   // camera-only regardless of the transform selection — guide-box nudging
   // stays slider-based (the keyboard work's own scope line).
   function onKeyDown(event: KeyboardEvent): void {
-    if (callbacks.frozen()) return;
     // AltGr on Windows reports ctrlKey+altKey together, and on many
     // layouts (QWERTZ, AZERTY...) [ and ] are AltGr chords — so ctrl+alt
     // TOGETHER producing a printable character is text input, not a
@@ -587,6 +624,13 @@ export function attachInteractions(
       { fourD: callbacks.fourDView(), sliceOn: callbacks.fourDSliceOn() },
     );
     if (action === null) return;
+    const frozenActionAllowed =
+      action.kind === "rotor" ||
+      action.kind === "slice" ||
+      (action.kind === "toggleMotion" && callbacks.fourDView());
+    if (callbacks.frozen() && !frozenActionAllowed) {
+      return;
+    }
     event.preventDefault();
     if (action.kind === "orbit") {
       orbit.rotate(action.dx, action.dy);
@@ -594,8 +638,10 @@ export function attachInteractions(
       orbit.dolly(action.factor);
     } else if (action.kind === "rotor") {
       callbacks.onFourDRotate(action);
+      scheduleFourDCommit();
     } else if (action.kind === "slice") {
       callbacks.onFourDSliceNudge(action.delta);
+      scheduleFourDCommit();
     } else {
       callbacks.onToggleAutoMotion();
     }

@@ -1202,7 +1202,7 @@ export class FractalScene {
   /** In-flight strip job over {@link surfaceSettleTarget}, or null. */
   private surfaceStripJob: SurfaceStripJob | null = null;
   /** Passes the ACTIVE {@link surfaceSettleTarget} supersampling sequence
-   * wants — {@link SURFACE_STRIP_SETTLE_SAMPLES} for a settle or an
+   * wants — {@link surfaceSettleSamples} for a settle or an
    * interactive Save-PNG, 1 for everything else, which is every path that
    * existed before supersampling. */
   private surfaceSampleTotal = 1;
@@ -1408,6 +1408,9 @@ export class FractalScene {
    * GLSL uniform writes in {@link setSurfaceParams} so both paths read the
    * one document. */
   private surfaceComputeParams: SurfaceParams | null = null;
+  /** Effective settle/capture sample count, including any diagnostic query
+   * override resolved once by main.ts. Previews remain one sample. */
+  private surfaceSettleSamples = 8;
   /** Bumped by {@link setSurfaceColorLUT} so the compute renderer
    * re-uploads its LUT texture only when the ramp actually changed. */
   private surfaceLUTVersion = 0;
@@ -4444,6 +4447,10 @@ export class FractalScene {
     this.applySurfaceGroundPlane();
   }
 
+  setSurfaceSettleSamples(samples: number): void {
+    this.surfaceSettleSamples = Math.max(1, Math.min(64, Math.round(samples)));
+  }
+
   /**
    * The color-source integer BOTH engines dispatch on — the ONE resolution
    * site of the `"shapeTrap"` source's pinned fallback: selected without a
@@ -6316,7 +6323,7 @@ export class FractalScene {
     // sub-pixel structure no march budget or viewport reaches (measured on
     // the compute engine this arm stands in for). Pass
     // 0 is armed exactly as it always was, below.
-    this.beginSurfaceSamples(SURFACE_STRIP_SETTLE_SAMPLES, size.x, size.y);
+    this.beginSurfaceSamples(this.surfaceSettleSamples, size.x, size.y);
     this.surfaceSettledRayCensus = null;
     this.surfaceStripJob = this.newStripJob(
       createStripPlanner(size.y, size.x, {
@@ -7453,7 +7460,7 @@ export class FractalScene {
     // so exporting larger does not fix it and an unsampled export would be
     // visibly worse than the screen it came from. Coverage below spans the
     // passes, and Cancel lands between them.
-    this.beginSurfaceSamples(SURFACE_STRIP_SETTLE_SAMPLES, width, height);
+    this.beginSurfaceSamples(this.surfaceSettleSamples, width, height);
     this.surfaceCaptureFlight = true;
     // Definite by the loop's first iteration; the initializer only tells
     // the compiler the `finally` cannot see it unassigned.
@@ -7627,34 +7634,6 @@ const SURFACE_PREVIEW_PRESENT_MS = 200;
 /** Present cadence (ms) for the settle job's progressive sharpening —
  * the view is parked; fewer drain gaps means better GPU utilization. */
 const SURFACE_SETTLE_PRESENT_MS = 600;
-/**
- * Supersampling passes the WebGL settle and the interactive Save-PNG spend
- * — main.ts's `SURFACE_COMPUTE_SETTLE_SAMPLES` for the WebGPU arm,
- * deliberately the same number: the two engines render the same
- * document, and "how much antialiasing does this app do" must not depend
- * on which one a machine happens to have. Pass 0 lands when the settle
- * always landed, so the count buys refinement time, never first-image
- * time.
- */
-const SURFACE_STRIP_SETTLE_SAMPLES = /* @__PURE__ */ resolveSettleSamples();
-
-/**
- * `?surfacesamples=N`: the A/B override for the supersampling
- * count, `?surfshadewidth=N`'s precedent one module over — and for the
- * same reason. N=1 turns the settle and the Save-PNG back into the exact
- * single-pass traces this arm made before supersampling, on the SAME
- * build, so "pass 0 is value-identical" is a byte comparison anyone can
- * rerun rather than an argument. Out-of-range or unparseable falls back to
- * the shipped 8.
- */
-function resolveSettleSamples(): number {
-  const shipped = 8;
-  if (typeof window === "undefined") return shipped;
-  const raw = new URLSearchParams(window.location.search).get("surfacesamples");
-  if (raw === null) return shipped;
-  const n = Number(raw);
-  return Number.isInteger(n) && n >= 1 && n <= 64 ? n : shipped;
-}
 /** Gamma the surface tracers encode their output with — the
  * `pow(lit, 1/2.2)` that ends surface-material.ts's shade path and its 4D
  * twin. The supersampling average has to undo it before summing and

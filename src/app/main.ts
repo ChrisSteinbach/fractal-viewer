@@ -148,6 +148,10 @@ import {
   saveIsolationHandoff,
 } from "./isolation-handoff";
 import { Ui } from "./ui";
+import {
+  effectiveSurfaceSamples,
+  parseSurfaceSamplesOverride,
+} from "./surface-sampling";
 import { bundledEmitterShape } from "./bundled-shapes";
 import {
   EXPORT_MODAL_SLOW_PREDICTION_MS,
@@ -547,6 +551,19 @@ function main(): void {
     : initialState(panelOpen);
   const orbit = new OrbitCamera(BOOT_CAMERA_POSITION);
   const ui = new Ui(document);
+  const surfaceSamplesOverride = parseSurfaceSamplesOverride(
+    window.location.search,
+  );
+  const effectiveSurfaceSettleSamples = (): number =>
+    effectiveSurfaceSamples(
+      state.surface.antialiasSamples,
+      surfaceSamplesOverride,
+    );
+  const syncSurfaceSettleSamples = (): void => {
+    scene.setSurfaceSettleSamples(effectiveSurfaceSettleSamples());
+  };
+  syncSurfaceSettleSamples();
+  ui.setSurfaceSamplesOverride(surfaceSamplesOverride);
   // The still-export disclosure driver. A Save-PNG on a surface render can be
   // minutes of GPU work; it used to be indistinguishable from a mis-click
   // until the download toast landed. One grace-deferred modal now covers
@@ -2903,16 +2920,16 @@ function main(): void {
     };
   }
 
-  // Snapshot the frozen 4D view for a render worker: the current rotor + the
+  // Snapshot the entry 4D view for a render worker: the current rotor + the
   // cloud's center/support amplitude, the slice window, and the
   // "legacy"-palette color dispatch inputs. The flame and voxel start
   // commands declare structurally identical `fourD` blocks, so the one
   // snapshot feeds both. Undefined while the view is 3D — the workers then
   // take their unchanged 3D paths. The tumble needs no explicit pause here:
   // animate() early-returns past the whole 4D block while either render is
-  // active, so fourDView's rotor simply stops advancing (and onFourDRotate is
-  // gated the same way), making this snapshot valid for the render's whole
-  // life.
+  // active, so fourDView's automatic rotor stops advancing. Settled manual
+  // rotor/slice edits later replace only the mutable view half through
+  // setFourDView; each worker retains this entry geometry, centre and support.
   function fourDRenderSnapshot():
     | NonNullable<Extract<FlameWorkerCommand, { type: "start" }>["fourD"]>
     | undefined {
@@ -2952,6 +2969,7 @@ function main(): void {
         : null,
       rotor,
       center: fourDResult.center,
+      halfExtents,
       invWAmp,
       sliceOn: fourDView.sliceOn,
       sliceCenter: fourDView.sliceCenter,
@@ -2966,6 +2984,34 @@ function main(): void {
       // kept current by the shared Color editor's atomic worker command.
       rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
     };
+  }
+
+  /** The settled mutable half of the active 4D worker view. Each worker
+   * recomputes signed-W normalization from its own retained entry bounds. */
+  function fourDWorkerView(): Extract<
+    FlameWorkerCommand,
+    { type: "setFourDView" }
+  >["view"] {
+    return {
+      rotor: fourDView.matrix(),
+      sliceOn: fourDView.sliceOn,
+      sliceCenter: fourDView.sliceCenter,
+      sliceWidth: FOUR_D_SLICE_WIDTH,
+      sliceRelativeColor: fourDView.sliceRelColor,
+    };
+  }
+
+  /** Restart the active non-flat converging renderer at one settled manual
+   * endpoint. Route by the active session snapshot, not the current document:
+   * an authored dimension change must not retarget or orphan an older worker. */
+  function commitFourDWorkerView(): void {
+    const view = fourDWorkerView();
+    if (activeFlameNonFlat) {
+      flameSession.post({ type: "setFourDView", view });
+    }
+    if (activeSolidNonFlat) {
+      solidSession.post({ type: "setFourDView", view });
+    }
   }
 
   /**
@@ -3218,7 +3264,8 @@ function main(): void {
         // Per-chunk throughput instrumentation, off unless `?flameperf`
         // asks.
         instrument: flamePerfEnabled(),
-        // The frozen 4D view, or undefined for the unchanged 3D path.
+        // The entry 4D view, or undefined for the unchanged 3D path. Settled
+        // manual edits later arrive through setFourDView.
         fourD,
       });
       return host;
@@ -3423,7 +3470,8 @@ function main(): void {
         // The scheduled-hybrid post-word, snapshotted at entry like the
         // transform set — the flame start's field, verbatim.
         schedule: state.schedule ?? null,
-        // The frozen 4D view, or undefined for the unchanged 3D path.
+        // The entry 4D view, or undefined for the unchanged 3D path. Settled
+        // manual edits later arrive through setFourDView.
         fourD,
       });
       return handle;
@@ -3623,7 +3671,6 @@ function main(): void {
    * settle's total wall inside the same order of magnitude as the frame the
    * user already waited for.
    */
-  const SURFACE_COMPUTE_SETTLE_SAMPLES = 8;
   /**
    * Below this fraction of a settle's rays hitting anything, the session
    * says so. NOT zero, which was the second cut's mistake and would
@@ -3646,6 +3693,7 @@ function main(): void {
   // detail token — null outside a settle, and left null through pass 1, so
   // an ordinary settle's row reads exactly as it did before supersampling.
   let surfaceComputeSettleSample: number | null = null;
+  let surfaceComputeSettleSamples = effectiveSurfaceSettleSamples();
   // The same for the preview loop's COMPLETION pass. Separate field rather
   // than a phase-tagged one, because the two loops overlap for exactly as
   // long as a superseded settle takes to notice its cancel(): a shared field
@@ -4118,6 +4166,7 @@ function main(): void {
     if (!renderer || surfaceComputeSettleFlight || surfaceCaptureFlight) return;
     surfaceComputeSettleFlight = true;
     surfaceComputeSettledRayCensus = null;
+    surfaceComputeSettleSamples = effectiveSurfaceSettleSamples();
     try {
       renderer.cancel();
       const spec = scene.surfaceComputeFrameSpec("full");
@@ -4126,7 +4175,7 @@ function main(): void {
         // parked view finally shows, and the escape-time objects' speckle
         // is sub-pixel structure no march budget or viewport reaches.
         // Pass 0 is the pre-supersampling settle exactly.
-        samples: SURFACE_COMPUTE_SETTLE_SAMPLES,
+        samples: surfaceComputeSettleSamples,
         // Progressive presents: a full-resolution fold settle is tens of
         // seconds of bounded passes — the image develops on screen
         // (resolved rays shade in, unresolved ones keep backdrop) instead
@@ -4152,10 +4201,9 @@ function main(): void {
             surfaceComputeSettleSample =
               total > 0
                 ? Math.min(
-                    SURFACE_COMPUTE_SETTLE_SAMPLES,
-                    Math.floor(
-                      (done / total) * SURFACE_COMPUTE_SETTLE_SAMPLES,
-                    ) + 1,
+                    surfaceComputeSettleSamples,
+                    Math.floor((done / total) * surfaceComputeSettleSamples) +
+                      1,
                   )
                 : null;
           }
@@ -4305,7 +4353,7 @@ function main(): void {
         // export would be visibly worse than the screen it came from. The
         // modal's coverage report already spans the passes (`done`/`total`
         // are the whole job's), and Cancel still lands between them.
-        samples: SURFACE_COMPUTE_SETTLE_SAMPLES,
+        samples: effectiveSurfaceSettleSamples(),
       });
       if (frame) {
         console.debug(
@@ -5351,6 +5399,7 @@ function main(): void {
         // ramp LUT: pushed at entry so a fresh session reflects the
         // persisted SurfaceParams; the control-spec effects keep them live
         // from there.
+        syncSurfaceSettleSamples();
         scene.setSurfaceParams(state.surface);
         const lut = surfaceColorLUT(state);
         if (lut) scene.setSurfaceColorLUT(lut);
@@ -6636,7 +6685,10 @@ function main(): void {
     restartSolidRender: () => solidSession.enter(),
     restartFlameRender: () => flameSession.enter(),
     restartSurfaceRender: () => {
-      if (state.renderMode === "surface") surfaceSession.enter();
+      if (state.renderMode === "surface") {
+        syncSurfaceSettleSamples();
+        surfaceSession.enter();
+      }
     },
     applyBackground: applyBackgroundNow,
     trackAutoBackground,
@@ -7690,12 +7742,14 @@ function main(): void {
       releaseFourDPoseControl();
       fourDView.sliceOn = checked;
       pushFourDSlice();
+      commitFourDWorkerView();
     },
     onFourDSliceInput: (value) => {
       releaseFourDPoseControl();
       fourDView.sliceCenter = value;
       pushFourDSlice();
     },
+    onFourDSliceCommit: commitFourDWorkerView,
     // Slab thickness is the one slice field with NO point-cloud meaning — the
     // cloud's own slice is a fixed-width Gaussian — so it deliberately skips
     // pushFourDSlice(). Its only consumer is the 4D surface tracer, which
@@ -7709,6 +7763,7 @@ function main(): void {
       releaseFourDPoseControl();
       fourDView.sliceRelColor = checked;
       pushFourDSlice();
+      commitFourDWorkerView();
     },
     // One browser-owned automatic-motion switch drives this tumble and the
     // flat camera orbit. The two speed handlers remain contextual session
@@ -7757,33 +7812,36 @@ function main(): void {
       );
     },
     onTransformCommit: commitTransformEdit,
-    fourDView: () => viewIs4D,
+    fourDView: () =>
+      viewIs4D ||
+      activeFlameNonFlat ||
+      activeSolidNonFlat ||
+      surfaceSessionIs4D,
     onFourDRotate: ({ xw, yw, zw }) => {
-      if (!viewIs4D) return; // belt-and-braces, same as the ui handlers
-      // Flame/solid froze the rotor into their worker snapshot
-      // (fourDRenderSnapshot); a gesture mutating it mid-render would change
-      // nothing on screen (animate() skips setRot4 while rendering) and then
-      // surface as a surprise orientation jump on exit. `frozen` already
-      // blocks all drags during the flame render; the solid render keeps its
-      // camera gestures live, so the w-plane gesture needs this gate. The 4D
-      // surface session's pose is LIVE (tickRender pushes it every
-      // frame), so the gesture stays live there; gate on the session flag,
-      // not the mode, so a 3D surface session (doc drifted 4D mid-session)
-      // still blocks the invisible mutation.
-      if (state.renderMode !== "points" && !surfaceSessionIs4D) return;
+      const acceptsRotor =
+        state.renderMode === "points" ||
+        (state.renderMode === "flame" && activeFlameNonFlat) ||
+        (state.renderMode === "solid" && activeSolidNonFlat) ||
+        (state.renderMode === "surface" && surfaceSessionIs4D);
+      if (!acceptsRotor) return;
       // Grabbing the rotor cancels a pose glide / pending pose — the user's
       // hand wins, same as a camera grab cancelling cameraTween.
       releaseFourDPoseControl();
       fourDView.rotate(xw, yw, zw);
-      // animate() pushes fourDView.matrix() next frame; nothing else to do.
+      // Points/Surface push next frame; Flame/Solid commit once on settle.
     },
+    onFourDViewCommit: commitFourDWorkerView,
     // The [ / ] keys' gate: the points-mode cross-section checkbox OR a
     // live 4D surface session, where the slice is intrinsic — the tracer
     // renders the w = w0 slice/slab regardless of the checkbox, the panel
     // shows the slider unconditionally there, and gating on the checkbox
     // alone left the keys dead in the one mode where the slice always
     // means something (wave-5 review finding).
-    fourDSliceOn: () => fourDView.sliceOn || surfaceSessionIs4D,
+    fourDSliceOn: () =>
+      fourDView.sliceOn ||
+      activeFlameNonFlat ||
+      activeSolidNonFlat ||
+      surfaceSessionIs4D,
     // The [ / ] keys: the slice slider's own handler logic —
     // pose-control release, center write, push — plus the panel sync the
     // slider never needs (it IS the panel; a key nudge must reflect back
@@ -7803,14 +7861,14 @@ function main(): void {
     // (checkbox, row visibility, help-box flag; deliberately NOT the
     // fresh-visit reset methods, which would stomp a chosen speed).
     onToggleAutoMotion: () => {
-      // Surface visibly parks the shared preference in either dimension, so
-      // Space still updates that choice for its next live home. Flat Solid
-      // runs the turntable live. Flame and non-flat Solid hide View at this
-      // boundary and must not accept an invisible preference flip.
+      // Parked renderers keep the visible browser preference editable even
+      // though continuous motion cannot run during their accumulation.
       if (
         state.renderMode !== "points" &&
         state.renderMode !== "surface" &&
-        !(state.renderMode === "solid" && !viewIs4D)
+        !(state.renderMode === "solid" && !viewIs4D) &&
+        !activeFlameNonFlat &&
+        !activeSolidNonFlat
       )
         return;
       const on = !autoMotionEnabled();
@@ -8308,7 +8366,7 @@ function main(): void {
           preview === null &&
           surfaceComputeSettleSample !== null &&
           surfaceComputeSettleSample > 1
-            ? `antialiasing pass ${String(surfaceComputeSettleSample)}/${String(SURFACE_COMPUTE_SETTLE_SAMPLES)}`
+            ? `antialiasing pass ${String(surfaceComputeSettleSample)}/${String(surfaceComputeSettleSamples)}`
             : undefined,
         pct: formatRenderPercent(fraction),
         // The Skip button, on the engine it was originally reasoned would

@@ -27,9 +27,9 @@ import {
   DEFAULT_SOLID_PALETTE,
   FLAME_ITERATION_DETENTS,
   MAX_COLOR_GAMMA,
-  MAX_NUM_POINTS,
-  MIN_NUM_POINTS,
+  POINT_COUNT_DETENTS,
   nearestFlameIterationDetentIndex,
+  nearestLogDetentIndex,
   resolveBalloonPalette,
   setAdaptiveResolution,
   setAutoUpdate,
@@ -73,6 +73,7 @@ import {
   setSolidResolution,
   setSolidThreshold,
   setSurfaceAmbient,
+  setSurfaceAntialiasSamples,
   setSurfaceColorSource,
   setSurfaceColorSpeed,
   setSurfaceEnvLight,
@@ -82,6 +83,8 @@ import {
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
+  SOLID_ITERATION_DETENTS,
+  SURFACE_ANTIALIAS_DETENTS,
   setShapeTrap,
   systemIsNonFlat,
   updateShapeTrap,
@@ -147,28 +150,6 @@ export function surfaceColorSourceUsesOwnPalette(
  */
 
 /**
- * Point-count slider: log-scaled so the low end (1k–100k) has fine control
- * while the top end (100k–5M) is still reachable without a 5000-step slider.
- * The HTML range goes 0–1000; these helpers convert between that and real
- * point counts.
- */
-const NUM_POINTS_SLIDER_MAX = 1000;
-const LOG_MIN = Math.log(MIN_NUM_POINTS);
-const LOG_MAX = Math.log(MAX_NUM_POINTS);
-function numPointsToSlider(n: number): number {
-  const clamped = Math.max(MIN_NUM_POINTS, Math.min(MAX_NUM_POINTS, n));
-  return (
-    ((Math.log(clamped) - LOG_MIN) / (LOG_MAX - LOG_MIN)) *
-    NUM_POINTS_SLIDER_MAX
-  );
-}
-function sliderToNumPoints(s: number): number {
-  const t = s / NUM_POINTS_SLIDER_MAX;
-  // Round to the nearest 1000 so the label reads cleanly.
-  return Math.round(Math.exp(LOG_MIN + t * (LOG_MAX - LOG_MIN)) / 1000) * 1000;
-}
-
-/**
  * Log-scale mapping for the color-contrast slider: position `v` in `[-1, 1]`
  * maps to gamma in `[MIN_COLOR_GAMMA, MAX_COLOR_GAMMA]` via `MAX_COLOR_GAMMA
  * ** v`. Works because `MIN_COLOR_GAMMA === 1 / MAX_COLOR_GAMMA`, which puts
@@ -200,6 +181,15 @@ export function formatIterationCount(n: number): string {
     return `${billions}B`;
   }
   return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+/** Resolve a range input's integer detent index defensively. */
+function detentValue(raw: string, detents: readonly number[]): number {
+  const parsed = Number(raw);
+  const index = Number.isFinite(parsed)
+    ? Math.max(0, Math.min(detents.length - 1, Math.round(parsed)))
+    : 0;
+  return detents[index];
 }
 
 /**
@@ -312,10 +302,9 @@ export interface ControlEffects {
    * histogram/shared-frame dimensions are fixed at `start`; the flame twin
    * of {@link restartSolidRender}. */
   restartFlameRender(): void;
-  /** Re-enter the surface session so a variant-level change — the balloon
-   * toggle — recompiles and reroutes cleanly (compute vs WebGL, grid vs
-   * gridless, SURFACE_BALLOON on the material); a no-op outside surface
-   * mode. The surface sibling of {@link restartFlameRender}. */
+  /** Re-enter the surface session for a variant-level change (such as the
+   * balloon toggle) or a new settle budget (antialias samples); a no-op
+   * outside surface mode. The surface sibling of {@link restartFlameRender}. */
   restartSurfaceRender(): void;
   /**
    * Apply the CURRENT `state.background` source to every renderer: a resolved
@@ -710,8 +699,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     kind: "range",
     id: "numPointsSlider",
     label: { id: "numPointsLabel", text: (s) => s.numPoints.toLocaleString() },
-    read: (s) => String(numPointsToSlider(s.numPoints)),
-    apply: (s, raw) => setNumPoints(s, sliderToNumPoints(Number(raw))),
+    read: (s) =>
+      String(nearestLogDetentIndex(s.numPoints, POINT_COUNT_DETENTS)),
+    apply: (s, raw) => setNumPoints(s, detentValue(raw, POINT_COUNT_DETENTS)),
     // No live effect: regenerating on every "input" tick during the drag
     // would run a full chaos game per tick. Deferred to release instead
     // — see `commit`.
@@ -1113,11 +1103,11 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     id: "flameIterationsSlider",
     label: {
       id: "flameIterationsLabel",
-      text: (s) => `${formatIterationCount(s.flame.iterations)} iterations`,
+      text: (s) => formatIterationCount(s.flame.iterations),
     },
     read: (s) => String(nearestFlameIterationDetentIndex(s.flame.iterations)),
     apply: (s, raw) =>
-      setFlameIterations(s, FLAME_ITERATION_DETENTS[Number(raw)]),
+      setFlameIterations(s, detentValue(raw, FLAME_ITERATION_DETENTS)),
     effect: (s, fx) =>
       fx.postFlame({
         type: "setIterationsBudget",
@@ -1298,10 +1288,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     id: "solidIterationsSlider",
     label: {
       id: "solidIterationsLabel",
-      text: (s) => `${(s.solid.iterations / 1_000_000).toFixed(0)}M iterations`,
+      text: (s) => formatIterationCount(s.solid.iterations),
     },
-    read: (s) => String(s.solid.iterations),
-    apply: (s, raw) => setSolidIterations(s, Number(raw)),
+    read: (s) =>
+      String(
+        nearestLogDetentIndex(s.solid.iterations, SOLID_ITERATION_DETENTS),
+      ),
+    apply: (s, raw) =>
+      setSolidIterations(s, detentValue(raw, SOLID_ITERATION_DETENTS)),
     effect: (s, fx) =>
       fx.postVoxel({
         type: "setIterationsBudget",
@@ -1331,11 +1325,36 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
   },
   // ——— Surface render ———
-  // Every field is a live GPU uniform (see SurfaceParams's doc): unlike the
-  // flame/solid siblings above, NOTHING here ever restarts a worker or an
-  // accumulation — there is none. The lighting sliders just forward the
-  // settled params; the two color controls additionally rebuild the LUT
-  // (surfaceColorLUT), pushing it only when the source actually needs one.
+  // Appearance fields are live GPU uniforms (see SurfaceParams's doc). The
+  // antialiasing budget is the exception: it restarts the parked-view settle.
+  {
+    kind: "range",
+    id: "surfaceAntialiasSlider",
+    label: {
+      id: "surfaceAntialiasLabel",
+      text: (s) => `${String(s.surface.antialiasSamples)} samples/pixel`,
+    },
+    read: (s) =>
+      String(
+        SURFACE_ANTIALIAS_DETENTS.indexOf(
+          s.surface
+            .antialiasSamples as (typeof SURFACE_ANTIALIAS_DETENTS)[number],
+        ),
+      ),
+    apply: (s, raw) =>
+      setSurfaceAntialiasSamples(
+        s,
+        detentValue(raw, SURFACE_ANTIALIAS_DETENTS),
+      ),
+    effect: (s, fx, previous) => {
+      if (
+        s.renderMode === "surface" &&
+        s.surface.antialiasSamples !== previous.surface.antialiasSamples
+      ) {
+        fx.restartSurfaceRender();
+      }
+    },
+  },
   {
     kind: "range",
     id: "surfaceLightAzimuthSlider",

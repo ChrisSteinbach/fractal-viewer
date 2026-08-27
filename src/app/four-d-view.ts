@@ -21,8 +21,9 @@ import { smoothstep } from "./orbit";
  * `FourDView` never touches Three.js, the DOM, or the chaos game: it only
  * accumulates the view rotation and the slice window that `main.ts` pushes to
  * `scene.setRot4`/`scene.setFourDSlice` once per frame, and that the flame/
- * voxel render snapshot (main.ts's `fourDRenderSnapshot`) freezes for a
- * worker. The rotor pair itself stays PRIVATE: rotor4.ts's renormalization
+ * voxel render snapshot (main.ts's `fourDRenderSnapshot`) seeds a worker;
+ * settled manual edits can restart that worker. The rotor pair itself stays
+ * PRIVATE: rotor4.ts's renormalization
  * invariant (see its module doc comment) only holds if every mutation goes
  * through `rotateInPlane` — or through rotor4.ts's `normalizeRotorPair` —
  * so this class exposes the pair only indirectly, via `matrix()`,

@@ -64,6 +64,7 @@ import type { PreparedChaosGame4 } from "../fractal/chaos-game-4d";
 import { accumulateFlame4 } from "../fractal/flame-4d";
 import {
   buildColorModeLUT,
+  fourDColorNeedsAttribute,
   sameFourDRenderColorInputs,
   transformColors,
   W_SIDE_PALETTES,
@@ -79,6 +80,12 @@ import type { PaletteSpec } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
 import { FlamePerfMeter } from "./flame-perf";
+import { wSupport } from "./rotor4";
+import {
+  sameFourDWorkerView,
+  sameFourDWorkerSpatialView,
+  type FourDWorkerView,
+} from "./four-d-worker-view";
 import type {
   FourDColorMode,
   HybridSchedule,
@@ -200,13 +207,19 @@ export type FlameWorkerCommand =
         /** The 4D transform set — see `chaos-game-4d.ts`'s `PreparedChaosGame4`. */
         transforms4: Transform4[];
         finalTransform4: Transform4 | null;
-        /** Row-major 4x4 rotor matrix (the `affine4.ts`/`rotationMatrix4`
-         * convention), frozen at render entry — see `project4.ts`'s
-         * `composeRotorProjection4`. */
+        /** Initial row-major 4x4 rotor matrix (the
+         * `affine4.ts`/`rotationMatrix4` convention) — see `project4.ts`'s
+         * `composeRotorProjection4`. A settled `setFourDView` may replace it
+         * and restart accumulation. */
         rotor: number[];
         /** The cloud's 4D center (the rotor's pivot) — see
          * `composeRotorProjection4`. */
         center: Vec4;
+        /** Half-extents of the active entry cloud's 4D bounds. Retained by
+         * the worker so every later rotor endpoint recomputes signed-w
+         * normalization against this session's support, never a newer
+         * document cloud. */
+        halfExtents: Vec4;
         /** `1 / wSupport(rotor, halfExtents)` at render entry — see
          * `project4.ts`'s `FourDView.invWAmp` and `rotor4.ts`'s
          * `wSupport`. */
@@ -288,6 +301,16 @@ export type FlameWorkerCommand =
   | { type: "setColorInputs"; inputs: RenderColorInputs }
   | { type: "setBalloonPalette"; palette?: PaletteSpec }
   | {
+      type: "setFourDView";
+      /**
+       * A settled manual rotor/slice endpoint. The worker retains the active
+       * entry's geometry, centre and camera, rebuilds their composed 4D
+       * projection, then starts a fresh accumulation. A flat session ignores
+       * this command.
+       */
+      view: FourDWorkerView;
+    }
+  | {
       type: "setSymmetry";
       order: number;
       plane: SymmetryPlane;
@@ -333,8 +356,8 @@ export type FlameWorkerEvent =
       /**
        * Emitted synchronously, right where {@link FlameWorkerSession}'s
        * `startAccumulation` discards the in-flight accumulation —
-       * a live `setSupersample`/`setPalette`/`setColorInputs`/`setSymmetry`
-       * restart, the
+       * a live `setSupersample`/`setPalette`/`setColorInputs`/
+       * `setFourDView`/`setSymmetry` restart, the
        * allocation-failure fallback, or the initial `start` (harmless there:
        * nothing stale is on screen yet to correct). The next `progress`/
        * `sharedFrame` report — the only other thing that carries
@@ -354,7 +377,8 @@ export type FlameWorkerEvent =
        * Which {@link FlameAccumBackend} is driving the CURRENT
        * accumulation — emitted once per backend creation, i.e. on the first
        * chunk of every `start`/restart (a live `setSupersample`/`setPalette`/
-       * `setSymmetry`, or a GPU-failure/OOM-ratchet restart), so the UI's
+       * `setFourDView`/`setSymmetry`, or a GPU-failure/OOM-ratchet restart),
+       * so the UI's
        * label always reflects the backend actually in use, including across
        * a mid-session fallback. Emitted in EVERY session, not just GPU-
        * attempted ones (a CPU-only session emits `backend: "cpu"` too), so
@@ -784,7 +808,7 @@ export interface GpuBackendRequest4 {
    * `packGpuSystem4` lifts it exactly as `prepareSchedule4` lifts the CPU
    * oracle's; absent/`null` is byte-identical. */
   schedule?: HybridSchedule | null;
-  /** The frozen 4D view (signed-w normalization + soft slice) — see
+  /** The current accumulation's 4D view (signed-w normalization + soft slice) — see
    * `project4.ts`'s `FourDView`. */
   view: FourDView;
   /** The session's built {@link FourDRenderColor} — see `buildFourDColor`. */
@@ -1007,16 +1031,21 @@ export class FlameWorkerSession {
   private is4D = false;
   private prepared4: PreparedChaosGame4 | null = null;
   /** The 20-coefficient rotor+camera projection `composeFlameProjection4`
-   * builds — resolution-independent (NDC-based), exactly like the 3D
-   * path's `projection` above, so it is built ONCE in `start` and reused
-   * across every `startAccumulation` restart (a supersample/palette change
-   * never rebuilds it, mirroring `projection`'s own lifetime). */
+   * builds — resolution-independent (NDC-based), exactly like the 3D path's
+   * `projection` above. Built at `start`, rebuilt by `setFourDView`, and
+   * reused by restarts that do not change the view. */
   private projection4: Float64Array | null = null;
   /** The unfused 4D reduction map used only by project-then-invert. */
   private rotorProjection4: RotorProjection4 | null = null;
   private fourDView: FourDView | null = null;
+  /** Last settled rotor/view endpoint, retained both for exact command
+   * de-duplication and for rebuilding the projection around `fourDCenter`. */
+  private fourDWorkerView: FourDWorkerView | null = null;
   private fourDColorMode: FourDColorMode = "wBlueOrange";
   private fourDCenter: Vec4 = [0, 0, 0, 0];
+  /** The active entry cloud's axis-aligned support, paired with
+   * `fourDCenter` and deliberately unchanged by live document edits. */
+  private fourDHalfExtents: Vec4 = [0, 0, 0, 0];
   private fourDRadiusMin = 0;
   private fourDRadiusMax = 1;
   private fourDRampPalette: PaletteSpec = "legacy";
@@ -1322,6 +1351,9 @@ export class FlameWorkerSession {
       case "setBalloonPalette":
         this.setBalloonPalette(command.palette);
         break;
+      case "setFourDView":
+        this.setFourDView(command.view);
+        break;
       case "setSymmetry":
         this.setSymmetry(command.order, command.plane, command.twist ?? 0);
         break;
@@ -1418,8 +1450,16 @@ export class FlameWorkerSession {
         sliceWidth: fourD.sliceWidth,
         sliceRelativeColor: fourD.sliceRelativeColor,
       };
+      this.fourDWorkerView = {
+        rotor: [...fourD.rotor],
+        sliceOn: fourD.sliceOn,
+        sliceCenter: fourD.sliceCenter,
+        sliceWidth: fourD.sliceWidth,
+        sliceRelativeColor: fourD.sliceRelativeColor,
+      };
       this.fourDColorMode = fourD.colorMode;
-      this.fourDCenter = fourD.center;
+      this.fourDCenter = [...fourD.center];
+      this.fourDHalfExtents = [...fourD.halfExtents];
       this.fourDRadiusMin = fourD.radiusMin;
       this.fourDRadiusMax = fourD.radiusMax;
       this.fourDRampPalette = fourD.rampPalette;
@@ -1430,6 +1470,8 @@ export class FlameWorkerSession {
       this.projection4 = null;
       this.rotorProjection4 = null;
       this.fourDView = null;
+      this.fourDWorkerView = null;
+      this.fourDHalfExtents = [0, 0, 0, 0];
     }
     this.rng = mulberry32(cmd.seed);
     this.width = cmd.width;
@@ -1576,7 +1618,7 @@ export class FlameWorkerSession {
   /**
    * (Re)size the accumulator for `requested` (clamped to what fits the
    * memory budget) and discard any progress: shared by `start`, a live
-   * `setSupersample`/`setPalette`/`setSymmetry` command, and the
+   * `setSupersample`/`setPalette`/`setFourDView`/`setSymmetry` command, and the
    * allocation-failure fallback in `runChunk` — all need a from-scratch
    * histogram at a (possibly new) size, and this is the ONE place that
    * actually discards one, which is also where the `restarted` event is
@@ -1775,6 +1817,77 @@ export class FlameWorkerSession {
     }
     this.balloonColorLUT =
       palette === undefined ? null : buildPaletteLUT(palette);
+    this.startAccumulation(
+      this.lastRequestedSupersample ?? this.effectiveSupersample,
+    );
+  }
+
+  /**
+   * Apply one settled manual 4D pose edit to the active render. Projection,
+   * slice weight and active Classic W-ramp color are baked into the histogram,
+   * so every spatial endpoint change discards it through the ordinary
+   * generation-aware restart path. An inert slice-relative-color endpoint is
+   * staged until the color path consumes it. The entry centre and camera
+   * remain the session's; signed-w normalization is recomputed here from the
+   * retained entry support rather than trusted to the caller's current
+   * document.
+   */
+  private setFourDView(view: FourDWorkerView): void {
+    if (
+      !this.is4D ||
+      !this.hasGeometry() ||
+      this.fourDWorkerView === null ||
+      sameFourDWorkerView(this.fourDWorkerView, view)
+    ) {
+      return;
+    }
+
+    const relativeColorOnly = sameFourDWorkerSpatialView(
+      this.fourDWorkerView,
+      view,
+    );
+    this.fourDWorkerView = { ...view, rotor: [...view.rotor] };
+    if (relativeColorOnly) {
+      this.fourDView = {
+        ...this.fourDView!,
+        sliceRelativeColor: view.sliceRelativeColor,
+      };
+      // A structural primary palette overrides the 4D mode altogether, and
+      // the attribute modes never read the W-ramp remap. Keep the endpoint
+      // staged so a later return to Classic W-ramp sees it, without throwing
+      // away accumulation that cannot change yet.
+      if (
+        this.paletteSpec !== "legacy" ||
+        fourDColorNeedsAttribute(this.fourDColorMode)
+      ) {
+        return;
+      }
+      this.startAccumulation(
+        this.lastRequestedSupersample ?? this.effectiveSupersample,
+      );
+      return;
+    }
+
+    this.rotorProjection4 = composeRotorProjection4(
+      this.fourDWorkerView.rotor,
+      this.fourDCenter,
+    );
+    this.projection4 = composeFlameProjection4(
+      this.projection!,
+      this.rotorProjection4,
+    );
+    this.fourDView = {
+      invWAmp:
+        1 /
+        Math.max(
+          wSupport(this.fourDWorkerView.rotor, this.fourDHalfExtents),
+          1e-6,
+        ),
+      sliceOn: view.sliceOn,
+      sliceCenter: view.sliceCenter,
+      sliceWidth: view.sliceWidth,
+      sliceRelativeColor: view.sliceRelativeColor,
+    };
     this.startAccumulation(
       this.lastRequestedSupersample ?? this.effectiveSupersample,
     );
@@ -2189,7 +2302,7 @@ export class FlameWorkerSession {
    * Generation handling: `gen` is this call's accumulation
    * identity, captured on entry. Because backend creation and accumulation
    * can both genuinely suspend (the GPU paths), a `setSupersample`/
-   * `setPalette`/`setSymmetry`/OOM-ratchet/GPU-failure restart can land on
+   * `setPalette`/`setFourDView`/`setSymmetry`/OOM-ratchet/GPU-failure restart can land on
    * `this` WHILE this call is suspended — `startAccumulation` bumps
    * `this.generation`, destroys `this.backend`, and — because `this.running`
    * is still `true` (this very call hasn't returned yet) — its own

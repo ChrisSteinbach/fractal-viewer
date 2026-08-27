@@ -34,6 +34,7 @@ import {
   DEFAULT_SOLID_PALETTE,
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
+  DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
   DEFAULT_SURFACE_COLOR_SPEED,
   DEFAULT_SURFACE_ENV_LIGHT,
   DEFAULT_SURFACE_FLOOR_EMISSION,
@@ -95,7 +96,9 @@ import {
   MIN_SYMMETRY_ORDER,
   MIN_TRANSFORMS,
   nearestFlameIterationDetentIndex,
+  nearestLogDetentIndex,
   PARAM,
+  POINT_COUNT_DETENTS,
   removeTransform,
   resolveBalloonPalette,
   resolveFlameBackdropPalette,
@@ -155,12 +158,15 @@ import {
   setSolidResolution,
   setSolidThreshold,
   setSurfaceAmbient,
+  setSurfaceAntialiasSamples,
   setSurfaceColorSource,
   setSurfaceColorSpeed,
   setSurfaceEnvLight,
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
+  SOLID_ITERATION_DETENTS,
+  SURFACE_ANTIALIAS_DETENTS,
   setSymmetryPlane,
   setSymmetryTwist,
   setSymmetryOrder,
@@ -278,6 +284,7 @@ describe("initialState", () => {
   it("boots with the surface render at its default settings", () => {
     const state = initialState(true);
     expect(state.surface).toEqual({
+      antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
@@ -932,46 +939,59 @@ describe("setFlameIterations", () => {
   });
 });
 
-describe("FLAME_ITERATION_DETENTS", () => {
-  it("starts at the minimum and ends at the maximum iteration budget", () => {
+describe("renderer Quality detents", () => {
+  it("pins the Points endpoints and default markup index", () => {
+    expect(POINT_COUNT_DETENTS[0]).toBe(MIN_NUM_POINTS);
+    expect(POINT_COUNT_DETENTS[POINT_COUNT_DETENTS.length - 1]).toBe(
+      PARAM.numPoints.max,
+    );
+    expect(POINT_COUNT_DETENTS[6]).toBe(initialState(true).numPoints);
+  });
+
+  it("pins the Flame endpoints and default markup index", () => {
     expect(FLAME_ITERATION_DETENTS[0]).toBe(MIN_FLAME_ITERATIONS);
     expect(FLAME_ITERATION_DETENTS[FLAME_ITERATION_DETENTS.length - 1]).toBe(
       MAX_FLAME_ITERATIONS,
     );
-  });
-
-  // index.html's flameIterationsSlider hardcodes value="4" as the default
-  // detent index (and max="10" as the last one) — this pins the assumption
-  // so the markup and this list can never silently drift apart.
-  it("has the default iteration budget at index 4", () => {
     expect(FLAME_ITERATION_DETENTS[4]).toBe(DEFAULT_FLAME_ITERATIONS);
   });
-});
 
-describe("nearestFlameIterationDetentIndex", () => {
-  it("returns a detent's own index when given its exact value", () => {
-    expect(nearestFlameIterationDetentIndex(5_000_000)).toBe(2);
-    expect(nearestFlameIterationDetentIndex(2_000_000_000)).toBe(10);
+  it("pins the Solid endpoints and default markup index", () => {
+    expect(SOLID_ITERATION_DETENTS[0]).toBe(MIN_SOLID_ITERATIONS);
+    expect(SOLID_ITERATION_DETENTS[SOLID_ITERATION_DETENTS.length - 1]).toBe(
+      MAX_SOLID_ITERATIONS,
+    );
+    expect(SOLID_ITERATION_DETENTS[4]).toBe(DEFAULT_SOLID_ITERATIONS);
   });
 
-  it("snaps a value between two detents to the nearer one in log space", () => {
+  it("returns exact indexes for each budget family", () => {
+    expect(nearestLogDetentIndex(100_000, POINT_COUNT_DETENTS)).toBe(6);
+    expect(nearestFlameIterationDetentIndex(5_000_000)).toBe(2);
+    expect(nearestLogDetentIndex(50_000_000, SOLID_ITERATION_DETENTS)).toBe(5);
+  });
+
+  it("snaps non-detent values to the nearer choice in log space", () => {
     // 37M sits between 2e7 (index 4) and 5e7 (index 5). Log10 distances are
     // 0.267 to 20M vs 0.131 to 50M, so it snaps up to index 5 — a plain
     // linear midpoint (35M) would also call this closer to 50M, but the two
     // rules disagree closer to the geometric mean (~31.6M), which is why the
     // comparison has to be logarithmic, not linear.
+    expect(nearestLogDetentIndex(37_000, POINT_COUNT_DETENTS)).toBe(5);
     expect(nearestFlameIterationDetentIndex(37_000_000)).toBe(5);
+    expect(nearestLogDetentIndex(37_000_000, SOLID_ITERATION_DETENTS)).toBe(5);
   });
 
-  it("clamps a below-minimum value to the first index", () => {
-    expect(nearestFlameIterationDetentIndex(1)).toBe(0);
-  });
-
-  it("clamps an above-maximum value to the last index", () => {
-    expect(nearestFlameIterationDetentIndex(10_000_000_000)).toBe(
-      FLAME_ITERATION_DETENTS.length - 1,
-    );
-  });
+  it.each([
+    [POINT_COUNT_DETENTS, 1, 10_000_000],
+    [FLAME_ITERATION_DETENTS, 1, 10_000_000_000],
+    [SOLID_ITERATION_DETENTS, 1, 1_000_000_000],
+  ] as const)(
+    "clamps values outside %# to the endpoint indexes",
+    (detents, low, high) => {
+      expect(nearestLogDetentIndex(low, detents)).toBe(0);
+      expect(nearestLogDetentIndex(high, detents)).toBe(detents.length - 1);
+    },
+  );
 });
 
 describe("setFlameGamma", () => {
@@ -1383,6 +1403,26 @@ describe("setSurfaceLightAzimuth", () => {
     expect(
       setSurfaceLightAzimuth(initialState(true), -999).surface.lightAzimuth,
     ).toBe(MIN_SOLID_LIGHT_AZIMUTH);
+  });
+});
+
+describe("setSurfaceAntialiasSamples", () => {
+  it("sets a supported sample count immutably", () => {
+    const state = initialState(true);
+    const next = setSurfaceAntialiasSamples(state, 16);
+
+    expect(next.surface.antialiasSamples).toBe(16);
+    expect(state.surface.antialiasSamples).toBe(
+      DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+    );
+  });
+
+  it("snaps an unsupported count to the nearest UI detent", () => {
+    expect(
+      setSurfaceAntialiasSamples(initialState(true), 7).surface
+        .antialiasSamples,
+    ).toBe(8);
+    expect(SURFACE_ANTIALIAS_DETENTS).toEqual([1, 2, 4, 8, 16]);
   });
 });
 

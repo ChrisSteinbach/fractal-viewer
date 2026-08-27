@@ -370,6 +370,8 @@ export interface UiHandlers {
   /** The 4D slice-position slider moved: `value` is the slice center in
    * signed normalized rotated-w units, [-1, 1]. */
   onFourDSliceInput: (value: number) => void;
+  /** The slice-position gesture settled. */
+  onFourDSliceCommit: () => void;
   /** The 4D slice-thickness slider moved: `value` is the slab's
    * HALF-thickness in the same normalized rotated-w units as
    * {@link onFourDSliceInput}'s center, [0, 0.5]. Surface-only — the row
@@ -2068,6 +2070,12 @@ export class Ui {
   // reports a skippable phase, hidden with the row.
   private readonly surfacePreviewToggle: HTMLInputElement;
   private readonly surfaceSkipPreviewBtn: HTMLButtonElement;
+  /** One stable Quality accordion with one contextual control group per
+   * renderer. The section itself never moves or closes on a mode switch. */
+  private readonly rendererQualityControls: Record<RenderMode, HTMLElement>;
+  /** Adaptive resolution currently has implementations in Points and Solid. */
+  private readonly adaptiveResolutionRow: HTMLElement;
+  private readonly surfaceAntialiasNote: HTMLElement;
   // The surface render's own settings block: lighting sliders plus the
   // base-color source/palette selects, the same mode-section pattern one
   // render mode over. surfacePaletteRow additionally gates on colorSource
@@ -2565,12 +2573,10 @@ export class Ui {
     this.flameSections = [
       this.byId<HTMLDetailsElement>("flameToneSection"),
       this.byId<HTMLDetailsElement>("flameBlurSection"),
-      this.byId<HTMLDetailsElement>("flameQualitySection"),
     ];
     this.solidSections = [
       this.byId<HTMLDetailsElement>("solidSurfaceSection"),
       this.byId<HTMLDetailsElement>("solidLightingSection"),
-      this.byId<HTMLDetailsElement>("solidQualitySection"),
     ];
     this.surfaceCondensationSection = this.byId<HTMLDetailsElement>(
       "surfaceCondensationSection",
@@ -2602,6 +2608,14 @@ export class Ui {
     this.surfaceProgress = this.byId("surfaceProgress");
     this.surfacePreviewToggle = this.byId("surfacePreviewToggle");
     this.surfaceSkipPreviewBtn = this.byId("surfaceSkipPreviewBtn");
+    this.rendererQualityControls = {
+      points: this.byId("pointsQualityControls"),
+      flame: this.byId("flameQualityControls"),
+      solid: this.byId("solidQualityControls"),
+      surface: this.byId("surfaceQualityControls"),
+    };
+    this.adaptiveResolutionRow = this.byId("adaptiveResolutionRow");
+    this.surfaceAntialiasNote = this.byId("surfaceAntialiasNote");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
     this.flameProgress = this.byId("flameProgress");
@@ -3119,6 +3133,9 @@ export class Ui {
       this.fourDSliceLabel.textContent = value.toFixed(2);
       handlers.onFourDSliceInput(value);
     });
+    this.fourDSliceSlider.addEventListener("change", () => {
+      handlers.onFourDSliceCommit();
+    });
     this.fourDSliceThicknessSlider.addEventListener("input", () => {
       const value = Number(this.fourDSliceThicknessSlider.value);
       this.fourDSliceThicknessLabel.textContent = value.toFixed(2);
@@ -3590,24 +3607,26 @@ export class Ui {
     // sections, and the 4D View section's tumble/slice block replaces the 3D
     // View block. All four render
     // modes stay available while non-flat: the flame/solid renders snapshot
-    // the frozen 4D view and run their own 4D accumulators, and the surface
-    // tracer poses the 4D attractor live. The tumble/slice block hides under
-    // the FROZEN renders for the same reason the other 4D view controls do — the
-    // view (rotor + slice) is baked into their worker snapshot, so its
-    // controls couldn't affect it — but NOT under a live 4D surface session,
-    // where the tracer re-poses and re-marches every frame and those are the
-    // only controls that reach it.
+    // the entry 4D view and restart on settled manual edits, and the surface
+    // tracer poses the 4D attractor live. Flame and Solid accept settled
+    // manual rotor/slice edits by restarting their active worker; Surface
+    // re-poses and re-marches every frame.
     const nonFlat = systemIsNonFlat(state);
     this.viewIsNonFlat = nonFlat;
-    this.automaticMotionParked = state.renderMode === "surface";
+    this.automaticMotionParked =
+      state.renderMode === "surface" ||
+      (nonFlat &&
+        (state.renderMode === "flame" || state.renderMode === "solid"));
+    this.automaticMotionParkedHint.textContent =
+      state.renderMode === "surface"
+        ? "Surface parks automatic motion so the render can settle. Manual camera turns and, in 4D, rotor and slice controls stay live; your setting takes effect again in Points or Solid."
+        : "Manual 4D turns and W-slice changes restart this Flame or Solid after release. Automatic motion is parked while it accumulates.";
     const panelContext: PanelContext = {
       renderMode: state.renderMode,
       dimension: nonFlat ? "nonFlat" : "flat",
       surfaceKind: this.surfaceSessionKind,
     };
     this.panelContext = panelContext;
-    const frozenRender =
-      state.renderMode === "flame" || state.renderMode === "solid";
     // A non-flat system in Surface mode is always the 4D tracer: the session
     // routes on this same predicate (main.ts's systemPartsAreNonFlat branch),
     // ahead of the flat-only escape-time and fold/affine paths.
@@ -3623,6 +3642,16 @@ export class Ui {
     for (const section of this.solidSections) {
       section.classList.toggle("hidden", state.renderMode !== "solid");
     }
+    for (const mode of RENDER_MODES) {
+      this.rendererQualityControls[mode].classList.toggle(
+        "hidden",
+        mode !== state.renderMode,
+      );
+    }
+    this.adaptiveResolutionRow.classList.toggle(
+      "hidden",
+      state.renderMode !== "points" && state.renderMode !== "solid",
+    );
     const surfaceInspectorApplicability = resolvePanelApplicability(
       "surfaceInspector",
       panelContext,
@@ -3734,10 +3763,11 @@ export class Ui {
     // One stable View section follows every live-camera renderer. Flat Solid
     // keeps its automatic turntable; Surface keeps manual camera/rotor/slice
     // controls but visibly parks continuous motion so refinement can settle.
-    // Frozen Flame, plus the baked non-flat Solid snapshot, still hide here.
+    // Flat Flame still hides its frozen camera. A non-flat Flame/Solid keeps
+    // manual rotor/slice controls available through restart-on-settle.
     this.viewControls.classList.toggle(
       "hidden",
-      state.renderMode === "flame" || (nonFlat && frozenRender),
+      state.renderMode === "flame" && !nonFlat,
     );
     this.syncViewRows();
     // The slice-relative option only touches the w-ramp palettes, so its row
@@ -5584,6 +5614,14 @@ export class Ui {
    * a one-time write, not a sync. */
   setSurfacePreviewToggle(on: boolean): void {
     this.surfacePreviewToggle.checked = on;
+  }
+
+  /** Disclose a diagnostic query override beside the authored choice. */
+  setSurfaceSamplesOverride(samples: number | null): void {
+    this.surfaceAntialiasNote.textContent =
+      samples === null
+        ? "Used for full-detail settles and Save PNG. Quick previews stay at 1 sample/pixel."
+        : `Diagnostic override active: ${String(samples)} samples/pixel is used for settles and Save PNG; the saved choice remains unchanged.`;
   }
 
   /**

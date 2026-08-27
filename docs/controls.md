@@ -75,6 +75,15 @@ the 4D viewpoint is as pointer-free as the 3D one:
 Space toggles the auto-tumble here, exactly as it toggles the auto-orbit on a
 flat scene — one shared preference either way.
 
+During a non-flat **Flame** render, the ordinary camera and transform gestures
+remain frozen, but the 4D view vocabulary stays available: a Shift-started
+rotor drag remains latched even if Shift is released, Shift-wheel and the
+rotor/slice keys update the view, and Space can change the visible Automatic
+motion preference. A pointer or slice-slider gesture restarts the active
+accumulation once on release; wheel and keyboard bursts restart it once after
+150 ms of quiet. **Solid** uses the same settled rotor/slice restart, while its
+ordinary inspection camera remains live.
+
 ## Transform mode
 
 With a transform selected in flat Points, its **guide box** is highlighted in
@@ -101,7 +110,8 @@ Transform** sliders that appear in the panel while a transform is selected.
 
 The panel's active editing categories — including **Transforms**, **Xaos**,
 **Hybrid schedule**, **Cloud**, **Color**, **Balloon**, **Atmosphere**, **Symmetry**, and the
-contextual renderer inspector — come before **View**, then the always-available
+contextual renderer inspector — come before the shared contextual **Quality**
+section, then **Performance** and **View**, then the always-available
 workflow sections **Systems**, **Collection**, **Timeline**, **Capture**, and **Share**.
 These are collapsible sections, and opening one closes the previous. The collapsed ones
 pack into rows of chips rather than stacking, because nine stacked
@@ -109,10 +119,12 @@ headers cost 473px of a 727px phone screen before any control was visible.
 Measured, that keeps the panel between one and two phone screens rather than
 the one it used to claim: 727px with **Color** open, 1336px with
 **Transforms** open and a transform selected. The Flame, Solid, and Surface render
-modes get the same treatment — **Depth** for Points, **Tone** / **Blur** /
-**Quality** for Flame, **Surface** / **Lighting** / **Quality** for Solid, and
-**Color** / **Shape copies** or **Shape trap** / **Lighting** / **Floor** for
-Surface itself (see **✺ Flame**, **◆ Solid** and **◈ Surface** below) — with a status block
+modes get the same treatment — **Depth** for Points, **Tone** / **Blur** for
+Flame, **Surface** / **Lighting** for Solid, and **Color** / **Shape copies**
+or **Shape trap** / **Lighting** / **Floor** for Surface itself (see **✺
+Flame**, **◆ Solid** and **◈ Surface** below). One **Quality** section follows
+those inspectors and swaps its Points, Flame, Solid or Surface controls in
+place rather than creating several homes. Each renderer keeps its status block
 pinned above the sections (a progress readout for Flame/Solid, an instant
 hint for Surface), and the panel remembers which contextual section was open
 in each mode, so switching Points ↔ Flame ↔ Solid ↔ Surface restores where you
@@ -212,7 +224,7 @@ morphs into place instead of snapping (see **Presets** below).
     never a re-accumulation, and a change made while a render is still
     converging takes effect when it finishes. (Sharp Radius may be dragged
     above Blur Radius, but nothing comes of it — the render caps it there.)
-  - **Quality** — the **Quality** slider steps a 1-2-5 ladder of iteration
+  - **Quality** — **Iterations** steps a 1-2-5 ladder of iteration
     budgets from 1M to 2B (default 20.0M). Raising it _extends_ the run in
     place instead of starting over, so a converged flame can always be pushed
     further; lowering it below what has already accumulated finishes the
@@ -258,8 +270,8 @@ morphs into place instead of snapping (see **Presets** below).
     material look: all three are plain shader uniforms that redraw only Solid,
     live, without changing the separate Surface lighting state or
     re-accumulating the grid.
-  - **Quality** — **Quality** (1M–100M iterations, default 20M) behaves like
-    the flame's: raise it and accumulation continues past what already looked
+  - **Quality** — **Iterations** steps a 1-2-5 ladder from 1M–100M
+    (default 20M) and behaves like the flame's: raise it and accumulation continues past what already looked
     done, lower it and the render finishes where it stands. **Detail
     (restarts render)** (64³–512³ in steps of 32, default 192³) is the grid's
     voxels per axis, and its restart is the heaviest kind: the whole render
@@ -271,8 +283,9 @@ morphs into place instead of snapping (see **Presets** below).
 - **◈ Surface** — a fourth render alongside Flame and Solid: the
   attractor as a true implicit surface, sphere-traced live against an
   analytic distance estimator instead of accumulated from chaos-game
-  samples. It needs no worker and no accumulation, so it renders instantly,
-  and unlike the flame's frozen still the camera stays live exactly like the
+  samples. It needs no chaos-game or voxel worker; its traced first pass and
+  later antialiasing passes develop progressively. Unlike the flame's frozen
+  still the camera stays live exactly like the
   solid render — orbit, pan, and zoom the tracer from any angle. Detail is
   view-dependent rather than sample-dependent: zoom in and the surface keeps
   resolving finer instead of showing the grain a still would at the same
@@ -524,14 +537,21 @@ morphs into place instead of snapping (see **Presets** below).
   how far along each one is ("Preview 43%", "Full detail 0.4%") so you can
   judge whether to wait it out or move the camera on — the render never
   gives up on its own. The preview tier itself is yours to control
-  (and deliberately never a patience guess): a **Quick previews**
-  checkbox above the progress row turns it off wholesale — the view then
+  (and deliberately never a patience guess): **Quick previews** in the
+  contextual **Quality** section turns it off wholesale — the view then
   holds its last frame while you move and the full render starts the
   moment you stop, developing progressively over the held image (worth
   trying on machines whose previews come out coarse, like a slow WebGPU
   stack; flipping it off mid-grind takes effect immediately). It is a
   **This browser**, remembered on this device and never carried by a shared
-  link. With previews on, a grinding preview shows a one-shot
+  link. Beside it, **Antialiasing** selects 1, 2, 4, 8, or 16 samples per
+  pixel (default 8). This is a saved Surface render setting: changing it
+  cancels and restarts the parked view's refinement, and Save PNG uses the
+  same count. Moving previews and offline video frames remain one sample so
+  the interactive and frame-sequence costs do not multiply. The diagnostic
+  `?surfacesamples=N` override accepts 1–64, wins over the saved choice for
+  that page load, is disclosed beside Antialiasing in **Quality**, and drives
+  WebGPU and WebGL identically. With previews on, a grinding preview shows a one-shot
   **Skip preview — full detail now** button under the progress row that
   abandons just that preview and starts the full render at once — the next
   move previews as usual. **Save PNG** refuses nothing and guesses at no
@@ -1050,8 +1070,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   JSON file; restore it with **Share**'s **⬆ Import file** (or drop it onto
   the page), which REPLACES the authored timeline, with an Undo toast when
   there was one.
-- **Points** — log-scaled slider for the point count (1k–5M); takes effect on
-  **Regenerate Points** (or immediately on other edits when auto-update is on).
+- **Points** — in **Quality**, a 1-2-5 ladder for the point count from 1k–5M;
+  it takes effect on **Regenerate Points** (or immediately on other edits when
+  auto-update is on). A link made before the ladder may hold an in-between
+  count: its exact value remains in the label and document until the slider is
+  moved, while the thumb rests at the nearest logarithmic detent.
 - **▶ Watch it build** — replays how the chaos game drew the cloud
   that's on screen right now: the same buffer is revealed in generation order
   (no re-roll), one hop at a time at first — a bright spark riding each
@@ -1067,7 +1090,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   cancelled.
   Reduced motion keeps that extra spin off. Opening the control panel
   mid-replay cancels the replay too, restoring everything immediately.
-- **Morph Detail** — how many points the cloud keeps while a system
+- **Morph Detail** — in **Performance**, how many points the cloud keeps while a system
   morph is in flight (a preset load, Surprise Me, a gallery load, or a Drift
   leg). **Adaptive** (default) sizes each in-between cloud to what this device
   can regenerate in one animation frame — the smoothest motion, but on a big
@@ -1081,7 +1104,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
 - **Point Size** — slider scaling the rendered point size from 0.25× to 4× the
   authored size; applies live (no regenerate) and carries across depth styles.
 - **Show guides** — toggle the grid, axes, and transform boxes.
-- **Adaptive resolution** — on by default: when frames get slow the explorer
+- **Adaptive resolution** — in **Performance** while Points or Solid is
+  active, on by default: when frames get slow the explorer
   quietly draws at a lower internal resolution and scales it up, stepping down
   a five-rung ladder to half linear resolution at worst. Recovery is
   deliberately unhurried — one rung back only after frames have been
@@ -1342,8 +1366,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   matter of waiting (the modal's percentage counts the bands) rather than
   of what fits. While a video recording is rolling, Save
   PNG is pinned to 1× whatever this says — resizing the shared canvas
-  mid-stream would break the capture. Capture size is **This session** and is
-  not carried to another device with the scene.
+  mid-stream would break the capture. The visible timing note summarizes the
+  split before the control: the next Points, Solid, or Surface capture reads
+  the choice, while changing it during an active Flame restarts accumulation.
+  Capture size is **This session** and is not carried to another device with
+  the scene.
 - **Save PNG** — download the current frame as a PNG. The image is the bare
   render (fractal and backdrop) without the panel, help box, or vignette, so it
   captures whatever depth style and color mode are active. The PNG is
@@ -1484,7 +1511,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   accumulation is independent of the inspection camera. **Surface** keeps the
   View section and manual camera live but parks continuous automatic motion so
   its progressive render can settle, with the reason shown beside the retained
-  preference. **Flame** freezes the camera and hides View for that render.
+  preference. A flat **Flame** freezes the camera and hides View. A non-flat
+  Flame retains View for manual rotor/slice edits, parks automatic tumble, and
+  restarts its accumulation once after the edit settles.
 
   Once the current system is _non-flat_ (see
   [architecture.md](architecture.md#the-4d-extension)): the point cloud
@@ -1572,12 +1601,18 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   (their own 4D accumulators for Flame and Solid, their own 4D tracer for
   Surface; the Surface button still gates on distance-estimator eligibility
   exactly as it does for a flat system, see **◈ Surface** above). Flame and
-  Solid _freeze_ the spatial view they start from — one snapshot of the rotor
-  and slice window held for the render's whole life — so the tumble parks and
-  this section's spatial sliders hide until you return to Points. Shared
-  **Color** remains shown: an applicable edit under the worker's Classic palette
-  re-accumulates over that retained view, while another primary palette stages
-  it. Surface instead keeps the rotor and W slice live per
+  Solid retain the spatial view they start from as the worker's current
+  endpoint, but the View section stays visible for manual rotor and W-slice
+  edits. Automatic tumble parks so accumulation can converge. Pointer and
+  slice-slider gestures update the explorer's live FourDView while moving, then
+  send one settled endpoint and restart the active worker on release;
+  Shift-wheel and rotor/slice key bursts do the same once after 150 ms of
+  quiet. The worker retains its entry geometry, center, and support across that
+  restart. Flame still refuses ordinary camera/transform motion; Solid's camera
+  remains live because its voxel volume is world-space. Shared **Color** remains
+  shown: an applicable edit under the worker's Classic palette re-accumulates
+  over the current view, while another primary palette stages it. Surface
+  instead keeps the rotor and W slice live per
   frame, so the Shift-drag / Shift-wheel gestures above still steer it and
   the **W slice** position slider stays live and shown unconditionally,
   since the tracer marches a cross-section every frame regardless of any
@@ -1609,7 +1644,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   impossible.
   **Symmetry** stays put: the 4D chaos game runs its own
   kaleidoscope stage, so Order, Plane, and Twist keep editing the live
-  projection — and the frozen flame/solid snapshots and the live surface
+  projection — and the current Flame/Solid worker endpoints and live Surface
   tracer render the same kaleidoscope (see **Symmetry** above). The
   live 4D view object stays outside AppState, so motion and slice gestures do
   not create undo steps or schedule a save on every frame. Its rotor and slice

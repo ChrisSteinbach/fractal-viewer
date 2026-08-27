@@ -63,6 +63,7 @@ import {
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SURFACE_COLOR_SPEED,
+  DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
   DEFAULT_SURFACE_ENV_LIGHT,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
@@ -172,6 +173,7 @@ function baseSnapshot(): SceneSnapshot {
       paletteId: DEFAULT_SOLID_PALETTE,
     },
     surface: {
+      antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
@@ -229,6 +231,7 @@ describe("encodeScene / decodeScene round-trip", () => {
       paletteId: DEFAULT_SOLID_PALETTE,
     });
     expect(result!.surface).toEqual({
+      antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
@@ -2626,6 +2629,7 @@ describe("decodeScene surface params", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
       surface: {
+        antialiasSamples: 16,
         lightAzimuth: -45,
         lightElevation: 70,
         ambient: 0.5,
@@ -2640,6 +2644,7 @@ describe("decodeScene surface params", () => {
     };
     const result = decodeScene(encodeScene(s));
     expect(result!.surface).toEqual({
+      antialiasSamples: 16,
       lightAzimuth: -45,
       lightElevation: 70,
       ambient: 0.5,
@@ -2668,6 +2673,7 @@ describe("decodeScene surface params", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.surface).toEqual({
+      antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
@@ -2679,6 +2685,51 @@ describe("decodeScene surface params", () => {
       floorTileScale: 0.64,
       floorEmission: 0,
     });
+  });
+
+  it("defaults a legacy surface block that omits antialiasSamples to 8", () => {
+    const base = baseSnapshot().surface;
+    const raw = {
+      ...baseSnapshot(),
+      surface: {
+        lightAzimuth: base.lightAzimuth,
+        lightElevation: base.lightElevation,
+        ambient: base.ambient,
+        colorSource: base.colorSource,
+        paletteId: base.paletteId,
+        colorSpeed: base.colorSpeed,
+        envLight: base.envLight,
+        floorPattern: base.floorPattern,
+        floorTileScale: base.floorTileScale,
+        floorEmission: base.floorEmission,
+      },
+    };
+
+    expect(
+      decodeScene("v1=" + b64url(JSON.stringify(raw)))!.surface
+        .antialiasSamples,
+    ).toBe(DEFAULT_SURFACE_ANTIALIAS_SAMPLES);
+  });
+
+  it("snaps a finite off-detent antialias sample count to the nearest supported choice", () => {
+    const raw = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, antialiasSamples: 7 },
+    };
+
+    expect(
+      decodeScene("v1=" + b64url(JSON.stringify(raw)))!.surface
+        .antialiasSamples,
+    ).toBe(8);
+  });
+
+  it("rejects a non-finite antialias sample count", () => {
+    const raw = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, antialiasSamples: "many" },
+    };
+
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
   });
 
   it("returns null when surface is present but not an object", () => {

@@ -81,6 +81,7 @@ function setupInteractions(
   rotate: ReturnType<typeof vi.fn>;
   dolly: ReturnType<typeof vi.fn>;
   onFourDRotate: ReturnType<typeof vi.fn>;
+  onFourDViewCommit: ReturnType<typeof vi.fn>;
   onFourDSliceNudge: ReturnType<typeof vi.fn>;
   onToggleAutoMotion: ReturnType<typeof vi.fn>;
   onTransformChange: ReturnType<typeof vi.fn>;
@@ -93,6 +94,7 @@ function setupInteractions(
   const rotate = vi.fn();
   const dolly = vi.fn();
   const onFourDRotate = vi.fn();
+  const onFourDViewCommit = vi.fn();
   const onFourDSliceNudge = vi.fn();
   const onToggleAutoMotion = vi.fn();
   const onTransformChange = vi.fn();
@@ -121,6 +123,7 @@ function setupInteractions(
       frozen: () => opts.frozen ?? false,
       fourDView: () => opts.fourD ?? false,
       onFourDRotate,
+      onFourDViewCommit,
       fourDSliceOn: () => opts.sliceOn ?? false,
       onFourDSliceNudge,
       onToggleAutoMotion,
@@ -131,6 +134,7 @@ function setupInteractions(
     rotate,
     dolly,
     onFourDRotate,
+    onFourDViewCommit,
     onFourDSliceNudge,
     onToggleAutoMotion,
     onTransformChange,
@@ -448,6 +452,162 @@ describe("attachInteractions transform settle commits", () => {
   });
 });
 
+describe("attachInteractions frozen 4D view settlement", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  function key(
+    canvas: HTMLCanvasElement,
+    key: string,
+    init: KeyboardEventInit = {},
+  ): KeyboardEvent {
+    const event = new KeyboardEvent("keydown", {
+      key,
+      cancelable: true,
+      ...init,
+    });
+    canvas.dispatchEvent(event);
+    return event;
+  }
+
+  function shiftWheel(canvas: HTMLCanvasElement, deltaY = -100): WheelEvent {
+    const event = new WheelEvent("wheel", {
+      deltaY,
+      shiftKey: true,
+      cancelable: true,
+    });
+    canvas.dispatchEvent(event);
+    return event;
+  }
+
+  it("refuses Flame camera and transform actions", () => {
+    const camera = setupInteractions({ frozen: true, fourD: true });
+
+    camera.canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        clientX: 50,
+        clientY: 50,
+      }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons: 1,
+        clientX: 70,
+        clientY: 60,
+      }),
+    );
+    camera.canvas.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -100, cancelable: true }),
+    );
+    key(camera.canvas, "ArrowLeft");
+    key(camera.canvas, "+");
+
+    expect(camera.handle.gestureActive()).toBe(false);
+    expect(camera.rotate).not.toHaveBeenCalled();
+    expect(camera.dolly).not.toHaveBeenCalled();
+    expect(camera.onFourDRotate).not.toHaveBeenCalled();
+
+    const cube = new THREE.Object3D();
+    const transform = setupInteractions({
+      selected: 0,
+      guideCube: () => cube,
+      frozen: true,
+      fourD: true,
+    });
+    transform.canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 2,
+        clientX: 50,
+        clientY: 50,
+      }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons: 2,
+        clientX: 70,
+        clientY: 60,
+      }),
+    );
+    document.dispatchEvent(new MouseEvent("mouseup"));
+
+    expect(transform.onTransformChange).not.toHaveBeenCalled();
+    expect(transform.onTransformCommit).not.toHaveBeenCalled();
+  });
+
+  it("latches a Shift-started Flame rotor drag and commits exactly once on release", () => {
+    const h = setupInteractions({ frozen: true, fourD: true });
+    h.canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        shiftKey: true,
+        clientX: 50,
+        clientY: 50,
+      }),
+    );
+
+    // Releasing Shift mid-drag must not fall through to the frozen camera.
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons: 1,
+        shiftKey: false,
+        clientX: 70,
+        clientY: 60,
+      }),
+    );
+
+    expect(h.handle.gestureActive()).toBe(true);
+    expect(h.onFourDRotate).toHaveBeenCalledTimes(1);
+    expect(h.rotate).not.toHaveBeenCalled();
+    expect(h.onFourDViewCommit).not.toHaveBeenCalled();
+
+    document.dispatchEvent(new MouseEvent("mouseup"));
+    document.dispatchEvent(new MouseEvent("mouseup"));
+
+    expect(h.onFourDViewCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it("admits Shift-wheel in Flame and commits one burst after 150ms quiet", () => {
+    const h = setupInteractions({ frozen: true, fourD: true });
+
+    shiftWheel(h.canvas);
+    vi.advanceTimersByTime(75);
+    shiftWheel(h.canvas);
+
+    expect(h.onFourDRotate).toHaveBeenCalledTimes(2);
+    expect(h.onFourDViewCommit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(149);
+    expect(h.onFourDViewCommit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(h.onFourDViewCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it("admits rotor/slice keys and the visible motion preference in Flame, batching view keys once", () => {
+    const h = setupInteractions({ frozen: true, fourD: true, sliceOn: true });
+
+    const rotor = key(h.canvas, "ArrowRight", { shiftKey: true });
+    vi.advanceTimersByTime(75);
+    const slice = key(h.canvas, "]");
+    const motion = key(h.canvas, " ");
+
+    expect(rotor.defaultPrevented).toBe(true);
+    expect(slice.defaultPrevented).toBe(true);
+    expect(motion.defaultPrevented).toBe(true);
+    expect(h.onFourDRotate).toHaveBeenCalledTimes(1);
+    expect(h.onFourDSliceNudge).toHaveBeenCalledTimes(1);
+    expect(h.onToggleAutoMotion).toHaveBeenCalledTimes(1);
+    expect(h.onFourDViewCommit).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(149);
+    expect(h.onFourDViewCommit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(h.onFourDViewCommit).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("attachInteractions camera keys", () => {
   function key(
     canvas: HTMLCanvasElement,
@@ -524,7 +684,7 @@ describe("attachInteractions camera keys", () => {
     expect(on.onFourDSliceNudge.mock.calls[0][0] as number).toBeGreaterThan(0);
   });
 
-  it("frozen() blocks every key exactly as it blocks drags — a flame render's camera cannot drift", () => {
+  it("flat frozen Flame blocks camera keys and its unavailable motion preference", () => {
     const { canvas, rotate, dolly, onToggleAutoMotion } = setupInteractions({
       frozen: true,
     });

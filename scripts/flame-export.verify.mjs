@@ -496,7 +496,7 @@ try {
     document.getElementById("modePointsBtn").click();
   });
   await page.waitForTimeout(1200);
-  await setControl("solidIterationsSlider", "1000000"); // the floor: a CPU grid build
+  await setControl("solidIterationsSlider", "0"); // detent 0 = the 1M CPU-grid floor
   await takeTrace();
   const beforeP5 = await pngCount();
   await page.evaluate(() => {

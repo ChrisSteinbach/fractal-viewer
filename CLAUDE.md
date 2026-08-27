@@ -513,7 +513,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     weight decision is `scripts/flame-balloon.harness.ts`.
   - `flame-4d.ts` — 4D twin (`accumulateFlame4`), CPU oracle for
     `flame-gpu-4d.ts`; slices with `0.06` ghost floor (not solid's `0`). Its
-    balloon path reduces through the frozen rotor first, inverts the visible
+    balloon path reduces through the worker's current settled rotor first,
+    inverts the visible
     3D point, then applies the camera — never a 4D inversion.
   - `flame-gpu.ts` — WebGPU flame kernel (WGSL) + packing/dispatch/histogram
     layer. Pinned against CPU oracle by `src/app/gpu-bench/` (`npm run bench:gpu`).
@@ -1243,7 +1244,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     duration. Pure, tested.
   - `morph-budget.ts` — adaptive intermediate point budget: EMA of per-point
     cost sizes each intermediate to ~one frame's chaos game, clamped
-    `[MIN, MAX]`. Morph Detail select trades smoothness for density. Pure, tested.
+    `[MIN, MAX]`. The session-owned Performance → Morph Detail select trades
+    smoothness for density. Pure, tested.
   - `mutation-thumbs.ts` — mutation grid thumbnail renderer: canvas-free
     chaos-game scatter into RGBA buffer, fixed oblique view, additive
     per-transform color. main.ts owns the 3x3 modal grid. Pure, tested.
@@ -1536,6 +1538,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `<select>` picked it.
   - `constants.ts` — shared UI/interaction magic numbers.
   - `interactions.ts` — pointer/touch/wheel handling (Three.js raycasting).
+    Flame's frozen gate is action-specific: it refuses ordinary camera and
+    transform motion but admits a Shift-started, release-latched 4D rotor drag,
+    Shift-wheel, rotor/slice keys, and the visible Automatic motion preference.
+    Pointer rotor edits commit once on release; wheel/keyboard view bursts
+    commit once after 150 ms of quiet.
   - `slider-scroll-guard.ts` — PREVENTS the panel sliders' tap-jump on
     touch, where an earlier pass repaired it after the fact (tested).
     The repair let the jump commit mid-gesture and fired `input` TWICE —
@@ -1664,10 +1671,14 @@ Frame` callback, which runs before paint so the disabled look never
     `scripts/flame-teardown.verify.mjs`.
   - `flame-worker.ts` / `flame-worker-core.ts` — flame render worker:
     `FlameWorkerSession` driving CPU or WebGPU accumulation; SAB fast path,
-    transfer fallback. GPU failure recovery ladder: retry smaller -> fresh
-    device -> CPU fallback.
+    transfer fallback. A non-flat session retains entry geometry/support but
+    accepts a settled `setFourDView` rotor/slice endpoint and restarts its
+    accumulation. GPU failure recovery ladder: retry smaller -> fresh device ->
+    CPU fallback.
   - `flame-perf.ts` — opt-in flame throughput diagnostics (`?flameperf`).
-  - `voxel-worker.ts` / `voxel-worker-core.ts` — solid render worker (transfer only).
+  - `voxel-worker.ts` / `voxel-worker-core.ts` — solid render worker (transfer
+    only). Its non-flat session shares Flame's retained-geometry,
+    restart-on-settled-`setFourDView` contract.
   - `surface-grid-worker.ts` / `surface-grid-worker-core.ts` /
     `surface-grid-client.ts` — empty-space-grid build worker:
     one-shot `buildSurfaceGrid` request/response (transfer), latest-wins-by-id
@@ -1801,7 +1812,7 @@ Frame` callback, which runs before paint so the disabled look never
     nothing beyond the extra live registers and renders today's frame value
     for value.
     Rotor + w-slice are LIVE per-frame view uniforms (`setSurfaceView4`),
-    unlike flame/solid-4D's frozen snapshot — the slider is normalized
+    unlike Flame/Solid's settled-restart worker contract — the slider is normalized
     rotated-w, and `scene.ts`'s `setSurface4View` converts it to the
     tracer's world `uW0` through `wSupport`, so one slider
     position is one hyperplane across every mode; 24-map cap matching 3D's,
@@ -1920,14 +1931,18 @@ n·marginal` (`ShadeHitCost`): each measurement's surprise splits
     and averaging the bytes is the edge-darkening bug — N frames rather
     than N rays per frame, so every per-ray buffer and watchdog bound
     stays as measured. The result is PROGRESSIVE and a superseded job
-    keeps what it finished; main.ts spends it on the live SETTLE and on
-    Save-PNG at 8 samples, never on a preview (cheap by definition) and
+    keeps what it finished; main.ts spends the persisted
+    `surface.antialiasSamples` choice (1/2/4/8/16, default 8) on the live
+    SETTLE and on Save-PNG, never on a preview (cheap by definition) and
     never on offline VIDEO force frames (the cost would multiply by the
     frame count); the progress row discloses the pass as a trailing
-    `antialiasing pass k/8`, silent through pass 1. `?surfacesamples=N` is
-    the escape hatch and the A/B instrument. THE WEBGL STRIP ARM DOES THE
-    SAME THING BY THE SAME ALGORITHM — it imports `subPixelSample` from
-    here — so "8 samples" has ONE meaning whichever engine a machine has.
+    `antialiasing pass k/N`, silent through pass 1. `?surfacesamples=N`
+    (integer 1–64) is one page-load diagnostic override over the document
+    choice, visibly disclosed beside Antialiasing and supplied to BOTH
+    engines. THE WEBGL STRIP
+    ARM DOES THE SAME THING BY THE SAME ALGORITHM — it imports
+    `subPixelSample` from here — so "N samples" has ONE meaning whichever
+    engine a machine has.
     A FRAME'S RASTER IS BOUNDED BY THE DEVICE, NOT THE CALLER: the six
     per-ray buffers cost 36 B/ray, and it is the 16 B ray state as a bound
     STORAGE buffer that a limit bites, so `maxFrameRays =
@@ -2018,8 +2033,10 @@ min(maxBufferSize, maxStorageBufferBindingSize)/16` and a frame past
     turn; frozen Flame and parked Surface do not advance it.
   - `four-d-view.ts` — the session-owned live 4D view container. `FourDPose`
     snapshots rotor + slice as Saved-view framing; auto-motion on/off is a
-    browser preference and speed is session-only. `FourDTween` is the directed
-    pose glide (rotor slerp + slice lerp).
+    browser preference and speed is session-only. During non-flat Flame/Solid,
+    manual endpoints are sent to the active worker once on release or after the
+    interaction quiet period; automatic tumble stays parked. `FourDTween` is
+    the directed pose glide (rotor slerp + slice lerp).
   - `rotor4.ts` — SO(4) rotation as renormalizable unit-quaternion pair
     (`RotorPair`); `slerpRotorPair` + `normalizeRotorPair`.
   - `recorder.ts` / `mp4-duration.ts` / `webm-duration.ts` — video capture:

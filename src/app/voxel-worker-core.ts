@@ -16,9 +16,9 @@
  * worker. Only the iteration budget, the palette (restarts accumulation
  * the same way, since baked-in colors can't be reapplied live),
  * the shared legacy-color inputs (also baked, but staged without work under a
- * structural palette), and the symmetry (it reshapes the geometry itself,
- * not a tone-map param, so it restarts accumulation like the flame session's
- * `setSymmetry`) are live here.
+ * structural palette), the settled 4D rotor/slice view, and the symmetry (it
+ * reshapes the geometry itself, not a tone-map param, so it restarts
+ * accumulation like the flame session's `setSymmetry`) are live here.
  */
 import {
   accumulateVoxels,
@@ -36,6 +36,7 @@ import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
 import type { PreparedChaosGame4 } from "../fractal/chaos-game-4d";
 import {
   buildColorModeLUT,
+  fourDColorNeedsAttribute,
   sameFlatRenderColorInputs,
   sameFourDRenderColorInputs,
   transformColors,
@@ -63,6 +64,12 @@ import type {
   Vec3,
   Vec4,
 } from "../fractal/types";
+import {
+  sameFourDWorkerView,
+  sameFourDWorkerSpatialView,
+  type FourDWorkerView,
+} from "./four-d-worker-view";
+import { wSupport } from "./rotor4";
 
 // ---------------------------------------------------------------------------
 // Protocol
@@ -156,15 +163,19 @@ export type VoxelWorkerCommand =
         /** The 4D transform set — see `chaos-game-4d.ts`'s `PreparedChaosGame4`. */
         transforms4: Transform4[];
         finalTransform4: Transform4 | null;
-        /** Row-major 4x4 rotor matrix (the `affine4.ts`/`rotationMatrix4`
-         * convention), frozen at render entry — see `project4.ts`'s
-         * `composeRotorProjection4`. Built into one {@link RotorProjection4}
-         * ONCE per session (the rotor never changes mid-render — only the
-         * camera stays live). */
+        /** Initial row-major 4x4 rotor matrix (the
+         * `affine4.ts`/`rotationMatrix4` convention) — see `project4.ts`'s
+         * `composeRotorProjection4`. A settled `setFourDView` may replace it,
+         * re-pilot bounds, and restart accumulation. */
         rotor: number[];
         /** The cloud's 4D center (the rotor's pivot) — see
          * `composeRotorProjection4`. */
         center: Vec4;
+        /** Half-extents of the active entry cloud's 4D bounds. Retained by
+         * the worker so every later rotor endpoint recomputes signed-w
+         * normalization against this session's support, never a newer
+         * document cloud. */
+        halfExtents: Vec4;
         /** `1 / wSupport(rotor, halfExtents)` at render-entry — see
          * `project4.ts`'s `FourDView.invWAmp` and `rotor4.ts`'s `wSupport`. */
         invWAmp: number;
@@ -201,6 +212,15 @@ export type VoxelWorkerCommand =
   | { type: "setPalette"; palette: PaletteSpec }
   | { type: "setColorInputs"; inputs: RenderColorInputs }
   | {
+      type: "setFourDView";
+      /**
+       * A settled manual rotor/slice endpoint. The worker retains the active
+       * entry geometry and centre, re-pilots projected bounds, then starts a
+       * fresh voxel accumulation. A flat session ignores this command.
+       */
+      view: FourDWorkerView;
+    }
+  | {
       type: "setSymmetry";
       order: number;
       plane: SymmetryPlane;
@@ -233,9 +253,9 @@ export type VoxelWorkerEvent =
        * Emitted synchronously, right where {@link VoxelWorkerSession}'s
        * `startAccumulation` discards the in-flight accumulation (mirroring
        * the flame session's own `restarted` event) — a live
-       * `setPalette`/`setSymmetry` restart, the allocation-failure fallback,
-       * or the initial `start` (harmless there: nothing stale is on screen
-       * yet to correct). The next `grid` report — the only other thing that
+       * `setPalette`/`setFourDView`/`setSymmetry` restart, the
+       * allocation-failure fallback, or the initial `start` (harmless there:
+       * nothing stale is on screen yet to correct). The next `grid` report — the only other thing that
        * carries `iterationsDone`/`iterationsBudget` — can be seconds away on
        * a big grid, so without this the main thread keeps showing the
        * PRE-restart count until that first post-restart pack lands. Carries
@@ -274,6 +294,9 @@ export interface VoxelWorkerDeps {
   /** Defaults to the real {@link createVoxelGrid}; overridable so a test can
    * force the OOM-retry path without a real allocation failure. */
   createGrid?: typeof createVoxelGrid;
+  /** Defaults to the real {@link computeVoxelBounds4}; overridable so tests
+   * can inspect the worker-owned view normalization passed to the 4D pilot. */
+  computeBounds4?: typeof computeVoxelBounds4;
   /** Fallback voxel budget for `start` commands that don't carry their own
    * `maxVoxels` (defaults to the phone-safe 320 MiB floor); overridable so a
    * test can trigger the proactive `clampVoxelResolution` guard cheaply. */
@@ -413,6 +436,7 @@ export class VoxelWorkerSession {
   private readonly schedule: (fn: () => void) => void;
   private readonly emit: (event: VoxelWorkerEvent) => void;
   private readonly createGrid: typeof createVoxelGrid;
+  private readonly computeBounds4: typeof computeVoxelBounds4;
   /** Fallback budget for starts that don't carry one — see VoxelWorkerDeps. */
   private readonly defaultMaxVoxels: number;
   /** The budget the CURRENT session runs under: the `start` command's
@@ -454,13 +478,19 @@ export class VoxelWorkerSession {
   private is4D = false;
   private prepared4: PreparedChaosGame4 | null = null;
   /** The 20-coefficient rotor projection `composeRotorProjection4` builds —
-   * built ONCE in `start` (the rotor is frozen for the whole session, unlike
-   * the flame session's `projection4` there is no camera to fold in here:
-   * the solid render is world-space, so this alone is the projection). */
+   * created at `start` and rebuilt by `setFourDView`. Unlike the flame
+   * session's `projection4` there is no camera to fold in here: the solid
+   * render is world-space, so this alone is the projection. */
   private rotorProj4: RotorProjection4 | null = null;
   private fourDView: FourDView | null = null;
+  /** Last settled rotor/view endpoint, retained for exact command
+   * de-duplication and projection rebuilds around `fourDCenter`. */
+  private fourDWorkerView: FourDWorkerView | null = null;
   private fourDColorMode: FourDColorMode = "wBlueOrange";
   private fourDCenter: Vec4 = [0, 0, 0, 0];
+  /** The active entry cloud's axis-aligned support, paired with
+   * `fourDCenter` and deliberately unchanged by live document edits. */
+  private fourDHalfExtents: Vec4 = [0, 0, 0, 0];
   private fourDRadiusMin = 0;
   private fourDRadiusMax = 1;
   private fourDRampPalette: PaletteSpec = "legacy";
@@ -522,6 +552,7 @@ export class VoxelWorkerSession {
     this.schedule = deps.schedule;
     this.emit = deps.emit;
     this.createGrid = deps.createGrid ?? createVoxelGrid;
+    this.computeBounds4 = deps.computeBounds4 ?? computeVoxelBounds4;
     this.defaultMaxVoxels = deps.maxVoxels ?? VOXEL_FLOOR_VOXELS;
     this.maxVoxels = this.defaultMaxVoxels;
     this.initialChunkSize = deps.initialChunkSize ?? VOXEL_CHUNK_INITIAL;
@@ -566,6 +597,9 @@ export class VoxelWorkerSession {
         break;
       case "setColorInputs":
         this.setColorInputs(command.inputs);
+        break;
+      case "setFourDView":
+        this.setFourDView(command.view);
         break;
       case "setSymmetry":
         this.setSymmetry(command.order, command.plane, command.twist ?? 0);
@@ -640,9 +674,8 @@ export class VoxelWorkerSession {
         this.symmetry(),
         this.hybridSchedule,
       );
-      // The rotor is frozen for the whole session — built once here, unlike
-      // the flame session's projection4 there is no camera to fold on top:
-      // the solid render is world-space.
+      // Initial world-space rotor projection. `setFourDView` may replace it
+      // after a settled manual edit; there is no camera to fold on top.
       this.rotorProj4 = composeRotorProjection4(fourD.rotor, fourD.center);
       this.fourDView = {
         invWAmp: fourD.invWAmp,
@@ -651,8 +684,16 @@ export class VoxelWorkerSession {
         sliceWidth: fourD.sliceWidth,
         sliceRelativeColor: fourD.sliceRelativeColor,
       };
+      this.fourDWorkerView = {
+        rotor: [...fourD.rotor],
+        sliceOn: fourD.sliceOn,
+        sliceCenter: fourD.sliceCenter,
+        sliceWidth: fourD.sliceWidth,
+        sliceRelativeColor: fourD.sliceRelativeColor,
+      };
       this.fourDColorMode = fourD.colorMode;
-      this.fourDCenter = fourD.center;
+      this.fourDCenter = [...fourD.center];
+      this.fourDHalfExtents = [...fourD.halfExtents];
       this.fourDRadiusMin = fourD.radiusMin;
       this.fourDRadiusMax = fourD.radiusMax;
       this.fourDRampPalette = fourD.rampPalette;
@@ -662,12 +703,14 @@ export class VoxelWorkerSession {
       this.prepared4 = null;
       this.rotorProj4 = null;
       this.fourDView = null;
+      this.fourDWorkerView = null;
+      this.fourDHalfExtents = [0, 0, 0, 0];
     }
 
     // The bounds pilot is part of the same seeded run, so a given seed
     // produces one reproducible render, bounds included.
     this.bounds = this.is4D
-      ? computeVoxelBounds4(
+      ? this.computeBounds4(
           this.prepared4!,
           this.rotorProj4!,
           this.fourDView!,
@@ -790,6 +833,76 @@ export class VoxelWorkerSession {
     this.startAccumulation();
   }
 
+  /**
+   * Apply one settled manual 4D pose edit to the active solid. Rotor, slice
+   * weights and active Classic W-ramp colors are baked into the voxel grid,
+   * and a rotor/slice can change the projected extent, so every spatial
+   * endpoint change rebuilds both the projection/view and the bounds pilot
+   * before the ordinary accumulation restart. An inert slice-relative-color
+   * endpoint is staged until the color path consumes it. The entry centre
+   * remains session-owned; signed-w normalization is recomputed here from the
+   * retained entry support rather than trusted to the caller's current
+   * document.
+   */
+  private setFourDView(view: FourDWorkerView): void {
+    if (
+      !this.is4D ||
+      !this.hasGeometry() ||
+      this.fourDWorkerView === null ||
+      sameFourDWorkerView(this.fourDWorkerView, view)
+    ) {
+      return;
+    }
+
+    const relativeColorOnly = sameFourDWorkerSpatialView(
+      this.fourDWorkerView,
+      view,
+    );
+    this.fourDWorkerView = { ...view, rotor: [...view.rotor] };
+    if (relativeColorOnly) {
+      this.fourDView = {
+        ...this.fourDView!,
+        sliceRelativeColor: view.sliceRelativeColor,
+      };
+      // Structural coloring and the attribute modes do not consume the
+      // W-ramp remap. Stage it for a later Classic W-ramp restart without
+      // discarding the current grid or re-piloting unchanged bounds.
+      if (
+        this.paletteSpec !== "legacy" ||
+        fourDColorNeedsAttribute(this.fourDColorMode)
+      ) {
+        return;
+      }
+      this.startAccumulation();
+      return;
+    }
+
+    this.rotorProj4 = composeRotorProjection4(
+      this.fourDWorkerView.rotor,
+      this.fourDCenter,
+    );
+    this.fourDView = {
+      invWAmp:
+        1 /
+        Math.max(
+          wSupport(this.fourDWorkerView.rotor, this.fourDHalfExtents),
+          1e-6,
+        ),
+      sliceOn: view.sliceOn,
+      sliceCenter: view.sliceCenter,
+      sliceWidth: view.sliceWidth,
+      sliceRelativeColor: view.sliceRelativeColor,
+    };
+    this.bounds = this.computeBounds4(
+      this.prepared4!,
+      this.rotorProj4,
+      this.fourDView,
+      this.rng,
+      this.boundsSamples,
+    );
+    this.startAccumulation();
+  }
+
   /** Live kaleidoscope change. Both dimensions rebuild their own prepared
    * game (the 4D path has `postRotations`/base-map bookkeeping of its
    * own, so this is no longer 3D-only), re-pilot their bounds, and
@@ -833,10 +946,10 @@ export class VoxelWorkerSession {
     // sits, same as `start()` uses it fresh — a restart was never meant to be
     // bit-for-bit replayable against the original seed, only internally
     // consistent from here on. The 4D pilot is the same one `start` runs,
-    // through the frozen rotor/view (a 4D kaleidoscope widens the PROJECTED
+    // through the current rotor/view (a 4D kaleidoscope widens the PROJECTED
     // cloud exactly as a 3D one widens the raw attractor).
     this.bounds = this.is4D
-      ? computeVoxelBounds4(
+      ? this.computeBounds4(
           this.prepared4!,
           this.rotorProj4!,
           this.fourDView!,
@@ -856,8 +969,8 @@ export class VoxelWorkerSession {
    * supersample fallback. Dimension-agnostic: the grid itself (and this OOM
    * guard) doesn't care whether it's being filled by the 3D or 4D path. The
    * ONE place that actually discards a prior accumulation (shared by
-   * `start`, a live `setPalette`/`setSymmetry`/`setColorInputs`, and the OOM
-   * retry above), so
+   * `start`, a live `setPalette`/`setFourDView`/`setSymmetry`/
+   * `setColorInputs`, and the OOM retry above), so
    * it's also where the `restarted` event is emitted — but only
    * once the grid is actually (re)allocated, i.e. never for a failed attempt
    * that's about to retry smaller.
