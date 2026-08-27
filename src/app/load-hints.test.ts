@@ -106,6 +106,39 @@ describe("PendingLoadHints", () => {
   });
 
   describe("pose hints", () => {
+    it("keeps the target Saved-view pose in persistence before its cloud lands", () => {
+      const hints = hintsAt({ id: 5 });
+      const outgoing = pose(-0.6);
+      const target = pose(0.4);
+      hints.clearAll();
+      hints.armPose(target);
+
+      expect(hints.poseForDocument(outgoing)).toBe(target);
+
+      hints.releasePose({ id: 5, replaced: true });
+      expect(hints.poseForDocument(outgoing)).toBe(outgoing);
+    });
+
+    it("treats a target document with no FourDPose as an armed absence", () => {
+      const hints = hintsAt({ id: 5 });
+      const outgoing = pose(-0.6);
+      hints.clearAll();
+      hints.armPose(null);
+
+      expect(hints.poseForDocument(outgoing)).toBeUndefined();
+      expect(hints.poseFor({ id: 5, replaced: true })).toBeNull();
+    });
+
+    it("hands persistence back to the live pose when the user supersedes the hint", () => {
+      const hints = hintsAt({ id: 5 });
+      const live = pose(-0.2);
+      hints.clearAll();
+      hints.armPose(pose(0.8));
+      hints.clearPose();
+
+      expect(hints.poseForDocument(live)).toBe(live);
+    });
+
     it("a stale flat replaced arrival no longer discards the next load's pose — the silent 4D data loss the await key fixes", () => {
       const counter = { id: 5 };
       const hints = hintsAt(counter);

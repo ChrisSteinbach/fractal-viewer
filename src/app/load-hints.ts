@@ -76,6 +76,9 @@ export class PendingLoadHints {
   private modeHint: RenderMode | null = null;
   private seedHint: number | null = null;
   private poseHint: FourDPose | null = null;
+  /** True while a loaded document's Saved-view 4D field — including an
+   * explicit ABSENCE from a legacy/flat document — still waits to land. */
+  private poseArmed = false;
   /** The request id the armed hints await — see the module doc. Stale (from
    * an older load) whenever nothing is armed, which is harmless: every take/
    * release no-ops on a null hint. */
@@ -107,9 +110,24 @@ export class PendingLoadHints {
     this.seedHint = seed;
   }
 
-  /** Arm the loaded document's 4D pose. */
-  armPose(pose: FourDPose): void {
+  /**
+   * Arm the loaded document's 4D Saved-view field. `null` is a real arm: it
+   * prevents a delayed persistence tick from attaching the outgoing live
+   * view's pose to a target document that carried none.
+   */
+  armPose(pose: FourDPose | null): void {
     this.poseHint = pose;
+    this.poseArmed = true;
+  }
+
+  /**
+   * Resolve the FourDPose a persistence snapshot should use while a loaded
+   * document is still waiting for its replacement cloud. The target's saved
+   * value outranks the outgoing live view until arrival. Once disarmed, the
+   * current live framing wins again.
+   */
+  poseForDocument(live: FourDPose | undefined): FourDPose | undefined {
+    return this.poseArmed ? (this.poseHint ?? undefined) : live;
   }
 
   /**
@@ -127,6 +145,7 @@ export class PendingLoadHints {
     this.modeHint = null;
     this.seedHint = null;
     this.poseHint = null;
+    this.poseArmed = false;
     this.awaitId = this.nextRequestId();
   }
 
@@ -135,6 +154,7 @@ export class PendingLoadHints {
    * timeline leg's render entry survives a mid-glide rotor grab. */
   clearPose(): void {
     this.poseHint = null;
+    this.poseArmed = false;
   }
 
   /**
@@ -167,7 +187,7 @@ export class PendingLoadHints {
    * PREVIOUS load's cloud.
    */
   poseFor(arrival: HintArrival): FourDPose | null {
-    return arrival.id >= this.awaitId ? this.poseHint : null;
+    return this.poseArmed && arrival.id >= this.awaitId ? this.poseHint : null;
   }
 
   /**
@@ -180,5 +200,6 @@ export class PendingLoadHints {
   releasePose(arrival: HintArrival): void {
     if (!arrival.replaced || arrival.id < this.awaitId) return;
     this.poseHint = null;
+    this.poseArmed = false;
   }
 }

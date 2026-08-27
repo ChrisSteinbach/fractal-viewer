@@ -122,7 +122,10 @@ import { clamp } from "../fractal/vec";
 // Public types
 // ---------------------------------------------------------------------------
 
-/** The persistent subset of AppState — everything needed to recreate the scene. */
+/**
+ * The persistable scene document: authored AppState plus optional Saved-view
+ * camera/FourDPose framing attached by main.ts.
+ */
 export interface SceneSnapshot {
   transforms: Transform[];
   /** Optional final-transform lens (see {@link AppState.finalTransform}). */
@@ -168,14 +171,15 @@ export interface SceneSnapshot {
   rampPaletteId: PaletteSelection;
   /**
    * 4D projection color mode (see {@link AppState.fourDColor}).
-   * Persists like `colorMode` — always present, not session-only (unlike the
-   * tumble/slice view state, which never persists).
+   * Persists like `colorMode` — always-present authored look. This is distinct
+   * from the optional {@link SceneSnapshot.fourD} Saved-view pose and from its
+   * browser/session-owned automatic-motion settings.
    */
   fourDColor: FourDColorMode;
   /**
    * 4D camera-depth fade toggle (see {@link AppState.fourDDepthFade}).
-   * Persists like `fourDColor` — always present, not session-only (unlike the
-   * tumble/slice view state, which never persists).
+   * Persists like `fourDColor` — always-present authored look, rather than the
+   * optional {@link SceneSnapshot.fourD} Saved-view framing beside it.
    */
   fourDDepthFade: boolean;
   renderStyle: RenderStyle;
@@ -263,10 +267,9 @@ export interface SceneSnapshot {
    * the system is non-flat — never to an in-session undo checkpoint. (Like
    * `camera`, undo/redo across a whole-system replace DOES restore the
    * pre-replace rotor/slice, via the same out-of-band
-   * `HistoryEntry.pose` channel, never these encoded bytes.) Tumble
-   * on/off + speed are deliberately NOT part of the pose — a viewer
-   * PREFERENCE, never document state; see `FourDPose`'s own doc
-   * comment.
+   * `HistoryEntry.pose` channel, never these encoded bytes.) Tumble on/off +
+   * speed are deliberately NOT part of the pose: on/off is a browser viewer
+   * preference and speed is session-only; see `FourDPose`'s own doc comment.
    */
   fourD?: FourDPose;
   /**

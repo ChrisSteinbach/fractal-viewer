@@ -1585,9 +1585,8 @@ Frame` callback, which runs before paint so the disabled look never
     read-only settle latch `scripts/surface-repro.verify.mjs` — and any
     future visual-regression script — waits on: the surface renderer is
     bit-reproducible run to run once truly settled, PROVIDED the scene
-    document pins its camera (a pose-less scene auto-frames from a
-    `Math.random()`-seeded cloud and drifts ~0.3%/load, lighting up 1-9%
-    of pixels).
+    document pins its camera (a pose-less scene deterministically auto-fits,
+    but does not reproduce the reporter's inspection framing).
     SAVE-PNG'S ARM IS THE RENDER MODE'S, FULL STOP: a render that has not
     produced its picture yet is WAITED for behind the export
     modal (`planPngExport`'s `awaitReady`, disclosed and cancellable), never
@@ -2011,13 +2010,15 @@ min(maxBufferSize, maxStorageBufferBindingSize)/16` and a frame past
     entry froze a DOCUMENT, so a patch applies only while the live
     document still encodes to the string the entry was saved with AND the
     mode is unchanged; otherwise it is dropped, because a stale-but-honest
-    picture beats a confident wrong one. The camera pose rides the encoded
-    document, so a manual orbit invalidates too — the
+    picture beats a confident wrong one. Camera + non-flat FourDPose framing
+    ride the encoded document, so a manual orbit or rotor/slice change
+    invalidates too — the
     conservative direction, and free in the headline case since the
     auto-orbit tick sits past the render branches' early returns.
-  - `four-d-view.ts` — session-only 4D view state (rotor, tumble, slice).
-    `FourDPose` snapshots rotor + slice for persistence. `FourDTween` is the
-    directed pose glide (rotor slerp + slice lerp).
+  - `four-d-view.ts` — the session-owned live 4D view container. `FourDPose`
+    snapshots rotor + slice as Saved-view framing; auto-motion on/off is a
+    browser preference and speed is session-only. `FourDTween` is the directed
+    pose glide (rotor slerp + slice lerp).
   - `rotor4.ts` — SO(4) rotation as renormalizable unit-quaternion pair
     (`RotorPair`); `slerpRotorPair` + `normalizeRotorPair`.
   - `recorder.ts` / `mp4-duration.ts` / `webm-duration.ts` — video capture:

@@ -7850,9 +7850,9 @@ describe("Ui 4D depth-fade control", () => {
     expect(current().fourDDepthFade).toBe(true);
   });
 
-  // Unlike the session-only slice/tumble toggles, the fade is part of the
-  // persisted scene document — so updateLabels must reflect a restored state
-  // (boot from a shared link, undo/redo) back into the checkbox.
+  // Unlike optional Saved-view slice framing and browser/session-owned motion,
+  // the fade is authored scene look — so updateLabels must reflect a restored
+  // state (boot from a shared link, undo/redo) back into the checkbox.
   it("syncs the checkbox from state via updateLabels", () => {
     const ui = new Ui(document);
 
@@ -8563,6 +8563,112 @@ describe("index.html slider ranges match PARAM", () => {
     expect(attr("solidResolutionSlider", "step")).toBe(
       String(PARAM.solidResolution.snap),
     );
+  });
+});
+
+describe("visible control lifetimes", () => {
+  const normalizedText = (node: Element | null): string =>
+    node?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+
+  const labelledScope = (id: string): string => {
+    const control = document.getElementById(id);
+    if (!control) throw new Error(`No #${id} in index.html`);
+    const label = control.closest("label");
+    if (!label) throw new Error(`#${id} is not inside a label`);
+    return normalizedText(label.querySelector(".control-scope"));
+  };
+
+  it("defines the three visible scope phrases and the unmarked scene default", () => {
+    const key = document.getElementById("controlScopeKey");
+    expect(key).not.toBeNull();
+    expect(key?.classList.contains("hidden")).toBe(false);
+    expect(key?.classList.contains("visually-hidden")).toBe(false);
+    expect(normalizedText(key)).toBe(
+      "Unmarked controls edit the scene. Saved view travels when you save or share. This session resets on reload. This browser is remembered only here.",
+    );
+    for (const phrase of ["Saved view", "This session", "This browser"]) {
+      expect(normalizedText(key)).toContain(phrase);
+    }
+  });
+
+  it("marks session-owned controls without moving them", () => {
+    for (const id of [
+      "autoUpdate",
+      "morphDetail",
+      "adaptiveResolutionCheckbox",
+      "exportScale",
+      "autoOrbitSpeedSlider",
+      "fourDTumbleSpeedSlider",
+    ]) {
+      expect(labelledScope(id), id).toBe("This session");
+    }
+
+    expect(normalizedText(document.getElementById("renderModeLabel"))).toBe(
+      "Render mode This session",
+    );
+    expect(
+      document
+        .getElementById("renderModeSwitch")
+        ?.getAttribute("aria-labelledby"),
+    ).toBe("renderModeLabel");
+    expect(
+      document
+        .getElementById("renderModeSwitch")
+        ?.getAttribute("aria-describedby"),
+    ).toBe("controlScopeKey");
+  });
+
+  it("marks the two current auto-motion writers and Quick previews as browser-owned", () => {
+    for (const id of [
+      "autoOrbitToggle",
+      "fourDTumbleToggle",
+      "surfacePreviewToggle",
+    ]) {
+      expect(labelledScope(id), id).toBe("This browser");
+    }
+  });
+
+  it("associates every 4D slice field with Saved-view framing", () => {
+    const note = document.getElementById("fourDSavedViewScope");
+    expect(normalizedText(note)).toContain("Saved view");
+    expect(normalizedText(note)).toContain(
+      "restored with the current scene on reload",
+    );
+    expect(
+      normalizedText(document.getElementById("threeDSavedViewScope")),
+    ).toContain("Saved view");
+    expect(
+      normalizedText(document.getElementById("threeDSavedViewScope")),
+    ).toContain("restored with the current scene on reload");
+    for (const id of [
+      "fourDSliceToggle",
+      "fourDSliceSlider",
+      "fourDSliceThicknessSlider",
+      "fourDSliceRelColorToggle",
+    ]) {
+      expect(
+        document.getElementById(id)?.getAttribute("aria-describedby"),
+        id,
+      ).toContain("fourDSavedViewScope");
+    }
+  });
+
+  it("keeps authored 4D look outside Saved view and adds no Preferences section", () => {
+    for (const id of ["fourDColor", "fourDDepthFadeToggle"]) {
+      const control = document.getElementById(id);
+      expect(
+        control?.closest("label")?.querySelector(".control-scope"),
+        id,
+      ).toBeNull();
+      expect(control?.getAttribute("aria-describedby") ?? "", id).not.toContain(
+        "fourDSavedViewScope",
+      );
+    }
+    const summaries = Array.from(
+      document.querySelectorAll("#panelSections > details > summary"),
+      normalizedText,
+    );
+    expect(summaries).not.toContain("Preferences");
   });
 });
 

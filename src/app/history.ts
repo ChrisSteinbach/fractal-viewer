@@ -4,10 +4,11 @@
  *
  * Undo time-travels exactly the persistent subset `persist.ts` serializes —
  * transforms, render settings, symmetry, and so on (see `SceneSnapshot`).
- * View state (camera orbit, 4D tumble/slice, the current selection) stays
- * live: none of it is part of the document a user is editing, so stepping
- * through history must never yank the camera around or collapse a selection
- * the user still has open.
+ * Ordinary view state (camera orbit, 4D rotor/slice, the current selection)
+ * stays live while stepping through in-place scene edits. Camera/FourDPose
+ * framing can travel as optional Saved view fields on a persisted document,
+ * but remains outside the encoded bytes used for undo deduplication; selection
+ * is local UI state and never travels.
  *
  * Entries are stored as already-ENCODED strings rather than `SceneSnapshot`
  * objects: they are immutable (nothing can reach back into history and mutate
@@ -20,7 +21,7 @@
  * {@link HistoryEntry.pose}) alongside — but deliberately NOT inside — its
  * snapshot string, so undo/redo across a whole-system replace can restore the
  * exact pre-replace framing while the `===` dedup keeps comparing only the
- * camera-less string. That framing is the whole {@link ViewPose}
+ * view-framing-less string. That framing is the whole {@link ViewPose}
  * — the orbit camera plus, for a non-flat system, the 4D rotor/slice pose.
  * Both halves are type-only imports (from the pure `orbit.ts` and
  * `four-d-view.ts`), so this stays free of any DOM or runtime app-module
@@ -64,8 +65,8 @@ export interface HistoryEntry {
    * lands on this entry across a `replaced` transition, instead of auto-fitting
    * the restored attractor — so undoing a preset/gallery load returns to the
    * exact pre-load framing. Deliberately NOT folded into {@link snapshot}: the
-   * encoded string stays camera-less so `checkpoint`'s `===` dedup survives
-   * camera drift (see `persist.ts`'s `SceneSnapshot.camera` doc — and the live
+   * encoded string stays view-framing-less so `checkpoint`'s `===` dedup
+   * survives camera drift (see `persist.ts`'s `SceneSnapshot.camera` doc — and the live
    * 4D rotor drifts every tumble frame, which would defeat it even harder).
    * Optional because a caller may push a step with no pose (tests, or a future
    * non-camera caller); a `replaced` step with no pose falls back to

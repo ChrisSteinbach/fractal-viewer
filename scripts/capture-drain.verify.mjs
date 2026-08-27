@@ -52,9 +52,8 @@
  * editSession.beginEdit() — and main.ts's boot path assigns `state` directly
  * from loadScene()/initialState() BEFORE EditSession is even constructed, so
  * a plain boot with no user interaction never calls beginEdit() and the hash
- * never gets written (matches main.ts's own "camera is never persisted"
- * comment on the auto-orbit tick — camera pose is captured fresh, out of
- * band, only at the moment something DOES persist). So this script mints its
+ * never gets written (camera motion schedules no per-frame save — its pose is
+ * captured fresh only at the moment something DOES persist). So this script mints its
  * pinned document the way surface-repro.verify.mjs's `--mint` mode does:
  * click "Save to collection" (onSaveToCollection encodes currentDocument()
  * — the scene PLUS the live camera pose — independent of the hash/autosave

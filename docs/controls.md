@@ -119,6 +119,12 @@ in each mode, so switching Points ↔ Flame ↔ Solid ↔ Surface restores where
 were. **Transforms**, **Xaos**, and **Hybrid schedule** are shared rather than
 contextual: their top-level and nested open state, selected map, and authored
 values survive every renderer switch.
+Most controls author the scene document. Compact scope markers call out the
+exceptions in place: **Saved view** is the camera or 4D rotor/slice framing
+captured with a link, scene file, Collection entry or Timeline keyframe;
+**This session** resets with the app session; and **This browser** is remembered
+locally but never shared. These lifetimes do not change a control's section or
+whether an edit is live, restarts a render, or waits for the next entry.
 Scroll swipes that happen to land on a slider scroll the panel without
 editing its value; horizontal drags still adjust it as usual. A tap alone
 sets nothing — tap-to-set is deliberately absent on touch, since
@@ -139,7 +145,7 @@ morphs into place instead of snapping (see **Presets** below).
   current system: **∴ Points** (the live, interactive cloud), **✺ Flame**,
   **◆ Solid**, or **◈ Surface**. Each of the three renders brings its own
   accordion sections and a status block, all described below. The mode itself
-  is session-only and never rides in a link, so a shared scene or scene file
+  is **This session** and never rides in a link, so a shared scene or scene file
   always opens in Points — a **Collection** entry or a timeline keyframe can
   still be _tagged_ with the mode it was saved from, which is what re-enters
   the renderer on load (see those sections). If the browser turns out to be
@@ -524,8 +530,8 @@ morphs into place instead of snapping (see **Presets** below).
   moment you stop, developing progressively over the held image (worth
   trying on machines whose previews come out coarse, like a slow WebGPU
   stack; flipping it off mid-grind takes effect immediately). It is a
-  per-browser preference, remembered on this device and never carried by a
-  shared link. With previews on, a grinding preview shows a one-shot
+  **This browser**, remembered on this device and never carried by a shared
+  link. With previews on, a grinding preview shows a one-shot
   **Skip preview — full detail now** button under the progress row that
   abandons just that preview and starts the full render at once — the next
   move previews as usual. **Save PNG** refuses nothing and guesses at no
@@ -910,8 +916,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   undo/redo, a manual preset / Surprise Me / gallery load, switching to a
   Flame/Solid/Surface render, or starting **▶ Watch it build** — while camera drags
   and the auto-orbit / auto-tumble / W-slice view controls leave it running
-  (the camera stays independent, as ever). Session-only like auto-orbit and
-  auto-tumble — never persisted or shared — and unavailable while the OS
+  (the camera stays independent, as ever). Drift is **This session** only —
+  never persisted or shared — while the automatic-motion switches it leaves
+  alone are **This browser**. Drift is unavailable while the OS
   asks for reduced motion (the persistent status above the accordion says
   why, and is associated with the disabled button): no motion means no drift.
   Between legs the show is fully idle, so it sips battery while
@@ -1070,7 +1077,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   every in-between cloud at the scene's own point count, updating as fast as
   full generations complete — the one to pick when recording a clip of a
   morphing or drifting session. The settled attractor is always full-count
-  regardless. Session-only, like auto-update — never persisted.
+  regardless. **This session**, like Auto-update — never persisted.
 - **Point Size** — slider scaling the rendered point size from 0.25× to 4× the
   authored size; applies live (no regenerate) and carries across depth styles.
 - **Show guides** — toggle the grid, axes, and transform boxes.
@@ -1086,8 +1093,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   buffer is sized separately), and the Surface render ignores it entirely —
   that mode has its own preview/settle ladder. The Solid render's raymarch
   _is_ governed, so a slow solid trace goes soft before it goes choppy; its
-  voxel grid is unaffected either way (see **Detail**). Session-only: it is a
-  device preference, so it never rides in a link or scene file.
+  voxel grid is unaffected either way (see **Detail**). **This session**: it
+  describes this device's current rendering budget, but never rides in a link
+  or scene file.
 - **Color** (shared Scene / Look section) — remains in the same accordion slot,
   with the same open state, while you switch among Points, Flame, Solid, and
   Surface. A flat system shows **Color Mode**; a non-flat system replaces it
@@ -1318,6 +1326,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   tints the _light_ itself, by shading normal — the two compose
   additively, so both pushed hard together is worth a by-eye check.
 - **Auto-update on change** — regenerate the cloud on every edit vs. on demand.
+  **This session**; it never becomes authored scene content.
 - **Capture size** — in the **Capture** section, the resolution **Save PNG**
   renders at, as a multiple of the screen: **1× (screen)**, **2×**, or **4×
   (print)**. It is a real re-render at that size, not an upscale — the Solid
@@ -1333,7 +1342,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   matter of waiting (the modal's percentage counts the bands) rather than
   of what fits. While a video recording is rolling, Save
   PNG is pinned to 1× whatever this says — resizing the shared canvas
-  mid-stream would break the capture.
+  mid-stream would break the capture. Capture size is **This session** and is
+  not carried to another device with the scene.
 - **Save PNG** — download the current frame as a PNG. The image is the bare
   render (fractal and backdrop) without the panel, help box, or vignette, so it
   captures whatever depth style and color mode are active. The PNG is
@@ -1353,7 +1363,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   properly. For an authored clip that is frame-exact rather than realtime, use
   **Timeline → ⏺ Export clip** instead.
 - **⤓ Save scene file** — download the current scene as a small JSON
-  file: the same document bytes as 🔗 Copy link (camera pose included),
+  file: the same document bytes as 🔗 Copy link (camera and non-flat FourDPose
+  framing included),
   wrapped in a file envelope instead of a URL, for keeping scenes where a
   link doesn't fit — archives, email attachments, version control. Load one
   back with **⬆ Import file** (see **Share**) or by dropping it anywhere
@@ -1450,12 +1461,15 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   (turntable)** slowly circles the camera around the cloud — one revolution
   every ~52 s at 1× — pausing while any canvas drag is in progress and
   resuming when you let go, and **Orbit speed** scales its rate from 0.1× to
-  3×. The pair mirrors the 4D **Auto-tumble** controls exactly: on by default
-  (starting paused when the OS asks for reduced motion, as an explicit
-  opt-in), session-only (never persisted), and reset to a fresh baseline only
-  when the system flips from non-flat to flat or a whole new flat system
-  replaces it (preset load / Surprise Me) — never on a later edit, so a
-  paused or re-sped orbit survives ordinary parameter tweaks.
+  3×. The toggle is the **This browser** `autoMotion` preference shared with
+  4D auto-tumble; speed is **This session** only. Motion starts on by default
+  (paused when the OS asks for reduced motion, until an explicit opt-in) and
+  resets to that preference only when the system flips from non-flat to flat
+  or a whole new flat system replaces it — never on a later edit, so a paused
+  or re-sped orbit survives ordinary parameter tweaks. The camera angle itself
+  is **Saved view** framing: it is captured with links, scene files, Collection
+  entries and Timeline keyframes, without turning camera motion into undoable
+  scene edits.
 - **4D View** — appears once the current system is _non-flat_ (see
   [architecture.md](architecture.md#the-4d-extension)): the point cloud
   becomes an orthographic projection of a slow double rotation (XY+ZW),
@@ -1465,8 +1479,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   toward −w and warm toward +w — or two rotation-invariant modes, **By
   Transform** and **By 4D Radius (warm→cool)**, which still dim toward gray
   as |w| → 0 so the fourth dimension stays legible either way; the legend
-  keys whichever choice is active, and — unlike the tumble/slice view below
-  — the choice persists across reloads and shared links. Rendered either way
+  keys whichever choice is active, and — unlike the automatic-motion settings
+  below — the choice is authored scene content. Rendered either way
   with additive translucency so the w-layers a projection folds together
   stay _visible_ and sum toward white where they cross. Load any entry in the
   Presets dropdown's **4D** group to see one immediately — **Pentatope
@@ -1533,8 +1547,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   out), restoring the camera-z cue the projection otherwise lacks. It is off
   by default because brightness already encodes |w| (dim gray = near our
   3-space), and earns its keep in stills — Save PNG, paused video — where
-  motion parallax can't disambiguate depth; unlike the tumble/slice view
-  state it persists across reloads and shared links, exactly like **4D
+  motion parallax can't disambiguate depth; unlike the automatic-motion
+  settings it is authored scene content, exactly like **4D
   Color**. The camera orbits the projection as usual, and Points / Point
   Size / Regenerate / guides / Save PNG stay live, as do the transform list
   and every transform's editor — and so does the render-mode switch: Flame,
@@ -1571,19 +1585,26 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   kaleidoscope stage, so Order, Plane, and Twist keep editing the live
   projection — and the frozen flame/solid snapshots and the live surface
   tracer render the same kaleidoscope (see **Symmetry** above). The
-  tumble/slice view is session-only (never persisted) and resets to
-  a fresh baseline only when the system flips from flat to non-flat, or a
-  whole new system replaces it (preset load / Surprise Me) — never on a
-  later edit, so an in-progress tumble/slice survives ordinary parameter
-  tweaks. See
+  live 4D view object stays outside AppState, so motion and slice gestures do
+  not create undo steps or schedule a save on every frame. Its rotor and slice
+  fields are nevertheless **Saved view** framing: a FourDPose snapshot travels
+  with links, scene files, Collection entries and Timeline keyframes, then is
+  restored on load. Auto-tumble on/off is the shared **This browser** motion
+  preference, while Tumble speed is **This session** only. A pose-less fresh
+  view resets when the system flips from flat to non-flat, or a preset /
+  Surprise Me replaces it; a loaded Saved view restores its pose over that
+  baseline. A later parameter edit never resets it, so an in-progress
+  tumble/slice survives ordinary tweaks. See
   [4d-exploration.md](4d-exploration.md) for the design.
 
 ## Sharing & persistence
 
-The scene — transforms, the optional final transform, point count and size, color
-mode, depth style, backdrop and atmosphere (fog, balloon, and floor included),
-and guide visibility — is encoded into the page URL (`#v1=…`)
-as you edit, and mirrored to `localStorage`. So:
+The scene — transforms, the optional final transform, point count and size,
+color mode, depth style, backdrop and atmosphere (fog, balloon, and floor
+included), and guide visibility — plus its optional **Saved view** camera or 4D
+rotor/slice framing is encoded into the page URL (`#v1=…`) as you edit and
+mirrored to `localStorage`. Explicit saves capture the view as it looks at that
+moment. So:
 
 - **Copy the address bar to share a fractal.** Opening that link recreates the
   exact system; a pasted link takes priority over any locally saved scene.
@@ -1602,6 +1623,10 @@ as you edit, and mirrored to `localStorage`. So:
   profile, and these files are how a library survives clearing site data or
   moving devices.
 
-Camera angle, selection, and panel state are intentionally left out — a shared
-link is about the _system_, not where you happened to be looking. See
+Camera angle and 4D rotor/slice framing travel as **Saved view**, while
+selection and panel state stay local UI state. Render mode, Auto-update, Morph
+Detail, Adaptive resolution, Capture size and motion speed are **This session**;
+Quick previews and the shared auto-motion choice are **This browser**. Neither
+lifetime rides in the shared scene, though Collection and Timeline separately
+tag their entries with a renderer so those workflows can re-enter it. See
 `src/app/persist.ts` (the codec rejects malformed links rather than throwing).

@@ -9,10 +9,12 @@ import type { RotorPair } from "./rotor4";
 import { smoothstep } from "./orbit";
 
 /**
- * Session-only 4D projection VIEW state — the accumulated rotor (tumble ticks
- * and Shift-drag/Shift-wheel gestures all compose into it, see rotor4.ts), the
+ * Live 4D projection VIEW state — the accumulated rotor (tumble ticks and
+ * Shift-drag/Shift-wheel gestures all compose into it, see rotor4.ts), the
  * tumble pause/speed, and the soft w-slice — plus the pure decision table for
- * when a regenerate() must reset it (`viewTransition`). Kept separate from
+ * when a regenerate() must reset it (`viewTransition`). The instance is owned
+ * by this session, while {@link FourDPose} snapshots its rotor/slice as Saved
+ * view framing; auto-motion is browser-owned and speed is session-only. Kept separate from
  * main.ts's closure so the state machine is unit-tested without a browser,
  * the same way `orbit.ts` is for the 3D camera.
  *
@@ -26,9 +28,9 @@ import { smoothstep } from "./orbit";
  * so this class exposes the pair only indirectly, via `matrix()`,
  * `reset()`, `tick()`, `rotate()`, `pose()` / `applyPose()` — unlike
  * `tumbleOn`/`tumbleSpeed`/`sliceOn`/`sliceCenter`/`sliceThickness`/
- * `sliceRelColor`, which are plain session data with no invariant to
- * protect, so the animate loop and UI handlers read and write them
- * directly. One exception: the UI's tumble CHECKBOX flows through
+ * `sliceRelColor`, which are plain live fields with no invariant to protect,
+ * so the animate loop and UI handlers read and write them directly. One
+ * exception: the UI's tumble CHECKBOX flows through
  * `setTumbleUserChoice`, not a bare `tumbleOn` write, because a manual toggle
  * must also be remembered as the sticky choice that future `reset()`s
  * respect.
@@ -87,8 +89,9 @@ export function viewTransition(
  * The persistable 4D VIEW pose — the 4D sibling of orbit.ts's
  * `CameraPose`: the accumulated view rotor plus the soft w-slice
  * window, everything needed to reproduce a saved 4D framing. Deliberately
- * EXCLUDES `tumbleOn`/`tumbleSpeed`: auto-motion is a viewer PREFERENCE
- * (the combined auto-motion pref), never document state.
+ * EXCLUDES `tumbleOn`/`tumbleSpeed`: on/off is the combined browser-owned
+ * auto-motion preference, while speed is session-only; neither is document
+ * state.
  */
 export interface FourDPose {
   pair: RotorPair;
@@ -103,9 +106,9 @@ export interface FourDPose {
 }
 
 /**
- * Session-only 4D projection VIEW state: the accumulated rotor (tumble +
- * Shift-drag/wheel all compose into it), the tumble pause/speed, and the soft
- * w-slice. The live instance itself is never persisted, never part of
+ * Session-owned live 4D projection VIEW container: the accumulated rotor
+ * (tumble + Shift-drag/wheel all compose into it), the tumble pause/speed, and
+ * the soft w-slice. The live instance itself is never persisted, never part of
  * AppState/undo — but a `pose()` snapshot ({@link FourDPose})
  * IS persisted via the document (a saved/shared scene, a timeline keyframe),
  * restored on load through `applyPose()`, and the same snapshot
@@ -121,8 +124,8 @@ export class FourDView {
    * the checkbox. `null` = untouched, so reset() follows the
    * reduced-motion default; after a manual toggle reset() follows this
    * instead — a fresh visit must not re-enable a tumble the user turned off
-   * (nor re-pause a reduced-motion user's explicit opt-in). Session-only,
-   * like everything else here. */
+   * (nor re-pause a reduced-motion user's explicit opt-in). This field is the
+   * current session's mirror of the browser-owned autoMotion preference. */
   private tumbleUserChoice: boolean | null = null;
 
   /** Tumble running? Paused (false) under reduced motion after reset(). */

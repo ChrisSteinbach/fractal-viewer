@@ -466,9 +466,10 @@ export interface AppState {
    * How the 4D projection view colors points: a diverging signed-w
    * palette or a baked structural mode — see `fractal/types.ts`'s
    * {@link FourDColorMode} and `color.ts`'s `buildColors4`. Persists like
-   * `colorMode` / `renderStyle` (NOT session-only, unlike the tumble/slice
-   * view state), and is simply inert while the system is flat — exactly as
-   * `colorMode` is inert while it is non-flat.
+   * `colorMode` / `renderStyle` as authored look, distinct from the optional
+   * Saved-view FourDPose that carries rotor/slice framing, and is simply inert
+   * while the system is flat — exactly as `colorMode` is inert while it is
+   * non-flat.
    */
   fourDColor: FourDColorMode;
   /**
@@ -479,9 +480,9 @@ export interface AppState {
    * because the 4D shader already spends luminance on |w| — dim gray means
    * "near our 3-space" — so a distance fade makes dimness ambiguous; its
    * value is stills (PNG capture / paused video), where motion parallax
-   * can't disambiguate depth. A look preference, so it persists like
-   * `fourDColor` (NOT session-only, unlike the tumble/slice view state) and
-   * is simply inert while the system is flat.
+   * can't disambiguate depth. Authored look, so it persists like `fourDColor`
+   * rather than as optional Saved-view framing, and is simply inert while the
+   * system is flat.
    */
   fourDDepthFade: boolean;
   /**
