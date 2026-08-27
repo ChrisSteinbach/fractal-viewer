@@ -675,6 +675,13 @@
               </select>
             </label>
             <div id="rampCustomPaletteRow" class="custom-palette-row hidden">
+              <p
+                id="rampCustomPaletteDisclosure"
+                class="custom-palette-disclosure"
+              >
+                Shared Custom gradient. Every non-Balloon palette set to Custom
+                uses these stops; Balloon Custom stays separate.
+              </p>
               <div
                 id="rampCustomPaletteStrip"
                 class="custom-palette-strip"
@@ -689,6 +696,7 @@
                   id="rampCustomPaletteRemove"
                   type="button"
                   title="Remove the last color stop"
+                  aria-describedby="rampCustomPaletteDisclosure"
                 >
                   − Stop
                 </button>
@@ -697,6 +705,7 @@
                   id="rampCustomPaletteAdd"
                   type="button"
                   title="Add a color stop"
+                  aria-describedby="rampCustomPaletteDisclosure"
                 >
                   + Stop
                 </button>
@@ -799,6 +808,13 @@
               class="custom-palette-row hidden"
               aria-describedby="balloonTimingHint balloonNote"
             >
+              <p
+                id="balloonCustomPaletteDisclosure"
+                class="custom-palette-disclosure"
+              >
+                Balloon-only Custom gradient. It does not change the shared
+                gradient used by other palettes.
+              </p>
               <div
                 id="balloonCustomPaletteStrip"
                 class="custom-palette-strip"
@@ -813,7 +829,7 @@
                   id="balloonCustomPaletteRemove"
                   type="button"
                   title="Remove the last balloon color stop"
-                  aria-describedby="balloonTimingHint balloonNote"
+                  aria-describedby="balloonTimingHint balloonNote balloonCustomPaletteDisclosure"
                 >
                   − Stop
                 </button>
@@ -822,7 +838,7 @@
                   id="balloonCustomPaletteAdd"
                   type="button"
                   title="Add a balloon color stop"
-                  aria-describedby="balloonTimingHint balloonNote"
+                  aria-describedby="balloonTimingHint balloonNote balloonCustomPaletteDisclosure"
                 >
                   + Stop
                 </button>
@@ -948,6 +964,13 @@
             id="backgroundCustomPaletteRow"
             class="custom-palette-row hidden"
           >
+            <p
+              id="backgroundCustomPaletteDisclosure"
+              class="custom-palette-disclosure"
+            >
+              Shared Custom gradient. Every non-Balloon palette set to Custom
+              uses these stops; Balloon Custom stays separate.
+            </p>
             <div
               id="backgroundCustomPaletteStrip"
               class="custom-palette-strip"
@@ -962,6 +985,7 @@
                 id="backgroundCustomPaletteRemove"
                 type="button"
                 title="Remove the last color stop"
+                aria-describedby="backgroundCustomPaletteDisclosure"
               >
                 − Stop
               </button>
@@ -970,6 +994,7 @@
                 id="backgroundCustomPaletteAdd"
                 type="button"
                 title="Add a color stop"
+                aria-describedby="backgroundCustomPaletteDisclosure"
               >
                 + Stop
               </button>
@@ -1252,6 +1277,13 @@
             </select>
           </label>
           <div id="flameCustomPaletteRow" class="custom-palette-row hidden">
+            <p
+              id="flameCustomPaletteDisclosure"
+              class="custom-palette-disclosure"
+            >
+              Shared Custom gradient. Every non-Balloon palette set to Custom
+              uses these stops; Balloon Custom stays separate.
+            </p>
             <div
               id="flameCustomPaletteStrip"
               class="custom-palette-strip"
@@ -1266,6 +1298,7 @@
                 id="flameCustomPaletteRemove"
                 type="button"
                 title="Remove the last color stop"
+                aria-describedby="flameCustomPaletteDisclosure"
               >
                 − Stop
               </button>
@@ -1274,6 +1307,7 @@
                 id="flameCustomPaletteAdd"
                 type="button"
                 title="Add a color stop"
+                aria-describedby="flameCustomPaletteDisclosure"
               >
                 + Stop
               </button>
@@ -1392,6 +1426,13 @@
             </select>
           </label>
           <div id="solidCustomPaletteRow" class="custom-palette-row hidden">
+            <p
+              id="solidCustomPaletteDisclosure"
+              class="custom-palette-disclosure"
+            >
+              Shared Custom gradient. Every non-Balloon palette set to Custom
+              uses these stops; Balloon Custom stays separate.
+            </p>
             <div
               id="solidCustomPaletteStrip"
               class="custom-palette-strip"
@@ -1406,6 +1447,7 @@
                 id="solidCustomPaletteRemove"
                 type="button"
                 title="Remove the last color stop"
+                aria-describedby="solidCustomPaletteDisclosure"
               >
                 − Stop
               </button>
@@ -1414,6 +1456,7 @@
                 id="solidCustomPaletteAdd"
                 type="button"
                 title="Add a color stop"
+                aria-describedby="solidCustomPaletteDisclosure"
               >
                 + Stop
               </button>
@@ -1540,6 +1583,13 @@
               </select>
             </label>
             <div id="surfaceCustomPaletteRow" class="custom-palette-row hidden">
+              <p
+                id="surfaceCustomPaletteDisclosure"
+                class="custom-palette-disclosure"
+              >
+                Shared Custom gradient. Every non-Balloon palette set to Custom
+                uses these stops; Balloon Custom stays separate.
+              </p>
               <div
                 id="surfaceCustomPaletteStrip"
                 class="custom-palette-strip"
@@ -1554,6 +1604,7 @@
                   id="surfaceCustomPaletteRemove"
                   type="button"
                   title="Remove the last color stop"
+                  aria-describedby="surfaceCustomPaletteDisclosure"
                 >
                   − Stop
                 </button>
@@ -1562,6 +1613,7 @@
                   id="surfaceCustomPaletteAdd"
                   type="button"
                   title="Add a color stop"
+                  aria-describedby="surfaceCustomPaletteDisclosure"
                 >
                   + Stop
                 </button>

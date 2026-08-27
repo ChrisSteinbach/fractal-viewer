@@ -1216,6 +1216,11 @@ summary.editor-group-title {
   display: none;
 }
 
+.custom-palette-disclosure {
+  margin: 0;
+  line-height: 1.45;
+}
+
 .custom-palette-strip {
   width: 100%;
   height: 14px;

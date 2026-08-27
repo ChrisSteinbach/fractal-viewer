@@ -220,11 +220,12 @@ export interface SceneSnapshot {
    */
   background: BackgroundParams;
   /**
-   * The one user-authored gradient slot (see
+   * The one primary user-authored gradient slot shared by the Points ramp,
+   * Flame, Solid, Surface, and generated Flame background (see
    * {@link AppState.customPalette}). Optional like `finalTransform` — absent
-   * until a palette selection first lands on Custom — unlike the always-
-   * present settings blocks above (`flame`/`solid`/`symmetry`/
-   * `glowBrightness`).
+   * until one of those palette selections first lands on Custom — unlike the
+   * always-present settings blocks above. Balloon's independent Custom
+   * gradient is {@link balloonCustomPalette} below.
    */
   customPalette?: CustomPalette;
   /**
@@ -542,11 +543,10 @@ const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
 
 /**
  * Exact set of valid BUILT-IN palette ids (see `palette.ts`'s
- * `FLAME_PALETTES`), shared by the flame (`flame.paletteId`) and solid
- * (`solid.paletteId`) validators. Deliberately excludes
- * {@link CUSTOM_PALETTE_ID}: `"custom"` is only ever valid alongside
- * an actually-decoded `customPalette` payload, a condition this fixed set
- * can't express — `decodeFlameParams`/`decodeSolidParams` check for that
+ * `FLAME_PALETTES`), shared by all five primary palette validators.
+ * Deliberately excludes {@link CUSTOM_PALETTE_ID}: `"custom"` is only ever
+ * valid alongside an actually-decoded `customPalette` payload, a condition
+ * this fixed set can't express — the consumer decoders check for that
  * separately via their `hasCustomPalette` parameter.
  */
 const VALID_PALETTE_IDS = new Set<string>(FLAME_PALETTE_IDS);
@@ -1388,9 +1388,9 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
  * axis or `decodeFlameParams`'s paletteId for the same rule applied to a
  * single value rather than an array).
  *
- * Called BEFORE `decodeFlameParams`/`decodeSolidParams` in `decodeScene`, so
- * its result can tell them whether a `"custom"` paletteId selection actually
- * has a payload to back it.
+ * Called before every primary palette selection is decoded in `decodeScene`,
+ * so Flame, Solid, Surface, the Points ramp, and the generated Flame background
+ * can each tell whether a `"custom"` selection has a payload to back it.
  */
 function decodeCustomPalette(raw: unknown): CustomPalette | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
@@ -2757,11 +2757,11 @@ export function encodeScene(s: SceneSnapshot): string {
  * and never rejects the scene — absent, malformed, or an out-of-range stop
  * count all quietly decode to `undefined` (see {@link decodeCustomPalette}),
  * the same cosmetic-field spirit as glowBrightness/colorGamma. Consequently,
- * flame.paletteId / solid.paletteId accept the `"custom"` id only when a
+ * all five primary palette selections accept the `"custom"` id only when a
  * valid customPalette payload actually decoded alongside it; a `"custom"`
- * selection with nothing to back it falls back to that block's default
- * paletteId exactly like any other unrecognized id (see
- * {@link decodeFlameParams}).
+ * selection with nothing to back it falls back to that consumer's default
+ * exactly like any other unrecognized id (see {@link decodeFlameParams},
+ * {@link decodeSurfaceParams}, and {@link decodeBackground}).
  *
  * positionAxisColors follows the identical quiet-fallback contract:
  * absent or malformed decodes to `undefined` — the legacy axis mapping —
@@ -2902,9 +2902,9 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     if (!Number.isFinite(rawPointSize)) return null;
     const pointSize = clampToSpec(PARAM.pointSize, rawPointSize);
 
-    // customPalette: decoded BEFORE flame/solid so their paletteId
-    // logic can tell whether a "custom" selection actually has a payload to
-    // back it. Never rejects the scene — see decodeCustomPalette.
+    // customPalette: decoded BEFORE every primary palette selection so each
+    // one's logic can tell whether a "custom" selection actually has a
+    // payload to back it. Never rejects the scene — see decodeCustomPalette.
     const customPalette = decodeCustomPalette(o.customPalette);
 
     // Balloon Custom is an independent authored slot. Decode it regardless of
@@ -2922,10 +2922,9 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // colors. Never rejects the scene — see decodePositionAxisColors.
     const positionAxisColors = decodePositionAxisColors(o.positionAxisColors);
 
-    // flame/solid: an absent block defaults quietly; present-but-malformed
-    // rejects the whole scene. See decodeFlameParams / decodeSolidParams. A
-    // "custom" paletteId is honored only when customPalette (above) actually
-    // decoded.
+    // flame/solid/surface: an absent block defaults quietly;
+    // present-but-malformed rejects the whole scene. A "custom" paletteId is
+    // honored only when customPalette (above) actually decoded.
     const flame = decodeFlameParams(o.flame, customPalette !== undefined);
     if (flame === null) return null;
     const solid = decodeSolidParams(o.solid, customPalette !== undefined);

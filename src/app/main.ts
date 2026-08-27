@@ -201,7 +201,11 @@ import {
   updateTransform,
 } from "./state";
 import type { AppState, RenderMode } from "./state";
-import { applyScalarControl, surfaceColorLUT } from "./control-spec";
+import {
+  applyScalarControl,
+  surfaceColorLUT,
+  surfaceColorSourceUsesOwnPalette,
+} from "./control-spec";
 import type { ControlEffects } from "./control-spec";
 import {
   decodeScene,
@@ -6864,16 +6868,13 @@ function main(): void {
       if (state.solid.paletteId === CUSTOM_PALETTE_ID)
         solidSession.post({ type: "setPalette", palette });
       // The surface tracer's LUT bakes whichever palette its colorSource
-      // samples — the surface palette (orbit trap, rings, or sheets — rings
-      // and sheets ride the same paletteId as the orbit trap) or the explorer
-      // ramp (height/radius) — so re-upload it whenever the edited gradient
-      // is the one it currently samples. Pure uniforms: the change lands next
-      // frame, mid-render, with nothing to restart.
+      // samples — the Surface palette (orbit trap, rings, sheets, or shape
+      // trap) or the explorer ramp (height/radius) — so re-upload it whenever
+      // the edited gradient is the one it currently samples. Pure uniforms:
+      // the change lands next frame, mid-render, with nothing to restart.
       const surfaceSource = state.surface.colorSource;
       if (
-        ((surfaceSource === "palette" ||
-          surfaceSource === "rings" ||
-          surfaceSource === "sheets") &&
+        (surfaceColorSourceUsesOwnPalette(surfaceSource) &&
           state.surface.paletteId === CUSTOM_PALETTE_ID) ||
         ((surfaceSource === "height" || surfaceSource === "radius") &&
           state.rampPaletteId === CUSTOM_PALETTE_ID)

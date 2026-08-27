@@ -1400,6 +1400,25 @@ describe("balloon custom palette editors", () => {
     }
   });
 
+  it("discloses Balloon-only scope and associates every editor control", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(authoredBalloonState());
+    const disclosure = document.getElementById(
+      "balloonCustomPaletteDisclosure",
+    ) as HTMLElement;
+
+    expect(disclosure.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "Balloon-only Custom gradient. It does not change the shared gradient used by other palettes.",
+    );
+    for (const control of document.querySelectorAll<HTMLElement>(
+      "#balloonCustomPaletteStops input, #balloonCustomPaletteRow button",
+    )) {
+      expect(control.getAttribute("aria-describedby")?.split(/\s+/)).toContain(
+        disclosure.id,
+      );
+    }
+  });
+
   it("keeps balloon stops visually independent from the primary Custom slot", () => {
     const ui = new Ui(document);
     ui.updateLabels({
@@ -5853,6 +5872,89 @@ describe("Ui independent renderer lighting", () => {
 });
 
 describe("custom palette editor", () => {
+  const primaryKinds = [
+    "ramp",
+    "background",
+    "flame",
+    "solid",
+    "surface",
+  ] as const;
+  const sharedDisclosure =
+    "Shared Custom gradient. Every non-Balloon palette set to Custom uses these stops; Balloon Custom stays separate.";
+
+  function allPrimaryPalettesCustom(): AppState {
+    const base = initialState(true);
+    return {
+      ...base,
+      colorMode: "height",
+      rampPaletteId: "custom",
+      background: { mode: "flame", flamePaletteId: "custom" },
+      flame: { ...base.flame, paletteId: "custom" },
+      solid: { ...base.solid, paletteId: "custom" },
+      surface: {
+        ...base.surface,
+        colorSource: "palette",
+        paletteId: "custom",
+      },
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    };
+  }
+
+  it("mirrors one shared gradient with identical visible scope disclosure and ARIA associations", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(allPrimaryPalettesCustom());
+
+    for (const kind of primaryKinds) {
+      const disclosure = document.getElementById(
+        `${kind}CustomPaletteDisclosure`,
+      ) as HTMLElement;
+      expect(disclosure.textContent?.replace(/\s+/g, " ").trim()).toBe(
+        sharedDisclosure,
+      );
+      expect(
+        Array.from(
+          document.querySelectorAll<HTMLInputElement>(
+            `#${kind}CustomPaletteStops input[type="color"]`,
+          ),
+        ).map((input) => input.value),
+      ).toEqual(["#ff0000", "#00ff00"]);
+      for (const control of document.querySelectorAll<HTMLElement>(
+        `#${kind}CustomPaletteStops input, #${kind}CustomPaletteRow button`,
+      )) {
+        expect(
+          control.getAttribute("aria-describedby")?.split(/\s+/),
+        ).toContain(disclosure.id);
+      }
+    }
+  });
+
+  it.each(primaryKinds)(
+    "%s mirror dispatches the one primary callback and never the Balloon callback",
+    (kind) => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.updateLabels(allPrimaryPalettesCustom());
+      const input = document.querySelector<HTMLInputElement>(
+        `#${kind}CustomPaletteStops input[type="color"]`,
+      )!;
+
+      input.value = "#0000ff";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+
+      expect(handlers.onCustomPaletteStops).toHaveBeenCalledWith([
+        [0, 0, 1],
+        [0, 1, 0],
+      ]);
+      expect(handlers.onBalloonCustomPaletteStops).not.toHaveBeenCalled();
+    },
+  );
+
   it("hides the flame custom-palette row while the palette is a preset id", () => {
     const ui = new Ui(document);
     ui.updateLabels(initialState(true));

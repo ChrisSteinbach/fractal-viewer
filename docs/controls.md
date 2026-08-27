@@ -1054,12 +1054,16 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   the ramp and blend linearly between neighbors; there may be 2 to 8 of them
   and the buttons disable at those bounds. **+ Stop** appends a copy of the
   last color, so the gradient doesn't jump until you recolor the new swatch.
-  A scene has exactly ONE custom gradient, and all four selects offering it
-  edit that same one: **Ramp Palette** here, **Palette (restarts render)** in
-  Flame's **Tone** section and in Solid's **Surface** section (those two
-  restart the accumulation, as their labels say, where this one and the
-  surface tracer's apply live), and **Palette** in Surface's **Color** section. A look
-  authored in one render is therefore one select away in the others. The first
+  A scene has exactly ONE shared primary custom gradient, and all five selects
+  offering it edit that same one: **Ramp Palette** here, **Palette (restarts
+  render)** in Flame's **Tone** section and in Solid's **Surface** section
+  (those two restart accumulation, while the ramp and Surface tracer apply
+  live), **Palette** in Surface's **Color** section, and **Flame Color** for the
+  generated Flame background in **Atmosphere**. Each editor says this directly:
+  every non-Balloon palette set to Custom uses those stops. Balloon's Custom
+  gradient is explicitly Balloon-only and never changes this shared primary
+  gradient. A look authored in one render is therefore one select away in the
+  others. The first
   select to reach **Custom** seeds the gradient by sampling the palette it just
   replaced, so Custom always opens as a tweakable copy of what was on screen
   rather than a blank ramp; it then survives switching back to a named palette,

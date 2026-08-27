@@ -2235,6 +2235,7 @@ export class Ui {
     "background" | "flame" | "solid" | "surface" | "ramp",
     {
       row: HTMLElement;
+      disclosureId: string;
       strip: HTMLElement;
       stops: HTMLElement;
       add: HTMLButtonElement;
@@ -2245,6 +2246,7 @@ export class Ui {
   /** The Balloon's one Custom editor, backed by its independent stop slot. */
   private readonly balloonCustomPaletteEditor: {
     row: HTMLElement;
+    disclosureId: string;
     strip: HTMLElement;
     stops: HTMLElement;
     add: HTMLButtonElement;
@@ -2654,6 +2656,7 @@ export class Ui {
     this.customPaletteEditors = {
       background: {
         row: this.byId("backgroundCustomPaletteRow"),
+        disclosureId: this.byId("backgroundCustomPaletteDisclosure").id,
         strip: this.byId("backgroundCustomPaletteStrip"),
         stops: this.byId("backgroundCustomPaletteStops"),
         add: this.byId("backgroundCustomPaletteAdd"),
@@ -2661,6 +2664,7 @@ export class Ui {
       },
       flame: {
         row: this.byId("flameCustomPaletteRow"),
+        disclosureId: this.byId("flameCustomPaletteDisclosure").id,
         strip: this.byId("flameCustomPaletteStrip"),
         stops: this.byId("flameCustomPaletteStops"),
         add: this.byId("flameCustomPaletteAdd"),
@@ -2668,6 +2672,7 @@ export class Ui {
       },
       solid: {
         row: this.byId("solidCustomPaletteRow"),
+        disclosureId: this.byId("solidCustomPaletteDisclosure").id,
         strip: this.byId("solidCustomPaletteStrip"),
         stops: this.byId("solidCustomPaletteStops"),
         add: this.byId("solidCustomPaletteAdd"),
@@ -2675,6 +2680,7 @@ export class Ui {
       },
       surface: {
         row: this.byId("surfaceCustomPaletteRow"),
+        disclosureId: this.byId("surfaceCustomPaletteDisclosure").id,
         strip: this.byId("surfaceCustomPaletteStrip"),
         stops: this.byId("surfaceCustomPaletteStops"),
         add: this.byId("surfaceCustomPaletteAdd"),
@@ -2682,6 +2688,7 @@ export class Ui {
       },
       ramp: {
         row: this.byId("rampCustomPaletteRow"),
+        disclosureId: this.byId("rampCustomPaletteDisclosure").id,
         strip: this.byId("rampCustomPaletteStrip"),
         stops: this.byId("rampCustomPaletteStops"),
         add: this.byId("rampCustomPaletteAdd"),
@@ -2690,6 +2697,7 @@ export class Ui {
     };
     this.balloonCustomPaletteEditor = {
       row: this.byId("balloonCustomPaletteRow"),
+      disclosureId: this.byId("balloonCustomPaletteDisclosure").id,
       strip: this.byId("balloonCustomPaletteStrip"),
       stops: this.byId("balloonCustomPaletteStops"),
       add: this.byId("balloonCustomPaletteAdd"),
@@ -3973,7 +3981,7 @@ export class Ui {
    * gating — flat: `colorModeUsesRampPalette`; non-flat: `fourDColor ===
    * "radius"`), so {@link updateLabels}' container gating composes on top
    * of the isCustom gating handled here — both must hold for those editors
-   * to actually show. All four edit the same shared slot (see `state.ts`'s
+   * to actually show. All five edit the same shared slot (see `state.ts`'s
    * `AppState.customPalette`), so switching which one is "custom" never
    * loses an in-progress edit. The stop inputs are only rebuilt when their
    * count changes (add/remove, or a fresh seed) — an ordinary recolor
@@ -4025,6 +4033,7 @@ export class Ui {
           // The swatch is the input's whole visible face — no room for a
           // text label, so name it for assistive tech instead.
           input.setAttribute("aria-label", `Color stop ${i + 1}`);
+          input.setAttribute("aria-describedby", editor.disclosureId);
           editor.stops.appendChild(input);
         });
       } else {
@@ -4066,7 +4075,10 @@ export class Ui {
         input.type = "color";
         input.value = rgbToHex(stop);
         input.setAttribute("aria-label", `Balloon color stop ${i + 1}`);
-        input.setAttribute("aria-describedby", "balloonTimingHint balloonNote");
+        input.setAttribute(
+          "aria-describedby",
+          `balloonTimingHint balloonNote ${editor.disclosureId}`,
+        );
         editor.stops.appendChild(input);
       });
     } else {
