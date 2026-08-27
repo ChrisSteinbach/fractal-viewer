@@ -1418,6 +1418,11 @@
           name="panel-section"
         >
           <summary>Lighting</summary>
+          <p id="solidLightingDisclosure" class="flame-hint">
+            Solid keeps an independent lighting look for its voxel volume. These
+            controls update only the Solid renderer, live; Surface lighting is
+            preserved separately.
+          </p>
           <label class="select-label">
             Light Angle: <span id="solidLightAzimuthLabel">135°</span>
             <input
@@ -1777,6 +1782,12 @@
           name="panel-section"
         >
           <summary>Lighting</summary>
+          <p id="surfaceLightingDisclosure" class="flame-hint">
+            Surface keeps an independent lighting look for its analytic
+            material. These controls update only the Surface renderer, live;
+            Solid lighting is preserved separately, and Environment is
+            Surface-only.
+          </p>
           <label class="select-label">
             Light Angle: <span id="surfaceLightAzimuthLabel">135°</span>
             <input

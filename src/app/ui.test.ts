@@ -5766,6 +5766,92 @@ describe("Ui solid render controls", () => {
   });
 });
 
+describe("Ui independent renderer lighting", () => {
+  it.each([
+    [
+      "solid",
+      "solidLightingSection",
+      "solidLightingDisclosure",
+      ["independent lighting look", "only the Solid renderer", "Surface"],
+    ],
+    [
+      "surface",
+      "surfaceLightingSection",
+      "surfaceLightingDisclosure",
+      [
+        "independent lighting look",
+        "only the Surface renderer",
+        "Environment is Surface-only",
+      ],
+    ],
+  ] as const)(
+    "puts the %s disclosure first in its contextual Lighting section",
+    (renderMode, sectionId, disclosureId, phrases) => {
+      const ui = new Ui(document);
+      ui.updateLabels({ ...initialState(true), renderMode });
+      const section = document.getElementById(sectionId) as HTMLDetailsElement;
+      const disclosure = document.getElementById(disclosureId) as HTMLElement;
+
+      expect(section.classList.contains("hidden")).toBe(false);
+      expect(section.querySelector("summary")?.nextElementSibling).toBe(
+        disclosure,
+      );
+      expect(disclosure.classList.contains("hidden")).toBe(false);
+      const disclosureText = disclosure.textContent?.replace(/\s+/g, " ");
+      for (const phrase of phrases) {
+        expect(disclosureText).toContain(phrase);
+      }
+    },
+  );
+
+  it("restores divergent Solid and Surface lighting across mode switches", () => {
+    const ui = new Ui(document);
+    const state = {
+      ...initialState(true),
+      solid: {
+        ...initialState(true).solid,
+        lightAzimuth: -45,
+        lightElevation: 70,
+        ambient: 0.2,
+      },
+      surface: {
+        ...initialState(true).surface,
+        lightAzimuth: 95,
+        lightElevation: 30,
+        ambient: 0.65,
+        envLight: 0.8,
+      },
+    };
+    const value = (id: string): string =>
+      (document.getElementById(id) as HTMLInputElement).value;
+
+    ui.updateLabels({ ...state, renderMode: "solid" });
+    expect(value("solidLightAzimuthSlider")).toBe("-45");
+    expect(value("solidLightElevationSlider")).toBe("70");
+    expect(value("solidAmbientSlider")).toBe("0.2");
+    expect(
+      document
+        .getElementById("surfaceLightingSection")
+        ?.classList.contains("hidden"),
+    ).toBe(true);
+
+    ui.updateLabels({ ...state, renderMode: "surface" });
+    expect(value("surfaceLightAzimuthSlider")).toBe("95");
+    expect(value("surfaceLightElevationSlider")).toBe("30");
+    expect(value("surfaceAmbientSlider")).toBe("0.65");
+    expect(value("surfaceEnvLightSlider")).toBe("0.8");
+    expect(
+      document
+        .getElementById("solidLightingSection")
+        ?.classList.contains("hidden"),
+    ).toBe(true);
+
+    ui.updateLabels({ ...state, renderMode: "solid" });
+    expect(value("solidLightAzimuthSlider")).toBe("-45");
+    expect(value("solidAmbientSlider")).toBe("0.2");
+  });
+});
+
 describe("custom palette editor", () => {
   it("hides the flame custom-palette row while the palette is a preset id", () => {
     const ui = new Ui(document);

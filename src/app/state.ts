@@ -231,6 +231,9 @@ export interface FlameParams {
  * Settings for the solid render (`src/fractal/voxel.ts` + the GPU
  * raymarcher in `scene.ts`). Persists as a render-settings block like
  * {@link FlameParams}, independent of whether a render is active.
+ * Its lighting fields deliberately remain independent from
+ * {@link SurfaceParams}: this look shades an accumulated voxel volume through
+ * Solid's own material/effect lane, even where the controls share vocabulary.
  */
 export interface SolidParams {
   /**
@@ -327,6 +330,9 @@ export type SurfaceFloorPattern = (typeof SURFACE_FLOOR_PATTERNS)[number];
  * analytic distance estimator). Persists as a render-settings block like
  * {@link FlameParams}/{@link SolidParams}, independent of whether the render
  * is active.
+ * Its lighting fields deliberately remain independent from Solid's: this look
+ * shades an analytic surface through its own material/effect lane, and
+ * {@link envLight} has no Solid counterpart.
  *
  * Every field here is a LIVE GPU uniform: the tracer has no accumulation to
  * restart at all (unlike the flame's histogram or the solid render's voxel
@@ -608,10 +614,11 @@ export interface AppState {
   panelOpen: boolean;
   /** Render-current-view settings; persists independent of {@link renderMode}. */
   flame: FlameParams;
-  /** Solid render settings; persists independent of {@link renderMode}. */
+  /** Solid render settings; persists independent of {@link renderMode} and
+   * separately from {@link surface}, including its lighting look. */
   solid: SolidParams;
   /** Surface render settings; persists independent of {@link renderMode},
-   * like {@link solid}. */
+   * and separately from {@link solid}, including its lighting look. */
   surface: SurfaceParams;
   /**
    * Which renderer is displaying the attractor — see

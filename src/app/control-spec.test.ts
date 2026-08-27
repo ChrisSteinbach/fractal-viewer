@@ -1149,6 +1149,8 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.scene.setSolidParams).toHaveBeenCalledWith(state.solid);
+      expect(state.surface).toBe(previous.surface);
+      expect(fx.scene.setSurfaceParams).not.toHaveBeenCalled();
     });
 
     it("solidLightElevationSlider effect forwards the settled solid params to the scene", () => {
@@ -1309,6 +1311,8 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
+      expect(state.solid).toBe(previous.solid);
+      expect(fx.scene.setSolidParams).not.toHaveBeenCalled();
     });
 
     it("surfaceLightElevationSlider effect forwards the settled surface params to the scene", () => {
