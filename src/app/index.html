@@ -418,45 +418,20 @@
           <div id="transformEditor"></div>
         </details>
 
-        <!-- Xaos: compose separate systems in one shared space (graph-
-             directed selection over Transform.chaos rows —
-             chaos-game.ts's systemHasChaos), or fine-tune which map
-             follows which. The construction gesture is the prominent
-             piece; the full n-by-n matrix is the fine-tuning surface
-             behind its own Advanced disclosure. Surface inverse descent
+        <!-- Xaos: edit graph-directed selection over Transform.chaos rows
+             (chaos-game.ts's systemHasChaos). The construction gesture lives
+             under Workflow → Systems; this Scene editor owns the resulting
+             leak dials and full n-by-n fine-tuning surface. Surface inverse descent
              consumes chi rows when eligible and otherwise explains the
              analyzer refusal; Points, Flame and Solid render them too. -->
         <details class="panel-section" id="xaosSection" name="panel-section">
           <summary>Xaos</summary>
           <p id="xaosEditHint" class="flame-note-info">
+            Add an isolated block under Systems; tune its transitions here.
             Matrix and leak edits update Points live. Flat Flame or Solid
             restarts when the edit settles; 4D or Balloon changes apply on next
             entry. Surface re-enters or explains an analyzer refusal.
           </p>
-          <label class="select-label">
-            Add system as isolated block
-            <select
-              id="xaosAddSource"
-              aria-label="Choose a system to add as an isolated block"
-            >
-              <option value="" selected>Choose a system…</option>
-              <option value="__duplicate">Duplicate current system</option>
-              <optgroup label="Presets" id="xaosAddSourcePresets"></optgroup>
-              <optgroup label="Saved scenes" id="xaosAddSourceSaved"></optgroup>
-            </select>
-          </label>
-          <label class="checkbox-label">
-            <input type="checkbox" id="xaosBalanceWeights" checked />
-            Balance weights so blocks render equally dense
-          </label>
-          <button
-            class="btn btn-blue"
-            id="xaosAddBtn"
-            type="button"
-            title="Append the chosen system's maps, seated apart and isolated by chaos rows"
-          >
-            + Add as block
-          </button>
           <div id="xaosLeakRows" class="hidden"></div>
           <!-- Nested detail, independent of the top-level accordion: no name,
                so opening the matrix cannot close Xaos (its ancestor). -->
@@ -1125,6 +1100,7 @@
             />
           </label>
           <p id="scheduleEditHint" class="flame-note-info">
+            A source choice installs an affine-only snapshot, not a live link.
             Changes update Points live. Flat Flame or Solid restarts when the
             edit settles; 4D or Balloon changes apply on next entry. Surface
             re-enters or explains an analyzer refusal.
@@ -2026,81 +2002,85 @@
           name="panel-section"
           open
         >
-          <summary>Presets</summary>
+          <summary>Systems</summary>
+          <div class="editor-group-title">Replace or explore</div>
           <p id="presetTimingHint" class="flame-note-info">
             Loads morph in Points, then an authored Flame, Solid, or Surface
             preset enters that renderer when its cloud lands. Random Drift stays
             in Points; Collection Drift follows saved renderer tags.
           </p>
-          <select
-            id="presetSelect"
-            aria-label="Load a preset"
-            aria-describedby="presetTimingHint"
-          >
-            <option value="" selected>Load a preset…</option>
-            <option value="default">Twisted Tetrahedron</option>
-            <option value="sierpinski">Sierpinski Tetrahedron</option>
-            <option value="menger">Menger Sponge</option>
-            <option value="spiral">Spiral</option>
-            <option value="pyramid">Sierpinski Pyramid</option>
-            <option value="octahedron">Octahedron Flake</option>
-            <option value="icosahedron">Icosahedron (12)</option>
-            <option value="dodecahedron">Dodecahedron (20)</option>
-            <option value="jerusalem">Jerusalem Cube</option>
-            <option value="chiral">Chiral Lace</option>
-            <option value="barnsley">Barnsley Fern</option>
-            <option value="curling">Curling Fern</option>
-            <option value="fernSponge">Fern | Sponge (isolated)</option>
-            <option value="fernSpongeLeak">Fern | Sponge (1% leak)</option>
-            <option value="spongeOfFerns">Sponge of Ferns</option>
-            <option value="gearworks">Gearworks</option>
-            <option value="starFoundry">Star Foundry</option>
-            <option value="mandelboxKifs">Mandelbox KIFS</option>
-            <option value="fourFinishes">Four Finishes</option>
-            <option value="metalStudio">Metal Studio</option>
-            <optgroup label="Escape-time">
-              <option value="mandelboxClassic">Mandelbox</option>
-              <option value="mandelboxRings">Mandelbox Rings</option>
-              <option value="mandelboxCube">Mandelbox Cube</option>
-              <option value="mandelboxPeace">Mandelbox Peace</option>
-              <option value="foldChain">Fold Chain</option>
-              <option value="foldChainBoulder">Fold Chain Boulder</option>
-              <option value="foldChainFlower">Fold Chain Flower</option>
-              <option value="foldChainGear">Fold Chain Gear</option>
-              <option value="mandelbulbClassic">Mandelbulb</option>
-              <option value="mandelbulbOffset">Mandelbulb Offset</option>
-              <option value="mandelbulbRotated">Mandelbulb Rotated</option>
-              <option value="hybridChainCube">Hybrid Chain Cube</option>
-              <option value="hybridChainCraters">Hybrid Chain Craters</option>
-              <option value="hybridChainQuaternion">
-                Hybrid Chain Quaternion
-              </option>
-            </optgroup>
-            <optgroup label="Flame">
-              <option value="radiolarian">Radiolarian</option>
-              <option value="swirl">Swirl</option>
-              <option value="mandelbox">Fold Lattice</option>
-              <option value="dyedSpiral">Dyed Spiral</option>
-              <option value="julia">Julia Set</option>
-              <option value="juliaDust">Julia Dust</option>
-              <option value="juliaIsland">Julia Island</option>
-              <option value="juliaSnowflake">Julia Snowflake</option>
-              <option value="juliaPinwheel">Julia Pinwheel</option>
-            </optgroup>
-            <optgroup label="4D">
-              <option value="pentatope">Pentatope Gasket</option>
-              <option value="sixteenCell">16-Cell Flake</option>
-              <option value="duoprism">Duoprism (3×3)</option>
-              <option value="tesseract">Tesseract Dust</option>
-              <option value="twentyFourCell">24-Cell Flake</option>
-              <option value="doubleRotation">Double-Rotation Spiral</option>
-              <option value="woodGrain">Wood Grain (4D)</option>
-              <option value="hyperfern">Hyperfern</option>
-              <option value="mandelboxBrick">Mandelbox Brick</option>
-              <option value="mandelboxColumn">Mandelbox Column</option>
-              <option value="hybridChainShells">Hybrid Shells</option>
-            </optgroup>
-          </select>
+          <label class="select-label">
+            Replace with preset
+            <select
+              id="presetSelect"
+              aria-label="Replace system with preset"
+              aria-describedby="presetTimingHint"
+            >
+              <option value="" selected>Load a preset…</option>
+              <option value="default">Twisted Tetrahedron</option>
+              <option value="sierpinski">Sierpinski Tetrahedron</option>
+              <option value="menger">Menger Sponge</option>
+              <option value="spiral">Spiral</option>
+              <option value="pyramid">Sierpinski Pyramid</option>
+              <option value="octahedron">Octahedron Flake</option>
+              <option value="icosahedron">Icosahedron (12)</option>
+              <option value="dodecahedron">Dodecahedron (20)</option>
+              <option value="jerusalem">Jerusalem Cube</option>
+              <option value="chiral">Chiral Lace</option>
+              <option value="barnsley">Barnsley Fern</option>
+              <option value="curling">Curling Fern</option>
+              <option value="fernSponge">Fern | Sponge (isolated)</option>
+              <option value="fernSpongeLeak">Fern | Sponge (1% leak)</option>
+              <option value="spongeOfFerns">Sponge of Ferns</option>
+              <option value="gearworks">Gearworks</option>
+              <option value="starFoundry">Star Foundry</option>
+              <option value="mandelboxKifs">Mandelbox KIFS</option>
+              <option value="fourFinishes">Four Finishes</option>
+              <option value="metalStudio">Metal Studio</option>
+              <optgroup label="Escape-time">
+                <option value="mandelboxClassic">Mandelbox</option>
+                <option value="mandelboxRings">Mandelbox Rings</option>
+                <option value="mandelboxCube">Mandelbox Cube</option>
+                <option value="mandelboxPeace">Mandelbox Peace</option>
+                <option value="foldChain">Fold Chain</option>
+                <option value="foldChainBoulder">Fold Chain Boulder</option>
+                <option value="foldChainFlower">Fold Chain Flower</option>
+                <option value="foldChainGear">Fold Chain Gear</option>
+                <option value="mandelbulbClassic">Mandelbulb</option>
+                <option value="mandelbulbOffset">Mandelbulb Offset</option>
+                <option value="mandelbulbRotated">Mandelbulb Rotated</option>
+                <option value="hybridChainCube">Hybrid Chain Cube</option>
+                <option value="hybridChainCraters">Hybrid Chain Craters</option>
+                <option value="hybridChainQuaternion">
+                  Hybrid Chain Quaternion
+                </option>
+              </optgroup>
+              <optgroup label="Flame">
+                <option value="radiolarian">Radiolarian</option>
+                <option value="swirl">Swirl</option>
+                <option value="mandelbox">Fold Lattice</option>
+                <option value="dyedSpiral">Dyed Spiral</option>
+                <option value="julia">Julia Set</option>
+                <option value="juliaDust">Julia Dust</option>
+                <option value="juliaIsland">Julia Island</option>
+                <option value="juliaSnowflake">Julia Snowflake</option>
+                <option value="juliaPinwheel">Julia Pinwheel</option>
+              </optgroup>
+              <optgroup label="4D">
+                <option value="pentatope">Pentatope Gasket</option>
+                <option value="sixteenCell">16-Cell Flake</option>
+                <option value="duoprism">Duoprism (3×3)</option>
+                <option value="tesseract">Tesseract Dust</option>
+                <option value="twentyFourCell">24-Cell Flake</option>
+                <option value="doubleRotation">Double-Rotation Spiral</option>
+                <option value="woodGrain">Wood Grain (4D)</option>
+                <option value="hyperfern">Hyperfern</option>
+                <option value="mandelboxBrick">Mandelbox Brick</option>
+                <option value="mandelboxColumn">Mandelbox Column</option>
+                <option value="hybridChainShells">Hybrid Shells</option>
+              </optgroup>
+            </select>
+          </label>
           <button
             class="btn btn-blue"
             id="surpriseBtn"
@@ -2131,6 +2111,43 @@
           <!-- #driftNote lives in the document-status area above the
                accordion so reduced-motion remains disclosed in every mode;
                aria-describedby preserves the explicit control association. -->
+          <div class="editor-group-title">Combine systems</div>
+          <p id="xaosAddHint" class="flame-note-info">
+            Copies the chosen preset, saved scene, or current system into a
+            seated isolated block and rebuilds through Points; the source is not
+            a live link. Edit its transition links under Xaos.
+          </p>
+          <label class="select-label">
+            System to add
+            <select
+              id="xaosAddSource"
+              aria-label="Choose a system to add as an isolated block"
+              aria-describedby="xaosAddHint"
+            >
+              <option value="" selected>Choose a system…</option>
+              <option value="__duplicate">Duplicate current system</option>
+              <optgroup label="Presets" id="xaosAddSourcePresets"></optgroup>
+              <optgroup label="Saved scenes" id="xaosAddSourceSaved"></optgroup>
+            </select>
+          </label>
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              id="xaosBalanceWeights"
+              aria-describedby="xaosAddHint"
+              checked
+            />
+            Balance weights so blocks render equally dense
+          </label>
+          <button
+            class="btn btn-blue"
+            id="xaosAddBtn"
+            type="button"
+            aria-describedby="xaosAddHint"
+            title="Append the chosen system's maps, seated apart and isolated by chaos rows"
+          >
+            + Add isolated block
+          </button>
         </details>
 
         <!-- Always applicable, like Capture: saving a keeper / opening the
