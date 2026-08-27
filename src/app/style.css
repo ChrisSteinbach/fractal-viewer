@@ -1102,6 +1102,54 @@ summary.editor-group-title {
   color: #fff;
 }
 
+/* The same single-part primitive form is mounted inside a selected
+   transform's Shape disclosure and Surface's Shape trap section. A quiet
+   inset boundary distinguishes compile-affecting part geometry from the
+   trap's live outer pose controls below it. */
+.shape-primitive-editor {
+  margin: 8px 0 12px;
+  padding: 10px 0 4px 10px;
+  border-left: 2px solid var(--border);
+}
+
+.shape-kind-label {
+  margin-bottom: 6px;
+}
+
+.shape-editor-timing {
+  margin-bottom: 8px;
+}
+
+.shape-editor-heading {
+  margin: 9px 0 3px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.shape-parameter-row .axis {
+  flex: 0 0 62px;
+  width: 62px;
+  color: var(--text-dim);
+}
+
+.shape-parameter-row .value {
+  width: 48px;
+}
+
+.shape-authored-note,
+.shape-validation {
+  margin: 5px 0 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.shape-validation {
+  color: #ff8b8b;
+}
+
 /* Generic display-toggle, used to swap the explorer panel for the flame
    render controls (and back) without removing either from the DOM. */
 .hidden {

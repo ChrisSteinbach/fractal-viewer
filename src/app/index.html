@@ -371,8 +371,8 @@
           </div>
           <p class="flame-hint" id="emitterShapeCatalogHint">
             Shape catalog: emitter shapes here and trap shapes under Surface →
-            Shape trap come from one bundled library. Adding one creates and
-            selects a new emitter map.
+            Shape trap share the bundled library and Custom primitive editor.
+            Adding one creates and selects a new emitter map.
           </p>
           <label class="select-label">
             Add emitter shape
@@ -381,6 +381,7 @@
               aria-describedby="transformTimingHint emitterShapeCatalogHint"
             >
               <option value="">Choose a shape…</option>
+              <option value="custom">Custom primitive…</option>
             </select>
           </label>
           <label class="checkbox-label">
@@ -1541,9 +1542,10 @@
                three-axis consumer rule. Painted by the "Shape trap" color
                source above. -->
           <p id="trapShapeCatalogHint" class="flame-hint">
-            Shape catalog: trap shapes here use the same bundled library as
-            Transforms → Add emitter shape. Choosing None or a trap shape
-            re-enters Surface; size, position, mode and fade stay live.
+            Shape catalog: trap shapes here share the bundled library and Custom
+            primitive editor with Transforms → Add emitter shape. Choosing None
+            or a trap shape re-enters Surface; size, position, mode and fade
+            stay live.
           </p>
           <label
             class="select-label"
@@ -1555,10 +1557,12 @@
               aria-describedby="trapShapeCatalogHint"
             >
               <option value="">None</option>
-              <option value="custom" hidden>(authored)</option>
+              <option value="custom">Custom primitive…</option>
+              <option value="authored" hidden>Authored shape</option>
             </select>
           </label>
           <div id="surfaceTrapControls" class="hidden">
+            <div id="surfaceTrapPrimitiveEditor" class="hidden"></div>
             <div id="surfaceTrapGeometryRow" class="hidden">
               <label
                 class="checkbox-label"

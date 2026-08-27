@@ -709,6 +709,142 @@ function decodeEmitterNumber(raw: unknown): number | undefined {
   return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 }
 
+/** The compact single-part wire's optional pose. One-letter keys keep the
+ * URL payload small; the decoded document still receives the ordinary
+ * descriptive {@link ShapePose} fields. */
+interface EncodedShapePose {
+  o?: Vec3;
+  r?: Vec3;
+  s?: number;
+}
+
+/**
+ * Additive compact v1 representation for the single analytic union part the
+ * parameter editor authors. The legacy `{ parts: [...] }` object remains the
+ * representation for meshes and compound/intersection shapes, and remains a
+ * supported decode form forever.
+ */
+type EncodedSinglePartShape =
+  | ["s", number, EncodedShapePose?]
+  | ["b", number, number, number, EncodedShapePose?]
+  | ["t", number, number, EncodedShapePose?]
+  | [
+      "c",
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      EncodedShapePose?,
+    ]
+  | ["g", number, number, number, number, number, number, EncodedShapePose?];
+
+type EncodedShapeSpec = ShapeSpec | EncodedSinglePartShape;
+
+/** Decode a present compact-pose object, rebuilding only admitted fields.
+ * `null` means malformed; an empty object is valid and canonicalizes away. */
+function decodeCompactShapePose(raw: unknown): ShapePose | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return null;
+  const encoded = raw as Record<string, unknown>;
+  const pose: ShapePose = {};
+  if (encoded.o !== undefined) {
+    if (!isVec3(encoded.o)) return null;
+    pose.offset = encoded.o;
+  }
+  if (encoded.r !== undefined) {
+    if (!isVec3(encoded.r)) return null;
+    pose.rotate = encoded.r;
+  }
+  if (encoded.s !== undefined) {
+    const scale = decodeEmitterNumber(encoded.s);
+    if (scale === undefined) return null;
+    pose.scale = scale;
+  }
+  return pose;
+}
+
+/** Decode the compact single-analytic-part form. Exact arity is part of the
+ * discriminator: a trailing value is either the one pose object or invalid,
+ * never a silently ignored future leaf. */
+function decodeCompactShape(raw: unknown[]): ShapeSpec | undefined {
+  const tag = raw[0];
+  let primitive: ShapePart["primitive"];
+  let primitiveLength: number;
+
+  switch (tag) {
+    case "s": {
+      primitiveLength = 2;
+      const radius = decodeEmitterNumber(raw[1]);
+      if (radius === undefined) return undefined;
+      primitive = { kind: "sphere", radius };
+      break;
+    }
+    case "b": {
+      primitiveLength = 4;
+      const x = decodeEmitterNumber(raw[1]);
+      const y = decodeEmitterNumber(raw[2]);
+      const z = decodeEmitterNumber(raw[3]);
+      if (x === undefined || y === undefined || z === undefined)
+        return undefined;
+      primitive = { kind: "box", half: [x, y, z] };
+      break;
+    }
+    case "t": {
+      primitiveLength = 3;
+      const major = decodeEmitterNumber(raw[1]);
+      const minor = decodeEmitterNumber(raw[2]);
+      if (major === undefined || minor === undefined) return undefined;
+      primitive = { kind: "torus", major, minor };
+      break;
+    }
+    case "c": {
+      primitiveLength = 8;
+      const values = raw.slice(1, primitiveLength).map(decodeEmitterNumber);
+      if (values.some((value) => value === undefined)) return undefined;
+      const [ax, ay, az, bx, by, bz, radius] = values as number[];
+      primitive = {
+        kind: "capsule",
+        a: [ax, ay, az],
+        b: [bx, by, bz],
+        radius,
+      };
+      break;
+    }
+    case "g": {
+      primitiveLength = 7;
+      const values = raw.slice(1, primitiveLength).map(decodeEmitterNumber);
+      if (values.some((value) => value === undefined)) return undefined;
+      const [teeth, radius, tooth0, tooth1, hole, halfHeight] =
+        values as number[];
+      primitive = {
+        kind: "gear",
+        teeth,
+        radius,
+        tooth: [tooth0, tooth1],
+        hole,
+        halfHeight,
+      };
+      break;
+    }
+    default:
+      return undefined;
+  }
+
+  if (raw.length !== primitiveLength && raw.length !== primitiveLength + 1) {
+    return undefined;
+  }
+  const part: ShapePart = { primitive, combine: "union" };
+  if (raw.length === primitiveLength + 1) {
+    const pose = decodeCompactShapePose(raw[primitiveLength]);
+    if (pose === null) return undefined;
+    if (Object.keys(pose).length > 0) part.pose = pose;
+  }
+  return { parts: [part] };
+}
+
 /**
  * Decode one transform's optional shape-emitter spec (`types.ts`'s
  * {@link Transform.emitter}). QUIET WHOLE-FIELD fallback,
@@ -731,7 +867,8 @@ function decodeEmitterNumber(raw: unknown): number | undefined {
  * spec to the plain transform.
  */
 function decodeEmitter(raw: unknown): ShapeSpec | undefined {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+  if (Array.isArray(raw)) return decodeCompactShape(raw);
+  if (typeof raw !== "object" || raw === null) {
     return undefined;
   }
   const spec = raw as Record<string, unknown>;
@@ -2042,8 +2179,12 @@ interface EncodedTransform {
   w?: WExtension;
   finish?: SurfaceFinish;
   surfacePattern?: SurfacePattern;
-  emitter?: ShapeSpec;
+  emitter?: EncodedShapeSpec;
 }
+
+type EncodedShapeTrap = Omit<ShapeTrap, "shape"> & {
+  shape: EncodedShapeSpec;
+};
 
 /**
  * Round one of the fold's three lengths for the wire IFF it's
@@ -2114,6 +2255,61 @@ function encodeEmitterPose(pose: ShapePose | undefined): ShapePose | undefined {
   return Object.keys(encoded).length > 0 ? encoded : undefined;
 }
 
+/** Compact counterpart to {@link encodeEmitterPose}; pose identity remains
+ * absent rather than occupying a trailing tuple slot. */
+function encodeCompactShapePose(
+  pose: ShapePose | undefined,
+): EncodedShapePose | undefined {
+  const encoded = encodeEmitterPose(pose);
+  if (encoded === undefined) return undefined;
+  const compact: EncodedShapePose = {};
+  if (encoded.offset !== undefined) compact.o = encoded.offset;
+  if (encoded.rotate !== undefined) compact.r = encoded.rotate;
+  if (encoded.scale !== undefined) compact.s = encoded.scale;
+  return compact;
+}
+
+type GearPrimitive = Extract<ShapePart["primitive"], { kind: "gear" }>;
+
+/** Is a gear's sector coupling inside the parameter editor's supported
+ * domain before wire quantization? Keep this deliberately narrower than the
+ * core resolver: imported out-of-domain numbers are fidelity data and must
+ * retain ordinary round4 behavior rather than being repaired by persist. */
+function authoredGearFitsSector(gear: GearPrimitive): boolean {
+  return (
+    Number.isInteger(gear.teeth) &&
+    gear.teeth >= 3 &&
+    gear.teeth <= 64 &&
+    Number.isFinite(gear.radius) &&
+    gear.radius > 0 &&
+    Number.isFinite(gear.tooth[1]) &&
+    gear.tooth[1] > 0 &&
+    gear.tooth[1] <= gear.radius * Math.sin(Math.PI / gear.teeth)
+  );
+}
+
+/** Preserve the gear sector invariant across compact-wire round4. Rounding
+ * the body radius down while rounding a boundary tangential half-size up can
+ * otherwise turn a valid authored gear into one whose sector fold may
+ * overestimate. Only pre-round editor-domain gears receive this conservative
+ * floor; already-invalid imported specs keep the codec's no-domain-clamp
+ * fidelity rule. */
+function compactGearTangential(
+  source: GearPrimitive,
+  encodedTeeth: number,
+  encodedRadius: number,
+  encodedTangential: number,
+): number {
+  if (!authoredGearFitsSector(source)) return encodedTangential;
+  const limit = encodedRadius * Math.sin(Math.PI / encodedTeeth);
+  if (encodedTangential <= limit) return encodedTangential;
+  let safe = Math.floor(limit * 10000) / 10000;
+  // Guard the quotient's last binary rounding: the decoded decimal must pass
+  // the same direct `<= radius * sin(pi / teeth)` predicate as the editor.
+  if (safe > limit) safe = (Math.floor(limit * 10000) - 1) / 10000;
+  return safe;
+}
+
 /**
  * Encode a transform's optional shape emitter (`types.ts`'s
  * {@link Transform.emitter}): written ONLY when present — an absent field
@@ -2125,18 +2321,33 @@ function encodeEmitterPose(pose: ShapePose | undefined): ShapePose | undefined {
  * like every other wire float; a spec whose parts are gone (the empty list
  * `transformHasEmitter` already calls absent) writes nothing.
  */
-function encodeEmitter(spec: ShapeSpec | undefined): ShapeSpec | undefined {
+function encodeEmitter(
+  spec: ShapeSpec | undefined,
+): EncodedShapeSpec | undefined {
   if (spec === undefined || spec.parts.length === 0) return undefined;
   // Mesh bytes never ride the v1 wire: the primitive carries only a stable,
   // built-in catalog id. Keep the encoder a trust boundary too (a live
   // object can still arrive through an `as ShapeSpec` cast or foreign app
-  // integration) and omit the WHOLE optional shape rather than write a link
-  // this build cannot resolve.
+  // integration) and omit the WHOLE optional shape rather than throw on a
+  // future primitive tag or write a link this build cannot resolve.
   if (
-    spec.parts.some(
-      (part) =>
-        part.primitive.kind === "mesh" && !isMeshAssetId(part.primitive.meshId),
-    )
+    spec.parts.some((part) => {
+      const primitive: unknown = part?.primitive;
+      if (typeof primitive !== "object" || primitive === null) return true;
+      const candidate = primitive as Record<string, unknown>;
+      switch (candidate.kind) {
+        case "sphere":
+        case "box":
+        case "torus":
+        case "capsule":
+        case "gear":
+          return false;
+        case "mesh":
+          return !isMeshAssetId(candidate.meshId);
+        default:
+          return true;
+      }
+    })
   ) {
     return undefined;
   }
@@ -2184,6 +2395,69 @@ function encodeEmitter(spec: ShapeSpec | undefined): ShapeSpec | undefined {
     if (pose !== undefined) encoded.pose = pose;
     return encoded;
   });
+
+  // The custom editor's exact domain gets a compact additive v1 form. Keep
+  // meshes and every compound/intersection shape on the legacy object wire so
+  // their established representation and full vocabulary remain untouched.
+  if (
+    parts.length === 1 &&
+    parts[0].combine === "union" &&
+    parts[0].primitive.kind !== "mesh"
+  ) {
+    const part = parts[0];
+    const pose = encodeCompactShapePose(part.pose);
+    const prim = part.primitive;
+    let compact: EncodedSinglePartShape;
+    switch (prim.kind) {
+      case "sphere":
+        compact = ["s", prim.radius];
+        break;
+      case "box":
+        compact = ["b", prim.half[0], prim.half[1], prim.half[2]];
+        break;
+      case "torus":
+        compact = ["t", prim.major, prim.minor];
+        break;
+      case "capsule":
+        compact = [
+          "c",
+          prim.a[0],
+          prim.a[1],
+          prim.a[2],
+          prim.b[0],
+          prim.b[1],
+          prim.b[2],
+          prim.radius,
+        ];
+        break;
+      case "gear": {
+        const source = spec.parts[0].primitive;
+        const tangential =
+          source.kind === "gear"
+            ? compactGearTangential(
+                source,
+                prim.teeth,
+                prim.radius,
+                prim.tooth[1],
+              )
+            : prim.tooth[1];
+        compact = [
+          "g",
+          prim.teeth,
+          prim.radius,
+          prim.tooth[0],
+          tangential,
+          prim.hole,
+          prim.halfHeight,
+        ];
+        break;
+      }
+      case "mesh":
+        return { parts };
+    }
+    if (pose !== undefined) compact.push(pose);
+    return compact;
+  }
   return { parts };
 }
 
@@ -2372,7 +2646,7 @@ export function encodeScene(s: SceneSnapshot): string {
       depth: number;
     };
     condensationDepthBand?: CondensationDepthBand;
-    shapeTrap?: ShapeTrap;
+    shapeTrap?: EncodedShapeTrap;
     numPoints: number;
     pointSize: number;
     colorMode: ColorMode;
@@ -2634,7 +2908,7 @@ export function encodeScene(s: SceneSnapshot): string {
   if (s.shapeTrap) {
     const shape = encodeEmitter(s.shapeTrap.shape);
     if (shape !== undefined) {
-      const trap: ShapeTrap = { shape };
+      const trap: EncodedShapeTrap = { shape };
       if (s.shapeTrap.position !== undefined) {
         trap.position = round4Vec3(s.shapeTrap.position);
       }

@@ -369,6 +369,25 @@ describe("shape sampler agreement", () => {
     }
   });
 
+  it("covers the gear tooth corners beyond the outer-face midpoint", () => {
+    const prim = GEAR_SHAPE.parts[0].primitive as Extract<
+      ShapePrimitive,
+      { kind: "gear" }
+    >;
+    const oldProposalRadius = prim.radius + prim.tooth[0];
+    const draw = prepareShapeSampler(GEAR_SHAPE);
+    const rng = mulberry32(0x6ea7c0de);
+    let farthest = 0;
+    for (let i = 0; i < 20_000; i++) {
+      const [x, y] = draw(rng);
+      farthest = Math.max(farthest, Math.hypot(x, y));
+    }
+    expect(farthest).toBeGreaterThan(oldProposalRadius + 1e-4);
+    expect(farthest).toBeLessThanOrEqual(
+      Math.hypot(oldProposalRadius, prim.tooth[1]) + 1e-9,
+    );
+  });
+
   it("samples the gear outline onto the profile boundary: |sdf| tiny at every draw", () => {
     const rng = mulberry32(0x0071e);
     const draw = prepareShapeSampler(GEAR_SHAPE, { gearOutline: true });

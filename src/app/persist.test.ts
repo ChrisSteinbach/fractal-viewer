@@ -5958,15 +5958,248 @@ describe("decodeScene transform shape emitters", () => {
     ["snowflake-prism", "snowflake-prism-v1", SNOWFLAKE_PRISM_SHAPE],
     ["trefoil-knot", "trefoil-knot-v1", TREFOIL_KNOT_SHAPE],
   ] as const;
+  const COMPACT_ANALYTIC_SHAPES: [string, ShapeSpec, unknown][] = [
+    [
+      "sphere",
+      {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.7312 },
+            combine: "union",
+          },
+        ],
+      },
+      ["s", 0.7312],
+    ],
+    [
+      "box",
+      {
+        parts: [
+          {
+            primitive: { kind: "box", half: [0.7, 0.5, 0.3] },
+            combine: "union",
+          },
+        ],
+      },
+      ["b", 0.7, 0.5, 0.3],
+    ],
+    [
+      "torus",
+      {
+        parts: [
+          {
+            primitive: { kind: "torus", major: 0.78, minor: 0.26 },
+            combine: "union",
+          },
+        ],
+      },
+      ["t", 0.78, 0.26],
+    ],
+    [
+      "capsule",
+      {
+        parts: [
+          {
+            primitive: {
+              kind: "capsule",
+              a: [-0.5, 0, 0],
+              b: [0.5, 0, 0],
+              radius: 0.2,
+            },
+            combine: "union",
+          },
+        ],
+      },
+      ["c", -0.5, 0, 0, 0.5, 0, 0, 0.2],
+    ],
+    [
+      "gear",
+      {
+        parts: [
+          {
+            primitive: {
+              kind: "gear",
+              teeth: 8,
+              radius: 1,
+              tooth: [0.22, 0.16],
+              hole: 0.35,
+              halfHeight: 0.25,
+            },
+            combine: "union",
+          },
+        ],
+      },
+      ["g", 8, 1, 0.22, 0.16, 0.35, 0.25],
+    ],
+  ];
 
   it("round-trips an authored emitter spec exactly (4-decimal values)", () => {
     const s = baseSnapshot();
     s.transforms[0] = { ...s.transforms[0], emitter: GEAR };
     const result = decodeScene(encodeScene(s));
     expect(result!.transforms[0].emitter).toEqual(GEAR);
+    const wire = (
+      decodePayload(encodeScene(s)).transforms as Record<string, unknown>[]
+    )[0].emitter;
+    expect(wire).toEqual(GEAR);
+    expect(Array.isArray(wire)).toBe(false);
   });
 
-  it("shares Orbit Ring and Peace through existing torus/capsule wire kinds", () => {
+  it.each(COMPACT_ANALYTIC_SHAPES)(
+    "encodes and round-trips a single %s union as its compact tuple",
+    (_kind, shape, expectedWire) => {
+      const s = baseSnapshot();
+      s.transforms[0] = { ...s.transforms[0], emitter: shape };
+      const encoded = encodeScene(s);
+      const wire = (
+        decodePayload(encoded).transforms as Record<string, unknown>[]
+      )[0].emitter;
+
+      expect(wire).toEqual(expectedWire);
+      expect(decodeScene(encoded)!.transforms[0].emitter).toEqual(shape);
+    },
+  );
+
+  it("keeps a valid gear sector boundary valid after compact round4", () => {
+    const radius = 1.00004;
+    const teeth = 8;
+    const tangential = radius * Math.sin(Math.PI / teeth);
+    const s = baseSnapshot();
+    s.transforms[0] = {
+      ...s.transforms[0],
+      emitter: {
+        parts: [
+          {
+            primitive: {
+              kind: "gear",
+              teeth,
+              radius,
+              tooth: [0.22, tangential],
+              hole: 0.35,
+              halfHeight: 0.25,
+            },
+            combine: "union",
+          },
+        ],
+      },
+    };
+
+    const encoded = encodeScene(s);
+    const wire = (
+      decodePayload(encoded).transforms as Record<string, unknown>[]
+    )[0].emitter;
+    expect(wire).toEqual(["g", 8, 1, 0.22, 0.3826, 0.35, 0.25]);
+
+    const primitive =
+      decodeScene(encoded)!.transforms[0].emitter!.parts[0].primitive;
+    if (primitive.kind !== "gear") throw new Error("expected gear");
+    expect(primitive.tooth[1]).toBeLessThanOrEqual(
+      primitive.radius * Math.sin(Math.PI / primitive.teeth),
+    );
+  });
+
+  it("does not sector-clamp an already-invalid imported gear", () => {
+    const radius = 1.00004;
+    const teeth = 8;
+    const tangential = radius * Math.sin(Math.PI / teeth) + 0.00001;
+    const s = baseSnapshot();
+    s.transforms[0] = {
+      ...s.transforms[0],
+      emitter: {
+        parts: [
+          {
+            primitive: {
+              kind: "gear",
+              teeth,
+              radius,
+              tooth: [0.22, tangential],
+              hole: 0.35,
+              halfHeight: 0.25,
+            },
+            combine: "union",
+          },
+        ],
+      },
+    };
+
+    const encoded = encodeScene(s);
+    const wire = (
+      decodePayload(encoded).transforms as Record<string, unknown>[]
+    )[0].emitter;
+    expect(wire).toEqual(["g", 8, 1, 0.22, 0.3827, 0.35, 0.25]);
+  });
+
+  it("rounds and round-trips the compact part pose without materializing absent keys", () => {
+    const s = baseSnapshot();
+    s.transforms[0] = {
+      ...s.transforms[0],
+      emitter: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.123456 },
+            combine: "union",
+            pose: {
+              offset: [0.123456, -0.2, 0],
+              rotate: [0.5, 0, 0.250067],
+              scale: 0.500067,
+            },
+          },
+        ],
+      },
+    };
+
+    const encoded = encodeScene(s);
+    const wire = (
+      decodePayload(encoded).transforms as Record<string, unknown>[]
+    )[0].emitter;
+    expect(wire).toEqual([
+      "s",
+      0.1235,
+      { o: [0.1235, -0.2, 0], r: [0.5, 0, 0.2501], s: 0.5001 },
+    ]);
+    expect(decodeScene(encoded)!.transforms[0].emitter).toEqual({
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.1235 },
+          combine: "union",
+          pose: {
+            offset: [0.1235, -0.2, 0],
+            rotate: [0.5, 0, 0.2501],
+            scale: 0.5001,
+          },
+        },
+      ],
+    });
+  });
+
+  it("decodes a legacy single-part object and preserves its authored spec when canonicalizing compactly", () => {
+    const authored: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.7312 },
+          combine: "union",
+          pose: { scale: 0.8 },
+        },
+      ],
+    };
+    const raw = JSON.parse(JSON.stringify(baseSnapshot())) as Record<
+      string,
+      unknown
+    >;
+    (raw.transforms as Record<string, unknown>[])[0].emitter = authored;
+
+    const decoded = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(decoded!.transforms[0].emitter).toEqual(authored);
+    const canonical = (
+      decodePayload(encodeScene(decoded!)).transforms as Record<
+        string,
+        unknown
+      >[]
+    )[0].emitter;
+    expect(canonical).toEqual(["s", 0.7312, { s: 0.8 }]);
+  });
+
+  it("shares Orbit Ring and Peace without persisting catalog kinds", () => {
     for (const [kind, shape] of [
       ["orbit-ring", ORBIT_RING_SHAPE],
       ["peace", PEACE_SIGN_SHAPE],
@@ -5984,9 +6217,7 @@ describe("decodeScene transform shape emitters", () => {
       expect(wireText).not.toContain("orbit-ring");
       expect(wireText).not.toContain('"kind":"peace"');
       if (kind === "orbit-ring") {
-        expect(wireText).toBe(
-          '{"parts":[{"primitive":{"kind":"torus","major":0.78,"minor":0.26},"combine":"union"}]}',
-        );
+        expect(wireEmitter).toEqual(["t", 0.78, 0.26]);
       } else {
         expect(decoded.parts[2].primitive).toMatchObject({
           kind: "capsule",
@@ -6035,6 +6266,31 @@ describe("decodeScene transform shape emitters", () => {
       } as unknown as ShapeSpec,
     };
     const encoded = encodeScene(s);
+    expect(
+      "emitter" in
+        (decodePayload(encoded).transforms as Record<string, unknown>[])[0],
+    ).toBe(false);
+    expect(decodeScene(encoded)!.transforms[0].emitter).toBeUndefined();
+  });
+
+  it("omits a foreign live primitive kind without throwing", () => {
+    const s = baseSnapshot();
+    s.transforms[0] = {
+      ...s.transforms[0],
+      emitter: {
+        parts: [
+          {
+            primitive: { kind: "cone", radius: 1 },
+            combine: "union",
+          },
+        ],
+      } as unknown as ShapeSpec,
+    };
+
+    let encoded = "";
+    expect(() => {
+      encoded = encodeScene(s);
+    }).not.toThrow();
     expect(
       "emitter" in
         (decodePayload(encoded).transforms as Record<string, unknown>[])[0],
@@ -6168,6 +6424,14 @@ describe("decodeScene transform shape emitters", () => {
           },
         ],
       },
+      [],
+      ["future", 1],
+      ["s"],
+      ["s", "1"],
+      ["s", 1, null],
+      ["s", 1, { o: [1, 2] }],
+      ["s", 1, {}, "extra"],
+      ["b", 1, 2, Infinity],
     ];
     for (const emitter of malformed) {
       const raw = JSON.parse(JSON.stringify(baseSnapshot())) as Record<
@@ -6203,6 +6467,38 @@ describe("decodeScene transform shape emitters", () => {
 });
 
 describe("shapeTrap codec (the shape-trap color/geometry block)", () => {
+  it("uses the shared compact shape tuple while keeping the trap's outer pose separate", () => {
+    const shape: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "box", half: [0.7, 0.5, 0.3] },
+          combine: "union",
+          pose: { offset: [0.1, 0.2, 0.3], scale: 0.8 },
+        },
+      ],
+    };
+    const encoded = encodeScene({
+      ...baseSnapshot(),
+      shapeTrap: { shape, position: [-0.25, 0, 0.5], scale: 1.5 },
+    });
+    const wire = decodePayload(encoded).shapeTrap as Record<string, unknown>;
+
+    expect(wire.shape).toEqual([
+      "b",
+      0.7,
+      0.5,
+      0.3,
+      { o: [0.1, 0.2, 0.3], s: 0.8 },
+    ]);
+    expect(wire.position).toEqual([-0.25, 0, 0.5]);
+    expect(wire.scale).toBe(1.5);
+    expect(decodeScene(encoded)!.shapeTrap).toEqual({
+      shape,
+      position: [-0.25, 0, 0.5],
+      scale: 1.5,
+    });
+  });
+
   it("round-trips a known built-in mesh id through the shared shape codec", () => {
     const mesh: ShapeSpec = {
       parts: [
@@ -6366,6 +6662,7 @@ describe("shapeTrap codec (the shape-trap color/geometry block)", () => {
       { mode: "nearest" },
       { position: [1, 2] },
       { shape: { parts: "x" } },
+      { shape: ["s", 1, { r: [0, 1] }] },
       { geometry: 1 },
       { geometryLevelMin: "2" },
       { geometryLevelMax: Number.POSITIVE_INFINITY },

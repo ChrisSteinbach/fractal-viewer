@@ -110,6 +110,8 @@ function noopHandlers(): UiHandlers {
     onSelect: vi.fn(),
     onTransformGeometry: vi.fn(),
     onTransformEmitter: vi.fn(),
+    onTransformEmitterShape: vi.fn(),
+    onShapeTrapShape: vi.fn(),
     onToggleFinalTransform: vi.fn(),
     onFinalTransformGeometry: vi.fn(),
     onTransformCommit: vi.fn(),
@@ -385,10 +387,11 @@ describe("shared Shape catalog roles", () => {
     expect(Array.from(select.options).map((option) => option.value)).toEqual([
       "",
       ...BUNDLED_EMITTER_SHAPES.map((entry) => entry.kind),
+      "custom",
     ]);
     expect(
       Array.from(select.options)
-        .slice(1)
+        .slice(1, -1)
         .map((option) => option.textContent),
     ).toEqual(BUNDLED_EMITTER_SHAPES.map(bundledShapeOptionLabel));
 
@@ -401,6 +404,10 @@ describe("shared Shape catalog roles", () => {
     expect(handlers.onAddEmitter).toHaveBeenCalledTimes(
       BUNDLED_EMITTER_SHAPES.length,
     );
+    select.value = "custom";
+    select.dispatchEvent(new Event("change"));
+    expect(handlers.onAddEmitter).toHaveBeenLastCalledWith("custom");
+    expect(select.value).toBe("");
   });
 
   it("offers every registered trap exactly once before the authored sentinel", () => {
@@ -425,13 +432,15 @@ describe("shared Shape catalog roles", () => {
       "",
       ...BUNDLED_TRAP_SHAPES.map((entry) => entry.kind),
       "custom",
+      "authored",
     ]);
     expect(
       Array.from(select.options)
-        .slice(1, -1)
+        .slice(1, -2)
         .map((option) => option.textContent),
     ).toEqual(BUNDLED_TRAP_SHAPES.map(bundledShapeOptionLabel));
     expect(select.options[select.options.length - 1].hidden).toBe(true);
+    expect(select.options[select.options.length - 2].hidden).toBe(false);
   });
 
   it("keeps both role doors discoverable in an applicable Surface session", () => {
@@ -453,6 +462,99 @@ describe("shared Shape catalog roles", () => {
         .getElementById("surfaceTrapSection")
         ?.classList.contains("hidden"),
     ).toBe(false);
+  });
+
+  it("uses the shared release-time primitive editor for a custom shape trap", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels({
+      ...setShapeTrap(initialState(true), {
+        shape: {
+          parts: [
+            {
+              primitive: { kind: "torus", major: 0.8, minor: 0.3 },
+              combine: "union",
+            },
+          ],
+        },
+      }),
+      renderMode: "surface",
+      transforms: foldChain(),
+    });
+
+    const select = document.getElementById(
+      "surfaceTrapShape",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("custom");
+    const major = document.querySelector<HTMLInputElement>(
+      '#surfaceTrapPrimitiveEditor input[aria-label="Shape torus major radius"]',
+    )!;
+    const minor = document.querySelector<HTMLInputElement>(
+      '#surfaceTrapPrimitiveEditor input[aria-label="Shape torus minor radius"]',
+    )!;
+    major.value = "0.25";
+    major.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(minor.value).toBe("0.25");
+    major.value = "0.7";
+    major.dispatchEvent(new Event("input", { bubbles: true }));
+    major.value = "0.6";
+    major.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(handlers.onShapeTrapShape).not.toHaveBeenCalled();
+    major.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(handlers.onShapeTrapShape).toHaveBeenCalledTimes(1);
+    expect(handlers.onShapeTrapShape).toHaveBeenCalledWith({
+      parts: [
+        {
+          primitive: { kind: "torus", major: 0.6, minor: 0.25 },
+          combine: "union",
+        },
+      ],
+    });
+  });
+
+  it("keeps an unsupported imported trap read-only until explicitly replaced", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels({
+      ...setShapeTrap(initialState(true), { shape: STAR_PRISM_SHAPE }),
+      renderMode: "surface",
+      transforms: foldChain(),
+    });
+
+    // Star is a known catalog shape, so use a two-part imported composition
+    // to reach the opaque authored sentinel.
+    const imported = setShapeTrap(initialState(true), {
+      shape: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 1 },
+            combine: "union",
+          },
+          {
+            primitive: { kind: "box", half: [0.2, 0.3, 0.4] },
+            combine: "union",
+          },
+        ],
+      },
+    });
+    ui.updateLabels({
+      ...imported,
+      renderMode: "surface",
+      transforms: foldChain(),
+    });
+    const select = document.getElementById(
+      "surfaceTrapShape",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("authored");
+    expect(select.selectedOptions[0].hidden).toBe(true);
+    expect(
+      document.querySelector("#surfaceTrapPrimitiveEditor")?.textContent,
+    ).toContain("preserved exactly");
+    expect(handlers.onShapeTrapShape).not.toHaveBeenCalled();
   });
 });
 
@@ -2599,6 +2701,7 @@ describe("Ui.renderTransformEditor", () => {
       "",
       ...BUNDLED_EMITTER_SHAPES.map((entry) => entry.kind),
       "custom",
+      "authored",
     ]);
     for (const entry of BUNDLED_EMITTER_SHAPES) {
       select.value = entry.kind;
@@ -2614,7 +2717,7 @@ describe("Ui.renderTransformEditor", () => {
     expect(handlers.onTransformEmitter).toHaveBeenLastCalledWith(1, null);
   });
 
-  it("preserves an imported authored shape behind the hidden sentinel", () => {
+  it("opens the shared editor for a valid imported single-part primitive", () => {
     const transforms = defaultTransforms();
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -2639,9 +2742,174 @@ describe("Ui.renderTransformEditor", () => {
     )!;
 
     expect(select.value).toBe("custom");
+    expect(select.selectedOptions[0].hidden).toBe(false);
+    expect(
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="Shape sphere radius"]',
+      )?.value,
+    ).toBe("0.7312");
+  });
+
+  it("expands custom ranges to preserve valid imported values", () => {
+    const transforms = defaultTransforms();
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      {
+        ...transforms[1],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 10 },
+              combine: "union",
+              pose: { offset: [20, 0, 0], scale: 5 },
+            },
+          ],
+        },
+      },
+      1,
+      transforms.length,
+    );
+
+    const radius = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Shape sphere radius"]',
+    )!;
+    const offset = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Shape part offset X"]',
+    )!;
+    const scale = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Shape part scale"]',
+    )!;
+    expect([radius.value, radius.max]).toEqual(["10", "10"]);
+    expect([offset.value, offset.max]).toEqual(["20", "20"]);
+    expect([scale.value, scale.max]).toEqual(["5", "5"]);
+  });
+
+  it("preserves an unsupported imported composition behind the read-only sentinel", () => {
+    const transforms = defaultTransforms();
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...transforms[1],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.7 },
+              combine: "union",
+            },
+            {
+              primitive: { kind: "box", half: [0.2, 0.2, 0.2] },
+              combine: "union",
+            },
+          ],
+        },
+      },
+      1,
+      transforms.length,
+    );
+    const select = document.querySelector<HTMLSelectElement>(
+      '#transformEditor select[aria-label="Emitter shape"]',
+    )!;
+
+    expect(select.value).toBe("authored");
     expect(select.selectedOptions[0].hidden).toBe(true);
+    expect(
+      document.querySelector("#transformEditor .shape-authored-note")
+        ?.textContent,
+    ).toContain("preserved exactly");
     select.dispatchEvent(new Event("change"));
     expect(handlers.onTransformEmitter).not.toHaveBeenCalled();
+    expect(handlers.onTransformEmitterShape).not.toHaveBeenCalled();
+  });
+
+  it("commits custom emitter parameters once on release and exposes part pose in degrees", () => {
+    const transforms = defaultTransforms();
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...transforms[0],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 1 },
+              combine: "union",
+            },
+          ],
+        },
+      },
+      0,
+      transforms.length,
+    );
+
+    const radius = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Shape sphere radius"]',
+    )!;
+    for (const value of ["0.8", "0.65", "0.5"]) {
+      radius.value = value;
+      radius.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    expect(handlers.onTransformEmitterShape).not.toHaveBeenCalled();
+    radius.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(handlers.onTransformEmitterShape).toHaveBeenCalledTimes(1);
+    expect(handlers.onTransformEmitterShape).toHaveBeenLastCalledWith(0, {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.5 },
+          combine: "union",
+        },
+      ],
+    });
+
+    const rotate = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Shape part rotation X"]',
+    )!;
+    rotate.value = "90";
+    rotate.dispatchEvent(new Event("input", { bubbles: true }));
+    rotate.dispatchEvent(new Event("change", { bubbles: true }));
+    const rotated = vi.mocked(handlers.onTransformEmitterShape).mock
+      .calls[1][1];
+    expect(rotated.parts[0].pose?.rotate?.[0]).toBeCloseTo(Math.PI / 2);
+
+    const kind = document.querySelector<HTMLSelectElement>(
+      'select[aria-label="Custom primitive kind"]',
+    )!;
+    kind.value = "gear";
+    kind.dispatchEvent(new Event("change"));
+    expect(
+      document.querySelector('input[aria-label="Shape gear teeth"]'),
+    ).not.toBeNull();
+    expect(
+      vi.mocked(handlers.onTransformEmitterShape).mock.calls[2][1].parts[0].pose
+        ?.rotate?.[0],
+    ).toBeCloseTo(Math.PI / 2);
+
+    const teeth = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Shape gear teeth"]',
+    )!;
+    const body = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Shape gear body radius"]',
+    )!;
+    const tangential = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Shape gear tangential tooth half size"]',
+    )!;
+    const hole = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Shape gear hole radius"]',
+    )!;
+    teeth.value = "64";
+    teeth.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(Number(tangential.value)).toBeLessThanOrEqual(
+      Math.sin(Math.PI / 64),
+    );
+    body.value = "0.2";
+    body.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(Number(hole.value)).toBeLessThan(0.2);
+    expect(handlers.onTransformEmitterShape).toHaveBeenCalledTimes(3);
+    body.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(handlers.onTransformEmitterShape).toHaveBeenCalledTimes(4);
   });
 
   it("opens Shape for an emitter and re-syncs the choice after an external edit", () => {

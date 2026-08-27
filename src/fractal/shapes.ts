@@ -564,7 +564,11 @@ function gearProfileMeasures(prim: Extract<ShapePrimitive, { kind: "gear" }>): {
   area: number;
   perimeter: number;
 } {
-  const outer = prim.radius + prim.tooth[0];
+  // A tooth is a box in the folded sector. Its farthest 2D member is the
+  // outer/tangential corner, not the midpoint of its outer face. Proposal
+  // discs that stop at `radius + tooth[0]` silently omit a positive-area
+  // corner from the sampler even though the SDF contains it.
+  const outer = Math.hypot(prim.radius + prim.tooth[0], prim.tooth[1]);
   const hole = prim.hole > 0 ? prim.hole : 0;
   const band = outer * GEAR_OUTLINE_BAND;
   const rMax = outer + band;
@@ -666,7 +670,7 @@ function primitiveDraw(prim: ShapePrimitive): (rng: Rng) => Vec3 {
     case "mesh":
       return (rng) => sampleMeshSurface(meshAsset(prim.meshId), rng);
     case "gear": {
-      const outer = prim.radius + prim.tooth[0];
+      const outer = Math.hypot(prim.radius + prim.tooth[0], prim.tooth[1]);
       const hole = prim.hole > 0 ? prim.hole : 0;
       const lo2 = hole * hole;
       const span2 = outer * outer - lo2;
@@ -690,7 +694,7 @@ function primitiveDraw(prim: ShapePrimitive): (rng: Rng) => Vec3 {
 function gearOutlineDraw(
   prim: Extract<ShapePrimitive, { kind: "gear" }>,
 ): (rng: Rng) => Vec3 {
-  const outer = prim.radius + prim.tooth[0];
+  const outer = Math.hypot(prim.radius + prim.tooth[0], prim.tooth[1]);
   const band = outer * GEAR_OUTLINE_BAND;
   const rMax = outer + band;
   const h = outer * 1e-6;

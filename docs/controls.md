@@ -636,15 +636,18 @@ morphs into place instead of snapping (see **Presets** below).
   An emitter-backed inverse-descent session gets a **Shape copies** section for
   the **Levels** band described above. Forward-orbit sessions replace it
   with a **Shape trap** section and a matching **Shape
-  trap** color source. Choose any bundled trap shape or **None**, then set its
-  orbit-space size and X/Y/Z position. It uses the same shared catalog listed
-  under **Shape → Emitter** below. **Closest approach** shades by the
+  trap** color source. Choose any bundled trap shape, **Custom primitive**, or
+  **None**, then set its orbit-space size and X/Y/Z position. The custom editor
+  authors one sphere, box, torus, capsule, or parameterized gear plus an
+  optional part offset, rotation, and uniform scale. It uses the same shared
+  vocabulary and validation as **Shape → Emitter** below. **Closest approach** shades by the
   nearest pass over the whole orbit; **First crossing** enables the
   **Crossing bar** and colors the first dip below it. **Trap fade** biases
-  toward earlier, larger stamps. The shape choice re-enters the surface
-  session because it changes generated shader structure; mode also re-enters
-  by policy so both engines switch coherently. Pose, size, crossing bar and
-  fade remain live. The row appears only for the escape-time and Mandelbulb
+  toward earlier, larger stamps. The shape choice and custom primitive sliders
+  re-enter the surface session once on selection or slider release because they
+  change generated shader structure; mode also re-enters by policy so both
+  engines switch coherently. The outer trap pose, size, crossing bar and fade
+  remain live. The row appears only for the escape-time and Mandelbulb
   families. **Use as geometry** additionally unions the posed shape into the
   marched object on conformal fold-only escape chains; power-link and
   Mandelbulb sessions keep the color controls but do not offer this geometry
@@ -732,7 +735,12 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   from the document; it preserves the inspection camera, and an edit that
   makes the document unsupported returns to Points with the analyzer reason.
   - **Shape → Emitter shape** — turns the selected transform into any bundled
-    emitter shape, or returns it to an ordinary transform with **None**.
+    emitter shape or a **Custom primitive**, or returns it to an ordinary
+    transform with **None**. The custom editor authors the same five analytic
+    primitives and part pose as Shape trap. It keeps invalid or zero-measure
+    geometry out of the document, commits slider edits only on release, and
+    preserves imported multipart/mesh shapes as read-only **Authored shape**
+    values until they are explicitly replaced.
     The shared **Shape catalog** is **Cog**, **Star**, **Orbit Ring**, **Faceted
     Crystal**, **Heart Prism**, **Trefoil Knot**, **Crescent Moon**,
     **Snowflake Prism**, and **Peace sign**; every entry is also available to
