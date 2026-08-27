@@ -746,11 +746,149 @@
           </div>
         </details>
 
+        <!-- One persisted Balloon scene object, authored once and carried
+             unchanged across every renderer and dimension. The palette stays
+             pre-authorable while the echo is off; only dependent size/tint
+             detail collapses. Renderer-specific timing is explained in the
+             adjacent hint instead of duplicated presentations. -->
+        <details class="panel-section" id="balloonSection" name="panel-section">
+          <summary>Balloon</summary>
+          <p id="balloonTimingHint" class="flame-hint">
+            Points and Solid apply active Balloon edits live. Flame on/off and
+            active edits restart the exposure. Surface on/off and active palette
+            edits re-enter the render; size and tint stay live.
+          </p>
+          <label
+            class="checkbox-label"
+            id="balloonEchoRow"
+            title="Show a sphere-inverted echo of the attractor enclosing the whole scene — the Balloon size slider inflates it from a crumpled ball into a cave"
+          >
+            <input
+              type="checkbox"
+              id="balloonEchoCheckbox"
+              aria-describedby="balloonTimingHint balloonNote"
+            />
+            Balloon echo
+          </label>
+          <p
+            id="balloonNote"
+            class="flame-note hidden"
+            role="status"
+            aria-live="polite"
+          ></p>
+
+          <div id="balloonPaletteRow">
+            <label class="select-label">
+              Balloon Palette
+              <select
+                id="balloonPalette"
+                aria-describedby="balloonTimingHint balloonNote"
+              >
+                <option value="inherit">Inherit</option>
+                <option value="spectrum">Spectrum</option>
+                <option value="sunset">Sunset</option>
+                <option value="dusk">Dusk</option>
+                <option value="lagoon">Lagoon</option>
+                <option value="ember">Ember</option>
+                <option value="aurora">Aurora</option>
+                <option value="moss">Moss</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <div
+              id="balloonCustomPaletteRow"
+              class="custom-palette-row hidden"
+              aria-describedby="balloonTimingHint balloonNote"
+            >
+              <div
+                id="balloonCustomPaletteStrip"
+                class="custom-palette-strip"
+              ></div>
+              <div
+                id="balloonCustomPaletteStops"
+                class="custom-palette-stops"
+              ></div>
+              <div class="custom-palette-actions">
+                <button
+                  class="btn btn-ghost"
+                  id="balloonCustomPaletteRemove"
+                  type="button"
+                  title="Remove the last balloon color stop"
+                  aria-describedby="balloonTimingHint balloonNote"
+                >
+                  − Stop
+                </button>
+                <button
+                  class="btn btn-ghost"
+                  id="balloonCustomPaletteAdd"
+                  type="button"
+                  title="Add a balloon color stop"
+                  aria-describedby="balloonTimingHint balloonNote"
+                >
+                  + Stop
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div id="balloonRadiusRow" class="hidden">
+            <label class="select-label">
+              Balloon size: <span id="balloonRadiusLabel">1.60×</span>
+              <input
+                type="range"
+                id="balloonRadiusSlider"
+                min="0.05"
+                max="2.5"
+                step="0.01"
+                value="1.6"
+                aria-describedby="balloonTimingHint balloonNote"
+              />
+            </label>
+            <button
+              class="btn btn-ghost"
+              id="balloonInflateButton"
+              type="button"
+              title="Inflate the shared Balloon; Flame restarts at full size"
+              aria-describedby="balloonTimingHint balloonNote"
+            >
+              Inflate
+            </button>
+          </div>
+
+          <div id="balloonTintRow" class="position-axis-row hidden">
+            <span class="position-axis-title"
+              >Tint <span id="balloonTintLabel">0%</span></span
+            >
+            <div class="position-axis-inputs">
+              <label class="position-axis-label"
+                ><input
+                  type="color"
+                  id="balloonTintColor"
+                  value="#000000"
+                  aria-label="Balloon echo tint color"
+                  aria-describedby="balloonTimingHint balloonNote"
+              /></label>
+              <label class="position-axis-label">
+                <input
+                  type="range"
+                  id="balloonTintStrength"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  aria-label="Balloon echo tint strength"
+                  aria-describedby="balloonTimingHint balloonNote"
+                />
+              </label>
+            </div>
+          </div>
+        </details>
+
         <!-- Shared scene atmosphere. This stays reachable in every render
            mode: Background affects all four, while #fogControls hides only
            in Flame (the one renderer with no depth fog). The first block is
-           the Points renderer's own depth style and echo, so Surface/Solid/
-           Flame hide it without duplicating any of the shared controls. -->
+           the Points renderer's own depth style, so Surface/Solid/Flame hide
+           it without duplicating any of the shared controls. -->
         <details
           class="panel-section"
           id="atmosphereSection"
@@ -794,123 +932,6 @@
                   value="1"
                 />
               </label>
-            </div>
-
-            <!-- The balloon echo: a second, sphere-inverted point cloud
-               behind the explorer's own. Persisted scene content — one
-               balloon shared by Points, Flame, and Surface. A 4D cloud
-               projects each source point through the shared rotor/w-ramp/
-               slice path, then inverts that displayed 3D point through the
-               cloud's enclosing ball. -->
-            <label
-              class="checkbox-label"
-              id="balloonEchoRow"
-              title="Show a sphere-inverted echo of the attractor enclosing the whole scene — the Balloon size slider inflates it from a crumpled ball into a cave"
-            >
-              <input type="checkbox" id="balloonEchoCheckbox" />
-              Balloon echo
-            </label>
-
-            <div id="balloonPaletteRow">
-              <label class="select-label">
-                Balloon Palette
-                <select id="balloonPalette">
-                  <option value="inherit">Inherit</option>
-                  <option value="spectrum">Spectrum</option>
-                  <option value="sunset">Sunset</option>
-                  <option value="dusk">Dusk</option>
-                  <option value="lagoon">Lagoon</option>
-                  <option value="ember">Ember</option>
-                  <option value="aurora">Aurora</option>
-                  <option value="moss">Moss</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </label>
-              <div
-                id="balloonCustomPaletteRow"
-                class="custom-palette-row hidden"
-              >
-                <div
-                  id="balloonCustomPaletteStrip"
-                  class="custom-palette-strip"
-                ></div>
-                <div
-                  id="balloonCustomPaletteStops"
-                  class="custom-palette-stops"
-                ></div>
-                <div class="custom-palette-actions">
-                  <button
-                    class="btn btn-ghost"
-                    id="balloonCustomPaletteRemove"
-                    type="button"
-                    title="Remove the last balloon color stop"
-                  >
-                    − Stop
-                  </button>
-                  <button
-                    class="btn btn-ghost"
-                    id="balloonCustomPaletteAdd"
-                    type="button"
-                    title="Add a balloon color stop"
-                  >
-                    + Stop
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div id="balloonRadiusRow" class="hidden">
-              <label class="select-label">
-                Balloon size: <span id="balloonRadiusLabel">1.60×</span>
-                <input
-                  type="range"
-                  id="balloonRadiusSlider"
-                  min="0.05"
-                  max="2.5"
-                  step="0.01"
-                  value="1.6"
-                />
-              </label>
-              <button
-                class="btn btn-ghost"
-                id="balloonInflateButton"
-                type="button"
-                title="Inflate: animate Points and Surface, or restart Flame at the full-size rest pose"
-              >
-                Inflate
-              </button>
-            </div>
-
-            <!-- Balloon echo tint: color + strength blended onto the echo's
-               own base albedo before the dim/fade terms, one setting shared
-               with the Flame and Surface rows below — the three radius rows'
-               "one balloon, three renderers" relationship applied to color
-               instead of size. Same position-axis-row shape as fogTintRow
-               above. -->
-            <div id="balloonTintRow" class="position-axis-row hidden">
-              <span class="position-axis-title"
-                >Tint <span id="balloonTintLabel">0%</span></span
-              >
-              <div class="position-axis-inputs">
-                <label class="position-axis-label"
-                  ><input
-                    type="color"
-                    id="balloonTintColor"
-                    value="#000000"
-                    aria-label="Balloon echo tint color"
-                /></label>
-                <label class="position-axis-label">
-                  <input
-                    type="range"
-                    id="balloonTintStrength"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value="0"
-                    aria-label="Balloon echo tint strength"
-                  />
-                </label>
-              </div>
             </div>
           </div>
 
@@ -1244,114 +1265,6 @@
               </button>
             </div>
           </div>
-
-          <!-- The flame balloon: a second deposit for every chaos-game point,
-               sphere-inverted into this same exposure. These controls bind
-               the SAME persisted balloon fields as the Points and Surface
-               rows; changing them restarts accumulation because the echo and
-               its tint are baked into the histogram. -->
-          <label
-            class="checkbox-label"
-            id="flameBalloonRow"
-            title="Deposit a sphere-inverted echo of every Flame point into the same exposure"
-          >
-            <input type="checkbox" id="flameBalloonCheckbox" />
-            Balloon echo
-          </label>
-          <div id="flameBalloonPaletteRow">
-            <label class="select-label">
-              Balloon Palette
-              <select id="flameBalloonPalette">
-                <option value="inherit">Inherit</option>
-                <option value="spectrum">Spectrum</option>
-                <option value="sunset">Sunset</option>
-                <option value="dusk">Dusk</option>
-                <option value="lagoon">Lagoon</option>
-                <option value="ember">Ember</option>
-                <option value="aurora">Aurora</option>
-                <option value="moss">Moss</option>
-                <option value="custom">Custom</option>
-              </select>
-            </label>
-            <div
-              id="flameBalloonCustomPaletteRow"
-              class="custom-palette-row hidden"
-            >
-              <div
-                id="flameBalloonCustomPaletteStrip"
-                class="custom-palette-strip"
-              ></div>
-              <div
-                id="flameBalloonCustomPaletteStops"
-                class="custom-palette-stops"
-              ></div>
-              <div class="custom-palette-actions">
-                <button
-                  class="btn btn-ghost"
-                  id="flameBalloonCustomPaletteRemove"
-                  type="button"
-                  title="Remove the last balloon color stop"
-                >
-                  − Stop
-                </button>
-                <button
-                  class="btn btn-ghost"
-                  id="flameBalloonCustomPaletteAdd"
-                  type="button"
-                  title="Add a balloon color stop"
-                >
-                  + Stop
-                </button>
-              </div>
-            </div>
-          </div>
-          <div id="flameBalloonRadiusRow" class="hidden">
-            <label class="select-label">
-              Balloon size: <span id="flameBalloonRadiusLabel">1.60×</span>
-              <input
-                type="range"
-                id="flameBalloonRadiusSlider"
-                min="0.05"
-                max="2.5"
-                step="0.01"
-                value="1.6"
-              />
-            </label>
-            <button
-              class="btn btn-ghost"
-              id="flameBalloonInflateButton"
-              type="button"
-              title="Inflate: restart the Flame exposure at the full-size rest pose"
-            >
-              Inflate
-            </button>
-          </div>
-
-          <div id="flameBalloonTintRow" class="position-axis-row hidden">
-            <span class="position-axis-title"
-              >Tint <span id="flameBalloonTintLabel">0%</span></span
-            >
-            <div class="position-axis-inputs">
-              <label class="position-axis-label"
-                ><input
-                  type="color"
-                  id="flameBalloonTintColor"
-                  value="#000000"
-                  aria-label="Balloon echo tint color"
-              /></label>
-              <label class="position-axis-label">
-                <input
-                  type="range"
-                  id="flameBalloonTintStrength"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value="0"
-                  aria-label="Balloon echo tint strength"
-                />
-              </label>
-            </div>
-          </div>
         </details>
 
         <details
@@ -1490,77 +1403,6 @@
               >
                 + Stop
               </button>
-            </div>
-          </div>
-
-          <!-- The solid balloon samples the attractor's existing density
-               volume again at the sphere-inverted query point; it does not
-               accumulate a second, impractically large voxel grid. These
-               controls bind the SAME persisted balloon fields as Points,
-               Flame, and Surface. -->
-          <label
-            class="checkbox-label"
-            id="solidBalloonRow"
-            title="Show a sphere-inverted echo of the Solid volume around the attractor"
-          >
-            <input
-              type="checkbox"
-              id="solidBalloonCheckbox"
-              aria-describedby="solidBalloonNote"
-            />
-            Balloon echo
-          </label>
-          <p
-            id="solidBalloonNote"
-            class="flame-note hidden"
-            role="status"
-            aria-live="polite"
-          ></p>
-          <div id="solidBalloonRadiusRow" class="hidden">
-            <label class="select-label">
-              Balloon size: <span id="solidBalloonRadiusLabel">1.60×</span>
-              <input
-                type="range"
-                id="solidBalloonRadiusSlider"
-                min="0.05"
-                max="2.5"
-                step="0.01"
-                value="1.6"
-              />
-            </label>
-            <button
-              class="btn btn-ghost"
-              id="solidBalloonInflateButton"
-              type="button"
-              title="Inflate: animate the balloon from a crumpled ball out to its full size"
-            >
-              Inflate
-            </button>
-          </div>
-
-          <div id="solidBalloonTintRow" class="position-axis-row hidden">
-            <span class="position-axis-title"
-              >Tint <span id="solidBalloonTintLabel">0%</span></span
-            >
-            <div class="position-axis-inputs">
-              <label class="position-axis-label"
-                ><input
-                  type="color"
-                  id="solidBalloonTintColor"
-                  value="#000000"
-                  aria-label="Balloon echo tint color"
-              /></label>
-              <label class="position-axis-label">
-                <input
-                  type="range"
-                  id="solidBalloonTintStrength"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value="0"
-                  aria-label="Balloon echo tint strength"
-                />
-              </label>
             </div>
           </div>
         </details>
@@ -1951,139 +1793,11 @@
               value="0.35"
             />
           </label>
-          <!-- The surface balloon: the explorer's balloon echo rendered as real
-               geometry by the tracer. Binds the SAME persisted state pair, so
-               one balloon carries across renderers. The 4D arm slices then
-               inverts; the Points arm projects then inverts — dimensional
-               reduction first in both. A forward-orbit session keeps the
-               authored toggle visible but disabled with the adjacent reason;
-               its dependent controls hide while the balloon is refused. -->
-          <label
-            class="checkbox-label"
-            id="surfaceBalloonRow"
-            title="Enclose the render in its own sphere-inverted echo — the fractal's shadows fall on the cave wall around it"
-          >
-            <input
-              type="checkbox"
-              id="surfaceBalloonCheckbox"
-              aria-describedby="surfaceBalloonNote"
-            />
-            Balloon
-          </label>
-          <p
-            id="surfaceBalloonNote"
-            class="flame-note hidden"
-            role="status"
-            aria-live="polite"
-          ></p>
-          <div id="surfaceBalloonPaletteRow">
-            <label class="select-label">
-              Balloon Palette
-              <select id="surfaceBalloonPalette">
-                <option value="inherit">Inherit</option>
-                <option value="spectrum">Spectrum</option>
-                <option value="sunset">Sunset</option>
-                <option value="dusk">Dusk</option>
-                <option value="lagoon">Lagoon</option>
-                <option value="ember">Ember</option>
-                <option value="aurora">Aurora</option>
-                <option value="moss">Moss</option>
-                <option value="custom">Custom</option>
-              </select>
-            </label>
-            <div
-              id="surfaceBalloonCustomPaletteRow"
-              class="custom-palette-row hidden"
-            >
-              <div
-                id="surfaceBalloonCustomPaletteStrip"
-                class="custom-palette-strip"
-              ></div>
-              <div
-                id="surfaceBalloonCustomPaletteStops"
-                class="custom-palette-stops"
-              ></div>
-              <div class="custom-palette-actions">
-                <button
-                  class="btn btn-ghost"
-                  id="surfaceBalloonCustomPaletteRemove"
-                  type="button"
-                  title="Remove the last balloon color stop"
-                >
-                  − Stop
-                </button>
-                <button
-                  class="btn btn-ghost"
-                  id="surfaceBalloonCustomPaletteAdd"
-                  type="button"
-                  title="Add a balloon color stop"
-                >
-                  + Stop
-                </button>
-              </div>
-            </div>
-          </div>
-          <div id="surfaceBalloonRadiusRow" class="hidden">
-            <label class="select-label">
-              Balloon size: <span id="surfaceBalloonRadiusLabel">1.60×</span>
-              <input
-                type="range"
-                id="surfaceBalloonRadiusSlider"
-                min="0.05"
-                max="2.5"
-                step="0.01"
-                value="1.6"
-              />
-            </label>
-            <button
-              class="btn btn-ghost"
-              id="surfaceBalloonInflateButton"
-              type="button"
-              title="Inflate: animate the balloon from a crumpled ball out to its full size"
-            >
-              Inflate
-            </button>
-          </div>
-
-          <!-- Balloon tint: color + strength blended onto the balloon
-               shell's base albedo before lighting, gated on the union
-               argmin's shell attribution so a fractal-term hit is
-               untouched. Binds the SAME persisted state pair as the Points
-               and Flame rows above — one setting, three render modes, exactly
-               like their radius rows share the balloon size. -->
-          <div id="surfaceBalloonTintRow" class="position-axis-row hidden">
-            <span class="position-axis-title"
-              >Tint <span id="surfaceBalloonTintLabel">0%</span></span
-            >
-            <div class="position-axis-inputs">
-              <label class="position-axis-label"
-                ><input
-                  type="color"
-                  id="surfaceBalloonTintColor"
-                  value="#000000"
-                  aria-label="Balloon echo tint color"
-              /></label>
-              <label class="position-axis-label">
-                <input
-                  type="range"
-                  id="surfaceBalloonTintStrength"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value="0"
-                  aria-label="Balloon echo tint strength"
-                />
-              </label>
-            </div>
-          </div>
-
           <!-- The surface ground plane: an infinite floor under the
                fractal, catching its shadow. Persisted (state.groundPlane),
-               surface-mode only — no explorer-echo counterpart the way the
-               balloon above has one. Visible for BOTH "ifs" and "escape"
-               surface sessions, including 4D (unlike the balloon row, which
-               hides for escape — the floor survives where the balloon
-               degenerates). The balloon takes precedence while both are on:
+               surface-mode only — no explorer-echo counterpart. Visible for
+               BOTH "ifs" and "escape" surface sessions, including 4D. The
+               shared Balloon takes precedence while both are on:
                the two never compile together (main.ts's compute-target
                assembly resolves it). -->
           <label

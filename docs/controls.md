@@ -219,10 +219,11 @@ morphs into place instead of snapping (see **Presets** below).
     plus **By Color Mode (legacy)**, which hands coloring back to
     **Color**'s **Color Mode**; the restart is needed because each
     voxel's running mean color already has the old palette in it.
-    **Balloon echo**, **Balloon size**, **Inflate**, and **Tint** are the
-    Solid view of the same balloon settings shown in the other renders. Solid
-    remaps each ray query through the existing density volume, so these apply
-    live and never build or enlarge a second voxel grid. If the current
+    The shared top-level **Balloon** section carries **Balloon echo**,
+    **Balloon Palette**, **Balloon size**, **Inflate**, and **Tint** into this
+    render without moving or duplicating the editor. Solid remaps each ray
+    query through the existing density volume, so these apply live and never
+    build or enlarge a second voxel grid. If the current
     density already fills its enclosing-ball centre, the checkbox stays
     checked but disables with an explanatory note: inverting that interior
     would put the camera inside an unbounded solid. A later eligible system
@@ -609,10 +610,8 @@ morphs into place instead of snapping (see **Presets** below).
   and stores them as one sorted interval. Toggling geometry or changing its
   band restarts Surface because it changes the distance field. `Mandelbox
 Peace` is the color example; `Fold Chain Gear` is the geometry example.
-  Two persisted scene toggles round out the section. **Balloon**
-  — with its **Balloon size** slider and **Inflate** button — is the same
-  balloon as **Atmosphere**'s **Balloon echo** below (one setting, shared
-  across renderers), here traced as real geometry rather than echoed
+  The shared top-level **Balloon** section carries the same authored object
+  into Surface, here traced as real geometry rather than echoed
   points: the scene becomes the union of the attractor and its
   sphere-inverted copy, so the fractal sits at the center of an enclosing
   cave whose wall is itself, turned inside out — with its own shadows
@@ -630,11 +629,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   the same setting: what the tracer inverts there is the
   **W slice** it has just marched, not the 4D set, so the echo is the
   inversion of exactly what is drawn and the two scrub together as you move
-  the slice. The rows hide for a FORWARD-ORBIT session in either dimension
-  — the escape-time and Mandelbulb renders — where the balloon isn't just
-  unavailable but permanently inert: those solids are filled all the way to
-  the ball's center, so an inverted echo would swallow the camera, and they
-  stay plain. That gate is about the object, not the dimension. **Floor** puts an infinite neutral-gray floor just
+  the slice. In a FORWARD-ORBIT session in either dimension — escape-time or
+  Mandelbulb — the one authored editor remains in place but disables beside
+  its reason, retaining every value for recovery. Those solids are filled all
+  the way to the ball's center, so an inverted echo would swallow the camera.
+  That gate is about the object, not the dimension. **Floor** puts an infinite neutral-gray floor just
   below the shape to catch its shadow — the classic ray-marched-fractal
   grounding, and the scale reference fold monsters otherwise lack. The
   floor is matte-lit by the same **Light Angle** / **Light Height** /
@@ -1089,7 +1088,20 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   too hot or too dim for a particular scene — 1.00× (the default) leaves the
   automatic exposure alone. Applies live, with no regenerate, and persists in
   the link and scene file.
-- **Balloon echo** — a second copy of the point cloud,
+- **Balloon** (shared Scene / Look section) — one canonical editor remains in
+  the same accordion position across Points, Flame, Solid, Surface, and 3D/4D
+  changes. **Balloon Palette** can be selected — including editing its one
+  Custom stop list — before the echo is turned on; **Balloon size**,
+  **Inflate**, and **Tint** appear only once it is on. Active Points and Solid
+  changes are live. Flame on/off and active edits restart/re-accumulate because
+  the echo color is baked into its histogram. Surface on/off and active palette
+  changes re-enter the render, while size and tint remain live. Dormant palette
+  authoring changes only the document. Escape-time/Mandelbulb Surface
+  sessions and a Solid whose centre-density probe fails keep authored values
+  but disable the editor beside an accessible reason until an eligible session
+  returns.
+
+  **Balloon echo** is a second copy of the point cloud,
   sphere-inverted through a balloon centered on the attractor, enclosing the
   whole scene: the fractal you're orbiting sits inside a cave whose wall is
   itself, turned inside out. The **Balloon size** slider and **Inflate**
@@ -1121,6 +1133,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   slice first, then invert the marched 3D query. Solid freezes that slice in
   its voxel grid, but keeps the inversion ball at the 4D origin with the full
   pre-slice cloud radius, so scrubbing the slice never resizes the shell.
+
 - **Background** — the two-stop gradient every render shows behind
   the attractor: **Dark** (the original ground, and the default), **Haze**
   (the cooler, lighter atmosphere Aerial Haze used to force before this

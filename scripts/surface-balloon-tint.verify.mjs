@@ -905,7 +905,10 @@ async function main() {
       const capturePalette = (tag, balloon, palette, gl) =>
         capture({ ...base, tag, balloon, palette, gl });
       const selectDormantPalette = async (tag) => {
-        await page.selectOption("#surfaceBalloonPalette", BALLOON_PALETTE_ID);
+        await page.evaluate(() => {
+          document.getElementById("balloonSection")?.setAttribute("open", "");
+        });
+        await page.selectOption("#balloonPalette", BALLOON_PALETTE_ID);
         // The balloon-off control effect is renderer-inert. Give the browser
         // a turn, then use the same stable-shot rule as every loaded frame.
         await page.waitForTimeout(250);
@@ -1015,7 +1018,7 @@ async function main() {
       }
 
       // Cheap negative control: with no balloon target, selecting Aurora in
-      // the live mirrored control is renderer-inert on both engines. This
+      // the shared control is renderer-inert on both engines. This
       // catches both a LUT replacing the primary surface palette and an
       // unnecessary progressive restart while the balloon is disabled.
       for (const [engine, selected, inherited] of [

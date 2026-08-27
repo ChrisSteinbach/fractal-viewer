@@ -222,14 +222,13 @@ export interface ControlSceneEffects {
   setSurfaceShapeTrap(trap: ShapeTrap | null): void;
   /** Set the balloon tint — `tint` an rgb01 tuple, `strength` its 0..1
    * blend weight; see `scene.ts`'s `setBalloonTint`. ONE method for the
-   * Points and Surface scene renderers; all three panels' strength sliders
-   * and bespoke color pickers reach the same shared state/push. Uniform/spec writes
-   * only — unlike the balloon's on/off TOGGLE above this needs no session
-   * re-enter, because the tint lives inside the already-compiled
-   * SURFACE_BALLOON arm. */
+   * Points, Solid, and Surface scene renderers; the one shared editor reaches
+   * the same state/push. Uniform/spec writes only — unlike Surface's on/off
+   * toggle this needs no session re-enter, because tint lives inside the
+   * already-compiled SURFACE_BALLOON arm. */
   setBalloonTint(tint: [number, number, number], strength: number): void;
-  /** Replace the balloon-only LUT in the Points and Surface scene arms.
-   * `null` is the explicit Inherit signal. */
+  /** Replace the balloon-only LUT in the Points, Solid, and Surface scene
+   * arms. `null` is the explicit Inherit signal. */
   setBalloonPalette(lut: Float32Array | null): void;
   /** Set the depth-fog density multiplier — see `scene.ts`'s
    * `setFogDensity`. Pushes the GLSL/WGSL uniform on both surface tracers
@@ -473,7 +472,7 @@ const surfaceParamsEffect: ControlEffect = (state, fx) => {
 
 /** The trap's live-half push (scale/position/threshold/fade): rewrite the
  * scene's stored block — uniforms on the GLSL arm, the next frame spec on
- * compute — with no recompile (surfaceBalloonRadiusSlider's cheap path). */
+ * compute — with no recompile (the shared Balloon radius's cheap path). */
 const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
   fx.scene.setSurfaceShapeTrap(state.shapeTrap ?? null);
 };
@@ -546,15 +545,14 @@ export function surfaceColorLUT(state: AppState): Float32Array | null {
 }
 
 /**
- * Push the settled balloon palette to every renderer that can consume it.
+ * Push the settled balloon palette to the active renderer that consumes it.
  * The document remains editable while the balloon is off, but that state is
- * inert until a later enable rebuilds each arm from the current state. Flame
- * owns its accumulation restart inside the worker's `setBalloonPalette`
- * command; Surface needs an active-session re-entry to invalidate its
- * progressive frame cleanly.
+ * inert until a later enable rebuilds the active arm from current state.
+ * Points/Solid update live, Flame owns its accumulation restart inside the
+ * worker command, and Surface re-enters its progressive session.
  *
  * Exported for the bespoke balloon Custom editor in main.ts, whose stop-list
- * callback uses the same effect as the three scalar palette selects.
+ * callback uses the same effect as the one scalar palette select.
  */
 export function applyBalloonPaletteEffects(
   state: AppState,
@@ -563,18 +561,18 @@ export function applyBalloonPaletteEffects(
   if (!state.balloonEcho) return;
 
   const palette = applyBalloonPaletteToScene(state, fx);
-  fx.postFlame(
-    palette === null
-      ? { type: "setBalloonPalette" }
-      : { type: "setBalloonPalette", palette },
-  );
+  if (state.renderMode === "flame") {
+    fx.postFlame(
+      palette === null
+        ? { type: "setBalloonPalette" }
+        : { type: "setBalloonPalette", palette },
+    );
+  }
   if (state.renderMode === "surface") fx.restartSurfaceRender();
 }
 
-/** Install the current document choice in the persistent Points/Surface
- * scene without touching Flame accumulation. This is also needed when a
- * checkbox enables a palette authored while the balloon was off, because
- * dormant palette authoring is deliberately renderer-inert. */
+/** Install the document choice in the persistent Points/Solid/Surface scene.
+ * Also used when enabling a palette authored while Balloon was off. */
 function applyBalloonPaletteToScene(
   state: AppState,
   fx: ControlEffects,
@@ -819,10 +817,12 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       fx.scene.setBalloonEchoEnabled(s.balloonEcho);
       fx.scene.setBalloonEchoRadius(s.balloonRadius);
       fx.cancelBalloonSweep();
+      if (s.renderMode === "flame") fx.restartFlameRender();
+      if (s.renderMode === "surface") fx.restartSurfaceRender();
     },
   },
   {
-    // All three panels edit this one selection. Unlike radius/tint, the row
+    // One shared editor owns this selection. Unlike radius/tint, the row
     // stays reachable while the balloon is off so a look can be prepared
     // before enabling it; the shared effect's off guard keeps that authoring
     // renderer-inert until then.
@@ -854,15 +854,15 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, raw) => setBalloonRadius(s, Number(raw)),
     effect: (s, fx) => {
       fx.scene.setBalloonEchoRadius(s.balloonRadius);
+      fx.scene.setSurfaceBalloonRadius(s.balloonRadius);
       fx.cancelBalloonSweep();
+      if (s.renderMode === "flame") fx.restartFlameRender();
     },
   },
   {
     // Independent balloon color: the blend-weight half of the echo's own
-    // tint pair, next to balloonRadiusSlider above — the SAME state field
-    // as the Flame and Surface strength sliders below, seen through the
-    // Points explorer. The color half is a bespoke picker (ui.ts's
-    // onBalloonTint),
+    // tint pair, next to balloonRadiusSlider above. The color half is a
+    // bespoke picker (ui.ts's onBalloonTint),
     // like fogTintStrength's onFogTint above — this entry only carries the
     // 0..1 strength slider, converting the paired hex color to rgb01 at the
     // point of use rather than storing it twice.
@@ -874,8 +874,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
     read: (s) => String(s.balloonTintStrength),
     apply: (s, raw) => setBalloonTintStrength(s, Number(raw)),
-    effect: (s, fx) =>
-      fx.scene.setBalloonTint(hexToRgb01(s.balloonTint), s.balloonTintStrength),
+    effect: (s, fx) => {
+      fx.scene.setBalloonTint(hexToRgb01(s.balloonTint), s.balloonTintStrength);
+      if (s.renderMode === "flame") fx.restartFlameRender();
+    },
   },
   // ——— Export ———
   {
@@ -1063,65 +1065,6 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       fx.trackAutoBackground();
     },
   },
-  {
-    // The Flame panel's view of the shared balloon toggle. Unlike Points'
-    // uniform-only echo and Surface's shader variant, Flame bakes the extra
-    // deposits into its histogram, so every edit starts a fresh exposure.
-    kind: "checkbox",
-    id: "flameBalloonCheckbox",
-    read: (s) => s.balloonEcho,
-    apply: (s, checked) => setBalloonEcho(s, checked),
-    effect: (s, fx) => {
-      fx.cancelBalloonSweep();
-      if (s.balloonEcho) applyBalloonPaletteToScene(s, fx);
-      fx.scene.setBalloonEchoEnabled(s.balloonEcho);
-      fx.scene.setBalloonEchoRadius(s.balloonRadius);
-      if (s.renderMode === "flame") fx.restartFlameRender();
-    },
-  },
-  {
-    kind: "select",
-    id: "flameBalloonPalette",
-    read: (s) => s.balloonPaletteId,
-    apply: (s, raw) => setBalloonPaletteId(s, raw as BalloonPaletteSelection),
-    effect: balloonPaletteEffect,
-  },
-  {
-    // Same shared radius as the Points/Surface sliders. The scene pushes keep
-    // those two arms ready for a later mode switch; Flame itself must discard
-    // the old-radius histogram and accumulate again.
-    kind: "range",
-    id: "flameBalloonRadiusSlider",
-    label: {
-      id: "flameBalloonRadiusLabel",
-      text: (s) => `${s.balloonRadius.toFixed(2)}×`,
-    },
-    read: (s) => String(s.balloonRadius),
-    apply: (s, raw) => setBalloonRadius(s, Number(raw)),
-    effect: (s, fx) => {
-      fx.cancelBalloonSweep();
-      fx.scene.setBalloonEchoRadius(s.balloonRadius);
-      fx.scene.setSurfaceBalloonRadius(s.balloonRadius);
-      if (s.renderMode === "flame") fx.restartFlameRender();
-    },
-  },
-  {
-    // The strength half of Flame's shared tint pair. Tint affects deposited
-    // color, not the final tone-map, so it follows radius and restarts the
-    // exposure instead of trying to recolor an existing histogram.
-    kind: "range",
-    id: "flameBalloonTintStrength",
-    label: {
-      id: "flameBalloonTintLabel",
-      text: (s) => `${Math.round(s.balloonTintStrength * 100)}%`,
-    },
-    read: (s) => String(s.balloonTintStrength),
-    apply: (s, raw) => setBalloonTintStrength(s, Number(raw)),
-    effect: (s, fx) => {
-      fx.scene.setBalloonTint(hexToRgb01(s.balloonTint), s.balloonTintStrength);
-      if (s.renderMode === "flame") fx.restartFlameRender();
-    },
-  },
   // Adaptive density-estimation blur sliders — live-reactive like
   // gamma/vibrancy: the worker re-runs just the finished-frame adaptive
   // pass, never a re-accumulate.
@@ -1229,53 +1172,6 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       });
       fx.trackAutoBackground();
     },
-  },
-  {
-    // Solid's view of the shared balloon toggle. The echo is a query-space
-    // remap in the voxel material, so enabling it is the same cheap scene
-    // update as Points: the worker's one attractor grid remains untouched.
-    kind: "checkbox",
-    id: "solidBalloonCheckbox",
-    read: (s) => s.balloonEcho,
-    apply: (s, checked) => setBalloonEcho(s, checked),
-    effect: (s, fx) => {
-      if (s.balloonEcho) applyBalloonPaletteToScene(s, fx);
-      fx.scene.setBalloonEchoEnabled(s.balloonEcho);
-      fx.scene.setBalloonEchoRadius(s.balloonRadius);
-      fx.cancelBalloonSweep();
-    },
-  },
-  {
-    // The shader samples the same fixed voxel grid at the new inverted query
-    // point, so radius changes are live uniforms and never restart or rebuild
-    // the Solid accumulation.
-    kind: "range",
-    id: "solidBalloonRadiusSlider",
-    label: {
-      id: "solidBalloonRadiusLabel",
-      text: (s) => `${s.balloonRadius.toFixed(2)}×`,
-    },
-    read: (s) => String(s.balloonRadius),
-    apply: (s, raw) => setBalloonRadius(s, Number(raw)),
-    effect: (s, fx) => {
-      fx.scene.setBalloonEchoRadius(s.balloonRadius);
-      fx.cancelBalloonSweep();
-    },
-  },
-  {
-    // The strength half of Solid's shared tint pair. As in Points and
-    // Surface, the material consumes it live; only the echo contribution is
-    // tinted by the renderer.
-    kind: "range",
-    id: "solidBalloonTintStrength",
-    label: {
-      id: "solidBalloonTintLabel",
-      text: (s) => `${Math.round(s.balloonTintStrength * 100)}%`,
-    },
-    read: (s) => String(s.balloonTintStrength),
-    apply: (s, raw) => setBalloonTintStrength(s, Number(raw)),
-    effect: (s, fx) =>
-      fx.scene.setBalloonTint(hexToRgb01(s.balloonTint), s.balloonTintStrength),
   },
   {
     kind: "range",
@@ -1411,83 +1307,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: surfaceParamsEffect,
   },
   {
-    // The surface balloon checkbox: binds the SAME state pair as the
-    // explorer's balloonEchoCheckbox — one balloon across renderers (one
-    // continuous parameter: the explorer echo and the surface balloon are
-    // the same object through different renderers), persisted exactly like
-    // its explorer twin. Unlike every other surface control this is a
-    // VARIANT-level change (SURFACE_BALLOON recompile + compute/WebGL
-    // rerouting + grid on/off), so the effect re-enters the session, which
-    // re-derives all of it from state in one sweep.
-    kind: "checkbox",
-    id: "surfaceBalloonCheckbox",
-    read: (s) => s.balloonEcho,
-    apply: (s, checked) => setBalloonEcho(s, checked),
-    effect: (s, fx) => {
-      fx.cancelBalloonSweep();
-      if (s.balloonEcho) applyBalloonPaletteEffects(s, fx);
-      else fx.restartSurfaceRender();
-    },
-  },
-  {
-    kind: "select",
-    id: "surfaceBalloonPalette",
-    read: (s) => s.balloonPaletteId,
-    apply: (s, raw) => setBalloonPaletteId(s, raw as BalloonPaletteSelection),
-    effect: balloonPaletteEffect,
-  },
-  {
-    // The surface balloon's radius — same state field as
-    // balloonRadiusSlider (one balloon, two renderers), persisted like it.
-    // Live effect: the scene's cheap path rewrites uniforms only (never
-    // the shader), so every drag tick can push it, each coalescing into
-    // the drag's one undo checkpoint. The Inflate sweep (main.ts's
-    // onBalloonInflate/tickLogic) moves this same field every frame
-    // directly, bypassing this table entirely — never an undoable/saved
-    // edit in its own right, only wherever it settles.
-    kind: "range",
-    id: "surfaceBalloonRadiusSlider",
-    label: {
-      id: "surfaceBalloonRadiusLabel",
-      text: (s) => `${s.balloonRadius.toFixed(2)}×`,
-    },
-    read: (s) => String(s.balloonRadius),
-    apply: (s, raw) => setBalloonRadius(s, Number(raw)),
-    effect: (s, fx) => {
-      fx.cancelBalloonSweep();
-      fx.scene.setSurfaceBalloonRadius(s.balloonRadius);
-    },
-  },
-  {
-    // Independent balloon color: the blend-weight half of the surface
-    // balloon's own tint pair — the SAME state field as the Points and Flame
-    // strengths above (one balloon, three renderers, exactly like their
-    // radius sliders share the size). The
-    // color half is a bespoke picker (ui.ts's onBalloonTint), like
-    // fogTintStrength's onFogTint. Unlike surfaceBalloonCheckbox above,
-    // this is deliberately NOT a variant-level change — no
-    // restartSurfaceRender(): the tint is a uniform/spec value the already-
-    // compiled SURFACE_BALLOON arm reads (surface-de-gpu.ts's
-    // ShadeParams.balloonTint/balloonTintStrength, surface-material.ts's
-    // uBalloonTint/uBalloonTintStrength), so surfaceBalloonRadiusSlider's
-    // cheap live path — rewrite uniforms/spec fields only — is the right
-    // precedent here, not the checkbox's session re-entry.
-    kind: "range",
-    id: "surfaceBalloonTintStrength",
-    label: {
-      id: "surfaceBalloonTintLabel",
-      text: (s) => `${Math.round(s.balloonTintStrength * 100)}%`,
-    },
-    read: (s) => String(s.balloonTintStrength),
-    apply: (s, raw) => setBalloonTintStrength(s, Number(raw)),
-    effect: (s, fx) =>
-      fx.scene.setBalloonTint(hexToRgb01(s.balloonTint), s.balloonTintStrength),
-  },
-  {
     // The surface ground plane checkbox: a persisted Floor toggle for the
     // surface render alone — unlike the balloon pair above, there is no
     // explorer-echo counterpart in the points render. Like
-    // surfaceBalloonCheckbox, this is a VARIANT-level change
+    // the shared Balloon checkbox, this is a VARIANT-level change
     // (SURFACE_GROUND_PLANE recompile / compute params-struct size / shade
     // arm), so the effect re-enters the surface session, which re-derives
     // the floor uniforms/kernel choice from state in one sweep — no direct
@@ -1593,7 +1416,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     // re-picking it is a no-op so a sync can never destroy an authored
     // spec. VARIANT-LEVEL: the shape bakes into both engines' programs
     // (surfaceFragmentFor's splice, the kernels' codegen), so the effect
-    // re-enters the session, surfaceBalloonCheckbox's discipline.
+    // re-enters the session, the shared Balloon checkbox's discipline.
     kind: "select",
     id: "surfaceTrapShape",
     read: (s) => shapeTrapSelectValue(s),
@@ -1706,7 +1529,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   {
     // The trap's live pose half: scale/position/threshold/fade rewrite
     // uniforms (GLSL) or ride the next frame spec (compute) with no
-    // recompile — surfaceBalloonRadiusSlider's cheap path.
+    // recompile — the shared Balloon radius's cheap path.
     kind: "range",
     id: "surfaceTrapScaleSlider",
     label: {

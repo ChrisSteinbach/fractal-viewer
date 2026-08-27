@@ -2944,9 +2944,9 @@ function main(): void {
       : undefined;
   }
 
-  /** Resolve and push the balloon's independent gradient to the two live
-   * scene renderers. Null is explicit inherit. Kept beside the Flame echo
-   * snapshot because all three render arms must read one state decision. */
+  /** Resolve and push Balloon's independent gradient to the Points, Solid,
+   * and Surface scene renderers. Null is explicit inherit. Kept beside the
+   * Flame snapshot because all four render arms read one state decision. */
   function syncBalloonPaletteToScene(): void {
     const palette = resolveBalloonPalette(state);
     scene.setBalloonPalette(palette ? buildPaletteLUT(palette) : null);
@@ -5786,7 +5786,7 @@ function main(): void {
     // regardless of state.renderMode. A live surface session whose EFFECTIVE
     // balloon on/off just changed needs a full re-enter to pick it up (a
     // variant-level change — SURFACE_BALLOON compile / compute routing / grid
-    // on-off — not a uniform write), the same seam the surfaceBalloonCheckbox
+    // on-off — not a uniform write), the same seam the shared Balloon checkbox
     // effect uses (restartSurfaceRender in control-spec.ts). In practice this
     // branch is unreachable HERE today: switchRenderMode("points") above has
     // already exited any active surface session by this point, so
@@ -6898,10 +6898,10 @@ function main(): void {
       trackAutoBackground();
     },
     // Balloon Custom is an entirely separate authored slot. Its rendering
-    // effects mirror the shared selection: Points/Surface receive the
+    // effects mirror the shared selection: Points/Solid/Surface receive the
     // balloon-only scene LUT, Flame restarts because echo RGB is baked into
-    // accumulation. Editing dormant stops or editing while the balloon is
-    // off changes only the document, doing no renderer work.
+    // accumulation. Editing dormant stops or editing while Balloon is off
+    // changes only the document, doing no renderer work.
     onBalloonCustomPaletteStops: (stops) => {
       stopShows({ notify: true });
       editSession.beginEdit();
@@ -6960,10 +6960,9 @@ function main(): void {
     },
     // Balloon tint color: the color half of the balloon tint pair, mirroring
     // onFogTint just above exactly — one undo checkpoint per drag burst, then
-    // an instant push to every renderer the balloon reaches. ONE handler
-    // serves all THREE pickers (ui.ts wires the Points, Flame, and Surface
-    // inputs to it). The strength half rides the table-driven onScalarControl
-    // pipeline instead (control-spec.ts's three balloon-tint entries).
+    // an instant push to every renderer Balloon reaches. The strength half
+    // rides the table-driven onScalarControl pipeline instead (control-spec's
+    // one shared balloon-tint entry).
     onBalloonTint: (hex) => {
       stopShows({ notify: true });
       editSession.beginEdit();
@@ -6975,7 +6974,7 @@ function main(): void {
       );
       // Flame bakes the echo color into sumRGB, so the shared color picker
       // must restart an active accumulation just like the Flame section's
-      // tint-strength slider. Points/Surface remain cheap live pushes above.
+      // tint-strength slider. Points/Solid/Surface remain cheap live pushes.
       if (state.renderMode === "flame") controlEffects.restartFlameRender();
     },
     onRegenerate: () => regenerate(),
@@ -7059,13 +7058,13 @@ function main(): void {
     },
     // "Inflate": animate the balloon's radius from a crumpled near-center
     // ball out to its rest size — tickLogic's absolute-time poll pushes the
-    // sweep every frame while balloonSweepStartMs is set, in Points and
-    // Surface. Flame lands at rest and starts one new exposure instead.
+    // sweep every frame while balloonSweepStartMs is set, in Points, Solid,
+    // and Surface. Flame lands at rest and starts one new exposure instead.
     // Turns the balloon on first if it wasn't already,
     // mirroring the checkbox effects' own enabled(+radius) push
     // (control-spec.ts), so a click from off plays the whole sweep instead of
-    // silently jumping straight to rest — the explorer and surface checkboxes
-    // share this same on-first behavior via the mode-appropriate path below.
+    // silently jumping straight to rest — the shared control uses the
+    // mode-appropriate path below.
     // Session-only view motion, like auto-orbit: no undo checkpoint, no
     // stopShows (the balloon pair's OWN persistence still applies at whatever
     // the sweep is left resting on, via the next ordinary edit's debounced
@@ -7075,8 +7074,8 @@ function main(): void {
       // different set of deposited buckets, and restarting once per display
       // frame would prevent convergence entirely. In Flame, the shared
       // Inflate affordance therefore lands directly at the rest pose and
-      // starts one fresh accumulation. Points and Surface retain the live
-      // sweep below.
+      // starts one fresh accumulation. Points, Solid, and Surface retain the
+      // live sweep below.
       if (state.renderMode === "flame") {
         balloonSweepStartMs = null;
         state = setBalloonEcho(state, true);
@@ -7092,7 +7091,7 @@ function main(): void {
       if (!state.balloonEcho) {
         state = setBalloonEcho(state, true);
         if (state.renderMode === "surface") {
-          // Variant-level change, exactly like the surfaceBalloonCheckbox
+          // Variant-level change, exactly like the shared Balloon checkbox
           // effect (control-spec.ts): re-enter the session so it
           // recompiles/reroutes with the balloon on, rather than writing a
           // uniform the active variant doesn't carry.
@@ -8029,9 +8028,9 @@ function main(): void {
     // off ABSOLUTE time (now - balloonSweepStartMs) exactly like the tween
     // samples above, not a per-mode render dt — and tickLogic runs
     // unconditionally every frame where tickRender's per-mode branches
-    // early-return, so one poll here covers Points and Surface. Flame never
-    // arms the sweep (its handler lands once at rest); Solid has no balloon
-    // renderer. Direct reducer + scene calls, not the onScalarControl
+    // early-return, so one poll here covers Points, Solid, and Surface. Flame
+    // never arms the sweep (its handler lands once at rest). Direct reducer +
+    // scene calls, not the onScalarControl
     // pipeline (this is session-only replay motion, not a user edit — no undo
     // checkpoint, no save, and critically it can never reach the
     // control-spec.ts effects that call cancelBalloonSweep, or the sweep

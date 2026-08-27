@@ -136,9 +136,9 @@ async function settleOrReport(page, tag, timeoutMs = SOFT_TIMEOUT_MS) {
 
 async function setBalloon(page, on) {
   await page.evaluate((want) => {
-    const sec = document.getElementById("surfaceLookSection");
+    const sec = document.getElementById("balloonSection");
     if (sec) sec.setAttribute("open", "");
-    const cb = document.getElementById("surfaceBalloonCheckbox");
+    const cb = document.getElementById("balloonEchoCheckbox");
     if (cb && cb.checked !== want) cb.click();
   }, on);
   await page.waitForTimeout(500);
@@ -249,9 +249,9 @@ async function run() {
     if (sweepHost) {
       log(`sweep on ${sweepHost}: Inflate (9s) — previews must flow`);
       await page.evaluate(() => {
-        const sec = document.getElementById("surfaceLookSection");
+        const sec = document.getElementById("balloonSection");
         if (sec) sec.setAttribute("open", "");
-        document.getElementById("surfaceBalloonInflateButton").click();
+        document.getElementById("balloonInflateButton").click();
       });
       let previewSeen = 0;
       for (let i = 0; i < 22; i++) {
