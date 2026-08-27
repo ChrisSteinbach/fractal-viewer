@@ -1607,6 +1607,14 @@ describe("Ui surface ground plane row", () => {
   function surfaceGroundPlaneRow(): HTMLElement {
     return document.getElementById("surfaceGroundPlaneRow") as HTMLElement;
   }
+  function surfaceGroundPlaneCheckbox(): HTMLInputElement {
+    return document.getElementById(
+      "surfaceGroundPlaneCheckbox",
+    ) as HTMLInputElement;
+  }
+  function surfaceGroundPlaneNote(): HTMLElement {
+    return document.getElementById("surfaceGroundPlaneNote") as HTMLElement;
+  }
   function surfaceGroundPlaneDependentRows(): HTMLElement[] {
     return [
       document.getElementById("surfaceFloorPatternRow") as HTMLElement,
@@ -1615,70 +1623,130 @@ describe("Ui surface ground plane row", () => {
     ];
   }
 
-  it("shows the row for an ifs surface session", () => {
+  const FLOOR_BALLOON_REASON =
+    "Floor unavailable while Balloon encloses this Surface. Its saved setting is preserved; turn Balloon off to edit or show it.";
+
+  it.each(
+    (["flat", "nonFlat"] as const).flatMap((dimension) =>
+      ([null, "ifs", "escape", "bulb"] as const).map(
+        (kind) => [dimension, kind] as const,
+      ),
+    ),
+  )(
+    "composes %s × %s Balloon applicability before gating Floor",
+    (dimension, kind) => {
+      const ui = new Ui(document);
+      ui.setSurfaceSessionKind(kind);
+      ui.updateLabels({
+        ...initialState(true),
+        renderMode: "surface",
+        transforms:
+          dimension === "nonFlat"
+            ? nonFlatTransforms()
+            : initialState(true).transforms,
+        balloonEcho: true,
+        groundPlane: true,
+      });
+
+      const blocked = kind === null || kind === "ifs";
+      expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
+      expect(surfaceGroundPlaneCheckbox().checked).toBe(true);
+      expect(surfaceGroundPlaneCheckbox().disabled).toBe(blocked);
+      expect(surfaceGroundPlaneNote().textContent).toBe(
+        blocked ? FLOOR_BALLOON_REASON : "",
+      );
+      expect(surfaceGroundPlaneNote().classList.contains("hidden")).toBe(
+        !blocked,
+      );
+      for (const row of surfaceGroundPlaneDependentRows()) {
+        expect(row.classList.contains("hidden")).toBe(blocked);
+      }
+    },
+  );
+
+  it.each([
+    [false, false, false, true],
+    [false, true, false, false],
+    [true, false, true, true],
+    [true, true, true, true],
+  ] as const)(
+    "keeps Balloon=%s and Floor=%s independent (disabled=%s, settings hidden=%s)",
+    (balloonEcho, groundPlane, disabled, settingsHidden) => {
+      const ui = new Ui(document);
+      ui.setSurfaceSessionKind("ifs");
+      ui.updateLabels({
+        ...initialState(true),
+        renderMode: "surface",
+        balloonEcho,
+        groundPlane,
+      });
+
+      expect(surfaceGroundPlaneCheckbox().checked).toBe(groundPlane);
+      expect(surfaceGroundPlaneCheckbox().disabled).toBe(disabled);
+      for (const row of surfaceGroundPlaneDependentRows()) {
+        expect(row.classList.contains("hidden")).toBe(settingsHidden);
+      }
+    },
+  );
+
+  it("preserves Floor through applicability and Balloon recovery", () => {
     const ui = new Ui(document);
-    ui.setSurfaceSessionKind("ifs");
-    ui.updateLabels({
+    const bothOn = {
       ...initialState(true),
       renderMode: "surface" as const,
-    });
-    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
-  });
+      balloonEcho: true,
+      groundPlane: true,
+    };
+    ui.setSurfaceSessionKind("ifs");
+    ui.updateLabels(bothOn);
+    expect(surfaceGroundPlaneCheckbox().checked).toBe(true);
+    expect(surfaceGroundPlaneCheckbox().disabled).toBe(true);
 
-  it("shows the row for an escape surface session too — unlike the balloon row, which hides there", () => {
-    const ui = new Ui(document);
     ui.setSurfaceSessionKind("escape");
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "surface" as const,
-    });
-    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
+    expect(surfaceGroundPlaneCheckbox().checked).toBe(true);
+    expect(surfaceGroundPlaneCheckbox().disabled).toBe(false);
+    expect(
+      surfaceGroundPlaneDependentRows().every(
+        (row) => !row.classList.contains("hidden"),
+      ),
+    ).toBe(true);
+
+    ui.setSurfaceSessionKind("ifs");
+    expect(surfaceGroundPlaneCheckbox().checked).toBe(true);
+    expect(surfaceGroundPlaneCheckbox().disabled).toBe(true);
+
+    ui.updateLabels({ ...bothOn, balloonEcho: false });
+    expect(surfaceGroundPlaneCheckbox().checked).toBe(true);
+    expect(surfaceGroundPlaneCheckbox().disabled).toBe(false);
+    expect(surfaceGroundPlaneNote().textContent).toBe("");
   });
 
-  it("shows the row for a Mandelbulb session too — the floor survives where the balloon degenerates", () => {
-    const ui = new Ui(document);
-    ui.setSurfaceSessionKind("bulb");
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "surface" as const,
-    });
-    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
-  });
-
-  it("shows the row in a live 4D surface session too — the floor lifts to 4D", () => {
-    // The w-slice the floor drops under is an ordinary 3D object, so the
-    // row now carries no gate at all: every session kind, both dimensions.
+  it("keeps Floor usable outside Surface despite a stale eligible kind", () => {
     const ui = new Ui(document);
     ui.setSurfaceSessionKind("ifs");
     ui.updateLabels({
       ...initialState(true),
-      renderMode: "surface" as const,
-      transforms: nonFlatTransforms(),
+      renderMode: "points",
+      balloonEcho: true,
+      groundPlane: true,
     });
-    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
+    expect(surfaceGroundPlaneCheckbox().disabled).toBe(false);
+    expect(surfaceGroundPlaneCheckbox().checked).toBe(true);
   });
 
-  it("keeps the row stable OUTSIDE surface mode", () => {
+  it("exposes the adjacent refusal reason accessibly", () => {
     const ui = new Ui(document);
+    ui.setSurfaceSessionKind("ifs");
     ui.updateLabels({
       ...initialState(true),
-      transforms: nonFlatTransforms(),
+      renderMode: "surface",
+      balloonEcho: true,
     });
-    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
-  });
-
-  it("shows the floor settings only while Floor is on", () => {
-    const ui = new Ui(document);
-
-    ui.updateLabels({ ...initialState(true), groundPlane: false });
-    for (const row of surfaceGroundPlaneDependentRows()) {
-      expect(row.classList.contains("hidden")).toBe(true);
-    }
-
-    ui.updateLabels({ ...initialState(true), groundPlane: true });
-    for (const row of surfaceGroundPlaneDependentRows()) {
-      expect(row.classList.contains("hidden")).toBe(false);
-    }
+    expect(surfaceGroundPlaneCheckbox().getAttribute("aria-describedby")).toBe(
+      "surfaceGroundPlaneNote",
+    );
+    expect(surfaceGroundPlaneNote().getAttribute("role")).toBe("status");
+    expect(surfaceGroundPlaneNote().getAttribute("aria-live")).toBe("polite");
   });
 });
 

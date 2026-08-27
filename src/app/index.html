@@ -1796,18 +1796,28 @@
           <!-- The surface ground plane: an infinite floor under the
                fractal, catching its shadow. Persisted (state.groundPlane),
                surface-mode only — no explorer-echo counterpart. Visible for
-               BOTH "ifs" and "escape" surface sessions, including 4D. The
-               shared Balloon takes precedence while both are on:
-               the two never compile together (main.ts's compute-target
-               assembly resolves it). -->
+               BOTH "ifs" and "escape" surface sessions, including 4D. An
+               applicable, enabled shared Balloon temporarily disables this
+               authored presentation without clearing its saved value; a
+               refused escape/bulb Balloon leaves Floor usable. -->
           <label
             class="checkbox-label"
             id="surfaceGroundPlaneRow"
             title="Infinite floor under the fractal, catching its shadow (surface render)"
           >
-            <input type="checkbox" id="surfaceGroundPlaneCheckbox" />
+            <input
+              type="checkbox"
+              id="surfaceGroundPlaneCheckbox"
+              aria-describedby="surfaceGroundPlaneNote"
+            />
             Floor
           </label>
+          <p
+            id="surfaceGroundPlaneNote"
+            class="flame-note hidden"
+            role="status"
+            aria-live="polite"
+          ></p>
           <label class="select-label" id="surfaceFloorPatternRow">
             Floor pattern
             <select id="surfaceFloorPatternSelect">

@@ -1308,9 +1308,11 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   },
   {
     // The surface ground plane checkbox: a persisted Floor toggle for the
-    // surface render alone — unlike the balloon pair above, there is no
-    // explorer-echo counterpart in the points render. Like
-    // the shared Balloon checkbox, this is a VARIANT-level change
+    // surface render alone — unlike the Balloon pair above, there is no
+    // explorer-echo counterpart in the points render. Ui only disables this
+    // authored checkbox while an applicable Surface Balloon encloses it; the
+    // reducer remains independent and never clears either flag. Like the
+    // shared Balloon checkbox, this is a VARIANT-level change
     // (SURFACE_GROUND_PLANE recompile / compute params-struct size / shade
     // arm), so the effect re-enters the surface session, which re-derives
     // the floor uniforms/kernel choice from state in one sweep — no direct
