@@ -439,6 +439,27 @@ interface TransformButtonOptions {
 const AXES = ["X", "Y", "Z"] as const;
 const SURFACE_FLOOR_BALLOON_REASON =
   "Floor unavailable while Balloon encloses this Surface. Its saved setting is preserved; turn Balloon off to edit or show it.";
+const FOG_FLAME_REASON =
+  "Fog and Tint stay saved for Depth Fade, Aerial Haze, Solid, and Surface. Flame has no depth-fog pass.";
+const FOG_FOUR_D_DORMANT_REASON =
+  "Fog and Tint stay saved for 3D Depth Fade, Aerial Haze, Solid, and Surface. 4D Points use Depth fade, which dims brightness instead of applying fog.";
+const FOG_FOUR_D_BALLOON_REASON =
+  "Fog changes Balloon’s fade horizon only. 4D Points use Depth fade for the main cloud, and Tint does not color Balloon.";
+
+function foglessPointsStyleName(state: AppState): string {
+  switch (state.renderStyle) {
+    case "glow":
+      return "Glow + Bloom";
+    case "dof":
+      return "Depth of Field";
+    case "edl":
+      return "Eye-Dome Lighting";
+    case "depthFade":
+      return "Depth Fade";
+    case "aerial":
+      return "Aerial Haze";
+  }
+}
 
 /** Which geometry channel a group of editor sliders edits. */
 type Channel = "position" | "rotation" | "scale" | "shear";
@@ -1907,11 +1928,14 @@ export class Ui {
     top: HTMLInputElement;
     bottom: HTMLInputElement;
   };
-  /** The fog tint's bespoke color picker — the strength slider beside it
-   * is table-driven (see SCALAR_CONTROLS's `fogTintStrength` entry), so
-   * only the color input needs its own reference here, unlike
-   * `backgroundInputs`' pair. */
+  /** The Fog/Tint pair stays visible as authored Look state. These references
+   * let {@link syncFogRows} disable density and tint independently: a Points
+   * Balloon consumes density even when the main cloud has no fog pass, but it
+   * never consumes fog tint. The scalar sliders remain table-driven. */
+  private readonly fogSlider: HTMLInputElement;
   private readonly fogTintColorInput: HTMLInputElement;
+  private readonly fogTintStrengthInput: HTMLInputElement;
+  private readonly fogNote: HTMLElement;
   private readonly symmetryNote: HTMLElement;
   /** The Hybrid schedule section's controls — see the UiHandlers schedule
    * trio for the contract each drives. */
@@ -1954,9 +1978,6 @@ export class Ui {
    * emitter-backed IFS route; Shape trap belongs to forward-orbit routes. */
   private readonly surfaceCondensationSection: HTMLDetailsElement;
   private readonly surfaceTrapSection: HTMLDetailsElement;
-  /** The shared Atmosphere section's one mode-sensitive subset: fog in every
-   * renderer except Flame. */
-  private readonly fogControls: HTMLElement;
   /** The render-mode segmented control's three buttons, keyed by the mode
    * each one switches to — the single entry/exit surface that replaced the
    * flame/solid modal islands' four separate buttons. */
@@ -2460,7 +2481,10 @@ export class Ui {
       top: this.byId("backgroundTop"),
       bottom: this.byId("backgroundBottom"),
     };
+    this.fogSlider = this.byId("fogSlider");
     this.fogTintColorInput = this.byId("fogTintColor");
+    this.fogTintStrengthInput = this.byId("fogTintStrength");
+    this.fogNote = this.byId("fogNote");
     this.symmetryNote = this.byId("symmetryNote");
     this.scheduleSource = this.byId("scheduleSource");
     this.scheduleSourceSaved = this.byId("scheduleSourceSaved");
@@ -2551,7 +2575,6 @@ export class Ui {
       this.byId<HTMLDetailsElement>("surfaceLightingSection"),
       this.byId<HTMLDetailsElement>("surfaceFloorSection"),
     ];
-    this.fogControls = this.byId("fogControls");
     this.modeButtons = {
       points: this.byId("modePointsBtn"),
       flame: this.byId("modeFlameBtn"),
@@ -3294,6 +3317,49 @@ export class Ui {
     this.syncBalloonRows();
   }
 
+  /** Apply Fog/Tint's exact consumer record from docs/panel-ia.md. Both are
+   * authored Scene / Look state and therefore stay visible across renderer
+   * changes. The active consumer gate is intentionally feature-owned rather
+   * than a panel-applicability registry entry: Points depth style and the
+   * authored Balloon flag are document predicates beyond that registry's
+   * renderer/dimension/session-kind axes.
+   *
+   * Density and tint split only in Points: Balloon reuses density for its
+   * bounded radial horizon, but has its own independent Balloon Tint. */
+  private syncFogRows(state: AppState, nonFlat: boolean): void {
+    const pointsMainFog =
+      state.renderMode === "points" &&
+      !nonFlat &&
+      (state.renderStyle === "depthFade" || state.renderStyle === "aerial");
+    const mainFog =
+      state.renderMode === "solid" ||
+      state.renderMode === "surface" ||
+      pointsMainFog;
+    const balloonHorizon = state.renderMode === "points" && state.balloonEcho;
+
+    this.fogSlider.disabled = !mainFog && !balloonHorizon;
+    this.fogTintColorInput.disabled = !mainFog;
+    this.fogTintStrengthInput.disabled = !mainFog;
+
+    let reason = "";
+    if (!mainFog) {
+      if (state.renderMode === "flame") {
+        reason = FOG_FLAME_REASON;
+      } else if (nonFlat) {
+        reason = balloonHorizon
+          ? FOG_FOUR_D_BALLOON_REASON
+          : FOG_FOUR_D_DORMANT_REASON;
+      } else {
+        const style = foglessPointsStyleName(state);
+        reason = balloonHorizon
+          ? `Fog changes Balloon’s fade horizon only. ${style} has no depth-fog pass, and Tint does not color Balloon.`
+          : `Fog and Tint stay saved for Depth Fade, Aerial Haze, Solid, and Surface. ${style} has no depth-fog pass.`;
+      }
+    }
+    this.fogNote.textContent = reason;
+    this.fogNote.classList.toggle("hidden", reason === "");
+  }
+
   /** Apply the active consumer's refusal to the one authored presentation.
    * Authored values survive disabled Surface/Solid sessions; palette remains
    * pre-authorable while merely off, and size/tint are dependent detail. */
@@ -3489,7 +3555,8 @@ export class Ui {
     // render would just be confusing — but the segmented control itself stays,
     // so flame↔solid is a direct switch, not a round-trip through Points.
     // Atmosphere is the deliberate exception: its one shared section remains
-    // reachable and exposes only fog when the current renderer has a depth pass.
+    // reachable. Fog/Tint stay present as authored Look state and disclose
+    // dormant or partial scope in place; syncFogRows owns that finer gate.
     const rendering = state.renderMode !== "points";
     // "4D" is a DERIVED property of the system (see affine4.ts's systemIsFlat
     // via state.ts's systemIsNonFlat), NOT a fourth render mode — so this is a
@@ -3528,7 +3595,7 @@ export class Ui {
     for (const section of this.pointsSections) {
       section.classList.toggle("hidden", rendering);
     }
-    this.fogControls.classList.toggle("hidden", state.renderMode === "flame");
+    this.syncFogRows(state, nonFlat);
     for (const section of this.flameSections) {
       section.classList.toggle("hidden", state.renderMode !== "flame");
     }

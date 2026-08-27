@@ -5003,7 +5003,7 @@ describe("Ui render mode switch", () => {
     expect(atmosphere.classList.contains("hidden")).toBe(false);
     expect(depth.classList.contains("hidden")).toBe(true);
     expect(byId("backgroundRow").classList.contains("hidden")).toBe(false);
-    expect(byId("fogControls").classList.contains("hidden")).toBe(true);
+    expect(byId("fogControls").classList.contains("hidden")).toBe(false);
 
     ui.updateLabels(state);
     expect(byId("scheduleSection").classList.contains("hidden")).toBe(false);
@@ -7826,6 +7826,33 @@ describe("panel accordion sections", () => {
     expect(hiddenOpenSections()).toEqual([]);
   });
 
+  it("keeps Atmosphere open while Fog moves through live, dormant, and Balloon-only scope", () => {
+    const ui = new Ui(document);
+    const flat = initialState(true);
+    const atmosphere = details("atmosphereSection");
+    details("presetSection").open = false;
+    atmosphere.open = true;
+    atmosphere.dispatchEvent(new Event("toggle"));
+
+    const states: AppState[] = [
+      { ...flat, renderMode: "flame" },
+      { ...flat, transforms: nonFlatTransforms() },
+      {
+        ...flat,
+        transforms: nonFlatTransforms(),
+        balloonEcho: true,
+      },
+      { ...flat, renderMode: "solid" },
+      flat,
+    ];
+    for (const state of states) {
+      ui.updateLabels(state);
+      expect(atmosphere.classList.contains("hidden")).toBe(false);
+      expect(atmosphere.open).toBe(true);
+      expect(hiddenOpenSections()).toEqual([]);
+    }
+  });
+
   it("keeps an open Symmetry editor through Points → Flame → Solid → Surface → Points", () => {
     const ui = new Ui(document);
     const state = initialState(true);
@@ -10104,6 +10131,213 @@ describe("Ui background backdrop row", () => {
       top: [0x33 / 255, 0x66 / 255, 0x99 / 255],
       bottom: [1, 1, 1],
     });
+  });
+});
+
+describe("Ui Fog/Tint consumer applicability", () => {
+  const FLAME_REASON =
+    "Fog and Tint stay saved for Depth Fade, Aerial Haze, Solid, and Surface. Flame has no depth-fog pass.";
+  const FOUR_D_DORMANT_REASON =
+    "Fog and Tint stay saved for 3D Depth Fade, Aerial Haze, Solid, and Surface. 4D Points use Depth fade, which dims brightness instead of applying fog.";
+  const FOUR_D_BALLOON_REASON =
+    "Fog changes Balloon’s fade horizon only. 4D Points use Depth fade for the main cloud, and Tint does not color Balloon.";
+  const styleName: Record<AppState["renderStyle"], string> = {
+    depthFade: "Depth Fade",
+    aerial: "Aerial Haze",
+    glow: "Glow + Bloom",
+    dof: "Depth of Field",
+    edl: "Eye-Dome Lighting",
+  };
+
+  function el(id: string): HTMLInputElement {
+    return document.getElementById(id) as HTMLInputElement;
+  }
+
+  function note(): HTMLElement {
+    return document.getElementById("fogNote") as HTMLElement;
+  }
+
+  function stateFor(options: {
+    renderMode?: AppState["renderMode"];
+    renderStyle?: AppState["renderStyle"];
+    nonFlat?: boolean;
+    balloon?: boolean;
+  }): AppState {
+    const base = initialState(true);
+    return {
+      ...base,
+      renderMode: options.renderMode ?? "points",
+      renderStyle: options.renderStyle ?? "depthFade",
+      transforms: options.nonFlat ? nonFlatTransforms() : base.transforms,
+      balloonEcho: options.balloon ?? false,
+    };
+  }
+
+  type FogCase = {
+    name: string;
+    state: AppState;
+    densityEnabled: boolean;
+    tintEnabled: boolean;
+    reason: string;
+  };
+
+  const cases: FogCase[] = [];
+  for (const renderStyle of ["depthFade", "aerial"] as const) {
+    for (const balloon of [false, true]) {
+      cases.push({
+        name: `flat Points ${styleName[renderStyle]}, Balloon ${balloon ? "on" : "off"}`,
+        state: stateFor({ renderStyle, balloon }),
+        densityEnabled: true,
+        tintEnabled: true,
+        reason: "",
+      });
+    }
+  }
+  for (const renderStyle of ["glow", "dof", "edl"] as const) {
+    cases.push({
+      name: `flat Points ${styleName[renderStyle]}, Balloon off`,
+      state: stateFor({ renderStyle }),
+      densityEnabled: false,
+      tintEnabled: false,
+      reason:
+        `Fog and Tint stay saved for Depth Fade, Aerial Haze, Solid, and Surface. ` +
+        `${styleName[renderStyle]} has no depth-fog pass.`,
+    });
+    cases.push({
+      name: `flat Points ${styleName[renderStyle]}, Balloon on`,
+      state: stateFor({ renderStyle, balloon: true }),
+      densityEnabled: true,
+      tintEnabled: false,
+      reason:
+        `Fog changes Balloon’s fade horizon only. ${styleName[renderStyle]} ` +
+        `has no depth-fog pass, and Tint does not color Balloon.`,
+    });
+  }
+  cases.push(
+    {
+      name: "non-flat Points, Balloon off",
+      state: stateFor({ nonFlat: true }),
+      densityEnabled: false,
+      tintEnabled: false,
+      reason: FOUR_D_DORMANT_REASON,
+    },
+    {
+      name: "non-flat Points, Balloon on",
+      state: stateFor({ nonFlat: true, balloon: true }),
+      densityEnabled: true,
+      tintEnabled: false,
+      reason: FOUR_D_BALLOON_REASON,
+    },
+  );
+  for (const nonFlat of [false, true]) {
+    for (const balloon of [false, true]) {
+      cases.push({
+        name: `${nonFlat ? "non-flat" : "flat"} Flame, Balloon ${balloon ? "on" : "off"}`,
+        state: stateFor({
+          renderMode: "flame",
+          nonFlat,
+          balloon,
+        }),
+        densityEnabled: false,
+        tintEnabled: false,
+        reason: FLAME_REASON,
+      });
+      for (const renderMode of ["solid", "surface"] as const) {
+        cases.push({
+          name: `${nonFlat ? "non-flat" : "flat"} ${renderMode}, Balloon ${balloon ? "on" : "off"}`,
+          state: stateFor({ renderMode, nonFlat, balloon }),
+          densityEnabled: true,
+          tintEnabled: true,
+          reason: "",
+        });
+      }
+    }
+  }
+
+  it.each(cases)("$name", ({ state, densityEnabled, tintEnabled, reason }) => {
+    const ui = new Ui(document);
+    ui.updateLabels(state);
+
+    expect(
+      document.getElementById("fogControls")?.classList.contains("hidden"),
+    ).toBe(false);
+    expect(el("fogSlider").disabled).toBe(!densityEnabled);
+    expect(el("fogTintColor").disabled).toBe(!tintEnabled);
+    expect(el("fogTintStrength").disabled).toBe(!tintEnabled);
+    expect(note().textContent).toBe(reason);
+    expect(note().classList.contains("hidden")).toBe(reason === "");
+  });
+
+  it.each(
+    (["flat", "nonFlat"] as const).flatMap((dimension) =>
+      ([null, "ifs", "escape", "bulb"] as const).map(
+        (kind) => [dimension, kind] as const,
+      ),
+    ),
+  )(
+    "keeps Surface fog live for %s × %s even when Balloon is off or refused",
+    (dimension, kind) => {
+      const ui = new Ui(document);
+      ui.setSurfaceSessionKind(kind);
+      ui.updateLabels(
+        stateFor({
+          renderMode: "surface",
+          nonFlat: dimension === "nonFlat",
+          balloon: true,
+        }),
+      );
+
+      expect(el("fogSlider").disabled).toBe(false);
+      expect(el("fogTintColor").disabled).toBe(false);
+      expect(el("fogTintStrength").disabled).toBe(false);
+      expect(note().classList.contains("hidden")).toBe(true);
+    },
+  );
+
+  it("keeps Solid fog live when the centre-density probe refuses Balloon", () => {
+    const ui = new Ui(document);
+    ui.setSolidBalloonAvailable(false);
+    ui.updateLabels(stateFor({ renderMode: "solid", balloon: true }));
+
+    expect(el("fogSlider").disabled).toBe(false);
+    expect(el("fogTintColor").disabled).toBe(false);
+    expect(el("fogTintStrength").disabled).toBe(false);
+    expect(note().classList.contains("hidden")).toBe(true);
+  });
+
+  it("retains dormant authored values and restores editing when a consumer returns", () => {
+    const ui = new Ui(document);
+    const authored = {
+      ...stateFor({ renderMode: "flame" }),
+      fogDensity: 0.35,
+      fogTint: "#336699",
+      fogTintStrength: 0.65,
+    };
+
+    ui.updateLabels(authored);
+    expect(el("fogSlider").disabled).toBe(true);
+    expect(el("fogSlider").value).toBe("0.35");
+    expect(el("fogTintColor").value).toBe("#336699");
+    expect(el("fogTintStrength").value).toBe("0.65");
+
+    ui.updateLabels({ ...authored, renderMode: "solid" });
+    expect(el("fogSlider").disabled).toBe(false);
+    expect(el("fogTintColor").disabled).toBe(false);
+    expect(el("fogTintStrength").disabled).toBe(false);
+    expect(el("fogSlider").value).toBe("0.35");
+    expect(el("fogTintColor").value).toBe("#336699");
+    expect(el("fogTintStrength").value).toBe("0.65");
+    expect(note().textContent).toBe("");
+    expect(note().classList.contains("hidden")).toBe(true);
+  });
+
+  it("associates every Fog/Tint input with a polite live scope note", () => {
+    new Ui(document);
+    for (const id of ["fogSlider", "fogTintColor", "fogTintStrength"]) {
+      expect(el(id).getAttribute("aria-describedby")).toBe("fogNote");
+    }
+    expect(note().getAttribute("role")).toBe("status");
+    expect(note().getAttribute("aria-live")).toBe("polite");
   });
 });
 

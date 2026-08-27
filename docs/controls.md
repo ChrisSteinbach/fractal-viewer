@@ -1189,19 +1189,27 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   fog the app always had — links and scene files saved before the control
   existed render unchanged — and the slider scales the fog's distance unit
   around that: higher packs the fog tighter around the camera into a thicker
-  haze, lower stretches it thin, and 0 turns depth fog off outright. One
+  haze, lower stretches it thin, and 0 turns the renderers' depth fog off
+  outright. The Points Balloon's separate safety fade never disappears: it
+  stops stretching below 0.15× because it also bounds the sphere inversion's
+  otherwise infinite far field. One
   slider reaches every render with depth to convey — the explorer's
   fog-bearing depth styles (Depth Fade and Aerial Haze), the ◆ Solid render
   (which grew true depth fog with this control, so solids read a touch
   hazier than they once did), every ◈ Surface tracer (the 4D slice
   included), and the balloon echo's fade horizon above. The ✺ Flame render
   is a 2D exposure with no depth to fog, and the 4D projection's **Depth
-  fade** option is a brightness fade rather than a fog, so those two stay
-  untouched. There is deliberately no separate falloff slider: the point
+  fade** option is a brightness fade rather than fog, so those main render
+  paths stay untouched. When Balloon is on in Points, **Fog** remains live
+  for that echo's horizon even under a non-fog depth style or a 4D projection;
+  the adjacent scope note makes that partial effect explicit. There is
+  deliberately no separate falloff slider: the point
   cloud's fog is a linear near/far band while the solid and surface fogs
   are exponential in the shape's own scale, so no single falloff number
   could mean the same thing across them — density alone covers the useful
-  thin-to-thick range. Applies live everywhere (never a restart), and
+  thin-to-thick range. The authored slider stays visible in every renderer:
+  it applies live for the consumers above, and otherwise disables beside a
+  reason while retaining its saved value. It never restarts a renderer and
   persists in the link and scene file.
 - **Tint** — the color half of the atmosphere pair: what the fog
   fades things toward. Fog normally fades toward a color derived from the
@@ -1214,8 +1222,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   tinted atmosphere meaningful rather than silently overriding it. It
   reaches the same renders as **Fog** above, minus the two brightness fades
   that have no color to shift (the balloon echo's horizon and the 4D
-  projection's Depth fade dim points rather than blend them). Live and
-  persisted, like the density. A different knob from ◈ Surface's
+  projection's Depth fade dim points rather than blend them). It therefore
+  disables even when Balloon alone keeps **Fog** density live, with the same
+  adjacent scope note explaining the difference. Like density, it remains
+  visible with its saved value in a non-consuming renderer and is live and
+  persisted where consumed. A different knob from ◈ Surface's
   **Environment** slider above in both axis and target: **Tint**
   retargets what depth _fog_ blends toward, by distance; **Environment**
   tints the _light_ itself, by shading normal — the two compose

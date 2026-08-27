@@ -736,12 +736,13 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: (s, fx) => fx.trackAutoBackground(),
   },
   {
-    // The Fog slider: depth-fog density, spanning the points explorer's
-    // fog-bearing styles, every surface tracer, and the solid render — see
-    // state.ts's AppState.fogDensity. The shared Atmosphere panel exposes this
-    // row in Points, Surface, and Solid; ui.ts hides the enclosing fogControls
-    // group in Flame, whose renderer does not consume fog. Unlike
-    // glowBrightnessSlider, the row has no point-style gate of its own.
+    // The Fog slider's four-property record (docs/panel-ia.md): authored
+    // Scene / Look document state, consumed live by flat Points Depth Fade /
+    // Aerial Haze, Solid, every Surface tracer, and the Points Balloon's
+    // bounded fade horizon. Flame, non-flat Points, and the other flat Points
+    // styles have no main-cloud fog consumer; ui.ts keeps the authored row
+    // visible but disables it beside its scope reason, except that an enabled
+    // Points Balloon keeps density live for its horizon.
     kind: "range",
     id: "fogSlider",
     label: { id: "fogLabel", text: (s) => `${s.fogDensity.toFixed(2)}×` },
@@ -750,12 +751,13 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: (s, fx) => fx.scene.setFogDensity(s.fogDensity),
   },
   {
-    // The fog TINT strength: the blend-weight half of the atmosphere pair,
-    // spanning the same renderers as fogSlider above and gated with it only
-    // by the enclosing fogControls group in Flame. The color half is a
-    // bespoke picker (ui.ts's onFogTint), like the backdrop stops — this
-    // entry only carries the 0..1 strength slider, converting the paired hex
-    // color to rgb01 at the point of use rather than storing it twice.
+    // The fog TINT strength: the blend-weight half of the same authored Look
+    // pair, live for the main fog consumers above but NOT for Balloon's
+    // brightness-only horizon. ui.ts therefore gates it independently of
+    // fogSlider. The color half is a bespoke picker (ui.ts's onFogTint), like
+    // the backdrop stops — this entry only carries the 0..1 strength slider,
+    // converting the paired hex color to rgb01 at the point of use rather
+    // than storing it twice.
     kind: "range",
     id: "fogTintStrength",
     label: {
