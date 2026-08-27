@@ -705,16 +705,16 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   the same boundary because it derives its own distance estimator directly
   from the document; it preserves the inspection camera, and an edit that
   makes the document unsupported returns to Points with the analyzer reason.
-  - **Shape → Emitter** — turns the selected transform into any bundled
+  - **Shape → Emitter shape** — turns the selected transform into any bundled
     emitter shape, or returns it to an ordinary transform with **None**.
-    The shared catalog is **Cog**, **Star**, **Orbit Ring**, **Faceted
+    The shared **Shape catalog** is **Cog**, **Star**, **Orbit Ring**, **Faceted
     Crystal**, **Heart Prism**, **Trefoil Knot**, **Crescent Moon**,
     **Snowflake Prism**, and **Peace sign**; every entry is also available to
     the shape trap.
     When this map is picked it stamps a fresh point from the chosen shape;
     Position, Rotation, Scale and Shear pose the stamp, while **Weight** sets
     how often it is picked. The transform list names the active shape. For a
-    one-step shortcut, **Transforms → Add a shape emitter** creates and selects
+    one-step shortcut, **Transforms → Add emitter shape** creates and selects
     a new shaped map with this group already open. The final-transform
     lens has no Shape group because it is never picked.
   - **Color → Index / Speed** — the flam3 per-xform color pair, one
