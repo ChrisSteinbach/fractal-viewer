@@ -233,6 +233,22 @@ beforeEach(() => {
   }
 });
 
+// One real macrotask turn per test, which is what drains jsdom's queued
+// <details> toggle tasks. jsdom schedules one of those as a 0ms setTimeout
+// BOUND TO THE ELEMENT whenever `open` is added or removed — index.html
+// carries exactly one open section, so the importNode above queues a task
+// per test, and the accordion tests queue more. Between synchronous tests
+// the runner awaits only MICROtasks, so the loop never reaches its timer
+// phase: every task stays pending and its bound element pins the whole panel
+// tree it sits in. Measured without this: every one of the file's trees
+// retained (700/700 still alive after two forced full GCs) at ~4.6MB each,
+// heap climbing monotonically 111MB -> 4044MB, and a V8 heap-limit abort ~70
+// tests short of the end. Draining is also FASTER — 19.6s against 28.9s,
+// because V8 had been collecting a 4GB live heap.
+afterEach(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
 describe("Ui construction", () => {
   it("binds to every element the real index.html provides", () => {
     expect(() => new Ui(document)).not.toThrow();

@@ -2082,6 +2082,18 @@ alongside source as `*.test.ts`. DOM tests opt into jsdom with a
 `// @vitest-environment jsdom` comment (see `src/app/ui.test.ts`).
 
 - **Test behavior, not implementation.** Assert on outcomes.
+- **A jsdom test file must let the event loop turn.** Between synchronous
+  tests vitest awaits only microtasks, so queued environment timers (jsdom
+  schedules `<details>` toggles as 0ms `setTimeout`s bound to the element)
+  never fire and pin entire DOM trees — enough accumulation aborts the fork
+  with a V8 heap-limit crash. A jsdom file that builds or mutates the DOM
+  must drain one macrotask per test:
+  ```ts
+  afterEach(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  ```
+  Evidence: `docs/test-suite-memory.md`.
 - **DAMP over DRY.** Inline setup so each test reads in isolation.
 - **One behavior per test.** Each failure should name the exact scenario.
 - **Pragmatic coverage.** Don't chase 100%. Every test should pay rent. The pure
