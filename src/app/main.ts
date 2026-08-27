@@ -889,11 +889,10 @@ function main(): void {
   // re-enter the handler (which would re-save the pref at boot).
   ui.setSurfacePreviewToggle(surfacePreviewsEnabled);
 
-  // Shared frame clock for the explorer path's automatic motion (the 4D
-  // tumble and the 3D auto-orbit). Advances every explorer frame — paused,
-  // dragging, or not — so resuming never replays the gap as a jump; it
-  // simply doesn't tick during flame/solid renders (animate() returns
-  // early), which the dt clamp in animate() absorbs on exit.
+  // Shared frame clock for automatic motion (4D tumble and 3D auto-orbit).
+  // Points advances either mechanism; flat Solid advances its live camera
+  // orbit too. Frozen/parked render branches skip it, and the clamp absorbs
+  // their gap on exit so nothing jumps.
   let lastMotionTickMs = performance.now();
 
   // On desktop the 300px control panel overlays the canvas's right
@@ -7804,13 +7803,14 @@ function main(): void {
     // (checkbox, row visibility, help-box flag; deliberately NOT the
     // fresh-visit reset methods, which would stomp a chosen speed).
     onToggleAutoMotion: () => {
-      // The shared preference remains visible in a live 4D Surface session
-      // beside its parked/next-Points disclosure, so Space updates that same
-      // visible choice there too. Other renders still hide View at this
+      // Surface visibly parks the shared preference in either dimension, so
+      // Space still updates that choice for its next live home. Flat Solid
+      // runs the turntable live. Flame and non-flat Solid hide View at this
       // boundary and must not accept an invisible preference flip.
       if (
         state.renderMode !== "points" &&
-        !(state.renderMode === "surface" && viewIs4D)
+        state.renderMode !== "surface" &&
+        !(state.renderMode === "solid" && !viewIs4D)
       )
         return;
       const on = !autoMotionEnabled();
@@ -8356,6 +8356,21 @@ function main(): void {
 
   function tickRender(now: number, force: boolean): void {
     if (state.renderMode === "solid") {
+      // Flat Solid is world-space: the camera turntable is independent of
+      // voxel accumulation, so it remains live without restarting or
+      // preventing convergence. Non-flat Solid bakes the 4D rotor into its
+      // worker snapshot and keeps that different mechanism parked.
+      if (!viewIs4D) {
+        const dt = Math.min((now - lastMotionTickMs) / 1000, 0.1);
+        lastMotionTickMs = now;
+        if (
+          autoOrbitOn &&
+          !gestures.gestureActive() &&
+          !cameraTween.poseGliding
+        ) {
+          orbit.spherical.theta -= dt * AUTO_ORBIT_RATE * autoOrbitSpeed;
+        }
+      }
       // Unlike the flame's frozen view, the volume is world-space: keep
       // applying the live orbit camera so the user can keep looking around
       // while accumulation converges.

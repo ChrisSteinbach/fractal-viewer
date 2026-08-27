@@ -7272,7 +7272,8 @@ describe("Ui 4D view gating", () => {
     expect(el("viewControls").classList.contains("hidden")).toBe(true);
 
     ui.updateLabels({ ...flat, renderMode: "solid" as const });
-    expect(el("viewControls").classList.contains("hidden")).toBe(true);
+    expect(el("viewControls").classList.contains("hidden")).toBe(false);
+    expect(el("autoOrbitRow").classList.contains("hidden")).toBe(false);
   });
 
   // Flame and solid freeze the 4D view (rotor + slice) into their active
@@ -7651,17 +7652,17 @@ describe("Ui 4D surface session controls", () => {
 
     expect(el("autoMotionToggleRow").classList.contains("hidden")).toBe(false);
     expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
-    expect(el("fourDSurfaceMotionHint").classList.contains("hidden")).toBe(
+    expect(el("automaticMotionParkedHint").classList.contains("hidden")).toBe(
       false,
     );
-    expect(el("fourDSurfaceMotionHint").textContent).toContain(
+    expect(el("automaticMotionParkedHint").textContent).toContain(
       "setting takes effect again",
     );
     expect(
       (el("autoMotionToggle") as HTMLInputElement).getAttribute(
         "aria-describedby",
       ),
-    ).toContain("fourDSurfaceMotionHint");
+    ).toContain("automaticMotionParkedHint");
   });
 
   it("restores tumble speed — shared checkbox state untouched — after leaving surface mode", () => {
@@ -7673,7 +7674,7 @@ describe("Ui 4D surface session controls", () => {
     ui.updateLabels(nonFlat);
 
     expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(false);
-    expect(el("fourDSurfaceMotionHint").classList.contains("hidden")).toBe(
+    expect(el("automaticMotionParkedHint").classList.contains("hidden")).toBe(
       true,
     );
     expect((el("autoMotionToggle") as HTMLInputElement).checked).toBe(true);
@@ -7692,12 +7693,17 @@ describe("Ui 4D surface session controls", () => {
 
   // Guards against the gate keying on render mode alone rather than the
   // non-flat predicate main.ts actually routes a surface session on.
-  it("keeps the View block hidden for a flat system in surface mode at this boundary", () => {
+  it("keeps flat Surface View visible but parks its automatic orbit", () => {
     const ui = new Ui(document);
 
     ui.updateLabels({ ...initialState(true), renderMode: "surface" as const });
 
-    expect(el("viewControls").classList.contains("hidden")).toBe(true);
+    expect(el("viewControls").classList.contains("hidden")).toBe(false);
+    expect(el("autoMotionToggleRow").classList.contains("hidden")).toBe(false);
+    expect(el("autoOrbitRow").classList.contains("hidden")).toBe(true);
+    expect(el("automaticMotionParkedHint").classList.contains("hidden")).toBe(
+      false,
+    );
   });
 });
 
@@ -7866,6 +7872,20 @@ describe("Ui automatic-motion controls", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
   }
+
+  it("states why 4D tumble replaces automatic camera orbit without refusing manual orbit", () => {
+    const note = (el("autoMotionMechanismNote").textContent ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    expect(note).toContain("replaces automatic camera orbit");
+    expect(note).toContain("reveal the hidden axis");
+    expect(note).toContain("manual camera orbit remains available");
+    expect(
+      (el("autoMotionToggle") as HTMLInputElement).getAttribute(
+        "aria-describedby",
+      ),
+    ).toContain("autoMotionMechanismNote");
+  });
 
   it("hides the contextual speed row and fires the one handler when automatic motion is toggled off", () => {
     const handlers = noopHandlers();

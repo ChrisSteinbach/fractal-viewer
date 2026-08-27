@@ -412,7 +412,11 @@ palettes on the slice window — `project4.ts`'s `sliceColorRemap`). Its lifetim
 split deliberately: a `FourDPose` snapshot of rotor + slice is **Saved view**
 framing carried by links, files, Collection and Timeline. Main owns the one
 3D-orbit/4D-tumble auto-motion choice as **This browser** state; each contextual
-speed is **This session**. A pose-less fresh visit resets to a
+speed is **This session**. Tumble is the 4D counterpart because it turns hidden
+planes; automatic camera orbit would only spin the projected 3D result, while
+manual camera orbit remains available. Flat Solid can advance the turntable
+without touching its world-space accumulation. Surface parks continuous motion
+so its refinement can settle. A pose-less fresh visit resets to a
 baseline only on a flat-to-non-flat transition or a whole-system replacement;
 a loaded Saved view restores its pose over that baseline. An ordinary parameter
 edit never resets it. The 4D presets (`pentatope`,

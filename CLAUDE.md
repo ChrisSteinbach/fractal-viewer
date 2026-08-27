@@ -2013,9 +2013,9 @@ min(maxBufferSize, maxStorageBufferBindingSize)/16` and a frame past
     mode is unchanged; otherwise it is dropped, because a stale-but-honest
     picture beats a confident wrong one. Camera + non-flat FourDPose framing
     ride the encoded document, so a manual orbit or rotor/slice change
-    invalidates too — the
-    conservative direction, and free in the headline case since the
-    auto-orbit tick sits past the render branches' early returns.
+    invalidates too — the conservative direction. Flat Solid's live
+    auto-orbit can invalidate such a correction exactly like a manual camera
+    turn; frozen Flame and parked Surface do not advance it.
   - `four-d-view.ts` — the session-owned live 4D view container. `FourDPose`
     snapshots rotor + slice as Saved-view framing; auto-motion on/off is a
     browser preference and speed is session-only. `FourDTween` is the directed
