@@ -234,8 +234,10 @@ morphs into place instead of snapping (see **Presets** below).
     light at grazing height puts the whole volume in its own shadow; and
     **Ambient** (0–80%, default 25%) sets how bright fully shadowed faces
     stay, topping out below 100% because a full ambient floor would erase
-    every shading cue at once. All three are plain shader uniforms, so they
-    redraw instantly with nothing to re-accumulate.
+    every shading cue at once. This is Solid's independently persisted voxel-
+    material look: all three are plain shader uniforms that redraw only Solid,
+    live, without changing the separate Surface lighting state or
+    re-accumulating the grid.
   - **Quality** — **Quality** (1M–100M iterations, default 20M) behaves like
     the flame's: raise it and accumulation continues past what already looked
     done, lower it and the render finishes where it stands. **Detail
@@ -548,9 +550,10 @@ morphs into place instead of snapping (see **Presets** below).
   source only, fading how quickly deeper descent levels blend into the trap
   color. **Lighting** holds **Light Angle**, **Light Height**, **Ambient**, and
   **Environment**.
-  Every one of them is a plain shader input, so dragging any of them
-  re-renders instantly with nothing to restart. **Environment** (0–100%,
-  default 35%) tints the light itself toward the **Background**
+  This is Surface's independently persisted analytic-material look: every one
+  is a plain shader input that updates only Surface, live, without changing
+  Solid's lighting. **Environment** is Surface-only: from 0–100% (default
+  35%), it tints the light itself toward the **Background**
   gradient, sampled along each point's own shading normal — a two-stop
   sky-above/ground-below environment, so the render sits IN its backdrop
   instead of floating in front of it (a surface facing up over the default

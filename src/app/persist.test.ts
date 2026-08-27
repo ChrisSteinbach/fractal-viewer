@@ -242,6 +242,40 @@ describe("encodeScene / decodeScene round-trip", () => {
     });
   });
 
+  it("round-trips divergent Solid and Surface lighting independently", () => {
+    const base = baseSnapshot();
+    const result = decodeScene(
+      encodeScene({
+        ...base,
+        solid: {
+          ...base.solid,
+          lightAzimuth: -45,
+          lightElevation: 70,
+          ambient: 0.2,
+        },
+        surface: {
+          ...base.surface,
+          lightAzimuth: 95,
+          lightElevation: 30,
+          ambient: 0.65,
+          envLight: 0.8,
+        },
+      }),
+    );
+
+    expect(result?.solid).toMatchObject({
+      lightAzimuth: -45,
+      lightElevation: 70,
+      ambient: 0.2,
+    });
+    expect(result?.surface).toMatchObject({
+      lightAzimuth: 95,
+      lightElevation: 30,
+      ambient: 0.65,
+      envLight: 0.8,
+    });
+  });
+
   it("reassigns transform ids from the array index, ignoring stored ids", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
