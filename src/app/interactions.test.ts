@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import * as THREE from "three";
 import {
   attachInteractions,
   canvasTransformGuidesEnabled,
@@ -62,16 +63,15 @@ describe("resizeGuideComponent", () => {
   });
 });
 
-/** attachInteractions against a minimal fake scene — camera mode by default,
- * or a transform drag when `selected` names an index: the paths under test
- * never reach the raycaster, the camera or a real guide cube (guideCube
- * yields null, so a transform drag latches but edits nothing), so a bare
- * canvas element and a spy orbit are the whole world. Listeners attach for
- * the page lifetime by design; each call gets its own closure, so stacking
- * them across tests is harmless. */
+/** attachInteractions against a minimal scene. Tests that exercise transform
+ * geometry can provide guide cubes; camera-only tests retain the null guide.
+ * Listeners attach for the page lifetime by design; each call gets its own
+ * closure, so stacking them across tests is harmless. */
 function setupInteractions(
   opts: {
     selected?: number;
+    selectedTransform?: () => number | null;
+    guideCube?: (index: number) => THREE.Object3D | null;
     frozen?: boolean;
     fourD?: boolean;
     sliceOn?: boolean;
@@ -83,6 +83,8 @@ function setupInteractions(
   onFourDRotate: ReturnType<typeof vi.fn>;
   onFourDSliceNudge: ReturnType<typeof vi.fn>;
   onToggleAutoMotion: ReturnType<typeof vi.fn>;
+  onTransformChange: ReturnType<typeof vi.fn>;
+  onTransformCommit: ReturnType<typeof vi.fn>;
   handle: InteractionsHandle;
 } {
   document.body.replaceChildren();
@@ -93,18 +95,29 @@ function setupInteractions(
   const onFourDRotate = vi.fn();
   const onFourDSliceNudge = vi.fn();
   const onToggleAutoMotion = vi.fn();
+  const onTransformChange = vi.fn();
+  const onTransformCommit = vi.fn();
   const orbit = {
     target: [0, 0, 0],
     rotate,
     panBy: vi.fn(),
     dolly,
   } as unknown as OrbitCamera;
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.position.z = 5;
+  camera.updateMatrixWorld();
   const handle = attachInteractions(
-    { canvas, camera: {}, guideCube: () => null } as unknown as FractalScene,
+    {
+      canvas,
+      camera,
+      guideCube: opts.guideCube ?? (() => null),
+    } as unknown as FractalScene,
     orbit,
     {
-      selectedTransform: () => opts.selected ?? null,
-      onTransformChange: vi.fn(),
+      selectedTransform:
+        opts.selectedTransform ?? (() => opts.selected ?? null),
+      onTransformChange,
+      onTransformCommit,
       frozen: () => opts.frozen ?? false,
       fourDView: () => opts.fourD ?? false,
       onFourDRotate,
@@ -120,6 +133,8 @@ function setupInteractions(
     onFourDRotate,
     onFourDSliceNudge,
     onToggleAutoMotion,
+    onTransformChange,
+    onTransformCommit,
     handle,
   };
 }
@@ -204,6 +219,232 @@ describe("attachInteractions mouse latch release", () => {
     );
 
     expect(handle.gestureActive()).toBe(true);
+  });
+});
+
+describe("attachInteractions transform settle commits", () => {
+  function guideSetup(
+    opts: {
+      selectedTransform?: () => number | null;
+      guideCube?: (index: number) => THREE.Object3D | null;
+    } = {},
+  ) {
+    const cube = new THREE.Object3D();
+    return {
+      cube,
+      ...setupInteractions({
+        selected: 0,
+        guideCube: opts.guideCube ?? (() => cube),
+        selectedTransform: opts.selectedTransform,
+      }),
+    };
+  }
+
+  function beginMouseTransform(canvas: HTMLCanvasElement): void {
+    canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 2,
+        clientX: 50,
+        clientY: 50,
+      }),
+    );
+  }
+
+  function moveMouseTransform(buttons = 2): void {
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons,
+        clientX: 70,
+        clientY: 60,
+      }),
+    );
+  }
+
+  it("commits a changed mouse drag exactly once on release", () => {
+    const { canvas, onTransformChange, onTransformCommit } = guideSetup();
+    beginMouseTransform(canvas);
+    moveMouseTransform();
+
+    expect(onTransformChange).toHaveBeenCalledTimes(1);
+    expect(onTransformCommit).not.toHaveBeenCalled();
+    document.dispatchEvent(new MouseEvent("mouseup"));
+    document.dispatchEvent(new MouseEvent("mouseup"));
+
+    expect(onTransformCommit).toHaveBeenCalledTimes(1);
+    expect(onTransformCommit).toHaveBeenCalledWith(0);
+  });
+
+  it("does not commit a pointer gesture that made no geometry change", () => {
+    const { canvas, onTransformChange, onTransformCommit } = guideSetup();
+    beginMouseTransform(canvas);
+    document.dispatchEvent(new MouseEvent("mouseup"));
+
+    expect(onTransformChange).not.toHaveBeenCalled();
+    expect(onTransformCommit).not.toHaveBeenCalled();
+  });
+
+  it("latches the pointer target at press time", () => {
+    let selected = 0;
+    const cubes = [new THREE.Object3D(), new THREE.Object3D()];
+    const { canvas, onTransformChange, onTransformCommit } = guideSetup({
+      selectedTransform: () => selected,
+      guideCube: (index) => cubes[index] ?? null,
+    });
+    beginMouseTransform(canvas);
+    selected = 1;
+    moveMouseTransform();
+    document.dispatchEvent(new MouseEvent("mouseup"));
+
+    expect(onTransformChange).toHaveBeenCalledWith(0, expect.any(Object));
+    expect(onTransformCommit).toHaveBeenCalledWith(0);
+    expect(cubes[0].rotation.x).not.toBe(0);
+    expect(cubes[1].rotation.x).toBe(0);
+  });
+
+  it("commits a changed touch pinch on touchend", () => {
+    const { canvas, onTransformChange, onTransformCommit } = guideSetup();
+    canvas.dispatchEvent(
+      touchEvent("touchstart", [
+        { clientX: 20, clientY: 20 },
+        { clientX: 40, clientY: 20 },
+      ]),
+    );
+    document.dispatchEvent(
+      touchEvent("touchmove", [
+        { clientX: 20, clientY: 20 },
+        { clientX: 50, clientY: 25 },
+      ]),
+    );
+    document.dispatchEvent(touchEvent("touchend", []));
+
+    expect(onTransformChange).toHaveBeenCalledTimes(1);
+    expect(onTransformCommit).toHaveBeenCalledTimes(1);
+    expect(onTransformCommit).toHaveBeenCalledWith(0);
+  });
+
+  it("preserves target and dirty state across an additional touchstart", () => {
+    let selected = 0;
+    const cubes = [new THREE.Object3D(), new THREE.Object3D()];
+    const { canvas, onTransformCommit } = guideSetup({
+      selectedTransform: () => selected,
+      guideCube: (index) => cubes[index] ?? null,
+    });
+    const firstSpan = [
+      { clientX: 20, clientY: 20 },
+      { clientX: 40, clientY: 20 },
+    ];
+    canvas.dispatchEvent(touchEvent("touchstart", firstSpan));
+    document.dispatchEvent(
+      touchEvent("touchmove", [
+        { clientX: 20, clientY: 20 },
+        { clientX: 55, clientY: 20 },
+      ]),
+    );
+    selected = 1;
+    canvas.dispatchEvent(touchEvent("touchstart", firstSpan));
+    document.dispatchEvent(touchEvent("touchend", []));
+
+    expect(onTransformCommit).toHaveBeenCalledTimes(1);
+    expect(onTransformCommit).toHaveBeenCalledWith(0);
+  });
+
+  it("commits a dirty touch gesture when touchcancel replaces touchend", () => {
+    const { canvas, onTransformCommit } = guideSetup();
+    canvas.dispatchEvent(
+      touchEvent("touchstart", [
+        { clientX: 20, clientY: 20 },
+        { clientX: 40, clientY: 20 },
+      ]),
+    );
+    document.dispatchEvent(
+      touchEvent("touchmove", [
+        { clientX: 20, clientY: 20 },
+        { clientX: 55, clientY: 20 },
+      ]),
+    );
+    document.dispatchEvent(touchEvent("touchcancel", []));
+
+    expect(onTransformCommit).toHaveBeenCalledTimes(1);
+    expect(onTransformCommit).toHaveBeenCalledWith(0);
+  });
+
+  it("commits a dirty mouse gesture when the window blurs", () => {
+    const { canvas, onTransformCommit } = guideSetup();
+    beginMouseTransform(canvas);
+    moveMouseTransform();
+    window.dispatchEvent(new Event("blur"));
+
+    expect(onTransformCommit).toHaveBeenCalledTimes(1);
+    expect(onTransformCommit).toHaveBeenCalledWith(0);
+  });
+
+  it("commits on the stale buttonless-move escape only when dirty", () => {
+    const dirty = guideSetup();
+    beginMouseTransform(dirty.canvas);
+    moveMouseTransform();
+    moveMouseTransform(0);
+    expect(dirty.onTransformCommit).toHaveBeenCalledTimes(1);
+
+    const clean = guideSetup();
+    beginMouseTransform(clean.canvas);
+    moveMouseTransform(0);
+    expect(clean.onTransformCommit).not.toHaveBeenCalled();
+  });
+
+  describe("wheel bursts", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    function wheel(canvas: HTMLCanvasElement, deltaY = -100): void {
+      canvas.dispatchEvent(
+        new WheelEvent("wheel", { deltaY, cancelable: true }),
+      );
+    }
+
+    it("emits every notch but only one trailing commit", () => {
+      const { canvas, onTransformChange, onTransformCommit } = guideSetup();
+      wheel(canvas);
+      vi.advanceTimersByTime(75);
+      wheel(canvas);
+      vi.advanceTimersByTime(75);
+      wheel(canvas);
+
+      expect(onTransformChange).toHaveBeenCalledTimes(3);
+      expect(onTransformCommit).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(149);
+      expect(onTransformCommit).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onTransformCommit).toHaveBeenCalledTimes(1);
+      expect(onTransformCommit).toHaveBeenCalledWith(0);
+    });
+
+    it("flushes the old target before starting a burst for a new target", () => {
+      let selected = 0;
+      const cubes = [new THREE.Object3D(), new THREE.Object3D()];
+      const { canvas, onTransformChange, onTransformCommit } = guideSetup({
+        selectedTransform: () => selected,
+        guideCube: (index) => cubes[index] ?? null,
+      });
+      wheel(canvas);
+      selected = 1;
+      wheel(canvas);
+
+      expect(onTransformChange).toHaveBeenNthCalledWith(
+        1,
+        0,
+        expect.any(Object),
+      );
+      expect(onTransformChange).toHaveBeenNthCalledWith(
+        2,
+        1,
+        expect.any(Object),
+      );
+      expect(onTransformCommit).toHaveBeenCalledTimes(1);
+      expect(onTransformCommit).toHaveBeenLastCalledWith(0);
+      vi.advanceTimersByTime(150);
+      expect(onTransformCommit).toHaveBeenCalledTimes(2);
+      expect(onTransformCommit).toHaveBeenLastCalledWith(1);
+    });
   });
 });
 

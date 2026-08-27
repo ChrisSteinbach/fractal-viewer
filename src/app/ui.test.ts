@@ -109,6 +109,7 @@ function noopHandlers(): UiHandlers {
     onTransformEmitter: vi.fn(),
     onToggleFinalTransform: vi.fn(),
     onFinalTransformGeometry: vi.fn(),
+    onTransformCommit: vi.fn(),
     onTogglePanel: vi.fn(),
     onClosePanel: vi.fn(),
     onRenderMode: vi.fn(),
@@ -2586,6 +2587,49 @@ describe("Ui.renderTransformEditor", () => {
     expect(geometry.scale).toEqual([0.5, 0.5, 0.5]);
   });
 
+  it("keeps range inputs mutation-only until one bubbling change commits the current target", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      2,
+      3,
+    );
+
+    const positionX = editorSlider("Position X");
+    positionX.value = "0.25";
+    positionX.dispatchEvent(new Event("input"));
+    positionX.value = "0.5";
+    positionX.dispatchEvent(new Event("input"));
+
+    expect(handlers.onTransformGeometry).toHaveBeenCalledTimes(2);
+    expect(handlers.onTransformCommit).not.toHaveBeenCalled();
+
+    positionX.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(2);
+  });
+
+  it("ignores bubbling changes from connected non-range inputs", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(defaultTransforms()[0], 0, 1);
+
+    const number = document.createElement("input");
+    number.type = "number";
+    document.getElementById("transformEditor")!.appendChild(number);
+    number.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(handlers.onTransformCommit).not.toHaveBeenCalled();
+  });
+
   it("supports non-uniform scale", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -2682,6 +2726,13 @@ describe("Ui.renderTransformEditor", () => {
     );
     expect(editorReadout("Scale X").textContent).toBe("-0.50");
     expect(editorSlider("Scale X").value).toBe("0.5");
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(0);
+    expect(
+      vi.mocked(handlers.onTransformGeometry).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(handlers.onTransformCommit).mock.invocationCallOrder[0],
+    );
   });
 
   it("clears the mirror when a pressed toggle is clicked again", () => {
@@ -2830,7 +2881,7 @@ describe("Ui transform color editor", () => {
     expect(Number(editorSlider("Color index").value)).toBeCloseTo(1 / 3, 2);
     expect(
       editorGroup("Color").querySelector(".flame-hint")?.textContent,
-    ).toContain("next applicable render entry");
+    ).toContain("restarts once after the edit settles");
   });
 
   it("shows the default color speed for a map that authors none", () => {
@@ -3043,6 +3094,22 @@ describe("Ui final transform", () => {
     expect(geometry.scale).toEqual([1.5, 1, 1]);
     expect(geometry).not.toHaveProperty("weight");
   });
+
+  it("commits a settled final-transform range to the final target", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(lens, "final", 1);
+
+    const positionZ = editorSlider("Position Z");
+    positionZ.value = "0.4";
+    positionZ.dispatchEvent(new Event("input"));
+    expect(handlers.onTransformCommit).not.toHaveBeenCalled();
+
+    positionZ.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith("final");
+  });
 });
 
 describe("Ui variation editor", () => {
@@ -3083,6 +3150,33 @@ describe("Ui variation editor", () => {
     ]);
     // The menu snaps back to the placeholder, like the preset menu.
     expect(select.value).toBe("");
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(0);
+  });
+
+  it("settles a dynamically-added variation range through the editor delegate", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    const select = addSelect();
+    select.value = "mandelbox";
+    select.dispatchEvent(new Event("change"));
+    vi.mocked(handlers.onTransformGeometry).mockClear();
+    vi.mocked(handlers.onTransformCommit).mockClear();
+
+    const radius = editorSlider("Mandelbox min radius");
+    radius.value = "0.3";
+    radius.dispatchEvent(new Event("input"));
+    radius.value = "0.4";
+    radius.dispatchEvent(new Event("input"));
+
+    expect(handlers.onTransformGeometry).toHaveBeenCalledTimes(2);
+    expect(handlers.onTransformCommit).not.toHaveBeenCalled();
+    radius.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(0);
   });
 
   it("adds a fold variation carrying none of its optional lengths, so it renders as the classic Mandelbox", () => {
@@ -3317,6 +3411,8 @@ describe("Ui variation editor", () => {
       document.querySelectorAll("#transformEditor .variation-row"),
     ).toHaveLength(0);
     expect(lastGeometry(handlers).variations).toEqual([]);
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(0);
   });
 
   it("excludes an already-added variation from the add menu", () => {
@@ -4087,6 +4183,8 @@ describe("Ui pattern editor", () => {
     expect(patternAxisSelect().disabled).toBe(false);
     expect(editorReadout("Pattern scale").textContent).toBe("3.00");
     expect(editorReadout("Pattern strength").textContent).toBe("1.00");
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(0);
   });
 
   it("carries authored scale and strength through a family switch, with the defaults staying absent", () => {
@@ -4205,6 +4303,9 @@ describe("Ui pattern editor", () => {
       kind: "marble",
       axis: "y",
     });
+    expect(handlers.onTransformCommit).toHaveBeenCalledTimes(2);
+    expect(handlers.onTransformCommit).toHaveBeenNthCalledWith(1, 0);
+    expect(handlers.onTransformCommit).toHaveBeenNthCalledWith(2, 0);
   });
 
   it("removes the whole surfacePattern when the family returns to none, emitting the removal explicitly", () => {
@@ -4583,6 +4684,8 @@ describe("Ui material starting points", () => {
     expect(patternFamilySelect().value).toBe("wood");
     expect(editorReadout("Pattern scale").textContent).toBe("3.00");
     expect(vi.mocked(handlers.onTransformGeometry)).toHaveBeenCalledTimes(1);
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(0);
   });
 
   it("replaces a custom finish and pattern wholesale when a material is picked", () => {
@@ -4686,10 +4789,13 @@ describe("Ui material starting points", () => {
   });
 
   it("keeps the finish bundles working alongside the material menu", () => {
+    const handlers = noopHandlers();
     const ui = new Ui(document);
-    ui.bind(noopHandlers());
+    ui.bind(handlers);
     ui.renderTransformEditor(plain, 0, 1);
     pickMaterial("wood");
+    vi.mocked(handlers.onTransformGeometry).mockClear();
+    vi.mocked(handlers.onTransformCommit).mockClear();
 
     // Picking a bundle only touches the finish half: the pattern survives,
     // and the material menu reads Custom (chrome + wood pattern is
@@ -4701,6 +4807,9 @@ describe("Ui material starting points", () => {
     bundle!.dispatchEvent(new Event("change"));
     expect(materialSelect().value).toBe("custom");
     expect(patternFamilySelect().value).toBe("wood");
+    expect(handlers.onTransformGeometry).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(0);
   });
 });
 
@@ -4904,6 +5013,8 @@ describe("Ui 4D group", () => {
     );
     expect(editorReadout("Scale W").textContent).toBe("-0.90");
     expect(editorSlider("Scale W").value).toBe("0.9");
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(0);
   });
 
   it("materializes the negated derived mean as an explicit Scale W when Mirror W is clicked while auto", () => {
@@ -5288,7 +5399,7 @@ describe("Ui render mode switch", () => {
       }
 
       expect(byId("transformTimingHint").textContent).toMatch(
-        /uses edits on the next entry/,
+        /Surface re-enters without resetting the view/,
       );
     },
   );

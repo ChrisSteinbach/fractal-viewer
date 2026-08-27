@@ -366,9 +366,12 @@
         >
           <summary>Transforms (<span id="transformCount">4</span>)</summary>
           <p class="flame-hint" id="transformTimingHint">
-            Transform edits stay available in every renderer. Points follows
-            geometry edits through Auto-update; an active Flame, Solid, or
-            Surface keeps its current render and uses edits on the next entry.
+            Transform edits stay available in every renderer. Points geometry
+            follows Auto-update. After an edit settles, flat Balloon-off Flame
+            and Solid restart; 4D or Balloon geometry waits for the next entry.
+            Surface re-enters without resetting the view and returns to Points
+            if the edited document becomes unsupported. Color and material work
+            runs only where the active renderer consumes it.
           </p>
           <div class="btn-row">
             <button class="btn btn-green" id="addBtn" type="button">

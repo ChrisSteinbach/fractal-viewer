@@ -688,8 +688,15 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   freedom, no gesture above reaches it) give exact per-axis control on every
   device. In flat Points the sliders track the guide box live and stay in sync
   with the drag gestures above. Elsewhere the same editor authors the document
-  without exposing a stale guide box; an active Flame, Solid, or Surface keeps
-  its current render and reads the edit on its next entry.
+  without exposing a stale guide box. Points geometry follows **Auto-update on
+  change**. A flat, Balloon-off Flame or Solid restarts once when a slider,
+  pointer gesture, or discrete action settles; the restart uses the edited
+  document rather than rebuilding on every input tick. Their 4D and Balloon
+  routes keep the current accumulation and use geometry on the next entry
+  (regenerate Points first when Auto-update is off). Surface re-enters once at
+  the same boundary because it derives its own distance estimator directly
+  from the document; it preserves the inspection camera, and an edit that
+  makes the document unsupported returns to Points with the analyzer reason.
   - **Shape → Emitter** — turns the selected transform into any bundled
     emitter shape, or returns it to an ordinary transform with **None**.
     The shared catalog is **Cog**, **Star**, **Orbit Ring**, **Faceted
@@ -709,10 +716,16 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     **Speed** changes only the Flame/Solid gradient walk (`0` keeps the incoming
     color — flam3's "symmetry" xform, which shades without recoloring — and `1`
     snaps straight to the slot); the surface descends a map rather than picking
-    one, so there's no per-pick travel there for Speed to control. An edit is
-    saved immediately in every renderer, while an active Flame, Solid, or
-    Surface keeps its current image/volume/trace and reads it on the next
-    applicable renderer entry. Both controls start on the value the renderer
+    one, so there's no per-pick travel there for Speed to control. An Index
+    edit recolors a displayed flat or 4D Points cloud immediately only when
+    that view's source is **By Transform**. A consuming Flame or Solid restarts
+    once after the edit settles and reuses its current seed, so a color
+    comparison does not silently resample the geometry. An applicable Surface
+    re-enters for a consumed Index: **By Transform** on any supported route,
+    or **Palette** on an IFS route; forward-route Palette and live Shape Trap
+    use their own coordinates. Speed restarts only a Flame/Solid render using
+    a structural gradient palette. Every other context stores the edit for its
+    next applicable entry. Both controls start on the value the renderer
     already uses — maps
     spread evenly across the ramp in list order, at speed `0.50` — and stay
     unset until you actually move a slider, so a scene saved before you touch
@@ -773,7 +786,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     reason; values remain authored for a later eligible document. The final
     transform has no Finish group: the tracers shade a hit by the map that
     produced it, and the lens is not one. A Finish edit is saved in every
-    renderer and shows on the next **◈ Surface** entry; the transform list
+    renderer. When its slot is consumed by the active Surface, that renderer
+    re-enters once after the edit settles without resetting the camera;
+    elsewhere it shows on the next **◈ Surface** entry. The transform list
     names an authored finish on its row (`Chrome` becomes `Finish: Chrome`) and
     uses `Finish: custom` otherwise.
   - **Pattern** — one group below **Finish**: how this map's part of the
@@ -803,10 +818,12 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     the other transforms' Pattern rows are disabled with a note saying why.
     The same whole-Surface and Weight-0 refusals as Finish apply, always beside
     an accessible reason and without clearing authored pattern state. Pattern
-    edits are saved in every renderer and appear on the next Surface entry.
-    The final transform has no Pattern group, and the transform list names an
-    authored pattern on its row (`Pattern: Wood` at the family's defaults,
-    `Pattern: custom` once tuned away from them).
+    edits are saved in every renderer. A consumed edit re-enters the active
+    Surface once after it settles, preserving the inspection camera; otherwise
+    it appears on the next Surface entry. The final transform has no Pattern
+    group, and the transform list names an authored pattern on its row
+    (`Pattern: Wood` at the family's defaults, `Pattern: custom` once tuned
+    away from them).
   - **Variations → a fold's own lengths** — a `boxfold`,
     `spherefold` or `mandelbox` row carries the Mandelbox apparatus's three
     lengths nested under its weight slider: **Min radius** and **Fixed
