@@ -361,16 +361,17 @@ export interface SurfaceParams {
    */
   colorSource: SurfaceColorSource;
   /**
-   * Structural-coloring palette for the `"palette"` colorSource (shares
-   * the flame render's `PaletteSelection` union — see `palette.ts`),
-   * sampled along the orbit-trap coordinate. `"custom"` selects the
-   * user-authored gradient in {@link AppState.customPalette}. Defaults to
+   * Structural-coloring palette for the `"palette"`, `"rings"`, `"sheets"`,
+   * and `"shapeTrap"` color sources (shares the flame render's
+   * `PaletteSelection` union — see `palette.ts`), sampled along each source's
+   * orbit/shape-trap coordinate. `"custom"` selects the user-authored gradient
+   * in {@link AppState.customPalette}. Defaults to
    * {@link DEFAULT_SOLID_PALETTE} — the same gradient the solid render
    * defaults to, reused rather than redeclared, so a fresh session's two
    * converging renders share one default look; an absent or unrecognized
    * decoded value falls back to the same default (see `persist.ts`). Inert
-   * while `colorSource` isn't `"palette"`, but stored regardless so it's
-   * ready the moment the user switches to it. Live-reactive, unlike
+   * while `colorSource` does not use Surface's own palette, but stored
+   * regardless so it is ready the moment the user switches to one. Live-reactive, unlike
    * {@link FlameParams.paletteId}/{@link SolidParams.paletteId}: there is no
    * accumulation for the old palette to be baked into, so nothing restarts.
    */
@@ -648,14 +649,17 @@ export interface AppState {
    */
   glowBrightness: number;
   /**
-   * The one user-authored gradient slot, shared by the flame and
-   * solid renders — each opts in independently via its own
-   * `paletteId === "custom"`. Absent until a palette select first lands on
-   * Custom, at which point {@link setFlamePaletteId}/{@link setSolidPaletteId}
-   * seed it from the palette being replaced (see `palette.ts`'s
-   * `seedCustomStops`), so Custom starts as a tweakable copy of the current
-   * look. Persists like `flame`/`solid` (see `persist.ts`) and survives while
-   * unselected, so switching away and back never loses an authored gradient.
+   * The one primary user-authored gradient slot, shared by five independently
+   * selected consumers: the Points ramp, Flame, Solid, Surface, and the
+   * generated Flame background. Each opts in with its own palette selection
+   * set to `"custom"`; the ordinary two-stop Custom background is a different
+   * `background.custom` value, and Balloon deliberately owns
+   * {@link balloonCustomPalette}. Absent until one of the five primary selects
+   * first lands on Custom, whose setter seeds it from the palette being
+   * replaced (see `palette.ts`'s `seedCustomStops`), so Custom starts as a
+   * tweakable copy of the current look. It persists as one scene field (see
+   * `persist.ts`) and survives while unselected, so switching away and back
+   * never loses the authored shared gradient.
    */
   customPalette?: CustomPalette;
   /**
@@ -2757,10 +2761,10 @@ export function setSurfacePaletteId(
  * {@link MAX_CUSTOM_PALETTE_STOPS} is silently truncated first, so a
  * non-finite channel past the limit can't reject a list that would have been
  * fine once trimmed. Every surviving stop is copied into a fresh tuple with
- * each channel clamped to `[0, 1]`. Deliberately leaves `flame.paletteId` /
- * `solid.paletteId` untouched — editing the shared slot while it isn't the
- * active selection on either render is inert, like any other render-settings
- * edit made while a different setting is selected. `persist.ts` re-validates
+ * each channel clamped to `[0, 1]`. Deliberately leaves all five primary
+ * palette selections untouched — editing the shared slot is live only for
+ * consumers currently set to Custom and remains dormant for the others.
+ * `persist.ts` re-validates
  * untrusted (URL-hash-decoded) stop data separately; this reducer only guards
  * the live-editor input path.
  */

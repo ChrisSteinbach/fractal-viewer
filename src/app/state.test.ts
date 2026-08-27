@@ -1506,6 +1506,29 @@ describe("setSurfacePaletteId", () => {
 });
 
 describe("setCustomPaletteStops", () => {
+  it("seeds once from the first primary consumer and never re-seeds for the other four", () => {
+    const rampPreset = setRampPaletteId(initialState(true), "ember");
+    const seeded = setRampPaletteId(rampPreset, "custom");
+    const shared = seeded.customPalette;
+
+    const everyConsumer = setBackgroundFlamePaletteId(
+      setSurfacePaletteId(
+        setSolidPaletteId(setFlamePaletteId(seeded, "custom"), "custom"),
+        "custom",
+      ),
+      "custom",
+    );
+
+    expect(shared).toEqual({ stops: seedCustomStops("ember") });
+    expect(everyConsumer.customPalette).toBe(shared);
+    expect(everyConsumer.rampPaletteId).toBe("custom");
+    expect(everyConsumer.flame.paletteId).toBe("custom");
+    expect(everyConsumer.solid.paletteId).toBe("custom");
+    expect(everyConsumer.surface.paletteId).toBe("custom");
+    expect(everyConsumer.background.flamePaletteId).toBe("custom");
+    expect(everyConsumer.balloonCustomPalette).toBeUndefined();
+  });
+
   it("replaces the stops with clamped fresh values", () => {
     const state = initialState(true);
     const next = setCustomPaletteStops(state, [

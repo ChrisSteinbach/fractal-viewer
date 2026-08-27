@@ -5,6 +5,7 @@ import {
   shapeTrapGeometryBandMode,
   shapeTrapSelectValue,
   surfaceColorLUT,
+  surfaceColorSourceUsesOwnPalette,
 } from "./control-spec";
 import type { ControlEffects, ScalarControlSpec } from "./control-spec";
 import {
@@ -1425,6 +1426,16 @@ describe("effects", () => {
 });
 
 describe("surfaceColorLUT", () => {
+  it.each(["palette", "rings", "sheets", "shapeTrap"] as const)(
+    'classifies "%s" as a Surface-own-palette source',
+    (source) => expect(surfaceColorSourceUsesOwnPalette(source)).toBe(true),
+  );
+
+  it.each(["transform", "height", "radius"] as const)(
+    'does not classify "%s" as a Surface-own-palette source',
+    (source) => expect(surfaceColorSourceUsesOwnPalette(source)).toBe(false),
+  );
+
   it('returns null for the "transform" colorSource', () => {
     const state = initialState(true);
     expect(state.surface.colorSource).toBe("transform"); // sanity: the default
@@ -1510,6 +1521,38 @@ describe("surfaceColorLUT", () => {
     expect(lut).not.toBeNull();
     expect(lut!.length).toBe(768);
     expect(lut).toEqual(surfaceColorLUT(paletteState));
+  });
+
+  it('returns the identical Custom LUT as "palette" for the "shapeTrap" colorSource', () => {
+    const base = {
+      ...initialState(true),
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 0, 1],
+        ] as const,
+      },
+    };
+    const paletteState = {
+      ...base,
+      surface: {
+        ...base.surface,
+        colorSource: "palette" as const,
+        paletteId: "custom" as const,
+      },
+    };
+    const shapeTrapState = {
+      ...base,
+      surface: {
+        ...base.surface,
+        colorSource: "shapeTrap" as const,
+        paletteId: "custom" as const,
+      },
+    };
+
+    expect(surfaceColorLUT(shapeTrapState)).toEqual(
+      surfaceColorLUT(paletteState),
+    );
   });
 
   it('respects colorGamma for the "height" colorSource, matching a direct buildColorModeLUT call', () => {

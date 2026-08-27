@@ -2834,12 +2834,50 @@ describe("decodeScene surface params", () => {
 // ---------------------------------------------------------------------------
 // Custom palette — the one user-authored gradient slot. Absent,
 // malformed, or an out-of-range stop count all quietly decode to `undefined`
-// rather than rejecting the scene; flame.paletteId / solid.paletteId accept
-// "custom" only when a valid payload decoded alongside it (see
-// decodeCustomPalette).
+// rather than rejecting the scene; all five primary palette selections accept
+// "custom" only when a valid payload decoded alongside it. Balloon has its
+// own independent slot (see decodeCustomPalette).
 // ---------------------------------------------------------------------------
 
 describe("decodeScene customPalette", () => {
+  it("round-trips one shared payload backing all five primary Custom selections", () => {
+    const base = baseSnapshot();
+    const snapshot: SceneSnapshot = {
+      ...base,
+      rampPaletteId: "custom",
+      background: { mode: "flame", flamePaletteId: "custom" },
+      flame: { ...base.flame, paletteId: "custom" },
+      solid: { ...base.solid, paletteId: "custom" },
+      surface: { ...base.surface, paletteId: "custom" },
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 0, 1],
+        ],
+      },
+    };
+
+    const encoded = encodeScene(snapshot);
+    const payload = decodePayload(encoded);
+    const result = decodeScene(encoded)!;
+
+    expect(payload.customPalette).toEqual({
+      stops: ["#ff0000", "#0000ff"],
+    });
+    expect(payload).not.toHaveProperty("rampCustomPalette");
+    expect(payload).not.toHaveProperty("flameCustomPalette");
+    expect(payload).not.toHaveProperty("solidCustomPalette");
+    expect(payload).not.toHaveProperty("surfaceCustomPalette");
+    expect(payload).not.toHaveProperty("backgroundCustomPalette");
+    expect(result.customPalette).toEqual(snapshot.customPalette);
+    expect(result.rampPaletteId).toBe("custom");
+    expect(result.flame.paletteId).toBe("custom");
+    expect(result.solid.paletteId).toBe("custom");
+    expect(result.surface.paletteId).toBe("custom");
+    expect(result.background.flamePaletteId).toBe("custom");
+    expect(result.balloonCustomPalette).toBeUndefined();
+  });
+
   it("round-trips custom palette stops and a custom flame paletteId selection", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),

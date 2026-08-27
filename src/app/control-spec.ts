@@ -97,6 +97,20 @@ import type {
 } from "./state";
 import type { BackgroundMode, BackgroundShape } from "./background";
 
+/** One definition of the Surface sources that sample `surface.paletteId`.
+ * Shared by LUT construction and the bespoke Custom-stop effect in main.ts so
+ * adding a source cannot leave a live Surface session with a stale LUT. */
+export function surfaceColorSourceUsesOwnPalette(
+  source: SurfaceColorSource,
+): boolean {
+  return (
+    source === "palette" ||
+    source === "rings" ||
+    source === "sheets" ||
+    source === "shapeTrap"
+  );
+}
+
 /**
  * Declarative specs for the panel's SIMPLE SCALAR controls: every static
  * slider/select/checkbox that binds one `index.html` input to one `AppState`
@@ -502,9 +516,10 @@ function updateShapeTrapPosition(
  * tracer reads each slot's own `uMapColor` instead (see
  * `surface-material.ts`).
  *
- * `"palette"`, `"rings"`, and `"sheets"` (the latter two are
- * orbit-trap-derived sources that read a different coordinate off the same
- * descent hit-info `"palette"` already reads) all resolve
+ * `"palette"`, `"rings"`, `"sheets"`, and `"shapeTrap"` are the Surface
+ * sources that sample its own palette selection. The trap-derived sources
+ * read different coordinates off the same descent/forward-orbit hit info, but
+ * all resolve
  * `state.surface.paletteId` through the shared custom-palette bridge
  * ({@link resolvePalette}), exactly like the flame/solid palette effects
  * below. {@link buildPaletteLUT} returns `null` only for the `"legacy"`
@@ -530,8 +545,9 @@ export function surfaceColorLUT(state: AppState): Float32Array | null {
       resolvePalette(state.rampPaletteId, state.customPalette),
     );
   }
-  // "palette" / "rings" / "sheets" / "shapeTrap": an orbit-trap-derived
-  // coordinate through the surface's own user-selected palette.
+  if (!surfaceColorSourceUsesOwnPalette(colorSource)) return null;
+  // Own-palette sources: an orbit/shape-trap-derived coordinate through the
+  // Surface renderer's user-selected palette.
   const lut =
     buildPaletteLUT(
       resolvePalette(state.surface.paletteId, state.customPalette),
