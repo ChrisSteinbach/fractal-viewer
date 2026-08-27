@@ -8173,6 +8173,11 @@ describe("Ui symmetry controls", () => {
     expect(Array.from(select.options).map((o) => o.value)).toEqual([
       ...SYMMETRY_PLANES,
     ]);
+    expect(
+      Array.from(select.options)
+        .filter((option) => option.value.includes("w"))
+        .map((option) => option.textContent),
+    ).toEqual(["XW (4D)", "YW (4D)", "ZW (4D)"]);
   });
 
   it("associates every Symmetry input with the renderer timing note", () => {
@@ -8190,9 +8195,38 @@ describe("Ui symmetry controls", () => {
       ).toBe("symmetryEditHint");
     }
     const text = (hint?.textContent ?? "").replace(/\s+/g, " ");
+    expect(section?.querySelector("summary")?.textContent).toBe(
+      "Symmetry · 4D",
+    );
+    expect(text).toMatch(/4D route.*Order.*2-fold.*XW.*YW.*ZW.*Twist/i);
     expect(text).toMatch(/Flame and Solid renders restart.*same dimension/i);
     expect(text).toMatch(/3D and 4D.*re-enter/i);
     expect(text).toMatch(/Surface.*next entry/i);
+  });
+
+  it("offers a visible flat-to-4D route through Order and a W plane", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels(current());
+
+    const order = document.getElementById(
+      "symmetryOrderSlider",
+    ) as HTMLInputElement;
+    order.value = "2";
+    order.dispatchEvent(new Event("input"));
+    const plane = document.getElementById("symmetryPlane") as HTMLSelectElement;
+    plane.value = "xw";
+    plane.dispatchEvent(new Event("change"));
+    ui.updateLabels(current());
+
+    expect(current().symmetry).toMatchObject({ order: 2, plane: "xw" });
+    expect(document.getElementById("panelTitle")?.textContent).toBe(
+      "4D IFS Fractal",
+    );
+    expect(
+      document.getElementById("fourDControls")?.classList.contains("hidden"),
+    ).toBe(false);
   });
 
   it("reflects the twist into its slider and label, showing 0 for an absent twist", () => {

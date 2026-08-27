@@ -1030,12 +1030,14 @@
           id="symmetrySection"
           name="panel-section"
         >
-          <summary>Symmetry</summary>
+          <summary>Symmetry · 4D</summary>
           <p id="symmetryEditHint" class="flame-hint">
-            Active Flame and Solid renders restart for edits that stay in the
-            same dimension. If an edit switches between 3D and 4D, regenerate
-            Points before re-entering a render. Surface applies symmetry on its
-            next entry; its button explains eligibility immediately.
+            4D route: first set Order to 2-fold or more; then choose XW, YW or
+            ZW, or raise Twist above 0. Active Flame and Solid renders restart
+            for edits that stay in the same dimension. If an edit switches
+            between 3D and 4D, regenerate Points before re-entering a render.
+            Surface applies symmetry on its next entry; its button explains
+            eligibility immediately.
           </p>
           <label class="select-label">
             Order: <span id="symmetryOrderLabel">1-fold</span>
@@ -1055,13 +1057,13 @@
               <option value="xy">XY</option>
               <option value="xz" selected>XZ</option>
               <option value="yz">YZ</option>
-              <option value="xw">XW</option>
-              <option value="yw">YW</option>
-              <option value="zw">ZW</option>
+              <option value="xw">XW (4D)</option>
+              <option value="yw">YW (4D)</option>
+              <option value="zw">ZW (4D)</option>
             </select>
           </label>
           <label class="select-label">
-            Twist: <span id="symmetryTwistLabel">0</span>
+            Twist (4D): <span id="symmetryTwistLabel">0</span>
             <input
               type="range"
               id="symmetryTwistSlider"

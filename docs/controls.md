@@ -1359,7 +1359,10 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   **✦ Final Transform** row under **Select to edit** with the usual
   position/rotation/scale/shear/variation sliders — but no selection weight, which
   is meaningless for a map applied to every point. Untick to remove it.
-- **Symmetry** — kaleidoscope replication of the whole attractor:
+- **Symmetry · 4D** — kaleidoscope replication of the whole attractor. This is
+  the shortest route from a flat system into 4D without replacing it: set
+  **Order** to 2-fold or more, then choose **XW (4D)**, **YW (4D)** or
+  **ZW (4D)**, or raise **Twist (4D)** above 0.
   **Order** draws every chaos-game point up to 12 times (1 = off), the
   copies rotated evenly in the chosen **Plane** — any of the six coordinate
   planes. XY / XZ / YZ turn in ordinary 3-space; picking XW / YW /
@@ -1465,8 +1468,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   render, so it is not an IFS-attractor group by definition: a 4D
   escape-time chain, which ◈ Surface marches as the **W slice** of an
   escape-time set rather than as an attractor (see **◈ Surface** above),
-  belongs to it just as much. Or turn any flat system non-flat
-  yourself: every
+  belongs to it just as much. To keep the current system, the visible
+  **Symmetry · 4D** route above is the quickest entry; for precise per-map
+  authorship, every
   transform's (and the final lens's) editor ends with a collapsed **4D**
   group, with **Position W**, **Scale W** (tracks the map's live mean 3D
   contraction with an "(auto)" marker until set explicitly), and the
