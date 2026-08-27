@@ -72,7 +72,13 @@ jobs:
       - run: npm ci
 
       - name: Run tests
-        run: npm run test:coverage
+        # The coverage transform keeps substantially more source metadata per
+        # worker than the ordinary suite. Serial execution plus the measured
+        # heap margin prevents runner-contention OOMs from masquerading as a
+        # missing test file while preserving the complete coverage gate.
+        run: npm run test:coverage -- --maxWorkers=1
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Upload coverage
         if: always()
