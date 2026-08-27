@@ -128,8 +128,21 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps an authored trap untouched and preserves absent-means-classic", () => {
+  it("creates a custom primitive and keeps an opaque authored trap untouched", () => {
     const spec = specById("surfaceTrapShape");
+    const created = applyScalarControl(initialState(true), spec, "custom");
+    expect(created.shapeTrap).toEqual({
+      shape: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 1 },
+            combine: "union",
+          },
+        ],
+      },
+    });
+    expect(shapeTrapSelectValue(created)).toBe("custom");
+
     const authored = setShapeTrap(initialState(true), {
       shape: {
         parts: [
@@ -137,13 +150,17 @@ describe("applyScalarControl: parsing/mapping", () => {
             primitive: { kind: "sphere", radius: 0.7312 },
             combine: "union",
           },
+          {
+            primitive: { kind: "box", half: [0.2, 0.3, 0.4] },
+            combine: "union",
+          },
         ],
       },
       fade: 0.2,
     });
 
-    expect(shapeTrapSelectValue(authored)).toBe("custom");
-    expect(applyScalarControl(authored, spec, "custom")).toBe(authored);
+    expect(shapeTrapSelectValue(authored)).toBe("authored");
+    expect(applyScalarControl(authored, spec, "authored")).toBe(authored);
     const cleared = applyScalarControl(authored, spec, "");
     expect(cleared.shapeTrap).toBeUndefined();
     expect(shapeTrapSelectValue(cleared)).toBe("");

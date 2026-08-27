@@ -6,6 +6,7 @@ import type {
   SymmetryPlane,
 } from "../fractal/types";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "../fractal/shape-trap";
+import { authoredShapeDraft, defaultAuthoredShape } from "./authored-shape";
 import {
   buildColorModeLUT,
   colorModeUsesRampPalette,
@@ -1573,9 +1574,15 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     id: "surfaceTrapShape",
     read: (s) => shapeTrapSelectValue(s),
     apply: (s, raw) => {
-      if (raw === "custom") return s;
+      if (raw === "authored") return s;
       const bundled = bundledShapeEntry(raw);
-      return setShapeTrap(s, bundled?.trap ? { shape: bundled.shape } : null);
+      const shape =
+        raw === "custom"
+          ? defaultAuthoredShape()
+          : bundled?.trap
+            ? bundled.shape
+            : null;
+      return setShapeTrap(s, shape ? { ...s.shapeTrap, shape } : null);
     },
     effect: (s, fx) => {
       fx.scene.setSurfaceShapeTrap(s.shapeTrap ?? null);
@@ -1772,10 +1779,13 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
  */
 export function shapeTrapSelectValue(
   state: AppState,
-): "" | BundledTrapKind | "custom" {
+): "" | BundledTrapKind | "custom" | "authored" {
   const trap = state.shapeTrap;
   if (!trap) return "";
-  return bundledTrapForShape(trap.shape)?.kind ?? "custom";
+  return (
+    bundledTrapForShape(trap.shape)?.kind ??
+    (authoredShapeDraft(trap.shape) ? "custom" : "authored")
+  );
 }
 
 export function condensationBandMode(

@@ -90,6 +90,7 @@ import {
   formatIterationCount,
   SCALAR_CONTROLS,
   shapeTrapGeometryBandMode,
+  shapeTrapSelectValue,
 } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import {
@@ -124,6 +125,15 @@ import {
   type BundledEmitterKind,
   type BundledShapeDefinition,
 } from "./bundled-shapes";
+import {
+  AUTHORED_SHAPE_KINDS,
+  authoredShapeDraft,
+  authoredShapeFromDraft,
+  authoredShapeValidation,
+  defaultAuthoredShape,
+  type AuthoredShapeDraft,
+  type AuthoredShapeKind,
+} from "./authored-shape";
 
 export type { Preset };
 export type { SurfaceSessionKind } from "./panel-applicability";
@@ -166,7 +176,7 @@ type EditTarget = number | "final" | null;
 export interface UiHandlers {
   onAdd: () => void;
   /** Add and select a new transform carrying the chosen built-in shape. */
-  onAddEmitter: (kind: BundledEmitterKind) => void;
+  onAddEmitter: (kind: BundledEmitterKind | "custom") => void;
   onRemove: () => void;
   /** Step the scene document back one edit burst. */
   onUndo: () => void;
@@ -331,7 +341,14 @@ export interface UiHandlers {
    * {@link onTransformCommit}, never this mutation callback itself. */
   onTransformGeometry: (index: number, geometry: Geometry) => void;
   /** Set or clear the selected transform's condensation shape. */
-  onTransformEmitter: (index: number, kind: BundledEmitterKind | null) => void;
+  onTransformEmitter: (
+    index: number,
+    kind: BundledEmitterKind | "custom" | null,
+  ) => void;
+  /** Commit a valid parameter/part-pose edit to a custom shape emitter. */
+  onTransformEmitterShape: (index: number, shape: ShapeSpec) => void;
+  /** Commit a valid parameter/part-pose edit to the scene's shape trap. */
+  onShapeTrapShape: (shape: ShapeSpec) => void;
   /** The lens toggle was flipped: enable a default final transform, or clear it. */
   onToggleFinalTransform: (checked: boolean) => void;
   /** The mutation-only final-transform counterpart to
@@ -1270,23 +1287,38 @@ function variationSummary(t: Transform): string[] {
   return [`Var: ${active.map((v) => v.type).join(", ")}`];
 }
 
-type EmitterSelectValue = "" | BundledEmitterKind | "custom";
+type EmitterSelectValue = "" | BundledEmitterKind | "custom" | "authored";
+
+const AUTHORED_SHAPE_LABELS: Record<AuthoredShapeKind, string> = {
+  sphere: "Sphere",
+  box: "Box",
+  torus: "Torus",
+  capsule: "Capsule",
+  gear: "Gear",
+};
 
 /** Resolve a document emitter to the editor's small built-in vocabulary.
- * `custom` preserves a valid authored/shared ShapeSpec without pretending the
- * compact first-cut editor can reproduce it. */
+ * `custom` is the single-part analytic editor. `authored` preserves a valid
+ * imported ShapeSpec outside that deliberately small vocabulary without
+ * pretending the editor can reproduce it. */
 function emitterSelectValue(
   emitter: ShapeSpec | undefined,
 ): EmitterSelectValue {
   if (!emitter) return "";
-  return bundledEmitterForShape(emitter)?.kind ?? "custom";
+  return (
+    bundledEmitterForShape(emitter)?.kind ??
+    (authoredShapeDraft(emitter) ? "custom" : "authored")
+  );
 }
 
 /** One concise shape line for a transform-list row. */
 function emitterSummary(t: Transform): string[] {
   if (!t.emitter) return [];
   const bundled = bundledEmitterForShape(t.emitter);
-  return [`Shape: ${bundled?.label ?? "Authored"}`];
+  const draft = authoredShapeDraft(t.emitter);
+  return [
+    `Shape: ${bundled?.label ?? (draft ? `Custom ${AUTHORED_SHAPE_LABELS[draft.primitive.kind]}` : "Authored")}`,
+  ];
 }
 
 /**
@@ -1513,6 +1545,8 @@ interface EditorState {
   weightControl: AxisControl | null;
   /** The condensation-shape picker, or `null` for the final transform. */
   emitterSelect: HTMLSelectElement | null;
+  /** Host for the selected emitter's single-part custom editor. */
+  emitterShapeEditor: HTMLElement | null;
   /** The "Color" group's rows, or `null` for the final transform —
    * which is never PICKED, so it never moves the color coordinate. */
   colorControls: ColorControls | null;
@@ -2093,6 +2127,7 @@ export class Ui {
   // The shape trap section is the balloon's COMPLEMENT: visible exactly for
   // the forward-orbit (escape-family) session kinds, where Balloon refuses.
   private readonly surfaceTrapControls: HTMLElement;
+  private readonly surfaceTrapPrimitiveEditor: HTMLElement;
   private readonly surfaceTrapThresholdRow: HTMLElement;
   /** Geometry is the trap block's optional distance-union use. Its row is
    * limited to conformal fold-only escape sessions; its level controls wait
@@ -2399,6 +2434,7 @@ export class Ui {
     this.appendBundledShapeOptions(
       this.addEmitterSelect,
       BUNDLED_EMITTER_SHAPES,
+      "custom",
     );
     this.removeBtn = this.byId("removeBtn");
     this.undoBtn = this.byId("undoBtn");
@@ -2627,6 +2663,7 @@ export class Ui {
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
     this.surfaceCondensationCustom = this.byId("surfaceCondensationCustom");
     this.surfaceTrapControls = this.byId("surfaceTrapControls");
+    this.surfaceTrapPrimitiveEditor = this.byId("surfaceTrapPrimitiveEditor");
     this.surfaceTrapThresholdRow = this.byId("surfaceTrapThresholdRow");
     this.surfaceTrapGeometryRow = this.byId("surfaceTrapGeometryRow");
     this.surfaceTrapGeometryLevels = this.byId("surfaceTrapGeometryLevels");
@@ -2899,9 +2936,11 @@ export class Ui {
     this.backdrop.addEventListener("click", () => handlers.onClosePanel());
     this.addBtn.addEventListener("click", () => handlers.onAdd());
     this.addEmitterSelect.addEventListener("change", () => {
-      const entry = bundledShapeEntry(this.addEmitterSelect.value);
+      const value = this.addEmitterSelect.value;
+      const entry = bundledShapeEntry(value);
       this.addEmitterSelect.value = "";
-      if (entry?.emitter) handlers.onAddEmitter(entry.kind);
+      if (value === "custom") handlers.onAddEmitter("custom");
+      else if (entry?.emitter) handlers.onAddEmitter(entry.kind);
     });
     this.removeBtn.addEventListener("click", () => handlers.onRemove());
     this.undoBtn.addEventListener("click", () => handlers.onUndo());
@@ -3699,6 +3738,12 @@ export class Ui {
       surfaceTrapApplicability.kind !== "enabled",
     );
     this.surfaceTrapControls.classList.toggle("hidden", !state.shapeTrap);
+    this.syncAuthoredShapeEditor(
+      this.surfaceTrapPrimitiveEditor,
+      state.shapeTrap?.shape,
+      shapeTrapSelectValue(state),
+      (shape) => this.handlers?.onShapeTrapShape(shape),
+    );
     this.surfaceTrapThresholdRow.classList.toggle(
       "hidden",
       state.shapeTrap?.mode !== "threshold",
@@ -6156,10 +6201,11 @@ export class Ui {
     // A condensation shape belongs to the picked map, never the final lens.
     // Keep it beside Weight: Weight controls how often this map emits the
     // selected shape, while the ordinary TRS groups above pose it.
-    const emitterSelect =
+    const emitterGroup =
       target === "final"
         ? null
         : this.buildEmitterGroup(transform.emitter, target, openGroup);
+    const emitterSelect = emitterGroup?.select ?? null;
     // Color sits directly below Weight and above Variations: the two
     // per-map structural-color fields belong beside the other whole-map
     // property the chaos game reads when it PICKS this map, not among the
@@ -6214,6 +6260,7 @@ export class Ui {
       mirror,
       weightControl,
       emitterSelect,
+      emitterShapeEditor: emitterGroup?.editor ?? null,
       colorControls,
       finishControls,
       patternControls,
@@ -6298,6 +6345,448 @@ export class Ui {
     return { slider, readout };
   }
 
+  /**
+   * Keep one shared single-part primitive editor synchronized to a document
+   * shape. Catalog entries hide it; supported authored primitives expose the
+   * editor; every other imported ShapeSpec remains visible as a read-only
+   * authored value and is never rewritten implicitly.
+   */
+  private syncAuthoredShapeEditor(
+    host: HTMLElement,
+    shape: ShapeSpec | undefined,
+    choice: string,
+    onCommit: (shape: ShapeSpec) => void,
+  ): void {
+    const key = `${choice}:${shape ? JSON.stringify(shape) : ""}`;
+    if (host.dataset.shapeKey === key) return;
+    host.dataset.shapeKey = key;
+    host.replaceChildren();
+
+    if (!shape || (choice !== "custom" && choice !== "authored")) {
+      host.classList.add("hidden");
+      return;
+    }
+    host.classList.remove("hidden");
+
+    const initialDraft = authoredShapeDraft(shape);
+    if (!initialDraft || choice === "authored") {
+      const note = this.doc.createElement("p");
+      note.className = "flame-note-info shape-authored-note";
+      note.textContent =
+        "This imported authored shape is preserved exactly. Switch to Custom primitive to replace it with an editable single-part shape.";
+      host.appendChild(note);
+      return;
+    }
+    const draft: AuthoredShapeDraft = initialDraft;
+
+    const timing = this.doc.createElement("p");
+    timing.className = "flame-hint shape-editor-timing";
+    timing.textContent =
+      "Primitive and part-pose edits apply after release. Surface rebuilds the shape program once per edit.";
+    host.appendChild(timing);
+
+    const kindLabel = this.doc.createElement("label");
+    kindLabel.className = "select-label shape-kind-label";
+    kindLabel.append("Primitive");
+    const kindSelect = this.doc.createElement("select");
+    kindSelect.setAttribute("aria-label", "Custom primitive kind");
+    for (const kind of AUTHORED_SHAPE_KINDS) {
+      const option = this.doc.createElement("option");
+      option.value = kind;
+      option.textContent = AUTHORED_SHAPE_LABELS[kind];
+      kindSelect.appendChild(option);
+    }
+    kindSelect.value = draft.primitive.kind;
+    kindSelect.addEventListener("change", () => {
+      const kind = kindSelect.value as AuthoredShapeKind;
+      if (!AUTHORED_SHAPE_KINDS.includes(kind)) return;
+      const replacement = authoredShapeDraft(defaultAuthoredShape(kind));
+      if (!replacement) return;
+      replacement.offset = [...draft.offset];
+      replacement.rotate = [...draft.rotate];
+      replacement.scale = draft.scale;
+      const next = authoredShapeFromDraft(replacement);
+      // Update the local widget first. The real app callback synchronously
+      // refreshes from document state; letting an after-callback local write
+      // win could resurrect the editor beneath a catalog-classified select.
+      this.syncAuthoredShapeEditor(host, next, "custom", onCommit);
+      onCommit(next);
+    });
+    kindLabel.appendChild(kindSelect);
+    host.appendChild(kindLabel);
+
+    const validation = this.doc.createElement("p");
+    validation.className = "shape-validation hidden";
+    validation.setAttribute("role", "status");
+
+    type RangeBinding = AxisControl & { input(value: number): void };
+    const addHeading = (text: string): void => {
+      const heading = this.doc.createElement("div");
+      heading.className = "shape-editor-heading";
+      heading.textContent = text;
+      host.appendChild(heading);
+    };
+    const addRange = (options: {
+      label: string;
+      aria: string;
+      min: number;
+      max: number;
+      step: number;
+      value: number;
+      format?: (value: number) => string;
+      write: (value: number) => void;
+    }): RangeBinding => {
+      const row = this.doc.createElement("div");
+      row.className = "editor-row shape-parameter-row";
+      const name = this.doc.createElement("span");
+      name.className = "axis";
+      name.textContent = options.label;
+      const slider = this.doc.createElement("input");
+      slider.type = "range";
+      // Imported analytic specs remain editable even when an old/future
+      // author chose a value beyond today's convenience span. Expand the
+      // range to the document instead of letting the browser clamp its thumb
+      // and making the first interaction jump to unrelated geometry.
+      slider.min = String(Math.min(options.min, options.value));
+      slider.max = String(Math.max(options.max, options.value));
+      slider.step = String(options.step);
+      slider.value = String(options.value);
+      slider.setAttribute("aria-label", options.aria);
+      const readout = this.doc.createElement("span");
+      readout.className = "value";
+      const format = options.format ?? ((value: number) => value.toFixed(2));
+      const input = (value: number): void => {
+        slider.value = String(value);
+        readout.textContent = format(value);
+      };
+      input(options.value);
+      slider.addEventListener("input", () => {
+        const value = Number(slider.value);
+        options.write(value);
+        readout.textContent = format(value);
+        syncCoupledDomains();
+        refreshValidation();
+      });
+      slider.addEventListener("change", () => {
+        if (authoredShapeValidation(draft) === null) {
+          onCommit(authoredShapeFromDraft(draft));
+        }
+      });
+      row.append(name, slider, readout);
+      host.appendChild(row);
+      return { slider, readout, input };
+    };
+
+    const ranges = new Map<string, RangeBinding>();
+    const remember = (key: string, binding: RangeBinding): void => {
+      ranges.set(key, binding);
+    };
+
+    addHeading("Primitive parameters");
+    switch (draft.primitive.kind) {
+      case "sphere":
+        remember(
+          "radius",
+          addRange({
+            label: "Radius",
+            aria: "Shape sphere radius",
+            min: 0.01,
+            max: 3,
+            step: 0.01,
+            value: draft.primitive.radius,
+            write: (value) => {
+              if (draft.primitive.kind === "sphere")
+                draft.primitive.radius = value;
+            },
+          }),
+        );
+        break;
+      case "box":
+        (["X", "Y", "Z"] as const).forEach((axis, index) =>
+          remember(
+            `half${String(index)}`,
+            addRange({
+              label: `Half ${axis}`,
+              aria: `Shape box half ${axis}`,
+              min: 0.01,
+              max: 3,
+              step: 0.01,
+              value:
+                draft.primitive.kind === "box"
+                  ? draft.primitive.half[index]
+                  : 1,
+              write: (value) => {
+                if (draft.primitive.kind === "box")
+                  draft.primitive.half[index] = value;
+              },
+            }),
+          ),
+        );
+        break;
+      case "torus":
+        remember(
+          "major",
+          addRange({
+            label: "Major",
+            aria: "Shape torus major radius",
+            min: 0.01,
+            max: 3,
+            step: 0.01,
+            value: draft.primitive.major,
+            write: (value) => {
+              if (draft.primitive.kind === "torus")
+                draft.primitive.major = value;
+            },
+          }),
+        );
+        remember(
+          "minor",
+          addRange({
+            label: "Minor",
+            aria: "Shape torus minor radius",
+            min: 0.01,
+            max: draft.primitive.major,
+            step: 0.01,
+            value: draft.primitive.minor,
+            write: (value) => {
+              if (draft.primitive.kind === "torus")
+                draft.primitive.minor = value;
+            },
+          }),
+        );
+        break;
+      case "capsule":
+        for (const endpoint of ["a", "b"] as const) {
+          (["X", "Y", "Z"] as const).forEach((axis, index) =>
+            remember(
+              `${endpoint}${String(index)}`,
+              addRange({
+                label: `${endpoint.toUpperCase()} ${axis}`,
+                aria: `Shape capsule ${endpoint.toUpperCase()} ${axis}`,
+                min: -3,
+                max: 3,
+                step: 0.05,
+                value:
+                  draft.primitive.kind === "capsule"
+                    ? draft.primitive[endpoint][index]
+                    : 0,
+                write: (value) => {
+                  if (draft.primitive.kind === "capsule") {
+                    draft.primitive[endpoint][index] = value;
+                  }
+                },
+              }),
+            ),
+          );
+        }
+        remember(
+          "radius",
+          addRange({
+            label: "Radius",
+            aria: "Shape capsule radius",
+            min: 0.01,
+            max: 3,
+            step: 0.01,
+            value: draft.primitive.radius,
+            write: (value) => {
+              if (draft.primitive.kind === "capsule")
+                draft.primitive.radius = value;
+            },
+          }),
+        );
+        break;
+      case "gear":
+        remember(
+          "teeth",
+          addRange({
+            label: "Teeth",
+            aria: "Shape gear teeth",
+            min: 3,
+            max: 64,
+            step: 1,
+            value: draft.primitive.teeth,
+            format: (value) => String(Math.round(value)),
+            write: (value) => {
+              if (draft.primitive.kind === "gear")
+                draft.primitive.teeth = Math.round(value);
+            },
+          }),
+        );
+        remember(
+          "radius",
+          addRange({
+            label: "Body",
+            aria: "Shape gear body radius",
+            min: 0.05,
+            max: 3,
+            step: 0.01,
+            value: draft.primitive.radius,
+            write: (value) => {
+              if (draft.primitive.kind === "gear")
+                draft.primitive.radius = value;
+            },
+          }),
+        );
+        remember(
+          "toothRadial",
+          addRange({
+            label: "Tooth R",
+            aria: "Shape gear radial tooth half size",
+            min: 0.01,
+            max: 1,
+            step: 0.01,
+            value: draft.primitive.tooth[0],
+            write: (value) => {
+              if (draft.primitive.kind === "gear")
+                draft.primitive.tooth[0] = value;
+            },
+          }),
+        );
+        remember(
+          "toothTangential",
+          addRange({
+            label: "Tooth T",
+            aria: "Shape gear tangential tooth half size",
+            min: 0.001,
+            max:
+              draft.primitive.radius *
+              Math.sin(Math.PI / draft.primitive.teeth),
+            step: 0.001,
+            value: draft.primitive.tooth[1],
+            format: (value) => value.toFixed(3),
+            write: (value) => {
+              if (draft.primitive.kind === "gear")
+                draft.primitive.tooth[1] = value;
+            },
+          }),
+        );
+        remember(
+          "hole",
+          addRange({
+            label: "Hole",
+            aria: "Shape gear hole radius",
+            min: 0,
+            max: Math.max(0, draft.primitive.radius - 0.01),
+            step: 0.01,
+            value: draft.primitive.hole,
+            write: (value) => {
+              if (draft.primitive.kind === "gear") draft.primitive.hole = value;
+            },
+          }),
+        );
+        remember(
+          "halfHeight",
+          addRange({
+            label: "Half Z",
+            aria: "Shape gear half height",
+            min: 0.01,
+            max: 2,
+            step: 0.01,
+            value: draft.primitive.halfHeight,
+            write: (value) => {
+              if (draft.primitive.kind === "gear")
+                draft.primitive.halfHeight = value;
+            },
+          }),
+        );
+        break;
+    }
+
+    addHeading("Part pose");
+    (["X", "Y", "Z"] as const).forEach((axis, index) =>
+      remember(
+        `offset${String(index)}`,
+        addRange({
+          label: `Offset ${axis}`,
+          aria: `Shape part offset ${axis}`,
+          min: -3,
+          max: 3,
+          step: 0.05,
+          value: draft.offset[index],
+          write: (value) => {
+            draft.offset[index] = value;
+          },
+        }),
+      ),
+    );
+    (["X", "Y", "Z"] as const).forEach((axis, index) =>
+      remember(
+        `rotate${String(index)}`,
+        addRange({
+          label: `Rotate ${axis}`,
+          aria: `Shape part rotation ${axis}`,
+          min: -180,
+          max: 180,
+          step: 1,
+          value: (draft.rotate[index] * 180) / Math.PI,
+          format: (value) => `${Math.round(value)}°`,
+          write: (value) => {
+            draft.rotate[index] = (value * Math.PI) / 180;
+          },
+        }),
+      ),
+    );
+    remember(
+      "scale",
+      addRange({
+        label: "Scale",
+        aria: "Shape part scale",
+        min: 0.1,
+        max: 3,
+        step: 0.05,
+        value: draft.scale,
+        format: (value) => `${value.toFixed(2)}×`,
+        write: (value) => {
+          draft.scale = value;
+        },
+      }),
+    );
+
+    function syncCoupledDomains(): void {
+      if (draft.primitive.kind === "torus") {
+        const minor = ranges.get("minor");
+        if (minor) {
+          minor.slider.max = String(draft.primitive.major);
+          if (draft.primitive.minor > draft.primitive.major) {
+            draft.primitive.minor = draft.primitive.major;
+            minor.input(draft.primitive.minor);
+          }
+        }
+      }
+      if (draft.primitive.kind === "gear") {
+        const tangential = ranges.get("toothTangential");
+        const limit =
+          draft.primitive.radius * Math.sin(Math.PI / draft.primitive.teeth);
+        if (tangential) {
+          tangential.slider.max = String(limit);
+          if (draft.primitive.tooth[1] > limit) {
+            draft.primitive.tooth[1] = limit;
+            tangential.input(limit);
+          }
+        }
+        const hole = ranges.get("hole");
+        const holeMax = Math.max(0, draft.primitive.radius - 0.01);
+        if (hole) {
+          hole.slider.max = String(holeMax);
+          if (draft.primitive.hole > holeMax) {
+            draft.primitive.hole = holeMax;
+            hole.input(holeMax);
+          }
+        }
+      }
+    }
+
+    function refreshValidation(): void {
+      const message = authoredShapeValidation(draft);
+      validation.classList.toggle("hidden", message === null);
+      validation.textContent = message ?? "";
+    }
+
+    syncCoupledDomains();
+    refreshValidation();
+    host.appendChild(validation);
+  }
+
   /** Build the selected map's condensation-shape picker. Choosing a shape
    * turns this map into a fixed-shape emitter; the existing TRS controls pose
    * it and Weight controls its selection probability. */
@@ -6305,7 +6794,7 @@ export class Ui {
     emitter: ShapeSpec | undefined,
     target: number,
     openGroup: string,
-  ): HTMLSelectElement {
+  ): { select: HTMLSelectElement; editor: HTMLElement } {
     const group = this.createEditorGroup("Shape", openGroup);
 
     const hint = this.doc.createElement("p");
@@ -6328,13 +6817,14 @@ export class Ui {
       ...BUNDLED_EMITTER_SHAPES.map(
         (entry) => [entry.kind, bundledShapeOptionLabel(entry)] as const,
       ),
-      ["custom", "Authored shape"],
+      ["custom", "Custom primitive…"],
+      ["authored", "Authored shape"],
     ];
     for (const [value, text] of choices) {
       const option = this.doc.createElement("option");
       option.value = value;
       option.textContent = text;
-      if (value === "custom") option.hidden = true;
+      if (value === "authored") option.hidden = true;
       select.appendChild(option);
     }
     select.value = emitterSelectValue(emitter);
@@ -6344,17 +6834,29 @@ export class Ui {
         this.handlers?.onTransformEmitter(target, null);
         return;
       }
-      if (value === "custom") return;
+      if (value === "authored") return;
+      if (value === "custom") {
+        this.handlers?.onTransformEmitter(target, "custom");
+        return;
+      }
       const entry = bundledShapeEntry(value);
       if (entry?.emitter) {
         this.handlers?.onTransformEmitter(target, entry.kind);
       }
     });
 
+    const editor = this.doc.createElement("div");
+    editor.className = "shape-primitive-editor hidden";
     label.appendChild(select);
-    group.append(hint, label);
+    group.append(hint, label, editor);
     this.transformEditor.appendChild(group);
-    return select;
+    this.syncAuthoredShapeEditor(
+      editor,
+      emitter,
+      emitterSelectValue(emitter),
+      (shape) => this.handlers?.onTransformEmitterShape(target, shape),
+    );
+    return { select, editor };
   }
 
   /**
@@ -7681,7 +8183,17 @@ export class Ui {
       editor.weightControl.readout.textContent = weight.toFixed(2);
     }
     if (editor.emitterSelect) {
-      editor.emitterSelect.value = emitterSelectValue(transform.emitter);
+      const choice = emitterSelectValue(transform.emitter);
+      editor.emitterSelect.value = choice;
+      const target = editor.target;
+      if (editor.emitterShapeEditor && typeof target === "number") {
+        this.syncAuthoredShapeEditor(
+          editor.emitterShapeEditor,
+          transform.emitter,
+          choice,
+          (shape) => this.handlers?.onTransformEmitterShape(target, shape),
+        );
+      }
     }
     // The `typeof` narrows what the group's existence already guarantees (it
     // is built only for a numbered target) — and the derived slot is

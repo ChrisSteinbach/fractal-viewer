@@ -153,6 +153,7 @@ import {
   parseSurfaceSamplesOverride,
 } from "./surface-sampling";
 import { bundledEmitterShape } from "./bundled-shapes";
+import { defaultAuthoredShape } from "./authored-shape";
 import {
   EXPORT_MODAL_SLOW_PREDICTION_MS,
   createExportProgress,
@@ -6801,7 +6802,13 @@ function main(): void {
       applyDiscreteTransformEdit(() => {
         state = addTransform(state);
         const index = state.transforms.length - 1;
-        state = setTransformEmitter(state, index, bundledEmitterShape(kind));
+        state = setTransformEmitter(
+          state,
+          index,
+          kind === "custom"
+            ? defaultAuthoredShape()
+            : bundledEmitterShape(kind),
+        );
         state = selectTransform(state, index);
       });
     },
@@ -7685,9 +7692,27 @@ function main(): void {
         state = setTransformEmitter(
           state,
           index,
-          kind === null ? null : bundledEmitterShape(kind),
+          kind === null
+            ? null
+            : kind === "custom"
+              ? defaultAuthoredShape()
+              : bundledEmitterShape(kind),
         );
       });
+    },
+    onTransformEmitterShape: (index, shape) => {
+      applyDiscreteTransformEdit(() => {
+        state = setTransformEmitter(state, index, shape);
+      });
+    },
+    onShapeTrapShape: (shape) => {
+      if (!state.shapeTrap) return;
+      stopShows({ notify: true });
+      editSession.beginEdit();
+      state = setShapeTrap(state, { ...state.shapeTrap, shape });
+      ui.updateLabels(state);
+      scene.setSurfaceShapeTrap(state.shapeTrap ?? null);
+      controlEffects.restartSurfaceRender();
     },
     onToggleFinalTransform: (checked) => {
       applyDiscreteTransformEdit(() => {
