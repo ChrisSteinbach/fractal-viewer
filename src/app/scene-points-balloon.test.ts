@@ -9,6 +9,7 @@ function sceneWithoutRenderer(
 ): {
   scene: FractalScene;
   uniforms: Record<string, TestUniform>;
+  voxelUniforms: Record<string, TestUniform>;
   setAttribute: ReturnType<typeof vi.fn>;
 } {
   const scene = Object.create(FractalScene.prototype) as FractalScene;
@@ -36,13 +37,12 @@ function sceneWithoutRenderer(
       uBalloonPaletteEnabled: { value: 0 },
     },
   });
-  Reflect.set(scene, "voxelMaterial", {
-    uniforms: {
-      uBalloonColorLUT: { value: null },
-      uBalloonPaletteEnabled: { value: 0 },
-    },
-  });
-  return { scene, uniforms, setAttribute };
+  const voxelUniforms = {
+    uBalloonColorLUT: { value: null },
+    uBalloonPaletteEnabled: { value: usePalette },
+  };
+  Reflect.set(scene, "voxelMaterial", { uniforms: voxelUniforms });
+  return { scene, uniforms, voxelUniforms, setAttribute };
 }
 
 function ramp(): Float32Array {
@@ -55,13 +55,15 @@ function ramp(): Float32Array {
   return lut;
 }
 
-describe("Points balloon palette upload", () => {
+describe("shared scene balloon palette upload", () => {
   it("uses null as explicit inherit without allocating or touching primary colors", () => {
-    const { scene, uniforms, setAttribute } = sceneWithoutRenderer(true, 1);
+    const { scene, uniforms, voxelUniforms, setAttribute } =
+      sceneWithoutRenderer(true, 1);
 
     scene.setBalloonPalette(null);
 
     expect(uniforms.uEchoUsePalette.value).toBe(0);
+    expect(voxelUniforms.uBalloonPaletteEnabled.value).toBe(0);
     expect(uniforms.uEchoPalette.value).toBeNull();
     expect(Reflect.get(scene, "balloonEchoPaletteTexture")).toBeNull();
     expect(setAttribute).not.toHaveBeenCalled();
@@ -69,7 +71,8 @@ describe("Points balloon palette upload", () => {
   });
 
   it("uploads a balloon-only 256-entry texture and leaves primary geometry untouched", () => {
-    const { scene, uniforms, setAttribute } = sceneWithoutRenderer(true);
+    const { scene, uniforms, voxelUniforms, setAttribute } =
+      sceneWithoutRenderer(true);
     const lut = ramp();
 
     scene.setBalloonPalette(lut);
@@ -79,6 +82,8 @@ describe("Points balloon palette upload", () => {
     expect(texture).toBeInstanceOf(THREE.DataTexture);
     expect(texture.minFilter).toBe(THREE.NearestFilter);
     expect(texture.magFilter).toBe(THREE.NearestFilter);
+    expect(voxelUniforms.uBalloonColorLUT.value).toBe(texture);
+    expect(voxelUniforms.uBalloonPaletteEnabled.value).toBe(1);
     const bytes = texture.image.data as Uint8Array;
     expect(Array.from(bytes.slice(0, 4))).toEqual([0, 128, 255, 255]);
     expect(Array.from(bytes.slice(-4))).toEqual([255, 128, 0, 255]);

@@ -42,11 +42,12 @@
  *     t = clamp(|source - c| / rho, 0, 1)
  *
  * `source` is the exact pre-inversion point whose image is being drawn:
- * the projected source point in Points and Flame, and the shell argmin's
- * inverted query (`BalloonDistance.shell`'s source) in Surface. Thus one
- * source sample keeps one colour through the inversion, the coordinate is
- * independent of the balloon radius `R`, and Points/Flame/Surface do not
- * silently borrow three unrelated main-render colour modes. The margined
+ * the projected source point in Points and Flame, the inverted voxel query in
+ * Solid, and the shell argmin's inverted query (`BalloonDistance.shell`'s
+ * source) in Surface. Thus one source sample keeps one colour through the
+ * inversion, the coordinate is independent of the balloon radius `R`, and
+ * Points/Flame/Solid/Surface do not silently borrow four unrelated main-render
+ * colour modes. The margined
  * `rho`, rather than raw ball radius, is deliberate: it is the one bound all
  * balloon paths already carry and keeps certified source samples inside the
  * gradient up to measured ball-fit slack. {@link balloonPaletteCoordinate}

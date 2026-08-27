@@ -549,11 +549,13 @@ export interface AppState {
    */
   balloonRadius: number;
   /**
-   * The one palette selection shared by the balloon in Points, Flame, and
-   * Surface. {@link BALLOON_PALETTE_INHERIT} preserves each arm's existing
+   * The one palette selection shared by the balloon in Points, Flame, Solid,
+   * and Surface. {@link BALLOON_PALETTE_INHERIT} preserves each arm's existing
    * base-color path exactly; a gradient choice recolors only balloon-attributed
-   * samples/shell terms before {@link balloonTint} is applied. Persisted scene
-   * content, with missing/legacy/malformed values decoding back to Inherit.
+   * samples/shell terms before {@link balloonTint} is applied. Solid consumes
+   * it live in the query-time voxel material rather than baking it into the
+   * worker's density volume. Persisted scene content, with
+   * missing/legacy/malformed values decoding back to Inherit.
    */
   balloonPaletteId: BalloonPaletteSelection;
   /**
