@@ -59,7 +59,17 @@ import {
 } from "./surface-slots";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
-import { deriveSurfaceEligibility } from "./surface-eligibility";
+import {
+  deriveSurfaceEligibility,
+  type SurfaceEligibilityResult,
+} from "./surface-eligibility";
+import {
+  classifyTransformEdit,
+  planTransformEdit,
+  type PointsTransformEditEffect,
+  type TransformEditPlan,
+  type TransformEditSnapshot,
+} from "./transform-edit-effects";
 import {
   DEFAULT_FLAME_BALLOON_ECHO_WEIGHT,
   DEFAULT_GAMMA_THRESHOLD,
@@ -739,6 +749,12 @@ function main(): void {
   // Null whenever the view isn't showing 4D.
   let fourDResult: CloudResult4D | null = null;
 
+  // The exact transform support that produced the cloud currently on screen.
+  // A newer document may already be authored while its latest-wins request is
+  // queued or in flight; transform restart planning must compare against this
+  // landed snapshot, never against generator idleness or the live document.
+  let landedPointSupport: TransformEditSnapshot | null = null;
+
   // The pending load hints (load-hints.ts, where the policy and its history
   // live): a preset/gallery/timeline load's render-mode hint, a timeline
   // render keyframe's deterministic accumulator seed, and a loaded
@@ -761,6 +777,16 @@ function main(): void {
   function nextRenderSeed(): number {
     return loadHints.takeSeed() ?? Math.floor(Math.random() * 0xffffffff);
   }
+
+  // Transform Color edits re-enter Flame/Solid to rebuild only the consumed
+  // palette lanes. These one-shot overrides keep the stochastic orbit fixed,
+  // so a color comparison does not silently become a new sampled object.
+  let flameSeedOverride: number | null = null;
+  let solidSeedOverride: number | null = null;
+  let activeFlameSeed: number | null = null;
+  let activeSolidSeed: number | null = null;
+  let activeFlameNonFlat = false;
+  let activeSolidNonFlat = false;
 
   // The session-only 4D VIEW state: the accumulated rotor (tumble ticks and
   // Shift-drag/Shift-wheel deltas all compose into it), the tumble
@@ -2141,6 +2167,11 @@ function main(): void {
     // stop it and show the fresh cloud whole. (scene.setPoints* also clears
     // the prefix defensively, but the caption/cursor/count are app state.)
     cancelReplay();
+    landedPointSupport = {
+      transforms: request.transforms,
+      finalTransform: request.finalTransform,
+      symmetry: request.symmetry,
+    };
     const nonFlat = result.fourD;
     const wasNonFlat = viewIs4D;
     viewIs4D = nonFlat;
@@ -3110,6 +3141,11 @@ function main(): void {
         (width * height) / (base.width * base.height),
       );
       const projection = scene.flameProjectionMatrix();
+      const fourD = fourDRenderSnapshot();
+      const seed = flameSeedOverride ?? nextRenderSeed();
+      flameSeedOverride = null;
+      activeFlameSeed = seed;
+      activeFlameNonFlat = fourD !== undefined;
 
       // Post-clamp, so the export modal quotes the size that will actually
       // save rather than the size that was asked for.
@@ -3135,7 +3171,7 @@ function main(): void {
         height,
         // Rolled through the shared helper so a timeline render keyframe
         // can pin it — see nextRenderSeed's doc.
-        seed: nextRenderSeed(),
+        seed,
         requestedSupersample: state.flame.supersample,
         maxAccumBuckets,
         iterationsBudget: state.flame.iterations,
@@ -3174,7 +3210,7 @@ function main(): void {
         // asks.
         instrument: flamePerfEnabled(),
         // The frozen 4D view, or undefined for the unchanged 3D path.
-        fourD: fourDRenderSnapshot(),
+        fourD,
       });
       return host;
     },
@@ -3198,6 +3234,9 @@ function main(): void {
       refreshUi();
     },
     deactivate: () => {
+      activeFlameSeed = null;
+      activeFlameNonFlat = false;
+      flameSeedOverride = null;
       flameShared = null; // drop our half of the shared buffers; with the worker's half gone too, the SABs are collectable.
       flameRenderDims = null; // no session, no accumulation size.
       // Reset only the mode this session owns — the exact semantics the old
@@ -3304,6 +3343,11 @@ function main(): void {
   // only builds and kicks off.
   const solidSession = new RenderSession<VoxelWorkerCommand>({
     start: () => {
+      const fourD = fourDRenderSnapshot();
+      const seed = solidSeedOverride ?? nextRenderSeed();
+      solidSeedOverride = null;
+      activeSolidSeed = seed;
+      activeSolidNonFlat = fourD !== undefined;
       const worker = new Worker(new URL("./voxel-worker.ts", import.meta.url), {
         type: "module",
       });
@@ -3356,7 +3400,7 @@ function main(): void {
         iterationsBudget: state.solid.iterations,
         // Rolled through the shared helper so a timeline render keyframe
         // can pin it — see nextRenderSeed's doc.
-        seed: nextRenderSeed(),
+        seed,
         // Device-aware memory budget for the voxel grid + texture — the
         // same two main-thread-only signals, for the same reasons, as the
         // flame render's maxAccumBuckets above.
@@ -3371,7 +3415,7 @@ function main(): void {
         // transform set — the flame start's field, verbatim.
         schedule: state.schedule ?? null,
         // The frozen 4D view, or undefined for the unchanged 3D path.
-        fourD: fourDRenderSnapshot(),
+        fourD,
       });
       return handle;
     },
@@ -3394,6 +3438,9 @@ function main(): void {
       refreshUi();
     },
     deactivate: () => {
+      activeSolidSeed = null;
+      activeSolidNonFlat = false;
+      solidSeedOverride = null;
       // Reset only the mode this session owns — see the flame session's
       // deactivate for why this is not a blind write.
       if (state.renderMode === "solid") {
@@ -4671,8 +4718,15 @@ function main(): void {
     surfaceSettlePending = true;
   }
 
+  // Transform-driven re-entry rebuilds the Surface renderer but remains one
+  // continuous inspection gesture. The start consumes this one-shot before
+  // any routing arm can auto-fit an escape-family bailout ball.
+  let preserveSurfaceCameraOnNextEntry = false;
+
   const surfaceSession = new RenderSession<never>({
     start: () => {
+      const preserveCamera = preserveSurfaceCameraOnNextEntry;
+      preserveSurfaceCameraOnNextEntry = false;
       // Re-run the shared document gate at the session door. The button has
       // already used this answer, but timeline/isolation restores and
       // mid-session document changes can bypass the button. In particular a
@@ -4812,19 +4866,21 @@ function main(): void {
               // same escape-reset debris the 3D branch frames away from,
               // and it sits inside the solid for the same reason.
               const R = de.boundingRadius;
-              cameraTween.fitToBounds(
-                {
-                  minX: -R,
-                  maxX: R,
-                  minY: -R,
-                  maxY: R,
-                  minZ: -R,
-                  maxZ: R,
-                  minR: 0,
-                  maxR: R,
-                },
-                { fov: scene.camera.fov, aspect: scene.camera.aspect },
-              );
+              if (!preserveCamera) {
+                cameraTween.fitToBounds(
+                  {
+                    minX: -R,
+                    maxX: R,
+                    minY: -R,
+                    maxY: R,
+                    minZ: -R,
+                    maxZ: R,
+                    minR: 0,
+                    maxR: R,
+                  },
+                  { fov: scene.camera.fov, aspect: scene.camera.aspect },
+                );
+              }
             } else {
               // The fold-4D refusal's wording, one family over — reachable
               // only through mid-session compute loss, since the
@@ -5132,19 +5188,21 @@ function main(): void {
           // Mandelbulb, whose chaos-game cloud is the same debris and
           // whose solid likewise contains the origin — measured 100% of a
           // 0.1R neighbourhood of the centre interior.)
-          cameraTween.fitToBounds(
-            {
-              minX: -R,
-              maxX: R,
-              minY: -R,
-              maxY: R,
-              minZ: -R,
-              maxZ: R,
-              minR: 0,
-              maxR: R,
-            },
-            { fov: scene.camera.fov, aspect: scene.camera.aspect },
-          );
+          if (!preserveCamera) {
+            cameraTween.fitToBounds(
+              {
+                minX: -R,
+                maxX: R,
+                minY: -R,
+                maxY: R,
+                minZ: -R,
+                maxZ: R,
+                minR: 0,
+                maxR: R,
+              },
+              { fov: scene.camera.fov, aspect: scene.camera.aspect },
+            );
+          }
         } else {
           surfaceSessionIs4D = false;
           // An ordinary IFS session — the balloon's live shape, so its
@@ -5476,6 +5534,7 @@ function main(): void {
   // (clicking the lit segment must not restart a converging render).
   function switchRenderMode(target: RenderMode): void {
     if (target === state.renderMode) return;
+    clearPendingTransformEdits();
     // The replay lives in the points view; leaving it mid-replay must not
     // strand a partial cloud (or the narration pill) behind the flame/solid
     // render.
@@ -5628,8 +5687,8 @@ function main(): void {
    * where a stale-enabled button routed a plainly ineligible system into a
    * render-failure toast.
    */
-  function refreshSurfaceEligibility(): void {
-    const eligibility = deriveSurfaceEligibility(
+  function currentSurfaceEligibility(): SurfaceEligibilityResult {
+    return deriveSurfaceEligibility(
       state.transforms,
       state.finalTransform ?? null,
       state.symmetry,
@@ -5637,6 +5696,10 @@ function main(): void {
       state.schedule ?? null,
       state.shapeTrap ?? null,
     );
+  }
+
+  function refreshSurfaceEligibility(): SurfaceEligibilityResult {
+    const eligibility = currentSurfaceEligibility();
     // The route kind rides along for the transform editor's Finish group:
     // a forward-orbit route shades the whole object with the head
     // transform's finish, and the panel says so on the rows it would skip.
@@ -5646,6 +5709,148 @@ function main(): void {
       eligibility.kind,
       eligibility.recovery ?? null,
     );
+    return eligibility;
+  }
+
+  type TransformEditTarget = number | "final";
+
+  // Range/canvas input is live document authoring, but an accumulating
+  // renderer only restarts once at the gesture boundary. Retain the first
+  // whole-system snapshot per target so edit->revert and 3D->4D->3D bursts
+  // truthfully collapse to no active-session work.
+  const pendingTransformEdits = new Map<
+    TransformEditTarget,
+    TransformEditSnapshot
+  >();
+
+  function transformEditSnapshot(): TransformEditSnapshot {
+    return {
+      transforms: state.transforms,
+      finalTransform: state.finalTransform ?? null,
+      symmetry: state.symmetry,
+    };
+  }
+
+  function pointSupportMatches(document: TransformEditSnapshot): boolean {
+    return (
+      landedPointSupport !== null &&
+      !classifyTransformEdit(landedPointSupport, document).geometry
+    );
+  }
+
+  function transformEditPlan(
+    previous: TransformEditSnapshot,
+    document: TransformEditSnapshot,
+    eligibility = currentSurfaceEligibility(),
+  ): TransformEditPlan {
+    return planTransformEdit(classifyTransformEdit(previous, document), {
+      document,
+      displayedNonFlat: viewIs4D,
+      activeRenderNonFlat:
+        state.renderMode === "flame"
+          ? activeFlameNonFlat
+          : state.renderMode === "solid"
+            ? activeSolidNonFlat
+            : false,
+      pointSupportCurrent: pointSupportMatches(document),
+      renderMode: state.renderMode,
+      autoUpdate: state.autoUpdate,
+      balloonEcho: state.balloonEcho,
+      colorMode: state.colorMode,
+      fourDColor: state.fourDColor,
+      flamePaletteId: state.flame.paletteId,
+      solidPaletteId: state.solid.paletteId,
+      surface: {
+        eligibility,
+        colorSource: state.surface.colorSource,
+        shapeTrapActive: state.shapeTrap !== undefined,
+      },
+    });
+  }
+
+  function applyPointsTransformEffect(effect: PointsTransformEditEffect): void {
+    if (effect === "regenerate") regenScheduler.schedule();
+    else if (effect === "recolor-flat") recolor();
+    else if (effect === "recolor-4d") applyFourDColor();
+  }
+
+  function applyActiveTransformEffect(plan: TransformEditPlan): void {
+    switch (plan.active) {
+      case "restart-flame":
+        if (state.renderMode !== "flame") return;
+        if (plan.reuseActiveSeed && activeFlameSeed !== null) {
+          flameSeedOverride = activeFlameSeed;
+        }
+        flameSession.enter();
+        return;
+      case "restart-solid":
+        if (state.renderMode !== "solid") return;
+        if (plan.reuseActiveSeed && activeSolidSeed !== null) {
+          solidSeedOverride = activeSolidSeed;
+        }
+        solidSession.enter();
+        return;
+      case "reenter-surface":
+        if (state.renderMode !== "surface") return;
+        preserveSurfaceCameraOnNextEntry = plan.preserveSurfaceView;
+        surfaceSession.enter();
+        return;
+      case "none":
+      case "next-entry":
+        return;
+    }
+  }
+
+  function clearPendingTransformEdits(): void {
+    pendingTransformEdits.clear();
+  }
+
+  function applyTransformInput(
+    target: TransformEditTarget,
+    applyChange: () => void,
+  ): void {
+    const previous = transformEditSnapshot();
+    if (!pendingTransformEdits.has(target)) {
+      pendingTransformEdits.set(target, previous);
+    }
+    stopShows({ notify: true });
+    editSession.beginEdit();
+    applyChange();
+    ui.renderTransformList(
+      state.transforms,
+      state.selectedTransform,
+      state.finalTransform ?? null,
+    );
+    const document = transformEditSnapshot();
+    const eligibility = refreshSurfaceEligibility();
+    applyPointsTransformEffect(
+      transformEditPlan(previous, document, eligibility).points,
+    );
+  }
+
+  function commitTransformEdit(target: TransformEditTarget): void {
+    const previous = pendingTransformEdits.get(target);
+    if (!previous) return;
+    // Delete before enter(): session activation refreshes the UI reentrantly.
+    pendingTransformEdits.delete(target);
+    const document = transformEditSnapshot();
+    applyActiveTransformEffect(transformEditPlan(previous, document));
+  }
+
+  function applyDiscreteTransformEdit(applyReducer: () => void): void {
+    clearPendingTransformEdits();
+    stopShows({ notify: true });
+    loadHints.clearAll();
+    snapMorph();
+    const previous = transformEditSnapshot();
+    editSession.beginEdit("tweak");
+    applyReducer();
+    const document = transformEditSnapshot();
+    const plan = transformEditPlan(previous, document);
+    applyPointsTransformEffect(plan.points);
+    refreshGuides();
+    refreshUi();
+    applyActiveTransformEffect(plan);
   }
 
   /**
@@ -5687,6 +5892,7 @@ function main(): void {
     morphMs?: number,
     morphSeed?: number,
   ): void {
+    clearPendingTransformEdits();
     // Undo/redo and a gallery load are the user reaching in: both end the
     // drift show — this is the one chokepoint on their shared path. Notify:
     // the show's own collection legs also pass through here, but under the
@@ -6200,6 +6406,7 @@ function main(): void {
     effect: "auto" | "always" = "auto",
     morphMs?: number,
   ): void {
+    clearPendingTransformEdits();
     // Notify: every ordinary document edit (add/remove transform,
     // preset load, Surprise Me, toggles) flows through here. The show's own
     // roll (driftPolicy.advance → rollSurpriseSystem) takes this exact path
@@ -6225,60 +6432,12 @@ function main(): void {
   }
 
   /**
-   * applyEdit's DRAG SIBLING — the one chokepoint for the mid-gesture edit
-   * paths (slider drags, the lens sliders, the guide-box drag) that cannot
-   * use applyEdit itself: its refreshUi would rebuild the transform editor
-   * and tear the dragged slider out from under the pointer. Those paths
-   * each used to restate the same bookkeeping tail by hand, and the next
-   * hand-rolled copy that forgot refreshSurfaceEligibility would silently
-   * reintroduce the stale-Surface-button bug the refresh fixed — no test,
-   * no error, just a gate reading a document it stopped tracking.
-   *
-   * Same shape as applyEdit minus what a drag must not do: no refreshUi
-   * (the tear above) and no renderTransformEditor here EVER — the guide-box
-   * path adds its own rebuild after this returns, which is safe only
-   * because that gesture's pointer is on the CANVAS, not on a panel slider.
-   * Two more deliberate differences, decided rather than inherited: the
-   * pending load hints are NOT cleared — a drag is not a load, and today's
-   * drag paths never cleared them (an armed preset hint still fires when
-   * its snapped morph's terminal request lands, exactly as before) — and
-   * there is no snapMorph, because regenerate() (the scheduled run below)
-   * snaps any in-flight morph itself.
-   *
-   * `applyChange` mutates the document (and pushes any per-path scene
-   * geometry, e.g. setGuideGeometry); this wraps it in the shared
-   * bookkeeping: show stop, undo checkpoint, transform-list refresh, the
-   * Surface gate re-derivation (the one refreshUi output that must not go
-   * stale mid-drag), and the auto-update schedule.
-   */
-  function applyDragEdit(applyChange: () => void): void {
-    // Notify: a mid-gesture edit is a document edit like any other — it ends
-    // a running show, announced.
-    stopShows({ notify: true });
-    editSession.beginEdit();
-    applyChange();
-    ui.renderTransformList(
-      state.transforms,
-      state.selectedTransform,
-      state.finalTransform ?? null,
-    );
-    // The Surface gate reads the DOCUMENT, and a geometry drag can carry it
-    // across an analyzer seam — a scale reaching 1.0 stops contracting
-    // mid-drag, and a stale-enabled button then routes a plainly ineligible
-    // system into a render-failure toast. This list+gate pair mirrors
-    // refreshUi's own tail (with the editor rebuild omitted between them) —
-    // an edit to either sequence should visit its twin.
-    refreshSurfaceEligibility();
-    if (state.autoUpdate) regenScheduler.schedule();
-  }
-
-  /**
-   * The Xaos matrix's cell commits and leak-dial drags: applyDragEdit's
-   * bookkeeping shape (burst-coalesced undo, frame-coalesced regen)
-   * PLUS this section's own resync — kept OUT of applyDragEdit itself so
+   * The Xaos matrix's cell commits and leak-dial drags: the shared
+   * mid-gesture bookkeeping shape (burst-coalesced undo, frame-coalesced regen)
+   * PLUS this section's own resync — kept out of transform input planning so
    * an unrelated position/rotation/fold-radius drag never rebuilds this
    * grid on every one of its ticks. `resync` skips the rebuild mid-drag
-   * (every leak-dial "input" tick) the same way applyDragEdit skips
+   * (every leak-dial "input" tick) the same way transform input skips
    * refreshUi for the slider it is currently dragging — ui.ts's own leak
    * row updates its label directly instead — and runs it once the drag
    * settles ("change") or for a matrix cell's single "change" commit,
@@ -6563,12 +6722,12 @@ function main(): void {
   // are live for a non-flat system exactly like a flat one.
   ui.bind({
     onAdd: () => {
-      applyEdit(() => {
+      applyDiscreteTransformEdit(() => {
         state = addTransform(state);
       });
     },
     onAddEmitter: (kind) => {
-      applyEdit(() => {
+      applyDiscreteTransformEdit(() => {
         state = addTransform(state);
         const index = state.transforms.length - 1;
         state = setTransformEmitter(state, index, bundledEmitterShape(kind));
@@ -6576,7 +6735,7 @@ function main(): void {
       });
     },
     onRemove: () => {
-      applyEdit(() => {
+      applyDiscreteTransformEdit(() => {
         state = removeTransform(state);
       });
     },
@@ -7409,20 +7568,22 @@ function main(): void {
       exportProgress.requestDeliverEarly();
     },
     onSelect: (index) => {
+      clearPendingTransformEdits();
       state = selectTransform(state, index);
       refreshGuides();
       refreshUi();
     },
     onTransformGeometry: (index, geometry) => {
-      // A panel-slider transform edit: the drag chokepoint owns the
-      // bookkeeping; this path adds only its own guide push.
-      applyDragEdit(() => {
+      // A panel transform input: the settled planner owns regeneration and
+      // renderer work; this path adds only its own guide push.
+      applyTransformInput(index, () => {
         state = updateTransform(state, index, geometry);
         scene.setGuideGeometry(index, geometry);
       });
     },
+    onTransformCommit: commitTransformEdit,
     onTransformEmitter: (index, kind) => {
-      applyEdit(() => {
+      applyDiscreteTransformEdit(() => {
         state = setTransformEmitter(
           state,
           index,
@@ -7431,7 +7592,7 @@ function main(): void {
       });
     },
     onToggleFinalTransform: (checked) => {
-      applyEdit(() => {
+      applyDiscreteTransformEdit(() => {
         if (checked) {
           // Enable a default (identity, no-op) lens and jump straight to its
           // editor so the next click can start shaping it.
@@ -7452,7 +7613,7 @@ function main(): void {
       // A panel-slider final-transform edit — the gate tracks lens edits too:
       // a near-zero scale, a non-fold variation or a w block on the final all
       // move the analyzers.
-      applyDragEdit(() => {
+      applyTransformInput("final", () => {
         state = setFinalTransform(state, { id: 0, ...geometry });
       });
     },
@@ -7553,8 +7714,8 @@ function main(): void {
     onTransformChange: (index, geometry) => {
       // A guide-box drag is a system edit (unlike a camera drag): it ends
       // the drift show like every other undoable edit, through the same
-      // drag chokepoint as the panel sliders.
-      applyDragEdit(() => {
+      // planned input path as the panel sliders.
+      applyTransformInput(index, () => {
         state = updateTransform(state, index, geometry);
       });
       // This path alone re-renders the panel editor so its numbers track
@@ -7567,6 +7728,7 @@ function main(): void {
         state.transforms.length,
       );
     },
+    onTransformCommit: commitTransformEdit,
     fourDView: () => viewIs4D,
     onFourDRotate: ({ xw, yw, zw }) => {
       if (!viewIs4D) return; // belt-and-braces, same as the ui handlers

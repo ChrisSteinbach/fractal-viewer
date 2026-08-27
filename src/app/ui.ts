@@ -323,14 +323,21 @@ export interface UiHandlers {
    * layer's. */
   onImportFile: (file: File) => void;
   onSelect: (index: EditTarget) => void;
-  /** A panel slider edited the selected transform's geometry. */
+  /** A panel control mutated the selected transform's geometry. Range inputs
+   * call this for every live `input`; renderer settlement belongs to
+   * {@link onTransformCommit}, never this mutation callback itself. */
   onTransformGeometry: (index: number, geometry: Geometry) => void;
   /** Set or clear the selected transform's condensation shape. */
   onTransformEmitter: (index: number, kind: BundledEmitterKind | null) => void;
   /** The lens toggle was flipped: enable a default final transform, or clear it. */
   onToggleFinalTransform: (checked: boolean) => void;
-  /** A panel slider edited the final transform's geometry. */
+  /** The mutation-only final-transform counterpart to
+   * {@link onTransformGeometry}. */
   onFinalTransformGeometry: (geometry: FinalGeometry) => void;
+  /** A transform-editor gesture settled. Range inputs commit once through the
+   * editor's delegated bubbling `change` listener; discrete editor actions
+   * emit their one geometry mutation and then call this once directly. */
+  onTransformCommit: (target: number | "final") => void;
   onTogglePanel: () => void;
   onClosePanel: () => void;
   /**
@@ -2852,6 +2859,23 @@ export class Ui {
 
   bind(handlers: UiHandlers): void {
     this.handlers = handlers;
+    // Every editor range is dynamic — variation/fold rows can be rebuilt and
+    // the whole editor changes with the selected target — so one bubbling
+    // listener owns the settlement seam for all current and future families.
+    // `input` listeners remain mutation-only; the native trailing `change`
+    // commits exactly once after the gesture finishes.
+    this.transformEditor.addEventListener("change", (event) => {
+      const input = event.target;
+      if (
+        !(input instanceof HTMLInputElement) ||
+        input.type !== "range" ||
+        !input.isConnected ||
+        !this.transformEditor.contains(input)
+      ) {
+        return;
+      }
+      this.commitGeometry();
+    });
     this.menuToggle.addEventListener("click", () => handlers.onTogglePanel());
     this.backdrop.addEventListener("click", () => handlers.onClosePanel());
     this.addBtn.addEventListener("click", () => handlers.onAdd());
@@ -6325,7 +6349,7 @@ export class Ui {
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
     hint.textContent =
-      "Index sets this map's By Transform hue in Points, Flame, Solid and Surface; it also sets the gradient coordinate for Flame/Solid and IFS Surface Palette. Speed changes only the Flame/Solid gradient walk. Edits are saved now and apply on the next applicable render entry.";
+      "Index sets this map's By Transform hue in Points, Flame, Solid and Surface; it also sets the gradient coordinate for Flame/Solid and IFS Surface Palette. A matching Points source recolors immediately; a consuming Flame/Solid restarts once after the edit settles, and an applicable Surface re-enters. Speed restarts only a Flame/Solid using a gradient palette. Other contexts keep the authored values for their next applicable entry.";
     group.appendChild(hint);
 
     const derivedIndex = derivedColorIndex(target, transformCount);
@@ -6436,15 +6460,15 @@ export class Ui {
     const group = this.createEditorGroup("Finish", openGroup);
 
     // The scope note, in the Color group's hint idiom: every other render
-    // mode ignores a finish, and active-render edits intentionally remain
-    // next-entry document authoring until the renderer-effects wave lands.
+    // mode ignores a finish, while an applicable active Surface re-enters
+    // once at the editor's settlement boundary.
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
     // A metal reads as its environment. Point users at the authorable room
     // input that gives a mirror recognizable structure on the shipped dark
     // backdrop, and state the intentional Metal/Chrome tint distinction.
     hint.textContent =
-      "Surface renders only: how this map's part of the surface catches light. Edits are saved now and apply on the next Surface entry. The Material menu sets a finish and a pattern family together; a bundle sets all six controls; Classic clears them. Metal keeps the transform tint; Chrome stays neutral. A bright backdrop or Floor light makes reflections legible.";
+      "Surface renders only: how this map's part of the surface catches light. Edits are saved everywhere; an applicable active Surface re-enters once after the edit settles, while other contexts use them on the next Surface entry. The Material menu sets a finish and a pattern family together; a bundle sets all six controls; Classic clears them. Metal keeps the transform tint; Chrome stays neutral. A bright backdrop or Floor light makes reflections legible.";
     group.appendChild(hint);
 
     // One stable adjacent applicability disclosure for every refusal class:
@@ -6712,7 +6736,7 @@ export class Ui {
       this.writeFinishField(key, entry.finish[key]);
     }
     this.syncFinishControls();
-    this.emitGeometry();
+    this.emitGeometryAndCommit();
   }
 
   /** A material starting point was picked: set the finish fields and the
@@ -6745,7 +6769,7 @@ export class Ui {
     }
     this.syncFinishControls();
     this.syncPatternControls();
-    this.emitGeometry();
+    this.emitGeometryAndCommit();
   }
 
   /**
@@ -6842,7 +6866,7 @@ export class Ui {
     }
     this.syncPatternControls();
     this.syncMaterialSelect();
-    this.emitGeometry();
+    this.emitGeometryAndCommit();
   }
 
   /** The axis select changed: write exactly the axis, refresh the material
@@ -6853,7 +6877,7 @@ export class Ui {
     if (!SURFACE_PATTERN_AXES.includes(value as SurfacePatternAxis)) return;
     this.writePatternAxis(value as SurfacePatternAxis);
     this.syncMaterialSelect();
-    this.emitGeometry();
+    this.emitGeometryAndCommit();
   }
 
   /** The scale slider moved (already mapped through the grid): write
@@ -6904,12 +6928,12 @@ export class Ui {
 
     // The scope note, in the Finish hint's idiom: every other render mode
     // ignores a pattern, and a control that moves nothing on screen would
-    // otherwise teach that the group is broken. Active-render edits remain
-    // explicit next-entry authoring until renderer effects are added.
+    // otherwise teach that the group is broken. An applicable active Surface
+    // re-enters once at the editor's settlement boundary.
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
     hint.textContent =
-      "Surface renders only: how this map's part of the surface is patterned — its albedo texture, under the lighting. Edits are saved now and apply on the next Surface entry. A family picks the pattern; None clears it. The Finish group's Material menu sets a family and a finish together.";
+      "Surface renders only: how this map's part of the surface is patterned — its albedo texture, under the lighting. Edits are saved everywhere; an applicable active Surface re-enters once after the edit settles, while other contexts use them on the next Surface entry. A family picks the pattern; None clears it. The Finish group's Material menu sets a family and a finish together.";
     group.appendChild(hint);
 
     // Stable adjacent applicability disclosure; see the Finish twin above.
@@ -7246,7 +7270,7 @@ export class Ui {
     editor.variations.push({ type, weight: DEFAULT_VARIATION_WEIGHT });
     this.renderVariationRows();
     this.refreshAddOptions();
-    this.emitGeometry();
+    this.emitGeometryAndCommit();
   }
 
   private removeVariation(index: number): void {
@@ -7255,7 +7279,7 @@ export class Ui {
     editor.variations.splice(index, 1);
     this.renderVariationRows();
     this.refreshAddOptions();
-    this.emitGeometry();
+    this.emitGeometryAndCommit();
   }
 
   /**
@@ -7646,7 +7670,7 @@ export class Ui {
     editor.controls.scale[axis].readout.textContent =
       CHANNELS.scale.format(model);
     editor.mirror[axis].setAttribute("aria-pressed", String(model < 0));
-    this.emitGeometry();
+    this.emitGeometryAndCommit();
   }
 
   /** Flip Scale W's sign — the 4D group's counterpart to
@@ -7667,7 +7691,7 @@ export class Ui {
     editor.fourD.scaleW.slider.value = String(Math.abs(model));
     editor.fourD.scaleW.readout.textContent = model.toFixed(2);
     editor.fourD.mirrorW.setAttribute("aria-pressed", String(model < 0));
-    this.emitGeometry();
+    this.emitGeometryAndCommit();
   }
 
   private onWeightInput(sliderValue: number): void {
@@ -7706,6 +7730,25 @@ export class Ui {
     editor.geometry.colorSpeed = value;
     editor.colorControls.speed.readout.textContent = value.toFixed(2);
     this.emitGeometry();
+  }
+
+  /** Emit one discrete editor mutation and then settle the target that owned
+   * it. Capture before the mutation callback: an application handler may
+   * synchronously refresh or clear the editor after accepting the geometry,
+   * but the commit still belongs to the action that just fired. */
+  private emitGeometryAndCommit(): void {
+    const target = this.editor?.target;
+    if (target === undefined) return;
+    this.emitGeometry();
+    this.handlers?.onTransformCommit(target);
+  }
+
+  /** Commit whichever transform the current editor represents. Used only by
+   * the delegated trailing `change` listener for range controls. */
+  private commitGeometry(): void {
+    const target = this.editor?.target;
+    if (target === undefined) return;
+    this.handlers?.onTransformCommit(target);
   }
 
   /** Push the editor's current geometry back to the matching handler — the final

@@ -44,6 +44,8 @@ export interface InteractionCallbacks {
   selectedTransform: () => number | null;
   /** Called whenever a drag edits the selected transform's geometry. */
   onTransformChange: (index: number, geometry: TransformGeometry) => void;
+  /** Called once after a transform pointer gesture or wheel burst settles. */
+  onTransformCommit: (index: number) => void;
   /**
    * True while a flame render is converging: pointer/wheel input is ignored
    * so the frozen camera (and the transforms it is rendering) can't drift
@@ -79,6 +81,8 @@ const FOUR_D_WHEEL_SPEED = 0.0025;
 /** Per-event clamp on the Shift+scroll ZW turn: a single coarse notch steps
  * ~8.6°, while a trackpad's stream of small deltas stays smooth. */
 const FOUR_D_WHEEL_MAX = 0.15;
+/** Quiet period that groups trackpad/wheel notches into one settled edit. */
+const WHEEL_COMMIT_DELAY_MS = 150;
 
 type OrbitMode = "none" | "rotate" | "pan" | "dolly-pan";
 
@@ -173,6 +177,14 @@ export function attachInteractions(
 
   let orbitMode: OrbitMode = "none";
   let dragging = false;
+  /** Transform gestures own the target captured at pointerdown. The panel
+   * selection may change while a document-level move/up is still arriving. */
+  let dragTransformIndex: number | null = null;
+  let dragTransformDirty = false;
+  /** Wheel edits are independent of pointer gestures. The timeout captures
+   * its target so a later selection change cannot commit the wrong map. */
+  let wheelCommitIndex: number | null = null;
+  let wheelCommitTimer: ReturnType<typeof setTimeout> | null = null;
   /** True while the current orbitMode/dragging latch was begun by a touch —
    * scopes onPointerMove's stale-mouse release to mouse-owned gestures. */
   let latchFromTouch = false;
@@ -212,12 +224,85 @@ export function attachInteractions(
     orbit.panBy(right.x + up.x, right.y + up.y, right.z + up.z);
   }
 
-  function commit(index: number, cube: THREE.Object3D): void {
+  function emitTransformChange(index: number, cube: THREE.Object3D): void {
     callbacks.onTransformChange(index, {
       position: [cube.position.x, cube.position.y, cube.position.z],
       rotation: [cube.rotation.x, cube.rotation.y, cube.rotation.z],
       scale: [cube.scale.x, cube.scale.y, cube.scale.z],
     });
+  }
+
+  function cubeGeometryChanged(
+    cube: THREE.Object3D,
+    before: readonly [
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+    ],
+  ): boolean {
+    return (
+      cube.position.x !== before[0] ||
+      cube.position.y !== before[1] ||
+      cube.position.z !== before[2] ||
+      cube.rotation.x !== before[3] ||
+      cube.rotation.y !== before[4] ||
+      cube.rotation.z !== before[5] ||
+      cube.scale.x !== before[6] ||
+      cube.scale.y !== before[7] ||
+      cube.scale.z !== before[8]
+    );
+  }
+
+  function cubeGeometry(
+    cube: THREE.Object3D,
+  ): readonly [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ] {
+    return [
+      cube.position.x,
+      cube.position.y,
+      cube.position.z,
+      cube.rotation.x,
+      cube.rotation.y,
+      cube.rotation.z,
+      cube.scale.x,
+      cube.scale.y,
+      cube.scale.z,
+    ];
+  }
+
+  function flushWheelCommit(): void {
+    if (wheelCommitTimer !== null) {
+      clearTimeout(wheelCommitTimer);
+      wheelCommitTimer = null;
+    }
+    const index = wheelCommitIndex;
+    wheelCommitIndex = null;
+    if (index !== null) callbacks.onTransformCommit(index);
+  }
+
+  function scheduleWheelCommit(index: number): void {
+    if (wheelCommitIndex !== null && wheelCommitIndex !== index) {
+      flushWheelCommit();
+    } else if (wheelCommitTimer !== null) {
+      clearTimeout(wheelCommitTimer);
+    }
+    wheelCommitIndex = index;
+    wheelCommitTimer = setTimeout(flushWheelCommit, WHEEL_COMMIT_DELAY_MS);
   }
 
   function beginCameraGesture(event: Event): void {
@@ -236,6 +321,7 @@ export function attachInteractions(
 
   function beginTransformGesture(event: Event, index: number): void {
     dragging = true;
+    dragTransformIndex = index;
     const cube = scene.guideCube(index);
     const touch = touchOf(event);
     if (touch && touch.touches.length === 2) {
@@ -256,11 +342,11 @@ export function attachInteractions(
 
   function onPointerDown(event: Event): void {
     if (callbacks.frozen()) return;
+    const touch = touchOf(event);
     const { x, y } = pointerXY(event);
     setNdc(x, y);
     lastX = x;
     lastY = y;
-    latchFromTouch = touchOf(event) !== null;
     // Clicking the canvas must focus it in EVERY mode (click-or-Tab must
     // reach the camera keys): the transform path's preventDefault below
     // would otherwise cancel the browser's focus-on-mousedown, leaving
@@ -270,11 +356,32 @@ export function attachInteractions(
     // default.
     canvas.focus({ preventScroll: true });
 
+    // A second finger produces another touchstart during the same gesture.
+    // It changes the gesture shape (move -> pinch), not its target or dirty
+    // history, so preserve both latches while refreshing pinch baselines.
+    if (touch && latchFromTouch && (dragging || orbitMode !== "none")) {
+      if (dragging && dragTransformIndex !== null) {
+        event.preventDefault();
+        beginTransformGesture(event, dragTransformIndex);
+      } else {
+        beginCameraGesture(event);
+      }
+      return;
+    }
+
+    // Heal an older pointer latch before starting a genuinely new gesture;
+    // this is the press-time twin of the buttonless-move escape below.
+    if (dragging || orbitMode !== "none") onPointerUp();
+    latchFromTouch = touch !== null;
+
     const selected = callbacks.selectedTransform();
     if (selected === null) {
+      dragTransformIndex = null;
+      dragTransformDirty = false;
       beginCameraGesture(event);
       return;
     }
+    dragTransformDirty = false;
     event.preventDefault();
     beginTransformGesture(event, selected);
   }
@@ -321,9 +428,10 @@ export function attachInteractions(
     index: number,
     dx: number,
     dy: number,
-  ): void {
+  ): boolean {
     const cube = scene.guideCube(index);
-    if (!cube) return;
+    if (!cube) return false;
+    const before = cubeGeometry(cube);
     const touch = touchOf(event);
     const mouse = touch ? null : (event as MouseEvent);
 
@@ -342,10 +450,12 @@ export function attachInteractions(
       setNdc(point.x, point.y);
       raycaster.setFromCamera(ndc, camera);
       const hit = new THREE.Vector3();
-      if (!raycaster.ray.intersectPlane(dragPlane, hit)) return;
+      if (!raycaster.ray.intersectPlane(dragPlane, hit)) return false;
       cube.position.copy(hit.add(dragOffset));
     }
-    commit(index, cube);
+    if (!cubeGeometryChanged(cube, before)) return false;
+    emitTransformChange(index, cube);
+    return true;
   }
 
   function onPointerMove(event: Event): void {
@@ -369,27 +479,35 @@ export function attachInteractions(
     const { x, y } = pointerXY(event);
     const dx = x - lastX;
     const dy = y - lastY;
-    const selected = callbacks.selectedTransform();
-
-    if (selected === null) {
+    if (orbitMode !== "none") {
       moveCamera(event, dx, dy);
-    } else if (dragging) {
+    } else if (dragging && dragTransformIndex !== null) {
       event.preventDefault();
-      moveTransform(event, selected, dx, dy);
+      if (moveTransform(event, dragTransformIndex, dx, dy)) {
+        dragTransformDirty = true;
+      }
     }
     lastX = x;
     lastY = y;
   }
 
   function onPointerUp(): void {
+    const commitIndex = dragTransformDirty ? dragTransformIndex : null;
     dragging = false;
     orbitMode = "none";
+    dragTransformIndex = null;
+    dragTransformDirty = false;
+    latchFromTouch = false;
+    if (commitIndex !== null) callbacks.onTransformCommit(commitIndex);
   }
 
   function onWheel(event: WheelEvent): void {
     event.preventDefault();
     if (callbacks.frozen()) return;
     const selected = callbacks.selectedTransform();
+    if (wheelCommitIndex !== null && wheelCommitIndex !== selected) {
+      flushWheelCommit();
+    }
     if (selected === null) {
       if (callbacks.fourDView() && event.shiftKey) {
         // Chrome (Win/Linux) remaps Shift+vertical-wheel to deltaX — read
@@ -421,9 +539,12 @@ export function attachInteractions(
     }
     const cube = scene.guideCube(selected);
     if (!cube) return;
+    const before = cubeGeometry(cube);
     const factor = event.deltaY > 0 ? 0.95 : 1.05;
     resizeGuideBox(cube, factor);
-    commit(selected, cube);
+    if (!cubeGeometryChanged(cube, before)) return;
+    emitTransformChange(selected, cube);
+    scheduleWheelCommit(selected);
   }
 
   function onContextMenu(event: Event): void {
