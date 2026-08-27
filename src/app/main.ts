@@ -9,7 +9,6 @@ import type { FourDPose } from "./four-d-view";
 import {
   buildColors,
   buildColors4,
-  colorModeUsesRampPalette,
   dimColorsExcept,
   fourDColorNeedsAttribute,
   transformColors,
@@ -202,9 +201,10 @@ import {
 } from "./state";
 import type { AppState, RenderMode } from "./state";
 import {
+  applyPrimaryCustomPaletteEffects,
+  applyRenderColorInputEffects,
   applyScalarControl,
   surfaceColorLUT,
-  surfaceColorSourceUsesOwnPalette,
 } from "./control-spec";
 import type { ControlEffects } from "./control-spec";
 import {
@@ -2918,7 +2918,8 @@ function main(): void {
       radiusMax,
       // The radius mode's ramp palette, resolved exactly like the
       // explorer's own bake (applyFourDColor) so the render's ramp matches
-      // the explorer's colors — snapshotted here like colorMode itself.
+      // the explorer's colors — snapshotted here like colorMode itself, then
+      // kept current by the shared Color editor's atomic worker command.
       rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
     };
   }
@@ -3334,19 +3335,18 @@ function main(): void {
         finalTransform: state.finalTransform ?? null,
         resolution: state.solid.resolution,
         // The explorer's Color Mode carries into the voxel colors;
-        // entering the mode snapshots it, exactly like the transform set.
+        // entering the mode seeds it; atomic Color commands keep it live.
         colorMode: state.colorMode,
-        // Snapshotted alongside colorMode so the solid render's
-        // baked-in LUT/position coloring matches the explorer's contrast.
+        // Seeded alongside colorMode so the solid render's baked-in
+        // LUT/position coloring matches the explorer's contrast.
         colorGamma: state.colorGamma,
         palette: resolvePalette(state.solid.paletteId, state.customPalette),
         // The height/radius ramps' gradient palette, snapshotted at
         // entry exactly like colorMode/colorGamma above — it only matters
         // while `palette` is "legacy" (the colorMode-driven path), and the
-        // ramp select is unreachable while this render is active, so there
-        // is no live command for it.
+        // shared Color editor's atomic command keeps it current in-session.
         rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
-        // Snapshotted at entry like colorMode/rampPalette above.
+        // Seeded at entry, then kept live by the atomic Color command.
         positionAxisColors: state.positionAxisColors,
         iterationsBudget: state.solid.iterations,
         // Rolled through the shared helper so a timeline render keyframe
@@ -6862,41 +6862,7 @@ function main(): void {
       editSession.beginEdit();
       state = setCustomPaletteStops(state, stops);
       ui.updateLabels(state);
-      const palette = resolvePalette(CUSTOM_PALETTE_ID, state.customPalette);
-      if (state.flame.paletteId === CUSTOM_PALETTE_ID)
-        flameSession.post({ type: "setPalette", palette });
-      if (state.solid.paletteId === CUSTOM_PALETTE_ID)
-        solidSession.post({ type: "setPalette", palette });
-      // The surface tracer's LUT bakes whichever palette its colorSource
-      // samples — the Surface palette (orbit trap, rings, sheets, or shape
-      // trap) or the explorer ramp (height/radius) — so re-upload it whenever
-      // the edited gradient is the one it currently samples. Pure uniforms:
-      // the change lands next frame, mid-render, with nothing to restart.
-      const surfaceSource = state.surface.colorSource;
-      if (
-        (surfaceColorSourceUsesOwnPalette(surfaceSource) &&
-          state.surface.paletteId === CUSTOM_PALETTE_ID) ||
-        ((surfaceSource === "height" || surfaceSource === "radius") &&
-          state.rampPaletteId === CUSTOM_PALETTE_ID)
-      ) {
-        const lut = surfaceColorLUT(state);
-        if (lut) scene.setSurfaceColorLUT(lut);
-      }
-      // The edited gradient is baked into the live cloud's color buffer
-      // whenever the ramp palette selects it and the active view's ramp mode
-      // shows it — the 3D height/radius modes (colorModeUsesRampPalette) or
-      // the 4D radius mode — even while a flame/solid render is
-      // showing, so the explorer never returns stale-colored. recolor and
-      // applyFourDColor each no-op in the other view, so both bakes can be
-      // requested and exactly the displayed cloud's one runs.
-      if (state.rampPaletteId === CUSTOM_PALETTE_ID) {
-        if (colorModeUsesRampPalette(state.colorMode)) recolor();
-        if (state.fourDColor === "radius") applyFourDColor();
-      }
-      // The `"auto"` backdrop tracks a custom-gradient drag live
-      // whenever the active render's palette selects the edited gradient —
-      // trackAutoBackground's own guards make this free otherwise.
-      trackAutoBackground();
+      applyPrimaryCustomPaletteEffects(state, controlEffects);
     },
     // Balloon Custom is an entirely separate authored slot. Its rendering
     // effects mirror the shared selection: Points/Solid/Surface receive the
@@ -6924,9 +6890,10 @@ function main(): void {
     },
     // The axis-color pickers are a bespoke widget like the gradient
     // editor: undo checkpoint + debounced save, reducer, label sync, then a
-    // recolor over the cached run — never a regenerate. No worker forward:
-    // the flame/solid renders snapshot the colors at entry, and the pickers
-    // are unreachable while a render is active (the explorer block hides).
+    // recolor over the cached run — never a regenerate — plus the same atomic
+    // worker staging as every scalar Color control. Solid legacy coloring
+    // re-accumulates in place; Flame/4D and nonlegacy primary palettes retain
+    // the value dormantly without discarding work.
     onPositionAxisColors: (colors) => {
       // Notify: an axis-color-picker edit, same bucket as any other document
       // edit.
@@ -6934,7 +6901,9 @@ function main(): void {
       editSession.beginEdit();
       state = setPositionAxisColors(state, colors);
       ui.updateLabels(state);
-      if (state.colorMode === "position") recolor();
+      applyRenderColorInputEffects(state, controlEffects, {
+        points: state.colorMode === "position" ? "flat" : "none",
+      });
     },
     // Custom backdrop pickers: the same shape as the axis colors above — one
     // undo checkpoint per drag burst (beginEdit coalesces), then an instant

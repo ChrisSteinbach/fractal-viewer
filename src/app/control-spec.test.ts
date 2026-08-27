@@ -1,4 +1,6 @@
 import {
+  applyPrimaryCustomPaletteEffects,
+  applyRenderColorInputEffects,
   applyScalarControl,
   condensationBandMode,
   SCALAR_CONTROLS,
@@ -844,6 +846,67 @@ describe("effects", () => {
       expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
     });
 
+    it.each(["height", "radius"] as const)(
+      "shared gamma refreshes Surface %s LUT without a view guard",
+      (colorSource) => {
+        const spec = specById("colorGammaSlider");
+        const previous = {
+          ...initialState(true),
+          surface: { ...initialState(true).surface, colorSource },
+        };
+        const state = applyScalarControl(previous, spec, "0.75");
+        const fx = mockEffects();
+
+        expect(spec.view).toBeUndefined();
+        spec.effect?.(state, fx, previous);
+
+        expect(fx.scene.setSurfaceColorLUT).toHaveBeenCalledWith(
+          surfaceColorLUT(state),
+        );
+        expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
+      },
+    );
+
+    it("posts one identical atomic color snapshot to both workers", () => {
+      const state = {
+        ...initialState(true),
+        colorMode: "position" as const,
+      };
+      const fx = mockEffects();
+
+      applyRenderColorInputEffects(state, fx, { points: "flat" });
+
+      const flame = vi.mocked(fx.postFlame).mock.calls[0][0];
+      const voxel = vi.mocked(fx.postVoxel).mock.calls[0][0];
+      expect(flame).toEqual(voxel);
+      expect(flame.type).toBe("setColorInputs");
+      expect(fx.recolor).toHaveBeenCalledTimes(1);
+    });
+
+    it("orders primary Custom before its ramp snapshot and never duplicates backdrop work", () => {
+      const state = {
+        ...initialState(true),
+        colorMode: "height" as const,
+        fourDColor: "radius" as const,
+        rampPaletteId: "custom" as const,
+        flame: { ...initialState(true).flame, paletteId: "custom" as const },
+        solid: { ...initialState(true).solid, paletteId: "custom" as const },
+      };
+      const fx = mockEffects();
+
+      applyPrimaryCustomPaletteEffects(state, fx);
+
+      expect(
+        vi.mocked(fx.postFlame).mock.calls.map(([command]) => command.type),
+      ).toEqual(["setPalette", "setColorInputs"]);
+      expect(
+        vi.mocked(fx.postVoxel).mock.calls.map(([command]) => command.type),
+      ).toEqual(["setPalette", "setColorInputs"]);
+      expect(fx.recolor).toHaveBeenCalledTimes(1);
+      expect(fx.applyFourDColor).toHaveBeenCalledTimes(1);
+      expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
+    });
+
     it("background effect invokes applyBackground exactly once and touches no scene method", () => {
       const spec = specById("background");
       const previous = initialState(true);
@@ -1652,9 +1715,7 @@ describe("table policy", () => {
     // The symmetry entries left the flat set when the 4D chaos game got a
     // kaleidoscope of its own: it is live in both views now (a w-plane or
     // twist even makes the system 4D), so its controls carry no view guard.
-    expect(flatIds).toEqual(
-      ["colorGammaSlider", "colorMode", "renderStyle"].sort(),
-    );
+    expect(flatIds).toEqual(["colorMode", "renderStyle"].sort());
     expect(nonFlatIds).toEqual(["fourDColor", "fourDDepthFadeToggle"].sort());
     // Every entry lands in exactly one of the three groups — catches a spec
     // that declared some other, unexpected `view` value and so fell out of

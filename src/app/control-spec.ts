@@ -6,8 +6,13 @@ import type {
   SymmetryPlane,
 } from "../fractal/types";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "../fractal/shape-trap";
-import { buildColorModeLUT } from "../fractal/color";
-import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
+import { buildColorModeLUT, colorModeUsesRampPalette } from "../fractal/color";
+import type { RenderColorInputs } from "../fractal/color";
+import {
+  buildPaletteLUT,
+  CUSTOM_PALETTE_ID,
+  resolvePalette,
+} from "../fractal/palette";
 import type { PaletteSelection } from "../fractal/palette";
 import type { FlameWorkerCommand } from "./flame-worker-core";
 import type { VoxelWorkerCommand } from "./voxel-worker-core";
@@ -560,6 +565,98 @@ export function surfaceColorLUT(state: AppState): Float32Array | null {
   return new Float32Array(256 * 3).fill(1);
 }
 
+/** Resolve the one document-level color-input object sent atomically to both
+ * accumulation workers. Palette ids never cross the protocol: Custom carries
+ * its stops, matching the start-command contract. */
+export function renderColorInputs(state: AppState): RenderColorInputs {
+  const rampPalette = resolvePalette(state.rampPaletteId, state.customPalette);
+  return {
+    flat: {
+      colorMode: state.colorMode,
+      colorGamma: state.colorGamma,
+      rampPalette,
+      positionAxisColors: state.positionAxisColors,
+    },
+    fourD: {
+      colorMode: state.fourDColor,
+      rampPalette,
+    },
+  };
+}
+
+/** Which cached Points color path an authored edit changes. Each method is a
+ * cheap no-op outside its own dimension, so `"both"` safely handles the one
+ * shared ramp selection. */
+type PointsColorEffect = "flat" | "fourD" | "both" | "none";
+
+/**
+ * One coordinator for the shared Scene / Look color inputs. It keeps the
+ * cached Points color buffers current, atomically stages both workers (their
+ * handlers own effective-legacy restart decisions), optionally refreshes the
+ * Surface height/radius LUT, and preserves the ramp palette's backdrop link.
+ * Bespoke axis/custom editors call this same function from main.ts so they
+ * cannot drift from the table-driven scalar controls.
+ */
+export function applyRenderColorInputEffects(
+  state: AppState,
+  fx: ControlEffects,
+  options: {
+    readonly points?: PointsColorEffect;
+    readonly surfaceRamp?: boolean;
+    readonly trackAutoBackground?: boolean;
+  } = {},
+): void {
+  const points = options.points ?? "none";
+  if (points === "flat" || points === "both") fx.recolor();
+  if (points === "fourD" || points === "both") fx.applyFourDColor();
+
+  const inputs = renderColorInputs(state);
+  fx.postFlame({ type: "setColorInputs", inputs });
+  fx.postVoxel({ type: "setColorInputs", inputs });
+
+  if (
+    options.surfaceRamp === true &&
+    (state.surface.colorSource === "height" ||
+      state.surface.colorSource === "radius")
+  ) {
+    const lut = surfaceColorLUT(state);
+    if (lut) fx.scene.setSurfaceColorLUT(lut);
+  }
+  if (options.trackAutoBackground === true) fx.trackAutoBackground();
+}
+
+/** Apply one edit to the shared Custom slot in command order. Structural
+ * palette consumers restart first; the atomic ramp command then stages under
+ * that override instead of causing a duplicate accumulation restart. */
+export function applyPrimaryCustomPaletteEffects(
+  state: AppState,
+  fx: ControlEffects,
+): void {
+  const palette = resolvePalette(CUSTOM_PALETTE_ID, state.customPalette);
+  if (state.flame.paletteId === CUSTOM_PALETTE_ID)
+    fx.postFlame({ type: "setPalette", palette });
+  if (state.solid.paletteId === CUSTOM_PALETTE_ID)
+    fx.postVoxel({ type: "setPalette", palette });
+
+  if (
+    surfaceColorSourceUsesOwnPalette(state.surface.colorSource) &&
+    state.surface.paletteId === CUSTOM_PALETTE_ID
+  ) {
+    const lut = surfaceColorLUT(state);
+    if (lut) fx.scene.setSurfaceColorLUT(lut);
+  }
+
+  if (state.rampPaletteId === CUSTOM_PALETTE_ID) {
+    const flat = colorModeUsesRampPalette(state.colorMode);
+    const fourD = state.fourDColor === "radius";
+    applyRenderColorInputEffects(state, fx, {
+      points: flat && fourD ? "both" : flat ? "flat" : fourD ? "fourD" : "none",
+      surfaceRamp: true,
+    });
+  }
+  fx.trackAutoBackground();
+}
+
 /**
  * Push the settled balloon palette to the active renderer that consumes it.
  * The document remains editable while the balloon is off, but that state is
@@ -662,7 +759,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     view: "flat",
     read: (s) => s.colorMode,
     apply: (s, raw) => setColorMode(s, raw as ColorMode),
-    effect: (s, fx) => fx.recolor(),
+    effect: (s, fx) => applyRenderColorInputEffects(s, fx, { points: "flat" }),
   },
   {
     // The ramp-palette select: swaps the height/radius color-mode ramps'
@@ -673,19 +770,19 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     // Color section (see ui.ts's rampPaletteRow gating). Recolors the
     // live cloud over the cached run — like colorMode/colorGamma, never a
     // regenerate; recolor/applyFourDColor each no-op in the other view, so
-    // exactly the displayed cloud re-bakes. No worker forward: the
-    // flame/solid renders snapshot it at entry (main.ts's
-    // fourDRenderSnapshot / the voxel start's rampPalette) and this row is
-    // unreachable while a render is active.
+    // exactly the displayed cloud re-bakes. The atomic worker forward below
+    // also re-accumulates an effective legacy Flame/Solid render without
+    // rebuilding its geometry, while staging under a structural palette.
     kind: "select",
     id: "rampPalette",
     read: (s) => s.rampPaletteId,
     apply: (s, raw) => setRampPaletteId(s, raw as PaletteSelection),
-    effect: (s, fx) => {
-      fx.recolor();
-      fx.applyFourDColor();
-      fx.trackAutoBackground();
-    },
+    effect: (s, fx) =>
+      applyRenderColorInputEffects(s, fx, {
+        points: "both",
+        surfaceRamp: true,
+        trackAutoBackground: true,
+      }),
   },
   {
     // The color-contrast slider — `apply` converts the slider's log-scale
@@ -693,11 +790,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     // mode is height/radius/position (see ui.ts's colorGammaRow).
     kind: "range",
     id: "colorGammaSlider",
-    view: "flat",
     label: { id: "colorGammaLabel", text: (s) => s.colorGamma.toFixed(2) },
     read: (s) => String(colorGammaToSlider(s.colorGamma)),
     apply: (s, raw) => setColorGamma(s, sliderToColorGamma(Number(raw))),
-    effect: (s, fx) => fx.recolor(),
+    effect: (s, fx) =>
+      applyRenderColorInputEffects(s, fx, {
+        points: "flat",
+        surfaceRamp: true,
+      }),
   },
   {
     kind: "select",
@@ -973,7 +1073,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     view: "nonFlat",
     read: (s) => s.fourDColor,
     apply: (s, raw) => setFourDColor(s, raw as FourDColorMode),
-    effect: (s, fx) => fx.applyFourDColor(),
+    effect: (s, fx) => applyRenderColorInputEffects(s, fx, { points: "fourD" }),
   },
   {
     // The 4D camera-depth fade. Unlike the session-only slice/tumble

@@ -2972,6 +2972,94 @@ describe("FlameWorkerSession 4D flame render", () => {
     expect(backendEvents(events).length).toBeGreaterThan(backendsBefore);
   });
 
+  it("stages atomic color inputs under nonlegacy and activates them on return to legacy", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        palette: "spectrum",
+        iterationsBudget: 20,
+      }),
+    );
+    scheduler.drain();
+    const before = restartedEvents(events).length;
+    const inputs = {
+      flat: {
+        colorMode: "height" as const,
+        colorGamma: 2,
+        rampPalette: "ember" as const,
+      },
+      fourD: { colorMode: "radius" as const, rampPalette: "ember" as const },
+    };
+
+    session.handle({ type: "setColorInputs", inputs });
+    expect(restartedEvents(events)).toHaveLength(before);
+    session.handle({ type: "setPalette", palette: "legacy" });
+    expect(restartedEvents(events)).toHaveLength(before + 1);
+    session.handle({ type: "setColorInputs", inputs });
+    expect(restartedEvents(events)).toHaveLength(before + 1);
+  });
+
+  it("treats cloned Custom ramps structurally and combines primary/ramp edits into one restart", () => {
+    const customA = {
+      stops: [[0.1, 0.2, 0.3] as const, [0.8, 0.7, 0.6] as const],
+    };
+    const customB = {
+      stops: [[0.2, 0.3, 0.4] as const, [0.9, 0.8, 0.7] as const],
+    };
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        fourD: { ...defaultFourD(), colorMode: "radius", rampPalette: customA },
+        palette: customA,
+        iterationsBudget: 20,
+      }),
+    );
+    scheduler.drain();
+    const before = restartedEvents(events).length;
+
+    session.handle({
+      type: "setColorInputs",
+      inputs: {
+        flat: { colorMode: "transform", colorGamma: 1, rampPalette: customA },
+        fourD: {
+          colorMode: "radius",
+          rampPalette: {
+            stops: customA.stops.map(
+              (stop) => [...stop] as [number, number, number],
+            ),
+          },
+        },
+      },
+    });
+    expect(restartedEvents(events)).toHaveLength(before);
+
+    session.handle({ type: "setPalette", palette: customB });
+    session.handle({
+      type: "setColorInputs",
+      inputs: {
+        flat: { colorMode: "transform", colorGamma: 1, rampPalette: customB },
+        fourD: { colorMode: "radius", rampPalette: customB },
+      },
+    });
+    expect(restartedEvents(events)).toHaveLength(before + 1);
+  });
+
+  it("stages flat inputs without restarting a flat Flame session", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ palette: "legacy", iterationsBudget: 20 }));
+    scheduler.drain();
+    const before = restartedEvents(events).length;
+    session.handle({
+      type: "setColorInputs",
+      inputs: {
+        flat: { colorMode: "radius", colorGamma: 2, rampPalette: "ember" },
+        fourD: { colorMode: "radius", rampPalette: "ember" },
+      },
+    });
+    expect(restartedEvents(events)).toHaveLength(before);
+  });
+
   it("a 3D start (no fourD) is unaffected: behaves exactly as every other test in this file", () => {
     const { session, events, scheduler } = harness();
     session.handle(startCommand({ iterationsBudget: 500 }));

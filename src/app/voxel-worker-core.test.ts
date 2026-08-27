@@ -1,6 +1,6 @@
 import { sierpinskiTetrahedron } from "../fractal/presets";
 import { CHAOS_SUB_ORBIT_POINTS } from "../fractal/chaos-game";
-import { clampVoxelResolution } from "../fractal/voxel";
+import { clampVoxelResolution, createVoxelGrid } from "../fractal/voxel";
 import type { Transform4 } from "../fractal/types";
 import {
   voxelAccumBudgetVoxels,
@@ -394,6 +394,123 @@ describe("VoxelWorkerSession setPalette", () => {
       session.handle({ type: "setPalette", palette: "spectrum" }),
     ).not.toThrow();
     expect(events).toHaveLength(0);
+  });
+});
+
+describe("VoxelWorkerSession setColorInputs", () => {
+  const customA = {
+    stops: [[0.1, 0.2, 0.3] as const, [0.8, 0.7, 0.6] as const],
+  };
+  const customAClone = {
+    stops: [[0.1, 0.2, 0.3] as const, [0.8, 0.7, 0.6] as const],
+  };
+  const customB = {
+    stops: [[0.2, 0.3, 0.4] as const, [0.9, 0.8, 0.7] as const],
+  };
+
+  function inputs(
+    flat: Partial<
+      Extract<VoxelWorkerCommand, { type: "setColorInputs" }>["inputs"]["flat"]
+    > = {},
+    fourD: Partial<
+      Extract<VoxelWorkerCommand, { type: "setColorInputs" }>["inputs"]["fourD"]
+    > = {},
+  ): Extract<VoxelWorkerCommand, { type: "setColorInputs" }>["inputs"] {
+    return {
+      flat: {
+        colorMode: "height",
+        colorGamma: 1,
+        rampPalette: "legacy",
+        ...flat,
+      },
+      fourD: { colorMode: "wBlueOrange", rampPalette: "legacy", ...fourD },
+    };
+  }
+
+  it("semantically equal cloned Custom inputs are a no-op", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ colorMode: "height", rampPalette: customA }));
+    scheduler.drain();
+    const before = restartedEvents(events).length;
+
+    session.handle({
+      type: "setColorInputs",
+      inputs: inputs({ rampPalette: customAClone }),
+    });
+
+    expect(restartedEvents(events)).toHaveLength(before);
+  });
+
+  it("treats an absent axis palette as the explicit classic XYZ palette", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ colorMode: "position" }));
+    scheduler.drain();
+    const before = restartedEvents(events).length;
+
+    session.handle({
+      type: "setColorInputs",
+      inputs: inputs({
+        colorMode: "position",
+        positionAxisColors: {
+          x: [1, 0, 0],
+          y: [0, 1, 0],
+          z: [0, 0, 1],
+        },
+      }),
+    });
+
+    expect(restartedEvents(events)).toHaveLength(before);
+  });
+
+  it("stages dormant nonlegacy inputs and picks them up on return to legacy", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({ palette: "spectrum", colorMode: "transform" }),
+    );
+    scheduler.drain();
+    const before = restartedEvents(events).length;
+
+    const staged = inputs({
+      colorMode: "radius",
+      colorGamma: 2,
+      rampPalette: "ember",
+    });
+    session.handle({ type: "setColorInputs", inputs: staged });
+    expect(restartedEvents(events)).toHaveLength(before);
+
+    session.handle({ type: "setPalette", palette: "legacy" });
+    expect(restartedEvents(events)).toHaveLength(before + 1);
+    session.handle({ type: "setColorInputs", inputs: staged });
+    expect(restartedEvents(events)).toHaveLength(before + 1);
+  });
+
+  it("restarts without recomputing bounds and avoids a duplicate Custom restart", () => {
+    const seenBounds: unknown[] = [];
+    const { session, events, scheduler } = harness({
+      createGrid: (size, bounds) => {
+        seenBounds.push(bounds);
+        return createVoxelGrid(size, bounds);
+      },
+    });
+    session.handle(
+      startCommand({
+        palette: customA,
+        colorMode: "height",
+        rampPalette: customA,
+      }),
+    );
+    scheduler.drain();
+    const before = restartedEvents(events).length;
+    const originalBounds = seenBounds[0];
+
+    session.handle({ type: "setPalette", palette: customB });
+    session.handle({
+      type: "setColorInputs",
+      inputs: inputs({ rampPalette: customB }),
+    });
+
+    expect(restartedEvents(events)).toHaveLength(before + 1);
+    expect(seenBounds.at(-1)).toBe(originalBounds);
   });
 });
 

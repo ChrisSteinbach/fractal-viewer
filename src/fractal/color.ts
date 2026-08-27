@@ -184,6 +184,99 @@ export interface PositionAxisColors {
 }
 
 /**
+ * The complete resolved Scene / Look color payload shared by the Points
+ * explorer and the two accumulation workers. Both dimensional branches ride
+ * one atomic command so changing any visible color control can never restart
+ * a worker with stale sibling inputs. `rampPalette` is already resolved: a
+ * Custom selection carries its stop payload rather than the UI-only
+ * `"custom"` sentinel.
+ *
+ * Workers retain both branches even while their primary structural palette
+ * overrides this legacy-color path. That dormant staging matters when a
+ * later primary-palette edit returns to legacy coloring within the same
+ * render session.
+ */
+export interface RenderColorInputs {
+  readonly flat: {
+    readonly colorMode: ColorMode;
+    readonly colorGamma: number;
+    readonly rampPalette: PaletteSpec;
+    readonly positionAxisColors?: PositionAxisColors;
+  };
+  readonly fourD: {
+    readonly colorMode: FourDColorMode;
+    readonly rampPalette: PaletteSpec;
+  };
+}
+
+/** Structural equality for a resolved palette payload. Worker messages clone
+ * Custom objects, so reference equality would turn an unrelated color edit
+ * into a false ramp change and an unnecessary accumulation restart. */
+function samePaletteSpec(a: PaletteSpec, b: PaletteSpec): boolean {
+  if (typeof a === "string" || typeof b === "string") return a === b;
+  if (a.stops.length !== b.stops.length) return false;
+  return a.stops.every(
+    (stop, i) =>
+      stop[0] === b.stops[i][0] &&
+      stop[1] === b.stops[i][1] &&
+      stop[2] === b.stops[i][2],
+  );
+}
+
+function samePositionAxisColors(
+  a: PositionAxisColors | undefined,
+  b: PositionAxisColors | undefined,
+): boolean {
+  const left = a ?? LEGACY_POSITION_AXIS_COLORS;
+  const right = b ?? LEGACY_POSITION_AXIS_COLORS;
+  const sameStop = (left: RgbStop, right: RgbStop) =>
+    left[0] === right[0] && left[1] === right[1] && left[2] === right[2];
+  return (
+    sameStop(left.x, right.x) &&
+    sameStop(left.y, right.y) &&
+    sameStop(left.z, right.z)
+  );
+}
+
+/** Whether two atomic payloads produce the same flat legacy-color output.
+ * Dormant sibling values deliberately do not count: changing a ramp while
+ * By Transform is active must stage it without discarding accumulation. */
+export function sameFlatRenderColorInputs(
+  a: RenderColorInputs["flat"],
+  b: RenderColorInputs["flat"],
+): boolean {
+  if (a.colorMode !== b.colorMode) return false;
+  switch (b.colorMode) {
+    case "height":
+    case "radius":
+      return (
+        a.colorGamma === b.colorGamma &&
+        samePaletteSpec(a.rampPalette, b.rampPalette)
+      );
+    case "position":
+      return (
+        a.colorGamma === b.colorGamma &&
+        samePositionAxisColors(a.positionAxisColors, b.positionAxisColors)
+      );
+    case "transform":
+    case "uniform":
+      return true;
+  }
+}
+
+/** 4D counterpart of {@link sameFlatRenderColorInputs}: only Radius reads
+ * the shared ramp; w-depth and By Transform ignore it. */
+export function sameFourDRenderColorInputs(
+  a: RenderColorInputs["fourD"],
+  b: RenderColorInputs["fourD"],
+): boolean {
+  if (a.colorMode !== b.colorMode) return false;
+  return (
+    b.colorMode !== "radius" || samePaletteSpec(a.rampPalette, b.rampPalette)
+  );
+}
+
+/**
  * The axis colors that reproduce the legacy XYZ→RGB position mapping (each
  * axis feeds exactly its own channel): {@link writePositionColor} over these
  * is numerically identical to the hardcoded legacy loop. The UI's axis
