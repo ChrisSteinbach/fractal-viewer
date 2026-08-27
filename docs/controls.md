@@ -99,10 +99,10 @@ Transform** sliders that appear in the panel while a transform is selected.
 
 ## Panel controls
 
-The panel's active editing categories — including **Transforms**, **Presets**,
-**Cloud**, **Color**, **Balloon**, **Atmosphere**, **Symmetry**, and the
+The panel's active editing categories — including **Transforms**, **Xaos**,
+**Hybrid schedule**, **Cloud**, **Color**, **Balloon**, **Atmosphere**, **Symmetry**, and the
 contextual renderer inspector — come before **3D View**/**4D View**, then the always-available
-workflow sections **Collection**, **Timeline**, **Capture**, and **Share**.
+workflow sections **Presets**, **Collection**, **Timeline**, **Capture**, and **Share**.
 These are collapsible sections, and opening one closes the previous. The collapsed ones
 pack into rows of chips rather than stacking, because nine stacked
 headers cost 473px of a 727px phone screen before any control was visible.
@@ -116,8 +116,9 @@ Surface itself (see **✺ Flame**, **◆ Solid** and **◈ Surface** below) — 
 pinned above the sections (a progress readout for Flame/Solid, an instant
 hint for Surface), and the panel remembers which contextual section was open
 in each mode, so switching Points ↔ Flame ↔ Solid ↔ Surface restores where you
-were. **Transforms** is shared rather than contextual: its top-level and nested
-open state, selected map, and authored values survive every renderer switch.
+were. **Transforms**, **Xaos**, and **Hybrid schedule** are shared rather than
+contextual: their top-level and nested open state, selected map, and authored
+values survive every renderer switch.
 Scroll swipes that happen to land on a slider scroll the panel without
 editing its value; horizontal drags still adjust it as usual. A tap alone
 sets nothing — tap-to-set is deliberately absent on touch, since
@@ -166,6 +167,13 @@ morphs into place instead of snapping (see **Presets** below).
   chain determines which predecessor maps or emitter shapes may occur next.
   Xaos magnitudes above zero change density but not Surface geometry, while an
   all-zero effective row uses the same global fallback as the point engine.
+  The editor remains available while any renderer is showing. A cell commits
+  as one edit; a leak dial updates its document value and Points cache while
+  dragging, then settles once on release. Flat, Balloon-off Flame and Solid
+  restart with the active seed at settlement. A 4D or Balloon accumulation
+  stages the change for its next entry because its bounds come from Points.
+  Surface re-enters in place with the inspection camera preserved, or exits to
+  Points with the analyzer's refusal rather than tracing a graph-blind object.
 - **✺ Flame** — the classic fractal-flame exposure: millions of chaos-game
   samples accumulated into a histogram, then tone-mapped into a soft, glowing
   image. The camera _freezes_ on entry — the render converges through the view
@@ -855,9 +863,13 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
 - **Presets** — a dropdown that replaces the whole system with a named fractal,
   from the Sierpinski tetrahedron and Menger sponge to the 12-map icosahedron
   and 20-map dodecahedron flakes, plus dedicated **Flame** and **4D** groups.
-  Loading one — like Surprise Me and a gallery load — morphs the attractor
-  smoothly from the current shape into the new one instead of snapping; the
-  OS's reduced-motion preference opts out to the instant snap.
+  This Workflow section stays reachable from every renderer. Loading one —
+  like Surprise Me or choosing a mutation — first returns to Points and morphs
+  the attractor smoothly from the current shape into the new one instead of
+  snapping; the OS's reduced-motion preference opts out to the instant snap.
+  A renderer-authored preset enters Flame, Solid, or Surface only after that
+  new cloud lands, so even two consecutive Surface presets rebuild the second
+  session from its own document rather than leaving the old trace on screen.
 - **Surprise Me** — rolls a whole new random system rather than a named one:
   two to four maps, a kaleidoscope about 30% of the time, a final-transform
   lens about 25% of the time, and about 25% of rolls 4D (which
@@ -876,18 +888,20 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   time so the modal opens instantly. Clicking one morphs into it as a normal
   undoable load and re-seeds the grid around your pick, so you can keep walking
   outward a step at a time; **↻ Mutate again** rolls eight fresh variations of
-  where you are now. Nothing touches the scene until you pick.
+  where you are now. Nothing touches the scene until you pick; the chosen cell
+  then returns through Points like every other replacement load.
 - **▶ Drift** — next to **Surprise Me**: an ambient, ever-evolving
   show for leaving the explorer running (a TV via the PWA, a second screen).
   While drifting, the explorer dwells on the current attractor for about five
   seconds, then glides over about five more into a fresh quality-gated
   Surprise-Me roll, dwells on that, and repeats; the panel closes when the
-  show starts so the stage is clear. Every landing is a normal, undoable
+  show starts so the stage is clear. Starting it from another renderer first
+  returns to Points, and every landing is a normal, undoable
   replace-load — the same "replace" checkpoint and camera auto-fit as
   pressing Surprise Me, so undo walks back through the show. It STOPS (never
   pauses) the moment you reach in: any edit to the system or its settings,
   undo/redo, a manual preset / Surprise Me / gallery load, switching to a
-  Flame/Solid render, or starting **▶ Watch it build** — while camera drags
+  Flame/Solid/Surface render, or starting **▶ Watch it build** — while camera drags
   and the auto-orbit / auto-tumble / W-slice view controls leave it running
   (the camera stays independent, as ever). Session-only like auto-orbit and
   auto-tumble — never persisted or shared — and unavailable while the OS
@@ -1400,6 +1414,14 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   B map. An inverse-analysis refusal is terminal for a scheduled Surface
   document: it never falls through to an A-only escape renderer and silently
   drops the composition.
+
+  The one editor stays available in every renderer. Source/snapshot choices
+  settle as one edit; Depth updates the document and Points cache while it is
+  dragged, then settles once on release. Flat, Balloon-off Flame and Solid
+  restart with their active seed. A 4D or Balloon accumulation stages the
+  schedule for next entry because its bounds come from Points. Surface
+  re-enters with the inspection camera preserved, or exits to Points with the
+  analyzer's refusal.
 
   **Sponge of Ferns** is the shipped showcase: A is Barnsley's fern and B is
   a spread Menger sponge at depth 2. Barnsley's canonical stem has exactly

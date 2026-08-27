@@ -113,13 +113,10 @@ const LENS_PRESETS = ["juliaSnowflake", "juliaPinwheel"];
  * Whether the live DOCUMENT carries a final transform, read out of the
  * `#v1=` hash `persist.ts` writes on every edit.
  *
- * Deliberately NOT a DOM probe. The obvious one — the panel's "Lens over the
- * whole cloud" row — measures the wrong thing: the transform list lives in
- * the Points-only Transforms section, which HIDES outside explorer mode, and
- * every preset with a render hint switches mode as it loads. `innerText` then returns
- * nothing for a lens that is perfectly well installed, and the "did it clear"
- * half of the check passes vacuously for the same reason. The hash is the
- * document itself, and it is what a shared link carries.
+ * Deliberately NOT a DOM probe. The panel row is shared now, but disclosure
+ * open state and the active final-transform selection remain view concerns;
+ * they are not proof of the stored document. The hash is the document itself,
+ * and it is what a shared link carries.
  */
 const READ_FINAL_TRANSFORM = () => {
   const raw = location.hash.replace(/^#v1=/, "");
@@ -261,16 +258,10 @@ async function settled(page, fn) {
 /** Choose a preset from the panel's menu — the path a user takes, and the one
  * that runs main.ts's onPreset handler with its side tables. */
 async function loadPreset(page, key) {
-  // The menu lives in a `<details name="panel-section">` accordion whose open
-  // section the panel REMEMBERS per render mode, so whether it is expanded
-  // depends on where the session has been — open it explicitly rather than
-  // depending on that.
-  // The menu lives in the Points-only Presets section, which HIDES outside
-  // explorer mode — and a preset carrying a render hint (PRESET_RENDER_HINTS) switches mode
-  // as it loads, so after loading a flame showcase the menu is gone. Return
-  // to the explorer first, which is the path a user takes for the same
-  // reason. Then open the accordion section the menu sits in, whose open
-  // state the panel remembers per render mode.
+  // Presets is a shared Workflow section. Open its accordion explicitly,
+  // but deliberately do NOT return to Points: consecutive Surface-authored
+  // presets are the regression this helper now pins. main.ts must perform the
+  // replacement's Points morph and re-enter the arriving preset on its own.
   let shape = null;
   for (let i = 0; i < 20; i++) {
     shape = await settled(page, () =>
@@ -284,12 +275,10 @@ async function loadPreset(page, key) {
           found: true,
           w: r.width,
           h: r.height,
-          mode: window.__surfaceState?.().mode ?? "?",
         };
       }),
     );
     if (shape.found && shape.w > 0 && shape.h > 0) break;
-    if (shape.mode !== "points") await page.click("#modePointsBtn");
     await page.waitForTimeout(250);
   }
   if (!shape?.found || shape.w === 0 || shape.h === 0) {

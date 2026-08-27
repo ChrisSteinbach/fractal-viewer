@@ -415,11 +415,16 @@
              chaos-game.ts's systemHasChaos), or fine-tune which map
              follows which. The construction gesture is the prominent
              piece; the full n-by-n matrix is the fine-tuning surface
-             behind its own Advanced disclosure. Surface/escape/bulb
-             refuse a chi-carrying document — points/flame/solid render
-             it. -->
+             behind its own Advanced disclosure. Surface inverse descent
+             consumes chi rows when eligible and otherwise explains the
+             analyzer refusal; Points, Flame and Solid render them too. -->
         <details class="panel-section" id="xaosSection" name="panel-section">
           <summary>Xaos</summary>
+          <p id="xaosEditHint" class="flame-note-info">
+            Matrix and leak edits update Points live. Flat Flame or Solid
+            restarts when the edit settles; 4D or Balloon changes apply on next
+            entry. Surface re-enters or explains an analyzer refusal.
+          </p>
           <label class="select-label">
             Add system as isolated block
             <select
@@ -452,104 +457,6 @@
             <p id="xaosMatrixNote" class="flame-note-info hidden"></p>
             <div id="xaosMatrixContainer"></div>
           </details>
-        </details>
-
-        <details
-          class="panel-section"
-          id="presetSection"
-          name="panel-section"
-          open
-        >
-          <summary>Presets</summary>
-          <select id="presetSelect" aria-label="Load a preset">
-            <option value="" selected>Load a preset…</option>
-            <option value="default">Twisted Tetrahedron</option>
-            <option value="sierpinski">Sierpinski Tetrahedron</option>
-            <option value="menger">Menger Sponge</option>
-            <option value="spiral">Spiral</option>
-            <option value="pyramid">Sierpinski Pyramid</option>
-            <option value="octahedron">Octahedron Flake</option>
-            <option value="icosahedron">Icosahedron (12)</option>
-            <option value="dodecahedron">Dodecahedron (20)</option>
-            <option value="jerusalem">Jerusalem Cube</option>
-            <option value="chiral">Chiral Lace</option>
-            <option value="barnsley">Barnsley Fern</option>
-            <option value="curling">Curling Fern</option>
-            <option value="fernSponge">Fern | Sponge (isolated)</option>
-            <option value="fernSpongeLeak">Fern | Sponge (1% leak)</option>
-            <option value="spongeOfFerns">Sponge of Ferns</option>
-            <option value="gearworks">Gearworks</option>
-            <option value="starFoundry">Star Foundry</option>
-            <option value="mandelboxKifs">Mandelbox KIFS</option>
-            <option value="fourFinishes">Four Finishes</option>
-            <option value="metalStudio">Metal Studio</option>
-            <optgroup label="Escape-time">
-              <option value="mandelboxClassic">Mandelbox</option>
-              <option value="mandelboxRings">Mandelbox Rings</option>
-              <option value="mandelboxCube">Mandelbox Cube</option>
-              <option value="mandelboxPeace">Mandelbox Peace</option>
-              <option value="foldChain">Fold Chain</option>
-              <option value="foldChainBoulder">Fold Chain Boulder</option>
-              <option value="foldChainFlower">Fold Chain Flower</option>
-              <option value="foldChainGear">Fold Chain Gear</option>
-              <option value="mandelbulbClassic">Mandelbulb</option>
-              <option value="mandelbulbOffset">Mandelbulb Offset</option>
-              <option value="mandelbulbRotated">Mandelbulb Rotated</option>
-              <option value="hybridChainCube">Hybrid Chain Cube</option>
-              <option value="hybridChainCraters">Hybrid Chain Craters</option>
-              <option value="hybridChainQuaternion">
-                Hybrid Chain Quaternion
-              </option>
-            </optgroup>
-            <optgroup label="Flame">
-              <option value="radiolarian">Radiolarian</option>
-              <option value="swirl">Swirl</option>
-              <option value="mandelbox">Fold Lattice</option>
-              <option value="dyedSpiral">Dyed Spiral</option>
-              <option value="julia">Julia Set</option>
-              <option value="juliaDust">Julia Dust</option>
-              <option value="juliaIsland">Julia Island</option>
-              <option value="juliaSnowflake">Julia Snowflake</option>
-              <option value="juliaPinwheel">Julia Pinwheel</option>
-            </optgroup>
-            <optgroup label="4D">
-              <option value="pentatope">Pentatope Gasket</option>
-              <option value="sixteenCell">16-Cell Flake</option>
-              <option value="duoprism">Duoprism (3×3)</option>
-              <option value="tesseract">Tesseract Dust</option>
-              <option value="twentyFourCell">24-Cell Flake</option>
-              <option value="doubleRotation">Double-Rotation Spiral</option>
-              <option value="woodGrain">Wood Grain (4D)</option>
-              <option value="hyperfern">Hyperfern</option>
-              <option value="mandelboxBrick">Mandelbox Brick</option>
-              <option value="mandelboxColumn">Mandelbox Column</option>
-              <option value="hybridChainShells">Hybrid Shells</option>
-            </optgroup>
-          </select>
-          <button class="btn btn-blue" id="surpriseBtn" type="button">
-            Surprise Me
-          </button>
-          <button
-            class="btn btn-ghost"
-            id="mutateBtn"
-            type="button"
-            title="Explore small variations of the current system in a 3×3 grid"
-          >
-            🧬 Mutate
-          </button>
-          <button
-            class="btn btn-ghost"
-            id="driftBtn"
-            type="button"
-            aria-pressed="false"
-            aria-describedby="driftNote"
-            title="Ambient show: keep morphing into fresh random systems until you edit or toggle it off"
-          >
-            ▶ Drift
-          </button>
-          <!-- #driftNote lives in the document-status area above the
-               accordion so reduced-motion remains disclosed in every mode;
-               aria-describedby preserves the explicit control association. -->
         </details>
 
         <!-- Appearance measured 839px with 29 controls, ~81% of it control
@@ -1175,6 +1082,7 @@
             <select
               id="scheduleSource"
               aria-label="Choose the hybrid schedule's system B"
+              aria-describedby="scheduleEditHint"
             >
               <option value="" selected>None</option>
               <option value="__installed" hidden>System B installed</option>
@@ -1189,6 +1097,7 @@
             class="btn btn-ghost"
             id="scheduleSnapshotBtn"
             type="button"
+            aria-describedby="scheduleEditHint"
             title="Snapshot the current transform list as system B (affine part only)"
           >
             Use current system as B
@@ -1198,12 +1107,18 @@
             <input
               type="range"
               id="scheduleDepthSlider"
+              aria-describedby="scheduleEditHint"
               min="0"
               max="5"
               step="1"
               value="0"
             />
           </label>
+          <p id="scheduleEditHint" class="flame-note-info">
+            Changes update Points live. Flat Flame or Solid restarts when the
+            edit settles; 4D or Balloon changes apply on next entry. Surface
+            re-enters or explains an analyzer refusal.
+          </p>
         </details>
 
         <!-- Points renderer depth treatment. Flat and non-flat systems swap
@@ -2087,6 +2002,119 @@
         <!-- Workflow output and library operations stay available in every
              renderer, but follow the active editing and View / Device
              sections in DOM and native focus order (docs/panel-ia.md). -->
+        <details
+          class="panel-section"
+          id="presetSection"
+          name="panel-section"
+          open
+        >
+          <summary>Presets</summary>
+          <p id="presetTimingHint" class="flame-note-info">
+            Loads morph in Points, then an authored Flame, Solid, or Surface
+            preset enters that renderer when its cloud lands. Random Drift stays
+            in Points; Collection Drift follows saved renderer tags.
+          </p>
+          <select
+            id="presetSelect"
+            aria-label="Load a preset"
+            aria-describedby="presetTimingHint"
+          >
+            <option value="" selected>Load a preset…</option>
+            <option value="default">Twisted Tetrahedron</option>
+            <option value="sierpinski">Sierpinski Tetrahedron</option>
+            <option value="menger">Menger Sponge</option>
+            <option value="spiral">Spiral</option>
+            <option value="pyramid">Sierpinski Pyramid</option>
+            <option value="octahedron">Octahedron Flake</option>
+            <option value="icosahedron">Icosahedron (12)</option>
+            <option value="dodecahedron">Dodecahedron (20)</option>
+            <option value="jerusalem">Jerusalem Cube</option>
+            <option value="chiral">Chiral Lace</option>
+            <option value="barnsley">Barnsley Fern</option>
+            <option value="curling">Curling Fern</option>
+            <option value="fernSponge">Fern | Sponge (isolated)</option>
+            <option value="fernSpongeLeak">Fern | Sponge (1% leak)</option>
+            <option value="spongeOfFerns">Sponge of Ferns</option>
+            <option value="gearworks">Gearworks</option>
+            <option value="starFoundry">Star Foundry</option>
+            <option value="mandelboxKifs">Mandelbox KIFS</option>
+            <option value="fourFinishes">Four Finishes</option>
+            <option value="metalStudio">Metal Studio</option>
+            <optgroup label="Escape-time">
+              <option value="mandelboxClassic">Mandelbox</option>
+              <option value="mandelboxRings">Mandelbox Rings</option>
+              <option value="mandelboxCube">Mandelbox Cube</option>
+              <option value="mandelboxPeace">Mandelbox Peace</option>
+              <option value="foldChain">Fold Chain</option>
+              <option value="foldChainBoulder">Fold Chain Boulder</option>
+              <option value="foldChainFlower">Fold Chain Flower</option>
+              <option value="foldChainGear">Fold Chain Gear</option>
+              <option value="mandelbulbClassic">Mandelbulb</option>
+              <option value="mandelbulbOffset">Mandelbulb Offset</option>
+              <option value="mandelbulbRotated">Mandelbulb Rotated</option>
+              <option value="hybridChainCube">Hybrid Chain Cube</option>
+              <option value="hybridChainCraters">Hybrid Chain Craters</option>
+              <option value="hybridChainQuaternion">
+                Hybrid Chain Quaternion
+              </option>
+            </optgroup>
+            <optgroup label="Flame">
+              <option value="radiolarian">Radiolarian</option>
+              <option value="swirl">Swirl</option>
+              <option value="mandelbox">Fold Lattice</option>
+              <option value="dyedSpiral">Dyed Spiral</option>
+              <option value="julia">Julia Set</option>
+              <option value="juliaDust">Julia Dust</option>
+              <option value="juliaIsland">Julia Island</option>
+              <option value="juliaSnowflake">Julia Snowflake</option>
+              <option value="juliaPinwheel">Julia Pinwheel</option>
+            </optgroup>
+            <optgroup label="4D">
+              <option value="pentatope">Pentatope Gasket</option>
+              <option value="sixteenCell">16-Cell Flake</option>
+              <option value="duoprism">Duoprism (3×3)</option>
+              <option value="tesseract">Tesseract Dust</option>
+              <option value="twentyFourCell">24-Cell Flake</option>
+              <option value="doubleRotation">Double-Rotation Spiral</option>
+              <option value="woodGrain">Wood Grain (4D)</option>
+              <option value="hyperfern">Hyperfern</option>
+              <option value="mandelboxBrick">Mandelbox Brick</option>
+              <option value="mandelboxColumn">Mandelbox Column</option>
+              <option value="hybridChainShells">Hybrid Shells</option>
+            </optgroup>
+          </select>
+          <button
+            class="btn btn-blue"
+            id="surpriseBtn"
+            type="button"
+            aria-describedby="presetTimingHint"
+          >
+            Surprise Me
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="mutateBtn"
+            type="button"
+            aria-describedby="presetTimingHint"
+            title="Explore small variations of the current system in a 3×3 grid"
+          >
+            🧬 Mutate
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="driftBtn"
+            type="button"
+            aria-pressed="false"
+            aria-describedby="presetTimingHint driftNote"
+            title="Ambient show: keep morphing into fresh random systems until you edit or toggle it off"
+          >
+            ▶ Drift
+          </button>
+          <!-- #driftNote lives in the document-status area above the
+               accordion so reduced-motion remains disclosed in every mode;
+               aria-describedby preserves the explicit control association. -->
+        </details>
+
         <!-- Always applicable, like Capture: saving a keeper / opening the
            gallery works while a flame/solid render is showing — the save then
            captures the rendered frame and tags the entry with the mode it

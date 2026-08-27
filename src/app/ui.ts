@@ -183,8 +183,9 @@ export interface UiHandlers {
    * snapshot the live transform list (stripped to its affine part) as B. */
   onScheduleSnapshot: () => void;
   /** The Hybrid schedule's depth slider moved: an integer 0..5, where 0
-   * removes the block (the classic-removal rule). */
-  onScheduleDepth: (depth: number) => void;
+   * removes the block (the classic-removal rule). Input authors live state;
+   * commit settles the active renderer exactly once. */
+  onScheduleDepth: (depth: number, phase: "input" | "commit") => void;
   /**
    * The Xaos section's "+ Add as block" button was clicked: `source` is
    * `"__duplicate"` (clone the current system), `"preset:<key>"`, or
@@ -2553,10 +2554,7 @@ export class Ui {
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
     this.pointsSections = [
-      this.byId<HTMLDetailsElement>("xaosSection"),
-      this.byId<HTMLDetailsElement>("presetSection"),
       this.byId<HTMLDetailsElement>("cloudSection"),
-      this.byId<HTMLDetailsElement>("scheduleSection"),
       this.byId<HTMLDetailsElement>("pointsDepthSection"),
     ];
     this.flameSections = [
@@ -2905,7 +2903,13 @@ export class Ui {
       handlers.onScheduleSnapshot(),
     );
     this.scheduleDepthSlider.addEventListener("input", () => {
-      handlers.onScheduleDepth(Number(this.scheduleDepthSlider.value));
+      handlers.onScheduleDepth(Number(this.scheduleDepthSlider.value), "input");
+    });
+    this.scheduleDepthSlider.addEventListener("change", () => {
+      handlers.onScheduleDepth(
+        Number(this.scheduleDepthSlider.value),
+        "commit",
+      );
     });
     // The Xaos "Add as block" button reads the picker + checkbox directly
     // (no change listener on the select itself — unlike the schedule
@@ -5738,6 +5742,7 @@ export class Ui {
           `Leak between the block starting at transform ${leak.blockA[0] + 1} ` +
             `and the block starting at transform ${leak.blockB[0] + 1}`,
         );
+        slider.setAttribute("aria-describedby", "xaosEditHint");
         const readout = this.doc.createElement("span");
         readout.className = "value";
         readout.textContent = formatXaosLeak(leak.value);
@@ -5850,6 +5855,7 @@ export class Ui {
           "aria-label",
           `Chi from transform ${i + 1} to transform ${j + 1}`,
         );
+        input.setAttribute("aria-describedby", "xaosEditHint");
         input.addEventListener("change", () => {
           const raw = Number(input.value);
           if (input.value === "" || !Number.isFinite(raw) || raw < 0) {

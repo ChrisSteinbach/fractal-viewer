@@ -2171,6 +2171,7 @@ function main(): void {
       transforms: request.transforms,
       finalTransform: request.finalTransform,
       symmetry: request.symmetry,
+      schedule: request.schedule,
     };
     const nonFlat = result.fourD;
     const wasNonFlat = viewIs4D;
@@ -5712,7 +5713,7 @@ function main(): void {
     return eligibility;
   }
 
-  type TransformEditTarget = number | "final";
+  type TransformEditTarget = number | "final" | "schedule" | "xaos";
 
   // Range/canvas input is live document authoring, but an accumulating
   // renderer only restarts once at the gesture boundary. Retain the first
@@ -5728,6 +5729,7 @@ function main(): void {
       transforms: state.transforms,
       finalTransform: state.finalTransform ?? null,
       symmetry: state.symmetry,
+      schedule: state.schedule ?? null,
     };
   }
 
@@ -5774,18 +5776,27 @@ function main(): void {
     else if (effect === "recolor-4d") applyFourDColor();
   }
 
-  function applyActiveTransformEffect(plan: TransformEditPlan): void {
+  function applyActiveTransformEffect(
+    plan: TransformEditPlan,
+    reuseGeometrySeed = false,
+  ): void {
     switch (plan.active) {
       case "restart-flame":
         if (state.renderMode !== "flame") return;
-        if (plan.reuseActiveSeed && activeFlameSeed !== null) {
+        if (
+          (plan.reuseActiveSeed || reuseGeometrySeed) &&
+          activeFlameSeed !== null
+        ) {
           flameSeedOverride = activeFlameSeed;
         }
         flameSession.enter();
         return;
       case "restart-solid":
         if (state.renderMode !== "solid") return;
-        if (plan.reuseActiveSeed && activeSolidSeed !== null) {
+        if (
+          (plan.reuseActiveSeed || reuseGeometrySeed) &&
+          activeSolidSeed !== null
+        ) {
           solidSeedOverride = activeSolidSeed;
         }
         solidSession.enter();
@@ -5808,6 +5819,12 @@ function main(): void {
   function applyTransformInput(
     target: TransformEditTarget,
     applyChange: () => void,
+    synchronize: () => void = () =>
+      ui.renderTransformList(
+        state.transforms,
+        state.selectedTransform,
+        state.finalTransform ?? null,
+      ),
   ): void {
     const previous = transformEditSnapshot();
     if (!pendingTransformEdits.has(target)) {
@@ -5816,11 +5833,7 @@ function main(): void {
     stopShows({ notify: true });
     editSession.beginEdit();
     applyChange();
-    ui.renderTransformList(
-      state.transforms,
-      state.selectedTransform,
-      state.finalTransform ?? null,
-    );
+    synchronize();
     const document = transformEditSnapshot();
     const eligibility = refreshSurfaceEligibility();
     applyPointsTransformEffect(
@@ -5834,10 +5847,16 @@ function main(): void {
     // Delete before enter(): session activation refreshes the UI reentrantly.
     pendingTransformEdits.delete(target);
     const document = transformEditSnapshot();
-    applyActiveTransformEffect(transformEditPlan(previous, document));
+    applyActiveTransformEffect(
+      transformEditPlan(previous, document),
+      target === "schedule" || target === "xaos",
+    );
   }
 
-  function applyDiscreteTransformEdit(applyReducer: () => void): void {
+  function applyDiscreteTransformEdit(
+    applyReducer: () => void,
+    reuseGeometrySeed = false,
+  ): void {
     clearPendingTransformEdits();
     stopShows({ notify: true });
     loadHints.clearAll();
@@ -5850,7 +5869,7 @@ function main(): void {
     applyPointsTransformEffect(plan.points);
     refreshGuides();
     refreshUi();
-    applyActiveTransformEffect(plan);
+    applyActiveTransformEffect(plan, reuseGeometrySeed);
   }
 
   /**
@@ -6432,27 +6451,6 @@ function main(): void {
   }
 
   /**
-   * The Xaos matrix's cell commits and leak-dial drags: the shared
-   * mid-gesture bookkeeping shape (burst-coalesced undo, frame-coalesced regen)
-   * PLUS this section's own resync — kept out of transform input planning so
-   * an unrelated position/rotation/fold-radius drag never rebuilds this
-   * grid on every one of its ticks. `resync` skips the rebuild mid-drag
-   * (every leak-dial "input" tick) the same way transform input skips
-   * refreshUi for the slider it is currently dragging — ui.ts's own leak
-   * row updates its label directly instead — and runs it once the drag
-   * settles ("change") or for a matrix cell's single "change" commit,
-   * where a rebuild is safe: no cell is still focused mid-edit by then.
-   */
-  function applyXaosEdit(mutate: () => void, resync: boolean): void {
-    stopShows({ notify: true });
-    editSession.beginEdit();
-    mutate();
-    if (resync) ui.renderXaosSection(state.transforms);
-    refreshSurfaceEligibility();
-    if (state.autoUpdate) regenScheduler.schedule();
-  }
-
-  /**
    * Roll a fresh random system into the document — the shared body of the
    * Surprise Me button and a drift leg: the same quality-gated roll
    * (random-system.ts), the same "replace" undo checkpoint and camera
@@ -6461,6 +6459,7 @@ function main(): void {
    * snappier click-feedback default.
    */
   function rollSurpriseSystem(morphMs?: number): void {
+    switchRenderMode("points");
     applyEdit(
       () => {
         const sys = randomSystem(Math.random);
@@ -6581,6 +6580,7 @@ function main(): void {
   function pickMutation(index: number): void {
     const candidate = mutationCandidates.at(index);
     if (!candidate) return;
+    switchRenderMode("points");
     applyEdit(() => {
       state = setTransforms(state, candidate.transforms);
       state = setFinalTransform(state, candidate.finalTransform);
@@ -6685,9 +6685,9 @@ function main(): void {
         chaosRowIsNonTrivial(t.chaos, transforms.length),
     );
     const depth = state.schedule?.depth ?? 1;
-    applyEdit(() => {
+    applyDiscreteTransformEdit(() => {
       state = setSchedule(state, { transforms, depth });
-    });
+    }, true);
     if (losesShape) {
       ui.flashToast(
         "System B keeps only the source's affine part — its variations, 4D parts or chaos rows don't ride the schedule.",
@@ -6742,6 +6742,7 @@ function main(): void {
     onUndo: () => editSession.undo(),
     onRedo: () => editSession.redo(),
     onPreset: (preset) => {
+      switchRenderMode("points");
       applyEdit(() => {
         state = setTransforms(state, presetTransforms(preset));
         // The final-transform lens (PRESET_FINALS): a preset authored AROUND
@@ -6849,9 +6850,9 @@ function main(): void {
     onScheduleSource: (source) => {
       if (source === "__installed") return; // re-picking the sentinel: no-op.
       if (source === "") {
-        applyEdit(() => {
+        applyDiscreteTransformEdit(() => {
           state = setSchedule(state, null);
-        });
+        }, true);
         return;
       }
       const transforms = resolveScheduleSourceTransforms(source);
@@ -6867,16 +6868,24 @@ function main(): void {
     onScheduleSnapshot: () => {
       installSchedule(state.transforms);
     },
-    onScheduleDepth: (depth) => {
+    onScheduleDepth: (depth, phase) => {
+      if (phase === "commit") {
+        commitTransformEdit("schedule");
+        return;
+      }
       if (!state.schedule) {
         // Depth is a property OF the post-word; without a B there is
         // nothing for it to mean — snap the slider back to 0.
         refreshUi();
         return;
       }
-      applyEdit(() => {
-        state = setScheduleDepth(state, depth);
-      });
+      applyTransformInput(
+        "schedule",
+        () => {
+          state = setScheduleDepth(state, depth);
+        },
+        () => ui.updateLabels(state),
+      );
     },
     // The Xaos construction gesture: resolve the picked source, measure
     // both systems' extent to seat the new block apart
@@ -6909,20 +6918,30 @@ function main(): void {
         ui.resetXaosAddSource();
         return;
       }
+      switchRenderMode("points");
       applyEdit(() => {
         state = setTransforms(state, result.transforms);
       }, "always");
       ui.resetXaosAddSource();
     },
     onXaosCell: (fromIndex, toIndex, value) => {
-      applyXaosEdit(() => {
+      applyDiscreteTransformEdit(() => {
         state = setChaosCell(state, fromIndex, toIndex, value);
       }, true);
     },
     onXaosLeak: (blockA, blockB, leak, phase) => {
-      applyXaosEdit(() => {
-        state = setChaosLeak(state, blockA, blockB, leak);
-      }, phase === "commit");
+      if (phase === "commit") {
+        commitTransformEdit("xaos");
+        ui.renderXaosSection(state.transforms);
+        return;
+      }
+      applyTransformInput(
+        "xaos",
+        () => {
+          state = setChaosLeak(state, blockA, blockB, leak);
+        },
+        () => {},
+      );
     },
     // A manual press is a manual replace-load, so applyEdit (inside) also
     // ends a running drift show — the show's own legs take the same path
@@ -6957,6 +6976,7 @@ function main(): void {
       // the toast: the user is looking at the Drift toggle, not the
       // timeline's lit Play button.
       timelinePolicy.stop({ notify: true });
+      switchRenderMode("points");
       driftSource = "random";
       driftShow.start();
       ui.setDriftActive(true);

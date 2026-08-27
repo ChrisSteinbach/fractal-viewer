@@ -3,6 +3,7 @@ import type { PaletteSelection } from "../fractal/palette";
 import type {
   ColorMode,
   FourDColorMode,
+  HybridSchedule,
   SymmetryParams,
   Transform,
 } from "../fractal/types";
@@ -13,11 +14,12 @@ import type {
 } from "./surface-eligibility";
 import { surfaceForwardSlot } from "./surface-slots";
 
-/** The scene-document subset whose transform editor can change or reroute. */
+/** The scene-document subset whose composition editors can change or reroute. */
 export interface TransformEditSnapshot {
   readonly transforms: readonly Transform[];
   readonly finalTransform?: Transform | null;
   readonly symmetry: SymmetryParams;
+  readonly schedule?: HybridSchedule | null;
 }
 
 /**
@@ -194,7 +196,8 @@ export function classifyTransformEdit(
       finalGeometry(previousFinal),
       finalGeometry(nextFinal),
     ) ||
-    !structurallyEqual(previous.symmetry, next.symmetry);
+    !structurallyEqual(previous.symmetry, next.symmetry) ||
+    !structurallyEqual(previous.schedule ?? null, next.schedule ?? null);
 
   const colorIndexTransforms = changedTransformIndices(
     previousById,

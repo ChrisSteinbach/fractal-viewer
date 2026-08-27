@@ -665,6 +665,7 @@ describe("Ui.renderXaosSection — the matrix", () => {
 
     const cell = xaosCell(1, 2);
     expect(cell.value).toBe("1"); // classic default at render time
+    expect(cell.getAttribute("aria-describedby")).toBe("xaosEditHint");
     cell.value = "0.3";
     cell.dispatchEvent(new Event("change"));
     expect(handlers.onXaosCell).toHaveBeenCalledWith(0, 1, 0.3);
@@ -727,6 +728,7 @@ describe("Ui.renderXaosSection — the leak dial", () => {
     ui.renderXaosSection(fernSpongeIsolated());
 
     const slider = xaosLeakSliders()[0];
+    expect(slider.getAttribute("aria-describedby")).toBe("xaosEditHint");
     slider.value = "0.02";
     slider.dispatchEvent(new Event("input"));
     expect(handlers.onXaosLeak).toHaveBeenCalledWith(
@@ -742,6 +744,38 @@ describe("Ui.renderXaosSection — the leak dial", () => {
       0.02,
       "commit",
     );
+  });
+});
+
+describe("Ui Hybrid schedule controls", () => {
+  it("authors depth on input and settles once on change", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const slider = document.getElementById(
+      "scheduleDepthSlider",
+    ) as HTMLInputElement;
+
+    slider.value = "3";
+    slider.dispatchEvent(new Event("input"));
+    slider.dispatchEvent(new Event("change"));
+
+    expect(handlers.onScheduleDepth).toHaveBeenNthCalledWith(1, 3, "input");
+    expect(handlers.onScheduleDepth).toHaveBeenNthCalledWith(2, 3, "commit");
+    expect(handlers.onScheduleDepth).toHaveBeenCalledTimes(2);
+  });
+
+  it("associates every schedule editor with its settlement timing", () => {
+    for (const id of [
+      "scheduleSource",
+      "scheduleSnapshotBtn",
+      "scheduleDepthSlider",
+    ]) {
+      expect(
+        document.getElementById(id)?.getAttribute("aria-describedby"),
+        id,
+      ).toBe("scheduleEditHint");
+    }
   });
 });
 
@@ -5106,11 +5140,14 @@ describe("Ui render mode switch", () => {
     return document.getElementById("renderModeSwitch") as HTMLElement;
   }
   const POINT_CONTEXTUAL_SECTION_IDS = [
-    "xaosSection",
-    "presetSection",
     "cloudSection",
-    "scheduleSection",
     "pointsDepthSection",
+  ] as const;
+  const SHARED_SCENE_WORKFLOW_SECTION_IDS = [
+    "transformsSection",
+    "xaosSection",
+    "scheduleSection",
+    "presetSection",
   ] as const;
   const FLAME_SECTION_IDS = [
     "flameToneSection",
@@ -5282,7 +5319,7 @@ describe("Ui render mode switch", () => {
     ui.updateLabels({ ...initialState(true), renderMode: "flame" });
 
     expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
-    expect(byId("transformsSection").classList.contains("hidden")).toBe(false);
+    expectSectionsHidden(SHARED_SCENE_WORKFLOW_SECTION_IDS, false);
     expectSectionsHidden(FLAME_SECTION_IDS, false);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
     expectSectionsHidden(SURFACE_SECTION_IDS, true);
@@ -5299,7 +5336,7 @@ describe("Ui render mode switch", () => {
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
 
     expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
-    expect(byId("transformsSection").classList.contains("hidden")).toBe(false);
+    expectSectionsHidden(SHARED_SCENE_WORKFLOW_SECTION_IDS, false);
     expectSectionsHidden(SOLID_SECTION_IDS, false);
     expectSectionsHidden(FLAME_SECTION_IDS, true);
     expectSectionsHidden(SURFACE_SECTION_IDS, true);
@@ -5315,7 +5352,7 @@ describe("Ui render mode switch", () => {
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
 
     expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
-    expect(byId("transformsSection").classList.contains("hidden")).toBe(false);
+    expectSectionsHidden(SHARED_SCENE_WORKFLOW_SECTION_IDS, false);
     expectSectionsHidden(SURFACE_ALWAYS_SECTION_IDS, false);
     expect(
       byId("surfaceCondensationSection").classList.contains("hidden"),
@@ -5532,7 +5569,7 @@ describe("Ui render mode switch", () => {
 
     ui.updateLabels({ ...state, renderMode: "surface" });
     expect(atmosphere.classList.contains("hidden")).toBe(false);
-    expect(byId("scheduleSection").classList.contains("hidden")).toBe(true);
+    expect(byId("scheduleSection").classList.contains("hidden")).toBe(false);
     expect(depth.classList.contains("hidden")).toBe(true);
     expect(byId("backgroundRow").classList.contains("hidden")).toBe(false);
     expect(byId("fogControls").classList.contains("hidden")).toBe(false);
@@ -8400,6 +8437,7 @@ describe("panel accordion sections", () => {
   it("keeps output and library workflow after active editing in DOM order", () => {
     const ids = sections().map((section) => section.id);
     const workflowIds = [
+      "presetSection",
       "collectionSection",
       "timelineSection",
       "captureSection",
@@ -8475,18 +8513,21 @@ describe("panel accordion sections", () => {
 
   it("entering flame mode opens its Tone section", () => {
     const ui = new Ui(document);
+    details("presetSection").open = false;
     ui.updateLabels({ ...initialState(true), renderMode: "flame" });
     expect(details("flameToneSection").open).toBe(true);
   });
 
   it("entering solid mode opens its Surface section", () => {
     const ui = new Ui(document);
+    details("presetSection").open = false;
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
     expect(details("solidSurfaceSection").open).toBe(true);
   });
 
   it("entering surface mode opens its Color section", () => {
     const ui = new Ui(document);
+    details("presetSection").open = false;
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
     expect(details("surfaceColorSection").open).toBe(true);
   });
@@ -8564,6 +8605,58 @@ describe("panel accordion sections", () => {
     }
   });
 
+  it("keeps Presets open through every renderer and document dimension", () => {
+    const ui = new Ui(document);
+    const flat = initialState(true);
+    const presets = details("presetSection");
+
+    for (const transforms of [flat.transforms, nonFlatTransforms()]) {
+      for (const renderMode of [
+        "points",
+        "flame",
+        "solid",
+        "surface",
+      ] as const) {
+        if (renderMode === "surface") ui.setSurfaceSessionKind("ifs");
+        ui.updateLabels({ ...flat, transforms, renderMode });
+        expect(presets.classList.contains("hidden"), renderMode).toBe(false);
+        expect(presets.open, renderMode).toBe(true);
+        expect(hiddenOpenSections(), renderMode).toEqual([]);
+      }
+    }
+  });
+
+  it.each(["xaosSection", "scheduleSection"])(
+    "keeps the shared Scene editor #%s open through every renderer and dimension",
+    (sectionId) => {
+      const ui = new Ui(document);
+      const flat = initialState(true);
+      details("presetSection").open = false;
+      const editor = details(sectionId);
+      editor.open = true;
+      editor.dispatchEvent(new Event("toggle"));
+      if (sectionId === "xaosSection") details("xaosMatrixSection").open = true;
+
+      for (const transforms of [flat.transforms, nonFlatTransforms()]) {
+        for (const renderMode of [
+          "points",
+          "flame",
+          "solid",
+          "surface",
+        ] as const) {
+          if (renderMode === "surface") ui.setSurfaceSessionKind("ifs");
+          ui.updateLabels({ ...flat, transforms, renderMode });
+          expect(editor.classList.contains("hidden"), renderMode).toBe(false);
+          expect(editor.open, renderMode).toBe(true);
+          if (sectionId === "xaosSection") {
+            expect(details("xaosMatrixSection").open, renderMode).toBe(true);
+          }
+          expect(hiddenOpenSections(), renderMode).toEqual([]);
+        }
+      }
+    },
+  );
+
   it("keeps the shared Balloon editor open through every mode and dimension", () => {
     const ui = new Ui(document);
     const state = initialState(true);
@@ -8593,6 +8686,7 @@ describe("panel accordion sections", () => {
     const points = initialState(true);
     const flame = { ...points, renderMode: "flame" as const };
 
+    details("presetSection").open = false;
     ui.updateLabels(flame);
     details("flameToneSection").open = false;
     details("flameBlurSection").open = true;
@@ -8610,6 +8704,7 @@ describe("panel accordion sections", () => {
   it("returning to points restores the explorer's section", () => {
     const ui = new Ui(document);
     const state = initialState(true);
+    details("presetSection").open = false;
     ui.updateLabels({ ...state, renderMode: "flame" });
     // In a real browser the name group closes Presets when Tone opens;
     // simulate that half of the exchange.
@@ -8699,17 +8794,17 @@ describe("panel accordion sections", () => {
     expect(hiddenOpenSections()).toEqual([]);
   });
 
-  it("closes a hidden-open section even without another mode change", () => {
+  it("closes a hidden-open Points section even without another mode change", () => {
     const ui = new Ui(document);
     const flame = { ...initialState(true), renderMode: "flame" as const };
     ui.updateLabels(flame);
 
-    const presets = details("presetSection");
-    presets.open = true;
-    expect(presets.classList.contains("hidden")).toBe(true);
+    const cloud = details("cloudSection");
+    cloud.open = true;
+    expect(cloud.classList.contains("hidden")).toBe(true);
 
     ui.updateLabels({ ...flame });
-    expect(presets.open).toBe(false);
+    expect(cloud.open).toBe(false);
     expect(hiddenOpenSections()).toEqual([]);
   });
 
@@ -11223,7 +11318,7 @@ describe("document-level panel disclosures", () => {
     }
     expect(
       document.getElementById("driftBtn")?.getAttribute("aria-describedby"),
-    ).toBe("driftNote");
+    ).toBe("presetTimingHint driftNote");
   });
 
   it.each(["points", "flame", "solid", "surface"] as const)(
