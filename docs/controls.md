@@ -120,8 +120,9 @@ Measured, that keeps the panel between one and two phone screens rather than
 the one it used to claim: 727px with **Color** open, 1336px with
 **Transforms** open and a transform selected. The Flame, Solid, and Surface render
 modes get the same treatment — **Depth** for Points, **Tone** / **Blur** for
-Flame, **Surface** / **Lighting** for Solid, and **Color** / **Shape copies**
-or **Shape trap** / **Lighting** / **Floor** for Surface itself (see **✺
+Flame, **Level** / **Lighting** for Solid, and **Surface color** / **Shape
+copies** or **Shape trap** / **Lighting** / **Floor** for Surface itself (see
+**✺
 Flame**, **◆ Solid** and **◈ Surface** below). One **Quality** section follows
 those inspectors and swaps its Points, Flame, Solid or Surface controls in
 place rather than creating several homes. Each renderer keeps its status block
@@ -241,7 +242,7 @@ morphs into place instead of snapping (see **Presets** below).
   ("12.3M / 20.0M iterations (61%)"); until the worker's first grid lands there
   is nothing in the volume for rays to hit, so the point cloud deliberately
   stays on screen rather than flashing an empty frame at you.
-  - **Surface** — **Surface Level** (0.02–0.95, default 0.30) is where the
+  - **Level** — **Surface Level** (0.02–0.95, default 0.30) is where the
     surface is cut through the density, measured on a log scale so that a
     given level lines up with what reads as "bright" in a Flame of the same
     system. Lower values wrap the shape around fainter, sparser hits —
@@ -272,7 +273,7 @@ morphs into place instead of snapping (see **Presets** below).
     re-accumulating the grid.
   - **Quality** — **Iterations** steps a 1-2-5 ladder from 1M–100M
     (default 20M) and behaves like the flame's: raise it and accumulation continues past what already looked
-    done, lower it and the render finishes where it stands. **Detail
+    done, lower it and the render finishes where it stands. **Resolution
     (restarts render)** (64³–512³ in steps of 32, default 192³) is the grid's
     voxels per axis, and its restart is the heaviest kind: the whole render
     session is torn down and begun again, because a grid's dimensions are
@@ -312,7 +313,7 @@ morphs into place instead of snapping (see **Presets** below).
   A transform with a samplable **shape emitter** is the other supported map
   kind: Surface marches the condensation set `C0 union f_j(A)`, so the
   shipped **Gearworks** and **Star Foundry** presets render the master shape
-  and every recursive copy instead of refusing the document. **Shape levels** chooses all depths,
+  and every recursive copy instead of refusing the document. **Levels** chooses all depths,
   root only, or a custom inclusive min/max word-depth band (root is 0).
   Emitters do not recurse and their variations are skipped; ordinary maps
   remain the recursive alphabet. In a schedule-free document the 24-slot
@@ -581,7 +582,8 @@ morphs into place instead of snapping (see **Presets** below).
   softer case: the button stays enabled, but the status beside the mode switch
   warns before entry that those maps are marched conservatively — a smaller step size
   that trades some speed to stay a safe, non-overshooting bound. Its contextual
-  inspector splits independent concerns into separate sections. **Color** holds a **Color source**
+  inspector splits independent concerns into separate sections. **Surface
+  color** holds a **Color source**
   select — By Transform, the orbit-trap Palette, a Height ramp, a Radius
   ramp, Orbit rings, Orbit sheets, or Shape trap — with a **Surface palette** select underneath
   (the same named gradients as Flame/Solid, the shared **Custom** gradient
@@ -632,7 +634,7 @@ morphs into place instead of snapping (see **Presets** below).
   per-transform **Speed** does nothing here, and is not the **Color speed**
   slider above, which fades descent levels rather than picks.
   An emitter-backed inverse-descent session gets a **Shape copies** section for
-  the **Shape levels** band described above. Forward-orbit sessions replace it
+  the **Levels** band described above. Forward-orbit sessions replace it
   with a **Shape trap** section and a matching **Shape
   trap** color source. Choose any bundled trap shape or **None**, then set its
   orbit-space size and X/Y/Z position. It uses the same shared catalog listed
@@ -1070,7 +1072,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   JSON file; restore it with **Share**'s **⬆ Import file** (or drop it onto
   the page), which REPLACES the authored timeline, with an Undo toast when
   there was one.
-- **Points** — in **Quality**, a 1-2-5 ladder for the point count from 1k–5M;
+- **Point count** — in **Quality**, a 1-2-5 ladder for the point count from 1k–5M;
   it takes effect on **Regenerate Points** (or immediately on other edits when
   auto-update is on). A link made before the ladder may hold an in-between
   count: its exact value remains in the label and document until the slider is
@@ -1117,7 +1119,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   buffer is sized separately), and the Surface render ignores it entirely —
   that mode has its own preview/settle ladder. The Solid render's raymarch
   _is_ governed, so a slow solid trace goes soft before it goes choppy; its
-  voxel grid is unaffected either way (see **Detail**). **This session**: it
+  voxel grid is unaffected either way (see **Resolution**). **This session**: it
   describes this device's current rendering budget, but never rides in a link
   or scene file.
 - **Color** (shared Scene / Look section) — remains in the same accordion slot,
@@ -1164,8 +1166,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   A scene has exactly ONE shared primary custom gradient, and all five selects
   offering it edit that same one: **Color ramp palette** here, **Flame palette
   (restarts render)** in Flame's **Tone** section, **Solid palette (restarts
-  render)** in Solid's **Surface** section, **Surface palette** in Surface's
-  **Color** section, and **Backdrop flame palette** for the generated Flame
+  render)** in Solid's **Level** section, **Surface palette** in Surface's
+  **Surface color** section, and **Backdrop flame palette** for the generated Flame
   background in **Atmosphere**. The effect follows the active
   consumer matrix above: the same shared Custom edit may be live, staged, or
   re-accumulating rather than acquiring a different cost from the editor copy
@@ -1270,7 +1272,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   palette edits, gradient-editor drags, and render-mode switches live
   (palettes with no gradient, like Classic, keep the Dark ground; the
   derived stops are clamped dark enough that the attractor keeps contrast),
-  **Flame**, a dark, defocused one-million-sample flame of the same system
+  **Flame backdrop**, a dark, defocused one-million-sample flame of the same
+  system
   projected through the current view, with its own **Backdrop flame palette**
   (Spectrum by default, or any preset/Custom gradient),
   or **Custom**, which reveals **Top**/**Bottom** color pickers for an
@@ -1290,7 +1293,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   bytes, so a shared link keeps tracking its scene and view; a link saved
   before this control existed still renders exactly as it always did — Haze
   if its Depth Style was Aerial, Dark otherwise.
-- **Shape** — the backdrop's gradient shape, orthogonal to
+- **Gradient shape** — the backdrop's gradient shape, orthogonal to
   **Background** above: **Vertical** (the default — the original top-to-
   bottom ramp) or **Radial**, a soft vignette centered behind the
   attractor, darkened corners fading toward a lighter glow at the middle.

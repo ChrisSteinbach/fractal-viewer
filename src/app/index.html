@@ -818,7 +818,7 @@
                 <option value="dark">Dark</option>
                 <option value="haze">Haze</option>
                 <option value="auto">Auto</option>
-                <option value="flame">Flame</option>
+                <option value="flame">Flame backdrop</option>
                 <option value="custom">Custom</option>
               </select>
             </label>
@@ -827,10 +827,12 @@
           <!-- The backdrop's gradient SHAPE: orthogonal to the gradient
                Background choices above — every gradient mode can be linear
                or radial. Hidden while Flame selects a per-pixel image. See
-               fractal/background-shape.ts's BACKGROUND_SHAPES. -->
+               fractal/background-shape.ts's BACKGROUND_SHAPES. Named
+               "Gradient shape" rather than "Shape" so the word stays
+               unambiguous beside Surface's Shape copies / Shape trap. -->
           <div id="backgroundShapeRow">
             <label class="select-label">
-              Shape
+              Gradient shape
               <select id="backgroundShape">
                 <option value="linear">Vertical</option>
                 <option value="radial">Radial</option>
@@ -1283,7 +1285,7 @@
           id="solidSurfaceSection"
           name="panel-section"
         >
-          <summary>Surface</summary>
+          <summary>Level</summary>
           <label class="select-label">
             Surface Level: <span id="solidThresholdLabel">0.30</span>
             <input
@@ -1395,14 +1397,15 @@
         </details>
 
         <!-- Surface's renderer inspector is split at its concern and session
-             seams. Color, Lighting and Floor apply across Surface sessions;
-             Shape copies and Shape trap own their mutually exclusive routes. -->
+             seams. Surface color, Lighting and Floor apply across Surface
+             sessions; Shape copies and Shape trap own their mutually
+             exclusive routes. -->
         <details
           class="panel-section hidden"
           id="surfaceColorSection"
           name="panel-section"
         >
-          <summary>Color</summary>
+          <summary>Surface color</summary>
           <label class="select-label">
             Color source
             <select id="surfaceColorSource">
@@ -1492,7 +1495,7 @@
             class="select-label"
             title="Choose which recursive word depths contain copies of an emitter shape; root is depth 0"
           >
-            Shape levels
+            Levels
             <select id="surfaceCondensationBandMode">
               <option value="all">All levels</option>
               <option value="root">Root only</option>
@@ -1539,7 +1542,7 @@
                source above. -->
           <p id="trapShapeCatalogHint" class="flame-hint">
             Shape catalog: trap shapes here use the same bundled library as
-            Transforms → Shape → Emitter shape. Choosing None or a trap shape
+            Transforms → Add emitter shape. Choosing None or a trap shape
             re-enters Surface; size, position, mode and fade stay live.
           </p>
           <label
@@ -1820,7 +1823,7 @@
           <summary>Quality</summary>
           <div id="pointsQualityControls">
             <label class="select-label">
-              Points: <span id="numPointsLabel">100,000</span>
+              Point count: <span id="numPointsLabel">100,000</span>
               <input
                 type="range"
                 id="numPointsSlider"
@@ -1880,7 +1883,7 @@
               />
             </label>
             <label class="select-label">
-              Detail (restarts render):
+              Resolution (restarts render):
               <span id="solidResolutionLabel">192³</span>
               <input
                 type="range"
