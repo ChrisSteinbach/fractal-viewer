@@ -77,7 +77,7 @@ export type BalloonPaletteSelection =
 
 /**
  * Every balloon palette choice in UI order. Single source of truth for the
- * mirrored Points/Flame/Surface selects and persistence validation.
+ * shared Balloon select and persistence validation.
  */
 export const BALLOON_PALETTE_IDS: readonly BalloonPaletteSelection[] = [
   BALLOON_PALETTE_INHERIT,

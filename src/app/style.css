@@ -1288,14 +1288,12 @@ summary.editor-group-title {
   cursor: pointer;
 }
 
-/* Fog tint row and the balloon tint rows (same position-axis-row shape, one
-   shared state pair seen from the Points and Surface sections): the
-   strength slider shares its row with the fixed-width swatch beside it, so
-   it needs to grow into the remaining space instead of fighting the swatch
-   under the global input[type="range"] 100%-width rule. */
+/* The Fog and shared Balloon tint rows use the same position-axis-row shape.
+   Each strength slider shares its row with the fixed-width swatch beside it,
+   so it needs to grow into the remaining space instead of fighting the
+   swatch under the global input[type="range"] 100%-width rule. */
 #fogTintRow input[type="range"],
-#balloonTintRow input[type="range"],
-#surfaceBalloonTintRow input[type="range"] {
+#balloonTintRow input[type="range"] {
   flex: 1;
   min-width: 0;
 }

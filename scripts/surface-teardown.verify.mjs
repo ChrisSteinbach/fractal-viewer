@@ -37,7 +37,7 @@
  *     readily as any slider position, and the CPU sweep in
  *     scripts/fold-radii-seam.harness.ts finds nothing wrong with the
  *     estimator anywhere the sliders can reach.
- *   - The FLOOR is not special. --toggleId=surfaceBalloonCheckbox kills it
+ *   - The FLOOR is not special. --toggleId=balloonEchoCheckbox kills it
  *     the same way, and so does simply LEAVING Surface mode. Floor and
  *     Balloon are just the only two document edits reachable from INSIDE a
  *     surface session — the Transforms section carrying the radius sliders is

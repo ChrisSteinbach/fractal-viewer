@@ -98,7 +98,6 @@ import {
 import {
   BALLOON_CENTRE_REFUSAL_REASON,
   resolvePanelApplicability,
-  type PanelApplicability,
   type PanelContext,
   type SurfaceSessionKind,
 } from "./panel-applicability";
@@ -387,7 +386,7 @@ export interface UiHandlers {
    * recolor, an added stop, or a removed stop; `stops` is the editor's
    * whole new list, parsed and ready for `setCustomPaletteStops`. */
   onCustomPaletteStops: (stops: RgbStop[]) => void;
-  /** A mirrored balloon gradient editor changed its whole independent stop
+  /** The Balloon gradient editor changed its whole independent stop
    * list. This must never route through {@link onCustomPaletteStops}: the
    * primary and balloon Custom slots are separate document content. */
   onBalloonCustomPaletteStops: (stops: RgbStop[]) => void;
@@ -1869,9 +1868,12 @@ export class Ui {
   private readonly modalStack: ModalStackEntry[] = [];
 
   private readonly glowBrightnessRow: HTMLElement;
-  // The balloon echo's dependent rows wait for state.balloonEcho. The
-  // checkbox input itself is table-driven (see SCALAR_CONTROLS);
-  // balloonInflateButton's click is bespoke, like watchBuildBtn.
+  // One shared Balloon presentation. The checkbox and scalar inputs are
+  // table-driven (see SCALAR_CONTROLS); the palette remains authorable while
+  // off, while the radius/tint rows are dependent detail.
+  private readonly balloonEchoCheckbox: HTMLInputElement;
+  private readonly balloonNote: HTMLElement;
+  private readonly balloonPaletteSelect: HTMLSelectElement;
   private readonly balloonRadiusRow: HTMLElement;
   private readonly balloonInflateButton: HTMLButtonElement;
   /** The balloon echo's tint picker — same shape as fogTintColorInput
@@ -1947,7 +1949,7 @@ export class Ui {
   private readonly solidSections: readonly HTMLDetailsElement[];
   private readonly surfaceLookSection: HTMLDetailsElement;
   /** The shared Atmosphere section's two mode-sensitive subsets: Points-only
-   * depth/balloon effects, and fog (all modes except Flame). */
+   * depth effects, and fog (all modes except Flame). */
   private readonly pointsAtmosphereControls: HTMLElement;
   private readonly fogControls: HTMLElement;
   /** The render-mode segmented control's three buttons, keyed by the mode
@@ -2007,29 +2009,11 @@ export class Ui {
   private readonly flameSupersampleNote: HTMLElement;
   private readonly flameBackendNote: HTMLElement;
   private readonly flameProgress: HTMLElement;
-  // Flame's third view of the shared balloon fields. The scalar inputs are
-  // table-driven; the Inflate button and tint-color picker share the two
-  // bespoke handlers used by their Points/Surface siblings (the handler
-  // itself gives Flame its one-restart rest-pose behavior).
-  private readonly flameBalloonRadiusRow: HTMLElement;
-  private readonly flameBalloonInflateButton: HTMLButtonElement;
-  private readonly flameBalloonTintRow: HTMLElement;
-  private readonly flameBalloonTintColorInput: HTMLInputElement;
-
   private readonly solidResolutionNote: HTMLElement;
   private readonly solidProgress: HTMLElement;
-  // Solid's view of the shared balloon fields. Its query-space remap is live,
-  // so the radius row and tint picker use the same bespoke handlers as Points
-  // and Surface without rebuilding the one accumulated voxel grid.
-  private readonly solidBalloonCheckbox: HTMLInputElement;
-  private readonly solidBalloonNote: HTMLElement;
-  private readonly solidBalloonRadiusRow: HTMLElement;
-  private readonly solidBalloonInflateButton: HTMLButtonElement;
-  private readonly solidBalloonTintRow: HTMLElement;
-  private readonly solidBalloonTintColorInput: HTMLInputElement;
   /** Whether the active Solid session's centre-density probe permits the
    * query-space echo. Session routing owns this transient result; it is not
-   * authored AppState and never changes the shared checkbox value. */
+   * authored AppState and never changes the shared Balloon editor's value. */
   private solidBalloonAvailable = true;
 
   // The surface render's mode-gated status block contains its hint and trace
@@ -2058,17 +2042,6 @@ export class Ui {
   // speed shapes only that source's orbit-trap blend.
   private readonly surfacePaletteRow: HTMLElement;
   private readonly surfaceColorSpeedRow: HTMLElement;
-  // The surface balloon rows, 3D and 4D alike. A FORWARD-ORBIT session in
-  // either dimension REFUSES the authored top-level capability visibly: the
-  // checkbox stays checked but disables beside its reason, while dependent
-  // rows hide. A 4D IFS session balloons exactly like a 3D one, so the old
-  // fourDSurfaceLive gate is gone. The radius row additionally waits for the
-  // balloon itself, mirroring the explorer pair. Its own Inflate button binds
-  // the SAME handler as the Points and Flame buttons — one shared command
-  // with mode-specific motion. See docs/panel-ia.md.
-  private readonly surfaceBalloonRow: HTMLElement;
-  private readonly surfaceBalloonCheckbox: HTMLInputElement;
-  private readonly surfaceBalloonNote: HTMLElement;
   /** Condensation level-band controls, visible only for an emitter-backed
    * IFS Surface session. */
   private readonly surfaceCondensationRow: HTMLElement;
@@ -2085,18 +2058,6 @@ export class Ui {
   private readonly surfaceTrapGeometryRow: HTMLElement;
   private readonly surfaceTrapGeometryLevels: HTMLElement;
   private readonly surfaceTrapGeometryCustom: HTMLElement;
-  /** Palette/editor container: eligible whenever the surface balloon itself
-   * is eligible, even while the balloon is currently off. */
-  private readonly surfaceBalloonPaletteRow: HTMLElement;
-  private readonly surfaceBalloonRadiusRow: HTMLElement;
-  private readonly surfaceBalloonInflateButton: HTMLButtonElement;
-  /** The surface balloon's tint picker — same state field as the Points and
-   * Flame inputs above (one balloon, three renderers). Hidden
-   * exactly like surfaceBalloonRadiusRow: under a forward-orbit session in
-   * either dimension, or while the balloon itself is off. */
-  private readonly surfaceBalloonTintRow: HTMLElement;
-  private readonly surfaceBalloonTintColorInput: HTMLInputElement;
-
   // The floor checkbox is valid for every Surface session kind and dimension.
   // These three rows are its dependent settings and hide while it is off.
   private readonly surfaceGroundPlaneDependentRows: readonly HTMLElement[];
@@ -2166,7 +2127,7 @@ export class Ui {
    */
   private surfaceSessionKind: SurfaceSessionKind | null = null;
   /** Last document context reflected by updateLabels. Session routing can
-   * update Surface's duplicated Balloon row immediately between refreshes. */
+   * update the shared Balloon editor immediately between refreshes. */
   private panelContext: PanelContext = {
     renderMode: "points",
     dimension: "flat",
@@ -2254,17 +2215,14 @@ export class Ui {
     }
   >;
 
-  /** Three mirrored views of the balloon's independent Custom slot. */
-  private readonly balloonCustomPaletteEditors: Record<
-    "points" | "flame" | "surface",
-    {
-      row: HTMLElement;
-      strip: HTMLElement;
-      stops: HTMLElement;
-      add: HTMLButtonElement;
-      remove: HTMLButtonElement;
-    }
-  >;
+  /** The Balloon's one Custom editor, backed by its independent stop slot. */
+  private readonly balloonCustomPaletteEditor: {
+    row: HTMLElement;
+    strip: HTMLElement;
+    stops: HTMLElement;
+    add: HTMLButtonElement;
+    remove: HTMLButtonElement;
+  };
 
   /** Per-mode fallback for the accordion when the previously open section is
    * no longer applicable after a renderer switch. A still-visible open
@@ -2473,6 +2431,9 @@ export class Ui {
     // offers the action, and takes it out again for one that does not.
     this.exportDeliverBtn.remove();
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
+    this.balloonEchoCheckbox = this.byId("balloonEchoCheckbox");
+    this.balloonNote = this.byId("balloonNote");
+    this.balloonPaletteSelect = this.byId("balloonPalette");
     this.balloonRadiusRow = this.byId("balloonRadiusRow");
     this.balloonInflateButton = this.byId("balloonInflateButton");
     this.balloonTintRow = this.byId("balloonTintRow");
@@ -2596,23 +2557,10 @@ export class Ui {
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
     this.flameProgress = this.byId("flameProgress");
-    this.flameBalloonRadiusRow = this.byId("flameBalloonRadiusRow");
-    this.flameBalloonInflateButton = this.byId("flameBalloonInflateButton");
-    this.flameBalloonTintRow = this.byId("flameBalloonTintRow");
-    this.flameBalloonTintColorInput = this.byId("flameBalloonTintColor");
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
-    this.solidBalloonCheckbox = this.byId("solidBalloonCheckbox");
-    this.solidBalloonNote = this.byId("solidBalloonNote");
-    this.solidBalloonRadiusRow = this.byId("solidBalloonRadiusRow");
-    this.solidBalloonInflateButton = this.byId("solidBalloonInflateButton");
-    this.solidBalloonTintRow = this.byId("solidBalloonTintRow");
-    this.solidBalloonTintColorInput = this.byId("solidBalloonTintColor");
     this.surfacePaletteRow = this.byId("surfacePaletteRow");
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
-    this.surfaceBalloonRow = this.byId("surfaceBalloonRow");
-    this.surfaceBalloonCheckbox = this.byId("surfaceBalloonCheckbox");
-    this.surfaceBalloonNote = this.byId("surfaceBalloonNote");
     this.surfaceCondensationRow = this.byId("surfaceCondensationRow");
     this.surfaceCondensationCustom = this.byId("surfaceCondensationCustom");
     this.surfaceTrapRow = this.byId("surfaceTrapRow");
@@ -2621,11 +2569,6 @@ export class Ui {
     this.surfaceTrapGeometryRow = this.byId("surfaceTrapGeometryRow");
     this.surfaceTrapGeometryLevels = this.byId("surfaceTrapGeometryLevels");
     this.surfaceTrapGeometryCustom = this.byId("surfaceTrapGeometryCustom");
-    this.surfaceBalloonPaletteRow = this.byId("surfaceBalloonPaletteRow");
-    this.surfaceBalloonRadiusRow = this.byId("surfaceBalloonRadiusRow");
-    this.surfaceBalloonInflateButton = this.byId("surfaceBalloonInflateButton");
-    this.surfaceBalloonTintRow = this.byId("surfaceBalloonTintRow");
-    this.surfaceBalloonTintColorInput = this.byId("surfaceBalloonTintColor");
     this.surfaceGroundPlaneDependentRows = [
       this.byId("surfaceFloorPatternRow"),
       this.byId("surfaceFloorTileScaleRow"),
@@ -2706,28 +2649,12 @@ export class Ui {
         remove: this.byId("rampCustomPaletteRemove"),
       },
     };
-    this.balloonCustomPaletteEditors = {
-      points: {
-        row: this.byId("balloonCustomPaletteRow"),
-        strip: this.byId("balloonCustomPaletteStrip"),
-        stops: this.byId("balloonCustomPaletteStops"),
-        add: this.byId("balloonCustomPaletteAdd"),
-        remove: this.byId("balloonCustomPaletteRemove"),
-      },
-      flame: {
-        row: this.byId("flameBalloonCustomPaletteRow"),
-        strip: this.byId("flameBalloonCustomPaletteStrip"),
-        stops: this.byId("flameBalloonCustomPaletteStops"),
-        add: this.byId("flameBalloonCustomPaletteAdd"),
-        remove: this.byId("flameBalloonCustomPaletteRemove"),
-      },
-      surface: {
-        row: this.byId("surfaceBalloonCustomPaletteRow"),
-        strip: this.byId("surfaceBalloonCustomPaletteStrip"),
-        stops: this.byId("surfaceBalloonCustomPaletteStops"),
-        add: this.byId("surfaceBalloonCustomPaletteAdd"),
-        remove: this.byId("surfaceBalloonCustomPaletteRemove"),
-      },
+    this.balloonCustomPaletteEditor = {
+      row: this.byId("balloonCustomPaletteRow"),
+      strip: this.byId("balloonCustomPaletteStrip"),
+      stops: this.byId("balloonCustomPaletteStops"),
+      add: this.byId("balloonCustomPaletteAdd"),
+      remove: this.byId("balloonCustomPaletteRemove"),
     };
 
     // Panel accordion: the sections are exclusive-open <details
@@ -3017,20 +2944,9 @@ export class Ui {
     this.exportDeliverBtn.addEventListener("click", () =>
       handlers.onExportDeliverEarly(),
     );
-    // The balloon echo's "Inflate" replay — a bespoke button like
-    // watchBuildBtn above, not a table-driven scalar control. The surface
-    // Flame, Solid, and Surface each expose their own Inflate button through
-    // the exact SAME handler — one radius field and four mode-aware entry points.
+    // The shared balloon echo's one "Inflate" command. The app handler reads
+    // the active renderer to choose live motion or Flame's restart path.
     this.balloonInflateButton.addEventListener("click", () =>
-      handlers.onBalloonInflate(),
-    );
-    this.flameBalloonInflateButton.addEventListener("click", () =>
-      handlers.onBalloonInflate(),
-    );
-    this.solidBalloonInflateButton.addEventListener("click", () =>
-      handlers.onBalloonInflate(),
-    );
-    this.surfaceBalloonInflateButton.addEventListener("click", () =>
       handlers.onBalloonInflate(),
     );
     // Every table-driven scalar control (see control-spec.ts) shares one
@@ -3172,29 +3088,23 @@ export class Ui {
         handlers.onCustomPaletteStops(stops.slice(0, -1));
       });
     }
-    // Balloon Custom has the same editor mechanics but an intentionally
-    // separate callback and document slot. Each mirrored editor reports the
-    // whole balloon stop list; none can mutate the primary Custom gradient.
-    for (const kind of ["points", "flame", "surface"] as const) {
-      const editor = this.balloonCustomPaletteEditors[kind];
-      editor.stops.addEventListener("input", () => {
-        const stops = this.readCustomPaletteStops(editor.stops);
-        if (stops) handlers.onBalloonCustomPaletteStops(stops);
-      });
-      editor.add.addEventListener("click", () => {
-        const stops = this.readCustomPaletteStops(editor.stops);
-        if (!stops || stops.length >= MAX_CUSTOM_PALETTE_STOPS) return;
-        handlers.onBalloonCustomPaletteStops([
-          ...stops,
-          stops[stops.length - 1],
-        ]);
-      });
-      editor.remove.addEventListener("click", () => {
-        const stops = this.readCustomPaletteStops(editor.stops);
-        if (!stops || stops.length <= MIN_CUSTOM_PALETTE_STOPS) return;
-        handlers.onBalloonCustomPaletteStops(stops.slice(0, -1));
-      });
-    }
+    // Balloon Custom has the same mechanics but an intentionally separate
+    // callback and document slot from the primary Custom gradient.
+    const balloonEditor = this.balloonCustomPaletteEditor;
+    balloonEditor.stops.addEventListener("input", () => {
+      const stops = this.readCustomPaletteStops(balloonEditor.stops);
+      if (stops) handlers.onBalloonCustomPaletteStops(stops);
+    });
+    balloonEditor.add.addEventListener("click", () => {
+      const stops = this.readCustomPaletteStops(balloonEditor.stops);
+      if (!stops || stops.length >= MAX_CUSTOM_PALETTE_STOPS) return;
+      handlers.onBalloonCustomPaletteStops([...stops, stops[stops.length - 1]]);
+    });
+    balloonEditor.remove.addEventListener("click", () => {
+      const stops = this.readCustomPaletteStops(balloonEditor.stops);
+      if (!stops || stops.length <= MIN_CUSTOM_PALETTE_STOPS) return;
+      handlers.onBalloonCustomPaletteStops(stops.slice(0, -1));
+    });
     // Position axis colors: three pickers report as one triple — the app
     // state is the triple, so a drag in any one picker re-reads all three,
     // exactly like the gradient editor reads its whole stop list.
@@ -3219,23 +3129,10 @@ export class Ui {
     this.fogTintColorInput.addEventListener("input", () => {
       handlers.onFogTint(this.fogTintColorInput.value);
     });
-    // Balloon tint color: ONE handler serves all four pickers — the Points,
-    // Flame, Solid, and Surface sections expose the same state field in their own
-    // render modes (fogTintColorInput's precedent just above, tripled).
-    // Each row also hosts its own table-driven strength slider, whose
-    // "input" events must not re-trigger this handler — so, like
-    // fogTintColorInput, these bind to the picker itself, not the row.
+    // The shared Balloon row hosts a bespoke color picker beside the
+    // table-driven strength slider, so bind to the picker rather than the row.
     this.balloonTintColorInput.addEventListener("input", () => {
       handlers.onBalloonTint(this.balloonTintColorInput.value);
-    });
-    this.flameBalloonTintColorInput.addEventListener("input", () => {
-      handlers.onBalloonTint(this.flameBalloonTintColorInput.value);
-    });
-    this.solidBalloonTintColorInput.addEventListener("input", () => {
-      handlers.onBalloonTint(this.solidBalloonTintColorInput.value);
-    });
-    this.surfaceBalloonTintColorInput.addEventListener("input", () => {
-      handlers.onBalloonTint(this.surfaceBalloonTintColorInput.value);
     });
   }
 
@@ -3363,14 +3260,12 @@ export class Ui {
   setSurfaceSessionKind(kind: SurfaceSessionKind | null): void {
     this.surfaceSessionKind = kind;
     this.panelContext = { ...this.panelContext, surfaceKind: kind };
-    this.syncSurfaceBalloonRows(
-      resolvePanelApplicability("balloon", {
-        ...this.panelContext,
-        // A non-null kind arrives from an active Surface session. Use that
-        // renderer immediately; updateLabels will reconcile the full context.
-        renderMode: kind === null ? this.panelContext.renderMode : "surface",
-      }),
-    );
+    this.syncBalloonRows({
+      ...this.panelContext,
+      // A non-null kind arrives from an active Surface session. Use that
+      // renderer immediately; updateLabels will reconcile the full context.
+      renderMode: kind === null ? this.panelContext.renderMode : "surface",
+    });
   }
 
   /** Apply the active Solid session's centre-density refusal result. The
@@ -3378,40 +3273,40 @@ export class Ui {
    * eligible system restores the user's intent rather than erasing it. */
   setSolidBalloonAvailable(available: boolean): void {
     this.solidBalloonAvailable = available;
-    this.syncSolidBalloonRows();
+    this.syncBalloonRows();
   }
 
-  /** Reconcile the transient Solid eligibility result with the shared
-   * checkbox value most recently reflected by updateLabels. */
-  private syncSolidBalloonRows(): void {
-    const refused = !this.solidBalloonAvailable;
-    const showDependent = !refused && this.solidBalloonCheckbox.checked;
-    this.solidBalloonCheckbox.disabled = refused;
-    this.solidBalloonRadiusRow.classList.toggle("hidden", !showDependent);
-    this.solidBalloonTintRow.classList.toggle("hidden", !showDependent);
-    this.solidBalloonNote.textContent = refused
+  /** Apply the active consumer's refusal to the one authored presentation.
+   * Authored values survive disabled Surface/Solid sessions; palette remains
+   * pre-authorable while merely off, and size/tint are dependent detail. */
+  private syncBalloonRows(context: PanelContext = this.panelContext): void {
+    const applicability = resolvePanelApplicability("balloon", context);
+    const solidRefused =
+      context.renderMode === "solid" && !this.solidBalloonAvailable;
+    const refused = applicability.kind === "disabled" || solidRefused;
+    const reason = solidRefused
       ? BALLOON_CENTRE_REFUSAL_REASON
-      : "";
-    this.solidBalloonNote.classList.toggle("hidden", !refused);
-  }
+      : applicability.kind === "disabled"
+        ? applicability.reason
+        : "";
+    const showDependent = !refused && this.balloonEchoCheckbox.checked;
 
-  /** Apply Surface's forward-orbit refusal without erasing the shared authored
-   * flag. The checkbox remains discoverable; palette/radius/tint are dependent
-   * controls and hide until the capability is usable again. */
-  private syncSurfaceBalloonRows(applicability: PanelApplicability): void {
-    const enabled = applicability.kind === "enabled";
-    const refused = applicability.kind === "disabled";
-    const showDependent = enabled && this.surfaceBalloonCheckbox.checked;
-    this.surfaceBalloonRow.classList.toggle(
-      "hidden",
-      applicability.kind === "hidden",
+    this.balloonEchoCheckbox.disabled = refused;
+    this.balloonPaletteSelect.disabled = refused;
+    this.balloonRadiusRow.classList.toggle("hidden", !showDependent);
+    this.balloonTintRow.classList.toggle("hidden", !showDependent);
+    this.balloonNote.textContent = reason;
+    this.balloonNote.classList.toggle("hidden", !refused);
+
+    const editor = this.balloonCustomPaletteEditor;
+    const stopInputs = Array.from(
+      editor.stops.querySelectorAll<HTMLInputElement>('input[type="color"]'),
     );
-    this.surfaceBalloonCheckbox.disabled = refused;
-    this.surfaceBalloonPaletteRow.classList.toggle("hidden", !enabled);
-    this.surfaceBalloonRadiusRow.classList.toggle("hidden", !showDependent);
-    this.surfaceBalloonTintRow.classList.toggle("hidden", !showDependent);
-    this.surfaceBalloonNote.textContent = refused ? applicability.reason : "";
-    this.surfaceBalloonNote.classList.toggle("hidden", !refused);
+    for (const input of stopInputs) input.disabled = refused;
+    editor.add.disabled =
+      refused || stopInputs.length >= MAX_CUSTOM_PALETTE_STOPS;
+    editor.remove.disabled =
+      refused || stopInputs.length <= MIN_CUSTOM_PALETTE_STOPS;
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -3497,7 +3392,7 @@ export class Ui {
       if (spec.label && label) label.textContent = spec.label.text(state);
     }
     this.syncCustomPaletteEditors(state);
-    this.syncBalloonCustomPaletteEditors(state);
+    this.syncBalloonCustomPaletteEditor(state);
 
     const effectiveOrder = effectiveSymmetryOrder(
       state.symmetry.order,
@@ -3597,15 +3492,9 @@ export class Ui {
     for (const section of this.flameSections) {
       section.classList.toggle("hidden", state.renderMode !== "flame");
     }
-    this.flameBalloonRadiusRow.classList.toggle("hidden", !state.balloonEcho);
-    this.flameBalloonTintRow.classList.toggle("hidden", !state.balloonEcho);
     for (const section of this.solidSections) {
       section.classList.toggle("hidden", state.renderMode !== "solid");
     }
-    // Solid's query-space echo is dimension-independent, but a session whose
-    // centre-density probe refuses it temporarily disables the checkbox and
-    // hides the dependent rows without mutating the shared authored flag.
-    this.syncSolidBalloonRows();
     const surfaceInspectorApplicability = resolvePanelApplicability(
       "surfaceInspector",
       panelContext,
@@ -3632,13 +3521,10 @@ export class Ui {
       "hidden",
       state.surface.colorSource !== "palette",
     );
-    // Forward-orbit Surface sessions preserve the authored balloon while
-    // visibly refusing it; eligible sessions show only the dependent rows
-    // whose parent state makes them meaningful. The 4D dimension gate is
-    // gone: a 4D IFS session balloons exactly like a 3D one.
-    this.syncSurfaceBalloonRows(
-      resolvePanelApplicability("balloon", panelContext),
-    );
+    // One shared Balloon presentation stays in place across renderer and
+    // dimension changes. Surface route and Solid centre refusals disable that
+    // authored editor in place without clearing its document state.
+    this.syncBalloonRows(panelContext);
     for (const row of this.surfaceGroundPlaneDependentRows) {
       row.classList.toggle("hidden", !state.groundPlane);
     }
@@ -3756,12 +3642,6 @@ export class Ui {
       "hidden",
       nonFlat || state.renderStyle !== "glow",
     );
-    // The balloon echo follows the projected cloud in either dimension. Its
-    // radius slider + Inflate button wait only for the echo itself to be on.
-    this.balloonRadiusRow.classList.toggle("hidden", !state.balloonEcho);
-    // The balloon tint waits for the echo itself, exactly like
-    // balloonRadiusRow above — same gate, same reason.
-    this.balloonTintRow.classList.toggle("hidden", !state.balloonEcho);
     // The ramp palette only means anything for the modes that ARE a 1-D ramp:
     // the flat view's height/radius color modes (narrower than the contrast
     // slider's gating, see color.ts's colorModeUsesRampPalette) and the 4D
@@ -3832,21 +3712,10 @@ export class Ui {
     if (this.fogTintColorInput.value !== state.fogTint) {
       this.fogTintColorInput.value = state.fogTint;
     }
-    // The balloon tint pickers: synced the same only-write-on-change way as
-    // fogTintColorInput just above, to ALL inputs — the Points, Flame, Solid,
-    // and Surface sections show the SAME state.balloonTint through four DOM
-    // elements, so a gallery load or undo must move whichever are stale.
+    // The shared Balloon tint picker follows document loads and undo without
+    // mode-specific mirrors.
     if (this.balloonTintColorInput.value !== state.balloonTint) {
       this.balloonTintColorInput.value = state.balloonTint;
-    }
-    if (this.flameBalloonTintColorInput.value !== state.balloonTint) {
-      this.flameBalloonTintColorInput.value = state.balloonTint;
-    }
-    if (this.solidBalloonTintColorInput.value !== state.balloonTint) {
-      this.solidBalloonTintColorInput.value = state.balloonTint;
-    }
-    if (this.surfaceBalloonTintColorInput.value !== state.balloonTint) {
-      this.surfaceBalloonTintColorInput.value = state.balloonTint;
     }
     // Accordion applicability/restore runs after every section-level gate
     // above. Close anything now hidden, even when applicability changed
@@ -4064,44 +3933,42 @@ export class Ui {
   }
 
   /**
-   * Sync the three balloon-only gradient editors. Their visibility follows
-   * only the shared balloon palette selection — never `balloonEcho` — so a
-   * Custom look can be authored while the balloon is off. Surface eligibility
-   * is an outer-container gate applied in {@link updateLabels}.
+   * Sync the Balloon-only gradient editor. Its visibility follows only the
+   * shared palette selection — never `balloonEcho` — so a Custom look can be
+   * authored while the Balloon is off.
    */
-  private syncBalloonCustomPaletteEditors(state: AppState): void {
+  private syncBalloonCustomPaletteEditor(state: AppState): void {
     const isCustom = state.balloonPaletteId === CUSTOM_PALETTE_ID;
-    for (const kind of ["points", "flame", "surface"] as const) {
-      const editor = this.balloonCustomPaletteEditors[kind];
-      editor.row.classList.toggle("hidden", !isCustom);
-      if (!isCustom) continue;
+    const editor = this.balloonCustomPaletteEditor;
+    editor.row.classList.toggle("hidden", !isCustom);
+    if (!isCustom) return;
 
-      // The selection check above excludes resolveBalloonPalette's null arm.
-      const resolved = resolveBalloonPalette(state) as CustomPalette;
-      const { stops } = resolved;
-      const inputs = Array.from(
-        editor.stops.querySelectorAll<HTMLInputElement>('input[type="color"]'),
-      );
-      if (inputs.length !== stops.length) {
-        editor.stops.replaceChildren();
-        stops.forEach((stop, i) => {
-          const input = this.doc.createElement("input");
-          input.type = "color";
-          input.value = rgbToHex(stop);
-          input.setAttribute("aria-label", `Balloon color stop ${i + 1}`);
-          editor.stops.appendChild(input);
-        });
-      } else {
-        inputs.forEach((input, i) => {
-          const hex = rgbToHex(stops[i]);
-          if (input.value !== hex) input.value = hex;
-        });
-      }
-
-      editor.strip.style.background = lutGradient(buildPaletteLUT(resolved)!);
-      editor.add.disabled = stops.length >= MAX_CUSTOM_PALETTE_STOPS;
-      editor.remove.disabled = stops.length <= MIN_CUSTOM_PALETTE_STOPS;
+    // The selection check above excludes resolveBalloonPalette's null arm.
+    const resolved = resolveBalloonPalette(state) as CustomPalette;
+    const { stops } = resolved;
+    const inputs = Array.from(
+      editor.stops.querySelectorAll<HTMLInputElement>('input[type="color"]'),
+    );
+    if (inputs.length !== stops.length) {
+      editor.stops.replaceChildren();
+      stops.forEach((stop, i) => {
+        const input = this.doc.createElement("input");
+        input.type = "color";
+        input.value = rgbToHex(stop);
+        input.setAttribute("aria-label", `Balloon color stop ${i + 1}`);
+        input.setAttribute("aria-describedby", "balloonTimingHint balloonNote");
+        editor.stops.appendChild(input);
+      });
+    } else {
+      inputs.forEach((input, i) => {
+        const hex = rgbToHex(stops[i]);
+        if (input.value !== hex) input.value = hex;
+      });
     }
+
+    editor.strip.style.background = lutGradient(buildPaletteLUT(resolved)!);
+    editor.add.disabled = stops.length >= MAX_CUSTOM_PALETTE_STOPS;
+    editor.remove.disabled = stops.length <= MIN_CUSTOM_PALETTE_STOPS;
   }
 
   setPointCount(count: number): void {

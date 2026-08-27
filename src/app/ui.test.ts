@@ -854,370 +854,147 @@ describe("Ui glow brightness slider", () => {
   });
 });
 
-describe("Ui balloon echo radius row", () => {
-  function balloonEchoRow(): HTMLElement {
-    return document.getElementById("balloonEchoRow") as HTMLElement;
-  }
+describe("Ui shared Balloon presentation", () => {
+  const checkbox = (): HTMLInputElement =>
+    document.getElementById("balloonEchoCheckbox") as HTMLInputElement;
+  const rowHidden = (id: string): boolean =>
+    (document.getElementById(id) as HTMLElement).classList.contains("hidden");
 
-  function balloonRadiusRow(): HTMLElement {
-    return document.getElementById("balloonRadiusRow") as HTMLElement;
-  }
+  it("renders exactly one canonical editor and no mode mirrors", () => {
+    new Ui(document);
+    expect(document.querySelectorAll("#balloonSection")).toHaveLength(1);
+    expect(document.querySelectorAll("#balloonEchoCheckbox")).toHaveLength(1);
+    expect(document.querySelectorAll("#balloonPalette")).toHaveLength(1);
+    expect(
+      document.querySelectorAll("#balloonCustomPaletteStops"),
+    ).toHaveLength(1);
+    for (const id of [
+      "flameBalloonCheckbox",
+      "solidBalloonCheckbox",
+      "surfaceBalloonCheckbox",
+    ]) {
+      expect(document.getElementById(id)).toBeNull();
+    }
+  });
 
-  it("is hidden while the balloon echo is off", () => {
+  it.each(["points", "flame", "solid", "surface"] as const)(
+    "keeps the same editor available in %s across both dimensions",
+    (renderMode) => {
+      const ui = new Ui(document);
+      if (renderMode === "surface") ui.setSurfaceSessionKind("ifs");
+      for (const transforms of [
+        initialState(true).transforms,
+        nonFlatTransforms(),
+      ]) {
+        ui.updateLabels({
+          ...initialState(true),
+          renderMode,
+          transforms,
+          balloonEcho: true,
+        });
+        expect(rowHidden("balloonSection")).toBe(false);
+        expect(rowHidden("balloonRadiusRow")).toBe(false);
+        expect(rowHidden("balloonTintRow")).toBe(false);
+      }
+    },
+  );
+
+  it("keeps palette pre-authorable while off and hides size/tint", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), balloonEcho: false });
-    expect(balloonRadiusRow().classList.contains("hidden")).toBe(true);
+    expect(
+      (document.getElementById("balloonPalette") as HTMLSelectElement).disabled,
+    ).toBe(false);
+    expect(rowHidden("balloonPaletteRow")).toBe(false);
+    expect(rowHidden("balloonRadiusRow")).toBe(true);
+    expect(rowHidden("balloonTintRow")).toBe(true);
   });
 
-  it("is shown while the balloon echo is on", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), balloonEcho: true });
-    expect(balloonRadiusRow().classList.contains("hidden")).toBe(false);
-  });
-
-  it("keeps the checkbox available for a non-flat system while the echo is off", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      transforms: nonFlatTransforms(),
-      balloonEcho: false,
-    });
-
-    expect(balloonEchoRow().classList.contains("hidden")).toBe(false);
-    expect(balloonRadiusRow().classList.contains("hidden")).toBe(true);
-  });
-
-  it("shows both balloon rows for a non-flat system while the echo is on", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      transforms: nonFlatTransforms(),
-      balloonEcho: true,
-    });
-
-    expect(balloonEchoRow().classList.contains("hidden")).toBe(false);
-    expect(balloonRadiusRow().classList.contains("hidden")).toBe(false);
-  });
-
-  it("fires onBalloonInflate when the Inflate button is clicked", () => {
+  it("binds exactly one Inflate event path", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-
     (
       document.getElementById("balloonInflateButton") as HTMLButtonElement
     ).click();
-
-    expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("Ui Flame balloon rows", () => {
-  function flameBalloonRow(): HTMLElement {
-    return document.getElementById("flameBalloonRow") as HTMLElement;
-  }
-  function flameBalloonRadiusRow(): HTMLElement {
-    return document.getElementById("flameBalloonRadiusRow") as HTMLElement;
-  }
-  function flameBalloonTintRow(): HTMLElement {
-    return document.getElementById("flameBalloonTintRow") as HTMLElement;
-  }
-
-  it("keeps the checkbox available and hides its dependent rows while the echo is off", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "flame" as const,
-      balloonEcho: false,
-    });
-
-    expect(flameBalloonRow().classList.contains("hidden")).toBe(false);
-    expect(flameBalloonRadiusRow().classList.contains("hidden")).toBe(true);
-    expect(flameBalloonTintRow().classList.contains("hidden")).toBe(true);
-  });
-
-  it("shows the radius and tint rows while the echo is on, including for a non-flat system", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "flame" as const,
-      transforms: nonFlatTransforms(),
-      balloonEcho: true,
-    });
-
-    expect(flameBalloonRow().classList.contains("hidden")).toBe(false);
-    expect(flameBalloonRadiusRow().classList.contains("hidden")).toBe(false);
-    expect(flameBalloonTintRow().classList.contains("hidden")).toBe(false);
-  });
-
-  it("fires onBalloonInflate when the Flame Inflate button is clicked", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-
-    (
-      document.getElementById("flameBalloonInflateButton") as HTMLButtonElement
-    ).click();
-
-    expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("Ui Solid balloon rows", () => {
-  function solidBalloonRow(): HTMLElement {
-    return document.getElementById("solidBalloonRow") as HTMLElement;
-  }
-  function solidBalloonRadiusRow(): HTMLElement {
-    return document.getElementById("solidBalloonRadiusRow") as HTMLElement;
-  }
-  function solidBalloonCheckbox(): HTMLInputElement {
-    return document.getElementById("solidBalloonCheckbox") as HTMLInputElement;
-  }
-  function solidBalloonNote(): HTMLElement {
-    return document.getElementById("solidBalloonNote") as HTMLElement;
-  }
-  function solidBalloonTintRow(): HTMLElement {
-    return document.getElementById("solidBalloonTintRow") as HTMLElement;
-  }
-
-  it("keeps the checkbox available and hides its dependent rows while the echo is off", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "solid" as const,
-      balloonEcho: false,
-    });
-
-    expect(solidBalloonRow().classList.contains("hidden")).toBe(false);
-    expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(true);
-    expect(solidBalloonTintRow().classList.contains("hidden")).toBe(true);
-  });
-
-  it("shows the radius and tint rows while the echo is on in both dimensions", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "solid" as const,
-      transforms: nonFlatTransforms(),
-      balloonEcho: true,
-    });
-
-    expect(solidBalloonRow().classList.contains("hidden")).toBe(false);
-    expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(false);
-    expect(solidBalloonTintRow().classList.contains("hidden")).toBe(false);
-  });
-
-  it("fires onBalloonInflate when the Solid Inflate button is clicked", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-
-    (
-      document.getElementById("solidBalloonInflateButton") as HTMLButtonElement
-    ).click();
-
     expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses the balloon transiently while preserving the checked authored state", () => {
+  it("preserves authored state through Solid refusal and recovery", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
-      renderMode: "solid" as const,
+      renderMode: "solid",
       balloonEcho: true,
     });
-
     ui.setSolidBalloonAvailable(false);
-
-    expect(solidBalloonRow().classList.contains("hidden")).toBe(false);
-    expect(solidBalloonCheckbox().checked).toBe(true);
-    expect(solidBalloonCheckbox().disabled).toBe(true);
-    expect(solidBalloonCheckbox().getAttribute("aria-describedby")).toBe(
-      "solidBalloonNote",
+    expect(checkbox().checked).toBe(true);
+    expect(checkbox().disabled).toBe(true);
+    expect(rowHidden("balloonRadiusRow")).toBe(true);
+    expect(document.getElementById("balloonNote")?.textContent).toContain(
+      "enclosing-ball centre",
     );
-    expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(true);
-    expect(solidBalloonTintRow().classList.contains("hidden")).toBe(true);
-    expect(solidBalloonNote().classList.contains("hidden")).toBe(false);
-    expect(solidBalloonNote().textContent).toBe(
-      "Balloon unavailable — this solid fills its enclosing-ball centre.",
-    );
-  });
-
-  it("keeps a refusal across state refreshes, then restores the checked rows when available", () => {
-    const ui = new Ui(document);
-    ui.setSolidBalloonAvailable(false);
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "solid" as const,
-      balloonEcho: true,
-    });
-
-    expect(solidBalloonCheckbox().disabled).toBe(true);
-    expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(true);
-    expect(solidBalloonTintRow().classList.contains("hidden")).toBe(true);
-
     ui.setSolidBalloonAvailable(true);
-
-    expect(solidBalloonCheckbox().checked).toBe(true);
-    expect(solidBalloonCheckbox().disabled).toBe(false);
-    expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(false);
-    expect(solidBalloonTintRow().classList.contains("hidden")).toBe(false);
-    expect(solidBalloonNote().classList.contains("hidden")).toBe(true);
-    expect(solidBalloonNote().textContent).toBe("");
-  });
-});
-
-describe("Ui surface balloon rows", () => {
-  function surfaceBalloonRow(): HTMLElement {
-    return document.getElementById("surfaceBalloonRow") as HTMLElement;
-  }
-  function surfaceBalloonCheckbox(): HTMLInputElement {
-    return document.getElementById(
-      "surfaceBalloonCheckbox",
-    ) as HTMLInputElement;
-  }
-  function surfaceBalloonNote(): HTMLElement {
-    return document.getElementById("surfaceBalloonNote") as HTMLElement;
-  }
-  function surfaceBalloonPaletteRow(): HTMLElement {
-    return document.getElementById("surfaceBalloonPaletteRow") as HTMLElement;
-  }
-  function surfaceBalloonRadiusRow(): HTMLElement {
-    return document.getElementById("surfaceBalloonRadiusRow") as HTMLElement;
-  }
-  function surfaceBalloonTintRow(): HTMLElement {
-    return document.getElementById("surfaceBalloonTintRow") as HTMLElement;
-  }
-
-  it("hides the radius row while the balloon is off", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "surface" as const,
-      balloonEcho: false,
-    });
-    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
-    expect(surfaceBalloonCheckbox().disabled).toBe(false);
-    expect(surfaceBalloonPaletteRow().classList.contains("hidden")).toBe(false);
-    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
-    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
-  });
-
-  it("shows the radius row while the balloon is on", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "surface" as const,
-      balloonEcho: true,
-    });
-    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
-  });
-
-  it("keeps both rows in a live 4D surface session — the balloon lifts to 4D", () => {
-    // The dimension gate is GONE: a 4D IFS session composes the balloon
-    // wrapper over its own core exactly as a 3D one does, so the only
-    // thing that hides these rows is a FORWARD-orbit session (below).
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "surface" as const,
-      transforms: nonFlatTransforms(),
-      balloonEcho: true,
-    });
-    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
-    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
-  });
-
-  it("keeps both rows for a non-flat system OUTSIDE surface mode", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      transforms: nonFlatTransforms(),
-      balloonEcho: true,
-    });
-    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
-    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
+    expect(checkbox().checked).toBe(true);
+    expect(checkbox().disabled).toBe(false);
+    expect(rowHidden("balloonRadiusRow")).toBe(false);
   });
 
   it.each(["escape", "bulb"] as const)(
-    "refuses the balloon accessibly while preserving authored state in a %s session",
+    "disables authored controls for Surface %s and recovers for IFS",
     (kind) => {
       const ui = new Ui(document);
       ui.setSurfaceSessionKind(kind);
       ui.updateLabels({
-        ...initialState(true),
-        renderMode: "surface" as const,
+        ...setBalloonPaletteId(initialState(true), "custom"),
+        renderMode: "surface",
         balloonEcho: true,
       });
-
-      expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
-      expect(surfaceBalloonCheckbox().checked).toBe(true);
-      expect(surfaceBalloonCheckbox().disabled).toBe(true);
-      expect(surfaceBalloonCheckbox().getAttribute("aria-describedby")).toBe(
-        "surfaceBalloonNote",
+      expect(checkbox().checked).toBe(true);
+      expect(checkbox().disabled).toBe(true);
+      expect(
+        (document.getElementById("balloonPalette") as HTMLSelectElement)
+          .disabled,
+      ).toBe(true);
+      expect(rowHidden("balloonPaletteRow")).toBe(false);
+      expect(rowHidden("balloonCustomPaletteRow")).toBe(false);
+      expect(
+        document.querySelector<HTMLInputElement>(
+          "#balloonCustomPaletteStops input",
+        )?.disabled,
+      ).toBe(true);
+      for (const id of [
+        "balloonPalette",
+        "balloonCustomPaletteAdd",
+        "balloonCustomPaletteRemove",
+      ]) {
+        const control = document.getElementById(id) as HTMLInputElement;
+        expect(control.disabled).toBe(true);
+        expect(control.getAttribute("aria-describedby")).toContain(
+          "balloonNote",
+        );
+      }
+      expect(
+        document
+          .querySelector<HTMLInputElement>("#balloonCustomPaletteStops input")
+          ?.getAttribute("aria-describedby"),
+      ).toContain("balloonNote");
+      expect(rowHidden("balloonRadiusRow")).toBe(true);
+      expect(checkbox().getAttribute("aria-describedby")).toContain(
+        "balloonNote",
       );
-      expect(surfaceBalloonNote().getAttribute("role")).toBe("status");
-      expect(surfaceBalloonNote().getAttribute("aria-live")).toBe("polite");
-      expect(surfaceBalloonNote().classList.contains("hidden")).toBe(false);
-      expect(surfaceBalloonNote().textContent).toBe(
-        "Balloon unavailable — this solid fills its enclosing-ball centre.",
-      );
-      expect(surfaceBalloonPaletteRow().classList.contains("hidden")).toBe(
-        true,
-      );
-      expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
-      expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
+      ui.setSurfaceSessionKind("ifs");
+      expect(checkbox().disabled).toBe(false);
+      expect(rowHidden("balloonRadiusRow")).toBe(false);
     },
   );
-
-  it("keeps a refusal across refreshes, then restores authored rows for IFS", () => {
-    const ui = new Ui(document);
-    ui.setSurfaceSessionKind("escape");
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "surface" as const,
-      balloonEcho: true,
-    });
-
-    ui.updateLabels({
-      ...initialState(true),
-      renderMode: "surface" as const,
-      balloonEcho: true,
-    });
-    expect(surfaceBalloonCheckbox().checked).toBe(true);
-    expect(surfaceBalloonCheckbox().disabled).toBe(true);
-
-    ui.setSurfaceSessionKind("ifs");
-    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
-    expect(surfaceBalloonCheckbox().checked).toBe(true);
-    expect(surfaceBalloonCheckbox().disabled).toBe(false);
-    expect(surfaceBalloonPaletteRow().classList.contains("hidden")).toBe(false);
-    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
-    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(false);
-    expect(surfaceBalloonNote().classList.contains("hidden")).toBe(true);
-    expect(surfaceBalloonNote().textContent).toBe("");
-  });
-
-  it("fires onBalloonInflate when the surface Inflate button is clicked", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-
-    (
-      document.getElementById(
-        "surfaceBalloonInflateButton",
-      ) as HTMLButtonElement
-    ).click();
-
-    expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("Ui three-axis panel applicability", () => {
   const hidden = (id: string): boolean =>
     (document.getElementById(id) as HTMLElement).classList.contains("hidden");
   const balloon = (): HTMLInputElement =>
-    document.getElementById("surfaceBalloonCheckbox") as HTMLInputElement;
+    document.getElementById("balloonEchoCheckbox") as HTMLInputElement;
   const transformsFor = (dimension: "flat" | "nonFlat"): Transform[] =>
     gearworks().map((transform, index) =>
       dimension === "nonFlat" && index === 0
@@ -1516,11 +1293,7 @@ describe("Ui shape-trap geometry", () => {
 });
 
 describe("Ui balloon palette", () => {
-  const selectIds = [
-    "balloonPalette",
-    "flameBalloonPalette",
-    "surfaceBalloonPalette",
-  ] as const;
+  const selectIds = ["balloonPalette"] as const;
 
   it.each(selectIds)(
     "%s offers exactly the shared balloon vocabulary in order",
@@ -1533,7 +1306,7 @@ describe("Ui balloon palette", () => {
     },
   );
 
-  it("reflects one state selection into all three selects", () => {
+  it("reflects one state selection into the canonical select", () => {
     const ui = new Ui(document);
     ui.updateLabels(setBalloonPaletteId(initialState(true), "aurora"));
 
@@ -1556,7 +1329,7 @@ describe("Ui balloon palette", () => {
     expect(current().balloonPaletteId).toBe("lagoon");
   });
 
-  it("keeps every eligible palette row visible while the balloon is off", () => {
+  it("keeps the palette row visible while Balloon is off", () => {
     const ui = new Ui(document);
     ui.setSurfaceSessionKind("ifs");
     ui.updateLabels({ ...initialState(true), balloonEcho: false });
@@ -1566,20 +1339,10 @@ describe("Ui balloon palette", () => {
         .getElementById("balloonPaletteRow")
         ?.classList.contains("hidden"),
     ).toBe(false);
-    expect(
-      document
-        .getElementById("flameBalloonPaletteRow")
-        ?.classList.contains("hidden"),
-    ).toBe(false);
-    expect(
-      document
-        .getElementById("surfaceBalloonPaletteRow")
-        ?.classList.contains("hidden"),
-    ).toBe(false);
   });
 
   it.each(["escape", "bulb"] as const)(
-    "hides the Surface palette/editor container for an ineligible %s session",
+    "keeps but disables the authored palette for a refused Surface %s session",
     (kind) => {
       const ui = new Ui(document);
       ui.setSurfaceSessionKind(kind);
@@ -1591,19 +1354,19 @@ describe("Ui balloon palette", () => {
 
       expect(
         document
-          .getElementById("surfaceBalloonPaletteRow")
+          .getElementById("balloonPaletteRow")
           ?.classList.contains("hidden"),
+      ).toBe(false);
+      expect(
+        (document.getElementById("balloonPalette") as HTMLSelectElement)
+          .disabled,
       ).toBe(true);
     },
   );
 });
 
 describe("balloon custom palette editors", () => {
-  const editors = [
-    ["points", "balloonCustomPalette"],
-    ["flame", "flameBalloonCustomPalette"],
-    ["surface", "surfaceBalloonCustomPalette"],
-  ] as const;
+  const editors = [["shared", "balloonCustomPalette"]] as const;
 
   function authoredBalloonState(): AppState {
     return setBalloonCustomPaletteStops(
@@ -1615,7 +1378,7 @@ describe("balloon custom palette editors", () => {
     );
   }
 
-  it("shows and mirrors all three editors while Custom is selected, even with balloon off", () => {
+  it("shows one editor while Custom is selected, even with Balloon off", () => {
     const ui = new Ui(document);
     const state = authoredBalloonState();
     expect(state.balloonEcho).toBe(false);
@@ -1654,7 +1417,7 @@ describe("balloon custom palette editors", () => {
     ).map((input) => input.value);
     const balloon = Array.from(
       document.querySelectorAll<HTMLInputElement>(
-        "#flameBalloonCustomPaletteStops input[type='color']",
+        "#balloonCustomPaletteStops input[type='color']",
       ),
     ).map((input) => input.value);
     expect(primary).toEqual(["#00ff00", "#ffff00"]);
@@ -1698,7 +1461,7 @@ describe("balloon custom palette editors", () => {
     expect(handlers.onCustomPaletteStops).not.toHaveBeenCalled();
   });
 
-  it("hides all three editors when a built-in is selected", () => {
+  it("hides the editor when a built-in is selected", () => {
     const ui = new Ui(document);
     ui.updateLabels(setBalloonPaletteId(authoredBalloonState(), "ember"));
 
@@ -1714,20 +1477,17 @@ describe("Ui balloon tint", () => {
   function balloonTintRow(): HTMLElement {
     return document.getElementById("balloonTintRow") as HTMLElement;
   }
-  function surfaceBalloonTintRow(): HTMLElement {
-    return document.getElementById("surfaceBalloonTintRow") as HTMLElement;
-  }
   function el(id: string): HTMLInputElement {
     return document.getElementById(id) as HTMLInputElement;
   }
 
-  it("hides the Points tint row while the balloon echo is off", () => {
+  it("hides the dependent tint row while Balloon is off", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), balloonEcho: false });
     expect(balloonTintRow().classList.contains("hidden")).toBe(true);
   });
 
-  it("shows the Points tint row while the balloon echo is on", () => {
+  it("shows the dependent tint row while Balloon is on", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), balloonEcho: true });
     expect(balloonTintRow().classList.contains("hidden")).toBe(false);
@@ -1740,7 +1500,7 @@ describe("Ui balloon tint", () => {
       renderMode: "surface" as const,
       balloonEcho: false,
     });
-    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
+    expect(balloonTintRow().classList.contains("hidden")).toBe(true);
   });
 
   it("shows the Surface tint row while the balloon is on", () => {
@@ -1750,13 +1510,12 @@ describe("Ui balloon tint", () => {
       renderMode: "surface" as const,
       balloonEcho: true,
     });
-    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(false);
+    expect(balloonTintRow().classList.contains("hidden")).toBe(false);
   });
 
   it("hides the Surface tint row for an escape surface session even with the balloon on", () => {
-    // Mirrors surfaceBalloonRadiusRow's own test above: the balloon is
-    // permanently inert for the escape solid, and the tint row rides the
-    // exact same Surface-refusal gate as the radius row.
+    // The balloon is permanently inert for the escape solid, and the tint
+    // row rides the same Surface-refusal gate as the radius row.
     const ui = new Ui(document);
     ui.setSurfaceSessionKind("escape");
     ui.updateLabels({
@@ -1764,7 +1523,7 @@ describe("Ui balloon tint", () => {
       renderMode: "surface" as const,
       balloonEcho: true,
     });
-    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
+    expect(balloonTintRow().classList.contains("hidden")).toBe(true);
   });
 
   it("hides the Surface tint row for a Mandelbulb surface session even with the balloon on", () => {
@@ -1775,7 +1534,7 @@ describe("Ui balloon tint", () => {
       renderMode: "surface" as const,
       balloonEcho: true,
     });
-    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
+    expect(balloonTintRow().classList.contains("hidden")).toBe(true);
   });
 
   it("reports a Points picker edit as the raw hex value", () => {
@@ -1791,66 +1550,54 @@ describe("Ui balloon tint", () => {
     expect(handlers.onBalloonTint).toHaveBeenCalledWith("#336699");
   });
 
-  it("reports a Surface picker edit as the raw hex value through the SAME handler", () => {
+  it("reports the shared picker in Surface through the same handler", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.updateLabels(initialState(true));
+    ui.updateLabels({ ...initialState(true), renderMode: "surface" });
 
-    const input = el("surfaceBalloonTintColor");
+    const input = el("balloonTintColor");
     input.value = "#996633";
     input.dispatchEvent(new Event("input", { bubbles: true }));
 
     expect(handlers.onBalloonTint).toHaveBeenCalledWith("#996633");
   });
 
-  it("reports a Flame picker edit as the raw hex value through the SAME handler", () => {
+  it("reports the shared picker in Flame through the same handler", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.updateLabels(initialState(true));
+    ui.updateLabels({ ...initialState(true), renderMode: "flame" });
 
-    const input = el("flameBalloonTintColor");
+    const input = el("balloonTintColor");
     input.value = "#663399";
     input.dispatchEvent(new Event("input", { bubbles: true }));
 
     expect(handlers.onBalloonTint).toHaveBeenCalledWith("#663399");
   });
 
-  it("reports a Solid picker edit as the raw hex value through the SAME handler", () => {
+  it("reports the shared picker in Solid through the same handler", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.updateLabels(initialState(true));
+    ui.updateLabels({ ...initialState(true), renderMode: "solid" });
 
-    const input = el("solidBalloonTintColor");
+    const input = el("balloonTintColor");
     input.value = "#339966";
     input.dispatchEvent(new Event("input", { bubbles: true }));
 
     expect(handlers.onBalloonTint).toHaveBeenCalledWith("#339966");
   });
 
-  it("reflects a non-default balloonTint into all four pickers (gallery loads/undo move the swatch)", () => {
+  it("reflects a non-default balloonTint into the shared picker", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), balloonTint: "#336699" });
     expect(el("balloonTintColor").value).toBe("#336699");
-    expect(el("flameBalloonTintColor").value).toBe("#336699");
-    expect(el("solidBalloonTintColor").value).toBe("#336699");
-    expect(el("surfaceBalloonTintColor").value).toBe("#336699");
   });
 
-  it("names all color inputs for assistive tech (their labels carry no text)", () => {
+  it("names the color input for assistive tech", () => {
     new Ui(document);
     expect(el("balloonTintColor").getAttribute("aria-label")).toBe(
-      "Balloon echo tint color",
-    );
-    expect(el("flameBalloonTintColor").getAttribute("aria-label")).toBe(
-      "Balloon echo tint color",
-    );
-    expect(el("solidBalloonTintColor").getAttribute("aria-label")).toBe(
-      "Balloon echo tint color",
-    );
-    expect(el("surfaceBalloonTintColor").getAttribute("aria-label")).toBe(
       "Balloon echo tint color",
     );
   });
@@ -7723,8 +7470,6 @@ describe("index.html slider ranges match PARAM", () => {
     ["pointSizeSlider", PARAM.pointSize],
     ["glowBrightnessSlider", PARAM.glowBrightness],
     ["balloonRadiusSlider", PARAM.balloonRadius],
-    ["flameBalloonRadiusSlider", PARAM.balloonRadius],
-    ["surfaceBalloonRadiusSlider", PARAM.balloonRadius],
     ["fogSlider", PARAM.fogDensity],
     ["fogTintStrength", PARAM.fogTintStrength],
     ["flameExposureSlider", PARAM.flameExposure],
@@ -7801,6 +7546,12 @@ describe("panel accordion sections", () => {
     );
     expect(ids.indexOf("fourDControls")).toBeLessThan(
       ids.indexOf("captureSection"),
+    );
+    expect(ids.indexOf("colorSection")).toBeLessThan(
+      ids.indexOf("balloonSection"),
+    );
+    expect(ids.indexOf("balloonSection")).toBeLessThan(
+      ids.indexOf("atmosphereSection"),
     );
     // Symmetry is authored Scene composition, so its single shared editor
     // stays in the Scene / Look run before every contextual render inspector,
@@ -7896,6 +7647,30 @@ describe("panel accordion sections", () => {
       expect(symmetry.classList.contains("hidden"), renderMode).toBe(false);
       expect(symmetry.open, renderMode).toBe(true);
       expect(hiddenOpenSections(), renderMode).toEqual([]);
+    }
+  });
+
+  it("keeps the shared Balloon editor open through every mode and dimension", () => {
+    const ui = new Ui(document);
+    const state = initialState(true);
+    const balloon = details("balloonSection");
+    details("presetSection").open = false;
+    balloon.open = true;
+    balloon.dispatchEvent(new Event("toggle"));
+
+    for (const transforms of [state.transforms, nonFlatTransforms()]) {
+      for (const renderMode of [
+        "points",
+        "flame",
+        "solid",
+        "surface",
+      ] as const) {
+        if (renderMode === "surface") ui.setSurfaceSessionKind("ifs");
+        ui.updateLabels({ ...state, transforms, renderMode });
+        expect(balloon.classList.contains("hidden"), renderMode).toBe(false);
+        expect(balloon.open, renderMode).toBe(true);
+        expect(hiddenOpenSections(), renderMode).toEqual([]);
+      }
     }
   });
 
