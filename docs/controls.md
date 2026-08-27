@@ -109,7 +109,7 @@ Transform** sliders that appear in the panel while a transform is selected.
 ## Panel controls
 
 The panel's active editing categories — including **Transforms**, **Xaos**,
-**Hybrid schedule**, **Cloud**, **Color**, **Balloon**, **Atmosphere**, **Symmetry**, and the
+**Hybrid schedule**, **Cloud**, **Scene color**, **Balloon**, **Atmosphere**, **Symmetry**, and the
 contextual renderer inspector — come before the shared contextual **Quality**
 section, then **Performance** and **View**, then the always-available
 workflow sections **Systems**, **Collection**, **Timeline**, **Capture**, and **Share**.
@@ -117,7 +117,7 @@ These are collapsible sections, and opening one closes the previous. The collaps
 pack into rows of chips rather than stacking, because nine stacked
 headers cost 473px of a 727px phone screen before any control was visible.
 Measured, that keeps the panel between one and two phone screens rather than
-the one it used to claim: 727px with **Color** open, 1336px with
+the one it used to claim: 727px with **Scene color** open, 1336px with
 **Transforms** open and a transform selected. The Flame, Solid, and Surface render
 modes get the same treatment — **Depth** for Points, **Tone** / **Blur** for
 Flame, **Level** / **Lighting** for Solid, and **Surface color** / **Shape
@@ -250,7 +250,7 @@ morphs into place instead of snapping (see **Presets** below).
     densest core, crisper but liable to thin fine structure away entirely.
     **Solid palette (restarts render)** offers the same gradients as the
     flame's, plus **Classic**, which hands coloring back to
-    **Color**'s **Color Mode**; the restart is needed because each
+    **Scene color**'s **Color Mode**; the restart is needed because each
     voxel's running mean color already has the old palette in it.
     The shared top-level **Balloon** section carries **Balloon echo**,
     **Balloon palette**, **Balloon size**, **Inflate**, and **Tint** into this
@@ -587,7 +587,7 @@ morphs into place instead of snapping (see **Presets** below).
   select — By Transform, the orbit-trap Palette, a Height ramp, a Radius
   ramp, Orbit rings, Orbit sheets, or Shape trap — with a **Surface palette** select underneath
   (the same named gradients as Flame/Solid, the shared **Custom** gradient
-  included — see **Color**) that appears for the orbit-trap,
+  included — see **Scene color**) that appears for the orbit-trap,
   rings, sheets, and Shape trap sources, plus a **Color speed** slider — orbit-trap
   source only, fading how quickly deeper descent levels blend into the trap
   color. **Lighting** holds **Light Angle**, **Light Height**, **Ambient**, and
@@ -1122,19 +1122,23 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   voxel grid is unaffected either way (see **Resolution**). **This session**: it
   describes this device's current rendering budget, but never rides in a link
   or scene file.
-- **Color** (shared Scene / Look section) — remains in the same accordion slot,
+- **Scene color** (shared Scene / Look section) — remains in the same accordion slot,
   with the same open state, while you switch among Points, Flame, Solid, and
   Surface. A flat system shows **Color Mode**; a non-flat system replaces it
   with **4D Color**. See [architecture.md](architecture.md#color-modes).
+  This section authors the color the Points, Solid and Flame renderers
+  consume; the Surface view is colored by its own **Surface color** section
+  instead, and only this section's ramp and **Color Contrast** rows also reach
+  a Surface **Height** or **Radius** source live.
   The visible scope note summarizes when an edit is live, re-accumulates, or
   merely prepares authored state for its next consumer. The exact contract is:
 
   | Active renderer | Flat system                                                                                                                                                            | Non-flat system                                                                                                                                                        |
   | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
   | Points          | **Color Mode**, applicable Ramp/Contrast, and Position Axis Colors update the cached cloud live.                                                                       | **4D Color** and its Radius ramp update the cached projection live.                                                                                                    |
-  | Flame           | Flat Flame's Classic look is per-transform, so shared Color edits prepare a later applicable view.                                                                     | With Flame's Classic palette, **4D Color** and its Radius ramp restart only accumulation; another primary palette keeps the edit staged for a later return to Classic. |
+  | Flame           | Flat Flame's Classic look is per-transform, so shared Scene color edits prepare a later applicable view.                                                               | With Flame's Classic palette, **4D Color** and its Radius ramp restart only accumulation; another primary palette keeps the edit staged for a later return to Classic. |
   | Solid           | With Solid's Classic palette, the applicable Color Mode, ramp/contrast, and Position Axis Colors restart only voxel accumulation; another primary palette stages them. | With Solid's Classic palette, **4D Color** and its radius ramp restart only voxel accumulation; another primary palette stages them.                                   |
-  | Surface         | **Height** and **Radius** sources consume Color ramp palette and Color Contrast live; other sources leave shared Color authored for another consumer.                  | The same: **Height** and **Radius** consume Color ramp palette and Color Contrast live, independent of the 4D Color selection; other sources do not.                   |
+  | Surface         | **Height** and **Radius** sources consume Color ramp palette and Color Contrast live; other sources leave shared Scene color authored for another consumer.            | The same: **Height** and **Radius** consume Color ramp palette and Color Contrast live, independent of the 4D Color selection; other sources do not.                   |
 
   Worker color restarts retain the current geometry, bounds, projection, and
   view; they are not a regenerate or a full render-session re-entry.
@@ -1612,7 +1616,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   Shift-wheel and rotor/slice key bursts do the same once after 150 ms of
   quiet. The worker retains its entry geometry, center, and support across that
   restart. Flame still refuses ordinary camera/transform motion; Solid's camera
-  remains live because its voxel volume is world-space. Shared **Color** remains
+  remains live because its voxel volume is world-space. Shared **Scene color** remains
   shown: an applicable edit under the worker's Classic palette re-accumulates
   over the current view, while another primary palette stages it. Surface
   instead keeps the rotor and W slice live per

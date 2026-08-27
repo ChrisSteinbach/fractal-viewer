@@ -2222,7 +2222,7 @@ export class Ui {
   private automaticMotionParked = false;
   private readonly colorModeRow: HTMLElement;
   /** The 4D Color select's wrapper — {@link colorModeRow}'s non-flat sibling
-   * in the Color section: exactly one of the pair shows, and
+   * in the Scene color section: exactly one of the pair shows, and
    * `#rampPaletteRow` sits statically beneath them (gate and gated
    * co-located, with no DOM re-homing). */
   private readonly fourDColorRow: HTMLElement;

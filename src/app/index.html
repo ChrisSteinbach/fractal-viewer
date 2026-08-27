@@ -482,11 +482,19 @@
         </details>
 
         <details class="panel-section" id="colorSection" name="panel-section">
-          <summary>Color</summary>
+          <!-- "Scene color" rather than "Color": this shared section authors
+               the scene's own color (Points, Solid, 4D Flame), while the
+               Surface renderer is colored by its own "Surface color" section
+               beside it. Two chips both reading COLOR were indistinguishable
+               in Surface mode. -->
+          <summary>Scene color</summary>
           <p id="colorTimingHint" class="flame-hint">
-            Points color edits apply live. An active Solid—or a 4D Flame—using
-            its legacy palette re-accumulates. Surface Height and Radius update
-            live. Otherwise edits prepare the next applicable view.
+            The scene's authored color for Points, Solid and 4D Flame. Points
+            edits apply live; an active Solid—or a 4D Flame—using its legacy
+            palette re-accumulates. The Surface view is colored by its own
+            Surface color section instead — except this section's Color
+            Contrast, which still sharpens a Surface Height or Radius source
+            live. Other edits prepare the next applicable view.
           </p>
           <div id="colorModeRow">
             <label class="select-label">
@@ -508,8 +516,8 @@
                selects shows (flat ↔ non-flat), so #rampPaletteRow below
                always sits directly beneath the select that gates it. The ramp
                is true dependent detail of the active color choice, so they
-               stay together in Color; top-level accordion exclusivity does
-               not decide that placement. -->
+               stay together in the Scene color section; top-level accordion
+               exclusivity does not decide that placement. -->
           <div id="fourDColorRow" class="hidden">
             <p class="flame-hint">
               W-depth color = side of our 3-space:
