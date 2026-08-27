@@ -1935,11 +1935,13 @@ export class Ui {
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
 
-  /** Top-level sections whose current behavior is mode-contextual. They are
-   * direct siblings in index.html's one #panelSections strip: each section,
-   * rather than a layout wrapper, owns its visibility. This preserves the
-   * pre-migration control placement while the panel-ia work rehomes features
-   * by conceptual family. */
+  /** Renderer-contextual top-level sections whose current behavior is
+   * mode-specific. Shared Scene / Look sections such as Symmetry deliberately
+   * stay out of these lists so their open editor survives renderer changes.
+   * All are direct siblings in index.html's one #panelSections strip: each
+   * section, rather than a layout wrapper, owns its visibility. This preserves
+   * the pre-migration control placement while the panel-ia work rehomes
+   * features by conceptual family. */
   private readonly pointsSections: readonly HTMLDetailsElement[];
   private readonly flameSections: readonly HTMLDetailsElement[];
   private readonly solidSections: readonly HTMLDetailsElement[];
@@ -2557,7 +2559,6 @@ export class Ui {
       this.byId<HTMLDetailsElement>("presetSection"),
       this.byId<HTMLDetailsElement>("cloudSection"),
       this.byId<HTMLDetailsElement>("colorSection"),
-      this.byId<HTMLDetailsElement>("symmetrySection"),
       this.byId<HTMLDetailsElement>("scheduleSection"),
     ];
     this.flameSections = [

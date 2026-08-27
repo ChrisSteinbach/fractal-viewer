@@ -26,7 +26,8 @@ import type { AppState, ParamSpec } from "./state";
 import { BACKGROUND_MODES } from "./background";
 import { BACKGROUND_SHAPES } from "../fractal/background-shape";
 import { applyScalarControl } from "./control-spec";
-import type { ScalarControlSpec } from "./control-spec";
+import type { ControlEffects, ScalarControlSpec } from "./control-spec";
+import { deriveSurfaceEligibility } from "./surface-eligibility";
 import {
   defaultTransforms,
   fernSpongeIsolated,
@@ -4887,13 +4888,12 @@ describe("Ui render mode switch", () => {
   function renderModeSwitch(): HTMLElement {
     return document.getElementById("renderModeSwitch") as HTMLElement;
   }
-  const POINT_SECTION_IDS = [
+  const POINT_CONTEXTUAL_SECTION_IDS = [
     "transformsSection",
     "xaosSection",
     "presetSection",
     "cloudSection",
     "colorSection",
-    "symmetrySection",
     "scheduleSection",
   ] as const;
   const FLAME_SECTION_IDS = [
@@ -5053,7 +5053,7 @@ describe("Ui render mode switch", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "flame" });
 
-    expectSectionsHidden(POINT_SECTION_IDS, true);
+    expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
     expectSectionsHidden(FLAME_SECTION_IDS, false);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
     expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(true);
@@ -5069,7 +5069,7 @@ describe("Ui render mode switch", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
 
-    expectSectionsHidden(POINT_SECTION_IDS, true);
+    expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
     expectSectionsHidden(SOLID_SECTION_IDS, false);
     expectSectionsHidden(FLAME_SECTION_IDS, true);
     expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(true);
@@ -5084,7 +5084,7 @@ describe("Ui render mode switch", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
 
-    expectSectionsHidden(POINT_SECTION_IDS, true);
+    expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
     expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(false);
     expectSectionsHidden(FLAME_SECTION_IDS, true);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
@@ -5096,6 +5096,46 @@ describe("Ui render mode switch", () => {
     expect(modeBtn("surface").getAttribute("aria-pressed")).toBe("true");
   });
 
+  it.each([
+    ["flat", defaultTransforms()],
+    ["non-flat", nonFlatTransforms()],
+  ] as const)(
+    "keeps the one shared Symmetry editor visible in every renderer for a %s document",
+    (_dimension, transforms) => {
+      const ui = new Ui(document);
+      const symmetry = byId("symmetrySection");
+      const inputs = Array.from(
+        symmetry.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+          "input, select",
+        ),
+      );
+
+      expect(document.querySelectorAll("#symmetrySection")).toHaveLength(1);
+      expect(symmetry.parentElement).toBe(byId("panelSections"));
+      for (const renderMode of [
+        "points",
+        "flame",
+        "solid",
+        "surface",
+      ] as const) {
+        ui.updateLabels({
+          ...initialState(true),
+          renderMode,
+          transforms: [...transforms],
+        });
+
+        expect(
+          symmetry.classList.contains("hidden"),
+          `${renderMode} must expose Symmetry`,
+        ).toBe(false);
+        expect(
+          inputs.every((input) => !input.disabled),
+          `${renderMode} must keep Symmetry editable`,
+        ).toBe(true);
+      }
+    },
+  );
+
   it("keeps one shared Atmosphere section live and exposes only renderer-relevant rows", () => {
     const ui = new Ui(document);
     const state = initialState(true);
@@ -5105,7 +5145,6 @@ describe("Ui render mode switch", () => {
 
     ui.updateLabels({ ...state, renderMode: "surface" });
     expect(atmosphere.classList.contains("hidden")).toBe(false);
-    expect(byId("symmetrySection").classList.contains("hidden")).toBe(true);
     expect(byId("scheduleSection").classList.contains("hidden")).toBe(true);
     expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
       true,
@@ -5129,7 +5168,6 @@ describe("Ui render mode switch", () => {
     expect(byId("fogControls").classList.contains("hidden")).toBe(true);
 
     ui.updateLabels(state);
-    expect(byId("symmetrySection").classList.contains("hidden")).toBe(false);
     expect(byId("scheduleSection").classList.contains("hidden")).toBe(false);
     expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
       false,
@@ -5141,7 +5179,7 @@ describe("Ui render mode switch", () => {
     const ui = new Ui(document);
     ui.updateLabels(initialState(true));
 
-    expectSectionsHidden(POINT_SECTION_IDS, false);
+    expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, false);
     expectSectionsHidden(FLAME_SECTION_IDS, true);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
     expect(byId("surfaceLookSection").classList.contains("hidden")).toBe(true);
@@ -7374,6 +7412,27 @@ describe("Ui symmetry controls", () => {
     return document.getElementById("symmetryNote");
   }
 
+  /** The symmetry spec touches only these four capabilities. Keeping this
+   * focused lets the UI tests exercise the real spec effect after a real DOM
+   * event without cloning control-spec.test.ts's exhaustive scene mock. */
+  function symmetryEffects(refresh: () => void = () => undefined): {
+    fx: ControlEffects;
+    postFlame: ReturnType<typeof vi.fn>;
+    postVoxel: ReturnType<typeof vi.fn>;
+    refreshSurfaceEligibility: ReturnType<typeof vi.fn>;
+  } {
+    const postFlame = vi.fn();
+    const postVoxel = vi.fn();
+    const refreshSurfaceEligibility = vi.fn(refresh);
+    const fx = {
+      postFlame,
+      postVoxel,
+      regenerateIfAutoUpdate: vi.fn(),
+      refreshSurfaceEligibility,
+    } as unknown as ControlEffects;
+    return { fx, postFlame, postVoxel, refreshSurfaceEligibility };
+  }
+
   it("reflects order and plane into the slider, label, and select", () => {
     const ui = new Ui(document);
     ui.updateLabels({
@@ -7401,6 +7460,26 @@ describe("Ui symmetry controls", () => {
     expect(Array.from(select.options).map((o) => o.value)).toEqual([
       ...SYMMETRY_PLANES,
     ]);
+  });
+
+  it("associates every Symmetry input with the renderer timing note", () => {
+    const section = document.getElementById("symmetrySection");
+    const hint = document.getElementById("symmetryEditHint");
+
+    expect(hint?.closest("details")).toBe(section);
+    for (const id of [
+      "symmetryOrderSlider",
+      "symmetryPlane",
+      "symmetryTwistSlider",
+    ]) {
+      expect(
+        document.getElementById(id)?.getAttribute("aria-describedby"),
+      ).toBe("symmetryEditHint");
+    }
+    const text = (hint?.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toMatch(/Flame and Solid renders restart.*same dimension/i);
+    expect(text).toMatch(/3D and 4D.*re-enter/i);
+    expect(text).toMatch(/Surface.*next entry/i);
   });
 
   it("reflects the twist into its slider and label, showing 0 for an absent twist", () => {
@@ -7476,6 +7555,116 @@ describe("Ui symmetry controls", () => {
     slider.value = "9";
     slider.dispatchEvent(new Event("input"));
     expect(current().symmetry.twist).toBe(3);
+  });
+
+  it.each([
+    ["flame", "postFlame"],
+    ["solid", "postVoxel"],
+  ] as const)(
+    "routes a live Symmetry edit from the visible %s inspector to its worker channel",
+    (renderMode, worker) => {
+      let state: AppState = { ...initialState(true), renderMode };
+      const ui = new Ui(document);
+      const effects = symmetryEffects();
+      const onScalarControl = vi.fn(
+        (spec: ScalarControlSpec, raw: string | boolean) => {
+          const previous = state;
+          state = applyScalarControl(state, spec, raw);
+          ui.updateLabels(state);
+          spec.effect?.(state, effects.fx, previous);
+        },
+      );
+      ui.bind({ ...noopHandlers(), onScalarControl });
+      ui.updateLabels(state);
+
+      expect(
+        document
+          .getElementById("symmetrySection")
+          ?.classList.contains("hidden"),
+      ).toBe(false);
+      const slider = document.getElementById(
+        "symmetryOrderSlider",
+      ) as HTMLInputElement;
+      slider.value = "4";
+      slider.dispatchEvent(new Event("input"));
+
+      const command = { type: "setSymmetry", order: 4, plane: "xz", twist: 0 };
+      expect(onScalarControl).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "symmetryOrderSlider" }),
+        "4",
+      );
+      expect(state.symmetry.order).toBe(4);
+      expect(effects[worker]).toHaveBeenCalledWith(command);
+      expect(effects.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("refreshes a visible Surface refusal immediately when a Symmetry edit crosses the eligibility gate", () => {
+    let state: AppState = {
+      ...initialState(true),
+      renderMode: "surface",
+      transforms: mandelbulbClassic(),
+      symmetry: { order: 1, plane: "xz" },
+    };
+    const ui = new Ui(document);
+    const refreshEligibility = (): void => {
+      const result = deriveSurfaceEligibility(
+        state.transforms,
+        state.finalTransform ?? null,
+        state.symmetry,
+        { computeAvailable: true },
+        state.schedule ?? null,
+        state.shapeTrap ?? null,
+      );
+      ui.setSurfaceEligibility(
+        result.status,
+        result.note,
+        result.kind,
+        result.recovery ?? null,
+      );
+    };
+    const effects = symmetryEffects(refreshEligibility);
+    ui.bind({
+      ...noopHandlers(),
+      onScalarControl: (spec, raw) => {
+        const previous = state;
+        state = applyScalarControl(state, spec, raw);
+        ui.updateLabels(state);
+        spec.effect?.(state, effects.fx, previous);
+      },
+    });
+    ui.updateLabels(state);
+    refreshEligibility();
+
+    const surfaceButton = document.getElementById(
+      "modeSurfaceBtn",
+    ) as HTMLButtonElement;
+    const surfaceNote = document.getElementById("surfaceNote") as HTMLElement;
+    const symmetrySection = document.getElementById(
+      "symmetrySection",
+    ) as HTMLDetailsElement;
+    // Surface is the inspected renderer, but the shared scene editor is the
+    // section the user opened to make the live edit.
+    (document.getElementById("surfaceLookSection") as HTMLDetailsElement).open =
+      false;
+    symmetrySection.open = true;
+    symmetrySection.dispatchEvent(new Event("toggle"));
+    expect(surfaceButton.disabled).toBe(false);
+    expect(surfaceNote.textContent).toContain("Mandelbulb render");
+
+    const slider = document.getElementById(
+      "symmetryOrderSlider",
+    ) as HTMLInputElement;
+    slider.value = "2";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(state.renderMode).toBe("surface");
+    expect(symmetrySection.open).toBe(true);
+    expect(symmetrySection.classList.contains("hidden")).toBe(false);
+    expect(effects.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
+    expect(surfaceButton.disabled).toBe(true);
+    expect(surfaceNote.textContent).toMatch(/^Surface render unavailable: /);
+    expect(surfaceNote.textContent).not.toContain("Mandelbulb render");
   });
 
   it("hides the reduction note when the requested order fits under the transform limit", () => {
@@ -7613,6 +7802,20 @@ describe("panel accordion sections", () => {
     expect(ids.indexOf("fourDControls")).toBeLessThan(
       ids.indexOf("captureSection"),
     );
+    // Symmetry is authored Scene composition, so its single shared editor
+    // stays in the Scene / Look run before every contextual render inspector,
+    // View / Device, and Workflow — it does not move with the active mode.
+    for (const later of [
+      "flameToneSection",
+      "solidSurfaceSection",
+      "surfaceLookSection",
+      "fourDControls",
+      "collectionSection",
+    ]) {
+      expect(ids.indexOf("symmetrySection"), later).toBeLessThan(
+        ids.indexOf(later),
+      );
+    }
   });
 
   it("boots with exactly one section open — Presets", () => {
@@ -7676,6 +7879,24 @@ describe("panel accordion sections", () => {
     expect(atmosphere.open).toBe(true);
     expect(details("presetSection").open).toBe(false);
     expect(hiddenOpenSections()).toEqual([]);
+  });
+
+  it("keeps an open Symmetry editor through Points → Flame → Solid → Surface → Points", () => {
+    const ui = new Ui(document);
+    const state = initialState(true);
+    const symmetry = details("symmetrySection");
+
+    // Simulate the native exclusive-name exchange when Symmetry is opened.
+    details("presetSection").open = false;
+    symmetry.open = true;
+    symmetry.dispatchEvent(new Event("toggle"));
+
+    for (const renderMode of ["flame", "solid", "surface", "points"] as const) {
+      ui.updateLabels({ ...state, renderMode });
+      expect(symmetry.classList.contains("hidden"), renderMode).toBe(false);
+      expect(symmetry.open, renderMode).toBe(true);
+      expect(hiddenOpenSections(), renderMode).toEqual([]);
+    }
   });
 
   it("restores contextual per-mode memory when the open section becomes hidden", () => {

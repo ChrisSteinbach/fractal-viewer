@@ -1265,7 +1265,17 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   document status above the accordion names the reduced order that actually
   renders in every mode. The
   whole setting persists in the link, and every render mode — Points,
-  Flame, Solid, Surface — renders the same kaleidoscope.
+  Flame, Solid, Surface — renders the same kaleidoscope. The one **Symmetry**
+  editor remains reachable while any of those four renderers is inspected.
+  In Points, an edit regenerates immediately when **Auto-update on change** is
+  on (otherwise use **Regenerate Points**). An active Flame or Solid render
+  restarts its accumulation immediately for an edit that stays in the same
+  dimension. If an edit switches the system between 3D and 4D, return to
+  Points, regenerate, then re-enter the renderer so its fixed dimensional
+  snapshot can change. In Surface, the edit applies on the next entry, while
+  the Surface button and its adjacent eligibility explanation update
+  immediately if the new order, plane, or twist changes what the tracer can
+  render.
 - **Hybrid schedule** — builds a finite arrangement of one attractor from a
   second transform list: choose a preset or saved scene under **System B**,
   or press **Use current system as B**, then set **Depth** from 1 to 5. Each
