@@ -254,7 +254,7 @@ describe("classifyTransformEdit", () => {
     });
   });
 
-  it("classifies topology, id order, final lens, and symmetry as geometry", () => {
+  it("classifies topology, id order, lens, symmetry, and schedule as geometry", () => {
     const previous = snapshot();
     const cases: TransformEditSnapshot[] = [
       { ...previous, transforms: [...previous.transforms, transform(2)] },
@@ -271,6 +271,10 @@ describe("classifyTransformEdit", () => {
       },
       { ...previous, finalTransform: transform(90) },
       { ...previous, symmetry: { order: 3, plane: "xy" } },
+      {
+        ...previous,
+        schedule: { depth: 1, transforms: [transform(20)] },
+      },
     ];
 
     for (const next of cases) {

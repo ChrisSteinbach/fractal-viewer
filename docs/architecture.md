@@ -155,6 +155,16 @@ builders all receive that same document value. A preset installs its schedule
 through `PRESET_SCHEDULES`, and every preset without one clears the old block
 instead of accidentally composing the incoming artwork with stale B state.
 
+Schedule and Xaos edits use the transform editor's settled scene-composition
+planner rather than inventing live worker commands those render sessions do not
+support. Input updates the document, Surface eligibility, and (when Auto-update
+is on) the Points request. At settlement, flat Balloon-off Flame/Solid sessions
+restart once with their active seed; 4D and Balloon sessions stage the change
+until fresh Points-derived support exists; Surface re-enters with its camera
+preserved or follows the analyzer refusal back to Points. The snapshot attached
+to each landed cloud includes the schedule, so a later appearance-only edit
+cannot mistake stale 4D/Balloon support for current support.
+
 The shipped **Sponge of Ferns** composes a spread Menger B at depth 2 over
 Barnsley's A. Barnsley's exact stem has a singular zero x column, which a
 Surface inverse cannot represent, so only this showcase's private A factory
@@ -444,7 +454,13 @@ Radiolarian/Swirl/Dyed Spiral, and the "Escape-time" group's Mandelboxes,
 Mandelbulbs and cross-family Hybrid Chains),
 which `main.ts` applies when the freshly loaded system's cloud lands,
 snapping the camera fit first so the flame's frozen projection frames the
-new attractor. Two sibling side tables ride the same lookup:
+new attractor. Presets, Surprise Me, mutation picks, and random Drift are
+Workflow doors shared across modes, but replacement itself always exits an
+active renderer and morphs through Points. That makes a same-mode authored
+hint a real re-entry rather than a no-op against the previous renderer
+session. Collection Drift remains distinct: it follows each saved mode tag
+and holds while a converging renderer finishes. Two sibling side tables ride
+the same lookup:
 `PRESET_FINALS` gives a preset the final-transform LENS it was composed
 around — and, absent, CLEARS whatever lens the session had, so one preset's
 lens can never re-pose the next one's attractor — and `PRESET_PALETTES`
