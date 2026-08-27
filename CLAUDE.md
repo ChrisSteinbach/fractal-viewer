@@ -459,6 +459,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     the frozen balloon DE params block — it LIGHTS a hit, it does not move
     geometry — and `surface-de-gpu.ts`'s shade entry being SHARED across all
     seven cores is what made the 4D half one emission rather than a lift.
+    THE INDEPENDENT BALLOON PALETTE is likewise one authored LUT consumed by
+    Points, Flame, Solid and Surface in both dimensions. Solid samples it only
+    for a strict echo-attributed inverted-volume query, before balloon tint;
+    changing it is a live material-texture update and never restarts the voxel
+    worker or rebuilds its density volume.
     NO SECOND BRIGHTNESS KNOB, and `BALLOON_ECHO_DIM` stays a module
     constant: the default tint is BLACK, so the strength slider alone reads
     as a dimmer (`mix(base, black, s)` = `base·(1−s)`), where one shared dim
