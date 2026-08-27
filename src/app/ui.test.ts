@@ -202,6 +202,18 @@ function editorGroupTitles(): string[] {
   ).map((el) => el.textContent ?? "");
 }
 
+function editorGroup(title: string): HTMLDetailsElement {
+  const group = Array.from(
+    document.querySelectorAll<HTMLDetailsElement>(
+      "#transformEditor details.editor-group",
+    ),
+  ).find(
+    (candidate) => candidate.querySelector("summary")?.textContent === title,
+  );
+  if (!group) throw new Error(`No editor group titled "${title}"`);
+  return group;
+}
+
 // Parsed once here at module scope instead of once per test (~433 tests):
 // importNode below always deep-clones, so this cached template is never
 // mutated by a test, and re-parsing the same 63KB string per test bought
@@ -2816,6 +2828,9 @@ describe("Ui transform color editor", () => {
 
     expect(editorReadout("Color index").textContent).toBe("0.33");
     expect(Number(editorSlider("Color index").value)).toBeCloseTo(1 / 3, 2);
+    expect(
+      editorGroup("Color").querySelector(".flame-hint")?.textContent,
+    ).toContain("next applicable render entry");
   });
 
   it("shows the default color speed for a map that authors none", () => {
@@ -3346,6 +3361,14 @@ describe("Ui finish editor", () => {
     return select;
   }
 
+  function materialSelect(): HTMLSelectElement {
+    const select = document.querySelector<HTMLSelectElement>(
+      "#transformEditor .finish-material",
+    );
+    if (!select) throw new Error("No finish-material select");
+    return select;
+  }
+
   function finishNote(): HTMLElement {
     const note = document.querySelector<HTMLElement>(
       "#transformEditor .finish-note",
@@ -3385,6 +3408,9 @@ describe("Ui finish editor", () => {
     expect(editorSlider("Finish transmit").value).toBe("0");
     expect(editorReadout("Finish shininess").textContent).toBe("32");
     expect(bundleSelect().value).toBe("classic");
+    expect(
+      editorGroup("Finish").querySelector(".flame-hint")?.textContent,
+    ).toContain("next Surface entry");
   });
 
   it("seeds each row from the document, and from the classic value where the document is silent", () => {
@@ -3717,6 +3743,7 @@ describe("Ui finish editor", () => {
 
     function finishInputsDisabled(): boolean[] {
       return [
+        materialSelect().disabled,
         bundleSelect().disabled,
         ...[
           "Finish specular",
@@ -3724,7 +3751,23 @@ describe("Ui finish editor", () => {
           "Finish metalness",
           "Finish reflect",
           "Finish transmit",
+          "Finish metal tint",
         ].map((label) => editorSlider(label).disabled),
+      ];
+    }
+
+    function finishInputs(): Array<HTMLInputElement | HTMLSelectElement> {
+      return [
+        materialSelect(),
+        bundleSelect(),
+        ...[
+          "Finish specular",
+          "Finish shininess",
+          "Finish metalness",
+          "Finish reflect",
+          "Finish transmit",
+          "Finish metal tint",
+        ].map(editorSlider),
       ];
     }
 
@@ -3742,9 +3785,15 @@ describe("Ui finish editor", () => {
         true,
         true,
         true,
+        true,
+        true,
       ]);
       expect(finishNote().classList.contains("hidden")).toBe(false);
       expect(finishNote().textContent).toMatch(/FIRST active transform/);
+      expect(finishNote().id).toBe("finishApplicabilityNote");
+      for (const input of finishInputs()) {
+        expect(input.getAttribute("aria-describedby")).toBe(finishNote().id);
+      }
     });
 
     it("keeps the head transform's rows live on the same document", () => {
@@ -3755,6 +3804,8 @@ describe("Ui finish editor", () => {
       ui.setSurfaceEligibility("eligible", null, "bulb");
 
       expect(finishInputsDisabled()).toEqual([
+        false,
+        false,
         false,
         false,
         false,
@@ -3780,8 +3831,67 @@ describe("Ui finish editor", () => {
         false,
         false,
         false,
+        false,
+        false,
       ]);
     });
+
+    it("stores a full Surface refusal for a later-built editor without changing authored values", () => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      const authored: Transform = {
+        ...two[0],
+        finish: { metalness: 0.7, reflectionTint: 0.25 },
+        surfacePattern: { kind: "wood", axis: "z", strength: 0.4 },
+      };
+
+      ui.setSurfaceEligibility(
+        "ineligible",
+        "map 1 uses variations and cannot be marched",
+        null,
+      );
+      ui.renderTransformList([authored], 0, null);
+      ui.renderTransformEditor(authored, 0, 1);
+
+      expect(finishInputsDisabled()).toEqual(Array(8).fill(true));
+      expect(materialSelect().value).toBe("custom");
+      expect(bundleSelect().value).toBe("custom");
+      expect(editorSlider("Finish metalness").value).toBe("0.7");
+      expect(editorSlider("Finish metal tint").value).toBe("0.25");
+      expect(finishNote().textContent).toContain(
+        "map 1 uses variations and cannot be marched",
+      );
+      expect(finishNote().textContent).toContain("stays authored");
+      expect(handlers.onTransformGeometry).not.toHaveBeenCalled();
+    });
+
+    it.each(["ifs", "ifs4"] as const)(
+      "disables every finish input for a Weight-0 %s map, then restores it when the map becomes active",
+      (kind) => {
+        const ui = new Ui(document);
+        ui.bind(noopHandlers());
+        const inactive: Transform = {
+          ...two[0],
+          weight: 0,
+          finish: { reflect: 0.45, reflectionTint: 0.2 },
+        };
+        ui.setSurfaceEligibility("eligible", null, kind);
+        ui.renderTransformList([inactive], 0, null);
+        ui.renderTransformEditor(inactive, 0, 1);
+
+        expect(finishInputsDisabled()).toEqual(Array(8).fill(true));
+        expect(finishNote().textContent).toMatch(/Weight is 0/);
+        expect(editorSlider("Finish reflect").value).toBe("0.45");
+        expect(editorSlider("Finish metal tint").value).toBe("0.2");
+
+        const active = { ...inactive, weight: 0.5 };
+        ui.renderTransformList([active], 0, null);
+        ui.renderTransformEditor(active, 0, 1);
+        expect(finishInputsDisabled()).toEqual(Array(8).fill(false));
+        expect(finishNote().classList.contains("hidden")).toBe(true);
+      },
+    );
 
     it("re-enables the rows when the document routes back to an IFS surface, and applies to a later-built editor", () => {
       const ui = new Ui(document);
@@ -3801,13 +3911,15 @@ describe("Ui finish editor", () => {
         false,
         false,
         false,
+        false,
+        false,
       ]);
       expect(finishNote().classList.contains("hidden")).toBe(true);
 
-      // An ineligible document routes nowhere, and a refusal is not a
-      // reason to grey the rows — the gate's own note carries that.
+      // A whole-document refusal supersedes the route-specific disclosure.
       ui.setSurfaceEligibility("ineligible", "not marchable", null);
-      expect(bundleSelect().disabled).toBe(false);
+      expect(finishInputsDisabled()).toEqual(Array(8).fill(true));
+      expect(finishNote().textContent).toContain("not marchable");
     });
   });
 });
@@ -4177,6 +4289,9 @@ describe("Ui pattern editor", () => {
 
     expect(editorGroupTitles()).toContain("Pattern");
     expect(patternFamilySelect()).not.toBeNull();
+    expect(
+      editorGroup("Pattern").querySelector(".flame-hint")?.textContent,
+    ).toContain("next Surface entry");
   });
 
   it("picks up a pattern that changed under a stable selection, instead of writing the stale one back", () => {
@@ -4266,6 +4381,15 @@ describe("Ui pattern editor", () => {
       ];
     }
 
+    function patternInputs(): Array<HTMLInputElement | HTMLSelectElement> {
+      return [
+        patternFamilySelect(),
+        patternAxisSelect(),
+        editorSlider("Pattern scale"),
+        editorSlider("Pattern strength"),
+      ];
+    }
+
     it("disables a non-head transform's pattern rows on an escape-shaped document, with the reason shown", () => {
       const ui = new Ui(document);
       ui.bind(noopHandlers());
@@ -4276,6 +4400,10 @@ describe("Ui pattern editor", () => {
       expect(patternInputsDisabled()).toEqual([true, true, true, true]);
       expect(patternNote().classList.contains("hidden")).toBe(false);
       expect(patternNote().textContent).toMatch(/FIRST active transform/);
+      expect(patternNote().id).toBe("patternApplicabilityNote");
+      for (const input of patternInputs()) {
+        expect(input.getAttribute("aria-describedby")).toBe(patternNote().id);
+      }
     });
 
     it("keeps the head transform's rows live on the same document", () => {
@@ -4288,6 +4416,50 @@ describe("Ui pattern editor", () => {
       expect(patternInputsDisabled()).toEqual([false, false, false, false]);
       expect(patternNote().classList.contains("hidden")).toBe(true);
     });
+
+    it("stores a full Surface refusal for a later-built editor without changing authored values", () => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.setSurfaceEligibility(
+        "ineligible",
+        "map 1 uses variations and cannot be marched",
+        null,
+      );
+      ui.renderTransformList([two[0]], 0, null);
+      ui.renderTransformEditor(two[0], 0, 1);
+
+      expect(patternInputsDisabled()).toEqual([true, true, true, true]);
+      expect(patternFamilySelect().value).toBe("wood");
+      expect(patternAxisSelect().value).toBe("y");
+      expect(patternNote().textContent).toContain(
+        "map 1 uses variations and cannot be marched",
+      );
+      expect(patternNote().textContent).toContain("stays authored");
+      expect(handlers.onTransformGeometry).not.toHaveBeenCalled();
+    });
+
+    it.each(["ifs", "ifs4"] as const)(
+      "disables every pattern input for a Weight-0 %s map, then restores it when the map becomes active",
+      (kind) => {
+        const ui = new Ui(document);
+        ui.bind(noopHandlers());
+        const inactive = { ...two[0], weight: 0 };
+        ui.setSurfaceEligibility("eligible", null, kind);
+        ui.renderTransformList([inactive], 0, null);
+        ui.renderTransformEditor(inactive, 0, 1);
+
+        expect(patternInputsDisabled()).toEqual([true, true, true, true]);
+        expect(patternNote().textContent).toMatch(/Weight is 0/);
+        expect(patternFamilySelect().value).toBe("wood");
+
+        const active = { ...inactive, weight: 0.5 };
+        ui.renderTransformList([active], 0, null);
+        ui.renderTransformEditor(active, 0, 1);
+        expect(patternInputsDisabled()).toEqual([false, false, false, false]);
+        expect(patternNote().classList.contains("hidden")).toBe(true);
+      },
+    );
 
     it("re-enables the rows when the document routes back to an IFS surface, and applies to a later-built editor", () => {
       const ui = new Ui(document);
@@ -4303,10 +4475,10 @@ describe("Ui pattern editor", () => {
       expect(patternInputsDisabled()).toEqual([false, false, false, false]);
       expect(patternNote().classList.contains("hidden")).toBe(true);
 
-      // An ineligible document routes nowhere, and a refusal is not a
-      // reason to grey the rows — the gate's own note carries that.
+      // A whole-document refusal supersedes the route-specific disclosure.
       ui.setSurfaceEligibility("ineligible", "not marchable", null);
-      expect(patternFamilySelect().disabled).toBe(false);
+      expect(patternInputsDisabled()).toEqual([true, true, true, true]);
+      expect(patternNote().textContent).toContain("not marchable");
     });
   });
 });
@@ -4823,7 +4995,6 @@ describe("Ui render mode switch", () => {
     return document.getElementById("renderModeSwitch") as HTMLElement;
   }
   const POINT_CONTEXTUAL_SECTION_IDS = [
-    "transformsSection",
     "xaosSection",
     "presetSection",
     "cloudSection",
@@ -5000,6 +5171,7 @@ describe("Ui render mode switch", () => {
     ui.updateLabels({ ...initialState(true), renderMode: "flame" });
 
     expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
+    expect(byId("transformsSection").classList.contains("hidden")).toBe(false);
     expectSectionsHidden(FLAME_SECTION_IDS, false);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
     expectSectionsHidden(SURFACE_SECTION_IDS, true);
@@ -5016,6 +5188,7 @@ describe("Ui render mode switch", () => {
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
 
     expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
+    expect(byId("transformsSection").classList.contains("hidden")).toBe(false);
     expectSectionsHidden(SOLID_SECTION_IDS, false);
     expectSectionsHidden(FLAME_SECTION_IDS, true);
     expectSectionsHidden(SURFACE_SECTION_IDS, true);
@@ -5031,6 +5204,7 @@ describe("Ui render mode switch", () => {
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
 
     expectSectionsHidden(POINT_CONTEXTUAL_SECTION_IDS, true);
+    expect(byId("transformsSection").classList.contains("hidden")).toBe(false);
     expectSectionsHidden(SURFACE_ALWAYS_SECTION_IDS, false);
     expect(
       byId("surfaceCondensationSection").classList.contains("hidden"),
@@ -5045,6 +5219,79 @@ describe("Ui render mode switch", () => {
     expect(modeBtn("surface").classList.contains("active")).toBe(true);
     expect(modeBtn("surface").getAttribute("aria-pressed")).toBe("true");
   });
+
+  it.each([
+    ["flat", defaultTransforms()],
+    ["non-flat", nonFlatTransforms()],
+  ] as const)(
+    "preserves the shared Transforms selection and both accordion levels through every renderer for a %s document",
+    (_dimension, transforms) => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      const selected = Math.min(1, transforms.length - 1);
+      const section = byId("transformsSection") as HTMLDetailsElement;
+      (byId("presetSection") as HTMLDetailsElement).open = false;
+      section.open = true;
+      section.dispatchEvent(new Event("toggle"));
+      ui.renderTransformList([...transforms], selected, null);
+      ui.renderTransformEditor(
+        transforms[selected],
+        selected,
+        transforms.length,
+      );
+
+      const finish = Array.from(
+        document.querySelectorAll<HTMLDetailsElement>(
+          "#transformEditor details.editor-group",
+        ),
+      ).find(
+        (group) => group.querySelector("summary")?.textContent === "Finish",
+      );
+      if (!finish) throw new Error("No Finish editor group");
+      finish.open = true;
+      finish.dispatchEvent(new Event("toggle"));
+
+      for (const renderMode of [
+        "points",
+        "flame",
+        "solid",
+        "surface",
+      ] as const) {
+        ui.updateLabels({
+          ...initialState(true),
+          transforms: [...transforms],
+          selectedTransform: selected,
+          renderMode,
+        });
+        // Mirrors main.ts's refreshUi: neither rebuilding the list nor syncing
+        // a stable editor target may erase either disclosure choice.
+        ui.renderTransformList([...transforms], selected, null);
+        ui.renderTransformEditor(
+          transforms[selected],
+          selected,
+          transforms.length,
+        );
+
+        expect(section.classList.contains("hidden"), renderMode).toBe(false);
+        expect(section.open, renderMode).toBe(true);
+        expect(
+          document.querySelector(
+            "#transformList .transform-btn[aria-pressed='true'] .name",
+          )?.textContent,
+          renderMode,
+        ).toBe(`Transform ${selected + 1}`);
+        expect(
+          document.querySelector("#transformEditor .editor-title")?.textContent,
+          renderMode,
+        ).toBe(`Edit Transform ${selected + 1}`);
+        expect(finish.open, renderMode).toBe(true);
+      }
+
+      expect(byId("transformTimingHint").textContent).toMatch(
+        /uses edits on the next entry/,
+      );
+    },
+  );
 
   it.each([
     ["flat", defaultTransforms()],

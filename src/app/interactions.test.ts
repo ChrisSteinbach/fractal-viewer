@@ -1,9 +1,42 @@
 // @vitest-environment jsdom
-import { attachInteractions, resizeGuideComponent } from "./interactions";
+import {
+  attachInteractions,
+  canvasTransformGuidesEnabled,
+  canvasTransformTarget,
+  resizeGuideComponent,
+} from "./interactions";
 import type { InteractionsHandle } from "./interactions";
 import { MIN_GUIDE_SCALE, MAX_GUIDE_SCALE } from "./constants";
 import type { OrbitCamera } from "./orbit";
 import type { FractalScene } from "./scene";
+
+describe("canvas transform applicability", () => {
+  it.each([
+    ["points", false, true],
+    ["points", true, false],
+    ["flame", false, false],
+    ["flame", true, false],
+    ["solid", false, false],
+    ["solid", true, false],
+    ["surface", false, false],
+    ["surface", true, false],
+  ] as const)(
+    "%s / fourD=%s exposes guides only for flat Points",
+    (renderMode, fourD, expected) => {
+      expect(canvasTransformGuidesEnabled(renderMode, fourD)).toBe(expected);
+      expect(canvasTransformTarget(renderMode, fourD, 2)).toBe(
+        expected ? 2 : null,
+      );
+    },
+  );
+
+  it.each([null, "final"] as const)(
+    "maps the %s panel target to no canvas box even in flat Points",
+    (selected) => {
+      expect(canvasTransformTarget("points", false, selected)).toBeNull();
+    },
+  );
+});
 
 describe("resizeGuideComponent", () => {
   it("multiplies a positive component by the factor", () => {

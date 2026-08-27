@@ -1,9 +1,13 @@
 # Controls
 
-Fractal Explorer has two interaction modes. Switch between them from the panel's
-**Transforms** section (its **Select to edit** list): choose **🎥 Camera View**
-for camera mode, or a specific **Transform N** to edit that map. The help box (top-left) always shows the active
-mode and its gestures, adapting the wording to the device: mouse verbs
+Fractal Explorer keeps one selection in the shared **Transforms** section
+(its **Select to edit** list): choose **🎥 Camera View** for camera mode, or a
+specific **Transform N** to edit that map. The selection and editor stay put
+while switching renderers. Canvas guide-box gestures are available only in the
+flat **∴ Points** view; Flame, Solid, Surface, and the 4D Points projection keep
+the editor selection but route canvas gestures to their own camera/view behavior.
+The help box (top-left) always shows the active mode and its gestures, adapting
+the wording to the device: mouse verbs
 ("Drag", "Right-drag", "Scroll") on pointer devices, finger gestures on touch.
 
 ## Camera mode
@@ -73,9 +77,11 @@ flat scene — one shared preference either way.
 
 ## Transform mode
 
-With a transform selected, its **guide box** is highlighted in white and the same
-gestures now edit that map. Edits regenerate the fractal live when **Auto-update on
-change** is on (otherwise press **Regenerate Points**).
+With a transform selected in flat Points, its **guide box** is highlighted in
+white and the same gestures now edit that map. Edits regenerate the fractal live
+when **Auto-update on change** is on (otherwise press **Regenerate Points**).
+The selection remains in the panel in every other renderer and in 4D Points,
+but no canvas guide is shown or hit-tested there.
 
 | Input            | Action                                  |
 | ---------------- | --------------------------------------- |
@@ -108,8 +114,10 @@ modes get the same treatment — **Depth** for Points, **Tone** / **Blur** /
 **Color** / **Shape copies** or **Shape trap** / **Lighting** / **Floor** for
 Surface itself (see **✺ Flame**, **◆ Solid** and **◈ Surface** below) — with a status block
 pinned above the sections (a progress readout for Flame/Solid, an instant
-hint for Surface), and the panel remembers which section was open in each
-mode, so switching Points ↔ Flame ↔ Solid ↔ Surface restores where you were.
+hint for Surface), and the panel remembers which contextual section was open
+in each mode, so switching Points ↔ Flame ↔ Solid ↔ Surface restores where you
+were. **Transforms** is shared rather than contextual: its top-level and nested
+open state, selected map, and authored values survive every renderer switch.
 Scroll swipes that happen to land on a slider scroll the panel without
 editing its value; horizontal drags still adjust it as usual. A tap alone
 sets nothing — tap-to-set is deliberately absent on touch, since
@@ -674,11 +682,14 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   the moment the tracer lands — there's no convergence wait to sit through.
 
 - **Edit Transform N** — appears under **Transforms → Select to edit** while a
-  transform is selected: sliders for its position (X/Y/Z), rotation (X/Y/Z, in
-  degrees), scale (X/Y/Z), and shear (XY/XZ/YZ — the affine group's remaining
-  degree of freedom, no gesture above reaches it) give exact per-axis control
-  on every device. The sliders track the guide box live and stay in sync with
-  the drag gestures above.
+  transform is selected and remains there in Points, Flame, Solid, and Surface:
+  sliders for its position (X/Y/Z), rotation (X/Y/Z, in degrees), scale
+  (X/Y/Z), and shear (XY/XZ/YZ — the affine group's remaining degree of
+  freedom, no gesture above reaches it) give exact per-axis control on every
+  device. In flat Points the sliders track the guide box live and stay in sync
+  with the drag gestures above. Elsewhere the same editor authors the document
+  without exposing a stale guide box; an active Flame, Solid, or Surface keeps
+  its current render and reads the edit on its next entry.
   - **Shape → Emitter** — turns the selected transform into any bundled
     emitter shape, or returns it to an ordinary transform with **None**.
     The shared catalog is **Cog**, **Star**, **Orbit Ring**, **Faceted
@@ -692,15 +703,17 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     a new shaped map with this group already open. The final-transform
     lens has no Shape group because it is never picked.
   - **Color → Index / Speed** — the flam3 per-xform color pair, one
-    group below **Weight**. **Index** is the palette slot this map pulls the
-    flame's structural color coordinate toward; **Speed** is how far each pick
-    moves it (`0` keeps the incoming color — flam3's "symmetry" xform, which
-    shades without recoloring — and `1` snaps straight to the slot). **Index**
-    bites on a **Flame** or **Solid** render, and also the **Surface** render's
-    orbit-trap **Palette** color source; **Speed** stays **Flame**/**Solid**
-    only — the surface descends a map rather than picking one, so there's no
-    per-pick travel there for Speed to control. All of it needs a gradient
-    palette active. Both start on the value the renderer already uses — maps
+    group below **Weight**. **Index** sets this map's **By Transform** hue in
+    Points, Flame, Solid, and Surface. It also sets the gradient coordinate
+    used by Flame, Solid, and an IFS Surface's orbit-trap **Palette** source.
+    **Speed** changes only the Flame/Solid gradient walk (`0` keeps the incoming
+    color — flam3's "symmetry" xform, which shades without recoloring — and `1`
+    snaps straight to the slot); the surface descends a map rather than picking
+    one, so there's no per-pick travel there for Speed to control. An edit is
+    saved immediately in every renderer, while an active Flame, Solid, or
+    Surface keeps its current image/volume/trace and reads it on the next
+    applicable renderer entry. Both controls start on the value the renderer
+    already uses — maps
     spread evenly across the ramp in list order, at speed `0.50` — and stay
     unset until you actually move a slider, so a scene saved before you touch
     them is byte-identical to one saved after. Importing a `.flame`
@@ -746,20 +759,23 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     last field goes, which is also exactly what **Classic** does — so a
     scene you explored and returned from is byte-identical to one that never
     carried a finish, and a bundle stores only the fields that differ from
-    classic (**Matte** is a lone `specular: 0`). Every map's finish reaches
-    an IFS surface, 3D or 4D, a kaleidoscope copy or a balloon echo included
-    (each shades as the map that produced it). The **escape-time** and
+    classic (**Matte** is a lone `specular: 0`). Every active map's finish
+    reaches an IFS surface, 3D or 4D, a kaleidoscope copy or a balloon echo
+    included (each shades as the map that produced it). A Weight-0 map is not
+    visited, so its controls disable beside a reason while preserving their
+    authored values. The **escape-time** and
     **Mandelbulb** surfaces are the exception: they shade the whole object
     with the FIRST active transform's finish, so on a system the Surface
     gate would route there the other transforms' Finish rows are disabled,
     with a note saying why — the rows come back the moment the system routes
-    to an IFS surface again, or that transform becomes the head. The final
+    to an IFS surface again, or that transform becomes the head. If Surface is
+    wholly ineligible, every map's Finish controls disable beside the full gate
+    reason; values remain authored for a later eligible document. The final
     transform has no Finish group: the tracers shade a hit by the map that
-    produced it, and the lens is not one. Like every transform edit it is
-    made in **∴ Points** (a render takes over the panel) and shows the next
-    time **◈ Surface** is entered; the transform list names an authored
-    finish on its row, by bundle where it is one (`Finish: Chrome`) and as
-    `Finish: custom` otherwise.
+    produced it, and the lens is not one. A Finish edit is saved in every
+    renderer and shows on the next **◈ Surface** entry; the transform list
+    names an authored finish on its row (`Chrome` becomes `Finish: Chrome`) and
+    uses `Finish: custom` otherwise.
   - **Pattern** — one group below **Finish**: how this map's part of the
     surface is patterned in a **◈ Surface** render, and nowhere else — the
     albedo texture the lighting then responds to. A **family** menu picks
@@ -785,9 +801,12 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     Finish applies: escape-time and Mandelbulb surfaces pattern the whole
     object with the first active transform's pattern, so on such a system
     the other transforms' Pattern rows are disabled with a note saying why.
-    The final transform has no Pattern group, and the transform list names
-    an authored pattern on its row (`Pattern: Wood` at the family's
-    defaults, `Pattern: custom` once tuned away from them).
+    The same whole-Surface and Weight-0 refusals as Finish apply, always beside
+    an accessible reason and without clearing authored pattern state. Pattern
+    edits are saved in every renderer and appear on the next Surface entry.
+    The final transform has no Pattern group, and the transform list names an
+    authored pattern on its row (`Pattern: Wood` at the family's defaults,
+    `Pattern: custom` once tuned away from them).
   - **Variations → a fold's own lengths** — a `boxfold`,
     `spherefold` or `mandelbox` row carries the Mandelbox apparatus's three
     lengths nested under its weight slider: **Min radius** and **Fixed

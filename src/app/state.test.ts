@@ -1187,6 +1187,21 @@ describe("setRenderMode", () => {
     expect(next.solid).toBe(state.solid);
     expect(next.surface).toBe(state.surface);
   });
+
+  it.each(["points", "flame", "solid", "surface"] as const)(
+    "preserves numbered and final-transform editor selections when switching to %s",
+    (renderMode) => {
+      const numbered = selectTransform(initialState(true), 2);
+      expect(setRenderMode(numbered, renderMode).selectedTransform).toBe(2);
+
+      const withFinal = setFinalTransform(
+        initialState(true),
+        defaultFinalTransform(),
+      );
+      const final = selectTransform(withFinal, "final");
+      expect(setRenderMode(final, renderMode).selectedTransform).toBe("final");
+    },
+  );
 });
 
 describe("setSolidResolution", () => {

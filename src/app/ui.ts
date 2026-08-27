@@ -93,6 +93,7 @@ import type { ScalarControlSpec } from "./control-spec";
 import {
   surfaceTrapGeometryRestriction,
   type SurfaceEligibilityRecovery,
+  type SurfaceEligibilityResult,
   type SurfaceRouteKind,
 } from "./surface-eligibility";
 import {
@@ -1193,6 +1194,9 @@ function routeShadesHeadOnly(kind: SurfaceRouteKind | null): boolean {
   return kind === "escape" || kind === "bulb" || kind === "escape4";
 }
 
+const FINISH_APPLICABILITY_NOTE_ID = "finishApplicabilityNote";
+const PATTERN_APPLICABILITY_NOTE_ID = "patternApplicabilityNote";
+
 /** The HEAD transform of a forward-orbit session — the first with a
  * positive weight, clamped at 0 exactly as main.ts's `escapeSlotFinish` and
  * `escapeSlotColor` clamp it, so the panel disables the rows that session
@@ -1376,8 +1380,7 @@ interface ColorControls {
 
 /**
  * Live handles into the "Finish" group: the material starting-point menu,
- * the bundle select, the six rows, and the head-only disclosure line the
- * forward-orbit routes reveal.
+ * the bundle select, the six rows, and the stable applicability disclosure.
  */
 interface FinishControls {
   /** The `<details>` group itself — the disclosure dims it as a whole. */
@@ -1391,16 +1394,14 @@ interface FinishControls {
    * (a disabled option, so it can be shown but never picked). */
   bundle: HTMLSelectElement;
   rows: Record<FinishKey, AxisControl>;
-  /** The "only the first transform's finish is read" line — hidden unless
-   * the document routes to a forward-orbit surface session AND this is
-   * not its head transform. */
+  /** Adjacent reason for any Surface refusal affecting this map's finish. */
   note: HTMLElement;
 }
 
 /**
  * Live handles into the "Pattern" group: the family and axis selects, the
- * scale/strength rows, and the head-only disclosure line — the Finish
- * group's shape one feature over.
+ * scale/strength rows, and the applicability disclosure — the Finish group's
+ * shape one feature over.
  */
 interface PatternControls {
   /** The `<details>` group itself — the disclosure dims it as a whole. */
@@ -1414,9 +1415,7 @@ interface PatternControls {
   scale: AxisControl;
   /** The strength row (patterned-albedo blend, `0..1`). */
   strength: AxisControl;
-  /** The "only the first transform's pattern is read" line — hidden
-   * unless the document routes to a forward-orbit surface session AND
-   * this is not its head transform. */
+  /** Adjacent reason for any Surface refusal affecting this map's pattern. */
   note: HTMLElement;
 }
 
@@ -1963,8 +1962,9 @@ export class Ui {
   private readonly transformEditor: HTMLElement;
 
   /** Renderer-contextual top-level sections whose current behavior is
-   * mode-specific. Shared Scene / Look sections such as Symmetry deliberately
-   * stay out of these lists so their open editor survives renderer changes.
+   * mode-specific. Shared authoring sections such as Transforms and Symmetry
+   * deliberately stay out of these lists so their open editor survives
+   * renderer changes.
    * All are direct siblings in index.html's one #panelSections strip: each
    * section, rather than a layout wrapper, owns its visibility. This preserves
    * the pre-migration control placement while the panel-ia work rehomes
@@ -2159,18 +2159,18 @@ export class Ui {
     dimension: "flat",
     surfaceKind: null,
   };
-  /**
-   * Where the DOCUMENT would route if Surface were entered now — the gate's
-   * own `kind`, pushed with every {@link setSurfaceEligibility}. This, and
-   * not {@link surfaceSessionKind}, drives the finish rows' head-only
-   * disclosure: the transform editor lives inside the explorer controls,
-   * which hide for the whole of a surface session (and entry drops the
-   * selection), so a session-scoped flag could never be seen from a row
-   * that exists only in Points mode. The gate re-derives on every edit,
-   * drags included, so the rows tell the truth about the session the NEXT
-   * click into Surface would start.
-   */
-  private surfaceRouteKind: SurfaceRouteKind | null = null;
+  /** Full DOCUMENT-derived Surface gate result, pushed on every eligibility
+   * refresh. The shared transform editor needs all three axes: `status` and
+   * `note` disable with the exact full refusal, while `kind` distinguishes an
+   * IFS map material from the head-only forward routes. This is deliberately
+   * not {@link surfaceSessionKind}: selection and authoring stay reachable
+   * before, during, and after a renderer session, and describe what the next
+   * Surface entry can consume even while another renderer is active. */
+  private surfaceEligibility: SurfaceEligibilityResult = {
+    status: "eligible",
+    note: null,
+    kind: null,
+  };
   /** The first positively-weighted transform — the one finish a
    * forward-orbit session reads (see {@link forwardHeadIndex}); refreshed
    * with every transform-list render, the panel's feed of the whole set. */
@@ -2546,7 +2546,6 @@ export class Ui {
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
     this.pointsSections = [
-      this.byId<HTMLDetailsElement>("transformsSection"),
       this.byId<HTMLDetailsElement>("xaosSection"),
       this.byId<HTMLDetailsElement>("presetSection"),
       this.byId<HTMLDetailsElement>("cloudSection"),
@@ -3576,7 +3575,7 @@ export class Ui {
     // modes stay available while non-flat: the flame/solid renders snapshot
     // the frozen 4D view and run their own 4D accumulators, and the surface
     // tracer poses the 4D attractor live. The tumble/slice block hides under
-    // the FROZEN renders for the same reason the editing controls do — the
+    // the FROZEN renders for the same reason the other 4D view controls do — the
     // view (rotor + slice) is baked into their worker snapshot, so its
     // controls couldn't affect it — but NOT under a live 4D surface session,
     // where the tracer re-poses and re-marches every frame and those are the
@@ -5422,10 +5421,12 @@ export class Ui {
       "hidden",
       !blocked || recovery !== "disableShapeTrapGeometry",
     );
-    // The route kind reaches the transform editor's Finish group (see
-    // surfaceRouteKind's doc): re-applied to a live editor here because the
-    // gate refresh runs AFTER the editor build on every refresh path.
-    this.surfaceRouteKind = kind;
+    // The full verdict reaches the shared transform editor: re-applied to a
+    // live editor here because the gate refresh runs AFTER the editor build
+    // on every refresh path. Store it rather than only its route so a later
+    // editor rebuild cannot lose an ineligibility reason.
+    this.surfaceEligibility = { status, note: detail, kind };
+    if (recovery !== null) this.surfaceEligibility.recovery = recovery;
     this.applyMaterialDisclosure();
   }
 
@@ -6324,7 +6325,7 @@ export class Ui {
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
     hint.textContent =
-      "Gradient palettes only: Index is the ramp slot this map pulls toward, in Flame, Solid and Surface's Palette source; Speed is how far each pick moves — Flame and Solid only.";
+      "Index sets this map's By Transform hue in Points, Flame, Solid and Surface; it also sets the gradient coordinate for Flame/Solid and IFS Surface Palette. Speed changes only the Flame/Solid gradient walk. Edits are saved now and apply on the next applicable render entry.";
     group.appendChild(hint);
 
     const derivedIndex = derivedColorIndex(target, transformCount);
@@ -6435,24 +6436,23 @@ export class Ui {
     const group = this.createEditorGroup("Finish", openGroup);
 
     // The scope note, in the Color group's hint idiom: every other render
-    // mode ignores a finish, and a slider that moves nothing on screen would
-    // otherwise teach that the group is broken.
+    // mode ignores a finish, and active-render edits intentionally remain
+    // next-entry document authoring until the renderer-effects wave lands.
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
     // A metal reads as its environment. Point users at the authorable room
     // input that gives a mirror recognizable structure on the shipped dark
     // backdrop, and state the intentional Metal/Chrome tint distinction.
     hint.textContent =
-      "Surface renders only: how this map's part of the surface catches light. The Material menu sets a finish and a pattern family together; a bundle sets all six controls; Classic clears them. Metal keeps the transform tint; Chrome stays neutral. Turn on Floor and Floor light to give reflections room structure.";
+      "Surface renders only: how this map's part of the surface catches light. Edits are saved now and apply on the next Surface entry. The Material menu sets a finish and a pattern family together; a bundle sets all six controls; Classic clears them. Metal keeps the transform tint; Chrome stays neutral. A bright backdrop or Floor light makes reflections legible.";
     group.appendChild(hint);
 
-    // The forward-orbit disclosure — hidden until applyMaterialDisclosure
-    // finds the document routing to an escape-time chain or a Mandelbulb
-    // with this transform not at its head.
+    // One stable adjacent applicability disclosure for every refusal class:
+    // whole-document Surface refusal, a forward route's non-head map, or an
+    // inactive IFS map. Hidden while the group is applicable.
     const note = this.doc.createElement("p");
     note.className = "flame-hint finish-note hidden";
-    note.textContent =
-      "Escape-time and Mandelbulb surfaces shade the whole object with the FIRST active transform's finish, so this one is not read there. It still applies to an IFS surface.";
+    note.id = FINISH_APPLICABILITY_NOTE_ID;
     group.appendChild(note);
 
     // The material select acts like a preset menu over the finish AND the
@@ -6466,6 +6466,7 @@ export class Ui {
     const material = this.doc.createElement("select");
     material.className = "finish-material";
     material.setAttribute("aria-label", "Material");
+    material.setAttribute("aria-describedby", note.id);
     material.title =
       "Material starting points that set the finish and the pattern family together — the scene stores the numbers, never the name.";
     const materialNone = this.doc.createElement("option");
@@ -6496,6 +6497,7 @@ export class Ui {
     const bundle = this.doc.createElement("select");
     bundle.className = "finish-bundle";
     bundle.setAttribute("aria-label", "Finish bundle");
+    bundle.setAttribute("aria-describedby", note.id);
     bundle.title =
       "Named starting points for the six controls below — the scene stores the numbers, never the name.";
     for (const entry of FINISH_BUNDLES) {
@@ -6535,6 +6537,7 @@ export class Ui {
         "aria-label",
         `Finish ${FINISH_LABELS[key].toLowerCase()}`,
       );
+      slider.setAttribute("aria-describedby", note.id);
       slider.title = FINISH_TITLES[key];
 
       const readout = this.doc.createElement("span");
@@ -6594,45 +6597,61 @@ export class Ui {
   }
 
   /**
-   * Disable the Finish and Pattern groups — and say why — on a transform
-   * whose material the surface session this document would start could
-   * never read: the forward-orbit routes (the escape-time chain in either
-   * dimension, the Mandelbulb) shade AND pattern the WHOLE object with the
-   * first active transform's and nobody else's. Disclosure rather than
-   * pretence: an enabled slider that moved nothing would teach that the
-   * feature is broken. The rows stay editable everywhere else, including on
-   * the head transform of such a document, and the document keeps whatever
-   * it carries — routing is a property of the system and a weight edit can
-   * hand the head to another map, at which point its rows re-enable through
-   * the same call. The pattern group's axis/scale/strength additionally
-   * disable while the family is none (there is no pattern to orient or
-   * scale yet) — the family select itself stays live, and the disclosure
-   * dims the whole group as well.
+   * Apply material CONSUMER eligibility without changing authored state.
+   * Three refusal classes, in precedence order: a document Surface cannot
+   * render at all; a non-head map on a forward route that shades/patterns the
+   * whole object from one head material; and a Weight-0 map an IFS descent
+   * never visits. Each keeps its values visible, disables every input, and
+   * exposes the exact reason through the stable adjacent note referenced by
+   * aria-describedby. Pattern's axis/scale/strength remain additionally
+   * disabled while its family is None when no refusal applies.
    */
   private applyMaterialDisclosure(): void {
     const editor = this.editor;
     if (!editor) return;
+    const eligibility = this.surfaceEligibility;
+    const fullyIneligible = eligibility.status === "ineligible";
     const headOnly =
-      routeShadesHeadOnly(this.surfaceRouteKind) &&
+      routeShadesHeadOnly(eligibility.kind) &&
       editor.target !== this.forwardHead;
+    const inactiveIfs =
+      (eligibility.kind === "ifs" || eligibility.kind === "ifs4") &&
+      editor.geometry.weight <= 0;
+    const refused = fullyIneligible || headOnly || inactiveIfs;
+    const reason = (feature: "finish" | "pattern"): string => {
+      if (fullyIneligible) {
+        const detail = eligibility.note ?? "not marchable";
+        const sentence = /[.!?]$/.test(detail) ? detail : `${detail}.`;
+        return `Surface render unavailable: ${sentence} This ${feature} stays authored for the next eligible Surface.`;
+      }
+      if (headOnly) {
+        return `Escape-time and Mandelbulb surfaces ${feature === "finish" ? "shade" : "pattern"} the whole object with the FIRST active transform's ${feature}, so this one is not read there. It still applies to an IFS surface.`;
+      }
+      if (inactiveIfs) {
+        return `IFS surfaces do not read a transform while its Weight is 0. This ${feature} stays authored and applies when the map is active.`;
+      }
+      return "";
+    };
     if (editor.finishControls) {
       const { group, material, bundle, rows, note } = editor.finishControls;
-      material.disabled = headOnly;
-      bundle.disabled = headOnly;
-      for (const key of FINISH_FIELDS) rows[key].slider.disabled = headOnly;
-      note.classList.toggle("hidden", !headOnly);
-      group.classList.toggle("material-inert", headOnly);
+      material.disabled = refused;
+      bundle.disabled = refused;
+      for (const key of FINISH_FIELDS) rows[key].slider.disabled = refused;
+      this.setReasonNote(note, reason("finish"));
+      note.classList.toggle("hidden", !refused);
+      group.classList.toggle("material-inert", refused);
     }
     if (editor.patternControls) {
       const { group, family, axis, scale, strength, note } =
         editor.patternControls;
       const hasFamily = family.value !== PATTERN_FAMILY_NONE;
-      family.disabled = headOnly;
-      axis.disabled = headOnly || !hasFamily;
-      scale.slider.disabled = headOnly || !hasFamily;
-      strength.slider.disabled = headOnly || !hasFamily;
-      note.classList.toggle("hidden", !headOnly);
-      group.classList.toggle("material-inert", headOnly);
+      family.disabled = refused;
+      axis.disabled = refused || !hasFamily;
+      scale.slider.disabled = refused || !hasFamily;
+      strength.slider.disabled = refused || !hasFamily;
+      this.setReasonNote(note, reason("pattern"));
+      note.classList.toggle("hidden", !refused);
+      group.classList.toggle("material-inert", refused);
     }
   }
 
@@ -6885,20 +6904,18 @@ export class Ui {
 
     // The scope note, in the Finish hint's idiom: every other render mode
     // ignores a pattern, and a control that moves nothing on screen would
-    // otherwise teach that the group is broken.
+    // otherwise teach that the group is broken. Active-render edits remain
+    // explicit next-entry authoring until renderer effects are added.
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
     hint.textContent =
-      "Surface renders only: how this map's part of the surface is patterned — its albedo texture, under the lighting. A family picks the pattern; None clears it. The Finish group's Material menu sets a family and a finish together.";
+      "Surface renders only: how this map's part of the surface is patterned — its albedo texture, under the lighting. Edits are saved now and apply on the next Surface entry. A family picks the pattern; None clears it. The Finish group's Material menu sets a family and a finish together.";
     group.appendChild(hint);
 
-    // The forward-orbit disclosure — hidden until applyMaterialDisclosure
-    // finds the document routing to an escape-time chain or a Mandelbulb
-    // with this transform not at its head.
+    // Stable adjacent applicability disclosure; see the Finish twin above.
     const note = this.doc.createElement("p");
     note.className = "flame-hint pattern-note hidden";
-    note.textContent =
-      "Escape-time and Mandelbulb surfaces pattern the whole object with the FIRST active transform's, so this one is not read there. It still applies to an IFS surface.";
+    note.id = PATTERN_APPLICABILITY_NOTE_ID;
     group.appendChild(note);
 
     // The family select is the block's spine: it reflects the resolved
@@ -6909,6 +6926,7 @@ export class Ui {
     const family = this.doc.createElement("select");
     family.className = "pattern-family";
     family.setAttribute("aria-label", "Pattern family");
+    family.setAttribute("aria-describedby", note.id);
     family.title =
       "Which pattern covers this map's part of the surface: wood, marble or strata. None removes the pattern.";
     const familyNone = this.doc.createElement("option");
@@ -6931,6 +6949,7 @@ export class Ui {
     const axis = this.doc.createElement("select");
     axis.className = "pattern-axis";
     axis.setAttribute("aria-label", "Pattern axis");
+    axis.setAttribute("aria-describedby", note.id);
     axis.title =
       "Which object-space axis the pattern's structure runs along. Y is the default.";
     for (const value of SURFACE_PATTERN_AXES) {
@@ -6968,6 +6987,7 @@ export class Ui {
     scaleSlider.step = "1";
     scaleSlider.value = String(patternScaleToSlider(resolved.scale));
     scaleSlider.setAttribute("aria-label", "Pattern scale");
+    scaleSlider.setAttribute("aria-describedby", note.id);
     scaleSlider.title =
       "Periods across one normalized object-space unit, on a logarithmic slider. Wood 3, Marble 1.35, Strata 2.6 by default.";
     const scaleReadout = this.doc.createElement("span");
@@ -6996,6 +7016,7 @@ export class Ui {
     strengthSlider.step = String(PATTERN_STRENGTH_STEP);
     strengthSlider.value = String(resolved.strength);
     strengthSlider.setAttribute("aria-label", "Pattern strength");
+    strengthSlider.setAttribute("aria-describedby", note.id);
     strengthSlider.title =
       "How much the pattern replaces the surface's own albedo: 0 leaves it unchanged, 1 is the full pattern. Default 1.";
     const strengthReadout = this.doc.createElement("span");
