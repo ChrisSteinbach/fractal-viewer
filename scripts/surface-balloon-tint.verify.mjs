@@ -129,12 +129,13 @@
  * THE CAMERA IS PINNED INTO EVERY DOCUMENT, and it is the app's OWN
  * auto-frame: the script boots each system once with no pose, reads the
  * pose back out of the Copy-link handler's `#v1=`, and writes it into every
- * document of that system. The settle latch is bit-reproducible run to run
- * ONLY for a document that pins its camera — a pose-less scene auto-frames
- * from a cloud and drifts — so without this L3 and L4 would be measuring
- * framing noise. Reading it rather than hardcoding it keeps the framing
- * honest if the system, the layout or the fit ever changes. The 4D system's
- * `fourD` rotor rides the same read, for the same reason one dimension up.
+ * document of that system. Current pose-less direct boots already frame
+ * deterministically from `BOOT_SEED`; pinning the read-back pose here makes
+ * the stronger contract that every balloon/tint leg uses the exact same
+ * camera even if the system, layout or fit changes. It also preserves the
+ * fixture discipline established when pose-less boot framing still drifted.
+ * The 4D system's `fourD` rotor rides the same read, for the same reason one
+ * dimension up.
  *
  * ENGINE. `window.__surfaceState().engine` (needs `?surfacestate`) is read
  * and PRINTED for every leg. The compute legs are GATED on it whenever a
@@ -485,11 +486,10 @@ async function probeAdapter(page) {
  * handler's `#v1=` rather than the camera object — the handler is the one
  * place that decides what a shared document carries.
  *
- * Waits out the boot first: the synchronous boot cloud auto-frames instantly
- * and the async density upgrade can re-fit behind it, so a pose read at
- * `load` is a pose the app may still be moving away from. It only has to be
- * a GOOD framing once — every leg then shares whatever this returns — but a
- * half-fitted one would frame the legs badly for the whole run. */
+ * Waits for the synchronous boot cloud and leaves the existing short grace
+ * period for the app/share UI to become quiescent. The framing is already
+ * final once the synchronous fit finishes: the async density upgrade reuses
+ * `BOOT_SEED` with `fit:false`, so it only adds points and cannot re-fit. */
 async function readPose(page) {
   await page.waitForFunction(
     () =>

@@ -243,8 +243,8 @@ gradient at the same gamma-mapped coordinate instead of the built-in HSL
 formulas. One definition again: `writePaletteRampColor` in `color.ts` is
 shared by `buildColors`' branches and `buildColorModeLUT`, so the explorer's
 points, the solid render's colorMode-driven voxels, and the panel legend all
-recolor together. The 4D projection's "By 4D Radius" mode follows the same
-selection.
+recolor together. The 4D projection's "By Height" and "By 4D Radius" modes
+follow the same selection and shared contrast exponent.
 
 The `position` mode is not a 1-D ramp (a 256×3 LUT indexes one coordinate;
 position has three), so instead of the ramp palette it takes three
@@ -383,13 +383,17 @@ Seeing the result is a separate concern from generating it. `scene.ts` renders a
 non-flat cloud with a dedicated shader material: the vertex shader rotates each
 point about the cloud's 4D center by a `uRot4` uniform, drops the rotated `w` to
 project orthographically, and colors the point according to the panel's **4D
-Color** select. Three of its five modes are diverging palettes on the
+Color** select. Three of its eight modes are diverging palettes on the
 signed rotated `w` — blue/orange (the default), purple/green, or cyan/magenta,
 each a `{neg, pos}` pair in `color.ts`'s `W_SIDE_PALETTES` fed to the shader as
-uniforms — toward `−w`/`+w`; the other two swap in a rotation-invariant
-per-point color instead, baked once per generation into a color attribute by
-`color.ts`'s `buildColors4` (by producing transform, or by 4D distance from the
-cloud's 4D center). Either way the signed rotated `w` — which picks the
+uniforms — toward `−w`/`+w`; the other five swap in a fixed per-point color
+attribute baked by `color.ts`'s `buildColors4`: producing transform, raw
+authored Y height, 4D distance from the cloud center, raw authored XYZ
+position with the shared Axis Colors, or uniform cyan. Height/Radius/Position
+also consume the shared Color Contrast, while Height/Radius consume the shared
+ramp palette. These coordinates stay attached to the fractal as the 4D VIEW
+rotor turns, just as their flat counterparts stay attached under camera orbit.
+Either way the signed rotated `w` — which picks the
 diverging side and, in every mode, drives the dim gray notch near `w = 0` — is
 normalized by the cloud's 4D bounding box's support in the rotated-w direction
 (`rotor4.ts`'s `wSupport`, rotation-covariant so anisotropic clouds never wash
@@ -399,11 +403,12 @@ several w-layers an orthographic projection folds onto the same screen pixel sta
 visible and sum toward white where they overlap, instead of the nearest layer
 hiding the rest. That composition admits fade-to-black attenuation, but a
 colored haze would add its fog color once per W layer and EDL has no single
-front/depth surface to inspect. Those two flat depth styles are disclosed
-refusals. Glow/Bloom, Depth of Field, flat Height/Position/Uniform color, and
-4D-Radius Contrast are separate unfinished renderer lifts; the panel keeps
-their stored flat controls visible-disabled rather than erasing them or
-pretending they are impossible.
+front/depth surface to inspect. Those two depth styles remain disclosed
+refusals. Glow uses the same bloom composer over soft HDR sprites emitted by
+the dedicated 4D material; Depth of Field computes its circle of confusion
+from each projected point's camera depth and conserves additive energy as the
+sprite spreads. The independent fade-to-black toggle remains available in
+every style.
 
 `uRot4` is driven from `rotor4.ts`, which represents the
 accumulated 4D VIEW rotation as a pair of unit quaternions (`RotorPair`) — the
@@ -686,7 +691,8 @@ accumulation, and restarts at that settled endpoint. Flame continues to refuse
 ordinary camera and transform actions, while its Shift rotor, W-slice, and
 visible motion-preference actions remain reachable; Solid's world-space camera
 stays live. The shared Scene color editor similarly uses atomic `setColorInputs`
-commands to keep 4D color mode and radius-ramp palette current. The 4D flame
+commands to keep 4D color mode, contrast, applicable ramp palette, and Axis
+Colors current. The 4D flame
 rides the same WebGPU path as the 3D one (see "GPU accumulation backend"), with
 `accumulateFlame4` as its CPU oracle and fallback.
 

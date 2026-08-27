@@ -2750,7 +2750,11 @@ describe("FlameWorkerSession 4D flame render", () => {
             colorGamma: 1,
             rampPalette: "legacy",
           },
-          fourD: { colorMode: "wBlueOrange", rampPalette: "legacy" },
+          fourD: {
+            colorMode: "wBlueOrange",
+            colorGamma: 1,
+            rampPalette: "legacy",
+          },
         },
       }),
     },
@@ -3012,6 +3016,7 @@ describe("FlameWorkerSession 4D flame render", () => {
     > = {
       ...defaultFourD(),
       colorMode: "radius",
+      colorGamma: 2,
       radiusMin: 0.25,
       radiusMax: 2.5,
       rampPalette: "ember",
@@ -3050,7 +3055,7 @@ describe("FlameWorkerSession 4D flame render", () => {
     // explorer's own bake.
     if (request.color.kind === "radius") {
       expect(request.color.lut).toEqual(
-        buildColorModeLUT("radius", 1, "ember"),
+        buildColorModeLUT("radius", 2, "ember"),
       );
       expect(request.color.minD).toBe(0.25);
       expect(request.color.maxD).toBe(2.5);
@@ -3252,7 +3257,11 @@ describe("FlameWorkerSession 4D flame render", () => {
         colorGamma: 2,
         rampPalette: "ember" as const,
       },
-      fourD: { colorMode: "radius" as const, rampPalette: "ember" as const },
+      fourD: {
+        colorMode: "radius" as const,
+        colorGamma: 1,
+        rampPalette: "ember" as const,
+      },
     };
 
     session.handle({ type: "setColorInputs", inputs });
@@ -3260,6 +3269,55 @@ describe("FlameWorkerSession 4D flame render", () => {
     session.handle({ type: "setPalette", palette: "legacy" });
     expect(restartedEvents(events)).toHaveLength(before + 1);
     session.handle({ type: "setColorInputs", inputs });
+    expect(restartedEvents(events)).toHaveLength(before + 1);
+  });
+
+  it("restarts an active 4D Position mode only for visible contrast/axis changes", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        fourD: {
+          ...defaultFourD(),
+          colorMode: "position",
+          colorGamma: 2,
+        },
+        palette: "legacy",
+        iterationsBudget: 20,
+      }),
+    );
+    scheduler.drain();
+    const before = restartedEvents(events).length;
+    const legacyAxes = {
+      x: [1, 0, 0] as const,
+      y: [0, 1, 0] as const,
+      z: [0, 0, 1] as const,
+    };
+    session.handle({
+      type: "setColorInputs",
+      inputs: {
+        flat: { colorMode: "transform", colorGamma: 1, rampPalette: "legacy" },
+        fourD: {
+          colorMode: "position",
+          colorGamma: 2,
+          rampPalette: "ember", // dormant in Position
+          positionAxisColors: legacyAxes,
+        },
+      },
+    });
+    expect(restartedEvents(events)).toHaveLength(before);
+
+    session.handle({
+      type: "setColorInputs",
+      inputs: {
+        flat: { colorMode: "transform", colorGamma: 1, rampPalette: "legacy" },
+        fourD: {
+          colorMode: "position",
+          colorGamma: 3,
+          rampPalette: "ember",
+          positionAxisColors: legacyAxes,
+        },
+      },
+    });
     expect(restartedEvents(events)).toHaveLength(before + 1);
   });
 
@@ -3287,6 +3345,7 @@ describe("FlameWorkerSession 4D flame render", () => {
         flat: { colorMode: "transform", colorGamma: 1, rampPalette: customA },
         fourD: {
           colorMode: "radius",
+          colorGamma: 1,
           rampPalette: {
             stops: customA.stops.map(
               (stop) => [...stop] as [number, number, number],
@@ -3302,7 +3361,7 @@ describe("FlameWorkerSession 4D flame render", () => {
       type: "setColorInputs",
       inputs: {
         flat: { colorMode: "transform", colorGamma: 1, rampPalette: customB },
-        fourD: { colorMode: "radius", rampPalette: customB },
+        fourD: { colorMode: "radius", colorGamma: 1, rampPalette: customB },
       },
     });
     expect(restartedEvents(events)).toHaveLength(before + 1);
@@ -3317,7 +3376,7 @@ describe("FlameWorkerSession 4D flame render", () => {
       type: "setColorInputs",
       inputs: {
         flat: { colorMode: "radius", colorGamma: 2, rampPalette: "ember" },
-        fourD: { colorMode: "radius", rampPalette: "ember" },
+        fourD: { colorMode: "radius", colorGamma: 1, rampPalette: "ember" },
       },
     });
     expect(restartedEvents(events)).toHaveLength(before);

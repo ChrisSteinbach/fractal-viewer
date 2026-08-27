@@ -40,6 +40,7 @@ import {
   sameFlatRenderColorInputs,
   sameFourDRenderColorInputs,
   transformColors,
+  UNIFORM_POINT_COLOR,
   W_SIDE_PALETTES,
 } from "../fractal/color";
 import type {
@@ -192,6 +193,10 @@ export type VoxelWorkerCommand =
         /** The explorer's active 4D color mode — drives the "legacy"
          * palette dispatch (see `color.ts`'s `FourDRenderColor`). */
         colorMode: FourDColorMode;
+        /** Shared contrast exponent for Height/Radius/Position. */
+        colorGamma?: number;
+        /** Position mode's custom XYZ axis colors; absent is legacy XYZ→RGB. */
+        positionAxisColors?: PositionAxisColors;
         /** Min/max 4D distance from `center` over the explorer's own cloud
          * (`ChaosGame4Result`), computed by the main thread — the "radius"
          * color mode's normalization range. */
@@ -493,7 +498,9 @@ export class VoxelWorkerSession {
   private fourDHalfExtents: Vec4 = [0, 0, 0, 0];
   private fourDRadiusMin = 0;
   private fourDRadiusMax = 1;
+  private fourDColorGamma = 1;
   private fourDRampPalette: PaletteSpec = "legacy";
+  private fourDPositionAxisColors: PositionAxisColors | undefined;
   /** Built once per `startAccumulation` (never per chunk — see
    * `buildFourDColor`) from the current `colorLUT` and the `fourD` block's
    * `colorMode`. `null` for a 3D session. */
@@ -696,7 +703,9 @@ export class VoxelWorkerSession {
       this.fourDHalfExtents = [...fourD.halfExtents];
       this.fourDRadiusMin = fourD.radiusMin;
       this.fourDRadiusMax = fourD.radiusMax;
+      this.fourDColorGamma = fourD.colorGamma ?? 1;
       this.fourDRampPalette = fourD.rampPalette;
+      this.fourDPositionAxisColors = fourD.positionAxisColors;
     } else {
       this.baseTransforms4 = [];
       this.baseFinalTransform4 = null;
@@ -770,14 +779,47 @@ export class VoxelWorkerSession {
             this.baseTransforms4.map((t) => t.colorIndex),
           ),
         };
+      case "height":
+        return {
+          kind: "height",
+          lut: buildColorModeLUT(
+            "height",
+            this.fourDColorGamma,
+            this.fourDRampPalette,
+          ),
+          minY: this.fourDCenter[1] - this.fourDHalfExtents[1],
+          maxY: this.fourDCenter[1] + this.fourDHalfExtents[1],
+        };
       case "radius":
         return {
           kind: "radius",
-          lut: buildColorModeLUT("radius", 1, this.fourDRampPalette),
+          lut: buildColorModeLUT(
+            "radius",
+            this.fourDColorGamma,
+            this.fourDRampPalette,
+          ),
           center: this.fourDCenter,
           minD: this.fourDRadiusMin,
           maxD: this.fourDRadiusMax,
         };
+      case "position":
+        return {
+          kind: "position",
+          min: [
+            this.fourDCenter[0] - this.fourDHalfExtents[0],
+            this.fourDCenter[1] - this.fourDHalfExtents[1],
+            this.fourDCenter[2] - this.fourDHalfExtents[2],
+          ],
+          max: [
+            this.fourDCenter[0] + this.fourDHalfExtents[0],
+            this.fourDCenter[1] + this.fourDHalfExtents[1],
+            this.fourDCenter[2] + this.fourDHalfExtents[2],
+          ],
+          colorGamma: this.fourDColorGamma,
+          axisColors: this.fourDPositionAxisColors,
+        };
+      case "uniform":
+        return { kind: "uniform", color: UNIFORM_POINT_COLOR };
     }
   }
 
@@ -810,7 +852,9 @@ export class VoxelWorkerSession {
       ? sameFourDRenderColorInputs(
           {
             colorMode: this.fourDColorMode,
+            colorGamma: this.fourDColorGamma,
             rampPalette: this.fourDRampPalette,
+            positionAxisColors: this.fourDPositionAxisColors,
           },
           inputs.fourD,
         )
@@ -828,7 +872,9 @@ export class VoxelWorkerSession {
     this.rampPalette = inputs.flat.rampPalette;
     this.positionAxisColors = inputs.flat.positionAxisColors;
     this.fourDColorMode = inputs.fourD.colorMode;
+    this.fourDColorGamma = inputs.fourD.colorGamma ?? 1;
     this.fourDRampPalette = inputs.fourD.rampPalette;
+    this.fourDPositionAxisColors = inputs.fourD.positionAxisColors;
     if (this.paletteSpec !== "legacy" || unchanged) return;
     this.startAccumulation();
   }

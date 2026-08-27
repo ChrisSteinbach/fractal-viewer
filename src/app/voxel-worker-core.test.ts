@@ -452,7 +452,12 @@ describe("VoxelWorkerSession setColorInputs", () => {
         rampPalette: "legacy",
         ...flat,
       },
-      fourD: { colorMode: "wBlueOrange", rampPalette: "legacy", ...fourD },
+      fourD: {
+        colorMode: "wBlueOrange",
+        rampPalette: "legacy",
+        ...fourD,
+        colorGamma: fourD.colorGamma ?? 1,
+      },
     };
   }
 
@@ -489,6 +494,53 @@ describe("VoxelWorkerSession setColorInputs", () => {
     });
 
     expect(restartedEvents(events)).toHaveLength(before);
+  });
+
+  it("does the same semantic de-duplication for active 4D Position contrast/axes", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        fourD: {
+          ...defaultFourD(),
+          colorMode: "position",
+          colorGamma: 2,
+        },
+      }),
+    );
+    scheduler.drain();
+    const before = restartedEvents(events).length;
+    const legacyAxes = {
+      x: [1, 0, 0] as const,
+      y: [0, 1, 0] as const,
+      z: [0, 0, 1] as const,
+    };
+    session.handle({
+      type: "setColorInputs",
+      inputs: inputs(
+        {},
+        {
+          colorMode: "position",
+          colorGamma: 2,
+          rampPalette: "ember",
+          positionAxisColors: legacyAxes,
+        },
+      ),
+    });
+    expect(restartedEvents(events)).toHaveLength(before);
+
+    session.handle({
+      type: "setColorInputs",
+      inputs: inputs(
+        {},
+        {
+          colorMode: "position",
+          colorGamma: 3,
+          rampPalette: "ember",
+          positionAxisColors: legacyAxes,
+        },
+      ),
+    });
+    expect(restartedEvents(events)).toHaveLength(before + 1);
   });
 
   it("stages dormant nonlegacy inputs and picks them up on return to legacy", () => {

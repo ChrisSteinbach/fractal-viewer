@@ -499,8 +499,8 @@ export interface AppState {
   /**
    * Contrast exponent applied to the normalized coordinate in the
    * height/radius/position color modes (see `color.ts`'s
-   * `colorModeUsesGamma`): `t' = t ** colorGamma`. `1` = linear (today's
-   * mapping, unreshaped). Persists like `colorMode` / `renderStyle` /
+   * `colorModeUsesGamma` and its 4D twin): `t' = t ** colorGamma`. `1` =
+   * linear (today's mapping, unreshaped). Persists like `colorMode` / `renderStyle` /
    * `glowBrightness` — not session-only.
    */
   colorGamma: number;
@@ -509,13 +509,14 @@ export interface AppState {
    * everywhere the ONE ramp definition flows: the explorer's
    * point colors (`buildColors`), the solid render's `"legacy"`-palette
    * colorMode path (`accumulateVoxels`), and the panel legend, all via
-   * `color.ts`'s `buildColorModeLUT`. The 4D projection's
-   * "By 4D Radius" mode follows the same selection — the explorer bake
-   * (`buildColors4`), the flame/voxel workers' 4D radius LUT, and the 4D
+   * `color.ts`'s `buildColorModeLUT`. The 4D projection's By Height and
+   * By 4D Radius modes follow the same selection — the explorer bake
+   * (`buildColors4`), the flame/voxel workers' 4D ramp LUTs, and the 4D
    * legend. `"legacy"` keeps the built-in ramps; `"custom"` selects the
    * user-authored gradient in {@link AppState.customPalette}, exactly like
    * the flame/solid `paletteId`s. Inert for the modes with no 1-D ramp
-   * (transform/position/uniform, and the 4D w-depth/transform modes).
+   * (transform/position/uniform, and the 4D w-depth/transform/position/uniform
+   * modes).
    * Persists like `colorMode` / `colorGamma`.
    */
   rampPaletteId: PaletteSelection;

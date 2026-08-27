@@ -67,9 +67,14 @@ import {
   fourDColorNeedsAttribute,
   sameFourDRenderColorInputs,
   transformColors,
+  UNIFORM_POINT_COLOR,
   W_SIDE_PALETTES,
 } from "../fractal/color";
-import type { FourDRenderColor, RenderColorInputs } from "../fractal/color";
+import type {
+  FourDRenderColor,
+  PositionAxisColors,
+  RenderColorInputs,
+} from "../fractal/color";
 import {
   composeFlameProjection4,
   composeRotorProjection4,
@@ -237,6 +242,11 @@ export type FlameWorkerCommand =
         /** The explorer's active 4D color mode — drives the "legacy"
          * palette dispatch (see `color.ts`'s `FourDRenderColor`). */
         colorMode: FourDColorMode;
+        /** Shared contrast exponent for Height/Radius/Position. Absent keeps
+         * the legacy neutral exponent for older callers. */
+        colorGamma?: number;
+        /** Position mode's custom XYZ axis colors; absent is legacy XYZ→RGB. */
+        positionAxisColors?: PositionAxisColors;
         /** Min/max 4D distance from `center` over the explorer's own cloud
          * (`ChaosGame4Result`), computed by the main thread — the "radius"
          * color mode's normalization range. */
@@ -1048,7 +1058,9 @@ export class FlameWorkerSession {
   private fourDHalfExtents: Vec4 = [0, 0, 0, 0];
   private fourDRadiusMin = 0;
   private fourDRadiusMax = 1;
+  private fourDColorGamma = 1;
   private fourDRampPalette: PaletteSpec = "legacy";
+  private fourDPositionAxisColors: PositionAxisColors | undefined;
   /** Built once per `startAccumulation` (never per chunk — see
    * `buildFourDColor`) from the current `paletteSpec`/`colorLUT` and the
    * `fourD` block's `colorMode`. `null` for a 3D session. */
@@ -1462,7 +1474,9 @@ export class FlameWorkerSession {
       this.fourDHalfExtents = [...fourD.halfExtents];
       this.fourDRadiusMin = fourD.radiusMin;
       this.fourDRadiusMax = fourD.radiusMax;
+      this.fourDColorGamma = fourD.colorGamma ?? 1;
       this.fourDRampPalette = fourD.rampPalette;
+      this.fourDPositionAxisColors = fourD.positionAxisColors;
     } else {
       this.baseTransforms4 = [];
       this.baseFinalTransform4 = null;
@@ -1565,14 +1579,47 @@ export class FlameWorkerSession {
             this.baseTransforms4.map((t) => t.colorIndex),
           ),
         };
+      case "height":
+        return {
+          kind: "height",
+          lut: buildColorModeLUT(
+            "height",
+            this.fourDColorGamma,
+            this.fourDRampPalette,
+          ),
+          minY: this.fourDCenter[1] - this.fourDHalfExtents[1],
+          maxY: this.fourDCenter[1] + this.fourDHalfExtents[1],
+        };
       case "radius":
         return {
           kind: "radius",
-          lut: buildColorModeLUT("radius", 1, this.fourDRampPalette),
+          lut: buildColorModeLUT(
+            "radius",
+            this.fourDColorGamma,
+            this.fourDRampPalette,
+          ),
           center: this.fourDCenter,
           minD: this.fourDRadiusMin,
           maxD: this.fourDRadiusMax,
         };
+      case "position":
+        return {
+          kind: "position",
+          min: [
+            this.fourDCenter[0] - this.fourDHalfExtents[0],
+            this.fourDCenter[1] - this.fourDHalfExtents[1],
+            this.fourDCenter[2] - this.fourDHalfExtents[2],
+          ],
+          max: [
+            this.fourDCenter[0] + this.fourDHalfExtents[0],
+            this.fourDCenter[1] + this.fourDHalfExtents[1],
+            this.fourDCenter[2] + this.fourDHalfExtents[2],
+          ],
+          colorGamma: this.fourDColorGamma,
+          axisColors: this.fourDPositionAxisColors,
+        };
+      case "uniform":
+        return { kind: "uniform", color: UNIFORM_POINT_COLOR };
     }
   }
 
@@ -1782,7 +1829,8 @@ export class FlameWorkerSession {
    * Stage the document's latest shared color inputs. A flat Flame never reads
    * them, and a structural primary palette overrides them, so neither case
    * discards useful accumulation. A 4D legacy session bakes `fourDColor`
-   * (and, for radius, its ramp) into sumRGB and therefore restarts through the
+   * (including active contrast/ramp/axis inputs) into sumRGB and therefore
+   * restarts through the
    * same accumulation-only path as `setPalette`; geometry, projection and the
    * frozen view remain intact.
    */
@@ -1791,12 +1839,16 @@ export class FlameWorkerSession {
     const unchanged = sameFourDRenderColorInputs(
       {
         colorMode: this.fourDColorMode,
+        colorGamma: this.fourDColorGamma,
         rampPalette: this.fourDRampPalette,
+        positionAxisColors: this.fourDPositionAxisColors,
       },
       inputs.fourD,
     );
     this.fourDColorMode = inputs.fourD.colorMode;
+    this.fourDColorGamma = inputs.fourD.colorGamma ?? 1;
     this.fourDRampPalette = inputs.fourD.rampPalette;
+    this.fourDPositionAxisColors = inputs.fourD.positionAxisColors;
     if (!this.is4D || this.paletteSpec !== "legacy" || unchanged) return;
     this.startAccumulation(
       this.lastRequestedSupersample ?? this.effectiveSupersample,

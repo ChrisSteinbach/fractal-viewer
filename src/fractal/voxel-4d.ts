@@ -24,7 +24,12 @@ import {
 } from "./chaos-game";
 import { pickIndex4, plotPoint4, stepOrbit4 } from "./chaos-game-4d";
 import type { PreparedChaosGame4 } from "./chaos-game-4d";
-import { wRampColor } from "./color";
+import {
+  POSITION_COLOR_OFFSET,
+  POSITION_COLOR_SCALE,
+  wRampColor,
+  writePositionColor,
+} from "./color";
 import type { FourDRenderColor } from "./color";
 import type { FourDView, RotorProjection4 } from "./project4";
 import { sliceColorRemap, sliceWeight } from "./project4";
@@ -344,6 +349,10 @@ export function accumulateVoxels4(
   const colorSlots = prepared.colorIndex;
   const colorSpeeds = prepared.colorSpeed;
   let c = grid.orbitColor;
+  const positionScratch =
+    color.kind === "position" && color.axisColors !== undefined
+      ? new Float32Array(3)
+      : null;
 
   // Graph-directed selection state, resumed from the grid — see
   // accumulateVoxels' identical threading (chunk-boundary independence via
@@ -659,6 +668,14 @@ export function accumulateVoxels4(
         b = rgb[2];
         break;
       }
+      case "height": {
+        const t = (py - color.minY) / (color.maxY - color.minY || 1);
+        const li = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 255 + 0.5) | 0) * 3;
+        r = color.lut[li];
+        g = color.lut[li + 1];
+        b = color.lut[li + 2];
+        break;
+      }
       case "radius": {
         const dx = px - color.center[0];
         const dy = py - color.center[1];
@@ -675,6 +692,31 @@ export function accumulateVoxels4(
         b = color.lut[li + 2];
         break;
       }
+      case "position": {
+        const tx0 = (px - color.min[0]) / (color.max[0] - color.min[0] || 1);
+        const ty0 = (py - color.min[1]) / (color.max[1] - color.min[1] || 1);
+        const tz0 = (pz - color.min[2]) / (color.max[2] - color.min[2] || 1);
+        const tx = tx0 <= 0 ? 0 : tx0 >= 1 ? 1 : tx0;
+        const ty = ty0 <= 0 ? 0 : ty0 >= 1 ? 1 : ty0;
+        const tz = tz0 <= 0 ? 0 : tz0 >= 1 ? 1 : tz0;
+        const gx = color.colorGamma === 1 ? tx : tx ** color.colorGamma;
+        const gy = color.colorGamma === 1 ? ty : ty ** color.colorGamma;
+        const gz = color.colorGamma === 1 ? tz : tz ** color.colorGamma;
+        if (color.axisColors === undefined) {
+          r = gx * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+          g = gy * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+          b = gz * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+        } else {
+          writePositionColor(positionScratch!, 0, gx, gy, gz, color.axisColors);
+          r = positionScratch![0];
+          g = positionScratch![1];
+          b = positionScratch![2];
+        }
+        break;
+      }
+      case "uniform":
+        [r, g, b] = color.color;
+        break;
     }
     const o = bucket * 3;
     // Weighted running mean: at weight === 1 (every unsliced hit),

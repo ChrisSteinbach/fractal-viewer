@@ -6,7 +6,11 @@ import type {
   SymmetryPlane,
 } from "../fractal/types";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "../fractal/shape-trap";
-import { buildColorModeLUT, colorModeUsesRampPalette } from "../fractal/color";
+import {
+  buildColorModeLUT,
+  colorModeUsesRampPalette,
+  fourDColorModeUsesRampPalette,
+} from "../fractal/color";
 import type { RenderColorInputs } from "../fractal/color";
 import {
   buildPaletteLUT,
@@ -569,7 +573,9 @@ export function renderColorInputs(state: AppState): RenderColorInputs {
     },
     fourD: {
       colorMode: state.fourDColor,
+      colorGamma: state.colorGamma,
       rampPalette,
+      positionAxisColors: state.positionAxisColors,
     },
   };
 }
@@ -638,7 +644,7 @@ export function applyPrimaryCustomPaletteEffects(
 
   if (state.rampPaletteId === CUSTOM_PALETTE_ID) {
     const flat = colorModeUsesRampPalette(state.colorMode);
-    const fourD = state.fourDColor === "radius";
+    const fourD = fourDColorModeUsesRampPalette(state.fourDColor);
     applyRenderColorInputEffects(state, fx, {
       points: flat && fourD ? "both" : flat ? "flat" : fourD ? "fourD" : "none",
       surfaceRamp: true,
@@ -756,7 +762,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     // The ramp-palette select: swaps the height/radius color-mode ramps'
     // built-in colors for a gradient palette (see color.ts's
     // buildColorModeLUT). Live in BOTH views (no `view` guard): the 4D
-    // projection's "By 4D Radius" mode follows the same selection, so the
+    // projection's By Height and By 4D Radius modes follow the same selection, so the
     // one row sits statically beneath the flat/4D color-select pair in the
     // Color section (see ui.ts's rampPaletteRow gating). Recolors the
     // live cloud over the cached run — like colorMode/colorGamma, never a
@@ -777,8 +783,8 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   },
   {
     // The color-contrast slider — `apply` converts the slider's log-scale
-    // position to the actual gamma. Only shown while the active color
-    // mode is height/radius/position (see ui.ts's colorGammaRow).
+    // position to the actual gamma. Only shown while the active flat or 4D
+    // color mode is height/radius/position (see ui.ts's colorGammaRow).
     kind: "range",
     id: "colorGammaSlider",
     label: { id: "colorGammaLabel", text: (s) => s.colorGamma.toFixed(2) },
@@ -786,18 +792,23 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, raw) => setColorGamma(s, sliderToColorGamma(Number(raw))),
     effect: (s, fx) =>
       applyRenderColorInputEffects(s, fx, {
-        points: "flat",
+        points: "both",
         surfaceRamp: true,
       }),
   },
   {
     kind: "select",
     id: "renderStyle",
-    // renderStyleRow stays visible-disabled while non-flat (the 4D material
-    // ignores it); this guard is the mutation backstop.
-    view: "flat",
+    // Glow/Bloom and DOF have dedicated 4D paths. Aerial/EDL remain disabled
+    // in the non-flat UI; keep this mutation backstop for synthetic events.
     read: (s) => s.renderStyle,
-    apply: (s, raw) => setRenderStyle(s, raw as RenderStyle),
+    apply: (s, raw) =>
+      systemIsNonFlat(s) &&
+      raw !== "depthFade" &&
+      raw !== "glow" &&
+      raw !== "dof"
+        ? s
+        : setRenderStyle(s, raw as RenderStyle),
     effect: (s, fx) => {
       fx.scene.setRenderStyle(s.renderStyle);
       // Reset glow exposure so no stale factor sticks when switching away.

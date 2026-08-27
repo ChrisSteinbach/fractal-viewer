@@ -11,20 +11,23 @@
  * TWO THINGS make a run-to-run comparison meaningful, and both are the
  * point of this script:
  *
- *  1. THE POSE MUST BE PINNED IN THE DOCUMENT. A pose-less scene auto-frames
- *     itself at boot from `frameBounds` — trimmed quantiles over a chaos game
- *     seeded with `Math.random()` (main.ts's `rollSeed`) — so the camera
- *     radius/target differ by a fraction of a percent on every load, and a
- *     sub-pixel-to-few-pixel reframing lights up the silhouette of every
- *     object in the frame. That is a whole-image difference with nothing to
- *     do with the renderer, and it is MEASURED, not theorised: two `--mint`
- *     runs of these very scenes minutes apart auto-framed sierpinski3 at
- *     radius 4.1597 vs 4.1747 (0.36%), pentatope4 at 2.3117 vs 2.3038, and
- *     boxfold3's target at [0.1724,-0.0662,0.2449] vs [0.1726,-0.0660,
- *     0.2452]. Every SCENARIO hash below therefore carries a
- *     `camera` (and, for 4D, a `fourD`) block, which main.ts's boot applies
- *     INSTEAD of fitting (see `saved?.camera` in main.ts). They were minted
- *     by this script's own `--mint` mode — see MINTING below — so the
+ *  1. THE MEASUREMENT POSE IS PINNED IN THE DOCUMENT. A pose-less scene
+ *     auto-frames itself at boot from `frameBounds` — trimmed quantiles over
+ *     the boot chaos game. Current main.ts pins that game's `BOOT_SEED`, so
+ *     opening the same pose-less hash now produces the same cloud and camera;
+ *     the async full-density upgrade keeps `fit:false` and cannot move it.
+ *     This harness predates that fix, though, and the historical measurements
+ *     that motivated it remain useful: with the old random boot seed, two
+ *     `--mint` runs minutes apart auto-framed sierpinski3 at radius 4.1597 vs
+ *     4.1747 (0.36%), pentatope4 at 2.3117 vs 2.3038, and boxfold3's target at
+ *     [0.1724,-0.0662,0.2449] vs [0.1726,-0.0660,0.2452]. That
+ *     sub-pixel-to-few-pixel reframing lit up whole silhouettes, not renderer
+ *     nondeterminism. Every SCENARIO hash below still carries a `camera` (and,
+ *     for 4D, a `fourD`) block: it freezes the exact measurement viewpoint
+ *     across code changes and also covers preset/menu loads, whose later
+ *     regenerations deliberately still use `rollSeed()`. main.ts applies the
+ *     stored pose INSTEAD of fitting (see `saved?.camera`). The hashes were
+ *     minted by this script's own `--mint` mode — see MINTING below — so the
  *     provenance is reproducible rather than hand-typed.
  *     `emulateMedia({reducedMotion:"reduce"})` covers the rest of the motion
  *     surface: no entry glide, no 3D auto-orbit, no 4D auto-tumble.
@@ -68,15 +71,17 @@
  * and ~92s with `--query=surfacegl` — i.e. an A/B of two builds is ~6
  * minutes of wall time, dominated by page boots rather than tracing.
  *
- * And the CONTROL reproduces that motivating measurement. The same scenes at
- * `--pose=free` — identical in every respect except that boot auto-frames
- * them — are NOT reproducible: lens3 8.900/9.131/8.963% of pixels differing
- * with max channel delta 216-223, pentatope4 0.885/0.937/1.005% at max delta
- * 202-232, and the compute settle census moving with it (lens3 hit counts
- * 60328 / 60840 / 59844 where the pinned pose reports 60912 every time).
- * The diff images are the whole object lit up, not scattered speckle: the
- * camera moved, the renderer did not. That is the motivating 2.9%/170 in
- * kind and in magnitude.
+ * And the HISTORICAL CONTROL (2026-08-10, before `BOOT_SEED`) reproduced that
+ * motivating measurement. The same scenes at `--pose=free` — identical in
+ * every respect except that boot auto-framed them — were NOT reproducible:
+ * lens3 8.900/9.131/8.963% of pixels differing with max channel delta
+ * 216-223, pentatope4 0.885/0.937/1.005% at max delta 202-232, and the compute
+ * settle census moved with it (lens3 hit counts 60328 / 60840 / 59844 where
+ * the pinned pose reported 60912 every time). The diff images were the whole
+ * object lit up, not scattered speckle: the camera moved, the renderer did
+ * not. That is the motivating 2.9%/170 in kind and in magnitude. It records
+ * why the boot seed was pinned; it is not the expected result for a current
+ * direct-hash boot.
  *
  * POSE-LESS 4D BOOT ADDENDUM (measured 2026-08-11): the CONTROL paragraph
  * above never actually exercised the boot-time seed pin — pentatope4's
@@ -93,11 +98,12 @@
  * exhausted 0), 0 differing pixels across all 3 pairs, max channel delta 0;
  * settles 10.9/6.3/5.1s. The minted `--pose=pinned` hash's own 4D pose (p/q
  * rotor) came out BIT-IDENTICAL to pentatope4's separately-minted one —
- * direct confirmation that the pinned boot seed makes the tumble-reset
- * deterministic independent of how the document arrived (deep link vs preset
- * menu). Only the 3D camera auto-frame differs between the two mints (a
- * target/radius drift of a few tenths of a percent), `frameBounds`'s own
- * point-cloud sampling noise, unrelated to the seed pin.
+ * direct confirmation that the fixed tumble-reset pose is deterministic
+ * independent of how the document arrived (deep link vs preset menu). Only
+ * the 3D camera auto-frame differs between the two historical mints (a
+ * target/radius drift of a few tenths of a percent): the direct boot used
+ * `BOOT_SEED`, while the preset selection was a later regeneration and still
+ * used `rollSeed()`.
  *
  * WHAT IT REPORTS, per scenario+arm: the settle wall time of each run, then
  * every pairwise diff — %-pixels-differing, max channel delta, and the count
@@ -169,11 +175,11 @@
  *               itself, NOT a verdict about the real driver).
  *   --pose      pinned (default) = the minted, pose-carrying hash: the
  *               measurement configuration. free = the SAME system with no
- *               stored pose, so boot auto-frames it from a Math.random()-
- *               seeded cloud — the CONTROL, and a faithful reproduction of
- *               the motivating A/B's original setup. Run it once and the
- *               difference between the two numbers is the answer to "is
- *               this the renderer or the camera?".
+ *               stored pose, so it auto-frames. A direct-hash scenario uses
+ *               deterministic `BOOT_SEED`; a preset-based scenario then
+ *               selects through the menu and deliberately regenerates with
+ *               `rollSeed()`. The option preserves the historical control
+ *               shape, but only the latter path is still a randomness probe.
  *   --runs      fresh loads per scenario+arm (default 3, minimum 2).
  *   --dwell     ms the settled verdict must hold continuously (default 2000).
  *   --settle    per-run budget for reaching that state (default 240000).
@@ -258,13 +264,13 @@ const SCENARIOS = [
     // --mint output, 2026-08-11: PENTATOPE4_BASE_HASH after its boot
     // auto-frame. The fourD block — p:[0.9888,0,0,-0.1494],
     // q:[0.7317,0,0,0.6816] — is BIT-IDENTICAL to pentatope4's own mint
-    // above: the pinned boot seed makes the 4D tumble-reset
-    // deterministic across both the preset-select path (pentatope4) and this
-    // direct-hash boot, exactly as predicted. Only the 3D camera
+    // above: the fixed 4D tumble-reset is deterministic across both the
+    // preset-select path (pentatope4) and this direct-hash boot, independent
+    // of the point-cloud seed. Only the 3D camera
     // auto-frame differs (target [0.0003,0.0002,0.0001]/radius 2.3178 vs
     // pentatope4's [0,0,0]/2.3038) — the ordinary few-tenths-of-a-percent
-    // spread `frameBounds`'s own point-cloud sampling carries, not a
-    // regression.
+    // spread between the preset regeneration's random seed and the direct
+    // boot's `BOOT_SEED`, not a regression.
     hash: "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMjc5NSwwLjI3OTUsMC4yNzk1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjotMC4xMjV9fSx7InBvc2l0aW9uIjpbMC4yNzk1LC0wLjI3OTUsLTAuMjc5NV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6LTAuMTI1fX0seyJwb3NpdGlvbiI6Wy0wLjI3OTUsMC4yNzk1LC0wLjI3OTVdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOi0wLjEyNX19LHsicG9zaXRpb24iOlstMC4yNzk1LC0wLjI3OTUsMC4yNzk1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjotMC4xMjV9fSx7InBvc2l0aW9uIjpbMCwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNX19XSwibnVtUG9pbnRzIjoxMDAwMDAsInBvaW50U2l6ZSI6MSwiY29sb3JNb2RlIjoidHJhbnNmb3JtIiwiY29sb3JHYW1tYSI6MSwicmFtcFBhbGV0dGVJZCI6ImxlZ2FjeSIsImZvdXJEQ29sb3IiOiJ3Qmx1ZU9yYW5nZSIsImZvdXJERGVwdGhGYWRlIjpmYWxzZSwicmVuZGVyU3R5bGUiOiJkZXB0aEZhZGUiLCJzaG93R3VpZGVzIjp0cnVlLCJmbGFtZSI6eyJleHBvc3VyZSI6MSwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsImdhbW1hIjoyLjQsInZpYnJhbmN5IjoxLCJzdXBlcnNhbXBsZSI6MiwiZXN0aW1hdG9yUmFkaXVzIjo2LCJlc3RpbWF0b3JNaW5pbXVtUmFkaXVzIjowLCJlc3RpbWF0b3JDdXJ2ZSI6MC40LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzb2xpZCI6eyJyZXNvbHV0aW9uIjoxOTIsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJ0aHJlc2hvbGQiOjAuMywibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic3VyZmFjZSI6eyJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJjb2xvclNvdXJjZSI6InRyYW5zZm9ybSIsInBhbGV0dGVJZCI6InNwZWN0cnVtIiwiY29sb3JTcGVlZCI6MC41fSwic3ltbWV0cnkiOnsib3JkZXIiOjEsInBsYW5lIjoieHoifSwiZ2xvd0JyaWdodG5lc3MiOjEsImNhbWVyYSI6eyJ0YXJnZXQiOlswLjAwMDMsMC4wMDAyLDAuMDAwMV0sInJhZGl1cyI6Mi4zMTc4LCJ0aGV0YSI6MC43ODU0LCJwaGkiOjEuMDU2fSwiZm91ckQiOnsicCI6WzAuOTg4OCwwLDAsLTAuMTQ5NF0sInEiOlswLjczMTcsMCwwLDAuNjgxNl0sInNsaWNlT24iOmZhbHNlLCJzbGljZUNlbnRlciI6MCwic2xpY2VUaGlja25lc3MiOjAsInNsaWNlUmVsQ29sb3IiOmZhbHNlfX0",
   },
   {
@@ -387,11 +393,12 @@ async function bootScene(page, target) {
 
 /**
  * Load a scenario in the requested pose mode. `pinned` opens the minted,
- * pose-carrying hash — the measurement configuration. `free` reproduces the
- * ORIGINAL bead: the same system with NO stored pose, so boot auto-frames it
- * from a `Math.random()`-seeded cloud. It is the control that says how much
- * of a "renderer nondeterminism" number is really the camera. A preset-based
- * scenario loads through the menu there, exactly as --mint does.
+ * pose-carrying hash — the measurement configuration. `free` uses the same
+ * system with NO stored pose, so it auto-frames. Direct hashes now frame from
+ * the deterministic `BOOT_SEED`; a preset-based scenario loads through the
+ * menu exactly as --mint does, and that later regeneration still rolls a
+ * fresh seed. This distinction keeps the original camera-noise control
+ * reproducible without claiming that current direct boots are random.
  */
 async function loadScenario(page, args, scenario, pose) {
   const base = args.url.replace(/\/+$/, "");

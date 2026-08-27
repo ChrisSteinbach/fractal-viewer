@@ -223,12 +223,13 @@
  *   prints each block's ratios; nothing here averages them, because a
  *   spread across blocks is the machine and deserves to be seen rather
  *   than smoothed.
- * - THE POSE IS PINNED by reading the app's own share link once and
- *   writing that camera into all four documents (the settle latch is
- *   reproducible only for a document that pins its camera). If that read
- *   fails the run CONTINUES unpinned and says so loudly in every line of
- *   output — an unpinned run is still worth something, but the balloon
- *   legs' framing is then only probably the plain legs'.
+ * - THE POSE IS PINNED by reading the app's own share link once and writing
+ *   that camera into all four documents. Current direct boots already use
+ *   deterministic `BOOT_SEED`; the explicit pose makes the stronger A/B
+ *   contract that every leg consumes the exact same captured camera,
+ *   independently of fit changes. If that read fails the run CONTINUES
+ *   unpinned and says so loudly: the current boots should still agree, but
+ *   the harness has no explicit pose artifact proving that they did.
  *
  * -- FLAGS -------------------------------------------------------------
  *
@@ -550,10 +551,11 @@ async function probeAdapter(page) {
  * Copy-link handler's `#v1=` — the one place that decides what a shared
  * document carries. Read ONCE, from the balloon-OFF document, and written
  * into all four legs, so the balloon legs are framed exactly as the plain
- * ones are. Waits out the boot first: the synchronous boot cloud
- * auto-frames instantly and the async density upgrade can re-fit behind
- * it. (Copied from `surface-balloon-tint.verify.mjs`, which is where this
- * idiom was proven.)
+ * ones are. It waits for the synchronous boot cloud and retains the short
+ * grace period for the app/share UI to become quiescent. The async density
+ * upgrade uses the same `BOOT_SEED` with `fit:false`: it adds points but
+ * cannot re-fit the camera. (Copied from
+ * `surface-balloon-tint.verify.mjs`, where this idiom was proven.)
  */
 async function readPose(page) {
   await page.waitForFunction(
@@ -1020,14 +1022,16 @@ async function main() {
           `WARNING: could not read the app's pose (${e instanceof Error ? e.message : String(e)}).`,
         );
         log(
-          `WARNING: legs run UNPINNED — each auto-frames, so a framing difference between`,
+          `WARNING: legs run UNPINNED — direct boots use deterministic BOOT_SEED, but`,
         );
         log(
-          `WARNING: the balloon and plain documents would land inside the ratio. Read with care.`,
+          `WARNING: identical framing is not captured as an explicit harness artifact. Read with care.`,
         );
       }
     } else {
-      log("--nopose: legs run UNPINNED (see the header's WEAKNESSES).");
+      log(
+        "--nopose: legs use deterministic boot auto-frames, without an explicit shared pose (see WEAKNESSES).",
+      );
     }
 
     // The matching claim about the documents themselves, diffed rather

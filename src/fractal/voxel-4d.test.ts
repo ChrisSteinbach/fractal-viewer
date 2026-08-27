@@ -873,6 +873,56 @@ describe("accumulateVoxels4 color kinds", () => {
     expect(grid.avgRGB[o + 1]).toBe(lut[li + 1]);
     expect(grid.avgRGB[o + 2]).toBe(lut[li + 2]);
   });
+
+  it("Height/Position/Uniform lift the raw-XYZ 3D color semantics", () => {
+    const prepared = prepareChaosGame4(fixedPointSystem4([0, 0, 0, 0]));
+    const heightLut = buildColorModeLUT("height", 2);
+    const axes = {
+      x: [0, 1, 0] as Vec3,
+      y: [0, 0, 1] as Vec3,
+      z: [1, 0, 0] as Vec3,
+    };
+    const render = (color: FourDRenderColor) =>
+      accumulateVoxels4(
+        prepared,
+        createVoxelGrid(size, bounds),
+        1,
+        mulberry32(1),
+        FLAT_ROTOR_PROJ,
+        FLAT_VIEW,
+        color,
+      );
+    const o = bucket * 3;
+
+    const heightGrid = render({
+      kind: "height",
+      lut: heightLut,
+      minY: -1,
+      maxY: 3,
+    });
+    expect(Array.from(heightGrid.avgRGB.slice(o, o + 3))).toEqual(
+      Array.from(heightLut.slice(64 * 3, 64 * 3 + 3)),
+    );
+
+    const positionGrid = render({
+      kind: "position",
+      min: [-1, -2, -3],
+      max: [3, 2, 1],
+      colorGamma: 1,
+      axisColors: axes,
+    });
+    expect(Array.from(positionGrid.avgRGB.slice(o, o + 3))).toEqual(
+      [0.8, 0.4, 0.6].map(Math.fround),
+    );
+
+    const uniformGrid = render({
+      kind: "uniform",
+      color: [0.4, 0.8, 1],
+    });
+    expect(Array.from(uniformGrid.avgRGB.slice(o, o + 3))).toEqual(
+      [0.4, 0.8, 1].map(Math.fround),
+    );
+  });
 });
 
 describe("accumulateVoxels4 structural coloring: per-transform colorIndex/colorSpeed", () => {

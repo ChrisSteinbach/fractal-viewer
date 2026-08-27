@@ -483,6 +483,25 @@ describe("effects", () => {
       expect(fx.scene.setGlowExposure).not.toHaveBeenCalled();
     });
 
+    it("accepts 4D glow/DOF while refusing synthetic 4D aerial/EDL edits", () => {
+      const spec = specById("renderStyle");
+      const initial = initialState(true);
+      const nonFlat = {
+        ...initial,
+        transforms: [
+          { ...initial.transforms[0], w: { position: 0.5 } },
+          ...initial.transforms.slice(1),
+        ],
+      };
+
+      expect(applyScalarControl(nonFlat, spec, "glow").renderStyle).toBe(
+        "glow",
+      );
+      expect(applyScalarControl(nonFlat, spec, "dof").renderStyle).toBe("dof");
+      expect(applyScalarControl(nonFlat, spec, "aerial")).toBe(nonFlat);
+      expect(applyScalarControl(nonFlat, spec, "edl")).toBe(nonFlat);
+    });
+
     it("showGuides effect forwards showGuides to the scene", () => {
       const spec = specById("showGuides");
       const previous = initialState(true);
@@ -907,6 +926,8 @@ describe("effects", () => {
         expect(fx.scene.setSurfaceColorLUT).toHaveBeenCalledWith(
           surfaceColorLUT(state),
         );
+        expect(fx.recolor).toHaveBeenCalledOnce();
+        expect(fx.applyFourDColor).toHaveBeenCalledOnce();
         expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
       },
     );
@@ -1789,7 +1810,7 @@ describe("table policy", () => {
     // The symmetry entries left the flat set when the 4D chaos game got a
     // kaleidoscope of its own: it is live in both views now (a w-plane or
     // twist even makes the system 4D), so its controls carry no view guard.
-    expect(flatIds).toEqual(["colorMode", "renderStyle"].sort());
+    expect(flatIds).toEqual(["colorMode"]);
     expect(nonFlatIds).toEqual(["fourDColor", "fourDDepthFadeToggle"].sort());
     // Every entry lands in exactly one of the three groups — catches a spec
     // that declared some other, unexpected `view` value and so fell out of

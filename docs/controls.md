@@ -1133,19 +1133,19 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   The visible scope note summarizes when an edit is live, re-accumulates, or
   merely prepares authored state for its next consumer. The exact contract is:
 
-  | Active renderer | Flat system                                                                                                                                                            | Non-flat system                                                                                                                                                        |
-  | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | Points          | **Color Mode**, applicable Ramp/Contrast, and Position Axis Colors update the cached cloud live.                                                                       | **4D Color** and its Radius ramp update the cached projection live.                                                                                                    |
-  | Flame           | Flat Flame's Classic look is per-transform, so shared Scene color edits prepare a later applicable view.                                                               | With Flame's Classic palette, **4D Color** and its Radius ramp restart only accumulation; another primary palette keeps the edit staged for a later return to Classic. |
-  | Solid           | With Solid's Classic palette, the applicable Color Mode, ramp/contrast, and Position Axis Colors restart only voxel accumulation; another primary palette stages them. | With Solid's Classic palette, **4D Color** and its radius ramp restart only voxel accumulation; another primary palette stages them.                                   |
-  | Surface         | **Height** and **Radius** sources consume Color ramp palette and Color Contrast live; other sources leave shared Scene color authored for another consumer.            | The same: **Height** and **Radius** consume Color ramp palette and Color Contrast live, independent of the 4D Color selection; other sources do not.                   |
+  | Active renderer | Flat system                                                                                                                                                            | Non-flat system                                                                                                                                                  |
+  | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | Points          | **Color Mode**, applicable Ramp/Contrast, and Position Axis Colors update the cached cloud live.                                                                       | **4D Color**, applicable Ramp/Contrast, and Position Axis Colors update the cached projection live.                                                              |
+  | Flame           | Flat Flame's Classic look is per-transform, so shared Scene color edits prepare a later applicable view.                                                               | With Flame's Classic palette, applicable **4D Color**, ramp/contrast, and Axis Color edits restart only accumulation; another primary palette stages them.       |
+  | Solid           | With Solid's Classic palette, the applicable Color Mode, ramp/contrast, and Position Axis Colors restart only voxel accumulation; another primary palette stages them. | With Solid's Classic palette, applicable **4D Color**, ramp/contrast, and Axis Color edits restart only voxel accumulation; another primary palette stages them. |
+  | Surface         | **Height** and **Radius** sources consume Color ramp palette and Color Contrast live; other sources leave shared Scene color authored for another consumer.            | The same: **Height** and **Radius** consume Color ramp palette and Color Contrast live, independent of the 4D Color selection; other sources do not.             |
 
   Worker color restarts retain the current geometry, bounds, projection, and
   view; they are not a regenerate or a full render-session re-entry.
 
 - **Color ramp palette** — appears while **Color Mode** is **By Height** or
   **By Radius**, the two modes that _are_ a 1-D ramp — and, in the 4D
-  projection, while **4D Color** is **By 4D Radius** — naming the
+  projection, while **4D Color** is **By Height** or **By 4D Radius** — naming the
   gradient those ramps sample. During an active Surface whose color source is
   **Height** or **Radius**, the row remains visible in either dimension even
   when the Points/4D color selection would ordinarily hide it. **Classic**
@@ -1191,19 +1191,20 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   explorer's own **Color Mode** colors. **Surface palette** has no Classic
   option — it only appears for the color sources that need a gradient, and its
   **By Transform** source is a sibling choice in **Color source** above it.
-- **Axis Colors** — appears only while **Color Mode** is **By
-  Position**: three pickers naming the color each axis contributes, blended by
+- **Axis Colors** — appears while the active flat **Color Mode** or non-flat
+  **4D Color** is **By Position**: three pickers naming the color each axis contributes, blended by
   the point's normalized X/Y/Z (so a point near the far X corner reads mostly
   as the X color, one in the middle as the mix). **Reset** restores the classic
   X→red, Y→green, Z→blue mapping, which is also the default. A dark-gray floor
   keeps the near corner of the bounds from fading to black, and colors sharing
   a channel deliberately wash toward their sum near the far corner rather than
   being renormalized. The live cloud, the panel legend's swatches, and the
-  Solid render all read the same three colors. Points updates live; an active
-  flat Solid using its Classic palette re-accumulates, while every other active
-  renderer simply preserves the edit for the next applicable view. The colors
-  travel in the link and scene file.
-- **Color Contrast** — visible for the Height/Radius/Position color modes; a
+  Solid render all read the same three colors in either dimension. Points
+  updates live; an active non-flat Flame or applicable Classic Solid
+  re-accumulates, while a renderer under a primary palette preserves the edit
+  for its next applicable view. The colors travel in the link and scene file.
+- **Color Contrast** — visible for the active flat or 4D
+  Height/Radius/Position color modes; a
   log-scale gamma on the normalized coordinate. Left (<1) spreads detail in
   the dense low end, right (>1) in the high end, center = linear. It also stays
   visible for an active Surface Height/Radius source in either dimension and
@@ -1212,14 +1213,19 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   Depth Fade (default), Aerial
   Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting. The backdrop color
   itself is a separate choice — see **Background**, below; Aerial Haze only
-  picks the fog treatment now.
+  picks the fog treatment now. Non-flat Points supports Glow + Bloom and Depth
+  of Field through its dedicated additive 4D material. Aerial Haze is disabled
+  there because colored fog would be added once per translucent W layer, and
+  Eye-Dome Lighting is disabled because one depth sample cannot represent the
+  stacked projection. The separate non-flat **Depth fade** toggle remains
+  available with any supported style.
 - **Glow Brightness** — appears only while **Depth Style** is **Glow +
   Bloom**: a 0.1×–3× manual multiplier on top of that style's automatic
   exposure, which already dims dense clouds and lifts sparse ones so additive
   points don't blow out to white. Reach for it when the automatic choice reads
   too hot or too dim for a particular scene — 1.00× (the default) leaves the
-  automatic exposure alone. Applies live, with no regenerate, and persists in
-  the link and scene file.
+  automatic exposure alone. Applies live in both dimensions, with no
+  regenerate, and persists in the link and scene file.
 - **Balloon** (shared Scene / Look section) — one canonical editor remains in
   the same accordion position across Points, Flame, Solid, Surface, and 3D/4D
   changes. **Balloon palette** can be selected — including editing its one
@@ -1528,9 +1534,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   colored per the **4D Color** select, spelled out right in the
   panel: three diverging palettes on the rotated 4th coordinate — **W Depth
   (blue / orange)** (the default), purple / green, or cyan / magenta, cool
-  toward −w and warm toward +w — or two rotation-invariant modes, **By
-  Transform** and **By 4D Radius (warm→cool)**, which still dim toward gray
-  as |w| → 0 so the fourth dimension stays legible either way; the legend
+  toward −w and warm toward +w — or five colors attached to the fractal:
+  **By Transform**, **By Height**, **By 4D Radius**, **By Position**, and
+  **Uniform Cyan**. The coordinate modes share the same ramp, Contrast, and
+  Axis Colors described above. Every choice still dims toward gray as |w| →
+  0 so the fourth dimension stays legible; the legend
   keys whichever choice is active, and — unlike the automatic-motion settings
   below — the choice is authored scene content. Rendered either way
   with additive translucency so the w-layers a projection folds together
@@ -1633,22 +1641,15 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   The **W slice** on/off checkbox hides
   anyway — there's no off state left for it to mean — and so does
   **Slice-relative color**, since the tracer has no w-ramp palette for it to
-  remap. The dormant flat-only look controls do not silently drop out:
-  **Color Mode** and **Depth Style** remain visible-disabled beside accessible
-  reasons while **4D Color** and **Depth fade** are active, and their stored
-  values return unchanged when the system becomes flat. The same rule keeps
-  stored **Axis Colors**, **Color Contrast**, and **Glow Brightness** visible
-  under their selected flat parents. A non-flat Surface using **Height** or
-  **Radius** is the exception: its live LUT consumes Color Contrast, so that
-  control remains enabled.
-
-  The reasons distinguish current constraints from unfinished lifts. Colored
-  Aerial Haze would be added once per translucent W layer, and Eye-Dome
-  Lighting assumes a single front/depth surface the additive projection does
-  not write. Glow/Bloom and Depth of Field currently bypass the dedicated 4D
-  material/post path; non-flat Height, Position/Axis, Uniform, and 4D-Radius
-  Contrast color paths are likewise not implemented yet rather than inherently
-  impossible.
+  remap. The dormant flat **Color Mode** remains visible-disabled while **4D
+  Color** is active, and its stored value returns unchanged when the system
+  becomes flat. The active 4D Height/Radius/Position choices expose the same
+  ramp, Color Contrast, and Axis Colors as their flat counterparts. **Depth
+  Style** remains editable: Glow/Bloom and Depth of Field are live in 4D,
+  while its Aerial Haze and Eye-Dome Lighting options are disabled beside the
+  accessible additive-layer/single-depth reasons above. Glow Brightness is
+  live in both dimensions. A non-flat Surface using **Height** or **Radius**
+  independently keeps its shared ramp and Color Contrast live.
   **Symmetry** stays put: the 4D chaos game runs its own
   kaleidoscope stage, so Order, Plane, and Twist keep editing the live
   projection — and the current Flame/Solid worker endpoints and live Surface

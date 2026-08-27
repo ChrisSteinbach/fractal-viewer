@@ -529,6 +529,28 @@ describe("deriveLegend palette-driven renders", () => {
 });
 
 describe("deriveLegend 4D projection", () => {
+  it("keeps the active 4D color legend for Classic 4D Flame and Solid", () => {
+    const base = initialState(true);
+    for (const state of [
+      {
+        ...base,
+        fourDColor: "height" as const,
+        renderMode: "flame" as const,
+        flame: { ...base.flame, paletteId: "legacy" as const },
+      },
+      {
+        ...base,
+        fourDColor: "height" as const,
+        renderMode: "solid" as const,
+        solid: { ...base.solid, paletteId: "legacy" as const },
+      },
+    ]) {
+      const spec = bar(legendOf(state, { nonFlat: true }));
+      expect(spec.low).toBe("low");
+      expect(spec.high).toBe("high");
+    }
+  });
+
   it("shows the diverging w ramp with signed end labels for a 4D system", () => {
     const spec = bar(legendOf(initialState(true), { nonFlat: true }));
 
@@ -662,7 +684,7 @@ describe("deriveLegend 4D projection", () => {
     expect(bar(spec).high).toBe("edge");
   });
 
-  it("keeps the 4D radius ramp fixed as color contrast changes", () => {
+  it("applies shared color contrast to the 4D radius ramp", () => {
     const neutral = bar(
       legendOf(
         { ...initialState(true), fourDColor: "radius", colorGamma: 1 },
@@ -680,10 +702,58 @@ describe("deriveLegend 4D projection", () => {
       ),
     ).gradient;
 
-    // Gamma-neutral contract: the 4D view never applies colorGamma, so the
-    // baked radius ramp must not react to it either — mirrors the w-ramp's
-    // own "keeps the 4D w ramp fixed as color contrast changes" test above.
-    expect(contrasted).toBe(neutral);
+    expect(contrasted).not.toBe(neutral);
+  });
+
+  it("shows the height ramp and applies shared contrast in 4D", () => {
+    const neutral = bar(
+      legendOf(
+        { ...initialState(true), fourDColor: "height", colorGamma: 1 },
+        { nonFlat: true },
+      ),
+    );
+    const contrasted = bar(
+      legendOf(
+        {
+          ...initialState(true),
+          fourDColor: "height",
+          colorGamma: MAX_COLOR_GAMMA,
+        },
+        { nonFlat: true },
+      ),
+    );
+
+    expect(neutral.low).toBe("low");
+    expect(neutral.high).toBe("high");
+    expect(contrasted.gradient).not.toBe(neutral.gradient);
+  });
+
+  it("shows shared Axis Colors for 4D position and hides the uniform legend", () => {
+    const position = items(
+      legendOf(
+        {
+          ...initialState(true),
+          fourDColor: "position",
+          positionAxisColors: {
+            x: [0, 1, 1],
+            y: [1, 0, 1],
+            z: [1, 1, 0],
+          },
+        },
+        { nonFlat: true },
+      ),
+    );
+    expect(position.filter((item) => item.kind === "label")).toEqual([
+      { kind: "label", text: "X" },
+      { kind: "label", text: "Y" },
+      { kind: "label", text: "Z" },
+    ]);
+    expect(
+      legendOf(
+        { ...initialState(true), fourDColor: "uniform" },
+        { nonFlat: true },
+      ),
+    ).toEqual({ kind: "hidden" });
   });
 
   it("shows the ramp palette's own colors in the 4D radius legend when rampPaletteId is a gradient", () => {
@@ -712,8 +782,8 @@ describe("deriveLegend 4D projection", () => {
     expect(spec.high).toBe("edge");
     expect(spec.gradient).not.toBe(legacy);
     // Endpoints derived from the same rampPalette-aware LUT the 4D radius
-    // bake now samples (buildColorModeLUT's third argument), gamma pinned to
-    // 1 — the 4D view never applies colorGamma.
+    // bake now samples (buildColorModeLUT's third argument), at the neutral
+    // default contrast used by this state.
     const lut = buildColorModeLUT("radius", 1, "ember");
     const lowRgb = lutRgb(lut, 0);
     const highRgb = lutRgb(lut, 255);

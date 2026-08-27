@@ -2513,7 +2513,7 @@ function main(): void {
 
   // Point the 4D shader's color at the current fourDColor mode's source — the
   // w-depth modes are pure shader work (a side-color uniform pair from
-  // W_SIDE_PALETTES), while the baked modes build a rotation-invariant
+  // W_SIDE_PALETTES), while the baked modes build a view-rotation-independent
   // per-point attribute from the cached 4D result — the 4D sibling of
   // recolor(), and like it never re-runs the chaos game. No-op before the
   // first 4D generation.
@@ -2524,14 +2524,17 @@ function main(): void {
     const mode = replayShowcase?.color ? "transform" : state.fourDColor;
     if (fourDColorNeedsAttribute(mode)) {
       scene.setFourDColorSource({
-        // The radius mode's ramp follows the same rampPaletteId selection as
-        // the 3D height/radius ramps; the transform mode ignores it.
+        // Height/Radius follow the shared ramp palette and contrast;
+        // Position follows the shared contrast and Axis Colors. Modes without
+        // those inputs ignore them.
         colors: buildColors4(
           fourDResult,
           state.transforms.length,
           mode,
           resolvePalette(state.rampPaletteId, state.customPalette),
           state.transforms.map((t) => t.colorIndex),
+          state.colorGamma,
+          state.positionAxisColors,
         ),
       });
     } else {
@@ -2976,12 +2979,14 @@ function main(): void {
       sliceWidth: FOUR_D_SLICE_WIDTH,
       sliceRelativeColor: fourDView.sliceRelColor,
       colorMode: state.fourDColor,
+      colorGamma: state.colorGamma,
+      positionAxisColors: state.positionAxisColors,
       radiusMin,
       radiusMax,
-      // The radius mode's ramp palette, resolved exactly like the
-      // explorer's own bake (applyFourDColor) so the render's ramp matches
-      // the explorer's colors — snapshotted here like colorMode itself, then
-      // kept current by the shared Color editor's atomic worker command.
+      // Height/Radius ramp palette, resolved exactly like the explorer's own
+      // bake (applyFourDColor) so the render matches Points — snapshotted here
+      // like the other color inputs, then kept current by the shared Color
+      // editor's atomic worker command.
       rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
     };
   }
@@ -7143,7 +7148,14 @@ function main(): void {
       state = setPositionAxisColors(state, colors);
       ui.updateLabels(state);
       applyRenderColorInputEffects(state, controlEffects, {
-        points: state.colorMode === "position" ? "flat" : "none",
+        points:
+          state.colorMode === "position" && state.fourDColor === "position"
+            ? "both"
+            : state.colorMode === "position"
+              ? "flat"
+              : state.fourDColor === "position"
+                ? "fourD"
+                : "none",
       });
     },
     // Custom backdrop pickers: the same shape as the axis colors above — one
@@ -8729,12 +8741,26 @@ function main(): void {
       advanceFourDPose(dt);
       scene.setRot4(fourDView.matrix());
       automaticViewMoved = automaticFourDMotion && dt > 0;
+      if (state.renderStyle === "glow" && fourDResult) {
+        // The 4D composer blooms the dedicated additive projection material,
+        // so feed it the same density-adaptive exposure as flat Glow. Its
+        // outlier-trimmed frameRadius is rotation-invariant under the view
+        // rotor and is the 4D twin of the flat frameBounds radius below.
+        scene.setGlowExposure(
+          glowExposure(
+            fourDResult.count,
+            fourDResult.frameRadius,
+            orbit.spherical.radius,
+            (scene.camera.fov * Math.PI) / 180,
+            scene.renderer.domElement.clientHeight,
+          ) * state.glowBrightness,
+        );
+      }
     } else if (state.renderStyle === "glow" && lastResult) {
       // Density-adaptive glow brightness: dim dense clouds, brighten sparse
       // ones. state.glowBrightness then layers the user's manual override on
       // top — auto-exposure only sees the *average* screen density, so local
-      // density swings still need a hand-tuned correction. Skipped in 4D: it
-      // would touch glowMaterial, which isn't rendering there. The density
+      // density swings still need a hand-tuned correction. The density
       // estimate reads the outlier-trimmed frameBounds, not the raw min/max
       // bounds: it wants the box where the mass actually is, and on an
       // outlier-heavy system the raw box's flung stragglers inflate the

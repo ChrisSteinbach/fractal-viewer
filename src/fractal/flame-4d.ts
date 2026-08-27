@@ -40,17 +40,18 @@
  * lookup therefore happens after the 4D-to-visible-3D projection, then tint,
  * then soft-slice/echo weight accumulation. The primary splat is unchanged.
  *
- * **Coloring** has four flavors (see {@link import("./color").FourDRenderColor}): `"structural"` is
+ * **Coloring** dispatches through {@link import("./color").FourDRenderColor}:
+ * `"structural"` is
  * the cosine-palette path, an exact mirror of `accumulateFlame`'s `colorLUT`
  * mode — an orbit-riding coordinate blended toward the picked transform's
  * palette slot at that transform's color speed every step (both resolved by
  * `prepareChaosGame4`), reset on escape-reseed, and keyed on the
  * BASE map index (`idx % baseTransformCount`) so a kaleidoscope copy colors as
- * the map it copies. The other three reproduce whichever `FourDColorMode`
+ * the map it copies. The remaining kinds reproduce whichever `FourDColorMode`
  * the point-cloud explorer had active when the render started: `"wRamp"`
  * mirrors the diverging rotated-w ramp `scene.ts`'s `FOUR_D_VERTEX` paints
- * in-shader (`color.ts`'s `wRampColor`); `"transform"` and `"radius"` mirror
- * `color.ts`'s `buildColors4` baked-attribute modes.
+ * in-shader (`color.ts`'s `wRampColor`); Transform, Height, Radius, Position,
+ * and Uniform mirror `color.ts`'s baked raw-space modes.
  *
  * **The soft w-slice rides the SAME ghost-context floor the point-cloud view
  * uses** (0.06 — see `project4.ts`'s `sliceWeight`), not the voxel
@@ -72,7 +73,12 @@ import type { PreparedChaosGame4 } from "./chaos-game-4d";
 import { balloonPaletteCoordinate, invertBalloon } from "./balloon-de";
 import { createFlameHistogram } from "./flame";
 import type { FlameBalloonEcho, FlameHistogram, Mat4 } from "./flame";
-import { wRampColor } from "./color";
+import {
+  POSITION_COLOR_OFFSET,
+  POSITION_COLOR_SCALE,
+  wRampColor,
+  writePositionColor,
+} from "./color";
 import type { FourDRenderColor } from "./color";
 import { sliceColorRemap, sliceWeight, SLICE_GHOST_FLOOR } from "./project4";
 import type { FourDView, RotorProjection4 } from "./project4";
@@ -183,6 +189,10 @@ export function accumulateFlame4(
   // allocation-free contract even when every iteration gains an echo splat.
   const echoSource: Vec3 = [0, 0, 0];
   const echoInverted: Vec3 = [0, 0, 0];
+  const positionScratch =
+    color.kind === "position" && color.axisColors !== undefined
+      ? new Float32Array(3)
+      : null;
 
   // Graph-directed selection state, resumed from the histogram — see
   // accumulateFlame's identical threading (chunk-boundary independence via
@@ -502,6 +512,14 @@ export function accumulateFlame4(
           b = rgb[2];
           break;
         }
+        case "height": {
+          const t = (py - color.minY) / (color.maxY - color.minY || 1);
+          const li = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 255 + 0.5) | 0) * 3;
+          r = color.lut[li];
+          g = color.lut[li + 1];
+          b = color.lut[li + 2];
+          break;
+        }
         case "radius": {
           const dx = px - color.center[0];
           const dy = py - color.center[1];
@@ -518,6 +536,38 @@ export function accumulateFlame4(
           b = color.lut[li + 2];
           break;
         }
+        case "position": {
+          const tx0 = (px - color.min[0]) / (color.max[0] - color.min[0] || 1);
+          const ty0 = (py - color.min[1]) / (color.max[1] - color.min[1] || 1);
+          const tz0 = (pz - color.min[2]) / (color.max[2] - color.min[2] || 1);
+          const tx = tx0 <= 0 ? 0 : tx0 >= 1 ? 1 : tx0;
+          const ty = ty0 <= 0 ? 0 : ty0 >= 1 ? 1 : ty0;
+          const tz = tz0 <= 0 ? 0 : tz0 >= 1 ? 1 : tz0;
+          const gx = color.colorGamma === 1 ? tx : tx ** color.colorGamma;
+          const gy = color.colorGamma === 1 ? ty : ty ** color.colorGamma;
+          const gz = color.colorGamma === 1 ? tz : tz ** color.colorGamma;
+          if (color.axisColors === undefined) {
+            r = gx * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+            g = gy * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+            b = gz * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+          } else {
+            writePositionColor(
+              positionScratch!,
+              0,
+              gx,
+              gy,
+              gz,
+              color.axisColors,
+            );
+            r = positionScratch![0];
+            g = positionScratch![1];
+            b = positionScratch![2];
+          }
+          break;
+        }
+        case "uniform":
+          [r, g, b] = color.color;
+          break;
       }
       sumRGB[o] += r * weight;
       sumRGB[o + 1] += g * weight;
@@ -535,9 +585,11 @@ export function accumulateFlame4(
       ? sliceWeight(s, sliceCenter, sliceWidth, SLICE_GHOST_FLOOR)
       : 1;
 
-    let r: number;
-    let g: number;
-    let b: number;
+    // Initialized for TypeScript's definite-assignment analysis; the total
+    // FourDRenderColor switch below overwrites all three lanes.
+    let r = 0;
+    let g = 0;
+    let b = 0;
     switch (color.kind) {
       case "structural": {
         const li = Math.min(255, (c * 256) | 0) * 3;
@@ -560,6 +612,14 @@ export function accumulateFlame4(
         b = rgb[2];
         break;
       }
+      case "height": {
+        const t = (py - color.minY) / (color.maxY - color.minY || 1);
+        const li = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 255 + 0.5) | 0) * 3;
+        r = color.lut[li];
+        g = color.lut[li + 1];
+        b = color.lut[li + 2];
+        break;
+      }
       case "radius": {
         const dx = px - color.center[0];
         const dy = py - color.center[1];
@@ -574,6 +634,31 @@ export function accumulateFlame4(
         b = color.lut[li + 2];
         break;
       }
+      case "position": {
+        const tx0 = (px - color.min[0]) / (color.max[0] - color.min[0] || 1);
+        const ty0 = (py - color.min[1]) / (color.max[1] - color.min[1] || 1);
+        const tz0 = (pz - color.min[2]) / (color.max[2] - color.min[2] || 1);
+        const tx = tx0 <= 0 ? 0 : tx0 >= 1 ? 1 : tx0;
+        const ty = ty0 <= 0 ? 0 : ty0 >= 1 ? 1 : ty0;
+        const tz = tz0 <= 0 ? 0 : tz0 >= 1 ? 1 : tz0;
+        const gx = color.colorGamma === 1 ? tx : tx ** color.colorGamma;
+        const gy = color.colorGamma === 1 ? ty : ty ** color.colorGamma;
+        const gz = color.colorGamma === 1 ? tz : tz ** color.colorGamma;
+        if (color.axisColors === undefined) {
+          r = gx * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+          g = gy * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+          b = gz * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+        } else {
+          writePositionColor(positionScratch!, 0, gx, gy, gz, color.axisColors);
+          r = positionScratch![0];
+          g = positionScratch![1];
+          b = positionScratch![2];
+        }
+        break;
+      }
+      case "uniform":
+        [r, g, b] = color.color;
+        break;
     }
 
     // Primary splat via the precomposed fast projection.

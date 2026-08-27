@@ -3667,6 +3667,14 @@ describe("decodeScene fourDColor", () => {
     expect(result!.fourDColor).toBe("wCyanMagenta");
   });
 
+  it.each(["height", "position", "uniform"] as const)(
+    "round-trips the lifted 4D %s color mode",
+    (fourDColor) => {
+      const s: SceneSnapshot = { ...baseSnapshot(), fourDColor };
+      expect(decodeScene(encodeScene(s))!.fourDColor).toBe(fourDColor);
+    },
+  );
+
   it("defaults quietly when fourDColor is absent", () => {
     // A hand-built payload with no `fourDColor` key at all.
     const raw = {

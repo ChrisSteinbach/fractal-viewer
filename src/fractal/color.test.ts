@@ -9,6 +9,8 @@ import {
   dimColorsExcept,
   hslToRgb,
   isLegacyPositionAxisColors,
+  fourDColorModeUsesGamma,
+  fourDColorModeUsesRampPalette,
   transformColors,
   wRampColor,
 } from "./color";
@@ -785,9 +787,27 @@ describe("colorModeUsesRampPalette", () => {
   });
 });
 
-/** Bounds4 plays no part in buildColors4 (it reads `center`/`positions`/`w`
- * directly, never the box) — zeroed out so the fixtures below can stay
- * literal about the fields that actually matter. */
+describe("4D color dependency helpers", () => {
+  it("exposes contrast only for Height, Radius, and Position", () => {
+    expect(fourDColorModeUsesGamma("height")).toBe(true);
+    expect(fourDColorModeUsesGamma("radius")).toBe(true);
+    expect(fourDColorModeUsesGamma("position")).toBe(true);
+    expect(fourDColorModeUsesGamma("transform")).toBe(false);
+    expect(fourDColorModeUsesGamma("uniform")).toBe(false);
+    expect(fourDColorModeUsesGamma("wBlueOrange")).toBe(false);
+  });
+
+  it("exposes the shared ramp palette only for Height and Radius", () => {
+    expect(fourDColorModeUsesRampPalette("height")).toBe(true);
+    expect(fourDColorModeUsesRampPalette("radius")).toBe(true);
+    expect(fourDColorModeUsesRampPalette("position")).toBe(false);
+    expect(fourDColorModeUsesRampPalette("uniform")).toBe(false);
+    expect(fourDColorModeUsesRampPalette("wPurpleGreen")).toBe(false);
+  });
+});
+
+/** Zero bounds for fixtures whose transform/radius mode does not read XYZ
+ * bounds. Height/Position fixtures below provide their authored extents. */
 function zeroBounds4(): Bounds4 {
   return {
     minX: 0,
@@ -802,6 +822,69 @@ function zeroBounds4(): Bounds4 {
 }
 
 describe("buildColors4", () => {
+  it("Height and Position exactly lift buildColors' raw-XYZ contrast and custom-axis semantics", () => {
+    const bounds4: Bounds4 = {
+      minX: -1,
+      maxX: 3,
+      minY: -2,
+      maxY: 2,
+      minZ: -3,
+      maxZ: 1,
+      minW: -10,
+      maxW: 10,
+    };
+    const positions = new Float32Array([0, -1, -2, 1, 0, -1, 2, 1, 0]);
+    const result4: ChaosGame4Result = {
+      positions,
+      w: new Float32Array([9, -7, 3]),
+      transformIndices: new Uint8Array(3),
+      count: 3,
+      bounds: bounds4,
+      center: [1, 0, -1, 0],
+      radius: 10,
+      originRadius: 10,
+    };
+    const bounds3: Bounds = {
+      ...bounds4,
+      minR: 0,
+      maxR: 1,
+    };
+    const result3: ChaosGameResult = {
+      positions,
+      transformIndices: new Uint8Array(3),
+      count: 3,
+      bounds: bounds3,
+    };
+    const axes: PositionAxisColors = {
+      x: [0.1, 0.9, 0.2],
+      y: [0.8, 0.1, 0.3],
+      z: [0.2, 0.4, 1],
+    };
+
+    expect(buildColors4(result4, 1, "height", "ember", undefined, 2)).toEqual(
+      buildColors(result3, [], "height", 2, "ember"),
+    );
+    expect(
+      buildColors4(result4, 1, "position", "legacy", undefined, 2, axes),
+    ).toEqual(buildColors(result3, [], "position", 2, "legacy", axes));
+  });
+
+  it("uniform mode fills every point with the shared cyan", () => {
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([1, 2, 3, -4, -5, -6]),
+      w: new Float32Array([7, 8]),
+      transformIndices: new Uint8Array(2),
+      count: 2,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 1,
+      originRadius: 1,
+    };
+    expect(Array.from(buildColors4(result, 1, "uniform"))).toEqual(
+      [0.4, 0.8, 1, 0.4, 0.8, 1].map(Math.fround),
+    );
+  });
+
   it("transform mode colors each point by its producing transform", () => {
     const result: ChaosGame4Result = {
       positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
@@ -895,6 +978,26 @@ describe("buildColors4", () => {
     expect(colors[6]).toBeCloseTo(far[0], 5);
     expect(colors[7]).toBeCloseTo(far[1], 5);
     expect(colors[8]).toBeCloseTo(far[2], 5);
+  });
+
+  it("radius mode applies the shared contrast exponent before its palette", () => {
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+      w: new Float32Array(3),
+      transformIndices: new Uint8Array(3),
+      count: 3,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 2,
+      originRadius: 2,
+    };
+    const colors = buildColors4(result, 1, "radius", "spectrum", undefined, 2);
+    const lut = buildPaletteLUT("spectrum");
+    if (!lut) throw new Error("spectrum should have a LUT");
+    // Middle distance t=.5 becomes .25 and therefore palette bucket 64.
+    expect(Array.from(colors.slice(3, 6))).toEqual(
+      Array.from(lut.slice(64 * 3, 64 * 3 + 3)),
+    );
   });
 
   it("radius mode is NaN-free when every point is equidistant", () => {
