@@ -502,7 +502,10 @@ A user-authored **custom palette** joins the presets as 2–8 evenly
 spaced sRGB stops sampled piecewise-linearly into the same LUT, so it flows
 through the CPU accumulators, the WGSL kernels' packed color table, and the
 legend identically; the scene codec persists it as `#rrggbb` strings, and the
-gradient editor under either palette select edits the one scene-wide slot.
+gradient editors under the five primary selectors — **Color ramp palette**,
+**Flame palette (restarts render)**, **Solid palette (restarts render)**,
+**Surface palette**, and **Backdrop flame palette** — all edit the one
+scene-wide slot. Balloon's Custom gradient is a separate slot.
 
 **The solid voxel render** (`voxel.ts`) trades the 2-D histogram for a
 world-space **3-D density grid**. An affine IFS carries no analytic distance
