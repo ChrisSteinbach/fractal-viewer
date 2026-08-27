@@ -10,6 +10,10 @@ import type { FlameBalloonEcho, FlameHistogram, Mat4 } from "../fractal/flame";
 import { W_SIDE_PALETTES, buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT } from "../fractal/palette";
 import { sierpinskiTetrahedron } from "../fractal/presets";
+import {
+  composeFlameProjection4,
+  composeRotorProjection4,
+} from "../fractal/project4";
 import type { Transform4 } from "../fractal/types";
 import {
   FLAME_FILTER_RADIUS,
@@ -85,6 +89,15 @@ const IDENTITY_ROTOR4 = [
   0, 0, 0, 1,
 ];
 
+/** +90 degrees in XW: x' = w and w' = -x. */
+// prettier-ignore
+const XW_QUARTER_TURN = [
+  0, 0, 0, 1,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+ -1, 0, 0, 0,
+];
+
 /** A simple pentatope-ish 4D system: every map contracts all of 4-space
  * toward the same fixed point, converging to (0.5, 0.5, 0.5, 0.5) — the 4D
  * twin of this file's implicit 3D fixture (`sierpinskiTetrahedron`), just
@@ -108,6 +121,7 @@ function defaultFourD(): NonNullable<
     finalTransform4: null,
     rotor: IDENTITY_ROTOR4,
     center: [0, 0, 0, 0],
+    halfExtents: [1, 1, 1, 1],
     invWAmp: 1,
     sliceOn: false,
     sliceCenter: 0,
@@ -117,6 +131,22 @@ function defaultFourD(): NonNullable<
     radiusMin: 0,
     radiusMax: 1,
     rampPalette: "legacy",
+  };
+}
+
+function fourDWorkerView(
+  overrides: Partial<
+    Extract<FlameWorkerCommand, { type: "setFourDView" }>["view"]
+  > = {},
+): Extract<FlameWorkerCommand, { type: "setFourDView" }>["view"] {
+  const fourD = defaultFourD();
+  return {
+    rotor: [...fourD.rotor],
+    sliceOn: fourD.sliceOn,
+    sliceCenter: fourD.sliceCenter,
+    sliceWidth: fourD.sliceWidth,
+    sliceRelativeColor: fourD.sliceRelativeColor,
+    ...overrides,
   };
 }
 
@@ -2638,6 +2668,236 @@ describe("FlameWorkerSession GPU progressive display", () => {
 // ---------------------------------------------------------------------------
 
 describe("FlameWorkerSession 4D flame render", () => {
+  it("setFourDView rebuilds projection/view around the retained entry centre and restarts once", async () => {
+    const center: [number, number, number, number] = [0.2, -0.1, 0.3, 0.4];
+    const halfExtents: [number, number, number, number] = [0.5, 1, 1.5, 2];
+    const requests: GpuBackendRequest4[] = [];
+    const createGpuBackend4 = async (
+      request: GpuBackendRequest4,
+    ): Promise<FlameAccumBackend> => {
+      requests.push(request);
+      return {
+        kind: "gpu",
+        accumulate: async (n) => n,
+        snapshot: async () =>
+          createFlameHistogram(request.width, request.height),
+        destroy: () => {},
+      };
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend4 });
+    session.handle(
+      startCommand({
+        fourD: { ...defaultFourD(), center, halfExtents, invWAmp: 0.5 },
+        gpuPreference: "auto",
+        iterationsBudget: 20,
+      }),
+    );
+    await drainAsync(scheduler);
+    const restartsBefore = restartedEvents(events).length;
+
+    const view = fourDWorkerView({
+      rotor: XW_QUARTER_TURN,
+      sliceOn: true,
+      sliceCenter: 0.25,
+      sliceWidth: 0.2,
+      sliceRelativeColor: true,
+    });
+    session.handle({ type: "setFourDView", view });
+    expect(restartedEvents(events)).toHaveLength(restartsBefore + 1);
+    await drainAsync(scheduler);
+
+    expect(requests).toHaveLength(2);
+    const expectedRotorProjection = composeRotorProjection4(
+      XW_QUARTER_TURN,
+      center,
+    );
+    expect(requests[1].projection).toEqual(
+      composeFlameProjection4(ORTHOGRAPHIC, expectedRotorProjection),
+    );
+    expect(requests[1].view).toEqual({
+      // XW_QUARTER_TURN's w row selects x, whose retained half-extent is
+      // 0.5: the worker, not this command, derives 1 / 0.5 = 2.
+      invWAmp: 2,
+      sliceOn: true,
+      sliceCenter: 0.25,
+      sliceWidth: 0.2,
+      sliceRelativeColor: true,
+    });
+    expect(progressEvents(events).at(-1)?.iterationsDone).toBe(20);
+
+    // A structurally cloned repeat is still the exact same endpoint.
+    const progressBeforeRepeat = progressEvents(events).length;
+    session.handle({
+      type: "setFourDView",
+      view: { ...view, rotor: [...view.rotor] },
+    });
+    expect(restartedEvents(events)).toHaveLength(restartsBefore + 1);
+    expect(progressEvents(events)).toHaveLength(progressBeforeRepeat);
+    expect(requests).toHaveLength(2);
+  });
+
+  it.each([
+    {
+      label: "a Classic attribute mode",
+      colorMode: "transform" as const,
+      palette: "legacy" as const,
+      immediateRestart: false,
+      activate: (): FlameWorkerCommand => ({
+        type: "setColorInputs",
+        inputs: {
+          flat: {
+            colorMode: "transform",
+            colorGamma: 1,
+            rampPalette: "legacy",
+          },
+          fourD: { colorMode: "wBlueOrange", rampPalette: "legacy" },
+        },
+      }),
+    },
+    {
+      label: "a structural palette override",
+      colorMode: "wBlueOrange" as const,
+      palette: "spectrum" as const,
+      immediateRestart: false,
+      activate: (): FlameWorkerCommand => ({
+        type: "setPalette",
+        palette: "legacy",
+      }),
+    },
+    {
+      label: "the Classic W-ramp",
+      colorMode: "wBlueOrange" as const,
+      palette: "legacy" as const,
+      immediateRestart: true,
+      activate: null,
+    },
+  ])(
+    "applies a slice-relative-only edit under $label with the correct restart cost",
+    async ({ colorMode, palette, immediateRestart, activate }) => {
+      const requests: GpuBackendRequest4[] = [];
+      const createGpuBackend4 = async (
+        request: GpuBackendRequest4,
+      ): Promise<FlameAccumBackend> => {
+        requests.push(request);
+        return {
+          kind: "gpu",
+          accumulate: async (n) => n,
+          snapshot: async () =>
+            createFlameHistogram(request.width, request.height),
+          destroy: () => {},
+        };
+      };
+      const { session, events, scheduler } = harness({ createGpuBackend4 });
+      session.handle(
+        startCommand({
+          fourD: { ...defaultFourD(), sliceOn: true, colorMode },
+          palette,
+          gpuPreference: "auto",
+          iterationsBudget: 20,
+        }),
+      );
+      await drainAsync(scheduler);
+      const restartsBefore = restartedEvents(events).length;
+
+      session.handle({
+        type: "setFourDView",
+        view: fourDWorkerView({
+          sliceOn: true,
+          sliceRelativeColor: true,
+        }),
+      });
+
+      if (immediateRestart) {
+        expect(restartedEvents(events)).toHaveLength(restartsBefore + 1);
+        await drainAsync(scheduler);
+      } else {
+        // Inert now: stage the endpoint but keep the completed accumulation.
+        expect(restartedEvents(events)).toHaveLength(restartsBefore);
+        expect(requests).toHaveLength(1);
+        session.handle(activate!());
+        expect(restartedEvents(events)).toHaveLength(restartsBefore + 1);
+        await drainAsync(scheduler);
+      }
+
+      // Whether immediate or activated later, the next real accumulation
+      // receives the staged relative-color endpoint.
+      expect(requests).toHaveLength(2);
+      expect(requests[1].view.sliceRelativeColor).toBe(true);
+    },
+  );
+
+  it("setFourDView is a no-op for a flat session", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 20 }));
+    scheduler.drain();
+    const restartsBefore = restartedEvents(events).length;
+    const progressBefore = progressEvents(events).length;
+
+    session.handle({
+      type: "setFourDView",
+      view: fourDWorkerView({ rotor: XW_QUARTER_TURN }),
+    });
+
+    expect(restartedEvents(events)).toHaveLength(restartsBefore);
+    expect(progressEvents(events)).toHaveLength(progressBefore);
+  });
+
+  it("setFourDView supersedes a stale in-flight 4D GPU chunk through the existing generation hand-off", async () => {
+    const events: FlameWorkerEvent[] = [];
+    const scheduler = stepScheduler();
+    let scheduleCalls = 0;
+    let accumulateCalls = 0;
+    let resolveFirstAccumulate: ((value: number) => void) | undefined;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: (n) => {
+        accumulateCalls++;
+        if (accumulateCalls === 1) {
+          return new Promise<number>((resolve) => {
+            resolveFirstAccumulate = resolve;
+          });
+        }
+        return Promise.resolve(n);
+      },
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    };
+    const session = new FlameWorkerSession({
+      now: fakeClock(0),
+      schedule: (fn) => {
+        scheduleCalls++;
+        scheduler.schedule(fn);
+      },
+      emit: (event) => events.push(event),
+      createGpuBackend4: async () => backend,
+    });
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        gpuPreference: "auto",
+        iterationsBudget: 500,
+      }),
+    );
+    scheduler.step();
+    await flushMicrotasks();
+    expect(accumulateCalls).toBe(1);
+
+    session.handle({
+      type: "setFourDView",
+      view: fourDWorkerView({ rotor: XW_QUARTER_TURN }),
+    });
+    // The stale run still owns `running`; the restart cannot double-schedule.
+    expect(scheduleCalls).toBe(1);
+
+    resolveFirstAccumulate!(10);
+    await flushMicrotasks();
+    expect(scheduleCalls).toBe(2);
+    await drainAsync(scheduler);
+
+    // The stale ten iterations were discarded, not folded into the new run.
+    expect(progressEvents(events).at(-1)?.iterationsDone).toBe(500);
+  });
+
   it("never calls the 3D GPU factory for a 4D session, and — with no createGpuBackend4 wired — runs CPU synchronously, even with gpuPreference auto", () => {
     let factoryCalls = 0;
     const createGpuBackend = async (): Promise<FlameAccumBackend> => {
@@ -2820,9 +3080,12 @@ describe("FlameWorkerSession 4D flame render", () => {
     ]);
     expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500); // the real CPU accumulate ran.
 
-    // gpuFailed ratchets for the rest of the session — a later restart must
-    // not retry the 4D factory either.
-    session.handle({ type: "setPalette", palette: "spectrum" });
+    // gpuFailed ratchets for the rest of the session — the new view restart
+    // must preserve that recovery state and not retry the 4D factory either.
+    session.handle({
+      type: "setFourDView",
+      view: fourDWorkerView({ rotor: XW_QUARTER_TURN }),
+    });
     await drainAsync(scheduler);
 
     expect(factory4Calls).toBe(1);

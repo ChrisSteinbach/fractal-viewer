@@ -137,6 +137,7 @@ describe("FlameBackdropGenerator request policy", () => {
       finalTransform4: null,
       rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
       center: [1, 2, 3, 4],
+      halfExtents: [1, 1, 1, 1],
       invWAmp: 0.5,
       sliceOn: true,
       sliceCenter: 0.1,

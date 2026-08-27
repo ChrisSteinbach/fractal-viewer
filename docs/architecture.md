@@ -424,7 +424,11 @@ speed is **This session**. Tumble is the 4D counterpart because it turns hidden
 planes; automatic camera orbit would only spin the projected 3D result, while
 manual camera orbit remains available. Flat Solid can advance the turntable
 without touching its world-space accumulation. Surface parks continuous motion
-so its refinement can settle. A pose-less fresh visit resets to a
+so its refinement can settle. Non-flat Flame and Solid also park automatic
+tumble, but keep manual rotor/slice editing reachable: pointer and slider edits
+commit once on release, while wheel and keyboard bursts commit after 150 ms of
+quiet, restarting the active accumulation at that settled endpoint. A pose-less
+fresh visit resets to a
 baseline only on a flat-to-non-flat transition or a whole-system replacement;
 a loaded Saved view restores its pose over that baseline. An ordinary parameter
 edit never resets it. The 4D presets (`pentatope`,
@@ -463,11 +467,20 @@ discovery, keep tweaking, and it's still there to load back.
 
 ## The flame still and the solid voxel render
 
+The panel presents the explorer, Flame, and Solid sampling budgets through one
+preferred-number convention. Points use 1k/2k/5k through 5M, Flame uses
+1M/2M/5M through 2B, and Solid uses 1M/2M/5M through 100M. Their range inputs
+carry detent indexes, not raw counts. A decoded legacy document may still hold
+an exact value between detents: state and the readout preserve it until the
+user moves the thumb, whose nearest position is chosen in logarithmic space.
+This keeps persistence lossless while making equal slider travel mean equal
+multiplicative cost across all three renderers.
+
 Beyond the live point cloud, a converged system can be committed to one of
 three on-demand renders. Two of them — the flame still and the solid voxel
 render, this section's subject — accumulate their result from hundreds of
 millions of chaos-game iterations; the third, the surface distance
-estimator (below), needs no accumulation and completes instantly. All three
+estimator (below), needs no chaos-game accumulation and traces on demand. All three
 replay the identical chaos game (or, for the surface render, its analytic
 equivalent) — same transforms, variations, final-transform lens, symmetry —
 and present the result differently. The four renderers are one **render
@@ -658,21 +671,24 @@ compile/render check plus a deliberately conservative wall-time bound, not a
 representative hardware-GPU claim. Browser wall time stays separate from the
 portable accounting because it also includes draw synchronization and readback.
 
-Both renders extend to 4D. There is no separate 4D worker: the
-flame and solid `start` commands each carry an optional `fourD` block whose mere
-presence flips the session onto the 4D chaos game and `accumulateFlame4` /
-`accumulateVoxels4`. Its geometry and view fields are a **frozen snapshot** of
-the current 4D view, captured the instant Render is clicked — the accumulated
-rotor, the cloud's 4D center and rotated-w support, the slice window (`sliceOn`
-/ `sliceCenter` / `sliceWidth`) and its optional slice-relative recolor, and the
-lifted `Transform4`s. The shared Color editor is the deliberate exception:
-atomic `setColorInputs` commands keep the 4D color mode and radius-ramp palette
-current, restarting only active legacy accumulation over that retained geometry
-and view. The frozen fields stay valid for the render's whole life because the
-animation loop early-returns past the tumble step while a render is active, so
-the rotor simply never advances. The 4D flame rides the same WebGPU path as the
-3D one (see "GPU accumulation backend"), with `accumulateFlame4` as its CPU
-oracle and fallback.
+Both renders extend to 4D. There is no separate 4D worker: the flame and solid
+`start` commands each carry an optional `fourD` block whose mere presence flips
+the session onto the 4D chaos game and `accumulateFlame4` /
+`accumulateVoxels4`. Entry freezes the geometry half — lifted `Transform4`s,
+the cloud's 4D center and half-extents — and seeds a mutable worker-view half
+with the current rotor, slice window (`sliceOn` / `sliceCenter` / `sliceWidth`),
+and optional slice-relative recolor. Automatic tumble remains parked while the
+worker converges. Manual view edits stay available, however: `input` updates the
+live `FourDView`, then pointer/slider release or 150 ms of wheel/keyboard quiet
+sends one `setFourDView` command. The worker derives rotated-w normalization
+from the new rotor and its retained entry support, discards the old
+accumulation, and restarts at that settled endpoint. Flame continues to refuse
+ordinary camera and transform actions, while its Shift rotor, W-slice, and
+visible motion-preference actions remain reachable; Solid's world-space camera
+stays live. The shared Color editor similarly uses atomic `setColorInputs`
+commands to keep 4D color mode and radius-ramp palette current. The 4D flame
+rides the same WebGPU path as the 3D one (see "GPU accumulation backend"), with
+`accumulateFlame4` as its CPU oracle and fallback.
 
 One asymmetry is deliberate: the **soft w-slice floor**. The point cloud and the
 flame both slice with a small `SLICE_GHOST_FLOOR` (`0.06`, the single source of
@@ -973,9 +989,10 @@ lockstep-oracle discipline, with one live-view difference from every other
 rotation is an isometry, so the marched field is just
 `DE4(rotorInv · (p, w0))` and step sizes, normals, and validity survive
 untouched — meaning the pose stays exactly as live as the camera (tumble,
-Shift-drag, and slice sweeps all keep working inside the mode), where
-flame/solid-4D freeze theirs at session start because a pose change would
-invalidate their accumulated content. Since the 4D compute cut the same
+Shift-drag, and slice sweeps all keep working inside the mode). Flame/Solid-4D
+instead hold the pose fixed within each accumulation because changing it
+invalidates accumulated content, then restart once at a settled manual endpoint.
+Since the 4D compute cut the same
 estimator ALSO lives in `src/fractal/surface-de-gpu.ts` as the compute
 kernel's fourth core (`core:"affine4"`), and PLAIN 4D surface sessions
 (symmetry order 1) prefer `src/app/surface-compute.ts`'s WebGPU

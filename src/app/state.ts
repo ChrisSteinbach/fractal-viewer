@@ -57,6 +57,15 @@ import type {
 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
+import {
+  DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+  nearestSurfaceAntialiasSamples,
+} from "./surface-sampling";
+
+export {
+  DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+  SURFACE_ANTIALIAS_DETENTS,
+} from "./surface-sampling";
 
 /**
  * Balloon-only palette sentinel: keep each renderer's existing balloon color
@@ -334,12 +343,14 @@ export type SurfaceFloorPattern = (typeof SURFACE_FLOOR_PATTERNS)[number];
  * shades an analytic surface through its own material/effect lane, and
  * {@link envLight} has no Solid counterpart.
  *
- * Every field here is a LIVE GPU uniform: the tracer has no accumulation to
- * restart at all (unlike the flame's histogram or the solid render's voxel
- * grid), so every change — including `colorSource`/`paletteId` — takes
- * effect the very next frame, at full frame rate, with nothing to re-run.
+ * Appearance fields here are live GPU uniforms. {@link antialiasSamples} is
+ * the deliberate exception: it controls the next parked-view settle and
+ * capture, so changing it restarts Surface refinement without changing the
+ * already-visible first pass.
  */
 export interface SurfaceParams {
+  /** Samples per pixel used by the parked Surface settle and Save-PNG. */
+  antialiasSamples: number;
   /** Light's horizontal angle in degrees. Same physical meaning as
    * {@link SolidParams.lightAzimuth} — `PARAM.surfaceLightAzimuth` reuses its
    * `MIN_SOLID_LIGHT_AZIMUTH`/`MAX_SOLID_LIGHT_AZIMUTH` range. Live-reactive
@@ -766,6 +777,11 @@ export const MIN_TRANSFORMS = 1;
 export const DEFAULT_NUM_POINTS = 100_000;
 export const MAX_NUM_POINTS = 5_000_000;
 export const MIN_NUM_POINTS = 1_000;
+/** Preferred-number detents for the renderer Quality slider. */
+export const POINT_COUNT_DETENTS = [
+  1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000, 200_000, 500_000,
+  1_000_000, 2_000_000, 5_000_000,
+] as const;
 /** Point-size multiplier; 1 renders each style at its authored size. */
 export const DEFAULT_POINT_SIZE = 1;
 /**
@@ -820,6 +836,12 @@ export const FLAME_ITERATION_DETENTS = [
   100_000_000, 200_000_000, 500_000_000, 1_000_000_000, 2_000_000_000,
 ] as const;
 
+/** Preferred-number detents for the Solid iteration budget. */
+export const SOLID_ITERATION_DETENTS = [
+  1_000_000, 2_000_000, 5_000_000, 10_000_000, 20_000_000, 50_000_000,
+  100_000_000,
+] as const;
+
 /**
  * Index of the {@link FLAME_ITERATION_DETENTS} entry closest to `iterations`
  * in LOG space (comparing `|log(iterations) - log(detent)|`, not the raw
@@ -843,18 +865,25 @@ export const FLAME_ITERATION_DETENTS = [
  * ever runs — so, unlike the setters below, this does not defend against
  * `NaN`/`Infinity`/`<= 0`.
  */
-export function nearestFlameIterationDetentIndex(iterations: number): number {
-  const target = Math.log(iterations);
+export function nearestLogDetentIndex(
+  value: number,
+  detents: readonly number[],
+): number {
+  const target = Math.log(value);
   let bestIndex = 0;
   let bestDistance = Infinity;
-  for (let i = 0; i < FLAME_ITERATION_DETENTS.length; i++) {
-    const distance = Math.abs(target - Math.log(FLAME_ITERATION_DETENTS[i]));
+  for (let i = 0; i < detents.length; i++) {
+    const distance = Math.abs(target - Math.log(detents[i]));
     if (distance < bestDistance) {
       bestDistance = distance;
       bestIndex = i;
     }
   }
   return bestIndex;
+}
+
+export function nearestFlameIterationDetentIndex(iterations: number): number {
+  return nearestLogDetentIndex(iterations, FLAME_ITERATION_DETENTS);
 }
 /**
  * A moderately "punchy" default — MIN_FLAME_GAMMA (1) is the neutral point
@@ -1452,6 +1481,7 @@ export function initialState(panelOpen: boolean): AppState {
       paletteId: DEFAULT_SOLID_PALETTE,
     },
     surface: {
+      antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
@@ -2617,6 +2647,20 @@ export function setSurfaceLightAzimuth(
     surface: {
       ...state.surface,
       lightAzimuth: clampToSpec(PARAM.surfaceLightAzimuth, lightAzimuth),
+    },
+  };
+}
+
+/** Set the authored settle/capture sample count to a supported detent. */
+export function setSurfaceAntialiasSamples(
+  state: AppState,
+  antialiasSamples: number,
+): AppState {
+  return {
+    ...state,
+    surface: {
+      ...state.surface,
+      antialiasSamples: nearestSurfaceAntialiasSamples(antialiasSamples),
     },
   };
 }

@@ -62,17 +62,11 @@
  * `--scale=1`; see WEAKNESSES below for why the small raster is not free.)
  *
  * ONE SUPERSAMPLING COUNT — the subtle one, and the one that observation
- * calls out. The two arms do NOT read the same knob: `?surfacesamples=N`
- * is read by `scene.ts`'s `resolveSettleSamples()`, which is the STRIP arm
- * only; the compute arm's count is main.ts's `SURFACE_COMPUTE_SETTLE_SAMPLES`,
- * a hardcoded 8 with no URL door at all. So THE COUNT CANNOT BE PINNED
- * DOWNWARD ON BOTH ARMS — passing `?surfacesamples=1` would give WebGL a
- * one-pass settle against compute's eight and fake exactly the asymmetry
- * under test (which is why `surface-balloon-tint.verify.mjs`, which does
- * pass it on its GL legs, says its two engines' legs are not comparable in
- * cost and never compares them). This script therefore passes NO
- * `?surfacesamples` at all, leaving both arms on their shipped 8, and then
- * MEASURES the count on every leg rather than assuming it: both arms
+ * calls out. Both arms now resolve the document's Antialiasing choice and
+ * the same diagnostic `?surfacesamples=N` override before either renderer
+ * starts. This script deliberately passes NO override, leaving every leg on
+ * the shipped document default of 8, and then MEASURES the count rather than
+ * assuming the shared resolver stayed wired to both arms: both engines
  * disclose the pass as a trailing `antialiasing pass k/N` token in
  * `#surfaceProgress` (deliberately the same words), and the run
  * FAILS if two legs report different N. A leg too fast — or too slow — to

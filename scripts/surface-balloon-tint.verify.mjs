@@ -121,10 +121,10 @@
  * at a real raster instead of tracing the same postage stamp faster, which
  * is the row only real hardware buys — that is why this is a `parseArgs`
  * flag and not a second hardcoded constant that could go stale beside this
- * one. The WebGL legs additionally pass `?surfacesamples=1` (the strip
- * arm's own A/B override, read by the STRIP arm only — it is not a knob the
- * compute arm has), which is why the two engines' legs are not comparable
- * to each other in cost and are never compared here.
+ * one. Every leg additionally passes the shared `?surfacesamples=1`
+ * diagnostic override, so WebGPU and WebGL both spend one pass. The verdict
+ * still compares Balloon on/off within one engine rather than treating the
+ * two engines' absolute wall times as interchangeable.
  *
  * THE CAMERA IS PINNED INTO EVERY DOCUMENT, and it is the app's OWN
  * auto-frame: the script boots each system once with no pose, reads the
@@ -446,7 +446,7 @@ function launchOptions(display) {
 async function openScene(page, { url, tag, hash, gl }) {
   const query = gl
     ? `?surfacestate&surfacegl&surfacesamples=1&leg=${tag}`
-    : `?surfacestate&leg=${tag}`;
+    : `?surfacestate&surfacecompute&surfacesamples=1&leg=${tag}`;
   await page.goto(`${url}/${query}${hash}`, { waitUntil: "load" });
   // Mutter only sends frame callbacks to VISIBLE surfaces, and every
   // capture below waits on the settle latch — an occluded window

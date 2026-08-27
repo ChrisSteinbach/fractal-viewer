@@ -950,16 +950,18 @@ its structure in its interior, where a silhouette statistic cannot see it,
 which is why the six-link row's coverage fell to the sphere's while its
 impulse rate rose ABOVE the single map's.
 
-`main.ts` spends supersampling on the live SETTLE and on Save-PNG, at 8
-samples — never on a preview (cheap by definition) and never on offline
-VIDEO force frames (the cost would multiply by the frame count). The
-progress row discloses the pass as a trailing `antialiasing pass k/8`,
-silent through pass 1.
+`main.ts` spends the document's Surface **Antialiasing** choice on the live
+SETTLE and on Save-PNG. The Quality slider offers 1, 2, 4, 8, or 16 samples per
+pixel and defaults to 8. It never applies to a preview (cheap by definition)
+or an offline VIDEO force frame (the cost would multiply by the frame count).
+The progress row discloses later passes as a trailing `antialiasing pass k/N`,
+silent through pass 1. Changing the choice cancels and restarts the active
+refinement; it persists with the Surface render settings.
 
 THE WEBGL STRIP ARM NOW DOES THE SAME THING, and by the same algorithm
 rather than a parallel one: it imports `subPixelSample` from here, averages
-in linear light, and spends 8 samples on the settle and on Save-PNG, so "8
-samples" has ONE meaning whichever engine a machine has. An in-shader
+in linear light, and spends the same resolved count on the settle and on
+Save-PNG, so "N samples" has ONE meaning whichever engine a machine has. An in-shader
 accumulation loop stayed refused for the reason above (all-or-nothing
 per-strip cost fighting the strip pump's own bounding and evidence
 machinery); instead the settle opens a SEQUENCE of N whole-frame strip jobs,
@@ -983,8 +985,11 @@ driver can answer. Edge energy falls 0.846x / 0.851x on the two adapters, so
 the supersampling win is the object's own and not an artifact of the
 rasterizer.
 
-`?surfacesamples=N` is the escape hatch and the A/B instrument (N=1
-restores the exact single-pass behaviour).
+`?surfacesamples=N` is the escape hatch and the A/B instrument (N=1 restores
+the exact single-pass behaviour). The override accepts integers 1–64 and wins
+over the document setting for that page load. It is resolved once before the
+renderer arms, disclosed beside Antialiasing in Quality, and supplied to both
+WebGPU and WebGL; it is not a second engine-specific quality setting.
 
 ## Raster limits and tiled export
 

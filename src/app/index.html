@@ -325,27 +325,12 @@
              sentence that replaced it says so by describing the move. -->
         <p class="flame-hint">
           The attractor as a true implicit surface, ray-marched live from a
-          distance estimator — zoom in and detail keeps resolving. Every move
-          traces a quick preview that sharpens to full detail once you settle: a
-          moment for most systems, minutes or more for fold-heavy ones like
-          Mandelbox KIFS. The readout below says how far along it is.
+          distance estimator — zoom in and detail keeps resolving. With Quick
+          previews on, every move traces a coarse frame that sharpens to full
+          detail once you settle: a moment for most systems, minutes or more for
+          fold-heavy ones like Mandelbox KIFS. The readout below says how far
+          along it is.
         </p>
-        <!-- The preview tier under user control — the no-automatic-give-up
-             principle (never guess willingness to wait) applied to the
-             preview itself. A per-BROWSER viewer pref (viewer-prefs.ts,
-             never the share URL): off freezes the pane while the view moves
-             and starts the full render the moment it parks. -->
-        <label
-          class="checkbox-label"
-          id="surfacePreviewRow"
-          title="Trace a fast, coarse preview on every move that sharpens once you stop. Off: the view holds its last frame while you move, and the full-detail render starts as soon as you pause."
-        >
-          <input type="checkbox" id="surfacePreviewToggle" checked />
-          Quick previews
-          <span class="control-scope" aria-label="Scope: This browser"
-            >This browser</span
-          >
-        </label>
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>
         <!-- The preview tier's one-shot escape: shown only while a preview is
              actually grinding (setSurfaceProgress's skippable flag) — a WebGL
@@ -470,22 +455,6 @@
         <details class="panel-section" id="cloudSection" name="panel-section">
           <summary>Cloud</summary>
           <label class="select-label">
-            Points: <span id="numPointsLabel">100,000</span>
-            <input
-              type="range"
-              id="numPointsSlider"
-              min="0"
-              max="1000"
-              step="1"
-              value="540"
-            />
-          </label>
-
-          <!-- Directly under Points on purpose: the two are the cloud's pair
-               of scalars — how many, and how big — and reading one while
-               reaching for the other is the common move. Regenerate below
-               them applies the count; Point Size needs no regeneration. -->
-          <label class="select-label">
             Point Size: <span id="pointSizeLabel">1.00×</span>
             <input
               type="range"
@@ -497,9 +466,6 @@
             />
           </label>
 
-          <button class="btn btn-blue" id="regenerateBtn" type="button">
-            Regenerate Points
-          </button>
           <button
             class="btn btn-ghost"
             id="watchBuildBtn"
@@ -509,37 +475,9 @@
             ▶ Watch it build
           </button>
 
-          <label class="select-label">
-            <span class="control-label-line">
-              <span>Morph Detail</span>
-              <span class="control-scope" aria-label="Scope: This session"
-                >This session</span
-              >
-            </span>
-            <select
-              id="morphDetail"
-              title="Point density while morphing between systems: more detail updates the shape less often but keeps it bright — use Full when recording video"
-            >
-              <option value="adaptive">Adaptive (smoothest)</option>
-              <option value="dense">Dense</option>
-              <option value="full">Full (all points)</option>
-            </select>
-          </label>
-
           <label class="checkbox-label">
             <input type="checkbox" id="showGuides" checked />
             Show guides
-          </label>
-
-          <label
-            class="checkbox-label"
-            title="Automatically lowers render resolution when frames get slow, and restores it when they recover"
-          >
-            <input type="checkbox" id="adaptiveResolutionCheckbox" checked />
-            Adaptive resolution
-            <span class="control-scope" aria-label="Scope: This session"
-              >This session</span
-            >
           </label>
         </details>
 
@@ -1342,43 +1280,6 @@
 
         <details
           class="panel-section hidden"
-          id="flameQualitySection"
-          name="panel-section"
-        >
-          <summary>Quality</summary>
-          <label class="select-label">
-            Quality: <span id="flameIterationsLabel">20M iterations</span>
-            <input
-              type="range"
-              id="flameIterationsSlider"
-              min="0"
-              max="10"
-              step="1"
-              value="4"
-            />
-          </label>
-          <label class="select-label">
-            Supersample (restarts render):
-            <span id="flameSupersampleLabel">2×</span>
-            <input
-              type="range"
-              id="flameSupersampleSlider"
-              min="1"
-              max="3"
-              step="1"
-              value="2"
-            />
-          </label>
-          <p
-            id="flameSupersampleNote"
-            class="flame-note"
-            role="status"
-            aria-live="polite"
-          ></p>
-        </details>
-
-        <details
-          class="panel-section hidden"
           id="solidSurfaceSection"
           name="panel-section"
         >
@@ -1491,43 +1392,6 @@
               value="0.25"
             />
           </label>
-        </details>
-
-        <details
-          class="panel-section hidden"
-          id="solidQualitySection"
-          name="panel-section"
-        >
-          <summary>Quality</summary>
-          <label class="select-label">
-            Quality: <span id="solidIterationsLabel">20M iterations</span>
-            <input
-              type="range"
-              id="solidIterationsSlider"
-              min="1000000"
-              max="100000000"
-              step="1000000"
-              value="20000000"
-            />
-          </label>
-          <label class="select-label">
-            Detail (restarts render):
-            <span id="solidResolutionLabel">192³</span>
-            <input
-              type="range"
-              id="solidResolutionSlider"
-              min="64"
-              max="512"
-              step="32"
-              value="192"
-            />
-          </label>
-          <p
-            id="solidResolutionNote"
-            class="flame-note"
-            role="status"
-            aria-live="polite"
-          ></p>
         </details>
 
         <!-- Surface's renderer inspector is split at its concern and session
@@ -1949,6 +1813,165 @@
         </details>
 
         <details
+          class="panel-section"
+          id="rendererQualitySection"
+          name="panel-section"
+        >
+          <summary>Quality</summary>
+          <div id="pointsQualityControls">
+            <label class="select-label">
+              Points: <span id="numPointsLabel">100,000</span>
+              <input
+                type="range"
+                id="numPointsSlider"
+                min="0"
+                max="11"
+                step="1"
+                value="6"
+              />
+            </label>
+            <button class="btn btn-blue" id="regenerateBtn" type="button">
+              Regenerate Points
+            </button>
+          </div>
+
+          <div id="flameQualityControls" class="hidden">
+            <label class="select-label">
+              Iterations: <span id="flameIterationsLabel">20M</span>
+              <input
+                type="range"
+                id="flameIterationsSlider"
+                min="0"
+                max="10"
+                step="1"
+                value="4"
+              />
+            </label>
+            <label class="select-label">
+              Supersample (restarts render):
+              <span id="flameSupersampleLabel">2×</span>
+              <input
+                type="range"
+                id="flameSupersampleSlider"
+                min="1"
+                max="3"
+                step="1"
+                value="2"
+              />
+            </label>
+            <p
+              id="flameSupersampleNote"
+              class="flame-note"
+              role="status"
+              aria-live="polite"
+            ></p>
+          </div>
+
+          <div id="solidQualityControls" class="hidden">
+            <label class="select-label">
+              Iterations: <span id="solidIterationsLabel">20M</span>
+              <input
+                type="range"
+                id="solidIterationsSlider"
+                min="0"
+                max="6"
+                step="1"
+                value="4"
+              />
+            </label>
+            <label class="select-label">
+              Detail (restarts render):
+              <span id="solidResolutionLabel">192³</span>
+              <input
+                type="range"
+                id="solidResolutionSlider"
+                min="64"
+                max="512"
+                step="32"
+                value="192"
+              />
+            </label>
+            <p
+              id="solidResolutionNote"
+              class="flame-note"
+              role="status"
+              aria-live="polite"
+            ></p>
+          </div>
+
+          <div id="surfaceQualityControls" class="hidden">
+            <label
+              class="checkbox-label"
+              id="surfacePreviewRow"
+              title="Trace a fast, coarse preview on every move that sharpens once you stop. Off: the view holds its last frame while you move, and the full-detail render starts as soon as you pause."
+            >
+              <input type="checkbox" id="surfacePreviewToggle" checked />
+              Quick previews
+              <span class="control-scope" aria-label="Scope: This browser"
+                >This browser</span
+              >
+            </label>
+            <label class="select-label">
+              Antialiasing:
+              <span id="surfaceAntialiasLabel">8 samples/pixel</span>
+              <input
+                type="range"
+                id="surfaceAntialiasSlider"
+                min="0"
+                max="4"
+                step="1"
+                value="3"
+                aria-describedby="surfaceAntialiasNote"
+              />
+            </label>
+            <p
+              id="surfaceAntialiasNote"
+              class="flame-note"
+              role="status"
+              aria-live="polite"
+            >
+              Used for full-detail settles and Save PNG. Quick previews stay at
+              1 sample/pixel.
+            </p>
+          </div>
+        </details>
+
+        <details
+          class="panel-section"
+          id="performanceSection"
+          name="panel-section"
+        >
+          <summary>Performance</summary>
+          <label class="select-label">
+            <span class="control-label-line">
+              <span>Morph Detail</span>
+              <span class="control-scope" aria-label="Scope: This session"
+                >This session</span
+              >
+            </span>
+            <select
+              id="morphDetail"
+              title="Point density while morphing between systems: more detail updates the shape less often but keeps it bright — use Full when recording video"
+            >
+              <option value="adaptive">Adaptive (smoothest)</option>
+              <option value="dense">Dense</option>
+              <option value="full">Full (all points)</option>
+            </select>
+          </label>
+          <label
+            class="checkbox-label"
+            id="adaptiveResolutionRow"
+            title="Automatically lowers render resolution when frames get slow, and restores it when they recover"
+          >
+            <input type="checkbox" id="adaptiveResolutionCheckbox" checked />
+            Adaptive resolution
+            <span class="control-scope" aria-label="Scope: This session"
+              >This session</span
+            >
+          </label>
+        </details>
+
+        <details
           class="panel-section hidden"
           id="viewControls"
           name="panel-section"
@@ -2363,6 +2386,7 @@
             </span>
             <select
               id="exportScale"
+              aria-describedby="captureSizeTimingHint"
               title="Resolution Save PNG renders at, as a multiple of the screen — large sizes may be capped by this device. While a Flame render is active it re-renders at the chosen size."
             >
               <option value="1" selected>1× (screen)</option>
@@ -2370,6 +2394,10 @@
               <option value="4">4× (print)</option>
             </select>
           </label>
+          <p id="captureSizeTimingHint" class="flame-note-info">
+            Points, Solid, and Surface use this size on the next capture. An
+            active Flame restarts at the chosen size.
+          </p>
           <button class="btn btn-ghost" id="savePngBtn" type="button">
             ⤓ Save PNG
           </button>

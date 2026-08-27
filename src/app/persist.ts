@@ -106,6 +106,10 @@ import {
 import type { FourDPose } from "./four-d-view";
 import { normalizeRotorPair } from "./rotor4";
 import {
+  DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+  nearestSurfaceAntialiasSamples,
+} from "./surface-sampling";
+import {
   DEFAULT_COLOR_SPEED,
   MAX_SCHEDULE_DEPTH,
   MAX_TRANSFORMS,
@@ -1736,6 +1740,7 @@ function decodeSurfaceParams(
   hasCustomPalette: boolean,
 ): SurfaceParams | null {
   const defaults: SurfaceParams = {
+    antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
     lightAzimuth: PARAM.surfaceLightAzimuth.default,
     lightElevation: PARAM.surfaceLightElevation.default,
     ambient: PARAM.surfaceAmbient.default,
@@ -1757,7 +1762,7 @@ function decodeSurfaceParams(
   const out = { ...defaults };
   const numeric: Exclude<
     keyof SurfaceParams,
-    "colorSource" | "paletteId" | "floorPattern"
+    "antialiasSamples" | "colorSource" | "paletteId" | "floorPattern"
   >[] = [
     "lightAzimuth",
     "lightElevation",
@@ -1772,6 +1777,12 @@ function decodeSurfaceParams(
     const value = Number(s[key]);
     if (!Number.isFinite(value)) return null;
     out[key] = value;
+  }
+
+  if (s.antialiasSamples !== undefined) {
+    const samples = Number(s.antialiasSamples);
+    if (!Number.isFinite(samples)) return null;
+    out.antialiasSamples = nearestSurfaceAntialiasSamples(samples);
   }
 
   // colorSource: unknown or missing quietly becomes "transform" —
@@ -1799,6 +1810,7 @@ function decodeSurfaceParams(
       : DEFAULT_SOLID_PALETTE;
 
   return {
+    antialiasSamples: out.antialiasSamples,
     lightAzimuth: clampToSpec(PARAM.surfaceLightAzimuth, out.lightAzimuth),
     lightElevation: clampToSpec(
       PARAM.surfaceLightElevation,
@@ -2372,7 +2384,9 @@ export function encodeScene(s: SceneSnapshot): string {
     showGuides: boolean;
     flame: FlameParams;
     solid: SolidParams;
-    surface: SurfaceParams;
+    surface: Omit<SurfaceParams, "antialiasSamples"> & {
+      antialiasSamples?: number;
+    };
     symmetry: SymmetryParams;
     glowBrightness: number;
     balloonEcho: boolean;
@@ -2456,6 +2470,11 @@ export function encodeScene(s: SceneSnapshot): string {
       paletteId: s.solid.paletteId,
     },
     surface: {
+      // Added after the Surface block shipped: omit the default so pristine
+      // and legacy documents keep their byte-identical short links.
+      ...(s.surface.antialiasSamples !== DEFAULT_SURFACE_ANTIALIAS_SAMPLES
+        ? { antialiasSamples: Math.round(s.surface.antialiasSamples) }
+        : {}),
       lightAzimuth: round4(s.surface.lightAzimuth),
       lightElevation: round4(s.surface.lightElevation),
       ambient: round4(s.surface.ambient),

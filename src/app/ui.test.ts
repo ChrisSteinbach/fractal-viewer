@@ -9,6 +9,7 @@ import {
   MAX_COLOR_GAMMA,
   MORPH_DETAILS,
   PARAM,
+  POINT_COUNT_DETENTS,
   setBackgroundFlamePaletteId,
   setBackgroundMode,
   setBackgroundShape,
@@ -20,6 +21,8 @@ import {
   setSurfacePaletteId,
   setShapeTrap,
   setSymmetryOrder,
+  SOLID_ITERATION_DETENTS,
+  SURFACE_ANTIALIAS_DETENTS,
   SURFACE_COLOR_SOURCES,
 } from "./state";
 import type { AppState, ParamSpec } from "./state";
@@ -119,6 +122,7 @@ function noopHandlers(): UiHandlers {
     onSurfaceSkipPreview: vi.fn(),
     onFourDSliceToggle: vi.fn(),
     onFourDSliceInput: vi.fn(),
+    onFourDSliceCommit: vi.fn(),
     onFourDSliceThicknessInput: vi.fn(),
     onFourDSliceRelColorToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
@@ -1002,6 +1006,34 @@ describe("Ui point size slider", () => {
   });
 });
 
+describe("Ui Points Quality budget", () => {
+  it("keeps a non-detent saved count in the label while snapping only the thumb", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), numPoints: 37_000 });
+
+    expect(document.getElementById("numPointsLabel")?.textContent).toBe(
+      "37,000",
+    );
+    expect(
+      (document.getElementById("numPointsSlider") as HTMLInputElement).value,
+    ).toBe("5");
+  });
+
+  it("applies a point-count detent index on input", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const slider = document.getElementById(
+      "numPointsSlider",
+    ) as HTMLInputElement;
+
+    slider.value = "8";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(current().numPoints).toBe(POINT_COUNT_DETENTS[8]);
+  });
+});
+
 describe("Ui scalar control commit phase", () => {
   it("a range with a declared commit reports the commit phase on change, on top of input", () => {
     const onScalarControl = vi.fn();
@@ -1011,7 +1043,7 @@ describe("Ui scalar control commit phase", () => {
       "numPointsSlider",
     ) as HTMLInputElement;
 
-    slider.value = "500";
+    slider.value = "8";
     slider.dispatchEvent(new Event("input"));
     slider.dispatchEvent(new Event("change"));
 
@@ -1019,12 +1051,12 @@ describe("Ui scalar control commit phase", () => {
     expect(onScalarControl).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ id: "numPointsSlider" }),
-      "500",
+      "8",
     );
     expect(onScalarControl).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ id: "numPointsSlider" }),
-      "500",
+      "8",
       "commit",
     );
   });
@@ -5268,15 +5300,10 @@ describe("Ui render mode switch", () => {
     "scheduleSection",
     "presetSection",
   ] as const;
-  const FLAME_SECTION_IDS = [
-    "flameToneSection",
-    "flameBlurSection",
-    "flameQualitySection",
-  ] as const;
+  const FLAME_SECTION_IDS = ["flameToneSection", "flameBlurSection"] as const;
   const SOLID_SECTION_IDS = [
     "solidSurfaceSection",
     "solidLightingSection",
-    "solidQualitySection",
   ] as const;
   const SURFACE_SECTION_IDS = [
     "surfaceColorSection",
@@ -5290,11 +5317,30 @@ describe("Ui render mode switch", () => {
     "surfaceLightingSection",
     "surfaceFloorSection",
   ] as const;
+  const QUALITY_CONTROL_IDS = {
+    points: "pointsQualityControls",
+    flame: "flameQualityControls",
+    solid: "solidQualityControls",
+    surface: "surfaceQualityControls",
+  } as const;
 
   function expectSectionsHidden(ids: readonly string[], hidden: boolean): void {
     for (const id of ids) {
       expect(byId(id).classList.contains("hidden"), id).toBe(hidden);
     }
+  }
+
+  function expectQualityMode(active: keyof typeof QUALITY_CONTROL_IDS): void {
+    expect(byId("rendererQualitySection").classList.contains("hidden")).toBe(
+      false,
+    );
+    for (const [mode, id] of Object.entries(QUALITY_CONTROL_IDS)) {
+      expect(byId(id).classList.contains("hidden"), id).toBe(mode !== active);
+    }
+    expect(byId("performanceSection").classList.contains("hidden")).toBe(false);
+    expect(byId("adaptiveResolutionRow").classList.contains("hidden")).toBe(
+      active !== "points" && active !== "solid",
+    );
   }
 
   it("fires onRenderMode with the flame mode when the flame segment is clicked", () => {
@@ -5442,6 +5488,7 @@ describe("Ui render mode switch", () => {
     expectSectionsHidden(FLAME_SECTION_IDS, false);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
     expectSectionsHidden(SURFACE_SECTION_IDS, true);
+    expectQualityMode("flame");
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(false);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
@@ -5459,6 +5506,7 @@ describe("Ui render mode switch", () => {
     expectSectionsHidden(SOLID_SECTION_IDS, false);
     expectSectionsHidden(FLAME_SECTION_IDS, true);
     expectSectionsHidden(SURFACE_SECTION_IDS, true);
+    expectQualityMode("solid");
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
@@ -5479,6 +5527,7 @@ describe("Ui render mode switch", () => {
     expect(byId("surfaceTrapSection").classList.contains("hidden")).toBe(true);
     expectSectionsHidden(FLAME_SECTION_IDS, true);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
+    expectQualityMode("surface");
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("surfaceStatus").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
@@ -5564,8 +5613,8 @@ describe("Ui render mode switch", () => {
     ["flat", defaultTransforms()],
     ["non-flat", nonFlatTransforms()],
   ] as const)(
-    "keeps shared Color visible, editable, and open across every renderer for a %s document",
-    (_dimension, transforms) => {
+    "keeps shared Color visible and open across every renderer for a %s document",
+    (dimension, transforms) => {
       const ui = new Ui(document);
       const color = byId("colorSection") as HTMLDetailsElement;
       (byId("presetSection") as HTMLDetailsElement).open = false;
@@ -5590,14 +5639,16 @@ describe("Ui render mode switch", () => {
           document.querySelectorAll("details.panel-section.hidden[open]"),
           renderMode,
         ).toHaveLength(0);
-        expect(
-          Array.from(
-            color.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
-              "input, select",
-            ),
-          ).every((control) => !control.disabled),
-          renderMode,
-        ).toBe(true);
+        if (dimension === "flat") {
+          expect(
+            Array.from(
+              color.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+                "input, select",
+              ),
+            ).every((control) => !control.disabled),
+            renderMode,
+          ).toBe(true);
+        }
       }
     },
   );
@@ -5719,6 +5770,7 @@ describe("Ui render mode switch", () => {
     expectSectionsHidden(FLAME_SECTION_IDS, true);
     expectSectionsHidden(SOLID_SECTION_IDS, true);
     expectSectionsHidden(SURFACE_SECTION_IDS, true);
+    expectQualityMode("points");
     expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
     expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
     expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
@@ -5759,6 +5811,12 @@ describe("Ui render mode switch", () => {
         `#${floatingId} must precede the accordion`,
       ).toBeTruthy();
     }
+    expect(byId("surfaceStatus").contains(byId("surfacePreviewToggle"))).toBe(
+      false,
+    );
+    expect(
+      byId("rendererQualitySection").contains(byId("surfacePreviewToggle")),
+    ).toBe(true);
   });
 
   // The refactor's whole point: the segmented control itself is never hidden
@@ -5810,7 +5868,7 @@ describe("Ui flame render controls", () => {
     ) as HTMLInputElement;
     expect(iterationsSlider.value).toBe("5");
     expect(document.getElementById("flameIterationsLabel")?.textContent).toBe(
-      "42.0M iterations",
+      "42.0M",
     );
   });
 
@@ -5829,7 +5887,7 @@ describe("Ui flame render controls", () => {
         .value,
     ).toBe("10");
     expect(document.getElementById("flameIterationsLabel")?.textContent).toBe(
-      "2B iterations",
+      "2B",
     );
   });
 
@@ -6390,9 +6448,9 @@ describe("Ui solid render controls", () => {
     expect(
       (document.getElementById("solidIterationsSlider") as HTMLInputElement)
         .value,
-    ).toBe("42000000");
+    ).toBe("5");
     expect(document.getElementById("solidIterationsLabel")?.textContent).toBe(
-      "42M iterations",
+      "42.0M",
     );
 
     expect(
@@ -6412,10 +6470,10 @@ describe("Ui solid render controls", () => {
     const slider = document.getElementById(
       "solidIterationsSlider",
     ) as HTMLInputElement;
-    slider.value = "5000000";
+    slider.value = "2";
     slider.dispatchEvent(new Event("input"));
 
-    expect(current().solid.iterations).toBe(5_000_000);
+    expect(current().solid.iterations).toBe(SOLID_ITERATION_DETENTS[2]);
   });
 
   it("applies the resolution slider's value to state.solid.resolution on input", () => {
@@ -7346,27 +7404,44 @@ describe("Ui 4D view gating", () => {
     expect(el("autoOrbitRow").classList.contains("hidden")).toBe(false);
   });
 
-  // Flame and solid freeze the 4D view (rotor + slice) into their active
-  // render's worker snapshot (main.ts's fourDRenderSnapshot), so its controls
-  // hide during those FROZEN renders exactly like the editing controls do. A
-  // live 4D surface session is different: its tracer re-poses the view every
-  // frame instead of freezing it — see the "Ui 4D surface session controls"
-  // tests below.
-  it("hides the 4D tumble/slice controls while a FROZEN render is active on a non-flat system", () => {
-    const ui = new Ui(document);
-    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+  // Non-flat Flame/Solid retain their entry geometry but accept a settled
+  // rotor/slice endpoint by restarting the active accumulation. Automatic
+  // tumble remains parked so the worker can converge between edits.
+  it.each(["flame", "solid"] as const)(
+    "keeps non-flat View reachable in %s with parked motion and restart-on-release copy",
+    (renderMode) => {
+      const ui = new Ui(document);
+      const nonFlat = {
+        ...initialState(true),
+        transforms: nonFlatTransforms(),
+        renderMode,
+      };
 
-    ui.updateLabels({ ...nonFlat, renderMode: "flame" as const });
-    expect(el("viewControls").classList.contains("hidden")).toBe(true);
-    expect(el("flameToneSection").classList.contains("hidden")).toBe(false);
+      ui.updateLabels(nonFlat);
 
-    ui.updateLabels({ ...nonFlat, renderMode: "solid" as const });
-    expect(el("viewControls").classList.contains("hidden")).toBe(true);
-    expect(el("solidSurfaceSection").classList.contains("hidden")).toBe(false);
-
-    ui.updateLabels(nonFlat);
-    expect(el("viewControls").classList.contains("hidden")).toBe(false);
-  });
+      expect(el("viewControls").classList.contains("hidden")).toBe(false);
+      expect(el("autoMotionToggleRow").classList.contains("hidden")).toBe(
+        false,
+      );
+      expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
+      expect(el("fourDSliceToggleRow").classList.contains("hidden")).toBe(
+        false,
+      );
+      expect(el("automaticMotionParkedHint").classList.contains("hidden")).toBe(
+        false,
+      );
+      const copy = el("automaticMotionParkedHint").textContent ?? "";
+      expect(copy).toContain(
+        "Manual 4D turns and W-slice changes restart this Flame or Solid after release",
+      );
+      expect(copy).toContain("Automatic motion is parked while it accumulates");
+      expect(
+        el(
+          renderMode === "flame" ? "flameToneSection" : "solidSurfaceSection",
+        ).classList.contains("hidden"),
+      ).toBe(false);
+    },
+  );
 
   // The crucial inversion from the old 4D MODE: unlike the retired
   // fourDActive flag, which hid the whole editing surface, a non-flat system
@@ -7796,7 +7871,7 @@ describe("Ui 4D slice controls", () => {
     expect(el("fourDSliceRow").classList.contains("hidden")).toBe(false);
   });
 
-  it("fires onFourDSliceInput with the slider's numeric value and updates the label", () => {
+  it("updates the slice live on input and commits the settled endpoint only on change", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -7807,6 +7882,12 @@ describe("Ui 4D slice controls", () => {
 
     expect(handlers.onFourDSliceInput).toHaveBeenCalledWith(-0.35);
     expect(el("fourDSliceLabel").textContent).toBe("-0.35");
+    expect(handlers.onFourDSliceCommit).not.toHaveBeenCalled();
+
+    slider.dispatchEvent(new Event("change"));
+
+    expect(handlers.onFourDSliceInput).toHaveBeenCalledTimes(1);
+    expect(handlers.onFourDSliceCommit).toHaveBeenCalledTimes(1);
   });
 
   it("fires onFourDSliceThicknessInput with the slider's numeric value and updates the label", () => {
@@ -8253,6 +8334,42 @@ describe("Ui surface quick-previews toggle", () => {
   });
 });
 
+describe("Ui Surface Quality antialiasing", () => {
+  it("reflects the saved sample count as a detent index and readable label", () => {
+    const ui = new Ui(document);
+    const base = initialState(true);
+    ui.updateLabels({
+      ...base,
+      renderMode: "surface",
+      surface: { ...base.surface, antialiasSamples: 16 },
+    });
+
+    expect(
+      (document.getElementById("surfaceAntialiasSlider") as HTMLInputElement)
+        .value,
+    ).toBe("4");
+    expect(document.getElementById("surfaceAntialiasLabel")?.textContent).toBe(
+      "16 samples/pixel",
+    );
+  });
+
+  it("applies the selected samples-per-pixel detent on input", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const slider = document.getElementById(
+      "surfaceAntialiasSlider",
+    ) as HTMLInputElement;
+
+    slider.value = "0";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(current().surface.antialiasSamples).toBe(
+      SURFACE_ANTIALIAS_DETENTS[0],
+    );
+  });
+});
+
 describe("Ui symmetry controls", () => {
   function note(): HTMLElement | null {
     return document.getElementById("symmetryNote");
@@ -8584,9 +8701,9 @@ describe("Ui symmetry controls", () => {
 // This pins every DIRECTLY-mapped slider (HTML range == the parameter's value
 // range) against its spec, so editing a range in one place without the other
 // fails here. Excluded on purpose (their HTML range is a mapping DOMAIN, not
-// the parameter's value range — see control-spec.ts): numPointsSlider and
-// colorGammaSlider carry a log-scale position and flameIterationsSlider a
-// detent index. symmetryOrderSlider joined the direct set once its max stopped
+// the parameter's value range — see control-spec.ts): colorGammaSlider carries
+// a log-scale position; the Points, Flame and Solid budget sliders and Surface
+// antialiasing carry detent indexes. symmetryOrderSlider joined the direct set once its max stopped
 // being capped below its spec (which silently rewrote shared 10-12 links), and
 // symmetryTwistSlider's static range IS its spec — the tighter order-dependent
 // cap lives in setSymmetryTwist alone.
@@ -8617,7 +8734,6 @@ describe("index.html slider ranges match PARAM", () => {
     ["solidLightAzimuthSlider", PARAM.solidLightAzimuth],
     ["solidLightElevationSlider", PARAM.solidLightElevation],
     ["solidAmbientSlider", PARAM.solidAmbient],
-    ["solidIterationsSlider", PARAM.solidIterations],
     ["solidResolutionSlider", PARAM.solidResolution],
     ["surfaceLightAzimuthSlider", PARAM.surfaceLightAzimuth],
     ["surfaceLightElevationSlider", PARAM.surfaceLightElevation],
@@ -8638,6 +8754,21 @@ describe("index.html slider ranges match PARAM", () => {
       String(PARAM.solidResolution.snap),
     );
   });
+
+  it.each([
+    ["numPointsSlider", POINT_COUNT_DETENTS.length, 6],
+    ["flameIterationsSlider", FLAME_ITERATION_DETENTS.length, 4],
+    ["solidIterationsSlider", SOLID_ITERATION_DETENTS.length, 4],
+    ["surfaceAntialiasSlider", SURFACE_ANTIALIAS_DETENTS.length, 3],
+  ] as const)(
+    "%s uses the full zero-based detent domain with the expected default",
+    (id, length, defaultIndex) => {
+      expect(attr(id, "min")).toBe("0");
+      expect(attr(id, "max")).toBe(String(length - 1));
+      expect(attr(id, "step")).toBe("1");
+      expect(attr(id, "value")).toBe(String(defaultIndex));
+    },
+  );
 });
 
 describe("visible control lifetimes", () => {
@@ -8665,7 +8796,7 @@ describe("visible control lifetimes", () => {
     }
   });
 
-  it("marks session-owned controls without moving them", () => {
+  it("keeps session-owned controls marked after the Performance rehome", () => {
     for (const id of [
       "autoUpdate",
       "morphDetail",
@@ -8697,6 +8828,18 @@ describe("visible control lifetimes", () => {
     for (const id of ["autoMotionToggle", "surfacePreviewToggle"]) {
       expect(labelledScope(id), id).toBe("This browser");
     }
+  });
+
+  it("discloses Capture size timing for every renderer before the control is used", () => {
+    const select = document.getElementById("exportScale");
+    const hint = document.getElementById("captureSizeTimingHint");
+
+    expect(select?.getAttribute("aria-describedby")).toContain(
+      "captureSizeTimingHint",
+    );
+    expect(normalizedText(hint)).toBe(
+      "Points, Solid, and Surface use this size on the next capture. An active Flame restarts at the chosen size.",
+    );
   });
 
   it("associates every 4D slice field with Saved-view framing", () => {
@@ -8787,10 +8930,16 @@ describe("panel accordion sections", () => {
       ids.indexOf("captureSection"),
     );
     expect(ids.indexOf("surfaceFloorSection")).toBeLessThan(
-      ids.indexOf("captureSection"),
+      ids.indexOf("rendererQualitySection"),
+    );
+    expect(ids.indexOf("rendererQualitySection")).toBeLessThan(
+      ids.indexOf("performanceSection"),
+    );
+    expect(ids.indexOf("performanceSection")).toBeLessThan(
+      ids.indexOf("viewControls"),
     );
     expect(ids.indexOf("viewControls")).toBeLessThan(
-      ids.indexOf("captureSection"),
+      ids.indexOf("presetSection"),
     );
     expect(ids.indexOf("colorSection")).toBeLessThan(
       ids.indexOf("balloonSection"),
@@ -8889,6 +9038,34 @@ describe("panel accordion sections", () => {
     expect(atmosphere.open).toBe(true);
     expect(details("presetSection").open).toBe(false);
     expect(hiddenOpenSections()).toEqual([]);
+  });
+
+  it("keeps the one Quality section open while its contextual group changes", () => {
+    const ui = new Ui(document);
+    const state = initialState(true);
+    const quality = details("rendererQualitySection");
+    details("presetSection").open = false;
+    quality.open = true;
+    quality.dispatchEvent(new Event("toggle"));
+
+    const groups = {
+      points: "pointsQualityControls",
+      flame: "flameQualityControls",
+      solid: "solidQualityControls",
+      surface: "surfaceQualityControls",
+    } as const;
+    for (const renderMode of ["points", "flame", "solid", "surface"] as const) {
+      ui.updateLabels({ ...state, renderMode });
+      expect(quality.classList.contains("hidden"), renderMode).toBe(false);
+      expect(quality.open, renderMode).toBe(true);
+      for (const [mode, id] of Object.entries(groups)) {
+        expect(
+          document.getElementById(id)?.classList.contains("hidden"),
+          id,
+        ).toBe(mode !== renderMode);
+      }
+      expect(hiddenOpenSections(), renderMode).toEqual([]);
+    }
   });
 
   it("keeps Atmosphere open while Fog moves through live, dormant, and Balloon-only scope", () => {

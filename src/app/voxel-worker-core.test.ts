@@ -1,6 +1,8 @@
 import { sierpinskiTetrahedron } from "../fractal/presets";
 import { CHAOS_SUB_ORBIT_POINTS } from "../fractal/chaos-game";
 import { clampVoxelResolution, createVoxelGrid } from "../fractal/voxel";
+import { computeVoxelBounds4 } from "../fractal/voxel-4d";
+import type { FourDView } from "../fractal/project4";
 import type { Transform4 } from "../fractal/types";
 import {
   voxelAccumBudgetVoxels,
@@ -47,6 +49,15 @@ const IDENTITY_ROTOR4 = [
   0, 0, 0, 1,
 ];
 
+/** +90 degrees in XW: x' = w and w' = -x. */
+// prettier-ignore
+const XW_QUARTER_TURN = [
+  0, 0, 0, 1,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+ -1, 0, 0, 0,
+];
+
 /** A simple pentatope-ish 4D system: every map contracts all of 4-space
  * toward the same fixed point, converging to (0.5, 0.5, 0.5, 0.5) — the 4D
  * twin of this file's implicit 3D fixture (`sierpinskiTetrahedron`), just
@@ -71,6 +82,7 @@ function defaultFourD(): NonNullable<
     finalTransform4: null,
     rotor: IDENTITY_ROTOR4,
     center: [0, 0, 0, 0],
+    halfExtents: [1, 1, 1, 1],
     invWAmp: 1,
     sliceOn: false,
     sliceCenter: 0,
@@ -80,6 +92,22 @@ function defaultFourD(): NonNullable<
     radiusMin: 0,
     radiusMax: 1,
     rampPalette: "legacy",
+  };
+}
+
+function fourDWorkerView(
+  overrides: Partial<
+    Extract<VoxelWorkerCommand, { type: "setFourDView" }>["view"]
+  > = {},
+): Extract<VoxelWorkerCommand, { type: "setFourDView" }>["view"] {
+  const fourD = defaultFourD();
+  return {
+    rotor: [...fourD.rotor],
+    sliceOn: fourD.sliceOn,
+    sliceCenter: fourD.sliceCenter,
+    sliceWidth: fourD.sliceWidth,
+    sliceRelativeColor: fourD.sliceRelativeColor,
+    ...overrides,
   };
 }
 
@@ -158,6 +186,7 @@ function harness(
     schedule: scheduler.schedule,
     emit: (event) => events.push(event),
     createGrid: overrides.createGrid,
+    computeBounds4: overrides.computeBounds4,
     maxVoxels: overrides.maxVoxels,
     initialChunkSize: overrides.initialChunkSize,
     boundsSamples: overrides.boundsSamples ?? 500,
@@ -743,6 +772,88 @@ describe("VoxelWorkerSession memory guards", () => {
 // ---------------------------------------------------------------------------
 
 describe("VoxelWorkerSession 4D solid render", () => {
+  it("setFourDView rebuilds projected bounds around the retained entry centre and restarts once", () => {
+    // Fixed point (0.5, 0.2, 0.3, 0.1): an XW quarter-turn moves projected
+    // x from 0.5 to 0.1, making a bounds re-pilot directly observable.
+    const transforms4 = makeTransforms4(4).map((transform) => ({
+      ...transform,
+      position: [0.25, 0.1, 0.15, 0.05] as [number, number, number, number],
+    }));
+    const halfExtents: [number, number, number, number] = [0.5, 0.5, 0.5, 2];
+    const pilotedViews: FourDView[] = [];
+    const computeBounds4: typeof computeVoxelBounds4 = (...args) => {
+      pilotedViews.push({ ...args[2] });
+      return computeVoxelBounds4(...args);
+    };
+    const { session, events, scheduler } = harness({
+      boundsSamples: 100,
+      computeBounds4,
+    });
+    session.handle(
+      startCommand({
+        fourD: {
+          ...defaultFourD(),
+          transforms4,
+          halfExtents,
+          invWAmp: 0.5,
+        },
+        iterationsBudget: 200,
+      }),
+    );
+    scheduler.drain();
+    const first = gridEvents(events).at(-1)!;
+    const firstCenterX = (first.boundsMin[0] + first.boundsMax[0]) / 2;
+    const restartsBefore = restartedEvents(events).length;
+
+    const view = fourDWorkerView({
+      rotor: XW_QUARTER_TURN,
+      sliceOn: true,
+      sliceCenter: -0.5,
+      sliceWidth: 0.2,
+      sliceRelativeColor: true,
+    });
+    session.handle({ type: "setFourDView", view });
+    expect(restartedEvents(events)).toHaveLength(restartsBefore + 1);
+    scheduler.drain();
+
+    const second = gridEvents(events).at(-1)!;
+    const secondCenterX = (second.boundsMin[0] + second.boundsMax[0]) / 2;
+    expect(firstCenterX).toBeCloseTo(0.5, 5);
+    expect(secondCenterX).toBeCloseTo(0.1, 5);
+    expect(second.iterationsDone).toBe(200);
+    expect(pilotedViews).toHaveLength(2);
+    // XW_QUARTER_TURN's w row selects x, whose retained half-extent is
+    // 0.5: the worker, not this command, derives 1 / 0.5 = 2.
+    expect(pilotedViews[1].invWAmp).toBe(2);
+
+    // A structurally cloned repeat is still the exact same endpoint.
+    const gridsBeforeRepeat = gridEvents(events).length;
+    const notesBeforeRepeat = noteEvents(events).length;
+    session.handle({
+      type: "setFourDView",
+      view: { ...view, rotor: [...view.rotor] },
+    });
+    expect(restartedEvents(events)).toHaveLength(restartsBefore + 1);
+    expect(gridEvents(events)).toHaveLength(gridsBeforeRepeat);
+    expect(noteEvents(events)).toHaveLength(notesBeforeRepeat);
+  });
+
+  it("setFourDView is a no-op for a flat session", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 200 }));
+    scheduler.drain();
+    const restartsBefore = restartedEvents(events).length;
+    const gridsBefore = gridEvents(events).length;
+
+    session.handle({
+      type: "setFourDView",
+      view: fourDWorkerView({ rotor: XW_QUARTER_TURN }),
+    });
+
+    expect(restartedEvents(events)).toHaveLength(restartsBefore);
+    expect(gridEvents(events)).toHaveLength(gridsBefore);
+  });
+
   it("emits a grid event with a nonzero texture for a simple 4D transform fixture", () => {
     const { session, events, scheduler } = harness();
     session.handle(

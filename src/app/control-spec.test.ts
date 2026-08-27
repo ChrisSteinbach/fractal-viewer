@@ -15,12 +15,14 @@ import {
   FLAME_ITERATION_DETENTS,
   initialState,
   MAX_COLOR_GAMMA,
-  MAX_NUM_POINTS,
-  MIN_NUM_POINTS,
   nearestFlameIterationDetentIndex,
+  nearestLogDetentIndex,
+  POINT_COUNT_DETENTS,
   setShapeTrap,
   setSymmetryOrder,
   setSymmetryPlane,
+  SOLID_ITERATION_DETENTS,
+  SURFACE_ANTIALIAS_DETENTS,
 } from "./state";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
@@ -253,20 +255,24 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(state.balloonTintStrength).toBe(0.5);
   });
 
-  it("numPointsSlider apply floors raw 0 to the MIN_NUM_POINTS endpoint", () => {
+  it("numPointsSlider apply maps a detent index to its preferred count", () => {
     const spec = specById("numPointsSlider");
 
-    const state = applyScalarControl(initialState(true), spec, "0");
+    const state = applyScalarControl(initialState(true), spec, "8");
 
-    expect(state.numPoints).toBe(MIN_NUM_POINTS);
+    expect(state.numPoints).toBe(POINT_COUNT_DETENTS[8]);
   });
 
-  it("numPointsSlider apply ceilings raw 1000 to the MAX_NUM_POINTS endpoint", () => {
+  it("detent-index sliders safely clamp synthetic out-of-range indexes", () => {
     const spec = specById("numPointsSlider");
 
-    const state = applyScalarControl(initialState(true), spec, "1000");
+    const low = applyScalarControl(initialState(true), spec, "-100");
+    const high = applyScalarControl(initialState(true), spec, "1000");
 
-    expect(state.numPoints).toBe(MAX_NUM_POINTS);
+    expect(low.numPoints).toBe(POINT_COUNT_DETENTS[0]);
+    expect(high.numPoints).toBe(
+      POINT_COUNT_DETENTS[POINT_COUNT_DETENTS.length - 1],
+    );
   });
 
   it("colorGammaSlider apply maps raw 0 to the exact neutral gamma of 1", () => {
@@ -291,6 +297,22 @@ describe("applyScalarControl: parsing/mapping", () => {
     const state = applyScalarControl(initialState(true), spec, "7");
 
     expect(state.flame.iterations).toBe(FLAME_ITERATION_DETENTS[7]);
+  });
+
+  it("solidIterationsSlider apply maps a detent index to its preferred budget", () => {
+    const spec = specById("solidIterationsSlider");
+
+    const state = applyScalarControl(initialState(true), spec, "5");
+
+    expect(state.solid.iterations).toBe(SOLID_ITERATION_DETENTS[5]);
+  });
+
+  it("surfaceAntialiasSlider apply maps a detent index to samples per pixel", () => {
+    const spec = specById("surfaceAntialiasSlider");
+
+    const state = applyScalarControl(initialState(true), spec, "4");
+
+    expect(state.surface.antialiasSamples).toBe(SURFACE_ANTIALIAS_DETENTS[4]);
   });
 
   it("colorMode select apply sets colorMode from the option value", () => {
@@ -354,17 +376,14 @@ describe("applyScalarControl: parsing/mapping", () => {
 });
 
 describe("read: state -> element value", () => {
-  it("numPointsSlider read/apply round-trips through the log slider mapping", () => {
+  it("numPointsSlider read snaps a non-detent saved count without rewriting it", () => {
     const spec = specById("numPointsSlider");
-    const original = { ...initialState(true), numPoints: 100_000 };
+    const original = { ...initialState(true), numPoints: 37_000 };
 
-    const roundTripped = applyScalarControl(
-      initialState(true),
-      spec,
-      spec.read(original),
+    expect(spec.read(original)).toBe(
+      String(nearestLogDetentIndex(37_000, POINT_COUNT_DETENTS)),
     );
-
-    expect(roundTripped.numPoints).toBe(100_000);
+    expect(original.numPoints).toBe(37_000);
   });
 
   it("flameIterationsSlider read snaps a non-detent persisted value to the nearest detent index", () => {
@@ -378,6 +397,31 @@ describe("read: state -> element value", () => {
     expect(spec.read(state)).toBe(
       String(nearestFlameIterationDetentIndex(37_000_000)),
     );
+  });
+
+  it("solidIterationsSlider read snaps only the thumb for a non-detent saved budget", () => {
+    const spec = specById("solidIterationsSlider");
+    const base = initialState(true);
+    const state = {
+      ...base,
+      solid: { ...base.solid, iterations: 37_000_000 },
+    };
+
+    expect(spec.read(state)).toBe(
+      String(nearestLogDetentIndex(37_000_000, SOLID_ITERATION_DETENTS)),
+    );
+    expect(state.solid.iterations).toBe(37_000_000);
+  });
+
+  it("surfaceAntialiasSlider read exposes the authored detent index", () => {
+    const spec = specById("surfaceAntialiasSlider");
+    const base = initialState(true);
+    const state = {
+      ...base,
+      surface: { ...base.surface, antialiasSamples: 16 },
+    };
+
+    expect(spec.read(state)).toBe("4");
   });
 
   it("fourDDepthFadeToggle read reflects a true fourDDepthFade state", () => {
@@ -1267,14 +1311,14 @@ describe("effects", () => {
     it("solidIterationsSlider effect posts setIterationsBudget to the voxel worker", () => {
       const spec = specById("solidIterationsSlider");
       const previous = initialState(true);
-      const state = applyScalarControl(previous, spec, "40000000");
+      const state = applyScalarControl(previous, spec, "5");
       const fx = mockEffects();
 
       spec.effect?.(state, fx, previous);
 
       expect(fx.postVoxel).toHaveBeenCalledWith({
         type: "setIterationsBudget",
-        iterations: 40_000_000,
+        iterations: SOLID_ITERATION_DETENTS[5],
       });
     });
 
@@ -1366,6 +1410,36 @@ describe("effects", () => {
   });
 
   describe("surface render controls", () => {
+    it("surfaceAntialiasSlider restarts active refinement after a genuine change", () => {
+      const spec = specById("surfaceAntialiasSlider");
+      const previous = {
+        ...initialState(true),
+        renderMode: "surface" as const,
+      };
+      const state = applyScalarControl(previous, spec, "4");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(state.surface.antialiasSamples).toBe(16);
+      expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaceAntialiasSlider does not restart outside Surface or for an unchanged choice", () => {
+      const spec = specById("surfaceAntialiasSlider");
+      const points = initialState(true);
+      const changed = applyScalarControl(points, spec, "4");
+      const fx = mockEffects();
+
+      spec.effect?.(changed, fx, points);
+      expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
+
+      const surface = { ...points, renderMode: "surface" as const };
+      const unchanged = applyScalarControl(surface, spec, "3");
+      spec.effect?.(unchanged, fx, surface);
+      expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
+    });
+
     it("surfaceLightAzimuthSlider effect forwards the settled surface params to the scene", () => {
       const spec = specById("surfaceLightAzimuthSlider");
       const previous = initialState(true);
