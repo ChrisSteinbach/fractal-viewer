@@ -553,7 +553,10 @@
           <div id="colorModeRow">
             <label class="select-label">
               Color Mode
-              <select id="colorMode" aria-describedby="colorTimingHint">
+              <select
+                id="colorMode"
+                aria-describedby="colorTimingHint colorDimensionalRefusal"
+              >
                 <option value="transform">By Transform</option>
                 <option value="height">By Height (terrain)</option>
                 <option value="radius">By Radius (warm→cool)</option>
@@ -587,6 +590,16 @@
               </select>
             </label>
           </div>
+          <p
+            id="colorDimensionalRefusal"
+            class="flame-note-info hidden"
+            role="status"
+          >
+            Non-flat Points, Flame, and Solid use signed-W color, By Transform,
+            or By 4D Radius. By Height, By Position / Axis Colors, Uniform Cyan,
+            and Color Contrast have no non-flat path in those renderers; their
+            flat values stay saved. Surface uses its own Color source.
+          </p>
 
           <div id="rampPaletteRow" class="hidden">
             <label class="select-label">
@@ -651,7 +664,7 @@
                   type="color"
                   id="positionAxisX"
                   value="#ff0000"
-                  aria-describedby="colorTimingHint"
+                  aria-describedby="colorTimingHint colorDimensionalRefusal"
                 />
               </label>
               <label class="position-axis-label"
@@ -660,7 +673,7 @@
                   type="color"
                   id="positionAxisY"
                   value="#00ff00"
-                  aria-describedby="colorTimingHint"
+                  aria-describedby="colorTimingHint colorDimensionalRefusal"
                 />
               </label>
               <label class="position-axis-label"
@@ -669,7 +682,7 @@
                   type="color"
                   id="positionAxisZ"
                   value="#0000ff"
-                  aria-describedby="colorTimingHint"
+                  aria-describedby="colorTimingHint colorDimensionalRefusal"
                 />
               </label>
               <button
@@ -677,7 +690,7 @@
                 id="positionColorsReset"
                 type="button"
                 title="Reset to the classic X→red, Y→green, Z→blue mapping"
-                aria-describedby="colorTimingHint"
+                aria-describedby="colorTimingHint colorDimensionalRefusal"
               >
                 Reset
               </button>
@@ -694,7 +707,7 @@
                 max="1"
                 step="0.01"
                 value="0"
-                aria-describedby="colorTimingHint"
+                aria-describedby="colorTimingHint colorDimensionalRefusal"
               />
             </label>
           </div>
@@ -1145,7 +1158,10 @@
           <div id="renderStyleRow">
             <label class="select-label">
               Depth Style
-              <select id="renderStyle">
+              <select
+                id="renderStyle"
+                aria-describedby="depthDimensionalRefusal"
+              >
                 <option value="depthFade">Depth Fade</option>
                 <option value="aerial">Aerial Haze</option>
                 <option value="glow">Glow + Bloom</option>
@@ -1164,6 +1180,15 @@
               Depth fade (dim far points)
             </label>
           </div>
+          <p
+            id="depthDimensionalRefusal"
+            class="flame-note-info hidden"
+            role="status"
+          >
+            4D Points layers projected W slices additively, so it supports
+            fade-to-black only. Aerial Haze, Glow + Bloom / Brightness, Depth of
+            Field, and Eye-Dome Lighting are 3D-only; their values stay saved.
+          </p>
 
           <div id="glowBrightnessRow" class="hidden">
             <label class="select-label">
@@ -1171,6 +1196,7 @@
               <input
                 type="range"
                 id="glowBrightnessSlider"
+                aria-describedby="depthDimensionalRefusal"
                 min="0.1"
                 max="3"
                 step="0.05"

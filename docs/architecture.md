@@ -397,7 +397,15 @@ out toward gray), so the fourth dimension stays legible in brightness no matter
 which mode is active. The projection renders with additive blending so the
 several w-layers an orthographic projection folds onto the same screen pixel stay
 visible and sum toward white where they overlap, instead of the nearest layer
-hiding the rest. `uRot4` is driven from `rotor4.ts`, which represents the
+hiding the rest. That composition admits fade-to-black attenuation, but a
+colored haze would add its fog color once per W layer and EDL has no single
+front/depth surface to inspect. Those two flat depth styles are disclosed
+refusals. Glow/Bloom, Depth of Field, flat Height/Position/Uniform color, and
+4D-Radius Contrast are separate unfinished renderer lifts; the panel keeps
+their stored flat controls visible-disabled rather than erasing them or
+pretending they are impossible.
+
+`uRot4` is driven from `rotor4.ts`, which represents the
 accumulated 4D VIEW rotation as a pair of unit quaternions (`RotorPair`) — the
 SO(4)-as-quaternion-pair identity `x ↦ p·x·q̄` — rather than an accumulated matrix,
 so the slow auto-tumble and the Shift-drag/Shift-wheel gestures

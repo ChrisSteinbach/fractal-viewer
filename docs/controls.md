@@ -1591,12 +1591,22 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   The **W slice** on/off checkbox hides
   anyway — there's no off state left for it to mean — and so does
   **Slice-relative color**, since the tracer has no w-ramp palette for it to
-  remap. What does drop out of the panel is the flat-only look controls:
-  **Color Mode** and **Depth Style** are superseded in their **Color** and
-  **Depth** sections by **4D
-  Color** and **Depth fade** above. **Color Contrast** ordinarily goes with the
-  flat selection, but remains visible when an active 4D Surface uses its
-  **Height** or **Radius** source, whose live LUT still consumes it.
+  remap. The dormant flat-only look controls do not silently drop out:
+  **Color Mode** and **Depth Style** remain visible-disabled beside accessible
+  reasons while **4D Color** and **Depth fade** are active, and their stored
+  values return unchanged when the system becomes flat. The same rule keeps
+  stored **Axis Colors**, **Color Contrast**, and **Glow Brightness** visible
+  under their selected flat parents. A non-flat Surface using **Height** or
+  **Radius** is the exception: its live LUT consumes Color Contrast, so that
+  control remains enabled.
+
+  The reasons distinguish current constraints from unfinished lifts. Colored
+  Aerial Haze would be added once per translucent W layer, and Eye-Dome
+  Lighting assumes a single front/depth surface the additive projection does
+  not write. Glow/Bloom and Depth of Field currently bypass the dedicated 4D
+  material/post path; non-flat Height, Position/Axis, Uniform, and 4D-Radius
+  Contrast color paths are likewise not implemented yet rather than inherently
+  impossible.
   **Symmetry** stays put: the 4D chaos game runs its own
   kaleidoscope stage, so Order, Plane, and Twist keep editing the live
   projection — and the frozen flame/solid snapshots and the live surface
