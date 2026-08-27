@@ -6987,7 +6987,7 @@ describe("Ui ramp palette", () => {
     expect(el("rampPaletteRow").classList.contains("hidden")).toBe(true);
   });
 
-  // Non-flat visibility keys on fourDColor === "radius", not on
+  // Non-flat visibility keys on the active 4D ramp mode, not on
   // colorMode — the default fourDColor ("wBlueOrange") still hides here.
   it("is hidden while non-flat with a w-depth 4D color mode, even with colorMode height", () => {
     const ui = new Ui(document);
@@ -7010,6 +7010,16 @@ describe("Ui ramp palette", () => {
     // colorMode "transform" would hide the row in flat view (see the
     // "is hidden while the color mode is transform" test above) — showing
     // here proves the non-flat gate reads fourDColor instead of colorMode.
+    expect(el("rampPaletteRow").classList.contains("hidden")).toBe(false);
+  });
+
+  it("is shown while non-flat once fourDColor is height", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      fourDColor: "height",
+    });
     expect(el("rampPaletteRow").classList.contains("hidden")).toBe(false);
   });
 
@@ -7307,7 +7317,7 @@ describe("Ui 4D view gating", () => {
     expect(el("panelTitle").textContent).toBe("3D IFS Fractal");
   });
 
-  it("shows 4D controls and retains dormant flat color/style disabled for a non-flat system", () => {
+  it("shows 4D controls, parks flat color, and exposes supported depth styles for a non-flat system", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
@@ -7319,7 +7329,24 @@ describe("Ui 4D view gating", () => {
     expect(el("colorModeRow").classList.contains("hidden")).toBe(false);
     expect((el("colorMode") as HTMLSelectElement).disabled).toBe(true);
     expect(el("renderStyleRow").classList.contains("hidden")).toBe(false);
-    expect((el("renderStyle") as HTMLSelectElement).disabled).toBe(true);
+    const renderStyle = el("renderStyle") as HTMLSelectElement;
+    expect(renderStyle.disabled).toBe(false);
+    expect(
+      renderStyle.querySelector<HTMLOptionElement>('option[value="glow"]')
+        ?.disabled,
+    ).toBe(false);
+    expect(
+      renderStyle.querySelector<HTMLOptionElement>('option[value="dof"]')
+        ?.disabled,
+    ).toBe(false);
+    expect(
+      renderStyle.querySelector<HTMLOptionElement>('option[value="aerial"]')
+        ?.disabled,
+    ).toBe(true);
+    expect(
+      renderStyle.querySelector<HTMLOptionElement>('option[value="edl"]')
+        ?.disabled,
+    ).toBe(true);
     expect(el("colorDimensionalRefusal").classList.contains("hidden")).toBe(
       false,
     );
@@ -7352,7 +7379,7 @@ describe("Ui 4D view gating", () => {
     expect(el("viewControls").contains(el("fourDColorRow"))).toBe(false);
   });
 
-  it("retains dependent flat look values disabled with their refusal, then restores them on flattening", () => {
+  it("retains dormant flat Axis Colors while making 4D Glow Brightness live", () => {
     const ui = new Ui(document);
     const nonFlat = {
       ...initialState(true),
@@ -7366,13 +7393,13 @@ describe("Ui 4D view gating", () => {
     expect(el("glowBrightnessRow").classList.contains("hidden")).toBe(false);
     expect((el("positionAxisX") as HTMLInputElement).disabled).toBe(true);
     expect((el("glowBrightnessSlider") as HTMLInputElement).disabled).toBe(
-      true,
+      false,
     );
     expect(el("colorDimensionalRefusal").textContent).toContain(
-      "flat values stay saved",
+      "flat Color Mode stays saved",
     );
     expect(el("depthDimensionalRefusal").textContent).toContain(
-      "values stay saved",
+      "remain unavailable and stay saved",
     );
 
     ui.updateLabels({
@@ -7383,6 +7410,25 @@ describe("Ui 4D view gating", () => {
     expect((el("renderStyle") as HTMLSelectElement).disabled).toBe(false);
     expect((el("positionAxisX") as HTMLInputElement).disabled).toBe(false);
     expect((el("glowBrightnessSlider") as HTMLInputElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("enables shared contrast and Axis Colors for their active 4D color modes", () => {
+    const ui = new Ui(document);
+    const nonFlat = {
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+    };
+
+    ui.updateLabels({ ...nonFlat, fourDColor: "radius" as const });
+    expect(el("colorGammaRow").classList.contains("hidden")).toBe(false);
+    expect((el("colorGammaSlider") as HTMLInputElement).disabled).toBe(false);
+
+    ui.updateLabels({ ...nonFlat, fourDColor: "position" as const });
+    expect(el("positionColorsRow").classList.contains("hidden")).toBe(false);
+    expect((el("positionAxisX") as HTMLInputElement).disabled).toBe(false);
+    expect((el("positionColorsReset") as HTMLButtonElement).disabled).toBe(
       false,
     );
   });

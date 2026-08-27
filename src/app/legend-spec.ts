@@ -266,12 +266,10 @@ function axisSwatches(axes: PositionAxisColors): LegendSpec {
  *
  * - 4D projection (non-flat system): keyed by `state.fourDColor`. The w-depth
  *   modes show their diverging signed-w ramp (see {@link W_RAMP_GRADIENTS})
- *   labeled "−w" / "in our 3-space" / "+w"; the baked "transform" mode shows
- *   the same per-transform swatch strip as the 3D mode of that name (identical
- *   palette); "radius" shows the 3D radius ramp's bar — gamma-neutral, since
- *   the 4D view never applies colorGamma, but rampPalette-aware, exactly like
- *   the bake it keys (`buildColors4`) — labeled center/edge. `colorMode` (even
- *   "uniform") is irrelevant here.
+ *   labeled "−w" / "in our 3-space" / "+w". Transform, Height, Radius,
+ *   Position and Uniform mirror the flat legend families, including the shared
+ *   ramp palette, Color Contrast and Axis Colors consumed by their 4D paths.
+ *   `colorMode` itself is irrelevant here.
  * - Palette-driven renders — flame always, solid with a non-"legacy"
  *   palette: the active gradient palette's strip sampled from
  *   {@link buildPaletteLUT} (the very table the render's hot loop indexes),
@@ -378,26 +376,33 @@ export function deriveLegend({
         paletteName(render.control, render.paletteId),
       );
     }
-    if (state.renderMode === "flame") return { kind: "hidden" };
+    // Flat Classic Flame rides its orbit-color coordinate and has no useful
+    // one-dimensional key. Non-flat Classic Flame instead dispatches through
+    // FourDRenderColor, so fall through to the active 4D legend below.
+    if (state.renderMode === "flame" && !nonFlat) return { kind: "hidden" };
   }
 
   if (nonFlat) {
     const mode = state.fourDColor;
+    if (mode === "uniform") return { kind: "hidden" };
     if (mode === "transform") return transformSwatches(state.transforms);
-    if (mode === "radius") {
-      // The ONE radius ramp (buildColorModeLUT), over 4D distance from the
-      // cloud's 4D center. Gamma-neutral: the 4D shader never applies
-      // colorGamma, so the legend must not pretend it does. The ramp follows
-      // rampPaletteId exactly like the 3D radius mode's — the same
-      // rampPalette-aware LUT the explorer bake (buildColors4) and the render
-      // workers' own 4D radius LUT sample.
+    if (mode === "height" || mode === "radius") {
+      // The ONE coordinate ramp (buildColorModeLUT): raw authored Y for
+      // Height, or 4D distance from the cloud center for Radius. Both consume
+      // the shared contrast and ramp palette exactly like buildColors4 and the
+      // Flame/Solid 4D workers.
       return rampBar(
         legendGradient(
-          "radius",
-          1,
+          mode,
+          state.colorGamma,
           resolvePalette(state.rampPaletteId, state.customPalette),
         ),
-        "radius",
+        mode,
+      );
+    }
+    if (mode === "position") {
+      return axisSwatches(
+        state.positionAxisColors ?? LEGACY_POSITION_AXIS_COLORS,
       );
     }
     return {

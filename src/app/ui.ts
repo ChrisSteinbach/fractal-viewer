@@ -10,6 +10,8 @@ import {
 import {
   colorModeUsesGamma,
   colorModeUsesRampPalette,
+  fourDColorModeUsesGamma,
+  fourDColorModeUsesRampPalette,
   fourDColorNeedsAttribute,
   LEGACY_POSITION_AXIS_COLORS,
   transformColors,
@@ -3791,7 +3793,16 @@ export class Ui {
     this.fourDColorRow.classList.toggle("hidden", !nonFlat);
     this.fourDDepthFadeRow.classList.toggle("hidden", !nonFlat);
     this.renderStyleRow.classList.remove("hidden");
-    this.scalarInput("renderStyle").disabled = nonFlat;
+    const renderStyle = this.scalarInput("renderStyle") as HTMLSelectElement;
+    renderStyle.disabled = false;
+    // The dedicated 4D material/composer carries Glow/Bloom and DOF. Aerial's
+    // colored fog and EDL's single-front-depth assumption still do not compose
+    // with translucent additive W layers, so disable exactly those choices
+    // without erasing a stored flat selection.
+    for (const option of renderStyle.options) {
+      option.disabled =
+        nonFlat && (option.value === "aerial" || option.value === "edl");
+    }
     this.depthDimensionalRefusal.classList.toggle("hidden", !nonFlat);
     // The Symmetry section deliberately does NOT gate on `nonFlat`: every
     // render path sweeps or expands the kaleidoscope for a 4D system too, so
@@ -3806,7 +3817,7 @@ export class Ui {
       "hidden",
       state.renderStyle !== "glow",
     );
-    this.scalarInput("glowBrightnessSlider").disabled = nonFlat;
+    this.scalarInput("glowBrightnessSlider").disabled = false;
     // The shared ramp/contrast inputs also feed Surface Height/Radius. Keep
     // those rows reachable during such a Surface session independently of
     // the Points/4D color selection shown above; otherwise the active
@@ -3819,29 +3830,35 @@ export class Ui {
       "hidden",
       !activeSurfaceRamp &&
         (nonFlat
-          ? state.fourDColor !== "radius"
+          ? !fourDColorModeUsesRampPalette(state.fourDColor)
           : !colorModeUsesRampPalette(state.colorMode)),
     );
     // Contrast is part of Surface's normalized Height/Radius LUT in both
     // dimensions; outside that active consumer it remains flat Points detail.
     const storedFlatGamma = colorModeUsesGamma(state.colorMode);
+    const activeFourDGamma = fourDColorModeUsesGamma(state.fourDColor);
     this.colorGammaRow.classList.toggle(
       "hidden",
-      !activeSurfaceRamp && !storedFlatGamma,
+      !activeSurfaceRamp && !storedFlatGamma && !(nonFlat && activeFourDGamma),
     );
     this.scalarInput("colorGammaSlider").disabled =
-      nonFlat && !activeSurfaceRamp;
+      nonFlat && !activeSurfaceRamp && !activeFourDGamma;
     // The axis pickers only mean anything for the position mode (and never
     // while non-flat it stays visible-disabled to disclose the retained
     // authored dependency rather than vanishing with its parent.
     this.positionColorsRow.classList.toggle(
       "hidden",
-      state.colorMode !== "position",
+      state.colorMode !== "position" &&
+        !(nonFlat && state.fourDColor === "position"),
     );
+    const positionColorsActive = nonFlat
+      ? state.fourDColor === "position"
+      : state.colorMode === "position";
     for (const input of Object.values(this.positionAxisInputs)) {
-      input.disabled = nonFlat;
+      input.disabled = nonFlat && !positionColorsActive;
     }
-    (this.positionColorsResetBtn as HTMLButtonElement).disabled = nonFlat;
+    (this.positionColorsResetBtn as HTMLButtonElement).disabled =
+      nonFlat && !positionColorsActive;
     // Sync the pickers to state — only write on change, like
     // syncCustomPaletteEditors' recolor path, so a mid-drag picker isn't
     // clobbered by its own input event's resulting state update.

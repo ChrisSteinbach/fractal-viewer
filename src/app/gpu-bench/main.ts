@@ -62,11 +62,12 @@ import type { PreparedChaosGame } from "../../fractal/chaos-game";
 import { runChaosGame4, prepareChaosGame4 } from "../../fractal/chaos-game-4d";
 import type { PreparedChaosGame4 } from "../../fractal/chaos-game-4d";
 import {
+  UNIFORM_POINT_COLOR,
   W_SIDE_PALETTES,
   buildColorModeLUT,
   transformColors,
 } from "../../fractal/color";
-import type { FourDRenderColor } from "../../fractal/color";
+import type { FourDRenderColor, PositionAxisColors } from "../../fractal/color";
 import {
   analyzeBulbSystem,
   buildBulbDE,
@@ -442,6 +443,10 @@ interface ScenarioDef4D {
   rotation: Rotation4;
   paletteId: FlamePaletteId;
   colorMode: FourDColorMode;
+  /** Shared Height/Radius/Position contrast exponent. */
+  colorGamma?: number;
+  /** Position mode's custom XYZ axis colors. */
+  positionAxisColors?: PositionAxisColors;
   /** The "radius" color mode's ramp palette — the `fourD` start block's
    * `rampPalette`, minus the custom-payload arm the bench doesn't author.
    * Omitted = `"legacy"` (the built-in warm→cool ramp); only the radius
@@ -1781,6 +1786,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
 
   const color = buildBenchFourDColor(def, transforms4, {
     center,
+    halfExtents,
     radiusMin,
     radiusMax,
   });
@@ -1875,7 +1881,12 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
 function buildBenchFourDColor(
   def: ScenarioDef4D,
   transforms4: Transform4[],
-  cloudStats: { center: Vec4; radiusMin: number; radiusMax: number },
+  cloudStats: {
+    center: Vec4;
+    halfExtents: Vec4;
+    radiusMin: number;
+    radiusMax: number;
+  },
 ): FourDRenderColor {
   const lut = buildPaletteLUT(def.paletteId);
   if (lut !== null) {
@@ -1894,14 +1905,47 @@ function buildBenchFourDColor(
           transforms4.map((t) => t.colorIndex),
         ),
       };
+    case "height":
+      return {
+        kind: "height",
+        lut: buildColorModeLUT(
+          "height",
+          def.colorGamma ?? 1,
+          def.rampPalette ?? "legacy",
+        ),
+        minY: cloudStats.center[1] - cloudStats.halfExtents[1],
+        maxY: cloudStats.center[1] + cloudStats.halfExtents[1],
+      };
     case "radius":
       return {
         kind: "radius",
-        lut: buildColorModeLUT("radius", 1, def.rampPalette ?? "legacy"),
+        lut: buildColorModeLUT(
+          "radius",
+          def.colorGamma ?? 1,
+          def.rampPalette ?? "legacy",
+        ),
         center: cloudStats.center,
         minD: cloudStats.radiusMin,
         maxD: cloudStats.radiusMax,
       };
+    case "position":
+      return {
+        kind: "position",
+        min: [
+          cloudStats.center[0] - cloudStats.halfExtents[0],
+          cloudStats.center[1] - cloudStats.halfExtents[1],
+          cloudStats.center[2] - cloudStats.halfExtents[2],
+        ],
+        max: [
+          cloudStats.center[0] + cloudStats.halfExtents[0],
+          cloudStats.center[1] + cloudStats.halfExtents[1],
+          cloudStats.center[2] + cloudStats.halfExtents[2],
+        ],
+        colorGamma: def.colorGamma ?? 1,
+        axisColors: def.positionAxisColors,
+      };
+    case "uniform":
+      return { kind: "uniform", color: UNIFORM_POINT_COLOR };
   }
 }
 

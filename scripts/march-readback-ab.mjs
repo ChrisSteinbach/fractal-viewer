@@ -400,18 +400,16 @@ const mandelboxKifs = (() => {
  * mode booted the pose-less document, let it auto-frame, and re-encoded
  * the result with the resulting `camera` block baked in.
  *
- * WHY THE PINNED POSE MATTERS FOR THIS A/B: a pose-less document boots
- * from a `Math.random()`-seeded point cloud, so its auto-frame lands on a
- * slightly different camera (radius/target a few tenths of a percent
- * apart) on every load — the exact drift surface-repro.verify.mjs's own
- * module doc measures and its pinned-pose discipline exists to
- * remove. A different pose marches a different set of rays through a
- * different empty-space/fold-branch mix, so two `git stash` arms loading
- * a pose-less scene would not be tracing the same work end to end — only
- * the PER-SWEEP MEANS (see that section of this module doc) would still
- * be safe to compare, not the raw sweep counts/totals. Pinning the pose
- * makes both arms trace the IDENTICAL scene from the IDENTICAL viewpoint,
- * so counts and totals compare exactly too, not just their means.
+ * WHY THE PINNED POSE MATTERS FOR THIS A/B: it makes both `git stash` arms
+ * trace the IDENTICAL scene from the IDENTICAL viewpoint even if framing
+ * code changes between them, so counts and totals compare exactly, not just
+ * their PER-SWEEP MEANS. Current direct pose-less boots use main.ts's
+ * deterministic `BOOT_SEED` and would repeat on one build. The older
+ * random-boot behavior remains relevant historical context: the exact drift
+ * measured in surface-repro.verify.mjs (radius/target a few tenths of a
+ * percent apart) changed the ray set and its empty-space/fold-branch mix,
+ * making only per-sweep means safe. The stored camera keeps this instrument
+ * independent of either seed or fit implementation.
  *
  * Already a full `#v1=` hash rather than a JS scene object, so it is used
  * directly instead of round-tripped through enc(). Sets
@@ -421,9 +419,10 @@ const BOXFOLD_PINNED_HASH =
 
 /** scripts/surface-repro.verify.mjs's `SCENARIOS` table, the `lens3`
  * entry's minted hash — copied verbatim, POSE-PINNED for the same reason
- * BOXFOLD_PINNED_HASH above is (see its comment): a pose-less boot
- * auto-frames from a `Math.random()`-seeded cloud, so two `git stash` arms
- * would trace two different sets of rays rather than the identical work.
+ * BOXFOLD_PINNED_HASH above is (see its comment): the stored camera freezes
+ * the exact ray set across both `git stash` arms. A current pose-less direct
+ * boot is deterministic under `BOOT_SEED`, but would still couple this A/B to
+ * any framing change between the builds.
  * The fold-FINAL lens archetype — a Sierpinski-shaped 4-map affine
  * base under a boxfold FINAL transform, eligible through `foldFinal`
  * rather than `deHasFolds` (see the module doc's "SCENE CHOICE") — and,

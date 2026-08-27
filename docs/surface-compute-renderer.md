@@ -543,11 +543,14 @@ of its 98 dispatches at 512-1023:
 
 **6.1x the hits per second on the hardest scene the project has, and the
 worst single submission did not move across any of the three arms**
-(1714.8 / 1735.1 / 1731.3 ms). The scene is pose-less, so it auto-frames
-from a `Math.random()`-seeded cloud and the three runs are not the
-identical work — read the ratio as an order-of-magnitude statement, and
-the worst-dispatch column, which is measured over ~100 dispatches per
-arm, as the reliable one.
+(1714.8 / 1735.1 / 1731.3 ms). These historical measurements predate the
+deterministic `BOOT_SEED`: the scene was pose-less, so its then-random boot
+cloud auto-framed each arm differently. The runs therefore were not
+identical work — read the ratio as an order-of-magnitude statement, and the
+worst-dispatch column, measured over ~100 dispatches per arm, as the reliable
+one. Current direct pose-less boots reuse `BOOT_SEED`, and their async
+full-density upgrade keeps `fit:false`, so neither the initial frame nor the
+upgrade introduces that camera drift.
 
 Its own cost-vs-width table is the cleanest statement of the finding
 anywhere in this record — from 16 hits per dispatch to 512, cost per

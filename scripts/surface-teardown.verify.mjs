@@ -194,9 +194,10 @@ function sceneFor(radii, { lens = false, foldType = "mandelbox" } = {}) {
     renderStyle: "depthFade",
     showGuides: false,
     groundPlane: FLOOR,
-    // Pinned pose: the surface renderer is only bit-reproducible run to run
-    // when the document pins its camera, and an unpinned scene
-    // auto-frames off a random seed — which would make a crash unattributable.
+    // Pinned pose: keep the crash geometry exact and independent of framing
+    // changes. Current pose-less direct boots auto-frame deterministically
+    // from `BOOT_SEED`; before that pin, random framing also made a crash
+    // unattributable, which is why this fixture carries its own camera.
     // phi just above the horizontal so plenty of rays go DOWN and cross the
     // floor's fade band, which is the whole point of the Floor arm.
     camera: { target: [0, 0, 0], radius: 3.2, theta: -0.35, phi: 1.15 },

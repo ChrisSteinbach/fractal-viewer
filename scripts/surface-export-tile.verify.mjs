@@ -85,9 +85,11 @@ const MAX_RAYS = Number(args.maxrays ?? 60_000);
 /** The boxfold PAIR (surface-fold.verify.mjs's BOXFOLD_HASH: two
  * single-variation boxfold maps, `deHasFolds` true, eligibility
  * "eligible") with three things pinned on top:
- *   - an explicit CAMERA, because auto-framing seeds from a
- *     `Math.random()` cloud and drifts ~0.3% per load, which
- *     would swamp the diff this gate exists to read;
+ *   - an explicit CAMERA, freezing the exact gate viewpoint independently
+ *     of future fit changes. Before main.ts introduced deterministic
+ *     `BOOT_SEED`, pose-less auto-framing drifted ~0.3% per load and would
+ *     have swamped the diff this gate exists to read; current direct boots
+ *     no longer have that randomness;
  *   - the RINGS color source, so the comparison covers a LUT-sampled
  *     palette rather than flat per-slot colors;
  *   - the GROUND PLANE, which is what makes the frame worth

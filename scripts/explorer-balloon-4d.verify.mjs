@@ -103,22 +103,26 @@
  * inside a bug fix. That fixture is still owed, and nothing yet builds it.
  *
  * Every image comparison that decides something happens INSIDE ONE
- * post-reload page. A pose-less document auto-frames from a
- * `Math.random()`-seeded cloud, so a cross-reload pixel diff is not a sound
- * instrument here — which is also why the historical 1.60x disclosure is
- * taken on the pre-share page as its own self-contained on/off pair rather
- * than compared against anything on the restored one.
+ * post-reload page, so page/layout state cannot leak into a render diff.
+ * Current pose-less direct boots frame deterministically from `BOOT_SEED`,
+ * and the share link persists the resulting pose; the same-page discipline
+ * no longer needs boot randomness as its justification. It still isolates
+ * each claimed state change, which is also why the historical 1.60x
+ * disclosure is taken on the pre-share page as its own self-contained on/off
+ * pair rather than compared against anything on the restored one.
  *
- * MEASURED (SwiftShader, 960x720, pentatope, scene region 656x720). The
- * echo-bearing rows move a few tenths of a percent between runs — a pose-less
- * document seeds its cloud from `Math.random()` — so they are recorded as what
- * a passing run measured, not as pins:
+ * MEASURED HISTORICALLY (SwiftShader, 960x720, pentatope, scene region
+ * 656x720), before the direct-boot seed was pinned. The echo-bearing rows
+ * moved a few tenths of a percent between those runs because the pose-less
+ * boot then used `Math.random()`, so they remain recorded as what those
+ * passing runs measured, not as current pins:
  *   echo on/off, SCENE @0.50x            19.546% changed, meanAbs 0.933, max 57
  *                                        — THE GATED ROW, floor 2.0%. Three
  *                                          runs: 19.546 / 19.840 / 20.066,
  *                                          which is the framing noise a
- *                                          pose-less first boot carries and is
- *                                          the whole reason the bar is a floor
+ *                                          pre-`BOOT_SEED` pose-less first
+ *                                          boot carried and is the historical
+ *                                          reason the bar is a floor
  *                                          an order of magnitude below it
  *                                          rather than a pinned figure
  *   echo on/off, full frame @0.50x       23.714% changed, meanAbs 3.818, max 234

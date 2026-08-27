@@ -400,16 +400,21 @@ export type ColorMode = (typeof COLOR_MODES)[number];
  * (`VALID_FOUR_D_COLOR_MODES` in `persist.ts`), so adding a mode is one edit.
  * The `w…` entries are diverging palettes on the signed rotated 4th
  * coordinate, colored purely in-shader (see `color.ts`'s `W_SIDE_PALETTES`
- * and scene.ts's `FOUR_D_VERTEX`); `transform` and `radius` bake a
- * rotation-invariant per-point color attribute instead (`color.ts`'s
- * `buildColors4`).
+ * and scene.ts's `FOUR_D_VERTEX`); the remaining modes bake a
+ * rotation-independent per-point color attribute instead (`color.ts`'s
+ * `buildColors4`). Height and Position deliberately read the authored XYZ,
+ * before the 4D view rotor, so their colors stay attached to the fractal just
+ * as their 3D counterparts do while the camera orbits.
  */
 export const FOUR_D_COLOR_MODES = [
   "wBlueOrange",
   "wPurpleGreen",
   "wCyanMagenta",
   "transform",
+  "height",
   "radius",
+  "position",
+  "uniform",
 ] as const;
 
 /** How the 4D projection derives point colors. */
@@ -417,14 +422,17 @@ export type FourDColorMode = (typeof FOUR_D_COLOR_MODES)[number];
 
 /** The {@link FourDColorMode}s that color in-shader from the signed rotated
  * w — the diverging "w depth" palettes (see `color.ts`'s `W_SIDE_PALETTES`). */
-export type WDepthColorMode = Exclude<FourDColorMode, "transform" | "radius">;
+export type WDepthColorMode = Extract<
+  FourDColorMode,
+  "wBlueOrange" | "wPurpleGreen" | "wCyanMagenta"
+>;
 
 /** The {@link FourDColorMode}s that bake a rotation-invariant per-point color
  * attribute on the CPU (see `color.ts`'s `buildColors4`) — the complement of
  * {@link WDepthColorMode}. */
 export type FourDAttributeColorMode = Extract<
   FourDColorMode,
-  "transform" | "radius"
+  "transform" | "height" | "radius" | "position" | "uniform"
 >;
 
 /**

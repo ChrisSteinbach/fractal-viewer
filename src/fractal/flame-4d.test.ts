@@ -611,6 +611,57 @@ describe("accumulateFlame4 color kinds", () => {
     expect(hist.sumRGB[o + 1]).toBe(lut[li + 1]);
     expect(hist.sumRGB[o + 2]).toBe(lut[li + 2]);
   });
+
+  it("Height/Position/Uniform lift the raw-XYZ 3D color semantics", () => {
+    const prepared = prepareChaosGame4(fixedPointSystem4([0, 0, 0, 0]));
+    const axes = {
+      x: [0, 1, 0] as Vec3,
+      y: [0, 0, 1] as Vec3,
+      z: [1, 0, 0] as Vec3,
+    };
+    const heightLut = buildColorModeLUT("height", 2);
+    const render = (color: FourDRenderColor) =>
+      accumulateFlame4(
+        prepared,
+        FLAT_PROJECTION,
+        FLAT_VIEW,
+        width,
+        height,
+        1,
+        mulberry32(1),
+        color,
+      );
+    const o = centerBucket * 3;
+
+    const heightHist = render({
+      kind: "height",
+      lut: heightLut,
+      minY: -1,
+      maxY: 3,
+    });
+    expect(Array.from(heightHist.sumRGB.slice(o, o + 3))).toEqual(
+      Array.from(heightLut.slice(64 * 3, 64 * 3 + 3)),
+    );
+
+    const positionHist = render({
+      kind: "position",
+      min: [-1, -2, -3],
+      max: [3, 2, 1],
+      colorGamma: 1,
+      axisColors: axes,
+    });
+    expect(Array.from(positionHist.sumRGB.slice(o, o + 3))).toEqual(
+      [0.8, 0.4, 0.6].map(Math.fround),
+    );
+
+    const uniformHist = render({
+      kind: "uniform",
+      color: [0.4, 0.8, 1],
+    });
+    expect(Array.from(uniformHist.sumRGB.slice(o, o + 3))).toEqual([
+      0.4, 0.8, 1,
+    ]);
+  });
 });
 
 describe("accumulateFlame4 structural coloring: per-transform colorIndex/colorSpeed", () => {

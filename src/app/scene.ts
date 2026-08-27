@@ -452,15 +452,26 @@ const DOF_FRAGMENT = /* glsl */ `
 // fourth dimension. Points outside the slice keep a floor of visibility so the
 // full projection stays as ghost context around the vivid cross-section.
 //
+// Glow and depth-of-field stay inside this same material rather than swapping
+// to the flat Points materials. Glow changes the projected sprite's size/soft
+// radial envelope and then sends this additive HDR result through the existing
+// bloom composer. DOF computes its circle of confusion from the PROJECTED
+// point's camera-space depth and divides alpha by coc squared, so spreading a
+// point does not manufacture energy; all of its w-layers still superpose under
+// the one additive blend. Aerial haze and EDL intentionally have no shader
+// modes here: adding a non-black fog colour once per stacked layer blows out,
+// while one depth-buffer sample cannot represent several projected w-layers.
+//
 // The opt-in camera-depth fade rides it too: attenuating each point's
 // contribution with CAMERA distance is the one 3D depth style whose mechanism
 // survives additive blending — fading toward black IS attenuation, which
 // composes under addition, whereas fading toward any brighter fog color would
 // add that color once per stacked layer and blow out. It restores the
-// camera-z cue the projection otherwise lacks (post-processing never runs
-// here — see render()), which matters most in stills, where motion parallax
-// can't help. Off by default: brightness already encodes |w| (dim gray = near
-// our 3-space), so the fade deliberately trades some of that legibility for
+// camera-z cue the projection otherwise lacks (Glow's optional bloom pass has
+// no depth representation of its own), which matters most in stills, where
+// motion parallax can't help. Off by default: brightness already encodes |w|,
+// with dim gray marking proximity to our 3-space, so the fade deliberately
+// trades some of that legibility for
 // camera depth. The near/far band re-brackets the projected cloud every
 // rendered frame (updateFourDFade), mirroring updateFog's band for the 3D
 // styles.
@@ -543,10 +554,16 @@ const FOUR_D_PROJECT_POINT_GLSL = /* glsl */ `
   }
 `;
 
-const FOUR_D_VERTEX = /* glsl */ `
+export const FOUR_D_VERTEX = /* glsl */ `
   ${FOUR_D_PROJECT_POINT_GLSL}
   uniform float uSize;
+  uniform float uGlowSize;
   uniform float uHalfHeight;
+  uniform float uDepthStyle;
+  uniform float uGlowExposure;
+  uniform float uFocus;
+  uniform float uAperture;
+  uniform float uMaxBlur;
   uniform float uFadeOn;
   uniform float uFadeNear;
   uniform float uFadeFar;
@@ -571,19 +588,52 @@ const FOUR_D_VERTEX = /* glsl */ `
     // edges land softly; the band brackets the cloud with the same margin.
     if (uFadeOn > 0.5) vAlpha *= 1.0 - smoothstep(uFadeNear, uFadeFar, dist);
 
-    gl_PointSize = uSize * (uHalfHeight / dist);
+    float pointSize = uSize;
+    if (uDepthStyle > 0.5 && uDepthStyle < 1.5) {
+      pointSize = uGlowSize;
+      vAlpha *= uGlowExposure;
+    } else if (uDepthStyle > 1.5) {
+      // Same camera-space circle of confusion as the flat DOF shader, after
+      // 4D rotation/projection. The alpha correction preserves one projected
+      // layer's integrated additive contribution as its sprite spreads.
+      float coc = min(uMaxBlur, 1.0 + uAperture * abs(dist - uFocus));
+      pointSize *= coc;
+      vAlpha /= coc * coc;
+    }
+
+    gl_PointSize = pointSize * (uHalfHeight / dist);
     gl_Position = projectionMatrix * mv;
   }
 `;
 
-// Additive square points: with THREE.AdditiveBlending the source factor is the
-// fragment's alpha, so vAlpha scales each point's contribution and overlapping
-// w-layers sum — no sorting needed (addition commutes), hence depthWrite off.
-const FOUR_D_FRAGMENT = /* glsl */ `
+// Additive points (square in the plain mode, soft radial sprites for Glow/DOF):
+// with THREE.AdditiveBlending the source factor is the fragment's alpha, so
+// vAlpha scales each point's contribution and overlapping w-layers sum — no
+// sorting needed (addition commutes), hence depthWrite off.
+export const FOUR_D_FRAGMENT = /* glsl */ `
+  uniform float uDepthStyle;
   varying vec3 vColor;
   varying float vAlpha;
   void main() {
-    gl_FragColor = vec4(vColor, vAlpha);
+    float a = vAlpha;
+    if (uDepthStyle > 0.5) {
+      float r = length(2.0 * gl_PointCoord - 1.0);
+      if (r > 1.0) discard;
+      if (uDepthStyle < 1.5) {
+        // GLSL twin of glowTexture's 1.0 -> 0.5 -> 0 radial stops. Keeping
+        // the softness in alpha preserves AdditiveBlending's layer sum.
+        float glow = r < 0.25
+          ? mix(1.0, 0.5, r / 0.25)
+          : mix(0.5, 0.0, (r - 0.25) / 0.75);
+        a *= glow;
+      } else {
+        // The flat DOF shader's circular sprite envelope; vAlpha already
+        // carries the circle-of-confusion energy correction from the vertex.
+        a *= smoothstep(1.0, 0.25, r);
+      }
+    }
+    if (a < 0.0001) discard;
+    gl_FragColor = vec4(vColor, a);
   }
 `;
 
@@ -1609,7 +1659,15 @@ export class FractalScene {
         uCenter4: { value: new THREE.Vector4() },
         uInvWAmp4: { value: 1 },
         uSize: { value: DOF_POINT_SIZE },
+        uGlowSize: { value: GLOW_POINT_SIZE },
         uHalfHeight: { value: buffer.y * 0.5 },
+        // 0 = plain projection, 1 = glow sprite + bloom, 2 = projected-depth
+        // DOF. Aerial and EDL deliberately resolve to 0; see FOUR_D_VERTEX.
+        uDepthStyle: { value: 0 },
+        uGlowExposure: { value: 1 },
+        uFocus: { value: 9 },
+        uAperture: { value: 3.5 },
+        uMaxBlur: { value: 14 },
         uIntensity: { value: FOUR_D_BASE_INTENSITY },
         uSliceOn: { value: 0 },
         uSliceCenter: { value: 0 },
@@ -2320,10 +2378,17 @@ export class FractalScene {
   setRenderStyle(style: RenderStyle): void {
     this.renderNeeded = true;
     this.renderStyle = style;
+    // The 4D projection never swaps away from its dedicated additive
+    // material. Only the two depth mechanisms whose representation survives
+    // stacked w-layers select shader modes; Aerial's coloured fog and EDL's
+    // single depth sample remain reasoned refusals and therefore resolve to
+    // the plain projected-points path.
+    this.fourDMaterial.uniforms.uDepthStyle.value =
+      style === "glow" ? 1 : style === "dof" ? 2 : 0;
     // While the 4D projection owns the point cloud, record the requested style
-    // (so exiting 4D can restore it) but don't overwrite fourDMaterial. main.ts
-    // also guards its onRenderStyle handler, but the scene must not be
-    // corruptible from here either.
+    // (so exiting 4D can restore it) and configure that material's shader mode,
+    // but don't overwrite fourDMaterial. The scene must not be corruptible
+    // even if a caller changes style while the 4D view is live.
     if (this.fourDActive) return;
     // The backdrop itself no longer varies by style: every style
     // shows the one Background-control gradient (`this.backdropTexture`,
@@ -3020,6 +3085,7 @@ export class FractalScene {
     this.glowMaterial.size = GLOW_POINT_SIZE * multiplier;
     this.dofMaterial.uniforms.uSize.value = DOF_POINT_SIZE * multiplier;
     this.fourDMaterial.uniforms.uSize.value = DOF_POINT_SIZE * multiplier;
+    this.fourDMaterial.uniforms.uGlowSize.value = GLOW_POINT_SIZE * multiplier;
   }
 
   /**
@@ -3030,8 +3096,15 @@ export class FractalScene {
     // Per-frame caller: static inputs produce the identical factor every
     // frame — don't mark the frame dirty for it.
     const opacity = GLOW_BASE_OPACITY * factor;
-    if (this.glowMaterial.opacity === opacity) return;
+    const uGlowExposure = this.fourDMaterial.uniforms.uGlowExposure;
+    if (
+      this.glowMaterial.opacity === opacity &&
+      uGlowExposure.value === factor
+    ) {
+      return;
+    }
     this.glowMaterial.opacity = opacity;
+    uGlowExposure.value = factor;
     this.renderNeeded = true;
   }
 
@@ -3396,16 +3469,21 @@ export class FractalScene {
 
   render(): void {
     this.renderNeeded = false;
-    // The 4D projection always renders plain: its material is
-    // designed to look like the base style, and layering the recorded render
-    // style's post-processing (bloom / EDL / DOF focus) over it would restyle
-    // the projection unpredictably — including in captureFrame's PNG export.
-    // The recorded style still drives fog/background until the user exits.
-    // The camera-depth fade is part of the 4D material itself, not
-    // post-processing, so "plain" rendering still carries it.
+    // The 4D projection always keeps its dedicated additive material. Glow
+    // adds the same bloom composer the flat glow uses after the material has
+    // drawn its soft HDR sprites; DOF derives focus and camera-depth blur in
+    // that material itself. Aerial and EDL intentionally fall through to a
+    // plain render: coloured haze is not additive-layer-safe, and an EDL
+    // depth target cannot retain several w-layers at one projected pixel.
+    // The independent camera-depth fade is also part of the 4D material.
     if (this.fourDActive) {
       this.updateFourDFade();
-      this.renderer.render(this.scene, this.camera);
+      if (this.renderStyle === "glow") {
+        this.composer.render();
+      } else {
+        if (this.renderStyle === "dof") this.focusDof(true);
+        this.renderer.render(this.scene, this.camera);
+      }
       return;
     }
     switch (this.renderStyle) {
@@ -3413,7 +3491,7 @@ export class FractalScene {
         this.composer.render();
         break;
       case "dof":
-        this.focusDof();
+        this.focusDof(false);
         this.renderer.render(this.scene, this.camera);
         break;
       case "edl":
@@ -7593,12 +7671,13 @@ export class FractalScene {
     return this.surfaceCaptureFlight;
   }
 
-  /** Park the depth-of-field focal plane on the centre of the cloud. */
-  private focusDof(): void {
+  /** Park either depth-of-field material's focal plane on the cloud centre. */
+  private focusDof(fourD: boolean): void {
     const bounds = this.pointGeometry.boundingSphere;
     const center = bounds ? bounds.center : ZERO;
-    this.dofMaterial.uniforms.uFocus.value =
-      this.camera.position.distanceTo(center);
+    const focus = this.camera.position.distanceTo(center);
+    const material = fourD ? this.fourDMaterial : this.dofMaterial;
+    material.uniforms.uFocus.value = focus;
   }
 
   private renderEdl(): void {

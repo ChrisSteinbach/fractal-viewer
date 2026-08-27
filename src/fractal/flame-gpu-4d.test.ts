@@ -121,7 +121,7 @@ const COLOR_SPEED = 80; // byte 320
 
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
-    expect(PARAMS4_BYTES).toBe(384);
+    expect(PARAMS4_BYTES).toBe(480);
     expect(SLOT4_STRIDE_BYTES).toBe(1168);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
@@ -133,6 +133,9 @@ describe("layout constants", () => {
     expect(KERNEL_COLOR_KIND.wRamp).toBe(1);
     expect(KERNEL_COLOR_KIND.transform).toBe(2);
     expect(KERNEL_COLOR_KIND.radius).toBe(3);
+    expect(KERNEL_COLOR_KIND.height).toBe(4);
+    expect(KERNEL_COLOR_KIND.position).toBe(5);
+    expect(KERNEL_COLOR_KIND.uniform).toBe(6);
   });
 });
 
@@ -908,6 +911,22 @@ describe("packGpuSystem4 colors", () => {
     expect(colorsU32[2]).toBe(Math.round(0.75 * COLOR_FIXED_POINT_SCALE));
   });
 
+  it("packs a height color's LUT through that identical fixed-point path", () => {
+    const lut = new Float32Array(256 * 3);
+    lut[64 * 3] = 0.125;
+    lut[64 * 3 + 1] = 0.625;
+    lut[64 * 3 + 2] = 1;
+    const packed = packGpuSystem4(
+      baseSpec4({ color: { kind: "height", lut, minY: -1, maxY: 3 } }),
+    );
+    const colorsU32 = new Uint32Array(packed.colors);
+    expect(colorsU32[64 * 4]).toBe(Math.round(0.125 * COLOR_FIXED_POINT_SCALE));
+    expect(colorsU32[64 * 4 + 1]).toBe(
+      Math.round(0.625 * COLOR_FIXED_POINT_SCALE),
+    );
+    expect(colorsU32[64 * 4 + 2]).toBe(COLOR_FIXED_POINT_SCALE);
+  });
+
   it("packs a transform color's palette per transform, white-padding entries past palette.length", () => {
     const palette: Vec3[] = [
       [0.1, 0.2, 0.3],
@@ -1134,6 +1153,12 @@ describe("packGpuParams4", () => {
   const ECHO_TINT_STRENGTH = 84;
   const ECHO_PALETTE_ENABLED = 88;
   const EMITTER_OVERLAP_ATTEMPTS_WORD = 94;
+  const COLOR_MIN = 96;
+  const COLOR_INV_RANGE_GAMMA = 100;
+  const AXIS_X = 104;
+  const AXIS_Y = 108;
+  const AXIS_Z = 112;
+  const UNIFORM_COLOR = 116;
 
   const VIEW: FourDView = {
     invWAmp: 2.5,
@@ -1395,6 +1420,78 @@ describe("packGpuParams4", () => {
     expect(f32[INV_RADIUS_RANGE]).toBe(1);
   });
 
+  it("packs Height raw-Y bounds and its dedicated color kind", () => {
+    const f32 = new Float32Array(
+      packGpuParams4(
+        fields4({
+          color: {
+            kind: "height",
+            lut: new Float32Array(256 * 3),
+            minY: -2,
+            maxY: 6,
+          },
+        }),
+      ),
+    );
+    expect(f32[COLOR_MIN + 1]).toBe(-2);
+    expect(f32[COLOR_INV_RANGE_GAMMA + 1]).toBe(0.125);
+    expect(new Uint32Array(f32.buffer)[COLOR_KIND]).toBe(
+      KERNEL_COLOR_KIND.height,
+    );
+  });
+
+  it("packs Position raw-XYZ bounds, contrast, and custom axis colors", () => {
+    const f32 = new Float32Array(
+      packGpuParams4(
+        fields4({
+          color: {
+            kind: "position",
+            min: [-1, -2, -3],
+            max: [3, 2, 1],
+            colorGamma: 2,
+            axisColors: {
+              x: [0.1, 0.2, 0.3],
+              y: [0.4, 0.5, 0.6],
+              z: [0.7, 0.8, 0.9],
+            },
+          },
+        }),
+      ),
+    );
+    expect(Array.from(f32.slice(COLOR_MIN, COLOR_MIN + 3))).toEqual([
+      -1, -2, -3,
+    ]);
+    expect(
+      Array.from(f32.slice(COLOR_INV_RANGE_GAMMA, COLOR_INV_RANGE_GAMMA + 4)),
+    ).toEqual([0.25, 0.25, 0.25, 2]);
+    expect(Array.from(f32.slice(AXIS_X, AXIS_X + 3))).toEqual(
+      [0.1, 0.2, 0.3].map(Math.fround),
+    );
+    expect(Array.from(f32.slice(AXIS_Y, AXIS_Y + 3))).toEqual(
+      [0.4, 0.5, 0.6].map(Math.fround),
+    );
+    expect(Array.from(f32.slice(AXIS_Z, AXIS_Z + 3))).toEqual(
+      [0.7, 0.8, 0.9].map(Math.fround),
+    );
+    expect(new Uint32Array(f32.buffer)[COLOR_KIND]).toBe(
+      KERNEL_COLOR_KIND.position,
+    );
+  });
+
+  it("packs Uniform's cyan and leaves the legacy Params prefix intact", () => {
+    const f32 = new Float32Array(
+      packGpuParams4(
+        fields4({ color: { kind: "uniform", color: [0.4, 0.8, 1] } }),
+      ),
+    );
+    expect(Array.from(f32.slice(UNIFORM_COLOR, UNIFORM_COLOR + 3))).toEqual(
+      [0.4, 0.8, 1].map(Math.fround),
+    );
+    expect(new Uint32Array(f32.buffer)[COLOR_KIND]).toBe(
+      KERNEL_COLOR_KIND.uniform,
+    );
+  });
+
   it("throws RangeError naming the actual length when projection.length !== 20", () => {
     const shortProjection = new Float64Array(16);
     expect(() =>
@@ -1517,6 +1614,15 @@ describe("convertGpuDisplayHistogram4", () => {
 });
 
 describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
+  it("colors Height/Position from the raw plotted point, before view projection", () => {
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "(pp.y - params.colorMin.y) * params.colorInvRangeGamma.y",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "(pp.xyz - params.colorMin.xyz) * params.colorInvRangeGamma.xyz",
+    );
+  });
+
   it("interpolates WORKGROUP_SIZE and WEIGHT_FIXED_POINT_SCALE into the kernel source", () => {
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
       `@workgroup_size(${WORKGROUP_SIZE})`,

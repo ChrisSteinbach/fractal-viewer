@@ -205,7 +205,9 @@ export interface RenderColorInputs {
   };
   readonly fourD: {
     readonly colorMode: FourDColorMode;
+    readonly colorGamma: number;
     readonly rampPalette: PaletteSpec;
+    readonly positionAxisColors?: PositionAxisColors;
   };
 }
 
@@ -264,16 +266,34 @@ export function sameFlatRenderColorInputs(
   }
 }
 
-/** 4D counterpart of {@link sameFlatRenderColorInputs}: only Radius reads
- * the shared ramp; w-depth and By Transform ignore it. */
+/** 4D counterpart of {@link sameFlatRenderColorInputs}. Dormant sibling
+ * values are staged without invalidating an accumulation, exactly like the
+ * flat branch: Height/Radius read contrast + ramp, Position reads contrast +
+ * axis colors, and the w-depth/Transform/Uniform modes ignore all three. */
 export function sameFourDRenderColorInputs(
   a: RenderColorInputs["fourD"],
   b: RenderColorInputs["fourD"],
 ): boolean {
   if (a.colorMode !== b.colorMode) return false;
-  return (
-    b.colorMode !== "radius" || samePaletteSpec(a.rampPalette, b.rampPalette)
-  );
+  switch (b.colorMode) {
+    case "height":
+    case "radius":
+      return (
+        (a.colorGamma ?? 1) === (b.colorGamma ?? 1) &&
+        samePaletteSpec(a.rampPalette, b.rampPalette)
+      );
+    case "position":
+      return (
+        (a.colorGamma ?? 1) === (b.colorGamma ?? 1) &&
+        samePositionAxisColors(a.positionAxisColors, b.positionAxisColors)
+      );
+    case "wBlueOrange":
+    case "wPurpleGreen":
+    case "wCyanMagenta":
+    case "transform":
+    case "uniform":
+      return true;
+  }
 }
 
 /**
@@ -681,7 +701,23 @@ export function wRampColor(s: number, side: { neg: Vec3; pos: Vec3 }): Vec3 {
 export function fourDColorNeedsAttribute(
   mode: FourDColorMode,
 ): mode is FourDAttributeColorMode {
-  return mode === "transform" || mode === "radius";
+  return (
+    mode === "transform" ||
+    mode === "height" ||
+    mode === "radius" ||
+    mode === "position" ||
+    mode === "uniform"
+  );
+}
+
+/** 4D counterpart of {@link colorModeUsesGamma}. */
+export function fourDColorModeUsesGamma(mode: FourDColorMode): boolean {
+  return mode === "height" || mode === "radius" || mode === "position";
+}
+
+/** 4D counterpart of {@link colorModeUsesRampPalette}. */
+export function fourDColorModeUsesRampPalette(mode: FourDColorMode): boolean {
+  return mode === "height" || mode === "radius";
 }
 
 /**
@@ -696,6 +732,11 @@ export function fourDColorNeedsAttribute(
  *   through to {@link transformColors} exactly like `buildColors`' own
  *   `"transform"` branch; absent (or an absent entry within it) keeps the
  *   derived `i / count` spread.
+ * - `"height"` / `"position"`: the 3D modes' exact raw-XYZ semantics over
+ *   {@link ChaosGame4Result.bounds}. They deliberately ignore `w` and the
+ *   live view rotor, so color stays attached to the authored fractal while
+ *   it tumbles. Position accepts the same custom axis colors.
+ * - `"uniform"`: every point receives {@link UNIFORM_POINT_COLOR}.
  * - `"radius"`: the same ramp as the 3D "By Radius" mode (the ONE ramp
  *   definition — `writeRadiusColor`, or {@link writePaletteRampColor} under a
  *   non-`"legacy"` `rampPalette`), over each point's 4D Euclidean distance
@@ -713,15 +754,14 @@ export function fourDColorNeedsAttribute(
  * this; their color is a pure function of the rotated w and lives entirely in
  * the shader (see {@link W_SIDE_PALETTES}).
  *
- * `rampPalette` is the radius mode's counterpart of `buildColors`'
+ * `rampPalette` is the Height/Radius counterpart of `buildColors`'
  * parameter of the same name: the same `rampPaletteId` selection recolors the
  * 3D height/radius ramps and this 4D one, so a system going 4D never drops
  * the user's chosen gradient. `"legacy"` (the default) is bit-identical to
- * before the parameter existed, and the `"transform"` mode ignores it — it
- * has no ramp.
+ * before the parameter existed; Transform/Position/Uniform ignore it.
  *
- * `colorGamma` deliberately does not apply: the 4D view hides the contrast
- * control and never applied gamma to color (see ui.ts's legend contract).
+ * `colorGamma` is the same contrast exponent Height/Radius/Position use in
+ * 3D. The neutral default short-circuits the power exactly as there.
  */
 export function buildColors4(
   result: ChaosGame4Result,
@@ -729,8 +769,10 @@ export function buildColors4(
   mode: FourDAttributeColorMode,
   rampPalette: PaletteSpec = "legacy",
   colorIndexes?: readonly (number | undefined)[],
+  colorGamma = 1,
+  positionAxisColors?: PositionAxisColors,
 ): Float32Array {
-  const { positions, w, transformIndices, count, center } = result;
+  const { positions, w, transformIndices, count, center, bounds } = result;
   const colors = new Float32Array(count * 3);
 
   if (mode === "transform") {
@@ -741,6 +783,60 @@ export function buildColors4(
       colors[o] = rgb[0];
       colors[o + 1] = rgb[1];
       colors[o + 2] = rgb[2];
+    }
+    return colors;
+  }
+
+  if (mode === "uniform") {
+    const [r, g, b] = UNIFORM_POINT_COLOR;
+    for (let i = 0; i < count; i++) {
+      const o = i * 3;
+      colors[o] = r;
+      colors[o + 1] = g;
+      colors[o + 2] = b;
+    }
+    return colors;
+  }
+
+  if (mode === "height") {
+    const rangeY = bounds.maxY - bounds.minY || 1;
+    const paletteLUT = buildPaletteLUT(rampPalette);
+    for (let i = 0; i < count; i++) {
+      const t = applyColorGamma(
+        (positions[i * 3 + 1] - bounds.minY) / rangeY,
+        colorGamma,
+      );
+      if (paletteLUT === null) writeHeightColor(colors, i * 3, t);
+      else writePaletteRampColor(colors, i * 3, t, paletteLUT);
+    }
+    return colors;
+  }
+
+  if (mode === "position") {
+    const rangeX = bounds.maxX - bounds.minX || 1;
+    const rangeY = bounds.maxY - bounds.minY || 1;
+    const rangeZ = bounds.maxZ - bounds.minZ || 1;
+    for (let i = 0; i < count; i++) {
+      const o = i * 3;
+      const tx = applyColorGamma(
+        (positions[o] - bounds.minX) / rangeX,
+        colorGamma,
+      );
+      const ty = applyColorGamma(
+        (positions[o + 1] - bounds.minY) / rangeY,
+        colorGamma,
+      );
+      const tz = applyColorGamma(
+        (positions[o + 2] - bounds.minZ) / rangeZ,
+        colorGamma,
+      );
+      if (positionAxisColors === undefined) {
+        colors[o] = tx * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+        colors[o + 1] = ty * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+        colors[o + 2] = tz * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+      } else {
+        writePositionColor(colors, o, tx, ty, tz, positionAxisColors);
+      }
     }
     return colors;
   }
@@ -766,14 +862,18 @@ export function buildColors4(
   const paletteLUT = buildPaletteLUT(rampPalette);
   if (paletteLUT === null) {
     for (let i = 0; i < count; i++) {
-      writeRadiusColor(colors, i * 3, (dist[i] - minD) / range);
+      writeRadiusColor(
+        colors,
+        i * 3,
+        applyColorGamma((dist[i] - minD) / range, colorGamma),
+      );
     }
   } else {
     for (let i = 0; i < count; i++) {
       writePaletteRampColor(
         colors,
         i * 3,
-        (dist[i] - minD) / range,
+        applyColorGamma((dist[i] - minD) / range, colorGamma),
         paletteLUT,
       );
     }
@@ -848,8 +948,13 @@ export function dimColorsExcept(
  *   Transform" 4D color mode ({@link buildColors4}'s `"transform"` branch),
  *   falling back to `[1, 1, 1]` for an out-of-range index (shouldn't happen;
  *   mirrors `buildColors4`).
+ * - `"height"`: the 3D height ramp over raw authored Y, normalized against
+ *   the entry cloud's raw bounds. `"position"` likewise uses raw authored
+ *   XYZ and the shared axis-color blend. Neither follows the view rotor.
+ * - `"uniform"`: {@link UNIFORM_POINT_COLOR}, with no coordinate input.
  * - `"radius"`: the 3D radius ramp LUT ({@link buildColorModeLUT}, built at
- *   the explorer's own `rampPalette`, exactly like {@link buildColors4}'s
+ *   the explorer's own `rampPalette` and contrast, exactly like
+ *   {@link buildColors4}'s
  *   `"radius"` branch), indexed by the plotted point's
  *   4D Euclidean distance from `center`, normalized over `[minD, maxD]` — the
  *   "legacy" dispatch for the explorer's "By 4D Radius" mode. `minD`/`maxD`
@@ -862,10 +967,19 @@ export type FourDRenderColor =
   | { kind: "structural"; lut: Float32Array }
   | { kind: "wRamp"; side: { neg: Vec3; pos: Vec3 } }
   | { kind: "transform"; palette: Vec3[] }
+  | { kind: "height"; lut: Float32Array; minY: number; maxY: number }
   | {
       kind: "radius";
       lut: Float32Array;
       center: Vec4;
       minD: number;
       maxD: number;
-    };
+    }
+  | {
+      kind: "position";
+      min: Vec3;
+      max: Vec3;
+      colorGamma: number;
+      axisColors?: PositionAxisColors;
+    }
+  | { kind: "uniform"; color: Vec3 };

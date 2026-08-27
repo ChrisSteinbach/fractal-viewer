@@ -81,7 +81,14 @@ import type { HybridSchedule, SymmetryParams, Transform4 } from "./types";
 import { createFlameHistogram } from "./flame";
 import type { FlameHistogram, Mat4 } from "./flame";
 import type { FourDRenderColor } from "./color";
-import { W_RAMP_BRIGHTNESS_FLOOR, W_RAMP_EXPONENT, W_RAMP_GRAY } from "./color";
+import {
+  LEGACY_POSITION_AXIS_COLORS,
+  POSITION_COLOR_OFFSET,
+  POSITION_COLOR_SCALE,
+  W_RAMP_BRIGHTNESS_FLOOR,
+  W_RAMP_EXPONENT,
+  W_RAMP_GRAY,
+} from "./color";
 import { sliceColorRemap, SLICE_GHOST_FLOOR } from "./project4";
 import type { FourDView, RotorProjection4 } from "./project4";
 // Value imports for the packing functions below the kernel — mirrors
@@ -148,13 +155,16 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
   wRamp: 1,
   transform: 2,
   radius: 3,
+  height: 4,
+  position: 5,
+  uniform: 6,
 };
 
 /**
  * Byte-layout contracts (WGSL struct rules; the pack* functions below write
  * ArrayBuffers to match, and `flame-gpu-4d.test.ts` pins them):
  *
- * Params4 (uniform, {@link PARAMS4_BYTES} = 384):
+ * Params4 (uniform, {@link PARAMS4_BYTES} = 480):
  *   0 projX vec4f | 16 projY vec4f | 32 projW vec4f | 48 projS vec4f
  *   64 projC vec4f (the four row constants: x=clipX, y=clipY, z=clipW, w=sRaw)
  *   80 center4 vec4f (radius mode's 4D center; zero otherwise)
@@ -179,6 +189,10 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   rows — binding 6 is then an unread alias, the echoColors idiom) |
  *   376 emitterOverlapAttempts u32 (the host-packed runtime loop bound,
  *   `flame-gpu.ts`'s {@link EMITTER_OVERLAP_ATTEMPTS}) | 380 pad
+ *   384 colorMin vec4f (raw authored XYZ minima; w unused) |
+ *   400 colorInvRangeGamma vec4f (XYZ reciprocal ranges, gamma) |
+ *   416 axisX vec4f | 432 axisY | 448 axisZ (position colors, w unused) |
+ *   464 uniformColor vec4f (xyz, w unused)
  *
  * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 1168 stride);
  * slot count = transformCount + 1 + scheduleCount — the expanded transform
@@ -252,10 +266,10 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   chi state, so `packGpuChains4` writes nothing for it and a chi-free
  *   document's chains buffer is byte-identical to before chi existed)
  *
- * colors: array<vec4u, 256> — gradient LUT (structural/radius) or
+ * colors: array<vec4u, 256> — gradient LUT (structural/height/radius) or
  * per-transform palette (transform mode), channels pre-scaled by
- * `COLOR_FIXED_POINT_SCALE` via `writeColorEntry`; zeros for wRamp (whose
- * color is computed in-shader from the projected s instead). The independent
+ * `COLOR_FIXED_POINT_SCALE` via `writeColorEntry`; zeros for wRamp/Position/
+ * Uniform (computed from packed Params instead). The independent
  * balloon LUT is the separate echoColors table at binding 5.
  *
  * chaosRows: array<f32> at binding 6 — the graph-directed selection rows
@@ -274,7 +288,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * still reads it through the dimension-named {@link convertGpuHistogram4}
  * seam.
  */
-export const PARAMS4_BYTES = 384;
+export const PARAMS4_BYTES = 480;
 export const SLOT4_STRIDE_BYTES = 1168;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
@@ -335,6 +349,12 @@ struct Params {
   scheduleTotalWeight: f32,
   chaosEnabled: u32,
   emitterOverlapAttempts: u32,
+  colorMin: vec4f,
+  colorInvRangeGamma: vec4f,
+  axisX: vec4f,
+  axisY: vec4f,
+  axisZ: vec4f,
+  uniformColor: vec4f,
 }
 
 // flame-gpu.ts's EmitterPart verbatim — the shape vocabulary is 3D always,
@@ -1210,11 +1230,38 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
         case 2u: { // transform: picked slot's BASE-map palette entry.
           rgb = colors[idx % params.baseTransformCount].xyz;
         }
-        default: { // 3u, radius: source point's 4D distance.
+        case 3u: { // radius: source point's raw 4D distance.
           let d4 = distance(pp, params.center4);
           let t = clamp((d4 - params.minD) * params.invRadiusRange, 0.0, 1.0);
           let li = u32(t * 255.0 + 0.5);
           rgb = colors[li].xyz;
+        }
+        case 4u: { // height: raw authored Y, independent of the view rotor.
+          let t = clamp(
+            (pp.y - params.colorMin.y) * params.colorInvRangeGamma.y,
+            0.0,
+            1.0,
+          );
+          rgb = colors[u32(t * 255.0 + 0.5)].xyz;
+        }
+        case 5u: { // position: raw authored XYZ and shared axis-color blend.
+          let t = clamp(
+            (pp.xyz - params.colorMin.xyz) * params.colorInvRangeGamma.xyz,
+            vec3f(0.0),
+            vec3f(1.0),
+          );
+          if (params.colorInvRangeGamma.w != 1.0) {
+            t = pow(t, vec3f(params.colorInvRangeGamma.w));
+          }
+          let c = min(
+            vec3f(1.0),
+            vec3f(${POSITION_COLOR_OFFSET}) + ${POSITION_COLOR_SCALE} *
+              (t.x * params.axisX.xyz + t.y * params.axisY.xyz + t.z * params.axisZ.xyz),
+          );
+          rgb = vec3u(round(c * ${COLOR_FIXED_POINT_SCALE}.0));
+        }
+        default: { // 6u, uniform cyan.
+          rgb = vec3u(round(params.uniformColor.xyz * ${COLOR_FIXED_POINT_SCALE}.0));
         }
       }
 
@@ -1377,6 +1424,12 @@ const PARAMS4_SCHEDULE_WEIGHTED = 91;
 const PARAMS4_SCHEDULE_TOTAL_WEIGHT = 92;
 const PARAMS4_CHAOS_ENABLED = 93;
 const PARAMS4_EMITTER_OVERLAP_ATTEMPTS = 94;
+const PARAMS4_COLOR_MIN = 96;
+const PARAMS4_COLOR_INV_RANGE_GAMMA = 100;
+const PARAMS4_AXIS_X = 104;
+const PARAMS4_AXIS_Y = 108;
+const PARAMS4_AXIS_Z = 112;
+const PARAMS4_UNIFORM_COLOR = 116;
 
 /**
  * A 4D chaos-game system in exactly the shape {@link packGpuSystem4} needs —
@@ -1657,7 +1710,8 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
   const colorsU32 = new Uint32Array(colors);
   switch (color.kind) {
     case "structural":
-    case "radius": {
+    case "radius":
+    case "height": {
       for (let i = 0; i < COLOR_LUT_ENTRIES; i++) {
         writeColorEntry(
           colorsU32,
@@ -1679,7 +1733,9 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
       break;
     }
     case "wRamp":
-      // Computed in-shader from the projected s — the table stays zeroed.
+    case "position":
+    case "uniform":
+      // Computed in-shader from Params — the table stays zeroed.
       break;
   }
 
@@ -1993,6 +2049,29 @@ export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
     }
     f32[PARAMS4_MIN_D] = color.minD;
     f32[PARAMS4_INV_RADIUS_RANGE] = 1 / (color.maxD - color.minD || 1);
+  }
+  if (color.kind === "height") {
+    f32[PARAMS4_COLOR_MIN + 1] = color.minY;
+    f32[PARAMS4_COLOR_INV_RANGE_GAMMA + 1] = 1 / (color.maxY - color.minY || 1);
+  }
+  if (color.kind === "position") {
+    for (let i = 0; i < 3; i++) {
+      f32[PARAMS4_COLOR_MIN + i] = color.min[i];
+      f32[PARAMS4_COLOR_INV_RANGE_GAMMA + i] =
+        1 / (color.max[i] - color.min[i] || 1);
+    }
+    f32[PARAMS4_COLOR_INV_RANGE_GAMMA + 3] = color.colorGamma;
+    const axes = color.axisColors ?? LEGACY_POSITION_AXIS_COLORS;
+    for (let i = 0; i < 3; i++) {
+      f32[PARAMS4_AXIS_X + i] = axes.x[i];
+      f32[PARAMS4_AXIS_Y + i] = axes.y[i];
+      f32[PARAMS4_AXIS_Z + i] = axes.z[i];
+    }
+  }
+  if (color.kind === "uniform") {
+    for (let i = 0; i < 3; i++) {
+      f32[PARAMS4_UNIFORM_COLOR + i] = color.color[i];
+    }
   }
   if (color.kind === "wRamp") {
     for (let i = 0; i < 3; i++) {
