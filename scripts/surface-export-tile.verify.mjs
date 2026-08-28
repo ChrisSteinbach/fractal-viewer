@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
  * Export-tiling gate: does a TILED compute capture reproduce the
- * untiled one, pixel for pixel?
+ * untiled one, pixel for pixel? The exported frame enables Surface depth of
+ * field after settle, then switches to a radial live background, so the same
+ * comparison proves the one full-image filter crosses tile seams.
  *
  * THE BUG THIS EXISTS TO CATCH. `SurfaceComputeRenderer` allocates eight
  * per-ray buffers for a whole frame (44 B/ray with the march-status and
@@ -66,7 +68,7 @@
  * driver instead of headless SwiftShader; --out keeps both exports as
  * PNGs to eyeball, which is how a failing diff gets read.)
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import process from "node:process";
 import { chromium } from "playwright-core";
 
@@ -185,6 +187,59 @@ async function runArm(ctx, label, maxRays) {
   );
   check(computeActive, `${label}: ran the WebGPU compute tracer`);
 
+  // Presentation-only DoF must change the retained frame without disturbing
+  // the settled trace, and disabling it must recover the legacy image. This
+  // runs before Save PNG so both tiling arms export the feature under test.
+  const canvas = page.locator("canvas").first();
+  const dofOff = await canvas.screenshot({ type: "png" });
+  await page.$eval("#surfaceDepthOfFieldCheckbox", (input) => {
+    input.checked = true;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.waitForTimeout(500);
+  check(
+    await page.evaluate(() => window.__surfaceState?.().settled === true),
+    `${label}: enabling DoF did not restart the settled trace`,
+  );
+  const dofOn = await canvas.screenshot({ type: "png" });
+  const dofDiff = await comparePngs(page, dofOff, dofOn);
+  check(
+    !dofDiff.other && dofDiff.meanDiff > 0.01,
+    `${label}: DoF changed retained pixels (mean ${dofDiff.meanDiff?.toFixed(4) ?? "n/a"}/255)`,
+  );
+
+  await page.$eval("#surfaceDepthOfFieldCheckbox", (input) => {
+    input.checked = false;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.waitForTimeout(250);
+  const dofOffAgain = await canvas.screenshot({ type: "png" });
+  const identityDiff = await comparePngs(page, dofOff, dofOffAgain);
+  check(
+    !identityDiff.other && identityDiff.meanDiff < 0.02,
+    `${label}: disabling DoF restored the legacy frame (mean ${identityDiff.meanDiff?.toFixed(4) ?? "n/a"}/255)`,
+  );
+
+  // Re-enable and edit only the live backdrop. The settled bit must remain
+  // true while the shared blit recomposes every tap at its own radial UV.
+  await page.$eval("#surfaceDepthOfFieldCheckbox", (input) => {
+    input.checked = true;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.$eval("#background", (select) => {
+    select.value = "haze";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.$eval("#backgroundShape", (select) => {
+    select.value = "radial";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.waitForTimeout(500);
+  check(
+    await page.evaluate(() => window.__surfaceState?.().settled === true),
+    `${label}: radial background edit with DoF did not retrace`,
+  );
+
   await openPanelSection(page, "captureSection");
   const dl = page.waitForEvent("download", { timeout: EXPORT_TIMEOUT_MS });
   const c0 = Date.now();
@@ -294,6 +349,7 @@ async function main() {
     const untiled = await runArm(ctx, "untiled", null);
     const tiled = await runArm(ctx, "tiled", MAX_RAYS);
     if (args.out !== undefined && untiled.bytes && tiled.bytes) {
+      await mkdir(args.out, { recursive: true });
       await writeFile(`${args.out}/export-untiled.png`, untiled.bytes);
       await writeFile(`${args.out}/export-tiled.png`, tiled.bytes);
       console.error(

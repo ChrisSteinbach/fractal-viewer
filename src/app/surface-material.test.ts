@@ -120,6 +120,109 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   },
 };
 
+/** Intentional whole-tracer source advance for signed-CoC metadata. */
+const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
+  string,
+  { resolved: string; emitted: string }
+> = {
+  "3D affine finish0": {
+    resolved: "87155b2380d0ce9d",
+    emitted: "9e8ffc12aa11c2f8",
+  },
+  "3D lens finish0": {
+    resolved: "a588c95b6a9357b2",
+    emitted: "5898a35d60540b64",
+  },
+  "3D balloon finish0": {
+    resolved: "cf3993a5bb63e38a",
+    emitted: "27c0cc0f1b1b5fc0",
+  },
+  "3D plane finish0": {
+    resolved: "ee58344008c3c12e",
+    emitted: "cdb41fd6ff2c1784",
+  },
+  "3D lens+balloon finish0": {
+    resolved: "85835dc8f5c693ad",
+    emitted: "6579e37fd4ec9597",
+  },
+  "3D lens+plane finish0": {
+    resolved: "f206a3e9b71b8642",
+    emitted: "cbc63d042d9a1f35",
+  },
+  "3D escape finish0": {
+    resolved: "fc3b5eecf090fd50",
+    emitted: "fc3b5eecf090fd50",
+  },
+  "3D escape+balloon finish0": {
+    resolved: "73ab8e8cf15dc8ff",
+    emitted: "441881d3d6dcddf5",
+  },
+  "3D escape+plane finish0": {
+    resolved: "56ac81a3bf8adfc2",
+    emitted: "44138e09099bbd38",
+  },
+  "3D bulb finish0": {
+    resolved: "68625d8191aae5d9",
+    emitted: "68625d8191aae5d9",
+  },
+  "3D bulb+balloon finish0": {
+    resolved: "1a8be3a870ec0ee3",
+    emitted: "1a8be3a870ec0ee3",
+  },
+  "3D bulb+plane finish0": {
+    resolved: "52e3a9619ac1764d",
+    emitted: "38ff35ac5765e842",
+  },
+  "3D affine finish1": {
+    resolved: "a0619b96de2c5aac",
+    emitted: "03580e57ec07fe47",
+  },
+  "3D lens finish1": {
+    resolved: "ab8ff01454039c55",
+    emitted: "887c47b063db1b7f",
+  },
+  "3D balloon finish1": {
+    resolved: "44b4ae7c9f6b0e3d",
+    emitted: "56853af5a9459b54",
+  },
+  "3D plane finish1": {
+    resolved: "f7ddf629f2765877",
+    emitted: "e806201d0cf3b015",
+  },
+  "3D lens+balloon finish1": {
+    resolved: "5447b05868aae46e",
+    emitted: "d826e47ceaf72e34",
+  },
+  "3D lens+plane finish1": {
+    resolved: "fa81806a0940b144",
+    emitted: "c6826145915a35ee",
+  },
+  "3D escape finish1": {
+    resolved: "ec3e7ee94f8643e3",
+    emitted: "ec3e7ee94f8643e3",
+  },
+  "3D escape+balloon finish1": {
+    resolved: "f3a49755c3848638",
+    emitted: "6d98c7e3bf1564de",
+  },
+  "3D escape+plane finish1": {
+    resolved: "3527516ca49ffdd7",
+    emitted: "dca6b4cb765dc2aa",
+  },
+  "3D bulb finish1": {
+    resolved: "8a2cd95308953315",
+    emitted: "8a2cd95308953315",
+  },
+  "3D bulb+balloon finish1": {
+    resolved: "f253055d4b2352f2",
+    emitted: "f253055d4b2352f2",
+  },
+  "3D bulb+plane finish1": {
+    resolved: "0dc18c2d33878971",
+    emitted: "6b667e362c8cdd28",
+  },
+};
+
 /**
  * The tracer itself is verified by running the app, but its kaleidoscope
  * PACKER is pinned here. The descent sweeps symmetry sectors instead of
@@ -2434,32 +2537,44 @@ describe("surface trace alpha statuses", () => {
   it("keeps exhausted distinct when a sphere-exit miss can become a plane", () => {
     const shader = surfaceFragmentResolvedFor(0, 0, 0, 1, 0, 0, 0);
     expect(shader).toMatch(
-      /shadeGroundPlane\(\s*ro,\s*rd,\s*background,\s*planeCovMiss,\s*planeLayerCoverageMiss,\s*planeLayerFogMiss\s*\)/,
+      /shadeGroundPlane\(\s*ro,\s*rd,\s*background,\s*planeCovMiss,\s*planeLayerCoverageMiss,\s*planeLayerFogMiss,\s*planeLayerDepthMiss\s*\)/,
     );
     expect(shader).toContain("outColor = vec4(background, 0.5);");
   });
 
-  it("emits coverage, fog, and backdrop weight without repurposing status alpha", () => {
+  it("emits coverage, fog, backdrop weight, and signed CoC without repurposing status alpha", () => {
     const shader = surfaceFragmentResolvedFor(0, 0, 0, 1, 0, 0, 0);
+    const focus = createSurfaceMaterial().uniforms.uFocusPlane.value;
+    expect(focus.toArray()).toEqual([0, 0, -1, 1]);
     expect(shader).toContain("layout(location = 0) out vec4 outColor;");
     expect(shader).toContain("layout(location = 1) out vec4 outTraceLayer;");
     expect(shader).toContain(
       [
         "float beta = 1.0 - coverage +",
         "      coverage * fog * (1.0 - uFogTintStrength);",
-        "    return vec4(coverage, fog, beta, 1.0);",
+        "    float coc = coverage > 0.0",
+        "      ? clamp(",
+        "          (cameraDepth - uFocusPlane.w) / max(uVisibleRadius, 1.0e-6),",
+        "          -1.0,",
+        "          1.0",
+        "        )",
+        "      : 1.0;",
+        "    float cocCode = (128.0 + 127.0 * coc) / 255.0;",
+        "    return vec4(coverage, fog, beta, cocCode);",
       ].join("\n"),
     );
     expect(shader).toContain("layerCoverage = 0.0;");
     expect(shader).toContain("layerFog = 0.0;");
+    expect(shader).toContain("layerDepth = 0.0;");
     expect(shader).toContain("cov = 1.0;\n    layerCoverage = fade;");
+    expect(shader).toContain("layerDepth = dot(hp - ro, uFocusPlane.xyz);");
     expect(shader).toContain("layerFog = clamp(fog, 0.0, 1.0);");
     expect(shader).toMatch(
-      /outTraceLayer = traceLayer\(\s*planeLayerCoverageMiss,\s*planeLayerFogMiss\s*\);/,
+      /outTraceLayer = traceLayer\(\s*planeLayerCoverageMiss,\s*planeLayerFogMiss,\s*planeLayerDepthMiss\s*\);/,
     );
-    expect(shader).toContain("outTraceLayer = traceLayer(0.0, 0.0);");
-    expect(shader).toContain(
-      "outTraceLayer = traceLayer(1.0, clamp(fog, 0.0, 1.0));",
+    expect(shader).toContain("outTraceLayer = traceLayer(0.0, 0.0, 0.0);");
+    expect(shader).toMatch(
+      /outTraceLayer = traceLayer\(\s*1\.0,\s*clamp\(fog, 0\.0, 1\.0\),\s*dot\(pos - ro, uFocusPlane\.xyz\)\s*\);/,
     );
     for (const [name, source] of [
       ["plain", surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 0, 0)],
@@ -2485,7 +2600,12 @@ describe("the present blit strips trace-status alpha", () => {
   // DataTexture, capture's present-then-toBlob), so alpha must die here.
   it("forces alpha to 1 so trace status never reaches the always-alpha:true canvas", () => {
     const material = createSurfaceBlitMaterial(new Texture());
-    expect(material.fragmentShader).toContain("outColor = vec4(rgb, 1.0);");
+    expect(material.fragmentShader).toContain(
+      "outColor = vec4(centerRgb, 1.0);",
+    );
+    expect(material.fragmentShader).toContain(
+      "blitEncodeLight(sum / max(sumWeight, 1.0e-6))",
+    );
     expect(material.fragmentShader).toContain("outColor = vec4(liveBg, 1.0);");
     expect(material.fragmentShader).not.toContain(
       "outColor = texture(uSrc, vUv);",
@@ -2508,11 +2628,42 @@ describe("the present blit strips trace-status alpha", () => {
       "uniform sampler2D uLiveBgImage;",
     );
     expect(material.fragmentShader).toContain(
-      "if (kind == 1) {\n      return texture(image, vUv).rgb;",
+      "if (kind == 1) {\n      return texture(image, p).rgb;",
     );
     expect(material.fragmentShader).toContain(
       "rgb += layer.b * (liveBg - traceBg);",
     );
+  });
+
+  it("keeps DoF runtime-bounded, recomposes each tap, and supports packed capture metadata", () => {
+    const material = createSurfaceBlitMaterial(new Texture());
+    const shader = material.fragmentShader;
+    expect(material.uniforms.uDepthOfField.value).toBe(0);
+    expect(material.uniforms.uDofMetadataInSourceAlpha.value).toBe(0);
+    expect(shader).toContain("if (uDepthOfField == 0) {");
+    expect(shader).toContain("const vec2 DOF_TAPS[8] = vec2[8](");
+    expect(shader).toContain("for (int i = 0; i < 8; i++) {");
+    expect(shader).toContain(
+      "vec3 tapRgb = blitCompositeSample(tapUv, tapSource, tapLayer);",
+    );
+    expect(shader).toContain("uLiveBgScale,\n        p");
+    expect(shader).toContain("uTraceBgScale,\n        p");
+    expect(shader).toContain("if (uDofMetadataInSourceAlpha == 1) {");
+    expect(shader).toContain("source.a = texelFetch(uSrc, sourcePixel, 0).a;");
+    expect(shader).toContain(
+      "vec4 nearestLayer = texelFetch(uLayer, layerPixel, 0);",
+    );
+    expect(shader).toContain("encoded = source.a;");
+    expect(shader).toContain(
+      "coverage = encoded < (254.5 / 255.0) ? 1.0 : 0.0;",
+    );
+    expect(shader).toContain("encoded = layer.a;");
+    expect(shader).toContain("coverage = layer.r;");
+    expect(shader).toContain(
+      "float depthWeight = 1.0 - coveredCenter * farther;",
+    );
+    expect(shader).toContain("sum += blitDecodeLight(tapRgb) * weight;");
+    expect(shader).toContain("blitEncodeLight(sum / max(sumWeight, 1.0e-6))");
   });
 });
 
@@ -3128,7 +3279,9 @@ describe("SURFACE_PATTERN variant", () => {
       for (const [name, [escape, lens, balloon, plane, bulb]] of variants) {
         const key = `${name} finish${finish}`;
         const expected =
-          BALLOON_PALETTE_SOURCE_HASHES[key] ?? PRE_PATTERN_SOURCE_HASHES[key];
+          DEPTH_OF_FIELD_SOURCE_HASHES[key] ??
+          BALLOON_PALETTE_SOURCE_HASHES[key] ??
+          PRE_PATTERN_SOURCE_HASHES[key];
         expect(expected, key).toBeDefined();
         const resolved = surfaceFragmentResolvedFor(
           escape,
@@ -3433,7 +3586,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     const cases = [
       {
         source: surfaceFragmentResolvedFor(1, 0),
-        hash: "6fefaf2c63a4325a13bb444c6d57ab355264d0556f3032a2be98145ac2c89995",
+        hash: "fc3b5eecf090fd501baed63e808f088d6d56b6b7ef98d2d36a124eacfeaae610",
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -3447,7 +3600,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "da44aaf7b0d78fc6748335b7b0bbeabe78239566cd9b65e534507ad07eaad9a8",
+        hash: "3c9f51402e8cbd9ee207d9009068ed8019edfd1073f15b9d82b275dfccf41e8b",
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -3461,7 +3614,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "11fa11fbf1fcf682e2c49ba308980f1a214bbcaa16fd4532f4227445523e91ea",
+        hash: "5ce6434ccbc2cc3252eedcc4292fed2256cc71935125a397866f392cd325810a",
       },
     ];
     for (const { source, hash } of cases) {

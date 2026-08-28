@@ -1143,6 +1143,8 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform float uAmbient;
   uniform vec3 uCamPos;
   uniform mat4 uInvProjView;
+  /** xyz = camera forward; w = enclosing-ball centre depth. */
+  uniform vec4 uFocusPlane;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
   /** The backdrop's gradient SHAPE: 0 = linear (vertical ramp, the
@@ -1272,13 +1274,19 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   layout(location = 0) out vec4 outColor;
   layout(location = 1) out vec4 outTraceLayer;
 
-  /** Background recomposition sidecar: fractional surface coverage,
-   * clamped fog, and the surviving backdrop weight beta. The fourth lane
-   * is reserved and deliberately initialized on every terminal path. */
-  vec4 traceLayer(float coverage, float fog) {
+  /** RGB = coverage/fog/beta; A = signed CoC (focus 128, uncovered 255). */
+  vec4 traceLayer(float coverage, float fog, float cameraDepth) {
     float beta = 1.0 - coverage +
       coverage * fog * (1.0 - uFogTintStrength);
-    return vec4(coverage, fog, beta, 1.0);
+    float coc = coverage > 0.0
+      ? clamp(
+          (cameraDepth - uFocusPlane.w) / max(uVisibleRadius, 1.0e-6),
+          -1.0,
+          1.0
+        )
+      : 1.0;
+    float cocCode = (128.0 + 127.0 * coc) / 255.0;
+    return vec4(coverage, fog, beta, cocCode);
   }
 
   /** Per-pixel dither for the march start so grazing rays don't band. */
@@ -4268,11 +4276,13 @@ ${foldValueFormGlsl(shadeDeWidth)}
     vec3 background,
     out float cov,
     out float layerCoverage,
-    out float layerFog
+    out float layerFog,
+    out float layerDepth
   ) {
     cov = 0.0;
     layerCoverage = 0.0;
     layerFog = 0.0;
+    layerDepth = 0.0;
     // One-sided: visible from above only; parallel or climbing rays miss.
     if (ro.y <= uGroundY || rd.y >= -1.0e-6) {
       return background;
@@ -4290,6 +4300,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
     }
     cov = 1.0;
     layerCoverage = fade;
+    layerDepth = dot(hp - ro, uFocusPlane.xyz);
 
     // Penumbra shadow toward the light: the hit path's DE loop, adapted
     // for a start OUTSIDE the certified ball. Two analytic gates make the
@@ -4438,6 +4449,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
       float planeCov;
       float planeLayerCoverage;
       float planeLayerFog;
+      float planeLayerDepth;
       outColor = vec4(
         shadeGroundPlane(
           ro,
@@ -4445,14 +4457,19 @@ ${foldValueFormGlsl(shadeDeWidth)}
           background,
           planeCov,
           planeLayerCoverage,
-          planeLayerFog
+          planeLayerFog,
+          planeLayerDepth
         ),
         planeCov
       );
-      outTraceLayer = traceLayer(planeLayerCoverage, planeLayerFog);
+      outTraceLayer = traceLayer(
+        planeLayerCoverage,
+        planeLayerFog,
+        planeLayerDepth
+      );
 #else
       outColor = vec4(background, 0.0);
-      outTraceLayer = traceLayer(0.0, 0.0);
+      outTraceLayer = traceLayer(0.0, 0.0, 0.0);
 #endif
       return;
     }
@@ -4463,6 +4480,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
       float planeCovExit;
       float planeLayerCoverageExit;
       float planeLayerFogExit;
+      float planeLayerDepthExit;
       outColor = vec4(
         shadeGroundPlane(
           ro,
@@ -4470,17 +4488,19 @@ ${foldValueFormGlsl(shadeDeWidth)}
           background,
           planeCovExit,
           planeLayerCoverageExit,
-          planeLayerFogExit
+          planeLayerFogExit,
+          planeLayerDepthExit
         ),
         planeCovExit
       );
       outTraceLayer = traceLayer(
         planeLayerCoverageExit,
-        planeLayerFogExit
+        planeLayerFogExit,
+        planeLayerDepthExit
       );
 #else
       outColor = vec4(background, 0.0);
-      outTraceLayer = traceLayer(0.0, 0.0);
+      outTraceLayer = traceLayer(0.0, 0.0, 0.0);
 #endif
       return;
     }
@@ -4590,6 +4610,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
         float planeCovMiss;
         float planeLayerCoverageMiss;
         float planeLayerFogMiss;
+        float planeLayerDepthMiss;
         outColor = vec4(
           shadeGroundPlane(
             ro,
@@ -4597,17 +4618,19 @@ ${foldValueFormGlsl(shadeDeWidth)}
             background,
             planeCovMiss,
             planeLayerCoverageMiss,
-            planeLayerFogMiss
+            planeLayerFogMiss,
+            planeLayerDepthMiss
           ),
           planeCovMiss
         );
         outTraceLayer = traceLayer(
           planeLayerCoverageMiss,
-          planeLayerFogMiss
+          planeLayerFogMiss,
+          planeLayerDepthMiss
         );
 #else
         outColor = vec4(background, 0.0);
-        outTraceLayer = traceLayer(0.0, 0.0);
+        outTraceLayer = traceLayer(0.0, 0.0, 0.0);
 #endif
         return;
       }
@@ -4616,7 +4639,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
       // 255. RGB remains the same backdrop, and BLIT_FRAGMENT strips the
       // status to presented alpha 1.
       outColor = vec4(background, ${SURFACE_TRACE_EXHAUSTED_ALPHA.toFixed(1)});
-      outTraceLayer = traceLayer(0.0, 0.0);
+      outTraceLayer = traceLayer(0.0, 0.0, 0.0);
       return;
     }
     vec3 pos = ro + rd * t;
@@ -4884,7 +4907,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // answer the blank-frame question the WebGPU arm answers from its own
     // per-ray status tally.
     outColor = vec4(col, 1.0);
-    outTraceLayer = traceLayer(1.0, clamp(fog, 0.0, 1.0));
+    outTraceLayer = traceLayer(
+      1.0,
+      clamp(fog, 0.0, 1.0),
+      dot(pos - ro, uFocusPlane.xyz)
+    );
   }
 `;
 }
@@ -4933,6 +4960,13 @@ const BLIT_FRAGMENT = /* glsl */ `
   uniform int uHasSource;
   uniform int uHasLayer;
   uniform int uComposite;
+  /** Final-presentation-only depth of field. The expensive tracers always
+   * retain CoC; this runtime branch decides whether a blit filters it. */
+  uniform int uDepthOfField;
+  /** Tiled compute capture flattens RGB+background on the CPU and carries
+   * the sidecar's CoC byte in source alpha. Ordinary live/GLSL paths keep
+   * it in uLayer.a. Both modes still force final output alpha to one. */
+  uniform int uDofMetadataInSourceAlpha;
   uniform sampler2D uTraceBgImage;
   uniform int uTraceBgKind;
   uniform vec3 uTraceBgTop;
@@ -4971,12 +5005,111 @@ const BLIT_FRAGMENT = /* glsl */ `
     vec3 top,
     int shape,
     vec2 center,
-    vec2 scale
+    vec2 scale,
+    vec2 p
   ) {
     if (kind == 1) {
-      return texture(image, vUv).rgb;
+      return texture(image, p).rgb;
     }
-    return mix(bottom, top, blitBackgroundShapeT(vUv, shape, center, scale));
+    return mix(bottom, top, blitBackgroundShapeT(p, shape, center, scale));
+  }
+
+  /** Fetch one sample and apply the live-background delta BEFORE it enters
+   * the optical gather. This order is load-bearing for background-only
+   * edits: every color participating in the blur sees the same live
+   * backdrop, so a recolor never needs a retrace and cannot leave a halo
+   * baked against the reference backdrop. */
+  vec3 blitCompositeSample(vec2 p, out vec4 source, out vec4 layer) {
+    source = texture(uSrc, p);
+    layer = uHasLayer == 1
+      ? texture(uLayer, p)
+      : vec4(0.0, 0.0, 1.0, 1.0);
+    if (uDepthOfField == 1) {
+      // Color and beta retain the targets' linear filtering, especially when
+      // a low-resolution preview is stretched. Coverage and signed depth are
+      // classifications: fetch their nearest stored texel so interpolation
+      // cannot invent a false focal layer between foreground and backdrop.
+      ivec2 sourceSize = textureSize(uSrc, 0);
+      ivec2 sourcePixel = clamp(
+        ivec2(p * vec2(sourceSize)),
+        ivec2(0),
+        sourceSize - ivec2(1)
+      );
+      if (uDofMetadataInSourceAlpha == 1) {
+        source.a = texelFetch(uSrc, sourcePixel, 0).a;
+      } else if (uHasLayer == 1) {
+        ivec2 layerSize = textureSize(uLayer, 0);
+        ivec2 layerPixel = clamp(
+          ivec2(p * vec2(layerSize)),
+          ivec2(0),
+          layerSize - ivec2(1)
+        );
+        vec4 nearestLayer = texelFetch(uLayer, layerPixel, 0);
+        layer.r = nearestLayer.r;
+        layer.a = nearestLayer.a;
+      }
+    }
+    vec3 rgb = source.rgb;
+    if (uComposite == 1) {
+      vec3 liveBg = blitBackground(
+        uLiveBgImage,
+        uLiveBgKind,
+        uLiveBgBottom,
+        uLiveBgTop,
+        uLiveBgShape,
+        uLiveBgCenter,
+        uLiveBgScale,
+        p
+      );
+      vec3 traceBg = blitBackground(
+        uTraceBgImage,
+        uTraceBgKind,
+        uTraceBgBottom,
+        uTraceBgTop,
+        uTraceBgShape,
+        uTraceBgCenter,
+        uTraceBgScale,
+        p
+      );
+      rgb += layer.b * (liveBg - traceBg);
+    }
+    return rgb;
+  }
+
+  /** Decode the tracer's exact byte-domain map. Source-alpha capture reserves
+   * byte 255 for uncovered and caps covered far geometry at 254, retaining a
+   * one-byte coverage distinction without another full-image attachment. */
+  float blitSignedCoc(vec4 source, vec4 layer, out float coverage) {
+    float encoded;
+    if (uDofMetadataInSourceAlpha == 1) {
+      encoded = source.a;
+      coverage = encoded < (254.5 / 255.0) ? 1.0 : 0.0;
+    } else {
+      encoded = layer.a;
+      coverage = layer.r;
+    }
+    return clamp((encoded * 255.0 - 128.0) / 127.0, -1.0, 1.0);
+  }
+
+  /** Eight deterministic Poisson-ish offsets plus the separately sampled
+   * center below: fixed work, no resolution- or blur-dependent loop count. */
+  const vec2 DOF_TAPS[8] = vec2[8](
+    vec2( 0.314,  0.125),
+    vec2(-0.236,  0.352),
+    vec2(-0.421, -0.146),
+    vec2( 0.181, -0.487),
+    vec2( 0.658,  0.326),
+    vec2(-0.611,  0.513),
+    vec2(-0.704, -0.458),
+    vec2( 0.529, -0.733)
+  );
+
+  vec3 blitDecodeLight(vec3 rgb) {
+    return pow(max(rgb, vec3(0.0)), vec3(2.2));
+  }
+
+  vec3 blitEncodeLight(vec3 rgb) {
+    return pow(max(rgb, vec3(0.0)), vec3(1.0 / 2.2));
   }
 
   void main() {
@@ -4994,40 +5127,114 @@ const BLIT_FRAGMENT = /* glsl */ `
     // path's present-then-toBlob) is where the coverage channel must stop;
     // the settle-target readbacks that COUNT it read the trace target,
     // never a blit destination.
-    vec3 liveBg = blitBackground(
-      uLiveBgImage,
-      uLiveBgKind,
-      uLiveBgBottom,
-      uLiveBgTop,
-      uLiveBgShape,
-      uLiveBgCenter,
-      uLiveBgScale
-    );
     if (uHasSource == 0) {
       // Composite-layer prefill: unresolved pixels are uncovered live
       // backdrop, not stale target memory.
+      vec3 liveBg = blitBackground(
+        uLiveBgImage,
+        uLiveBgKind,
+        uLiveBgBottom,
+        uLiveBgTop,
+        uLiveBgShape,
+        uLiveBgCenter,
+        uLiveBgScale,
+        vUv
+      );
       outColor = vec4(liveBg, 1.0);
       outLayer = vec4(0.0, 0.0, 1.0, 1.0);
       return;
     }
-    vec3 rgb = texture(uSrc, vUv).rgb;
-    vec4 layer = uHasLayer == 1
-      ? texture(uLayer, vUv)
-      : vec4(0.0, 0.0, 1.0, 1.0);
-    if (uComposite == 1) {
-      vec3 traceBg = blitBackground(
-        uTraceBgImage,
-        uTraceBgKind,
-        uTraceBgBottom,
-        uTraceBgTop,
-        uTraceBgShape,
-        uTraceBgCenter,
-        uTraceBgScale
-      );
-      rgb += layer.b * (liveBg - traceBg);
+    vec4 centerSource;
+    vec4 centerLayer;
+    vec3 centerRgb = blitCompositeSample(
+      vUv,
+      centerSource,
+      centerLayer
+    );
+    // Exact legacy presentation when disabled: one source/layer read, the
+    // same optional beta delta, and forced opaque alpha. No CoC decode or
+    // neighboring sample can perturb this branch.
+    if (uDepthOfField == 0) {
+      outColor = vec4(centerRgb, 1.0);
+      outLayer = centerLayer;
+      return;
     }
-    outColor = vec4(rgb, 1.0);
-    outLayer = layer;
+
+    float centerCoverage;
+    float centerCoc = blitSignedCoc(
+      centerSource,
+      centerLayer,
+      centerCoverage
+    );
+    // The quantized focal byte and its immediate neighbor stay perfectly
+    // crisp on covered geometry. Uncovered backdrop carries +1, so it never
+    // takes this shortcut and can receive the splat of defocused geometry.
+    if (centerCoverage > 0.5 && abs(centerCoc) <= (1.5 / 127.0)) {
+      outColor = vec4(centerRgb, 1.0);
+      outLayer = centerLayer;
+      return;
+    }
+
+    vec2 sourceSize = vec2(textureSize(uSrc, 0));
+    float maxRadiusPx = max(
+      1.0,
+      min(sourceSize.x, sourceSize.y) * 0.012
+    );
+    vec2 maxRadiusUv = vec2(maxRadiusPx) / max(sourceSize, vec2(1.0));
+    float centerRadius = max(abs(centerCoc), 1.0 / 127.0);
+    vec3 sum = blitDecodeLight(centerRgb) * 1.5;
+    float sumWeight = 1.5;
+    for (int i = 0; i < 8; i++) {
+      vec2 tap = DOF_TAPS[i];
+      float tapDistance = length(tap) * centerRadius;
+      vec2 tapUv = clamp(
+        vUv + tap * maxRadiusUv * centerRadius,
+        vec2(0.0),
+        vec2(1.0)
+      );
+      vec4 tapSource;
+      vec4 tapLayer;
+      vec3 tapRgb = blitCompositeSample(tapUv, tapSource, tapLayer);
+      float tapCoverage;
+      float tapCoc = blitSignedCoc(tapSource, tapLayer, tapCoverage);
+
+      // A source contributes only where its own blur disc reaches this
+      // destination. The small feather hides the nine-tap boundary without
+      // widening the bounded radius.
+      float reach = smoothstep(
+        tapDistance - 0.06,
+        tapDistance + 0.06,
+        abs(tapCoc)
+      );
+      // Covered near geometry rejects materially farther samples (especially
+      // uncovered +1 backdrop), preventing the classic bright/dark halo.
+      // The reverse is allowed: a nearer defocused source may reach a farther
+      // or uncovered center, approximating foreground scatter in one gather.
+      float coveredCenter = smoothstep(0.01, 0.25, centerCoverage);
+      float farther = smoothstep(
+        2.0 / 127.0,
+        8.0 / 127.0,
+        tapCoc - centerCoc
+      );
+      float depthWeight = 1.0 - coveredCenter * farther;
+      // Fractional edge coverage tempers a foreground splat into uncovered
+      // backdrop while full-coverage geometry retains its full authority.
+      float nearer = step(tapCoc, centerCoc - 2.0 / 127.0);
+      float edgeWeight = mix(
+        1.0,
+        max(tapCoverage, 0.08),
+        nearer * (1.0 - coveredCenter)
+      );
+      float kernel = 1.0 - 0.35 * dot(tap, tap);
+      float weight = max(kernel, 0.0) * reach * depthWeight * edgeWeight;
+      sum += blitDecodeLight(tapRgb) * weight;
+      sumWeight += weight;
+    }
+    outColor = vec4(
+      blitEncodeLight(sum / max(sumWeight, 1.0e-6)),
+      1.0
+    );
+    outLayer = centerLayer;
   }
 `;
 
@@ -5055,6 +5262,11 @@ export function createSurfaceBlitMaterial(
       uHasSource: { value: 1 },
       uHasLayer: { value: 0 },
       uComposite: { value: 0 },
+      // Runtime final-presentation switches. Scene wiring enables the first
+      // only for a canvas/capture present, never for an offscreen seed; the
+      // second selects tiled compute capture's packed source alpha.
+      uDepthOfField: { value: 0 },
+      uDofMetadataInSourceAlpha: { value: 0 },
       // Both image samplers always have a complete fallback texture bound;
       // kind 0 keeps the shipping analytic-gradient path active.
       uTraceBgImage: { value: src },
@@ -5481,6 +5693,10 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uAmbient: { value: 0.25 },
       uCamPos: { value: new THREE.Vector3() },
       uInvProjView: { value: new THREE.Matrix4() },
+      // Automatic Surface focal plane. Scene wiring replaces this at every
+      // frame arm; this finite forward/depth pair keeps the placeholder
+      // material total before the first camera push.
+      uFocusPlane: { value: new THREE.Vector4(0, 0, -1, 1) },
       uBgTop: { value: BG_TOP.clone() },
       uBgBottom: { value: BG_BOTTOM.clone() },
       // Background shape: linear defaults — 0 is inert, center/scale

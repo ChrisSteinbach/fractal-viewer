@@ -6,7 +6,7 @@
  *   R = fractional surface coverage
  *   G = clamped fog amount
  *   B = surviving background weight (beta)
- *   A = reserved, written as 255
+ *   A = signed circle of confusion, encoded from -1..1 with 128 = focus
  *
  * A background-only edit can then preserve the expensive trace and replace
  * just the background contribution:
@@ -64,6 +64,8 @@ export interface SurfaceBackgroundLayerWeights {
   readonly coverage: number;
   readonly fog: number;
   readonly backgroundWeight: number;
+  /** Signed camera-depth distance from the automatic focal plane. */
+  readonly circleOfConfusion: number;
 }
 
 /** The fixed RGBA8 encoding of {@link SurfaceBackgroundLayerWeights}. */
@@ -71,13 +73,14 @@ export type SurfaceBackgroundLayerBytes = readonly [
   coverage: number,
   fog: number,
   backgroundWeight: number,
-  reservedAlpha: 255,
+  circleOfConfusion: number,
 ];
 
 export const SURFACE_LAYER_COVERAGE_BYTE = 0;
 export const SURFACE_LAYER_FOG_BYTE = 1;
 export const SURFACE_LAYER_BACKGROUND_WEIGHT_BYTE = 2;
 export const SURFACE_LAYER_ALPHA_BYTE = 3;
+export const SURFACE_LAYER_COC_BYTE = SURFACE_LAYER_ALPHA_BYTE;
 
 type RgbaBytes = Uint8Array | Uint8ClampedArray;
 
@@ -99,6 +102,14 @@ export interface SurfaceBackgroundCompositeSpec {
   readonly liveBackground: TraceBackgroundSpec;
   readonly traceOffset?: readonly [x: number, y: number];
   readonly traceExtent?: readonly [width: number, height: number];
+  /**
+   * Capture-only packing mode. The ordinary compositor always emits opaque
+   * alpha; tiled depth-of-field captures can instead carry the sidecar CoC
+   * byte in alpha while bands are assembled (255 remains reserved for
+   * uncovered), avoiding a second full-image RGBA allocation before the one
+   * seam-free presentation pass.
+   */
+  readonly outputAlpha?: "opaque" | "circle-of-confusion";
 }
 
 function validateImage(image: TraceBackgroundImage): void {
@@ -280,17 +291,23 @@ function unormByte(value: number): number {
   return Math.floor(clamp(value, 0, 1) * 255 + 0.5);
 }
 
-/** Encode the GLSL/WGSL sidecar layout from its three physical inputs. */
+/** Encode the GLSL/WGSL sidecar layout from its physical inputs.
+ *
+ * Circle of confusion is signed: negative is in front of the automatic
+ * focal plane, positive is behind it. Zero deliberately maps to byte 128.
+ * The default is the far/background sentinel used by existing miss callers.
+ */
 export function encodeSurfaceBackgroundLayer(
   coverage: number,
   fog: number,
   fogTintStrength: number,
+  circleOfConfusion = 1,
 ): SurfaceBackgroundLayerBytes {
   return [
     unormByte(coverage),
     unormByte(fog),
     unormByte(surfaceBackgroundWeight(coverage, fog, fogTintStrength)),
-    255,
+    Math.round(128 + 127 * clamp(circleOfConfusion, -1, 1)),
   ];
 }
 
@@ -304,6 +321,11 @@ export function decodeSurfaceBackgroundLayer(
     fog: bytes[offset + SURFACE_LAYER_FOG_BYTE] / 255,
     backgroundWeight:
       bytes[offset + SURFACE_LAYER_BACKGROUND_WEIGHT_BYTE] / 255,
+    circleOfConfusion: clamp(
+      (bytes[offset + SURFACE_LAYER_COC_BYTE] - 128) / 127,
+      -1,
+      1,
+    ),
   };
 }
 
@@ -323,7 +345,7 @@ function adjustedByte(
  * Re-composite an RGBA8 trace on the host. Equal backgrounds copy legacy RGB
  * exactly. Changed backgrounds evaluate both shapes at the same full-image
  * pixel center and apply the sidecar's quantized background weight. Alpha is
- * unconditionally 255 in both paths.
+ * opaque by default; the opt-in capture mode copies the sidecar CoC byte.
  */
 export function compositeSurfaceBackgroundLayer(
   spec: SurfaceBackgroundCompositeSpec,
@@ -403,7 +425,12 @@ export function compositeSurfaceBackgroundLayer(
           live[2],
         );
       }
-      out[p + 3] = 255;
+      out[p + 3] =
+        spec.outputAlpha === "circle-of-confusion"
+          ? layerRgba[p + SURFACE_LAYER_COVERAGE_BYTE] > 0
+            ? Math.min(layerRgba[p + SURFACE_LAYER_COC_BYTE], 254)
+            : 255
+          : 255;
     }
   }
   return out;

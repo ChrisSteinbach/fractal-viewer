@@ -472,7 +472,7 @@ import type { Vec3 } from "./types";
  *          64  f32  cutoff                68  f32 footprint (0 = off)
  *          72  u32  marchSteps            76  f32 pixelEps
  *          80  f32  hitFloorEps           84  u32 rasterWidth
- *          88  u32  rasterHeight          92  f32 (pad)
+ *          88  u32  rasterHeight          92  f32 focusDepth
  *          96  vec3f finalM row0         108  f32 finalT.x
  *         112  vec3f finalM row1         124  f32 finalT.y
  *         128  vec3f finalM row2         140  f32 finalT.z
@@ -1777,6 +1777,11 @@ export interface SurfaceGpuRunParams {
    * The app passes the preview tier's coarser floor. */
   hitFloor?: number;
   pose?: SurfaceGpuPose;
+  /** Camera-space depth of the Surface focal plane, packed at the frozen
+   * offset 92 formerly reserved as padding. The shade kernel compares each
+   * covered hit against it along {@link SurfaceGpuPose.fwd}; default 0 keeps
+   * the historical packers' optional-run contract for eval/march callers. */
+  focusDepth?: number;
   /** Depth-fog density multiplier, packed at the frozen offset
    * 204 (module doc) by every params packer. Default 1 — the fixed fog
    * that preceded the density control — when omitted, matching the GLSL
@@ -1914,6 +1919,7 @@ export function packSurfaceGpuParams(
   );
   view.setUint32(84, pose?.rasterWidth ?? 0, true);
   view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
   const f = de.final;
   const fm = f ? f.invM : [1, 0, 0, 0, 1, 0, 0, 0, 1];
   const ft = f ? f.invT : ([0, 0, 0] as Vec3);
@@ -2106,6 +2112,7 @@ export function packEscapeGpuParams(
   );
   view.setUint32(84, pose?.rasterWidth ?? 0, true);
   view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
   writeVec3(view, 96, [1, 0, 0]);
   writeVec3(view, 112, [0, 1, 0]);
   writeVec3(view, 128, [0, 0, 1]);
@@ -2288,6 +2295,7 @@ export function packBulbGpuParams(
   );
   view.setUint32(84, pose?.rasterWidth ?? 0, true);
   view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
   writeVec3(view, 96, [1, 0, 0]);
   writeVec3(view, 112, [0, 1, 0]);
   writeVec3(view, 128, [0, 0, 1]);
@@ -2484,6 +2492,7 @@ export function packSurface4GpuParams(
   );
   view.setUint32(84, pose?.rasterWidth ?? 0, true);
   view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
   writeVec3(view, 96, [1, 0, 0]);
   writeVec3(view, 112, [0, 1, 0]);
   writeVec3(view, 128, [0, 0, 1]);
@@ -2692,6 +2701,7 @@ export function packEscape4GpuParams(
   view.setFloat32(80, R * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR), true);
   view.setUint32(84, pose?.rasterWidth ?? 0, true);
   view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
   writeVec3(view, 96, [1, 0, 0]);
   writeVec3(view, 112, [0, 1, 0]);
   writeVec3(view, 128, [0, 0, 1]);
@@ -6739,7 +6749,7 @@ ${balloonHitWrapText}`
   if (disc < 0.0) {
     // Defensive — a HIT ray always intersected the gate sphere.
     colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
-    layerOut[ray] = packSurfaceLayer(0.0, 0.0);
+    layerOut[ray] = packSurfaceLayer(0.0, 0.0, 1.0);
     return;
   }
   let sq = sqrt(disc);
@@ -6955,10 +6965,21 @@ struct SurfaceHitInfo {
 
 ${trapHelperText}${hitInfoText}
 ${backgroundShapeSource(BACKGROUND_SHAPE_WGSL)}
-fn packSurfaceLayer(coverage: f32, fog: f32) -> u32 {
+fn surfaceCoc(cameraDepth: f32) -> f32 {
+  let signedCoc = clamp(
+    (cameraDepth - params.focusDepth) / max(params.visibleRadius, 1.0e-6),
+    -1.0,
+    1.0
+  );
+  // UNORM midpoint is byte 128: the exact focal-plane sentinel the
+  // presentation filter treats as zero circle of confusion.
+  return (128.0 + 127.0 * signedCoc) / 255.0;
+}
+
+fn packSurfaceLayer(coverage: f32, fog: f32, coc: f32) -> u32 {
   let beta = 1.0 - coverage +
     coverage * fog * (1.0 - shade.fogTintStrength);
-  return pack4x8unorm(vec4f(coverage, fog, beta, 1.0));
+  return pack4x8unorm(vec4f(coverage, fog, beta, coc));
 }
 ${
   groundPlane
@@ -6967,6 +6988,7 @@ struct GroundPlaneShade {
   color: vec3f,
   coverage: f32,
   fog: f32,
+  coc: f32,
 }
 
 fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShade {
@@ -6975,7 +6997,7 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
   // but the geometry re-derives from scratch so the guards keep this
   // total on any input.
   if (ro.y <= params.groundY || rd.y >= -1.0e-6) {
-    return GroundPlaneShade(bg, 0.0, 0.0);
+    return GroundPlaneShade(bg, 0.0, 0.0, 1.0);
   }
   let tp = (params.groundY - ro.y) / rd.y;
   let hp = ro + rd * tp;
@@ -6984,7 +7006,7 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
   let fade =
     1.0 - smoothstep(params.groundFadeStart, params.groundFadeEnd, length(rel));
   if (fade <= 0.0) {
-    return GroundPlaneShade(bg, 0.0, 0.0);
+    return GroundPlaneShade(bg, 0.0, 0.0, 1.0);
   }
   let gR = params.groundBallR;
   let visR = params.visibleRadius;
@@ -7069,7 +7091,13 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
   let dist = tp - clamp(dot(params.groundBallC - ro, rd), 0.0, tp);
   let fog = 1.0 - exp(-0.12 * pow(dist * params.fogDensity / max(visR, 1.0e-6), 2.0));
   col = mix(col, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));
-  return GroundPlaneShade(mix(bg, col, fade), fade, clamp(fog, 0.0, 1.0));
+  let coc = surfaceCoc(dot(hp - ro, params.fwd));
+  return GroundPlaneShade(
+    mix(bg, col, fade),
+    fade,
+    clamp(fog, 0.0, 1.0),
+    coc
+  );
 }
 `
     : ""
@@ -7120,14 +7148,14 @@ ${
     let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
     let ground = shadeGroundPlane(params.ro, rd, bg, li);
     colorOut[ray] = pack4x8unorm(vec4f(ground.color, 1.0));
-    layerOut[ray] = packSurfaceLayer(ground.coverage, ground.fog);
+    layerOut[ray] = packSurfaceLayer(ground.coverage, ground.fog, ground.coc);
     return;
   }
 `
     : ""
 }  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
     colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
-    layerOut[ray] = packSurfaceLayer(0.0, 0.0);
+    layerOut[ray] = packSurfaceLayer(0.0, 0.0, 1.0);
     return;
   }
   let ndcX = ((f32(px) + sub.x) / f32(params.rasterWidth)) * 2.0 - 1.0;
@@ -7218,7 +7246,8 @@ ${shadeLighting}
   let fog = 1.0 - exp(-0.12 * pow((t - tEnter) * params.fogDensity / max(visR, 1.0e-6), 2.0));
   col = mix(col, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));
   colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));
-  layerOut[ray] = packSurfaceLayer(1.0, clamp(fog, 0.0, 1.0));
+  let coc = surfaceCoc(dot(pos - ro, params.fwd));
+  layerOut[ray] = packSurfaceLayer(1.0, clamp(fog, 0.0, 1.0), coc);
 }`;
 
   // Stage-2 branch-and-bound (surface-de.ts descendFold, the
@@ -7383,7 +7412,10 @@ struct Params {
   hitFloorEps: f32,
   rasterWidth: u32,
   rasterHeight: u32,
-  pad0: f32,
+  // Camera-space focal-plane depth for the presentation sidecar's signed
+  // circle of confusion. This claims the frozen offset-92 padding word, so
+  // every Params ABI size and every following field remain unchanged.
+  focusDepth: f32,
   finalM0: vec3f,
   finalT0: f32,
   finalM1: vec3f,

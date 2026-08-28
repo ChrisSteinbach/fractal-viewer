@@ -36,6 +36,7 @@ import {
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
   DEFAULT_SURFACE_COLOR_SPEED,
+  DEFAULT_SURFACE_DEPTH_OF_FIELD,
   DEFAULT_SURFACE_ENV_LIGHT,
   DEFAULT_SURFACE_FLOOR_EMISSION,
   DEFAULT_SURFACE_FLOOR_TILE_SCALE,
@@ -161,6 +162,7 @@ import {
   setSurfaceAntialiasSamples,
   setSurfaceColorSource,
   setSurfaceColorSpeed,
+  setSurfaceDepthOfField,
   setSurfaceEnvLight,
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
@@ -285,6 +287,7 @@ describe("initialState", () => {
     const state = initialState(true);
     expect(state.surface).toEqual({
       antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+      depthOfField: DEFAULT_SURFACE_DEPTH_OF_FIELD,
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
@@ -1423,6 +1426,17 @@ describe("setSurfaceAntialiasSamples", () => {
         .antialiasSamples,
     ).toBe(8);
     expect(SURFACE_ANTIALIAS_DETENTS).toEqual([1, 2, 4, 8, 16]);
+  });
+});
+
+describe("setSurfaceDepthOfField", () => {
+  it("toggles the retained presentation immutably", () => {
+    const state = initialState(true);
+    const next = setSurfaceDepthOfField(state, true);
+
+    expect(next.surface.depthOfField).toBe(true);
+    expect(state.surface.depthOfField).toBe(DEFAULT_SURFACE_DEPTH_OF_FIELD);
+    expect(next.surface).not.toBe(state.surface);
   });
 });
 

@@ -52,6 +52,37 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   },
 };
 
+/** Intentional whole-tracer source advance for signed-CoC metadata. */
+const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
+  string,
+  { resolved: string; emitted: string }
+> = {
+  "4D base finish0": {
+    resolved: "8248aba6382b9a4e",
+    emitted: "8248aba6382b9a4e",
+  },
+  "4D balloon finish0": {
+    resolved: "a6b1d39f778a691b",
+    emitted: "b99a52e0f70aea2c",
+  },
+  "4D plane finish0": {
+    resolved: "ca7b92ca9e64278e",
+    emitted: "8800bea40c8a62ae",
+  },
+  "4D base finish1": {
+    resolved: "c2310c52de115b63",
+    emitted: "c2310c52de115b63",
+  },
+  "4D balloon finish1": {
+    resolved: "898bef0145e8d230",
+    emitted: "047caf9d7122a79b",
+  },
+  "4D plane finish1": {
+    resolved: "88e962ee6787fb59",
+    emitted: "c1238e6ba2bf9863",
+  },
+};
+
 /**
  * The 4D tracer's per-map data rides a std140 uniform BLOCK rather than
  * default-block uniform arrays (that block is what let the cap match 3D's
@@ -975,7 +1006,7 @@ describe("the 4D tracer's variant arms", () => {
     expect(glsl).toContain("uniform float uGroundY;");
     expect(glsl).toContain("uniform vec3 uGroundAlbedo;");
     expect(glsl).toContain(
-      "vec3 shadeGroundPlane(\nvec3 ro,\nvec3 rd,\nvec3 background,\nout float cov,\nout float layerCoverage,\nout float layerFog\n) {",
+      "vec3 shadeGroundPlane(\nvec3 ro,\nvec3 rd,\nvec3 background,\nout float cov,\nout float layerCoverage,\nout float layerFog,\nout float layerDepth\n) {",
     );
     // One-sided, radially faded, and the two gates that make an infinite
     // floor affordable (shadow corridor, AO reach).
@@ -1010,6 +1041,7 @@ describe("the 4D tracer's variant arms", () => {
         "float planeCovMiss;",
         "float planeLayerCoverageMiss;",
         "float planeLayerFogMiss;",
+        "float planeLayerDepthMiss;",
         "outColor = vec4(",
         "shadeGroundPlane(",
         "ro,",
@@ -1017,18 +1049,20 @@ describe("the 4D tracer's variant arms", () => {
         "background,",
         "planeCovMiss,",
         "planeLayerCoverageMiss,",
-        "planeLayerFogMiss",
+        "planeLayerFogMiss,",
+        "planeLayerDepthMiss",
         "),",
         "planeCovMiss",
         ");",
         "outTraceLayer = traceLayer(",
         "planeLayerCoverageMiss,",
-        "planeLayerFogMiss",
+        "planeLayerFogMiss,",
+        "planeLayerDepthMiss",
         ");",
         "return;",
         "}",
         "outColor = vec4(background, 0.5);",
-        "outTraceLayer = traceLayer(0.0, 0.0);",
+        "outTraceLayer = traceLayer(0.0, 0.0, 0.0);",
       ].join("\n"),
     );
   });
@@ -1036,7 +1070,7 @@ describe("the 4D tracer's variant arms", () => {
   it("lands the two pre-march misses on the floor too", () => {
     const glsl = surface4FragmentFor(0, 1);
     expect(glsl).toContain(
-      "if (disc < 0.0) {\nfloat planeCov;\nfloat planeLayerCoverage;\nfloat planeLayerFog;\noutColor = vec4(\nshadeGroundPlane(",
+      "if (disc < 0.0) {\nfloat planeCov;\nfloat planeLayerCoverage;\nfloat planeLayerFog;\nfloat planeLayerDepth;\noutColor = vec4(\nshadeGroundPlane(",
     );
     expect(glsl).toContain("if (tFar <= 0.0) {\nfloat planeCovExit;");
   });
@@ -1347,32 +1381,44 @@ describe("the 4D trace alpha statuses", () => {
   it("keeps exhausted distinct when a sphere-exit miss can become a plane", () => {
     const shader = surface4FragmentResolvedFor(0, 1, 0, 0);
     expect(shader).toMatch(
-      /shadeGroundPlane\(\s*ro,\s*rd,\s*background,\s*planeCovMiss,\s*planeLayerCoverageMiss,\s*planeLayerFogMiss\s*\)/,
+      /shadeGroundPlane\(\s*ro,\s*rd,\s*background,\s*planeCovMiss,\s*planeLayerCoverageMiss,\s*planeLayerFogMiss,\s*planeLayerDepthMiss\s*\)/,
     );
     expect(shader).toContain("outColor = vec4(background, 0.5);");
   });
 
-  it("mirrors the 3D coverage, fog, and backdrop-weight sidecar", () => {
+  it("mirrors the 3D coverage, fog, backdrop weight, and signed-CoC sidecar", () => {
     const shader = surface4FragmentResolvedFor(0, 1, 0, 0);
+    const focus = createSurfaceMaterial4().uniforms.uFocusPlane.value;
+    expect(focus.toArray()).toEqual([0, 0, -1, 1]);
     expect(shader).toContain("layout(location = 0) out vec4 outColor;");
     expect(shader).toContain("layout(location = 1) out vec4 outTraceLayer;");
     expect(shader).toContain(
       [
         "float beta = 1.0 - coverage +",
         "      coverage * fog * (1.0 - uFogTintStrength);",
-        "    return vec4(coverage, fog, beta, 1.0);",
+        "    float coc = coverage > 0.0",
+        "      ? clamp(",
+        "          (cameraDepth - uFocusPlane.w) / max(uVisibleRadius, 1.0e-6),",
+        "          -1.0,",
+        "          1.0",
+        "        )",
+        "      : 1.0;",
+        "    float cocCode = (128.0 + 127.0 * coc) / 255.0;",
+        "    return vec4(coverage, fog, beta, cocCode);",
       ].join("\n"),
     );
     expect(shader).toContain("layerCoverage = 0.0;");
     expect(shader).toContain("layerFog = 0.0;");
+    expect(shader).toContain("layerDepth = 0.0;");
     expect(shader).toContain("cov = 1.0;\n    layerCoverage = fade;");
+    expect(shader).toContain("layerDepth = dot(hp - ro, uFocusPlane.xyz);");
     expect(shader).toContain("layerFog = clamp(fog, 0.0, 1.0);");
     expect(shader).toMatch(
-      /outTraceLayer = traceLayer\(\s*planeLayerCoverageMiss,\s*planeLayerFogMiss\s*\);/,
+      /outTraceLayer = traceLayer\(\s*planeLayerCoverageMiss,\s*planeLayerFogMiss,\s*planeLayerDepthMiss\s*\);/,
     );
-    expect(shader).toContain("outTraceLayer = traceLayer(0.0, 0.0);");
-    expect(shader).toContain(
-      "outTraceLayer = traceLayer(1.0, clamp(fog, 0.0, 1.0));",
+    expect(shader).toContain("outTraceLayer = traceLayer(0.0, 0.0, 0.0);");
+    expect(shader).toMatch(
+      /outTraceLayer = traceLayer\(\s*1\.0,\s*clamp\(fog, 0\.0, 1\.0\),\s*dot\(pos - ro, uFocusPlane\.xyz\)\s*\);/,
     );
     for (const [name, source] of [
       ["plain", surface4FragmentResolvedFor(0, 0, 0, 0)],
@@ -1731,7 +1777,9 @@ describe("the 4D tracer's pattern arm", () => {
       ] as const) {
         const key = `${name} finish${finish}`;
         const expected =
-          BALLOON_PALETTE_SOURCE_HASHES[key] ?? PRE_PATTERN_SOURCE_HASHES[key];
+          DEPTH_OF_FIELD_SOURCE_HASHES[key] ??
+          BALLOON_PALETTE_SOURCE_HASHES[key] ??
+          PRE_PATTERN_SOURCE_HASHES[key];
         expect(expected, key).toBeDefined();
         const resolved = surface4FragmentResolvedFor(balloon, plane, finish, 0);
         const emitted = surface4FragmentFor(balloon, plane, finish, 0);

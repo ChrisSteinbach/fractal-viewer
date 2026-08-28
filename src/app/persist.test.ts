@@ -64,6 +64,7 @@ import {
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SURFACE_COLOR_SPEED,
   DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+  DEFAULT_SURFACE_DEPTH_OF_FIELD,
   DEFAULT_SURFACE_ENV_LIGHT,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
@@ -174,6 +175,7 @@ function baseSnapshot(): SceneSnapshot {
     },
     surface: {
       antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+      depthOfField: DEFAULT_SURFACE_DEPTH_OF_FIELD,
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
@@ -232,6 +234,7 @@ describe("encodeScene / decodeScene round-trip", () => {
     });
     expect(result!.surface).toEqual({
       antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+      depthOfField: DEFAULT_SURFACE_DEPTH_OF_FIELD,
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
@@ -2630,6 +2633,7 @@ describe("decodeScene surface params", () => {
       ...baseSnapshot(),
       surface: {
         antialiasSamples: 16,
+        depthOfField: true,
         lightAzimuth: -45,
         lightElevation: 70,
         ambient: 0.5,
@@ -2645,6 +2649,7 @@ describe("decodeScene surface params", () => {
     const result = decodeScene(encodeScene(s));
     expect(result!.surface).toEqual({
       antialiasSamples: 16,
+      depthOfField: true,
       lightAzimuth: -45,
       lightElevation: 70,
       ambient: 0.5,
@@ -2674,6 +2679,7 @@ describe("decodeScene surface params", () => {
     expect(result).not.toBeNull();
     expect(result!.surface).toEqual({
       antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+      depthOfField: DEFAULT_SURFACE_DEPTH_OF_FIELD,
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
@@ -2709,6 +2715,41 @@ describe("decodeScene surface params", () => {
       decodeScene("v1=" + b64url(JSON.stringify(raw)))!.surface
         .antialiasSamples,
     ).toBe(DEFAULT_SURFACE_ANTIALIAS_SAMPLES);
+  });
+
+  it("defaults a legacy surface block that omits depthOfField to off", () => {
+    const { depthOfField: _depthOfField, ...legacySurface } =
+      baseSnapshot().surface;
+    const raw = { ...baseSnapshot(), surface: legacySurface };
+
+    expect(
+      decodeScene("v1=" + b64url(JSON.stringify(raw)))!.surface.depthOfField,
+    ).toBe(DEFAULT_SURFACE_DEPTH_OF_FIELD);
+  });
+
+  it("quietly defaults malformed depthOfField to off", () => {
+    const raw = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, depthOfField: "yes" },
+    };
+
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.surface.depthOfField).toBe(DEFAULT_SURFACE_DEPTH_OF_FIELD);
+  });
+
+  it("omits default-off depthOfField from the wire and writes enabled explicitly", () => {
+    const defaultPayload = decodePayload(encodeScene(baseSnapshot()));
+    expect(
+      "depthOfField" in (defaultPayload.surface as Record<string, unknown>),
+    ).toBe(false);
+
+    const enabled = baseSnapshot();
+    enabled.surface = { ...enabled.surface, depthOfField: true };
+    const enabledPayload = decodePayload(encodeScene(enabled));
+    expect(
+      (enabledPayload.surface as Record<string, unknown>).depthOfField,
+    ).toBe(true);
   });
 
   it("snaps a finite off-detent antialias sample count to the nearest supported choice", () => {

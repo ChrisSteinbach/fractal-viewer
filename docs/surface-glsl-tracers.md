@@ -1183,6 +1183,23 @@ verbatim:
   ADDED rather than copied: 3D splits it because it has a floor to
   classify into, and EXHAUSTED never planes.
 
+## Retained focus depth and shared presentation
+
+Both fragment tracers write the background sidecar's alpha on every terminal
+path. `uFocusPlane.xyz` is normalized camera-forward and `.w` is the projected
+depth of the active enclosing-ball centre. Covered fractal/balloon hits use the
+actual winning hit position; the analytic floor uses its plane intersection;
+miss, exhausted, and target-prefill paths use the far sentinel. The signed CoC
+is normalized by `uVisibleRadius`, so the focal region follows the active
+Surface framing scale instead of a screen-size or world-unit constant.
+
+The shared blit owns the optional nine-tap depth-aware gather. It is runtime
+gated and enabled only for the final canvas hop; target-to-target preview and
+supersample copies stay raw. Each neighbor is background-recomposited at its
+own UV before filtering, and covered near depth rejects farther samples. The
+off branch is the former literal copy/compositor, so default-off documents do
+not change pixels or shader variants.
+
 ## The coverage-alpha leak
 
 The tracers' output alpha is the COVERAGE flag — 1 where the frame drew

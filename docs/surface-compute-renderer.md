@@ -898,6 +898,13 @@ no wall budget to expire. Offline force frames are memoized. Fallback is
 one-way: a create failure or device loss re-enters through the untouched
 WebGL path; `?surfacegl` forces WebGL.
 
+The frame spec also carries `camForward` and `focusDepth`. The former is the
+normalized camera world direction; the latter is
+`dot(enclosingBall.center - camPos, camForward)`. Kernels store signed CoC in
+the retained layer's alpha while leaving terminal state/count buffers alone.
+The parameter ABI does not grow: `pose.fwd` already occupies its camera lane,
+and the former pad at byte 92 now stores focus depth.
+
 ## The Mesa park
 
 See "The frame loop and batch sizing" above for the mechanism. In short:
@@ -988,6 +995,11 @@ driver can answer. Edge energy falls 0.846x / 0.851x on the two adapters, so
 the supersampling win is the object's own and not an artifact of the
 rasterizer.
 
+Sidecar R/G/B follow the existing arithmetic fold. Sidecar A does not: each
+pixel retains the minimum encoded CoC among covered samples, while an
+all-uncovered pixel stays at the far sentinel 255. This frontmost rule avoids
+near/far cancellation at silhouettes and matches the WebGL host fold.
+
 `?surfacesamples=N` is the escape hatch and the A/B instrument (N=1 restores
 the exact single-pass behaviour). The override accepts integers 1–64 and wins
 over the document setting for that page load. It is resolved once before the
@@ -1049,6 +1061,13 @@ pane's seed chain. One band is the whole image on an ordinary export, and
 that path is byte-identical to the untiled path (an absent
 `bgOffset`/`bgExtent` defaults to offset `(0, 0)` and extent equal to the
 frame's own raster).
+
+Band completion never blurs a band. Host recomposition writes the band's CoC
+byte into the otherwise private color alpha while placing rows in the one
+full-image RGBA allocation. When Surface depth of field is enabled, the shared
+blit reads that metadata after the final band and filters the complete image
+once, so kernel tiles create neither blur seams nor a second full-image sidecar
+allocation. Background and DoF enable state are both frozen at capture arm.
 
 `?surfacemaxrays=N` pretends a device ceiling for testing.
 `scripts/surface-export-tile.verify.mjs` is the gate: tiled vs untiled

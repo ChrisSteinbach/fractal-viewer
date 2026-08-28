@@ -753,6 +753,17 @@ min, bit-exact since refinement only raises certificates — keeps the cost
 at ~2-4x inverse applications). See that module's doc comment for the
 bound's derivation and the measured tables.
 
+Both the WebGL tracer and WebGPU compute renderer end in the same retained
+presentation boundary: RGBA8 color plus an RGBA8 sidecar containing coverage,
+fog, live-background weight, and signed camera-space circle of confusion. The
+focal plane passes through the active enclosing-ball centre and moves with the
+camera. Surface's optional depth of field is therefore a fixed-work
+screen-space gather, not another DE/shade pass; toggling it and changing only
+the background re-present retained data. Filtering is final-presentation-only,
+so preview/settle intermediates, progressive strips, and supersampling remain
+raw. WebGPU capture traces bands but assembles their CoC in color alpha before
+one full-image gather, avoiding both band seams and a second 4× RGBA image.
+
 A live scheduled hybrid turns that stationary inverse tree into one finite
 level-dependent prefix. Query space first passes through the inverse final
 lens — the lens is outside the word and is not a descent level. Global depths
