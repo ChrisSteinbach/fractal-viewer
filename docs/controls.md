@@ -636,14 +636,16 @@ morphs into place instead of snapping (see **Presets** below).
   An emitter-backed inverse-descent session gets a **Shape copies** section for
   the **Levels** band described above. Forward-orbit sessions replace it
   with a **Shape trap** section and a matching **Shape
-  trap** color source. Choose any bundled trap shape, **Custom primitive**, or
-  **None**, then set its orbit-space size and X/Y/Z position. The custom editor
-  authors one sphere, box, torus, capsule, or parameterized gear plus an
-  optional part offset, rotation, and uniform scale. It uses the same shared
-  vocabulary and validation as **Shape → Emitter** below. **Closest approach** shades by the
+  trap** color source. Choose any bundled trap shape, **Custom shape**, or
+  **None**, then set its orbit-space size and X/Y/Z position. The shared flat
+  composer authors up to eight sphere, box, torus, capsule, or parameterized
+  gear parts, each with its own offset, rotation, and uniform scale. Parts fold
+  left-to-right as unions or intersections; the first is always a union. It
+  uses the same shared vocabulary and validation as **Shape → Emitter** below.
+  **Closest approach** shades by the
   nearest pass over the whole orbit; **First crossing** enables the
   **Crossing bar** and colors the first dip below it. **Trap fade** biases
-  toward earlier, larger stamps. The shape choice and custom primitive sliders
+  toward earlier, larger stamps. The shape choice and custom-shape sliders
   re-enter the surface session once on selection or slider release because they
   change generated shader structure; mode also re-enters by policy so both
   engines switch coherently. The outer trap pose, size, crossing bar and fade
@@ -735,12 +737,18 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   from the document; it preserves the inspection camera, and an edit that
   makes the document unsupported returns to Points with the analyzer reason.
   - **Shape → Emitter shape** — turns the selected transform into any bundled
-    emitter shape or a **Custom primitive**, or returns it to an ordinary
-    transform with **None**. The custom editor authors the same five analytic
-    primitives and part pose as Shape trap. It keeps invalid or zero-measure
-    geometry out of the document, commits slider edits only on release, and
-    preserves imported multipart/mesh shapes as read-only **Authored shape**
-    values until they are explicitly replaced.
+    emitter shape or a **Custom shape**, or returns it to an ordinary transform
+    with **None**. The composer authors the same five analytic primitives and
+    per-part poses as Shape trap, up to eight parts, with add/remove/reorder
+    controls. Emitters are union-only because intersections do not have a
+    general sampler; Shape trap may use both union and intersection. The editor
+    reports Points/Flame/Solid sampler capability separately from Surface/trap
+    distance-field capability, keeps invalid or zero-measure geometry out of
+    the document, and commits slider edits only on release. Imported mesh specs
+    remain read-only **Authored shape** values until explicitly replaced. An
+    imported intersection emitter is preserved and marked **Surface only**:
+    Surface can use its distance shape, while Points, Flame, and Solid apply
+    that map as an ordinary transform because no exact sampler exists.
     The shared **Shape catalog** is **Cog**, **Star**, **Orbit Ring**, **Faceted
     Crystal**, **Heart Prism**, **Trefoil Knot**, **Crescent Moon**,
     **Snowflake Prism**, and **Peace sign**; every entry is also available to

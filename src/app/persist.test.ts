@@ -6467,6 +6467,74 @@ describe("decodeScene transform shape emitters", () => {
 });
 
 describe("shapeTrap codec (the shape-trap color/geometry block)", () => {
+  it("round-trips the composer's maximum eight analytic parts, poses, and flat boolean fold", () => {
+    const shape: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.75 },
+          combine: "union",
+          pose: { offset: [-1, 0, 0] },
+        },
+        {
+          primitive: { kind: "box", half: [0.4, 0.5, 0.6] },
+          combine: "intersect",
+          pose: { rotate: [0, 0, 0.25] },
+        },
+        {
+          primitive: { kind: "torus", major: 0.8, minor: 0.2 },
+          combine: "union",
+          pose: { scale: 1.2 },
+        },
+        {
+          primitive: {
+            kind: "capsule",
+            a: [0, -0.5, 0],
+            b: [0, 0.5, 0],
+            radius: 0.15,
+          },
+          combine: "intersect",
+          pose: { offset: [0.2, 0, 0], rotate: [0.1, 0.2, 0.3] },
+        },
+        {
+          primitive: {
+            kind: "gear",
+            teeth: 8,
+            radius: 0.7,
+            tooth: [0.12, 0.1],
+            hole: 0.2,
+            halfHeight: 0.18,
+          },
+          combine: "union",
+        },
+        {
+          primitive: { kind: "sphere", radius: 0.3 },
+          combine: "intersect",
+          pose: { offset: [0, 0.4, 0], scale: 0.8 },
+        },
+        {
+          primitive: { kind: "box", half: [0.2, 0.25, 0.3] },
+          combine: "union",
+          pose: { offset: [0, 0, 0.5] },
+        },
+        {
+          primitive: { kind: "torus", major: 0.4, minor: 0.1 },
+          combine: "intersect",
+          pose: { rotate: [0.5, 0, 0], scale: 0.6 },
+        },
+      ],
+    };
+
+    const encoded = encodeScene({
+      ...baseSnapshot(),
+      shapeTrap: { shape },
+    });
+    const wire = decodePayload(encoded).shapeTrap as Record<string, unknown>;
+
+    expect(Array.isArray(wire.shape)).toBe(false);
+    expect((wire.shape as ShapeSpec).parts).toHaveLength(8);
+    expect(decodeScene(encoded)!.shapeTrap?.shape).toEqual(shape);
+  });
+
   it("uses the shared compact shape tuple while keeping the trap's outer pose separate", () => {
     const shape: ShapeSpec = {
       parts: [

@@ -3955,7 +3955,7 @@ describe("analyzeSurfaceSystem shape emitters", () => {
     expect(analyzeSurfaceSystem(empty).status).toBe("eligible");
   });
 
-  it("refuses pure-emitter and unsamplable-emitter systems explicitly", () => {
+  it("refuses pure-emitter systems but admits SDF-only intersections as condensation", () => {
     const sphere = {
       parts: [
         {
@@ -3968,7 +3968,7 @@ describe("analyzeSurfaceSystem shape emitters", () => {
     expect(pure.status).toBe("ineligible");
     expect(pure.reasons).toContain("shape emitters leave no recursive maps");
 
-    const unsamplable = analyzeSurfaceSystem([
+    const intersectionSystem = [
       map(),
       map({
         id: 1,
@@ -3982,9 +3982,14 @@ describe("analyzeSurfaceSystem shape emitters", () => {
           ],
         },
       }),
-    ]);
-    expect(unsamplable.status).toBe("ineligible");
-    expect(unsamplable.reasons.join(" ")).toMatch(/unsamplable shape emitter/);
+    ];
+    expect(analyzeSurfaceSystem(intersectionSystem).status).toBe("eligible");
+    const intersectionDE = buildSurfaceDE(intersectionSystem);
+    expect(intersectionDE.maps.map((entry) => entry.baseIndex)).toEqual([0]);
+    expect(intersectionDE.condensation?.emitters).toHaveLength(1);
+    expect(intersectionDE.condensation?.emitters[0].shape).toBe(
+      intersectionSystem[1].emitter,
+    );
 
     const inactiveFallback = [
       map(),

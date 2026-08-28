@@ -7,6 +7,7 @@ import {
   chaosRowIsNonTrivial,
   createEmitterStream,
   derivedColorIndex,
+  emitterSamplerCapability,
   effectiveSymmetryOrder,
   emitterSeed,
   pickIndex,
@@ -1977,6 +1978,75 @@ describe("shape emitters (condensation)", () => {
     expect(prepareChaosGame(makeTransforms(3)).emitters).toBeNull();
   });
 
+  it("classifies emitter sampler capability once, including every fallback reason", () => {
+    const sampleable = emitterSamplerCapability(SPHERE_SPEC);
+    expect(sampleable.status).toBe("sampleable");
+    expect(emitterSamplerCapability(SPHERE_SPEC)).toBe(sampleable);
+    expect(emitterSamplerCapability(undefined)).toMatchObject({
+      status: "absent",
+      reason: null,
+    });
+    expect(emitterSamplerCapability({ parts: [] })).toMatchObject({
+      status: "absent",
+      reason: null,
+    });
+    expect(emitterSamplerCapability(INTERSECT_SPEC)).toMatchObject({
+      status: "unsupported",
+      reason: "intersection",
+    });
+    expect(
+      emitterSamplerCapability({
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0 },
+            combine: "union",
+          },
+        ],
+      }),
+    ).toMatchObject({ status: "unsupported", reason: "zero-measure" });
+    expect(
+      emitterSamplerCapability({
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.5 },
+            combine: "intersect",
+          },
+        ],
+      }),
+    ).toMatchObject({ status: "unsupported", reason: "invalid" });
+    expect(
+      emitterSamplerCapability({
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: Number.MAX_VALUE },
+            combine: "union",
+          },
+        ],
+      }),
+    ).toMatchObject({ status: "unsupported", reason: "invalid" });
+  });
+
+  it("invalidates the identity cache when a public ShapeSpec is mutated", () => {
+    const mutable: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.5 },
+          combine: "union",
+        },
+        {
+          primitive: { kind: "box", half: [0.2, 0.2, 0.2] },
+          combine: "union",
+        },
+      ],
+    };
+    expect(emitterSamplerCapability(mutable).status).toBe("sampleable");
+    mutable.parts[1].combine = "intersect";
+    expect(emitterSamplerCapability(mutable)).toMatchObject({
+      status: "unsupported",
+      reason: "intersection",
+    });
+  });
+
   it("createEmitterStream reproduces mulberry32(seed)'s sequence after every reseed", () => {
     const stream = createEmitterStream();
     for (const seed of [0, 1, 0x9ea2c0f5, 4294967295]) {
@@ -2150,6 +2220,11 @@ describe("shape emitters (condensation)", () => {
     expect(emitters![0]).toBeNull();
     expect(emitters![1]).toBeNull();
     expect(emitters![2]).not.toBeNull();
+    const capability = emitterSamplerCapability(SPHERE_SPEC);
+    expect(capability.status).toBe("sampleable");
+    if (capability.status === "sampleable") {
+      expect(emitters![2]).toBe(capability.sampler);
+    }
   });
 
   it("rotates a kaleidoscope copy's emitted stamp by the copy's own rotation", () => {

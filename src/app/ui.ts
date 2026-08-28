@@ -32,7 +32,7 @@ import type {
   RgbStop,
 } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
-import type { ShapeSpec } from "../fractal/shapes";
+import { MAX_SHAPE_PARTS, type ShapeSpec } from "../fractal/shapes";
 import { CLASSIC_FOLD_RADII, isFoldVariationType } from "../fractal/variations";
 import {
   CLASSIC_SURFACE_FINISH,
@@ -127,12 +127,22 @@ import {
 } from "./bundled-shapes";
 import {
   AUTHORED_SHAPE_KINDS,
+  addAuthoredShapePart,
+  analyzeAuthoredShapeCapabilities,
+  authoredShapeComposerDraft,
+  authoredShapeComposerFromDraft,
+  authoredShapeComposerStatus,
+  authoredShapeComposerValidation,
   authoredShapeDraft,
   authoredShapeFromDraft,
   authoredShapeValidation,
   defaultAuthoredShape,
+  removeAuthoredShapePart,
+  reorderAuthoredShapePart,
+  type AuthoredShapeComposerDraft,
   type AuthoredShapeDraft,
   type AuthoredShapeKind,
+  type ShapeComposerRole,
 } from "./authored-shape";
 
 export type { Preset };
@@ -1297,17 +1307,16 @@ const AUTHORED_SHAPE_LABELS: Record<AuthoredShapeKind, string> = {
   gear: "Gear",
 };
 
-/** Resolve a document emitter to the editor's small built-in vocabulary.
- * `custom` is the single-part analytic editor. `authored` preserves a valid
- * imported ShapeSpec outside that deliberately small vocabulary without
- * pretending the editor can reproduce it. */
+/** Resolve a document emitter to the editor's built-in or analytic-composer
+ * vocabulary. `authored` preserves meshes and unsamplable imported specs
+ * without pretending the composer can reproduce them. */
 function emitterSelectValue(
   emitter: ShapeSpec | undefined,
 ): EmitterSelectValue {
   if (!emitter) return "";
   return (
     bundledEmitterForShape(emitter)?.kind ??
-    (authoredShapeDraft(emitter) ? "custom" : "authored")
+    (authoredShapeComposerDraft(emitter, "emitter") ? "custom" : "authored")
   );
 }
 
@@ -1315,9 +1324,10 @@ function emitterSelectValue(
 function emitterSummary(t: Transform): string[] {
   if (!t.emitter) return [];
   const bundled = bundledEmitterForShape(t.emitter);
-  const draft = authoredShapeDraft(t.emitter);
+  const draft = authoredShapeComposerDraft(t.emitter, "emitter");
+  const capabilities = analyzeAuthoredShapeCapabilities(t.emitter);
   return [
-    `Shape: ${bundled?.label ?? (draft ? `Custom ${AUTHORED_SHAPE_LABELS[draft.primitive.kind]}` : "Authored")}`,
+    `Shape: ${bundled?.label ?? (draft ? (draft.parts.length === 1 ? `Custom ${AUTHORED_SHAPE_LABELS[draft.parts[0].primitive.kind]}` : `Custom · ${draft.parts.length} parts`) : capabilities.modes.emitter.eligible ? "Authored" : capabilities.modes.trap.eligible ? "Authored (Surface only)" : "Authored (unsupported)")}`,
   ];
 }
 
@@ -1545,7 +1555,7 @@ interface EditorState {
   weightControl: AxisControl | null;
   /** The condensation-shape picker, or `null` for the final transform. */
   emitterSelect: HTMLSelectElement | null;
-  /** Host for the selected emitter's single-part custom editor. */
+  /** Host for the selected emitter's flat custom-shape composer. */
   emitterShapeEditor: HTMLElement | null;
   /** The "Color" group's rows, or `null` for the final transform —
    * which is never PICKED, so it never moves the color coordinate. */
@@ -3742,6 +3752,7 @@ export class Ui {
       this.surfaceTrapPrimitiveEditor,
       state.shapeTrap?.shape,
       shapeTrapSelectValue(state),
+      "trap",
       (shape) => this.handlers?.onShapeTrapShape(shape),
     );
     this.surfaceTrapThresholdRow.classList.toggle(
@@ -6345,19 +6356,15 @@ export class Ui {
     return { slider, readout };
   }
 
-  /**
-   * Keep one shared single-part primitive editor synchronized to a document
-   * shape. Catalog entries hide it; supported authored primitives expose the
-   * editor; every other imported ShapeSpec remains visible as a read-only
-   * authored value and is never rewritten implicitly.
-   */
+  /** Keep the role-aware flat composer synchronized to one document shape. */
   private syncAuthoredShapeEditor(
     host: HTMLElement,
     shape: ShapeSpec | undefined,
     choice: string,
+    role: ShapeComposerRole,
     onCommit: (shape: ShapeSpec) => void,
   ): void {
-    const key = `${choice}:${shape ? JSON.stringify(shape) : ""}`;
+    const key = `${role}:${choice}:${shape ? JSON.stringify(shape) : ""}`;
     if (host.dataset.shapeKey === key) return;
     host.dataset.shapeKey = key;
     host.replaceChildren();
@@ -6368,28 +6375,209 @@ export class Ui {
     }
     host.classList.remove("hidden");
 
-    const initialDraft = authoredShapeDraft(shape);
-    if (!initialDraft || choice === "authored") {
+    const status = authoredShapeComposerStatus(shape, role);
+    const capability = this.doc.createElement("p");
+    capability.className =
+      "flame-note-info shape-authored-note shape-capability-note";
+    capability.setAttribute("role", "status");
+    if (role === "emitter") {
+      if (
+        !status.capabilities.modes.emitter.eligible &&
+        status.capabilities.modes.trap.eligible
+      ) {
+        capability.textContent =
+          "Surface can use this distance shape. Points / Flame / Solid render this map as an ordinary transform because this shape has no emitter sampler.";
+      } else if (
+        status.capabilities.modes.emitter.eligible &&
+        status.capabilities.modes.trap.eligible
+      ) {
+        capability.textContent =
+          "Points / Flame / Solid: supported shape emitter. Surface: supported distance shape, subject to the scene's aggregate source limit.";
+      } else if (status.capabilities.modes.emitter.eligible) {
+        capability.textContent = `Points / Flame / Solid: supported shape emitter. Surface: unavailable. ${status.capabilities.modes.trap.reason ?? status.message}`;
+      } else {
+        capability.textContent = `Points / Flame / Solid render this map as an ordinary transform because it has no emitter sampler. Surface: unavailable. ${status.capabilities.modes.trap.reason ?? status.capabilities.modes.emitter.reason ?? status.message}`;
+      }
+    } else if (status.capabilities.modes.trap.eligible) {
+      capability.textContent = status.capabilities.modes.emitter.eligible
+        ? "Surface / shape trap: supported. Points / Flame / Solid: emitter sampler available."
+        : `Surface / shape trap: supported. Points / Flame / Solid: no emitter sampler. ${status.capabilities.modes.emitter.reason ?? ""}`;
+    } else {
+      capability.textContent = status.capabilities.modes.emitter.eligible
+        ? `Surface / shape trap: unavailable. Points / Flame / Solid: emitter sampler available. ${status.capabilities.modes.trap.reason ?? status.message}`
+        : `Surface / shape trap: unavailable. Points / Flame / Solid: no emitter sampler. ${status.capabilities.modes.trap.reason ?? status.message}`;
+    }
+    host.appendChild(capability);
+
+    if (status.status === "opaque" || choice === "authored") {
       const note = this.doc.createElement("p");
       note.className = "flame-note-info shape-authored-note";
-      note.textContent =
-        "This imported authored shape is preserved exactly. Switch to Custom primitive to replace it with an editable single-part shape.";
+      note.textContent = `${status.message} This imported authored shape is preserved exactly; choose Custom shape to replace it.`;
       host.appendChild(note);
       return;
     }
-    const draft: AuthoredShapeDraft = initialDraft;
+    const draft: AuthoredShapeComposerDraft = status.draft;
 
     const timing = this.doc.createElement("p");
     timing.className = "flame-hint shape-editor-timing";
     timing.textContent =
-      "Primitive and part-pose edits apply after release. Surface rebuilds the shape program once per edit.";
+      "Primitive and part-pose edits apply after release. Structural actions apply once. Surface rebuilds the shape program once per edit.";
     host.appendChild(timing);
+
+    const composerValidation = this.doc.createElement("p");
+    composerValidation.className = "shape-validation hidden";
+    composerValidation.setAttribute("role", "status");
+    host.appendChild(composerValidation);
+
+    const commitDraft = (next: AuthoredShapeComposerDraft): void => {
+      const message = authoredShapeComposerValidation(next, role);
+      composerValidation.classList.toggle("hidden", message === null);
+      composerValidation.textContent = message ?? "";
+      if (message !== null) return;
+      onCommit(authoredShapeComposerFromDraft(next, role));
+    };
+
+    draft.parts.forEach((part, index) => {
+      const card = this.doc.createElement("section");
+      card.className = "shape-part-card";
+      card.setAttribute("role", "group");
+      card.setAttribute("aria-label", `Shape part ${index + 1}`);
+
+      const header = this.doc.createElement("div");
+      header.className = "shape-part-header";
+      const title = this.doc.createElement("span");
+      title.className = "shape-part-title";
+      title.textContent = `Part ${index + 1}`;
+      const partActions = this.doc.createElement("span");
+      partActions.className = "shape-part-actions";
+
+      const addAction = (
+        label: string,
+        text: string,
+        disabled: boolean,
+        action: () => AuthoredShapeComposerDraft,
+      ): void => {
+        const button = this.doc.createElement("button");
+        button.type = "button";
+        button.className = "btn shape-action-btn";
+        button.textContent = text;
+        button.setAttribute("aria-label", label);
+        button.disabled = disabled;
+        button.addEventListener("click", () => commitDraft(action()));
+        partActions.appendChild(button);
+      };
+      addAction(`Move shape part ${index + 1} up`, "↑", index === 0, () =>
+        reorderAuthoredShapePart(draft, index, index - 1),
+      );
+      addAction(
+        `Move shape part ${index + 1} down`,
+        "↓",
+        index === draft.parts.length - 1,
+        () => reorderAuthoredShapePart(draft, index, index + 1),
+      );
+      addAction(
+        `Remove shape part ${index + 1}`,
+        "Remove",
+        draft.parts.length === 1,
+        () => removeAuthoredShapePart(draft, index),
+      );
+      header.append(title, partActions);
+      card.appendChild(header);
+
+      if (index === 0) {
+        const operation = this.doc.createElement("p");
+        operation.className = "flame-hint shape-part-operation";
+        operation.textContent = "Base part · Union";
+        card.appendChild(operation);
+      } else {
+        const combineLabel = this.doc.createElement("label");
+        combineLabel.className = "select-label shape-combine-label";
+        combineLabel.append("Combine");
+        const combine = this.doc.createElement("select");
+        combine.setAttribute("aria-label", `Shape part ${index + 1} operation`);
+        const operations: readonly (readonly [
+          "union" | "intersect",
+          string,
+        ])[] =
+          role === "emitter"
+            ? [["union", "Union"]]
+            : [
+                ["union", "Union"],
+                ["intersect", "Intersect"],
+              ];
+        for (const [value, label] of operations) {
+          const option = this.doc.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          combine.appendChild(option);
+        }
+        combine.value = part.combine;
+        combine.addEventListener("change", () => {
+          const value = combine.value;
+          if (value !== "union" && value !== "intersect") return;
+          commitDraft({
+            parts: draft.parts.map((candidate, partIndex) =>
+              partIndex === index
+                ? { ...candidate, combine: value }
+                : candidate,
+            ),
+          });
+        });
+        combineLabel.appendChild(combine);
+        card.appendChild(combineLabel);
+      }
+
+      const partEditor = this.doc.createElement("div");
+      partEditor.className = "shape-part-editor";
+      card.appendChild(partEditor);
+      this.syncAuthoredShapePartEditor(
+        partEditor,
+        authoredShapeFromDraft(part),
+        (nextShape) => {
+          const replacement = authoredShapeDraft(nextShape);
+          if (!replacement) return;
+          commitDraft({
+            parts: draft.parts.map((candidate, partIndex) =>
+              partIndex === index
+                ? { ...replacement, combine: candidate.combine }
+                : candidate,
+            ),
+          });
+        },
+      );
+      host.appendChild(card);
+    });
+
+    const composerActions = this.doc.createElement("div");
+    composerActions.className = "shape-composer-actions";
+    const add = this.doc.createElement("button");
+    add.type = "button";
+    add.className = "btn shape-action-btn";
+    add.textContent = `+ Add part (${draft.parts.length}/${MAX_SHAPE_PARTS})`;
+    add.setAttribute("aria-label", "Add shape part");
+    add.disabled = draft.parts.length >= MAX_SHAPE_PARTS;
+    add.addEventListener("click", () =>
+      commitDraft(addAuthoredShapePart(draft)),
+    );
+    composerActions.appendChild(add);
+    host.appendChild(composerActions);
+  }
+
+  /** Render one analytic part inside a composer card. */
+  private syncAuthoredShapePartEditor(
+    host: HTMLElement,
+    shape: ShapeSpec,
+    onCommit: (shape: ShapeSpec) => void,
+  ): void {
+    const initialDraft = authoredShapeDraft(shape);
+    if (!initialDraft) return;
+    const draft: AuthoredShapeDraft = initialDraft;
 
     const kindLabel = this.doc.createElement("label");
     kindLabel.className = "select-label shape-kind-label";
     kindLabel.append("Primitive");
     const kindSelect = this.doc.createElement("select");
-    kindSelect.setAttribute("aria-label", "Custom primitive kind");
+    kindSelect.setAttribute("aria-label", "Shape part primitive kind");
     for (const kind of AUTHORED_SHAPE_KINDS) {
       const option = this.doc.createElement("option");
       option.value = kind;
@@ -6409,7 +6597,8 @@ export class Ui {
       // Update the local widget first. The real app callback synchronously
       // refreshes from document state; letting an after-callback local write
       // win could resurrect the editor beneath a catalog-classified select.
-      this.syncAuthoredShapeEditor(host, next, "custom", onCommit);
+      host.replaceChildren();
+      this.syncAuthoredShapePartEditor(host, next, onCommit);
       onCommit(next);
     });
     kindLabel.appendChild(kindSelect);
@@ -6817,7 +7006,7 @@ export class Ui {
       ...BUNDLED_EMITTER_SHAPES.map(
         (entry) => [entry.kind, bundledShapeOptionLabel(entry)] as const,
       ),
-      ["custom", "Custom primitive…"],
+      ["custom", "Custom shape…"],
       ["authored", "Authored shape"],
     ];
     for (const [value, text] of choices) {
@@ -6854,6 +7043,7 @@ export class Ui {
       editor,
       emitter,
       emitterSelectValue(emitter),
+      "emitter",
       (shape) => this.handlers?.onTransformEmitterShape(target, shape),
     );
     return { select, editor };
@@ -8191,6 +8381,7 @@ export class Ui {
           editor.emitterShapeEditor,
           transform.emitter,
           choice,
+          "emitter",
           (shape) => this.handlers?.onTransformEmitterShape(target, shape),
         );
       }

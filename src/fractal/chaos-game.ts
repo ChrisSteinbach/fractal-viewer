@@ -203,6 +203,125 @@ export function systemHasEmitters(
   return false;
 }
 
+/** A prepared shape-emitter draw. Exported as part of the capability result
+ * so consumers that need both the admission answer and the sampler never
+ * prepare a gear's measured outline twice. */
+export type EmitterSampler = (rng: Rng) => Vec3;
+
+/** Why a present emitter cannot replace its transform's ordinary map step. */
+export type EmitterSamplerUnsupportedReason =
+  "intersection" | "zero-measure" | "invalid";
+
+/**
+ * The one typed capability answer for an emitter spec. `"absent"` includes
+ * the document vocabulary's empty-parts identity; `"unsupported"` is the
+ * documented plain-transform fallback and names whether the blocker is an
+ * SDF-only intersection, a measureless union, or malformed shape state.
+ */
+export type EmitterSamplerCapability =
+  | {
+      status: "absent";
+      sampler: null;
+      reason: null;
+      detail: null;
+    }
+  | {
+      status: "sampleable";
+      sampler: EmitterSampler;
+      reason: null;
+      detail: null;
+    }
+  | {
+      status: "unsupported";
+      sampler: null;
+      reason: EmitterSamplerUnsupportedReason;
+      detail: string;
+    };
+
+type PresentEmitterSamplerCapability = Exclude<
+  EmitterSamplerCapability,
+  { status: "absent" }
+>;
+
+const ABSENT_EMITTER_SAMPLER: EmitterSamplerCapability = {
+  status: "absent",
+  sampler: null,
+  reason: null,
+  detail: null,
+};
+
+/** Shape specs are immutable document values in normal app flow. Cache the
+ * complete answer by identity so eligibility, UI disclosure, and run
+ * preparation can all ask without repeating a gear's seeded measure probe. */
+interface CachedEmitterSamplerCapability {
+  fingerprint: string;
+  capability: PresentEmitterSamplerCapability;
+}
+
+const emitterSamplerCapabilityCache = new WeakMap<
+  ShapeSpec,
+  CachedEmitterSamplerCapability
+>();
+
+function emitterSpecFingerprint(spec: ShapeSpec): string | null {
+  try {
+    return JSON.stringify(spec);
+  } catch {
+    return null;
+  }
+}
+
+function emitterSamplerUnsupportedReason(
+  detail: string,
+): EmitterSamplerUnsupportedReason {
+  if (detail.startsWith('shape sampler: an "intersect" part')) {
+    return "intersection";
+  }
+  if (detail.includes("no measure to sample")) return "zero-measure";
+  return "invalid";
+}
+
+/**
+ * Classify and, when possible, prepare one emitter spec. This is deliberately
+ * total at the document boundary: malformed imported state becomes a typed
+ * unsupported answer rather than escaping as an exception. The sampler and
+ * every failure answer are cached by spec identity.
+ */
+export function emitterSamplerCapability(
+  spec: ShapeSpec | undefined,
+): EmitterSamplerCapability {
+  if (spec === undefined) return ABSENT_EMITTER_SAMPLER;
+  if (Array.isArray(spec.parts) && spec.parts.length === 0) {
+    return ABSENT_EMITTER_SAMPLER;
+  }
+  const fingerprint = emitterSpecFingerprint(spec);
+  const cached = emitterSamplerCapabilityCache.get(spec);
+  if (fingerprint !== null && cached?.fingerprint === fingerprint) {
+    return cached.capability;
+  }
+  let capability: PresentEmitterSamplerCapability;
+  try {
+    capability = {
+      status: "sampleable",
+      sampler: prepareShapeSampler(spec),
+      reason: null,
+      detail: null,
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    capability = {
+      status: "unsupported",
+      sampler: null,
+      reason: emitterSamplerUnsupportedReason(detail),
+      detail,
+    };
+  }
+  if (fingerprint !== null) {
+    emitterSamplerCapabilityCache.set(spec, { fingerprint, capability });
+  }
+  return capability;
+}
+
 /**
  * Build the per-BASE-map emitter samplers a prepared chaos game carries,
  * or `null` when no transform's emitter yields one — the common case, in
@@ -230,19 +349,18 @@ export function systemHasEmitters(
  */
 export function prepareEmitters(
   transforms: readonly { emitter?: ShapeSpec }[],
-): (((rng: Rng) => Vec3) | null)[] | null {
+): (EmitterSampler | null)[] | null {
   let any = false;
   const emitters = transforms.map((t) => {
     if (!transformHasEmitter(t)) return null;
-    try {
-      const sampler = prepareShapeSampler(t.emitter as ShapeSpec);
+    const capability = emitterSamplerCapability(t.emitter);
+    if (capability.status === "sampleable") {
       any = true;
-      return sampler;
-    } catch {
-      // SDF-only / degenerate spec — the documented plain-transform
-      // fallback above.
-      return null;
+      return capability.sampler;
     }
+    // SDF-only / degenerate / malformed spec — the documented
+    // plain-transform fallback above.
+    return null;
   });
   return any ? emitters : null;
 }

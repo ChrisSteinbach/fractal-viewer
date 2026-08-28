@@ -464,7 +464,7 @@ describe("shared Shape catalog roles", () => {
     ).toBe(false);
   });
 
-  it("uses the shared release-time primitive editor for a custom shape trap", () => {
+  it("uses the shared release-time shape composer for a custom trap", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -514,7 +514,7 @@ describe("shared Shape catalog roles", () => {
     });
   });
 
-  it("keeps an unsupported imported trap read-only until explicitly replaced", () => {
+  it("keeps an imported mesh composition read-only until explicitly replaced", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -525,13 +525,13 @@ describe("shared Shape catalog roles", () => {
       transforms: foldChain(),
     });
 
-    // Star is a known catalog shape, so use a two-part imported composition
-    // to reach the opaque authored sentinel.
+    // Star alone is a known catalog shape. A mesh composition is still valid
+    // shape data, but its asset semantics stay opaque to the analytic editor.
     const imported = setShapeTrap(initialState(true), {
       shape: {
         parts: [
           {
-            primitive: { kind: "sphere", radius: 1 },
+            primitive: STAR_PRISM_SHAPE.parts[0].primitive,
             combine: "union",
           },
           {
@@ -555,6 +555,69 @@ describe("shared Shape catalog roles", () => {
       document.querySelector("#surfaceTrapPrimitiveEditor")?.textContent,
     ).toContain("preserved exactly");
     expect(handlers.onShapeTrapShape).not.toHaveBeenCalled();
+  });
+
+  it("edits flat trap intersections and discloses their Surface-only capability", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels({
+      ...setShapeTrap(initialState(true), {
+        shape: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 1 },
+              combine: "union",
+            },
+            {
+              primitive: { kind: "box", half: [0.2, 0.3, 0.4] },
+              combine: "intersect",
+              pose: { offset: [0.1, 0.2, 0.3] },
+            },
+          ],
+        },
+      }),
+      renderMode: "surface",
+      transforms: foldChain(),
+    });
+
+    const select = document.getElementById(
+      "surfaceTrapShape",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("custom");
+    expect(
+      document.querySelectorAll("#surfaceTrapPrimitiveEditor .shape-part-card"),
+    ).toHaveLength(2);
+    const operation = document.querySelector<HTMLSelectElement>(
+      '#surfaceTrapPrimitiveEditor select[aria-label="Shape part 2 operation"]',
+    )!;
+    expect([...operation.options].map((option) => option.value)).toEqual([
+      "union",
+      "intersect",
+    ]);
+    expect(operation.value).toBe("intersect");
+    expect(
+      document.querySelector(
+        "#surfaceTrapPrimitiveEditor .shape-capability-note",
+      )?.textContent,
+    ).toContain("no emitter sampler");
+
+    operation.value = "union";
+    operation.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(handlers.onShapeTrapShape).toHaveBeenCalledWith({
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 1 },
+          combine: "union",
+        },
+        {
+          primitive: { kind: "box", half: [0.2, 0.3, 0.4] },
+          combine: "union",
+          pose: { offset: [0.1, 0.2, 0.3] },
+        },
+      ],
+    });
   });
 });
 
@@ -2717,7 +2780,7 @@ describe("Ui.renderTransformEditor", () => {
     expect(handlers.onTransformEmitter).toHaveBeenLastCalledWith(1, null);
   });
 
-  it("opens the shared editor for a valid imported single-part primitive", () => {
+  it("opens the shared composer for a valid imported analytic shape", () => {
     const transforms = defaultTransforms();
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -2785,7 +2848,7 @@ describe("Ui.renderTransformEditor", () => {
     expect([scale.value, scale.max]).toEqual(["5", "5"]);
   });
 
-  it("preserves an unsupported imported composition behind the read-only sentinel", () => {
+  it("edits flat union emitters with whole-shape structural commits", () => {
     const transforms = defaultTransforms();
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -2813,14 +2876,254 @@ describe("Ui.renderTransformEditor", () => {
       '#transformEditor select[aria-label="Emitter shape"]',
     )!;
 
+    expect(select.value).toBe("custom");
+    expect(
+      document.querySelector("#transformEditor .shape-capability-note")
+        ?.textContent,
+    ).toContain("supported shape emitter");
+    expect(
+      document.querySelectorAll("#transformEditor .shape-part-card"),
+    ).toHaveLength(2);
+    expect(
+      document
+        .querySelector("#transformEditor .shape-part-card")
+        ?.getAttribute("aria-label"),
+    ).toBe("Shape part 1");
+    const operation = document.querySelector<HTMLSelectElement>(
+      '#transformEditor select[aria-label="Shape part 2 operation"]',
+    )!;
+    expect([...operation.options].map((option) => option.value)).toEqual([
+      "union",
+    ]);
+    document
+      .querySelector<HTMLButtonElement>(
+        '#transformEditor button[aria-label="Move shape part 2 up"]',
+      )!
+      .click();
+    expect(handlers.onTransformEmitter).not.toHaveBeenCalled();
+    expect(handlers.onTransformEmitterShape).toHaveBeenCalledWith(1, {
+      parts: [
+        {
+          primitive: { kind: "box", half: [0.2, 0.2, 0.2] },
+          combine: "union",
+        },
+        {
+          primitive: { kind: "sphere", radius: 0.7 },
+          combine: "union",
+        },
+      ],
+    });
+  });
+
+  it("preserves an intersection emitter and prominently discloses its Surface-only fallback", () => {
+    const transforms = defaultTransforms();
+    const handlers = noopHandlers();
+    const imported: Transform = {
+      ...transforms[1],
+      emitter: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.7 },
+            combine: "union",
+          },
+          {
+            primitive: { kind: "box", half: [0.2, 0.2, 0.2] },
+            combine: "intersect",
+          },
+        ],
+      },
+    };
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformList([imported], 0, null);
+    ui.renderTransformEditor(imported, 0, 1);
+
+    const select = document.querySelector<HTMLSelectElement>(
+      '#transformEditor select[aria-label="Emitter shape"]',
+    )!;
     expect(select.value).toBe("authored");
     expect(select.selectedOptions[0].hidden).toBe(true);
+    expect(transformButtons()[1].textContent).toContain(
+      "Shape: Authored (Surface only)",
+    );
     expect(
-      document.querySelector("#transformEditor .shape-authored-note")
+      document.querySelector("#transformEditor .shape-capability-note")
         ?.textContent,
-    ).toContain("preserved exactly");
-    select.dispatchEvent(new Event("change"));
-    expect(handlers.onTransformEmitter).not.toHaveBeenCalled();
+    ).toContain(
+      "Surface can use this distance shape. Points / Flame / Solid render this map as an ordinary transform",
+    );
+    expect(handlers.onTransformEmitterShape).not.toHaveBeenCalled();
+  });
+
+  it("enforces the eight-part composer cap in the UI", () => {
+    const transforms = defaultTransforms();
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...transforms[0],
+        emitter: {
+          parts: Array.from({ length: 8 }, (_, index) => ({
+            primitive: { kind: "sphere" as const, radius: index + 1 },
+            combine: "union" as const,
+          })),
+        },
+      },
+      0,
+      transforms.length,
+    );
+
+    const add = document.querySelector<HTMLButtonElement>(
+      '#transformEditor button[aria-label="Add shape part"]',
+    )!;
+    expect(add.disabled).toBe(true);
+    expect(add.textContent).toContain("8/8");
+    const removes = document.querySelectorAll<HTMLButtonElement>(
+      '#transformEditor button[aria-label^="Remove shape part"]',
+    );
+    expect(removes).toHaveLength(8);
+    expect([...removes].every((button) => !button.disabled)).toBe(true);
+    removes[7].click();
+    expect(handlers.onTransformEmitterShape).toHaveBeenCalledTimes(1);
+    expect(
+      vi.mocked(handlers.onTransformEmitterShape).mock.calls[0][1].parts,
+    ).toHaveLength(7);
+  });
+
+  it("wires Add part and protects the one-part minimum", () => {
+    const transforms = defaultTransforms();
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...transforms[0],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.7 },
+              combine: "union",
+            },
+          ],
+        },
+      },
+      0,
+      transforms.length,
+    );
+
+    expect(
+      document.querySelector<HTMLButtonElement>(
+        '#transformEditor button[aria-label="Remove shape part 1"]',
+      )?.disabled,
+    ).toBe(true);
+    document
+      .querySelector<HTMLButtonElement>(
+        '#transformEditor button[aria-label="Add shape part"]',
+      )!
+      .click();
+    expect(handlers.onTransformEmitterShape).toHaveBeenCalledWith(0, {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.7 },
+          combine: "union",
+        },
+        {
+          primitive: { kind: "sphere", radius: 1 },
+          combine: "union",
+        },
+      ],
+    });
+  });
+
+  it("discloses ordinary-transform fallback for a structurally invalid imported emitter", () => {
+    const transforms = defaultTransforms();
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      {
+        ...transforms[0],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.7 },
+              combine: "intersect",
+            },
+          ],
+        },
+      },
+      0,
+      transforms.length,
+    );
+
+    expect(
+      document.querySelector("#transformEditor .shape-capability-note")
+        ?.textContent,
+    ).toContain("render this map as an ordinary transform");
+    expect(
+      document.querySelector("#transformEditor .shape-capability-note")
+        ?.textContent,
+    ).toContain("Surface: unavailable");
+  });
+
+  it("refuses over-budget generated shape source with an explicit per-mode status", () => {
+    const transforms = defaultTransforms();
+    const handlers = noopHandlers();
+    const gear = {
+      kind: "gear" as const,
+      teeth: 13,
+      radius: 0.9123456789012345,
+      tooth: [0.1123456789012345, 0.0123456789012345] as [number, number],
+      hole: 0.2123456789012345,
+      halfHeight: 0.3123456789012345,
+    };
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...transforms[0],
+        emitter: {
+          parts: Array.from({ length: 8 }, (_, index) => ({
+            primitive: gear,
+            combine: "union" as const,
+            pose: {
+              offset: [
+                Number.MAX_VALUE,
+                -Number.MAX_VALUE,
+                Number.MAX_VALUE,
+              ] as [number, number, number],
+              rotate: [
+                index + 0.456789012345678,
+                index + 0.567890123456789,
+                index + 0.67890123456789,
+              ] as [number, number, number],
+              scale: index + 1.123456789012345,
+            },
+          })),
+        },
+      },
+      0,
+      transforms.length,
+    );
+
+    const select = document.querySelector<HTMLSelectElement>(
+      '#transformEditor select[aria-label="Emitter shape"]',
+    )!;
+    expect(select.value).toBe("authored");
+    const capability = document.querySelector(
+      "#transformEditor .shape-capability-note",
+    )?.textContent;
+    expect(capability).toContain(
+      "Points / Flame / Solid: supported shape emitter",
+    );
+    expect(capability).toContain("Surface: unavailable");
+    expect(
+      document.querySelector("#transformEditor .shape-authored-note:last-child")
+        ?.textContent,
+    ).toContain("8192");
+    expect(
+      document.querySelectorAll("#transformEditor .shape-part-card"),
+    ).toHaveLength(0);
     expect(handlers.onTransformEmitterShape).not.toHaveBeenCalled();
   });
 
@@ -2875,7 +3178,7 @@ describe("Ui.renderTransformEditor", () => {
     expect(rotated.parts[0].pose?.rotate?.[0]).toBeCloseTo(Math.PI / 2);
 
     const kind = document.querySelector<HTMLSelectElement>(
-      'select[aria-label="Custom primitive kind"]',
+      'select[aria-label="Shape part primitive kind"]',
     )!;
     kind.value = "gear";
     kind.dispatchEvent(new Event("change"));
