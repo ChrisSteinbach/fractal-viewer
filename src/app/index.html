@@ -277,10 +277,8 @@
 
       <div id="flameStatus" class="hidden">
         <p class="flame-hint">
-          The classic &#8220;fractal flame&#8221; exposure: a soft, glowing 2D
-          image that converges through the frozen camera. For crisp lit
-          surfaces, switch to Solid. The live view is paused while Flame is
-          active — switch back to Points to keep exploring.
+          Flame renders the frozen camera view. Return to Points to keep
+          exploring.
         </p>
         <div id="flameProgress" class="flame-progress">0%</div>
         <p
@@ -293,31 +291,14 @@
 
       <div id="solidStatus" class="hidden">
         <p class="flame-hint">
-          Builds a lit, shadowed solid from the attractor&#8217;s density,
-          colored by the explorer&#8217;s Color Mode or a smooth gradient
-          palette. Keep orbiting while it converges — the light and surface
-          react live.
+          Keep orbiting while Solid converges; lighting responds immediately.
         </p>
         <div id="solidProgress" class="flame-progress">0%</div>
       </div>
 
       <div id="surfaceStatus" class="hidden">
-        <!-- The cost range is the whole story here, so the hint tells it.
-             "Renders instantly" was true of the escape-time and light fold
-             systems and flatly false of the mandelbox class, which the readout
-             directly below this paragraph would then be caught reporting at
-             "Full detail · WebGL 0.4%" — a render the user had just been told
-             was already done reads as a hung one. The dropped "stays fully
-             orbitable" was the same overclaim one notch quieter: you CAN orbit
-             a monster, but every move buys another grinding preview, and the
-             sentence that replaced it says so by describing the move. -->
         <p class="flame-hint">
-          The attractor as a true implicit surface, ray-marched live from a
-          distance estimator — zoom in and detail keeps resolving. With Quick
-          previews on, every move traces a coarse frame that sharpens to full
-          detail once you settle: a moment for most systems, minutes or more for
-          fold-heavy ones like Mandelbox KIFS. The readout below says how far
-          along it is.
+          Quick previews sharpen after you stop moving; progress appears below.
         </p>
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>
         <!-- The preview tier's one-shot escape: shown only while a preview is
@@ -354,13 +335,17 @@
         >
           <summary>Transforms (<span id="transformCount">4</span>)</summary>
           <p class="flame-hint" id="transformTimingHint">
-            Transform edits stay available in every renderer. Points geometry
-            follows Auto-update. After an edit settles, flat Balloon-off Flame
-            and Solid restart; 4D or Balloon geometry waits for the next entry.
-            Surface re-enters without resetting the view and returns to Points
-            if the edited document becomes unsupported. Color and material work
-            runs only where the active renderer consumes it.
+            Geometry follows Auto-update; color changes apply immediately.
           </p>
+          <details class="panel-explainer">
+            <summary>How edits affect renders</summary>
+            <p>
+              Flat Flame and Solid restart after an edit settles. With 4D or
+              Balloon geometry, changes apply the next time you enter that
+              renderer. Surface restarts without resetting the view; an
+              unsupported change returns to Points.
+            </p>
+          </details>
           <div class="btn-row">
             <button class="btn btn-green" id="addBtn" type="button">
               + Add
@@ -370,10 +355,15 @@
             </button>
           </div>
           <p class="flame-hint" id="emitterShapeCatalogHint">
-            Shape catalog: emitter shapes here and trap shapes under Surface →
-            Shape trap share the bundled library and Custom shape composer.
-            Adding one creates and selects a new emitter map.
+            Adds and selects a new emitter transform.
           </p>
+          <details class="panel-explainer">
+            <summary>How emitter shapes work</summary>
+            <p>
+              Emitter shapes and Surface → Shape trap use the same built-in
+              library and Custom shape composer for different purposes.
+            </p>
+          </details>
           <label class="select-label">
             Add emitter shape
             <select
@@ -419,11 +409,16 @@
         <details class="panel-section" id="xaosSection" name="panel-section">
           <summary>Xaos</summary>
           <p id="xaosEditHint" class="flame-note-info">
-            Add an isolated block under Systems; tune its transitions here.
-            Matrix and leak edits update Points live. Flat Flame or Solid
-            restarts when the edit settles; 4D or Balloon changes apply on next
-            entry. Surface re-enters or explains an analyzer refusal.
+            Changes update Points immediately.
           </p>
+          <details class="panel-explainer">
+            <summary>How Xaos works</summary>
+            <p>
+              Add an isolated block under Systems, then tune the links between
+              its transforms here. Leak controls make broad changes; the matrix
+              provides precise control.
+            </p>
+          </details>
           <div id="xaosLeakRows" class="hidden"></div>
           <!-- Nested detail, independent of the top-level accordion: no name,
                so opening the matrix cannot close Xaos (its ancestor). -->
@@ -478,13 +473,16 @@
                in Surface mode. -->
           <summary>Scene color</summary>
           <p id="colorTimingHint" class="flame-hint">
-            The scene's authored color for Points, Solid and 4D Flame. Points
-            edits apply live; an active Solid—or a 4D Flame—using its legacy
-            palette re-accumulates. The Surface view is colored by its own
-            Surface color section instead — except this section's Color
-            Contrast, which still sharpens a Surface Height or Radius source
-            live. Other edits prepare the next applicable view.
+            Changes apply immediately in Points.
           </p>
+          <details class="panel-explainer">
+            <summary>Where scene color is used</summary>
+            <p>
+              Scene color is used by Points, Solid, and 4D Flame. Surface has
+              separate color controls, though Color Contrast also affects its
+              Height and Radius sources.
+            </p>
+          </details>
           <div id="colorModeRow">
             <label class="select-label">
               Color Mode
@@ -508,12 +506,13 @@
                stay together in the Scene color section; top-level accordion
                exclusivity does not decide that placement. -->
           <div id="fourDColorRow" class="hidden">
-            <p class="flame-hint">
-              W-depth color = side of our 3-space:
-              <strong>cool −w · warm +w</strong> · dim gray ≈ w 0 (the legend
-              keys the active choice). Layers add up where the projection
-              overlaps itself.
-            </p>
+            <details class="panel-explainer">
+              <summary>How W-depth color works</summary>
+              <p>
+                Cool and warm colors show opposite sides of W; dim gray is near
+                W&nbsp;=&nbsp;0. Layers add where the projection overlaps.
+              </p>
+            </details>
             <label class="select-label">
               4D Color
               <select id="fourDColor" aria-describedby="colorTimingHint">
@@ -533,10 +532,8 @@
             class="flame-note-info hidden"
             role="status"
           >
-            The flat Color Mode stays saved while this system is non-flat. Use
-            4D Color for the active Points, Flame, and Solid look; its Height,
-            Radius, and Position modes share the ramp, Color Contrast, and Axis
-            Colors below. Surface uses its own Color source.
+            Flat Color Mode stays saved. Use 4D Color here; Surface has its own
+            color controls.
           </p>
 
           <div id="rampPaletteRow" class="hidden">
@@ -559,8 +556,7 @@
                 id="rampCustomPaletteDisclosure"
                 class="custom-palette-disclosure"
               >
-                Shared Custom gradient. Every non-Balloon palette set to Custom
-                uses these stops; Balloon Custom stays separate.
+                Shared custom gradient; Balloon has its own.
               </p>
               <div
                 id="rampCustomPaletteStrip"
@@ -659,10 +655,16 @@
         <details class="panel-section" id="balloonSection" name="panel-section">
           <summary>Balloon</summary>
           <p id="balloonTimingHint" class="flame-hint">
-            Points and Solid apply active Balloon edits live. Flame on/off and
-            active edits restart the exposure. Surface on/off and active palette
-            edits re-enter the render; size and tint stay live.
+            Changes apply immediately in Points.
           </p>
+          <details class="panel-explainer">
+            <summary>How Balloon affects renders</summary>
+            <p>
+              Balloon changes are immediate in Points and Solid. They restart
+              Flame. In Surface, on/off and palette changes restart the render;
+              size and tint stay live.
+            </p>
+          </details>
           <label
             class="checkbox-label"
             id="balloonEchoRow"
@@ -709,8 +711,7 @@
                 id="balloonCustomPaletteDisclosure"
                 class="custom-palette-disclosure"
               >
-                Balloon-only Custom gradient. It does not change the shared
-                gradient used by other palettes.
+                Balloon has its own custom gradient.
               </p>
               <div
                 id="balloonCustomPaletteStrip"
@@ -867,8 +868,7 @@
               id="backgroundCustomPaletteDisclosure"
               class="custom-palette-disclosure"
             >
-              Shared Custom gradient. Every non-Balloon palette set to Custom
-              uses these stops; Balloon Custom stays separate.
+              Shared custom gradient; Balloon has its own.
             </p>
             <div
               id="backgroundCustomPaletteStrip"
@@ -986,13 +986,16 @@
         >
           <summary>Symmetry · 4D</summary>
           <p id="symmetryEditHint" class="flame-hint">
-            4D route: first set Order to 2-fold or more; then choose XW, YW or
-            ZW, or raise Twist above 0. Active Flame and Solid renders restart
-            for edits that stay in the same dimension. If an edit switches
-            between 3D and 4D, regenerate Points before re-entering a render.
-            Surface applies symmetry on its next entry; its button explains
-            eligibility immediately.
+            Changes apply immediately in Points.
           </p>
+          <details class="panel-explainer">
+            <summary>How to add 4D symmetry</summary>
+            <p>
+              Set Order to at least 2-fold, then choose XW, YW, or ZW—or raise
+              Twist above 0. A change between 3D and 4D regenerates Points
+              before another renderer can use it.
+            </p>
+          </details>
           <label class="select-label">
             Order: <span id="symmetryOrderLabel">1-fold</span>
             <input
@@ -1079,11 +1082,17 @@
             />
           </label>
           <p id="scheduleEditHint" class="flame-note-info">
-            A source choice installs an affine-only snapshot, not a live link.
-            Changes update Points live. Flat Flame or Solid restarts when the
-            edit settles; 4D or Balloon changes apply on next entry. Surface
-            re-enters or explains an analyzer refusal.
+            Choosing a source copies it; later source changes do not follow.
+            Changes update Points immediately.
           </p>
+          <details class="panel-explainer">
+            <summary>How the schedule works</summary>
+            <p>
+              System B is an affine-only snapshot. Depth controls how many
+              randomly chosen B maps bend each plotted point after the main
+              system.
+            </p>
+          </details>
         </details>
 
         <!-- Points renderer depth treatment. Glow/Bloom and Depth of Field
@@ -1125,10 +1134,8 @@
             class="flame-note-info hidden"
             role="status"
           >
-            4D Points supports Glow + Bloom, Depth of Field, and its separate
-            fade-to-black toggle. Aerial Haze would add colored fog once per
-            translucent W layer, while Eye-Dome Lighting needs one front/depth
-            surface; those two styles remain unavailable and stay saved.
+            Aerial Haze and Eye-Dome Lighting are unavailable in 4D; those
+            choices stay saved. Use Glow, Depth of Field, or Depth fade.
           </p>
 
           <div id="glowBrightnessRow" class="hidden">
@@ -1205,8 +1212,7 @@
               id="flameCustomPaletteDisclosure"
               class="custom-palette-disclosure"
             >
-              Shared Custom gradient. Every non-Balloon palette set to Custom
-              uses these stops; Balloon Custom stays separate.
+              Shared custom gradient; Balloon has its own.
             </p>
             <div
               id="flameCustomPaletteStrip"
@@ -1317,8 +1323,7 @@
               id="solidCustomPaletteDisclosure"
               class="custom-palette-disclosure"
             >
-              Shared Custom gradient. Every non-Balloon palette set to Custom
-              uses these stops; Balloon Custom stays separate.
+              Shared custom gradient; Balloon has its own.
             </p>
             <div
               id="solidCustomPaletteStrip"
@@ -1358,9 +1363,7 @@
         >
           <summary>Lighting</summary>
           <p id="solidLightingDisclosure" class="flame-hint">
-            Solid keeps an independent lighting look for its voxel volume. These
-            controls update only the Solid renderer, live; Surface lighting is
-            preserved separately.
+            Changes affect only Solid and apply immediately.
           </p>
           <label class="select-label">
             Light Angle: <span id="solidLightAzimuthLabel">135°</span>
@@ -1438,8 +1441,7 @@
                 id="surfaceCustomPaletteDisclosure"
                 class="custom-palette-disclosure"
               >
-                Shared Custom gradient. Every non-Balloon palette set to Custom
-                uses these stops; Balloon Custom stays separate.
+                Shared custom gradient; Balloon has its own.
               </p>
               <div
                 id="surfaceCustomPaletteStrip"
@@ -1542,11 +1544,16 @@
                three-axis consumer rule. Painted by the "Shape trap" color
                source above. -->
           <p id="trapShapeCatalogHint" class="flame-hint">
-            Shape catalog: trap shapes here share the bundled library and Custom
-            shape composer with Transforms → Add emitter shape. Choosing None or
-            a trap shape re-enters Surface; size, position, mode and fade stay
-            live.
+            Choosing a shape restarts Surface; its pose and fade stay live.
           </p>
+          <details class="panel-explainer">
+            <summary>How shape traps work</summary>
+            <p>
+              Trap shapes use the same library and Custom shape composer as
+              Transforms → Add emitter shape, but color or carve the Surface
+              instead of emitting points.
+            </p>
+          </details>
           <label
             class="select-label"
             title="Stamp a shape across the fractal: every orbit step measures its distance to this shape, and the closest approach drives the palette"
@@ -1572,8 +1579,8 @@
                 Use as geometry
               </label>
               <p class="flame-note-info">
-                Geometry is limited to conformal fold-only escape chains. Color
-                trapping still works on power and anisotropic systems.
+                Geometry requires conformal folds; color trapping works on other
+                systems.
               </p>
               <div id="surfaceTrapGeometryLevels" class="hidden">
                 <label
@@ -1706,9 +1713,7 @@
         >
           <summary>Lighting</summary>
           <p id="surfaceLightingDisclosure" class="flame-hint">
-            Surface keeps an independent lighting look for its analytic
-            material. These controls update only the Surface renderer, live;
-            Solid lighting is preserved separately, and Environment is
+            Changes affect only Surface and apply immediately. Environment is
             Surface-only.
           </p>
           <label class="select-label">
@@ -1937,8 +1942,8 @@
               role="status"
               aria-live="polite"
             >
-              Used for full-detail settles and Save PNG. Quick previews stay at
-              1 sample/pixel.
+              Applies to settled renders and PNG saves; quick previews use 1
+              sample/pixel.
             </p>
           </div>
         </details>
@@ -1988,18 +1993,16 @@
             <span class="control-scope" aria-label="Scope: Saved view"
               >Saved view</span
             >
-            Your current camera framing is included when you Copy Link, save a
-            scene file, or add to Collection or Timeline, and is restored with
-            the current scene on reload.
+            Camera framing is saved with links, scene files, Collection entries,
+            and Timeline keyframes, and restored on reload.
           </p>
           <p class="flame-hint view-scope-note hidden" id="fourDSavedViewScope">
             <span class="control-scope" aria-label="Scope: Saved view"
               >Saved view</span
             >
-            Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll turns
-            ZW. This rotation and the slice framing are included when you Copy
-            Link, save a scene file, or add to Collection or Timeline, and are
-            restored with the current scene on reload.
+            Shift-drag rotates XW/YW; Shift-scroll rotates ZW. Rotation and
+            slice framing are saved with links, files, Collection entries,
+            Timeline keyframes, and restored on reload.
           </p>
           <p class="flame-hint hidden" id="automaticMotionParkedHint">
             Surface parks automatic motion so the render can settle. Manual
@@ -2019,9 +2022,8 @@
             >
           </label>
           <p class="flame-hint" id="autoMotionMechanismNote">
-            Orbits the camera in 3D. In 4D, XY + ZW tumble replaces automatic
-            camera orbit to reveal the hidden axis; manual camera orbit remains
-            available.
+            In 4D, tumble replaces automatic camera orbit to reveal hidden axes;
+            manual camera orbit remains available.
           </p>
           <div id="autoOrbitRow">
             <label class="select-label">
@@ -2126,9 +2128,8 @@
           <summary>Systems</summary>
           <div class="editor-group-title">Replace or explore</div>
           <p id="presetTimingHint" class="flame-note-info">
-            Loads morph in Points, then an authored Flame, Solid, or Surface
-            preset enters that renderer when its cloud lands. Random Drift stays
-            in Points; Collection Drift follows saved renderer tags.
+            Presets morph in Points, then open their saved renderer. Random
+            Drift stays in Points; Collection Drift follows each saved scene.
           </p>
           <label class="select-label">
             Replace with preset
@@ -2234,9 +2235,8 @@
                aria-describedby preserves the explicit control association. -->
           <div class="editor-group-title">Combine systems</div>
           <p id="xaosAddHint" class="flame-note-info">
-            Copies the chosen preset, saved scene, or current system into a
-            seated isolated block and rebuilds through Points; the source is not
-            a live link. Edit its transition links under Xaos.
+            Adds a separate copy of the chosen system; later source changes do
+            not carry over. Edit its links in Xaos.
           </p>
           <label class="select-label">
             System to add
@@ -2374,8 +2374,7 @@
           <div id="timelineStatus" class="timeline-status hidden"></div>
           <div id="timelineList" class="timeline-list"></div>
           <p id="timelineEmpty" class="timeline-empty">
-            📍 Add keyframe captures the current view. Build a sequence, then ▶
-            Play it — or ⏺ Export it as a video clip.
+            Add keyframes, then play the sequence or export it as a video.
           </p>
         </details>
 
@@ -2402,8 +2401,8 @@
             </select>
           </label>
           <p id="captureSizeTimingHint" class="flame-note-info">
-            Points, Solid, and Surface use this size on the next capture. An
-            active Flame restarts at the chosen size.
+            Used by the next capture. Changing it during Flame restarts the
+            render.
           </p>
           <button class="btn btn-ghost" id="savePngBtn" type="button">
             ⤓ Save PNG
@@ -2468,9 +2467,7 @@
             aria-hidden="true"
             tabindex="-1"
           />
-          <p class="flame-hint">
-            Files also load by dropping them anywhere on the page.
-          </p>
+          <p class="flame-hint">Or drop a file anywhere on the page.</p>
         </details>
       </div>
     </div>

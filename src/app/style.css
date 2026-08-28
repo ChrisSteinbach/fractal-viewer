@@ -478,6 +478,28 @@ body {
    The summaries inherit the look of the h3 headings they replaced; the
    native marker is the collapsed/expanded affordance, same as the editor's
    "4D" group. */
+
+/* Optional teaching stays available without occupying the everyday control
+   surface. These disclosures are deliberately unnamed: they are independent
+   of both the top-level panel accordion and the transform editor groups. The
+   native marker and focus outline remain the keyboard/touch affordance. */
+.panel-explainer {
+  margin: -4px 0 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.panel-explainer > summary {
+  color: var(--text-faint);
+  cursor: pointer;
+  user-select: none;
+}
+
+.panel-explainer > p {
+  margin: 6px 0 0;
+}
+
 .panel-section > summary {
   margin: 20px 0 9px;
   color: var(--text-faint);

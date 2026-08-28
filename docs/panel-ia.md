@@ -120,6 +120,16 @@ consumers with home.
   controls warn before discarding accumulated work; next-entry controls say
   which renderer must be re-entered; refused controls remain disabled with the
   adjacent reason. Never silently queue an edit whose result appears later.
+- Keep **operational copy** visible and concise: the consequence in the active
+  renderer, a refusal reason and recovery action, progress, warning, or error.
+  Stable IDs referenced by `aria-describedby` stay on these rendered nodes;
+  never move them into a closed disclosure.
+- Put optional **instructional copy** behind an initially closed, unnamed
+  native disclosure inside the owning section. It may explain the wider
+  cross-renderer model, terminology, or examples, but must not repeat labels
+  or become the only place an immediate consequence is disclosed. Preserve
+  the native marker and keyboard focus treatment. Delete redundant prose
+  instead of moving every old paragraph into help.
 
 Hiding and disabling therefore mean different things. Hidden detail has no
 meaning in the parent's current state. Disabled authored state still has
