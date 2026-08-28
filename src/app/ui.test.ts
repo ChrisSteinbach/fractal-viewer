@@ -3017,6 +3017,15 @@ describe("Ui.renderTransformEditor", () => {
         '#transformEditor button[aria-label="Remove shape part 1"]',
       )?.disabled,
     ).toBe(true);
+    const shapeActions = document.querySelectorAll<HTMLButtonElement>(
+      "#transformEditor .shape-action-btn",
+    );
+    expect(shapeActions).toHaveLength(4);
+    expect(
+      [...shapeActions].every((button) =>
+        button.classList.contains("btn-ghost"),
+      ),
+    ).toBe(true);
     document
       .querySelector<HTMLButtonElement>(
         '#transformEditor button[aria-label="Add shape part"]',

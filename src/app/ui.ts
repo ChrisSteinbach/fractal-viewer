@@ -6479,7 +6479,7 @@ export class Ui {
       ): void => {
         const button = this.doc.createElement("button");
         button.type = "button";
-        button.className = "btn shape-action-btn";
+        button.className = "btn btn-ghost shape-action-btn";
         button.textContent = text;
         button.setAttribute("aria-label", label);
         button.disabled = disabled;
@@ -6572,7 +6572,7 @@ export class Ui {
     composerActions.className = "shape-composer-actions";
     const add = this.doc.createElement("button");
     add.type = "button";
-    add.className = "btn shape-action-btn";
+    add.className = "btn btn-ghost shape-action-btn";
     add.textContent = `+ Add part (${draft.parts.length}/${MAX_SHAPE_PARTS})`;
     add.setAttribute("aria-label", "Add shape part");
     add.disabled = draft.parts.length >= MAX_SHAPE_PARTS;
