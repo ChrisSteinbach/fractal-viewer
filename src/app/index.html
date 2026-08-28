@@ -1290,57 +1290,6 @@
           name="panel-section"
         >
           <summary>Scene color</summary>
-          <label class="select-label">
-            Color source (restarts render)
-            <select id="solidPalette">
-              <option value="legacy">Color mode</option>
-              <option value="spectrum">Spectrum</option>
-              <option value="sunset">Sunset</option>
-              <option value="dusk">Dusk</option>
-              <option value="lagoon">Lagoon</option>
-              <option value="ember">Ember</option>
-              <option value="aurora">Aurora</option>
-              <option value="moss">Moss</option>
-              <option value="custom">Custom</option>
-            </select>
-          </label>
-          <div id="solidCustomPaletteRow" class="custom-palette-row hidden">
-            <p
-              id="solidCustomPaletteDisclosure"
-              class="custom-palette-disclosure"
-            >
-              Shared custom gradient; Balloon has its own.
-            </p>
-            <div
-              id="solidCustomPaletteStrip"
-              class="custom-palette-strip"
-            ></div>
-            <div
-              id="solidCustomPaletteStops"
-              class="custom-palette-stops"
-            ></div>
-            <div class="custom-palette-actions">
-              <button
-                class="btn btn-ghost"
-                id="solidCustomPaletteRemove"
-                type="button"
-                title="Remove the last color stop"
-                aria-describedby="solidCustomPaletteDisclosure"
-              >
-                − Stop
-              </button>
-              <button
-                class="btn btn-ghost"
-                id="solidCustomPaletteAdd"
-                type="button"
-                title="Add a color stop"
-                aria-describedby="solidCustomPaletteDisclosure"
-              >
-                + Stop
-              </button>
-            </div>
-          </div>
-
           <div id="solidColorModeRow" class="hidden">
             <label class="select-label">
               Color Mode
@@ -1350,6 +1299,7 @@
                 <option value="radius">By Radius (warm→cool)</option>
                 <option value="position">By Position (XYZ→RGB)</option>
                 <option value="uniform">Uniform Cyan</option>
+                <option value="orbit">Orbit palette</option>
               </select>
             </label>
           </div>
@@ -1366,8 +1316,61 @@
                 <option value="radius">By 4D Radius (warm→cool)</option>
                 <option value="position">By Position (XYZ→RGB)</option>
                 <option value="uniform">Uniform Cyan</option>
+                <option value="orbit">Orbit palette</option>
               </select>
             </label>
+          </div>
+
+          <div id="solidOrbitPaletteRow" class="hidden">
+            <label class="select-label">
+              Palette (restarts render)
+              <select id="solidPalette">
+                <option value="spectrum">Spectrum</option>
+                <option value="sunset">Sunset</option>
+                <option value="dusk">Dusk</option>
+                <option value="lagoon">Lagoon</option>
+                <option value="ember">Ember</option>
+                <option value="aurora">Aurora</option>
+                <option value="moss">Moss</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <div id="solidCustomPaletteRow" class="custom-palette-row hidden">
+              <p
+                id="solidCustomPaletteDisclosure"
+                class="custom-palette-disclosure"
+              >
+                Shared custom gradient; Balloon has its own.
+              </p>
+              <div
+                id="solidCustomPaletteStrip"
+                class="custom-palette-strip"
+              ></div>
+              <div
+                id="solidCustomPaletteStops"
+                class="custom-palette-stops"
+              ></div>
+              <div class="custom-palette-actions">
+                <button
+                  class="btn btn-ghost"
+                  id="solidCustomPaletteRemove"
+                  type="button"
+                  title="Remove the last color stop"
+                  aria-describedby="solidCustomPaletteDisclosure"
+                >
+                  − Stop
+                </button>
+                <button
+                  class="btn btn-ghost"
+                  id="solidCustomPaletteAdd"
+                  type="button"
+                  title="Add a color stop"
+                  aria-describedby="solidCustomPaletteDisclosure"
+                >
+                  + Stop
+                </button>
+              </div>
+            </div>
           </div>
 
           <div id="solidRampPaletteRow" class="hidden">

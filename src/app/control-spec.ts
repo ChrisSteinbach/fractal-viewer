@@ -703,6 +703,59 @@ const balloonPaletteEffect: ControlEffect = (state, fx, previous) => {
   applyBalloonPaletteEffects(state, fx);
 };
 
+/** UI-only sentinel that folds Solid's structural palette override into its
+ * Color Mode selector. It never enters AppState or the scene wire. */
+export const SOLID_ORBIT_COLOR_MODE = "orbit" as const;
+
+function solidColorModeValue(
+  state: AppState,
+  dimension: "flat" | "fourD",
+): string {
+  if (state.solid.paletteId !== "legacy") return SOLID_ORBIT_COLOR_MODE;
+  return dimension === "flat" ? state.colorMode : state.fourDColor;
+}
+
+function setSolidColorModeValue(
+  state: AppState,
+  raw: string,
+  dimension: "flat" | "fourD",
+): AppState {
+  if (raw === SOLID_ORBIT_COLOR_MODE) {
+    return state.solid.paletteId === "legacy"
+      ? setSolidPaletteId(state, DEFAULT_SOLID_PALETTE)
+      : state;
+  }
+  const withMode =
+    dimension === "flat"
+      ? setColorMode(state, raw as ColorMode)
+      : setFourDColor(state, raw as FourDColorMode);
+  return setSolidPaletteId(withMode, "legacy");
+}
+
+function solidColorModeEffect(dimension: "flat" | "fourD"): ControlEffect {
+  return (state, fx, previous) => {
+    const modeChanged =
+      dimension === "flat"
+        ? state.colorMode !== previous.colorMode
+        : state.fourDColor !== previous.fourDColor;
+    // Stage a newly selected mode while the old orbit palette still owns the
+    // worker. The following palette command then restarts exactly once with
+    // those staged inputs when it switches the worker back to mode coloring.
+    if (modeChanged) {
+      applyRenderColorInputEffects(state, fx, {
+        points: dimension === "flat" ? "flat" : "fourD",
+      });
+    }
+    if (state.solid.paletteId !== previous.solid.paletteId) {
+      fx.postVoxel({
+        type: "setPalette",
+        palette: resolvePalette(state.solid.paletteId, state.customPalette),
+      });
+      fx.trackAutoBackground();
+    }
+  };
+}
+
 export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   // ——— Explorer: appearance ———
   {
@@ -763,16 +816,15 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: (s, fx) => applyRenderColorInputEffects(s, fx, { points: "flat" }),
   },
   {
-    // Solid owns a second presentation of the flat color-mode choice. The
-    // document value remains shared so a scene has one authored definition,
-    // but this control lives in Solid's Scene color section and always pushes
-    // the active legacy-palette worker immediately.
+    // Solid presents the same flat modes as Points plus one UI-only Orbit
+    // palette branch. That branch maps to solid.paletteId; every ordinary
+    // mode maps back to the existing legacy sentinel and shared definition.
     kind: "select",
     id: "solidColorMode",
     view: "flat",
-    read: (s) => s.colorMode,
-    apply: (s, raw) => setColorMode(s, raw as ColorMode),
-    effect: (s, fx) => applyRenderColorInputEffects(s, fx, { points: "flat" }),
+    read: (s) => solidColorModeValue(s, "flat"),
+    apply: (s, raw) => setSolidColorModeValue(s, raw, "flat"),
+    effect: solidColorModeEffect("flat"),
   },
   {
     // The ramp-palette select: swaps the height/radius color-mode ramps'
@@ -799,8 +851,8 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   },
   {
     // Solid's renderer-owned presentation of the same authored ramp. It is
-    // shown only when Color source is Color mode and that mode consumes a
-    // one-dimensional ramp; the worker command decides whether to restart.
+    // shown only when the leading Color Mode consumes a one-dimensional ramp;
+    // the worker command decides whether to restart.
     kind: "select",
     id: "solidRampPalette",
     read: (s) => s.rampPaletteId,
@@ -1124,15 +1176,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: (s, fx) => applyRenderColorInputEffects(s, fx, { points: "fourD" }),
   },
   {
-    // Solid's non-flat sibling of solidColorMode. Its visibility is further
-    // gated by the Solid Color source in Ui; this view guard is the mutation
-    // backstop for synthetic events.
+    // Non-flat twin of Solid's flattened selector: the Points 4D choices plus
+    // Orbit palette, with the same wire mapping as the flat control above.
     kind: "select",
     id: "solidFourDColor",
     view: "nonFlat",
-    read: (s) => s.fourDColor,
-    apply: (s, raw) => setFourDColor(s, raw as FourDColorMode),
-    effect: (s, fx) => applyRenderColorInputEffects(s, fx, { points: "fourD" }),
+    read: (s) => solidColorModeValue(s, "fourD"),
+    apply: (s, raw) => setSolidColorModeValue(s, raw, "fourD"),
+    effect: solidColorModeEffect("fourD"),
   },
   {
     // The 4D camera-depth fade edits the persisted scene document — authored

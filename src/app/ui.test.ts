@@ -273,9 +273,9 @@ describe("palette field vocabulary", () => {
     },
     {
       id: "solidPalette",
-      label: "Color source (restarts render)",
-      firstValue: "legacy",
-      firstLabel: "Color mode",
+      label: "Palette (restarts render)",
+      firstValue: "spectrum",
+      firstLabel: "Spectrum",
     },
     {
       id: "solidRampPalette",
@@ -355,15 +355,21 @@ describe("palette field vocabulary", () => {
     ).not.toBe("solidSurfaceSection");
   });
 
-  it("keeps Solid's mirrored color registries aligned with Points", () => {
-    const values = (id: string): string[] =>
+  it("keeps Solid's color registries aligned with Points plus Orbit palette", () => {
+    const entries = (id: string): [string, string][] =>
       Array.from(
         document.querySelectorAll<HTMLOptionElement>(`#${id} option`),
-      ).map((option) => option.value);
+      ).map((option) => [option.value, option.textContent ?? ""]);
 
-    expect(values("solidColorMode")).toEqual(values("colorMode"));
-    expect(values("solidFourDColor")).toEqual(values("fourDColor"));
-    expect(values("solidRampPalette")).toEqual(values("rampPalette"));
+    expect(entries("solidColorMode")).toEqual([
+      ...entries("colorMode"),
+      ["orbit", "Orbit palette"],
+    ]);
+    expect(entries("solidFourDColor")).toEqual([
+      ...entries("fourDColor"),
+      ["orbit", "Orbit palette"],
+    ]);
+    expect(entries("solidRampPalette")).toEqual(entries("rampPalette"));
   });
 
   it("labels each legacy wire sentinel for its local meaning", () => {
@@ -375,7 +381,6 @@ describe("palette field vocabulary", () => {
         "rampPalette",
         "backgroundFlamePalette",
         "flamePalette",
-        "solidPalette",
         "solidRampPalette",
       ],
     );
@@ -383,7 +388,6 @@ describe("palette field vocabulary", () => {
       "Classic",
       "Classic",
       "Classic",
-      "Color mode",
       "Classic",
     ]);
   });
@@ -7222,12 +7226,16 @@ describe("Ui solid render controls", () => {
     expect(current().solid.resolution).toBe(224);
   });
 
-  // Followed by the Custom sentinel last, mirroring #flamePalette.
-  it("offers exactly the registered palettes plus Custom, in order", () => {
+  // Orbit palettes exclude the legacy wire sentinel: ordinary coloring is
+  // selected from Solid's leading Color Mode control instead.
+  it("offers exactly the registered orbit palettes plus Custom, in order", () => {
     const values = Array.from(
       document.querySelectorAll<HTMLOptionElement>("#solidPalette option"),
     ).map((o) => o.value);
-    expect(values).toEqual([...FLAME_PALETTE_IDS, CUSTOM_PALETTE_ID]);
+    expect(values).toEqual([
+      ...FLAME_PALETTE_IDS.filter((id) => id !== "legacy"),
+      CUSTOM_PALETTE_ID,
+    ]);
   });
 
   it("reflects the palette id into the select", () => {
@@ -7264,7 +7272,7 @@ describe("Ui solid render controls", () => {
       "solidColorModeRow",
     ],
   ] as const)(
-    "restores the %s dimensional color selector inside Solid when Color source is Color mode",
+    "shows the %s dimensional Color selector first inside Solid",
     (_dimension, transforms, visibleRow, hiddenRow) => {
       const base = initialState(true);
       const ui = new Ui(document);
@@ -7281,22 +7289,61 @@ describe("Ui solid render controls", () => {
       );
       expect(byId(visibleRow).classList.contains("hidden")).toBe(false);
       expect(byId(hiddenRow).classList.contains("hidden")).toBe(true);
+      expect(byId("solidOrbitPaletteRow").classList.contains("hidden")).toBe(
+        true,
+      );
     },
   );
 
-  it("hides mode-dependent Solid controls while an orbit palette overrides them", () => {
+  it("presents Orbit palette as the additional flat mode and reveals Palette", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
 
+    expect(byId("solidColorModeRow").classList.contains("hidden")).toBe(false);
+    expect((byId("solidColorMode") as HTMLSelectElement).value).toBe("orbit");
+    expect(byId("solidFourDColorRow").classList.contains("hidden")).toBe(true);
+    expect(byId("solidOrbitPaletteRow").classList.contains("hidden")).toBe(
+      false,
+    );
     for (const id of [
-      "solidColorModeRow",
-      "solidFourDColorRow",
       "solidRampPaletteRow",
       "solidPositionColorsRow",
       "solidColorGammaRow",
     ]) {
       expect(byId(id).classList.contains("hidden"), id).toBe(true);
     }
+  });
+
+  it("presents Orbit palette as the additional 4D mode", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "solid",
+      transforms: nonFlatTransforms(),
+    });
+
+    expect(byId("solidColorModeRow").classList.contains("hidden")).toBe(true);
+    expect(byId("solidFourDColorRow").classList.contains("hidden")).toBe(false);
+    expect((byId("solidFourDColor") as HTMLSelectElement).value).toBe("orbit");
+    expect(byId("solidOrbitPaletteRow").classList.contains("hidden")).toBe(
+      false,
+    );
+  });
+
+  it("maps Solid's flattened mode selector onto mode and orbit-palette state", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const mode = byId("solidColorMode") as HTMLSelectElement;
+
+    mode.value = "height";
+    mode.dispatchEvent(new Event("change"));
+    expect(current().colorMode).toBe("height");
+    expect(current().solid.paletteId).toBe("legacy");
+
+    mode.value = "orbit";
+    mode.dispatchEvent(new Event("change"));
+    expect(current().solid.paletteId).toBe("spectrum");
   });
 
   it.each([
