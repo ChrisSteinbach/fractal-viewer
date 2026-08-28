@@ -609,7 +609,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Catalog meshes are prepared lazily and their exact nearest/sign queries
     use a deterministic identity-cached BVH; Surface atlases contain only the
     active scene's canonical id set, preserving stable catalog dispatch while
-    analytic scenes allocate and upload nothing. Proof and cold-bake budget:
+    analytic scenes allocate and upload nothing. Two-scene cache proof:
     `docs/mesh-sdf-delivery.md`.
   - `surface-de.ts` — surface render's CPU oracle: `analyzeSurfaceSystem`
     (eligibility gate: eligible/degraded/ineligible + reasons),

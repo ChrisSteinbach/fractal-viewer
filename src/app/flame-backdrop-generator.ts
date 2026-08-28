@@ -37,6 +37,7 @@ export type FlameBackdropParams = Pick<
   | "plane"
   | "twist"
   | "fourD"
+  | "meshAssets"
 >;
 
 /** One immutable, top-origin RGBA backdrop. Structurally compatible with

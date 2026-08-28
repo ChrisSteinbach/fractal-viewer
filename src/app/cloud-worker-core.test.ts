@@ -133,14 +133,31 @@ describe("generateCloud 3D", () => {
     expect(hasMeshAsset(CLOUD_MESH_ID)).toBe(false);
   });
 
-  it("rejects source batches above the scene budget", () => {
-    expect(() =>
-      generateCloud(
-        cloudRequest({
-          meshAssets: Array.from({ length: 5 }, () => meshSource()),
-        }),
-      ),
-    ).toThrow(/too many custom mesh sources/);
+  it("accepts a two-scene transient set and rejects a ninth source", () => {
+    const ids = Array.from(
+      { length: 9 },
+      (_, index) =>
+        `mesh-sha256-${index.toString(16).padStart(64, "0")}` as const,
+    );
+    try {
+      expect(
+        generateCloud(
+          cloudRequest({
+            transforms: [],
+            meshAssets: ids.slice(0, 8).map(meshSource),
+          }),
+        ).count,
+      ).toBe(0);
+      expect(() =>
+        generateCloud(
+          cloudRequest({
+            meshAssets: ids.map(meshSource),
+          }),
+        ),
+      ).toThrow(/too many custom mesh sources/);
+    } finally {
+      for (const id of ids) uninstallCustomMeshAsset(id);
+    }
   });
 
   it("rejects a conflicting wire for an id already installed in the worker", () => {
@@ -159,9 +176,13 @@ describe("generateCloud 3D", () => {
       expect(() =>
         generateCloud({ ...request, meshAssets: [conflicting] }),
       ).toThrow(/conflicts with installed source/);
-      expect(generateCloud({ ...request, meshAssets: undefined }).count).toBe(
-        20,
-      );
+      expect(
+        generateCloud({
+          ...request,
+          meshAssets: undefined,
+          meshAssetIds: [CLOUD_MESH_ID],
+        }).count,
+      ).toBe(20);
     } finally {
       uninstallCustomMeshAsset(CLOUD_MESH_ID);
     }

@@ -165,12 +165,20 @@ import {
 } from "../fractal/custom-mesh";
 import {
   bakeMeshSdf,
+  hasMeshAsset,
+  hasMeshSdfBake,
+  installCustomMeshAsset,
   installSerializedCustomMeshAsset,
   installSerializedMeshSdfBake,
+  MAX_CUSTOM_MESH_RUNTIME_ASSETS,
+  pinCustomMeshAssets,
+  prepareWorkerValidatedCustomMeshAsset,
+  setPinnedCustomMeshAssets,
   serializeCustomMeshAsset,
   serializeMeshSdfBake,
   type SerializedMeshSdfBake,
   type SerializedPreparedMeshAsset,
+  touchInstalledCustomMeshAssets,
 } from "../fractal/mesh-shapes";
 import {
   CustomMeshImportCancelledError,
@@ -191,6 +199,7 @@ import type { ExportRun } from "./export-progress";
 import { createExportWait } from "./export-wait";
 import { EditSession, SAVE_DEBOUNCE_MS } from "./edit-session";
 import type { ViewPose } from "./history";
+import { LruMap } from "./lru-map";
 import { RenderSession } from "./render-session";
 import {
   createCanvasRecorder,
@@ -585,21 +594,36 @@ async function main(): Promise<void> {
   const panelOpen = window.innerWidth > MOBILE_BREAKPOINT;
   const saved = loadScene();
   let customMeshStore: CustomMeshStore | null = null;
-  const customMeshWireCache = new Map<string, SerializedPreparedMeshAsset>();
-  const customMeshBakeWireCache = new Map<string, SerializedMeshSdfBake>();
+  const customMeshWireCache = new LruMap<string, SerializedPreparedMeshAsset>(
+    MAX_CUSTOM_MESH_RUNTIME_ASSETS,
+  );
+  const customMeshBakeWireCache = new LruMap<string, SerializedMeshSdfBake>(
+    MAX_CUSTOM_MESH_RUNTIME_ASSETS,
+  );
   const assetStore = (): CustomMeshStore =>
     (customMeshStore ??= new CustomMeshStore());
   const customMeshWires = (
     snapshot: SceneSnapshot,
-  ): SerializedPreparedMeshAsset[] =>
-    sceneCustomMeshIds(snapshot).map((id) => {
+  ): SerializedPreparedMeshAsset[] => {
+    const ids = sceneCustomMeshIds(snapshot);
+    touchInstalledCustomMeshAssets(ids);
+    return ids.map((id) => {
       let wire = customMeshWireCache.get(id);
       if (!wire) {
         wire = serializeCustomMeshAsset(id);
         customMeshWireCache.set(id, wire);
+      } else if (!hasMeshAsset(id)) {
+        // Source-wire retention and the prepared-asset registry have
+        // independent LRU lifetimes. Reinstall from the already validated
+        // local wire when those lifetimes cross instead of treating a cache
+        // hit as proof that the live registry still owns the source.
+        installCustomMeshAsset(prepareWorkerValidatedCustomMeshAsset(wire));
+        const bakeWire = customMeshBakeWireCache.get(id);
+        if (bakeWire) installSerializedMeshSdfBake(bakeWire);
       }
       return wire;
     });
+  };
   const customMeshBakeWires = (
     snapshot: SceneSnapshot,
   ): SerializedMeshSdfBake[] =>
@@ -610,6 +634,8 @@ async function main(): Promise<void> {
           bakeMeshSdf(id, CUSTOM_MESH_SDF_RESOLUTION),
         );
         customMeshBakeWireCache.set(id, wire);
+      } else if (!hasMeshSdfBake(id, CUSTOM_MESH_SDF_RESOLUTION)) {
+        installSerializedMeshSdfBake(wire);
       }
       return wire;
     });
@@ -628,6 +654,7 @@ async function main(): Promise<void> {
   let state: AppState = saved
     ? fromSnapshot(saved, initialState(panelOpen))
     : initialState(panelOpen);
+  setPinnedCustomMeshAssets(sceneCustomMeshIds(toSnapshot(state)));
   const orbit = new OrbitCamera(BOOT_CAMERA_POSITION);
   const ui = new Ui(document);
   const surfaceSamplesOverride = parseSurfaceSamplesOverride(
@@ -1238,6 +1265,7 @@ async function main(): Promise<void> {
   // looping ("collection" — see advanceCollectionLeg). Set by whichever
   // affordance starts the show; meaningless (and untouched) while idle.
   let driftSource: "random" | "collection" = "random";
+  let collectionPlaybackMeshRelease: (() => void) | null = null;
   // The id of the collection entry the show most recently departed toward —
   // SceneCollection.after's loop cursor. Null'd when a collection show
   // starts, so every show plays from the gallery's front.
@@ -1268,10 +1296,20 @@ async function main(): Promise<void> {
     show: driftShow,
     reducedMotion: prefersReducedMotion,
     onStopped: (notify) => {
+      collectionPlaybackMeshRelease?.();
+      collectionPlaybackMeshRelease = null;
       ui.setDriftActive(false);
       if (notify) ui.flashToast("Drift stopped");
     },
   });
+
+  /** A collection show resolves the live gallery at every leg. Any semantic
+   * collection mutation must therefore stop it first, releasing the exact
+   * source set preflighted for that run before a new entry can join the
+   * sequence. Thumbnail-only patches are deliberately exempt. */
+  function stopCollectionPlaybackForMutation(): void {
+    if (driftSource === "collection") driftPolicy.stop({ notify: true });
+  }
 
   // One drift leg, passed to driftPolicy.advance at the poll site: press
   // Surprise Me — or, for a collection show, load the next saved scene — on
@@ -1413,13 +1451,27 @@ async function main(): Promise<void> {
   // are mutually exclusive: each start stops the other, and stopShows() is
   // the one helper every shared "user reached in" chokepoint calls.
   const timeline = new TimelineStore();
+  const timelinePlaybackSignature = (): string =>
+    JSON.stringify([
+      timeline.seed,
+      timeline.all().map(({ id, encoded, morphMs, holdMs, mode }) => ({
+        id,
+        encoded,
+        morphMs,
+        holdMs,
+        mode,
+      })),
+    ]);
   // nowMs, not performance.now(): an offline export drives the same player
   // on the virtual clock.
   const timelinePlayer = new TimelinePlayer(nowMs);
+  let timelinePlaybackMeshRelease: (() => void) | null = null;
   const timelinePolicy = new DriftPolicy({
     show: timelinePlayer,
     reducedMotion: prefersReducedMotion,
     onStopped: (notify) => {
+      timelinePlaybackMeshRelease?.();
+      timelinePlaybackMeshRelease = null;
       ui.setTimelineActive(false);
       if (notify) ui.flashToast("Timeline stopped");
       // An OFFLINE export run needs nothing here beyond a park wake: its
@@ -1533,6 +1585,8 @@ async function main(): Promise<void> {
    * panel closed when playback started, so nothing else on screen says so.
    */
   function finishTimelinePlayback(): void {
+    timelinePlaybackMeshRelease?.();
+    timelinePlaybackMeshRelease = null;
     ui.setTimelineActive(false);
     if (offlineExport !== null) {
       // The offline export's natural end: the driver sees the player inactive
@@ -1589,7 +1643,7 @@ async function main(): Promise<void> {
     );
   }
 
-  async function startOfflineExport(): Promise<void> {
+  async function startOfflineExport(signature: string): Promise<void> {
     offlineExportPending = true;
     try {
       // Pin the render resolution BEFORE reading the canvas size — the
@@ -1608,12 +1662,15 @@ async function main(): Promise<void> {
       // and SAY so — the silent abort read as a dead Export button. Above
       // BOTH branches on purpose: the no-H.264 fallback below used to
       // restart the raced run from leg 0 as a recorded export.
-      if (timelinePlayer.active || timeline.size === 0) {
+      const timelineChanged = timelinePlaybackSignature() !== signature;
+      if (timelinePlayer.active || timeline.size === 0 || timelineChanged) {
         session?.abort();
         ui.flashToast(
           timelinePlayer.active
             ? "Export abandoned — playback already started"
-            : "Export abandoned — the timeline is empty",
+            : timeline.size === 0
+              ? "Export abandoned — the timeline is empty"
+              : "Export abandoned — the timeline changed",
         );
         return;
       }
@@ -1632,6 +1689,10 @@ async function main(): Promise<void> {
       exportFailedToast(err);
     } finally {
       offlineExportPending = false;
+      if (!timelinePlayer.active) {
+        timelinePlaybackMeshRelease?.();
+        timelinePlaybackMeshRelease = null;
+      }
     }
   }
 
@@ -2137,17 +2198,42 @@ async function main(): Promise<void> {
     // Supersede any coalesced pending run, exactly like regenerate() does —
     // the morph's own per-frame requests take over from here.
     regenScheduler.cancel();
-    morphTween.start(
+    const target = currentMorphSystem();
+    const snapped = morphTween.start(
       from,
-      currentMorphSystem(),
+      target,
       seed ?? rollSeed(),
       // nowMs, not performance.now(): a timeline leg's morph must start on
       // the offline export's virtual clock, and animate() samples it with the
       // same clock.
       nowMs(),
       durationMs,
+      (live, next) => {
+        const ids = new Set([
+          ...sceneCustomMeshIds(morphSnapshot(live)),
+          ...sceneCustomMeshIds(morphSnapshot(next)),
+        ]);
+        return ids.size <= MAX_CUSTOM_MESH_RUNTIME_ASSETS;
+      },
     );
+    // A rapidly chained A -> B -> C morph can otherwise retain the union of
+    // the live A/B intermediate and C, exceeding the explicit two-scene
+    // working set. Snap to B first, then continue B -> C under the same seed.
+    if (snapped) requestMorphSample(snapped);
     morphFinalFit = fit;
+  }
+
+  /** Project a morph system through the same scene dependency collector used
+   * by cloudParams. The live target schedule remains in force during a
+   * morph, while the interpolated transforms/final/trap replace its authored
+   * endpoints. */
+  function morphSnapshot(system: MorphSystem): SceneSnapshot {
+    return {
+      ...toSnapshot(state),
+      transforms: system.transforms,
+      finalTransform: system.finalTransform ?? undefined,
+      shapeTrap: system.shapeTrap ?? undefined,
+    };
   }
 
   /** The attractor-shaping subset of the live document (morph.ts's
@@ -2216,11 +2302,9 @@ async function main(): Promise<void> {
   ): CloudParams {
     const { transforms, finalTransform, symmetry } =
       morph?.system ?? currentMorphSystem();
-    const meshAssets = customMeshWires({
-      ...toSnapshot(state),
-      transforms,
-      finalTransform: finalTransform ?? undefined,
-    });
+    const meshAssets = customMeshWires(
+      morph ? morphSnapshot(morph.system) : toSnapshot(state),
+    );
     return {
       transforms,
       finalTransform,
@@ -5980,6 +6064,10 @@ async function main(): Promise<void> {
     pendingTransformEdits.clear();
   }
 
+  function pinCurrentCustomMeshes(): void {
+    setPinnedCustomMeshAssets(sceneCustomMeshIds(toSnapshot(state)));
+  }
+
   function applyTransformInput(
     target: TransformEditTarget,
     applyChange: () => void,
@@ -5997,6 +6085,7 @@ async function main(): Promise<void> {
     stopShows({ notify: true });
     editSession.beginEdit();
     applyChange();
+    pinCurrentCustomMeshes();
     synchronize();
     const document = transformEditSnapshot();
     const eligibility = refreshSurfaceEligibility();
@@ -6028,6 +6117,7 @@ async function main(): Promise<void> {
     const previous = transformEditSnapshot();
     editSession.beginEdit("tweak");
     applyReducer();
+    pinCurrentCustomMeshes();
     const document = transformEditSnapshot();
     const plan = transformEditPlan(previous, document);
     applyPointsTransformEffect(plan.points);
@@ -6112,6 +6202,10 @@ async function main(): Promise<void> {
     // the restored document's value.
     const previousGroundPlane = state.groundPlane;
     state = fromSnapshot(snap, state);
+    // Publish the authored target's residency at the same moment as its state.
+    // The display morph may not post its first request until the next rAF; the
+    // target must still survive that gap after a load/undo lease is released.
+    setPinnedCustomMeshAssets(sceneCustomMeshIds(toSnapshot(state)));
     if (
       typeof state.selectedTransform === "number" &&
       state.selectedTransform >= state.transforms.length
@@ -6243,22 +6337,77 @@ async function main(): Promise<void> {
    * EditSession `pose` dep) falls back to auto-fitting the restored
    * attractor.
    */
+  let preparedHistoryRestore:
+    { snapshot: string; release: () => void } | undefined;
+
+  async function prepareHistoryRestore(
+    snapshot: string,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const snap = decodeScene(snapshot);
+    if (!snap) return false; // can't happen: entries are encodeScene output
+    let release = (): void => {};
+    try {
+      release = pinCustomMeshAssets(sceneCustomMeshIds(snap));
+      signal.addEventListener(
+        "abort",
+        () => {
+          release();
+          if (preparedHistoryRestore?.release === release) {
+            preparedHistoryRestore = undefined;
+          }
+        },
+        { once: true },
+      );
+      assertSceneCustomMeshBudget(snap);
+      if (sceneHasCustomMeshes(snap)) {
+        await hydrateSceneCustomMeshes(snap, assetStore());
+      }
+      if (signal.aborted) {
+        release();
+        return false;
+      }
+      preparedHistoryRestore?.release();
+      preparedHistoryRestore = { snapshot, release };
+      return true;
+    } catch (error) {
+      release();
+      if (!signal.aborted) {
+        ui.flashToast(
+          `Undo/redo not applied: ${
+            error instanceof Error ? error.message : "local mesh asset failed"
+          }`,
+        );
+      }
+      return false;
+    }
+  }
+
   function restoreSnapshot(
     snapshot: string,
     replaced: boolean,
     pose?: ViewPose,
   ): void {
+    const pendingPrepared = preparedHistoryRestore;
+    const prepared =
+      pendingPrepared?.snapshot === snapshot ? pendingPrepared : undefined;
+    preparedHistoryRestore = undefined;
+    if (pendingPrepared && !prepared) pendingPrepared.release();
     const snap = decodeScene(snapshot);
-    if (!snap) return; // can't happen: entries are encodeScene output
-    if (replaced && pose) {
-      applyDecodedSnapshot(snap, false, false);
-      applyCameraPose(pose.camera);
-      // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
-      // every load's behalf (the render-mode-hint pattern).
-      loadHints.armPose(pose.fourD ?? null);
-    } else {
-      applyDecodedSnapshot(snap, replaced, false);
-      if (replaced) loadHints.armPose(null);
+    try {
+      if (!snap) return; // can't happen: entries are encodeScene output
+      if (replaced && pose) {
+        applyDecodedSnapshot(snap, false, false);
+        applyCameraPose(pose.camera);
+        // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
+        // every load's behalf (the render-mode-hint pattern).
+        loadHints.armPose(pose.fourD ?? null);
+      } else {
+        applyDecodedSnapshot(snap, replaced, false);
+        if (replaced) loadHints.armPose(null);
+      }
+    } finally {
+      prepared?.release();
     }
   }
 
@@ -6309,6 +6458,7 @@ async function main(): Promise<void> {
   const editSession = new EditSession({
     snapshot: () => encodeScene(toSnapshot(state)),
     persist: () => saveScene(currentDocument()),
+    prepareRestore: prepareHistoryRestore,
     restore: restoreSnapshot,
     // The live view pose — orbit camera plus the 4D rotor/slice while
     // non-flat — captured out of band onto each history entry so undo/redo
@@ -6350,18 +6500,42 @@ async function main(): Promise<void> {
    * load that never happened.
    */
   let sceneLoadTicket = 0;
+  let pendingSceneLoadRelease: (() => void) | null = null;
 
   async function loadEncodedScene(encoded: string): Promise<boolean> {
     const snap = decodeScene(encoded);
     if (!snap) return false;
     const ticket = ++sceneLoadTicket;
     const baseline = encodeScene(toSnapshot(state));
+    pendingSceneLoadRelease?.();
+    let releasePinnedTarget: () => void;
+    try {
+      releasePinnedTarget = pinCustomMeshAssets(sceneCustomMeshIds(snap));
+    } catch (error) {
+      ui.flashToast(
+        `Scene not loaded: ${
+          error instanceof Error ? error.message : "asset cache is busy"
+        }`,
+      );
+      return false;
+    }
+    let targetPinned = true;
+    const releaseTarget = (): void => {
+      if (!targetPinned) return;
+      targetPinned = false;
+      releasePinnedTarget();
+      if (pendingSceneLoadRelease === releaseTarget) {
+        pendingSceneLoadRelease = null;
+      }
+    };
+    pendingSceneLoadRelease = releaseTarget;
     try {
       assertSceneCustomMeshBudget(snap);
       if (sceneHasCustomMeshes(snap)) {
         await hydrateSceneCustomMeshes(snap, assetStore());
       }
     } catch (error) {
+      releaseTarget();
       if (ticket === sceneLoadTicket) {
         ui.flashToast(
           `Scene not loaded: ${
@@ -6371,19 +6545,25 @@ async function main(): Promise<void> {
       }
       return false;
     }
-    if (
-      ticket !== sceneLoadTicket ||
-      encodeScene(toSnapshot(state)) !== baseline
-    ) {
+    if (ticket !== sceneLoadTicket) {
+      releaseTarget();
+      return false;
+    }
+    if (encodeScene(toSnapshot(state)) !== baseline) {
+      releaseTarget();
       ui.flashToast("Scene changed while local assets were loading");
       return false;
     }
     editSession.beginEdit("replace");
-    applyDecodedSnapshot(snap, snap.camera === undefined, true);
-    if (snap.camera) applyCameraPose(snap.camera);
-    // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
-    // every load's behalf (the render-mode-hint pattern).
-    loadHints.armPose(snap.fourD ?? null);
+    try {
+      applyDecodedSnapshot(snap, snap.camera === undefined, true);
+      if (snap.camera) applyCameraPose(snap.camera);
+      // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
+      // every load's behalf (the render-mode-hint pattern).
+      loadHints.armPose(snap.fourD ?? null);
+    } finally {
+      releaseTarget();
+    }
     return true;
   }
 
@@ -6419,7 +6599,7 @@ async function main(): Promise<void> {
 
   async function preflightEncodedScenes(
     encodedScenes: readonly string[],
-  ): Promise<boolean> {
+  ): Promise<(() => void) | null> {
     const ids = [] as ReturnType<typeof sceneCustomMeshIds>;
     try {
       for (const encoded of encodedScenes) {
@@ -6428,15 +6608,21 @@ async function main(): Promise<void> {
         assertSceneCustomMeshBudget(snapshot);
         ids.push(...sceneCustomMeshIds(snapshot));
       }
-      if (ids.length > 0) await hydrateCustomMeshIds(ids, assetStore());
-      return true;
+      const release = pinCustomMeshAssets([...new Set(ids)]);
+      try {
+        if (ids.length > 0) await hydrateCustomMeshIds(ids, assetStore());
+        return release;
+      } catch (error) {
+        release();
+        throw error;
+      }
     } catch (error) {
       ui.flashToast(
         `Saved sequence not started: ${
           error instanceof Error ? error.message : "local mesh asset failed"
         }`,
       );
-      return false;
+      return null;
     }
   }
 
@@ -6691,6 +6877,7 @@ async function main(): Promise<void> {
       ui.flashToast("No usable scenes in that file");
       return;
     }
+    stopCollectionPlaybackForMutation();
     const added = collection.importScenes(imported.scenes);
     if (added === 0) {
       // Every entry was either already saved or (rarely) too old to survive
@@ -6743,6 +6930,7 @@ async function main(): Promise<void> {
       return true;
     }
     const now = Date.now();
+    stopCollectionPlaybackForMutation();
     const added = collection.importScenes(
       flame.scenes.map((scene, i) => ({
         encoded: scene.encoded,
@@ -6856,6 +7044,7 @@ async function main(): Promise<void> {
     const morphFrom = currentMorphSystem();
     editSession.beginEdit(effect === "always" ? "replace" : "tweak");
     applyReducer();
+    pinCurrentCustomMeshes();
     if (effect === "always") {
       regenerateReplaced(morphFrom, true, morphMs);
     } else if (state.autoUpdate) {
@@ -7084,6 +7273,121 @@ async function main(): Promise<void> {
   function resolveXaosSourceTransforms(source: string): Transform[] | null {
     if (source === "__duplicate") return state.transforms;
     return resolveScheduleSourceTransforms(source);
+  }
+
+  let xaosAddTicket = 0;
+  let pendingXaosSourceRelease: (() => void) | null = null;
+
+  async function addXaosBlockFromSource(
+    source: string,
+    balanceWeights: boolean,
+  ): Promise<void> {
+    const ticket = ++xaosAddTicket;
+    pendingXaosSourceRelease?.();
+    pendingXaosSourceRelease = null;
+    const baseline = encodeScene(toSnapshot(state));
+    let releaseSource = (): void => undefined;
+    let incoming: Transform[] | null;
+    if (source.startsWith("saved:")) {
+      const id = source.slice("saved:".length);
+      const entry = collection.all().find((candidate) => candidate.id === id);
+      const snapshot = entry ? decodeScene(entry.encoded) : null;
+      if (!snapshot) {
+        ui.flashToast(
+          "That source could not be read as a system to add — nothing appended.",
+        );
+        ui.resetXaosAddSource();
+        return;
+      }
+      const ids = sceneCustomMeshIds({
+        ...snapshot,
+        finalTransform: undefined,
+        schedule: undefined,
+        shapeTrap: undefined,
+      });
+      try {
+        const releasePinnedSource = pinCustomMeshAssets(ids);
+        let sourcePinned = true;
+        releaseSource = () => {
+          if (!sourcePinned) return;
+          sourcePinned = false;
+          releasePinnedSource();
+          if (pendingXaosSourceRelease === releaseSource) {
+            pendingXaosSourceRelease = null;
+          }
+        };
+        pendingXaosSourceRelease = releaseSource;
+      } catch (error) {
+        ui.flashToast(
+          `System not appended: ${
+            error instanceof Error ? error.message : "asset cache is busy"
+          }`,
+        );
+        return;
+      }
+      try {
+        if (ids.length > 0) await hydrateCustomMeshIds(ids, assetStore());
+      } catch (error) {
+        ui.flashToast(
+          `System not appended: ${
+            error instanceof Error ? error.message : "local mesh asset failed"
+          }`,
+        );
+        releaseSource();
+        return;
+      }
+      if (ticket !== xaosAddTicket) {
+        releaseSource();
+        return;
+      }
+      if (encodeScene(toSnapshot(state)) !== baseline) {
+        releaseSource();
+        ui.flashToast("Scene changed while the saved system was loading");
+        return;
+      }
+      incoming = snapshot.transforms;
+    } else {
+      incoming = resolveXaosSourceTransforms(source);
+    }
+    try {
+      if (!incoming || incoming.length === 0) {
+        ui.flashToast(
+          "That source could not be read as a system to add — nothing appended.",
+        );
+        ui.resetXaosAddSource();
+        return;
+      }
+      const offsetX = computeXaosBlockOffset(state.transforms, incoming);
+      const result = appendXaosBlock(
+        state.transforms,
+        incoming,
+        offsetX,
+        balanceWeights,
+      );
+      if ("refused" in result) {
+        ui.flashToast(result.refused);
+        ui.resetXaosAddSource();
+        return;
+      }
+      const candidate = setTransforms(state, result.transforms);
+      try {
+        assertSceneCustomMeshBudget(toSnapshot(candidate));
+      } catch (error) {
+        ui.flashToast(
+          error instanceof Error
+            ? error.message
+            : "The combined system exceeds the local mesh limit",
+        );
+        return;
+      }
+      switchRenderMode("points");
+      applyEdit(() => {
+        state = candidate;
+      }, "always");
+      ui.resetXaosAddSource();
+    } finally {
+      releaseSource();
+    }
   }
 
   /**
@@ -7322,31 +7626,7 @@ async function main(): Promise<void> {
         ui.flashToast("Choose a system to add first.");
         return;
       }
-      const incoming = resolveXaosSourceTransforms(source);
-      if (!incoming || incoming.length === 0) {
-        ui.flashToast(
-          "That source could not be read as a system to add — nothing appended.",
-        );
-        ui.resetXaosAddSource();
-        return;
-      }
-      const offsetX = computeXaosBlockOffset(state.transforms, incoming);
-      const result = appendXaosBlock(
-        state.transforms,
-        incoming,
-        offsetX,
-        balanceWeights,
-      );
-      if ("refused" in result) {
-        ui.flashToast(result.refused);
-        ui.resetXaosAddSource();
-        return;
-      }
-      switchRenderMode("points");
-      applyEdit(() => {
-        state = setTransforms(state, result.transforms);
-      }, "always");
-      ui.resetXaosAddSource();
+      void addXaosBlockFromSource(source, balanceWeights);
     },
     onXaosCell: (fromIndex, toIndex, value) => {
       applyDiscreteTransformEdit(() => {
@@ -7708,6 +7988,7 @@ async function main(): Promise<void> {
     onSaveToCollection: () => {
       const encoded = encodeScene(currentDocument());
       const gapMode = thumbnailGapMode();
+      stopCollectionPlaybackForMutation();
       const entry = collection.add(
         encoded,
         captureCurrentThumbnail(),
@@ -7734,12 +8015,27 @@ async function main(): Promise<void> {
     onDriftCollection: () => {
       if (prefersReducedMotion() || collection.size === 0) return;
       const entries = collection.all();
+      const signature = JSON.stringify(
+        entries.map((entry) => [entry.id, entry.encoded]),
+      );
       void preflightEncodedScenes(entries.map((entry) => entry.encoded)).then(
-        (ready) => {
-          if (!ready || prefersReducedMotion() || collection.size === 0) return;
+        (release) => {
+          if (
+            !release ||
+            prefersReducedMotion() ||
+            collection.size === 0 ||
+            JSON.stringify(
+              collection.all().map((entry) => [entry.id, entry.encoded]),
+            ) !== signature
+          ) {
+            release?.();
+            return;
+          }
           // Same mutual exclusion as onDriftToggle: the slideshow ends a
           // running timeline playback, with the toast.
           timelinePolicy.stop({ notify: true });
+          collectionPlaybackMeshRelease?.();
+          collectionPlaybackMeshRelease = release;
           driftSource = "collection";
           driftLastPlayedId = null;
           driftShow.start();
@@ -7811,17 +8107,23 @@ async function main(): Promise<void> {
       // Either way the click loses to the export in flight — swallow it.
       if (offlineExportPending) return;
       if (prefersReducedMotion() || timeline.size === 0) return;
+      const signature = timelinePlaybackSignature();
       void preflightEncodedScenes(
         timeline.all().map((step) => step.encoded),
-      ).then((ready) => {
+      ).then((release) => {
         if (
-          ready &&
+          release &&
           !offlineExportPending &&
           !timelinePlayer.active &&
           !prefersReducedMotion() &&
-          timeline.size > 0
+          timeline.size > 0 &&
+          timelinePlaybackSignature() === signature
         ) {
+          timelinePlaybackMeshRelease?.();
+          timelinePlaybackMeshRelease = release;
           startTimelinePlayback(false);
+        } else {
+          release?.();
         }
       });
     },
@@ -7853,18 +8155,23 @@ async function main(): Promise<void> {
         return;
       }
       const requestedSteps = timeline.all();
+      const signature = timelinePlaybackSignature();
       void preflightEncodedScenes(
         requestedSteps.map((step) => step.encoded),
-      ).then((ready) => {
+      ).then((release) => {
         if (
-          !ready ||
+          !release ||
           offlineExportPending ||
           timelinePlayer.active ||
           prefersReducedMotion() ||
-          timeline.size === 0
+          timeline.size === 0 ||
+          timelinePlaybackSignature() !== signature
         ) {
+          release?.();
           return;
         }
+        timelinePlaybackMeshRelease?.();
+        timelinePlaybackMeshRelease = release;
         const steps = timeline.all();
         if (timelineDurationMs(steps) > MAX_RECORDING_SECONDS * 1000) {
           ui.flashToast(
@@ -7879,7 +8186,7 @@ async function main(): Promise<void> {
         // stream — adopt it, as before); so does a browser without an encodable
         // H.264 config.
         if (offlineExportSupported() && !recorderActive) {
-          void startOfflineExport();
+          void startOfflineExport(signature);
           return;
         }
         startTimelinePlayback(true);
@@ -7938,6 +8245,7 @@ async function main(): Promise<void> {
       // point flashing an Undo for a delete that didn't actually happen.
       const entry = collection.all().find((s) => s.id === id);
       if (!entry) return;
+      stopCollectionPlaybackForMutation();
       collection.remove(id);
       ui.setCollectionCount(collection.size);
       refreshScheduleSavedScenes();
@@ -7945,6 +8253,7 @@ async function main(): Promise<void> {
       ui.flashToast("Deleted from collection", {
         label: "Undo",
         onAction: () => {
+          stopCollectionPlaybackForMutation();
           collection.restore(entry);
           ui.setCollectionCount(collection.size);
           refreshScheduleSavedScenes();
@@ -8141,6 +8450,7 @@ async function main(): Promise<void> {
       stopShows({ notify: true });
       editSession.beginEdit();
       state = setShapeTrap(state, { ...state.shapeTrap, shape });
+      pinCurrentCustomMeshes();
       ui.updateLabels(state);
       scene.setSurfaceShapeTrap(state.shapeTrap ?? null);
       controlEffects.restartSurfaceRender();

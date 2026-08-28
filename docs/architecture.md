@@ -806,9 +806,10 @@ or all-one rows allocate no graph metadata and retain the classic descent
 source and packed bytes.
 
 The shared `ShapeSpec` vocabulary admits both bundled catalog meshes and local
-content-addressed meshes by stable id. `mesh-shapes.ts` validates and prepares
-each watertight indexed asset once: the exact triangle-area CDF drives CPU and Flame GPU surface
-sampling, while those same prepared triangles produce a conservative 64³
+content-addressed meshes by stable id. While a watertight indexed asset is
+resident, `mesh-shapes.ts` shares one prepared representation: the exact
+triangle-area CDF drives CPU and Flame GPU surface sampling, while those same
+prepared triangles produce a conservative 64³
 R32F signed-distance node lattice. Exact nearest and parity queries use a
 deterministic, identity-cached BVH; independent linear scans guard the
 acceleration and conservative result in tests. The versioned bake remains lazy,
@@ -842,6 +843,26 @@ digest, solid-validates and bakes every source off-thread, and commits the whole
 source/bake set in one IndexedDB transaction before publishing the scene,
 collection, or timeline. Any missing, extra, duplicate, corrupt, or over-budget
 asset rejects the complete bundle.
+
+Runtime retention is a rolling working set, not a second durable store. The
+main realm keeps at most eight prepared custom sources (two maximum-sized
+scenes) plus bounded transition leases; its serialized source and bake caches
+are independent eight-entry LRUs. The authored current scene is pinned at
+state publication. An undo/redo target, gallery load, xaos append, or saved
+sequence is leased and rehydrated from IndexedDB before the document/history
+commit, and a playback lease lives until that run stops. This preserves a hot
+current+target handoff without letting a long session retain every mesh it has
+ever visited. Persistent Cloud and Surface workers mirror the same
+message-boundary LRU from a complete active-id list while receiving wires only
+for cache misses; Surface additionally permits only one physical build plus
+one latest pending request, bounding its mailbox clones. The global overlap of
+the authored set and concurrent leases is capped at sixteen ids and trims back
+to eight as soon as leases release. A rapid three-generation morph whose live
+intermediate plus new target would exceed eight deliberately snaps to the old
+target before starting the next leg. IndexedDB remains authoritative, so an
+evicted source can be validated/prepared again and a missing or version-stale
+derived bake rebuilt off-thread rather than forcing a synchronous cold bake on
+playback.
 
 Whether a valid DE exists at all — and how fast it can be marched — turns on
 **conformality**. For an invertible affine map with linear part `M`,

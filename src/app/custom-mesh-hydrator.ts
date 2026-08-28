@@ -6,10 +6,12 @@ import {
 import {
   MESH_SDF_BAKE_VERSION,
   hasMeshAsset,
+  hasMeshSdfBake,
   installCustomMeshAsset,
   installPreparedMeshSdfBake,
   prepareSerializedMeshSdfBake,
   prepareWorkerValidatedCustomMeshAsset,
+  touchInstalledCustomMeshAssets,
   type CustomMeshAssetId,
   type MeshSdfBake,
   type PreparedMeshAsset,
@@ -124,6 +126,12 @@ async function stageMesh(
     if (validated.source.id !== id || validated.bake.meshId !== id) {
       throw new RangeError("worker returned a different custom mesh id");
     }
+    if (
+      validated.bake.version !== MESH_SDF_BAKE_VERSION ||
+      validated.bake.resolution !== CUSTOM_MESH_SDF_RESOLUTION
+    ) {
+      throw new RangeError("worker returned the wrong custom mesh bake format");
+    }
     if (regenerated) {
       if (!store.putBake) {
         throw new Error("derived SDF bake cannot be refreshed in this store");
@@ -156,7 +164,15 @@ export async function hydrateCustomMeshIds(
       `custom mesh dependency set exceeds the ${MAX_CUSTOM_MESHES_PER_SCENE}-mesh budget`,
     );
   }
-  const missing = unique.filter((id) => !hasMeshAsset(id));
+  // Refresh the target's resident members before installing its missing
+  // members. The runtime cache holds two maximum-size scenes, so hydration
+  // can never evict either the current scene or a resident part of the target
+  // while the atomic barrier is still in flight.
+  touchInstalledCustomMeshAssets(unique);
+  const missing = unique.filter(
+    (id) =>
+      !hasMeshAsset(id) || !hasMeshSdfBake(id, CUSTOM_MESH_SDF_RESOLUTION),
+  );
   const staged = await Promise.all(
     missing.map((id) => stageMesh(id, store, validateOrBake)),
   );

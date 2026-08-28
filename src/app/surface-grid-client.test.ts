@@ -7,6 +7,33 @@ import { SURFACE_GRID_RESOLUTION } from "../fractal/surface-grid";
 import type { SurfaceGrid } from "../fractal/surface-grid";
 import { buildSurfaceDE } from "../fractal/surface-de";
 import { sierpinskiTetrahedron } from "../fractal/presets";
+import {
+  MESH_SDF_BAKE_VERSION,
+  type SerializedMeshSdfBake,
+  type SerializedPreparedMeshAsset,
+} from "../fractal/mesh-shapes";
+
+function meshSource(index: number): SerializedPreparedMeshAsset {
+  return {
+    id: `mesh-sha256-${index.toString(16).padStart(64, "0")}`,
+    name: `Grid mesh ${index}`,
+    vertices: new Float64Array(),
+    triangles: new Uint32Array(),
+  };
+}
+
+function meshBake(source: SerializedPreparedMeshAsset): SerializedMeshSdfBake {
+  return {
+    meshId: source.id,
+    version: MESH_SDF_BAKE_VERSION,
+    resolution: 1,
+    values: new Float32Array(1),
+    min: new Float64Array(3),
+    max: new Float64Array(3),
+    cellSize: 1,
+    cellRadius: 1,
+  };
+}
 
 /**
  * A cheap, shared `SurfaceDE` fixture. This suite tests the client's
@@ -103,7 +130,7 @@ describe("SurfaceGridClient request()", () => {
     expect(h.client.busy).toBe(false);
   });
 
-  it("does not spawn a second worker for a request made while one is outstanding", () => {
+  it("keeps one physical request in flight and only the latest pending build", () => {
     const h = harness();
 
     h.client.request(de);
@@ -111,17 +138,21 @@ describe("SurfaceGridClient request()", () => {
     h.client.request(de);
 
     expect(h.createWorkerCallCount()).toBe(1);
-    expect(h.posted).toHaveLength(3); // no client-side queueing — each posts immediately
+    expect(h.posted.map((request) => request.id)).toEqual([1]);
+
+    h.deliverResult(fakeResult(1));
+    expect(h.posted.map((request) => request.id)).toEqual([1, 3]);
   });
 
-  it("latest wins: an earlier request's stale-id reply is dropped once a newer request has been posted", () => {
+  it("latest wins: an earlier physical reply dispatches the pending request but is dropped", () => {
     const h = harness();
 
     h.client.request(de); // id 1
-    h.client.request(de); // id 2 — posted right away, no pending slot
-    expect(h.posted.map((p) => p.id)).toEqual([1, 2]);
+    h.client.request(de); // id 2 — parked while id 1 executes
+    expect(h.posted.map((p) => p.id)).toEqual([1]);
 
-    h.deliverResult(fakeResult(1)); // stale — dropped
+    h.deliverResult(fakeResult(1)); // stale — dropped, id 2 posts
+    expect(h.posted.map((p) => p.id)).toEqual([1, 2]);
     expect(h.grids).toHaveLength(0);
     expect(h.client.busy).toBe(true); // still awaiting id 2
 
@@ -129,6 +160,66 @@ describe("SurfaceGridClient request()", () => {
     expect(h.grids).toHaveLength(1);
     expect(h.grids[0].halfExtent).toBe(2); // fakeResult(2)'s own tag confirms which one landed
     expect(h.client.busy).toBe(false);
+  });
+
+  it("posts each source+bake once, then re-sends both after LRU eviction", () => {
+    const h = harness();
+    const sources = Array.from({ length: 9 }, (_, index) => meshSource(index));
+    for (const [index, source] of sources.entries()) {
+      const bake = meshBake(source);
+      h.client.request(de, 4, [source], [bake]);
+      expect(h.posted[index].meshAssetIds).toEqual([source.id]);
+      expect(h.posted[index].meshAssets).toEqual([source]);
+      expect(h.posted[index].meshBakes).toEqual([bake]);
+      h.deliverResult(fakeResult(index + 1));
+    }
+
+    const revisitedBake = meshBake(sources[0]);
+    h.client.request(de, 4, [sources[0]], [revisitedBake]);
+    expect(h.posted[9].meshAssets).toEqual([sources[0]]);
+    expect(h.posted[9].meshBakes).toEqual([revisitedBake]);
+  });
+
+  it("sends only the active id after a source+bake is resident", () => {
+    const h = harness();
+    const source = meshSource(9);
+    const bake = meshBake(source);
+    h.client.request(de, 4, [source], [bake]);
+    h.deliverResult(fakeResult(1));
+
+    h.client.request(de, 4, [source], [bake]);
+    expect(h.posted[1].meshAssetIds).toEqual([source.id]);
+    expect(h.posted[1].meshAssets).toBeUndefined();
+    expect(h.posted[1].meshBakes).toBeUndefined();
+  });
+
+  it("tracks source and bake residency independently", () => {
+    const h = harness();
+    const source = meshSource(15);
+    const bake = meshBake(source);
+    h.client.request(de, 4, [source]);
+    h.deliverResult(fakeResult(1));
+
+    h.client.request(de, 4, [source], [bake]);
+    expect(h.posted[1].meshAssets).toBeUndefined();
+    expect(h.posted[1].meshBakes).toEqual([bake]);
+  });
+
+  it("does not count a superseded pending source as resident", () => {
+    const h = harness();
+    const first = meshSource(10);
+    const dropped = meshSource(11);
+    const latest = meshSource(12);
+    h.client.request(de, 4, [first], [meshBake(first)]);
+    h.client.request(de, 4, [dropped], [meshBake(dropped)]);
+    h.client.request(de, 4, [latest], [meshBake(latest)]);
+
+    h.deliverResult(fakeResult(1));
+    expect(h.posted[1].meshAssets).toEqual([latest]);
+    h.deliverResult(fakeResult(3));
+
+    h.client.request(de, 4, [dropped], [meshBake(dropped)]);
+    expect(h.posted[2].meshAssets).toEqual([dropped]);
   });
 });
 
@@ -209,6 +300,18 @@ describe("SurfaceGridClient worker error recovery", () => {
     h.client.request(de); // respawns a fresh worker
     expect(h.createWorkerCallCount()).toBe(2);
   });
+
+  it("re-sends cached wires after a worker crash creates a fresh realm", () => {
+    const h = harness();
+    const source = meshSource(13);
+    const bake = meshBake(source);
+    h.client.request(de, 4, [source], [bake]);
+    h.triggerError(new Error("worker crashed"));
+
+    h.client.request(de, 4, [source], [bake]);
+    expect(h.posted[1].meshAssets).toEqual([source]);
+    expect(h.posted[1].meshBakes).toEqual([bake]);
+  });
 });
 
 describe("SurfaceGridClient dispose()", () => {
@@ -224,5 +327,17 @@ describe("SurfaceGridClient dispose()", () => {
 
     h.client.request(de);
     expect(h.createWorkerCallCount()).toBe(2);
+  });
+
+  it("forgets worker residency along with the disposed realm", () => {
+    const h = harness();
+    const source = meshSource(14);
+    const bake = meshBake(source);
+    h.client.request(de, 4, [source], [bake]);
+    h.client.dispose();
+
+    h.client.request(de, 4, [source], [bake]);
+    expect(h.posted[1].meshAssets).toEqual([source]);
+    expect(h.posted[1].meshBakes).toEqual([bake]);
   });
 });

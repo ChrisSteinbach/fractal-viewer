@@ -30,7 +30,10 @@ import {
   hasMeshAsset,
   installCustomMeshAsset,
   installSerializedCustomMeshAsset,
+  MAX_CUSTOM_MESH_RUNTIME_ASSETS,
   prepareSerializedCustomMeshAsset,
+  touchInstalledCustomMeshAssets,
+  type CustomMeshAssetId,
   type SerializedPreparedMeshAsset,
 } from "../fractal/mesh-shapes";
 import { iterationRng, mulberry32 } from "../fractal/rng";
@@ -42,7 +45,6 @@ import type {
   Transform,
 } from "../fractal/types";
 import { framingBounds, framingRadius4 } from "./framing-bounds";
-import { MAX_CUSTOM_MESHES_PER_SCENE } from "../fractal/custom-mesh";
 
 /**
  * Main thread → worker: one point-cloud generation request. Everything the
@@ -54,10 +56,16 @@ export interface CloudRequest {
   /** Monotonic tag stamped by `cloud-generator.ts` and echoed on the result,
    * so the client can match a reply to its request and drop stale ones. */
   id: number;
-  /** Custom mesh sources needed by this generation. Workers own a separate
-   * module registry, so callers attach the structured-cloneable source wires
-   * for every local mesh referenced by the transforms. */
+  /** Custom mesh cache-miss sources needed by this generation. Workers own a
+   * separate module registry; persistent clients attach the complete active
+   * ids below and only the structured-cloneable wires absent from that realm.
+   * Synchronous callers attach the full set. */
   meshAssets?: readonly SerializedPreparedMeshAsset[];
+  /** Complete active custom-mesh id set. The persistent worker uses it to
+   * refresh resident entries before installing only the cache misses carried
+   * by `meshAssets`; synchronous callers may omit it because their full wires
+   * already carry the same set. */
+  meshAssetIds?: readonly CustomMeshAssetId[];
   transforms: Transform[];
   finalTransform: Transform | null;
   numPoints: number;
@@ -178,8 +186,14 @@ function sameMeshSource(
 
 function installRequestMeshAssets(
   wires: readonly SerializedPreparedMeshAsset[] = [],
+  activeIds: readonly CustomMeshAssetId[] = wires.map((wire) => wire.id),
 ): void {
-  if (wires.length > MAX_CUSTOM_MESHES_PER_SCENE) {
+  if (
+    wires.length > MAX_CUSTOM_MESH_RUNTIME_ASSETS ||
+    activeIds.length > MAX_CUSTOM_MESH_RUNTIME_ASSETS ||
+    new Set([...activeIds, ...wires.map((wire) => wire.id)]).size >
+      MAX_CUSTOM_MESH_RUNTIME_ASSETS
+  ) {
     throw new RangeError("too many custom mesh sources in request");
   }
   for (let index = 0; index < wires.length; index += 1) {
@@ -192,6 +206,7 @@ function installRequestMeshAssets(
       }
     }
   }
+  touchInstalledCustomMeshAssets(activeIds);
   for (const wire of wires) {
     if (hasMeshAsset(wire.id)) installSerializedCustomMeshAsset(wire);
   }
@@ -224,7 +239,7 @@ function installRequestMeshAssets(
  * visibly boiled.
  */
 export function generateCloud(request: CloudRequest): CloudResult {
-  installRequestMeshAssets(request.meshAssets);
+  installRequestMeshAssets(request.meshAssets, request.meshAssetIds);
 
   const rng = mulberry32(request.seed);
   const iterRng = iterationRng(request.seed ^ ITERATION_SEED_XOR);

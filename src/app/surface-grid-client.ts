@@ -3,17 +3,11 @@
  * worker: owns the one-shot, latest-wins request policy that keeps a grid
  * build off the main thread without ever delivering a torn or stale result.
  *
- * Policy, in one breath: **at most one worker; latest request wins.** Unlike
- * `cloud-generator.ts`'s live point cloud, a request made while one is
- * already outstanding is not parked in a pending slot at all — it is posted
- * immediately (the worker's own mailbox serializes them: a synchronous
- * `onmessage` handler blocks the worker's event loop until it returns, so
- * two posts in flight are simply computed one after another, in order).
- * Every reply is checked against the id of the LATEST request: a reply to a
- * build that a newer request superseded before it finished arrives, matches
- * nothing, and is dropped silently — {@link SurfaceGridClient.busy} and
- * {@link SurfaceGridClient.settle} track only the latest id, never the
- * superseded ones.
+ * Policy, in one breath: **at most one physical request in flight; latest
+ * state wins.** One newer request may park on the main thread, replacing any
+ * older pending request. This bounds both worker mailbox work and cloned mesh
+ * payloads while preserving the old stale-result rule: a superseded result is
+ * dropped, then the latest pending request is posted immediately.
  *
  * Fallback is the opposite of `cloud-generator.ts`'s. The live cloud IS the
  * app, so `CloudGenerator` falls back to a synchronous main-thread compute
@@ -40,6 +34,8 @@ import type {
   SerializedMeshSdfBake,
   SerializedPreparedMeshAsset,
 } from "../fractal/mesh-shapes";
+import { MAX_CUSTOM_MESH_RUNTIME_ASSETS } from "../fractal/mesh-shapes";
+import { LruMap } from "./lru-map";
 import type {
   SurfaceGridRequest,
   SurfaceGridResult,
@@ -93,10 +89,34 @@ export interface SurfaceGridClientDeps {
   onError?: (error: unknown) => void;
 }
 
+interface PendingSurfaceGridRequest {
+  readonly id: number;
+  readonly de: SurfaceDE;
+  readonly resolution: number;
+  readonly meshAssets?: readonly SerializedPreparedMeshAsset[];
+  readonly meshBakes?: readonly SerializedMeshSdfBake[];
+}
+
+interface WorkerMeshResidency {
+  readonly source: boolean;
+  readonly bake: boolean;
+}
+
 export class SurfaceGridClient {
   private readonly deps: SurfaceGridClientDeps;
   private worker: SurfaceGridWorkerHandle | null = null;
+  /** Source+bake ids installed in the current persistent worker realm. The
+   * worker mirrors this bounded LRU; requests carry the complete active ids
+   * but only cache-miss wires. */
+  private readonly workerMeshAssetIds = new LruMap<string, WorkerMeshResidency>(
+    MAX_CUSTOM_MESH_RUNTIME_ASSETS,
+  );
   private nextId = 1;
+  /** Request physically executing in the worker, if any. */
+  private inFlightId: number | null = null;
+  /** Single latest-wins main-thread slot. Full wires stay here until physical
+   * dispatch so worker-residency filtering cannot account for dropped work. */
+  private pending: PendingSurfaceGridRequest | null = null;
   /** The id of the request whose result is still awaited, or `null` when
    * idle — nothing has been requested yet, the last result already arrived,
    * or the outstanding request was dropped by `cancel()`/a worker error.
@@ -116,11 +136,9 @@ export class SurfaceGridClient {
   /**
    * Request a grid build for `de` at `resolution` (default
    * `SURFACE_GRID_RESOLUTION`). Spawns the worker lazily on first use.
-   * Supersedes any outstanding request — if that older request's reply
-   * still arrives, it carries a stale id and is dropped, per the module doc
-   * — and is posted immediately regardless of whether a previous request is
-   * still being computed (no client-side queueing; the worker's own mailbox
-   * serializes the posts). Silently does nothing if no worker is available
+   * Supersedes any outstanding request. If a build is already executing, the
+   * new request replaces the single pending slot; otherwise it posts
+   * immediately. Silently does nothing if no worker is available
    * (creation failed or declined): see the module doc's graceful
    * degradation.
    *
@@ -143,12 +161,63 @@ export class SurfaceGridClient {
     if (this.worker === null) return;
     const id = this.nextId++;
     this.outstandingId = id;
-    this.worker.post({
-      id,
-      de,
-      resolution,
-      ...(meshAssets === undefined ? {} : { meshAssets }),
-      ...(meshBakes === undefined ? {} : { meshBakes }),
+    const request = { id, de, resolution, meshAssets, meshBakes };
+    if (this.inFlightId !== null) {
+      this.pending = request;
+      return;
+    }
+    this.post(request);
+  }
+
+  private post(request: PendingSurfaceGridRequest): void {
+    const worker = this.worker;
+    if (worker === null) return;
+    const activeIds = [
+      ...new Set([
+        ...(request.meshAssets?.map((asset) => asset.id) ?? []),
+        ...(request.meshBakes?.map((bake) => bake.meshId) ?? []),
+      ]),
+    ];
+    const residency = new Map(
+      activeIds.map((meshId) => [meshId, this.workerMeshAssetIds.get(meshId)]),
+    );
+    const missingSources = new Set(
+      activeIds.filter((meshId) => !residency.get(meshId)?.source),
+    );
+    const missingBakes = new Set(
+      activeIds.filter((meshId) => !residency.get(meshId)?.bake),
+    );
+    const postedAssets = request.meshAssets?.filter((asset) =>
+      missingSources.has(asset.id),
+    );
+    const postedBakes = request.meshBakes?.filter((bake) =>
+      missingBakes.has(bake.meshId),
+    );
+    const postedSourceIds = new Set(
+      postedAssets?.map((asset) => asset.id) ?? [],
+    );
+    const postedBakeIds = new Set(
+      postedBakes?.map((bake) => bake.meshId) ?? [],
+    );
+    for (const meshId of activeIds) {
+      const previous = residency.get(meshId);
+      this.workerMeshAssetIds.set(meshId, {
+        source: previous?.source === true || postedSourceIds.has(meshId),
+        bake: previous?.bake === true || postedBakeIds.has(meshId),
+      });
+    }
+    this.inFlightId = request.id;
+    worker.post({
+      id: request.id,
+      de: request.de,
+      resolution: request.resolution,
+      ...(activeIds.length === 0 ? {} : { meshAssetIds: activeIds }),
+      ...(postedAssets === undefined || postedAssets.length === 0
+        ? {}
+        : { meshAssets: postedAssets }),
+      ...(postedBakes === undefined || postedBakes.length === 0
+        ? {}
+        : { meshBakes: postedBakes }),
     });
   }
 
@@ -161,6 +230,7 @@ export class SurfaceGridClient {
    */
   cancel(): void {
     this.outstandingId = null;
+    this.pending = null;
     this.flushSettled();
   }
 
@@ -184,6 +254,9 @@ export class SurfaceGridClient {
     const worker = this.worker;
     this.worker = null;
     this.outstandingId = null;
+    this.inFlightId = null;
+    this.pending = null;
+    this.workerMeshAssetIds.clear();
     worker?.terminate();
     this.flushSettled();
   }
@@ -210,13 +283,19 @@ export class SurfaceGridClient {
   }
 
   private handleResult(result: SurfaceGridResult): void {
-    if (result.id !== this.outstandingId) return; // stale or cancelled
-    this.outstandingId = null;
-    this.deps.onGrid({
-      resolution: result.resolution,
-      halfExtent: result.halfExtent,
-      values: result.values,
-    });
+    if (result.id !== this.inFlightId) return;
+    this.inFlightId = null;
+    const next = this.pending;
+    this.pending = null;
+    if (next !== null) this.post(next);
+    if (result.id === this.outstandingId) {
+      this.outstandingId = null;
+      this.deps.onGrid({
+        resolution: result.resolution,
+        halfExtent: result.halfExtent,
+        values: result.values,
+      });
+    }
     this.flushSettled();
   }
 
@@ -224,6 +303,9 @@ export class SurfaceGridClient {
     const worker = this.worker;
     this.worker = null;
     this.outstandingId = null;
+    this.inFlightId = null;
+    this.pending = null;
+    this.workerMeshAssetIds.clear();
     worker?.terminate();
     this.deps.onError?.(error);
     this.flushSettled();

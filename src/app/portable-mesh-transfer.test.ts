@@ -7,7 +7,10 @@ import {
   type CustomMeshAssetId,
   type SerializedPreparedMeshAsset,
 } from "../fractal/mesh-shapes";
-import { prepareCustomMeshObj } from "../fractal/custom-mesh";
+import {
+  CUSTOM_MESH_SDF_RESOLUTION,
+  prepareCustomMeshObj,
+} from "../fractal/custom-mesh";
 import {
   importPortableCustomMeshSources,
   PORTABLE_MESH_VALIDATION_CONCURRENCY,
@@ -31,18 +34,33 @@ f 2 3 4
 
 const installedIds = new Set<CustomMeshAssetId>();
 
+let portableFixturePromise:
+  | Promise<{
+      source: SerializedPreparedMeshAsset;
+      validate: PortableMeshSourceValidator;
+    }>
+  | undefined;
+
 async function portableFixture(): Promise<{
   source: SerializedPreparedMeshAsset;
   validate: PortableMeshSourceValidator;
 }> {
-  const prepared = await prepareCustomMeshObj(TETRA_OBJ, "portable.obj");
-  installedIds.add(prepared.id);
-  const source = serializePreparedCustomMeshAsset(prepared.asset);
-  const bake = serializeMeshSdfBake(bakePreparedMeshSdf(prepared.asset, 8));
-  return {
-    source,
-    validate: async () => ({ source: structuredClone(source), bake }),
-  };
+  portableFixturePromise ??= prepareCustomMeshObj(
+    TETRA_OBJ,
+    "portable.obj",
+  ).then((prepared) => {
+    const source = serializePreparedCustomMeshAsset(prepared.asset);
+    const bake = serializeMeshSdfBake(
+      bakePreparedMeshSdf(prepared.asset, CUSTOM_MESH_SDF_RESOLUTION),
+    );
+    return {
+      source,
+      validate: async () => ({ source: structuredClone(source), bake }),
+    };
+  });
+  const fixture = await portableFixturePromise;
+  installedIds.add(fixture.source.id);
+  return fixture;
 }
 
 afterEach(() => {
@@ -193,6 +211,22 @@ describe("portable custom-mesh transfer", () => {
       ),
     ).rejects.toBeInstanceOf(PortableMeshImportCancelledError);
     expect(writes).toBe(0);
+    expect(hasMeshAsset(source.id)).toBe(false);
+  });
+
+  it("rejects a worker result at the wrong production bake resolution", async () => {
+    const { source, validate } = await portableFixture();
+
+    await expect(
+      importPortableCustomMeshSources(
+        [source],
+        { putSourcesAndInitialBakes: async () => ["stored"] },
+        async (wire) => {
+          const result = await validate(wire);
+          return { ...result, bake: { ...result.bake, resolution: 8 } };
+        },
+      ),
+    ).rejects.toThrow(/wrong portable bake format/);
     expect(hasMeshAsset(source.id)).toBe(false);
   });
 
