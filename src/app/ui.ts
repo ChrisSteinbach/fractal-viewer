@@ -1978,6 +1978,20 @@ export class Ui {
     z: HTMLInputElement;
   };
   private readonly positionColorsResetBtn: HTMLElement;
+  /** Solid-local mirrors of the authored color definition. They stay inside
+   * Solid's renderer-owned Scene color section and are reachable only while
+   * its Color source is the mode-driven (legacy protocol) path. */
+  private readonly solidColorModeRow: HTMLElement;
+  private readonly solidFourDColorRow: HTMLElement;
+  private readonly solidRampPaletteRow: HTMLElement;
+  private readonly solidPositionColorsRow: HTMLElement;
+  private readonly solidColorGammaRow: HTMLElement;
+  private readonly solidPositionAxisInputs: {
+    x: HTMLInputElement;
+    y: HTMLInputElement;
+    z: HTMLInputElement;
+  };
+  private readonly solidPositionColorsResetBtn: HTMLElement;
   /** The gradient-shape row is inert for the per-pixel flame backdrop and
    * hides while that image source is selected. Its authored state remains in
    * AppState and returns when a gradient mode is selected again. */
@@ -2306,15 +2320,16 @@ export class Ui {
     }
   >();
 
-  /** The gradient-stop editor rows shown under the background/flame/solid/surface/ramp
-   * palette `<select>`s once set to Custom: a live gradient strip preview,
-   * one `<input type="color">` per stop, and the add/remove-stop buttons.
-   * All five editors read/write the SAME shared `AppState.customPalette`
+  /** The gradient-stop editor rows shown under the background/flame/solid/
+   * solid-ramp/surface/ramp palette `<select>`s once set to Custom: a live
+   * gradient strip preview, one `<input type="color">` per stop, and the
+   * add/remove-stop buttons. All six editors read/write the SAME shared
+   * `AppState.customPalette`
    * slot (see {@link syncCustomPaletteEditors}) — only which row is visible
    * differs, keyed on that palette select's own paletteId
-   * (background/flame/solid/surface) or \`rampPaletteId\` (ramp). */
+   * (background/flame/solid/surface) or `rampPaletteId` (solid-ramp/ramp). */
   private readonly customPaletteEditors: Record<
-    "background" | "flame" | "solid" | "surface" | "ramp",
+    "background" | "flame" | "solid" | "solidRamp" | "surface" | "ramp",
     {
       row: HTMLElement;
       disclosureId: string;
@@ -2566,6 +2581,17 @@ export class Ui {
       z: this.byId("positionAxisZ"),
     };
     this.positionColorsResetBtn = this.byId("positionColorsReset");
+    this.solidColorModeRow = this.byId("solidColorModeRow");
+    this.solidFourDColorRow = this.byId("solidFourDColorRow");
+    this.solidRampPaletteRow = this.byId("solidRampPaletteRow");
+    this.solidPositionColorsRow = this.byId("solidPositionColorsRow");
+    this.solidColorGammaRow = this.byId("solidColorGammaRow");
+    this.solidPositionAxisInputs = {
+      x: this.byId("solidPositionAxisX"),
+      y: this.byId("solidPositionAxisY"),
+      z: this.byId("solidPositionAxisZ"),
+    };
+    this.solidPositionColorsResetBtn = this.byId("solidPositionColorsReset");
     this.backgroundShapeRow = this.byId("backgroundShapeRow");
     this.backgroundFlamePaletteRow = this.byId("backgroundFlamePaletteRow");
     this.backgroundCustomRow = this.byId("backgroundCustomRow");
@@ -2771,6 +2797,14 @@ export class Ui {
         add: this.byId("solidCustomPaletteAdd"),
         remove: this.byId("solidCustomPaletteRemove"),
       },
+      solidRamp: {
+        row: this.byId("solidRampCustomPaletteRow"),
+        disclosureId: this.byId("solidRampCustomPaletteDisclosure").id,
+        strip: this.byId("solidRampCustomPaletteStrip"),
+        stops: this.byId("solidRampCustomPaletteStops"),
+        add: this.byId("solidRampCustomPaletteAdd"),
+        remove: this.byId("solidRampCustomPaletteRemove"),
+      },
       surface: {
         row: this.byId("surfaceCustomPaletteRow"),
         disclosureId: this.byId("surfaceCustomPaletteDisclosure").id,
@@ -2928,10 +2962,14 @@ export class Ui {
   /** Read the three axis-color pickers as a PositionAxisColors, or null if any
    * fails to parse (can't happen for a real <input type="color"> — same
    * defensive contract as readCustomPaletteStops). */
-  private readPositionAxisColors(): PositionAxisColors | null {
-    const x = hexToRgb(this.positionAxisInputs.x.value);
-    const y = hexToRgb(this.positionAxisInputs.y.value);
-    const z = hexToRgb(this.positionAxisInputs.z.value);
+  private readPositionAxisColors(inputs: {
+    readonly x: HTMLInputElement;
+    readonly y: HTMLInputElement;
+    readonly z: HTMLInputElement;
+  }): PositionAxisColors | null {
+    const x = hexToRgb(inputs.x.value);
+    const y = hexToRgb(inputs.y.value);
+    const z = hexToRgb(inputs.z.value);
     if (!x || !y || !z) return null;
     return { x, y, z };
   }
@@ -3220,8 +3258,9 @@ export class Ui {
         this.fourDSliceRelColorToggle.checked,
       ),
     );
-    // Custom palette gradient editor: the background/flame/solid/surface/ramp rows share
-    // this same wiring, each against its own DOM elements. The recolor
+    // Custom palette gradient editor: the background/flame/solid/solid-ramp/
+    // surface/ramp rows share this same wiring, each against its own DOM
+    // elements. The recolor
     // listener is delegated on the `stops` container (rather than bound per
     // input) so it survives syncCustomPaletteEditors rebuilding the inputs on
     // an add/remove.
@@ -3229,6 +3268,7 @@ export class Ui {
       "background",
       "flame",
       "solid",
+      "solidRamp",
       "surface",
       "ramp",
     ] as const) {
@@ -3268,13 +3308,26 @@ export class Ui {
     // Position axis colors: three pickers report as one triple — the app
     // state is the triple, so a drag in any one picker re-reads all three,
     // exactly like the gradient editor reads its whole stop list.
-    this.positionColorsRow.addEventListener("input", () => {
-      const colors = this.readPositionAxisColors();
-      if (colors) handlers.onPositionAxisColors(colors);
-    });
-    this.positionColorsResetBtn.addEventListener("click", () =>
-      handlers.onPositionAxisColors(LEGACY_POSITION_AXIS_COLORS),
-    );
+    for (const { row, inputs, reset } of [
+      {
+        row: this.positionColorsRow,
+        inputs: this.positionAxisInputs,
+        reset: this.positionColorsResetBtn,
+      },
+      {
+        row: this.solidPositionColorsRow,
+        inputs: this.solidPositionAxisInputs,
+        reset: this.solidPositionColorsResetBtn,
+      },
+    ]) {
+      row.addEventListener("input", () => {
+        const colors = this.readPositionAxisColors(inputs);
+        if (colors) handlers.onPositionAxisColors(colors);
+      });
+      reset.addEventListener("click", () =>
+        handlers.onPositionAxisColors(LEGACY_POSITION_AXIS_COLORS),
+      );
+    }
     // Custom backdrop stops: two pickers report as one pair — the app state
     // is the pair, so a drag in either re-reads both, exactly like the
     // position axis row just above.
@@ -4018,14 +4071,53 @@ export class Ui {
     }
     (this.positionColorsResetBtn as HTMLButtonElement).disabled =
       nonFlat && !positionColorsActive;
+    // Solid's structural palettes override the dimensional color definition
+    // entirely. Expose the mirrors only when Color source is Color mode, then
+    // apply the same dimension/dependency gates as the Points presentation.
+    const solidColorModeActive =
+      state.renderMode === "solid" && state.solid.paletteId === "legacy";
+    this.solidColorModeRow.classList.toggle(
+      "hidden",
+      !solidColorModeActive || nonFlat,
+    );
+    this.solidFourDColorRow.classList.toggle(
+      "hidden",
+      !solidColorModeActive || !nonFlat,
+    );
+    const solidUsesRamp = nonFlat
+      ? fourDColorModeUsesRampPalette(state.fourDColor)
+      : colorModeUsesRampPalette(state.colorMode);
+    this.solidRampPaletteRow.classList.toggle(
+      "hidden",
+      !solidColorModeActive || !solidUsesRamp,
+    );
+    const solidUsesGamma = nonFlat
+      ? fourDColorModeUsesGamma(state.fourDColor)
+      : colorModeUsesGamma(state.colorMode);
+    this.solidColorGammaRow.classList.toggle(
+      "hidden",
+      !solidColorModeActive || !solidUsesGamma,
+    );
+    const solidUsesPosition = nonFlat
+      ? state.fourDColor === "position"
+      : state.colorMode === "position";
+    this.solidPositionColorsRow.classList.toggle(
+      "hidden",
+      !solidColorModeActive || !solidUsesPosition,
+    );
     // Sync the pickers to state — only write on change, like
     // syncCustomPaletteEditors' recolor path, so a mid-drag picker isn't
     // clobbered by its own input event's resulting state update.
     const axes = state.positionAxisColors ?? LEGACY_POSITION_AXIS_COLORS;
     for (const axis of ["x", "y", "z"] as const) {
       const hex = rgbToHex(axes[axis]);
-      const input = this.positionAxisInputs[axis];
-      if (input.value !== hex) input.value = hex;
+      for (const inputs of [
+        this.positionAxisInputs,
+        this.solidPositionAxisInputs,
+      ]) {
+        const input = inputs[axis];
+        if (input.value !== hex) input.value = hex;
+      }
     }
     // The gradient shape has no meaning for the Flame backdrop's per-pixel
     // image. Hide the row while that mode is selected without clearing its
@@ -4197,19 +4289,19 @@ export class Ui {
   }
 
   /**
-   * Sync the background/flame/solid/surface/ramp gradient-stop editors to
-   * `state.customPalette`, called from {@link updateLabels} right after the
-   * table-driven scalar sync loop. Five rows now: the background editor shows
-   * only while the Flame backdrop owns a Custom palette; flame/solid rows show
-   * only while their OWN render's palette select is on
-   * {@link CUSTOM_PALETTE_ID}; the surface and ramp rows additionally sit
+   * Sync the background/flame/solid/solid-ramp/surface/ramp gradient-stop
+   * editors to `state.customPalette`, called from {@link updateLabels} right
+   * after the table-driven scalar sync loop. Six rows now: the background
+   * editor shows only while the Flame backdrop owns a Custom palette;
+   * flame/solid rows show only while their OWN render's palette select is on
+   * {@link CUSTOM_PALETTE_ID}; the surface and two ramp rows additionally sit
    * INSIDE a gated container (`#surfacePaletteRow`, hidden unless the
    * surface colorSource is one of the four that sample the user palette —
    * `palette`/`rings`/`sheets`/`shapeTrap`; `#rampPaletteRow`, the active
    * Points/4D ramp-mode gate or an active Surface Height/Radius override), so
    * {@link updateLabels}' container gating composes on top of the isCustom
    * gating handled here — both must hold for those editors to actually show.
-   * All five edit the same shared slot (see `state.ts`'s
+   * All six edit the same shared slot (see `state.ts`'s
    * `AppState.customPalette`), so switching which one is "custom" never
    * loses an in-progress edit. The stop inputs are only rebuilt when their
    * count changes (add/remove, or a fresh seed) — an ordinary recolor
@@ -4218,12 +4310,13 @@ export class Ui {
    */
   private syncCustomPaletteEditors(state: AppState): void {
     const paletteIdByKind: Record<
-      "background" | "flame" | "solid" | "surface" | "ramp",
+      "background" | "flame" | "solid" | "solidRamp" | "surface" | "ramp",
       PaletteSelection
     > = {
       background: state.background.flamePaletteId ?? DEFAULT_FLAME_PALETTE,
       flame: state.flame.paletteId,
       solid: state.solid.paletteId,
+      solidRamp: state.rampPaletteId,
       surface: state.surface.paletteId,
       ramp: state.rampPaletteId,
     };
@@ -4231,6 +4324,7 @@ export class Ui {
       "background",
       "flame",
       "solid",
+      "solidRamp",
       "surface",
       "ramp",
     ] as const) {

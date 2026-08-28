@@ -690,9 +690,11 @@ from the new rotor and its retained entry support, discards the old
 accumulation, and restarts at that settled endpoint. Flame continues to refuse
 ordinary camera and transform actions, while its Shift rotor, W-slice, and
 visible motion-preference actions remain reachable; Solid's world-space camera
-stays live. The saved Points Scene color inputs similarly use atomic
+stays live. The shared authored color inputs similarly use atomic
 `setColorInputs` commands to keep 4D color mode, contrast, applicable ramp
-palette, and Axis Colors current when a Classic worker consumes them. The 4D
+palette, and Axis Colors current when a mode-driven worker consumes them.
+Solid exposes those inputs through mirrors in its own Scene color panel rather
+than revealing the Points panel. The 4D
 flame
 rides the same WebGPU path as the 3D one (see "GPU accumulation backend"), with
 `accumulateFlame4` as its CPU oracle and fallback.

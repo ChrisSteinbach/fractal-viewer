@@ -237,16 +237,21 @@ morphs into place instead of snapping (see **Presets** below).
     slider says what it was reduced to.
 - **◆ Solid** — the attractor as a lit, shadowed solid: the chaos game fills a
   cubic density grid and a raymarcher lifts a surface out of it, colored by
-  the explorer's **Color Mode** or by a gradient. Unlike the flame's frozen
+  its **Color Mode** or by a gradient. Unlike the flame's frozen
   still the camera stays live while it converges, and the surface and lighting
   controls react at full frame rate. Its status block counts the same way
   ("12.3M / 20.0M iterations (61%)"); until the worker's first grid lands there
   is nothing in the volume for rays to hit, so the point cloud deliberately
   stays on screen rather than flashing an empty frame at you.
-  - **Scene color** — **Palette (restarts render)** offers the same gradients
-    as the flame's, plus **Classic**, which uses the saved Points Color Mode.
-    The restart is needed because each voxel's running mean color already has
-    the old palette in it.
+  - **Scene color** — **Color source (restarts render)** chooses either
+    **Color mode** or one of the same orbit gradients as Flame. Color mode
+    reveals the current-dimensional **Color Mode** / **4D Color** selector:
+    By Transform, Height, Radius, Position, Uniform Cyan, and the three W-depth
+    choices in 4D. Height/Radius also reveal their ramp palette and contrast;
+    Position reveals Axis Colors and contrast. A named or Custom orbit palette
+    overrides that definition, so the mode-dependent controls hide until Color
+    source returns to Color mode. Restarts are needed because each voxel's
+    running mean color already has the old choice in it.
   - **Level** — **Surface Level** (0.02–0.95, default 0.30) is where the
     surface is cut through the density, measured on a log scale so that a
     given level lines up with what reads as "bright" in a Flame of the same
@@ -1156,10 +1161,12 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     and Position Axis Colors. Changes recolor the cached cloud immediately.
   - Flame: Exposure, Gamma, Vibrancy, and its Palette. Tone-map controls are
     live; palette changes restart accumulation.
-  - Solid: its Palette. Palette changes restart voxel accumulation; **Classic**
-    delegates to the saved Points color definition.
+  - Solid: **Color source**, the current-dimensional **Color Mode** / **4D
+    Color**, and applicable ramp, contrast, Custom-gradient, and Axis Color
+    controls. Color changes restart voxel accumulation. A named orbit palette
+    overrides and hides the mode-dependent controls.
   - Surface: Color source, an applicable Palette, and Color speed. Its Height
-    and Radius sources reuse the saved Points ramp and contrast definition.
+    and Radius sources reuse the stored ramp and contrast definition.
 
   The four sections deliberately share one name because each answers the same
   question for the current view. Renderer-specific values persist while their
@@ -1169,9 +1176,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
 - **Color ramp palette** — appears while **Color Mode** is **By Height** or
   **By Radius**, the two modes that _are_ a 1-D ramp — and, in the 4D
   projection, while **4D Color** is **By Height** or **By 4D Radius** — naming the
-  gradient those ramps sample. The editor is shown only in Points; a Surface
-  **Height** or **Radius** source and Solid **Classic** reuse the stored
-  definition. **Classic**
+  gradient those ramps sample. The editor is shown in Points and in Solid when
+  its Color source is **Color mode**; a Surface **Height** or **Radius** source
+  reuses the stored definition. **Classic**
   (the default) keeps the
   original hand-tuned formulas (height's blue→green→red, radius's warm→cool);
   the seven named gradients — **Spectrum**, **Sunset**, **Dusk**, **Lagoon**,
@@ -1188,11 +1195,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   the ramp and blend linearly between neighbors; there may be 2 to 8 of them
   and the buttons disable at those bounds. **+ Stop** appends a copy of the
   last color, so the gradient doesn't jump until you recolor the new swatch.
-  A scene has exactly ONE shared primary custom gradient, and all five selects
-  offering it edit that same one: **Color ramp palette** in Points,
-  **Palette (restarts render)** in Flame and Solid **Scene color**,
-  **Palette** in Surface **Scene color**, and **Backdrop flame palette** for
-  the generated Flame background in **Atmosphere**. The renderer rules above
+  A scene has exactly ONE shared primary custom gradient, and all six selects
+  offering it edit that same one: **Color ramp palette** in Points and Solid,
+  Flame's **Palette**, Solid's orbit-gradient **Color source**, **Palette** in
+  Surface **Scene color**, and **Backdrop flame palette** for the generated
+  Flame background in **Atmosphere**. The renderer rules above
   still apply: the same shared Custom edit may be live, staged, or
   re-accumulating rather than acquiring a different cost from the editor copy
   used to make it. Each editor says this directly:
@@ -1204,15 +1211,17 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   replaced, so Custom always opens as a tweakable copy of what was on screen
   rather than a blank ramp; it then survives switching back to a named palette,
   and persists in the link and scene file, so an authored gradient is never
-  lost. Four of those selects also keep a **Classic** option that opts out of
-  gradients altogether: **Color ramp palette** uses the original hand-tuned
-  ramp, Flame's palette and **Backdrop flame palette** use a flat per-map hue,
-  and Solid's palette uses the Points **Color Mode** colors. Surface's palette
+  lost. Their legacy-valued choices opt out of gradients altogether: **Color
+  ramp palette** uses the original hand-tuned ramp, Flame's palette and
+  **Backdrop flame palette** use a flat per-map hue, and Solid's **Color mode**
+  source uses the shared authored mode colors.
+  Surface's palette
   has no Classic option — it only appears for the color sources that need a
   gradient, and its **By Transform** source is a sibling choice in **Color
   source** above it.
-- **Axis Colors** — appears in Points while the active flat **Color Mode** or
-  non-flat **4D Color** is **By Position**: three pickers naming the color each axis contributes, blended by
+- **Axis Colors** — appears in Points, or in Solid while its Color source is
+  **Color mode**, when the active flat **Color Mode** or non-flat **4D Color**
+  is **By Position**: three pickers naming the color each axis contributes, blended by
   the point's normalized X/Y/Z (so a point near the far X corner reads mostly
   as the X color, one in the middle as the mix). **Reset** restores the classic
   X→red, Y→green, Z→blue mapping, which is also the default. A dark-gray floor
@@ -1222,8 +1231,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   Solid render all read the same three colors in either dimension. Points
   updates live; Classic Flame and Solid paths may consume the saved colors.
   The colors travel in the link and scene file.
-- **Color Contrast** — visible in Points for the active flat or 4D
-  Height/Radius/Position color modes; a
+- **Color Contrast** — visible in Points, or in mode-driven Solid, for the
+  active flat or 4D Height/Radius/Position color modes; a
   log-scale gamma on the normalized coordinate. Left (<1) spreads detail in
   the dense low end, right (>1) in the high end, center = linear. Its stored
   value also shapes a Surface Height/Radius source in either dimension.
@@ -1645,8 +1654,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   quiet. The worker retains its entry geometry, center, and support across that
   restart. Flame still refuses ordinary camera/transform motion; Solid's camera
   remains live because its voxel volume is world-space. Each renderer shows
-  its own **Scene color** section; a Classic Flame or Solid render may still
-  consume the saved Points color definition without exposing the Points editor.
+  its own **Scene color** section; mode-driven Solid exposes a local mirror of
+  the applicable selector and dependent controls without exposing the Points
+  section.
   Surface
   instead keeps the rotor and W slice live per
   frame, so the Shift-drag / Shift-wheel gestures above still steer it and

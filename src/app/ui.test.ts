@@ -273,7 +273,13 @@ describe("palette field vocabulary", () => {
     },
     {
       id: "solidPalette",
-      label: "Palette (restarts render)",
+      label: "Color source (restarts render)",
+      firstValue: "legacy",
+      firstLabel: "Color mode",
+    },
+    {
+      id: "solidRampPalette",
+      label: "Color ramp palette",
       firstValue: "legacy",
       firstLabel: "Classic",
     },
@@ -327,6 +333,11 @@ describe("palette field vocabulary", () => {
       flameVibrancySlider: "flameToneSection",
       flamePalette: "flameToneSection",
       solidPalette: "solidColorSection",
+      solidColorMode: "solidColorSection",
+      solidFourDColor: "solidColorSection",
+      solidRampPalette: "solidColorSection",
+      solidColorGammaSlider: "solidColorSection",
+      solidPositionAxisX: "solidColorSection",
       surfaceColorSource: "surfaceColorSection",
       surfacePalette: "surfaceColorSection",
       surfaceColorSpeedSlider: "surfaceColorSection",
@@ -344,17 +355,35 @@ describe("palette field vocabulary", () => {
     ).not.toBe("solidSurfaceSection");
   });
 
-  it("keeps exactly four legacy wire options and presents each as Classic", () => {
+  it("keeps Solid's mirrored color registries aligned with Points", () => {
+    const values = (id: string): string[] =>
+      Array.from(
+        document.querySelectorAll<HTMLOptionElement>(`#${id} option`),
+      ).map((option) => option.value);
+
+    expect(values("solidColorMode")).toEqual(values("colorMode"));
+    expect(values("solidFourDColor")).toEqual(values("fourDColor"));
+    expect(values("solidRampPalette")).toEqual(values("rampPalette"));
+  });
+
+  it("labels each legacy wire sentinel for its local meaning", () => {
     const legacyOptions = Array.from(
       document.querySelectorAll<HTMLOptionElement>('option[value="legacy"]'),
     );
     expect(legacyOptions.map((option) => option.closest("select")?.id)).toEqual(
-      ["rampPalette", "backgroundFlamePalette", "flamePalette", "solidPalette"],
+      [
+        "rampPalette",
+        "backgroundFlamePalette",
+        "flamePalette",
+        "solidPalette",
+        "solidRampPalette",
+      ],
     );
     expect(legacyOptions.map((option) => option.textContent)).toEqual([
       "Classic",
       "Classic",
       "Classic",
+      "Color mode",
       "Classic",
     ]);
   });
@@ -7025,6 +7054,9 @@ describe("Ui.setSoftwareRendererNote", () => {
 });
 
 describe("Ui solid render controls", () => {
+  const byId = (id: string): HTMLElement =>
+    document.getElementById(id) as HTMLElement;
+
   it("names the render mode in the help box while active", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
@@ -7221,6 +7253,154 @@ describe("Ui solid render controls", () => {
     select.dispatchEvent(new Event("change"));
 
     expect(current().solid.paletteId).toBe("sunset");
+  });
+
+  it.each([
+    ["flat", defaultTransforms(), "solidColorModeRow", "solidFourDColorRow"],
+    [
+      "non-flat",
+      nonFlatTransforms(),
+      "solidFourDColorRow",
+      "solidColorModeRow",
+    ],
+  ] as const)(
+    "restores the %s dimensional color selector inside Solid when Color source is Color mode",
+    (_dimension, transforms, visibleRow, hiddenRow) => {
+      const base = initialState(true);
+      const ui = new Ui(document);
+      ui.updateLabels({
+        ...base,
+        renderMode: "solid",
+        transforms: [...transforms],
+        solid: { ...base.solid, paletteId: "legacy" },
+      });
+
+      expect(byId("colorSection").classList.contains("hidden")).toBe(true);
+      expect(byId("solidColorSection").classList.contains("hidden")).toBe(
+        false,
+      );
+      expect(byId(visibleRow).classList.contains("hidden")).toBe(false);
+      expect(byId(hiddenRow).classList.contains("hidden")).toBe(true);
+    },
+  );
+
+  it("hides mode-dependent Solid controls while an orbit palette overrides them", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderMode: "solid" });
+
+    for (const id of [
+      "solidColorModeRow",
+      "solidFourDColorRow",
+      "solidRampPaletteRow",
+      "solidPositionColorsRow",
+      "solidColorGammaRow",
+    ]) {
+      expect(byId(id).classList.contains("hidden"), id).toBe(true);
+    }
+  });
+
+  it.each([
+    ["transform", true, true, true],
+    ["height", false, true, false],
+    ["radius", false, true, false],
+    ["position", true, false, false],
+    ["uniform", true, true, true],
+  ] as const)(
+    "gates Solid flat %s dependent controls",
+    (colorMode, rampHidden, positionHidden, gammaHidden) => {
+      const base = initialState(true);
+      const ui = new Ui(document);
+      ui.updateLabels({
+        ...base,
+        renderMode: "solid",
+        colorMode,
+        solid: { ...base.solid, paletteId: "legacy" },
+      });
+
+      expect(byId("solidRampPaletteRow").classList.contains("hidden")).toBe(
+        rampHidden,
+      );
+      expect(byId("solidPositionColorsRow").classList.contains("hidden")).toBe(
+        positionHidden,
+      );
+      expect(byId("solidColorGammaRow").classList.contains("hidden")).toBe(
+        gammaHidden,
+      );
+    },
+  );
+
+  it("applies Solid's mirror controls to the existing authored color definition", () => {
+    const base = initialState(true);
+    const { handlers, current } = scalarHandlers({
+      ...base,
+      renderMode: "solid",
+      solid: { ...base.solid, paletteId: "legacy" },
+    });
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const mode = byId("solidColorMode") as HTMLSelectElement;
+    mode.value = "height";
+    mode.dispatchEvent(new Event("change"));
+    const ramp = byId("solidRampPalette") as HTMLSelectElement;
+    ramp.value = "ember";
+    ramp.dispatchEvent(new Event("change"));
+    const gamma = byId("solidColorGammaSlider") as HTMLInputElement;
+    gamma.value = "1";
+    gamma.dispatchEvent(new Event("input"));
+
+    expect(current().colorMode).toBe("height");
+    expect(current().rampPaletteId).toBe("ember");
+    expect(current().colorGamma).toBe(MAX_COLOR_GAMMA);
+  });
+
+  it("reports Solid position-axis edits through the shared authored triple", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const x = byId("solidPositionAxisX") as HTMLInputElement;
+    const y = byId("solidPositionAxisY") as HTMLInputElement;
+    const z = byId("solidPositionAxisZ") as HTMLInputElement;
+    x.value = "#ff0000";
+    y.value = "#008000";
+    z.value = "#0000ff";
+
+    y.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(handlers.onPositionAxisColors).toHaveBeenCalledWith({
+      x: [1, 0, 0],
+      y: [0, 128 / 255, 0],
+      z: [0, 0, 1],
+    });
+  });
+
+  it("shows Solid's ramp Custom editor for a mode-driven custom ramp", () => {
+    const base = initialState(true);
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...base,
+      renderMode: "solid",
+      colorMode: "height",
+      rampPaletteId: "custom",
+      solid: { ...base.solid, paletteId: "legacy" },
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    });
+
+    expect(byId("solidRampCustomPaletteRow").classList.contains("hidden")).toBe(
+      false,
+    );
+    expect(
+      Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          "#solidRampCustomPaletteStops input[type='color']",
+        ),
+      ).map((input) => input.value),
+    ).toEqual(["#ff0000", "#00ff00"]);
   });
 });
 

@@ -3619,8 +3619,8 @@ async function main(): Promise<void> {
         transforms: state.transforms,
         finalTransform: state.finalTransform ?? null,
         resolution: state.solid.resolution,
-        // The explorer's Color Mode carries into the voxel colors;
-        // entering the mode seeds it; atomic Color commands keep it live.
+        // The authored Color Mode selected through Points or Solid carries
+        // into the voxel colors; entry seeds it and atomic commands keep it live.
         colorMode: state.colorMode,
         // Seeded alongside colorMode so the solid render's baked-in
         // LUT/position coloring matches the explorer's contrast.
