@@ -37,6 +37,10 @@ import { SURFACE_GRID_RESOLUTION } from "../fractal/surface-grid";
 import type { SurfaceGrid } from "../fractal/surface-grid";
 import type { SurfaceDE } from "../fractal/surface-de";
 import type {
+  SerializedMeshSdfBake,
+  SerializedPreparedMeshAsset,
+} from "../fractal/mesh-shapes";
+import type {
   SurfaceGridRequest,
   SurfaceGridResult,
 } from "./surface-grid-worker-core";
@@ -129,12 +133,23 @@ export class SurfaceGridClient {
    * reflect what was actually built and are the authoritative values —
    * never the `resolution` passed here.
    */
-  request(de: SurfaceDE, resolution: number = SURFACE_GRID_RESOLUTION): void {
+  request(
+    de: SurfaceDE,
+    resolution: number = SURFACE_GRID_RESOLUTION,
+    meshAssets?: readonly SerializedPreparedMeshAsset[],
+    meshBakes?: readonly SerializedMeshSdfBake[],
+  ): void {
     if (this.worker === null) this.worker = this.spawnWorker();
     if (this.worker === null) return;
     const id = this.nextId++;
     this.outstandingId = id;
-    this.worker.post({ id, de, resolution });
+    this.worker.post({
+      id,
+      de,
+      resolution,
+      ...(meshAssets === undefined ? {} : { meshAssets }),
+      ...(meshBakes === undefined ? {} : { meshBakes }),
+    });
   }
 
   /**

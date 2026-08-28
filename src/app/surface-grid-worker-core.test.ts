@@ -6,6 +6,69 @@ import type { SurfaceGridRequest } from "./surface-grid-worker-core";
 import { buildSurfaceGrid, surfaceGridSpec } from "../fractal/surface-grid";
 import { buildSurfaceDE } from "../fractal/surface-de";
 import { sierpinskiTetrahedron } from "../fractal/presets";
+import {
+  bakeMeshSdf,
+  bakePreparedMeshSdf,
+  hasMeshAsset,
+  installCustomMeshAsset,
+  prepareSerializedCustomMeshAsset,
+  serializeMeshSdfBake,
+  uninstallCustomMeshAsset,
+  type CustomMeshAssetId,
+  type SerializedMeshSdfBake,
+  type SerializedPreparedMeshAsset,
+} from "../fractal/mesh-shapes";
+import type { Transform } from "../fractal/types";
+
+const SURFACE_MESH_ID: CustomMeshAssetId = `mesh-sha256-${"3".repeat(64)}`;
+
+function meshSource(
+  id: CustomMeshAssetId = SURFACE_MESH_ID,
+): SerializedPreparedMeshAsset {
+  return {
+    id,
+    name: "Worker tetra",
+    vertices: new Float64Array([1, 1, 1, -1, -1, 1, -1, 1, -1, 1, -1, -1]),
+    triangles: new Uint32Array([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]),
+  };
+}
+
+function meshBake(
+  id: CustomMeshAssetId = SURFACE_MESH_ID,
+): SerializedMeshSdfBake {
+  const source = prepareSerializedCustomMeshAsset(meshSource(id));
+  return serializeMeshSdfBake(bakePreparedMeshSdf(source, 8));
+}
+
+function customMeshTransform(id = SURFACE_MESH_ID): Transform {
+  return {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+    emitter: {
+      parts: [
+        {
+          combine: "union",
+          primitive: { kind: "mesh", meshId: id },
+        },
+      ],
+    },
+  };
+}
+
+function customMeshDe() {
+  const asset = prepareSerializedCustomMeshAsset(meshSource());
+  installCustomMeshAsset(asset);
+  try {
+    return buildSurfaceDE([
+      customMeshTransform(),
+      { ...sierpinskiTetrahedron()[0], id: 1 },
+    ]);
+  } finally {
+    uninstallCustomMeshAsset(SURFACE_MESH_ID);
+  }
+}
 
 /**
  * A minimal, fully-specified `SurfaceGridRequest`, overridable per test so
@@ -26,6 +89,124 @@ function request(
 }
 
 describe("buildSurfaceGridResult", () => {
+  it("installs custom mesh payloads before evaluating a surface request", () => {
+    const de = customMeshDe();
+    expect(() =>
+      buildSurfaceGridResult(request({ de, resolution: 4 }), () => 0),
+    ).toThrow(/missing local mesh asset/);
+
+    try {
+      const prepared = prepareSerializedCustomMeshAsset(meshSource());
+      const bake = serializeMeshSdfBake(bakePreparedMeshSdf(prepared, 8));
+      bake.values[0] -= 0.125;
+      const result = buildSurfaceGridResult(
+        request({
+          de,
+          resolution: 4,
+          meshAssets: [meshSource()],
+          meshBakes: [bake],
+        }),
+        () => 0,
+      );
+      expect(result.values).toHaveLength(4 ** 3);
+      expect(Array.from(result.values).every(Number.isFinite)).toBe(true);
+      expect(bakeMeshSdf(SURFACE_MESH_ID, 8).values[0]).toBe(bake.values[0]);
+    } finally {
+      uninstallCustomMeshAsset(SURFACE_MESH_ID);
+    }
+  });
+
+  it("rejects custom mesh batches above the scene budget", () => {
+    expect(() =>
+      buildSurfaceGridResult(
+        request({ meshAssets: Array.from({ length: 5 }, () => meshSource()) }),
+      ),
+    ).toThrow(/too many custom mesh assets/);
+  });
+
+  it("rejects a malformed batch without partially installing earlier wires", () => {
+    const malformedId: CustomMeshAssetId = `mesh-sha256-${"4".repeat(64)}`;
+    expect(() =>
+      buildSurfaceGridResult(
+        request({
+          de: customMeshDe(),
+          resolution: 4,
+          meshAssets: [
+            meshSource(),
+            {
+              ...meshSource(malformedId),
+              triangles: new Uint32Array([0]),
+            },
+          ],
+        }),
+        () => 0,
+      ),
+    ).toThrow(/malformed/);
+    expect(hasMeshAsset(SURFACE_MESH_ID)).toBe(false);
+  });
+
+  it("stages all bakes before installing their new sources", () => {
+    const secondId: CustomMeshAssetId = `mesh-sha256-${"5".repeat(64)}`;
+    const firstBake = meshBake();
+    const secondBake = meshBake(secondId);
+    try {
+      expect(() =>
+        buildSurfaceGridResult(
+          request({
+            meshAssets: [meshSource(), meshSource(secondId)],
+            meshBakes: [
+              firstBake,
+              { ...secondBake, values: new Float32Array(1) },
+            ],
+          }),
+        ),
+      ).toThrow(/arrays are malformed/);
+      expect(hasMeshAsset(SURFACE_MESH_ID)).toBe(false);
+      expect(hasMeshAsset(secondId)).toBe(false);
+    } finally {
+      uninstallCustomMeshAsset(SURFACE_MESH_ID);
+      uninstallCustomMeshAsset(secondId);
+    }
+  });
+
+  it("rejects a malformed first bake without installing its source", () => {
+    const bake = meshBake();
+    try {
+      expect(() =>
+        buildSurfaceGridResult(
+          request({
+            meshAssets: [meshSource()],
+            meshBakes: [{ ...bake, values: new Float32Array(1) }],
+          }),
+        ),
+      ).toThrow(/arrays are malformed/);
+      expect(hasMeshAsset(SURFACE_MESH_ID)).toBe(false);
+    } finally {
+      uninstallCustomMeshAsset(SURFACE_MESH_ID);
+    }
+  });
+
+  it("rejects duplicate bake keys before installing their source", () => {
+    const first = meshBake();
+    const conflicting = serializeMeshSdfBake(
+      bakePreparedMeshSdf(prepareSerializedCustomMeshAsset(meshSource()), 8),
+    );
+    conflicting.values[0] -= 0.125;
+    try {
+      expect(() =>
+        buildSurfaceGridResult(
+          request({
+            meshAssets: [meshSource()],
+            meshBakes: [first, conflicting],
+          }),
+        ),
+      ).toThrow(/duplicate custom mesh bake/);
+      expect(hasMeshAsset(SURFACE_MESH_ID)).toBe(false);
+    } finally {
+      uninstallCustomMeshAsset(SURFACE_MESH_ID);
+    }
+  });
+
   it("matches buildSurfaceGrid for resolution/halfExtent/values and echoes the request id (oracle)", () => {
     const req = request({ id: 7 });
     const result = buildSurfaceGridResult(req);

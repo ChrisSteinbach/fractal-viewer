@@ -6,12 +6,16 @@ import {
   FLAME_GPU_KERNEL_WGSL,
   HIST_U32_PER_BUCKET,
   KERNEL_VARIATION_INDEX,
+  MAX_EMITTER_TRIANGLE_TABLE_BYTES,
+  MAX_EMITTER_TRIANGLE_TABLE_FLOATS,
   MAX_SLOT_VARIATIONS,
   PARAMS_BYTES,
   SLOT_STRIDE_BYTES,
   WEIGHT_FIXED_POINT_SCALE,
   convertGpuDisplayHistogram,
   convertGpuHistogram,
+  buildMeshTriangleTable,
+  createGearTableBuilder,
   packChaosRowsTable,
   packGpuChains,
   packGpuColorLUT,
@@ -40,9 +44,13 @@ import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
 import {
   MESH_ASSET_IDS,
+  ingestMeshAsset,
+  installCustomMeshAsset,
   meshAsset,
   meshAssetCatalogIndex,
   meshAssetIdAtCatalogIndex,
+  uninstallCustomMeshAsset,
+  type CustomMeshAssetId,
   type MeshAssetId,
 } from "./mesh-shapes";
 import { VARIATION_TYPES } from "./types";
@@ -93,6 +101,29 @@ function expectedMeshTriangleTable(meshId: MeshAssetId): number[] {
       ),
     ),
   ];
+}
+
+const CUSTOM_TETRA_ID_3D: CustomMeshAssetId = `mesh-sha256-${"a".repeat(64)}`;
+
+function installCustomTetra3d(): void {
+  installCustomMeshAsset(
+    ingestMeshAsset(
+      CUSTOM_TETRA_ID_3D,
+      [
+        [0, 0, 0],
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+      ],
+      [
+        [0, 2, 1],
+        [0, 1, 3],
+        [0, 3, 2],
+        [1, 2, 3],
+      ],
+      "GPU table test tetra",
+    ),
+  );
 }
 
 function makeTransforms(count: number): Transform[] {
@@ -720,6 +751,81 @@ describe("packGpuSystem shape emitters", () => {
       expect(f32[p + EP_ROT0 + 3]).toBeCloseTo(asset.totalArea * 4, 5);
     },
   );
+
+  it("resolves a custom mesh and reuses one content table across parts, transforms, and symmetry copies", () => {
+    installCustomTetra3d();
+    try {
+      const repeated: ShapeSpec = {
+        parts: [
+          {
+            primitive: { kind: "mesh", meshId: CUSTOM_TETRA_ID_3D },
+            combine: "union",
+          },
+          {
+            primitive: { kind: "mesh", meshId: CUSTOM_TETRA_ID_3D },
+            combine: "union",
+            pose: { offset: [0.25, 0, 0] },
+          },
+        ],
+      };
+      const first = transformWithEmitter(repeated);
+      const second: Transform = {
+        ...transformWithEmitter(repeated),
+        id: 1,
+        position: [0.1, 0, 0],
+      };
+      const packed = packGpuSystem(
+        baseSpec({
+          transforms: [first, second],
+          symmetry: { order: 3, plane: "xz" },
+        }),
+      );
+
+      expect(packed.transformCount).toBe(6);
+      const asset = meshAsset(CUSTOM_TETRA_ID_3D);
+      const table = new Float32Array(packed.gearTable!);
+      expect(table.length).toBe(asset.triangles.length * 10);
+      expect(Array.from(table)).toEqual(
+        expectedMeshTriangleTable(CUSTOM_TETRA_ID_3D),
+      );
+
+      const f32 = new Float32Array(packed.slots);
+      for (let slot = 0; slot < packed.transformCount; slot++) {
+        for (let part = 0; part < repeated.parts.length; part++) {
+          const p = slot * F32_PER_SLOT + EMITTER_PARTS + part * EP_STRIDE;
+          expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
+          expect(f32[p + EP_KIND_PARAMS0 + 1]).toBe(0);
+          expect(f32[p + EP_KIND_PARAMS0 + 2]).toBe(asset.triangles.length);
+        }
+      }
+    } finally {
+      uninstallCustomMeshAsset(CUSTOM_TETRA_ID_3D);
+    }
+  });
+
+  it("rejects an aggregate emitter triangle table over its named float and byte budget before appending", () => {
+    expect(MAX_EMITTER_TRIANGLE_TABLE_BYTES).toBe(
+      MAX_EMITTER_TRIANGLE_TABLE_FLOATS * Float32Array.BYTES_PER_ELEMENT,
+    );
+    installCustomTetra3d();
+    try {
+      const builder = createGearTableBuilder();
+      builder.floats.length = MAX_EMITTER_TRIANGLE_TABLE_FLOATS - 39;
+      expect(() =>
+        buildMeshTriangleTable(
+          { kind: "mesh", meshId: CUSTOM_TETRA_ID_3D },
+          builder,
+        ),
+      ).toThrow(
+        `aggregate ${MAX_EMITTER_TRIANGLE_TABLE_FLOATS}-float (${MAX_EMITTER_TRIANGLE_TABLE_BYTES}-byte) limit`,
+      );
+      expect(builder.floats.length).toBe(
+        MAX_EMITTER_TRIANGLE_TABLE_FLOATS - 39,
+      );
+    } finally {
+      uninstallCustomMeshAsset(CUSTOM_TETRA_ID_3D);
+    }
+  });
 
   it("the packed mesh CDF selects triangles in their catalog area proportions", () => {
     const asset = meshAsset("star-prism-v1");

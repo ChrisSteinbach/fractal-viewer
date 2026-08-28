@@ -121,6 +121,7 @@ import { isMeshAssetId } from "../fractal/mesh-shapes";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
 import { clamp } from "../fractal/vec";
+import { sceneHasCustomMeshes } from "./scene-mesh-assets";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -393,7 +394,7 @@ export interface SceneSnapshot {
 
 /** Injectable browser dependencies; each defaults to its real-global counterpart. */
 export interface PersistDeps {
-  location?: { hash: string };
+  location?: { hash: string; pathname?: string; search?: string };
   storage?: Pick<Storage, "getItem" | "setItem">;
   history?: Pick<History, "replaceState">;
 }
@@ -3449,8 +3450,10 @@ export function loadScene(deps?: PersistDeps): SceneSnapshot | null {
 }
 
 /**
- * Persist the snapshot to the URL hash (silent `replaceState`, no new history
- * entry) and to localStorage. Guards for missing browser globals.
+ * Persist the snapshot to localStorage and, only when it has no local asset
+ * dependency, to the URL hash (silent `replaceState`, no new history entry).
+ * A content-addressed local mesh is intentionally non-portable in this
+ * release, so retaining an older portable hash would be actively misleading.
  */
 export function saveScene(s: SceneSnapshot, deps?: PersistDeps): void {
   const encoded = encodeScene(s);
@@ -3460,7 +3463,18 @@ export function saveScene(s: SceneSnapshot, deps?: PersistDeps): void {
     deps?.history ?? (typeof history !== "undefined" ? history : undefined);
   if (hist) {
     try {
-      hist.replaceState(null, "", "#" + encoded);
+      if (sceneHasCustomMeshes(s)) {
+        const loc =
+          deps?.location ??
+          (typeof window !== "undefined" ? window.location : undefined);
+        hist.replaceState(
+          null,
+          "",
+          `${loc?.pathname ?? ""}${loc?.search ?? ""}` || "/",
+        );
+      } else {
+        hist.replaceState(null, "", "#" + encoded);
+      }
     } catch {
       // SecurityError in sandboxed / cross-origin iframes — ignore silently.
     }

@@ -1,9 +1,18 @@
 import { sierpinskiTetrahedron } from "../fractal/presets";
-import { CHAOS_SUB_ORBIT_POINTS } from "../fractal/chaos-game";
+import {
+  CHAOS_SUB_ORBIT_POINTS,
+  emitterSamplerCapability,
+} from "../fractal/chaos-game";
 import { clampVoxelResolution, createVoxelGrid } from "../fractal/voxel";
 import { computeVoxelBounds4 } from "../fractal/voxel-4d";
 import type { FourDView } from "../fractal/project4";
-import type { Transform4 } from "../fractal/types";
+import type { Transform, Transform4 } from "../fractal/types";
+import {
+  hasMeshAsset,
+  uninstallCustomMeshAsset,
+  type CustomMeshAssetId,
+  type SerializedPreparedMeshAsset,
+} from "../fractal/mesh-shapes";
 import {
   voxelAccumBudgetVoxels,
   VoxelWorkerSession,
@@ -14,13 +23,47 @@ import type {
   VoxelWorkerEvent,
 } from "./voxel-worker-core";
 
+const VOXEL_MESH_ID: CustomMeshAssetId = `mesh-sha256-${"7".repeat(64)}`;
+
+function meshSource(
+  id: CustomMeshAssetId = VOXEL_MESH_ID,
+): SerializedPreparedMeshAsset {
+  return {
+    id,
+    name: "Worker tetra",
+    vertices: new Float64Array([1, 1, 1, -1, -1, 1, -1, 1, -1, 1, -1, -1]),
+    triangles: new Uint32Array([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]),
+  };
+}
+
+function customEmitter(id: CustomMeshAssetId = VOXEL_MESH_ID) {
+  return {
+    parts: [
+      {
+        combine: "union" as const,
+        primitive: { kind: "mesh" as const, meshId: id },
+      },
+    ],
+  };
+}
+
+function customMeshTransform(): Transform {
+  return {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+    emitter: customEmitter(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Test harness — mirrors flame-worker-core.test.ts's.
 // ---------------------------------------------------------------------------
 
 function startCommand(
   overrides: Partial<Extract<VoxelWorkerCommand, { type: "start" }>> = {},
-): VoxelWorkerCommand {
+): Extract<VoxelWorkerCommand, { type: "start" }> {
   return {
     type: "start",
     transforms: sierpinskiTetrahedron(),
@@ -217,6 +260,72 @@ function restartedEvents(
 // ---------------------------------------------------------------------------
 
 describe("VoxelWorkerSession start", () => {
+  it.each(["3D", "4D"] as const)(
+    "installs a custom mesh emitter payload for a %s session",
+    (dimension) => {
+      const transforms =
+        dimension === "3D" ? [customMeshTransform()] : sierpinskiTetrahedron();
+      const fourD =
+        dimension === "4D"
+          ? {
+              ...defaultFourD(),
+              transforms4: [
+                { ...makeTransforms4(1)[0], emitter: customEmitter() },
+              ],
+            }
+          : undefined;
+      const command = startCommand({
+        transforms,
+        fourD,
+        resolution: 8,
+        iterationsBudget: 40,
+      });
+
+      const { session, events, scheduler } = harness({ boundsSamples: 40 });
+      try {
+        session.handle({ ...command, meshAssets: [meshSource()] });
+        scheduler.drain();
+        expect(gridEvents(events).at(-1)?.iterationsDone).toBe(40);
+        const emitter =
+          dimension === "3D"
+            ? transforms[0].emitter
+            : fourD?.transforms4[0].emitter;
+        expect(emitterSamplerCapability(emitter).status).toBe("sampleable");
+      } finally {
+        uninstallCustomMeshAsset(VOXEL_MESH_ID);
+      }
+    },
+  );
+
+  it("rejects a malformed batch without partially installing earlier wires", () => {
+    const malformedId: CustomMeshAssetId = `mesh-sha256-${"8".repeat(64)}`;
+    const { session, events } = harness();
+    expect(() =>
+      session.handle(
+        startCommand({
+          transforms: [customMeshTransform()],
+          meshAssets: [
+            meshSource(),
+            { ...meshSource(malformedId), triangles: new Uint32Array([0]) },
+          ],
+        }),
+      ),
+    ).toThrow(/malformed/);
+    expect(hasMeshAsset(VOXEL_MESH_ID)).toBe(false);
+    expect(events).toHaveLength(0);
+  });
+
+  it("rejects source batches above the scene budget", () => {
+    const { session } = harness();
+    expect(() =>
+      session.handle(
+        startCommand({
+          meshAssets: Array.from({ length: 5 }, () => meshSource()),
+        }),
+      ),
+    ).toThrow(/too many custom mesh sources/);
+  });
+
   it("runs to completion and reports the final grid at the full budget", () => {
     const { session, events, scheduler } = harness();
     session.handle(startCommand({ iterationsBudget: 500 }));

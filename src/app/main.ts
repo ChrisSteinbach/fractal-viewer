@@ -155,6 +155,34 @@ import {
 import { bundledEmitterShape } from "./bundled-shapes";
 import { defaultAuthoredShape } from "./authored-shape";
 import {
+  assertSceneCustomMeshBudget,
+  sceneCustomMeshIds,
+  sceneHasCustomMeshes,
+} from "./scene-mesh-assets";
+import {
+  CUSTOM_MESH_SDF_RESOLUTION,
+  MAX_CUSTOM_MESH_OBJ_BYTES,
+} from "../fractal/custom-mesh";
+import {
+  bakeMeshSdf,
+  installSerializedCustomMeshAsset,
+  installSerializedMeshSdfBake,
+  serializeCustomMeshAsset,
+  serializeMeshSdfBake,
+  type SerializedMeshSdfBake,
+  type SerializedPreparedMeshAsset,
+} from "../fractal/mesh-shapes";
+import {
+  CustomMeshImportCancelledError,
+  importCustomMeshObj,
+  type CustomMeshImportJob,
+} from "./custom-mesh-importer";
+import { CustomMeshStore } from "./custom-mesh-store";
+import {
+  hydrateCustomMeshIds,
+  hydrateSceneCustomMeshes,
+} from "./custom-mesh-hydrator";
+import {
   EXPORT_MODAL_SLOW_PREDICTION_MS,
   createExportProgress,
   formatRenderPercent,
@@ -518,7 +546,7 @@ const BOOT_SYNC_MAX_POINTS = 30_000;
  */
 const BOOT_SEED = 0x5eedb007;
 
-function main(): void {
+async function main(): Promise<void> {
   // Field-diagnosability breadcrumb: the ONE line that says which build this
   // page actually runs. The service worker keeps serving a deploy's precache
   // for as long as any tab stays open (the wait-for-consent update flow), so
@@ -547,6 +575,47 @@ function main(): void {
 
   const panelOpen = window.innerWidth > MOBILE_BREAKPOINT;
   const saved = loadScene();
+  let customMeshStore: CustomMeshStore | null = null;
+  const customMeshWireCache = new Map<string, SerializedPreparedMeshAsset>();
+  const customMeshBakeWireCache = new Map<string, SerializedMeshSdfBake>();
+  const assetStore = (): CustomMeshStore =>
+    (customMeshStore ??= new CustomMeshStore());
+  const customMeshWires = (
+    snapshot: SceneSnapshot,
+  ): SerializedPreparedMeshAsset[] =>
+    sceneCustomMeshIds(snapshot).map((id) => {
+      let wire = customMeshWireCache.get(id);
+      if (!wire) {
+        wire = serializeCustomMeshAsset(id);
+        customMeshWireCache.set(id, wire);
+      }
+      return wire;
+    });
+  const customMeshBakeWires = (
+    snapshot: SceneSnapshot,
+  ): SerializedMeshSdfBake[] =>
+    sceneCustomMeshIds(snapshot).map((id) => {
+      let wire = customMeshBakeWireCache.get(id);
+      if (!wire) {
+        wire = serializeMeshSdfBake(
+          bakeMeshSdf(id, CUSTOM_MESH_SDF_RESOLUTION),
+        );
+        customMeshBakeWireCache.set(id, wire);
+      }
+      return wire;
+    });
+  if (saved && sceneHasCustomMeshes(saved)) {
+    try {
+      await hydrateSceneCustomMeshes(saved, assetStore());
+    } catch (error) {
+      showError(
+        `This local scene could not be opened without all of its mesh assets: ${
+          error instanceof Error ? error.message : "asset resolution failed"
+        }`,
+      );
+      return;
+    }
+  }
   let state: AppState = saved
     ? fromSnapshot(saved, initialState(panelOpen))
     : initialState(panelOpen);
@@ -2138,6 +2207,11 @@ function main(): void {
   ): CloudParams {
     const { transforms, finalTransform, symmetry } =
       morph?.system ?? currentMorphSystem();
+    const meshAssets = customMeshWires({
+      ...toSnapshot(state),
+      transforms,
+      finalTransform: finalTransform ?? undefined,
+    });
     return {
       transforms,
       finalTransform,
@@ -2178,6 +2252,7 @@ function main(): void {
       positionAxisColors: state.positionAxisColors,
       replaced,
       fit,
+      ...(meshAssets.length > 0 ? { meshAssets } : {}),
     };
   }
 
@@ -3111,7 +3186,9 @@ function main(): void {
       return;
     }
     const { width, height } = scene.flameBackdropRenderSize();
+    const meshAssets = customMeshWires(currentDocument());
     flameBackdropGenerator.request({
+      ...(meshAssets.length > 0 ? { meshAssets } : {}),
       transforms: state.transforms,
       finalTransform: state.finalTransform ?? null,
       projection: scene.flameProjectionMatrix(),
@@ -3219,12 +3296,14 @@ function main(): void {
       );
       const host = createFlameWorkerHost();
       const balloonPalette = flameBalloonPaletteSnapshot();
+      const meshAssets = customMeshWires(currentDocument());
 
       // Post the `start` via the freshly-created host, NOT flameSession.post:
       // RenderSession.enter only stores this returned handle afterwards, so
       // flameSession.post can't reach the new session yet.
       host.post({
         type: "start",
+        ...(meshAssets.length > 0 ? { meshAssets } : {}),
         transforms: state.transforms,
         finalTransform: state.finalTransform ?? null,
         projection,
@@ -3440,8 +3519,10 @@ function main(): void {
       // Post the `start` via the fresh handle — typed, so the payload is
       // checked — NOT solidSession.post: RenderSession.enter only stores this
       // returned handle afterwards, so solidSession.post can't reach it yet.
+      const meshAssets = customMeshWires(currentDocument());
       handle.post({
         type: "start",
+        ...(meshAssets.length > 0 ? { meshAssets } : {}),
         transforms: state.transforms,
         finalTransform: state.finalTransform ?? null,
         resolution: state.solid.resolution,
@@ -5371,7 +5452,15 @@ function main(): void {
                 surfaceGridSpec(de).halfExtent,
               );
             if (gridValidAtEntry) {
-              surfaceGrid.request(de);
+              const document = currentDocument();
+              const meshAssets = customMeshWires(document);
+              const meshBakes = customMeshBakeWires(document);
+              surfaceGrid.request(
+                de,
+                undefined,
+                meshAssets.length > 0 ? meshAssets : undefined,
+                meshBakes.length > 0 ? meshBakes : undefined,
+              );
             } else {
               surfaceGrid.cancel();
             }
@@ -5711,6 +5800,9 @@ function main(): void {
 
   function refreshUi(): void {
     ui.updateLabels(state);
+    ui.setPortableSceneSharingAvailable(
+      !sceneHasCustomMeshes(currentDocument()),
+    );
     ui.setSolidBalloonAvailable(scene.solidBalloonAvailable());
     ui.renderTransformList(
       state.transforms,
@@ -6248,9 +6340,35 @@ function main(): void {
    * applied, so onLoadFromCollection never arms a render-mode hint for a
    * load that never happened.
    */
-  function loadEncodedScene(encoded: string): boolean {
+  let sceneLoadTicket = 0;
+
+  async function loadEncodedScene(encoded: string): Promise<boolean> {
     const snap = decodeScene(encoded);
     if (!snap) return false;
+    const ticket = ++sceneLoadTicket;
+    const baseline = encodeScene(toSnapshot(state));
+    try {
+      assertSceneCustomMeshBudget(snap);
+      if (sceneHasCustomMeshes(snap)) {
+        await hydrateSceneCustomMeshes(snap, assetStore());
+      }
+    } catch (error) {
+      if (ticket === sceneLoadTicket) {
+        ui.flashToast(
+          `Scene not loaded: ${
+            error instanceof Error ? error.message : "local mesh asset failed"
+          }`,
+        );
+      }
+      return false;
+    }
+    if (
+      ticket !== sceneLoadTicket ||
+      encodeScene(toSnapshot(state)) !== baseline
+    ) {
+      ui.flashToast("Scene changed while local assets were loading");
+      return false;
+    }
     editSession.beginEdit("replace");
     applyDecodedSnapshot(snap, snap.camera === undefined, true);
     if (snap.camera) applyCameraPose(snap.camera);
@@ -6258,6 +6376,131 @@ function main(): void {
     // every load's behalf (the render-mode-hint pattern).
     loadHints.armPose(snap.fourD ?? null);
     return true;
+  }
+
+  function encodedSceneHasCustomMeshes(encoded: string): boolean {
+    const snapshot = decodeScene(encoded);
+    return snapshot !== null && sceneHasCustomMeshes(snapshot);
+  }
+
+  async function preflightEncodedScenes(
+    encodedScenes: readonly string[],
+  ): Promise<boolean> {
+    const ids = [] as ReturnType<typeof sceneCustomMeshIds>;
+    try {
+      for (const encoded of encodedScenes) {
+        const snapshot = decodeScene(encoded);
+        if (!snapshot) throw new Error("a saved scene is corrupt");
+        assertSceneCustomMeshBudget(snapshot);
+        ids.push(...sceneCustomMeshIds(snapshot));
+      }
+      if (ids.length > 0) await hydrateCustomMeshIds(ids, assetStore());
+      return true;
+    } catch (error) {
+      ui.flashToast(
+        `Saved sequence not started: ${
+          error instanceof Error ? error.message : "local mesh asset failed"
+        }`,
+      );
+      return false;
+    }
+  }
+
+  let activeCustomMeshImport: CustomMeshImportJob | null = null;
+  let customMeshImportTicket = 0;
+
+  async function importCustomMeshFile(file: File): Promise<void> {
+    const ticket = ++customMeshImportTicket;
+    activeCustomMeshImport?.cancel();
+    activeCustomMeshImport = null;
+    if (file.size > MAX_CUSTOM_MESH_OBJ_BYTES) {
+      ui.flashToast("That OBJ exceeds the local mesh import limit");
+      return;
+    }
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(
+        await file.arrayBuffer(),
+      );
+    } catch {
+      if (ticket === customMeshImportTicket) {
+        ui.flashToast("Couldn't read that OBJ as valid UTF-8");
+      }
+      return;
+    }
+    if (ticket !== customMeshImportTicket) return;
+    const target = state.selectedTransform;
+    if (typeof target !== "number" || state.transforms[target] === undefined) {
+      ui.flashToast("Select a transform before importing an OBJ emitter");
+      return;
+    }
+    const baseline = encodeScene(toSnapshot(state));
+    const job = importCustomMeshObj(text, file.name);
+    activeCustomMeshImport = job;
+    ui.flashToast("Validating and baking local mesh…", {
+      label: "Cancel",
+      onAction: () => {
+        if (activeCustomMeshImport === job) job.cancel();
+      },
+    });
+    try {
+      const result = await job.promise;
+      if (
+        ticket !== customMeshImportTicket ||
+        activeCustomMeshImport !== job ||
+        state.selectedTransform !== target ||
+        encodeScene(toSnapshot(state)) !== baseline
+      ) {
+        ui.flashToast(
+          "Mesh import finished after the scene changed; nothing applied",
+        );
+        return;
+      }
+      const shape = {
+        parts: [
+          {
+            primitive: { kind: "mesh" as const, meshId: result.source.id },
+            combine: "union" as const,
+          },
+        ],
+      };
+      const candidate = setTransformEmitter(state, target, shape);
+      assertSceneCustomMeshBudget(toSnapshot(candidate));
+      await assetStore().putSourceAndInitialBake(result.source, result.bake);
+      if (
+        ticket !== customMeshImportTicket ||
+        activeCustomMeshImport !== job ||
+        state.selectedTransform !== target ||
+        encodeScene(toSnapshot(state)) !== baseline
+      ) {
+        ui.flashToast(
+          "Mesh was stored locally, but the changed scene was left untouched",
+        );
+        return;
+      }
+      installSerializedCustomMeshAsset(result.source);
+      installSerializedMeshSdfBake(result.bake);
+      applyDiscreteTransformEdit(() => {
+        state = setTransformEmitter(state, target, shape);
+      });
+      // A local mesh must clear any old portable hash immediately; do not
+      // leave the address bar misleading during the ordinary save debounce.
+      editSession.flush();
+      ui.flashToast(`Imported local mesh “${result.source.name}”`);
+    } catch (error) {
+      if (activeCustomMeshImport !== job) return;
+      if (error instanceof CustomMeshImportCancelledError) {
+        ui.flashToast("Mesh import cancelled");
+        return;
+      }
+      ui.flashToast(
+        `Mesh import failed: ${
+          error instanceof Error ? error.message : "validation failed"
+        }`,
+      );
+    } finally {
+      if (activeCustomMeshImport === job) activeCustomMeshImport = null;
+    }
   }
 
   /**
@@ -6277,6 +6520,10 @@ function main(): void {
    * large to be a plausible export, rejected before it is read into memory.
    */
   async function importSceneFile(file: File): Promise<void> {
+    if (/\.obj$/i.test(file.name)) {
+      await importCustomMeshFile(file);
+      return;
+    }
     if (file.size > MAX_IMPORT_FILE_BYTES) {
       ui.flashToast("That file is too large to import");
       return;
@@ -6293,7 +6540,7 @@ function main(): void {
       // Not our JSON envelope — maybe a flam3/Apophysis .flame file
       // Its decoder is the same kind of never-throwing trust boundary, so
       // trying it on arbitrary text is safe and cheap.
-      if (importFlameText(text)) return;
+      if (await importFlameText(text)) return;
       ui.flashToast("Not a scene, collection, timeline, or .flame file");
       return;
     }
@@ -6301,7 +6548,8 @@ function main(): void {
       // decodeImportFile pre-validated the payload, so this load can't
       // actually miss — the guard just keeps loadEncodedScene's contract
       // local instead of trusting it at a distance.
-      if (loadEncodedScene(imported.encoded)) ui.flashToast("Scene loaded");
+      if (await loadEncodedScene(imported.encoded))
+        ui.flashToast("Scene loaded");
       return;
     }
     if (imported.kind === "timeline") {
@@ -6378,7 +6626,7 @@ function main(): void {
    * compromises (dropped posts, unknown variations, …) surface as a toast
    * suffix + the full list on the console — fidelity notes, not errors.
    */
-  function importFlameText(text: string): boolean {
+  async function importFlameText(text: string): Promise<boolean> {
     const flame = decodeFlameFile(text);
     if (flame === null) return false;
     if (flame.scenes.length === 0) {
@@ -6390,7 +6638,7 @@ function main(): void {
       const { name, encoded } = flame.scenes[0];
       // decodeFlameFile pre-validated the payload (same guard-not-trust
       // shape as the JSON scene branch above).
-      if (loadEncodedScene(encoded)) {
+      if (await loadEncodedScene(encoded)) {
         loadHints.armMode("flame");
         ui.flashToast(`Imported "${name}"${suffix}`);
       }
@@ -7387,24 +7635,33 @@ function main(): void {
     // covers a click racing either change.
     onDriftCollection: () => {
       if (prefersReducedMotion() || collection.size === 0) return;
-      // Same mutual exclusion as onDriftToggle: the slideshow ends a
-      // running timeline playback, with the toast.
-      timelinePolicy.stop({ notify: true });
-      driftSource = "collection";
-      driftLastPlayedId = null;
-      driftShow.start();
-      // Started from inside a CONVERGING flame/solid render (the gallery is
-      // reachable there in every render mode): hold the first departure for
-      // that render's completion — start()'s plain dwell would yank a still
-      // mid-convergence. A render that already met its budget sends no
-      // further progress, so it keeps the dwell instead (renderComplete).
-      if (state.renderMode !== "points" && !renderComplete[state.renderMode]) {
-        driftShow.hold();
-      }
-      ui.setDriftActive(true);
-      ui.closeGallery();
-      state = setPanelOpen(state, false);
-      ui.updateLabels(state);
+      const entries = collection.all();
+      void preflightEncodedScenes(entries.map((entry) => entry.encoded)).then(
+        (ready) => {
+          if (!ready || prefersReducedMotion() || collection.size === 0) return;
+          // Same mutual exclusion as onDriftToggle: the slideshow ends a
+          // running timeline playback, with the toast.
+          timelinePolicy.stop({ notify: true });
+          driftSource = "collection";
+          driftLastPlayedId = null;
+          driftShow.start();
+          // Started from inside a CONVERGING flame/solid render (the gallery is
+          // reachable there in every render mode): hold the first departure for
+          // that render's completion — start()'s plain dwell would yank a still
+          // mid-convergence. A render that already met its budget sends no
+          // further progress, so it keeps the dwell instead (renderComplete).
+          if (
+            state.renderMode !== "points" &&
+            !renderComplete[state.renderMode]
+          ) {
+            driftShow.hold();
+          }
+          ui.setDriftActive(true);
+          ui.closeGallery();
+          state = setPanelOpen(state, false);
+          ui.updateLabels(state);
+        },
+      );
     },
     // Animation timeline. Authoring edits (add/remove/move/ retime) act on
     // the persistent TimelineStore and re-render the section — and each one
@@ -7456,7 +7713,19 @@ function main(): void {
       // Either way the click loses to the export in flight — swallow it.
       if (offlineExportPending) return;
       if (prefersReducedMotion() || timeline.size === 0) return;
-      startTimelinePlayback(false);
+      void preflightEncodedScenes(
+        timeline.all().map((step) => step.encoded),
+      ).then((ready) => {
+        if (
+          ready &&
+          !offlineExportPending &&
+          !timelinePlayer.active &&
+          !prefersReducedMotion() &&
+          timeline.size > 0
+        ) {
+          startTimelinePlayback(false);
+        }
+      });
     },
     // ⏺ Export clip: the same playback run with the recorder rolling —
     // whatever ends the run also stops the recorder, so the clip downloads
@@ -7485,25 +7754,39 @@ function main(): void {
       ) {
         return;
       }
-      const steps = timeline.all();
-      if (timelineDurationMs(steps) > MAX_RECORDING_SECONDS * 1000) {
-        ui.flashToast(
-          `Clips cap at ${formatElapsed(MAX_RECORDING_SECONDS)} — the end will be cut off`,
-        );
-      }
-      // Frame-exact offline export whenever WebCodecs can encode it — render
-      // keyframes included: their legs park the driver's virtual clock while
-      // the flame/solid render converges and capture only the converged still
-      // for the step's holdMs. A run started with a manual recording already
-      // rolling keeps the realtime MediaRecorder capture (it owns the canvas
-      // stream — adopt it, as before); so does a browser without an encodable
-      // H.264 config.
-      if (offlineExportSupported() && !recorderActive) {
-        void startOfflineExport();
-        return;
-      }
-      startTimelinePlayback(true);
-      if (!recorderActive) recorder.toggle();
+      const requestedSteps = timeline.all();
+      void preflightEncodedScenes(
+        requestedSteps.map((step) => step.encoded),
+      ).then((ready) => {
+        if (
+          !ready ||
+          offlineExportPending ||
+          timelinePlayer.active ||
+          prefersReducedMotion() ||
+          timeline.size === 0
+        ) {
+          return;
+        }
+        const steps = timeline.all();
+        if (timelineDurationMs(steps) > MAX_RECORDING_SECONDS * 1000) {
+          ui.flashToast(
+            `Clips cap at ${formatElapsed(MAX_RECORDING_SECONDS)} — the end will be cut off`,
+          );
+        }
+        // Frame-exact offline export whenever WebCodecs can encode it — render
+        // keyframes included: their legs park the driver's virtual clock while
+        // the flame/solid render converges and capture only the converged still
+        // for the step's holdMs. A run started with a manual recording already
+        // rolling keeps the realtime MediaRecorder capture (it owns the canvas
+        // stream — adopt it, as before); so does a browser without an encodable
+        // H.264 config.
+        if (offlineExportSupported() && !recorderActive) {
+          void startOfflineExport();
+          return;
+        }
+        startTimelinePlayback(true);
+        if (!recorderActive) recorder.toggle();
+      });
     },
     onTimelineRemoveStep: (id) => {
       timelinePolicy.stop({ notify: true });
@@ -7543,9 +7826,9 @@ function main(): void {
       // restored cloud lands — the preset-hint path. Armed only when the load
       // actually applied (a corrupt entry must not leave a stale hint), and
       // AFTER it: applyDecodedSnapshot clears the hint.
-      if (loadEncodedScene(entry.encoded) && entry.mode) {
-        loadHints.armMode(entry.mode);
-      }
+      void loadEncodedScene(entry.encoded).then((loaded) => {
+        if (loaded && entry.mode) loadHints.armMode(entry.mode);
+      });
     },
     onDeleteFromCollection: (id) => {
       // Snapshot the entry before removing it: the Undo toast's
@@ -7574,6 +7857,10 @@ function main(): void {
       });
     },
     onCopyLink: () => {
+      if (sceneHasCustomMeshes(currentDocument())) {
+        ui.flashToast("Local mesh scenes cannot be copied as links yet");
+        return;
+      }
       // Build the link from CURRENT state rather than reading location.hash,
       // which the autosave only writes on its 300ms debounce (so it can lag a
       // just-made edit). origin + pathname drops any existing hash/query.
@@ -7591,6 +7878,12 @@ function main(): void {
     // of a URL, for keeping scenes where a link doesn't fit (archives, email
     // attachments, version control).
     onSaveSceneFile: () => {
+      if (sceneHasCustomMeshes(currentDocument())) {
+        ui.flashToast(
+          "Local mesh scenes cannot be saved as portable files yet",
+        );
+        return;
+      }
       const text = encodeSceneFile(encodeScene(currentDocument()), Date.now());
       triggerDownload(
         new Blob([text], { type: "application/json" }),
@@ -7603,6 +7896,12 @@ function main(): void {
     // structure, x/y-axis kaleidoscopes — surface exactly like the import
     // path's notes: a toast suffix + the console list.
     onSaveFlameFile: () => {
+      if (sceneHasCustomMeshes(currentDocument())) {
+        ui.flashToast(
+          "Local mesh scenes cannot be exported as portable .flame files",
+        );
+        return;
+      }
       const stamp = Date.now();
       const { xml, warnings } = encodeFlameFile(
         currentDocument(),
@@ -7621,6 +7920,16 @@ function main(): void {
       // The button disables at zero, but guard the race anyway (a delete
       // landing between the last count sync and this click).
       if (collection.size === 0) return;
+      if (
+        collection
+          .all()
+          .some((entry) => encodedSceneHasCustomMeshes(entry.encoded))
+      ) {
+        ui.flashToast(
+          "This collection contains local meshes and cannot be exported portably yet",
+        );
+        return;
+      }
       const text = encodeCollectionFile(collection.all(), Date.now());
       triggerDownload(
         new Blob([text], { type: "application/json" }),
@@ -7639,6 +7948,14 @@ function main(): void {
       // The button disables at zero, but guard the race anyway (an edit
       // landing between the last renderTimeline sync and this click).
       if (timeline.size === 0) return;
+      if (
+        timeline.all().some((step) => encodedSceneHasCustomMeshes(step.encoded))
+      ) {
+        ui.flashToast(
+          "This timeline contains local meshes and cannot be exported portably yet",
+        );
+        return;
+      }
       const text = encodeTimelineFile(
         timeline.all(),
         timeline.seed,
@@ -8962,4 +9279,10 @@ function main(): void {
   animate();
 }
 
-main();
+void main().catch((error: unknown) => {
+  showError(
+    `Fractal Explorer could not start: ${
+      error instanceof Error ? error.message : "unknown startup error"
+    }`,
+  );
+});

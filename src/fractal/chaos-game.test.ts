@@ -2026,6 +2026,22 @@ describe("shape emitters (condensation)", () => {
     ).toMatchObject({ status: "unsupported", reason: "invalid" });
   });
 
+  it("never downgrades an unresolved local mesh to a plain affine map", () => {
+    expect(() =>
+      emitterSamplerCapability({
+        parts: [
+          {
+            primitive: {
+              kind: "mesh",
+              meshId: `mesh-sha256-${"0".repeat(64)}`,
+            },
+            combine: "union",
+          },
+        ],
+      }),
+    ).toThrow(/missing local mesh asset/);
+  });
+
   it("invalidates the identity cache when a public ShapeSpec is mutated", () => {
     const mutable: ShapeSpec = {
       parts: [

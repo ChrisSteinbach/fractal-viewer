@@ -84,6 +84,13 @@ import { buildPaletteLUT } from "../fractal/palette";
 import type { PaletteSpec } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
+import {
+  hasMeshAsset,
+  installCustomMeshAsset,
+  installSerializedCustomMeshAsset,
+  prepareSerializedCustomMeshAsset,
+  type SerializedPreparedMeshAsset,
+} from "../fractal/mesh-shapes";
 import { FlamePerfMeter } from "./flame-perf";
 import { wSupport } from "./rotor4";
 import {
@@ -101,10 +108,58 @@ import type {
   Vec3,
   Vec4,
 } from "../fractal/types";
+import { MAX_CUSTOM_MESHES_PER_SCENE } from "../fractal/custom-mesh";
 
 // ---------------------------------------------------------------------------
 // Protocol
 // ---------------------------------------------------------------------------
+
+function sameMeshSource(
+  left: SerializedPreparedMeshAsset,
+  right: SerializedPreparedMeshAsset,
+): boolean {
+  return (
+    left.vertices instanceof Float64Array &&
+    right.vertices instanceof Float64Array &&
+    left.triangles instanceof Uint32Array &&
+    right.triangles instanceof Uint32Array &&
+    left.vertices.length === right.vertices.length &&
+    left.triangles.length === right.triangles.length &&
+    left.vertices.every((value, index) =>
+      Object.is(value, right.vertices[index]),
+    ) &&
+    left.triangles.every((value, index) => value === right.triangles[index])
+  );
+}
+
+function installStartMeshAssets(
+  wires: readonly SerializedPreparedMeshAsset[] = [],
+): void {
+  if (wires.length > MAX_CUSTOM_MESHES_PER_SCENE) {
+    throw new RangeError("too many custom mesh sources in start command");
+  }
+  for (let index = 0; index < wires.length; index += 1) {
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      if (
+        wires[earlier].id === wires[index].id &&
+        !sameMeshSource(wires[earlier], wires[index])
+      ) {
+        throw new RangeError("serialized mesh conflicts within start command");
+      }
+    }
+  }
+  for (const wire of wires) {
+    if (hasMeshAsset(wire.id)) installSerializedCustomMeshAsset(wire);
+  }
+  const stagedIds = new Set<string>();
+  const staged = [];
+  for (const wire of wires) {
+    if (hasMeshAsset(wire.id) || stagedIds.has(wire.id)) continue;
+    staged.push(prepareSerializedCustomMeshAsset(wire));
+    stagedIds.add(wire.id);
+  }
+  for (const asset of staged) installCustomMeshAsset(asset);
+}
 
 /**
  * One shared display-resolution frame slot: views over
@@ -126,6 +181,10 @@ export interface SharedFrameBuffers {
 export type FlameWorkerCommand =
   | {
       type: "start";
+      /** Custom mesh sources referenced by either dimensional transform set.
+       * The worker validates the full batch before mutating its realm-local
+       * registry or preparing either chaos game. */
+      meshAssets?: readonly SerializedPreparedMeshAsset[];
       transforms: Transform[];
       finalTransform: Transform | null;
       /** Row-major camera projection*view — see `flame.ts`'s `Mat4` doc. */
@@ -1403,6 +1462,8 @@ export class FlameWorkerSession {
   }
 
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
+    installStartMeshAssets(cmd.meshAssets);
+
     this.baseTransforms = cmd.transforms;
     this.baseFinalTransform = cmd.finalTransform;
     this.hybridSchedule = cmd.schedule ?? null;

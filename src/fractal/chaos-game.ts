@@ -2,6 +2,7 @@ import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
 import type { Affine } from "./affine";
 import { prepareShapeSampler } from "./shapes";
 import type { ShapeSpec } from "./shapes";
+import { MissingMeshAssetError } from "./mesh-shapes";
 import { composeVariations } from "./variations";
 import type { VariationBlend } from "./variations";
 import { mulberry32 } from "./rng";
@@ -308,6 +309,7 @@ export function emitterSamplerCapability(
       detail: null,
     };
   } catch (error) {
+    if (error instanceof MissingMeshAssetError) throw error;
     const detail = error instanceof Error ? error.message : String(error);
     capability = {
       status: "unsupported",

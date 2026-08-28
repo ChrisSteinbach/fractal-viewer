@@ -20,7 +20,10 @@ import {
   shapeSpecsMeshIds,
   type ShapeSpec,
 } from "../fractal/shapes";
-import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
+import {
+  activeMeshSdfAtlas,
+  meshSdfAtlasShaderIndex,
+} from "../fractal/mesh-sdf-atlas-cache";
 import type { MeshAssetId, MeshSdfAtlas } from "../fractal/mesh-shapes";
 import type { SurfaceDE } from "../fractal/surface-de";
 import {
@@ -188,8 +191,13 @@ function condensationShapeDispatch(
       unique.push(shape);
     }
   }
+  const meshIds = shapeSpecsMeshIds(unique);
+  const meshIndex = (id: MeshAssetId): number =>
+    meshSdfAtlasShaderIndex(meshIds, id);
   const bodies = unique
-    .map((shape, i) => shapeSdfSource(shape, "glsl", `${fnPrefix}${i}`))
+    .map((shape, i) =>
+      shapeSdfSource(shape, "glsl", `${fnPrefix}${i}`, { meshIndex }),
+    )
     .join("\n");
   const choices = unique
     .map(
@@ -197,7 +205,6 @@ function condensationShapeDispatch(
         `${i === 0 ? "if" : "else if"} (shape == ${i}) return ${fnPrefix}${i}(q);`,
     )
     .join("\n  ");
-  const meshIds = shapeSpecsMeshIds(unique);
   const meshHelper = meshIds.length > 0 ? `${shapeMeshSdfGlsl(meshIds)}\n` : "";
   return `${meshHelper}${bodies}\nfloat ${dispatchName}(int shape, vec3 q) {\n  ${choices}\n  return 1.0e30;\n}`;
 }
@@ -212,7 +219,7 @@ function shapeMeshSdfGlsl(activeIds: readonly MeshAssetId[]): string {
     .map((entry) => {
       const lo = entry.min.map(glslFloatLit).join(", ");
       const hi = entry.max.map(glslFloatLit).join(", ");
-      return `  if (mesh == ${entry.catalogIndex}) return shapeMeshSdfSample(p, vec3(${lo}), vec3(${hi}), ${glslFloatLit(entry.cellSize)}, ${entry.zOffset}, ${entry.resolution});`;
+      return `  if (mesh == ${entry.shaderIndex}) return shapeMeshSdfSample(p, vec3(${lo}), vec3(${hi}), ${glslFloatLit(entry.cellSize)}, ${entry.zOffset}, ${entry.resolution});`;
     })
     .join("\n");
   return `uniform highp sampler3D uShapeMeshSdf;
@@ -6104,7 +6111,10 @@ export function surfaceFragmentResolvedFor(
     baked = baked
       .replace(
         "//__SURFACE_TRAP_SDF__",
-        meshHelper + shapeSdfSource(trap, "glsl", "surfaceTrapSdf"),
+        meshHelper +
+          shapeSdfSource(trap, "glsl", "surfaceTrapSdf", {
+            meshIndex: (id) => meshSdfAtlasShaderIndex(meshIds, id),
+          }),
       )
       .replace(
         "__SURFACE_TRAP_INV_NORM__",

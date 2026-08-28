@@ -41,6 +41,96 @@ import {
   surfaceGridSpec,
 } from "../fractal/surface-grid";
 import type { SurfaceDE } from "../fractal/surface-de";
+import {
+  hasMeshAsset,
+  installCustomMeshAsset,
+  installPreparedMeshSdfBake,
+  installSerializedCustomMeshAsset,
+  meshAsset,
+  prepareSerializedCustomMeshAsset,
+  prepareSerializedMeshSdfBake,
+  type MeshSdfBake,
+  type PreparedMeshAsset,
+  type SerializedMeshSdfBake,
+  type SerializedPreparedMeshAsset,
+} from "../fractal/mesh-shapes";
+import { MAX_CUSTOM_MESHES_PER_SCENE } from "../fractal/custom-mesh";
+
+function sameMeshSource(
+  left: SerializedPreparedMeshAsset,
+  right: SerializedPreparedMeshAsset,
+): boolean {
+  return (
+    left.vertices instanceof Float64Array &&
+    right.vertices instanceof Float64Array &&
+    left.triangles instanceof Uint32Array &&
+    right.triangles instanceof Uint32Array &&
+    left.vertices.length === right.vertices.length &&
+    left.triangles.length === right.triangles.length &&
+    left.vertices.every((value, index) =>
+      Object.is(value, right.vertices[index]),
+    ) &&
+    left.triangles.every((value, index) => value === right.triangles[index])
+  );
+}
+
+function installRequestMeshAssets(
+  wires: readonly SerializedPreparedMeshAsset[] = [],
+  bakes: readonly SerializedMeshSdfBake[] = [],
+): void {
+  if (
+    wires.length > MAX_CUSTOM_MESHES_PER_SCENE ||
+    bakes.length > MAX_CUSTOM_MESHES_PER_SCENE ||
+    new Set([
+      ...wires.map((wire) => wire.id),
+      ...bakes.map((bake) => bake.meshId),
+    ]).size > MAX_CUSTOM_MESHES_PER_SCENE
+  ) {
+    throw new RangeError("too many custom mesh assets in request");
+  }
+  for (let index = 0; index < wires.length; index += 1) {
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      if (
+        wires[earlier].id === wires[index].id &&
+        !sameMeshSource(wires[earlier], wires[index])
+      ) {
+        throw new RangeError("serialized mesh conflicts within request");
+      }
+    }
+  }
+  const sourcesById = new Map<string, PreparedMeshAsset>();
+  const stagedSources: PreparedMeshAsset[] = [];
+  for (const wire of wires) {
+    if (sourcesById.has(wire.id)) continue;
+    if (hasMeshAsset(wire.id)) {
+      sourcesById.set(wire.id, installSerializedCustomMeshAsset(wire));
+      continue;
+    }
+    const source = prepareSerializedCustomMeshAsset(wire);
+    sourcesById.set(wire.id, source);
+    stagedSources.push(source);
+  }
+  const bakeKeys = new Set<string>();
+  const stagedBakes: MeshSdfBake[] = [];
+  for (const bake of bakes) {
+    const key = `${bake.meshId}:${String(bake.version)}:${String(bake.resolution)}`;
+    if (bakeKeys.has(key)) {
+      throw new RangeError("duplicate custom mesh bake in request");
+    }
+    bakeKeys.add(key);
+    const source =
+      sourcesById.get(bake.meshId) ??
+      (hasMeshAsset(bake.meshId) ? meshAsset(bake.meshId) : undefined);
+    if (!source) {
+      throw new RangeError(
+        "custom mesh bake has no installed or staged source",
+      );
+    }
+    stagedBakes.push(prepareSerializedMeshSdfBake(bake, source));
+  }
+  for (const source of stagedSources) installCustomMeshAsset(source);
+  for (const bake of stagedBakes) installPreparedMeshSdfBake(bake);
+}
 
 /** Main thread -> worker: one grid-build request. */
 export interface SurfaceGridRequest {
@@ -48,6 +138,12 @@ export interface SurfaceGridRequest {
    * result, so the client can match a reply to its request and drop stale
    * ones. */
   id: number;
+  /** Custom mesh sources referenced by `de`. The worker validates the entire
+   * batch before installing any entry in its realm-local registry. */
+  meshAssets?: readonly SerializedPreparedMeshAsset[];
+  /** Derived bakes matching `meshAssets`, avoiding a cold 64³ rebuild in a
+   * newly spawned grid worker. */
+  meshBakes?: readonly SerializedMeshSdfBake[];
   /** Plain structured-cloneable data (`surface-de.ts`) — crosses
    * postMessage as-is, no transfer needed. */
   de: SurfaceDE;
@@ -81,6 +177,8 @@ export function buildSurfaceGridResult(
   request: SurfaceGridRequest,
   now: () => number = () => performance.now(),
 ): SurfaceGridResult {
+  installRequestMeshAssets(request.meshAssets, request.meshBakes);
+
   const { de, resolution } = request;
   const spec = surfaceGridSpec(de, resolution);
   const values = new Float32Array(resolution * resolution * resolution);

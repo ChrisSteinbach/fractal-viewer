@@ -5,7 +5,7 @@ import type {
   CloudResult3D,
   CloudResult4D,
 } from "./cloud-worker-core";
-import { runChaosGame } from "../fractal/chaos-game";
+import { emitterSamplerCapability, runChaosGame } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import { toTransform4 } from "../fractal/affine4";
 import { buildColors } from "../fractal/color";
@@ -14,6 +14,42 @@ import { mulberry32 } from "../fractal/rng";
 import { doubleRotation, sierpinskiTetrahedron } from "../fractal/presets";
 import type { Transform } from "../fractal/types";
 import { framingBounds, framingRadius4 } from "./framing-bounds";
+import {
+  hasMeshAsset,
+  uninstallCustomMeshAsset,
+  type CustomMeshAssetId,
+  type SerializedPreparedMeshAsset,
+} from "../fractal/mesh-shapes";
+
+const CLOUD_MESH_ID: CustomMeshAssetId = `mesh-sha256-${"1".repeat(64)}`;
+
+function meshSource(
+  id: CustomMeshAssetId = CLOUD_MESH_ID,
+): SerializedPreparedMeshAsset {
+  return {
+    id,
+    name: "Worker tetra",
+    vertices: new Float64Array([1, 1, 1, -1, -1, 1, -1, 1, -1, 1, -1, -1]),
+    triangles: new Uint32Array([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]),
+  };
+}
+
+function customMeshTransform(id: CustomMeshAssetId = CLOUD_MESH_ID): Transform {
+  return {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+    emitter: {
+      parts: [
+        {
+          combine: "union",
+          primitive: { kind: "mesh", meshId: id },
+        },
+      ],
+    },
+  };
+}
 
 /**
  * A minimal, fully-specified 3D `CloudRequest`, overridable per test so each
@@ -54,6 +90,83 @@ function as4D(result: CloudResult): CloudResult4D {
 }
 
 describe("generateCloud 3D", () => {
+  it.each([false, true])(
+    "installs a custom mesh emitter payload for the %s path",
+    (fourD) => {
+      const request = cloudRequest({
+        transforms: [customMeshTransform()],
+        numPoints: 40,
+        fourD,
+      });
+
+      try {
+        const result = generateCloud({
+          ...request,
+          meshAssets: [meshSource()],
+        });
+        expect(result.count).toBe(40);
+        expect(result.fourD).toBe(fourD);
+        expect(
+          emitterSamplerCapability(request.transforms[0].emitter).status,
+        ).toBe("sampleable");
+      } finally {
+        uninstallCustomMeshAsset(CLOUD_MESH_ID);
+      }
+    },
+  );
+
+  it("rejects a malformed batch without partially installing earlier wires", () => {
+    const malformedId: CustomMeshAssetId = `mesh-sha256-${"2".repeat(64)}`;
+    const malformed = {
+      ...meshSource(malformedId),
+      vertices: new Float64Array([0]),
+    };
+
+    expect(() =>
+      generateCloud(
+        cloudRequest({
+          transforms: [customMeshTransform()],
+          meshAssets: [meshSource(), malformed],
+        }),
+      ),
+    ).toThrow(/malformed/);
+    expect(hasMeshAsset(CLOUD_MESH_ID)).toBe(false);
+  });
+
+  it("rejects source batches above the scene budget", () => {
+    expect(() =>
+      generateCloud(
+        cloudRequest({
+          meshAssets: Array.from({ length: 5 }, () => meshSource()),
+        }),
+      ),
+    ).toThrow(/too many custom mesh sources/);
+  });
+
+  it("rejects a conflicting wire for an id already installed in the worker", () => {
+    const request = cloudRequest({
+      transforms: [customMeshTransform()],
+      numPoints: 20,
+      meshAssets: [meshSource()],
+    });
+    try {
+      generateCloud(request);
+      const source = meshSource();
+      const conflicting = {
+        ...source,
+        vertices: source.vertices.map((value) => value * 2),
+      };
+      expect(() =>
+        generateCloud({ ...request, meshAssets: [conflicting] }),
+      ).toThrow(/conflicts with installed source/);
+      expect(generateCloud({ ...request, meshAssets: undefined }).count).toBe(
+        20,
+      );
+    } finally {
+      uninstallCustomMeshAsset(CLOUD_MESH_ID);
+    }
+  });
+
   it("matches runChaosGame for positions/indices/count/bounds and echoes fourD/id (oracle)", () => {
     const req = cloudRequest({ id: 7 });
     const result = as3D(generateCloud(req));

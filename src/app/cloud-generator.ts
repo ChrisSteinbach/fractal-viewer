@@ -80,6 +80,11 @@ export class CloudGenerator {
   private readonly deps: CloudGeneratorDeps;
   private readonly now: () => number;
   private worker: CloudWorkerHandle | null = null;
+  /** Content ids already installed in the current persistent worker realm.
+   * The authoritative request retained in `inFlight`/`pending` keeps its
+   * complete wires for synchronous recovery; only the posted clone is
+   * filtered. */
+  private readonly workerMeshAssetIds = new Set<string>();
   /** True once the generator has given up on the worker — permanent
    * synchronous mode. Never reset: a worker that failed once (missing chunk,
    * crash) would just fail again. */
@@ -197,7 +202,22 @@ export class CloudGenerator {
   private send(request: CloudRequest): void {
     this.inFlight = request;
     this.sentAtMs = this.now();
-    this.worker?.post(request);
+    let workerRequest = request;
+    const installedAfterPost = new Set(this.workerMeshAssetIds);
+    if (request.meshAssets !== undefined) {
+      const meshAssets = request.meshAssets.filter((asset) => {
+        if (installedAfterPost.has(asset.id)) return false;
+        installedAfterPost.add(asset.id);
+        return true;
+      });
+      workerRequest = {
+        ...request,
+        meshAssets: meshAssets.length > 0 ? meshAssets : undefined,
+      };
+    }
+    this.worker?.post(workerRequest);
+    this.workerMeshAssetIds.clear();
+    for (const id of installedAfterPost) this.workerMeshAssetIds.add(id);
   }
 
   private handleResult(result: CloudResult): void {
@@ -229,6 +249,7 @@ export class CloudGenerator {
     this.broken = true;
     const worker = this.worker;
     this.worker = null;
+    this.workerMeshAssetIds.clear();
     worker?.terminate();
     // The freshest outstanding request still deserves its cloud — run it
     // here, now. (pending is by construction newer than inFlight.)

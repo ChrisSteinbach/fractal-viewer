@@ -118,8 +118,9 @@ function shapeSourceBytes(
   let result: ShapeSourceBytes;
   try {
     result = {
-      bytes: shapeSourceEncoder.encode(shapeSdfSource(shape, dialect, name))
-        .byteLength,
+      bytes: shapeSourceEncoder.encode(
+        shapeSdfSource(shape, dialect, name, { meshIndex: () => 23 }),
+      ).byteLength,
       error: null,
     };
   } catch (error) {

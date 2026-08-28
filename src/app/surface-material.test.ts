@@ -46,9 +46,12 @@ import { shapeTrapInvNorm } from "../fractal/shape-trap";
 import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
 import {
   MESH_ASSET_IDS,
+  installCustomMeshAsset,
   meshAssetCatalogIndex,
+  uninstallCustomMeshAsset,
   type MeshAssetId,
 } from "../fractal/mesh-shapes";
+import { prepareCustomMeshObj } from "../fractal/custom-mesh";
 import {
   PEACE_SIGN_SHAPE,
   SHAPE_MARCH_SAFETY,
@@ -655,9 +658,46 @@ describe("GLSL condensation packing and source", () => {
     );
   });
 
+  it("routes an installed local mesh through the real surface material atlas", async () => {
+    const prepared = await prepareCustomMeshObj(`
+v 1 1 1
+v -1 -1 1
+v -1 1 -1
+v 1 -1 -1
+f 1 3 2
+f 1 2 4
+f 1 4 3
+f 2 3 4
+`);
+    installCustomMeshAsset(prepared.asset);
+    try {
+      const shape = meshShape(prepared.id);
+      const source = surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        [shape],
+      );
+      expect(source).toContain("shapeMeshSdf(0, vec3(");
+
+      const material = createSurfaceMaterial();
+      setSurfaceShapeMeshSdf(material, [shape]);
+      const texture = material.uniforms.uShapeMeshSdf.value as Data3DTexture;
+      expect(texture.image.data).toBe(activeMeshSdfAtlas([prepared.id]).values);
+    } finally {
+      uninstallCustomMeshAsset(prepared.id);
+    }
+  }, 30_000);
+
   // Source resolution intentionally cold-bakes the largest active asset;
   // coverage instrumentation is much slower than the production benchmark.
-  it("compacts active mesh slabs while keeping stable catalog-id dispatch", () => {
+  it("compacts active mesh slabs into dense shader-slot dispatch", () => {
     const requested = [
       MESH_ASSET_IDS.at(-1)!,
       MESH_ASSET_IDS[0],
@@ -678,23 +718,16 @@ describe("GLSL condensation packing and source", () => {
     const activeIds = [...new Set(requested)].sort(
       (a, b) => meshAssetCatalogIndex(a) - meshAssetCatalogIndex(b),
     );
-    activeIds.forEach((id, slabIndex) => {
-      const catalogIndex = meshAssetCatalogIndex(id);
+    activeIds.forEach((_id, slabIndex) => {
       expect(source).toMatch(
         new RegExp(
-          `if \\(mesh == ${String(catalogIndex)}\\) return shapeMeshSdfSample\\([^\\n]+, ${String(
+          `if \\(mesh == ${String(slabIndex)}\\) return shapeMeshSdfSample\\([^\\n]+, ${String(
             slabIndex * 64,
           )}, 64\\);`,
         ),
       );
     });
-    for (const inactiveId of MESH_ASSET_IDS.filter(
-      (id) => !activeIds.includes(id),
-    )) {
-      expect(source).not.toContain(
-        `if (mesh == ${String(meshAssetCatalogIndex(inactiveId))})`,
-      );
-    }
+    expect(source).not.toContain(`if (mesh == ${String(activeIds.length)})`);
   }, 30_000);
 
   it("uploads the cached active-set R32F atlas and restores the 1^3 placeholder", () => {

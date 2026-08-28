@@ -26,6 +26,13 @@ import { toTransform4 } from "../fractal/affine4";
 import { buildColors } from "../fractal/color";
 import type { PositionAxisColors } from "../fractal/color";
 import type { PaletteSpec } from "../fractal/palette";
+import {
+  hasMeshAsset,
+  installCustomMeshAsset,
+  installSerializedCustomMeshAsset,
+  prepareSerializedCustomMeshAsset,
+  type SerializedPreparedMeshAsset,
+} from "../fractal/mesh-shapes";
 import { iterationRng, mulberry32 } from "../fractal/rng";
 import type {
   Bounds,
@@ -35,6 +42,7 @@ import type {
   Transform,
 } from "../fractal/types";
 import { framingBounds, framingRadius4 } from "./framing-bounds";
+import { MAX_CUSTOM_MESHES_PER_SCENE } from "../fractal/custom-mesh";
 
 /**
  * Main thread → worker: one point-cloud generation request. Everything the
@@ -46,6 +54,10 @@ export interface CloudRequest {
   /** Monotonic tag stamped by `cloud-generator.ts` and echoed on the result,
    * so the client can match a reply to its request and drop stale ones. */
   id: number;
+  /** Custom mesh sources needed by this generation. Workers own a separate
+   * module registry, so callers attach the structured-cloneable source wires
+   * for every local mesh referenced by the transforms. */
+  meshAssets?: readonly SerializedPreparedMeshAsset[];
   transforms: Transform[];
   finalTransform: Transform | null;
   numPoints: number;
@@ -146,6 +158,53 @@ export type CloudResult = CloudResult3D | CloudResult4D;
  */
 const ITERATION_SEED_XOR = 0x9e3779b9;
 
+function sameMeshSource(
+  left: SerializedPreparedMeshAsset,
+  right: SerializedPreparedMeshAsset,
+): boolean {
+  return (
+    left.vertices instanceof Float64Array &&
+    right.vertices instanceof Float64Array &&
+    left.triangles instanceof Uint32Array &&
+    right.triangles instanceof Uint32Array &&
+    left.vertices.length === right.vertices.length &&
+    left.triangles.length === right.triangles.length &&
+    left.vertices.every((value, index) =>
+      Object.is(value, right.vertices[index]),
+    ) &&
+    left.triangles.every((value, index) => value === right.triangles[index])
+  );
+}
+
+function installRequestMeshAssets(
+  wires: readonly SerializedPreparedMeshAsset[] = [],
+): void {
+  if (wires.length > MAX_CUSTOM_MESHES_PER_SCENE) {
+    throw new RangeError("too many custom mesh sources in request");
+  }
+  for (let index = 0; index < wires.length; index += 1) {
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      if (
+        wires[earlier].id === wires[index].id &&
+        !sameMeshSource(wires[earlier], wires[index])
+      ) {
+        throw new RangeError("serialized mesh conflicts within request");
+      }
+    }
+  }
+  for (const wire of wires) {
+    if (hasMeshAsset(wire.id)) installSerializedCustomMeshAsset(wire);
+  }
+  const stagedIds = new Set<string>();
+  const staged = [];
+  for (const wire of wires) {
+    if (hasMeshAsset(wire.id) || stagedIds.has(wire.id)) continue;
+    staged.push(prepareSerializedCustomMeshAsset(wire));
+    stagedIds.add(wire.id);
+  }
+  for (const asset of staged) installCustomMeshAsset(asset);
+}
+
 /**
  * Run one point-cloud generation — the pure request → result function both
  * the real worker (`cloud-worker.ts`) and the main-thread synchronous
@@ -165,6 +224,8 @@ const ITERATION_SEED_XOR = 0x9e3779b9;
  * visibly boiled.
  */
 export function generateCloud(request: CloudRequest): CloudResult {
+  installRequestMeshAssets(request.meshAssets);
+
   const rng = mulberry32(request.seed);
   const iterRng = iterationRng(request.seed ^ ITERATION_SEED_XOR);
   if (request.fourD) {

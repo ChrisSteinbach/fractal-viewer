@@ -93,6 +93,49 @@ function triangleArea(a: Vec3, b: Vec3, c: Vec3): number {
   );
 }
 
+interface IndexedFixture {
+  vertices: Vec3[];
+  triangles: [number, number, number][];
+}
+
+const OUTWARD_TETRA_TRIANGLES: readonly (readonly [number, number, number])[] =
+  [
+    [0, 2, 1],
+    [0, 1, 3],
+    [0, 3, 2],
+    [1, 2, 3],
+  ];
+
+function tetraFixture(offset: Vec3, scale = 1, inward = false): IndexedFixture {
+  const vertices: Vec3[] = [
+    [offset[0], offset[1], offset[2]],
+    [offset[0] + scale, offset[1], offset[2]],
+    [offset[0], offset[1] + scale, offset[2]],
+    [offset[0], offset[1], offset[2] + scale],
+  ];
+  const triangles = OUTWARD_TETRA_TRIANGLES.map(
+    ([a, b, c]): [number, number, number] => (inward ? [a, c, b] : [a, b, c]),
+  );
+  return { vertices, triangles };
+}
+
+function combineFixtures(...fixtures: IndexedFixture[]): IndexedFixture {
+  const vertices: Vec3[] = [];
+  const triangles: [number, number, number][] = [];
+  for (const fixture of fixtures) {
+    const base = vertices.length;
+    vertices.push(...fixture.vertices);
+    triangles.push(
+      ...fixture.triangles.map(([a, b, c]): [number, number, number] => [
+        a + base,
+        b + base,
+        c + base,
+      ]),
+    );
+  }
+  return { vertices, triangles };
+}
+
 function subtract3(a: Vec3, b: Vec3): Vec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 }
@@ -232,6 +275,127 @@ describe("built-in mesh ingestion", () => {
       /non-finite/,
     );
   });
+
+  it("rejects duplicate triangles regardless of cyclic order or winding", () => {
+    const asset = meshAsset(ID);
+    const vertices = asset.vertices.map((vertex) => [...vertex] as Vec3);
+    const triangles = asset.triangles.map(
+      (triangle) => [...triangle] as [number, number, number],
+    );
+    const [a, b, c] = triangles[0];
+    expect(() =>
+      ingestMeshAsset(ID, vertices, [...triangles, [b, c, a]]),
+    ).toThrow(/duplicates an existing triangle/);
+    expect(() =>
+      ingestMeshAsset(ID, vertices, [...triangles, [a, c, b]]),
+    ).toThrow(/including reversed winding/);
+  });
+
+  it("requires every disconnected component to be outward after translated compensated summation", () => {
+    // The large outward tetra dominates the old one-global-volume sum, so the
+    // smaller inward component is the part this per-component gate must find.
+    const mixed = combineFixtures(
+      tetraFixture([0, 0, 0], 3),
+      tetraFixture([10, 0, 0], 1, true),
+    );
+    expect(() => ingestMeshAsset(ID, mixed.vertices, mixed.triangles)).toThrow(
+      /component 1.*outward, positive orientation/,
+    );
+
+    // Moving a small valid solid far from the origin must not change its
+    // orientation through cancellation in the signed-volume sum.
+    const translated = tetraFixture([1e8, -1e8, 1e8]);
+    expect(() =>
+      ingestMeshAsset(ID, translated.vertices, translated.triangles),
+    ).not.toThrow();
+  });
+
+  it("rejects two otherwise closed face fans joined only at a bow-tie vertex", () => {
+    const vertices: Vec3[] = [
+      [0, 0, 0],
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+      [-1, 0, 0],
+      [0, -1, 0],
+      [0, 0, -1],
+    ];
+    const triangles: [number, number, number][] = [
+      ...OUTWARD_TETRA_TRIANGLES.map(
+        (triangle) => [...triangle] as [number, number, number],
+      ),
+      [0, 4, 5],
+      [0, 6, 4],
+      [0, 5, 6],
+      [4, 6, 5],
+    ];
+    expect(() => ingestMeshAsset(ID, vertices, triangles)).toThrow(
+      /non-manifold bow-tie vertex link at vertex 0/,
+    );
+  });
+
+  it("rejects crossing and non-topological touching closed components", () => {
+    const crossing = combineFixtures(
+      tetraFixture([0, 0, 0]),
+      tetraFixture([0.35, 0.2, 0.2]),
+    );
+    expect(() =>
+      ingestMeshAsset(ID, crossing.vertices, crossing.triangles),
+    ).toThrow(/self-intersect or touch beyond shared topology/);
+
+    const touching = combineFixtures(
+      tetraFixture([0, 0, 0]),
+      tetraFixture([1, 0, 0]),
+    );
+    expect(() =>
+      ingestMeshAsset(ID, touching.vertices, touching.triangles),
+    ).toThrow(/self-intersect or touch beyond shared topology/);
+  });
+
+  it("rejects coplanar adjacent triangles that overlap beyond their shared edge", () => {
+    const vertices: Vec3[] = [
+      [-1, -1, -1],
+      [1, -1, -1],
+      [1, 1, -1],
+      [-1, 1, -1],
+      [-1, -1, 1],
+      [1, -1, 1],
+      [1, 1, 1],
+      [0, -0.5, 1],
+    ];
+    const triangles: [number, number, number][] = [
+      [0, 2, 1],
+      [0, 3, 2],
+      [4, 5, 6],
+      [4, 6, 7],
+      [0, 1, 5],
+      [0, 5, 4],
+      [1, 2, 6],
+      [1, 6, 5],
+      [2, 3, 7],
+      [2, 7, 6],
+      [3, 0, 4],
+      [3, 4, 7],
+    ];
+    expect(() => ingestMeshAsset(ID, vertices, triangles)).toThrow(
+      /self-intersect or touch beyond shared topology/,
+    );
+  });
+
+  it("bounds adversarial broad-phase work instead of scanning every triangle pair", () => {
+    // Concentric closed tetrahedra do not intersect, but their nested AABBs
+    // make a deliberately hostile broad phase. The deterministic work budget
+    // must stop this input rather than completing an O(component²) scan.
+    const nested = combineFixtures(
+      ...Array.from({ length: 600 }, (_, index) => {
+        const scale = 1 + index / 1_000;
+        return tetraFixture([-scale / 4, -scale / 4, -scale / 4], scale);
+      }),
+    );
+    expect(() =>
+      ingestMeshAsset(ID, nested.vertices, nested.triangles),
+    ).toThrow(/self-intersection validation exceeded its .* work-item limit/);
+  }, 20_000);
 
   it("orients the crystal's long diamond axis for the ordinary front view", () => {
     const crystal = meshAsset("faceted-crystal-v1");
