@@ -29,6 +29,8 @@
  * discipline as `edit-session.ts` and `regen-scheduler.ts`.
  */
 import type { CloudRequest, CloudResult } from "./cloud-worker-core";
+import { MAX_CUSTOM_MESH_RUNTIME_ASSETS } from "../fractal/mesh-shapes";
+import { LruMap } from "./lru-map";
 
 /** What a request looks like before the generator stamps its `id`. */
 export type CloudParams = Omit<CloudRequest, "id">;
@@ -84,7 +86,9 @@ export class CloudGenerator {
    * The authoritative request retained in `inFlight`/`pending` keeps its
    * complete wires for synchronous recovery; only the posted clone is
    * filtered. */
-  private readonly workerMeshAssetIds = new Set<string>();
+  private readonly workerMeshAssetIds = new LruMap<string, true>(
+    MAX_CUSTOM_MESH_RUNTIME_ASSETS,
+  );
   /** True once the generator has given up on the worker — permanent
    * synchronous mode. Never reset: a worker that failed once (missing chunk,
    * crash) would just fail again. */
@@ -203,21 +207,34 @@ export class CloudGenerator {
     this.inFlight = request;
     this.sentAtMs = this.now();
     let workerRequest = request;
-    const installedAfterPost = new Set(this.workerMeshAssetIds);
-    if (request.meshAssets !== undefined) {
-      const meshAssets = request.meshAssets.filter((asset) => {
-        if (installedAfterPost.has(asset.id)) return false;
-        installedAfterPost.add(asset.id);
-        return true;
-      });
+    if (
+      request.meshAssets !== undefined ||
+      request.meshAssetIds !== undefined
+    ) {
+      const activeIds =
+        request.meshAssetIds ??
+        request.meshAssets?.map((asset) => asset.id) ??
+        [];
+      const missing = new Set(
+        activeIds.filter((id) => !this.workerMeshAssetIds.has(id)),
+      );
+      for (const id of activeIds) this.workerMeshAssetIds.touch(id);
+      const meshAssets = request.meshAssets?.filter((asset) =>
+        missing.has(asset.id),
+      );
+      for (const asset of meshAssets ?? []) {
+        this.workerMeshAssetIds.set(asset.id, true);
+      }
       workerRequest = {
         ...request,
-        meshAssets: meshAssets.length > 0 ? meshAssets : undefined,
+        meshAssetIds: activeIds.length > 0 ? activeIds : undefined,
+        meshAssets:
+          meshAssets !== undefined && meshAssets.length > 0
+            ? meshAssets
+            : undefined,
       };
     }
     this.worker?.post(workerRequest);
-    this.workerMeshAssetIds.clear();
-    for (const id of installedAfterPost) this.workerMeshAssetIds.add(id);
   }
 
   private handleResult(result: CloudResult): void {

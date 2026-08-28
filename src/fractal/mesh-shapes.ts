@@ -29,6 +29,11 @@
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
 
+/** Authored documents stay small; runtime caches hold two disjoint scenes so
+ * a load or morph can overlap its current and target dependencies. */
+export const MAX_CUSTOM_MESHES_PER_SCENE = 4;
+export const MAX_CUSTOM_MESH_RUNTIME_ASSETS = 2 * MAX_CUSTOM_MESHES_PER_SCENE;
+
 export const MESH_ASSET_IDS = [
   "star-prism-v1",
   "faceted-crystal-v1",
@@ -1579,6 +1584,41 @@ const CATALOG_FACTORIES: Record<CatalogMeshAssetId, () => PreparedMeshAsset> = {
 };
 const CATALOG = new Map<CatalogMeshAssetId, PreparedMeshAsset>();
 const CUSTOM_ASSETS = new Map<CustomMeshAssetId, PreparedMeshAsset>();
+let PINNED_CUSTOM_ASSET_IDS = new Set<CustomMeshAssetId>();
+const CUSTOM_ASSET_LEASES = new Map<CustomMeshAssetId, number>();
+const MAX_CUSTOM_MESH_PINNED_ASSETS = 2 * MAX_CUSTOM_MESH_RUNTIME_ASSETS;
+
+function customMeshAssetPinned(id: CustomMeshAssetId): boolean {
+  return (
+    PINNED_CUSTOM_ASSET_IDS.has(id) || (CUSTOM_ASSET_LEASES.get(id) ?? 0) > 0
+  );
+}
+
+function touchInstalledCustomMeshAsset(
+  id: CustomMeshAssetId,
+): PreparedMeshAsset | undefined {
+  const asset = CUSTOM_ASSETS.get(id);
+  if (!asset) return undefined;
+  CUSTOM_ASSETS.delete(id);
+  CUSTOM_ASSETS.set(id, asset);
+  return asset;
+}
+
+function trimCustomMeshAssets(): void {
+  while (CUSTOM_ASSETS.size > MAX_CUSTOM_MESH_RUNTIME_ASSETS) {
+    let victim: CustomMeshAssetId | undefined;
+    for (const id of CUSTOM_ASSETS.keys()) {
+      if (!customMeshAssetPinned(id)) {
+        victim = id;
+        break;
+      }
+    }
+    // A temporarily oversized explicitly pinned transition is safer than
+    // evicting geometry still needed by its live request.
+    if (victim === undefined) break;
+    CUSTOM_ASSETS.delete(victim);
+  }
+}
 
 export function meshAsset(id: MeshAssetId): PreparedMeshAsset {
   if (isCustomMeshAssetId(id)) {
@@ -1614,10 +1654,96 @@ export function installCustomMeshAsset(
       "only content-addressed local meshes can be installed",
     );
   }
-  const existing = CUSTOM_ASSETS.get(asset.id);
+  const existing = touchInstalledCustomMeshAsset(asset.id);
   if (existing) return existing;
   CUSTOM_ASSETS.set(asset.id, asset);
+  trimCustomMeshAssets();
   return asset;
+}
+
+/** Refresh every already-installed member of an upcoming scene before new
+ * sources are installed. With a two-scene cache this keeps the whole target
+ * working set ahead of unrelated LRU victims; missing members are staged and
+ * installed by the caller afterward. */
+export function touchInstalledCustomMeshAssets(
+  ids: readonly CustomMeshAssetId[],
+): void {
+  const unique = [...new Set(ids)];
+  if (unique.length > MAX_CUSTOM_MESH_RUNTIME_ASSETS) {
+    throw new RangeError("custom mesh working set exceeds the runtime cache");
+  }
+  for (const id of unique) {
+    if (!isCustomMeshAssetId(id)) {
+      throw new RangeError(`invalid custom mesh asset id: ${String(id)}`);
+    }
+    touchInstalledCustomMeshAsset(id);
+  }
+}
+
+/** Replace the main realm's non-evictable live working set. Workers do not
+ * call this: their message-boundary active-id touch protocol mirrors the
+ * client LRU instead. Missing ids are allowed while an atomic hydration is
+ * staging them. */
+export function setPinnedCustomMeshAssets(
+  ids: readonly CustomMeshAssetId[],
+): void {
+  const unique = [...new Set(ids)];
+  if (unique.length > MAX_CUSTOM_MESH_RUNTIME_ASSETS) {
+    throw new RangeError("custom mesh pinned set exceeds the runtime cache");
+  }
+  for (const id of unique) {
+    if (!isCustomMeshAssetId(id)) {
+      throw new RangeError(`invalid custom mesh asset id: ${String(id)}`);
+    }
+  }
+  if (
+    new Set([...CUSTOM_ASSET_LEASES.keys(), ...unique]).size >
+    MAX_CUSTOM_MESH_PINNED_ASSETS
+  ) {
+    throw new RangeError("too many concurrent custom mesh working sets");
+  }
+  PINNED_CUSTOM_ASSET_IDS = new Set(unique);
+  touchInstalledCustomMeshAssets(unique);
+  trimCustomMeshAssets();
+}
+
+/** Temporarily protect a staged transition/preflight set in addition to the
+ * live pinned set. The idempotent release immediately returns the registry to
+ * its hard rolling cap. */
+export function pinCustomMeshAssets(
+  ids: readonly CustomMeshAssetId[],
+): () => void {
+  const unique = [...new Set(ids)];
+  if (unique.length > MAX_CUSTOM_MESH_RUNTIME_ASSETS) {
+    throw new RangeError("custom mesh lease exceeds the runtime cache");
+  }
+  const leaseUnion = new Set([...CUSTOM_ASSET_LEASES.keys(), ...unique]);
+  if (leaseUnion.size > MAX_CUSTOM_MESH_RUNTIME_ASSETS) {
+    throw new RangeError("too many concurrent custom mesh working sets");
+  }
+  const pinnedUnion = new Set([
+    ...PINNED_CUSTOM_ASSET_IDS,
+    ...CUSTOM_ASSET_LEASES.keys(),
+    ...unique,
+  ]);
+  if (pinnedUnion.size > MAX_CUSTOM_MESH_PINNED_ASSETS) {
+    throw new RangeError("too many concurrent custom mesh working sets");
+  }
+  touchInstalledCustomMeshAssets(unique);
+  for (const id of unique) {
+    CUSTOM_ASSET_LEASES.set(id, (CUSTOM_ASSET_LEASES.get(id) ?? 0) + 1);
+  }
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    for (const id of unique) {
+      const count = CUSTOM_ASSET_LEASES.get(id);
+      if (count === undefined || count <= 1) CUSTOM_ASSET_LEASES.delete(id);
+      else CUSTOM_ASSET_LEASES.set(id, count - 1);
+    }
+    trimCustomMeshAssets();
+  };
 }
 
 /** Remove one local runtime asset. Durable deletion belongs to the asset
@@ -1693,7 +1819,7 @@ export function installSerializedCustomMeshAsset(
         throw new RangeError("serialized mesh conflicts with installed source");
       }
     }
-    return existing;
+    return installCustomMeshAsset(existing);
   }
   return installCustomMeshAsset(prepareSerializedCustomMeshAsset(serialized));
 }
@@ -2133,6 +2259,23 @@ export function floorMeshValueToF32(value: number): number {
 }
 
 const BAKE_CACHE = new WeakMap<PreparedMeshAsset, Map<string, MeshSdfBake>>();
+
+/** Whether the currently installed source identity already owns a bake at
+ * `resolution`. Dependency hydration uses this with source residency so an
+ * evicted/reinstalled source cannot trigger a synchronous cold bake later. */
+export function hasMeshSdfBake(
+  id: MeshAssetId,
+  resolution: number = 64,
+): boolean {
+  const asset = isCustomMeshAssetId(id)
+    ? CUSTOM_ASSETS.get(id)
+    : CATALOG.get(id);
+  if (!asset) return false;
+  return (
+    BAKE_CACHE.get(asset)?.has(`${MESH_SDF_BAKE_VERSION}:${resolution}`) ??
+    false
+  );
+}
 
 function meshBakeGeometry(
   mesh: PreparedMeshAsset,

@@ -4,6 +4,7 @@ import {
   MAX_CUSTOM_MESHES_PER_SCENE,
 } from "../fractal/custom-mesh";
 import {
+  MESH_SDF_BAKE_VERSION,
   hasMeshAsset,
   installCustomMeshAsset,
   installPreparedMeshSdfBake,
@@ -146,6 +147,14 @@ export async function importPortableCustomMeshSources(
       if (source.id !== expectedId || bake.meshId !== expectedId) {
         throw new RangeError(
           "mesh worker returned a different portable asset id",
+        );
+      }
+      if (
+        bake.version !== MESH_SDF_BAKE_VERSION ||
+        bake.resolution !== CUSTOM_MESH_SDF_RESOLUTION
+      ) {
+        throw new RangeError(
+          "mesh worker returned the wrong portable bake format",
         );
       }
       const prepared = prepareWorkerValidatedCustomMeshAsset(source);

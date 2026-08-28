@@ -116,6 +116,35 @@ describe("buildSurfaceGridResult", () => {
     }
   });
 
+  it("reuses an active resident source+bake without repeated wires", () => {
+    const de = customMeshDe();
+    try {
+      const first = buildSurfaceGridResult(
+        request({
+          de,
+          resolution: 4,
+          meshAssets: [meshSource()],
+          meshBakes: [meshBake()],
+        }),
+        () => 0,
+      );
+      const second = buildSurfaceGridResult(
+        request({
+          id: 2,
+          de,
+          resolution: 4,
+          meshAssetIds: [SURFACE_MESH_ID],
+        }),
+        () => 0,
+      );
+
+      expect(first.values).toHaveLength(4 ** 3);
+      expect(second.values).toHaveLength(4 ** 3);
+    } finally {
+      uninstallCustomMeshAsset(SURFACE_MESH_ID);
+    }
+  });
+
   it("rejects custom mesh batches above the scene budget", () => {
     expect(() =>
       buildSurfaceGridResult(

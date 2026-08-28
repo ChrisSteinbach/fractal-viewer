@@ -1,4 +1,4 @@
-import { EditSession } from "./edit-session";
+import { EditSession, type EditSessionDeps } from "./edit-session";
 import type { FourDPose } from "./four-d-view";
 import type { ViewPose } from "./history";
 
@@ -15,7 +15,12 @@ import type { ViewPose } from "./history";
  * the camera, so only then does the modelled live pose follow the restored
  * entry.
  */
-function harness(): {
+function harness(
+  overrides: Pick<
+    EditSessionDeps,
+    "prepareRestore" | "onPrepareRestoreError"
+  > = {},
+): {
   session: EditSession;
   persisted: string[];
   restored: { snapshot: string; replaced: boolean; pose?: ViewPose }[];
@@ -56,6 +61,7 @@ function harness(): {
         if (pending === fn) pending = null;
       };
     },
+    ...overrides,
   });
   return {
     session,
@@ -278,6 +284,125 @@ describe("EditSession restore", () => {
 
     h.session.redo();
     expect(h.current()).toBe("s1");
+  });
+});
+
+describe("EditSession async restore preparation", () => {
+  function deferred<T>(): {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (error: unknown) => void;
+  } {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  function withUndo(
+    prepareRestore: NonNullable<EditSessionDeps["prepareRestore"]>,
+    onPrepareRestoreError?: (error: unknown) => void,
+  ): ReturnType<typeof harness> {
+    const h = harness({ prepareRestore, onPrepareRestoreError });
+    h.session.beginEdit();
+    h.setScene("s1");
+    h.fireSave();
+    return h;
+  }
+
+  it("hydrates before mutating history and commits only after success", async () => {
+    const preparation = deferred<boolean>();
+    const h = withUndo(() => preparation.promise);
+
+    h.session.undo();
+    expect(h.current()).toBe("s1");
+    expect(h.session.canUndo).toBe(false);
+    expect(h.session.canRedo).toBe(false);
+
+    preparation.resolve(true);
+    await preparation.promise;
+    await Promise.resolve();
+    expect(h.current()).toBe("s0");
+    expect(h.session.canRedo).toBe(true);
+  });
+
+  it("leaves both stacks untouched when preparation declines", async () => {
+    const preparation = deferred<boolean>();
+    const h = withUndo(() => preparation.promise);
+    h.session.undo();
+
+    preparation.resolve(false);
+    await preparation.promise;
+    await Promise.resolve();
+    expect(h.current()).toBe("s1");
+    expect(h.session.canUndo).toBe(true);
+    expect(h.session.canRedo).toBe(false);
+  });
+
+  it("reports a rejection, aborts its cleanup signal, and preserves history", async () => {
+    const preparation = deferred<boolean>();
+    const errors: unknown[] = [];
+    let signal: AbortSignal | undefined;
+    const h = withUndo(
+      (_snapshot, nextSignal) => {
+        signal = nextSignal;
+        return preparation.promise;
+      },
+      (error) => errors.push(error),
+    );
+    h.session.undo();
+
+    const failure = new Error("hydrate failed");
+    preparation.reject(failure);
+    await preparation.promise.catch(() => undefined);
+    await Promise.resolve();
+    expect(errors).toEqual([failure]);
+    expect(signal?.aborted).toBe(true);
+    expect(h.current()).toBe("s1");
+    expect(h.session.canUndo).toBe(true);
+    expect(h.session.canRedo).toBe(false);
+  });
+
+  it("an edit aborts a pending restore and ignores its eventual success", async () => {
+    const preparation = deferred<boolean>();
+    let signal: AbortSignal | undefined;
+    const h = withUndo((_snapshot, nextSignal) => {
+      signal = nextSignal;
+      return preparation.promise;
+    });
+    h.session.undo();
+
+    h.session.beginEdit();
+    h.setScene("s2");
+    expect(signal?.aborted).toBe(true);
+    preparation.resolve(true);
+    await preparation.promise;
+    await Promise.resolve();
+
+    expect(h.current()).toBe("s2");
+    expect(h.restored).toHaveLength(0);
+  });
+
+  it("refuses a prepared target when state drifted without an edit signal", async () => {
+    const preparation = deferred<boolean>();
+    let signal: AbortSignal | undefined;
+    const h = withUndo((_snapshot, nextSignal) => {
+      signal = nextSignal;
+      return preparation.promise;
+    });
+    h.session.undo();
+    h.setScene("raced");
+
+    preparation.resolve(true);
+    await preparation.promise;
+    await Promise.resolve();
+    expect(signal?.aborted).toBe(true);
+    expect(h.current()).toBe("raced");
+    expect(h.restored).toHaveLength(0);
+    expect(h.session.canUndo).toBe(true);
   });
 });
 

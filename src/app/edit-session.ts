@@ -63,6 +63,16 @@ export interface EditSessionDeps {
    * restores it across a `replaced` step (instead of auto-fitting) and ignores
    * it for a tweak step (which leaves the camera alone). */
   restore: (snapshot: string, replaced: boolean, pose?: ViewPose) => void;
+  /** Optional dependency barrier run before undo/redo mutates either history
+   * stack. The app uses it to hydrate an evicted custom-mesh target. `false`
+   * or rejection leaves current state and both stacks untouched. The signal
+   * is aborted when a real edit supersedes the pending time travel. */
+  prepareRestore?: (
+    snapshot: string,
+    signal: AbortSignal,
+  ) => boolean | void | Promise<boolean | void>;
+  /** Optional diagnostic hook for a rejected preparation. */
+  onPrepareRestoreError?: (error: unknown) => void;
   /** Reflect undo/redo availability in the UI (ui.setUndoRedo in the app). */
   syncUi: (canUndo: boolean, canRedo: boolean) => void;
   /** Read the CURRENT live view pose (viewPose() in the app): the orbit
@@ -93,6 +103,14 @@ export class EditSession {
   private burstOpen = false;
   /** Cancels the pending debounced save, or null when none is armed. */
   private cancel: (() => void) | null = null;
+  /** At most one async undo/redo dependency barrier. History remains
+   * unmodified until it succeeds. */
+  private pendingRestore: {
+    readonly direction: "undo" | "redo";
+    readonly baseline: string;
+    readonly targetSnapshot: string;
+    readonly controller: AbortController;
+  } | null = null;
 
   /** `history` defaults to a fresh SceneHistory; injectable for tests that want
    * to pre-seed or inspect it (not required — the documented behavior is all
@@ -110,6 +128,7 @@ export class EditSession {
    * mid-burst and tags the transition so undo/redo re-frames the camera.
    */
   beginEdit(kind: "tweak" | "replace" = "tweak"): void {
+    this.cancelPendingRestore();
     if (!this.burstOpen || kind === "replace") {
       this.history.checkpoint(
         this.deps.snapshot(),
@@ -136,38 +155,154 @@ export class EditSession {
    * own step), then pops history and restores — restore never checkpoints; a
    * bare debounced save of the restored document is armed. */
   undo(): void {
+    if (this.pendingRestore !== null) return;
     if (this.burstOpen) this.flush();
-    const entry = this.history.undo(this.deps.snapshot(), this.deps.pose());
-    if (entry) {
-      this.deps.restore(entry.snapshot, entry.replaced, entry.pose);
-      this.scheduleSave();
-    }
-    this.syncUi();
+    this.startRestore("undo");
   }
 
   /** Step forward one redo step — the mirror of undo(). */
   redo(): void {
+    if (this.pendingRestore !== null) return;
     if (this.burstOpen) this.flush();
-    const entry = this.history.redo(this.deps.snapshot(), this.deps.pose());
-    if (entry) {
-      this.deps.restore(entry.snapshot, entry.replaced, entry.pose);
-      this.scheduleSave();
-    }
-    this.syncUi();
+    this.startRestore("redo");
   }
 
   /** Push current undo/redo availability to deps.syncUi. Called internally
    * after any stack change; exposed so main.ts can sync once at boot. */
   syncUi(): void {
-    this.deps.syncUi(this.history.canUndo, this.history.canRedo);
+    this.deps.syncUi(this.canUndo, this.canRedo);
   }
 
   get canUndo(): boolean {
-    return this.history.canUndo;
+    return this.pendingRestore === null && this.history.canUndo;
   }
 
   get canRedo(): boolean {
-    return this.history.canRedo;
+    return this.pendingRestore === null && this.history.canRedo;
+  }
+
+  private startRestore(direction: "undo" | "redo"): void {
+    const baseline = this.deps.snapshot();
+    const target =
+      direction === "undo"
+        ? this.history.peekUndo(baseline)
+        : this.history.peekRedo();
+    if (!target) {
+      this.syncUi();
+      return;
+    }
+    const prepare = this.deps.prepareRestore;
+    if (!prepare) {
+      this.commitRestore(direction, baseline, target.snapshot);
+      return;
+    }
+    const transaction = {
+      direction,
+      baseline,
+      targetSnapshot: target.snapshot,
+      controller: new AbortController(),
+    } as const;
+    this.pendingRestore = transaction;
+    let result: boolean | void | Promise<boolean | void>;
+    try {
+      result = prepare(target.snapshot, transaction.controller.signal);
+    } catch (error) {
+      this.pendingRestore = null;
+      transaction.controller.abort();
+      this.deps.onPrepareRestoreError?.(error);
+      this.syncUi();
+      return;
+    }
+    if (result instanceof Promise) {
+      this.syncUi();
+      void result.then(
+        (ready) => this.finishRestore(transaction, ready !== false),
+        (error) => {
+          if (this.pendingRestore !== transaction) return;
+          this.pendingRestore = null;
+          transaction.controller.abort();
+          this.deps.onPrepareRestoreError?.(error);
+          this.syncUi();
+        },
+      );
+      return;
+    }
+    this.pendingRestore = null;
+    if (result !== false) {
+      if (!this.commitRestore(direction, baseline, target.snapshot)) {
+        transaction.controller.abort();
+      }
+    } else {
+      transaction.controller.abort();
+      this.syncUi();
+    }
+  }
+
+  private finishRestore(
+    transaction: NonNullable<EditSession["pendingRestore"]>,
+    ready: boolean,
+  ): void {
+    if (this.pendingRestore !== transaction) return;
+    this.pendingRestore = null;
+    if (
+      ready &&
+      !transaction.controller.signal.aborted &&
+      this.deps.snapshot() === transaction.baseline
+    ) {
+      if (
+        !this.commitRestore(
+          transaction.direction,
+          transaction.baseline,
+          transaction.targetSnapshot,
+        )
+      ) {
+        transaction.controller.abort();
+      }
+      return;
+    }
+    transaction.controller.abort();
+    this.syncUi();
+  }
+
+  private commitRestore(
+    direction: "undo" | "redo",
+    baseline: string,
+    targetSnapshot: string,
+  ): boolean {
+    // A synchronous preparation can still invoke app code. Refuse to time
+    // travel if current state moved under it.
+    if (this.deps.snapshot() !== baseline) {
+      this.syncUi();
+      return false;
+    }
+    const pendingTarget =
+      direction === "undo"
+        ? this.history.peekUndo(baseline)
+        : this.history.peekRedo();
+    if (!pendingTarget || pendingTarget.snapshot !== targetSnapshot) {
+      this.syncUi();
+      return false;
+    }
+    const entry =
+      direction === "undo"
+        ? this.history.undo(baseline, this.deps.pose())
+        : this.history.redo(baseline, this.deps.pose());
+    if (!entry || entry.snapshot !== targetSnapshot) {
+      this.syncUi();
+      return false;
+    }
+    this.deps.restore(entry.snapshot, entry.replaced, entry.pose);
+    this.scheduleSave();
+    this.syncUi();
+    return true;
+  }
+
+  private cancelPendingRestore(): void {
+    const pending = this.pendingRestore;
+    if (!pending) return;
+    this.pendingRestore = null;
+    pending.controller.abort();
+    this.syncUi();
   }
 
   /** (Re-)arm the debounced save: cancel whatever was pending and schedule a

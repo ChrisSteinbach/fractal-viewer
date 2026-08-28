@@ -49,6 +49,8 @@ import {
   meshAsset,
   prepareSerializedCustomMeshAsset,
   prepareSerializedMeshSdfBake,
+  touchInstalledCustomMeshAssets,
+  type CustomMeshAssetId,
   type MeshSdfBake,
   type PreparedMeshAsset,
   type SerializedMeshSdfBake,
@@ -77,11 +79,14 @@ function sameMeshSource(
 function installRequestMeshAssets(
   wires: readonly SerializedPreparedMeshAsset[] = [],
   bakes: readonly SerializedMeshSdfBake[] = [],
+  activeIds: readonly CustomMeshAssetId[] = wires.map((wire) => wire.id),
 ): void {
   if (
     wires.length > MAX_CUSTOM_MESHES_PER_SCENE ||
     bakes.length > MAX_CUSTOM_MESHES_PER_SCENE ||
+    activeIds.length > MAX_CUSTOM_MESHES_PER_SCENE ||
     new Set([
+      ...activeIds,
       ...wires.map((wire) => wire.id),
       ...bakes.map((bake) => bake.meshId),
     ]).size > MAX_CUSTOM_MESHES_PER_SCENE
@@ -98,6 +103,7 @@ function installRequestMeshAssets(
       }
     }
   }
+  touchInstalledCustomMeshAssets(activeIds);
   const sourcesById = new Map<string, PreparedMeshAsset>();
   const stagedSources: PreparedMeshAsset[] = [];
   for (const wire of wires) {
@@ -141,6 +147,9 @@ export interface SurfaceGridRequest {
   /** Custom mesh sources referenced by `de`. The worker validates the entire
    * batch before installing any entry in its realm-local registry. */
   meshAssets?: readonly SerializedPreparedMeshAsset[];
+  /** Complete active id set used to refresh the persistent worker's LRU while
+   * `meshAssets`/`meshBakes` carry only cache misses. */
+  meshAssetIds?: readonly CustomMeshAssetId[];
   /** Derived bakes matching `meshAssets`, avoiding a cold 64³ rebuild in a
    * newly spawned grid worker. */
   meshBakes?: readonly SerializedMeshSdfBake[];
@@ -177,7 +186,11 @@ export function buildSurfaceGridResult(
   request: SurfaceGridRequest,
   now: () => number = () => performance.now(),
 ): SurfaceGridResult {
-  installRequestMeshAssets(request.meshAssets, request.meshBakes);
+  installRequestMeshAssets(
+    request.meshAssets,
+    request.meshBakes,
+    request.meshAssetIds,
+  );
 
   const { de, resolution } = request;
   const spec = surfaceGridSpec(de, resolution);

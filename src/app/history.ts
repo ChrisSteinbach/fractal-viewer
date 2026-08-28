@@ -105,6 +105,21 @@ export class SceneHistory {
     return this.redoStack.length > 0;
   }
 
+  /** Next genuine undo target without mutating either stack. Entries equal to
+   * `current` are the same no-op checkpoints {@link undo} discards. */
+  peekUndo(current: string): HistoryEntry | null {
+    for (let index = this.undoStack.length - 1; index >= 0; index -= 1) {
+      const entry = this.undoStack[index];
+      if (entry.snapshot !== current) return entry;
+    }
+    return null;
+  }
+
+  /** Next redo target without mutating either stack. */
+  peekRedo(): HistoryEntry | null {
+    return this.redoStack[this.redoStack.length - 1] ?? null;
+  }
+
   /**
    * Record the pre-edit state at the leading edge of an edit burst, tagged
    * with the current live view `pose` so undo can later

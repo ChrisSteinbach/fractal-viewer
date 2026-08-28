@@ -11,16 +11,18 @@
 import {
   MAX_LOCAL_MESH_TRIANGLES,
   MAX_LOCAL_MESH_VERTICES,
+  MAX_CUSTOM_MESHES_PER_SCENE,
   ingestMeshAsset,
   type CustomMeshAssetId,
   type PreparedMeshAsset,
 } from "./mesh-shapes";
 import type { Vec3 } from "./types";
 
+export { MAX_CUSTOM_MESHES_PER_SCENE } from "./mesh-shapes";
+
 export const MAX_CUSTOM_MESH_OBJ_BYTES = 4 * 1024 * 1024;
 export const MAX_CUSTOM_MESH_VERTICES = MAX_LOCAL_MESH_VERTICES;
 export const MAX_CUSTOM_MESH_TRIANGLES = MAX_LOCAL_MESH_TRIANGLES;
-export const MAX_CUSTOM_MESHES_PER_SCENE = 4;
 export const CUSTOM_MESH_SDF_RESOLUTION = 64;
 export const MAX_CUSTOM_MESH_SDF_VOXELS =
   MAX_CUSTOM_MESHES_PER_SCENE * CUSTOM_MESH_SDF_RESOLUTION ** 3;

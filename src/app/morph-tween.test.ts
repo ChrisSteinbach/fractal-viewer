@@ -182,6 +182,30 @@ describe("MorphTween.start", () => {
     expect(result!.final).toBe(true);
   });
 
+  it("snaps to the old target before a refused chained working set", () => {
+    const tween = new MorphTween();
+    const a = system({ transforms: [transform({ position: [0, 0, 0] })] });
+    const b = system({ transforms: [transform({ position: [1, 0, 0] })] });
+    const c = system({ transforms: [transform({ position: [5, 0, 0] })] });
+    tween.start(a, b, 7, 0);
+
+    const chainNow = MORPH_TWEEN_MS / 2;
+    const snapped = tween.start(
+      a,
+      c,
+      99,
+      chainNow,
+      MORPH_TWEEN_MS,
+      () => false,
+    );
+
+    expect(snapped?.system).toBe(b);
+    expect(snapped?.final).toBe(true);
+    expect(tween.sample(chainNow)?.system).toBe(b);
+    expect(tween.sample(chainNow)?.seed).toBe(7);
+    expect(tween.sample(chainNow + MORPH_TWEEN_MS)?.system).toBe(c);
+  });
+
   it("chains from the old target when the previous morph ran past its duration unpolled", () => {
     const tween = new MorphTween();
     const a = system({ transforms: [transform({ position: [0, 0, 0] })] });

@@ -31,6 +31,29 @@ describe("SceneHistory undo", () => {
   });
 });
 
+describe("SceneHistory peek", () => {
+  it("finds the next genuine undo without mutating either stack", () => {
+    const history = new SceneHistory();
+    history.checkpoint("a", false);
+    history.checkpoint("b", true);
+
+    expect(history.peekUndo("b")?.snapshot).toBe("a");
+    expect(history.canUndo).toBe(true);
+    expect(history.canRedo).toBe(false);
+    expect(history.undo("b")?.snapshot).toBe("a");
+  });
+
+  it("peeks redo repeatedly without consuming it", () => {
+    const history = new SceneHistory();
+    history.checkpoint("a", false);
+    history.undo("b");
+
+    expect(history.peekRedo()?.snapshot).toBe("b");
+    expect(history.peekRedo()?.snapshot).toBe("b");
+    expect(history.redo("a")?.snapshot).toBe("b");
+  });
+});
+
 describe("SceneHistory redo", () => {
   it("returns null when there is nothing to redo", () => {
     const history = new SceneHistory();

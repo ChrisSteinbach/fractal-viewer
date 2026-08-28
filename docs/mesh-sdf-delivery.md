@@ -61,6 +61,28 @@ two-cell padding, conservative bias, and z-slab atlas ordering. Any change to
 those bytes or their interpretation must bump it; a BVH-only change that is
 proven identical to the exact oracle does not.
 
+## Runtime lifetime budget
+
+Local mesh durability belongs to IndexedDB; the prepared geometry, BVH, SDF
+bake and structured-clone wires are runtime accelerators. The main realm keeps
+an eight-id LRU, sized for two disjoint maximum-sized scenes, and independent
+eight-entry source-wire and bake-wire LRUs. The current document is pinned.
+Loads, undo/redo, xaos append and saved-sequence preflight acquire bounded
+leases, hydrate before publication, and release after the transition or whole
+playback run. A temporary current-plus-leases overlap can contain at most
+sixteen unique ids; release immediately trims the prepared registry back to
+eight. Because bake caches are identity-keyed `WeakMap`s, evicting the prepared
+source also makes its otherwise unreachable BVH/bake naturally collectible.
+
+Persistent Cloud and Surface workers follow the same eight-id order at message
+boundaries. Each request carries its complete active id set but clones only
+source/bake cache misses; revisiting an evicted id re-sends its validated wire.
+Surface posts at most one physical build and retains only the latest pending
+one, so a burst cannot fill the worker mailbox with cloned volumes. A timeline
+or collection preflight still enforces its stricter four-id aggregate playback
+budget and holds those hydrated assets for the run, preventing a cold 64³ bake
+between keyframes.
+
 ## Measured budget
 
 The reproducible gate is `npm run bench:mesh-sdf`. It resolves the production

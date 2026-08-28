@@ -138,6 +138,12 @@ export class MorphTween {
    * in-flight morph that ran past its own duration without ever being
    * polled (it resumes from that morph's `to`, which is exactly what was
    * left on screen).
+   *
+   * `canChain` is the caller's optional external-resource budget gate. When
+   * it refuses the live-intermediate/new-target pair, the tween snaps to the
+   * old target and starts old-target -> new-target instead. The returned
+   * terminal sample lets the caller publish that deliberate snap; ordinary
+   * starts and accepted chains return null.
    */
   start(
     from: MorphSystem,
@@ -145,8 +151,21 @@ export class MorphTween {
     seed: number,
     now: number,
     durationMs: number = MORPH_TWEEN_MS,
-  ): void {
+    canChain: (from: MorphSystem, to: MorphSystem) => boolean = () => true,
+  ): MorphSample | null {
     const inFlight = this.sample(now);
+    if (inFlight && !inFlight.final && !canChain(inFlight.system, to)) {
+      const snapped = this.finish();
+      if (!snapped) return null;
+      this.morph = {
+        from: snapped.system,
+        to,
+        seed: snapped.seed,
+        startMs: now,
+        durationMs,
+      };
+      return snapped;
+    }
     this.morph = inFlight
       ? {
           from: inFlight.system,
@@ -156,6 +175,7 @@ export class MorphTween {
           durationMs,
         }
       : { from, to, seed, startMs: now, durationMs };
+    return null;
   }
 
   /**

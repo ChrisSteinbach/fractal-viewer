@@ -154,14 +154,32 @@ describe("CloudGenerator request()", () => {
 
     h.generator.request(params({ meshAssets: [first] }));
     expect(h.posted[0].meshAssets).toEqual([first]);
+    expect(h.posted[0].meshAssetIds).toEqual([first.id]);
     h.deliverResult(fakeResult(1));
 
     h.generator.request(params({ meshAssets: [first, second] }));
     expect(h.posted[1].meshAssets).toEqual([second]);
+    expect(h.posted[1].meshAssetIds).toEqual([first.id, second.id]);
     h.deliverResult(fakeResult(2));
 
     h.generator.request(params({ meshAssets: [first, second] }));
     expect(h.posted[2].meshAssets).toBeUndefined();
+    expect(h.posted[2].meshAssetIds).toEqual([first.id, second.id]);
+  });
+
+  it("re-sends a source after the bounded worker residency LRU evicts it", () => {
+    const h = harness();
+    const sources = Array.from({ length: 9 }, (_, index) =>
+      meshSource(index.toString(16)),
+    );
+    for (const [index, source] of sources.entries()) {
+      h.generator.request(params({ meshAssets: [source] }));
+      expect(h.posted[index].meshAssets).toEqual([source]);
+      h.deliverResult(fakeResult(index + 1));
+    }
+
+    h.generator.request(params({ meshAssets: [sources[0]] }));
+    expect(h.posted[9].meshAssets).toEqual([sources[0]]);
   });
 
   it("posts the first request immediately with a stamped id when idle", () => {

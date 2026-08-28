@@ -1,4 +1,7 @@
-import { prepareCustomMeshObj } from "../fractal/custom-mesh";
+import {
+  CUSTOM_MESH_SDF_RESOLUTION,
+  prepareCustomMeshObj,
+} from "../fractal/custom-mesh";
 import {
   hasMeshAsset,
   serializePreparedCustomMeshAsset,
@@ -99,7 +102,7 @@ async function installDecodedAssets(
         type: "bake",
         jobId: 1,
         source,
-        resolution: 8,
+        resolution: CUSTOM_MESH_SDF_RESOLUTION,
       }),
   );
 }
@@ -120,7 +123,9 @@ describe("portable custom-mesh cross-profile round trip", () => {
 
     await installDecodedAssets(imported.assets, writes);
 
-    expect(writes).toEqual([{ sourceId: source.id, resolution: 8 }]);
+    expect(writes).toEqual([
+      { sourceId: source.id, resolution: CUSTOM_MESH_SDF_RESOLUTION },
+    ]);
     expect(hasMeshAsset(source.id)).toBe(true);
     const snapshot = decodeScene(imported.encoded);
     if (snapshot === null) throw new Error("imported scene did not decode");
@@ -170,7 +175,9 @@ describe("portable custom-mesh cross-profile round trip", () => {
     });
     expect(collection.importScenes(imported.scenes)).toBe(2);
 
-    expect(writes).toEqual([{ sourceId: source.id, resolution: 8 }]);
+    expect(writes).toEqual([
+      { sourceId: source.id, resolution: CUSTOM_MESH_SDF_RESOLUTION },
+    ]);
     expect(collection.all().map(({ encoded: scene }) => scene)).toEqual([
       encoded,
       secondEncoded,
