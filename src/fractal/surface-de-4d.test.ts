@@ -4145,7 +4145,7 @@ describe("analyzeSurfaceSystem4 chaos rows", () => {
 });
 
 describe("analyzeSurfaceSystem4 shape emitters", () => {
-  it("admits a samplable emitter, splits it from recursive maps, and refuses slabs", () => {
+  it("admits a shape emitter, splits it from recursive maps, and refuses slabs", () => {
     const emitter = {
       parts: [
         {
@@ -4174,7 +4174,7 @@ describe("analyzeSurfaceSystem4 shape emitters", () => {
     ).toThrow(/condensation shape/);
   });
 
-  it("refuses a pure-emitter 4D system", () => {
+  it("refuses a pure-emitter 4D system but admits an SDF-only intersection beside recursion", () => {
     const emitter = {
       parts: [
         {
@@ -4187,6 +4187,29 @@ describe("analyzeSurfaceSystem4 shape emitters", () => {
     expect(analysis.status).toBe("ineligible");
     expect(analysis.reasons).toContain(
       "shape emitters leave no recursive maps",
+    );
+
+    const intersectionSystem = [
+      map4(),
+      map4({
+        id: 1,
+        emitter: {
+          parts: [
+            emitter.parts[0],
+            {
+              primitive: { kind: "sphere" as const, radius: 0.25 },
+              combine: "intersect" as const,
+            },
+          ],
+        },
+      }),
+    ];
+    expect(analyzeSurfaceSystem4(intersectionSystem).status).toBe("eligible");
+    const intersectionDE = buildSurfaceDE4(intersectionSystem);
+    expect(intersectionDE.maps.map((entry) => entry.baseIndex)).toEqual([0]);
+    expect(intersectionDE.condensation?.emitters).toHaveLength(1);
+    expect(intersectionDE.condensation?.emitters[0].shape).toBe(
+      intersectionSystem[1].emitter,
     );
 
     const inactiveUnsamplable = [

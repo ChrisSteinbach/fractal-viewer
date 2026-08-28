@@ -6,7 +6,10 @@ import type {
   SymmetryPlane,
 } from "../fractal/types";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "../fractal/shape-trap";
-import { authoredShapeDraft, defaultAuthoredShape } from "./authored-shape";
+import {
+  authoredShapeComposerDraft,
+  defaultAuthoredShape,
+} from "./authored-shape";
 import {
   buildColorModeLUT,
   colorModeUsesRampPalette,
@@ -1784,7 +1787,7 @@ export function shapeTrapSelectValue(
   if (!trap) return "";
   return (
     bundledTrapForShape(trap.shape)?.kind ??
-    (authoredShapeDraft(trap.shape) ? "custom" : "authored")
+    (authoredShapeComposerDraft(trap.shape, "trap") ? "custom" : "authored")
   );
 }
 

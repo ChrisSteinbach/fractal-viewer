@@ -591,6 +591,13 @@ body {
   transform: translateY(1px);
 }
 
+.shape-action-btn {
+  width: auto;
+  min-height: 28px;
+  margin-bottom: 0;
+  padding: 3px 8px;
+}
+
 .btn-green {
   border-color: rgb(52 211 153 / 26%);
   background: rgb(52 211 153 / 14%);
@@ -1102,14 +1109,50 @@ summary.editor-group-title {
   color: #fff;
 }
 
-/* The same single-part primitive form is mounted inside a selected
-   transform's Shape disclosure and Surface's Shape trap section. A quiet
-   inset boundary distinguishes compile-affecting part geometry from the
-   trap's live outer pose controls below it. */
+/* The same flat shape composer is mounted inside a selected transform's Shape
+   disclosure and Surface's Shape trap section. A quiet inset boundary
+   distinguishes compile-affecting part geometry from the trap's live outer
+   pose controls below it. */
 .shape-primitive-editor {
   margin: 8px 0 12px;
   padding: 10px 0 4px 10px;
   border-left: 2px solid var(--border);
+}
+
+.shape-capability-note {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.shape-part-card {
+  margin: 10px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.shape-part-header,
+.shape-part-actions,
+.shape-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shape-part-header {
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.shape-part-title {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shape-composer-actions {
+  margin-top: 10px;
 }
 
 .shape-kind-label {

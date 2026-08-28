@@ -34,12 +34,15 @@ import {
   systemHasChaos,
   transformHasEmitter,
 } from "../fractal/chaos-game";
+import { shapeSdfSource } from "../fractal/shapes";
+import type { ShapeSpec } from "../fractal/shapes";
 import type {
   HybridSchedule,
   ShapeTrap,
   SymmetryParams,
   Transform,
 } from "../fractal/types";
+import { MAX_AUTHORED_SHAPE_SOURCE_BYTES } from "./authored-shape";
 import { SURFACE_MAX_MAPS, SURFACE_MAX_RECORDS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
 
@@ -66,6 +69,162 @@ export interface SurfaceEligibilityResult {
 }
 
 /**
+ * Maximum aggregate UTF-8 payload contributed by active authored shape-SDF
+ * functions to either Surface shader dialect. This is deliberately below a
+ * driver's whole-program cliff: the fixed tracer still needs its own source
+ * headroom, and both GLSL and WGSL must pass the same document gate.
+ */
+export const SURFACE_SHAPE_SOURCE_BUDGET_BYTES =
+  MAX_AUTHORED_SHAPE_SOURCE_BYTES;
+
+interface ShapeSourceBytes {
+  bytes: number;
+  error: string | null;
+}
+
+const shapeSourceEncoder = new TextEncoder();
+interface CachedShapeSourceBytes {
+  fingerprint: string;
+  entries: Map<string, ShapeSourceBytes>;
+}
+const shapeSourceBytesCache = new WeakMap<ShapeSpec, CachedShapeSourceBytes>();
+
+function sourceShapeFingerprint(shape: ShapeSpec): string | null {
+  try {
+    return JSON.stringify(shape);
+  } catch {
+    return null;
+  }
+}
+
+/** Measure the exact production identifier: shapeSdfSource repeats it in
+ * helper names and call sites, so a short placeholder materially underprices
+ * a large eight-part function. Cache entries carry a content fingerprint so
+ * a mutated public ShapeSpec cannot retain stale eligibility. */
+function shapeSourceBytes(
+  shape: ShapeSpec,
+  dialect: "glsl" | "wgsl",
+  name: string,
+): ShapeSourceBytes {
+  const fingerprint = sourceShapeFingerprint(shape);
+  const cacheKey = `${dialect}:${name}`;
+  let cached = shapeSourceBytesCache.get(shape);
+  if (fingerprint !== null && cached?.fingerprint === fingerprint) {
+    const entry = cached.entries.get(cacheKey);
+    if (entry) return entry;
+  } else {
+    cached = undefined;
+  }
+  let result: ShapeSourceBytes;
+  try {
+    result = {
+      bytes: shapeSourceEncoder.encode(shapeSdfSource(shape, dialect, name))
+        .byteLength,
+      error: null,
+    };
+  } catch (error) {
+    result = {
+      bytes: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (fingerprint !== null) {
+    const entries = cached?.entries ?? new Map<string, ShapeSourceBytes>();
+    entries.set(cacheKey, result);
+    shapeSourceBytesCache.set(shape, { fingerprint, entries });
+  }
+  return result;
+}
+
+function activeEmitterShapes(transforms: Transform[]): ShapeSpec[] {
+  const shapes: ShapeSpec[] = [];
+  for (const transform of transforms) {
+    if ((transform.weight ?? 1) <= 0 || !transformHasEmitter(transform)) {
+      continue;
+    }
+    // Surface consumes the shape's distance function, not its point sampler:
+    // an imported intersection emitter still contributes active shader
+    // source even though point/flame/solid modes use the ordinary-map
+    // fallback disclosed by emitterSamplerCapability.
+    shapes.push(transform.emitter!);
+  }
+  return shapes;
+}
+
+function surfaceShapeSourceRefusal(
+  result: SurfaceEligibilityResult,
+  shapes: readonly ShapeSpec[],
+): string | null {
+  let glsl = 0;
+  let wgsl = 0;
+  const add = (
+    shape: ShapeSpec,
+    dialect: "glsl" | "wgsl",
+    name: string,
+  ): string | null => {
+    const measured = shapeSourceBytes(shape, dialect, name);
+    if (measured.error !== null) {
+      return `Surface cannot generate authored custom-shape ${dialect.toUpperCase()} source: ${measured.error}`;
+    }
+    if (dialect === "glsl") glsl += measured.bytes;
+    else wgsl += measured.bytes;
+    return null;
+  };
+
+  if (result.kind === "ifs" || result.kind === "ifs4") {
+    // GLSL structurally deduplicates functions; WGSL emits once per base
+    // emitter shade slot. Symmetry copies add records but no source bodies.
+    const uniqueGlsl: ShapeSpec[] = [];
+    const seen = new Set<string>();
+    shapes.forEach((shape, index) => {
+      const fingerprint = sourceShapeFingerprint(shape);
+      const key = fingerprint ?? `uncacheable:${index}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueGlsl.push(shape);
+      }
+    });
+    const glslPrefix =
+      result.kind === "ifs4" ? "condensation4Sdf" : "condensationSdf";
+    for (let index = 0; index < uniqueGlsl.length; index += 1) {
+      const error = add(uniqueGlsl[index], "glsl", `${glslPrefix}${index}`);
+      if (error) return error;
+    }
+    for (let index = 0; index < shapes.length; index += 1) {
+      const error = add(shapes[index], "wgsl", `condensationShape${index}`);
+      if (error) return error;
+    }
+  } else {
+    for (const shape of shapes) {
+      const glslError = add(shape, "glsl", "surfaceTrapSdf");
+      if (glslError) return glslError;
+      const wgslError = add(shape, "wgsl", "trapShapeSdf");
+      if (wgslError) return wgslError;
+    }
+  }
+  if (
+    glsl <= SURFACE_SHAPE_SOURCE_BUDGET_BYTES &&
+    wgsl <= SURFACE_SHAPE_SOURCE_BUDGET_BYTES
+  ) {
+    return null;
+  }
+  return (
+    `Authored custom-shape source needs ${glsl} GLSL bytes and ${wgsl} WGSL bytes; ` +
+    `Surface allows at most ${SURFACE_SHAPE_SOURCE_BUDGET_BYTES} bytes in each dialect`
+  );
+}
+
+function withSurfaceShapeSourceBudget(
+  result: SurfaceEligibilityResult,
+  shapes: readonly ShapeSpec[],
+): SurfaceEligibilityResult {
+  const refusal = surfaceShapeSourceRefusal(result, shapes);
+  return refusal === null
+    ? result
+    : { status: "ineligible", note: refusal, kind: null };
+}
+
+/**
  * qsquare's complement, the ONE copy: a quaternion square renders as a LINK
  * in an escape-time chain, so both the 3D and 4D refusal arms append this
  * clause to name the way out — and a copy-edit that reached only one of the
@@ -83,10 +242,10 @@ function activeMapCount(transforms: Transform[]): number {
 }
 
 /** Storage records used by a condensation descent: recursive maps occupy one
- * each, while every active samplable emitter occupies one inverse record per
- * effective symmetry copy. The shade/material side stays one slot per base
- * transform, but the shared GLSL/WGSL record ceiling must price the expanded
- * C0 union explicitly. */
+ * each, while every active emitter SDF occupies one inverse record per
+ * effective symmetry copy (Surface does not need the point sampler). The
+ * shade/material side stays one slot per base transform, but the shared
+ * GLSL/WGSL record ceiling must price the expanded C0 union explicitly. */
 function condensationRecordCount(
   transforms: Transform[],
   symmetry: SymmetryParams,
@@ -274,14 +433,17 @@ export function deriveSurfaceEligibility(
             kind: null,
           };
         }
-        return {
-          status: "degraded",
-          note:
-            links > 1
-              ? `Escape-time render: these ${links} maps reach out of the w = 0 hyperplane and do not all contract, so Surface marches the w-slice of the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
-              : "Escape-time render: this 4D fold does not contract, so Surface marches the w-slice of its escape-time set rather than an IFS attractor.",
-          kind: "escape4",
-        };
+        return withSurfaceShapeSourceBudget(
+          {
+            status: "degraded",
+            note:
+              links > 1
+                ? `Escape-time render: these ${links} maps reach out of the w = 0 hyperplane and do not all contract, so Surface marches the w-slice of the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
+                : "Escape-time render: this 4D fold does not contract, so Surface marches the w-slice of its escape-time set rather than an IFS attractor.",
+            kind: "escape4",
+          },
+          shapeTrap ? [shapeTrap.shape] : [],
+        );
       }
       // qsquare's complement, one dimension up — see the 3D arm below for
       // the full reasoning. A 4D quaternion square DOES render, as a link
@@ -339,13 +501,19 @@ export function deriveSurfaceEligibility(
       };
     }
     if (analysis.status === "degraded") {
-      return {
-        status: "degraded",
-        note: `Anisotropic maps (ratio ${analysis.anisotropy.toFixed(2)}): marched conservatively.`,
-        kind: "ifs4",
-      };
+      return withSurfaceShapeSourceBudget(
+        {
+          status: "degraded",
+          note: `Anisotropic maps (ratio ${analysis.anisotropy.toFixed(2)}): marched conservatively.`,
+          kind: "ifs4",
+        },
+        activeEmitterShapes(transforms),
+      );
     }
-    return { status: "eligible", note: null, kind: "ifs4" };
+    return withSurfaceShapeSourceBudget(
+      { status: "eligible", note: null, kind: "ifs4" },
+      activeEmitterShapes(transforms),
+    );
   }
 
   const analysis = analyzeSurfaceSystem(transforms, finalTransform, schedule);
@@ -388,21 +556,24 @@ export function deriveSurfaceEligibility(
           recovery: "disableShapeTrapGeometry",
         };
       }
-      return {
-        status: "degraded",
-        note:
-          links > 1
-            ? // The hybrid chain: the transform list IS the formula
-              // sequence, so name the object as a chain rather than as
-              // "the canonical Mandelbox". Cross-family power links split
-              // the sentence again, because a chain may hold a POWER link
-              // and "these N folds" is then simply false.
-              systemHasPowerLink(transforms)
-              ? `Escape-time render: these ${links} maps form a hybrid formula chain — folds and power maps in one sequence — so Surface marches its escape-time set, one link per orbit step, rather than an IFS attractor.`
-              : `Escape-time render: these ${links} folds do not all contract, so Surface marches the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
-            : "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",
-        kind: "escape",
-      };
+      return withSurfaceShapeSourceBudget(
+        {
+          status: "degraded",
+          note:
+            links > 1
+              ? // The hybrid chain: the transform list IS the formula
+                // sequence, so name the object as a chain rather than as
+                // "the canonical Mandelbox". Cross-family power links split
+                // the sentence again, because a chain may hold a POWER link
+                // and "these N folds" is then simply false.
+                systemHasPowerLink(transforms)
+                ? `Escape-time render: these ${links} maps form a hybrid formula chain — folds and power maps in one sequence — so Surface marches its escape-time set, one link per orbit step, rather than an IFS attractor.`
+                : `Escape-time render: these ${links} folds do not all contract, so Surface marches the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
+              : "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",
+          kind: "escape",
+        },
+        shapeTrap ? [shapeTrap.shape] : [],
+      );
     }
     // The escape family's second complement: a single pure triplex-power
     // map. Same channel and same reason as the fold arm above — the note
@@ -423,11 +594,14 @@ export function deriveSurfaceEligibility(
           recovery: "disableShapeTrapGeometry",
         };
       }
-      return {
-        status: "degraded",
-        note: "Mandelbulb render: Surface marches the escape-time set of this triplex power — the classic Mandelbulb — rather than an IFS attractor.",
-        kind: "bulb",
-      };
+      return withSurfaceShapeSourceBudget(
+        {
+          status: "degraded",
+          note: "Mandelbulb render: Surface marches the escape-time set of this triplex power — the classic Mandelbulb — rather than an IFS attractor.",
+          kind: "bulb",
+        },
+        shapeTrap ? [shapeTrap.shape] : [],
+      );
     }
     // qsquare's complement: unlike the fold and bulb arms above, there is
     // no third renderer to route to — a dedicated quaternion-Julia tracer
@@ -471,11 +645,17 @@ export function deriveSurfaceEligibility(
     };
   }
   if (analysis.status === "degraded") {
-    return {
-      status: "degraded",
-      note: `Anisotropic maps (ratio ${analysis.anisotropy.toFixed(2)}): marched conservatively.`,
-      kind: "ifs",
-    };
+    return withSurfaceShapeSourceBudget(
+      {
+        status: "degraded",
+        note: `Anisotropic maps (ratio ${analysis.anisotropy.toFixed(2)}): marched conservatively.`,
+        kind: "ifs",
+      },
+      activeEmitterShapes(transforms),
+    );
   }
-  return { status: "eligible", note: null, kind: "ifs" };
+  return withSurfaceShapeSourceBudget(
+    { status: "eligible", note: null, kind: "ifs" },
+    activeEmitterShapes(transforms),
+  );
 }

@@ -4,7 +4,6 @@ import {
   effectiveSymmetryOrder,
   buildChaosSelection,
   prepareSchedule,
-  prepareEmitters,
   runChaosGame,
   symmetryRotation,
   systemHasChaos,
@@ -1708,13 +1707,6 @@ export function analyzeSurfaceSystem(
   const reasons: string[] = [];
   const sigmas = transforms.map(transformSigmas);
   const active = transforms.filter(isActive);
-  const hasEmitter = transforms.some(transformHasEmitter);
-  // This is the point sampler's own resolution, not a second interpretation:
-  // a sampler-null emitter falls back to an ordinary map in point mode, so
-  // Surface refuses it explicitly instead of drawing divergent geometry.
-  const preparedEmitters = hasEmitter ? prepareEmitters(transforms) : null;
-  const isPreparedEmitter = (i: number): boolean =>
-    preparedEmitters?.[i] !== null && preparedEmitters?.[i] !== undefined;
   let anisotropy = 1;
 
   if (transforms.length === 0) {
@@ -1723,17 +1715,9 @@ export function analyzeSurfaceSystem(
     reasons.push("every transform has weight 0");
   }
 
-  transforms.forEach((t, i) => {
-    if (isActive(t) && transformHasEmitter(t) && !isPreparedEmitter(i)) {
-      reasons.push(
-        `map ${i + 1} has an unsamplable shape emitter (point mode falls back to an ordinary map)`,
-      );
-    }
-  });
-
   if (
     active.length > 0 &&
-    transforms.every((t, i) => !isActive(t) || isPreparedEmitter(i))
+    transforms.every((t) => !isActive(t) || transformHasEmitter(t))
   ) {
     reasons.push("shape emitters leave no recursive maps");
   }
@@ -1741,9 +1725,10 @@ export function analyzeSurfaceSystem(
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
     const label = `map ${i + 1}`;
-    if (isPreparedEmitter(i)) {
-      // Emitter steps use only the full affine pose; variations are skipped
-      // and the transform is not recursive, so it has no contraction gate.
+    if (transformHasEmitter(t)) {
+      // Surface consumes the emitter's SDF directly, so even an intersection
+      // that has no point sampler remains a condensation shape here. Only
+      // the full affine pose matters and the transform is not recursive.
       if (!isFlatTransform(t)) {
         reasons.push(`${label} extends into 4D`);
       }
@@ -1958,14 +1943,14 @@ export function buildSurfaceDE(
   // q -> inv(M_i) · (Rot_k^T · q) - inv(M_i) · t_i — a base inverse applied
   // to the point ALREADY turned into sector k, which is exactly what the
   // descent's sector sweep feeds it. Nothing per-copy is left to store.
-  const preparedEmitters = transforms.some(transformHasEmitter)
-    ? prepareEmitters(transforms)
-    : null;
+  const hasEmitter = transforms.some(
+    (transform) => isActive(transform) && transformHasEmitter(transform),
+  );
   const hasChaos = systemHasChaos(transforms);
   const maps: SurfaceDEMap[] = [];
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
-    if (preparedEmitters?.[i]) return;
+    if (transformHasEmitter(t)) return;
     const affine = composeAffine(t);
     const invM = inverse3(affine.m);
     const [tx, ty, tz] = affine.t;
@@ -2054,12 +2039,12 @@ export function buildSurfaceDE(
   let condensation: CondensationDE3 | undefined;
   const emitterBaseIndices: number[] = [];
   const emitterCopyBaseIndices: number[] = [];
-  if (preparedEmitters !== null) {
+  if (hasEmitter) {
     const emitters: CondensationEmitter3[] = [];
     const shadeIndices = new Map<number, number>();
     let nextShadeIndex = maps.length;
     for (let i = 0; i < transforms.length; i++) {
-      if (isActive(transforms[i]) && preparedEmitters[i]) {
+      if (isActive(transforms[i]) && transformHasEmitter(transforms[i])) {
         shadeIndices.set(i, nextShadeIndex++);
         emitterBaseIndices.push(i);
       }
@@ -2067,7 +2052,9 @@ export function buildSurfaceDE(
     for (let k = 0; k < order; k++) {
       const post = k === 0 ? null : symmetryRotation(symmetry.plane, step * k);
       for (let i = 0; i < transforms.length; i++) {
-        if (!isActive(transforms[i]) || !preparedEmitters[i]) continue;
+        if (!isActive(transforms[i]) || !transformHasEmitter(transforms[i])) {
+          continue;
+        }
         const t = transforms[i];
         const affine = composeAffine(t);
         const baseInv = inverse3(affine.m);
@@ -2149,7 +2136,12 @@ export function buildSurfaceDE(
             const post =
               k === 0 ? null : symmetryRotation(symmetry.plane, step * k);
             for (let i = 0; i < transforms.length; i++) {
-              if (!isActive(transforms[i]) || preparedEmitters?.[i]) continue;
+              if (
+                !isActive(transforms[i]) ||
+                transformHasEmitter(transforms[i])
+              ) {
+                continue;
+              }
               const transform = transforms[i];
               const affine = composeAffine(transform);
               let fx =

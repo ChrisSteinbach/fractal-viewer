@@ -540,6 +540,11 @@ export interface ShapeSamplerOptions {
  * (`set-extent.ts`'s seeded-instrument discipline). */
 const GEAR_MEASURE_SAMPLES = 65536;
 const GEAR_MEASURE_SEED = 0x9ea2c0f5;
+/** Authored gear edits commonly rebuild structurally equal ShapeSpecs. Cache
+ * the pure deterministic profile probe by value, with a small FIFO bound so
+ * a long authoring session cannot grow process memory without limit. */
+const GEAR_MEASURE_CACHE_LIMIT = 64;
+const gearMeasureCache = new Map<string, { area: number; perimeter: number }>();
 /** Width of the gear-outline rejection band, as a fraction of the outer
  * radius — also the scale of the outline sampler's disclosed corner bias. */
 const GEAR_OUTLINE_BAND = 0.05;
@@ -564,6 +569,22 @@ function gearProfileMeasures(prim: Extract<ShapePrimitive, { kind: "gear" }>): {
   area: number;
   perimeter: number;
 } {
+  const cacheValues = [
+    prim.teeth,
+    prim.radius,
+    prim.tooth[0],
+    prim.tooth[1],
+    prim.hole,
+  ];
+  const cacheKey = cacheValues.every(Number.isFinite)
+    ? cacheValues
+        .map((value) => (Object.is(value, -0) ? "-0" : String(value)))
+        .join("|")
+    : null;
+  if (cacheKey !== null) {
+    const cached = gearMeasureCache.get(cacheKey);
+    if (cached) return cached;
+  }
   // A tooth is a box in the folded sector. Its farthest 2D member is the
   // outer/tangential corner, not the midpoint of its outer face. Proposal
   // discs that stop at `radius + tooth[0]` silently omit a positive-area
@@ -585,11 +606,19 @@ function gearProfileMeasures(prim: Extract<ShapePrimitive, { kind: "gear" }>): {
     if (d > 0 && d <= band) bandHits++;
   }
   const discArea = Math.PI * rMax * rMax;
-  return {
+  const result = {
     area: (areaHits / GEAR_MEASURE_SAMPLES) * discArea,
     // The one-sided exterior band has area ≈ perimeter · band.
     perimeter: ((bandHits / GEAR_MEASURE_SAMPLES) * discArea) / band,
   };
+  if (cacheKey !== null) {
+    gearMeasureCache.set(cacheKey, result);
+    if (gearMeasureCache.size > GEAR_MEASURE_CACHE_LIMIT) {
+      const oldest = gearMeasureCache.keys().next().value;
+      if (oldest !== undefined) gearMeasureCache.delete(oldest);
+    }
+  }
+  return result;
 }
 
 /** Exact local-frame draw for one solid primitive (module doc lists each
@@ -834,6 +863,9 @@ export function prepareShapeSampler(
     return { weight, draw, toWorld, contains, surfaceMeasure };
   });
   const total = parts.reduce((acc, p) => acc + p.weight, 0);
+  if (!Number.isFinite(total)) {
+    throw new Error("shape sampler: the spec has non-finite measure");
+  }
   if (!(total > 0)) {
     throw new Error("shape sampler: the spec has no measure to sample");
   }

@@ -2,7 +2,6 @@ import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
 import {
   effectiveSymmetryOrder,
   prepareSchedule,
-  prepareEmitters,
   systemHasChaos,
   transformHasEmitter,
 } from "./chaos-game";
@@ -752,10 +751,6 @@ export function analyzeSurfaceSystem4(
   const reasons: string[] = [];
   const sigmas = transforms.map((t) => transformSigmas4(toTransform4(t)));
   const active = transforms.filter(isActive);
-  const hasEmitter = transforms.some(transformHasEmitter);
-  const preparedEmitters = hasEmitter ? prepareEmitters(transforms) : null;
-  const isPreparedEmitter = (i: number): boolean =>
-    preparedEmitters?.[i] !== null && preparedEmitters?.[i] !== undefined;
   let anisotropy = 1;
 
   if (transforms.length === 0) {
@@ -764,17 +759,9 @@ export function analyzeSurfaceSystem4(
     reasons.push("every transform has weight 0");
   }
 
-  transforms.forEach((t, i) => {
-    if (isActive(t) && transformHasEmitter(t) && !isPreparedEmitter(i)) {
-      reasons.push(
-        `map ${i + 1} has an unsamplable shape emitter (point mode falls back to an ordinary map)`,
-      );
-    }
-  });
-
   if (
     active.length > 0 &&
-    transforms.every((t, i) => !isActive(t) || isPreparedEmitter(i))
+    transforms.every((t) => !isActive(t) || transformHasEmitter(t))
   ) {
     reasons.push("shape emitters leave no recursive maps");
   }
@@ -782,9 +769,10 @@ export function analyzeSurfaceSystem4(
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
     const label = `map ${i + 1}`;
-    if (isPreparedEmitter(i)) {
-      // The reset event uses the lifted affine only; variations are skipped
-      // and no contraction gate applies because the emitter is not iterated.
+    if (transformHasEmitter(t)) {
+      // Surface consumes the emitter's SDF directly, so an intersection is
+      // still a condensation shape even though point modes cannot sample it.
+      // The reset event uses the lifted affine only and is not iterated.
       if (sigmas[i].min < NEAR_SINGULAR_SIGMA) {
         reasons.push(`${label} emitter is nearly flat (scale ≈ 0)`);
       }
@@ -1201,15 +1189,15 @@ export function buildSurfaceDE4(
   // though they are never drawn), and the per-map inversion loop needs the
   // same lift.
   const lifted = transforms.map(toTransform4);
-  const preparedEmitters = transforms.some(transformHasEmitter)
-    ? prepareEmitters(transforms)
-    : null;
+  const hasEmitter = transforms.some(
+    (transform) => isActive(transform) && transformHasEmitter(transform),
+  );
   const hasChaos = systemHasChaos(transforms);
 
   const maps: SurfaceDE4Map[] = [];
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
-    if (preparedEmitters?.[i]) return;
+    if (transformHasEmitter(t)) return;
     const affine = composeAffine4(lifted[i]);
     const invM = inverse4(affine.m);
     const [tx, ty, tz, tw] = affine.t;
@@ -1337,12 +1325,12 @@ export function buildSurfaceDE4(
   let condensation: CondensationDE4 | undefined;
   const emitterBaseIndices: number[] = [];
   const emitterCopyBaseIndices: number[] = [];
-  if (preparedEmitters !== null) {
+  if (hasEmitter) {
     const emitters: CondensationEmitter4[] = [];
     const shadeIndices = new Map<number, number>();
     let nextShadeIndex = maps.length;
     for (let i = 0; i < transforms.length; i++) {
-      if (isActive(transforms[i]) && preparedEmitters[i]) {
+      if (isActive(transforms[i]) && transformHasEmitter(transforms[i])) {
         shadeIndices.set(i, nextShadeIndex++);
         emitterBaseIndices.push(i);
       }
@@ -1357,7 +1345,9 @@ export function buildSurfaceDE4(
               symmetry.twist ?? 0,
             );
       for (let i = 0; i < transforms.length; i++) {
-        if (!isActive(transforms[i]) || !preparedEmitters[i]) continue;
+        if (!isActive(transforms[i]) || !transformHasEmitter(transforms[i])) {
+          continue;
+        }
         const t = transforms[i];
         const affine = composeAffine4(lifted[i]);
         const baseInv = inverse4(affine.m);
@@ -1451,7 +1441,9 @@ export function buildSurfaceDE4(
       ? condensationBoundingRadius4(condensation)
       : 0;
     for (let i = 0; i < transforms.length; i++) {
-      if (!isActive(transforms[i]) || preparedEmitters?.[i]) continue;
+      if (!isActive(transforms[i]) || transformHasEmitter(transforms[i])) {
+        continue;
+      }
       const affine = composeAffine4(lifted[i]);
       let image: Vec4 = [affine.t[0], affine.t[1], affine.t[2], affine.t[3]];
       const fold = pureFoldVariation(transforms[i]);

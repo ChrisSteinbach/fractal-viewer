@@ -128,7 +128,7 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
   });
 
-  it("creates a custom primitive and keeps an opaque authored trap untouched", () => {
+  it("creates a custom shape and keeps an opaque mesh composition untouched", () => {
     const spec = specById("surfaceTrapShape");
     const created = applyScalarControl(initialState(true), spec, "custom");
     expect(created.shapeTrap).toEqual({
@@ -147,7 +147,7 @@ describe("applyScalarControl: parsing/mapping", () => {
       shape: {
         parts: [
           {
-            primitive: { kind: "sphere", radius: 0.7312 },
+            primitive: STAR_PRISM_SHAPE.parts[0].primitive,
             combine: "union",
           },
           {

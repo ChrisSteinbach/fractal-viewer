@@ -9,8 +9,13 @@ import {
   sierpinskiTetrahedron,
 } from "../fractal/presets";
 import type { Preset } from "../fractal/presets";
+import { shapeSdfSource } from "../fractal/shapes";
+import type { ShapeSpec } from "../fractal/shapes";
 import type { SymmetryParams, Transform } from "../fractal/types";
-import { deriveSurfaceEligibility } from "./surface-eligibility";
+import {
+  SURFACE_SHAPE_SOURCE_BUDGET_BYTES,
+  deriveSurfaceEligibility,
+} from "./surface-eligibility";
 import { SURFACE_MAX_MAPS } from "./surface-material";
 
 const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xy" };
@@ -537,6 +542,33 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
 });
 
 describe("deriveSurfaceEligibility shape emitters", () => {
+  const nearBudgetShape: ShapeSpec = {
+    parts: Array.from({ length: 8 }, (_, index) => ({
+      primitive: {
+        kind: "gear" as const,
+        teeth: 13,
+        radius: 0.91234567890123,
+        tooth: [0.11234567890123, 0.01234567890123] as [number, number],
+        hole: 0.21234567890123,
+        halfHeight: 0.31234567890123,
+      },
+      combine: "union" as const,
+      pose: {
+        offset: [
+          index + 0.12345678901235,
+          index + 0.23456789012346,
+          index + 0.34567890123457,
+        ] as [number, number, number],
+        rotate: [
+          index + 0.45678901234568,
+          index + 0.56789012345679,
+          index + 0.67890123456789,
+        ] as [number, number, number],
+        scale: index + 1.12345678901235,
+      },
+    })),
+  };
+
   it("admits the Gearworks condensation preset into the IFS descent", () => {
     const result = derivePreset("gearworks");
     expect(result.status).toBe("eligible");
@@ -591,6 +623,177 @@ describe("deriveSurfaceEligibility shape emitters", () => {
     });
     expect(result.status).not.toBe("ineligible");
     expect(result.kind).toBe("ifs4");
+  });
+
+  it("admits an intersection emitter into Surface even though point modes cannot sample it", () => {
+    const transforms = sierpinskiTetrahedron().map((transform, index) =>
+      index === 1
+        ? {
+            ...transform,
+            emitter: {
+              parts: [
+                {
+                  primitive: { kind: "sphere" as const, radius: 0.5 },
+                  combine: "union" as const,
+                },
+                {
+                  primitive: {
+                    kind: "box" as const,
+                    half: [0.25, 0.25, 0.25] as [number, number, number],
+                  },
+                  combine: "intersect" as const,
+                },
+              ],
+            },
+          }
+        : transform,
+    );
+    expect(
+      deriveSurfaceEligibility(transforms, null, NO_SYMMETRY, {
+        computeAvailable: true,
+      }),
+    ).toEqual({ status: "eligible", note: null, kind: "ifs" });
+  });
+
+  it("enforces one aggregate 8192-byte budget in both dialects across active emitter functions", () => {
+    const encoder = new TextEncoder();
+    const glslBytes = encoder.encode(
+      shapeSdfSource(nearBudgetShape, "glsl", "condensationSdf0"),
+    ).byteLength;
+    const wgslBytes0 = encoder.encode(
+      shapeSdfSource(nearBudgetShape, "wgsl", "condensationShape0"),
+    ).byteLength;
+    const wgslBytes1 = encoder.encode(
+      shapeSdfSource(nearBudgetShape, "wgsl", "condensationShape1"),
+    ).byteLength;
+    expect(glslBytes).toBeLessThanOrEqual(SURFACE_SHAPE_SOURCE_BUDGET_BYTES);
+    expect(wgslBytes0).toBeLessThanOrEqual(SURFACE_SHAPE_SOURCE_BUDGET_BYTES);
+    expect(wgslBytes0 + wgslBytes1).toBeGreaterThan(
+      SURFACE_SHAPE_SOURCE_BUDGET_BYTES,
+    );
+
+    const one = sierpinskiTetrahedron().map((transform, index) =>
+      index === 0 ? { ...transform, emitter: nearBudgetShape } : transform,
+    );
+    expect(
+      deriveSurfaceEligibility(one, null, NO_SYMMETRY, {
+        computeAvailable: true,
+      }).status,
+    ).toBe("eligible");
+
+    const two = one.map((transform, index) =>
+      index === 1 ? { ...transform, emitter: nearBudgetShape } : transform,
+    );
+    const refused = deriveSurfaceEligibility(two, null, NO_SYMMETRY, {
+      computeAvailable: true,
+    });
+    expect(refused.status).toBe("ineligible");
+    expect(refused.kind).toBeNull();
+    // GLSL structurally deduplicates equal functions; WGSL emits one body
+    // per base-emitter shade slot.
+    expect(refused.note).toContain(`${glslBytes} GLSL bytes`);
+    expect(refused.note).toContain(`${wgslBytes0 + wgslBytes1} WGSL bytes`);
+    expect(refused.note).toContain(
+      `${SURFACE_SHAPE_SOURCE_BUDGET_BYTES} bytes in each dialect`,
+    );
+
+    // Inactive emitters produce no function and therefore do not spend the
+    // aggregate, even though their document field remains preserved.
+    const inactiveSecond = two.map((transform, index) =>
+      index === 1 ? { ...transform, weight: 0 } : transform,
+    );
+    expect(
+      deriveSurfaceEligibility(inactiveSecond, null, NO_SYMMETRY, {
+        computeAvailable: true,
+      }).status,
+    ).toBe("eligible");
+
+    const nonFlatTwo = two.map((transform, index) =>
+      index === 2 ? { ...transform, w: { rotation: { xw: 0.25 } } } : transform,
+    );
+    const glsl4dBytes = encoder.encode(
+      shapeSdfSource(nearBudgetShape, "glsl", "condensation4Sdf0"),
+    ).byteLength;
+    const refused4d = deriveSurfaceEligibility(nonFlatTwo, null, NO_SYMMETRY, {
+      computeAvailable: true,
+    });
+    expect(refused4d.status).toBe("ineligible");
+    expect(refused4d.note).toContain(`${glsl4dBytes} GLSL bytes`);
+    expect(refused4d.note).toContain(`${wgslBytes0 + wgslBytes1} WGSL bytes`);
+
+    const symmetric = deriveSurfaceEligibility(
+      two,
+      null,
+      { order: 2, plane: "xy" },
+      { computeAvailable: true },
+    );
+    expect(symmetric.status).toBe("ineligible");
+    expect(symmetric.note).toContain(`${glslBytes} GLSL bytes`);
+    expect(symmetric.note).toContain(`${wgslBytes0 + wgslBytes1} WGSL bytes`);
+  });
+
+  it("applies the same source gate to the active forward-route shape trap", () => {
+    const overBudgetShape: ShapeSpec = {
+      parts: nearBudgetShape.parts.map((part) => ({
+        ...part,
+        pose: {
+          ...part.pose,
+          offset: [Number.MAX_VALUE, -Number.MAX_VALUE, Number.MAX_VALUE],
+        },
+      })),
+    };
+    const result = deriveSurfaceEligibility(
+      presetTransforms("mandelboxClassic"),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      { shape: overBudgetShape },
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.kind).toBeNull();
+    expect(result.note).toContain("Authored custom-shape source needs");
+    const encoder = new TextEncoder();
+    const trapGlsl = encoder.encode(
+      shapeSdfSource(overBudgetShape, "glsl", "surfaceTrapSdf"),
+    ).byteLength;
+    const trapWgsl = encoder.encode(
+      shapeSdfSource(overBudgetShape, "wgsl", "trapShapeSdf"),
+    ).byteLength;
+    expect(result.note).toContain(`${trapGlsl} GLSL bytes`);
+    expect(result.note).toContain(`${trapWgsl} WGSL bytes`);
+  });
+
+  it("invalidates source eligibility cache entries after in-place mutation", () => {
+    const mutable: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.5 },
+          combine: "union",
+        },
+      ],
+    };
+    const transforms = sierpinskiTetrahedron().map((transform, index) =>
+      index === 0 ? { ...transform, emitter: mutable } : transform,
+    );
+    expect(
+      deriveSurfaceEligibility(transforms, null, NO_SYMMETRY, {
+        computeAvailable: true,
+      }).status,
+    ).toBe("eligible");
+
+    mutable.parts = nearBudgetShape.parts.map((part) => ({
+      ...part,
+      pose: {
+        ...part.pose,
+        offset: [Number.MAX_VALUE, -Number.MAX_VALUE, Number.MAX_VALUE],
+      },
+    }));
+    expect(
+      deriveSurfaceEligibility(transforms, null, NO_SYMMETRY, {
+        computeAvailable: true,
+      }).status,
+    ).toBe("ineligible");
   });
 
   it("prices symmetry-expanded emitter records against the common cap", () => {
