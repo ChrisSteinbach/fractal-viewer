@@ -1978,11 +1978,12 @@ export class Ui {
     z: HTMLInputElement;
   };
   private readonly positionColorsResetBtn: HTMLElement;
-  /** Solid-local mirrors of the authored color definition. They stay inside
-   * Solid's renderer-owned Scene color section and are reachable only while
-   * its Color source is the mode-driven (legacy protocol) path. */
+  /** Solid-local presentation of the authored color definition. The
+   * dimensional selector always leads its renderer-owned Scene color section;
+   * these references gate the dependent orbit/ramp/position branches. */
   private readonly solidColorModeRow: HTMLElement;
   private readonly solidFourDColorRow: HTMLElement;
+  private readonly solidOrbitPaletteRow: HTMLElement;
   private readonly solidRampPaletteRow: HTMLElement;
   private readonly solidPositionColorsRow: HTMLElement;
   private readonly solidColorGammaRow: HTMLElement;
@@ -2583,6 +2584,7 @@ export class Ui {
     this.positionColorsResetBtn = this.byId("positionColorsReset");
     this.solidColorModeRow = this.byId("solidColorModeRow");
     this.solidFourDColorRow = this.byId("solidFourDColorRow");
+    this.solidOrbitPaletteRow = this.byId("solidOrbitPaletteRow");
     this.solidRampPaletteRow = this.byId("solidRampPaletteRow");
     this.solidPositionColorsRow = this.byId("solidPositionColorsRow");
     this.solidColorGammaRow = this.byId("solidColorGammaRow");
@@ -4071,19 +4073,18 @@ export class Ui {
     }
     (this.positionColorsResetBtn as HTMLButtonElement).disabled =
       nonFlat && !positionColorsActive;
-    // Solid's structural palettes override the dimensional color definition
-    // entirely. Expose the mirrors only when Color source is Color mode, then
-    // apply the same dimension/dependency gates as the Points presentation.
-    const solidColorModeActive =
-      state.renderMode === "solid" && state.solid.paletteId === "legacy";
-    this.solidColorModeRow.classList.toggle(
-      "hidden",
-      !solidColorModeActive || nonFlat,
-    );
+    // Solid starts with the same dimensional selector as Points. Its one
+    // additional Orbit palette option reveals the palette branch; ordinary
+    // modes use the same ramp/position/contrast dependency gates as Points.
+    const solidActive = state.renderMode === "solid";
+    const solidOrbitActive = solidActive && state.solid.paletteId !== "legacy";
+    this.solidColorModeRow.classList.toggle("hidden", !solidActive || nonFlat);
     this.solidFourDColorRow.classList.toggle(
       "hidden",
-      !solidColorModeActive || !nonFlat,
+      !solidActive || !nonFlat,
     );
+    this.solidOrbitPaletteRow.classList.toggle("hidden", !solidOrbitActive);
+    const solidColorModeActive = solidActive && !solidOrbitActive;
     const solidUsesRamp = nonFlat
       ? fourDColorModeUsesRampPalette(state.fourDColor)
       : colorModeUsesRampPalette(state.colorMode);

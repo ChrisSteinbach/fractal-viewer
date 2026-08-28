@@ -341,6 +341,9 @@ describe("applyScalarControl: parsing/mapping", () => {
       const state = applyScalarControl(initialState(true), spec, "height");
 
       expect(state.colorMode).toBe("height");
+      if (id === "solidColorMode") {
+        expect(state.solid.paletteId).toBe("legacy");
+      }
     },
   );
 
@@ -369,6 +372,20 @@ describe("applyScalarControl: parsing/mapping", () => {
     const state = applyScalarControl(initial, spec, "radius");
 
     expect(state.fourDColor).toBe("radius");
+    expect(state.solid.paletteId).toBe("legacy");
+  });
+
+  it("Solid's Orbit palette choice maps to its default structural palette", () => {
+    const spec = specById("solidColorMode");
+    const initial = {
+      ...initialState(true),
+      solid: { ...initialState(true).solid, paletteId: "legacy" as const },
+    };
+
+    const state = applyScalarControl(initial, spec, "orbit");
+
+    expect(state.solid.paletteId).toBe(DEFAULT_SOLID_PALETTE);
+    expect(spec.kind === "select" && spec.read(state)).toBe("orbit");
   });
 
   it("solidColorGammaSlider applies the same contrast mapping", () => {
@@ -644,6 +661,43 @@ describe("effects", () => {
         expect(fx.postVoxel).not.toHaveBeenCalled();
       },
     );
+
+    it("stages a Solid mode before switching the worker out of Orbit palette", () => {
+      const previous = initialState(true);
+      const spec = specById("solidColorMode");
+      const state = applyScalarControl(previous, spec, "height");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(
+        vi.mocked(fx.postVoxel).mock.calls.map(([command]) => command.type),
+      ).toEqual(["setColorInputs", "setPalette"]);
+      expect(fx.postVoxel).toHaveBeenLastCalledWith({
+        type: "setPalette",
+        palette: "legacy",
+      });
+      expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
+    });
+
+    it("switches Solid from a mode to Orbit palette without a redundant color-input restart", () => {
+      const base = initialState(true);
+      const previous = {
+        ...base,
+        solid: { ...base.solid, paletteId: "legacy" as const },
+      };
+      const spec = specById("solidColorMode");
+      const state = applyScalarControl(previous, spec, "orbit");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.postVoxel).toHaveBeenCalledExactlyOnceWith({
+        type: "setPalette",
+        palette: DEFAULT_SOLID_PALETTE,
+      });
+      expect(fx.postFlame).not.toHaveBeenCalled();
+    });
 
     it("sends Flame the omitted-palette Inherit command", () => {
       const spec = specById("balloonPalette");

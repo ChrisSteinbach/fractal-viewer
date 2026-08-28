@@ -693,7 +693,8 @@ visible motion-preference actions remain reachable; Solid's world-space camera
 stays live. The shared authored color inputs similarly use atomic
 `setColorInputs` commands to keep 4D color mode, contrast, applicable ramp
 palette, and Axis Colors current when a mode-driven worker consumes them.
-Solid exposes those inputs through mirrors in its own Scene color panel rather
+Solid exposes those inputs through the same selector/dependent-control pattern
+in its own Scene color panel, adding Orbit palette as a UI-only branch rather
 than revealing the Points panel. The 4D
 flame
 rides the same WebGPU path as the 3D one (see "GPU accumulation backend"), with
