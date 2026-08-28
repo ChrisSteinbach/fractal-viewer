@@ -51,6 +51,11 @@ export function surfaceComputeForceFrameKey(
 ): string {
   return [
     Array.from(spec.invProjView).join(","),
+    // The tracer now also emits autofocus metadata. These are presentation
+    // inputs only after the trace exists, but a memoized force frame must
+    // retain metadata for the exact camera-aligned plane it was traced with.
+    spec.camForward.join(","),
+    spec.focusDepth,
     spec.width,
     spec.height,
     spec.lutVersion,

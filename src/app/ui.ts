@@ -2686,6 +2686,7 @@ export class Ui {
       this.surfaceCondensationSection,
       this.surfaceTrapSection,
       this.byId<HTMLDetailsElement>("surfaceLightingSection"),
+      this.byId<HTMLDetailsElement>("surfaceDepthSection"),
       this.byId<HTMLDetailsElement>("surfaceFloorSection"),
     ];
     this.modeButtons = {

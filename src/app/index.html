@@ -1534,7 +1534,7 @@
         </details>
 
         <!-- Surface's renderer inspector is split at its concern and session
-             seams. Scene color, Lighting and Floor apply across Surface
+             seams. Scene color, Lighting, Depth and Floor apply across Surface
              sessions; Shape copies and Shape trap own their mutually
              exclusive routes. -->
         <details
@@ -1893,6 +1893,25 @@
               value="0.35"
             />
           </label>
+        </details>
+
+        <details
+          class="panel-section hidden"
+          id="surfaceDepthSection"
+          name="panel-section"
+        >
+          <summary>Depth</summary>
+          <label
+            class="checkbox-label"
+            title="Apply bounded depth-aware blur around the automatically focused Surface centre"
+          >
+            <input type="checkbox" id="surfaceDepthOfFieldCheckbox" />
+            Depth of Field
+          </label>
+          <p class="flame-hint">
+            Focus follows the Surface centre. Changes apply immediately without
+            retracing.
+          </p>
         </details>
 
         <details

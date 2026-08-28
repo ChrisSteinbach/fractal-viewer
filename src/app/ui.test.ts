@@ -5990,11 +5990,13 @@ describe("Ui render mode switch", () => {
     "surfaceCondensationSection",
     "surfaceTrapSection",
     "surfaceLightingSection",
+    "surfaceDepthSection",
     "surfaceFloorSection",
   ] as const;
   const SURFACE_ALWAYS_SECTION_IDS = [
     "surfaceColorSection",
     "surfaceLightingSection",
+    "surfaceDepthSection",
     "surfaceFloorSection",
   ] as const;
   const QUALITY_CONTROL_IDS = {
@@ -7530,6 +7532,61 @@ describe("Ui independent renderer lighting", () => {
     ui.updateLabels({ ...state, renderMode: "solid" });
     expect(value("solidLightAzimuthSlider")).toBe("-45");
     expect(value("solidAmbientSlider")).toBe("0.2");
+  });
+});
+
+describe("Ui Surface Depth of Field", () => {
+  const checkbox = (): HTMLInputElement =>
+    document.getElementById("surfaceDepthOfFieldCheckbox") as HTMLInputElement;
+
+  it("owns a separate Surface Depth section and reflects the saved default-off choice", () => {
+    const ui = new Ui(document);
+    const base = initialState(true);
+
+    ui.updateLabels({ ...base, renderMode: "surface" });
+    expect(checkbox().checked).toBe(false);
+    expect(checkbox().closest("details")?.id).toBe("surfaceDepthSection");
+    expect(checkbox().closest("details")?.id).not.toBe("pointsDepthSection");
+
+    ui.updateLabels({
+      ...base,
+      renderMode: "surface",
+      surface: { ...base.surface, depthOfField: true },
+    });
+    expect(checkbox().checked).toBe(true);
+  });
+
+  it("is visible for every flat and non-flat Surface session kind and hidden in other render modes", () => {
+    const ui = new Ui(document);
+    const base = initialState(true);
+    const section = document.getElementById("surfaceDepthSection")!;
+
+    for (const renderMode of ["points", "flame", "solid"] as const) {
+      ui.updateLabels({ ...base, renderMode });
+      expect(section.classList.contains("hidden"), renderMode).toBe(true);
+    }
+
+    for (const transforms of [base.transforms, nonFlatTransforms()]) {
+      for (const kind of [null, "ifs", "escape", "bulb"] as const) {
+        ui.setSurfaceSessionKind(kind);
+        ui.updateLabels({ ...base, transforms, renderMode: "surface" });
+        expect(
+          section.classList.contains("hidden"),
+          `${kind ?? "unrouted"} ${transforms === base.transforms ? "flat" : "non-flat"}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("routes checkbox changes through the persisted scalar state", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    checkbox().checked = true;
+    checkbox().dispatchEvent(new Event("change"));
+
+    expect(current().surface.depthOfField).toBe(true);
   });
 });
 
@@ -9880,6 +9937,7 @@ describe("panel accordion sections", () => {
       "surfaceCondensationSection",
       "surfaceTrapSection",
       "surfaceLightingSection",
+      "surfaceDepthSection",
       "surfaceFloorSection",
     ];
 
@@ -9953,6 +10011,7 @@ describe("panel accordion sections", () => {
       "Scene color",
       "Scene color",
       "Lighting",
+      "Depth",
     ]);
     const solidLighting = sections().find(
       (section) => section.id === "solidLightingSection",

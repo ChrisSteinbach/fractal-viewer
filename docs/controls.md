@@ -122,7 +122,7 @@ the one it used to claim: 727px with **Scene color** open, 1336px with
 modes get the same treatment — **Scene color** / **Depth** for Points,
 **Scene color** / **Blur** for Flame, **Scene color** / **Level** /
 **Lighting** for Solid, and **Scene color** / **Shape copies** or **Shape
-trap** / **Lighting** / **Floor** for Surface itself (see
+trap** / **Lighting** / **Depth** / **Floor** for Surface itself (see
 **✺
 Flame**, **◆ Solid** and **◈ Surface** below). One **Quality** section follows
 those inspectors and swaps its Points, Flame, Solid or Surface controls in
@@ -596,10 +596,17 @@ morphs into place instead of snapping (see **Presets** below).
   rings, sheets, and Shape trap sources, plus a **Color speed** slider — orbit-trap
   source only, fading how quickly deeper descent levels blend into the trap
   color. **Lighting** holds **Light Angle**, **Light Height**, **Ambient**, and
-  **Environment**.
-  This is Surface's independently persisted analytic-material look: every one
-  is a plain shader input that updates only Surface, live, without changing
-  Solid's lighting. **Environment** is Surface-only: from 0–100% (default
+  **Environment**. Surface's separate **Depth** section owns a **Depth of
+  Field** checkbox (off by default). It automatically focuses on the active
+  Surface framing centre, leaving that region crisp while applying a bounded,
+  depth-aware blur in front of and behind it. The checkbox is a saved Surface
+  look, independent of Points' **Depth Style**, and changes only the retained
+  presentation: it does not restart or multiply distance-estimator work.
+  Preview, progressive settle, supersampling, the live Background compositor,
+  PNG capture, offline frames, and thumbnails all use the same setting.
+  The Lighting fields form Surface's independently persisted analytic-material
+  look: each is a plain shader input that updates only Surface, live, without
+  changing Solid's lighting. **Environment** is Surface-only: from 0–100% (default
   35%), it tints the light itself toward the **Background**
   gradient, sampled along each point's own shading normal — a two-stop
   sky-above/ground-below environment, so the render sits IN its backdrop

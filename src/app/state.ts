@@ -343,14 +343,21 @@ export type SurfaceFloorPattern = (typeof SURFACE_FLOOR_PATTERNS)[number];
  * shades an analytic surface through its own material/effect lane, and
  * {@link envLight} has no Solid counterpart.
  *
- * Appearance fields here are live GPU uniforms. {@link antialiasSamples} is
- * the deliberate exception: it controls the next parked-view settle and
- * capture, so changing it restarts Surface refinement without changing the
- * already-visible first pass.
+ * Most appearance fields here are live GPU uniforms. {@link depthOfField} is
+ * instead a retained-frame presentation choice, while
+ * {@link antialiasSamples} controls the next parked-view settle and capture;
+ * neither belongs to the Surface distance estimator itself.
  */
 export interface SurfaceParams {
   /** Samples per pixel used by the parked Surface settle and Save-PNG. */
   antialiasSamples: number;
+  /**
+   * Bounded, depth-aware screen-space blur over the completed/progressive
+   * Surface image. The focal plane follows the active Surface framing centre.
+   * Off is the legacy identity path and the default for new and decoded
+   * documents. Presentation-only: changing it must not re-run the tracer.
+   */
+  depthOfField: boolean;
   /** Light's horizontal angle in degrees. Same physical meaning as
    * {@link SolidParams.lightAzimuth} — `PARAM.surfaceLightAzimuth` reuses its
    * `MIN_SOLID_LIGHT_AZIMUTH`/`MAX_SOLID_LIGHT_AZIMUTH` range. Live-reactive
@@ -988,6 +995,8 @@ export const MAX_SOLID_AMBIENT = 0.8;
 export const DEFAULT_SURFACE_COLOR_SPEED = 0.5;
 export const MIN_SURFACE_COLOR_SPEED = 0;
 export const MAX_SURFACE_COLOR_SPEED = 1;
+/** Surface depth-of-field is opt-in; false preserves the legacy image. */
+export const DEFAULT_SURFACE_DEPTH_OF_FIELD = false;
 /** Environment-light strength: how far the surface render's light
  * is tinted toward the backdrop sampled along the shading normal. 0 is a
  * bit-exact identity — the neutral light it replaced. The default is
@@ -1483,6 +1492,7 @@ export function initialState(panelOpen: boolean): AppState {
     },
     surface: {
       antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+      depthOfField: DEFAULT_SURFACE_DEPTH_OF_FIELD,
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
@@ -2664,6 +2674,14 @@ export function setSurfaceAntialiasSamples(
       antialiasSamples: nearestSurfaceAntialiasSamples(antialiasSamples),
     },
   };
+}
+
+/** Toggle the Surface renderer's retained-frame depth-of-field treatment. */
+export function setSurfaceDepthOfField(
+  state: AppState,
+  depthOfField: boolean,
+): AppState {
+  return { ...state, surface: { ...state.surface, depthOfField } };
 }
 
 /** Set the surface render's light height above the horizon (degrees),

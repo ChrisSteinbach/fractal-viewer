@@ -66,6 +66,7 @@ import {
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_RAMP_PALETTE,
   DEFAULT_SOLID_PALETTE,
+  DEFAULT_SURFACE_DEPTH_OF_FIELD,
   DEFAULT_SYMMETRY_PLANE,
   MAX_W_ANGLE,
   MAX_W_POSITION,
@@ -1879,6 +1880,7 @@ function decodeSurfaceParams(
 ): SurfaceParams | null {
   const defaults: SurfaceParams = {
     antialiasSamples: DEFAULT_SURFACE_ANTIALIAS_SAMPLES,
+    depthOfField: DEFAULT_SURFACE_DEPTH_OF_FIELD,
     lightAzimuth: PARAM.surfaceLightAzimuth.default,
     lightElevation: PARAM.surfaceLightElevation.default,
     ambient: PARAM.surfaceAmbient.default,
@@ -1900,7 +1902,11 @@ function decodeSurfaceParams(
   const out = { ...defaults };
   const numeric: Exclude<
     keyof SurfaceParams,
-    "antialiasSamples" | "colorSource" | "paletteId" | "floorPattern"
+    | "antialiasSamples"
+    | "depthOfField"
+    | "colorSource"
+    | "paletteId"
+    | "floorPattern"
   >[] = [
     "lightAzimuth",
     "lightElevation",
@@ -1949,6 +1955,10 @@ function decodeSurfaceParams(
 
   return {
     antialiasSamples: out.antialiasSamples,
+    depthOfField:
+      typeof s.depthOfField === "boolean"
+        ? s.depthOfField
+        : DEFAULT_SURFACE_DEPTH_OF_FIELD,
     lightAzimuth: clampToSpec(PARAM.surfaceLightAzimuth, out.lightAzimuth),
     lightElevation: clampToSpec(
       PARAM.surfaceLightElevation,
@@ -2659,8 +2669,9 @@ export function encodeScene(s: SceneSnapshot): string {
     showGuides: boolean;
     flame: FlameParams;
     solid: SolidParams;
-    surface: Omit<SurfaceParams, "antialiasSamples"> & {
+    surface: Omit<SurfaceParams, "antialiasSamples" | "depthOfField"> & {
       antialiasSamples?: number;
+      depthOfField?: true;
     };
     symmetry: SymmetryParams;
     glowBrightness: number;
@@ -2750,6 +2761,9 @@ export function encodeScene(s: SceneSnapshot): string {
       ...(s.surface.antialiasSamples !== DEFAULT_SURFACE_ANTIALIAS_SAMPLES
         ? { antialiasSamples: Math.round(s.surface.antialiasSamples) }
         : {}),
+      // Optional and off by default: legacy/default documents keep their
+      // compact wire while an enabled treatment round-trips explicitly.
+      ...(s.surface.depthOfField ? { depthOfField: true as const } : {}),
       lightAzimuth: round4(s.surface.lightAzimuth),
       lightElevation: round4(s.surface.lightElevation),
       ambient: round4(s.surface.ambient),

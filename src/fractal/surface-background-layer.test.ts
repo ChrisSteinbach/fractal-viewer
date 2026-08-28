@@ -74,6 +74,12 @@ describe("surface background layer encoding", () => {
     ]);
   });
 
+  it("encodes signed circle of confusion with an exact focal byte", () => {
+    expect(encodeSurfaceBackgroundLayer(1, 0, 0, -1)[3]).toBe(1);
+    expect(encodeSurfaceBackgroundLayer(1, 0, 0, 0)[3]).toBe(128);
+    expect(encodeSurfaceBackgroundLayer(1, 0, 0, 1)[3]).toBe(255);
+  });
+
   it("decodes coverage, fog, and background weight from the named bytes", () => {
     const decoded = decodeSurfaceBackgroundLayer(
       new Uint8Array([9, 8, 7, 6, 64, 128, 192, 255]),
@@ -83,7 +89,15 @@ describe("surface background layer encoding", () => {
       coverage: 64 / 255,
       fog: 128 / 255,
       backgroundWeight: 192 / 255,
+      circleOfConfusion: 1,
     });
+  });
+
+  it("decodes the focal CoC byte to zero", () => {
+    expect(
+      decodeSurfaceBackgroundLayer(new Uint8Array([255, 0, 0, 128]))
+        .circleOfConfusion,
+    ).toBe(0);
   });
 });
 
@@ -220,6 +234,41 @@ describe("compositeSurfaceBackgroundLayer", () => {
       liveBackground: background,
     });
     expect(Array.from(out)).toEqual([13, 72, 201, 255, 255, 4, 99, 255]);
+  });
+
+  it("can pack the CoC byte into capture alpha without changing RGB", () => {
+    const background = uniformBackground([0.2, 0.3, 0.4]);
+    const out = compositeSurfaceBackgroundLayer({
+      width: 2,
+      height: 1,
+      legacyRgba: new Uint8Array([13, 72, 201, 0, 255, 4, 99, 0]),
+      layerRgba: new Uint8Array([
+        ...encodeSurfaceBackgroundLayer(1, 0, 0, -0.5),
+        ...encodeSurfaceBackgroundLayer(1, 0, 0, 0.25),
+      ]),
+      referenceBackground: snapshotTraceBackground(background),
+      liveBackground: background,
+      outputAlpha: "circle-of-confusion",
+    });
+    expect(Array.from(out)).toEqual([13, 72, 201, 65, 255, 4, 99, 160]);
+  });
+
+  it("reserves capture alpha 255 for uncovered pixels", () => {
+    const background = uniformBackground([0, 0, 0]);
+    const out = compositeSurfaceBackgroundLayer({
+      width: 2,
+      height: 1,
+      legacyRgba: new Uint8Array(8),
+      layerRgba: new Uint8Array([
+        ...encodeSurfaceBackgroundLayer(1, 0, 0, 1),
+        ...encodeSurfaceBackgroundLayer(0, 0, 0),
+      ]),
+      referenceBackground: snapshotTraceBackground(background),
+      liveBackground: background,
+      outputAlpha: "circle-of-confusion",
+    });
+    expect(out[3]).toBe(254);
+    expect(out[7]).toBe(255);
   });
 
   it("direct-copies when immutable image identity and revision are unchanged", () => {

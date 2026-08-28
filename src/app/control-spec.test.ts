@@ -50,6 +50,7 @@ function mockEffects(shared = false): ControlEffects {
       setFourDDepthFade: vi.fn(),
       setSolidParams: vi.fn(),
       setSurfaceParams: vi.fn(),
+      setSurfaceDepthOfField: vi.fn(),
       setSurfaceShapeTrap: vi.fn(),
       setSurfaceColorLUT: vi.fn(),
       setBalloonEchoEnabled: vi.fn(),
@@ -487,6 +488,17 @@ describe("read: state -> element value", () => {
     };
 
     expect(spec.read(state)).toBe("4");
+  });
+
+  it("surfaceDepthOfFieldCheckbox read reflects the saved Surface choice", () => {
+    const spec = specById("surfaceDepthOfFieldCheckbox");
+    const base = initialState(true);
+    const state = {
+      ...base,
+      surface: { ...base.surface, depthOfField: true },
+    };
+
+    expect(spec.read(state)).toBe(true);
   });
 
   it("fourDDepthFadeToggle read reflects a true fourDDepthFade state", () => {
@@ -1554,6 +1566,25 @@ describe("effects", () => {
   });
 
   describe("surface render controls", () => {
+    it("surfaceDepthOfFieldCheckbox toggles presentation without restarting or pushing trace params", () => {
+      const spec = specById("surfaceDepthOfFieldCheckbox");
+      const previous = {
+        ...initialState(true),
+        renderMode: "surface" as const,
+      };
+      const state = applyScalarControl(previous, spec, true);
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(state.surface.depthOfField).toBe(true);
+      expect(fx.scene.setSurfaceDepthOfField).toHaveBeenCalledExactlyOnceWith(
+        true,
+      );
+      expect(fx.scene.setSurfaceParams).not.toHaveBeenCalled();
+      expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
+    });
+
     it("surfaceAntialiasSlider restarts active refinement after a genuine change", () => {
       const spec = specById("surfaceAntialiasSlider");
       const previous = {

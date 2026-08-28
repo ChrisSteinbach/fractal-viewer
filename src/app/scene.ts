@@ -1187,6 +1187,10 @@ export class FractalScene {
    * path stores `balloonBall4(de)` and applies through these same methods
    * (see {@link setSurfaceSystem4}). */
   private surfaceBalloonBall: { center: Vec3; radius: number } | null = null;
+  /** Stable autofocus target for Surface depth of field. Unlike the balloon
+   * ball, this remains present for filled escape-family sessions; unlike the
+   * floor ball, it never depends on whether the Floor control is enabled. */
+  private surfaceFocusBall: { center: Vec3; radius: number } | null = null;
   private surfaceBalloonOn = false;
   /** The ground plane's session ball: balloonBall(de) for IFS
    * installs, the origin bailout ball for escape — a SEPARATE field from
@@ -1271,6 +1275,9 @@ export class FractalScene {
    * RGB mean keeps the existing linear-light path; metadata is averaged in
    * its own affine domain for changed-background presentation. */
   private surfaceSampleLayerAccum: Float32Array | null = null;
+  /** Frontmost signed-CoC byte per pixel across completed samples. Kept as
+   * one byte/pixel instead of growing the float RGB sidecar accumulator. */
+  private surfaceSampleCoc: Uint8Array | null = null;
   /** RGBA8 scratch the passes read back into and the mean is encoded back
    * into — the {@link surfaceSampleTexture}'s own storage, so a pass costs
    * one readback and one upload, no intermediate copy. */
@@ -1442,17 +1449,23 @@ export class FractalScene {
   private surfaceComputeTexture: THREE.DataTexture | null = null;
   private surfaceComputeLayerTexture: THREE.DataTexture | null = null;
   private surfaceComputeBackground: TraceBackgroundReference | null = null;
+  private surfaceComputeMetadataInSourceAlpha = false;
   /** Background edits are presentation work while Surface owns the canvas.
    * They never set renderNeeded (the trace dirty bit); tickRender consumes
    * this latch through presentSurfaceComposite. */
   private surfaceDisplayActive = false;
   private surfaceCompositePending = false;
+  /** Surface-owned retained-frame optical treatment. Metadata is produced
+   * unconditionally, so this flag changes presentation without retracing. */
+  private surfaceDepthOfField = false;
   /** The last source actually shown on the canvas, retained so a backdrop
    * tween can repaint it without re-tracing. */
   private surfacePresentation: {
     color: THREE.Texture;
     layer: THREE.Texture | null;
     background: TraceBackgroundReference | null;
+    /** Capture-only compact sidecar transport; live frames keep full uLayer. */
+    metadataInSourceAlpha: boolean;
   } | null = null;
   /** Live SurfaceParams snapshot for compute frame specs — kept beside the
    * GLSL uniform writes in {@link setSurfaceParams} so both paths read the
@@ -2656,8 +2669,18 @@ export class FractalScene {
    * any trace has presented in this session. */
   presentSurfaceComposite(): boolean {
     const source = this.surfacePresentation;
-    if (!source?.layer || !source.background) return false;
-    this.blitSurface(source.color, null, source.layer, source.background);
+    if (!source || (source.layer === null && !source.metadataInSourceAlpha)) {
+      return false;
+    }
+    this.blitSurface(
+      source.color,
+      null,
+      source.layer,
+      source.background,
+      null,
+      undefined,
+      source.metadataInSourceAlpha,
+    );
     this.surfaceCompositePending = false;
     return true;
   }
@@ -3995,12 +4018,14 @@ export class FractalScene {
     // new system re-derives it and re-applies the stored on/rMult — a
     // session entered with the balloon already on wraps the new system's
     // ball, not the previous one's.
-    this.surfaceBalloonBall = balloonBall(de);
+    const focusBall = balloonBall(de);
+    this.surfaceFocusBall = focusBall;
+    this.surfaceBalloonBall = focusBall;
     this.applySurfaceBalloon();
     // The ground plane drops under the same ball, re-derived
     // and re-asserted per install exactly like the balloon above — AFTER
     // it, so the eligibility gate reads the final balloon define.
-    this.surfaceGroundBall = balloonBall(de);
+    this.surfaceGroundBall = focusBall;
     this.applySurfaceGroundPlane();
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
@@ -4080,6 +4105,10 @@ export class FractalScene {
     // void — exactly the IFS attractors the spike certified. Nulling the
     // ball keeps applySurfaceBalloon packing the variant OFF however the
     // shared toggle is set, so escape sessions render plain.
+    this.surfaceFocusBall = {
+      center: [0, 0, 0],
+      radius: de.boundingRadius,
+    };
     this.surfaceBalloonBall = null;
     this.applySurfaceBalloon();
     // The floor survives where the balloon degenerates: the
@@ -4133,6 +4162,10 @@ export class FractalScene {
     // one object over. Nulling the ball keeps applySurfaceBalloon packing the
     // variant OFF however the shared toggle is set, so bulb sessions
     // render plain.
+    this.surfaceFocusBall = {
+      center: [0, 0, 0],
+      radius: de.boundingRadius,
+    };
     this.surfaceBalloonBall = null;
     this.applySurfaceBalloon();
     // The floor survives where the balloon degenerates, exactly
@@ -4428,8 +4461,10 @@ export class FractalScene {
     // radius, so neither slides as the slice slider scrubs). The apply
     // methods dispatch on the active material, which is why it is set above
     // them.
-    this.surfaceBalloonBall = balloonBall4(de);
-    this.surfaceGroundBall = balloonBall4(de);
+    const focusBall = balloonBall4(de);
+    this.surfaceFocusBall = focusBall;
+    this.surfaceBalloonBall = focusBall;
+    this.surfaceGroundBall = focusBall;
     this.applySurfaceBalloon();
     this.applySurfaceGroundPlane();
     this.surfaceFullMaxDepth = de.maxDepth;
@@ -4523,6 +4558,26 @@ export class FractalScene {
     // Pattern/scale/emission are part of the already-installed floor's
     // uniform payload. Re-pack live; this never changes the shader variant.
     this.applySurfaceGroundPlane();
+    // Kept out of the tracer uniforms: metadata is always written, and the
+    // saved switch controls only the retained-frame presentation pass.
+    this.setSurfaceDepthOfField(params.depthOfField);
+  }
+
+  /** Toggle Surface's depth-aware presentation without invalidating the
+   * expensive trace. The next presentation of an in-flight frame reads the
+   * field directly; an already retained frame is re-blitted immediately by
+   * the normal composite latch consumed from the animation loop. */
+  setSurfaceDepthOfField(on: boolean): void {
+    if (this.surfaceDepthOfField === on) return;
+    this.surfaceDepthOfField = on;
+    const presentation = this.surfacePresentation;
+    if (
+      this.surfaceDisplayActive &&
+      presentation !== null &&
+      (presentation.layer !== null || presentation.metadataInSourceAlpha)
+    ) {
+      this.surfaceCompositePending = true;
+    }
   }
 
   setSurfaceSettleSamples(samples: number): void {
@@ -4608,13 +4663,15 @@ export class FractalScene {
     // An IFS compute session's kernels never carry the trap channel.
     this.surfaceComputeShapeTrap = false;
     this.surfaceShapeTrapLive = false;
-    this.surfaceBalloonBall = balloonBall(de);
+    const focusBall = balloonBall(de);
+    this.surfaceFocusBall = focusBall;
+    this.surfaceBalloonBall = focusBall;
     this.surfaceComputeBalloon = balloon;
     // The floor flag records the create-target's choice exactly
     // like `balloon` above; the ball it drops under is re-derived from
     // the DE so every frame spec can attach the live floor block the
     // 336-byte params struct expects.
-    this.surfaceGroundBall = balloonBall(de);
+    this.surfaceGroundBall = focusBall;
     this.surfaceComputeGroundPlane = groundPlane;
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
@@ -4659,6 +4716,10 @@ export class FractalScene {
     // degeneracy, re-measured on the Mandelbulb — see setEscapeSystem's
     // and setBulbSystem's comments) — null the ball
     // exactly like the WebGL install path, and the session flag with it.
+    this.surfaceFocusBall = {
+      center: [0, 0, 0],
+      radius: ballRadius,
+    };
     this.surfaceBalloonBall = null;
     this.surfaceComputeBalloon = false;
     // The floor survives where the balloon degenerates — the
@@ -4730,9 +4791,11 @@ export class FractalScene {
     // 3D entry's move with its own ball choice. The flags record the
     // create-target's choice exactly as the 3D entry's do, so every frame
     // spec can attach the live block the grown params struct expects.
-    this.surfaceBalloonBall = balloonBall4(de);
+    const focusBall = balloonBall4(de);
+    this.surfaceFocusBall = focusBall;
+    this.surfaceBalloonBall = focusBall;
     this.surfaceComputeBalloon = balloon;
-    this.surfaceGroundBall = groundPlane ? balloonBall4(de) : null;
+    this.surfaceGroundBall = groundPlane ? focusBall : null;
     this.surfaceComputeGroundPlane = groundPlane;
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset();
@@ -4761,6 +4824,10 @@ export class FractalScene {
     this.surfaceComputeShapeTrap = shapeTrap !== null;
     this.surfaceShapeTrapLive = shapeTrap !== null;
     this.surfaceShapeTrap = shapeTrap;
+    this.surfaceFocusBall = {
+      center: [0, 0, 0],
+      radius: ballRadius,
+    };
     this.surfaceBalloonBall = null;
     this.surfaceComputeBalloon = false;
     this.surfaceGroundBall = groundPlane
@@ -4801,6 +4868,7 @@ export class FractalScene {
     this.surfaceComputeLayerTexture?.dispose();
     this.surfaceComputeLayerTexture = null;
     this.surfaceComputeBackground = null;
+    this.surfaceComputeMetadataInSourceAlpha = false;
   }
 
   get surfaceComputeSessionActive(): boolean {
@@ -4839,6 +4907,26 @@ export class FractalScene {
     return this.surfaceComputeFrameSpecAt(tier, fit.width, fit.height, size.y);
   }
 
+  /** Camera-aligned autofocus plane through the active Surface enclosing-ball
+   * centre. Both renderer backends receive this same projected depth so the
+   * focal region cannot drift when the camera or 4D view moves. */
+  private surfaceFocusPlane(): {
+    forward: THREE.Vector3;
+    depth: number;
+  } {
+    const forward = this.camera.getWorldDirection(SURFACE_CAMERA_FORWARD);
+    const ball = this.surfaceFocusBall;
+    if (!ball) return { forward, depth: 1 };
+    const [x, y, z] = ball.center;
+    return {
+      forward,
+      depth:
+        (x - this.camera.position.x) * forward.x +
+        (y - this.camera.position.y) * forward.y +
+        (z - this.camera.position.z) * forward.z,
+    };
+  }
+
   private surfaceComputeFrameSpecAt(
     tier: RenderTier,
     width: number,
@@ -4872,6 +4960,7 @@ export class FractalScene {
     const angularPerPixel = 2 * Math.tan((this.camera.fov * Math.PI) / 360);
     const preview = tier === "preview";
     const light = lightDirection(params.lightAzimuth, params.lightElevation);
+    const focus = this.surfaceFocusPlane();
     // A band traces the full image's pixels through a sub-frustum, so its
     // per-pixel cone footprint is the full image's, not its own raster's.
     const traceHeight = band ? band.fullHeight : height;
@@ -4894,6 +4983,8 @@ export class FractalScene {
         this.camera.position.y,
         this.camera.position.z,
       ],
+      camForward: [focus.forward.x, focus.forward.y, focus.forward.z],
+      focusDepth: focus.depth,
       acceptPixelEps: angularPerPixel / Math.max(acceptHeight, 1),
       tracePixelEps: angularPerPixel / Math.max(traceHeight, 1),
       maxDepth: preview
@@ -5042,6 +5133,10 @@ export class FractalScene {
     height: number,
     layers?: Uint8Array,
     traceSpec?: SurfaceComputeFrameSpec,
+    presentation?: {
+      depthOfFieldOverride?: boolean;
+      metadataInSourceAlpha?: boolean;
+    },
   ): void {
     let tex = this.surfaceComputeTexture;
     if (!tex || tex.image.width !== width || tex.image.height !== height) {
@@ -5088,9 +5183,24 @@ export class FractalScene {
         stops: { top: traceSpec.bgTop, bottom: traceSpec.bgBottom },
         shape: traceSpec.bgShape ?? { kind: "linear" },
       });
+    } else {
+      // A flattened capture has no beta sidecar. Drop any retained live layer
+      // so recorder re-presents cannot pair the new color with stale metadata.
+      this.surfaceComputeLayerTexture?.dispose();
+      this.surfaceComputeLayerTexture = null;
     }
     this.surfaceComputeBackground = reference;
-    this.blitSurface(tex, null, layerTex, reference);
+    this.surfaceComputeMetadataInSourceAlpha =
+      presentation?.metadataInSourceAlpha ?? false;
+    this.blitSurface(
+      tex,
+      null,
+      layerTex,
+      reference,
+      null,
+      presentation?.depthOfFieldOverride,
+      presentation?.metadataInSourceAlpha ?? false,
+    );
   }
 
   /** Repaint the last presented compute frame (recorder ticks, forced
@@ -5102,6 +5212,9 @@ export class FractalScene {
       null,
       this.surfaceComputeLayerTexture,
       this.surfaceComputeBackground,
+      null,
+      undefined,
+      this.surfaceComputeMetadataInSourceAlpha,
     );
     return true;
   }
@@ -5167,6 +5280,10 @@ export class FractalScene {
       height,
       this.surfaceComputeRayCap,
     );
+    // Like the camera/background specs below, the optical choice is frozen at
+    // capture arm. A checkbox change during a long tiled trace affects the
+    // live pane afterward, never some bands but not others in the PNG.
+    const captureDepthOfField = this.surfaceDepthOfField;
     // EVERY band's spec is assembled in this one synchronous span, before
     // any of them traces. A tiled export spans minutes, and the live
     // camera can move through it (auto-orbit, a drift leg, a tween still
@@ -5197,12 +5314,15 @@ export class FractalScene {
     const captureBackground = this.currentSurfaceBackground(width, height);
     const deliverFrozen = async (
       pixels: Uint8Array | Uint8ClampedArray,
+      metadataInSourceAlpha: boolean,
     ): Promise<ExportImage | null> => {
       const result = await this.deliverSurfaceCapture(
         pixels,
         width,
         height,
         ratio,
+        captureDepthOfField,
+        metadataInSourceAlpha,
       );
       if (
         !traceBackgroundsEqual(
@@ -5210,17 +5330,22 @@ export class FractalScene {
           this.currentSurfaceBackground(width, height),
         )
       ) {
-        // deliverSurfaceCapture intentionally presents flattened pixels (the
-        // capture has already consumed its sidecar), so there is no retained
-        // layer to re-composite. Re-arm one live compute frame instead.
+        // The capture has consumed beta into flattened RGB. Its compact alpha
+        // retains CoC only, so a later backdrop edit still needs one live
+        // compute frame to recover the full sidecar.
         this.surfaceCompositePending = false;
         this.renderNeeded = true;
+      } else if (captureDepthOfField !== this.surfaceDepthOfField) {
+        // CoC survived in source alpha, so a switch moved during capture can
+        // re-present immediately without tracing the scene again.
+        this.surfaceCompositePending = metadataInSourceAlpha;
       }
       return result;
     };
     // One band is the whole image: trace it and present its own pixels,
     // no assembly buffer (a 4x export's would be another 130 MB).
     const image = count === 1 ? null : new Uint8Array(width * height * 4);
+    let metadataComplete = true;
     for (let index = 0; index < count; index++) {
       const band = bands[index];
       const traced = await trace(band, { index, count });
@@ -5239,10 +5364,12 @@ export class FractalScene {
             liveBackground: captureBackground,
             traceOffset: band.bgOffset,
             traceExtent: band.bgExtent,
+            outputAlpha: "circle-of-confusion",
           })
         : traced.pixels;
+      if (!traced.layers) metadataComplete = false;
       if (image === null) {
-        return deliverFrozen(pixels);
+        return deliverFrozen(pixels, metadataComplete);
       }
       // Row 0 is the bottom row on both sides (the kernel's py=0 row is
       // ndcY=-1), so a band's rows land contiguously at its own offset.
@@ -5251,7 +5378,7 @@ export class FractalScene {
         index * rows * width * 4,
       );
     }
-    return image ? deliverFrozen(image) : null;
+    return image ? deliverFrozen(image, metadataComplete) : null;
   }
 
   /** Present a finished capture at the export pixel ratio and read it
@@ -5262,9 +5389,18 @@ export class FractalScene {
     width: number,
     height: number,
     ratio: number,
+    depthOfField: boolean,
+    metadataInSourceAlpha: boolean,
   ): Promise<ExportImage | null> {
     return this.withPixelRatio(ratio, () => {
-      this.presentSurfaceComputeFrame(pixels, width, height);
+      this.presentSurfaceComputeFrame(
+        pixels,
+        width,
+        height,
+        undefined,
+        undefined,
+        { depthOfFieldOverride: depthOfField, metadataInSourceAlpha },
+      );
       return exportImageFrom(this.renderer.domElement);
     });
   }
@@ -6036,6 +6172,7 @@ export class FractalScene {
       // A single-pass caller has no use for either accumulation pair.
       this.surfaceSampleAccum = null;
       this.surfaceSampleLayerAccum = null;
+      this.surfaceSampleCoc = null;
       if (
         this.surfacePresentation?.color === this.surfaceSampleTexture ||
         this.surfacePresentation?.layer === this.surfaceSampleLayerTexture
@@ -6058,6 +6195,12 @@ export class FractalScene {
       this.surfaceSampleLayerAccum.fill(0);
     } else {
       this.surfaceSampleLayerAccum = new Float32Array(px * 3);
+    }
+    if (this.surfaceSampleCoc?.length === px) {
+      this.surfaceSampleCoc.fill(255);
+    } else {
+      this.surfaceSampleCoc = new Uint8Array(px);
+      this.surfaceSampleCoc.fill(255);
     }
     const tex = this.surfaceSampleTexture;
     if (!tex || tex.image.width !== width || tex.image.height !== height) {
@@ -6145,9 +6288,10 @@ export class FractalScene {
   private foldSurfaceSample(): void {
     const accum = this.surfaceSampleAccum;
     const layerAccum = this.surfaceSampleLayerAccum;
+    const coc = this.surfaceSampleCoc;
     const tex = this.surfaceSampleTexture;
     const layerTex = this.surfaceSampleLayerTexture;
-    if (!accum || !layerAccum || !tex || !layerTex) return;
+    if (!accum || !layerAccum || !coc || !tex || !layerTex) return;
     const width = this.surfaceSampleWidth;
     const height = this.surfaceSampleHeight;
     const buf = tex.image.data as Uint8Array;
@@ -6187,6 +6331,10 @@ export class FractalScene {
       layerAccum[a] += layerBuf[p];
       layerAccum[a + 1] += layerBuf[p + 1];
       layerAccum[a + 2] += layerBuf[p + 2];
+      // Signed CoC is monotone camera depth. Arithmetic averaging would let
+      // near/far samples cancel at silhouettes, so retain the frontmost
+      // covered sample; an all-uncovered pixel keeps the far sentinel 255.
+      if (layerBuf[p] > 0) coc[i] = Math.min(coc[i], layerBuf[p + 3]);
     }
     this.surfaceSampleTaken += 1;
     // The texture now holds THIS pass verbatim — which is already the
@@ -6252,24 +6400,28 @@ export class FractalScene {
    * Re-encode the mean of the folded passes over the readback buffer it was
    * accumulated from — the gamma decode's inverse, see
    * {@link foldSurfaceSample}. In place, so a pass costs one full-frame
-   * readback and one upload with no copy between them; alpha is left as the
-   * trace wrote it — the last folded pass's terminal status rather than an
-   * opacity, which is invisible because the present blit strips alpha to 1
+   * readback and one upload with no copy between them. Color alpha is left as
+   * the trace wrote it — the last folded pass's terminal status rather than
+   * an opacity, which is invisible because the present blit strips alpha to 1
    * (three r163+ creates the canvas `alpha: true` regardless of the
    * renderer's `alpha` param, so a coverage-0 pixel that DID reach the canvas
    * composited the page background into the pane — the earlier "canvas is
-   * alpha:false" claim here was wrong) and is nothing this path reads. A
+   * alpha:false" claim here was wrong) and is nothing this path reads.
+   * Sidecar alpha is the frontmost covered sample's CoC (all-uncovered stays
+   * the far sentinel), deliberately not a near/far-cancelling mean. A
    * no-op at one pass, where the buffer already holds that pass verbatim and
    * a round trip through the table could only lose a least significant bit.
    */
   private encodeSurfaceSampleMean(): void {
     const accum = this.surfaceSampleAccum;
     const layerAccum = this.surfaceSampleLayerAccum;
+    const coc = this.surfaceSampleCoc;
     const tex = this.surfaceSampleTexture;
     const layerTex = this.surfaceSampleLayerTexture;
     if (
       !accum ||
       !layerAccum ||
+      !coc ||
       !tex ||
       !layerTex ||
       this.surfaceSampleTaken < 2
@@ -6280,14 +6432,14 @@ export class FractalScene {
     const layerBuf = layerTex.image.data as Uint8Array;
     const inv = 1 / this.surfaceSampleTaken;
     const invGamma = 1 / SURFACE_OUTPUT_GAMMA;
-    for (let p = 0, a = 0; p < buf.length; p += 4, a += 3) {
+    for (let p = 0, a = 0, i = 0; p < buf.length; p += 4, a += 3, i++) {
       buf[p] = Math.round(255 * Math.pow(accum[a] * inv, invGamma));
       buf[p + 1] = Math.round(255 * Math.pow(accum[a + 1] * inv, invGamma));
       buf[p + 2] = Math.round(255 * Math.pow(accum[a + 2] * inv, invGamma));
       layerBuf[p] = Math.round(layerAccum[a] * inv);
       layerBuf[p + 1] = Math.round(layerAccum[a + 1] * inv);
       layerBuf[p + 2] = Math.round(layerAccum[a + 2] * inv);
-      layerBuf[p + 3] = 255;
+      layerBuf[p + 3] = coc[i];
     }
     tex.needsUpdate = true;
     layerTex.needsUpdate = true;
@@ -6303,6 +6455,7 @@ export class FractalScene {
   private presentSurfaceSampleImage(
     target: THREE.WebGLRenderTarget | null = null,
     liveOverride: TraceBackgroundReference | null = null,
+    depthOfFieldOverride?: boolean,
   ): boolean {
     const tex = this.surfaceSampleTexture;
     if (!tex || this.surfaceSampleTaken < 1) return false;
@@ -6312,6 +6465,7 @@ export class FractalScene {
       this.surfaceSampleLayerTexture,
       this.surfaceSettleBackground,
       liveOverride,
+      depthOfFieldOverride,
     );
     this.surfaceSampleMeanReady = true;
     return true;
@@ -6582,6 +6736,13 @@ export class FractalScene {
       ...(background.shape.scale ?? [1, 1]),
     );
     (u.uCamPos.value as THREE.Vector3).copy(this.camera.position);
+    const focus = this.surfaceFocusPlane();
+    (u.uFocusPlane.value as THREE.Vector4).set(
+      focus.forward.x,
+      focus.forward.y,
+      focus.forward.z,
+      focus.depth,
+    );
     (u.uInvProjView.value as THREE.Matrix4)
       .multiplyMatrices(
         this.camera.projectionMatrix,
@@ -7386,6 +7547,8 @@ export class FractalScene {
     u.uHasSource.value = 0;
     u.uHasLayer.value = 0;
     u.uComposite.value = 0;
+    u.uDepthOfField.value = 0;
+    u.uDofMetadataInSourceAlpha.value = 0;
     const disposable = this.setSurfaceBlitBackground("Live", background);
     this.renderer.setRenderTarget(target);
     this.surfaceBlitQuad.render(this.renderer);
@@ -7402,6 +7565,8 @@ export class FractalScene {
     layer: THREE.Texture | null = null,
     background: TraceBackgroundReference | null = null,
     liveOverride: TraceBackgroundReference | null = null,
+    depthOfFieldOverride?: boolean,
+    metadataInSourceAlpha = false,
   ): void {
     const u = this.surfaceBlitMaterial.uniforms;
     const live = liveOverride ?? this.currentSurfaceBackground();
@@ -7415,6 +7580,17 @@ export class FractalScene {
       !traceBackgroundsEqual(background, live)
         ? 1
         : 0;
+    // Filtering belongs only to the final presentation. Intermediate seed,
+    // sample and settle copies must keep raw color/metadata or later passes
+    // would blur twice and lose the unfiltered trace.
+    u.uDepthOfField.value =
+      target === null &&
+      (depthOfFieldOverride ?? this.surfaceDepthOfField) &&
+      (layer !== null || metadataInSourceAlpha)
+        ? 1
+        : 0;
+    u.uDofMetadataInSourceAlpha.value =
+      target === null && metadataInSourceAlpha ? 1 : 0;
     const liveDisposable = this.setSurfaceBlitBackground("Live", live);
     const traceDisposable =
       background === null
@@ -7426,7 +7602,12 @@ export class FractalScene {
     liveDisposable?.dispose();
     traceDisposable?.dispose();
     if (target === null) {
-      this.surfacePresentation = { color: src, layer, background };
+      this.surfacePresentation = {
+        color: src,
+        layer,
+        background,
+        metadataInSourceAlpha,
+      };
       this.surfaceCompositePending = false;
     }
   }
@@ -7464,6 +7645,7 @@ export class FractalScene {
     }
     this.surfaceSampleAccum = null;
     this.surfaceSampleLayerAccum = null;
+    this.surfaceSampleCoc = null;
     this.surfaceSampleTexture?.dispose();
     this.surfaceSampleTexture = null;
     this.surfaceSampleLayerTexture?.dispose();
@@ -7524,6 +7706,7 @@ export class FractalScene {
     const width = Math.floor(this.viewportWidth * ratio);
     const height = Math.floor(this.viewportHeight * ratio);
     const captureBackground = this.currentSurfaceBackground(width, height);
+    const captureDepthOfField = this.surfaceDepthOfField;
     // invalidate: false — this arms the offscreen capture job under the
     // centered camera; a capture job never presents (strip-planner's own
     // rule), so nothing centered ever reaches the live canvas and the
@@ -7605,7 +7788,11 @@ export class FractalScene {
         // capture's sample sequence once this returns.
         if (
           this.surfaceSampleTaken < 2 ||
-          !this.presentSurfaceSampleImage(null, captureBackground)
+          !this.presentSurfaceSampleImage(
+            null,
+            captureBackground,
+            captureDepthOfField,
+          )
         ) {
           this.blitSurface(
             this.surfaceSettleTarget.texture,
@@ -7613,6 +7800,7 @@ export class FractalScene {
             this.surfaceSettleTarget.textures[1],
             this.surfaceSettleBackground,
             captureBackground,
+            captureDepthOfField,
           );
         }
         return exportImageFrom(this.renderer.domElement);
@@ -7623,6 +7811,8 @@ export class FractalScene {
           this.currentSurfaceBackground(width, height),
         )
       ) {
+        this.surfaceCompositePending = true;
+      } else if (captureDepthOfField !== this.surfaceDepthOfField) {
         this.surfaceCompositePending = true;
       }
       return exported;
@@ -7696,6 +7886,7 @@ export class FractalScene {
 }
 
 const ZERO = new THREE.Vector3();
+const SURFACE_CAMERA_FORWARD = new THREE.Vector3(0, 0, -1);
 const NO_SHEAR: Vec3 = [0, 0, 0];
 /** Scratch for `applyFogColor`'s tint lerp. */
 const FOG_TINT_COLOR = new THREE.Color();

@@ -2,6 +2,8 @@ import {
   buildSurfaceComputeBackground,
   buildSurfaceComputeLayerPrefill,
   fitSurfaceComputeRaster,
+  foldSurfaceComputeLayerSample,
+  encodeSurfaceComputeLayerMean,
   initialShadeHitCost,
   marchChunkFor,
   nextShadeBatchSize,
@@ -520,6 +522,61 @@ describe("surface compute composite layer storage", () => {
       0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
     ]);
     expect(buildSurfaceComputeLayerPrefill(0)).toHaveLength(0);
+  });
+
+  it("averages coefficient lanes but keeps the nearest covered signed CoC", () => {
+    const accum = new Float32Array(2 * 3);
+    const frontmost = new Uint8Array([255, 255]);
+    foldSurfaceComputeLayerSample(
+      accum,
+      frontmost,
+      new Uint8Array([
+        0,
+        0,
+        255,
+        255, // uncovered: its sentinel cannot win
+        255,
+        64,
+        32,
+        210,
+      ]),
+    );
+    foldSurfaceComputeLayerSample(
+      accum,
+      frontmost,
+      new Uint8Array([
+        255,
+        128,
+        16,
+        80, // nearer covered sample wins
+        255,
+        192,
+        64,
+        230, // farther covered sample loses
+      ]),
+    );
+
+    expect(
+      Array.from(encodeSurfaceComputeLayerMean(accum, 2, frontmost)),
+    ).toEqual([128, 64, 136, 80, 255, 128, 48, 210]);
+  });
+
+  it("keeps the far sentinel when every supersample is uncovered", () => {
+    const accum = new Float32Array(3);
+    const frontmost = new Uint8Array([255]);
+    foldSurfaceComputeLayerSample(
+      accum,
+      frontmost,
+      new Uint8Array([0, 0, 255, 12]),
+    );
+    foldSurfaceComputeLayerSample(
+      accum,
+      frontmost,
+      new Uint8Array([0, 0, 255, 200]),
+    );
+    expect(
+      Array.from(encodeSurfaceComputeLayerMean(accum, 2, frontmost)),
+    ).toEqual([0, 0, 255, 255]);
   });
 });
 
@@ -1934,6 +1991,8 @@ function frameSpec(): SurfaceComputeFrameSpec {
     height: 2,
     invProjView: new Float32Array(16),
     camPos: [0, 0, 3],
+    camForward: [0, 0, -1],
+    focusDepth: 3,
     acceptPixelEps: 1e-3,
     tracePixelEps: 1e-3,
     maxDepth: 8,

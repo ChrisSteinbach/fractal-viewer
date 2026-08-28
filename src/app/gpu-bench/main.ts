@@ -5548,6 +5548,17 @@ function surfaceCross(a: Vec3, b: Vec3): Vec3 {
   ];
 }
 
+function surfaceCameraDepth(
+  pose: Pick<SurfaceGpuPose, "ro" | "fwd">,
+  center: Vec3 = [0, 0, 0],
+): number {
+  return (
+    (center[0] - pose.ro[0]) * pose.fwd[0] +
+    (center[1] - pose.ro[1]) * pose.fwd[1] +
+    (center[2] - pose.ro[2]) * pose.fwd[2]
+  );
+}
+
 /** `poseRays`'s camera math (scripts/fold-cost-split.harness.ts) verbatim —
  * target origin, orbit angles (0.9, 1.2), distance
  * `distFactor` × visibleBoundingRadius (default `SURFACE_POSE_DIST_FACTOR`
@@ -8093,6 +8104,8 @@ async function runSurfaceComputeFrameLeg(
       height,
       invProjView,
       camPos: pose.ro,
+      camForward: pose.fwd,
+      focusDepth: surfaceCameraDepth(pose, balloonBall(sys.de).center),
       // The harness's fixed acceptance slope (tier-pinned acceptance
       // semantics) — the same eps leg A marched with; trace slope from
       // this raster's own height, scene.ts's convention.
@@ -8260,6 +8273,8 @@ async function runSurfaceComputeFrameEscapeLeg(
       height,
       invProjView,
       camPos: pose.ro,
+      camForward: pose.fwd,
+      focusDepth: surfaceCameraDepth(pose),
       acceptPixelEps: SURFACE_PIXEL_EPS,
       tracePixelEps:
         (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
@@ -8482,6 +8497,8 @@ async function runSurfaceComputeFramePlaneLeg(
       height,
       invProjView,
       camPos: pose.ro,
+      camForward: pose.fwd,
+      focusDepth: surfaceCameraDepth(pose, ball.center),
       acceptPixelEps: SURFACE_PIXEL_EPS,
       tracePixelEps:
         (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
@@ -8710,6 +8727,8 @@ async function runSurfaceComputeFrame4Leg(
       height,
       invProjView,
       camPos: pose.ro,
+      camForward: pose.fwd,
+      focusDepth: surfaceCameraDepth(pose),
       acceptPixelEps: SURFACE_PIXEL_EPS,
       tracePixelEps:
         (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
@@ -9078,6 +9097,8 @@ async function runSurfaceShadeAbLeg(
       height,
       invProjView: surfaceInvProjView(mbox.de, pose),
       camPos: pose.ro,
+      camForward: pose.fwd,
+      focusDepth: surfaceCameraDepth(pose, balloonBall(mbox.de).center),
       acceptPixelEps: SURFACE_PIXEL_EPS,
       tracePixelEps:
         (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,

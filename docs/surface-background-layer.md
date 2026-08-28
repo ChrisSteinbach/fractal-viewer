@@ -6,7 +6,7 @@ The Surface tracers keep their legacy RGBA8 color and one RGBA8 sidecar:
 R = fractional surface coverage
 G = fog amount
 B = beta, the surviving direct-background weight
-A = 255
+A = signed camera-space circle of confusion (focus = 128)
 ```
 
 Presentation applies a background-only edit as
@@ -21,6 +21,21 @@ background never passes through a decode/re-encode, and presented alpha is
 always 255. The sidecar remains the shipped architecture; this record defines
 where its algebra is exact, where byte storage or shading makes it approximate,
 and why exact retained re-shading is not adopted.
+
+The alpha lane is also the optional Surface depth-of-field record. Covered hits
+and analytic floor intersections store
+
+```text
+coc = clamp((cameraDepth - focusDepth) / enclosingBallRadius, -1, 1)
+byte = 128 + 127 * coc
+```
+
+where `focusDepth` is the camera-forward projection of the active Surface
+enclosing-ball centre. Uncovered, exhausted, and not-yet-traced pixels use the
+far sentinel 255. The RGB contract and the trace-color terminal-status alpha
+are unchanged. Metadata is written whether the saved checkbox is on or off, so
+toggling the treatment or editing only the live background re-runs the bounded
+presentation pass, never the distance estimator.
 
 ## Algebraic and byte-level boundaries
 
@@ -68,7 +83,7 @@ encode(mean(decode(C_i + beta_i * dB)))
 ```
 
 The retained frame instead has only the folded color and the arithmetic mean of
-the sidecar bytes, so presentation computes:
+the sidecar RGB bytes, so presentation computes:
 
 ```text
 encode(mean(decode(C_i))) + mean(beta_i) * dB
@@ -81,6 +96,29 @@ mean-beta error, but its changed-background byte can still encounter the
 single-sample rounding boundary above. The focused unit test in
 `surface-background-layer.test.ts` pins the nonlinear boundary against the
 actual compositor.
+
+Sidecar alpha is deliberately not averaged. Both engines retain the minimum
+encoded CoC among covered sub-pixel samples, which is the frontmost camera
+depth under the monotone encoding; an all-uncovered pixel remains 255. Averaging
+signed CoC would let near and far samples cancel to a false focal edge and
+produce a halo.
+
+## Depth-of-field presentation
+
+`BLIT_FRAGMENT` is the one postprocess for WebGL trace targets and uploaded
+WebGPU frames. The disabled branch remains the legacy one-sample compositor.
+When enabled, it performs one fixed nine-sample gather with a maximum radius of
+1.2% of the smaller source dimension. Each candidate first applies its own
+beta/background delta at its sampled UV, decodes the resulting color to linear
+light, then a source-disc reach test and a depth gate reject far color behind
+covered near geometry. Focal covered pixels take an exact crisp shortcut. This keeps work and blur radius bounded and makes
+radial/image background edits participate in the same filter without a
+retrace.
+
+The effect is enabled only when blitting to the canvas. Preview-to-settle seeds
+and supersample intermediates retain raw color and sidecar data, so the blur is
+never baked or applied twice. Presented alpha remains forced to 255; the
+tracer's status channels stay private.
 
 ## Exact retained alternatives
 
@@ -142,10 +180,14 @@ its actual peak stays below the untiled stress figure.
 | Eight packed 4-byte terminal records, 32 B/ray |  +61.93 MiB |             +990.94 MiB |
 | Eight 12-float response records, 384 B/ray     | +743.20 MiB |          +11,891.30 MiB |
 
-An export does not need to retain re-shading state after each band: its
-background is frozen when capture starts, and completed bands are final output.
-That avoids the full 4x retained figures but does not solve the live pane's
-capability, bandwidth, or shade-replay costs.
+An export freezes its background and depth-of-field choice when capture starts.
+For tiled WebGPU capture, each completed band consumes beta on the host and
+temporarily carries its CoC byte in the assembled color alpha. Capture packing
+reserves 255 for uncovered pixels and caps covered far geometry at 254, keeping
+the coverage distinction needed by the depth gate. The full image therefore
+needs only the existing RGBA output allocation, not another full-size RGBA
+sidecar, and one final gather crosses band boundaries without seams. The canvas
+blit discards that transport alpha after filtering.
 
 ## Image-backed backgrounds
 

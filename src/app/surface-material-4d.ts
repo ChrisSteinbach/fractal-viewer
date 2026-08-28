@@ -482,6 +482,8 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   uniform float uAmbient;
   uniform vec3 uCamPos;
   uniform mat4 uInvProjView;
+  /** xyz = camera forward; w = enclosing-ball centre depth. */
+  uniform vec4 uFocusPlane;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
   /** Backdrop gradient SHAPE: mirrors the 3D tracer's
@@ -569,11 +571,19 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   layout(location = 0) out vec4 outColor;
   layout(location = 1) out vec4 outTraceLayer;
 
-  /** Background recomposition sidecar, identical to the 3D tracer. */
-  vec4 traceLayer(float coverage, float fog) {
+  /** RGB = coverage/fog/beta; A = signed CoC (focus 128, uncovered 255). */
+  vec4 traceLayer(float coverage, float fog, float cameraDepth) {
     float beta = 1.0 - coverage +
       coverage * fog * (1.0 - uFogTintStrength);
-    return vec4(coverage, fog, beta, 1.0);
+    float coc = coverage > 0.0
+      ? clamp(
+          (cameraDepth - uFocusPlane.w) / max(uVisibleRadius, 1.0e-6),
+          -1.0,
+          1.0
+        )
+      : 1.0;
+    float cocCode = (128.0 + 127.0 * coc) / 255.0;
+    return vec4(coverage, fog, beta, cocCode);
   }
 
   /** Per-pixel dither for the march start so grazing rays don't band. */
@@ -2305,11 +2315,13 @@ uniform float uBalloonPaletteEnabled;
     vec3 background,
     out float cov,
     out float layerCoverage,
-    out float layerFog
+    out float layerFog,
+    out float layerDepth
   ) {
     cov = 0.0;
     layerCoverage = 0.0;
     layerFog = 0.0;
+    layerDepth = 0.0;
     // One-sided: visible from above only; parallel or climbing rays miss.
     if (ro.y <= uGroundY || rd.y >= -1.0e-6) {
       return background;
@@ -2327,6 +2339,7 @@ uniform float uBalloonPaletteEnabled;
     }
     cov = 1.0;
     layerCoverage = fade;
+    layerDepth = dot(hp - ro, uFocusPlane.xyz);
 
     // Penumbra shadow toward the light: the hit path's DE loop, adapted
     // for a start OUTSIDE the certified ball. Two analytic gates make the
@@ -2479,6 +2492,7 @@ uniform float uBalloonPaletteEnabled;
       float planeCov;
       float planeLayerCoverage;
       float planeLayerFog;
+      float planeLayerDepth;
       outColor = vec4(
         shadeGroundPlane(
           ro,
@@ -2486,14 +2500,19 @@ uniform float uBalloonPaletteEnabled;
           background,
           planeCov,
           planeLayerCoverage,
-          planeLayerFog
+          planeLayerFog,
+          planeLayerDepth
         ),
         planeCov
       );
-      outTraceLayer = traceLayer(planeLayerCoverage, planeLayerFog);
+      outTraceLayer = traceLayer(
+        planeLayerCoverage,
+        planeLayerFog,
+        planeLayerDepth
+      );
 #else
       outColor = vec4(background, 0.0);
-      outTraceLayer = traceLayer(0.0, 0.0);
+      outTraceLayer = traceLayer(0.0, 0.0, 0.0);
 #endif
       return;
     }
@@ -2504,6 +2523,7 @@ uniform float uBalloonPaletteEnabled;
       float planeCovExit;
       float planeLayerCoverageExit;
       float planeLayerFogExit;
+      float planeLayerDepthExit;
       outColor = vec4(
         shadeGroundPlane(
           ro,
@@ -2511,17 +2531,19 @@ uniform float uBalloonPaletteEnabled;
           background,
           planeCovExit,
           planeLayerCoverageExit,
-          planeLayerFogExit
+          planeLayerFogExit,
+          planeLayerDepthExit
         ),
         planeCovExit
       );
       outTraceLayer = traceLayer(
         planeLayerCoverageExit,
-        planeLayerFogExit
+        planeLayerFogExit,
+        planeLayerDepthExit
       );
 #else
       outColor = vec4(background, 0.0);
-      outTraceLayer = traceLayer(0.0, 0.0);
+      outTraceLayer = traceLayer(0.0, 0.0, 0.0);
 #endif
       return;
     }
@@ -2568,6 +2590,7 @@ uniform float uBalloonPaletteEnabled;
         float planeCovMiss;
         float planeLayerCoverageMiss;
         float planeLayerFogMiss;
+        float planeLayerDepthMiss;
         outColor = vec4(
           shadeGroundPlane(
             ro,
@@ -2575,17 +2598,19 @@ uniform float uBalloonPaletteEnabled;
             background,
             planeCovMiss,
             planeLayerCoverageMiss,
-            planeLayerFogMiss
+            planeLayerFogMiss,
+            planeLayerDepthMiss
           ),
           planeCovMiss
         );
         outTraceLayer = traceLayer(
           planeLayerCoverageMiss,
-          planeLayerFogMiss
+          planeLayerFogMiss,
+          planeLayerDepthMiss
         );
 #else
         outColor = vec4(background, 0.0);
-        outTraceLayer = traceLayer(0.0, 0.0);
+        outTraceLayer = traceLayer(0.0, 0.0, 0.0);
 #endif
         return;
       }
@@ -2594,7 +2619,7 @@ uniform float uBalloonPaletteEnabled;
       // is an invisible status byte: 0.5 becomes RGBA8 128, distinct from
       // MISS 0 and COVERED 255; the present blit still forces alpha 1.
       outColor = vec4(background, ${SURFACE_TRACE_EXHAUSTED_ALPHA.toFixed(1)});
-      outTraceLayer = traceLayer(0.0, 0.0);
+      outTraceLayer = traceLayer(0.0, 0.0, 0.0);
       return;
     }
     vec3 pos = ro + rd * t;
@@ -2876,7 +2901,11 @@ uniform float uBalloonPaletteEnabled;
     // regardless, and a coverage-0 pixel reaching it composited the page
     // background into the pane).
     outColor = vec4(col, 1.0);
-    outTraceLayer = traceLayer(1.0, clamp(fog, 0.0, 1.0));
+    outTraceLayer = traceLayer(
+      1.0,
+      clamp(fog, 0.0, 1.0),
+      dot(pos - ro, uFocusPlane.xyz)
+    );
   }
 `;
 
@@ -3184,6 +3213,8 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uAmbient: { value: 0.25 },
       uCamPos: { value: new THREE.Vector3() },
       uInvProjView: { value: new THREE.Matrix4() },
+      // Automatic Surface focal plane; overwritten by scene frame wiring.
+      uFocusPlane: { value: new THREE.Vector4(0, 0, -1, 1) },
       uBgTop: { value: BG_TOP.clone() },
       uBgBottom: { value: BG_BOTTOM.clone() },
       // Background shape: linear defaults, matching the 3D twin.

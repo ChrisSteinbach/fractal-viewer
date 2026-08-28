@@ -349,21 +349,41 @@ function encodeLinearMean(
   return out;
 }
 
-/** Average packed layer-sidecar bytes in their own scalar space. Unlike the
- * traced RGB, coverage/fog/beta are coefficients, not gamma-encoded light,
- * so their supersample mean is the ordinary arithmetic mean. */
-function encodeLayerMean(
+/** Fold one packed layer sample into the supersample accumulators. RGB are
+ * scalar coefficients and sum arithmetically. Alpha is monotonic signed CoC,
+ * so the nearest COVERED sample wins; uncovered sentinel 255 never masks a
+ * real surface and an all-uncovered pixel remains 255. Exported as the small
+ * pure seam that pins this presentation-metadata rule without a GPU. */
+export function foldSurfaceComputeLayerSample(
+  accum: Float32Array,
+  frontmostCoc: Uint8Array,
+  layer: Uint8Array,
+): void {
+  for (let i = 0, p = 0, a = 0; i < frontmostCoc.length; i++, p += 4, a += 3) {
+    accum[a] += layer[p];
+    accum[a + 1] += layer[p + 1];
+    accum[a + 2] += layer[p + 2];
+    if (layer[p] > 0 && layer[p + 3] < frontmostCoc[i]) {
+      frontmostCoc[i] = layer[p + 3];
+    }
+  }
+}
+
+/** Average packed layer-sidecar RGB bytes in their own scalar space and
+ * attach the front-most signed CoC selected by
+ * {@link foldSurfaceComputeLayerSample}. */
+export function encodeSurfaceComputeLayerMean(
   accum: Float32Array,
   taken: number,
-  alpha: Uint8Array,
+  frontmostCoc: Uint8Array,
 ): Uint8Array<ArrayBuffer> {
-  const out = new Uint8Array(alpha.length);
+  const out = new Uint8Array(frontmostCoc.length * 4);
   const inv = 1 / taken;
-  for (let p = 0, a = 0; p < out.length; p += 4, a += 3) {
+  for (let i = 0, p = 0, a = 0; i < frontmostCoc.length; i++, p += 4, a += 3) {
     out[p] = Math.round(accum[a] * inv);
     out[p + 1] = Math.round(accum[a + 1] * inv);
     out[p + 2] = Math.round(accum[a + 2] * inv);
-    out[p + 3] = alpha[p + 3];
+    out[p + 3] = frontmostCoc[i];
   }
   return out;
 }
@@ -554,6 +574,11 @@ export interface SurfaceComputeFrameSpec {
    * the exact matrix the GLSL tracer gets as uInvProjView. */
   invProjView: Float32Array;
   camPos: Vec3;
+  /** Normalized camera forward in world space. The shade kernel projects
+   * covered hit positions onto it to derive camera-space depth. */
+  camForward: Vec3;
+  /** Camera-space depth of the active Surface framing/enclosing-ball centre. */
+  focusDepth: number;
   acceptPixelEps: number;
   tracePixelEps: number;
   /** Tier depth clamp — previewMaxDepth(...) for previews, de.maxDepth
@@ -750,8 +775,9 @@ export interface SurfaceComputeFrame {
   /** RGBA8, row 0 = bottom (the kernel's py=0 row is ndcY=-1), matching
    * an unflipped DataTexture under the shared blit quad. */
   pixels: Uint8Array;
-  /** RGBA8 background-composite sidecar, row order matching {@link pixels}:
-   * R coverage, G fog, B beta, A 255. `pixels` stays the byte-identical
+  /** RGBA8 presentation sidecar, row order matching {@link pixels}: R
+   * coverage, G fog, B beta, A signed CoC (focus 128, near-to-far monotonic;
+   * uncovered/active/miss/exhausted 255). `pixels` stays the byte-identical
    * traced reference; presentation may combine the pair without retracing. */
   layers: Uint8Array;
   width: number;
@@ -852,7 +878,7 @@ export function buildSurfaceComputeBackground(
 }
 
 /** Packed sidecar seed for rays that have not reached a terminal shade yet:
- * no traced coverage, no fog, full background coefficient, opaque storage.
+ * no traced coverage, no fog, full background coefficient, far-CoC sentinel.
  * Deliberately independent of any previous frame: active pixels describe
  * their CURRENT trace state. */
 export function buildSurfaceComputeLayerPrefill(
@@ -1620,7 +1646,7 @@ interface FrameBuffers {
   states: GPUBuffer;
   active: GPUBuffer;
   color: GPUBuffer;
-  /** Packed RGBA8 background-composite sidecar: coverage/fog/beta/1. */
+  /** Packed RGBA8 presentation sidecar: coverage/fog/beta/signed-CoC. */
   layer: GPUBuffer;
   /** The march status side-channel: one `u32` per ACTIVE-LIST SLOT,
    * written by every march dispatch and read back once per sweep. */
@@ -2497,6 +2523,8 @@ export class SurfaceComputeRenderer {
     const rays = spec.width * spec.height;
     const accum = new Float32Array(rays * 3);
     const layerAccum = new Float32Array(rays * 3);
+    const frontmostCoc = new Uint8Array(rays);
+    frontmostCoc.fill(255);
     let taken = 0;
     let out: SurfaceComputeFrame | null = null;
     let wallMs = 0;
@@ -2546,10 +2574,8 @@ export class SurfaceComputeRenderer {
         accum[a] += SRGB_TO_LINEAR[px[p]];
         accum[a + 1] += SRGB_TO_LINEAR[px[p + 1]];
         accum[a + 2] += SRGB_TO_LINEAR[px[p + 2]];
-        layerAccum[a] += layers[p];
-        layerAccum[a + 1] += layers[p + 1];
-        layerAccum[a + 2] += layers[p + 2];
       }
+      foldSurfaceComputeLayerSample(layerAccum, frontmostCoc, layers);
       taken++;
       if (s === 0) {
         // Pass 0 IS the pre-supersampling frame — hand it back untouched
@@ -2559,7 +2585,11 @@ export class SurfaceComputeRenderer {
         out = { ...frame, wallMs, gpuMs };
       } else {
         const mean = encodeLinearMean(accum, taken, px);
-        const layerMean = encodeLayerMean(layerAccum, taken, layers);
+        const layerMean = encodeSurfaceComputeLayerMean(
+          layerAccum,
+          taken,
+          frontmostCoc,
+        );
         out = { ...frame, pixels: mean, layers: layerMean, wallMs, gpuMs };
         // The completed mean is what later samples present; their in-flight
         // prefill remains deliberately uncovered background.
@@ -3295,11 +3325,12 @@ export class SurfaceComputeRenderer {
         cutoff: 0,
         footprint: 0,
         fogDensity: spec.fogDensity,
+        focusDepth: spec.focusDepth,
         pose: {
           ro: spec.camPos,
           right: [1, 0, 0],
           up: [0, 1, 0],
-          fwd: [0, 0, 1],
+          fwd: spec.camForward,
           tanHalf: 0,
           aspect: width / Math.max(1, height),
           rasterWidth: width,

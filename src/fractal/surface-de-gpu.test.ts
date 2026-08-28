@@ -737,6 +737,20 @@ describe("packSurfaceGpuParams pose", () => {
 });
 
 describe("packSurfaceGpuParams run overrides", () => {
+  it("packs focusDepth into the former offset-92 padding word", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const view = new DataView(
+      packSurfaceGpuParams(de, { itemCount: 1, focusDepth: 4.25 }),
+    );
+    expect(view.getFloat32(92, true)).toBe(Math.fround(4.25));
+    expect(
+      new DataView(packSurfaceGpuParams(de, { itemCount: 1 })).getFloat32(
+        92,
+        true,
+      ),
+    ).toBe(0);
+  });
+
   it("packs run.maxDepth at offset 52 in place of de.maxDepth", () => {
     const de = buildSurfaceDE(foldSystemTransforms());
     const view = new DataView(
@@ -1568,22 +1582,48 @@ describe("surfaceDeKernelWgsl mode selection", () => {
     );
   });
 
-  it("packs the composite sidecar as coverage/fog/beta/one and writes every ordinary terminal path without changing colorOut", () => {
+  it("packs the presentation sidecar as coverage/fog/beta/signed-CoC and writes every ordinary terminal path without changing colorOut", () => {
     const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
     expect(wgsl).toContain(
-      "fn packSurfaceLayer(coverage: f32, fog: f32) -> u32",
+      "fn packSurfaceLayer(coverage: f32, fog: f32, coc: f32) -> u32",
     );
+    expect(wgsl).toContain("(cameraDepth - params.focusDepth)");
+    expect(wgsl).toContain("max(params.visibleRadius, 1.0e-6)");
+    expect(wgsl).toContain("return (128.0 + 127.0 * signedCoc) / 255.0;");
     expect(wgsl).toContain("coverage * fog * (1.0 - shade.fogTintStrength)");
     expect(wgsl).toContain(
-      "return pack4x8unorm(vec4f(coverage, fog, beta, 1.0));",
+      "return pack4x8unorm(vec4f(coverage, fog, beta, coc));",
     );
     // Defensive gate miss, terminal miss/exhausted, terminal hit.
     expect(wgsl.split("layerOut[ray] = packSurfaceLayer(").length - 1).toBe(3);
-    expect(wgsl).toContain("layerOut[ray] = packSurfaceLayer(0.0, 0.0);");
+    expect(wgsl).toContain("layerOut[ray] = packSurfaceLayer(0.0, 0.0, 1.0);");
+    expect(wgsl).toContain("let coc = surfaceCoc(dot(pos - ro, params.fwd));");
     expect(wgsl).toContain(
-      "layerOut[ray] = packSurfaceLayer(1.0, clamp(fog, 0.0, 1.0));",
+      "layerOut[ray] = packSurfaceLayer(1.0, clamp(fog, 0.0, 1.0), coc);",
     );
     expect(wgsl).toContain("colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));");
+  });
+
+  it.each([
+    { core: "fold" as const },
+    { core: "affine" as const },
+    { core: "escape" as const },
+    { core: "bulb" as const },
+    { core: "fold4" as const },
+    { core: "affine4" as const },
+    { core: "escape4" as const },
+    { core: "fold" as const, balloon: true },
+  ])("initializes signed CoC metadata in the $core shade kernel", (opts) => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 4, ...opts }),
+    );
+    expect(wgsl).toContain("focusDepth: f32,");
+    expect(wgsl).toContain("fn surfaceCoc(cameraDepth: f32) -> f32");
+    expect(wgsl).toContain("layerOut[ray] = packSurfaceLayer(0.0, 0.0, 1.0);");
+    expect(wgsl).toContain("let coc = surfaceCoc(dot(pos - ro, params.fwd));");
+    expect(wgsl).toContain(
+      "layerOut[ray] = packSurfaceLayer(1.0, clamp(fog, 0.0, 1.0), coc);",
+    );
   });
 
   it("mode 'shade' emits the greedy hit-info descent and packs pixels with pack4x8unorm", () => {
@@ -2594,11 +2634,9 @@ describe("groundPlane wrapper", () => {
     expect(wgsl).toContain("fn shadeGroundPlane");
     expect(wgsl).toContain("if (st.y == 4.0) {");
     expect(wgsl).toContain("surfaceDEProbe(");
+    expect(wgsl).toContain("let coc = surfaceCoc(dot(hp - ro, params.fwd));");
     expect(wgsl).toContain(
-      "return GroundPlaneShade(mix(bg, col, fade), fade, clamp(fog, 0.0, 1.0));",
-    );
-    expect(wgsl).toContain(
-      "layerOut[ray] = packSurfaceLayer(ground.coverage, ground.fog);",
+      "layerOut[ray] = packSurfaceLayer(ground.coverage, ground.fog, ground.coc);",
     );
   });
 
@@ -3299,6 +3337,15 @@ describe("ray-state status constants", () => {
 });
 
 describe("packEscapeGpuParams", () => {
+  it("packs focusDepth at offset 92 without growing the base ABI", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const view = new DataView(
+      packEscapeGpuParams(de, { itemCount: 1, focusDepth: 5.5 }),
+    );
+    expect(view.getFloat32(92, true)).toBe(Math.fround(5.5));
+    expect(view.byteLength).toBe(SURFACE_GPU_PARAMS_BYTES);
+  });
+
   it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES, the same struct size the fold/affine packer uses", () => {
     const de = buildEscapeDE([canonicalMandelbox()]);
     const buf = packEscapeGpuParams(de, { itemCount: 1 });
@@ -5042,6 +5089,18 @@ function view4(overrides: Partial<SurfaceGpu4View> = {}): SurfaceGpu4View {
 }
 
 describe("packSurface4GpuParams", () => {
+  it("packs focusDepth at offset 92 without growing the base 4D ABI", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), {
+        itemCount: 1,
+        focusDepth: 6.75,
+      }),
+    );
+    expect(view.getFloat32(92, true)).toBe(Math.fround(6.75));
+    expect(view.byteLength).toBe(SURFACE_GPU_PARAMS4_BYTES);
+  });
+
   it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS4_BYTES — the frozen 0..207 block plus the 4D variant tail (464 bytes, per the module doc)", () => {
     expect(SURFACE_GPU_PARAMS4_BYTES).toBe(464);
     const de = buildSurfaceDE4(fourDSystemTransforms());
@@ -5626,6 +5685,15 @@ function scaledBulb(): Transform {
 }
 
 describe("packBulbGpuParams", () => {
+  it("packs focusDepth at offset 92 without growing the base ABI", () => {
+    const de = buildBulbDE([canonicalBulb()]);
+    const view = new DataView(
+      packBulbGpuParams(de, { itemCount: 1, focusDepth: 7.25 }),
+    );
+    expect(view.getFloat32(92, true)).toBe(Math.fround(7.25));
+    expect(view.byteLength).toBe(SURFACE_GPU_PARAMS_BYTES);
+  });
+
   it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES, the same struct size every other 3D packer uses", () => {
     const de = buildBulbDE([canonicalBulb()]);
     const buf = packBulbGpuParams(de, { itemCount: 1 });
@@ -6006,6 +6074,18 @@ describe("packEscape4GpuParams byte length", () => {
 });
 
 describe("packEscape4GpuParams frozen-block scalars", () => {
+  it("packs focusDepth at offset 92 without growing the escape4 ABI", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    const view = new DataView(
+      packEscape4GpuParams(de, view4(), {
+        itemCount: 1,
+        focusDepth: 8.5,
+      }),
+    );
+    expect(view.getFloat32(92, true)).toBe(Math.fround(8.5));
+    expect(view.byteLength).toBe(SURFACE_GPU_PARAMS4_ESCAPE_BYTES);
+  });
+
   it("packs the bailout ball at boundingRadius (12), escapeRadius as 2R (16), ESCAPE_STEP_SCALE (20), the link count at mapCount (48) and maxDepth (52, overridable by run.maxDepth)", () => {
     const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
     const view = new DataView(

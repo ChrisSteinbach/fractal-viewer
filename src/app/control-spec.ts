@@ -84,6 +84,7 @@ import {
   setSurfaceAntialiasSamples,
   setSurfaceColorSource,
   setSurfaceColorSpeed,
+  setSurfaceDepthOfField,
   setSurfaceEnvLight,
   setSurfaceFloorEmission,
   setSurfaceFloorPattern,
@@ -215,6 +216,9 @@ export interface ControlSceneEffects {
   /** The surface tracer's live uniforms — lighting + color-source
    * dispatch, all read every frame; see {@link SurfaceParams}. */
   setSurfaceParams(params: SurfaceParams): void;
+  /** Toggle Surface's retained-frame depth-of-field presentation without
+   * invalidating or restarting the expensive trace. */
+  setSurfaceDepthOfField(on: boolean): void;
   /** The surface tracer's 256x3 color LUT for the palette/height/radius
    * colorSources (see {@link surfaceColorLUT}) — uploaded once per change,
    * unlike `setSurfaceParams`' every-frame uniforms. */
@@ -1444,8 +1448,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
   },
   // ——— Surface render ———
-  // Appearance fields are live GPU uniforms (see SurfaceParams's doc). The
-  // antialiasing budget is the exception: it restarts the parked-view settle.
+  // Surface appearance controls are live without rebuilding the DE. Lighting
+  // fields push uniforms, DOF re-presents retained metadata, and the
+  // antialiasing budget alone restarts the parked-view settle.
   {
     kind: "range",
     id: "surfaceAntialiasSlider",
@@ -1473,6 +1478,16 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
         fx.restartSurfaceRender();
       }
     },
+  },
+  {
+    // Surface owns its own optical treatment instead of borrowing Points'
+    // RenderStyle. Metadata is retained regardless of this choice, so the
+    // checkbox only re-presents the current frame and never restarts tracing.
+    kind: "checkbox",
+    id: "surfaceDepthOfFieldCheckbox",
+    read: (s) => s.surface.depthOfField,
+    apply: (s, checked) => setSurfaceDepthOfField(s, checked),
+    effect: (s, fx) => fx.scene.setSurfaceDepthOfField(s.surface.depthOfField),
   },
   {
     kind: "range",

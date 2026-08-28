@@ -21,6 +21,8 @@ function baseSpec(
     height: 4,
     invProjView: new Float32Array(16),
     camPos: [0, 0, 3],
+    camForward: [0, 0, -1],
+    focusDepth: 3,
     acceptPixelEps: 1e-3,
     tracePixelEps: 1e-3,
     maxDepth: 8,
@@ -111,6 +113,16 @@ describe("surfaceComputeForceFrameKey", () => {
     const off = surfaceComputeForceFrameKey(baseSpec({ envLight: 0 }));
     const on = surfaceComputeForceFrameKey(baseSpec({ envLight: 0.4 }));
     expect(off).not.toBe(on);
+  });
+
+  it("keys the camera-aligned autofocus plane metadata", () => {
+    const base = surfaceComputeForceFrameKey(baseSpec());
+    expect(
+      surfaceComputeForceFrameKey(baseSpec({ camForward: [0.1, 0, -0.995] })),
+    ).not.toBe(base);
+    expect(surfaceComputeForceFrameKey(baseSpec({ focusDepth: 4 }))).not.toBe(
+      base,
+    );
   });
 
   it("changes the key when the background shape's kind differs", () => {
