@@ -119,9 +119,10 @@ headers cost 473px of a 727px phone screen before any control was visible.
 Measured, that keeps the panel between one and two phone screens rather than
 the one it used to claim: 727px with **Scene color** open, 1336px with
 **Transforms** open and a transform selected. The Flame, Solid, and Surface render
-modes get the same treatment — **Depth** for Points, **Tone** / **Blur** for
-Flame, **Level** / **Lighting** for Solid, and **Surface color** / **Shape
-copies** or **Shape trap** / **Lighting** / **Floor** for Surface itself (see
+modes get the same treatment — **Scene color** / **Depth** for Points,
+**Scene color** / **Blur** for Flame, **Scene color** / **Level** /
+**Lighting** for Solid, and **Scene color** / **Shape copies** or **Shape
+trap** / **Lighting** / **Floor** for Surface itself (see
 **✺
 Flame**, **◆ Solid** and **◈ Surface** below). One **Quality** section follows
 those inspectors and swaps its Points, Flame, Solid or Surface controls in
@@ -200,7 +201,7 @@ morphs into place instead of snapping (see **Presets** below).
   engine doing the accumulating: the GPU (with the adapter's name where the
   browser reports one) or the CPU, saying which way it fell back when the GPU
   was tried and refused.
-  - **Tone** — **Exposure** (0.2×–4×), **Gamma** (1–6, default 2.4) and
+  - **Scene color** — **Exposure** (0.2×–4×), **Gamma** (1–6, default 2.4) and
     **Vibrancy** (0–100%) all re-map the histogram that is already
     accumulated, so each applies instantly and none costs a restart. Gamma
     reshapes the density curve: 1 is the raw curve, and raising it — 2.4 by
@@ -210,7 +211,7 @@ morphs into place instead of snapping (see **Presets** below).
     the density-scaled color at 100% and a flat, density-blind one at 0. The
     very lowest densities ride a straight line instead of the curve, so a
     single stray early sample can't flare into a bright speckle on an
-    unconverged frame. **Flame palette (restarts render)** picks the gradient
+    unconverged frame. **Palette (restarts render)** picks the gradient
     (see **Color → Custom** for the shared editor), and it does mean the
     restart: the accumulated color sums have the old palette baked into them.
   - **Blur** — flam3's _density estimation_, which smooths sparse regions
@@ -242,16 +243,16 @@ morphs into place instead of snapping (see **Presets** below).
   ("12.3M / 20.0M iterations (61%)"); until the worker's first grid lands there
   is nothing in the volume for rays to hit, so the point cloud deliberately
   stays on screen rather than flashing an empty frame at you.
+  - **Scene color** — **Palette (restarts render)** offers the same gradients
+    as the flame's, plus **Classic**, which uses the saved Points Color Mode.
+    The restart is needed because each voxel's running mean color already has
+    the old palette in it.
   - **Level** — **Surface Level** (0.02–0.95, default 0.30) is where the
     surface is cut through the density, measured on a log scale so that a
     given level lines up with what reads as "bright" in a Flame of the same
     system. Lower values wrap the shape around fainter, sparser hits —
     bulkier, noisier, diffuse edges included; higher values keep only the
     densest core, crisper but liable to thin fine structure away entirely.
-    **Solid palette (restarts render)** offers the same gradients as the
-    flame's, plus **Classic**, which hands coloring back to
-    **Scene color**'s **Color Mode**; the restart is needed because each
-    voxel's running mean color already has the old palette in it.
     The shared top-level **Balloon** section carries **Balloon echo**,
     **Balloon palette**, **Balloon size**, **Inflate**, and **Tint** into this
     render without moving or duplicating the editor. Solid remaps each ray
@@ -585,7 +586,7 @@ morphs into place instead of snapping (see **Presets** below).
   inspector splits independent concerns into separate sections. **Surface
   color** holds a **Color source**
   select — By Transform, the orbit-trap Palette, a Height ramp, a Radius
-  ramp, Orbit rings, Orbit sheets, or Shape trap — with a **Surface palette** select underneath
+  ramp, Orbit rings, Orbit sheets, or Shape trap — with a **Palette** select underneath
   (the same named gradients as Flame/Solid, the shared **Custom** gradient
   included — see **Scene color**) that appears for the orbit-trap,
   rings, sheets, and Shape trap sources, plus a **Color speed** slider — orbit-trap
@@ -1148,42 +1149,36 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   voxel grid is unaffected either way (see **Resolution**). **This session**: it
   describes this device's current rendering budget, but never rides in a link
   or scene file.
-- **Scene color** (shared Scene / Look section) — remains in the same accordion slot,
-  with the same open state, while you switch among Points, Flame, Solid, and
-  Surface. A flat system shows **Color Mode**; a non-flat system replaces it
-  with **4D Color**. See [architecture.md](architecture.md#color-modes).
-  This section authors the color the Points, Solid and Flame renderers
-  consume; the Surface view is colored by its own **Surface color** section
-  instead, and only this section's ramp and **Color Contrast** rows also reach
-  a Surface **Height** or **Radius** source live.
-  The visible scope note summarizes when an edit is live, re-accumulates, or
-  merely prepares authored state for its next consumer. The exact contract is:
+- **Scene color** — one renderer-owned section occupies this conceptual slot.
+  Switching renderers hides the outgoing section and shows the controls that
+  color the selected view:
+  - Points: **Color Mode** (or **4D Color**), applicable ramp and contrast,
+    and Position Axis Colors. Changes recolor the cached cloud immediately.
+  - Flame: Exposure, Gamma, Vibrancy, and its Palette. Tone-map controls are
+    live; palette changes restart accumulation.
+  - Solid: its Palette. Palette changes restart voxel accumulation; **Classic**
+    delegates to the saved Points color definition.
+  - Surface: Color source, an applicable Palette, and Color speed. Its Height
+    and Radius sources reuse the saved Points ramp and contrast definition.
 
-  | Active renderer | Flat system                                                                                                                                                            | Non-flat system                                                                                                                                                  |
-  | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | Points          | **Color Mode**, applicable Ramp/Contrast, and Position Axis Colors update the cached cloud live.                                                                       | **4D Color**, applicable Ramp/Contrast, and Position Axis Colors update the cached projection live.                                                              |
-  | Flame           | Flat Flame's Classic look is per-transform, so shared Scene color edits prepare a later applicable view.                                                               | With Flame's Classic palette, applicable **4D Color**, ramp/contrast, and Axis Color edits restart only accumulation; another primary palette stages them.       |
-  | Solid           | With Solid's Classic palette, the applicable Color Mode, ramp/contrast, and Position Axis Colors restart only voxel accumulation; another primary palette stages them. | With Solid's Classic palette, applicable **4D Color**, ramp/contrast, and Axis Color edits restart only voxel accumulation; another primary palette stages them. |
-  | Surface         | **Height** and **Radius** sources consume Color ramp palette and Color Contrast live; other sources leave shared Scene color authored for another consumer.            | The same: **Height** and **Radius** consume Color ramp palette and Color Contrast live, independent of the 4D Color selection; other sources do not.             |
-
-  Worker color restarts retain the current geometry, bounds, projection, and
-  view; they are not a regenerate or a full render-session re-entry.
+  The four sections deliberately share one name because each answers the same
+  question for the current view. Renderer-specific values persist while their
+  section is hidden. Worker color restarts retain geometry, bounds, projection,
+  and view; they are not a regenerate or full render-session re-entry.
 
 - **Color ramp palette** — appears while **Color Mode** is **By Height** or
   **By Radius**, the two modes that _are_ a 1-D ramp — and, in the 4D
   projection, while **4D Color** is **By Height** or **By 4D Radius** — naming the
-  gradient those ramps sample. During an active Surface whose color source is
-  **Height** or **Radius**, the row remains visible in either dimension even
-  when the Points/4D color selection would ordinarily hide it. **Classic**
+  gradient those ramps sample. The editor is shown only in Points; a Surface
+  **Height** or **Radius** source and Solid **Classic** reuse the stored
+  definition. **Classic**
   (the default) keeps the
   original hand-tuned formulas (height's blue→green→red, radius's warm→cool);
   the seven named gradients — **Spectrum**, **Sunset**, **Dusk**, **Lagoon**,
   **Ember**, **Aurora**, **Moss** — swap in a cosine gradient read at the same
   **Color Contrast**-mapped coordinate, and **Custom** selects your own
-  (below). Every applicable consumer in the matrix above resolves this one
-  selection, so their ramps cannot drift apart. Switching gradients recolors
-  Points or Surface live; an active Classic 4D Flame or applicable Classic Solid
-  re-accumulates over its retained geometry.
+  (below). Every applicable consumer resolves this one selection, so their
+  ramps cannot drift apart.
   Persists in the link and scene file, and the row simply hides again under a
   color mode with no ramp (By Transform, By Position, Uniform Cyan), holding
   your choice for the next time one is active.
@@ -1194,12 +1189,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   and the buttons disable at those bounds. **+ Stop** appends a copy of the
   last color, so the gradient doesn't jump until you recolor the new swatch.
   A scene has exactly ONE shared primary custom gradient, and all five selects
-  offering it edit that same one: **Color ramp palette** here, **Flame palette
-  (restarts render)** in Flame's **Tone** section, **Solid palette (restarts
-  render)** in Solid's **Level** section, **Surface palette** in Surface's
-  **Surface color** section, and **Backdrop flame palette** for the generated Flame
-  background in **Atmosphere**. The effect follows the active
-  consumer matrix above: the same shared Custom edit may be live, staged, or
+  offering it edit that same one: **Color ramp palette** in Points,
+  **Palette (restarts render)** in Flame and Solid **Scene color**,
+  **Palette** in Surface **Scene color**, and **Backdrop flame palette** for
+  the generated Flame background in **Atmosphere**. The renderer rules above
+  still apply: the same shared Custom edit may be live, staged, or
   re-accumulating rather than acquiring a different cost from the editor copy
   used to make it. Each editor says this directly:
   every non-Balloon palette set to Custom uses those stops. Balloon's Custom
@@ -1212,13 +1206,13 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   and persists in the link and scene file, so an authored gradient is never
   lost. Four of those selects also keep a **Classic** option that opts out of
   gradients altogether: **Color ramp palette** uses the original hand-tuned
-  ramp, **Flame palette (restarts render)** and **Backdrop flame palette** use
-  a flat per-map hue, and **Solid palette (restarts render)** uses the
-  explorer's own **Color Mode** colors. **Surface palette** has no Classic
-  option — it only appears for the color sources that need a gradient, and its
-  **By Transform** source is a sibling choice in **Color source** above it.
-- **Axis Colors** — appears while the active flat **Color Mode** or non-flat
-  **4D Color** is **By Position**: three pickers naming the color each axis contributes, blended by
+  ramp, Flame's palette and **Backdrop flame palette** use a flat per-map hue,
+  and Solid's palette uses the Points **Color Mode** colors. Surface's palette
+  has no Classic option — it only appears for the color sources that need a
+  gradient, and its **By Transform** source is a sibling choice in **Color
+  source** above it.
+- **Axis Colors** — appears in Points while the active flat **Color Mode** or
+  non-flat **4D Color** is **By Position**: three pickers naming the color each axis contributes, blended by
   the point's normalized X/Y/Z (so a point near the far X corner reads mostly
   as the X color, one in the middle as the mix). **Reset** restores the classic
   X→red, Y→green, Z→blue mapping, which is also the default. A dark-gray floor
@@ -1226,15 +1220,13 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   a channel deliberately wash toward their sum near the far corner rather than
   being renormalized. The live cloud, the panel legend's swatches, and the
   Solid render all read the same three colors in either dimension. Points
-  updates live; an active non-flat Flame or applicable Classic Solid
-  re-accumulates, while a renderer under a primary palette preserves the edit
-  for its next applicable view. The colors travel in the link and scene file.
-- **Color Contrast** — visible for the active flat or 4D
+  updates live; Classic Flame and Solid paths may consume the saved colors.
+  The colors travel in the link and scene file.
+- **Color Contrast** — visible in Points for the active flat or 4D
   Height/Radius/Position color modes; a
   log-scale gamma on the normalized coordinate. Left (<1) spreads detail in
-  the dense low end, right (>1) in the high end, center = linear. It also stays
-  visible for an active Surface Height/Radius source in either dimension and
-  updates that tracer's LUT live.
+  the dense low end, right (>1) in the high end, center = linear. Its stored
+  value also shapes a Surface Height/Radius source in either dimension.
 - **Depth Style** — in Points' **Depth** section, how the cloud conveys depth:
   Depth Fade (default), Aerial
   Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting. The backdrop color
@@ -1652,9 +1644,10 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   Shift-wheel and rotor/slice key bursts do the same once after 150 ms of
   quiet. The worker retains its entry geometry, center, and support across that
   restart. Flame still refuses ordinary camera/transform motion; Solid's camera
-  remains live because its voxel volume is world-space. Shared **Scene color** remains
-  shown: an applicable edit under the worker's Classic palette re-accumulates
-  over the current view, while another primary palette stages it. Surface
+  remains live because its voxel volume is world-space. Each renderer shows
+  its own **Scene color** section; a Classic Flame or Solid render may still
+  consume the saved Points color definition without exposing the Points editor.
+  Surface
   instead keeps the rotor and W slice live per
   frame, so the Shift-drag / Shift-wheel gestures above still steer it and
   the **W slice** position slider stays live and shown unconditionally,

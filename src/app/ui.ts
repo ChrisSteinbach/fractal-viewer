@@ -2343,7 +2343,7 @@ export class Ui {
   private readonly openSectionByMode: Record<RenderMode, string> = {
     points: "presetSection",
     flame: "flameToneSection",
-    solid: "solidSurfaceSection",
+    solid: "solidColorSection",
     surface: "surfaceColorSection",
   };
 
@@ -2636,6 +2636,7 @@ export class Ui {
     this.transformEditor = this.byId("transformEditor");
     this.pointsSections = [
       this.byId<HTMLDetailsElement>("cloudSection"),
+      this.byId<HTMLDetailsElement>("colorSection"),
       this.byId<HTMLDetailsElement>("pointsDepthSection"),
     ];
     this.flameSections = [
@@ -2643,6 +2644,7 @@ export class Ui {
       this.byId<HTMLDetailsElement>("flameBlurSection"),
     ];
     this.solidSections = [
+      this.byId<HTMLDetailsElement>("solidColorSection"),
       this.byId<HTMLDetailsElement>("solidSurfaceSection"),
       this.byId<HTMLDetailsElement>("solidLightingSection"),
     ];
@@ -3598,12 +3600,14 @@ export class Ui {
   private syncContextualGuidance(state: AppState, nonFlat: boolean): void {
     const mode = state.renderMode;
     const deferredGeometry = nonFlat || state.balloonEcho;
+    // This node belongs to the Points-only Scene color section. Renderer-
+    // specific color sections describe their own controls directly.
+    this.colorTimingHint.textContent = "Changes apply immediately in Points.";
 
     if (mode === "points") {
       this.transformTimingHint.textContent =
         "Geometry follows Auto-update; color changes apply immediately.";
       this.xaosEditHint.textContent = "Changes update Points immediately.";
-      this.colorTimingHint.textContent = "Changes apply immediately in Points.";
       this.balloonTimingHint.textContent =
         "Changes apply immediately in Points.";
       this.symmetryEditHint.textContent =
@@ -3619,12 +3623,6 @@ export class Ui {
       this.xaosEditHint.textContent = deferredGeometry
         ? `Changes apply next time you enter ${label}.`
         : `Changes restart ${label} after editing stops.`;
-      this.colorTimingHint.textContent =
-        mode === "solid"
-          ? "Palette-based changes restart Solid."
-          : nonFlat
-            ? "Palette-based changes restart 4D Flame."
-            : "Flame has separate Tone controls; these colors stay saved.";
       this.balloonTimingHint.textContent =
         mode === "solid"
           ? "Changes apply immediately in Solid."
@@ -3644,11 +3642,6 @@ export class Ui {
         "Geometry changes restart Surface without resetting the view. Unsupported changes return to Points.";
       this.xaosEditHint.textContent =
         "Changes restart Surface when supported; otherwise the Surface button explains why.";
-      this.colorTimingHint.textContent =
-        state.surface.colorSource === "height" ||
-        state.surface.colorSource === "radius"
-          ? "Surface uses its own color controls; Contrast still applies immediately."
-          : "Surface uses its own color controls; these colors stay saved.";
       this.balloonTimingHint.textContent =
         "On/off and palette changes restart Surface; size and tint stay live.";
       this.symmetryEditHint.textContent =
@@ -3749,10 +3742,9 @@ export class Ui {
       this.modeButtons[mode].classList.toggle("active", active);
       this.modeButtons[mode].setAttribute("aria-pressed", String(active));
     }
-    // …and swap in the active mode's contextual inspectors. Color and
-    // Atmosphere are shared Scene / Look sections and remain reachable:
-    // their notes disclose live, re-accumulating, and prepared-next-view
-    // effects in place. Fog/Tint's finer gate belongs to syncFogRows.
+    // …and swap in the active mode's contextual inspectors. Each renderer
+    // owns one visible Scene color section; Atmosphere remains shared, with
+    // Fog/Tint's finer gate owned by syncFogRows.
     const rendering = state.renderMode !== "points";
     // "4D" is a DERIVED property of the system (see affine4.ts's systemIsFlat
     // via state.ts's systemIsNonFlat), NOT a fourth render mode — so this is a
@@ -3948,9 +3940,10 @@ export class Ui {
       "hidden",
       this.fourDSurfaceLive || fourDColorNeedsAttribute(state.fourDColor),
     );
-    // Dormant flat look remains visible-disabled beside an accessible reason
-    // instead of silently disappearing. Its stored value is untouched and
-    // becomes editable again when the document returns to flat.
+    // Inside Points, dormant flat look remains visible-disabled beside an
+    // accessible reason instead of silently disappearing. Its stored value
+    // is untouched and becomes editable again when the document returns to
+    // flat. The whole Points Scene color section is mode-gated above.
     this.colorModeRow.classList.remove("hidden");
     this.scalarInput("colorMode").disabled = nonFlat;
     this.colorDimensionalRefusal.classList.toggle("hidden", !nonFlat);

@@ -267,19 +267,19 @@ describe("palette field vocabulary", () => {
     },
     {
       id: "flamePalette",
-      label: "Flame palette (restarts render)",
+      label: "Palette (restarts render)",
       firstValue: "legacy",
       firstLabel: "Classic",
     },
     {
       id: "solidPalette",
-      label: "Solid palette (restarts render)",
+      label: "Palette (restarts render)",
       firstValue: "legacy",
       firstLabel: "Classic",
     },
     {
       id: "surfacePalette",
-      label: "Surface palette",
+      label: "Palette",
       firstValue: "spectrum",
       firstLabel: "Spectrum",
     },
@@ -309,7 +309,7 @@ describe("palette field vocabulary", () => {
   }
 
   it.each(fields)(
-    "$id has its consumer-specific label and first option",
+    "$id has its contextual label and first option",
     ({ id, label, firstValue, firstLabel }) => {
       const select = document.getElementById(id) as HTMLSelectElement;
       expect(directLabelText(select)).toBe(label);
@@ -317,6 +317,32 @@ describe("palette field vocabulary", () => {
       expect(select.options[0]?.textContent).toBe(firstLabel);
     },
   );
+
+  it("homes each renderer's controls in its own Scene color section", () => {
+    const homes = {
+      colorMode: "colorSection",
+      fourDColor: "colorSection",
+      flameExposureSlider: "flameToneSection",
+      flameGammaSlider: "flameToneSection",
+      flameVibrancySlider: "flameToneSection",
+      flamePalette: "flameToneSection",
+      solidPalette: "solidColorSection",
+      surfaceColorSource: "surfaceColorSection",
+      surfacePalette: "surfaceColorSection",
+      surfaceColorSpeedSlider: "surfaceColorSection",
+    } as const;
+
+    for (const [controlId, sectionId] of Object.entries(homes)) {
+      expect(
+        document.getElementById(controlId)?.closest("details.panel-section")
+          ?.id,
+        controlId,
+      ).toBe(sectionId);
+    }
+    expect(
+      document.getElementById("solidPalette")?.closest("details")?.id,
+    ).not.toBe("solidSurfaceSection");
+  });
 
   it("keeps exactly four legacy wire options and presents each as Classic", () => {
     const legacyOptions = Array.from(
@@ -5911,6 +5937,7 @@ describe("Ui render mode switch", () => {
   }
   const POINT_CONTEXTUAL_SECTION_IDS = [
     "cloudSection",
+    "colorSection",
     "pointsDepthSection",
   ] as const;
   const SHARED_SCENE_WORKFLOW_SECTION_IDS = [
@@ -5921,6 +5948,7 @@ describe("Ui render mode switch", () => {
   ] as const;
   const FLAME_SECTION_IDS = ["flameToneSection", "flameBlurSection"] as const;
   const SOLID_SECTION_IDS = [
+    "solidColorSection",
     "solidSurfaceSection",
     "solidLightingSection",
   ] as const;
@@ -6162,8 +6190,9 @@ describe("Ui render mode switch", () => {
     expect(byId("transformTimingHint").textContent).toBe(
       "Flame restarts after geometry changes settle.",
     );
-    expect(byId("colorTimingHint").textContent).toBe(
-      "Flame has separate Tone controls; these colors stay saved.",
+    expect(byId("colorSection").classList.contains("hidden")).toBe(true);
+    expect(byId("flameToneSection").querySelector("summary")?.textContent).toBe(
+      "Scene color",
     );
     expect(byId("balloonTimingHint").textContent).toBe(
       "Changes restart Flame.",
@@ -6193,8 +6222,9 @@ describe("Ui render mode switch", () => {
     expect(byId("transformTimingHint").textContent).toContain(
       "without resetting the view",
     );
-    expect(byId("colorTimingHint").textContent).toContain(
-      "Contrast still applies immediately",
+    expect(byId("colorSection").classList.contains("hidden")).toBe(true);
+    expect(byId("surfaceColorSection").classList.contains("hidden")).toBe(
+      false,
     );
     expect(byId("balloonTimingHint").textContent).toContain(
       "size and tint stay live",
@@ -6278,13 +6308,15 @@ describe("Ui render mode switch", () => {
     ["flat", defaultTransforms()],
     ["non-flat", nonFlatTransforms()],
   ] as const)(
-    "keeps shared Scene color visible and open across every renderer for a %s document",
-    (dimension, transforms) => {
+    "shows exactly one renderer-owned Scene color section for a %s document",
+    (_dimension, transforms) => {
       const ui = new Ui(document);
-      const color = byId("colorSection") as HTMLDetailsElement;
-      (byId("presetSection") as HTMLDetailsElement).open = false;
-      color.open = true;
-      color.dispatchEvent(new Event("toggle"));
+      const colorSectionByMode = {
+        points: "colorSection",
+        flame: "flameToneSection",
+        solid: "solidColorSection",
+        surface: "surfaceColorSection",
+      } as const;
 
       for (const renderMode of [
         "points",
@@ -6298,22 +6330,32 @@ describe("Ui render mode switch", () => {
           transforms: [...transforms],
         });
 
-        expect(color.classList.contains("hidden"), renderMode).toBe(false);
-        expect(color.open, renderMode).toBe(true);
+        for (const [owner, sectionId] of Object.entries(colorSectionByMode)) {
+          const section = byId(sectionId);
+          expect(
+            section.classList.contains("hidden"),
+            `${renderMode} must ${owner === renderMode ? "show" : "hide"} #${sectionId}`,
+          ).toBe(owner !== renderMode);
+          expect(section.querySelector("summary")?.textContent).toBe(
+            "Scene color",
+          );
+        }
+        expect(
+          Array.from(
+            document.querySelectorAll<HTMLDetailsElement>(
+              "details.panel-section:not(.hidden)",
+            ),
+          ).filter(
+            (section) =>
+              section.querySelector(":scope > summary")?.textContent ===
+              "Scene color",
+          ),
+          renderMode,
+        ).toHaveLength(1);
         expect(
           document.querySelectorAll("details.panel-section.hidden[open]"),
           renderMode,
         ).toHaveLength(0);
-        if (dimension === "flat") {
-          expect(
-            Array.from(
-              color.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
-                "input, select",
-              ),
-            ).every((control) => !control.disabled),
-            renderMode,
-          ).toBe(true);
-        }
       }
     },
   );
@@ -6322,28 +6364,21 @@ describe("Ui render mode switch", () => {
     ["flat", defaultTransforms()],
     ["non-flat", nonFlatTransforms()],
   ] as const)(
-    "shows the active %s Color selector and retains the flat selector in every renderer",
+    "shows the active %s Color selector in Points",
     (dimension, transforms) => {
       const ui = new Ui(document);
-      for (const renderMode of [
-        "points",
-        "flame",
-        "solid",
-        "surface",
-      ] as const) {
-        ui.updateLabels({
-          ...initialState(true),
-          renderMode,
-          transforms: [...transforms],
-        });
-        expect(byId("colorModeRow").classList.contains("hidden")).toBe(false);
-        expect((byId("colorMode") as HTMLSelectElement).disabled).toBe(
-          dimension === "non-flat",
-        );
-        expect(byId("fourDColorRow").classList.contains("hidden")).toBe(
-          dimension === "flat",
-        );
-      }
+      ui.updateLabels({
+        ...initialState(true),
+        transforms: [...transforms],
+      });
+      expect(byId("colorSection").classList.contains("hidden")).toBe(false);
+      expect(byId("colorModeRow").classList.contains("hidden")).toBe(false);
+      expect((byId("colorMode") as HTMLSelectElement).disabled).toBe(
+        dimension === "non-flat",
+      );
+      expect(byId("fourDColorRow").classList.contains("hidden")).toBe(
+        dimension === "flat",
+      );
     },
   );
 
@@ -7799,7 +7834,7 @@ describe("Ui ramp palette", () => {
   });
 });
 
-describe("shared Scene color scope disclosure", () => {
+describe("Points Scene color scope disclosure", () => {
   it("is visible and ARIA-associated with every Color editor control", () => {
     const base = initialState(true);
     const ui = new Ui(document);
@@ -7824,7 +7859,9 @@ describe("shared Scene color scope disclosure", () => {
       document
         .querySelector("#colorSection .panel-explainer")
         ?.textContent?.replace(/\s+/g, " "),
-    ).toMatch(/Points, Solid, and 4D Flame.*Surface.*Color Contrast/i);
+    ).toMatch(
+      /controls color the Points view.*other renderer.*own Scene color/i,
+    );
     for (const control of document.querySelectorAll<HTMLElement>(
       "#colorSection input, #colorSection select, #colorSection button",
     )) {
@@ -9673,24 +9710,23 @@ describe("panel accordion sections", () => {
     expect(open.map((section) => section.id)).toEqual(["presetSection"]);
   });
 
-  // The vocabulary pin: section and control names must stay unambiguous
-  // beside the render-mode segments (fr-soag.21). A chip reading "Surface"
-  // under the ◈ Surface segment, or a shared chip colliding with a
-  // contextual one ("Color" vs "Surface color"), is exactly what the epic's
-  // final audit exists to prevent.
+  // The vocabulary pin: each mutually exclusive renderer uses the same
+  // Scene color concept, while unrelated visible sections remain distinct.
   it("keeps top-level section names distinct from the render-mode vocabulary", () => {
     const titles = sections().map(
       (section) => section.querySelector("summary")?.textContent ?? "",
     );
-    // The one deliberate duplicate: Solid's and Surface's contextual
-    // "Lighting" chips are mutually exclusive (never co-visible) and each
-    // inspector discloses the other's independence. Every other chip title
-    // must be unique — a shared "Color" or a Solid chip reading "Surface"
-    // is exactly what the epic's final audit exists to prevent.
+    // Renderer-owned Scene color sections and contextual Lighting sections
+    // are mutually exclusive, so their shared names are deliberate.
     const duplicates = titles.filter(
       (title, index) => titles.indexOf(title) !== index,
     );
-    expect(duplicates).toEqual(["Lighting"]);
+    expect(duplicates).toEqual([
+      "Scene color",
+      "Scene color",
+      "Scene color",
+      "Lighting",
+    ]);
     const solidLighting = sections().find(
       (section) => section.id === "solidLightingSection",
     );
@@ -9703,21 +9739,20 @@ describe("panel accordion sections", () => {
     expect(surfaceLighting?.querySelector("summary")?.textContent).toBe(
       "Lighting",
     );
-    // The shared authored color is "Scene color", named for what it is —
-    // Points/Solid/4D-Flame consumption — so the pair with Surface's own
-    // contextual "Surface color" chip reads as families, not duplicates.
-    expect(details("colorSection").querySelector("summary")?.textContent).toBe(
-      "Scene color",
-    );
-    // Solid's first section is its iso level, not the Surface mode.
+    for (const id of [
+      "colorSection",
+      "flameToneSection",
+      "solidColorSection",
+      "surfaceColorSection",
+    ]) {
+      expect(details(id).querySelector("summary")?.textContent, id).toBe(
+        "Scene color",
+      );
+    }
+    // Solid keeps geometry level separate from its color home.
     expect(
       details("solidSurfaceSection").querySelector("summary")?.textContent,
     ).toBe("Level");
-    // Surface's contextual inspector qualifies its own color home because
-    // the shared authored Scene color section stays visible in Surface mode.
-    expect(
-      details("surfaceColorSection").querySelector("summary")?.textContent,
-    ).toBe("Surface color");
     // The Atmosphere backdrop's geometry is "Gradient shape", never a bare
     // "Shape" beside the Surface inspector's shape sections.
     const gradientShapeRow = document.getElementById("backgroundShapeRow");
@@ -9756,21 +9791,21 @@ describe("panel accordion sections", () => {
     return el;
   };
 
-  it("entering flame mode opens its Tone section", () => {
+  it("entering flame mode opens its Scene color section", () => {
     const ui = new Ui(document);
     details("presetSection").open = false;
     ui.updateLabels({ ...initialState(true), renderMode: "flame" });
     expect(details("flameToneSection").open).toBe(true);
   });
 
-  it("entering solid mode opens its Level section", () => {
+  it("entering solid mode opens its Scene color section", () => {
     const ui = new Ui(document);
     details("presetSection").open = false;
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
-    expect(details("solidSurfaceSection").open).toBe(true);
+    expect(details("solidColorSection").open).toBe(true);
   });
 
-  it("entering surface mode opens its Surface color section", () => {
+  it("entering surface mode opens its Scene color section", () => {
     const ui = new Ui(document);
     details("presetSection").open = false;
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
@@ -9966,7 +10001,7 @@ describe("panel accordion sections", () => {
     details("flameBlurSection").dispatchEvent(new Event("toggle"));
 
     ui.updateLabels({ ...points, renderMode: "solid" });
-    expect(details("solidSurfaceSection").open).toBe(true);
+    expect(details("solidColorSection").open).toBe(true);
     expect(hiddenOpenSections()).toEqual([]);
 
     ui.updateLabels(flame);
@@ -9979,7 +10014,7 @@ describe("panel accordion sections", () => {
     const state = initialState(true);
     details("presetSection").open = false;
     ui.updateLabels({ ...state, renderMode: "flame" });
-    // In a real browser the name group closes Presets when Tone opens;
+    // In a real browser the name group closes Presets when Scene color opens;
     // simulate that half of the exchange.
     details("presetSection").open = false;
     ui.updateLabels(state);
@@ -10058,7 +10093,7 @@ describe("panel accordion sections", () => {
     presets.open = false;
     presets.dispatchEvent(new Event("toggle"));
 
-    ui.updateLabels({ ...state, renderMode: "flame" }); // Tone opens
+    ui.updateLabels({ ...state, renderMode: "flame" }); // Scene color opens
     expect(details("flameToneSection").open).toBe(true);
     ui.updateLabels(state); // points remembers "collapsed everything"
 
