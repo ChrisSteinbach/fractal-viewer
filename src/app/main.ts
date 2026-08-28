@@ -276,6 +276,15 @@ import {
   encodeTimelineFile,
   MAX_IMPORT_FILE_BYTES,
 } from "./scene-file";
+import {
+  encodePortableMeshManifest,
+  validatePortableMeshManifest,
+  type PortableMeshManifestWire,
+} from "./portable-mesh-manifest";
+import {
+  importPortableCustomMeshSources,
+  readPortableCustomMeshSources,
+} from "./portable-mesh-transfer";
 import { decodeFlameFile, encodeFlameFile } from "./flame-file";
 import { BALLOON_SWEEP_MS, hexToRgb01, MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
@@ -5800,7 +5809,7 @@ async function main(): Promise<void> {
 
   function refreshUi(): void {
     ui.updateLabels(state);
-    ui.setPortableSceneSharingAvailable(
+    ui.setPortableLinkSharingAvailable(
       !sceneHasCustomMeshes(currentDocument()),
     );
     ui.setSolidBalloonAvailable(scene.solidBalloonAvailable());
@@ -6378,9 +6387,34 @@ async function main(): Promise<void> {
     return true;
   }
 
-  function encodedSceneHasCustomMeshes(encoded: string): boolean {
-    const snapshot = decodeScene(encoded);
-    return snapshot !== null && sceneHasCustomMeshes(snapshot);
+  function customMeshIdsForEncodedScenes(
+    encodedScenes: readonly string[],
+  ): ReturnType<typeof sceneCustomMeshIds> {
+    const ids = [] as ReturnType<typeof sceneCustomMeshIds>;
+    for (const encoded of encodedScenes) {
+      const snapshot = decodeScene(encoded);
+      if (!snapshot) throw new Error("a saved scene is corrupt");
+      assertSceneCustomMeshBudget(snapshot);
+      ids.push(...sceneCustomMeshIds(snapshot));
+    }
+    return ids;
+  }
+
+  async function portableManifestForEncodedScenes(
+    encodedScenes: readonly string[],
+  ): Promise<PortableMeshManifestWire | undefined> {
+    const ids = customMeshIdsForEncodedScenes(encodedScenes);
+    if (ids.length === 0) return undefined;
+    const sources = await readPortableCustomMeshSources(ids, assetStore());
+    return encodePortableMeshManifest(sources, ids);
+  }
+
+  function assertPortableExportSize(text: string): void {
+    if (new TextEncoder().encode(text).byteLength > MAX_IMPORT_FILE_BYTES) {
+      throw new RangeError(
+        `portable file exceeds the ${MAX_IMPORT_FILE_BYTES / (1024 * 1024)} MiB limit`,
+      );
+    }
   }
 
   async function preflightEncodedScenes(
@@ -6519,11 +6553,22 @@ async function main(): Promise<void> {
    * every failure lands as a toast, never a throw — including a file too
    * large to be a plausible export, rejected before it is read into memory.
    */
+  let sceneFileImportTicket = 0;
+
   async function importSceneFile(file: File): Promise<void> {
+    const ticket = ++sceneFileImportTicket;
+    const sceneBaseline = encodeScene(toSnapshot(state));
+    const timelineBaseline = JSON.stringify([timeline.seed, timeline.all()]);
     if (/\.obj$/i.test(file.name)) {
       await importCustomMeshFile(file);
       return;
     }
+    // The shared picker is last-selection-wins across formats. Invalidate an
+    // older OBJ worker before reading JSON/XML; a later OBJ already invalidates
+    // this import through sceneFileImportTicket above.
+    customMeshImportTicket += 1;
+    activeCustomMeshImport?.cancel();
+    activeCustomMeshImport = null;
     if (file.size > MAX_IMPORT_FILE_BYTES) {
       ui.flashToast("That file is too large to import");
       return;
@@ -6544,6 +6589,50 @@ async function main(): Promise<void> {
       ui.flashToast("Not a scene, collection, timeline, or .flame file");
       return;
     }
+    if (ticket !== sceneFileImportTicket) return;
+    if (
+      imported.kind === "scene" &&
+      encodeScene(toSnapshot(state)) !== sceneBaseline
+    ) {
+      ui.flashToast("Scene changed while the file was loading");
+      return;
+    }
+    if (imported.assets !== undefined) {
+      ui.flashToast("Validating bundled mesh assets…");
+      try {
+        const validated = await validatePortableMeshManifest(imported.assets);
+        if (validated === null) {
+          throw new Error("a bundled mesh does not match its content digest");
+        }
+        await importPortableCustomMeshSources(
+          validated.sources,
+          assetStore(),
+          undefined,
+          () => ticket === sceneFileImportTicket,
+        );
+      } catch (error) {
+        if (ticket === sceneFileImportTicket) {
+          ui.flashToast(
+            `File not imported: ${
+              error instanceof Error
+                ? error.message
+                : "bundled mesh validation failed"
+            }`,
+          );
+        }
+        return;
+      }
+      if (ticket !== sceneFileImportTicket) return;
+      if (
+        imported.kind === "scene" &&
+        encodeScene(toSnapshot(state)) !== sceneBaseline
+      ) {
+        ui.flashToast(
+          "Bundled meshes were stored, but the changed scene was left untouched",
+        );
+        return;
+      }
+    }
     if (imported.kind === "scene") {
       // decodeImportFile pre-validated the payload, so this load can't
       // actually miss — the guard just keeps loadEncodedScene's contract
@@ -6555,6 +6644,15 @@ async function main(): Promise<void> {
     if (imported.kind === "timeline") {
       if (imported.steps.length === 0) {
         ui.flashToast("No usable keyframes in that file");
+        return;
+      }
+      if (
+        imported.assets !== undefined &&
+        JSON.stringify([timeline.seed, timeline.all()]) !== timelineBaseline
+      ) {
+        ui.flashToast(
+          "Bundled meshes were stored, but the changed timeline was left untouched",
+        );
         return;
       }
       // An import is an authoring edit: like every onTimeline* handler it
@@ -7876,20 +7974,29 @@ async function main(): Promise<void> {
     // The file counterpart of Copy link: the SAME document bytes — camera +
     // non-flat FourDPose included — wrapped in the JSON file envelope instead
     // of a URL, for keeping scenes where a link doesn't fit (archives, email
-    // attachments, version control).
+    // attachments, version control). Asset-free documents retain the exact v1
+    // envelope; local meshes select v2 and carry each canonical source once.
     onSaveSceneFile: () => {
-      if (sceneHasCustomMeshes(currentDocument())) {
-        ui.flashToast(
-          "Local mesh scenes cannot be saved as portable files yet",
+      const document = currentDocument();
+      const encoded = encodeScene(document);
+      const stamp = Date.now();
+      void portableManifestForEncodedScenes([encoded])
+        .then((assets) => {
+          const text = encodeSceneFile(encoded, stamp, assets);
+          assertPortableExportSize(text);
+          triggerDownload(
+            new Blob([text], { type: "application/json" }),
+            `fractal-scene-${stamp}.json`,
+          );
+          ui.flashToast("Scene file saved");
+        })
+        .catch((error: unknown) =>
+          ui.flashToast(
+            `Scene file not saved: ${
+              error instanceof Error ? error.message : "mesh export failed"
+            }`,
+          ),
         );
-        return;
-      }
-      const text = encodeSceneFile(encodeScene(currentDocument()), Date.now());
-      triggerDownload(
-        new Blob([text], { type: "application/json" }),
-        `fractal-scene-${Date.now()}.json`,
-      );
-      ui.flashToast("Scene file saved");
     },
     // flam3/Apophysis interop: the system's XY shadow as a .flame file
     // (flame-file.ts; docs/flame-interop.md). Projection compromises — 3D/4D
@@ -7920,23 +8027,28 @@ async function main(): Promise<void> {
       // The button disables at zero, but guard the race anyway (a delete
       // landing between the last count sync and this click).
       if (collection.size === 0) return;
-      if (
-        collection
-          .all()
-          .some((entry) => encodedSceneHasCustomMeshes(entry.encoded))
-      ) {
-        ui.flashToast(
-          "This collection contains local meshes and cannot be exported portably yet",
+      const scenes = collection.all();
+      const stamp = Date.now();
+      void portableManifestForEncodedScenes(
+        scenes.map((entry) => entry.encoded),
+      )
+        .then((assets) => {
+          const text = encodeCollectionFile(scenes, stamp, assets);
+          assertPortableExportSize(text);
+          triggerDownload(
+            new Blob([text], { type: "application/json" }),
+            `fractal-collection-${stamp}.json`,
+          );
+          const n = scenes.length;
+          ui.flashToast(n === 1 ? "Exported 1 scene" : `Exported ${n} scenes`);
+        })
+        .catch((error: unknown) =>
+          ui.flashToast(
+            `Collection not exported: ${
+              error instanceof Error ? error.message : "mesh export failed"
+            }`,
+          ),
         );
-        return;
-      }
-      const text = encodeCollectionFile(collection.all(), Date.now());
-      triggerDownload(
-        new Blob([text], { type: "application/json" }),
-        `fractal-collection-${Date.now()}.json`,
-      );
-      const n = collection.size;
-      ui.flashToast(n === 1 ? "Exported 1 scene" : `Exported ${n} scenes`);
     },
     // The timeline's own escape hatch — the collection backup's exact pattern
     // one section over: the authored sequence (steps, timings, render-mode
@@ -7948,27 +8060,29 @@ async function main(): Promise<void> {
       // The button disables at zero, but guard the race anyway (an edit
       // landing between the last renderTimeline sync and this click).
       if (timeline.size === 0) return;
-      if (
-        timeline.all().some((step) => encodedSceneHasCustomMeshes(step.encoded))
-      ) {
-        ui.flashToast(
-          "This timeline contains local meshes and cannot be exported portably yet",
+      const steps = timeline.all();
+      const seed = timeline.seed;
+      const stamp = Date.now();
+      void portableManifestForEncodedScenes(steps.map((step) => step.encoded))
+        .then((assets) => {
+          const text = encodeTimelineFile(steps, seed, stamp, assets);
+          assertPortableExportSize(text);
+          triggerDownload(
+            new Blob([text], { type: "application/json" }),
+            `fractal-timeline-${stamp}.json`,
+          );
+          const n = steps.length;
+          ui.flashToast(
+            n === 1 ? "Exported 1 keyframe" : `Exported ${n} keyframes`,
+          );
+        })
+        .catch((error: unknown) =>
+          ui.flashToast(
+            `Timeline not exported: ${
+              error instanceof Error ? error.message : "mesh export failed"
+            }`,
+          ),
         );
-        return;
-      }
-      const text = encodeTimelineFile(
-        timeline.all(),
-        timeline.seed,
-        Date.now(),
-      );
-      triggerDownload(
-        new Blob([text], { type: "application/json" }),
-        `fractal-timeline-${Date.now()}.json`,
-      );
-      const n = timeline.size;
-      ui.flashToast(
-        n === 1 ? "Exported 1 keyframe" : `Exported ${n} keyframes`,
-      );
     },
     onImportFile: (file) => {
       void importSceneFile(file);

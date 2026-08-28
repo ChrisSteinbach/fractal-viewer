@@ -27,7 +27,11 @@ export const MAX_CUSTOM_MESH_SDF_VOXELS =
 
 const NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const INDEX_TOKEN = /^[1-9]\d*$/;
-const CANONICAL_MAGIC = new TextEncoder().encode("fractal-mesh-v1\0");
+export const CUSTOM_MESH_CANONICAL_MAGIC = new TextEncoder().encode(
+  "fractal-mesh-v1\0",
+);
+export const CUSTOM_MESH_CANONICAL_HEADER_BYTES =
+  CUSTOM_MESH_CANONICAL_MAGIC.byteLength + 8;
 
 export interface CanonicalMeshGeometry {
   readonly name: string;
@@ -81,31 +85,47 @@ function compareTriangle(
   return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 }
 
-function canonicalBytes(
-  vertices: readonly Vec3[],
-  triangles: readonly (readonly [number, number, number])[],
+/** Authoritative digest/source byte layout shared by OBJ ingestion, durable
+ * storage, and portable bundles. Inputs may be prepared tuple arrays or their
+ * structured-clone flat typed-array wire representation. */
+export function canonicalCustomMeshSourceBytes(
+  vertices: readonly Vec3[] | Float64Array,
+  triangles: readonly (readonly [number, number, number])[] | Uint32Array,
 ): Uint8Array<ArrayBuffer> {
+  const flatVertices = vertices instanceof Float64Array;
+  const flatTriangles = triangles instanceof Uint32Array;
+  if (
+    (flatVertices && vertices.length % 3 !== 0) ||
+    (flatTriangles && triangles.length % 3 !== 0)
+  ) {
+    throw new RangeError("canonical custom-mesh arrays are malformed");
+  }
+  const vertexCount = flatVertices ? vertices.length / 3 : vertices.length;
+  const triangleCount = flatTriangles ? triangles.length / 3 : triangles.length;
   const byteLength =
-    CANONICAL_MAGIC.byteLength +
-    8 +
-    vertices.length * 24 +
-    triangles.length * 12;
+    CUSTOM_MESH_CANONICAL_HEADER_BYTES + vertexCount * 24 + triangleCount * 12;
   const bytes = new Uint8Array(byteLength);
-  bytes.set(CANONICAL_MAGIC, 0);
+  bytes.set(CUSTOM_MESH_CANONICAL_MAGIC, 0);
   const view = new DataView(bytes.buffer);
-  let offset = CANONICAL_MAGIC.byteLength;
-  view.setUint32(offset, vertices.length, true);
+  let offset = CUSTOM_MESH_CANONICAL_MAGIC.byteLength;
+  view.setUint32(offset, vertexCount, true);
   offset += 4;
-  view.setUint32(offset, triangles.length, true);
+  view.setUint32(offset, triangleCount, true);
   offset += 4;
-  for (const vertex of vertices) {
-    for (const value of vertex) {
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    for (let axis = 0; axis < 3; axis += 1) {
+      const value = flatVertices
+        ? vertices[vertex * 3 + axis]
+        : vertices[vertex][axis];
       view.setFloat64(offset, Object.is(value, -0) ? 0 : value, true);
       offset += 8;
     }
   }
-  for (const triangle of triangles) {
-    for (const index of triangle) {
+  for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+    for (let corner = 0; corner < 3; corner += 1) {
+      const index = flatTriangles
+        ? triangles[triangle * 3 + corner]
+        : triangles[triangle][corner];
       view.setUint32(offset, index, true);
       offset += 4;
     }
@@ -273,7 +293,7 @@ export function canonicalizeCustomMeshObj(
     name: cleanMeshName(objectName ?? fallbackName),
     vertices: frozenVertices,
     triangles: frozenTriangles,
-    bytes: canonicalBytes(frozenVertices, frozenTriangles),
+    bytes: canonicalCustomMeshSourceBytes(frozenVertices, frozenTriangles),
   });
 }
 
@@ -294,7 +314,14 @@ export async function customMeshContentId(
   geometry: CanonicalMeshGeometry,
   digest: MeshDigest = defaultDigest,
 ): Promise<CustomMeshAssetId> {
-  const hash = new Uint8Array(await digest(geometry.bytes));
+  return customMeshContentIdFromBytes(geometry.bytes, digest);
+}
+
+export async function customMeshContentIdFromBytes(
+  bytes: Uint8Array<ArrayBuffer>,
+  digest: MeshDigest = defaultDigest,
+): Promise<CustomMeshAssetId> {
+  const hash = new Uint8Array(await digest(bytes));
   if (hash.byteLength !== 32) {
     throw new Error("SHA-256 returned an invalid digest length");
   }

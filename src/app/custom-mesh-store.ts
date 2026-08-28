@@ -9,13 +9,14 @@
  * cache write can never leave a source-only half import behind.
  */
 import {
-  CUSTOM_MESH_ASSET_ID_PATTERN,
   isCustomMeshAssetId,
   type CustomMeshAssetId,
   type SerializedMeshSdfBake,
   type SerializedPreparedMeshAsset,
 } from "../fractal/mesh-shapes";
 import {
+  canonicalCustomMeshSourceBytes,
+  customMeshContentIdFromBytes,
   MAX_CUSTOM_MESH_TRIANGLES,
   MAX_CUSTOM_MESH_VERTICES,
 } from "../fractal/custom-mesh";
@@ -27,7 +28,6 @@ export const CUSTOM_MESH_BAKE_STORE = "meshBakes";
 
 const SOURCE_RECORD_VERSION = 1;
 const BAKE_RECORD_VERSION = 1;
-const CANONICAL_MAGIC = new TextEncoder().encode("fractal-mesh-v1\0");
 const BAKE_MAGIC = new TextEncoder().encode("fractal-mesh-sdf-v1\0");
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 
@@ -48,6 +48,11 @@ export type CustomMeshReadResult<T> =
   | { readonly status: "corrupt"; readonly reason: string };
 
 export type CustomMeshPutResult = "stored" | "already-stored";
+
+export interface CustomMeshSourceAndBake {
+  readonly source: SerializedPreparedMeshAsset;
+  readonly bake: SerializedMeshSdfBake;
+}
 
 export class CustomMeshSourceConflictError extends Error {
   constructor(id: CustomMeshAssetId) {
@@ -253,33 +258,6 @@ function isFiniteTriple(value: unknown): value is Float64Array<ArrayBuffer> {
   );
 }
 
-function canonicalSourceBytes(
-  source: Pick<SerializedPreparedMeshAsset, "vertices" | "triangles">,
-): Uint8Array<ArrayBuffer> {
-  const bytes = new Uint8Array(
-    CANONICAL_MAGIC.byteLength +
-      8 +
-      source.vertices.length * Float64Array.BYTES_PER_ELEMENT +
-      source.triangles.length * Uint32Array.BYTES_PER_ELEMENT,
-  );
-  bytes.set(CANONICAL_MAGIC);
-  const view = new DataView(bytes.buffer);
-  let offset = CANONICAL_MAGIC.byteLength;
-  view.setUint32(offset, source.vertices.length / 3, true);
-  offset += 4;
-  view.setUint32(offset, source.triangles.length / 3, true);
-  offset += 4;
-  for (const value of source.vertices) {
-    view.setFloat64(offset, Object.is(value, -0) ? 0 : value, true);
-    offset += 8;
-  }
-  for (const value of source.triangles) {
-    view.setUint32(offset, value, true);
-    offset += 4;
-  }
-  return bytes;
-}
-
 function canonicalBakeBytes(
   bake: SerializedMeshSdfBake,
 ): Uint8Array<ArrayBuffer> {
@@ -328,18 +306,6 @@ async function checksumHex(
     throw new CustomMeshStoreError("SHA-256 returned an invalid digest length");
   }
   return [...hash].map((value) => value.toString(16).padStart(2, "0")).join("");
-}
-
-function digestId(hash: ArrayBuffer): CustomMeshAssetId | null {
-  const bytes = new Uint8Array(hash);
-  if (bytes.byteLength !== 32) return null;
-  const hex = [...bytes]
-    .map((value) => value.toString(16).padStart(2, "0"))
-    .join("");
-  const id = `mesh-sha256-${hex}`;
-  return CUSTOM_MESH_ASSET_ID_PATTERN.test(id)
-    ? (id as CustomMeshAssetId)
-    : null;
 }
 
 function arraysEqual<T extends Float64Array | Uint32Array>(
@@ -493,36 +459,69 @@ export class CustomMeshStore {
     source: SerializedPreparedMeshAsset,
     bake: SerializedMeshSdfBake,
   ): Promise<CustomMeshPutResult> {
-    const sourceReason = sourceRecordReason(sourceRecord(source), source.id);
-    if (sourceReason) {
-      throw new CustomMeshStoreError(
-        `invalid custom-mesh source: ${sourceReason}`,
-      );
-    }
-    const expectedId = digestId(
-      await this.digest(canonicalSourceBytes(source)),
+    const [outcome] = await this.putSourcesAndInitialBakes([{ source, bake }]);
+    return outcome;
+  }
+
+  /**
+   * Atomically add a complete portable import's immutable sources and freshly
+   * derived bakes. Every digest and wire is checked before opening the write
+   * transaction; then every existing-source comparison and every write shares
+   * that one transaction. A conflict, corrupt resident record, quota failure,
+   * or failed bake write therefore leaves the whole imported asset set absent.
+   */
+  async putSourcesAndInitialBakes(
+    entries: readonly CustomMeshSourceAndBake[],
+  ): Promise<readonly CustomMeshPutResult[]> {
+    if (entries.length === 0) return [];
+    const ids = new Set<CustomMeshAssetId>();
+    const durable = await Promise.all(
+      entries.map(async ({ source, bake }) => {
+        if (ids.has(source.id)) {
+          throw new CustomMeshStoreError(
+            `duplicate custom-mesh source: ${source.id}`,
+          );
+        }
+        ids.add(source.id);
+        const sourceReason = sourceRecordReason(
+          sourceRecord(source),
+          source.id,
+        );
+        if (sourceReason) {
+          throw new CustomMeshStoreError(
+            `invalid custom-mesh source: ${sourceReason}`,
+          );
+        }
+        const expectedId = await customMeshContentIdFromBytes(
+          canonicalCustomMeshSourceBytes(source.vertices, source.triangles),
+          this.digest,
+        );
+        if (expectedId !== source.id) {
+          throw new CustomMeshStoreError(
+            "custom-mesh source does not match its content id",
+          );
+        }
+        const bakeChecksum = await checksumHex(
+          this.digest,
+          canonicalBakeBytes(bake),
+        );
+        const durableBake = bakeRecord(bake, bakeChecksum);
+        const bakeReason = bakeRecordReason(durableBake, {
+          meshId: source.id,
+          algorithmVersion: bake.version,
+          resolution: bake.resolution,
+        });
+        if (bakeReason) {
+          throw new CustomMeshStoreError(
+            `invalid custom-mesh bake: ${bakeReason}`,
+          );
+        }
+        if (bake.meshId !== source.id) {
+          throw new CustomMeshStoreError("source and bake mesh ids differ");
+        }
+        return { source, bake: durableBake };
+      }),
     );
-    if (expectedId === null || expectedId !== source.id) {
-      throw new CustomMeshStoreError(
-        "custom-mesh source does not match its content id",
-      );
-    }
-    const bakeChecksum = await checksumHex(
-      this.digest,
-      canonicalBakeBytes(bake),
-    );
-    const durableBake = bakeRecord(bake, bakeChecksum);
-    const bakeReason = bakeRecordReason(durableBake, {
-      meshId: source.id,
-      algorithmVersion: bake.version,
-      resolution: bake.resolution,
-    });
-    if (bakeReason) {
-      throw new CustomMeshStoreError(`invalid custom-mesh bake: ${bakeReason}`);
-    }
-    if (bake.meshId !== source.id) {
-      throw new CustomMeshStoreError("source and bake mesh ids differ");
-    }
 
     const database = await this.open();
     const transaction = database.transaction(
@@ -532,51 +531,57 @@ export class CustomMeshStore {
     const completion = transactionDone(transaction);
     const sources = transaction.objectStore(CUSTOM_MESH_SOURCE_STORE);
     const bakes = transaction.objectStore(CUSTOM_MESH_BAKE_STORE);
-    const existingRequest = sources.get(source.id);
-    let outcome: CustomMeshPutResult = "stored";
+    const outcomes: CustomMeshPutResult[] = entries.map(() => "stored");
     const failure: { error: Error | null } = { error: null };
 
-    existingRequest.onsuccess = () => {
-      try {
-        const existing: unknown = existingRequest.result;
-        if (existing === undefined) {
-          sources.add(sourceRecord(source));
-        } else {
-          const reason = sourceRecordReason(existing, source.id);
-          if (reason) {
-            throw new CustomMeshStoreError(
-              `stored custom-mesh source is corrupt: ${reason}`,
-            );
+    durable.forEach(({ source, bake }, index) => {
+      const existingRequest = sources.get(source.id);
+      existingRequest.onsuccess = () => {
+        if (failure.error) return;
+        try {
+          const existing: unknown = existingRequest.result;
+          if (existing === undefined) {
+            sources.add(sourceRecord(source));
+          } else {
+            const reason = sourceRecordReason(existing, source.id);
+            if (reason) {
+              throw new CustomMeshStoreError(
+                `stored custom-mesh source is corrupt: ${reason}`,
+              );
+            }
+            if (
+              !sameSource(
+                publicSource(existing as CustomMeshSourceRecord),
+                source,
+              )
+            ) {
+              throw new CustomMeshSourceConflictError(source.id);
+            }
+            outcomes[index] = "already-stored";
           }
-          if (
-            !sameSource(
-              publicSource(existing as CustomMeshSourceRecord),
-              source,
-            )
-          ) {
-            throw new CustomMeshSourceConflictError(source.id);
-          }
-          outcome = "already-stored";
+          bakes.put(bake);
+        } catch (error) {
+          failure.error =
+            error instanceof Error
+              ? error
+              : new CustomMeshStoreError("custom-mesh transaction failed");
+          transaction.abort();
         }
-        bakes.put(durableBake);
-      } catch (error) {
-        failure.error =
-          error instanceof Error
-            ? error
-            : new CustomMeshStoreError("custom-mesh transaction failed");
-        transaction.abort();
-      }
-    };
-    existingRequest.onerror = () => {
-      // IndexedDB aborts the transaction; completion below reports the error.
-    };
+      };
+      existingRequest.onerror = () => {
+        // IndexedDB aborts the transaction; completion below reports the error.
+      };
+    });
 
     try {
       await completion;
     } catch (error) {
       if (failure.error) throw failure.error;
       if (error instanceof DOMException && error.name === "ConstraintError") {
-        throw new CustomMeshSourceConflictError(source.id);
+        throw new CustomMeshStoreError(
+          "custom-mesh import conflicts with stored sources",
+          { cause: error },
+        );
       }
       throw error instanceof Error
         ? error
@@ -584,7 +589,7 @@ export class CustomMeshStore {
             cause: error,
           });
     }
-    return outcome;
+    return outcomes;
   }
 
   /** Refresh one derived bake without changing its immutable source. Used
@@ -640,7 +645,10 @@ export class CustomMeshStore {
     const reason = sourceRecordReason(raw, id);
     if (reason) return { status: "corrupt", reason };
     const value = publicSource(raw as CustomMeshSourceRecord);
-    const expectedId = digestId(await this.digest(canonicalSourceBytes(value)));
+    const expectedId = await customMeshContentIdFromBytes(
+      canonicalCustomMeshSourceBytes(value.vertices, value.triangles),
+      this.digest,
+    );
     if (expectedId !== id) {
       return { status: "corrupt", reason: "content digest mismatch" };
     }

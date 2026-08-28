@@ -829,9 +829,19 @@ before installing any runtime source or mutating the document; a missing,
 version-stale, or corrupt derived bake is regenerated in that worker and
 refreshed without discarding its valid immutable source. Worker renderers
 receive the same canonical source wire. Local ids persist in autosave,
-collection, and timeline documents, but their bytes do not ride the `#v1` wire:
-asset-bearing scenes clear the hash and disable portable link/file export until
-portable bundles are designed separately.
+collection, and timeline documents, but their bytes never ride the compact
+`#v1` wire: asset-bearing scenes clear the hash and disable Copy Link. JSON
+scene, collection, and timeline export instead selects a strict version-2
+envelope with one digest-keyed canonical geometry blob per unique source.
+Geometry is little-endian, unpadded base64url; derived SDF bakes are deliberately
+excluded and rebuilt by the mesh worker after import. Version-1 files and
+asset-free exports retain their existing wire unchanged. A version-2 import
+requires the manifest keys to equal every decoded scene reference exactly,
+enforces per-source and aggregate byte/count budgets, verifies every SHA-256
+digest, solid-validates and bakes every source off-thread, and commits the whole
+source/bake set in one IndexedDB transaction before publishing the scene,
+collection, or timeline. Any missing, extra, duplicate, corrupt, or over-budget
+asset rejects the complete bundle.
 
 Whether a valid DE exists at all — and how fast it can be marched — turns on
 **conformality**. For an invertible affine map with linear part `M`,

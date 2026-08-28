@@ -4371,17 +4371,17 @@ export class Ui {
     );
   }
 
-  /** Local mesh bytes live in IndexedDB and are not embedded in v1 links or
-   * scene files. Keep both portable-document affordances visibly unavailable
-   * instead of producing an artifact that fails on another browser. */
-  setPortableSceneSharingAvailable(available: boolean): void {
+  /** Local mesh bytes cannot ride the compact URL hash. Keep Copy Link visibly
+   * unavailable while leaving scene-file export enabled: its version-2 bundle
+   * carries the canonical source geometry to another browser. */
+  setPortableLinkSharingAvailable(available: boolean): void {
     const reason = available
       ? ""
-      : "This scene uses a local mesh. Links and scene files cannot carry that asset yet.";
+      : "This scene uses a local mesh. Save a scene file to share its bundled geometry; compact links cannot carry it.";
     this.copyLinkBtn.disabled = !available;
     this.copyLinkBtn.title = available ? this.copyLinkTitle : reason;
-    this.saveSceneFileBtn.disabled = !available;
-    this.saveSceneFileBtn.title = available ? this.saveSceneFileTitle : reason;
+    this.saveSceneFileBtn.disabled = false;
+    this.saveSceneFileBtn.title = this.saveSceneFileTitle;
     this.setReasonNote(this.localAssetShareNote, reason);
   }
 

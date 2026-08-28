@@ -1021,9 +1021,14 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   backup (replacing the authored timeline — with an Undo toast
   when one was there). Local mesh source and its conservative Surface bake
   live in this browser profile's IndexedDB. They reload locally and work in
-  Points, Flame, Solid, and Surface, but are not embedded in portable files or
-  links; those controls disable with an explanation while the current scene
-  references a local mesh.
+  Points, Flame, Solid, and Surface. Compact links and `.flame` files cannot
+  carry local geometry, so those exports remain unavailable with an explanation.
+  JSON scene, collection, and timeline backups do carry each referenced
+  canonical mesh once in a content-addressed portable bundle; importing on a
+  different profile verifies and stores every source before changing the scene
+  or saved sequence. One file is bounded to four unique custom meshes, matching
+  the saved-sequence working-set limit. Derived Surface bakes are rebuilt
+  locally rather than bloating the file.
 - **Timeline** — an authored animation: an ordered sequence of
   keyframes played back as a chain of morphs, the drift show's directed
   counterpart — you decide what plays, in what order, at what pace. Like the
@@ -1429,8 +1434,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   wrapped in a file envelope instead of a URL, for keeping scenes where a
   link doesn't fit — archives, email attachments, version control. Load one
   back with **⬆ Import file** (see **Share**) or by dropping it anywhere
-  on the page. This portable export is unavailable for a scene that references
-  a local OBJ mesh, because the file does not yet package IndexedDB assets.
+  on the page. A scene with local OBJ meshes uses the version-2 bundle and
+  packages each canonical source once; an asset-free scene keeps the original
+  version-1 envelope.
 - **Final-transform lens** — the _(warps the whole cloud)_ checkbox in the
   **Transforms** section turns on a **final transform**: one more affine +
   variation map applied to every point as it is plotted, bending the whole

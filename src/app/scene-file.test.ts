@@ -4,6 +4,7 @@ import {
   encodeSceneFile,
   encodeTimelineFile,
   MAX_IMPORT_THUMBNAIL_CHARS,
+  PORTABLE_SCENE_FILE_VERSION,
   SCENE_FILE_VERSION,
 } from "./scene-file";
 import { encodeScene } from "./persist";
@@ -11,6 +12,13 @@ import type { SceneSnapshot } from "./persist";
 import { COLLECTION_CAP } from "./collection";
 import type { SavedScene } from "./collection";
 import { TIMELINE_CAP } from "./timeline";
+import { encodePortableMeshManifest } from "./portable-mesh-manifest";
+import { prepareCustomMeshObj } from "../fractal/custom-mesh";
+import {
+  serializePreparedCustomMeshAsset,
+  type CustomMeshAssetId,
+  type SerializedPreparedMeshAsset,
+} from "../fractal/mesh-shapes";
 import {
   DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
@@ -100,6 +108,34 @@ function baseSnapshot(): SceneSnapshot {
   };
 }
 
+const TETRA_OBJ = `
+o Portable file tetra
+v 1 1 1
+v -1 -1 1
+v -1 1 -1
+v 1 -1 -1
+f 1 3 2
+f 1 2 4
+f 1 4 3
+f 2 3 4
+`;
+
+async function portableSource(): Promise<SerializedPreparedMeshAsset> {
+  const prepared = await prepareCustomMeshObj(TETRA_OBJ, "portable-file.obj");
+  return serializePreparedCustomMeshAsset(prepared.asset);
+}
+
+function snapshotWithMesh(id: CustomMeshAssetId): SceneSnapshot {
+  const snapshot = baseSnapshot();
+  snapshot.transforms[0] = {
+    ...snapshot.transforms[0],
+    emitter: {
+      parts: [{ primitive: { kind: "mesh", meshId: id }, combine: "union" }],
+    },
+  };
+  return snapshot;
+}
+
 describe("scene-file: single scene", () => {
   it("round-trips through encodeSceneFile/decodeImportFile", () => {
     const encoded = encodeScene(baseSnapshot());
@@ -121,6 +157,99 @@ describe("scene-file: single scene", () => {
     expect(parsed.version).toBe(SCENE_FILE_VERSION);
     expect(parsed.exportedAt).toBe(555);
     expect(parsed.scene).toBe(encoded);
+  });
+});
+
+describe("scene-file: portable version-2 mesh bundles", () => {
+  it("keeps asset-free export on the unchanged version-1 envelope", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const parsed = JSON.parse(encodeSceneFile(encoded, 123)) as Record<
+      string,
+      unknown
+    >;
+
+    expect(parsed.version).toBe(SCENE_FILE_VERSION);
+    expect("assets" in parsed).toBe(false);
+  });
+
+  it("round-trips one strict asset-bearing scene envelope", async () => {
+    const source = await portableSource();
+    const encoded = encodeScene(snapshotWithMesh(source.id));
+    const assets = await encodePortableMeshManifest([source], [source.id]);
+    const text = encodeSceneFile(encoded, 123, assets);
+
+    expect(JSON.parse(text)).toMatchObject({
+      kind: "scene",
+      version: PORTABLE_SCENE_FILE_VERSION,
+    });
+    const decoded = decodeImportFile(text);
+    expect(decoded?.kind).toBe("scene");
+    expect(decoded?.assets?.sources).toHaveLength(1);
+    expect(decoded?.assets?.sources[0].id).toBe(source.id);
+  });
+
+  it("stores a repeated collection mesh once and validates every scene", async () => {
+    const source = await portableSource();
+    const encoded = encodeScene(snapshotWithMesh(source.id));
+    const assets = await encodePortableMeshManifest(
+      [source],
+      [source.id, source.id],
+    );
+    const scenes: SavedScene[] = [
+      {
+        id: "one",
+        encoded,
+        createdAt: 1,
+        thumbnail: "",
+      },
+      {
+        id: "two",
+        encoded,
+        createdAt: 2,
+        thumbnail: "",
+      },
+    ];
+    const text = encodeCollectionFile(scenes, 123, assets);
+    const raw = JSON.parse(text) as { assets: { geometries: unknown[] } };
+
+    expect(raw.assets.geometries).toHaveLength(1);
+    const decoded = decodeImportFile(text);
+    expect(decoded?.kind).toBe("collection");
+    if (decoded?.kind !== "collection") throw new Error("expected collection");
+    expect(decoded.scenes).toHaveLength(2);
+
+    const tampered = JSON.parse(text) as {
+      scenes: Array<Record<string, unknown>>;
+    };
+    tampered.scenes[1].encoded = "v1=garbage";
+    expect(decodeImportFile(JSON.stringify(tampered))).toBeNull();
+  });
+
+  it("round-trips timeline assets and rejects unknown version-2 fields", async () => {
+    const source = await portableSource();
+    const encoded = encodeScene(snapshotWithMesh(source.id));
+    const assets = await encodePortableMeshManifest([source], [source.id]);
+    const text = encodeTimelineFile(
+      [
+        {
+          id: "step",
+          encoded,
+          thumbnail: "",
+          morphMs: 1000,
+          holdMs: 500,
+        },
+      ],
+      7,
+      123,
+      assets,
+    );
+    const decoded = decodeImportFile(text);
+    expect(decoded?.kind).toBe("timeline");
+    expect(decoded?.assets?.sources[0].id).toBe(source.id);
+
+    const extra = JSON.parse(text) as Record<string, unknown>;
+    extra.derivedBake = "forbidden";
+    expect(decodeImportFile(JSON.stringify(extra))).toBeNull();
   });
 });
 
