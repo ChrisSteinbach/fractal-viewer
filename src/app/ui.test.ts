@@ -382,6 +382,11 @@ describe("shared Shape catalog roles", () => {
       document
         .getElementById("emitterShapeCatalogHint")
         ?.textContent?.replace(/\s+/g, " "),
+    ).toContain("Adds and selects a new emitter transform");
+    expect(
+      document
+        .querySelector("#transformsSection .panel-explainer")
+        ?.parentElement?.textContent?.replace(/\s+/g, " "),
     ).toContain("Surface → Shape trap");
 
     expect(Array.from(select.options).map((option) => option.value)).toEqual([
@@ -425,6 +430,11 @@ describe("shared Shape catalog roles", () => {
     expect(
       document
         .getElementById("trapShapeCatalogHint")
+        ?.textContent?.replace(/\s+/g, " "),
+    ).toContain("Choosing a shape restarts Surface");
+    expect(
+      document
+        .querySelector("#surfaceTrapSection .panel-explainer")
         ?.textContent?.replace(/\s+/g, " "),
     ).toContain("Transforms → Add emitter shape");
 
@@ -1042,7 +1052,7 @@ describe("Ui Hybrid schedule controls", () => {
       document
         .getElementById("scheduleEditHint")
         ?.textContent?.replace(/\s+/g, " "),
-    ).toContain("affine-only snapshot, not a live link");
+    ).toMatch(/copies it; later source changes do not follow/i);
   });
 });
 
@@ -1088,10 +1098,12 @@ describe("Ui Xaos add-as-block gesture", () => {
     ).toEqual(["Replace or explore", "Combine systems"]);
     expect(
       document.getElementById("xaosAddHint")?.textContent?.replace(/\s+/g, " "),
-    ).toMatch(/rebuilds through Points.*Edit its transition links under Xaos/i);
+    ).toMatch(
+      /separate copy.*later source changes do not carry over.*links in Xaos/i,
+    );
     expect(
       document
-        .getElementById("xaosEditHint")
+        .querySelector("#xaosSection .panel-explainer")
         ?.textContent?.replace(/\s+/g, " "),
     ).toContain("Add an isolated block under Systems");
   });
@@ -1628,8 +1640,8 @@ describe("Ui shape-trap geometry", () => {
 
   it("discloses the fold-only restriction next to the checkbox", () => {
     const text = row().textContent?.replace(/\s+/g, " ");
-    expect(text).toContain("conformal fold-only escape chains");
-    expect(text).toContain("Color trapping still works");
+    expect(text).toContain("Geometry requires conformal folds");
+    expect(text).toContain("color trapping works on other systems");
   });
 
   it.each([
@@ -1877,7 +1889,7 @@ describe("balloon custom palette editors", () => {
     ) as HTMLElement;
 
     expect(disclosure.textContent?.replace(/\s+/g, " ").trim()).toBe(
-      "Balloon-only Custom gradient. It does not change the shared gradient used by other palettes.",
+      "Balloon has its own custom gradient.",
     );
     for (const control of document.querySelectorAll<HTMLElement>(
       "#balloonCustomPaletteStops input, #balloonCustomPaletteRow button",
@@ -2757,7 +2769,12 @@ describe("Ui.renderTransformEditor", () => {
     );
     expect(
       document.getElementById("transformEmitterShapeCatalogHint")?.textContent,
-    ).toContain("Surface → Shape trap");
+    ).toContain("Weight sets how often it appears");
+    expect(
+      editorGroup("Shape")
+        .querySelector(".panel-explainer")
+        ?.textContent?.replace(/\s+/g, " "),
+    ).toContain("Surface Shape trap uses the same library");
 
     expect(select.value).toBe("");
     expect(Array.from(select.options).map((option) => option.value)).toEqual([
@@ -2880,7 +2897,7 @@ describe("Ui.renderTransformEditor", () => {
     expect(
       document.querySelector("#transformEditor .shape-capability-note")
         ?.textContent,
-    ).toContain("supported shape emitter");
+    ).toContain("Available as an emitter and a Surface shape");
     expect(
       document.querySelectorAll("#transformEditor .shape-part-card"),
     ).toHaveLength(2);
@@ -2950,7 +2967,7 @@ describe("Ui.renderTransformEditor", () => {
       document.querySelector("#transformEditor .shape-capability-note")
         ?.textContent,
     ).toContain(
-      "Surface can use this distance shape. Points / Flame / Solid render this map as an ordinary transform",
+      "Surface can use this shape; other renderers use the transform normally",
     );
     expect(handlers.onTransformEmitterShape).not.toHaveBeenCalled();
   });
@@ -3068,11 +3085,11 @@ describe("Ui.renderTransformEditor", () => {
     expect(
       document.querySelector("#transformEditor .shape-capability-note")
         ?.textContent,
-    ).toContain("render this map as an ordinary transform");
+    ).toContain("remains an ordinary transform");
     expect(
       document.querySelector("#transformEditor .shape-capability-note")
         ?.textContent,
-    ).toContain("Surface: unavailable");
+    ).toContain("Surface unavailable");
   });
 
   it("refuses over-budget generated shape source with an explicit per-mode status", () => {
@@ -3122,10 +3139,7 @@ describe("Ui.renderTransformEditor", () => {
     const capability = document.querySelector(
       "#transformEditor .shape-capability-note",
     )?.textContent;
-    expect(capability).toContain(
-      "Points / Flame / Solid: supported shape emitter",
-    );
-    expect(capability).toContain("Surface: unavailable");
+    expect(capability).toContain("Surface unavailable");
     expect(
       document.querySelector("#transformEditor .shape-authored-note:last-child")
         ?.textContent,
@@ -3662,7 +3676,10 @@ describe("Ui transform color editor", () => {
     expect(Number(editorSlider("Color index").value)).toBeCloseTo(1 / 3, 2);
     expect(
       editorGroup("Color").querySelector(".flame-hint")?.textContent,
-    ).toContain("restarts once after the edit settles");
+    ).toContain("Index recolors Points immediately");
+    expect(editorSlider("Color index").getAttribute("aria-describedby")).toBe(
+      "transformColorTimingHint",
+    );
   });
 
   it("shows the default color speed for a map that authors none", () => {
@@ -4287,7 +4304,7 @@ describe("Ui finish editor", () => {
     expect(bundleSelect().value).toBe("classic");
     expect(
       editorGroup("Finish").querySelector(".flame-hint")?.textContent,
-    ).toContain("next Surface entry");
+    ).toContain("next time you enter an eligible Surface");
   });
 
   it("seeds each row from the document, and from the classic value where the document is silent", () => {
@@ -4669,7 +4686,10 @@ describe("Ui finish editor", () => {
       expect(finishNote().textContent).toMatch(/FIRST active transform/);
       expect(finishNote().id).toBe("finishApplicabilityNote");
       for (const input of finishInputs()) {
-        expect(input.getAttribute("aria-describedby")).toBe(finishNote().id);
+        expect(input.getAttribute("aria-describedby")?.split(/\s+/)).toEqual([
+          "transformFinishTimingHint",
+          finishNote().id,
+        ]);
       }
     });
 
@@ -5173,7 +5193,7 @@ describe("Ui pattern editor", () => {
     expect(patternFamilySelect()).not.toBeNull();
     expect(
       editorGroup("Pattern").querySelector(".flame-hint")?.textContent,
-    ).toContain("next Surface entry");
+    ).toContain("next time you enter an eligible Surface");
   });
 
   it("picks up a pattern that changed under a stable selection, instead of writing the stale one back", () => {
@@ -5284,7 +5304,10 @@ describe("Ui pattern editor", () => {
       expect(patternNote().textContent).toMatch(/FIRST active transform/);
       expect(patternNote().id).toBe("patternApplicabilityNote");
       for (const input of patternInputs()) {
-        expect(input.getAttribute("aria-describedby")).toBe(patternNote().id);
+        expect(input.getAttribute("aria-describedby")?.split(/\s+/)).toEqual([
+          "transformPatternTimingHint",
+          patternNote().id,
+        ]);
       }
     });
 
@@ -6132,6 +6155,52 @@ describe("Ui render mode switch", () => {
     expect(modeBtn("surface").getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("describes only the active renderer's immediate editing consequences", () => {
+    const ui = new Ui(document);
+
+    ui.updateLabels({ ...initialState(true), renderMode: "flame" });
+    expect(byId("transformTimingHint").textContent).toBe(
+      "Flame restarts after geometry changes settle.",
+    );
+    expect(byId("colorTimingHint").textContent).toBe(
+      "Flame has separate Tone controls; these colors stay saved.",
+    );
+    expect(byId("balloonTimingHint").textContent).toBe(
+      "Changes restart Flame.",
+    );
+    expect(byId("captureSizeTimingHint").textContent).toBe(
+      "Changing size restarts Flame at the new dimensions.",
+    );
+
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      renderMode: "solid",
+    });
+    expect(byId("transformTimingHint").textContent).toBe(
+      "Geometry changes apply next time you enter Solid.",
+    );
+    expect(byId("scheduleEditHint").textContent).toContain(
+      "Changes apply next time you enter Solid.",
+    );
+
+    const surface = initialState(true);
+    ui.updateLabels({
+      ...surface,
+      renderMode: "surface",
+      surface: { ...surface.surface, colorSource: "height" },
+    });
+    expect(byId("transformTimingHint").textContent).toContain(
+      "without resetting the view",
+    );
+    expect(byId("colorTimingHint").textContent).toContain(
+      "Contrast still applies immediately",
+    );
+    expect(byId("balloonTimingHint").textContent).toContain(
+      "size and tint stay live",
+    );
+  });
+
   it.each([
     ["flat", defaultTransforms()],
     ["non-flat", nonFlatTransforms()],
@@ -6200,7 +6269,7 @@ describe("Ui render mode switch", () => {
       }
 
       expect(byId("transformTimingHint").textContent).toMatch(
-        /Surface re-enters without resetting the view/,
+        /Surface without resetting the view/,
       );
     },
   );
@@ -7126,17 +7195,13 @@ describe("Ui independent renderer lighting", () => {
       "solid",
       "solidLightingSection",
       "solidLightingDisclosure",
-      ["independent lighting look", "only the Solid renderer", "Surface"],
+      ["only Solid", "apply immediately"],
     ],
     [
       "surface",
       "surfaceLightingSection",
       "surfaceLightingDisclosure",
-      [
-        "independent lighting look",
-        "only the Surface renderer",
-        "Environment is Surface-only",
-      ],
+      ["only Surface", "apply immediately", "Environment is Surface-only"],
     ],
   ] as const)(
     "puts the %s disclosure first in its contextual Lighting section",
@@ -7214,8 +7279,7 @@ describe("custom palette editor", () => {
     "solid",
     "surface",
   ] as const;
-  const sharedDisclosure =
-    "Shared Custom gradient. Every non-Balloon palette set to Custom uses these stops; Balloon Custom stays separate.";
+  const sharedDisclosure = "Shared custom gradient; Balloon has its own.";
 
   function allPrimaryPalettesCustom(): AppState {
     const base = initialState(true);
@@ -7754,8 +7818,13 @@ describe("shared Scene color scope disclosure", () => {
     const hint = document.getElementById("colorTimingHint") as HTMLElement;
     expect(hint.classList.contains("hidden")).toBe(false);
     expect(hint.textContent?.replace(/\s+/g, " ").trim()).toBe(
-      "The scene's authored color for Points, Solid and 4D Flame. Points edits apply live; an active Solid—or a 4D Flame—using its legacy palette re-accumulates. The Surface view is colored by its own Surface color section instead — except this section's Color Contrast, which still sharpens a Surface Height or Radius source live. Other edits prepare the next applicable view.",
+      "Changes apply immediately in Points.",
     );
+    expect(
+      document
+        .querySelector("#colorSection .panel-explainer")
+        ?.textContent?.replace(/\s+/g, " "),
+    ).toMatch(/Points, Solid, and 4D Flame.*Surface.*Color Contrast/i);
     for (const control of document.querySelectorAll<HTMLElement>(
       "#colorSection input, #colorSection select, #colorSection button",
     )) {
@@ -7976,11 +8045,11 @@ describe("Ui 4D view gating", () => {
       false,
     );
     expect(el("colorDimensionalRefusal").textContent).toContain(
-      "flat Color Mode stays saved",
+      "Flat Color Mode stays saved",
     );
-    expect(el("depthDimensionalRefusal").textContent).toContain(
-      "remain unavailable and stay saved",
-    );
+    expect(
+      el("depthDimensionalRefusal").textContent?.replace(/\s+/g, " "),
+    ).toContain("unavailable in 4D; those choices stay saved");
 
     ui.updateLabels({
       ...nonFlat,
@@ -8073,10 +8142,8 @@ describe("Ui 4D view gating", () => {
         false,
       );
       const copy = el("automaticMotionParkedHint").textContent ?? "";
-      expect(copy).toContain(
-        "Manual 4D turns and W-slice changes restart this Flame or Solid after release",
-      );
-      expect(copy).toContain("Automatic motion is parked while it accumulates");
+      expect(copy).toContain("Manual 4D turns and W-slice changes restart it");
+      expect(copy).toContain("Automatic motion pauses");
       expect(
         el(
           renderMode === "flame" ? "flameToneSection" : "solidSurfaceSection",
@@ -8443,7 +8510,7 @@ describe("Ui 4D surface session controls", () => {
       false,
     );
     expect(el("automaticMotionParkedHint").textContent).toContain(
-      "setting takes effect again",
+      "setting resumes in Points or Solid",
     );
     expect(
       (el("autoMotionToggle") as HTMLInputElement).getAttribute(
@@ -8671,7 +8738,7 @@ describe("Ui automatic-motion controls", () => {
       .replace(/\s+/g, " ")
       .trim();
     expect(note).toContain("replaces automatic camera orbit");
-    expect(note).toContain("reveal the hidden axis");
+    expect(note).toContain("reveal hidden axes");
     expect(note).toContain("manual camera orbit remains available");
     expect(
       (el("autoMotionToggle") as HTMLInputElement).getAttribute(
@@ -9090,10 +9157,12 @@ describe("Ui symmetry controls", () => {
     expect(section?.querySelector("summary")?.textContent).toBe(
       "Symmetry · 4D",
     );
-    expect(text).toMatch(/4D route.*Order.*2-fold.*XW.*YW.*ZW.*Twist/i);
-    expect(text).toMatch(/Flame and Solid renders restart.*same dimension/i);
-    expect(text).toMatch(/3D and 4D.*re-enter/i);
-    expect(text).toMatch(/Surface.*next entry/i);
+    expect(text).toContain("Changes apply immediately in Points");
+    const explainer = section
+      ?.querySelector(".panel-explainer")
+      ?.textContent?.replace(/\s+/g, " ");
+    expect(explainer).toMatch(/Order.*2-fold.*XW.*YW.*ZW.*Twist/i);
+    expect(explainer).toMatch(/between 3D and 4D.*regenerates Points/i);
   });
 
   it("offers a visible flat-to-4D route through Order and a W plane", () => {
@@ -9465,22 +9534,20 @@ describe("visible control lifetimes", () => {
       "captureSizeTimingHint",
     );
     expect(normalizedText(hint)).toBe(
-      "Points, Solid, and Surface use this size on the next capture. An active Flame restarts at the chosen size.",
+      "Used by the next capture. Changing it during Flame restarts the render.",
     );
   });
 
   it("associates every 4D slice field with Saved-view framing", () => {
     const note = document.getElementById("fourDSavedViewScope");
     expect(normalizedText(note)).toContain("Saved view");
-    expect(normalizedText(note)).toContain(
-      "restored with the current scene on reload",
-    );
+    expect(normalizedText(note)).toContain("restored on reload");
     expect(
       normalizedText(document.getElementById("threeDSavedViewScope")),
     ).toContain("Saved view");
     expect(
       normalizedText(document.getElementById("threeDSavedViewScope")),
-    ).toContain("restored with the current scene on reload");
+    ).toContain("restored on reload");
     for (const id of [
       "fourDSliceToggle",
       "fourDSliceSlider",
@@ -10030,7 +10097,7 @@ describe("panel accordion sections", () => {
 
     const editorDetails = [
       ...document.querySelectorAll<HTMLDetailsElement>(
-        "#transformEditor details",
+        "#transformEditor > details.editor-group",
       ),
     ];
     expect(editorDetails.length).toBeGreaterThan(0);
@@ -10056,6 +10123,37 @@ describe("panel accordion sections", () => {
       if (name === null) continue;
       const clash = nested.parentElement?.closest(`details[name="${name}"]`);
       expect(clash).toBeFalsy();
+    }
+  });
+
+  it("keeps optional explanation closed, independent, and out of automatic control descriptions", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(defaultTransforms()[0], 0, 4);
+
+    const explainers = [
+      ...document.querySelectorAll<HTMLDetailsElement>(".panel-explainer"),
+    ];
+    expect(explainers.length).toBeGreaterThan(0);
+
+    const describedIds = new Set(
+      Array.from(
+        document.querySelectorAll<HTMLElement>("[aria-describedby]"),
+      ).flatMap((control) =>
+        (control.getAttribute("aria-describedby") ?? "")
+          .split(/\s+/)
+          .filter(Boolean),
+      ),
+    );
+    for (const explainer of explainers) {
+      expect(explainer.open).toBe(false);
+      expect(explainer.getAttribute("name")).toBeNull();
+      expect(
+        explainer.querySelector(":scope > summary")?.textContent?.trim().length,
+      ).toBeGreaterThan(0);
+      for (const described of explainer.querySelectorAll<HTMLElement>("[id]")) {
+        expect(describedIds.has(described.id), described.id).toBe(false);
+      }
     }
   });
 });

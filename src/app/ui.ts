@@ -1764,6 +1764,8 @@ export class Ui {
   private readonly backdrop: HTMLElement;
   private readonly panel: HTMLElement;
   private readonly transformCount: HTMLElement;
+  /** Short, current-renderer consequence beside the shared transform editor. */
+  private readonly transformTimingHint: HTMLElement;
   private readonly transformList: HTMLElement;
   private readonly addBtn: HTMLButtonElement;
   private readonly addEmitterSelect: HTMLSelectElement;
@@ -1952,6 +1954,7 @@ export class Ui {
   // table-driven (see SCALAR_CONTROLS); the palette remains authorable while
   // off, while the radius/tint rows are dependent detail.
   private readonly balloonEchoCheckbox: HTMLInputElement;
+  private readonly balloonTimingHint: HTMLElement;
   private readonly balloonNote: HTMLElement;
   private readonly balloonPaletteSelect: HTMLSelectElement;
   private readonly balloonRadiusRow: HTMLElement;
@@ -1965,6 +1968,7 @@ export class Ui {
   private readonly balloonTintRow: HTMLElement;
   private readonly balloonTintColorInput: HTMLInputElement;
   private readonly colorGammaRow: HTMLElement;
+  private readonly colorTimingHint: HTMLElement;
   private readonly rampPaletteRow: HTMLElement;
   private readonly positionColorsRow: HTMLElement;
   private readonly colorDimensionalRefusal: HTMLElement;
@@ -1995,6 +1999,7 @@ export class Ui {
   private readonly fogTintStrengthInput: HTMLInputElement;
   private readonly fogNote: HTMLElement;
   private readonly symmetryNote: HTMLElement;
+  private readonly symmetryEditHint: HTMLElement;
   /** The Hybrid schedule section's controls — see the UiHandlers schedule
    * trio for the contract each drives. */
   private readonly scheduleSource: HTMLSelectElement;
@@ -2004,6 +2009,7 @@ export class Ui {
   private readonly scheduleDepthSlider: HTMLInputElement;
   private readonly scheduleDepthLabel: HTMLElement;
   private readonly scheduleNote: HTMLElement;
+  private readonly scheduleEditHint: HTMLElement;
   /** The Xaos section's controls — see the UiHandlers Xaos trio for the
    * contract each drives. `xaosAddSource` shares the schedule picker's
    * exact vocabulary (its Presets group is cloned from the same
@@ -2015,6 +2021,7 @@ export class Ui {
   private readonly xaosAddSourceSaved: HTMLOptGroupElement;
   private readonly xaosBalanceWeights: HTMLInputElement;
   private readonly xaosAddBtn: HTMLButtonElement;
+  private readonly xaosEditHint: HTMLElement;
   private readonly xaosLeakRows: HTMLElement;
   private readonly xaosMatrixNote: HTMLElement;
   private readonly xaosMatrixContainer: HTMLElement;
@@ -2125,6 +2132,7 @@ export class Ui {
   /** Adaptive resolution currently has implementations in Points and Solid. */
   private readonly adaptiveResolutionRow: HTMLElement;
   private readonly surfaceAntialiasNote: HTMLElement;
+  private readonly captureSizeTimingHint: HTMLElement;
   // The surface render's own settings block: lighting sliders plus the
   // base-color source/palette selects, the same mode-section pattern one
   // render mode over. surfacePaletteRow additionally gates on colorSource
@@ -2441,6 +2449,7 @@ export class Ui {
     this.backdrop = this.byId("backdrop");
     this.panel = this.byId("panel");
     this.transformCount = this.byId("transformCount");
+    this.transformTimingHint = this.byId("transformTimingHint");
     this.transformList = this.byId("transformList");
     this.addBtn = this.byId("addBtn");
     this.addEmitterSelect = this.byId("addEmitterSelect");
@@ -2539,6 +2548,7 @@ export class Ui {
     this.exportDeliverBtn.remove();
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
     this.balloonEchoCheckbox = this.byId("balloonEchoCheckbox");
+    this.balloonTimingHint = this.byId("balloonTimingHint");
     this.balloonNote = this.byId("balloonNote");
     this.balloonPaletteSelect = this.byId("balloonPalette");
     this.balloonRadiusRow = this.byId("balloonRadiusRow");
@@ -2546,6 +2556,7 @@ export class Ui {
     this.balloonTintRow = this.byId("balloonTintRow");
     this.balloonTintColorInput = this.byId("balloonTintColor");
     this.colorGammaRow = this.byId("colorGammaRow");
+    this.colorTimingHint = this.byId("colorTimingHint");
     this.rampPaletteRow = this.byId("rampPaletteRow");
     this.positionColorsRow = this.byId("positionColorsRow");
     this.colorDimensionalRefusal = this.byId("colorDimensionalRefusal");
@@ -2567,12 +2578,14 @@ export class Ui {
     this.fogTintStrengthInput = this.byId("fogTintStrength");
     this.fogNote = this.byId("fogNote");
     this.symmetryNote = this.byId("symmetryNote");
+    this.symmetryEditHint = this.byId("symmetryEditHint");
     this.scheduleSource = this.byId("scheduleSource");
     this.scheduleSourceSaved = this.byId("scheduleSourceSaved");
     this.scheduleSnapshotBtn = this.byId("scheduleSnapshotBtn");
     this.scheduleDepthSlider = this.byId("scheduleDepthSlider");
     this.scheduleDepthLabel = this.byId("scheduleDepthLabel");
     this.scheduleNote = this.byId("scheduleNote");
+    this.scheduleEditHint = this.byId("scheduleEditHint");
     // The sentinel the picker shows while a block is installed (the
     // document stores B's MAPS, not their source, so no source name can be
     // honestly re-selected after a reload/undo).
@@ -2595,6 +2608,7 @@ export class Ui {
     this.xaosAddSourceSaved = this.byId("xaosAddSourceSaved");
     this.xaosBalanceWeights = this.byId("xaosBalanceWeights");
     this.xaosAddBtn = this.byId("xaosAddBtn");
+    this.xaosEditHint = this.byId("xaosEditHint");
     this.xaosLeakRows = this.byId("xaosLeakRows");
     this.xaosMatrixNote = this.byId("xaosMatrixNote");
     this.xaosMatrixContainer = this.byId("xaosMatrixContainer");
@@ -2670,6 +2684,7 @@ export class Ui {
     };
     this.adaptiveResolutionRow = this.byId("adaptiveResolutionRow");
     this.surfaceAntialiasNote = this.byId("surfaceAntialiasNote");
+    this.captureSizeTimingHint = this.byId("captureSizeTimingHint");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
     this.flameProgress = this.byId("flameProgress");
@@ -3574,6 +3589,96 @@ export class Ui {
     }
   }
 
+  /**
+   * Keep operational copy about the renderer the user is looking at. The
+   * longer cross-renderer explanation lives in optional panel disclosures;
+   * controls keep describing these short, visible nodes so keyboard and
+   * assistive-technology users hear the consequence before editing.
+   */
+  private syncContextualGuidance(state: AppState, nonFlat: boolean): void {
+    const mode = state.renderMode;
+    const deferredGeometry = nonFlat || state.balloonEcho;
+
+    if (mode === "points") {
+      this.transformTimingHint.textContent =
+        "Geometry follows Auto-update; color changes apply immediately.";
+      this.xaosEditHint.textContent = "Changes update Points immediately.";
+      this.colorTimingHint.textContent = "Changes apply immediately in Points.";
+      this.balloonTimingHint.textContent =
+        "Changes apply immediately in Points.";
+      this.symmetryEditHint.textContent =
+        "Changes update Points; switching between 3D and 4D regenerates them.";
+      this.scheduleEditHint.textContent =
+        "Choosing a source copies it; later source changes do not follow. Changes update Points immediately.";
+      this.captureSizeTimingHint.textContent = "Used by the next capture.";
+    } else if (mode === "flame" || mode === "solid") {
+      const label = mode === "flame" ? "Flame" : "Solid";
+      this.transformTimingHint.textContent = deferredGeometry
+        ? `Geometry changes apply next time you enter ${label}.`
+        : `${label} restarts after geometry changes settle.`;
+      this.xaosEditHint.textContent = deferredGeometry
+        ? `Changes apply next time you enter ${label}.`
+        : `Changes restart ${label} after editing stops.`;
+      this.colorTimingHint.textContent =
+        mode === "solid"
+          ? "Palette-based changes restart Solid."
+          : nonFlat
+            ? "Palette-based changes restart 4D Flame."
+            : "Flame has separate Tone controls; these colors stay saved.";
+      this.balloonTimingHint.textContent =
+        mode === "solid"
+          ? "Changes apply immediately in Solid."
+          : "Changes restart Flame.";
+      this.symmetryEditHint.textContent = `Changes restart ${label} within the same dimension; 3D/4D changes return to Points.`;
+      this.scheduleEditHint.textContent =
+        `Choosing a source copies it; later source changes do not follow. ` +
+        (deferredGeometry
+          ? `Changes apply next time you enter ${label}.`
+          : `Changes restart ${label} after editing stops.`);
+      this.captureSizeTimingHint.textContent =
+        mode === "flame"
+          ? "Changing size restarts Flame at the new dimensions."
+          : "Used by the next capture.";
+    } else {
+      this.transformTimingHint.textContent =
+        "Geometry changes restart Surface without resetting the view. Unsupported changes return to Points.";
+      this.xaosEditHint.textContent =
+        "Changes restart Surface when supported; otherwise the Surface button explains why.";
+      this.colorTimingHint.textContent =
+        state.surface.colorSource === "height" ||
+        state.surface.colorSource === "radius"
+          ? "Surface uses its own color controls; Contrast still applies immediately."
+          : "Surface uses its own color controls; these colors stay saved.";
+      this.balloonTimingHint.textContent =
+        "On/off and palette changes restart Surface; size and tint stay live.";
+      this.symmetryEditHint.textContent =
+        "Changes apply next time you enter Surface; eligibility updates immediately.";
+      this.scheduleEditHint.textContent =
+        "Choosing a source copies it; later source changes do not follow. Changes restart Surface when supported.";
+      this.captureSizeTimingHint.textContent = "Used by the next capture.";
+    }
+
+    const transformColorTiming = this.doc.getElementById(
+      "transformColorTimingHint",
+    );
+    if (transformColorTiming) {
+      transformColorTiming.textContent =
+        mode === "points"
+          ? "Index recolors Points immediately; Speed is used by Flame and Solid."
+          : mode === "surface"
+            ? "Index restarts an IFS Surface using Palette; Speed is saved for Flame and Solid."
+            : `Changes restart ${mode === "flame" ? "Flame" : "Solid"} when its gradient palette uses them.`;
+    }
+    const materialTiming =
+      mode === "surface"
+        ? "Changes restart Surface when this map is used."
+        : "Used next time you enter an eligible Surface.";
+    const finishTiming = this.doc.getElementById("transformFinishTimingHint");
+    if (finishTiming) finishTiming.textContent = materialTiming;
+    const patternTiming = this.doc.getElementById("transformPatternTimingHint");
+    if (patternTiming) patternTiming.textContent = materialTiming;
+  }
+
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
   updateLabels(state: AppState): void {
     this.transformCount.textContent = String(state.transforms.length);
@@ -3622,11 +3727,9 @@ export class Ui {
       this.scheduleDepthSlider.value = String(schedule.depth);
       this.scheduleDepthLabel.textContent = String(schedule.depth);
       this.scheduleNote.textContent =
-        `Each plotted point is bent through ${schedule.depth} random ` +
-        `B-map${schedule.depth === 1 ? "" : "s"} — the depth-${schedule.depth} ` +
-        `B-arrangement of the attractor. Points, flame and solid render ` +
-        `the composition; Surface follows the same finite B prefix when ` +
-        `all participating maps support inverse descent.`;
+        `Applies ${schedule.depth} random System B ` +
+        `map${schedule.depth === 1 ? "" : "s"} to each point. ` +
+        "Surface requires every map to support inverse descent.";
       this.scheduleNote.classList.remove("hidden");
     } else {
       this.scheduleSource.value = "";
@@ -3676,14 +3779,15 @@ export class Ui {
         (state.renderMode === "flame" || state.renderMode === "solid"));
     this.automaticMotionParkedHint.textContent =
       state.renderMode === "surface"
-        ? "Surface parks automatic motion so the render can settle. Manual camera turns and, in 4D, rotor and slice controls stay live; your setting takes effect again in Points or Solid."
-        : "Manual 4D turns and W-slice changes restart this Flame or Solid after release. Automatic motion is parked while it accumulates.";
+        ? "Surface pauses automatic motion so rendering can settle. Manual view controls still work; your setting resumes in Points or Solid."
+        : "Automatic motion pauses while this 4D render accumulates. Manual 4D turns and W-slice changes restart it after release.";
     const panelContext: PanelContext = {
       renderMode: state.renderMode,
       dimension: nonFlat ? "nonFlat" : "flat",
       surfaceKind: this.surfaceSessionKind,
     };
     this.panelContext = panelContext;
+    this.syncContextualGuidance(state, nonFlat);
     // A non-flat system in Surface mode is always the 4D tracer: the session
     // routes on this same predicate (main.ts's systemPartsAreNonFlat branch),
     // ahead of the flat-only escape-time and fold/affine paths.
@@ -6106,6 +6210,23 @@ export class Ui {
     return group;
   }
 
+  /** Add optional teaching without making it part of a control's automatic
+   * description. Unnamed native details stay independent of both accordions. */
+  private appendPanelExplainer(
+    host: HTMLElement,
+    summaryText: string,
+    bodyText: string,
+  ): void {
+    const details = this.doc.createElement("details");
+    details.className = "panel-explainer";
+    const summary = this.doc.createElement("summary");
+    summary.textContent = summaryText;
+    const body = this.doc.createElement("p");
+    body.textContent = bodyText;
+    details.append(summary, body);
+    host.appendChild(details);
+  }
+
   private buildEditor(
     transform: Transform,
     target: number | "final",
@@ -6406,33 +6527,32 @@ export class Ui {
         status.capabilities.modes.trap.eligible
       ) {
         capability.textContent =
-          "Surface can use this distance shape. Points / Flame / Solid render this map as an ordinary transform because this shape has no emitter sampler.";
+          "Surface can use this shape; other renderers use the transform normally.";
       } else if (
         status.capabilities.modes.emitter.eligible &&
         status.capabilities.modes.trap.eligible
       ) {
-        capability.textContent =
-          "Points / Flame / Solid: supported shape emitter. Surface: supported distance shape, subject to the scene's aggregate source limit.";
+        capability.textContent = "Available as an emitter and a Surface shape.";
       } else if (status.capabilities.modes.emitter.eligible) {
-        capability.textContent = `Points / Flame / Solid: supported shape emitter. Surface: unavailable. ${status.capabilities.modes.trap.reason ?? status.message}`;
+        capability.textContent = `Surface unavailable: ${status.capabilities.modes.trap.reason ?? status.message}`;
       } else {
-        capability.textContent = `Points / Flame / Solid render this map as an ordinary transform because it has no emitter sampler. Surface: unavailable. ${status.capabilities.modes.trap.reason ?? status.capabilities.modes.emitter.reason ?? status.message}`;
+        capability.textContent = `This remains an ordinary transform. Surface unavailable: ${status.capabilities.modes.trap.reason ?? status.capabilities.modes.emitter.reason ?? status.message}`;
       }
     } else if (status.capabilities.modes.trap.eligible) {
       capability.textContent = status.capabilities.modes.emitter.eligible
-        ? "Surface / shape trap: supported. Points / Flame / Solid: emitter sampler available."
-        : `Surface / shape trap: supported. Points / Flame / Solid: no emitter sampler. ${status.capabilities.modes.emitter.reason ?? ""}`;
+        ? "Available here and as an emitter."
+        : `Available here; no emitter sampler. ${status.capabilities.modes.emitter.reason ?? ""}`;
     } else {
       capability.textContent = status.capabilities.modes.emitter.eligible
-        ? `Surface / shape trap: unavailable. Points / Flame / Solid: emitter sampler available. ${status.capabilities.modes.trap.reason ?? status.message}`
-        : `Surface / shape trap: unavailable. Points / Flame / Solid: no emitter sampler. ${status.capabilities.modes.trap.reason ?? status.message}`;
+        ? `Unavailable here: ${status.capabilities.modes.trap.reason ?? status.message} Available as an emitter.`
+        : `Unavailable here: ${status.capabilities.modes.trap.reason ?? status.message} No emitter sampler.`;
     }
     host.appendChild(capability);
 
     if (status.status === "opaque" || choice === "authored") {
       const note = this.doc.createElement("p");
       note.className = "flame-note-info shape-authored-note";
-      note.textContent = `${status.message} This imported authored shape is preserved exactly; choose Custom shape to replace it.`;
+      note.textContent = `${status.message} The imported shape is preserved; choose Custom shape to replace it.`;
       host.appendChild(note);
       return;
     }
@@ -6440,8 +6560,7 @@ export class Ui {
 
     const timing = this.doc.createElement("p");
     timing.className = "flame-hint shape-editor-timing";
-    timing.textContent =
-      "Primitive and part-pose edits apply after release. Structural actions apply once. Surface rebuilds the shape program once per edit.";
+    timing.textContent = "Shape edits apply once after release.";
     host.appendChild(timing);
 
     const composerValidation = this.doc.createElement("p");
@@ -7009,7 +7128,8 @@ export class Ui {
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
     hint.id = "transformEmitterShapeCatalogHint";
-    hint.textContent = `Shape catalog: stamp ${BUNDLED_EMITTER_SHAPES.map((entry) => entry.label).join(" or ")} whenever this transform is picked. Surface → Shape trap uses the same library for a different role. Position, Rotation and Scale pose this emitter; Weight controls how often it appears.`;
+    hint.textContent =
+      "Position, Rotation, and Scale place the emitter; Weight sets how often it appears.";
 
     const label = this.doc.createElement("label");
     label.className = "select-label";
@@ -7057,7 +7177,13 @@ export class Ui {
     const editor = this.doc.createElement("div");
     editor.className = "shape-primitive-editor hidden";
     label.appendChild(select);
-    group.append(hint, label, editor);
+    group.appendChild(hint);
+    this.appendPanelExplainer(
+      group,
+      "How emitter shapes work",
+      `The transform stamps ${BUNDLED_EMITTER_SHAPES.map((entry) => entry.label).join(", ")}, or a Custom shape, whenever it is picked. Surface Shape trap uses the same library for a different purpose.`,
+    );
+    group.append(label, editor);
     this.transformEditor.appendChild(group);
     this.syncAuthoredShapeEditor(
       editor,
@@ -7129,9 +7255,20 @@ export class Ui {
     // notes) carries the caveat instead.
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
+    hint.id = "transformColorTimingHint";
+    const mode = this.panelContext.renderMode;
     hint.textContent =
-      "Index sets this map's By Transform hue in Points, Flame, Solid and Surface; it also sets the gradient coordinate for Flame/Solid and IFS Surface Palette. A matching Points source recolors immediately; a consuming Flame/Solid restarts once after the edit settles, and an applicable Surface re-enters. Speed restarts only a Flame/Solid using a gradient palette. Other contexts keep the authored values for their next applicable entry.";
+      mode === "points"
+        ? "Index recolors Points immediately; Speed is used by Flame and Solid."
+        : mode === "surface"
+          ? "Index restarts an IFS Surface using Palette; Speed is saved for Flame and Solid."
+          : `Changes restart ${mode === "flame" ? "Flame" : "Solid"} when its gradient palette uses them.`;
     group.appendChild(hint);
+    this.appendPanelExplainer(
+      group,
+      "How transform color works",
+      "Index sets this map's hue and palette position. Speed controls how far each Flame or Solid pick moves toward it. Surface Palette uses Index but not Speed.",
+    );
 
     const derivedIndex = derivedColorIndex(target, transformCount);
     const index = this.buildColorRow(
@@ -7189,6 +7326,7 @@ export class Ui {
     slider.step = "0.01";
     slider.value = String(initial);
     slider.setAttribute("aria-label", ariaLabel);
+    slider.setAttribute("aria-describedby", "transformColorTimingHint");
     slider.title = title;
 
     const readout = this.doc.createElement("span");
@@ -7245,12 +7383,17 @@ export class Ui {
     // once at the editor's settlement boundary.
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
-    // A metal reads as its environment. Point users at the authorable room
-    // input that gives a mirror recognizable structure on the shipped dark
-    // backdrop, and state the intentional Metal/Chrome tint distinction.
+    hint.id = "transformFinishTimingHint";
     hint.textContent =
-      "Surface renders only: how this map's part of the surface catches light. Edits are saved everywhere; an applicable active Surface re-enters once after the edit settles, while other contexts use them on the next Surface entry. The Material menu sets a finish and a pattern family together; a bundle sets all six controls; Classic clears them. Metal keeps the transform tint; Chrome stays neutral. A bright backdrop or Floor light makes reflections legible.";
+      this.panelContext.renderMode === "surface"
+        ? "Changes restart Surface when this map is used."
+        : "Used next time you enter an eligible Surface.";
     group.appendChild(hint);
+    this.appendPanelExplainer(
+      group,
+      "How Finish works",
+      "Material sets Finish and Pattern together; a bundle sets all six finish controls; Classic clears them. Metal keeps the transform tint, while Chrome stays neutral. Bright surroundings make reflections easier to see.",
+    );
 
     // One stable adjacent applicability disclosure for every refusal class:
     // whole-document Surface refusal, a forward route's non-head map, or an
@@ -7271,7 +7414,7 @@ export class Ui {
     const material = this.doc.createElement("select");
     material.className = "finish-material";
     material.setAttribute("aria-label", "Material");
-    material.setAttribute("aria-describedby", note.id);
+    material.setAttribute("aria-describedby", `${hint.id} ${note.id}`);
     material.title =
       "Material starting points that set the finish and the pattern family together — the scene stores the numbers, never the name.";
     const materialNone = this.doc.createElement("option");
@@ -7302,7 +7445,7 @@ export class Ui {
     const bundle = this.doc.createElement("select");
     bundle.className = "finish-bundle";
     bundle.setAttribute("aria-label", "Finish bundle");
-    bundle.setAttribute("aria-describedby", note.id);
+    bundle.setAttribute("aria-describedby", `${hint.id} ${note.id}`);
     bundle.title =
       "Named starting points for the six controls below — the scene stores the numbers, never the name.";
     for (const entry of FINISH_BUNDLES) {
@@ -7342,7 +7485,7 @@ export class Ui {
         "aria-label",
         `Finish ${FINISH_LABELS[key].toLowerCase()}`,
       );
-      slider.setAttribute("aria-describedby", note.id);
+      slider.setAttribute("aria-describedby", `${hint.id} ${note.id}`);
       slider.title = FINISH_TITLES[key];
 
       const readout = this.doc.createElement("span");
@@ -7713,9 +7856,17 @@ export class Ui {
     // re-enters once at the editor's settlement boundary.
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
+    hint.id = "transformPatternTimingHint";
     hint.textContent =
-      "Surface renders only: how this map's part of the surface is patterned — its albedo texture, under the lighting. Edits are saved everywhere; an applicable active Surface re-enters once after the edit settles, while other contexts use them on the next Surface entry. A family picks the pattern; None clears it. The Finish group's Material menu sets a family and a finish together.";
+      this.panelContext.renderMode === "surface"
+        ? "Changes restart Surface when this map is used."
+        : "Used next time you enter an eligible Surface.";
     group.appendChild(hint);
+    this.appendPanelExplainer(
+      group,
+      "How Pattern works",
+      "A family chooses the surface pattern; None clears it. Finish → Material can set a Pattern and Finish together.",
+    );
 
     // Stable adjacent applicability disclosure; see the Finish twin above.
     const note = this.doc.createElement("p");
@@ -7731,7 +7882,7 @@ export class Ui {
     const family = this.doc.createElement("select");
     family.className = "pattern-family";
     family.setAttribute("aria-label", "Pattern family");
-    family.setAttribute("aria-describedby", note.id);
+    family.setAttribute("aria-describedby", `${hint.id} ${note.id}`);
     family.title =
       "Which pattern covers this map's part of the surface: wood, marble or strata. None removes the pattern.";
     const familyNone = this.doc.createElement("option");
@@ -7754,7 +7905,7 @@ export class Ui {
     const axis = this.doc.createElement("select");
     axis.className = "pattern-axis";
     axis.setAttribute("aria-label", "Pattern axis");
-    axis.setAttribute("aria-describedby", note.id);
+    axis.setAttribute("aria-describedby", `${hint.id} ${note.id}`);
     axis.title =
       "Which object-space axis the pattern's structure runs along. Y is the default.";
     for (const value of SURFACE_PATTERN_AXES) {
@@ -7792,7 +7943,7 @@ export class Ui {
     scaleSlider.step = "1";
     scaleSlider.value = String(patternScaleToSlider(resolved.scale));
     scaleSlider.setAttribute("aria-label", "Pattern scale");
-    scaleSlider.setAttribute("aria-describedby", note.id);
+    scaleSlider.setAttribute("aria-describedby", `${hint.id} ${note.id}`);
     scaleSlider.title =
       "Periods across one normalized object-space unit, on a logarithmic slider. Wood 3, Marble 1.35, Strata 2.6 by default.";
     const scaleReadout = this.doc.createElement("span");
@@ -7821,7 +7972,7 @@ export class Ui {
     strengthSlider.step = String(PATTERN_STRENGTH_STEP);
     strengthSlider.value = String(resolved.strength);
     strengthSlider.setAttribute("aria-label", "Pattern strength");
-    strengthSlider.setAttribute("aria-describedby", note.id);
+    strengthSlider.setAttribute("aria-describedby", `${hint.id} ${note.id}`);
     strengthSlider.title =
       "How much the pattern replaces the surface's own albedo: 0 leaves it unchanged, 1 is the full pattern. Default 1.";
     const strengthReadout = this.doc.createElement("span");
