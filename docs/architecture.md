@@ -563,9 +563,9 @@ A user-authored **custom palette** joins the presets as 2–8 evenly
 spaced sRGB stops sampled piecewise-linearly into the same LUT, so it flows
 through the CPU accumulators, the WGSL kernels' packed color table, and the
 legend identically; the scene codec persists it as `#rrggbb` strings, and the
-gradient editors under the five primary selectors — **Color ramp palette**,
-**Flame palette (restarts render)**, **Solid palette (restarts render)**,
-**Surface palette**, and **Backdrop flame palette** — all edit the one
+gradient editors under the five primary selectors — Points **Color ramp
+palette**, Flame and Solid **Palette (restarts render)**, Surface **Palette**,
+and **Backdrop flame palette** — all edit the one
 scene-wide slot. Balloon's Custom gradient is a separate slot.
 
 **The solid voxel render** (`voxel.ts`) trades the 2-D histogram for a
@@ -690,9 +690,10 @@ from the new rotor and its retained entry support, discards the old
 accumulation, and restarts at that settled endpoint. Flame continues to refuse
 ordinary camera and transform actions, while its Shift rotor, W-slice, and
 visible motion-preference actions remain reachable; Solid's world-space camera
-stays live. The shared Scene color editor similarly uses atomic `setColorInputs`
-commands to keep 4D color mode, contrast, applicable ramp palette, and Axis
-Colors current. The 4D flame
+stays live. The saved Points Scene color inputs similarly use atomic
+`setColorInputs` commands to keep 4D color mode, contrast, applicable ramp
+palette, and Axis Colors current when a Classic worker consumes them. The 4D
+flame
 rides the same WebGPU path as the 3D one (see "GPU accumulation backend"), with
 `accumulateFlame4` as its CPU oracle and fallback.
 
