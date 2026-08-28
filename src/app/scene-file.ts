@@ -21,11 +21,14 @@
  * picked from disk could be anything: hand-edited, from a future or older
  * build, or actively hostile — so, like `persist.ts`'s `decodeScene` and
  * `collection.ts`'s own storage loader, it NEVER throws. Anything it can't
- * make sense of becomes `null` (a "scene" file) or a dropped entry (one bad
- * scene inside a "collection" file), never an exception the caller has to
- * guard against. Every `encoded` string this module hands back has already
+ * make sense of never becomes an exception the caller has to guard against.
+ * Version 1 preserves its original lenience (one bad collection/timeline entry
+ * is dropped); asset-bearing version 2 is fail-closed as one bundle. Every
+ * `encoded` string this module hands back has already
  * been round-tripped through `decodeScene` and found loadable — a returned
- * scene is genuinely renderable by this build, not just shaped like one.
+ * scene is genuinely understood by this build, not just shaped like one.
+ * Version-2 source bytes have completed structural/reference checks here but
+ * still require the async digest/worker barrier before they are renderable.
  *
  * A deliberate choice: entries keep their ORIGINAL `encoded` string, never
  * re-encoded/canonicalized through `encodeScene`. A file written by a newer
@@ -40,13 +43,26 @@ import { COLLECTION_CAP } from "./collection";
 import type { ImportableScene, SavedScene, SavedSceneMode } from "./collection";
 import { TIMELINE_CAP } from "./timeline";
 import type { ImportableTimelineStep, TimelineStep } from "./timeline";
+import {
+  parsePortableMeshManifest,
+  type ParsedPortableMeshManifest,
+  type PortableMeshManifestWire,
+} from "./portable-mesh-manifest";
+import {
+  assertSceneCustomMeshBudget,
+  sceneCustomMeshIds,
+} from "./scene-mesh-assets";
+import type { CustomMeshAssetId } from "../fractal/mesh-shapes";
 
 /**
- * Format version written into every exported file. {@link decodeImportFile}
- * requires an exact match — see its doc comment for why a mismatch always
- * rejects rather than trying to interpret an unrecognized version.
+ * Original asset-free format version. Asset-free export remains byte-compatible
+ * with it; {@link decodeImportFile} also accepts the strict version 2 below.
  */
 export const SCENE_FILE_VERSION = 1;
+
+/** Asset-bearing files use a strict envelope whose source-only manifest is
+ * validated as one unit before any imported document is published. */
+export const PORTABLE_SCENE_FILE_VERSION = 2;
 
 /**
  * `app` marker naming the producer, written into every exported file.
@@ -85,12 +101,21 @@ export const MAX_IMPORT_FILE_BYTES = 32 * 1024 * 1024;
  * `TimelineStore.replaceAll` rolls a fresh one when it sees `undefined`.
  */
 export type ImportedFile =
-  | { kind: "scene"; encoded: string }
-  | { kind: "collection"; scenes: ImportableScene[] }
+  | {
+      kind: "scene";
+      encoded: string;
+      assets?: ParsedPortableMeshManifest;
+    }
+  | {
+      kind: "collection";
+      scenes: ImportableScene[];
+      assets?: ParsedPortableMeshManifest;
+    }
   | {
       kind: "timeline";
       seed: number | undefined;
       steps: ImportableTimelineStep[];
+      assets?: ParsedPortableMeshManifest;
     };
 
 /**
@@ -100,14 +125,20 @@ export type ImportedFile =
  * carried through as a courtesy timestamp only — nothing in this module
  * reads it back.
  */
-export function encodeSceneFile(encoded: string, exportedAt: number): string {
+export function encodeSceneFile(
+  encoded: string,
+  exportedAt: number,
+  assets?: PortableMeshManifestWire,
+): string {
   return JSON.stringify(
     {
       app: SCENE_FILE_APP,
       kind: "scene",
-      version: SCENE_FILE_VERSION,
+      version:
+        assets === undefined ? SCENE_FILE_VERSION : PORTABLE_SCENE_FILE_VERSION,
       exportedAt,
       scene: encoded,
+      assets,
     },
     null,
     2,
@@ -128,12 +159,14 @@ export function encodeSceneFile(encoded: string, exportedAt: number): string {
 export function encodeCollectionFile(
   scenes: SavedScene[],
   exportedAt: number,
+  assets?: PortableMeshManifestWire,
 ): string {
   return JSON.stringify(
     {
       app: SCENE_FILE_APP,
       kind: "collection",
-      version: SCENE_FILE_VERSION,
+      version:
+        assets === undefined ? SCENE_FILE_VERSION : PORTABLE_SCENE_FILE_VERSION,
       exportedAt,
       scenes: scenes.map((s) => ({
         encoded: s.encoded,
@@ -141,6 +174,7 @@ export function encodeCollectionFile(
         mode: s.mode,
         thumbnail: s.thumbnail,
       })),
+      assets,
     },
     null,
     2,
@@ -165,12 +199,14 @@ export function encodeTimelineFile(
   steps: TimelineStep[],
   seed: number,
   exportedAt: number,
+  assets?: PortableMeshManifestWire,
 ): string {
   return JSON.stringify(
     {
       app: SCENE_FILE_APP,
       kind: "timeline",
-      version: SCENE_FILE_VERSION,
+      version:
+        assets === undefined ? SCENE_FILE_VERSION : PORTABLE_SCENE_FILE_VERSION,
       exportedAt,
       seed,
       steps: steps.map((s) => ({
@@ -180,6 +216,7 @@ export function encodeTimelineFile(
         morphMs: s.morphMs,
         holdMs: s.holdMs,
       })),
+      assets,
     },
     null,
     2,
@@ -275,21 +312,167 @@ function sanitizeImportedStep(v: unknown): ImportableTimelineStep | null {
   };
 }
 
+function hasExactKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): boolean {
+  const allowed = new Set([...required, ...optional]);
+  return (
+    required.every((key) => Object.hasOwn(value, key)) &&
+    Object.keys(value).every((key) => allowed.has(key))
+  );
+}
+
+function strictSceneReferences(encoded: string): CustomMeshAssetId[] | null {
+  const snapshot = decodeScene(encoded);
+  if (snapshot === null) return null;
+  try {
+    assertSceneCustomMeshBudget(snapshot);
+  } catch {
+    return null;
+  }
+  return sceneCustomMeshIds(snapshot);
+}
+
+/** Decode an asset-bearing version-2 envelope. Unlike the deliberately
+ * lenient version-1 collection/timeline path, every entry must be valid and
+ * every custom-mesh reference must match the manifest exactly. The returned
+ * sources are structurally decoded but still require async digest and worker
+ * validation before publication. */
+function decodePortableImportFile(
+  o: Record<string, unknown>,
+): ImportedFile | null {
+  const { kind, exportedAt, assets: rawAssets } = o;
+  if (typeof exportedAt !== "number" || !Number.isFinite(exportedAt)) {
+    return null;
+  }
+  if (kind === "scene") {
+    if (
+      !hasExactKeys(o, [
+        "app",
+        "assets",
+        "exportedAt",
+        "kind",
+        "scene",
+        "version",
+      ]) ||
+      typeof o.scene !== "string"
+    ) {
+      return null;
+    }
+    const references = strictSceneReferences(o.scene);
+    if (references === null) return null;
+    const assets = parsePortableMeshManifest(rawAssets, references);
+    return assets === null ? null : { kind: "scene", encoded: o.scene, assets };
+  }
+
+  if (kind === "timeline") {
+    if (
+      !hasExactKeys(o, [
+        "app",
+        "assets",
+        "exportedAt",
+        "kind",
+        "seed",
+        "steps",
+        "version",
+      ]) ||
+      !Array.isArray(o.steps) ||
+      o.steps.length < 1 ||
+      o.steps.length > TIMELINE_CAP
+    ) {
+      return null;
+    }
+    const steps: ImportableTimelineStep[] = [];
+    const references: CustomMeshAssetId[] = [];
+    for (const raw of o.steps) {
+      if (
+        typeof raw !== "object" ||
+        raw === null ||
+        Array.isArray(raw) ||
+        !hasExactKeys(
+          raw as Record<string, unknown>,
+          ["encoded", "holdMs", "morphMs", "thumbnail"],
+          ["mode"],
+        )
+      ) {
+        return null;
+      }
+      const step = sanitizeImportedStep(raw);
+      if (step === null) return null;
+      const ids = strictSceneReferences(step.encoded);
+      if (ids === null) return null;
+      steps.push(step);
+      references.push(...ids);
+    }
+    const assets = parsePortableMeshManifest(rawAssets, references);
+    if (assets === null) return null;
+    return {
+      kind: "timeline",
+      seed:
+        typeof o.seed === "number" && Number.isFinite(o.seed)
+          ? o.seed
+          : undefined,
+      steps,
+      assets,
+    };
+  }
+
+  if (
+    kind !== "collection" ||
+    !hasExactKeys(o, [
+      "app",
+      "assets",
+      "exportedAt",
+      "kind",
+      "scenes",
+      "version",
+    ]) ||
+    !Array.isArray(o.scenes) ||
+    o.scenes.length < 1 ||
+    o.scenes.length > COLLECTION_CAP
+  ) {
+    return null;
+  }
+  const scenes: ImportableScene[] = [];
+  const references: CustomMeshAssetId[] = [];
+  for (const raw of o.scenes) {
+    if (
+      typeof raw !== "object" ||
+      raw === null ||
+      Array.isArray(raw) ||
+      !hasExactKeys(
+        raw as Record<string, unknown>,
+        ["createdAt", "encoded", "thumbnail"],
+        ["mode"],
+      )
+    ) {
+      return null;
+    }
+    const scene = sanitizeImportedScene(raw);
+    if (scene === null) return null;
+    const ids = strictSceneReferences(scene.encoded);
+    if (ids === null) return null;
+    scenes.push(scene);
+    references.push(...ids);
+  }
+  const assets = parsePortableMeshManifest(rawAssets, references);
+  return assets === null ? null : { kind: "collection", scenes, assets };
+}
+
 /**
  * Parse and validate an import file's raw text, or `null` if it isn't one —
  * the never-throws trust boundary for untrusted file bytes (see this
- * module's doc comment). Requires the exact envelope this module writes:
- * `app === "fractal-viewer"`, `version === {@link SCENE_FILE_VERSION}`
- * (strict — a future breaking format change bumps the version and is
- * rejected rather than misread; an additive change wouldn't bump it and
- * decodes here unchanged), and `kind` one of `"scene"` / `"collection"` /
- * `"timeline"`.
+ * module's doc comment). Requires `app === "fractal-viewer"`, one of the two
+ * versions this module owns, and `kind` one of `"scene"` / `"collection"` /
+ * `"timeline"`. Any other version rejects rather than being guessed at.
  *
  * For `kind: "scene"`, the `scene` field must be a string that
  * {@link decodeScene} itself accepts — a scene file whose one payload is
  * unusable has nothing to offer, so the whole file is rejected.
  *
- * For `kind: "timeline"`, `steps` must be an array; entries are validated
+ * In version 1, for `kind: "timeline"`, `steps` must be an array; entries are validated
  * INDIVIDUALLY by {@link sanitizeImportedStep}, dropping bad ones rather
  * than rejecting the file — the same lenience a `"collection"` file's
  * scenes get, below, and the same bounded-work cap, here
@@ -298,14 +481,16 @@ function sanitizeImportedStep(v: unknown): ImportableTimelineStep | null {
  * rolls a fresh one when it sees that. The result may likewise carry an
  * empty `steps` array; reporting that is the caller's concern.
  *
- * For `kind: "collection"`, `scenes` must be an array; entries are then
+ * In version 1, for `kind: "collection"`, `scenes` must be an array; entries are then
  * validated INDIVIDUALLY by {@link sanitizeImportedScene}, dropping bad ones
  * rather than rejecting the file — the same lenience `collection.ts`'s own
  * loader shows corrupt localStorage. Iteration stops once
  * {@link COLLECTION_CAP} valid entries have been collected, so a hostile
  * file with a million-entry array can't force unbounded work. The result may
  * be an empty array (every entry was invalid); reporting that is the
- * caller's concern.
+ * caller's concern. Version 2 instead requires every entry, the exact
+ * reference union, and the source-only manifest to pass together; async digest
+ * and topology validation deliberately follows in the import orchestrator.
  */
 export function decodeImportFile(text: string): ImportedFile | null {
   try {
@@ -321,9 +506,17 @@ export function decodeImportFile(text: string): ImportedFile | null {
     const { app, version, kind } = o;
 
     if (app !== SCENE_FILE_APP) return null;
-    if (version !== SCENE_FILE_VERSION) return null;
+    if (
+      version !== SCENE_FILE_VERSION &&
+      version !== PORTABLE_SCENE_FILE_VERSION
+    ) {
+      return null;
+    }
     if (kind !== "scene" && kind !== "collection" && kind !== "timeline") {
       return null;
+    }
+    if (version === PORTABLE_SCENE_FILE_VERSION) {
+      return decodePortableImportFile(o);
     }
 
     if (kind === "scene") {

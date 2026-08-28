@@ -10459,6 +10459,26 @@ describe("Ui timeline section", () => {
 });
 
 describe("Ui file import/export", () => {
+  it("disables local-mesh links while keeping portable scene bundles available", () => {
+    const ui = new Ui(document);
+    const copy = document.getElementById("copyLinkBtn") as HTMLButtonElement;
+    const save = document.getElementById(
+      "saveSceneFileBtn",
+    ) as HTMLButtonElement;
+    const note = document.getElementById("localAssetShareNote") as HTMLElement;
+
+    ui.setPortableLinkSharingAvailable(false);
+
+    expect(copy.disabled).toBe(true);
+    expect(save.disabled).toBe(false);
+    expect(note.textContent).toContain("Save a scene file");
+
+    ui.setPortableLinkSharingAvailable(true);
+    expect(copy.disabled).toBe(false);
+    expect(save.disabled).toBe(false);
+    expect(note.textContent).toBe("");
+  });
+
   it("fires onSaveSceneFile when ⤓ Save scene file is clicked", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);

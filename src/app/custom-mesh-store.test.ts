@@ -34,6 +34,18 @@ f 1 4 3
 f 2 3 4
 `;
 
+const ASYMMETRIC_TETRA_OBJ = `
+o Asymmetric store tetra
+v 1.5 1 1
+v -1 -1 1
+v -1 1 -1
+v 1 -1 -1
+f 1 3 2
+f 1 2 4
+f 1 4 3
+f 2 3 4
+`;
+
 const sha256: CustomMeshDigest = async (bytes) => {
   const digest = createHash("sha256").update(bytes).digest();
   return Uint8Array.from(digest).buffer;
@@ -44,8 +56,9 @@ const ZERO_ID = `mesh-sha256-${"0".repeat(64)}`;
 
 async function sourceFixture(
   digest: CustomMeshDigest = sha256,
+  obj = TETRA_OBJ,
 ): Promise<SerializedPreparedMeshAsset> {
-  const prepared = await prepareCustomMeshObj(TETRA_OBJ, "tetra.obj", digest);
+  const prepared = await prepareCustomMeshObj(obj, "tetra.obj", digest);
   installCustomMeshAsset(prepared.asset);
   try {
     return serializeCustomMeshAsset(prepared.id);
@@ -459,6 +472,72 @@ describe("CustomMeshStore", () => {
     });
     await expect(store.readBake(source.id, 1, 8)).resolves.toEqual({
       status: "missing",
+    });
+  });
+
+  it("stores a portable import's complete source set in one transaction", async () => {
+    const factory = new FakeIDBFactory();
+    const store = storeWith(factory);
+    const first = await sourceFixture();
+    const second = await sourceFixture(sha256, ASYMMETRIC_TETRA_OBJ);
+
+    await expect(
+      store.putSourcesAndInitialBakes([
+        { source: first, bake: bakeFixture(first.id) },
+        { source: second, bake: bakeFixture(second.id) },
+      ]),
+    ).resolves.toEqual(["stored", "stored"]);
+    await expect(store.readSource(first.id)).resolves.toMatchObject({
+      status: "found",
+    });
+    await expect(store.readSource(second.id)).resolves.toMatchObject({
+      status: "found",
+    });
+  });
+
+  it("rolls back every source when any batch bake write fails", async () => {
+    const factory = new FakeIDBFactory();
+    const store = storeWith(factory);
+    const first = await sourceFixture();
+    const second = await sourceFixture(sha256, ASYMMETRIC_TETRA_OBJ);
+    factory.database.failNextBakePut();
+
+    await expect(
+      store.putSourcesAndInitialBakes([
+        { source: first, bake: bakeFixture(first.id) },
+        { source: second, bake: bakeFixture(second.id) },
+      ]),
+    ).rejects.toMatchObject({ name: "QuotaExceededError" });
+    await expect(store.readSource(first.id)).resolves.toEqual({
+      status: "missing",
+    });
+    await expect(store.readSource(second.id)).resolves.toEqual({
+      status: "missing",
+    });
+  });
+
+  it("rolls back new batch entries when a resident source is corrupt", async () => {
+    const factory = new FakeIDBFactory();
+    const store = storeWith(factory);
+    const first = await sourceFixture();
+    const second = await sourceFixture(sha256, ASYMMETRIC_TETRA_OBJ);
+    await store.putSourceAndInitialBake(second, bakeFixture(second.id));
+    factory.database.mutate(CUSTOM_MESH_SOURCE_STORE, second.id, (raw) => ({
+      ...(raw as object),
+      vertices: new Float64Array([0, 1, 2]),
+    }));
+
+    await expect(
+      store.putSourcesAndInitialBakes([
+        { source: first, bake: bakeFixture(first.id) },
+        { source: second, bake: bakeFixture(second.id) },
+      ]),
+    ).rejects.toThrow("stored custom-mesh source is corrupt");
+    await expect(store.readSource(first.id)).resolves.toEqual({
+      status: "missing",
+    });
+    await expect(store.readSource(second.id)).resolves.toMatchObject({
+      status: "corrupt",
     });
   });
 
