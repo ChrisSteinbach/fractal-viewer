@@ -27,7 +27,10 @@ import {
   shapeSpecsMeshIds,
   type ShapeSpec,
 } from "./shapes";
-import { activeMeshSdfAtlas } from "./mesh-sdf-atlas-cache";
+import {
+  activeMeshSdfAtlas,
+  meshSdfAtlasShaderIndex,
+} from "./mesh-sdf-atlas-cache";
 import type { MeshAssetId } from "./mesh-shapes";
 import {
   ESCAPE_FACTOR,
@@ -3261,7 +3264,7 @@ export function surfaceMeshSdfWgslSource(
     .map((entry) => {
       const n = entry.resolution;
       const hi = n - 1;
-      const fn = `shapeMeshSdf${entry.catalogIndex}`;
+      const fn = `shapeMeshSdf${entry.shaderIndex}`;
       return /* wgsl */ `fn ${fn}(p: vec3f) -> f32 {
   let lo = vec3f(${wgslFloatLit(entry.min[0])}, ${wgslFloatLit(entry.min[1])}, ${wgslFloatLit(entry.min[2])});
   let hi = vec3f(${wgslFloatLit(entry.max[0])}, ${wgslFloatLit(entry.max[1])}, ${wgslFloatLit(entry.max[2])});
@@ -3303,8 +3306,8 @@ export function surfaceMeshSdfWgslSource(
     .join("\n\n");
   const choices = atlas.entries
     .map(
-      (entry) => `    case ${entry.catalogIndex}u: {
-      return shapeMeshSdf${entry.catalogIndex}(p);
+      (entry) => `    case ${entry.shaderIndex}u: {
+      return shapeMeshSdf${entry.shaderIndex}(p);
     }`,
     )
     .join("\n");
@@ -3606,6 +3609,15 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // Mesh resources are selected entirely by the baked shape vocabulary,
   // never by a params-wire flag. Trap and condensation are currently
   // exclusive, but derive across both so this seam stays explicit.
+  // Source generation itself is eager: the shade-only trap helper is built
+  // while assembling every kernel variant, even when that helper is not
+  // spliced into eval/march output. Keep a complete slot map for that eager
+  // pass, while only declaring/uploading resources in variants that actually
+  // evaluate the mesh SDF.
+  const sourceMeshIds = [
+    ...(shapeTrap ? shapeMeshIds(shapeTrap) : []),
+    ...(condensationShapes ? shapeSpecsMeshIds(condensationShapes) : []),
+  ];
   const meshIds = [
     ...(shapeTrap && (mode === "shade" || shapeTrapGeometry)
       ? shapeMeshIds(shapeTrap)
@@ -3614,6 +3626,8 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   ];
   const meshSdfHelperText =
     meshIds.length > 0 ? `${surfaceMeshSdfWgslSource(meshIds)}\n` : "";
+  const meshIndex = (id: MeshAssetId): number =>
+    meshSdfAtlasShaderIndex(sourceMeshIds, id);
   // Per-slot finish lighting (option doc). Absent means the fixed
   // Blinn-Phong lines, so every config predating the option generates
   // byte-identical source; no throw anywhere — the flag composes with
@@ -3667,7 +3681,7 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // untouched and never emits this block.
   const trapGeometryHelperText =
     shapeTrap && shapeTrapGeometry
-      ? `${shapeSdfSource(shapeTrap, "wgsl", "trapShapeSdf")}
+      ? `${shapeSdfSource(shapeTrap, "wgsl", "trapShapeSdf", { meshIndex })}
 // Shared posed local SDF for shape-trap color and geometry. The similarity's
 // value factor is deliberately NOT restored here: color normalizes this local
 // value, while geometry divides it by invScale at the post-link dr.
@@ -3706,7 +3720,7 @@ fn trapLocalSdf(pOrbit: vec3f) -> f32 {
   // the kernel and the resolver cannot disagree; everything LIVE rides the
   // appended trap params block.
   const trapHelperText = shapeTrap
-    ? `${shapeTrapGeometry ? "" : shapeSdfSource(shapeTrap, "wgsl", "trapShapeSdf")}
+    ? `${shapeTrapGeometry ? "" : shapeSdfSource(shapeTrap, "wgsl", "trapShapeSdf", { meshIndex })}
 // Step stepIdx's trap candidate at orbit point pOrbit — escape-de.ts's
 // shapeTrapCandidate in f32: pose inverse WITHOUT the value factor
 // (distances in the shape's own local units), normalized by the baked
@@ -3747,7 +3761,9 @@ fn trapValue(best: f32, cross: f32) -> f32 {
   const condensationHelperText = condensationShapes
     ? `${condensationShapes
         .map((shape, i) =>
-          shapeSdfSource(shape, "wgsl", `condensationShape${i}`),
+          shapeSdfSource(shape, "wgsl", `condensationShape${i}`, {
+            meshIndex,
+          }),
         )
         .join("\n")}
 struct CondensationHit {

@@ -1566,10 +1566,38 @@ export interface GearTableRegion {
  * The historical public name stays for backend/API compatibility. */
 export interface GearTableBuilder {
   floats: number[];
+  /** One binding-7 region per resolved mesh content id. Repeated authored
+   * parts and symmetry-expanded slots reuse it instead of multiplying the
+   * device upload by occurrence count. */
+  meshRegionsByContentId: Map<string, GearTableRegion>;
 }
 
 export function createGearTableBuilder(): GearTableBuilder {
-  return { floats: [] };
+  return { floats: [], meshRegionsByContentId: new Map() };
+}
+
+/** Aggregate binding-7 budget for one packed system. Eight MiB admits all
+ * four maximum-size custom meshes with bounded headroom for other regions;
+ * occurrence copies are content-deduplicated and consume it only once. */
+export const MAX_EMITTER_TRIANGLE_TABLE_BYTES = 8 * 1024 * 1024;
+export const MAX_EMITTER_TRIANGLE_TABLE_FLOATS =
+  MAX_EMITTER_TRIANGLE_TABLE_BYTES / Float32Array.BYTES_PER_ELEMENT;
+
+function reserveEmitterTriangleTableFloats(
+  builder: GearTableBuilder,
+  appendCount: number,
+): void {
+  const nextLength = builder.floats.length + appendCount;
+  if (
+    !Number.isSafeInteger(appendCount) ||
+    appendCount < 0 ||
+    !Number.isSafeInteger(nextLength) ||
+    nextLength > MAX_EMITTER_TRIANGLE_TABLE_FLOATS
+  ) {
+    throw new RangeError(
+      `shape-emitter triangle table exceeds the aggregate ${MAX_EMITTER_TRIANGLE_TABLE_FLOATS}-float (${MAX_EMITTER_TRIANGLE_TABLE_BYTES}-byte) limit`,
+    );
+  }
 }
 
 /** `null` when nothing was accumulated (no gear or mesh emitter part
@@ -1580,6 +1608,7 @@ export function finishGearTableBuilder(
   builder: GearTableBuilder,
 ): ArrayBuffer | null {
   if (builder.floats.length === 0) return null;
+  reserveEmitterTriangleTableFloats(builder, 0);
   return new Float32Array(builder.floats).buffer;
 }
 
@@ -1666,6 +1695,8 @@ export function buildGearTriangleTable(
     GEAR_TABLE_MIN_STEPS,
     Math.min(GEAR_TABLE_MAX_STEPS, teeth * GEAR_TABLE_STEPS_PER_TOOTH),
   );
+  const triCount = 2 * steps;
+  reserveEmitterTriangleTableFloats(builder, triCount * 7);
   const innerR = prim.hole > 0 ? prim.hole : 0;
   const outerR = prim.radius + prim.tooth[0];
   const searchHi = Math.hypot(outerR, prim.tooth[1]) * 1.001;
@@ -1692,7 +1723,6 @@ export function buildGearTriangleTable(
     }
     outer[i] = [lo * ct, lo * st];
   }
-  const triCount = 2 * steps;
   const cumAreas = new Array<number>(triCount);
   const verts: [number, number][][] = new Array<[number, number][]>(triCount);
   let running = 0;
@@ -1745,17 +1775,20 @@ function assertEmitterTableAddressable(offset: number, triCount: number): void {
   }
 }
 
-/** Append one catalog mesh's prepared area CDF plus its indexed 3D
- * triangle vertices to binding 7. `meshAsset` owns both products, so the
- * point sampler cannot silently ingest a different mesh from the SDF
- * consumer. The table intentionally expands indexed vertices: the kernel
- * needs one bounded lookup after its CDF search, and a second index buffer
- * would grow the frozen binding layout. */
+/** Resolve one catalog or custom mesh through `meshAsset`, then append its
+ * prepared area CDF plus indexed 3D triangle vertices to binding 7. The
+ * resolved content id owns both products and keys the builder cache, so the
+ * point sampler cannot ingest different geometry and repeated occurrences
+ * reuse the same table region. The table intentionally expands indexed
+ * vertices: the kernel needs one bounded lookup after its CDF search, and a
+ * second index buffer would grow the frozen binding layout. */
 export function buildMeshTriangleTable(
   prim: Extract<ShapePrimitive, { kind: "mesh" }>,
   builder: GearTableBuilder,
 ): GearTableRegion {
   const asset = meshAsset(prim.meshId);
+  const cached = builder.meshRegionsByContentId.get(asset.id);
+  if (cached !== undefined) return cached;
   const triCount = asset.triangles.length;
   if (
     asset.triangleCumulativeAreas.length !== triCount ||
@@ -1767,6 +1800,7 @@ export function buildMeshTriangleTable(
   }
   const offset = builder.floats.length;
   assertEmitterTableAddressable(offset, triCount);
+  reserveEmitterTriangleTableFloats(builder, triCount * 10);
   for (const area of asset.triangleCumulativeAreas) builder.floats.push(area);
   for (const triangle of asset.triangles) {
     for (const vertexIndex of triangle) {
@@ -1779,7 +1813,9 @@ export function buildMeshTriangleTable(
       builder.floats.push(vertex[0], vertex[1], vertex[2]);
     }
   }
-  return { offset, triCount, totalArea: asset.totalArea };
+  const region = { offset, triCount, totalArea: asset.totalArea };
+  builder.meshRegionsByContentId.set(asset.id, region);
+  return region;
 }
 
 /** Restates `shapes.ts`'s private `resolvePoseScale`: non-finite or

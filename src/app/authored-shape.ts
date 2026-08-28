@@ -491,10 +491,14 @@ export function analyzeAuthoredShapeCapabilities(
   let sourceValid = false;
   try {
     glslBytes = utf8Bytes(
-      shapeSdfSource(spec, "glsl", AUTHORED_SHAPE_BUDGET_GLSL_NAME),
+      shapeSdfSource(spec, "glsl", AUTHORED_SHAPE_BUDGET_GLSL_NAME, {
+        meshIndex: () => 23,
+      }),
     );
     wgslBytes = utf8Bytes(
-      shapeSdfSource(spec, "wgsl", AUTHORED_SHAPE_BUDGET_WGSL_NAME),
+      shapeSdfSource(spec, "wgsl", AUTHORED_SHAPE_BUDGET_WGSL_NAME, {
+        meshIndex: () => 23,
+      }),
     );
     sourceValid = true;
   } catch {

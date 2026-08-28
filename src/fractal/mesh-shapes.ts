@@ -37,7 +37,31 @@ export const MESH_ASSET_IDS = [
   "snowflake-prism-v1",
   "trefoil-knot-v1",
 ] as const;
-export type MeshAssetId = (typeof MESH_ASSET_IDS)[number];
+export type CatalogMeshAssetId = (typeof MESH_ASSET_IDS)[number];
+
+/** Content-addressed local asset reference. Geometry bytes live in the
+ * browser's asset store; the document carries only this stable digest. */
+export type CustomMeshAssetId = `mesh-sha256-${string}`;
+
+/** One mesh reference in ShapeSpec: bundled catalog id or local content id. */
+export type MeshAssetId = CatalogMeshAssetId | CustomMeshAssetId;
+
+export const CUSTOM_MESH_ASSET_ID_PATTERN = /^mesh-sha256-[0-9a-f]{64}$/;
+export const MAX_LOCAL_MESH_VERTICES = 25_000;
+export const MAX_LOCAL_MESH_TRIANGLES = 50_000;
+
+/** A syntactically valid document reference whose durable source has not
+ * passed the scene hydration barrier. Consumers must surface this instead of
+ * treating the authored shape as an unsupported optional emitter. */
+export class MissingMeshAssetError extends RangeError {
+  readonly meshId: CustomMeshAssetId;
+
+  constructor(meshId: CustomMeshAssetId) {
+    super(`missing local mesh asset: ${meshId}`);
+    this.name = "MissingMeshAssetError";
+    this.meshId = meshId;
+  }
+}
 
 /**
  * Version of the node-lattice encoding consumed by CPU and GPU samplers.
@@ -50,12 +74,30 @@ export const MESH_SDF_BAKE_VERSION = 1;
 export function isMeshAssetId(value: unknown): value is MeshAssetId {
   return (
     typeof value === "string" &&
+    ((MESH_ASSET_IDS as readonly string[]).includes(value) ||
+      CUSTOM_MESH_ASSET_ID_PATTERN.test(value))
+  );
+}
+
+export function isCatalogMeshAssetId(
+  value: unknown,
+): value is CatalogMeshAssetId {
+  return (
+    typeof value === "string" &&
     (MESH_ASSET_IDS as readonly string[]).includes(value)
   );
 }
 
+export function isCustomMeshAssetId(
+  value: unknown,
+): value is CustomMeshAssetId {
+  return typeof value === "string" && CUSTOM_MESH_ASSET_ID_PATTERN.test(value);
+}
+
 export interface PreparedMeshAsset {
   readonly id: MeshAssetId;
+  /** Local display label. It is metadata only and never enters the content id. */
+  readonly name?: string;
   /** Canonical local-space vertices. */
   readonly vertices: readonly Vec3[];
   /** Outward-oriented indexed triangles. */
@@ -86,6 +128,9 @@ export interface MeshSdfBake {
 
 export interface MeshSdfAtlasEntry {
   readonly meshId: MeshAssetId;
+  /** Dense scene-local selector emitted into shape shader source. */
+  readonly shaderIndex: number;
+  /** Stable bundled-catalog ordinal for diagnostics; -1 for local assets. */
   readonly catalogIndex: number;
   readonly zOffset: number;
   readonly resolution: number;
@@ -103,6 +148,28 @@ export interface MeshSdfAtlas {
   readonly depth: number;
   readonly values: Float32Array<ArrayBuffer>;
   readonly entries: readonly MeshSdfAtlasEntry[];
+}
+
+/** Structured-clone form installed into renderer workers exactly once. */
+export interface SerializedPreparedMeshAsset {
+  readonly id: CustomMeshAssetId;
+  readonly name: string;
+  readonly vertices: Float64Array<ArrayBuffer>;
+  readonly triangles: Uint32Array<ArrayBuffer>;
+}
+
+/** Structured-clone form of a derived conservative SDF bake. The source
+ * geometry remains authoritative; this payload may be discarded and rebuilt
+ * whenever its version or integrity checks fail. */
+export interface SerializedMeshSdfBake {
+  readonly meshId: CustomMeshAssetId;
+  readonly version: typeof MESH_SDF_BAKE_VERSION;
+  readonly resolution: number;
+  readonly values: Float32Array<ArrayBuffer>;
+  readonly min: Float64Array<ArrayBuffer>;
+  readonly max: Float64Array<ArrayBuffer>;
+  readonly cellSize: number;
+  readonly cellRadius: number;
 }
 
 // ---------------------------------------------------------------- catalog
@@ -507,6 +574,12 @@ const MESH_ACCELERATION = new WeakMap<
 
 const BVH_LEAF_TRIANGLES = 8;
 
+/** Deterministic denial-of-service guard for the self-intersection broad and
+ * narrow phases. A well-spaced production mesh visits only a small fraction
+ * of this; hostile meshes whose triangle boxes all overlap fail explicitly
+ * instead of falling back to an unbounded all-pairs scan. */
+export const MESH_VALIDATION_WORK_LIMIT = 500_000;
+
 function prepareTriangleGeometry(
   vertices: readonly Vec3[],
   triangles: readonly (readonly [number, number, number])[],
@@ -548,10 +621,9 @@ function triangleGeometry(
 
 /** Build a deterministic median-split BVH. Stable triangle-index tie breaks
  * make the tree and all query results independent of engine sort stability. */
-function buildMeshAcceleration(
-  mesh: PreparedMeshAsset,
+function buildTriangleAcceleration(
+  triangles: readonly PreparedTriangleGeometry[],
 ): PreparedMeshAcceleration {
-  const triangles = triangleGeometry(mesh);
   const order = Array.from({ length: triangles.length }, (_, i) => i);
   const nodes: MeshBvhNode[] = [];
 
@@ -638,6 +710,12 @@ function buildMeshAcceleration(
   };
 }
 
+function buildMeshAcceleration(
+  mesh: PreparedMeshAsset,
+): PreparedMeshAcceleration {
+  return buildTriangleAcceleration(triangleGeometry(mesh));
+}
+
 function meshAcceleration(mesh: PreparedMeshAsset): PreparedMeshAcceleration {
   let acceleration = MESH_ACCELERATION.get(mesh);
   if (!acceleration) {
@@ -647,17 +725,686 @@ function meshAcceleration(mesh: PreparedMeshAsset): PreparedMeshAcceleration {
   return acceleration;
 }
 
+interface MeshTopologyEdge {
+  count: number;
+  direction: number;
+  faces: number[];
+}
+
+function topologyEdgeKey(a: number, b: number): string {
+  return `${Math.min(a, b)}:${Math.max(a, b)}`;
+}
+
+/** Edge-manifoldness alone does not exclude two closed face fans meeting at
+ * one vertex. Walk each vertex's incident faces through the two edges that
+ * contain that vertex; a valid closed 2-manifold has exactly one fan. */
+function validateMeshVertexLinks(
+  triangles: readonly (readonly [number, number, number])[],
+  edges: ReadonlyMap<string, MeshTopologyEdge>,
+  vertexCount: number,
+): void {
+  const incidentFaces = Array.from(
+    { length: vertexCount },
+    () => [] as number[],
+  );
+  triangles.forEach((triangle, face) => {
+    incidentFaces[triangle[0]].push(face);
+    incidentFaces[triangle[1]].push(face);
+    incidentFaces[triangle[2]].push(face);
+  });
+  for (let vertex = 0; vertex < incidentFaces.length; vertex++) {
+    const incident = incidentFaces[vertex];
+    if (incident.length === 0) continue;
+    const incidentSet = new Set(incident);
+    const visited = new Set<number>();
+    const pending = [incident[0]];
+    while (pending.length > 0) {
+      const face = pending.pop()!;
+      if (visited.has(face)) continue;
+      visited.add(face);
+      const triangle = triangles[face];
+      const at = triangle.indexOf(vertex);
+      const before = triangle[(at + 2) % 3];
+      const after = triangle[(at + 1) % 3];
+      for (const neighbour of [before, after]) {
+        const edge = edges.get(topologyEdgeKey(vertex, neighbour));
+        if (!edge || edge.faces.length !== 2) continue;
+        const other = edge.faces[0] === face ? edge.faces[1] : edge.faces[0];
+        if (incidentSet.has(other) && !visited.has(other)) pending.push(other);
+      }
+    }
+    if (visited.size !== incident.length) {
+      throw new RangeError(
+        `mesh has a non-manifold bow-tie vertex link at vertex ${vertex}`,
+      );
+    }
+  }
+}
+
+function unionFindRoot(parents: Int32Array, index: number): number {
+  let root = index;
+  while (parents[root] !== root) root = parents[root];
+  let cursor = index;
+  while (parents[cursor] !== cursor) {
+    const next = parents[cursor];
+    parents[cursor] = root;
+    cursor = next;
+  }
+  return root;
+}
+
+function unionFindJoin(parents: Int32Array, a: number, b: number): void {
+  const rootA = unionFindRoot(parents, a);
+  const rootB = unionFindRoot(parents, b);
+  if (rootA === rootB) return;
+  if (rootA < rootB) parents[rootB] = rootA;
+  else parents[rootA] = rootB;
+}
+
+/** Check outward orientation independently for every edge-connected shell.
+ * The translated determinant avoids the catastrophic cancellation of an
+ * origin-based volume for a small mesh far from the origin; Neumaier's
+ * correction keeps a large triangle count from hiding a negative component. */
+function validateMeshComponentOrientation(
+  vertices: readonly Vec3[],
+  triangles: readonly (readonly [number, number, number])[],
+  edges: ReadonlyMap<string, MeshTopologyEdge>,
+): void {
+  const parents = Int32Array.from({ length: triangles.length }, (_, i) => i);
+  for (const edge of edges.values()) {
+    unionFindJoin(parents, edge.faces[0], edge.faces[1]);
+  }
+  const components = new Map<number, number[]>();
+  for (let face = 0; face < triangles.length; face++) {
+    const root = unionFindRoot(parents, face);
+    const component = components.get(root) ?? [];
+    component.push(face);
+    components.set(root, component);
+  }
+  let componentIndex = 0;
+  for (const faces of components.values()) {
+    const lo: Vec3 = [Infinity, Infinity, Infinity];
+    const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+    for (const face of faces) {
+      for (const vertexIndex of triangles[face]) {
+        const vertex = vertices[vertexIndex];
+        for (let axis = 0; axis < 3; axis++) {
+          lo[axis] = Math.min(lo[axis], vertex[axis]);
+          hi[axis] = Math.max(hi[axis], vertex[axis]);
+        }
+      }
+    }
+    const origin: Vec3 = [
+      (lo[0] + hi[0]) / 2,
+      (lo[1] + hi[1]) / 2,
+      (lo[2] + hi[2]) / 2,
+    ];
+    let sum = 0;
+    let correction = 0;
+    for (const face of faces) {
+      const triangle = triangles[face];
+      const a = vertices[triangle[0]];
+      const b = vertices[triangle[1]];
+      const c = vertices[triangle[2]];
+      const ax = a[0] - origin[0];
+      const ay = a[1] - origin[1];
+      const az = a[2] - origin[2];
+      const bx = b[0] - origin[0];
+      const by = b[1] - origin[1];
+      const bz = b[2] - origin[2];
+      const cx = c[0] - origin[0];
+      const cy = c[1] - origin[1];
+      const cz = c[2] - origin[2];
+      const term =
+        ax * (by * cz - bz * cy) +
+        ay * (bz * cx - bx * cz) +
+        az * (bx * cy - by * cx);
+      const next = sum + term;
+      correction +=
+        Math.abs(sum) >= Math.abs(term) ? sum - next + term : term - next + sum;
+      sum = next;
+    }
+    const span = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+    const tolerance = Math.max(
+      1e-12,
+      512 * Number.EPSILON * faces.length * span ** 3,
+    );
+    if (!(sum + correction > tolerance)) {
+      throw new RangeError(
+        `mesh component ${componentIndex} faces must have outward, positive orientation`,
+      );
+    }
+    componentIndex++;
+  }
+}
+
+type Point2 = readonly [number, number];
+
+function projectionAxis(normal: Vec3): number {
+  const magnitudes = normal.map(Math.abs);
+  let axis = 0;
+  if (magnitudes[1] > magnitudes[axis]) axis = 1;
+  if (magnitudes[2] > magnitudes[axis]) axis = 2;
+  return axis;
+}
+
+function projectPoint2(point: Vec3, droppedAxis: number): Point2 {
+  if (droppedAxis === 0) return [point[1], point[2]];
+  if (droppedAxis === 1) return [point[0], point[2]];
+  return [point[0], point[1]];
+}
+
+function orient2(a: Point2, b: Point2, c: Point2): number {
+  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+}
+
+function orient2Tolerance(a: Point2, b: Point2, epsilon: number): number {
+  return epsilon * Math.max(1, Math.hypot(b[0] - a[0], b[1] - a[1]));
+}
+
+function pointOnSegment2(
+  point: Point2,
+  a: Point2,
+  b: Point2,
+  epsilon: number,
+): boolean {
+  if (Math.abs(orient2(a, b, point)) > orient2Tolerance(a, b, epsilon)) {
+    return false;
+  }
+  return (
+    point[0] >= Math.min(a[0], b[0]) - epsilon &&
+    point[0] <= Math.max(a[0], b[0]) + epsilon &&
+    point[1] >= Math.min(a[1], b[1]) - epsilon &&
+    point[1] <= Math.max(a[1], b[1]) + epsilon
+  );
+}
+
+function segmentsContact2(
+  a: Point2,
+  b: Point2,
+  c: Point2,
+  d: Point2,
+  epsilon: number,
+): boolean {
+  const abTolerance = orient2Tolerance(a, b, epsilon);
+  const cdTolerance = orient2Tolerance(c, d, epsilon);
+  const abc = orient2(a, b, c);
+  const abd = orient2(a, b, d);
+  const cda = orient2(c, d, a);
+  const cdb = orient2(c, d, b);
+  if (
+    ((abc > abTolerance && abd < -abTolerance) ||
+      (abc < -abTolerance && abd > abTolerance)) &&
+    ((cda > cdTolerance && cdb < -cdTolerance) ||
+      (cda < -cdTolerance && cdb > cdTolerance))
+  ) {
+    return true;
+  }
+  return (
+    (Math.abs(abc) <= abTolerance && pointOnSegment2(c, a, b, epsilon)) ||
+    (Math.abs(abd) <= abTolerance && pointOnSegment2(d, a, b, epsilon)) ||
+    (Math.abs(cda) <= cdTolerance && pointOnSegment2(a, c, d, epsilon)) ||
+    (Math.abs(cdb) <= cdTolerance && pointOnSegment2(b, c, d, epsilon))
+  );
+}
+
+function validationPointInTriangle2(
+  point: Point2,
+  triangle: readonly [Point2, Point2, Point2],
+  epsilon: number,
+): boolean {
+  const o0 = orient2(triangle[0], triangle[1], point);
+  const o1 = orient2(triangle[1], triangle[2], point);
+  const o2 = orient2(triangle[2], triangle[0], point);
+  const t0 = orient2Tolerance(triangle[0], triangle[1], epsilon);
+  const t1 = orient2Tolerance(triangle[1], triangle[2], epsilon);
+  const t2 = orient2Tolerance(triangle[2], triangle[0], epsilon);
+  return (
+    (o0 >= -t0 && o1 >= -t1 && o2 >= -t2) || (o0 <= t0 && o1 <= t1 && o2 <= t2)
+  );
+}
+
+function triangleIsCoplanar(
+  a: readonly [Vec3, Vec3, Vec3],
+  b: readonly [Vec3, Vec3, Vec3],
+  epsilon: number,
+): { coplanar: boolean; normal: Vec3 } {
+  const normalA = triangleCross(a[0], a[1], a[2]);
+  const normalB = triangleCross(b[0], b[1], b[2]);
+  const lengthA = Math.hypot(...normalA);
+  const lengthB = Math.hypot(...normalB);
+  const normalCross: Vec3 = [
+    normalA[1] * normalB[2] - normalA[2] * normalB[1],
+    normalA[2] * normalB[0] - normalA[0] * normalB[2],
+    normalA[0] * normalB[1] - normalA[1] * normalB[0],
+  ];
+  if (Math.hypot(...normalCross) > 1e-11 * lengthA * lengthB) {
+    return { coplanar: false, normal: normalA };
+  }
+  const planeTolerance = epsilon * lengthA;
+  for (const point of b) {
+    const px = point[0] - a[0][0];
+    const py = point[1] - a[0][1];
+    const pz = point[2] - a[0][2];
+    if (
+      Math.abs(px * normalA[0] + py * normalA[1] + pz * normalA[2]) >
+      planeTolerance
+    ) {
+      return { coplanar: false, normal: normalA };
+    }
+  }
+  return { coplanar: true, normal: normalA };
+}
+
+const TRIANGLE_EDGES = [
+  [0, 1],
+  [1, 2],
+  [2, 0],
+] as const;
+
+function coplanarTrianglesContact(
+  a: readonly [Vec3, Vec3, Vec3],
+  b: readonly [Vec3, Vec3, Vec3],
+  normal: Vec3,
+  epsilon: number,
+): boolean {
+  const axis = projectionAxis(normal);
+  const pa = a.map((point) =>
+    projectPoint2(point, axis),
+  ) as unknown as readonly [Point2, Point2, Point2];
+  const pb = b.map((point) =>
+    projectPoint2(point, axis),
+  ) as unknown as readonly [Point2, Point2, Point2];
+  for (const [a0, a1] of TRIANGLE_EDGES) {
+    for (const [b0, b1] of TRIANGLE_EDGES) {
+      if (segmentsContact2(pa[a0], pa[a1], pb[b0], pb[b1], epsilon)) {
+        return true;
+      }
+    }
+  }
+  return (
+    validationPointInTriangle2(pa[0], pb, epsilon) ||
+    validationPointInTriangle2(pb[0], pa, epsilon)
+  );
+}
+
+function coplanarTrianglesOverlapBeyondVertex(
+  a: readonly [Vec3, Vec3, Vec3],
+  b: readonly [Vec3, Vec3, Vec3],
+  aIndices: readonly [number, number, number],
+  bIndices: readonly [number, number, number],
+  sharedVertex: number,
+  normal: Vec3,
+  epsilon: number,
+): boolean {
+  const axis = projectionAxis(normal);
+  const pa = a.map((point) =>
+    projectPoint2(point, axis),
+  ) as unknown as readonly [Point2, Point2, Point2];
+  const pb = b.map((point) =>
+    projectPoint2(point, axis),
+  ) as unknown as readonly [Point2, Point2, Point2];
+  for (const [a0, a1] of TRIANGLE_EDGES) {
+    for (const [b0, b1] of TRIANGLE_EDGES) {
+      const aHasShared =
+        aIndices[a0] === sharedVertex || aIndices[a1] === sharedVertex;
+      const bHasShared =
+        bIndices[b0] === sharedVertex || bIndices[b1] === sharedVertex;
+      if (aHasShared && bHasShared) {
+        const aOther = aIndices[a0] === sharedVertex ? pa[a1] : pa[a0];
+        const bOther = bIndices[b0] === sharedVertex ? pb[b1] : pb[b0];
+        const shared = aIndices[a0] === sharedVertex ? pa[a0] : pa[a1];
+        const av: Point2 = [aOther[0] - shared[0], aOther[1] - shared[1]];
+        const bv: Point2 = [bOther[0] - shared[0], bOther[1] - shared[1]];
+        const cross = av[0] * bv[1] - av[1] * bv[0];
+        const scale = Math.max(1, Math.hypot(...av), Math.hypot(...bv));
+        if (Math.abs(cross) <= epsilon * scale) {
+          // Collinear rays on the same side overlap for positive length;
+          // opposite rays meet at the authored shared vertex only.
+          if (av[0] * bv[0] + av[1] * bv[1] >= -epsilon * scale) return true;
+        }
+        continue;
+      }
+      if (segmentsContact2(pa[a0], pa[a1], pb[b0], pb[b1], epsilon)) {
+        return true;
+      }
+    }
+  }
+  for (let i = 0; i < 3; i++) {
+    if (
+      aIndices[i] !== sharedVertex &&
+      validationPointInTriangle2(pa[i], pb, epsilon)
+    ) {
+      return true;
+    }
+    if (
+      bIndices[i] !== sharedVertex &&
+      validationPointInTriangle2(pb[i], pa, epsilon)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function segmentTriangleContact(
+  start: Vec3,
+  end: Vec3,
+  triangle: readonly [Vec3, Vec3, Vec3],
+  epsilon: number,
+): boolean {
+  const normal = triangleCross(triangle[0], triangle[1], triangle[2]);
+  const normalLength = Math.hypot(...normal);
+  const signed = (point: Vec3): number =>
+    (point[0] - triangle[0][0]) * normal[0] +
+    (point[1] - triangle[0][1]) * normal[1] +
+    (point[2] - triangle[0][2]) * normal[2];
+  const startDistance = signed(start);
+  const endDistance = signed(end);
+  const planeTolerance = epsilon * normalLength;
+  const axis = projectionAxis(normal);
+  const projectedTriangle = triangle.map((point) =>
+    projectPoint2(point, axis),
+  ) as unknown as readonly [Point2, Point2, Point2];
+  if (
+    Math.abs(startDistance) <= planeTolerance &&
+    Math.abs(endDistance) <= planeTolerance
+  ) {
+    const a = projectPoint2(start, axis);
+    const b = projectPoint2(end, axis);
+    if (
+      validationPointInTriangle2(a, projectedTriangle, epsilon) ||
+      validationPointInTriangle2(b, projectedTriangle, epsilon)
+    ) {
+      return true;
+    }
+    return TRIANGLE_EDGES.some(([i, j]) =>
+      segmentsContact2(
+        a,
+        b,
+        projectedTriangle[i],
+        projectedTriangle[j],
+        epsilon,
+      ),
+    );
+  }
+  if (
+    (startDistance > planeTolerance && endDistance > planeTolerance) ||
+    (startDistance < -planeTolerance && endDistance < -planeTolerance)
+  ) {
+    return false;
+  }
+  const denominator = startDistance - endDistance;
+  if (denominator === 0) return false;
+  const t = startDistance / denominator;
+  const segmentLength = Math.hypot(
+    end[0] - start[0],
+    end[1] - start[1],
+    end[2] - start[2],
+  );
+  const parameterTolerance = epsilon / Math.max(segmentLength, epsilon);
+  if (t < -parameterTolerance || t > 1 + parameterTolerance) return false;
+  const point: Vec3 = [
+    start[0] + t * (end[0] - start[0]),
+    start[1] + t * (end[1] - start[1]),
+    start[2] + t * (end[2] - start[2]),
+  ];
+  return validationPointInTriangle2(
+    projectPoint2(point, axis),
+    projectedTriangle,
+    epsilon,
+  );
+}
+
+function trianglesOverlapBeyondTopology(
+  vertices: readonly Vec3[],
+  aIndices: readonly [number, number, number],
+  bIndices: readonly [number, number, number],
+  epsilon: number,
+): boolean {
+  const shared = aIndices.filter((index) => bIndices.includes(index));
+  if (shared.length === 3) return true;
+  const a = aIndices.map((index) => vertices[index]) as unknown as readonly [
+    Vec3,
+    Vec3,
+    Vec3,
+  ];
+  const b = bIndices.map((index) => vertices[index]) as unknown as readonly [
+    Vec3,
+    Vec3,
+    Vec3,
+  ];
+  const plane = triangleIsCoplanar(a, b, epsilon);
+  if (shared.length === 2) {
+    if (!plane.coplanar) return false;
+    const uniqueA = aIndices.find((index) => !shared.includes(index))!;
+    const uniqueB = bIndices.find((index) => !shared.includes(index))!;
+    const edgeA = vertices[shared[0]];
+    const edgeB = vertices[shared[1]];
+    const edge: Vec3 = [
+      edgeB[0] - edgeA[0],
+      edgeB[1] - edgeA[1],
+      edgeB[2] - edgeA[2],
+    ];
+    const side = (point: Vec3): Vec3 => {
+      const w: Vec3 = [
+        point[0] - edgeA[0],
+        point[1] - edgeA[1],
+        point[2] - edgeA[2],
+      ];
+      return [
+        edge[1] * w[2] - edge[2] * w[1],
+        edge[2] * w[0] - edge[0] * w[2],
+        edge[0] * w[1] - edge[1] * w[0],
+      ];
+    };
+    const sideA = side(vertices[uniqueA]);
+    const sideB = side(vertices[uniqueB]);
+    const dot = sideA[0] * sideB[0] + sideA[1] * sideB[1] + sideA[2] * sideB[2];
+    const tolerance =
+      epsilon *
+      Math.hypot(...edge) *
+      Math.max(1, Math.hypot(...sideA) + Math.hypot(...sideB));
+    return dot >= -tolerance;
+  }
+  if (plane.coplanar) {
+    return shared.length === 1
+      ? coplanarTrianglesOverlapBeyondVertex(
+          a,
+          b,
+          aIndices,
+          bIndices,
+          shared[0],
+          plane.normal,
+          epsilon,
+        )
+      : coplanarTrianglesContact(a, b, plane.normal, epsilon);
+  }
+  if (shared.length === 1) {
+    const oppositeA = aIndices.filter((index) => index !== shared[0]);
+    const oppositeB = bIndices.filter((index) => index !== shared[0]);
+    return (
+      segmentTriangleContact(
+        vertices[oppositeA[0]],
+        vertices[oppositeA[1]],
+        b,
+        epsilon,
+      ) ||
+      segmentTriangleContact(
+        vertices[oppositeB[0]],
+        vertices[oppositeB[1]],
+        a,
+        epsilon,
+      )
+    );
+  }
+  for (const [i, j] of TRIANGLE_EDGES) {
+    if (segmentTriangleContact(a[i], a[j], b, epsilon)) return true;
+    if (segmentTriangleContact(b[i], b[j], a, epsilon)) return true;
+  }
+  return false;
+}
+
+function bvhBoundsOverlap(
+  a: Pick<MeshBvhNode, "minX" | "minY" | "minZ" | "maxX" | "maxY" | "maxZ">,
+  b: Pick<MeshBvhNode, "minX" | "minY" | "minZ" | "maxX" | "maxY" | "maxZ">,
+  epsilon: number,
+): boolean {
+  return !(
+    a.maxX < b.minX - epsilon ||
+    b.maxX < a.minX - epsilon ||
+    a.maxY < b.minY - epsilon ||
+    b.maxY < a.minY - epsilon ||
+    a.maxZ < b.minZ - epsilon ||
+    b.maxZ < a.minZ - epsilon
+  );
+}
+
+function triangleBounds(
+  triangle: PreparedTriangleGeometry,
+): Pick<MeshBvhNode, "minX" | "minY" | "minZ" | "maxX" | "maxY" | "maxZ"> {
+  return {
+    minX: Math.min(triangle.ax, triangle.bx, triangle.cx),
+    minY: Math.min(triangle.ay, triangle.by, triangle.cy),
+    minZ: Math.min(triangle.az, triangle.bz, triangle.cz),
+    maxX: Math.max(triangle.ax, triangle.bx, triangle.cx),
+    maxY: Math.max(triangle.ay, triangle.by, triangle.cy),
+    maxZ: Math.max(triangle.az, triangle.bz, triangle.cz),
+  };
+}
+
+/** Traverse unique overlapping BVH node pairs. The root's self-pair expands
+ * as LL/LR/RR, so no triangle pair is revisited and no O(T^2) pair array is
+ * allocated. Returns the already-built acceleration for the query cache. */
+function validateMeshSelfIntersections(
+  vertices: readonly Vec3[],
+  triangles: readonly (readonly [number, number, number])[],
+  epsilon: number,
+): PreparedMeshAcceleration {
+  const acceleration = buildTriangleAcceleration(
+    prepareTriangleGeometry(vertices, triangles),
+  );
+  const triangleAabbs = acceleration.triangles.map(triangleBounds);
+  const pending: [number, number][] = [[0, 0]];
+  let work = 0;
+  const spend = (): void => {
+    work++;
+    if (work > MESH_VALIDATION_WORK_LIMIT) {
+      throw new RangeError(
+        `mesh self-intersection validation exceeded its ${MESH_VALIDATION_WORK_LIMIT} work-item limit`,
+      );
+    }
+  };
+  while (pending.length > 0) {
+    const [aIndex, bIndex] = pending.pop()!;
+    const aNode = acceleration.nodes[aIndex];
+    const bNode = acceleration.nodes[bIndex];
+    spend();
+    if (!bvhBoundsOverlap(aNode, bNode, epsilon)) continue;
+    if (aIndex === bIndex) {
+      if (aNode.left >= 0) {
+        pending.push(
+          [aNode.left, aNode.left],
+          [aNode.left, aNode.right],
+          [aNode.right, aNode.right],
+        );
+        continue;
+      }
+      for (let aPos = aNode.start; aPos < aNode.end; aPos++) {
+        for (let bPos = aPos + 1; bPos < aNode.end; bPos++) {
+          const aTriangle = acceleration.triangleOrder[aPos];
+          const bTriangle = acceleration.triangleOrder[bPos];
+          if (
+            !bvhBoundsOverlap(
+              triangleAabbs[aTriangle],
+              triangleAabbs[bTriangle],
+              epsilon,
+            )
+          ) {
+            continue;
+          }
+          spend();
+          if (
+            trianglesOverlapBeyondTopology(
+              vertices,
+              triangles[aTriangle],
+              triangles[bTriangle],
+              epsilon,
+            )
+          ) {
+            throw new RangeError(
+              `mesh triangles ${aTriangle} and ${bTriangle} self-intersect or touch beyond shared topology`,
+            );
+          }
+        }
+      }
+      continue;
+    }
+    if (aNode.left >= 0 && bNode.left >= 0) {
+      pending.push(
+        [aNode.left, bNode.left],
+        [aNode.left, bNode.right],
+        [aNode.right, bNode.left],
+        [aNode.right, bNode.right],
+      );
+      continue;
+    }
+    if (aNode.left >= 0) {
+      pending.push([aNode.left, bIndex], [aNode.right, bIndex]);
+      continue;
+    }
+    if (bNode.left >= 0) {
+      pending.push([aIndex, bNode.left], [aIndex, bNode.right]);
+      continue;
+    }
+    for (let aPos = aNode.start; aPos < aNode.end; aPos++) {
+      for (let bPos = bNode.start; bPos < bNode.end; bPos++) {
+        const aTriangle = acceleration.triangleOrder[aPos];
+        const bTriangle = acceleration.triangleOrder[bPos];
+        if (
+          !bvhBoundsOverlap(
+            triangleAabbs[aTriangle],
+            triangleAabbs[bTriangle],
+            epsilon,
+          )
+        ) {
+          continue;
+        }
+        spend();
+        if (
+          trianglesOverlapBeyondTopology(
+            vertices,
+            triangles[aTriangle],
+            triangles[bTriangle],
+            epsilon,
+          )
+        ) {
+          throw new RangeError(
+            `mesh triangles ${aTriangle} and ${bTriangle} self-intersect or touch beyond shared topology`,
+          );
+        }
+      }
+    }
+  }
+  return acceleration;
+}
+
 /**
  * Validate and prepare indexed geometry.  Exported for ingestion tests; the
  * production path calls it only while constructing the built-in catalog.
  */
-export function ingestMeshAsset(
+function prepareMeshAsset(
   id: MeshAssetId,
   inputVertices: readonly Vec3[],
   inputTriangles: readonly (readonly [number, number, number])[],
+  name: string | undefined,
+  validateIntersections: boolean,
 ): PreparedMeshAsset {
   if (!isMeshAssetId(id))
-    throw new RangeError(`unknown mesh asset id: ${String(id)}`);
+    throw new RangeError(`invalid mesh asset id: ${String(id)}`);
+  if (name !== undefined && (name.trim().length < 1 || name.length > 160)) {
+    throw new RangeError("mesh asset name must contain 1..160 characters");
+  }
   if (inputVertices.length < 4) {
     throw new RangeError("mesh asset needs at least four vertices");
   }
@@ -674,11 +1421,28 @@ export function ingestMeshAsset(
       throw new RangeError("mesh asset contains a non-finite vertex");
     }
   }
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  let radius = 0;
+  let coordinateMagnitude = 0;
+  for (const v of vertices) {
+    for (let axis = 0; axis < 3; axis++) {
+      min[axis] = Math.min(min[axis], v[axis]);
+      max[axis] = Math.max(max[axis], v[axis]);
+      coordinateMagnitude = Math.max(coordinateMagnitude, Math.abs(v[axis]));
+    }
+    radius = Math.max(radius, Math.hypot(v[0], v[1], v[2]));
+  }
+  const center: Vec3 = [
+    (min[0] + max[0]) / 2,
+    (min[1] + max[1]) / 2,
+    (min[2] + max[2]) / 2,
+  ];
   const triangles = freezeTriangles(inputTriangles);
   const cumulative = new Array<number>(triangles.length);
-  const edges = new Map<string, { count: number; direction: number }>();
+  const edges = new Map<string, MeshTopologyEdge>();
+  const triangleKeys = new Set<string>();
   let totalArea = 0;
-  let signedVolume6 = 0;
   for (let i = 0; i < triangles.length; i++) {
     const tri = triangles[i];
     const [ia, ib, ic] = tri;
@@ -690,6 +1454,13 @@ export function ingestMeshAsset(
     if (ia === ib || ib === ic || ic === ia) {
       throw new RangeError(`mesh triangle ${i} repeats a vertex`);
     }
+    const triangleKey = [...tri].sort((a, b) => a - b).join(":");
+    if (triangleKeys.has(triangleKey)) {
+      throw new RangeError(
+        `mesh triangle ${i} duplicates an existing triangle, including reversed winding`,
+      );
+    }
+    triangleKeys.add(triangleKey);
     const a = vertices[ia];
     const b = vertices[ib];
     const c = vertices[ic];
@@ -700,10 +1471,6 @@ export function ingestMeshAsset(
     }
     totalArea += twiceArea / 2;
     cumulative[i] = totalArea;
-    signedVolume6 +=
-      a[0] * (b[1] * c[2] - b[2] * c[1]) +
-      a[1] * (b[2] * c[0] - b[0] * c[2]) +
-      a[2] * (b[0] * c[1] - b[1] * c[0]);
     for (const [from, to] of [
       [ia, ib],
       [ib, ic],
@@ -712,9 +1479,10 @@ export function ingestMeshAsset(
       const lo = Math.min(from, to);
       const hi = Math.max(from, to);
       const key = `${lo}:${hi}`;
-      const edge = edges.get(key) ?? { count: 0, direction: 0 };
+      const edge = edges.get(key) ?? { count: 0, direction: 0, faces: [] };
       edge.count++;
       edge.direction += from === lo ? 1 : -1;
+      edge.faces.push(i);
       edges.set(key, edge);
     }
   }
@@ -726,31 +1494,27 @@ export function ingestMeshAsset(
       throw new RangeError(`mesh orientation disagrees at edge ${key}`);
     }
   }
-  if (!(signedVolume6 > 1e-12)) {
-    throw new RangeError("mesh faces must have outward, positive orientation");
-  }
-
-  const min: Vec3 = [Infinity, Infinity, Infinity];
-  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
-  let radius = 0;
-  for (const v of vertices) {
-    for (let axis = 0; axis < 3; axis++) {
-      min[axis] = Math.min(min[axis], v[axis]);
-      max[axis] = Math.max(max[axis], v[axis]);
-    }
-    radius = Math.max(radius, Math.hypot(v[0], v[1], v[2]));
-  }
-  const center: Vec3 = [
-    (min[0] + max[0]) / 2,
-    (min[1] + max[1]) / 2,
-    (min[2] + max[2]) / 2,
-  ];
+  validateMeshVertexLinks(triangles, edges, vertices.length);
+  validateMeshComponentOrientation(vertices, triangles, edges);
+  const diagonal = Math.hypot(
+    max[0] - min[0],
+    max[1] - min[1],
+    max[2] - min[2],
+  );
+  const intersectionEpsilon = Math.max(
+    1e-12 * Math.max(1, diagonal),
+    64 * Number.EPSILON * Math.max(1, coordinateMagnitude),
+  );
+  const validationAcceleration = validateIntersections
+    ? validateMeshSelfIntersections(vertices, triangles, intersectionEpsilon)
+    : null;
   Object.freeze(cumulative);
   Object.freeze(min);
   Object.freeze(max);
   Object.freeze(center);
   const prepared: PreparedMeshAsset = {
     id,
+    ...(name === undefined ? {} : { name: name.trim() }),
     vertices,
     triangles,
     triangleCumulativeAreas: cumulative,
@@ -764,25 +1528,44 @@ export function ingestMeshAsset(
   };
   Object.freeze(prepared.bounds);
   Object.freeze(prepared);
-  TRIANGLE_GEOMETRY.set(
-    prepared,
-    prepareTriangleGeometry(prepared.vertices, prepared.triangles),
-  );
+  if (validationAcceleration) {
+    TRIANGLE_GEOMETRY.set(prepared, validationAcceleration.triangles);
+    MESH_ACCELERATION.set(prepared, validationAcceleration);
+  } else {
+    TRIANGLE_GEOMETRY.set(
+      prepared,
+      prepareTriangleGeometry(prepared.vertices, prepared.triangles),
+    );
+  }
   return prepared;
 }
 
-function prepareCatalogAsset(
+/** Validate untrusted indexed geometry completely, including bounded BVH
+ * self-intersection detection, then derive the immutable shared sampler/SDF
+ * source. Bundled factories use the same topology/orientation preparation but
+ * skip that expensive final proof: their fixed geometry has independent
+ * clearance fixtures and keeping its historical lazy-BVH startup matters. */
+export function ingestMeshAsset(
   id: MeshAssetId,
+  inputVertices: readonly Vec3[],
+  inputTriangles: readonly (readonly [number, number, number])[],
+  name?: string,
+): PreparedMeshAsset {
+  return prepareMeshAsset(id, inputVertices, inputTriangles, name, true);
+}
+
+function prepareCatalogAsset(
+  id: CatalogMeshAssetId,
   factory: () => {
     vertices: Vec3[];
     triangles: [number, number, number][];
   },
 ): PreparedMeshAsset {
   const raw = factory();
-  return ingestMeshAsset(id, raw.vertices, raw.triangles);
+  return prepareMeshAsset(id, raw.vertices, raw.triangles, undefined, false);
 }
 
-const CATALOG_FACTORIES: Record<MeshAssetId, () => PreparedMeshAsset> = {
+const CATALOG_FACTORIES: Record<CatalogMeshAssetId, () => PreparedMeshAsset> = {
   "star-prism-v1": () => prepareCatalogAsset("star-prism-v1", starPrismRaw),
   "faceted-crystal-v1": () =>
     prepareCatalogAsset("faceted-crystal-v1", facetedCrystalRaw),
@@ -794,11 +1577,20 @@ const CATALOG_FACTORIES: Record<MeshAssetId, () => PreparedMeshAsset> = {
   "trefoil-knot-v1": () =>
     prepareCatalogAsset("trefoil-knot-v1", trefoilKnotRaw),
 };
-const CATALOG = new Map<MeshAssetId, PreparedMeshAsset>();
+const CATALOG = new Map<CatalogMeshAssetId, PreparedMeshAsset>();
+const CUSTOM_ASSETS = new Map<CustomMeshAssetId, PreparedMeshAsset>();
 
 export function meshAsset(id: MeshAssetId): PreparedMeshAsset {
-  if (!isMeshAssetId(id))
-    throw new RangeError(`unknown mesh asset id: ${String(id)}`);
+  if (isCustomMeshAssetId(id)) {
+    const custom = CUSTOM_ASSETS.get(id);
+    if (!custom) {
+      throw new MissingMeshAssetError(id);
+    }
+    return custom;
+  }
+  if (!isCatalogMeshAssetId(id)) {
+    throw new RangeError(`invalid mesh asset id: ${String(id)}`);
+  }
   let asset = CATALOG.get(id);
   if (!asset) {
     asset = CATALOG_FACTORIES[id]();
@@ -807,13 +1599,171 @@ export function meshAsset(id: MeshAssetId): PreparedMeshAsset {
   return asset;
 }
 
-export function meshAssetCatalogIndex(id: MeshAssetId): number {
-  if (!isMeshAssetId(id))
+/** Whether a syntactically valid mesh reference resolves in this runtime. */
+export function hasMeshAsset(id: MeshAssetId): boolean {
+  return isCatalogMeshAssetId(id) || CUSTOM_ASSETS.has(id);
+}
+
+/** Install one fully validated local asset in the current JS realm. Workers
+ * have independent module registries and receive the serialized form below. */
+export function installCustomMeshAsset(
+  asset: PreparedMeshAsset,
+): PreparedMeshAsset {
+  if (!isCustomMeshAssetId(asset.id)) {
+    throw new RangeError(
+      "only content-addressed local meshes can be installed",
+    );
+  }
+  const existing = CUSTOM_ASSETS.get(asset.id);
+  if (existing) return existing;
+  CUSTOM_ASSETS.set(asset.id, asset);
+  return asset;
+}
+
+/** Remove one local runtime asset. Durable deletion belongs to the asset
+ * store; this is also the explicit test/session cleanup seam. */
+export function uninstallCustomMeshAsset(id: CustomMeshAssetId): void {
+  CUSTOM_ASSETS.delete(id);
+}
+
+export function serializeCustomMeshAsset(
+  id: CustomMeshAssetId,
+): SerializedPreparedMeshAsset {
+  const asset = meshAsset(id);
+  return serializePreparedCustomMeshAsset(asset);
+}
+
+/** Copy one prepared custom mesh into an independently owned transfer wire. */
+export function serializePreparedCustomMeshAsset(
+  asset: PreparedMeshAsset,
+): SerializedPreparedMeshAsset {
+  if (!isCustomMeshAssetId(asset.id)) {
+    throw new RangeError("only local meshes have transferable source wires");
+  }
+  const vertices = new Float64Array(asset.vertices.length * 3);
+  asset.vertices.forEach((vertex, index) => {
+    vertices.set(vertex, index * 3);
+  });
+  const triangles = new Uint32Array(asset.triangles.length * 3);
+  asset.triangles.forEach((triangle, index) => {
+    triangles.set(triangle, index * 3);
+  });
+  return {
+    id: asset.id,
+    name: asset.name ?? "Imported mesh",
+    vertices,
+    triangles,
+  };
+}
+
+/** Revalidate structured-cloned source geometry before installing it in a
+ * worker. This refuses partial/corrupt messages atomically. */
+export function installSerializedCustomMeshAsset(
+  serialized: SerializedPreparedMeshAsset,
+): PreparedMeshAsset {
+  const existing = isCustomMeshAssetId(serialized?.id)
+    ? CUSTOM_ASSETS.get(serialized.id)
+    : undefined;
+  if (existing) {
+    if (
+      !(serialized.vertices instanceof Float64Array) ||
+      serialized.vertices.length !== existing.vertices.length * 3 ||
+      !(serialized.triangles instanceof Uint32Array) ||
+      serialized.triangles.length !== existing.triangles.length * 3
+    ) {
+      throw new RangeError("serialized mesh arrays are malformed");
+    }
+    for (let index = 0; index < existing.vertices.length; index += 1) {
+      const vertex = existing.vertices[index];
+      if (
+        !Object.is(serialized.vertices[index * 3], vertex[0]) ||
+        !Object.is(serialized.vertices[index * 3 + 1], vertex[1]) ||
+        !Object.is(serialized.vertices[index * 3 + 2], vertex[2])
+      ) {
+        throw new RangeError("serialized mesh conflicts with installed source");
+      }
+    }
+    for (let index = 0; index < existing.triangles.length; index += 1) {
+      const triangle = existing.triangles[index];
+      if (
+        serialized.triangles[index * 3] !== triangle[0] ||
+        serialized.triangles[index * 3 + 1] !== triangle[1] ||
+        serialized.triangles[index * 3 + 2] !== triangle[2]
+      ) {
+        throw new RangeError("serialized mesh conflicts with installed source");
+      }
+    }
+    return existing;
+  }
+  return installCustomMeshAsset(prepareSerializedCustomMeshAsset(serialized));
+}
+
+/** Revalidate a source wire without mutating the runtime registry. Scene
+ * hydration uses this to stage every dependency before an atomic install. */
+export function prepareSerializedCustomMeshAsset(
+  serialized: SerializedPreparedMeshAsset,
+): PreparedMeshAsset {
+  return prepareSerializedCustomMeshAssetWithMode(serialized, true);
+}
+
+/** Reconstruct a source already fully validated in the dedicated mesh worker.
+ * Topology/measure preparation still runs, but the expensive BVH pair proof
+ * does not block the main thread a second time. */
+export function prepareWorkerValidatedCustomMeshAsset(
+  serialized: SerializedPreparedMeshAsset,
+): PreparedMeshAsset {
+  return prepareSerializedCustomMeshAssetWithMode(serialized, false);
+}
+
+function prepareSerializedCustomMeshAssetWithMode(
+  serialized: SerializedPreparedMeshAsset,
+  validateIntersections: boolean,
+): PreparedMeshAsset {
+  if (!isCustomMeshAssetId(serialized?.id)) {
+    throw new RangeError("serialized mesh has an invalid content id");
+  }
+  if (
+    !(serialized.vertices instanceof Float64Array) ||
+    serialized.vertices.length % 3 !== 0 ||
+    serialized.vertices.length / 3 > MAX_LOCAL_MESH_VERTICES ||
+    !(serialized.triangles instanceof Uint32Array) ||
+    serialized.triangles.length % 3 !== 0 ||
+    serialized.triangles.length / 3 > MAX_LOCAL_MESH_TRIANGLES
+  ) {
+    throw new RangeError("serialized mesh arrays are malformed");
+  }
+  const vertices: Vec3[] = [];
+  for (let index = 0; index < serialized.vertices.length; index += 3) {
+    vertices.push([
+      serialized.vertices[index],
+      serialized.vertices[index + 1],
+      serialized.vertices[index + 2],
+    ]);
+  }
+  const triangles: [number, number, number][] = [];
+  for (let index = 0; index < serialized.triangles.length; index += 3) {
+    triangles.push([
+      serialized.triangles[index],
+      serialized.triangles[index + 1],
+      serialized.triangles[index + 2],
+    ]);
+  }
+  return prepareMeshAsset(
+    serialized.id,
+    vertices,
+    triangles,
+    serialized.name,
+    validateIntersections,
+  );
+}
+
+export function meshAssetCatalogIndex(id: CatalogMeshAssetId): number {
+  if (!isCatalogMeshAssetId(id))
     throw new RangeError(`unknown mesh asset id: ${String(id)}`);
   return MESH_ASSET_IDS.indexOf(id);
 }
 
-export function meshAssetIdAtCatalogIndex(index: number): MeshAssetId {
+export function meshAssetIdAtCatalogIndex(index: number): CatalogMeshAssetId {
   const id = MESH_ASSET_IDS[index];
   if (id === undefined)
     throw new RangeError(`unknown mesh catalog index: ${index}`);
@@ -1184,6 +2134,33 @@ export function floorMeshValueToF32(value: number): number {
 
 const BAKE_CACHE = new WeakMap<PreparedMeshAsset, Map<string, MeshSdfBake>>();
 
+function meshBakeGeometry(
+  mesh: PreparedMeshAsset,
+  resolution: number,
+): {
+  min: Vec3;
+  max: Vec3;
+  cellSize: number;
+  cellRadius: number;
+} {
+  const sourceSpan = Math.max(
+    mesh.bounds.max[0] - mesh.bounds.min[0],
+    mesh.bounds.max[1] - mesh.bounds.min[1],
+    mesh.bounds.max[2] - mesh.bounds.min[2],
+  );
+  // Exactly two lattice spacings of padding on each side.
+  const span = (sourceSpan * (resolution - 1)) / (resolution - 5);
+  const cellSize = span / (resolution - 1);
+  const cellRadius = (Math.sqrt(3) * cellSize) / 2;
+  const min: Vec3 = [
+    mesh.bounds.center[0] - span / 2,
+    mesh.bounds.center[1] - span / 2,
+    mesh.bounds.center[2] - span / 2,
+  ];
+  const max: Vec3 = [min[0] + span, min[1] + span, min[2] + span];
+  return { min, max, cellSize, cellRadius };
+}
+
 /** Bake one prepared object, preserving sampler/SDF geometry identity. */
 export function bakePreparedMeshSdf(
   mesh: PreparedMeshAsset,
@@ -1200,21 +2177,7 @@ export function bakePreparedMeshSdf(
   const key = `${MESH_SDF_BAKE_VERSION}:${resolution}`;
   const cached = meshCache.get(key);
   if (cached) return cached;
-  const sourceSpan = Math.max(
-    mesh.bounds.max[0] - mesh.bounds.min[0],
-    mesh.bounds.max[1] - mesh.bounds.min[1],
-    mesh.bounds.max[2] - mesh.bounds.min[2],
-  );
-  // Exactly two lattice spacings of padding on each side.
-  const span = (sourceSpan * (resolution - 1)) / (resolution - 5);
-  const cellSize = span / (resolution - 1);
-  const cellRadius = (Math.sqrt(3) * cellSize) / 2;
-  const min: Vec3 = [
-    mesh.bounds.center[0] - span / 2,
-    mesh.bounds.center[1] - span / 2,
-    mesh.bounds.center[2] - span / 2,
-  ];
-  const max: Vec3 = [min[0] + span, min[1] + span, min[2] + span];
+  const { min, max, cellSize, cellRadius } = meshBakeGeometry(mesh, resolution);
   Object.freeze(min);
   Object.freeze(max);
   const values = new Float32Array(resolution ** 3);
@@ -1250,6 +2213,120 @@ export function bakePreparedMeshSdf(
     cellRadius,
   };
   Object.freeze(bake);
+  meshCache.set(key, bake);
+  return bake;
+}
+
+/** Copy a derived bake into an independently owned transfer/storage wire. */
+export function serializeMeshSdfBake(bake: MeshSdfBake): SerializedMeshSdfBake {
+  if (!isCustomMeshAssetId(bake.mesh.id)) {
+    throw new RangeError("only local mesh bakes are transferable");
+  }
+  return {
+    meshId: bake.mesh.id,
+    version: bake.version,
+    resolution: bake.resolution,
+    values: new Float32Array(bake.values),
+    min: Float64Array.from(bake.min),
+    max: Float64Array.from(bake.max),
+    cellSize: bake.cellSize,
+    cellRadius: bake.cellRadius,
+  };
+}
+
+function sameFiniteNumber(actual: number, expected: number): boolean {
+  return Number.isFinite(actual) && Object.is(actual, expected);
+}
+
+/** Validate and install a structured-cloned derived bake for an already
+ * installed source mesh. No cache entry becomes visible until every field has
+ * passed validation, and all mutable arrays are copied before installation. */
+export function installSerializedMeshSdfBake(
+  serialized: SerializedMeshSdfBake,
+): MeshSdfBake {
+  const mesh = meshAsset(serialized?.meshId);
+  const prepared = prepareSerializedMeshSdfBake(serialized, mesh);
+  return installPreparedMeshSdfBake(prepared);
+}
+
+/** Validate a bake wire against a staged source without mutating caches. */
+export function prepareSerializedMeshSdfBake(
+  serialized: SerializedMeshSdfBake,
+  mesh: PreparedMeshAsset,
+): MeshSdfBake {
+  if (!isCustomMeshAssetId(serialized?.meshId)) {
+    throw new RangeError("serialized mesh bake has an invalid content id");
+  }
+  if (serialized.version !== MESH_SDF_BAKE_VERSION) {
+    throw new RangeError("serialized mesh bake has an unsupported version");
+  }
+  const { resolution } = serialized;
+  if (!Number.isInteger(resolution) || resolution < 8 || resolution > 128) {
+    throw new RangeError("serialized mesh bake has an invalid resolution");
+  }
+  if (
+    !(serialized.values instanceof Float32Array) ||
+    serialized.values.length !== resolution ** 3 ||
+    !(serialized.min instanceof Float64Array) ||
+    serialized.min.length !== 3 ||
+    !(serialized.max instanceof Float64Array) ||
+    serialized.max.length !== 3
+  ) {
+    throw new RangeError("serialized mesh bake arrays are malformed");
+  }
+  for (const value of serialized.values) {
+    if (!Number.isFinite(value)) {
+      throw new RangeError("serialized mesh bake contains a non-finite value");
+    }
+  }
+  if (mesh.id !== serialized.meshId) {
+    throw new RangeError("serialized mesh bake belongs to another source");
+  }
+  const expected = meshBakeGeometry(mesh, resolution);
+  if (
+    !sameFiniteNumber(serialized.cellSize, expected.cellSize) ||
+    !sameFiniteNumber(serialized.cellRadius, expected.cellRadius) ||
+    expected.min.some(
+      (value, axis) => !sameFiniteNumber(serialized.min[axis], value),
+    ) ||
+    expected.max.some(
+      (value, axis) => !sameFiniteNumber(serialized.max[axis], value),
+    )
+  ) {
+    throw new RangeError("serialized mesh bake metadata disagrees with source");
+  }
+  const min = Object.freeze([...expected.min]) as Vec3;
+  const max = Object.freeze([...expected.max]) as Vec3;
+  const bake: MeshSdfBake = Object.freeze({
+    version: MESH_SDF_BAKE_VERSION,
+    mesh,
+    resolution,
+    values: new Float32Array(serialized.values),
+    min,
+    max,
+    cellSize: expected.cellSize,
+    cellRadius: expected.cellRadius,
+  });
+  return bake;
+}
+
+/** Install one already validated derived bake for an installed source. */
+export function installPreparedMeshSdfBake(bake: MeshSdfBake): MeshSdfBake {
+  if (!isCustomMeshAssetId(bake.mesh.id)) {
+    throw new RangeError("only local mesh bakes can be installed");
+  }
+  if (meshAsset(bake.mesh.id) !== bake.mesh) {
+    throw new RangeError("mesh bake source is not installed in this runtime");
+  }
+  const mesh = bake.mesh;
+  let meshCache = BAKE_CACHE.get(mesh);
+  if (!meshCache) {
+    meshCache = new Map<string, MeshSdfBake>();
+    BAKE_CACHE.set(mesh, meshCache);
+  }
+  const key = `${MESH_SDF_BAKE_VERSION}:${bake.resolution}`;
+  const existing = meshCache.get(key);
+  if (existing) return existing;
   meshCache.set(key, bake);
   return bake;
 }
@@ -1319,7 +2396,10 @@ export function meshSdfAtlas(
     values.set(bake.values, slabIndex * resolution ** 3);
     return Object.freeze({
       meshId: bake.mesh.id,
-      catalogIndex: meshAssetCatalogIndex(bake.mesh.id),
+      shaderIndex: slabIndex,
+      catalogIndex: isCatalogMeshAssetId(bake.mesh.id)
+        ? meshAssetCatalogIndex(bake.mesh.id)
+        : -1,
       zOffset: slabIndex * resolution,
       resolution,
       min: bake.min,

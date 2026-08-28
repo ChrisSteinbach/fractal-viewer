@@ -29,9 +29,13 @@ import type { Mat4 } from "./flame";
 import { mulberry32 } from "./rng";
 import {
   MESH_ASSET_IDS,
+  ingestMeshAsset,
+  installCustomMeshAsset,
   meshAsset,
   meshAssetCatalogIndex,
   meshAssetIdAtCatalogIndex,
+  uninstallCustomMeshAsset,
+  type CustomMeshAssetId,
   type MeshAssetId,
 } from "./mesh-shapes";
 import { VARIATION_TYPES } from "./types";
@@ -72,6 +76,29 @@ function expectedMeshTriangleTable(meshId: MeshAssetId): number[] {
       ),
     ),
   ];
+}
+
+const CUSTOM_TETRA_ID_4D: CustomMeshAssetId = `mesh-sha256-${"b".repeat(64)}`;
+
+function installCustomTetra4d(): void {
+  installCustomMeshAsset(
+    ingestMeshAsset(
+      CUSTOM_TETRA_ID_4D,
+      [
+        [0, 0, 0],
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+      ],
+      [
+        [0, 2, 1],
+        [0, 1, 3],
+        [0, 3, 2],
+        [1, 2, 3],
+      ],
+      "GPU 4D table test tetra",
+    ),
+  );
 }
 
 function makeTransforms4(count: number): Transform4[] {
@@ -383,6 +410,7 @@ describe("packGpuSystem4 shape emitters", () => {
   const EMITTER_PART_COUNT = 97;
   const EMITTER_FALLBACK_PART = 99;
   const EMITTER_PARTS = 100;
+  const EP_STRIDE = 24;
   const EP_KIND_PARAMS0 = 0;
   const EP_PARAMS1 = 4;
   const EP_ROT0 = 12;
@@ -532,6 +560,57 @@ describe("packGpuSystem4 shape emitters", () => {
       expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("case 5u: { // mesh:");
     },
   );
+
+  it("resolves a custom mesh and reuses one content table across 4D parts, transforms, and symmetry copies", () => {
+    installCustomTetra4d();
+    try {
+      const repeated: ShapeSpec = {
+        parts: [
+          {
+            primitive: { kind: "mesh", meshId: CUSTOM_TETRA_ID_4D },
+            combine: "union",
+          },
+          {
+            primitive: { kind: "mesh", meshId: CUSTOM_TETRA_ID_4D },
+            combine: "union",
+            pose: { offset: [0.25, 0, 0] },
+          },
+        ],
+      };
+      const packed = packGpuSystem4(
+        baseSpec4({
+          transforms4: [
+            transform4WithEmitter(repeated),
+            {
+              ...transform4WithEmitter(repeated),
+              position: [0.1, 0, 0, 0],
+            },
+          ],
+          symmetry: { order: 3, plane: "xz" },
+        }),
+      );
+
+      expect(packed.transformCount).toBe(6);
+      const asset = meshAsset(CUSTOM_TETRA_ID_4D);
+      const table = new Float32Array(packed.gearTable!);
+      expect(table.length).toBe(asset.triangles.length * 10);
+      expect(Array.from(table)).toEqual(
+        expectedMeshTriangleTable(CUSTOM_TETRA_ID_4D),
+      );
+
+      const f32 = new Float32Array(packed.slots);
+      for (let slot = 0; slot < packed.transformCount; slot++) {
+        for (let part = 0; part < repeated.parts.length; part++) {
+          const p = slot * F32_PER_SLOT4 + EMITTER_PARTS + part * EP_STRIDE;
+          expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
+          expect(f32[p + EP_KIND_PARAMS0 + 1]).toBe(0);
+          expect(f32[p + EP_KIND_PARAMS0 + 2]).toBe(asset.triangles.length);
+        }
+      }
+    } finally {
+      uninstallCustomMeshAsset(CUSTOM_TETRA_ID_4D);
+    }
+  });
 
   it("replicates a base map's emitter block into every kaleidoscope copy", () => {
     const packed = packGpuSystem4(

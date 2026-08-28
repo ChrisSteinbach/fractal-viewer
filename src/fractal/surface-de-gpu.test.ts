@@ -6559,7 +6559,7 @@ describe("surfaceDeKernelWgsl shape trap (shapeTrap)", () => {
   // instrumentation is several times slower than the separately gated
   // production benchmark, so give the structural source assertion room to
   // finish without weakening the benchmark's 2 s application budget.
-  it("emits compact slabs while dispatching every active stable catalog id", () => {
+  it("emits compact slabs with dense shader-slot dispatch", () => {
     const requested = [
       MESH_ASSET_IDS.at(-1)!,
       MESH_ASSET_IDS[0],
@@ -6569,19 +6569,12 @@ describe("surfaceDeKernelWgsl shape trap (shapeTrap)", () => {
       (a, b) => meshAssetCatalogIndex(a) - meshAssetCatalogIndex(b),
     );
     const wgsl = surfaceMeshSdfWgslSource(requested);
-    activeIds.forEach((id, slabIndex) => {
-      const catalogIndex = meshAssetCatalogIndex(id);
-      expect(wgsl).toContain(`case ${catalogIndex}u:`);
-      expect(wgsl).toContain(`return shapeMeshSdf${catalogIndex}(p);`);
+    activeIds.forEach((_id, slabIndex) => {
+      expect(wgsl).toContain(`case ${slabIndex}u:`);
+      expect(wgsl).toContain(`return shapeMeshSdf${slabIndex}(p);`);
       expect(wgsl).toContain(`let z0 = ${String(slabIndex * 64)} + i0.z;`);
     });
-    for (const inactiveId of MESH_ASSET_IDS.filter(
-      (id) => !activeIds.includes(id),
-    )) {
-      expect(wgsl).not.toContain(
-        `case ${String(meshAssetCatalogIndex(inactiveId))}u:`,
-      );
-    }
+    expect(wgsl).not.toContain(`case ${String(activeIds.length)}u:`);
     expect(wgsl.match(/fn shapeMeshSdf\d+\(p: vec3f\)/g)).toHaveLength(
       activeIds.length,
     );

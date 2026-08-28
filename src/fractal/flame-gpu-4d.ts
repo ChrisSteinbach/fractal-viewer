@@ -1650,6 +1650,9 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
       (emitter, i) =>
         emitter !== null && (transforms4[i].emitter?.parts.length ?? 0) > 1,
     );
+  // One builder spans every base map and symmetry copy. Its shared mesh
+  // content-id cache therefore gives 4D the same aggregate budget and
+  // repeated-occurrence deduplication as the 3D packer.
   const gearBuilder = createGearTableBuilder();
 
   // Copy-major expansion: copy 0 (unrotated) first, then copy 1, etc. — see

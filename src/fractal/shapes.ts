@@ -163,6 +163,7 @@ import { mulberry32 } from "./rng";
 import type { Rng } from "./rng";
 import {
   bakeMeshSdf,
+  isCatalogMeshAssetId,
   isMeshAssetId,
   meshAsset,
   meshAssetCatalogIndex,
@@ -1043,6 +1044,7 @@ function emitPartLines(
   i: number,
   d: ShapeDialect,
   name: string,
+  meshIndex: (id: MeshAssetId) => number,
 ): { lines: string[]; value: string } {
   const L = d.decl;
   const F = d.call;
@@ -1107,17 +1109,22 @@ function emitPartLines(
       );
       break;
     case "mesh": {
-      const catalogIndex = meshAssetCatalogIndex(prim.meshId);
+      const shaderIndex = meshIndex(prim.meshId);
+      if (!Number.isInteger(shaderIndex) || shaderIndex < 0) {
+        throw new RangeError(
+          `shape codegen: mesh ${prim.meshId} has no non-negative shader index`,
+        );
+      }
       let call: string;
       switch (d.language) {
         case "glsl":
-          call = `shapeMeshSdf(${catalogIndex}, vec3(${X}, ${Y}, ${Z}))`;
+          call = `shapeMeshSdf(${shaderIndex}, vec3(${X}, ${Y}, ${Z}))`;
           break;
         case "wgsl":
-          call = `shapeMeshSdf(${catalogIndex}u, vec3f(${X}, ${Y}, ${Z}))`;
+          call = `shapeMeshSdf(${shaderIndex}u, vec3f(${X}, ${Y}, ${Z}))`;
           break;
         case "js":
-          call = `shapeMeshSdf(${catalogIndex}, ${X}, ${Y}, ${Z})`;
+          call = `shapeMeshSdf(${shaderIndex}, ${X}, ${Y}, ${Z})`;
           break;
       }
       lines.push(`  ${L} u${i} = ${call};`);
@@ -1165,12 +1172,26 @@ export function shapeSdfSource(
   spec: ShapeSpec,
   dialect: ShapeSdfDialect,
   name: string,
+  options: {
+    /** Scene-local dense atlas selector. Catalog-only callers may omit it. */
+    meshIndex?: (id: MeshAssetId) => number;
+  } = {},
 ): string {
   validateShapeSpec(spec);
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
     throw new Error(`shape codegen: "${name}" is not a plain identifier`);
   }
   const d = SHAPE_DIALECTS[dialect];
+  const meshIndex =
+    options.meshIndex ??
+    ((id: MeshAssetId): number => {
+      if (!isCatalogMeshAssetId(id)) {
+        throw new RangeError(
+          `shape codegen: local mesh ${id} requires an active atlas`,
+        );
+      }
+      return meshAssetCatalogIndex(id);
+    });
   const L = d.decl;
   const used = {
     box2: false,
@@ -1224,7 +1245,7 @@ export function shapeSdfSource(
       break;
   }
   spec.parts.forEach((part, i) => {
-    const { lines, value } = emitPartLines(part, i, d, name);
+    const { lines, value } = emitPartLines(part, i, d, name, meshIndex);
     main.push(...lines);
     if (i === 0) {
       main.push(`  ${L} d0 = ${value};`);

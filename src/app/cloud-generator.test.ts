@@ -5,6 +5,16 @@ import type {
   CloudResult,
   CloudResult3D,
 } from "./cloud-worker-core";
+import type { SerializedPreparedMeshAsset } from "../fractal/mesh-shapes";
+
+function meshSource(hex: string): SerializedPreparedMeshAsset {
+  return {
+    id: `mesh-sha256-${hex.repeat(64)}`,
+    name: "Generator mesh",
+    vertices: new Float64Array(),
+    triangles: new Uint32Array(),
+  };
+}
 
 /**
  * A minimal, fully-specified `CloudParams`, overridable per test so each
@@ -137,6 +147,23 @@ function harness(
 }
 
 describe("CloudGenerator request()", () => {
+  it("posts each custom mesh source only once per persistent worker", () => {
+    const h = harness();
+    const first = meshSource("a");
+    const second = meshSource("b");
+
+    h.generator.request(params({ meshAssets: [first] }));
+    expect(h.posted[0].meshAssets).toEqual([first]);
+    h.deliverResult(fakeResult(1));
+
+    h.generator.request(params({ meshAssets: [first, second] }));
+    expect(h.posted[1].meshAssets).toEqual([second]);
+    h.deliverResult(fakeResult(2));
+
+    h.generator.request(params({ meshAssets: [first, second] }));
+    expect(h.posted[2].meshAssets).toBeUndefined();
+  });
+
   it("posts the first request immediately with a stamped id when idle", () => {
     const h = harness();
 
@@ -220,6 +247,17 @@ describe("CloudGenerator request()", () => {
 });
 
 describe("CloudGenerator worker error recovery", () => {
+  it("retains full mesh wires for synchronous recovery after worker failure", () => {
+    const h = harness();
+    const source = meshSource("c");
+    h.generator.request(params({ meshAssets: [source] }));
+
+    h.triggerError();
+
+    expect(h.computeSyncCalls).toHaveLength(1);
+    expect(h.computeSyncCalls[0].meshAssets).toEqual([source]);
+  });
+
   it("a worker error mid-flight computes the freshest pending request synchronously, terminates the worker, and falls back to sync mode", () => {
     const h = harness();
 

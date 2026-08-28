@@ -1785,6 +1785,7 @@ export class Ui {
   private readonly savePngTitle: string;
   private readonly recordVideoBtn: HTMLButtonElement;
   private readonly saveSceneFileBtn: HTMLButtonElement;
+  private readonly saveSceneFileTitle: string;
   private readonly saveFlameFileBtn: HTMLButtonElement;
 
   // Saved-scene collection: the panel's Save/Gallery/Copy-link buttons, the
@@ -1794,6 +1795,8 @@ export class Ui {
   private readonly saveCollectionBtn: HTMLButtonElement;
   private readonly galleryBtn: HTMLButtonElement;
   private readonly copyLinkBtn: HTMLButtonElement;
+  private readonly copyLinkTitle: string;
+  private readonly localAssetShareNote: HTMLElement;
   private readonly exportCollectionBtn: HTMLButtonElement;
   /** "⬇ Back up collection"'s authored title, restored whenever the button
    * re-enables — the disabled state swaps in a why-explaining one, the same
@@ -2460,10 +2463,13 @@ export class Ui {
     this.recordVideoBtn = this.byId("recordVideoBtn");
     this.recordVideoBtn.classList.toggle("hidden", !videoCaptureSupported());
     this.saveSceneFileBtn = this.byId("saveSceneFileBtn");
+    this.saveSceneFileTitle = this.saveSceneFileBtn.title;
     this.saveFlameFileBtn = this.byId("saveFlameFileBtn");
     this.saveCollectionBtn = this.byId("saveCollectionBtn");
     this.galleryBtn = this.byId("galleryBtn");
     this.copyLinkBtn = this.byId("copyLinkBtn");
+    this.copyLinkTitle = this.copyLinkBtn.title;
+    this.localAssetShareNote = this.byId("localAssetShareNote");
     this.exportCollectionBtn = this.byId("exportCollectionBtn");
     this.exportCollectionTitle = this.exportCollectionBtn.title;
     this.exportCollectionNote = this.byId("exportCollectionNote");
@@ -4363,6 +4369,20 @@ export class Ui {
       this.exportCollectionNote,
       count === 0 ? "Nothing saved yet — ★ Save to collection first." : "",
     );
+  }
+
+  /** Local mesh bytes live in IndexedDB and are not embedded in v1 links or
+   * scene files. Keep both portable-document affordances visibly unavailable
+   * instead of producing an artifact that fails on another browser. */
+  setPortableSceneSharingAvailable(available: boolean): void {
+    const reason = available
+      ? ""
+      : "This scene uses a local mesh. Links and scene files cannot carry that asset yet.";
+    this.copyLinkBtn.disabled = !available;
+    this.copyLinkBtn.title = available ? this.copyLinkTitle : reason;
+    this.saveSceneFileBtn.disabled = !available;
+    this.saveSceneFileBtn.title = available ? this.saveSceneFileTitle : reason;
+    this.setReasonNote(this.localAssetShareNote, reason);
   }
 
   /**

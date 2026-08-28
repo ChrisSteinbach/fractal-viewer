@@ -805,9 +805,9 @@ keeps one global enclosing ball instead of component-specific bounds. Absent
 or all-one rows allocate no graph metadata and retain the classic descent
 source and packed bytes.
 
-The shared `ShapeSpec` vocabulary also admits a built-in catalog mesh by
-stable id. `mesh-shapes.ts` lazily validates and prepares each watertight indexed
-asset once: the exact triangle-area CDF drives CPU and Flame GPU surface
+The shared `ShapeSpec` vocabulary admits both bundled catalog meshes and local
+content-addressed meshes by stable id. `mesh-shapes.ts` validates and prepares
+each watertight indexed asset once: the exact triangle-area CDF drives CPU and Flame GPU surface
 sampling, while those same prepared triangles produce a conservative 64³
 R32F signed-distance node lattice. Exact nearest and parity queries use a
 deterministic, identity-cached BVH; independent linear scans guard the
@@ -816,12 +816,22 @@ so analytic-only startup allocates neither the BVH nor its 1 MiB lattice. See
 `mesh-sdf-delivery.md` for the proof boundary, cold-start budget and measurements.
 Surface GLSL reads the active scene's compact cached atlas through one
 `sampler3D`; Surface WGSL uses an unfilterable 3D texture at binding 11. Stable
-catalog indices remain the shader dispatch values while per-atlas metadata maps
-them to dense runtime z slabs. Both perform the same explicit eight-node
+document ids are mapped to dense scene-local shader slots and z slabs. Both perform the same explicit eight-node
 interpolation as the CPU oracle, and analytic-only programs remain resource-
-and source-byte-identical. Scene persistence carries only the catalog id.
-Uploaded geometry is intentionally outside that wire contract until collection
-storage and share-link semantics are designed together.
+and source-byte-identical.
+
+Local OBJ import accepts a bounded triangle-only subset and runs
+canonicalization, SHA-256 addressing, manifold/orientation/self-intersection
+validation, BVH construction, and the first conservative bake in a terminating
+worker. Immutable canonical source and versioned derived bakes are committed in
+one IndexedDB transaction. Scene loads stage and verify every referenced asset
+before installing any runtime source or mutating the document; a missing,
+version-stale, or corrupt derived bake is regenerated in that worker and
+refreshed without discarding its valid immutable source. Worker renderers
+receive the same canonical source wire. Local ids persist in autosave,
+collection, and timeline documents, but their bytes do not ride the `#v1` wire:
+asset-bearing scenes clear the hash and disable portable link/file export until
+portable bundles are designed separately.
 
 Whether a valid DE exists at all — and how fast it can be marched — turns on
 **conformality**. For an invertible affine map with linear part `M`,
