@@ -3,6 +3,7 @@ import {
   applyRenderColorInputEffects,
   applyScalarControl,
   condensationBandMode,
+  renderColorInputs,
   SCALAR_CONTROLS,
   shapeTrapGeometryBandMode,
   shapeTrapSelectValue,
@@ -332,20 +333,50 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(state.surface.antialiasSamples).toBe(SURFACE_ANTIALIAS_DETENTS[4]);
   });
 
-  it("colorMode select apply sets colorMode from the option value", () => {
-    const spec = specById("colorMode");
+  it.each(["colorMode", "solidColorMode"])(
+    "%s select apply sets colorMode from the option value",
+    (id) => {
+      const spec = specById(id);
 
-    const state = applyScalarControl(initialState(true), spec, "height");
+      const state = applyScalarControl(initialState(true), spec, "height");
 
-    expect(state.colorMode).toBe("height");
+      expect(state.colorMode).toBe("height");
+    },
+  );
+
+  it.each(["rampPalette", "solidRampPalette"])(
+    "%s select apply sets rampPaletteId from the option value",
+    (id) => {
+      const spec = specById(id);
+
+      const state = applyScalarControl(initialState(true), spec, "ember");
+
+      expect(state.rampPaletteId).toBe("ember");
+    },
+  );
+
+  it("solidFourDColor select applies the existing 4D color definition", () => {
+    const spec = specById("solidFourDColor");
+    const base = initialState(true);
+    const initial = {
+      ...base,
+      transforms: [
+        { ...base.transforms[0], w: { position: 0.5 } },
+        ...base.transforms.slice(1),
+      ],
+    };
+
+    const state = applyScalarControl(initial, spec, "radius");
+
+    expect(state.fourDColor).toBe("radius");
   });
 
-  it("rampPalette select apply sets rampPaletteId from the option value", () => {
-    const spec = specById("rampPalette");
+  it("solidColorGammaSlider applies the same contrast mapping", () => {
+    const spec = specById("solidColorGammaSlider");
 
-    const state = applyScalarControl(initialState(true), spec, "ember");
+    const state = applyScalarControl(initialState(true), spec, "1");
 
-    expect(state.rampPaletteId).toBe("ember");
+    expect(state.colorGamma).toBe(MAX_COLOR_GAMMA);
   });
 
   it("background select apply sets background.mode from the option value", () => {
@@ -964,6 +995,27 @@ describe("effects", () => {
       expect(flame.type).toBe("setColorInputs");
       expect(fx.recolor).toHaveBeenCalledTimes(1);
     });
+
+    it.each([
+      ["solidColorMode", "height"],
+      ["solidRampPalette", "ember"],
+      ["solidColorGammaSlider", "0.75"],
+    ] as const)(
+      "%s pushes the complete color snapshot to an active Solid worker",
+      (id, raw) => {
+        const previous = initialState(true);
+        const spec = specById(id);
+        const state = applyScalarControl(previous, spec, raw);
+        const fx = mockEffects();
+
+        spec.effect?.(state, fx, previous);
+
+        expect(fx.postVoxel).toHaveBeenCalledWith({
+          type: "setColorInputs",
+          inputs: renderColorInputs(state),
+        });
+      },
+    );
 
     it("orders primary Custom before its ramp snapshot and never duplicates backdrop work", () => {
       const state = {
@@ -1827,8 +1879,10 @@ describe("table policy", () => {
     // The symmetry entries left the flat set when the 4D chaos game got a
     // kaleidoscope of its own: it is live in both views now (a w-plane or
     // twist even makes the system 4D), so its controls carry no view guard.
-    expect(flatIds).toEqual(["colorMode"]);
-    expect(nonFlatIds).toEqual(["fourDColor", "fourDDepthFadeToggle"].sort());
+    expect(flatIds).toEqual(["colorMode", "solidColorMode"].sort());
+    expect(nonFlatIds).toEqual(
+      ["fourDColor", "fourDDepthFadeToggle", "solidFourDColor"].sort(),
+    );
     // Every entry lands in exactly one of the three groups — catches a spec
     // that declared some other, unexpected `view` value and so fell out of
     // both named sets without landing in "none" either.

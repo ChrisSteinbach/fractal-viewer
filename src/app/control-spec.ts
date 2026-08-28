@@ -763,6 +763,18 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: (s, fx) => applyRenderColorInputEffects(s, fx, { points: "flat" }),
   },
   {
+    // Solid owns a second presentation of the flat color-mode choice. The
+    // document value remains shared so a scene has one authored definition,
+    // but this control lives in Solid's Scene color section and always pushes
+    // the active legacy-palette worker immediately.
+    kind: "select",
+    id: "solidColorMode",
+    view: "flat",
+    read: (s) => s.colorMode,
+    apply: (s, raw) => setColorMode(s, raw as ColorMode),
+    effect: (s, fx) => applyRenderColorInputEffects(s, fx, { points: "flat" }),
+  },
+  {
     // The ramp-palette select: swaps the height/radius color-mode ramps'
     // built-in colors for a gradient palette (see color.ts's
     // buildColorModeLUT). Live in BOTH views (no `view` guard): the 4D
@@ -786,12 +798,42 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       }),
   },
   {
+    // Solid's renderer-owned presentation of the same authored ramp. It is
+    // shown only when Color source is Color mode and that mode consumes a
+    // one-dimensional ramp; the worker command decides whether to restart.
+    kind: "select",
+    id: "solidRampPalette",
+    read: (s) => s.rampPaletteId,
+    apply: (s, raw) => setRampPaletteId(s, raw as PaletteSelection),
+    effect: (s, fx) =>
+      applyRenderColorInputEffects(s, fx, {
+        points: "both",
+        surfaceRamp: true,
+        trackAutoBackground: true,
+      }),
+  },
+  {
     // The color-contrast slider — `apply` converts the slider's log-scale
     // position to the actual gamma. Only shown while the active flat or 4D
     // color mode is height/radius/position (see ui.ts's colorGammaRow).
     kind: "range",
     id: "colorGammaSlider",
     label: { id: "colorGammaLabel", text: (s) => s.colorGamma.toFixed(2) },
+    read: (s) => String(colorGammaToSlider(s.colorGamma)),
+    apply: (s, raw) => setColorGamma(s, sliderToColorGamma(Number(raw))),
+    effect: (s, fx) =>
+      applyRenderColorInputEffects(s, fx, {
+        points: "both",
+        surfaceRamp: true,
+      }),
+  },
+  {
+    kind: "range",
+    id: "solidColorGammaSlider",
+    label: {
+      id: "solidColorGammaLabel",
+      text: (s) => s.colorGamma.toFixed(2),
+    },
     read: (s) => String(colorGammaToSlider(s.colorGamma)),
     apply: (s, raw) => setColorGamma(s, sliderToColorGamma(Number(raw))),
     effect: (s, fx) =>
@@ -1076,6 +1118,17 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     // chaos game.
     kind: "select",
     id: "fourDColor",
+    view: "nonFlat",
+    read: (s) => s.fourDColor,
+    apply: (s, raw) => setFourDColor(s, raw as FourDColorMode),
+    effect: (s, fx) => applyRenderColorInputEffects(s, fx, { points: "fourD" }),
+  },
+  {
+    // Solid's non-flat sibling of solidColorMode. Its visibility is further
+    // gated by the Solid Color source in Ui; this view guard is the mutation
+    // backstop for synthetic events.
+    kind: "select",
+    id: "solidFourDColor",
     view: "nonFlat",
     read: (s) => s.fourDColor,
     apply: (s, raw) => setFourDColor(s, raw as FourDColorMode),
