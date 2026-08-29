@@ -28,6 +28,11 @@ import {
   DEFAULT_POINT_SIZE,
   DEFAULT_RAMP_PALETTE,
   DEFAULT_SOLID_AMBIENT,
+  DEFAULT_SOLID_ENV_LIGHT,
+  DEFAULT_SOLID_FLOOR_EMISSION,
+  DEFAULT_SOLID_FLOOR_ENABLED,
+  DEFAULT_SOLID_FLOOR_PATTERN,
+  DEFAULT_SOLID_FLOOR_TILE_SCALE,
   DEFAULT_SOLID_ITERATIONS,
   DEFAULT_SOLID_LIGHT_AZIMUTH,
   DEFAULT_SOLID_LIGHT_ELEVATION,
@@ -152,6 +157,11 @@ import {
   setRenderMode,
   setRenderStyle,
   setSolidAmbient,
+  setSolidEnvLight,
+  setSolidFloorEmission,
+  setSolidFloorEnabled,
+  setSolidFloorPattern,
+  setSolidFloorTileScale,
   setSolidIterations,
   setSolidLightAzimuth,
   setSolidLightElevation,
@@ -274,6 +284,11 @@ describe("initialState", () => {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      envLight: DEFAULT_SOLID_ENV_LIGHT,
+      floorEnabled: DEFAULT_SOLID_FLOOR_ENABLED,
+      floorPattern: DEFAULT_SOLID_FLOOR_PATTERN,
+      floorTileScale: DEFAULT_SOLID_FLOOR_TILE_SCALE,
+      floorEmission: DEFAULT_SOLID_FLOOR_EMISSION,
       paletteId: DEFAULT_SOLID_PALETTE,
     });
   });
@@ -1356,6 +1371,45 @@ describe("setSolidAmbient", () => {
     expect(setSolidAmbient(initialState(true), -5).solid.ambient).toBe(
       MIN_SOLID_AMBIENT,
     );
+  });
+});
+
+describe("Solid presentation setters", () => {
+  it("keeps Solid environment and floor intent independent and immutable", () => {
+    const state = initialState(true);
+    const next = setSolidFloorEmission(
+      setSolidFloorTileScale(
+        setSolidFloorPattern(
+          setSolidFloorEnabled(setSolidEnvLight(state, 0.65), true),
+          "checker",
+        ),
+        1.25,
+      ),
+      2.5,
+    );
+
+    expect(next.solid).toMatchObject({
+      envLight: 0.65,
+      floorEnabled: true,
+      floorPattern: "checker",
+      floorTileScale: 1.25,
+      floorEmission: 2.5,
+    });
+    expect(next.surface).toBe(state.surface);
+    expect(state.solid.envLight).toBe(DEFAULT_SOLID_ENV_LIGHT);
+    expect(state.solid.floorEnabled).toBe(DEFAULT_SOLID_FLOOR_ENABLED);
+  });
+
+  it("reuses Surface's numeric presentation ranges", () => {
+    expect(setSolidEnvLight(initialState(true), 5).solid.envLight).toBe(
+      PARAM.surfaceEnvLight.max,
+    );
+    expect(
+      setSolidFloorTileScale(initialState(true), -5).solid.floorTileScale,
+    ).toBe(PARAM.surfaceFloorTileScale.min);
+    expect(
+      setSolidFloorEmission(initialState(true), 99).solid.floorEmission,
+    ).toBe(PARAM.surfaceFloorEmission.max);
   });
 });
 

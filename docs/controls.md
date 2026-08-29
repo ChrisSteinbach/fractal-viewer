@@ -121,7 +121,7 @@ the one it used to claim: 727px with **Scene color** open, 1336px with
 **Transforms** open and a transform selected. The Flame, Solid, and Surface render
 modes get the same treatment — **Scene color** / **Depth** for Points,
 **Scene color** / **Blur** for Flame, **Scene color** / **Level** /
-**Lighting** for Solid, and **Scene color** / **Shape copies** or **Shape
+**Lighting** / **Floor** for Solid, and **Scene color** / **Shape copies** or **Shape
 trap** / **Lighting** / **Depth** / **Floor** for Surface itself (see
 **✺
 Flame**, **◆ Solid** and **◈ Surface** below). One **Quality** section follows
@@ -272,10 +272,21 @@ morphs into place instead of snapping (see **Presets** below).
     light at grazing height puts the whole volume in its own shadow; and
     **Ambient** (0–80%, default 25%) sets how bright fully shadowed faces
     stay, topping out below 100% because a full ambient floor would erase
-    every shading cue at once. This is Solid's independently persisted voxel-
-    material look: all three are plain shader uniforms that redraw only Solid,
+    every shading cue at once. **Environment** (0–100%, default 0%) tints the
+    light toward the backdrop along the shading normal; zero retains the
+    original neutral-light image exactly. This is Solid's independently persisted voxel-
+    material look: these controls redraw only Solid,
     live, without changing the separate Surface lighting state or
     re-accumulating the grid.
+  - **Floor** — adds a neutral-gray world-space floor below the sampled
+    volume, with **Solid** or **Checkerboard** pattern, **Tile size**
+    (0.10×–2.00× the cloud radius, default 0.64×), and emitted **Floor light**
+    (0–4, default 0). The floor uses the cloud's stable enclosing sphere: in
+    4D it remains at the origin with the full 4D radius while the rotor and W
+    slice move. Changes are live presentation work and never rebuild the voxel
+    grid. Balloon has no horizon, so an effective Balloon temporarily hides
+    the floor while preserving the authored checkbox and appearance settings;
+    turning Balloon off restores it.
   - **Quality** — **Iterations** steps a 1-2-5 ladder from 1M–100M
     (default 20M) and behaves like the flame's: raise it and accumulation continues past what already looked
     done, lower it and the render finishes where it stands. **Resolution

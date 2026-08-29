@@ -81,6 +81,7 @@ import type {
   Vec4,
 } from "../fractal/types";
 import {
+  fourDWorkerViewNeedsRebuild,
   sameFourDWorkerView,
   sameFourDWorkerSpatialView,
   type FourDWorkerView,
@@ -291,6 +292,9 @@ export type VoxelWorkerCommand =
        * fresh voxel accumulation. A flat session ignores this command.
        */
       view: FourDWorkerView;
+      /** Main-thread endpoint revision, echoed by generation-bearing events
+       * so queued results from superseded endpoints can be rejected. */
+      viewRevision?: number;
     }
   | {
       type: "setSymmetry";
@@ -329,6 +333,8 @@ export type VoxelWorkerEvent =
       boundsMax: Vec3;
       iterationsDone: number;
       iterationsBudget: number;
+      /** Settled 4D endpoint revision baked into this density/hierarchy pair. */
+      viewRevision?: number;
     }
   | {
       type: "resolutionNote";
@@ -353,6 +359,8 @@ export type VoxelWorkerEvent =
        */
       type: "restarted";
       iterationsBudget: number;
+      /** Settled 4D endpoint revision this restart will build. */
+      viewRevision?: number;
     }
   | {
       /** Counters-only label refresh for when the budget changes but the
@@ -363,6 +371,8 @@ export type VoxelWorkerEvent =
       type: "progress";
       iterationsDone: number;
       iterationsBudget: number;
+      /** Settled 4D endpoint revision these counters describe. */
+      viewRevision?: number;
     }
   | { type: "error"; message: string };
 
@@ -585,6 +595,8 @@ export class VoxelWorkerSession {
   /** Last settled rotor/view endpoint, retained for exact command
    * de-duplication and projection rebuilds around `fourDCenter`. */
   private fourDWorkerView: FourDWorkerView | null = null;
+  /** Main-thread endpoint revision echoed on generation-bearing events. */
+  private fourDViewRevision: number | undefined;
   private fourDColorMode: FourDColorMode = "wBlueOrange";
   private fourDCenter: Vec4 = [0, 0, 0, 0];
   /** The active entry cloud's axis-aligned support, paired with
@@ -683,6 +695,9 @@ export class VoxelWorkerSession {
             type: "progress",
             iterationsDone: this.iterationsDone,
             iterationsBudget: this.iterationsBudget,
+            ...(this.fourDViewRevision === undefined
+              ? {}
+              : { viewRevision: this.fourDViewRevision }),
           });
         } else if (this.grid) {
           // Lowered to/below the accumulated count mid-render: that finishes
@@ -702,7 +717,7 @@ export class VoxelWorkerSession {
         this.setColorInputs(command.inputs);
         break;
       case "setFourDView":
-        this.setFourDView(command.view);
+        this.setFourDView(command.view, command.viewRevision);
         break;
       case "setSymmetry":
         this.setSymmetry(command.order, command.plane, command.twist ?? 0);
@@ -768,6 +783,7 @@ export class VoxelWorkerSession {
     this.requestedResolution = cmd.resolution;
     this.maxBytes = cmd.maxBytes ?? this.defaultMaxBytes;
     this.maxSafeResolution = Infinity; // a fresh session has no learned ceiling yet.
+    this.fourDViewRevision = undefined;
 
     this.is4D = cmd.fourD !== undefined;
     if (cmd.fourD) {
@@ -989,7 +1005,7 @@ export class VoxelWorkerSession {
    * retained entry support rather than trusted to the caller's current
    * document.
    */
-  private setFourDView(view: FourDWorkerView): void {
+  private setFourDView(view: FourDWorkerView, viewRevision?: number): void {
     if (
       !this.is4D ||
       !this.hasGeometry() ||
@@ -1003,7 +1019,14 @@ export class VoxelWorkerSession {
       this.fourDWorkerView,
       view,
     );
+    const needsRebuild = fourDWorkerViewNeedsRebuild(
+      this.fourDWorkerView,
+      view,
+      this.paletteSpec === "legacy" &&
+        !fourDColorNeedsAttribute(this.fourDColorMode),
+    );
     this.fourDWorkerView = { ...view, rotor: [...view.rotor] };
+    this.fourDViewRevision = viewRevision;
     if (relativeColorOnly) {
       this.fourDView = {
         ...this.fourDView!,
@@ -1012,12 +1035,7 @@ export class VoxelWorkerSession {
       // Structural coloring and the attribute modes do not consume the
       // W-ramp remap. Stage it for a later Classic W-ramp restart without
       // discarding the current grid or re-piloting unchanged bounds.
-      if (
-        this.paletteSpec !== "legacy" ||
-        fourDColorNeedsAttribute(this.fourDColorMode)
-      ) {
-        return;
-      }
+      if (!needsRebuild) return;
       this.startAccumulation();
       return;
     }
@@ -1148,7 +1166,13 @@ export class VoxelWorkerSession {
     // `restarted` event's doc) — emitted unconditionally, including from
     // `start`'s own call into this method, which keeps this the one place
     // that announces a discard rather than special-casing the first one.
-    this.emit({ type: "restarted", iterationsBudget: this.iterationsBudget });
+    this.emit({
+      type: "restarted",
+      iterationsBudget: this.iterationsBudget,
+      ...(this.fourDViewRevision === undefined
+        ? {}
+        : { viewRevision: this.fourDViewRevision }),
+    });
     this.lastTextureAt = undefined;
     this.lastPackMs = 0;
     this.chunkSize = this.initialChunkSize;
@@ -1286,6 +1310,9 @@ export class VoxelWorkerSession {
       boundsMax: grid.bounds.max,
       iterationsDone: this.iterationsDone,
       iterationsBudget: this.iterationsBudget,
+      ...(this.fourDViewRevision === undefined
+        ? {}
+        : { viewRevision: this.fourDViewRevision }),
     });
     return true;
   }

@@ -1402,6 +1402,8 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.scene.setSolidParams).toHaveBeenCalledWith(state.solid);
+      expect(fx.postVoxel).not.toHaveBeenCalled();
+      expect(fx.restartSolidRender).not.toHaveBeenCalled();
     });
 
     it("solidLightAzimuthSlider effect forwards the settled solid params to the scene", () => {
@@ -1415,6 +1417,8 @@ describe("effects", () => {
       expect(fx.scene.setSolidParams).toHaveBeenCalledWith(state.solid);
       expect(state.surface).toBe(previous.surface);
       expect(fx.scene.setSurfaceParams).not.toHaveBeenCalled();
+      expect(fx.postVoxel).not.toHaveBeenCalled();
+      expect(fx.restartSolidRender).not.toHaveBeenCalled();
     });
 
     it("solidLightElevationSlider effect forwards the settled solid params to the scene", () => {
@@ -1426,6 +1430,8 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.scene.setSolidParams).toHaveBeenCalledWith(state.solid);
+      expect(fx.postVoxel).not.toHaveBeenCalled();
+      expect(fx.restartSolidRender).not.toHaveBeenCalled();
     });
 
     it("solidAmbientSlider effect forwards the settled solid params to the scene", () => {
@@ -1437,6 +1443,28 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.scene.setSolidParams).toHaveBeenCalledWith(state.solid);
+      expect(fx.postVoxel).not.toHaveBeenCalled();
+      expect(fx.restartSolidRender).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["solidEnvLightSlider", "0.65"],
+      ["solidFloorEnabledCheckbox", true],
+      ["solidFloorPatternSelect", "checker"],
+      ["solidFloorTileScaleSlider", "1.2"],
+      ["solidFloorEmissionSlider", "1.5"],
+    ] as const)("%s applies presentation only through the scene", (id, raw) => {
+      const spec = specById(id);
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, raw);
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setSolidParams).toHaveBeenCalledWith(state.solid);
+      expect(fx.postVoxel).not.toHaveBeenCalled();
+      expect(fx.restartSolidRender).not.toHaveBeenCalled();
+      expect(fx.scene.setSurfaceParams).not.toHaveBeenCalled();
     });
 
     it("solidPalette effect posts setPalette to the voxel worker", () => {

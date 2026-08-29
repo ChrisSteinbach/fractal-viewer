@@ -56,6 +56,11 @@ import {
   DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_RAMP_PALETTE,
   DEFAULT_SOLID_AMBIENT,
+  DEFAULT_SOLID_ENV_LIGHT,
+  DEFAULT_SOLID_FLOOR_EMISSION,
+  DEFAULT_SOLID_FLOOR_ENABLED,
+  DEFAULT_SOLID_FLOOR_PATTERN,
+  DEFAULT_SOLID_FLOOR_TILE_SCALE,
   DEFAULT_SOLID_ITERATIONS,
   DEFAULT_SOLID_LIGHT_AZIMUTH,
   DEFAULT_SOLID_LIGHT_ELEVATION,
@@ -107,6 +112,7 @@ import {
   MIN_SYMMETRY_ORDER,
   MIN_W_POSITION,
   MIN_W_SCALE,
+  PARAM,
   initialState,
   setSymmetryOrder,
   setSymmetryTwist,
@@ -171,6 +177,11 @@ function baseSnapshot(): SceneSnapshot {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      envLight: DEFAULT_SOLID_ENV_LIGHT,
+      floorEnabled: DEFAULT_SOLID_FLOOR_ENABLED,
+      floorPattern: DEFAULT_SOLID_FLOOR_PATTERN,
+      floorTileScale: DEFAULT_SOLID_FLOOR_TILE_SCALE,
+      floorEmission: DEFAULT_SOLID_FLOOR_EMISSION,
       paletteId: DEFAULT_SOLID_PALETTE,
     },
     surface: {
@@ -230,6 +241,11 @@ describe("encodeScene / decodeScene round-trip", () => {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      envLight: DEFAULT_SOLID_ENV_LIGHT,
+      floorEnabled: DEFAULT_SOLID_FLOOR_ENABLED,
+      floorPattern: DEFAULT_SOLID_FLOOR_PATTERN,
+      floorTileScale: DEFAULT_SOLID_FLOOR_TILE_SCALE,
+      floorEmission: DEFAULT_SOLID_FLOOR_EMISSION,
       paletteId: DEFAULT_SOLID_PALETTE,
     });
     expect(result!.surface).toEqual({
@@ -1404,7 +1420,7 @@ describe("decodeScene transform surface pattern", () => {
     ).toEqual({ kind: "marble", axis: "y" });
   });
 
-  it("keeps absence byte-identical and old payloads patternless", () => {
+  it("keeps absence byte-identical within the current wire and old payloads patternless", () => {
     const omitted: SceneSnapshot = {
       ...baseSnapshot(),
       transforms: [
@@ -1420,7 +1436,6 @@ describe("decodeScene transform surface pattern", () => {
     explicit.transforms[0].surfacePattern = undefined;
     const legacyGolden =
       "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAsMCwwXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNSwiZW52TGlnaHQiOjAuMzUsImZsb29yUGF0dGVybiI6InNvbGlkIiwiZmxvb3JUaWxlU2NhbGUiOjAuNjQsImZsb29yRW1pc3Npb24iOjB9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MSwiYmFsbG9vbkVjaG8iOmZhbHNlLCJiYWxsb29uUmFkaXVzIjoxLjYsImJhbGxvb25UaW50IjoiIzAwMDAwMCIsImJhbGxvb25UaW50U3RyZW5ndGgiOjAsImZvZ0RlbnNpdHkiOjEsImZvZ1RpbnQiOiIjZmZmZmZmIiwiZm9nVGludFN0cmVuZ3RoIjowLCJncm91bmRQbGFuZSI6ZmFsc2V9";
-    expect(encodeScene(omitted)).toBe(legacyGolden);
     expect(encodeScene(explicit)).toBe(encodeScene(omitted));
     expect(
       decodeScene(encodeScene(omitted))!.transforms[0].surfacePattern,
@@ -1429,6 +1444,9 @@ describe("decodeScene transform surface pattern", () => {
     expect(
       "surfacePattern" in (payload.transforms as Record<string, unknown>[])[0],
     ).toBe(false);
+    expect(
+      decodeScene(legacyGolden)!.transforms[0].surfacePattern,
+    ).toBeUndefined();
   });
 
   it("quietly drops malformed blocks and required discriminators", () => {
@@ -2462,6 +2480,11 @@ describe("decodeScene solid params", () => {
         lightAzimuth: -45,
         lightElevation: 70,
         ambient: 0.5,
+        envLight: 0.7,
+        floorEnabled: true,
+        floorPattern: "checker",
+        floorTileScale: 1.2,
+        floorEmission: 1.5,
         paletteId: "spectrum",
       },
     };
@@ -2473,6 +2496,11 @@ describe("decodeScene solid params", () => {
       lightAzimuth: -45,
       lightElevation: 70,
       ambient: 0.5,
+      envLight: 0.7,
+      floorEnabled: true,
+      floorPattern: "checker",
+      floorTileScale: 1.2,
+      floorEmission: 1.5,
       paletteId: "spectrum",
     });
   });
@@ -2497,8 +2525,71 @@ describe("decodeScene solid params", () => {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      envLight: DEFAULT_SOLID_ENV_LIGHT,
+      floorEnabled: DEFAULT_SOLID_FLOOR_ENABLED,
+      floorPattern: DEFAULT_SOLID_FLOOR_PATTERN,
+      floorTileScale: DEFAULT_SOLID_FLOOR_TILE_SCALE,
+      floorEmission: DEFAULT_SOLID_FLOOR_EMISSION,
       paletteId: DEFAULT_SOLID_PALETTE,
     });
+  });
+
+  it("decodes a legacy Solid block with no presentation fields to compatibility defaults", () => {
+    const raw = {
+      ...baseSnapshot(),
+      solid: {
+        resolution: 224,
+        iterations: 42_000_000,
+        threshold: 0.6,
+        lightAzimuth: -45,
+        lightElevation: 70,
+        ambient: 0.5,
+        paletteId: "aurora",
+      },
+    };
+
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))!.solid).toEqual({
+      ...raw.solid,
+      envLight: DEFAULT_SOLID_ENV_LIGHT,
+      floorEnabled: DEFAULT_SOLID_FLOOR_ENABLED,
+      floorPattern: DEFAULT_SOLID_FLOOR_PATTERN,
+      floorTileScale: DEFAULT_SOLID_FLOOR_TILE_SCALE,
+      floorEmission: DEFAULT_SOLID_FLOOR_EMISSION,
+    });
+  });
+
+  it("quietly defaults malformed Solid floor bool and enum fields", () => {
+    const raw = {
+      ...baseSnapshot(),
+      solid: {
+        ...baseSnapshot().solid,
+        floorEnabled: "yes",
+        floorPattern: "stripes",
+      },
+    };
+    const solid = decodeScene("v1=" + b64url(JSON.stringify(raw)))!.solid;
+
+    expect(solid.floorEnabled).toBe(DEFAULT_SOLID_FLOOR_ENABLED);
+    expect(solid.floorPattern).toBe(DEFAULT_SOLID_FLOOR_PATTERN);
+  });
+
+  it("coerces, clamps, and rejects Solid presentation numerics like the existing block", () => {
+    const raw = {
+      ...baseSnapshot(),
+      solid: {
+        ...baseSnapshot().solid,
+        envLight: "0.8",
+        floorTileScale: -99,
+        floorEmission: 99,
+      },
+    };
+    const solid = decodeScene("v1=" + b64url(JSON.stringify(raw)))!.solid;
+    expect(solid.envLight).toBe(0.8);
+    expect(solid.floorTileScale).toBe(PARAM.solidFloorTileScale.min);
+    expect(solid.floorEmission).toBe(PARAM.solidFloorEmission.max);
+
+    raw.solid.envLight = "bright";
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
   });
 
   it("returns null when solid is present but not an object", () => {

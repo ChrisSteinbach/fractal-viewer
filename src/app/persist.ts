@@ -65,6 +65,11 @@ import {
   DEFAULT_FOG_TINT_STRENGTH,
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_RAMP_PALETTE,
+  DEFAULT_SOLID_ENV_LIGHT,
+  DEFAULT_SOLID_FLOOR_EMISSION,
+  DEFAULT_SOLID_FLOOR_ENABLED,
+  DEFAULT_SOLID_FLOOR_PATTERN,
+  DEFAULT_SOLID_FLOOR_TILE_SCALE,
   DEFAULT_SOLID_PALETTE,
   DEFAULT_SURFACE_DEPTH_OF_FIELD,
   DEFAULT_SYMMETRY_PLANE,
@@ -1808,6 +1813,11 @@ function decodeSolidParams(
     lightAzimuth: PARAM.solidLightAzimuth.default,
     lightElevation: PARAM.solidLightElevation.default,
     ambient: PARAM.solidAmbient.default,
+    envLight: DEFAULT_SOLID_ENV_LIGHT,
+    floorEnabled: DEFAULT_SOLID_FLOOR_ENABLED,
+    floorPattern: DEFAULT_SOLID_FLOOR_PATTERN,
+    floorTileScale: DEFAULT_SOLID_FLOOR_TILE_SCALE,
+    floorEmission: DEFAULT_SOLID_FLOOR_EMISSION,
     paletteId: DEFAULT_SOLID_PALETTE,
   };
   if (raw === undefined) return defaults;
@@ -1815,13 +1825,19 @@ function decodeSolidParams(
   const s = raw as Record<string, unknown>;
 
   const out = { ...defaults };
-  const numeric: Exclude<keyof SolidParams, "paletteId">[] = [
+  const numeric: Exclude<
+    keyof SolidParams,
+    "paletteId" | "floorEnabled" | "floorPattern"
+  >[] = [
     "resolution",
     "iterations",
     "threshold",
     "lightAzimuth",
     "lightElevation",
     "ambient",
+    "envLight",
+    "floorTileScale",
+    "floorEmission",
   ];
   for (const key of numeric) {
     if (s[key] === undefined) continue;
@@ -1840,6 +1856,11 @@ function decodeSolidParams(
       (s.paletteId === CUSTOM_PALETTE_ID && hasCustomPalette))
       ? (s.paletteId as PaletteSelection)
       : DEFAULT_SOLID_PALETTE;
+  const floorPattern: SurfaceFloorPattern =
+    typeof s.floorPattern === "string" &&
+    (SURFACE_FLOOR_PATTERNS as readonly string[]).includes(s.floorPattern)
+      ? (s.floorPattern as SurfaceFloorPattern)
+      : DEFAULT_SOLID_FLOOR_PATTERN;
 
   return {
     resolution: clampToSpec(PARAM.solidResolution, out.resolution),
@@ -1848,6 +1869,14 @@ function decodeSolidParams(
     lightAzimuth: clampToSpec(PARAM.solidLightAzimuth, out.lightAzimuth),
     lightElevation: clampToSpec(PARAM.solidLightElevation, out.lightElevation),
     ambient: clampToSpec(PARAM.solidAmbient, out.ambient),
+    envLight: clampToSpec(PARAM.solidEnvLight, out.envLight),
+    floorEnabled:
+      typeof s.floorEnabled === "boolean"
+        ? s.floorEnabled
+        : DEFAULT_SOLID_FLOOR_ENABLED,
+    floorPattern,
+    floorTileScale: clampToSpec(PARAM.solidFloorTileScale, out.floorTileScale),
+    floorEmission: clampToSpec(PARAM.solidFloorEmission, out.floorEmission),
     paletteId,
   };
 }
@@ -2753,6 +2782,11 @@ export function encodeScene(s: SceneSnapshot): string {
       lightAzimuth: round4(s.solid.lightAzimuth),
       lightElevation: round4(s.solid.lightElevation),
       ambient: round4(s.solid.ambient),
+      envLight: round4(s.solid.envLight),
+      floorEnabled: s.solid.floorEnabled,
+      floorPattern: s.solid.floorPattern,
+      floorTileScale: round4(s.solid.floorTileScale),
+      floorEmission: round4(s.solid.floorEmission),
       paletteId: s.solid.paletteId,
     },
     surface: {

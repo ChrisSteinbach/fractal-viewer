@@ -86,10 +86,11 @@ export interface RenderSessionDeps<C> {
   deactivate: () => void;
   /**
    * Optional: fired the first time {@link RenderSession.markFirstFrame} lands
-   * for THIS session — the TRANSITION, not every call, since a mode's
-   * first-frame signal is usually its ordinary progress event (the flame
-   * marks one per chunk). A re-{@link RenderSession.enter} resets the gate,
-   * so a fresh session fires again.
+   * for the CURRENT render generation — the TRANSITION, not every call,
+   * since a mode's first-frame signal is usually its ordinary progress event
+   * (the flame marks one per chunk). A re-{@link RenderSession.enter} or an
+   * in-session {@link RenderSession.invalidateFirstFrame} resets the gate, so
+   * a fresh generation fires again.
    *
    * The moment the app's answer to "has this render produced its picture?"
    * flips, which is the moment anything that fell back to the explorer while
@@ -116,27 +117,46 @@ export class RenderSession<C> {
   constructor(private readonly deps: RenderSessionDeps<C>) {}
 
   /**
-   * True once the CURRENT session's first frame — a flame image / a solid grid
-   * — has arrived. main.ts's animate() reads this to keep drawing the frozen
-   * (flame) or live (solid) explorer during the worker's startup gap instead of
-   * flashing the render canvas's blank-or-stale contents. Reset to false by
-   * every {@link enter}/{@link exit}, so a stray frame can't leak across
-   * sessions.
+   * True once the CURRENT render generation's first frame — a flame image / a
+   * solid grid — has arrived. main.ts's animate() reads this to keep drawing
+   * the frozen (flame) or live (solid) explorer during a worker startup/rebuild
+   * gap instead of flashing the render canvas's blank-or-stale contents. Reset
+   * to false by every {@link enter}/{@link exit} and by an explicit
+   * {@link invalidateFirstFrame}, so neither a prior session nor a prior
+   * in-session generation can answer for the current one.
    */
   get hasFirstFrame(): boolean {
     return this.firstFrame;
   }
 
-  /** Record that the current session's first frame has arrived — called from
-   * the mode's worker-event handler on the first "progress"/"sharedFrame"
-   * (flame) or "grid" (solid) event. Callers fire it per EVENT rather than
-   * per session (the flame's every-chunk progress), so the gate absorbs the
-   * repeats and {@link RenderSessionDeps.onFirstFrame} sees only the
-   * transition. */
+  /** Record that the current generation's first frame has arrived — called
+   * from the mode's worker-event handler on the first
+   * "progress"/"sharedFrame" (flame) or "grid" (solid) event. Callers fire it
+   * per EVENT rather than per generation (the flame's every-chunk progress),
+   * so the gate absorbs the repeats and
+   * {@link RenderSessionDeps.onFirstFrame} sees only the transition. */
   markFirstFrame(): void {
     if (this.firstFrame) return;
     this.firstFrame = true;
     this.deps.onFirstFrame?.();
+  }
+
+  /**
+   * Record that the active worker discarded the generation which produced
+   * the currently installed frame. The worker may deliberately leave that
+   * old picture on the canvas while the replacement builds, but it is no
+   * longer a valid answer to "has the current generation produced a frame?"
+   * — in particular, an export must wait for the replacement rather than
+   * capture the stale input. The next {@link markFirstFrame} opens the gate
+   * again and fires {@link RenderSessionDeps.onFirstFrame} for that new
+   * generation.
+   *
+   * Idempotent by construction. Calling it during initial startup (the voxel
+   * worker emits `restarted` for its first allocation too) leaves the already
+   * closed gate closed.
+   */
+  invalidateFirstFrame(): void {
+    this.firstFrame = false;
   }
 
   /** Forward a command to the running session, or a no-op when none is running.

@@ -41,7 +41,7 @@ The current color contract already reaches that running RGB in both dimensions:
 Changing color dispatch does not change the orbit or density. Changing a color
 that is baked into `avgRGB` restarts accumulation, as it does today.
 
-## Planned consumers
+## Presentation consumers
 
 The sampled Solid upgrade adds three kinds of presentation work:
 

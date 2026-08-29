@@ -8,6 +8,7 @@ import {
   legSeed,
   timelineDurationMs,
 } from "./timeline";
+import type { SampledSolidStatus } from "./solid-render-status";
 
 function memoryStorage(initial: Record<string, string> = {}) {
   const store: Record<string, string> = { ...initial };
@@ -489,6 +490,15 @@ describe("TimelineStore restore", () => {
 });
 
 describe("TimelineStore mode", () => {
+  const solidStatus: SampledSolidStatus = {
+    kind: "sampled-solid",
+    phase: "complete",
+    requestedResolution: 192,
+    effectiveResolution: 160,
+    iterationsDone: 10,
+    iterationsBudget: 10,
+  };
+
   it("round-trips a mode tag through storage", () => {
     const storage = memoryStorage();
     new TimelineStore({ storage }).add("v1=a", "thumb-a", "flame");
@@ -503,6 +513,19 @@ describe("TimelineStore mode", () => {
     const step = timeline.add("v1=a", "");
 
     expect(step?.mode).toBeUndefined();
+  });
+
+  it("round-trips optional sampled Solid status while old steps stay valid", () => {
+    const storage = memoryStorage();
+    new TimelineStore({ storage }).add(
+      "v1=solid",
+      "thumb",
+      "solid",
+      solidStatus,
+    );
+    expect(new TimelineStore({ storage }).all()[0].solidStatus).toEqual(
+      solidStatus,
+    );
   });
 
   it("loads a legacy step with no mode field at all, mode undefined and the step intact", () => {

@@ -7,6 +7,11 @@ import { wSupport } from "./rotor4";
 import { FourDTween, FourDView, viewTransition } from "./four-d-view";
 import type { FourDPose } from "./four-d-view";
 import {
+  fourDWorkerViewNeedsRebuild,
+  sameFourDWorkerView,
+  type FourDWorkerView,
+} from "./four-d-worker-view";
+import {
   buildColors,
   buildColors4,
   dimColorsExcept,
@@ -198,6 +203,17 @@ import {
 } from "./export-progress";
 import type { ExportRun } from "./export-progress";
 import { createExportWait } from "./export-wait";
+import {
+  beginSampledSolidStatus,
+  endSampledSolidStatus,
+  progressSampledSolidStatus,
+  resolveSampledSolidResolution,
+  restartSampledSolidStatus,
+  sampledSolidFileTag,
+  sampledSolidSnapshotText,
+  sampledSolidStatusText,
+  type SampledSolidStatus,
+} from "./solid-render-status";
 import { EditSession, SAVE_DEBOUNCE_MS } from "./edit-session";
 import type { ViewPose } from "./history";
 import { LruMap } from "./lru-map";
@@ -915,6 +931,29 @@ async function main(): Promise<void> {
   let activeSolidSeed: number | null = null;
   let activeFlameNonFlat = false;
   let activeSolidNonFlat = false;
+  /** The last settled 4D endpoint posted to the active Solid worker. Main
+   * keeps this tiny mirror so it can close the capture/display gate BEFORE a
+   * changed endpoint crosses the asynchronous worker boundary, while an
+   * unchanged commit remains a true no-op and cannot strand that gate shut. */
+  let activeSolidWorkerView: FourDWorkerView | null = null;
+  /** Revision expected on generation-bearing events from the active Solid
+   * worker. Undefined is the entry view; settled endpoint posts increment it. */
+  let activeSolidViewRevision: number | undefined;
+  // Runtime-only sampled Solid identity/resolution/convergence. Every UI,
+  // capture, collection and timeline disclosure reads snapshots of this one
+  // model rather than rebuilding labels from worker events independently.
+  let sampledSolidStatus: SampledSolidStatus = beginSampledSolidStatus(
+    state.solid.resolution,
+    state.solid.iterations,
+  );
+
+  function publishSampledSolidStatus(next: SampledSolidStatus): void {
+    sampledSolidStatus = next;
+    ui.setSampledSolidStatus(next);
+    if (offlineExportPending && state.renderMode === "solid") {
+      ui.setTimelineExportProgress(`waiting · ${sampledSolidStatusText(next)}`);
+    }
+  }
 
   // The session-owned live 4D VIEW state: the accumulated rotor (tumble ticks and
   // Shift-drag/Shift-wheel deltas all compose into it), the tumble
@@ -1809,7 +1848,7 @@ async function main(): Promise<void> {
         encodeFrame: (index) => session.encodeFrame(scene.canvas, index),
         onProgress: (done, total) => {
           ui.setTimelineExportProgress(
-            `${String(Math.min(100, Math.round((done / total) * 100)))}%`,
+            `${String(Math.min(100, Math.round((done / total) * 100)))}%${state.renderMode === "solid" ? ` · ${sampledSolidStatusText(sampledSolidStatus)}` : ""}`,
           );
         },
         yieldToUi: () =>
@@ -3184,8 +3223,41 @@ async function main(): Promise<void> {
     if (activeFlameNonFlat) {
       flameSession.post({ type: "setFourDView", view });
     }
-    if (activeSolidNonFlat) {
-      solidSession.post({ type: "setFourDView", view });
+    if (
+      activeSolidNonFlat &&
+      (activeSolidWorkerView === null ||
+        !sameFourDWorkerView(activeSolidWorkerView, view))
+    ) {
+      const needsRebuild =
+        activeSolidWorkerView === null ||
+        fourDWorkerViewNeedsRebuild(
+          activeSolidWorkerView,
+          view,
+          state.solid.paletteId === "legacy" &&
+            !fourDColorNeedsAttribute(state.fourDColor),
+        );
+      activeSolidWorkerView = { ...view, rotor: [...view.rotor] };
+      if (needsRebuild) {
+        activeSolidViewRevision = (activeSolidViewRevision ?? 0) + 1;
+        // Close synchronously, not only when the worker's `restarted` reply
+        // returns: Save PNG can be pressed in that round-trip gap and must
+        // wait for this endpoint's atomic density/hierarchy pair. Color-only
+        // endpoints whose active path does not consume W-ramp remapping keep
+        // the current frame valid and deliberately do not close this gate.
+        solidSession.invalidateFirstFrame();
+        publishSampledSolidStatus(
+          restartSampledSolidStatus(sampledSolidStatus, state.solid.iterations),
+        );
+      }
+      solidSession.post({
+        type: "setFourDView",
+        view,
+        // An inert color-only endpoint stages over the current valid frame,
+        // so it deliberately retains that frame's revision. Advancing here
+        // would make an in-flight valid grid look stale without promising a
+        // replacement.
+        viewRevision: activeSolidViewRevision,
+      });
     }
   }
 
@@ -3522,6 +3594,10 @@ async function main(): Promise<void> {
   function handleSolidEvent(event: VoxelWorkerEvent): void {
     switch (event.type) {
       case "grid":
+        // A worker may finish an old chunk before it dequeues a newly posted
+        // 4D endpoint. Its queued payload remains atomically self-consistent,
+        // but it is not the endpoint main is waiting to display/capture.
+        if (event.viewRevision !== activeSolidViewRevision) break;
         scene.setVoxelGrid(
           event.texture,
           event.size,
@@ -3530,7 +3606,14 @@ async function main(): Promise<void> {
           event.hierarchy.status === "present" ? event.hierarchy : null,
         );
         ui.setSolidBalloonAvailable(scene.solidBalloonAvailable());
-        ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
+        publishSampledSolidStatus(
+          progressSampledSolidStatus(
+            sampledSolidStatus,
+            event.iterationsDone,
+            event.iterationsBudget,
+            event.size,
+          ),
+        );
         noteRenderProgress(
           "solid",
           event.iterationsDone,
@@ -3539,9 +3622,16 @@ async function main(): Promise<void> {
         solidSession.markFirstFrame();
         break;
       case "progress":
+        if (event.viewRevision !== activeSolidViewRevision) break;
         // Counters-only label refresh (the displayed texture is already
         // final) — e.g. the budget slider moved on a finished render.
-        ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
+        publishSampledSolidStatus(
+          progressSampledSolidStatus(
+            sampledSolidStatus,
+            event.iterationsDone,
+            event.iterationsBudget,
+          ),
+        );
         noteRenderProgress(
           "solid",
           event.iterationsDone,
@@ -3549,20 +3639,41 @@ async function main(): Promise<void> {
         );
         break;
       case "restarted":
+        if (event.viewRevision !== activeSolidViewRevision) break;
         // Same contract as the flame's "restarted" case: zero the readout
-        // the moment the worker discards its accumulation.
-        ui.setSolidProgress(0, event.iterationsBudget);
+        // the moment the worker discards its accumulation. Close the
+        // first-frame gate too: the scene may still HOLD the preceding
+        // density/hierarchy pair while this generation builds, but a capture
+        // (and the Solid display branch) must not mistake that stale pair for
+        // the settled rotor/slice/color/symmetry endpoint just requested.
+        // The next atomic grid event installs matching density + hierarchy
+        // and opens the gate again.
+        solidSession.invalidateFirstFrame();
+        publishSampledSolidStatus(
+          restartSampledSolidStatus(sampledSolidStatus, event.iterationsBudget),
+        );
         noteRenderProgress("solid", 0, event.iterationsBudget);
         break;
       case "resolutionNote":
-        ui.setSolidResolutionNote(event.effective, event.requested);
+        publishSampledSolidStatus(
+          resolveSampledSolidResolution(
+            sampledSolidStatus,
+            event.effective,
+            event.requested,
+          ),
+        );
         break;
       case "error":
+        publishSampledSolidStatus(
+          endSampledSolidStatus(sampledSolidStatus, "failed"),
+        );
         console.error(
           "Solid render failed to accumulate; returning to explorer.",
           event.message,
         );
-        showRenderError(RENDER_ACCUMULATE_ERROR);
+        showRenderError(
+          `${sampledSolidStatusText(sampledSolidStatus)} — returning to the explorer.`,
+        );
         solidSession.exit();
         break;
     }
@@ -3584,6 +3695,8 @@ async function main(): Promise<void> {
       solidSeedOverride = null;
       activeSolidSeed = seed;
       activeSolidNonFlat = fourD !== undefined;
+      activeSolidWorkerView = fourD ? fourDWorkerView() : null;
+      activeSolidViewRevision = undefined;
       const worker = new Worker(new URL("./voxel-worker.ts", import.meta.url), {
         type: "module",
       });
@@ -3591,8 +3704,13 @@ async function main(): Promise<void> {
         VoxelWorkerCommand,
         VoxelWorkerEvent
       >(worker, handleSolidEvent, (e) => {
+        publishSampledSolidStatus(
+          endSampledSolidStatus(sampledSolidStatus, "failed"),
+        );
         console.error("Solid worker crashed; returning to explorer.", e);
-        showRenderError();
+        showRenderError(
+          `${sampledSolidStatusText(sampledSolidStatus)} — returning to the explorer; try reloading.`,
+        );
         solidSession.exit();
       });
 
@@ -3644,26 +3762,41 @@ async function main(): Promise<void> {
       return handle;
     },
     clearNotes: () => {
-      ui.setSolidResolutionNote(null); // clear any note from a previous render before the fresh worker reports its own.
+      // The fresh status model clears the previous memory fallback before the
+      // worker reports its effective grid.
       // The arriving grid will replace this optimistic placeholder with its
       // measured centre-density verdict. Do not carry a previous system's
       // refusal through the first-frame gap.
       ui.setSolidBalloonAvailable(true);
     },
     resetProgress: () => {
-      ui.setSolidProgress(0, state.solid.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first grid event.
+      publishSampledSolidStatus(
+        beginSampledSolidStatus(state.solid.resolution, state.solid.iterations),
+      );
       renderComplete.solid = false; // ...and the completion flag with it, like the flame session's resetProgress.
       renderCoverage.solid = 0; // ...and its fraction form, likewise.
     },
     activate: () => {
       state = setRenderMode(state, "solid");
+      if (offlineExportPending) {
+        ui.setTimelineExportProgress(
+          `waiting · ${sampledSolidStatusText(sampledSolidStatus)}`,
+        );
+      }
       trackAutoBackground(); // see the flame session's activate
       refreshGuides();
       refreshUi();
     },
     deactivate: () => {
+      if (sampledSolidStatus.phase === "active") {
+        publishSampledSolidStatus(
+          endSampledSolidStatus(sampledSolidStatus, "cancelled"),
+        );
+      }
       activeSolidSeed = null;
       activeSolidNonFlat = false;
+      activeSolidWorkerView = null;
+      activeSolidViewRevision = undefined;
       solidSeedOverride = null;
       // Reset only the mode this session owns — see the flame session's
       // deactivate for why this is not a blind write.
@@ -4659,7 +4792,7 @@ async function main(): Promise<void> {
     if (state.renderMode === "solid") {
       const size = scene.exportSize(scale);
       return {
-        detail: `${String(size.width)} × ${String(size.height)}`,
+        detail: `${String(size.width)} × ${String(size.height)} · ${sampledSolidStatusText(sampledSolidStatus)}`,
         // One synchronous raymarch at export scale: it can report no coverage
         // mid-draw, so this decides the ONE thing left — whether the modal
         // skips its grace period. That decision is MEASURED: the previous
@@ -4737,17 +4870,30 @@ async function main(): Promise<void> {
    * unfinished picture they asked for — the toast is the only record of
    * that once the modal is gone, and a file that looks noisier than the
    * screen it came from should not have to be explained by memory. */
-  function deliverPng(image: ExportImage | null, rough = false): void {
+  function deliverPng(
+    image: ExportImage | null,
+    rough = false,
+    solidStatus?: SampledSolidStatus,
+  ): void {
     if (!image) {
-      ui.flashToast("Couldn't encode the PNG");
+      ui.flashToast(
+        solidStatus
+          ? `PNG export failed · ${sampledSolidStatusText(endSampledSolidStatus(solidStatus, "failed"))} · no file saved`
+          : "Couldn't encode the PNG",
+      );
       return;
     }
-    triggerDownload(image.blob, `fractal-${Date.now()}.png`);
+    triggerDownload(
+      image.blob,
+      solidStatus
+        ? `fractal-${sampledSolidFileTag(solidStatus)}-${Date.now()}.png`
+        : `fractal-${Date.now()}.png`,
+    );
     // The device ceilings may have clamped the export below the chosen
     // multiple (scene.exportPixelRatio / the flame memory clamp), so
     // report the size that actually saved.
     ui.flashToast(
-      `Saved ${image.width}×${image.height} PNG${rough ? " · rough" : ""}`,
+      `Saved ${image.width}×${image.height} PNG${rough ? " · rough" : ""}${solidStatus ? ` · ${sampledSolidSnapshotText(solidStatus)}` : ""}`,
     );
   }
 
@@ -4759,6 +4905,7 @@ async function main(): Promise<void> {
    * to disclose.
    */
   async function savePng(scale: number): Promise<void> {
+    const captureMode = state.renderMode;
     const plan = planPngExport(scale);
     const run = exportProgress.begin({
       title: "Saving PNG",
@@ -4797,7 +4944,11 @@ async function main(): Promise<void> {
         const blocked = await plan.awaitReady(run);
         surfaceCaptureFlight = plan.holdsSurfaceTracer;
         if (run.cancelled) {
-          ui.flashToast("Export cancelled");
+          ui.flashToast(
+            captureMode === "solid"
+              ? `PNG export cancelled · ${sampledSolidStatusText(endSampledSolidStatus(sampledSolidStatus, "cancelled"))} · no file saved`
+              : "Export cancelled",
+          );
           return;
         }
         if (blocked !== null) {
@@ -4810,13 +4961,25 @@ async function main(): Promise<void> {
       // a refused encode resolves — the caller is the only one who knows
       // which happened.
       if (run.cancelled) {
-        ui.flashToast("Export cancelled");
+        ui.flashToast(
+          captureMode === "solid"
+            ? `PNG export cancelled · ${sampledSolidStatusText(endSampledSolidStatus(sampledSolidStatus, "cancelled"))} · no file saved`
+            : "Export cancelled",
+        );
         return;
       }
-      deliverPng(image, plan.deliverEarly?.taken() ?? false);
+      deliverPng(
+        image,
+        plan.deliverEarly?.taken() ?? false,
+        captureMode === "solid" ? sampledSolidStatus : undefined,
+      );
     } catch (err: unknown) {
       if (run.cancelled) {
-        ui.flashToast("Export cancelled");
+        ui.flashToast(
+          captureMode === "solid"
+            ? `PNG export cancelled · ${sampledSolidStatusText(endSampledSolidStatus(sampledSolidStatus, "cancelled"))} · no file saved`
+            : "Export cancelled",
+        );
         return;
       }
       // No surface arm refuses on cost any more, so anything reaching here is
@@ -4825,9 +4988,11 @@ async function main(): Promise<void> {
       // which this path cannot reach, but honouring the message costs nothing
       // and beats swallowing it.
       ui.flashToast(
-        err instanceof SurfaceCaptureCostError
-          ? err.message
-          : "Couldn't encode the PNG",
+        captureMode === "solid"
+          ? `PNG export failed · ${sampledSolidStatusText(endSampledSolidStatus(sampledSolidStatus, "failed"))} · no file saved`
+          : err instanceof SurfaceCaptureCostError
+            ? err.message
+            : "Couldn't encode the PNG",
       );
     } finally {
       surfaceCaptureFlight = false;
@@ -7980,6 +8145,7 @@ async function main(): Promise<void> {
         encoded,
         captureCurrentThumbnail(),
         state.renderMode === "points" ? undefined : state.renderMode,
+        state.renderMode === "solid" ? sampledSolidStatus : undefined,
       );
       if (gapMode) {
         notePendingThumbnailPatch("collection", entry.id, gapMode, encoded);
@@ -8064,6 +8230,7 @@ async function main(): Promise<void> {
         encoded,
         captureCurrentThumbnail(),
         state.renderMode === "points" ? undefined : state.renderMode,
+        state.renderMode === "solid" ? sampledSolidStatus : undefined,
       );
       // The store refuses at cap rather than evicting part of an authored
       // sequence (timeline.ts) — say so instead of silently doing nothing.

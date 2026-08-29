@@ -49,3 +49,22 @@ export function sameFourDWorkerSpatialView(
     current.rotor.every((value, index) => value === next.rotor[index])
   );
 }
+
+/**
+ * Whether applying `next` must discard an accumulation. Spatial changes
+ * always rebuild. A slice-relative-color-only change rebuilds only while the
+ * active color path consumes that W-ramp remap; otherwise the worker merely
+ * stages the endpoint over its still-valid frame.
+ *
+ * Shared by the worker and main-thread preflight so the capture/display gate
+ * closes before a rebuilding command crosses the Worker boundary, but never
+ * closes for an inert command that will publish no replacement frame.
+ */
+export function fourDWorkerViewNeedsRebuild(
+  current: FourDWorkerView,
+  next: FourDWorkerView,
+  relativeColorIsActive: boolean,
+): boolean {
+  if (sameFourDWorkerView(current, next)) return false;
+  return !sameFourDWorkerSpatialView(current, next) || relativeColorIsActive;
+}

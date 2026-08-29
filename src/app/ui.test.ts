@@ -2,6 +2,12 @@
 import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
 import {
+  beginSampledSolidStatus,
+  endSampledSolidStatus,
+  progressSampledSolidStatus,
+  resolveSampledSolidResolution,
+} from "./solid-render-status";
+import {
   BALLOON_PALETTE_IDS,
   EXPORT_SCALES,
   FLAME_ITERATION_DETENTS,
@@ -5984,6 +5990,7 @@ describe("Ui render mode switch", () => {
     "solidColorSection",
     "solidSurfaceSection",
     "solidLightingSection",
+    "solidFloorSection",
   ] as const;
   const SURFACE_SECTION_IDS = [
     "surfaceColorSection",
@@ -7067,11 +7074,11 @@ describe("Ui solid render controls", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
     expect(document.getElementById("helpTitle")?.textContent).toBe(
-      "Solid Render",
+      "Sampled Solid Render",
     );
   });
 
-  it("reflects threshold, light angle/height, and ambient into their sliders and labels", () => {
+  it("reflects threshold, lighting, and floor presentation into their controls", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -7081,6 +7088,11 @@ describe("Ui solid render controls", () => {
         lightAzimuth: -45,
         lightElevation: 70,
         ambient: 0.5,
+        envLight: 0.65,
+        floorEnabled: true,
+        floorPattern: "checker",
+        floorTileScale: 1.2,
+        floorEmission: 1.5,
       },
     });
 
@@ -7113,6 +7125,32 @@ describe("Ui solid render controls", () => {
     ).toBe("0.5");
     expect(document.getElementById("solidAmbientLabel")?.textContent).toBe(
       "50%",
+    );
+    expect(
+      (document.getElementById("solidEnvLightSlider") as HTMLInputElement)
+        .value,
+    ).toBe("0.65");
+    expect(document.getElementById("solidEnvLightLabel")?.textContent).toBe(
+      "65%",
+    );
+    expect(
+      (document.getElementById("solidFloorEnabledCheckbox") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    expect(
+      (document.getElementById("solidFloorPatternSelect") as HTMLSelectElement)
+        .value,
+    ).toBe("checker");
+    expect(
+      (document.getElementById("solidFloorTileScaleSlider") as HTMLInputElement)
+        .value,
+    ).toBe("1.2");
+    expect(
+      (document.getElementById("solidFloorEmissionSlider") as HTMLInputElement)
+        .value,
+    ).toBe("1.5");
+    expect(byId("solidFloorPatternRow").classList.contains("hidden")).toBe(
+      false,
     );
   });
 
@@ -7170,6 +7208,45 @@ describe("Ui solid render controls", () => {
     slider.dispatchEvent(new Event("input"));
 
     expect(current().solid.ambient).toBe(0.4);
+  });
+
+  it.each([
+    ["solidEnvLightSlider", "0.8", "envLight", 0.8],
+    ["solidFloorPatternSelect", "checker", "floorPattern", "checker"],
+    ["solidFloorTileScaleSlider", "1.4", "floorTileScale", 1.4],
+    ["solidFloorEmissionSlider", "2", "floorEmission", 2],
+  ] as const)(
+    "applies %s to Solid presentation",
+    (id, value, key, expected) => {
+      const { handlers, current } = scalarHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      const input = document.getElementById(id) as HTMLInputElement;
+      input.value = value;
+      input.dispatchEvent(
+        new Event(id.endsWith("Select") ? "change" : "input"),
+      );
+      expect(current().solid[key]).toBe(expected);
+    },
+  );
+
+  it("stores Solid floor intent independently and gates only its detail rows", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const checkbox = document.getElementById(
+      "solidFloorEnabledCheckbox",
+    ) as HTMLInputElement;
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(current().solid.floorEnabled).toBe(true);
+    expect(current().groundPlane).toBe(false);
+
+    ui.updateLabels({ ...current(), renderMode: "solid", balloonEcho: true });
+    expect(checkbox.disabled).toBe(false);
+    expect(byId("solidFloorPatternRow").classList.contains("hidden")).toBe(
+      false,
+    );
   });
 
   it("reflects iterations and resolution into their sliders and labels", () => {
@@ -9182,11 +9259,53 @@ describe("Ui automatic-motion controls", () => {
 });
 
 describe("Ui.setSolidProgress", () => {
+  const sampled = (done: number, budget: number, effective = 192) =>
+    progressSampledSolidStatus(
+      resolveSampledSolidResolution(
+        beginSampledSolidStatus(192, budget),
+        effective,
+      ),
+      done,
+      budget,
+    );
+
+  it("uses one sampled identity/resolution/convergence label while active and complete", () => {
+    const ui = new Ui(document);
+    ui.setSampledSolidStatus(sampled(5, 10, 128));
+    const progress = document.getElementById("solidProgress");
+    const fallback = document.getElementById("solidResolutionNote");
+    expect(progress?.textContent).toContain(
+      "Sampled Solid · 128³ voxels (requested 192³) · converging 50%",
+    );
+    expect(fallback?.textContent).toBe(
+      "Memory fallback active: requested 192³, rendering 128³ voxels.",
+    );
+    expect(fallback?.getAttribute("role")).toBe("status");
+    expect(fallback?.getAttribute("aria-live")).toBe("polite");
+
+    ui.setSampledSolidStatus(sampled(10, 10));
+    expect(progress?.textContent).toContain(
+      "Sampled Solid · 192³ voxels · converged",
+    );
+    expect(fallback?.textContent).toBe("");
+  });
+
+  it.each(["cancelled", "failed"] as const)(
+    "discloses an incomplete %s session",
+    (phase) => {
+      const ui = new Ui(document);
+      ui.setSampledSolidStatus(endSampledSolidStatus(sampled(4, 10), phase));
+      expect(document.getElementById("solidProgress")?.textContent).toContain(
+        `${phase} · incomplete at 40%`,
+      );
+    },
+  );
+
   it("formats done/budget in millions with a percentage", () => {
     const ui = new Ui(document);
     ui.setSolidProgress(12_345_000, 20_000_000);
     expect(document.getElementById("solidProgress")?.textContent).toBe(
-      "12.3M / 20.0M iterations (61%)",
+      "Sampled Solid · requested 192³ voxels · effective resolution pending · converging 61% · 12.3M / 20.0M iterations",
     );
   });
 
@@ -9194,7 +9313,7 @@ describe("Ui.setSolidProgress", () => {
     const ui = new Ui(document);
     ui.setSolidProgress(25_000_000, 20_000_000);
     expect(document.getElementById("solidProgress")?.textContent).toContain(
-      "(100%)",
+      "converged",
     );
   });
 
@@ -9229,7 +9348,7 @@ describe("Ui.setSolidResolutionNote", () => {
     const ui = new Ui(document);
     ui.setSolidResolutionNote(128, 192);
     expect(note()?.textContent).toBe(
-      "Reduced to 128³ (from 192³) to fit available memory.",
+      "Memory fallback active: requested 192³, rendering 128³ voxels.",
     );
   });
 
@@ -10012,6 +10131,7 @@ describe("panel accordion sections", () => {
       "Scene color",
       "Lighting",
       "Depth",
+      "Floor",
     ]);
     const solidLighting = sections().find(
       (section) => section.id === "solidLightingSection",
@@ -10581,6 +10701,31 @@ describe("Ui collection gallery", () => {
     expect(captions[2]).not.toMatch(/^[✺◆]/);
   });
 
+  it("discloses a saved sampled Solid's resolution/convergence visibly and accessibly", () => {
+    const ui = new Ui(document);
+    const solidStatus = progressSampledSolidStatus(
+      resolveSampledSolidResolution(beginSampledSolidStatus(192, 10), 128),
+      10,
+      10,
+    );
+    ui.openGallery([
+      { ...saved("solidScene"), mode: "solid" as const, solidStatus },
+    ]);
+    expect(
+      document.querySelector("#galleryGrid .gallery-card-caption")?.textContent,
+    ).toContain("Sampled Solid · 128³ voxels (requested 192³) · converged");
+    expect(
+      document
+        .querySelector("#galleryGrid .gallery-card-caption")
+        ?.classList.contains("sampled-solid"),
+    ).toBe(true);
+    expect(
+      document
+        .querySelector("#galleryGrid .gallery-card-load")
+        ?.getAttribute("aria-label"),
+    ).toContain("Sampled Solid · 128³ voxels (requested 192³) · converged");
+  });
+
   it("fires onLoadFromCollection with the scene id when a card is clicked", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -10838,7 +10983,28 @@ describe("Ui timeline section", () => {
       "✺",
     );
     expect(rows()[1].querySelector(".timeline-step-mode")?.textContent).toBe(
-      "◆",
+      "◆ Sampled Solid · resolution and convergence unavailable",
+    );
+  });
+
+  it("discloses sampled Solid status on a timeline row and its accessible name", () => {
+    const ui = new Ui(document);
+    const solidStatus = progressSampledSolidStatus(
+      resolveSampledSolidResolution(beginSampledSolidStatus(160, 10), 160),
+      6,
+      10,
+    );
+    ui.renderTimeline(
+      [{ ...step("solid"), mode: "solid" as const, solidStatus }],
+      "0:06+",
+    );
+    const mode = rows()[0].querySelector(".timeline-step-mode");
+    expect(mode?.classList.contains("sampled-solid")).toBe(true);
+    expect(mode?.textContent).toContain(
+      "Sampled Solid · 160³ voxels · incomplete at 60%",
+    );
+    expect(mode?.getAttribute("aria-label")).toContain(
+      "Sampled Solid · 160³ voxels · incomplete at 60%",
     );
   });
 
@@ -13074,13 +13240,13 @@ describe("Ui render-progress announcer", () => {
     ui.setSolidProgress(24_000_000, 100_000_000);
     expect(announcer()?.textContent).toBe("");
     ui.setSolidProgress(25_000_000, 100_000_000);
-    expect(announcer()?.textContent).toBe("Solid render, 25 percent");
+    expect(announcer()?.textContent).toBe("Sampled Solid render, 25 percent");
     ui.setSolidProgress(75_000_000, 100_000_000); // skips 50: only the highest crossed
-    expect(announcer()?.textContent).toBe("Solid render, 75 percent");
+    expect(announcer()?.textContent).toBe("Sampled Solid render, 75 percent");
     ui.setSolidProgress(0, 100_000_000); // restart re-arms, like flame's
     expect(announcer()?.textContent).toBe("");
     ui.setSolidProgress(50_000_000, 100_000_000);
-    expect(announcer()?.textContent).toBe("Solid render, 50 percent");
+    expect(announcer()?.textContent).toBe("Sampled Solid render, 50 percent");
   });
 
   it("Surface announces at the same coarse boundaries, with its own wording", () => {

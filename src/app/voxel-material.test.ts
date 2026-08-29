@@ -8,6 +8,7 @@ import {
   marchStepsForGrid,
   packVoxelBalloonPalette,
   packVoxelBalloonTint,
+  packVoxelPresentation,
   sampleVoxelAlpha,
   setVoxelBalloon,
   solidBalloonCenterIsEmpty,
@@ -16,6 +17,7 @@ import {
   voxelMaxHierarchyLevelTexture,
   voxelFragmentFor,
 } from "./voxel-material";
+import { presentationFloorSpec } from "../fractal/presentation-floor";
 import { buildVoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
 import { VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN } from "../fractal/voxel-max-hierarchy";
 
@@ -46,6 +48,183 @@ describe("createVoxelMaterial backdrop source", () => {
     expect(material.uniforms.uBgImageOn.value).toBe(0);
     expect(material.fragmentShader).toContain("uBgImageOn == 1");
     expect(material.fragmentShader).toContain("texture(uBgImage, vUv).rgb");
+  });
+});
+
+describe("Solid environment and floor presentation programs", () => {
+  const floor = presentationFloorSpec(
+    { center: [1, 2, 3], radius: 4 },
+    { pattern: "checker", tileScale: 0.8, emission: 1.5 },
+  )!;
+
+  it("preserves every legacy source exactly when both features are off", () => {
+    const plain = voxelFragmentFor(false);
+    const accelerated = voxelFragmentFor(false, true);
+    const balloon = voxelFragmentFor(true);
+    const balloonAccelerated = voxelFragmentFor(true, true);
+
+    expect(voxelFragmentFor(false, false, false, false)).toBe(plain);
+    expect(voxelFragmentFor(false, true, false, false)).toBe(accelerated);
+    expect(voxelFragmentFor(true, false, false, false)).toBe(balloon);
+    expect(voxelFragmentFor(true, true, false, false)).toBe(balloonAccelerated);
+    for (const source of [plain, accelerated, balloon, balloonAccelerated]) {
+      expect(source).not.toContain("uEnvLight");
+      expect(source).not.toContain("shadeVoxelFloor");
+      expect(source).not.toContain("uGroundY");
+    }
+  });
+
+  it("uses Surface's normalized two-stop hue convention on every geometry/acceleration arm", () => {
+    for (const balloon of [false, true]) {
+      for (const accelerated of [false, true]) {
+        const source = voxelFragmentFor(balloon, accelerated, true, false);
+        expect(source).toContain(
+          "vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5)",
+        );
+        expect(source).toContain("e / max(max(e.r, max(e.g, e.b)), 1.0e-4)");
+        expect(source).toContain("voxelEnvTint(n)");
+        expect(source).toContain(
+          balloon ? "densityAtEcho(ro + rd * t)" : "vec2 tRange = boxIntersect",
+        );
+        if (accelerated) {
+          expect(source).toContain("maxHierarchyNode");
+        }
+      }
+    }
+  });
+
+  it("shades only misses with the one-sided, faded, bounded-read floor", () => {
+    const source = voxelFragmentFor(false, true, true, true);
+
+    expect(source.match(/shadeVoxelFloor\(ro, rd, background\)/g)).toHaveLength(
+      2,
+    );
+    expect(source).toContain("if (ro.y <= uGroundY || rd.y >= -1.0e-6)");
+    expect(source).toContain(
+      "1.0 - smoothstep(\n      uGroundFadeStart,\n      uGroundFadeEnd",
+    );
+    expect(source).toContain(
+      "vec2 shadowRange = boxIntersect(shadowOrigin, uLightDir)",
+    );
+    expect(source).toContain("for (int i = 0; i < SHADOW_STEPS; i++)");
+    expect(source).toContain("all(greaterThanEqual(uvw, vec3(0.0)))");
+    expect(source).toContain("if (uGroundPattern == 1)");
+    expect(source).toContain("uGroundBallR * uGroundTileScale");
+    expect(source).toContain("floorLinear * (lit + vec3(uGroundEmission))");
+    expect(source).toContain("vec3 floorLinear = pow(floorAlbedo, vec3(2.2))");
+    expect(source).toContain("vec3(1.0 / 2.2)");
+    expect(source).toContain("dist * uFogDensity / max(uGroundBallR, 1.0e-6)");
+    expect(source).toContain("maxHierarchyNode");
+  });
+
+  it("packs every scalar and recompiles only across effective axes", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    const original = material.fragmentShader;
+    const originalVersion = material.version;
+
+    packVoxelPresentation(material, { envLight: 0, floor: null });
+    expect(material.fragmentShader).toBe(original);
+    expect(material.version).toBe(originalVersion);
+
+    packVoxelPresentation(material, { envLight: 0.25, floor });
+    expect(material.fragmentShader).toBe(
+      voxelFragmentFor(false, false, true, true),
+    );
+    expect(material.version).toBe(originalVersion + 1);
+    expect(material.uniforms.uEnvLight.value).toBe(0.25);
+    expect(material.uniforms.uGroundY.value).toBeCloseTo(-2.08);
+    expect(material.uniforms.uGroundFadeStart.value).toBe(16);
+    expect(material.uniforms.uGroundFadeEnd.value).toBe(40);
+    expect(material.uniforms.uGroundBallR.value).toBe(4);
+    expect(material.uniforms.uGroundBallC.value.toArray()).toEqual([1, 2, 3]);
+    expect(material.uniforms.uGroundAlbedo.value.toArray()).toEqual([
+      0.62, 0.62, 0.62,
+    ]);
+    expect(material.uniforms.uGroundPattern.value).toBe(1);
+    expect(material.uniforms.uGroundTileScale.value).toBe(0.8);
+    expect(material.uniforms.uGroundEmission.value).toBe(1.5);
+
+    packVoxelPresentation(material, {
+      envLight: 0.75,
+      floor: { ...floor, tileScale: 1.2, emission: 0.4 },
+    });
+    expect(material.version).toBe(originalVersion + 1);
+    expect(material.uniforms.uEnvLight.value).toBe(0.75);
+    expect(material.uniforms.uGroundTileScale.value).toBe(1.2);
+    expect(material.uniforms.uGroundEmission.value).toBe(0.4);
+
+    packVoxelPresentation(material, { envLight: 0, floor });
+    expect(material.fragmentShader).toBe(
+      voxelFragmentFor(false, false, false, true),
+    );
+    expect(material.version).toBe(originalVersion + 2);
+    packVoxelPresentation(material, { envLight: 0, floor: null });
+    expect(material.fragmentShader).toBe(original);
+    expect(material.version).toBe(originalVersion + 3);
+  });
+
+  it("lets Balloon suppress the horizon and restores the requested floor", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    const balloon = {
+      center: [0, 0, 0] as [number, number, number],
+      radius: 1,
+      rho: 1.02,
+      R: 1.6,
+    };
+    packVoxelPresentation(material, { envLight: 0, floor });
+    const floorVersion = material.version;
+
+    setVoxelBalloon(material, balloon);
+    expect(material.fragmentShader).toBe(voxelFragmentFor(true));
+    expect(material.fragmentShader).not.toContain("shadeVoxelFloor");
+    expect(material.version).toBe(floorVersion + 1);
+
+    const revised = { ...floor, tileScale: 1.25, emission: 0.7 };
+    packVoxelPresentation(material, { envLight: 0, floor: revised });
+    expect(material.fragmentShader).toBe(voxelFragmentFor(true));
+    expect(material.version).toBe(floorVersion + 1);
+    expect(material.uniforms.uGroundTileScale.value).toBe(1.25);
+
+    setVoxelBalloon(material, null);
+    expect(material.fragmentShader).toBe(
+      voxelFragmentFor(false, false, false, true),
+    );
+    expect(material.fragmentShader).toContain("shadeVoxelFloor");
+    expect(material.uniforms.uGroundEmission.value).toBe(0.7);
+    expect(material.version).toBe(floorVersion + 2);
+  });
+
+  it("keeps the active presentation axes across hierarchy uploads and fallback", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    packVoxelPresentation(material, { envLight: 0.4, floor });
+    const packed = new Uint8Array(32 ** 3 * 4);
+    for (let i = 0; i < 32 ** 3; i++) packed[i * 4 + 3] = i & 0xff;
+
+    const texture = updateVoxelMaxHierarchyTexture(
+      material,
+      null,
+      buildVoxelMaxHierarchy(packed, 32),
+    );
+    expect(material.fragmentShader).toBe(
+      voxelFragmentFor(false, true, true, true),
+    );
+    expect(material.fragmentShader).toContain("maxHierarchyNode");
+    expect(material.fragmentShader).toContain("shadeVoxelFloor");
+    expect(material.fragmentShader).toContain("voxelEnvTint(n)");
+
+    updateVoxelMaxHierarchyTexture(material, texture, null);
+    expect(material.fragmentShader).toBe(
+      voxelFragmentFor(false, false, true, true),
+    );
+  });
+
+  it("never admits a Balloon+Floor program, including accelerated variants", () => {
+    expect(voxelFragmentFor(true, false, false, true)).toBe(
+      voxelFragmentFor(true, false, false, false),
+    );
+    expect(voxelFragmentFor(true, true, true, true)).toBe(
+      voxelFragmentFor(true, true, true, false),
+    );
   });
 });
 

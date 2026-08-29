@@ -268,6 +268,20 @@ export interface SolidParams {
    * stay. Live-reactive. */
   ambient: number;
   /**
+   * Environment-light strength in [0, 1], independent from Surface's
+   * identically named setting. Zero preserves Solid's original neutral-light
+   * shader exactly. Live-reactive presentation only.
+   */
+  envLight: number;
+  /** Whether Solid requests the shared world-space presentation floor. */
+  floorEnabled: boolean;
+  /** Solid or world-space checker floor. */
+  floorPattern: SurfaceFloorPattern;
+  /** Checker cell width as a fraction of the retained cloud sphere radius. */
+  floorTileScale: number;
+  /** Emitted floor radiance in linear light. Zero preserves the neutral floor. */
+  floorEmission: number;
+  /**
    * Structural-coloring palette (shares the flame render's
    * `PaletteSelection` union — see `palette.ts`). A cosine-gradient id
    * paints continuous color along the orbit, overriding colorMode entirely;
@@ -987,6 +1001,13 @@ export const MAX_SOLID_LIGHT_ELEVATION = 85;
 export const DEFAULT_SOLID_AMBIENT = 0.25;
 export const MIN_SOLID_AMBIENT = 0;
 export const MAX_SOLID_AMBIENT = 0.8;
+/** Solid's presentation additions are compatibility-off by default. Their
+ * numeric spans deliberately reuse Surface's ranges below. */
+export const DEFAULT_SOLID_ENV_LIGHT = 0;
+export const DEFAULT_SOLID_FLOOR_ENABLED = false;
+export const DEFAULT_SOLID_FLOOR_PATTERN: SurfaceFloorPattern = "solid";
+export const DEFAULT_SOLID_FLOOR_TILE_SCALE = 0.64;
+export const DEFAULT_SOLID_FLOOR_EMISSION = 0;
 /** Per-level decay of the surface render's orbit-trap color blend —
  * flam3's "color speed", one render over. 0.5 is the classic
  * halving the blend shipped with; 0 paints each top-level copy a
@@ -1368,6 +1389,21 @@ export const PARAM = defineParams({
     max: MAX_SOLID_AMBIENT,
     default: DEFAULT_SOLID_AMBIENT,
   },
+  solidEnvLight: {
+    min: MIN_SURFACE_ENV_LIGHT,
+    max: MAX_SURFACE_ENV_LIGHT,
+    default: DEFAULT_SOLID_ENV_LIGHT,
+  },
+  solidFloorTileScale: {
+    min: MIN_SURFACE_FLOOR_TILE_SCALE,
+    max: MAX_SURFACE_FLOOR_TILE_SCALE,
+    default: DEFAULT_SOLID_FLOOR_TILE_SCALE,
+  },
+  solidFloorEmission: {
+    min: MIN_SURFACE_FLOOR_EMISSION,
+    max: MAX_SURFACE_FLOOR_EMISSION,
+    default: DEFAULT_SOLID_FLOOR_EMISSION,
+  },
   // Surface render lighting is the SAME physical quantity as the
   // solid render's lighting just above (a horizontal light angle, a height
   // above the horizon, a fill-light floor) — these three reuse the solid
@@ -1488,6 +1524,11 @@ export function initialState(panelOpen: boolean): AppState {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      envLight: DEFAULT_SOLID_ENV_LIGHT,
+      floorEnabled: DEFAULT_SOLID_FLOOR_ENABLED,
+      floorPattern: DEFAULT_SOLID_FLOOR_PATTERN,
+      floorTileScale: DEFAULT_SOLID_FLOOR_TILE_SCALE,
+      floorEmission: DEFAULT_SOLID_FLOOR_EMISSION,
       paletteId: DEFAULT_SOLID_PALETTE,
     },
     surface: {
@@ -2616,6 +2657,58 @@ export function setSolidAmbient(state: AppState, ambient: number): AppState {
     solid: {
       ...state.solid,
       ambient: clampToSpec(PARAM.solidAmbient, ambient),
+    },
+  };
+}
+
+/** Set Solid's independent environment-light strength. */
+export function setSolidEnvLight(state: AppState, envLight: number): AppState {
+  return {
+    ...state,
+    solid: {
+      ...state.solid,
+      envLight: clampToSpec(PARAM.solidEnvLight, envLight),
+    },
+  };
+}
+
+/** Store Solid's floor intent independently from Surface's floor toggle. */
+export function setSolidFloorEnabled(
+  state: AppState,
+  floorEnabled: boolean,
+): AppState {
+  return { ...state, solid: { ...state.solid, floorEnabled } };
+}
+
+export function setSolidFloorPattern(
+  state: AppState,
+  floorPattern: SurfaceFloorPattern,
+): AppState {
+  return { ...state, solid: { ...state.solid, floorPattern } };
+}
+
+export function setSolidFloorTileScale(
+  state: AppState,
+  floorTileScale: number,
+): AppState {
+  return {
+    ...state,
+    solid: {
+      ...state.solid,
+      floorTileScale: clampToSpec(PARAM.solidFloorTileScale, floorTileScale),
+    },
+  };
+}
+
+export function setSolidFloorEmission(
+  state: AppState,
+  floorEmission: number,
+): AppState {
+  return {
+    ...state,
+    solid: {
+      ...state.solid,
+      floorEmission: clampToSpec(PARAM.solidFloorEmission, floorEmission),
     },
   };
 }

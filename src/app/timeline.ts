@@ -1,6 +1,10 @@
 import { mulberry32 } from "../fractal/rng";
 import { sanitizedMode } from "./collection";
 import type { SavedSceneMode } from "./collection";
+import {
+  sanitizeSampledSolidStatus,
+  type SampledSolidStatus,
+} from "./solid-render-status";
 
 /**
  * The timeline — an ordered, AUTHORED sequence of keyframe steps played back
@@ -62,6 +66,9 @@ export interface TimelineStep {
    * like it stored on the STEP, never inside `encoded`, so the scene
    * document itself stays render-mode-less. */
   mode?: SavedSceneMode;
+  /** Sampled-Solid status captured with this keyframe; absent for old steps
+   * and every independently routed Surface/Flame/Points step. */
+  solidStatus?: SampledSolidStatus;
 }
 
 /**
@@ -152,6 +159,15 @@ function isTimelineStep(v: unknown): v is TimelineStep {
   );
 }
 
+function sanitizedSolidStatusFields(
+  mode: SavedSceneMode | undefined,
+  value: unknown,
+): { solidStatus?: SampledSolidStatus } {
+  const status =
+    mode === "solid" ? sanitizeSampledSolidStatus(value) : undefined;
+  return status === undefined ? {} : { solidStatus: status };
+}
+
 /**
  * Load `{ seed, steps }` from `storage`. Never throws: no storage, a missing
  * key, invalid JSON, or a non-object payload all yield an empty timeline
@@ -190,6 +206,10 @@ function loadTimeline(
             morphMs: clampMs(s.morphMs),
             holdMs: clampMs(s.holdMs),
             mode: sanitizedMode(s.mode),
+            ...sanitizedSolidStatusFields(
+              sanitizedMode(s.mode),
+              (s as TimelineStep & { solidStatus?: unknown }).solidStatus,
+            ),
           }))
       : [];
     return { seed, steps };
@@ -256,6 +276,7 @@ export class TimelineStore {
     encoded: string,
     thumbnail: string,
     mode?: SavedSceneMode,
+    solidStatus?: SampledSolidStatus,
   ): TimelineStep | null {
     if (this.steps.length >= TIMELINE_CAP) return null;
     const step: TimelineStep = {
@@ -263,6 +284,7 @@ export class TimelineStore {
       encoded,
       thumbnail,
       mode,
+      ...(mode === "solid" && solidStatus ? { solidStatus } : {}),
       morphMs: DEFAULT_STEP_MORPH_MS,
       holdMs: DEFAULT_STEP_HOLD_MS,
     };
@@ -390,6 +412,9 @@ export class TimelineStore {
       encoded: s.encoded,
       thumbnail: s.thumbnail,
       mode: s.mode,
+      ...(s.mode === "solid" && s.solidStatus
+        ? { solidStatus: s.solidStatus }
+        : {}),
       morphMs: clampMs(s.morphMs),
       holdMs: clampMs(s.holdMs),
     }));

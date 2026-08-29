@@ -4,6 +4,7 @@ import {
   backgroundShapeSource,
 } from "../fractal/background-shape";
 import { BALLOON_FAR_CAP_RHO } from "../fractal/balloon-de";
+import type { PresentationFloorSpec } from "../fractal/presentation-floor";
 import type { Vec3 } from "../fractal/types";
 import {
   VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN,
@@ -27,14 +28,11 @@ import { DARK_BACKDROP, hexToRgb01 } from "./constants";
  * `sampler3D` requires it; Three injects the built-in vertex attributes and
  * matrix uniforms for GLSL3 ShaderMaterials automatically.
  *
- * DELIBERATELY NOT ENVIRONMENT-LIT (the environment-lit shading work scoped
- * it out): the surface tracers (`surface-material.ts` / `-4d.ts`) and their
- * WGSL mirror (`fractal/surface-de-gpu.ts`) tint the WHOLE lit term toward
- * the backdrop sampled along the shading normal, so those renders sit IN
- * their background; this raymarcher's `uAmbient` blend below stays a plain
- * scalar. That leaves the solid render as the one mode still floating in
- * front of its backdrop — a known, accepted gap, not an oversight a future
- * reader should "fix" by copying the tint in without a bead behind it.
+ * Environment light and the studio floor are explicit program features. At
+ * their compatibility-safe defaults (environment strength 0, floor absent),
+ * this module returns the literal pre-feature shader source for every
+ * balloon/hierarchy arm. Scalar look edits stay uniform-only; only crossing
+ * one of those effective feature axes selects another cached program.
  *
  * The miss-pixel gradient shares its shape with every other tracer:
  * `backgroundShapeT`, spliced in from `../fractal/background-shape.ts`, is
@@ -830,17 +828,221 @@ const VOXEL_BALLOON_ACCELERATED_FRAGMENT = buildVoxelAcceleratedFragment(
   true,
 );
 
-/** Resolved shader source. Both acceleration-off arms remain byte-exact. */
+function replaceEveryVoxelSeam(
+  source: string,
+  seam: string,
+  replacement: string,
+  expected: number,
+): string {
+  const pieces = source.split(seam);
+  if (pieces.length !== expected + 1) {
+    throw new Error("Voxel presentation shader seam count changed");
+  }
+  return pieces.join(replacement);
+}
+
+/**
+ * Layer the two presentation features over one already-resolved geometry /
+ * acceleration program. This ordering is intentional: presentation never
+ * chooses a query implementation, so adding it cannot drop Balloon's echo or
+ * the hierarchy's conservative traversal.
+ */
+function buildVoxelPresentationFragment(
+  input: string,
+  balloon: boolean,
+  environment: boolean,
+  floor: boolean,
+): string {
+  let source = input;
+  let presentationUniforms = "";
+  if (environment) {
+    presentationUniforms += `  // Surface-parity two-stop hue environment.\n  uniform float uEnvLight;\n`;
+  }
+  if (floor) {
+    presentationUniforms += `  // Shared world-space presentation floor.\n  uniform float uGroundY;\n  uniform float uGroundFadeStart;\n  uniform float uGroundFadeEnd;\n  uniform float uGroundBallR;\n  uniform vec3 uGroundBallC;\n  uniform vec3 uGroundAlbedo;\n  uniform int uGroundPattern;\n  uniform float uGroundTileScale;\n  uniform float uGroundEmission;\n`;
+  }
+  source = spliceVoxelBalloon(
+    source,
+    "  uniform float uFogTintStrength;\n",
+    `  uniform float uFogTintStrength;\n${presentationUniforms}`,
+  );
+
+  const envHelper = environment
+    ? `  /** Surface's normalized two-stop hue convention: strength changes
+   * tint, never the light's peak brightness. */
+  vec3 voxelEnvTint(vec3 n) {
+    vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
+    return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
+  }
+
+`
+    : "";
+  const floorHelper = floor
+    ? `  /** Shade only a density MISS against the one-sided shared floor. */
+  vec3 shadeVoxelFloor(vec3 ro, vec3 rd, vec3 background) {
+    if (ro.y <= uGroundY || rd.y >= -1.0e-6) {
+      return background;
+    }
+    float tp = (uGroundY - ro.y) / rd.y;
+    vec3 hp = ro + rd * tp;
+    vec2 rel = hp.xz - uGroundBallC.xz;
+    float fade = 1.0 - smoothstep(
+      uGroundFadeStart,
+      uGroundFadeEnd,
+      length(rel)
+    );
+    if (fade <= 0.0) {
+      return background;
+    }
+
+    // The floor receives a hard density shadow. boxIntersect is the gate:
+    // texture reads occur only on the finite AABB segment and the fixed loop
+    // bounds the work independently of the floor's infinite analytic extent.
+    float shadow = 1.0;
+    float lift = max(
+      uGroundBallR * 4.0e-4,
+      length(uBoundsSize) * uTexel * 0.5
+    );
+    vec3 shadowOrigin = hp + vec3(0.0, lift, 0.0);
+    vec2 shadowRange = boxIntersect(shadowOrigin, uLightDir);
+    float shadowNear = max(shadowRange.x, 0.0);
+    if (shadowNear < shadowRange.y && shadowRange.y > 0.0) {
+      float shadowStep = (shadowRange.y - shadowNear) / float(SHADOW_STEPS);
+      float shadowT = shadowNear + shadowStep * 0.5;
+      for (int i = 0; i < SHADOW_STEPS; i++) {
+        vec3 shadowPos = shadowOrigin + uLightDir * shadowT;
+        vec3 uvw = (shadowPos - uBoundsMin) / uBoundsSize;
+        if (all(greaterThanEqual(uvw, vec3(0.0))) &&
+            all(lessThanEqual(uvw, vec3(1.0))) &&
+            texture(uVolume, uvw).a > uThreshold) {
+          shadow = 0.0;
+          break;
+        }
+        shadowT += shadowStep;
+      }
+    }
+
+    // Solid's density AO convention, sampled upward and guarded before every
+    // volume read. It is deliberately local and bounded to four taps.
+    float occlusion = 0.0;
+    float aoStep = max(uGroundBallR * 0.02, lift);
+    for (int k = 1; k <= 4; k++) {
+      vec3 aoPos = hp + vec3(0.0, aoStep * float(k), 0.0);
+      vec3 uvw = (aoPos - uBoundsMin) / uBoundsSize;
+      if (all(greaterThanEqual(uvw, vec3(0.0))) &&
+          all(lessThanEqual(uvw, vec3(1.0)))) {
+        occlusion += texture(uVolume, uvw).a;
+      }
+    }
+    float ao = clamp(1.0 - occlusion * 0.35, 0.0, 1.0);
+    float diffuse = max(uLightDir.y, 0.0);
+    ${
+      environment
+        ? "vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *\n      voxelEnvTint(vec3(0.0, 1.0, 0.0));"
+        : "float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;"
+    }
+
+    vec3 floorAlbedo = uGroundAlbedo;
+    if (uGroundPattern == 1) {
+      float cell = max(uGroundBallR * uGroundTileScale, 1.0e-4);
+      ivec2 tile = ivec2(floor((hp.xz - uGroundBallC.xz) / cell));
+      int checker = ((tile.x + tile.y) % 2 + 2) % 2;
+      floorAlbedo *= mix(0.035, 1.0, float(checker));
+    }
+    // Albedo is authored sRGB; light and emission operate in linear space.
+    vec3 floorLinear = pow(floorAlbedo, vec3(2.2));
+    vec3 col = pow(
+      floorLinear * (lit + ${environment ? "vec3(uGroundEmission)" : "uGroundEmission"}),
+      vec3(1.0 / 2.2)
+    );
+
+    // Surface's floor fog origin: closest approach to the presentation ball
+    // along the camera-to-plane segment, then the shared squared exponential.
+    float dist = tp - clamp(dot(uGroundBallC - ro, rd), 0.0, tp);
+    float fog = 1.0 - exp(-0.12 * pow(
+      dist * uFogDensity / max(uGroundBallR, 1.0e-6),
+      2.0
+    ));
+    col = mix(
+      col,
+      mix(background, uFogTint, uFogTintStrength),
+      clamp(fog, 0.0, 1.0)
+    );
+    return mix(background, col, fade);
+  }
+
+`
+    : "";
+  source = spliceVoxelBalloon(
+    source,
+    "  void main() {\n",
+    `${envHelper}${floorHelper}  void main() {\n`,
+  );
+
+  if (environment) {
+    source = spliceVoxelBalloon(
+      source,
+      `    float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
+    // Light in linear space: base is sRGB-authored (color.ts), so
+`,
+      `    vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
+      voxelEnvTint(n);
+    // Light in linear space: base is sRGB-authored (color.ts), so
+`,
+    );
+  }
+
+  if (floor) {
+    const miss = `      outColor = vec4(background, 1.0);
+      return;
+`;
+    source = replaceEveryVoxelSeam(
+      source,
+      miss,
+      `      outColor = vec4(shadeVoxelFloor(ro, rd, background), 1.0);
+      return;
+`,
+      balloon ? 1 : 2,
+    );
+  }
+  return source;
+}
+
+const VOXEL_PRESENTATION_FRAGMENTS = new Map<string, string>();
+
+/**
+ * Resolve a Solid shader from four orthogonal booleans. The presentation
+ * cache is bounded to the small feature matrix (and Balloon refuses Floor),
+ * while the environment strength and every floor scalar remain uniforms.
+ * With both presentation booleans false, the exact historical source object
+ * is returned for all balloon/hierarchy arms.
+ */
 export function voxelFragmentFor(
   balloon: boolean,
   accelerated = false,
+  environment = false,
+  floor = false,
 ): string {
-  if (accelerated) {
-    return balloon
+  const base = accelerated
+    ? balloon
       ? VOXEL_BALLOON_ACCELERATED_FRAGMENT
-      : VOXEL_ACCELERATED_FRAGMENT;
-  }
-  return balloon ? VOXEL_BALLOON_FRAGMENT : VOXEL_FRAGMENT;
+      : VOXEL_ACCELERATED_FRAGMENT
+    : balloon
+      ? VOXEL_BALLOON_FRAGMENT
+      : VOXEL_FRAGMENT;
+  const effectiveFloor = floor && !balloon;
+  if (!environment && !effectiveFloor) return base;
+  const key = `${balloon ? "b" : "p"}${accelerated ? "a" : "u"}${environment ? "e" : "n"}${effectiveFloor ? "f" : "n"}`;
+  const cached = VOXEL_PRESENTATION_FRAGMENTS.get(key);
+  if (cached) return cached;
+  const resolved = buildVoxelPresentationFragment(
+    base,
+    balloon,
+    environment,
+    effectiveFloor,
+  );
+  VOXEL_PRESENTATION_FRAGMENTS.set(key, resolved);
+  return resolved;
 }
 
 /** The live uniform block for the Solid query-space balloon. */
@@ -931,11 +1133,16 @@ export function configureVoxelMaxHierarchyTexture(
 
 const HIERARCHY_FALLBACK_KEY = "voxelMaxHierarchyFallback";
 const BALLOON_ENABLED_KEY = "voxelBalloonEnabled";
+const ENVIRONMENT_ENABLED_KEY = "voxelEnvironmentEnabled";
+const FLOOR_REQUESTED_KEY = "voxelFloorRequested";
 
 function syncVoxelFragment(material: THREE.ShaderMaterial): void {
+  const balloon = material.userData[BALLOON_ENABLED_KEY] === true;
   const next = voxelFragmentFor(
-    material.userData[BALLOON_ENABLED_KEY] === true,
+    balloon,
     material.uniforms.uMaxHierarchyEnabled.value === 1,
+    material.userData[ENVIRONMENT_ENABLED_KEY] === true,
+    material.userData[FLOOR_REQUESTED_KEY] === true && !balloon,
   );
   if (material.fragmentShader !== next) {
     material.fragmentShader = next;
@@ -1118,6 +1325,56 @@ export function packVoxelBalloonPalette(
   material.uniforms.uBalloonPaletteEnabled.value = texture ? 1 : 0;
 }
 
+/** Solid's complete opt-in presentation block. */
+export interface VoxelPresentationSpec {
+  /** Surface-parity environment hue strength. Zero selects the exact legacy
+   * geometry program; nonzero edits remain uniforms until returning to zero. */
+  envLight: number;
+  /** Shared world-space floor, or null for no requested horizon. */
+  floor: PresentationFloorSpec | null;
+}
+
+/**
+ * Pack Solid's environment and floor presentation without touching the
+ * camera-independent volume. Program selection changes only when the
+ * environment's zero/nonzero axis or the floor's effective off/on axis
+ * changes. Balloon has no horizon, so it suppresses the floor program while
+ * retaining both the request flag and its uniforms; clearing Balloon restores
+ * the requested floor automatically.
+ */
+export function packVoxelPresentation(
+  material: THREE.ShaderMaterial,
+  spec: VoxelPresentationSpec,
+): void {
+  const u = material.uniforms;
+  u.uEnvLight.value = spec.envLight;
+  if (spec.floor) {
+    const floor = spec.floor;
+    u.uGroundY.value = floor.y;
+    u.uGroundFadeStart.value = floor.fadeStart;
+    u.uGroundFadeEnd.value = floor.fadeEnd;
+    u.uGroundBallR.value = floor.ballRadius;
+    (u.uGroundBallC.value as THREE.Vector3).set(...floor.ballCenter);
+    (u.uGroundAlbedo.value as THREE.Vector3).set(...floor.albedo);
+    u.uGroundPattern.value = floor.pattern;
+    u.uGroundTileScale.value = floor.tileScale;
+    u.uGroundEmission.value = floor.emission;
+  } else {
+    u.uGroundY.value = 0;
+    u.uGroundFadeStart.value = 0;
+    u.uGroundFadeEnd.value = 0;
+    u.uGroundBallR.value = 1;
+    (u.uGroundBallC.value as THREE.Vector3).set(0, 0, 0);
+    (u.uGroundAlbedo.value as THREE.Vector3).set(1, 1, 1);
+    u.uGroundPattern.value = 0;
+    u.uGroundTileScale.value = 0.64;
+    u.uGroundEmission.value = 0;
+  }
+  material.userData[ENVIRONMENT_ENABLED_KEY] = spec.envLight !== 0;
+  material.userData[FLOOR_REQUESTED_KEY] = spec.floor !== null;
+  syncVoxelFragment(material);
+}
+
 export function createVoxelMaterial(
   volume: THREE.Data3DTexture,
   backgroundImage?: THREE.Texture,
@@ -1151,6 +1408,19 @@ export function createVoxelMaterial(
       uFogDensity: { value: 1 }, // scene.setFogDensity keeps it current.
       uFogTint: { value: new THREE.Vector3(1, 1, 1) },
       uFogTintStrength: { value: 0 }, // scene.setFogTint keeps both current.
+      // Presentation uniforms are bound even while the exact compatibility
+      // source omits them, so toggles are allocation-free and scalar edits do
+      // not reconstruct the material.
+      uEnvLight: { value: 0 },
+      uGroundY: { value: 0 },
+      uGroundFadeStart: { value: 0 },
+      uGroundFadeEnd: { value: 0 },
+      uGroundBallR: { value: 1 },
+      uGroundBallC: { value: new THREE.Vector3() },
+      uGroundAlbedo: { value: new THREE.Vector3(1, 1, 1) },
+      uGroundPattern: { value: 0 },
+      uGroundTileScale: { value: 0.64 },
+      uGroundEmission: { value: 0 },
       // Acceleration is opt-in per exact worker snapshot. These uniforms stay
       // inert (and the fragment source stays unchanged) until its traversal
       // program is selected; the 1x1x1 R8 binding makes absence explicit.
@@ -1178,6 +1448,8 @@ export function createVoxelMaterial(
   });
   material.userData[HIERARCHY_FALLBACK_KEY] = hierarchyFallback;
   material.userData[BALLOON_ENABLED_KEY] = false;
+  material.userData[ENVIRONMENT_ENABLED_KEY] = false;
+  material.userData[FLOOR_REQUESTED_KEY] = false;
   material.addEventListener("dispose", () => hierarchyFallback.dispose());
   return material;
 }

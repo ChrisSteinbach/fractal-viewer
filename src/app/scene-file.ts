@@ -43,6 +43,7 @@ import { COLLECTION_CAP } from "./collection";
 import type { ImportableScene, SavedScene, SavedSceneMode } from "./collection";
 import { TIMELINE_CAP } from "./timeline";
 import type { ImportableTimelineStep, TimelineStep } from "./timeline";
+import { sanitizeSampledSolidStatus } from "./solid-render-status";
 import {
   parsePortableMeshManifest,
   type ParsedPortableMeshManifest,
@@ -172,6 +173,7 @@ export function encodeCollectionFile(
         encoded: s.encoded,
         createdAt: s.createdAt,
         mode: s.mode,
+        solidStatus: s.solidStatus,
         thumbnail: s.thumbnail,
       })),
       assets,
@@ -212,6 +214,7 @@ export function encodeTimelineFile(
       steps: steps.map((s) => ({
         encoded: s.encoded,
         mode: s.mode,
+        solidStatus: s.solidStatus,
         thumbnail: s.thumbnail,
         morphMs: s.morphMs,
         holdMs: s.holdMs,
@@ -260,7 +263,7 @@ function sanitizedImportThumbnail(v: unknown): string {
 function sanitizeImportedScene(v: unknown): ImportableScene | null {
   if (typeof v !== "object" || v === null) return null;
   const o = v as Record<string, unknown>;
-  const { encoded, createdAt: rawCreatedAt, mode, thumbnail } = o;
+  const { encoded, createdAt: rawCreatedAt, mode, solidStatus, thumbnail } = o;
 
   if (typeof encoded !== "string" || decodeScene(encoded) === null) {
     return null;
@@ -271,10 +274,16 @@ function sanitizeImportedScene(v: unknown): ImportableScene | null {
   if (!Number.isFinite(rawCreatedAt)) return null;
   const createdAt = rawCreatedAt as number;
 
+  const sanitizedMode = sanitizedImportMode(mode);
+  const sampledStatus =
+    sanitizedMode === "solid"
+      ? sanitizeSampledSolidStatus(solidStatus)
+      : undefined;
   return {
     encoded,
     createdAt,
-    mode: sanitizedImportMode(mode),
+    mode: sanitizedMode,
+    ...(sampledStatus ? { solidStatus: sampledStatus } : {}),
     thumbnail: sanitizedImportThumbnail(thumbnail),
   };
 }
@@ -296,18 +305,24 @@ function sanitizeImportedScene(v: unknown): ImportableScene | null {
 function sanitizeImportedStep(v: unknown): ImportableTimelineStep | null {
   if (typeof v !== "object" || v === null) return null;
   const o = v as Record<string, unknown>;
-  const { encoded, morphMs, holdMs, mode, thumbnail } = o;
+  const { encoded, morphMs, holdMs, mode, solidStatus, thumbnail } = o;
 
   if (typeof encoded !== "string" || decodeScene(encoded) === null) {
     return null;
   }
   if (typeof morphMs !== "number" || typeof holdMs !== "number") return null;
 
+  const sanitizedMode = sanitizedImportMode(mode);
+  const sampledStatus =
+    sanitizedMode === "solid"
+      ? sanitizeSampledSolidStatus(solidStatus)
+      : undefined;
   return {
     encoded,
     morphMs,
     holdMs,
-    mode: sanitizedImportMode(mode),
+    mode: sanitizedMode,
+    ...(sampledStatus ? { solidStatus: sampledStatus } : {}),
     thumbnail: sanitizedImportThumbnail(thumbnail),
   };
 }
@@ -394,7 +409,7 @@ function decodePortableImportFile(
         !hasExactKeys(
           raw as Record<string, unknown>,
           ["encoded", "holdMs", "morphMs", "thumbnail"],
-          ["mode"],
+          ["mode", "solidStatus"],
         )
       ) {
         return null;
@@ -445,7 +460,7 @@ function decodePortableImportFile(
       !hasExactKeys(
         raw as Record<string, unknown>,
         ["createdAt", "encoded", "thumbnail"],
-        ["mode"],
+        ["mode", "solidStatus"],
       )
     ) {
       return null;
