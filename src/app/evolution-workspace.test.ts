@@ -1,13 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { EvolutionLineage, type LineageNodeInput } from "./evolution-lineage";
-import { EvolutionWorkspaceSelection } from "./evolution-workspace";
+import {
+  EvolutionWorkspaceSelection,
+  promoteEvolutionSelection,
+} from "./evolution-workspace";
+import { evolutionSceneContentDigest } from "./evolution-crossover";
 import { initialState } from "./state";
-import { toSnapshot } from "./persist";
+import { encodeScene, toSnapshot } from "./persist";
 
 function input(scene: string): LineageNodeInput {
+  const snapshot = toSnapshot(initialState(true));
+  snapshot.transforms[0].position[0] =
+    [...scene].reduce((sum, character) => sum + character.charCodeAt(0), 0) /
+    10_000;
   return {
     encodedScene: scene,
-    snapshot: toSnapshot(initialState(true)),
+    snapshot,
     thumbnail: new Uint8ClampedArray([1, 2, 3, 255]),
     seed: 7,
     profile: { algorithm: "test" },
@@ -107,7 +115,7 @@ describe("EvolutionWorkspaceSelection", () => {
     const { lineage, workspace, firstId, secondId } = branch();
     await workspace.select(firstId, async () => true);
 
-    const result = workspace.reconcile("second");
+    const result = workspace.reconcile(lineage.node(secondId)!.contentDigest);
 
     expect(result).toMatchObject({ attached: true, node: { id: secondId } });
     expect(lineage.currentId).toBe(secondId);
@@ -115,11 +123,11 @@ describe("EvolutionWorkspaceSelection", () => {
   });
 
   it("reconciliation does not rewrite lineage back/forward history", () => {
-    const { lineage, workspace, rootId, firstId } = branch();
+    const { lineage, workspace, rootId, firstId, secondId } = branch();
     lineage.visitBranch(firstId);
     expect(lineage.back()?.id).toBe(rootId);
 
-    workspace.reconcile("second");
+    workspace.reconcile(lineage.node(secondId)!.contentDigest);
 
     expect(lineage.forward()?.id).toBe(firstId);
   });
@@ -127,21 +135,84 @@ describe("EvolutionWorkspaceSelection", () => {
   it("visibly detaches on an unknown outside edit without lying about selection", async () => {
     const { lineage, workspace, firstId } = branch();
     await workspace.select(firstId, async () => true);
+    const outside = toSnapshot(initialState(true));
+    outside.transforms[0].position[0] = 9;
 
-    expect(workspace.reconcile("outside-edit")).toEqual({ attached: false });
+    expect(workspace.reconcile(evolutionSceneContentDigest(outside))).toEqual({
+      attached: false,
+    });
     expect(workspace.detached).toBe(true);
     expect(lineage.currentId).toBe(firstId);
   });
 
   it("reattaches after a new root reset", () => {
     const { lineage, workspace } = branch();
-    workspace.reconcile("outside-edit");
+    const outside = toSnapshot(initialState(true));
+    outside.transforms[0].position[0] = 9;
+    workspace.reconcile(evolutionSceneContentDigest(outside));
     const root = lineage.reset(input("new-root"));
 
     workspace.noteReset();
 
     expect(workspace.detached).toBe(false);
     expect(lineage.currentId).toBe(root.id);
+  });
+
+  it("promotes only the selected scene and leaves lineage untouched", async () => {
+    const { lineage, workspace, firstId } = branch();
+    await workspace.select(firstId, async () => true);
+    const before = lineage.all().map((node) => node.id);
+    const saved: string[] = [];
+
+    expect(
+      promoteEvolutionSelection(lineage, workspace, (encoded) =>
+        saved.push(encoded),
+      ),
+    ).toBe(true);
+    expect(saved).toEqual([lineage.node(firstId)!.encodedScene]);
+    expect(lineage.all().map((node) => node.id)).toEqual(before);
+    expect(lineage.currentId).toBe(firstId);
+
+    workspace.noteOutsideEdit();
+    expect(
+      promoteEvolutionSelection(lineage, workspace, (encoded) =>
+        saved.push(encoded),
+      ),
+    ).toBe(false);
+    expect(saved).toHaveLength(1);
+  });
+
+  it("distinguishes exact documents that collide on the rounded portable wire", async () => {
+    const rootSnapshot = toSnapshot(initialState(true));
+    rootSnapshot.transforms[0].position[0] = 0.123456789;
+    const childSnapshot = toSnapshot(initialState(true));
+    childSnapshot.transforms[0].position[0] = 0.12345679;
+    expect(encodeScene(rootSnapshot)).toBe(encodeScene(childSnapshot));
+
+    const lineage = new EvolutionLineage({
+      ...input("root"),
+      encodedScene: encodeScene(rootSnapshot),
+      snapshot: rootSnapshot,
+    });
+    const child = lineage.addMutation(lineage.rootId!, {
+      ...input("child"),
+      encodedScene: encodeScene(childSnapshot),
+      snapshot: childSnapshot,
+    });
+    if (!child.added) throw new Error("test graph refused");
+    const workspace = new EvolutionWorkspaceSelection(lineage);
+
+    expect(
+      workspace.reconcile(evolutionSceneContentDigest(childSnapshot)),
+    ).toMatchObject({ attached: true, node: { id: child.node.id } });
+
+    const outsideEdit = structuredClone(childSnapshot);
+    outsideEdit.transforms[0].position[0] = 0.123456791;
+    expect(encodeScene(outsideEdit)).toBe(child.node.encodedScene);
+    expect(
+      workspace.reconcile(evolutionSceneContentDigest(outsideEdit)),
+    ).toEqual({ attached: false });
+    expect(lineage.currentId).toBe(child.node.id);
   });
 
   it("can attach or detach display state without moving graph selection", () => {

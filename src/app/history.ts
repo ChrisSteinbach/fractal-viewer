@@ -51,6 +51,13 @@ export interface ViewPose {
 export interface HistoryEntry {
   /** Encoded scene (encodeScene output) captured before an edit burst. */
   snapshot: string;
+  /** Optional session-local exact-authority token. The ordinary portable
+   * history wire is intentionally rounded; callers that own a stronger
+   * immutable authority (Evolution lineage, for example) can attach a small
+   * opaque token so equal wires from different exact documents are never
+   * deduplicated or skipped. The history does not interpret or retain the
+   * authority itself. */
+  authority?: string;
   /** True when the edit adjacent to this entry (toward the state that replaced
    * it) was a whole-system replacement (preset load / Surprise Me). The flag
    * travels with that transition between the stacks, so undo/redo can decide
@@ -107,10 +114,10 @@ export class SceneHistory {
 
   /** Next genuine undo target without mutating either stack. Entries equal to
    * `current` are the same no-op checkpoints {@link undo} discards. */
-  peekUndo(current: string): HistoryEntry | null {
+  peekUndo(current: string, authority?: string): HistoryEntry | null {
     for (let index = this.undoStack.length - 1; index >= 0; index -= 1) {
       const entry = this.undoStack[index];
-      if (entry.snapshot !== current) return entry;
+      if (!sameState(entry, current, authority)) return entry;
     }
     return null;
   }
@@ -131,13 +138,18 @@ export class SceneHistory {
    * the redo stack — the redone-past-this-point future no longer exists once a
    * new edit branches off.
    */
-  checkpoint(snapshot: string, replaced: boolean, pose?: ViewPose): void {
+  checkpoint(
+    snapshot: string,
+    replaced: boolean,
+    pose?: ViewPose,
+    authority?: string,
+  ): void {
     const top = this.undoStack[this.undoStack.length - 1];
-    if (top && top.snapshot === snapshot) {
+    if (top && sameState(top, snapshot, authority)) {
       top.replaced = replaced;
       top.pose = pose;
     } else {
-      this.undoStack.push({ snapshot, replaced, pose });
+      this.undoStack.push({ snapshot, replaced, pose, authority });
       if (this.undoStack.length > this.cap) this.undoStack.shift();
     }
     this.redoStack = [];
@@ -154,16 +166,25 @@ export class SceneHistory {
    * so a later redo can restore it), and returns the popped entry
    * (whose own pose the caller restores). Null when nothing is left to undo.
    */
-  undo(current: string, pose?: ViewPose): HistoryEntry | null {
+  undo(
+    current: string,
+    pose?: ViewPose,
+    authority?: string,
+  ): HistoryEntry | null {
     while (
       this.undoStack.length > 0 &&
-      this.undoStack[this.undoStack.length - 1].snapshot === current
+      sameState(this.undoStack[this.undoStack.length - 1], current, authority)
     ) {
       this.undoStack.pop();
     }
     const entry = this.undoStack.pop();
     if (!entry) return null;
-    this.redoStack.push({ snapshot: current, replaced: entry.replaced, pose });
+    this.redoStack.push({
+      snapshot: current,
+      replaced: entry.replaced,
+      pose,
+      authority,
+    });
     return entry;
   }
 
@@ -175,11 +196,28 @@ export class SceneHistory {
    * `checkpoint`), and returns the popped entry (whose own pose the caller
    * restores). Null when nothing is left to redo.
    */
-  redo(current: string, pose?: ViewPose): HistoryEntry | null {
+  redo(
+    current: string,
+    pose?: ViewPose,
+    authority?: string,
+  ): HistoryEntry | null {
     const entry = this.redoStack.pop();
     if (!entry) return null;
-    this.undoStack.push({ snapshot: current, replaced: entry.replaced, pose });
+    this.undoStack.push({
+      snapshot: current,
+      replaced: entry.replaced,
+      pose,
+      authority,
+    });
     if (this.undoStack.length > this.cap) this.undoStack.shift();
     return entry;
   }
+}
+
+function sameState(
+  entry: Pick<HistoryEntry, "snapshot" | "authority">,
+  snapshot: string,
+  authority: string | undefined,
+): boolean {
+  return entry.snapshot === snapshot && entry.authority === authority;
 }

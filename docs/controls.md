@@ -963,8 +963,10 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   path. **Parent**, **Forward**, and **Branch** revisit retained alternatives;
   branches can be pruned, and **New root from displayed scene** deliberately
   starts over. The graph is capped at 64 nodes and 12 MiB of thumbnails, with
-  no silent eviction. **Generate 8 variations** can add another retained set until
-  those caps are reached.
+  no silent eviction. At the 220×220 RGBA preview size, 64 raw thumbnail
+  buffers measure 11.82 MiB; per-node generation/navigation metadata is swept
+  with prune, and A/B owns at most two external authorities. **Generate 8
+  variations** can add another retained set until those caps are reached.
 
   **Keep traits unchanged** exposes independent locks for spatial geometry,
   nonlinear variations, the final lens, 4D extension fields, map selection or
@@ -978,8 +980,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   seeded lane, so they cannot shift later siblings. Automatic orbit and tumble
   pause while the Lab is open without changing the saved motion preference.
   Undo, redo, Collection loads, or editor changes reattach when the displayed
-  document matches a retained node; otherwise the Lab visibly detaches and
-  offers a new root.
+  document matches a retained node by its exact semantic digest; otherwise the
+  Lab visibly detaches and offers a new root. Undo/redo carries a page-local
+  retained-node token beside its ordinary rounded history wire, so revisiting
+  an unpruned node restores the unrounded scene and saved view without keeping
+  pruned node assets alive.
 
   **Compare and breed** keeps two session-local references, A and B.
   **Pin selected as A/B** replaces that pin with the graph-selected node;

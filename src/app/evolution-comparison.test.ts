@@ -384,13 +384,35 @@ describe("EvolutionComparisonSession", () => {
       }),
     ).toThrow("does not match its snapshot");
     expect(() => comparison.pinExternal("B", externalInput("kept"))).toThrow(
-      "already used",
+      "already active",
     );
     expect(comparison.resolve("A")).toMatchObject({
       endpoint: { kind: "external", authorityId: "kept" },
     });
     expect(comparison.resolve("B")).toEqual({ state: "empty" });
     expect(released).toEqual([]);
+  });
+
+  it("bounds external authority identity across a long replacement session", () => {
+    const released: string[] = [];
+    const { lineage } = branch();
+    const comparison = new EvolutionComparisonSession(lineage, {
+      onExternalRelease: (endpoint) => released.push(endpoint.authorityId),
+    });
+
+    for (let index = 0; index < 2_000; index += 1) {
+      comparison.pinExternal("A", externalInput(`external-${String(index)}`));
+      expect(comparison.externalAuthorityCount).toBe(1);
+    }
+    comparison.clear("A");
+    expect(comparison.externalAuthorityCount).toBe(0);
+    expect(released).toHaveLength(2_000);
+
+    comparison.pinExternal("B", externalInput("external-0"));
+    expect(comparison.externalAuthorityCount).toBe(1);
+    comparison.dispose();
+    expect(comparison.externalAuthorityCount).toBe(0);
+    expect(released).toHaveLength(2_001);
   });
 
   it("keeps external pins across lineage reset while retained pins become missing", () => {
