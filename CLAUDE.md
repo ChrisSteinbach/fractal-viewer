@@ -1220,22 +1220,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `vec.ts` — `clamp`, `clone3`, `to255` helpers.
   - `voxel.ts` — solid render: `accumulateVoxels` → 3D density grid →
     `voxelTextureData` (RGBA8 volume). `buildColorModeLUT` reuses `color.ts`.
-    PAYLOAD VERDICT: density plus running RGB remains sufficient; acceleration
-    derives from packed alpha and presentation stays query-time, so no
-    itinerary/trap channel ships without a named user-visible consumer. The
-    audit and reopen conditions are in `docs/solid-voxel-payload-decision.md`.
   - `voxel-4d.ts` — 4D twin; slices with `0` floor (not flame's `0.06`).
-  - `voxel-raymarch.ts` — pure CPU geometry oracle for Solid's packed RGBA8
-    density: ClampToEdge trilinear reconstruction plus the unaccelerated
-    fixed-step, strict-threshold, bracket-refined primary march.
-  - `voxel-raymarch-accelerated.ts` — conservative cellSpan-16 traversal over
-    that SAME fixed sample lattice. Empty nodes skip density reads, occupied
-    node exits are cached, and crossing evidence/refinement stays oracle-exact.
-  - `voxel-max-hierarchy.ts` — alpha-only max hierarchy over the CONTINUOUS
-    trilinear interpolation cells, including both clamped boundary half-cells.
-    The source texture remains the leaf; threshold stays live; allocation
-    failure omits acceleration without changing geometry. Proof, cost, rebuild
-    policy and measurements: `docs/solid-density-acceleration.md`.
 - **`src/app/`** — Three.js + DOM glue. Vite root (`root: "src/app"`).
   - `scene.ts` — Three.js wrapper (scene, camera, renderer, point cloud, guide
     boxes, fog). Three.js confined to this file, `interactions.ts`,
@@ -1692,13 +1677,8 @@ Frame` callback, which runs before paint so the disabled look never
     CPU fallback.
   - `flame-perf.ts` — opt-in flame throughput diagnostics (`?flameperf`).
   - `voxel-worker.ts` / `voxel-worker-core.ts` — solid render worker (transfer
-    only). Each progressive event transfers one exact packed texture plus its
-    matching max hierarchy, or explicit absence; exact peak-byte accounting
-    covers both before the resolution clamp. Its non-flat session shares
-    Flame's retained-geometry, restart-on-settled-`setFourDView` contract.
-  - `render-worker-host.ts` — live-gated Worker adapter used by Solid:
-    detaches callbacks before termination and also makes already-captured
-    stale message/error callbacks inert across exit and re-entry.
+    only). Its non-flat session shares Flame's retained-geometry,
+    restart-on-settled-`setFourDView` contract.
   - `surface-grid-worker.ts` / `surface-grid-worker-core.ts` /
     `surface-grid-client.ts` — empty-space-grid build worker:
     one-shot `buildSurfaceGrid` request/response (transfer), latest-wins-by-id
@@ -1710,9 +1690,6 @@ Frame` callback, which runs before paint so the disabled look never
     at 32, never skipped; the result's own `resolution`/`halfExtent` are what
     was actually built.
   - `voxel-material.ts` — GLSL3 raymarcher `ShaderMaterial` for voxel volume.
-    A matched hierarchy uploads only its cellSpan-16 level as nearest R8;
-    absent acceleration selects the byte-exact prior shader. Straight primary
-    rays accelerate; shadows/AO and Balloon's nonlinear inverted echo do not.
   - `surface-slots.ts` — the three per-slot shading inputs every surface tracer
     takes (per-slot "By Transform" colors, orbit-trap palette coordinates,
     and RESOLVED finishes), keyed on `baseIndex` into the DOCUMENT's
