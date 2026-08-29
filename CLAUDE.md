@@ -1228,6 +1228,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `voxel-raymarch.ts` — pure CPU geometry oracle for Solid's packed RGBA8
     density: ClampToEdge trilinear reconstruction plus the unaccelerated
     fixed-step, strict-threshold, bracket-refined primary march.
+  - `voxel-raymarch-accelerated.ts` — conservative cellSpan-16 traversal over
+    that SAME fixed sample lattice. Empty nodes skip density reads, occupied
+    node exits are cached, and crossing evidence/refinement stays oracle-exact.
   - `voxel-max-hierarchy.ts` — alpha-only max hierarchy over the CONTINUOUS
     trilinear interpolation cells, including both clamped boundary half-cells.
     The source texture remains the leaf; threshold stays live; allocation
@@ -1707,6 +1710,9 @@ Frame` callback, which runs before paint so the disabled look never
     at 32, never skipped; the result's own `resolution`/`halfExtent` are what
     was actually built.
   - `voxel-material.ts` — GLSL3 raymarcher `ShaderMaterial` for voxel volume.
+    A matched hierarchy uploads only its cellSpan-16 level as nearest R8;
+    absent acceleration selects the byte-exact prior shader. Straight primary
+    rays accelerate; shadows/AO and Balloon's nonlinear inverted echo do not.
   - `surface-slots.ts` — the three per-slot shading inputs every surface tracer
     takes (per-slot "By Transform" colors, orbit-trap palette coordinates,
     and RESOLVED finishes), keyed on `baseIndex` into the DOCUMENT's

@@ -740,3 +740,21 @@ the 3D/4D packed-adjacent mirrors, with 7,369 / 7,258 rejected overlapping
 proposals and zero 64-attempt fallbacks. Those deterministic tests are not a
 live GPU claim; this sheet provides the actual-spec visual/extent evidence
 without repeating the long GPU run.
+
+### voxel-hierarchy-traversal
+
+The Solid max-hierarchy traversal's deterministic work-count sheet: 3,072
+matched orthographic rays over sparse islands, a deliberately full dense
+volume, and a thin nonlinear warped ring at 192³ / 220 fixed steps. It prices
+cell spans 8/16/32 while requiring every accelerated first-hit lattice index to
+equal the unaccelerated one.
+
+MEASURED VERDICT: span 16. Sparse and nonlinear combined-fetch ratios were
+0.066 and 0.099 of baseline (99.1% / 95.9% of trilinear RGBA8 reads removed),
+against span 8's 0.114/0.126 and span 32's 0.074/0.138, with zero mismatches in
+all nine rows. The full dense arm hits immediately and is bounded at exactly
+one extra nearest R8 read: 3,072 hierarchy plus 3,072 baseline RGBA8 reads.
+The companion real-WebGL verifier gates matched production captures and prints
+descriptive timing; its recorded 192³ SwiftShader run changed four channels by
+one byte and measured 137.20 ms accelerated versus 326.22 ms fallback median
+capture latency.

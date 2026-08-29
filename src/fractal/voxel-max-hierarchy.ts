@@ -25,6 +25,9 @@
 
 import type { Vec3 } from "./types";
 
+/** Coarse level shared by the CPU oracle, GPU upload, and shader traversal. */
+export const VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN = 16;
+
 /** One cubic, x-fastest level inside {@link VoxelMaxHierarchy.data}. */
 export interface VoxelMaxHierarchyLevel {
   /** Nodes per axis. */

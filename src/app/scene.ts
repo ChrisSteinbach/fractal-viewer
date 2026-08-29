@@ -56,6 +56,7 @@ import {
   sampleVoxelAlpha,
   setVoxelBalloon,
   solidBalloonCenterIsEmpty,
+  updateVoxelMaxHierarchyTexture,
 } from "./voxel-material";
 import {
   configureSurfaceGridTexture,
@@ -1032,12 +1033,11 @@ export class FractalScene {
   // world-space and camera-independent, so — unlike the flame's frozen view —
   // renderSolid reads the LIVE camera every frame and the user keeps orbiting.
   private voxelTexture: THREE.Data3DTexture;
-  // CPU-side half of the exact progressive snapshot that produced
-  // `voxelTexture`. The accelerated marcher installs its GPU representation
-  // from here; null is an explicit unaccelerated fallback and, importantly,
-  // clears the preceding grid's hierarchy rather than pairing stale bounds
-  // with a newer density texture.
-  private voxelMaxHierarchy: VoxelMaxHierarchy | null = null;
+  // GPU-side half of the exact progressive snapshot that produced
+  // `voxelTexture`. Null is an explicit unaccelerated fallback and,
+  // importantly, clears the preceding grid's hierarchy rather than pairing
+  // stale bounds with a newer density texture.
+  private voxelMaxHierarchyTexture: THREE.Data3DTexture | null = null;
   private readonly voxelMaterial: THREE.ShaderMaterial;
   private readonly voxelQuad: FullScreenQuad;
   /**
@@ -3862,8 +3862,6 @@ export class FractalScene {
     maxHierarchy: VoxelMaxHierarchy | null,
   ): void {
     this.renderNeeded = true;
-    this.voxelMaxHierarchy =
-      maxHierarchy?.sourceSize === size ? maxHierarchy : null;
     if (this.voxelTexture.image.width !== size) {
       this.voxelTexture.dispose();
       this.voxelTexture = new THREE.Data3DTexture(data, size, size, size);
@@ -3873,6 +3871,11 @@ export class FractalScene {
       this.voxelTexture.image.data = data;
       this.voxelTexture.needsUpdate = true;
     }
+    this.voxelMaxHierarchyTexture = updateVoxelMaxHierarchyTexture(
+      this.voxelMaterial,
+      this.voxelMaxHierarchyTexture,
+      maxHierarchy?.sourceSize === size ? maxHierarchy : null,
+    );
     const u = this.voxelMaterial.uniforms;
     (u.uBoundsMin.value as THREE.Vector3).set(...boundsMin);
     (u.uBoundsSize.value as THREE.Vector3).set(

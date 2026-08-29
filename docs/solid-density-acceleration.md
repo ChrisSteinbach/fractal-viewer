@@ -202,6 +202,72 @@ desktop budgets scale linearly between the same device-memory signals and the
 resolution clamp walks the existing 32-voxel steps using `M(N)` directly.
 Reactive base-grid allocation failure still walks that same resolution ladder.
 
+## Fixed-lattice GPU traversal
+
+The renderer uploads only the existing level whose nodes span 16 base
+interpolation cells per axis. At 192³ it is a 13³, 2.15-KiB nearest-filtered
+R8 texture; at the 512³ ceiling it is 33³. A single additional `sampler3D`
+stays within WebGL2's guaranteed fragment-sampler limit and avoids a dynamic
+sampler array or a second full hierarchy atlas.
+
+At a primary-ray lattice point the shader maps normalized texture coordinates
+to the same base cell as the builder, reads that node's maximum, and computes
+the ray's exit from the node's continuous half-texel bounds. If the node is
+empty, it advances by a whole number of the original fixed strides and leaves
+the next point at an exact boundary for reclassification. If the node is
+occupied, its exit is cached and ordinary RGBA8 samples continue until the ray
+leaves it, amortizing the R8 read. The loop still consumes at least one original
+lattice index per iteration and retains the existing `uMarchSteps` ceiling.
+The outside/inside pair is refined with the same five strict-threshold
+trilinear samples as the fallback. Its final bracket is therefore no wider
+than one original stride divided by 32 (about 0.036 voxel at the tuned
+1.16-voxel stride).
+
+`voxel-raymarch-accelerated.ts` is the independent CPU oracle. Adversarial and
+seeded property tests require exact hit/miss, first-inside, last-outside, five
+bisections, refined position, and density agreement with the unaccelerated
+oracle across boundary halos, thin diagonals, phase changes, sparse/dense
+volumes, and threshold equality. The GPU may regroup a multi-stride f32
+advance; real rendered comparison permits at most one output-byte difference
+in at most 0.1% of channels and requires identical coverage.
+
+Only straight source-volume primary rays use node-exit skipping. Balloon's
+source-AABB primary loop is straight and uses the same traversal. Its inverted
+echo is a curved path in source texture space, so linear node exits are not a
+valid bound and its existing march remains unchanged. The 48-sample shadow,
+four-tap AO, six-tap gradient, and one color read all start in occupied
+neighborhoods where an additional hierarchy query has no measured case; they
+also remain unchanged.
+
+## Traversal measurement
+
+`scripts/voxel-hierarchy-traversal.harness.ts` compares span 8, 16, and 32 on
+3,072 deterministic 192³ rays per profile, preserving the production
+220-sample lattice and asserting zero first-hit mismatches. `total fetch ratio`
+counts one nearest R8 lookup and one trilinear RGBA8 lookup equally; it is a
+stable work-count comparison, not a claim that the two reads have identical
+hardware cost.
+
+| Profile   | Span | Baseline RGBA8 | Accelerated RGBA8 | Hierarchy R8 | RGBA8 saved | Total fetch ratio | Mismatches |
+| --------- | ---: | -------------: | ----------------: | -----------: | ----------: | ----------------: | ---------: |
+| Sparse    |   16 |        672,237 |             6,118 |       38,476 |       99.1% |             0.066 |          0 |
+| Dense     |   16 |          3,072 |             3,072 |        3,072 |        0.0% |             2.000 |          0 |
+| Nonlinear |   16 |        651,559 |            26,892 |       37,335 |       95.9% |             0.099 |          0 |
+
+Span 16 is the best combined count: span 8 scored 0.114/0.126 for
+sparse/nonlinear, and span 32 scored 0.074/0.138. The deliberately full dense
+profile hits on its first sample, so its bound is one extra tiny R8 read rather
+than a longer ray.
+
+`scripts/solid-hierarchy.verify.mjs` drives the production app through
+SwiftShader WebGL2, captures matched hierarchy-present and event-forced-absent
+192³ renders through the app's own PNG path, and compiles both Balloon variants.
+The recorded run had no browser errors, changed four of 16,384 readback
+channels by one byte (mean delta 0.000244), and measured median capture latency
+137.20 ms accelerated versus 326.22 ms fallback (2.38x fallback/accelerated).
+Timing is descriptive and ungated; coverage and the tight pixel tolerance are
+gated.
+
 ## Allocation failure and fallback
 
 Construction is pure and all-or-nothing. The builder computes its checked

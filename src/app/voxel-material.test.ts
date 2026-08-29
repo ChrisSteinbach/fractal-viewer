@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import {
+  configureVoxelMaxHierarchyTexture,
   configureVoxelTexture,
   createVoxelMaterial,
+  emptyVoxelMaxHierarchyTexture,
   emptyVoxelTexture,
   marchStepsForGrid,
   packVoxelBalloonPalette,
@@ -10,8 +12,12 @@ import {
   setVoxelBalloon,
   solidBalloonCenterIsEmpty,
   SOLID_BALLOON_ECHO_WEIGHT,
+  updateVoxelMaxHierarchyTexture,
+  voxelMaxHierarchyLevelTexture,
   voxelFragmentFor,
 } from "./voxel-material";
+import { buildVoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
+import { VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN } from "../fractal/voxel-max-hierarchy";
 
 describe("marchStepsForGrid", () => {
   it("holds the 220-step floor below the 256³ tuning point", () => {
@@ -40,6 +46,176 @@ describe("createVoxelMaterial backdrop source", () => {
     expect(material.uniforms.uBgImageOn.value).toBe(0);
     expect(material.fragmentShader).toContain("uBgImageOn == 1");
     expect(material.fragmentShader).toContain("texture(uBgImage, vUv).rgb");
+  });
+});
+
+describe("Solid max-density hierarchy GPU payload", () => {
+  function hierarchy(size: number, seed = 0) {
+    const packed = new Uint8Array(size ** 3 * 4);
+    for (let i = 0; i < size ** 3; i++) {
+      packed[i * 4 + 3] = (i * 47 + seed) & 0xff;
+    }
+    return buildVoxelMaxHierarchy(packed, size);
+  }
+
+  it("selects only the fixed cellSpan-16 level as a no-copy R8 cube", () => {
+    const source = hierarchy(32);
+    const level = source.levels.find(
+      ({ cellSpan }) => cellSpan === VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN,
+    )!;
+    const upload = voxelMaxHierarchyLevelTexture(source);
+
+    expect(upload).toMatchObject({
+      size: 3,
+      cellSpan: VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN,
+    });
+    expect(upload.data).toHaveLength(27);
+    expect(upload.data.buffer).toBe(source.data.buffer);
+    expect(upload.data.byteOffset).toBe(source.data.byteOffset + level.offset);
+    expect(upload.data).toEqual(
+      source.data.subarray(level.offset, level.offset + level.length),
+    );
+  });
+
+  it("configures an exact nearest-neighbour R8 sampler", () => {
+    const texture = emptyVoxelMaxHierarchyTexture();
+    configureVoxelMaxHierarchyTexture(texture);
+
+    expect(texture.format).toBe(THREE.RedFormat);
+    expect(texture.type).toBe(THREE.UnsignedByteType);
+    expect(texture.minFilter).toBe(THREE.NearestFilter);
+    expect(texture.magFilter).toBe(THREE.NearestFilter);
+    expect(texture.wrapS).toBe(THREE.ClampToEdgeWrapping);
+    expect(texture.wrapT).toBe(THREE.ClampToEdgeWrapping);
+    expect(texture.wrapR).toBe(THREE.ClampToEdgeWrapping);
+    expect(texture.generateMipmaps).toBe(false);
+    expect(texture.unpackAlignment).toBe(1);
+  });
+
+  it("starts explicitly absent without changing the unaccelerated shader source", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+
+    expect(material.fragmentShader).toBe(voxelFragmentFor(false));
+    expect(material.uniforms.uMaxHierarchyEnabled.value).toBe(0);
+    expect(material.uniforms.uMaxHierarchyLevelSize.value).toBe(1);
+    expect(material.uniforms.uMaxHierarchyCellSpan.value).toBe(
+      VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN,
+    );
+    expect(material.uniforms.uMaxHierarchy.value).toBeInstanceOf(
+      THREE.Data3DTexture,
+    );
+    expect(material.uniforms.uMaxHierarchy.value.image).toMatchObject({
+      width: 1,
+      height: 1,
+      depth: 1,
+    });
+  });
+
+  it("uses the bounded fixed-lattice program only while acceleration is present", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    const fallbackSource = voxelFragmentFor(false);
+
+    const texture = updateVoxelMaxHierarchyTexture(
+      material,
+      null,
+      hierarchy(32),
+    );
+    const accelerated = voxelFragmentFor(false, true);
+    expect(material.fragmentShader).toBe(accelerated);
+    expect(accelerated).toContain("texelFetch(uMaxHierarchy, node, 0).r");
+    expect(accelerated).toContain("int latticeIndex = 0");
+    expect(accelerated).toContain("float occupiedUntil = -1.0e30");
+    expect(accelerated).toContain("nodeMaxAlpha <= uThreshold");
+    expect(accelerated).toContain("tPrev = t + dt * float(advance - 1)");
+
+    updateVoxelMaxHierarchyTexture(material, texture, null);
+    expect(material.fragmentShader).toBe(fallbackSource);
+    expect(fallbackSource).not.toContain("uMaxHierarchy");
+  });
+
+  it("accelerates only Balloon's straight primary loop and keeps its inverted echo loop", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    const texture = updateVoxelMaxHierarchyTexture(
+      material,
+      null,
+      hierarchy(32),
+    );
+    setVoxelBalloon(material, {
+      center: [0, 0, 0],
+      radius: 1,
+      rho: 1.02,
+      R: 1.6,
+    });
+
+    const source = voxelFragmentFor(true, true);
+    expect(material.fragmentShader).toBe(source);
+    expect(source).toContain("int primaryLatticeIndex = 0");
+    expect(source).toContain("maxHierarchyNode(ro, rd, primaryT, nodeExitT)");
+    expect(source).toContain("densityAtEcho(ro + rd * t)");
+    expect(source).toContain("for (int i = 0; i < marchSteps; i++)");
+    expect(source).toContain("densityAtFractal(sp + uLightDir * shadowT)");
+
+    updateVoxelMaxHierarchyTexture(material, texture, null);
+    expect(material.fragmentShader).toBe(voxelFragmentFor(true));
+  });
+
+  it("reuses same-sized progressive uploads and replaces changed dimensions", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    const first = updateVoxelMaxHierarchyTexture(material, null, hierarchy(32));
+    expect(first).not.toBeNull();
+    expect(material.uniforms.uMaxHierarchy.value).toBe(first);
+    expect(material.uniforms.uMaxHierarchyEnabled.value).toBe(1);
+    expect(material.fragmentShader).toBe(voxelFragmentFor(false, true));
+    expect(first!.image).toMatchObject({ width: 3, height: 3, depth: 3 });
+    expect(material.uniforms.uMaxHierarchyLevelSize.value).toBe(3);
+    expect(material.uniforms.uMaxHierarchyCellSpan.value).toBe(16);
+
+    const firstDispose = vi.spyOn(first!, "dispose");
+    const second = updateVoxelMaxHierarchyTexture(
+      material,
+      first,
+      hierarchy(32, 1),
+    );
+    expect(second).toBe(first);
+    expect(firstDispose).not.toHaveBeenCalled();
+
+    const third = updateVoxelMaxHierarchyTexture(
+      material,
+      second,
+      hierarchy(64),
+    );
+    expect(third).not.toBe(first);
+    expect(third!.image).toMatchObject({ width: 5, height: 5, depth: 5 });
+    expect(firstDispose).toHaveBeenCalledOnce();
+  });
+
+  it("disposes and resets every shader-facing field on explicit absence", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    const texture = updateVoxelMaxHierarchyTexture(
+      material,
+      null,
+      hierarchy(32),
+    );
+    const dispose = vi.spyOn(texture!, "dispose");
+
+    expect(updateVoxelMaxHierarchyTexture(material, texture, null)).toBeNull();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(material.uniforms.uMaxHierarchy.value).not.toBe(texture);
+    expect(material.uniforms.uMaxHierarchyEnabled.value).toBe(0);
+    expect(material.uniforms.uMaxHierarchyLevelSize.value).toBe(1);
+    expect(material.uniforms.uMaxHierarchyCellSpan.value).toBe(
+      VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN,
+    );
+  });
+
+  it("owns and disposes the material's permanent absent-state texture", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    const fallback = material.uniforms.uMaxHierarchy
+      .value as THREE.Data3DTexture;
+    const dispose = vi.spyOn(fallback, "dispose");
+
+    material.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 });
 
