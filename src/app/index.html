@@ -2856,9 +2856,10 @@
             ✕
           </button>
         </div>
-        <p class="mutation-hint">
-          The selected node is at the center. Generated children stay in this
-          browser session when you travel through parents and branches.
+        <p id="evolutionLifetimeHint" class="mutation-hint">
+          The selected node is at the center. Branches and A/B pins stay only in
+          this open tab; reloading or closing it discards the Evolution
+          workspace.
         </p>
         <p
           id="evolutionStatus"
@@ -2903,7 +2904,7 @@
             class="btn btn-blue evolution-action-button"
             type="button"
           >
-            ★ Save current to Collection
+            ★ Save current scene to Collection
           </button>
           <button
             id="evolutionResetBtn"
@@ -2913,6 +2914,9 @@
             New root from displayed scene
           </button>
         </div>
+        <p id="evolutionSaveScopeNote" class="mutation-hint">
+          Collection saves only the current scene, not its branches or ancestry.
+        </p>
         <section
           class="evolution-compare"
           aria-labelledby="evolutionCompareTitle"

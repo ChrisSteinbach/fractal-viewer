@@ -470,6 +470,20 @@ Loading an entry from the collection is a whole-system replacement, the same
 treatment a preset load gets, which is what makes it non-destructive: keep a
 discovery, keep tweaking, and it's still there to load back.
 
+Evolution Lab deliberately is not a third persistence layer. Its exact,
+unrounded node snapshots, thumbnails, topology certificates, algorithm
+profiles, ancestry, A/B pins, and acquired Collection authorities live only
+for the lifetime of the currently loaded page; reloading or closing the tab
+discards that workspace. Autosave, hash links, scene files, and Collection
+entries still receive only the ordinary `SceneSnapshot`, and **Save current
+scene to Collection** promotes that one scene without its branches or
+ancestry. This boundary avoids presenting the compact, rounded `v1` scene wire
+as authority for exact lineage digests, keeps graph and custom-mesh budgets out
+of ordinary scene sharing, and prevents a shared keeper from silently
+disclosing the creative path that produced it. Any future durable workspace
+would need a separate, explicit, versioned storage and export design rather
+than an optional field added to the scene codec.
+
 ## The flame still and the solid voxel render
 
 The panel presents the explorer, Flame, and Solid sampling budgets through one
