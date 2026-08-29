@@ -962,8 +962,15 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   time so the modal opens instantly. Clicking one morphs into it as a normal
   undoable load and re-seeds the grid around your pick, so you can keep walking
   outward a step at a time; **↻ Mutate again** rolls eight fresh variations of
-  where you are now. Nothing touches the scene until you pick; the chosen cell
-  then returns through Points like every other replacement load.
+  where you are now. The cells are fixed-angle **By Transform scatter**
+  previews: they show orbit geometry, map selection, Xaos, scheduled post-word
+  composition, and each map's identity color. They do not simulate
+  renderer-specific appearance. In particular, **Finish** and **Pattern** are
+  visible only after loading in Surface, while **Color speed** is visible only
+  through Flame/Solid structural coloring; matching cell images do not mean
+  those authored fields are equal. Nothing touches the scene until you pick;
+  the chosen cell then returns through Points like every other replacement
+  load.
 - **▶ Drift** — next to **Surprise Me**: an ambient, ever-evolving
   show for leaving the explorer running (a TV via the PWA, a second screen).
   While drifting, the explorer dwells on the current attractor for about five

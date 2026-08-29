@@ -27,11 +27,7 @@
  * style — which is what keeps a busy fractal legible at only
  * {@link THUMB_POINTS} points and a handful of dozen pixels across.
  */
-import {
-  symmetryIsNonFlat,
-  systemIsFlat,
-  toTransform4,
-} from "../fractal/affine4";
+import { systemPartsAreNonFlat, toTransform4 } from "../fractal/affine4";
 import { runChaosGame } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import { transformColors } from "../fractal/color";
@@ -74,19 +70,45 @@ const BG_G = 10;
 const BG_B = 14;
 
 /**
+ * The exact field coverage of the mutation grid's canonical scatter preview.
+ *
+ * "Represented" means the field is consumed while producing the preview; it
+ * does not promise that every numerical change is perceptible in a small
+ * fixed projection. The three excluded appearance fields belong to renderer
+ * behavior this scatter deliberately does not emulate: Surface owns finish
+ * and procedural pattern shading, while Flame/Solid structural color owns
+ * color speed. Keeping this contract beside the renderer lets the retained
+ * Evolution Lab disclose those limits without implying that two
+ * byte-identical scatter previews prove the authored appearances are equal.
+ */
+export const MUTATION_THUMBNAIL_PREVIEW_COVERAGE = {
+  renderer: "fixed-oblique-by-transform-scatter",
+  represented: [
+    "transform.position/rotation/scale/shear",
+    "transform.weight/chaos/emitter/variations/w",
+    "finalTransform.affine/variations/w",
+    "symmetry",
+    "schedule",
+    "transform.colorIndex",
+  ],
+  notRepresented: [
+    "transform.colorSpeed",
+    "transform.finish",
+    "transform.surfacePattern",
+  ],
+  disclosure:
+    "Scatter previews show orbit geometry, selection, and By Transform identity color. Surface finish and pattern, and Flame/Solid structural color speed, are visible only after loading the candidate in the applicable renderer.",
+} as const;
+
+/**
  * Render `system` to an opaque square RGBA thumbnail, `size`×`size` pixels —
  * a small scatter plot of its chaos game viewed from the fixed oblique angle
- * (see the module doc). Branches on the system's flatness exactly like
- * `random-system.ts`'s `scoreSystem`: a flat system (`systemIsFlat` over
- * `system.transforms` — the final-transform lens's own flatness is not
- * consulted, mirroring that same branch) runs the 3D chaos game directly;
- * otherwise every map (and the lens, if any) is lifted through
- * {@link toTransform4} and run through the 4D chaos game, reading its xyz
- * `positions` and `transformIndices` the same way, with `system.symmetry`
- * passed straight through on BOTH branches — an order-1 symmetry is
- * the identity, so passing it unconditionally is always safe, and it's the 4D
- * branch that actually renders a w-plane or twisted symmetry's kaleidoscope,
- * since a non-flat symmetry always routes there.
+ * (see the module doc). Branches through the generation path's shared
+ * {@link systemPartsAreNonFlat} predicate, so a 4D numbered map, final lens,
+ * w-plane symmetry, or twisted symmetry all select the 4D chaos game.
+ * Otherwise the 3D chaos game runs directly. On the 4D branch every map (and
+ * the lens, if any) is lifted through {@link toTransform4}; both branches
+ * receive `system.symmetry` and the optional scheduled post-word unchanged.
  *
  * Each plotted point is colored by its BASE transform (`transformColors`,
  * `color.ts`'s "by transform" palette) — `transformIndices` already records
@@ -111,13 +133,9 @@ export function renderSystemThumb(
   let transformIndices: Uint8Array;
   let count: number;
 
-  // Routed on the SYSTEM's flatness, symmetry included: a
-  // kaleidoscope turning in a w-plane (or carrying a twist) is 4D structure
-  // with no 3D expansion, so it belongs on the 4D branch below exactly as a
-  // transform's w block does. Every 3D-only symmetry is w-free and
-  // twist-free, so `symmetryIsNonFlat` is false for all of them and this
-  // routes identically to the bare `systemIsFlat` test it replaces.
-  if (systemIsFlat(transforms) && !symmetryIsNonFlat(symmetry)) {
+  // One routing formula with cloud generation: the final lens and symmetry
+  // are system geometry on the same footing as the numbered transforms.
+  if (!systemPartsAreNonFlat(transforms, finalTransform, symmetry)) {
     const result = runChaosGame(
       transforms,
       THUMB_POINTS,
