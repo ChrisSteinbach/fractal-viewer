@@ -8934,8 +8934,17 @@ async function main(): Promise<void> {
     // bounded neighborhood. Exact-node navigation still funnels through the
     // normal async replace-load transaction above.
     onOpenMutations: () => {
-      evolutionModalOpen = true;
       stopShows({ notify: true });
+      // The workspace root owns one exact saved view. Land any directed view
+      // glide before capturing it; merely pausing ambient orbit/tumble would
+      // otherwise let these already-active tweens keep moving underneath the
+      // selected root after the Lab opened.
+      cameraTween.finish();
+      const fourDGlideLanded = fourDTween.active;
+      fourDTween.finish();
+      if (fourDGlideLanded) applyFourDPose(fourDView.pose());
+      scene.applyCamera(orbit);
+      evolutionModalOpen = true;
       ui.openMutations();
       if (!evolutionLineage) {
         if (!createOrResetEvolutionRoot()) {
