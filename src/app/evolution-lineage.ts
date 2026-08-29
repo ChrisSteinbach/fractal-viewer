@@ -14,6 +14,7 @@
  * node, allowing an integration layer to retire thumbnail/object-URL or
  * custom-mesh leases without this pure model importing those systems.
  */
+import type { SceneSnapshot } from "./persist";
 
 export const LINEAGE_NODE_CAP = 64;
 export const LINEAGE_THUMBNAIL_BYTE_CAP = 12 * 1024 * 1024;
@@ -32,9 +33,22 @@ export type LineageProfileValue =
 /** Plain JSON-shaped algorithm metadata, copied and deeply frozen on entry. */
 export type LineageProfile = Readonly<Record<string, LineageProfileValue>>;
 
+export type ImmutableLineageSceneSnapshot<T = SceneSnapshot> = T extends (
+  ...args: never[]
+) => unknown
+  ? T
+  : T extends readonly (infer Entry)[]
+    ? readonly ImmutableLineageSceneSnapshot<Entry>[]
+    : T extends object
+      ? { readonly [Key in keyof T]: ImmutableLineageSceneSnapshot<T[Key]> }
+      : T;
+
 export interface LineageNodeInput {
-  /** `encodeScene` output for the full authored scene and saved view. */
+  /** `encodeScene` output used as the canonical reconciliation key. */
   readonly encodedScene: string;
+  /** Exact full authored scene and saved view. Unlike the encoded key this is
+   * not rounded by the portable codec. */
+  readonly snapshot: SceneSnapshot;
   /** Opaque thumbnail bytes. Evolution currently supplies RGBA pixels. */
   readonly thumbnail: Uint8ClampedArray;
   /** Mutation/crossover seed, retained as unsigned 32-bit provenance. */
@@ -55,6 +69,7 @@ export interface LineageNode {
   readonly id: LineageNodeId;
   readonly kind: LineageNodeKind;
   readonly encodedScene: string;
+  readonly snapshot: ImmutableLineageSceneSnapshot;
   readonly thumbnail: Uint8ClampedArray;
   readonly thumbnailBytes: number;
   readonly seed: number;
@@ -107,6 +122,7 @@ interface StoredNode {
   readonly id: LineageNodeId;
   readonly kind: LineageNodeKind;
   readonly encodedScene: string;
+  readonly snapshot: ImmutableLineageSceneSnapshot;
   readonly thumbnail: Uint8ClampedArray;
   readonly seed: number;
   readonly profile: LineageProfile;
@@ -117,6 +133,7 @@ interface StoredNode {
 
 interface OwnedInput {
   readonly encodedScene: string;
+  readonly snapshot: ImmutableLineageSceneSnapshot;
   readonly thumbnail: Uint8ClampedArray;
   readonly seed: number;
   readonly profile: LineageProfile;
@@ -180,6 +197,27 @@ function cloneProfileValue(
   return Object.freeze(copy);
 }
 
+function freezeRecursively(value: unknown, seen: Set<object>): void {
+  if (
+    (typeof value !== "object" && typeof value !== "function") ||
+    value === null ||
+    seen.has(value)
+  ) {
+    return;
+  }
+  seen.add(value);
+  for (const key of Reflect.ownKeys(value)) {
+    freezeRecursively((value as Record<PropertyKey, unknown>)[key], seen);
+  }
+  Object.freeze(value);
+}
+
+function ownSnapshot(snapshot: SceneSnapshot): ImmutableLineageSceneSnapshot {
+  const owned = structuredClone(snapshot);
+  freezeRecursively(owned, new Set());
+  return owned;
+}
+
 function ownInput(input: LineageNodeInput): OwnedInput {
   if (
     typeof input.encodedScene !== "string" ||
@@ -214,6 +252,7 @@ function ownInput(input: LineageNodeInput): OwnedInput {
   }
   return {
     encodedScene: input.encodedScene,
+    snapshot: ownSnapshot(input.snapshot),
     thumbnail: new Uint8ClampedArray(input.thumbnail),
     seed: input.seed,
     profile: cloneProfileValue(input.profile, new Set()) as LineageProfile,
@@ -297,6 +336,20 @@ export class EvolutionLineage {
     return this.currentIdValue === null ? null : this.node(this.currentIdValue);
   }
 
+  /**
+   * Find an exact retained document without exposing the graph's owned
+   * storage. Evolution Lab uses the canonical `encodeScene` string as its
+   * reconciliation key after undo, redo, or an edit outside the workspace.
+   * Keeping the scan here avoids copying every retained thumbnail merely to
+   * compare opaque document strings.
+   */
+  findByEncodedScene(encodedScene: string): LineageNode | null {
+    for (const node of this.nodesById.values()) {
+      if (node.encodedScene === encodedScene) return this.publicNode(node);
+    }
+    return null;
+  }
+
   /** All nodes in deterministic insertion/id order. */
   all(): LineageNode[] {
     return [...this.nodesById.values()].map((node) => this.publicNode(node));
@@ -343,6 +396,18 @@ export class EvolutionLineage {
     if (current !== null) this.backHistory.push(current);
     this.currentIdValue = id;
     this.forwardHistory = [];
+    return true;
+  }
+
+  /**
+   * Align selection to externally displayed retained authority without
+   * manufacturing a lineage-navigation history entry or changing a parent's
+   * remembered branch. Used only for undo/redo/outside-load reconciliation.
+   */
+  reconcileVisit(id: LineageNodeId): boolean {
+    this.ensureActive();
+    if (!this.nodesById.has(id)) return false;
+    this.currentIdValue = id;
     return true;
   }
 
@@ -556,6 +621,7 @@ export class EvolutionLineage {
       id,
       kind,
       encodedScene: input.encodedScene,
+      snapshot: input.snapshot,
       thumbnail: input.thumbnail,
       seed: input.seed,
       profile: input.profile,
@@ -632,6 +698,7 @@ export class EvolutionLineage {
       id: node.id,
       kind: node.kind,
       encodedScene: node.encodedScene,
+      snapshot: node.snapshot,
       thumbnail: new Uint8ClampedArray(node.thumbnail),
       thumbnailBytes: node.thumbnail.byteLength,
       seed: node.seed,

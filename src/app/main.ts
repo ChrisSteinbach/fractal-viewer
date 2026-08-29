@@ -133,8 +133,23 @@ import {
   CUSTOM_PALETTE_ID,
   resolvePalette,
 } from "../fractal/palette";
-import { mutateSystem } from "../fractal/mutate-system";
+import {
+  MUTATION_DOMAINS,
+  SEEDED_MUTATION_ALGORITHM_VERSION,
+  type MutationDomain,
+} from "../fractal/mutate-system";
+import { mulberry32 } from "../fractal/rng";
 import { renderSystemThumb } from "./mutation-thumbs";
+import {
+  createEvolutionMutationCandidate,
+  type ImmutableSceneSnapshot,
+} from "./evolution-candidate";
+import {
+  EvolutionLineage,
+  type LineageNode,
+  type LineageProfile,
+} from "./evolution-lineage";
+import { EvolutionWorkspaceSelection } from "./evolution-workspace";
 import { randomSystem } from "../fractal/random-system";
 import { BOOT_CAMERA_POSITION, OrbitCamera, type CameraPose } from "./orbit";
 import {
@@ -1004,6 +1019,12 @@ async function main(): Promise<void> {
   // additionally pauses it while interactions reports a gesture in progress.
   let autoOrbitOn = true;
   let autoOrbitSpeed = 1;
+  // While Evolution Lab compares exact saved views, ambient orbit/tumble
+  // pauses without touching the user's browser preference. Closing the modal
+  // resumes it; reopening reconciles any resulting view drift visibly.
+  let evolutionModalOpen = false;
+  let evolutionReconciliationPaused = false;
+  let reconcileEvolutionDocument = (): void => {};
   // The ONE explicit automatic-view-motion choice. undefined = untouched, so both
   // the flat camera turntable and non-flat rotor tumble follow the reduced-
   // motion default; once chosen, the browser-owned preference survives every
@@ -6070,6 +6091,7 @@ async function main(): Promise<void> {
     // never from updateLabels() alone (see renderXaosSection's own doc).
     ui.renderXaosSection(state.transforms);
     refreshSurfaceEligibility();
+    if (!evolutionReconciliationPaused) reconcileEvolutionDocument();
   }
 
   /**
@@ -6546,6 +6568,7 @@ async function main(): Promise<void> {
     preparedHistoryRestore = undefined;
     if (pendingPrepared && !prepared) pendingPrepared.release();
     const snap = decodeScene(snapshot);
+    evolutionReconciliationPaused = true;
     try {
       if (!snap) return; // can't happen: entries are encodeScene output
       if (replaced && pose) {
@@ -6559,8 +6582,10 @@ async function main(): Promise<void> {
         if (replaced) loadHints.armPose(null);
       }
     } finally {
+      evolutionReconciliationPaused = false;
       prepared?.release();
     }
+    reconcileEvolutionDocument();
   }
 
   /**
@@ -6654,9 +6679,10 @@ async function main(): Promise<void> {
   let sceneLoadTicket = 0;
   let pendingSceneLoadRelease: (() => void) | null = null;
 
-  async function loadEncodedScene(encoded: string): Promise<boolean> {
-    const snap = decodeScene(encoded);
-    if (!snap) return false;
+  async function loadSceneSnapshot(
+    snap: SceneSnapshot,
+    reconcileAfter = true,
+  ): Promise<boolean> {
     const ticket = ++sceneLoadTicket;
     const baseline = encodeScene(toSnapshot(state));
     pendingSceneLoadRelease?.();
@@ -6707,6 +6733,7 @@ async function main(): Promise<void> {
       return false;
     }
     editSession.beginEdit("replace");
+    evolutionReconciliationPaused = true;
     try {
       applyDecodedSnapshot(snap, snap.camera === undefined, true);
       if (snap.camera) applyCameraPose(snap.camera);
@@ -6714,9 +6741,16 @@ async function main(): Promise<void> {
       // every load's behalf (the render-mode-hint pattern).
       loadHints.armPose(snap.fourD ?? null);
     } finally {
+      evolutionReconciliationPaused = false;
       releaseTarget();
     }
+    if (reconcileAfter) reconcileEvolutionDocument();
     return true;
+  }
+
+  async function loadEncodedScene(encoded: string): Promise<boolean> {
+    const snap = decodeScene(encoded);
+    return snap ? loadSceneSnapshot(snap) : false;
   }
 
   function customMeshIdsForEncodedScenes(
@@ -7275,86 +7309,465 @@ async function main(): Promise<void> {
     scene.setFourDScaffold(null);
   }
 
-  // ── Mutation grid ──────────────────────────────────────────────────────
-  // Directed exploration AROUND the current system — the gap between the
-  // precise sliders and Surprise Me's total reroll: eight quality-gated
-  // small perturbations (the last one a bolder wildcard) in a 3×3 modal
-  // with the current system pinned at the center. The candidates live here;
-  // the Ui only shows cells. Each candidate + thumbnail is built one
-  // animation frame at a time so the modal opens instantly and fills
-  // progressively; the token makes every re-seed (open, pick, "Mutate
-  // again") cancel the previous build, and closing the modal ends the build
-  // on its next step. Session-only — nothing here touches the document
-  // until a pick, which is a normal undoable replace-load.
+  // ── Evolution Lab ──────────────────────────────────────────────────────
+  // Session-local retained exploration around an exact full document. The
+  // 3×3 grid remains the progressively filled neighborhood, but candidates
+  // become bounded lineage nodes on admission, so navigating away never
+  // discards siblings. The graph owns exact unrounded snapshots; encoded
+  // strings are reconciliation/Collection keys only.
   const MUTATION_CELLS = 8;
+  const MUTATION_ATTEMPTS_PER_CELL = 8;
   /** Canvas pixels per thumbnail — ~2× the dialog's ~85-160px CSS cells so
    * they stay crisp on hidpi screens. */
   const MUTATION_THUMB_SIZE = 220;
-  let mutationCandidates: MorphSystem[] = [];
-  let mutationBuildToken = 0;
+  let evolutionLineage: EvolutionLineage | null = null;
+  let evolutionWorkspace: EvolutionWorkspaceSelection | null = null;
+  const evolutionNodeReleases = new Map<string, () => void>();
+  const evolutionNextOrdinal = new Map<string, number>();
+  const evolutionChosenBranches = new Map<string, string>();
+  const evolutionLockedDomains = new Set<MutationDomain>();
+  let evolutionBuildToken = 0;
+  let evolutionTopologyCounter = 0;
+  let mutationVisibleNodeIds: (string | undefined)[] = [];
+  let evolutionBusy = false;
+  let evolutionSelectionTicket = 0;
 
-  function buildMutationGrid(): void {
-    const token = ++mutationBuildToken;
-    const base = currentMorphSystem();
-    mutationCandidates = [];
-    ui.resetMutationCells();
-    // The live schedule rides every thumbnail (mutateSystem leaves it
-    // alone — it operates on transforms — so each candidate renders under
-    // the block the pick would actually load into).
-    const schedule = state.schedule ?? null;
-    ui.setMutationCurrent(
-      renderSystemThumb(base, MUTATION_THUMB_SIZE, Math.random, schedule),
+  function deriveEvolutionSeed(parts: readonly (number | string)[]): number {
+    let hash = 0x811c9dc5;
+    for (const part of parts) {
+      const value = String(part);
+      const framed = `${String(value.length)}:${value}`;
+      for (let index = 0; index < framed.length; index++) {
+        hash ^= framed.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193);
+      }
+    }
+    hash ^= hash >>> 16;
+    hash = Math.imul(hash, 0x7feb352d);
+    hash ^= hash >>> 15;
+    hash = Math.imul(hash, 0x846ca68b);
+    return (hash ^ (hash >>> 16)) >>> 0;
+  }
+
+  function morphFromEvolutionSnapshot(
+    snapshot: SceneSnapshot | ImmutableSceneSnapshot,
+  ): MorphSystem {
+    return {
+      transforms: snapshot.transforms as Transform[],
+      finalTransform:
+        (snapshot.finalTransform as Transform | undefined) ?? null,
+      symmetry: snapshot.symmetry,
+      shapeTrap: snapshot.shapeTrap as MorphSystem["shapeTrap"],
+      condensationDepthBand: snapshot.condensationDepthBand,
+    };
+  }
+
+  function evolutionThumbnail(
+    snapshot: SceneSnapshot | ImmutableSceneSnapshot,
+    seed: number,
+    ordinal: number | string,
+  ): Uint8ClampedArray<ArrayBuffer> {
+    return renderSystemThumb(
+      morphFromEvolutionSnapshot(snapshot),
       MUTATION_THUMB_SIZE,
+      mulberry32(
+        deriveEvolutionSeed([
+          "evolution-thumbnail-v1",
+          seed,
+          ordinal,
+          MUTATION_THUMB_SIZE,
+        ]),
+      ),
+      (snapshot.schedule as SceneSnapshot["schedule"]) ?? null,
     );
-    let index = 0;
-    const step = (): void => {
-      if (token !== mutationBuildToken || !ui.mutationsOpen()) return;
-      const wild = index === MUTATION_CELLS - 1;
-      const candidate = mutateSystem(base, Math.random, { wildcard: wild });
-      mutationCandidates[index] = candidate;
+  }
+
+  function mintEvolutionTopology(transformCount: number): {
+    token: string;
+    slotKeys: string[];
+  } {
+    const token = `topology-${String(evolutionTopologyCounter++)}-${rollSeed().toString(16).padStart(8, "0")}`;
+    return {
+      token,
+      slotKeys: Array.from(
+        { length: transformCount },
+        (_, index) => `${token}:slot:${String(index)}`,
+      ),
+    };
+  }
+
+  function topologyProfile(node: LineageNode): {
+    token: string;
+    slotKeys: string[];
+  } {
+    const token = node.profile.topologyToken;
+    const keys = node.profile.topologySlotKeys;
+    if (
+      typeof token !== "string" ||
+      !Array.isArray(keys) ||
+      keys.some((key) => typeof key !== "string") ||
+      keys.length !== node.snapshot.transforms.length ||
+      new Set(keys).size !== keys.length
+    ) {
+      throw new Error("Lineage topology metadata is invalid");
+    }
+    return { token, slotKeys: [...(keys as readonly string[])] };
+  }
+
+  function rootEvolutionProfile(snapshot: SceneSnapshot): LineageProfile {
+    const topology = mintEvolutionTopology(snapshot.transforms.length);
+    return {
+      algorithm: "evolution-root-v1",
+      topologyToken: topology.token,
+      topologySlotKeys: topology.slotKeys,
+    };
+  }
+
+  function mutationEvolutionProfile(
+    parent: LineageNode,
+    candidate: ReturnType<typeof createEvolutionMutationCandidate> & {
+      accepted: true;
+    },
+  ): LineageProfile {
+    const topology = topologyProfile(parent);
+    return {
+      algorithm: "seeded-mutation-v1",
+      algorithmVersion: candidate.candidate.algorithmVersion,
+      mutationNodeSeed: candidate.candidate.nodeSeed,
+      childOrdinal: candidate.candidate.childOrdinal,
+      wildcard: candidate.candidate.profile.wildcard,
+      lockedDomains: [...candidate.candidate.profile.lockedDomains],
+      qualityProbeVersion: candidate.candidate.quality.probeVersion,
+      qualityScores: [...candidate.candidate.quality.scores],
+      topologyToken: topology.token,
+      topologySlotKeys: topology.slotKeys,
+    };
+  }
+
+  function releaseEvolutionNode(id: string): void {
+    const release = evolutionNodeReleases.get(id);
+    if (!release) return;
+    evolutionNodeReleases.delete(id);
+    release();
+  }
+
+  function createOrResetEvolutionRoot(): boolean {
+    const snapshot = currentDocument();
+    const seed = rollSeed();
+    const resourceIds = sceneCustomMeshIds(snapshot);
+    let release: () => void;
+    try {
+      release = pinCustomMeshAssets(resourceIds);
+    } catch (error) {
+      ui.flashToast(
+        `Evolution root not created: ${
+          error instanceof Error ? error.message : "asset cache is busy"
+        }`,
+      );
+      return false;
+    }
+    const input = {
+      encodedScene: encodeScene(snapshot),
+      snapshot,
+      thumbnail: evolutionThumbnail(snapshot, seed, "root"),
+      seed,
+      profile: rootEvolutionProfile(snapshot),
+      resourceIds,
+    };
+    try {
+      if (evolutionLineage === null) {
+        evolutionLineage = new EvolutionLineage(input, {
+          onRelease: (node) => releaseEvolutionNode(node.id),
+        });
+        evolutionWorkspace = new EvolutionWorkspaceSelection(evolutionLineage);
+      } else {
+        evolutionWorkspace?.cancelPending();
+        evolutionLineage.reset(input);
+        evolutionWorkspace?.noteReset();
+      }
+      evolutionNodeReleases.set(evolutionLineage.currentId!, release);
+      evolutionNextOrdinal.clear();
+      evolutionChosenBranches.clear();
+      evolutionBuildToken += 1;
+      return true;
+    } catch (error) {
+      release();
+      ui.flashToast(
+        `Evolution root not created: ${
+          error instanceof Error ? error.message : "lineage cap rejected it"
+        }`,
+      );
+      return false;
+    }
+  }
+
+  function mutationNodeLabel(node: LineageNode, index: number): string {
+    const ordinal = node.profile.childOrdinal;
+    const wild = node.profile.wildcard === true;
+    return `${wild ? "Wildcard child" : "Child"} ${
+      typeof ordinal === "number" ? String(ordinal + 1) : String(index + 1)
+    }`;
+  }
+
+  function chosenEvolutionBranch(current: LineageNode): string | null {
+    const chosen = evolutionChosenBranches.get(current.id);
+    if (chosen && current.childIds.includes(chosen)) return chosen;
+    const preferred = evolutionLineage?.preferredChildId(current.id);
+    if (preferred && current.childIds.includes(preferred)) return preferred;
+    return current.childIds[0] ?? null;
+  }
+
+  function syncEvolutionWorkspace(status?: string): void {
+    const lineage = evolutionLineage;
+    const workspace = evolutionWorkspace;
+    const current = lineage?.current() ?? null;
+    if (!lineage || !workspace || !current) return;
+    const branches = current.childIds.flatMap((id, index) => {
+      const node = lineage.node(id);
+      return node ? [{ id, label: mutationNodeLabel(node, index) }] : [];
+    });
+    const branch = chosenEvolutionBranch(current);
+    ui.setEvolutionWorkspace({
+      detached: workspace.detached,
+      busy: evolutionBusy,
+      nodeCount: lineage.size,
+      nodeCap: lineage.nodeCap,
+      currentLabel:
+        current.kind === "root" ? "current root" : `current ${current.id}`,
+      canBack: current.parentIds.length > 0,
+      canForward: branch !== null,
+      branches,
+      selectedBranchId: branch,
+      lockedDomains: MUTATION_DOMAINS.filter((domain) =>
+        evolutionLockedDomains.has(domain),
+      ),
+      status:
+        status ??
+        (workspace.detached
+          ? "Displayed scene is outside this lineage. Start a new root to continue."
+          : `Selected ${current.kind === "root" ? "root" : current.id}. Automatic view motion is paused while this dialog is open.`),
+    });
+  }
+
+  function renderEvolutionNeighborhood(): void {
+    const lineage = evolutionLineage;
+    const workspace = evolutionWorkspace;
+    const current = lineage?.current() ?? null;
+    evolutionBuildToken += 1;
+    mutationVisibleNodeIds = [];
+    ui.resetMutationCells();
+    if (!lineage || !workspace || !current) return;
+    if (workspace.detached) {
+      const snapshot = currentDocument();
+      ui.setMutationCurrent(
+        evolutionThumbnail(snapshot, rollSeed(), "detached"),
+        MUTATION_THUMB_SIZE,
+        "displayed",
+      );
+      syncEvolutionWorkspace();
+      return;
+    }
+    ui.setMutationCurrent(current.thumbnail, MUTATION_THUMB_SIZE, "current");
+    const shown = current.childIds.slice(-MUTATION_CELLS);
+    shown.forEach((id, index) => {
+      const node = lineage.node(id);
+      if (!node) return;
+      mutationVisibleNodeIds[index] = id;
       ui.setMutationCell(
         index,
-        renderSystemThumb(
-          candidate,
-          MUTATION_THUMB_SIZE,
-          Math.random,
-          schedule,
-        ),
+        node.thumbnail,
         MUTATION_THUMB_SIZE,
-        wild,
+        node.profile.wildcard === true,
+        `Load retained ${mutationNodeLabel(node, index).toLowerCase()}`,
       );
-      index += 1;
-      if (index < MUTATION_CELLS) requestAnimationFrame(step);
+    });
+    syncEvolutionWorkspace();
+  }
+
+  function buildMutationGrid(): void {
+    const lineage = evolutionLineage;
+    const workspace = evolutionWorkspace;
+    const parent = lineage?.current() ?? null;
+    if (!lineage || !workspace || !parent || workspace.detached) return;
+    if (lineage.size >= lineage.nodeCap) {
+      syncEvolutionWorkspace(
+        "Lineage cap reached. Prune a branch or start a new root.",
+      );
+      return;
+    }
+    const token = ++evolutionBuildToken;
+    const parentId = parent.id;
+    const baseOrdinal = evolutionNextOrdinal.get(parentId) ?? 0;
+    evolutionNextOrdinal.set(
+      parentId,
+      baseOrdinal + MUTATION_CELLS * MUTATION_ATTEMPTS_PER_CELL,
+    );
+    const lockedDomains = MUTATION_DOMAINS.filter((domain) =>
+      evolutionLockedDomains.has(domain),
+    );
+    mutationVisibleNodeIds = [];
+    ui.resetMutationCells();
+    ui.setMutationCurrent(parent.thumbnail, MUTATION_THUMB_SIZE, "current");
+    evolutionBusy = true;
+    syncEvolutionWorkspace("Generating retained children…");
+    let cell = 0;
+    let attempt = 0;
+    const step = (): void => {
+      if (token !== evolutionBuildToken) {
+        return;
+      }
+      if (
+        !ui.mutationsOpen() ||
+        lineage.currentId !== parentId ||
+        workspace.detached
+      ) {
+        evolutionBusy = false;
+        syncEvolutionWorkspace();
+        return;
+      }
+      if (lineage.size >= lineage.nodeCap) {
+        evolutionBusy = false;
+        syncEvolutionWorkspace(
+          "Lineage cap reached. Prune a branch or start a new root.",
+        );
+        return;
+      }
+      const childOrdinal =
+        baseOrdinal + cell * MUTATION_ATTEMPTS_PER_CELL + attempt;
+      const result = createEvolutionMutationCandidate(
+        parent.snapshot as SceneSnapshot,
+        {
+          algorithmVersion: SEEDED_MUTATION_ALGORITHM_VERSION,
+          nodeSeed: parent.seed,
+          childOrdinal,
+          profile: {
+            wildcard: cell === MUTATION_CELLS - 1,
+            lockedDomains,
+          },
+        },
+      );
+      if (!result.accepted) {
+        attempt += 1;
+        if (attempt < MUTATION_ATTEMPTS_PER_CELL) {
+          requestAnimationFrame(step);
+          return;
+        }
+        ui.setMutationCellUnavailable(
+          cell,
+          `No quality-gated child found for slot ${String(cell + 1)}`,
+        );
+      } else {
+        const candidate = result.candidate;
+        const snapshot = candidate.snapshot as unknown as SceneSnapshot;
+        const thumbnail = evolutionThumbnail(
+          candidate.snapshot,
+          candidate.nodeSeed,
+          candidate.childOrdinal,
+        );
+        let release: () => void;
+        try {
+          release = pinCustomMeshAssets(candidate.resourceIds);
+        } catch (error) {
+          evolutionBusy = false;
+          ui.setMutationCellUnavailable(
+            cell,
+            error instanceof Error ? error.message : "Asset cache is busy",
+          );
+          syncEvolutionWorkspace("Generation paused by the custom-mesh cap.");
+          return;
+        }
+        const added = lineage.addMutation(parentId, {
+          encodedScene: encodeScene(snapshot),
+          snapshot,
+          thumbnail,
+          seed: candidate.nodeSeed,
+          profile: mutationEvolutionProfile(parent, result),
+          resourceIds: candidate.resourceIds,
+        });
+        if (!added.added) {
+          release();
+          evolutionBusy = false;
+          ui.setMutationCellUnavailable(
+            cell,
+            `Lineage ${added.reason.replaceAll("-", " ")} reached`,
+          );
+          syncEvolutionWorkspace(
+            "Lineage cap reached. Prune a branch or start a new root.",
+          );
+          return;
+        }
+        evolutionNodeReleases.set(added.node.id, release);
+        mutationVisibleNodeIds[cell] = added.node.id;
+        ui.setMutationCell(
+          cell,
+          added.node.thumbnail,
+          MUTATION_THUMB_SIZE,
+          candidate.profile.wildcard,
+          `Load retained ${mutationNodeLabel(added.node, cell).toLowerCase()}`,
+        );
+      }
+      cell += 1;
+      attempt = 0;
+      if (cell < MUTATION_CELLS) {
+        requestAnimationFrame(step);
+      } else {
+        evolutionBusy = false;
+        syncEvolutionWorkspace("Eight-child generation pass complete.");
+      }
     };
     requestAnimationFrame(step);
   }
 
-  /** Load mutation candidate `index` — the same replace-load path as a
-   * Surprise Me roll (undo checkpoint, morph-in, camera fit) — then re-seed
-   * the grid around the pick: the modal stays open with the pick as the new
-   * center, so exploration can keep walking outward. */
-  function pickMutation(index: number): void {
-    const candidate = mutationCandidates.at(index);
-    if (!candidate) return;
-    switchRenderMode("points");
-    applyEdit(() => {
-      state = setTransforms(state, candidate.transforms);
-      state = setFinalTransform(state, candidate.finalTransform);
-      // Mutation preserves symmetry, so this re-applies the same values —
-      // kept for uniformity with the other replace-load paths.
-      state = setSymmetryOrder(state, candidate.symmetry.order);
-      state = setSymmetryPlane(state, candidate.symmetry.plane);
-      state = setSymmetryTwist(state, candidate.symmetry.twist ?? 0);
-      // Mutation may turn a conformal fold chain anisotropic. The candidate
-      // grid does not carry a re-authored trap, so do not let geometry (or
-      // its paired color composition) leak onto the selected system.
-      state = setShapeTrap(state, null);
-    }, "always");
-    // A mutated system is no longer the polytope a preset's scaffold
-    // illustrated — clear it, like rollSurpriseSystem.
-    scene.setFourDScaffold(null);
-    buildMutationGrid();
+  function requestEvolutionNode(nodeId: string): void {
+    const workspace = evolutionWorkspace;
+    if (!workspace) return;
+    const sourceId = evolutionLineage?.currentId ?? null;
+    const selectionTicket = ++evolutionSelectionTicket;
+    evolutionBuildToken += 1;
+    evolutionBusy = true;
+    syncEvolutionWorkspace("Loading exact retained scene…");
+    void workspace
+      .select(nodeId, (node) =>
+        loadSceneSnapshot(node.snapshot as SceneSnapshot, false),
+      )
+      .then((result) => {
+        if (selectionTicket !== evolutionSelectionTicket) return;
+        evolutionBusy = false;
+        if (!result.selected) {
+          if (result.reason === "superseded") {
+            reconcileEvolutionDocument();
+          }
+          syncEvolutionWorkspace(
+            result.reason === "superseded"
+              ? "A newer lineage selection replaced that request."
+              : "Retained scene was not loaded; selection stayed unchanged.",
+          );
+          return;
+        }
+        if (sourceId !== null) {
+          const source = evolutionLineage?.node(sourceId);
+          if (source?.childIds.includes(nodeId)) {
+            evolutionChosenBranches.set(sourceId, nodeId);
+          }
+        }
+        renderEvolutionNeighborhood();
+        if (result.node.childIds.length === 0) buildMutationGrid();
+      });
   }
+
+  function pickMutation(index: number): void {
+    const nodeId = mutationVisibleNodeIds.at(index);
+    if (nodeId) requestEvolutionNode(nodeId);
+  }
+
+  reconcileEvolutionDocument = (): void => {
+    const workspace = evolutionWorkspace;
+    if (!workspace) return;
+    evolutionBuildToken += 1;
+    evolutionBusy = false;
+    workspace.reconcile(encodeScene(currentDocument()));
+    if (ui.mutationsOpen()) renderEvolutionNeighborhood();
+  };
 
   // The one place control-spec.ts's declared effects meet the app's real
   // capabilities: scene pushes, render-session forwards, and the refreshers.
@@ -7583,6 +7996,28 @@ async function main(): Promise<void> {
     ui.setXaosAddSourceSavedScenes(entries);
   }
 
+  /** The one explicit Collection-promotion path, shared by the panel action
+   * and Evolution Lab's selected-node action. Lineage navigation/generation
+   * never calls it implicitly. */
+  function saveDocumentToCollection(
+    encoded = encodeScene(currentDocument()),
+  ): void {
+    const gapMode = thumbnailGapMode();
+    stopCollectionPlaybackForMutation();
+    const entry = collection.add(
+      encoded,
+      captureCurrentThumbnail(),
+      state.renderMode === "points" ? undefined : state.renderMode,
+      state.renderMode === "solid" ? sampledSolidStatus : undefined,
+    );
+    if (gapMode) {
+      notePendingThumbnailPatch("collection", entry.id, gapMode, encoded);
+    }
+    ui.setCollectionCount(collection.size);
+    refreshScheduleSavedScenes();
+    ui.flashToast("Saved to collection");
+  }
+
   // Every simple scalar control (slider/select/checkbox bound to one state
   // field) shares the one pipeline in onScalarControl below, driven by
   // control-spec.ts's SCALAR_CONTROLS table. Its `view` guard replaces the
@@ -7803,15 +8238,99 @@ async function main(): Promise<void> {
     // ends a running drift show — the show's own legs take the same path
     // with a longer morph (see driftPolicy's launchLeg).
     onSurprise: () => rollSurpriseSystem(),
-    // The mutation grid: open + build, pick (replace-load + re-seed),
-    // and reroll all share buildMutationGrid's token, so each supersedes any
-    // build still filling cells.
+    // Evolution Lab: the old mutation entry point now opens a retained,
+    // bounded neighborhood. Exact-node navigation still funnels through the
+    // normal async replace-load transaction above.
     onOpenMutations: () => {
+      evolutionModalOpen = true;
+      stopShows({ notify: true });
       ui.openMutations();
-      buildMutationGrid();
+      if (!evolutionLineage) {
+        if (!createOrResetEvolutionRoot()) {
+          ui.closeMutations();
+          return;
+        }
+      } else {
+        reconcileEvolutionDocument();
+      }
+      renderEvolutionNeighborhood();
+      const current = evolutionLineage?.current();
+      if (
+        current &&
+        current.childIds.length === 0 &&
+        evolutionWorkspace?.detached === false
+      ) {
+        buildMutationGrid();
+      }
     },
     onMutationPick: (index) => pickMutation(index),
     onMutateAgain: () => buildMutationGrid(),
+    onEvolutionBack: () => {
+      const target = evolutionLineage?.current()?.parentIds[0];
+      if (target) requestEvolutionNode(target);
+    },
+    onEvolutionForward: () => {
+      const current = evolutionLineage?.current();
+      if (!current) return;
+      const target = chosenEvolutionBranch(current);
+      if (target) requestEvolutionNode(target);
+    },
+    onEvolutionBranch: (nodeId) => {
+      const current = evolutionLineage?.current();
+      if (!current?.childIds.includes(nodeId)) return;
+      evolutionChosenBranches.set(current.id, nodeId);
+      syncEvolutionWorkspace();
+    },
+    onEvolutionPrune: (nodeId) => {
+      const lineage = evolutionLineage;
+      const current = lineage?.current();
+      if (!lineage || !current?.childIds.includes(nodeId)) return;
+      evolutionBuildToken += 1;
+      evolutionBusy = false;
+      const result = lineage.prune(nodeId, current.id);
+      if (!result.pruned) return;
+      evolutionChosenBranches.delete(current.id);
+      renderEvolutionNeighborhood();
+      ui.flashToast(
+        result.removedIds.length === 1
+          ? "Branch pruned"
+          : `${String(result.removedIds.length)} lineage nodes pruned`,
+      );
+    },
+    onEvolutionReset: () => {
+      evolutionBusy = false;
+      if (!createOrResetEvolutionRoot()) return;
+      renderEvolutionNeighborhood();
+      buildMutationGrid();
+      ui.flashToast("Displayed scene is the new Evolution root");
+    },
+    onEvolutionSave: () => {
+      const current = evolutionLineage?.current();
+      if (!current || evolutionWorkspace?.detached !== false) return;
+      saveDocumentToCollection(current.encodedScene);
+    },
+    onEvolutionLock: (domain, locked) => {
+      if (!MUTATION_DOMAINS.includes(domain)) return;
+      if (locked) evolutionLockedDomains.add(domain);
+      else evolutionLockedDomains.delete(domain);
+      if (evolutionBusy) {
+        evolutionBuildToken += 1;
+        evolutionBusy = false;
+        renderEvolutionNeighborhood();
+        syncEvolutionWorkspace(
+          "Trait locks changed. Generate children to use the new profile.",
+        );
+      } else {
+        syncEvolutionWorkspace(
+          "Trait locks updated for the next generated children.",
+        );
+      }
+    },
+    onEvolutionClose: () => {
+      evolutionModalOpen = false;
+      evolutionBuildToken += 1;
+      evolutionBusy = false;
+    },
     // The ambient drift show's toggle. Session-only, never persisted; the
     // button is disabled under reduced motion (syncMotionAvailability), and
     // the guard here covers a preference flip that raced the disable.
@@ -8137,23 +8656,7 @@ async function main(): Promise<void> {
     // — and the late correction comes back once that render's first frame
     // lands and re-photographs the entry, so the gap costs a briefly-wrong
     // picture rather than a permanent one.
-    onSaveToCollection: () => {
-      const encoded = encodeScene(currentDocument());
-      const gapMode = thumbnailGapMode();
-      stopCollectionPlaybackForMutation();
-      const entry = collection.add(
-        encoded,
-        captureCurrentThumbnail(),
-        state.renderMode === "points" ? undefined : state.renderMode,
-        state.renderMode === "solid" ? sampledSolidStatus : undefined,
-      );
-      if (gapMode) {
-        notePendingThumbnailPatch("collection", entry.id, gapMode, encoded);
-      }
-      ui.setCollectionCount(collection.size);
-      refreshScheduleSavedScenes();
-      ui.flashToast("Saved to collection");
-    },
+    onSaveToCollection: () => saveDocumentToCollection(),
     onOpenGallery: () => {
       ui.openGallery(collection.all());
     },
@@ -9248,7 +9751,7 @@ async function main(): Promise<void> {
       // sync (applyFourDPose via the pending pose hint) only covers legs
       // whose cloud landed after the glide had already finished.
       if (!fourDTween.active) syncFourDSliceUi();
-    } else {
+    } else if (!evolutionModalOpen) {
       fourDView.tick(dt);
     }
   }
@@ -9355,6 +9858,7 @@ async function main(): Promise<void> {
         lastMotionTickMs = now;
         if (
           autoOrbitOn &&
+          !evolutionModalOpen &&
           !gestures.gestureActive() &&
           !cameraTween.poseGliding
         ) {
@@ -9633,6 +10137,7 @@ async function main(): Promise<void> {
     if (
       !viewIs4D &&
       autoOrbitOn &&
+      !evolutionModalOpen &&
       !gestures.gestureActive() &&
       !cameraTween.poseGliding
     ) {
@@ -9657,7 +10162,8 @@ async function main(): Promise<void> {
       // doesn't replay the gap as a jump. The point color re-derives
       // in-shader from the new rotation, so nothing else needs updating per
       // frame.
-      const automaticFourDMotion = fourDTween.active || fourDView.tumbleOn;
+      const automaticFourDMotion =
+        fourDTween.active || (fourDView.tumbleOn && !evolutionModalOpen);
       advanceFourDPose(dt);
       scene.setRot4(fourDView.matrix());
       automaticViewMoved = automaticFourDMotion && dt > 0;

@@ -64,6 +64,7 @@ import type {
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
+import type { MutationDomain } from "../fractal/mutate-system";
 import type { SavedScene } from "./collection";
 import type { TimelineStep } from "./timeline";
 import {
@@ -258,6 +259,24 @@ export interface UiHandlers {
   /** The mutation modal's "↻ Mutate again" was clicked: roll eight fresh
    * candidates from the same current system. */
   onMutateAgain: () => void;
+  /** Navigate to the selected node's first parent through the exact async
+   * scene-load transaction. */
+  onEvolutionBack: () => void;
+  /** Follow the selected node's remembered or chosen child branch. */
+  onEvolutionForward: () => void;
+  /** Choose one retained direct-child branch. */
+  onEvolutionBranch: (nodeId: string) => void;
+  /** Prune the branch currently chosen in the retained-child picker. */
+  onEvolutionPrune: (nodeId: string) => void;
+  /** Replace the graph with the displayed document as a new session root. */
+  onEvolutionReset: () => void;
+  /** Explicitly promote the exact selected node into Collection. */
+  onEvolutionSave: () => void;
+  /** The Evolution Lab modal closed; ambient view motion may resume without
+   * changing the user's stored preference. */
+  onEvolutionClose: () => void;
+  /** Lock one seeded mutation domain for future generated children. */
+  onEvolutionLock: (domain: MutationDomain, locked: boolean) => void;
   /** "▶ Drift" was clicked: toggle the ambient drift show — session-only, like
    * the auto-orbit/tumble motion; main.ts owns the policy. */
   onDriftToggle: () => void;
@@ -1628,7 +1647,7 @@ function galleryTimestamp(ms: number): string {
  * `[tabindex="-1"]` excluded because a programmatic focus target is not one.
  */
 const MODAL_FOCUSABLE_SELECTOR =
-  'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+  'button, a[href], input, select, summary, textarea, [tabindex]:not([tabindex="-1"])';
 
 /**
  * The Tab ring of an open modal, in DOM order: every focusable it
@@ -1656,6 +1675,13 @@ function modalFocusRing(modal: HTMLElement): HTMLElement[] {
     // `disabled` is a reflected boolean attribute on every element type that
     // has it, so the attribute and the property cannot disagree.
     if (el.hasAttribute("disabled") || el.hasAttribute("hidden")) return false;
+    const closedDetails = el.closest<HTMLDetailsElement>("details:not([open])");
+    if (
+      closedDetails &&
+      !(el.tagName === "SUMMARY" && el.parentElement === closedDetails)
+    ) {
+      return false;
+    }
     for (let node: HTMLElement | null = el; node; node = node.parentElement) {
       if (node.classList.contains("hidden")) return false;
       if (node === modal) break;
@@ -1745,6 +1771,25 @@ function surfaceProgressEngine(label: string): string | null {
  * lifetime and live/restart/next-entry/refused behavior as specified in
  * `docs/panel-ia.md`.
  */
+export interface EvolutionBranchOption {
+  readonly id: string;
+  readonly label: string;
+}
+
+export interface EvolutionWorkspaceView {
+  readonly detached: boolean;
+  readonly busy: boolean;
+  readonly nodeCount: number;
+  readonly nodeCap: number;
+  readonly currentLabel: string;
+  readonly canBack: boolean;
+  readonly canForward: boolean;
+  readonly branches: readonly EvolutionBranchOption[];
+  readonly selectedBranchId: string | null;
+  readonly lockedDomains: readonly MutationDomain[];
+  readonly status: string;
+}
+
 export class Ui {
   private readonly doc: Document;
   private readonly mouse = usesMouse();
@@ -1884,6 +1929,15 @@ export class Ui {
   private readonly mutationCloseBtn: HTMLButtonElement;
   private readonly mutationAgainBtn: HTMLButtonElement;
   private readonly mutationGrid: HTMLElement;
+  private readonly evolutionBackBtn: HTMLButtonElement;
+  private readonly evolutionForwardBtn: HTMLButtonElement;
+  private readonly evolutionBranchSelect: HTMLSelectElement;
+  private readonly evolutionPruneBtn: HTMLButtonElement;
+  private readonly evolutionResetBtn: HTMLButtonElement;
+  private readonly evolutionSaveBtn: HTMLButtonElement;
+  private readonly evolutionStatus: HTMLElement;
+  private readonly evolutionCount: HTMLElement;
+  private readonly evolutionLockInputs: readonly HTMLInputElement[];
   /** The eight candidate cell buttons, by candidate index; rebuilt by
    * {@link resetMutationCells}. */
   private mutationCells: HTMLButtonElement[] = [];
@@ -2550,6 +2604,19 @@ export class Ui {
     this.mutationCloseBtn = this.byId("mutationCloseBtn");
     this.mutationAgainBtn = this.byId("mutationAgainBtn");
     this.mutationGrid = this.byId("mutationGrid");
+    this.evolutionBackBtn = this.byId("evolutionBackBtn");
+    this.evolutionForwardBtn = this.byId("evolutionForwardBtn");
+    this.evolutionBranchSelect = this.byId("evolutionBranchSelect");
+    this.evolutionPruneBtn = this.byId("evolutionPruneBtn");
+    this.evolutionResetBtn = this.byId("evolutionResetBtn");
+    this.evolutionSaveBtn = this.byId("evolutionSaveBtn");
+    this.evolutionStatus = this.byId("evolutionStatus");
+    this.evolutionCount = this.byId("evolutionCount");
+    this.evolutionLockInputs = Array.from(
+      this.doc.querySelectorAll<HTMLInputElement>(
+        "#evolutionLocks input[data-evolution-domain]",
+      ),
+    );
     this.toast = this.byId("toast");
     // Pause-on-hover/focus: the element is permanent, so the four
     // listeners bind once here rather than per flashToast. mouseenter only
@@ -3141,6 +3208,32 @@ export class Ui {
     this.mutationAgainBtn.addEventListener("click", () =>
       handlers.onMutateAgain(),
     );
+    this.evolutionBackBtn.addEventListener("click", () =>
+      handlers.onEvolutionBack(),
+    );
+    this.evolutionForwardBtn.addEventListener("click", () =>
+      handlers.onEvolutionForward(),
+    );
+    this.evolutionBranchSelect.addEventListener("change", () => {
+      const id = this.evolutionBranchSelect.value;
+      if (id !== "") handlers.onEvolutionBranch(id);
+    });
+    this.evolutionPruneBtn.addEventListener("click", () => {
+      const id = this.evolutionBranchSelect.value;
+      if (id !== "") handlers.onEvolutionPrune(id);
+    });
+    this.evolutionResetBtn.addEventListener("click", () =>
+      handlers.onEvolutionReset(),
+    );
+    this.evolutionSaveBtn.addEventListener("click", () =>
+      handlers.onEvolutionSave(),
+    );
+    for (const input of this.evolutionLockInputs) {
+      input.addEventListener("change", () => {
+        const domain = input.dataset.evolutionDomain as MutationDomain;
+        handlers.onEvolutionLock(domain, input.checked);
+      });
+    }
     this.mutationCloseBtn.addEventListener("click", () =>
       this.closeMutations(),
     );
@@ -4821,14 +4914,75 @@ export class Ui {
    * focus to whatever opened it — skipped while the export modal still
    * stands above (see releaseModalFocus). Idempotent. */
   closeMutations(): void {
+    if (this.mutationModal.classList.contains("hidden")) return;
     this.mutationModal.classList.add("hidden");
     this.releaseModalFocus(this.mutationModal);
+    this.handlers?.onEvolutionClose();
   }
 
   /** Whether the mutation modal is on screen. The app's progressive cell
    * builder checks this each step so closing the modal ends the build. */
   mutationsOpen(): boolean {
     return !this.mutationModal.classList.contains("hidden");
+  }
+
+  /** Reflect the retained lineage controls without rebuilding thumbnail
+   * cells. All controls remain native buttons/selects/checkboxes, so touch,
+   * keyboard activation, and the modal's dynamic focus ring share one path. */
+  setEvolutionWorkspace(view: EvolutionWorkspaceView): void {
+    this.evolutionBackBtn.disabled =
+      view.detached || view.busy || !view.canBack;
+    this.evolutionForwardBtn.disabled =
+      view.detached || view.busy || !view.canForward;
+    this.evolutionAgainBtnState(view);
+    this.evolutionSaveBtn.disabled = view.detached || view.busy;
+    this.evolutionResetBtn.disabled = view.busy;
+    this.evolutionCount.textContent = `${String(view.nodeCount)} / ${String(view.nodeCap)} nodes`;
+    this.evolutionStatus.textContent = view.status;
+
+    const selected = view.selectedBranchId;
+    this.evolutionBranchSelect.replaceChildren();
+    if (view.branches.length === 0) {
+      const empty = this.doc.createElement("option");
+      empty.value = "";
+      empty.textContent = "No retained children";
+      this.evolutionBranchSelect.appendChild(empty);
+    } else {
+      for (const branch of view.branches) {
+        const option = this.doc.createElement("option");
+        option.value = branch.id;
+        option.textContent = branch.label;
+        this.evolutionBranchSelect.appendChild(option);
+      }
+      this.evolutionBranchSelect.value =
+        selected !== null &&
+        view.branches.some((entry) => entry.id === selected)
+          ? selected
+          : view.branches[0].id;
+    }
+    const branchUnavailable =
+      view.detached || view.busy || view.branches.length === 0;
+    this.evolutionBranchSelect.disabled = branchUnavailable;
+    this.evolutionPruneBtn.disabled = branchUnavailable;
+
+    const locks = new Set(view.lockedDomains);
+    for (const input of this.evolutionLockInputs) {
+      input.checked = locks.has(
+        input.dataset.evolutionDomain as MutationDomain,
+      );
+      input.disabled = view.detached;
+    }
+    this.mutationModal.setAttribute(
+      "aria-label",
+      view.detached
+        ? "Evolution Lab detached from the displayed scene"
+        : `Evolution Lab, ${view.currentLabel}`,
+    );
+  }
+
+  private evolutionAgainBtnState(view: EvolutionWorkspaceView): void {
+    this.mutationAgainBtn.disabled =
+      view.detached || view.busy || view.nodeCount >= view.nodeCap;
   }
 
   /** Show the blocking export modal: a Save PNG capture is starting and may
@@ -4956,12 +5110,13 @@ export class Ui {
 
   /** Fill the center cell with the current system's thumbnail. */
   setMutationCurrent(
-    pixels: Uint8ClampedArray<ArrayBuffer>,
+    pixels: Uint8ClampedArray<ArrayBufferLike>,
     size: number,
+    tag = "current",
   ): void {
     this.mutationCenter?.replaceChildren(
       this.thumbCanvas(pixels, size),
-      this.mutationTag("current"),
+      this.mutationTag(tag),
     );
   }
 
@@ -4969,18 +5124,35 @@ export class Ui {
    * the grid's one bolder wildcard mutation. */
   setMutationCell(
     index: number,
-    pixels: Uint8ClampedArray<ArrayBuffer>,
+    pixels: Uint8ClampedArray<ArrayBufferLike>,
     size: number,
     wild: boolean,
+    retainedLabel?: string,
   ): void {
     const cell = this.mutationCells[index];
     if (!cell) return;
     cell.replaceChildren(this.thumbCanvas(pixels, size));
     if (wild) {
       cell.appendChild(this.mutationTag("wild"));
-      cell.setAttribute("aria-label", `Load wildcard mutation ${index + 1}`);
+      cell.setAttribute(
+        "aria-label",
+        retainedLabel ?? `Load wildcard mutation ${index + 1}`,
+      );
+    } else if (retainedLabel) {
+      cell.setAttribute("aria-label", retainedLabel);
     }
     cell.disabled = false;
+  }
+
+  /** Leave a failed progressive slot inert while explaining why it did not
+   * become a retained node. */
+  setMutationCellUnavailable(index: number, reason: string): void {
+    const cell = this.mutationCells[index];
+    if (!cell) return;
+    cell.replaceChildren(this.mutationPlaceholder());
+    cell.setAttribute("aria-label", reason);
+    cell.title = reason;
+    cell.disabled = true;
   }
 
   private mutationPlaceholder(): HTMLElement {
@@ -5001,14 +5173,20 @@ export class Ui {
    * square canvas. jsdom — the DOM test environment — has no 2d context, so
    * the canvas simply stays blank there. */
   private thumbCanvas(
-    pixels: Uint8ClampedArray<ArrayBuffer>,
+    pixels: Uint8ClampedArray<ArrayBufferLike>,
     size: number,
   ): HTMLCanvasElement {
     const canvas = this.doc.createElement("canvas");
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext("2d");
-    if (ctx) ctx.putImageData(new ImageData(pixels, size, size), 0, 0);
+    if (ctx) {
+      ctx.putImageData(
+        new ImageData(new Uint8ClampedArray(pixels), size, size),
+        0,
+        0,
+      );
+    }
     return canvas;
   }
 
