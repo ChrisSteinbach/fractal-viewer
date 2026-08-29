@@ -18,6 +18,7 @@ import {
 } from "../fractal/mutate-system";
 import { MIN_OCCUPIED_CELLS, scoreSystem } from "../fractal/random-system";
 import { mulberry32 } from "../fractal/rng";
+import type { Rng } from "../fractal/rng";
 import type { MorphSystem } from "../fractal/morph";
 import type { HybridSchedule, Transform } from "../fractal/types";
 import { sceneCustomMeshIds } from "./scene-mesh-assets";
@@ -208,15 +209,18 @@ function candidateSnapshot(
   return ownEvolutionSceneSnapshot(draft);
 }
 
-function strictQuality(
+/** Score one exact, owned document through the shared strict two-probe gate.
+ * The caller owns probe-stream derivation so mutation and crossover can keep
+ * their reproduction coordinates isolated while sharing one acceptance rule. */
+export function evaluateEvolutionCandidateQuality(
   snapshot: ImmutableSceneSnapshot,
-  request: SeededMutationRequest,
+  rngForProbe: (probe: 0 | 1) => Rng,
 ): EvolutionCandidateQuality {
   const system = morphSystemFromSnapshot(snapshot);
   const schedule = snapshot.schedule ?? null;
   const effectiveSchedule = schedule as unknown as HybridSchedule | null;
-  const first = scoreSystem(system, qualityRng(request, 0), effectiveSchedule);
-  const second = scoreSystem(system, qualityRng(request, 1), effectiveSchedule);
+  const first = scoreSystem(system, rngForProbe(0), effectiveSchedule);
+  const second = scoreSystem(system, rngForProbe(1), effectiveSchedule);
   const scores: readonly [number, number] = Object.freeze([first, second]);
   return Object.freeze({
     scores,
@@ -224,6 +228,15 @@ function strictQuality(
     threshold: MIN_OCCUPIED_CELLS,
     probeVersion: EVOLUTION_CANDIDATE_QUALITY_VERSION,
   });
+}
+
+function strictQuality(
+  snapshot: ImmutableSceneSnapshot,
+  request: SeededMutationRequest,
+): EvolutionCandidateQuality {
+  return evaluateEvolutionCandidateQuality(snapshot, (probe) =>
+    qualityRng(request, probe),
+  );
 }
 
 /**
