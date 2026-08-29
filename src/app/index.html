@@ -2917,11 +2917,41 @@
           class="evolution-compare"
           aria-labelledby="evolutionCompareTitle"
         >
-          <h3 id="evolutionCompareTitle">Compare pinned endpoints</h3>
+          <h3 id="evolutionCompareTitle">Compare and breed</h3>
           <p class="mutation-hint evolution-compare-note">
-            Pins name retained nodes. Showing A or B replaces only the canvas;
-            the lineage selection and Collection stay unchanged.
+            A and B can name retained nodes or exact Collection scenes. Showing
+            either replaces only the canvas; the lineage selection and
+            Collection stay unchanged.
           </p>
+          <div class="evolution-compare-collection">
+            <label for="evolutionCompareCollectionSelect"
+              >Collection scene</label
+            >
+            <select
+              id="evolutionCompareCollectionSelect"
+              class="evolution-compare-select"
+            >
+              <option value="">No Collection scenes</option>
+            </select>
+            <div class="evolution-compare-actions">
+              <button
+                id="evolutionCompareCollectionPinA"
+                class="btn btn-ghost"
+                type="button"
+                disabled
+              >
+                Use as A
+              </button>
+              <button
+                id="evolutionCompareCollectionPinB"
+                class="btn btn-ghost"
+                type="button"
+                disabled
+              >
+                Use as B
+              </button>
+            </div>
+          </div>
           <div class="evolution-compare-slots">
             <div class="evolution-compare-slot">
               <strong id="evolutionCompareLabelA">A · empty</strong>
@@ -3001,6 +3031,29 @@
             aria-live="polite"
           >
             Pin the selected node as A or B to compare it full-canvas.
+          </p>
+          <div class="evolution-breed">
+            <label for="evolutionBreedOrder">Ordered parents</label>
+            <select id="evolutionBreedOrder" class="evolution-compare-select">
+              <option value="A">A primary · B secondary</option>
+              <option value="B">B primary · A secondary</option>
+            </select>
+            <button
+              id="evolutionBreedBtn"
+              class="btn btn-blue evolution-action-button"
+              type="button"
+              disabled
+            >
+              Breed child
+            </button>
+          </div>
+          <p
+            id="evolutionBreedStatus"
+            class="evolution-compare-status"
+            role="status"
+            aria-live="polite"
+          >
+            Pin both A and B to inspect crossover compatibility.
           </p>
         </section>
         <div class="evolution-surface-constraint">

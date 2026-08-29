@@ -151,6 +151,44 @@ function ownEligibility(
   return Object.freeze({ ...admission.eligibility });
 }
 
+function validateRequest(
+  request: EvolutionCrossoverCandidateRequest,
+): EvolutionCrossoverRefusal | null {
+  if (request.algorithmVersion !== CROSSOVER_ALGORITHM_VERSION) {
+    return Object.freeze({
+      code: "invalid-coordinates",
+      detail: "unsupported crossover algorithm version",
+    });
+  }
+  if (
+    !Number.isInteger(request.nodeSeed) ||
+    request.nodeSeed < 0 ||
+    request.nodeSeed > 0xffff_ffff
+  ) {
+    return Object.freeze({
+      code: "invalid-coordinates",
+      detail: "nodeSeed must be a uint32",
+    });
+  }
+  if (
+    !Number.isSafeInteger(request.childOrdinal) ||
+    request.childOrdinal < 0 ||
+    Object.is(request.childOrdinal, -0)
+  ) {
+    return Object.freeze({
+      code: "invalid-coordinates",
+      detail: "childOrdinal must be a canonical non-negative safe integer",
+    });
+  }
+  if (typeof request.surfaceRequired !== "boolean") {
+    return Object.freeze({
+      code: "invalid-coordinates",
+      detail: "surfaceRequired must be boolean",
+    });
+  }
+  return null;
+}
+
 /**
  * Build attempts in ascending order and return the first document that passes
  * both strict scheduled quality probes and the optional capability-neutral
@@ -163,6 +201,16 @@ export function createEvolutionCrossoverCandidate(
   request: EvolutionCrossoverCandidateRequest,
   preflightOptions: EvolutionCrossoverPreflightOptions = {},
 ): EvolutionCrossoverCandidateResult {
+  const requestRefusal = validateRequest(request);
+  if (requestRefusal) {
+    return Object.freeze({
+      accepted: false,
+      rejection: Object.freeze({
+        reason: "preflight-refusal",
+        refusal: requestRefusal,
+      }),
+    });
+  }
   const preflight = prepareEvolutionCrossover(
     primary,
     secondary,

@@ -96,10 +96,12 @@ function noopHandlers(): UiHandlers {
     onEvolutionReset: vi.fn(),
     onEvolutionSave: vi.fn(),
     onEvolutionComparePin: vi.fn(),
+    onEvolutionCompareCollectionPin: vi.fn(),
     onEvolutionCompareShow: vi.fn(),
     onEvolutionCompareClear: vi.fn(),
     onEvolutionCompareExit: vi.fn(),
     onEvolutionCompareAnimate: vi.fn(),
+    onEvolutionBreed: vi.fn(),
     onEvolutionClose: vi.fn(),
     onEvolutionLock: vi.fn(),
     onEvolutionSurfaceConstraint: vi.fn(),
@@ -11195,6 +11197,7 @@ describe("Ui mutation grid", () => {
     nodeCount: 3,
     nodeCap: 64,
     currentLabel: "current lineage-1",
+    backLabel: "\u2190 Parent",
     canBack: true,
     canForward: true,
     branches: [
@@ -11219,6 +11222,12 @@ describe("Ui mutation grid", () => {
     comparisonPending: false,
     comparisonAnimate: true,
     comparisonStatus: "Pin the selected node as A or B.",
+    collectionScenes: [
+      { id: "saved-1", label: "Saved nebula" },
+      { id: "saved-2", label: "Saved fern" },
+    ],
+    breedReady: true,
+    breedStatus: "A and B are compatible.",
     status: "Selected lineage-1.",
     ...overrides,
   });
@@ -11378,6 +11387,199 @@ describe("Ui mutation grid", () => {
     )) {
       expect(button.type).toBe("button");
     }
+  });
+
+  it("acquires the selected Collection scene as either explicit endpoint and preserves the selection on refresh", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openMutations();
+    ui.setEvolutionWorkspace(workspace());
+
+    expect(document.getElementById("evolutionCompareTitle")?.textContent).toBe(
+      "Compare and breed",
+    );
+    const collection = document.getElementById(
+      "evolutionCompareCollectionSelect",
+    ) as HTMLSelectElement;
+    collection.value = "saved-2";
+    document.getElementById("evolutionCompareCollectionPinA")?.click();
+    document.getElementById("evolutionCompareCollectionPinB")?.click();
+
+    expect(handlers.onEvolutionCompareCollectionPin).toHaveBeenNthCalledWith(
+      1,
+      "A",
+      "saved-2",
+    );
+    expect(handlers.onEvolutionCompareCollectionPin).toHaveBeenNthCalledWith(
+      2,
+      "B",
+      "saved-2",
+    );
+
+    ui.setEvolutionWorkspace(
+      workspace({
+        collectionScenes: [
+          { id: "saved-2", label: "Renamed fern" },
+          { id: "saved-3", label: "Saved cloud" },
+        ],
+      }),
+    );
+    expect(collection.value).toBe("saved-2");
+    expect(collection.selectedOptions[0]?.textContent).toBe("Renamed fern");
+
+    ui.setEvolutionWorkspace(
+      workspace({
+        collectionScenes: [{ id: "saved-3", label: "Saved cloud" }],
+      }),
+    );
+    expect(collection.value).toBe("saved-3");
+  });
+
+  it("routes the explicit ordered parent choice and exposes polite breed feedback", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openMutations();
+    ui.setEvolutionWorkspace(
+      workspace({
+        comparisonPins: [
+          { slot: "A", state: "available", label: "A · lineage-1" },
+          { slot: "B", state: "available", label: "B · Saved fern" },
+        ],
+        breedStatus: "Parents are compatible. Ready to breed.",
+      }),
+    );
+
+    const order = document.getElementById(
+      "evolutionBreedOrder",
+    ) as HTMLSelectElement;
+    expect(
+      Array.from(order.options).map((option) => option.textContent),
+    ).toEqual(["A primary · B secondary", "B primary · A secondary"]);
+    order.value = "B";
+    document.getElementById("evolutionBreedBtn")?.click();
+
+    expect(handlers.onEvolutionBreed).toHaveBeenCalledWith("B");
+    expect(
+      document
+        .getElementById("evolutionBreedStatus")
+        ?.getAttribute("aria-live"),
+    ).toBe("polite");
+    expect(document.getElementById("evolutionBreedStatus")?.textContent).toBe(
+      "Parents are compatible. Ready to breed.",
+    );
+  });
+
+  it("uses the truthful workspace-anchor back label", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    ui.setEvolutionWorkspace(workspace({ backLabel: "← Workspace anchor" }));
+
+    expect(document.getElementById("evolutionBackBtn")?.textContent).toBe(
+      "← Workspace anchor",
+    );
+  });
+
+  it.each([
+    ["detached", { detached: true }],
+    ["busy", { busy: true }],
+    ["active comparison", { comparisonActive: "A" as const }],
+    ["pending comparison", { comparisonPending: true }],
+  ])(
+    "disables Collection acquisition and breeding while %s",
+    (_label, state) => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.openMutations();
+      ui.setEvolutionWorkspace(
+        workspace({
+          ...state,
+          comparisonPins: [
+            { slot: "A", state: "available", label: "A · lineage-1" },
+            { slot: "B", state: "available", label: "B · lineage-2" },
+          ],
+        }),
+      );
+
+      expect(
+        (
+          document.getElementById(
+            "evolutionCompareCollectionSelect",
+          ) as HTMLSelectElement
+        ).disabled,
+      ).toBe(true);
+      expect(
+        (
+          document.getElementById(
+            "evolutionCompareCollectionPinA",
+          ) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+      expect(
+        (document.getElementById("evolutionBreedBtn") as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+    },
+  );
+
+  it("requires a Collection selection, two available pins, and a ready crossover before enabling Breed", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    ui.setEvolutionWorkspace(
+      workspace({ collectionScenes: [], breedReady: false }),
+    );
+
+    const collection = document.getElementById(
+      "evolutionCompareCollectionSelect",
+    ) as HTMLSelectElement;
+    expect(collection.value).toBe("");
+    expect(collection.disabled).toBe(true);
+    expect(
+      (
+        document.getElementById(
+          "evolutionCompareCollectionPinB",
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      (document.getElementById("evolutionBreedBtn") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    ui.setEvolutionWorkspace(
+      workspace({
+        breedReady: true,
+        comparisonPins: [
+          { slot: "A", state: "available", label: "A · lineage-1" },
+          { slot: "B", state: "missing", label: "B · missing" },
+        ],
+      }),
+    );
+    expect(
+      (document.getElementById("evolutionBreedBtn") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    ui.setEvolutionWorkspace(
+      workspace({
+        breedReady: true,
+        comparisonPins: [
+          { slot: "A", state: "available", label: "A · lineage-1" },
+          { slot: "B", state: "available", label: "B · lineage-2" },
+        ],
+      }),
+    );
+    expect(
+      (document.getElementById("evolutionBreedOrder") as HTMLSelectElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      (document.getElementById("evolutionBreedBtn") as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
   });
 
   it("keeps the canvas override explicit and turns every close route into Exit first", () => {
@@ -12557,6 +12759,7 @@ describe("Ui modal focus trap", () => {
       nodeCount: 1,
       nodeCap: 64,
       currentLabel: "current root",
+      backLabel: "← Parent",
       canBack: false,
       canForward: false,
       branches: [],
@@ -12574,6 +12777,9 @@ describe("Ui modal focus trap", () => {
       comparisonPending: false,
       comparisonAnimate: true,
       comparisonStatus: "Pin the selected node as A or B.",
+      collectionScenes: [],
+      breedReady: false,
+      breedStatus: "Pin both A and B.",
       status: "Loading",
     });
     // Every workspace action is disabled while this simulated load is busy;

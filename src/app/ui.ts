@@ -275,6 +275,11 @@ export interface UiHandlers {
   onEvolutionSave: () => void;
   /** Pin/replace one comparison endpoint with the graph-selected node. */
   onEvolutionComparePin: (slot: EvolutionComparisonSlot) => void;
+  /** Pin/replace one comparison endpoint with an exact Collection scene. */
+  onEvolutionCompareCollectionPin: (
+    slot: EvolutionComparisonSlot,
+    collectionId: string,
+  ) => void;
   /** Load one pinned endpoint as an explicit full-canvas display override. */
   onEvolutionCompareShow: (slot: EvolutionComparisonSlot) => void;
   /** Clear one comparison pin, restoring selection first when needed. */
@@ -283,6 +288,8 @@ export interface UiHandlers {
   onEvolutionCompareExit: () => void;
   /** Enable existing system morph feedback for comparison loads only. */
   onEvolutionCompareAnimate: (enabled: boolean) => void;
+  /** Breed the ordered A/B endpoints, naming which slot is the primary. */
+  onEvolutionBreed: (primarySlot: EvolutionComparisonSlot) => void;
   /** The Evolution Lab modal closed; ambient view motion may resume without
    * changing the user's stored preference. */
   onEvolutionClose: () => void;
@@ -1796,6 +1803,7 @@ export interface EvolutionWorkspaceView {
   readonly nodeCount: number;
   readonly nodeCap: number;
   readonly currentLabel: string;
+  readonly backLabel: string;
   readonly canBack: boolean;
   readonly canForward: boolean;
   readonly branches: readonly EvolutionBranchOption[];
@@ -1813,6 +1821,12 @@ export interface EvolutionWorkspaceView {
   readonly comparisonPending: boolean;
   readonly comparisonAnimate: boolean;
   readonly comparisonStatus: string;
+  readonly collectionScenes: readonly {
+    readonly id: string;
+    readonly label: string;
+  }[];
+  readonly breedReady: boolean;
+  readonly breedStatus: string;
   readonly status: string;
 }
 
@@ -1974,9 +1988,15 @@ export class Ui {
   private readonly evolutionCompareClearB: HTMLButtonElement;
   private readonly evolutionCompareLabelA: HTMLElement;
   private readonly evolutionCompareLabelB: HTMLElement;
+  private readonly evolutionCompareCollectionSelect: HTMLSelectElement;
+  private readonly evolutionCompareCollectionPinA: HTMLButtonElement;
+  private readonly evolutionCompareCollectionPinB: HTMLButtonElement;
   private readonly evolutionCompareExit: HTMLButtonElement;
   private readonly evolutionCompareAnimate: HTMLInputElement;
   private readonly evolutionCompareStatus: HTMLElement;
+  private readonly evolutionBreedOrder: HTMLSelectElement;
+  private readonly evolutionBreedBtn: HTMLButtonElement;
+  private readonly evolutionBreedStatus: HTMLElement;
   private evolutionComparisonActive: EvolutionComparisonSlot | null = null;
   private evolutionComparisonPending = false;
   /** The eight candidate cell buttons, by candidate index; rebuilt by
@@ -2665,9 +2685,21 @@ export class Ui {
     this.evolutionCompareClearB = this.byId("evolutionCompareClearB");
     this.evolutionCompareLabelA = this.byId("evolutionCompareLabelA");
     this.evolutionCompareLabelB = this.byId("evolutionCompareLabelB");
+    this.evolutionCompareCollectionSelect = this.byId(
+      "evolutionCompareCollectionSelect",
+    );
+    this.evolutionCompareCollectionPinA = this.byId(
+      "evolutionCompareCollectionPinA",
+    );
+    this.evolutionCompareCollectionPinB = this.byId(
+      "evolutionCompareCollectionPinB",
+    );
     this.evolutionCompareExit = this.byId("evolutionCompareExit");
     this.evolutionCompareAnimate = this.byId("evolutionCompareAnimate");
     this.evolutionCompareStatus = this.byId("evolutionCompareStatus");
+    this.evolutionBreedOrder = this.byId("evolutionBreedOrder");
+    this.evolutionBreedBtn = this.byId("evolutionBreedBtn");
+    this.evolutionBreedStatus = this.byId("evolutionBreedStatus");
     this.evolutionLockInputs = Array.from(
       this.doc.querySelectorAll<HTMLInputElement>(
         "#evolutionLocks input[data-evolution-domain]",
@@ -3290,6 +3322,14 @@ export class Ui {
     this.evolutionComparePinB.addEventListener("click", () =>
       handlers.onEvolutionComparePin("B"),
     );
+    this.evolutionCompareCollectionPinA.addEventListener("click", () => {
+      const id = this.evolutionCompareCollectionSelect.value;
+      if (id !== "") handlers.onEvolutionCompareCollectionPin("A", id);
+    });
+    this.evolutionCompareCollectionPinB.addEventListener("click", () => {
+      const id = this.evolutionCompareCollectionSelect.value;
+      if (id !== "") handlers.onEvolutionCompareCollectionPin("B", id);
+    });
     this.evolutionCompareShowA.addEventListener("click", () =>
       handlers.onEvolutionCompareShow("A"),
     );
@@ -3307,6 +3347,11 @@ export class Ui {
     );
     this.evolutionCompareAnimate.addEventListener("change", () =>
       handlers.onEvolutionCompareAnimate(this.evolutionCompareAnimate.checked),
+    );
+    this.evolutionBreedBtn.addEventListener("click", () =>
+      handlers.onEvolutionBreed(
+        this.evolutionBreedOrder.value as EvolutionComparisonSlot,
+      ),
     );
     this.evolutionSurfaceCompatible.addEventListener("change", () =>
       handlers.onEvolutionSurfaceConstraint(
@@ -5026,9 +5071,11 @@ export class Ui {
    * keyboard activation, and the modal's dynamic focus ring share one path. */
   setEvolutionWorkspace(view: EvolutionWorkspaceView): void {
     const comparing = view.comparisonActive !== null;
+    const comparisonOccupied = comparing || view.comparisonPending;
     this.evolutionComparisonActive = view.comparisonActive;
     this.evolutionComparisonPending = view.comparisonPending;
     this.mutationModal.classList.toggle("mutation-modal-comparing", comparing);
+    this.evolutionBackBtn.textContent = view.backLabel;
     this.evolutionBackBtn.disabled =
       view.detached || view.busy || comparing || !view.canBack;
     this.evolutionForwardBtn.disabled =
@@ -5087,6 +5134,35 @@ export class Ui {
       throw new Error("Evolution comparison requires A and B");
     this.evolutionCompareLabelA.textContent = pinA.label;
     this.evolutionCompareLabelB.textContent = pinB.label;
+
+    const selectedCollectionId = this.evolutionCompareCollectionSelect.value;
+    this.evolutionCompareCollectionSelect.replaceChildren();
+    if (view.collectionScenes.length === 0) {
+      const empty = this.doc.createElement("option");
+      empty.value = "";
+      empty.textContent = "No Collection scenes";
+      this.evolutionCompareCollectionSelect.appendChild(empty);
+    } else {
+      for (const scene of view.collectionScenes) {
+        const option = this.doc.createElement("option");
+        option.value = scene.id;
+        option.textContent = scene.label;
+        this.evolutionCompareCollectionSelect.appendChild(option);
+      }
+      this.evolutionCompareCollectionSelect.value = view.collectionScenes.some(
+        (scene) => scene.id === selectedCollectionId,
+      )
+        ? selectedCollectionId
+        : view.collectionScenes[0].id;
+    }
+    const collectionUnavailable =
+      view.detached ||
+      view.busy ||
+      comparisonOccupied ||
+      view.collectionScenes.length === 0;
+    this.evolutionCompareCollectionSelect.disabled = collectionUnavailable;
+    this.evolutionCompareCollectionPinA.disabled = collectionUnavailable;
+    this.evolutionCompareCollectionPinB.disabled = collectionUnavailable;
     this.evolutionComparePinA.disabled =
       view.detached || view.busy || comparing;
     this.evolutionComparePinB.disabled =
@@ -5108,6 +5184,17 @@ export class Ui {
     this.evolutionCompareAnimate.checked = view.comparisonAnimate;
     this.evolutionCompareAnimate.disabled = view.detached;
     this.evolutionCompareStatus.textContent = view.comparisonStatus;
+    const hasBreedParents =
+      pinA.state === "available" && pinB.state === "available";
+    const breedUnavailable =
+      view.detached ||
+      view.busy ||
+      comparisonOccupied ||
+      !view.breedReady ||
+      !hasBreedParents;
+    this.evolutionBreedOrder.disabled = breedUnavailable;
+    this.evolutionBreedBtn.disabled = breedUnavailable;
+    this.evolutionBreedStatus.textContent = view.breedStatus;
     this.mutationCloseBtn.setAttribute(
       "aria-label",
       comparing || view.comparisonPending
