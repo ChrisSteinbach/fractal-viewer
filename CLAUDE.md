@@ -1221,6 +1221,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `voxel.ts` — solid render: `accumulateVoxels` → 3D density grid →
     `voxelTextureData` (RGBA8 volume). `buildColorModeLUT` reuses `color.ts`.
   - `voxel-4d.ts` — 4D twin; slices with `0` floor (not flame's `0.06`).
+  - `voxel-raymarch.ts` — pure CPU geometry oracle for Solid's packed RGBA8
+    density: ClampToEdge trilinear reconstruction plus the unaccelerated
+    fixed-step, strict-threshold, bracket-refined primary march.
 - **`src/app/`** — Three.js + DOM glue. Vite root (`root: "src/app"`).
   - `scene.ts` — Three.js wrapper (scene, camera, renderer, point cloud, guide
     boxes, fog). Three.js confined to this file, `interactions.ts`,

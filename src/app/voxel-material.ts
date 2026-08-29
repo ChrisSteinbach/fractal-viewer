@@ -5,6 +5,7 @@ import {
 } from "../fractal/background-shape";
 import { BALLOON_FAR_CAP_RHO } from "../fractal/balloon-de";
 import type { Vec3 } from "../fractal/types";
+export { sampleVoxelAlpha } from "../fractal/voxel-raymarch";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
 /**
@@ -659,57 +660,6 @@ export function lightDirection(
  */
 export function marchStepsForGrid(gridSize: number): number {
   return Math.max(220, Math.ceil((gridSize * 220) / 256));
-}
-
-/**
- * CPU twin of the volume texture's normalized-alpha trilinear sample. Used
- * only for the balloon refusal: if the authored enclosing-ball centre already
- * crosses the isosurface, inversion maps that filled neighbourhood toward
- * infinity and the camera sits inside the echo. Coordinates follow WebGL's
- * normalized texture convention (`x = u*size - 0.5`) and ClampToEdge exactly.
- */
-export function sampleVoxelAlpha(
-  data: Uint8Array,
-  size: number,
-  boundsMin: Vec3,
-  boundsMax: Vec3,
-  p: Vec3,
-): number {
-  if (size <= 0 || data.length < size * size * size * 4) return 0;
-  const extent: Vec3 = [
-    boundsMax[0] - boundsMin[0],
-    boundsMax[1] - boundsMin[1],
-    boundsMax[2] - boundsMin[2],
-  ];
-  if (extent.some((v) => !(v > 0))) return 0;
-  const uvw: Vec3 = [
-    (p[0] - boundsMin[0]) / extent[0],
-    (p[1] - boundsMin[1]) / extent[1],
-    (p[2] - boundsMin[2]) / extent[2],
-  ];
-  if (uvw.some((v) => v < 0 || v > 1)) return 0;
-
-  const axis = (u: number): [number, number, number] => {
-    const x = u * size - 0.5;
-    const lo = Math.floor(x);
-    const hi = lo + 1;
-    return [
-      Math.max(0, Math.min(size - 1, lo)),
-      Math.max(0, Math.min(size - 1, hi)),
-      x - lo,
-    ];
-  };
-  const [x0, x1, tx] = axis(uvw[0]);
-  const [y0, y1, ty] = axis(uvw[1]);
-  const [z0, z1, tz] = axis(uvw[2]);
-  const alpha = (x: number, y: number, z: number): number =>
-    data[(x + y * size + z * size * size) * 4 + 3] / 255;
-  const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
-  const z0y0 = lerp(alpha(x0, y0, z0), alpha(x1, y0, z0), tx);
-  const z0y1 = lerp(alpha(x0, y1, z0), alpha(x1, y1, z0), tx);
-  const z1y0 = lerp(alpha(x0, y0, z1), alpha(x1, y0, z1), tx);
-  const z1y1 = lerp(alpha(x0, y1, z1), alpha(x1, y1, z1), tx);
-  return lerp(lerp(z0y0, z0y1, ty), lerp(z1y0, z1y1, ty), tz);
 }
 
 /** True exactly while the inverted density at infinity stays below the live
