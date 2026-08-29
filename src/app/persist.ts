@@ -613,7 +613,7 @@ const VALID_BACKGROUND_SHAPES = new Set<string>(BACKGROUND_SHAPES);
 const MAX_VARIATIONS = VARIATION_TYPES.length;
 
 /** Reject wildly out-of-range blend weights from hand-crafted input; clamp the rest. */
-const MAX_VARIATION_WEIGHT = 100;
+export const MAX_VARIATION_WEIGHT = 100;
 
 /**
  * Sanity bound on each component of an untrusted `camera.target`:
@@ -622,7 +622,7 @@ const MAX_VARIATION_WEIGHT = 100;
  * 100 — so 1000 is generous headroom while still rejecting a wildly
  * hand-crafted value. See {@link decodeCameraPose}.
  */
-const CAMERA_TARGET_LIMIT = 1000;
+export const CAMERA_TARGET_LIMIT = 1000;
 
 // ---------------------------------------------------------------------------
 // Codec helpers
