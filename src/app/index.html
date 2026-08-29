@@ -2429,9 +2429,9 @@
             id="mutateBtn"
             type="button"
             aria-describedby="presetTimingHint"
-            title="Explore small variations of the current system in a 3×3 grid"
+            title="Open the session-local Evolution Lab"
           >
-            🧬 Mutate
+            🧬 Evolve
           </button>
           <button
             class="btn btn-ghost"
@@ -2823,42 +2823,138 @@
       </div>
     </div>
 
-    <!-- Mutation grid: directed exploration AROUND the current system — 8
-         quality-gated small perturbations in a 3×3 grid with the current
-         system pinned at the center. Reuses the gallery modal's chrome
-         classes; only the grid itself has mutation-specific styles. Cells
-         are built by Ui (createElement, never innerHTML). -->
+    <!-- Evolution Lab: the mutation grid evolved into a retained,
+         session-local neighborhood. The selected node remains at center and
+         its retained children surround it; lineage metadata never enters a
+         scene document or Collection without the explicit Save action. -->
     <div
       id="mutationModal"
       class="gallery-modal hidden"
       role="dialog"
       aria-modal="true"
-      aria-label="Mutations of the current system"
+      aria-label="Evolution Lab"
     >
       <div id="mutationBackdrop" class="gallery-backdrop"></div>
       <div class="gallery-dialog mutation-dialog">
         <div class="gallery-header">
-          <h2 class="gallery-title">Mutations</h2>
+          <h2 class="gallery-title">Evolution Lab</h2>
+          <span id="evolutionCount" class="evolution-count">1 / 64 nodes</span>
           <button
             id="mutationAgainBtn"
             class="btn btn-blue gallery-drift-btn"
             type="button"
-            title="Roll eight fresh variations of the current system"
+            title="Generate another retained set from the selected node"
           >
-            ↻ Mutate again
+            + Generate children
           </button>
           <button
             id="mutationCloseBtn"
             class="notice-dismiss"
             type="button"
-            aria-label="Close mutations"
+            aria-label="Close Evolution Lab"
           >
             ✕
           </button>
         </div>
         <p class="mutation-hint">
-          Small variations of the current system — you are at the center. Click
-          one to morph into it; the grid re-seeds around your pick.
+          The selected node is at the center. Generated children stay in this
+          browser session when you travel through parents and branches.
+        </p>
+        <p
+          id="evolutionStatus"
+          class="evolution-status"
+          role="status"
+          aria-live="polite"
+        >
+          Current scene is the lineage root.
+        </p>
+        <div class="evolution-nav" aria-label="Lineage navigation">
+          <button
+            id="evolutionBackBtn"
+            class="btn btn-ghost evolution-nav-button"
+            type="button"
+          >
+            ← Parent
+          </button>
+          <button
+            id="evolutionForwardBtn"
+            class="btn btn-ghost evolution-nav-button"
+            type="button"
+          >
+            Forward →
+          </button>
+          <label class="evolution-branch-label">
+            Branch
+            <select id="evolutionBranchSelect" class="evolution-branch-select">
+              <option value="">No retained children</option>
+            </select>
+          </label>
+          <button
+            id="evolutionPruneBtn"
+            class="btn btn-ghost evolution-nav-button evolution-prune-btn"
+            type="button"
+          >
+            Prune branch
+          </button>
+        </div>
+        <div class="evolution-actions">
+          <button
+            id="evolutionSaveBtn"
+            class="btn btn-blue evolution-action-button"
+            type="button"
+          >
+            ★ Save current to Collection
+          </button>
+          <button
+            id="evolutionResetBtn"
+            class="btn btn-ghost evolution-action-button"
+            type="button"
+          >
+            New root from displayed scene
+          </button>
+        </div>
+        <details id="evolutionLocks" class="evolution-locks">
+          <summary class="evolution-locks-summary">
+            Keep traits unchanged
+          </summary>
+          <p class="mutation-hint">
+            Locks apply only to children generated next; retained nodes never
+            change.
+          </p>
+          <div class="evolution-lock-grid">
+            <label>
+              <input type="checkbox" data-evolution-domain="spatialGeometry" />
+              Spatial geometry
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                data-evolution-domain="nonlinearVariations"
+              />
+              Nonlinear variations
+            </label>
+            <label>
+              <input type="checkbox" data-evolution-domain="finalLens" />
+              Final lens
+            </label>
+            <label>
+              <input type="checkbox" data-evolution-domain="fourDExtension" />
+              4D extension
+            </label>
+            <label>
+              <input type="checkbox" data-evolution-domain="mapSelectionXaos" />
+              Map selection / Xaos
+            </label>
+            <label>
+              <input type="checkbox" data-evolution-domain="appearance" />
+              Appearance
+            </label>
+          </div>
+        </details>
+        <p class="mutation-preview-note">
+          Previews show orbit geometry and By Transform identity color. Surface
+          finish and pattern, plus Flame/Solid color speed, appear after loading
+          the node in that renderer.
         </p>
         <div id="mutationGrid" class="mutation-grid"></div>
       </div>

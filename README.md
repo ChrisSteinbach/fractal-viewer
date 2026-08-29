@@ -36,9 +36,9 @@ Three.js, and Vite, and packaged as an installable, offline-capable PWA.
 - **Presets** — two dozen systems, from the Sierpinski tetrahedron and Menger
   sponge to icosahedron and dodecahedron flakes, fractal-flame classics, the
   Mandelbox, and a 4D group of tumbling polytope fractals.
-- **Surprise Me, 🧬 Mutate, ▶ Drift** — quality-gated random systems, a 3×3
-  grid of small mutations around the current system to walk outward through,
-  and an ambient, ever-evolving show for leaving on a second screen.
+- **Surprise Me, 🧬 Evolve, ▶ Drift** — quality-gated random systems; a
+  session-local Evolution Lab with retained, deterministic branches and trait
+  locks; and an ambient, ever-evolving show for leaving on a second screen.
 - **Five color modes** — by transform, height, radius, position, or a uniform
   cyan — plus gradient palettes and a custom-gradient editor.
 - **Orbit camera** with rotate / pan / zoom, and an adjustable atmosphere:

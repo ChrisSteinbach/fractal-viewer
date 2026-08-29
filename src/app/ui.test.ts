@@ -89,6 +89,14 @@ function noopHandlers(): UiHandlers {
     onOpenMutations: vi.fn(),
     onMutationPick: vi.fn(),
     onMutateAgain: vi.fn(),
+    onEvolutionBack: vi.fn(),
+    onEvolutionForward: vi.fn(),
+    onEvolutionBranch: vi.fn(),
+    onEvolutionPrune: vi.fn(),
+    onEvolutionReset: vi.fn(),
+    onEvolutionSave: vi.fn(),
+    onEvolutionClose: vi.fn(),
+    onEvolutionLock: vi.fn(),
     onDriftToggle: vi.fn(),
     onScalarControl: vi.fn(),
     onRegenerate: vi.fn(),
@@ -11173,6 +11181,25 @@ describe("Ui mutation grid", () => {
   const pixels = () => new Uint8ClampedArray(SIZE * SIZE * 4);
   const cells = () =>
     Array.from(document.querySelectorAll("#mutationGrid .mutation-cell"));
+  const workspace = (
+    overrides: Partial<Parameters<Ui["setEvolutionWorkspace"]>[0]> = {},
+  ): Parameters<Ui["setEvolutionWorkspace"]>[0] => ({
+    detached: false,
+    busy: false,
+    nodeCount: 3,
+    nodeCap: 64,
+    currentLabel: "current lineage-1",
+    canBack: true,
+    canForward: true,
+    branches: [
+      { id: "lineage-2", label: "Child 1" },
+      { id: "lineage-3", label: "Wildcard child 8" },
+    ],
+    selectedBranchId: "lineage-3",
+    lockedDomains: ["appearance"],
+    status: "Selected lineage-1.",
+    ...overrides,
+  });
 
   it("opens with nine placeholder cells: eight disabled buttons around an inert 'current' center", () => {
     const ui = new Ui(document);
@@ -11226,6 +11253,120 @@ describe("Ui mutation grid", () => {
     expect(cell.querySelector(".mutation-cell-tag")?.textContent).toBe("wild");
   });
 
+  it("renders retained navigation, cap, status, and lock state", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+
+    ui.setEvolutionWorkspace(workspace());
+
+    expect(document.getElementById("evolutionCount")?.textContent).toBe(
+      "3 / 64 nodes",
+    );
+    expect(document.getElementById("evolutionStatus")?.textContent).toBe(
+      "Selected lineage-1.",
+    );
+    const branch = document.getElementById(
+      "evolutionBranchSelect",
+    ) as HTMLSelectElement;
+    expect(Array.from(branch.options).map((option) => option.value)).toEqual([
+      "lineage-2",
+      "lineage-3",
+    ]);
+    expect(branch.value).toBe("lineage-3");
+    expect(
+      document.querySelector<HTMLInputElement>(
+        '[data-evolution-domain="appearance"]',
+      )?.checked,
+    ).toBe(true);
+    expect(
+      document.querySelectorAll("#evolutionLocks input[data-evolution-domain]"),
+    ).toHaveLength(6);
+  });
+
+  it("routes retained navigation, prune, reset, save, and lock controls", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openMutations();
+    ui.setEvolutionWorkspace(workspace());
+
+    document.getElementById("evolutionBackBtn")?.click();
+    document.getElementById("evolutionForwardBtn")?.click();
+    const branch = document.getElementById(
+      "evolutionBranchSelect",
+    ) as HTMLSelectElement;
+    branch.value = "lineage-2";
+    branch.dispatchEvent(new Event("change"));
+    document.getElementById("evolutionPruneBtn")?.click();
+    document.getElementById("evolutionResetBtn")?.click();
+    document.getElementById("evolutionSaveBtn")?.click();
+    const lock = document.querySelector<HTMLInputElement>(
+      '[data-evolution-domain="spatialGeometry"]',
+    )!;
+    lock.checked = true;
+    lock.dispatchEvent(new Event("change"));
+
+    expect(handlers.onEvolutionBack).toHaveBeenCalledOnce();
+    expect(handlers.onEvolutionForward).toHaveBeenCalledOnce();
+    expect(handlers.onEvolutionBranch).toHaveBeenCalledWith("lineage-2");
+    expect(handlers.onEvolutionPrune).toHaveBeenCalledWith("lineage-2");
+    expect(handlers.onEvolutionReset).toHaveBeenCalledOnce();
+    expect(handlers.onEvolutionSave).toHaveBeenCalledOnce();
+    expect(handlers.onEvolutionLock).toHaveBeenCalledWith(
+      "spatialGeometry",
+      true,
+    );
+  });
+
+  it("visibly detaches and leaves only new-root recovery enabled", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+
+    ui.setEvolutionWorkspace(
+      workspace({
+        detached: true,
+        status: "Displayed scene is outside this lineage.",
+      }),
+    );
+
+    expect(
+      (document.getElementById("mutationAgainBtn") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (document.getElementById("evolutionSaveBtn") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (document.getElementById("evolutionBranchSelect") as HTMLSelectElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (document.getElementById("evolutionResetBtn") as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      document.getElementById("mutationModal")?.getAttribute("aria-label"),
+    ).toBe("Evolution Lab detached from the displayed scene");
+  });
+
+  it("marks a rejected progressive slot as unavailable", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+
+    ui.setMutationCellUnavailable(2, "No quality-gated child found");
+
+    const cell = cells()[2] as HTMLButtonElement;
+    expect(cell.disabled).toBe(true);
+    expect(cell.title).toBe("No quality-gated child found");
+    expect(cell.getAttribute("aria-label")).toBe(
+      "No quality-gated child found",
+    );
+  });
+
   it("resetMutationCells returns every cell to a disabled placeholder", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -11248,8 +11389,9 @@ describe("Ui mutation grid", () => {
   });
 
   it("closeMutations hides the modal and mutationsOpen reflects it", () => {
+    const handlers = noopHandlers();
     const ui = new Ui(document);
-    ui.bind(noopHandlers());
+    ui.bind(handlers);
     ui.openMutations();
     expect(ui.mutationsOpen()).toBe(true);
     ui.closeMutations();
@@ -11257,6 +11399,7 @@ describe("Ui mutation grid", () => {
     expect(
       document.getElementById("mutationModal")?.classList.contains("hidden"),
     ).toBe(true);
+    expect(handlers.onEvolutionClose).toHaveBeenCalledOnce();
   });
 });
 
@@ -12182,12 +12325,31 @@ describe("Ui modal focus trap", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.openMutations();
-    // Placeholders are disabled, so the ring is ↻ Mutate again + ✕ only.
+    ui.setEvolutionWorkspace({
+      detached: true,
+      busy: true,
+      nodeCount: 1,
+      nodeCap: 64,
+      currentLabel: "current root",
+      canBack: false,
+      canForward: false,
+      branches: [],
+      selectedBranchId: null,
+      lockedDomains: [],
+      status: "Loading",
+    });
+    // Every workspace action is disabled while this simulated load is busy;
+    // the native lock disclosure remains reachable.
     pressTab();
-    expect(document.activeElement).toBe(el("mutationAgainBtn"));
+    expect(document.activeElement).toBe(
+      document.querySelector("#evolutionLocks > summary"),
+    );
 
     ui.setMutationCell(0, new Uint8ClampedArray(4 * 4 * 4), 4, false);
-    el("mutationCloseBtn").focus();
+    const locks = el("evolutionLocks") as HTMLDetailsElement;
+    locks.open = true;
+    const lockInputs = locks.querySelectorAll<HTMLInputElement>("input");
+    lockInputs[lockInputs.length - 1].focus();
     pressTab();
 
     const cells = document.querySelectorAll("#mutationGrid .mutation-cell");

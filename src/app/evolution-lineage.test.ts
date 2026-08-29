@@ -3,6 +3,8 @@ import {
   type LineageNodeInput,
   type ReleasedLineageNode,
 } from "./evolution-lineage";
+import { initialState } from "./state";
+import { toSnapshot } from "./persist";
 
 function input(
   label: string,
@@ -10,6 +12,7 @@ function input(
 ): LineageNodeInput {
   return {
     encodedScene: `v1=${label}`,
+    snapshot: toSnapshot(initialState(true)),
     thumbnail: new Uint8ClampedArray([1, 2, 3, 255]),
     seed: label.length,
     profile: { algorithm: "mutation-v1", label },
@@ -56,14 +59,17 @@ describe("EvolutionLineage ownership and ordering", () => {
     const nested = { locks: ["geometry"] };
     const profile = { algorithm: "mutation-v2", nested };
     const resourceIds = ["mesh-a", "mesh-a", "mesh-b"];
+    const snapshot = toSnapshot(initialState(true));
+    snapshot.transforms[0].position[0] = 0.123456789;
     const lineage = new EvolutionLineage(
-      input("root", { thumbnail, profile, resourceIds }),
+      input("root", { snapshot, thumbnail, profile, resourceIds }),
     );
     const rootId = lineage.rootId!;
 
     thumbnail[0] = 0;
     nested.locks.push("appearance");
     resourceIds.push("mesh-c");
+    snapshot.transforms[0].position[0] = 9;
     const firstRead = lineage.node(rootId)!;
     firstRead.thumbnail[1] = 0;
 
@@ -74,6 +80,12 @@ describe("EvolutionLineage ownership and ordering", () => {
       nested: { locks: ["geometry"] },
     });
     expect(secondRead.resourceIds).toEqual(["mesh-a", "mesh-b"]);
+    expect(secondRead.snapshot.transforms[0].position[0]).toBe(0.123456789);
+    expect(Object.isFrozen(secondRead.snapshot)).toBe(true);
+    expect(Object.isFrozen(secondRead.snapshot.transforms)).toBe(true);
+    expect(Object.isFrozen(secondRead.snapshot.transforms[0].position)).toBe(
+      true,
+    );
     expect(Object.isFrozen(secondRead.profile)).toBe(true);
     expect(
       Object.isFrozen(
