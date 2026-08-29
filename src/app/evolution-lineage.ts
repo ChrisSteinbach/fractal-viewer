@@ -404,16 +404,21 @@ export class EvolutionLineage {
     return this.currentIdValue === null ? null : this.node(this.currentIdValue);
   }
 
-  /**
-   * Find an exact retained document without exposing the graph's owned
-   * storage. Evolution Lab uses the canonical `encodeScene` string as its
-   * reconciliation key after undo, redo, or an edit outside the workspace.
-   * Keeping the scan here avoids copying every retained thumbnail merely to
-   * compare opaque document strings.
-   */
-  findByEncodedScene(encodedScene: string): LineageNode | null {
+  /** Find an exact retained document without exposing the graph's owned
+   * storage. The portable scene wire is rounded and therefore cannot be an
+   * authority key. Prefer the current node when multiple retained nodes are
+   * semantically identical so reconciliation never moves selection merely
+   * because an equal snapshot was admitted earlier. */
+  findByContentDigest(contentDigest: SceneContentDigest): LineageNode | null {
+    const current =
+      this.currentIdValue === null
+        ? undefined
+        : this.nodesById.get(this.currentIdValue);
+    if (current?.contentDigest === contentDigest) {
+      return this.publicNode(current);
+    }
     for (const node of this.nodesById.values()) {
-      if (node.encodedScene === encodedScene) return this.publicNode(node);
+      if (node.contentDigest === contentDigest) return this.publicNode(node);
     }
     return null;
   }

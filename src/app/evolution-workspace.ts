@@ -14,6 +14,7 @@ import type {
   LineageNode,
   LineageNodeId,
 } from "./evolution-lineage";
+import type { SceneContentDigest } from "./evolution-crossover";
 
 export type EvolutionSelectionResult =
   | { readonly selected: true; readonly node: LineageNode }
@@ -25,6 +26,20 @@ export type EvolutionSelectionResult =
 export type EvolutionReconciliation =
   | { readonly attached: true; readonly node: LineageNode }
   | { readonly attached: false };
+
+/** Explicitly promote only the selected ordinary scene document. The
+ * callback is injected so this policy stays independent of Collection, and
+ * the graph is never mutated as a side effect. */
+export function promoteEvolutionSelection(
+  lineage: EvolutionLineage,
+  workspace: EvolutionWorkspaceSelection,
+  saveEncodedScene: (encodedScene: string) => void,
+): boolean {
+  const current = lineage.current();
+  if (!current || workspace.detached) return false;
+  saveEncodedScene(current.encodedScene);
+  return true;
+}
 
 export class EvolutionWorkspaceSelection {
   private requestTicket = 0;
@@ -84,9 +99,9 @@ export class EvolutionWorkspaceSelection {
    * Exact matches move selection to that node; an unknown document leaves
    * the previous graph selection intact and visibly detaches the workspace.
    */
-  reconcile(encodedScene: string): EvolutionReconciliation {
+  reconcile(contentDigest: SceneContentDigest): EvolutionReconciliation {
     this.cancelPending();
-    const match = this.lineage.findByEncodedScene(encodedScene);
+    const match = this.lineage.findByContentDigest(contentDigest);
     if (!match) {
       this.detachedValue = true;
       return { attached: false };

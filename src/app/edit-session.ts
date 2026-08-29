@@ -52,6 +52,11 @@ export interface EditSessionDeps {
    * (encodeScene(toSnapshot(state)) in the app). Read on the leading edge of a
    * burst and when stepping the undo/redo stacks. */
   snapshot: () => string;
+  /** Optional opaque identity for a stronger session-local authority behind
+   * the current portable snapshot. Equal rounded wires with different tokens
+   * are distinct history states. Evolution uses this to name a retained exact
+   * node without copying that node into the bounded history stacks. */
+  authority?: () => string | undefined;
   /** Persist the CURRENT scene document (saveScene(toSnapshot(state)) in the
    * app). Called on the debounce's trailing edge and on flush(). */
   persist: () => void;
@@ -62,7 +67,12 @@ export interface EditSessionDeps {
    * — orbit camera plus, for a non-flat system, the 4D rotor/slice: the app
    * restores it across a `replaced` step (instead of auto-fitting) and ignores
    * it for a tweak step (which leaves the camera alone). */
-  restore: (snapshot: string, replaced: boolean, pose?: ViewPose) => void;
+  restore: (
+    snapshot: string,
+    replaced: boolean,
+    pose?: ViewPose,
+    authority?: string,
+  ) => void;
   /** Optional dependency barrier run before undo/redo mutates either history
    * stack. The app uses it to hydrate an evicted custom-mesh target. `false`
    * or rejection leaves current state and both stacks untouched. The signal
@@ -70,6 +80,7 @@ export interface EditSessionDeps {
   prepareRestore?: (
     snapshot: string,
     signal: AbortSignal,
+    authority?: string,
   ) => boolean | void | Promise<boolean | void>;
   /** Optional diagnostic hook for a rejected preparation. */
   onPrepareRestoreError?: (error: unknown) => void;
@@ -108,7 +119,9 @@ export class EditSession {
   private pendingRestore: {
     readonly direction: "undo" | "redo";
     readonly baseline: string;
+    readonly baselineAuthority?: string;
     readonly targetSnapshot: string;
+    readonly targetAuthority?: string;
     readonly controller: AbortController;
   } | null = null;
 
@@ -134,6 +147,7 @@ export class EditSession {
         this.deps.snapshot(),
         kind === "replace",
         this.deps.pose(),
+        this.deps.authority?.(),
       );
       this.burstOpen = true;
       this.syncUi();
@@ -183,9 +197,10 @@ export class EditSession {
 
   private startRestore(direction: "undo" | "redo"): void {
     const baseline = this.deps.snapshot();
+    const baselineAuthority = this.deps.authority?.();
     const target =
       direction === "undo"
-        ? this.history.peekUndo(baseline)
+        ? this.history.peekUndo(baseline, baselineAuthority)
         : this.history.peekRedo();
     if (!target) {
       this.syncUi();
@@ -193,19 +208,31 @@ export class EditSession {
     }
     const prepare = this.deps.prepareRestore;
     if (!prepare) {
-      this.commitRestore(direction, baseline, target.snapshot);
+      this.commitRestore(
+        direction,
+        baseline,
+        baselineAuthority,
+        target.snapshot,
+        target.authority,
+      );
       return;
     }
     const transaction = {
       direction,
       baseline,
+      baselineAuthority,
       targetSnapshot: target.snapshot,
+      targetAuthority: target.authority,
       controller: new AbortController(),
     } as const;
     this.pendingRestore = transaction;
     let result: boolean | void | Promise<boolean | void>;
     try {
-      result = prepare(target.snapshot, transaction.controller.signal);
+      result = prepare(
+        target.snapshot,
+        transaction.controller.signal,
+        target.authority,
+      );
     } catch (error) {
       this.pendingRestore = null;
       transaction.controller.abort();
@@ -229,7 +256,15 @@ export class EditSession {
     }
     this.pendingRestore = null;
     if (result !== false) {
-      if (!this.commitRestore(direction, baseline, target.snapshot)) {
+      if (
+        !this.commitRestore(
+          direction,
+          baseline,
+          baselineAuthority,
+          target.snapshot,
+          target.authority,
+        )
+      ) {
         transaction.controller.abort();
       }
     } else {
@@ -247,13 +282,16 @@ export class EditSession {
     if (
       ready &&
       !transaction.controller.signal.aborted &&
-      this.deps.snapshot() === transaction.baseline
+      this.deps.snapshot() === transaction.baseline &&
+      this.deps.authority?.() === transaction.baselineAuthority
     ) {
       if (
         !this.commitRestore(
           transaction.direction,
           transaction.baseline,
+          transaction.baselineAuthority,
           transaction.targetSnapshot,
+          transaction.targetAuthority,
         )
       ) {
         transaction.controller.abort();
@@ -267,31 +305,49 @@ export class EditSession {
   private commitRestore(
     direction: "undo" | "redo",
     baseline: string,
+    baselineAuthority: string | undefined,
     targetSnapshot: string,
+    targetAuthority: string | undefined,
   ): boolean {
     // A synchronous preparation can still invoke app code. Refuse to time
     // travel if current state moved under it.
-    if (this.deps.snapshot() !== baseline) {
+    if (
+      this.deps.snapshot() !== baseline ||
+      this.deps.authority?.() !== baselineAuthority
+    ) {
       this.syncUi();
       return false;
     }
     const pendingTarget =
       direction === "undo"
-        ? this.history.peekUndo(baseline)
+        ? this.history.peekUndo(baseline, baselineAuthority)
         : this.history.peekRedo();
-    if (!pendingTarget || pendingTarget.snapshot !== targetSnapshot) {
+    if (
+      !pendingTarget ||
+      pendingTarget.snapshot !== targetSnapshot ||
+      pendingTarget.authority !== targetAuthority
+    ) {
       this.syncUi();
       return false;
     }
     const entry =
       direction === "undo"
-        ? this.history.undo(baseline, this.deps.pose())
-        : this.history.redo(baseline, this.deps.pose());
-    if (!entry || entry.snapshot !== targetSnapshot) {
+        ? this.history.undo(baseline, this.deps.pose(), baselineAuthority)
+        : this.history.redo(baseline, this.deps.pose(), baselineAuthority);
+    if (
+      !entry ||
+      entry.snapshot !== targetSnapshot ||
+      entry.authority !== targetAuthority
+    ) {
       this.syncUi();
       return false;
     }
-    this.deps.restore(entry.snapshot, entry.replaced, entry.pose);
+    this.deps.restore(
+      entry.snapshot,
+      entry.replaced,
+      entry.pose,
+      entry.authority,
+    );
     this.scheduleSave();
     this.syncUi();
     return true;
