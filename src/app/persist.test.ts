@@ -4003,6 +4003,41 @@ describe("saveScene", () => {
     expect(replaceState).toHaveBeenCalledWith(null, "", "#" + encodeScene(s));
   });
 
+  it("keeps Evolution workspace metadata out of autosave and shared scene payloads", () => {
+    const sessionAugmentedScene = {
+      ...baseSnapshot(),
+      lineage: { nodes: ["lineage-0", "lineage-1"] },
+      profile: { algorithm: "crossover-v1" },
+      geneticParents: [{ kind: "lineage", nodeId: "lineage-0" }],
+      topologyToken: "session-only-topology",
+      topologySlotKeys: ["session-only-slot"],
+    };
+    const encoded = encodeScene(sessionAugmentedScene);
+    const payload = decodePayload(encoded);
+    const setItem = vi.fn();
+    const replaceState = vi.fn();
+
+    saveScene(sessionAugmentedScene, {
+      history: { replaceState },
+      storage: { getItem: () => null, setItem },
+    });
+
+    for (const field of [
+      "lineage",
+      "profile",
+      "geneticParents",
+      "topologyToken",
+      "topologySlotKeys",
+    ]) {
+      expect(payload).not.toHaveProperty(field);
+    }
+    expect(setItem).toHaveBeenCalledWith("fractal-viewer:scene", encoded);
+    expect(replaceState).toHaveBeenCalledWith(null, "", `#${encoded}`);
+    expect(decodeScene(encoded)).not.toMatchObject({
+      lineage: expect.anything(),
+    });
+  });
+
   it("swallows a throwing replaceState and still writes storage", () => {
     const setItem = vi.fn();
     const storage = { getItem: () => null, setItem };

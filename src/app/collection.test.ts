@@ -234,6 +234,37 @@ describe("SceneCollection persistence", () => {
     expect(second.all().map((s) => s.encoded)).toEqual(["v1=b", "v1=a"]);
   });
 
+  it("loads only the ordinary SavedScene schema and drops Evolution provenance", () => {
+    const storage = fakeStorage({
+      [COLLECTION_STORAGE_KEY]: JSON.stringify([
+        {
+          id: "keeper",
+          encoded: "v1=scene",
+          thumbnail: "",
+          createdAt: 100,
+          lineage: { nodes: ["lineage-0"] },
+          profile: { algorithm: "crossover-v1" },
+          geneticParents: [{ kind: "external", contentDigest: "digest" }],
+          topologyToken: "session-only-topology",
+        },
+      ]),
+    });
+
+    const [scene] = new SceneCollection({ storage }).all();
+
+    expect(scene).toEqual({
+      id: "keeper",
+      encoded: "v1=scene",
+      thumbnail: "",
+      createdAt: 100,
+      mode: undefined,
+    });
+    expect(scene).not.toHaveProperty("lineage");
+    expect(scene).not.toHaveProperty("profile");
+    expect(scene).not.toHaveProperty("geneticParents");
+    expect(scene).not.toHaveProperty("topologyToken");
+  });
+
   it("drops malformed entries while keeping the valid one", () => {
     const storage = fakeStorage({
       [COLLECTION_STORAGE_KEY]: JSON.stringify([

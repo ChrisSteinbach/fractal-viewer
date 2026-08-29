@@ -11315,6 +11315,25 @@ describe("Ui mutation grid", () => {
     ).toHaveLength(6);
   });
 
+  it("states the page-lifetime boundary and plain-scene Collection promotion exactly", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+
+    const normalizedText = (id: string): string =>
+      document.getElementById(id)?.textContent?.replace(/\s+/g, " ").trim() ??
+      "";
+    expect(normalizedText("evolutionLifetimeHint")).toBe(
+      "The selected node is at the center. Branches and A/B pins stay only in this open tab; reloading or closing it discards the Evolution workspace.",
+    );
+    expect(normalizedText("evolutionSaveBtn")).toBe(
+      "★ Save current scene to Collection",
+    );
+    expect(normalizedText("evolutionSaveScopeNote")).toBe(
+      "Collection saves only the current scene, not its branches or ancestry.",
+    );
+  });
+
   it("routes retained navigation, prune, reset, save, lock, and Surface constraint controls", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);

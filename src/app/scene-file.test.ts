@@ -151,7 +151,7 @@ describe("scene-file: single scene", () => {
     expect(decoded).toEqual({ kind: "scene", encoded });
   });
 
-  it("writes app/kind/version/exportedAt into the exported file", () => {
+  it("exports the ordinary scene envelope without Evolution provenance", () => {
     const encoded = encodeScene(baseSnapshot());
 
     const file = encodeSceneFile(encoded, 555);
@@ -162,6 +162,13 @@ describe("scene-file: single scene", () => {
     expect(parsed.version).toBe(SCENE_FILE_VERSION);
     expect(parsed.exportedAt).toBe(555);
     expect(parsed.scene).toBe(encoded);
+    expect(Object.keys(parsed).sort()).toEqual([
+      "app",
+      "exportedAt",
+      "kind",
+      "scene",
+      "version",
+    ]);
   });
 });
 
@@ -183,10 +190,19 @@ describe("scene-file: portable version-2 mesh bundles", () => {
     const assets = await encodePortableMeshManifest([source], [source.id]);
     const text = encodeSceneFile(encoded, 123, assets);
 
-    expect(JSON.parse(text)).toMatchObject({
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    expect(parsed).toMatchObject({
       kind: "scene",
       version: PORTABLE_SCENE_FILE_VERSION,
     });
+    expect(Object.keys(parsed).sort()).toEqual([
+      "app",
+      "assets",
+      "exportedAt",
+      "kind",
+      "scene",
+      "version",
+    ]);
     const decoded = decodeImportFile(text);
     expect(decoded?.kind).toBe("scene");
     expect(decoded?.assets?.sources).toHaveLength(1);
@@ -309,7 +325,7 @@ describe("scene-file: collection backup", () => {
     });
   });
 
-  it("omits id from every entry in an exported collection file", () => {
+  it("exports only the ordinary SavedScene fields, without ancestry", () => {
     const scenes: SavedScene[] = [
       {
         id: "should-not-appear",
@@ -320,9 +336,24 @@ describe("scene-file: collection backup", () => {
     ];
 
     const file = encodeCollectionFile(scenes, 1);
-    const parsed = JSON.parse(file) as { scenes: Record<string, unknown>[] };
+    const parsed = JSON.parse(file) as {
+      scenes: Record<string, unknown>[];
+      [key: string]: unknown;
+    };
 
     expect("id" in parsed.scenes[0]).toBe(false);
+    expect(Object.keys(parsed).sort()).toEqual([
+      "app",
+      "exportedAt",
+      "kind",
+      "scenes",
+      "version",
+    ]);
+    expect(Object.keys(parsed.scenes[0]).sort()).toEqual([
+      "createdAt",
+      "encoded",
+      "thumbnail",
+    ]);
   });
 
   it("round-trips optional sampled Solid metadata without changing renderMode codecs", () => {
