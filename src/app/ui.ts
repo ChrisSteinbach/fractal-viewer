@@ -1993,6 +1993,8 @@ export class Ui {
   private readonly evolutionCompareCollectionPinB: HTMLButtonElement;
   private readonly evolutionCompareExit: HTMLButtonElement;
   private readonly evolutionCompareAnimate: HTMLInputElement;
+  private readonly evolutionCompare: HTMLDetailsElement;
+  private readonly evolutionCompareSummary: HTMLElement;
   private readonly evolutionCompareStatus: HTMLElement;
   private readonly evolutionBreedOrder: HTMLSelectElement;
   private readonly evolutionBreedBtn: HTMLButtonElement;
@@ -2696,6 +2698,8 @@ export class Ui {
     );
     this.evolutionCompareExit = this.byId("evolutionCompareExit");
     this.evolutionCompareAnimate = this.byId("evolutionCompareAnimate");
+    this.evolutionCompare = this.byId("evolutionCompare");
+    this.evolutionCompareSummary = this.byId("evolutionCompareTitle");
     this.evolutionCompareStatus = this.byId("evolutionCompareStatus");
     this.evolutionBreedOrder = this.byId("evolutionBreedOrder");
     this.evolutionBreedBtn = this.byId("evolutionBreedBtn");
@@ -3348,6 +3352,14 @@ export class Ui {
     this.evolutionCompareAnimate.addEventListener("change", () =>
       handlers.onEvolutionCompareAnimate(this.evolutionCompareAnimate.checked),
     );
+    this.evolutionCompareSummary.addEventListener("click", (event) => {
+      if (
+        this.evolutionComparisonActive !== null ||
+        this.evolutionComparisonPending
+      ) {
+        event.preventDefault();
+      }
+    });
     this.evolutionBreedBtn.addEventListener("click", () =>
       handlers.onEvolutionBreed(
         this.evolutionBreedOrder.value as EvolutionComparisonSlot,
@@ -5034,6 +5046,7 @@ export class Ui {
    * tabbable. */
   openMutations(): void {
     this.resetMutationCells();
+    this.evolutionCompare.open = false;
     this.mutationModal.classList.remove("hidden");
     this.trapModalFocus(this.mutationModal, this.mutationCloseBtn, () =>
       this.closeMutations(),
@@ -5074,6 +5087,11 @@ export class Ui {
     const comparisonOccupied = comparing || view.comparisonPending;
     this.evolutionComparisonActive = view.comparisonActive;
     this.evolutionComparisonPending = view.comparisonPending;
+    this.evolutionCompareSummary.setAttribute(
+      "aria-disabled",
+      String(comparisonOccupied),
+    );
+    if (comparisonOccupied) this.evolutionCompare.open = true;
     this.mutationModal.classList.toggle("mutation-modal-comparing", comparing);
     this.evolutionBackBtn.textContent = view.backLabel;
     this.evolutionBackBtn.disabled =

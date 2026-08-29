@@ -9085,7 +9085,7 @@ async function main(): Promise<void> {
       if (evolutionBusy) return;
       syncEvolutionWorkspace(
         available
-          ? `Surface-compatible generation ${evolutionSurfaceConstraintEnabled ? "enabled" : "disabled"}. Generate children to use the new policy.`
+          ? `Surface-compatible generation ${evolutionSurfaceConstraintEnabled ? "enabled" : "disabled"}. Generate variations to use the new policy.`
           : (evolutionRootSurfaceEligibility?.note ??
               "This root has no supported Surface route."),
       );
@@ -9098,7 +9098,7 @@ async function main(): Promise<void> {
       if (evolutionGenerating) {
         renderEvolutionNeighborhood();
         syncEvolutionWorkspace(
-          "Trait locks changed. Generate children to use the new profile.",
+          "Trait locks changed. Generate variations to use the new profile.",
         );
       } else if (evolutionBusy) {
         // Preserve the in-flight load status. Its completion refreshes the

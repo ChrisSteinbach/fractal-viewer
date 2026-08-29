@@ -1907,6 +1907,7 @@ summary.editor-group-title {
 .mutation-dialog {
   width: min(92vw, 560px);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .mutation-hint {
@@ -1980,10 +1981,19 @@ summary.editor-group-title {
   border-radius: var(--radius-sm);
 }
 
-.evolution-compare h3 {
-  margin: 0 0 4px;
+.evolution-compare-summary {
+  cursor: pointer;
   color: var(--text);
   font-size: 13px;
+  font-weight: 600;
+}
+
+.evolution-compare-summary[aria-disabled="true"] {
+  cursor: default;
+}
+
+.evolution-compare[open] > .evolution-compare-summary {
+  margin-bottom: 4px;
 }
 
 .evolution-compare .mutation-hint {
@@ -2146,10 +2156,20 @@ summary.editor-group-title {
 }
 
 .mutation-preview-note {
-  margin: 0 0 10px;
+  margin: 8px 0 0;
   color: var(--text-faint);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.mutation-preview-details {
+  margin-bottom: 10px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.mutation-preview-summary {
+  cursor: pointer;
 }
 
 @media (width <= 560px) {
@@ -2182,9 +2202,11 @@ summary.editor-group-title {
 
 .mutation-grid {
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
-  overflow-y: auto;
+  margin-bottom: 8px;
+  overflow: visible;
   padding: 2px;
 }
 
@@ -2213,6 +2235,7 @@ summary.editor-group-title {
 .mutation-modal-comparing .evolution-actions,
 .mutation-modal-comparing .evolution-surface-constraint,
 .mutation-modal-comparing .evolution-locks,
+.mutation-modal-comparing .mutation-preview-details,
 .mutation-modal-comparing .mutation-preview-note,
 .mutation-modal-comparing .mutation-grid {
   display: none;
