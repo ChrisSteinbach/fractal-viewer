@@ -3,9 +3,12 @@
  *
  * The graph deliberately owns no storage and knows nothing about the DOM or
  * scene decoder. An encoded full scene document (including its saved view) is
- * opaque authority here. Mutation adds one-parent nodes; the two-parent API is
- * reserved for crossover, making the model DAG-ready without changing the
- * ordinary tree workflow.
+ * opaque authority here. Mutation adds one-parent nodes; crossover records
+ * ordered genetic provenance separately from the navigation/reachability
+ * edges that keep a node connected to the protected root. The two coincide
+ * for retained lineage parents. Collection parents never become hidden graph
+ * nodes; an all-external crossover instead uses one explicit current-node
+ * workspace anchor as a non-genetic reachability edge.
  *
  * Every authority-bearing input is copied on admission. Read methods return a
  * fresh thumbnail copy, while profiles and resource-id lists are recursively
@@ -15,6 +18,10 @@
  * custom-mesh leases without this pure model importing those systems.
  */
 import type { SceneSnapshot } from "./persist";
+import {
+  evolutionSceneContentDigest,
+  type SceneContentDigest,
+} from "./evolution-crossover";
 
 export const LINEAGE_NODE_CAP = 64;
 export const LINEAGE_THUMBNAIL_BYTE_CAP = 12 * 1024 * 1024;
@@ -44,6 +51,9 @@ export type ImmutableLineageSceneSnapshot<T = SceneSnapshot> = T extends (
       : T;
 
 export interface LineageNodeInput {
+  /** Exact ID-neutral semantic identity. Omit to derive it from `snapshot`;
+   * a supplied digest is verified rather than trusted. */
+  readonly contentDigest?: SceneContentDigest;
   /** `encodeScene` output used as the canonical reconciliation key. */
   readonly encodedScene: string;
   /** Exact full authored scene and saved view. Unlike the encoded key this is
@@ -61,6 +71,31 @@ export interface LineageNodeInput {
 
 export type LineageNodeKind = "root" | "mutation" | "crossover";
 
+/** Authority supplied when adding a crossover. Retained lineage digests are
+ * derived from the graph rather than accepted from the caller. */
+export type LineageCrossoverParentInput =
+  | { readonly kind: "lineage"; readonly nodeId: LineageNodeId }
+  | { readonly kind: "external"; readonly contentDigest: SceneContentDigest };
+
+/** Immutable ordered ancestry truth. A lineage ref keeps its exact digest
+ * even if a later prune removes that parent's reachability edge or node. */
+export type LineageGeneticParent =
+  | {
+      readonly kind: "lineage";
+      readonly nodeId: LineageNodeId;
+      readonly contentDigest: SceneContentDigest;
+    }
+  | {
+      readonly kind: "external";
+      readonly contentDigest: SceneContentDigest;
+    };
+
+export interface LineageCrossoverNavigation {
+  /** Required only for two external parents. Must be the currently selected
+   * retained node and is never recorded as genetic ancestry. */
+  readonly navigationAnchorId?: LineageNodeId;
+}
+
 /**
  * A defensive node snapshot. The thumbnail is a fresh copy on every read;
  * mutating it cannot reach back into the graph.
@@ -68,6 +103,7 @@ export type LineageNodeKind = "root" | "mutation" | "crossover";
 export interface LineageNode {
   readonly id: LineageNodeId;
   readonly kind: LineageNodeKind;
+  readonly contentDigest: SceneContentDigest;
   readonly encodedScene: string;
   readonly snapshot: ImmutableLineageSceneSnapshot;
   readonly thumbnail: Uint8ClampedArray;
@@ -75,7 +111,11 @@ export interface LineageNode {
   readonly seed: number;
   readonly profile: LineageProfile;
   readonly resourceIds: readonly string[];
+  /** Root-reachability/navigation edges. For retained genetic parents these
+   * also point at the parent; an all-external crossover instead points at its
+   * explicit non-genetic workspace anchor. */
   readonly parentIds: readonly LineageNodeId[];
+  readonly geneticParents: readonly LineageGeneticParent[];
   readonly childIds: readonly LineageNodeId[];
 }
 
@@ -121,6 +161,7 @@ export type PruneLineageResult =
 interface StoredNode {
   readonly id: LineageNodeId;
   readonly kind: LineageNodeKind;
+  readonly contentDigest: SceneContentDigest;
   readonly encodedScene: string;
   readonly snapshot: ImmutableLineageSceneSnapshot;
   readonly thumbnail: Uint8ClampedArray;
@@ -128,16 +169,35 @@ interface StoredNode {
   readonly profile: LineageProfile;
   readonly resourceIds: readonly string[];
   parentIds: LineageNodeId[];
+  readonly geneticParents: readonly LineageGeneticParent[];
   childIds: LineageNodeId[];
 }
 
 interface OwnedInput {
+  readonly contentDigest: SceneContentDigest;
   readonly encodedScene: string;
   readonly snapshot: ImmutableLineageSceneSnapshot;
   readonly thumbnail: Uint8ClampedArray;
   readonly seed: number;
   readonly profile: LineageProfile;
   readonly resourceIds: readonly string[];
+}
+
+const SCENE_CONTENT_DIGEST_PATTERN = /^scene-sha256-[0-9a-f]{64}$/;
+
+function assertContentDigest(
+  digest: string,
+  label = "Lineage content digest",
+): asserts digest is SceneContentDigest {
+  if (!SCENE_CONTENT_DIGEST_PATTERN.test(digest)) {
+    throw new TypeError(`${label} must be a lowercase SHA-256 scene digest`);
+  }
+}
+
+function ownGeneticParents(
+  parents: readonly LineageGeneticParent[],
+): readonly LineageGeneticParent[] {
+  return Object.freeze(parents.map((parent) => Object.freeze({ ...parent })));
 }
 
 function positiveInteger(value: number, label: string): number {
@@ -225,6 +285,13 @@ function ownInput(input: LineageNodeInput): OwnedInput {
   ) {
     throw new TypeError("Lineage encodedScene must be a non-empty string");
   }
+  const derivedDigest = evolutionSceneContentDigest(input.snapshot);
+  if (input.contentDigest !== undefined) {
+    assertContentDigest(input.contentDigest);
+    if (input.contentDigest !== derivedDigest) {
+      throw new TypeError("Lineage content digest does not match its snapshot");
+    }
+  }
   if (
     !Number.isInteger(input.seed) ||
     input.seed < 0 ||
@@ -251,6 +318,7 @@ function ownInput(input: LineageNodeInput): OwnedInput {
     }
   }
   return {
+    contentDigest: derivedDigest,
     encodedScene: input.encodedScene,
     snapshot: ownSnapshot(input.snapshot),
     thumbnail: new Uint8ClampedArray(input.thumbnail),
@@ -298,7 +366,7 @@ export class EvolutionLineage {
 
     const owned = ownInput(root);
     this.assertRootFits(owned);
-    const node = this.installNode("root", [], owned);
+    const node = this.installNode("root", [], [], owned);
     this.rootIdValue = node.id;
     this.currentIdValue = node.id;
   }
@@ -360,22 +428,82 @@ export class EvolutionLineage {
     input: LineageNodeInput,
   ): AddLineageNodeResult {
     this.ensureActive();
-    this.requireNode(parentId);
-    return this.addNode("mutation", [parentId], input);
+    const parent = this.requireNode(parentId);
+    return this.addNode(
+      "mutation",
+      [parentId],
+      [
+        {
+          kind: "lineage",
+          nodeId: parent.id,
+          contentDigest: parent.contentDigest,
+        },
+      ],
+      input,
+    );
   }
 
   addCrossover(
-    firstParentId: LineageNodeId,
-    secondParentId: LineageNodeId,
+    parents: readonly [
+      LineageCrossoverParentInput,
+      LineageCrossoverParentInput,
+    ],
     input: LineageNodeInput,
+    navigation: LineageCrossoverNavigation = {},
   ): AddLineageNodeResult {
     this.ensureActive();
-    this.requireNode(firstParentId);
-    this.requireNode(secondParentId);
-    if (firstParentId === secondParentId) {
-      throw new RangeError("A crossover node requires two distinct parents");
+    const geneticParents = parents.map((parent): LineageGeneticParent => {
+      if (parent.kind === "lineage") {
+        const retained = this.requireNode(parent.nodeId);
+        return {
+          kind: "lineage",
+          nodeId: retained.id,
+          contentDigest: retained.contentDigest,
+        };
+      }
+      assertContentDigest(parent.contentDigest, "External parent digest");
+      return { kind: "external", contentDigest: parent.contentDigest };
+    }) as [LineageGeneticParent, LineageGeneticParent];
+    const retainedParentIds = geneticParents.flatMap((parent) =>
+      parent.kind === "lineage" ? [parent.nodeId] : [],
+    );
+    if (
+      retainedParentIds.length === 2 &&
+      retainedParentIds[0] === retainedParentIds[1]
+    ) {
+      throw new RangeError(
+        "A crossover node requires two distinct retained lineage parents",
+      );
     }
-    return this.addNode("crossover", [firstParentId, secondParentId], input);
+    let navigationParentIds: LineageNodeId[];
+    if (retainedParentIds.length > 0) {
+      if (navigation.navigationAnchorId !== undefined) {
+        throw new RangeError(
+          "A crossover navigation anchor is allowed only for two external parents",
+        );
+      }
+      navigationParentIds = retainedParentIds;
+    } else {
+      const anchorId = navigation.navigationAnchorId;
+      if (anchorId === undefined) {
+        throw new RangeError(
+          "Two external parents require a current-node navigation anchor",
+        );
+      }
+      this.requireNode(anchorId);
+      if (anchorId !== this.currentIdValue) {
+        throw new RangeError(
+          "The crossover navigation anchor must be the current retained node",
+        );
+      }
+      navigationParentIds = [anchorId];
+    }
+    return this.addNode(
+      "crossover",
+      navigationParentIds,
+      geneticParents,
+      input,
+    );
   }
 
   /**
@@ -532,7 +660,7 @@ export class EvolutionLineage {
     this.backHistory = [];
     this.forwardHistory = [];
     this.branchChoice.clear();
-    const node = this.installNode("root", [], owned);
+    const node = this.installNode("root", [], [], owned);
     this.rootIdValue = node.id;
     this.currentIdValue = node.id;
     this.release(released);
@@ -558,13 +686,14 @@ export class EvolutionLineage {
   private addNode(
     kind: Exclude<LineageNodeKind, "root">,
     parentIds: LineageNodeId[],
+    geneticParents: readonly LineageGeneticParent[],
     input: LineageNodeInput,
   ): AddLineageNodeResult {
     const resourceIds = [...new Set(input.resourceIds ?? [])];
     const cap = this.capRefusal(input.thumbnail.byteLength, resourceIds.length);
     if (cap) return cap;
     const owned = ownInput(input);
-    const node = this.installNode(kind, parentIds, owned);
+    const node = this.installNode(kind, parentIds, geneticParents, owned);
     return { added: true, node: this.publicNode(node) };
   }
 
@@ -614,12 +743,14 @@ export class EvolutionLineage {
   private installNode(
     kind: LineageNodeKind,
     parentIds: LineageNodeId[],
+    geneticParents: readonly LineageGeneticParent[],
     input: OwnedInput,
   ): StoredNode {
     const id = `lineage-${this.nextId++}`;
     const node: StoredNode = {
       id,
       kind,
+      contentDigest: input.contentDigest,
       encodedScene: input.encodedScene,
       snapshot: input.snapshot,
       thumbnail: input.thumbnail,
@@ -627,6 +758,7 @@ export class EvolutionLineage {
       profile: input.profile,
       resourceIds: input.resourceIds,
       parentIds: [...parentIds],
+      geneticParents: ownGeneticParents(geneticParents),
       childIds: [],
     };
     this.nodesById.set(id, node);
@@ -697,6 +829,7 @@ export class EvolutionLineage {
     return Object.freeze({
       id: node.id,
       kind: node.kind,
+      contentDigest: node.contentDigest,
       encodedScene: node.encodedScene,
       snapshot: node.snapshot,
       thumbnail: new Uint8ClampedArray(node.thumbnail),
@@ -705,6 +838,7 @@ export class EvolutionLineage {
       profile: node.profile,
       resourceIds: node.resourceIds,
       parentIds: Object.freeze([...node.parentIds]),
+      geneticParents: node.geneticParents,
       childIds: Object.freeze([...node.childIds]),
     });
   }
