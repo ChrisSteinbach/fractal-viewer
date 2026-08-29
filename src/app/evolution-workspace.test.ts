@@ -143,4 +143,16 @@ describe("EvolutionWorkspaceSelection", () => {
     expect(workspace.detached).toBe(false);
     expect(lineage.currentId).toBe(root.id);
   });
+
+  it("can attach or detach display state without moving graph selection", () => {
+    const { lineage, workspace, rootId } = branch();
+
+    workspace.noteOutsideEdit();
+    expect(workspace.detached).toBe(true);
+    expect(lineage.currentId).toBe(rootId);
+
+    workspace.noteSelectionDisplayed();
+    expect(workspace.detached).toBe(false);
+    expect(lineage.currentId).toBe(rootId);
+  });
 });

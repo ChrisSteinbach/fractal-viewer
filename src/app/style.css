@@ -1973,6 +1973,87 @@ summary.editor-group-title {
   margin-bottom: 8px;
 }
 
+.evolution-compare {
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.evolution-compare h3 {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.evolution-compare .mutation-hint {
+  margin-bottom: 8px;
+}
+
+.evolution-compare-slots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.evolution-compare-slot {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.evolution-compare-slot strong {
+  display: block;
+  overflow: hidden;
+  margin-bottom: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evolution-compare-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.evolution-compare-actions button {
+  width: auto;
+  min-height: 44px;
+  margin: 0;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.evolution-compare-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.evolution-compare-footer label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 40px;
+}
+
+.evolution-compare-status {
+  min-height: 1.4em;
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .evolution-surface-constraint {
   margin-bottom: 8px;
   padding: 8px 10px;
@@ -2048,6 +2129,10 @@ summary.editor-group-title {
   .evolution-lock-grid {
     grid-template-columns: 1fr;
   }
+
+  .evolution-compare-slots {
+    grid-template-columns: 1fr;
+  }
 }
 
 .mutation-grid {
@@ -2056,6 +2141,36 @@ summary.editor-group-title {
   gap: 10px;
   overflow-y: auto;
   padding: 2px;
+}
+
+/* Comparison presents the real canvas as the primary surface. The compact
+   controller docks at the bottom and the scrim drops its blur, while the
+   explicit A/B status and exit action remain inside the focus trap. */
+.mutation-modal-comparing {
+  align-items: flex-end;
+  padding: 12px;
+}
+
+.mutation-modal-comparing .gallery-backdrop {
+  background: rgb(8 9 14 / 12%);
+  backdrop-filter: none;
+}
+
+.mutation-modal-comparing .mutation-dialog {
+  width: min(96vw, 760px);
+  max-height: min(46%, 390px);
+}
+
+.mutation-modal-comparing #mutationAgainBtn,
+.mutation-modal-comparing > .gallery-dialog > .mutation-hint,
+.mutation-modal-comparing .evolution-status,
+.mutation-modal-comparing .evolution-nav,
+.mutation-modal-comparing .evolution-actions,
+.mutation-modal-comparing .evolution-surface-constraint,
+.mutation-modal-comparing .evolution-locks,
+.mutation-modal-comparing .mutation-preview-note,
+.mutation-modal-comparing .mutation-grid {
+  display: none;
 }
 
 /* One cell = one candidate button (or the inert current-system center).

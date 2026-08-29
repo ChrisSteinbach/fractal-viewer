@@ -37,7 +37,8 @@ Three.js, and Vite, and packaged as an installable, offline-capable PWA.
   sponge to icosahedron and dodecahedron flakes, fractal-flame classics, the
   Mandelbox, and a 4D group of tumbling polytope fractals.
 - **Surprise Me, 🧬 Evolve, ▶ Drift** — quality-gated random systems; a
-  session-local Evolution Lab with retained, deterministic branches and trait
+  session-local Evolution Lab with retained, deterministic branches, pinned
+  full-canvas A/B comparison, and trait
   locks; and an ambient, ever-evolving show for leaving on a second screen.
 - **Five color modes** — by transform, height, radius, position, or a uniform
   cyan — plus gradient palettes and a custom-gradient editor.

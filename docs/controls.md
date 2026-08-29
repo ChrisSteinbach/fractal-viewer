@@ -981,6 +981,23 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   document matches a retained node; otherwise the Lab visibly detaches and
   offers a new root.
 
+  **Compare pinned endpoints** keeps two session-local references, A and B.
+  **Pin selected as A/B** replaces that pin with the graph-selected node;
+  empty pins and pins removed by prune or root reset are identified directly.
+  **Show A/B** loads the node's exact unrounded scene and saved camera/4D view
+  full-canvas without moving lineage selection or changing its navigation
+  history. While an endpoint is displayed, the compact comparison controller
+  remains visible and names both the displayed pin and the still-selected
+  node. **Animate switches** reuses the ordinary system morph strictly as
+  comparison feedback—never as breeding—and the operating system's reduced-
+  motion preference still snaps. The existing morph handles 3D↔3D, 3D↔4D,
+  4D↔4D, unequal map counts, and structurally incompatible shape blocks; its
+  endpoints remain exact. Rapid switches are latest-wins, and custom-mesh
+  residency is checked by the same load path before the canvas changes.
+  **Exit comparison**, Close, Escape, or the backdrop first restores the exact
+  selected node. A failed restore or an outside edit ends the override and
+  visibly detaches instead of pretending the canvas still matches selection.
+
   Nothing is added to Collection implicitly. **Save current to Collection** is
   the only promotion action, and lineage/provenance never enters autosave,
   links, scene files, or Collection data. Cells remain fixed-angle **By

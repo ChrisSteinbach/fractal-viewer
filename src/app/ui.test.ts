@@ -95,6 +95,11 @@ function noopHandlers(): UiHandlers {
     onEvolutionPrune: vi.fn(),
     onEvolutionReset: vi.fn(),
     onEvolutionSave: vi.fn(),
+    onEvolutionComparePin: vi.fn(),
+    onEvolutionCompareShow: vi.fn(),
+    onEvolutionCompareClear: vi.fn(),
+    onEvolutionCompareExit: vi.fn(),
+    onEvolutionCompareAnimate: vi.fn(),
     onEvolutionClose: vi.fn(),
     onEvolutionLock: vi.fn(),
     onEvolutionSurfaceConstraint: vi.fn(),
@@ -11202,6 +11207,18 @@ describe("Ui mutation grid", () => {
     surfaceConstraintAvailable: true,
     surfaceConstraintNote:
       "Future children must have a supported Surface route; degraded routes are allowed.",
+    comparisonPins: [
+      { slot: "A", state: "empty", label: "A · empty" },
+      {
+        slot: "B",
+        state: "available",
+        label: "B · lineage-2 · Child 1",
+      },
+    ],
+    comparisonActive: null,
+    comparisonPending: false,
+    comparisonAnimate: true,
+    comparisonStatus: "Pin the selected node as A or B.",
     status: "Selected lineage-1.",
     ...overrides,
   });
@@ -11328,6 +11345,142 @@ describe("Ui mutation grid", () => {
       true,
     );
     expect(handlers.onEvolutionSurfaceConstraint).toHaveBeenCalledWith(true);
+  });
+
+  it("renders and routes keyboard/touch-sized A/B pin, show, clear, animation, and exit controls", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openMutations();
+    ui.setEvolutionWorkspace(workspace());
+
+    document.getElementById("evolutionComparePinA")?.click();
+    document.getElementById("evolutionCompareShowB")?.click();
+    document.getElementById("evolutionCompareClearB")?.click();
+    const animate = document.getElementById(
+      "evolutionCompareAnimate",
+    ) as HTMLInputElement;
+    animate.checked = false;
+    animate.dispatchEvent(new Event("change"));
+    ui.setEvolutionWorkspace(workspace({ comparisonActive: "B" }));
+    document.getElementById("evolutionCompareExit")?.click();
+
+    expect(handlers.onEvolutionComparePin).toHaveBeenCalledWith("A");
+    expect(handlers.onEvolutionCompareShow).toHaveBeenCalledWith("B");
+    expect(handlers.onEvolutionCompareClear).toHaveBeenCalledWith("B");
+    expect(handlers.onEvolutionCompareAnimate).toHaveBeenCalledWith(false);
+    expect(handlers.onEvolutionCompareExit).toHaveBeenCalledOnce();
+    expect(document.getElementById("evolutionCompareLabelB")?.textContent).toBe(
+      "B · lineage-2 · Child 1",
+    );
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      ".evolution-compare-actions button",
+    )) {
+      expect(button.type).toBe("button");
+    }
+  });
+
+  it("keeps the canvas override explicit and turns every close route into Exit first", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openMutations();
+    ui.setEvolutionWorkspace(
+      workspace({
+        comparisonActive: "A",
+        comparisonStatus:
+          "Displaying A over selected lineage-1. Comparison only.",
+      }),
+    );
+
+    document.getElementById("evolutionSaveBtn")?.click();
+
+    ui.closeMutations();
+
+    expect(handlers.onEvolutionSave).not.toHaveBeenCalled();
+    expect(handlers.onEvolutionCompareExit).toHaveBeenCalledOnce();
+    expect(ui.mutationsOpen()).toBe(true);
+    expect(document.getElementById("mutationModal")?.classList).toContain(
+      "mutation-modal-comparing",
+    );
+    expect(
+      document.getElementById("mutationModal")?.getAttribute("aria-label"),
+    ).toBe("Evolution Lab comparison, displaying A");
+  });
+
+  it("turns dismissal during an initial endpoint load into Exit instead of hiding the controller", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openMutations();
+    ui.setEvolutionWorkspace(
+      workspace({
+        busy: true,
+        comparisonPending: true,
+        comparisonStatus: "Loading pinned A through the exact scene path…",
+      }),
+    );
+
+    ui.closeMutations();
+
+    expect(handlers.onEvolutionCompareExit).toHaveBeenCalledOnce();
+    expect(ui.mutationsOpen()).toBe(true);
+    expect(
+      (document.getElementById("evolutionCompareExit") as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("keeps both available switches operable while a newer comparison load is pending", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    ui.setEvolutionWorkspace(
+      workspace({
+        busy: true,
+        comparisonActive: "A",
+        comparisonPending: true,
+        comparisonPins: [
+          { slot: "A", state: "available", label: "A · lineage-1" },
+          { slot: "B", state: "available", label: "B · lineage-2" },
+        ],
+      }),
+    );
+
+    expect(
+      (document.getElementById("evolutionCompareShowA") as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      (document.getElementById("evolutionCompareShowB") as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("identifies missing/pruned pins and disables their display action", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    ui.setEvolutionWorkspace(
+      workspace({
+        comparisonPins: [
+          {
+            slot: "A",
+            state: "missing",
+            label: "A · lineage-8 · missing/pruned",
+          },
+          { slot: "B", state: "empty", label: "B · empty" },
+        ],
+      }),
+    );
+
+    expect(document.getElementById("evolutionCompareLabelA")?.textContent).toBe(
+      "A · lineage-8 · missing/pruned",
+    );
+    expect(
+      (document.getElementById("evolutionCompareShowA") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   it("keeps eligible and degraded Surface constraints available during generation", () => {
@@ -12413,6 +12566,14 @@ describe("Ui modal focus trap", () => {
       surfaceConstraintAvailable: true,
       surfaceConstraintNote:
         "Future children must have a supported Surface route; degraded routes are allowed.",
+      comparisonPins: [
+        { slot: "A", state: "empty", label: "A · empty" },
+        { slot: "B", state: "empty", label: "B · empty" },
+      ],
+      comparisonActive: null,
+      comparisonPending: false,
+      comparisonAnimate: true,
+      comparisonStatus: "Pin the selected node as A or B.",
       status: "Loading",
     });
     // Every workspace action is disabled while this simulated load is busy;
