@@ -100,7 +100,7 @@ describe("RenderSession onFirstFrame", () => {
     expect(h.log).toEqual(["firstFrame"]);
   });
 
-  it("fires once per session, not once per marked frame", () => {
+  it("fires once per generation, not once per marked frame", () => {
     const h = harness();
     h.session.enter();
     h.log.length = 0;
@@ -122,6 +122,32 @@ describe("RenderSession onFirstFrame", () => {
 
     h.session.markFirstFrame();
     expect(h.log).toEqual(["firstFrame"]);
+  });
+
+  it("closes the current-generation gate until a replacement frame lands", () => {
+    const h = harness();
+    h.session.enter();
+    h.session.markFirstFrame();
+    h.log.length = 0;
+
+    h.session.invalidateFirstFrame();
+    h.session.invalidateFirstFrame();
+    expect(h.session.hasFirstFrame).toBe(false);
+    expect(h.log).toEqual([]);
+
+    h.session.markFirstFrame();
+    expect(h.session.hasFirstFrame).toBe(true);
+    expect(h.log).toEqual(["firstFrame"]);
+  });
+
+  it("tolerates an initial allocation's invalidation before any frame", () => {
+    const h = harness();
+    h.session.enter();
+
+    h.session.invalidateFirstFrame();
+
+    expect(h.session.hasFirstFrame).toBe(false);
+    expect(h.log.filter((entry) => entry === "firstFrame")).toEqual([]);
   });
 
   it("sees the gate already flipped", () => {

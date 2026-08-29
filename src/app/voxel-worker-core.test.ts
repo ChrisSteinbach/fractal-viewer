@@ -1169,6 +1169,7 @@ describe("VoxelWorkerSession 4D solid render", () => {
     scheduler.drain();
 
     const second = gridEvents(events).at(-1)!;
+    expectHierarchyMatchesTexture(second);
     const secondCenterX = (second.boundsMin[0] + second.boundsMax[0]) / 2;
     expect(firstCenterX).toBeCloseTo(0.5, 5);
     expect(secondCenterX).toBeCloseTo(0.1, 5);
@@ -1188,6 +1189,178 @@ describe("VoxelWorkerSession 4D solid render", () => {
     expect(restartedEvents(events)).toHaveLength(restartsBefore + 1);
     expect(gridEvents(events)).toHaveLength(gridsBeforeRepeat);
     expect(noteEvents(events)).toHaveLength(notesBeforeRepeat);
+  });
+
+  it("rebuilds a settled slice-only endpoint and publishes its matching hierarchy", () => {
+    const pilotedViews: FourDView[] = [];
+    const computeBounds4: typeof computeVoxelBounds4 = (...args) => {
+      pilotedViews.push({ ...args[2] });
+      return computeVoxelBounds4(...args);
+    };
+    const { session, events, scheduler } = harness({
+      boundsSamples: 100,
+      computeBounds4,
+    });
+    session.handle(
+      startCommand({ fourD: defaultFourD(), iterationsBudget: 200 }),
+    );
+    scheduler.drain();
+    const gridsBefore = gridEvents(events).length;
+    const restartsBefore = restartedEvents(events).length;
+
+    const view = fourDWorkerView({
+      sliceOn: true,
+      sliceCenter: 0.35,
+      sliceWidth: 0.2,
+    });
+    session.handle({ type: "setFourDView", view });
+
+    expect(restartedEvents(events)).toHaveLength(restartsBefore + 1);
+    expect(gridEvents(events)).toHaveLength(gridsBefore);
+    scheduler.drain();
+
+    const settled = gridEvents(events).at(-1)!;
+    expect(settled.iterationsDone).toBe(200);
+    expectHierarchyMatchesTexture(settled);
+    expect(pilotedViews).toHaveLength(2);
+    expect(pilotedViews[1]).toMatchObject({
+      sliceOn: true,
+      sliceCenter: 0.35,
+      sliceWidth: 0.2,
+    });
+  });
+
+  it("lets rapid settled edits supersede unrun generations and publishes only the latest pair", () => {
+    const pilotedCenters: number[] = [];
+    const computeBounds4: typeof computeVoxelBounds4 = (
+      _prepared,
+      _projection,
+      view,
+    ) => {
+      pilotedCenters.push(view.sliceCenter);
+      // Give every requested generation an observable but still generous
+      // cube. Commands arrive while the one scheduled accumulation callback
+      // is parked, so any grid carrying an older bound is a stale publish.
+      const center = view.sliceCenter / 10;
+      return {
+        min: [center - 1, center - 1, center - 1],
+        max: [center + 1, center + 1, center + 1],
+        color: {
+          minX: center - 1,
+          maxX: center + 1,
+          minY: center - 1,
+          maxY: center + 1,
+          minZ: center - 1,
+          maxZ: center + 1,
+          minR: 0,
+          maxR: 2,
+        },
+      };
+    };
+    const { session, events, scheduler } = harness({
+      computeBounds4,
+      initialChunkSize: 50,
+    });
+    session.handle(
+      startCommand({ fourD: defaultFourD(), iterationsBudget: 100 }),
+    );
+
+    session.handle({
+      type: "setFourDView",
+      viewRevision: 1,
+      view: fourDWorkerView({
+        sliceOn: true,
+        sliceCenter: -0.5,
+        sliceWidth: 0.25,
+      }),
+    });
+    session.handle({
+      type: "setFourDView",
+      viewRevision: 2,
+      view: fourDWorkerView({
+        sliceOn: true,
+        sliceCenter: 0.5,
+        sliceWidth: 0.25,
+      }),
+    });
+
+    expect(gridEvents(events)).toHaveLength(0);
+    expect(pilotedCenters).toEqual([0, -0.5, 0.5]);
+    expect(restartedEvents(events)).toHaveLength(3);
+    expect(restartedEvents(events).map((event) => event.viewRevision)).toEqual([
+      undefined,
+      1,
+      2,
+    ]);
+    scheduler.drain();
+
+    const grids = gridEvents(events);
+    expect(grids.map((grid) => grid.boundsMin)).toEqual([
+      [-0.95, -0.95, -0.95],
+      [-0.95, -0.95, -0.95],
+    ]);
+    expect(grids.at(-1)!.iterationsDone).toBe(100);
+    for (const grid of grids) {
+      expect(grid.viewRevision).toBe(2);
+      expectHierarchyMatchesTexture(grid);
+    }
+  });
+
+  it("stages inert relative color without superseding the valid in-flight revision", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        palette: "spectrum",
+        iterationsBudget: 100,
+      }),
+    );
+    const restartsBefore = restartedEvents(events).length;
+
+    session.handle({
+      type: "setFourDView",
+      view: fourDWorkerView({ sliceRelativeColor: true }),
+    });
+    scheduler.drain();
+
+    expect(restartedEvents(events)).toHaveLength(restartsBefore);
+    expect(gridEvents(events).length).toBeGreaterThan(0);
+    expect(
+      gridEvents(events).every((event) => event.viewRevision === undefined),
+    ).toBe(true);
+  });
+
+  it("keeps an in-flight spatial revision when a dormant color endpoint follows it", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        palette: "spectrum",
+        iterationsBudget: 100,
+      }),
+    );
+    session.handle({
+      type: "setFourDView",
+      viewRevision: 4,
+      view: fourDWorkerView({ sliceOn: true, sliceCenter: 0.3 }),
+    });
+    const restartsBeforeDormant = restartedEvents(events).length;
+    session.handle({
+      type: "setFourDView",
+      viewRevision: 4,
+      view: fourDWorkerView({
+        sliceOn: true,
+        sliceCenter: 0.3,
+        sliceRelativeColor: true,
+      }),
+    });
+    scheduler.drain();
+
+    expect(restartedEvents(events)).toHaveLength(restartsBeforeDormant);
+    expect(gridEvents(events).length).toBeGreaterThan(0);
+    expect(gridEvents(events).every((event) => event.viewRevision === 4)).toBe(
+      true,
+    );
   });
 
   it("setFourDView is a no-op for a flat session", () => {
@@ -1218,6 +1391,7 @@ describe("VoxelWorkerSession 4D solid render", () => {
     const last = grids[grids.length - 1];
     expect(last.iterationsDone).toBe(2000);
     expect(last.texture.some((b) => b > 0)).toBe(true);
+    expectHierarchyMatchesTexture(last);
   });
 
   it("setSymmetry on a 4D session restarts accumulation and re-emits a grid", () => {
@@ -1237,7 +1411,9 @@ describe("VoxelWorkerSession 4D solid render", () => {
     // A finished render emits no more grids on its own; that it climbs back
     // to the budget AND emits new grids proves it reset to zero and re-ran.
     expect(gridEvents(events).length).toBeGreaterThan(gridsBefore);
-    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+    const settled = gridEvents(events).at(-1)!;
+    expect(settled.iterationsDone).toBe(200);
+    expectHierarchyMatchesTexture(settled);
   });
 
   it("setSymmetry on a 4D session still no-ops when order, plane and twist are unchanged", () => {
@@ -1282,8 +1458,31 @@ describe("VoxelWorkerSession 4D solid render", () => {
     // A finished render produces no more grids on its own; that it climbs
     // back to the budget AND emits new grid events proves it reset to zero
     // and re-ran, exactly like the 3D setPalette restart.
-    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+    const settled = gridEvents(events).at(-1)!;
+    expect(settled.iterationsDone).toBe(200);
+    expectHierarchyMatchesTexture(settled);
     expect(gridEvents(events).length).toBeGreaterThan(gridsBefore);
+  });
+
+  it("keeps a 4D density render usable when acceleration allocation falls back", () => {
+    let attempts = 0;
+    const { session, events, scheduler } = harness({
+      buildHierarchy: () => {
+        attempts++;
+        throw new RangeError("hierarchy allocation failed");
+      },
+    });
+    session.handle(
+      startCommand({ fourD: defaultFourD(), iterationsBudget: 200 }),
+    );
+    scheduler.drain();
+
+    const settled = gridEvents(events).at(-1)!;
+    expect(attempts).toBe(1);
+    expect(settled.iterationsDone).toBe(200);
+    expect(settled.texture.some((byte) => byte > 0)).toBe(true);
+    expect(settled.hierarchy).toEqual({ status: "absent" });
+    expect(events.some((event) => event.type === "error")).toBe(false);
   });
 
   it("a 3D start (no fourD) is unaffected: still runs to completion with a real texture", () => {
@@ -1351,7 +1550,9 @@ describe("VoxelWorkerSession 4D solid render", () => {
     runTwo.scheduler.drain();
 
     const textureOne = gridEvents(runOne.events).at(-1)!.texture;
-    const textureTwo = gridEvents(runTwo.events).at(-1)!.texture;
+    const secondGrid = gridEvents(runTwo.events).at(-1)!;
+    const textureTwo = secondGrid.texture;
+    expectHierarchyMatchesTexture(secondGrid);
 
     expect(textureTwo.length).toBe(textureOne.length);
 

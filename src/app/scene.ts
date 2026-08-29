@@ -32,6 +32,7 @@ import { sliceColorRemap, SLICE_GHOST_FLOOR } from "../fractal/project4";
 import { clamp, clone3 } from "../fractal/vec";
 import type { ShapeTrap, Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
+import { presentationFloorSpec } from "../fractal/presentation-floor";
 import type { VoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
 import type { OrbitCamera } from "./orbit";
 import { wSupport } from "./rotor4";
@@ -53,6 +54,7 @@ import {
   marchStepsForGrid,
   packVoxelBalloonPalette,
   packVoxelBalloonTint,
+  packVoxelPresentation,
   sampleVoxelAlpha,
   setVoxelBalloon,
   solidBalloonCenterIsEmpty,
@@ -200,22 +202,6 @@ const DOF_POINT_SIZE = 0.024; // dof
 // base * (1 - s).
 const BALLOON_ECHO_POINT_SIZE = 0.016;
 const BALLOON_ECHO_DIM = 0.5;
-/** Ground plane geometry, in multiples of the session ball's
- * radius — the ONE place the floor's shape is decided; both the GLSL
- * uniforms and the compute frame spec derive from these through
- * {@link FractalScene.setSurfaceGroundPlane}'s spec. The drop keeps the
- * floor >= 1.02 R below the ball CENTER, the bound the tracers' analytic
- * shadow-skip certificates assume; the fade band ends the "infinite"
- * floor in the pixel's own backdrop long before any disc edge could
- * show, and bounds which missed rays the compute march classifies as
- * plane work. */
-const GROUND_PLANE_DROP = 1.02;
-const GROUND_PLANE_FADE_START = 4;
-const GROUND_PLANE_FADE_END = 10;
-/** sRGB floor albedo: a neutral studio grey so the penumbra reads on any
- * backdrop (a floor matching a dark backdrop would swallow the shadow
- * that is this feature's point). */
-const GROUND_PLANE_ALBEDO: Vec3 = [0.62, 0.62, 0.62];
 const GLOW_BASE_OPACITY = 0.28; // glow additive blend
 // The "Watch it build" replay cursor: the bright spark pinned to the
 // newest revealed point. Sized well above every per-style point size so the
@@ -904,6 +890,10 @@ export class FractalScene {
     0,
   );
   private solidBalloonSourceSphereReady = false;
+  /** Latest authored Solid look. Null only before boot's first settings push;
+   * cloud uploads re-derive presentation from it without consulting the
+   * camera-independent voxel grid. */
+  private solidParams: SolidParams | null = null;
   /** Latest trilinear packed-alpha sample at the Solid ball centre. A filled
    * centre makes the inverted isosurface unbounded and refuses the echo. */
   private solidBalloonCenterAlpha = 0;
@@ -1990,6 +1980,7 @@ export class FractalScene {
       this.balloonEchoSourceSphereReady = false;
       this.solidBalloonSourceSphereReady = false;
     }
+    this.applySolidPresentation();
     // This ball belongs to a new cloud while the voxel texture still belongs
     // to the previous Solid session. Treat eligibility as unknown/safe until
     // setVoxelGrid samples the first matching progressive grid; carrying the
@@ -2074,6 +2065,7 @@ export class FractalScene {
     this.solidBalloonSourceSphere.center.set(0, 0, 0);
     this.solidBalloonSourceSphere.radius = originRadius;
     this.solidBalloonSourceSphereReady = true;
+    this.applySolidPresentation();
     this.solidBalloonCenterAlpha = 0;
     this.syncBalloonEchoUniforms();
     this.syncSolidBalloonUniforms();
@@ -3914,6 +3906,7 @@ export class FractalScene {
    */
   setSolidParams(params: SolidParams): void {
     this.renderNeeded = true;
+    this.solidParams = params;
     const u = this.voxelMaterial.uniforms;
     u.uThreshold.value = params.threshold;
     this.solidThreshold = params.threshold;
@@ -3921,6 +3914,7 @@ export class FractalScene {
     (u.uLightDir.value as THREE.Vector3).copy(
       lightDirection(params.lightAzimuth, params.lightElevation),
     );
+    this.applySolidPresentation();
     // Threshold is also the centre-density refusal boundary. Raising it can
     // make a previously filled-centre grid safe to invert, and lowering it
     // can refuse one, without any worker round-trip.
@@ -3929,6 +3923,33 @@ export class FractalScene {
     // every ray. See {@link solidCapturePxCostMs} for why the
     // whole setter clears rather than the threshold alone.
     this.solidCapturePxCostMs = null;
+  }
+
+  /** Derive Solid's environment/floor payload from authored look and the
+   * neutral presentation sphere retained by the cloud upload. In 3D that is
+   * the cloud sphere; in 4D it is the origin/full-radius sphere installed by
+   * {@link setPoints4}, stable across rotor and slice edits. */
+  private applySolidPresentation(): void {
+    const params = this.solidParams;
+    if (!params) return;
+    const sphere = this.solidBalloonSourceSphere;
+    const ball =
+      params.floorEnabled &&
+      this.solidBalloonSourceSphereReady &&
+      sphere.radius > 0
+        ? {
+            center: [sphere.center.x, sphere.center.y, sphere.center.z] as Vec3,
+            radius: sphere.radius,
+          }
+        : null;
+    packVoxelPresentation(this.voxelMaterial, {
+      envLight: params.envLight,
+      floor: presentationFloorSpec(ball, {
+        pattern: params.floorPattern,
+        tileScale: params.floorTileScale,
+        emission: params.floorEmission,
+      }),
+    });
   }
 
   /**
@@ -4370,17 +4391,11 @@ export class FractalScene {
     const ball = this.surfaceGroundBall;
     if (!ball) return null;
     const room = this.surfaceComputeParams;
-    return {
-      y: ball.center[1] - ball.radius * GROUND_PLANE_DROP,
-      fadeStart: ball.radius * GROUND_PLANE_FADE_START,
-      fadeEnd: ball.radius * GROUND_PLANE_FADE_END,
-      ballCenter: ball.center,
-      ballRadius: ball.radius,
-      albedo: GROUND_PLANE_ALBEDO,
-      pattern: room?.floorPattern === "checker" ? 1 : 0,
+    return presentationFloorSpec(ball, {
+      pattern: room?.floorPattern ?? "solid",
       tileScale: room?.floorTileScale ?? 0.64,
       emission: room?.floorEmission ?? 0,
-    };
+    });
   }
 
   /** Re-assert the stored floor intent against the installed

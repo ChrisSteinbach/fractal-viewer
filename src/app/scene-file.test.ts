@@ -11,6 +11,7 @@ import { encodeScene } from "./persist";
 import type { SceneSnapshot } from "./persist";
 import { COLLECTION_CAP } from "./collection";
 import type { SavedScene } from "./collection";
+import type { SampledSolidStatus } from "./solid-render-status";
 import { TIMELINE_CAP } from "./timeline";
 import { encodePortableMeshManifest } from "./portable-mesh-manifest";
 import { prepareCustomMeshObj } from "../fractal/custom-mesh";
@@ -45,6 +46,7 @@ import {
   DEFAULT_SURFACE_ENV_LIGHT,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
+  initialState,
 } from "./state";
 
 /** A minimal valid snapshot used to build real `encodeScene` wire strings —
@@ -82,6 +84,7 @@ function baseSnapshot(): SceneSnapshot {
       paletteId: DEFAULT_FLAME_PALETTE,
     },
     solid: {
+      ...initialState(true).solid,
       resolution: DEFAULT_SOLID_RESOLUTION,
       iterations: DEFAULT_SOLID_ITERATIONS,
       threshold: DEFAULT_SOLID_THRESHOLD,
@@ -256,6 +259,15 @@ describe("scene-file: portable version-2 mesh bundles", () => {
 });
 
 describe("scene-file: collection backup", () => {
+  const solidStatus: SampledSolidStatus = {
+    kind: "sampled-solid",
+    phase: "complete",
+    requestedResolution: 192,
+    effectiveResolution: 128,
+    iterationsDone: 10,
+    iterationsBudget: 10,
+  };
+
   it("round-trips two scenes, preserving encoded/createdAt/mode/thumbnail", () => {
     const encodedA = encodeScene(baseSnapshot());
     const encodedB = encodeScene({ ...baseSnapshot(), numPoints: 250_000 });
@@ -311,6 +323,35 @@ describe("scene-file: collection backup", () => {
     const parsed = JSON.parse(file) as { scenes: Record<string, unknown>[] };
 
     expect("id" in parsed.scenes[0]).toBe(false);
+  });
+
+  it("round-trips optional sampled Solid metadata without changing renderMode codecs", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const file = encodeCollectionFile(
+      [
+        {
+          id: "solid",
+          encoded,
+          thumbnail: "",
+          createdAt: 1,
+          mode: "solid",
+          solidStatus,
+        },
+      ],
+      2,
+    );
+    expect(decodeImportFile(file)).toEqual({
+      kind: "collection",
+      scenes: [
+        {
+          encoded,
+          createdAt: 1,
+          mode: "solid",
+          solidStatus,
+          thumbnail: "",
+        },
+      ],
+    });
   });
 });
 
@@ -393,6 +434,49 @@ describe("scene-file: timeline file", () => {
     const parsed = JSON.parse(file) as { steps: Record<string, unknown>[] };
 
     expect(parsed.steps.every((s) => !("id" in s))).toBe(true);
+  });
+
+  it("round-trips a timeline keyframe's sampled Solid disclosure", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const solidStatus: SampledSolidStatus = {
+      kind: "sampled-solid",
+      phase: "active",
+      requestedResolution: 224,
+      effectiveResolution: 192,
+      iterationsDone: 5,
+      iterationsBudget: 10,
+    };
+    const decoded = decodeImportFile(
+      encodeTimelineFile(
+        [
+          {
+            id: "solid-step",
+            encoded,
+            thumbnail: "",
+            morphMs: 1000,
+            holdMs: 500,
+            mode: "solid",
+            solidStatus,
+          },
+        ],
+        7,
+        9,
+      ),
+    );
+    expect(decoded).toEqual({
+      kind: "timeline",
+      seed: 7,
+      steps: [
+        {
+          encoded,
+          thumbnail: "",
+          morphMs: 1000,
+          holdMs: 500,
+          mode: "solid",
+          solidStatus,
+        },
+      ],
+    });
   });
 
   it("writes app/kind/version/exportedAt/seed into the exported file", () => {

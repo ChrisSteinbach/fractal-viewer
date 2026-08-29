@@ -177,9 +177,9 @@
           id="modeSolidBtn"
           type="button"
           aria-pressed="false"
-          title="Lit, shadowed solid built from the density"
+          title="Sampled voxel-density Solid; distinct from analytic Surface"
         >
-          ◆ Solid
+          ◆ Sampled Solid
         </button>
         <button
           class="segment"
@@ -291,7 +291,8 @@
 
       <div id="solidStatus" class="hidden">
         <p class="flame-hint">
-          Keep orbiting while Solid converges; lighting responds immediately.
+          Keep orbiting while sampled Solid converges; lighting responds
+          immediately.
         </p>
         <div id="solidProgress" class="flame-progress">0%</div>
       </div>
@@ -1529,6 +1530,66 @@
               max="0.8"
               step="0.05"
               value="0.25"
+            />
+          </label>
+          <label class="select-label">
+            Environment: <span id="solidEnvLightLabel">0%</span>
+            <input
+              type="range"
+              id="solidEnvLightSlider"
+              min="0"
+              max="1"
+              step="0.05"
+              value="0"
+            />
+          </label>
+        </details>
+
+        <details
+          class="panel-section hidden"
+          id="solidFloorSection"
+          name="panel-section"
+        >
+          <summary>Floor</summary>
+          <p class="flame-hint">
+            A world-space floor under sampled Solid. Balloon temporarily hides
+            it without clearing these settings.
+          </p>
+          <label
+            class="checkbox-label"
+            id="solidFloorEnabledRow"
+            title="Floor under the sampled Solid volume, catching its shadow"
+          >
+            <input type="checkbox" id="solidFloorEnabledCheckbox" />
+            Floor
+          </label>
+          <label class="select-label hidden" id="solidFloorPatternRow">
+            Floor pattern
+            <select id="solidFloorPatternSelect">
+              <option value="solid">Solid</option>
+              <option value="checker">Checkerboard</option>
+            </select>
+          </label>
+          <label class="select-label hidden" id="solidFloorTileScaleRow">
+            Tile size: <span id="solidFloorTileScaleLabel">0.64×</span>
+            <input
+              type="range"
+              id="solidFloorTileScaleSlider"
+              min="0.1"
+              max="2"
+              step="0.01"
+              value="0.64"
+            />
+          </label>
+          <label class="select-label hidden" id="solidFloorEmissionRow">
+            Floor light: <span id="solidFloorEmissionLabel">0.00</span>
+            <input
+              type="range"
+              id="solidFloorEmissionSlider"
+              min="0"
+              max="4"
+              step="0.05"
+              value="0"
             />
           </label>
         </details>

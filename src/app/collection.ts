@@ -17,6 +17,11 @@
  * persistence and timestamps are fully testable without a browser.
  */
 
+import {
+  sanitizeSampledSolidStatus,
+  type SampledSolidStatus,
+} from "./solid-render-status";
+
 /**
  * The render mode a scene was SAVED from, when it wasn't the points explorer.
  * Absent means points — which also keeps every entry saved before
@@ -43,6 +48,9 @@ export interface SavedScene {
   /** Display mode the scene was saved from; absent = the points explorer
    * (see {@link SavedSceneMode}). */
   mode?: SavedSceneMode;
+  /** Optional sampled-Solid session snapshot at save time. Absent keeps old
+   * entries and every non-Solid mode compatible. */
+  solidStatus?: SampledSolidStatus;
 }
 
 /**
@@ -106,6 +114,15 @@ export function sanitizedMode(v: unknown): SavedSceneMode | undefined {
   return v === "flame" || v === "solid" || v === "surface" ? v : undefined;
 }
 
+function sanitizedSolidStatusFields(
+  mode: SavedSceneMode | undefined,
+  value: unknown,
+): { solidStatus?: SampledSolidStatus } {
+  const status =
+    mode === "solid" ? sanitizeSampledSolidStatus(value) : undefined;
+  return status === undefined ? {} : { solidStatus: status };
+}
+
 /**
  * Load the saved list from `storage`, newest-first. Never throws: no
  * storage, a missing key, invalid JSON, or a non-array payload all yield an
@@ -132,6 +149,10 @@ function loadScenes(
         thumbnail: s.thumbnail,
         createdAt: s.createdAt,
         mode: sanitizedMode(s.mode),
+        ...sanitizedSolidStatusFields(
+          sanitizedMode(s.mode),
+          (s as SavedScene & { solidStatus?: unknown }).solidStatus,
+        ),
       }));
   } catch {
     return [];
@@ -179,7 +200,12 @@ export class SceneCollection {
    * Persists. `mode` is the renderer the save came from; omit for the
    * points explorer (see {@link SavedSceneMode}).
    */
-  add(encoded: string, thumbnail: string, mode?: SavedSceneMode): SavedScene {
+  add(
+    encoded: string,
+    thumbnail: string,
+    mode?: SavedSceneMode,
+    solidStatus?: SampledSolidStatus,
+  ): SavedScene {
     this.scenes = this.scenes.filter((s) => s.encoded !== encoded);
     const createdAt = this.now();
     const scene: SavedScene = {
@@ -188,6 +214,7 @@ export class SceneCollection {
       thumbnail,
       createdAt,
       mode,
+      ...(mode === "solid" && solidStatus ? { solidStatus } : {}),
     };
     this.scenes.unshift(scene);
     while (this.scenes.length > COLLECTION_CAP) this.scenes.pop();

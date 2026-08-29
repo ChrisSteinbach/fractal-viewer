@@ -66,6 +66,16 @@ import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { SavedScene } from "./collection";
 import type { TimelineStep } from "./timeline";
+import {
+  beginSampledSolidStatus,
+  progressSampledSolidStatus,
+  resolveSampledSolidResolution,
+  sampledSolidConvergencePercent,
+  sampledSolidIsReduced,
+  sampledSolidSnapshotText,
+  sampledSolidStatusText,
+  type SampledSolidStatus,
+} from "./solid-render-status";
 import type { AppState, RenderMode } from "./state";
 import { resolveBackground } from "./background";
 import type { BackgroundGradient } from "./background";
@@ -2118,6 +2128,10 @@ export class Ui {
   private readonly flameProgress: HTMLElement;
   private readonly solidResolutionNote: HTMLElement;
   private readonly solidProgress: HTMLElement;
+  /** One model backs the visible row, memory note, and speech cadence. Main
+   * supplies complete snapshots; the two legacy narrow setters below merely
+   * adapt older call sites/tests into this same model. */
+  private sampledSolidStatus = beginSampledSolidStatus(192, 0);
   /** Whether the active Solid session's centre-density probe permits the
    * query-space echo. Session routing owns this transient result; it is not
    * authored AppState and never changes the shared Balloon editor's value. */
@@ -2177,6 +2191,9 @@ export class Ui {
   private readonly surfaceGroundPlaneCheckbox: HTMLInputElement;
   private readonly surfaceGroundPlaneNote: HTMLElement;
   private readonly surfaceGroundPlaneDependentRows: readonly HTMLElement[];
+  /** Solid's authored floor stays available while its effective Balloon
+   * suppresses the horizon; detail rows depend only on authored intent. */
+  private readonly solidFloorDependentRows: readonly HTMLElement[];
 
   // One stable VIEW section owns the browser's single automatic-motion
   // choice. Its contextual rows explain what that choice drives here: the
@@ -2675,6 +2692,7 @@ export class Ui {
       this.byId<HTMLDetailsElement>("solidColorSection"),
       this.byId<HTMLDetailsElement>("solidSurfaceSection"),
       this.byId<HTMLDetailsElement>("solidLightingSection"),
+      this.byId<HTMLDetailsElement>("solidFloorSection"),
     ];
     this.surfaceCondensationSection = this.byId<HTMLDetailsElement>(
       "surfaceCondensationSection",
@@ -2736,6 +2754,11 @@ export class Ui {
       this.byId("surfaceFloorPatternRow"),
       this.byId("surfaceFloorTileScaleRow"),
       this.byId("surfaceFloorEmissionRow"),
+    ];
+    this.solidFloorDependentRows = [
+      this.byId("solidFloorPatternRow"),
+      this.byId("solidFloorTileScaleRow"),
+      this.byId("solidFloorEmissionRow"),
     ];
     this.viewControls = this.byId("viewControls");
     this.threeDSavedViewScope = this.byId("threeDSavedViewScope");
@@ -3600,6 +3623,15 @@ export class Ui {
     }
   }
 
+  /** Collapse Solid's floor details while the authored toggle is off. The
+   * Balloon precedence is renderer-side, so it never disables or clears the
+   * independently persisted editor. */
+  private syncSolidFloorRows(state: AppState): void {
+    for (const row of this.solidFloorDependentRows) {
+      row.classList.toggle("hidden", !state.solid.floorEnabled);
+    }
+  }
+
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
    * a slice left behind by the previous visit never silently applies. The
    * slice-relative color option resets with it: it's slice view state, and the
@@ -3893,6 +3925,7 @@ export class Ui {
     // dimension changes. Surface route and Solid centre refusals disable that
     // authored editor in place without clearing its document state.
     this.syncBalloonRows(panelContext);
+    this.syncSolidFloorRows(state);
     this.syncSurfaceFloorRows(panelContext);
     // The shape trap independently states the same forward-orbit consumer
     // set; it is not inferred from Balloon's complementary refusal. Sub-rows
@@ -4203,7 +4236,7 @@ export class Ui {
     } else if (state.renderMode === "solid") {
       // Unlike the flame's frozen view, the solid render's volume is
       // world-space: the camera stays fully interactive while it converges.
-      this.helpTitle.textContent = "Solid Render";
+      this.helpTitle.textContent = "Sampled Solid Render";
       this.setHelpLines(
         this.mouse
           ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
@@ -5042,11 +5075,16 @@ export class Ui {
       scene.mode === "flame"
         ? "✺ "
         : scene.mode === "solid"
-          ? "◆ "
+          ? `◆ ${scene.solidStatus ? sampledSolidSnapshotText(scene.solidStatus) : "Sampled Solid · resolution and convergence unavailable"} · `
           : scene.mode === "surface"
             ? "◈ "
             : "";
-    const modeAria = scene.mode === undefined ? "" : ` (${scene.mode} render)`;
+    const modeAria =
+      scene.mode === undefined
+        ? ""
+        : scene.mode === "solid"
+          ? ` (${scene.solidStatus ? sampledSolidSnapshotText(scene.solidStatus) : "Sampled Solid; resolution and convergence unavailable"})`
+          : ` (${scene.mode} render)`;
     const card = this.doc.createElement("div");
     card.className = "gallery-card";
 
@@ -5078,6 +5116,7 @@ export class Ui {
 
     const caption = this.doc.createElement("div");
     caption.className = "gallery-card-caption";
+    if (scene.mode === "solid") caption.classList.add("sampled-solid");
     caption.textContent = `${modeCaption}${label}`;
     load.appendChild(caption);
     card.appendChild(load);
@@ -5164,11 +5203,24 @@ export class Ui {
       // at all.
       const mode = this.doc.createElement("span");
       mode.className = "timeline-step-mode";
+      if (step.mode === "solid") mode.classList.add("sampled-solid");
       mode.textContent =
-        step.mode === "flame" ? "✺" : step.mode === "solid" ? "◆" : "◈";
-      mode.title = `Plays as a ${step.mode} render — playback holds until it converges`;
+        step.mode === "flame"
+          ? "✺"
+          : step.mode === "solid"
+            ? `◆ ${step.solidStatus ? sampledSolidSnapshotText(step.solidStatus) : "Sampled Solid · resolution and convergence unavailable"}`
+            : "◈";
+      mode.title =
+        step.mode === "solid"
+          ? `Plays as ${step.solidStatus ? sampledSolidSnapshotText(step.solidStatus) : "Sampled Solid; saved resolution and convergence unavailable"} — playback builds a fresh sampled session and holds until it converges`
+          : `Plays as a ${step.mode} render — playback holds until it converges`;
       mode.setAttribute("role", "img");
-      mode.setAttribute("aria-label", `${step.mode} render keyframe`);
+      mode.setAttribute(
+        "aria-label",
+        step.mode === "solid"
+          ? `${step.solidStatus ? sampledSolidSnapshotText(step.solidStatus) : "Sampled Solid; resolution and convergence unavailable"} keyframe`
+          : `${step.mode} render keyframe`,
+      );
       row.appendChild(mode);
     }
 
@@ -5688,17 +5740,34 @@ export class Ui {
     this.softwareRendererNote.textContent = text ?? "";
   }
 
-  /** Reflect solid-render progress, mirroring {@link setFlameProgress}. */
-  setSolidProgress(iterationsDone: number, iterationsBudget: number): void {
-    const pct =
-      iterationsBudget > 0
-        ? Math.min(100, Math.floor((iterationsDone / iterationsBudget) * 100))
-        : 100;
-    const done = (iterationsDone / 1_000_000).toFixed(1);
-    const budget = (iterationsBudget / 1_000_000).toFixed(1);
-    this.solidProgress.textContent = `${done}M / ${budget}M iterations (${pct}%)`;
+  /** Reflect every disclosed fact about the active sampled Solid session from
+   * one model. This is the main-thread entry point used by live progress,
+   * memory fallback, restart, cancellation and failure paths. */
+  setSampledSolidStatus(status: SampledSolidStatus): void {
+    this.sampledSolidStatus = status;
+    const pct = sampledSolidConvergencePercent(status);
+    const done = (status.iterationsDone / 1_000_000).toFixed(1);
+    const budget = (status.iterationsBudget / 1_000_000).toFixed(1);
+    this.solidProgress.textContent = `${sampledSolidStatusText(status)} · ${done}M / ${budget}M iterations`;
     this.solidProgress.style.setProperty("--progress", `${pct}%`);
+    const resolutionNote = sampledSolidIsReduced(status)
+      ? `Memory fallback active: requested ${status.requestedResolution}³, rendering ${String(status.effectiveResolution)}³ voxels.`
+      : "";
+    if (this.solidResolutionNote.textContent !== resolutionNote) {
+      this.solidResolutionNote.textContent = resolutionNote;
+    }
     this.announceSolidProgress(pct);
+  }
+
+  /** Compatibility adapter for callers that only own convergence counters. */
+  setSolidProgress(iterationsDone: number, iterationsBudget: number): void {
+    this.setSampledSolidStatus(
+      progressSampledSolidStatus(
+        this.sampledSolidStatus,
+        iterationsDone,
+        iterationsBudget,
+      ),
+    );
   }
 
   /** The live-region half of {@link setSolidProgress} — see
@@ -5710,7 +5779,7 @@ export class Ui {
       return;
     }
     const { armed, text } = crossedProgressQuartile(
-      "Solid",
+      "Sampled Solid",
       pct,
       this.solidAnnouncedQuartile,
     );
@@ -5725,14 +5794,25 @@ export class Ui {
    * the same text-driven visibility.
    */
   setSolidResolutionNote(effective: number | null, requested?: number): void {
-    if (effective === null) {
+    // `null` used to mean "clear". In the worker protocol it means the
+    // requested resolution is effective, so preserve that meaning when a
+    // requested value accompanies it; the no-argument clear used on session
+    // teardown starts a fresh pending model.
+    if (effective === null && requested === undefined) {
+      this.sampledSolidStatus = beginSampledSolidStatus(
+        this.sampledSolidStatus.requestedResolution,
+        this.sampledSolidStatus.iterationsBudget,
+      );
       this.solidResolutionNote.textContent = "";
       return;
     }
-    this.solidResolutionNote.textContent =
-      requested !== undefined
-        ? `Reduced to ${effective}³ (from ${requested}³) to fit available memory.`
-        : `Reduced to ${effective}³ to fit available memory.`;
+    this.setSampledSolidStatus(
+      resolveSampledSolidResolution(
+        this.sampledSolidStatus,
+        effective,
+        requested,
+      ),
+    );
   }
 
   /**

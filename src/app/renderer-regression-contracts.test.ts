@@ -86,6 +86,11 @@ describe("Solid document compatibility contracts", () => {
       lightAzimuth: 135,
       lightElevation: 50,
       ambient: 0.25,
+      envLight: 0,
+      floorEnabled: false,
+      floorPattern: "solid",
+      floorTileScale: 0.64,
+      floorEmission: 0,
       paletteId: "spectrum",
     });
     expect(decoded).toMatchObject({
@@ -110,6 +115,7 @@ describe("Solid document compatibility contracts", () => {
         z: [0, 0.4, 1],
       },
       solid: {
+        ...initialState(false).solid,
         resolution: 224,
         iterations: 42_000_000,
         threshold: 0.61,

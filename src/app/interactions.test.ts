@@ -570,6 +570,29 @@ describe("attachInteractions frozen 4D view settlement", () => {
     expect(h.onFourDViewCommit).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps an ordinary 4D camera orbit out of the settled worker-view commit path", () => {
+    const h = setupInteractions({ fourD: true });
+    h.canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        clientX: 50,
+        clientY: 50,
+      }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons: 1,
+        clientX: 70,
+        clientY: 60,
+      }),
+    );
+    document.dispatchEvent(new MouseEvent("mouseup"));
+
+    expect(h.rotate).toHaveBeenCalledTimes(1);
+    expect(h.onFourDRotate).not.toHaveBeenCalled();
+    expect(h.onFourDViewCommit).not.toHaveBeenCalled();
+  });
+
   it("admits Shift-wheel in Flame and commits one burst after 150ms quiet", () => {
     const h = setupInteractions({ frozen: true, fourD: true });
 

@@ -5,6 +5,7 @@ import {
 } from "./export-wait";
 import type { ExportWaitDeps, ExportWaitMode } from "./export-wait";
 import type { ExportRun, ExportStop } from "./export-progress";
+import { RenderSession } from "./render-session";
 
 /**
  * The app's live signals as one mutable `world` plus a manual render-signal
@@ -141,6 +142,40 @@ describe("createExportWait: awaitReady", () => {
     // A solid grid arrives whole, so every disclosure was the modal's
     // indeterminate state — one per turn the wait sat through.
     expect(reports).toEqual([null, null]);
+  });
+
+  it("waits for the replacement Solid grid after a settled generation is invalidated", async () => {
+    const h = harness();
+    h.world.mode = "solid";
+    const session = new RenderSession<never>({
+      start: () => ({ post: () => undefined, terminate: () => undefined }),
+      clearNotes: () => undefined,
+      resetProgress: () => undefined,
+      activate: () => undefined,
+      deactivate: () => undefined,
+    });
+    session.enter();
+    session.markFirstFrame();
+    session.invalidateFirstFrame();
+    h.deps.hasFirstFrame = () => session.hasFirstFrame;
+    const { run, reports } = stubRun();
+    let outcome: string | null | undefined;
+
+    void createExportWait(h.deps)
+      .planRenderWait("solid")
+      .awaitReady(run)
+      .then((value) => {
+        outcome = value;
+      });
+    await settle();
+
+    expect(outcome).toBeUndefined();
+    expect(reports).toEqual([null]);
+    session.markFirstFrame();
+    h.signal();
+    await settle();
+
+    expect(outcome).toBeNull();
   });
 
   it("parks on the surface session's first frame the same way", async () => {

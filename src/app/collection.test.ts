@@ -3,6 +3,7 @@ import {
   COLLECTION_STORAGE_KEY,
   SceneCollection,
 } from "./collection";
+import type { SampledSolidStatus } from "./solid-render-status";
 
 function fakeStorage(initial: Record<string, string> = {}) {
   const store: Record<string, string> = { ...initial };
@@ -487,6 +488,15 @@ describe("SceneCollection after (the drift show's loop cursor)", () => {
 });
 
 describe("SceneCollection saved-from mode", () => {
+  const solidStatus: SampledSolidStatus = {
+    kind: "sampled-solid",
+    phase: "active",
+    requestedResolution: 192,
+    effectiveResolution: 128,
+    iterationsDone: 4,
+    iterationsBudget: 10,
+  };
+
   it("round-trips a flame/solid mode tag through storage", () => {
     const storage = fakeStorage();
     new SceneCollection({ storage }).add("v1=a", "", "flame");
@@ -503,6 +513,33 @@ describe("SceneCollection saved-from mode", () => {
 
     expect(collection.all()[0].mode).toBeUndefined();
     expect(storage.store[COLLECTION_STORAGE_KEY]).not.toContain("mode");
+  });
+
+  it("round-trips an optional sampled Solid resolution/convergence snapshot", () => {
+    const storage = fakeStorage();
+    new SceneCollection({ storage }).add("v1=solid", "", "solid", solidStatus);
+
+    expect(new SceneCollection({ storage }).all()[0].solidStatus).toEqual(
+      solidStatus,
+    );
+  });
+
+  it("drops malformed sampled status without losing an old Solid entry", () => {
+    const storage = fakeStorage({
+      [COLLECTION_STORAGE_KEY]: JSON.stringify([
+        {
+          id: "1-0",
+          encoded: "v1=solid",
+          thumbnail: "",
+          createdAt: 1,
+          mode: "solid",
+          solidStatus: { kind: "surface", phase: "complete" },
+        },
+      ]),
+    });
+    const [entry] = new SceneCollection({ storage }).all();
+    expect(entry.mode).toBe("solid");
+    expect(entry.solidStatus).toBeUndefined();
   });
 
   it("a re-save from a different renderer re-tags the bumped entry", () => {

@@ -1713,6 +1713,16 @@ summary.editor-group-title {
   white-space: nowrap;
 }
 
+/* Sampled Solid carries resolution + convergence in the saved artifact's
+   visible caption. Let that explicit status wrap instead of ellipsizing it
+   down to the mode name on narrow cards. */
+.gallery-card-caption.sampled-solid {
+  overflow: visible;
+  line-height: 1.3;
+  text-overflow: clip;
+  white-space: normal;
+}
+
 /* Per-card delete, kept visible (touch has no hover) but subtle until focus. */
 .gallery-card-delete {
   display: flex;
@@ -1811,6 +1821,16 @@ summary.editor-group-title {
   flex: 0 0 auto;
   color: var(--text-faint);
   font-size: 13px;
+}
+
+/* The saved sampled-session disclosure is data, not a decorative glyph.
+   Give it a shrinkable/wrapping lane so timing/actions remain reachable. */
+.timeline-step-mode.sampled-solid {
+  flex: 1 1 140px;
+  min-width: 110px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .timeline-step-timing {
