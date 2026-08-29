@@ -129,13 +129,16 @@ npx vitest run --config scripts/vitest.harness.config.ts scripts/voxel-hierarchy
 
 ### Production browser comparison
 
-Serve the production build over localhost HTTP in one terminal. Localhost is a
-secure context for service workers, while avoiding the development certificate
-errors that would invalidate the verifier's zero-console-error gate:
+Serve the production build in one terminal:
 
 ```bash
-python3 -m http.server 4173 --bind 127.0.0.1 --directory dist/app
+npm run preview -- --host 127.0.0.1 --port 4173 --strictPort
 ```
+
+Vite's self-signed certificate produces two known service-worker registration
+errors under Playwright. The verifier retains those messages in the evidence
+but excludes only those exact certificate errors from its renderer failure
+list; every other console or page error remains fatal.
 
 Against that preview, run the generic WebGL boot gate and retain its screenshot
 under the ignored local evidence directory. Supplying `--url` matters: without
@@ -143,7 +146,7 @@ it the smoke script starts a development server rather than testing `dist/`.
 
 ```bash
 npm run smoke -- \
-  --url=http://127.0.0.1:4173 \
+  --url=https://127.0.0.1:4173 \
   --screenshot=bench-results/fr-qxyt.9/webgl-smoke.png
 ```
 
@@ -153,7 +156,7 @@ real-GPU timing row:
 
 ```bash
 DISPLAY=:0 node scripts/solid-hierarchy.verify.mjs \
-  --url=http://127.0.0.1:4173 \
+  --url=https://127.0.0.1:4173 \
   --driver=swiftshader \
   --fixtures=affine,nonlinear,stochastic,nonlinear4d \
   --resolution=192 \
@@ -169,7 +172,7 @@ record the actual values:
 
 ```bash
 node scripts/solid-hierarchy.verify.mjs \
-  --url=http://127.0.0.1:4173 \
+  --url=https://127.0.0.1:4173 \
   --driver=hardware \
   --display=:0 \
   --chrome=/usr/bin/google-chrome \

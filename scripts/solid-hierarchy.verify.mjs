@@ -38,6 +38,7 @@ import {
 } from "../src/fractal/nonlinear-solid.fixture.ts";
 import {
   comparePixelChannels,
+  isKnownServiceWorkerSslNoise,
   median,
   medianSampleIndex,
   parseSolidHierarchyVerifyArgs,
@@ -310,7 +311,12 @@ async function renderCase(browser, fixture, stripHierarchy, leg) {
   page.on("console", (message) => {
     const entry = { type: message.type(), text: message.text() };
     consoleMessages.push(entry);
-    if (message.type() === "error") consoleErrors.push(message.text());
+    if (
+      message.type() === "error" &&
+      !isKnownServiceWorkerSslNoise(message.text())
+    ) {
+      consoleErrors.push(message.text());
+    }
     const match = message.text().match(/^Fractal Explorer build (.+)$/);
     if (match) buildIdentity = match[1];
   });

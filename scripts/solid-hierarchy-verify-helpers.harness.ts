@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   comparePixelChannels,
+  isKnownServiceWorkerSslNoise,
   median,
   medianSampleIndex,
   parseSolidHierarchyVerifyArgs,
@@ -79,6 +80,22 @@ describe("Solid hierarchy production verifier helpers", () => {
       rendererIsSoftware(
         "ANGLE (Intel, Mesa Intel(R) Iris(R) Xe Graphics (TGL GT2))",
       ),
+    ).toBe(false);
+  });
+
+  it("filters only the known local service-worker certificate noise", () => {
+    expect(
+      isKnownServiceWorkerSslNoise(
+        "An SSL certificate error occurred when fetching the script.",
+      ),
+    ).toBe(true);
+    expect(
+      isKnownServiceWorkerSslNoise(
+        "Service worker registration failed: SecurityError: Failed to register a ServiceWorker with script (https://127.0.0.1:4173/sw.js): An SSL certificate error occurred",
+      ),
+    ).toBe(true);
+    expect(
+      isKnownServiceWorkerSslNoise("WebGL shader compilation failed"),
     ).toBe(false);
   });
 });
