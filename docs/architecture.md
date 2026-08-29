@@ -572,7 +572,20 @@ scene-wide slot. Balloon's Custom gradient is a separate slot.
 world-space **3-D density grid**. An affine IFS carries no analytic distance
 field to raymarch, so the solid render marches _measured_ density — the chaos
 game's own per-voxel hit counts — paying the convergence cost once rather than
-per view. `computeVoxelBounds` sizes the grid from a pilot orbit using trimmed
+per view. This is the app's one sampled-density renderer: nonlinear and
+stochastic variations take this same Solid route unchanged, while Surface
+remains the separately routed analytic/distance-estimator renderer. There is
+no sampled-Surface mode, accumulator, or marcher alongside it.
+
+The grid is world-space and **camera-independent**. Camera orbit, zoom, density
+threshold, light direction, ambient/environment light, backdrop, fog, and the
+optional floor re-present the installed volume without re-running the chaos
+game. Only inputs baked into occupancy or running RGB — geometry, symmetry,
+the active 4D projection/slice, structural palette or applicable color source,
+and resolution — belong to accumulation. The iteration budget controls how
+far the retained orbit continues; changing it can resume or finish the same
+grid without moving the volume.
+`computeVoxelBounds` sizes the grid from a pilot orbit using trimmed
 per-axis quantiles (robust to a stray variation outlier), cubed and padded; each
 voxel keeps a hit count plus a **running-mean** color (accurate in f32 without
 the flame's f64 trick). Color tracks the live point cloud exactly — the same
@@ -582,15 +595,21 @@ explorer it was captured from — or a palette gradient, as in the flame.
 `voxelTextureData` packs the grid into an RGBA8 volume: color in RGB,
 **log-normalized density in alpha** via the same `log1p` curve the flame
 tone-maps with, so "solid enough to cross the isosurface" and "bright in a flame
-of the same system" line up.
+of the same system" line up. Density plus running RGB is the complete authored
+voxel payload; the acceleration structure below is derived from packed alpha,
+not another accumulation channel. The payload audit and the condition for ever
+reopening that decision are recorded in
+`docs/solid-voxel-payload-decision.md`.
 
 `voxel-material.ts` is the GPU side — a Three.js GLSL3 `ShaderMaterial` (one
 of four places Three.js appears in the shipped app, alongside `scene.ts`,
 `interactions.ts`, and the surface render's own `surface-material.ts`, below)
 that raymarches the volume behind a full-screen quad:
-reconstruct each pixel's camera ray, intersect the grid's box, march from a
-dithered start until density crosses the threshold, bisect to localize the
-isosurface, then shade it from a central-difference density gradient with a hard
+reconstruct each pixel's camera ray, intersect the grid's box, sample one
+dithered **fixed lattice** until packed trilinear density crosses the strict
+`>` threshold, then bisect the last-outside/first-inside bracket five times
+against that same density field. The refined inside endpoint is shaded from a
+central-difference density gradient with a hard
 shadow ray, a short ambient-occlusion tap, and Blinn-Phong lighting. Threshold,
 light direction, and ambient are plain uniforms `scene.ts` pushes live, so those
 controls re-render with no worker round-trip — which is also why the solid worker
@@ -611,26 +630,72 @@ level pools two cells and their full texel halo, and later levels max-pool to a
 one-byte root. The source RGBA8 texture stays the leaf, so the added 192³
 payload is 1,048,560 alpha-only bytes. A fresh hierarchy belongs to each packed
 progressive snapshot, while threshold edits reuse it live; allocation failure
-falls back to the unchanged fixed-step marcher. The proof and measured build
+falls back to the unchanged fixed-lattice marcher. Because a trilinear sample
+is a convex combination of its supporting texel bytes, a node maximum at or
+below the live strict threshold certifies that its whole continuous region is
+empty; it can overestimate occupancy but cannot hide an above-isovalue sample.
+The proof and measured build
 cost are in `docs/solid-density-acceleration.md`.
 
-The voxel worker publishes the texture and its hierarchy as one transferable
-snapshot; explicit absence clears any preceding hierarchy on the main thread.
-Its byte guard includes density, running RGB, packed RGBA8, and the exact
-hierarchy layout before choosing an effective resolution. Worker teardown uses
-a live-gated host, so a queued callback from a terminated Solid entry cannot
-install a stale snapshot or tear down the next render.
+The existing voxel worker owns the whole progressive generation. It accumulates
+in adaptive chunks, throttles the O(N³) pack/build publication, and publishes
+the texture, hierarchy, bounds, effective resolution, and convergence counters
+as one transferable snapshot. Explicit hierarchy absence clears any preceding
+hierarchy on the main thread; density from one generation is never paired with
+acceleration from another. Its byte guard includes retained density, running
+RGB, packed RGBA8, and the exact hierarchy layout before choosing an effective
+resolution. Grid allocation failure ratchets down by the shared 32-voxel ladder;
+hierarchy allocation failure instead latches acceleration off for that session
+and publishes the still-valid texture. Texture-pack failure is fatal because
+neither marcher then has a presentable field. Worker teardown uses a live-gated
+host, so a queued callback from a terminated Solid entry cannot install a stale
+snapshot or tear down the next render.
+
+`solid-render-status.ts` is the one user-facing model over that lifecycle. It
+always identifies the mode as **Sampled Solid**, records requested and effective
+N³ resolution separately, and derives convergence solely from
+`iterationsDone / iterationsBudget`. Effective resolution is explicitly pending
+until the worker resolves it; a lower value retains the requested fallback in
+the label. Reaching the budget is "converged". Active snapshots saved before
+then become "incomplete at P%", while cancellation and failure preserve the
+last honest counters instead of fabricating completion. The live/accessibility
+row, export wait, PNG filename/toast, Collection cards and backups, and Timeline
+steps/playback all render snapshots of this same model. Older saved entries with
+no snapshot stay readable and say that resolution/convergence is unavailable;
+the document's existing mode codec is unchanged and Surface remains a separate
+identity.
 
 The GPU binds the hierarchy's cellSpan-16 level as one tiny nearest R8 3D
 texture. Primary rays retain their original jittered fixed-step lattice:
 certified-empty nodes consume multiple lattice indices, while an occupied
 node's exit is cached and ordinary samples continue until it is crossed. The
-same five bisections refine the same packed trilinear density bracket. This is
+next sampled index is still on the original lattice; skipping does not stretch
+steps or define a new crossing. The same five bisections refine the same packed
+trilinear density bracket. With no hierarchy, the literal unaccelerated program
+samples every lattice point and remains the correctness oracle. This is
 used for the ordinary primary and Balloon's straight source primary only;
 shadow/AO/normal/color taps remain direct, and Balloon's sphere-inverted echo
 cannot use linear node exits because it is curved in source texture space.
 CPU agreement, work counts, real-WebGL pixels, and measured latency live in
-`docs/solid-density-acceleration.md`.
+`docs/solid-density-acceleration.md`; the production acceptance matrix and
+operator record live in `docs/solid-density-qualification.md`.
+
+Environment integration and the floor are **Solid-owned presentation**, not a
+Surface route and not worker inputs. Their persisted defaults are environment
+strength 0 and floor off, which select the literal pre-feature Solid shader
+source. A nonzero environment strength applies Surface's normalized two-stop
+hue convention without changing peak light strength. The shared pure
+`presentationFloorSpec` derives a floor 1.02 presentation-ball radii below the
+object, with the same 4R→10R fade geometry, neutral albedo, checker scale, and
+emission vocabulary Surface consumes. Solid shades that one-sided plane only
+after a density miss; its shadow/AO reads are bounded to the finite volume.
+In 3D the scale ball is the uploaded cloud sphere. In 4D it is the
+origin-centred, full unsliced 4D-radius sphere, so rotor and slice edits do not
+make the horizon pulse. Balloon deliberately suppresses the floor program (the
+shell has no horizon) but retains authored floor intent and restores it when
+Balloon is cleared. All numeric look edits are uniforms; only crossing the
+environment zero/nonzero or effective floor off/on axes selects a cached shader
+variant, never a voxel rebuild.
 
 The solid balloon is a **query-space union over that one volume**, not a second
 voxel accumulation: while enabled, every combined-density query is
@@ -720,9 +785,23 @@ with the current rotor, slice window (`sliceOn` / `sliceCenter` / `sliceWidth`),
 and optional slice-relative recolor. Automatic tumble remains parked while the
 worker converges. Manual view edits stay available, however: `input` updates the
 live `FourDView`, then pointer/slider release or 150 ms of wheel/keyboard quiet
-sends one `setFourDView` command. The worker derives rotated-w normalization
-from the new rotor and its retained entry support, discards the old
-accumulation, and restarts at that settled endpoint. Flame continues to refuse
+sends one `setFourDView` command. A changed spatial endpoint — rotor, slice
+enable, center, or width — is one atomic Solid generation change: the main
+thread increments an endpoint revision and closes the first-frame/capture gate
+before posting; the worker derives rotated-w normalization from its retained
+entry support, re-pilots projected bounds, and rebuilds density plus hierarchy
+together. `restarted`, `progress`, and `grid` events echo that revision, and
+main installs only the revision it currently expects. Rapid edits can therefore
+finish queued old chunks without displaying or capturing them; the first
+matching grid installs its density/hierarchy pair and reopens the gate.
+
+Exact repeated endpoints are no-ops. A slice-relative-color-only edit rebuilds
+only while the active classic W-ramp consumes that remap; structural and
+attribute color paths stage the dormant value without invalidating their still
+valid frame or advancing its revision. Palette or applicable baked-color edits
+restart accumulation without re-piloting unchanged geometry. Ordinary 3D camera,
+lighting, environment, floor, backdrop, fog, and threshold edits remain live
+presentation and do not rebuild. Flame continues to refuse
 ordinary camera and transform actions, while its Shift rotor, W-slice, and
 visible motion-preference actions remain reachable; Solid's world-space camera
 stays live. The shared authored color inputs similarly use atomic

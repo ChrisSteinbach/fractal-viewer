@@ -5,7 +5,12 @@ import { plotPoint4, prepareChaosGame4, stepOrbit4 } from "./chaos-game-4d";
 import { composeRotorProjection4 } from "./project4";
 import type { FourDView } from "./project4";
 import { mulberry32 } from "./rng";
-import type { Transform, Vec3, Vec4 } from "./types";
+import type { Vec3, Vec4 } from "./types";
+import {
+  NONLINEAR_SOLID_FIXTURE_SEED,
+  canonicalTwoMapSolidSystem,
+  stochasticJuliaSolidLens,
+} from "./nonlinear-solid.fixture";
 import {
   accumulateVoxels,
   computeVoxelBounds,
@@ -22,45 +27,7 @@ import { accumulateVoxels4, computeVoxelBounds4 } from "./voxel-4d";
  * Keeping it at exactly two maps makes a seeded routing trace readable while
  * still exercising nonlinear blending in the real chaos-game and Solid loops.
  */
-function canonicalTwoMapSystem(): Transform[] {
-  return [
-    {
-      id: 0,
-      position: [-0.34, 0.08, -0.06],
-      rotation: [0.11, -0.17, 0.07],
-      scale: [0.48, 0.44, 0.42],
-      variations: [
-        { type: "linear", weight: 0.72 },
-        { type: "swirl", weight: 0.28 },
-      ],
-    },
-    {
-      id: 1,
-      position: [0.36, -0.1, 0.09],
-      rotation: [-0.09, 0.19, -0.05],
-      scale: [0.45, 0.49, 0.41],
-      variations: [
-        { type: "linear", weight: 0.78 },
-        { type: "swirl", weight: 0.22 },
-      ],
-    },
-  ];
-}
-
-/** Separate stochastic coverage: Julia is a plot-time lens so its random
- * half-turn is exercised without changing the canonical scene's two maps or
- * feeding a lens-only perturbation back into their attractor. */
-function stochasticJuliaLens(): Transform {
-  return {
-    id: 2,
-    position: [0, 0, 0],
-    rotation: [0, 0, 0],
-    scale: [1, 1, 1],
-    variations: [{ type: "julia", weight: 1 }],
-  };
-}
-
-const FIXTURE_SEED = 0x51d0cafe;
+const FIXTURE_SEED = NONLINEAR_SOLID_FIXTURE_SEED;
 const BOUNDS_SAMPLES = 4_000;
 const VOXEL_ITERATIONS = 2_000;
 const VOXEL_SIZE = 16;
@@ -111,7 +78,7 @@ function round(values: readonly number[]): number[] {
 }
 
 function trace3(seed: number): { indices: number[]; last: number[] } {
-  const prepared = prepareChaosGame(canonicalTwoMapSystem());
+  const prepared = prepareChaosGame(canonicalTwoMapSolidSystem());
   const rng = mulberry32(seed);
   let point: Vec3 = [0.125, -0.25, 0.375];
   const indices: number[] = [];
@@ -127,7 +94,9 @@ function traceLifted4(seed: number): {
   indices: number[];
   last: number[];
 } {
-  const prepared = prepareChaosGame4(canonicalTwoMapSystem().map(toTransform4));
+  const prepared = prepareChaosGame4(
+    canonicalTwoMapSolidSystem().map(toTransform4),
+  );
   const rng = mulberry32(seed);
   let point: Vec4 = [0.125, -0.25, 0.375, 0];
   const indices: number[] = [];
@@ -154,7 +123,7 @@ function textureHash(bytes: Uint8Array): number {
 
 describe("canonical two-map linear + swirl Solid fixture", () => {
   it("pins the two-map routing through the real 3D prepare/step seams", () => {
-    const transforms = canonicalTwoMapSystem();
+    const transforms = canonicalTwoMapSolidSystem();
     expect(transforms).toHaveLength(2);
     expect(
       transforms.map((transform) =>
@@ -179,7 +148,7 @@ describe("canonical two-map linear + swirl Solid fixture", () => {
   });
 
   it("passes the authored maps unchanged through the production 3D voxel path", () => {
-    const transforms = canonicalTwoMapSystem();
+    const transforms = canonicalTwoMapSolidSystem();
     const authored = structuredClone(transforms);
     const prepared = prepareChaosGame(transforms);
 
@@ -223,7 +192,7 @@ describe("canonical two-map linear + swirl Solid fixture", () => {
   });
 
   it("keeps the same nonlinear blend and routing in its 4D lift and voxelizes it through Solid-4D", () => {
-    const transforms = canonicalTwoMapSystem();
+    const transforms = canonicalTwoMapSolidSystem();
     const authored = structuredClone(transforms);
     const lifted = transforms.map(toTransform4);
     const prepared = prepareChaosGame4(lifted);
@@ -281,8 +250,8 @@ describe("canonical two-map linear + swirl Solid fixture", () => {
   });
 
   it("covers a stochastic Julia lens separately in the real 3D and 4D plot/voxel paths", () => {
-    const transforms = canonicalTwoMapSystem();
-    const lens = stochasticJuliaLens();
+    const transforms = canonicalTwoMapSolidSystem();
+    const lens = stochasticJuliaSolidLens();
     const prepared = prepareChaosGame(transforms, lens);
     const lifted = transforms.map(toTransform4);
     const prepared4 = prepareChaosGame4(lifted, toTransform4(lens));
