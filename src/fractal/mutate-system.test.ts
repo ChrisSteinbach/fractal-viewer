@@ -1,5 +1,11 @@
-import { systemIsFlat } from "./affine4";
-import { mutateSystem } from "./mutate-system";
+import { systemIsFlat, systemPartsAreNonFlat } from "./affine4";
+import {
+  MUTATION_DOMAINS,
+  SEEDED_MUTATION_ALGORITHM_VERSION,
+  mutateSystem,
+  mutateSystemSeeded,
+} from "./mutate-system";
+import type { MutationDomain } from "./mutate-system";
 import type { MorphSystem } from "./morph";
 import { doubleRotation, sierpinskiTetrahedron, swirlFlame } from "./presets";
 import { MIN_OCCUPIED_CELLS, scoreSystem } from "./random-system";
@@ -995,5 +1001,259 @@ describe("mutateSystem shape emitters", () => {
     }
     expect(b.transforms[3].position).toEqual(a.transforms[3].position);
     expect(b.transforms[3].emitter).toBe(EMITTER);
+  });
+});
+
+function richSeededMutationBase(): MorphSystem {
+  return system({
+    transforms: sierpinskiTetrahedron().map((transform, index) => ({
+      ...transform,
+      shear: [0.02, -0.03, 0.04],
+      variations: [
+        { type: "swirl", weight: 0.12 + index * 0.01 },
+        {
+          type: "mandelbox",
+          weight: 0.08,
+          minRadius: 0.4,
+          fixedRadius: 0.9,
+          boxLimit: 0.8,
+        },
+      ],
+      w: {
+        position: 0.02 * (index + 1),
+        rotation: { xw: 0.03, yw: -0.02, zw: 0.01 },
+        scale: 0.52,
+        shear: { xw: 0.01, yw: -0.01, zw: 0.02 },
+      },
+      weight: 1 + index * 0.1,
+      chaos: [1, index === 0 ? 0 : 0.8, 1.1, 0.9],
+      colorIndex: 0.15 + index * 0.15,
+      colorSpeed: 0.45,
+      finish: {
+        specular: 0.5,
+        shininess: 40,
+        metalness: 0.2,
+        reflect: 0.1,
+        transmit: 0.05,
+        reflectionTint: 0.8,
+      },
+      surfacePattern: {
+        kind: "strata" as const,
+        axis: "y" as const,
+        scale: 1.2,
+        strength: 0.35,
+      },
+    })),
+    finalTransform: {
+      id: 99,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [
+        {
+          type: "boxfold",
+          weight: 0.1,
+          boxLimit: 0.75,
+        },
+      ],
+    },
+  });
+}
+
+function mutationDomainProjection(
+  value: MorphSystem,
+  domain: MutationDomain,
+): unknown {
+  switch (domain) {
+    case "spatialGeometry":
+      return value.transforms.map(({ position, rotation, scale, shear }) => ({
+        position,
+        rotation,
+        scale,
+        shear,
+      }));
+    case "nonlinearVariations":
+      return value.transforms.map(({ variations }) => variations);
+    case "finalLens":
+      return value.finalTransform?.variations ?? null;
+    case "fourDExtension":
+      return value.transforms.map(({ w }) => w);
+    case "mapSelectionXaos":
+      return value.transforms.map(({ weight, chaos }) => ({ weight, chaos }));
+    case "appearance":
+      return value.transforms.map(
+        ({ colorIndex, colorSpeed, finish, surfacePattern }) => ({
+          colorIndex,
+          colorSpeed,
+          finish,
+          surfacePattern,
+        }),
+      );
+  }
+}
+
+/** Compact golden over the complete serialized v1 result. Property order is
+ * part of the profile boundary too: lineage metadata names an algorithm
+ * version precisely so any output-affecting rewrite must opt into v2. */
+function jsonFnv1a(value: unknown): string {
+  let hash = 0x811c9dc5;
+  for (const char of JSON.stringify(value)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+describe("mutateSystemSeeded versioned domain streams", () => {
+  const request = {
+    algorithmVersion: SEEDED_MUTATION_ALGORITHM_VERSION,
+    nodeSeed: 0x1234abcd,
+    childOrdinal: 5,
+    profile: { wildcard: true },
+  } as const;
+
+  it("publishes the complete v1 field-domain vocabulary", () => {
+    expect(MUTATION_DOMAINS).toEqual([
+      "spatialGeometry",
+      "nonlinearVariations",
+      "finalLens",
+      "fourDExtension",
+      "mapSelectionXaos",
+      "appearance",
+    ]);
+  });
+
+  it("reproduces a child from version, node seed, ordinal, and profile", () => {
+    const base = richSeededMutationBase();
+    expect(mutateSystemSeeded(base, request)).toEqual(
+      mutateSystemSeeded(base, request),
+    );
+    expect(
+      mutateSystemSeeded(base, { ...request, childOrdinal: 6 }),
+    ).not.toEqual(mutateSystemSeeded(base, request));
+  });
+
+  it("pins the complete v1 output behind the algorithm version", () => {
+    expect(
+      jsonFnv1a(mutateSystemSeeded(richSeededMutationBase(), request)),
+    ).toBe("3fba2659");
+  });
+
+  it("keeps every unrelated domain byte-identical when any one domain is locked", () => {
+    const base = richSeededMutationBase();
+    const unlocked = mutateSystemSeeded(base, request);
+    for (const lockedDomain of MUTATION_DOMAINS) {
+      const locked = mutateSystemSeeded(base, {
+        ...request,
+        profile: { wildcard: true, lockedDomains: [lockedDomain] },
+      });
+      expect(
+        mutationDomainProjection(locked, lockedDomain),
+        `${lockedDomain} should be copied from the parent`,
+      ).toEqual(mutationDomainProjection(base, lockedDomain));
+      for (const unrelatedDomain of MUTATION_DOMAINS) {
+        if (unrelatedDomain === lockedDomain) continue;
+        expect(
+          mutationDomainProjection(locked, unrelatedDomain),
+          `${lockedDomain} changed ${unrelatedDomain}`,
+        ).toEqual(mutationDomainProjection(unlocked, unrelatedDomain));
+      }
+    }
+  });
+
+  it("preserves sparse optional absence, including an absent authored weight", () => {
+    const base = system({ transforms: sierpinskiTetrahedron() });
+    const mutant = mutateSystemSeeded(base, {
+      algorithmVersion: SEEDED_MUTATION_ALGORITHM_VERSION,
+      nodeSeed: 91,
+      childOrdinal: 2,
+      profile: { wildcard: true },
+    });
+    for (const transform of mutant.transforms) {
+      for (const key of [
+        "weight",
+        "shear",
+        "variations",
+        "w",
+        "chaos",
+        "colorIndex",
+        "colorSpeed",
+        "finish",
+        "surfacePattern",
+        "emitter",
+      ] as const) {
+        expect(key in transform, key).toBe(false);
+      }
+    }
+  });
+
+  it("does not mutate its input and copies mutable nested authored fields", () => {
+    const base = richSeededMutationBase();
+    const before = structuredClone(base);
+    const mutant = mutateSystemSeeded(base, request);
+    expect(base).toEqual(before);
+    expect(mutant.transforms[0]).not.toBe(base.transforms[0]);
+    expect(mutant.transforms[0].w).not.toBe(base.transforms[0].w);
+    expect(mutant.transforms[0].finish).not.toBe(base.transforms[0].finish);
+    expect(mutant.finalTransform).not.toBe(base.finalTransform);
+  });
+
+  it("keeps a 3D parent 3D and a 4D parent routed through all system parts", () => {
+    const flatBase = system({ transforms: sierpinskiTetrahedron() });
+    const flatMutant = mutateSystemSeeded(flatBase, request);
+    expect(
+      systemPartsAreNonFlat(
+        flatMutant.transforms,
+        flatMutant.finalTransform,
+        flatMutant.symmetry,
+      ),
+    ).toBe(false);
+
+    const fourDBase = system({ transforms: doubleRotation() });
+    const fourDMutant = mutateSystemSeeded(fourDBase, request);
+    expect(
+      systemPartsAreNonFlat(
+        fourDMutant.transforms,
+        fourDMutant.finalTransform,
+        fourDMutant.symmetry,
+      ),
+    ).toBe(true);
+
+    const finalOnlyBase = system({
+      finalTransform: {
+        id: 100,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        w: { rotation: { xw: 0.2 } },
+        variations: [{ type: "swirl", weight: 0.2 }],
+      },
+    });
+    const finalOnlyMutant = mutateSystemSeeded(finalOnlyBase, request);
+    expect(finalOnlyMutant.finalTransform?.w).toEqual(
+      finalOnlyBase.finalTransform?.w,
+    );
+    expect(
+      systemPartsAreNonFlat(
+        finalOnlyMutant.transforms,
+        finalOnlyMutant.finalTransform,
+        finalOnlyMutant.symmetry,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps legacy injected-RNG behavior behind an explicit version boundary", () => {
+    const base = system({ transforms: sierpinskiTetrahedron() });
+    expect(mutateSystemSeeded(base, request)).not.toEqual(
+      mutateSystem(base, mulberry32(request.nodeSeed), {
+        wildcard: request.profile.wildcard,
+      }),
+    );
+    expect(() =>
+      mutateSystemSeeded(base, {
+        ...request,
+        algorithmVersion: 2 as typeof SEEDED_MUTATION_ALGORITHM_VERSION,
+      }),
+    ).toThrow("Unsupported seeded mutation algorithm version: 2");
   });
 });
