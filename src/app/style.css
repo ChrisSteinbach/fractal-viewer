@@ -1996,6 +1996,42 @@ summary.editor-group-title {
   gap: 8px;
 }
 
+.evolution-compare-collection,
+.evolution-breed {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 8px;
+  align-items: end;
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.evolution-compare-collection > label,
+.evolution-breed > label {
+  grid-column: 1 / -1;
+  color: var(--text-faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.evolution-compare-select {
+  width: 100%;
+  min-height: 44px;
+}
+
+.evolution-breed {
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: 10px;
+}
+
+.evolution-breed .evolution-action-button {
+  align-self: stretch;
+}
+
 .evolution-compare-slot {
   min-width: 0;
   padding: 8px;
@@ -2026,6 +2062,10 @@ summary.editor-group-title {
   margin: 0;
   padding: 6px 9px;
   font-size: 11px;
+}
+
+.evolution-compare-collection .evolution-compare-actions {
+  flex-wrap: nowrap;
 }
 
 .evolution-compare-footer {
@@ -2131,6 +2171,11 @@ summary.editor-group-title {
   }
 
   .evolution-compare-slots {
+    grid-template-columns: 1fr;
+  }
+
+  .evolution-compare-collection,
+  .evolution-breed {
     grid-template-columns: 1fr;
   }
 }

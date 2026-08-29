@@ -37,6 +37,27 @@ function accepted(
 }
 
 describe("crossover-v1 strict candidate gate", () => {
+  it.each([
+    ["non-boolean Surface policy", { ...REQUEST, surfaceRequired: 1 }],
+    ["negative-zero ordinal", { ...REQUEST, childOrdinal: -0 }],
+  ])(
+    "refuses an invalid request before producing a candidate: %s",
+    (_name, request) => {
+      const result = createEvolutionCrossoverCandidate(
+        { snapshot: snapshot() },
+        { snapshot: snapshot() },
+        request as unknown as EvolutionCrossoverCandidateRequest,
+      );
+      expect(result).toMatchObject({
+        accepted: false,
+        rejection: {
+          reason: "preflight-refusal",
+          refusal: { code: "invalid-coordinates" },
+        },
+      });
+    },
+  );
+
   it("returns the first deterministic two-probe exact document with complete provenance", () => {
     const primary = snapshot();
     const secondary = snapshot();

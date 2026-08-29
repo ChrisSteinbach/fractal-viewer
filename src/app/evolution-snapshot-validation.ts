@@ -322,9 +322,21 @@ function object(
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`${path} must be an object`);
   }
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${path} must be a plain object`);
+  }
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== "string" || !Object.hasOwn(fields, key)) {
       throw new TypeError(`${path}.${String(key)} is not a crossover-v1 field`);
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      !descriptor.enumerable
+    ) {
+      throw new TypeError(`${path}.${key} must be an enumerable data field`);
     }
   }
   return value as Record<string, unknown>;
@@ -332,6 +344,9 @@ function object(
 
 function array(value: unknown, path: string): unknown[] {
   if (!Array.isArray(value)) throw new TypeError(`${path} must be an array`);
+  if (Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new TypeError(`${path} must be a plain array`);
+  }
   for (const key of Reflect.ownKeys(value)) {
     if (key === "length") continue;
     if (
@@ -340,6 +355,14 @@ function array(value: unknown, path: string): unknown[] {
       Number(key) >= value.length
     ) {
       throw new TypeError(`${path}.${String(key)} is not an array index`);
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      !descriptor.enumerable
+    ) {
+      throw new TypeError(`${path}[${key}] must be an enumerable data entry`);
     }
   }
   for (let index = 0; index < value.length; index += 1) {

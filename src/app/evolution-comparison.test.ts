@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EvolutionComparisonSession,
+  evolutionComparisonEndpointMatchesSnapshot,
   type EvolutionComparisonEndpoint,
   type EvolutionExternalComparisonEndpointInput,
 } from "./evolution-comparison";
@@ -54,6 +55,36 @@ function branch() {
 }
 
 describe("EvolutionComparisonSession", () => {
+  it("reconciles by exact content rather than non-canonical portable bytes", () => {
+    const { lineage, comparison, rootId } = branch();
+    const snapshot = toSnapshot(initialState(true));
+    comparison.pinExternal("A", {
+      ...externalInput("alternate-wire", snapshot),
+      encodedScene: "v1=valid-but-not-canonical-for-this-document",
+    });
+    const external = comparison.resolve("A");
+    if (external.state !== "available") throw new Error("expected endpoint");
+    expect(
+      evolutionComparisonEndpointMatchesSnapshot(external.endpoint, snapshot),
+    ).toBe(true);
+
+    comparison.pin("B", rootId);
+    const retained = comparison.resolve("B");
+    if (retained.state !== "available") throw new Error("expected endpoint");
+    expect(
+      evolutionComparisonEndpointMatchesSnapshot(
+        retained.endpoint,
+        lineage.node(rootId)!.snapshot,
+      ),
+    ).toBe(true);
+
+    const changed = toSnapshot(initialState(true));
+    changed.transforms[0].position[0] = 0.25;
+    expect(
+      evolutionComparisonEndpointMatchesSnapshot(external.endpoint, changed),
+    ).toBe(false);
+  });
+
   it("pins, replaces, clears, and visibly resolves a pruned endpoint", () => {
     const { lineage, comparison, rootId, firstId, secondId } = branch();
 

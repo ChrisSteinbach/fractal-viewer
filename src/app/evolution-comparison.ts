@@ -57,6 +57,26 @@ export interface EvolutionLineageComparisonEndpoint {
 export type EvolutionComparisonEndpoint =
   EvolutionLineageComparisonEndpoint | EvolutionExternalComparisonEndpoint;
 
+/** Compare semantic exact authority rather than portable wire bytes. Valid
+ * legacy or differently formatted encodings may decode to the same document,
+ * while content identity is deliberately independent of that representation. */
+export function evolutionComparisonEndpointMatchesSnapshot(
+  endpoint: EvolutionComparisonEndpoint,
+  snapshot: SceneSnapshot | ImmutableSceneSnapshot,
+): boolean {
+  try {
+    const digest = evolutionSceneContentDigest(snapshot);
+    return (
+      digest ===
+      (endpoint.kind === "lineage"
+        ? endpoint.node.contentDigest
+        : endpoint.contentDigest)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export type EvolutionComparisonPin =
   | { readonly state: "empty" }
   | {

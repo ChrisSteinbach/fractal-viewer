@@ -236,6 +236,66 @@ describe("crossover-v1 exact SceneSnapshot validation", () => {
   });
 
   it.each<[string, Corruption]>([
+    [
+      "Date in an all-optional block",
+      (s) => (record(s).condensationDepthBand = new Date(0)),
+    ],
+    [
+      "Map in an all-optional block",
+      (s) => (record(s.transforms[0]).finish = new Map()),
+    ],
+    [
+      "custom record prototype",
+      (s) => {
+        const band = s.condensationDepthBand!;
+        record(s).condensationDepthBand = Object.assign(
+          Object.create({ inherited: true }) as Record<string, unknown>,
+          band,
+        );
+      },
+    ],
+    [
+      "accessor field",
+      (s) => {
+        Object.defineProperty(s.condensationDepthBand!, "maxDepth", {
+          enumerable: true,
+          get: () => 5,
+        });
+      },
+    ],
+    [
+      "non-enumerable record field",
+      (s) => {
+        Object.defineProperty(s, "condensationDepthBand", {
+          configurable: true,
+          enumerable: false,
+          value: s.condensationDepthBand,
+          writable: true,
+        });
+      },
+    ],
+    [
+      "non-enumerable array entry",
+      (s) => {
+        Object.defineProperty(s.transforms[0].position, "0", {
+          configurable: true,
+          enumerable: false,
+          value: 0,
+          writable: true,
+        });
+      },
+    ],
+    [
+      "custom array prototype",
+      (s) => {
+        Object.setPrototypeOf(s.transforms[0].position, Object.create(null));
+      },
+    ],
+  ])("rejects exotic authority structure: %s", (_name, change) => {
+    expectPreflightRefusal(change);
+  });
+
+  it.each<[string, Corruption]>([
     ["SceneSnapshot", (s) => Object.assign(s, { futureScene: 1 })],
     ["Transform", (s) => Object.assign(s.transforms[0], { futureMap: 1 })],
     ["Variation", (s) => Object.assign(variation(s), { futureVariation: 1 })],

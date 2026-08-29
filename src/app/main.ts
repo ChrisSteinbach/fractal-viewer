@@ -154,8 +154,20 @@ import {
 import { EvolutionWorkspaceSelection } from "./evolution-workspace";
 import {
   EvolutionComparisonSession,
+  evolutionComparisonEndpointMatchesSnapshot,
+  type EvolutionComparisonEndpoint,
   type EvolutionComparisonSlot,
 } from "./evolution-comparison";
+import { acquireEvolutionCollectionParent } from "./evolution-collection-parent";
+import {
+  CROSSOVER_ALGORITHM_VERSION,
+  deriveCrossoverSeed32,
+  prepareEvolutionCrossover,
+  type EvolutionCrossoverParentInput,
+  type EvolutionTopologyV1,
+  type SceneContentDigest,
+} from "./evolution-crossover";
+import { createEvolutionCrossoverCandidate } from "./evolution-crossover-candidate";
 import { evaluateEvolutionSurfaceAdmission } from "./evolution-surface-constraint";
 import {
   evolutionChildOrdinal,
@@ -208,6 +220,7 @@ import {
   setPinnedCustomMeshAssets,
   serializeCustomMeshAsset,
   serializeMeshSdfBake,
+  type CustomMeshAssetId,
   type SerializedMeshSdfBake,
   type SerializedPreparedMeshAsset,
   touchInstalledCustomMeshAssets,
@@ -7336,21 +7349,28 @@ async function main(): Promise<void> {
   let evolutionWorkspace: EvolutionWorkspaceSelection | null = null;
   let evolutionComparison: EvolutionComparisonSession | null = null;
   const evolutionNodeReleases = new Map<string, () => void>();
+  const evolutionExternalReleases = new Map<string, () => void>();
   const evolutionNextOrdinal = new Map<string, number>();
+  const evolutionNextCrossoverOrdinal = new Map<string, number>();
   const evolutionChosenBranches = new Map<string, string>();
   const evolutionLockedDomains = new Set<MutationDomain>();
   let evolutionSurfaceConstraintEnabled = false;
   let evolutionRootSurfaceEligibility: SurfaceEligibilityResult | null = null;
   let evolutionBuildToken = 0;
   let evolutionTopologyCounter = 0;
+  let evolutionExternalAuthorityCounter = 0;
+  let evolutionCollectionPinTicket = 0;
   let mutationVisibleNodeIds: (string | undefined)[] = [];
   let evolutionBusy = false;
   let evolutionGenerating = false;
+  let evolutionBreeding = false;
   let evolutionSelectionTicket = 0;
   let evolutionComparisonAnimate = true;
   let evolutionComparisonPending = false;
   let evolutionComparisonStatus =
     "Pin the selected node as A or B to compare it full-canvas.";
+  let evolutionBreedStatus =
+    "Pin two compatible endpoints, choose their order, then breed a quality-gated child.";
 
   function deriveEvolutionSeed(parts: readonly (number | string)[]): number {
     let hash = 0x811c9dc5;
@@ -7416,10 +7436,7 @@ async function main(): Promise<void> {
     };
   }
 
-  function topologyProfile(node: LineageNode): {
-    token: string;
-    slotKeys: string[];
-  } {
+  function topologyProfile(node: LineageNode): EvolutionTopologyV1 {
     const token = node.profile.topologyToken;
     const keys = node.profile.topologySlotKeys;
     if (
@@ -7431,7 +7448,7 @@ async function main(): Promise<void> {
     ) {
       throw new Error("Lineage topology metadata is invalid");
     }
-    return { token, slotKeys: [...(keys as readonly string[])] };
+    return { version: 1, token, slotKeys: [...(keys as readonly string[])] };
   }
 
   function rootEvolutionProfile(snapshot: SceneSnapshot): LineageProfile {
@@ -7471,6 +7488,13 @@ async function main(): Promise<void> {
     release();
   }
 
+  function releaseEvolutionExternalAuthority(authorityId: string): void {
+    const release = evolutionExternalReleases.get(authorityId);
+    if (!release) return;
+    evolutionExternalReleases.delete(authorityId);
+    release();
+  }
+
   function createOrResetEvolutionRoot(): boolean {
     const replacesExistingLineage = evolutionLineage !== null;
     const snapshot = currentDocument();
@@ -7502,7 +7526,10 @@ async function main(): Promise<void> {
           onRelease: (node) => releaseEvolutionNode(node.id),
         });
         evolutionWorkspace = new EvolutionWorkspaceSelection(evolutionLineage);
-        evolutionComparison = new EvolutionComparisonSession(evolutionLineage);
+        evolutionComparison = new EvolutionComparisonSession(evolutionLineage, {
+          onExternalRelease: (endpoint) =>
+            releaseEvolutionExternalAuthority(endpoint.authorityId),
+        });
       } else {
         evolutionWorkspace?.cancelPending();
         evolutionComparison?.invalidateDisplay();
@@ -7511,14 +7538,23 @@ async function main(): Promise<void> {
       }
       evolutionNodeReleases.set(evolutionLineage.currentId!, release);
       evolutionNextOrdinal.clear();
+      evolutionNextCrossoverOrdinal.clear();
       evolutionChosenBranches.clear();
       evolutionRootSurfaceEligibility = rootSurfaceEligibility;
       // The policy belongs to this root, not to the browser or the previous
       // lineage. Every successful reset starts with an explicit opt-in.
       evolutionSurfaceConstraintEnabled = false;
+      const externalPins = (["A", "B"] as const).filter((slot) => {
+        const pin = evolutionComparison?.resolve(slot);
+        return pin?.state === "available" && pin.endpoint.kind === "external";
+      });
       evolutionComparisonStatus = replacesExistingLineage
-        ? "Pins from the previous root now resolve as missing; pin this selected root to replace them."
+        ? externalPins.length > 0
+          ? "Collection pins remain available; retained pins from the previous root now resolve as missing."
+          : "Retained pins from the previous root now resolve as missing; pin this selected root to replace them."
         : "Pin the selected node as A or B to compare it full-canvas.";
+      evolutionBreedStatus =
+        "Pin two compatible endpoints, choose their order, then breed a quality-gated child.";
       evolutionBuildToken += 1;
       return true;
     } catch (error) {
@@ -7546,6 +7582,114 @@ async function main(): Promise<void> {
     const preferred = evolutionLineage?.preferredChildId(current.id);
     if (preferred && current.childIds.includes(preferred)) return preferred;
     return current.childIds[0] ?? null;
+  }
+
+  function evolutionEndpointLabel(
+    slot: EvolutionComparisonSlot,
+    endpoint: EvolutionComparisonEndpoint,
+  ): string {
+    if (endpoint.kind === "external") {
+      return `${slot} · ${endpoint.label} · Collection`;
+    }
+    return `${slot} · ${endpoint.node.id} · ${
+      endpoint.node.kind === "root"
+        ? "Root"
+        : mutationNodeLabel(endpoint.node, 0)
+    }`;
+  }
+
+  function availableEvolutionParents():
+    readonly [EvolutionComparisonEndpoint, EvolutionComparisonEndpoint] | null {
+    const comparison = evolutionComparison;
+    if (!comparison) return null;
+    const primary = comparison.resolve("A");
+    const secondary = comparison.resolve("B");
+    if (primary.state !== "available" || secondary.state !== "available") {
+      return null;
+    }
+    return [primary.endpoint, secondary.endpoint];
+  }
+
+  function evolutionEndpointDigest(
+    endpoint: EvolutionComparisonEndpoint,
+  ): SceneContentDigest {
+    return endpoint.kind === "lineage"
+      ? endpoint.node.contentDigest
+      : endpoint.contentDigest;
+  }
+
+  function evolutionEndpointResources(
+    endpoint: EvolutionComparisonEndpoint,
+  ): readonly CustomMeshAssetId[] {
+    return endpoint.kind === "lineage"
+      ? sceneCustomMeshIds(endpoint.node.snapshot as unknown as SceneSnapshot)
+      : endpoint.resourceIds;
+  }
+
+  function evolutionCrossoverParent(
+    endpoint: EvolutionComparisonEndpoint,
+  ): EvolutionCrossoverParentInput {
+    return endpoint.kind === "lineage"
+      ? {
+          snapshot: endpoint.node.snapshot,
+          topology: topologyProfile(endpoint.node),
+        }
+      : { snapshot: endpoint.snapshot };
+  }
+
+  function sameEvolutionEndpoint(
+    first: EvolutionComparisonEndpoint,
+    second: EvolutionComparisonEndpoint,
+  ): boolean {
+    return first.kind === "lineage" && second.kind === "lineage"
+      ? first.nodeId === second.nodeId
+      : first.kind === "external" && second.kind === "external"
+        ? first.authorityId === second.authorityId
+        : false;
+  }
+
+  function evolutionBreedAvailability(): {
+    ready: boolean;
+    note: string;
+  } {
+    if (evolutionLineage && evolutionLineage.size >= evolutionLineage.nodeCap) {
+      return {
+        ready: false,
+        note: "Lineage cap reached. Prune a branch or start a new root before breeding.",
+      };
+    }
+    const parents = availableEvolutionParents();
+    if (!parents) {
+      return {
+        ready: false,
+        note: "Pin two available endpoints before breeding.",
+      };
+    }
+    if (
+      parents[0].kind === "lineage" &&
+      parents[1].kind === "lineage" &&
+      parents[0].nodeId === parents[1].nodeId
+    ) {
+      return {
+        ready: false,
+        note: "A and B must name different retained nodes.",
+      };
+    }
+    const availableResourceIds = new Set(
+      parents.flatMap((endpoint) => [...evolutionEndpointResources(endpoint)]),
+    );
+    const preflight = prepareEvolutionCrossover(
+      evolutionCrossoverParent(parents[0]),
+      evolutionCrossoverParent(parents[1]),
+      { availableResourceIds },
+    );
+    if (!preflight.accepted) {
+      return {
+        ready: false,
+        note: `These endpoints cannot breed: ${preflight.refusal.detail}.`,
+      };
+    }
+    return { ready: true, note: evolutionBreedStatus };
   }
 
   function syncEvolutionWorkspace(status?: string): void {
@@ -7577,9 +7721,7 @@ async function main(): Promise<void> {
       return {
         slot,
         state: pin.state,
-        label: `${slot} · ${pin.node.id} · ${
-          pin.node.kind === "root" ? "Root" : mutationNodeLabel(pin.node, 0)
-        }`,
+        label: evolutionEndpointLabel(slot, pin.endpoint),
       };
     });
     const comparisonActive = comparison?.activeSlot ?? null;
@@ -7588,9 +7730,10 @@ async function main(): Promise<void> {
       ? evolutionComparisonStatus
       : activeComparison
         ? activeComparison.pin.state === "available"
-          ? `Full canvas displays ${activeComparison.slot} · ${activeComparison.pin.node.id}; lineage selection remains ${current.id}. Comparison only.`
+          ? `Full canvas displays ${evolutionEndpointLabel(activeComparison.slot, activeComparison.pin.endpoint)}; lineage selection remains ${current.id}. Comparison only.`
           : `Full canvas displays former ${activeComparison.slot}, but that pin is missing/pruned. Exit comparison to restore selected ${current.id}.`
         : evolutionComparisonStatus;
+    const breedAvailability = evolutionBreedAvailability();
     ui.setEvolutionWorkspace({
       detached: workspace.detached,
       busy: evolutionBusy,
@@ -7598,6 +7741,13 @@ async function main(): Promise<void> {
       nodeCap: lineage.nodeCap,
       currentLabel:
         current.kind === "root" ? "current root" : `current ${current.id}`,
+      backLabel:
+        current.kind === "crossover" &&
+        current.geneticParents.every((parent) => parent.kind === "external")
+          ? "← Workspace anchor"
+          : current.kind === "crossover"
+            ? "← Retained parent"
+            : "← Parent",
       canBack: current.parentIds.length > 0,
       canForward: branch !== null,
       branches,
@@ -7616,6 +7766,12 @@ async function main(): Promise<void> {
       comparisonPending: evolutionComparisonPending,
       comparisonAnimate: evolutionComparisonAnimate,
       comparisonStatus,
+      collectionScenes: collection.all().map((entry) => ({
+        id: entry.id,
+        label: collectionEvolutionLabel(entry.createdAt),
+      })),
+      breedReady: breedAvailability.ready,
+      breedStatus: breedAvailability.note,
       status:
         status ??
         (workspace.detached
@@ -7631,6 +7787,10 @@ async function main(): Promise<void> {
     evolutionBuildToken += 1;
     if (evolutionGenerating) {
       evolutionGenerating = false;
+      evolutionBusy = false;
+    }
+    if (evolutionBreeding) {
+      evolutionBreeding = false;
       evolutionBusy = false;
     }
     mutationVisibleNodeIds = [];
@@ -7675,6 +7835,7 @@ async function main(): Promise<void> {
       return;
     }
     const token = ++evolutionBuildToken;
+    evolutionBreeding = false;
     const parentId = parent.id;
     const baseOrdinal = evolutionNextOrdinal.get(parentId) ?? 0;
     evolutionNextOrdinal.set(
@@ -7854,6 +8015,7 @@ async function main(): Promise<void> {
     const selectionTicket = ++evolutionSelectionTicket;
     evolutionBuildToken += 1;
     evolutionGenerating = false;
+    evolutionBreeding = false;
     evolutionBusy = true;
     syncEvolutionWorkspace("Loading exact retained scene…");
     void workspace
@@ -7910,8 +8072,10 @@ async function main(): Promise<void> {
     const comparison = evolutionComparison;
     const workspace = evolutionWorkspace;
     if (!comparison || !workspace || workspace.detached) return;
+    evolutionCollectionPinTicket += 1;
     evolutionBuildToken += 1;
     evolutionGenerating = false;
+    evolutionBreeding = false;
     evolutionBusy = true;
     evolutionComparisonPending = true;
     evolutionComparisonStatus = comparison.activeSlot
@@ -7919,9 +8083,11 @@ async function main(): Promise<void> {
       : `The selected node remains on canvas while pinned ${slot} loads through the exact scene path.`;
     syncEvolutionWorkspace();
     void comparison
-      .show(slot, (node) =>
+      .show(slot, (endpoint) =>
         loadSceneSnapshot(
-          node.snapshot as SceneSnapshot,
+          (endpoint.kind === "lineage"
+            ? endpoint.node.snapshot
+            : endpoint.snapshot) as SceneSnapshot,
           false,
           evolutionComparisonAnimate,
         ),
@@ -7934,7 +8100,7 @@ async function main(): Promise<void> {
           if (result.reason === "pruned-after-load") {
             comparison.invalidateDisplay();
             workspace.noteOutsideEdit();
-            evolutionComparisonStatus = `${slot} was pruned while loading. The displayed scene is detached; start a new root or exit recovery.`;
+            evolutionComparisonStatus = `${slot} changed or was pruned while loading. The displayed scene is detached; start a new root or exit recovery.`;
             renderEvolutionNeighborhood();
             return;
           }
@@ -7967,6 +8133,7 @@ async function main(): Promise<void> {
     }
     evolutionBuildToken += 1;
     evolutionGenerating = false;
+    evolutionBreeding = false;
     evolutionBusy = true;
     evolutionComparisonPending = true;
     evolutionComparisonStatus = `Full canvas remains ${comparison.activeSlot ?? "on its current scene"} while selected ${selected.id} is restored.`;
@@ -7998,11 +8165,269 @@ async function main(): Promise<void> {
       });
   }
 
+  function collectionEvolutionLabel(createdAt: number): string {
+    return `Saved ${new Date(createdAt).toLocaleString()}`;
+  }
+
+  async function pinEvolutionCollectionScene(
+    slot: EvolutionComparisonSlot,
+    collectionId: string,
+  ): Promise<void> {
+    const comparison = evolutionComparison;
+    const workspace = evolutionWorkspace;
+    const entry = collection
+      .all()
+      .find((candidate) => candidate.id === collectionId);
+    if (
+      !comparison ||
+      !workspace ||
+      workspace.detached ||
+      comparison.activeSlot !== null ||
+      evolutionComparisonPending ||
+      evolutionBusy ||
+      !entry
+    ) {
+      return;
+    }
+    const ticket = ++evolutionCollectionPinTicket;
+    const authorityId = `collection-authority-${String(evolutionExternalAuthorityCounter++)}`;
+    const label = collectionEvolutionLabel(entry.createdAt);
+    evolutionBusy = true;
+    evolutionComparisonStatus = `Acquiring ${label} as exact endpoint ${slot}…`;
+    syncEvolutionWorkspace();
+    const result = await acquireEvolutionCollectionParent(
+      { encoded: entry.encoded },
+      { authorityId, label },
+      {
+        pin: (resourceIds) => pinCustomMeshAssets(resourceIds),
+        hydrate: async (resourceIds) => {
+          if (resourceIds.length > 0) {
+            await hydrateCustomMeshIds(resourceIds, assetStore());
+          }
+        },
+      },
+    );
+    if (
+      ticket !== evolutionCollectionPinTicket ||
+      comparison !== evolutionComparison ||
+      workspace !== evolutionWorkspace
+    ) {
+      if (result.acquired) result.parent.release();
+      return;
+    }
+    evolutionBusy = false;
+    if (!result.acquired) {
+      evolutionComparisonStatus = `Collection endpoint ${slot} was not acquired: ${result.detail}.`;
+      syncEvolutionWorkspace();
+      return;
+    }
+    evolutionExternalReleases.set(authorityId, result.parent.release);
+    try {
+      comparison.pinExternal(slot, result.parent.endpoint);
+    } catch (error) {
+      releaseEvolutionExternalAuthority(authorityId);
+      evolutionComparisonStatus = `Collection endpoint ${slot} was not pinned: ${
+        error instanceof Error ? error.message : "invalid authority"
+      }.`;
+      syncEvolutionWorkspace();
+      return;
+    }
+    evolutionComparisonStatus = `${slot} pinned to ${label}; the Collection entry may now change without altering this exact authority.`;
+    evolutionBreedStatus =
+      "Choose which pinned endpoint is primary, then breed a quality-gated child.";
+    syncEvolutionWorkspace();
+  }
+
+  function crossoverRejectionNote(
+    result: Exclude<
+      ReturnType<typeof createEvolutionCrossoverCandidate>,
+      { readonly accepted: true }
+    >,
+  ): string {
+    if (result.rejection.reason === "preflight-refusal") {
+      return result.rejection.refusal.detail;
+    }
+    const last = result.rejection.attempts.at(-1);
+    if (!last) return "all deterministic attempts were rejected";
+    switch (last.reason) {
+      case "kernel-refusal":
+        return last.refusal.detail;
+      case "quality-below-threshold":
+        return "all deterministic attempts fell below the strict quality threshold";
+      case "quality-error":
+        return last.detail;
+      case "surface-incompatible":
+        return (
+          last.eligibility.note ??
+          "all deterministic attempts lacked a supported Surface route"
+        );
+    }
+  }
+
+  function requestEvolutionBreed(primarySlot: EvolutionComparisonSlot): void {
+    const comparison = evolutionComparison;
+    const lineage = evolutionLineage;
+    const workspace = evolutionWorkspace;
+    const selected = lineage?.current() ?? null;
+    const parentsBySlot = availableEvolutionParents();
+    if (
+      !comparison ||
+      !lineage ||
+      !workspace ||
+      !selected ||
+      !parentsBySlot ||
+      workspace.detached ||
+      comparison.activeSlot !== null ||
+      evolutionComparisonPending ||
+      evolutionBusy ||
+      !evolutionBreedAvailability().ready
+    ) {
+      return;
+    }
+    const primary = primarySlot === "A" ? parentsBySlot[0] : parentsBySlot[1];
+    const secondary = primarySlot === "A" ? parentsBySlot[1] : parentsBySlot[0];
+    const primaryDigest = evolutionEndpointDigest(primary);
+    const secondaryDigest = evolutionEndpointDigest(secondary);
+    const pairKey = `${primaryDigest}\0${secondaryDigest}`;
+    const childOrdinal = evolutionNextCrossoverOrdinal.get(pairKey) ?? 0;
+    evolutionNextCrossoverOrdinal.set(pairKey, childOrdinal + 1);
+    const root = lineage.rootId ? lineage.node(lineage.rootId) : null;
+    if (!root) return;
+    const nodeSeed = deriveCrossoverSeed32([
+      "evolution-breed-session-v1",
+      root.seed,
+      primaryDigest,
+      secondaryDigest,
+      childOrdinal,
+    ]);
+    const token = ++evolutionBuildToken;
+    evolutionBreeding = true;
+    evolutionBusy = true;
+    evolutionBreedStatus = `Breeding ${primarySlot} primary with ${primarySlot === "A" ? "B" : "A"} secondary through deterministic quality gates…`;
+    syncEvolutionWorkspace();
+    requestAnimationFrame(() => {
+      const currentParents = availableEvolutionParents();
+      if (
+        token !== evolutionBuildToken ||
+        !evolutionBreeding ||
+        !currentParents ||
+        !sameEvolutionEndpoint(
+          primary,
+          primarySlot === "A" ? currentParents[0] : currentParents[1],
+        ) ||
+        !sameEvolutionEndpoint(
+          secondary,
+          primarySlot === "A" ? currentParents[1] : currentParents[0],
+        )
+      ) {
+        return;
+      }
+      const availableResourceIds = new Set([
+        ...evolutionEndpointResources(primary),
+        ...evolutionEndpointResources(secondary),
+      ]);
+      const result = createEvolutionCrossoverCandidate(
+        evolutionCrossoverParent(primary),
+        evolutionCrossoverParent(secondary),
+        {
+          algorithmVersion: CROSSOVER_ALGORITHM_VERSION,
+          nodeSeed,
+          childOrdinal,
+          surfaceRequired: evolutionSurfaceConstraintEnabled,
+        },
+        { availableResourceIds },
+      );
+      if (token !== evolutionBuildToken) return;
+      if (!result.accepted) {
+        evolutionBreeding = false;
+        evolutionBusy = false;
+        evolutionBreedStatus = `Breed refused: ${crossoverRejectionNote(result)}.`;
+        syncEvolutionWorkspace();
+        return;
+      }
+      const candidate = result.candidate;
+      const snapshot = candidate.snapshot as unknown as SceneSnapshot;
+      let release: () => void;
+      try {
+        release = pinCustomMeshAssets(candidate.resourceIds);
+      } catch (error) {
+        evolutionBreeding = false;
+        evolutionBusy = false;
+        evolutionBreedStatus = `Breed paused by the custom-mesh cap: ${
+          error instanceof Error ? error.message : "asset cache is busy"
+        }.`;
+        syncEvolutionWorkspace();
+        return;
+      }
+      let added: ReturnType<EvolutionLineage["addCrossover"]>;
+      try {
+        const graphParent = (
+          endpoint: EvolutionComparisonEndpoint,
+        ): Parameters<EvolutionLineage["addCrossover"]>[0][number] =>
+          endpoint.kind === "lineage"
+            ? { kind: "lineage", nodeId: endpoint.nodeId }
+            : {
+                kind: "external",
+                contentDigest: endpoint.contentDigest,
+              };
+        const graphParents: Parameters<EvolutionLineage["addCrossover"]>[0] = [
+          graphParent(primary),
+          graphParent(secondary),
+        ];
+        added = lineage.addCrossover(
+          graphParents,
+          {
+            encodedScene: encodeScene(snapshot),
+            snapshot,
+            thumbnail: evolutionThumbnail(
+              candidate.snapshot,
+              nodeSeed,
+              `breed:${String(childOrdinal)}`,
+            ),
+            seed: nodeSeed,
+            profile: {
+              algorithm: CROSSOVER_ALGORITHM_VERSION,
+              ...candidate.profile,
+            },
+            resourceIds: candidate.resourceIds,
+          },
+          primary.kind === "external" && secondary.kind === "external"
+            ? { navigationAnchorId: selected.id }
+            : {},
+        );
+      } catch (error) {
+        release();
+        evolutionBreeding = false;
+        evolutionBusy = false;
+        evolutionBreedStatus = `Breed was not retained: ${
+          error instanceof Error ? error.message : "invalid lineage state"
+        }.`;
+        syncEvolutionWorkspace();
+        return;
+      }
+      if (!added.added) {
+        release();
+        evolutionBreeding = false;
+        evolutionBusy = false;
+        evolutionBreedStatus = `Breed was not retained: lineage ${added.reason.replaceAll("-", " ")} reached.`;
+        syncEvolutionWorkspace();
+        return;
+      }
+      evolutionNodeReleases.set(added.node.id, release);
+      evolutionBreeding = false;
+      evolutionBusy = false;
+      evolutionBreedStatus = `Created ${added.node.id} from ordered ${primarySlot}/${primarySlot === "A" ? "B" : "A"} parents.`;
+      requestEvolutionNode(added.node.id);
+    });
+  }
+
   reconcileEvolutionDocument = (): void => {
     const workspace = evolutionWorkspace;
     if (!workspace) return;
+    evolutionCollectionPinTicket += 1;
     evolutionBuildToken += 1;
     evolutionGenerating = false;
+    evolutionBreeding = false;
     evolutionBusy = false;
     if (evolutionComparisonPending) {
       // An outside document edit wins over a comparison load that is still
@@ -8015,10 +8440,12 @@ async function main(): Promise<void> {
     }
     const activeComparison = evolutionComparison?.active();
     if (activeComparison) {
-      const displayedKey = encodeScene(currentDocument());
       if (
         activeComparison.pin.state === "available" &&
-        displayedKey === activeComparison.pin.node.encodedScene
+        evolutionComparisonEndpointMatchesSnapshot(
+          activeComparison.pin.endpoint,
+          currentDocument(),
+        )
       ) {
         if (ui.mutationsOpen()) renderEvolutionNeighborhood();
         return;
@@ -8556,6 +8983,7 @@ async function main(): Promise<void> {
       if (!lineage || !current?.childIds.includes(nodeId)) return;
       evolutionBuildToken += 1;
       evolutionGenerating = false;
+      evolutionBreeding = false;
       evolutionBusy = false;
       const result = lineage.prune(nodeId, current.id);
       if (!result.pruned) return;
@@ -8591,6 +9019,9 @@ async function main(): Promise<void> {
       const current = evolutionLineage?.current();
       if (!current || evolutionWorkspace?.detached !== false) return;
       saveDocumentToCollection(current.encodedScene);
+      syncEvolutionWorkspace(
+        "Saved the selected scene to Collection without lineage or ancestry.",
+      );
     },
     onEvolutionComparePin: (slot) => {
       const current = evolutionLineage?.current();
@@ -8606,7 +9037,12 @@ async function main(): Promise<void> {
       }
       if (!comparison.pin(slot, current.id)) return;
       evolutionComparisonStatus = `${slot} pinned to selected ${current.id}.`;
+      evolutionBreedStatus =
+        "Choose which pinned endpoint is primary, then breed a quality-gated child.";
       syncEvolutionWorkspace();
+    },
+    onEvolutionCompareCollectionPin: (slot, collectionId) => {
+      void pinEvolutionCollectionScene(slot, collectionId);
     },
     onEvolutionCompareShow: (slot) => requestEvolutionComparison(slot),
     onEvolutionCompareClear: (slot) => restoreEvolutionSelection(slot),
@@ -8618,12 +9054,20 @@ async function main(): Promise<void> {
         : "Comparison switches will snap to exact endpoints.";
       syncEvolutionWorkspace();
     },
+    onEvolutionBreed: (primarySlot) => requestEvolutionBreed(primarySlot),
     onEvolutionSurfaceConstraint: (enabled) => {
       if (evolutionComparison?.activeSlot !== null) return;
       const available =
         evolutionRootSurfaceEligibility !== null &&
         surfaceEligibilityHasRoute(evolutionRootSurfaceEligibility);
       evolutionSurfaceConstraintEnabled = enabled && available;
+      if (evolutionBreeding) {
+        evolutionBuildToken += 1;
+        evolutionBreeding = false;
+        evolutionBusy = false;
+        evolutionBreedStatus =
+          "Breed cancelled because the Surface-compatible policy changed.";
+      }
       if (evolutionGenerating) {
         renderEvolutionNeighborhood();
       }
@@ -8660,7 +9104,9 @@ async function main(): Promise<void> {
     onEvolutionClose: () => {
       evolutionModalOpen = false;
       evolutionBuildToken += 1;
+      evolutionCollectionPinTicket += 1;
       evolutionGenerating = false;
+      evolutionBreeding = false;
       evolutionBusy = false;
     },
     // The ambient drift show's toggle. Session-only, never persisted; the

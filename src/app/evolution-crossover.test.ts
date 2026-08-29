@@ -153,6 +153,21 @@ describe("crossover-v1 exact content identity", () => {
     parent.transforms[0].scale[0] = Number.NaN;
     expect(() => evolutionSceneContentDigest(parent)).toThrow(/finite/);
   });
+
+  it("rejects negative-zero ordinals before streams and topology can disagree", () => {
+    const plan = prepared({ snapshot: snapshot() }, { snapshot: snapshot() });
+    expect(
+      createEvolutionCrossoverAttempt(plan, {
+        algorithmVersion: CROSSOVER_ALGORITHM_VERSION,
+        nodeSeed: 1,
+        childOrdinal: -0,
+        attempt: 0,
+      }),
+    ).toMatchObject({
+      accepted: false,
+      refusal: { code: "invalid-coordinates" },
+    });
+  });
 });
 
 describe("crossover-v1 pairing and xaos", () => {

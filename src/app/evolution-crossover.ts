@@ -587,12 +587,14 @@ function validateCoordinates(
   if (
     !Number.isSafeInteger(coordinates.childOrdinal) ||
     coordinates.childOrdinal < 0 ||
+    Object.is(coordinates.childOrdinal, -0) ||
     !Number.isSafeInteger(coordinates.attempt) ||
-    coordinates.attempt < 0
+    coordinates.attempt < 0 ||
+    Object.is(coordinates.attempt, -0)
   ) {
     return refusal(
       "invalid-coordinates",
-      "childOrdinal and attempt must be non-negative safe integers",
+      "childOrdinal and attempt must be canonical non-negative safe integers",
     );
   }
   return null;

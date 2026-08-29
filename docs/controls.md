@@ -981,22 +981,40 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   document matches a retained node; otherwise the Lab visibly detaches and
   offers a new root.
 
-  **Compare pinned endpoints** keeps two session-local references, A and B.
+  **Compare and breed** keeps two session-local references, A and B.
   **Pin selected as A/B** replaces that pin with the graph-selected node;
   empty pins and pins removed by prune or root reset are identified directly.
-  **Show A/B** loads the node's exact unrounded scene and saved camera/4D view
-  full-canvas without moving lineage selection or changing its navigation
+  The Collection picker can instead acquire one saved scene as an exact,
+  immutable A or B authority without loading it onto the canvas. Its custom
+  meshes are staged before the pin changes. That authority survives later
+  Collection deletion and lineage reset until it is replaced or cleared.
+  **Show A/B** loads the endpoint's exact unrounded scene and saved camera/4D
+  view full-canvas without moving lineage selection or changing its navigation
   history. While an endpoint is displayed, the compact comparison controller
   remains visible and names both the displayed pin and the still-selected
   node. **Animate switches** reuses the ordinary system morph strictly as
-  comparison feedback—never as breeding—and the operating system's reduced-
-  motion preference still snaps. The existing morph handles 3D↔3D, 3D↔4D,
-  4D↔4D, unequal map counts, and structurally incompatible shape blocks; its
-  endpoints remain exact. Rapid switches are latest-wins, and custom-mesh
-  residency is checked by the same load path before the canvas changes.
-  **Exit comparison**, Close, Escape, or the backdrop first restores the exact
-  selected node. A failed restore or an outside edit ends the override and
-  visibly detaches instead of pretending the canvas still matches selection.
+  comparison feedback—not as the crossover algorithm—and the operating
+  system's reduced-motion preference still snaps. The existing morph handles
+  3D↔3D, 3D↔4D, 4D↔4D, unequal map counts, and structurally incompatible shape
+  blocks; its endpoints remain exact. Rapid switches are latest-wins, and
+  custom-mesh residency is checked by the same load path before the canvas
+  changes. **Exit comparison**, Close, Escape, or the backdrop first restores
+  the exact selected node. A failed restore or an outside edit ends the
+  override and visibly detaches instead of pretending the canvas still matches
+  selection.
+
+  **Ordered parents** makes primary and secondary ownership explicit before
+  **Breed child** runs the versioned `crossover-v1` policy. Certified relatives
+  pair by their session-only topology keys; unrelated roots and Collection
+  scenes require equal map and emitter-role counts and pair in stable role
+  order. Whole authored blocks are inherited independently, both Xaos axes are
+  remapped, and fresh map IDs are assigned. The result must pass the same strict
+  two-probe quality gate, the custom-mesh budget, and—when enabled—the neutral
+  Surface gate before it can become a node. Parent order, content digests, seed,
+  ordinal, accepted attempt, pairing kind, and resulting topology are retained
+  as session provenance. A two-Collection child returns through its visibly
+  named **Workspace anchor**; that navigation edge is not presented as genetic
+  ancestry.
 
   Nothing is added to Collection implicitly. **Save current to Collection** is
   the only promotion action, and lineage/provenance never enters autosave,
