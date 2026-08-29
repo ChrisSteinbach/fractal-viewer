@@ -2913,6 +2913,25 @@
             New root from displayed scene
           </button>
         </div>
+        <div class="evolution-surface-constraint">
+          <label>
+            <input
+              id="evolutionSurfaceCompatible"
+              type="checkbox"
+              aria-describedby="evolutionSurfaceCompatibilityNote"
+            />
+            Surface-compatible children only
+          </label>
+          <p
+            id="evolutionSurfaceCompatibilityNote"
+            class="mutation-hint"
+            role="status"
+            aria-live="polite"
+          >
+            Future children must have a supported Surface route; degraded routes
+            are allowed.
+          </p>
+        </div>
         <details id="evolutionLocks" class="evolution-locks">
           <summary class="evolution-locks-summary">
             Keep traits unchanged

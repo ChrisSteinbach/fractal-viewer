@@ -11,6 +11,7 @@ import {
   type EvolutionMutationCandidate,
   type EvolutionMutationCandidateResult,
 } from "./evolution-candidate";
+import { evaluateEvolutionSurfaceAdmission } from "./evolution-surface-constraint";
 
 const REQUEST = {
   algorithmVersion: SEEDED_MUTATION_ALGORITHM_VERSION,
@@ -178,6 +179,32 @@ describe("Evolution exact-document mutation candidates", () => {
     expect(
       accepted(createEvolutionMutationCandidate(parent, REQUEST)).snapshot,
     ).not.toEqual(accepted(after).snapshot);
+  });
+
+  it("does not perturb a later child stream when Surface admission rejects a sibling", () => {
+    const parent = scheduledParent();
+    const laterRequest = { ...REQUEST, childOrdinal: 11 };
+    const before = createEvolutionMutationCandidate(parent, laterRequest);
+
+    const refusal = evaluateEvolutionSurfaceAdmission(
+      {
+        transforms: [
+          {
+            id: 1,
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            variations: [{ type: "qsquare", weight: 1 }],
+          },
+        ],
+        symmetry: { order: 1, plane: "xy" },
+      },
+      true,
+    );
+    expect(refusal.admitted).toBe(false);
+
+    const after = createEvolutionMutationCandidate(parent, laterRequest);
+    expect(after).toEqual(before);
   });
 
   it("includes the carried effective schedule in strict quality scoring", () => {
