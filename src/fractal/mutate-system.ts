@@ -24,6 +24,7 @@
  */
 import type { MorphSystem } from "./morph";
 import { MIN_OCCUPIED_CELLS, scoreSystem } from "./random-system";
+import { mulberry32 } from "./rng";
 import type { Rng } from "./rng";
 import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
 import {
@@ -55,6 +56,66 @@ import { clamp } from "./vec";
 export interface MutationOptions {
   /** One "wildcard" cell per grid: jitter scaled up plus one structural kick. */
   wildcard?: boolean;
+}
+
+/**
+ * The stable wire/version boundary for {@link mutateSystemSeeded}. Changing
+ * a derived-stream name, field assignment, jitter rule, or retry-selection
+ * rule requires a new version instead of silently changing existing lineage
+ * nodes. The injected-RNG {@link mutateSystem} API above remains the legacy
+ * compatibility profile and deliberately does not claim this version.
+ */
+export const SEEDED_MUTATION_ALGORITHM_VERSION = 1 as const;
+export type SeededMutationAlgorithmVersion =
+  typeof SEEDED_MUTATION_ALGORITHM_VERSION;
+
+/**
+ * Lockable mutation domains. Every field currently mutated by the legacy
+ * kernel has exactly one owner:
+ *
+ * - `spatialGeometry`: position, rotation, scale, shear, and the affine
+ *   wildcard rotation reroll;
+ * - `nonlinearVariations`: base-map variation weights/fold parameters and a
+ *   wildcard variation-type swap;
+ * - `finalLens`: final-transform variation weights/fold parameters;
+ * - `fourDExtension`: authored leaves of a base map's `w` block;
+ * - `mapSelectionXaos`: authored map weight and authored chaos-row entries;
+ * - `appearance`: authored color index/speed, finish, and surface pattern.
+ *
+ * Symmetry and emitters are pass-through structure, not mutation knobs in
+ * version 1. Absent optional fields remain absent. The wildcard may replace
+ * the type of an existing nonlinear entry, but never creates an entry or an
+ * optional block.
+ */
+export const MUTATION_DOMAINS = [
+  "spatialGeometry",
+  "nonlinearVariations",
+  "finalLens",
+  "fourDExtension",
+  "mapSelectionXaos",
+  "appearance",
+] as const;
+export type MutationDomain = (typeof MUTATION_DOMAINS)[number];
+
+/** Serializable controls stored with a deterministic mutation node. */
+export interface SeededMutationProfile {
+  /** Widen all jitters and apply one domain-owned structural kick. */
+  wildcard?: boolean;
+  /** Domains copied structurally unchanged from the parent. */
+  lockedDomains?: readonly MutationDomain[];
+}
+
+/**
+ * Reproduction coordinates for one deterministic mutation child. All
+ * derived streams include every field here plus attempt, domain, and stable
+ * map key. `algorithmVersion` is required so persisted callers cannot
+ * accidentally opt into a future algorithm by omission.
+ */
+export interface SeededMutationRequest {
+  algorithmVersion: SeededMutationAlgorithmVersion;
+  nodeSeed: number;
+  childOrdinal: number;
+  profile?: SeededMutationProfile;
 }
 
 const TWO_PI = Math.PI * 2;
@@ -1032,4 +1093,449 @@ export function mutateSystem(
     }
   }
   return best;
+}
+
+/** Internal stream name used only to choose which map receives a wildcard.
+ * It owns no document field; the chosen action is subsequently performed by
+ * either `spatialGeometry` or `nonlinearVariations` and obeys that lock. */
+const WILDCARD_PLAN_STREAM = "wildcardPlan";
+/** Quality never consumes a mutation-domain stream. */
+const QUALITY_STREAM = "quality";
+
+interface SeededMutationContext {
+  algorithmVersion: SeededMutationAlgorithmVersion;
+  nodeSeed: number;
+  childOrdinal: number;
+  wildcard: boolean;
+}
+
+/** FNV-1a followed by a small integer avalanche. Length-prefixed parts avoid
+ * delimiter ambiguity while keeping the derivation portable and dependency
+ * free. This hash is part of seeded mutation algorithm v1. */
+function deriveMutationSeed(parts: readonly (number | string)[]): number {
+  let hash = 0x811c9dc5;
+  for (const part of parts) {
+    const value = String(part);
+    const framed = `${value.length}:${value}`;
+    for (let i = 0; i < framed.length; i++) {
+      hash ^= framed.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+  }
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x7feb352d);
+  hash ^= hash >>> 15;
+  hash = Math.imul(hash, 0x846ca68b);
+  return (hash ^ (hash >>> 16)) >>> 0;
+}
+
+function derivedMutationRng(
+  context: SeededMutationContext,
+  attempt: number,
+  stream: MutationDomain | typeof WILDCARD_PLAN_STREAM | typeof QUALITY_STREAM,
+  stableKey: string,
+): Rng {
+  return mulberry32(
+    deriveMutationSeed([
+      context.algorithmVersion,
+      context.nodeSeed >>> 0,
+      context.childOrdinal,
+      attempt,
+      stream,
+      stableKey,
+    ]),
+  );
+}
+
+/** The document-order coordinate disambiguates duplicate/session-local ids;
+ * the id makes accidental reordering visible in the seed coordinate. */
+function stableMapKey(map: Transform, index: number): string {
+  return `map:${index}:id:${map.id}`;
+}
+
+/** Deep-copy every mutable authored field the mutation kernel knows about.
+ * Unknown/scalar future fields ride through via the leading spread, and the
+ * emitter deliberately retains legacy's immutable-by-contract reference. */
+function cloneTransformForMutation(base: Transform): Transform {
+  const result: Transform = {
+    ...base,
+    position: [...base.position] as Vec3,
+    rotation: [...base.rotation] as Vec3,
+    scale: [...base.scale] as Vec3,
+  };
+  if (base.shear !== undefined) result.shear = [...base.shear] as Vec3;
+  if (base.variations !== undefined) {
+    result.variations = base.variations.map((variation) => ({ ...variation }));
+  }
+  if (base.w !== undefined) {
+    result.w = {
+      ...base.w,
+      ...(base.w.rotation !== undefined
+        ? { rotation: { ...base.w.rotation } }
+        : {}),
+      ...(base.w.shear !== undefined ? { shear: { ...base.w.shear } } : {}),
+    };
+  }
+  if (base.chaos !== undefined) result.chaos = [...base.chaos];
+  if (base.finish !== undefined) result.finish = { ...base.finish };
+  if (base.surfacePattern !== undefined) {
+    result.surfacePattern = { ...base.surfacePattern };
+  }
+  return result;
+}
+
+function mutateSpatialGeometry(
+  result: Transform,
+  base: Transform,
+  rng: Rng,
+  spread: number,
+): void {
+  result.rotation = [
+    wrapAngle(
+      base.rotation[0] +
+        uniform(rng, -ROTATION_JITTER * spread, ROTATION_JITTER * spread),
+    ),
+    wrapAngle(
+      base.rotation[1] +
+        uniform(rng, -ROTATION_JITTER * spread, ROTATION_JITTER * spread),
+    ),
+    wrapAngle(
+      base.rotation[2] +
+        uniform(rng, -ROTATION_JITTER * spread, ROTATION_JITTER * spread),
+    ),
+  ];
+  result.position = [
+    clamp(
+      base.position[0] +
+        uniform(rng, -POSITION_JITTER * spread, POSITION_JITTER * spread),
+      -POSITION_CLAMP,
+      POSITION_CLAMP,
+    ),
+    clamp(
+      base.position[1] +
+        uniform(rng, -POSITION_JITTER * spread, POSITION_JITTER * spread),
+      -POSITION_CLAMP,
+      POSITION_CLAMP,
+    ),
+    clamp(
+      base.position[2] +
+        uniform(rng, -POSITION_JITTER * spread, POSITION_JITTER * spread),
+      -POSITION_CLAMP,
+      POSITION_CLAMP,
+    ),
+  ];
+  result.scale = [
+    jitterScaleAxis(rng, base.scale[0], SCALE_JITTER_HALF_RANGE, spread),
+    jitterScaleAxis(rng, base.scale[1], SCALE_JITTER_HALF_RANGE, spread),
+    jitterScaleAxis(rng, base.scale[2], SCALE_JITTER_HALF_RANGE, spread),
+  ];
+  if (base.shear !== undefined) {
+    result.shear = [
+      clamp(
+        base.shear[0] +
+          uniform(rng, -SHEAR_JITTER * spread, SHEAR_JITTER * spread),
+        -SHEAR_CLAMP,
+        SHEAR_CLAMP,
+      ),
+      clamp(
+        base.shear[1] +
+          uniform(rng, -SHEAR_JITTER * spread, SHEAR_JITTER * spread),
+        -SHEAR_CLAMP,
+        SHEAR_CLAMP,
+      ),
+      clamp(
+        base.shear[2] +
+          uniform(rng, -SHEAR_JITTER * spread, SHEAR_JITTER * spread),
+        -SHEAR_CLAMP,
+        SHEAR_CLAMP,
+      ),
+    ];
+  }
+}
+
+function mutateNonlinearVariations(
+  result: Transform,
+  base: Transform,
+  rng: Rng,
+  spread: number,
+): void {
+  if (base.variations !== undefined) {
+    result.variations = base.variations.map((variation) =>
+      jitterVariationEntry(rng, variation, spread),
+    );
+  }
+}
+
+function mutateFourDExtension(
+  result: Transform,
+  base: Transform,
+  rng: Rng,
+  spread: number,
+): void {
+  if (base.w !== undefined) result.w = jitterW(rng, base.w, spread);
+}
+
+function mutateMapSelectionXaos(
+  result: Transform,
+  base: Transform,
+  rng: Rng,
+  spread: number,
+): void {
+  // Version 1 repairs legacy's accidental sparse-weight materialization:
+  // absent means the authored default and remains absent.
+  if (base.weight !== undefined) {
+    result.weight = Math.max(
+      MIN_WEIGHT,
+      base.weight *
+        uniform(
+          rng,
+          1 - WEIGHT_JITTER_HALF_RANGE * spread,
+          1 + WEIGHT_JITTER_HALF_RANGE * spread,
+        ),
+    );
+  }
+  if (base.chaos !== undefined) {
+    result.chaos = base.chaos.map((entry) =>
+      Math.max(
+        0,
+        entry *
+          uniform(
+            rng,
+            1 - CHAOS_JITTER_HALF_RANGE * spread,
+            1 + CHAOS_JITTER_HALF_RANGE * spread,
+          ),
+      ),
+    );
+  }
+}
+
+function mutateAppearance(
+  result: Transform,
+  base: Transform,
+  rng: Rng,
+  spread: number,
+): void {
+  if (base.colorIndex !== undefined) {
+    result.colorIndex = clamp(
+      base.colorIndex +
+        uniform(rng, -COLOR_INDEX_JITTER * spread, COLOR_INDEX_JITTER * spread),
+      COLOR_INDEX_CLAMP_MIN,
+      COLOR_INDEX_CLAMP_MAX,
+    );
+  }
+  if (base.colorSpeed !== undefined) {
+    result.colorSpeed = clamp(
+      base.colorSpeed +
+        uniform(rng, -COLOR_SPEED_JITTER * spread, COLOR_SPEED_JITTER * spread),
+      COLOR_SPEED_CLAMP_MIN,
+      COLOR_SPEED_CLAMP_MAX,
+    );
+  }
+  if (base.finish !== undefined) {
+    result.finish = jitterFinish(rng, base.finish, spread);
+  }
+  if (base.surfacePattern !== undefined) {
+    result.surfacePattern = jitterSurfacePattern(
+      rng,
+      base.surfacePattern,
+      spread,
+    );
+  }
+}
+
+function wildcardOwner(baseMap: Transform): MutationDomain {
+  const hasNonlinearEntry = (baseMap.variations ?? []).some(
+    (variation) => variation.type !== "linear",
+  );
+  const carried = new Set((baseMap.variations ?? []).map((v) => v.type));
+  const hasUnusedNonlinearType = NON_LINEAR_VARIATION_TYPES.some(
+    (type) => !carried.has(type),
+  );
+  return hasNonlinearEntry && hasUnusedNonlinearType
+    ? "nonlinearVariations"
+    : "spatialGeometry";
+}
+
+function buildSeededMutant(
+  base: MorphSystem,
+  context: SeededMutationContext,
+  attempt: number,
+  lockedDomains: ReadonlySet<MutationDomain>,
+): MorphSystem {
+  const spread = context.wildcard ? WILDCARD_SPREAD : 1;
+  const transforms = base.transforms.map((baseMap, index) => {
+    const result = cloneTransformForMutation(baseMap);
+    const key = stableMapKey(baseMap, index);
+    if (!lockedDomains.has("spatialGeometry")) {
+      mutateSpatialGeometry(
+        result,
+        baseMap,
+        derivedMutationRng(context, attempt, "spatialGeometry", key),
+        spread,
+      );
+    }
+    if (!lockedDomains.has("nonlinearVariations")) {
+      mutateNonlinearVariations(
+        result,
+        baseMap,
+        derivedMutationRng(context, attempt, "nonlinearVariations", key),
+        spread,
+      );
+    }
+    if (!lockedDomains.has("fourDExtension")) {
+      mutateFourDExtension(
+        result,
+        baseMap,
+        derivedMutationRng(context, attempt, "fourDExtension", key),
+        spread,
+      );
+    }
+    if (!lockedDomains.has("mapSelectionXaos")) {
+      mutateMapSelectionXaos(
+        result,
+        baseMap,
+        derivedMutationRng(context, attempt, "mapSelectionXaos", key),
+        spread,
+      );
+    }
+    if (!lockedDomains.has("appearance")) {
+      mutateAppearance(
+        result,
+        baseMap,
+        derivedMutationRng(context, attempt, "appearance", key),
+        spread,
+      );
+    }
+    return result;
+  });
+
+  if (context.wildcard && transforms.length > 0) {
+    const targetRng = derivedMutationRng(
+      context,
+      attempt,
+      WILDCARD_PLAN_STREAM,
+      "target-map",
+    );
+    const index = Math.floor(targetRng() * transforms.length);
+    const owner = wildcardOwner(base.transforms[index]);
+    if (!lockedDomains.has(owner)) {
+      transforms[index] = applyStructuralKick(
+        derivedMutationRng(
+          context,
+          attempt,
+          owner,
+          `${stableMapKey(base.transforms[index], index)}:wildcard`,
+        ),
+        base.transforms[index],
+        transforms[index],
+      );
+    }
+  }
+
+  const finalTransform = base.finalTransform
+    ? cloneTransformForMutation(base.finalTransform)
+    : null;
+  if (
+    finalTransform !== null &&
+    base.finalTransform !== null &&
+    !lockedDomains.has("finalLens") &&
+    base.finalTransform.variations !== undefined
+  ) {
+    const finalLensRng = derivedMutationRng(
+      context,
+      attempt,
+      "finalLens",
+      "final-lens",
+    );
+    finalTransform.variations = base.finalTransform.variations.map(
+      (variation) => jitterVariationEntry(finalLensRng, variation, spread),
+    );
+  }
+
+  // Spread preserves MorphSystem's optional context blocks (including their
+  // exact absence). Full SceneSnapshot mutation/schedules are a later layer.
+  return {
+    ...base,
+    transforms,
+    finalTransform,
+    symmetry: { ...base.symmetry },
+  };
+}
+
+/**
+ * Choose a retry using the all-unlocked profile. This is intentionally
+ * independent of the requested locks: otherwise a locked field could change
+ * a quality score, select a different attempt, and indirectly reroll every
+ * unrelated unlocked domain. The chosen attempt is then materialized with
+ * the requested locks below. Strict exhaustion/constraint handling belongs
+ * to the full-scene generation layer, not this v1 compatibility gate.
+ */
+function selectSeededAttempt(
+  base: MorphSystem,
+  context: SeededMutationContext,
+): number {
+  const unlocked = new Set<MutationDomain>();
+  let bestAttempt = 0;
+  let bestScore = -Infinity;
+  for (let attempt = 0; attempt < MUTATION_MAX_ATTEMPTS; attempt++) {
+    const candidate = buildSeededMutant(base, context, attempt, unlocked);
+    let score = Infinity;
+    for (let probe = 0; probe < MUTATION_STABILITY_PROBES; probe++) {
+      score = Math.min(
+        score,
+        scoreSystem(
+          candidate,
+          derivedMutationRng(
+            context,
+            attempt,
+            QUALITY_STREAM,
+            `probe:${probe}`,
+          ),
+        ),
+      );
+      if (score < MIN_OCCUPIED_CELLS) break;
+    }
+    if (score >= MIN_OCCUPIED_CELLS) return attempt;
+    if (score > bestScore) {
+      bestScore = score;
+      bestAttempt = attempt;
+    }
+  }
+  return bestAttempt;
+}
+
+/**
+ * Deterministically mutate one lineage child using versioned, independently
+ * derived RNG streams. Within a chosen attempt, a map/domain pair never
+ * consumes another map or domain's stream; quality probes use their own
+ * streams; and lock-neutral attempt selection prevents rejection from
+ * perturbing unrelated domains. Locked domains are cloned structurally
+ * unchanged, including absent optional fields.
+ *
+ * This API intentionally accepts a {@link MorphSystem}. Exact full-scene
+ * snapshots, schedules, external eligibility constraints, and strict retry
+ * exhaustion are owned by the higher-level evolution generation layer.
+ */
+export function mutateSystemSeeded(
+  base: MorphSystem,
+  request: SeededMutationRequest,
+): MorphSystem {
+  if (request.algorithmVersion !== SEEDED_MUTATION_ALGORITHM_VERSION) {
+    throw new Error(
+      `Unsupported seeded mutation algorithm version: ${String(request.algorithmVersion)}`,
+    );
+  }
+  const context: SeededMutationContext = {
+    algorithmVersion: request.algorithmVersion,
+    nodeSeed: request.nodeSeed,
+    childOrdinal: request.childOrdinal,
+    wildcard: request.profile?.wildcard ?? false,
+  };
+  const selectedAttempt = selectSeededAttempt(base, context);
+  return buildSeededMutant(
+    base,
+    context,
+    selectedAttempt,
+    new Set(request.profile?.lockedDomains ?? []),
+  );
 }
