@@ -6,7 +6,10 @@
  * (including the narrowed `self` typing; see that file's doc for why the
  * ambient `webworker` lib can't be used) this mirrors exactly.
  */
-import { VoxelWorkerSession } from "./voxel-worker-core";
+import {
+  VoxelWorkerSession,
+  voxelWorkerEventTransferBuffers,
+} from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 
 interface VoxelWorkerScope {
@@ -20,14 +23,10 @@ const session = new VoxelWorkerSession({
   now: () => performance.now(),
   schedule: (fn) => setTimeout(fn, 0),
   emit: (event) => {
-    // Transfer the packed texture's backing buffer — a zero-copy ownership
-    // move to the main thread, not a copy (`voxelTextureData` allocates a
-    // fresh buffer per pack for exactly this reason).
-    if (event.type === "grid") {
-      scope.postMessage(event, [event.texture.buffer]);
-    } else {
-      scope.postMessage(event, []);
-    }
+    // Each grid publication owns fresh packed texture/hierarchy buffers.
+    // Transfer both when acceleration is present; absent acceleration still
+    // transfers and displays the complete texture fallback.
+    scope.postMessage(event, voxelWorkerEventTransferBuffers(event));
   },
 });
 

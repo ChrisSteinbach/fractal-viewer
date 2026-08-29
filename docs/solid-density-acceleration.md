@@ -172,6 +172,36 @@ chunk. It also preserves today's throttling behavior: a large grid cannot spend
 nearly all worker time repeatedly packing and rebuilding between small amounts
 of new accumulation.
 
+## Worker, lifecycle, and memory integration
+
+Each worker `grid` event carries the fresh RGBA8 texture plus exactly one of:
+
+- a `present` hierarchy built from that texture's bytes; or
+- an explicit `absent` marker selecting the unaccelerated marcher.
+
+The worker transfers both backing buffers in the same `postMessage`. The main
+thread installs or clears the hierarchy in the same synchronous scene call that
+installs the texture, so a progressive update cannot retain acceleration from
+an older normalization. A render entry owns one Worker. Its host detaches the
+message and error handlers, closes a local live gate, and only then terminates;
+even callback references already captured from an old worker become inert after
+exit or re-entry.
+
+The proactive resolution guard uses exact bytes rather than treating the
+hierarchy as a fractional afterthought. `voxel-memory.ts` accounts
+
+```text
+M(N) = 4N³ density + 12N³ running RGB + 4N³ packed RGBA8 + B(N) hierarchy
+```
+
+at the point when all four worker payloads coexist. The coarse-pointer floor is
+`M(256) = 338,007,374` bytes (322.349 MiB), preserving the shipped 256³ phone
+ceiling. The desktop cap is `M(512) = 2,703,792,207` bytes (2578.537 MiB),
+preserving the full 512³ slider endpoint for an 8-GiB report. Intermediate
+desktop budgets scale linearly between the same device-memory signals and the
+resolution clamp walks the existing 32-voxel steps using `M(N)` directly.
+Reactive base-grid allocation failure still walks that same resolution ladder.
+
 ## Allocation failure and fallback
 
 Construction is pure and all-or-nothing. The builder computes its checked

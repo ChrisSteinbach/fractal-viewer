@@ -86,7 +86,8 @@ import {
   type FlameBackdropImage,
 } from "./flame-backdrop-generator";
 import type { RenderSessionHandle } from "./render-session";
-import { voxelAccumBudgetVoxels } from "./voxel-worker-core";
+import { createRenderWorkerHost } from "./render-worker-host";
+import { voxelAccumBudgetBytes } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { CloudGenerator } from "./cloud-generator";
 import { PendingLoadHints } from "./load-hints";
@@ -3526,6 +3527,7 @@ async function main(): Promise<void> {
           event.size,
           event.boundsMin,
           event.boundsMax,
+          event.hierarchy.status === "present" ? event.hierarchy : null,
         );
         ui.setSolidBalloonAvailable(scene.solidBalloonAvailable());
         ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
@@ -3585,29 +3587,14 @@ async function main(): Promise<void> {
       const worker = new Worker(new URL("./voxel-worker.ts", import.meta.url), {
         type: "module",
       });
-      worker.onmessage = (e: MessageEvent<VoxelWorkerEvent>) =>
-        handleSolidEvent(e.data);
-      worker.onerror = (e) => {
+      const handle = createRenderWorkerHost<
+        VoxelWorkerCommand,
+        VoxelWorkerEvent
+      >(worker, handleSolidEvent, (e) => {
         console.error("Solid worker crashed; returning to explorer.", e);
         showRenderError();
         solidSession.exit();
-      };
-      const handle = {
-        post: (command: VoxelWorkerCommand) => worker.postMessage(command),
-        terminate: () => {
-          // Detach the handlers BEFORE terminating — the flame host's idiom
-          // — terminate() discards the WORKER's queue, not
-          // MessageEvents already queued on THIS thread, and the voxel worker
-          // posts a grid per chunk, so one is nearly always in flight. A
-          // stale grid arriving after exit uploaded the dead session's
-          // volume as the next session's first frame, marked first-frame on
-          // a session that drew nothing (wrong thumbnail patch), and a
-          // queued "error" tore down whatever session was live by then.
-          worker.onmessage = null;
-          worker.onerror = null;
-          worker.terminate();
-        },
-      };
+      });
 
       // Post the `start` via the fresh handle — typed, so the payload is
       // checked — NOT solidSession.post: RenderSession.enter only stores this
@@ -3637,10 +3624,10 @@ async function main(): Promise<void> {
         // Rolled through the shared helper so a timeline render keyframe
         // can pin it — see nextRenderSeed's doc.
         seed,
-        // Device-aware memory budget for the voxel grid + texture — the
-        // same two main-thread-only signals, for the same reasons, as the
-        // flame render's maxAccumBuckets above.
-        maxVoxels: voxelAccumBudgetVoxels(
+        // Device-aware exact peak budget for the retained grid, packed
+        // texture, and matching hierarchy — the same two main-thread-only
+        // signals, for the same reasons, as flame's maxAccumBuckets above.
+        maxBytes: voxelAccumBudgetBytes(
           (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
           window.matchMedia("(pointer: coarse)").matches,
         ),

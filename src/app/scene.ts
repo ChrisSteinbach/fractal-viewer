@@ -32,6 +32,7 @@ import { sliceColorRemap, SLICE_GHOST_FLOOR } from "../fractal/project4";
 import { clamp, clone3 } from "../fractal/vec";
 import type { ShapeTrap, Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
+import type { VoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
 import type { OrbitCamera } from "./orbit";
 import { wSupport } from "./rotor4";
 import { contextAntialias } from "./constants";
@@ -1031,6 +1032,12 @@ export class FractalScene {
   // world-space and camera-independent, so — unlike the flame's frozen view —
   // renderSolid reads the LIVE camera every frame and the user keeps orbiting.
   private voxelTexture: THREE.Data3DTexture;
+  // CPU-side half of the exact progressive snapshot that produced
+  // `voxelTexture`. The accelerated marcher installs its GPU representation
+  // from here; null is an explicit unaccelerated fallback and, importantly,
+  // clears the preceding grid's hierarchy rather than pairing stale bounds
+  // with a newer density texture.
+  private voxelMaxHierarchy: VoxelMaxHierarchy | null = null;
   private readonly voxelMaterial: THREE.ShaderMaterial;
   private readonly voxelQuad: FullScreenQuad;
   /**
@@ -3842,15 +3849,21 @@ export class FractalScene {
    * {@link renderSolid} call marches it. Re-uses the existing 3D texture
    * when the resolution is unchanged (the common progressive-update case) and
    * rebuilds it otherwise — a `Data3DTexture`'s dimensions are fixed at
-   * construction.
+   * construction. `maxHierarchy` is transferred with these exact packed bytes;
+   * installing both in this one synchronous call keeps progressive snapshots
+   * matched. Null deliberately replaces, rather than preserves, an older
+   * hierarchy when construction or allocation fell back in the worker.
    */
   setVoxelGrid(
     data: Uint8Array<ArrayBuffer>,
     size: number,
     boundsMin: Vec3,
     boundsMax: Vec3,
+    maxHierarchy: VoxelMaxHierarchy | null,
   ): void {
     this.renderNeeded = true;
+    this.voxelMaxHierarchy =
+      maxHierarchy?.sourceSize === size ? maxHierarchy : null;
     if (this.voxelTexture.image.width !== size) {
       this.voxelTexture.dispose();
       this.voxelTexture = new THREE.Data3DTexture(data, size, size, size);

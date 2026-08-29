@@ -614,6 +614,13 @@ progressive snapshot, while threshold edits reuse it live; allocation failure
 falls back to the unchanged fixed-step marcher. The proof and measured build
 cost are in `docs/solid-density-acceleration.md`.
 
+The voxel worker publishes the texture and its hierarchy as one transferable
+snapshot; explicit absence clears any preceding hierarchy on the main thread.
+Its byte guard includes density, running RGB, packed RGBA8, and the exact
+hierarchy layout before choosing an effective resolution. Worker teardown uses
+a live-gated host, so a queued callback from a terminated Solid entry cannot
+install a stale snapshot or tear down the next render.
+
 The solid balloon is a **query-space union over that one volume**, not a second
 voxel accumulation: while enabled, every combined-density query is
 `max(density(p), density(I(p)))`, where `I` is the shared sphere inversion.
