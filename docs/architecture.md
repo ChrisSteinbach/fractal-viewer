@@ -604,6 +604,16 @@ as an explicit deterministic phase, applies the same strict `>` threshold, and
 returns the outside/inside bracket after the same five bisections. Accelerated
 traversals compare against this path; they do not define a second density field.
 
+`voxel-max-hierarchy.ts` derives threshold-independent empty-space bounds from
+that exact packed field. Its base domain is the `N + 1` continuous interpolation
+cells per axis, including the two clamped boundary half-cells; the first stored
+level pools two cells and their full texel halo, and later levels max-pool to a
+one-byte root. The source RGBA8 texture stays the leaf, so the added 192³
+payload is 1,048,560 alpha-only bytes. A fresh hierarchy belongs to each packed
+progressive snapshot, while threshold edits reuse it live; allocation failure
+falls back to the unchanged fixed-step marcher. The proof and measured build
+cost are in `docs/solid-density-acceleration.md`.
+
 The solid balloon is a **query-space union over that one volume**, not a second
 voxel accumulation: while enabled, every combined-density query is
 `max(density(p), density(I(p)))`, where `I` is the shared sphere inversion.
