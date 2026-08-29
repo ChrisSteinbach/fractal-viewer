@@ -963,7 +963,7 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   path. **Parent**, **Forward**, and **Branch** revisit retained alternatives;
   branches can be pruned, and **New root from displayed scene** deliberately
   starts over. The graph is capped at 64 nodes and 12 MiB of thumbnails, with
-  no silent eviction. **Generate children** can add another retained set until
+  no silent eviction. **Generate 8 variations** can add another retained set until
   those caps are reached.
 
   **Keep traits unchanged** exposes independent locks for spatial geometry,

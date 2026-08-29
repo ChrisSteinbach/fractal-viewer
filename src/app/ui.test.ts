@@ -11324,7 +11324,7 @@ describe("Ui mutation grid", () => {
       document.getElementById(id)?.textContent?.replace(/\s+/g, " ").trim() ??
       "";
     expect(normalizedText("evolutionLifetimeHint")).toBe(
-      "The selected node is at the center. Branches and A/B pins stay only in this open tab; reloading or closing it discards the Evolution workspace.",
+      "Pick a surrounding preview to make it the new center and generate eight variations. Previews appear one at a time. Your exploration history and A/B choices last only in this tab; reloading or closing discards them.",
     );
     expect(normalizedText("evolutionSaveBtn")).toBe(
       "★ Save current scene to Collection",
@@ -11332,6 +11332,71 @@ describe("Ui mutation grid", () => {
     expect(normalizedText("evolutionSaveScopeNote")).toBe(
       "Collection saves only the current scene, not its branches or ancestry.",
     );
+  });
+
+  it("puts the thumbnail neighborhood before secondary controls and collapses comparison by default", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+
+    const grid = document.getElementById("mutationGrid")!;
+    const navigation = document.querySelector(".evolution-nav")!;
+    const comparison = document.getElementById(
+      "evolutionCompare",
+    ) as HTMLDetailsElement;
+    expect(
+      grid.compareDocumentPosition(navigation) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      grid.compareDocumentPosition(comparison) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(comparison.open).toBe(false);
+    expect(
+      (
+        document.querySelector(
+          ".mutation-preview-details",
+        ) as HTMLDetailsElement
+      ).open,
+    ).toBe(false);
+    expect(grid.getAttribute("aria-label")).toBe("Evolution candidates");
+  });
+
+  it("opens comparison controls while a comparison endpoint is loading or displayed", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    const comparison = document.getElementById(
+      "evolutionCompare",
+    ) as HTMLDetailsElement;
+
+    ui.setEvolutionWorkspace(workspace({ comparisonPending: true }));
+    expect(comparison.open).toBe(true);
+
+    comparison.open = false;
+    ui.setEvolutionWorkspace(workspace({ comparisonActive: "A" }));
+    expect(comparison.open).toBe(true);
+  });
+
+  it("keeps active comparison controls expanded until the comparison exits", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    const comparison = document.getElementById(
+      "evolutionCompare",
+    ) as HTMLDetailsElement;
+    const summary = document.getElementById("evolutionCompareTitle")!;
+
+    ui.setEvolutionWorkspace(workspace({ comparisonActive: "A" }));
+    expect(summary.getAttribute("aria-disabled")).toBe("true");
+    summary.click();
+    expect(comparison.open).toBe(true);
+
+    ui.setEvolutionWorkspace(workspace({ comparisonActive: null }));
+    expect(summary.getAttribute("aria-disabled")).toBe("false");
+    summary.click();
+    expect(comparison.open).toBe(false);
   });
 
   it("routes retained navigation, prune, reset, save, lock, and Surface constraint controls", () => {
@@ -11415,9 +11480,12 @@ describe("Ui mutation grid", () => {
     ui.openMutations();
     ui.setEvolutionWorkspace(workspace());
 
-    expect(document.getElementById("evolutionCompareTitle")?.textContent).toBe(
-      "Compare and breed",
-    );
+    expect(
+      document
+        .getElementById("evolutionCompareTitle")
+        ?.textContent?.replace(/\s+/g, " ")
+        .trim(),
+    ).toBe("Compare and breed");
     const collection = document.getElementById(
       "evolutionCompareCollectionSelect",
     ) as HTMLSelectElement;
@@ -12802,18 +12870,15 @@ describe("Ui modal focus trap", () => {
       status: "Loading",
     });
     // Every workspace action is disabled while this simulated load is busy;
-    // the native lock disclosure remains reachable.
+    // the first disclosure after the grid remains reachable.
     pressTab();
     expect(document.activeElement).toBe(
-      document.querySelector("#evolutionLocks > summary"),
+      document.querySelector(".mutation-preview-summary"),
     );
 
     ui.setMutationCell(0, new Uint8ClampedArray(4 * 4 * 4), 4, false);
-    const locks = el("evolutionLocks") as HTMLDetailsElement;
-    locks.open = true;
-    const lockInputs = locks.querySelectorAll<HTMLInputElement>("input");
-    lockInputs[lockInputs.length - 1].focus();
-    pressTab();
+    document.querySelector<HTMLElement>(".mutation-preview-summary")!.focus();
+    pressTab(true);
 
     const cells = document.querySelectorAll("#mutationGrid .mutation-cell");
     expect(document.activeElement).toBe(cells[0]);
