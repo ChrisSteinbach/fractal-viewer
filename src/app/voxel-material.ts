@@ -5,6 +5,10 @@ import {
 } from "../fractal/background-shape";
 import { BALLOON_FAR_CAP_RHO } from "../fractal/balloon-de";
 import type { Vec3 } from "../fractal/types";
+import {
+  VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN,
+  type VoxelMaxHierarchy,
+} from "../fractal/voxel-max-hierarchy";
 export { sampleVoxelAlpha } from "../fractal/voxel-raymarch";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
@@ -590,10 +594,252 @@ function buildVoxelBalloonFragment(): string {
   return source;
 }
 
-const VOXEL_BALLOON_FRAGMENT = buildVoxelBalloonFragment();
+/**
+ * Add conservative fixed-lattice skipping to one resolved Solid program.
+ *
+ * The absent path never calls this builder, preserving its literal shader
+ * source. The accelerated program samples one cellSpan-16 max node, caches an
+ * occupied node until the ray leaves it, and skips only ORIGINAL lattice
+ * samples certified by an empty node. The balloon's nonlinear inverted echo
+ * remains on its existing loop; only its straight source-volume primary ray
+ * can use these linear node bounds safely.
+ */
+function buildVoxelAcceleratedFragment(
+  input: string,
+  balloon: boolean,
+): string {
+  let source = spliceVoxelBalloon(
+    input,
+    "  uniform int uMarchSteps;\n",
+    `  uniform int uMarchSteps;
+  uniform sampler3D uMaxHierarchy;
+  uniform int uMaxHierarchyLevelSize;
+  uniform int uMaxHierarchyCellSpan;
+`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    `  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+  }
+`,
+    `  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+  }
 
-/** Resolved shader source. `false` is the pre-feature source byte for byte. */
-export function voxelFragmentFor(balloon: boolean): string {
+  /** Maximum alpha and world-ray exit for the coarse continuous-cell node
+   * containing the sample at t. The +/- half texel bounds are the exact
+   * ClampToEdge interpolation-cell convention used by the CPU builder. */
+  float maxHierarchyNode(vec3 ro, vec3 rd, float t, out float exitT) {
+    float sourceSize = floor(1.0 / uTexel + 0.5);
+    vec3 p = ro + rd * t;
+    vec3 uvw = clamp((p - uBoundsMin) / uBoundsSize, 0.0, 1.0);
+    vec3 baseCell = clamp(
+      floor(uvw * sourceSize + 0.5),
+      vec3(0.0),
+      vec3(sourceSize)
+    );
+    ivec3 node = min(
+      ivec3(uMaxHierarchyLevelSize - 1),
+      ivec3(baseCell) / uMaxHierarchyCellSpan
+    );
+    float maxAlpha = texelFetch(uMaxHierarchy, node, 0).r;
+
+    vec3 firstCell = vec3(node * uMaxHierarchyCellSpan);
+    vec3 lastCell = min(
+      vec3(sourceSize),
+      firstCell + vec3(float(uMaxHierarchyCellSpan - 1))
+    );
+    vec3 nodeUvMin = clamp((firstCell - 0.5) / sourceSize, 0.0, 1.0);
+    vec3 nodeUvMax = clamp((lastCell + 0.5) / sourceSize, 0.0, 1.0);
+    vec3 uvDirection = rd / uBoundsSize;
+    vec3 axisAdvance = vec3(1.0e30);
+    if (uvDirection.x > 0.0)
+      axisAdvance.x = (nodeUvMax.x - uvw.x) / uvDirection.x;
+    else if (uvDirection.x < 0.0)
+      axisAdvance.x = (nodeUvMin.x - uvw.x) / uvDirection.x;
+    if (uvDirection.y > 0.0)
+      axisAdvance.y = (nodeUvMax.y - uvw.y) / uvDirection.y;
+    else if (uvDirection.y < 0.0)
+      axisAdvance.y = (nodeUvMin.y - uvw.y) / uvDirection.y;
+    if (uvDirection.z > 0.0)
+      axisAdvance.z = (nodeUvMax.z - uvw.z) / uvDirection.z;
+    else if (uvDirection.z < 0.0)
+      axisAdvance.z = (nodeUvMin.z - uvw.z) / uvDirection.z;
+    exitT = t + max(0.0, min(axisAdvance.x, min(axisAdvance.y, axisAdvance.z)));
+    return maxAlpha;
+  }
+`,
+  );
+
+  if (!balloon) {
+    return spliceVoxelBalloon(
+      source,
+      `    // --- primary march: first sample past the isosurface -------------------
+    float tPrev = t;
+    bool hit = false;
+    for (int i = 0; i < uMarchSteps; i++) {
+      if (densityAt(ro + rd * t) > uThreshold) {
+        hit = true;
+        break;
+      }
+      tPrev = t;
+      t += dt;
+    }
+    if (!hit) {
+      outColor = vec4(background, 1.0);
+      return;
+    }
+`,
+      `    // --- primary march: same lattice, empty nodes consume many indices -----
+    float tPrev = t;
+    float occupiedUntil = -1.0e30;
+    int latticeIndex = 0;
+    bool hit = false;
+    for (int traversal = 0; traversal < uMarchSteps; traversal++) {
+      if (latticeIndex >= uMarchSteps) break;
+      if (t >= occupiedUntil) {
+        float nodeExitT;
+        float nodeMaxAlpha = maxHierarchyNode(ro, rd, t, nodeExitT);
+        if (nodeMaxAlpha <= uThreshold) {
+          // Bias the quotient toward re-checking an exact boundary. Every
+          // consumed point is an ORIGINAL fixed-step sample before that exit.
+          float quotient = max(0.0, (nodeExitT - t) / max(dt, 1.0e-30) - 1.0e-4);
+          int advance = min(
+            uMarchSteps - latticeIndex,
+            max(1, int(floor(quotient)) + 1)
+          );
+          tPrev = t + dt * float(advance - 1);
+          t += dt * float(advance);
+          latticeIndex += advance;
+          continue;
+        }
+        // An occupied certificate says nothing about this particular ray.
+        // Sample normally until leaving it, amortizing the one R8 lookup.
+        occupiedUntil = max(nodeExitT, t + dt);
+      }
+      if (densityAt(ro + rd * t) > uThreshold) {
+        hit = true;
+        break;
+      }
+      tPrev = t;
+      t += dt;
+      latticeIndex++;
+    }
+    if (!hit) {
+      outColor = vec4(background, 1.0);
+      return;
+    }
+`,
+    );
+  }
+
+  return spliceVoxelBalloon(
+    source,
+    `    float primaryPrev = primaryT;
+    float primaryHi = 1.0e30;
+    bool primaryHit = false;
+    if (tRange.x <= tRange.y && primaryFar > 0.0) {
+      float primaryDt = (primaryFar - primaryT) / float(uMarchSteps);
+      primaryT += primaryDt * jitter;
+      primaryPrev = primaryT;
+      for (int i = 0; i < uMarchSteps; i++) {
+        if (densityAtFractal(ro + rd * primaryT) > uThreshold) {
+          primaryHit = true;
+          break;
+        }
+        primaryPrev = primaryT;
+        primaryT += primaryDt;
+      }
+      if (primaryHit) {
+        float primaryLo = primaryPrev;
+        primaryHi = primaryT;
+        for (int i = 0; i < REFINE_STEPS; i++) {
+          float mid = (primaryLo + primaryHi) * 0.5;
+          if (densityAtFractal(ro + rd * mid) > uThreshold) {
+            primaryHi = mid;
+          } else {
+            primaryLo = mid;
+          }
+        }
+      }
+    }
+`,
+    `    float primaryPrev = primaryT;
+    float primaryHi = 1.0e30;
+    bool primaryHit = false;
+    if (tRange.x <= tRange.y && primaryFar > 0.0) {
+      float primaryDt = (primaryFar - primaryT) / float(uMarchSteps);
+      primaryT += primaryDt * jitter;
+      primaryPrev = primaryT;
+      float primaryOccupiedUntil = -1.0e30;
+      int primaryLatticeIndex = 0;
+      for (int traversal = 0; traversal < uMarchSteps; traversal++) {
+        if (primaryLatticeIndex >= uMarchSteps) break;
+        if (primaryT >= primaryOccupiedUntil) {
+          float nodeExitT;
+          float nodeMaxAlpha = maxHierarchyNode(ro, rd, primaryT, nodeExitT);
+          if (nodeMaxAlpha <= uThreshold) {
+            float quotient = max(
+              0.0,
+              (nodeExitT - primaryT) / max(primaryDt, 1.0e-30) - 1.0e-4
+            );
+            int advance = min(
+              uMarchSteps - primaryLatticeIndex,
+              max(1, int(floor(quotient)) + 1)
+            );
+            primaryPrev = primaryT + primaryDt * float(advance - 1);
+            primaryT += primaryDt * float(advance);
+            primaryLatticeIndex += advance;
+            continue;
+          }
+          primaryOccupiedUntil = max(nodeExitT, primaryT + primaryDt);
+        }
+        if (densityAtFractal(ro + rd * primaryT) > uThreshold) {
+          primaryHit = true;
+          break;
+        }
+        primaryPrev = primaryT;
+        primaryT += primaryDt;
+        primaryLatticeIndex++;
+      }
+      if (primaryHit) {
+        float primaryLo = primaryPrev;
+        primaryHi = primaryT;
+        for (int i = 0; i < REFINE_STEPS; i++) {
+          float mid = (primaryLo + primaryHi) * 0.5;
+          if (densityAtFractal(ro + rd * mid) > uThreshold) {
+            primaryHi = mid;
+          } else {
+            primaryLo = mid;
+          }
+        }
+      }
+    }
+`,
+  );
+}
+
+const VOXEL_BALLOON_FRAGMENT = buildVoxelBalloonFragment();
+const VOXEL_ACCELERATED_FRAGMENT = buildVoxelAcceleratedFragment(
+  VOXEL_FRAGMENT,
+  false,
+);
+const VOXEL_BALLOON_ACCELERATED_FRAGMENT = buildVoxelAcceleratedFragment(
+  VOXEL_BALLOON_FRAGMENT,
+  true,
+);
+
+/** Resolved shader source. Both acceleration-off arms remain byte-exact. */
+export function voxelFragmentFor(
+  balloon: boolean,
+  accelerated = false,
+): string {
+  if (accelerated) {
+    return balloon
+      ? VOXEL_BALLOON_ACCELERATED_FRAGMENT
+      : VOXEL_ACCELERATED_FRAGMENT;
+  }
   return balloon ? VOXEL_BALLOON_FRAGMENT : VOXEL_FRAGMENT;
 }
 
@@ -613,6 +859,162 @@ export interface VoxelBalloonSpec {
 export function emptyVoxelTexture(): THREE.Data3DTexture {
   const texture = new THREE.Data3DTexture(new Uint8Array(4), 1, 1, 1);
   configureVoxelTexture(texture);
+  return texture;
+}
+
+/** The one worker level uploaded to the GPU as a tiny cubic R8 texture. */
+export interface VoxelMaxHierarchyLevelTexture {
+  data: Uint8Array<ArrayBuffer>;
+  size: number;
+  cellSpan: number;
+}
+
+/**
+ * Select the fixed coarse level from the worker's concatenated x-fastest R8
+ * payload. Every supported stepped resolution (>=32) contains this level;
+ * returning its exact subarray avoids a second hierarchy representation.
+ */
+export function voxelMaxHierarchyLevelTexture(
+  hierarchy: VoxelMaxHierarchy,
+): VoxelMaxHierarchyLevelTexture {
+  const { sourceSize, byteLength } = hierarchy;
+  if (!Number.isInteger(sourceSize) || sourceSize <= 0) {
+    throw new RangeError("voxel hierarchy source size must be positive");
+  }
+  if (byteLength !== hierarchy.data.byteLength) {
+    throw new RangeError("voxel hierarchy byte length does not match its data");
+  }
+  const level = hierarchy.levels.find(
+    ({ cellSpan }) => cellSpan === VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN,
+  );
+  if (
+    !level ||
+    !Number.isInteger(level.size) ||
+    level.size <= 0 ||
+    !Number.isInteger(level.offset) ||
+    level.offset < 0 ||
+    !Number.isInteger(level.length) ||
+    level.length !== level.size ** 3 ||
+    level.offset + level.length > byteLength
+  ) {
+    throw new RangeError("voxel hierarchy has no valid coarse GPU level");
+  }
+  return {
+    data: hierarchy.data.subarray(level.offset, level.offset + level.length),
+    size: level.size,
+    cellSpan: level.cellSpan,
+  };
+}
+
+/** A complete R8 sampler binding for the hierarchy-disabled program state. */
+export function emptyVoxelMaxHierarchyTexture(): THREE.Data3DTexture {
+  const texture = new THREE.Data3DTexture(new Uint8Array(1), 1, 1, 1);
+  configureVoxelMaxHierarchyTexture(texture);
+  return texture;
+}
+
+/** Exact integer hierarchy lookups require R8 nearest-neighbour sampling. */
+export function configureVoxelMaxHierarchyTexture(
+  texture: THREE.Data3DTexture,
+): void {
+  texture.format = THREE.RedFormat;
+  texture.type = THREE.UnsignedByteType;
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.wrapR = THREE.ClampToEdgeWrapping;
+  texture.generateMipmaps = false;
+  texture.unpackAlignment = 1;
+  texture.needsUpdate = true;
+}
+
+const HIERARCHY_FALLBACK_KEY = "voxelMaxHierarchyFallback";
+const BALLOON_ENABLED_KEY = "voxelBalloonEnabled";
+
+function syncVoxelFragment(material: THREE.ShaderMaterial): void {
+  const next = voxelFragmentFor(
+    material.userData[BALLOON_ENABLED_KEY] === true,
+    material.uniforms.uMaxHierarchyEnabled.value === 1,
+  );
+  if (material.fragmentShader !== next) {
+    material.fragmentShader = next;
+    material.needsUpdate = true;
+  }
+}
+
+function hierarchyFallbackTexture(
+  material: THREE.ShaderMaterial,
+): THREE.Data3DTexture {
+  const texture = material.userData[HIERARCHY_FALLBACK_KEY] as
+    THREE.Data3DTexture | undefined;
+  if (!texture) {
+    throw new Error("voxel material has no hierarchy fallback texture");
+  }
+  return texture;
+}
+
+function disableVoxelMaxHierarchy(material: THREE.ShaderMaterial): void {
+  const u = material.uniforms;
+  u.uMaxHierarchy.value = hierarchyFallbackTexture(material);
+  u.uMaxHierarchyEnabled.value = 0;
+  u.uMaxHierarchyLevelSize.value = 1;
+  u.uMaxHierarchyCellSpan.value = VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN;
+  syncVoxelFragment(material);
+}
+
+/**
+ * Upload or explicitly clear the hierarchy paired with the current density
+ * snapshot. Same-sized progressive updates reuse immutable GPU dimensions;
+ * size changes and fallback dispose the previous allocation immediately.
+ * Invalid/allocation-failed payloads take the same honest disabled path.
+ */
+export function updateVoxelMaxHierarchyTexture(
+  material: THREE.ShaderMaterial,
+  current: THREE.Data3DTexture | null,
+  hierarchy: VoxelMaxHierarchy | null,
+): THREE.Data3DTexture | null {
+  if (!hierarchy) {
+    current?.dispose();
+    disableVoxelMaxHierarchy(material);
+    return null;
+  }
+
+  let level: VoxelMaxHierarchyLevelTexture;
+  try {
+    level = voxelMaxHierarchyLevelTexture(hierarchy);
+  } catch {
+    current?.dispose();
+    disableVoxelMaxHierarchy(material);
+    return null;
+  }
+
+  let texture = current;
+  if (
+    !texture ||
+    texture.image.width !== level.size ||
+    texture.image.height !== level.size ||
+    texture.image.depth !== level.size
+  ) {
+    texture?.dispose();
+    texture = new THREE.Data3DTexture(
+      level.data,
+      level.size,
+      level.size,
+      level.size,
+    );
+    configureVoxelMaxHierarchyTexture(texture);
+  } else {
+    texture.image.data = level.data;
+    texture.needsUpdate = true;
+  }
+
+  const u = material.uniforms;
+  u.uMaxHierarchy.value = texture;
+  u.uMaxHierarchyEnabled.value = 1;
+  u.uMaxHierarchyLevelSize.value = level.size;
+  u.uMaxHierarchyCellSpan.value = level.cellSpan;
+  syncVoxelFragment(material);
   return texture;
 }
 
@@ -692,11 +1094,8 @@ export function setVoxelBalloon(
     u.uBalloonRho.value = 1;
     u.uBalloonFar.value = 0;
   }
-  const next = voxelFragmentFor(spec !== null);
-  if (material.fragmentShader !== next) {
-    material.fragmentShader = next;
-    material.needsUpdate = true;
-  }
+  material.userData[BALLOON_ENABLED_KEY] = spec !== null;
+  syncVoxelFragment(material);
 }
 
 /** Uniform-only shell tint; strength 0 is the authored-color identity. */
@@ -723,7 +1122,8 @@ export function createVoxelMaterial(
   volume: THREE.Data3DTexture,
   backgroundImage?: THREE.Texture,
 ): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
+  const hierarchyFallback = emptyVoxelMaxHierarchyTexture();
+  const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
       uVolume: { value: volume },
@@ -751,6 +1151,15 @@ export function createVoxelMaterial(
       uFogDensity: { value: 1 }, // scene.setFogDensity keeps it current.
       uFogTint: { value: new THREE.Vector3(1, 1, 1) },
       uFogTintStrength: { value: 0 }, // scene.setFogTint keeps both current.
+      // Acceleration is opt-in per exact worker snapshot. These uniforms stay
+      // inert (and the fragment source stays unchanged) until its traversal
+      // program is selected; the 1x1x1 R8 binding makes absence explicit.
+      uMaxHierarchy: { value: hierarchyFallback },
+      uMaxHierarchyEnabled: { value: 0 },
+      uMaxHierarchyLevelSize: { value: 1 },
+      uMaxHierarchyCellSpan: {
+        value: VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN,
+      },
       // Balloon uniforms are inert while the exact off source is installed.
       uBalloonCenter: { value: new THREE.Vector3() },
       uBalloonRawRadius: { value: 1 },
@@ -767,4 +1176,8 @@ export function createVoxelMaterial(
     depthTest: false,
     depthWrite: false,
   });
+  material.userData[HIERARCHY_FALLBACK_KEY] = hierarchyFallback;
+  material.userData[BALLOON_ENABLED_KEY] = false;
+  material.addEventListener("dispose", () => hierarchyFallback.dispose());
+  return material;
 }

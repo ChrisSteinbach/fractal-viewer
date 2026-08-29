@@ -621,6 +621,17 @@ hierarchy layout before choosing an effective resolution. Worker teardown uses
 a live-gated host, so a queued callback from a terminated Solid entry cannot
 install a stale snapshot or tear down the next render.
 
+The GPU binds the hierarchy's cellSpan-16 level as one tiny nearest R8 3D
+texture. Primary rays retain their original jittered fixed-step lattice:
+certified-empty nodes consume multiple lattice indices, while an occupied
+node's exit is cached and ordinary samples continue until it is crossed. The
+same five bisections refine the same packed trilinear density bracket. This is
+used for the ordinary primary and Balloon's straight source primary only;
+shadow/AO/normal/color taps remain direct, and Balloon's sphere-inverted echo
+cannot use linear node exits because it is curved in source texture space.
+CPU agreement, work counts, real-WebGL pixels, and measured latency live in
+`docs/solid-density-acceleration.md`.
+
 The solid balloon is a **query-space union over that one volume**, not a second
 voxel accumulation: while enabled, every combined-density query is
 `max(density(p), density(I(p)))`, where `I` is the shared sphere inversion.
