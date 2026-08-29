@@ -970,10 +970,16 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   nonlinear variations, the final lens, 4D extension fields, map selection or
   Xaos, and appearance. Locks affect only children generated next; they never
   rewrite retained nodes, and one lock does not shift the deterministic random
-  streams of unrelated domains. Automatic orbit and tumble pause while the Lab
-  is open without changing the saved motion preference. Undo, redo, Collection
-  loads, or editor changes reattach when the displayed document matches a
-  retained node; otherwise the Lab visibly detaches and offers a new root.
+  streams of unrelated domains. **Surface-compatible children only** applies
+  the same document-level Surface analysis before a child is retained. Eligible
+  and degraded routes pass, including compute-only 4D routes regardless of the
+  current device; an ineligible root disables the option with the renderer's
+  shared refusal reason. Rejected attempts stay inside their child's reserved
+  seeded lane, so they cannot shift later siblings. Automatic orbit and tumble
+  pause while the Lab is open without changing the saved motion preference.
+  Undo, redo, Collection loads, or editor changes reattach when the displayed
+  document matches a retained node; otherwise the Lab visibly detaches and
+  offers a new root.
 
   Nothing is added to Collection implicitly. **Save current to Collection** is
   the only promotion action, and lineage/provenance never enters autosave,

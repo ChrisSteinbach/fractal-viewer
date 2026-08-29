@@ -65,7 +65,9 @@ import {
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import {
+  deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
+  surfaceEligibilityHasRoute,
   type SurfaceEligibilityResult,
 } from "./surface-eligibility";
 import {
@@ -150,6 +152,11 @@ import {
   type LineageProfile,
 } from "./evolution-lineage";
 import { EvolutionWorkspaceSelection } from "./evolution-workspace";
+import { evaluateEvolutionSurfaceAdmission } from "./evolution-surface-constraint";
+import {
+  evolutionChildOrdinal,
+  evolutionNextPassOrdinal,
+} from "./evolution-generation";
 import { randomSystem } from "../fractal/random-system";
 import { BOOT_CAMERA_POSITION, OrbitCamera, type CameraPose } from "./orbit";
 import {
@@ -7326,10 +7333,13 @@ async function main(): Promise<void> {
   const evolutionNextOrdinal = new Map<string, number>();
   const evolutionChosenBranches = new Map<string, string>();
   const evolutionLockedDomains = new Set<MutationDomain>();
+  let evolutionSurfaceConstraintEnabled = false;
+  let evolutionRootSurfaceEligibility: SurfaceEligibilityResult | null = null;
   let evolutionBuildToken = 0;
   let evolutionTopologyCounter = 0;
   let mutationVisibleNodeIds: (string | undefined)[] = [];
   let evolutionBusy = false;
+  let evolutionGenerating = false;
   let evolutionSelectionTicket = 0;
 
   function deriveEvolutionSeed(parts: readonly (number | string)[]): number {
@@ -7453,6 +7463,7 @@ async function main(): Promise<void> {
 
   function createOrResetEvolutionRoot(): boolean {
     const snapshot = currentDocument();
+    const rootSurfaceEligibility = deriveSurfaceDocumentEligibility(snapshot);
     const seed = rollSeed();
     const resourceIds = sceneCustomMeshIds(snapshot);
     let release: () => void;
@@ -7488,6 +7499,10 @@ async function main(): Promise<void> {
       evolutionNodeReleases.set(evolutionLineage.currentId!, release);
       evolutionNextOrdinal.clear();
       evolutionChosenBranches.clear();
+      evolutionRootSurfaceEligibility = rootSurfaceEligibility;
+      // The policy belongs to this root, not to the browser or the previous
+      // lineage. Every successful reset starts with an explicit opt-in.
+      evolutionSurfaceConstraintEnabled = false;
       evolutionBuildToken += 1;
       return true;
     } catch (error) {
@@ -7527,6 +7542,9 @@ async function main(): Promise<void> {
       return node ? [{ id, label: mutationNodeLabel(node, index) }] : [];
     });
     const branch = chosenEvolutionBranch(current);
+    const surfaceConstraintAvailable =
+      evolutionRootSurfaceEligibility !== null &&
+      surfaceEligibilityHasRoute(evolutionRootSurfaceEligibility);
     ui.setEvolutionWorkspace({
       detached: workspace.detached,
       busy: evolutionBusy,
@@ -7541,6 +7559,12 @@ async function main(): Promise<void> {
       lockedDomains: MUTATION_DOMAINS.filter((domain) =>
         evolutionLockedDomains.has(domain),
       ),
+      surfaceConstraintChecked: evolutionSurfaceConstraintEnabled,
+      surfaceConstraintAvailable,
+      surfaceConstraintNote: surfaceConstraintAvailable
+        ? "Future children must have a supported Surface route; degraded routes are allowed."
+        : (evolutionRootSurfaceEligibility?.note ??
+          "This root has no supported Surface route."),
       status:
         status ??
         (workspace.detached
@@ -7554,6 +7578,10 @@ async function main(): Promise<void> {
     const workspace = evolutionWorkspace;
     const current = lineage?.current() ?? null;
     evolutionBuildToken += 1;
+    if (evolutionGenerating) {
+      evolutionGenerating = false;
+      evolutionBusy = false;
+    }
     mutationVisibleNodeIds = [];
     ui.resetMutationCells();
     if (!lineage || !workspace || !current) return;
@@ -7600,7 +7628,11 @@ async function main(): Promise<void> {
     const baseOrdinal = evolutionNextOrdinal.get(parentId) ?? 0;
     evolutionNextOrdinal.set(
       parentId,
-      baseOrdinal + MUTATION_CELLS * MUTATION_ATTEMPTS_PER_CELL,
+      evolutionNextPassOrdinal(
+        baseOrdinal,
+        MUTATION_CELLS,
+        MUTATION_ATTEMPTS_PER_CELL,
+      ),
     );
     const lockedDomains = MUTATION_DOMAINS.filter((domain) =>
       evolutionLockedDomains.has(domain),
@@ -7609,9 +7641,11 @@ async function main(): Promise<void> {
     ui.resetMutationCells();
     ui.setMutationCurrent(parent.thumbnail, MUTATION_THUMB_SIZE, "current");
     evolutionBusy = true;
+    evolutionGenerating = true;
     syncEvolutionWorkspace("Generating retained children…");
     let cell = 0;
     let attempt = 0;
+    let lastSurfaceRefusalNote: string | null = null;
     const step = (): void => {
       if (token !== evolutionBuildToken) {
         return;
@@ -7621,19 +7655,25 @@ async function main(): Promise<void> {
         lineage.currentId !== parentId ||
         workspace.detached
       ) {
+        evolutionGenerating = false;
         evolutionBusy = false;
         syncEvolutionWorkspace();
         return;
       }
       if (lineage.size >= lineage.nodeCap) {
+        evolutionGenerating = false;
         evolutionBusy = false;
         syncEvolutionWorkspace(
           "Lineage cap reached. Prune a branch or start a new root.",
         );
         return;
       }
-      const childOrdinal =
-        baseOrdinal + cell * MUTATION_ATTEMPTS_PER_CELL + attempt;
+      const childOrdinal = evolutionChildOrdinal(
+        baseOrdinal,
+        cell,
+        attempt,
+        MUTATION_ATTEMPTS_PER_CELL,
+      );
       const result = createEvolutionMutationCandidate(
         parent.snapshot as SceneSnapshot,
         {
@@ -7659,6 +7699,34 @@ async function main(): Promise<void> {
       } else {
         const candidate = result.candidate;
         const snapshot = candidate.snapshot as unknown as SceneSnapshot;
+        const surfaceAdmission = evaluateEvolutionSurfaceAdmission(
+          snapshot,
+          evolutionSurfaceConstraintEnabled,
+        );
+        if (!surfaceAdmission.admitted) {
+          lastSurfaceRefusalNote = surfaceAdmission.eligibility.note;
+          attempt += 1;
+          if (attempt < MUTATION_ATTEMPTS_PER_CELL) {
+            requestAnimationFrame(step);
+            return;
+          }
+          ui.setMutationCellUnavailable(
+            cell,
+            lastSurfaceRefusalNote ??
+              `No Surface-compatible child found for slot ${String(cell + 1)}`,
+          );
+          cell += 1;
+          attempt = 0;
+          lastSurfaceRefusalNote = null;
+          if (cell < MUTATION_CELLS) {
+            requestAnimationFrame(step);
+          } else {
+            evolutionGenerating = false;
+            evolutionBusy = false;
+            syncEvolutionWorkspace("Eight-child generation pass complete.");
+          }
+          return;
+        }
         const thumbnail = evolutionThumbnail(
           candidate.snapshot,
           candidate.nodeSeed,
@@ -7668,6 +7736,7 @@ async function main(): Promise<void> {
         try {
           release = pinCustomMeshAssets(candidate.resourceIds);
         } catch (error) {
+          evolutionGenerating = false;
           evolutionBusy = false;
           ui.setMutationCellUnavailable(
             cell,
@@ -7686,6 +7755,7 @@ async function main(): Promise<void> {
         });
         if (!added.added) {
           release();
+          evolutionGenerating = false;
           evolutionBusy = false;
           ui.setMutationCellUnavailable(
             cell,
@@ -7708,9 +7778,11 @@ async function main(): Promise<void> {
       }
       cell += 1;
       attempt = 0;
+      lastSurfaceRefusalNote = null;
       if (cell < MUTATION_CELLS) {
         requestAnimationFrame(step);
       } else {
+        evolutionGenerating = false;
         evolutionBusy = false;
         syncEvolutionWorkspace("Eight-child generation pass complete.");
       }
@@ -7724,6 +7796,7 @@ async function main(): Promise<void> {
     const sourceId = evolutionLineage?.currentId ?? null;
     const selectionTicket = ++evolutionSelectionTicket;
     evolutionBuildToken += 1;
+    evolutionGenerating = false;
     evolutionBusy = true;
     syncEvolutionWorkspace("Loading exact retained scene…");
     void workspace
@@ -7764,6 +7837,7 @@ async function main(): Promise<void> {
     const workspace = evolutionWorkspace;
     if (!workspace) return;
     evolutionBuildToken += 1;
+    evolutionGenerating = false;
     evolutionBusy = false;
     workspace.reconcile(encodeScene(currentDocument()));
     if (ui.mutationsOpen()) renderEvolutionNeighborhood();
@@ -8286,6 +8360,7 @@ async function main(): Promise<void> {
       const current = lineage?.current();
       if (!lineage || !current?.childIds.includes(nodeId)) return;
       evolutionBuildToken += 1;
+      evolutionGenerating = false;
       evolutionBusy = false;
       const result = lineage.prune(nodeId, current.id);
       if (!result.pruned) return;
@@ -8298,6 +8373,7 @@ async function main(): Promise<void> {
       );
     },
     onEvolutionReset: () => {
+      evolutionGenerating = false;
       evolutionBusy = false;
       if (!createOrResetEvolutionRoot()) return;
       renderEvolutionNeighborhood();
@@ -8309,17 +8385,37 @@ async function main(): Promise<void> {
       if (!current || evolutionWorkspace?.detached !== false) return;
       saveDocumentToCollection(current.encodedScene);
     },
+    onEvolutionSurfaceConstraint: (enabled) => {
+      const available =
+        evolutionRootSurfaceEligibility !== null &&
+        surfaceEligibilityHasRoute(evolutionRootSurfaceEligibility);
+      evolutionSurfaceConstraintEnabled = enabled && available;
+      if (evolutionGenerating) {
+        renderEvolutionNeighborhood();
+      }
+      // An async retained-node load also owns `evolutionBusy`. Policy changes
+      // are safe during it, but must not make the load look completed.
+      if (evolutionBusy) return;
+      syncEvolutionWorkspace(
+        available
+          ? `Surface-compatible generation ${evolutionSurfaceConstraintEnabled ? "enabled" : "disabled"}. Generate children to use the new policy.`
+          : (evolutionRootSurfaceEligibility?.note ??
+              "This root has no supported Surface route."),
+      );
+    },
     onEvolutionLock: (domain, locked) => {
       if (!MUTATION_DOMAINS.includes(domain)) return;
       if (locked) evolutionLockedDomains.add(domain);
       else evolutionLockedDomains.delete(domain);
-      if (evolutionBusy) {
-        evolutionBuildToken += 1;
-        evolutionBusy = false;
+      if (evolutionGenerating) {
         renderEvolutionNeighborhood();
         syncEvolutionWorkspace(
           "Trait locks changed. Generate children to use the new profile.",
         );
+      } else if (evolutionBusy) {
+        // Preserve the in-flight load status. Its completion refreshes the
+        // workspace from these newly updated locks.
+        return;
       } else {
         syncEvolutionWorkspace(
           "Trait locks updated for the next generated children.",
@@ -8329,6 +8425,7 @@ async function main(): Promise<void> {
     onEvolutionClose: () => {
       evolutionModalOpen = false;
       evolutionBuildToken += 1;
+      evolutionGenerating = false;
       evolutionBusy = false;
     },
     // The ambient drift show's toggle. Session-only, never persisted; the

@@ -97,6 +97,7 @@ function noopHandlers(): UiHandlers {
     onEvolutionSave: vi.fn(),
     onEvolutionClose: vi.fn(),
     onEvolutionLock: vi.fn(),
+    onEvolutionSurfaceConstraint: vi.fn(),
     onDriftToggle: vi.fn(),
     onScalarControl: vi.fn(),
     onRegenerate: vi.fn(),
@@ -11197,6 +11198,10 @@ describe("Ui mutation grid", () => {
     ],
     selectedBranchId: "lineage-3",
     lockedDomains: ["appearance"],
+    surfaceConstraintChecked: false,
+    surfaceConstraintAvailable: true,
+    surfaceConstraintNote:
+      "Future children must have a supported Surface route; degraded routes are allowed.",
     status: "Selected lineage-1.",
     ...overrides,
   });
@@ -11284,7 +11289,7 @@ describe("Ui mutation grid", () => {
     ).toHaveLength(6);
   });
 
-  it("routes retained navigation, prune, reset, save, and lock controls", () => {
+  it("routes retained navigation, prune, reset, save, lock, and Surface constraint controls", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -11306,6 +11311,11 @@ describe("Ui mutation grid", () => {
     )!;
     lock.checked = true;
     lock.dispatchEvent(new Event("change"));
+    const surfaceConstraint = document.getElementById(
+      "evolutionSurfaceCompatible",
+    ) as HTMLInputElement;
+    surfaceConstraint.checked = true;
+    surfaceConstraint.dispatchEvent(new Event("change"));
 
     expect(handlers.onEvolutionBack).toHaveBeenCalledOnce();
     expect(handlers.onEvolutionForward).toHaveBeenCalledOnce();
@@ -11317,6 +11327,62 @@ describe("Ui mutation grid", () => {
       "spatialGeometry",
       true,
     );
+    expect(handlers.onEvolutionSurfaceConstraint).toHaveBeenCalledWith(true);
+  });
+
+  it("keeps eligible and degraded Surface constraints available during generation", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+
+    ui.setEvolutionWorkspace(
+      workspace({
+        busy: true,
+        surfaceConstraintChecked: true,
+        surfaceConstraintAvailable: true,
+        surfaceConstraintNote:
+          "Future children must have a supported Surface route; degraded routes are allowed.",
+      }),
+    );
+
+    const surfaceConstraint = document.getElementById(
+      "evolutionSurfaceCompatible",
+    ) as HTMLInputElement;
+    expect(surfaceConstraint.disabled).toBe(false);
+    expect(surfaceConstraint.checked).toBe(true);
+    expect(
+      document.getElementById("evolutionSurfaceCompatibilityNote")?.textContent,
+    ).toContain("degraded routes are allowed");
+    expect(
+      document.querySelector<HTMLInputElement>(
+        '[data-evolution-domain="appearance"]',
+      )?.disabled,
+    ).toBe(false);
+  });
+
+  it("disables and unchecks the Surface constraint with the shared root refusal note", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    const refusal =
+      "QJulia nonlinear maps do not have a supported Surface estimator";
+
+    ui.setEvolutionWorkspace(
+      workspace({
+        surfaceConstraintChecked: true,
+        surfaceConstraintAvailable: false,
+        surfaceConstraintNote: refusal,
+      }),
+    );
+
+    const surfaceConstraint = document.getElementById(
+      "evolutionSurfaceCompatible",
+    ) as HTMLInputElement;
+    expect(surfaceConstraint.disabled).toBe(true);
+    expect(surfaceConstraint.checked).toBe(false);
+    expect(
+      document.getElementById("evolutionSurfaceCompatibilityNote")?.textContent,
+    ).toBe(refusal);
   });
 
   it("visibly detaches and leaves only new-root recovery enabled", () => {
@@ -11347,6 +11413,13 @@ describe("Ui mutation grid", () => {
       (document.getElementById("evolutionResetBtn") as HTMLButtonElement)
         .disabled,
     ).toBe(false);
+    expect(
+      (
+        document.getElementById(
+          "evolutionSurfaceCompatible",
+        ) as HTMLInputElement
+      ).disabled,
+    ).toBe(true);
     expect(
       document.getElementById("mutationModal")?.getAttribute("aria-label"),
     ).toBe("Evolution Lab detached from the displayed scene");
@@ -12336,6 +12409,10 @@ describe("Ui modal focus trap", () => {
       branches: [],
       selectedBranchId: null,
       lockedDomains: [],
+      surfaceConstraintChecked: false,
+      surfaceConstraintAvailable: true,
+      surfaceConstraintNote:
+        "Future children must have a supported Surface route; degraded routes are allowed.",
       status: "Loading",
     });
     // Every workspace action is disabled while this simulated load is busy;

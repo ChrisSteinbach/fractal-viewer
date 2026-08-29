@@ -277,6 +277,9 @@ export interface UiHandlers {
   onEvolutionClose: () => void;
   /** Lock one seeded mutation domain for future generated children. */
   onEvolutionLock: (domain: MutationDomain, locked: boolean) => void;
+  /** Require future mutation/crossover children to retain a capability-neutral
+   * Surface route. */
+  onEvolutionSurfaceConstraint: (enabled: boolean) => void;
   /** "▶ Drift" was clicked: toggle the ambient drift show — session-only, like
    * the auto-orbit/tumble motion; main.ts owns the policy. */
   onDriftToggle: () => void;
@@ -1787,6 +1790,9 @@ export interface EvolutionWorkspaceView {
   readonly branches: readonly EvolutionBranchOption[];
   readonly selectedBranchId: string | null;
   readonly lockedDomains: readonly MutationDomain[];
+  readonly surfaceConstraintChecked: boolean;
+  readonly surfaceConstraintAvailable: boolean;
+  readonly surfaceConstraintNote: string;
   readonly status: string;
 }
 
@@ -1938,6 +1944,8 @@ export class Ui {
   private readonly evolutionStatus: HTMLElement;
   private readonly evolutionCount: HTMLElement;
   private readonly evolutionLockInputs: readonly HTMLInputElement[];
+  private readonly evolutionSurfaceCompatible: HTMLInputElement;
+  private readonly evolutionSurfaceCompatibilityNote: HTMLElement;
   /** The eight candidate cell buttons, by candidate index; rebuilt by
    * {@link resetMutationCells}. */
   private mutationCells: HTMLButtonElement[] = [];
@@ -2612,6 +2620,10 @@ export class Ui {
     this.evolutionSaveBtn = this.byId("evolutionSaveBtn");
     this.evolutionStatus = this.byId("evolutionStatus");
     this.evolutionCount = this.byId("evolutionCount");
+    this.evolutionSurfaceCompatible = this.byId("evolutionSurfaceCompatible");
+    this.evolutionSurfaceCompatibilityNote = this.byId(
+      "evolutionSurfaceCompatibilityNote",
+    );
     this.evolutionLockInputs = Array.from(
       this.doc.querySelectorAll<HTMLInputElement>(
         "#evolutionLocks input[data-evolution-domain]",
@@ -3227,6 +3239,11 @@ export class Ui {
     );
     this.evolutionSaveBtn.addEventListener("click", () =>
       handlers.onEvolutionSave(),
+    );
+    this.evolutionSurfaceCompatible.addEventListener("change", () =>
+      handlers.onEvolutionSurfaceConstraint(
+        this.evolutionSurfaceCompatible.checked,
+      ),
     );
     for (const input of this.evolutionLockInputs) {
       input.addEventListener("change", () => {
@@ -4972,6 +4989,14 @@ export class Ui {
       );
       input.disabled = view.detached;
     }
+    this.evolutionSurfaceCompatible.checked =
+      view.surfaceConstraintAvailable && view.surfaceConstraintChecked;
+    // Like the trait locks, this stays operable during a progressive build:
+    // its handler invalidates the build token before stale work can commit.
+    this.evolutionSurfaceCompatible.disabled =
+      view.detached || !view.surfaceConstraintAvailable;
+    this.evolutionSurfaceCompatibilityNote.textContent =
+      view.surfaceConstraintNote;
     this.mutationModal.setAttribute(
       "aria-label",
       view.detached
