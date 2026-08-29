@@ -597,6 +597,13 @@ controls re-render with no worker round-trip — which is also why the solid wor
 needs no SharedArrayBuffer fast path (nothing on the main thread is tone-mapping),
 unlike the flame.
 
+`voxel-raymarch.ts` is the pure CPU geometry oracle for that primary path. It
+samples the same packed alpha field at WebGL texel centres with ClampToEdge
+trilinear reconstruction, clips the same AABB interval, exposes the pixel hash
+as an explicit deterministic phase, applies the same strict `>` threshold, and
+returns the outside/inside bracket after the same five bisections. Accelerated
+traversals compare against this path; they do not define a second density field.
+
 The solid balloon is a **query-space union over that one volume**, not a second
 voxel accumulation: while enabled, every combined-density query is
 `max(density(p), density(I(p)))`, where `I` is the shared sphere inversion.
