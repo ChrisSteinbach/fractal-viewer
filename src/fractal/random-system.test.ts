@@ -12,7 +12,7 @@ import { runChaosGame4 } from "./chaos-game-4d";
 import { doubleRotation, sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
 import { SYMMETRY_PLANES } from "./types";
-import type { Bounds, Bounds4, Transform } from "./types";
+import type { Bounds, Bounds4, HybridSchedule, Transform } from "./types";
 
 const SEED_SAMPLE_SIZE = 50;
 /** Larger batch for the 4D-roll tests: the roll only hits ~1/4 of the time,
@@ -547,6 +547,19 @@ describe("randomSystem's symmetry roll", () => {
 });
 
 describe("scoreSystem's flat/4D routing", () => {
+  const effectiveSchedule: HybridSchedule = {
+    depth: 2,
+    transforms: sierpinskiTetrahedron().map((transform, index) => ({
+      ...transform,
+      position: [
+        transform.position[0] * 0.45 + index * 0.03,
+        transform.position[1] * 0.45,
+        transform.position[2] * 0.45,
+      ],
+      scale: [0.42, 0.42, 0.42],
+    })),
+  };
+
   it("does not throw and returns a finite score for flat transforms carrying a w-plane symmetry", () => {
     // Before the routing fix, scoreSystem branched on
     // `systemIsFlat(transforms)` alone, so this flat-transform candidate
@@ -596,6 +609,36 @@ describe("scoreSystem's flat/4D routing", () => {
       mulberry32(4),
     );
     expect(withSymmetry).not.toBe(withoutSymmetry);
+  });
+
+  it("scores the effective scheduled post-word in the 3D route", () => {
+    const candidate = {
+      transforms: sierpinskiTetrahedron(),
+      finalTransform: null,
+      symmetry: null,
+    };
+    const classic = scoreSystem(candidate, mulberry32(17));
+    const scheduled = scoreSystem(candidate, mulberry32(17), effectiveSchedule);
+    expect(Number.isFinite(scheduled)).toBe(true);
+    expect(scheduled).not.toBe(classic);
+    expect(scoreSystem(candidate, mulberry32(17), effectiveSchedule)).toBe(
+      scheduled,
+    );
+  });
+
+  it("scores the effective scheduled post-word in the 4D route", () => {
+    const candidate = {
+      transforms: doubleRotation(),
+      finalTransform: null,
+      symmetry: null,
+    };
+    const classic = scoreSystem(candidate, mulberry32(23));
+    const scheduled = scoreSystem(candidate, mulberry32(23), effectiveSchedule);
+    expect(Number.isFinite(scheduled)).toBe(true);
+    expect(scheduled).not.toBe(classic);
+    expect(scoreSystem(candidate, mulberry32(23), effectiveSchedule)).toBe(
+      scheduled,
+    );
   });
 });
 

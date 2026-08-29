@@ -11,6 +11,7 @@ import { SYMMETRY_PLANES, VARIATION_TYPES } from "./types";
 import type {
   Bounds,
   Bounds4,
+  HybridSchedule,
   SymmetryParams,
   Transform,
   Variation,
@@ -975,6 +976,12 @@ const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
  * so {@link randomSystem}'s best-candidate bookkeeping never needs to care
  * which kind of candidate it is holding.
  *
+ * `effectiveSchedule` is the document's scheduled-hybrid post-word, when
+ * one is active. It is threaded into either chaos-game arm after dimensional
+ * routing, so the score judges the plotted A-then-B object rather than A in
+ * isolation. The default remains `null`, preserving every existing caller's
+ * stream and result byte-for-byte.
+ *
  * Shared by two acceptance gates: {@link randomSystem}'s own roll here, and
  * `mutate-system.ts`'s mutation gate, which judges a perturbed
  * system by the exact same "renders as a real shape" bar so a mutant is held
@@ -983,7 +990,11 @@ const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
  * flat system carrying a w-plane/twisted kaleidoscope reaches this same gate
  * on every Mutate click.
  */
-export function scoreSystem(candidate: RandomSystem, rng: Rng): number {
+export function scoreSystem(
+  candidate: RandomSystem,
+  rng: Rng,
+  effectiveSchedule: HybridSchedule | null = null,
+): number {
   const symmetry = candidate.symmetry ?? NO_SYMMETRY;
   const nonFlat = systemPartsAreNonFlat(
     candidate.transforms,
@@ -997,6 +1008,8 @@ export function scoreSystem(candidate: RandomSystem, rng: Rng): number {
       rng,
       candidate.finalTransform,
       candidate.symmetry ?? undefined,
+      undefined,
+      effectiveSchedule,
     );
     if (!isAcceptableSystem(bounds)) return UNACCEPTABLE_BOUNDS_SCORE;
     return occupiedCellCount(positions, count, bounds);
@@ -1010,6 +1023,8 @@ export function scoreSystem(candidate: RandomSystem, rng: Rng): number {
     rng,
     finalTransform4,
     symmetry,
+    undefined,
+    effectiveSchedule,
   );
   if (!isAcceptableSystem4(bounds, radius)) return UNACCEPTABLE_BOUNDS_SCORE;
   return occupiedCellCount(positions, count, bounds);
