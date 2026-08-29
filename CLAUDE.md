@@ -1228,6 +1228,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `voxel-raymarch.ts` — pure CPU geometry oracle for Solid's packed RGBA8
     density: ClampToEdge trilinear reconstruction plus the unaccelerated
     fixed-step, strict-threshold, bracket-refined primary march.
+  - `voxel-max-hierarchy.ts` — alpha-only max hierarchy over the CONTINUOUS
+    trilinear interpolation cells, including both clamped boundary half-cells.
+    The source texture remains the leaf; threshold stays live; allocation
+    failure omits acceleration without changing geometry. Proof, cost, rebuild
+    policy and measurements: `docs/solid-density-acceleration.md`.
 - **`src/app/`** — Three.js + DOM glue. Vite root (`root: "src/app"`).
   - `scene.ts` — Three.js wrapper (scene, camera, renderer, point cloud, guide
     boxes, fog). Three.js confined to this file, `interactions.ts`,

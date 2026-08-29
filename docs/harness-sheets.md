@@ -41,6 +41,20 @@ figures in four module docs and cost two claims: the Juliabox's "narrow
 usable band" does not exist, and `qjulia-beauty`'s "a deformed M never wins"
 was the instrument.
 
+## The Solid density sheet
+
+### voxel-max-hierarchy
+
+The max-alpha hierarchy's construction and payload measurement. It builds
+deterministic sparse and dense RGBA8 volumes at 64³, 128³ and the production
+192³ resolution, then requires duplicate payloads, exact level accounting and
+an independently witnessed root maximum. Timing is printed evidence rather
+than a flaky gate. On Node 22.23.2 and an i7-1165G7, repeated 192³ builds took
+about 61 ms for the sparse fixture and 85 ms for the dense fixture; both add
+exactly 1,048,560 bytes (0.1481 bytes per source voxel, 3.70% of RGBA8). The
+proof, full table, progressive rebuild rule and allocation fallback are in
+`docs/solid-density-acceleration.md`.
+
 ## The surface DE's sheets
 
 ### surface-beam
