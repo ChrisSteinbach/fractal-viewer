@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { EvolutionComparisonSession } from "./evolution-comparison";
+import {
+  EvolutionComparisonSession,
+  type EvolutionComparisonEndpoint,
+  type EvolutionExternalComparisonEndpointInput,
+} from "./evolution-comparison";
+import { evolutionSceneContentDigest } from "./evolution-crossover";
 import { EvolutionLineage, type LineageNodeInput } from "./evolution-lineage";
 import { initialState } from "./state";
 import { toSnapshot, type SceneSnapshot } from "./persist";
@@ -12,6 +17,25 @@ function input(key: string, snapshot?: SceneSnapshot): LineageNodeInput {
     seed: 7,
     profile: { algorithm: "comparison-test" },
   };
+}
+
+function externalInput(
+  authorityId: string,
+  snapshot: SceneSnapshot = toSnapshot(initialState(true)),
+): EvolutionExternalComparisonEndpointInput {
+  return {
+    authorityId,
+    label: `Collection ${authorityId}`,
+    encodedScene: `v1=${authorityId}`,
+    snapshot,
+    contentDigest: evolutionSceneContentDigest(snapshot),
+  };
+}
+
+function encoded(endpoint: EvolutionComparisonEndpoint): string {
+  return endpoint.kind === "lineage"
+    ? endpoint.node.encodedScene
+    : endpoint.encodedScene;
 }
 
 function branch() {
@@ -37,7 +61,7 @@ describe("EvolutionComparisonSession", () => {
     expect(comparison.pin("A", firstId)).toBe(true);
     expect(comparison.resolve("A")).toMatchObject({
       state: "available",
-      nodeId: firstId,
+      endpoint: { kind: "lineage", nodeId: firstId },
     });
     expect(comparison.pin("A", secondId)).toBe(true);
     lineage.prune(secondId, rootId);
@@ -56,7 +80,10 @@ describe("EvolutionComparisonSession", () => {
 
     await expect(
       comparison.show("A", async (node) => {
-        expect(node.snapshot).toEqual(target.snapshot);
+        expect(node.kind).toBe("lineage");
+        if (node.kind === "lineage") {
+          expect(node.node.snapshot).toEqual(target.snapshot);
+        }
         return true;
       }),
     ).resolves.toMatchObject({ displayed: true, slot: "A" });
@@ -72,9 +99,9 @@ describe("EvolutionComparisonSession", () => {
     comparison.pin("A", firstId);
     comparison.pin("B", secondId);
     const finishes = new Map<string, (loaded: boolean) => void>();
-    const load = (node: { encodedScene: string }) =>
+    const load = (endpoint: EvolutionComparisonEndpoint) =>
       new Promise<boolean>((resolve) =>
-        finishes.set(node.encodedScene, resolve),
+        finishes.set(encoded(endpoint), resolve),
       );
 
     const first = comparison.show("A", load);
@@ -132,7 +159,9 @@ describe("EvolutionComparisonSession", () => {
 
     comparison.pin("A", secondId);
     expect(comparison.activeSlot).toBeNull();
-    expect(comparison.resolve("A")).toMatchObject({ nodeId: secondId });
+    expect(comparison.resolve("A")).toMatchObject({
+      endpoint: { kind: "lineage", nodeId: secondId },
+    });
 
     await comparison.show("A", async () => true);
     comparison.clear("A");
@@ -201,8 +230,8 @@ describe("EvolutionComparisonSession", () => {
     }
     const comparison = new EvolutionComparisonSession(lineage);
     const seen: string[] = [];
-    const load = async (node: { encodedScene: string }) => {
-      seen.push(node.encodedScene);
+    const load = async (endpoint: EvolutionComparisonEndpoint) => {
+      seen.push(encoded(endpoint));
       return true;
     };
 
@@ -235,5 +264,148 @@ describe("EvolutionComparisonSession", () => {
     expect(comparison.activeSlot).toBeNull();
     expect(lineage.currentId).toBe(rootId);
     expect(lineage.size).toBe(3);
+  });
+
+  it("owns an exact external authority defensively without adding a graph node", async () => {
+    const { lineage, comparison, rootId } = branch();
+    const snapshot = toSnapshot(initialState(true));
+    snapshot.transforms[0].position[0] = 0.125;
+    const admitted = comparison.pinExternal(
+      "A",
+      externalInput("external-1", snapshot),
+    );
+    snapshot.transforms[0].position[0] = 9;
+
+    expect(lineage.size).toBe(3);
+    expect(lineage.currentId).toBe(rootId);
+    expect(Object.isFrozen(admitted)).toBe(true);
+    expect(Object.isFrozen(admitted.snapshot)).toBe(true);
+    expect(admitted.snapshot.transforms[0].position[0]).toBe(0.125);
+    const resolved = comparison.resolve("A");
+    expect(resolved).toMatchObject({
+      state: "available",
+      endpoint: {
+        kind: "external",
+        authorityId: "external-1",
+        contentDigest: admitted.contentDigest,
+      },
+    });
+
+    await expect(
+      comparison.show("A", async (endpoint) => {
+        expect(endpoint).toBe(admitted);
+        return true;
+      }),
+    ).resolves.toMatchObject({
+      displayed: true,
+      slot: "A",
+      endpoint: { kind: "external", authorityId: "external-1" },
+    });
+    expect(lineage.currentId).toBe(rootId);
+    expect(lineage.back()).toBeNull();
+  });
+
+  it("releases external authorities exactly once on replace, clear, and dispose", () => {
+    const released: string[] = [];
+    const { lineage, firstId } = branch();
+    const comparison = new EvolutionComparisonSession(lineage, {
+      onExternalRelease: (endpoint) => released.push(endpoint.authorityId),
+    });
+
+    comparison.pinExternal("A", externalInput("external-a"));
+    comparison.pin("A", firstId);
+    comparison.pinExternal("A", externalInput("external-b"));
+    comparison.clear("A");
+    comparison.clear("A");
+    comparison.pinExternal("A", externalInput("external-c"));
+    comparison.pinExternal("B", externalInput("external-d"));
+    comparison.dispose();
+    comparison.dispose();
+
+    expect(released).toEqual([
+      "external-a",
+      "external-b",
+      "external-c",
+      "external-d",
+    ]);
+    expect(comparison.isDisposed).toBe(true);
+    expect(() => comparison.resolve("A")).toThrow("session is disposed");
+  });
+
+  it("rejects invalid or reused authority ids without replacing the live pin", () => {
+    const released: string[] = [];
+    const { lineage } = branch();
+    const comparison = new EvolutionComparisonSession(lineage, {
+      onExternalRelease: (endpoint) => released.push(endpoint.authorityId),
+    });
+    comparison.pinExternal("A", externalInput("kept"));
+
+    expect(() =>
+      comparison.pinExternal("A", {
+        ...externalInput("bad-digest"),
+        contentDigest: evolutionSceneContentDigest(
+          (() => {
+            const changed = toSnapshot(initialState(true));
+            changed.transforms[0].position[0] = 0.75;
+            return changed;
+          })(),
+        ),
+      }),
+    ).toThrow("does not match its snapshot");
+    expect(() => comparison.pinExternal("B", externalInput("kept"))).toThrow(
+      "already used",
+    );
+    expect(comparison.resolve("A")).toMatchObject({
+      endpoint: { kind: "external", authorityId: "kept" },
+    });
+    expect(comparison.resolve("B")).toEqual({ state: "empty" });
+    expect(released).toEqual([]);
+  });
+
+  it("keeps external pins across lineage reset while retained pins become missing", () => {
+    const { lineage, comparison, firstId } = branch();
+    comparison.pin("A", firstId);
+    comparison.pinExternal("B", externalInput("keeper"));
+
+    lineage.reset(input("new-root"));
+
+    expect(comparison.resolve("A")).toEqual({
+      state: "missing",
+      nodeId: firstId,
+    });
+    expect(comparison.resolve("B")).toMatchObject({
+      state: "available",
+      endpoint: { kind: "external", authorityId: "keeper" },
+    });
+  });
+
+  it("makes rapid external replacement latest-wins and releases the old authority", async () => {
+    const released: string[] = [];
+    const { lineage } = branch();
+    const comparison = new EvolutionComparisonSession(lineage, {
+      onExternalRelease: (endpoint) => released.push(endpoint.authorityId),
+    });
+    comparison.pinExternal("A", externalInput("first"));
+    let finish!: (loaded: boolean) => void;
+    const pending = comparison.show(
+      "A",
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    );
+
+    comparison.pinExternal("A", externalInput("second"));
+    finish(true);
+
+    await expect(pending).resolves.toEqual({
+      displayed: false,
+      reason: "superseded",
+    });
+    expect(released).toEqual(["first"]);
+    expect(comparison.resolve("A")).toMatchObject({
+      endpoint: { authorityId: "second" },
+    });
+    expect(comparison.activeSlot).toBeNull();
   });
 });

@@ -1,8 +1,10 @@
 import {
   EvolutionLineage,
+  type LineageCrossoverParentInput,
   type LineageNodeInput,
   type ReleasedLineageNode,
 } from "./evolution-lineage";
+import { evolutionSceneContentDigest } from "./evolution-crossover";
 import { initialState } from "./state";
 import { toSnapshot } from "./persist";
 
@@ -26,6 +28,16 @@ function added(result: ReturnType<EvolutionLineage["addMutation"]>) {
   return result.node;
 }
 
+const external = (hex: string): LineageCrossoverParentInput => ({
+  kind: "external",
+  contentDigest: `scene-sha256-${hex.repeat(64)}`,
+});
+
+const retained = (nodeId: string): LineageCrossoverParentInput => ({
+  kind: "lineage",
+  nodeId,
+});
+
 describe("EvolutionLineage ownership and ordering", () => {
   it("mints deterministic monotonic ids and retains ordered ancestors and siblings", () => {
     const lineage = new EvolutionLineage(input("root"));
@@ -44,6 +56,13 @@ describe("EvolutionLineage ownership and ordering", () => {
     ]);
     expect(lineage.node(rootId)?.childIds).toEqual([first.id, second.id]);
     expect(lineage.node(first.id)?.parentIds).toEqual([rootId]);
+    expect(lineage.node(first.id)?.geneticParents).toEqual([
+      {
+        kind: "lineage",
+        nodeId: rootId,
+        contentDigest: lineage.node(rootId)?.contentDigest,
+      },
+    ]);
     expect(lineage.node(first.id)?.childIds).toEqual([grandchild.id]);
     expect(lineage.node(second.id)?.childIds).toEqual([]);
     expect(lineage.all().map((node) => node.id)).toEqual([
@@ -93,7 +112,40 @@ describe("EvolutionLineage ownership and ordering", () => {
       ),
     ).toBe(true);
     expect(Object.isFrozen(secondRead.parentIds)).toBe(true);
+    expect(Object.isFrozen(secondRead.geneticParents)).toBe(true);
     expect(Object.isFrozen(secondRead.childIds)).toBe(true);
+    expect(secondRead.contentDigest).toBe(
+      evolutionSceneContentDigest(secondRead.snapshot),
+    );
+  });
+
+  it("verifies supplied content digests without trusting valid-looking lies", () => {
+    const snapshot = toSnapshot(initialState(true));
+    const exact = evolutionSceneContentDigest(snapshot);
+    expect(
+      new EvolutionLineage(
+        input("exact", { snapshot, contentDigest: exact }),
+      ).current()?.contentDigest,
+    ).toBe(exact);
+
+    expect(
+      () =>
+        new EvolutionLineage(
+          input("malformed", {
+            snapshot,
+            contentDigest: "scene-sha256-nope",
+          }),
+        ),
+    ).toThrow("lowercase SHA-256 scene digest");
+    expect(
+      () =>
+        new EvolutionLineage(
+          input("mismatch", {
+            snapshot,
+            contentDigest: `scene-sha256-${"f".repeat(64)}`,
+          }),
+        ),
+    ).toThrow("does not match its snapshot");
   });
 
   it("rejects non-JSON or cyclic profiles without changing the graph", () => {
@@ -155,22 +207,129 @@ describe("EvolutionLineage navigation", () => {
 });
 
 describe("EvolutionLineage DAG pruning", () => {
-  it("stores two ordered parents and exposes the crossover origin", () => {
+  it("stores ordered genetic provenance separately from navigation edges", () => {
     const lineage = new EvolutionLineage(input("root"));
     const root = lineage.rootId!;
     const a = added(lineage.addMutation(root, input("a")));
     const b = added(lineage.addMutation(root, input("b")));
-    const result = lineage.addCrossover(a.id, b.id, input("cross"));
+    const result = lineage.addCrossover(
+      [retained(a.id), retained(b.id)],
+      input("cross"),
+    );
     expect(result.added).toBe(true);
     if (!result.added) return;
 
     expect(result.node.kind).toBe("crossover");
     expect(result.node.parentIds).toEqual([a.id, b.id]);
+    expect(result.node.geneticParents).toEqual([
+      { kind: "lineage", nodeId: a.id, contentDigest: a.contentDigest },
+      { kind: "lineage", nodeId: b.id, contentDigest: b.contentDigest },
+    ]);
+    expect(Object.isFrozen(result.node.geneticParents)).toBe(true);
+    expect(Object.isFrozen(result.node.geneticParents[0])).toBe(true);
     expect(lineage.node(a.id)?.childIds).toEqual([result.node.id]);
     expect(lineage.node(b.id)?.childIds).toEqual([result.node.id]);
-    expect(() => lineage.addCrossover(a.id, a.id, input("bad"))).toThrow(
-      "two distinct parents",
+    expect(() =>
+      lineage.addCrossover([retained(a.id), retained(a.id)], input("bad")),
+    ).toThrow("two distinct retained lineage parents");
+  });
+
+  it("keeps mixed external provenance out of graph reachability in either order", () => {
+    const lineage = new EvolutionLineage(input("root"));
+    const root = lineage.rootId!;
+    const parent = added(lineage.addMutation(root, input("parent")));
+    const first = lineage.addCrossover(
+      [retained(parent.id), external("a")],
+      input("lineage-primary"),
     );
+    const second = lineage.addCrossover(
+      [external("b"), retained(parent.id)],
+      input("collection-primary"),
+    );
+    if (!first.added || !second.added) throw new Error("expected crossover");
+
+    expect(first.node.parentIds).toEqual([parent.id]);
+    expect(first.node.geneticParents).toEqual([
+      {
+        kind: "lineage",
+        nodeId: parent.id,
+        contentDigest: parent.contentDigest,
+      },
+      external("a"),
+    ]);
+    expect(second.node.parentIds).toEqual([parent.id]);
+    expect(second.node.geneticParents).toEqual([
+      external("b"),
+      {
+        kind: "lineage",
+        nodeId: parent.id,
+        contentDigest: parent.contentDigest,
+      },
+    ]);
+    expect(lineage.size).toBe(4);
+    expect(lineage.node(parent.id)?.childIds).toEqual([
+      first.node.id,
+      second.node.id,
+    ]);
+  });
+
+  it("requires the current retained node as the non-genetic all-external anchor", () => {
+    const lineage = new EvolutionLineage(input("root"));
+    const root = lineage.rootId!;
+    const other = added(lineage.addMutation(root, input("other")));
+
+    expect(() =>
+      lineage.addCrossover([external("a"), external("b")], input("missing")),
+    ).toThrow("require a current-node navigation anchor");
+    expect(() =>
+      lineage.addCrossover(
+        [external("a"), external("b")],
+        input("not-current"),
+        { navigationAnchorId: other.id },
+      ),
+    ).toThrow("must be the current retained node");
+    expect(() =>
+      lineage.addCrossover(
+        [retained(other.id), external("a")],
+        input("illegal-anchor"),
+        { navigationAnchorId: root },
+      ),
+    ).toThrow("allowed only for two external parents");
+
+    const result = lineage.addCrossover(
+      [external("a"), external("b")],
+      input("anchored", { resourceIds: ["child-only"] }),
+      { navigationAnchorId: root },
+    );
+    if (!result.added) throw new Error("expected crossover");
+    expect(result.node.parentIds).toEqual([root]);
+    expect(result.node.geneticParents).toEqual([external("a"), external("b")]);
+    expect(result.node.geneticParents).not.toContainEqual({
+      kind: "lineage",
+      nodeId: root,
+      contentDigest: lineage.node(root)?.contentDigest,
+    });
+    expect(lineage.resourceReferenceCount).toBe(1);
+    expect(lineage.size).toBe(3);
+  });
+
+  it("validates external digest shape before changing edges or consuming capacity", () => {
+    const lineage = new EvolutionLineage(input("root"));
+    const root = lineage.rootId!;
+    expect(() =>
+      lineage.addCrossover(
+        [
+          retained(root),
+          {
+            kind: "external",
+            contentDigest: "scene-sha256-UPPER",
+          },
+        ],
+        input("bad"),
+      ),
+    ).toThrow("External parent digest");
+    expect(lineage.size).toBe(1);
+    expect(lineage.node(root)?.childIds).toEqual([]);
   });
 
   it("prunes an ordinary subtree, preserves its sibling, and releases owned resources", () => {
@@ -216,7 +375,10 @@ describe("EvolutionLineage DAG pruning", () => {
     const root = lineage.rootId!;
     const a = added(lineage.addMutation(root, input("a")));
     const b = added(lineage.addMutation(root, input("b")));
-    const crossedResult = lineage.addCrossover(a.id, b.id, input("cross"));
+    const crossedResult = lineage.addCrossover(
+      [retained(a.id), retained(b.id)],
+      input("cross"),
+    );
     if (!crossedResult.added) throw new Error("expected crossover");
     const crossed = crossedResult.node;
     const descendant = added(
@@ -232,6 +394,10 @@ describe("EvolutionLineage DAG pruning", () => {
       removedIds: [],
     });
     expect(lineage.node(crossed.id)?.parentIds).toEqual([b.id]);
+    expect(lineage.node(crossed.id)?.geneticParents).toEqual([
+      { kind: "lineage", nodeId: a.id, contentDigest: a.contentDigest },
+      { kind: "lineage", nodeId: b.id, contentDigest: b.contentDigest },
+    ]);
     expect(lineage.node(a.id)?.childIds).toEqual([]);
     expect(lineage.node(b.id)?.childIds).toEqual([crossed.id]);
     expect(lineage.node(descendant.id)).not.toBeNull();
@@ -248,6 +414,64 @@ describe("EvolutionLineage DAG pruning", () => {
     expect(lineage.all().flatMap((node) => node.childIds)).not.toContain(
       crossed.id,
     );
+  });
+
+  it("sweeps mixed and all-external children through navigation only and releases once", () => {
+    const released: string[] = [];
+    const lineage = new EvolutionLineage(input("root"), {
+      onRelease: (node) => released.push(node.id),
+    });
+    const root = lineage.rootId!;
+    const retainedParent = added(
+      lineage.addMutation(root, input("retained-parent")),
+    );
+    const mixed = lineage.addCrossover(
+      [external("a"), retained(retainedParent.id)],
+      input("mixed"),
+    );
+    if (!mixed.added) throw new Error("expected mixed crossover");
+    expect(lineage.prune(mixed.node.id, retainedParent.id)).toEqual({
+      pruned: true,
+      removedIds: [mixed.node.id],
+    });
+
+    const externalOnly = lineage.addCrossover(
+      [external("b"), external("c")],
+      input("external-only"),
+      { navigationAnchorId: root },
+    );
+    if (!externalOnly.added) throw new Error("expected external crossover");
+    const descendant = added(
+      lineage.addMutation(externalOnly.node.id, input("descendant")),
+    );
+    expect(lineage.prune(externalOnly.node.id, root)).toEqual({
+      pruned: true,
+      removedIds: [externalOnly.node.id, descendant.id],
+    });
+    expect(released).toEqual([
+      mixed.node.id,
+      externalOnly.node.id,
+      descendant.id,
+    ]);
+  });
+
+  it("sweeps an anchored external lineage when its workspace anchor is pruned upstream", () => {
+    const lineage = new EvolutionLineage(input("root"));
+    const root = lineage.rootId!;
+    const anchor = added(lineage.addMutation(root, input("anchor")));
+    lineage.visit(anchor.id);
+    const crossed = lineage.addCrossover(
+      [external("a"), external("b")],
+      input("crossed"),
+      { navigationAnchorId: anchor.id },
+    );
+    if (!crossed.added) throw new Error("expected crossover");
+
+    expect(lineage.prune(anchor.id, root)).toEqual({
+      pruned: true,
+      removedIds: [anchor.id, crossed.node.id],
+    });
+    expect(lineage.currentId).toBe(root);
   });
 
   it("protects the root and refuses an unrelated parent", () => {
@@ -269,6 +493,32 @@ describe("EvolutionLineage DAG pruning", () => {
 });
 
 describe("EvolutionLineage caps and lifetime", () => {
+  it("refuses an anchored external crossover at caps without installing an edge or releasing authority", () => {
+    const released: string[] = [];
+    const lineage = new EvolutionLineage(input("root"), {
+      nodeCap: 1,
+      onRelease: (node) => released.push(node.id),
+    });
+    const root = lineage.rootId!;
+
+    expect(
+      lineage.addCrossover(
+        [external("a"), external("b")],
+        input("refused", { resourceIds: ["external-child-resource"] }),
+        { navigationAnchorId: root },
+      ),
+    ).toEqual({
+      added: false,
+      reason: "node-cap",
+      limit: 1,
+      requested: 2,
+    });
+    expect(lineage.size).toBe(1);
+    expect(lineage.resourceReferenceCount).toBe(0);
+    expect(lineage.node(root)?.childIds).toEqual([]);
+    expect(released).toEqual([]);
+  });
+
   it("refuses at the node cap without eviction, then admits after prune", () => {
     const released: string[] = [];
     const lineage = new EvolutionLineage(input("root"), {
