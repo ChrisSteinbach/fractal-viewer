@@ -154,3 +154,18 @@ export function rendererIsSoftware(renderer: string | null): boolean {
     )
   );
 }
+
+/** Playwright does not trust Vite's local development certificate when the
+ * service worker fetches its own script. Preserve the messages in evidence,
+ * but do not turn these two known registration errors into renderer failures. */
+export function isKnownServiceWorkerSslNoise(text: string): boolean {
+  if (text === "An SSL certificate error occurred when fetching the script.") {
+    return true;
+  }
+  return (
+    text.startsWith("Service worker registration failed:") &&
+    text.includes("SecurityError") &&
+    text.includes("sw.js") &&
+    text.includes("SSL certificate error")
+  );
+}
