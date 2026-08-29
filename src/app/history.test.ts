@@ -90,6 +90,18 @@ describe("SceneHistory checkpoint", () => {
     expect(history.undo("b")?.replaced).toBe(true);
   });
 
+  it("keeps exact authorities distinct when their portable wires collide", () => {
+    const history = new SceneHistory();
+    history.checkpoint("same-rounded-wire", true, undefined, "node-a");
+    history.checkpoint("same-rounded-wire", true, undefined, "node-b");
+
+    const latest = history.undo("same-rounded-wire", undefined, "outside-edit");
+    expect(latest?.authority).toBe("node-b");
+    expect(
+      history.undo("same-rounded-wire", undefined, "node-b")?.authority,
+    ).toBe("node-a");
+  });
+
   it("evicts the oldest entry once checkpoints exceed the cap", () => {
     const history = new SceneHistory(3);
     history.checkpoint("a", false);
@@ -124,6 +136,16 @@ describe("SceneHistory replaced flag", () => {
     history.checkpoint("s0", true);
     history.undo("s1");
     expect(history.redo("s0")?.replaced).toBe(true);
+  });
+});
+
+describe("SceneHistory exact authority", () => {
+  it("parks the current authority so redo restores the exact state", () => {
+    const history = new SceneHistory();
+    history.checkpoint("same", true, undefined, "node-a");
+
+    expect(history.undo("same", undefined, "node-b")?.authority).toBe("node-a");
+    expect(history.redo("same", undefined, "node-a")?.authority).toBe("node-b");
   });
 });
 

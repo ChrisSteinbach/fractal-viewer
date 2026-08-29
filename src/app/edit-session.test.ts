@@ -23,15 +23,22 @@ function harness(
 ): {
   session: EditSession;
   persisted: string[];
-  restored: { snapshot: string; replaced: boolean; pose?: ViewPose }[];
+  restored: {
+    snapshot: string;
+    replaced: boolean;
+    pose?: ViewPose;
+    authority?: string;
+  }[];
   undoRedo: [boolean, boolean][];
   setScene: (next: string) => void;
+  setAuthority: (next: string | undefined) => void;
   setPose: (next: ViewPose) => void;
   current: () => string;
   fireSave: () => void;
   savePending: () => boolean;
 } {
   let current = "s0";
+  let currentAuthority: string | undefined;
   let currentPose: ViewPose = {
     camera: { target: [0, 0, 0], radius: 8, theta: 0, phi: 1 },
   };
@@ -40,15 +47,18 @@ function harness(
     snapshot: string;
     replaced: boolean;
     pose?: ViewPose;
+    authority?: string;
   }[] = [];
   const undoRedo: [boolean, boolean][] = [];
   let pending: (() => void) | null = null;
   const session = new EditSession({
     snapshot: () => current,
+    authority: () => currentAuthority,
     persist: () => persisted.push(current),
-    restore: (snapshot, replaced, pose) => {
-      restored.push({ snapshot, replaced, pose });
+    restore: (snapshot, replaced, pose, authority) => {
+      restored.push({ snapshot, replaced, pose, authority });
       current = snapshot;
+      currentAuthority = authority;
       // Mirror main.ts's restoreSnapshot: only a cross-replace step moves the
       // camera, so only then does the live pose follow the restored entry.
       if (replaced && pose) currentPose = pose;
@@ -70,6 +80,9 @@ function harness(
     undoRedo,
     setScene: (next: string) => {
       current = next;
+    },
+    setAuthority: (next: string | undefined) => {
+      currentAuthority = next;
     },
     setPose: (next: ViewPose) => {
       currentPose = next;
@@ -287,6 +300,21 @@ describe("EditSession restore", () => {
   });
 });
 
+describe("EditSession exact authority", () => {
+  it("undo and redo distinguish exact states with the same portable wire", () => {
+    const h = harness();
+    h.setAuthority("node-a");
+    h.session.beginEdit("replace");
+    h.setAuthority("node-b");
+    h.fireSave();
+
+    h.session.undo();
+    expect(h.restored.at(-1)?.authority).toBe("node-a");
+    h.session.redo();
+    expect(h.restored.at(-1)?.authority).toBe("node-b");
+  });
+});
+
 describe("EditSession async restore preparation", () => {
   function deferred<T>(): {
     promise: Promise<T>;
@@ -401,6 +429,34 @@ describe("EditSession async restore preparation", () => {
     await Promise.resolve();
     expect(signal?.aborted).toBe(true);
     expect(h.current()).toBe("raced");
+    expect(h.restored).toHaveLength(0);
+    expect(h.session.canUndo).toBe(true);
+  });
+
+  it("refuses a prepared target when only exact authority changed", async () => {
+    const preparation = deferred<boolean>();
+    let signal: AbortSignal | undefined;
+    let preparedAuthority: string | undefined;
+    const h = harness({
+      prepareRestore: (_snapshot, nextSignal, authority) => {
+        signal = nextSignal;
+        preparedAuthority = authority;
+        return preparation.promise;
+      },
+    });
+    h.setAuthority("node-a");
+    h.session.beginEdit("replace");
+    h.setAuthority("node-b");
+    h.fireSave();
+    h.session.undo();
+    expect(preparedAuthority).toBe("node-a");
+
+    h.setAuthority("outside-edit");
+    preparation.resolve(true);
+    await preparation.promise;
+    await Promise.resolve();
+
+    expect(signal?.aborted).toBe(true);
     expect(h.restored).toHaveLength(0);
     expect(h.session.canUndo).toBe(true);
   });

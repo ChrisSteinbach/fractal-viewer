@@ -484,6 +484,20 @@ disclosing the creative path that produced it. Any future durable workspace
 would need a separate, explicit, versioned storage and export design rather
 than an optional field added to the scene codec.
 
+Within that page-local lifetime, lineage reconciliation uses the same exact,
+ID-neutral SHA-256 scene digest as crossover authority; the rounded portable
+wire is never treated as proof that the displayed scene still equals a node.
+Ordinary undo entries remain compact encoded strings, but may carry a small
+opaque exact-scene digest token while a matching lineage or pinned comparison
+authority exists. That token lets undo/redo resolve the graph-owned unrounded
+snapshot; camera and 4D pose continue through history's separate pose channel.
+Prune or root reset invalidates an otherwise unowned token, releases the node
+normally, and makes an older history entry fall back to the portable scene and
+visibly detach. Auxiliary mutation/branch counters are swept with pruned nodes,
+ordered crossover counters use a graph-cap recent-pair cache plus retained
+child provenance as their floor, and external comparison identity is bounded
+by the two owned pins rather than a session-long tombstone set.
+
 ## The flame still and the solid voxel render
 
 The panel presents the explorer, Flame, and Solid sampling budgets through one

@@ -172,7 +172,7 @@ export class EvolutionComparisonSession {
     EvolutionComparisonSlot,
     StoredEvolutionComparisonPin | null
   > = { A: null, B: null };
-  private readonly usedExternalAuthorityIds = new Set<string>();
+  private readonly activeExternalAuthorityIds = new Set<string>();
   private readonly onExternalRelease?: (
     endpoint: EvolutionExternalComparisonEndpoint,
   ) => void;
@@ -195,6 +195,11 @@ export class EvolutionComparisonSession {
     return this.disposed;
   }
 
+  /** Number of external authorities whose leases are currently owned. */
+  get externalAuthorityCount(): number {
+    return this.activeExternalAuthorityIds.size;
+  }
+
   /** Supersede an endpoint load without changing the current override. */
   cancelPending(): void {
     this.requestTicket += 1;
@@ -208,20 +213,21 @@ export class EvolutionComparisonSession {
     return true;
   }
 
-  /** Admit an independently owned external authority. The lifecycle id may
-   * never be reused, preventing replacement from releasing a newer lease. */
+  /** Admit an independently owned external authority. A lifecycle id may not
+   * alias either live pin; once its prior lease is fully released it can be
+   * reused without retaining an unbounded tombstone set. */
   pinExternal(
     slot: EvolutionComparisonSlot,
     input: EvolutionExternalComparisonEndpointInput,
   ): EvolutionExternalComparisonEndpoint {
     this.ensureActive();
     const endpoint = ownExternalEndpoint(input);
-    if (this.usedExternalAuthorityIds.has(endpoint.authorityId)) {
+    if (this.activeExternalAuthorityIds.has(endpoint.authorityId)) {
       throw new RangeError(
-        `External comparison authorityId was already used: ${endpoint.authorityId}`,
+        `External comparison authorityId is already active: ${endpoint.authorityId}`,
       );
     }
-    this.usedExternalAuthorityIds.add(endpoint.authorityId);
+    this.activeExternalAuthorityIds.add(endpoint.authorityId);
     this.replace(slot, endpoint);
     return endpoint;
   }
@@ -342,6 +348,7 @@ export class EvolutionComparisonSession {
     this.pins.B = null;
     this.disposed = true;
     endpoints.forEach((endpoint) => this.releaseExternal(endpoint));
+    this.activeExternalAuthorityIds.clear();
   }
 
   private replace(
@@ -356,7 +363,9 @@ export class EvolutionComparisonSession {
   }
 
   private releaseExternal(endpoint: StoredEvolutionComparisonPin | null): void {
-    if (endpoint?.kind === "external") this.onExternalRelease?.(endpoint);
+    if (endpoint?.kind !== "external") return;
+    this.activeExternalAuthorityIds.delete(endpoint.authorityId);
+    this.onExternalRelease?.(endpoint);
   }
 
   private ensureActive(): void {

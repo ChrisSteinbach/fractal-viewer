@@ -151,7 +151,14 @@ import {
   type LineageNode,
   type LineageProfile,
 } from "./evolution-lineage";
-import { EvolutionWorkspaceSelection } from "./evolution-workspace";
+import {
+  EvolutionWorkspaceSelection,
+  promoteEvolutionSelection,
+} from "./evolution-workspace";
+import {
+  evolutionHistoryAuthority,
+  evolutionSnapshotForHistoryAuthority,
+} from "./evolution-history";
 import {
   EvolutionComparisonSession,
   evolutionComparisonEndpointMatchesSnapshot,
@@ -162,6 +169,7 @@ import { acquireEvolutionCollectionParent } from "./evolution-collection-parent"
 import {
   CROSSOVER_ALGORITHM_VERSION,
   deriveCrossoverSeed32,
+  evolutionSceneContentDigest,
   prepareEvolutionCrossover,
   type EvolutionCrossoverParentInput,
   type EvolutionTopologyV1,
@@ -170,8 +178,11 @@ import {
 import { createEvolutionCrossoverCandidate } from "./evolution-crossover-candidate";
 import { evaluateEvolutionSurfaceAdmission } from "./evolution-surface-constraint";
 import {
+  decideEvolutionMutationAttempt,
   evolutionChildOrdinal,
   evolutionNextPassOrdinal,
+  pruneEvolutionNodeBookkeeping,
+  reserveEvolutionCrossoverOrdinal,
 } from "./evolution-generation";
 import { randomSystem } from "../fractal/random-system";
 import { BOOT_CAMERA_POSITION, OrbitCamera, type CameraPose } from "./orbit";
@@ -6536,13 +6547,18 @@ async function main(): Promise<void> {
    * attractor.
    */
   let preparedHistoryRestore:
-    { snapshot: string; release: () => void } | undefined;
+    { snapshot: string; authority?: string; release: () => void } | undefined;
 
   async function prepareHistoryRestore(
     snapshot: string,
     signal: AbortSignal,
+    authority?: string,
   ): Promise<boolean> {
-    const snap = decodeScene(snapshot);
+    const snap = (evolutionSnapshotForHistoryAuthority(
+      evolutionLineage,
+      evolutionComparisonHistoryEndpoints(),
+      authority,
+    ) ?? decodeScene(snapshot)) as SceneSnapshot | null;
     if (!snap) return false; // can't happen: entries are encodeScene output
     let release = (): void => {};
     try {
@@ -6566,7 +6582,7 @@ async function main(): Promise<void> {
         return false;
       }
       preparedHistoryRestore?.release();
-      preparedHistoryRestore = { snapshot, release };
+      preparedHistoryRestore = { snapshot, authority, release };
       return true;
     } catch (error) {
       release();
@@ -6585,13 +6601,21 @@ async function main(): Promise<void> {
     snapshot: string,
     replaced: boolean,
     pose?: ViewPose,
+    authority?: string,
   ): void {
     const pendingPrepared = preparedHistoryRestore;
     const prepared =
-      pendingPrepared?.snapshot === snapshot ? pendingPrepared : undefined;
+      pendingPrepared?.snapshot === snapshot &&
+      pendingPrepared.authority === authority
+        ? pendingPrepared
+        : undefined;
     preparedHistoryRestore = undefined;
     if (pendingPrepared && !prepared) pendingPrepared.release();
-    const snap = decodeScene(snapshot);
+    const snap = (evolutionSnapshotForHistoryAuthority(
+      evolutionLineage,
+      evolutionComparisonHistoryEndpoints(),
+      authority,
+    ) ?? decodeScene(snapshot)) as SceneSnapshot | null;
     evolutionReconciliationPaused = true;
     try {
       if (!snap) return; // can't happen: entries are encodeScene output
@@ -6648,6 +6672,20 @@ async function main(): Promise<void> {
     };
   }
 
+  function evolutionComparisonHistoryEndpoints(): EvolutionComparisonEndpoint[] {
+    const comparison = evolutionComparison;
+    if (!comparison) return [];
+    return (["A", "B"] as const).flatMap((slot) => {
+      const pin = comparison.resolve(slot);
+      return pin.state === "available" ? [pin.endpoint] : [];
+    });
+  }
+
+  function displayedEvolutionComparisonEndpoint(): EvolutionComparisonEndpoint | null {
+    const active = evolutionComparison?.active();
+    return active?.pin.state === "available" ? active.pin.endpoint : null;
+  }
+
   // Session-only undo/redo plus the edit-burst / debounced-save policy layered
   // over it (see edit-session.ts). The injected deps are the app's real
   // capabilities: encode and persist the live scene document, apply a restored
@@ -6658,6 +6696,13 @@ async function main(): Promise<void> {
   // Ctrl+Shift+Z call undo()/redo(); the page-hide handlers below call flush().
   const editSession = new EditSession({
     snapshot: () => encodeScene(toSnapshot(state)),
+    authority: () =>
+      evolutionHistoryAuthority(
+        evolutionLineage,
+        evolutionWorkspace,
+        currentDocument(),
+        displayedEvolutionComparisonEndpoint(),
+      ),
     persist: () => saveScene(currentDocument()),
     prepareRestore: prepareHistoryRestore,
     restore: restoreSnapshot,
@@ -7899,8 +7944,14 @@ async function main(): Promise<void> {
         },
       );
       if (!result.accepted) {
-        attempt += 1;
-        if (attempt < MUTATION_ATTEMPTS_PER_CELL) {
+        const decision = decideEvolutionMutationAttempt(
+          attempt,
+          MUTATION_ATTEMPTS_PER_CELL,
+          null,
+          false,
+        );
+        if (decision.kind === "retry") {
+          attempt = decision.nextAttempt;
           requestAnimationFrame(step);
           return;
         }
@@ -7917,8 +7968,14 @@ async function main(): Promise<void> {
         );
         if (!surfaceAdmission.admitted) {
           lastSurfaceRefusalNote = surfaceAdmission.eligibility.note;
-          attempt += 1;
-          if (attempt < MUTATION_ATTEMPTS_PER_CELL) {
+          const decision = decideEvolutionMutationAttempt(
+            attempt,
+            MUTATION_ATTEMPTS_PER_CELL,
+            candidate,
+            false,
+          );
+          if (decision.kind === "retry") {
+            attempt = decision.nextAttempt;
             requestAnimationFrame(step);
             return;
           }
@@ -7939,14 +7996,23 @@ async function main(): Promise<void> {
           }
           return;
         }
+        const admitted = decideEvolutionMutationAttempt(
+          attempt,
+          MUTATION_ATTEMPTS_PER_CELL,
+          candidate,
+          true,
+        );
+        if (admitted.kind !== "admit") {
+          throw new Error("Admitted Evolution candidate lost its gate result");
+        }
         const thumbnail = evolutionThumbnail(
-          candidate.snapshot,
-          candidate.nodeSeed,
-          candidate.childOrdinal,
+          admitted.candidate.snapshot,
+          admitted.candidate.nodeSeed,
+          admitted.candidate.childOrdinal,
         );
         let release: () => void;
         try {
-          release = pinCustomMeshAssets(candidate.resourceIds);
+          release = pinCustomMeshAssets(admitted.candidate.resourceIds);
         } catch (error) {
           evolutionGenerating = false;
           evolutionBusy = false;
@@ -7961,9 +8027,9 @@ async function main(): Promise<void> {
           encodedScene: encodeScene(snapshot),
           snapshot,
           thumbnail,
-          seed: candidate.nodeSeed,
+          seed: admitted.candidate.nodeSeed,
           profile: mutationEvolutionProfile(parent, result),
-          resourceIds: candidate.resourceIds,
+          resourceIds: admitted.candidate.resourceIds,
         });
         if (!added.added) {
           release();
@@ -7984,7 +8050,7 @@ async function main(): Promise<void> {
           cell,
           added.node.thumbnail,
           MUTATION_THUMB_SIZE,
-          candidate.profile.wildcard,
+          admitted.candidate.profile.wildcard,
           `Load retained ${mutationNodeLabel(added.node, cell).toLowerCase()}`,
         );
       }
@@ -8264,6 +8330,32 @@ async function main(): Promise<void> {
     }
   }
 
+  /** Reconstruct the next admitted ordinal from bounded graph provenance when
+   * an inactive pair has fallen out of the recent-pair cache. Failed attempts
+   * remain cached for the most recent graph-cap pairs. */
+  function retainedEvolutionCrossoverOrdinalFloor(
+    lineage: EvolutionLineage,
+    primaryDigest: SceneContentDigest,
+    secondaryDigest: SceneContentDigest,
+  ): number {
+    let floor = 0;
+    for (const node of lineage.all()) {
+      if (node.kind !== "crossover") continue;
+      const [primary, secondary] = node.geneticParents;
+      const ordinal = node.profile.childOrdinal;
+      if (
+        primary?.contentDigest === primaryDigest &&
+        secondary?.contentDigest === secondaryDigest &&
+        typeof ordinal === "number" &&
+        Number.isSafeInteger(ordinal) &&
+        ordinal >= 0
+      ) {
+        floor = Math.max(floor, ordinal + 1);
+      }
+    }
+    return floor;
+  }
+
   function requestEvolutionBreed(primarySlot: EvolutionComparisonSlot): void {
     const comparison = evolutionComparison;
     const lineage = evolutionLineage;
@@ -8288,9 +8380,17 @@ async function main(): Promise<void> {
     const secondary = primarySlot === "A" ? parentsBySlot[1] : parentsBySlot[0];
     const primaryDigest = evolutionEndpointDigest(primary);
     const secondaryDigest = evolutionEndpointDigest(secondary);
-    const pairKey = `${primaryDigest}\0${secondaryDigest}`;
-    const childOrdinal = evolutionNextCrossoverOrdinal.get(pairKey) ?? 0;
-    evolutionNextCrossoverOrdinal.set(pairKey, childOrdinal + 1);
+    const childOrdinal = reserveEvolutionCrossoverOrdinal(
+      evolutionNextCrossoverOrdinal,
+      primaryDigest,
+      secondaryDigest,
+      lineage.nodeCap,
+      retainedEvolutionCrossoverOrdinalFloor(
+        lineage,
+        primaryDigest,
+        secondaryDigest,
+      ),
+    );
     const root = lineage.rootId ? lineage.node(lineage.rootId) : null;
     if (!root) return;
     const nodeSeed = deriveCrossoverSeed32([
@@ -8457,7 +8557,11 @@ async function main(): Promise<void> {
       if (ui.mutationsOpen()) renderEvolutionNeighborhood();
       return;
     }
-    workspace.reconcile(encodeScene(currentDocument()));
+    try {
+      workspace.reconcile(evolutionSceneContentDigest(currentDocument()));
+    } catch {
+      workspace.noteOutsideEdit();
+    }
     if (ui.mutationsOpen()) renderEvolutionNeighborhood();
   };
 
@@ -8996,6 +9100,11 @@ async function main(): Promise<void> {
       evolutionBusy = false;
       const result = lineage.prune(nodeId, current.id);
       if (!result.pruned) return;
+      pruneEvolutionNodeBookkeeping(
+        result.removedIds,
+        evolutionNextOrdinal,
+        evolutionChosenBranches,
+      );
       evolutionChosenBranches.delete(current.id);
       renderEvolutionNeighborhood();
       ui.flashToast(
@@ -9025,9 +9134,17 @@ async function main(): Promise<void> {
       ) {
         return;
       }
-      const current = evolutionLineage?.current();
-      if (!current || evolutionWorkspace?.detached !== false) return;
-      saveDocumentToCollection(current.encodedScene);
+      if (
+        !evolutionLineage ||
+        !evolutionWorkspace ||
+        !promoteEvolutionSelection(
+          evolutionLineage,
+          evolutionWorkspace,
+          saveDocumentToCollection,
+        )
+      ) {
+        return;
+      }
       syncEvolutionWorkspace(
         "Saved the selected scene to Collection without lineage or ancestry.",
       );
