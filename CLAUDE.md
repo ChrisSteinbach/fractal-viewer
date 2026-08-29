@@ -1220,6 +1220,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `vec.ts` — `clamp`, `clone3`, `to255` helpers.
   - `voxel.ts` — solid render: `accumulateVoxels` → 3D density grid →
     `voxelTextureData` (RGBA8 volume). `buildColorModeLUT` reuses `color.ts`.
+    PAYLOAD VERDICT: density plus running RGB remains sufficient; acceleration
+    derives from packed alpha and presentation stays query-time, so no
+    itinerary/trap channel ships without a named user-visible consumer. The
+    audit and reopen conditions are in `docs/solid-voxel-payload-decision.md`.
   - `voxel-4d.ts` — 4D twin; slices with `0` floor (not flame's `0.06`).
   - `voxel-raymarch.ts` — pure CPU geometry oracle for Solid's packed RGBA8
     density: ClampToEdge trilinear reconstruction plus the unaccelerated
