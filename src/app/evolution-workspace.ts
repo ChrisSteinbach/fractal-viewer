@@ -101,4 +101,16 @@ export class EvolutionWorkspaceSelection {
     this.cancelPending();
     this.detachedValue = false;
   }
+
+  /** A comparison exit successfully restored the already-selected node. */
+  noteSelectionDisplayed(): void {
+    this.cancelPending();
+    this.detachedValue = false;
+  }
+
+  /** An outside edit or failed comparison exit left selection unchanged. */
+  noteOutsideEdit(): void {
+    this.cancelPending();
+    this.detachedValue = true;
+  }
 }

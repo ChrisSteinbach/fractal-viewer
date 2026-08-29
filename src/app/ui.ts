@@ -65,6 +65,7 @@ import type {
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { MutationDomain } from "../fractal/mutate-system";
+import type { EvolutionComparisonSlot } from "./evolution-comparison";
 import type { SavedScene } from "./collection";
 import type { TimelineStep } from "./timeline";
 import {
@@ -272,6 +273,16 @@ export interface UiHandlers {
   onEvolutionReset: () => void;
   /** Explicitly promote the exact selected node into Collection. */
   onEvolutionSave: () => void;
+  /** Pin/replace one comparison endpoint with the graph-selected node. */
+  onEvolutionComparePin: (slot: EvolutionComparisonSlot) => void;
+  /** Load one pinned endpoint as an explicit full-canvas display override. */
+  onEvolutionCompareShow: (slot: EvolutionComparisonSlot) => void;
+  /** Clear one comparison pin, restoring selection first when needed. */
+  onEvolutionCompareClear: (slot: EvolutionComparisonSlot) => void;
+  /** Exit the display override by restoring the graph-selected node. */
+  onEvolutionCompareExit: () => void;
+  /** Enable existing system morph feedback for comparison loads only. */
+  onEvolutionCompareAnimate: (enabled: boolean) => void;
   /** The Evolution Lab modal closed; ambient view motion may resume without
    * changing the user's stored preference. */
   onEvolutionClose: () => void;
@@ -1793,6 +1804,15 @@ export interface EvolutionWorkspaceView {
   readonly surfaceConstraintChecked: boolean;
   readonly surfaceConstraintAvailable: boolean;
   readonly surfaceConstraintNote: string;
+  readonly comparisonPins: readonly {
+    readonly slot: EvolutionComparisonSlot;
+    readonly state: "empty" | "available" | "missing";
+    readonly label: string;
+  }[];
+  readonly comparisonActive: EvolutionComparisonSlot | null;
+  readonly comparisonPending: boolean;
+  readonly comparisonAnimate: boolean;
+  readonly comparisonStatus: string;
   readonly status: string;
 }
 
@@ -1946,6 +1966,19 @@ export class Ui {
   private readonly evolutionLockInputs: readonly HTMLInputElement[];
   private readonly evolutionSurfaceCompatible: HTMLInputElement;
   private readonly evolutionSurfaceCompatibilityNote: HTMLElement;
+  private readonly evolutionComparePinA: HTMLButtonElement;
+  private readonly evolutionComparePinB: HTMLButtonElement;
+  private readonly evolutionCompareShowA: HTMLButtonElement;
+  private readonly evolutionCompareShowB: HTMLButtonElement;
+  private readonly evolutionCompareClearA: HTMLButtonElement;
+  private readonly evolutionCompareClearB: HTMLButtonElement;
+  private readonly evolutionCompareLabelA: HTMLElement;
+  private readonly evolutionCompareLabelB: HTMLElement;
+  private readonly evolutionCompareExit: HTMLButtonElement;
+  private readonly evolutionCompareAnimate: HTMLInputElement;
+  private readonly evolutionCompareStatus: HTMLElement;
+  private evolutionComparisonActive: EvolutionComparisonSlot | null = null;
+  private evolutionComparisonPending = false;
   /** The eight candidate cell buttons, by candidate index; rebuilt by
    * {@link resetMutationCells}. */
   private mutationCells: HTMLButtonElement[] = [];
@@ -2624,6 +2657,17 @@ export class Ui {
     this.evolutionSurfaceCompatibilityNote = this.byId(
       "evolutionSurfaceCompatibilityNote",
     );
+    this.evolutionComparePinA = this.byId("evolutionComparePinA");
+    this.evolutionComparePinB = this.byId("evolutionComparePinB");
+    this.evolutionCompareShowA = this.byId("evolutionCompareShowA");
+    this.evolutionCompareShowB = this.byId("evolutionCompareShowB");
+    this.evolutionCompareClearA = this.byId("evolutionCompareClearA");
+    this.evolutionCompareClearB = this.byId("evolutionCompareClearB");
+    this.evolutionCompareLabelA = this.byId("evolutionCompareLabelA");
+    this.evolutionCompareLabelB = this.byId("evolutionCompareLabelB");
+    this.evolutionCompareExit = this.byId("evolutionCompareExit");
+    this.evolutionCompareAnimate = this.byId("evolutionCompareAnimate");
+    this.evolutionCompareStatus = this.byId("evolutionCompareStatus");
     this.evolutionLockInputs = Array.from(
       this.doc.querySelectorAll<HTMLInputElement>(
         "#evolutionLocks input[data-evolution-domain]",
@@ -3239,6 +3283,30 @@ export class Ui {
     );
     this.evolutionSaveBtn.addEventListener("click", () =>
       handlers.onEvolutionSave(),
+    );
+    this.evolutionComparePinA.addEventListener("click", () =>
+      handlers.onEvolutionComparePin("A"),
+    );
+    this.evolutionComparePinB.addEventListener("click", () =>
+      handlers.onEvolutionComparePin("B"),
+    );
+    this.evolutionCompareShowA.addEventListener("click", () =>
+      handlers.onEvolutionCompareShow("A"),
+    );
+    this.evolutionCompareShowB.addEventListener("click", () =>
+      handlers.onEvolutionCompareShow("B"),
+    );
+    this.evolutionCompareClearA.addEventListener("click", () =>
+      handlers.onEvolutionCompareClear("A"),
+    );
+    this.evolutionCompareClearB.addEventListener("click", () =>
+      handlers.onEvolutionCompareClear("B"),
+    );
+    this.evolutionCompareExit.addEventListener("click", () =>
+      handlers.onEvolutionCompareExit(),
+    );
+    this.evolutionCompareAnimate.addEventListener("change", () =>
+      handlers.onEvolutionCompareAnimate(this.evolutionCompareAnimate.checked),
     );
     this.evolutionSurfaceCompatible.addEventListener("change", () =>
       handlers.onEvolutionSurfaceConstraint(
@@ -4932,6 +5000,16 @@ export class Ui {
    * stands above (see releaseModalFocus). Idempotent. */
   closeMutations(): void {
     if (this.mutationModal.classList.contains("hidden")) return;
+    // A display override must stay explicit. Escape, backdrop, and close all
+    // become "exit comparison" first; a second dismissal can close the Lab
+    // after the selected node has been restored or detachment is visible.
+    if (
+      this.evolutionComparisonActive !== null ||
+      this.evolutionComparisonPending
+    ) {
+      this.handlers?.onEvolutionCompareExit();
+      return;
+    }
     this.mutationModal.classList.add("hidden");
     this.releaseModalFocus(this.mutationModal);
     this.handlers?.onEvolutionClose();
@@ -4947,13 +5025,17 @@ export class Ui {
    * cells. All controls remain native buttons/selects/checkboxes, so touch,
    * keyboard activation, and the modal's dynamic focus ring share one path. */
   setEvolutionWorkspace(view: EvolutionWorkspaceView): void {
+    const comparing = view.comparisonActive !== null;
+    this.evolutionComparisonActive = view.comparisonActive;
+    this.evolutionComparisonPending = view.comparisonPending;
+    this.mutationModal.classList.toggle("mutation-modal-comparing", comparing);
     this.evolutionBackBtn.disabled =
-      view.detached || view.busy || !view.canBack;
+      view.detached || view.busy || comparing || !view.canBack;
     this.evolutionForwardBtn.disabled =
-      view.detached || view.busy || !view.canForward;
+      view.detached || view.busy || comparing || !view.canForward;
     this.evolutionAgainBtnState(view);
-    this.evolutionSaveBtn.disabled = view.detached || view.busy;
-    this.evolutionResetBtn.disabled = view.busy;
+    this.evolutionSaveBtn.disabled = view.detached || view.busy || comparing;
+    this.evolutionResetBtn.disabled = view.busy || comparing;
     this.evolutionCount.textContent = `${String(view.nodeCount)} / ${String(view.nodeCap)} nodes`;
     this.evolutionStatus.textContent = view.status;
 
@@ -4978,7 +5060,7 @@ export class Ui {
           : view.branches[0].id;
     }
     const branchUnavailable =
-      view.detached || view.busy || view.branches.length === 0;
+      view.detached || view.busy || comparing || view.branches.length === 0;
     this.evolutionBranchSelect.disabled = branchUnavailable;
     this.evolutionPruneBtn.disabled = branchUnavailable;
 
@@ -4987,27 +5069,69 @@ export class Ui {
       input.checked = locks.has(
         input.dataset.evolutionDomain as MutationDomain,
       );
-      input.disabled = view.detached;
+      input.disabled = view.detached || comparing;
     }
     this.evolutionSurfaceCompatible.checked =
       view.surfaceConstraintAvailable && view.surfaceConstraintChecked;
     // Like the trait locks, this stays operable during a progressive build:
     // its handler invalidates the build token before stale work can commit.
     this.evolutionSurfaceCompatible.disabled =
-      view.detached || !view.surfaceConstraintAvailable;
+      view.detached || comparing || !view.surfaceConstraintAvailable;
     this.evolutionSurfaceCompatibilityNote.textContent =
       view.surfaceConstraintNote;
+
+    const pins = new Map(view.comparisonPins.map((pin) => [pin.slot, pin]));
+    const pinA = pins.get("A");
+    const pinB = pins.get("B");
+    if (!pinA || !pinB)
+      throw new Error("Evolution comparison requires A and B");
+    this.evolutionCompareLabelA.textContent = pinA.label;
+    this.evolutionCompareLabelB.textContent = pinB.label;
+    this.evolutionComparePinA.disabled =
+      view.detached || view.busy || comparing;
+    this.evolutionComparePinB.disabled =
+      view.detached || view.busy || comparing;
+    // Endpoint switches and Exit deliberately stay available during a load;
+    // the app's independent request tickets make rapid input latest-wins.
+    this.evolutionCompareShowA.disabled =
+      view.detached ||
+      pinA.state !== "available" ||
+      (view.comparisonActive === "A" && !view.comparisonPending);
+    this.evolutionCompareShowB.disabled =
+      view.detached ||
+      pinB.state !== "available" ||
+      (view.comparisonActive === "B" && !view.comparisonPending);
+    this.evolutionCompareClearA.disabled = view.busy || pinA.state === "empty";
+    this.evolutionCompareClearB.disabled = view.busy || pinB.state === "empty";
+    this.evolutionCompareExit.disabled =
+      view.comparisonActive === null && !view.comparisonPending;
+    this.evolutionCompareAnimate.checked = view.comparisonAnimate;
+    this.evolutionCompareAnimate.disabled = view.detached;
+    this.evolutionCompareStatus.textContent = view.comparisonStatus;
+    this.mutationCloseBtn.setAttribute(
+      "aria-label",
+      comparing || view.comparisonPending
+        ? "Exit comparison and restore selected node"
+        : "Close Evolution Lab",
+    );
     this.mutationModal.setAttribute(
       "aria-label",
-      view.detached
-        ? "Evolution Lab detached from the displayed scene"
-        : `Evolution Lab, ${view.currentLabel}`,
+      comparing
+        ? `Evolution Lab comparison, displaying ${view.comparisonActive}`
+        : view.comparisonPending
+          ? "Evolution Lab, loading comparison endpoint"
+          : view.detached
+            ? "Evolution Lab detached from the displayed scene"
+            : `Evolution Lab, ${view.currentLabel}`,
     );
   }
 
   private evolutionAgainBtnState(view: EvolutionWorkspaceView): void {
     this.mutationAgainBtn.disabled =
-      view.detached || view.busy || view.nodeCount >= view.nodeCap;
+      view.detached ||
+      view.busy ||
+      view.comparisonActive !== null ||
+      view.nodeCount >= view.nodeCap;
   }
 
   /** Show the blocking export modal: a Save PNG capture is starting and may

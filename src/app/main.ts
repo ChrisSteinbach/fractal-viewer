@@ -152,6 +152,10 @@ import {
   type LineageProfile,
 } from "./evolution-lineage";
 import { EvolutionWorkspaceSelection } from "./evolution-workspace";
+import {
+  EvolutionComparisonSession,
+  type EvolutionComparisonSlot,
+} from "./evolution-comparison";
 import { evaluateEvolutionSurfaceAdmission } from "./evolution-surface-constraint";
 import {
   evolutionChildOrdinal,
@@ -6689,6 +6693,7 @@ async function main(): Promise<void> {
   async function loadSceneSnapshot(
     snap: SceneSnapshot,
     reconcileAfter = true,
+    morph = true,
   ): Promise<boolean> {
     const ticket = ++sceneLoadTicket;
     const baseline = encodeScene(toSnapshot(state));
@@ -6742,7 +6747,7 @@ async function main(): Promise<void> {
     editSession.beginEdit("replace");
     evolutionReconciliationPaused = true;
     try {
-      applyDecodedSnapshot(snap, snap.camera === undefined, true);
+      applyDecodedSnapshot(snap, snap.camera === undefined, morph);
       if (snap.camera) applyCameraPose(snap.camera);
       // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
       // every load's behalf (the render-mode-hint pattern).
@@ -7329,6 +7334,7 @@ async function main(): Promise<void> {
   const MUTATION_THUMB_SIZE = 220;
   let evolutionLineage: EvolutionLineage | null = null;
   let evolutionWorkspace: EvolutionWorkspaceSelection | null = null;
+  let evolutionComparison: EvolutionComparisonSession | null = null;
   const evolutionNodeReleases = new Map<string, () => void>();
   const evolutionNextOrdinal = new Map<string, number>();
   const evolutionChosenBranches = new Map<string, string>();
@@ -7341,6 +7347,10 @@ async function main(): Promise<void> {
   let evolutionBusy = false;
   let evolutionGenerating = false;
   let evolutionSelectionTicket = 0;
+  let evolutionComparisonAnimate = true;
+  let evolutionComparisonPending = false;
+  let evolutionComparisonStatus =
+    "Pin the selected node as A or B to compare it full-canvas.";
 
   function deriveEvolutionSeed(parts: readonly (number | string)[]): number {
     let hash = 0x811c9dc5;
@@ -7462,6 +7472,7 @@ async function main(): Promise<void> {
   }
 
   function createOrResetEvolutionRoot(): boolean {
+    const replacesExistingLineage = evolutionLineage !== null;
     const snapshot = currentDocument();
     const rootSurfaceEligibility = deriveSurfaceDocumentEligibility(snapshot);
     const seed = rollSeed();
@@ -7491,8 +7502,10 @@ async function main(): Promise<void> {
           onRelease: (node) => releaseEvolutionNode(node.id),
         });
         evolutionWorkspace = new EvolutionWorkspaceSelection(evolutionLineage);
+        evolutionComparison = new EvolutionComparisonSession(evolutionLineage);
       } else {
         evolutionWorkspace?.cancelPending();
+        evolutionComparison?.invalidateDisplay();
         evolutionLineage.reset(input);
         evolutionWorkspace?.noteReset();
       }
@@ -7503,6 +7516,9 @@ async function main(): Promise<void> {
       // The policy belongs to this root, not to the browser or the previous
       // lineage. Every successful reset starts with an explicit opt-in.
       evolutionSurfaceConstraintEnabled = false;
+      evolutionComparisonStatus = replacesExistingLineage
+        ? "Pins from the previous root now resolve as missing; pin this selected root to replace them."
+        : "Pin the selected node as A or B to compare it full-canvas.";
       evolutionBuildToken += 1;
       return true;
     } catch (error) {
@@ -7545,6 +7561,36 @@ async function main(): Promise<void> {
     const surfaceConstraintAvailable =
       evolutionRootSurfaceEligibility !== null &&
       surfaceEligibilityHasRoute(evolutionRootSurfaceEligibility);
+    const comparison = evolutionComparison;
+    const comparisonPins = (["A", "B"] as const).map((slot) => {
+      const pin = comparison?.resolve(slot) ?? { state: "empty" as const };
+      if (pin.state === "empty") {
+        return { slot, state: pin.state, label: `${slot} · empty` };
+      }
+      if (pin.state === "missing") {
+        return {
+          slot,
+          state: pin.state,
+          label: `${slot} · ${pin.nodeId} · missing/pruned`,
+        };
+      }
+      return {
+        slot,
+        state: pin.state,
+        label: `${slot} · ${pin.node.id} · ${
+          pin.node.kind === "root" ? "Root" : mutationNodeLabel(pin.node, 0)
+        }`,
+      };
+    });
+    const comparisonActive = comparison?.activeSlot ?? null;
+    const activeComparison = comparison?.active();
+    const comparisonStatus = evolutionComparisonPending
+      ? evolutionComparisonStatus
+      : activeComparison
+        ? activeComparison.pin.state === "available"
+          ? `Full canvas displays ${activeComparison.slot} · ${activeComparison.pin.node.id}; lineage selection remains ${current.id}. Comparison only.`
+          : `Full canvas displays former ${activeComparison.slot}, but that pin is missing/pruned. Exit comparison to restore selected ${current.id}.`
+        : evolutionComparisonStatus;
     ui.setEvolutionWorkspace({
       detached: workspace.detached,
       busy: evolutionBusy,
@@ -7565,6 +7611,11 @@ async function main(): Promise<void> {
         ? "Future children must have a supported Surface route; degraded routes are allowed."
         : (evolutionRootSurfaceEligibility?.note ??
           "This root has no supported Surface route."),
+      comparisonPins,
+      comparisonActive,
+      comparisonPending: evolutionComparisonPending,
+      comparisonAnimate: evolutionComparisonAnimate,
+      comparisonStatus,
       status:
         status ??
         (workspace.detached
@@ -7792,7 +7843,13 @@ async function main(): Promise<void> {
 
   function requestEvolutionNode(nodeId: string): void {
     const workspace = evolutionWorkspace;
-    if (!workspace) return;
+    if (
+      !workspace ||
+      evolutionComparison?.activeSlot !== null ||
+      evolutionComparisonPending
+    ) {
+      return;
+    }
     const sourceId = evolutionLineage?.currentId ?? null;
     const selectionTicket = ++evolutionSelectionTicket;
     evolutionBuildToken += 1;
@@ -7833,12 +7890,146 @@ async function main(): Promise<void> {
     if (nodeId) requestEvolutionNode(nodeId);
   }
 
+  function comparisonFailureStatus(
+    slot: EvolutionComparisonSlot,
+    reason: "empty" | "missing" | "load-failed" | "superseded",
+  ): string {
+    switch (reason) {
+      case "empty":
+        return `${slot} is empty. Pin the selected node first.`;
+      case "missing":
+        return `${slot} is missing or was pruned. Pin the selected node to replace it.`;
+      case "load-failed":
+        return `${slot} was not displayed; the previous canvas and lineage selection are unchanged.`;
+      case "superseded":
+        return "A newer comparison request replaced that switch.";
+    }
+  }
+
+  function requestEvolutionComparison(slot: EvolutionComparisonSlot): void {
+    const comparison = evolutionComparison;
+    const workspace = evolutionWorkspace;
+    if (!comparison || !workspace || workspace.detached) return;
+    evolutionBuildToken += 1;
+    evolutionGenerating = false;
+    evolutionBusy = true;
+    evolutionComparisonPending = true;
+    evolutionComparisonStatus = comparison.activeSlot
+      ? `Full canvas remains ${comparison.activeSlot} while pinned ${slot} loads; lineage selection is unchanged.`
+      : `The selected node remains on canvas while pinned ${slot} loads through the exact scene path.`;
+    syncEvolutionWorkspace();
+    void comparison
+      .show(slot, (node) =>
+        loadSceneSnapshot(
+          node.snapshot as SceneSnapshot,
+          false,
+          evolutionComparisonAnimate,
+        ),
+      )
+      .then((result) => {
+        if (!result.displayed && result.reason === "superseded") return;
+        evolutionBusy = false;
+        evolutionComparisonPending = false;
+        if (!result.displayed) {
+          if (result.reason === "pruned-after-load") {
+            comparison.invalidateDisplay();
+            workspace.noteOutsideEdit();
+            evolutionComparisonStatus = `${slot} was pruned while loading. The displayed scene is detached; start a new root or exit recovery.`;
+            renderEvolutionNeighborhood();
+            return;
+          }
+          evolutionComparisonStatus = comparisonFailureStatus(
+            slot,
+            result.reason,
+          );
+          syncEvolutionWorkspace();
+          return;
+        }
+        evolutionComparisonStatus = `Displaying ${slot} for comparison only.`;
+        renderEvolutionNeighborhood();
+      });
+  }
+
+  function restoreEvolutionSelection(
+    clearAfter?: EvolutionComparisonSlot,
+  ): void {
+    const comparison = evolutionComparison;
+    const workspace = evolutionWorkspace;
+    const selected = evolutionLineage?.current() ?? null;
+    if (!comparison || !workspace || !selected) return;
+    if (comparison.activeSlot === null && !evolutionComparisonPending) {
+      if (clearAfter) {
+        comparison.clear(clearAfter);
+        evolutionComparisonStatus = `${clearAfter} cleared.`;
+        syncEvolutionWorkspace();
+      }
+      return;
+    }
+    evolutionBuildToken += 1;
+    evolutionGenerating = false;
+    evolutionBusy = true;
+    evolutionComparisonPending = true;
+    evolutionComparisonStatus = `Full canvas remains ${comparison.activeSlot ?? "on its current scene"} while selected ${selected.id} is restored.`;
+    syncEvolutionWorkspace();
+    void comparison
+      .restore(selected, (node) =>
+        loadSceneSnapshot(
+          node.snapshot as SceneSnapshot,
+          false,
+          evolutionComparisonAnimate,
+        ),
+      )
+      .then((result) => {
+        if (!result.restored && result.reason === "superseded") return;
+        evolutionBusy = false;
+        evolutionComparisonPending = false;
+        if (clearAfter) comparison.clear(clearAfter);
+        if (result.restored) {
+          workspace.noteSelectionDisplayed();
+          evolutionComparisonStatus = clearAfter
+            ? `${clearAfter} cleared; selected ${selected.id} restored.`
+            : `Comparison ended; selected ${selected.id} restored.`;
+        } else {
+          workspace.noteOutsideEdit();
+          evolutionComparisonStatus =
+            "Selected node could not be restored. The displayed scene is detached; start a new root to continue.";
+        }
+        renderEvolutionNeighborhood();
+      });
+  }
+
   reconcileEvolutionDocument = (): void => {
     const workspace = evolutionWorkspace;
     if (!workspace) return;
     evolutionBuildToken += 1;
     evolutionGenerating = false;
     evolutionBusy = false;
+    if (evolutionComparisonPending) {
+      // An outside document edit wins over a comparison load that is still
+      // hydrating. Cancel both independent tickets so a late target cannot
+      // land after this reconciliation and become an undisclosed override.
+      sceneLoadTicket += 1;
+      pendingSceneLoadRelease?.();
+      evolutionComparison?.cancelPending();
+      evolutionComparisonPending = false;
+    }
+    const activeComparison = evolutionComparison?.active();
+    if (activeComparison) {
+      const displayedKey = encodeScene(currentDocument());
+      if (
+        activeComparison.pin.state === "available" &&
+        displayedKey === activeComparison.pin.node.encodedScene
+      ) {
+        if (ui.mutationsOpen()) renderEvolutionNeighborhood();
+        return;
+      }
+      evolutionComparison?.invalidateDisplay();
+      workspace.noteOutsideEdit();
+      evolutionComparisonStatus =
+        "Comparison ended because the displayed scene changed outside A/B. The lineage selection stayed unchanged and is now detached.";
+      if (ui.mutationsOpen()) renderEvolutionNeighborhood();
+      return;
+    }
     workspace.reconcile(encodeScene(currentDocument()));
     if (ui.mutationsOpen()) renderEvolutionNeighborhood();
   };
@@ -8340,22 +8531,26 @@ async function main(): Promise<void> {
     onMutationPick: (index) => pickMutation(index),
     onMutateAgain: () => buildMutationGrid(),
     onEvolutionBack: () => {
+      if (evolutionComparison?.activeSlot !== null) return;
       const target = evolutionLineage?.current()?.parentIds[0];
       if (target) requestEvolutionNode(target);
     },
     onEvolutionForward: () => {
+      if (evolutionComparison?.activeSlot !== null) return;
       const current = evolutionLineage?.current();
       if (!current) return;
       const target = chosenEvolutionBranch(current);
       if (target) requestEvolutionNode(target);
     },
     onEvolutionBranch: (nodeId) => {
+      if (evolutionComparison?.activeSlot !== null) return;
       const current = evolutionLineage?.current();
       if (!current?.childIds.includes(nodeId)) return;
       evolutionChosenBranches.set(current.id, nodeId);
       syncEvolutionWorkspace();
     },
     onEvolutionPrune: (nodeId) => {
+      if (evolutionComparison?.activeSlot !== null) return;
       const lineage = evolutionLineage;
       const current = lineage?.current();
       if (!lineage || !current?.childIds.includes(nodeId)) return;
@@ -8373,6 +8568,12 @@ async function main(): Promise<void> {
       );
     },
     onEvolutionReset: () => {
+      if (
+        evolutionComparison?.activeSlot !== null ||
+        evolutionComparisonPending
+      ) {
+        return;
+      }
       evolutionGenerating = false;
       evolutionBusy = false;
       if (!createOrResetEvolutionRoot()) return;
@@ -8381,11 +8582,44 @@ async function main(): Promise<void> {
       ui.flashToast("Displayed scene is the new Evolution root");
     },
     onEvolutionSave: () => {
+      if (
+        evolutionComparison?.activeSlot !== null ||
+        evolutionComparisonPending
+      ) {
+        return;
+      }
       const current = evolutionLineage?.current();
       if (!current || evolutionWorkspace?.detached !== false) return;
       saveDocumentToCollection(current.encodedScene);
     },
+    onEvolutionComparePin: (slot) => {
+      const current = evolutionLineage?.current();
+      const comparison = evolutionComparison;
+      if (
+        !current ||
+        !comparison ||
+        evolutionWorkspace?.detached !== false ||
+        evolutionBusy ||
+        comparison.activeSlot !== null
+      ) {
+        return;
+      }
+      if (!comparison.pin(slot, current.id)) return;
+      evolutionComparisonStatus = `${slot} pinned to selected ${current.id}.`;
+      syncEvolutionWorkspace();
+    },
+    onEvolutionCompareShow: (slot) => requestEvolutionComparison(slot),
+    onEvolutionCompareClear: (slot) => restoreEvolutionSelection(slot),
+    onEvolutionCompareExit: () => restoreEvolutionSelection(),
+    onEvolutionCompareAnimate: (enabled) => {
+      evolutionComparisonAnimate = enabled;
+      evolutionComparisonStatus = enabled
+        ? "Comparison switches will use the existing reduced-motion-aware morph feedback."
+        : "Comparison switches will snap to exact endpoints.";
+      syncEvolutionWorkspace();
+    },
     onEvolutionSurfaceConstraint: (enabled) => {
+      if (evolutionComparison?.activeSlot !== null) return;
       const available =
         evolutionRootSurfaceEligibility !== null &&
         surfaceEligibilityHasRoute(evolutionRootSurfaceEligibility);
@@ -8404,6 +8638,7 @@ async function main(): Promise<void> {
       );
     },
     onEvolutionLock: (domain, locked) => {
+      if (evolutionComparison?.activeSlot !== null) return;
       if (!MUTATION_DOMAINS.includes(domain)) return;
       if (locked) evolutionLockedDomains.add(domain);
       else evolutionLockedDomains.delete(domain);

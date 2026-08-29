@@ -2913,6 +2913,96 @@
             New root from displayed scene
           </button>
         </div>
+        <section
+          class="evolution-compare"
+          aria-labelledby="evolutionCompareTitle"
+        >
+          <h3 id="evolutionCompareTitle">Compare pinned endpoints</h3>
+          <p class="mutation-hint evolution-compare-note">
+            Pins name retained nodes. Showing A or B replaces only the canvas;
+            the lineage selection and Collection stay unchanged.
+          </p>
+          <div class="evolution-compare-slots">
+            <div class="evolution-compare-slot">
+              <strong id="evolutionCompareLabelA">A · empty</strong>
+              <div class="evolution-compare-actions">
+                <button
+                  id="evolutionComparePinA"
+                  class="btn btn-ghost"
+                  type="button"
+                >
+                  Pin selected as A
+                </button>
+                <button
+                  id="evolutionCompareShowA"
+                  class="btn btn-blue"
+                  type="button"
+                  disabled
+                >
+                  Show A
+                </button>
+                <button
+                  id="evolutionCompareClearA"
+                  class="btn btn-ghost"
+                  type="button"
+                  disabled
+                >
+                  Clear A
+                </button>
+              </div>
+            </div>
+            <div class="evolution-compare-slot">
+              <strong id="evolutionCompareLabelB">B · empty</strong>
+              <div class="evolution-compare-actions">
+                <button
+                  id="evolutionComparePinB"
+                  class="btn btn-ghost"
+                  type="button"
+                >
+                  Pin selected as B
+                </button>
+                <button
+                  id="evolutionCompareShowB"
+                  class="btn btn-blue"
+                  type="button"
+                  disabled
+                >
+                  Show B
+                </button>
+                <button
+                  id="evolutionCompareClearB"
+                  class="btn btn-ghost"
+                  type="button"
+                  disabled
+                >
+                  Clear B
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="evolution-compare-footer">
+            <label>
+              <input id="evolutionCompareAnimate" type="checkbox" checked />
+              Animate switches (comparison only)
+            </label>
+            <button
+              id="evolutionCompareExit"
+              class="btn btn-ghost evolution-action-button"
+              type="button"
+              disabled
+            >
+              Exit comparison
+            </button>
+          </div>
+          <p
+            id="evolutionCompareStatus"
+            class="evolution-compare-status"
+            role="status"
+            aria-live="polite"
+          >
+            Pin the selected node as A or B to compare it full-canvas.
+          </p>
+        </section>
         <div class="evolution-surface-constraint">
           <label>
             <input
