@@ -14,11 +14,52 @@ import type { ShapeSpec } from "../fractal/shapes";
 import type { SymmetryParams, Transform } from "../fractal/types";
 import {
   SURFACE_SHAPE_SOURCE_BUDGET_BYTES,
+  deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
+  surfaceEligibilityHasRoute,
 } from "./surface-eligibility";
+import type { SurfaceEligibilityDocument } from "./surface-eligibility";
 import { SURFACE_MAX_MAPS } from "./surface-material";
+import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
 
 const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xy" };
+
+const NEAR_BUDGET_SHAPE: ShapeSpec = {
+  parts: Array.from({ length: 8 }, (_, index) => ({
+    primitive: {
+      kind: "gear" as const,
+      teeth: 13,
+      radius: 0.91234567890123,
+      tooth: [0.11234567890123, 0.01234567890123] as [number, number],
+      hole: 0.21234567890123,
+      halfHeight: 0.31234567890123,
+    },
+    combine: "union" as const,
+    pose: {
+      offset: [
+        index + 0.12345678901235,
+        index + 0.23456789012346,
+        index + 0.34567890123457,
+      ] as [number, number, number],
+      rotate: [
+        index + 0.45678901234568,
+        index + 0.56789012345679,
+        index + 0.67890123456789,
+      ] as [number, number, number],
+      scale: index + 1.12345678901235,
+    },
+  })),
+};
+
+function presetDocument(preset: Preset): SurfaceEligibilityDocument {
+  return {
+    transforms: presetTransforms(preset),
+    finalTransform: PRESET_FINALS[preset]?.() ?? null,
+    symmetry: PRESET_SYMMETRIES[preset] ?? NO_SYMMETRY,
+    schedule: PRESET_SCHEDULES[preset]?.() ?? null,
+    shapeTrap: PRESET_TRAPS[preset]?.() ?? null,
+  };
+}
 
 /** Derive a preset exactly as main.ts would present it: factory transforms,
  * its side-table final lens and kaleidoscope when it carries them. */
@@ -26,14 +67,31 @@ function derivePreset(
   preset: Preset,
   opts: { computeAvailable: boolean } = { computeAvailable: true },
 ) {
+  const document = presetDocument(preset);
   return deriveSurfaceEligibility(
-    presetTransforms(preset),
-    PRESET_FINALS[preset]?.() ?? null,
-    PRESET_SYMMETRIES[preset] ?? NO_SYMMETRY,
+    document.transforms,
+    document.finalTransform ?? null,
+    document.symmetry,
     opts,
-    PRESET_SCHEDULES[preset]?.() ?? null,
-    PRESET_TRAPS[preset]?.() ?? null,
+    document.schedule ?? null,
+    document.shapeTrap ?? null,
   );
+}
+
+function expectNeutralParity(
+  document: SurfaceEligibilityDocument,
+): ReturnType<typeof deriveSurfaceEligibility> {
+  const neutral = deriveSurfaceDocumentEligibility(document);
+  const legacyComplete = deriveSurfaceEligibility(
+    document.transforms,
+    document.finalTransform ?? null,
+    document.symmetry,
+    { computeAvailable: true },
+    document.schedule ?? null,
+    document.shapeTrap ?? null,
+  );
+  expect(neutral).toEqual(legacyComplete);
+  return neutral;
 }
 
 describe("deriveSurfaceEligibility over the shipped presets", () => {
@@ -103,6 +161,223 @@ describe("deriveSurfaceEligibility over the shipped presets", () => {
     expect(
       derivePreset("pentatope", { computeAvailable: false }).status,
     ).not.toBe("ineligible");
+  });
+});
+
+describe("capability-neutral Surface document eligibility", () => {
+  it("matches the complete-capability legacy derivation over every shipped preset", () => {
+    for (const preset of PRESET_NAMES) {
+      expect(
+        deriveSurfaceDocumentEligibility(presetDocument(preset)),
+        preset,
+      ).toEqual(derivePreset(preset, { computeAvailable: true }));
+    }
+  });
+
+  it("admits compute-only 4D escape and fold routes while preserving legacy machine refusals", () => {
+    const escapeDocument = presetDocument("mandelboxBrick");
+    expect(deriveSurfaceDocumentEligibility(escapeDocument)).toMatchObject({
+      status: "degraded",
+      kind: "escape4",
+    });
+    expect(derivePreset("mandelboxBrick", { computeAvailable: false })).toEqual(
+      {
+        status: "ineligible",
+        note: "4D escape-time chains render on WebGPU compute, which is unavailable here",
+        kind: null,
+      },
+    );
+
+    const foldDocument: SurfaceEligibilityDocument = {
+      ...presetDocument("mandelboxKifs"),
+      transforms: presetTransforms("mandelboxKifs").map((transform, index) =>
+        index === 0
+          ? { ...transform, w: { rotation: { xw: 0.25 } } }
+          : transform,
+      ),
+    };
+    expect(deriveSurfaceDocumentEligibility(foldDocument)).toMatchObject({
+      kind: "ifs4",
+    });
+    expect(
+      deriveSurfaceEligibility(
+        foldDocument.transforms,
+        foldDocument.finalTransform ?? null,
+        foldDocument.symmetry,
+        { computeAvailable: false },
+        foldDocument.schedule ?? null,
+        foldDocument.shapeTrap ?? null,
+      ),
+    ).toEqual({
+      status: "ineligible",
+      note: "4D folds render on WebGPU compute, which is unavailable here",
+      kind: null,
+    });
+  });
+
+  it("leaves a fragment-capable 4D IFS unchanged when compute is unavailable", () => {
+    const document = presetDocument("pentatope");
+    const neutral = deriveSurfaceDocumentEligibility(document);
+    const machineWithoutCompute = derivePreset("pentatope", {
+      computeAvailable: false,
+    });
+
+    expect(neutral).toEqual(machineWithoutCompute);
+    expect(neutral).toMatchObject({ status: "eligible", kind: "ifs4" });
+  });
+
+  it("routes a final-lens-only 4D document through the shared 4D analysis", () => {
+    const document: SurfaceEligibilityDocument = {
+      transforms: sierpinskiTetrahedron(),
+      finalTransform: {
+        id: 99,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        w: { position: 0.4, rotation: { xw: 0.2 } },
+      },
+      symmetry: NO_SYMMETRY,
+    };
+
+    expect(expectNeutralParity(document)).toMatchObject({
+      status: "eligible",
+      kind: "ifs4",
+    });
+  });
+
+  it("preserves schedules, chaos rows and both dimensional record caps", () => {
+    const pairB: Transform[] = [
+      {
+        id: 100,
+        position: [-0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      {
+        id: 101,
+        position: [0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+    const scheduled: SurfaceEligibilityDocument = {
+      transforms: sierpinskiTetrahedron(),
+      symmetry: NO_SYMMETRY,
+      schedule: { transforms: pairB, depth: 2 },
+    };
+    expect(expectNeutralParity(scheduled)).toMatchObject({
+      status: "eligible",
+      kind: "ifs",
+    });
+
+    const chiEscape: SurfaceEligibilityDocument = {
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+          chaos: [0.5],
+        },
+      ],
+      symmetry: NO_SYMMETRY,
+    };
+    expect(expectNeutralParity(chiEscape)).toMatchObject({
+      status: "ineligible",
+      kind: null,
+    });
+
+    const base3 = sierpinskiTetrahedron();
+    const overCap3: SurfaceEligibilityDocument = {
+      transforms: Array.from({ length: SURFACE_MAX_MAPS + 1 }, (_, index) => ({
+        ...base3[index % base3.length],
+        id: index,
+      })),
+      symmetry: NO_SYMMETRY,
+    };
+    expect(expectNeutralParity(overCap3)).toMatchObject({
+      status: "ineligible",
+      kind: null,
+    });
+
+    const base4 = presetTransforms("pentatope");
+    const overCap4: SurfaceEligibilityDocument = {
+      transforms: Array.from({ length: SURFACE4_MAX_MAPS + 1 }, (_, index) => ({
+        ...base4[index % base4.length],
+        id: index,
+      })),
+      symmetry: NO_SYMMETRY,
+    };
+    expect(expectNeutralParity(overCap4)).toMatchObject({
+      status: "ineligible",
+      kind: null,
+    });
+  });
+
+  it("preserves emitter, authored-source-budget and shape-trap decisions", () => {
+    expect(expectNeutralParity(presetDocument("gearworks"))).toMatchObject({
+      status: "eligible",
+      kind: "ifs",
+    });
+
+    const emitters = sierpinskiTetrahedron().map((transform, index) =>
+      index < 2 ? { ...transform, emitter: NEAR_BUDGET_SHAPE } : transform,
+    );
+    const sourceRefusal = expectNeutralParity({
+      transforms: emitters,
+      symmetry: NO_SYMMETRY,
+    });
+    expect(sourceRefusal).toMatchObject({ status: "ineligible", kind: null });
+    expect(sourceRefusal.note).toContain("Authored custom-shape source needs");
+
+    const geometryTrap = PRESET_TRAPS.foldChainGear!();
+    expect(
+      expectNeutralParity({
+        transforms: presetTransforms("foldChainGear"),
+        symmetry: NO_SYMMETRY,
+        shapeTrap: geometryTrap,
+      }),
+    ).toMatchObject({ status: "degraded", kind: "escape" });
+
+    const trapRefusal = expectNeutralParity({
+      transforms: presetTransforms("default"),
+      symmetry: NO_SYMMETRY,
+      shapeTrap: geometryTrap,
+    });
+    expect(trapRefusal).toMatchObject({
+      status: "ineligible",
+      kind: null,
+      recovery: "disableShapeTrapGeometry",
+    });
+  });
+
+  it("treats eligible and degraded as routes and only ineligible as refusal", () => {
+    const eligible = deriveSurfaceDocumentEligibility(
+      presetDocument("default"),
+    );
+    const degraded = deriveSurfaceDocumentEligibility(
+      presetDocument("mandelboxClassic"),
+    );
+    const ineligible = deriveSurfaceDocumentEligibility({
+      transforms: [
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "qsquare", weight: 1 }],
+        },
+      ],
+      symmetry: NO_SYMMETRY,
+    });
+
+    expect(eligible.status).toBe("eligible");
+    expect(degraded.status).toBe("degraded");
+    expect(ineligible.status).toBe("ineligible");
+    expect(surfaceEligibilityHasRoute(eligible)).toBe(true);
+    expect(surfaceEligibilityHasRoute(degraded)).toBe(true);
+    expect(surfaceEligibilityHasRoute(ineligible)).toBe(false);
   });
 });
 
@@ -542,33 +817,6 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
 });
 
 describe("deriveSurfaceEligibility shape emitters", () => {
-  const nearBudgetShape: ShapeSpec = {
-    parts: Array.from({ length: 8 }, (_, index) => ({
-      primitive: {
-        kind: "gear" as const,
-        teeth: 13,
-        radius: 0.91234567890123,
-        tooth: [0.11234567890123, 0.01234567890123] as [number, number],
-        hole: 0.21234567890123,
-        halfHeight: 0.31234567890123,
-      },
-      combine: "union" as const,
-      pose: {
-        offset: [
-          index + 0.12345678901235,
-          index + 0.23456789012346,
-          index + 0.34567890123457,
-        ] as [number, number, number],
-        rotate: [
-          index + 0.45678901234568,
-          index + 0.56789012345679,
-          index + 0.67890123456789,
-        ] as [number, number, number],
-        scale: index + 1.12345678901235,
-      },
-    })),
-  };
-
   it("admits the Gearworks condensation preset into the IFS descent", () => {
     const result = derivePreset("gearworks");
     expect(result.status).toBe("eligible");
@@ -658,13 +906,13 @@ describe("deriveSurfaceEligibility shape emitters", () => {
   it("enforces one aggregate 8192-byte budget in both dialects across active emitter functions", () => {
     const encoder = new TextEncoder();
     const glslBytes = encoder.encode(
-      shapeSdfSource(nearBudgetShape, "glsl", "condensationSdf0"),
+      shapeSdfSource(NEAR_BUDGET_SHAPE, "glsl", "condensationSdf0"),
     ).byteLength;
     const wgslBytes0 = encoder.encode(
-      shapeSdfSource(nearBudgetShape, "wgsl", "condensationShape0"),
+      shapeSdfSource(NEAR_BUDGET_SHAPE, "wgsl", "condensationShape0"),
     ).byteLength;
     const wgslBytes1 = encoder.encode(
-      shapeSdfSource(nearBudgetShape, "wgsl", "condensationShape1"),
+      shapeSdfSource(NEAR_BUDGET_SHAPE, "wgsl", "condensationShape1"),
     ).byteLength;
     expect(glslBytes).toBeLessThanOrEqual(SURFACE_SHAPE_SOURCE_BUDGET_BYTES);
     expect(wgslBytes0).toBeLessThanOrEqual(SURFACE_SHAPE_SOURCE_BUDGET_BYTES);
@@ -673,7 +921,7 @@ describe("deriveSurfaceEligibility shape emitters", () => {
     );
 
     const one = sierpinskiTetrahedron().map((transform, index) =>
-      index === 0 ? { ...transform, emitter: nearBudgetShape } : transform,
+      index === 0 ? { ...transform, emitter: NEAR_BUDGET_SHAPE } : transform,
     );
     expect(
       deriveSurfaceEligibility(one, null, NO_SYMMETRY, {
@@ -682,7 +930,7 @@ describe("deriveSurfaceEligibility shape emitters", () => {
     ).toBe("eligible");
 
     const two = one.map((transform, index) =>
-      index === 1 ? { ...transform, emitter: nearBudgetShape } : transform,
+      index === 1 ? { ...transform, emitter: NEAR_BUDGET_SHAPE } : transform,
     );
     const refused = deriveSurfaceEligibility(two, null, NO_SYMMETRY, {
       computeAvailable: true,
@@ -712,7 +960,7 @@ describe("deriveSurfaceEligibility shape emitters", () => {
       index === 2 ? { ...transform, w: { rotation: { xw: 0.25 } } } : transform,
     );
     const glsl4dBytes = encoder.encode(
-      shapeSdfSource(nearBudgetShape, "glsl", "condensation4Sdf0"),
+      shapeSdfSource(NEAR_BUDGET_SHAPE, "glsl", "condensation4Sdf0"),
     ).byteLength;
     const refused4d = deriveSurfaceEligibility(nonFlatTwo, null, NO_SYMMETRY, {
       computeAvailable: true,
@@ -734,7 +982,7 @@ describe("deriveSurfaceEligibility shape emitters", () => {
 
   it("applies the same source gate to the active forward-route shape trap", () => {
     const overBudgetShape: ShapeSpec = {
-      parts: nearBudgetShape.parts.map((part) => ({
+      parts: NEAR_BUDGET_SHAPE.parts.map((part) => ({
         ...part,
         pose: {
           ...part.pose,
@@ -782,7 +1030,7 @@ describe("deriveSurfaceEligibility shape emitters", () => {
       }).status,
     ).toBe("eligible");
 
-    mutable.parts = nearBudgetShape.parts.map((part) => ({
+    mutable.parts = NEAR_BUDGET_SHAPE.parts.map((part) => ({
       ...part,
       pose: {
         ...part.pose,
