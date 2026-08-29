@@ -69,6 +69,40 @@ export interface SurfaceEligibilityResult {
 }
 
 /**
+ * The document fields that decide whether Surface has a truthful route.
+ * This is intentionally the Surface-relevant projection of a full scene
+ * snapshot: renderer settings, view poses and transient machine state cannot
+ * change which mathematical object the document describes.
+ */
+export interface SurfaceEligibilityDocument {
+  transforms: Transform[];
+  finalTransform?: Transform | null;
+  symmetry: SymmetryParams;
+  schedule?: HybridSchedule | null;
+  shapeTrap?: ShapeTrap | null;
+}
+
+/**
+ * The complete backend set shipped by the product, independent of which
+ * backend happens to be available on this device right now. A value of
+ * `true` here does NOT claim that the current browser has WebGPU; it asks the
+ * shared derivation whether the document has a correct Surface route on any
+ * supported product backend. The ordinary mode button and render-session
+ * door continue to pass their live machine capability instead.
+ */
+const COMPLETE_SURFACE_PRODUCT_CAPABILITIES = {
+  computeAvailable: true,
+} as const;
+
+/** Eligible and degraded routes are both renderable; only ineligible means
+ * that Surface has no truthful route for this document. */
+export function surfaceEligibilityHasRoute(
+  result: SurfaceEligibilityResult,
+): boolean {
+  return result.status !== "ineligible";
+}
+
+/**
  * Maximum aggregate UTF-8 payload contributed by active authored shape-SDF
  * functions to either Surface shader dialect. This is deliberately below a
  * driver's whole-program cliff: the fixed tracer still needs its own source
@@ -658,5 +692,26 @@ export function deriveSurfaceEligibility(
   return withSurfaceShapeSourceBudget(
     { status: "eligible", note: null, kind: "ifs" },
     activeEmitterShapes(transforms),
+  );
+}
+
+/**
+ * Capability-neutral Surface compatibility for retained mutation/crossover
+ * candidates. This deliberately delegates to the exact machine-sensitive
+ * derivation with the product's complete backend set instead of copying or
+ * reordering any analyzer, cap, source-budget or trap rule. In particular,
+ * compute-only 4D routes remain compatible during a transient adapter loss,
+ * while every document-level refusal and its shared note remain unchanged.
+ */
+export function deriveSurfaceDocumentEligibility(
+  document: SurfaceEligibilityDocument,
+): SurfaceEligibilityResult {
+  return deriveSurfaceEligibility(
+    document.transforms,
+    document.finalTransform ?? null,
+    document.symmetry,
+    COMPLETE_SURFACE_PRODUCT_CAPABILITIES,
+    document.schedule ?? null,
+    document.shapeTrap ?? null,
   );
 }
