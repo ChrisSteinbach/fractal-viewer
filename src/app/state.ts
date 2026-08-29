@@ -953,13 +953,13 @@ export const DEFAULT_FLAME_PALETTE: FlamePaletteId = "spectrum";
  * modest sharpness gain); the worker's own byte budget may still clamp the
  * top of this range on constrained devices (see `voxel-worker-core.ts`).
  *
- * The ceiling (512) matches the desktop budget ceiling: 512^3 x 20
- * bytes/voxel = 2.5 GiB, exactly `voxelAccumBudgetVoxels`'s
- * `VOXEL_ACCUM_MAX_BYTES` in `voxel-worker-core.ts`, so a desktop reporting
- * (or assumed to have, per that function) 8+ GiB can run the slider's full
- * range untouched. Weaker devices asking for more than their own budget are
- * proactively clamped by the worker (`clampVoxelResolution`) and shown the
- * "Reduced to N³" note (`resolutionNote`).
+ * The ceiling (512) matches the desktop budget ceiling: the exact peak for
+ * retained density/RGB, packed RGBA8, and its conservative max hierarchy
+ * (`voxelResolutionMemoryByteLength(512)`, about 2.52 GiB). Thus a desktop
+ * reporting (or assumed to have) 8+ GiB can run the slider's full range
+ * untouched. Weaker devices asking for more than their own budget are
+ * proactively clamped by exact byte accounting and shown the "Reduced to
+ * N³" note (`resolutionNote`).
  */
 export const DEFAULT_SOLID_RESOLUTION = 192;
 export const MIN_SOLID_RESOLUTION = 64;

@@ -22,12 +22,20 @@
  */
 import {
   accumulateVoxels,
-  clampVoxelResolution,
   computeVoxelBounds,
   createVoxelGrid,
   voxelTextureData,
 } from "../fractal/voxel";
 import type { VoxelBounds, VoxelGrid } from "../fractal/voxel";
+import { buildVoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
+import type {
+  VoxelMaxHierarchy,
+  VoxelMaxHierarchyLevel,
+} from "../fractal/voxel-max-hierarchy";
+import {
+  clampVoxelResolutionToMemoryBudget,
+  voxelResolutionMemoryByteLength,
+} from "../fractal/voxel-memory";
 import { accumulateVoxels4, computeVoxelBounds4 } from "../fractal/voxel-4d";
 import { symmetryIsNonFlat } from "../fractal/affine4";
 import { prepareChaosGame } from "../fractal/chaos-game";
@@ -183,12 +191,12 @@ export type VoxelWorkerCommand =
        * its inputs. */
       seed: number;
       /**
-       * Grid + texture memory ceiling in voxels, computed by the main thread
-       * via {@link voxelAccumBudgetVoxels} — the device signals it reads
+       * Exact worker peak-memory ceiling in bytes, computed by the main thread
+       * via {@link voxelAccumBudgetBytes} — the device signals it reads
        * (`navigator.deviceMemory`, pointer coarseness) only exist there.
        * Omitted, the session falls back to the phone-safe floor.
        */
-      maxVoxels?: number;
+      maxBytes?: number;
       /** Kaleidoscope symmetry, 4D as well as 3D — which is also why
        * `twist` rides along (the second angle of a 4D double rotation, which
        * only the 4D path can express). Absent `twist` means 0. */
@@ -292,12 +300,29 @@ export type VoxelWorkerCommand =
       twist?: number;
     };
 
+/**
+ * Threshold-independent empty-space acceleration built from the exact packed
+ * texture carried beside it. `absent` is an honest, usable fallback: the main
+ * thread must install the texture and use its unaccelerated Solid march.
+ */
+export type VoxelWorkerHierarchyPayload =
+  | {
+      readonly status: "present";
+      readonly data: Uint8Array<ArrayBuffer>;
+      readonly levels: readonly Readonly<VoxelMaxHierarchyLevel>[];
+      readonly byteLength: number;
+      readonly sourceSize: number;
+    }
+  | { readonly status: "absent" };
+
 /** Worker → main thread. */
 export type VoxelWorkerEvent =
   | {
       type: "grid";
       /** RGBA8 3D-texture bytes (see `voxelTextureData`), transferred (zero-copy). */
       texture: Uint8Array<ArrayBuffer>;
+      /** Max hierarchy derived from THIS texture, or an explicit fallback. */
+      hierarchy: VoxelWorkerHierarchyPayload;
       /** Voxels per axis of `texture` — the EFFECTIVE (post-clamp) resolution. */
       size: number;
       boundsMin: Vec3;
@@ -358,13 +383,20 @@ export interface VoxelWorkerDeps {
   /** Defaults to the real {@link createVoxelGrid}; overridable so a test can
    * force the OOM-retry path without a real allocation failure. */
   createGrid?: typeof createVoxelGrid;
+  /** Defaults to the real {@link voxelTextureData}; injectable so tests can
+   * prove that texture-pack failure remains fatal and never publishes a
+   * hierarchy without its source texture. */
+  textureData?: typeof voxelTextureData;
+  /** Defaults to the real {@link buildVoxelMaxHierarchy}; allocation failure
+   * is non-fatal because the packed texture remains a complete render path. */
+  buildHierarchy?: typeof buildVoxelMaxHierarchy;
   /** Defaults to the real {@link computeVoxelBounds4}; overridable so tests
    * can inspect the worker-owned view normalization passed to the 4D pilot. */
   computeBounds4?: typeof computeVoxelBounds4;
-  /** Fallback voxel budget for `start` commands that don't carry their own
-   * `maxVoxels` (defaults to the phone-safe 320 MiB floor); overridable so a
-   * test can trigger the proactive `clampVoxelResolution` guard cheaply. */
-  maxVoxels?: number;
+  /** Fallback byte budget for `start` commands that don't carry their own
+   * `maxBytes` (defaults to the exact peak for 256 cubed); overridable so a
+   * test can trigger the proactive memory guard cheaply. */
+  maxBytes?: number;
   /** Defaults to the real (1,000,000) initial chunk size; overridable so a
    * test can force a multi-chunk render with a tiny iteration budget. */
   initialChunkSize?: number;
@@ -414,43 +446,31 @@ const VOXEL_TEXTURE_INTERVAL_MS = 250;
  */
 const VOXEL_TEXTURE_PACK_DUTY = 3;
 
-/** Bytes per voxel across everything a session allocates per voxel: Float32
- * density (4) + Float32 RGB running mean (12) + the RGBA8 texture (4). */
-const BYTES_PER_VOXEL = 20;
-const MIB = 1024 * 1024;
 /**
  * Phone-safe floor (and no-better-information default) for one session's
- * grid + texture. 320 MiB / 20 bytes is exactly 256^3 — the value the app
- * originally shipped with, so coarse-pointer devices keep exactly their old
- * behavior (the old 256-max slider passes untouched). Same reasoning as the
- * flame's floor (`FLAME_ACCUM_FLOOR_BYTES`): phones die uncatchably (the OS
- * kills the tab before an allocation ever throws), so they get a conservative
- * flat budget, while desktops fail catchably and get more.
+ * exact peak: retained Float32 density/RGB, packed RGBA8, and max hierarchy.
+ * It is the precise peak for 256 cubed, preserving the app's shipped phone
+ * ceiling while making the new acceleration bytes part of the guard. Same
+ * reasoning as the flame's floor: phone OOMs can kill the tab before an
+ * allocation throws, so coarse-pointer devices get a flat budget.
  */
-const VOXEL_ACCUM_FLOOR_BYTES = 320 * MIB;
-const VOXEL_FLOOR_VOXELS = Math.floor(
-  VOXEL_ACCUM_FLOOR_BYTES / BYTES_PER_VOXEL,
-);
-/** Desktop budget scale: grid+texture bytes allowed per GiB of *reported*
- * device memory. 320 MiB/GiB lands an 8-GiB report exactly on the ceiling
- * (same scale as the flame's `FLAME_ACCUM_BYTES_PER_GIB`). */
-const VOXEL_ACCUM_BYTES_PER_GIB = 320 * MIB;
+const VOXEL_ACCUM_FLOOR_BYTES = voxelResolutionMemoryByteLength(256);
 /**
- * Desktop ceiling. 2560 MiB is exactly 512^3 voxels x 20 bytes — the new
- * slider maximum passes untouched on any machine reporting 8 GiB
- * (`navigator.deviceMemory`'s cap, meaning "8 or more"); a modest slice of
- * such a machine, and the reactive allocation-failure ratchet
- * (`maxSafeResolution`) still backstops weaker ones.
+ * Desktop ceiling: the precise full-payload peak for 512 cubed, so the slider
+ * maximum remains available on a machine reporting 8 GiB. The reactive
+ * allocation-failure ratchet still backstops weaker machines.
  */
-const VOXEL_ACCUM_MAX_BYTES = 2560 * MIB;
+const VOXEL_ACCUM_MAX_BYTES = voxelResolutionMemoryByteLength(512);
+/** Linear desktop scale landing an 8-GiB report exactly on the ceiling. */
+const VOXEL_ACCUM_BYTES_PER_GIB = VOXEL_ACCUM_MAX_BYTES / 8;
 
 /**
- * The grid+texture memory budget (in voxels — see {@link BYTES_PER_VOXEL})
- * for the device we're actually running on, from the two signals only the
+ * The exact peak-memory budget in bytes for the device we're actually
+ * running on, from the two signals only the
  * MAIN thread can read; it computes this and ships the result in the
  * `start` command (mirroring the flame's — see `flame-worker-core.ts`'s
- * `flameAccumBudgetBuckets`). Before this, the budget was a flat 320 MiB
- * sized so the OLD 256 slider max fit exactly on every device — i.e.
+ * `flameAccumBudgetBuckets`). Before hierarchy accounting, the budget was a
+ * nominal 320 MiB sized so the old 256 slider max fit exactly — i.e.
  * desktops were pinned to a phone-derived resolution ceiling no matter how
  * much RAM they actually had.
  *
@@ -466,21 +486,31 @@ const VOXEL_ACCUM_MAX_BYTES = 2560 * MIB;
  *   is still protected by `startAccumulation`'s reactive OOM fallback plus
  *   the session's learned `maxSafeResolution` ceiling.
  */
-export function voxelAccumBudgetVoxels(
+export function voxelAccumBudgetBytes(
   deviceMemoryGiB: number | undefined,
   coarsePointer: boolean,
 ): number {
-  if (coarsePointer) return VOXEL_FLOOR_VOXELS;
+  if (coarsePointer) return VOXEL_ACCUM_FLOOR_BYTES;
   const bytes = (deviceMemoryGiB ?? 8) * VOXEL_ACCUM_BYTES_PER_GIB;
   const clamped = Math.min(
     VOXEL_ACCUM_MAX_BYTES,
     Math.max(VOXEL_ACCUM_FLOOR_BYTES, bytes),
   );
-  return Math.floor(clamped / BYTES_PER_VOXEL);
+  return Math.floor(clamped);
 }
 
 function describeError(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** Transfer ownership of every fresh payload buffer exactly once. */
+export function voxelWorkerEventTransferBuffers(
+  event: VoxelWorkerEvent,
+): ArrayBuffer[] {
+  if (event.type !== "grid") return [];
+  return event.hierarchy.status === "present"
+    ? [event.texture.buffer, event.hierarchy.data.buffer]
+    : [event.texture.buffer];
 }
 
 // ---------------------------------------------------------------------------
@@ -500,13 +530,18 @@ export class VoxelWorkerSession {
   private readonly schedule: (fn: () => void) => void;
   private readonly emit: (event: VoxelWorkerEvent) => void;
   private readonly createGrid: typeof createVoxelGrid;
+  private readonly textureData: typeof voxelTextureData;
+  private readonly buildHierarchy: typeof buildVoxelMaxHierarchy;
+  /** Latched off after one hierarchy failure so progressive packs do not
+   * repeatedly allocate under the same session-wide memory pressure. */
+  private hierarchyEnabled = true;
   private readonly computeBounds4: typeof computeVoxelBounds4;
   /** Fallback budget for starts that don't carry one — see VoxelWorkerDeps. */
-  private readonly defaultMaxVoxels: number;
+  private readonly defaultMaxBytes: number;
   /** The budget the CURRENT session runs under: the `start` command's
-   * device-aware value (see {@link voxelAccumBudgetVoxels}), or the
+   * device-aware value (see {@link voxelAccumBudgetBytes}), or the
    * fallback when the command carried none. */
-  private maxVoxels: number;
+  private maxBytes: number;
   private readonly initialChunkSize: number;
   private readonly boundsSamples: number | undefined;
 
@@ -618,9 +653,11 @@ export class VoxelWorkerSession {
     this.schedule = deps.schedule;
     this.emit = deps.emit;
     this.createGrid = deps.createGrid ?? createVoxelGrid;
+    this.textureData = deps.textureData ?? voxelTextureData;
+    this.buildHierarchy = deps.buildHierarchy ?? buildVoxelMaxHierarchy;
     this.computeBounds4 = deps.computeBounds4 ?? computeVoxelBounds4;
-    this.defaultMaxVoxels = deps.maxVoxels ?? VOXEL_FLOOR_VOXELS;
-    this.maxVoxels = this.defaultMaxVoxels;
+    this.defaultMaxBytes = deps.maxBytes ?? VOXEL_ACCUM_FLOOR_BYTES;
+    this.maxBytes = this.defaultMaxBytes;
     this.initialChunkSize = deps.initialChunkSize ?? VOXEL_CHUNK_INITIAL;
     this.boundsSamples = deps.boundsSamples;
     this.chunkSize = this.initialChunkSize;
@@ -696,6 +733,7 @@ export class VoxelWorkerSession {
 
   private start(cmd: Extract<VoxelWorkerCommand, { type: "start" }>): void {
     installStartMeshAssets(cmd.meshAssets);
+    this.hierarchyEnabled = true;
 
     this.baseTransforms = cmd.transforms;
     this.baseFinalTransform = cmd.finalTransform;
@@ -728,7 +766,7 @@ export class VoxelWorkerSession {
     this.paletteSpec = cmd.palette;
     this.iterationsBudget = cmd.iterationsBudget;
     this.requestedResolution = cmd.resolution;
-    this.maxVoxels = cmd.maxVoxels ?? this.defaultMaxVoxels;
+    this.maxBytes = cmd.maxBytes ?? this.defaultMaxBytes;
     this.maxSafeResolution = Infinity; // a fresh session has no learned ceiling yet.
 
     this.is4D = cmd.fourD !== undefined;
@@ -1072,7 +1110,7 @@ export class VoxelWorkerSession {
    * learned allocation ceiling) allows, and start accumulating. On a real
    * allocation failure, learn the ceiling and retry one step smaller rather
    * than failing every attempt forever — the reactive guard backing up the
-   * proactive `clampVoxelResolution` estimate, mirroring the flame session's
+   * proactive exact-memory estimate, mirroring the flame session's
    * supersample fallback. Dimension-agnostic: the grid itself (and this OOM
    * guard) doesn't care whether it's being filled by the 3D or 4D path. The
    * ONE place that actually discards a prior accumulation (shared by
@@ -1085,7 +1123,10 @@ export class VoxelWorkerSession {
   private startAccumulation(): void {
     if (!this.bounds) return;
     const effective = Math.min(
-      clampVoxelResolution(this.requestedResolution, this.maxVoxels),
+      clampVoxelResolutionToMemoryBudget(
+        this.requestedResolution,
+        this.maxBytes,
+      ),
       this.maxSafeResolution,
     );
     try {
@@ -1216,14 +1257,30 @@ export class VoxelWorkerSession {
   private sendGrid(grid: VoxelGrid): boolean {
     let texture: Uint8Array<ArrayBuffer>;
     try {
-      texture = voxelTextureData(grid);
+      texture = this.textureData(grid);
     } catch (e) {
       this.emit({ type: "error", message: describeError(e) });
       return false;
     }
+    let hierarchy: VoxelWorkerHierarchyPayload = { status: "absent" };
+    if (this.hierarchyEnabled) {
+      try {
+        const built: VoxelMaxHierarchy = this.buildHierarchy(
+          texture,
+          this.effectiveResolution,
+        );
+        hierarchy = { status: "present", ...built };
+      } catch {
+        // The texture was already packed successfully and remains the
+        // complete legacy render path. Latch acceleration off so subsequent
+        // progressive packs do not repeat the same allocation pressure.
+        this.hierarchyEnabled = false;
+      }
+    }
     this.emit({
       type: "grid",
       texture,
+      hierarchy,
       size: this.effectiveResolution,
       boundsMin: grid.bounds.min,
       boundsMax: grid.bounds.max,

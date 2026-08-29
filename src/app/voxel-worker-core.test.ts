@@ -3,7 +3,12 @@ import {
   CHAOS_SUB_ORBIT_POINTS,
   emitterSamplerCapability,
 } from "../fractal/chaos-game";
-import { clampVoxelResolution, createVoxelGrid } from "../fractal/voxel";
+import { createVoxelGrid, voxelTextureData } from "../fractal/voxel";
+import { buildVoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
+import {
+  clampVoxelResolutionToMemoryBudget,
+  voxelResolutionMemoryByteLength,
+} from "../fractal/voxel-memory";
 import { computeVoxelBounds4 } from "../fractal/voxel-4d";
 import type { FourDView } from "../fractal/project4";
 import type { Transform, Transform4 } from "../fractal/types";
@@ -14,7 +19,8 @@ import {
   type SerializedPreparedMeshAsset,
 } from "../fractal/mesh-shapes";
 import {
-  voxelAccumBudgetVoxels,
+  voxelAccumBudgetBytes,
+  voxelWorkerEventTransferBuffers,
   VoxelWorkerSession,
 } from "./voxel-worker-core";
 import type {
@@ -229,8 +235,10 @@ function harness(
     schedule: scheduler.schedule,
     emit: (event) => events.push(event),
     createGrid: overrides.createGrid,
+    textureData: overrides.textureData,
+    buildHierarchy: overrides.buildHierarchy,
     computeBounds4: overrides.computeBounds4,
-    maxVoxels: overrides.maxVoxels,
+    maxBytes: overrides.maxBytes,
     initialChunkSize: overrides.initialChunkSize,
     boundsSamples: overrides.boundsSamples ?? 500,
   });
@@ -241,6 +249,20 @@ function gridEvents(
   events: VoxelWorkerEvent[],
 ): Extract<VoxelWorkerEvent, { type: "grid" }>[] {
   return events.filter((e) => e.type === "grid");
+}
+
+type GridEvent = Extract<VoxelWorkerEvent, { type: "grid" }>;
+
+function expectHierarchyMatchesTexture(grid: GridEvent): void {
+  expect(grid.hierarchy.status).toBe("present");
+  if (grid.hierarchy.status !== "present") return;
+  const rebuilt = buildVoxelMaxHierarchy(grid.texture, grid.size);
+  expect(grid.hierarchy).toMatchObject({
+    sourceSize: grid.size,
+    byteLength: rebuilt.byteLength,
+    levels: rebuilt.levels,
+  });
+  expect(grid.hierarchy.data).toEqual(rebuilt.data);
 }
 
 function noteEvents(
@@ -420,6 +442,168 @@ describe("VoxelWorkerSession start", () => {
       return grids[grids.length - 1].texture;
     };
     expect(run("spectrum")).not.toEqual(run("legacy"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Texture-coupled empty-space hierarchy publication
+// ---------------------------------------------------------------------------
+
+describe("VoxelWorkerSession max hierarchy publication", () => {
+  it("builds each progressive hierarchy after and from its exact packed texture", () => {
+    const calls: string[] = [];
+    const { session, events, scheduler } = harness({
+      initialChunkSize: 100,
+      textureData: (grid) => {
+        calls.push("texture");
+        return voxelTextureData(grid);
+      },
+      buildHierarchy: (texture, size) => {
+        calls.push("hierarchy");
+        return buildVoxelMaxHierarchy(texture, size);
+      },
+    });
+    session.handle(startCommand({ iterationsBudget: 300 }));
+    scheduler.drain();
+
+    const grids = gridEvents(events);
+    expect(grids.map((grid) => grid.iterationsDone)).toEqual([100, 300]);
+    expect(calls).toEqual(["texture", "hierarchy", "texture", "hierarchy"]);
+    for (const grid of grids) expectHierarchyMatchesTexture(grid);
+    expect(grids[0].texture).not.toBe(grids[1].texture);
+    if (
+      grids[0].hierarchy.status === "present" &&
+      grids[1].hierarchy.status === "present"
+    ) {
+      expect(grids[0].hierarchy.data).not.toBe(grids[1].hierarchy.data);
+      expect(grids[0].hierarchy.levels).not.toBe(grids[1].hierarchy.levels);
+    }
+  });
+
+  it("publishes absent acceleration and latches allocation failure for the session", () => {
+    let attempts = 0;
+    const { session, events, scheduler } = harness({
+      initialChunkSize: 100,
+      buildHierarchy: () => {
+        attempts++;
+        throw new RangeError("hierarchy allocation failed");
+      },
+    });
+    session.handle(startCommand({ iterationsBudget: 200 }));
+    scheduler.drain();
+
+    const grids = gridEvents(events);
+    expect(grids).toHaveLength(2);
+    expect(attempts).toBe(1);
+    expect(events.some((event) => event.type === "error")).toBe(false);
+    for (const grid of grids) {
+      expect(grid.hierarchy).toEqual({ status: "absent" });
+      expect(grid.texture).toHaveLength(grid.size ** 3 * 4);
+      expect(voxelWorkerEventTransferBuffers(grid)).toEqual([
+        grid.texture.buffer,
+      ]);
+    }
+  });
+
+  it("replaces a prior present hierarchy with absent instead of reusing it after failure", () => {
+    let attempts = 0;
+    const { session, events, scheduler } = harness({
+      initialChunkSize: 100,
+      buildHierarchy: (texture, size) => {
+        attempts++;
+        if (attempts > 1) throw new RangeError("later hierarchy failure");
+        return buildVoxelMaxHierarchy(texture, size);
+      },
+    });
+    session.handle(startCommand({ iterationsBudget: 200 }));
+    scheduler.drain();
+
+    const grids = gridEvents(events);
+    expect(grids.map((grid) => grid.hierarchy.status)).toEqual([
+      "present",
+      "absent",
+    ]);
+    expect(grids[1].texture.some((byte) => byte > 0)).toBe(true);
+  });
+
+  it("keeps texture-pack failure fatal and never attempts or publishes a hierarchy", () => {
+    let hierarchyAttempts = 0;
+    const { session, events, scheduler } = harness({
+      textureData: () => {
+        throw new RangeError("texture allocation failed");
+      },
+      buildHierarchy: () => {
+        hierarchyAttempts++;
+        return buildVoxelMaxHierarchy(new Uint8Array(4), 1);
+      },
+    });
+    session.handle(startCommand({ iterationsBudget: 200 }));
+    scheduler.drain();
+
+    expect(hierarchyAttempts).toBe(0);
+    expect(gridEvents(events)).toHaveLength(0);
+    expect(events).toContainEqual({
+      type: "error",
+      message: "texture allocation failed",
+    });
+  });
+
+  it("transfers both fresh buffers when present and none for non-grid events", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 200 }));
+    scheduler.drain();
+
+    const grid = gridEvents(events).at(-1)!;
+    expect(grid.hierarchy.status).toBe("present");
+    if (grid.hierarchy.status !== "present") return;
+    expect(voxelWorkerEventTransferBuffers(grid)).toEqual([
+      grid.texture.buffer,
+      grid.hierarchy.data.buffer,
+    ]);
+    expect(
+      voxelWorkerEventTransferBuffers({
+        type: "progress",
+        iterationsDone: 1,
+        iterationsBudget: 2,
+      }),
+    ).toEqual([]);
+  });
+
+  it("is deterministic across progressive and restarted nonlinear stochastic runs", () => {
+    const transforms = sierpinskiTetrahedron().map((transform) => ({
+      ...transform,
+      variations: [
+        { type: "swirl" as const, weight: 0.7 },
+        { type: "julia" as const, weight: 0.3 },
+      ],
+    }));
+    const run = () => {
+      const { session, events, scheduler } = harness({ initialChunkSize: 100 });
+      session.handle(
+        startCommand({
+          transforms,
+          seed: 0xdecafbad,
+          iterationsBudget: 300,
+        }),
+      );
+      scheduler.drain();
+      session.handle({ type: "setPalette", palette: "spectrum" });
+      scheduler.drain();
+      const grids = gridEvents(events);
+      for (const grid of grids) expectHierarchyMatchesTexture(grid);
+      return grids.map((grid) => ({
+        iterationsDone: grid.iterationsDone,
+        texture: grid.texture,
+        hierarchy: grid.hierarchy,
+      }));
+    };
+
+    const first = run();
+    const second = run();
+    expect(first.map((grid) => grid.iterationsDone)).toEqual([
+      100, 300, 100, 300,
+    ]);
+    expect(first).toEqual(second);
   });
 });
 
@@ -845,7 +1029,9 @@ describe("VoxelWorkerSession restarted event", () => {
 
 describe("VoxelWorkerSession memory guards", () => {
   it("proactively clamps the resolution to the voxel budget and says so", () => {
-    const { session, events, scheduler } = harness({ maxVoxels: 32 ** 3 });
+    const { session, events, scheduler } = harness({
+      maxBytes: voxelResolutionMemoryByteLength(32),
+    });
     session.handle(startCommand({ resolution: 96 }));
     scheduler.drain();
 
@@ -864,7 +1050,12 @@ describe("VoxelWorkerSession memory guards", () => {
     // Without it, the built-in floor (256^3 worth of voxels) would clamp
     // nothing at a mere 64^3 request.
     const { session, events, scheduler } = harness();
-    session.handle(startCommand({ resolution: 64, maxVoxels: 32 * 32 * 32 }));
+    session.handle(
+      startCommand({
+        resolution: 64,
+        maxBytes: voxelResolutionMemoryByteLength(32),
+      }),
+    );
     scheduler.drain();
 
     expect(noteEvents(events)[0]).toEqual({
@@ -1191,46 +1382,44 @@ describe("VoxelWorkerSession 4D solid render", () => {
 // Device-aware accumulation budget policy
 // ---------------------------------------------------------------------------
 
-describe("voxelAccumBudgetVoxels", () => {
-  /** MiB → voxels, restating the contract: one voxel is 20 bytes (Float32
-   * density + Float32 RGB running mean + the RGBA8 texture texel). */
-  const voxels = (mib: number) => Math.floor((mib * 1024 * 1024) / 20);
+describe("voxelAccumBudgetBytes", () => {
+  const bytes256 = voxelResolutionMemoryByteLength(256);
+  const bytes512 = voxelResolutionMemoryByteLength(512);
 
-  it("keeps the flat 320 MiB phone floor on coarse-pointer devices, ignoring reported memory", () => {
+  it("keeps the exact 256-cubed phone peak on coarse-pointer devices, ignoring reported memory", () => {
     // Flagship phones report the capped deviceMemory maximum of 8 — exactly
     // the devices the conservative floor exists for, so the report is
     // ignored. Also pins today's exact ceiling (256^3) so phones see no
-    // regression from raising the desktop slider max.
-    expect(voxelAccumBudgetVoxels(8, true)).toBe(voxels(320));
-    expect(voxelAccumBudgetVoxels(8, true)).toBe(256 ** 3);
+    // regression while the hierarchy bytes remain fully accounted.
+    expect(voxelAccumBudgetBytes(8, true)).toBe(bytes256);
   });
 
   it("scales the desktop budget with reported device memory", () => {
-    expect(voxelAccumBudgetVoxels(4, false)).toBe(voxels(1280));
+    expect(voxelAccumBudgetBytes(4, false)).toBe(Math.floor(bytes512 / 2));
   });
 
   it("assumes a desktop-class budget when deviceMemory is unavailable (Firefox/Safari)", () => {
-    expect(voxelAccumBudgetVoxels(undefined, false)).toBe(voxels(2560));
+    expect(voxelAccumBudgetBytes(undefined, false)).toBe(bytes512);
   });
 
   it("never drops below the phone-safe floor on tiny-memory desktops", () => {
-    expect(voxelAccumBudgetVoxels(0.25, false)).toBe(voxels(320));
+    expect(voxelAccumBudgetBytes(0.25, false)).toBe(bytes256);
   });
 
   it("caps the budget even if a future UA reports more than 8 GiB", () => {
-    expect(voxelAccumBudgetVoxels(64, false)).toBe(voxels(2560));
+    expect(voxelAccumBudgetBytes(64, false)).toBe(bytes512);
   });
 
   it("lets a desktop run the full 512^3 slider maximum", () => {
-    expect(clampVoxelResolution(512, voxelAccumBudgetVoxels(8, false))).toBe(
-      512,
-    );
+    expect(
+      clampVoxelResolutionToMemoryBudget(512, voxelAccumBudgetBytes(8, false)),
+    ).toBe(512);
   });
 
   it("still pins a phone asking for 512^3 to the old 256^3 ceiling", () => {
-    expect(clampVoxelResolution(512, voxelAccumBudgetVoxels(8, true))).toBe(
-      256,
-    );
+    expect(
+      clampVoxelResolutionToMemoryBudget(512, voxelAccumBudgetBytes(8, true)),
+    ).toBe(256);
   });
 });
 

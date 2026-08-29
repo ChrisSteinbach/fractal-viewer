@@ -1689,8 +1689,13 @@ Frame` callback, which runs before paint so the disabled look never
     CPU fallback.
   - `flame-perf.ts` — opt-in flame throughput diagnostics (`?flameperf`).
   - `voxel-worker.ts` / `voxel-worker-core.ts` — solid render worker (transfer
-    only). Its non-flat session shares Flame's retained-geometry,
-    restart-on-settled-`setFourDView` contract.
+    only). Each progressive event transfers one exact packed texture plus its
+    matching max hierarchy, or explicit absence; exact peak-byte accounting
+    covers both before the resolution clamp. Its non-flat session shares
+    Flame's retained-geometry, restart-on-settled-`setFourDView` contract.
+  - `render-worker-host.ts` — live-gated Worker adapter used by Solid:
+    detaches callbacks before termination and also makes already-captured
+    stale message/error callbacks inert across exit and re-entry.
   - `surface-grid-worker.ts` / `surface-grid-worker-core.ts` /
     `surface-grid-client.ts` — empty-space-grid build worker:
     one-shot `buildSurfaceGrid` request/response (transfer), latest-wins-by-id
