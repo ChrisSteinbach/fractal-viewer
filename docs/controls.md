@@ -149,6 +149,58 @@ sets nothing — tap-to-set is deliberately absent on touch, since
 on a panel of full-width sliders a tap that lands on one is a scroll that
 hasn't moved yet far more often than it's an edit, and a drag still reaches
 any value the tap could have.
+
+Every slider is paired with an editable number beside it, so a value can be
+set exactly rather than aimed at: the slider stays the fast, coarse gesture
+and the number field is where precision lives. The two are one control —
+moving either moves the other, and both reach the same document. Typing alone
+changes nothing; the value applies when the field is committed (Enter, or
+moving focus away), and ↑/↓ step it by the slider's own increment. Direct
+entry may land BETWEEN the slider's stops — Fog steps by 0.05 but accepts
+1.73, and the thumb simply parks at the nearest stop while the document keeps
+1.73 — but not with more decimals than that increment declares, since that is
+the precision the readout and the document round to. A value the control
+cannot take is refused in place rather than silently corrected: the field
+turns red, keeps what was typed so it can be corrected, and states the reason
+("Enter a value from 0 to 2.5.", "Use at most 2 decimal places.") as an
+announced alert; Escape puts the last accepted value back. Where a formatted
+readout already exists — the editor's "0.50 (auto)", "0°", "1.00×" — it stays,
+because it carries units and derived state a bare number cannot. On touch the
+number is a tap target rather than a drag surface: a tap focuses it for
+typing, and a scroll that happens to start on it scrolls the panel and leaves
+the value alone, exactly as one starting on a slider does.
+
+MEASURED on a real production build at 393×727 and 320×568 (the narrowest
+phone the panel is designed against), driving it through 80 states — every
+visible section in every reachable render mode, every transform-editor group,
+a mandelbox for the fold-length rows, an emitter shape for the part editor, a
+xaos-carrying preset for the leak dials: 86 distinct sliders, every one paired
+with exactly one companion, and every pair available or unavailable as one
+control across the ten the app actually disables; smallest companion 61×44px (a mandelbox
+fold-length row at 320px, the deepest-nested row the panel has), no horizontal
+overflow at either width, and no value at either end of any control's own
+domain clipped by its field. Under trusted CDP-level touch a tap focuses the
+field, a swipe starting on it scrolls the panel −165px and moves neither the
+value nor the document, and a drag on the retained slider still edits with the
+field following it exactly — 784 samples through that drag never caught the
+slider guard's one-frame `disabled` flip landing on the companion.
+
+THAT RUN FOUND ONE DEFECT, and it is why the gate reads committed values out
+of the `#v1=` document hash rather than off the panel. ↑/↓ stepped from
+whatever the field was SHOWING and committed without re-validating, so a draft
+the control had just refused stepped into a value the same control rejects
+when typed: Position X (step 0.01), draft "0.375" refused for precision, then
+↑ wrote 0.385 into the document while the field, the slider and the readout
+all read 0.39. The table-driven half did the same (Fog, step 0.05: "1.234"
+refused, ↑ wrote 1.284 and showed 1.28). The panel and the document disagreed
+about the number, which is the one thing an exact-value control must not do.
+Both the base and the result of a step now pass through the control's own
+domain — bounds, the enforced increment where one exists, then precision — so
+a step commits exactly what it shows. The gate reproduces the defect against
+the pre-fix build (those two legs fail with those figures, every other verdict
+still green), so it is a real detector rather than one that passes by
+construction. Not verified on WebKit or Firefox Android.
+
 Loading a whole new system — a preset, Surprise Me, or a gallery load —
 morphs into place instead of snapping (see **Presets** below).
 
