@@ -394,6 +394,72 @@ describe("enhanceRangeWithNumber", () => {
     expect(discrete.numberInput.value).toBe("8");
   });
 
+  it("steps a refused draft into a value it would also accept typed", () => {
+    // Measured on a real build before the domain snap existed: Position X
+    // (step 0.01) refused the draft "0.375" for precision, and ArrowUp then
+    // committed 0.385 while the field, the slider and the readout all showed
+    // 0.39 — the panel and the document disagreeing about the number.
+    const onInput = vi.fn();
+    const control = enhanceRangeWithNumber(
+      range({ min: -1, max: 1, step: 0.01, value: 0.5 }),
+      { min: -1, max: 1, step: 0.01, onInput },
+    );
+
+    control.numberInput.value = "0.375";
+    control.numberInput.dispatchEvent(new Event("input"));
+    control.numberInput.dispatchEvent(new Event("change"));
+    expect(control.numberInput.getAttribute("aria-invalid")).toBe("true");
+    onInput.mockClear();
+
+    control.numberInput.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowUp", cancelable: true }),
+    );
+
+    expect(onInput).toHaveBeenCalledWith(0.39, "number");
+    expect(control.numberInput.value).toBe("0.39");
+    expect(control.numberInput.getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("keeps every Arrow step on the enforced increment grid", () => {
+    const onInput = vi.fn();
+    const control = enhanceRangeWithNumber(
+      range({ min: 0, max: 10, step: 0.5, value: 2 }),
+      { min: 0, max: 10, step: 0.5, enforceStep: true, onInput },
+    );
+
+    control.numberInput.value = "3.3";
+    control.numberInput.dispatchEvent(new Event("input"));
+    control.numberInput.dispatchEvent(new Event("change"));
+    expect(control.numberInput.getAttribute("aria-invalid")).toBe("true");
+    onInput.mockClear();
+
+    control.numberInput.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowUp", cancelable: true }),
+    );
+
+    expect(onInput).toHaveBeenCalledWith(4, "number");
+  });
+
+  it("keeps a bound reachable when the synchronized value widened it off-precision", () => {
+    // A document may carry more precision than the control declares; the
+    // panel widens the bounds to it rather than clamping it away, so the
+    // bound must stay exactly reachable instead of rounding past itself.
+    const onInput = vi.fn();
+    const control = enhanceRangeWithNumber(
+      range({ min: 0, max: 3, step: 0.1, value: 1 }),
+      { min: 0, max: 3, step: 0.1, onInput },
+    );
+    control.setBounds({ min: 0, max: 2.345, step: 0.1 });
+    control.setValue(2.3);
+    onInput.mockClear();
+
+    control.numberInput.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowUp", cancelable: true }),
+    );
+
+    expect(onInput).toHaveBeenCalledWith(2.345, "number");
+  });
+
   it("rejects invalid construction and programmatic synchronization contracts", () => {
     const notRange = document.createElement("input");
     document.body.appendChild(notRange);
