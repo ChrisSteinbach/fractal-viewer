@@ -432,6 +432,11 @@ export interface UiHandlers {
    * flat view it drives the camera turntable; in a non-flat view it drives
    * the 4D rotor tumble. */
   onAutoMotionToggle: (checked: boolean) => void;
+  /** Continuous zoom is Saved-view camera framing. Surface resolves new
+   * analytic detail; sampled renderers retain the stable lens navigation. */
+  onContinuousZoomToggle: (checked: boolean) => void;
+  /** Restore the ordinary lens and auto-fit the active attractor. */
+  onContinuousZoomReset: () => void;
   /** The surface mode's "Quick previews" checkbox was flipped: `false` =
    * invalidations never trace the preview tier — the pane holds its last
    * frame while the view moves and the full render starts on park. A
@@ -2321,6 +2326,12 @@ export class Ui {
   private readonly threeDSavedViewScope: HTMLElement;
   private readonly fourDSavedViewScope: HTMLElement;
   private readonly autoMotionToggle: HTMLInputElement;
+  private readonly continuousZoomRow: HTMLElement;
+  private readonly continuousZoomToggle: HTMLInputElement;
+  private readonly continuousZoomUnavailableNote: HTMLElement;
+  private readonly continuousZoomControls: HTMLElement;
+  private readonly continuousZoomStatus: HTMLOutputElement;
+  private readonly continuousZoomResetBtn: HTMLButtonElement;
   private readonly autoOrbitRow: HTMLElement;
   private readonly autoOrbitSpeedSlider: HTMLInputElement;
   private readonly autoOrbitSpeedLabel: HTMLElement;
@@ -2922,6 +2933,14 @@ export class Ui {
     this.viewControls = this.byId("viewControls");
     this.threeDSavedViewScope = this.byId("threeDSavedViewScope");
     this.fourDSavedViewScope = this.byId("fourDSavedViewScope");
+    this.continuousZoomRow = this.byId("continuousZoomRow");
+    this.continuousZoomToggle = this.byId("continuousZoomToggle");
+    this.continuousZoomUnavailableNote = this.byId(
+      "continuousZoomUnavailableNote",
+    );
+    this.continuousZoomControls = this.byId("continuousZoomControls");
+    this.continuousZoomStatus = this.byId("continuousZoomStatus");
+    this.continuousZoomResetBtn = this.byId("continuousZoomResetBtn");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceToggleRow = this.byId("fourDSliceToggleRow");
     this.fourDSliceRow = this.byId("fourDSliceRow");
@@ -3477,6 +3496,15 @@ export class Ui {
       }
       handlers.onAutoMotionToggle(on);
     });
+    this.continuousZoomToggle.addEventListener("change", () => {
+      const on = this.continuousZoomToggle.checked;
+      this.continuousZoomControls.classList.toggle("hidden", !on);
+      this.syncContinuousZoomAvailability();
+      handlers.onContinuousZoomToggle(on);
+    });
+    this.continuousZoomResetBtn.addEventListener("click", () => {
+      handlers.onContinuousZoomReset();
+    });
     this.surfacePreviewToggle.addEventListener("change", () => {
       handlers.onSurfacePreviewToggle(this.surfacePreviewToggle.checked);
     });
@@ -3659,6 +3687,7 @@ export class Ui {
   private syncViewRows(): void {
     const sliceOn = this.fourDSliceToggle.checked;
     const motionOn = this.autoMotionToggle.checked;
+    this.syncContinuousZoomAvailability();
     this.threeDSavedViewScope.classList.toggle("hidden", this.viewIsNonFlat);
     this.fourDSavedViewScope.classList.toggle("hidden", !this.viewIsNonFlat);
     this.autoOrbitRow.classList.toggle(
@@ -3720,6 +3749,39 @@ export class Ui {
           "segment certificates are unsound under the spherefold's " +
           "inversion branch (mandelbox includes it). Box-fold-only systems " +
           "keep the slab.";
+  }
+
+  /** Camera motion is frozen in Flame. An already-active saved deep view keeps
+   * its toggle enabled there so it can always be exited/reset; a fresh mode
+   * cannot be started until the user returns to a live-camera renderer. */
+  private syncContinuousZoomAvailability(): void {
+    const frozen = this.panelContext.renderMode === "flame";
+    const active = this.continuousZoomToggle.checked;
+    // Flat Flame normally hides its frozen View section, but an armed mode
+    // keeps the shell reachable until the user exits or resets it.
+    this.viewControls.classList.toggle(
+      "hidden",
+      frozen && this.panelContext.dimension === "flat" && !active,
+    );
+    this.continuousZoomToggle.disabled = frozen && !active;
+    this.continuousZoomRow.title = frozen
+      ? active
+        ? "Flame freezes the camera; Continuous zoom can still be reset or exited."
+        : "Continuous zoom cannot start while Flame freezes the camera."
+      : "";
+    this.continuousZoomUnavailableNote.classList.toggle("hidden", !frozen);
+  }
+
+  /** Reflect Saved-view zoom state and its runtime renderer/detail disclosure.
+   * The output is intentionally not aria-live: wheel ticks may be rapid; the
+   * app announces only discrete precision/work caps through its toast. */
+  setContinuousZoom(enabled: boolean, status: string): void {
+    this.continuousZoomToggle.checked = enabled;
+    this.continuousZoomControls.classList.toggle("hidden", !enabled);
+    if (this.continuousZoomStatus.textContent !== status) {
+      this.continuousZoomStatus.textContent = status;
+    }
+    this.syncContinuousZoomAvailability();
   }
 
   /** Whether the live 4D surface session can take a slab at all (see
@@ -4247,12 +4309,9 @@ export class Ui {
     // One stable View section follows every live-camera renderer. Flat Solid
     // keeps its automatic turntable; Surface keeps manual camera/rotor/slice
     // controls but visibly parks continuous motion so refinement can settle.
-    // Flat Flame still hides its frozen camera. A non-flat Flame/Solid keeps
-    // manual rotor/slice controls available through restart-on-settle.
-    this.viewControls.classList.toggle(
-      "hidden",
-      state.renderMode === "flame" && !nonFlat,
-    );
+    // syncContinuousZoomAvailability owns flat Flame's exception so toggling
+    // an armed mode off can hide this shell immediately. A non-flat
+    // Flame/Solid keeps manual rotor/slice controls through restart-on-settle.
     this.syncViewRows();
     // The slice-relative option only touches the w-ramp palettes, so its row
     // hides under the baked 4D color modes — the same single source of truth

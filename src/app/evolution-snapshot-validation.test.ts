@@ -121,6 +121,8 @@ function populatedSnapshot(): SceneSnapshot {
     radius: 8,
     theta: -20.25,
     phi: 1.25,
+    fov: 0.5,
+    infiniteZoom: true,
   };
   snapshot.fourD = {
     pair: { p: [1, 0, 0, 0], q: [0, 1, 0, 0] },
@@ -472,6 +474,8 @@ describe("crossover-v1 exact SceneSnapshot validation", () => {
     ],
     ["out-of-range camera radius", (s) => (record(s.camera).radius = 101)],
     ["string camera angle", (s) => (record(s.camera).theta = "1")],
+    ["out-of-range camera FOV", (s) => (record(s.camera).fov = 0.001)],
+    ["bad continuous zoom flag", (s) => (record(s.camera).infiniteZoom = 1)],
     ["malformed fourD pair", (s) => (record(s.fourD?.pair).p = [1, 0, 0])],
     [
       "unnormalized fourD pair",

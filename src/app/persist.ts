@@ -97,7 +97,13 @@ import type {
   SurfaceFloorPattern,
   SurfaceParams,
 } from "./state";
-import { clampPhi, clampRadius, type CameraPose } from "./orbit";
+import {
+  DEFAULT_CAMERA_FOV,
+  clampCameraFov,
+  clampPhi,
+  clampRadius,
+  type CameraPose,
+} from "./orbit";
 import { BACKGROUND_MODES } from "./background";
 import type {
   BackgroundGradient,
@@ -631,6 +637,12 @@ export const CAMERA_TARGET_LIMIT = 1000;
 /** Round to 4 decimal places to keep encoded URLs compact. */
 function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
+}
+
+/** Deep camera framing needs sub-0.0001 focus coordinates to survive a share
+ * link. Kept camera-only so ordinary scene fields retain the compact v1 wire. */
+function round10(n: number): number {
+  return Math.round(n * 10_000_000_000) / 10_000_000_000;
 }
 
 /** {@link round4} over a Vec3, keeping the tuple type (the emitter codec's
@@ -2109,11 +2121,25 @@ function decodeCameraPose(raw: unknown): CameraPose | undefined {
   if (typeof theta !== "number" || !Number.isFinite(theta)) return undefined;
   if (typeof phi !== "number" || !Number.isFinite(phi)) return undefined;
 
+  const fov = c.fov;
+  if (fov !== undefined && (typeof fov !== "number" || !Number.isFinite(fov))) {
+    return undefined;
+  }
+  const infiniteZoom = c.infiniteZoom;
+  if (infiniteZoom !== undefined && typeof infiniteZoom !== "boolean") {
+    return undefined;
+  }
+
+  const decodedFov = clampCameraFov(fov ?? DEFAULT_CAMERA_FOV);
   return {
     target: c.target,
     radius: clampRadius(radius),
     theta,
     phi: clampPhi(phi),
+    ...(decodedFov !== DEFAULT_CAMERA_FOV ? { fov: decodedFov } : {}),
+    ...(infiniteZoom === true || decodedFov !== DEFAULT_CAMERA_FOV
+      ? { infiniteZoom: true }
+      : {}),
   };
 }
 
@@ -2728,6 +2754,8 @@ export function encodeScene(s: SceneSnapshot): string {
       radius: number;
       theta: number;
       phi: number;
+      fov?: number;
+      infiniteZoom?: boolean;
     };
     fourD?: {
       p: number[];
@@ -3024,11 +3052,21 @@ export function encodeScene(s: SceneSnapshot): string {
   // undo-history snapshot (which never carries a camera — see
   // SceneSnapshot.camera's doc) stays byte-identical.
   if (s.camera) {
+    const deep =
+      s.camera.infiniteZoom === true ||
+      (s.camera.fov ?? DEFAULT_CAMERA_FOV) !== DEFAULT_CAMERA_FOV;
+    const roundCamera = deep ? round10 : round4;
     payload.camera = {
-      target: s.camera.target.map(round4),
-      radius: round4(s.camera.radius),
-      theta: round4(s.camera.theta),
-      phi: round4(s.camera.phi),
+      target: s.camera.target.map(roundCamera),
+      radius: roundCamera(s.camera.radius),
+      theta: roundCamera(s.camera.theta),
+      phi: roundCamera(s.camera.phi),
+      ...(deep
+        ? {
+            fov: round10(s.camera.fov ?? DEFAULT_CAMERA_FOV),
+            infiniteZoom: true,
+          }
+        : {}),
     };
   }
   // Written only when present, like camera above — an undo-history

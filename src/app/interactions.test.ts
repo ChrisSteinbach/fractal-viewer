@@ -86,21 +86,28 @@ function setupInteractions(
   onToggleAutoMotion: ReturnType<typeof vi.fn>;
   onTransformChange: ReturnType<typeof vi.fn>;
   onTransformCommit: ReturnType<typeof vi.fn>;
+  onCameraZoom: ReturnType<typeof vi.fn>;
   handle: InteractionsHandle;
 } {
   document.body.replaceChildren();
   const canvas = document.createElement("canvas");
   document.body.appendChild(canvas);
   const rotate = vi.fn();
-  const dolly = vi.fn();
+  const spherical = { radius: 5 };
+  const dolly = vi.fn((factor: number) => {
+    spherical.radius *= factor;
+  });
   const onFourDRotate = vi.fn();
   const onFourDViewCommit = vi.fn();
   const onFourDSliceNudge = vi.fn();
   const onToggleAutoMotion = vi.fn();
   const onTransformChange = vi.fn();
   const onTransformCommit = vi.fn();
+  const onCameraZoom = vi.fn();
   const orbit = {
     target: [0, 0, 0],
+    spherical,
+    fov: 60,
     rotate,
     panBy: vi.fn(),
     dolly,
@@ -127,6 +134,7 @@ function setupInteractions(
       fourDSliceOn: () => opts.sliceOn ?? false,
       onFourDSliceNudge,
       onToggleAutoMotion,
+      onCameraZoom,
     },
   );
   return {
@@ -139,6 +147,7 @@ function setupInteractions(
     onToggleAutoMotion,
     onTransformChange,
     onTransformCommit,
+    onCameraZoom,
     handle,
   };
 }
@@ -657,10 +666,11 @@ describe("attachInteractions camera keys", () => {
   });
 
   it("+ and - dolly like wheel notches", () => {
-    const { canvas, dolly } = setupInteractions();
+    const { canvas, dolly, onCameraZoom } = setupInteractions();
     key(canvas, "+");
     key(canvas, "-");
     expect(dolly).toHaveBeenCalledTimes(2);
+    expect(onCameraZoom).toHaveBeenCalledTimes(2);
     const zoomIn = dolly.mock.calls[0][0] as number;
     const zoomOut = dolly.mock.calls[1][0] as number;
     expect(zoomIn).toBeLessThan(1);

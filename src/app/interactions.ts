@@ -71,6 +71,9 @@ export interface InteractionCallbacks {
    * (3D auto-orbit / 4D auto-tumble) — main.ts routes it through
    * the same logic as the panel's one Automatic motion checkbox. */
   onToggleAutoMotion: () => void;
+  /** Dolly input changed the radius or deep lens; used for adaptive detail and
+   * the live zoom/limit disclosure. */
+  onCameraZoom: () => void;
 }
 
 /** Radians per normalized wheel px that Shift+scroll turns the ZW plane —
@@ -227,6 +230,15 @@ export function attachInteractions(
     right.multiplyScalar((-dx * dist) / window.innerHeight / 2);
     up.multiplyScalar((dy * dist) / window.innerHeight / 2);
     orbit.panBy(right.x + up.x, right.y + up.y, right.z + up.z);
+  }
+
+  function dollyCamera(factor: number): void {
+    const beforeRadius = orbit.spherical.radius;
+    const beforeFov = orbit.fov;
+    orbit.dolly(factor);
+    if (orbit.spherical.radius !== beforeRadius || orbit.fov !== beforeFov) {
+      callbacks.onCameraZoom();
+    }
   }
 
   function emitTransformChange(index: number, cube: THREE.Object3D): void {
@@ -444,7 +456,7 @@ export function attachInteractions(
       const touch = touchOf(event);
       if (!touch || touch.touches.length !== 2) return;
       const { dist } = pinchSpan(touch);
-      if (dist > 0) orbit.dolly(dollyStart / dist);
+      if (dist > 0) dollyCamera(dollyStart / dist);
       dollyStart = dist;
       const center = pinchCenter(touch);
       panByScreen(center.x - panStartX, center.y - panStartY);
@@ -572,7 +584,7 @@ export function attachInteractions(
         scheduleFourDCommit();
         return;
       }
-      orbit.dolly(event.deltaY > 0 ? 1.1 : 0.9);
+      dollyCamera(event.deltaY > 0 ? 1.1 : 0.9);
       return;
     }
     const cube = scene.guideCube(selected);
@@ -635,7 +647,7 @@ export function attachInteractions(
     if (action.kind === "orbit") {
       orbit.rotate(action.dx, action.dy);
     } else if (action.kind === "dolly") {
-      orbit.dolly(action.factor);
+      dollyCamera(action.factor);
     } else if (action.kind === "rotor") {
       callbacks.onFourDRotate(action);
       scheduleFourDCommit();

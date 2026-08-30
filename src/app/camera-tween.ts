@@ -26,7 +26,9 @@
  */
 import type { Bounds, Vec3, Vec4 } from "../fractal/types";
 import {
+  DEFAULT_CAMERA_FOV,
   boundsCenter,
+  clampCameraFov,
   fitRadius,
   smoothstep,
   type CameraPose,
@@ -104,7 +106,7 @@ interface Chase {
 }
 
 /** In-flight pose glide: a directed smoothstep to a SAVED camera
- * pose — unlike Tween/Chase it moves theta/phi too, and it times itself
+ * pose — unlike Tween/Chase it moves theta/phi/FOV too, and it times itself
  * (durationMs is the timeline leg's own morph length, not CAMERA_TWEEN_MS). */
 interface PoseTween {
   startMs: number;
@@ -117,6 +119,9 @@ interface PoseTween {
   toTheta: number;
   fromPhi: number;
   toPhi: number;
+  fromFov: number;
+  toFov: number;
+  toInfiniteZoom: boolean;
 }
 
 /**
@@ -140,7 +145,7 @@ interface PoseTween {
  *   glide is a short touch-down rather than a leap.
  * - The **pose glide** ({@link glideToPose}): a directed, self-timed
  *   smoothstep to a SAVED {@link CameraPose} — a timeline leg's camera
- *   move. The one motion that moves theta/phi: the fit glide and chase
+ *   move. The one motion that moves theta/phi/lens: the fit glide and chase
  *   deliberately leave the orbit ANGLES to the user (see the module header),
  *   but a timeline keyframe's saved pose IS the author's framing, angles
  *   included.
@@ -210,9 +215,9 @@ export class CameraTween {
     this.poseTween = null;
   }
 
-  /** Jump the camera straight to a full pose (target/radius/theta/phi) — the
-   * reduced-motion/zero-duration path of {@link glideToPose} and its {@link
-   * finish} completion, clearing all three motion records. */
+  /** Jump the camera straight to a full pose (target/radius/theta/phi/lens) —
+   * the reduced-motion/zero-duration path of {@link glideToPose} and its
+   * {@link finish} completion, clearing all three motion records. */
   private snapToPose(pose: CameraPose): void {
     this.orbit.target[0] = pose.target[0];
     this.orbit.target[1] = pose.target[1];
@@ -220,6 +225,9 @@ export class CameraTween {
     this.orbit.spherical.radius = pose.radius;
     this.orbit.spherical.theta = pose.theta;
     this.orbit.spherical.phi = pose.phi;
+    this.orbit.fov = clampCameraFov(pose.fov ?? DEFAULT_CAMERA_FOV);
+    this.orbit.infiniteZoom =
+      pose.infiniteZoom === true || this.orbit.fov !== DEFAULT_CAMERA_FOV;
     this.tween = null;
     this.chase = null;
     this.poseTween = null;
@@ -284,7 +292,7 @@ export class CameraTween {
    * timeline leg's directed camera move from wherever the camera currently
    * is to the arriving step's authored framing, over `durationMs` — the
    * leg's own morph length, NOT {@link CAMERA_TWEEN_MS}. Unlike {@link
-   * fitToBounds}/{@link track}, this moves theta/phi too: a saved pose IS
+   * fitToBounds}/{@link track}, this moves theta/phi/FOV too: a saved pose IS
    * the author's framing, angles included.
    *
    * `theta` is unbounded (see orbit.ts), so lerping straight from the
@@ -308,6 +316,9 @@ export class CameraTween {
       Math.cos(pose.theta - fromTheta),
     );
     const toTheta = fromTheta + delta;
+    const toFov = clampCameraFov(pose.fov ?? DEFAULT_CAMERA_FOV);
+    const toInfiniteZoom =
+      pose.infiniteZoom === true || toFov !== DEFAULT_CAMERA_FOV;
 
     if (this.reducedMotion() || durationMs <= 0) {
       this.snapToPose(pose);
@@ -331,7 +342,13 @@ export class CameraTween {
       toTheta,
       fromPhi: this.orbit.spherical.phi,
       toPhi: pose.phi,
+      fromFov: this.orbit.fov,
+      toFov,
+      toInfiniteZoom,
     };
+    // Keep the lens-capable path armed for the duration if either endpoint
+    // needs it. The exact destination flag lands when the tween completes.
+    this.orbit.infiniteZoom ||= toInfiniteZoom;
   }
 
   /**
@@ -339,7 +356,7 @@ export class CameraTween {
    * the orbit target + radius by the smoothstep of elapsed/{@link
    * CAMERA_TWEEN_MS} and clears itself once it reaches the target (t ≥ 1); a
    * pose glide ({@link glideToPose}) does the same but over its own
-   * `durationMs` and additionally interpolates theta/phi; a chase closes
+   * `durationMs` and additionally interpolates theta/phi/FOV; a chase closes
    * `1 - exp(-dt/τ)` of its remaining distance and never self-terminates
    * (see {@link track}). Called from animate() before `applyCamera` so the
    * frame it takes effect on is the one drawn.
@@ -357,6 +374,9 @@ export class CameraTween {
         toTheta,
         fromPhi,
         toPhi,
+        fromFov,
+        toFov,
+        toInfiniteZoom,
       } = this.poseTween;
       const t = smoothstep((this.now() - startMs) / durationMs);
       this.orbit.spherical.radius = fromRadius + (toRadius - fromRadius) * t;
@@ -365,7 +385,11 @@ export class CameraTween {
       this.orbit.target[2] = fromTarget[2] + (toTarget[2] - fromTarget[2]) * t;
       this.orbit.spherical.theta = fromTheta + (toTheta - fromTheta) * t;
       this.orbit.spherical.phi = fromPhi + (toPhi - fromPhi) * t;
-      if (t >= 1) this.poseTween = null;
+      this.orbit.fov = fromFov + (toFov - fromFov) * t;
+      if (t >= 1) {
+        this.orbit.infiniteZoom = toInfiniteZoom;
+        this.poseTween = null;
+      }
       return;
     }
     if (this.tween) {
@@ -409,12 +433,15 @@ export class CameraTween {
    */
   finish(): void {
     if (this.poseTween) {
-      const { toTarget, toRadius, toTheta, toPhi } = this.poseTween;
+      const { toTarget, toRadius, toTheta, toPhi, toFov, toInfiniteZoom } =
+        this.poseTween;
       this.snapToPose({
         target: toTarget,
         radius: toRadius,
         theta: toTheta,
         phi: toPhi,
+        fov: toFov,
+        infiniteZoom: toInfiniteZoom,
       });
       return;
     }

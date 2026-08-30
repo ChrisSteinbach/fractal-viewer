@@ -141,6 +141,8 @@ function noopHandlers(): UiHandlers {
     onClosePanel: vi.fn(),
     onRenderMode: vi.fn(),
     onAutoMotionToggle: vi.fn(),
+    onContinuousZoomToggle: vi.fn(),
+    onContinuousZoomReset: vi.fn(),
     onAutoOrbitSpeedInput: vi.fn(),
     onSurfacePreviewToggle: vi.fn(),
     onSurfaceSkipPreview: vi.fn(),
@@ -6587,6 +6589,61 @@ describe("Ui render mode switch", () => {
     expect(renderModeSwitch().classList.contains("hidden")).toBe(false);
     expect(document.body.contains(modeBtn("solid"))).toBe(true);
     expect(modeBtn("solid").disabled).toBe(false);
+  });
+});
+
+describe("Ui continuous zoom", () => {
+  it("arms the saved-view mode, reveals its status, and routes reset", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const toggle = document.getElementById(
+      "continuousZoomToggle",
+    ) as HTMLInputElement;
+
+    toggle.click();
+    expect(handlers.onContinuousZoomToggle).toHaveBeenCalledWith(true);
+    expect(
+      document
+        .getElementById("continuousZoomControls")!
+        .classList.contains("hidden"),
+    ).toBe(false);
+
+    ui.setContinuousZoom(true, "Zoom 128× · detail depth 42/256");
+    expect(document.getElementById("continuousZoomStatus")!.textContent).toBe(
+      "Zoom 128× · detail depth 42/256",
+    );
+    (
+      document.getElementById("continuousZoomResetBtn") as HTMLButtonElement
+    ).click();
+    expect(handlers.onContinuousZoomReset).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a fresh start in frozen Flame but keeps an active mode exit-capable", () => {
+    const ui = new Ui(document);
+    const toggle = document.getElementById(
+      "continuousZoomToggle",
+    ) as HTMLInputElement;
+    const flame = { ...initialState(true), renderMode: "flame" as const };
+
+    ui.updateLabels(flame);
+    expect(toggle.disabled).toBe(true);
+    expect(
+      document
+        .getElementById("continuousZoomUnavailableNote")!
+        .classList.contains("hidden"),
+    ).toBe(false);
+
+    ui.setContinuousZoom(true, "Zoom 32× · camera frozen");
+    expect(toggle.disabled).toBe(false);
+    ui.updateLabels(flame);
+    expect(
+      document.getElementById("viewControls")!.classList.contains("hidden"),
+    ).toBe(false);
+    ui.setContinuousZoom(false, "Zoom 1× · camera frozen");
+    expect(
+      document.getElementById("viewControls")!.classList.contains("hidden"),
+    ).toBe(true);
   });
 });
 

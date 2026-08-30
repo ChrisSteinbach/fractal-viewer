@@ -25,8 +25,12 @@ on the canvas; see **View** below.
 | Two finger drag  | Pan                              |
 | Two finger pinch | Zoom                             |
 
-Phi (vertical orbit) is clamped just shy of the poles and the zoom radius is
-clamped to `[1, 100]` — see `src/app/orbit.ts`.
+Phi (vertical orbit) is clamped just shy of the poles and ordinary zoom keeps
+the orbit radius within `[1, 100]` — see `src/app/orbit.ts`. Turn on
+**Continuous zoom** in **View** to continue inward after radius 1: the camera
+stays one unit from its maintained target and the lens narrows instead of
+crossing through that focus. Right-drag or two-finger drag first to place the
+target on the region you want to follow.
 
 ### Keyboard
 
@@ -1611,6 +1615,20 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   not need that approximation for the standalone fern.
 
 - **View** — one stable View / Device home follows the current dimension.
+  **Continuous zoom** is **Saved view** framing. Once ordinary dolly reaches
+  radius 1, further wheel, pinch, or keyboard zoom narrows the lens while the
+  camera stays on the same side of its orbit target. Its live readout reports
+  magnification and the current renderer's detail contract: **Surface**
+  re-traces at the new scale, lowers its full-detail hit floor, and raises its
+  contraction-aware descent/iteration depth up to a bounded 256-step work
+  cap; **Points** and **Solid** honestly magnify their existing point sample or
+  voxel grid. The lens stops at 0.02° (about 3,300× beyond the ordinary 60°
+  view) before adjacent pixel rays approach the numeric precision of the
+  current GPU paths, and the readout/toast names that limit. **Reset view**
+  restores the ordinary lens and fits the current attractor; unchecking the
+  mode exits it. Flame freezes the camera, so a fresh Continuous zoom cannot
+  start there, while an already-active mode remains reachable to exit.
+
   **Automatic motion** is one **This browser** preference and one checkbox:
   it drives the 3D camera turntable for a flat system and the 4D XY+ZW rotor
   tumble for a non-flat one. The associated note states both mechanisms, so a

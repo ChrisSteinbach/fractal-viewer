@@ -1,11 +1,14 @@
 import type { Bounds } from "../fractal/types";
 import {
   BOOT_CAMERA_POSITION,
+  DEFAULT_CAMERA_FOV,
   MAX_PHI,
   MAX_RADIUS,
+  MIN_DEEP_ZOOM_FOV,
   MIN_PHI,
   MIN_RADIUS,
   OrbitCamera,
+  adaptiveSurfaceDetail,
   boundsCenter,
   fitRadius,
   smoothstep,
@@ -54,6 +57,47 @@ describe("OrbitCamera", () => {
     expect(orbit.spherical.radius).toBe(MIN_RADIUS);
   });
 
+  it("hands continuous zoom from physical dolly to the lens without crossing the focus", () => {
+    const orbit = new OrbitCamera([0, 0, 2]);
+    orbit.setInfiniteZoom(true);
+
+    orbit.dolly(0.5);
+    expect(orbit.spherical.radius).toBe(MIN_RADIUS);
+    expect(orbit.fov).toBe(DEFAULT_CAMERA_FOV);
+
+    orbit.dolly(0.5);
+    expect(orbit.spherical.radius).toBe(MIN_RADIUS);
+    expect(orbit.fov).toBeLessThan(DEFAULT_CAMERA_FOV);
+    expect(orbit.position()[2]).toBe(MIN_RADIUS);
+
+    orbit.dolly(2);
+    expect(orbit.spherical.radius).toBe(MIN_RADIUS);
+    expect(orbit.fov).toBeCloseTo(DEFAULT_CAMERA_FOV, 10);
+    orbit.dolly(2);
+    expect(orbit.spherical.radius).toBeCloseTo(2, 10);
+  });
+
+  it("stops continuous zoom at a disclosed finite precision floor", () => {
+    const orbit = new OrbitCamera([0, 0, 1]);
+    orbit.setInfiniteZoom(true);
+    orbit.dolly(1e-12);
+
+    expect(orbit.fov).toBe(MIN_DEEP_ZOOM_FOV);
+    expect(orbit.deepZoomLimitReached).toBe(true);
+    expect(orbit.deepMagnification).toBeGreaterThan(3_000);
+  });
+
+  it("exits continuous zoom through the ordinary lens", () => {
+    const orbit = new OrbitCamera([0, 0, 1]);
+    orbit.setInfiniteZoom(true);
+    orbit.dolly(0.1);
+    orbit.setInfiniteZoom(false);
+
+    expect(orbit.infiniteZoom).toBe(false);
+    expect(orbit.fov).toBe(DEFAULT_CAMERA_FOV);
+    expect(orbit.spherical.radius).toBe(MIN_RADIUS);
+  });
+
   it("moves the target (and camera) when panned", () => {
     const orbit = new OrbitCamera([0, 0, 5]);
     orbit.panBy(2, -1, 0);
@@ -66,6 +110,26 @@ describe("OrbitCamera", () => {
     const before = orbit.spherical.theta;
     orbit.rotate(50, 0);
     expect(orbit.spherical.theta).not.toBe(before);
+  });
+});
+
+describe("adaptiveSurfaceDetail", () => {
+  it("adds contraction-aware depth for IFS surfaces", () => {
+    expect(adaptiveSurfaceDetail(16, 8, 0.5)).toEqual({
+      depth: 19,
+      capped: false,
+    });
+  });
+
+  it("adds forward-orbit iterations and reports the hard depth cap", () => {
+    expect(adaptiveSurfaceDetail(20, 16, null)).toEqual({
+      depth: 24,
+      capped: false,
+    });
+    expect(adaptiveSurfaceDetail(250, 1024, null)).toEqual({
+      depth: 256,
+      capped: true,
+    });
   });
 });
 

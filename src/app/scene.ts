@@ -34,7 +34,12 @@ import type { ShapeTrap, Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import { presentationFloorSpec } from "../fractal/presentation-floor";
 import type { VoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
-import type { OrbitCamera } from "./orbit";
+import {
+  DEFAULT_CAMERA_FOV,
+  adaptiveSurfaceDetail,
+  type AdaptiveSurfaceDetail,
+  type OrbitCamera,
+} from "./orbit";
 import { wSupport } from "./rotor4";
 import { contextAntialias } from "./constants";
 import { predictCaptureMs, solidCaptureMsPerPx } from "./capture-cost";
@@ -1221,11 +1226,17 @@ export class FractalScene {
   private readonly surfacePreviewTarget: THREE.WebGLRenderTarget;
   private readonly surfaceBlitMaterial: THREE.ShaderMaterial;
   private readonly surfaceBlitQuad: FullScreenQuad;
-  /** The ACTIVE DE's own descent depth cap, recorded by
-   * {@link setSurfaceSystem}/{@link setSurfaceSystem4}: the preview tier
+  /** The ACTIVE DE's full-detail descent/iteration cap: installed from the
+   * session's base depth, then extended by Continuous zoom. The preview tier
    * clamps `uMaxDepth` below it and the full tier restores it, so the two
    * tiers can interleave freely. */
   private surfaceFullMaxDepth = 0;
+  /** Unmagnified session depth and, for inverse-IFS surfaces, its certified
+   * slowest contraction. Continuous zoom derives the live full depth from
+   * these instead of compounding each wheel event onto the previous result. */
+  private surfaceBaseMaxDepth = 0;
+  private surfaceSlowestSigma: number | null = null;
+  private surfaceZoomMagnification = 1;
   /** Which (scale, depth) rung preview traces currently cost, driven by
    * the measured cost of the traces themselves. Reset by
    * {@link setSurfaceSystem}/{@link setSurfaceSystem4}: a new DE is a new
@@ -1506,7 +1517,8 @@ export class FractalScene {
    * its no-change fast path. `null` until the first apply ever runs.
    */
   private lastCameraPose:
-    [number, number, number, number, number, number] | null = null;
+    [number, number, number, number, number, number, number, number] | null =
+    null;
 
   /**
    * Adaptive-resolution scale multiplied into the base pixel ratio:
@@ -1555,7 +1567,12 @@ export class FractalScene {
     );
     this.scene.fog = this.fog;
 
-    this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
+    this.camera = new THREE.PerspectiveCamera(
+      DEFAULT_CAMERA_FOV,
+      width / height,
+      0.1,
+      1000,
+    );
     this.camera.position.set(5, 4, 5);
     this.camera.lookAt(0, 0, 0);
 
@@ -1933,6 +1950,53 @@ export class FractalScene {
    */
   get needsRender(): boolean {
     return this.renderNeeded;
+  }
+
+  /** Install the active Surface renderer's unmagnified work budget. IFS
+   * callers provide their certified contraction; forward escape/bulb callers
+   * pass null and use iteration rungs instead. */
+  private installSurfaceDepth(
+    baseDepth: number,
+    slowestSigma: number | null,
+  ): void {
+    this.surfaceBaseMaxDepth = baseDepth;
+    this.surfaceSlowestSigma = slowestSigma;
+    const detail = adaptiveSurfaceDetail(
+      baseDepth,
+      this.surfaceZoomMagnification,
+      slowestSigma,
+    );
+    this.surfaceFullMaxDepth = detail.depth;
+  }
+
+  /**
+   * Adapt analytic Surface detail to Continuous zoom. Both fragment and
+   * compute paths read {@link surfaceFullMaxDepth} when assembling their next
+   * frame, so this is the one backend-independent detail funnel. The returned
+   * cap bit feeds the View disclosure; it never silently promises resolution
+   * after the bounded per-query budget is exhausted.
+   */
+  setSurfaceZoomMagnification(magnification: number): AdaptiveSurfaceDetail {
+    this.surfaceZoomMagnification = Math.max(1, magnification);
+    const detail = adaptiveSurfaceDetail(
+      this.surfaceBaseMaxDepth,
+      this.surfaceZoomMagnification,
+      this.surfaceSlowestSigma,
+    );
+    if (detail.depth !== this.surfaceFullMaxDepth) {
+      this.surfaceFullMaxDepth = detail.depth;
+      this.renderNeeded = true;
+    }
+    return detail;
+  }
+
+  /** Full-tier absolute hit floor follows deep magnification until the f32
+   * world-space floor. Preview deliberately keeps its coarse fixed value. */
+  private surfaceFullHitFloor(): number {
+    return Math.max(
+      1e-7,
+      SURFACE_FULL_HIT_FLOOR / this.surfaceZoomMagnification,
+    );
   }
 
   /**
@@ -2359,6 +2423,12 @@ export class FractalScene {
     const tx = orbit.target[0];
     const ty = orbit.target[1];
     const tz = orbit.target[2];
+    // Keep the near plane proportional to physical camera distance while
+    // retaining a conservative floor. Continuous zoom narrows the lens at a
+    // safe radius instead of driving through the focus, so this modest
+    // 0.01..0.1 range is enough to avoid clipping foreground detail without
+    // sacrificing the depth precision EDL and the raymarchers consume.
+    const near = clamp(orbit.spherical.radius * 0.01, 0.01, 0.1);
     // Per-frame caller: a static orbit hands back the identical pose every
     // frame — don't mark the frame dirty for it. Every camera
     // motion source (gesture, wheel, tween, auto-orbit) mutates the orbit,
@@ -2371,16 +2441,23 @@ export class FractalScene {
       last[2] === z &&
       last[3] === tx &&
       last[4] === ty &&
-      last[5] === tz
+      last[5] === tz &&
+      last[6] === orbit.fov &&
+      last[7] === near
     ) {
       return;
     }
-    this.lastCameraPose = [x, y, z, tx, ty, tz];
+    this.lastCameraPose = [x, y, z, tx, ty, tz, orbit.fov, near];
     this.renderNeeded = true;
     // NOTE a pose change deliberately does NOT clear
     // {@link solidCapturePxCostMs} — the argument is at that field.
     this.camera.position.set(x, y, z);
     this.camera.lookAt(tx, ty, tz);
+    if (this.camera.fov !== orbit.fov || this.camera.near !== near) {
+      this.camera.fov = orbit.fov;
+      this.camera.near = near;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   /**
@@ -4066,7 +4143,7 @@ export class FractalScene {
     this.applySurfaceGroundPlane();
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
-    this.surfaceFullMaxDepth = de.maxDepth;
+    this.installSurfaceDepth(de.maxDepth, de.slowestSigma);
     // Cost-weighted ladder entry: a fold-frontier DE's per-pixel
     // cost is a known static multiple of an affine system's, and the FIRST
     // trace has no measurement for the panic path to act on — the entry
@@ -4155,7 +4232,7 @@ export class FractalScene {
     this.applySurfaceGroundPlane();
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
-    this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
+    this.installSurfaceDepth(ESCAPE_TIME_ITERATIONS, null);
     // The escape loop is phone-cheap (~30 branchless folds per eval):
     // the plain anchor entry is right, and so is the legacy strip probe.
     this.surfacePreviewGovernor.reset();
@@ -4212,7 +4289,7 @@ export class FractalScene {
     this.applySurfaceGroundPlane();
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
-    this.surfaceFullMaxDepth = BULB_ITERATIONS;
+    this.installSurfaceDepth(BULB_ITERATIONS, null);
     // Cheaper per eval than the fold mode that already ships (0.29 us
     // against 1.04, bulb-de.ts's measured verdict), so the plain anchor
     // entry and the legacy strip probe are right here too.
@@ -4498,7 +4575,7 @@ export class FractalScene {
     this.surfaceGroundBall = focusBall;
     this.applySurfaceBalloon();
     this.applySurfaceGroundPlane();
-    this.surfaceFullMaxDepth = de.maxDepth;
+    this.installSurfaceDepth(de.maxDepth, de.slowestSigma);
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.surfaceFullPxCostMs = null;
@@ -4704,7 +4781,7 @@ export class FractalScene {
     // 336-byte params struct expects.
     this.surfaceGroundBall = focusBall;
     this.surfaceComputeGroundPlane = groundPlane;
-    this.surfaceFullMaxDepth = de.maxDepth;
+    this.installSurfaceDepth(de.maxDepth, de.slowestSigma);
     this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
     this.surfacePreviewPxCostMs = null;
     // A previous strip session's pooled fences must not linger into (or
@@ -4759,7 +4836,7 @@ export class FractalScene {
       ? { center: [0, 0, 0], radius: ballRadius }
       : null;
     this.surfaceComputeGroundPlane = groundPlane;
-    this.surfaceFullMaxDepth = maxDepth;
+    this.installSurfaceDepth(maxDepth, null);
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.flushStripBacklog();
@@ -4828,7 +4905,7 @@ export class FractalScene {
     this.surfaceComputeBalloon = balloon;
     this.surfaceGroundBall = groundPlane ? focusBall : null;
     this.surfaceComputeGroundPlane = groundPlane;
-    this.surfaceFullMaxDepth = de.maxDepth;
+    this.installSurfaceDepth(de.maxDepth, de.slowestSigma);
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.flushStripBacklog();
@@ -4865,7 +4942,7 @@ export class FractalScene {
       ? { center: [0, 0, 0], radius: ballRadius }
       : null;
     this.surfaceComputeGroundPlane = groundPlane;
-    this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
+    this.installSurfaceDepth(ESCAPE_TIME_ITERATIONS, null);
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.flushStripBacklog();
@@ -5041,7 +5118,9 @@ export class FractalScene {
             ? SURFACE_PREVIEW_AO_TAPS
             : SURFACE_FULL_AO_TAPS
           : 0,
-      hitFloor: preview ? SURFACE_PREVIEW_HIT_FLOOR : SURFACE_FULL_HIT_FLOOR,
+      hitFloor: preview
+        ? SURFACE_PREVIEW_HIT_FLOOR
+        : this.surfaceFullHitFloor(),
       lightDir: [light.x, light.y, light.z],
       ambient: params.ambient,
       // The environment-light strength, mirroring uEnvLight.
@@ -6828,7 +6907,7 @@ export class FractalScene {
         : 0;
     u.uHitFloor.value = preview
       ? SURFACE_PREVIEW_HIT_FLOOR
-      : SURFACE_FULL_HIT_FLOOR;
+      : this.surfaceFullHitFloor();
     return background;
   }
 

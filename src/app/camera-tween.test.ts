@@ -1,4 +1,9 @@
-import { OrbitCamera, boundsCenter, fitRadius } from "./orbit";
+import {
+  DEFAULT_CAMERA_FOV,
+  OrbitCamera,
+  boundsCenter,
+  fitRadius,
+} from "./orbit";
 import type { CameraPose } from "./orbit";
 import type { Bounds } from "../fractal/types";
 import {
@@ -441,6 +446,31 @@ describe("CameraTween.glideToPose", () => {
     expect(orbit.spherical.theta).toBeCloseTo(SAMPLE_POSE.theta);
     expect(orbit.spherical.phi).toBeCloseTo(SAMPLE_POSE.phi);
     expect(tween.active).toBe(false);
+  });
+
+  it("glides and restores continuous-zoom lens state with the saved pose", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    const pose: CameraPose = {
+      ...SAMPLE_POSE,
+      fov: 0.5,
+      infiniteZoom: true,
+    };
+
+    tween.glideToPose(pose, POSE_DURATION_MS);
+    clock = POSE_DURATION_MS / 2;
+    tween.advance();
+    expect(orbit.fov).toBeCloseTo((DEFAULT_CAMERA_FOV + 0.5) / 2);
+    expect(orbit.infiniteZoom).toBe(true);
+
+    tween.finish();
+    expect(orbit.fov).toBeCloseTo(0.5);
+    expect(orbit.infiniteZoom).toBe(true);
   });
 
   it("sits at the smoothstep(0.5) = 0.5 blend of from→to at the midpoint", () => {

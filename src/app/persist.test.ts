@@ -4095,6 +4095,53 @@ describe("decodeScene camera", () => {
     expect(result!.camera!.phi).toBeCloseTo(1.056, 4);
   });
 
+  it("round-trips continuous zoom with high-precision focus coordinates", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      camera: {
+        target: [1.23456789012, -0.00001234567, 0.5],
+        radius: 1,
+        theta: 0.30671012345,
+        phi: 1.05599012345,
+        fov: 0.02345678901,
+        infiniteZoom: true,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+
+    expect(result!.camera!.target[0]).toBeCloseTo(1.2345678901, 10);
+    expect(result!.camera!.target[1]).toBeCloseTo(-0.0000123457, 10);
+    expect(result!.camera!.theta).toBeCloseTo(0.3067101235, 10);
+    expect(result!.camera!.phi).toBeCloseTo(1.0559901235, 10);
+    expect(result!.camera!.fov).toBeCloseTo(0.023456789, 10);
+    expect(result!.camera!.infiniteZoom).toBe(true);
+  });
+
+  it("infers continuous mode for a deep-FOV camera and rejects malformed fields without rejecting the scene", () => {
+    const deepRaw = {
+      ...baseSnapshot(),
+      camera: {
+        target: [1, 2, 3],
+        radius: 1,
+        theta: 0.5,
+        phi: 1,
+        fov: 0.01,
+      },
+    };
+    expect(
+      decodeScene("v1=" + b64url(JSON.stringify(deepRaw)))!.camera
+        ?.infiniteZoom,
+    ).toBe(true);
+
+    const malformed = {
+      ...deepRaw,
+      camera: { ...deepRaw.camera, infiniteZoom: "yes" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(malformed)));
+    expect(result).not.toBeNull();
+    expect(result!.camera).toBeUndefined();
+  });
+
   it("omits camera from the encoded payload and decodes back to undefined when the snapshot has none", () => {
     const payload = decodePayload(encodeScene(baseSnapshot()));
     expect("camera" in payload).toBe(false);

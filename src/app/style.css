@@ -698,6 +698,10 @@ body {
   flex: 1;
 }
 
+.continuous-zoom-controls .btn {
+  margin-bottom: 0;
+}
+
 /* Render-mode segmented control: the one switch between the three sibling
    renderers (Points / Flame / Solid). A joined button group rather than
    three stacked buttons, so it reads as one mutually-exclusive choice; the
@@ -852,6 +856,18 @@ input[type="range"] {
 
 .view-scope-note .control-scope {
   margin-right: 5px;
+}
+
+.continuous-zoom-controls {
+  margin-bottom: 12px;
+}
+
+.continuous-zoom-controls output {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* The one BARE select in the panel (every other select sits inside a

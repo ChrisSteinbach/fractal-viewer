@@ -1081,6 +1081,10 @@ export interface SurfaceDE4 {
   /** Descent depth cap, sized so the SLOWEST contraction chain resolves
    * features below `DEPTH_RESOLUTION`. */
   maxDepth: number;
+  /** 4D twin of SurfaceDE.slowestSigma: the largest certified per-level
+   * shrink, retained so camera-dependent deep zoom can extend maxDepth by
+   * exactly the number of levels its smaller footprint needs. */
+  slowestSigma: number;
   /** How many descent chains {@link estimateDistance4} refines in
    * parallel. Widths 1/2 are the classic greedy chain and the paired A/B
    * chains; widths 3/4 add the rank-3/4 VALIDITY slots — extra chains that
@@ -1729,6 +1733,7 @@ export function buildSurfaceDE4(
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
     patternCalibration,
     maxDepth,
+    slowestSigma: slowest,
     beamWidth: 4,
     stepScale: analysis.stepScale,
     final,

@@ -3,6 +3,19 @@ import { clamp } from "../fractal/vec";
 
 export const MIN_RADIUS = 1;
 export const MAX_RADIUS = 100;
+/** Ordinary perspective used by every fitted/reset view. Deep zoom narrows
+ * the lens only after the physical orbit reaches {@link MIN_RADIUS}. */
+export const DEFAULT_CAMERA_FOV = 60;
+/** Numerical floor for continuous zoom. At this field of view the target-plane
+ * footprint is ~3,300x smaller than the ordinary 60 degree lens while the
+ * camera itself remains a safe unit away from the focus. Going narrower would
+ * make adjacent ~1000px rays approach f32 angular resolution in the current
+ * WebGL/WGSL pipelines; the UI surfaces this as the numeric limit. */
+export const MIN_DEEP_ZOOM_FOV = 0.02;
+/** Hard performance ceiling for adaptive analytic-surface depth. The renderer's
+ * bounded strip pump still protects responsiveness; this cap bounds the work
+ * of each individual distance query and gives the UI a concrete limit. */
+export const MAX_DEEP_ZOOM_SURFACE_DEPTH = 256;
 export const MIN_PHI = 0.01;
 export const MAX_PHI = Math.PI - 0.01;
 /** Radians of orbit per pixel of drag. */
@@ -42,6 +55,51 @@ export interface CameraPose {
   radius: number;
   theta: number;
   phi: number;
+  /** Vertical field of view in degrees. Absent in documents written before
+   * continuous zoom and therefore interpreted as {@link DEFAULT_CAMERA_FOV}. */
+  fov?: number;
+  /** Whether dolly input may continue through the lens after MIN_RADIUS.
+   * Optional so legacy saved views keep their original camera contract. */
+  infiniteZoom?: boolean;
+}
+
+export function clampCameraFov(fov: number): number {
+  return Math.max(MIN_DEEP_ZOOM_FOV, Math.min(DEFAULT_CAMERA_FOV, fov));
+}
+
+/** Extra magnification contributed by the deep-zoom lens (1 at the ordinary
+ * 60 degree view). Tangents make this an exact target-plane scale ratio. */
+export function deepZoomMagnification(fov: number): number {
+  return (
+    Math.tan((DEFAULT_CAMERA_FOV * Math.PI) / 360) /
+    Math.tan((clampCameraFov(fov) * Math.PI) / 360)
+  );
+}
+
+export interface AdaptiveSurfaceDetail {
+  depth: number;
+  capped: boolean;
+}
+
+/** Extend an analytic surface's iteration/descent budget as the lens narrows.
+ * IFS surfaces pass their slowest certified contraction so each added level
+ * resolves the requested scale. Forward escape/bulb surfaces pass null and
+ * receive one extra orbit step per doubled magnification. */
+export function adaptiveSurfaceDetail(
+  baseDepth: number,
+  magnification: number,
+  slowestSigma: number | null,
+): AdaptiveSurfaceDetail {
+  const mag = Math.max(1, magnification);
+  const extra =
+    slowestSigma !== null && slowestSigma > 0 && slowestSigma < 1
+      ? Math.ceil(Math.log(1 / mag) / Math.log(slowestSigma))
+      : Math.ceil(Math.log2(mag));
+  const desired = baseDepth + Math.max(0, extra);
+  return {
+    depth: Math.min(MAX_DEEP_ZOOM_SURFACE_DEPTH, desired),
+    capped: desired >= MAX_DEEP_ZOOM_SURFACE_DEPTH,
+  };
 }
 
 export function clampPhi(phi: number): number {
@@ -85,6 +143,10 @@ export function sphericalFromCartesian(
 export class OrbitCamera {
   readonly spherical: Spherical;
   readonly target: Vec3;
+  /** Vertical perspective field of view in degrees. Owned beside the orbit so
+   * input, persistence, timelines and the Three.js projection share one pose. */
+  fov = DEFAULT_CAMERA_FOV;
+  infiniteZoom = false;
 
   constructor(position: Vec3, target: Vec3 = [0, 0, 0]) {
     this.target = [...target];
@@ -103,7 +165,51 @@ export class OrbitCamera {
 
   /** Zoom by a multiplicative factor (> 1 moves the camera away). */
   dolly(factor: number): void {
-    this.spherical.radius = clampRadius(this.spherical.radius * factor);
+    if (!Number.isFinite(factor) || factor <= 0) return;
+    if (!this.infiniteZoom) {
+      this.spherical.radius = clampRadius(this.spherical.radius * factor);
+      return;
+    }
+
+    // Preserve one continuous target-plane footprint across the handoff:
+    // ordinary dolly changes radius under the 60 degree lens; once radius 1
+    // is reached, narrowing the lens changes the same footprint instead. On
+    // zoom-out the order reverses automatically. The camera never crosses its
+    // focus and never approaches the near plane.
+    const baseTan = Math.tan((DEFAULT_CAMERA_FOV * Math.PI) / 360);
+    const currentTan = Math.tan((this.fov * Math.PI) / 360);
+    const desiredFootprint = this.spherical.radius * currentTan * factor;
+    const radiusAtOrdinaryLens = desiredFootprint / baseTan;
+    if (radiusAtOrdinaryLens >= MIN_RADIUS) {
+      this.spherical.radius = clampRadius(radiusAtOrdinaryLens);
+      this.fov = DEFAULT_CAMERA_FOV;
+      return;
+    }
+
+    this.spherical.radius = MIN_RADIUS;
+    this.fov = clampCameraFov(
+      (2 * Math.atan(desiredFootprint / MIN_RADIUS) * 180) / Math.PI,
+    );
+  }
+
+  /** Enable/exit continuous zoom. Exiting restores the ordinary lens; the
+   * radius and focus remain, so the user can resume normal navigation. */
+  setInfiniteZoom(enabled: boolean): void {
+    this.infiniteZoom = enabled;
+    if (!enabled) this.fov = DEFAULT_CAMERA_FOV;
+  }
+
+  /** Return to the ordinary lens without changing whether the mode is armed. */
+  resetLens(): void {
+    this.fov = DEFAULT_CAMERA_FOV;
+  }
+
+  get deepMagnification(): number {
+    return deepZoomMagnification(this.fov);
+  }
+
+  get deepZoomLimitReached(): boolean {
+    return this.fov <= MIN_DEEP_ZOOM_FOV;
   }
 
   /** Shift the orbit target by a world-space delta. */
