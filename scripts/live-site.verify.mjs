@@ -2,7 +2,7 @@
 /**
  * Post-deploy LIVE-SITE smoke test.
  *
- * Deployment to GitHub Pages is `workflow_dispatch`-only (see CLAUDE.md's
+ * Deployment to GitHub Pages is `workflow_dispatch`-only (see AGENTS.md's
  * Branching & Deployment section) — nothing runs it automatically on merge,
  * and nothing automatically checks what a dispatched run actually produced.
  * A deploy that ships a broken bundle (a bad build, a missing asset, a

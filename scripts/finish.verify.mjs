@@ -133,7 +133,7 @@
  *   --mode=x11:<display>: headed on a live X display, the only route to the
  *   real driver (Iris here) — and an agent/SSH shell arrives with a forwarded
  *   DISPLAY and no authorization for :0, so a run that MEANT Iris can land
- *   on SwiftShader without any error (CLAUDE.md's XAUTHORITY note). So
+ *   on SwiftShader without any error (AGENTS.md's XAUTHORITY note). So
  *   every leg prints the WebGL unmasked renderer string and the WebGPU
  *   adapter's vendor/architecture/description (read in-page) beside the
  *   app's own console breadcrumbs ("Surface render: WebGPU compute tracer
