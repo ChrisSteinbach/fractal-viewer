@@ -29,12 +29,15 @@ jobs:
 
       - run: npm ci
 
-      # CLAUDE.md is loaded into every session's context and silently stops
-      # being loaded past 150000 characters, so the guard sits below that.
-      - name: CLAUDE.md size guard
+      # AGENTS.md is the canonical project-rules file. CLAUDE.md imports it,
+      # and an import costs the same launch context as inline text, so moving
+      # bytes between the two buys no room. Keep their combined payload below
+      # the project's 145k adherence/context budget; evidence belongs in docs/
+      # or its reproducing harness.
+      - name: Agent instruction size guard
         run: |
-          size=$(wc -c < CLAUDE.md)
-          echo "CLAUDE.md is $size bytes"
+          size=$(cat AGENTS.md CLAUDE.md | wc -c)
+          echo "AGENTS.md + CLAUDE.md is $size bytes"
           test "$size" -le 145000
 
       - name: Lint (type-check x3, ESLint, Stylelint, Prettier)

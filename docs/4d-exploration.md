@@ -259,6 +259,45 @@ See `affine4.ts`, `chaos-game-4d.ts`, `variations4.ts`, `rotor4.ts`, and
 `architecture.md`'s "The 4D extension" section for the shipped implementation
 this addendum summarizes.
 
+## 9. Dimensional-parity lift record (2026-08-30)
+
+The escape chain, ground plane and balloon had all shipped 3D-first. The chain
+was the widest gap: `analyzeEscapeSystem` rejected every non-flat map, with no
+4D oracle, kernel core, GLSL arm or tracked lift behind that refusal. Closing
+all three 4D halves in one session showed that their common cost was not the
+algebra but the structural decision about where appended params blocks land.
+
+Once the 4D tail was fixed at byte 576 — the 3D cores' frozen 288 one dimension
+up — the ground plane needed no new shader body, the balloon needed no new
+wrapper body, and the escape-chain oracle duplicated only the five maps'
+arithmetic while importing every constant and link code from its 3D twin. The
+costly discovery was the layout hazard: appending at byte 560 lands inside the
+`lens4Fold` quartet and corrupts it.
+
+The balloon's remaining Points half then fixed the same reduction-first rule
+from the explorer side: PROJECT THEN INVERT the exact 3D point being displayed,
+through the full rotation-invariant 4D ball. The echo keeps the source point's
+rotor, w-ramp and soft-slice treatment; projecting a 4D inversion would display
+the echo of a different object.
+
+### Surface-lift browser gate
+
+`scripts/surface-4d-lift.verify.mjs` re-pinned the escape chain, ground plane
+and balloon lifts on the real Iris at 1024x640: all eleven rows entered,
+settled, drew and took the expected compute engine. The non-backdrop shares
+were 44.6% for the 4D chain, 44.5% under an xw kaleidoscope and 87.8% with the
+floor; 87.7%/40.9% for a 4D IFS with floor/balloon; 86.6%/40.1% for the
+kaleidoscope-4D pair; 88.2% for the 3D floor control; and
+89.5%/89.4%/83.1% for the three shipped 4D presets.
+
+This was the first record with `page.bringToFront()`. Floor-bearing rows fell
+about 1.0–1.5 points from the preceding run while the floorless rows reproduced
+to the digit, consistent with the earlier gate sometimes capturing a partially
+drawn frame; one run makes that a re-read, not an independent pin. The
+kaleidoscope fixture deliberately uses two maps at order 3: a four-map order-5
+system settled neither with nor without the floor inside 200 seconds on this
+hardware, the DE's own superlinear order cost rather than a lift regression.
+
 ## References
 
 - A. Hanson, _Visualizing Quaternions_ — and his 4D visualization work, the

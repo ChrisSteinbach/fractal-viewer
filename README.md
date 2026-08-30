@@ -111,7 +111,7 @@ src/
 
 The tree above is the load-bearing sample, not the full listing — see
 [docs/architecture.md](docs/architecture.md) for the algorithm and data flow,
-and [CLAUDE.md](CLAUDE.md) for the complete module map.
+and [AGENTS.md](AGENTS.md) for the complete module map.
 
 ## Testing & quality
 

@@ -131,6 +131,13 @@ settled at 30s; the 81-branch mandelbox field class settles in ~35-55s
 The renderer owns the device (bench acquisition idioms + flame-backend
 error taxonomy) and the frame loop.
 
+`create()`'s opts also carry the session's gated finishes: `null` means
+classic — today's kernels unchanged — and non-null compiles `finish: true`
+and packs the stride-3 shadeMaps. Finishes are compiled at create time, like
+colors, rather than read per frame; the frame spec still discloses the finish
+list so the offline force-frame memo re-traces a finish-only leg instead of
+serving a stale frame.
+
 ## The frame loop and batch sizing
 
 March slices are sized from a measured per-ray·step EMA, and `stepsThisPass`

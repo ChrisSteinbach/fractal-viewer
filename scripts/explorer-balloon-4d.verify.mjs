@@ -20,8 +20,8 @@
  * wrong, and every one of them is measured here rather than argued.
  *
  * THE ROW IT REPLACED IS KEPT AS A DISCLOSED HISTORICAL MEASUREMENT, because
- * that number is on the record elsewhere too (CLAUDE.md's own account of the
- * 4D lift) and a reader who meets it is owed what it actually measured. The
+ * that number was part of the earlier 4D-lift record and a reader who meets it
+ * is owed what it actually measured. The
  * lift recorded "10.255% of pixels changed, meanAbs 3.285, max 234" from a
  * FULL-FRAME diff of an element screenshot at the document's own 1.60x
  * radius. `#container canvas` fills the viewport and `#panel` is painted ON
@@ -664,8 +664,8 @@ async function main() {
     // ——— THE HISTORICAL ROW, DISCLOSED —————————————————————————————————
     // One echo on/off pair at the document's OWN 1.60x — the radius the 4D
     // echo lift measured at — compared both ways. The full-frame figure is
-    // the shape of the number that lift pinned (10.255%) and CLAUDE.md
-    // carried; the scene figure is what that number was worth. Both are
+    // the shape of the number that lift pinned (10.255%); the scene figure
+    // is what that number was worth. Both are
     // printed, NEITHER is asserted: the header explains why, and the gate's
     // own row is the one below, on the restored page at GATE_RADIUS.
     const historicalFull = await imageDiff(page, echoAtDocRadius, plain4);

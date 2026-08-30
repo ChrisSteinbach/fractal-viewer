@@ -261,8 +261,8 @@
  *   AND THE COST OF THAT CLAMP IS PRINTED NOW, which is the one
  *   figure the last reading had to leave unquoted: the share of hit pixels
  *   pinned at exactly 1.0 runs 6.78 / 10.59 / 31.44% across the three
- *   rows. The record it replaces — `surface-material.ts` and `CLAUDE.md`
- *   both quoted "1.9-8.6% of really-hit pixels" — was measured at the
+ *   rows. The superseded record quoted "1.9-8.6% of really-hit pixels";
+ *   that was measured at the
  *   INFLATED marching ball, and it was a substantial under-count for the
  *   same reason everything else in this section moved: a smaller object
  *   inside a larger frame puts most of its hit pixels on the silhouette,
