@@ -34,7 +34,7 @@ import {
 import type { AppState, ParamSpec } from "./state";
 import { BACKGROUND_MODES } from "./background";
 import { BACKGROUND_SHAPES } from "../fractal/background-shape";
-import { applyScalarControl } from "./control-spec";
+import { applyScalarControl, SCALAR_CONTROLS } from "./control-spec";
 import type { ControlEffects, ScalarControlSpec } from "./control-spec";
 import { deriveSurfaceEligibility } from "./surface-eligibility";
 import {
@@ -176,8 +176,13 @@ function scalarHandlers(initial: AppState = initialState(true)): {
   let state = initial;
   const handlers: UiHandlers = {
     ...noopHandlers(),
-    onScalarControl: (spec: ScalarControlSpec, raw: string | boolean) => {
-      state = applyScalarControl(state, spec, raw);
+    onScalarControl: (
+      spec: ScalarControlSpec,
+      raw: string | boolean | number,
+      _phase,
+      source,
+    ) => {
+      state = applyScalarControl(state, spec, raw, source);
     },
   };
   return { handlers, current: () => state };
@@ -197,6 +202,14 @@ function editorSliders(): HTMLInputElement[] {
       "#transformEditor input[type='range']",
     ),
   );
+}
+
+function exactInput(rangeId: string): HTMLInputElement {
+  const input = document.getElementById(`${rangeId}Number`);
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`No exact numeric companion for #${rangeId}`);
+  }
+  return input;
 }
 
 /** Grab one editor slider by its aria-label, e.g. "Rotation Y" — stable across
@@ -1284,6 +1297,98 @@ describe("Ui point size slider", () => {
   });
 });
 
+describe("Ui table-driven exact numeric controls", () => {
+  it("creates one accessible numeric companion for every table-driven range", () => {
+    new Ui(document);
+    const ranges = SCALAR_CONTROLS.filter((spec) => spec.kind === "range");
+
+    expect(ranges).toHaveLength(46);
+    for (const spec of ranges) {
+      const slider = document.getElementById(spec.id);
+      const number = exactInput(spec.id);
+      expect(slider?.closest(".range-number-pair")).toBe(
+        number.closest(".range-number-pair"),
+      );
+      expect(number.getAttribute("aria-label")).toBe(
+        `${spec.numeric.accessibleLabel} exact value`,
+      );
+    }
+  });
+
+  it("keeps a mapped slider and its semantic numeric value synchronized", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.updateLabels({ ...initialState(true), colorGamma: 1 });
+    const slider = document.getElementById(
+      "colorGammaSlider",
+    ) as HTMLInputElement;
+
+    slider.value = String(Math.log(2) / Math.log(MAX_COLOR_GAMMA));
+    slider.dispatchEvent(new Event("input"));
+
+    expect(Number(exactInput("colorGammaSlider").value)).toBeCloseTo(2);
+  });
+
+  it("accepts an exact off-detent point budget and reports apply then commit", () => {
+    const onScalarControl = vi.fn();
+    const ui = new Ui(document);
+    ui.bind({ ...noopHandlers(), onScalarControl });
+    const number = exactInput("numPointsSlider");
+
+    number.value = "37000";
+    number.dispatchEvent(new Event("change"));
+
+    expect(onScalarControl).toHaveBeenCalledTimes(2);
+    expect(onScalarControl).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ id: "numPointsSlider" }),
+      37_000,
+      "input",
+      "number",
+    );
+    expect(onScalarControl).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ id: "numPointsSlider" }),
+      37_000,
+      "commit",
+      "number",
+    );
+  });
+
+  it("applies exact model-domain values instead of mapped slider positions", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const number = exactInput("colorGammaSlider");
+
+    number.value = "1.3";
+    number.dispatchEvent(new Event("change"));
+
+    expect(current().colorGamma).toBe(1.3);
+  });
+
+  it("keeps an invalid draft visible without mutating state", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const number = exactInput("pointSizeSlider");
+
+    number.value = "9";
+    number.dispatchEvent(new Event("change"));
+
+    expect(current().pointSize).toBe(initialState(true).pointSize);
+    expect(number.value).toBe("9");
+    expect(number.getAttribute("aria-invalid")).toBe("true");
+    const errorId = number
+      .getAttribute("aria-describedby")
+      ?.split(/\s+/)
+      .at(-1);
+    expect(document.getElementById(errorId ?? "")?.textContent).toContain(
+      "0.25 to 4",
+    );
+  });
+});
+
 describe("Ui Points Quality budget", () => {
   it("keeps a non-detent saved count in the label while snapping only the thumb", () => {
     const ui = new Ui(document);
@@ -1811,7 +1916,7 @@ describe("Ui shape-trap geometry", () => {
     let current = state;
     const ui = new Ui(document);
     const onScalarControl = vi.fn(
-      (spec: ScalarControlSpec, raw: string | boolean) => {
+      (spec: ScalarControlSpec, raw: string | boolean | number) => {
         current = applyScalarControl(current, spec, raw);
         ui.updateLabels(current);
         // The real main.ts effect synchronously refreshes the analyzer before
@@ -9919,7 +10024,7 @@ describe("Ui symmetry controls", () => {
       const ui = new Ui(document);
       const effects = symmetryEffects();
       const onScalarControl = vi.fn(
-        (spec: ScalarControlSpec, raw: string | boolean) => {
+        (spec: ScalarControlSpec, raw: string | boolean | number) => {
           const previous = state;
           state = applyScalarControl(state, spec, raw);
           ui.updateLabels(state);
@@ -13844,7 +13949,9 @@ describe("Ui Fog/Tint consumer applicability", () => {
   it("associates every Fog/Tint input with a polite live scope note", () => {
     new Ui(document);
     for (const id of ["fogSlider", "fogTintColor", "fogTintStrength"]) {
-      expect(el(id).getAttribute("aria-describedby")).toBe("fogNote");
+      expect(el(id).getAttribute("aria-describedby")?.split(/\s+/)).toContain(
+        "fogNote",
+      );
     }
     expect(note().getAttribute("role")).toBe("status");
     expect(note().getAttribute("aria-live")).toBe("polite");

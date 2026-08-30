@@ -35,6 +35,7 @@ import {
   DEFAULT_SOLID_PALETTE,
   FLAME_ITERATION_DETENTS,
   MAX_COLOR_GAMMA,
+  PARAM,
   POINT_COUNT_DETENTS,
   nearestFlameIterationDetentIndex,
   nearestLogDetentIndex,
@@ -388,14 +389,45 @@ interface ScalarControlBase {
   effect?: ControlEffect;
 }
 
-/** A slider or select: the element's string `value` carries the edit. */
-export interface ValueControlSpec extends ScalarControlBase {
-  kind: "range" | "select";
+/** The semantic, model-domain companion to one range input. Range inputs may
+ * carry a presentation-domain value (a detent index or logarithmic position),
+ * while an exact numeric editor must always expose the value the document and
+ * reducers actually store. */
+export interface NumericControlSpec {
+  /** Accessible name for the numeric input; independent of visual units. */
+  accessibleLabel: string;
+  min: number;
+  max: number;
+  step: number;
+  /** Discrete model values when ordinary `step` arithmetic is insufficient. */
+  allowedValues?: readonly number[];
+  /** Suggested decimal precision for display/edit synchronization. */
+  precision?: number;
+  /** Presentation mapping for a retained slider. Omitted means identity. */
+  rangeToNumber?: (raw: number) => number;
+  numberToRange?: (value: number) => number;
+  read(state: AppState): number;
+  apply(state: AppState, value: number): AppState;
+}
+
+interface ValueControlBase extends ScalarControlBase {
   /** The element's `value` derived from state (slider mappings included) —
    * the updateLabels sync direction. */
   read(state: AppState): string;
   /** Parse the element's raw `value` and apply the edit through a reducer. */
   apply(state: AppState, raw: string): AppState;
+}
+
+/** A select: its option value is already the semantic model value. */
+export interface SelectControlSpec extends ValueControlBase {
+  kind: "select";
+}
+
+/** A range: slider-domain behavior plus a required exact model-domain
+ * numeric companion. */
+export interface RangeControlSpec extends ValueControlBase {
+  kind: "range";
+  numeric: NumericControlSpec;
   /**
    * Commit-on-release effect: fired once when a range's drag ENDS — the
    * input's `change` event — unlike `effect`, which fires on every `input`
@@ -413,6 +445,8 @@ export interface ValueControlSpec extends ScalarControlBase {
   commit?: ControlEffect;
 }
 
+export type ValueControlSpec = SelectControlSpec | RangeControlSpec;
+
 /** A checkbox: the element's `checked` flag carries the edit. */
 export interface ToggleControlSpec extends ScalarControlBase {
   kind: "checkbox";
@@ -424,16 +458,21 @@ export type ScalarControlSpec = ValueControlSpec | ToggleControlSpec;
 
 /**
  * Apply a control's raw DOM input (`value` string for range/select, `checked`
- * boolean for checkbox) to state through the spec's own parse + reducer. The
- * kind switch is what lets one `UiHandlers.onScalarControl` callback carry
- * both raw shapes without casts: each branch coerces to the shape its `apply`
- * declares (a no-op for the type the Ui actually sends).
+ * boolean for checkbox) to state through the spec's own parse + reducer.
+ * `source: "number"` selects a range's semantic numeric path instead, so a
+ * future exact editor can submit a model value without pretending it is the
+ * range's detent index/logarithmic position. The default preserves every
+ * existing caller's range/select/checkbox behavior.
  */
 export function applyScalarControl(
   state: AppState,
   spec: ScalarControlSpec,
-  raw: string | boolean,
+  raw: string | boolean | number,
+  source: "range" | "number" = "range",
 ): AppState {
+  if (source === "number" && spec.kind === "range") {
+    return spec.numeric.apply(state, Number(raw));
+  }
   return spec.kind === "checkbox"
     ? spec.apply(state, raw === true)
     : spec.apply(state, String(raw));
@@ -765,12 +804,58 @@ function solidColorModeEffect(dimension: "flat" | "fourD"): ControlEffect {
   };
 }
 
+/** Compact constructor for the required model-domain metadata on range
+ * controls. Decimal precision follows the declared numeric step unless a
+ * caller overrides it. */
+function numericControl(
+  accessibleLabel: string,
+  min: number,
+  max: number,
+  step: number,
+  read: (state: AppState) => number,
+  apply: (state: AppState, value: number) => AppState,
+  options: Pick<
+    NumericControlSpec,
+    "allowedValues" | "precision" | "rangeToNumber" | "numberToRange"
+  > = {},
+): NumericControlSpec {
+  const stepText = String(step);
+  const inferredPrecision = stepText.includes(".")
+    ? stepText.length - stepText.indexOf(".") - 1
+    : 0;
+  return {
+    accessibleLabel,
+    min,
+    max,
+    step,
+    precision: options.precision ?? inferredPrecision,
+    read,
+    apply,
+    ...(options.allowedValues ? { allowedValues: options.allowedValues } : {}),
+    ...(options.rangeToNumber ? { rangeToNumber: options.rangeToNumber } : {}),
+    ...(options.numberToRange ? { numberToRange: options.numberToRange } : {}),
+  };
+}
+
 export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   // ——— Explorer: appearance ———
   {
     kind: "range",
     id: "numPointsSlider",
     label: { id: "numPointsLabel", text: (s) => s.numPoints.toLocaleString() },
+    numeric: numericControl(
+      "Point count",
+      PARAM.numPoints.min,
+      PARAM.numPoints.max,
+      1,
+      (s) => s.numPoints,
+      setNumPoints,
+      {
+        rangeToNumber: (raw) => detentValue(String(raw), POINT_COUNT_DETENTS),
+        numberToRange: (value) =>
+          nearestLogDetentIndex(value, POINT_COUNT_DETENTS),
+      },
+    ),
     read: (s) =>
       String(nearestLogDetentIndex(s.numPoints, POINT_COUNT_DETENTS)),
     apply: (s, raw) => setNumPoints(s, detentValue(raw, POINT_COUNT_DETENTS)),
@@ -795,6 +880,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     kind: "range",
     id: "pointSizeSlider",
     label: { id: "pointSizeLabel", text: (s) => `${s.pointSize.toFixed(2)}×` },
+    numeric: numericControl(
+      "Point size",
+      PARAM.pointSize.min,
+      PARAM.pointSize.max,
+      0.05,
+      (s) => s.pointSize,
+      setPointSize,
+    ),
     read: (s) => String(s.pointSize),
     apply: (s, raw) => setPointSize(s, Number(raw)),
     effect: (s, fx) => fx.scene.setPointSize(s.pointSize),
@@ -811,6 +904,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "glowBrightnessLabel",
       text: (s) => `${s.glowBrightness.toFixed(2)}×`,
     },
+    numeric: numericControl(
+      "Glow brightness",
+      PARAM.glowBrightness.min,
+      PARAM.glowBrightness.max,
+      0.05,
+      (s) => s.glowBrightness,
+      setGlowBrightness,
+    ),
     read: (s) => String(s.glowBrightness),
     apply: (s, raw) => setGlowBrightness(s, Number(raw)),
   },
@@ -880,6 +981,18 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     kind: "range",
     id: "colorGammaSlider",
     label: { id: "colorGammaLabel", text: (s) => s.colorGamma.toFixed(2) },
+    numeric: numericControl(
+      "Color contrast",
+      PARAM.colorGamma.min,
+      PARAM.colorGamma.max,
+      0.01,
+      (s) => s.colorGamma,
+      setColorGamma,
+      {
+        rangeToNumber: sliderToColorGamma,
+        numberToRange: colorGammaToSlider,
+      },
+    ),
     read: (s) => String(colorGammaToSlider(s.colorGamma)),
     apply: (s, raw) => setColorGamma(s, sliderToColorGamma(Number(raw))),
     effect: (s, fx) =>
@@ -895,6 +1008,18 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "solidColorGammaLabel",
       text: (s) => s.colorGamma.toFixed(2),
     },
+    numeric: numericControl(
+      "Solid color contrast",
+      PARAM.colorGamma.min,
+      PARAM.colorGamma.max,
+      0.01,
+      (s) => s.colorGamma,
+      setColorGamma,
+      {
+        rangeToNumber: sliderToColorGamma,
+        numberToRange: colorGammaToSlider,
+      },
+    ),
     read: (s) => String(colorGammaToSlider(s.colorGamma)),
     apply: (s, raw) => setColorGamma(s, sliderToColorGamma(Number(raw))),
     effect: (s, fx) =>
@@ -971,6 +1096,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     kind: "range",
     id: "fogSlider",
     label: { id: "fogLabel", text: (s) => `${s.fogDensity.toFixed(2)}×` },
+    numeric: numericControl(
+      "Fog density",
+      PARAM.fogDensity.min,
+      PARAM.fogDensity.max,
+      0.05,
+      (s) => s.fogDensity,
+      setFogDensity,
+    ),
     read: (s) => String(s.fogDensity),
     apply: (s, raw) => setFogDensity(s, Number(raw)),
     effect: (s, fx) => fx.scene.setFogDensity(s.fogDensity),
@@ -989,6 +1122,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "fogTintLabel",
       text: (s) => `${Math.round(s.fogTintStrength * 100)}%`,
     },
+    numeric: numericControl(
+      "Fog tint strength",
+      PARAM.fogTintStrength.min,
+      PARAM.fogTintStrength.max,
+      0.01,
+      (s) => s.fogTintStrength,
+      setFogTintStrength,
+    ),
     read: (s) => String(s.fogTintStrength),
     apply: (s, raw) => setFogTintStrength(s, Number(raw)),
     effect: (s, fx) =>
@@ -1077,6 +1218,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "balloonRadiusLabel",
       text: (s) => `${s.balloonRadius.toFixed(2)}×`,
     },
+    numeric: numericControl(
+      "Balloon size",
+      PARAM.balloonRadius.min,
+      PARAM.balloonRadius.max,
+      0.01,
+      (s) => s.balloonRadius,
+      setBalloonRadius,
+    ),
     read: (s) => String(s.balloonRadius),
     apply: (s, raw) => setBalloonRadius(s, Number(raw)),
     effect: (s, fx) => {
@@ -1099,6 +1248,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "balloonTintLabel",
       text: (s) => `${Math.round(s.balloonTintStrength * 100)}%`,
     },
+    numeric: numericControl(
+      "Balloon tint strength",
+      PARAM.balloonTintStrength.min,
+      PARAM.balloonTintStrength.max,
+      0.01,
+      (s) => s.balloonTintStrength,
+      setBalloonTintStrength,
+    ),
     read: (s) => String(s.balloonTintStrength),
     apply: (s, raw) => setBalloonTintStrength(s, Number(raw)),
     effect: (s, fx) => {
@@ -1137,6 +1294,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "symmetryOrderLabel",
       text: (s) => `${s.symmetry.order}-fold`,
     },
+    numeric: numericControl(
+      "Symmetry order",
+      PARAM.symmetryOrder.min,
+      PARAM.symmetryOrder.max,
+      1,
+      (s) => s.symmetry.order,
+      setSymmetryOrder,
+    ),
     read: (s) => String(s.symmetry.order),
     apply: (s, raw) => setSymmetryOrder(s, Number(raw)),
     effect: symmetryEffect,
@@ -1167,6 +1332,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "symmetryTwistLabel",
       text: (s) => String(s.symmetry.twist ?? 0),
     },
+    numeric: numericControl(
+      "Symmetry twist",
+      PARAM.symmetryTwist.min,
+      PARAM.symmetryTwist.max,
+      1,
+      (s) => s.symmetry.twist ?? 0,
+      setSymmetryTwist,
+    ),
     read: (s) => String(s.symmetry.twist ?? 0),
     apply: (s, raw) => setSymmetryTwist(s, Number(raw)),
     effect: symmetryEffect,
@@ -1214,6 +1387,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "flameExposureLabel",
       text: (s) => `${s.flame.exposure.toFixed(2)}×`,
     },
+    numeric: numericControl(
+      "Flame exposure",
+      PARAM.flameExposure.min,
+      PARAM.flameExposure.max,
+      0.05,
+      (s) => s.flame.exposure,
+      setFlameExposure,
+    ),
     read: (s) => String(s.flame.exposure),
     apply: (s, raw) => setFlameExposure(s, Number(raw)),
     effect: liveTonemapEffect((s) => ({
@@ -1233,6 +1414,19 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "flameIterationsLabel",
       text: (s) => formatIterationCount(s.flame.iterations),
     },
+    numeric: numericControl(
+      "Flame iterations",
+      PARAM.flameIterations.min,
+      PARAM.flameIterations.max,
+      1,
+      (s) => s.flame.iterations,
+      setFlameIterations,
+      {
+        rangeToNumber: (raw) =>
+          detentValue(String(raw), FLAME_ITERATION_DETENTS),
+        numberToRange: nearestFlameIterationDetentIndex,
+      },
+    ),
     read: (s) => String(nearestFlameIterationDetentIndex(s.flame.iterations)),
     apply: (s, raw) =>
       setFlameIterations(s, detentValue(raw, FLAME_ITERATION_DETENTS)),
@@ -1246,6 +1440,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     kind: "range",
     id: "flameGammaSlider",
     label: { id: "flameGammaLabel", text: (s) => s.flame.gamma.toFixed(2) },
+    numeric: numericControl(
+      "Flame gamma",
+      PARAM.flameGamma.min,
+      PARAM.flameGamma.max,
+      0.1,
+      (s) => s.flame.gamma,
+      setFlameGamma,
+    ),
     read: (s) => String(s.flame.gamma),
     apply: (s, raw) => setFlameGamma(s, Number(raw)),
     effect: liveTonemapEffect((s) => ({
@@ -1260,6 +1462,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "flameVibrancyLabel",
       text: (s) => `${Math.round(s.flame.vibrancy * 100)}%`,
     },
+    numeric: numericControl(
+      "Flame vibrancy",
+      PARAM.flameVibrancy.min,
+      PARAM.flameVibrancy.max,
+      0.05,
+      (s) => s.flame.vibrancy,
+      setFlameVibrancy,
+    ),
     read: (s) => String(s.flame.vibrancy),
     apply: (s, raw) => setFlameVibrancy(s, Number(raw)),
     effect: liveTonemapEffect((s) => ({
@@ -1279,6 +1489,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "flameSupersampleLabel",
       text: (s) => `${s.flame.supersample}×`,
     },
+    numeric: numericControl(
+      "Flame supersample",
+      PARAM.flameSupersample.min,
+      PARAM.flameSupersample.max,
+      1,
+      (s) => s.flame.supersample,
+      setFlameSupersample,
+    ),
     read: (s) => String(s.flame.supersample),
     apply: (s, raw) => setFlameSupersample(s, Number(raw)),
     effect: (s, fx) =>
@@ -1313,6 +1531,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "flameEstimatorRadiusLabel",
       text: (s) => `${s.flame.estimatorRadius.toFixed(1)}px`,
     },
+    numeric: numericControl(
+      "Flame blur radius",
+      PARAM.estimatorRadius.min,
+      PARAM.estimatorRadius.max,
+      0.5,
+      (s) => s.flame.estimatorRadius,
+      setFlameEstimatorRadius,
+    ),
     read: (s) => String(s.flame.estimatorRadius),
     apply: (s, raw) => setFlameEstimatorRadius(s, Number(raw)),
     effect: (s, fx) =>
@@ -1328,6 +1554,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "flameEstimatorMinimumRadiusLabel",
       text: (s) => `${s.flame.estimatorMinimumRadius.toFixed(1)}px`,
     },
+    numeric: numericControl(
+      "Flame sharp radius",
+      PARAM.estimatorMinimumRadius.min,
+      PARAM.estimatorMinimumRadius.max,
+      0.5,
+      (s) => s.flame.estimatorMinimumRadius,
+      setFlameEstimatorMinimumRadius,
+    ),
     read: (s) => String(s.flame.estimatorMinimumRadius),
     apply: (s, raw) => setFlameEstimatorMinimumRadius(s, Number(raw)),
     effect: (s, fx) =>
@@ -1343,6 +1577,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "flameEstimatorCurveLabel",
       text: (s) => s.flame.estimatorCurve.toFixed(2),
     },
+    numeric: numericControl(
+      "Flame blur falloff",
+      PARAM.estimatorCurve.min,
+      PARAM.estimatorCurve.max,
+      0.05,
+      (s) => s.flame.estimatorCurve,
+      setFlameEstimatorCurve,
+    ),
     read: (s) => String(s.flame.estimatorCurve),
     apply: (s, raw) => setFlameEstimatorCurve(s, Number(raw)),
     effect: (s, fx) =>
@@ -1359,6 +1601,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "solidThresholdLabel",
       text: (s) => s.solid.threshold.toFixed(2),
     },
+    numeric: numericControl(
+      "Solid surface level",
+      PARAM.solidThreshold.min,
+      PARAM.solidThreshold.max,
+      0.01,
+      (s) => s.solid.threshold,
+      setSolidThreshold,
+    ),
     read: (s) => String(s.solid.threshold),
     apply: (s, raw) => setSolidThreshold(s, Number(raw)),
     effect: solidParamsEffect,
@@ -1370,6 +1620,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "solidLightAzimuthLabel",
       text: (s) => `${Math.round(s.solid.lightAzimuth)}°`,
     },
+    numeric: numericControl(
+      "Solid light angle",
+      PARAM.solidLightAzimuth.min,
+      PARAM.solidLightAzimuth.max,
+      5,
+      (s) => s.solid.lightAzimuth,
+      setSolidLightAzimuth,
+    ),
     read: (s) => String(s.solid.lightAzimuth),
     apply: (s, raw) => setSolidLightAzimuth(s, Number(raw)),
     effect: solidParamsEffect,
@@ -1381,6 +1639,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "solidLightElevationLabel",
       text: (s) => `${Math.round(s.solid.lightElevation)}°`,
     },
+    numeric: numericControl(
+      "Solid light height",
+      PARAM.solidLightElevation.min,
+      PARAM.solidLightElevation.max,
+      5,
+      (s) => s.solid.lightElevation,
+      setSolidLightElevation,
+    ),
     read: (s) => String(s.solid.lightElevation),
     apply: (s, raw) => setSolidLightElevation(s, Number(raw)),
     effect: solidParamsEffect,
@@ -1392,6 +1658,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "solidAmbientLabel",
       text: (s) => `${Math.round(s.solid.ambient * 100)}%`,
     },
+    numeric: numericControl(
+      "Solid ambient light",
+      PARAM.solidAmbient.min,
+      PARAM.solidAmbient.max,
+      0.05,
+      (s) => s.solid.ambient,
+      setSolidAmbient,
+    ),
     read: (s) => String(s.solid.ambient),
     apply: (s, raw) => setSolidAmbient(s, Number(raw)),
     effect: solidParamsEffect,
@@ -1403,6 +1677,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "solidEnvLightLabel",
       text: (s) => `${Math.round(s.solid.envLight * 100)}%`,
     },
+    numeric: numericControl(
+      "Solid environment light",
+      PARAM.solidEnvLight.min,
+      PARAM.solidEnvLight.max,
+      0.05,
+      (s) => s.solid.envLight,
+      setSolidEnvLight,
+    ),
     read: (s) => String(s.solid.envLight),
     apply: (s, raw) => setSolidEnvLight(s, Number(raw)),
     effect: solidParamsEffect,
@@ -1428,6 +1710,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "solidFloorTileScaleLabel",
       text: (s) => `${s.solid.floorTileScale.toFixed(2)}×`,
     },
+    numeric: numericControl(
+      "Solid floor tile size",
+      PARAM.solidFloorTileScale.min,
+      PARAM.solidFloorTileScale.max,
+      0.01,
+      (s) => s.solid.floorTileScale,
+      setSolidFloorTileScale,
+    ),
     read: (s) => String(s.solid.floorTileScale),
     apply: (s, raw) => setSolidFloorTileScale(s, Number(raw)),
     effect: solidParamsEffect,
@@ -1439,6 +1729,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "solidFloorEmissionLabel",
       text: (s) => s.solid.floorEmission.toFixed(2),
     },
+    numeric: numericControl(
+      "Solid floor light",
+      PARAM.solidFloorEmission.min,
+      PARAM.solidFloorEmission.max,
+      0.05,
+      (s) => s.solid.floorEmission,
+      setSolidFloorEmission,
+    ),
     read: (s) => String(s.solid.floorEmission),
     apply: (s, raw) => setSolidFloorEmission(s, Number(raw)),
     effect: solidParamsEffect,
@@ -1465,6 +1763,20 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "solidIterationsLabel",
       text: (s) => formatIterationCount(s.solid.iterations),
     },
+    numeric: numericControl(
+      "Solid iterations",
+      PARAM.solidIterations.min,
+      PARAM.solidIterations.max,
+      1,
+      (s) => s.solid.iterations,
+      setSolidIterations,
+      {
+        rangeToNumber: (raw) =>
+          detentValue(String(raw), SOLID_ITERATION_DETENTS),
+        numberToRange: (value) =>
+          nearestLogDetentIndex(value, SOLID_ITERATION_DETENTS),
+      },
+    ),
     read: (s) =>
       String(
         nearestLogDetentIndex(s.solid.iterations, SOLID_ITERATION_DETENTS),
@@ -1488,6 +1800,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "solidResolutionLabel",
       text: (s) => `${s.solid.resolution}³`,
     },
+    numeric: numericControl(
+      "Solid resolution",
+      PARAM.solidResolution.min,
+      PARAM.solidResolution.max,
+      PARAM.solidResolution.snap ?? 1,
+      (s) => s.solid.resolution,
+      setSolidResolution,
+    ),
     read: (s) => String(s.solid.resolution),
     apply: (s, raw) => setSolidResolution(s, Number(raw)),
     effect: (s, fx, previous) => {
@@ -1510,6 +1830,23 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceAntialiasLabel",
       text: (s) => `${String(s.surface.antialiasSamples)} samples/pixel`,
     },
+    numeric: numericControl(
+      "Surface antialiasing samples",
+      SURFACE_ANTIALIAS_DETENTS[0],
+      SURFACE_ANTIALIAS_DETENTS[SURFACE_ANTIALIAS_DETENTS.length - 1],
+      1,
+      (s) => s.surface.antialiasSamples,
+      setSurfaceAntialiasSamples,
+      {
+        allowedValues: SURFACE_ANTIALIAS_DETENTS,
+        rangeToNumber: (raw) =>
+          detentValue(String(raw), SURFACE_ANTIALIAS_DETENTS),
+        numberToRange: (value) =>
+          SURFACE_ANTIALIAS_DETENTS.indexOf(
+            value as (typeof SURFACE_ANTIALIAS_DETENTS)[number],
+          ),
+      },
+    ),
     read: (s) =>
       String(
         SURFACE_ANTIALIAS_DETENTS.indexOf(
@@ -1548,6 +1885,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceLightAzimuthLabel",
       text: (s) => `${Math.round(s.surface.lightAzimuth)}°`,
     },
+    numeric: numericControl(
+      "Surface light angle",
+      PARAM.surfaceLightAzimuth.min,
+      PARAM.surfaceLightAzimuth.max,
+      5,
+      (s) => s.surface.lightAzimuth,
+      setSurfaceLightAzimuth,
+    ),
     read: (s) => String(s.surface.lightAzimuth),
     apply: (s, raw) => setSurfaceLightAzimuth(s, Number(raw)),
     effect: surfaceParamsEffect,
@@ -1559,6 +1904,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceLightElevationLabel",
       text: (s) => `${Math.round(s.surface.lightElevation)}°`,
     },
+    numeric: numericControl(
+      "Surface light height",
+      PARAM.surfaceLightElevation.min,
+      PARAM.surfaceLightElevation.max,
+      5,
+      (s) => s.surface.lightElevation,
+      setSurfaceLightElevation,
+    ),
     read: (s) => String(s.surface.lightElevation),
     apply: (s, raw) => setSurfaceLightElevation(s, Number(raw)),
     effect: surfaceParamsEffect,
@@ -1570,6 +1923,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceAmbientLabel",
       text: (s) => `${Math.round(s.surface.ambient * 100)}%`,
     },
+    numeric: numericControl(
+      "Surface ambient light",
+      PARAM.surfaceAmbient.min,
+      PARAM.surfaceAmbient.max,
+      0.05,
+      (s) => s.surface.ambient,
+      setSurfaceAmbient,
+    ),
     read: (s) => String(s.surface.ambient),
     apply: (s, raw) => setSurfaceAmbient(s, Number(raw)),
     effect: surfaceParamsEffect,
@@ -1581,6 +1942,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceEnvLightLabel",
       text: (s) => `${Math.round(s.surface.envLight * 100)}%`,
     },
+    numeric: numericControl(
+      "Surface environment light",
+      PARAM.surfaceEnvLight.min,
+      PARAM.surfaceEnvLight.max,
+      0.05,
+      (s) => s.surface.envLight,
+      setSurfaceEnvLight,
+    ),
     read: (s) => String(s.surface.envLight),
     apply: (s, raw) => setSurfaceEnvLight(s, Number(raw)),
     effect: surfaceParamsEffect,
@@ -1599,6 +1968,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceFloorTileScaleLabel",
       text: (s) => `${s.surface.floorTileScale.toFixed(2)}×`,
     },
+    numeric: numericControl(
+      "Surface floor tile size",
+      PARAM.surfaceFloorTileScale.min,
+      PARAM.surfaceFloorTileScale.max,
+      0.01,
+      (s) => s.surface.floorTileScale,
+      setSurfaceFloorTileScale,
+    ),
     read: (s) => String(s.surface.floorTileScale),
     apply: (s, raw) => setSurfaceFloorTileScale(s, Number(raw)),
     effect: surfaceParamsEffect,
@@ -1610,6 +1987,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceFloorEmissionLabel",
       text: (s) => s.surface.floorEmission.toFixed(2),
     },
+    numeric: numericControl(
+      "Surface floor light",
+      PARAM.surfaceFloorEmission.min,
+      PARAM.surfaceFloorEmission.max,
+      0.05,
+      (s) => s.surface.floorEmission,
+      setSurfaceFloorEmission,
+    ),
     read: (s) => String(s.surface.floorEmission),
     apply: (s, raw) => setSurfaceFloorEmission(s, Number(raw)),
     effect: surfaceParamsEffect,
@@ -1627,6 +2012,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceColorSpeedLabel",
       text: (s) => `${Math.round(s.surface.colorSpeed * 100)}%`,
     },
+    numeric: numericControl(
+      "Surface color speed",
+      PARAM.surfaceColorSpeed.min,
+      PARAM.surfaceColorSpeed.max,
+      0.05,
+      (s) => s.surface.colorSpeed,
+      setSurfaceColorSpeed,
+    ),
     read: (s) => String(s.surface.colorSpeed),
     apply: (s, raw) => setSurfaceColorSpeed(s, Number(raw)),
     effect: surfaceParamsEffect,
@@ -1712,6 +2105,18 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceCondensationMinLabel",
       text: (s) => String(s.condensationDepthBand?.minDepth ?? 1),
     },
+    numeric: numericControl(
+      "First shape-copy level",
+      0,
+      24,
+      1,
+      (s) => s.condensationDepthBand?.minDepth ?? 1,
+      (s, value) =>
+        setCondensationDepthBand(s, {
+          ...(s.condensationDepthBand ?? { maxDepth: 1 }),
+          minDepth: value,
+        }),
+    ),
     read: (s) => String(s.condensationDepthBand?.minDepth ?? 1),
     apply: (s, raw) =>
       setCondensationDepthBand(s, {
@@ -1727,6 +2132,18 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceCondensationMaxLabel",
       text: (s) => String(s.condensationDepthBand?.maxDepth ?? 1),
     },
+    numeric: numericControl(
+      "Last shape-copy level",
+      0,
+      24,
+      1,
+      (s) => s.condensationDepthBand?.maxDepth ?? 1,
+      (s, value) =>
+        setCondensationDepthBand(s, {
+          ...(s.condensationDepthBand ?? { minDepth: 1 }),
+          maxDepth: value,
+        }),
+    ),
     read: (s) => String(s.condensationDepthBand?.maxDepth ?? 1),
     apply: (s, raw) =>
       setCondensationDepthBand(s, {
@@ -1822,6 +2239,22 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceTrapGeometryMinLabel",
       text: (s) => String(s.shapeTrap?.geometryLevelMin ?? 1),
     },
+    numeric: numericControl(
+      "First trap geometry level",
+      0,
+      24,
+      1,
+      (s) => s.shapeTrap?.geometryLevelMin ?? 1,
+      (s, value) =>
+        s.shapeTrap
+          ? setShapeTrap(s, {
+              ...s.shapeTrap,
+              geometry: true,
+              geometryLevelMin: value,
+              geometryLevelMax: s.shapeTrap.geometryLevelMax ?? 1,
+            })
+          : s,
+    ),
     read: (s) => String(s.shapeTrap?.geometryLevelMin ?? 1),
     apply: (s, raw) =>
       s.shapeTrap
@@ -1844,6 +2277,22 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceTrapGeometryMaxLabel",
       text: (s) => String(s.shapeTrap?.geometryLevelMax ?? 1),
     },
+    numeric: numericControl(
+      "Last trap geometry level",
+      0,
+      24,
+      1,
+      (s) => s.shapeTrap?.geometryLevelMax ?? 1,
+      (s, value) =>
+        s.shapeTrap
+          ? setShapeTrap(s, {
+              ...s.shapeTrap,
+              geometry: true,
+              geometryLevelMin: s.shapeTrap.geometryLevelMin ?? 1,
+              geometryLevelMax: value,
+            })
+          : s,
+    ),
     read: (s) => String(s.shapeTrap?.geometryLevelMax ?? 1),
     apply: (s, raw) =>
       s.shapeTrap
@@ -1869,6 +2318,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceTrapScaleLabel",
       text: (s) => `${(s.shapeTrap?.scale ?? 1).toFixed(2)}×`,
     },
+    numeric: numericControl(
+      "Shape trap size",
+      0.1,
+      3,
+      0.05,
+      (s) => s.shapeTrap?.scale ?? 1,
+      (s, value) => updateShapeTrap(s, { scale: value }),
+    ),
     read: (s) => String(s.shapeTrap?.scale ?? 1),
     apply: (s, raw) => updateShapeTrap(s, { scale: Number(raw) }),
     effect: shapeTrapLiveEffect,
@@ -1880,6 +2337,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceTrapXLabel",
       text: (s) => (s.shapeTrap?.position?.[0] ?? 0).toFixed(2),
     },
+    numeric: numericControl(
+      "Shape trap X",
+      -3,
+      3,
+      0.05,
+      (s) => s.shapeTrap?.position?.[0] ?? 0,
+      (s, value) => updateShapeTrapPosition(s, 0, value),
+    ),
     read: (s) => String(s.shapeTrap?.position?.[0] ?? 0),
     apply: (s, raw) => updateShapeTrapPosition(s, 0, Number(raw)),
     effect: shapeTrapLiveEffect,
@@ -1891,6 +2356,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceTrapYLabel",
       text: (s) => (s.shapeTrap?.position?.[1] ?? 0).toFixed(2),
     },
+    numeric: numericControl(
+      "Shape trap Y",
+      -3,
+      3,
+      0.05,
+      (s) => s.shapeTrap?.position?.[1] ?? 0,
+      (s, value) => updateShapeTrapPosition(s, 1, value),
+    ),
     read: (s) => String(s.shapeTrap?.position?.[1] ?? 0),
     apply: (s, raw) => updateShapeTrapPosition(s, 1, Number(raw)),
     effect: shapeTrapLiveEffect,
@@ -1902,6 +2375,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceTrapZLabel",
       text: (s) => (s.shapeTrap?.position?.[2] ?? 0).toFixed(2),
     },
+    numeric: numericControl(
+      "Shape trap Z",
+      -3,
+      3,
+      0.05,
+      (s) => s.shapeTrap?.position?.[2] ?? 0,
+      (s, value) => updateShapeTrapPosition(s, 2, value),
+    ),
     read: (s) => String(s.shapeTrap?.position?.[2] ?? 0),
     apply: (s, raw) => updateShapeTrapPosition(s, 2, Number(raw)),
     effect: shapeTrapLiveEffect,
@@ -1928,6 +2409,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       text: (s) =>
         `${Math.round((s.shapeTrap?.threshold ?? DEFAULT_SHAPE_TRAP_THRESHOLD) * 100)}%`,
     },
+    numeric: numericControl(
+      "Shape trap crossing bar",
+      0.02,
+      1,
+      0.01,
+      (s) => s.shapeTrap?.threshold ?? DEFAULT_SHAPE_TRAP_THRESHOLD,
+      (s, value) => updateShapeTrap(s, { threshold: value }),
+    ),
     read: (s) => String(s.shapeTrap?.threshold ?? DEFAULT_SHAPE_TRAP_THRESHOLD),
     apply: (s, raw) => updateShapeTrap(s, { threshold: Number(raw) }),
     effect: shapeTrapLiveEffect,
@@ -1939,6 +2428,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       id: "surfaceTrapFadeLabel",
       text: (s) => `${Math.round((s.shapeTrap?.fade ?? 0) * 100)}%`,
     },
+    numeric: numericControl(
+      "Shape trap fade",
+      0,
+      0.3,
+      0.01,
+      (s) => s.shapeTrap?.fade ?? 0,
+      (s, value) => updateShapeTrap(s, { fade: value }),
+    ),
     read: (s) => String(s.shapeTrap?.fade ?? 0),
     apply: (s, raw) => updateShapeTrap(s, { fade: Number(raw) }),
     effect: shapeTrapLiveEffect,

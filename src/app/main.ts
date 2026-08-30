@@ -9355,7 +9355,7 @@ async function main(): Promise<void> {
     // label sync → the spec's declared side effects. Per-control semantics
     // (worker forwards, restarts, live tone-maps) live on the SCALAR_CONTROLS
     // entries in control-spec.ts, next to the control they belong to.
-    onScalarControl: (spec, raw, phase = "input") => {
+    onScalarControl: (spec, raw, phase = "input", source = "range") => {
       if (spec.view === "flat" && viewIs4D) return;
       if (spec.view === "nonFlat" && !viewIs4D) return;
       // Commit-on-release: the drag's own "input" events already ran the
@@ -9379,7 +9379,7 @@ async function main(): Promise<void> {
         stopShows({ notify: true });
         editSession.beginEdit();
       }
-      state = applyScalarControl(state, spec, raw);
+      state = applyScalarControl(state, spec, raw, source);
       ui.updateLabels(state);
       spec.effect?.(state, controlEffects, previous);
       // Threshold and the shared balloon toggle/radius can change the live
