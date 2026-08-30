@@ -14,7 +14,15 @@ function fourViewScene(): {
     domElement: HTMLCanvasElement;
   };
   cameras: Record<"x" | "y" | "z", THREE.PerspectiveCamera>;
+  parallelCameras: Record<"x" | "y" | "z", THREE.OrthographicCamera>;
   nativePointMaterials: THREE.PointsMaterial[];
+  shaderMaterials: Array<{
+    uniforms: {
+      uHalfHeight: { value: number };
+      uOrthographic: { value: number };
+      uParallelPointScale: { value: number };
+    };
+  }>;
   backdropQuad: { render: ReturnType<typeof vi.fn> };
 } {
   const scene = Object.create(FractalScene.prototype) as FractalScene;
@@ -38,15 +46,30 @@ function fourViewScene(): {
     z: new THREE.PerspectiveCamera(),
   };
   cameras.y.up.set(0, 0, -1);
+  const parallelCameras = {
+    x: new THREE.OrthographicCamera(),
+    y: new THREE.OrthographicCamera(),
+    z: new THREE.OrthographicCamera(),
+  };
+  parallelCameras.y.up.set(0, 0, -1);
   const nativePointMaterials = [4, 6, 8, 10].map(
     (size) => new THREE.PointsMaterial({ size }),
   );
+  const shaderMaterials = Array.from({ length: 3 }, () => ({
+    uniforms: {
+      uHalfHeight: { value: 0 },
+      uOrthographic: { value: 0 },
+      uParallelPointScale: { value: 1 },
+    },
+  }));
   const backdropQuad = { render: vi.fn() };
 
   Reflect.set(scene, "renderer", renderer);
   Reflect.set(scene, "scene", new THREE.Scene());
   Reflect.set(scene, "camera", camera);
-  Reflect.set(scene, "axisCameras", cameras);
+  Reflect.set(scene, "perspectiveAxisCameras", cameras);
+  Reflect.set(scene, "parallelAxisCameras", parallelCameras);
+  Reflect.set(scene, "pointsAxisProjection", "perspective");
   Reflect.set(scene, "pointsViewLayout", "four");
   Reflect.set(scene, "viewportWidth", 1000);
   Reflect.set(scene, "viewportHeight", 600);
@@ -63,16 +86,18 @@ function fourViewScene(): {
   Reflect.set(scene, "replayCursor", {
     material: nativePointMaterials[3],
   });
-  Reflect.set(scene, "dofMaterial", {
-    uniforms: { uHalfHeight: { value: 0 } },
-  });
-  Reflect.set(scene, "fourDMaterial", {
-    uniforms: { uHalfHeight: { value: 0 } },
-  });
-  Reflect.set(scene, "balloonEchoMaterial", {
-    uniforms: { uHalfHeight: { value: 0 } },
-  });
-  return { scene, renderer, cameras, nativePointMaterials, backdropQuad };
+  Reflect.set(scene, "dofMaterial", shaderMaterials[0]);
+  Reflect.set(scene, "fourDMaterial", shaderMaterials[1]);
+  Reflect.set(scene, "balloonEchoMaterial", shaderMaterials[2]);
+  return {
+    scene,
+    renderer,
+    cameras,
+    parallelCameras,
+    nativePointMaterials,
+    shaderMaterials,
+    backdropQuad,
+  };
 }
 
 describe("FractalScene four-view Points rendering", () => {
@@ -157,6 +182,101 @@ describe("FractalScene four-view Points rendering", () => {
     ]);
   });
 
+  it("matches target-plane framing in parallel fixed panes while removing convergence", () => {
+    const { scene, cameras, parallelCameras } = fourViewScene();
+    scene.camera.zoom = 2;
+    scene.camera.updateProjectionMatrix();
+    scene.setPointsAxisProjection("parallel");
+
+    scene.render();
+
+    const target = new THREE.Vector3(0, 0, 0);
+    const radius = scene.camera.position.distanceTo(target);
+    const halfHeight =
+      (radius * Math.tan(THREE.MathUtils.degToRad(25))) / scene.camera.zoom;
+    for (const camera of Object.values(cameras)) {
+      expect(camera.zoom).toBe(scene.camera.zoom);
+    }
+    for (const camera of Object.values(parallelCameras)) {
+      expect(camera.left).toBeCloseTo((-halfHeight * 4) / 3);
+      expect(camera.right).toBeCloseTo((halfHeight * 4) / 3);
+      expect(camera.top).toBeCloseTo(halfHeight);
+      expect(camera.bottom).toBeCloseTo(-halfHeight);
+    }
+
+    const targetPlanePoint = new THREE.Vector3(0, halfHeight * 0.5, 0);
+    const perspectiveAtTarget = targetPlanePoint.clone().project(cameras.x);
+    const parallelAtTarget = targetPlanePoint
+      .clone()
+      .project(parallelCameras.x);
+    expect(parallelAtTarget.x).toBeCloseTo(perspectiveAtTarget.x);
+    expect(parallelAtTarget.y).toBeCloseTo(perspectiveAtTarget.y);
+
+    const nearerPoint = targetPlanePoint.clone().setX(radius * 0.25);
+    const perspectiveNear = nearerPoint.clone().project(cameras.x);
+    const parallelNear = nearerPoint.clone().project(parallelCameras.x);
+    expect(perspectiveNear.y).not.toBeCloseTo(perspectiveAtTarget.y);
+    expect(parallelNear.y).toBeCloseTo(parallelAtTarget.y);
+  });
+
+  it("keeps native and custom point sprites constant-size in parallel panes and restores Current", () => {
+    const {
+      scene,
+      renderer,
+      parallelCameras,
+      nativePointMaterials,
+      shaderMaterials,
+    } = fourViewScene();
+    const renderedCameras: THREE.Camera[] = [];
+    const renderedSizes: number[][] = [];
+    const renderedUniforms: Array<Array<[number, number]>> = [];
+    renderer.render.mockImplementation((_scene, camera: THREE.Camera) => {
+      renderedCameras.push(camera);
+      renderedSizes.push(nativePointMaterials.map((material) => material.size));
+      renderedUniforms.push(
+        shaderMaterials.map((material) => [
+          material.uniforms.uOrthographic.value,
+          material.uniforms.uParallelPointScale.value,
+        ]),
+      );
+    });
+    scene.setPointsAxisProjection("parallel");
+
+    scene.render();
+
+    const radius = scene.camera.position.length();
+    const parallelNativeScale = 300 / (2 * radius);
+    const parallelShaderScale = 300 / radius;
+    expect(renderedCameras).toEqual([
+      parallelCameras.x,
+      parallelCameras.y,
+      parallelCameras.z,
+      scene.camera,
+    ]);
+    for (const sizes of renderedSizes.slice(0, 3)) {
+      sizes.forEach((size, index) => {
+        expect(size).toBeCloseTo([4, 6, 8, 10][index] * parallelNativeScale);
+      });
+    }
+    expect(renderedSizes[3]).toEqual([2, 3, 4, 5]);
+    for (const paneUniforms of renderedUniforms.slice(0, 3)) {
+      for (const [orthographic, scale] of paneUniforms) {
+        expect(orthographic).toBe(1);
+        expect(scale).toBeCloseTo(parallelShaderScale);
+      }
+    }
+    for (const [orthographic] of renderedUniforms[3]) {
+      expect(orthographic).toBe(0);
+    }
+    for (const material of shaderMaterials) {
+      expect(material.uniforms.uOrthographic.value).toBe(0);
+      expect(material.uniforms.uHalfHeight.value).toBe(600);
+    }
+    expect(nativePointMaterials.map((material) => material.size)).toEqual([
+      4, 6, 8, 10,
+    ]);
+  });
+
   it("routes scaled client coordinates to production pane cameras and rejects the panel strip", () => {
     const { scene, renderer, cameras } = fourViewScene();
     vi.spyOn(renderer.domElement, "getBoundingClientRect").mockReturnValue({
@@ -196,5 +316,52 @@ describe("FractalScene four-view Points rendering", () => {
       adjustable: true,
     });
     expect(scene.pointsInteractionView(420, 190)).toBeNull();
+  });
+
+  it("routes fixed interactions to parallel cameras without changing Current", () => {
+    const { scene, renderer, cameras, parallelCameras } = fourViewScene();
+    vi.spyOn(renderer.domElement, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 500,
+      bottom: 300,
+      width: 500,
+      height: 300,
+      toJSON: () => ({}),
+    });
+
+    scene.setPointsAxisProjection("parallel");
+
+    expect(scene.pointsInteractionView(10, 10)).toMatchObject({
+      kind: "x",
+      camera: parallelCameras.x,
+      adjustable: false,
+    });
+    expect(scene.pointsInteractionView(250, 200)).toMatchObject({
+      kind: "current",
+      camera: scene.camera,
+      adjustable: true,
+    });
+    expect(renderer.domElement.getAttribute("aria-label")).toContain(
+      "use parallel projection",
+    );
+
+    scene.setPointsAxisProjection("perspective");
+
+    expect(scene.pointsInteractionView(10, 10)).toMatchObject({
+      kind: "x",
+      camera: cameras.x,
+      adjustable: false,
+    });
+    expect(scene.pointsInteractionView(250, 200)).toMatchObject({
+      kind: "current",
+      camera: scene.camera,
+      adjustable: true,
+    });
+    expect(renderer.domElement.getAttribute("aria-label")).toContain(
+      "use perspective projection",
+    );
   });
 });

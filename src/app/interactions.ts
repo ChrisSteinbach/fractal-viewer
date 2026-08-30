@@ -244,7 +244,13 @@ export function attachInteractions(
   function refreshActiveView(): void {
     if (typeof scene.pointsInteractionViewForKind !== "function") return;
     const view = scene.pointsInteractionViewForKind(activeKind);
-    if (view) activateView(view);
+    if (!view) return;
+    // A live panel inset/resize changes the pane rectangle, but the camera is
+    // part of the pointerdown latch just like pane identity. Keeping it here
+    // also makes a keyboard-triggered Perspective/Parallel toggle mid-drag
+    // wait until the next gesture instead of changing the established plane.
+    activeRect = view.rect;
+    activeAdjustable = view.adjustable;
   }
 
   function setNdc(clientX: number, clientY: number): void {
