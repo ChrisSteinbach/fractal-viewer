@@ -79,7 +79,10 @@ import {
   type SampledSolidStatus,
 } from "./solid-render-status";
 import type { AppState, RenderMode } from "./state";
-import type { PointsViewLayout } from "./points-view-layout";
+import type {
+  PointsAxisProjection,
+  PointsViewLayout,
+} from "./points-view-layout";
 import { resolveBackground } from "./background";
 import type { BackgroundGradient } from "./background";
 import {
@@ -432,6 +435,9 @@ export interface UiHandlers {
   /** Switch the live Points editing workspace without changing document,
    * selection, generated points, or the authored Current camera. */
   onPointsViewLayout: (layout: PointsViewLayout) => void;
+  /** Switch only the fixed X/Y/Z Points panes between perspective and
+   * parallel projection; Current remains the authored perspective view. */
+  onPointsAxisProjection: (projection: PointsAxisProjection) => void;
   /** The one browser-owned automatic-view-motion choice was changed. In a
    * flat view it drives the camera turntable; in a non-flat view it drives
    * the 4D rotor tumble. */
@@ -2329,12 +2335,16 @@ export class Ui {
   private readonly viewControls: HTMLElement;
   private readonly pointsLayoutRow: HTMLElement;
   private readonly pointsLayoutNote: HTMLElement;
+  private readonly pointsParallelViewsControls: HTMLElement;
+  private readonly pointsParallelViewsToggle: HTMLInputElement;
+  private readonly pointsParallelViewsNote: HTMLElement;
   private readonly pointsViewGrid: HTMLElement;
   private readonly pointsLayoutButtons: Record<
     PointsViewLayout,
     HTMLButtonElement
   >;
   private pointsViewLayout: PointsViewLayout = "single";
+  private pointsAxisProjection: PointsAxisProjection = "perspective";
   private readonly threeDSavedViewScope: HTMLElement;
   private readonly fourDSavedViewScope: HTMLElement;
   private readonly autoMotionToggle: HTMLInputElement;
@@ -2945,6 +2955,9 @@ export class Ui {
     this.viewControls = this.byId("viewControls");
     this.pointsLayoutRow = this.byId("pointsLayoutRow");
     this.pointsLayoutNote = this.byId("pointsLayoutNote");
+    this.pointsParallelViewsControls = this.byId("pointsParallelViewsControls");
+    this.pointsParallelViewsToggle = this.byId("pointsParallelViewsToggle");
+    this.pointsParallelViewsNote = this.byId("pointsParallelViewsNote");
     this.pointsViewGrid = this.byId("pointsViewGrid");
     this.pointsLayoutButtons = {
       single: this.byId("pointsSingleViewBtn"),
@@ -3502,6 +3515,14 @@ export class Ui {
         handlers.onPointsViewLayout(layout);
       });
     }
+    this.pointsParallelViewsToggle.addEventListener("change", () => {
+      const projection: PointsAxisProjection = this.pointsParallelViewsToggle
+        .checked
+        ? "parallel"
+        : "perspective";
+      this.setPointsAxisProjection(projection);
+      handlers.onPointsAxisProjection(projection);
+    });
     // The adjacent live-region note is the modality-independent refusal path.
     // A disabled segment still swallows clicks, while pointer events ARE
     // dispatched for disabled form controls, so touch also gets a transient
@@ -4009,6 +4030,12 @@ export class Ui {
     this.syncPointsViewLayout();
   }
 
+  /** Reflect the session-only fixed-pane projection choice. */
+  setPointsAxisProjection(projection: PointsAxisProjection): void {
+    this.pointsAxisProjection = projection;
+    this.pointsParallelViewsToggle.checked = projection === "parallel";
+  }
+
   private syncPointsViewLayout(): void {
     for (const layout of ["single", "four"] as const) {
       const active = layout === this.pointsViewLayout;
@@ -4021,6 +4048,7 @@ export class Ui {
       this.panelContext.renderMode === "points";
     this.pointsViewGrid.classList.toggle("hidden", !visible);
     this.doc.body.classList.toggle("points-four-view", visible);
+    this.pointsParallelViewsControls.classList.toggle("hidden", !visible);
   }
 
   /**
@@ -4201,6 +4229,9 @@ export class Ui {
     this.pointsLayoutNote.textContent = nonFlat
       ? "X, Y, and Z stay axis-locked. Edit 4D transforms in the panel; only Current accepts view gestures. Bloom and EDL are shown in Current-only Single view. Saved images capture Current."
       : "X, Y, and Z stay axis-locked. Move a selected transform in any pane; camera controls stay in Current. Bloom and EDL are shown in Current-only Single view. Saved images capture Current.";
+    this.pointsParallelViewsNote.textContent = nonFlat
+      ? "When on, X, Y, and Z use parallel views of the projected 4D scene. Current, 4D rotation, and the W slice are unchanged."
+      : "When on, X, Y, and Z keep the same size at every depth. Current stays perspective.";
     this.automaticMotionParked =
       state.renderMode === "surface" ||
       (nonFlat &&
@@ -4575,6 +4606,7 @@ export class Ui {
       }
     }
     this.updateLegend(state, nonFlat);
+    const axisViewHelp = `Axis views: fixed · ${this.pointsAxisProjection}`;
 
     if (state.renderMode === "flame") {
       this.helpTitle.textContent = "Flame Render";
@@ -4622,11 +4654,11 @@ export class Ui {
           ? this.mouse
             ? [
                 subject,
-                "Axis views: fixed",
+                axisViewHelp,
                 "Current: drag/scroll view",
                 "Current + Shift: turn 4D",
               ]
-            : [subject, "Axis views: fixed", "Current: rotate/pan/zoom"]
+            : [subject, axisViewHelp, "Current: rotate/pan/zoom"]
           : this.mouse
             ? [
                 subject,
@@ -4642,8 +4674,8 @@ export class Ui {
       this.setHelpLines(
         this.pointsViewLayout === "four"
           ? this.mouse
-            ? ["Axis views: fixed", "Current: drag/pan/scroll view"]
-            : ["Axis views: fixed", "Current: rotate/pan/zoom"]
+            ? [axisViewHelp, "Current: drag/pan/scroll view"]
+            : [axisViewHelp, "Current: rotate/pan/zoom"]
           : this.mouse
             ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
             : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
@@ -4657,12 +4689,12 @@ export class Ui {
           ? this.mouse
             ? [
                 "A lens on the whole cloud",
-                "Axis views: fixed",
+                axisViewHelp,
                 "Current: drag/scroll view",
               ]
             : [
                 "A lens on the whole cloud",
-                "Axis views: fixed",
+                axisViewHelp,
                 "Current: rotate/pan/zoom",
               ]
           : this.mouse

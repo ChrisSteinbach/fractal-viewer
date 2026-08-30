@@ -1,6 +1,10 @@
 /** Session-only layout of the live Points explorer. */
 export type PointsViewLayout = "single" | "four";
 
+/** Session-only projection used by the three fixed-axis panes. Current keeps
+ * the authored perspective camera in either case. */
+export type PointsAxisProjection = "perspective" | "parallel";
+
 /**
  * The three fixed axis views and the existing user-controlled camera view.
  * Rectangles use CSS-pixel, top-left-origin coordinates so the same geometry

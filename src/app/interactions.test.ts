@@ -175,8 +175,19 @@ function touchEvent(
 function fixedAxisView(
   axis: "x" | "y" | "z",
   adjustable = false,
+  parallel = false,
 ): PointsInteractionView {
-  const camera = new THREE.PerspectiveCamera(50, 4 / 3, 0.1, 100);
+  const halfHeight = 10 * Math.tan(THREE.MathUtils.degToRad(25));
+  const camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = parallel
+    ? new THREE.OrthographicCamera(
+        (-halfHeight * 4) / 3,
+        (halfHeight * 4) / 3,
+        halfHeight,
+        -halfHeight,
+        0.1,
+        100,
+      )
+    : new THREE.PerspectiveCamera(50, 4 / 3, 0.1, 100);
   if (axis === "x") camera.position.set(10, 0, 0);
   else if (axis === "y") {
     camera.position.set(0, 10, 0);
@@ -194,18 +205,21 @@ function fixedAxisView(
 
 describe("attachInteractions Points view routing", () => {
   it.each([
-    ["x", 0],
-    ["y", 1],
-    ["z", 2],
+    ["x", 0, false],
+    ["y", 1, false],
+    ["z", 2, false],
+    ["x", 0, true],
+    ["y", 1, true],
+    ["z", 2, true],
   ] as const)(
-    "moves in the %s pane's image plane while preserving that axis",
-    (axis, fixedComponent) => {
+    "moves in the %s pane's image plane while preserving component %i (parallel=%s)",
+    (axis, fixedComponent, parallel) => {
       const cube = new THREE.Object3D();
       cube.position.set(1, 2, 3);
       const { canvas, onTransformChange } = setupInteractions({
         selected: 0,
         guideCube: () => cube,
-        interactionView: () => fixedAxisView(axis),
+        interactionView: () => fixedAxisView(axis, false, parallel),
       });
 
       canvas.dispatchEvent(
@@ -325,6 +339,9 @@ describe("attachInteractions Points view routing", () => {
     const initial = fixedAxisView("x");
     const resized = {
       ...initial,
+      // Projection changed during the drag: the live rectangle updates, but
+      // this replacement camera stays dormant until the next gesture.
+      camera: fixedAxisView("y", false, true).camera,
       rect: { left: 20, top: 30, width: 800, height: 500 },
     };
     const refresh = vi.fn(() => resized);

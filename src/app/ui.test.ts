@@ -141,6 +141,7 @@ function noopHandlers(): UiHandlers {
     onClosePanel: vi.fn(),
     onRenderMode: vi.fn(),
     onPointsViewLayout: vi.fn(),
+    onPointsAxisProjection: vi.fn(),
     onAutoMotionToggle: vi.fn(),
     onContinuousZoomToggle: vi.fn(),
     onContinuousZoomReset: vi.fn(),
@@ -6007,8 +6008,15 @@ describe("Ui render mode switch", () => {
       "pointsFourViewBtn",
     ) as HTMLButtonElement;
     const grid = document.getElementById("pointsViewGrid") as HTMLElement;
+    const parallelControls = document.getElementById(
+      "pointsParallelViewsControls",
+    ) as HTMLElement;
+    const parallel = document.getElementById(
+      "pointsParallelViewsToggle",
+    ) as HTMLInputElement;
     expect(single.getAttribute("aria-pressed")).toBe("true");
     expect(grid.classList.contains("hidden")).toBe(true);
+    expect(parallelControls.classList.contains("hidden")).toBe(true);
 
     four.click();
 
@@ -6016,6 +6024,7 @@ describe("Ui render mode switch", () => {
     expect(four.getAttribute("aria-pressed")).toBe("true");
     expect(single.getAttribute("aria-pressed")).toBe("false");
     expect(grid.classList.contains("hidden")).toBe(false);
+    expect(parallelControls.classList.contains("hidden")).toBe(false);
     expect(document.body.classList.contains("points-four-view")).toBe(true);
     expect(
       Array.from(grid.querySelectorAll(".points-view-label"), (label) =>
@@ -6023,25 +6032,49 @@ describe("Ui render mode switch", () => {
       ),
     ).toEqual(["+X · YZ", "+Y · XZ", "+Z · XY", "Current · adjustable"]);
 
+    parallel.click();
+    expect(parallel.checked).toBe(true);
+    expect(handlers.onPointsAxisProjection).toHaveBeenCalledWith("parallel");
+
+    parallel.click();
+    expect(parallel.checked).toBe(false);
+    expect(handlers.onPointsAxisProjection).toHaveBeenLastCalledWith(
+      "perspective",
+    );
+
     single.click();
     expect(handlers.onPointsViewLayout).toHaveBeenLastCalledWith("single");
     expect(grid.classList.contains("hidden")).toBe(true);
+    expect(parallelControls.classList.contains("hidden")).toBe(true);
     expect(document.body.classList.contains("points-four-view")).toBe(false);
   });
 
   it("keeps the four-view choice dormant through another renderer", () => {
     const ui = new Ui(document);
     ui.setPointsViewLayout("four");
+    ui.setPointsAxisProjection("parallel");
     const grid = document.getElementById("pointsViewGrid") as HTMLElement;
     const row = document.getElementById("pointsLayoutRow") as HTMLElement;
+    const controls = document.getElementById(
+      "pointsParallelViewsControls",
+    ) as HTMLElement;
+    const toggle = document.getElementById(
+      "pointsParallelViewsToggle",
+    ) as HTMLInputElement;
 
     ui.updateLabels({ ...initialState(true), renderMode: "flame" });
     expect(row.classList.contains("hidden")).toBe(true);
     expect(grid.classList.contains("hidden")).toBe(true);
+    expect(controls.classList.contains("hidden")).toBe(true);
 
     ui.updateLabels(initialState(true));
     expect(row.classList.contains("hidden")).toBe(false);
     expect(grid.classList.contains("hidden")).toBe(false);
+    expect(controls.classList.contains("hidden")).toBe(false);
+    expect(toggle.checked).toBe(true);
+    expect(document.getElementById("helpText")?.textContent).toContain(
+      "Axis views: fixed · parallel",
+    );
     expect(
       document
         .getElementById("pointsFourViewBtn")
@@ -6067,6 +6100,9 @@ describe("Ui render mode switch", () => {
     expect(document.getElementById("pointsLayoutNote")?.textContent).toContain(
       "Edit 4D transforms in the panel",
     );
+    expect(
+      document.getElementById("pointsParallelViewsNote")?.textContent,
+    ).toContain("projected 4D scene");
     expect(document.getElementById("helpText")?.textContent).toContain(
       "Axis views: fixed",
     );

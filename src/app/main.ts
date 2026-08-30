@@ -210,7 +210,10 @@ import {
   saveIsolationHandoff,
 } from "./isolation-handoff";
 import { Ui } from "./ui";
-import type { PointsViewLayout } from "./points-view-layout";
+import type {
+  PointsAxisProjection,
+  PointsViewLayout,
+} from "./points-view-layout";
 import {
   effectiveSurfaceSamples,
   parseSurfaceSamplesOverride,
@@ -736,6 +739,7 @@ async function main(): Promise<void> {
   // undo, share links, scene files, or point generation. The preference stays
   // dormant through other renderers and resumes on return to Points.
   let pointsViewLayout: PointsViewLayout = "single";
+  let pointsAxisProjection: PointsAxisProjection = "perspective";
   const surfaceSamplesOverride = parseSurfaceSamplesOverride(
     window.location.search,
   );
@@ -6178,7 +6182,9 @@ async function main(): Promise<void> {
 
   function refreshUi(): void {
     ui.setPointsViewLayout(pointsViewLayout);
+    ui.setPointsAxisProjection(pointsAxisProjection);
     ui.updateLabels(state);
+    scene.setPointsAxisProjection(pointsAxisProjection);
     scene.setPointsViewLayout(
       state.renderMode === "points" ? pointsViewLayout : "single",
     );
@@ -10156,6 +10162,12 @@ async function main(): Promise<void> {
       if (state.renderMode === "points") scene.setPointsViewLayout(layout);
       // Layout-specific help distinguishes the three fixed panes from
       // Current, and 4D copy discloses its panel-only transform editing.
+      ui.updateLabels(state);
+    },
+    onPointsAxisProjection: (projection) => {
+      pointsAxisProjection = projection;
+      ui.setPointsAxisProjection(projection);
+      scene.setPointsAxisProjection(projection);
       ui.updateLabels(state);
     },
     // Live slice state is owned by FourDView (like the tumble clock): it

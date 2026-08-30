@@ -54,6 +54,7 @@ import type { RenderStyle, SolidParams } from "./state";
 import {
   fourPointsViewports,
   pointsViewportAt,
+  type PointsAxisProjection,
   type PointsViewLayout,
   type PointsViewportKind,
   type PointsViewportRect,
@@ -387,6 +388,8 @@ const BACKDROP_CANVAS_PX = 256;
 const DOF_VERTEX = /* glsl */ `
   uniform float uSize;
   uniform float uHalfHeight;
+  uniform float uOrthographic;
+  uniform float uParallelPointScale;
   uniform float uFocus;
   uniform float uAperture;
   uniform float uMaxBlur;
@@ -398,7 +401,8 @@ const DOF_VERTEX = /* glsl */ `
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     float dist = -mv.z;
     float coc = min(uMaxBlur, 1.0 + uAperture * abs(dist - uFocus));
-    gl_PointSize = uSize * (uHalfHeight / dist) * coc;
+    float pointScale = mix(uHalfHeight / dist, uParallelPointScale, uOrthographic);
+    gl_PointSize = uSize * pointScale * coc;
     vAlpha = 1.0 / (coc * coc);
     gl_Position = projectionMatrix * mv;
   }
@@ -559,6 +563,8 @@ export const FOUR_D_VERTEX = /* glsl */ `
   uniform float uSize;
   uniform float uGlowSize;
   uniform float uHalfHeight;
+  uniform float uOrthographic;
+  uniform float uParallelPointScale;
   uniform float uDepthStyle;
   uniform float uGlowExposure;
   uniform float uFocus;
@@ -601,7 +607,8 @@ export const FOUR_D_VERTEX = /* glsl */ `
       vAlpha /= coc * coc;
     }
 
-    gl_PointSize = pointSize * (uHalfHeight / dist);
+    float pointScale = mix(uHalfHeight / dist, uParallelPointScale, uOrthographic);
+    gl_PointSize = pointSize * pointScale;
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -676,6 +683,8 @@ export const BALLOON_ECHO_VERTEX = /* glsl */ `
   uniform float uEchoTintStrength;
   uniform float uSize;
   uniform float uHalfHeight;
+  uniform float uOrthographic;
+  uniform float uParallelPointScale;
   varying vec3 vColor;
   varying float vFade;
   void main() {
@@ -747,7 +756,8 @@ export const BALLOON_ECHO_VERTEX = /* glsl */ `
     // magnification above.
     vec4 mv = modelViewMatrix * vec4(inv, 1.0);
     float dist = -mv.z;
-    gl_PointSize = uSize * mag * (uHalfHeight / dist);
+    float pointScale = mix(uHalfHeight / dist, uParallelPointScale, uOrthographic);
+    gl_PointSize = uSize * mag * pointScale;
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -839,7 +849,7 @@ export interface ExportImage {
  * browser-client CSS pixels, matching MouseEvent/Touch coordinates. */
 export interface PointsInteractionView {
   kind: PointsViewportKind;
-  camera: THREE.PerspectiveCamera;
+  camera: THREE.Camera;
   rect: Omit<PointsViewportRect, "kind" | "adjustable">;
   adjustable: boolean;
 }
@@ -867,12 +877,18 @@ export class FractalScene {
   readonly renderer: THREE.WebGLRenderer;
 
   /** Fixed positive-axis cameras used only by the optional Points 2×2
-   * workspace. The existing public camera remains the adjustable pane and is
-   * never temporarily re-posed, preserving applyCamera's equality cache. */
-  private readonly axisCameras: Record<
+   * workspace. Both projection families stay allocated so toggling does not
+   * disturb a latched interaction; the existing public camera remains the
+   * adjustable perspective pane and is never temporarily re-posed. */
+  private readonly perspectiveAxisCameras: Record<
     Exclude<PointsViewportKind, "current">,
     THREE.PerspectiveCamera
   >;
+  private readonly parallelAxisCameras: Record<
+    Exclude<PointsViewportKind, "current">,
+    THREE.OrthographicCamera
+  >;
+  private pointsAxisProjection: PointsAxisProjection = "perspective";
   private pointsViewLayout: PointsViewLayout = "single";
   private readonly pointsViewGrid: HTMLElement | null;
 
@@ -1602,15 +1618,21 @@ export class FractalScene {
     );
     this.camera.position.set(5, 4, 5);
     this.camera.lookAt(0, 0, 0);
-    this.axisCameras = {
+    this.perspectiveAxisCameras = {
       x: new THREE.PerspectiveCamera(DEFAULT_CAMERA_FOV, 1, 0.1, 1000),
       y: new THREE.PerspectiveCamera(DEFAULT_CAMERA_FOV, 1, 0.1, 1000),
       z: new THREE.PerspectiveCamera(DEFAULT_CAMERA_FOV, 1, 0.1, 1000),
     };
+    this.parallelAxisCameras = {
+      x: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000),
+      y: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000),
+      z: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000),
+    };
     // Looking down +Y needs an up vector that is not parallel to the view
     // direction. The sign makes the fixed Y pane read as a conventional top
     // view, with -Z toward the top of the screen.
-    this.axisCameras.y.up.set(0, 0, -1);
+    this.perspectiveAxisCameras.y.up.set(0, 0, -1);
+    this.parallelAxisCameras.y.up.set(0, 0, -1);
 
     // MSAA is a context-creation-time choice: on at low DPR where
     // aliasing shows, off at DPR >= 2 where the buffer already oversamples
@@ -1701,6 +1723,8 @@ export class FractalScene {
       uniforms: {
         uSize: { value: DOF_POINT_SIZE },
         uHalfHeight: { value: buffer.y * 0.5 },
+        uOrthographic: { value: 0 },
+        uParallelPointScale: { value: 1 },
         uFocus: { value: 9 },
         uAperture: { value: 3.5 },
         uMaxBlur: { value: 14 },
@@ -1718,6 +1742,8 @@ export class FractalScene {
         uSize: { value: DOF_POINT_SIZE },
         uGlowSize: { value: GLOW_POINT_SIZE },
         uHalfHeight: { value: buffer.y * 0.5 },
+        uOrthographic: { value: 0 },
+        uParallelPointScale: { value: 1 },
         // 0 = plain projection, 1 = glow sprite + bloom, 2 = projected-depth
         // DOF. Aerial and EDL deliberately resolve to 0; see FOUR_D_VERTEX.
         uDepthStyle: { value: 0 },
@@ -1797,6 +1823,8 @@ export class FractalScene {
         uEchoTintStrength: { value: 0 },
         uSize: { value: BALLOON_ECHO_POINT_SIZE },
         uHalfHeight: { value: buffer.y * 0.5 },
+        uOrthographic: { value: 0 },
+        uParallelPointScale: { value: 1 },
       },
       vertexShader: BALLOON_ECHO_VERTEX,
       fragmentShader: BALLOON_ECHO_FRAGMENT,
@@ -3456,14 +3484,24 @@ export class FractalScene {
     this.syncPointsCanvasLabel();
   }
 
+  /** Switch only the three fixed panes between perspective and parallel
+   * projection. Current remains the authored perspective camera. */
+  setPointsAxisProjection(projection: PointsAxisProjection): void {
+    if (projection === this.pointsAxisProjection) return;
+    this.pointsAxisProjection = projection;
+    this.renderNeeded = true;
+    this.syncAxisCameras();
+    this.syncPointsCanvasLabel();
+  }
+
   /** Keep the focusable canvas's interaction contract dimensionally honest. */
   private syncPointsCanvasLabel(): void {
     this.canvas.setAttribute(
       "aria-label",
       this.pointsViewLayout === "four"
         ? this.fourDActive
-          ? "Four-view 4D fractal workspace. Fixed X, Y, and Z axis views are followed by the adjustable Current view. Edit transforms in the controls panel; only Current accepts view gestures. Camera keys control Current. Shift with arrows or Page Up and Page Down turns the fourth-dimension view, and the bracket keys move the w slice."
-          : "Four-view fractal placement workspace. Fixed X, Y, and Z axis views are followed by the adjustable Current view. Drag a selected transform in any view; camera keys and camera gestures control Current. Arrow keys orbit, plus and minus zoom, and Space pauses or resumes automatic motion."
+          ? `Four-view 4D fractal workspace. Fixed X, Y, and Z axis views use ${this.pointsAxisProjection} projection and are followed by the adjustable perspective Current view. Edit transforms in the controls panel; only Current accepts view gestures. Camera keys control Current. Shift with arrows or Page Up and Page Down turns the fourth-dimension view, and the bracket keys move the w slice.`
+          : `Four-view fractal placement workspace. Fixed X, Y, and Z axis views use ${this.pointsAxisProjection} projection and are followed by the adjustable perspective Current view. Drag a selected transform in any view; camera keys and camera gestures control Current. Arrow keys orbit, plus and minus zoom, and Space pauses or resumes automatic motion.`
         : "Fractal viewpoint. Arrow keys orbit, plus and minus zoom, Space pauses or resumes the automatic motion. In a 4D scene, Shift with arrows or Page Up and Page Down turns the fourth-dimension view, and the bracket keys move the w slice.",
     );
   }
@@ -3528,7 +3566,7 @@ export class FractalScene {
     const scaleX = bounds.width > 0 ? this.viewportWidth / bounds.width : 1;
     const scaleY = bounds.height > 0 ? this.viewportHeight / bounds.height : 1;
     const camera =
-      view.kind === "current" ? this.camera : this.axisCameras[view.kind];
+      view.kind === "current" ? this.camera : this.axisCamera(view.kind);
     return {
       kind: view.kind,
       camera,
@@ -3550,7 +3588,29 @@ export class FractalScene {
     );
   }
 
-  /** Keep fixed directions while sharing the live target, radius and lens. */
+  private axisCamera(
+    kind: Exclude<PointsViewportKind, "current">,
+  ): THREE.PerspectiveCamera | THREE.OrthographicCamera {
+    return this.pointsAxisProjection === "parallel"
+      ? this.parallelAxisCameras[kind]
+      : this.perspectiveAxisCameras[kind];
+  }
+
+  private pointsCameraDistanceToTarget(camera: THREE.Camera): number {
+    const pose = this.lastCameraPose;
+    return Math.max(
+      Math.hypot(
+        camera.position.x - (pose?.[3] ?? 0),
+        camera.position.y - (pose?.[4] ?? 0),
+        camera.position.z - (pose?.[5] ?? 0),
+      ),
+      1e-6,
+    );
+  }
+
+  /** Keep fixed directions while sharing the live target, radius and target-
+   * plane framing. Parallel uses the Current lens at the target plane, so
+   * toggling projection changes convergence without a scale jump. */
   private syncAxisCameras(viewports = this.livePointsViewports()): void {
     const pose = this.lastCameraPose;
     const target = new THREE.Vector3(
@@ -3559,23 +3619,41 @@ export class FractalScene {
       pose?.[5] ?? 0,
     );
     const radius = Math.max(this.camera.position.distanceTo(target), 1e-6);
+    const zoom = Math.max(this.camera.zoom, 1e-6);
+    const halfHeight =
+      (radius * Math.tan(THREE.MathUtils.degToRad(this.camera.fov * 0.5))) /
+      zoom;
     for (const kind of ["x", "y", "z"] as const) {
-      const camera = this.axisCameras[kind];
       const viewport = viewports.find((view) => view.kind === kind);
-      camera.fov = this.camera.fov;
-      camera.near = this.camera.near;
-      camera.far = this.camera.far;
-      camera.aspect = viewport
+      const aspect = viewport
         ? viewport.width / Math.max(viewport.height, 1)
         : 1;
-      camera.clearViewOffset();
-      camera.position.copy(target);
-      if (kind === "x") camera.position.x += radius;
-      else if (kind === "y") camera.position.y += radius;
-      else camera.position.z += radius;
-      camera.lookAt(target);
-      camera.updateProjectionMatrix();
-      camera.updateMatrixWorld();
+      const perspective = this.perspectiveAxisCameras[kind];
+      perspective.fov = this.camera.fov;
+      perspective.near = this.camera.near;
+      perspective.far = this.camera.far;
+      perspective.aspect = aspect;
+      perspective.zoom = this.camera.zoom;
+      perspective.clearViewOffset();
+
+      const parallel = this.parallelAxisCameras[kind];
+      parallel.left = -halfHeight * aspect;
+      parallel.right = halfHeight * aspect;
+      parallel.top = halfHeight;
+      parallel.bottom = -halfHeight;
+      parallel.near = this.camera.near;
+      parallel.far = this.camera.far;
+      parallel.zoom = 1;
+
+      for (const camera of [perspective, parallel]) {
+        camera.position.copy(target);
+        if (kind === "x") camera.position.x += radius;
+        else if (kind === "y") camera.position.y += radius;
+        else camera.position.z += radius;
+        camera.lookAt(target);
+        camera.updateProjectionMatrix();
+        camera.updateMatrixWorld();
+      }
     }
   }
 
@@ -3824,14 +3902,19 @@ export class FractalScene {
       for (const view of viewports) {
         if (view.width <= 0 || view.height <= 0) continue;
         const camera =
-          view.kind === "current" ? this.camera : this.axisCameras[view.kind];
+          view.kind === "current" ? this.camera : this.axisCamera(view.kind);
         const bottom = this.viewportHeight - view.top - view.height;
         renderer.setViewport(view.left, bottom, view.width, view.height);
         renderer.setScissor(view.left, bottom, view.width, view.height);
-        // Three's built-in PointsMaterial attenuation uses the full render
+        // Three's built-in perspective attenuation uses the full render
         // target height, not the active viewport height. Counter-scale its
         // authored CSS-pixel size so half-height panes match Single exactly.
-        const pointScale = view.height / Math.max(this.viewportHeight, 1);
+        // Orthographic projection skips Three's attenuation entirely, so its
+        // separate factor reproduces that same target-plane pixel size.
+        const pointScale =
+          camera instanceof THREE.OrthographicCamera
+            ? view.height / (2 * this.pointsCameraDistanceToTarget(camera))
+            : view.height / Math.max(this.viewportHeight, 1);
         nativePointMaterials.forEach((material, index) => {
           material.size = nativePointSizes[index] * pointScale;
         });
@@ -3854,9 +3937,18 @@ export class FractalScene {
     if (this.fourDActive) this.updateFourDFade(camera);
     if (this.renderStyle === "dof") this.focusDof(this.fourDActive, camera);
     const halfHeight = cssHeight * this.renderer.getPixelRatio() * 0.5;
-    this.dofMaterial.uniforms.uHalfHeight.value = halfHeight;
-    this.fourDMaterial.uniforms.uHalfHeight.value = halfHeight;
-    this.balloonEchoMaterial.uniforms.uHalfHeight.value = halfHeight;
+    const orthographic = camera instanceof THREE.OrthographicCamera ? 1 : 0;
+    const parallelPointScale =
+      halfHeight / this.pointsCameraDistanceToTarget(camera);
+    for (const material of [
+      this.dofMaterial,
+      this.fourDMaterial,
+      this.balloonEchoMaterial,
+    ]) {
+      material.uniforms.uHalfHeight.value = halfHeight;
+      material.uniforms.uOrthographic.value = orthographic;
+      material.uniforms.uParallelPointScale.value = parallelPointScale;
+    }
   }
 
   /**

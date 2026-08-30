@@ -2267,6 +2267,23 @@
                 Four views
               </button>
             </div>
+            <div id="pointsParallelViewsControls" class="hidden">
+              <label class="checkbox-label" id="pointsParallelViewsRow">
+                <input
+                  type="checkbox"
+                  id="pointsParallelViewsToggle"
+                  aria-describedby="pointsParallelViewsNote"
+                />
+                Parallel fixed views
+                <span class="control-scope" aria-label="Scope: This session"
+                  >This session</span
+                >
+              </label>
+              <p class="flame-hint" id="pointsParallelViewsNote">
+                X, Y, and Z keep the same size at every depth. Current stays
+                perspective.
+              </p>
+            </div>
             <p class="flame-hint" id="pointsLayoutNote">
               X, Y, and Z stay axis-locked. Move a selected transform in any
               pane; camera controls stay in Current. Bloom and EDL are shown in
