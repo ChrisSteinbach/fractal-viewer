@@ -194,10 +194,10 @@ async function selectTransform(page) {
 /** Bring an element to a fixed height inside the panel's own scroller —
  * `scrollIntoView` animates here and the panel re-renders under it, so the
  * gate writes scrollTop directly and re-reads the rect afterwards. */
-async function scrollInPanel(page, handleJs, offset = 280) {
+async function scrollInPanel(page, id, offset = 280) {
   await page.evaluate(
-    ([js, off]) => {
-      const el = new Function(`return (${js})`)();
+    ([elementId, off]) => {
+      const el = document.getElementById(elementId);
       if (!el) return;
       const panel = document.getElementById("panel");
       panel.scrollTop +=
@@ -205,7 +205,7 @@ async function scrollInPanel(page, handleJs, offset = 280) {
         panel.getBoundingClientRect().top -
         off;
     },
-    [handleJs, offset],
+    [id, offset],
   );
   await sleep(250);
   await settleScroll(page);
@@ -748,7 +748,7 @@ async function main() {
     if (!(await openSection(page, "atmosphereSection"))) {
       harnessFail("Atmosphere section is not reachable in Points mode");
     }
-    await scrollInPanel(page, 'document.getElementById("fogSlider")');
+    await scrollInPanel(page, "fogSlider");
 
     const numberRect = await tapTarget(page, "fogSliderNumber");
     if (numberRect === null) {
@@ -803,7 +803,7 @@ async function main() {
       `scrolled ${String(Math.round(scrolled))}px, value ${room.value} -> ${afterSwipe.value}, document ${afterSwipe.hash === room.hash ? "unchanged" : "MOVED"}`,
     );
 
-    await scrollInPanel(page, 'document.getElementById("fogSlider")');
+    await scrollInPanel(page, "fogSlider");
     await settleScroll(page);
     const trackRect = await page.evaluate(() => {
       const r = document.getElementById("fogSlider").getBoundingClientRect();
@@ -931,7 +931,7 @@ async function main() {
           harnessFail("the Position X companion is missing from the editor");
           break;
         }
-        await scrollInPanel(page, `document.getElementById("${numberId}")`);
+        await scrollInPanel(page, numberId);
       }
 
       await page.evaluate((id) => {
