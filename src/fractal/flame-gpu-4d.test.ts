@@ -1702,6 +1702,15 @@ describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
     );
   });
 
+  it("keeps the position-color coordinate mutable for optional gamma", () => {
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "var t = clamp(\n            (pp.xyz - params.colorMin.xyz)",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "t = pow(t, vec3f(params.colorInvRangeGamma.w));",
+    );
+  });
+
   it("interpolates WORKGROUP_SIZE and WEIGHT_FIXED_POINT_SCALE into the kernel source", () => {
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
       `@workgroup_size(${WORKGROUP_SIZE})`,

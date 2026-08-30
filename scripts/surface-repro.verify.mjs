@@ -379,6 +379,16 @@ function searchFor(extra) {
 
 async function bootScene(page, target) {
   await page.goto(target, { waitUntil: "load", timeout: 60_000 });
+  // A first production visit can install the isolation service worker and
+  // reload once before SharedArrayBuffer/WebGPU work begins. Do not let the
+  // first, unisolated point cloud satisfy the boot latch: callers would then
+  // start polling in the execution context that the activation reload is
+  // about to destroy. Local preview already supplies the isolation headers,
+  // so this resolves immediately there.
+  await page.waitForFunction(() => window.crossOriginIsolated, undefined, {
+    timeout: 60_000,
+    polling: 100,
+  });
   // The point count crossing zero means the boot chaos game landed — the
   // same boot signal every other verify script in this directory uses.
   await page.waitForFunction(

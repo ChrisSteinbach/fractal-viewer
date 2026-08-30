@@ -1642,6 +1642,18 @@ summary.editor-group-title {
   font-size: 12px;
 }
 
+/* Evolution is explicitly operated as a coarse-touch workflow. Its two
+   header actions use the same 44px target floor as its navigation and A/B
+   controls; the shared Gallery/About header keeps its compact sizing. */
+#mutationAgainBtn {
+  min-height: 44px;
+}
+
+#mutationCloseBtn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
 .gallery-empty {
   padding: 28px 8px;
   color: var(--text-dim);
@@ -1982,6 +1994,7 @@ summary.editor-group-title {
 }
 
 .evolution-compare-summary {
+  min-height: 44px;
   cursor: pointer;
   color: var(--text);
   font-size: 13px;
@@ -2134,6 +2147,7 @@ summary.editor-group-title {
 }
 
 .evolution-locks-summary {
+  min-height: 44px;
   cursor: pointer;
   color: var(--text);
 }
@@ -2169,6 +2183,7 @@ summary.editor-group-title {
 }
 
 .mutation-preview-summary {
+  min-height: 44px;
   cursor: pointer;
 }
 

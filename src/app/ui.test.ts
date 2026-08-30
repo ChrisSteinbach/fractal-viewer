@@ -11473,6 +11473,39 @@ describe("Ui mutation grid", () => {
     }
   });
 
+  it("keeps focus inside the dialog when the active comparison switch disables itself", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    const comparisonPins = [
+      { slot: "A" as const, state: "available" as const, label: "A · root" },
+      {
+        slot: "B" as const,
+        state: "available" as const,
+        label: "B · lineage-2 · Child 1",
+      },
+    ];
+    ui.setEvolutionWorkspace(workspace({ comparisonPins }));
+    const showA = document.getElementById(
+      "evolutionCompareShowA",
+    ) as HTMLButtonElement;
+    showA.focus();
+
+    ui.setEvolutionWorkspace(
+      workspace({ comparisonPins, comparisonActive: "A" }),
+    );
+
+    expect(showA.disabled).toBe(true);
+    expect(document.activeElement).toBe(
+      document.getElementById("evolutionCompareShowB"),
+    );
+    expect(
+      document
+        .getElementById("mutationModal")
+        ?.contains(document.activeElement),
+    ).toBe(true);
+  });
+
   it("acquires the selected Collection scene as either explicit endpoint and preserves the selection on refresh", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);

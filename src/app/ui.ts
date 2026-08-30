@@ -5083,6 +5083,16 @@ export class Ui {
    * cells. All controls remain native buttons/selects/checkboxes, so touch,
    * keyboard activation, and the modal's dynamic focus ring share one path. */
   setEvolutionWorkspace(view: EvolutionWorkspaceView): void {
+    // A successful endpoint switch disables the button that initiated it.
+    // Capture that focus before updating `disabled`: browsers otherwise move
+    // it to BODY, temporarily breaking this aria-modal dialog's focus
+    // continuity until the user presses Tab again.
+    const focusedComparisonSwitch =
+      this.doc.activeElement === this.evolutionCompareShowA
+        ? this.evolutionCompareShowA
+        : this.doc.activeElement === this.evolutionCompareShowB
+          ? this.evolutionCompareShowB
+          : null;
     const comparing = view.comparisonActive !== null;
     const comparisonOccupied = comparing || view.comparisonPending;
     this.evolutionComparisonActive = view.comparisonActive;
@@ -5199,6 +5209,13 @@ export class Ui {
     this.evolutionCompareClearB.disabled = view.busy || pinB.state === "empty";
     this.evolutionCompareExit.disabled =
       view.comparisonActive === null && !view.comparisonPending;
+    if (comparing && focusedComparisonSwitch?.disabled) {
+      const otherSwitch =
+        focusedComparisonSwitch === this.evolutionCompareShowA
+          ? this.evolutionCompareShowB
+          : this.evolutionCompareShowA;
+      (otherSwitch.disabled ? this.evolutionCompareExit : otherSwitch).focus();
+    }
     this.evolutionCompareAnimate.checked = view.comparisonAnimate;
     this.evolutionCompareAnimate.disabled = view.detached;
     this.evolutionCompareStatus.textContent = view.comparisonStatus;

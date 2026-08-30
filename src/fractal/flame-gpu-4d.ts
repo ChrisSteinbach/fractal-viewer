@@ -1245,7 +1245,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
           rgb = colors[u32(t * 255.0 + 0.5)].xyz;
         }
         case 5u: { // position: raw authored XYZ and shared axis-color blend.
-          let t = clamp(
+          var t = clamp(
             (pp.xyz - params.colorMin.xyz) * params.colorInvRangeGamma.xyz,
             vec3f(0.0),
             vec3f(1.0),
