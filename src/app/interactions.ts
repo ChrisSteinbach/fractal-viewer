@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { ROTATE_SPEED } from "./orbit";
 import type { OrbitCamera } from "./orbit";
-import type { FractalScene } from "./scene";
+import type { FractalScene, PointsInteractionView } from "./scene";
+import type { PointsViewportKind } from "./points-view-layout";
 import { cameraKeyAction } from "./keyboard-camera";
 import { clamp } from "../fractal/vec";
 import { MIN_GUIDE_SCALE, MAX_GUIDE_SCALE } from "./constants";
@@ -172,11 +173,16 @@ export function attachInteractions(
   callbacks: InteractionCallbacks,
 ): InteractionsHandle {
   const canvas = scene.canvas;
-  const camera = scene.camera;
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const dragPlane = new THREE.Plane();
   const dragOffset = new THREE.Vector3();
+
+  let activeCamera: THREE.Camera = scene.camera;
+  let activeKind: PointsViewportKind = "current";
+  let activeRect: PointsInteractionView["rect"] =
+    canvas.getBoundingClientRect();
+  let activeAdjustable = true;
 
   let orbitMode: OrbitMode = "none";
   let dragging = false;
@@ -204,31 +210,70 @@ export function attachInteractions(
   let pinchDist = 0;
   let pinchAngle = 0;
 
+  function resolveInteractionView(
+    clientX: number,
+    clientY: number,
+  ): PointsInteractionView | null {
+    // The fallback keeps attachInteractions usable with the intentionally
+    // tiny scene doubles in its unit tests and with any older embedders: one
+    // full-canvas adjustable view is the pre-feature contract.
+    if (typeof scene.pointsInteractionView !== "function") {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        kind: "current",
+        camera: scene.camera,
+        rect: {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+        },
+        adjustable: true,
+      };
+    }
+    return scene.pointsInteractionView(clientX, clientY);
+  }
+
+  function activateView(view: PointsInteractionView): void {
+    activeKind = view.kind;
+    activeCamera = view.camera;
+    activeRect = view.rect;
+    activeAdjustable = view.adjustable;
+  }
+
+  function refreshActiveView(): void {
+    if (typeof scene.pointsInteractionViewForKind !== "function") return;
+    const view = scene.pointsInteractionViewForKind(activeKind);
+    if (view) activateView(view);
+  }
+
   function setNdc(clientX: number, clientY: number): void {
-    const rect = canvas.getBoundingClientRect();
-    ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    ndc.x = ((clientX - activeRect.left) / activeRect.width) * 2 - 1;
+    ndc.y = -((clientY - activeRect.top) / activeRect.height) * 2 + 1;
   }
 
   // Screen-space pan: shift the orbit target along the camera's right/up axes,
   // scaled so a drag tracks the cursor at the target's depth.
   function panByScreen(dx: number, dy: number): void {
-    camera.updateMatrixWorld();
+    activeCamera.updateMatrixWorld();
     const target = new THREE.Vector3(
       orbit.target[0],
       orbit.target[1],
       orbit.target[2],
     );
     const dist =
-      camera.position.distanceTo(target) *
-      Math.tan(((camera.fov / 2) * Math.PI) / 180);
+      activeCamera.position.distanceTo(target) *
+      Math.tan(((scene.camera.fov / 2) * Math.PI) / 180);
     const right = new THREE.Vector3().setFromMatrixColumn(
-      camera.matrixWorld,
+      activeCamera.matrixWorld,
       0,
     );
-    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
-    right.multiplyScalar((-dx * dist) / window.innerHeight / 2);
-    up.multiplyScalar((dy * dist) / window.innerHeight / 2);
+    const up = new THREE.Vector3().setFromMatrixColumn(
+      activeCamera.matrixWorld,
+      1,
+    );
+    right.multiplyScalar((-dx * dist) / Math.max(activeRect.height, 1) / 2);
+    up.multiplyScalar((dy * dist) / Math.max(activeRect.height, 1) / 2);
     orbit.panBy(right.x + up.x, right.y + up.y, right.z + up.z);
   }
 
@@ -339,6 +384,10 @@ export function attachInteractions(
   }
 
   function beginCameraGesture(event: Event): void {
+    if (!activeAdjustable) {
+      orbitMode = "none";
+      return;
+    }
     const touch = touchOf(event);
     if (touch && touch.touches.length === 2) {
       dollyStart = pinchSpan(touch).dist;
@@ -365,9 +414,9 @@ export function attachInteractions(
     }
     if (!cube) return;
     const normal = new THREE.Vector3();
-    camera.getWorldDirection(normal);
+    activeCamera.getWorldDirection(normal);
     dragPlane.setFromNormalAndCoplanarPoint(normal, cube.position);
-    raycaster.setFromCamera(ndc, camera);
+    raycaster.setFromCamera(ndc, activeCamera);
     const hit = new THREE.Vector3();
     raycaster.ray.intersectPlane(dragPlane, hit);
     dragOffset.copy(cube.position).sub(hit);
@@ -384,6 +433,13 @@ export function attachInteractions(
       mouse.button === 0;
     if (callbacks.frozen() && !frozenRotor) return;
     const { x, y } = pointerXY(event);
+    const continuingTouch =
+      touch !== null && latchFromTouch && (dragging || orbitMode !== "none");
+    if (!continuingTouch) {
+      const view = resolveInteractionView(x, y);
+      if (!view) return;
+      activateView(view);
+    }
     setNdc(x, y);
     lastX = x;
     lastY = y;
@@ -399,7 +455,7 @@ export function attachInteractions(
     // A second finger produces another touchstart during the same gesture.
     // It changes the gesture shape (move -> pinch), not its target or dirty
     // history, so preserve both latches while refreshing pinch baselines.
-    if (touch && latchFromTouch && (dragging || orbitMode !== "none")) {
+    if (continuingTouch) {
       if (dragging && dragTransformIndex !== null) {
         event.preventDefault();
         beginTransformGesture(event, dragTransformIndex);
@@ -490,7 +546,7 @@ export function attachInteractions(
     } else {
       const point = pointerXY(event);
       setNdc(point.x, point.y);
-      raycaster.setFromCamera(ndc, camera);
+      raycaster.setFromCamera(ndc, activeCamera);
       const hit = new THREE.Vector3();
       if (!raycaster.ray.intersectPlane(dragPlane, hit)) return false;
       cube.position.copy(hit.add(dragOffset));
@@ -519,6 +575,9 @@ export function attachInteractions(
       return;
     }
     const { x, y } = pointerXY(event);
+    // Preserve pane identity across dividers, but keep its rectangle current
+    // while the panel inset animates or the canvas resizes mid-gesture.
+    if (orbitMode !== "none" || dragging) refreshActiveView();
     const dx = x - lastX;
     const dy = y - lastY;
     if (orbitMode !== "none") {
@@ -541,12 +600,26 @@ export function attachInteractions(
     dragTransformDirty = false;
     latchFromTouch = false;
     rotorOnly = false;
+    activeKind = "current";
+    activeCamera = scene.camera;
+    activeRect = canvas.getBoundingClientRect();
+    activeAdjustable = true;
     if (commitIndex !== null) callbacks.onTransformCommit(commitIndex);
     flushFourDCommit();
   }
 
   function onWheel(event: WheelEvent): void {
     event.preventDefault();
+    // A wheel can arrive while a pointer gesture is latched. Its scale/dolly
+    // action belongs to that gesture, and must not replace the camera used by
+    // the next drag move with whichever pane happens to be under the wheel.
+    if (dragging || orbitMode !== "none") {
+      refreshActiveView();
+    } else {
+      const view = resolveInteractionView(event.clientX, event.clientY);
+      if (!view) return;
+      activateView(view);
+    }
     const selected = callbacks.selectedTransform();
     const frozenRotor =
       callbacks.frozen() &&
@@ -554,6 +627,7 @@ export function attachInteractions(
       callbacks.fourDView() &&
       event.shiftKey;
     if (callbacks.frozen() && !frozenRotor) return;
+    if (selected === null && !activeAdjustable) return;
     if (wheelCommitIndex !== null && wheelCommitIndex !== selected) {
       flushWheelCommit();
     }
