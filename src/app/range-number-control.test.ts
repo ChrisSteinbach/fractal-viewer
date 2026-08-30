@@ -63,6 +63,33 @@ describe("enhanceRangeWithNumber", () => {
     );
   });
 
+  it("normalizes a wrapping label into a gated container and explicit range caption", () => {
+    const wrapper = document.createElement("label");
+    wrapper.id = "gatedRow";
+    wrapper.className = "select-label hidden";
+    wrapper.append("Point size");
+    const slider = range({ id: "pointSize", value: 2 });
+    wrapper.appendChild(slider);
+    document.body.appendChild(wrapper);
+
+    const control = enhanceRangeWithNumber(slider, {
+      min: 0,
+      max: 10,
+      step: 1,
+      onInput: vi.fn(),
+    });
+
+    const container = document.getElementById("gatedRow");
+    expect(container?.tagName).toBe("DIV");
+    expect(container?.classList.contains("hidden")).toBe(true);
+    expect(container?.querySelector("label")?.htmlFor).toBe("pointSize");
+    expect(container?.querySelector("label")?.textContent).toContain(
+      "Point size",
+    );
+    expect(container?.querySelectorAll("input")).toHaveLength(2);
+    expect(container?.querySelector(".range-number-pair")).toBe(control.pair);
+  });
+
   it("uses the semantic adapter when a slider input synchronizes the number and callback", () => {
     const slider = range({ min: 0, max: 4, step: 1, value: 1 });
     const onInput = vi.fn();
@@ -112,6 +139,29 @@ describe("enhanceRangeWithNumber", () => {
     expect(calls).toEqual(["input:37:number", "commit:37"]);
   });
 
+  it("lets a valid change bubble but contains invalid drafts", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const slider = range({ min: 0, max: 10, value: 2 });
+    host.appendChild(slider);
+    const bubbled = vi.fn();
+    host.addEventListener("change", bubbled);
+    const control = enhanceRangeWithNumber(slider, {
+      min: 0,
+      max: 10,
+      step: 1,
+      onInput: vi.fn(),
+    });
+
+    control.numberInput.value = "20";
+    control.numberInput.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(bubbled).not.toHaveBeenCalled();
+
+    control.numberInput.value = "4";
+    control.numberInput.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(bubbled).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["", "Enter a number."],
     ["-1", "Enter a value from 0 to 10."],
@@ -128,6 +178,7 @@ describe("enhanceRangeWithNumber", () => {
         min: 0,
         max: 10,
         step: 1,
+        enforceStep: draft === "1.5",
         allowedValues: draft === "3" ? [0, 2, 4, 8] : undefined,
         onInput,
         onCommit,
@@ -199,6 +250,29 @@ describe("enhanceRangeWithNumber", () => {
     expect(onInput).not.toHaveBeenCalled();
   });
 
+  it("formats synchronized values and rejects drafts beyond the declared precision", () => {
+    const slider = range({ min: 0, max: 10, step: 0.01, value: 2 });
+    const onInput = vi.fn();
+    const control = enhanceRangeWithNumber(slider, {
+      min: 0,
+      max: 10,
+      step: 0.01,
+      precision: 2,
+      onInput,
+    });
+
+    expect(control.numberInput.value).toBe("2.00");
+    control.numberInput.value = "2.345";
+    control.numberInput.dispatchEvent(new Event("change"));
+
+    expect(control.numberInput.value).toBe("2.345");
+    expect(control.numberInput.validationMessage).toBe(
+      "Use at most 2 decimal places.",
+    );
+    expect(slider.value).toBe("2");
+    expect(onInput).not.toHaveBeenCalled();
+  });
+
   it("updates external value, bounds, discrete domain, and disabled state without callbacks", () => {
     const slider = range({ min: 0, max: 10, value: 2 });
     const onInput = vi.fn();
@@ -220,7 +294,7 @@ describe("enhanceRangeWithNumber", () => {
     expect(slider.value).toBe("6");
     expect(control.numberInput.min).toBe("4");
     expect(control.numberInput.max).toBe("12");
-    expect(control.numberInput.step).toBe("2");
+    expect(control.numberInput.step).toBe("any");
     expect(slider.disabled).toBe(true);
     expect(control.numberInput.disabled).toBe(true);
     expect(onInput).not.toHaveBeenCalled();
@@ -248,6 +322,76 @@ describe("enhanceRangeWithNumber", () => {
     control.setDisabled(true);
     expect(slider.disabled).toBe(true);
     expect(control.numberInput.disabled).toBe(true);
+  });
+
+  it("preserves an invalid or uncommitted draft across external synchronization", () => {
+    const slider = range({ value: 2 });
+    const control = enhanceRangeWithNumber(slider, {
+      min: 0,
+      max: 10,
+      step: 1,
+      onInput: vi.fn(),
+    });
+
+    control.numberInput.value = "20";
+    control.numberInput.dispatchEvent(new Event("change"));
+    control.setValue(4);
+    expect(control.numberInput.value).toBe("20");
+    expect(control.numberInput.getAttribute("aria-invalid")).toBe("true");
+    expect(slider.value).toBe("4");
+
+    control.numberInput.value = "6.5";
+    control.numberInput.dispatchEvent(new Event("input"));
+    control.setValue(5);
+    expect(control.numberInput.value).toBe("6.5");
+
+    control.setValue(5, { force: true });
+    expect(control.numberInput.value).toBe("5");
+    expect(control.numberInput.hasAttribute("aria-invalid")).toBe(false);
+  });
+
+  it("steps continuous and discrete semantic domains with Arrow keys", () => {
+    const onContinuousInput = vi.fn();
+    const onContinuousCommit = vi.fn();
+    const continuous = enhanceRangeWithNumber(range({ value: 2 }), {
+      min: 0,
+      max: 10,
+      step: 0.25,
+      onInput: onContinuousInput,
+      onCommit: onContinuousCommit,
+    });
+    continuous.numberInput.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "ArrowUp",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(continuous.numberInput.value).toBe("2.25");
+    expect(continuous.range.value).toBe("2.25");
+    expect(onContinuousInput).toHaveBeenCalledWith(2.25, "number");
+    expect(onContinuousCommit).not.toHaveBeenCalled();
+    continuous.numberInput.dispatchEvent(
+      new KeyboardEvent("keyup", { key: "ArrowUp", bubbles: true }),
+    );
+    expect(onContinuousCommit).toHaveBeenCalledOnce();
+    expect(onContinuousCommit).toHaveBeenCalledWith(2.25);
+
+    const discrete = enhanceRangeWithNumber(range({ value: 8 }), {
+      min: 1,
+      max: 16,
+      step: 1,
+      allowedValues: [1, 2, 4, 8, 16],
+      onInput: vi.fn(),
+    });
+    discrete.numberInput.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowUp", cancelable: true }),
+    );
+    expect(discrete.numberInput.value).toBe("16");
+    discrete.numberInput.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", cancelable: true }),
+    );
+    expect(discrete.numberInput.value).toBe("8");
   });
 
   it("rejects invalid construction and programmatic synchronization contracts", () => {

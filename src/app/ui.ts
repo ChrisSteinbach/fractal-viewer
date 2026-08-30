@@ -47,6 +47,8 @@ import {
   SURFACE_PATTERN_DEFAULT_AXIS,
   SURFACE_PATTERN_DEFAULT_STRENGTH,
   SURFACE_PATTERN_KINDS,
+  SURFACE_PATTERN_SCALE_MAX,
+  SURFACE_PATTERN_SCALE_MIN,
 } from "../fractal/surface-pattern";
 import type {
   ResolvedSurfacePattern,
@@ -134,6 +136,8 @@ import { offlineExportSupported } from "./video-encode";
 import { installSliderScrollGuard } from "./slider-scroll-guard";
 import {
   enhanceRangeWithNumber,
+  normalizeRangeWrappingLabel,
+  type RangeNumberAdapter,
   type RangeNumberControl,
 } from "./range-number-control";
 import {
@@ -1466,6 +1470,7 @@ function paletteDisplayName(
 interface AxisControl {
   slider: HTMLInputElement;
   readout: HTMLElement;
+  numeric: RangeNumberControl;
 }
 
 /**
@@ -2098,6 +2103,7 @@ export class Ui {
    * other and they drift.
    */
   private readonly modalStack: ModalStackEntry[] = [];
+  private dynamicRangeSequence = 0;
 
   private readonly glowBrightnessRow: HTMLElement;
   // One shared Balloon presentation. The checkbox and scalar inputs are
@@ -2172,6 +2178,7 @@ export class Ui {
   private readonly scheduleSourceSaved: HTMLOptGroupElement;
   private readonly scheduleSnapshotBtn: HTMLButtonElement;
   private readonly scheduleDepthSlider: HTMLInputElement;
+  private readonly scheduleDepthNumeric: RangeNumberControl;
   private readonly scheduleDepthLabel: HTMLElement;
   private readonly scheduleNote: HTMLElement;
   private readonly scheduleEditHint: HTMLElement;
@@ -2364,6 +2371,7 @@ export class Ui {
   private readonly continuousZoomResetBtn: HTMLButtonElement;
   private readonly autoOrbitRow: HTMLElement;
   private readonly autoOrbitSpeedSlider: HTMLInputElement;
+  private readonly autoOrbitSpeedNumeric: RangeNumberControl;
   private readonly autoOrbitSpeedLabel: HTMLElement;
 
   // 4D VIEW controls. "4D" is a DERIVED property of the system now (see
@@ -2376,6 +2384,7 @@ export class Ui {
   private readonly fourDSliceToggleRow: HTMLElement;
   private readonly fourDSliceRow: HTMLElement;
   private readonly fourDSliceSlider: HTMLInputElement;
+  private readonly fourDSliceNumeric: RangeNumberControl;
   private readonly fourDSliceLabel: HTMLElement;
   // Slice thickness: lives inside fourDSliceRow like the rel-color row
   // below, but with the OPPOSITE surface gate — a slab only means something
@@ -2383,6 +2392,7 @@ export class Ui {
   // surface session (see syncViewRows).
   private readonly fourDSliceThicknessRow: HTMLElement;
   private readonly fourDSliceThicknessSlider: HTMLInputElement;
+  private readonly fourDSliceThicknessNumeric: RangeNumberControl;
   private readonly fourDSliceThicknessLabel: HTMLElement;
   // Slice-relative color: lives inside fourDSliceRow (so it hides with the
   // slice), with its own row element hidden for the baked 4D color modes — the
@@ -2449,6 +2459,7 @@ export class Ui {
   private readonly fourDTumbleRow: HTMLElement;
   private readonly automaticMotionParkedHint: HTMLElement;
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
+  private readonly fourDTumbleSpeedNumeric: RangeNumberControl;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
   /** Is the projection ACTUALLY tumbling right now (main.ts's
    * `fourDView.tumbleOn`, whose default this matches)? Mirrored here because
@@ -2626,6 +2637,15 @@ export class Ui {
 
   constructor(doc: Document = document) {
     this.doc = doc;
+    // Normalize every static wrapping <label> before retaining row references.
+    // The numeric companion makes each range a two-input control, which needs
+    // an explicit caption label; doing this first also keeps all later byId()
+    // fields pointed at the live replacement row rather than its old wrapper.
+    for (const range of doc.querySelectorAll<HTMLInputElement>(
+      'input[type="range"]',
+    )) {
+      normalizeRangeWrappingLabel(range);
+    }
     this.helpTitle = this.byId("helpTitle");
     this.panelTitle = this.byId("panelTitle");
     this.helpText = this.byId("helpText");
@@ -3000,6 +3020,79 @@ export class Ui {
     this.automaticMotionParkedHint = this.byId("automaticMotionParkedHint");
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
+    this.scheduleDepthNumeric = enhanceRangeWithNumber(
+      this.scheduleDepthSlider,
+      {
+        min: 0,
+        max: 5,
+        step: 1,
+        ariaLabel: "Hybrid schedule depth exact value",
+        onInput: (value, source) => {
+          if (source === "number") {
+            this.handlers?.onScheduleDepth(value, "input");
+          }
+        },
+        onCommit: (value) => this.handlers?.onScheduleDepth(value, "commit"),
+      },
+    );
+    this.autoOrbitSpeedNumeric = enhanceRangeWithNumber(
+      this.autoOrbitSpeedSlider,
+      {
+        min: 0.1,
+        max: 3,
+        step: 0.1,
+        ariaLabel: "Orbit speed exact value",
+        formatValue: (value) => value.toFixed(1),
+        onInput: (value, source) => {
+          if (source !== "number") return;
+          this.autoOrbitSpeedLabel.textContent = `${value.toFixed(1)}×`;
+          this.handlers?.onAutoOrbitSpeedInput(value);
+        },
+      },
+    );
+    this.fourDTumbleSpeedNumeric = enhanceRangeWithNumber(
+      this.fourDTumbleSpeedSlider,
+      {
+        min: 0.1,
+        max: 3,
+        step: 0.1,
+        ariaLabel: "Tumble speed exact value",
+        formatValue: (value) => value.toFixed(1),
+        onInput: (value, source) => {
+          if (source !== "number") return;
+          this.fourDTumbleSpeedLabel.textContent = `${value.toFixed(1)}×`;
+          this.handlers?.onFourDTumbleSpeedInput(value);
+        },
+      },
+    );
+    this.fourDSliceNumeric = enhanceRangeWithNumber(this.fourDSliceSlider, {
+      min: -1,
+      max: 1,
+      step: 0.01,
+      ariaLabel: "Slice position exact value",
+      formatValue: (value) => value.toFixed(2),
+      onInput: (value, source) => {
+        if (source !== "number") return;
+        this.fourDSliceLabel.textContent = value.toFixed(2);
+        this.handlers?.onFourDSliceInput(value);
+      },
+      onCommit: () => this.handlers?.onFourDSliceCommit(),
+    });
+    this.fourDSliceThicknessNumeric = enhanceRangeWithNumber(
+      this.fourDSliceThicknessSlider,
+      {
+        min: 0,
+        max: 0.5,
+        step: 0.01,
+        ariaLabel: "Slice thickness exact value",
+        formatValue: (value) => value.toFixed(2),
+        onInput: (value, source) => {
+          if (source !== "number") return;
+          this.fourDSliceThicknessLabel.textContent = value.toFixed(2);
+          this.handlers?.onFourDSliceThicknessInput(value);
+        },
+      },
+    );
     this.colorModeRow = this.byId("colorModeRow");
     this.fourDColorRow = this.byId("fourDColorRow");
     this.fourDDepthFadeRow = this.byId("fourDDepthFadeRow");
@@ -3014,6 +3107,8 @@ export class Ui {
               max: spec.numeric.max,
               step: spec.numeric.step,
               allowedValues: spec.numeric.allowedValues,
+              enforceStep: spec.numeric.enforceStep,
+              precision: spec.numeric.precision,
               adapter: {
                 rangeToNumber: spec.numeric.rangeToNumber ?? ((value) => value),
                 numberToRange: spec.numeric.numberToRange ?? ((value) => value),
@@ -3180,6 +3275,16 @@ export class Ui {
     return bound.input;
   }
 
+  /** Set an app-owned availability gate on a table control and its exact
+   * companion together. Keeping this explicit avoids sampling the range
+   * touch guard's one-frame suppression as if it were durable UI state. */
+  private setScalarDisabled(id: string, disabled: boolean): void {
+    const bound = this.scalars.get(id);
+    if (!bound) throw new Error(`No scalar control spec for #${id}`);
+    bound.input.disabled = disabled;
+    bound.numeric?.setDisabled(disabled);
+  }
+
   /** {@link scalarInput} narrowed to a `<select>` (for `.options` access). */
   private scalarSelect(id: string): HTMLSelectElement {
     const input = this.scalarInput(id);
@@ -3215,6 +3320,58 @@ export class Ui {
     const el = this.doc.getElementById(id);
     if (!el) throw new Error(`Missing required element #${id}`);
     return el as T;
+  }
+
+  /** Pair one hand-built range with a semantic numeric editor. Existing range
+   * listeners remain the sole range mutation path; the companion callback
+   * forwards only number-originated edits, preventing duplicate live updates.
+   * The formatted readout remains visible and is an accessible description:
+   * it carries units (%, °, ×) and derived state such as Scale W's “auto”. */
+  private pairDynamicRange(options: {
+    slider: HTMLInputElement;
+    readout: HTMLElement;
+    min: number;
+    max: number;
+    step: number;
+    value: number;
+    ariaLabel: string;
+    adapter?: RangeNumberAdapter;
+    formatValue?: (value: number) => string;
+    onNumberInput(value: number): void;
+    onNumberCommit?: (value: number) => void;
+  }): RangeNumberControl {
+    if (!options.readout.id) {
+      let candidate: string;
+      do {
+        this.dynamicRangeSequence += 1;
+        candidate = `dynamicRangeReadout${String(this.dynamicRangeSequence)}`;
+      } while (this.doc.getElementById(candidate) !== null);
+      options.readout.id = candidate;
+    }
+    const descriptions =
+      options.slider
+        .getAttribute("aria-describedby")
+        ?.trim()
+        .split(/\s+/)
+        .filter(Boolean) ?? [];
+    if (!descriptions.includes(options.readout.id)) {
+      descriptions.push(options.readout.id);
+    }
+    options.slider.setAttribute("aria-describedby", descriptions.join(" "));
+    const control = enhanceRangeWithNumber(options.slider, {
+      min: options.min,
+      max: options.max,
+      step: options.step,
+      adapter: options.adapter,
+      ariaLabel: `${options.ariaLabel} exact value`,
+      formatValue: options.formatValue,
+      onInput: (value, source) => {
+        if (source === "number") options.onNumberInput(value);
+      },
+      onCommit: options.onNumberCommit,
+    });
+    control.setValue(options.value);
+    return control;
   }
 
   /**
@@ -3271,17 +3428,28 @@ export class Ui {
     // listener owns the settlement seam for all current and future families.
     // `input` listeners remain mutation-only; the native trailing `change`
     // commits exactly once after the gesture finishes.
-    this.transformEditor.addEventListener("change", (event) => {
+    const settleTransformInput = (event: Event): void => {
       const input = event.target;
       if (
         !(input instanceof HTMLInputElement) ||
-        input.type !== "range" ||
+        (input.type !== "range" &&
+          !input.classList.contains("range-number-input")) ||
         !input.isConnected ||
         !this.transformEditor.contains(input)
       ) {
         return;
       }
       this.commitGeometry();
+    };
+    this.transformEditor.addEventListener("change", settleTransformInput);
+    // The exact-number primitive owns Arrow stepping so non-linear detents and
+    // model-domain increments work consistently. Its keyup is therefore the
+    // keyboard counterpart to a range/number `change`: settle the one live
+    // geometry sequence exactly once after key repeat ends.
+    this.transformEditor.addEventListener("keyup", (event) => {
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        settleTransformInput(event);
+      }
     });
     this.menuToggle.addEventListener("click", () => handlers.onTogglePanel());
     this.backdrop.addEventListener("click", () => handlers.onClosePanel());
@@ -3742,9 +3910,9 @@ export class Ui {
   ): void {
     this.fourDSliceToggle.checked = on;
     this.syncViewRows();
-    this.fourDSliceSlider.value = String(center);
+    this.fourDSliceNumeric.setValue(center, { force: true });
     this.fourDSliceLabel.textContent = center.toFixed(2);
-    this.fourDSliceThicknessSlider.value = String(thickness);
+    this.fourDSliceThicknessNumeric.setValue(thickness, { force: true });
     this.fourDSliceThicknessLabel.textContent = thickness.toFixed(2);
     this.fourDSliceRelColorToggle.checked = relColor;
   }
@@ -3810,13 +3978,13 @@ export class Ui {
       !this.fourDSurfaceLive,
     );
     const slabRefused = this.fourDSurfaceLive && !this.fourDSlabAvailable;
-    this.fourDSliceThicknessSlider.disabled = slabRefused;
+    this.fourDSliceThicknessNumeric.setDisabled(slabRefused);
     if (slabRefused) {
       // The session clamps the slab to 0 whatever the thumb says — show
       // the clamped truth rather than a lying nonzero thumb. (Thickness
       // is session view state; resetFourDSlice zeroes it on every 4D
       // entry anyway, so no user-authored value is being discarded.)
-      this.fourDSliceThicknessSlider.value = "0";
+      this.fourDSliceThicknessNumeric.setValue(0, { force: true });
       this.fourDSliceThicknessLabel.textContent = "0.00";
     }
     // TWO SESSIONS REFUSE THE SLAB AND THEY OWE DIFFERENT REASONS. The IFS
@@ -3931,9 +4099,9 @@ export class Ui {
       pointsMainFog;
     const balloonHorizon = state.renderMode === "points" && state.balloonEcho;
 
-    this.fogSlider.disabled = !mainFog && !balloonHorizon;
+    this.setScalarDisabled("fogSlider", !mainFog && !balloonHorizon);
     this.fogTintColorInput.disabled = !mainFog;
-    this.fogTintStrengthInput.disabled = !mainFog;
+    this.setScalarDisabled("fogTintStrength", !mainFog);
 
     let reason = "";
     if (!mainFog) {
@@ -4033,14 +4201,14 @@ export class Ui {
    * browser-owned on/off choice is shared with 4D and must survive the
    * dimension transition untouched. */
   resetAutoOrbitSpeed(): void {
-    this.autoOrbitSpeedSlider.value = "1";
+    this.autoOrbitSpeedNumeric.setValue(1, { force: true });
     this.autoOrbitSpeedLabel.textContent = "1.0×";
   }
 
   /** Reset only the contextual 4D speed and mirror the mechanism's actual
    * activity for help text. The shared preference checkbox is not reset. */
   resetFourDTumbleSpeed(on: boolean): void {
-    this.fourDTumbleSpeedSlider.value = "1";
+    this.fourDTumbleSpeedNumeric.setValue(1, { force: true });
     this.fourDTumbleSpeedLabel.textContent = "1.0×";
     this.fourDTumbleActive = on;
   }
@@ -4244,7 +4412,7 @@ export class Ui {
     if (schedule) {
       this.scheduleInstalledOption.textContent = `System B (${schedule.transforms.length} maps)`;
       this.scheduleSource.value = "__installed";
-      this.scheduleDepthSlider.value = String(schedule.depth);
+      this.scheduleDepthNumeric.setValue(schedule.depth);
       this.scheduleDepthLabel.textContent = String(schedule.depth);
       this.scheduleNote.textContent =
         `Applies ${schedule.depth} random System B ` +
@@ -4253,7 +4421,7 @@ export class Ui {
       this.scheduleNote.classList.remove("hidden");
     } else {
       this.scheduleSource.value = "";
-      this.scheduleDepthSlider.value = "0";
+      this.scheduleDepthNumeric.setValue(0);
       this.scheduleDepthLabel.textContent = "off";
       this.scheduleNote.textContent = "";
       this.scheduleNote.classList.add("hidden");
@@ -4509,7 +4677,7 @@ export class Ui {
       "hidden",
       state.renderStyle !== "glow",
     );
-    this.scalarInput("glowBrightnessSlider").disabled = false;
+    this.setScalarDisabled("glowBrightnessSlider", false);
     // The shared ramp/contrast inputs also feed Surface Height/Radius. Keep
     // those rows reachable during such a Surface session independently of
     // the Points/4D color selection shown above; otherwise the active
@@ -4533,8 +4701,10 @@ export class Ui {
       "hidden",
       !activeSurfaceRamp && !storedFlatGamma && !(nonFlat && activeFourDGamma),
     );
-    this.scalarInput("colorGammaSlider").disabled =
-      nonFlat && !activeSurfaceRamp && !activeFourDGamma;
+    this.setScalarDisabled(
+      "colorGammaSlider",
+      nonFlat && !activeSurfaceRamp && !activeFourDGamma,
+    );
     // The axis pickers only mean anything for the position mode (and never
     // while non-flat it stays visible-disabled to disclose the retained
     // authored dependency rather than vanishing with its parent.
@@ -4802,13 +4972,6 @@ export class Ui {
       "aria-label",
       state.panelOpen ? "Close controls" : "Open controls",
     );
-    // Availability gates above remain owned by their existing rows. Reflect
-    // their final app-owned disabled state into the exact companion once per
-    // state sync; the range touch guard's transient disabled flip is not
-    // observed and therefore cannot strand the number input disabled.
-    for (const { input, numeric } of this.scalars.values()) {
-      if (numeric) numeric.setDisabled(input.disabled);
-    }
   }
 
   /**
@@ -6870,6 +7033,26 @@ export class Ui {
         });
         row.appendChild(slider);
         row.appendChild(readout);
+        this.pairDynamicRange({
+          slider,
+          readout,
+          min: 0,
+          max: 1,
+          step: 0.01,
+          value: leak.value,
+          ariaLabel: slider.getAttribute("aria-label") ?? "Xaos leak",
+          onNumberInput: (value) => {
+            readout.textContent = formatXaosLeak(value);
+            this.handlers?.onXaosLeak(leak.blockA, leak.blockB, value, "input");
+          },
+          onNumberCommit: (value) =>
+            this.handlers?.onXaosLeak(
+              leak.blockA,
+              leak.blockB,
+              value,
+              "commit",
+            ),
+        });
       }
       this.xaosLeakRows.appendChild(row);
     }
@@ -7196,8 +7379,18 @@ export class Ui {
         );
 
         row.append(name, slider, readout);
+        const numeric = this.pairDynamicRange({
+          slider,
+          readout,
+          min: spec.min,
+          max: spec.max,
+          step: spec.step,
+          value: spec.toSlider(model),
+          ariaLabel: `${spec.title} ${axisLabel}`,
+          onNumberInput: (value) => this.onAxisInput(channel, axis, value),
+        });
         group.appendChild(row);
-        controls[channel].push({ slider, readout });
+        controls[channel].push({ slider, readout, numeric });
       });
 
       if (channel === "scale") {
@@ -7362,10 +7555,26 @@ export class Ui {
     );
 
     row.append(name, slider, readout);
+    const numeric = this.pairDynamicRange({
+      slider,
+      readout,
+      // Weight 0 is a meaningful imported/authored inactive transform even
+      // though the logarithmic range itself bottoms out at WEIGHT_MIN.
+      min: 0,
+      max: WEIGHT_MAX,
+      step: 0.01,
+      value: weight,
+      ariaLabel: "Weight",
+      adapter: {
+        rangeToNumber: sliderToWeight,
+        numberToRange: weightToSlider,
+      },
+      onNumberInput: (value) => this.onWeightValueInput(value),
+    });
     group.appendChild(row);
     this.transformEditor.appendChild(group);
 
-    return { slider, readout };
+    return { slider, readout, numeric };
   }
 
   /** Keep the role-aware flat composer synchronized to one document shape. */
@@ -7654,11 +7863,7 @@ export class Ui {
       const readout = this.doc.createElement("span");
       readout.className = "value";
       const format = options.format ?? ((value: number) => value.toFixed(2));
-      const input = (value: number): void => {
-        slider.value = String(value);
-        readout.textContent = format(value);
-      };
-      input(options.value);
+      readout.textContent = format(options.value);
       slider.addEventListener("input", () => {
         const value = Number(slider.value);
         options.write(value);
@@ -7673,7 +7878,32 @@ export class Ui {
       });
       row.append(name, slider, readout);
       host.appendChild(row);
-      return { slider, readout, input };
+      const numeric = this.pairDynamicRange({
+        slider,
+        readout,
+        min: Number(slider.min),
+        max: Number(slider.max),
+        step: options.step,
+        value: options.value,
+        ariaLabel: options.aria,
+        onNumberInput: (value) => {
+          options.write(value);
+          readout.textContent = format(value);
+          syncCoupledDomains();
+          refreshValidation();
+        },
+        onNumberCommit: () => {
+          if (authoredShapeValidation(draft) === null) {
+            onCommit(authoredShapeFromDraft(draft));
+          }
+        },
+      });
+      const input = (value: number): void => {
+        slider.value = String(value);
+        readout.textContent = format(value);
+        numeric.setValue(value);
+      };
+      return { slider, readout, numeric, input };
     };
 
     const ranges = new Map<string, RangeBinding>();
@@ -7946,6 +8176,11 @@ export class Ui {
         const minor = ranges.get("minor");
         if (minor) {
           minor.slider.max = String(draft.primitive.major);
+          minor.numeric.setBounds({
+            min: Number(minor.slider.min),
+            max: draft.primitive.major,
+            step: Number(minor.slider.step),
+          });
           if (draft.primitive.minor > draft.primitive.major) {
             draft.primitive.minor = draft.primitive.major;
             minor.input(draft.primitive.minor);
@@ -7958,6 +8193,11 @@ export class Ui {
           draft.primitive.radius * Math.sin(Math.PI / draft.primitive.teeth);
         if (tangential) {
           tangential.slider.max = String(limit);
+          tangential.numeric.setBounds({
+            min: Number(tangential.slider.min),
+            max: limit,
+            step: Number(tangential.slider.step),
+          });
           if (draft.primitive.tooth[1] > limit) {
             draft.primitive.tooth[1] = limit;
             tangential.input(limit);
@@ -7967,6 +8207,11 @@ export class Ui {
         const holeMax = Math.max(0, draft.primitive.radius - 0.01);
         if (hole) {
           hole.slider.max = String(holeMax);
+          hole.numeric.setBounds({
+            min: Number(hole.slider.min),
+            max: holeMax,
+            step: Number(hole.slider.step),
+          });
           if (draft.primitive.hole > holeMax) {
             draft.primitive.hole = holeMax;
             hole.input(holeMax);
@@ -8207,8 +8452,18 @@ export class Ui {
     slider.addEventListener("input", () => onInput(Number(slider.value)));
 
     row.append(name, slider, readout);
+    const numeric = this.pairDynamicRange({
+      slider,
+      readout,
+      min: 0,
+      max: 1,
+      step: 0.01,
+      value: initial,
+      ariaLabel,
+      onNumberInput: onInput,
+    });
     group.appendChild(row);
-    return { slider, readout };
+    return { slider, readout, numeric };
   }
 
   /**
@@ -8368,8 +8623,18 @@ export class Ui {
       );
 
       row.append(name, slider, readout);
+      const numeric = this.pairDynamicRange({
+        slider,
+        readout,
+        min: range.min,
+        max: range.max,
+        step: range.step,
+        value: resolved[key],
+        ariaLabel: `Finish ${FINISH_LABELS[key].toLowerCase()}`,
+        onNumberInput: (value) => this.onFinishInput(key, value),
+      });
       group.appendChild(row);
-      rows[key] = { slider, readout };
+      rows[key] = { slider, readout, numeric };
     }
     this.syncFinishBundleSelect(bundle, finish);
     material.value =
@@ -8407,7 +8672,7 @@ export class Ui {
     const { rows, bundle } = editor.finishControls;
     const resolved = resolveSurfaceFinish(editor.geometry.finish);
     for (const key of FINISH_FIELDS) {
-      rows[key].slider.value = String(resolved[key]);
+      rows[key].numeric.setValue(resolved[key]);
       rows[key].readout.textContent = formatFinishValue(key, resolved[key]);
     }
     this.syncFinishBundleSelect(bundle, editor.geometry.finish);
@@ -8455,7 +8720,7 @@ export class Ui {
       const { group, material, bundle, rows, note } = editor.finishControls;
       material.disabled = refused;
       bundle.disabled = refused;
-      for (const key of FINISH_FIELDS) rows[key].slider.disabled = refused;
+      for (const key of FINISH_FIELDS) rows[key].numeric.setDisabled(refused);
       this.setReasonNote(note, reason("finish"));
       note.classList.toggle("hidden", !refused);
       group.classList.toggle("material-inert", refused);
@@ -8466,8 +8731,8 @@ export class Ui {
       const hasFamily = family.value !== PATTERN_FAMILY_NONE;
       family.disabled = refused;
       axis.disabled = refused || !hasFamily;
-      scale.slider.disabled = refused || !hasFamily;
-      strength.slider.disabled = refused || !hasFamily;
+      scale.numeric.setDisabled(refused || !hasFamily);
+      strength.numeric.setDisabled(refused || !hasFamily);
       this.setReasonNote(note, reason("pattern"));
       note.classList.toggle("hidden", !refused);
       group.classList.toggle("material-inert", refused);
@@ -8826,8 +9091,26 @@ export class Ui {
       ),
     );
     scaleRow.append(scaleName, scaleSlider, scaleReadout);
+    const scaleNumeric = this.pairDynamicRange({
+      slider: scaleSlider,
+      readout: scaleReadout,
+      min: SURFACE_PATTERN_SCALE_MIN,
+      max: SURFACE_PATTERN_SCALE_MAX,
+      step: 0.01,
+      value: resolved.scale,
+      ariaLabel: "Pattern scale",
+      adapter: {
+        rangeToNumber: patternScaleFromSlider,
+        numberToRange: patternScaleToSlider,
+      },
+      onNumberInput: (value) => this.onPatternScaleInput(value),
+    });
     group.appendChild(scaleRow);
-    const scale: AxisControl = { slider: scaleSlider, readout: scaleReadout };
+    const scale: AxisControl = {
+      slider: scaleSlider,
+      readout: scaleReadout,
+      numeric: scaleNumeric,
+    };
 
     // The strength row: the patterned-albedo blend, `0..1` at the wire's
     // own 0.01 UI step (see PATTERN_STRENGTH_STEP), default 1.
@@ -8853,10 +9136,21 @@ export class Ui {
       this.onPatternStrengthInput(Number(strengthSlider.value)),
     );
     strengthRow.append(strengthName, strengthSlider, strengthReadout);
+    const strengthNumeric = this.pairDynamicRange({
+      slider: strengthSlider,
+      readout: strengthReadout,
+      min: PATTERN_STRENGTH_MIN,
+      max: PATTERN_STRENGTH_MAX,
+      step: PATTERN_STRENGTH_STEP,
+      value: resolved.strength,
+      ariaLabel: "Pattern strength",
+      onNumberInput: (value) => this.onPatternStrengthInput(value),
+    });
     group.appendChild(strengthRow);
     const strength: AxisControl = {
       slider: strengthSlider,
       readout: strengthReadout,
+      numeric: strengthNumeric,
     };
 
     this.transformEditor.appendChild(group);
@@ -8874,9 +9168,9 @@ export class Ui {
     const resolved = resolveSurfacePattern(editor.geometry.surfacePattern);
     family.value = resolved.kind;
     axis.value = resolved.axis;
-    scale.slider.value = String(patternScaleToSlider(resolved.scale));
+    scale.numeric.setValue(resolved.scale);
     scale.readout.textContent = resolved.scale.toFixed(2);
-    strength.slider.value = String(resolved.strength);
+    strength.numeric.setValue(resolved.strength);
     strength.readout.textContent = resolved.strength.toFixed(2);
     this.applyMaterialDisclosure();
   }
@@ -8952,6 +9246,20 @@ export class Ui {
       remove.addEventListener("click", () => this.removeVariation(i));
 
       row.append(name, slider, readout, remove);
+      this.pairDynamicRange({
+        slider,
+        readout,
+        min: VARIATION_WEIGHT_MIN,
+        max: VARIATION_WEIGHT_MAX,
+        step: 0.05,
+        value: variation.weight,
+        ariaLabel: `Variation ${variation.type}`,
+        onNumberInput: (weight) => {
+          editor.variations[i].weight = weight;
+          readout.textContent = weight.toFixed(2);
+          this.emitGeometry();
+        },
+      });
       editor.variationList.appendChild(row);
       if (isFoldVariationType(variation.type)) {
         this.appendFoldRadiusRows(variation.type, i);
@@ -8987,7 +9295,7 @@ export class Ui {
         editor.variations[index][key] = value;
       }
     };
-    const minRow: { slider: HTMLInputElement; readout: HTMLElement }[] = [];
+    const minRow: AxisControl[] = [];
     // The fold's domain is 0 < mR <= fR: lowering the fixed radius past the
     // min radius carries the min radius down with it, rather than leaving a
     // readout the estimator would silently clamp.
@@ -8996,10 +9304,16 @@ export class Ui {
       if (!row) return;
       const fR = valueOf("fixedRadius");
       row.slider.max = String(fR);
+      row.numeric.setBounds({
+        min: FOLD_RADIUS_MIN,
+        max: fR,
+        step: FOLD_RADIUS_STEP,
+      });
       if (valueOf("minRadius") > fR) {
         write("minRadius", fR);
         row.slider.value = String(fR);
         row.readout.textContent = fR.toFixed(3);
+        row.numeric.setValue(fR, { force: true });
       }
     };
     for (const key of FOLD_RADIUS_FIELDS[type]) {
@@ -9040,7 +9354,22 @@ export class Ui {
       });
 
       row.append(name, slider, readout);
-      if (key === "minRadius") minRow.push({ slider, readout });
+      const numeric = this.pairDynamicRange({
+        slider,
+        readout,
+        min: Number(slider.min),
+        max: Number(slider.max),
+        step: FOLD_RADIUS_STEP,
+        value: valueOf(key),
+        ariaLabel: `${variationLabel(type)} ${FOLD_RADIUS_LABELS[key].toLowerCase()}`,
+        onNumberInput: (value) => {
+          write(key, value);
+          readout.textContent = value.toFixed(3);
+          if (key === "fixedRadius") followFixedRadius();
+          this.emitGeometry();
+        },
+      });
+      if (key === "minRadius") minRow.push({ slider, readout, numeric });
       editor.variationList.appendChild(row);
     }
   }
@@ -9132,8 +9461,22 @@ export class Ui {
     });
 
     row.append(name, slider, readout);
+    const numeric = this.pairDynamicRange({
+      slider,
+      readout,
+      min,
+      max,
+      step,
+      value: toSlider(initialModel),
+      ariaLabel,
+      onNumberInput: (value) => {
+        const model = fromSlider(value);
+        readout.textContent = format(model);
+        onModelChange(model);
+      },
+    });
     container.appendChild(row);
-    return { slider, readout };
+    return { slider, readout, numeric };
   }
 
   /** Append a titled sub-group (a plain div, NOT collapsible on its own) to
@@ -9334,7 +9677,7 @@ export class Ui {
     const editor = this.editor;
     if (!editor || editor.geometry.w?.scale !== undefined) return;
     const derived = meanContraction(editor.geometry.scale);
-    editor.fourD.scaleW.slider.value = String(derived);
+    editor.fourD.scaleW.numeric.setValue(derived);
     editor.fourD.scaleW.readout.textContent = `${derived.toFixed(2)} (auto)`;
   }
 
@@ -9349,12 +9692,12 @@ export class Ui {
     const { fourD } = editor;
 
     const posV = w?.position ?? 0;
-    fourD.positionW.slider.value = String(posV);
+    fourD.positionW.numeric.setValue(posV);
     fourD.positionW.readout.textContent = posV.toFixed(2);
 
     const scaleAuto = w?.scale === undefined;
     const scaleV = w?.scale ?? meanContraction(editor.geometry.scale);
-    fourD.scaleW.slider.value = String(Math.abs(scaleV));
+    fourD.scaleW.numeric.setValue(Math.abs(scaleV));
     fourD.scaleW.readout.textContent = scaleAuto
       ? `${scaleV.toFixed(2)} (auto)`
       : scaleV.toFixed(2);
@@ -9362,12 +9705,12 @@ export class Ui {
 
     W_PLANES.forEach((plane, i) => {
       const rad = w?.rotation?.[plane] ?? 0;
-      fourD.rotationW[i].slider.value = String(displayDegrees(rad));
+      fourD.rotationW[i].numeric.setValue(displayDegrees(rad));
       fourD.rotationW[i].readout.textContent = `${displayDegrees(rad)}°`;
     });
     W_PLANES.forEach((plane, i) => {
       const val = w?.shear?.[plane] ?? 0;
-      fourD.shearW[i].slider.value = String(val);
+      fourD.shearW[i].numeric.setValue(val);
       fourD.shearW[i].readout.textContent = val.toFixed(2);
     });
   }
@@ -9399,7 +9742,7 @@ export class Ui {
       const spec = CHANNELS[channel];
       editor.controls[channel].forEach((control, axis) => {
         const model = editor.geometry[channel][axis];
-        control.slider.value = String(spec.toSlider(model));
+        control.numeric.setValue(spec.toSlider(model));
         control.readout.textContent = spec.format(model);
       });
     }
@@ -9411,7 +9754,7 @@ export class Ui {
     });
     if (editor.weightControl) {
       const { weight } = editor.geometry;
-      editor.weightControl.slider.value = String(weightToSlider(weight));
+      editor.weightControl.numeric.setValue(weight);
       editor.weightControl.readout.textContent = weight.toFixed(2);
     }
     if (editor.emitterSelect) {
@@ -9436,10 +9779,10 @@ export class Ui {
       const color = editor.colorControls;
       color.derivedIndex = derivedColorIndex(editor.target, transformCount);
       const index = editor.geometry.colorIndex ?? color.derivedIndex;
-      color.index.slider.value = String(index);
+      color.index.numeric.setValue(index);
       color.index.readout.textContent = index.toFixed(2);
       const speed = editor.geometry.colorSpeed ?? DEFAULT_COLOR_SPEED;
-      color.speed.slider.value = String(speed);
+      color.speed.numeric.setValue(speed);
       color.speed.readout.textContent = speed.toFixed(2);
     }
     this.syncFinishControls();
@@ -9502,18 +9845,22 @@ export class Ui {
     this.mutateW((block) => {
       block.scale = model;
     });
-    editor.fourD.scaleW.slider.value = String(Math.abs(model));
+    editor.fourD.scaleW.numeric.setValue(Math.abs(model));
     editor.fourD.scaleW.readout.textContent = model.toFixed(2);
     editor.fourD.mirrorW.setAttribute("aria-pressed", String(model < 0));
     this.emitGeometryAndCommit();
   }
 
   private onWeightInput(sliderValue: number): void {
+    this.onWeightValueInput(sliderToWeight(sliderValue));
+  }
+
+  /** Exact-value counterpart to the logarithmic range's position adapter. */
+  private onWeightValueInput(weight: number): void {
     const editor = this.editor;
     // The weight slider only exists for a numbered transform, so its control is
     // always present when this fires; the guard just satisfies the nullable type.
     if (!editor || !editor.weightControl) return;
-    const weight = sliderToWeight(sliderValue);
     editor.geometry.weight = weight;
     editor.weightControl.readout.textContent = weight.toFixed(2);
     this.emitGeometry();

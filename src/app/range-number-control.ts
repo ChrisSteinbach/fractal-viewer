@@ -17,6 +17,13 @@ export interface RangeNumberBounds {
 export interface RangeNumberControlOptions extends RangeNumberBounds {
   /** Optional semantic values accepted by a discrete control. */
   allowedValues?: readonly number[];
+  /** Require committed values to land on `min + n * step`. Most continuous
+   * model parameters deliberately leave this false: `step` remains the
+   * keyboard increment while direct entry may use finer exact precision. */
+  enforceStep?: boolean;
+  /** Maximum fractional precision accepted and used for synchronized display.
+   * Defaults to the decimal precision of `step`. */
+  precision?: number;
   adapter?: RangeNumberAdapter;
   /** Explicit accessible name for the numeric field. */
   ariaLabel?: string;
@@ -36,7 +43,7 @@ export interface RangeNumberControl {
   readonly numberInput: HTMLInputElement;
   readonly error: HTMLElement;
   /** Synchronize an accepted external semantic value without firing callbacks. */
-  setValue(value: number): void;
+  setValue(value: number, options?: { force?: boolean }): void;
   /** Update semantic bounds without inferring anything from the range element. */
   setBounds(bounds: RangeNumberBounds): void;
   /** Replace or clear the optional discrete semantic domain. */
@@ -72,6 +79,23 @@ function approximatelyEqual(a: number, b: number): boolean {
   return Math.abs(a - b) <= Number.EPSILON * scale * 16;
 }
 
+function decimalPlaces(value: number): number {
+  const [coefficient, exponentText] = Math.abs(value)
+    .toString()
+    .toLowerCase()
+    .split("e");
+  const fraction = coefficient.split(".")[1]?.length ?? 0;
+  const exponent = Number(exponentText ?? 0);
+  return Math.max(0, fraction - exponent);
+}
+
+function checkedPrecision(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    throw new RangeError("precision must be an integer from 0 to 100");
+  }
+  return value;
+}
+
 function normalizedAllowed(values?: readonly number[]): number[] | undefined {
   if (values === undefined) return undefined;
   const sorted = [...values].sort((a, b) => a - b);
@@ -101,6 +125,37 @@ function uniqueId(doc: Document, preferred: string): string {
   return id;
 }
 
+/** A wrapping label may contain only the one labelable control it labels. A
+ * range+number pair therefore turns that static row into the same styled
+ * container with an explicit caption label for the retained range. IDs,
+ * hidden state, titles and gating classes stay on the container, so existing
+ * panel applicability code keeps addressing the same row. */
+export function normalizeRangeWrappingLabel(range: HTMLInputElement): void {
+  const wrapper = range.parentElement;
+  if (!(wrapper instanceof HTMLLabelElement)) return;
+  const doc = range.ownerDocument;
+  if (!range.id) {
+    range.id = uniqueId(doc, `range-input-${String(++generatedId)}`);
+  }
+  const container = doc.createElement("div");
+  for (const attribute of Array.from(wrapper.attributes)) {
+    if (attribute.name !== "for") {
+      container.setAttribute(attribute.name, attribute.value);
+    }
+  }
+  const caption = doc.createElement("label");
+  caption.className = "range-number-caption";
+  caption.htmlFor = range.id;
+  for (const child of Array.from(wrapper.childNodes)) {
+    if (child !== range) caption.appendChild(child);
+  }
+  wrapper.replaceWith(container);
+  if (caption.textContent?.trim() || caption.children.length > 0) {
+    container.appendChild(caption);
+  }
+  container.appendChild(range);
+}
+
 /**
  * Wrap a live `<input type="range">` with its editable numeric companion.
  * Existing range listeners and descriptions survive because the same element
@@ -123,11 +178,18 @@ export function enhanceRangeWithNumber(
   }
 
   const doc = range.ownerDocument;
+  normalizeRangeWrappingLabel(range);
   const adapter = options.adapter ?? IDENTITY_ADAPTER;
-  const formatValue = options.formatValue ?? String;
   let bounds = checkedBounds(options);
+  let precision = checkedPrecision(
+    options.precision ?? decimalPlaces(bounds.step),
+  );
+  const formatValue =
+    options.formatValue ?? ((value: number) => value.toFixed(precision));
   let allowedValues = normalizedAllowed(options.allowedValues);
   let lastAccepted = adapter.rangeToNumber(Number(range.value));
+  let draftDirty = false;
+  let arrowCommitPending = false;
   finite(lastAccepted, "initial semantic value");
 
   const originalDescribedBy = range.getAttribute("aria-describedby");
@@ -195,7 +257,8 @@ export function enhanceRangeWithNumber(
   const syncAttributes = (): void => {
     numberInput.min = String(bounds.min);
     numberInput.max = String(bounds.max);
-    numberInput.step = String(bounds.step);
+    numberInput.step =
+      options.enforceStep === true ? String(bounds.step) : "any";
   };
 
   type Validation = { value: number } | { error: string };
@@ -209,7 +272,6 @@ export function enhanceRangeWithNumber(
         error: `Enter a value from ${String(bounds.min)} to ${String(bounds.max)}.`,
       };
     }
-
     let value = parsed;
     if (allowedValues !== undefined) {
       const allowed = allowedValues.find((candidate) =>
@@ -226,16 +288,30 @@ export function enhanceRangeWithNumber(
       value = allowed;
     }
 
-    const steps = (value - bounds.min) / bounds.step;
-    if (!approximatelyEqual(steps, Math.round(steps))) {
+    if (options.enforceStep === true) {
+      const steps = (value - bounds.min) / bounds.step;
+      if (!approximatelyEqual(steps, Math.round(steps))) {
+        return {
+          error: `Use increments of ${String(bounds.step)} from ${String(bounds.min)}.`,
+        };
+      }
+    }
+    const precisionValue = Number(value.toFixed(precision));
+    if (!approximatelyEqual(value, precisionValue)) {
       return {
-        error: `Use increments of ${String(bounds.step)} from ${String(bounds.min)}.`,
+        error:
+          precision === 0
+            ? "Enter a whole number."
+            : `Use at most ${String(precision)} decimal places.`,
       };
     }
     return { value };
   };
 
-  const setValue = (value: number): void => {
+  const setValue = (
+    value: number,
+    syncOptions: { force?: boolean } = {},
+  ): void => {
     finite(value, "value");
     if (value < bounds.min || value > bounds.max) {
       throw new RangeError("value is outside the semantic bounds");
@@ -244,6 +320,8 @@ export function enhanceRangeWithNumber(
     finite(raw, "mapped range value");
     lastAccepted = value;
     range.value = String(raw);
+    if (draftDirty && syncOptions.force !== true) return;
+    draftDirty = false;
     numberInput.value = formatted(value);
     clearError();
   };
@@ -256,33 +334,48 @@ export function enhanceRangeWithNumber(
     const value = adapter.rangeToNumber(Number(range.value));
     finite(value, "mapped semantic value");
     lastAccepted = value;
+    draftDirty = false;
     numberInput.value = formatted(value);
     clearError();
     options.onInput(value, "range");
   });
 
-  numberInput.addEventListener("change", () => {
+  const applyNumberValue = (value: number, commit: boolean): boolean => {
+    const raw = adapter.numberToRange(value);
+    if (!Number.isFinite(raw)) {
+      showError("Enter a supported value.");
+      return false;
+    }
+    draftDirty = false;
+    lastAccepted = value;
+    range.value = String(raw);
+    numberInput.value = formatted(value);
+    clearError();
+    options.onInput(value, "number");
+    if (commit) options.onCommit?.(value);
+    return true;
+  };
+
+  numberInput.addEventListener("change", (event) => {
+    arrowCommitPending = false;
+    draftDirty = true;
     const result = validateDraft();
     if ("error" in result) {
       showError(result.error);
+      // Dynamic editor containers use delegated bubbling `change` as their
+      // settlement seam. An invalid draft did not mutate anything and must
+      // not look like a settled edit to that ancestor.
+      event.stopPropagation();
       return;
     }
-    const raw = adapter.numberToRange(result.value);
-    if (!Number.isFinite(raw)) {
-      showError("Enter a supported value.");
-      return;
-    }
-    lastAccepted = result.value;
-    range.value = String(raw);
-    numberInput.value = formatted(result.value);
-    clearError();
-    options.onInput(result.value, "number");
-    options.onCommit?.(result.value);
+    if (!applyNumberValue(result.value, true)) event.stopPropagation();
   });
 
   // Once validation has been shown, clear it as soon as the draft is valid;
   // typing alone never edits the semantic value or fires a callback.
   numberInput.addEventListener("input", () => {
+    arrowCommitPending = false;
+    draftDirty = true;
     if (numberInput.getAttribute("aria-invalid") !== "true") return;
     const result = validateDraft();
     if ("error" in result) showError(result.error);
@@ -290,11 +383,65 @@ export function enhanceRangeWithNumber(
   });
 
   numberInput.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      arrowCommitPending = false;
+      draftDirty = false;
+      numberInput.value = formatted(lastAccepted);
+      clearError();
+      return;
+    }
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+      return;
+    }
+    // Native number stepping cannot express non-linear detents (1,2,4,8,16),
+    // and assigning `.value` fires no event. Own every semantic Arrow step so
+    // the displayed value, retained range, and live app state move together.
+    // A matching keyup settles once after any key-repeat sequence.
     event.preventDefault();
-    event.stopPropagation();
-    numberInput.value = formatted(lastAccepted);
-    clearError();
+    const direction = event.key === "ArrowUp" ? 1 : -1;
+    const parsed = Number(numberInput.value);
+    const current = Number.isFinite(parsed) ? parsed : lastAccepted;
+    let next: number;
+    if (allowedValues !== undefined && allowedValues.length > 0) {
+      let candidate: number | undefined;
+      if (direction > 0) {
+        candidate = allowedValues.find(
+          (value) => value > current && !approximatelyEqual(value, current),
+        );
+      } else {
+        for (let index = allowedValues.length - 1; index >= 0; index -= 1) {
+          const value = allowedValues[index];
+          if (value < current && !approximatelyEqual(value, current)) {
+            candidate = value;
+            break;
+          }
+        }
+      }
+      next =
+        candidate ??
+        allowedValues[direction > 0 ? allowedValues.length - 1 : 0];
+    } else {
+      next = Number(
+        Math.min(
+          bounds.max,
+          Math.max(bounds.min, current + direction * bounds.step),
+        ).toPrecision(15),
+      );
+    }
+    arrowCommitPending = applyNumberValue(next, false);
+  });
+
+  numberInput.addEventListener("keyup", (event) => {
+    if (
+      !arrowCommitPending ||
+      (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+    ) {
+      return;
+    }
+    arrowCommitPending = false;
+    options.onCommit?.(lastAccepted);
   });
 
   return {
@@ -305,6 +452,9 @@ export function enhanceRangeWithNumber(
     setValue,
     setBounds(next): void {
       bounds = checkedBounds(next);
+      if (options.precision === undefined) {
+        precision = checkedPrecision(decimalPlaces(bounds.step));
+      }
       syncAttributes();
       if (numberInput.getAttribute("aria-invalid") === "true") {
         const result = validateDraft();
