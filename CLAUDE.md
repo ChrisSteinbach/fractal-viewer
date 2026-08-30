@@ -240,23 +240,17 @@ invert-then-project — both draw something; that needs a rotor pose where they
 visibly disagree.
 
 The panel's exact-numeric-companion gate (not an npm script — it needs
-layout and TRUSTED touch input, neither of which jsdom has):
+layout and TRUSTED touch, neither of which jsdom has):
 `npm run build && npm run preview &` then
 `node scripts/panel-numeric-control.verify.mjs [--viewport=WxH]`. It walks
-the app through the states that MINT sliders and asks four things no unit
-test reaches: does EVERY runtime `input[type=range]` carry exactly one
-companion, available or unavailable AS ONE CONTROL (eleven families are
-hand-built at render time, where the spec table's jsdom pin cannot see
-them); does each clear 44px on both axes
-inside the panel with its own domain's widest value unclipped; does a
-trusted tap FOCUS it while a swipe that starts on it SCROLLS and edits
-nothing (the slider guard's one-frame `disabled` flip never reaching it);
-and does Tab/Arrow/Escape/refusal hold — reading the committed value out of
-the `#v1=` document hash rather than the panel, which is the half that was
-lying when this caught an Arrow step after a REFUSED draft committing a
-value direct entry refuses. MEASURED green at 393x727 and 320x568; the
-figures and the defect's own numbers are in `docs/controls.md`. Not
-verified on WebKit or Firefox Android.
+the states that MINT sliders — eleven families are hand-built at render
+time, where the spec table's jsdom pin cannot see them — and gates
+completeness, availability parity, 44px targets over unclipped domains,
+trusted tap/scroll, and Tab/Arrow/Escape/refusal read out of the `#v1=`
+hash rather than the panel, which is the half that was lying when this
+caught an Arrow step after a REFUSED draft. Green at 393x727 and 320x568;
+figures and that defect in `docs/controls.md`. Not verified on WebKit or
+Firefox Android.
 
 **Harness sheets** (`scripts/*.harness.ts`, run with
 `npx vitest run --config scripts/vitest.harness.config.ts scripts/<name>`)
@@ -327,38 +321,22 @@ this fast. `--toggleId=` also takes `flameSupersampleSlider`,
 `symmetryOrderSlider`, and the sentinel `__modeExit` — that last one is
 INFORMATIONAL, not a gate on the deferred teardown: leaving flame mode never
 calls `destroy()` at all, since main.ts kills the worker with
-`worker.terminate()`, orphaning a live map a different way. MEASURED: the
-crash does not reproduce on this stack in either direction (pre-fix module
-12/12 clean, fixed module 12/12 clean), so this is a regression gate
-rather than a reproduction — the script's header carries the full
-numbers.
+`worker.terminate()`, orphaning a live map a different way. MEASURED a
+regression gate rather than a reproduction: the crash does not reproduce on
+this stack either way,
+12/12 clean pre-fix and fixed, with the figures in the script's header.
 
 The flame Save-PNG gate (not an npm script — it asserts what a
 downloaded IMAGE contains, which no unit test reaches):
 `npm run build && npm run preview &` then
-`node scripts/flame-export.verify.mjs https://localhost:4173`. It saves a
-POINTS reference and a converged FLAME reference from one pinned camera and
-then asks of every later PNG only which of the two it is closer to (mean
-absolute difference over a 64x64 grayscale downscale) — a comparison rather
-than a tuned "is this smooth" heuristic, and exactly the question the bug
-was about. Blobs are read through a `URL.createObjectURL` hook, each stamped
-with the moment it appeared, so the second assertion — did the PNG land only
-once the accumulation FINISHED — is answerable at all. Runs on SwiftShader
-(the flame takes its CPU backend, so the quality slider is pinned to its 1M
-floor). SOLID's phase asks the same question of the TRACE instead — its
-`#solidProgress` reads 0% until the worker's grid lands — because the
-explorer RE-SEEDS its chaos game on every mode switch, so a points reference
-does not survive one (measured: the two distances came out 5.1 vs 5.1 when
-the image test was tried there). MEASURED at the fix: 16/16 on the fixed
-build, and on the pre-fix build 6 failures naming every symptom — phase 2's
-2x save right after the Capture-size restart came back the POINTS EXPLORER
-at 1640x1080 (distance 3.4 to the points reference against 13.5 to the
-flame; the SIZE was right, which is how it evaded notice), phase 3 pressed
-at 5% and saved at 5%, phase 5's Save on solid's entry landed with its
-readout at 0%, and neither flame wait was disclosed at all. That run also
-killed the report's open "the 2x restart is failing outright" hypothesis:
-the 2x session converges fine, so the export was racing a first-frame gap,
-not a broken render.
+`node scripts/flame-export.verify.mjs https://localhost:4173`. Every saved
+PNG is asked only which of two pinned references it is closer to — the
+POINTS cloud or the converged FLAME — and whether it landed only once the
+accumulation FINISHED; SOLID's phase asks the same of the TRACE, since the
+explorer re-seeds its chaos game on every mode switch. MEASURED 16/16 on
+the fixed build and 6 failures on the pre-fix one, naming every symptom.
+Full record — the comparison's design, solid's substitution and the pre-fix
+figures — in `docs/architecture.md`.
 
 ## Pre-commit Hooks
 
@@ -1538,32 +1516,24 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     reads the DOCUMENT's routing kind (`deriveSurfaceEligibility`'s
     `kind`) — NOT the session kind, unobservable here because the editor
     hides for the whole of a surface session. AND METALS READ AS THEIR
-    SURROUNDINGS: metalness damps the diffuse away and the only
-    reflection source is the backdrop, so Metal/Chrome render nearly
-    BLACK against the dark stops (measured on `fourFinishes`' own
-    system). Physically right — a mirror in an unlit room — so the hint
-    and `docs/controls.md` DISCLOSE it rather than the BRDF fudging it.
+    SURROUNDINGS — nearly BLACK against the dark stops, since metalness
+    damps the diffuse away
+    and the backdrop is the only reflection source. Physically right, a
+    mirror in an unlit room, so the hint and `docs/controls.md` DISCLOSE it
+    rather than the BRDF fudging it.
   - `control-spec.ts` — declarative spec for panel scalar controls. Adding a
     setting = one spec entry + one index.html row (pure, tested).
-  - `range-number-control.ts` — the exact-value companion every panel slider
-    is paired with: the range stays the fast coarse gesture, the number
-    field is the authoring surface. `enhanceRangeWithNumber` MOVES the live
-    range rather than cloning it, so existing listeners and descriptions
-    survive, and it never observes `range.disabled` — the app synchronizes
-    availability through `setDisabled`, so `slider-scroll-guard.ts`'s
-    one-frame suppression flip cannot leak onto the field. PRECISION IS THE
-    DOMAIN, not the step: `step` stays the Arrow increment while direct
-    entry may be off-step but never off-precision (every shipped control
-    infers precision from its own step). Typing alone never edits — `input`
-    only re-checks a shown error, `change` commits — and an invalid draft
-    stops its own bubbling `change` so a delegated editor seam cannot read a
-    refusal as a settled edit. EVERY ARROW STEP GOES THROUGH `quantize`,
-    base and result: stepping owns the semantic step (native stepping cannot
-    express detents) and commits WITHOUT re-validating, so a refused draft
-    would otherwise step into a value the same control rejects typed and
-    then display it rounded — the panel and the document disagreeing, the
-    one thing an exact-value control must not do. Gated in a real browser at
-    phone width by `scripts/panel-numeric-control.verify.mjs` (above).
+  - `range-number-control.ts` — the exact-value companion every panel
+    slider is paired with. `enhanceRangeWithNumber` MOVES the live range
+    rather than cloning it, and never observes `range.disabled`:
+    availability moves through `setDisabled`, so `slider-scroll-guard.ts`'s
+    one-frame flip cannot leak onto the field. PRECISION IS THE DOMAIN, not
+    the step — `step` is only the Arrow increment, and direct entry may be
+    off-step but never off-precision. EVERY ARROW STEP GOES THROUGH
+    `quantize`, base AND result, because stepping commits without
+    re-validating: otherwise a REFUSED draft steps into a value the control
+    rejects typed and is then displayed rounded, panel and document
+    disagreeing.
   - `legend-spec.ts` — the color legend as DATA: `deriveLegend`
     returns a plain `LegendSpec` (hidden / gradient bar + three labels /
     swatch strip of labels and color chips) and `ui.ts`'s `paintLegend` only
@@ -1582,30 +1552,24 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Pointer rotor edits commit once on release; wheel/keyboard view bursts
     commit once after 150 ms of quiet.
   - `slider-scroll-guard.ts` — PREVENTS the panel sliders' tap-jump on
-    touch, where an earlier pass repaired it after the fact (tested).
-    The repair let the jump commit mid-gesture and fired `input` TWICE —
-    two trips through burst coalescing, a possible history checkpoint and
-    a cloud regeneration request, for a gesture meant as a scroll. The
-    obvious prevention does NOT work and that pass's own doc said it would:
-    the jump is the TOUCHSTART default action (Blink's
-    `SliderContainerElement`), not pointerdown's, so `preventDefault()`
-    there leaves it — and STICKING, with the restore gone. Of four
-    measured suppressions only one both kills the jump and keeps the pan:
-    flipping `disabled` for that one handler, on in the pointerdown
-    listener (dispatched before touchstart) and off in a `requestAnimation
-Frame` callback, which runs before paint so the disabled look never
-    reaches the screen. That kills the native drag too, so the guard now
-    DRIVES it — past `SLIDE_SLOP_PX` of horizontal travel it maps x onto
-    the track, quantizes to the slider's own `step`, and fires `input` per
-    change plus the trailing `change` the commit-on-release sliders
-    hang off (`numPointsSlider` defers its whole regeneration to it, and a
+    touch, where an earlier pass repaired it after the fact (tested). The
+    jump is the TOUCHSTART default action, not pointerdown's, so the one
+    suppression that kills it AND keeps the pan is flipping `disabled` for
+    that single handler — on in the pointerdown listener, off in a
+    `requestAnimationFrame` callback, before paint, so the disabled look
+    never reaches the screen. That kills the native drag too, so the guard
+    DRIVES it: past `SLIDE_SLOP_PX` of horizontal travel it maps x onto the
+    track, quantizes to the slider's own `step`, and fires `input` per
+    change plus the trailing `change` the commit-on-release sliders hang
+    off (`numPointsSlider` defers its whole regeneration to it, and a
     programmatic `value` assignment fires nothing). TAP-TO-SET IS GONE ON
     TOUCH by design — on a panel of full-width sliders a tap that lands on
     one is a scroll that has not moved yet far more often than it is an
-    edit — and desktop click-to-jump is untouched (mouse pointers return
-    early). Verified on real Chromium via
-    `scripts/panel-touch-scroll.verify.mjs`: `#fogSlider` HAZARD -> SAFE
-    from both start positions, pan still -132px. Not verified on WebKit or
+    edit — and desktop click-to-jump is untouched. The four measured
+    suppressions, the repair's doubled `input`, and the refuted
+    "`preventDefault()` on pointerdown" claim are in the module's own
+    header; verified on real Chromium via
+    `scripts/panel-touch-scroll.verify.mjs`. Not verified on WebKit or
     Firefox Android.
   - `capture-cost.ts` — the arithmetic behind a capture's cost memory,
     out of `scene.ts` so it tests without a WebGL context:

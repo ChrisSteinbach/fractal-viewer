@@ -1586,6 +1586,40 @@ readiness before honouring a rough-save press — so a press that the
 finished render beat to the line gets an ordinary toast rather than one
 labelled "rough".
 
+### The gate
+
+`scripts/flame-export.verify.mjs` (not an npm script — it asserts what a
+downloaded IMAGE contains, which no unit test reaches; run
+`npm run build && npm run preview &` first, then
+`node scripts/flame-export.verify.mjs https://localhost:4173`) is the
+executable half of this section.
+
+It saves a POINTS reference and a converged FLAME reference from one pinned
+camera and then asks of every later PNG only which of the two it is closer
+to — mean absolute difference over a 64x64 grayscale downscale. A
+comparison rather than a tuned "is this smooth" heuristic, and exactly the
+question the bug above was about. Blobs are read through a
+`URL.createObjectURL` hook, each stamped with the moment it appeared, so the
+second assertion — did the PNG land only once the accumulation FINISHED —
+is answerable at all. It runs on SwiftShader, where the flame takes its CPU
+backend and the quality slider is pinned to its 1M floor.
+
+SOLID's phase asks the same question of the TRACE instead — its
+`#solidProgress` reads 0% until the worker's grid lands — because the
+explorer RE-SEEDS its chaos game on every mode switch, so a points reference
+does not survive one. Measured: the two distances came out 5.1 vs 5.1 when
+the image test was tried there.
+
+MEASURED at the fix: 16/16 on the fixed build, and on the pre-fix build 6
+failures naming every symptom. Phase 2's 2x save right after the
+Capture-size restart came back the POINTS EXPLORER at 1640x1080 — distance
+3.4 to the points reference against 13.5 to the flame, and the SIZE was
+right, which is how it evaded notice. Phase 3 pressed at 5% and saved at 5%.
+Phase 5's Save on solid's entry landed with its readout at 0%. Neither flame
+wait was disclosed at all. That run also killed the report's open "the 2x
+restart is failing outright" hypothesis: the 2x session converges fine, so
+the export was racing a first-frame gap, not a broken render.
+
 ## Why this split?
 
 Putting the IFS math, color mapping, presets, RNG, orbit camera, and state
