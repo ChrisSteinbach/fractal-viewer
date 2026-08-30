@@ -113,6 +113,79 @@ body {
   touch-action: none;
 }
 
+/* The four-view workspace remains one canvas/one interaction surface. This
+   inert grid supplies only the quadrant dividers and human-readable camera
+   labels; scene.ts uses the same panel-uncovered rectangle for its scissor
+   passes and updates `right` while the desktop panel inset eases. */
+.points-view-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.points-view-grid::before,
+.points-view-grid::after {
+  position: absolute;
+  content: "";
+  background: rgb(255 255 255 / 28%);
+  box-shadow: 0 0 10px rgb(0 0 0 / 65%);
+}
+
+.points-view-grid::before {
+  inset: 0 auto 0 50%;
+  width: 1px;
+}
+
+.points-view-grid::after {
+  inset: 50% 0 auto;
+  height: 1px;
+}
+
+.points-view-label {
+  padding: 3px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: rgb(15 16 24 / 76%);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 35%);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+/* Keep essential pane names beside the centre cross rather than under the
+   top-corner help/menu chrome. Each label stays inside its own cell. */
+.points-view-label:nth-child(1) {
+  place-self: end end;
+  margin: 0 10px 10px 0;
+}
+
+.points-view-label:nth-child(2) {
+  place-self: end start;
+  margin: 0 0 10px 10px;
+}
+
+.points-view-label:nth-child(3) {
+  place-self: start end;
+  margin: 10px 10px 0 0;
+}
+
+.points-view-label:nth-child(4) {
+  place-self: start start;
+  margin: 10px 0 0 10px;
+}
+
+.points-view-label-current {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 /* Cinematic framing: darken the corners so the eye settles on the attractor.
    Sits above the canvas but ignores pointer events so it never blocks gestures. */
 #vignette {
@@ -126,6 +199,12 @@ body {
     rgb(0 0 0 / 24%) 78%,
     rgb(0 0 0 / 50%) 100%
   );
+}
+
+/* One global vignette would shade the four outer corners much more heavily
+   than the cells beside the centre cross, defeating side-by-side placement. */
+.points-four-view #vignette {
+  display: none;
 }
 
 #error {
@@ -727,6 +806,15 @@ body {
   transition:
     background 0.15s ease,
     color 0.15s ease;
+}
+
+.points-layout-switch {
+  margin-top: 8px;
+  margin-bottom: 6px;
+}
+
+.points-layout-switch .segment {
+  padding-block: 7px;
 }
 
 .segmented .segment + .segment {
@@ -2531,6 +2619,15 @@ summary.editor-group-title {
    square it off to read as a subtitle card. Breakpoint must match
    MOBILE_BREAKPOINT in constants.ts. */
 @media (width <= 640px) {
+  .points-view-label {
+    padding: 2px 6px;
+    font-size: 11px;
+  }
+
+  .points-view-plane {
+    display: none;
+  }
+
   .replay-caption {
     bottom: calc(88px + env(safe-area-inset-bottom));
     border-radius: var(--radius);
@@ -2580,6 +2677,20 @@ summary.editor-group-title {
    paints outside the border edge rather than behind glyphs, and it
    measured correctly colored without the escape hatch. */
 @media (forced-colors: active) {
+  .points-view-grid::before,
+  .points-view-grid::after {
+    background: CanvasText;
+    box-shadow: none;
+  }
+
+  .points-view-label {
+    border-color: CanvasText;
+  }
+
+  .points-view-label-current {
+    border-color: Highlight;
+  }
+
   .segmented .segment.active {
     background: Highlight;
     color: HighlightText;

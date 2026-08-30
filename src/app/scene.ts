@@ -52,6 +52,13 @@ import type { BackgroundGradient, BackgroundShape } from "./background";
 import { rgbToHex } from "../fractal/palette";
 import type { RenderStyle, SolidParams } from "./state";
 import {
+  fourPointsViewports,
+  pointsViewportAt,
+  type PointsViewLayout,
+  type PointsViewportKind,
+  type PointsViewportRect,
+} from "./points-view-layout";
+import {
   configureVoxelTexture,
   createVoxelMaterial,
   emptyVoxelTexture,
@@ -828,6 +835,15 @@ export interface ExportImage {
   height: number;
 }
 
+/** One live Points pane resolved for a pointer gesture. The rectangle is in
+ * browser-client CSS pixels, matching MouseEvent/Touch coordinates. */
+export interface PointsInteractionView {
+  kind: PointsViewportKind;
+  camera: THREE.PerspectiveCamera;
+  rect: Omit<PointsViewportRect, "kind" | "adjustable">;
+  adjustable: boolean;
+}
+
 /** One compute-export band. `layers` is Surface's retained background
  * sidecar; when present the scene composes it against the capture-frozen live
  * source before bands are assembled. */
@@ -849,6 +865,16 @@ export class FractalScene {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: THREE.WebGLRenderer;
+
+  /** Fixed positive-axis cameras used only by the optional Points 2×2
+   * workspace. The existing public camera remains the adjustable pane and is
+   * never temporarily re-posed, preserving applyCamera's equality cache. */
+  private readonly axisCameras: Record<
+    Exclude<PointsViewportKind, "current">,
+    THREE.PerspectiveCamera
+  >;
+  private pointsViewLayout: PointsViewLayout = "single";
+  private readonly pointsViewGrid: HTMLElement | null;
 
   private readonly grid: THREE.GridHelper;
   private readonly axes: THREE.AxesHelper;
@@ -1534,6 +1560,7 @@ export class FractalScene {
     const height = container.clientHeight || window.innerHeight;
     this.viewportWidth = width;
     this.viewportHeight = height;
+    this.pointsViewGrid = container.querySelector("#pointsViewGrid");
 
     this.scene = new THREE.Scene();
     // A camera-independent vertical gradient as the scene backdrop, so the
@@ -1575,6 +1602,15 @@ export class FractalScene {
     );
     this.camera.position.set(5, 4, 5);
     this.camera.lookAt(0, 0, 0);
+    this.axisCameras = {
+      x: new THREE.PerspectiveCamera(DEFAULT_CAMERA_FOV, 1, 0.1, 1000),
+      y: new THREE.PerspectiveCamera(DEFAULT_CAMERA_FOV, 1, 0.1, 1000),
+      z: new THREE.PerspectiveCamera(DEFAULT_CAMERA_FOV, 1, 0.1, 1000),
+    };
+    // Looking down +Y needs an up vector that is not parallel to the view
+    // direction. The sign makes the fixed Y pane read as a conventional top
+    // view, with -Z toward the top of the screen.
+    this.axisCameras.y.up.set(0, 0, -1);
 
     // MSAA is a context-creation-time choice: on at low DPR where
     // aliasing shows, off at DPR >= 2 where the buffer already oversamples
@@ -1609,13 +1645,7 @@ export class FractalScene {
     // ring style.css draws on :focus-visible.
     this.renderer.domElement.tabIndex = 0;
     this.renderer.domElement.setAttribute("role", "application");
-    this.renderer.domElement.setAttribute(
-      "aria-label",
-      "Fractal viewpoint. Arrow keys orbit, plus and minus zoom, Space " +
-        "pauses or resumes the automatic motion. In a 4D scene, Shift with " +
-        "arrows or Page Up and Page Down turns the fourth-dimension view, " +
-        "and the bracket keys move the w slice.",
-    );
+    this.syncPointsCanvasLabel();
     // A restored WebGL context comes back with an undefined drawing buffer;
     // make sure the render-on-demand gate repaints it even if the
     // scene is otherwise static.
@@ -2770,6 +2800,7 @@ export class FractalScene {
   setFourDActive(active: boolean): void {
     this.renderNeeded = true;
     this.fourDActive = active;
+    this.syncPointsCanvasLabel();
     // The echo remains visible across the dimensional flip. This uniform
     // chooses direct 3D inversion or project-then-invert inside its one shader.
     this.balloonEchoMaterial.uniforms.uFourDActive.value = active ? 1 : 0;
@@ -3353,11 +3384,16 @@ export class FractalScene {
    * untouched; the band just never visibly reaches anything.
    */
   updateFog(): void {
+    this.updateFogFor(this.camera);
+  }
+
+  /** Camera-parameterized fog band used by each synchronized Points pane. */
+  private updateFogFor(camera: THREE.Camera): void {
     const bounds = this.pointGeometry.boundingSphere;
     const fog = this.scene.fog;
     if (!bounds || bounds.radius === 0 || !(fog instanceof THREE.Fog)) return;
 
-    const camDist = this.camera.position.distanceTo(bounds.center);
+    const camDist = camera.position.distanceTo(bounds.center);
     const d = this.fogDensity;
     let near = Math.max(
       0.1,
@@ -3386,16 +3422,16 @@ export class FractalScene {
    * into view the cloud projects wider, while the 4D ball bounds it at every
    * tumble angle (the same argument as setPoints4's bounding-sphere comment).
    */
-  private updateFourDFade(): void {
+  private updateFourDFade(camera: THREE.Camera = this.camera): void {
     const u = this.fourDMaterial.uniforms;
     if (u.uFadeOn.value === 0) return;
     const [hx, hy, hz, hw] = this.fourDHalfExtents;
     const radius = Math.hypot(hx, hy, hz, hw);
     const c = u.uCenter4.value as THREE.Vector4;
     const camDist = Math.hypot(
-      this.camera.position.x - c.x,
-      this.camera.position.y - c.y,
-      this.camera.position.z - c.z,
+      camera.position.x - c.x,
+      camera.position.y - c.y,
+      camera.position.z - c.z,
     );
     let near = Math.max(0.1, camDist - radius * FOG_MARGIN);
     let far = camDist + radius * FOG_MARGIN;
@@ -3408,6 +3444,142 @@ export class FractalScene {
   }
 
   /**
+   * Switch the live Points workspace between its original single camera and
+   * the synchronized 2×2 placement workspace. This is display state only:
+   * no orbit, selection, guide, or point buffer is replaced.
+   */
+  setPointsViewLayout(layout: PointsViewLayout): void {
+    if (layout === this.pointsViewLayout) return;
+    this.pointsViewLayout = layout;
+    this.renderNeeded = true;
+    this.syncProjection();
+    this.syncPointsCanvasLabel();
+  }
+
+  /** Keep the focusable canvas's interaction contract dimensionally honest. */
+  private syncPointsCanvasLabel(): void {
+    this.canvas.setAttribute(
+      "aria-label",
+      this.pointsViewLayout === "four"
+        ? this.fourDActive
+          ? "Four-view 4D fractal workspace. Fixed X, Y, and Z axis views are followed by the adjustable Current view. Edit transforms in the controls panel; only Current accepts view gestures. Camera keys control Current. Shift with arrows or Page Up and Page Down turns the fourth-dimension view, and the bracket keys move the w slice."
+          : "Four-view fractal placement workspace. Fixed X, Y, and Z axis views are followed by the adjustable Current view. Drag a selected transform in any view; camera keys and camera gestures control Current. Arrow keys orbit, plus and minus zoom, and Space pauses or resumes automatic motion."
+        : "Fractal viewpoint. Arrow keys orbit, plus and minus zoom, Space pauses or resumes the automatic motion. In a 4D scene, Shift with arrows or Page Up and Page Down turns the fourth-dimension view, and the bracket keys move the w slice.",
+    );
+  }
+
+  /**
+   * Resolve a browser pointer to the camera and local rectangle that own the
+   * gesture. Axis cameras are synchronized here as well as at render time so
+   * a press can never race the first repaint after a layout/zoom change.
+   */
+  pointsInteractionView(
+    clientX: number,
+    clientY: number,
+  ): PointsInteractionView | null {
+    const bounds = this.canvas.getBoundingClientRect();
+    if (this.pointsViewLayout === "single") {
+      return {
+        kind: "current",
+        camera: this.camera,
+        rect: {
+          left: bounds.left,
+          top: bounds.top,
+          width: bounds.width,
+          height: bounds.height,
+        },
+        adjustable: true,
+      };
+    }
+
+    const scaleX = bounds.width > 0 ? this.viewportWidth / bounds.width : 1;
+    const scaleY = bounds.height > 0 ? this.viewportHeight / bounds.height : 1;
+    const localX = (clientX - bounds.left) * scaleX;
+    const localY = (clientY - bounds.top) * scaleY;
+    const viewports = this.livePointsViewports();
+    const view = pointsViewportAt(viewports, localX, localY);
+    if (!view) return null;
+    return this.pointsInteractionViewForKind(view.kind, bounds, viewports);
+  }
+
+  /** Re-resolve a latched pane after resize or the panel inset changes. */
+  pointsInteractionViewForKind(
+    kind: PointsViewportKind,
+    bounds = this.canvas.getBoundingClientRect(),
+    viewports = this.livePointsViewports(),
+  ): PointsInteractionView | null {
+    if (this.pointsViewLayout === "single") {
+      if (kind !== "current") return null;
+      return {
+        kind,
+        camera: this.camera,
+        rect: {
+          left: bounds.left,
+          top: bounds.top,
+          width: bounds.width,
+          height: bounds.height,
+        },
+        adjustable: true,
+      };
+    }
+    const view = viewports.find((candidate) => candidate.kind === kind);
+    if (!view) return null;
+    this.syncAxisCameras(viewports);
+    const scaleX = bounds.width > 0 ? this.viewportWidth / bounds.width : 1;
+    const scaleY = bounds.height > 0 ? this.viewportHeight / bounds.height : 1;
+    const camera =
+      view.kind === "current" ? this.camera : this.axisCameras[view.kind];
+    return {
+      kind: view.kind,
+      camera,
+      rect: {
+        left: bounds.left + view.left / scaleX,
+        top: bounds.top + view.top / scaleY,
+        width: view.width / scaleX,
+        height: view.height / scaleY,
+      },
+      adjustable: view.adjustable,
+    };
+  }
+
+  private livePointsViewports(): readonly PointsViewportRect[] {
+    return fourPointsViewports(
+      this.viewportWidth,
+      this.viewportHeight,
+      this.rightInsetPx,
+    );
+  }
+
+  /** Keep fixed directions while sharing the live target, radius and lens. */
+  private syncAxisCameras(viewports = this.livePointsViewports()): void {
+    const pose = this.lastCameraPose;
+    const target = new THREE.Vector3(
+      pose?.[3] ?? 0,
+      pose?.[4] ?? 0,
+      pose?.[5] ?? 0,
+    );
+    const radius = Math.max(this.camera.position.distanceTo(target), 1e-6);
+    for (const kind of ["x", "y", "z"] as const) {
+      const camera = this.axisCameras[kind];
+      const viewport = viewports.find((view) => view.kind === kind);
+      camera.fov = this.camera.fov;
+      camera.near = this.camera.near;
+      camera.far = this.camera.far;
+      camera.aspect = viewport
+        ? viewport.width / Math.max(viewport.height, 1)
+        : 1;
+      camera.clearViewOffset();
+      camera.position.copy(target);
+      if (kind === "x") camera.position.x += radius;
+      else if (kind === "y") camera.position.y += radius;
+      else camera.position.z += radius;
+      camera.lookAt(target);
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld();
+    }
+  }
+
+  /**
    * Reserve `px` of the right edge for the panel overlay — see
    * {@link rightInsetPx}. Values are clamped so at least half the viewport
    * stays visible; 0 restores the plain full-canvas projection.
@@ -3416,6 +3588,9 @@ export class FractalScene {
     const clamped = Math.max(0, Math.min(px, this.viewportWidth * 0.5));
     if (clamped === this.rightInsetPx) return;
     this.rightInsetPx = clamped;
+    if (this.pointsViewGrid) {
+      this.pointsViewGrid.style.right = `${String(Math.floor(clamped))}px`;
+    }
     this.renderNeeded = true;
     this.syncProjection();
   }
@@ -3431,10 +3606,19 @@ export class FractalScene {
     const width = this.viewportWidth;
     const height = this.viewportHeight;
     const visible = width - this.rightInsetPx;
-    this.camera.aspect = visible / height;
-    if (this.rightInsetPx > 0) {
+    if (this.pointsViewLayout === "four") {
+      const current = this.livePointsViewports().find(
+        (view) => view.kind === "current",
+      );
+      this.camera.aspect = current
+        ? current.width / Math.max(current.height, 1)
+        : visible / height;
+      this.camera.clearViewOffset();
+    } else if (this.rightInsetPx > 0) {
+      this.camera.aspect = visible / height;
       this.camera.setViewOffset(visible, height, 0, 0, width, height);
     } else {
+      this.camera.aspect = visible / height;
       this.camera.clearViewOffset();
     }
     this.camera.updateProjectionMatrix();
@@ -3568,6 +3752,10 @@ export class FractalScene {
 
   render(): void {
     this.renderNeeded = false;
+    if (this.pointsViewLayout === "four") {
+      this.renderFourPointsViews();
+      return;
+    }
     // The 4D projection always keeps its dedicated additive material. Glow
     // adds the same bloom composer the flat glow uses after the material has
     // drawn its soft HDR sprites; DOF derives focus and camera-depth blur in
@@ -3599,6 +3787,76 @@ export class FractalScene {
       default:
         this.renderer.render(this.scene, this.camera);
     }
+  }
+
+  /**
+   * Render the shared scene graph through X/Y/Z fixed cameras and the normal
+   * user camera. Full-screen post-processors (Bloom and EDL) intentionally do
+   * not run here: their render targets and screen-space kernels span the
+   * whole canvas and would bleed across pane boundaries. Their underlying
+   * point materials remain active, yielding a stable placement preview; the
+   * unchanged single view and saved-image captures retain the authored full
+   * effect.
+   */
+  private renderFourPointsViews(): void {
+    const viewports = this.livePointsViewports();
+    this.syncAxisCameras(viewports);
+    const renderer = this.renderer;
+
+    // Paint the authored backdrop across the whole canvas first, including
+    // the strip beneath the translucent desktop panel. Each subsequent
+    // render clears only its own scissored cell with that same scene backdrop
+    // before drawing the one shared set of points/guides.
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, this.viewportWidth, this.viewportHeight);
+    this.backdropQuad.render(renderer);
+    renderer.setScissorTest(true);
+    const nativePointMaterials = [
+      this.baseMaterial,
+      this.discMaterial,
+      this.glowMaterial,
+      this.replayCursor.material as THREE.PointsMaterial,
+    ];
+    const nativePointSizes = nativePointMaterials.map(
+      (material) => material.size,
+    );
+    try {
+      for (const view of viewports) {
+        if (view.width <= 0 || view.height <= 0) continue;
+        const camera =
+          view.kind === "current" ? this.camera : this.axisCameras[view.kind];
+        const bottom = this.viewportHeight - view.top - view.height;
+        renderer.setViewport(view.left, bottom, view.width, view.height);
+        renderer.setScissor(view.left, bottom, view.width, view.height);
+        // Three's built-in PointsMaterial attenuation uses the full render
+        // target height, not the active viewport height. Counter-scale its
+        // authored CSS-pixel size so half-height panes match Single exactly.
+        const pointScale = view.height / Math.max(this.viewportHeight, 1);
+        nativePointMaterials.forEach((material, index) => {
+          material.size = nativePointSizes[index] * pointScale;
+        });
+        this.preparePointsCamera(camera, view.height);
+        renderer.render(this.scene, camera);
+      }
+    } finally {
+      nativePointMaterials.forEach((material, index) => {
+        material.size = nativePointSizes[index];
+      });
+      renderer.setScissorTest(false);
+      renderer.setViewport(0, 0, this.viewportWidth, this.viewportHeight);
+      this.preparePointsCamera(this.camera, this.viewportHeight);
+    }
+  }
+
+  /** Push the camera-dependent shared fog/point uniforms before one pane. */
+  private preparePointsCamera(camera: THREE.Camera, cssHeight: number): void {
+    this.updateFogFor(camera);
+    if (this.fourDActive) this.updateFourDFade(camera);
+    if (this.renderStyle === "dof") this.focusDof(this.fourDActive, camera);
+    const halfHeight = cssHeight * this.renderer.getPixelRatio() * 0.5;
+    this.dofMaterial.uniforms.uHalfHeight.value = halfHeight;
+    this.fourDMaterial.uniforms.uHalfHeight.value = halfHeight;
+    this.balloonEchoMaterial.uniforms.uHalfHeight.value = halfHeight;
   }
 
   /**
@@ -3638,13 +3896,19 @@ export class FractalScene {
    */
   private withCenteredProjection<T>(readback: () => T, invalidate = true): T {
     const inset = this.rightInsetPx;
-    if (inset === 0) return readback();
+    const layout = this.pointsViewLayout;
+    if (inset === 0 && layout === "single") return readback();
     this.rightInsetPx = 0;
+    // Four-up is editing workspace chrome. Captures/thumbnails keep their
+    // established contract: the authored Current camera as one labeled-free
+    // image, never an HTML-label-free mosaic.
+    this.pointsViewLayout = "single";
     this.syncProjection();
     try {
       return readback();
     } finally {
       this.rightInsetPx = inset;
+      this.pointsViewLayout = layout;
       this.syncProjection();
       if (invalidate) this.renderNeeded = true;
     }
@@ -7972,10 +8236,10 @@ export class FractalScene {
   }
 
   /** Park either depth-of-field material's focal plane on the cloud centre. */
-  private focusDof(fourD: boolean): void {
+  private focusDof(fourD: boolean, camera: THREE.Camera = this.camera): void {
     const bounds = this.pointGeometry.boundingSphere;
     const center = bounds ? bounds.center : ZERO;
-    const focus = this.camera.position.distanceTo(center);
+    const focus = camera.position.distanceTo(center);
     const material = fourD ? this.fourDMaterial : this.dofMaterial;
     material.uniforms.uFocus.value = focus;
   }

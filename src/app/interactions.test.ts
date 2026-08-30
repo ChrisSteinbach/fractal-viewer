@@ -9,7 +9,7 @@ import {
 import type { InteractionsHandle } from "./interactions";
 import { MIN_GUIDE_SCALE, MAX_GUIDE_SCALE } from "./constants";
 import type { OrbitCamera } from "./orbit";
-import type { FractalScene } from "./scene";
+import type { FractalScene, PointsInteractionView } from "./scene";
 
 describe("canvas transform applicability", () => {
   it.each([
@@ -75,6 +75,13 @@ function setupInteractions(
     frozen?: boolean;
     fourD?: boolean;
     sliceOn?: boolean;
+    interactionView?: (
+      clientX: number,
+      clientY: number,
+    ) => PointsInteractionView | null;
+    interactionViewForKind?: (
+      kind: PointsInteractionView["kind"],
+    ) => PointsInteractionView | null;
   } = {},
 ): {
   canvas: HTMLCanvasElement;
@@ -120,6 +127,8 @@ function setupInteractions(
       canvas,
       camera,
       guideCube: opts.guideCube ?? (() => null),
+      pointsInteractionView: opts.interactionView,
+      pointsInteractionViewForKind: opts.interactionViewForKind,
     } as unknown as FractalScene,
     orbit,
     {
@@ -162,6 +171,233 @@ function touchEvent(
   Object.assign(event, { touches });
   return event;
 }
+
+function fixedAxisView(
+  axis: "x" | "y" | "z",
+  adjustable = false,
+): PointsInteractionView {
+  const camera = new THREE.PerspectiveCamera(50, 4 / 3, 0.1, 100);
+  if (axis === "x") camera.position.set(10, 0, 0);
+  else if (axis === "y") {
+    camera.position.set(0, 10, 0);
+    camera.up.set(0, 0, -1);
+  } else camera.position.set(0, 0, 10);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  return {
+    kind: adjustable ? "current" : axis,
+    camera,
+    rect: { left: 0, top: 0, width: 400, height: 300 },
+    adjustable,
+  };
+}
+
+describe("attachInteractions Points view routing", () => {
+  it.each([
+    ["x", 0],
+    ["y", 1],
+    ["z", 2],
+  ] as const)(
+    "moves in the %s pane's image plane while preserving that axis",
+    (axis, fixedComponent) => {
+      const cube = new THREE.Object3D();
+      cube.position.set(1, 2, 3);
+      const { canvas, onTransformChange } = setupInteractions({
+        selected: 0,
+        guideCube: () => cube,
+        interactionView: () => fixedAxisView(axis),
+      });
+
+      canvas.dispatchEvent(
+        new MouseEvent("mousedown", {
+          button: 0,
+          buttons: 1,
+          clientX: 200,
+          clientY: 150,
+        }),
+      );
+      document.dispatchEvent(
+        new MouseEvent("mousemove", {
+          buttons: 1,
+          clientX: 250,
+          clientY: 185,
+        }),
+      );
+      document.dispatchEvent(new MouseEvent("mouseup"));
+
+      expect(onTransformChange).toHaveBeenCalled();
+      const geometry = onTransformChange.mock.lastCall?.[1];
+      expect(geometry?.position[fixedComponent]).toBeCloseTo(
+        [1, 2, 3][fixedComponent],
+      );
+      expect(geometry?.position).not.toEqual([1, 2, 3]);
+    },
+  );
+
+  it("keeps camera gestures in Current and leaves fixed panes axis-locked", () => {
+    let current = false;
+    const fixed = fixedAxisView("x");
+    const adjustable = fixedAxisView("z", true);
+    const { canvas, rotate, dolly } = setupInteractions({
+      interactionView: () => (current ? adjustable : fixed),
+    });
+
+    canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        buttons: 1,
+        clientX: 100,
+        clientY: 100,
+      }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons: 1,
+        clientX: 130,
+        clientY: 120,
+      }),
+    );
+    document.dispatchEvent(new MouseEvent("mouseup"));
+    canvas.dispatchEvent(
+      new WheelEvent("wheel", { clientX: 100, clientY: 100, deltaY: 100 }),
+    );
+    expect(rotate).not.toHaveBeenCalled();
+    expect(dolly).not.toHaveBeenCalled();
+
+    current = true;
+    canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        buttons: 1,
+        clientX: 100,
+        clientY: 100,
+      }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons: 1,
+        clientX: 130,
+        clientY: 120,
+      }),
+    );
+    document.dispatchEvent(new MouseEvent("mouseup"));
+    canvas.dispatchEvent(
+      new WheelEvent("wheel", { clientX: 100, clientY: 100, deltaY: 100 }),
+    );
+    expect(rotate).toHaveBeenCalledWith(30, 20);
+    expect(dolly).toHaveBeenCalledWith(1.1);
+  });
+
+  it("latches the placement camera at pointerdown across a divider", () => {
+    const cube = new THREE.Object3D();
+    cube.position.set(1, 2, 3);
+    const resolve = vi.fn(() => fixedAxisView("x"));
+    const { canvas, onTransformChange } = setupInteractions({
+      selected: 0,
+      guideCube: () => cube,
+      interactionView: resolve,
+    });
+
+    canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        buttons: 1,
+        clientX: 390,
+        clientY: 150,
+      }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons: 1,
+        clientX: 450,
+        clientY: 150,
+      }),
+    );
+    document.dispatchEvent(new MouseEvent("mouseup"));
+
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(onTransformChange.mock.lastCall?.[1].position[0]).toBeCloseTo(1);
+  });
+
+  it("refreshes a latched pane's rectangle without changing its identity", () => {
+    const cube = new THREE.Object3D();
+    cube.position.set(1, 2, 3);
+    const initial = fixedAxisView("x");
+    const resized = {
+      ...initial,
+      rect: { left: 20, top: 30, width: 800, height: 500 },
+    };
+    const refresh = vi.fn(() => resized);
+    const { canvas, onTransformChange } = setupInteractions({
+      selected: 0,
+      guideCube: () => cube,
+      interactionView: () => initial,
+      interactionViewForKind: refresh,
+    });
+
+    canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        buttons: 1,
+        clientX: 200,
+        clientY: 150,
+      }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons: 1,
+        clientX: 250,
+        clientY: 185,
+      }),
+    );
+    document.dispatchEvent(new MouseEvent("mouseup"));
+
+    expect(refresh).toHaveBeenCalledWith("x");
+    expect(onTransformChange.mock.lastCall?.[1].position[0]).toBeCloseTo(1);
+  });
+
+  it("does not let wheel routing replace an active pointer pane", () => {
+    const cube = new THREE.Object3D();
+    cube.position.set(1, 2, 3);
+    const xView = fixedAxisView("x");
+    const resolve = vi.fn(() => xView);
+    const refresh = vi.fn(() => xView);
+    const { canvas, onTransformChange } = setupInteractions({
+      selected: 0,
+      guideCube: () => cube,
+      interactionView: resolve,
+      interactionViewForKind: refresh,
+    });
+
+    canvas.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        buttons: 1,
+        clientX: 200,
+        clientY: 150,
+      }),
+    );
+    canvas.dispatchEvent(
+      new WheelEvent("wheel", {
+        clientX: 700,
+        clientY: 450,
+        deltaY: 100,
+      }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        buttons: 1,
+        clientX: 250,
+        clientY: 185,
+      }),
+    );
+    document.dispatchEvent(new MouseEvent("mouseup"));
+
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledWith("x");
+    expect(onTransformChange.mock.lastCall?.[1].position[0]).toBeCloseTo(1);
+  });
+});
 
 describe("attachInteractions mouse latch release", () => {
   it("releases the drag latch on window blur so auto-orbit can resume (focus steal mid-hold)", () => {

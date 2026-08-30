@@ -79,6 +79,7 @@ import {
   type SampledSolidStatus,
 } from "./solid-render-status";
 import type { AppState, RenderMode } from "./state";
+import type { PointsViewLayout } from "./points-view-layout";
 import { resolveBackground } from "./background";
 import type { BackgroundGradient } from "./background";
 import {
@@ -428,6 +429,9 @@ export interface UiHandlers {
    * too; the app treats that as a no-op.
    */
   onRenderMode: (mode: RenderMode) => void;
+  /** Switch the live Points editing workspace without changing document,
+   * selection, generated points, or the authored Current camera. */
+  onPointsViewLayout: (layout: PointsViewLayout) => void;
   /** The one browser-owned automatic-view-motion choice was changed. In a
    * flat view it drives the camera turntable; in a non-flat view it drives
    * the 4D rotor tumble. */
@@ -2323,6 +2327,14 @@ export class Ui {
   // separate This-session mechanisms; Saved-view camera/rotor framing shares
   // the same home without becoming part of the preference.
   private readonly viewControls: HTMLElement;
+  private readonly pointsLayoutRow: HTMLElement;
+  private readonly pointsLayoutNote: HTMLElement;
+  private readonly pointsViewGrid: HTMLElement;
+  private readonly pointsLayoutButtons: Record<
+    PointsViewLayout,
+    HTMLButtonElement
+  >;
+  private pointsViewLayout: PointsViewLayout = "single";
   private readonly threeDSavedViewScope: HTMLElement;
   private readonly fourDSavedViewScope: HTMLElement;
   private readonly autoMotionToggle: HTMLInputElement;
@@ -2931,6 +2943,13 @@ export class Ui {
       this.byId("solidFloorEmissionRow"),
     ];
     this.viewControls = this.byId("viewControls");
+    this.pointsLayoutRow = this.byId("pointsLayoutRow");
+    this.pointsLayoutNote = this.byId("pointsLayoutNote");
+    this.pointsViewGrid = this.byId("pointsViewGrid");
+    this.pointsLayoutButtons = {
+      single: this.byId("pointsSingleViewBtn"),
+      four: this.byId("pointsFourViewBtn"),
+    };
     this.threeDSavedViewScope = this.byId("threeDSavedViewScope");
     this.fourDSavedViewScope = this.byId("fourDSavedViewScope");
     this.continuousZoomRow = this.byId("continuousZoomRow");
@@ -3477,6 +3496,12 @@ export class Ui {
         handlers.onRenderMode(mode),
       );
     }
+    for (const layout of ["single", "four"] as const) {
+      this.pointsLayoutButtons[layout].addEventListener("click", () => {
+        this.setPointsViewLayout(layout);
+        handlers.onPointsViewLayout(layout);
+      });
+    }
     // The adjacent live-region note is the modality-independent refusal path.
     // A disabled segment still swallows clicks, while pointer events ARE
     // dispatched for disabled form controls, so touch also gets a transient
@@ -3976,6 +4001,28 @@ export class Ui {
     }
   }
 
+  /** Reflect the session-only Points workspace choice in its control and
+   * inert on-canvas labels. Programmatic boot/mode restores dispatch no DOM
+   * event and therefore cannot loop back into the app handler. */
+  setPointsViewLayout(layout: PointsViewLayout): void {
+    this.pointsViewLayout = layout;
+    this.syncPointsViewLayout();
+  }
+
+  private syncPointsViewLayout(): void {
+    for (const layout of ["single", "four"] as const) {
+      const active = layout === this.pointsViewLayout;
+      const button = this.pointsLayoutButtons[layout];
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+    const visible =
+      this.pointsViewLayout === "four" &&
+      this.panelContext.renderMode === "points";
+    this.pointsViewGrid.classList.toggle("hidden", !visible);
+    this.doc.body.classList.toggle("points-four-view", visible);
+  }
+
   /**
    * Keep operational copy about the renderer the user is looking at. The
    * longer cross-renderer explanation lives in optional panel disclosures;
@@ -4131,6 +4178,7 @@ export class Ui {
     // owns one visible Scene color section; Atmosphere remains shared, with
     // Fog/Tint's finer gate owned by syncFogRows.
     const rendering = state.renderMode !== "points";
+    this.pointsLayoutRow.classList.toggle("hidden", rendering);
     // "4D" is a DERIVED property of the system (see affine4.ts's systemIsFlat
     // via state.ts's systemIsNonFlat), NOT a fourth render mode — so this is a
     // VIEW gate, orthogonal to the segmented control above. The presets block,
@@ -4150,6 +4198,9 @@ export class Ui {
     // re-poses and re-marches every frame.
     const nonFlat = systemIsNonFlat(state);
     this.viewIsNonFlat = nonFlat;
+    this.pointsLayoutNote.textContent = nonFlat
+      ? "X, Y, and Z stay axis-locked. Edit 4D transforms in the panel; only Current accepts view gestures. Bloom and EDL are shown in Current-only Single view. Saved images capture Current."
+      : "X, Y, and Z stay axis-locked. Move a selected transform in any pane; camera controls stay in Current. Bloom and EDL are shown in Current-only Single view. Saved images capture Current.";
     this.automaticMotionParked =
       state.renderMode === "surface" ||
       (nonFlat &&
@@ -4164,6 +4215,7 @@ export class Ui {
       surfaceKind: this.surfaceSessionKind,
     };
     this.panelContext = panelContext;
+    this.syncPointsViewLayout();
     this.syncContextualGuidance(state, nonFlat);
     // A non-flat system in Surface mode is always the 4D tracer: the session
     // routes on this same predicate (main.ts's systemPartsAreNonFlat branch),
@@ -4566,42 +4618,78 @@ export class Ui {
         ? "Auto-tumbling 4D IFS"
         : "4D IFS (tumble paused)";
       this.setHelpLines(
-        this.mouse
-          ? [
-              subject,
-              "Drag: Orbit",
-              "Scroll: Zoom",
-              "Shift-drag: Turn XW/YW",
-              "Shift-scroll: Turn ZW",
-            ]
-          : [subject, "1 finger: Rotate", "2 fingers: Pan/Zoom"],
+        this.pointsViewLayout === "four"
+          ? this.mouse
+            ? [
+                subject,
+                "Axis views: fixed",
+                "Current: drag/scroll view",
+                "Current + Shift: turn 4D",
+              ]
+            : [subject, "Axis views: fixed", "Current: rotate/pan/zoom"]
+          : this.mouse
+            ? [
+                subject,
+                "Drag: Orbit",
+                "Scroll: Zoom",
+                "Shift-drag: Turn XW/YW",
+                "Shift-scroll: Turn ZW",
+              ]
+            : [subject, "1 finger: Rotate", "2 fingers: Pan/Zoom"],
       );
     } else if (state.selectedTransform === null) {
       this.helpTitle.textContent = "Camera Mode";
       this.setHelpLines(
-        this.mouse
-          ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
-          : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
+        this.pointsViewLayout === "four"
+          ? this.mouse
+            ? ["Axis views: fixed", "Current: drag/pan/scroll view"]
+            : ["Axis views: fixed", "Current: rotate/pan/zoom"]
+          : this.mouse
+            ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
+            : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
       );
     } else if (state.selectedTransform === "final") {
       // The lens has no draggable guide box, so the canvas keeps orbiting the
       // camera; the panel sliders do the editing.
       this.helpTitle.textContent = "Final Transform";
       this.setHelpLines(
-        this.mouse
-          ? ["A lens on the whole cloud", "Drag: Orbit", "Scroll: Zoom"]
-          : [
-              "A lens on the whole cloud",
-              "1 finger: Rotate",
-              "2 fingers: Pan/Zoom",
-            ],
+        this.pointsViewLayout === "four"
+          ? this.mouse
+            ? [
+                "A lens on the whole cloud",
+                "Axis views: fixed",
+                "Current: drag/scroll view",
+              ]
+            : [
+                "A lens on the whole cloud",
+                "Axis views: fixed",
+                "Current: rotate/pan/zoom",
+              ]
+          : this.mouse
+            ? ["A lens on the whole cloud", "Drag: Orbit", "Scroll: Zoom"]
+            : [
+                "A lens on the whole cloud",
+                "1 finger: Rotate",
+                "2 fingers: Pan/Zoom",
+              ],
       );
     } else {
       this.helpTitle.textContent = `Transform ${state.selectedTransform + 1}`;
       this.setHelpLines(
-        this.mouse
-          ? ["Drag: Move", "Right-drag: Rotate", "Scroll: Scale"]
-          : ["1 finger: Move", "Pinch: Scale", "Twist: Rotate"],
+        this.pointsViewLayout === "four"
+          ? this.mouse
+            ? [
+                "Any pane: drag to move",
+                "Any pane: right-drag to rotate",
+                "Any pane: scroll to scale",
+              ]
+            : [
+                "Any pane: drag to move",
+                "Any pane: pinch/twist to resize/rotate",
+              ]
+          : this.mouse
+            ? ["Drag: Move", "Right-drag: Rotate", "Scroll: Scale"]
+            : ["1 finger: Move", "Pinch: Scale", "Twist: Rotate"],
       );
     }
 

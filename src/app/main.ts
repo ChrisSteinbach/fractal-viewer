@@ -210,6 +210,7 @@ import {
   saveIsolationHandoff,
 } from "./isolation-handoff";
 import { Ui } from "./ui";
+import type { PointsViewLayout } from "./points-view-layout";
 import {
   effectiveSurfaceSamples,
   parseSurfaceSamplesOverride,
@@ -731,6 +732,10 @@ async function main(): Promise<void> {
   setPinnedCustomMeshAssets(sceneCustomMeshIds(toSnapshot(state)));
   const orbit = new OrbitCamera(BOOT_CAMERA_POSITION);
   const ui = new Ui(document);
+  // Editing-workspace chrome, not document state: switching it never enters
+  // undo, share links, scene files, or point generation. The preference stays
+  // dormant through other renderers and resumes on return to Points.
+  let pointsViewLayout: PointsViewLayout = "single";
   const surfaceSamplesOverride = parseSurfaceSamplesOverride(
     window.location.search,
   );
@@ -6105,6 +6110,14 @@ async function main(): Promise<void> {
     if (state.renderMode === "flame") flameSession.exit();
     else if (state.renderMode === "solid") solidSession.exit();
     else if (state.renderMode === "surface") surfaceSession.exit();
+    // Session exit deactivates to Points and refreshes the UI, which can
+    // restore a dormant Four layout. Reassert the TARGET layout after that
+    // exit and before any new session starts: Flame snapshots its projection
+    // inside start(), before activate() changes renderMode, and every
+    // non-Points renderer needs the normal full-view projection there.
+    scene.setPointsViewLayout(
+      target === "points" ? pointsViewLayout : "single",
+    );
     if (target === "flame") flameSession.enter();
     else if (target === "solid") solidSession.enter();
     else if (target === "surface") surfaceSession.enter();
@@ -6164,7 +6177,11 @@ async function main(): Promise<void> {
   }
 
   function refreshUi(): void {
+    ui.setPointsViewLayout(pointsViewLayout);
     ui.updateLabels(state);
+    scene.setPointsViewLayout(
+      state.renderMode === "points" ? pointsViewLayout : "single",
+    );
     syncContinuousZoomUi();
     ui.setPortableLinkSharingAvailable(
       !sceneHasCustomMeshes(currentDocument()),
@@ -10132,6 +10149,14 @@ async function main(): Promise<void> {
       // just reached in over it.
       loadHints.clearAll();
       switchRenderMode(mode);
+    },
+    onPointsViewLayout: (layout) => {
+      pointsViewLayout = layout;
+      ui.setPointsViewLayout(layout);
+      if (state.renderMode === "points") scene.setPointsViewLayout(layout);
+      // Layout-specific help distinguishes the three fixed panes from
+      // Current, and 4D copy discloses its panel-only transform editing.
+      ui.updateLabels(state);
     },
     // Live slice state is owned by FourDView (like the tumble clock): it
     // never touches AppState or persistence AS STATE — though a snapshot of

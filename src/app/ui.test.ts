@@ -140,6 +140,7 @@ function noopHandlers(): UiHandlers {
     onTogglePanel: vi.fn(),
     onClosePanel: vi.fn(),
     onRenderMode: vi.fn(),
+    onPointsViewLayout: vi.fn(),
     onAutoMotionToggle: vi.fn(),
     onContinuousZoomToggle: vi.fn(),
     onContinuousZoomReset: vi.fn(),
@@ -5992,6 +5993,100 @@ describe("Ui render mode switch", () => {
   function renderModeSwitch(): HTMLElement {
     return document.getElementById("renderModeSwitch") as HTMLElement;
   }
+
+  it("switches the session-only Points layout and exposes four labeled panes", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels(initialState(true));
+
+    const single = document.getElementById(
+      "pointsSingleViewBtn",
+    ) as HTMLButtonElement;
+    const four = document.getElementById(
+      "pointsFourViewBtn",
+    ) as HTMLButtonElement;
+    const grid = document.getElementById("pointsViewGrid") as HTMLElement;
+    expect(single.getAttribute("aria-pressed")).toBe("true");
+    expect(grid.classList.contains("hidden")).toBe(true);
+
+    four.click();
+
+    expect(handlers.onPointsViewLayout).toHaveBeenCalledWith("four");
+    expect(four.getAttribute("aria-pressed")).toBe("true");
+    expect(single.getAttribute("aria-pressed")).toBe("false");
+    expect(grid.classList.contains("hidden")).toBe(false);
+    expect(document.body.classList.contains("points-four-view")).toBe(true);
+    expect(
+      Array.from(grid.querySelectorAll(".points-view-label"), (label) =>
+        label.textContent?.trim(),
+      ),
+    ).toEqual(["+X · YZ", "+Y · XZ", "+Z · XY", "Current · adjustable"]);
+
+    single.click();
+    expect(handlers.onPointsViewLayout).toHaveBeenLastCalledWith("single");
+    expect(grid.classList.contains("hidden")).toBe(true);
+    expect(document.body.classList.contains("points-four-view")).toBe(false);
+  });
+
+  it("keeps the four-view choice dormant through another renderer", () => {
+    const ui = new Ui(document);
+    ui.setPointsViewLayout("four");
+    const grid = document.getElementById("pointsViewGrid") as HTMLElement;
+    const row = document.getElementById("pointsLayoutRow") as HTMLElement;
+
+    ui.updateLabels({ ...initialState(true), renderMode: "flame" });
+    expect(row.classList.contains("hidden")).toBe(true);
+    expect(grid.classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels(initialState(true));
+    expect(row.classList.contains("hidden")).toBe(false);
+    expect(grid.classList.contains("hidden")).toBe(false);
+    expect(
+      document
+        .getElementById("pointsFourViewBtn")
+        ?.getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("keeps four-view inspection in 4D while disclosing panel-only transform editing", () => {
+    const ui = new Ui(document);
+    ui.setPointsViewLayout("four");
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      selectedTransform: 0,
+    });
+
+    expect(
+      document.getElementById("pointsLayoutRow")?.classList.contains("hidden"),
+    ).toBe(false);
+    expect(
+      document.getElementById("pointsViewGrid")?.classList.contains("hidden"),
+    ).toBe(false);
+    expect(document.getElementById("pointsLayoutNote")?.textContent).toContain(
+      "Edit 4D transforms in the panel",
+    );
+    expect(document.getElementById("helpText")?.textContent).toContain(
+      "Axis views: fixed",
+    );
+    expect(document.getElementById("helpText")?.textContent).toContain(
+      "Current:",
+    );
+    expect(document.getElementById("helpText")?.textContent).not.toContain(
+      "Any pane",
+    );
+  });
+
+  it("describes transform gestures as available in every flat placement pane", () => {
+    const ui = new Ui(document);
+    ui.setPointsViewLayout("four");
+    ui.updateLabels({ ...initialState(true), selectedTransform: 0 });
+
+    expect(document.getElementById("helpText")?.textContent).toContain(
+      "Any pane: drag to move",
+    );
+  });
   const POINT_CONTEXTUAL_SECTION_IDS = [
     "cloudSection",
     "colorSection",

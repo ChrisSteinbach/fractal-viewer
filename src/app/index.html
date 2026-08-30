@@ -82,7 +82,26 @@
            canvas was inert, but role="img" prunes its subtree from the
            accessibility tree, which would leave the now-focusable canvas
            taking keyboard focus with no announced name at all. -->
-      <div id="container"></div>
+      <div id="container">
+        <div
+          id="pointsViewGrid"
+          class="points-view-grid hidden"
+          aria-hidden="true"
+        >
+          <span class="points-view-label"
+            >+X<span class="points-view-plane"> · YZ</span></span
+          >
+          <span class="points-view-label"
+            >+Y<span class="points-view-plane"> · XZ</span></span
+          >
+          <span class="points-view-label"
+            >+Z<span class="points-view-plane"> · XY</span></span
+          >
+          <span class="points-view-label points-view-label-current"
+            >Current<span class="points-view-plane"> · adjustable</span></span
+          >
+        </div>
+      </div>
     </main>
     <div id="vignette"></div>
     <div id="error"></div>
@@ -2217,6 +2236,43 @@
             slice framing are saved with links, files, Collection entries,
             Timeline keyframes, and restored on reload.
           </p>
+          <div id="pointsLayoutRow">
+            <span class="control-label-line">
+              <span>Points layout</span>
+              <span class="control-scope" aria-label="Scope: This session"
+                >This session</span
+              >
+            </span>
+            <div
+              id="pointsLayoutSwitch"
+              class="segmented points-layout-switch"
+              role="group"
+              aria-label="Points layout"
+              aria-describedby="pointsLayoutNote"
+            >
+              <button
+                class="segment active"
+                id="pointsSingleViewBtn"
+                type="button"
+                aria-pressed="true"
+              >
+                Single
+              </button>
+              <button
+                class="segment"
+                id="pointsFourViewBtn"
+                type="button"
+                aria-pressed="false"
+              >
+                Four views
+              </button>
+            </div>
+            <p class="flame-hint" id="pointsLayoutNote">
+              X, Y, and Z stay axis-locked. Move a selected transform in any
+              pane; camera controls stay in Current. Bloom and EDL are shown in
+              Current-only Single view. Saved images capture Current.
+            </p>
+          </div>
           <label class="checkbox-label" id="continuousZoomRow">
             <input
               type="checkbox"
