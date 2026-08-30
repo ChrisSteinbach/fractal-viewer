@@ -308,6 +308,38 @@ export function enhanceRangeWithNumber(
     return { value };
   };
 
+  /**
+   * The nearest value inside this control's OWN accepted domain: within
+   * bounds, on the step grid where the control enforces one, and at the
+   * declared precision. Arrow stepping starts from whatever the field
+   * currently shows, which may be a draft {@link validateDraft} has just
+   * REFUSED, and it commits without re-validating — so without this a
+   * refused draft steps into a value the same control rejects when typed,
+   * writes it to the document, and then displays it ROUNDED, leaving the
+   * panel and the document disagreeing about what the number is. Measured
+   * on a real build before this existed: Position X (step 0.01), draft
+   * "0.375" refused for precision, then ArrowUp wrote 0.385 to the document
+   * and showed 0.39 in the field, the slider and the readout.
+   *
+   * THE ORDER IS THE LOAD-BEARING PART: grid, then precision, then bounds.
+   * Clamping first and rounding after would round the bound itself away —
+   * an off-precision bound is reachable in practice, since a synchronized
+   * value outside the declared span widens the bounds to itself (see
+   * {@link setBounds}'s callers) rather than being clamped off — and the
+   * step at the top of the range would then land back where it started.
+   */
+  const quantize = (value: number): number => {
+    const gridded =
+      options.enforceStep === true
+        ? bounds.min +
+          Math.round((value - bounds.min) / bounds.step) * bounds.step
+        : value;
+    return Math.min(
+      bounds.max,
+      Math.max(bounds.min, Number(gridded.toFixed(precision))),
+    );
+  };
+
   const setValue = (
     value: number,
     syncOptions: { force?: boolean } = {},
@@ -423,12 +455,10 @@ export function enhanceRangeWithNumber(
         candidate ??
         allowedValues[direction > 0 ? allowedValues.length - 1 : 0];
     } else {
-      next = Number(
-        Math.min(
-          bounds.max,
-          Math.max(bounds.min, current + direction * bounds.step),
-        ).toPrecision(15),
-      );
+      // Both the base and the result go through the domain, not just the
+      // result: stepping from an unquantized base lands a step away from a
+      // value the field never showed.
+      next = quantize(quantize(current) + direction * bounds.step);
     }
     arrowCommitPending = applyNumberValue(next, false);
   });
