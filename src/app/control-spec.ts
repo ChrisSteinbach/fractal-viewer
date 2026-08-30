@@ -403,6 +403,8 @@ export interface NumericControlSpec {
   allowedValues?: readonly number[];
   /** Suggested decimal precision for display/edit synchronization. */
   precision?: number;
+  /** Require exact entry to land on the semantic step grid. */
+  enforceStep?: boolean;
   /** Presentation mapping for a retained slider. Omitted means identity. */
   rangeToNumber?: (raw: number) => number;
   numberToRange?: (value: number) => number;
@@ -816,7 +818,11 @@ function numericControl(
   apply: (state: AppState, value: number) => AppState,
   options: Pick<
     NumericControlSpec,
-    "allowedValues" | "precision" | "rangeToNumber" | "numberToRange"
+    | "allowedValues"
+    | "enforceStep"
+    | "precision"
+    | "rangeToNumber"
+    | "numberToRange"
   > = {},
 ): NumericControlSpec {
   const stepText = String(step);
@@ -832,6 +838,7 @@ function numericControl(
     read,
     apply,
     ...(options.allowedValues ? { allowedValues: options.allowedValues } : {}),
+    ...(options.enforceStep ? { enforceStep: true } : {}),
     ...(options.rangeToNumber ? { rangeToNumber: options.rangeToNumber } : {}),
     ...(options.numberToRange ? { numberToRange: options.numberToRange } : {}),
   };
@@ -1807,6 +1814,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       PARAM.solidResolution.snap ?? 1,
       (s) => s.solid.resolution,
       setSolidResolution,
+      { enforceStep: true },
     ),
     read: (s) => String(s.solid.resolution),
     apply: (s, raw) => setSolidResolution(s, Number(raw)),

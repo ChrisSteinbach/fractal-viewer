@@ -222,14 +222,26 @@ function editorSlider(label: string): HTMLInputElement {
   return slider;
 }
 
-/** The value readout immediately following an editor slider (see
- * editorSlider above) — the two are always built as adjacent siblings. */
+/** Grab the retained formatted/unit readout in the slider's editor row. */
 function editorReadout(label: string): HTMLElement {
-  const readout = editorSlider(label).nextElementSibling;
+  const readout = editorSlider(label)
+    .closest(".editor-row")
+    ?.querySelector(".value");
   if (!(readout instanceof HTMLElement)) {
-    throw new Error(`No readout following the slider labelled "${label}"`);
+    throw new Error(`No readout in the row labelled "${label}"`);
   }
   return readout;
+}
+
+/** Grab the semantic exact-number companion for a dynamic editor slider. */
+function editorNumber(label: string): HTMLInputElement {
+  const input = editorSlider(label)
+    .closest(".range-number-pair")
+    ?.querySelector(".range-number-input");
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`No exact number input for the slider labelled "${label}"`);
+  }
+  return input;
 }
 
 /** Grab one Scale mirror toggle by its aria-label, e.g. "Mirror Scale Y". */
@@ -1081,7 +1093,9 @@ describe("Ui.renderXaosSection — the leak dial", () => {
     ui.renderXaosSection(fernSpongeIsolated());
 
     const slider = xaosLeakSliders()[0];
-    expect(slider.getAttribute("aria-describedby")).toBe("xaosEditHint");
+    expect(slider.getAttribute("aria-describedby")?.split(/\s+/)).toContain(
+      "xaosEditHint",
+    );
     slider.value = "0.02";
     slider.dispatchEvent(new Event("input"));
     expect(handlers.onXaosLeak).toHaveBeenCalledWith(
@@ -1326,7 +1340,11 @@ describe("Ui table-driven exact numeric controls", () => {
     slider.value = String(Math.log(2) / Math.log(MAX_COLOR_GAMMA));
     slider.dispatchEvent(new Event("input"));
 
-    expect(Number(exactInput("colorGammaSlider").value)).toBeCloseTo(2);
+    const number = exactInput("colorGammaSlider");
+    expect(Number(number.value)).toBeCloseTo(2);
+    // Direct entry is exact model data, not restricted to the thumb's
+    // convenience increment. Arrow keys still use the declared increment.
+    expect(number.step).toBe("any");
   });
 
   it("accepts an exact off-detent point budget and reports apply then commit", () => {
@@ -1355,6 +1373,20 @@ describe("Ui table-driven exact numeric controls", () => {
     );
   });
 
+  it("rejects a fractional point budget instead of silently storing it", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const number = exactInput("numPointsSlider");
+
+    number.value = "37000.5";
+    number.dispatchEvent(new Event("change"));
+
+    expect(current().numPoints).toBe(initialState(true).numPoints);
+    expect(number.value).toBe("37000.5");
+    expect(number.validationMessage).toBe("Enter a whole number.");
+  });
+
   it("applies exact model-domain values instead of mapped slider positions", () => {
     const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
@@ -1375,6 +1407,7 @@ describe("Ui table-driven exact numeric controls", () => {
 
     number.value = "9";
     number.dispatchEvent(new Event("change"));
+    ui.updateLabels(current());
 
     expect(current().pointSize).toBe(initialState(true).pointSize);
     expect(number.value).toBe("9");
@@ -1386,6 +1419,32 @@ describe("Ui table-driven exact numeric controls", () => {
     expect(document.getElementById(errorId ?? "")?.textContent).toContain(
       "0.25 to 4",
     );
+  });
+
+  it("routes each bespoke static exact value through its existing callback contract", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const change = (rangeId: string, value: number) => {
+      const number = exactInput(rangeId);
+      number.value = String(value);
+      number.dispatchEvent(new Event("change"));
+    };
+    change("scheduleDepthSlider", 4);
+    change("autoOrbitSpeedSlider", 1.7);
+    change("fourDTumbleSpeedSlider", 2.3);
+    change("fourDSliceSlider", -0.37);
+    change("fourDSliceThicknessSlider", 0.23);
+
+    expect(handlers.onScheduleDepth).toHaveBeenNthCalledWith(1, 4, "input");
+    expect(handlers.onScheduleDepth).toHaveBeenNthCalledWith(2, 4, "commit");
+    expect(handlers.onAutoOrbitSpeedInput).toHaveBeenCalledOnce();
+    expect(handlers.onAutoOrbitSpeedInput).toHaveBeenCalledWith(1.7);
+    expect(handlers.onFourDTumbleSpeedInput).toHaveBeenCalledWith(2.3);
+    expect(handlers.onFourDSliceInput).toHaveBeenCalledWith(-0.37);
+    expect(handlers.onFourDSliceCommit).toHaveBeenCalledOnce();
+    expect(handlers.onFourDSliceThicknessInput).toHaveBeenCalledWith(0.23);
   });
 });
 
@@ -2930,6 +2989,54 @@ describe("Ui.renderTransformEditor", () => {
     expect(editorSliders()).toHaveLength(31);
   });
 
+  it("pairs every rendered dynamic range and retains formatted/unit readouts", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      {
+        ...defaultTransforms()[0],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "torus", major: 0.8, minor: 0.3 },
+              combine: "union",
+            },
+          ],
+        },
+        variations: [{ type: "mandelbox", weight: 1 }],
+      },
+      0,
+      1,
+    );
+    ui.renderXaosSection(fernSpongeIsolated());
+
+    const ranges = Array.from(
+      document.querySelectorAll<HTMLInputElement>(
+        "#transformEditor input[type='range'], #xaosLeakRows input[type='range']",
+      ),
+    );
+    expect(ranges.length).toBeGreaterThan(31);
+    for (const slider of ranges) {
+      const pair = slider.closest(".range-number-pair");
+      expect(pair).not.toBeNull();
+      expect(pair?.querySelectorAll(".range-number-input")).toHaveLength(1);
+      const readout =
+        pair?.parentElement?.querySelector<HTMLElement>(":scope > .value");
+      if (readout) {
+        expect(readout.hidden).toBe(false);
+        expect(slider.getAttribute("aria-describedby")?.split(/\s+/)).toContain(
+          readout.id,
+        );
+        expect(
+          pair
+            ?.querySelector<HTMLInputElement>(".range-number-input")
+            ?.getAttribute("aria-describedby")
+            ?.split(/\s+/),
+        ).toContain(readout.id);
+      }
+    }
+  });
+
   it("opens only Position for a flat transform", () => {
     const transforms = defaultTransforms();
     const ui = new Ui(document);
@@ -3572,6 +3679,83 @@ describe("Ui.renderTransformEditor", () => {
     expect(geometry.scale).toEqual([0.5, 0.5, 0.5]);
   });
 
+  it("accepts exact degrees and settles one numeric transform change once", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(defaultTransforms()[0], 2, 3);
+
+    const rotationY = editorNumber("Rotation Y");
+    rotationY.value = "90";
+    rotationY.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(editorSlider("Rotation Y").value).toBe("90");
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.rotation[1]).toBeCloseTo(Math.PI / 2);
+    expect(handlers.onTransformGeometry).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(2);
+  });
+
+  it("applies an exact-number Arrow step live and settles it on keyup", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(defaultTransforms()[0], 2, 3);
+
+    const positionX = editorNumber("Position X");
+    positionX.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "ArrowUp",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    expect(positionX.value).toBe("0.51");
+    expect(editorSlider("Position X").value).toBe("0.51");
+    expect(handlers.onTransformGeometry).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).not.toHaveBeenCalled();
+
+    positionX.dispatchEvent(
+      new KeyboardEvent("keyup", { key: "ArrowUp", bubbles: true }),
+    );
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+    expect(handlers.onTransformCommit).toHaveBeenCalledWith(2);
+  });
+
+  it("accepts actual exact weights while keeping the range logarithmic", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor({ ...defaultTransforms()[0], weight: 1 }, 0, 1);
+
+    const weight = editorNumber("Weight");
+    weight.value = "3.25";
+    weight.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.weight).toBe(3.25);
+    expect(Number(editorSlider("Weight").value)).toBeCloseTo(Math.log10(3.25));
+    expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an invalid numeric draft from mutating or settling the transform", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(defaultTransforms()[0], 0, 1);
+
+    const positionX = editorNumber("Position X");
+    positionX.value = "99";
+    positionX.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(positionX.value).toBe("99");
+    expect(positionX.getAttribute("aria-invalid")).toBe("true");
+    expect(handlers.onTransformGeometry).not.toHaveBeenCalled();
+    expect(handlers.onTransformCommit).not.toHaveBeenCalled();
+  });
+
   it("keeps range inputs mutation-only until one bubbling change commits the current target", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -3867,9 +4051,11 @@ describe("Ui transform color editor", () => {
     expect(
       editorGroup("Color").querySelector(".flame-hint")?.textContent,
     ).toContain("Index recolors Points immediately");
-    expect(editorSlider("Color index").getAttribute("aria-describedby")).toBe(
-      "transformColorTimingHint",
-    );
+    expect(
+      editorSlider("Color index")
+        .getAttribute("aria-describedby")
+        ?.split(/\s+/),
+    ).toContain("transformColorTimingHint");
   });
 
   it("shows the default color speed for a map that authors none", () => {
@@ -4312,13 +4498,15 @@ describe("Ui variation editor", () => {
       1,
     );
 
-    const fixed = editorSlider("Spherefold fixed radius");
+    const fixed = editorNumber("Spherefold fixed radius");
     fixed.value = "0.6";
-    fixed.dispatchEvent(new Event("input"));
+    fixed.dispatchEvent(new Event("change", { bubbles: true }));
 
     const min = editorSlider("Spherefold min radius");
     expect(min.value).toBe("0.6");
     expect(min.max).toBe("0.6");
+    expect(editorNumber("Spherefold min radius").value).toBe("0.600");
+    expect(editorNumber("Spherefold min radius").max).toBe("0.6");
     expect(lastGeometry(handlers).variations).toEqual([
       { type: "spherefold", weight: 1, minRadius: 0.6, fixedRadius: 0.6 },
     ]);
@@ -4876,10 +5064,12 @@ describe("Ui finish editor", () => {
       expect(finishNote().textContent).toMatch(/FIRST active transform/);
       expect(finishNote().id).toBe("finishApplicabilityNote");
       for (const input of finishInputs()) {
-        expect(input.getAttribute("aria-describedby")?.split(/\s+/)).toEqual([
-          "transformFinishTimingHint",
-          finishNote().id,
-        ]);
+        expect(input.getAttribute("aria-describedby")?.split(/\s+/)).toEqual(
+          expect.arrayContaining([
+            "transformFinishTimingHint",
+            finishNote().id,
+          ]),
+        );
       }
     });
 
@@ -5243,6 +5433,36 @@ describe("Ui pattern editor", () => {
     });
   });
 
+  it("authors an exact pattern scale, then deletes it at the family default", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, surfacePattern: { kind: "wood", axis: "y", scale: 4 } },
+      0,
+      1,
+    );
+
+    const scale = editorNumber("Pattern scale");
+    scale.value = "1.37";
+    scale.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "wood",
+      axis: "y",
+      scale: 1.37,
+    });
+    expect(Number(editorSlider("Pattern scale").value)).toBeCloseTo(
+      scalePosition(1.37),
+    );
+
+    scale.value = "3";
+    scale.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "wood",
+      axis: "y",
+    });
+  });
+
   it("writes strength sparsely and removes it at the default 1", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -5494,10 +5714,12 @@ describe("Ui pattern editor", () => {
       expect(patternNote().textContent).toMatch(/FIRST active transform/);
       expect(patternNote().id).toBe("patternApplicabilityNote");
       for (const input of patternInputs()) {
-        expect(input.getAttribute("aria-describedby")?.split(/\s+/)).toEqual([
-          "transformPatternTimingHint",
-          patternNote().id,
-        ]);
+        expect(input.getAttribute("aria-describedby")?.split(/\s+/)).toEqual(
+          expect.arrayContaining([
+            "transformPatternTimingHint",
+            patternNote().id,
+          ]),
+        );
       }
     });
 
