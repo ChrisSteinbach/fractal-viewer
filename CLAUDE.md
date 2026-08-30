@@ -239,6 +239,25 @@ to catch. It still does NOT separate project-then-invert from
 invert-then-project — both draw something; that needs a rotor pose where they
 visibly disagree.
 
+The panel's exact-numeric-companion gate (not an npm script — it needs
+layout and TRUSTED touch input, neither of which jsdom has):
+`npm run build && npm run preview &` then
+`node scripts/panel-numeric-control.verify.mjs [--viewport=WxH]`. It walks
+the app through the states that MINT sliders and asks four things no unit
+test reaches: does EVERY runtime `input[type=range]` carry exactly one
+companion, available or unavailable AS ONE CONTROL (eleven families are
+hand-built at render time, where the spec table's jsdom pin cannot see
+them); does each clear 44px on both axes
+inside the panel with its own domain's widest value unclipped; does a
+trusted tap FOCUS it while a swipe that starts on it SCROLLS and edits
+nothing (the slider guard's one-frame `disabled` flip never reaching it);
+and does Tab/Arrow/Escape/refusal hold — reading the committed value out of
+the `#v1=` document hash rather than the panel, which is the half that was
+lying when this caught an Arrow step after a REFUSED draft committing a
+value direct entry refuses. MEASURED green at 393x727 and 320x568; the
+figures and the defect's own numbers are in `docs/controls.md`. Not
+verified on WebKit or Firefox Android.
+
 **Harness sheets** (`scripts/*.harness.ts`, run with
 `npx vitest run --config scripts/vitest.harness.config.ts scripts/<name>`)
 are this project's executable measurement records — the argument for a
@@ -1526,6 +1545,25 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     and `docs/controls.md` DISCLOSE it rather than the BRDF fudging it.
   - `control-spec.ts` — declarative spec for panel scalar controls. Adding a
     setting = one spec entry + one index.html row (pure, tested).
+  - `range-number-control.ts` — the exact-value companion every panel slider
+    is paired with: the range stays the fast coarse gesture, the number
+    field is the authoring surface. `enhanceRangeWithNumber` MOVES the live
+    range rather than cloning it, so existing listeners and descriptions
+    survive, and it never observes `range.disabled` — the app synchronizes
+    availability through `setDisabled`, so `slider-scroll-guard.ts`'s
+    one-frame suppression flip cannot leak onto the field. PRECISION IS THE
+    DOMAIN, not the step: `step` stays the Arrow increment while direct
+    entry may be off-step but never off-precision (every shipped control
+    infers precision from its own step). Typing alone never edits — `input`
+    only re-checks a shown error, `change` commits — and an invalid draft
+    stops its own bubbling `change` so a delegated editor seam cannot read a
+    refusal as a settled edit. EVERY ARROW STEP GOES THROUGH `quantize`,
+    base and result: stepping owns the semantic step (native stepping cannot
+    express detents) and commits WITHOUT re-validating, so a refused draft
+    would otherwise step into a value the same control rejects typed and
+    then display it rounded — the panel and the document disagreeing, the
+    one thing an exact-value control must not do. Gated in a real browser at
+    phone width by `scripts/panel-numeric-control.verify.mjs` (above).
   - `legend-spec.ts` — the color legend as DATA: `deriveLegend`
     returns a plain `LegendSpec` (hidden / gradient bar + three labels /
     swatch strip of labels and color chips) and `ui.ts`'s `paintLegend` only
