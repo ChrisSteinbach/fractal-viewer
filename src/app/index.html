@@ -2217,6 +2217,40 @@
             slice framing are saved with links, files, Collection entries,
             Timeline keyframes, and restored on reload.
           </p>
+          <label class="checkbox-label" id="continuousZoomRow">
+            <input
+              type="checkbox"
+              id="continuousZoomToggle"
+              aria-describedby="continuousZoomNote continuousZoomUnavailableNote"
+            />
+            Continuous zoom
+            <span class="control-scope" aria-label="Scope: Saved view"
+              >Saved view</span
+            >
+          </label>
+          <p class="flame-hint" id="continuousZoomNote">
+            Zoom keeps a safe distance from the orbit target, then narrows the
+            lens instead of crossing it. Right-drag or two-finger drag places
+            that target. Surface re-traces smaller detail and increases its
+            depth; Points and Solid magnify their existing sampled data.
+          </p>
+          <p class="flame-hint hidden" id="continuousZoomUnavailableNote">
+            The camera is frozen during Flame accumulation. An active mode can
+            still be reset or exited; return to another renderer to start one.
+          </p>
+          <div
+            class="continuous-zoom-controls hidden"
+            id="continuousZoomControls"
+          >
+            <output id="continuousZoomStatus">Zoom 1×</output>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              id="continuousZoomResetBtn"
+            >
+              Reset view
+            </button>
+          </div>
           <p class="flame-hint hidden" id="automaticMotionParkedHint">
             Surface parks automatic motion so the render can settle. Manual
             camera turns and, in 4D, rotor and slice controls stay live; your

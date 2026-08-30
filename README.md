@@ -43,7 +43,8 @@ Three.js, and Vite, and packaged as an installable, offline-capable PWA.
   leaving on a second screen.
 - **Five color modes** — by transform, height, radius, position, or a uniform
   cyan — plus gradient palettes and a custom-gradient editor.
-- **Orbit camera** with rotate / pan / zoom, and an adjustable atmosphere:
+- **Orbit camera** with rotate / pan / zoom, including a saved continuous-zoom
+  lens that stays outside its focus while analytic Surface adapts detail; plus
   depth fog with its own density and tint, tracking the cloud and backdrop.
 - **Scene backdrops** — dark, haze, palette-linked, custom gradients, or a
   softly blurred 2D Flame echo of the current system, generated off-thread and

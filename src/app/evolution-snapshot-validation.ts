@@ -72,8 +72,10 @@ import {
 } from "./state";
 import { SURFACE_ANTIALIAS_DETENTS } from "./surface-sampling";
 import {
+  DEFAULT_CAMERA_FOV,
   MAX_PHI,
   MAX_RADIUS,
+  MIN_DEEP_ZOOM_FOV,
   MIN_PHI,
   MIN_RADIUS,
   type CameraPose,
@@ -213,6 +215,8 @@ const CAMERA_FIELDS = {
   radius: true,
   theta: true,
   phi: true,
+  fov: true,
+  infiniteZoom: true,
 } satisfies Fields<CameraPose>;
 const ROTOR_FIELDS = { p: true, q: true } satisfies Fields<RotorPair>;
 const FOUR_D_FIELDS = {
@@ -1012,6 +1016,15 @@ function camera(value: unknown, path: string): void {
   const phi = finite(required(entry, "phi", path), `${path}.phi`);
   if (phi < MIN_PHI || phi > MAX_PHI) {
     throw new RangeError(`${path}.phi is outside its authored domain`);
+  }
+  if (entry.fov !== undefined) {
+    const fov = finite(entry.fov, `${path}.fov`);
+    if (fov < MIN_DEEP_ZOOM_FOV || fov > DEFAULT_CAMERA_FOV) {
+      throw new RangeError(`${path}.fov is outside its authored domain`);
+    }
+  }
+  if (entry.infiniteZoom !== undefined) {
+    boolean(entry.infiniteZoom, `${path}.infiniteZoom`);
   }
 }
 

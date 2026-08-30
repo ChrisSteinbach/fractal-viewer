@@ -571,6 +571,7 @@ describe("buildSurfaceDE4 on pentatope", () => {
   it("sizes the depth cap at 14 (ceil(log(1e-4) / log(0.5)))", () => {
     const de = buildSurfaceDE4(pentatope());
     expect(de.maxDepth).toBe(14);
+    expect(de.slowestSigma).toBeCloseTo(0.5, 12);
   });
 
   it("derives escapeRadius as exactly 2x boundingRadius", () => {
@@ -3027,6 +3028,7 @@ describe("buildSurfaceDE4 fold fields and depth sizing", () => {
       Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
     );
     expect(de.maxDepth).toBe(expected);
+    expect(de.slowestSigma).toBeCloseTo(slowest, 12);
   });
 });
 

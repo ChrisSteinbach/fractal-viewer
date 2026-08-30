@@ -185,7 +185,14 @@ import {
   reserveEvolutionCrossoverOrdinal,
 } from "./evolution-generation";
 import { randomSystem } from "../fractal/random-system";
-import { BOOT_CAMERA_POSITION, OrbitCamera, type CameraPose } from "./orbit";
+import {
+  BOOT_CAMERA_POSITION,
+  DEFAULT_CAMERA_FOV,
+  MAX_DEEP_ZOOM_SURFACE_DEPTH,
+  OrbitCamera,
+  clampCameraFov,
+  type CameraPose,
+} from "./orbit";
 import {
   type ExportImage,
   FOUR_D_SLICE_WIDTH,
@@ -2921,10 +2928,15 @@ async function main(): Promise<void> {
   function fitCameraToAttractor(): void {
     const bounds = attractorFramingBounds();
     if (!bounds) return;
+    // A new whole-system frame starts from the ordinary lens even when the
+    // Saved-view Continuous zoom mode remains armed. Fitting against a tiny
+    // deep FOV would clamp at MAX_RADIUS and still crop the new attractor.
+    orbit.resetLens();
     cameraTween.fitToBounds(bounds, {
-      fov: scene.camera.fov,
+      fov: orbit.fov,
       aspect: scene.camera.aspect,
     });
+    syncContinuousZoomUi();
   }
 
   // The fit's morph-time sibling: retarget the tracking chase at the current
@@ -2934,10 +2946,56 @@ async function main(): Promise<void> {
   function trackCameraToAttractor(): void {
     const bounds = attractorFramingBounds();
     if (!bounds) return;
+    orbit.resetLens();
     cameraTween.track(bounds, {
-      fov: scene.camera.fov,
+      fov: orbit.fov,
       aspect: scene.camera.aspect,
     });
+    syncContinuousZoomUi();
+  }
+
+  function formatZoomMagnification(magnification: number): string {
+    if (magnification < 10) return magnification.toFixed(1);
+    return Math.round(magnification).toLocaleString();
+  }
+
+  let lastContinuousZoomLimit: "numeric" | "work" | null = null;
+
+  /** Keep the View disclosure and both Surface backends on the same zoom
+   * plan. Sampled renderers name their fixed-data limit rather than implying
+   * that optical magnification created new geometry. */
+  function syncContinuousZoomUi(announceLimit = false): void {
+    const magnification = orbit.infiniteZoom ? orbit.deepMagnification : 1;
+    const surfaceDetail = scene.setSurfaceZoomMagnification(magnification);
+    const zoom = `Zoom ${formatZoomMagnification(magnification)}×`;
+    let status = zoom;
+    if (state.renderMode === "surface") {
+      status += ` · detail depth ${String(surfaceDetail.depth)}/${String(MAX_DEEP_ZOOM_SURFACE_DEPTH)}`;
+    } else if (state.renderMode === "points") {
+      status += " · existing point sample";
+    } else if (state.renderMode === "solid") {
+      status += " · existing voxel grid";
+    } else {
+      status += " · camera frozen";
+    }
+
+    const limit = orbit.deepZoomLimitReached
+      ? "numeric"
+      : state.renderMode === "surface" && surfaceDetail.capped
+        ? "work"
+        : null;
+    if (limit === "numeric") status += " · numeric limit";
+    else if (limit === "work") status += " · detail-work limit";
+    ui.setContinuousZoom(orbit.infiniteZoom, status);
+
+    if (announceLimit && limit !== null && limit !== lastContinuousZoomLimit) {
+      ui.flashToast(
+        limit === "numeric"
+          ? "Continuous zoom reached this renderer's numeric precision limit."
+          : "Surface detail reached its bounded depth limit; Reset view is available.",
+      );
+    }
+    lastContinuousZoomLimit = limit;
   }
 
   /**
@@ -2951,6 +3009,8 @@ async function main(): Promise<void> {
       radius: orbit.spherical.radius,
       theta: orbit.spherical.theta,
       phi: orbit.spherical.phi,
+      ...(orbit.fov !== DEFAULT_CAMERA_FOV ? { fov: orbit.fov } : {}),
+      ...(orbit.infiniteZoom ? { infiniteZoom: true } : {}),
     };
   }
 
@@ -2967,6 +3027,10 @@ async function main(): Promise<void> {
     orbit.spherical.radius = pose.radius;
     orbit.spherical.theta = pose.theta;
     orbit.spherical.phi = pose.phi;
+    orbit.fov = clampCameraFov(pose.fov ?? DEFAULT_CAMERA_FOV);
+    orbit.infiniteZoom =
+      pose.infiniteZoom === true || orbit.fov !== DEFAULT_CAMERA_FOV;
+    syncContinuousZoomUi();
   }
 
   // Grabbing the camera mid-glide should feel like a normal orbit, not a
@@ -6101,6 +6165,7 @@ async function main(): Promise<void> {
 
   function refreshUi(): void {
     ui.updateLabels(state);
+    syncContinuousZoomUi();
     ui.setPortableLinkSharingAvailable(
       !sceneHasCustomMeshes(currentDocument()),
     );
@@ -10111,6 +10176,19 @@ async function main(): Promise<void> {
       fourDView.tumbleSpeed = value;
     },
     onAutoMotionToggle: applyAutoMotionToggle,
+    onContinuousZoomToggle: (checked) => {
+      cameraTween.cancel();
+      orbit.setInfiniteZoom(checked);
+      syncContinuousZoomUi();
+      scene.invalidate();
+    },
+    onContinuousZoomReset: () => {
+      cameraTween.cancel();
+      orbit.resetLens();
+      fitCameraToAttractor();
+      syncContinuousZoomUi();
+      scene.invalidate();
+    },
     onAutoOrbitSpeedInput: (value) => {
       autoOrbitSpeed = value;
     },
@@ -10214,6 +10292,7 @@ async function main(): Promise<void> {
       ui.setAutoMotionToggle(on);
       applyAutoMotionToggle(on);
     },
+    onCameraZoom: () => syncContinuousZoomUi(true),
   });
 
   window.addEventListener("resize", () => {
@@ -10499,7 +10578,9 @@ async function main(): Promise<void> {
    * frame's — is what gets rendered and encoded.
    */
   function tickLogic(now: number): void {
+    const cameraFovBeforeTween = orbit.fov;
     cameraTween.advance();
+    if (orbit.fov !== cameraFovBeforeTween) syncContinuousZoomUi();
     // Ease the projection toward the panel-aware inset. Skipped while a flame
     // render is showing — its view is frozen by contract, and the projection
     // must not drift under the baked image; the ease resumes (and catches up)

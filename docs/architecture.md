@@ -445,6 +445,25 @@ systems, and each polytope preset also carries a legibility scaffold
 (`PRESET_SCAFFOLDS`) — its own wireframe edges, tumbled through the identical
 rotation so the projection's motion reads as genuinely 4D at a glance.
 
+Continuous zoom extends the same `OrbitCamera`/`CameraPose` rather than adding
+a second camera. `orbit.ts` converts dolly input into one continuous
+target-plane footprint: radius changes under the ordinary 60° lens down to the
+safe radius floor, then FOV changes down to 0.02°. The camera therefore never
+passes through its maintained target, and pan remains the single way to move
+that target. `scene.ts::applyCamera` owns projection updates and a
+radius-proportional near plane. The optional `fov`/`infiniteZoom` pose fields
+travel with saved views and timeline camera glides; legacy poses omit them and
+retain the 60° contract.
+
+Analytic Surface is the detail-generating consumer. `scene.ts` retains each
+3D/4D session's unmagnified maximum depth plus its slowest certified IFS
+contraction, then derives a live full-tier depth from lens magnification for
+both WebGL and WebGPU. Forward escape/bulb paths add one step per octave; all
+paths cap at 256, while the full-tier hit floor shrinks to a bounded f32 floor.
+Points and Solid are fixed global samples, so their UI calls the operation
+magnification rather than adaptive generation. The View status reports that
+distinction and surfaces both the depth-work and numeric FOV caps.
+
 ## Scene persistence
 
 `persist.ts` keeps the explorer share-ready. A persistent projection of
