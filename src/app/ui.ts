@@ -133,6 +133,10 @@ import { videoCaptureSupported } from "./recorder";
 import { offlineExportSupported } from "./video-encode";
 import { installSliderScrollGuard } from "./slider-scroll-guard";
 import {
+  enhanceRangeWithNumber,
+  type RangeNumberControl,
+} from "./range-number-control";
+import {
   BUNDLED_EMITTER_SHAPES,
   BUNDLED_TRAP_SHAPES,
   bundledEmitterForShape,
@@ -308,7 +312,9 @@ export interface UiHandlers {
   /**
    * A table-driven scalar control changed (see control-spec.ts's
    * SCALAR_CONTROLS): `raw` is the element's `value` string (range/select)
-   * or `checked` flag (checkbox), applied via `applyScalarControl`.
+   * or `checked` flag (checkbox), applied via `applyScalarControl`. Exact
+   * companions submit a semantic number with `source: "number"`; retained
+   * sliders keep submitting their presentation-domain string.
    * Per-control semantics — which edits restart accumulation, which are
    * live-reactive, which forward to a render worker — are documented on the
    * spec entries themselves.
@@ -318,12 +324,14 @@ export interface UiHandlers {
    * from a range spec's trailing "commit" — fired once on release for specs
    * that declare `ValueControlSpec.commit`, alongside (not instead of) the
    * ordinary input events the drag already sent. Defaults to "input" so
-   * every other call site is unaffected.
+   * every other call site is unaffected. `source` defaults to the retained
+   * range/select path for the same compatibility reason.
    */
   onScalarControl: (
     spec: ScalarControlSpec,
-    raw: string | boolean,
+    raw: string | boolean | number,
     phase?: "input" | "commit",
+    source?: "range" | "number",
   ) => void;
   onRegenerate: () => void;
   onSavePng: () => void;
@@ -2485,6 +2493,7 @@ export class Ui {
       spec: ScalarControlSpec;
       input: HTMLInputElement | HTMLSelectElement;
       label: HTMLElement | null;
+      numeric: RangeNumberControl | null;
     }
   >();
 
@@ -2997,10 +3006,45 @@ export class Ui {
     this.renderStyleRow = this.byId("renderStyleRow");
     this.depthDimensionalRefusal = this.byId("depthDimensionalRefusal");
     for (const spec of SCALAR_CONTROLS) {
+      const input = this.byId<HTMLInputElement | HTMLSelectElement>(spec.id);
+      const numeric =
+        spec.kind === "range" && input instanceof HTMLInputElement
+          ? enhanceRangeWithNumber(input, {
+              min: spec.numeric.min,
+              max: spec.numeric.max,
+              step: spec.numeric.step,
+              allowedValues: spec.numeric.allowedValues,
+              adapter: {
+                rangeToNumber: spec.numeric.rangeToNumber ?? ((value) => value),
+                numberToRange: spec.numeric.numberToRange ?? ((value) => value),
+              },
+              ariaLabel: `${spec.numeric.accessibleLabel} exact value`,
+              onInput: (value, source) => {
+                if (source === "number") {
+                  this.handlers?.onScalarControl(
+                    spec,
+                    value,
+                    "input",
+                    "number",
+                  );
+                }
+              },
+              onCommit: spec.commit
+                ? (value) =>
+                    this.handlers?.onScalarControl(
+                      spec,
+                      value,
+                      "commit",
+                      "number",
+                    )
+                : undefined,
+            })
+          : null;
       this.scalars.set(spec.id, {
         spec,
-        input: this.byId(spec.id),
+        input,
         label: spec.label ? this.byId(spec.label.id) : null,
+        numeric,
       });
     }
     this.appendBundledShapeOptions(
@@ -4144,9 +4188,32 @@ export class Ui {
     // the readout text from its `label` — replacing the old per-control
     // lines. Kind discriminates the spec union; the instanceof narrows the
     // element to match (a checkbox spec is always bound to an <input>).
-    for (const { spec, input, label } of this.scalars.values()) {
+    for (const { spec, input, label, numeric } of this.scalars.values()) {
       if (spec.kind === "checkbox") {
         if (input instanceof HTMLInputElement) input.checked = spec.read(state);
+      } else if (spec.kind === "range") {
+        const value = spec.numeric.read(state);
+        // Most numeric domains are fixed. Imported condensation/trap bands may
+        // legitimately exceed the sliders' convenience spans, so expand to
+        // the document instead of clamping or throwing during synchronization
+        // (the authored-shape editor follows the same rule). Twist is the one
+        // genuinely state-dependent bound: a full turn aliases zero, making
+        // order - 1 the last distinct value.
+        const dynamicMax =
+          spec.id === "symmetryTwistSlider"
+            ? Math.min(spec.numeric.max, state.symmetry.order - 1)
+            : Math.max(spec.numeric.max, value);
+        numeric?.setBounds({
+          min: Math.min(spec.numeric.min, value),
+          max: dynamicMax,
+          step: spec.numeric.step,
+        });
+        numeric?.setAllowedValues(spec.numeric.allowedValues);
+        numeric?.setValue(value);
+        // setValue also maps the retained thumb. Write the spec's canonical
+        // range-domain value last so off-detent/logarithmic controls keep the
+        // same nearest-thumb policy as before this feature.
+        input.value = spec.read(state);
       } else {
         input.value = spec.read(state);
       }
@@ -4735,6 +4802,13 @@ export class Ui {
       "aria-label",
       state.panelOpen ? "Close controls" : "Open controls",
     );
+    // Availability gates above remain owned by their existing rows. Reflect
+    // their final app-owned disabled state into the exact companion once per
+    // state sync; the range touch guard's transient disabled flip is not
+    // observed and therefore cannot strand the number input disabled.
+    for (const { input, numeric } of this.scalars.values()) {
+      if (numeric) numeric.setDisabled(input.disabled);
+    }
   }
 
   /**
