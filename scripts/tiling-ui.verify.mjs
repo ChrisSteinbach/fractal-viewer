@@ -33,7 +33,8 @@
  *   phone-sized 44px/touch contract stays owned by the numeric-control gate;
  * - Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z restore the exact group-only and
  *   group-plus-clip tiling objects, and the app's own copied share link keeps
- *   the latter object exactly;
+ *   the latter object exactly; the lattice copied link then re-enters Surface,
+ *   exposes progress, settles, and draws on its natural production route;
  * - the kind selector replaces finite with lattice while retaining only the
  *   shared clip, ArrowRight edits the exact lattice cell scale, and the return
  *   to finite clears the lattice discriminator/scale;
@@ -54,14 +55,15 @@
  * at a viewport wider than the 640px breakpoint).
  *
  * MEASURED 2026-08-31 on verified Mesa Intel Iris Xe, settled 8/8 at 800x640:
- * B3 routed WebGL and drew/differed from untiled by 40.26%/6.59%; A4 compute
- * 40.17%/5.17%; F4 compute 39.00%/8.42%; lattice-3D WebGL 46.85%/13.23%;
+ * B3 routed WebGL and drew/differed from untiled by 40.22%/6.62%; A4 compute
+ * 40.18%/5.23%; F4 compute 38.99%/8.39%; lattice-3D WebGL 46.85%/13.23%;
  * lattice-4D compute 37.42%/0.29% (its fixture-specific floor is 0.20%). All
  * five exposed progress before settling. Exact finite/lattice replacement,
- * the 2.4 numeric edit, both finite and lattice app-copied links, three
- * lattice-authored untiled-mode notices, Balloon/Symmetry dormancy, explicit
- * clear routes, and three malformed-block fallbacks passed without page or
- * console errors.
+ * the 2.4 numeric edit, both finite and lattice app-copied links, and the
+ * lattice copied link's WebGL progress/settle/draw at 46.85% all passed. So
+ * did three lattice-authored untiled-mode notices, Balloon/Symmetry dormancy,
+ * explicit clear routes, and three malformed-block fallbacks, without page
+ * or console errors.
  *
  * Usage (build + `npm run preview` first):
  *   node scripts/tiling-ui.verify.mjs
@@ -1159,6 +1161,28 @@ async function runAuthoringLeg(browser, args) {
           : `numeric edit produced ${exact(exactScale.document?.tiling)}`,
       );
 
+      // The clip-bearing B3 authoring scene above is intentionally a panel
+      // stress case, not a render fixture. Copy the app's known lightweight
+      // lattice showcase so this acceptance cell measures link persistence
+      // and renderer entry rather than an unrelated expensive clip.
+      const linkFixtureLoaded = await loadPreset(page, "mirroredLattice");
+      const linkFixturePoints = await waitForModeNote(
+        page,
+        "modePointsBtn",
+        /Points shows the untiled attractor/,
+      );
+      const linkFixture = await waitForExactTiling(page, {
+        kind: "lattice",
+        cellScale: 1.6,
+      });
+      check(
+        "lattice copied-link fixture",
+        linkFixtureLoaded && linkFixturePoints.ok && linkFixture.ok,
+        linkFixtureLoaded && linkFixturePoints.ok && linkFixture.ok
+          ? "app preset installed the lightweight 1.6 lattice and parked in Points before copying"
+          : `preset=${linkFixtureLoaded}, points=${linkFixturePoints.ok}, tiling=${exact(linkFixture.document?.tiling)}`,
+      );
+
       const latticeShareLink = await copyShareLink(page);
       const validLatticeShareLink = latticeShareLink.includes("#v1=");
       await page.goto(latticeShareLink, {
@@ -1176,15 +1200,89 @@ async function runAuthoringLeg(browser, args) {
       );
       const latticeReloaded = await waitForExactTiling(page, {
         kind: "lattice",
-        cellScale: 2.4,
-        clip: groupAndClip.clip,
+        cellScale: 1.6,
       });
       check(
         "lattice copied-link reload",
         validLatticeShareLink && latticeReloaded.ok,
         validLatticeShareLink && latticeReloaded.ok
-          ? "app-copied link restored exact lattice scale and shared clip"
+          ? "app-copied link restored the exact lattice showcase object"
           : "app-copied link changed or lost the lattice object",
+      );
+
+      // Copy Link intentionally emits a clean public URL and therefore drops
+      // this harness's read-only query instrumentation. Keep the exact public
+      // reload above as the persistence assertion, then reboot its unchanged
+      // app-generated hash with the settle probe enabled for the render cell.
+      const instrumentedLatticeLink = new URL(latticeShareLink);
+      instrumentedLatticeLink.searchParams.set("surfacestate", "");
+      instrumentedLatticeLink.searchParams.set("tilingcase", "copied-link");
+      await page.goto(instrumentedLatticeLink.toString(), {
+        waitUntil: "load",
+        timeout: 60_000,
+      });
+      await page.waitForFunction(
+        () => {
+          const count =
+            document.getElementById("pointCount")?.textContent ?? "";
+          return (
+            typeof window.__surfaceState === "function" &&
+            Number(count.replace(/[^\d]/g, "")) > 0
+          );
+        },
+        undefined,
+        { timeout: 60_000 },
+      );
+      const instrumentedLatticeReload = await waitForExactTiling(page, {
+        kind: "lattice",
+        cellScale: 1.6,
+      });
+
+      const surfaceButton = await page
+        .locator("#modeSurfaceBtn")
+        .evaluate((element) => ({
+          disabled: element.disabled,
+          title: element.title,
+        }));
+      await armSurfaceProgressProbe(page);
+      if (!surfaceButton.disabled) {
+        await page.locator("#modeSurfaceBtn").click();
+      }
+      const copiedLinkTarget = await waitForSurfaceTarget(page, args);
+      const copiedLinkState = copiedLinkTarget.state?.probe ?? null;
+      const copiedLinkDocument = await readDocument(page);
+      const copiedLinkError = await visibleErrorText(page);
+      const expectedEngine = args.mode.startsWith("x11:") ? "webgl" : null;
+      let copiedLinkCapture = null;
+      if (copiedLinkState?.firstFrame) {
+        copiedLinkCapture = await captureCanvas(
+          page,
+          args,
+          "lattice-copied-link",
+        );
+      }
+      const copiedLinkRenderPass =
+        !surfaceButton.disabled &&
+        instrumentedLatticeReload.ok &&
+        copiedLinkTarget.ok &&
+        copiedLinkState?.mode === "surface" &&
+        copiedLinkState.settled === true &&
+        (expectedEngine === null ||
+          copiedLinkState.engine === expectedEngine) &&
+        exact(copiedLinkDocument.tiling) ===
+          exact({
+            kind: "lattice",
+            cellScale: 1.6,
+          }) &&
+        copiedLinkCapture !== null &&
+        copiedLinkCapture.metrics.coverage >= args.draw &&
+        copiedLinkError.length === 0;
+      check(
+        "lattice copied-link render",
+        copiedLinkRenderPass,
+        copiedLinkRenderPass
+          ? `app-copied link re-entered Surface on ${copiedLinkState.engine}, exposed progress, settled, and drew ${(copiedLinkCapture.metrics.coverage * 100).toFixed(2)}%`
+          : `disabled=${surfaceButton.disabled} title=${surfaceButton.title || "none"}; mode=${copiedLinkState?.mode ?? "none"}, engine=${copiedLinkState?.engine ?? "none"}, progress=${copiedLinkTarget.progressSeen}, settled=${Boolean(copiedLinkState?.settled)}, drawn=${copiedLinkCapture === null ? "none" : `${(copiedLinkCapture.metrics.coverage * 100).toFixed(2)}%`}, error=${copiedLinkError || "none"}`,
       );
     }
 
@@ -1216,13 +1314,13 @@ async function runAuthoringLeg(browser, args) {
         page,
         "#tilingKind",
         "ArrowUp",
-        { group: "a3", clip: groupAndClip.clip },
+        { group: "a3" },
       );
       check(
         "lattice-to-finite replacement",
         finiteAgain.ok,
         finiteAgain.ok
-          ? "kind cleared the lattice discriminator/scale and kept only the shared clip"
+          ? "kind cleared the lattice discriminator/scale without leaking stale clip state"
           : `conversion produced ${exact(finiteAgain.document?.tiling)}`,
       );
     }

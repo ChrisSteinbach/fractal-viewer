@@ -12,6 +12,7 @@
  * exact-numeric gates own authoring interaction. This matrix covers:
  *
  *   - 3D inverse IFS lattice: forced WebGL and forced WebGPU;
+ *   - 3D inverse IFS lattice through a final fold lens: both engines;
  *   - 3D forward escape lattice: forced WebGL and WebGPU;
  *   - genuinely non-flat 4D inverse lattice: forced WebGL and WebGPU;
  *   - genuinely 4D forward escape lattice: its compute-only route;
@@ -43,10 +44,11 @@
  * readback is empty outside its own rAF).
  *
  * MEASURED 2026-08-31 on verified Mesa Intel Iris Xe with the shipped 8-pass
- * settle: all ten routed lattice rows exposed progress, settled, drew and
- * retained their document on the expected hardware engine. Coverage ranged
- * 34.32-74.67%; untiled/finite/lattice pair differences were
- * 8.10%/25.09%/25.07%, and the persisted-document reload differed by 7.87%
+ * settle: all twelve routed lattice rows exposed progress, settled, drew and
+ * retained their document on the expected hardware engine, including the 3D
+ * final-fold lens at 47.48% WebGL / 47.50% compute coverage. Overall coverage
+ * ranged 34.30-74.71%; untiled/finite/lattice pair differences were
+ * 7.97%/25.08%/25.06%, and the persisted-document reload differed by 10.73%
  * under its 15% rerender ceiling.
  *
  * Options:
@@ -215,6 +217,16 @@ const LATTICE_CLIP = {
   ],
 };
 
+/** A post-IFS fold lens forces the inverse fold-descent core while lattice
+ * remains the query-space pre-fold. This is deliberately 3D: fold4 + tiling
+ * is a documented refusal, not a successful route. */
+const FOLD_LENS = {
+  position: [0, 0, 0],
+  rotation: ZERO_ROTATION,
+  scale: [1, 1, 1],
+  variations: [{ type: "mandelbox", weight: 1 }],
+};
+
 function sceneDocument(transforms, tiling, extra = {}) {
   return {
     ...COMMON_DOCUMENT,
@@ -239,6 +251,14 @@ const FIXTURES = [
       clip: LATTICE_CLIP,
     }),
     arms: ["webgl"],
+  },
+  {
+    name: "ifs3-fold",
+    family: "inverse 3D lattice + final fold lens",
+    document: sceneDocument(IFS3_TRANSFORMS, LATTICE, {
+      finalTransform: FOLD_LENS,
+    }),
+    arms: ["webgl", "compute"],
   },
   {
     name: "escape3",
@@ -574,7 +594,10 @@ function latticeWirePass(persisted, document) {
   if (!kept || kept.kind !== "lattice") return false;
   return (
     kept.cellScale === authored.cellScale &&
-    Boolean(kept.clip) === Boolean(authored.clip)
+    Boolean(kept.clip) === Boolean(authored.clip) &&
+    (document.finalTransform === undefined ||
+      JSON.stringify(persisted.finalTransform) ===
+        JSON.stringify(document.finalTransform))
   );
 }
 
