@@ -326,6 +326,7 @@ export function deriveLegend({
             { computeAvailable: true },
             state.schedule ?? null,
             state.shapeTrap ?? null,
+            state.tiling ?? null,
           ).kind
         : null;
       if (kind !== "escape" && kind !== "bulb" && kind !== "escape4") {

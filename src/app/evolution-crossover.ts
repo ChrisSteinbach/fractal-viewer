@@ -141,6 +141,7 @@ const SCENE_FIELDS = {
   schedule: "schedule",
   condensationDepthBand: "condensationDepthBand",
   shapeTrap: "shapeTrap",
+  tiling: "tiling",
   numPoints: "primary",
   pointSize: "primary",
   colorMode: "primary",
@@ -924,6 +925,8 @@ function buildSnapshot(
   copyOptionalSceneField(snapshot, bandParent, "condensationDepthBand");
   const trapParent = chosenParent(prepared, coordinates, "shapeTrap").snapshot;
   copyOptionalSceneField(snapshot, trapParent, "shapeTrap");
+  const tilingParent = chosenParent(prepared, coordinates, "tiling").snapshot;
+  copyOptionalSceneField(snapshot, tilingParent, "tiling");
 
   copyOptionalSceneField(snapshot, primary, "customPalette");
   copyOptionalSceneField(snapshot, primary, "positionAxisColors");
