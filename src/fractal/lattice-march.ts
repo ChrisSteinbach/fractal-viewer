@@ -9,8 +9,11 @@ import type { Vec3, Vec4 } from "./types";
  * - the unrepeated attractor-y slab `|q.y| <= R`.
  *
  * The sphere radius is supplied by the caller. This module deliberately owns
- * no default and no `8R`/`10R` ratio: those values remain provisional until
- * the renderer gate measures them. The content radius `R` is the estimator's
+ * no FINAL default and no final `8R`/`10R` ratio: those values remain
+ * renderer-gated until the live GLSL/WGSL fixtures measure them. It does
+ * carry {@link LATTICE_PRESENTATION_RADIUS_MULT}, the explicit PROVISIONAL
+ * multiplier the renderer plumbing uses — the one line a measurement
+ * session edits. The content radius `R` is the estimator's
  * certified full visible/march radius. In 4D, `q = invRotor*(p,w0)`, so the
  * slab remains a linear interval at every supported rotor/slice pose.
  *
@@ -25,9 +28,19 @@ import type { Vec3, Vec4 } from "./types";
 export interface LatticePresentation {
   /** Certified origin-centred content radius. */
   contentRadius: number;
-  /** Explicit finite 3D observation sphere; no default is owned here. */
+  /** Explicit finite 3D observation sphere; no final default is owned here. */
   outerRadius: number;
 }
+
+/**
+ * PROVISIONAL renderer default for the presentation window's outer radius,
+ * in multiples of the estimator's certified content radius `R`. The
+ * contract's fog-fade `8R` / hard-window `10R` remain unmeasured; this is
+ * the explicit diagnostic value the GLSL/WGSL/camera plumbing all derive
+ * from, and the ONE line a real-driver measurement session edits before any
+ * accepted value is frozen. Not a document value: the user cannot author it.
+ */
+export const LATTICE_PRESENTATION_RADIUS_MULT = 10;
 
 export interface LatticeRayInterval {
   /** First in-domain ray parameter, clamped to zero for an inside camera. */

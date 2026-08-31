@@ -5,6 +5,7 @@ import {
 } from "../fractal/background-shape";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import { LATTICE_PRESENTATION_RADIUS_MULT } from "../fractal/lattice-march";
 import type { ShapeSpec } from "../fractal/shapes";
 import type { ResolvedTiling } from "../fractal/tiling";
 import {
@@ -3214,9 +3215,11 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uGroundTileScale: { value: 0.64 },
       uGroundEmission: { value: 0 },
       // Same live selector/half-cell wire as the 3D material. Finite roots
-      // and either arm's optional clip remain source-baked.
+      // and either arm's optional clip remain source-baked; the
+      // presentation radius default is the provisional window multiplier.
       uTilingGroup: { value: 0 },
       uTilingH: { value: 1 },
+      uTilingPresentationR: { value: LATTICE_PRESENTATION_RADIUS_MULT },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },

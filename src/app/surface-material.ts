@@ -33,6 +33,10 @@ import {
   SYM_PLANE_CODE,
 } from "../fractal/surface-de";
 import {
+  LATTICE_PRESENTATION_RADIUS_MULT,
+  latticePresentationCarrierSource,
+} from "../fractal/lattice-march";
+import {
   LATTICE_TILING_CODE,
   TILING_GROUP_INFO,
   isCanonicalResolvedLatticeTiling,
@@ -5700,9 +5704,13 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uGroundEmission: { value: 0 },
       // The live tiling selector plus the lattice half-cell. Finite roots and
       // either arm's optional clip remain baked source. h = 1 is an inert,
-      // non-dividing placeholder while lattice is absent.
+      // non-dividing placeholder while lattice is absent, and the
+      // presentation radius's 10 = 10 * R placeholder is the provisional
+      // window multiplier (a stray read at the default is a sane window,
+      // never a divide-by-zero).
       uTilingGroup: { value: 0 },
       uTilingH: { value: 1 },
+      uTilingPresentationR: { value: LATTICE_PRESENTATION_RADIUS_MULT },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -6583,11 +6591,25 @@ float surfaceDE(
       ? "firstChoice, trap, rings, sheets, shapeTrap"
       : "firstChoice, trap, rings, sheets";
   const foldSource = latticeFoldSource("glsl", fourD ? 4 : 3, "tilingFold");
+  // The carrier: the finite presentation of an unbounded set — one
+  // world-3D observation sphere intersected with the unrepeated-attractor-y
+  // slab, the CPU authority's own emitted text (lattice-march.ts). The
+  // interval bounds every primary/shadow march; the contains predicate
+  // makes out-of-carrier probe taps open space, so the artificial window
+  // never becomes geometry, casts a shadow or contributes AO. The
+  // presentation radius is the PROVISIONAL window multiplier times the
+  // certified content radius R (uVisibleRadius is R on every GLSL arm).
+  const carrierSource = latticePresentationCarrierSource(fourD ? 4 : 3, "glsl");
+  const carrierContains = fourD
+    ? `latticePresentationContains(p, uW0, vec4(uInvRotor[0][1], uInvRotor[1][1], uInvRotor[2][1], uInvRotor[3][1]), uVisibleRadius, uTilingPresentationR)`
+    : `latticePresentationContains(p, uVisibleRadius, uTilingPresentationR)`;
   const wrapper = `
 // Mirrored affine-A1 lattice: fold once, evaluate the untouched core once,
 // then intersect with the certified origin ball and optional authored clip.
 uniform int uTilingGroup;
 uniform float uTilingH;
+uniform float uTilingPresentationR;
+${carrierSource}
 ${foldSource}
 ${clipSource}bool surfaceTilingFold(vec3 p, out ${point} q) {
   if (${guard}) return false;
@@ -6603,6 +6625,13 @@ ${fourD ? "  surfaceTilingQuery4 = q;\n" : ""}  float inner = surfaceDETilingCor
   ${clipTerm}
 }
 float surfaceDE(vec3 p) {
+  // Probe taps outside the finite presentation carrier are OPEN SPACE:
+  // the window boundary must never read as geometry, cast a shadow or
+  // contribute AO (lattice-march.ts's contract). The march's cutoff
+  // overload needs no guard — it only ever samples inside the interval.
+  if (!${carrierContains}) {
+    return 2.0 * uTilingPresentationR;
+  }
   ${point} q;
   if (!surfaceTilingFold(p, q)) return 0.0;
 ${fourD ? "  surfaceTilingQuery4 = q;\n" : ""}  float inner = surfaceDETilingCore(${fourD ? "p" : "q"});
@@ -6622,6 +6651,142 @@ ${fourD ? "  surfaceTilingQuery4 = q;\n" : ""}  float inner = surfaceDETilingCor
   ${clipTerm}
 }
 `;
+  // The march entry: the visible-sphere gate becomes the presentation
+  // carrier interval. tEnter/tFar now delimit the carrier (the fog origin
+  // is the window's entry, not the ball's), and every miss/ground branch
+  // is reached exactly as before — a ray outside the carrier is a miss.
+  // The 4D arm evaluates the slab through the inverse rotor's y row at
+  // (ro, w0)/(rd, 0); the CPU authority's matrix4Y convention. GLSL mat4
+  // is column-indexed, so the row is ASSEMBLED across columns rather than
+  // read as uInvRotor[1] (which is the SECOND COLUMN).
+  const carrierIntervalArgs = fourD
+    ? `ro, rd, uW0, vec4(uInvRotor[0][1], uInvRotor[1][1], uInvRotor[2][1], uInvRotor[3][1]), uVisibleRadius, uTilingPresentationR`
+    : `ro, rd, uVisibleRadius, uTilingPresentationR`;
+  const entryGuard = fourD
+    ? `uTilingGroup != ${LATTICE_TILING_CODE} || uSliceHalfW > 0.0`
+    : `uTilingGroup != ${LATTICE_TILING_CODE}`;
+  replaceRequired(
+    fourD
+      ? `    float radius = sliceVisR * 1.02;
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - radius * radius;
+    float disc = b * b - c;
+    if (disc < 0.0) {`
+      : `    float radius = uVisibleRadius * 1.02;
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - radius * radius;
+    float disc = b * b - c;
+    if (disc < 0.0) {`,
+    `    LatticeCarrierInterval latticeCarrier = latticePresentationInterval(
+      ${carrierIntervalArgs}
+    );
+    if (!latticeCarrier.ok || ${entryGuard}) {`,
+  );
+  replaceRequired(
+    `    float sq = sqrt(disc);
+    float tFar = -b + sq;
+    if (tFar <= 0.0) {`,
+    `    float tFar = latticeCarrier.tFar;
+    if (tFar <= 0.0) {`,
+  );
+  replaceRequired(
+    `    float t = max(-b - sq, 0.0);
+    // Where the ray enters the bounding sphere — the depth-fog origin.
+    float tEnter = t;`,
+    `    float t = latticeCarrier.tEnter;
+    // Where the ray enters the presentation carrier — the depth-fog origin.
+    float tEnter = t;`,
+  );
+  // The hit path's shadow loop: the shadow ray computes its OWN carrier
+  // interval and is fully lit past its own tFar (the contract's shadow
+  // rule); the old |sp| > 1.05 R ball exit would fire one step into any
+  // ray leaving the ball, but lattice content repeats beyond the ball.
+  const shadowCarrierArgs = fourD
+    ? `uW0, vec4(uInvRotor[0][1], uInvRotor[1][1], uInvRotor[2][1], uInvRotor[3][1]), uVisibleRadius, uTilingPresentationR`
+    : `uVisibleRadius, uTilingPresentationR`;
+  replaceRequired(
+    `    float shadow = 1.0;
+    float ts = h * 2.0;
+    for (int i = 0; i < uShadowSteps; i++) {
+      vec3 sp = pos + n * h * 2.0 + uLightDir * ts;`,
+    `    float shadow = 1.0;
+    float ts = h * 2.0;
+    // The shadow ray's own presentation carrier: content exists only
+    // inside it, so past its own tFar the ray is fully lit, and a ray
+    // that never enters it stays lit.
+    LatticeCarrierInterval shadowCarrier = latticePresentationInterval(
+      pos + n * h * 2.0, uLightDir, ${shadowCarrierArgs}
+    );
+    for (int i = 0; i < uShadowSteps; i++) {
+      vec3 sp = pos + n * h * 2.0 + uLightDir * ts;`,
+  );
+  replaceRequired(
+    fourD
+      ? `      ts += clamp(d, uBoundingRadius * 2.0e-4, sliceVisR * 0.1);
+      if (shadow < 0.02 || length(sp) > sliceVisR * 1.05) {
+        break;
+      }`
+      : `      if (shadow < 0.02 || length(sp) > uVisibleRadius * 1.05) {
+        break;
+      }`,
+    fourD
+      ? `      ts += clamp(d, uBoundingRadius * 2.0e-4, uVisibleRadius * 0.1);
+      if (shadow < 0.02 || !shadowCarrier.ok || ts > shadowCarrier.tFar) {
+        break;
+      }`
+      : `      if (shadow < 0.02 || !shadowCarrier.ok || ts > shadowCarrier.tFar) {
+        break;
+      }`,
+  );
+  if (fourD) {
+    // The 4D hit fog normalizes by the FULL certified radius R, not the
+    // slice-adjusted sliceVisR (the contract's "normalized by R, not by
+    // the presentation radius" rule; sliceVisR would collapse the fog
+    // scale as the slice slider scrubs).
+    replaceRequired(
+      `      1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(sliceVisR, 1.0e-6), 2.0));`,
+      `      1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));`,
+    );
+  }
+  // The ground plane: the single-ball shadow corridor and the
+  // too-far-from-the-ball AO skip are INVALID for an infinite lattice
+  // (content repeats beyond the ball — docs/tiling-contract.md's ground
+  // paragraph). The lattice arm replaces both with carrier tests: the
+  // shadow ray marches through its own carrier interval, and the AO taps
+  // run unconditionally, out-of-carrier taps reading open space through
+  // the guarded probe DE.
+  const groundCarrierArgs = fourD
+    ? `hp, uLightDir, uW0, vec4(uInvRotor[0][1], uInvRotor[1][1], uInvRotor[2][1], uInvRotor[3][1]), uVisibleRadius, uTilingPresentationR`
+    : `hp, uLightDir, uVisibleRadius, uTilingPresentationR`;
+  replaceRequired(
+    `    float corridor = uGroundBallR * 1.05 + 0.3 * along;
+    if (along > 0.0 && perp2 < corridor * corridor) {`,
+    `    LatticeCarrierInterval groundShadowCarrier = latticePresentationInterval(
+      ${groundCarrierArgs}
+    );
+    if (groundShadowCarrier.ok) {`,
+  );
+  replaceRequired(
+    `        if (shadow < 0.02 ||
+            (dot(sp - uGroundBallC, uLightDir) > 0.0 &&
+              length(sp - uGroundBallC) > uGroundBallR * 1.05)) {
+          break;
+        }`,
+    `        if (shadow < 0.02 || ts > groundShadowCarrier.tFar) {
+          break;
+        }`,
+  );
+  replaceRequired(
+    `    float ao = 1.0;
+    float reach = uGroundBallR * (1.02 + 0.04 * float(uAoTaps));
+    vec3 relC = hp - uGroundBallC;
+    if (dot(relC, relC) < reach * reach) {`,
+    `    float ao = 1.0;
+    {
+      // The ball-reach AO certificate is invalid for an infinite
+      // lattice: the taps run unconditionally and the guarded probe
+      // DE reads any out-of-carrier tap as open space.`,
+  );
   return `${core}${wrapper}${rest}`;
 }
 
@@ -6962,6 +7127,9 @@ export function installSurfaceTiling(
       ? tilingGroupCode(finite.group)
       : 0;
   material.uniforms.uTilingH.value = lattice ? lattice.h : 1;
+  material.uniforms.uTilingPresentationR.value = lattice
+    ? lattice.radius * LATTICE_PRESENTATION_RADIUS_MULT
+    : LATTICE_PRESENTATION_RADIUS_MULT;
   return oldKey !== key;
 }
 

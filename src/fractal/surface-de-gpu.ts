@@ -62,6 +62,10 @@ import {
   type ResolvedTiling,
 } from "./tiling";
 import {
+  LATTICE_PRESENTATION_RADIUS_MULT,
+  latticePresentationCarrierSource,
+} from "./lattice-march";
+import {
   surfaceMaterialLanes,
   type ResolvedSurfaceMaterial,
 } from "./surface-material-wire";
@@ -1545,6 +1549,16 @@ function writeSurfaceTilingBlock(
   view.setUint32(offset, tiling.code, true);
   if (tiling.kind === "lattice") {
     view.setFloat32(offset + 4, tiling.h, true);
+    // The provisional presentation window radius, in world units: the
+    // authority radius times LATTICE_PRESENTATION_RADIUS_MULT — the ONE
+    // value both engines and the camera derive from. The tail's third
+    // word was zero pad before the lattice arm existed; finite tails
+    // still leave it zero.
+    view.setFloat32(
+      offset + 8,
+      tiling.tiling.radius * LATTICE_PRESENTATION_RADIUS_MULT,
+      true,
+    );
   }
 }
 
@@ -3958,6 +3972,16 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
           "tilingFold",
         )}\n`
     : "";
+  // The lattice arm's finite-presentation carrier — the SAME emitted text
+  // the GLSL tracers carry (lattice-march.ts's carrier source): the
+  // world-3D observation sphere intersected with the attractor-y slab.
+  // The interval bounds the march; the contains predicate makes
+  // out-of-carrier probe taps open space so the artificial window never
+  // becomes geometry, casts a shadow or contributes AO. Inert (absent)
+  // for every non-lattice program, which keeps their text byte-identical.
+  const latticeCarrierText = latticeTiling
+    ? `${latticePresentationCarrierSource(core4 ? 4 : 3, "wgsl")}\n`
+    : "";
   const tilingClipText = tiling?.clip
     ? `${shapeSdfSource(tiling.clip, "wgsl", "tilingClipSdf")}\n`
     : "";
@@ -4504,6 +4528,31 @@ fn hash2(p: vec2f) -> f32 {
         shade.tracePixelEps * max(t, 1.0);
     }`
     : "";
+
+  // The lattice carrier's content radius — the SAME estimator authority
+  // expression the mandatory ball max reads (the module doc's
+  // guard rule): inverse cores use the full visible radius, forward cores
+  // the bailout marching ball. The carrier's outer radius is the
+  // PROVISIONAL presentation multiplier times that same authority.
+  const latticeRadiusExpr = core4
+    ? forward
+      ? "params.boundingRadius"
+      : "params.visRadius4"
+    : forward
+      ? "params.boundingRadius"
+      : "params.visibleRadius";
+  // The 4D slab coordinate needs the inverse rotor's y row. The packed
+  // rotorInv rows ARE the inverse rotor's rows (rotorInvApply4 applies
+  // them), so the y row is rotorInvR1 itself — never an assembled column:
+  // the GLSL arm assembles across columns because its mat4 is
+  // column-indexed; here the row fields already are rows.
+  const latticeCarrierArgs = core4
+    ? `ro, rd, params.w0, params.rotorInvR1, ${latticeRadiusExpr}, params.tilingPresentationR`
+    : `ro, rd, ${latticeRadiusExpr}, params.tilingPresentationR`;
+  const latticeContainsCall = (p: string): string =>
+    core4
+      ? `latticePresentationContains(${p}, params.w0, params.rotorInvR1, ${latticeRadiusExpr}, params.tilingPresentationR)`
+      : `latticePresentationContains(${p}, ${latticeRadiusExpr}, params.tilingPresentationR)`;
 
   // Hit-info descent bodies: one per core, selected
   // like the value descents — and under the lens, renamed `…Core` with
@@ -7134,7 +7183,31 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   if (t < 0.0) {
     t = 0.0;${marchDither}
   }`
-    : `  // Sphere gate, origin-centered like the GLSL marcher (the emulator's
+    : latticeTiling
+      ? `  // Lattice presentation gate: intersect the world observation
+  // sphere with the attractor-y slab ONCE, then march only inside the
+  // carrier — the finite presentation of an unbounded set (the GLSL
+  // arm's entry, one text the host never has to explain). A ray that
+  // never enters the carrier is a miss, exactly like the sphere gate.
+  let carrier = latticePresentationInterval(${latticeCarrierArgs});
+  if (!carrier.ok || params.tilingGroup != ${LATTICE_TILING_CODE}u${
+    core4 ? " || params.sliceHalfW > 0.0" : ""
+  }) {
+    st.y = ${marchMissStatus};
+    states[ray] = st;${statusStore("    ")}
+    return;
+  }
+  let tFar = carrier.tFar;
+  if (tFar <= 0.0) {
+    st.y = ${marchMissStatus};
+    states[ray] = st;${statusStore("    ")}
+    return;
+  }
+  var t = st.x;
+  if (t < 0.0) {
+    t = carrier.tEnter;${marchDither}
+  }`
+      : `  // Sphere gate, origin-centered like the GLSL marcher (the emulator's
   // exact arithmetic; recomputed per pass — cheaper than persisting).
   let radius = params.visibleRadius * 1.02;
   let bq = dot(ro, rd);
@@ -7184,7 +7257,19 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   // the origin, and the fog pow below must never see a negative base —
   // such hits read fog-free.
   let tEnter = min(max(-bq - sq, 0.0), t);`
-    : `  // Sphere-gate recompute, only for tEnter (the fog origin) — cheaper
+    : latticeTiling
+      ? `  // Carrier recompute, only for tEnter (the fog origin) — the
+  // lattice march's own interval, recomputed exactly as the GLSL arm
+  // recomputes the sphere entry. Defensive: a HIT ray always intersected
+  // the carrier; a non-ok interval (stale pack or a slab guard) reads
+  // fog-free.
+  let carrier = latticePresentationInterval(${latticeCarrierArgs});
+  let t = st.x;
+  // --- shade: surface-material.ts main()'s hit path, term for term ---
+  let pos = ro + rd * t;
+  // The pre-dither carrier entry — exactly main()'s tEnter fog origin.
+  let tEnter = carrier.ok ? max(carrier.tEnter, 0.0) : t;`
+      : `  // Sphere-gate recompute, only for tEnter (the fog origin) — cheaper
   // than persisting it in the march state.
   let radius = params.visibleRadius * 1.02;
   let bq = dot(ro, rd);
@@ -7470,21 +7555,36 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
   // the center) and a closest approach clearing 1.05 R + 0.3 * along.
   // Inside the corridor the loop's exit is outside-AND-receding — the
   // hit path's |sp| > 1.05 R alone would fire immediately down here.
-  var shadow = 1.0;
-  let toC = params.groundBallC - hp;
+  var shadow = 1.0;${
+    latticeTiling
+      ? `  // Lattice: the single-ball corridor certificate is invalid
+  // (content repeats beyond the ball — the contract's ground paragraph),
+  // so the shadow ray marches through its own presentation carrier
+  // instead; out-of-carrier probes read open space through the guarded
+  // probe DE, and past the carrier's tFar the ray is fully lit.
+  let gShadowCarrier = latticePresentationInterval(hp, shade.lightDir${
+    core4 ? ", params.w0, params.rotorInvR1" : ""
+  }, ${latticeRadiusExpr}, params.tilingPresentationR);
+  if (gShadowCarrier.ok) {`
+      : `  let toC = params.groundBallC - hp;
   let along = dot(toC, shade.lightDir);
   let perp2 = dot(toC, toC) - along * along;
   let corridor = gR * 1.05 + 0.3 * along;
-  if (along > 0.0 && perp2 < corridor * corridor) {
+  if (along > 0.0 && perp2 < corridor * corridor) {`
+  }
     var ts = gR * 4.0e-4;
     for (var i = 0u; i < shade.shadowSteps; i++) {
       let sp = hp + shade.lightDir * ts;
       let d = ${probeDe}(sp, 0.0, li);
       shadow = min(shadow, 8.0 * d / ts);
       ts += clamp(d, gR * 2.0e-4, visR * 0.1);
-      if (shadow < 0.02 ||
+      if (shadow < 0.02${
+        latticeTiling
+          ? " || ts > gShadowCarrier.tFar"
+          : ` ||
           (dot(sp - params.groundBallC, shade.lightDir) > 0.0 &&
-            length(sp - params.groundBallC) > gR * 1.05)) {
+            length(sp - params.groundBallC) > gR * 1.05)`
+      }) {
         break;
       }
     }
@@ -7495,10 +7595,16 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
   // reach of the ball (each tap needs DE < tap height, and DE is at
   // least |hp - C| - hh - R — so |hp - C| >= R + 2 hh_max certifies
   // occlusion 0; 0.02 R of margin on top).
-  var ao = 1.0;
-  let reach = gR * (1.02 + 0.04 * f32(shade.aoTaps));
+  var ao = 1.0;${
+    latticeTiling
+      ? `  // Lattice: the ball-reach AO certificate is invalid for an
+  // infinite lattice — the taps run unconditionally and the guarded
+  // probe DE reads any out-of-carrier tap as open space.
+  {`
+      : `  let reach = gR * (1.02 + 0.04 * f32(shade.aoTaps));
   let relC = hp - params.groundBallC;
-  if (dot(relC, relC) < reach * reach) {
+  if (dot(relC, relC) < reach * reach) {`
+  }
     var occ = 0.0;
     var wgt = 1.0;
     var norm = 0.0;
@@ -7661,15 +7767,33 @@ ${shadeGate}
     e.xxx * ${probeDe}(pos + e.xxx * h, 0.0, li);
   let n = select(-rd, normalize(grad), dot(grad, grad) > 1e-12);
   // Soft shadow: DE penumbra toward the light, started just off the
-  // surface; near-black penumbras and leaving the sphere end early.
+  // surface; near-black penumbras and leaving the sphere end early.${
+    latticeTiling
+      ? ` The lattice shadow ray computes its OWN presentation carrier:
+  content exists only inside it, so past its own tFar the ray is fully
+  lit (the contract's shadow rule), and a ray that never enters it stays
+  lit.`
+      : ""
+  }
   var shadow = 1.0;
-  var ts = h * 2.0;
+  var ts = h * 2.0;${
+    latticeTiling
+      ? `
+  let shadowCarrier = latticePresentationInterval(pos + n * h * 2.0, shade.lightDir${
+    core4 ? ", params.w0, params.rotorInvR1" : ""
+  }, ${latticeRadiusExpr}, params.tilingPresentationR);`
+      : ""
+  }
   for (var i = 0u; i < shade.shadowSteps; i++) {
     let sp = pos + n * h * 2.0 + shade.lightDir * ts;
     let d = ${shadowDe}(sp, 0.0, li);
     shadow = min(shadow, 8.0 * d / ts);
     ts += clamp(d, R * 2.0e-4, visR * 0.1);
-    if (shadow < 0.02 || length(sp) > visR * 1.05) {
+    if (shadow < 0.02${
+      latticeTiling
+        ? " || !shadowCarrier.ok || ts > shadowCarrier.tFar"
+        : " || length(sp) > visR * 1.05"
+    }) {
       break;
     }
   }
@@ -7694,8 +7818,17 @@ ${shadeLighting}
   // traveled inside the bounding sphere. params.fogDensity scales the
   // traveled distance, mirroring the GLSL tracers' uFogDensity
   // line for line. shade.fogTint/fogTintStrength retarget the
-  // blend to mix(bg, fogTint, strength) — strength 0 is the identity.
-  let fog = 1.0 - exp(-0.12 * pow((t - tEnter) * params.fogDensity / max(visR, 1.0e-6), 2.0));
+  // blend to mix(bg, fogTint, strength) — strength 0 is the identity.${
+    latticeTiling && core4
+      ? `
+  // A lattice 4D hit normalizes by the FULL certified radius
+  // (params.visRadius4), never the slice-adjusted visibleRadius slot —
+  // the contract's "normalized by R" rule, and the GLSL arm's own split.`
+      : ""
+  }
+  let fog = 1.0 - exp(-0.12 * pow((t - tEnter) * params.fogDensity / max(${
+    latticeTiling && core4 ? "params.visRadius4" : "visR"
+  }, 1.0e-6), 2.0));
   col = mix(col, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));
   colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));
   let coc = surfaceCoc(dot(pos - ro, params.fwd));
@@ -8031,7 +8164,7 @@ struct Params {
 ${
   tiling
     ? latticeTiling
-      ? "  tilingGroup: u32,\n  tilingH: f32,\n"
+      ? "  tilingGroup: u32,\n  tilingH: f32,\n  tilingPresentationR: f32,\n"
       : "  tilingGroup: u32,\n"
     : ""
 }
@@ -11580,13 +11713,6 @@ ${balloonProbeWrapText}`
   ${tilingClipReturn}
 }`
       : "";
-  const latticeRadiusExpr = core4
-    ? forward
-      ? "params.boundingRadius"
-      : "params.visRadius4"
-    : forward
-      ? "params.boundingRadius"
-      : "params.visibleRadius";
   const latticeClipReturn = tiling?.clip
     ? `return max(bounded, tilingClipSdf(folded${core4 ? ".xyz" : ""}));`
     : "return bounded;";
@@ -11594,6 +11720,14 @@ ${balloonProbeWrapText}`
     ? /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   if (params.tilingGroup != ${LATTICE_TILING_CODE}u) {
     return 0.0;
+  }
+  // Probe taps outside the finite presentation carrier are OPEN SPACE:
+  // the window boundary must never read as geometry, cast a shadow or
+  // contribute AO (lattice-march.ts's contract). The march itself never
+  // samples outside the interval, so the guard only ever fires on
+  // normal/AO/shadow probes and the bench's in-domain evals.
+  if (!${latticeContainsCall("pIn")}) {
+    return 2.0 * params.tilingPresentationR;
   }
   let folded = tilingFold(${tilingValueLiftExpression}, params.tilingH);
   let inner = surfaceDETilingCore(${tilingValueCoreArgs}, cutoff, li);
@@ -11664,7 +11798,7 @@ ${tilingProbeWrapText}`
       : finiteTiledBodyBlock
     : bodyBlock;
 
-  return /* wgsl */ `${headerText}${tilingFoldText}${tilingClipText}${scheduleHelperText}${chaosHelperText}
+  return /* wgsl */ `${headerText}${tilingFoldText}${latticeCarrierText}${tilingClipText}${scheduleHelperText}${chaosHelperText}
 
 ${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}
 ${entry}

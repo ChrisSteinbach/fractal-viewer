@@ -84,6 +84,7 @@ import {
   ESCAPE_TIME_ITERATIONS,
 } from "./escape-de";
 import { resolveShapeTrap } from "./shape-trap";
+import { LATTICE_PRESENTATION_RADIUS_MULT } from "./lattice-march";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE, type ShapeSpec } from "./shapes";
 import { MESH_ASSET_IDS, meshAssetCatalogIndex } from "./mesh-shapes";
 import { buildEscapeDE4, SYM_PLANE_CODE4 } from "./escape-de-4d";
@@ -8602,8 +8603,14 @@ describe("mirrored lattice WGSL and params ABI", () => {
     expect(view.getFloat32(plain.byteLength + 4, true)).toBe(
       Math.fround(tiling.h),
     );
-    expect(Array.from(new Uint8Array(tiled, plain.byteLength + 8, 8))).toEqual(
-      new Array(8).fill(0),
+    // The tail's third word: the PROVISIONAL presentation window radius
+    // (authority radius times the shared multiplier), zero for finite
+    // tails. Only the final pad word stays zero.
+    expect(view.getFloat32(plain.byteLength + 8, true)).toBe(
+      Math.fround(tiling.radius * LATTICE_PRESENTATION_RADIUS_MULT),
+    );
+    expect(Array.from(new Uint8Array(tiled, plain.byteLength + 12, 4))).toEqual(
+      new Array(4).fill(0),
     );
   }
 
@@ -8866,5 +8873,114 @@ describe("mirrored lattice WGSL and params ABI", () => {
         surfaceTiling4,
       ),
     ).toThrow(/tiling\+4D slab/);
+  });
+
+  it("marches and shades through the presentation carrier in 3D with an out-of-carrier open-space probe guard", () => {
+    for (const core of ["affine", "fold", "escape", "bulb"] as const) {
+      const march = surfaceDeKernelWgsl(
+        kernelOpts({ core, mode: "march", tiling: lattice3 }),
+      );
+      // The shared carrier source is emitted.
+      expect(march, core).toContain("fn latticePresentationInterval(");
+      expect(march, core).toContain("fn latticePresentationContains(");
+      expect(march, core).toContain("struct LatticeCarrierInterval");
+      // The march gate is the carrier interval, not the sphere gate.
+      expect(march, core).toContain(
+        "let carrier = latticePresentationInterval(ro, rd, params.",
+      );
+      expect(march, core).toContain(
+        `if (!carrier.ok || params.tilingGroup != ${LATTICE_TILING_CODE}u)`,
+      );
+      expect(march, core).toContain("let tFar = carrier.tFar;");
+      expect(march, core).toContain("t = carrier.tEnter;");
+      expect(march, core).not.toContain(
+        "let radius = params.visibleRadius * 1.02;",
+      );
+      expect(march, core).not.toContain("let disc = bq * bq - cq;");
+      // The struct declares the presentation radius in the lattice tail.
+      expect(march, core).toContain("tilingPresentationR: f32");
+
+      const shade = surfaceDeKernelWgsl(
+        kernelOpts({ core, mode: "shade", tiling: lattice3 }),
+      );
+      // The wrapper's probe guard: out-of-carrier taps are open space.
+      expect(shade, core).toContain(
+        "if (!latticePresentationContains(pIn, params.",
+      );
+      expect(shade, core).toContain("return 2.0 * params.tilingPresentationR;");
+      // The shade entry recomputes the carrier for the fog origin and
+      // bounds shadow rays by their own carrier.
+      expect(shade, core).toContain(
+        "let carrier = latticePresentationInterval(ro, rd, params.",
+      );
+      expect(shade, core).toContain(
+        "let tEnter = carrier.ok ? max(carrier.tEnter, 0.0) : t;",
+      );
+      expect(shade, core).toContain(
+        "let shadowCarrier = latticePresentationInterval(pos + n * h * 2.0, shade.lightDir, params.",
+      );
+      expect(shade, core).toContain(
+        "shadow < 0.02 || !shadowCarrier.ok || ts > shadowCarrier.tFar",
+      );
+      // The 3D fog keeps the visibleRadius normalizer (it IS the
+      // authority for inverse cores; boundingRadius for forward).
+      expect(shade, core).toContain("max(visR, 1.0e-6)");
+    }
+  });
+
+  it("4D cores pass the inverse rotor's y row to the carrier and normalize fog by the full radius", () => {
+    for (const core of ["affine4", "fold4", "escape4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ core, mode: "shade", tiling: lattice4 }),
+      );
+      // The packed rotorInv rows ARE the inverse rotor's rows, so the y
+      // row is rotorInvR1 itself — never an assembled column. (The height
+      // color source's assembled column is a DIFFERENT quantity: the
+      // world y of the folded hit, the GLSL transpose lift's twin.)
+      expect(wgsl, core).toContain(
+        "latticePresentationInterval(ro, rd, params.w0, params.rotorInvR1,",
+      );
+      expect(wgsl, core).toContain(
+        "latticePresentationContains(pIn, params.w0, params.rotorInvR1,",
+      );
+      // The 4D march gate adds the slab refusal.
+      const march = surfaceDeKernelWgsl(
+        kernelOpts({ core, mode: "march", tiling: lattice4 }),
+      );
+      expect(march, core).toContain(" || params.sliceHalfW > 0.0)");
+      // The 4D hit fog normalizes by the full certified radius, never
+      // the slice-adjusted visibleRadius slot.
+      expect(wgsl, core).toContain("max(params.visRadius4, 1.0e-6)");
+      expect(wgsl, core).not.toContain(`max(visR, 1.0e-6)`);
+    }
+  });
+
+  it("replaces the ground plane's ball corridor and AO reach with carrier tests under lattice", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({
+        core: "fold",
+        mode: "shade",
+        tiling: lattice3,
+        groundPlane: true,
+      }),
+    );
+    expect(wgsl).toContain(
+      "let gShadowCarrier = latticePresentationInterval(hp, shade.lightDir, params.",
+    );
+    expect(wgsl).toContain("if (gShadowCarrier.ok) {");
+    expect(wgsl).toContain("shadow < 0.02 || ts > gShadowCarrier.tFar");
+    expect(wgsl).not.toContain("let corridor = gR * 1.05 + 0.3 * along;");
+    expect(wgsl).not.toContain(
+      "let reach = gR * (1.02 + 0.04 * f32(shade.aoTaps));",
+    );
+    // Non-lattice ground planes keep the shipped corridor verbatim.
+    const plain = surfaceDeKernelWgsl(
+      kernelOpts({ core: "fold", mode: "shade", groundPlane: true }),
+    );
+    expect(plain).toContain("let corridor = gR * 1.05 + 0.3 * along;");
+    expect(plain).toContain(
+      "let reach = gR * (1.02 + 0.04 * f32(shade.aoTaps));",
+    );
+    expect(plain).not.toContain("latticePresentationInterval");
   });
 });

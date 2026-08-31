@@ -1587,6 +1587,58 @@ describe("compile-gated mirrored lattice in the 4D GLSL tracer", () => {
       ),
     ).toThrow(/does not match the estimator authority/);
   });
+
+  it("marches the inverse-rotated 4D presentation carrier and assembles the y row across columns", () => {
+    const source = sourceFor(lattice, { plane: 1 });
+    // The 4D carrier evaluates the slab through the inverse rotor's y row
+    // at (ro, w0)/(rd, 0). GLSL mat4 is column-indexed, so the row must be
+    // assembled across columns, never read as uInvRotor[1] (the second
+    // COLUMN): the handover's matrix-row caveat.
+    expect(source).toContain(
+      "vec4(uInvRotor[0][1], uInvRotor[1][1], uInvRotor[2][1], uInvRotor[3][1])",
+    );
+    expect(
+      countOccurrences(
+        source,
+        "vec4(uInvRotor[0][1], uInvRotor[1][1], uInvRotor[2][1], uInvRotor[3][1])",
+      ),
+    ).toBe(4);
+    expect(source).toContain(
+      "if (!latticeCarrier.ok || uTilingGroup != 7 || uSliceHalfW > 0.0) {",
+    );
+    // The slab-aware slice radius gate and the slice-normalized fog are
+    // gone from the lattice arm: the fog normalizes by the FULL certified
+    // radius R.
+    expect(source).not.toContain("float radius = sliceVisR * 1.02;");
+    expect(source).not.toContain("float disc = b * b - c;");
+    expect(source).toContain(
+      "1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));",
+    );
+    // The probe contains predicate takes the same assembled row.
+    expect(source).toContain(
+      "if (!latticePresentationContains(p, uW0, vec4(uInvRotor[0][1], uInvRotor[1][1], uInvRotor[2][1], uInvRotor[3][1]), uVisibleRadius, uTilingPresentationR)) {",
+    );
+    // The 4D shadow clamp normalizes by the full radius too.
+    expect(source).toContain(
+      "ts += clamp(d, uBoundingRadius * 2.0e-4, uVisibleRadius * 0.1);",
+    );
+  });
+
+  it("derives the live presentation radius uniform from the authority radius", () => {
+    const material = createSurfaceMaterial4();
+    const radiusThree = resolveTiling({ kind: "lattice", cellScale: 1 }, 3);
+    const radiusThreeDe = { ...de4([map4()]), visibleBoundingRadius: 3 };
+    setSurfaceSystem4(
+      material,
+      radiusThreeDe,
+      [[0, 0, 0]],
+      undefined,
+      radiusThree,
+    );
+    expect(material.uniforms.uTilingPresentationR.value).toBe(30);
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, null);
+    expect(material.uniforms.uTilingPresentationR.value).toBe(10);
+  });
 });
 
 describe("setSurfaceView4", () => {

@@ -1919,6 +1919,62 @@ describe("compile-gated mirrored lattice in the 3D GLSL tracer", () => {
       ),
     ).toThrow(/cannot compose with kaleidoscope/);
   });
+
+  it("marches the presentation carrier instead of the visible sphere", () => {
+    const source = sourceFor(lattice);
+    // The shared carrier source is emitted once.
+    expect(source).toContain("struct LatticeCarrierInterval {");
+    expect(source).toContain(
+      "LatticeCarrierInterval latticePresentationInterval(",
+    );
+    expect(source).toContain("bool latticePresentationContains(");
+    expect(source).toContain("latticePresentationFogCoordinate");
+    // The march entry gate became the carrier interval: no sphere gate.
+    expect(source).toContain(
+      "LatticeCarrierInterval latticeCarrier = latticePresentationInterval(",
+    );
+    expect(source).toContain("if (!latticeCarrier.ok || uTilingGroup != 7) {");
+    expect(source).toContain("float t = latticeCarrier.tEnter;");
+    expect(source).toContain("float tFar = latticeCarrier.tFar;");
+    expect(source).not.toContain("float disc = b * b - c;");
+    expect(source).not.toContain("float sq = sqrt(disc);");
+  });
+
+  it("makes out-of-carrier probe taps open space and bounds shadow and ground rays by their own carriers", () => {
+    const source = sourceFor(lattice, { plane: 1 });
+    // The plain probe overload guards with the contains predicate.
+    expect(source).toContain(
+      "if (!latticePresentationContains(p, uVisibleRadius, uTilingPresentationR)) {",
+    );
+    expect(source).toContain("return 2.0 * uTilingPresentationR;");
+    // Shadow rays compute their own carrier and exit at its tFar.
+    expect(source).toContain(
+      "LatticeCarrierInterval shadowCarrier = latticePresentationInterval(",
+    );
+    expect(source).toContain("ts > shadowCarrier.tFar");
+    // Ground plane: the ball corridor and the AO reach certificate are
+    // replaced by carrier tests for the infinite lattice.
+    expect(source).not.toContain("float corridor = uGroundBallR * 1.05");
+    expect(source).not.toContain(
+      "length(sp - uGroundBallC) > uGroundBallR * 1.05",
+    );
+    expect(source).not.toContain("float reach = uGroundBallR * (1.02");
+    expect(source).toContain(
+      "LatticeCarrierInterval groundShadowCarrier = latticePresentationInterval(",
+    );
+    // The old single-ball exits are gone from the hit path too.
+    expect(source).not.toContain("length(sp) > uVisibleRadius * 1.05");
+  });
+
+  it("derives the live presentation radius uniform from the authority radius", () => {
+    const material = createSurfaceMaterial();
+    const radiusThreeDe = { ...de3([map3()]), visibleBoundingRadius: 3 };
+    const radiusThree = resolveTiling({ kind: "lattice", cellScale: 1 }, 3);
+    setSurfaceSystem(material, radiusThreeDe, [black], undefined, radiusThree);
+    expect(material.uniforms.uTilingPresentationR.value).toBe(30);
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, null);
+    expect(material.uniforms.uTilingPresentationR.value).toBe(10);
+  });
 });
 
 describe("the supersampling jitter uniform", () => {
