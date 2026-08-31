@@ -8851,6 +8851,10 @@ async function main(): Promise<void> {
     applyFourDColor,
     restartSolidRender: () => solidSession.enter(),
     restartFlameRender: () => flameSession.enter(),
+    setSurfaceLatticeScale: (cellScale) => {
+      surfaceComputeRenderer?.setLatticeScale(cellScale);
+      scene.setSurfaceLatticeScale(cellScale);
+    },
     restartSurfaceRender: () => {
       if (state.renderMode === "surface") {
         syncSurfaceSettleSamples();

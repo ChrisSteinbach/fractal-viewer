@@ -78,6 +78,7 @@ function mockEffects(shared = false): ControlEffects {
     applyFourDColor: vi.fn(),
     restartSolidRender: vi.fn(),
     restartFlameRender: vi.fn(),
+    setSurfaceLatticeScale: vi.fn(),
     restartSurfaceRender: vi.fn(),
     applyBackground: vi.fn(),
     trackAutoBackground: vi.fn(),
@@ -1386,6 +1387,37 @@ describe("effects", () => {
       ).toBe(finite);
     });
 
+    it("pushes lattice cell scale live on Surface without restarting", () => {
+      const spec = specById("tilingCellScaleSlider");
+      const previous = setTiling(
+        { ...initialState(true), renderMode: "surface" },
+        { kind: "lattice", cellScale: 1.5 },
+      );
+      const state = applyScalarControl(previous, spec, "2.4");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.setSurfaceLatticeScale).toHaveBeenCalledWith(2.4);
+      expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
+      expect(fx.refreshSurfaceEligibility).not.toHaveBeenCalled();
+    });
+
+    it("only stores lattice cell scale outside an active Surface session", () => {
+      const spec = specById("tilingCellScaleSlider");
+      const previous = setTiling(initialState(true), {
+        kind: "lattice",
+        cellScale: 1.5,
+      });
+      const state = applyScalarControl(previous, spec, "2.4");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.setSurfaceLatticeScale).not.toHaveBeenCalled();
+      expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
+    });
+
     it("reads a mesh-backed bundled clip as authored, not a selectable kind", () => {
       const meshClipped = setTiling(initialState(true), {
         group: "a3",
@@ -1405,23 +1437,29 @@ describe("effects", () => {
       expect(tilingClipSelectValue(latticeClipped)).toBe("gear");
     });
 
-    it("refreshes eligibility everywhere and restarts only an active Surface", () => {
-      const spec = specById("tilingGroup");
-      expect(spec.persisted).not.toBe(false);
+    it("restarts kind, group, clip, and toggle edits only on an active Surface", () => {
+      for (const id of [
+        "tilingEnabledCheckbox",
+        "tilingKind",
+        "tilingGroup",
+        "tilingClip",
+      ]) {
+        const spec = specById(id);
+        expect(spec.persisted).not.toBe(false);
 
-      for (const renderMode of ["points", "surface"] as const) {
-        const previous = setTiling(
-          { ...initialState(true), renderMode },
-          { group: "a3" },
-        );
-        const state = applyScalarControl(previous, spec, "b3");
-        const fx = mockEffects();
-        spec.effect?.(state, fx, previous);
+        for (const renderMode of ["points", "surface"] as const) {
+          const state = setTiling(
+            { ...initialState(true), renderMode },
+            { group: "b3" },
+          );
+          const fx = mockEffects();
+          spec.effect?.(state, fx, state);
 
-        expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
-        expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(
-          renderMode === "surface" ? 1 : 0,
-        );
+          expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
+          expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(
+            renderMode === "surface" ? 1 : 0,
+          );
+        }
       }
     });
   });

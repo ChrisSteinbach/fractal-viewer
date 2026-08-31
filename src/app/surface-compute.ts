@@ -92,7 +92,11 @@ import {
 } from "../fractal/shapes";
 import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
 import type { MeshAssetId } from "../fractal/mesh-shapes";
-import type { ResolvedTiling } from "../fractal/tiling";
+import {
+  isResolvedLatticeTiling,
+  resolveTiling,
+  type ResolvedTiling,
+} from "../fractal/tiling";
 import type {
   SurfaceGpu4View,
   SurfaceGpuGroundPlane,
@@ -1865,10 +1869,10 @@ export class SurfaceComputeRenderer {
           // and a balloon+plane target is a caller bug the codegen
           // rejects loudly.
           groundPlane: target.groundPlane === true,
-          // Finite reflection tiling is frozen with the session just like
-          // the estimator core and authored clip source. The resolved group
-          // bakes its fold/clip into both pipeline modules; the params tail
-          // carries the matching live group code as a stale-source guard.
+          // Tiling KIND and CLIP are frozen with the session like the
+          // estimator core. A lattice scale may change live afterward: it
+          // alters only h in the params tail, while this generated source
+          // depends on the lattice discriminator and baked clip alone.
           tiling: target.tiling ?? null,
           // The shape-trap channel — FORWARD kinds only (the target union
           // carries the field nowhere else). Baked geometry: the create-time
@@ -2623,6 +2627,29 @@ export class SurfaceComputeRenderer {
    * their next await. */
   cancel(): void {
     this.frameToken++;
+  }
+
+  /** Update the one live field of an existing lattice target. Pipelines and
+   * buffer sizes are unchanged because kind and clip stay frozen; the next
+   * frame's params pack reads the new canonical `h`. Cancel first so an
+   * in-flight multi-pass frame cannot mix two cell sizes. */
+  setLatticeScale(cellScale: number): void {
+    const current = this.target.tiling;
+    if (!current || !isResolvedLatticeTiling(current)) return;
+    const next = resolveTiling(
+      {
+        kind: "lattice",
+        cellScale,
+        ...(current.clip ? { clip: current.clip } : {}),
+      },
+      current.radius,
+    );
+    if (!next || !isResolvedLatticeTiling(next)) {
+      throw new Error("Surface compute: failed to resolve live lattice scale");
+    }
+    if (next.h === current.h) return;
+    this.cancel();
+    this.target.tiling = next;
   }
 
   /** Cancel, then tear the device down — immediately if nothing is in

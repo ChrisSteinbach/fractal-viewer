@@ -2225,7 +2225,10 @@ interface TeardownHarness {
  * that died during `create()`'s pipeline compiles hands the constructor.
  */
 function createHarness(
-  opts: { lostBeforeConstruction?: boolean } = {},
+  opts: {
+    lostBeforeConstruction?: boolean;
+    target?: SurfaceComputeTarget;
+  } = {},
 ): TeardownHarness {
   const work = deferred();
   const lost = deferred();
@@ -2261,7 +2264,7 @@ function createHarness(
     device,
     // The teardown path never reads the target: the packers that do sit past
     // the point a parked frame has reached.
-    target: { kind: "ifs" } as unknown as SurfaceComputeTarget,
+    target: opts.target ?? ({ kind: "ifs" } as unknown as SurfaceComputeTarget),
     marchPipeline: {} as GPUComputePipeline,
     marchLayout: {} as GPUBindGroupLayout,
     shadePipeline: {} as GPUComputePipeline,
@@ -2285,6 +2288,40 @@ function createHarness(
     loseDevice: lost.resolve,
   };
 }
+
+describe("SurfaceComputeRenderer live lattice scale", () => {
+  it("re-resolves h on the existing target without changing its baked clip", () => {
+    const clip = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.5 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const target = {
+      kind: "ifs",
+      de: {},
+      tiling: resolveTiling({ kind: "lattice", cellScale: 1.5, clip }, 2),
+    } as unknown as SurfaceComputeTarget;
+    const { renderer } = createHarness({ target });
+
+    renderer.setLatticeScale(2.5);
+
+    expect(target.tiling).toEqual(
+      resolveTiling({ kind: "lattice", cellScale: 2.5, clip }, 2),
+    );
+  });
+
+  it("is inert for a target without lattice tiling", () => {
+    const target = { kind: "ifs" } as unknown as SurfaceComputeTarget;
+    const { renderer } = createHarness({ target });
+
+    renderer.setLatticeScale(2.5);
+
+    expect(target.tiling).toBeUndefined();
+  });
+});
 
 describe("SurfaceComputeRenderer teardown", () => {
   it("defers device.destroy() until an in-flight frame unwinds", async () => {

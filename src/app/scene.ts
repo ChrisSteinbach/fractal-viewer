@@ -88,6 +88,8 @@ import {
   packSurfaceBalloonTint,
   setSurfaceMaterials as packSurfaceMaterials,
   setSurfaceGroundPlane as packSurfaceGroundPlane,
+  installSurfaceTiling,
+  materialSurfaceTiling,
   setSurfaceSystem as packSurfaceSystem,
   SURFACE_FULL_AO_TAPS,
   SURFACE_FULL_HIT_FLOOR,
@@ -134,7 +136,11 @@ import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { surfaceDescentCostWeight } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
-import type { ResolvedTiling } from "../fractal/tiling";
+import {
+  isResolvedLatticeTiling,
+  resolveTiling,
+  type ResolvedTiling,
+} from "../fractal/tiling";
 import {
   surfaceMaterialsNeedAo,
   surfaceMaterialsNeedShadow,
@@ -4747,6 +4753,39 @@ export class FractalScene {
         resolveShapeTrap(trap),
       );
     }
+  }
+
+  /** Push the lattice arm's only live authored field. The GLSL path updates
+   * its existing canonical material record and `uTilingH`; compute owns the
+   * matching target update in `SurfaceComputeRenderer`, so here it only
+   * marks the next frame dirty. Kind/clip edits still re-enter the session. */
+  setSurfaceLatticeScale(cellScale: number): void {
+    if (this.surfaceComputeActive) {
+      this.renderNeeded = true;
+      return;
+    }
+    const fourD = this.activeSurfaceMaterial === this.surfaceMaterial4;
+    const material = fourD ? this.surfaceMaterial4 : this.surfaceMaterial;
+    const current = materialSurfaceTiling(material, fourD);
+    if (!current || !isResolvedLatticeTiling(current)) return;
+    const next = resolveTiling(
+      {
+        kind: "lattice",
+        cellScale,
+        ...(current.clip ? { clip: current.clip } : {}),
+      },
+      current.radius,
+    );
+    if (!next || !isResolvedLatticeTiling(next)) {
+      throw new Error("Surface WebGL: failed to resolve live lattice scale");
+    }
+    if (next.h === current.h) return;
+    if (installSurfaceTiling(material, next, fourD, current.radius)) {
+      throw new Error(
+        "Surface lattice scale unexpectedly changed shader source",
+      );
+    }
+    this.renderNeeded = true;
   }
 
   /** The live balloon parameter block derived from the stored ball +
