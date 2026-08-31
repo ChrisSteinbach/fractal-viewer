@@ -863,11 +863,13 @@ the ground plane — settled with hit-rate gaps 0.001–0.012 against the
 family's tiled CPU oracle through the SAME carrier gate, the plane row's
 plane-rate gap 0.012 (GPU 0.535 vs CPU 0.547, 19738 plane terminals), and
 the durable browser gate `scripts/surface-lattice.verify.mjs` passed its full
-eight-pass route matrix (every row exposed progress, settled and drew on the
-expected engine with the lattice block retained; the untiled/finite/lattice
-trio differed by 8.10%/25.09%/25.07%; a persisted-document reload reproduced
-within 7.87%). The app's Copy Link interaction is separately pinned by the UI
-gate.
+twelve-row, eight-pass route matrix (inverse affine/fold and forward; every
+row exposed progress, settled and drew on the expected engine with the lattice
+block retained; the fold lens drew 47.48%/47.50% on WebGL/compute; the
+untiled/finite/lattice trio differed by 7.97%/25.08%/25.06%; a
+persisted-document reload reproduced within 10.73%). The UI gate separately
+reloads the app's clean Copy Link and enters/settles/draws its unchanged hash
+with diagnostic instrumentation.
 
 ### lattice-presentation
 

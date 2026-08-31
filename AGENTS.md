@@ -911,8 +911,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Bench-pinned on verified Iris: eval 7/7 cores plus five production
     frame legs (3D/4D × inverse/forward + ground plane) settling with
     hit-rate gaps ≤ 0.012 and plane-rate gap 0.012; the durable browser
-    gate `scripts/surface-lattice.verify.mjs` passes its full
-    progress→settled routing/persistence/distinctness matrix. Tiling-bearing
+    gate `scripts/surface-lattice.verify.mjs` passes its full inverse
+    affine/fold/forward progress→settled routing/persistence/distinctness matrix. Tiling-bearing
     cancel, real-Firefox teardown, WebGL fallback and fold-4D refusal are
     pinned by their owning lifecycle gates.
     Tiling authoring is shared Scene / Look state: B3/A4/F4 and paired lattice

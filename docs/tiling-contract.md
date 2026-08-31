@@ -212,12 +212,13 @@ the browser verifier now pin that path. The runnable record is
 The authoring/preset gate (`scripts/tiling-ui.verify.mjs`) drives the real
 top-level panel and Systems menu rather than installing hashes. On verified
 Iris, all five showcases exposed progress and reached a settled 8/8 frame:
-B3 WebGL drew/differed from untiled by 40.26%/6.59%, A4 compute
-40.17%/5.17%, F4 compute 39.00%/8.42%, lattice-3D WebGL 46.85%/13.23%, and
+B3 WebGL drew/differed from untiled by 40.22%/6.62%, A4 compute
+40.18%/5.23%, F4 compute 38.99%/8.39%, lattice-3D WebGL 46.85%/13.23%, and
 lattice-4D compute 37.42%/0.29%. The last uses a fixture-specific 0.20%
 structural floor because its untiled projection fills almost the same
 carrier. The same run pinned exact finite→lattice→finite→absent replacement,
 the exact 2.4 numeric edit, finite and lattice app-produced Copy Link reloads,
+and the lattice link's WebGL progress→settled render at 46.85%. It also pinned
 three lattice-authored untiled-mode disclosures, Balloon/Symmetry recovery,
 and whole-block fallback for three malformed wire shapes while preserving a
 distinctive valid surrounding scene.
@@ -610,13 +611,15 @@ the 3D inverse with the ground plane — run through the PRODUCTION
 same carrier gate and the family's tiled oracle. All five settled with
 hit-rate gaps 0.001–0.012 and the plane row's plane-rate gap 0.012
 (GPU 0.535 vs CPU 0.547, 19738 plane terminals). The durable browser gate
-`scripts/surface-lattice.verify.mjs` passed the same display's full route
-matrix with the shipped eight-pass settle: every row exposed progress before
-settling, drew 34.32–74.67% of the frame on the expected hardware engine and
-retained the lattice block. The untiled/finite/lattice trio differed by
-8.10%/25.09%/25.07%, and a persisted document reload reproduced its picture
-within 7.87% under the 15% rerender ceiling. `tiling-ui.verify.mjs`, not this
-hash reload, owns the app's Copy Link interaction.
+`scripts/surface-lattice.verify.mjs` passed the same display's full twelve-row
+route matrix with the shipped eight-pass settle: inverse affine/fold and
+forward rows all exposed progress before settling, drew 34.30–74.71% of the
+frame on the expected hardware engine and retained the lattice block. The
+final-fold lens drew 47.48%/47.50% on WebGL/compute, the
+untiled/finite/lattice trio differed by 7.97%/25.08%/25.06%, and a persisted
+document reload reproduced its picture within 10.73% under the 15% rerender
+ceiling. `tiling-ui.verify.mjs` additionally reloads the app's clean Copy Link
+and enters/settles/draws its unchanged hash under read-only instrumentation.
 
 ### Release qualification matrix
 
@@ -626,7 +629,7 @@ that lifecycle rather than building a second monolith:
 | Contract                                                                                                          | Durable gate                                                                                                  | 2026-08-31 verdict                                                                                   |
 | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Finite/lattice presets, exact authoring, replacement, copied links, unsupported-mode disclosure, malformed decode | `scripts/tiling-ui.verify.mjs`                                                                                | Five settled hardware presets plus all authoring/recovery checks passed                              |
-| Minimal inverse/forward, 3D/4D, WebGL/compute, clip, plane, progress and structural negative controls             | `scripts/surface-lattice.verify.mjs` and `scripts/surface-tiling.verify.mjs`                                  | Both real-Iris route matrices passed                                                                 |
+| Minimal inverse affine/fold and forward, 3D/4D, WebGL/compute, clip, plane, progress and structural controls      | `scripts/surface-lattice.verify.mjs` and `scripts/surface-tiling.verify.mjs`                                  | Both real-Iris route matrices passed                                                                 |
 | Carrier choice, cross-engine fade, fog/DoF/radial background and completed Save PNG                               | `scripts/lattice-presentation.verify.mjs`                                                                     | 22/22 scene rows and ten capture comparisons passed                                                  |
 | Completed export, mid-drain cancellation, interaction and collection encoding with authored tiling                | `scripts/capture-export.verify.mjs --tiling=a3`                                                               | 15/15 on SwiftShader; exact A3 survived every phase                                                  |
 | Renderer teardown during submitted compute work                                                                   | `scripts/surface-teardown.verify.mjs --lens --tiling=a3 --toggleId=__modeExit --toggles=20 --toggleGapMs=900` | 20/20 on real Firefox/Iris compute; exact A3 and hardware backend retained                           |
