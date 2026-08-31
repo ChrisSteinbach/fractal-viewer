@@ -132,6 +132,62 @@ describe("poseTilingForContent", () => {
     expect(authored.clip!.parts[0].pose).toEqual({ offset: [1, 2, 3] });
   });
 
+  it("poses every part of an unposed compound clip as one shape", () => {
+    const clip: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "torus", major: 1, minor: 0.12 },
+          combine: "union",
+        },
+        {
+          primitive: {
+            kind: "capsule",
+            a: [0, -1, 0],
+            b: [0, 1, 0],
+            radius: 0.12,
+          },
+          combine: "union",
+        },
+      ],
+    };
+    const tiling = resolveTiling({ group: "b3", clip })!;
+    const fit = { center: [1, 2, 3] as Vec3, radius: 0.75 };
+    const posed = poseTilingForContent(tiling, fit);
+    expect(posed.clip!.parts.map((part) => part.pose)).toEqual([
+      { offset: [1, 2, 3], scale: 0.75 },
+      { offset: [1, 2, 3], scale: 0.75 },
+    ]);
+    expect(tiling.clip!.parts.every((part) => part.pose === undefined)).toBe(
+      true,
+    );
+  });
+
+  it("leaves the whole compound clip authored when any part has a pose", () => {
+    const authored = resolveTiling({
+      group: "b3",
+      clip: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.5 },
+            combine: "union",
+          },
+          {
+            primitive: { kind: "sphere", radius: 0.25 },
+            combine: "union",
+            pose: { rotate: [0, 0, Math.PI / 2] },
+          },
+        ],
+      },
+    })!;
+    expect(tilingClipHasAuthoredPose(authored)).toBe(true);
+    expect(
+      poseTilingForContent(authored, {
+        center: [1, 2, 3],
+        radius: 0.75,
+      }),
+    ).toBe(authored);
+  });
+
   it("returns the tiling unchanged without a clip or fit", () => {
     const plain = resolveTiling({ group: "a3" })!;
     expect(poseTilingForContent(plain, { center: [0, 0, 0], radius: 1 })).toBe(

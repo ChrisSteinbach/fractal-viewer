@@ -178,12 +178,21 @@ export function chamberContentFit(
   return { center, radius };
 }
 
-/** Does the clip carry an authored pose? Only `parts[0]` is posed by this
- * module; an authored pose on the first part wins. */
+/** Does any part of the clip carry an authored pose? A pose anywhere makes
+ * the whole flat composition authored, so the session never moves only a
+ * subset of a deliberately arranged shape. */
 export function tilingClipHasAuthoredPose(tiling: ResolvedTiling): boolean {
-  const pose = tiling.clip?.parts[0]?.pose;
-  if (!pose) return false;
-  return pose.offset !== undefined || pose.scale !== undefined;
+  return (
+    tiling.clip?.parts.some((part) => {
+      const pose = part.pose;
+      return (
+        pose !== undefined &&
+        (pose.offset !== undefined ||
+          pose.rotate !== undefined ||
+          pose.scale !== undefined)
+      );
+    }) ?? false
+  );
 }
 
 /**
@@ -206,16 +215,13 @@ export function poseTilingForContent(
     ...tiling,
     clip: {
       ...tiling.clip,
-      parts: [
-        {
-          ...tiling.clip.parts[0],
-          pose: {
-            offset: [fit.center[0], fit.center[1], fit.center[2]],
-            scale: fit.radius * TILING_CLIP_POSE_SCALE,
-          },
+      parts: tiling.clip.parts.map((part) => ({
+        ...part,
+        pose: {
+          offset: [fit.center[0], fit.center[1], fit.center[2]],
+          scale: fit.radius * TILING_CLIP_POSE_SCALE,
         },
-        ...tiling.clip.parts.slice(1),
-      ],
+      })),
     },
   };
   return posed;
