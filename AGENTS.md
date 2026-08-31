@@ -874,10 +874,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `tiling.ts` — the ONE space-tiling vocabulary and resolver. The legacy
     finite arm stays `{group, clip?}`; mirrored affine-A1 repetition is
     `{kind: "lattice", cellScale, clip?}` with required finite
-    `cellScale >= 1`, no authored default/max, and `h = cellScale·R` derived from the
-    core's certified origin-centred visible radius. The finite arm owns
-    A3/B3/H3 and A4/B4/F4, their proven fold bound (32 including jitter guard),
-    roots and explicit-orbit test oracle; its estimate is
+    `cellScale >= 1`, no core-authored default/max, and `h = cellScale·R`
+    derived from the core's certified origin-centred visible radius. The
+    finite arm owns A3/B3/H3 and A4/B4/F4, their proven fold bound (32
+    including jitter guard), roots and explicit-orbit test oracle; its estimate is
     `max(DE(fold(q)), clipDist(fold(q)))`. The lattice folds attractor-frame
     x/z in 3D and x/z/w in 4D with fixed work (resolution refuses an `h`
     that rounds to zero or a `4h` period that cannot fit the frozen f32
@@ -900,8 +900,13 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     geometry, casts a shadow or contributes AO), and the ground plane's
     corridor/AO certificates replaced by carrier tests (content repeats
     beyond the ball). `10R` is `LATTICE_PRESENTATION_RADIUS_MULT` — the
-    PROVISIONAL diagnostic value a measurement session edits; cell-scale
-    authoring controls stay unexposed until measured. Routing resolves
+    PROVISIONAL diagnostic value a measurement session edits. Scene / Look
+    exposes arm kind, analytic clip on either arm, and lattice cell scale over
+    the FROZEN 1.25–4 range (default 1.5); the panel discloses that kind/clip
+    restart while scale is live per frame. An entirely unposed clip
+    composition gets one shared per-entry pose from the folded-content fit
+    (the bailout ball for forward families), without changing the document;
+    any authored part pose preserves the whole composition. Routing resolves
     lattice blocks PER-ARM against each DE's authority radius (visible for
     the descents, bounding for the forward orbits — resolveTiling throws
     without it), refuses the empty-space grid (its floors bound the
@@ -914,13 +919,15 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Finite authoring is shared Scene / Look state: B3/A4/F4 showcase presets,
     separate chamber-group and narrowing-clip rows, app-copy/reload and
     workflow behavior are real-browser gated by `scripts/tiling-ui.verify.mjs`.
+    `mirroredLattice` and `mirroredLattice4` are the lattice arm's paired
+    3D/4D showcase presets.
     Points/Flame/Solid remain untiled
     with an adjacent explanation. Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic
     opRep is REFUSED for overshoot and a wall clamp for false-zero geometry;
-    exact translation is deferred. Cell-scale defaults/ranges and the finite
-    presentation veil remain provisional. The deterministic lattice sheet
+    exact translation is deferred. The 10R presentation window and proposed
+    8R fade remain provisional. The deterministic lattice sheet
     calls the production scalar fold and pins orbit/seam, translation-
     overshoot, false-wall and preview evidence. Full contract and proof:
     `docs/tiling-contract.md`.

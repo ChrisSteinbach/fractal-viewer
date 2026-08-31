@@ -275,8 +275,39 @@ discrete — morphs never interpolate it (the target's block pops at the leg's
 first push, the HybridSchedule precedent); the clip follows the ShapeTrap
 morph precedent. A malformed block decodes to undefined, never rejects the
 scene. The panel family is authored scene geometry (placed under the rules in
-`docs/panel-ia.md`); the group cell is NEVER presented as a
-free-form clip and vice versa.
+`docs/panel-ia.md`). Its kind selector converts between Reflection group and
+Mirrored lattice while preserving their shared clip; group and cell scale are
+arm-specific rows, and the group cell is NEVER presented as a free-form clip
+or vice versa. The optional clip selector is shared by both arms and offers
+only the three analytic catalog entries (Cog, Orbit Ring and Peace sign). The
+six mesh-backed catalog entries are omitted because every offered value must
+be eligible for Surface; a mesh clip arriving in an imported document remains
+preserved and reads as Authored clip while the existing analytic-only refusal
+stays in force.
+
+The original clip editor was a measured dead end for two independent reasons.
+Six of its nine offered entries were those refused mesh clips, so choosing one
+disabled Surface. The remaining three were unit shapes at the origin, while
+the folded chamber content of the shipped systems lay 0.4–1.6 world units
+out: across the overlap probes, 0 of 399,000 content samples lay inside any
+unposed analytic clip. The positive clip term then dominated
+`max(DE, clipDist)` and the eligible choices rendered an empty or nearly empty
+frame.
+
+`chamber-content.ts` fixes the placement at the session boundary without
+rewriting the document. For an inverse-descent system it runs a deterministic
+20,000-point chaos game, folds every point through the renderer's own finite
+or lattice fold, and fits the folded xyz centroid and radius; every part of an
+entirely unposed flat clip receives that common offset and scale in the
+session's resolved copy. If any part carries an authored offset, rotation or
+scale, the whole composition remains authored and untouched.
+Forward escape/bulb systems use their certified bailout ball at the origin
+instead, because their chaos games sample reset debris rather than the set.
+An authored pose always wins, and an automatic pose is derived again on every
+Surface entry so morphs and randomize cannot leave it stale. The posed Cog
+retained 12% of the measured B3 chamber content where the origin pose retained
+none; on verified Mesa Intel Iris Xe the resulting frame drew 33.6% foreground
+against 36.3% unclipped, where the pre-fix clipped frame was empty.
 
 ## Evidence owed (summary)
 
@@ -349,13 +380,35 @@ from the current estimator. Absent tiling stays byte-identically off. A
 lattice program uses the same 16-byte WGSL tail: the first word is the lattice
 kind code, the next `f32` is resolved `h`, and the final eight bytes remain
 zero. GLSL receives the same `h` through its lattice-only uniform. Changing
-kind remains a source-regenerating edit; changing cell scale is a geometry
-edit and restarts accumulation without recompiling the formula.
+kind or clip remains a source-regenerating edit and restarts Surface. Cell
+scale is absent from the source-regeneration key and updates the GLSL uniform
+or WGSL params live per frame, without restarting the session; the adjacent
+timing hint discloses the active arm's behavior.
 
-**PROVISIONAL, not gated by this sheet:** `cellScale` default 1.5 and authored
-range 1.25–4.0. The mathematical gate proves only `cellScale >= 1`; the
-default and narrower minimum/maximum require real renderer fixtures and a UI
-range gate before they can be frozen.
+**FROZEN authoring verdict:** the lattice panel range is 1.25–4.0, with step
+0.05 and default 1.5. The mathematical domain remains `cellScale >= 1`, and
+imported documents outside the panel range remain legal; the narrower range
+is an authoring choice, not a resolver refusal. The 2026-08-31 verified Mesa
+Intel Iris Xe sweep exercised these rows; all 14 sessions were eligible,
+settled and drew with no page errors:
+
+| `cellScale` | 3D foreground | 4D foreground |
+| ----------: | ------------: | ------------: |
+|        1.05 |         62.4% |         41.1% |
+|        1.25 |         55.1% |         37.7% |
+|        1.50 |         49.1% |         36.2% |
+|        2.00 |         41.5% |         35.6% |
+|        3.00 |         36.5% |         34.3% |
+|        4.00 |         34.6% |         34.0% |
+|        5.00 |         34.2% |         33.8% |
+
+The frozen panel band lies inside the two tested guard rows (1.05 and 5.0),
+while imported documents retain the resolver's wider mathematical domain. The
+exact-numeric panel gate pins the range and the slider's target, trusted touch
+and keyboard behavior. A post-wiring continuity probe on the same verified
+Iris changed 1.6 to 3.5 in a 3D WebGL session and a 4D WebGPU compute session:
+both retained the current first-frame gate (no session re-entry), invalidated,
+settled again, and reported zero page errors.
 
 ### Landed CPU and document authority
 
@@ -448,9 +501,18 @@ Routing resolves lattice blocks PER-ARM against each DE's authority radius
 against a guessed radius; a persisted lattice document now enters Surface on
 both engines and settles on the mirrored cell. The empty-space grid is
 refused for lattice sessions (its floors bound the attractor, not the
-infinite mirror image). The panel still exposes no lattice authoring
-(cell-scale arrives with an imported/shared document); the disclosure names
-that boundary. A tiled 4D session renders slice 0 only, on both engines.
+infinite mirror image). The panel exposes the lattice arm through the shared
+kind and clip selectors plus its exact-numeric cell-scale slider. Kind and
+clip edits restart an active Surface session; cell-scale edits are live, and
+all tiling edits made in Points, Flame or Solid apply on the next Surface
+entry. A tiled 4D session renders slice 0 only, on both engines.
+
+Two Systems-menu landscape showcases make both dimensional halves reachable:
+**Mirrored Lattice** uses Sierpinski Tetrahedron and **Mirrored Lattice 4D**
+uses Pentatope. Both install `{ kind: "lattice", cellScale: 1.6 }` through
+`PRESET_TILINGS` and carry the Surface render hint. On verified Iris the menu
+installed and settled the 3D showcase; the existing lattice browser matrix
+continued to pass 18/18 across both dimensions and engines.
 
 Surface eligibility no longer refuses the lattice arm: the shared refusals —
 balloon, kaleidoscope, mesh clips, the 4D slab — are the boundary, exactly

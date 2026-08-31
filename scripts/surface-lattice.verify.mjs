@@ -6,10 +6,10 @@
  *   npm run build && npm run preview &
  *   node scripts/surface-lattice.verify.mjs [--display=:0] [--url=…]
  *
- * All fixtures are embedded JSON documents encoded to `#v1=` at runtime —
- * the lattice arm has no panel controls yet (cell-scale authoring ships
- * after measurement), so the block arrives with the shared document, the
- * way an imported or copied link would. The route matrix covers:
+ * All fixtures are embedded JSON documents encoded to `#v1=` at runtime, so
+ * the route matrix stays independent of panel layout and exercises the same
+ * document boundary as an imported or copied link. The separate panel and
+ * exact-numeric gates own authoring interaction. This matrix covers:
  *
  *   - 3D inverse IFS lattice: forced WebGL and forced WebGPU;
  *   - 3D forward escape lattice: forced WebGL and WebGPU;

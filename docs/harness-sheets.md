@@ -826,9 +826,35 @@ Within the deliberately finite radius-4 observation ball, 32,768 membership
 samples read mirror 0.534058% fill / 3.99910 reach and translation 0.524902% /
 3.99449. Those are comparable-local-presence rows, not global extents: both
 sets have infinite reach. The preview's radius-ten window is likewise ten
-cell half-widths, not evidence for production range. Proposed cell-scale
-default/minimum/maximum and the 8R/10R presentation veil remain explicitly
-PROVISIONAL until live GLSL/WGSL, capture and grazing-ray gates measure them.
+cell half-widths, not evidence for production range.
+
+The 2026-08-31 production-browser cell-scale sweep ran the live Surface path
+on verified Mesa Intel Iris Xe at 800x500. Every row was Surface-eligible,
+settled, drew, and reported zero page errors; coverage is the screenshot's
+non-backdrop share. Values 1.05 and 5 are guard samples outside the exposed
+panel endpoints, not additional authoring range.
+
+| Dimension | `cellScale` | Coverage |
+| --------- | ----------: | -------: |
+| 3D        |        1.05 |    62.4% |
+| 3D        |        1.25 |    55.1% |
+| 3D        |         1.5 |    49.1% |
+| 3D        |           2 |    41.5% |
+| 3D        |           3 |    36.5% |
+| 3D        |           4 |    34.6% |
+| 3D        |           5 |    34.2% |
+| 4D        |        1.05 |    41.1% |
+| 4D        |        1.25 |    37.7% |
+| 4D        |         1.5 |    36.2% |
+| 4D        |           2 |    35.6% |
+| 4D        |           3 |    34.3% |
+| 4D        |           4 |    34.0% |
+| 4D        |           5 |    33.8% |
+
+This sweep freezes the panel's 1.25–4 authoring range and 1.5 default in both
+dimensions. It does not settle presentation extent: the production 10R
+window remains a PROVISIONAL diagnostic value, and the proposed 8R fade is
+still PROVISIONAL and unimplemented.
 
 Since the carrier shipped, two real-driver gates hold the same verdicts
 with the production renderer (all on verified Mesa Intel Iris Xe,
@@ -842,5 +868,5 @@ the durable browser gate `scripts/surface-lattice.verify.mjs` passed 18/18
 retained; the untiled/finite/lattice trio differed by 25% structural; the
 app-generated link reload reproduced its picture within 2.75%). The 10R
 window in those runs is `LATTICE_PRESENTATION_RADIUS_MULT` in
-`lattice-march.ts` — still PROVISIONAL, the explicit diagnostic value a
-measurement session edits before any accepted range is frozen.
+`lattice-march.ts`; it remains independent of the now-frozen cell-scale
+authoring range.
