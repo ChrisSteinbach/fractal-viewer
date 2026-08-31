@@ -1050,6 +1050,73 @@
           </label>
         </details>
 
+        <!-- Finite reflection tiling is authored Scene / Look geometry: the
+             chosen group defines the chamber and copies; the independent
+             ShapeSpec clip can only trim content inside that chamber. It is
+             Surface-only today, but stays visible in every render mode so
+             the document's authored state and any refusal never disappear.
+             Phase-2 lattice controls deliberately do not live in this
+             finite-only editor. -->
+        <details class="panel-section" id="tilingSection" name="panel-section">
+          <summary>Surface tiling</summary>
+          <p id="tilingTimingHint" class="flame-hint">
+            Used next time you enter Surface.
+          </p>
+          <details class="panel-explainer">
+            <summary>How finite tiling works</summary>
+            <p>
+              The reflection group folds space into its fixed chamber, then
+              repeats the chamber's fractal piece. Optional content clip trims
+              that piece; it does not replace or reshape the chamber. Points,
+              Flame, and Solid keep showing the untiled attractor.
+            </p>
+          </details>
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              id="tilingEnabledCheckbox"
+              aria-describedby="tilingTimingHint tilingNote"
+            />
+            Surface tiling
+          </label>
+          <div id="tilingControls" class="hidden">
+            <label class="select-label">
+              Reflection group
+              <select
+                id="tilingGroup"
+                aria-describedby="tilingTimingHint tilingNote"
+              >
+                <optgroup label="3D">
+                  <option value="a3">A3 · tetrahedral</option>
+                  <option value="b3">B3 · octahedral</option>
+                  <option value="h3">H3 · icosahedral</option>
+                </optgroup>
+                <optgroup label="4D">
+                  <option value="a4">A4 · pentatope</option>
+                  <option value="b4">B4 · 16-cell</option>
+                  <option value="f4">F4 · 24-cell</option>
+                </optgroup>
+              </select>
+            </label>
+            <label class="select-label">
+              Optional content clip
+              <select
+                id="tilingClip"
+                aria-describedby="tilingTimingHint tilingNote"
+              >
+                <option value="">None</option>
+                <option value="authored" hidden>Authored clip</option>
+              </select>
+            </label>
+          </div>
+          <p
+            id="tilingNote"
+            class="flame-note-info"
+            role="status"
+            aria-live="polite"
+          ></p>
+        </details>
+
         <!-- The scheduled-hybrid post-word: system B bends every plotted
              point depth times before the lens — "a Menger sponge made of
              ferns". Picking a source installs B's AFFINE PART (stripped);
@@ -2479,6 +2546,11 @@
               <option value="mandelboxKifs">Mandelbox KIFS</option>
               <option value="fourFinishes">Four Finishes</option>
               <option value="metalStudio">Metal Studio</option>
+              <optgroup label="Surface tiling">
+                <option value="tiledOctahedron">Tiled Octahedron · B3</option>
+                <option value="tiledPentatope">Tiled Pentatope · A4</option>
+                <option value="tiledTwentyFourCell">Tiled 24-Cell · F4</option>
+              </optgroup>
               <optgroup label="Escape-time">
                 <option value="mandelboxClassic">Mandelbox</option>
                 <option value="mandelboxRings">Mandelbox Rings</option>

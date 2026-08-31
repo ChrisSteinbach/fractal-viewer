@@ -88,6 +88,7 @@ import type { CondensationDepthBand } from "./condensation-de";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "./shape-trap";
 import type { ShapePart, ShapePose, ShapeSpec } from "./shapes";
+import { isLatticeTilingSpec } from "./tiling";
 import type { TilingSpec } from "./tiling";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
 import {
@@ -1007,11 +1008,12 @@ export function lerpShapeTrap(
 
 /**
  * The tiling block's interpolation ({@link MorphSystem.tiling}'s rule), the
- * scheduled-hybrid placement combined with the shape-trap one: the GROUP is
- * discrete — never interpolated — so the target's group pops at the leg's
- * first push from any intermediate sample (there is no meaningful midpoint
- * between two reflection groups; a replace-load applies the target's block
- * from the first generation). The optional CLIP follows the shape-trap
+ * scheduled-hybrid placement combined with the shape-trap one. Finite GROUPS
+ * and finite↔lattice KIND changes are discrete, so the target's block pops at
+ * the leg's first push. Two lattice endpoints with the same clip interpolate
+ * their authored `cellScale`: it is continuous geometry and both accepted
+ * endpoints are >=1, so the interpolation remains in-domain without a
+ * synthesized default. The optional CLIP follows the shape-trap
  * precedent for its shape: both sides carrying deeply-equal clips rides the
  * TARGET's clip verbatim (the trap carries the target's shape while its own
  * pose fields glide — a clip has no trap-level pose counterpart, so there
@@ -1029,12 +1031,28 @@ export function lerpTiling(
   if (t <= 0) return a;
   if (t >= 1) return b;
   if (!a || !b) return b;
+  const aLattice = isLatticeTilingSpec(a);
+  const bLattice = isLatticeTilingSpec(b);
+  // A source-program kind change is discrete. The complete target block
+  // arrives together; no finite group/cellScale hybrid is synthesized.
+  if (aLattice !== bLattice) return b;
   // A different clip is a different composition — no meaningful midpoint
   // between two shapes, the trap's own pop. Deeply-equal clips glide by
   // riding the target's verbatim (the trap carries the target's shape the
   // same way while its pose fields glide).
   if (JSON.stringify(a.clip) !== JSON.stringify(b.clip)) return b;
-  const out: TilingSpec = { group: b.group };
+  if (aLattice && bLattice) {
+    const out: TilingSpec = {
+      kind: "lattice",
+      cellScale: lerp(a.cellScale, b.cellScale, t),
+    };
+    if (b.clip !== undefined) out.clip = b.clip;
+    return out;
+  }
+  // Both guards are false, so both arms are finite. TS does not correlate two
+  // independent predicate results, hence the local narrowed casts.
+  const finiteB = b as Exclude<TilingSpec, { kind: "lattice" }>;
+  const out: TilingSpec = { group: finiteB.group };
   if (b.clip !== undefined) out.clip = b.clip;
   return out;
 }

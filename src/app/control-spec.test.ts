@@ -9,6 +9,7 @@ import {
   shapeTrapSelectValue,
   surfaceColorLUT,
   surfaceColorSourceUsesOwnPalette,
+  tilingClipSelectValue,
 } from "./control-spec";
 import type { ControlEffects, ScalarControlSpec } from "./control-spec";
 import {
@@ -22,6 +23,7 @@ import {
   setShapeTrap,
   setSymmetryOrder,
   setSymmetryPlane,
+  setTiling,
   SOLID_ITERATION_DETENTS,
   SURFACE_ANTIALIAS_DETENTS,
 } from "./state";
@@ -29,7 +31,8 @@ import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
 import { resolveBackground } from "./background";
 import { GEAR_SHAPE, STAR_PRISM_SHAPE } from "../fractal/shapes";
-import { BUNDLED_TRAP_SHAPES } from "./bundled-shapes";
+import { pentatope } from "../fractal/presets";
+import { BUNDLED_SHAPES, BUNDLED_TRAP_SHAPES } from "./bundled-shapes";
 
 /** Look up a table entry by its index.html element id. */
 function specById(id: string): ScalarControlSpec {
@@ -1231,6 +1234,102 @@ describe("effects", () => {
       const command = { type: "setSymmetry", order: 5, plane: "zw", twist: 2 };
       expect(fx.postFlame).toHaveBeenCalledWith(command);
       expect(fx.postVoxel).toHaveBeenCalledWith(command);
+    });
+  });
+
+  describe("finite tiling controls", () => {
+    it("enables a dimension-matched default and clears the whole authored block", () => {
+      const toggle = specById("tilingEnabledCheckbox");
+
+      const flat = applyScalarControl(initialState(true), toggle, true);
+      expect(flat.tiling).toEqual({ group: "a3" });
+
+      const nonFlat = applyScalarControl(
+        { ...initialState(true), transforms: pentatope() },
+        toggle,
+        true,
+      );
+      expect(nonFlat.tiling).toEqual({ group: "a4" });
+
+      expect(applyScalarControl(nonFlat, toggle, false).tiling).toBeUndefined();
+    });
+
+    it("authors the fixed group and optional analytic clip independently", () => {
+      const group = specById("tilingGroup");
+      const clip = specById("tilingClip");
+      const base = setTiling(initialState(true), { group: "a3" });
+      const withGroup = applyScalarControl(base, group, "h3");
+      expect(withGroup.tiling).toEqual({ group: "h3" });
+
+      const catalog = BUNDLED_SHAPES[0];
+      const withClip = applyScalarControl(withGroup, clip, catalog.kind);
+      expect(withClip.tiling).toEqual({
+        group: "h3",
+        clip: catalog.shape,
+      });
+      expect(tilingClipSelectValue(withClip)).toBe(catalog.kind);
+
+      const cleared = applyScalarControl(withClip, clip, "");
+      expect(cleared.tiling).toEqual({ group: "h3" });
+    });
+
+    it("preserves an imported analytic clip until the user chooses a replacement", () => {
+      const clip = specById("tilingClip");
+      const authored = setTiling(initialState(true), {
+        group: "b3",
+        clip: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.731 },
+              combine: "union",
+            },
+          ],
+        },
+      });
+
+      expect(tilingClipSelectValue(authored)).toBe("authored");
+      expect(applyScalarControl(authored, clip, "authored")).toBe(authored);
+    });
+
+    it("does not let finite rows overwrite a preserved lattice block", () => {
+      const lattice = setTiling(initialState(true), {
+        kind: "lattice",
+        cellScale: 1.5,
+      });
+
+      expect(applyScalarControl(lattice, specById("tilingGroup"), "b3")).toBe(
+        lattice,
+      );
+      expect(applyScalarControl(lattice, specById("tilingClip"), "gear")).toBe(
+        lattice,
+      );
+      expect(
+        applyScalarControl(lattice, specById("tilingEnabledCheckbox"), true),
+      ).toBe(lattice);
+      expect(
+        applyScalarControl(lattice, specById("tilingEnabledCheckbox"), false)
+          .tiling,
+      ).toBeUndefined();
+    });
+
+    it("refreshes eligibility everywhere and restarts only an active Surface", () => {
+      const spec = specById("tilingGroup");
+      expect(spec.persisted).not.toBe(false);
+
+      for (const renderMode of ["points", "surface"] as const) {
+        const previous = setTiling(
+          { ...initialState(true), renderMode },
+          { group: "a3" },
+        );
+        const state = applyScalarControl(previous, spec, "b3");
+        const fx = mockEffects();
+        spec.effect?.(state, fx, previous);
+
+        expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
+        expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(
+          renderMode === "surface" ? 1 : 0,
+        );
+      }
     });
   });
 

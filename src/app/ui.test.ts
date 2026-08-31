@@ -27,6 +27,7 @@ import {
   setSurfacePaletteId,
   setShapeTrap,
   setSymmetryOrder,
+  setTiling,
   SOLID_ITERATION_DETENTS,
   SURFACE_ANTIALIAS_DETENTS,
   SURFACE_COLOR_SOURCES,
@@ -62,6 +63,7 @@ import { FOUR_D_COLOR_MODES, SYMMETRY_PLANES } from "../fractal/types";
 import type { Transform } from "../fractal/types";
 import { GEAR_SHAPE, STAR_PRISM_SHAPE } from "../fractal/shapes";
 import {
+  BUNDLED_SHAPES,
   BUNDLED_EMITTER_SHAPES,
   BUNDLED_TRAP_SHAPES,
   bundledShapeOptionLabel,
@@ -10376,6 +10378,219 @@ describe("Ui symmetry controls", () => {
     expect(note()?.textContent).toBe(
       "Reduced to 8-fold (from 9-fold) to fit the 256-transform limit.",
     );
+  });
+});
+
+describe("Ui finite tiling controls", () => {
+  function el(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
+
+  it("keeps authored status and explicit timing visible in every render mode", () => {
+    const ui = new Ui(document);
+    const tiled = setTiling(initialState(true), { group: "b3" });
+    const section = el("tilingSection");
+
+    for (const renderMode of ["points", "flame", "solid", "surface"] as const) {
+      ui.updateLabels({ ...tiled, renderMode });
+      expect(section.classList.contains("hidden"), renderMode).toBe(false);
+      expect(el("tilingTimingHint").textContent, renderMode).toContain(
+        renderMode === "surface" ? "restart Surface" : "next time",
+      );
+      expect(el("tilingNote").textContent, renderMode).toContain(
+        renderMode === "surface"
+          ? "Active in Surface"
+          : renderMode === "points"
+            ? "Points shows the untiled"
+            : renderMode === "flame"
+              ? "Flame shows the untiled"
+              : "Solid shows the untiled",
+      );
+    }
+  });
+
+  it("offers exactly the fixed finite groups and the shared analytic shape catalog", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(setTiling(initialState(true), { group: "a3" }));
+    const group = el("tilingGroup") as HTMLSelectElement;
+    const clip = el("tilingClip") as HTMLSelectElement;
+
+    expect(Array.from(group.options).map((option) => option.value)).toEqual([
+      "a3",
+      "b3",
+      "h3",
+      "a4",
+      "b4",
+      "f4",
+    ]);
+    expect(Array.from(clip.options).map((option) => option.value)).toEqual([
+      "",
+      ...BUNDLED_SHAPES.map((entry) => entry.kind),
+      "authored",
+    ]);
+    expect(document.getElementById("tilingCellScale")).toBeNull();
+
+    const explainer =
+      el("tilingSection")
+        .querySelector(".panel-explainer")
+        ?.textContent?.replace(/\s+/g, " ") ?? "";
+    expect(explainer).toMatch(/group.*fixed chamber/i);
+    expect(explainer).toMatch(/clip.*does not replace.*chamber/i);
+  });
+
+  it("disables the other dimension's groups without deleting a mismatched authored choice", () => {
+    const ui = new Ui(document);
+    const group = el("tilingGroup") as HTMLSelectElement;
+
+    ui.updateLabels(setTiling(initialState(true), { group: "a3" }));
+    expect(
+      Array.from(group.options)
+        .filter((option) => option.disabled)
+        .map((option) => option.value),
+    ).toEqual(["a4", "b4", "f4"]);
+
+    ui.updateLabels(
+      setTiling(
+        { ...initialState(true), transforms: nonFlatTransforms() },
+        { group: "a3" },
+      ),
+    );
+    expect(group.value).toBe("a3");
+    expect(group.disabled).toBe(false);
+    expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(false);
+    expect(el("tilingNote").textContent).toMatch(
+      /A3 is a 3D group.*document is 4D.*Choose a group under 4D/,
+    );
+    expect(
+      Array.from(group.options)
+        .filter((option) => option.disabled)
+        .map((option) => option.value),
+    ).toEqual(["a3", "b3", "h3"]);
+  });
+
+  it("places adjacent recovery reasons for illegal combinations", () => {
+    const ui = new Ui(document);
+    const finite = setTiling(initialState(true), { group: "a3" });
+    const states: ReadonlyArray<[AppState, RegExp, boolean]> = [
+      [
+        { ...finite, balloonEcho: true },
+        /Unavailable with Balloon.*turn Balloon off/i,
+        true,
+      ],
+      [
+        { ...finite, symmetry: { order: 2, plane: "xz" } },
+        /Unavailable with Symmetry.*set Order to 1/i,
+        true,
+      ],
+      [
+        setTiling(initialState(true), {
+          group: "a3",
+          clip: {
+            parts: [
+              {
+                primitive: { kind: "mesh", meshId: "star-prism-v1" },
+                combine: "union",
+              },
+            ],
+          },
+        }),
+        /clips must be analytic.*Choose None/i,
+        false,
+      ],
+    ];
+
+    for (const [state, reason, detailsDisabled] of states) {
+      ui.updateLabels(state);
+      expect(el("tilingNote").textContent).toMatch(reason);
+      expect((el("tilingGroup") as HTMLSelectElement).disabled).toBe(
+        detailsDisabled,
+      );
+      expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(
+        detailsDisabled,
+      );
+      expect((el("tilingEnabledCheckbox") as HTMLInputElement).disabled).toBe(
+        false,
+      );
+    }
+  });
+
+  it("announces the refusal that actually disables details in combined invalid states", () => {
+    const ui = new Ui(document);
+    const wrongDimensionWithBalloon = setTiling(
+      {
+        ...initialState(true),
+        transforms: nonFlatTransforms(),
+        balloonEcho: true,
+      },
+      { group: "a3" },
+    );
+    ui.updateLabels(wrongDimensionWithBalloon);
+    expect((el("tilingGroup") as HTMLSelectElement).disabled).toBe(true);
+    expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(true);
+    expect(el("tilingNote").textContent).toMatch(
+      /Unavailable with Balloon.*turn Balloon off/i,
+    );
+
+    const meshWithSymmetry = setTiling(
+      { ...initialState(true), symmetry: { order: 2, plane: "xz" } },
+      {
+        group: "a3",
+        clip: {
+          parts: [
+            {
+              primitive: { kind: "mesh", meshId: "star-prism-v1" },
+              combine: "union",
+            },
+          ],
+        },
+      },
+    );
+    ui.updateLabels(meshWithSymmetry);
+    expect((el("tilingGroup") as HTMLSelectElement).disabled).toBe(true);
+    expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(true);
+    expect(el("tilingNote").textContent).toMatch(
+      /Unavailable with Symmetry.*set Order to 1/i,
+    );
+  });
+
+  it("discloses and preserves lattice state while hiding finite-only rows", () => {
+    const lattice = setTiling(initialState(true), {
+      kind: "lattice",
+      cellScale: 1.5,
+    });
+    const { handlers, current } = scalarHandlers(lattice);
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels(current());
+
+    expect((el("tilingEnabledCheckbox") as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect(el("tilingControls").classList.contains("hidden")).toBe(true);
+    expect(el("tilingNote").textContent).toMatch(
+      /mirrored lattice tiling.*controls are not available yet.*block is preserved.*off to clear/i,
+    );
+    expect(current().tiling).toEqual({ kind: "lattice", cellScale: 1.5 });
+
+    const toggle = el("tilingEnabledCheckbox") as HTMLInputElement;
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event("change"));
+    expect(current().tiling).toBeUndefined();
+  });
+
+  it("announces the adjacent status and timing from every finite input", () => {
+    new Ui(document);
+    const section = el("tilingSection");
+    expect(section.querySelector(":scope > summary")?.textContent).toBe(
+      "Surface tiling",
+    );
+    expect(el("tilingNote").getAttribute("role")).toBe("status");
+    expect(el("tilingNote").getAttribute("aria-live")).toBe("polite");
+    for (const id of ["tilingEnabledCheckbox", "tilingGroup", "tilingClip"]) {
+      expect(el(id).getAttribute("aria-describedby")).toBe(
+        "tilingTimingHint tilingNote",
+      );
+    }
   });
 });
 

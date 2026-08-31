@@ -871,34 +871,34 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     build itself from a measured pilot slab, downshifting a 64/48/32 ladder to
     fit a 3s budget (floored at 32, never skipped). Module doc carries the
     validity chain and the 3D-only refusal.
-  - `tiling.ts` — the space-tiling vocabulary: the
-    scene-level `TilingSpec` (group + optional narrowing `ShapeSpec` clip),
-    one `resolveTiling` authority, the frozen finite reflection groups A3/B3/H3
-    (3D) and A4/B4/F4 (4D) with their root tables, the fold-to-chamber map
-    (reflect across the most-violated wall; PROVEN to terminate within the
-    group's max word length — F4's 24 — so the bound is 32 everywhere with a
-    return-0 guard), and the slow explicit orbit enumerator used only as a
-    test oracle. The rendered set is the orbit of `attractor ∩ chamber ∩
-clip`; the estimator is `max(DE(fold(q)), clipDist(fold(q)))` — the
-    chamber enters ONLY through the fold (the wall distance is not a term:
-    unsound as a max, false geometry as a min), sound by the nearest-copy
-    theorem and the max-of-lower-bounds chain. REFUSALS, each with its
-    reason in the contract: balloon (an orbit's echo is not the echo's
-    orbit), kaleidoscope (two query-space folds, no certified order),
-    4D slab (the fold of a segment is a bent polyline), H4 and reducible
-    groups. Ground plane, lens, condensation, schedule, chaos, trap and
-    finishes compose. Wire = ONE live u32 group id in a 16-byte-aligned tail
-    appended past every frozen region (12 zero pad bytes in the finite arm;
-    maximum params sizes 560 B in 3D and 848 B in 4D); roots and clip are
-    baked source. Points/Flame/Solid render the
-    UNTILED attractor with an adjacent explanation — a query-space fold has
-    no chaos-game meaning. PHASE-2 VERDICT: ship mirrored affine-A1
-    repetition across attractor-frame x/z in 3D and x/z/w in 4D; classic
-    opRep is REFUSED because it overshoots, the conservative wall clamp is
-    REFUSED because it creates false zero geometry, and exact translation is
-    deferred behind its complete seam/cost contract. Cell-scale defaults and
-    the finite presentation veil remain provisional until live renderer gates
-    freeze them. Contract, proof and false-wall disclosure:
+  - `tiling.ts` — the ONE space-tiling vocabulary and resolver. The legacy
+    finite arm stays `{group, clip?}`; mirrored affine-A1 repetition is
+    `{kind: "lattice", cellScale, clip?}` with required finite
+    `cellScale >= 1`, no authored default/max, and `h = cellScale·R` derived from the
+    core's certified origin-centred visible radius. The finite arm owns
+    A3/B3/H3 and A4/B4/F4, their proven fold bound (32 including jitter guard),
+    roots and explicit-orbit test oracle; its estimate is
+    `max(DE(fold(q)), clipDist(fold(q)))`. The lattice folds attractor-frame
+    x/z in 3D and x/z/w in 4D with fixed work (resolution refuses only a `4h`
+    period that cannot fit the frozen f32 shader representation);
+    `tiling-de.ts` is the one-core-call CPU authority for all seven inverse/forward families and additionally
+    maxes the mandatory certified ball. Walls/seams are NEVER distance terms.
+    `lattice-march.ts` owns exact sphere∩attractor-y-slab intervals, probe and
+    shadow membership, entry-relative fog distance, carrier formulas and a
+    bounded reference march against an EXPLICIT caller-supplied outer radius.
+    Finite authoring is shared Scene / Look state: B3/A4/F4 showcase presets,
+    separate chamber-group and narrowing-clip rows, app-copy/reload and
+    workflow behavior are real-browser gated by `scripts/tiling-ui.verify.mjs`.
+    Surface refuses lattice until GLSL/WGSL carriers, fog/shadow/AO, ground,
+    camera and capture paths land together; Points/Flame/Solid remain untiled
+    with an adjacent explanation. Balloon, kaleidoscope and 4D slab remain
+    refused for the proof reasons in the contract. Finite WGSL wire is one
+    live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic
+    opRep is REFUSED for overshoot and a wall clamp for false-zero geometry;
+    exact translation is deferred. Cell-scale defaults/ranges and the finite
+    presentation veil remain provisional. The deterministic lattice sheet
+    calls the production scalar fold and pins orbit/seam, translation-
+    overshoot, false-wall and preview evidence. Full contract and proof:
     `docs/tiling-contract.md`.
   - `surface-finish.ts` — the per-transform surface FINISH's meaning:
     `resolveSurfaceFinish` is the ONE absent-means-classic definition +

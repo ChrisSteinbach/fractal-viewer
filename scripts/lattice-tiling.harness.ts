@@ -46,6 +46,7 @@ import { renderPreview, writeLabeledContactSheet } from "./de-preview";
 import type { Vec3 } from "./de-preview";
 import { sampleSetExtent } from "./set-extent";
 import { mulberry32 } from "../src/fractal/rng";
+import { mirrorLatticeCoordinate } from "../src/fractal/tiling";
 
 const HALF = 1;
 const CELL_WIDTH = 2 * HALF;
@@ -54,13 +55,14 @@ const CENTER3: Vec3 = [0.34, 0.06, 0.21];
 const CENTER4 = [0.34, 0.06, 0.21, 0.28] as const;
 const SOUNDNESS_POINTS = 50_000;
 
+/** Mathematical modulo retained for the independent translation candidates. */
 function mod(x: number, y: number): number {
   return x - y * Math.floor(x / y);
 }
 
-/** Affine A1 fold into the closed chamber [-h, h], period 4h. */
+/** The landed CPU authority; the explicit-orbit truth below stays independent. */
 function mirror1(x: number, h = HALF): number {
-  return h - Math.abs(mod(x + h, 4 * h) - 2 * h);
+  return mirrorLatticeCoordinate(x, h);
 }
 
 /** Classic discontinuous opRep into the half-open cell [-h, h). */

@@ -36,7 +36,7 @@ import {
   TILING_GROUP_INFO,
   tilingFoldSource,
   tilingGroupCode,
-  type ResolvedTiling,
+  type ResolvedFiniteTiling,
 } from "../fractal/tiling";
 import {
   BACKGROUND_SHAPE_GLSL,
@@ -5798,7 +5798,7 @@ export function setSurfaceSystem(
   de: SurfaceDE,
   colors: Vec3[],
   trapIndices?: number[],
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): void {
   const schedule = de.schedule && de.schedule.depth > 0 ? de.schedule : null;
   const scheduleMaps = schedule?.maps ?? [];
@@ -6244,7 +6244,7 @@ export const SURFACE_GLSL_STRIP_BYTES = 64 * 1024;
  */
 function withTilingGlsl(
   source: string,
-  tiling: ResolvedTiling,
+  tiling: ResolvedFiniteTiling,
   fourD: boolean,
   trap: ShapeSpec | null,
 ): string {
@@ -6467,7 +6467,7 @@ export function surfaceFragmentResolvedFor(
   trapGeometry = 0,
   schedule = 0,
   chaos = 0,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): string {
   if (plane !== 0 && balloon !== 0) {
     throw new RangeError(
@@ -6645,7 +6645,7 @@ export function surfaceFragmentFor(
   trapGeometry = 0,
   schedule = 0,
   chaos = 0,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -6675,10 +6675,10 @@ export function surfaceFragmentFor(
 export function materialSurfaceTiling(
   material: THREE.ShaderMaterial,
   fourD = false,
-): ResolvedTiling | null {
+): ResolvedFiniteTiling | null {
   const data = material.userData as {
-    surfaceTiling?: ResolvedTiling | null;
-    surfaceTiling4?: ResolvedTiling | null;
+    surfaceTiling?: ResolvedFiniteTiling | null;
+    surfaceTiling4?: ResolvedFiniteTiling | null;
   };
   return (fourD ? data.surfaceTiling4 : data.surfaceTiling) ?? null;
 }
@@ -6688,7 +6688,7 @@ export function materialSurfaceTiling(
  * once alongside its other source-regenerating state. */
 export function installSurfaceTiling(
   material: THREE.ShaderMaterial,
-  tiling: ResolvedTiling | null,
+  tiling: ResolvedFiniteTiling | null,
   fourD = false,
 ): boolean {
   const expectedDim = fourD ? 4 : 3;
@@ -6718,8 +6718,8 @@ export function installSurfaceTiling(
     ? JSON.stringify({ group: tiling.group, clip: tiling.clip })
     : null;
   const data = material.userData as {
-    surfaceTiling?: ResolvedTiling | null;
-    surfaceTiling4?: ResolvedTiling | null;
+    surfaceTiling?: ResolvedFiniteTiling | null;
+    surfaceTiling4?: ResolvedFiniteTiling | null;
     surfaceTilingKey?: string | null;
     surfaceTilingKey4?: string | null;
   };
@@ -6860,7 +6860,7 @@ export function setEscapeSystem(
   de: EscapeDE,
   color: Vec3,
   trap: ShapeTrap | null = null,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): void {
   if (de.links.length > SURFACE_MAX_MAPS) {
     throw new RangeError(
@@ -7003,7 +7003,7 @@ export function setBulbSystem(
   de: BulbDE,
   color: Vec3,
   trap: ShapeTrap | null = null,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): void {
   const tilingChanged = installSurfaceTiling(material, tiling);
   setSurfaceGrid(material, null);

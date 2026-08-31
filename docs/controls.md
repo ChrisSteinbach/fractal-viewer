@@ -113,7 +113,7 @@ Transform** sliders that appear in the panel while a transform is selected.
 ## Panel controls
 
 The panel's active editing categories — including **Transforms**, **Xaos**,
-**Hybrid schedule**, **Cloud**, **Scene color**, **Balloon**, **Atmosphere**, **Symmetry**, and the
+**Hybrid schedule**, **Cloud**, **Scene color**, **Balloon**, **Atmosphere**, **Symmetry**, **Surface tiling**, and the
 contextual renderer inspector — come before the shared contextual **Quality**
 section, then **Performance** and **View**, then the always-available
 workflow sections **Systems**, **Collection**, **Timeline**, **Capture**, and **Share**.
@@ -1618,6 +1618,38 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   the Surface button and its adjacent eligibility explanation update
   immediately if the new order, plane, or twist changes what the tracer can
   render.
+- **Surface tiling** — finite reflection copies authored as shared Scene /
+  Look state. Turn it on, then choose one fixed group: **A3 · tetrahedral**,
+  **B3 · octahedral**, or **H3 · icosahedral** for a flat system; **A4 ·
+  pentatope**, **B4 · 16-cell**, or **F4 · 24-cell** for a genuinely 4D
+  system. The group folds space into its own fixed fundamental chamber and
+  repeats the chamber's fractal piece. **Optional content clip** is a separate
+  ShapeSpec catalog choice that can trim that piece; it never replaces or
+  reshapes the chamber. **None** therefore means “use the whole in-chamber
+  piece,” not “no chamber.” Mesh-backed choices are preserved but Surface
+  refuses them with an adjacent recovery reason until the tiling clip owns a
+  mesh-atlas binding.
+
+  Surface consumes the block in matching 3D/4D IFS and escape-chain sessions,
+  and in the Mandelbulb's existing 3D family (there is no 4D Mandelbulb).
+  Points, Flame and Solid deliberately keep showing the original untiled
+  attractor, but this editor and its authored status remain visible there. An
+  edit restarts an active Surface without resetting its inspection view;
+  elsewhere it applies on the next Surface entry. Adjacent status names the
+  recovery when a group has the wrong dimension, a clip contains a mesh,
+  Balloon is on, Symmetry order is above 1, or a 4D slab would be required.
+  Tiled 4D uses the zero-thickness W slice. A document carrying the pending
+  mirrored-lattice arm says so and preserves that block; the finite group/clip
+  rows hide rather than relabelling or overwriting it, and the common off
+  switch is the explicit way to clear it. No lattice cell or seam controls are
+  exposed yet.
+
+  The Systems menu includes three measured showcase documents from the
+  tiling harness matrix: **Tiled Octahedron · B3** (3D), **Tiled Pentatope ·
+  A4**, and **Tiled 24-Cell · F4** (both genuinely 4D). A preset is a whole
+  document replacement: those three install their group, while every preset
+  without a tiling entry clears any previous tiling block.
+
 - **Hybrid schedule** — builds a finite arrangement of one attractor from a
   second transform list: choose a preset or saved scene under **System B**,
   or press **Use current system as B**, then set **Depth** from 1 to 5. Each

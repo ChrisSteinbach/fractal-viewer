@@ -160,7 +160,12 @@ function wireShapeKey(shape: ShapeSpec): string {
   );
 }
 
-function bundledForShape(shape: ShapeSpec): BundledShape | undefined {
+/** Match any canonical bundled shape, independent of authoring role.
+ * Finite tiling uses this to display its optional narrowing clip without
+ * pretending the clip is either an emitter or an orbit trap. */
+export function bundledShapeForShape(
+  shape: ShapeSpec,
+): BundledShape | undefined {
   const key = shapeKey(shape);
   return BUNDLED_SHAPES.find(
     (entry) =>
@@ -172,7 +177,7 @@ function bundledForShape(shape: ShapeSpec): BundledShape | undefined {
 export function bundledEmitterForShape(
   shape: ShapeSpec,
 ): BundledEmitterShape | undefined {
-  const entry = bundledForShape(shape);
+  const entry = bundledShapeForShape(shape);
   return entry?.emitter ? entry : undefined;
 }
 
@@ -180,6 +185,6 @@ export function bundledEmitterForShape(
 export function bundledTrapForShape(
   shape: ShapeSpec,
 ): BundledTrapShape | undefined {
-  const entry = bundledForShape(shape);
+  const entry = bundledShapeForShape(shape);
   return entry?.trap ? entry : undefined;
 }

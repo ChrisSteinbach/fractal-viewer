@@ -487,21 +487,19 @@ export interface AppState {
   shapeTrap?: ShapeTrap;
   /**
    * Optional space-tiling block (`fractal/tiling.ts`'s {@link TilingSpec}):
-   * the finite-reflection group whose orbit of the attractor ∩ chamber (∩
-   * optional clip) the Surface tracers render — `docs/tiling-contract.md` is
-   * the frozen record. Omitted ⇒ off byte-identically (no block, no wire
+   * either the finite-reflection group or the mirrored affine-A1 lattice
+   * whose orbit of the attractor ∩ chamber/ball (∩ optional clip) Surface
+   * renders — `docs/tiling-contract.md` is the frozen record. Omitted ⇒ off
+   * byte-identically (no block, no wire
    * bytes, every emitted shader byte-identical to the untiled build). Scene
    * content beside {@link shapeTrap} and {@link schedule}: persists, rides
    * shared links, and a preset load clears it unless the preset's own side
-   * table authors one (`PRESET_FINALS`' absent-means-clear rule — phase 1
-   * ships no tiling presets, so the clear is wired where the others live for
-   * the future table). The one writer ({@link setTiling}) stores the spec
-   * as authored — the group is discrete and the clip's validation lives in
-   * `shapes.ts`, so there are no classic values to normalize away — and
-   * clearing removes the block. The group never interpolates in a morph
-   * (`morph.ts`'s `lerpTiling` pops the target's block at the leg's first
-   * push, the schedule precedent); the clip follows the shape trap's morph
-   * precedent.
+   * table authors one (`PRESET_TILINGS` follows `PRESET_FINALS`' exact
+   * absent-means-clear rule). The one writer ({@link setTiling}) stores the spec
+   * as authored — lattice cellScale is explicit (no default) and the clip's
+   * validation lives in `shapes.ts` — and clearing removes the block. Finite
+   * groups and cross-kind changes pop in a morph; two lattice blocks with the
+   * same clip interpolate cellScale (`morph.ts`'s `lerpTiling`).
    */
   tiling?: TilingSpec;
   numPoints: number;
@@ -2201,11 +2199,10 @@ export function updateShapeTrap(
 /**
  * Install/replace the space-tiling block, or clear it with `null` —
  * {@link setSchedule}'s shape for the tiling block. There is NO
- * normalization domain to own here, unlike {@link setShapeTrap}: the group
- * is discrete (every value in the union is authored, nothing is a classic
- * default to strip) and a clip's validation lives in `shapes.ts`, so a
- * present spec is stored exactly as authored and clearing stores absent —
- * the classic-removal rule at block scope.
+ * normalization domain to own here, unlike {@link setShapeTrap}: finite
+ * groups are discrete, lattice cellScale is required rather than defaulted,
+ * and a clip's validation lives in `shapes.ts`. A present spec is therefore
+ * stored exactly as authored and clearing stores absent.
  */
 export function setTiling(
   state: AppState,

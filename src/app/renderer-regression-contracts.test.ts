@@ -3,6 +3,7 @@ import {
   PRESET_FINALS,
   PRESET_SCHEDULES,
   PRESET_SYMMETRIES,
+  PRESET_TILINGS,
   PRESET_TRAPS,
   presetTransforms,
   type Preset,
@@ -30,6 +31,7 @@ function presetEligibility(preset: Preset, computeAvailable: boolean) {
     { computeAvailable },
     PRESET_SCHEDULES[preset]?.() ?? null,
     PRESET_TRAPS[preset]?.() ?? null,
+    PRESET_TILINGS[preset] ?? null,
   );
 }
 

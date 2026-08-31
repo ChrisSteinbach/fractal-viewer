@@ -209,6 +209,17 @@ tests had asserted rather than compiled; the corrected generated source and
 the browser verifier now pin that path. The runnable record is
 `scripts/surface-tiling.verify.mjs`.
 
+The finite authoring/preset gate (`scripts/tiling-ui.verify.mjs`) then drives
+the real top-level panel and Systems menu rather than installing hashes. On a
+verified Iris display, all three showcases reached a settled 8/8 frame and
+their same-camera untiled negative controls differed structurally: B3
+Octahedron 5.75% on WebGL, A4 Pentatope 5.19% on compute, and F4 24-Cell 8.47%
+on compute. The same run pinned preset absence clearing, 44px targets, trusted
+keyboard group/clip edits, exact undo/redo, the app-produced Copy Link reload,
+Points/Flame/Solid disclosures, and Balloon/Symmetry dormant-detail recovery.
+The executable header carries the complete coverage rows and software-run
+qualification.
+
 Forward cores get the fold free (they are in) — their kaleidoscope already
 is a query-space wedge fold by `escape-de.ts`'s own argument, and the same
 1-Lipschitz/pre-fold reasoning applies to the tiling fold with the
@@ -216,18 +227,18 @@ composition chain above.
 
 ## Legal combinations and refusals (frozen)
 
-| combination                                                      | verdict                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| tiling + ground plane                                            | composes — the landscape case; the plane is world-space in the sliced 3D space, the fold never touches it                                                                                                                                                                                                                                                                                                                                              |
-| tiling + lens (`foldFinal`)                                      | composes — pre-fold vs post-fold                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| tiling + condensation / schedule / chaos / shape trap / finishes | compose — they live at the estimator/orbit level                                                                                                                                                                                                                                                                                                                                                                                                       |
-| tiling + balloon                                                 | REFUSED, adjacent reason — the sphere-inversion echo of an orbit is not the orbit of the echo; no certified composition, and a filled solid's interior reaching the ball centre swallows the camera (the balloon's own IFS-only verdict)                                                                                                                                                                                                               |
-| tiling + kaleidoscope                                            | REFUSED in phase 1, adjacent reason — both are query-space folds and the composition argument differs per family (the descent cores sweep the rotation INSIDE the descent, after the tiling fold — the estimate then has no certified lower-bound order; the forward cores' foldK-then-foldT composition IS sound, but one uniform routing rule beats a per-family matrix). The fixtures never combine them; a later certified order is a phase-2 door |
-| tiling + 4D slab (`halfExtent > 0`)                              | REFUSED, adjacent reason — the fold of a segment is a bent polyline (per-point reflection sequences), and the slab's conservative-bound contract does not survive it. Tiled 4D sessions run slice 0 (the shipped default)                                                                                                                                                                                                                              |
-| tiling + H4 / reducible groups                                   | REFUSED — vocabulary above                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| tiling + escape4                                                 | in — no slab, no lens, no kaleidoscope by the refusals above; the forward orbit is seeded at the folded point exactly as its kaleidoscope seeds at the sector-folded point                                                                                                                                                                                                                                                                             |
+| combination                                                      | verdict                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| tiling + ground plane                                            | composes — the landscape case; the plane is world-space in the sliced 3D space, the fold never touches it                                                                                                                                                                                                                                                                                                                                                    |
+| tiling + lens (`foldFinal`)                                      | composes — pre-fold vs post-fold                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| tiling + condensation / schedule / chaos / shape trap / finishes | compose — they live at the estimator/orbit level                                                                                                                                                                                                                                                                                                                                                                                                             |
+| tiling + balloon                                                 | REFUSED, adjacent reason — the sphere-inversion echo of an orbit is not the orbit of the echo; no certified composition, and a filled solid's interior reaching the ball centre swallows the camera (the balloon's own IFS-only verdict)                                                                                                                                                                                                                     |
+| tiling + kaleidoscope                                            | REFUSED, adjacent reason — both are query-space folds and the composition argument differs per family (the descent cores sweep the rotation INSIDE the descent, after the tiling fold — the estimate then has no certified lower-bound order; the forward cores' foldK-then-foldT composition IS sound, but one uniform routing rule beats a per-family matrix). The fixtures never combine them; a later certified order requires its own measured delivery |
+| tiling + 4D slab (`halfExtent > 0`)                              | REFUSED, adjacent reason — the fold of a segment is a bent polyline (per-point reflection sequences), and the slab's conservative-bound contract does not survive it. Tiled 4D sessions run slice 0 (the shipped default)                                                                                                                                                                                                                                    |
+| tiling + H4 / reducible groups                                   | REFUSED — vocabulary above                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| tiling + escape4                                                 | in — no slab, no lens, no kaleidoscope by the refusals above; the forward orbit is seeded at the folded point exactly as its kaleidoscope seeds at the sector-folded point                                                                                                                                                                                                                                                                                   |
 
-## Wire placement (frozen rule)
+## Finite wire placement (frozen rule)
 
 The tiling block is ONE `u32` (the group id; it also keys the compile gate —
 a stale buffer from a different group is refused at pack). The roots are
@@ -345,6 +356,48 @@ edit and restarts accumulation without recompiling the formula.
 range 1.25–4.0. The mathematical gate proves only `cellScale >= 1`; the
 default and narrower minimum/maximum require real renderer fixtures and a UI
 range gate before they can be frozen.
+
+### Landed CPU and document authority
+
+`tiling.ts` now owns the complete discriminated union and resolver. The legacy
+finite wire remains exactly `{ group, clip? }`; the lattice wire is
+`{ kind: "lattice", cellScale, clip? }`. Lattice scale is required, finite and
+at least one. The resolver does not invent a default or maximum: its caller
+supplies the estimator's certified origin-centred visible radius and it derives
+`h`. Persistence keeps the arms distinct and evolution validation requires
+their exact field shapes. There is no authored maximum; resolution does reject
+a particular scale/radius pairing when its full `4h` period cannot fit the
+frozen f32 shader representation, because accepting a CPU-only period would
+make the two renderer authorities disagree.
+Morphing two lattice blocks with the same clip linearly interpolates authored
+`cellScale`; finite-to-lattice, lattice-to-finite and incompatible clips pop to
+the target block at the leg's first push, matching the discrete global-block
+rule.
+
+`tiling-de.ts` is the dependency-free CPU estimator authority for all seven
+inverse and forward families in 3D and 4D. It performs one mirrored fold, one
+unchanged core call, the mandatory certified-ball max and the optional clip
+max. Exact seams, negative and large-period coordinates, x/z versus x/z/w,
+inverse-rotated 4D queries and both plain/refined entries are unit-pinned. The
+deterministic decision sheet now calls the production scalar fold; its exact
+orbit, seam, overshoot, false-wall and preview rows reproduce the recorded
+mirrored-repetition verdict.
+
+`lattice-march.ts` owns the renderer-independent finite-presentation math but
+chooses no presentation ratio. A caller must supply an explicit outer radius.
+It intersects that sphere with the attractor-y slab, including an arbitrary
+inverse-rotated 4D slice, and exposes the same interval to primary marching,
+normal/AO membership, finite shadow reach and fog distance-from-entry. Its
+reference marcher has explicit hit, miss, exhausted and stalled terminals;
+the independent membership oracle, not the scalar march status, detects false
+zero seams. Tests pin tangent/inside/non-unit/parallel/near-parallel rays,
+negative far intervals, carrier formulas and content/ground hit ordering.
+
+Surface eligibility currently refuses the lattice arm with an adjacent reason.
+That is deliberate rather than a renderer verdict: GLSL/WGSL emission, live
+carrier/fog/shadow/AO use, ground composition, capture/strip limits and camera
+wiring remain gated together so a persisted lattice document cannot silently
+render the finite or untiled object.
 
 ### Genuine 4D meaning
 

@@ -53,7 +53,7 @@ import {
   TILING_GROUP_INFO,
   tilingFoldSource,
   tilingGroupCode,
-  type ResolvedTiling,
+  type ResolvedFiniteTiling,
 } from "./tiling";
 import {
   surfaceMaterialLanes,
@@ -1458,9 +1458,9 @@ function writeSurfaceChaosBlock(
  * clip that this compile-gated source path cannot bind. The group code itself
  * comes from `tiling.ts`; no GPU mirror re-derives the document mapping. */
 function surfaceTilingWireInfo(
-  tiling: ResolvedTiling | null | undefined,
+  tiling: ResolvedFiniteTiling | null | undefined,
   dimension: 3 | 4,
-): { code: number; tiling: ResolvedTiling } | null {
+): { code: number; tiling: ResolvedFiniteTiling } | null {
   if (!tiling) return null;
   if (
     tiling.info !== TILING_GROUP_INFO[tiling.group] ||
@@ -1643,7 +1643,7 @@ export interface SurfaceGpuKernelOptions {
    * byte. All seven cores compose; `balloon`, kaleidoscope and a real 4D
    * slab are refused by the codegen/pack seams with the contract's reasons.
    * Mesh-bearing clips are refused until tiling owns a mesh-atlas binding. */
-  tiling?: ResolvedTiling | null;
+  tiling?: ResolvedFiniteTiling | null;
   /** Per-slot surface FINISHES (surface-finish.ts): replace the shade
    * entry's fixed Blinn-Phong lines with the emitted `finishShade`
    * (`surfaceFinishShadeSource(SURFACE_FINISH_WGSL)`) reading each hit
@@ -1975,7 +1975,7 @@ export function packSurfaceGpuParams(
   run: SurfaceGpuRunParams,
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
   groundPlane: SurfaceGpuGroundPlane | null = null,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
@@ -2250,7 +2250,7 @@ export function packEscapeGpuParams(
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   shapeTrap: ResolvedShapeTrap | null = null,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): ArrayBuffer {
   const tilingInfo = surfaceTilingWireInfo(tiling, 3);
   if (tilingInfo && de.symmetryOrder > 1) {
@@ -2443,7 +2443,7 @@ export function packBulbGpuParams(
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   shapeTrap: ResolvedShapeTrap | null = null,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): ArrayBuffer {
   if (shapeTrap?.geometry) {
     throw new Error(
@@ -2596,7 +2596,7 @@ export function packSurface4GpuParams(
   run: SurfaceGpuRunParams,
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
   groundPlane: SurfaceGpuGroundPlane | null = null,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
@@ -2881,7 +2881,7 @@ export function packEscape4GpuParams(
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   shapeTrap: ResolvedShapeTrap | null = null,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): ArrayBuffer {
   const tilingInfo = surfaceTilingWireInfo(tiling, 4);
   if (tilingInfo && de.symmetryOrder > 1) {

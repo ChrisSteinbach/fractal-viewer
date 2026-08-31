@@ -32,7 +32,11 @@ import type {
   RgbStop,
 } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
-import { MAX_SHAPE_PARTS, type ShapeSpec } from "../fractal/shapes";
+import {
+  MAX_SHAPE_PARTS,
+  shapeMeshIds,
+  type ShapeSpec,
+} from "../fractal/shapes";
 import { CLASSIC_FOLD_RADII, isFoldVariationType } from "../fractal/variations";
 import {
   CLASSIC_SURFACE_FINISH,
@@ -66,6 +70,7 @@ import type {
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
+import { isLatticeTilingSpec } from "../fractal/tiling";
 import type { MutationDomain } from "../fractal/mutate-system";
 import type { EvolutionComparisonSlot } from "./evolution-comparison";
 import type { SavedScene } from "./collection";
@@ -109,6 +114,7 @@ import {
   SCALAR_CONTROLS,
   shapeTrapGeometryBandMode,
   shapeTrapSelectValue,
+  tilingClipSelectValue,
 } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import {
@@ -141,6 +147,7 @@ import {
   type RangeNumberControl,
 } from "./range-number-control";
 import {
+  BUNDLED_SHAPES,
   BUNDLED_EMITTER_SHAPES,
   BUNDLED_TRAP_SHAPES,
   bundledEmitterForShape,
@@ -2171,6 +2178,13 @@ export class Ui {
   private readonly fogNote: HTMLElement;
   private readonly symmetryNote: HTMLElement;
   private readonly symmetryEditHint: HTMLElement;
+  /** Finite reflection tiling is shared authored Scene / Look state. Its
+   * editor remains visible in every renderer; these rows disclose the active
+   * renderer's next-entry/restart behavior and all composition refusals. */
+  private readonly tilingControls: HTMLElement;
+  private readonly tilingTimingHint: HTMLElement;
+  private readonly tilingNote: HTMLElement;
+  private readonly tilingAuthoredClipOption: HTMLOptionElement;
   /** The Hybrid schedule section's controls — see the UiHandlers schedule
    * trio for the contract each drives. */
   private readonly scheduleSource: HTMLSelectElement;
@@ -2845,6 +2859,9 @@ export class Ui {
     this.fogNote = this.byId("fogNote");
     this.symmetryNote = this.byId("symmetryNote");
     this.symmetryEditHint = this.byId("symmetryEditHint");
+    this.tilingControls = this.byId("tilingControls");
+    this.tilingTimingHint = this.byId("tilingTimingHint");
+    this.tilingNote = this.byId("tilingNote");
     this.scheduleSource = this.byId("scheduleSource");
     this.scheduleSourceSaved = this.byId("scheduleSourceSaved");
     this.scheduleSnapshotBtn = this.byId("scheduleSnapshotBtn");
@@ -3147,6 +3164,18 @@ export class Ui {
       BUNDLED_TRAP_SHAPES,
       "custom",
     );
+    this.appendBundledShapeOptions(
+      this.scalarSelect("tilingClip"),
+      BUNDLED_SHAPES,
+      "authored",
+    );
+    const tilingAuthoredClipOption = Array.from(
+      this.scalarSelect("tilingClip").options,
+    ).find((option) => option.value === "authored");
+    if (!tilingAuthoredClipOption) {
+      throw new Error("Missing #tilingClip option authored");
+    }
+    this.tilingAuthoredClipOption = tilingAuthoredClipOption;
     this.customPaletteEditors = {
       background: {
         row: this.byId("backgroundCustomPaletteRow"),
@@ -4344,6 +4373,88 @@ export class Ui {
     if (patternTiming) patternTiming.textContent = materialTiming;
   }
 
+  /** Keep finite tiling's authored status visible across renderer changes.
+   * The fixed group supplies the chamber; the optional catalog ShapeSpec is
+   * only a narrowing clip, so the two selectors stay independent. Options
+   * from the other dimension remain named but disabled, while a mismatched
+   * imported document retains its selected value and an adjacent recovery
+   * reason. */
+  private syncTilingRows(state: AppState, nonFlat: boolean): void {
+    const tiling = state.tiling;
+    const lattice = tiling !== undefined && isLatticeTilingSpec(tiling);
+    this.tilingControls.classList.toggle("hidden", !tiling || lattice);
+    this.tilingTimingHint.textContent =
+      state.renderMode === "surface"
+        ? "Changes restart Surface without resetting the view."
+        : "Surface only — changes apply next time you enter Surface.";
+
+    const group = this.scalarSelect("tilingGroup");
+    const clip = this.scalarSelect("tilingClip");
+    // Balloon and kaleidoscope make an otherwise valid finite block dormant,
+    // so its dependent detail rows disable while the shared checkbox remains
+    // live as the explicit clear route. Dimension and clip-shape refusals do
+    // NOT disable: those selectors are their adjacent recovery paths.
+    const finiteDormant =
+      tiling !== undefined &&
+      !lattice &&
+      (state.balloonEcho || state.symmetry.order > 1);
+    group.disabled = finiteDormant;
+    clip.disabled = finiteDormant;
+    for (const option of Array.from(group.options)) {
+      option.disabled = nonFlat
+        ? option.value.endsWith("3")
+        : option.value.endsWith("4");
+    }
+    const clipValue = tilingClipSelectValue(state);
+    this.tilingAuthoredClipOption.hidden = clipValue !== "authored";
+
+    if (!tiling) {
+      this.tilingNote.textContent =
+        "Off — Surface renders the original attractor once.";
+      return;
+    }
+
+    if (lattice) {
+      this.tilingNote.textContent =
+        "This document carries mirrored lattice tiling. Its renderer and authoring controls are not available yet; the block is preserved. Turn Surface tiling off to clear it.";
+      return;
+    }
+
+    const wants4 = tiling.group.endsWith("4");
+    let note: string;
+    // Keep refusal precedence identical to the disabled-state decision above:
+    // a disabled recovery selector must always be accompanied by the reason
+    // that tells the author how to re-enable it.
+    if (state.balloonEcho) {
+      note =
+        "Unavailable with Balloon — turn Balloon off; an orbit's echo is not the echo's orbit.";
+    } else if (state.symmetry.order > 1) {
+      note =
+        "Unavailable with Symmetry — set Order to 1; both features fold query space and have no certified composition order.";
+    } else if (wants4 !== nonFlat) {
+      note = `${tiling.group.toUpperCase()} is a ${wants4 ? "4D" : "3D"} group, but this document is ${nonFlat ? "4D" : "3D"}. Choose a group under ${nonFlat ? "4D" : "3D"}.`;
+    } else if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
+      note =
+        "Unavailable — finite tiling clips must be analytic. Choose None or an analytic clip.";
+    } else if (state.renderMode !== "surface") {
+      const label =
+        state.renderMode === "points"
+          ? "Points"
+          : state.renderMode === "flame"
+            ? "Flame"
+            : "Solid";
+      note = `${label} shows the untiled attractor. Enter Surface to render these reflected copies.`;
+    } else {
+      note =
+        "Active in Surface; edits restart the render and preserve its view.";
+    }
+    if (nonFlat) {
+      note +=
+        " 4D finite tiling uses the zero-thickness W slice; slab thickness is unavailable while tiled.";
+    }
+    this.tilingNote.textContent = note;
+  }
+
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
   updateLabels(state: AppState): void {
     this.transformCount.textContent = String(state.transforms.length);
@@ -4481,6 +4592,7 @@ export class Ui {
       surfaceKind: this.surfaceSessionKind,
     };
     this.panelContext = panelContext;
+    this.syncTilingRows(state, nonFlat);
     this.syncPointsViewLayout();
     this.syncContextualGuidance(state, nonFlat);
     // A non-flat system in Surface mode is always the 4D tracer: the session

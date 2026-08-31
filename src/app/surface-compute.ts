@@ -92,7 +92,7 @@ import {
 } from "../fractal/shapes";
 import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
 import type { MeshAssetId } from "../fractal/mesh-shapes";
-import type { ResolvedTiling } from "../fractal/tiling";
+import type { ResolvedFiniteTiling } from "../fractal/tiling";
 import type {
   SurfaceGpu4View,
   SurfaceGpuGroundPlane,
@@ -442,13 +442,13 @@ export type SurfaceComputeTarget =
       de: SurfaceDE;
       balloon?: boolean;
       groundPlane?: boolean;
-      tiling?: ResolvedTiling;
+      tiling?: ResolvedFiniteTiling;
     }
   | {
       kind: "escape";
       de: EscapeDE;
       groundPlane?: boolean;
-      tiling?: ResolvedTiling;
+      tiling?: ResolvedFiniteTiling;
       /** The shape-trap channel's CREATE-TIME geometry (`AppState.shapeTrap`'s
        * shape): compiles the trap accumulator + baked SDF into the kernels
        * and grows their params struct; the LIVE pose/mode block then rides
@@ -467,7 +467,7 @@ export type SurfaceComputeTarget =
       kind: "bulb";
       de: BulbDE;
       groundPlane?: boolean;
-      tiling?: ResolvedTiling;
+      tiling?: ResolvedFiniteTiling;
       shapeTrap?: ShapeSpec;
       shapeTrapGeometry?: Pick<
         ResolvedShapeTrap,
@@ -478,7 +478,7 @@ export type SurfaceComputeTarget =
       kind: "escape4";
       de: EscapeDE4;
       groundPlane?: boolean;
-      tiling?: ResolvedTiling;
+      tiling?: ResolvedFiniteTiling;
       shapeTrap?: ShapeSpec;
       shapeTrapGeometry?: Pick<
         ResolvedShapeTrap,
@@ -490,7 +490,7 @@ export type SurfaceComputeTarget =
       de: SurfaceDE4;
       balloon?: boolean;
       groundPlane?: boolean;
-      tiling?: ResolvedTiling;
+      tiling?: ResolvedFiniteTiling;
     };
 
 /** The FORWARD-orbit kinds (escape, bulb, escape4): a forward orbit

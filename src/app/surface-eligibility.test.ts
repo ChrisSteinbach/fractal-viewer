@@ -4,6 +4,7 @@ import {
   PRESET_RENDER_HINTS,
   PRESET_SCHEDULES,
   PRESET_SYMMETRIES,
+  PRESET_TILINGS,
   PRESET_TRAPS,
   presetTransforms,
   sierpinskiTetrahedron,
@@ -59,6 +60,7 @@ function presetDocument(preset: Preset): SurfaceEligibilityDocument {
     symmetry: PRESET_SYMMETRIES[preset] ?? NO_SYMMETRY,
     schedule: PRESET_SCHEDULES[preset]?.() ?? null,
     shapeTrap: PRESET_TRAPS[preset]?.() ?? null,
+    tiling: PRESET_TILINGS[preset] ?? null,
   };
 }
 
@@ -76,6 +78,7 @@ function derivePreset(
     opts,
     document.schedule ?? null,
     document.shapeTrap ?? null,
+    document.tiling ?? null,
   );
 }
 
@@ -1147,6 +1150,33 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
     expect(group3On4.note).toContain("document is 4D");
   });
 
+  it("preserves but refuses the pending lattice renderer in both 3D and genuine 4D", () => {
+    for (const preset of ["sierpinski", "pentatope"] as Preset[]) {
+      const result = deriveWithTiling(preset, {
+        kind: "lattice",
+        cellScale: 1,
+      });
+      expect(result).toMatchObject({ status: "ineligible", kind: null });
+      expect(result.note).toContain("preserved");
+      expect(result.note).toContain("renderer path");
+    }
+  });
+
+  it("makes the pending lattice boundary independent of backend availability", () => {
+    const document = presetDocument("sierpinski");
+    const derive = (computeAvailable: boolean) =>
+      deriveSurfaceEligibility(
+        document.transforms,
+        document.finalTransform ?? null,
+        document.symmetry,
+        { computeAvailable },
+        document.schedule ?? null,
+        document.shapeTrap ?? null,
+        { kind: "lattice", cellScale: 2 },
+      );
+    expect(derive(false)).toEqual(derive(true));
+  });
+
   it("refuses mesh-backed tiling clips before either shader backend can ignore them", () => {
     const result = deriveWithTiling("mandelboxKifs", {
       group: "a3",
@@ -1216,5 +1246,17 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
     };
     expectNeutralParity(tiled);
     expect(deriveSurfaceDocumentEligibility(tiled).status).toBe("ineligible");
+  });
+
+  it("deriveSurfaceDocumentEligibility carries the same pending lattice refusal", () => {
+    const tiled: SurfaceEligibilityDocument = {
+      ...presetDocument("pentatope"),
+      tiling: { kind: "lattice", cellScale: 3 },
+    };
+    expectNeutralParity(tiled);
+    expect(deriveSurfaceDocumentEligibility(tiled)).toMatchObject({
+      status: "ineligible",
+      kind: null,
+    });
   });
 });

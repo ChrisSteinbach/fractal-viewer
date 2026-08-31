@@ -2,6 +2,7 @@ import { composeAffine } from "./affine";
 import type { FlamePaletteId, PaletteSelection } from "./palette";
 import type { Rng } from "./rng";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE, STAR_PRISM_SHAPE } from "./shapes";
+import type { FiniteTilingSpec } from "./tiling";
 import type {
   HybridSchedule,
   Rotation4,
@@ -2396,6 +2397,13 @@ const PRESETS = {
   duoprism,
   tesseract,
   twentyFourCell: twentyFourCellFlake,
+  // Finite-reflection Surface showcases measured by tiling.harness.ts. These
+  // keep their familiar base systems as distinct whole-document presets so
+  // PRESET_TILINGS can install the authored group without making an ordinary
+  // Octahedron/Pentatope/24-Cell load inherit a rendering-only side effect.
+  tiledOctahedron: octahedronFlake,
+  tiledPentatope: pentatope,
+  tiledTwentyFourCell: twentyFourCellFlake,
   hyperfern,
   // The escape-time family's 4D HALF: every preset above it is
   // flat by gate, so the mode the site is named after had no 4D entry at
@@ -2476,6 +2484,9 @@ export const PRESET_RENDER_HINTS: Partial<
   // finish showcase opens where its subject exists.
   fourFinishes: "surface",
   metalStudio: "surface",
+  tiledOctahedron: "surface",
+  tiledPentatope: "surface",
+  tiledTwentyFourCell: "surface",
   // Patterned albedo is likewise a Surface-only concern. This one is 4D,
   // which routes it to the affine4 tracer before the hint is consumed.
   woodGrain: "surface",
@@ -2689,6 +2700,21 @@ function spongeOfFernsSchedule(): HybridSchedule {
  */
 export const PRESET_SCHEDULES: Partial<Record<Preset, () => HybridSchedule>> = {
   spongeOfFerns: spongeOfFernsSchedule,
+};
+
+/** The finite reflection group a preset is composed WITH, following
+ * {@link PRESET_FINALS}' exact absent-means-clear rule. These are the live
+ * showcase subset of `scripts/tiling.harness.ts`'s measured fixture matrix:
+ * B3 Octahedron (3D), A4 Pentatope and F4 24-Cell (both genuinely 4D).
+ * Their no-clip panels differed from the untiled objects at the harness's
+ * render resolution; the optional analytic clip remains independently
+ * authorable in the panel and is deliberately not confused with the group's
+ * fixed chamber. Plain sibling presets stay untiled because main.ts clears
+ * this table on every absent lookup. */
+export const PRESET_TILINGS: Partial<Record<Preset, FiniteTilingSpec>> = {
+  tiledOctahedron: { group: "b3" },
+  tiledPentatope: { group: "a4" },
+  tiledTwentyFourCell: { group: "f4" },
 };
 
 /**

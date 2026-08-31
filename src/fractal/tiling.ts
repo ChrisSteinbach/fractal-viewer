@@ -2,17 +2,18 @@ import type { ShapeSpec } from "./shapes";
 import type { Vec3, Vec4 } from "./types";
 
 /**
- * The shared space-tiling vocabulary — the finite-reflection-group phase 1
- * of the tiling epic (`docs/tiling-contract.md` is the frozen record). This
- * module owns the document-facing {@link TilingSpec}, the ONE resolver
- * ({@link resolveTiling}), the frozen group tables
+ * The shared space-tiling vocabulary for both shipped constructions
+ * (`docs/tiling-contract.md` is the frozen record). This module owns the
+ * document-facing {@link TilingSpec}, the ONE resolver
+ * ({@link resolveTiling}), the finite group tables
  * ({@link TILING_GROUP_INFO}), the reflection primitive
  * ({@link reflectAcrossWall}), the fold-to-chamber retraction
  * ({@link foldToChamber}) with its proven step bound, chamber distance
  * ({@link chamberDistance}), and the slow explicit orbit enumerator
- * ({@link enumerateOrbit}) that is the fold's TEST ORACLE and nothing else.
+ * ({@link enumerateOrbit}) that is the finite fold's TEST ORACLE, and the
+ * mirrored affine-A1 scalar/vector folds.
  *
- * THE RENDERED SET this vocabulary serves is
+ * THE FINITE RENDERED SET is
  *
  *     T = G·S,   S = A ∩ C ∩ clip
  *
@@ -33,7 +34,19 @@ import type { Vec3, Vec4 } from "./types";
  * fold — the wall distance is deliberately not a term, and the contract
  * records why (unsound as a max, false geometry as a min).
  *
- * THE FOLD'S BOUND IS PROVEN, not assumed. A point `q` in the chamber
+ * THE MIRRORED-LATTICE SET is `L·S`, with
+ * `S = A ∩ ball(0,R) ∩ clip`. `L` mirrors attractor-frame x/z in 3D and
+ * x/z/w in 4D, leaving y unchanged. The resolver requires an authored
+ * `cellScale >= 1` and an estimator-owned, certified origin-centred visible
+ * radius `R > 0`, then derives the half-cell `h = cellScale·R`. The public
+ * estimator is `max(DE(F(q)), length(F(q)) - R, clipDist(F(q)))`. Product
+ * reflections are isometries and metric retractions toward the closed cell,
+ * so the same nearest-copy theorem applies to this infinite group. Cell walls
+ * are NEVER distance terms: the mirrored value is continuous at a seam and
+ * only its derivative changes sign. No default, narrower authored range,
+ * presentation radius or veil ratio is implied here.
+ *
+ * THE FINITE FOLD'S BOUND IS PROVEN, not assumed. A point `q` in the chamber
  * `w(C)` that violates a simple wall `i` (`⟨q, n_i⟩ < 0`) satisfies
  * `l(s_i w) < l(w)` — the classical simple-root criterion, since a chamber
  * sits entirely on one side of every wall hyperplane — so every reflection
@@ -50,7 +63,7 @@ import type { Vec3, Vec4 } from "./types";
  * gap this opens is bounded by `2·FOLD_EPS` (sub-pixel), and the CPU oracle
  * shares the constant so CPU/GPU agree.
  *
- * ROOT CONVENTIONS, frozen: unit inward normals `n_i` with pairings
+ * FINITE ROOT CONVENTIONS, frozen: unit inward normals `n_i` with pairings
  * `⟨n_i, n_j⟩ = −cos(π/m_ij)` from the Coxeter diagram (m_ij = 3 → −1/2,
  * 4 → −√2/2, 5 → −φ/2 with φ the golden ratio; non-adjacent pairs have
  * m_ij = 2 → 0), so the closed chamber is exactly
@@ -79,33 +92,47 @@ import type { Vec3, Vec4 } from "./types";
  * - balloon + tiling (an orbit's echo is not the echo's orbit — no
  *   certified composition).
  *
- * THE PHASE-2 EXTENSION POINT: the lattice-repetition epic must extend
- * THIS SAME `TilingSpec` union with its own kind, cell geometry and seam
- * semantics — it may not invent a second model.
+ * MIRRORED-LATTICE CONVENTION, frozen: one scalar fold uses the floor-based
+ * mathematical modulo `h - abs(mod(x + h, 4h) - 2h)`. It performs fixed work
+ * and exactly handles negative inputs and cell walls. The hot primitive has
+ * no per-query validation: {@link resolveTiling} validates `h` once, and
+ * finite marcher queries are an upstream invariant.
  */
 
 /** The shipped finite reflection groups, by dimension: A3/B3/H3 in 3D,
- * A4/B4/F4 in 4D. H4 and the reducible products are refused (module doc).
- * The phase-2 lattice epic extends THIS union with its own kind on
- * {@link TilingSpec} — never a second model. */
+ * A4/B4/F4 in 4D. H4 and the reducible products are refused (module doc);
+ * mirrored affine-A1 repetition is the discriminated non-finite arm of
+ * {@link TilingSpec}, not another entry in this list. */
 export const TILING_GROUPS = ["a3", "b3", "h3", "a4", "b4", "f4"] as const;
 
 /** One of the shipped finite reflection groups. */
 export type TilingGroup = (typeof TILING_GROUPS)[number];
 
-/** Scene-level tiling block, beside ShapeTrap and HybridSchedule.
- * ABSENT MEANS OFF, byte-identically: a scene that carries no block is
- * untiled, and nothing in any renderer changes. A present block renders
- * `T = G·(A ∩ C ∩ clip)` in Surface mode and its twins; the query-space
- * fold has no chaos-game meaning, so the chaos-game modes render the
- * UNTILED attractor with the adjacent explanation (the contract's renderer
- * matrix) — a document never silently renders a different object. */
-export interface TilingSpec {
+/** The legacy finite-reflection arm of {@link TilingSpec}. Its wire shape is
+ * deliberately unchanged: no discriminator is added to old documents. */
+export interface FiniteTilingSpec {
   /** One of the shipped finite reflection groups. */
   group: TilingGroup;
   /** Optional narrowing clip — may only intersect away, never widen. */
   clip?: ShapeSpec;
 }
+
+/** The mirrored affine-A1 lattice arm. `cellScale = h/R` is authored
+ * explicitly: phase 2 has certified only the mathematical domain `>= 1`, not
+ * a default or a narrower UI range. The resolver derives world-unit `h` from
+ * the estimator's certified full visible radius. */
+export interface LatticeTilingSpec {
+  kind: "lattice";
+  cellScale: number;
+  /** Optional narrowing clip, embedded exactly like the finite arm's. */
+  clip?: ShapeSpec;
+}
+
+/** Scene-level tiling block, beside ShapeTrap and HybridSchedule.
+ * ABSENT MEANS OFF, byte-identically. The finite arm retains its original
+ * `{ group, clip? }` wire; the lattice arm is explicitly discriminated and
+ * requires an authored `cellScale` because no default has been accepted. */
+export type TilingSpec = FiniteTilingSpec | LatticeTilingSpec;
 
 /** Immutable metadata for one {@link TilingGroup}: the dimension, the
  * group order, the fold's proven step bound, and the unit simple roots
@@ -129,10 +156,49 @@ export interface TilingGroupInfo {
  * defaults to own — the group is discrete and the clip is a
  * {@link ShapeSpec}, whose validation lives in `shapes.ts` — so the
  * resolved value is the resolved pairing, ready for the estimator. */
-export interface ResolvedTiling {
+export interface ResolvedFiniteTiling {
   group: TilingGroup;
   info: TilingGroupInfo;
   clip?: ShapeSpec;
+}
+
+/** Resolved mirrored lattice geometry. `radius` is the estimator authority's
+ * certified full visible radius (4D uses `visibleBoundingRadius`, never a
+ * slice-adjusted value); `h = cellScale * radius` is the world-unit half-cell.
+ */
+export interface ResolvedLatticeTiling {
+  kind: "lattice";
+  cellScale: number;
+  radius: number;
+  h: number;
+  clip?: ShapeSpec;
+}
+
+/** The one resolved tiling union. Renderer modules that have not yet landed
+ * the lattice arm continue to accept {@link ResolvedFiniteTiling}; the pure
+ * CPU wrappers accept this complete union. */
+export type ResolvedTiling = ResolvedFiniteTiling | ResolvedLatticeTiling;
+
+/** Largest half-cell whose full `4h` mirror period is representable by the
+ * frozen f32 shader wire. This is an implementation representation limit,
+ * not an authored UI maximum: persistence keeps any finite `cellScale`, and
+ * the resolver rejects only a particular scale/radius pairing that cannot be
+ * evaluated by both CPU and GPU arithmetic. */
+const MAX_LATTICE_HALF_CELL = 3.4028234663852886e38 / 4;
+
+/** Narrow a document block without re-deriving its vocabulary. */
+export function isLatticeTilingSpec(
+  tiling: TilingSpec,
+): tiling is LatticeTilingSpec {
+  return "kind" in tiling && tiling.kind === "lattice";
+}
+
+/** Narrow a resolved block. Finite resolved objects intentionally keep their
+ * historical shape and therefore carry no `kind` field. */
+export function isResolvedLatticeTiling(
+  tiling: ResolvedTiling,
+): tiling is ResolvedLatticeTiling {
+  return "kind" in tiling && tiling.kind === "lattice";
 }
 
 /** The fold's stop-test tolerance: a folded point is accepted once every
@@ -410,21 +476,55 @@ ${reflections}
 }
 
 /**
- * The ONE authority over the tiling block: `resolveTiling(spec)` returns
- * `null` when the scene carries no block (absent means off), otherwise the
- * resolved value — the group's frozen {@link TilingGroupInfo} and the clip
- * passed through exactly as authored. There are no clamps to own here: the
- * group is discrete, and a clip's validation lives in `shapes.ts`
- * (`validateShapeSpec` is not exported, so the resolver cannot — and must
- * not — re-validate the shape). Group strings outside the union are
- * impossible in TS; the check is defensive only — a malformed block is
- * dropped by the persistence layer before this ever runs, and reaching
- * here with one is a bug to surface, not a case to degrade.
+ * The ONE authority over both tiling arms. Finite blocks resolve exactly as
+ * before. A lattice block additionally requires the current estimator's
+ * certified full visible radius and derives `h = cellScale * radius` here —
+ * never in a renderer. No lattice default or upper range is invented:
+ * `cellScale` must be explicitly authored and finite in the accepted domain
+ * `[1, +∞)`. Persistence drops malformed blocks before this point; the throws
+ * below are defensive bug signals for direct callers.
  */
 export function resolveTiling(
+  spec: FiniteTilingSpec | undefined,
+): ResolvedFiniteTiling | null;
+export function resolveTiling(
+  spec: LatticeTilingSpec,
+  radius: number,
+): ResolvedLatticeTiling;
+export function resolveTiling(
   spec: TilingSpec | undefined,
+  radius: number,
+): ResolvedTiling | null;
+export function resolveTiling(
+  spec: TilingSpec | undefined,
+  radius?: number,
 ): ResolvedTiling | null {
   if (!spec) return null;
+  if (isLatticeTilingSpec(spec)) {
+    if (!Number.isFinite(spec.cellScale) || spec.cellScale < 1) {
+      throw new RangeError(
+        "resolveTiling: lattice cellScale must be a finite number >= 1",
+      );
+    }
+    if (radius === undefined || !Number.isFinite(radius) || radius <= 0) {
+      throw new RangeError(
+        "resolveTiling: lattice resolution requires a finite certified radius > 0",
+      );
+    }
+    const h = spec.cellScale * radius;
+    if (!Number.isFinite(h) || h > MAX_LATTICE_HALF_CELL) {
+      throw new RangeError(
+        "resolveTiling: lattice half-cell overflowed the finite f32 4h period representation",
+      );
+    }
+    return {
+      kind: "lattice",
+      cellScale: spec.cellScale,
+      radius,
+      h,
+      clip: spec.clip,
+    };
+  }
   if (!TILING_GROUPS.some((g) => g === spec.group)) {
     throw new Error(
       `resolveTiling: unknown tiling group "${String(spec.group)}" — ` +
@@ -436,6 +536,46 @@ export function resolveTiling(
     info: TILING_GROUP_INFO[spec.group],
     clip: spec.clip,
   };
+}
+
+/** Euclidean modulo with a non-negative result for every finite `x`. Kept
+ * private so every lattice caller goes through the accepted mirror formula
+ * rather than substituting JavaScript's negative-input remainder. */
+function latticeMod(x: number, period: number): number {
+  return x - period * Math.floor(x / period);
+}
+
+/** Affine-A1 fold into the closed chamber `[-h,h]`, with period `4h` and
+ * alternating orientation in adjacent copies. This is the CPU arithmetic the
+ * later shader bead must mirror literally (floor-based modulo, never `%`). */
+export function mirrorLatticeCoordinate(x: number, h: number): number {
+  return h - Math.abs(latticeMod(x + h, 4 * h) - 2 * h);
+}
+
+/** Mirror attractor-frame x/z and leave y vertical. `out` may alias `p`. */
+export function foldLattice3(p: Vec3, h: number, out: Vec3): Vec3 {
+  const x = mirrorLatticeCoordinate(p[0], h);
+  const y = p[1];
+  const z = mirrorLatticeCoordinate(p[2], h);
+  out[0] = x;
+  out[1] = y;
+  out[2] = z;
+  return out;
+}
+
+/** Mirror attractor-frame x/z/w and leave y vertical. The caller lifts and
+ * inverse-rotates the view query before this function; folding view-space xyz
+ * or omitting w would describe a different 4D lattice. `out` may alias `p`. */
+export function foldLattice4(p: Vec4, h: number, out: Vec4): Vec4 {
+  const x = mirrorLatticeCoordinate(p[0], h);
+  const y = p[1];
+  const z = mirrorLatticeCoordinate(p[2], h);
+  const w = mirrorLatticeCoordinate(p[3], h);
+  out[0] = x;
+  out[1] = y;
+  out[2] = z;
+  out[3] = w;
+  return out;
 }
 
 /**

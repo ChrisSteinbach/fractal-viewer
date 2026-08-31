@@ -24,7 +24,7 @@ import { buildEscapeDE4 } from "../fractal/escape-de-4d";
 import { buildBulbDE } from "../fractal/bulb-de";
 import { buildBalloon } from "../fractal/balloon-de";
 import { resolveShapeTrap } from "../fractal/shape-trap";
-import { resolveTiling } from "../fractal/tiling";
+import { isLatticeTilingSpec, resolveTiling } from "../fractal/tiling";
 import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
@@ -126,6 +126,7 @@ import {
   PRESET_SYMMETRIES,
   PRESET_SURFACE_PALETTES,
   PRESET_SURFACE_ROOMS,
+  PRESET_TILINGS,
   PRESET_TRAPS,
   presetTransforms,
 } from "../fractal/presets";
@@ -5276,7 +5277,19 @@ async function main(): Promise<void> {
       // group independently. Balloon remains a hard combination refusal:
       // an orbit's inverted echo is not the echo's orbit, so there is no
       // certified estimator composition to render.
-      const surfaceTiling = resolveTiling(state.tiling ?? undefined);
+      // The CPU/document lattice authority lands before its shader twins.
+      // deriveSurfaceEligibility refuses this arm above; keep a local
+      // backstop so the finite-only renderer types cannot accidentally accept
+      // a lattice if a future entry path bypasses that shared gate.
+      const surfaceTilingSpec = state.tiling;
+      if (surfaceTilingSpec && isLatticeTilingSpec(surfaceTilingSpec)) {
+        ui.flashToast(
+          "Surface render stopped: mirrored lattice tiling is preserved in the document but its renderer path is not available in this build yet.",
+        );
+        queueMicrotask(() => surfaceSession.exit());
+        return { post: () => {}, terminate: () => teardownSurfaceCompute() };
+      }
+      const surfaceTiling = resolveTiling(surfaceTilingSpec);
       if (surfaceTiling && state.balloonEcho) {
         ui.flashToast(
           "Surface tiling is unavailable while Balloon echo is on; turn off either authored effect.",
@@ -9068,9 +9081,7 @@ async function main(): Promise<void> {
         // would route the arriving system through a group it was never
         // composed with, and for a kaleidoscope-carrying preset would take
         // the Surface route away outright — the eligibility refusal).
-        // Phase 1 ships no tiling presets, so today this is always the
-        // clear; the future table slots in beside the others.
-        state = setTiling(state, null);
+        state = setTiling(state, PRESET_TILINGS[preset] ?? null);
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.

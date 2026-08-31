@@ -36,7 +36,7 @@ import {
   resolveTiling,
   TILING_GROUP_INFO,
   TILING_GROUPS,
-  type ResolvedTiling,
+  type ResolvedFiniteTiling,
 } from "../fractal/tiling";
 import type { ShapeSpec } from "../fractal/shapes";
 import { twentyFourCellFlake } from "../fractal/presets";
@@ -1190,7 +1190,7 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
   const clippedF4 = resolveTiling({ group: "f4", clip: COND4_SPHERE })!;
 
   const sourceFor = (
-    tiling: ResolvedTiling,
+    tiling: ResolvedFiniteTiling,
     {
       plane = 0,
       finish = 0,

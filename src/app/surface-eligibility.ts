@@ -36,7 +36,7 @@ import {
 } from "../fractal/chaos-game";
 import { shapeMeshIds, shapeSdfSource } from "../fractal/shapes";
 import type { ShapeSpec } from "../fractal/shapes";
-import { TILING_GROUP_INFO } from "../fractal/tiling";
+import { TILING_GROUP_INFO, isLatticeTilingSpec } from "../fractal/tiling";
 import type { TilingSpec } from "../fractal/tiling";
 import type {
   HybridSchedule,
@@ -429,7 +429,11 @@ export function deriveSurfaceEligibility(
   const hasSchedule = scheduleRecords > 0;
   const hasChaos = systemHasChaos(transforms);
   const fourD = systemPartsAreNonFlat(transforms, finalTransform, symmetry);
-  if (tiling && TILING_GROUP_INFO[tiling.group].dim !== (fourD ? 4 : 3)) {
+  if (
+    tiling &&
+    !isLatticeTilingSpec(tiling) &&
+    TILING_GROUP_INFO[tiling.group].dim !== (fourD ? 4 : 3)
+  ) {
     return {
       status: "ineligible",
       note: `The ${tiling.group.toUpperCase()} tiling group is ${TILING_GROUP_INFO[tiling.group].dim}D, but this document is ${fourD ? "4D" : "3D"}; choose a group with the same dimension as the fractal.`,
@@ -465,6 +469,18 @@ export function deriveSurfaceEligibility(
         "and the descent sweeps its rotation inside the descent, after the tiling fold — " +
         "the estimate then has no certified lower-bound order. Clear the tiling block or " +
         "set symmetry order to 1.",
+      kind: null,
+    };
+  }
+  // The document/CPU bead deliberately lands before either renderer mirrors
+  // the lattice contract. Refuse the recognized, persisted block here until
+  // that delivery removes this gate; otherwise a hand-authored hash would be
+  // admitted and one of the finite-only shaders could ignore or misread it.
+  // This is a temporary capability boundary, not a mathematical refusal.
+  if (tiling && isLatticeTilingSpec(tiling)) {
+    return {
+      status: "ineligible",
+      note: "Mirrored lattice tiling is preserved in this document, but its Surface renderer path is not available in this build yet.",
       kind: null,
     };
   }

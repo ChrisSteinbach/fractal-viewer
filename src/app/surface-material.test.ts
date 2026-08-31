@@ -79,7 +79,7 @@ import {
   resolveTiling,
   TILING_GROUP_INFO,
   TILING_GROUPS,
-  type ResolvedTiling,
+  type ResolvedFiniteTiling,
 } from "../fractal/tiling";
 import { defaultTransforms, sierpinskiTetrahedron } from "../fractal/presets";
 import type { ShapeTrap, Transform, Vec3 } from "../fractal/types";
@@ -1321,7 +1321,7 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
   const clippedA3 = resolveTiling({ group: "a3", clip: COND_SPHERE })!;
 
   const sourceFor = (
-    tiling: ResolvedTiling,
+    tiling: ResolvedFiniteTiling,
     {
       escape = 0,
       lens = 0,
