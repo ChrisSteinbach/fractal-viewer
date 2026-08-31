@@ -17,9 +17,9 @@ workgroup-SHARED (banked, transposed) vs private frontier storage, and
 stage-2 branch-and-bound on/off (WGSL has no Mesa link cliff, so there's no
 reason to strip source the way the GLSL side must).
 
-## Mirrored-lattice eval ABI (non-routed)
+## Mirrored-lattice carrier (routed)
 
-All seven cores can source-generate the mirrored affine-A1 lattice estimator
+All seven cores source-generate the mirrored affine-A1 lattice estimator
 wrapper in eval, march and shade programs. One dialect-shared authority emits
 the floor-modulo x/z fold in 3D and x/z/w fold in 4D. The wrapper lifts through
 the inverse 4D rotor before folding, evaluates the untouched core exactly once,
@@ -30,21 +30,40 @@ cores read `boundingRadius`. Folded hit coordinates supply material
 attribution. Tiling with balloon, kaleidoscope, a real 4D slab or a mesh clip
 retains the established refusal.
 
+The carrier is LIVE in every march/shade program: the shared carrier source
+(lattice-march.ts's emitter) supplies `latticePresentationInterval`,
+`latticePresentationContains` and the fog coordinate, and the march gate
+replaces the visible-sphere gate with the interval (world sphere ∩
+attractor-y slab at the PROVISIONAL `10R` window; the 4D arm evaluates the
+slab through the packed `rotorInvR1` row — the packed rows ARE the inverse
+rotor's rows — with the slab refusal appended). The shade entry recomputes the
+interval for the fog origin `tEnter`, bounds each shadow ray by its OWN
+carrier (fully lit past its own `tFar`), and the wrapper's probe guard returns
+open space (`2·presentationR`) for out-of-carrier taps, so the window never
+becomes geometry, casts a shadow or contributes AO. The ground plane's
+single-ball corridor and AO-reach certificates are replaced by carrier tests
+under lattice; the 4D hit fog normalizes by the full `visRadius4`.
+
 The five params packers reuse the append-only 16-byte tiling tail. Finite
 reflection remains `(groupCode, 0, 0, 0)` byte for byte; lattice is
-`(7u, h, 0, 0)`. Existing combination offsets and the 560/848-byte maxima are
-unchanged. Packers validate the canonical resolver record and require its
-stored full radius to equal the precise estimator field used by the kernel.
-The resolver additionally rejects half-cells whose f32 wire value becomes zero
-or whose shader-side `4h` becomes infinite.
+`(7u, h, presentationR, 0)` — the third word, zero pad before the lattice arm,
+now carries the provisional window radius (`authority ×
+LATTICE_PRESENTATION_RADIUS_MULT`). Existing combination offsets and the
+560/848-byte maxima are unchanged. Packers validate the canonical resolver
+record and require its stored full radius to equal the precise estimator field
+used by the kernel. The resolver additionally rejects half-cells whose f32
+wire value becomes zero or whose shader-side `4h` becomes infinite.
 
-The real-Iris Surface bench has an eval-only ABI leg for this layer: seven
-cores × three seam probes, with the 4D fixtures rotating visible x into
+The real-Iris Surface bench pins this layer in two legs. The eval ABI leg:
+seven cores × three seam probes, with the 4D fixtures rotating visible x into
 attractor w. The 2026-08-31 Mesa Intel Iris Xe run compiled, bound and
-dispatched 7/7 and matched `tiling-de.ts` at 3/3 probes per core; the complete
-Surface verdict was pass. This leg intentionally claims no live marcher:
-presentation carriers, shadow/AO/fog and ground/capture routing remain outside
-the compute renderer until they land atomically.
+dispatched 7/7 and matched `tiling-de.ts` at 3/3 probes per core. The carrier
+frame legs drive the PRODUCTION `SurfaceComputeRenderer` with lattice targets
+(3D inverse, 3D escape, 4D inverse, 4D escape, and the 3D inverse with the
+ground plane) against a strided CPU sanity march using the same carrier gate
+and the family's tiled oracle: all five settled with hit-rate gaps ≤ 0.012 and
+the plane row's plane-rate gap 0.012 (GPU 0.535 vs CPU 0.547, 19738 plane
+terminals); the complete Surface verdict was pass.
 
 ## Scheduled hybrid prefix
 

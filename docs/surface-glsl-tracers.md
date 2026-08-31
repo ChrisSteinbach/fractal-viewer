@@ -24,15 +24,16 @@ flam3's convention. The per-level decay is now the Color speed slider
 (default 0.5, which reproduces that original fixed behavior), and the
 rings/sheets orbit-trap color sources ride the same hit-info descent.
 
-## Mirrored-lattice estimator source (non-routed)
+## Mirrored-lattice carrier (routed)
 
-Both fragment tracers can generate the mirrored affine-A1 estimator wrapper
-without changing the live Surface route. `latticeFoldSource` is the one
-dialect-shared floor-modulo body: x/z fold in 3D, x/z/w after the true inverse
-rotor lift in 4D, with y untouched. A lattice-only `uTilingH` accompanies the
-append-only selector code 7. Scale changes update uniforms without recompiling;
-kind or analytic-clip changes regenerate source. The installer rejects
-non-canonical resolver data and a radius not owned by the current estimator.
+Both fragment tracers generate the mirrored affine-A1 estimator wrapper AND
+march it live. `latticeFoldSource` is the one dialect-shared floor-modulo
+body: x/z fold in 3D, x/z/w after the true inverse rotor lift in 4D, with y
+untouched. A lattice-only `uTilingH` and the PROVISIONAL presentation radius
+`uTilingPresentationR` accompany the append-only selector code 7. Scale or
+presentation-radius changes update uniforms without recompiling; kind or
+analytic-clip changes regenerate source. The installer rejects non-canonical
+resolver data and a radius not owned by the current estimator.
 
 The wrapper folds once, invokes each public core overload once, maxes with the
 full-radius origin ball and then the optional clip. Height, radius and
@@ -43,6 +44,22 @@ plus every legal 4D inverse arm. Absent and finite-reflection source hashes are
 pinned to the pre-lattice bytes, and every emitted lattice source stays below
 the existing 65,536-byte strip ceiling.
 
+THE CARRIER IS WIRED into the live march: `latticePresentationInterval`
+replaces the visible-sphere gate in `main()` (tEnter seeds the fog origin,
+tFar bounds the march, and the miss/ground branches are reached exactly as
+before — a ray outside the carrier is a miss); the 4D arm evaluates the slab
+through the inverse rotor's y row ASSEMBLED ACROSS COLUMNS —
+`vec4(uInvRotor[0][1], uInvRotor[1][1], uInvRotor[2][1], uInvRotor[3][1])`,
+never `uInvRotor[1]` (GLSL `mat4` is column-indexed, so that is the second
+COLUMN) — with the slab refusal appended, and the 4D hit fog normalizes by
+the full certified radius, never the slice-adjusted `sliceVisR`. Each shadow
+ray computes its OWN carrier and is fully lit past its own `tFar`; the plain
+probe overload guards with `latticePresentationContains` (an out-of-carrier
+tap returns open space, so the window never becomes geometry, casts a shadow
+or contributes AO); and the ground plane's single-ball shadow corridor and
+AO-reach certificates are replaced by carrier tests (an infinite lattice
+repeats content beyond the ball — the shortcuts are unsound there).
+
 The 2026-08-31 headed Chrome probe reported the unmasked renderer
 `ANGLE (Intel, Mesa Intel(R) Iris(R) Xe Graphics (TGL GT2), OpenGL ES 3.2)`.
 It compiled and rendered nine representative programs: 3D affine, lens,
@@ -50,11 +67,15 @@ ground plane, escape, bulb and finish+pattern; 4D plain, ground plane and
 finish+pattern. All 9/9 returned GL error 0 with no program diagnostic. The
 same matrix passed SwiftShader independently before the Iris run.
 
-The live eligibility gate still refuses lattice because a correct infinite-set
-presentation also needs the shared sphere∩attractor-y carrier in primary and
-shadow rays, open-space normal/AO taps, entry-relative fog, ground competition,
-camera fit and capture bands. Compiling this estimator source is evidence for
-the formula layer only, not permission to route it early.
+The durable browser gate `scripts/surface-lattice.verify.mjs` passed 18/18 on
+a verified Mesa Intel Iris Xe display: six lattice fixtures × their engines
+(3D inverse, 3D inverse + clip, 3D escape, 4D inverse, 4D escape, and the 3D
+inverse with the ground plane) entered Surface, settled on the
+`?surfacestate` latch, drew 34–75% of the frame through the fragment tracer
+where WebGL was forced, and retained the authored lattice block. The
+untiled/finite/lattice trio drew structurally different pictures (25% pair
+diffs on the same camera), and the app-generated link reload reproduced its
+picture within 2.75%.
 
 ## Scheduled finite B prefix
 

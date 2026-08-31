@@ -829,3 +829,18 @@ sets have infinite reach. The preview's radius-ten window is likewise ten
 cell half-widths, not evidence for production range. Proposed cell-scale
 default/minimum/maximum and the 8R/10R presentation veil remain explicitly
 PROVISIONAL until live GLSL/WGSL, capture and grazing-ray gates measure them.
+
+Since the carrier shipped, two real-driver gates hold the same verdicts
+with the production renderer (all on verified Mesa Intel Iris Xe,
+`npm run bench:surface -- --display=:0`): the five lattice carrier frame
+legs — 3D inverse, 3D escape, 4D inverse, 4D escape and the 3D inverse with
+the ground plane — settled with hit-rate gaps 0.001–0.012 against the
+family's tiled CPU oracle through the SAME carrier gate, the plane row's
+plane-rate gap 0.012 (GPU 0.535 vs CPU 0.547, 19738 plane terminals), and
+the durable browser gate `scripts/surface-lattice.verify.mjs` passed 18/18
+(six fixtures × engines entered/settled/drew with the lattice block
+retained; the untiled/finite/lattice trio differed by 25% structural; the
+app-generated link reload reproduced its picture within 2.75%). The 10R
+window in those runs is `LATTICE_PRESENTATION_RADIUS_MULT` in
+`lattice-march.ts` — still PROVISIONAL, the explicit diagnostic value a
+measurement session edits before any accepted range is frozen.

@@ -393,7 +393,7 @@ the independent membership oracle, not the scalar march status, detects false
 zero seams. Tests pin tangent/inside/non-unit/parallel/near-parallel rays,
 negative far intervals, carrier formulas and content/ground hit ordering.
 
-### Landed shader evaluation and wire layer (not routed)
+### Landed shader evaluation and wire layer (routed)
 
 The append-only shader code `7` selects the lattice arm after the six frozen
 finite-group codes. `latticeFoldSource` emits the same floor-modulo body in
@@ -405,11 +405,14 @@ visible-world normals and lighting retain their existing frame. Absent and
 finite-reflection programs are SHA-pinned to their pre-lattice source.
 
 All five WGSL params packers accept the resolved union and reuse the existing
-16-byte tiling tail as `(code=7, h, 0, 0)`, so the established 560-byte 3D and
-848-byte 4D maxima do not move. The pack and GLSL-install seams require the
-canonical resolver geometry and the exact estimator authority radius; a stale
-`h` or a block resolved against a different radius throws rather than drawing
-a different canonical cell. On a verified Mesa Intel Iris Xe display,
+16-byte tiling tail as `(code=7, h, presentationR, 0)` — the third word, zero
+pad before the lattice arm, now carries the PROVISIONAL presentation window
+radius (`authority radius × LATTICE_PRESENTATION_RADIUS_MULT`), so the
+established 560-byte 3D and 848-byte 4D maxima do not move. The pack and
+GLSL-install seams require the canonical resolver geometry and the exact
+estimator authority radius; a stale `h` or a block resolved against a
+different radius throws rather than drawing a different canonical cell. On a
+verified Mesa Intel Iris Xe display,
 `npm run bench:surface -- --display=:0` compiled, bound and dispatched all
 seven eval kernels and agreed with `tiling-de.ts` for all three exact/adjacent
 seam probes in every core, including a 4D pose that maps visible x into
@@ -417,22 +420,43 @@ attractor w. The overall Surface bench verdict was pass.
 
 The GLSL generators cover the inverse, fold, lens, floor, condensation,
 schedule, chaos, escape and bulb arms in 3D and every legal 4D arm; actual
-program-link evidence is recorded in `docs/surface-glsl-tracers.md`. This is
-still deliberately non-routed: source generation proves the estimator layer,
-not the finite presentation of an unbounded set.
+program-link evidence is recorded in `docs/surface-glsl-tracers.md`.
 
-The shared carrier emitter now spells the sphere/intersected attractor-y slab,
+The shared carrier emitter spells the sphere/intersected attractor-y slab,
 point membership and entry-relative fog coordinate once for both dialects.
 Its 4D form accepts the inverse rotor's y row explicitly and evaluates
-`(ro,w0)`, `(rd,0)` and `(p,w0)`. It owns no default or presentation ratio and
-is not yet installed into either live marcher.
+`(ro,w0)`, `(rd,0)` and `(p,w0)`. It owns no FINAL default or presentation
+ratio; the renderer plumbing derives the explicit PROVISIONAL window from
+`LATTICE_PRESENTATION_RADIUS_MULT` (10) in `lattice-march.ts` — the one line
+a measurement session edits.
 
-Surface eligibility currently refuses the lattice arm with an adjacent reason.
-That is deliberate rather than an estimator verdict: live carrier use in the
-primary and shadow intervals, normal/AO openness, entry-relative fog, ground
-composition, capture/strip limits and camera wiring remain gated together so a
-persisted lattice document cannot silently render the finite or untiled
-object.
+THE CARRIER IS WIRED through both engines, both dimensions and every phase of
+the live march: the primary interval's `tEnter`/`tFar`, the fog origin and its
+R normalizer, each shadow ray's own carrier (fully lit past its own `tFar`),
+the contains-guarded probe taps (a point outside the carrier is open space —
+the window never becomes geometry, casts a shadow or contributes AO), the
+ground plane's corridor and AO-reach certificates replaced by carrier tests
+(an infinite lattice repeats content beyond the ball, so the single-ball
+shortcuts are unsound there), and the canonical-cell camera fit. The 4D arm
+assembles the inverse rotor's y row ACROSS COLUMNS in GLSL (`mat4` is
+column-indexed; `uInvRotor[1]` is the second COLUMN) and passes the packed
+`rotorInvR1` row in WGSL — the same semantic row, and the 4D hit fog
+normalizes by the full certified radius, never the slice-adjusted slot.
+
+Routing resolves lattice blocks PER-ARM against each DE's authority radius
+(visible for the inverse descents, bounding for the forward orbits), never
+against a guessed radius; a persisted lattice document now enters Surface on
+both engines and settles on the mirrored cell. The empty-space grid is
+refused for lattice sessions (its floors bound the attractor, not the
+infinite mirror image). The panel still exposes no lattice authoring
+(cell-scale arrives with an imported/shared document); the disclosure names
+that boundary. A tiled 4D session renders slice 0 only, on both engines.
+
+Surface eligibility no longer refuses the lattice arm: the shared refusals —
+balloon, kaleidoscope, mesh clips, the 4D slab — are the boundary, exactly
+as the legal-combinations table freezes. A persisted lattice document cannot
+silently render the finite or untiled object because the shader selector,
+the packer guards and the routing resolve one block through one answer.
 
 ### Genuine 4D meaning
 
@@ -475,11 +499,13 @@ window from casting a shadow or contributing AO. The existing step/tap caps,
 capture raster limits, strip pump and abort/cancellation behavior remain the
 runtime limits.
 
-**PROVISIONAL, not gated by this sheet:** fade lattice coverage/fog to the
-backdrop from radius `8R` and stop at the hard `10R` presentation window. The
-sheet's preview uses a fixed radius of ten _cell half-widths_ only to compare
-the candidates; it does not gate the 8R/10R choice. Those constants require
-live GLSL/WGSL capture and grazing-ray measurements before freezing.
+**PROVISIONAL, not gated by this sheet:** the hard `10R` presentation window
+is carried as `LATTICE_PRESENTATION_RADIUS_MULT` in `lattice-march.ts` — the
+explicit diagnostic value the renderer plumbing derives its uniform, its
+params word and its camera fit from, and the ONE line a measurement session
+edits. A fade-to-backdrop curve from `8R` is not yet implemented at all.
+Neither the window nor the fog curve is a document value or a frozen
+constant until live capture and grazing-ray measurements settle them.
 
 ### Ground plane
 
@@ -487,12 +513,28 @@ The plane stays ordinary sliced-view 3D geometry, at the existing
 origin/radius-derived height, and is never folded. Its intersection competes
 with the lattice carrier's nearest hit and retains the existing radial fade.
 It receives shadows and contact AO from repeated content through the same
-mirrored estimator, clipped to the same presentation carriers. The current
-single-ball corridor and “too far from the ball for AO” shortcuts are invalid
-for an infinite lattice and must be disabled or replaced by carrier tests in
-the lattice arm. This is especially load-bearing in 4D: an arbitrary rotor
-tilts the attractor-frame carrier relative to the world-space plane, but the
-plane itself stays horizontal and unfurled.
+mirrored estimator, clipped to the same presentation carriers. The single-ball
+corridor and "too far from the ball for AO" shortcuts are INVALID for an
+infinite lattice and are replaced by carrier tests in the lattice arm (both
+engines): the shadow ray marches through its own carrier interval and is
+fully lit past its own `tFar`, and the AO taps run unconditionally, each tap
+reading open space outside the carrier through the guarded probe DE. This is
+especially load-bearing in 4D: an arbitrary rotor tilts the attractor-frame
+carrier relative to the world-space plane, but the plane itself stays
+horizontal and unfurled.
+
+MEASURED (verified Iris, `npm run bench:surface -- --display=:0`): the five
+lattice carrier frame legs — 3D inverse, 3D escape, 4D inverse, 4D escape and
+the 3D inverse with the ground plane — run through the PRODUCTION
+`SurfaceComputeRenderer` against a strided CPU sanity march that uses the
+same carrier gate and the family's tiled oracle. All five settled with
+hit-rate gaps 0.001–0.012 and the plane row's plane-rate gap 0.012
+(GPU 0.535 vs CPU 0.547, 19738 plane terminals). The durable browser gate
+`scripts/surface-lattice.verify.mjs` passed 18/18 on the same display:
+six fixtures × their engines entered, settled, drew 34–75% of the frame and
+retained the authored lattice block, the untiled/finite/lattice trio drew
+structurally different pictures (25% pair diffs), and the app-generated link
+reload reproduced its picture within 2.75%.
 
 ### Translation refusal
 
