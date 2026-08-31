@@ -758,3 +758,41 @@ The companion real-WebGL verifier gates matched production captures and prints
 descriptive timing; its recorded 192³ SwiftShader run changed four channels by
 one byte and measured 137.20 ms accelerated versus 326.22 ms fallback median
 capture latency.
+
+## The space-tiling sheet
+
+### tiling
+
+The space-tiling feature's go/no-go measurement (`scripts/tiling.harness.ts`)
+— the executable half of `docs/tiling-contract.md`'s "Evidence owed". One
+fixture per group (a3/b3/h3/a4/b4/f4): the shipped polytope gaskets
+(octahedronFlake, icosahedronFlake, pentatope, sixteenCellFlake,
+twentyFourCellFlake) plus a constructed ALIGNED tetrahedron for a3 (the
+shipped sierpinskiTetrahedron's content in the misaligned A3 chamber
+measured compact — 100% within 0.25R of the centroid — so its authored clip
+was inert), each with an authored chamber clip and measured against the
+chamber-content cloud oracle `d(F(q), S_cloud)`.
+
+MEASURED VERDICT: **GO**. Zero overshoot on every fixture (0 violations on
+all probe classes at the 1e-9 threshold; exact-class erosion 0), zero
+verified false walls (the marcher's own acceptance-gated stop test plus a
+dense local oracle — orbits seeded at the folded point — behind every flag),
+the fold never expires (max steps 6/9/15/10/16/23 against the proven bounds
+6/9/15/10/16/24; 0 cap hits, 0 nulls), all clip renders distinct, and every
+legal GLSL combination's emitted source under the 64KB strip bound (243 B
+minimum headroom, 16.6KB under the ~80KB Mesa cliff even at the tightest
+row). Two disclosures ride the verdict: the a4 pentatope's single 0.01R-proxy
+flag is a VERIFIED NEAR-MISS, not a stop (est 0.95%R vs the render's
+acceptance 0.97%R at its worst-case ray, content 14.3%R away, dense-verified
+— the surface-beam slow-march allowance class at the clip boundary's graze),
+and the b4 sixteenCellFlake's clip-cut copies render sub-pixel at 200px (the
+B4 chamber's content is compact; the tiled set is real — reach 0.899R — and
+its no-clip panel is 16.2% distinct). The sheet also measures the
+G-invariance of the shipped gaskets (0.022-0.238R — they are symmetric under
+a CONJUGATE of the frozen groups, which is what makes the tiling cut them),
+the nearest-copy theorem at fp precision (identity gap 5.1e-7 = the fold's
+disclosed epsilon-stop bound), the fold-step distribution and wrapper cost
+(0.75-1.20x), and the pre-tiling GLSL headroom for the fr-fn9j bead (largest
+legal 3D combination 112494 B resolved; the tiling arm's ~2-4KB resolved
+growth crosses the tightest rows' strip threshold — benign strip, the
+escape+balloon precedent).
