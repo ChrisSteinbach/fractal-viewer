@@ -9,6 +9,9 @@ import {
   timelineDurationMs,
 } from "./timeline";
 import type { SampledSolidStatus } from "./solid-render-status";
+import { encodeScene, toSnapshot } from "./persist";
+import { initialState } from "./state";
+import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 
 function memoryStorage(initial: Record<string, string> = {}) {
   const store: Record<string, string> = { ...initial };
@@ -845,5 +848,24 @@ describe("timelineDurationMs", () => {
 
   it("is 0 for an empty list", () => {
     expect(timelineDurationMs([])).toBe(0);
+  });
+});
+
+describe("TimelineStore with an encoded tiled scene", () => {
+  it("carries the block through add and persistence byte-for-byte", () => {
+    const encoded = encodeScene({
+      ...toSnapshot(initialState(false)),
+      tiling: { group: "f4", clip: PEACE_SIGN_SHAPE },
+    });
+    const storage = memoryStorage();
+    const timeline = new TimelineStore({ storage, rollSeed: () => 42 });
+    timeline.add(encoded, "thumb");
+
+    expect(timeline.all()[0].encoded).toBe(encoded);
+    // A fresh instance over the same storage still carries the string — the
+    // timeline treats encoded opaquely, so the tiling block rides it.
+    const reloaded = new TimelineStore({ storage, rollSeed: () => 43 });
+    expect(reloaded.all()[0].encoded).toBe(encoded);
+    expect(reloaded.all()[0].morphMs).toBe(DEFAULT_STEP_MORPH_MS);
   });
 });

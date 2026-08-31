@@ -4,6 +4,9 @@ import {
   SceneCollection,
 } from "./collection";
 import type { SampledSolidStatus } from "./solid-render-status";
+import { encodeScene, toSnapshot } from "./persist";
+import { initialState } from "./state";
+import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 
 function fakeStorage(initial: Record<string, string> = {}) {
   const store: Record<string, string> = { ...initial };
@@ -748,5 +751,32 @@ describe("SceneCollection importScenes", () => {
         .map((s) => s.encoded)
         .sort(),
     ).toEqual(["v1=one", "v1=two"]);
+  });
+});
+
+describe("SceneCollection with an encoded tiled scene", () => {
+  it("carries the block through add, persistence, and importScenes byte-for-byte", () => {
+    const encoded = encodeScene({
+      ...toSnapshot(initialState(false)),
+      tiling: { group: "b3", clip: PEACE_SIGN_SHAPE },
+    });
+    const storage = fakeStorage();
+    const collection = new SceneCollection({ storage, now: () => 1 });
+    collection.add(encoded, "thumb");
+
+    expect(collection.all()[0].encoded).toBe(encoded);
+    // A fresh instance over the same storage still carries the string.
+    const reloaded = new SceneCollection({ storage });
+    expect(reloaded.all()[0].encoded).toBe(encoded);
+    // And the backup/import loop round-trips it verbatim — the collection
+    // treats the encoded string opaquely, so the tiling block rides it.
+    const backup = JSON.parse(storage.store[COLLECTION_STORAGE_KEY]) as {
+      encoded: string;
+      thumbnail: string;
+      createdAt: number;
+    }[];
+    const restored = new SceneCollection({ storage: fakeStorage() });
+    restored.importScenes(backup);
+    expect(restored.all()[0].encoded).toBe(encoded);
   });
 });

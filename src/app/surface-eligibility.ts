@@ -36,6 +36,7 @@ import {
 } from "../fractal/chaos-game";
 import { shapeSdfSource } from "../fractal/shapes";
 import type { ShapeSpec } from "../fractal/shapes";
+import type { TilingSpec } from "../fractal/tiling";
 import type {
   HybridSchedule,
   ShapeTrap,
@@ -72,7 +73,13 @@ export interface SurfaceEligibilityResult {
  * The document fields that decide whether Surface has a truthful route.
  * This is intentionally the Surface-relevant projection of a full scene
  * snapshot: renderer settings, view poses and transient machine state cannot
- * change which mathematical object the document describes.
+ * change which mathematical object the document describes. That boundary is
+ * why the tiling block's OTHER two combination refusals are NOT here: the
+ * derivation does not know balloon-ness (a session flag, refused at the
+ * session door) or the 4D slice thickness (a view pose — the contract's
+ * "tiled 4D sessions run slice 0" refusal lives at the routing seam, where
+ * `fourDView.sliceThickness` is live). This module refuses what the DOCUMENT
+ * alone proves; the routing seam refuses what only the session knows.
  */
 export interface SurfaceEligibilityDocument {
   transforms: Transform[];
@@ -80,6 +87,7 @@ export interface SurfaceEligibilityDocument {
   symmetry: SymmetryParams;
   schedule?: HybridSchedule | null;
   shapeTrap?: ShapeTrap | null;
+  tiling?: TilingSpec | null;
 }
 
 /**
@@ -398,10 +406,32 @@ export function deriveSurfaceEligibility(
   opts: { computeAvailable: boolean },
   schedule: HybridSchedule | null = null,
   shapeTrap: ShapeTrap | null = null,
+  tiling: TilingSpec | null = null,
 ): SurfaceEligibilityResult {
   const scheduleRecords = scheduleRecordCount(schedule);
   const hasSchedule = scheduleRecords > 0;
   const hasChaos = systemHasChaos(transforms);
+  // The tiling block wraps EVERY estimator core, so its combination
+  // refusals gate the whole derivation before any analyzer routes. The
+  // kaleidoscope refusal is the one the document alone proves: both are
+  // query-space folds, and the descent cores sweep their rotation INSIDE
+  // the descent, after the tiling fold — the estimate then has no certified
+  // lower-bound order (docs/tiling-contract.md's legal-combinations table).
+  // One uniform routing rule beats the per-family matrix, so it refuses
+  // every kind — escape and bulb included — exactly as the contract
+  // freezes. The balloon and 4D-slab refusals live at the routing seam
+  // instead: this derivation does not know either (module doc).
+  if (tiling && symmetry.order > 1) {
+    return {
+      status: "ineligible",
+      note:
+        "A tiled document cannot carry a kaleidoscope: both are query-space folds, " +
+        "and the descent sweeps its rotation inside the descent, after the tiling fold — " +
+        "the estimate then has no certified lower-bound order. Clear the tiling block or " +
+        "set symmetry order to 1.",
+      kind: null,
+    };
+  }
   // A 4D document routes to the 4D analysis — what used to be this gate's
   // blanket "extends into 4D" disqualifier is now the 4D tracer's
   // admission ticket.
@@ -713,5 +743,6 @@ export function deriveSurfaceDocumentEligibility(
     COMPLETE_SURFACE_PRODUCT_CAPABILITIES,
     document.schedule ?? null,
     document.shapeTrap ?? null,
+    document.tiling ?? null,
   );
 }

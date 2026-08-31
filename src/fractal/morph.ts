@@ -88,6 +88,7 @@ import type { CondensationDepthBand } from "./condensation-de";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "./shape-trap";
 import type { ShapePart, ShapePose, ShapeSpec } from "./shapes";
+import type { TilingSpec } from "./tiling";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
 import {
   PATTERN_DEFAULT_SCALE,
@@ -146,6 +147,20 @@ export interface MorphSystem {
    * the exact endpoints still return by reference.
    */
   condensationDepthBand?: CondensationDepthBand | null;
+  /**
+   * The scene's optional space-tiling block (`fractal/tiling.ts`'s
+   * {@link TilingSpec}) — carried so the block's placement in a morph is
+   * ONE rule ({@link lerpTiling}). The group is discrete — never
+   * interpolated — so the target's block pops at the leg's first push, the
+   * scheduled-hybrid placement (a replace-load applies the TARGET's block
+   * from the first generation). The optional clip follows the shape-trap
+   * precedent: a deeply-equal clip rides the target's verbatim, any other
+   * pair pops the target's whole block. Absent on both sides stays absent,
+   * and the endpoints are exact by {@link lerpSystem}'s by-reference
+   * returns. Optional (`undefined` and `null` both mean "no tiling") so
+   * every existing caller's plain object stays valid.
+   */
+  tiling?: TilingSpec | null;
 }
 
 /** The three w-mixing planes shared by {@link WExtension}'s `rotation` and
@@ -917,6 +932,8 @@ export function lerpSystem(
   if (b.condensationDepthBand) {
     system.condensationDepthBand = { ...b.condensationDepthBand };
   }
+  const tiling = lerpTiling(a.tiling ?? null, b.tiling ?? null, t);
+  if (tiling) system.tiling = tiling;
   return system;
 }
 
@@ -985,5 +1002,39 @@ export function lerpShapeTrap(
       out.geometryLevelMax = b.geometryLevelMax;
     }
   }
+  return out;
+}
+
+/**
+ * The tiling block's interpolation ({@link MorphSystem.tiling}'s rule), the
+ * scheduled-hybrid placement combined with the shape-trap one: the GROUP is
+ * discrete — never interpolated — so the target's group pops at the leg's
+ * first push from any intermediate sample (there is no meaningful midpoint
+ * between two reflection groups; a replace-load applies the target's block
+ * from the first generation). The optional CLIP follows the shape-trap
+ * precedent for its shape: both sides carrying deeply-equal clips rides the
+ * TARGET's clip verbatim (the trap carries the target's shape while its own
+ * pose fields glide — a clip has no trap-level pose counterpart, so there
+ * is nothing here to glide), and every other pair — one-sided, or clips
+ * that differ — pops the target's WHOLE block. Absent on both sides stays
+ * absent (never a synthesized block), and the endpoints are exact by
+ * {@link lerpSystem}'s by-reference returns. Exported for the pinning
+ * tests; app callers go through {@link lerpSystem}.
+ */
+export function lerpTiling(
+  a: TilingSpec | null,
+  b: TilingSpec | null,
+  t: number,
+): TilingSpec | null {
+  if (t <= 0) return a;
+  if (t >= 1) return b;
+  if (!a || !b) return b;
+  // A different clip is a different composition — no meaningful midpoint
+  // between two shapes, the trap's own pop. Deeply-equal clips glide by
+  // riding the target's verbatim (the trap carries the target's shape the
+  // same way while its pose fields glide).
+  if (JSON.stringify(a.clip) !== JSON.stringify(b.clip)) return b;
+  const out: TilingSpec = { group: b.group };
+  if (b.clip !== undefined) out.clip = b.clip;
   return out;
 }

@@ -90,7 +90,7 @@ describe("crossover-v1 exact content identity", () => {
     first.transforms[0].position[0] = -0;
     const digest = evolutionSceneContentDigest(first);
     expect(digest).toBe(
-      "scene-sha256-6cb328964f6c131c3323d9fe6b91026c37bb51df90e322fe1b9cfb9462da4b17",
+      "scene-sha256-85ed00889cd99016e836d49cf8ddfd431d38e4ec0c3980be33bd554b3dcd8ae7",
     );
 
     const reidentified = structuredClone(first);

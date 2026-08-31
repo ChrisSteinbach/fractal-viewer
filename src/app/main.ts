@@ -329,6 +329,7 @@ import {
   setSymmetryPlane,
   setSymmetryOrder,
   setSymmetryTwist,
+  setTiling,
   setTransforms,
   setTransformEmitter,
   updateTransform,
@@ -2345,6 +2346,7 @@ async function main(): Promise<void> {
       transforms: system.transforms,
       finalTransform: system.finalTransform ?? undefined,
       shapeTrap: system.shapeTrap ?? undefined,
+      tiling: system.tiling ?? undefined,
     };
   }
 
@@ -2358,6 +2360,7 @@ async function main(): Promise<void> {
       symmetry: state.symmetry,
       shapeTrap: state.shapeTrap ?? null,
       condensationDepthBand: state.condensationDepthBand ?? null,
+      tiling: state.tiling ?? null,
     };
   }
 
@@ -5257,6 +5260,7 @@ async function main(): Promise<void> {
         { computeAvailable: surfaceComputeAvailable() },
         state.schedule ?? null,
         state.shapeTrap ?? null,
+        state.tiling ?? null,
       );
       if (sessionEligibility.status === "ineligible") {
         ui.flashToast(
@@ -6241,6 +6245,7 @@ async function main(): Promise<void> {
       { computeAvailable: surfaceComputeAvailable() },
       state.schedule ?? null,
       state.shapeTrap ?? null,
+      state.tiling ?? null,
     );
   }
 
@@ -7456,6 +7461,13 @@ async function main(): Promise<void> {
         // system-scoped blocks rather than leaving a stale trap to disable
         // the arriving system's Surface route.
         state = setShapeTrap(state, null);
+        // The tiling block clears for the same shared reason: a rolled
+        // system was quality-gated bare, a leftover group would tile the
+        // fresh surprise into a composition that gate never saw, and with a
+        // rolled kaleidoscope it would take the Surface route away outright
+        // (the eligibility refusal). random-system never ROLLS one — tiling
+        // is authored composition, not surprise material.
+        state = setTiling(state, null);
       },
       "always",
       morphMs,
@@ -7532,6 +7544,7 @@ async function main(): Promise<void> {
       symmetry: snapshot.symmetry,
       shapeTrap: snapshot.shapeTrap as MorphSystem["shapeTrap"],
       condensationDepthBand: snapshot.condensationDepthBand,
+      tiling: snapshot.tiling as MorphSystem["tiling"],
     };
   }
 
@@ -8753,6 +8766,7 @@ async function main(): Promise<void> {
         finalTransform: undefined,
         schedule: undefined,
         shapeTrap: undefined,
+        tiling: undefined,
       });
       try {
         const releasePinnedSource = pinCustomMeshAssets(ids);
@@ -9012,6 +9026,16 @@ async function main(): Promise<void> {
             },
           };
         }
+        // The space-tiling block a preset IS a composition with — the lens
+        // table's exact both-directions rule once more: a preset authored
+        // around a tiling group installs its block through its own side
+        // table, and every other preset CLEARS one (a leftover tiling block
+        // would route the arriving system through a group it was never
+        // composed with, and for a kaleidoscope-carrying preset would take
+        // the Surface route away outright — the eligibility refusal).
+        // Phase 1 ships no tiling presets, so today this is always the
+        // clear; the future table slots in beside the others.
+        state = setTiling(state, null);
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.

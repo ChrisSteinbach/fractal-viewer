@@ -129,6 +129,8 @@ import {
 } from "../fractal/chaos-game";
 import { MAX_SHAPE_PARTS } from "../fractal/shapes";
 import type { ShapePart, ShapePose, ShapeSpec } from "../fractal/shapes";
+import { TILING_GROUPS } from "../fractal/tiling";
+import type { TilingGroup, TilingSpec } from "../fractal/tiling";
 import { isMeshAssetId } from "../fractal/mesh-shapes";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
@@ -170,6 +172,16 @@ export interface SceneSnapshot {
    * shape leg through {@link decodeEmitter}'s spec codec.
    */
   shapeTrap?: ShapeTrap;
+  /**
+   * Optional space-tiling block (see {@link AppState.tiling}).
+   * Optional like {@link schedule}, and on the identical wire discipline:
+   * written only when present (a scene that never authored one encodes
+   * byte-identically to one predating the field), decoded by
+   * {@link decodeTiling} — never-throwing, WHOLE-BLOCK-OR-NOTHING, the
+   * group by exact string match against the shipped union and the clip
+   * through {@link decodeEmitter}'s spec codec.
+   */
+  tiling?: TilingSpec;
   numPoints: number;
   pointSize: number;
   colorMode: ColorMode;
@@ -428,6 +440,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     schedule: state.schedule,
     condensationDepthBand: state.condensationDepthBand,
     shapeTrap: state.shapeTrap,
+    tiling: state.tiling,
     numPoints: state.numPoints,
     pointSize: state.pointSize,
     colorMode: state.colorMode,
@@ -522,6 +535,8 @@ export function fromSnapshot(
     condensationDepthBand: snapshot.condensationDepthBand,
     // The trap block, for the schedule's reason exactly.
     shapeTrap: snapshot.shapeTrap,
+    // The tiling block, for the schedule's reason exactly.
+    tiling: snapshot.tiling,
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
     balloonPaletteId: snapshot.balloonPaletteId ?? DEFAULT_BALLOON_PALETTE,
@@ -1189,6 +1204,40 @@ function decodeShapeTrap(raw: unknown): ShapeTrap | undefined {
     delete trap.geometryLevelMax;
   }
   return trap;
+}
+
+/**
+ * Decode the scene's optional space-tiling block (`fractal/tiling.ts`'s
+ * {@link TilingSpec}). QUIET WHOLE-BLOCK fallback, {@link decodeShapeTrap}'s
+ * discipline: a malformed block — an unknown group string, a non-object
+ * block, a clip that fails {@link decodeEmitter}'s spec codec — drops the
+ * ENTIRE block to `undefined` rather than rejecting the scene or salvaging
+ * fields (tiling is one composition, not a bag of leaves), and never throws.
+ * The group decodes by EXACT string match against the shipped union
+ * (`TILING_GROUPS` — the runtime set built from the const array, the same
+ * validator discipline the color-mode sets use), so a future group a newer
+ * build shipped is dropped whole by an older build rather than decoded into
+ * a group the resolver would throw on; the clip rides the shape spec codec
+ * exactly as the trap's shape does (one spec vocabulary, one codec).
+ */
+function decodeTiling(raw: unknown): TilingSpec | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const o = raw as Record<string, unknown>;
+  if (
+    typeof o.group !== "string" ||
+    !TILING_GROUPS.some((g) => g === o.group)
+  ) {
+    return undefined;
+  }
+  const tiling: TilingSpec = { group: o.group as TilingGroup };
+  if (o.clip !== undefined) {
+    const clip = decodeEmitter(o.clip);
+    if (clip === undefined) return undefined;
+    tiling.clip = clip;
+  }
+  return tiling;
 }
 
 /**
@@ -2713,6 +2762,10 @@ export function encodeScene(s: SceneSnapshot): string {
     };
     condensationDepthBand?: CondensationDepthBand;
     shapeTrap?: EncodedShapeTrap;
+    tiling?: {
+      group: TilingGroup;
+      clip?: EncodedShapeSpec;
+    };
     numPoints: number;
     pointSize: number;
     colorMode: ColorMode;
@@ -3021,6 +3074,21 @@ export function encodeScene(s: SceneSnapshot): string {
       payload.shapeTrap = trap;
     }
   }
+  // The space-tiling block: written only when present — the schedule's
+  // discipline one block down. The group is a discrete string written
+  // verbatim; the optional clip rides the emitter spec's encoder (one spec
+  // vocabulary, one codec) and is written only when present AND when it
+  // survives the encoder (each optional field's own rule), so a group-only
+  // block carries the group alone.
+  if (s.tiling) {
+    const clip =
+      s.tiling.clip === undefined ? undefined : encodeEmitter(s.tiling.clip);
+    const encoded: { group: TilingGroup; clip?: EncodedShapeSpec } = {
+      group: s.tiling.group,
+    };
+    if (clip !== undefined) encoded.clip = clip;
+    payload.tiling = encoded;
+  }
   // Written only when present, like finalTransform above — never-authored
   // scenes keep their short URLs. Encoded as hex strings for URL
   // compactness — see rgbToHex.
@@ -3260,6 +3328,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // fallback, never rejecting the scene; see decodeShapeTrap.
     const shapeTrap = decodeShapeTrap(o.shapeTrap);
 
+    // tiling: optional space-tiling block — quiet whole-block fallback,
+    // never rejecting the scene; see decodeTiling.
+    const tiling = decodeTiling(o.tiling);
+
     // colorMode / renderStyle: exact known-string matches only. ---------------
     const { colorMode, renderStyle } = o;
     if (typeof colorMode !== "string" || !VALID_COLOR_MODES.has(colorMode))
@@ -3469,6 +3541,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       schedule,
       condensationDepthBand,
       shapeTrap,
+      tiling,
       numPoints,
       pointSize,
       colorMode: colorMode as ColorMode,

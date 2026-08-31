@@ -7,7 +7,7 @@ import {
   PORTABLE_SCENE_FILE_VERSION,
   SCENE_FILE_VERSION,
 } from "./scene-file";
-import { encodeScene } from "./persist";
+import { decodeScene, encodeScene } from "./persist";
 import type { SceneSnapshot } from "./persist";
 import { COLLECTION_CAP } from "./collection";
 import type { SavedScene } from "./collection";
@@ -149,6 +149,35 @@ describe("scene-file: single scene", () => {
     const decoded = decodeImportFile(file);
 
     expect(decoded).toEqual({ kind: "scene", encoded });
+  });
+
+  it("round-trips a tiled scene — the encoded string carries the block through the envelope untouched", () => {
+    const snapshot: SceneSnapshot = {
+      ...baseSnapshot(),
+      tiling: {
+        group: "b4",
+        clip: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.75 },
+              combine: "union",
+            },
+          ],
+        },
+      },
+    };
+    const encoded = encodeScene(snapshot);
+
+    const file = encodeSceneFile(encoded, 123_456);
+    const decoded = decodeImportFile(file);
+
+    expect(decoded).toEqual({ kind: "scene", encoded });
+    // And the carried string really decodes back to the authored tiling
+    // block — the envelope never re-encodes or drops the scene field.
+    expect(decoded !== null && decoded.kind).toBe("scene");
+    if (decoded !== null && decoded.kind === "scene") {
+      expect(decodeScene(decoded.encoded)!.tiling).toEqual(snapshot.tiling);
+    }
   });
 
   it("exports the ordinary scene envelope without Evolution provenance", () => {

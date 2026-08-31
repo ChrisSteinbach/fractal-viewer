@@ -130,6 +130,7 @@ import {
   setFinalTransform,
   setSchedule,
   setShapeTrap,
+  setTiling,
   updateShapeTrap,
   setScheduleDepth,
   stripScheduleTransform,
@@ -2851,5 +2852,28 @@ describe("setShapeTrap / updateShapeTrap (shape-trap color/geometry block)", () 
     expect(geometryOff.shapeTrap?.geometryLevelMin).toBeUndefined();
     expect(geometryOff.shapeTrap?.geometryLevelMax).toBeUndefined();
     expect(geometryOff.shapeTrap?.shape).toBe(PEACE_SIGN_SHAPE);
+  });
+});
+
+describe("setTiling (the space-tiling block)", () => {
+  const base = initialState(false);
+
+  it("stores a spec exactly as authored and clears with null (absent-means-off)", () => {
+    const on = setTiling(base, { group: "a3", clip: PEACE_SIGN_SHAPE });
+    expect(on.tiling).toEqual({ group: "a3", clip: PEACE_SIGN_SHAPE });
+    const off = setTiling(on, null);
+    expect(off.tiling).toBeUndefined();
+    // A group-only block is authored, not a classic value to strip — the
+    // tiling block has no normalization domain (the group is discrete and
+    // the clip's validation lives in shapes.ts), so it stores verbatim.
+    const groupOnly = setTiling(base, { group: "f4" });
+    expect(groupOnly.tiling).toEqual({ group: "f4" });
+    expect(groupOnly.tiling?.clip).toBeUndefined();
+  });
+
+  it("never normalizes: every shipped group stores as authored", () => {
+    for (const group of ["a3", "b3", "h3", "a4", "b4", "f4"] as const) {
+      expect(setTiling(base, { group }).tiling?.group).toBe(group);
+    }
   });
 });

@@ -6965,3 +6965,119 @@ describe("shapeTrap codec (the shape-trap color/geometry block)", () => {
     expect(cleared.shapeTrap).toBeUndefined();
   });
 });
+
+describe("tiling codec (the space-tiling block)", () => {
+  it("round-trips a group + clip block through the shared shape codec", () => {
+    const clip: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "box", half: [0.7, 0.5, 0.3] },
+          combine: "union",
+          pose: { offset: [0.1, 0.2, 0.3], scale: 0.8 },
+        },
+      ],
+    };
+    const result = decodeScene(
+      encodeScene({ ...baseSnapshot(), tiling: { group: "b3", clip } }),
+    );
+    expect(result).not.toBeNull();
+    expect(result!.tiling).toEqual({ group: "b3", clip });
+  });
+
+  it("round-trips a multi-part clip through the same object wire the trap's shape uses", () => {
+    const clip: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.75 },
+          combine: "union",
+          pose: { offset: [-1, 0, 0] },
+        },
+        {
+          primitive: { kind: "box", half: [0.4, 0.5, 0.6] },
+          combine: "intersect",
+          pose: { rotate: [0, 0, 0.25] },
+        },
+      ],
+    };
+    const result = decodeScene(
+      encodeScene({ ...baseSnapshot(), tiling: { group: "f4", clip } }),
+    );
+    expect(result!.tiling?.group).toBe("f4");
+    expect(result!.tiling?.clip).toEqual(clip);
+  });
+
+  it("writes nothing without a block — an unauthored scene stays byte-identical to one predating the field", () => {
+    const plain = encodeScene(baseSnapshot());
+    const payload = decodePayload(plain);
+    expect("tiling" in payload).toBe(false);
+    const decoded = decodeScene(plain);
+    expect(decoded!.tiling).toBeUndefined();
+  });
+
+  it("writes a group-only block carrying the group alone", () => {
+    const decoded = decodeScene(
+      encodeScene({ ...baseSnapshot(), tiling: { group: "a4" } }),
+    );
+    expect(decoded!.tiling).toEqual({ group: "a4" });
+    expect(decoded!.tiling!.clip).toBeUndefined();
+    const wire = decodePayload(
+      encodeScene({ ...baseSnapshot(), tiling: { group: "a4" } }),
+    ).tiling as Record<string, unknown>;
+    expect(Object.keys(wire).sort()).toEqual(["group"]);
+  });
+
+  it("drops a malformed block WHOLE — never rejecting the scene, never salvaging leaves", () => {
+    const mangle = (patch: unknown): SceneSnapshot | null => {
+      const raw = JSON.parse(
+        Buffer.from(
+          encodeScene({
+            ...baseSnapshot(),
+            tiling: { group: "a3", clip: PEACE_SIGN_SHAPE },
+          })
+            .slice("v1=".length)
+            .replace(/-/g, "+")
+            .replace(/_/g, "/"),
+          "base64",
+        ).toString("utf8"),
+      ) as Record<string, unknown>;
+      raw.tiling = patch;
+      const b64 = Buffer.from(JSON.stringify(raw), "utf8")
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+      return decodeScene(`v1=${b64}`);
+    };
+    // An unknown group, a non-string group, a missing group, a garbage
+    // block, and each way a clip can be malformed: each drops the ENTIRE
+    // block and keeps the scene — the group decodes by exact string match
+    // only, the clip through the shape decoder's own strictness.
+    for (const patch of [
+      { group: "g3" },
+      { group: 3 },
+      {},
+      "garbage",
+      [1, 2, 3],
+      { group: "a3", clip: { parts: "x" } },
+      { group: "a3", clip: ["s", "1"] },
+      { group: "a3", clip: { parts: [{ primitive: { kind: "wobble" } }] } },
+    ]) {
+      const decoded = mangle(patch);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.tiling).toBeUndefined();
+    }
+  });
+
+  it("fromSnapshot clears a base session's block when the snapshot has none (the schedule's explicit-read rule)", () => {
+    const withTiling = fromSnapshot(
+      { ...baseSnapshot(), tiling: { group: "h3" } },
+      initialState(false),
+    );
+    expect(withTiling.tiling).toEqual({ group: "h3" });
+    const cleared = fromSnapshot(baseSnapshot(), withTiling);
+    expect(cleared.tiling).toBeUndefined();
+    // A cleared block encodes byte-identically to an untiled scene — the
+    // wire never carries the field once the reducer removed it.
+    expect(encodeScene(toSnapshot(cleared))).toBe(encodeScene(baseSnapshot()));
+  });
+});

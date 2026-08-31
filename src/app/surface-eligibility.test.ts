@@ -11,6 +11,7 @@ import {
 import type { Preset } from "../fractal/presets";
 import { shapeSdfSource } from "../fractal/shapes";
 import type { ShapeSpec } from "../fractal/shapes";
+import type { TilingSpec } from "../fractal/tiling";
 import type { SymmetryParams, Transform } from "../fractal/types";
 import {
   SURFACE_SHAPE_SOURCE_BUDGET_BYTES,
@@ -89,6 +90,7 @@ function expectNeutralParity(
     { computeAvailable: true },
     document.schedule ?? null,
     document.shapeTrap ?? null,
+    document.tiling ?? null,
   );
   expect(neutral).toEqual(legacyComplete);
   return neutral;
@@ -1068,5 +1070,94 @@ describe("deriveSurfaceEligibility shape emitters", () => {
     });
     expect(result.status).toBe("ineligible");
     expect(result.note).toContain("25 map/emitter records");
+  });
+});
+
+describe("deriveSurfaceEligibility and the tiling block", () => {
+  function deriveWithTiling(
+    preset: Preset,
+    tiling: TilingSpec,
+    symmetry: SymmetryParams = presetDocument(preset).symmetry,
+  ) {
+    const document = presetDocument(preset);
+    return deriveSurfaceEligibility(
+      document.transforms,
+      document.finalTransform ?? null,
+      symmetry,
+      { computeAvailable: true },
+      document.schedule ?? null,
+      document.shapeTrap ?? null,
+      tiling,
+    );
+  }
+
+  it("refuses a tiled document with a kaleidoscope, naming the two query-space folds", () => {
+    const result = deriveWithTiling(
+      "mandelboxKifs",
+      { group: "a3" },
+      {
+        ...NO_SYMMETRY,
+        order: 2,
+      },
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.kind).toBeNull();
+    expect(result.note).toContain("query-space folds");
+    expect(result.note).toContain("tiling");
+  });
+
+  it("applies the one uniform refusal rule to every routing kind — escape included", () => {
+    const document = presetDocument("mandelboxClassic");
+    const result = deriveSurfaceEligibility(
+      document.transforms,
+      document.finalTransform ?? null,
+      { ...document.symmetry, order: 2 },
+      { computeAvailable: true },
+      document.schedule ?? null,
+      document.shapeTrap ?? null,
+      { group: "b3" },
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.kind).toBeNull();
+    expect(result.note).toContain("query-space folds");
+  });
+
+  it("keeps a tiled document without a kaleidoscope exactly as eligible as the untiled one", () => {
+    const plain = derivePreset("mandelboxKifs");
+    const tiled = deriveWithTiling("mandelboxKifs", { group: "a3" });
+    expect(tiled).toEqual(plain);
+  });
+
+  it("keeps a tiled 4D document eligible — eligibility refuses no dimension rule; the slab refusal lives at the routing seam", () => {
+    const plain = derivePreset("pentatope");
+    const tiled = deriveWithTiling("pentatope", { group: "a4" });
+    expect(tiled).toEqual(plain);
+    expect(tiled.status).not.toBe("ineligible");
+  });
+
+  it("never consults machine availability for the tiling refusal — a tiled kaleidoscope document is refused on every backend", () => {
+    const document = presetDocument("mandelboxKifs");
+    const withTiling = (computeAvailable: boolean) =>
+      deriveSurfaceEligibility(
+        document.transforms,
+        document.finalTransform ?? null,
+        { ...NO_SYMMETRY, order: 2 },
+        { computeAvailable },
+        document.schedule ?? null,
+        document.shapeTrap ?? null,
+        { group: "h3" },
+      );
+    expect(withTiling(false)).toEqual(withTiling(true));
+    expect(withTiling(false).status).toBe("ineligible");
+  });
+
+  it("deriveSurfaceDocumentEligibility reads document.tiling (neutral parity holds for a tiled document)", () => {
+    const tiled: SurfaceEligibilityDocument = {
+      ...presetDocument("mandelboxKifs"),
+      tiling: { group: "a3" },
+      symmetry: { ...NO_SYMMETRY, order: 2 },
+    };
+    expectNeutralParity(tiled);
+    expect(deriveSurfaceDocumentEligibility(tiled).status).toBe("ineligible");
   });
 });

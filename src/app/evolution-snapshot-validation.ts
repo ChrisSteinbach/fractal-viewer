@@ -36,6 +36,8 @@ import {
 } from "../fractal/surface-pattern";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
 import { SHAPE_TRAP_GEOMETRY_LEVEL_MAX } from "../fractal/shape-trap";
+import { TILING_GROUPS } from "../fractal/tiling";
+import type { TilingSpec } from "../fractal/tiling";
 import {
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
@@ -159,6 +161,10 @@ const TRAP_FIELDS = {
   geometryLevelMin: true,
   geometryLevelMax: true,
 } satisfies Fields<ShapeTrap>;
+const TILING_FIELDS = {
+  group: true,
+  clip: true,
+} satisfies Fields<TilingSpec>;
 const SYMMETRY_FIELDS = {
   order: true,
   plane: true,
@@ -287,6 +293,7 @@ const SCENE_FIELDS = {
   schedule: true,
   condensationDepthBand: true,
   shapeTrap: true,
+  tiling: true,
   numPoints: true,
   pointSize: true,
   colorMode: true,
@@ -761,6 +768,12 @@ function trap(value: unknown, path: string): void {
   }
 }
 
+function tiling(value: unknown, path: string): void {
+  const entry = object(value, path, TILING_FIELDS);
+  enumeration(required(entry, "group", path), TILING_GROUPS, `${path}.group`);
+  if (entry.clip !== undefined) shape(entry.clip, `${path}.clip`);
+}
+
 function symmetry(value: unknown, path: string): void {
   const entry = object(value, path, SYMMETRY_FIELDS);
   const order = param(
@@ -1100,6 +1113,7 @@ export function assertValidEvolutionSceneSnapshot(
   }
   if (scene.shapeTrap !== undefined)
     trap(scene.shapeTrap, "snapshot.shapeTrap");
+  if (scene.tiling !== undefined) tiling(scene.tiling, "snapshot.tiling");
 
   param(
     required(scene, "numPoints", "snapshot"),

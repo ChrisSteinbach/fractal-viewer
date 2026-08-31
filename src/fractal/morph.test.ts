@@ -1,12 +1,13 @@
 import { systemPartsAreNonFlat } from "./affine4";
 import { derivedColorIndex } from "./chaos-game";
 import type { MeshAssetId } from "./mesh-shapes";
-import { lerpShapeTrap, lerpSystem } from "./morph";
+import { lerpShapeTrap, lerpSystem, lerpTiling } from "./morph";
 import type { MorphSystem } from "./morph";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
 import type { ShapeSpec } from "./shapes";
 import { PEACE_SIGN_SHAPE, GEAR_SHAPE } from "./shapes";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "./shape-trap";
+import type { TilingSpec } from "./tiling";
 import type { ShapeTrap } from "./types";
 import { VARIATION_TYPES } from "./types";
 import type { Transform, VariationType } from "./types";
@@ -1437,5 +1438,83 @@ describe("lerpShapeTrap (the shape-trap block's morph rule)", () => {
     ).toBeUndefined();
     const mid = lerpSystem(system(trapA), system(trapB), 0.5).shapeTrap;
     expect(mid?.position).toEqual([0.5, 0.5, 0]);
+  });
+});
+
+describe("lerpTiling (the tiling block's morph rule)", () => {
+  const clipA: ShapeSpec = {
+    parts: [
+      {
+        primitive: { kind: "sphere", radius: 0.5 },
+        combine: "union",
+        pose: { offset: [0.2, 0, 0] },
+      },
+    ],
+  };
+  const clipB: ShapeSpec = {
+    parts: [
+      {
+        primitive: { kind: "sphere", radius: 0.5 },
+        combine: "union",
+        pose: { offset: [0.2, 0, 0] },
+      },
+    ],
+  };
+  const tilingA: TilingSpec = { group: "a3", clip: clipA };
+  const tilingB: TilingSpec = { group: "b3", clip: clipB };
+
+  it("is endpoint-exact by reference at t = 0 and t = 1", () => {
+    expect(lerpTiling(tilingA, tilingB, 0)).toBe(tilingA);
+    expect(lerpTiling(tilingA, tilingB, 1)).toBe(tilingB);
+    expect(lerpTiling(null, tilingB, 0)).toBeNull();
+    expect(lerpTiling(tilingA, null, 1)).toBeNull();
+  });
+
+  it("POPS the target's discrete group at the leg's first push — never interpolated", () => {
+    // Every intermediate, however small, carries B's group.
+    expect(lerpTiling(tilingA, tilingB, 0.01)!.group).toBe("b3");
+    expect(lerpTiling(tilingA, tilingB, 0.5)!.group).toBe("b3");
+    // The whole block pops when the target carries none.
+    expect(lerpTiling(tilingA, null, 0.25)).toBeNull();
+    // A group-only target pops the group and stays clip-less.
+    const groupOnly = lerpTiling(tilingA, { group: "f4" }, 0.5);
+    expect(groupOnly).toEqual({ group: "f4" });
+  });
+
+  it("rides the target's clip verbatim when both clips are deeply equal (the trap's shape rule)", () => {
+    const mid = lerpTiling(tilingA, tilingB, 0.5)!;
+    expect(mid.group).toBe("b3");
+    expect(mid.clip).toBe(tilingB.clip);
+  });
+
+  it("POPS the target's whole block for every other clip pair: one-sided, or clips that differ", () => {
+    // One-sided (either way).
+    expect(lerpTiling(tilingA, { group: "b3" }, 0.25)).toEqual({
+      group: "b3",
+    });
+    expect(lerpTiling({ group: "a3" }, tilingB, 0.25)).toBe(tilingB);
+    // A different clip is a different composition — the trap's pop.
+    const otherClip: TilingSpec = {
+      group: "b3",
+      clip: GEAR_SHAPE,
+    };
+    expect(lerpTiling(tilingA, otherClip, 0.25)).toBe(otherClip);
+    // The block arrives whole, by reference, with nothing synthesized.
+    expect(lerpTiling(null, tilingB, 0.25)).toBe(tilingB);
+  });
+
+  it("rides lerpSystem: an untiled pair stays absent and a tiled pair pops the target's block", () => {
+    expect(lerpSystem(system(), system(), 0.5).tiling).toBeUndefined();
+    const mid = lerpSystem(
+      system({ tiling: tilingA }),
+      system({ tiling: tilingB }),
+      0.5,
+    );
+    expect(mid.tiling?.group).toBe("b3");
+    expect(mid.tiling?.clip).toBe(tilingB.clip);
+    // A tiling-bearing morph into an untiled target pops to absence.
+    expect(
+      lerpSystem(system({ tiling: tilingA }), system(), 0.5).tiling,
+    ).toBeUndefined();
   });
 });
