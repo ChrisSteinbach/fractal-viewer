@@ -611,15 +611,16 @@ the 3D inverse with the ground plane — run through the PRODUCTION
 same carrier gate and the family's tiled oracle. All five settled with
 hit-rate gaps 0.001–0.012 and the plane row's plane-rate gap 0.012
 (GPU 0.535 vs CPU 0.547, 19738 plane terminals). The durable browser gate
-`scripts/surface-lattice.verify.mjs` passed the same display's full twelve-row
-route matrix with the shipped eight-pass settle: inverse affine/fold and
-forward rows all exposed progress before settling, drew 34.30–74.71% of the
-frame on the expected hardware engine and retained the lattice block. The
-final-fold lens drew 47.48%/47.50% on WebGL/compute, the
-untiled/finite/lattice trio differed by 7.97%/25.08%/25.06%, and a persisted
-document reload reproduced its picture within 10.73% under the 15% rerender
-ceiling. `tiling-ui.verify.mjs` additionally reloads the app's clean Copy Link
-and enters/settles/draws its unchanged hash under read-only instrumentation.
+`scripts/surface-lattice.verify.mjs` passed the same display's full
+thirteen-row route matrix with the shipped eight-pass settle: 3D/4D inverse
+affine/fold and forward rows all exposed progress before settling, drew
+33.03–74.65% of the frame on the expected hardware engine and retained the
+lattice block. The 3D final-fold lens drew 47.48%/47.49% on WebGL/compute,
+fold4 drew 33.03% on compute, the untiled/finite/lattice trio differed by
+7.67%/25.09%/25.10%, and a persisted document reload reproduced its picture
+within 4.15% under the 15% rerender ceiling. `tiling-ui.verify.mjs`
+additionally reloads the app's clean Copy Link and enters/settles/draws its
+unchanged hash under read-only instrumentation.
 
 ### Release qualification matrix
 

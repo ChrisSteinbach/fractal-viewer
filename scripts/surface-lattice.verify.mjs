@@ -15,6 +15,7 @@
  *   - 3D inverse IFS lattice through a final fold lens: both engines;
  *   - 3D forward escape lattice: forced WebGL and WebGPU;
  *   - genuinely non-flat 4D inverse lattice: forced WebGL and WebGPU;
+ *   - genuinely 4D folded-map inverse lattice: its compute-only route;
  *   - genuinely 4D forward escape lattice: its compute-only route;
  *   - the 3D inverse lattice with the ground plane: both engines.
  *
@@ -44,12 +45,12 @@
  * readback is empty outside its own rAF).
  *
  * MEASURED 2026-08-31 on verified Mesa Intel Iris Xe with the shipped 8-pass
- * settle: all twelve routed lattice rows exposed progress, settled, drew and
- * retained their document on the expected hardware engine, including the 3D
- * final-fold lens at 47.48% WebGL / 47.50% compute coverage. Overall coverage
- * ranged 34.30-74.71%; untiled/finite/lattice pair differences were
- * 7.97%/25.08%/25.06%, and the persisted-document reload differed by 10.73%
- * under its 15% rerender ceiling.
+ * settle: all thirteen routed lattice rows exposed progress, settled, drew
+ * and retained their document on the expected hardware engine. The 3D final-
+ * fold lens covered 47.48% WebGL / 47.49% compute; the non-flat fold4 row
+ * covered 33.03% on compute. Overall coverage ranged 33.03-74.65%;
+ * untiled/finite/lattice pair differences were 7.67%/25.09%/25.10%, and the
+ * persisted-document reload differed by 4.15% under its 15% rerender ceiling.
  *
  * Options:
  *   --url=URL        app origin (default https://localhost:4173)
@@ -175,6 +176,25 @@ const IFS4_TRANSFORMS = [
   w: { position: w },
 }));
 
+/** The fold4 core's two-map pure-boxfold fixture: both maps carry live w
+ * state, so this cannot collapse onto the 3D fold route. */
+const FOLD4_TRANSFORMS = [
+  {
+    position: [0.4, 0.2, 0],
+    rotation: ZERO_ROTATION,
+    scale: HALF_SCALE,
+    variations: [{ type: "boxfold", weight: 1 }],
+    w: { position: 0.3, rotation: { xw: 0.3 } },
+  },
+  {
+    position: [-0.4, -0.2, 0],
+    rotation: ZERO_ROTATION,
+    scale: HALF_SCALE,
+    variations: [{ type: "boxfold", weight: 1 }],
+    w: { position: -0.3, rotation: { yw: 0.25 } },
+  },
+];
+
 const ESCAPE3_TRANSFORMS = [
   {
     position: [0, 0, 0],
@@ -217,9 +237,9 @@ const LATTICE_CLIP = {
   ],
 };
 
-/** A post-IFS fold lens forces the inverse fold-descent core while lattice
- * remains the query-space pre-fold. This is deliberately 3D: fold4 + tiling
- * is a documented refusal, not a successful route. */
+/** A post-IFS fold lens forces the 3D inverse fold-descent core while lattice
+ * remains the query-space pre-fold. The 4D folded-map fixture below separately
+ * pins its supported compute-only fold4 route. */
 const FOLD_LENS = {
   position: [0, 0, 0],
   rotation: ZERO_ROTATION,
@@ -271,6 +291,12 @@ const FIXTURES = [
     family: "inverse 4D lattice",
     document: sceneDocument(IFS4_TRANSFORMS, LATTICE),
     arms: ["webgl", "compute"],
+  },
+  {
+    name: "ifs4-fold",
+    family: "inverse 4D folded-map lattice",
+    document: sceneDocument(FOLD4_TRANSFORMS, LATTICE),
+    arms: ["compute"],
   },
   {
     name: "escape4",
