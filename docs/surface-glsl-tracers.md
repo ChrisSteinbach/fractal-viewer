@@ -76,13 +76,13 @@ finish+pattern. All 9/9 returned GL error 0 with no program diagnostic. The
 same matrix passed SwiftShader independently before the Iris run.
 
 The durable browser gate `scripts/surface-lattice.verify.mjs` passed on a
-verified Mesa Intel Iris Xe display: its twelve-row 3D/4D inverse
+verified Mesa Intel Iris Xe display: its thirteen-row 3D/4D inverse
 affine/fold/forward, clip and ground-plane route matrix exposed progress,
-settled on the expected engine, drew 34.30–74.71% of the frame and retained
-the authored lattice block. The final-fold lens drew 47.48%/47.50% on
-WebGL/compute; the untiled/finite/lattice trio differed by
-7.97%/25.08%/25.06%; a persisted hash reload reproduced within 10.73%. The UI
-gate separately reloads and renders the app's clean Copy Link.
+settled on the expected engine, drew 33.03–74.65% of the frame and retained
+the authored lattice block. The 3D final-fold lens drew 47.48%/47.49% on
+WebGL/compute and fold4 drew 33.03% on compute; the untiled/finite/lattice trio
+differed by 7.67%/25.09%/25.10%; a persisted hash reload reproduced within
+4.15%. The UI gate separately reloads and renders the app's clean Copy Link.
 
 ## Scheduled finite B prefix
 
