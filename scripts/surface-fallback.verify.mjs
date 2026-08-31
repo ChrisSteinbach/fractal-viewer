@@ -30,8 +30,10 @@
  * (`SurfaceComputeRenderer.supported()` reads `!!navigator.gpu` directly,
  * with no await). The init script makes the property itself read exactly
  * like Firefox from the first synchronous check, asserted below on every
- * case. So every case here is forced onto the WebGL arm the fix lives on,
- * exactly the Firefox/Linux code path. Three cases, in order:
+ * case. So every rendering case here is forced onto the WebGL arm the fix
+ * lives on, exactly the Firefox/Linux code path. Cases a-e preserve the
+ * original plain/escape/fold/4D matrix; f adds the mirrored-lattice 4D
+ * fallback and g adds its compute-only fold refusal.
  *
  *   a. default scene — the plain-affine WebGL arm.
  *   b. an escape-eligible scene: one flat map, variations
@@ -97,19 +99,27 @@
  * `#modeSurfaceBtn`, then — with ZERO further pointer/keyboard/camera
  * input — poll canvas screenshots against that baseline until a material
  * difference appears (>2% of PNG bytes differ) or a ~3 minute budget
- * expires. `#surfaceProgress` is read every poll and its (visible, text)
- * pair recorded on every change — the element idles HIDDEN whenever the
+ * expires. `#surfaceProgress` is observed from BEFORE the entry click and
+ * also read every poll, with each (visible, text) transition recorded — the
+ * element idles HIDDEN whenever the
  * session is settled or has no in-flight strip job, which means DONE, not
- * "never started"; this script never mistakes hidden for stalled. Case d
- * additionally scans EVERY recorded sample (visible or not — `ui.ts`'s
+ * "never started"; this script never mistakes hidden for stalled. Cases d
+ * and f additionally scan EVERY recorded sample (visible or not — `ui.ts`'s
  * `setSurfaceProgress(null)` never clears stale textContent, only the
- * `hidden` class) for the "compute unavailable" token, asserting it only
- * when the row was actually caught visible at least once.
+ * `hidden` class) for the "compute unavailable" token and require that the
+ * observer caught it while visible.
  *
  * Usage: node scripts/surface-fallback.verify.mjs [url] [caseFilter]
  * (url defaults to https://localhost:5173 — start a dev server first.
- * caseFilter is a substring match over "abcd", default "all".)
+ * caseFilter is a substring match over "abcdefg", default "all".)
  * Screenshots land in .playwright-mcp/ (gitignored) for eyeballing.
+ *
+ * MEASURED 2026-08-31 on SwiftShader with WebGPU removed: case f retained
+ * exact lattice-4D before/after entry, painted through WebGL with 99.6% PNG
+ * byte difference, and the observer caught six visible "compute unavailable"
+ * progress transitions; case g retained the lattice and refused fold-4D with
+ * the adjacent WebGPU reason. Neither case lost context or emitted a page or
+ * console error.
  */
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -154,6 +164,20 @@ const PLAIN4_HASH =
  * disabled with the WebGPU reason — never a fold-blind render. */
 const FOLD4_HASH =
   "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNCwwLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjF9XSwidyI6eyJwb3NpdGlvbiI6MC4zLCJyb3RhdGlvbiI6eyJ4dyI6MC4zfX19LHsicG9zaXRpb24iOlstMC40LC0wLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjF9XSwidyI6eyJwb3NpdGlvbiI6LTAuMywicm90YXRpb24iOnsieXciOjAuMjV9fX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
+
+function withTiling(encoded, tiling) {
+  const match = /^v1=([A-Za-z0-9_-]+)$/.exec(encoded);
+  if (!match) throw new Error("fixture is not a v1 document");
+  const document = JSON.parse(
+    Buffer.from(match[1], "base64url").toString("utf8"),
+  );
+  document.tiling = tiling;
+  return `v1=${Buffer.from(JSON.stringify(document), "utf8").toString("base64url")}`;
+}
+
+const LATTICE4 = { kind: "lattice", cellScale: 1.6 };
+const LATTICE4_HASH = withTiling(PLAIN4_HASH, LATTICE4);
+const LATTICE_FOLD4_HASH = withTiling(FOLD4_HASH, LATTICE4);
 
 /** Upper bound for the WebGL compile gate + first traced preview to land,
  * per case. The fold-descent GLSL variant (case c) links in ~25s on
@@ -339,7 +363,11 @@ async function main() {
      * a material difference appears or the budget expires.
      */
     async function runCase(label, hashPath, screenshotPrefix, opts = {}) {
-      const { expect4DDetailToken = false, pollMs = POLL_MS } = opts;
+      const {
+        expectComputeUnavailableToken = false,
+        expectedTiling = null,
+        pollMs = POLL_MS,
+      } = opts;
       console.error(
         `[surface-fallback] ==== case ${label}: ${hashPath || "(default)"} ====`,
       );
@@ -356,6 +384,8 @@ async function main() {
         newPageErrors: [],
         sawComputeActive: false,
         sawComputeUnavailableToken: null,
+        tilingBefore: null,
+        tilingAfter: null,
         before: null,
         after: null,
       };
@@ -368,6 +398,27 @@ async function main() {
       });
       await waitForPointCount();
       await armContextLossTripwire();
+
+      const readAuthoredTiling = () =>
+        page.evaluate(() => {
+          const enabled = document.getElementById("tilingEnabledCheckbox");
+          const kind = document.getElementById("tilingKind");
+          const scale = document.getElementById("tilingCellScaleSlider");
+          if (enabled?.checked !== true) return null;
+          if (kind?.value === "lattice") {
+            return { kind: "lattice", cellScale: Number(scale?.value) };
+          }
+          const group = document.getElementById("tilingGroup");
+          return group?.value ? { group: group.value } : null;
+        });
+      result.tilingBefore = await readAuthoredTiling();
+      if (expectedTiling !== null) {
+        check(
+          JSON.stringify(result.tilingBefore) ===
+            JSON.stringify(expectedTiling),
+          `${label}: exact tiling authored before entry (${JSON.stringify(result.tilingBefore)})`,
+        );
+      }
 
       const gpuStatus = await page.evaluate(() => ({
         hasNavigatorGpu: "gpu" in navigator,
@@ -401,6 +452,32 @@ async function main() {
       const before = await canvasShot(`${screenshotPrefix}-1-before.png`);
       result.before = `${screenshotPrefix}-1-before.png`;
 
+      await page.evaluate(() => {
+        window.__fallbackProgress = [];
+        const row = document.getElementById("surfaceProgress");
+        if (!row) throw new Error("surface progress row missing");
+        const sample = () => {
+          const visible = !row.classList.contains("hidden");
+          const text = row.textContent ?? "";
+          const observations = window.__fallbackProgress;
+          const last = observations.at(-1);
+          if (!last || last.visible !== visible || last.text !== text) {
+            observations.push({
+              visible,
+              text,
+              atMs: Math.round(performance.now()),
+            });
+          }
+        };
+        sample();
+        new MutationObserver(sample).observe(row, {
+          attributes: true,
+          childList: true,
+          characterData: true,
+          subtree: true,
+        });
+      });
+
       const t0 = Date.now();
       await page.click("#modeSurfaceBtn");
       result.entered = true;
@@ -432,6 +509,27 @@ async function main() {
       result.painted = lastDiff > PAINT_DIFF_PCT;
       await canvasShot(`${screenshotPrefix}-2-after.png`);
       result.after = `${screenshotPrefix}-2-after.png`;
+      const observerProgress = await page.evaluate(
+        () => window.__fallbackProgress ?? [],
+      );
+      for (const observation of observerProgress) {
+        if (
+          !result.progressObservations.some(
+            (current) =>
+              current.visible === observation.visible &&
+              current.text === observation.text,
+          )
+        ) {
+          result.progressObservations.push(observation);
+        }
+      }
+      result.tilingAfter = await readAuthoredTiling();
+      if (expectedTiling !== null) {
+        check(
+          JSON.stringify(result.tilingAfter) === JSON.stringify(expectedTiling),
+          `${label}: exact tiling survived fallback (${JSON.stringify(result.tilingAfter)})`,
+        );
+      }
 
       check(
         result.painted,
@@ -448,6 +546,15 @@ async function main() {
       );
 
       const newConsole = consoleMessages.slice(consoleBefore);
+      if (expectedTiling !== null) {
+        const newConsoleErrors = newConsole.filter(
+          (message) => message.type === "error",
+        );
+        check(
+          newConsoleErrors.length === 0,
+          `${label}: no console errors (${newConsoleErrors.map((message) => message.text).join(" | ")})`,
+        );
+      }
       result.sawComputeActive = newConsole.some((m) =>
         m.text.includes("WebGPU compute tracer active"),
       );
@@ -482,7 +589,7 @@ async function main() {
       // class, it never clears stale textContent — but only ASSERT the
       // token when the row was actually caught visible at least once; a
       // settle that outran the poll cadence is reported, not failed.
-      if (expect4DDetailToken) {
+      if (expectComputeUnavailableToken) {
         const anySampleWithToken = result.progressObservations.filter(
           (o) => o.text && o.text.includes("compute unavailable"),
         );
@@ -498,21 +605,14 @@ async function main() {
               : "none"
           }`,
         );
-        if (shownTexts.length > 0) {
-          const sawTokenWhileVisible = shownTexts.some((o) =>
-            o.text.includes("compute unavailable"),
-          );
-          result.sawComputeUnavailableToken = sawTokenWhileVisible;
-          check(
-            sawTokenWhileVisible,
-            `${label}: visible progress row discloses "compute unavailable" (${shownTexts.map((o) => o.text).join(" | ")})`,
-          );
-        } else {
-          result.sawComputeUnavailableToken = false;
-          console.error(
-            `[surface-fallback] ${label}: #surfaceProgress never observed visible -- cannot confirm the "compute unavailable" disclosure token (settled faster than the poll cadence); not asserted.`,
-          );
-        }
+        const sawTokenWhileVisible = shownTexts.some((o) =>
+          o.text.includes("compute unavailable"),
+        );
+        result.sawComputeUnavailableToken = sawTokenWhileVisible;
+        check(
+          sawTokenWhileVisible,
+          `${label}: visible progress row discloses "compute unavailable" (${shownTexts.map((o) => o.text).join(" | ")})`,
+        );
       }
 
       caseResults.push(result);
@@ -520,7 +620,7 @@ async function main() {
     }
 
     // Optional third CLI arg selects a subset of cases (substring match on
-    // "a"/"b"/"c", e.g. "b" or "bc"); default "all" runs every case in
+    // "a".."g", e.g. "b" or "fg"); default "all" runs every case in
     // order with the normal budget-descent gating. Exists for the
     // blank-until-nudge baseline A/B (main.ts pre-fix): rerunning the whole
     // suite there would waste time re-proving cases a fresh compile-gate
@@ -532,6 +632,8 @@ async function main() {
     const wantsC = CASE_FILTER === "all" || CASE_FILTER.includes("c");
     const wantsD = CASE_FILTER === "all" || CASE_FILTER.includes("d");
     const wantsE = CASE_FILTER === "all" || CASE_FILTER.includes("e");
+    const wantsF = CASE_FILTER === "all" || CASE_FILTER.includes("f");
+    const wantsG = CASE_FILTER === "all" || CASE_FILTER.includes("g");
 
     // ---- Case a: default scene — plain-affine WebGL arm --------------------
     let a = null;
@@ -575,7 +677,7 @@ async function main() {
       // over a short session but doesn't touch a/b/c's already-proven
       // cadence.
       d = await runCase("d-4d", `#${PLAIN4_HASH}`, "case-d-4d", {
-        expect4DDetailToken: true,
+        expectComputeUnavailableToken: true,
         pollMs: 250,
       });
     }
@@ -608,6 +710,72 @@ async function main() {
       check(
         /WebGPU/i.test(surfBtn.title),
         `e-fold4-refusal: reason names WebGPU (${surfBtn.title})`,
+      );
+    }
+
+    // ---- Case f: 4D mirrored lattice — WebGL fallback + disclosure -------
+    if (wantsF) {
+      await runCase("f-lattice-4d", `#${LATTICE4_HASH}`, "case-f-lattice-4d", {
+        expectComputeUnavailableToken: true,
+        expectedTiling: LATTICE4,
+        pollMs: 100,
+      });
+    }
+
+    // ---- Case g: fold-4D mirrored lattice — compute-only refusal --------
+    if (wantsG) {
+      console.error(
+        `[surface-fallback] ==== case g-lattice-fold4-refusal: #${LATTICE_FOLD4_HASH.slice(0, 24)}… ====`,
+      );
+      const pageErrorsBefore = pageErrors.length;
+      const consoleBefore = consoleMessages.length;
+      await gotoFresh(`${BASE}/#${LATTICE_FOLD4_HASH}`, {
+        waitUntil: "load",
+        timeout: 30_000,
+      });
+      await waitForPointCount();
+      await page.waitForTimeout(1_000);
+      const refusal = await page.evaluate(() => {
+        const enabled = document.getElementById("tilingEnabledCheckbox");
+        const kind = document.getElementById("tilingKind");
+        const scale = document.getElementById("tilingCellScaleSlider");
+        const surface = document.getElementById("modeSurfaceBtn");
+        return {
+          gpuGone: navigator.gpu === undefined,
+          tiling:
+            enabled?.checked === true && kind?.value === "lattice"
+              ? { kind: "lattice", cellScale: Number(scale?.value) }
+              : null,
+          disabled: surface?.disabled === true,
+          title: surface?.title ?? "",
+        };
+      });
+      check(
+        refusal.gpuGone,
+        "g-lattice-fold4-refusal: navigator.gpu is undefined",
+      );
+      check(
+        JSON.stringify(refusal.tiling) === JSON.stringify(LATTICE4),
+        `g-lattice-fold4-refusal: exact lattice remains authored (${JSON.stringify(refusal.tiling)})`,
+      );
+      check(
+        refusal.disabled,
+        "g-lattice-fold4-refusal: Surface control disabled",
+      );
+      check(
+        /WebGPU/i.test(refusal.title),
+        `g-lattice-fold4-refusal: reason names WebGPU (${refusal.title})`,
+      );
+      check(
+        pageErrors.length === pageErrorsBefore,
+        `g-lattice-fold4-refusal: no page errors (${pageErrors.slice(pageErrorsBefore).join(" | ")})`,
+      );
+      const newConsoleErrors = consoleMessages
+        .slice(consoleBefore)
+        .filter((message) => message.type === "error");
+      check(
+        newConsoleErrors.length === 0,
+        `g-lattice-fold4-refusal: no console errors (${newConsoleErrors.map((message) => message.text).join(" | ")})`,
       );
     }
 

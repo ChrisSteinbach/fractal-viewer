@@ -852,9 +852,8 @@ panel endpoints, not additional authoring range.
 | 4D        |           5 |    33.8% |
 
 This sweep freezes the panel's 1.25–4 authoring range and 1.5 default in both
-dimensions. It does not settle presentation extent: the production 10R
-window remains a PROVISIONAL diagnostic value, and the proposed 8R fade is
-still PROVISIONAL and unimplemented.
+dimensions. Presentation extent is a separate renderer-only decision, settled
+by the browser sheet below rather than inferred from cell-scale coverage.
 
 Since the carrier shipped, two real-driver gates hold the same verdicts
 with the production renderer (all on verified Mesa Intel Iris Xe,
@@ -863,10 +862,46 @@ legs — 3D inverse, 3D escape, 4D inverse, 4D escape and the 3D inverse with
 the ground plane — settled with hit-rate gaps 0.001–0.012 against the
 family's tiled CPU oracle through the SAME carrier gate, the plane row's
 plane-rate gap 0.012 (GPU 0.535 vs CPU 0.547, 19738 plane terminals), and
-the durable browser gate `scripts/surface-lattice.verify.mjs` passed 18/18
-(six fixtures × engines entered/settled/drew with the lattice block
-retained; the untiled/finite/lattice trio differed by 25% structural; the
-app-generated link reload reproduced its picture within 2.75%). The 10R
-window in those runs is `LATTICE_PRESENTATION_RADIUS_MULT` in
-`lattice-march.ts`; it remains independent of the now-frozen cell-scale
-authoring range.
+the durable browser gate `scripts/surface-lattice.verify.mjs` passed its full
+eight-pass route matrix (every row exposed progress, settled and drew on the
+expected engine with the lattice block retained; the untiled/finite/lattice
+trio differed by 8.10%/25.09%/25.07%; a persisted-document reload reproduced
+within 7.87%). The app's Copy Link interaction is separately pinned by the UI
+gate.
+
+### lattice-presentation
+
+The production-browser edge sheet
+(`scripts/lattice-presentation.verify.mjs`) fixes one camera outside the
+largest candidate carrier, classifies ordinary and grazing ray chords from
+the analytic sphere intersection, and sweeps hard 8/10/12R windows plus
+6/8/9R smoothstep onsets against a 10R carrier. Query-only diagnostics install
+each pair without changing the authored hash. The accepted pair is promoted
+through 3D/4D inverse and forward fixtures, both engines, ground plane, depth
+fog, and real Save PNG downloads at the identical closed-panel camera.
+
+MEASURED VERDICT (2026-08-31, 800x500, verified Mesa Intel Iris Xe): **SHIP A
+10R CARRIER WITH 8R->10R BACKDROP COVERAGE.** Hard 8/10/12R coverage was
+45.17/47.99/49.02% in WebGL and 45.16/47.99/49.02% in compute. The 6/8/9R
+fade candidates covered 45.47/46.10/47.63%; 6R erased nearly everything the
+8R hard cut did, while 9R stayed within 0.36 points of the hard 10R edge. The
+8R onset kept 0.93 points beyond hard 8R, removed 1.89 points from hard 10R,
+and reduced the analytic carrier-edge jump P95 from 48 to 9. Candidate engine
+agreement was 0.013-0.014 mean channel delta with no more than 0.028% of
+pixels over delta 8. All 22 scene rows passed; promoted draws ranged
+15.89-64.78%, 4D inverse cross-engine mask IoU was 1.0, and both ground/fog
+pairs changed by mean 14.42 while preserving carrier/plane edge P95s of 9/4
+and 4/3. Nine Save PNGs were pixel-identical to the settled live frame; the
+compute DoF/radial-background row differed by mean 0.010 with no pixel over
+delta 8.
+
+The release matrix composes that visual verdict with the owning lifecycle
+gates. `tiling-ui.verify.mjs` passed five settled hardware presets, exact
+finite/lattice replacement, both app-copied link arms and malformed-block
+recovery. `capture-export.verify.mjs --tiling=a3` passed 15/15 including a
+real mid-drain cancel with no download and exact A3 collection encoding.
+`surface-teardown.verify.mjs --lens --tiling=a3 --toggleId=__modeExit
+--toggles=20 --toggleGapMs=900` survived 20/20 Firefox/Iris compute exits with
+the exact block retained. Finally, `surface-fallback.verify.mjs ... fg`
+painted the 4D lattice through WebGL with a visible "compute unavailable"
+transition and refused the fold-4D lattice with its WebGPU reason.

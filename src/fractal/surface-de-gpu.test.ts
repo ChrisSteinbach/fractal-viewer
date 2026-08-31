@@ -84,7 +84,6 @@ import {
   ESCAPE_TIME_ITERATIONS,
 } from "./escape-de";
 import { resolveShapeTrap } from "./shape-trap";
-import { LATTICE_PRESENTATION_RADIUS_MULT } from "./lattice-march";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE, type ShapeSpec } from "./shapes";
 import { MESH_ASSET_IDS, meshAssetCatalogIndex } from "./mesh-shapes";
 import { buildEscapeDE4, SYM_PLANE_CODE4 } from "./escape-de-4d";
@@ -8603,11 +8602,11 @@ describe("mirrored lattice WGSL and params ABI", () => {
     expect(view.getFloat32(plain.byteLength + 4, true)).toBe(
       Math.fround(tiling.h),
     );
-    // The tail's third word: the PROVISIONAL presentation window radius
-    // (authority radius times the shared multiplier), zero for finite
-    // tails. Only the final pad word stays zero.
+    // The tail's third word is the resolved outer presentation radius,
+    // zero for finite tails. Fade onset is source-generated, so the final
+    // pad word remains frozen zero for every policy candidate.
     expect(view.getFloat32(plain.byteLength + 8, true)).toBe(
-      Math.fround(tiling.radius * LATTICE_PRESENTATION_RADIUS_MULT),
+      Math.fround(tiling.presentation.outerRadius),
     );
     expect(Array.from(new Uint8Array(tiled, plain.byteLength + 12, 4))).toEqual(
       new Array(4).fill(0),
@@ -8641,6 +8640,20 @@ describe("mirrored lattice WGSL and params ABI", () => {
             "let folded = tilingFold(rawTilingPoint, params.tilingH);",
           );
           expect(wgsl).toContain("info.tilingPoint = vec4f(folded, 0.0)");
+          expect(wgsl).toContain(
+            `pos, params.${
+              core === "affine" || core === "fold"
+                ? "visibleRadius"
+                : "boundingRadius"
+            } * 8.0, params.tilingPresentationR`,
+          );
+          expect(wgsl).toContain("col = mix(bg, col, latticeVisibility);");
+          expect(wgsl).toContain(
+            "let coc = select(1.0, surfaceCoc(dot(pos - ro, params.fwd)), latticeVisibility > 0.0);",
+          );
+          expect(wgsl).toContain(
+            "packSurfaceLayer(latticeVisibility, clamp(fog, 0.0, 1.0), coc)",
+          );
         }
       }
     }
@@ -8674,6 +8687,15 @@ describe("mirrored lattice WGSL and params ABI", () => {
             "let folded = tilingFold(rawTilingPoint, params.tilingH);",
           );
           expect(wgsl).toContain("info.tilingPoint = folded");
+          expect(wgsl).toContain(
+            `pos, params.${
+              core === "escape4" ? "boundingRadius" : "visRadius4"
+            } * 8.0, params.tilingPresentationR`,
+          );
+          expect(wgsl).toContain("col = mix(bg, col, latticeVisibility);");
+          expect(wgsl).toContain(
+            "let coc = select(1.0, surfaceCoc(dot(pos - ro, params.fwd)), latticeVisibility > 0.0);",
+          );
         }
       }
     }

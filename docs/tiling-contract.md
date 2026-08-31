@@ -209,16 +209,18 @@ tests had asserted rather than compiled; the corrected generated source and
 the browser verifier now pin that path. The runnable record is
 `scripts/surface-tiling.verify.mjs`.
 
-The finite authoring/preset gate (`scripts/tiling-ui.verify.mjs`) then drives
-the real top-level panel and Systems menu rather than installing hashes. On a
-verified Iris display, all three showcases reached a settled 8/8 frame and
-their same-camera untiled negative controls differed structurally: B3
-Octahedron 5.75% on WebGL, A4 Pentatope 5.19% on compute, and F4 24-Cell 8.47%
-on compute. The same run pinned preset absence clearing, 44px targets, trusted
-keyboard group/clip edits, exact undo/redo, the app-produced Copy Link reload,
-Points/Flame/Solid disclosures, and Balloon/Symmetry dormant-detail recovery.
-The executable header carries the complete coverage rows and software-run
-qualification.
+The authoring/preset gate (`scripts/tiling-ui.verify.mjs`) drives the real
+top-level panel and Systems menu rather than installing hashes. On verified
+Iris, all five showcases exposed progress and reached a settled 8/8 frame:
+B3 WebGL drew/differed from untiled by 40.26%/6.59%, A4 compute
+40.17%/5.17%, F4 compute 39.00%/8.42%, lattice-3D WebGL 46.85%/13.23%, and
+lattice-4D compute 37.42%/0.29%. The last uses a fixture-specific 0.20%
+structural floor because its untiled projection fills almost the same
+carrier. The same run pinned exact finite→lattice→finite→absent replacement,
+the exact 2.4 numeric edit, finite and lattice app-produced Copy Link reloads,
+three lattice-authored untiled-mode disclosures, Balloon/Symmetry recovery,
+and whole-block fallback for three malformed wire shapes while preserving a
+distinctive valid surrounding scene.
 
 Forward cores get the fold free (they are in) — their kaleidoscope already
 is a query-space wedge fold by `escape-de.ts`'s own argument, and the same
@@ -436,9 +438,9 @@ deterministic decision sheet now calls the production scalar fold; its exact
 orbit, seam, overshoot, false-wall and preview rows reproduce the recorded
 mirrored-repetition verdict.
 
-`lattice-march.ts` owns the renderer-independent finite-presentation math but
-chooses no presentation ratio. A caller must supply an explicit outer radius.
-It intersects that sphere with the attractor-y slab, including an arbitrary
+`lattice-march.ts` owns the renderer-independent finite-presentation math and
+the renderer-only normalized policy. Its carrier intersects the resolved
+outer sphere with the attractor-y slab, including an arbitrary
 inverse-rotated 4D slice, and exposes the same interval to primary marching,
 normal/AO membership, finite shadow reach and fog distance-from-entry. Its
 reference marcher has explicit hit, miss, exhausted and stalled terminals;
@@ -459,8 +461,8 @@ finite-reflection programs are SHA-pinned to their pre-lattice source.
 
 All five WGSL params packers accept the resolved union and reuse the existing
 16-byte tiling tail as `(code=7, h, presentationR, 0)` — the third word, zero
-pad before the lattice arm, now carries the PROVISIONAL presentation window
-radius (`authority radius × LATTICE_PRESENTATION_RADIUS_MULT`), so the
+pad before the lattice arm, carries the frozen presentation-window radius
+(`authority radius × LATTICE_PRESENTATION_RADIUS_MULT`), so the
 established 560-byte 3D and 848-byte 4D maxima do not move. The pack and
 GLSL-install seams require the canonical resolver geometry and the exact
 estimator authority radius; a stale `h` or a block resolved against a
@@ -478,10 +480,9 @@ program-link evidence is recorded in `docs/surface-glsl-tracers.md`.
 The shared carrier emitter spells the sphere/intersected attractor-y slab,
 point membership and entry-relative fog coordinate once for both dialects.
 Its 4D form accepts the inverse rotor's y row explicitly and evaluates
-`(ro,w0)`, `(rd,0)` and `(p,w0)`. It owns no FINAL default or presentation
-ratio; the renderer plumbing derives the explicit PROVISIONAL window from
-`LATTICE_PRESENTATION_RADIUS_MULT` (10) in `lattice-march.ts` — the one line
-a measurement session edits.
+`(ro,w0)`, `(rd,0)` and `(p,w0)`. The renderer resolves the module's frozen
+`8R -> 10R` policy; query-only diagnostics can replace both multipliers for
+the executable candidate sweep without entering scene state.
 
 THE CARRIER IS WIRED through both engines, both dimensions and every phase of
 the live march: the primary interval's `tEnter`/`tFar`, the fog origin and its
@@ -510,9 +511,9 @@ entry. A tiled 4D session renders slice 0 only, on both engines.
 Two Systems-menu landscape showcases make both dimensional halves reachable:
 **Mirrored Lattice** uses Sierpinski Tetrahedron and **Mirrored Lattice 4D**
 uses Pentatope. Both install `{ kind: "lattice", cellScale: 1.6 }` through
-`PRESET_TILINGS` and carry the Surface render hint. On verified Iris the menu
-installed and settled the 3D showcase; the existing lattice browser matrix
-continued to pass 18/18 across both dimensions and engines.
+`PRESET_TILINGS` and carry the Surface render hint. On verified Iris both menu
+entries exposed progress, installed their exact block, settled on the expected
+engine and differed from their same-camera untiled control.
 
 Surface eligibility no longer refuses the lattice arm: the shared refusals —
 balloon, kaleidoscope, mesh clips, the 4D slab — are the boundary, exactly
@@ -561,13 +562,30 @@ window from casting a shadow or contributing AO. The existing step/tap caps,
 capture raster limits, strip pump and abort/cancellation behavior remain the
 runtime limits.
 
-**PROVISIONAL, not gated by this sheet:** the hard `10R` presentation window
-is carried as `LATTICE_PRESENTATION_RADIUS_MULT` in `lattice-march.ts` — the
-explicit diagnostic value the renderer plumbing derives its uniform, its
-params word and its camera fit from, and the ONE line a measurement session
-edits. A fade-to-backdrop curve from `8R` is not yet implemented at all.
-Neither the window nor the fog curve is a document value or a frozen
-constant until live capture and grazing-ray measurements settle them.
+The presentation policy is frozen at a `10R` carrier with smoothstep coverage
+from `8R` to backdrop. Coverage is evaluated at the displayed 3D hit after
+4D rotation/slicing; it is shading, never a DE term, shadow, or AO source.
+The blend happens after ordinary depth fog and carries its fractional value
+through the existing capture/DOF sidecar while hit alpha remains the terminal
+status flag. Neither multiplier is document state. Query-only
+`latticefade`/`latticewindow` diagnostics exist solely for the executable
+candidate sheet.
+
+MEASURED (`scripts/lattice-presentation.verify.mjs`, 800x500, verified Mesa
+Intel Iris Xe): hard windows at 8/10/12R covered 45.17/47.99/49.02% in WebGL
+and 45.16/47.99/49.02% in compute. Fade starts at 6/8/9R against the 10R
+carrier covered 45.47/46.10/47.63%, making 6R nearly the 8R truncation and 9R
+nearly the hard 10R edge. The selected 8R onset retained 0.93 percentage
+points beyond hard 8R while removing 1.89 points from the hard edge; its
+analytic carrier-boundary jump P95 fell from 48 to 9. All six candidates
+agreed across engines (mean channel delta 0.013-0.014; at most 0.028% of
+pixels over delta 8). The sheet passed 22/22 rows spanning 3D/4D,
+inverse/forward, WebGL/WebGPU, ordinary and grazing carrier chords, ground
+plane, depth fog and DoF over a radial backdrop. The 4D inverse cross-engine
+mask IoU was 1.0; fog/no-fog pairs differed by mean 14.42 while retaining
+carrier/plane edge P95s of 9/4 and 4/3. Nine Save PNGs were pixel-identical to
+their closed-panel live frames; the tenth differed by mean 0.010 with no pixel
+over delta 8.
 
 ### Ground plane
 
@@ -592,11 +610,33 @@ the 3D inverse with the ground plane — run through the PRODUCTION
 same carrier gate and the family's tiled oracle. All five settled with
 hit-rate gaps 0.001–0.012 and the plane row's plane-rate gap 0.012
 (GPU 0.535 vs CPU 0.547, 19738 plane terminals). The durable browser gate
-`scripts/surface-lattice.verify.mjs` passed 18/18 on the same display:
-six fixtures × their engines entered, settled, drew 34–75% of the frame and
-retained the authored lattice block, the untiled/finite/lattice trio drew
-structurally different pictures (25% pair diffs), and the app-generated link
-reload reproduced its picture within 2.75%.
+`scripts/surface-lattice.verify.mjs` passed the same display's full route
+matrix with the shipped eight-pass settle: every row exposed progress before
+settling, drew 34.32–74.67% of the frame on the expected hardware engine and
+retained the lattice block. The untiled/finite/lattice trio differed by
+8.10%/25.09%/25.07%, and a persisted document reload reproduced its picture
+within 7.87% under the 15% rerender ceiling. `tiling-ui.verify.mjs`, not this
+hash reload, owns the app's Copy Link interaction.
+
+### Release qualification matrix
+
+The final matrix keeps each stateful question in the gate that already owns
+that lifecycle rather than building a second monolith:
+
+| Contract                                                                                                          | Durable gate                                                                                                  | 2026-08-31 verdict                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Finite/lattice presets, exact authoring, replacement, copied links, unsupported-mode disclosure, malformed decode | `scripts/tiling-ui.verify.mjs`                                                                                | Five settled hardware presets plus all authoring/recovery checks passed                              |
+| Minimal inverse/forward, 3D/4D, WebGL/compute, clip, plane, progress and structural negative controls             | `scripts/surface-lattice.verify.mjs` and `scripts/surface-tiling.verify.mjs`                                  | Both real-Iris route matrices passed                                                                 |
+| Carrier choice, cross-engine fade, fog/DoF/radial background and completed Save PNG                               | `scripts/lattice-presentation.verify.mjs`                                                                     | 22/22 scene rows and ten capture comparisons passed                                                  |
+| Completed export, mid-drain cancellation, interaction and collection encoding with authored tiling                | `scripts/capture-export.verify.mjs --tiling=a3`                                                               | 15/15 on SwiftShader; exact A3 survived every phase                                                  |
+| Renderer teardown during submitted compute work                                                                   | `scripts/surface-teardown.verify.mjs --lens --tiling=a3 --toggleId=__modeExit --toggles=20 --toggleGapMs=900` | 20/20 on real Firefox/Iris compute; exact A3 and hardware backend retained                           |
+| WebGPU-unavailable fallback and compute-only refusal with lattice authored                                        | `scripts/surface-fallback.verify.mjs https://localhost:5173 fg`                                               | 4D lattice painted through WebGL with visible disclosure; fold-4D lattice refused with WebGPU reason |
+| Phone target/layout and exact-number interaction                                                                  | `scripts/panel-numeric-control.verify.mjs`                                                                    | 87 slider companions over 84 states passed                                                           |
+
+The repository gates then passed 6,761 unit tests across 168 files, the two
+tiling sheets (11/11), production build, WebGL smoke, and the real-Iris
+surface bench. Presentation output itself did not change after that bench;
+the later edits were confined to browser gates and this evidence record.
 
 ### Translation refusal
 

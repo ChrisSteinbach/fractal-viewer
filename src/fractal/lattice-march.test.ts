@@ -9,7 +9,10 @@ import {
   latticePresentationCarrierSource,
   latticePresentationContains3,
   latticePresentationContains4,
+  latticePresentationPolicyOf,
+  latticePresentationVisibility,
   marchLatticeInterval,
+  resolveLatticePresentation,
 } from "./lattice-march";
 import { rotationMatrix4 } from "./affine4";
 import { mirrorLatticeCoordinate } from "./tiling";
@@ -204,6 +207,7 @@ describe("mirrored lattice presentation shader carrier", () => {
       for (const name of [
         "latticePresentationInterval",
         "latticePresentationContains",
+        "latticePresentationVisibility",
         "latticePresentationFogCoordinate",
       ]) {
         expect(normalizedCarrierBody(glsl, name)).toBe(
@@ -263,6 +267,55 @@ describe("mirrored lattice presentation shader carrier", () => {
       }
     },
   );
+});
+
+describe("mirrored lattice presentation fade", () => {
+  it("resolves the renderer-only default and a hard-edge diagnostic in world units", () => {
+    expect(resolveLatticePresentation(2)).toEqual({
+      contentRadius: 2,
+      fadeStartRadius: 16,
+      outerRadius: 20,
+    });
+    const hard = resolveLatticePresentation(2, {
+      fadeStartRadiusMult: 6,
+      outerRadiusMult: 6,
+    });
+    expect(hard).toEqual({
+      contentRadius: 2,
+      fadeStartRadius: 12,
+      outerRadius: 12,
+    });
+    expect(latticePresentationPolicyOf(hard)).toEqual({
+      fadeStartRadiusMult: 6,
+      outerRadiusMult: 6,
+    });
+  });
+
+  it("is exact before onset and at both fade boundaries", () => {
+    expect(latticePresentationVisibility(0, 8, 10)).toBe(1);
+    expect(latticePresentationVisibility(8, 8, 10)).toBe(1);
+    expect(latticePresentationVisibility(9, 8, 10)).toBe(0.5);
+    expect(latticePresentationVisibility(10, 8, 10)).toBe(0);
+    expect(latticePresentationVisibility(12, 8, 10)).toBe(0);
+    expect(latticePresentationVisibility(9.5, 10, 10)).toBe(1);
+    expect(latticePresentationVisibility(10, 10, 10)).toBe(1);
+    expect(latticePresentationVisibility(10.001, 10, 10)).toBe(0);
+  });
+
+  it("refuses malformed window and fade policies", () => {
+    expect(() =>
+      resolveLatticePresentation(1, {
+        fadeStartRadiusMult: 2,
+        outerRadiusMult: 0.5,
+      }),
+    ).toThrow(/outerRadiusMult/);
+    expect(() =>
+      resolveLatticePresentation(1, {
+        fadeStartRadiusMult: 11,
+        outerRadiusMult: 10,
+      }),
+    ).toThrow(/fadeStartRadiusMult/);
+  });
 });
 
 describe("shared lattice march/probe contract", () => {

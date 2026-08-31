@@ -741,6 +741,11 @@ describe("resolveTiling", () => {
       cellScale: 7.25,
       radius: 2.4,
       h: 17.4,
+      presentation: {
+        contentRadius: 2.4,
+        fadeStartRadius: 19.2,
+        outerRadius: 24,
+      },
       clip,
     });
   });

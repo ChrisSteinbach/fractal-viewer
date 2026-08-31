@@ -8753,7 +8753,7 @@ function surfaceLatticeInverseRotor(view: SurfaceGpu4View): number[] {
 /** The lattice frame legs' strided CPU sanity march: the kernel's own
  * unproject rays over the identical f32 matrix, the lattice marcher's
  * quantities — the PRESENTATION CARRIER interval (world sphere ∩
- * attractor-y slab, the PROVISIONAL window multiplier) as the march gate
+ * attractor-y slab, the frozen window multiplier) as the march gate
  * instead of the visible-sphere gate, eps = max(acceptEps·t, R·hitFloor)
  * — over the family's own TILED CPU oracle (the exact estimator the
  * kernel wrapper mirrors), every SURFACE_SANITY_STRIDE-th pixel. The

@@ -29,11 +29,12 @@ rings/sheets orbit-trap color sources ride the same hit-info descent.
 Both fragment tracers generate the mirrored affine-A1 estimator wrapper AND
 march it live. `latticeFoldSource` is the one dialect-shared floor-modulo
 body: x/z fold in 3D, x/z/w after the true inverse rotor lift in 4D, with y
-untouched. A lattice-only `uTilingH` and the PROVISIONAL presentation radius
+untouched. A lattice-only `uTilingH` and the frozen presentation radius
 `uTilingPresentationR` accompany the append-only selector code 7. Scale or
-presentation-radius changes update uniforms without recompiling; kind or
-analytic-clip changes regenerate source. The installer rejects non-canonical
-resolver data and a radius not owned by the current estimator.
+outer-radius changes update uniforms without recompiling; the query-only fade
+onset is source-generated, while kind or analytic-clip changes also regenerate
+source. The installer rejects non-canonical resolver data and a radius not
+owned by the current estimator.
 
 The wrapper folds once, invokes each public core overload once, maxes with the
 full-radius origin ball and then the optional clip. Height, radius and
@@ -60,6 +61,13 @@ or contributes AO); and the ground plane's single-ball shadow corridor and
 AO-reach certificates are replaced by carrier tests (an infinite lattice
 repeats content beyond the ball — the shortcuts are unsound there).
 
+After the existing entry-relative depth fog, the shared carrier emitter's
+`latticePresentationVisibility` fades the shaded hit toward that pixel's own
+backdrop from 8R to the 10R carrier. This changes no estimator or terminal;
+RGB carries the fade, hit alpha stays 1, and the trace sidecar carries the same
+fractional coverage for capture compositing and DOF. The 4D tracer reuses the
+same wrapper and therefore evaluates the policy in displayed 3D.
+
 The 2026-08-31 headed Chrome probe reported the unmasked renderer
 `ANGLE (Intel, Mesa Intel(R) Iris(R) Xe Graphics (TGL GT2), OpenGL ES 3.2)`.
 It compiled and rendered nine representative programs: 3D affine, lens,
@@ -67,15 +75,12 @@ ground plane, escape, bulb and finish+pattern; 4D plain, ground plane and
 finish+pattern. All 9/9 returned GL error 0 with no program diagnostic. The
 same matrix passed SwiftShader independently before the Iris run.
 
-The durable browser gate `scripts/surface-lattice.verify.mjs` passed 18/18 on
-a verified Mesa Intel Iris Xe display: six lattice fixtures × their engines
-(3D inverse, 3D inverse + clip, 3D escape, 4D inverse, 4D escape, and the 3D
-inverse with the ground plane) entered Surface, settled on the
-`?surfacestate` latch, drew 34–75% of the frame through the fragment tracer
-where WebGL was forced, and retained the authored lattice block. The
-untiled/finite/lattice trio drew structurally different pictures (25% pair
-diffs on the same camera), and the app-generated link reload reproduced its
-picture within 2.75%.
+The durable browser gate `scripts/surface-lattice.verify.mjs` passed on a
+verified Mesa Intel Iris Xe display: its full 3D/4D inverse/forward, clip and
+ground-plane route matrix exposed progress, settled on the expected engine,
+drew 34.32–74.67% of the frame and retained the authored lattice block. The
+untiled/finite/lattice trio differed by 8.10%/25.09%/25.07%; a persisted hash
+reload reproduced within 7.87%. The UI gate separately owns app Copy Link.
 
 ## Scheduled finite B prefix
 

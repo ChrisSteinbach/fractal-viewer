@@ -61,10 +61,7 @@ import {
   type ResolvedLatticeTiling,
   type ResolvedTiling,
 } from "./tiling";
-import {
-  LATTICE_PRESENTATION_RADIUS_MULT,
-  latticePresentationCarrierSource,
-} from "./lattice-march";
+import { latticePresentationCarrierSource } from "./lattice-march";
 import {
   surfaceMaterialLanes,
   type ResolvedSurfaceMaterial,
@@ -1549,16 +1546,12 @@ function writeSurfaceTilingBlock(
   view.setUint32(offset, tiling.code, true);
   if (tiling.kind === "lattice") {
     view.setFloat32(offset + 4, tiling.h, true);
-    // The provisional presentation window radius, in world units: the
-    // authority radius times LATTICE_PRESENTATION_RADIUS_MULT — the ONE
-    // value both engines and the camera derive from. The tail's third
-    // word was zero pad before the lattice arm existed; finite tails
-    // still leave it zero.
-    view.setFloat32(
-      offset + 8,
-      tiling.tiling.radius * LATTICE_PRESENTATION_RADIUS_MULT,
-      true,
-    );
+    // Renderer-only outer radius in world units. The tail's third word was
+    // zero pad before the lattice arm existed; finite tails still leave it
+    // zero. The fourth word remains frozen zero pad — fade onset is a
+    // source-generation policy derived from the authority radius, so merely
+    // choosing a presentation constant cannot alter the params ABI.
+    view.setFloat32(offset + 8, tiling.tiling.presentation.outerRadius, true);
   }
 }
 
@@ -4532,8 +4525,8 @@ fn hash2(p: vec2f) -> f32 {
   // The lattice carrier's content radius — the SAME estimator authority
   // expression the mandatory ball max reads (the module doc's
   // guard rule): inverse cores use the full visible radius, forward cores
-  // the bailout marching ball. The carrier's outer radius is the
-  // PROVISIONAL presentation multiplier times that same authority.
+  // the bailout marching ball. The carrier's outer radius is the frozen
+  // presentation multiplier times that same authority.
   const latticeRadiusExpr = core4
     ? forward
       ? "params.boundingRadius"
@@ -4541,6 +4534,14 @@ fn hash2(p: vec2f) -> f32 {
     : forward
       ? "params.boundingRadius"
       : "params.visibleRadius";
+  const latticeFadeStartMult =
+    tilingInfo?.kind === "lattice"
+      ? tilingInfo.tiling.presentation.fadeStartRadius /
+        tilingInfo.tiling.radius
+      : 0;
+  const latticeFadeStartMultText = Number.isInteger(latticeFadeStartMult)
+    ? `${latticeFadeStartMult}.0`
+    : String(latticeFadeStartMult);
   // The 4D slab coordinate needs the inverse rotor's y row. The packed
   // rotorInv rows ARE the inverse rotor's rows (rotorInvApply4 applies
   // them), so the y row is rotorInvR1 itself — never an assembled column:
@@ -7830,10 +7831,25 @@ ${shadeLighting}
   let fog = 1.0 - exp(-0.12 * pow((t - tEnter) * params.fogDensity / max(${
     latticeTiling && core4 ? "params.visRadius4" : "visR"
   }, 1.0e-6), 2.0));
-  col = mix(col, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));
+  col = mix(col, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));${
+    latticeTiling
+      ? `
+  // Renderer-only radial presentation coverage. This is evaluated in the
+  // displayed 3D world after the 4D rotor/slice reduction, so both dimensions
+  // fade the object actually on screen. It changes no DE or ray status.
+  let latticeVisibility = latticePresentationVisibility(
+    pos, ${latticeRadiusExpr} * ${latticeFadeStartMultText}, params.tilingPresentationR
+  );
+  col = mix(bg, col, latticeVisibility);`
+      : ""
+  }
   colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));
-  let coc = surfaceCoc(dot(pos - ro, params.fwd));
-  layerOut[ray] = packSurfaceLayer(1.0, clamp(fog, 0.0, 1.0), coc);
+  let coc = ${
+    latticeTiling
+      ? "select(1.0, surfaceCoc(dot(pos - ro, params.fwd)), latticeVisibility > 0.0)"
+      : "surfaceCoc(dot(pos - ro, params.fwd))"
+  };
+  layerOut[ray] = packSurfaceLayer(${latticeTiling ? "latticeVisibility" : "1.0"}, clamp(fog, 0.0, 1.0), coc);
 }`;
 
   // Stage-2 branch-and-bound (surface-de.ts descendFold, the

@@ -56,6 +56,11 @@
  * | Leave Surface mode (`RenderSession.exit()`)  | died at toggle 3  | 20/20 clean |
  * | same three, forced onto WebGL (`?surfacegl`) | survives          | survives    |
  *
+ * MEASURED 2026-08-31, the `--lens --tiling=a3 --toggleId=__modeExit
+ * --toggles=20 --toggleGapMs=900` qualification completed 20/20 on verified
+ * Iris through Firefox WebGPU compute. Exact A3 survived before/after, the
+ * final backend was non-software, and no page error or browser crash occurred.
+ *
  * ARMS, all against the same Sierpinski tetrahedron:
  *
  *   --toggleId=__modeExit
@@ -87,7 +92,8 @@
  *   --plain       no fold anywhere: bare affine tetra, native WebGL. Control.
  *   --gl          the lens system forced onto WebGL. Control — the crash is
  *                 WebGPU-only, so this arm must stay clean at any --toggles.
- *   --floor=off / --toggleId=... / --viewport=WxH / --toggleGapMs=N
+ *   --floor=off / --tiling=a3 / --toggleId=... / --viewport=WxH /
+ *   --toggleGapMs=N
  *
  * RUN (needs a real Firefox build with WebGPU on a display, and the
  * dev/preview server already up):
@@ -119,6 +125,14 @@ const PLAIN = Boolean(args.plain);
 const TOGGLE_ID = args.toggleId ?? "surfaceGroundPlaneCheckbox";
 const TOGGLES = Number(args.toggles ?? 0);
 const TOGGLE_GAP_MS = Number(args.toggleGapMs ?? 1200);
+const TILING = args.tiling ?? null;
+if (TILING !== null && TILING !== "a3") {
+  throw new Error("--tiling currently accepts only a3");
+}
+if (TILING !== null && TOGGLES <= 0) {
+  throw new Error("--tiling qualification requires --toggles=N");
+}
+const EXPECTED_TILING = TILING === "a3" ? { group: "a3" } : null;
 const POLL_MS = 500;
 const FIREFOX_BIN = path.join(
   os.homedir(),
@@ -201,6 +215,7 @@ function sceneFor(radii, { lens = false, foldType = "mandelbox" } = {}) {
     // phi just above the horizontal so plenty of rays go DOWN and cross the
     // floor's fade band, which is the whole point of the Floor arm.
     camera: { target: [0, 0, 0], radius: 3.2, theta: -0.35, phi: 1.15 },
+    ...(EXPECTED_TILING ? { tiling: EXPECTED_TILING } : {}),
   };
   if (PLAIN) {
     // No fold anywhere: the bare Sierpinski tetra on the affine descent. The
@@ -418,6 +433,10 @@ async function runToggleArm(browser, c, toggles, gapMs) {
     lastRow: "",
     engine: "",
     eligibility: "admitted",
+    togglesCompleted: 0,
+    tilingBefore: null,
+    tilingAfter: null,
+    pageErrors: [],
     lines,
   };
   let ctx;
@@ -433,14 +452,28 @@ async function runToggleArm(browser, c, toggles, gapMs) {
         lines.push(`[${m.type()}] ${t}`);
       }
     });
-    page.on("pageerror", (e) => lines.push(`[pageerror] ${String(e)}`));
+    page.on("pageerror", (e) => {
+      const message = String(e);
+      result.pageErrors.push(message);
+      lines.push(`[pageerror] ${message}`);
+    });
     page.on("crash", () => lines.push("[page] CRASHED"));
 
     await page.goto(url, { waitUntil: "load", timeout: 60000 });
     await sleep(2500);
-    const disabled = await page.evaluate(
-      () => document.getElementById("modeSurfaceBtn").disabled,
-    );
+    const before = await page.evaluate(() => {
+      const checkbox = document.getElementById("tilingEnabledCheckbox");
+      const group = document.getElementById("tilingGroup");
+      return {
+        disabled: document.getElementById("modeSurfaceBtn").disabled,
+        tiling:
+          checkbox?.checked === true && group?.value
+            ? { group: group.value }
+            : null,
+      };
+    });
+    result.tilingBefore = before.tiling;
+    const disabled = before.disabled;
     if (disabled) {
       await ctx.close();
       result.outcome = "refused";
@@ -496,11 +529,67 @@ async function runToggleArm(browser, c, toggles, gapMs) {
       }
       if (state.row) result.lastRow = state.row;
       if (state.probe) result.probe = state.probe;
+      result.togglesCompleted = i + 1;
       log(
         `      toggle ${i + 1}/${toggles} floor=${state.floor} row="${state.row}"`,
       );
     }
     await sleep(3000);
+    const after = await page.evaluate(() => {
+      const checkbox = document.getElementById("tilingEnabledCheckbox");
+      const group = document.getElementById("tilingGroup");
+      return {
+        tiling:
+          checkbox?.checked === true && group?.value
+            ? { group: group.value }
+            : null,
+        probe: window.__surfaceState?.() ?? null,
+      };
+    });
+    result.tilingAfter = after.tiling;
+    if (after.probe) {
+      result.probe = after.probe;
+      result.engine = after.probe.engine ?? result.engine;
+    }
+    if (TILING !== null) {
+      const qualificationFailures = [];
+      if (
+        JSON.stringify(result.tilingBefore) !== JSON.stringify(EXPECTED_TILING)
+      ) {
+        qualificationFailures.push(
+          `before tiling=${JSON.stringify(result.tilingBefore)}`,
+        );
+      }
+      if (result.togglesCompleted !== toggles) {
+        qualificationFailures.push(
+          `toggles=${result.togglesCompleted}/${toggles}`,
+        );
+      }
+      if (
+        JSON.stringify(result.tilingAfter) !== JSON.stringify(EXPECTED_TILING)
+      ) {
+        qualificationFailures.push(
+          `after tiling=${JSON.stringify(result.tilingAfter)}`,
+        );
+      }
+      if (
+        result.probe?.engine !== "compute" ||
+        result.probe?.backend?.software !== false
+      ) {
+        qualificationFailures.push(
+          `backend=${JSON.stringify(result.probe?.backend)} engine=${result.probe?.engine ?? "none"}`,
+        );
+      }
+      if (result.pageErrors.length > 0) {
+        qualificationFailures.push(
+          `pageErrors=${result.pageErrors.join(" | ")}`,
+        );
+      }
+      if (qualificationFailures.length > 0) {
+        result.outcome = "QUALIFICATION FAILED";
+        result.detail = qualificationFailures.join("; ");
+      }
+    }
     await ctx.close();
     return result;
   } catch (e) {
@@ -519,7 +608,7 @@ async function main() {
   log(
     `url=${BASE} shape=${LENS ? "fold FINAL lens" : "fold base map"} fold=${FOLD_TYPE} floor=${
       FLOOR ? "ON" : "off"
-    } engine=${
+    } tiling=${TILING ?? "off"} engine=${
       FORCE_GL ? "forced WebGL" : "default (WebGPU if available)"
     } watchMs=${WATCH_MS}`,
   );
@@ -554,12 +643,21 @@ async function main() {
     if (!browserAlive) {
       r.outcome = "BROWSER DIED";
       reproduced = true;
-    } else if (r.outcome === "CRASH/ERROR") {
+    } else if (
+      r.outcome === "CRASH/ERROR" ||
+      r.outcome === "QUALIFICATION FAILED" ||
+      (TILING !== null && r.outcome === "refused")
+    ) {
       reproduced = true;
     }
     log(
       `    ${r.outcome} | ${r.eligibility} | engine=${r.engine || "?"} | ink=${r.ink ?? "?"} | settled=${r.probe?.settled ?? "?"} | row="${r.lastRow}" ${r.detail ? "| " + r.detail : ""}`,
     );
+    if (TILING !== null) {
+      log(
+        `    tiling before=${JSON.stringify(r.tilingBefore)} after=${JSON.stringify(r.tilingAfter)} toggles=${r.togglesCompleted}/${TOGGLES} backend=${JSON.stringify(r.probe?.backend ?? null)}`,
+      );
+    }
     for (const l of r.lines.slice(-6)) log(`      ${l}`);
     if (!browserAlive) {
       log("    !!! FIREFOX DIED ON THIS CASE !!!");

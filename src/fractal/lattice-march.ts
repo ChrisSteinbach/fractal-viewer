@@ -9,11 +9,10 @@ import type { Bounds, Vec3, Vec4 } from "./types";
  * - the unrepeated attractor-y slab `|q.y| <= R`.
  *
  * The sphere radius is supplied by the caller. This module deliberately owns
- * no FINAL default and no final `8R`/`10R` ratio: those values remain
- * renderer-gated until the live GLSL/WGSL fixtures measure them. It does
- * carry {@link LATTICE_PRESENTATION_RADIUS_MULT}, the explicit PROVISIONAL
- * multiplier the renderer plumbing uses — the one line a measurement
- * session edits. The content radius `R` is the estimator's
+ * no document-authored window: the renderer policy is resolved separately
+ * from the scene and never changes the estimator's zero set. It does carry
+ * the measured presentation/fade policy used by the live GLSL/WGSL paths.
+ * The content radius `R` is the estimator's
  * certified full visible/march radius. In 4D, `q = invRotor*(p,w0)`, so the
  * slab remains a linear interval at every supported rotor/slice pose.
  *
@@ -28,19 +27,120 @@ import type { Bounds, Vec3, Vec4 } from "./types";
 export interface LatticePresentation {
   /** Certified origin-centred content radius. */
   contentRadius: number;
-  /** Explicit finite 3D observation sphere; no final default is owned here. */
+  /** Explicit finite 3D observation sphere. */
   outerRadius: number;
 }
 
+/** Renderer-only presentation policy, normalized by the estimator authority
+ * radius. This is deliberately not scene-document state. Equal fade/window
+ * multipliers select the hard-window diagnostic used by the measurement gate. */
+export interface LatticePresentationPolicy {
+  fadeStartRadiusMult: number;
+  outerRadiusMult: number;
+}
+
+/** Fully resolved world-space presentation policy handed to both engines. */
+export interface ResolvedLatticePresentation extends LatticePresentation {
+  fadeStartRadius: number;
+}
+
 /**
- * PROVISIONAL renderer default for the presentation window's outer radius,
- * in multiples of the estimator's certified content radius `R`. The
- * contract's fog-fade `8R` / hard-window `10R` remain unmeasured; this is
- * the explicit diagnostic value the GLSL/WGSL/camera plumbing all derive
- * from, and the ONE line a real-driver measurement session edits before any
- * accepted value is frozen. Not a document value: the user cannot author it.
+ * Frozen renderer window/fade in multiples of the estimator's certified
+ * content radius `R`: smooth coverage starts at 8R and reaches backdrop at
+ * the 10R carrier. The browser gate can override the pair diagnostically
+ * without writing it into the scene document. Keep both values here: every
+ * host and shader mirror resolves from this one policy authority.
  */
 export const LATTICE_PRESENTATION_RADIUS_MULT = 10;
+export const LATTICE_PRESENTATION_FADE_START_MULT = 8;
+
+export const LATTICE_PRESENTATION_POLICY: LatticePresentationPolicy =
+  Object.freeze({
+    fadeStartRadiusMult: LATTICE_PRESENTATION_FADE_START_MULT,
+    outerRadiusMult: LATTICE_PRESENTATION_RADIUS_MULT,
+  });
+
+/** Validate and resolve a renderer-only multiplier pair into world units. */
+export function resolveLatticePresentation(
+  contentRadius: number,
+  policy: LatticePresentationPolicy = LATTICE_PRESENTATION_POLICY,
+): ResolvedLatticePresentation {
+  if (!Number.isFinite(contentRadius) || contentRadius <= 0) {
+    throw new RangeError(
+      "lattice presentation contentRadius must be finite and > 0",
+    );
+  }
+  if (!Number.isFinite(policy.outerRadiusMult) || policy.outerRadiusMult < 1) {
+    throw new RangeError(
+      "lattice presentation outerRadiusMult must be finite and >= 1",
+    );
+  }
+  if (
+    !Number.isFinite(policy.fadeStartRadiusMult) ||
+    policy.fadeStartRadiusMult < 0 ||
+    policy.fadeStartRadiusMult > policy.outerRadiusMult
+  ) {
+    throw new RangeError(
+      "lattice presentation fadeStartRadiusMult must be finite and in [0, outerRadiusMult]",
+    );
+  }
+  return {
+    contentRadius,
+    fadeStartRadius: contentRadius * policy.fadeStartRadiusMult,
+    outerRadius: contentRadius * policy.outerRadiusMult,
+  };
+}
+
+/** Recover normalized policy from a resolved session so a live cell-scale
+ * edit preserves a diagnostics candidate without persisting it. */
+export function latticePresentationPolicyOf(
+  presentation: ResolvedLatticePresentation,
+): LatticePresentationPolicy {
+  const { contentRadius, fadeStartRadius, outerRadius } = presentation;
+  if (!Number.isFinite(contentRadius) || contentRadius <= 0) {
+    throw new RangeError(
+      "lattice presentation contentRadius must be finite and > 0",
+    );
+  }
+  return {
+    fadeStartRadiusMult: fadeStartRadius / contentRadius,
+    outerRadiusMult: outerRadius / contentRadius,
+  };
+}
+
+/** Radial visibility of a lattice content hit. The artificial carrier is
+ * still only a march-domain restriction; this smoothstep is presentation
+ * coverage toward the pixel's own backdrop. Equal radii deliberately select
+ * the hard-window diagnostic and avoid smoothstep's equal-edge undefined
+ * case in both shader dialects. */
+export function latticePresentationVisibility(
+  radialDistance: number,
+  fadeStartRadius: number,
+  outerRadius: number,
+): number {
+  if (
+    !Number.isFinite(radialDistance) ||
+    radialDistance < 0 ||
+    !Number.isFinite(fadeStartRadius) ||
+    fadeStartRadius < 0 ||
+    !Number.isFinite(outerRadius) ||
+    outerRadius <= 0 ||
+    fadeStartRadius > outerRadius
+  ) {
+    throw new RangeError("invalid lattice presentation visibility domain");
+  }
+  if (fadeStartRadius >= outerRadius) {
+    return radialDistance <= outerRadius ? 1 : 0;
+  }
+  const x = Math.max(
+    0,
+    Math.min(
+      1,
+      (radialDistance - fadeStartRadius) / (outerRadius - fadeStartRadius),
+    ),
+  );
+  return 1 - x * x * (3 - 2 * x);
+}
 
 export interface LatticeRayInterval {
   /** First in-domain ray parameter, clamped to zero for an inside camera. */
@@ -121,6 +221,11 @@ export function latticePresentationCarrierSource(
           ["contentRadius", float],
           ["outerRadius", float],
         ];
+  const visibilityParameters: readonly (readonly [string, string])[] = [
+    ["p", vec3],
+    ["fadeStartRadius", float],
+    ["outerRadius", float],
+  ];
   const slabOrigin =
     dimension === 4 ? `dot(inverseRotorY, ${vec4}(ro, w0))` : "ro.y";
   const slabDirection =
@@ -171,6 +276,20 @@ ${signature("latticePresentationInterval", intervalParameters, "LatticeCarrierIn
 ${signature("latticePresentationContains", containsParameters, "bool")} {
   ${immutable("slabCoordinate", containsSlab)}
   return dot(p, p) <= outerRadius * outerRadius && abs(slabCoordinate) <= contentRadius;
+}
+
+${signature("latticePresentationVisibility", visibilityParameters, float)} {
+  if (fadeStartRadius >= outerRadius) {
+    if (length(p) > outerRadius) {
+      return 0.0;
+    }
+    return 1.0;
+  }
+  ${immutable(
+    "x",
+    "clamp((length(p) - fadeStartRadius) / (outerRadius - fadeStartRadius), 0.0, 1.0)",
+  )}
+  return 1.0 - x * x * (3.0 - 2.0 * x);
 }
 
 ${signature(

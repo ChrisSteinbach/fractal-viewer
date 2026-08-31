@@ -92,6 +92,7 @@ import {
 } from "../fractal/shapes";
 import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
 import type { MeshAssetId } from "../fractal/mesh-shapes";
+import { latticePresentationPolicyOf } from "../fractal/lattice-march";
 import {
   isResolvedLatticeTiling,
   resolveTiling,
@@ -2643,6 +2644,7 @@ export class SurfaceComputeRenderer {
         ...(current.clip ? { clip: current.clip } : {}),
       },
       current.radius,
+      latticePresentationPolicyOf(current.presentation),
     );
     if (!next || !isResolvedLatticeTiling(next)) {
       throw new Error("Surface compute: failed to resolve live lattice scale");

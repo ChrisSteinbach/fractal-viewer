@@ -1928,6 +1928,7 @@ describe("compile-gated mirrored lattice in the 3D GLSL tracer", () => {
       "LatticeCarrierInterval latticePresentationInterval(",
     );
     expect(source).toContain("bool latticePresentationContains(");
+    expect(source).toContain("float latticePresentationVisibility(");
     expect(source).toContain("latticePresentationFogCoordinate");
     // The march entry gate became the carrier interval: no sphere gate.
     expect(source).toContain(
@@ -1938,6 +1939,11 @@ describe("compile-gated mirrored lattice in the 3D GLSL tracer", () => {
     expect(source).toContain("float tFar = latticeCarrier.tFar;");
     expect(source).not.toContain("float disc = b * b - c;");
     expect(source).not.toContain("float sq = sqrt(disc);");
+    expect(source).toContain("pos, uVisibleRadius * 8.0, uTilingPresentationR");
+    expect(source).toContain("col = mix(background, col, latticeVisibility);");
+    expect(source).toContain(
+      "outTraceLayer = traceLayer(\n      latticeVisibility,",
+    );
   });
 
   it("makes out-of-carrier probe taps open space and bounds shadow and ground rays by their own carriers", () => {
@@ -1974,6 +1980,33 @@ describe("compile-gated mirrored lattice in the 3D GLSL tracer", () => {
     expect(material.uniforms.uTilingPresentationR.value).toBe(30);
     setSurfaceSystem(material, de3([map3()]), [black], undefined, null);
     expect(material.uniforms.uTilingPresentationR.value).toBe(10);
+  });
+
+  it("recompiles only the source-generated fade onset, never an outer-radius-only candidate", () => {
+    const material = createSurfaceMaterial();
+    const base = resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1);
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, base);
+    const baseVersion = material.version;
+    const baseSource = material.fragmentShader;
+
+    const widerOuter = resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1, {
+      fadeStartRadiusMult: 8,
+      outerRadiusMult: 12,
+    });
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, widerOuter);
+    expect(material.version).toBe(baseVersion);
+    expect(material.fragmentShader).toBe(baseSource);
+    expect(material.uniforms.uTilingPresentationR.value).toBe(12);
+
+    const laterFade = resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1, {
+      fadeStartRadiusMult: 9,
+      outerRadiusMult: 12,
+    });
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, laterFade);
+    expect(material.version).toBeGreaterThan(baseVersion);
+    expect(material.fragmentShader).toContain(
+      "pos, uVisibleRadius * 9.0, uTilingPresentationR",
+    );
   });
 });
 

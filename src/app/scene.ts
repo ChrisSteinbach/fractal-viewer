@@ -136,6 +136,7 @@ import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { surfaceDescentCostWeight } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import { latticePresentationPolicyOf } from "../fractal/lattice-march";
 import {
   isResolvedLatticeTiling,
   resolveTiling,
@@ -4775,6 +4776,7 @@ export class FractalScene {
         ...(current.clip ? { clip: current.clip } : {}),
       },
       current.radius,
+      latticePresentationPolicyOf(current.presentation),
     );
     if (!next || !isResolvedLatticeTiling(next)) {
       throw new Error("Surface WebGL: failed to resolve live lattice scale");
