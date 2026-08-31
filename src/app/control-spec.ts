@@ -331,6 +331,10 @@ export interface ControlEffects {
    * histogram/shared-frame dimensions are fixed at `start`; the flame twin
    * of {@link restartSolidRender}. */
   restartFlameRender(): void;
+  /** Update the mirrored lattice's resolved half-cell on the active Surface
+   * session without rebuilding its baked kind/clip source. Both engines
+   * consume the new scale on the next frame. */
+  setSurfaceLatticeScale(cellScale: number): void;
   /** Re-enter the surface session for a variant-level change (such as the
    * balloon toggle) or a new settle budget (antialias samples); a no-op
    * outside surface mode. The surface sibling of {@link restartFlameRender}. */
@@ -565,6 +569,19 @@ const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
 const tilingEffect: ControlEffect = (state, fx) => {
   fx.refreshSurfaceEligibility();
   if (state.renderMode === "surface") fx.restartSurfaceRender();
+};
+
+/** The lattice scale is the tiling family's live exception: kind and clip are
+ * baked source, but `h = cellScale * R` rides a GLSL uniform / WGSL params
+ * word and therefore updates the active session without re-entry. */
+const tilingScaleEffect: ControlEffect = (state, fx) => {
+  if (
+    state.renderMode === "surface" &&
+    state.tiling &&
+    isLatticeTilingSpec(state.tiling)
+  ) {
+    fx.setSurfaceLatticeScale(state.tiling.cellScale);
+  }
 };
 
 /** Display the optional clip by canonical catalog identity. An imported
@@ -1518,7 +1535,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       if (!Number.isFinite(value)) return s;
       return setTiling(s, { ...s.tiling, cellScale: value });
     },
-    effect: tilingEffect,
+    effect: tilingScaleEffect,
   },
   {
     kind: "select",
