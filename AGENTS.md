@@ -871,6 +871,27 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     build itself from a measured pilot slab, downshifting a 64/48/32 ladder to
     fit a 3s budget (floored at 32, never skipped). Module doc carries the
     validity chain and the 3D-only refusal.
+  - `tiling.ts` — the space-tiling vocabulary (epic fr-b84r phase 1): the
+    scene-level `TilingSpec` (group + optional narrowing `ShapeSpec` clip),
+    one `resolveTiling` authority, the frozen finite reflection groups A3/B3/H3
+    (3D) and A4/B4/F4 (4D) with their root tables, the fold-to-chamber map
+    (reflect across the most-violated wall; PROVEN to terminate within the
+    group's max word length — F4's 24 — so the bound is 32 everywhere with a
+    return-0 guard), and the slow explicit orbit enumerator used only as a
+    test oracle. The rendered set is the orbit of `attractor ∩ chamber ∩
+clip`; the estimator is `max(DE(fold(q)), clipDist(fold(q)))` — the
+    chamber enters ONLY through the fold (the wall distance is not a term:
+    unsound as a max, false geometry as a min), sound by the nearest-copy
+    theorem and the max-of-lower-bounds chain. REFUSALS, each with its
+    reason in the contract: balloon (an orbit's echo is not the echo's
+    orbit), kaleidoscope (two query-space folds, no certified order),
+    4D slab (the fold of a segment is a bent polyline), H4 and reducible
+    groups. Ground plane, lens, condensation, schedule, chaos, trap and
+    finishes compose. Wire = ONE u32 (group id) appended past every frozen
+    tail; roots and clip are baked source. Points/Flame/Solid render the
+    UNTILED attractor with an adjacent explanation — a query-space fold has
+    no chaos-game meaning. Contract, proof and false-wall disclosure:
+    `docs/tiling-contract.md`.
   - `surface-finish.ts` — the per-transform surface FINISH's meaning:
     `resolveSurfaceFinish` is the ONE absent-means-classic definition +
     domain (classic = the fixed formula's 0.4/32/0/0/0; shininess FLOORS
