@@ -33,8 +33,11 @@
  *      pipelined pump — the baseline both drains are measured against).
  *   2. Save PNG to a real, completed download — the yielding async drain.
  *   3. Save PNG again, Cancel mid-drain: the export modal must open, the
- *      cancel must be honoured, and the surface session must still be
- *      interactive afterward — a cancelled export must not strand the pane.
+ *      cancel must be honoured without producing a second download, and the
+ *      surface session must still be interactive afterward — a cancelled
+ *      export must not strand the pane. `--tiling=a3` authors the finite
+ *      tiling through the real panel before entry and requires it to survive
+ *      the completed export, cancellation, interaction and collection save.
  *   4. Save to collection: the SYNCHRONOUS drain, via
  *      captureThumbnail("surface") -> renderSurface("full") ->
  *      drainStripsSync. This is the phase the bug above lived in, so its
@@ -67,6 +70,10 @@
  * thumbnail drain 1.1s / 2.4s / 1.5s. Concurrent gate runs invalidate
  * all of these numbers — beside stray concurrent runs the same export
  * measured 169.3s — so run this gate ALONE.
+ * The 2026-08-31 `--tiling=a3` qualification passed 15/15 on SwiftShader:
+ * settle 10.0s, completed PNG 73.6s/12,952 bytes, cancel 0.7s with no second
+ * download, and synchronous collection thumbnail 1.7s; exact A3 survived
+ * every phase and the collection entry's encoded document.
  *
  * ROBUSTNESS. The settle wait (phase 1) and the download wait (phase 2) are
  * the two places a hung drain would otherwise wedge this script forever;
@@ -84,7 +91,7 @@
  * noise — see `isKnownServiceWorkerSslNoise`'s doc for the exact text
  * matched. Every OTHER page error still fails the run.
  *
- * Usage: node scripts/capture-export.verify.mjs [url]
+ * Usage: node scripts/capture-export.verify.mjs [url] [--tiling=a3]
  * (url defaults to https://localhost:4173 — `npm run build && npm run
  * preview` first, per capture-drain.verify.mjs.)
  */
@@ -92,7 +99,15 @@ import { stat } from "node:fs/promises";
 import process from "node:process";
 import { chromium } from "playwright-core";
 
-const BASE = (process.argv[2] ?? "https://localhost:4173").replace(/\/+$/, "");
+const cliArgs = process.argv.slice(2);
+const BASE = (
+  cliArgs.find((arg) => !arg.startsWith("--")) ?? "https://localhost:4173"
+).replace(/\/+$/, "");
+const tilingArg = cliArgs.find((arg) => arg.startsWith("--tiling="));
+const TILING = tilingArg?.slice("--tiling=".length) ?? null;
+if (TILING !== null && TILING !== "a3") {
+  throw new Error("--tiling currently accepts only a3");
+}
 
 /** Bound on the live settle (phase 1). Generous even for SwiftShader on the
  * zoomed-out (cheap) frame this script insists on — a real timeout means
@@ -206,6 +221,32 @@ async function openPanelSection(page, sectionId) {
   }
 }
 
+function decodeDocument(encoded) {
+  const match = /^#?v1=([A-Za-z0-9_-]+)$/.exec(encoded);
+  if (!match)
+    throw new Error(`invalid scene document: ${encoded.slice(0, 24)}`);
+  return JSON.parse(Buffer.from(match[1], "base64url").toString("utf8"));
+}
+
+async function readTiling(page) {
+  return decodeDocument(await page.evaluate(() => window.location.hash)).tiling;
+}
+
+async function waitForExactTiling(page, wanted, timeout = 15_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    try {
+      if (JSON.stringify(await readTiling(page)) === JSON.stringify(wanted)) {
+        return true;
+      }
+    } catch {
+      // Debounced persistence can briefly leave the hash absent.
+    }
+    await page.waitForTimeout(100);
+  }
+  return false;
+}
+
 async function main() {
   const env = { ...process.env };
   delete env.DISPLAY; // offscreen SwiftShader, not X11 GLX (see webgl-smoke.mjs)
@@ -256,6 +297,15 @@ async function main() {
       timeout: 60_000,
     });
     await page.waitForTimeout(4000);
+
+    if (TILING === "a3") {
+      await openPanelSection(page, "tilingSection");
+      await page.locator("#tilingEnabledCheckbox").check();
+      check(
+        await waitForExactTiling(page, { group: "a3" }),
+        "A3 authored through the live tiling panel",
+      );
+    }
 
     // Zoom out so most rays miss the attractor: the cheap frame this whole
     // gate depends on to finish under SwiftShader at all (see the module
@@ -330,6 +380,13 @@ async function main() {
     );
     const toast1 = (await page.textContent("#toast").catch(() => "")) ?? "";
     check(/Saved /.test(toast1), `save toast: "${toast1.trim().slice(0, 70)}"`);
+    if (TILING === "a3") {
+      check(
+        JSON.stringify(await readTiling(page)) ===
+          JSON.stringify({ group: "a3" }),
+        "completed Save PNG preserved exact A3",
+      );
+    }
     await page.waitForTimeout(1500);
 
     // --- 3. Save PNG again, Cancel mid-drain --------------------------------
@@ -339,6 +396,11 @@ async function main() {
       const t = document.getElementById("toast");
       if (t) t.textContent = "";
     });
+    let cancelledDownload = false;
+    const onCancelledDownload = () => {
+      cancelledDownload = true;
+    };
+    page.on("download", onCancelledDownload);
     await page.click("#savePngBtn");
     await page.waitForTimeout(MODAL_GRACE_WAIT_MS);
     const modalUp = await page.isVisible("#exportModal").catch(() => false);
@@ -364,6 +426,16 @@ async function main() {
       !modalUp || cancelled,
       `cancel honoured in ${((Date.now() - cancelMs) / 1000).toFixed(1)}s`,
     );
+    await page.waitForTimeout(500);
+    page.off("download", onCancelledDownload);
+    check(!cancelledDownload, "cancelled export produced no download");
+    if (TILING === "a3") {
+      check(
+        JSON.stringify(await readTiling(page)) ===
+          JSON.stringify({ group: "a3" }),
+        "cancelled Save PNG preserved exact A3",
+      );
+    }
 
     // The pane must still be alive after a cancelled export.
     await page.waitForTimeout(1200);
@@ -380,6 +452,13 @@ async function main() {
       { timeout: ALIVE_CHECK_TIMEOUT_MS },
     );
     check(Boolean(alive), "surface session alive after cancel + drag");
+    if (TILING === "a3") {
+      check(
+        JSON.stringify(await readTiling(page)) ===
+          JSON.stringify({ group: "a3" }),
+        "post-cancel interaction preserved exact A3",
+      );
+    }
 
     // --- 4. Save to collection: the SYNC drain via captureThumbnail --------
     await openPanelSection(page, "collectionSection");
@@ -412,6 +491,18 @@ async function main() {
         `(${String(last?.thumbnail?.length ?? 0)} chars, click held ` +
         `${(syncHeldMs / 1000).toFixed(1)}s)`,
     );
+    if (TILING === "a3") {
+      let savedTiling = null;
+      try {
+        savedTiling = decodeDocument(last?.encoded ?? "").tiling;
+      } catch {
+        // The assertion below reports an invalid/missing encoded document.
+      }
+      check(
+        JSON.stringify(savedTiling) === JSON.stringify({ group: "a3" }),
+        "collection entry encoded exact A3",
+      );
+    }
 
     // --- Page errors, filtered for the known SSL/service-worker noise ------
     const realErrors = errors.filter((e) => !isKnownServiceWorkerSslNoise(e));

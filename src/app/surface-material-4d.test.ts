@@ -1614,6 +1614,11 @@ describe("compile-gated mirrored lattice in the 4D GLSL tracer", () => {
     expect(source).toContain(
       "1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));",
     );
+    expect(source).toContain("pos, uVisibleRadius * 8.0, uTilingPresentationR");
+    expect(source).toContain("col = mix(background, col, latticeVisibility);");
+    expect(source).toContain(
+      "outTraceLayer = traceLayer(\n      latticeVisibility,",
+    );
     // The probe contains predicate takes the same assembled row.
     expect(source).toContain(
       "if (!latticePresentationContains(p, uW0, vec4(uInvRotor[0][1], uInvRotor[1][1], uInvRotor[2][1], uInvRotor[3][1]), uVisibleRadius, uTilingPresentationR)) {",

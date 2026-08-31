@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * Finite Surface-tiling AUTHORING AND PRESET gate. This drives the production
+ * Surface-tiling AUTHORING AND PRESET gate. This drives the production
  * app through the same panel controls and preset menu a person uses; it does
  * not construct a tiling block by editing the document hash.
  *
- * The three showcase presets are loaded FROM `#presetSelect`. Each must write
- * its authored finite group (B3, A4, F4), enter Surface unaided through its
+ * The five showcase presets are loaded FROM `#presetSelect`. Each must write
+ * its authored finite group (B3, A4, F4) or mirrored-lattice scale (3D/4D),
+ * enter Surface unaided through its
  * saved renderer hint, reach the requested completed rendering stage, draw a
  * non-backdrop share in a real canvas screenshot, and retain the group in the
  * persisted `#v1=` document. The gate then clears ONLY the tiling block through
@@ -20,17 +21,22 @@
  * SwiftShader run reports its engine but does not turn adapter availability
  * into a routing verdict.
  *
- * A same-page replacement loads an ordinary untiled preset after a tiled one
- * and requires the tiling block to clear. The authoring leg then proves the
- * panel contract independently of the presets:
+ * A same-page replacement walks finite -> lattice -> finite -> ordinary and
+ * requires each arm to replace, rather than merge with, the prior block. The
+ * authoring leg then proves the panel contract independently of the presets:
  *
  * - Space enables the finite block, ArrowDown changes the chamber group, and
  *   ArrowDown in the independent clip picker adds a bundled analytic content
  *   clip without changing that chamber;
- * - every control has an unclipped 44x44 CSS-pixel activation target;
+ * - every checkbox/select has an unclipped 44x44 CSS-pixel activation target;
+ *   the exact lattice numeric companion is keyboard-driven here while the
+ *   phone-sized 44px/touch contract stays owned by the numeric-control gate;
  * - Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z restore the exact group-only and
  *   group-plus-clip tiling objects, and the app's own copied share link keeps
  *   the latter object exactly;
+ * - the kind selector replaces finite with lattice while retaining only the
+ *   shared clip, ArrowRight edits the exact lattice cell scale, and the return
+ *   to finite clears the lattice discriminator/scale;
  * - Points, Flame, and Sampled Solid each disclose beside the still-visible
  *   controls that they show the untiled attractor;
  * - Balloon and order>1 Symmetry leave the authored checkbox available as a
@@ -42,22 +48,20 @@
  * elements are hidden before capture, and the downsampled image is compared
  * with its own four corners to estimate non-backdrop coverage.
  *
- * This gate deliberately does NOT compare the three presets with each other,
- * certify the fold algebra (the CPU/kernel tests and finite renderer gate own
- * that), exercise imported/custom clips, author mirrored lattice parameters,
- * or test phone layout (the panel must be open at a viewport wider than the
- * 640px breakpoint).
+ * This gate deliberately does NOT compare the five presets with each other,
+ * certify the fold algebra (the CPU/kernel tests and renderer gates own that),
+ * exercise imported/custom clips, or test phone layout (the panel must be open
+ * at a viewport wider than the 640px breakpoint).
  *
  * MEASURED 2026-08-31 on verified Mesa Intel Iris Xe, settled 8/8 at 800x640:
- * B3 routed WebGL, drew 39.63% non-backdrop and differed 5.75% from its
- * same-camera untiled control; A4 routed compute at 40.19% / 5.19%; F4 routed
- * compute at 39.01% / 8.47%. The preset clear, 44px targets, trusted keyboard
- * edits, exact undo/redo, app-copied-link reload, three untiled-mode notices,
- * Balloon/Symmetry dormancy and explicit clear route all passed without page
- * or console errors. A short SwiftShader stage-1 smoke independently passed
- * B3 (37.22% / 5.68%) and A4 (37.75% / 4.85%); F4 drew through compute but
- * its untiled negative-control pass exceeded that run's deliberately short
- * 120s diagnostic budget, so it is not recorded as a software verdict.
+ * B3 routed WebGL and drew/differed from untiled by 40.26%/6.59%; A4 compute
+ * 40.17%/5.17%; F4 compute 39.00%/8.42%; lattice-3D WebGL 46.85%/13.23%;
+ * lattice-4D compute 37.42%/0.29% (its fixture-specific floor is 0.20%). All
+ * five exposed progress before settling. Exact finite/lattice replacement,
+ * the 2.4 numeric edit, both finite and lattice app-copied links, three
+ * lattice-authored untiled-mode notices, Balloon/Symmetry dormancy, explicit
+ * clear routes, and three malformed-block fallbacks passed without page or
+ * console errors.
  *
  * Usage (build + `npm run preview` first):
  *   node scripts/tiling-ui.verify.mjs
@@ -115,20 +119,35 @@ const PRESETS = [
   {
     key: "tiledOctahedron",
     label: "Tiled Octahedron",
-    group: "b3",
+    tiling: { group: "b3" },
     x11Engine: "webgl",
   },
   {
     key: "tiledPentatope",
     label: "Tiled Pentatope",
-    group: "a4",
+    tiling: { group: "a4" },
     x11Engine: "compute",
   },
   {
     key: "tiledTwentyFourCell",
     label: "Tiled 24-Cell",
-    group: "f4",
+    tiling: { group: "f4" },
     x11Engine: "compute",
+  },
+  {
+    key: "mirroredLattice",
+    label: "Mirrored Lattice",
+    tiling: { kind: "lattice", cellScale: 1.6 },
+    x11Engine: "webgl",
+  },
+  {
+    key: "mirroredLattice4",
+    label: "Mirrored Lattice 4D",
+    tiling: { kind: "lattice", cellScale: 1.6 },
+    x11Engine: "compute",
+    // The 4D fixture occupies nearly the same projected carrier without the
+    // lattice; its repeated cells are a smaller but still robust difference.
+    minDiff: 0.002,
   },
 ];
 
@@ -222,6 +241,10 @@ function decodeHash(hash) {
   return JSON.parse(Buffer.from(match[1], "base64url").toString("utf8"));
 }
 
+function encodeHash(document) {
+  return `#v1=${Buffer.from(JSON.stringify(document), "utf8").toString("base64url")}`;
+}
+
 async function readDocument(page) {
   return decodeHash(await page.evaluate(() => window.location.hash));
 }
@@ -311,7 +334,9 @@ async function openApp(browser, args) {
       "presetSelect",
       "tilingSection",
       "tilingEnabledCheckbox",
+      "tilingKind",
       "tilingGroup",
+      "tilingCellScaleSlider",
       "tilingClip",
       "tilingNote",
     ];
@@ -347,6 +372,45 @@ async function openSection(page, id) {
     id,
     { timeout: 5_000 },
   );
+}
+
+/** Observe before a preset or mode click so a fast full-detail pass cannot
+ * appear and hide entirely between the polling samples below. */
+async function armSurfaceProgressProbe(page) {
+  await page.evaluate(() => {
+    window.__tilingUiProgressSeen = false;
+    const row = document.getElementById("surfaceProgress");
+    if (!row) throw new Error("surface progress row missing");
+    const sample = () => {
+      if (
+        !row.classList.contains("hidden") &&
+        (row.textContent ?? "").trim().length > 0
+      ) {
+        window.__tilingUiProgressSeen = true;
+      }
+    };
+    sample();
+    new MutationObserver((records) => {
+      if (
+        records.some(
+          (record) =>
+            record.type === "attributes" &&
+            record.attributeName === "class" &&
+            record.oldValue?.split(/\s+/).includes("hidden"),
+        ) &&
+        (row.textContent ?? "").trim().length > 0
+      ) {
+        window.__tilingUiProgressSeen = true;
+      }
+      sample();
+    }).observe(row, {
+      attributes: true,
+      attributeOldValue: true,
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
 }
 
 /** Choose a preset through the one-shot menu and wait for its debounced
@@ -389,11 +453,14 @@ async function waitForSurfaceTarget(page, args) {
   let heldSince = null;
   while (Date.now() < deadline) {
     last = await pollSurfaceStage(page);
+    const progressSeen = await page.evaluate(
+      () => window.__tilingUiProgressSeen === true,
+    );
     if (args.stage === SETTLE_SAMPLES) {
       if (last.settled) {
         heldSince ??= Date.now();
         if (Date.now() - heldSince >= args.dwell) {
-          return { ok: true, state: last };
+          return { ok: progressSeen, progressSeen, state: last };
         }
       } else heldSince = null;
     } else if (
@@ -401,7 +468,7 @@ async function waitForSurfaceTarget(page, args) {
       last.probe.firstFrame &&
       last.completed >= args.stage
     ) {
-      return { ok: true, state: last };
+      return { ok: progressSeen, progressSeen, state: last };
     }
     if (
       last.probe &&
@@ -412,7 +479,13 @@ async function waitForSurfaceTarget(page, args) {
     }
     await page.waitForTimeout(POLL_MS);
   }
-  return { ok: false, state: last };
+  return {
+    ok: false,
+    progressSeen: await page.evaluate(
+      () => window.__tilingUiProgressSeen === true,
+    ),
+    state: last,
+  };
 }
 
 async function visibleErrorText(page) {
@@ -590,19 +663,20 @@ async function runPresetLeg(browser, args, preset) {
   const { context, page, pageErrors, consoleErrors } = app;
   const started = Date.now();
   try {
+    await armSurfaceProgressProbe(page);
     const loaded = await loadPreset(page, preset.key);
     if (!loaded) {
       return { ok: false, preset, reason: "preset document never changed" };
     }
     const installed = await waitForDocument(
       page,
-      (document) => document.tiling?.group === preset.group,
+      (document) => exact(document.tiling) === exact(preset.tiling),
     );
     if (!installed.ok) {
       return {
         ok: false,
         preset,
-        reason: `preset did not install ${preset.group.toUpperCase()}`,
+        reason: `preset did not install ${exact(preset.tiling)}`,
       };
     }
     // Do not press #modeSurfaceBtn. PRESET_RENDER_HINTS owns this transition,
@@ -615,9 +689,7 @@ async function runPresetLeg(browser, args, preset) {
     const enginePass =
       expectedEngine === null || state?.engine === expectedEngine;
     const document = await readDocument(page);
-    const documentPass =
-      document.tiling?.group === preset.group &&
-      Object.prototype.hasOwnProperty.call(document.tiling, "kind") === false;
+    const documentPass = exact(document.tiling) === exact(preset.tiling);
     const errorText = await visibleErrorText(page);
     let tiledCapture = null;
     if (state?.firstFrame) {
@@ -651,12 +723,13 @@ async function runPresetLeg(browser, args, preset) {
         }
       }
     }
+    const minDiff = preset.minDiff ?? args.diff;
     const distinctPass =
       untiledTarget?.ok === true &&
       untiledCapture !== null &&
       untiledCapture.metrics.coverage >= args.draw &&
       distinctness !== null &&
-      distinctness.fraction >= args.diff;
+      distinctness.fraction >= minDiff;
     const ok =
       target.ok &&
       state?.mode === "surface" &&
@@ -673,6 +746,7 @@ async function runPresetLeg(browser, args, preset) {
       ok,
       preset,
       target,
+      progressSeen: target.progressSeen,
       engine: state?.engine ?? null,
       backend: state?.backend ?? null,
       expectedEngine,
@@ -680,6 +754,7 @@ async function runPresetLeg(browser, args, preset) {
       coverage: tiledCapture?.metrics.coverage ?? null,
       untiledCoverage: untiledCapture?.metrics.coverage ?? null,
       distinctness,
+      minDiff,
       elapsedMs: Date.now() - started,
       pageErrors,
       consoleErrors,
@@ -710,7 +785,10 @@ async function pressAndWaitTiling(page, selector, key, wanted) {
   return waitForExactTiling(page, wanted);
 }
 
-async function readActivationTargets(page) {
+async function readActivationTargets(
+  page,
+  ids = ["tilingEnabledCheckbox", "tilingKind", "tilingGroup", "tilingClip"],
+) {
   return page.evaluate(
     ({ ids, minimum }) => {
       const panel = document.getElementById("panel");
@@ -749,10 +827,7 @@ async function readActivationTargets(page) {
         };
       });
     },
-    {
-      ids: ["tilingEnabledCheckbox", "tilingGroup", "tilingClip"],
-      minimum: TARGET_PX,
-    },
+    { ids, minimum: TARGET_PX },
   );
 }
 
@@ -801,13 +876,42 @@ async function runClearLeakLeg(browser, args) {
     if (!(await loadPreset(page, "tiledOctahedron"))) {
       return { ok: false, reason: "tiled preset never changed the document" };
     }
-    const tiled = await waitForDocument(
-      page,
-      (document) => document.tiling?.group === "b3",
-    );
-    if (!tiled.ok) {
+    const finite3 = await waitForExactTiling(page, { group: "b3" });
+    if (!finite3.ok) {
       return { ok: false, reason: "tiled preset never installed B3" };
     }
+
+    if (!(await loadPreset(page, "mirroredLattice4"))) {
+      return {
+        ok: false,
+        reason: "4D lattice preset never changed the document",
+      };
+    }
+    const lattice4 = await waitForExactTiling(page, {
+      kind: "lattice",
+      cellScale: 1.6,
+    });
+    if (!lattice4.ok) {
+      return {
+        ok: false,
+        reason: `lattice preset merged or lost fields: ${exact(lattice4.document?.tiling)}`,
+      };
+    }
+
+    if (!(await loadPreset(page, "tiledPentatope"))) {
+      return {
+        ok: false,
+        reason: "4D finite preset never changed the document",
+      };
+    }
+    const finite4 = await waitForExactTiling(page, { group: "a4" });
+    if (!finite4.ok) {
+      return {
+        ok: false,
+        reason: `finite preset merged or lost fields: ${exact(finite4.document?.tiling)}`,
+      };
+    }
+
     if (!(await loadPreset(page, "default"))) {
       return {
         ok: false,
@@ -821,7 +925,7 @@ async function runClearLeakLeg(browser, args) {
     return {
       ok: cleared.ok,
       reason: cleared.ok
-        ? "ordinary preset cleared the previous finite block"
+        ? "finite -> lattice -> finite replaced exactly; ordinary cleared"
         : `ordinary preset retained ${exact(cleared.document?.tiling)}`,
     };
   } finally {
@@ -959,6 +1063,129 @@ async function runAuthoringLeg(browser, args) {
           ? "app-copied link restored the exact B3-plus-clip object"
           : "app-copied link was invalid or changed/lost its tiling object",
       );
+
+      await openSection(page, "tilingSection");
+      const lattice = await pressAndWaitTiling(
+        page,
+        "#tilingKind",
+        "ArrowDown",
+        {
+          kind: "lattice",
+          cellScale: 1.5,
+          clip: groupAndClip.clip,
+        },
+      );
+      check(
+        "finite-to-lattice replacement",
+        lattice.ok,
+        lattice.ok
+          ? "kind replaced group with the default cell scale and kept only the shared clip"
+          : `conversion produced ${exact(lattice.document?.tiling)}`,
+      );
+
+      await page.locator("#tilingCellScaleSlider").scrollIntoViewIfNeeded();
+      const latticeTargets = await readActivationTargets(page, [
+        "tilingEnabledCheckbox",
+        "tilingKind",
+        "tilingClip",
+      ]);
+      for (const target of latticeTargets) {
+        const ok =
+          !target.missing &&
+          !target.disabled &&
+          target.width >= TARGET_PX &&
+          target.height >= TARGET_PX &&
+          target.hitPass &&
+          target.unclipped;
+        check(
+          `${target.id} lattice target`,
+          ok,
+          target.missing
+            ? "missing"
+            : `${target.width.toFixed(1)}x${target.height.toFixed(1)}px, ` +
+                `hit=${target.hitPass}, unclipped=${target.unclipped}`,
+        );
+      }
+
+      const scaled = await pressAndWaitTiling(
+        page,
+        "#tilingCellScaleSlider",
+        "ArrowRight",
+        {
+          kind: "lattice",
+          cellScale: 1.55,
+          clip: groupAndClip.clip,
+        },
+      );
+      const scaleLabel = await page
+        .locator("#tilingCellScaleLabel")
+        .textContent();
+      check(
+        "keyboard lattice scale",
+        scaled.ok && scaleLabel?.trim() === "1.55×",
+        scaled.ok
+          ? `ArrowRight authored 1.55; label=${scaleLabel?.trim()}`
+          : `scale edit produced ${exact(scaled.document?.tiling)}`,
+      );
+
+      await page.locator("#tilingCellScaleSliderNumber").evaluate((element) => {
+        element.focus();
+        element.select();
+      });
+      await page.keyboard.type("2.4");
+      await page.keyboard.press("Enter");
+      const exactScale = await waitForExactTiling(page, {
+        kind: "lattice",
+        cellScale: 2.4,
+        clip: groupAndClip.clip,
+      });
+      const exactScaleUi = await page.evaluate(() => ({
+        range: document.getElementById("tilingCellScaleSlider")?.value ?? "",
+        number:
+          document.getElementById("tilingCellScaleSliderNumber")?.value ?? "",
+        label:
+          document
+            .getElementById("tilingCellScaleLabel")
+            ?.textContent?.trim() ?? "",
+      }));
+      check(
+        "exact lattice scale",
+        exactScale.ok &&
+          Number(exactScaleUi.range) === 2.4 &&
+          Number(exactScaleUi.number) === 2.4 &&
+          exactScaleUi.label === "2.40×",
+        exactScale.ok
+          ? `numeric companion authored exact 2.4; slider=${exactScaleUi.range}, label=${exactScaleUi.label}`
+          : `numeric edit produced ${exact(exactScale.document?.tiling)}`,
+      );
+
+      const latticeShareLink = await copyShareLink(page);
+      const validLatticeShareLink = latticeShareLink.includes("#v1=");
+      await page.goto(latticeShareLink, {
+        waitUntil: "load",
+        timeout: 60_000,
+      });
+      await page.waitForFunction(
+        () => {
+          const count =
+            document.getElementById("pointCount")?.textContent ?? "";
+          return Number(count.replace(/[^\d]/g, "")) > 0;
+        },
+        undefined,
+        { timeout: 60_000 },
+      );
+      const latticeReloaded = await waitForExactTiling(page, {
+        kind: "lattice",
+        cellScale: 2.4,
+        clip: groupAndClip.clip,
+      });
+      check(
+        "lattice copied-link reload",
+        validLatticeShareLink && latticeReloaded.ok,
+        validLatticeShareLink && latticeReloaded.ok
+          ? "app-copied link restored exact lattice scale and shared clip"
+          : "app-copied link changed or lost the lattice object",
+      );
     }
 
     await openSection(page, "tilingSection");
@@ -981,6 +1208,23 @@ async function runAuthoringLeg(browser, args) {
           /Points shows the untiled attractor/,
         );
       }
+    }
+
+    if (clipped.ok) {
+      await openSection(page, "tilingSection");
+      const finiteAgain = await pressAndWaitTiling(
+        page,
+        "#tilingKind",
+        "ArrowUp",
+        { group: "a3", clip: groupAndClip.clip },
+      );
+      check(
+        "lattice-to-finite replacement",
+        finiteAgain.ok,
+        finiteAgain.ok
+          ? "kind cleared the lattice discriminator/scale and kept only the shared clip"
+          : `conversion produced ${exact(finiteAgain.document?.tiling)}`,
+      );
     }
 
     await openSection(page, "balloonSection");
@@ -1090,6 +1334,90 @@ async function runAuthoringLeg(browser, args) {
   }
 }
 
+async function runMalformedDecodeLeg(browser, args) {
+  const { context, page, pageErrors, consoleErrors } = await openApp(
+    browser,
+    args,
+  );
+  const checks = [];
+  try {
+    const baselineLink = await copyShareLink(page);
+    const baseline = decodeHash(new URL(baselineLink).hash);
+    const malformed = [
+      {
+        name: "lattice string scale",
+        value: { kind: "lattice", cellScale: "2" },
+      },
+      {
+        name: "lattice cross-arm group",
+        value: { kind: "lattice", cellScale: 2, group: "a3" },
+      },
+      { name: "unknown finite group", value: { group: "z9" } },
+    ];
+    for (const [index, candidate] of malformed.entries()) {
+      const document = {
+        ...baseline,
+        pointSize: 1.23,
+        tiling: candidate.value,
+      };
+      await page.goto(
+        `${args.url}/?surfacestate&malformed=${index}${encodeHash(document)}`,
+        {
+          waitUntil: "load",
+          timeout: 60_000,
+        },
+      );
+      await page.waitForFunction(
+        () => {
+          const count =
+            document.getElementById("pointCount")?.textContent ?? "";
+          return Number(count.replace(/[^\d]/g, "")) > 0;
+        },
+        undefined,
+        { timeout: 60_000 },
+      );
+      await openSection(page, "tilingSection");
+      const panel = await page.evaluate(() => {
+        const checkbox = document.getElementById("tilingEnabledCheckbox");
+        const controls = document.getElementById("tilingControls");
+        return {
+          checked:
+            checkbox instanceof HTMLInputElement && checkbox.checked === true,
+          controlsHidden: controls?.classList.contains("hidden") === true,
+        };
+      });
+      const shareLink = await copyShareLink(page);
+      const shared = decodeHash(new URL(shareLink).hash);
+      const ok =
+        panel.checked === false &&
+        panel.controlsHidden &&
+        shared.tiling === undefined &&
+        shared.pointSize === 1.23 &&
+        exact(shared.transforms) === exact(baseline.transforms);
+      checks.push({
+        name: candidate.name,
+        ok,
+        detail: ok
+          ? "tiling decoded quietly to absent while the distinctive valid scene survived canonically"
+          : `panel=${exact(panel)}, tiling=${exact(shared.tiling)}, pointSize=${exact(shared.pointSize)}, transformsPreserved=${exact(shared.transforms) === exact(baseline.transforms)}`,
+      });
+    }
+    checks.push({
+      name: "malformed page errors",
+      ok: pageErrors.length === 0,
+      detail: pageErrors.length ? pageErrors.join(" | ") : "none",
+    });
+    checks.push({
+      name: "malformed console errors",
+      ok: consoleErrors.length === 0,
+      detail: consoleErrors.length ? consoleErrors.join(" | ") : "none",
+    });
+    return { ok: checks.every((entry) => entry.ok), checks };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 function printPreset(result) {
   const coverage =
     result.coverage === null || result.coverage === undefined
@@ -1100,12 +1428,15 @@ function printPreset(result) {
     : "n/a";
   const expected = result.expectedEngine ?? "reported-only";
   const difference = result.distinctness
-    ? `${(result.distinctness.fraction * 100).toFixed(2)}%`
+    ? `${(result.distinctness.fraction * 100).toFixed(2)}%/${(
+        result.minDiff * 100
+      ).toFixed(2)}%`
     : "n/a";
   process.stdout.write(
     `${result.ok ? "PASS" : "FAIL"}  ${result.preset.label.padEnd(20)} ` +
-      `group=${result.preset.group.toUpperCase()} ` +
+      `tiling=${exact(result.preset.tiling)} ` +
       `engine=${result.engine ?? "none"}/${expected} ` +
+      `progress=${String(Boolean(result.progressSeen))} ` +
       `drawn=${coverage} tiled/untiled=${difference} backend=${backend} ` +
       `time=${((result.elapsedMs ?? 0) / 1000).toFixed(1)}s` +
       `${result.reason ? ` — ${result.reason}` : ""}\n`,
@@ -1152,6 +1483,14 @@ async function run() {
       );
     }
     if (!authoring.ok) failed = true;
+
+    const malformed = await runMalformedDecodeLeg(browser, args);
+    for (const result of malformed.checks) {
+      process.stdout.write(
+        `${result.ok ? "PASS" : "FAIL"}  malformed ${result.name} — ${result.detail}\n`,
+      );
+    }
+    if (!malformed.ok) failed = true;
   } finally {
     await browser.close().catch(() => {});
   }

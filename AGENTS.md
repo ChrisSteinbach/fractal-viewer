@@ -885,22 +885,18 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `tiling-de.ts` is the one-core-call CPU authority for all seven inverse/forward families and additionally
     maxes the mandatory certified ball. Walls/seams are NEVER distance terms.
     `latticeFoldSource` is the ONE GLSL/WGSL floor-modulo emitter; code 7 + h
-    reuse the 16-byte tail (whose third word now carries the PROVISIONAL
-    presentation window radius — `(7, h, 10R, 0)`); all seven WGSL and both
-    GLSL wrappers are driver-qualified, with canonical resolver/full-radius
-    seams.
+    reuse the 16-byte tail as `(7, h, 10R, 0)`; all seven WGSL and both GLSL
+    wrappers are driver-qualified, with canonical resolver/full-radius seams.
     `lattice-march.ts` owns exact sphere∩attractor-y-slab intervals, probe and
     shadow membership, entry-relative fog, the shared GLSL/WGSL carrier-source
     emitter and a bounded reference march against an EXPLICIT outer radius.
     THE CARRIER IS WIRED: the live lattice session marches only inside
-    sphere(10R) ∩ slab(|attractor-y| ≤ R) on both engines and both
-    dimensions — the primary interval's tEnter/tFar, the fog origin and R
-    normalizer, each shadow ray's own carrier (fully lit past its own
-    tFar), the contains-guarded probe taps (the window never becomes
-    geometry, casts a shadow or contributes AO), and the ground plane's
-    corridor/AO certificates replaced by carrier tests (content repeats
-    beyond the ball). `10R` is `LATTICE_PRESENTATION_RADIUS_MULT` — the
-    PROVISIONAL diagnostic value a measurement session edits. Scene / Look
+    sphere(10R) ∩ slab(|attractor-y| ≤ R) on both engines/dimensions — primary,
+    fog, shadow, probe and ground-plane paths all use it, and the window never
+    becomes geometry, shadow or AO. After depth fog, shared-dialect smoothstep
+    coverage fades displayed-3D hits from 8R to the pixel backdrop at 10R;
+    capture/DOF carries that fraction while hit alpha stays terminal. The pair
+    is renderer-only, real-Iris gated, and not document state. Scene / Look
     exposes arm kind, analytic clip on either arm, and lattice cell scale over
     the FROZEN 1.25–4 range (default 1.5); the panel discloses that kind/clip
     restart while scale is live per frame. An entirely unposed clip
@@ -915,10 +911,13 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Bench-pinned on verified Iris: eval 7/7 cores plus five production
     frame legs (3D/4D × inverse/forward + ground plane) settling with
     hit-rate gaps ≤ 0.012 and plane-rate gap 0.012; the durable browser
-    gate `scripts/surface-lattice.verify.mjs` passed 18/18.
-    Finite authoring is shared Scene / Look state: B3/A4/F4 showcase presets,
-    separate chamber-group and narrowing-clip rows, app-copy/reload and
-    workflow behavior are real-browser gated by `scripts/tiling-ui.verify.mjs`.
+    gate `scripts/surface-lattice.verify.mjs` passes its full
+    progress→settled routing/persistence/distinctness matrix. Tiling-bearing
+    cancel, real-Firefox teardown, WebGL fallback and fold-4D refusal are
+    pinned by their owning lifecycle gates.
+    Tiling authoring is shared Scene / Look state: B3/A4/F4 and paired lattice
+    showcases, arm-specific controls, app-copy/reload and workflow behavior
+    are real-browser gated by `scripts/tiling-ui.verify.mjs`.
     `mirroredLattice` and `mirroredLattice4` are the lattice arm's paired
     3D/4D showcase presets.
     Points/Flame/Solid remain untiled
@@ -926,8 +925,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic
     opRep is REFUSED for overshoot and a wall clamp for false-zero geometry;
-    exact translation is deferred. The 10R presentation window and proposed
-    8R fade remain provisional. The deterministic lattice sheet
+    exact translation is deferred. The deterministic lattice sheet
     calls the production scalar fold and pins orbit/seam, translation-
     overshoot, false-wall and preview evidence. Full contract and proof:
     `docs/tiling-contract.md`.

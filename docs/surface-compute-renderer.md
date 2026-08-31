@@ -79,8 +79,9 @@ A TILED session (finite or mirrored-lattice) routes exactly where its
 untiled shape routes — the tiling block rides the `SurfaceComputeTarget`
 and the frame specs' params packers derive the carrier from it, so the
 lattice session marches the presentation carrier (sphere ∩ attractor-y
-slab at the PROVISIONAL 10R window) through the same bounded loop,
-shade batches, supersampling and capture tiling. The lattice camera
+slab at the frozen 10R window) through the same bounded loop, then fades
+coverage from 8R to backdrop in the shared shade entry used by every core,
+supersampling pass and capture tile. The lattice camera
 frames the canonical cell, never the global lattice, and a lattice
 session never requests the empty-space grid (its floors bound the
 attractor, not the infinite mirror image).

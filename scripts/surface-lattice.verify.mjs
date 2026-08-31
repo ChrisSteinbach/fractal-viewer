@@ -29,8 +29,9 @@
  * On top of the per-leg matrix the gate asserts THREE distinctness pairs
  * (untiled vs finite-tiled vs lattice on the SAME transforms and camera —
  * a knob that never reaches the renderer draws the same picture twice) and
- * one app-generated-link reload (the app's own copied hash re-enters
- * Surface and settles on the restored camera).
+ * one persisted-document reload (the current `#v1=` hash re-enters Surface
+ * and settles on the restored camera). The UI gate separately clicks the
+ * app's Copy Link control for the authored lattice arm.
  *
  * NOTE on headless SwiftShader: the fold WEBGL arms settle only with a
  * generous budget (the software rasterizer is 10-50x slower than a real
@@ -40,6 +41,13 @@
  * Screenshot PNGs are decoded through an offscreen 2D canvas only AFTER
  * capture; this never calls getImageData on the live WebGL canvas (that
  * readback is empty outside its own rAF).
+ *
+ * MEASURED 2026-08-31 on verified Mesa Intel Iris Xe with the shipped 8-pass
+ * settle: all ten routed lattice rows exposed progress, settled, drew and
+ * retained their document on the expected hardware engine. Coverage ranged
+ * 34.32-74.67%; untiled/finite/lattice pair differences were
+ * 8.10%/25.09%/25.07%, and the persisted-document reload differed by 7.87%
+ * under its 15% rerender ceiling.
  *
  * Options:
  *   --url=URL        app origin (default https://localhost:4173)
@@ -115,7 +123,9 @@ const COMMON_DOCUMENT = {
     paletteId: "spectrum",
   },
   surface: {
-    antialiasSamples: 1,
+    // The shipped eight-pass settle keeps even the fastest one-dispatch
+    // compute fixtures in the user-visible progress state before the latch.
+    antialiasSamples: 8,
     lightAzimuth: 135,
     lightElevation: 50,
     ambient: 0.25,
@@ -190,7 +200,7 @@ const ESCAPE4_TRANSFORMS = [
 ];
 
 /** Lattice cell scale: 1.6R cells keep the canonical cell's copies inside
- * the provisional 10R window with several mirrored rows visible. */
+ * the frozen 10R window with several mirrored rows visible. */
 const LATTICE_CELL_SCALE = 1.6;
 
 const LATTICE = { kind: "lattice", cellScale: LATTICE_CELL_SCALE };
@@ -371,6 +381,45 @@ async function waitForBoot(page) {
     undefined,
     { timeout: 60_000, polling: 100 },
   );
+}
+
+/** Install before the Surface click so even a fast compute settle cannot hide
+ * the visible progress transition between polling samples. */
+async function armSurfaceProgressProbe(page) {
+  await page.evaluate(() => {
+    window.__tilingProgressSeen = false;
+    const row = document.getElementById("surfaceProgress");
+    if (!row) throw new Error("surface progress row missing");
+    const sample = () => {
+      if (
+        !row.classList.contains("hidden") &&
+        (row.textContent ?? "").trim().length > 0
+      ) {
+        window.__tilingProgressSeen = true;
+      }
+    };
+    sample();
+    new MutationObserver((records) => {
+      if (
+        records.some(
+          (record) =>
+            record.type === "attributes" &&
+            record.attributeName === "class" &&
+            record.oldValue?.split(/\s+/).includes("hidden"),
+        ) &&
+        (row.textContent ?? "").trim().length > 0
+      ) {
+        window.__tilingProgressSeen = true;
+      }
+      sample();
+    }).observe(row, {
+      attributes: true,
+      attributeOldValue: true,
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
 }
 
 async function hideOverlays(page) {
@@ -566,6 +615,7 @@ async function runLeg(browser, args, fixture, arm, index) {
         consoleErrors,
       };
     }
+    await armSurfaceProgressProbe(page);
     await page.click("#modeSurfaceBtn");
 
     let entered = false;
@@ -579,6 +629,9 @@ async function runLeg(browser, args, fixture, arm, index) {
     }
 
     const settled = Boolean(state?.settled);
+    const progressSeen = await page.evaluate(
+      () => window.__tilingProgressSeen === true,
+    );
     const engine = state?.engine ?? null;
     const backend = state?.backend ?? null;
     const persisted = decodeHash(await page.evaluate(() => location.hash));
@@ -601,6 +654,7 @@ async function runLeg(browser, args, fixture, arm, index) {
       args.display === undefined || backend?.software === false;
     const ok =
       entered &&
+      progressSeen &&
       settled &&
       engine === arm &&
       documentPass &&
@@ -616,6 +670,7 @@ async function runLeg(browser, args, fixture, arm, index) {
       family: fixture.family,
       arm,
       entered,
+      progressSeen,
       settled,
       engine,
       backend,
@@ -643,6 +698,7 @@ function printLeg(result) {
   process.stdout.write(
     `${result.ok ? "PASS" : "FAIL"}  ${result.name.padEnd(11)} ${result.arm.padEnd(7)} ` +
       `entered=${String(Boolean(result.entered)).padEnd(5)} ` +
+      `progress=${String(Boolean(result.progressSeen)).padEnd(5)} ` +
       `settled=${String(Boolean(result.settled)).padEnd(5)} ` +
       `engine=${String(result.engine ?? "none").padEnd(7)} ` +
       `drawn=${coverage.padEnd(7)} document=${String(Boolean(result.documentPass)).padEnd(5)} ` +
@@ -659,8 +715,8 @@ function printLeg(result) {
     process.stdout.write(`  app error: ${result.errorText}\n`);
 }
 
-/** Enter Surface, settle, screenshot — shared by the trio and the
- * app-generated-link reload. */
+/** Enter Surface, settle, screenshot — shared by the trio and the persisted
+ * document reload. */
 async function settleAndShoot(browser, args, url, label, writePng) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
@@ -693,6 +749,7 @@ async function settleAndShoot(browser, args, url, label, writePng) {
         consoleErrors,
       };
     }
+    await armSurfaceProgressProbe(page);
     await page.click("#modeSurfaceBtn");
     let entered = false;
     let state = null;
@@ -704,6 +761,9 @@ async function settleAndShoot(browser, args, url, label, writePng) {
       await page.waitForTimeout(POLL_MS);
     }
     const errorText = await visibleErrorText(page);
+    const progressSeen = await page.evaluate(
+      () => window.__tilingProgressSeen === true,
+    );
     let coverage = null;
     if (entered) {
       await hideOverlays(page);
@@ -719,6 +779,7 @@ async function settleAndShoot(browser, args, url, label, writePng) {
     }
     const ok =
       entered &&
+      progressSeen &&
       Boolean(state?.settled) &&
       coverage !== null &&
       coverage >= args.draw &&
@@ -729,6 +790,7 @@ async function settleAndShoot(browser, args, url, label, writePng) {
       ok,
       label,
       entered,
+      progressSeen,
       settled: Boolean(state?.settled),
       coverage,
       elapsedMs: Date.now() - started,
@@ -794,6 +856,7 @@ async function run() {
         family: "distinctness trio",
         arm: "compute",
         entered: result.entered,
+        progressSeen: result.progressSeen,
         settled: result.settled,
         engine: "compute",
         backend: null,
@@ -838,13 +901,13 @@ async function run() {
       );
     }
 
-    // The app-generated-link reload: re-enter Surface from the app's OWN
-    // copied hash (the camera pose rides the document), settle again, and
-    // draw again — the finite gate's copy-link discipline for this arm.
+    // The persisted-document reload: re-enter Surface from the current hash
+    // (the camera pose rides the document), settle again, and draw again.
+    // tiling-ui.verify.mjs owns the distinct app Copy Link interaction.
     const source = results.get("ifs3:compute");
     if (!source) {
       process.stdout.write(
-        "FAIL  app-link reload: ifs3:compute screenshots unavailable\n",
+        "FAIL  document reload: ifs3:compute screenshots unavailable\n",
       );
       verdictFailed = true;
     } else {
@@ -855,7 +918,7 @@ async function run() {
         });
         try {
           const page = await context.newPage();
-          const appUrl = `${args.url}/?surfacestate&tilingcase=applink${encodeHash(fixtureDocument("ifs3"))}`;
+          const appUrl = `${args.url}/?surfacestate&tilingcase=reload${encodeHash(fixtureDocument("ifs3"))}`;
           await page.goto(appUrl, { waitUntil: "load", timeout: 60_000 });
           await page.bringToFront();
           await waitForBoot(page);
@@ -868,15 +931,16 @@ async function run() {
         browser,
         args,
         `${args.url}/?surfacestate${appHash}`,
-        "app-link-reload",
+        "document-reload",
         true,
       );
       printLeg({
         ok: reload.ok,
-        name: "app-link",
-        family: "app-generated link reload",
+        name: "reload",
+        family: "persisted document reload",
         arm: "compute",
         entered: reload.entered,
+        progressSeen: reload.progressSeen,
         settled: reload.settled,
         engine: "compute",
         backend: null,
@@ -905,7 +969,7 @@ async function run() {
         const pass = diff.fraction <= 0.15;
         if (!pass) verdictFailed = true;
         process.stdout.write(
-          `${pass ? "PASS" : "FAIL"}  app-link reload reproduces ` +
+          `${pass ? "PASS" : "FAIL"}  document reload reproduces ` +
             `structural=${(diff.fraction * 100).toFixed(2)}% ` +
             `(ceiling 15%, maxDelta ${diff.maxDelta})\n`,
         );

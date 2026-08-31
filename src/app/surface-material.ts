@@ -5705,7 +5705,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       // The live tiling selector plus the lattice half-cell. Finite roots and
       // either arm's optional clip remain baked source. h = 1 is an inert,
       // non-dividing placeholder while lattice is absent, and the
-      // presentation radius's 10 = 10 * R placeholder is the provisional
+      // presentation radius's 10 = 10 * R placeholder is the frozen
       // window multiplier (a stray read at the default is a sane window,
       // never a divide-by-zero).
       uTilingGroup: { value: 0 },
@@ -6474,6 +6474,11 @@ function withLatticeTilingGlsl(
       "Surface tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
     );
   }
+  const fadeStartMult =
+    tiling.presentation.fadeStartRadius / tiling.presentation.contentRadius;
+  const fadeStartMultText = Number.isInteger(fadeStartMult)
+    ? `${fadeStartMult}.0`
+    : String(fadeStartMult);
   const marker = /\n#if SURFACE_GROUND_PLANE\n {2}\/\*\* Ground plane/.exec(
     source,
   );
@@ -6597,7 +6602,7 @@ float surfaceDE(
   // interval bounds every primary/shadow march; the contains predicate
   // makes out-of-carrier probe taps open space, so the artificial window
   // never becomes geometry, casts a shadow or contributes AO. The
-  // presentation radius is the PROVISIONAL window multiplier times the
+  // presentation radius is the frozen window multiplier times the
   // certified content radius R (uVisibleRadius is R on every GLSL arm).
   const carrierSource = latticePresentationCarrierSource(fourD ? 4 : 3, "glsl");
   const carrierContains = fourD
@@ -6748,6 +6753,35 @@ ${fourD ? "  surfaceTilingQuery4 = q;\n" : ""}  float inner = surfaceDETilingCor
       `      1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));`,
     );
   }
+  // The carrier edge is presentation coverage, never geometry. Blend the
+  // shaded hit toward this pixel's own backdrop by the shared radial policy
+  // and carry the same fractional coverage into the presentation sidecar.
+  // The latter is load-bearing for background recomposition and depth of
+  // field: beta = 1-cov + cov*fog*(1-tint) is the exact backdrop coefficient
+  // of this blend followed by the existing depth fog.
+  const alphaComment = fourD
+    ? "    // Alpha is a terminal-status flag, not opacity:"
+    : "    // Alpha 1: a HIT.";
+  replaceRequired(
+    `    col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
+
+${alphaComment}`,
+    `    col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
+    float latticeVisibility = latticePresentationVisibility(
+      pos, uVisibleRadius * ${fadeStartMultText}, uTilingPresentationR
+    );
+    col = mix(background, col, latticeVisibility);
+
+${alphaComment}`,
+  );
+  replaceRequired(
+    `    outTraceLayer = traceLayer(
+      1.0,
+      clamp(fog, 0.0, 1.0),`,
+    `    outTraceLayer = traceLayer(
+      latticeVisibility,
+      clamp(fog, 0.0, 1.0),`,
+  );
   // The ground plane: the single-ball shadow corridor and the
   // too-far-from-the-ball AO skip are INVALID for an infinite lattice
   // (content repeats beyond the ball — docs/tiling-contract.md's ground
@@ -7097,7 +7131,13 @@ export function installSurfaceTiling(
   // or dimension change alters generated source. Keep the finite key's exact
   // historical bytes so finite installation behavior is unchanged.
   const key = lattice
-    ? JSON.stringify({ kind: "lattice", clip: lattice.clip })
+    ? JSON.stringify({
+        kind: "lattice",
+        clip: lattice.clip,
+        fadeStartRadiusMult:
+          lattice.presentation.fadeStartRadius /
+          lattice.presentation.contentRadius,
+      })
     : finite
       ? JSON.stringify({ group: finite.group, clip: finite.clip })
       : null;
@@ -7128,7 +7168,7 @@ export function installSurfaceTiling(
       : 0;
   material.uniforms.uTilingH.value = lattice ? lattice.h : 1;
   material.uniforms.uTilingPresentationR.value = lattice
-    ? lattice.radius * LATTICE_PRESENTATION_RADIUS_MULT
+    ? lattice.presentation.outerRadius
     : LATTICE_PRESENTATION_RADIUS_MULT;
   return oldKey !== key;
 }

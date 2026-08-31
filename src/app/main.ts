@@ -30,7 +30,11 @@ import {
   type ResolvedLatticeTiling,
   type ResolvedTiling,
 } from "../fractal/tiling";
-import { latticeCameraFitBounds } from "../fractal/lattice-march";
+import {
+  latticeCameraFitBounds,
+  type LatticePresentationPolicy,
+  type ResolvedLatticePresentation,
+} from "../fractal/lattice-march";
 import {
   chamberContentFit,
   poseTilingForContent,
@@ -604,6 +608,9 @@ interface SurfaceStateProbe {
   /** The full-quality frame (compute) or settle strip job (WebGL) is in
    * flight. */
   settleActive: boolean;
+  /** Renderer-only lattice presentation resolved for this session. Null for
+   * untiled/finite sessions; never persisted in the scene hash. */
+  latticePresentation: ResolvedLatticePresentation | null;
 }
 
 declare global {
@@ -3979,6 +3986,7 @@ async function main(): Promise<void> {
   // the live document's flatness may drift until the next enter). Gates
   // tickRender's per-frame rotor/slice push.
   let surfaceSessionIs4D = false;
+  let surfaceLatticePresentation: ResolvedLatticePresentation | null = null;
   // False while the live 4D surface session's fold set breaks segment
   // exactness (spherefold/mandelbox — slabExact4), where every view push
   // clamps the slice thickness to 0 and the panel hides the row.
@@ -4012,6 +4020,25 @@ async function main(): Promise<void> {
   // failure or device loss. One-way for the page's life, like the boolean it
   // replaced.
   const surfaceQuery = new URLSearchParams(window.location.search);
+  // Renderer-only lattice presentation diagnostics. The executable edge
+  // gate sweeps candidate fade/window pairs through these query values; they
+  // never enter AppState, persistence, copied links, undo, or authoring UI.
+  // Invalid/partial pairs fall back to the frozen module policy.
+  const latticePresentationPolicy = (():
+    LatticePresentationPolicy | undefined => {
+    const outerRaw = surfaceQuery.get("latticewindow");
+    const fadeRaw = surfaceQuery.get("latticefade");
+    if (outerRaw === null && fadeRaw === null) return undefined;
+    const outerRadiusMult = outerRaw === null ? NaN : Number(outerRaw);
+    const fadeStartRadiusMult = fadeRaw === null ? NaN : Number(fadeRaw);
+    return Number.isFinite(outerRadiusMult) &&
+      outerRadiusMult >= 1 &&
+      Number.isFinite(fadeStartRadiusMult) &&
+      fadeStartRadiusMult >= 0 &&
+      fadeStartRadiusMult <= outerRadiusMult
+      ? { outerRadiusMult, fadeStartRadiusMult }
+      : undefined;
+  })();
   let surfaceComputeBlock: SurfaceComputeBlock | null = surfaceQuery.has(
     "surfacegl",
   )
@@ -5260,6 +5287,7 @@ async function main(): Promise<void> {
     start: () => {
       const preserveCamera = preserveSurfaceCameraOnNextEntry;
       preserveSurfaceCameraOnNextEntry = false;
+      surfaceLatticePresentation = null;
       // Re-run the shared document gate at the session door. The button has
       // already used this answer, but timeline/isolation restores and
       // mid-session document changes can bypass the button. In particular a
@@ -5317,8 +5345,18 @@ async function main(): Promise<void> {
       // enforce (a lattice block resolved against a different radius
       // throws at pack). Each arm calls this with its own authority after
       // its DE exists; finite blocks ignore the radius.
-      const resolveSurfaceTiling = (radius: number): ResolvedTiling | null =>
-        resolveTiling(surfaceTilingSpec, radius);
+      const resolveSurfaceTiling = (radius: number): ResolvedTiling | null => {
+        const resolved = resolveTiling(
+          surfaceTilingSpec,
+          radius,
+          latticePresentationPolicy,
+        );
+        surfaceLatticePresentation =
+          resolved && isResolvedLatticeTiling(resolved)
+            ? resolved.presentation
+            : null;
+        return resolved;
+      };
       // The session-level clip pose: an authored clip WITHOUT a pose is
       // placed on the measured chamber content (chamber-content.ts) so the
       // trim is actually visible — the canned catalog shapes are unit-sized
@@ -11532,6 +11570,11 @@ async function main(): Promise<void> {
           compute !== null
             ? surfaceComputeSettleFlight
             : scene.surfaceSettleActive,
+        latticePresentation: inSurface
+          ? surfaceLatticePresentation === null
+            ? null
+            : { ...surfaceLatticePresentation }
+          : null,
       };
     };
   }

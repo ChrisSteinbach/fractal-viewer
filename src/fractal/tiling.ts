@@ -1,4 +1,9 @@
 import type { ShapeSpec } from "./shapes";
+import {
+  resolveLatticePresentation,
+  type LatticePresentationPolicy,
+  type ResolvedLatticePresentation,
+} from "./lattice-march";
 import type { Vec3, Vec4 } from "./types";
 
 /**
@@ -171,6 +176,9 @@ export interface ResolvedLatticeTiling {
   cellScale: number;
   radius: number;
   h: number;
+  /** Renderer-only finite observation/fade policy, resolved from the same
+   * authority radius but never persisted into the authored tiling block. */
+  presentation: ResolvedLatticePresentation;
   clip?: ShapeSpec;
 }
 
@@ -228,6 +236,12 @@ export function isCanonicalResolvedLatticeTiling(
     Number.isFinite(tiling.radius) &&
     tiling.radius > 0 &&
     tiling.h === tiling.cellScale * tiling.radius &&
+    tiling.presentation.contentRadius === tiling.radius &&
+    Number.isFinite(tiling.presentation.fadeStartRadius) &&
+    tiling.presentation.fadeStartRadius >= 0 &&
+    Number.isFinite(tiling.presentation.outerRadius) &&
+    tiling.presentation.outerRadius >= tiling.radius &&
+    tiling.presentation.fadeStartRadius <= tiling.presentation.outerRadius &&
     latticeHalfCellFitsShaderWire(tiling.h)
   );
 }
@@ -574,14 +588,17 @@ export function resolveTiling(
 export function resolveTiling(
   spec: LatticeTilingSpec,
   radius: number,
+  presentationPolicy?: LatticePresentationPolicy,
 ): ResolvedLatticeTiling;
 export function resolveTiling(
   spec: TilingSpec | undefined,
   radius: number,
+  presentationPolicy?: LatticePresentationPolicy,
 ): ResolvedTiling | null;
 export function resolveTiling(
   spec: TilingSpec | undefined,
   radius?: number,
+  presentationPolicy?: LatticePresentationPolicy,
 ): ResolvedTiling | null {
   if (!spec) return null;
   if (isLatticeTilingSpec(spec)) {
@@ -606,6 +623,7 @@ export function resolveTiling(
       cellScale: spec.cellScale,
       radius,
       h,
+      presentation: resolveLatticePresentation(radius, presentationPolicy),
       clip: spec.clip,
     };
   }

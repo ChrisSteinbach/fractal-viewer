@@ -3216,7 +3216,7 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uGroundEmission: { value: 0 },
       // Same live selector/half-cell wire as the 3D material. Finite roots
       // and either arm's optional clip remain source-baked; the
-      // presentation radius default is the provisional window multiplier.
+      // presentation radius default is the frozen window multiplier.
       uTilingGroup: { value: 0 },
       uTilingH: { value: 1 },
       uTilingPresentationR: { value: LATTICE_PRESENTATION_RADIUS_MULT },
