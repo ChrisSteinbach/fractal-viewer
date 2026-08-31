@@ -107,11 +107,14 @@ import {
 } from "./surface-material-wire";
 import type { Transform } from "./types";
 import {
+  LATTICE_TILING_CODE,
+  latticeFoldSource,
   resolveTiling,
   TILING_GROUP_INFO,
   tilingFoldSource,
   tilingGroupCode,
   type ResolvedFiniteTiling,
+  type ResolvedLatticeTiling,
 } from "./tiling";
 
 /** Two-map pure-boxfold system (the pure-fold shape used throughout
@@ -8563,5 +8566,305 @@ describe("finite reflection tiling WGSL and params ABI", () => {
         tiled3,
       ),
     ).toThrow(/tiling\+balloon/);
+  });
+});
+
+describe("mirrored lattice WGSL and params ABI", () => {
+  const lattice3 = resolveTiling(
+    { kind: "lattice", cellScale: 1.75, clip: GEAR_SHAPE },
+    3.25,
+  );
+  const lattice4 = resolveTiling(
+    { kind: "lattice", cellScale: 1.5, clip: GEAR_SHAPE },
+    5.5,
+  );
+  const plane: SurfaceGpuGroundPlane = {
+    y: -1.25,
+    fadeStart: 2,
+    fadeEnd: 4,
+    ballCenter: [0, 0, 0],
+    ballRadius: 4,
+    albedo: [0.4, 0.5, 0.6],
+  };
+
+  function expectLatticeTail(
+    plain: ArrayBuffer,
+    tiled: ArrayBuffer,
+    tiling: ResolvedLatticeTiling,
+  ): void {
+    expect(SURFACE_GPU_TILING_BYTES).toBe(16);
+    expect(tiled.byteLength).toBe(plain.byteLength + 16);
+    expect(new Uint8Array(tiled, 0, plain.byteLength)).toEqual(
+      new Uint8Array(plain),
+    );
+    const view = new DataView(tiled);
+    expect(view.getUint32(plain.byteLength, true)).toBe(LATTICE_TILING_CODE);
+    expect(view.getFloat32(plain.byteLength + 4, true)).toBe(
+      Math.fround(tiling.h),
+    );
+    expect(Array.from(new Uint8Array(tiled, plain.byteLength + 8, 8))).toEqual(
+      new Array(8).fill(0),
+    );
+  }
+
+  it("emits the floor-modulo x/z lattice and mandatory ball wrapper for every 3D core and mode", () => {
+    for (const core of ["affine", "fold", "escape", "bulb"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const wgsl = surfaceDeKernelWgsl(
+          kernelOpts({ core, mode, tiling: lattice3, pattern: true }),
+        );
+        expect(wgsl).toContain(latticeFoldSource("wgsl", 3, "tilingFold"));
+        expect(wgsl).toContain("tilingGroup: u32");
+        expect(wgsl).toContain("tilingH: f32");
+        expect(wgsl).toContain(
+          `if (params.tilingGroup != ${LATTICE_TILING_CODE}u)`,
+        );
+        expect(wgsl).toContain("let folded = tilingFold(pIn, params.tilingH);");
+        expect(wgsl).toContain(
+          `let bounded = max(inner, length(folded) - params.${
+            core === "affine" || core === "fold"
+              ? "visibleRadius"
+              : "boundingRadius"
+          });`,
+        );
+        expect(wgsl).toContain("return max(bounded, tilingClipSdf(folded));");
+        expect(wgsl).not.toContain("q.y = tilingFoldCoordinate");
+        if (mode === "shade") {
+          expect(wgsl).toContain(
+            "let folded = tilingFold(rawTilingPoint, params.tilingH);",
+          );
+          expect(wgsl).toContain("info.tilingPoint = vec4f(folded, 0.0)");
+        }
+      }
+    }
+  });
+
+  it("lifts before the x/z/w fold and uses the full 4D authority ball for every 4D core and mode", () => {
+    for (const core of ["affine4", "fold4", "escape4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const wgsl = surfaceDeKernelWgsl(
+          kernelOpts({ core, mode, tiling: lattice4, pattern: true }),
+        );
+        expect(wgsl).toContain(latticeFoldSource("wgsl", 4, "tilingFold"));
+        expect(wgsl).toContain("q.w = tilingFoldCoordinate(q.w, h);");
+        const lift =
+          core === "escape4"
+            ? "liftEscape4(pIn)"
+            : "rotorInvApply4(vec4f(pIn, params.w0))";
+        expect(wgsl).toContain(
+          `let folded = tilingFold(${lift}, params.tilingH);`,
+        );
+        expect(wgsl).toContain(
+          `let bounded = max(inner, length(folded) - params.${
+            core === "escape4" ? "boundingRadius" : "visRadius4"
+          });`,
+        );
+        expect(wgsl).toContain(
+          "return max(bounded, tilingClipSdf(folded.xyz));",
+        );
+        if (mode === "shade") {
+          expect(wgsl).toContain(
+            "let folded = tilingFold(rawTilingPoint, params.tilingH);",
+          );
+          expect(wgsl).toContain("info.tilingPoint = folded");
+        }
+      }
+    }
+  });
+
+  it("packs code, h, and zero padding through all five packers without moving a classic byte", () => {
+    const surface3 = buildSurfaceDE(foldSystemTransforms());
+    const escape3 = buildEscapeDE([canonicalMandelbox(), rotatedBoxfold()]);
+    const bulb = buildBulbDE([canonicalBulb()]);
+    const surface4 = buildSurfaceDE4(fourDSystemTransforms());
+    const escape4 = buildEscapeDE4([
+      escape4Mandelbox(),
+      escape4RotatedBoxfold(),
+    ]);
+    const run = { itemCount: 3 };
+    const tiledSurface3 = resolveTiling(
+      { kind: "lattice", cellScale: 1.25 },
+      surface3.visibleBoundingRadius,
+    );
+    const tiledEscape3 = resolveTiling(
+      { kind: "lattice", cellScale: 1.5 },
+      escape3.boundingRadius,
+    );
+    const tiledBulb = resolveTiling(
+      { kind: "lattice", cellScale: 2 },
+      bulb.boundingRadius,
+    );
+    const tiledSurface4 = resolveTiling(
+      { kind: "lattice", cellScale: 1.75 },
+      surface4.visibleBoundingRadius,
+    );
+    const tiledEscape4 = resolveTiling(
+      { kind: "lattice", cellScale: 2.25 },
+      escape4.boundingRadius,
+    );
+
+    expectLatticeTail(
+      packSurfaceGpuParams(surface3, run),
+      packSurfaceGpuParams(surface3, run, null, null, tiledSurface3),
+      tiledSurface3,
+    );
+    expectLatticeTail(
+      packEscapeGpuParams(escape3, run),
+      packEscapeGpuParams(escape3, run, null, null, tiledEscape3),
+      tiledEscape3,
+    );
+    expectLatticeTail(
+      packBulbGpuParams(bulb, run),
+      packBulbGpuParams(bulb, run, null, null, tiledBulb),
+      tiledBulb,
+    );
+    expectLatticeTail(
+      packSurface4GpuParams(surface4, view4(), run),
+      packSurface4GpuParams(surface4, view4(), run, null, null, tiledSurface4),
+      tiledSurface4,
+    );
+    expectLatticeTail(
+      packEscape4GpuParams(escape4, view4(), run),
+      packEscape4GpuParams(escape4, view4(), run, null, null, tiledEscape4),
+      tiledEscape4,
+    );
+  });
+
+  it("keeps the lattice tail at the corrected 560/848 maxima", () => {
+    let de3 = buildSurfaceDE(condensationTransforms(), null, undefined, {
+      condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+    });
+    de3 = withSchedule3(de3, 1, 1);
+    de3 = {
+      ...de3,
+      chaos: {
+        activeStateCount: 1,
+        predecessorMasks: Uint32Array.of(1),
+        emitterStateIndices: Uint8Array.from(
+          de3.condensation?.emitters.map(() => 0) ?? [],
+        ),
+      },
+    };
+    const tiled3 = resolveTiling(
+      { kind: "lattice", cellScale: 1.5 },
+      de3.visibleBoundingRadius,
+    );
+    const plain3 = packSurfaceGpuParams(de3, { itemCount: 1 }, null, plane);
+    const packed3 = packSurfaceGpuParams(
+      de3,
+      { itemCount: 1 },
+      null,
+      plane,
+      tiled3,
+    );
+    expectLatticeTail(plain3, packed3, tiled3);
+    expect(packed3.byteLength).toBe(560);
+
+    let de4 = buildSurfaceDE4(condensationTransforms(), null, undefined, {
+      condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+    });
+    de4 = withSchedule4(de4, 1, 1);
+    de4 = {
+      ...de4,
+      chaos: {
+        activeStateCount: 1,
+        predecessorMasks: Uint32Array.of(1),
+        emitterStateIndices: Uint8Array.from(
+          de4.condensation?.emitters.map(() => 0) ?? [],
+        ),
+      },
+    };
+    const tiled4 = resolveTiling(
+      { kind: "lattice", cellScale: 1.25 },
+      de4.visibleBoundingRadius,
+    );
+    const plain4 = packSurface4GpuParams(
+      de4,
+      view4(),
+      { itemCount: 1 },
+      null,
+      plane,
+    );
+    const packed4 = packSurface4GpuParams(
+      de4,
+      view4(),
+      { itemCount: 1 },
+      null,
+      plane,
+      tiled4,
+    );
+    expectLatticeTail(plain4, packed4, tiled4);
+    expect(packed4.byteLength).toBe(848);
+  });
+
+  it("refuses non-resolver lattice data, authority-radius mismatches, mesh clips, balloon, kaleidoscope, and real slabs", () => {
+    const malformed = { ...lattice3, h: lattice3.h + 1 };
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ tiling: malformed })),
+    ).toThrow(/canonical resolveTiling result/);
+
+    const surface3 = buildSurfaceDE(foldSystemTransforms());
+    expect(() =>
+      packSurfaceGpuParams(surface3, { itemCount: 1 }, null, null, lattice3),
+    ).toThrow(/does not match the estimator authority/);
+    const escape3 = buildEscapeDE([canonicalMandelbox()]);
+    expect(() =>
+      packEscapeGpuParams(escape3, { itemCount: 1 }, null, null, lattice3),
+    ).toThrow(/does not match the estimator authority/);
+    const surface4 = buildSurfaceDE4(fourDSystemTransforms());
+    expect(() =>
+      packSurface4GpuParams(
+        surface4,
+        view4(),
+        { itemCount: 1 },
+        null,
+        null,
+        lattice4,
+      ),
+    ).toThrow(/does not match the estimator authority/);
+
+    const meshLattice = resolveTiling(
+      { kind: "lattice", cellScale: 1.5, clip: MESH_SHAPE },
+      3,
+    );
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ tiling: meshLattice })),
+    ).toThrow(/mesh-bearing tiling clips/);
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ tiling: lattice3, balloon: true })),
+    ).toThrow(/tiling\+balloon/);
+
+    const symmetric3: SurfaceDE = {
+      ...surface3,
+      symmetry: { ...surface3.symmetry, order: 3 },
+    };
+    const symmetricTiling = resolveTiling(
+      { kind: "lattice", cellScale: 1.5 },
+      symmetric3.visibleBoundingRadius,
+    );
+    expect(() =>
+      packSurfaceGpuParams(
+        symmetric3,
+        { itemCount: 1 },
+        null,
+        null,
+        symmetricTiling,
+      ),
+    ).toThrow(/tiling\+kaleidoscope/);
+
+    const surfaceTiling4 = resolveTiling(
+      { kind: "lattice", cellScale: 1.5 },
+      surface4.visibleBoundingRadius,
+    );
+    expect(() =>
+      packSurface4GpuParams(
+        surface4,
+        view4({ sliceHalfW: 0.1 }),
+        { itemCount: 1 },
+        null,
+        null,
+        surfaceTiling4,
+      ),
+    ).toThrow(/tiling\+4D slab/);
   });
 });

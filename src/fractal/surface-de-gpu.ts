@@ -50,10 +50,16 @@ import {
 } from "./surface-finish";
 import { surfacePatternShadeSourceWgsl } from "./surface-pattern-shade";
 import {
+  isResolvedLatticeTiling,
+  isCanonicalResolvedLatticeTiling,
+  latticeFoldSource,
+  LATTICE_TILING_CODE,
   TILING_GROUP_INFO,
   tilingFoldSource,
   tilingGroupCode,
   type ResolvedFiniteTiling,
+  type ResolvedLatticeTiling,
+  type ResolvedTiling,
 } from "./tiling";
 import {
   surfaceMaterialLanes,
@@ -1452,16 +1458,49 @@ function writeSurfaceChaosBlock(
   }
 }
 
-/** Validate and transfer the resolver's finite-tiling answer. The packer and
- * source generator both call this ONE defensive seam, so neither can accept a
- * stale/non-canonical group table, a group from the wrong dimension, or a mesh
- * clip that this compile-gated source path cannot bind. The group code itself
- * comes from `tiling.ts`; no GPU mirror re-derives the document mapping. */
+type SurfaceTilingWireInfo =
+  | {
+      kind: "finite";
+      code: number;
+      tiling: ResolvedFiniteTiling;
+    }
+  | {
+      kind: "lattice";
+      code: typeof LATTICE_TILING_CODE;
+      h: number;
+      tiling: ResolvedLatticeTiling;
+    };
+
+/** Validate and transfer the resolver's tiling answer. The packer and source
+ * generator both call this ONE defensive seam. The finite branch retains its
+ * canonical-table and dimension checks; the lattice branch instead pins the
+ * resolver-owned `h = cellScale * radius` invariant. Both reject mesh clips
+ * because this compile-gated source path has no mesh-atlas binding. Codes come
+ * from `tiling.ts`; no GPU mirror re-derives the document mapping. */
 function surfaceTilingWireInfo(
-  tiling: ResolvedFiniteTiling | null | undefined,
+  tiling: ResolvedTiling | null | undefined,
   dimension: 3 | 4,
-): { code: number; tiling: ResolvedFiniteTiling } | null {
+): SurfaceTilingWireInfo | null {
   if (!tiling) return null;
+  if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
+    throw new Error(
+      "surface-de-gpu: mesh-bearing tiling clips are unsupported; tiling " +
+        "accepts analytic ShapeSpecs only",
+    );
+  }
+  if (isResolvedLatticeTiling(tiling)) {
+    if (!isCanonicalResolvedLatticeTiling(tiling)) {
+      throw new Error(
+        "surface-de-gpu: lattice tiling must be the canonical resolveTiling result",
+      );
+    }
+    return {
+      kind: "lattice",
+      code: LATTICE_TILING_CODE,
+      h: tiling.h,
+      tiling,
+    };
+  }
   if (
     tiling.info !== TILING_GROUP_INFO[tiling.group] ||
     tiling.info.id !== tiling.group
@@ -1476,21 +1515,37 @@ function surfaceTilingWireInfo(
         `but this is a ${dimension}D core`,
     );
   }
-  if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
+  return {
+    kind: "finite",
+    code: tilingGroupCode(tiling.group),
+    tiling,
+  };
+}
+
+/** The lattice resolver's radius must be the exact estimator authority whose
+ * corresponding params field the generated wrapper reads. Otherwise `h` and
+ * the mandatory ball term would describe different canonical cells. */
+function validateSurfaceLatticeRadius(
+  info: SurfaceTilingWireInfo | null,
+  authorityRadius: number,
+): void {
+  if (info?.kind === "lattice" && info.tiling.radius !== authorityRadius) {
     throw new Error(
-      "surface-de-gpu: mesh-bearing tiling clips are unsupported; finite " +
-        "tiling accepts analytic ShapeSpecs only",
+      `surface-de-gpu: lattice radius ${info.tiling.radius} does not match ` +
+        `the estimator authority ${authorityRadius}`,
     );
   }
-  return { code: tilingGroupCode(tiling.group), tiling };
 }
 
 function writeSurfaceTilingBlock(
   view: DataView,
   offset: number,
-  tiling: { code: number },
+  tiling: SurfaceTilingWireInfo,
 ): void {
   view.setUint32(offset, tiling.code, true);
+  if (tiling.kind === "lattice") {
+    view.setFloat32(offset + 4, tiling.h, true);
+  }
 }
 
 /** Shade uniform size under the pattern gate (shade mode): the 224-byte
@@ -1633,17 +1688,17 @@ export interface SurfaceGpuKernelOptions {
    * and `lens` composes exactly as the GLSL side's stripped lens+plane
    * program does. Inert in eval mode (no rays terminate). */
   groundPlane?: boolean;
-  /** Finite reflection tiling, resolved by `tiling.ts` before this seam.
-   * The group roots and optional analytic clip are baked into the source;
-   * a one-u32 group id appends after every enabled params tail and guards
-   * the compiled group against a stale wire. The wrapper folds the query
-   * FIRST, calls the otherwise untouched compiled core/lens at that folded
-   * point, then maxes with the clip's raw signed SDF — the CPU wrappers in
-   * `tiling-de.ts` exactly. Null/absent emits the pre-tiling source byte for
-   * byte. All seven cores compose; `balloon`, kaleidoscope and a real 4D
-   * slab are refused by the codegen/pack seams with the contract's reasons.
-   * Mesh-bearing clips are refused until tiling owns a mesh-atlas binding. */
-  tiling?: ResolvedFiniteTiling | null;
+  /** Space tiling, resolved by `tiling.ts` before this seam. Finite group
+   * roots and either arm's optional analytic clip bake into the source; the
+   * exact 16-byte tail carries a construction code plus lattice `h` when
+   * live. Both wrappers fold the query FIRST and call the otherwise untouched
+   * compiled core/lens once. Finite then maxes with the clip; lattice maxes
+   * with its mandatory origin ball and the clip — `tiling-de.ts` exactly.
+   * Null/absent emits the pre-tiling source byte for byte, and the finite arm
+   * retains its already-shipped source byte for byte. All seven cores compose;
+   * `balloon`, kaleidoscope and a real 4D slab remain refused. Mesh-bearing
+   * clips are refused until tiling owns a mesh-atlas binding. */
+  tiling?: ResolvedTiling | null;
   /** Per-slot surface FINISHES (surface-finish.ts): replace the shade
    * entry's fixed Blinn-Phong lines with the emitted `finishShade`
    * (`surfaceFinishShadeSource(SURFACE_FINISH_WGSL)`) reading each hit
@@ -1975,12 +2030,13 @@ export function packSurfaceGpuParams(
   run: SurfaceGpuRunParams,
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
   groundPlane: SurfaceGpuGroundPlane | null = null,
-  tiling: ResolvedFiniteTiling | null = null,
+  tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
   const chaos = surfaceChaosWireInfo(de);
   const tilingInfo = surfaceTilingWireInfo(tiling, 3);
+  validateSurfaceLatticeRadius(tilingInfo, de.visibleBoundingRadius);
   validateSurfacePhysicalMapCount(de, condensation?.emitterCount ?? 0);
   if (balloon && groundPlane) {
     throw new Error(
@@ -2250,9 +2306,10 @@ export function packEscapeGpuParams(
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   shapeTrap: ResolvedShapeTrap | null = null,
-  tiling: ResolvedFiniteTiling | null = null,
+  tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   const tilingInfo = surfaceTilingWireInfo(tiling, 3);
+  validateSurfaceLatticeRadius(tilingInfo, de.boundingRadius);
   if (tilingInfo && de.symmetryOrder > 1) {
     throw new Error(
       "surface-de-gpu: tiling+kaleidoscope is excluded — both are " +
@@ -2443,7 +2500,7 @@ export function packBulbGpuParams(
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   shapeTrap: ResolvedShapeTrap | null = null,
-  tiling: ResolvedFiniteTiling | null = null,
+  tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   if (shapeTrap?.geometry) {
     throw new Error(
@@ -2451,6 +2508,7 @@ export function packBulbGpuParams(
     );
   }
   const tilingInfo = surfaceTilingWireInfo(tiling, 3);
+  validateSurfaceLatticeRadius(tilingInfo, de.boundingRadius);
   const baseBytes = shapeTrap
     ? SURFACE_GPU_PARAMS_TRAP_BYTES
     : groundPlane
@@ -2596,12 +2654,13 @@ export function packSurface4GpuParams(
   run: SurfaceGpuRunParams,
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
   groundPlane: SurfaceGpuGroundPlane | null = null,
-  tiling: ResolvedFiniteTiling | null = null,
+  tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
   const chaos = surfaceChaosWireInfo(de);
   const tilingInfo = surfaceTilingWireInfo(tiling, 4);
+  validateSurfaceLatticeRadius(tilingInfo, de.visibleBoundingRadius);
   validateSurfacePhysicalMapCount(de, condensation?.emitterCount ?? 0);
   if (balloon && groundPlane) {
     throw new Error(
@@ -2881,9 +2940,10 @@ export function packEscape4GpuParams(
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   shapeTrap: ResolvedShapeTrap | null = null,
-  tiling: ResolvedFiniteTiling | null = null,
+  tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   const tilingInfo = surfaceTilingWireInfo(tiling, 4);
+  validateSurfaceLatticeRadius(tilingInfo, de.boundingRadius);
   if (tilingInfo && de.symmetryOrder > 1) {
     throw new Error(
       "surface-de-gpu: tiling+kaleidoscope is excluded — both are " +
@@ -3624,12 +3684,13 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // that is BOTH — it takes the 4D tail and the `GpuMap4` layout from the
   // descent cores and the orbit from the 3D escape one.
   const forward = core === "escape" || core === "bulb" || core === "escape4";
-  // Finite tiling is a compile gate: the resolved group and analytic clip
-  // bake into the source, while the params tail carries only the resolver's
-  // group id. Validate dimension/canonical authority before any body text is
+  // Tiling is a compile gate: finite roots and either arm's analytic clip
+  // bake into the source, while the params tail carries the construction code
+  // and lattice h. Validate resolver authority before any body text is
   // assembled so malformed options fail before pipeline submission.
   const tilingInfo = surfaceTilingWireInfo(opts.tiling, core4 ? 4 : 3);
   const tiling = tilingInfo?.tiling ?? null;
+  const latticeTiling = tilingInfo?.kind === "lattice";
   let schedule: NonNullable<SurfaceGpuKernelOptions["schedule"]> | null = null;
   if (opts.schedule && opts.schedule.scheduleMapCount !== 0) {
     if (
@@ -3889,7 +3950,13 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const meshIndex = (id: MeshAssetId): number =>
     meshSdfAtlasShaderIndex(sourceMeshIds, id);
   const tilingFoldText = tiling
-    ? `${tilingFoldSource(tiling.info, "wgsl", "tilingFold")}\n`
+    ? latticeTiling
+      ? `${latticeFoldSource("wgsl", core4 ? 4 : 3, "tilingFold")}\n`
+      : `${tilingFoldSource(
+          (tiling as ResolvedFiniteTiling).info,
+          "wgsl",
+          "tilingFold",
+        )}\n`
     : "";
   const tilingClipText = tiling?.clip
     ? `${shapeSdfSource(tiling.clip, "wgsl", "tilingClipSdf")}\n`
@@ -6822,19 +6889,23 @@ ${balloonHitWrapText}`
       ? "liftEscape4(p)"
       : "rotorInvApply4(vec4f(p, params.w0))"
     : "p";
+  const tilingHitFoldedPoint = latticeTiling ? "folded" : "folded.point";
   const tilingHitCoreArgs = core4
-    ? `folded.point${!forward && slabExt ? ", vec4f(0.0)" : ""}, li`
-    : "folded.point, li";
-  const tilingHitPoint4 = core4 ? "folded.point" : "vec4f(folded.point, 0.0)";
+    ? `${tilingHitFoldedPoint}${!forward && slabExt ? ", vec4f(0.0)" : ""}, li`
+    : `${tilingHitFoldedPoint}, li`;
+  const tilingHitPoint4 = core4
+    ? tilingHitFoldedPoint
+    : `vec4f(${tilingHitFoldedPoint}, 0.0)`;
   const tilingRawPoint4 = core4
     ? "rawTilingPoint"
     : "vec4f(rawTilingPoint, 0.0)";
-  const tiledHitInfoText = tiling
-    ? `${balloonRename(
-        hitInfoText,
-        "fn surfaceDEHitInfo(",
-        "fn surfaceDEHitInfoTilingCore(",
-      )}
+  const finiteTiledHitInfoText =
+    tiling && !latticeTiling
+      ? `${balloonRename(
+          hitInfoText,
+          "fn surfaceDEHitInfo(",
+          "fn surfaceDEHitInfoTilingCore(",
+        )}
 
 // Finite tiling hit attribution: fold FIRST, then ask the untouched
 // core/lens trajectory at that folded point. The optional clip moves only
@@ -6854,6 +6925,35 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   info.tilingPoint = ${tilingHitPoint4};
   return info;
 }`
+      : "";
+  const latticeTiledHitInfoText = latticeTiling
+    ? `${balloonRename(
+        hitInfoText,
+        "fn surfaceDEHitInfo(",
+        "fn surfaceDEHitInfoTilingCore(",
+      )}
+
+// Mirrored lattice hit attribution: fold FIRST, then ask the untouched
+// core/lens trajectory once at that canonical-cell point. The mandatory ball
+// and optional clip move only the distance max; neither owns a transform-slot
+// trajectory of its own.
+fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  let rawTilingPoint = ${tilingLiftExpression};
+  var failed = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+  failed.tilingPoint = ${tilingRawPoint4};
+  if (params.tilingGroup != ${LATTICE_TILING_CODE}u) {
+    return failed;
+  }
+  let folded = tilingFold(rawTilingPoint, params.tilingH);
+  var info = surfaceDEHitInfoTilingCore(${tilingHitCoreArgs});
+  info.tilingPoint = ${tilingHitPoint4};
+  return info;
+}`
+    : "";
+  const tiledHitInfoText = tiling
+    ? latticeTiling
+      ? latticeTiledHitInfoText
+      : finiteTiledHitInfoText
     : hitInfoText;
 
   // The two LUT color sources whose NORMALIZER is dimension-specific
@@ -7928,7 +8028,13 @@ struct Params {
   }${chaos ? chaosStructFields : ""}`
             : ""
   }
-${tiling ? "  tilingGroup: u32,\n" : ""}
+${
+  tiling
+    ? latticeTiling
+      ? "  tilingGroup: u32,\n  tilingH: f32,\n"
+      : "  tilingGroup: u32,\n"
+    : ""
+}
 }${
     !mapsBinding
       ? ""
@@ -11451,14 +11557,18 @@ ${balloonProbeWrapText}`
       ? "liftEscape4(pIn)"
       : "rotorInvApply4(vec4f(pIn, params.w0))"
     : "pIn";
+  const tilingValueFoldedPoint = latticeTiling ? "folded" : "folded.point";
   const tilingValueCoreArgs = core4
-    ? `folded.point${!forward && slabExt ? ", vec4f(0.0)" : ""}`
-    : "folded.point";
+    ? `${tilingValueFoldedPoint}${!forward && slabExt ? ", vec4f(0.0)" : ""}`
+    : tilingValueFoldedPoint;
   const tilingClipReturn = tiling?.clip
-    ? `return max(inner, tilingClipSdf(folded.point${core4 ? ".xyz" : ""}));`
+    ? `return max(inner, tilingClipSdf(${tilingValueFoldedPoint}${
+        core4 ? ".xyz" : ""
+      }));`
     : "return inner;";
-  const tilingDeWrapText = tiling
-    ? /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  const tilingDeWrapText =
+    tiling && !latticeTiling
+      ? /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   if (params.tilingGroup != ${tilingInfo!.code}u) {
     return 0.0;
   }
@@ -11469,13 +11579,60 @@ ${balloonProbeWrapText}`
   let inner = surfaceDETilingCore(${tilingValueCoreArgs}, cutoff, li);
   ${tilingClipReturn}
 }`
+      : "";
+  const latticeRadiusExpr = core4
+    ? forward
+      ? "params.boundingRadius"
+      : "params.visRadius4"
+    : forward
+      ? "params.boundingRadius"
+      : "params.visibleRadius";
+  const latticeClipReturn = tiling?.clip
+    ? `return max(bounded, tilingClipSdf(folded${core4 ? ".xyz" : ""}));`
+    : "return bounded;";
+  const latticeDeWrapText = latticeTiling
+    ? /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  if (params.tilingGroup != ${LATTICE_TILING_CODE}u) {
+    return 0.0;
+  }
+  let folded = tilingFold(${tilingValueLiftExpression}, params.tilingH);
+  let inner = surfaceDETilingCore(${tilingValueCoreArgs}, cutoff, li);
+  let bounded = max(inner, length(folded) - ${latticeRadiusExpr});
+  ${latticeClipReturn}
+}`
     : "";
   const tilingProbeWrapText = tiling
-    ? tilingDeWrapText
+    ? (latticeTiling ? latticeDeWrapText : tilingDeWrapText)
         .replace("fn surfaceDE(", "fn surfaceDEProbe(")
         .replaceAll("surfaceDETilingCore(", "surfaceDEProbeTilingCore(")
     : "";
-  const tiledBodyBlock = tiling
+  const finiteTiledBodyBlock =
+    tiling && !latticeTiling
+      ? `${balloonRename(
+          probeWidth === null
+            ? bodyBlock
+            : balloonRename(
+                bodyBlock,
+                "fn surfaceDEProbe(",
+                "fn surfaceDEProbeTilingCore(",
+              ),
+          "fn surfaceDE(",
+          "fn surfaceDETilingCore(",
+        )}
+
+// Finite reflection tiling: fold once, evaluate the untouched compiled
+// core/lens, then intersect with the optional authored analytic clip through
+// max(core, signed SDF). The group word refuses stale source/params pairings.
+${tilingDeWrapText}${
+          probeWidth === null
+            ? ""
+            : `
+
+// The shade taps' probe width gets the identical outer composition.
+${tilingProbeWrapText}`
+        }`
+      : "";
+  const latticeTiledBodyBlock = latticeTiling
     ? `${balloonRename(
         probeWidth === null
           ? bodyBlock
@@ -11488,10 +11645,11 @@ ${balloonProbeWrapText}`
         "fn surfaceDETilingCore(",
       )}
 
-// Finite reflection tiling: fold once, evaluate the untouched compiled
-// core/lens, then intersect with the optional authored analytic clip through
-// max(core, signed SDF). The group word refuses stale source/params pairings.
-${tilingDeWrapText}${
+// Mirrored affine-A1 lattice: fold once, evaluate the untouched compiled
+// core/lens once, then intersect with the mandatory origin-centred authority
+// ball and optional authored analytic clip. The code word refuses stale
+// source/params pairings; h is the resolver-owned half-cell.
+${latticeDeWrapText}${
         probeWidth === null
           ? ""
           : `
@@ -11499,6 +11657,11 @@ ${tilingDeWrapText}${
 // The shade taps' probe width gets the identical outer composition.
 ${tilingProbeWrapText}`
       }`
+    : "";
+  const tiledBodyBlock = tiling
+    ? latticeTiling
+      ? latticeTiledBodyBlock
+      : finiteTiledBodyBlock
     : bodyBlock;
 
   return /* wgsl */ `${headerText}${tilingFoldText}${tilingClipText}${scheduleHelperText}${chaosHelperText}

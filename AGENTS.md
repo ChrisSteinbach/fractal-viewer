@@ -879,18 +879,23 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     A3/B3/H3 and A4/B4/F4, their proven fold bound (32 including jitter guard),
     roots and explicit-orbit test oracle; its estimate is
     `max(DE(fold(q)), clipDist(fold(q)))`. The lattice folds attractor-frame
-    x/z in 3D and x/z/w in 4D with fixed work (resolution refuses only a `4h`
-    period that cannot fit the frozen f32 shader representation);
+    x/z in 3D and x/z/w in 4D with fixed work (resolution refuses an `h`
+    that rounds to zero or a `4h` period that cannot fit the frozen f32
+    shader representation);
     `tiling-de.ts` is the one-core-call CPU authority for all seven inverse/forward families and additionally
     maxes the mandatory certified ball. Walls/seams are NEVER distance terms.
+    `latticeFoldSource` is the ONE GLSL/WGSL floor-modulo emitter; code 7 + h
+    reuse the 16-byte tail; all seven WGSL and both GLSL non-routed estimator
+    wrappers are driver-qualified, with canonical resolver/full-radius seams.
     `lattice-march.ts` owns exact sphere∩attractor-y-slab intervals, probe and
-    shadow membership, entry-relative fog distance, carrier formulas and a
-    bounded reference march against an EXPLICIT caller-supplied outer radius.
+    shadow membership, entry-relative fog, the shared GLSL/WGSL carrier-source
+    emitter and a bounded reference march against an EXPLICIT outer radius.
     Finite authoring is shared Scene / Look state: B3/A4/F4 showcase presets,
     separate chamber-group and narrowing-clip rows, app-copy/reload and
     workflow behavior are real-browser gated by `scripts/tiling-ui.verify.mjs`.
-    Surface refuses lattice until GLSL/WGSL carriers, fog/shadow/AO, ground,
-    camera and capture paths land together; Points/Flame/Solid remain untiled
+    Surface still refuses lattice until the emitted carrier is WIRED through
+    primary/shadow intervals, fog/normal/AO, ground, camera and capture paths
+    together; Points/Flame/Solid remain untiled
     with an adjacent explanation. Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic

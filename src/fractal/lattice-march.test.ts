@@ -6,6 +6,7 @@ import {
   latticeCameraCarrierRadius3,
   latticeCameraCarrierRadius4,
   latticeFogCoordinate,
+  latticePresentationCarrierSource,
   latticePresentationContains3,
   latticePresentationContains4,
   marchLatticeInterval,
@@ -15,6 +16,27 @@ import { mirrorLatticeCoordinate } from "./tiling";
 import type { Vec3 } from "./types";
 
 const IDENTITY4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] as const;
+
+function functionBody(source: string, name: string): string {
+  const signature = source.indexOf(name);
+  const open = source.indexOf("{", signature);
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    if (source[i] === "}") depth--;
+    if (depth === 0) return source.slice(open + 1, i);
+  }
+  throw new Error(`unterminated emitted function ${name}`);
+}
+
+function normalizedCarrierBody(source: string, name: string): string {
+  return functionBody(source, name)
+    .replaceAll(/\b(?:float|f32)\s+/g, "")
+    .replaceAll(/\b(?:let|var)\s+/g, "")
+    .replaceAll("vec4f", "vec4")
+    .replaceAll(/\s+/g, " ")
+    .trim();
+}
 
 function inverseYw(angle: number): number[] {
   const c = Math.cos(angle);
@@ -171,6 +193,76 @@ describe("mirrored lattice presentation intervals", () => {
       }),
     ).toThrow(/outerRadius/);
   });
+});
+
+describe("mirrored lattice presentation shader carrier", () => {
+  it.each([3, 4] as const)(
+    "emits the same %iD arithmetic in GLSL and WGSL",
+    (dimension) => {
+      const glsl = latticePresentationCarrierSource(dimension, "glsl");
+      const wgsl = latticePresentationCarrierSource(dimension, "wgsl");
+      for (const name of [
+        "latticePresentationInterval",
+        "latticePresentationContains",
+        "latticePresentationFogCoordinate",
+      ]) {
+        expect(normalizedCarrierBody(glsl, name)).toBe(
+          normalizedCarrierBody(wgsl, name),
+        );
+      }
+      expect(glsl).not.toContain("%");
+      expect(wgsl).not.toContain("%");
+      expect(glsl).toContain("struct LatticeCarrierInterval");
+      expect(wgsl).toContain("struct LatticeCarrierInterval");
+      expect(glsl).toContain("bool ok;");
+      expect(wgsl).toContain("ok: bool,");
+    },
+  );
+
+  it.each(["glsl", "wgsl"] as const)(
+    "keeps the world sphere and direct attractor-y slab in %s 3D source",
+    (language) => {
+      const source = latticePresentationCarrierSource(3, language);
+      expect(source).toContain("dot(ro, ro) - outerRadius * outerRadius");
+      expect(source).toContain("slabOrigin = ro.y;");
+      expect(source).toContain("slabDirection = rd.y;");
+      expect(source).toContain("slabCoordinate = p.y;");
+      expect(source).not.toContain("inverseRotorY");
+    },
+  );
+
+  it.each(["glsl", "wgsl"] as const)(
+    "lifts the slab through every inverse-rotor y-row coefficient in %s 4D source",
+    (language) => {
+      const source = latticePresentationCarrierSource(4, language);
+      const vector = language === "wgsl" ? "vec4f" : "vec4";
+      expect(source).toContain(`dot(inverseRotorY, ${vector}(ro, w0))`);
+      expect(source).toContain(`dot(inverseRotorY, ${vector}(rd, 0.0))`);
+      expect(source).toContain(`dot(inverseRotorY, ${vector}(p, w0))`);
+      // Two typed parameters (interval + contains) and all three projections.
+      expect(source.match(/inverseRotorY/g)).toHaveLength(5);
+      expect(source).toContain("dot(ro, ro) - outerRadius * outerRadius");
+    },
+  );
+
+  it.each([3, 4] as const)(
+    "emits the CPU authority's parallel-ray, inside-camera and fog rules in %iD",
+    (dimension) => {
+      for (const language of ["glsl", "wgsl"] as const) {
+        const source = latticePresentationCarrierSource(dimension, language);
+        expect(source).toContain("if (slabDirection == 0.0)");
+        expect(source).toContain("abs(slabOrigin) > contentRadius");
+        expect(source).toContain("tEnter = max(tEnter, 0.0);");
+        expect(source).toContain("tFar >= tEnter");
+        expect(source).toContain(
+          "max(0.0, t - interval.tEnter) / contentRadius",
+        );
+        expect(source).toContain(
+          "dot(p, p) <= outerRadius * outerRadius && abs(slabCoordinate) <= contentRadius",
+        );
+      }
+    },
+  );
 });
 
 describe("shared lattice march/probe contract", () => {

@@ -2,6 +2,7 @@ import type { ShapeSpec } from "./shapes";
 import { mulberry32 } from "./rng";
 import {
   FOLD_EPS,
+  LATTICE_TILING_CODE,
   MAX_TILING_FOLD_STEPS,
   TILING_GROUP_INFO,
   TILING_GROUPS,
@@ -12,7 +13,9 @@ import {
   foldToChamber,
   foldToChamberWithSteps,
   isInChamber,
+  isCanonicalResolvedLatticeTiling,
   isResolvedLatticeTiling,
+  latticeFoldSource,
   mirrorLatticeCoordinate,
   reflectAcrossWall,
   resolveTiling,
@@ -506,8 +509,9 @@ describe("foldToChamber", () => {
 });
 
 describe("shader source authority", () => {
-  it("assigns one-based append-only group codes with zero reserved for off", () => {
+  it("keeps zero off, finite group codes frozen at 1..6, and the lattice code at 7", () => {
     expect(TILING_GROUPS.map(tilingGroupCode)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(LATTICE_TILING_CODE).toBe(7);
   });
 
   it("emits the 3D GLSL fold from A3's frozen roots and shared bounds", () => {
@@ -563,6 +567,62 @@ describe("shader source authority", () => {
     expect(() =>
       tilingFoldSource(TILING_GROUP_INFO.a3, "glsl", "fold-now"),
     ).toThrow(/invalid shader function name/);
+  });
+
+  it.each([
+    ["glsl", 3, "vec3", ["x", "z"]],
+    ["glsl", 4, "vec4", ["x", "z", "w"]],
+    ["wgsl", 3, "vec3f", ["x", "z"]],
+    ["wgsl", 4, "vec4f", ["x", "z", "w"]],
+  ] as const)(
+    "emits the exact floor-mod lattice fold for %s %dD",
+    (dialect, dimension, vector, mirroredAxes) => {
+      const source = latticeFoldSource(dialect, dimension);
+      expect(source).toContain("m = x + h - period * floor((x + h) / period);");
+      expect(source).toContain("return h - abs(m - 2.0 * h);");
+      expect(source).toContain(
+        dialect === "glsl"
+          ? `${vector} latticeFold(${vector} pIn, float h)`
+          : `fn latticeFold(pIn: ${vector}, h: f32) -> ${vector}`,
+      );
+      for (const axis of mirroredAxes) {
+        expect(source).toContain(
+          `q.${axis} = latticeFoldCoordinate(q.${axis}, h);`,
+        );
+      }
+      expect(source).not.toContain("q.y = latticeFoldCoordinate(q.y, h);");
+      if (dimension === 3) {
+        expect(source).not.toContain("q.w = latticeFoldCoordinate(q.w, h);");
+      }
+      expect(source).not.toMatch(/%|\bmod\s*\(/);
+    },
+  );
+
+  it("keeps the lattice arithmetic text aligned across shader dialects", () => {
+    const arithmetic = (source: string): string[] =>
+      source
+        .split("\n")
+        .filter(
+          (line) =>
+            line.includes("period =") ||
+            line.includes("m =") ||
+            line.includes("return h - abs"),
+        )
+        .map((line) => line.replace(/^\s*(?:float|let)\s+/, "").trim());
+    expect(arithmetic(latticeFoldSource("glsl", 4))).toEqual(
+      arithmetic(latticeFoldSource("wgsl", 4)),
+    );
+  });
+
+  it("validates and applies a custom lattice function name", () => {
+    const source = latticeFoldSource("wgsl", 3, "foldLatticeNow");
+    expect(source).toContain(
+      "fn foldLatticeNowCoordinate(x: f32, h: f32) -> f32",
+    );
+    expect(source).toContain("fn foldLatticeNow(pIn: vec3f, h: f32) -> vec3f");
+    expect(() => latticeFoldSource("glsl", 3, "fold-now")).toThrow(
+      /invalid shader function name/,
+    );
   });
 });
 
@@ -709,8 +769,12 @@ describe("resolveTiling", () => {
     expect(() =>
       resolveTiling({ kind: "lattice", cellScale: Number.MAX_VALUE }, 1),
     ).toThrow(/f32 4h period/);
+    expect(() =>
+      resolveTiling({ kind: "lattice", cellScale: 1 }, Number.MIN_VALUE),
+    ).toThrow(/underflowed.*f32 4h period/);
     const maxHalfCell = 3.4028234663852886e38 / 4;
     const edge = resolveTiling({ kind: "lattice", cellScale: maxHalfCell }, 1);
+    expect(isCanonicalResolvedLatticeTiling(edge)).toBe(true);
     expect(Number.isFinite(mirrorLatticeCoordinate(0, edge.h))).toBe(true);
     expect(() =>
       resolveTiling(
@@ -718,6 +782,9 @@ describe("resolveTiling", () => {
         1,
       ),
     ).toThrow(/f32 4h period/);
+    expect(
+      isCanonicalResolvedLatticeTiling({ ...edge, h: Number.MIN_VALUE }),
+    ).toBe(false);
   });
 });
 
@@ -725,7 +792,7 @@ describe("mirrored affine-A1 lattice fold", () => {
   const h = 1.7;
 
   it("is continuous and non-zero-generating at exact and adjacent seams", () => {
-    for (const wall of [-h, h]) {
+    for (const wall of [-7 * h, -5 * h, -3 * h, -h, h, 3 * h, 5 * h, 7 * h]) {
       const at = mirrorLatticeCoordinate(wall, h);
       expect(mirrorLatticeCoordinate(wall - 1e-10, h)).toBeCloseTo(at, 8);
       expect(mirrorLatticeCoordinate(wall + 1e-10, h)).toBeCloseTo(at, 8);
@@ -745,6 +812,15 @@ describe("mirrored affine-A1 lattice fold", () => {
           9,
         );
       }
+    }
+
+    // A binary-exact h makes this a large-coordinate arithmetic test rather
+    // than a decimal multiplication-rounding test.
+    const exactH = 2;
+    const phase = 0.375;
+    for (const cell of [-(2 ** 30), 2 ** 30]) {
+      const x = phase + 4 * exactH * cell;
+      expect(mirrorLatticeCoordinate(x, exactH)).toBe(phase);
     }
   });
 

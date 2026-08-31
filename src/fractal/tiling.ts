@@ -186,6 +186,21 @@ export type ResolvedTiling = ResolvedFiniteTiling | ResolvedLatticeTiling;
  * evaluated by both CPU and GPU arithmetic. */
 const MAX_LATTICE_HALF_CELL = 3.4028234663852886e38 / 4;
 
+/** Whether a half-cell survives the f32 uniform wire and its shader-side
+ * `4h` period without rounding to zero or infinity. The upper comparison
+ * keeps the accepted boundary explicit; the f32 checks catch the symmetric
+ * underflow case and pin what the GPU actually receives. */
+function latticeHalfCellFitsShaderWire(h: number): boolean {
+  const wireH = Math.fround(h);
+  return (
+    Number.isFinite(h) &&
+    h > 0 &&
+    h <= MAX_LATTICE_HALF_CELL &&
+    wireH > 0 &&
+    Number.isFinite(Math.fround(4 * wireH))
+  );
+}
+
 /** Narrow a document block without re-deriving its vocabulary. */
 export function isLatticeTilingSpec(
   tiling: TilingSpec,
@@ -199,6 +214,22 @@ export function isResolvedLatticeTiling(
   tiling: ResolvedTiling,
 ): tiling is ResolvedLatticeTiling {
   return "kind" in tiling && tiling.kind === "lattice";
+}
+
+/** Defensive structural check for values claiming to be resolver output.
+ * Renderer seams use this instead of each growing its own approximation of
+ * the lattice domain and f32 wire limits. */
+export function isCanonicalResolvedLatticeTiling(
+  tiling: ResolvedLatticeTiling,
+): boolean {
+  return (
+    Number.isFinite(tiling.cellScale) &&
+    tiling.cellScale >= 1 &&
+    Number.isFinite(tiling.radius) &&
+    tiling.radius > 0 &&
+    tiling.h === tiling.cellScale * tiling.radius &&
+    latticeHalfCellFitsShaderWire(tiling.h)
+  );
 }
 
 /** The fold's stop-test tolerance: a folded point is accepted once every
@@ -366,6 +397,11 @@ export function tilingGroupCode(group: TilingGroup): number {
   return TILING_GROUPS.indexOf(group) + 1;
 }
 
+/** Stable shader-wire code for the mirrored affine-A1 lattice arm. Zero is
+ * off and the six finite group codes remain frozen at 1..6, so the first
+ * non-finite construction occupies the next append-only value. */
+export const LATTICE_TILING_CODE = 7 as const;
+
 /** A finite number as a shader float literal. `String` preserves the solved
  * roots' full f64 text; integral values gain `.0`, valid in both dialects. */
 function shaderFloatLit(x: number): string {
@@ -476,6 +512,54 @@ ${reflections}
 }
 
 /**
+ * Emit the mirrored affine-A1 lattice fold used by both shader dialects.
+ * The scalar helper spells Euclidean modulo out with `floor`, exactly like
+ * {@link mirrorLatticeCoordinate}; native modulo/remainder operators are not
+ * interchangeable for negative cells. The vector fold mirrors x/z in 3D and
+ * x/z/w in 4D, leaving the vertical y coordinate untouched.
+ *
+ * `h` is caller-owned runtime data resolved once by {@link resolveTiling}.
+ * The generated function therefore has the signature `(point, h) -> point`
+ * and introduces no second lattice-size authority in shader source.
+ */
+export function latticeFoldSource(
+  dialect: "glsl" | "wgsl",
+  dimension: 3 | 4,
+  functionName = "latticeFold",
+): string {
+  const name = shaderIdentifier(functionName);
+  const coordinateName = `${name}Coordinate`;
+  const vector = dialect === "glsl" ? `vec${dimension}` : `vec${dimension}f`;
+  const axes = dimension === 3 ? ["x", "z"] : ["x", "z", "w"];
+  const assignments = axes
+    .map((axis) => `  q.${axis} = ${coordinateName}(q.${axis}, h);`)
+    .join("\n");
+
+  if (dialect === "glsl") {
+    return `float ${coordinateName}(float x, float h) {
+  float period = 4.0 * h;
+  float m = x + h - period * floor((x + h) / period);
+  return h - abs(m - 2.0 * h);
+}
+${vector} ${name}(${vector} pIn, float h) {
+  ${vector} q = pIn;
+${assignments}
+  return q;
+}`;
+  }
+  return `fn ${coordinateName}(x: f32, h: f32) -> f32 {
+  let period = 4.0 * h;
+  let m = x + h - period * floor((x + h) / period);
+  return h - abs(m - 2.0 * h);
+}
+fn ${name}(pIn: ${vector}, h: f32) -> ${vector} {
+  var q = pIn;
+${assignments}
+  return q;
+}`;
+}
+
+/**
  * The ONE authority over both tiling arms. Finite blocks resolve exactly as
  * before. A lattice block additionally requires the current estimator's
  * certified full visible radius and derives `h = cellScale * radius` here —
@@ -512,9 +596,9 @@ export function resolveTiling(
       );
     }
     const h = spec.cellScale * radius;
-    if (!Number.isFinite(h) || h > MAX_LATTICE_HALF_CELL) {
+    if (!latticeHalfCellFitsShaderWire(h)) {
       throw new RangeError(
-        "resolveTiling: lattice half-cell overflowed the finite f32 4h period representation",
+        "resolveTiling: lattice half-cell overflowed or underflowed the finite f32 4h period representation",
       );
     }
     return {
