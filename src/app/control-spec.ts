@@ -24,8 +24,14 @@ import {
 import type { PaletteSelection } from "../fractal/palette";
 import type { FlameWorkerCommand } from "./flame-worker-core";
 import type { VoxelWorkerCommand } from "./voxel-worker-core";
-import { hexToRgb01 } from "./constants";
 import {
+  LATTICE_CELL_SCALE_DEFAULT,
+  LATTICE_CELL_SCALE_MAX,
+  LATTICE_CELL_SCALE_MIN,
+  hexToRgb01,
+} from "./constants";
+import {
+  BUNDLED_TILING_CLIP_SHAPES,
   bundledShapeEntry,
   bundledShapeForShape,
   bundledTrapForShape,
@@ -33,6 +39,7 @@ import {
   type BundledTrapKind,
 } from "./bundled-shapes";
 import { isLatticeTilingSpec, TILING_GROUPS } from "../fractal/tiling";
+import { clamp } from "../fractal/vec";
 import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_SOLID_PALETTE,
@@ -562,16 +569,22 @@ const tilingEffect: ControlEffect = (state, fx) => {
 
 /** Display the optional clip by canonical catalog identity. An imported
  * analytic ShapeSpec that is not a bundled choice stays on the authored
- * sentinel and is never rewritten merely by synchronizing the panel. */
+ * sentinel and is never rewritten merely by synchronizing the panel. A
+ * MESH-backed bundled shape (the catalog entries the tiling clip select
+ * does not offer) also reads as authored: it is preserved in the document
+ * but is not a selectable panel choice. */
 export function tilingClipSelectValue(
   state: AppState,
 ): "" | BundledShapeKind | "authored" {
-  const clip =
-    state.tiling && !isLatticeTilingSpec(state.tiling)
-      ? state.tiling.clip
-      : undefined;
+  const clip = state.tiling ? state.tiling.clip : undefined;
   if (!clip) return "";
-  return bundledShapeForShape(clip)?.kind ?? "authored";
+  const entry = bundledShapeForShape(clip);
+  if (!entry) return "authored";
+  return BUNDLED_TILING_CLIP_SHAPES.some(
+    (offered) => offered.kind === entry.kind,
+  )
+    ? entry.kind
+    : "authored";
 }
 
 /** Patch one component of the trap's position through the block's one
@@ -1381,11 +1394,12 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, raw) => setSymmetryTwist(s, Number(raw)),
     effect: symmetryEffect,
   },
-  // ——— Finite reflection tiling: authored Scene geometry, not a Surface
-  // renderer preference. The fixed selector is the finite phase-1 vocabulary
-  // only; the chamber comes from that group and the optional ShapeSpec below
-  // only NARROWS its content. Points/Flame/Solid intentionally do not consume
-  // it, so those modes author for next Surface entry. ———
+  // ——— Space tiling: authored Scene geometry, not a Surface renderer
+  // preference. The arm chooser picks the finite reflection vocabulary or
+  // the mirrored lattice; the chamber comes from the group and the optional
+  // ShapeSpec clip below only NARROWS the content (both arms).
+  // Points/Flame/Solid intentionally do not consume it, so those modes
+  // author for next Surface entry. ———
   {
     kind: "checkbox",
     id: "tilingEnabledCheckbox",
@@ -1396,6 +1410,40 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
           ? s
           : setTiling(s, { group: systemIsNonFlat(s) ? "a4" : "a3" })
         : setTiling(s, null),
+    effect: tilingEffect,
+  },
+  {
+    // The arm chooser: the finite reflection groups or the mirrored
+    // lattice. The block's discriminator IS the kind, so converting in
+    // either direction preserves the shared clip and loses only the other
+    // arm's parameter (the group or the cell scale — the a3/a4 default
+    // mirrors the checkbox's own on-default).
+    kind: "select",
+    id: "tilingKind",
+    read: (s) =>
+      s.tiling && isLatticeTilingSpec(s.tiling) ? "lattice" : "reflection",
+    apply: (s, raw) => {
+      if (!s.tiling) return s;
+      const lattice = isLatticeTilingSpec(s.tiling);
+      if (raw === "lattice" && lattice) return s;
+      if (raw === "reflection" && !lattice) return s;
+      if (raw === "lattice") {
+        return setTiling(s, {
+          kind: "lattice",
+          cellScale: LATTICE_CELL_SCALE_DEFAULT,
+          ...(s.tiling.clip ? { clip: s.tiling.clip } : {}),
+        });
+      }
+      if (raw === "reflection") {
+        if (!isLatticeTilingSpec(s.tiling)) return s;
+        const { kind: _kind, cellScale: _scale, ...finite } = s.tiling;
+        return setTiling(s, {
+          group: systemIsNonFlat(s) ? "a4" : "a3",
+          ...(finite.clip ? { clip: finite.clip } : {}),
+        });
+      }
+      return s;
+    },
     effect: tilingEffect,
   },
   {
@@ -1415,16 +1463,72 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: tilingEffect,
   },
   {
+    // The mirrored lattice's one authored parameter: h = cellScale * R,
+    // where R is the estimator's certified radius. LIVE per frame on both
+    // engines (the GLSL uniform and the WGSL params tail both derive from
+    // the resolved tiling; scale is deliberately absent from the
+    // source-regeneration key), so the slider never restarts the session.
+    kind: "range",
+    id: "tilingCellScaleSlider",
+    label: {
+      id: "tilingCellScaleLabel",
+      text: (s) => {
+        const cellScale =
+          s.tiling && isLatticeTilingSpec(s.tiling)
+            ? s.tiling.cellScale
+            : LATTICE_CELL_SCALE_DEFAULT;
+        return `${cellScale.toFixed(2)}×`;
+      },
+    },
+    numeric: numericControl(
+      "Lattice cell scale",
+      LATTICE_CELL_SCALE_MIN,
+      LATTICE_CELL_SCALE_MAX,
+      0.05,
+      (s) =>
+        s.tiling && isLatticeTilingSpec(s.tiling)
+          ? s.tiling.cellScale
+          : LATTICE_CELL_SCALE_DEFAULT,
+      (s, value) => {
+        if (!s.tiling || !isLatticeTilingSpec(s.tiling)) return s;
+        return setTiling(s, {
+          ...s.tiling,
+          cellScale: clamp(
+            value,
+            LATTICE_CELL_SCALE_MIN,
+            LATTICE_CELL_SCALE_MAX,
+          ),
+        });
+      },
+      { precision: 2 },
+    ),
+    read: (s) =>
+      String(
+        s.tiling && isLatticeTilingSpec(s.tiling)
+          ? s.tiling.cellScale
+          : LATTICE_CELL_SCALE_DEFAULT,
+      ),
+    apply: (s, raw) => {
+      if (!s.tiling || !isLatticeTilingSpec(s.tiling)) return s;
+      const value = clamp(
+        Number(raw),
+        LATTICE_CELL_SCALE_MIN,
+        LATTICE_CELL_SCALE_MAX,
+      );
+      if (!Number.isFinite(value)) return s;
+      return setTiling(s, { ...s.tiling, cellScale: value });
+    },
+    effect: tilingEffect,
+  },
+  {
     kind: "select",
     id: "tilingClip",
     read: tilingClipSelectValue,
     apply: (s, raw) => {
-      if (!s.tiling || isLatticeTilingSpec(s.tiling) || raw === "authored") {
-        return s;
-      }
+      if (!s.tiling || raw === "authored") return s;
       if (raw === "") {
-        const { clip: _clip, ...groupOnly } = s.tiling;
-        return setTiling(s, groupOnly);
+        const { clip: _clip, ...withoutClip } = s.tiling;
+        return setTiling(s, withoutClip);
       }
       const clip = bundledShapeEntry(raw)?.shape;
       return clip ? setTiling(s, { ...s.tiling, clip }) : s;

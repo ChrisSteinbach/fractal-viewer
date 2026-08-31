@@ -32,6 +32,10 @@ import {
 } from "../fractal/tiling";
 import { latticeCameraFitBounds } from "../fractal/lattice-march";
 import {
+  chamberContentFit,
+  poseTilingForContent,
+} from "../fractal/chamber-content";
+import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
   deHasFolds,
@@ -5315,6 +5319,32 @@ async function main(): Promise<void> {
       // its DE exists; finite blocks ignore the radius.
       const resolveSurfaceTiling = (radius: number): ResolvedTiling | null =>
         resolveTiling(surfaceTilingSpec, radius);
+      // The session-level clip pose: an authored clip WITHOUT a pose is
+      // placed on the measured chamber content (chamber-content.ts) so the
+      // trim is actually visible — the canned catalog shapes are unit-sized
+      // at the origin, while the chamber content of every shipped system
+      // sits 0.4-1.6 units out, so an unposed clip overlaps nothing and the
+      // frame renders empty. FORWARD systems get the bailout ball's
+      // {origin, boundingRadius} fit instead: their chaos game samples
+      // escape-reset debris, not the set, and the set fills the ball. The
+      // authored document keeps the unposed clip; an authored pose wins.
+      const poseTilingForSession = (
+        raw: ResolvedTiling | null,
+        forward: boolean,
+        radius: number,
+        fourD: boolean,
+      ): ResolvedTiling | null => {
+        if (!raw) return null;
+        const fit = forward
+          ? { center: [0, 0, 0] as Vec3, radius }
+          : chamberContentFit(
+              state.transforms,
+              state.finalTransform ?? null,
+              raw,
+              fourD,
+            );
+        return poseTilingForContent(raw, fit);
+      };
       // The lattice camera fit: target the CANONICAL CELL around the
       // origin, never the global lattice (docs/tiling-contract.md's
       // camera paragraph) — the explorer's cloud fit frames the untiled
@@ -5401,8 +5431,14 @@ async function main(): Promise<void> {
               state.symmetry,
             );
             // Lattice: the forward chain's marching ball is the
-            // estimator authority (escape4's packer pins the same radius).
-            const surfaceTiling = resolveSurfaceTiling(de.boundingRadius);
+            // estimator authority (escape4's packer pins the same radius);
+            // the clip pose is the bailout ball's.
+            const surfaceTiling = poseTilingForSession(
+              resolveSurfaceTiling(de.boundingRadius),
+              true,
+              de.boundingRadius,
+              true,
+            );
             if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
               fitLatticeCamera(surfaceTiling, true);
             }
@@ -5487,10 +5523,14 @@ async function main(): Promise<void> {
               },
             );
             // Lattice: the 4D descent's FULL visible radius is the
-            // estimator authority (never the slice-adjusted one), and the
-            // camera frames the canonical cell, not the lattice.
-            const surfaceTiling = resolveSurfaceTiling(
+            // estimator authority (never the slice-adjusted one), the
+            // camera frames the canonical cell, not the lattice, and the
+            // clip pose is measured from the folded 4D content.
+            const surfaceTiling = poseTilingForSession(
+              resolveSurfaceTiling(de.visibleBoundingRadius),
+              false,
               de.visibleBoundingRadius,
+              true,
             );
             if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
               fitLatticeCamera(surfaceTiling, true);
@@ -5687,8 +5727,13 @@ async function main(): Promise<void> {
               state.symmetry,
             );
             // Lattice: the forward chain's bailout marching ball is the
-            // estimator authority.
-            const surfaceTiling = resolveSurfaceTiling(de.boundingRadius);
+            // estimator authority; the clip pose is the bailout ball's.
+            const surfaceTiling = poseTilingForSession(
+              resolveSurfaceTiling(de.boundingRadius),
+              true,
+              de.boundingRadius,
+              false,
+            );
             if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
               fitLatticeCamera(surfaceTiling, false);
             }
@@ -5762,8 +5807,13 @@ async function main(): Promise<void> {
               state.symmetry,
             );
             // Lattice: the bulb's query-space marching ball is the
-            // estimator authority.
-            const surfaceTiling = resolveSurfaceTiling(de.boundingRadius);
+            // estimator authority; the clip pose is the bailout ball's.
+            const surfaceTiling = poseTilingForSession(
+              resolveSurfaceTiling(de.boundingRadius),
+              true,
+              de.boundingRadius,
+              false,
+            );
             if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
               fitLatticeCamera(surfaceTiling, false);
             }
@@ -5835,8 +5885,14 @@ async function main(): Promise<void> {
             },
           );
           // Lattice: the 3D descent's visible radius is the estimator
-          // authority, and the camera frames the canonical cell.
-          const surfaceTiling = resolveSurfaceTiling(de.visibleBoundingRadius);
+          // authority, the camera frames the canonical cell, and the clip
+          // pose is measured from the folded 3D content.
+          const surfaceTiling = poseTilingForSession(
+            resolveSurfaceTiling(de.visibleBoundingRadius),
+            false,
+            de.visibleBoundingRadius,
+            false,
+          );
           if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
             fitLatticeCamera(surfaceTiling, false);
           }

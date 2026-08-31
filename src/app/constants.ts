@@ -33,6 +33,24 @@ export const MIN_GUIDE_SCALE = 0.05;
 export const MAX_GUIDE_SCALE = 2;
 
 /**
+ * The mirrored-lattice cell-scale authoring range, FROZEN by the 2026-08-31
+ * real-Iris renderer sweep (docs/tiling-contract.md's lattice section): the
+ * math gate proves only `cellScale >= 1`, and these narrower bounds are the
+ * measured landscape range — every value from 1.05 to 5 settled and drew on
+ * the verified Mesa Intel Iris Xe display in both dimensions, and the 1.25-4
+ * band carries the visible gradient from dense mirroring (55% frame coverage
+ * in 3D) to a sparse single-cell window (34%, converging on the untiled
+ * view). Below 1.25 the canonical cell shrinks toward the content and the
+ * mirrored copies read as noise; above 4 the window shows one cell and the
+ * repetition vanishes. The resolver still accepts any `cellScale >= 1` for
+ * imported documents — the panel clamps to this range, it does not refuse.
+ */
+export const LATTICE_CELL_SCALE_MIN = 1.25;
+export const LATTICE_CELL_SCALE_MAX = 4;
+/** The panel's authored default — the center of the measured range. */
+export const LATTICE_CELL_SCALE_DEFAULT = 1.5;
+
+/**
  * Backdrop gradient stops, authored in sRGB and rendered verbatim (scene.ts
  * disables THREE.ColorManagement). Single source of truth for the explorer's
  * CanvasTexture backdrops, the fog colors derived from their midpoints,

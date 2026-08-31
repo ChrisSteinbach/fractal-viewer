@@ -1307,6 +1307,8 @@ describe("PRESET_TILINGS", () => {
       tiledOctahedron: { group: "b3" },
       tiledPentatope: { group: "a4" },
       tiledTwentyFourCell: { group: "f4" },
+      mirroredLattice: { kind: "lattice", cellScale: 1.6 },
+      mirroredLattice4: { kind: "lattice", cellScale: 1.6 },
     });
     const nonFlat = (name: Preset) =>
       systemPartsAreNonFlat(presetTransforms(name), null, {
@@ -1316,6 +1318,8 @@ describe("PRESET_TILINGS", () => {
     expect(nonFlat("tiledOctahedron")).toBe(false);
     expect(nonFlat("tiledPentatope")).toBe(true);
     expect(nonFlat("tiledTwentyFourCell")).toBe(true);
+    expect(nonFlat("mirroredLattice")).toBe(false);
+    expect(nonFlat("mirroredLattice4")).toBe(true);
   });
 
   it("opens every tiling showcase in Surface and leaves the familiar sibling presets untiled", () => {
@@ -1323,6 +1327,8 @@ describe("PRESET_TILINGS", () => {
       "tiledOctahedron",
       "tiledPentatope",
       "tiledTwentyFourCell",
+      "mirroredLattice",
+      "mirroredLattice4",
     ] as const) {
       expect(PRESET_NAMES).toContain(name);
       expect(PRESET_RENDER_HINTS[name]).toBe("surface");

@@ -63,7 +63,7 @@ import { FOUR_D_COLOR_MODES, SYMMETRY_PLANES } from "../fractal/types";
 import type { Transform } from "../fractal/types";
 import { GEAR_SHAPE, STAR_PRISM_SHAPE } from "../fractal/shapes";
 import {
-  BUNDLED_SHAPES,
+  BUNDLED_TILING_CLIP_SHAPES,
   BUNDLED_EMITTER_SHAPES,
   BUNDLED_TRAP_SHAPES,
   bundledShapeOptionLabel,
@@ -1318,7 +1318,7 @@ describe("Ui table-driven exact numeric controls", () => {
     new Ui(document);
     const ranges = SCALAR_CONTROLS.filter((spec) => spec.kind === "range");
 
-    expect(ranges).toHaveLength(46);
+    expect(ranges).toHaveLength(47);
     for (const spec of ranges) {
       const slider = document.getElementById(spec.id);
       const number = exactInput(spec.id);
@@ -10409,7 +10409,7 @@ describe("Ui finite tiling controls", () => {
     }
   });
 
-  it("offers exactly the fixed finite groups and the shared analytic shape catalog", () => {
+  it("offers exactly the fixed finite groups and the analytic clip subset", () => {
     const ui = new Ui(document);
     ui.updateLabels(setTiling(initialState(true), { group: "a3" }));
     const group = el("tilingGroup") as HTMLSelectElement;
@@ -10423,9 +10423,13 @@ describe("Ui finite tiling controls", () => {
       "b4",
       "f4",
     ]);
+    // Only the analytic catalog entries are offered: the mesh-backed ones
+    // would be selectable-but-always-ineligible (the tiling clip path
+    // refuses mesh clips), so every offered value can actually enter
+    // Surface.
     expect(Array.from(clip.options).map((option) => option.value)).toEqual([
       "",
-      ...BUNDLED_SHAPES.map((entry) => entry.kind),
+      ...BUNDLED_TILING_CLIP_SHAPES.map((entry) => entry.kind),
       "authored",
     ]);
     expect(document.getElementById("tilingCellScale")).toBeNull();
@@ -10436,6 +10440,32 @@ describe("Ui finite tiling controls", () => {
         ?.textContent?.replace(/\s+/g, " ") ?? "";
     expect(explainer).toMatch(/group.*fixed chamber/i);
     expect(explainer).toMatch(/clip.*does not replace.*chamber/i);
+  });
+
+  it("shows the lattice arm rows and hides the group row for a lattice block", () => {
+    const ui = new Ui(document);
+    const latticeState = setTiling(initialState(true), {
+      kind: "lattice",
+      cellScale: 1.8,
+    });
+    ui.updateLabels(latticeState);
+    expect(el("tilingControls").classList.contains("hidden")).toBe(false);
+    expect(el("tilingGroupRow").classList.contains("hidden")).toBe(true);
+    expect(el("tilingCellScaleRow").classList.contains("hidden")).toBe(false);
+    expect((el("tilingKind") as HTMLSelectElement).value).toBe("lattice");
+    expect(el("tilingNote").textContent).toContain("mirrored landscape");
+    // In a live Surface session the lattice hint discloses the live edit.
+    ui.updateLabels({ ...latticeState, renderMode: "surface" });
+    expect(el("tilingTimingHint").textContent).toContain("live");
+    // The finite arm's rows come back with a finite block.
+    ui.updateLabels(setTiling(initialState(true), { group: "b3" }));
+    expect(el("tilingGroupRow").classList.contains("hidden")).toBe(false);
+    expect(el("tilingCellScaleRow").classList.contains("hidden")).toBe(true);
+    expect((el("tilingKind") as HTMLSelectElement).value).toBe("reflection");
+    // Off hides everything and restores the off note.
+    ui.updateLabels(initialState(true));
+    expect(el("tilingControls").classList.contains("hidden")).toBe(true);
+    expect(el("tilingNote").textContent).toContain("Off");
   });
 
   it("disables the other dimension's groups without deleting a mismatched authored choice", () => {
@@ -10553,32 +10583,7 @@ describe("Ui finite tiling controls", () => {
     );
   });
 
-  it("discloses and preserves lattice state while hiding finite-only rows", () => {
-    const lattice = setTiling(initialState(true), {
-      kind: "lattice",
-      cellScale: 1.5,
-    });
-    const { handlers, current } = scalarHandlers(lattice);
-    const ui = new Ui(document);
-    ui.bind(handlers);
-    ui.updateLabels(current());
-
-    expect((el("tilingEnabledCheckbox") as HTMLInputElement).checked).toBe(
-      true,
-    );
-    expect(el("tilingControls").classList.contains("hidden")).toBe(true);
-    expect(el("tilingNote").textContent).toMatch(
-      /mirrored lattice tiling.*Surface renders the repeated cell.*authoring controls are not exposed yet.*off to clear/i,
-    );
-    expect(current().tiling).toEqual({ kind: "lattice", cellScale: 1.5 });
-
-    const toggle = el("tilingEnabledCheckbox") as HTMLInputElement;
-    toggle.checked = false;
-    toggle.dispatchEvent(new Event("change"));
-    expect(current().tiling).toBeUndefined();
-  });
-
-  it("announces the adjacent status and timing from every finite input", () => {
+  it("announces the adjacent status and timing from every tiling input", () => {
     new Ui(document);
     const section = el("tilingSection");
     expect(section.querySelector(":scope > summary")?.textContent).toBe(
@@ -10586,10 +10591,21 @@ describe("Ui finite tiling controls", () => {
     );
     expect(el("tilingNote").getAttribute("role")).toBe("status");
     expect(el("tilingNote").getAttribute("aria-live")).toBe("polite");
-    for (const id of ["tilingEnabledCheckbox", "tilingGroup", "tilingClip"]) {
-      expect(el(id).getAttribute("aria-describedby")).toBe(
-        "tilingTimingHint tilingNote",
-      );
+    for (const id of [
+      "tilingEnabledCheckbox",
+      "tilingKind",
+      "tilingGroup",
+      "tilingCellScaleSlider",
+      "tilingClip",
+    ]) {
+      const describedby = el(id).getAttribute("aria-describedby");
+      // The exact-numeric companion appends its own error id to the
+      // slider's description; every other row carries exactly the hint +
+      // the note.
+      expect(describedby).toContain("tilingTimingHint tilingNote");
+      if (id !== "tilingCellScaleSlider") {
+        expect(describedby).toBe("tilingTimingHint tilingNote");
+      }
     }
   });
 });
