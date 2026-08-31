@@ -569,42 +569,51 @@ describe("VoxelWorkerSession max hierarchy publication", () => {
     ).toEqual([]);
   });
 
-  it("is deterministic across progressive and restarted nonlinear stochastic runs", () => {
-    const transforms = sierpinskiTetrahedron().map((transform) => ({
-      ...transform,
-      variations: [
-        { type: "swirl" as const, weight: 0.7 },
-        { type: "julia" as const, weight: 0.3 },
-      ],
-    }));
-    const run = () => {
-      const { session, events, scheduler } = harness({ initialChunkSize: 100 });
-      session.handle(
-        startCommand({
-          transforms,
-          seed: 0xdecafbad,
-          iterationsBudget: 300,
-        }),
-      );
-      scheduler.drain();
-      session.handle({ type: "setPalette", palette: "spectrum" });
-      scheduler.drain();
-      const grids = gridEvents(events);
-      for (const grid of grids) expectHierarchyMatchesTexture(grid);
-      return grids.map((grid) => ({
-        iterationsDone: grid.iterationsDone,
-        texture: grid.texture,
-        hierarchy: grid.hierarchy,
+  it(
+    "is deterministic across progressive and restarted nonlinear stochastic runs",
+    // Two full 300-iteration nonlinear accumulations at 100-iteration
+    // chunks: measured ~5.5s under parallel-fork load, over the 5s default
+    // timeout — the run is deterministic, only its wall time is load-bound.
+    30_000,
+    () => {
+      const transforms = sierpinskiTetrahedron().map((transform) => ({
+        ...transform,
+        variations: [
+          { type: "swirl" as const, weight: 0.7 },
+          { type: "julia" as const, weight: 0.3 },
+        ],
       }));
-    };
+      const run = () => {
+        const { session, events, scheduler } = harness({
+          initialChunkSize: 100,
+        });
+        session.handle(
+          startCommand({
+            transforms,
+            seed: 0xdecafbad,
+            iterationsBudget: 300,
+          }),
+        );
+        scheduler.drain();
+        session.handle({ type: "setPalette", palette: "spectrum" });
+        scheduler.drain();
+        const grids = gridEvents(events);
+        for (const grid of grids) expectHierarchyMatchesTexture(grid);
+        return grids.map((grid) => ({
+          iterationsDone: grid.iterationsDone,
+          texture: grid.texture,
+          hierarchy: grid.hierarchy,
+        }));
+      };
 
-    const first = run();
-    const second = run();
-    expect(first.map((grid) => grid.iterationsDone)).toEqual([
-      100, 300, 100, 300,
-    ]);
-    expect(first).toEqual(second);
-  });
+      const first = run();
+      const second = run();
+      expect(first.map((grid) => grid.iterationsDone)).toEqual([
+        100, 300, 100, 300,
+      ]);
+      expect(first).toEqual(second);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

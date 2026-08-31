@@ -472,18 +472,14 @@ export function deriveSurfaceEligibility(
       kind: null,
     };
   }
-  // The document/CPU bead deliberately lands before either renderer mirrors
-  // the lattice contract. Refuse the recognized, persisted block here until
-  // that delivery removes this gate; otherwise a hand-authored hash would be
-  // admitted and one of the finite-only shaders could ignore or misread it.
-  // This is a temporary capability boundary, not a mathematical refusal.
-  if (tiling && isLatticeTilingSpec(tiling)) {
-    return {
-      status: "ineligible",
-      note: "Mirrored lattice tiling is preserved in this document, but its Surface renderer path is not available in this build yet.",
-      kind: null,
-    };
-  }
+  // The lattice arm resolves through the SAME estimator authority rule the
+  // wrappers use (docs/tiling-contract.md's "Resolve lattice only after the
+  // relevant DE exists"): the derivation below can't know the radius — the
+  // DE does — so the lattice arm is admitted here and resolved in the
+  // routing arms, exactly like the finite group's dimension check above.
+  // Refusals that remain: balloon (an orbit's echo is not the echo's
+  // orbit), kaleidoscope (both query-space folds, no certified order),
+  // the 4D slab (a fold of a segment is a bent polyline), and mesh clips.
   // A 4D document routes to the 4D analysis — what used to be this gate's
   // blanket "extends into 4D" disqualifier is now the 4D tracer's
   // admission ticket.

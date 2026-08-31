@@ -1,4 +1,4 @@
-import type { Vec3, Vec4 } from "./types";
+import type { Bounds, Vec3, Vec4 } from "./types";
 
 /**
  * Dependency-free CPU authority for a mirrored lattice's finite presentation
@@ -360,6 +360,50 @@ export function latticeCameraCarrierRadius3(h: number, radius: number): number {
 /** 4D x/z/w twin, before taking the live slice. */
 export function latticeCameraCarrierRadius4(h: number, radius: number): number {
   return Math.hypot(h, h, h, radius);
+}
+
+/** Camera-fit Bounds framing the canonical cell around the origin — the
+ * contract's "fit targets the canonical cell/origin, never the global
+ * lattice". 3D uses the cell's own asymmetric box (half-diagonal
+ * hypot(h, h, R), exactly `fitRadius`'s reading); 4D uses a symmetric box
+ * of half-extent r4/√3 so the fit radius lands on the PRE-SLICE 4D
+ * half-diagonal hypot(h, h, h, R) whatever the live rotor/slice — the
+ * rotor can bring any attractor axis into any world direction, so only a
+ * sphere of the 4D cell's full radius covers every pose. */
+export function latticeCameraFitBounds(
+  h: number,
+  radius: number,
+  fourD: boolean,
+): Bounds {
+  if (!Number.isFinite(h) || h <= 0) {
+    throw new RangeError("lattice camera fit h must be finite and > 0");
+  }
+  if (!Number.isFinite(radius) || radius <= 0) {
+    throw new RangeError("lattice camera fit radius must be finite and > 0");
+  }
+  if (fourD) {
+    const half = Math.hypot(h, h, h, radius) / Math.sqrt(3);
+    return {
+      minX: -half,
+      maxX: half,
+      minY: -half,
+      maxY: half,
+      minZ: -half,
+      maxZ: half,
+      minR: 0,
+      maxR: half,
+    };
+  }
+  return {
+    minX: -h,
+    maxX: h,
+    minY: -radius,
+    maxY: radius,
+    minZ: -h,
+    maxZ: h,
+    minR: 0,
+    maxR: radius,
+  };
 }
 
 export interface LatticeMarchOptions {
