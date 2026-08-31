@@ -37,6 +37,7 @@ import {
   TILING_GROUP_INFO,
   TILING_GROUPS,
   type ResolvedFiniteTiling,
+  type ResolvedLatticeTiling,
 } from "../fractal/tiling";
 import type { ShapeSpec } from "../fractal/shapes";
 import { twentyFourCellFlake } from "../fractal/presets";
@@ -1243,6 +1244,15 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
     }
   });
 
+  it("keeps the pre-lattice finite source bytes frozen", () => {
+    expect(sha256(sourceFor(f4))).toBe(
+      "54d31287457d9b798e36832f580d36dd0bc3031b4ee4789be49afdef7fda8dc0",
+    );
+    expect(sha256(surface4FragmentFor(0, 0, 0, 0, null, 0, 0, f4))).toBe(
+      "46cd3064b93759d6f21ad1ad72f046d1b8c69f1e0f3fc1dabc502b62fa11bc94",
+    );
+  });
+
   it("folds the true vec4 query before the untouched sliced core and clips in folded xyz", () => {
     const source = sourceFor(clippedF4);
     expect(source).toContain("vec4 surfaceTilingQuery4;");
@@ -1376,6 +1386,206 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
     expect(material.uniforms.uTilingGroup.value).toBe(0);
     expect(material.defines.SURFACE4_TILING).toBeUndefined();
     expect(material.fragmentShader).not.toContain("surfaceTilingFold");
+  });
+});
+
+describe("compile-gated mirrored lattice in the 4D GLSL tracer", () => {
+  const lattice = resolveTiling({ kind: "lattice", cellScale: 1.5 }, 2);
+  const clippedLattice = resolveTiling(
+    { kind: "lattice", cellScale: 1.5, clip: COND4_SPHERE },
+    2,
+  );
+
+  const sourceFor = (
+    tiling: ResolvedLatticeTiling,
+    {
+      plane = 0,
+      finish = 0,
+      pattern = 0,
+      condensation = null,
+      schedule = 0,
+      chaos = 0,
+    }: {
+      plane?: number;
+      finish?: number;
+      pattern?: number;
+      condensation?: readonly ShapeSpec[] | null;
+      schedule?: number;
+      chaos?: number;
+    } = {},
+  ): string =>
+    surface4FragmentResolvedFor(
+      0,
+      plane,
+      finish,
+      pattern,
+      condensation,
+      schedule,
+      chaos,
+      tiling,
+    );
+
+  it("inverse-rotates the true vec4 query, folds x/z/w once, bounds it, and clips folded xyz", () => {
+    const source = sourceFor(clippedLattice);
+    expect(source.indexOf("precision highp float;")).toBeLessThan(
+      source.indexOf("vec4 surfaceTilingQuery4;"),
+    );
+    expect(source).toContain("vec4 tilingFold(vec4 pIn, float h)");
+    expect(source).toContain("q.x = tilingFoldCoordinate(q.x, h);");
+    expect(source).toContain("q.z = tilingFoldCoordinate(q.z, h);");
+    expect(source).toContain("q.w = tilingFoldCoordinate(q.w, h);");
+    expect(source).not.toContain("q.y = tilingFoldCoordinate(q.y, h);");
+    expect(source).toContain(
+      "q = tilingFold(uInvRotor * vec4(p, uW0), uTilingH);",
+    );
+    expect(source).toContain("vec4 q = surfaceTilingQuery4;");
+    expect(source).toContain("float inner = surfaceDETilingCore(p, cutoff);");
+    expect(countOccurrences(source, "length(q) - uVisibleRadius")).toBe(3);
+    expect(
+      countOccurrences(source, "return max(bounded, tilingClipSdf(q.xyz));"),
+    ).toBe(3);
+    expect(source).toContain("uTilingGroup != 7 || uSliceHalfW > 0.0");
+    expect(sourceFor(lattice)).not.toContain("tilingClipSdf");
+  });
+
+  it("attributes folded 4D material coordinates and retains visible world lighting", () => {
+    const source = sourceFor(lattice, { finish: 1, pattern: 1 });
+    expect(source).toContain(
+      "(transpose(uInvRotor) * surfaceTilingHitPoint).y / uVisibleRadius",
+    );
+    expect(source).toContain("vec4 q4 = surfaceTilingHitPoint;");
+    expect(source).toContain("vec4 patternLifted = surfaceTilingHitPoint;");
+    expect(source).toContain("finishShade(base, pos, n, rd");
+  });
+
+  it("source-generates and size-gates every relevant 4D inverse arm", () => {
+    const cases: readonly {
+      name: string;
+      options: NonNullable<Parameters<typeof sourceFor>[1]>;
+    }[] = [
+      { name: "inverse", options: {} },
+      { name: "floor", options: { plane: 1 } },
+      { name: "finish/pattern", options: { finish: 1, pattern: 1 } },
+      {
+        name: "condensation/schedule/chaos",
+        options: {
+          condensation: [COND4_SPHERE],
+          schedule: 1,
+          chaos: 1,
+        },
+      },
+    ];
+    for (const { name, options } of cases) {
+      const resolved = sourceFor(lattice, options);
+      const emitted = surface4FragmentFor(
+        0,
+        options.plane ?? 0,
+        options.finish ?? 0,
+        options.pattern ?? 0,
+        options.condensation ?? null,
+        options.schedule ?? 0,
+        options.chaos ?? 0,
+        lattice,
+      );
+      expect(emitted.length, name).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+      const mustStrip =
+        (options.plane ?? 0) !== 0 ||
+        resolved.length > SURFACE_GLSL_STRIP_BYTES;
+      expect(emitted === resolved, name).toBe(!mustStrip);
+      if (mustStrip) expect(emitted, name).not.toContain("//");
+      expect(resolved, name).toContain("surfaceDETilingCore");
+      expect(resolved, name).toContain("length(q) - uVisibleRadius");
+    }
+  });
+
+  it("updates lattice scale live, recompiles for clips and finite groups, and retains slab/balloon/kaleidoscope refusals", () => {
+    const material = createSurfaceMaterial4();
+    const first = resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1);
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, first);
+    const firstSource = material.fragmentShader;
+    const firstVersion = material.version;
+    expect(materialSurfaceTiling(material, true)).toBe(first);
+    expect(material.uniforms.uTilingGroup.value).toBe(7);
+    expect(material.uniforms.uTilingH.value).toBe(1.5);
+    expect(material.defines.SURFACE4_TILING).toBe(1);
+
+    const scaleOnly = resolveTiling({ kind: "lattice", cellScale: 2.5 }, 1);
+    setSurfaceSystem4(
+      material,
+      de4([map4()]),
+      [[0, 0, 0]],
+      undefined,
+      scaleOnly,
+    );
+    expect(material.version).toBe(firstVersion);
+    expect(material.fragmentShader).toBe(firstSource);
+    expect(materialSurfaceTiling(material, true)).toBe(scaleOnly);
+    expect(material.uniforms.uTilingH.value).toBe(2.5);
+
+    const clipped = resolveTiling(
+      { kind: "lattice", cellScale: 2.5, clip: COND4_SPHERE },
+      1,
+    );
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, clipped);
+    expect(material.version).toBeGreaterThan(firstVersion);
+    expect(material.fragmentShader).toContain("tilingClipSdf");
+
+    const clippedVersion = material.version;
+    const finite = resolveTiling({ group: "f4" })!;
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, finite);
+    expect(material.version).toBeGreaterThan(clippedVersion);
+    expect(material.uniforms.uTilingGroup.value).toBe(6);
+    expect(material.uniforms.uTilingH.value).toBe(1);
+
+    setSurfaceSystem4(
+      material,
+      de4([map4()]),
+      [[0, 0, 0]],
+      undefined,
+      scaleOnly,
+    );
+    expect(() => setSurfaceView4(material, IDENTITY4, 0, 0.1)).toThrow(
+      /cannot compose with a 4D slab/,
+    );
+    expect(() => setSurface4Balloon(material, balloonSpec())).toThrow(
+      /cannot compose with balloon/,
+    );
+    expect(() =>
+      setSurfaceSystem4(
+        material,
+        de4([map4()], { order: 3, stepBack: IDENTITY4 }),
+        [[0, 0, 0]],
+        undefined,
+        lattice,
+      ),
+    ).toThrow(/cannot compose with kaleidoscope/);
+
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, null);
+    expect(material.uniforms.uTilingGroup.value).toBe(0);
+    expect(material.uniforms.uTilingH.value).toBe(1);
+  });
+
+  it("retains analytic-only clip refusal", () => {
+    expect(() => sourceFor({ ...lattice, h: lattice.h + 1 })).toThrow(
+      /canonical resolved geometry/,
+    );
+    expect(() =>
+      sourceFor(
+        resolveTiling(
+          { kind: "lattice", cellScale: 1.5, clip: MESH4_SHAPE },
+          1,
+        ),
+      ),
+    ).toThrow(/mesh clips are refused/);
+    expect(() =>
+      setSurfaceSystem4(
+        createSurfaceMaterial4(),
+        de4([map4()]),
+        [[0, 0, 0]],
+        undefined,
+        lattice,
+      ),
+    ).toThrow(/does not match the estimator authority/);
   });
 });
 

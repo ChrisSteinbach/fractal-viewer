@@ -80,6 +80,7 @@ import {
   TILING_GROUP_INFO,
   TILING_GROUPS,
   type ResolvedFiniteTiling,
+  type ResolvedLatticeTiling,
 } from "../fractal/tiling";
 import { defaultTransforms, sierpinskiTetrahedron } from "../fractal/presets";
 import type { ShapeTrap, Transform, Vec3 } from "../fractal/types";
@@ -1415,6 +1416,36 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
     }
   });
 
+  it("keeps the pre-lattice finite source bytes frozen", () => {
+    expect(sha256(sourceFor(a3))).toBe(
+      "9f3290c2d2a2133279eae88b11227711803af6db543f080e325bec471372c651",
+    );
+    expect(
+      sha256(
+        surfaceFragmentFor(
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          undefined,
+          null,
+          null,
+          false,
+          0,
+          0,
+          0,
+          a3,
+        ),
+      ),
+    ).toBe("6b43c768ac2a2cabeebe8d9f40a8c9832d12a41b73f334c2ce9b71e5d105b1ce");
+    expect(sha256(sourceFor(a3, { escape: 1 }))).toBe(
+      "0b1a8765b8d7a8a910442f81c8dd897d15b2efb9c2873a5724bdf3b3dfd67d6d",
+    );
+  });
+
   it("wraps the untouched core in CPU order and bakes the analytic clip under the fixed name", () => {
     const source = sourceFor(clippedA3, { pattern: 1 });
     expect(source).toContain("float surfaceDETilingCore(vec3 p, float cutoff)");
@@ -1646,6 +1677,247 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
     expect(materialSurfaceTiling(material)).toBe(a3);
     expect(material.fragmentShader).toContain("surfaceTilingFold");
     expect(material.fragmentShader).toContain("bulbPow8");
+  });
+});
+
+describe("compile-gated mirrored lattice in the 3D GLSL tracer", () => {
+  const lattice = resolveTiling({ kind: "lattice", cellScale: 1.5 }, 2);
+  const clippedLattice = resolveTiling(
+    { kind: "lattice", cellScale: 1.5, clip: COND_SPHERE },
+    2,
+  );
+
+  const sourceFor = (
+    tiling: ResolvedLatticeTiling,
+    {
+      escape = 0,
+      lens = 0,
+      plane = 0,
+      bulb = 0,
+      finish = 0,
+      pattern = 0,
+      trap = null,
+      condensation = null,
+      trapGeometry = 0,
+      schedule = 0,
+      chaos = 0,
+    }: {
+      escape?: number;
+      lens?: number;
+      plane?: number;
+      bulb?: number;
+      finish?: number;
+      pattern?: number;
+      trap?: ShapeSpec | null;
+      condensation?: readonly ShapeSpec[] | null;
+      trapGeometry?: number;
+      schedule?: number;
+      chaos?: number;
+    } = {},
+  ): string =>
+    surfaceFragmentResolvedFor(
+      escape,
+      lens,
+      0,
+      plane,
+      bulb,
+      finish,
+      pattern,
+      undefined,
+      trap,
+      condensation,
+      false,
+      trapGeometry,
+      schedule,
+      chaos,
+      tiling,
+    );
+
+  it("folds x/z once, evaluates each public core once, and intersects the mandatory ball before the optional clip", () => {
+    const source = sourceFor(clippedLattice, { pattern: 1 });
+    expect(source).toContain("uniform int uTilingGroup;");
+    expect(source).toContain("uniform float uTilingH;");
+    expect(source).toContain("float tilingFoldCoordinate(float x, float h)");
+    expect(source).toContain("x + h - period * floor((x + h) / period)");
+    expect(source).toContain("q.x = tilingFoldCoordinate(q.x, h);");
+    expect(source).toContain("q.z = tilingFoldCoordinate(q.z, h);");
+    expect(source).not.toContain("q.y = tilingFoldCoordinate(q.y, h);");
+    expect(source).toContain("uTilingGroup != 7");
+    expect(countOccurrences(source, "q = tilingFold(p, uTilingH);")).toBe(1);
+    expect(countOccurrences(source, "if (!surfaceTilingFold(p, q))")).toBe(3);
+    expect(
+      countOccurrences(source, "float inner = surfaceDETilingCore(q, cutoff);"),
+    ).toBe(1);
+    expect(
+      countOccurrences(source, "float inner = surfaceDETilingCore(q);"),
+    ).toBe(1);
+    expect(
+      countOccurrences(
+        source,
+        "float inner = surfaceDETilingCore(q, firstChoice, trap, rings, sheets);",
+      ),
+    ).toBe(1);
+    expect(countOccurrences(source, "length(q) - uVisibleRadius")).toBe(3);
+    expect(
+      countOccurrences(source, "return max(bounded, tilingClipSdf(q));"),
+    ).toBe(3);
+    expect(sourceFor(lattice)).not.toContain("tilingClipSdf");
+  });
+
+  it("attributes copied material channels to the folded hit and leaves world lighting alone", () => {
+    const source = sourceFor(lattice, { finish: 1, pattern: 1 });
+    expect(source).toContain("surfaceTilingHitPoint.y / uVisibleRadius");
+    expect(source).toContain("length(surfaceTilingHitPoint) / uVisibleRadius");
+    expect(source).toContain("patternSource = surfaceTilingHitPoint;");
+    expect(source).toContain("finishShade(base, pos, n, rd");
+  });
+
+  it("source-generates and size-gates inverse, lens, floor, condensation, escape, and bulb programs", () => {
+    const cases: readonly {
+      name: string;
+      options: NonNullable<Parameters<typeof sourceFor>[1]>;
+    }[] = [
+      { name: "inverse", options: {} },
+      { name: "lens", options: { lens: 1 } },
+      { name: "floor", options: { plane: 1 } },
+      { name: "finish/pattern", options: { finish: 1, pattern: 1 } },
+      {
+        name: "condensation/schedule/chaos",
+        options: {
+          condensation: [COND_SPHERE],
+          schedule: 1,
+          chaos: 1,
+        },
+      },
+      { name: "escape", options: { escape: 1 } },
+      {
+        name: "escape trap geometry",
+        options: { escape: 1, trap: COND_SPHERE, trapGeometry: 1 },
+      },
+      { name: "bulb trap", options: { bulb: 1, trap: COND_SPHERE } },
+    ];
+    for (const { name, options } of cases) {
+      const resolved = sourceFor(lattice, options);
+      const emitted = surfaceFragmentFor(
+        options.escape ?? 0,
+        options.lens ?? 0,
+        0,
+        options.plane ?? 0,
+        options.bulb ?? 0,
+        options.finish ?? 0,
+        options.pattern ?? 0,
+        undefined,
+        options.trap ?? null,
+        options.condensation ?? null,
+        false,
+        options.trapGeometry ?? 0,
+        options.schedule ?? 0,
+        options.chaos ?? 0,
+        lattice,
+      );
+      expect(emitted.length, name).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+      const mustStrip =
+        (options.plane ?? 0) !== 0 ||
+        resolved.length > SURFACE_GLSL_STRIP_BYTES;
+      expect(emitted === resolved, name).toBe(!mustStrip);
+      if (mustStrip) expect(emitted, name).not.toContain("//");
+      expect(resolved, name).toContain("surfaceDETilingCore");
+      expect(resolved, name).toContain("length(q) - uVisibleRadius");
+    }
+  });
+
+  it("keeps scale and authority-radius changes live while kind and clip changes recompile", () => {
+    const material = createSurfaceMaterial();
+    const first = resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1);
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, first);
+    const firstSource = material.fragmentShader;
+    const firstVersion = material.version;
+    expect(materialSurfaceTiling(material)).toBe(first);
+    expect(material.uniforms.uTilingGroup.value).toBe(7);
+    expect(material.uniforms.uTilingH.value).toBe(1.5);
+    expect(material.defines.SURFACE_TILING).toBe(1);
+
+    const scaleOnly = resolveTiling({ kind: "lattice", cellScale: 2 }, 1);
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, scaleOnly);
+    expect(material.version).toBe(firstVersion);
+    expect(material.fragmentShader).toBe(firstSource);
+    expect(materialSurfaceTiling(material)).toBe(scaleOnly);
+    expect(material.uniforms.uTilingH.value).toBe(2);
+
+    const radiusThreeDe = { ...de3([map3()]), visibleBoundingRadius: 3 };
+    const radiusOnly = resolveTiling({ kind: "lattice", cellScale: 1 }, 3);
+    setSurfaceSystem(material, radiusThreeDe, [black], undefined, radiusOnly);
+    expect(material.version).toBe(firstVersion);
+    expect(material.fragmentShader).toBe(firstSource);
+    expect(materialSurfaceTiling(material)).toBe(radiusOnly);
+    expect(material.uniforms.uTilingH.value).toBe(3);
+
+    const clipped = resolveTiling(
+      { kind: "lattice", cellScale: 1, clip: COND_SPHERE },
+      3,
+    );
+    setSurfaceSystem(material, radiusThreeDe, [black], undefined, clipped);
+    expect(material.version).toBeGreaterThan(firstVersion);
+    expect(material.fragmentShader).toContain("tilingClipSdf");
+
+    const clippedVersion = material.version;
+    const finite = resolveTiling({ group: "a3" })!;
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, finite);
+    expect(material.version).toBeGreaterThan(clippedVersion);
+    expect(material.uniforms.uTilingGroup.value).toBe(1);
+    expect(material.uniforms.uTilingH.value).toBe(1);
+
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, null);
+    expect(material.uniforms.uTilingGroup.value).toBe(0);
+    expect(material.uniforms.uTilingH.value).toBe(1);
+  });
+
+  it("retains the finite clip and composition refusals", () => {
+    expect(() => sourceFor({ ...lattice, h: lattice.h + 1 })).toThrow(
+      /canonical resolved geometry/,
+    );
+    expect(() =>
+      sourceFor(
+        resolveTiling({ kind: "lattice", cellScale: 1.5, clip: MESH_SHAPE }, 1),
+      ),
+    ).toThrow(/mesh clips are refused/);
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        lattice,
+      ),
+    ).toThrow(/cannot compile into the balloon variant/);
+    const material = createSurfaceMaterial();
+    expect(() =>
+      setSurfaceSystem(material, de3([map3()]), [black], undefined, lattice),
+    ).toThrow(/does not match the estimator authority/);
+    expect(() =>
+      setSurfaceSystem(
+        material,
+        de3([map3()], {
+          order: 3,
+          plane: "xz",
+          stepCos: -0.5,
+          stepSin: Math.sqrt(3) / 2,
+        }),
+        [black],
+        undefined,
+        lattice,
+      ),
+    ).toThrow(/cannot compose with kaleidoscope/);
   });
 });
 

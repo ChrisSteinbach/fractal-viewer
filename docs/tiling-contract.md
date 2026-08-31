@@ -137,9 +137,9 @@ The empty-space grid, the shading probe taps (normal/shadow/AO), the
 march-epsilon cutoff and the visible/bounding sphere contracts all ride the
 wrapper — every estimator evaluation, probe included, folds first.
 
-## Renderer matrix (frozen)
+## Finite-reflection renderer matrix (frozen)
 
-| route                                                            | tiling                                                                                                                                                                                                               |
+| route                                                            | finite reflection                                                                                                                                                                                                    |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CPU oracles: affine, fold, affine4, fold4, escape, bulb, escape4 | in — the wrapper above                                                                                                                                                                                               |
 | WGSL cores: affine, fold, affine4, fold4, escape, bulb, escape4  | in — compile-gated wrapper                                                                                                                                                                                           |
@@ -149,7 +149,7 @@ wrapper — every estimator evaluation, probe included, folds first.
 ### GLSL landing evidence
 
 The 3D and 4D fragment tracers compile the wrapper only when a resolved
-tiling block is present. `tilingFoldSource` is the shared, dialect-parametric
+finite-reflection block is present. `tilingFoldSource` is the shared, dialect-parametric
 source authority over the frozen roots and fold arithmetic; the material arm
 token-renames the existing estimator entries and owns their public overloads.
 The one live GLSL uniform is the one-based group code (`0` remains off), while
@@ -366,9 +366,9 @@ at least one. The resolver does not invent a default or maximum: its caller
 supplies the estimator's certified origin-centred visible radius and it derives
 `h`. Persistence keeps the arms distinct and evolution validation requires
 their exact field shapes. There is no authored maximum; resolution does reject
-a particular scale/radius pairing when its full `4h` period cannot fit the
-frozen f32 shader representation, because accepting a CPU-only period would
-make the two renderer authorities disagree.
+a particular scale/radius pairing when `h` rounds to zero or its full `4h`
+period rounds to infinity on the frozen f32 shader wire, because accepting
+CPU-only arithmetic would make the two renderer authorities disagree.
 Morphing two lattice blocks with the same clip linearly interpolates authored
 `cellScale`; finite-to-lattice, lattice-to-finite and incompatible clips pop to
 the target block at the leg's first push, matching the discrete global-block
@@ -393,11 +393,46 @@ the independent membership oracle, not the scalar march status, detects false
 zero seams. Tests pin tangent/inside/non-unit/parallel/near-parallel rays,
 negative far intervals, carrier formulas and content/ground hit ordering.
 
+### Landed shader evaluation and wire layer (not routed)
+
+The append-only shader code `7` selects the lattice arm after the six frozen
+finite-group codes. `latticeFoldSource` emits the same floor-modulo body in
+GLSL and WGSL, folding x/z or x/z/w as appropriate and never y. Both shader
+families compile a separate lattice wrapper around the untouched estimator:
+fold once, call the core once, max with the full-radius origin ball, then max
+with the optional analytic clip. Folded coordinates own hit attribution;
+visible-world normals and lighting retain their existing frame. Absent and
+finite-reflection programs are SHA-pinned to their pre-lattice source.
+
+All five WGSL params packers accept the resolved union and reuse the existing
+16-byte tiling tail as `(code=7, h, 0, 0)`, so the established 560-byte 3D and
+848-byte 4D maxima do not move. The pack and GLSL-install seams require the
+canonical resolver geometry and the exact estimator authority radius; a stale
+`h` or a block resolved against a different radius throws rather than drawing
+a different canonical cell. On a verified Mesa Intel Iris Xe display,
+`npm run bench:surface -- --display=:0` compiled, bound and dispatched all
+seven eval kernels and agreed with `tiling-de.ts` for all three exact/adjacent
+seam probes in every core, including a 4D pose that maps visible x into
+attractor w. The overall Surface bench verdict was pass.
+
+The GLSL generators cover the inverse, fold, lens, floor, condensation,
+schedule, chaos, escape and bulb arms in 3D and every legal 4D arm; actual
+program-link evidence is recorded in `docs/surface-glsl-tracers.md`. This is
+still deliberately non-routed: source generation proves the estimator layer,
+not the finite presentation of an unbounded set.
+
+The shared carrier emitter now spells the sphere/intersected attractor-y slab,
+point membership and entry-relative fog coordinate once for both dialects.
+Its 4D form accepts the inverse rotor's y row explicitly and evaluates
+`(ro,w0)`, `(rd,0)` and `(p,w0)`. It owns no default or presentation ratio and
+is not yet installed into either live marcher.
+
 Surface eligibility currently refuses the lattice arm with an adjacent reason.
-That is deliberate rather than a renderer verdict: GLSL/WGSL emission, live
-carrier/fog/shadow/AO use, ground composition, capture/strip limits and camera
-wiring remain gated together so a persisted lattice document cannot silently
-render the finite or untiled object.
+That is deliberate rather than an estimator verdict: live carrier use in the
+primary and shadow intervals, normal/AO openness, entry-relative fog, ground
+composition, capture/strip limits and camera wiring remain gated together so a
+persisted lattice document cannot silently render the finite or untiled
+object.
 
 ### Genuine 4D meaning
 

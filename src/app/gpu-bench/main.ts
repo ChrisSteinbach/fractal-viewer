@@ -157,7 +157,7 @@ import {
   estimateEscapeDistanceTiled,
 } from "../../fractal/tiling-de";
 import { resolveTiling } from "../../fractal/tiling";
-import type { ResolvedFiniteTiling } from "../../fractal/tiling";
+import type { ResolvedTiling } from "../../fractal/tiling";
 import {
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_MAP4_VEC4,
@@ -6700,15 +6700,15 @@ async function runSurfaceEvalDispatch(
   return out;
 }
 
-/** One finite-tiling ABI/agreement scenario. It is deliberately compact, but
+/** One tiling ABI/agreement scenario. It is deliberately compact, but
  * compares against `tiling-de.ts` after a REAL WebGPU implementation has
  * compiled, bound, and dispatched the tiled Params shape. In particular, it
- * catches both a fold/clip composed at the wrong point and a host buffer
- * sized for the live u32 alone instead of WGSL's 16-byte-rounded struct. */
+ * catches a fold/narrowing term composed at the wrong point and a host buffer
+ * sized for the live fields alone instead of WGSL's 16-byte-rounded struct. */
 interface SurfaceTilingAbiSpec {
   name: string;
   core: SurfaceKernelConfig["core"];
-  tiling: ResolvedFiniteTiling;
+  tiling: ResolvedTiling;
   params: ArrayBuffer;
   maps: Float32Array;
   queries: Vec3[];
@@ -6724,7 +6724,7 @@ async function runSurfaceTilingAbiLeg(
 ): Promise<void> {
   const layout = surfaceForwardBindGroupLayout(device);
   const pipelineLayout = device.createPipelineLayout({
-    label: "surface-de finite-tiling ABI pipeline layout",
+    label: "surface-de tiling ABI pipeline layout",
     bindGroupLayouts: [layout],
   });
   for (const spec of specs) {
@@ -6742,10 +6742,10 @@ async function runSurfaceTilingAbiLeg(
         tiling: spec.tiling,
       }),
       "evalQueries",
-      `surface-de finite-tiling ABI ${spec.name}`,
+      `surface-de tiling ABI ${spec.name}`,
     );
     const state: SurfaceForwardSystemState<null> = {
-      name: `finite-tiling ABI ${spec.name}`,
+      name: `tiling ABI ${spec.name}`,
       de: null,
       queries: spec.queries,
       cpu64: spec.cpu,
@@ -6767,7 +6767,7 @@ async function runSurfaceTilingAbiLeg(
         const tolerance = surfaceEvalTol(cpu, spec.toleranceRadius);
         if (!Number.isFinite(gpu) || Math.abs(gpu - cpu) > tolerance) {
           throw new Error(
-            `finite-tiling ABI ${spec.name} q${String(i)}: ` +
+            `tiling ABI ${spec.name} q${String(i)}: ` +
               `gpu=${String(gpu)} cpu=${String(cpu)} tol=${String(tolerance)}`,
           );
         }
@@ -12119,6 +12119,218 @@ async function runSurfaceDeSection(
     },
   ];
 
+  // The mirrored-lattice twin uses one system-owned resolved block per core:
+  // its h derives from that estimator's exact authority radius, so sharing a
+  // single 3D/4D object here would itself violate the wire contract. Each
+  // three-query row lands on, immediately before, and immediately after an
+  // x seam. The 4D views rotate that visible x coordinate into attractor w,
+  // making the lattice's fourth folded axis numerically live too.
+  const latticeFor = (radius: number) =>
+    resolveTiling(
+      { kind: "lattice", cellScale: 1.25, clip: PEACE_SIGN_SHAPE },
+      radius,
+    );
+  const latticeQueriesFor = (h: number, radius: number): Vec3[] => {
+    const seamEps = h / 32;
+    return [h, h - seamEps, h + seamEps].map(
+      (x) =>
+        [
+          Math.fround(x),
+          Math.fround(-0.11 * radius),
+          Math.fround(0.17 * radius),
+        ] as Vec3,
+    );
+  };
+  const latticeView4 = (radius: number): SurfaceGpu4View => ({
+    // Proper +90° xw rotation. The packer stores its transpose, so the eval
+    // lift maps visible x -> attractor -w and w0 -> attractor x.
+    rotor: [0, 0, 0, -1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0],
+    w0: 0.2 * radius,
+    sliceHalfW: 0,
+  });
+
+  const latticeAffine = latticeFor(tilingAffine.de.visibleBoundingRadius);
+  const latticeAffineQueries = latticeQueriesFor(
+    latticeAffine.h,
+    latticeAffine.radius,
+  );
+  const latticeFold = latticeFor(tilingFold.de.visibleBoundingRadius);
+  const latticeFoldQueries = latticeQueriesFor(
+    latticeFold.h,
+    latticeFold.radius,
+  );
+  const latticeEscape = latticeFor(tilingEscape.de.boundingRadius);
+  const latticeEscapeQueries = latticeQueriesFor(
+    latticeEscape.h,
+    latticeEscape.radius,
+  );
+  const latticeBulb = latticeFor(tilingBulb.de.boundingRadius);
+  const latticeBulbQueries = latticeQueriesFor(
+    latticeBulb.h,
+    latticeBulb.radius,
+  );
+  const latticeAffine4 = latticeFor(tilingAffine4.de.visibleBoundingRadius);
+  const latticeAffine4Queries = latticeQueriesFor(
+    latticeAffine4.h,
+    latticeAffine4.radius,
+  );
+  const latticeAffine4View = latticeView4(latticeAffine4.radius);
+  const latticeFold4 = latticeFor(tilingFold4.de.visibleBoundingRadius);
+  const latticeFold4Queries = latticeQueriesFor(
+    latticeFold4.h,
+    latticeFold4.radius,
+  );
+  const latticeFold4View = latticeView4(latticeFold4.radius);
+  const latticeEscape4 = latticeFor(tilingEscape4.de.boundingRadius);
+  const latticeEscape4Queries = latticeQueriesFor(
+    latticeEscape4.h,
+    latticeEscape4.radius,
+  );
+  const latticeEscape4View = latticeView4(latticeEscape4.radius);
+  const latticeAbiSpecs: SurfaceTilingAbiSpec[] = [
+    {
+      name: "lattice-affine",
+      core: "affine",
+      tiling: latticeAffine,
+      params: packSurfaceGpuParams(
+        tilingAffine.de,
+        { itemCount: latticeAffineQueries.length },
+        null,
+        null,
+        latticeAffine,
+      ),
+      maps: new Float32Array(packSurfaceGpuMaps(tilingAffine.de)),
+      queries: latticeAffineQueries,
+      cpu: latticeAffineQueries.map((q) =>
+        estimateDistanceRefinedTiled(latticeAffine, tilingAffine.de, q),
+      ),
+      toleranceRadius: latticeAffine.radius,
+    },
+    {
+      name: "lattice-fold",
+      core: "fold",
+      tiling: latticeFold,
+      params: packSurfaceGpuParams(
+        tilingFold.de,
+        { itemCount: latticeFoldQueries.length },
+        null,
+        null,
+        latticeFold,
+      ),
+      maps: new Float32Array(packSurfaceGpuMaps(tilingFold.de)),
+      queries: latticeFoldQueries,
+      cpu: latticeFoldQueries.map((q) =>
+        estimateDistanceTiled(latticeFold, tilingFold.de, q),
+      ),
+      toleranceRadius: latticeFold.radius,
+    },
+    {
+      name: "lattice-escape",
+      core: "escape",
+      tiling: latticeEscape,
+      params: packEscapeGpuParams(
+        tilingEscape.de,
+        { itemCount: latticeEscapeQueries.length },
+        null,
+        null,
+        latticeEscape,
+      ),
+      maps: new Float32Array(packEscapeGpuMaps(tilingEscape.de)),
+      queries: latticeEscapeQueries,
+      cpu: latticeEscapeQueries.map((q) =>
+        estimateEscapeDistanceTiled(latticeEscape, tilingEscape.de, q),
+      ),
+      toleranceRadius: latticeEscape.radius,
+    },
+    {
+      name: "lattice-bulb",
+      core: "bulb",
+      tiling: latticeBulb,
+      params: packBulbGpuParams(
+        tilingBulb.de,
+        { itemCount: latticeBulbQueries.length },
+        null,
+        null,
+        latticeBulb,
+      ),
+      maps: new Float32Array(SURFACE_GPU_MAP_VEC4 * 4),
+      queries: latticeBulbQueries,
+      cpu: latticeBulbQueries.map((q) =>
+        estimateBulbDistanceTiled(latticeBulb, tilingBulb.de, q),
+      ),
+      toleranceRadius: latticeBulb.radius,
+    },
+    {
+      name: "lattice-affine4",
+      core: "affine4",
+      tiling: latticeAffine4,
+      params: packSurface4GpuParams(
+        tilingAffine4.de,
+        latticeAffine4View,
+        { itemCount: latticeAffine4Queries.length },
+        null,
+        null,
+        latticeAffine4,
+      ),
+      maps: new Float32Array(packSurfaceGpuMaps4(tilingAffine4.de)),
+      queries: latticeAffine4Queries,
+      cpu: latticeAffine4Queries.map((q) =>
+        estimateDistance4RefinedTiled(
+          latticeAffine4,
+          tilingAffine4.de,
+          liftTiling4(latticeAffine4View, q),
+        ),
+      ),
+      toleranceRadius: latticeAffine4.radius,
+    },
+    {
+      name: "lattice-fold4",
+      core: "fold4",
+      tiling: latticeFold4,
+      params: packSurface4GpuParams(
+        tilingFold4.de,
+        latticeFold4View,
+        { itemCount: latticeFold4Queries.length },
+        null,
+        null,
+        latticeFold4,
+      ),
+      maps: new Float32Array(packSurfaceGpuMaps4(tilingFold4.de)),
+      queries: latticeFold4Queries,
+      cpu: latticeFold4Queries.map((q) =>
+        estimateDistance4Tiled(
+          latticeFold4,
+          tilingFold4.de,
+          liftTiling4(latticeFold4View, q),
+        ),
+      ),
+      toleranceRadius: latticeFold4.radius,
+    },
+    {
+      name: "lattice-escape4",
+      core: "escape4",
+      tiling: latticeEscape4,
+      params: packEscape4GpuParams(
+        tilingEscape4.de,
+        latticeEscape4View,
+        { itemCount: latticeEscape4Queries.length },
+        null,
+        null,
+        latticeEscape4,
+      ),
+      maps: new Float32Array(packEscape4GpuMaps(tilingEscape4.de)),
+      queries: latticeEscape4Queries,
+      cpu: latticeEscape4Queries.map((q) =>
+        estimateEscapeDistance4Tiled(
+          latticeEscape4,
+          tilingEscape4.de,
+          liftTiling4(latticeEscape4View, q),
+        ),
+      ),
+      toleranceRadius: latticeEscape4.radius,
+    },
+  ];
+
   // ----- Config matrices -----
   const evalConfigs: SurfaceKernelConfig[] = [];
   for (const variant of config.variants) {
@@ -12213,6 +12425,7 @@ async function runSurfaceDeSection(
   results.limits = acquired.limits;
   let compileFailed = false;
   let tilingAbiFailed = false;
+  let latticeTilingAbiFailed = false;
   // Set when the escape eval leg's f32-stability gate excludes too
   // large a fraction of a system's 700 queries (SURFACE_ESCAPE_EXCLUDED_CAP)
   // — separate from `anyAgreementFail` (computed at verdict time from
@@ -12334,6 +12547,25 @@ async function runSurfaceDeSection(
     }
     render();
     await canaryCheck("the finite-tiling ABI agreement leg");
+
+    // ----- Mirrored lattice: all-seven eval compile/bind/numeric gate -----
+    // This is intentionally eval-only. It pins the fold/ball/clip composition,
+    // exact code+h tail, and x/z/w seam arithmetic without implying that the
+    // routed march/unproject/shade carriers have landed.
+    try {
+      const tilingWg = surfaceWgFor(config, "private");
+      activity.setState("gpu", "Surface lattice-tiling ABI agreement");
+      await runSurfaceTilingAbiLeg(device, latticeAbiSpecs, tilingWg, status);
+      results.notes.push(
+        "lattice tiling ABI: 7/7 cores compiled, bound exact-size code+h " +
+          "params, dispatched, and agreed with tiling-de.ts at 3/3 seam queries",
+      );
+    } catch (e) {
+      latticeTilingAbiFailed = true;
+      results.notes.push(`lattice tiling ABI: ${describeError(e)}`);
+    }
+    render();
+    await canaryCheck("the lattice-tiling ABI agreement leg");
 
     // ----- Agreement protocol (the correctness pin — always runs) -----
     const gpuByKey = new Map<string, Float32Array>();
@@ -15651,7 +15883,8 @@ async function runSurfaceDeSection(
       lens4GateFail ||
       lens4PackGuardFailed ||
       aff4SweepFailed ||
-      tilingAbiFailed
+      tilingAbiFailed ||
+      latticeTilingAbiFailed
     ) {
       results.verdict = "fail";
       results.reason = compileFailed
@@ -15682,7 +15915,9 @@ async function runSurfaceDeSection(
                                 ? "lens4 pack-guard: packSurface4GpuParams did not refuse a spherefold-final slab query — see notes"
                                 : tilingAbiFailed
                                   ? "finite-tiling compile/bind/numeric ABI agreement failure — see notes"
-                                  : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                                  : latticeTilingAbiFailed
+                                    ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
+                                    : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like

@@ -17,6 +17,35 @@ workgroup-SHARED (banked, transposed) vs private frontier storage, and
 stage-2 branch-and-bound on/off (WGSL has no Mesa link cliff, so there's no
 reason to strip source the way the GLSL side must).
 
+## Mirrored-lattice eval ABI (non-routed)
+
+All seven cores can source-generate the mirrored affine-A1 lattice estimator
+wrapper in eval, march and shade programs. One dialect-shared authority emits
+the floor-modulo x/z fold in 3D and x/z/w fold in 4D. The wrapper lifts through
+the inverse 4D rotor before folding, evaluates the untouched core exactly once,
+then intersects it with the resolver-authority origin ball and an optional
+analytic clip. Inverse 3D reads `visibleRadius`, inverse 4D reads the full
+`visRadius4` rather than the slice-adjusted march radius, and the three forward
+cores read `boundingRadius`. Folded hit coordinates supply material
+attribution. Tiling with balloon, kaleidoscope, a real 4D slab or a mesh clip
+retains the established refusal.
+
+The five params packers reuse the append-only 16-byte tiling tail. Finite
+reflection remains `(groupCode, 0, 0, 0)` byte for byte; lattice is
+`(7u, h, 0, 0)`. Existing combination offsets and the 560/848-byte maxima are
+unchanged. Packers validate the canonical resolver record and require its
+stored full radius to equal the precise estimator field used by the kernel.
+The resolver additionally rejects half-cells whose f32 wire value becomes zero
+or whose shader-side `4h` becomes infinite.
+
+The real-Iris Surface bench has an eval-only ABI leg for this layer: seven
+cores × three seam probes, with the 4D fixtures rotating visible x into
+attractor w. The 2026-08-31 Mesa Intel Iris Xe run compiled, bound and
+dispatched 7/7 and matched `tiling-de.ts` at 3/3 probes per core; the complete
+Surface verdict was pass. This leg intentionally claims no live marcher:
+presentation carriers, shadow/AO/fog and ground/capture routing remain outside
+the compute renderer until they land atomically.
+
 ## Scheduled hybrid prefix
 
 The affine/fold and affine4/fold4 descent cores accept the same finite B

@@ -6,7 +6,7 @@ import {
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { ShapeSpec } from "../fractal/shapes";
-import type { ResolvedFiniteTiling } from "../fractal/tiling";
+import type { ResolvedTiling } from "../fractal/tiling";
 import {
   SURFACE_FINISH_GLSL,
   surfaceFinishShadeSource,
@@ -2988,7 +2988,7 @@ export function surface4FragmentFor(
   condensation: readonly ShapeSpec[] | null = null,
   schedule = 0,
   chaos = 0,
-  tiling: ResolvedFiniteTiling | null = null,
+  tiling: ResolvedTiling | null = null,
 ): string {
   return surfaceFragmentFor(
     0,
@@ -3022,7 +3022,7 @@ export function surface4FragmentResolvedFor(
   condensation: readonly ShapeSpec[] | null = null,
   schedule = 0,
   chaos = 0,
-  tiling: ResolvedFiniteTiling | null = null,
+  tiling: ResolvedTiling | null = null,
 ): string {
   return surfaceFragmentResolvedFor(
     0,
@@ -3213,9 +3213,10 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uGroundPattern: { value: 0 },
       uGroundTileScale: { value: 0.64 },
       uGroundEmission: { value: 0 },
-      // Same one-word finite-tiling wire as the 3D material; roots/clip are
-      // source-baked and zero is off.
+      // Same live selector/half-cell wire as the 3D material. Finite roots
+      // and either arm's optional clip remain source-baked.
       uTilingGroup: { value: 0 },
+      uTilingH: { value: 1 },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -3313,7 +3314,7 @@ export function setSurfaceSystem4(
   de: SurfaceDE4,
   colors: Vec3[],
   trapIndices?: number[],
-  tiling: ResolvedFiniteTiling | null = null,
+  tiling: ResolvedTiling | null = null,
 ): void {
   const schedule = de.schedule && de.schedule.depth > 0 ? de.schedule : null;
   const scheduleMaps = schedule?.maps ?? [];
@@ -3343,7 +3344,12 @@ export function setSurfaceSystem4(
       "Surface tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
     );
   }
-  const tilingChanged = installSurfaceTiling(material, tiling, true);
+  const tilingChanged = installSurfaceTiling(
+    material,
+    tiling,
+    true,
+    de.visibleBoundingRadius,
+  );
   const maps = mapBuffers.get(material);
   if (!maps) {
     throw new TypeError(

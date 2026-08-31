@@ -24,6 +24,38 @@ flam3's convention. The per-level decay is now the Color speed slider
 (default 0.5, which reproduces that original fixed behavior), and the
 rings/sheets orbit-trap color sources ride the same hit-info descent.
 
+## Mirrored-lattice estimator source (non-routed)
+
+Both fragment tracers can generate the mirrored affine-A1 estimator wrapper
+without changing the live Surface route. `latticeFoldSource` is the one
+dialect-shared floor-modulo body: x/z fold in 3D, x/z/w after the true inverse
+rotor lift in 4D, with y untouched. A lattice-only `uTilingH` accompanies the
+append-only selector code 7. Scale changes update uniforms without recompiling;
+kind or analytic-clip changes regenerate source. The installer rejects
+non-canonical resolver data and a radius not owned by the current estimator.
+
+The wrapper folds once, invokes each public core overload once, maxes with the
+full-radius origin ball and then the optional clip. Height, radius and
+object-attached pattern use the folded hit; world-space lighting remains at the
+displayed hit. The generated-source matrix covers inverse, fold, lens, floor,
+finish/pattern, condensation/schedule/chaos, escape, bulb and trap arms in 3D,
+plus every legal 4D inverse arm. Absent and finite-reflection source hashes are
+pinned to the pre-lattice bytes, and every emitted lattice source stays below
+the existing 65,536-byte strip ceiling.
+
+The 2026-08-31 headed Chrome probe reported the unmasked renderer
+`ANGLE (Intel, Mesa Intel(R) Iris(R) Xe Graphics (TGL GT2), OpenGL ES 3.2)`.
+It compiled and rendered nine representative programs: 3D affine, lens,
+ground plane, escape, bulb and finish+pattern; 4D plain, ground plane and
+finish+pattern. All 9/9 returned GL error 0 with no program diagnostic. The
+same matrix passed SwiftShader independently before the Iris run.
+
+The live eligibility gate still refuses lattice because a correct infinite-set
+presentation also needs the shared sphere∩attractor-y carrier in primary and
+shadow rays, open-space normal/AO taps, entry-relative fog, ground competition,
+camera fit and capture bands. Compiling this estimator source is evidence for
+the formula layer only, not permission to route it early.
+
 ## Scheduled finite B prefix
 
 `SURFACE_SCHEDULE` is a resolved program arm in both fragment tracers, not a

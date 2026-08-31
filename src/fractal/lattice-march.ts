@@ -36,6 +36,144 @@ export interface LatticeRayInterval {
   tFar: number;
 }
 
+/** Shader dialects supported by {@link latticePresentationCarrierSource}. */
+export type LatticeCarrierShaderLanguage = "glsl" | "wgsl";
+
+/**
+ * Emit the presentation carrier shared by the GLSL and WGSL Surface paths.
+ * The carrier is only a ray-domain restriction: its boundary is never a
+ * distance-estimator term. Normal and AO probes call the emitted contains
+ * helper, where a point outside the carrier is open space.
+ *
+ * Both dimensions intersect the same world-3D outer sphere. The 3D arm uses
+ * attractor y directly; the 4D arm receives the inverse rotor's y row and
+ * evaluates it at `(ro, w0)` / `(rd, 0)`. Direction need not be unit, and an
+ * inside camera starts at `t = 0`, exactly as the CPU authority above does.
+ * The caller owns both radii and every fog curve; this source owns no default,
+ * window ratio or fade constant.
+ */
+export function latticePresentationCarrierSource(
+  dimension: 3 | 4,
+  language: LatticeCarrierShaderLanguage,
+): string {
+  const wgsl = language === "wgsl";
+  const float = wgsl ? "f32" : "float";
+  const vec3 = wgsl ? "vec3f" : "vec3";
+  const vec4 = wgsl ? "vec4f" : "vec4";
+  const immutable = (name: string, value: string): string =>
+    wgsl ? `let ${name} = ${value};` : `${float} ${name} = ${value};`;
+  const mutable = (name: string, value: string): string =>
+    wgsl ? `var ${name} = ${value};` : `${float} ${name} = ${value};`;
+  const signature = (
+    name: string,
+    parameters: readonly (readonly [string, string])[],
+    result: string,
+  ): string => {
+    if (wgsl) {
+      return `fn ${name}(${parameters
+        .map(([parameter, type]) => `${parameter}: ${type}`)
+        .join(", ")}) -> ${result}`;
+    }
+    return `${result} ${name}(${parameters
+      .map(([parameter, type]) => `${type} ${parameter}`)
+      .join(", ")})`;
+  };
+  const intervalParameters: readonly (readonly [string, string])[] =
+    dimension === 4
+      ? [
+          ["ro", vec3],
+          ["rd", vec3],
+          ["w0", float],
+          ["inverseRotorY", vec4],
+          ["contentRadius", float],
+          ["outerRadius", float],
+        ]
+      : [
+          ["ro", vec3],
+          ["rd", vec3],
+          ["contentRadius", float],
+          ["outerRadius", float],
+        ];
+  const containsParameters: readonly (readonly [string, string])[] =
+    dimension === 4
+      ? [
+          ["p", vec3],
+          ["w0", float],
+          ["inverseRotorY", vec4],
+          ["contentRadius", float],
+          ["outerRadius", float],
+        ]
+      : [
+          ["p", vec3],
+          ["contentRadius", float],
+          ["outerRadius", float],
+        ];
+  const slabOrigin =
+    dimension === 4 ? `dot(inverseRotorY, ${vec4}(ro, w0))` : "ro.y";
+  const slabDirection =
+    dimension === 4 ? `dot(inverseRotorY, ${vec4}(rd, 0.0))` : "rd.y";
+  const containsSlab =
+    dimension === 4 ? `dot(inverseRotorY, ${vec4}(p, w0))` : "p.y";
+  const intervalStruct = wgsl
+    ? `struct LatticeCarrierInterval {
+  ok: bool,
+  tEnter: ${float},
+  tFar: ${float},
+}`
+    : `struct LatticeCarrierInterval {
+  bool ok;
+  ${float} tEnter;
+  ${float} tFar;
+};`;
+
+  return `${intervalStruct}
+
+${signature("latticePresentationInterval", intervalParameters, "LatticeCarrierInterval")} {
+  ${immutable("slabOrigin", slabOrigin)}
+  ${immutable("slabDirection", slabDirection)}
+  ${immutable("a", "dot(rd, rd)")}
+  ${immutable("b", "dot(ro, rd)")}
+  ${immutable("c", "dot(ro, ro) - outerRadius * outerRadius")}
+  ${immutable("discriminant", "b * b - a * c")}
+  if (discriminant < 0.0) {
+    return LatticeCarrierInterval(false, 0.0, 0.0);
+  }
+  ${immutable("root", "sqrt(max(0.0, discriminant))")}
+  ${mutable("tEnter", "(-b - root) / a")}
+  ${mutable("tFar", "(-b + root) / a")}
+  if (slabDirection == 0.0) {
+    if (abs(slabOrigin) > contentRadius) {
+      return LatticeCarrierInterval(false, 0.0, 0.0);
+    }
+  } else {
+    ${immutable("slabA", "(-contentRadius - slabOrigin) / slabDirection")}
+    ${immutable("slabB", "(contentRadius - slabOrigin) / slabDirection")}
+    tEnter = max(tEnter, min(slabA, slabB));
+    tFar = min(tFar, max(slabA, slabB));
+  }
+  tEnter = max(tEnter, 0.0);
+  return LatticeCarrierInterval(tFar >= tEnter, tEnter, tFar);
+}
+
+${signature("latticePresentationContains", containsParameters, "bool")} {
+  ${immutable("slabCoordinate", containsSlab)}
+  return dot(p, p) <= outerRadius * outerRadius && abs(slabCoordinate) <= contentRadius;
+}
+
+${signature(
+  "latticePresentationFogCoordinate",
+  [
+    ["t", float],
+    ["interval", "LatticeCarrierInterval"],
+    ["contentRadius", float],
+  ],
+  float,
+)} {
+  return max(0.0, t - interval.tEnter) / contentRadius;
+}
+`;
+}
+
 function validatedPresentation(
   presentation: LatticePresentation,
 ): LatticePresentation {
