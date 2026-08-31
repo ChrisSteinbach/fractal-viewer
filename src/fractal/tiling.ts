@@ -1,0 +1,518 @@
+import type { ShapeSpec } from "./shapes";
+import type { Vec3, Vec4 } from "./types";
+
+/**
+ * The shared space-tiling vocabulary — the finite-reflection-group phase 1
+ * of the tiling epic (`docs/tiling-contract.md` is the frozen record). This
+ * module owns the document-facing {@link TilingSpec}, the ONE resolver
+ * ({@link resolveTiling}), the frozen group tables
+ * ({@link TILING_GROUP_INFO}), the reflection primitive
+ * ({@link reflectAcrossWall}), the fold-to-chamber retraction
+ * ({@link foldToChamber}) with its proven step bound, chamber distance
+ * ({@link chamberDistance}), and the slow explicit orbit enumerator
+ * ({@link enumerateOrbit}) that is the fold's TEST ORACLE and nothing else.
+ *
+ * THE RENDERED SET this vocabulary serves is
+ *
+ *     T = G·S,   S = A ∩ C ∩ clip
+ *
+ * — `G` the group, `C` its fundamental chamber (a Coxeter orthoscheme,
+ * the cell of the tiling), `A` the attractor (NOT this module's concern),
+ * `clip` an optional narrowing {@link ShapeSpec} (intersection only
+ * narrows, so an authored clip can never widen `S`). The soundness chain
+ * is the NEAREST-COPY THEOREM (`docs/tiling-contract.md`): for `F` the
+ * fold,
+ *
+ *     d(q, T) = d(F(q), S)
+ *
+ * — the copy nearest any query is always the one in the query's own
+ * chamber, and the fold is a metric retraction toward `S` (each wall
+ * reflection reduces the squared distance to every `s ∈ C` by
+ * `4⟨m, n_i⟩⟨s, n_i⟩ ≥ 0`). The estimator composition is therefore
+ * `max(DE(F(q)), clipDist(F(q)))`, the chamber entering ONLY through the
+ * fold — the wall distance is deliberately not a term, and the contract
+ * records why (unsound as a max, false geometry as a min).
+ *
+ * THE FOLD'S BOUND IS PROVEN, not assumed. A point `q` in the chamber
+ * `w(C)` that violates a simple wall `i` (`⟨q, n_i⟩ < 0`) satisfies
+ * `l(s_i w) < l(w)` — the classical simple-root criterion, since a chamber
+ * sits entirely on one side of every wall hyperplane — so every reflection
+ * strictly shortens the chamber's word and the fold lands in `C` in at
+ * most the group's `maxWordLength` steps (A3 6, B3 9, H3 15, A4 10, B4 16,
+ * F4 24 — the sum of exponents, the longest element's length).
+ * {@link MAX_TILING_FOLD_STEPS} is the 32 cap: the proven 24 plus an f32
+ * wall-jitter margin (at a wall the pairings oscillate at f32 noise, so a
+ * few extra bounces are possible). An expired fold returns null and the
+ * caller's estimator reads 0 — fully conservative, never an overshoot, and
+ * by the proof it never fires. The stop test accepts a small negative
+ * tolerance (`⟨q, n_i⟩ ≥ −{@link FOLD_EPS}`, 1e-6 world units) so an
+ * f32-folded point sitting ε-outside the chamber is accepted; the soundness
+ * gap this opens is bounded by `2·FOLD_EPS` (sub-pixel), and the CPU oracle
+ * shares the constant so CPU/GPU agree.
+ *
+ * ROOT CONVENTIONS, frozen: unit inward normals `n_i` with pairings
+ * `⟨n_i, n_j⟩ = −cos(π/m_ij)` from the Coxeter diagram (m_ij = 3 → −1/2,
+ * 4 → −√2/2, 5 → −φ/2 with φ the golden ratio; non-adjacent pairs have
+ * m_ij = 2 → 0), so the closed chamber is exactly
+ * `C = {x : ⟨x, n_i⟩ ≥ 0 ∀i}`. The tables are SOLVED, not hand-typed, in
+ * a documented canonical form: `n_0 = e_1`, and each subsequent root's
+ * first `k` coordinates are solved in order from its pairings with the
+ * earlier roots — the Gram matrix is triangular in this orientation, so
+ * forward substitution applies with no division by a zero diagonal — with
+ * the NEW coordinate positive. That orientation is the one arbitrary
+ * choice; it makes the table deterministic and lets the tests pin it
+ * against an independent Cartan matrix. The 4D roots genuinely span all
+ * four axes — F4's especially, whose fourth root carries `w` — because
+ * the fold reads roots by name, exactly as the escape4 kernel core reads
+ * its own plane index rather than the descents' w-collapsing one.
+ *
+ * REFUSALS, one line each (the full argument is the contract's legal-
+ * combinations table):
+ * - H4 (order 14400 — no real-time use) and the reducible products (the
+ *   boxfold branch sweep is exactly the A1³ vocabulary this feature does
+ *   not re-implement);
+ * - kaleidoscope + tiling (both query-space folds; the descent cores
+ *   sweep their rotation inside the descent, after the tiling fold, and
+ *   the estimate then has no certified lower-bound order);
+ * - 4D slab + tiling (the fold of a segment is a bent polyline, and the
+ *   slab's conservative-bound contract does not survive it);
+ * - balloon + tiling (an orbit's echo is not the echo's orbit — no
+ *   certified composition).
+ *
+ * THE PHASE-2 EXTENSION POINT: the lattice-repetition epic must extend
+ * THIS SAME `TilingSpec` union with its own kind, cell geometry and seam
+ * semantics — it may not invent a second model.
+ */
+
+/** The shipped finite reflection groups, by dimension: A3/B3/H3 in 3D,
+ * A4/B4/F4 in 4D. H4 and the reducible products are refused (module doc).
+ * The phase-2 lattice epic extends THIS union with its own kind on
+ * {@link TilingSpec} — never a second model. */
+export const TILING_GROUPS = ["a3", "b3", "h3", "a4", "b4", "f4"] as const;
+
+/** One of the shipped finite reflection groups. */
+export type TilingGroup = (typeof TILING_GROUPS)[number];
+
+/** Scene-level tiling block, beside ShapeTrap and HybridSchedule.
+ * ABSENT MEANS OFF, byte-identically: a scene that carries no block is
+ * untiled, and nothing in any renderer changes. A present block renders
+ * `T = G·(A ∩ C ∩ clip)` in Surface mode and its twins; the query-space
+ * fold has no chaos-game meaning, so the chaos-game modes render the
+ * UNTILED attractor with the adjacent explanation (the contract's renderer
+ * matrix) — a document never silently renders a different object. */
+export interface TilingSpec {
+  /** One of the shipped finite reflection groups. */
+  group: TilingGroup;
+  /** Optional narrowing clip — may only intersect away, never widen. */
+  clip?: ShapeSpec;
+}
+
+/** Immutable metadata for one {@link TilingGroup}: the dimension, the
+ * group order, the fold's proven step bound, and the unit simple roots
+ * (inward chamber-wall normals), row-major flattened with `dim*dim`
+ * entries — root `i` occupies `roots[i*dim .. i*dim+dim)`. */
+export interface TilingGroupInfo {
+  id: TilingGroup;
+  dim: 3 | 4;
+  /** The group order: A3 24, B3 48, H3 120, A4 120, B4 384, F4 1152. */
+  order: number;
+  /** The fold's step bound — the longest element's word length (the sum
+   * of the diagram's exponents): A3 6, B3 9, H3 15, A4 10, B4 16, F4 24. */
+  maxWordLength: number;
+  /** Unit simple roots (inward normals), row-major flattened,
+   * `dim*dim` entries. */
+  roots: number[];
+}
+
+/** What {@link resolveTiling} hands the wrapper: the group plus its frozen
+ * {@link TilingGroupInfo} and the clip exactly as authored. There are no
+ * defaults to own — the group is discrete and the clip is a
+ * {@link ShapeSpec}, whose validation lives in `shapes.ts` — so the
+ * resolved value is the resolved pairing, ready for the estimator. */
+export interface ResolvedTiling {
+  group: TilingGroup;
+  info: TilingGroupInfo;
+  clip?: ShapeSpec;
+}
+
+/** The fold's stop-test tolerance: a folded point is accepted once every
+ * pairing satisfies `⟨q, n_i⟩ ≥ −FOLD_EPS` (1e-6 world units), so an
+ * f32-folded point sitting ε-outside the chamber is accepted; the
+ * soundness gap is bounded by `2·FOLD_EPS` — sub-pixel (module doc). */
+export const FOLD_EPS = 1e-6;
+
+/** The fold's iteration cap — the proven 24 (F4) plus an f32 wall-jitter
+ * margin (module doc). After the cap a still-violated point returns null
+ * and the caller's estimator returns 0: fully conservative. */
+export const MAX_TILING_FOLD_STEPS = 32;
+
+/** One Coxeter-diagram edge: `[i, j, m]` means `m_ij = m`, i.e. the
+ * pairings `⟨n_i, n_j⟩ = −cos(π/m)`. Non-listed pairs have m = 2
+ * (pairing 0). */
+type Diagram = readonly (readonly [number, number, number])[];
+
+/**
+ * Solve the simple roots of a diagram in the module doc's canonical form:
+ * `n_0 = e_1`, and each subsequent root's first `k` coordinates solved in
+ * order from its pairings with the earlier roots, new coordinate positive.
+ * The Gram matrix is triangular in this orientation — root `i` has support
+ * only in coordinates `0..i` — so the `k`-th root's equations are solved
+ * by forward substitution, and every diagonal entry is the positive new
+ * coordinate of an earlier root, so nothing divides by zero. The solved
+ * prefix determines the final coordinate up to sign; positive is the
+ * frozen choice.
+ *
+ * The construction is the contract's, so a transcription slip in a
+ * hand-typed table is impossible by construction; the group-axiom tests
+ * pin the result against an independent Cartan matrix anyway.
+ */
+function solveRoots(dim: number, diagram: Diagram): number[] {
+  const pair = (i: number, j: number): number => {
+    for (const [a, b, m] of diagram) {
+      if ((a === i && b === j) || (a === j && b === i)) {
+        return -Math.cos(Math.PI / m);
+      }
+    }
+    return 0;
+  };
+  const roots = new Array<number>(dim * dim).fill(0);
+  roots[0] = 1;
+  for (let k = 1; k < dim; k++) {
+    const base = k * dim;
+    let sq = 0;
+    for (let i = 0; i < k; i++) {
+      // Σ_{j<i} n_i[j]·x_j + n_i[i]·x_i = pair(i, k), x_j already solved.
+      let acc = -pair(i, k);
+      for (let j = 0; j < i; j++) acc += roots[i * dim + j] * roots[base + j];
+      const x = -acc / roots[i * dim + i];
+      roots[base + i] = x;
+      sq += x * x;
+    }
+    // Positive new coordinate; the max(0, …) only guards the final f64
+    // rounding of a sum that is always strictly below 1 (the Gram matrix
+    // is positive definite).
+    roots[base + k] = Math.sqrt(Math.max(0, 1 - sq));
+  }
+  return roots;
+}
+
+/** The per-group seed data: dimension, order, fold bound, and the Coxeter
+ * diagram (edge list). The orders and bounds are the contract's frozen
+ * table; the diagrams are the classic path graphs — the 4-edge sits
+ * between roots 1-2 for B3 and B4, 2-3 for F4, and the 5-edge between
+ * 0-1 for H3. */
+const GROUPS: Record<
+  TilingGroup,
+  { dim: 3 | 4; order: number; maxWordLength: number; diagram: Diagram }
+> = {
+  a3: {
+    dim: 3,
+    order: 24,
+    maxWordLength: 6,
+    diagram: [
+      [0, 1, 3],
+      [1, 2, 3],
+    ],
+  },
+  b3: {
+    dim: 3,
+    order: 48,
+    maxWordLength: 9,
+    diagram: [
+      [0, 1, 3],
+      [1, 2, 4],
+    ],
+  },
+  h3: {
+    dim: 3,
+    order: 120,
+    maxWordLength: 15,
+    diagram: [
+      [0, 1, 5],
+      [1, 2, 3],
+    ],
+  },
+  a4: {
+    dim: 4,
+    order: 120,
+    maxWordLength: 10,
+    diagram: [
+      [0, 1, 3],
+      [1, 2, 3],
+      [2, 3, 3],
+    ],
+  },
+  b4: {
+    dim: 4,
+    order: 384,
+    maxWordLength: 16,
+    diagram: [
+      [0, 1, 3],
+      [1, 2, 3],
+      [2, 3, 4],
+    ],
+  },
+  f4: {
+    dim: 4,
+    order: 1152,
+    maxWordLength: 24,
+    diagram: [
+      [0, 1, 3],
+      [1, 2, 4],
+      [2, 3, 3],
+    ],
+  },
+};
+
+function buildGroupInfo(id: TilingGroup): TilingGroupInfo {
+  const g = GROUPS[id];
+  const info: TilingGroupInfo = {
+    id,
+    dim: g.dim,
+    order: g.order,
+    maxWordLength: g.maxWordLength,
+    roots: solveRoots(g.dim, g.diagram),
+  };
+  Object.freeze(info.roots);
+  return Object.freeze(info);
+}
+
+/** The frozen group tables — the ONE source the fold, the resolver and
+ * the wrapper read. Deep-frozen (record, entries and root arrays), so no
+ * consumer can mutate the canonical roots. */
+export const TILING_GROUP_INFO: Record<TilingGroup, TilingGroupInfo> =
+  Object.freeze({
+    a3: buildGroupInfo("a3"),
+    b3: buildGroupInfo("b3"),
+    h3: buildGroupInfo("h3"),
+    a4: buildGroupInfo("a4"),
+    b4: buildGroupInfo("b4"),
+    f4: buildGroupInfo("f4"),
+  });
+
+/**
+ * The ONE authority over the tiling block: `resolveTiling(spec)` returns
+ * `null` when the scene carries no block (absent means off), otherwise the
+ * resolved value — the group's frozen {@link TilingGroupInfo} and the clip
+ * passed through exactly as authored. There are no clamps to own here: the
+ * group is discrete, and a clip's validation lives in `shapes.ts`
+ * (`validateShapeSpec` is not exported, so the resolver cannot — and must
+ * not — re-validate the shape). Group strings outside the union are
+ * impossible in TS; the check is defensive only — a malformed block is
+ * dropped by the persistence layer before this ever runs, and reaching
+ * here with one is a bug to surface, not a case to degrade.
+ */
+export function resolveTiling(
+  spec: TilingSpec | undefined,
+): ResolvedTiling | null {
+  if (!spec) return null;
+  if (!TILING_GROUPS.some((g) => g === spec.group)) {
+    throw new Error(
+      `resolveTiling: unknown tiling group "${String(spec.group)}" — ` +
+        `expected one of ${TILING_GROUPS.join(", ")}`,
+    );
+  }
+  return {
+    group: spec.group,
+    info: TILING_GROUP_INFO[spec.group],
+    clip: spec.clip,
+  };
+}
+
+/**
+ * The reflection primitive the fold is built from: `p' = p − 2⟨p, n⟩n`
+ * across the wall `⟨·, n⟩ = 0` (n unit), writing into `out` so the
+ * per-query path never allocates; `out` may alias `p` (the reflection
+ * reads all of `p` before writing). An exact isometry, so `|p'| = |p|` and
+ * every sphere gate the cores read is unchanged. The same formula serves
+ * 3- and 4-vectors; the working dimension is `normal`'s length.
+ */
+export function reflectAcrossWall(
+  p: Vec3 | Vec4,
+  normal: Vec3 | Vec4,
+  out: Vec3 | Vec4,
+): Vec3 | Vec4 {
+  let dot = 0;
+  for (let j = 0; j < normal.length; j++) dot += p[j] * normal[j];
+  const f = 2 * dot;
+  for (let j = 0; j < normal.length; j++) out[j] = p[j] - f * normal[j];
+  return out;
+}
+
+/**
+ * The fold-to-chamber retraction `F`, counting its own steps — the
+ * exported-for-test core {@link foldToChamber} is a thin wrapper over.
+ * While any pairing is below `−FOLD_EPS`, reflect across the MOST violated
+ * wall (the most negative pairing); deterministic, and every step strictly
+ * shortens the chamber's word, so the fold lands in `C` in at most
+ * `info.maxWordLength` steps (module doc's proof). After
+ * {@link MAX_TILING_FOLD_STEPS} iterations a point still violating a wall
+ * yields `null` — the caller's contract reads that as estimator 0, fully
+ * conservative, and by the proof it never fires (the cap covers f32
+ * wall-jitter only).
+ *
+ * Writes into `out` (which may alias `p` — the point is copied in before
+ * any reflection) and returns `{ point: out, steps }` on success: the
+ * step count is how the fold-bound test asserts the proof.
+ */
+export function foldToChamberWithSteps(
+  info: TilingGroupInfo,
+  p: Vec3 | Vec4,
+  out: Vec3 | Vec4,
+): { point: Vec3 | Vec4; steps: number } | null {
+  const dim = info.dim;
+  const roots = info.roots;
+  for (let j = 0; j < dim; j++) out[j] = p[j];
+  for (let step = 0; step < MAX_TILING_FOLD_STEPS; step++) {
+    let worst = -1;
+    let worstDot = -FOLD_EPS;
+    for (let i = 0; i < dim; i++) {
+      let dot = 0;
+      const base = i * dim;
+      for (let j = 0; j < dim; j++) dot += out[j] * roots[base + j];
+      if (dot < worstDot) {
+        worstDot = dot;
+        worst = i;
+      }
+    }
+    if (worst < 0) return { point: out, steps: step };
+    const base = worst * dim;
+    const f = 2 * worstDot;
+    for (let j = 0; j < dim; j++) out[j] -= f * roots[base + j];
+  }
+  let minDot = Infinity;
+  for (let i = 0; i < dim; i++) {
+    let dot = 0;
+    const base = i * dim;
+    for (let j = 0; j < dim; j++) dot += out[j] * roots[base + j];
+    if (dot < minDot) minDot = dot;
+  }
+  if (minDot >= -FOLD_EPS) return { point: out, steps: MAX_TILING_FOLD_STEPS };
+  return null;
+}
+
+/**
+ * The fold-to-chamber retraction `F` — the map the nearest-copy theorem
+ * and the wrapper composition are written in terms of (module doc). Thin
+ * wrapper over {@link foldToChamberWithSteps}; returns the folded point
+ * (the `out` array) or `null` on cap expiry (never in practice — the
+ * proof).
+ */
+export function foldToChamber(
+  info: TilingGroupInfo,
+  p: Vec3 | Vec4,
+  out: Vec3 | Vec4,
+): Vec3 | Vec4 | null {
+  const r = foldToChamberWithSteps(info, p, out);
+  return r === null ? null : r.point;
+}
+
+/**
+ * The distance from `p` to the chamber's complement: `max(0, min_i
+ * ⟨p, n_i⟩)` — 0 exactly when `p` is in (or within tolerance of) the
+ * closed chamber. Needed by nothing in this module's public surface today;
+ * it pins the vocabulary, and the estimator wrapper may read it.
+ */
+export function chamberDistance(info: TilingGroupInfo, p: Vec3 | Vec4): number {
+  const dim = info.dim;
+  const roots = info.roots;
+  let min = Infinity;
+  for (let i = 0; i < dim; i++) {
+    let dot = 0;
+    const base = i * dim;
+    for (let j = 0; j < dim; j++) dot += p[j] * roots[base + j];
+    if (dot < min) min = dot;
+  }
+  return Math.max(0, min);
+}
+
+/** Is `p` in the closed chamber, within the fold's own tolerance? —
+ * `min_i ⟨p, n_i⟩ >= −FOLD_EPS`, exactly the predicate the fold's stop
+ * test accepts, so "the fold landed in-chamber" and this agree. */
+export function isInChamber(info: TilingGroupInfo, p: Vec3 | Vec4): boolean {
+  const dim = info.dim;
+  const roots = info.roots;
+  let min = Infinity;
+  for (let i = 0; i < dim; i++) {
+    let dot = 0;
+    const base = i * dim;
+    for (let j = 0; j < dim; j++) dot += p[j] * roots[base + j];
+    if (dot < min) min = dot;
+  }
+  return min >= -FOLD_EPS;
+}
+
+/** The orbit enumerator's dedupe tolerance: two images within this of each
+ * other are the same image. It must sit comfortably ABOVE the f64 noise a
+ * reflected point accumulates (~1e-13 · |point| per word) and comfortably
+ * BELOW the separation of distinct images of any test point (the tests'
+ * seeded points separate at ≥ 1e-6), so each image keeps exactly one
+ * representative. */
+const ORBIT_EPS = 1e-10;
+
+/**
+ * THE SLOW EXPLICIT ORBIT ENUMERATOR — TEST ORACLE ONLY. Nothing in the
+ * runtime path may call this: the wrapper folds and never enumerates (the
+ * group order for a generic point and the orbit of a wall point are both
+ * far too big for a per-query walk). It exists so the tests can check the
+ * fold against something that is not the fold: the distinct images of
+ * `point` under the whole group, by walking the Cayley graph — every group
+ * element is a product of the simple reflections, so BFS from the identity
+ * applying each simple reflection to every newly seen image exhausts the
+ * orbit.
+ *
+ * DEDUPE IS A TOLERANCE SCAN, NOT AN EXACT KEY. The same group element
+ * reached through different words produces f64 images that differ in the
+ * last ulps, and an exact key would treat those as distinct forever — the
+ * BFS would never terminate. Every visited image is within `ORBIT_EPS` of
+ * a TRUE image `g(point)` (the reflections are exact isometries, so
+ * reflecting an ε-close point stays ε-close), and the distinct images of a
+ * test point separate by far more than `ORBIT_EPS`, so the scan keeps
+ * exactly one representative per image: a point fixed by a subgroup yields
+ * exactly its (smaller) orbit, and the returned count — the number of
+ * stored images, which is also written into `out` as fresh arrays
+ * (allocation is fine here, this is the slow oracle) — equals
+ * `info.order` exactly when the point is generic.
+ */
+export function enumerateOrbit(
+  info: TilingGroupInfo,
+  point: Vec3 | Vec4,
+  out: number[][],
+): number {
+  out.length = 0;
+  const dim = info.dim;
+  const roots = info.roots;
+  const start = new Array<number>(dim);
+  let startNorm = 0;
+  for (let j = 0; j < dim; j++) {
+    start[j] = point[j];
+    startNorm += point[j] * point[j];
+  }
+  const eps = ORBIT_EPS * Math.max(1, Math.sqrt(startNorm));
+  const eps2 = eps * eps;
+  out.push(start);
+  const distinct = (v: number[]): boolean => {
+    for (const existing of out) {
+      let d2 = 0;
+      for (let j = 0; j < dim; j++) {
+        const d = v[j] - existing[j];
+        d2 += d * d;
+      }
+      if (d2 <= eps2) return false;
+    }
+    return true;
+  };
+  for (let head = 0; head < out.length; head++) {
+    const current = out[head];
+    for (let i = 0; i < dim; i++) {
+      const next = new Array<number>(dim);
+      const base = i * dim;
+      let dot = 0;
+      for (let j = 0; j < dim; j++) dot += current[j] * roots[base + j];
+      const f = 2 * dot;
+      for (let j = 0; j < dim; j++) next[j] = current[j] - f * roots[base + j];
+      if (distinct(next)) out.push(next);
+    }
+  }
+  return out.length;
+}
