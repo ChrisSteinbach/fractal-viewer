@@ -569,9 +569,10 @@ describe("VoxelWorkerSession max hierarchy publication", () => {
     ).toEqual([]);
   });
 
-  it("is deterministic across progressive and restarted nonlinear stochastic runs", // chunks: measured ~5.5s under parallel-fork load, over the 5s default // Two full 300-iteration nonlinear accumulations at 100-iteration
+  // Two full 300-iteration nonlinear accumulations at 100-iteration
+  // chunks: measured ~5.5s under parallel-fork load, over the 5s default
   // timeout — the run is deterministic, only its wall time is load-bound.
-  () => {
+  it("is deterministic across progressive and restarted nonlinear stochastic runs", () => {
     const transforms = sierpinskiTetrahedron().map((transform) => ({
       ...transform,
       variations: [

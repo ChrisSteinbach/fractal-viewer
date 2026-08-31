@@ -885,17 +885,36 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `tiling-de.ts` is the one-core-call CPU authority for all seven inverse/forward families and additionally
     maxes the mandatory certified ball. Walls/seams are NEVER distance terms.
     `latticeFoldSource` is the ONE GLSL/WGSL floor-modulo emitter; code 7 + h
-    reuse the 16-byte tail; all seven WGSL and both GLSL non-routed estimator
-    wrappers are driver-qualified, with canonical resolver/full-radius seams.
+    reuse the 16-byte tail (whose third word now carries the PROVISIONAL
+    presentation window radius — `(7, h, 10R, 0)`); all seven WGSL and both
+    GLSL wrappers are driver-qualified, with canonical resolver/full-radius
+    seams.
     `lattice-march.ts` owns exact sphere∩attractor-y-slab intervals, probe and
     shadow membership, entry-relative fog, the shared GLSL/WGSL carrier-source
     emitter and a bounded reference march against an EXPLICIT outer radius.
+    THE CARRIER IS WIRED: the live lattice session marches only inside
+    sphere(10R) ∩ slab(|attractor-y| ≤ R) on both engines and both
+    dimensions — the primary interval's tEnter/tFar, the fog origin and R
+    normalizer, each shadow ray's own carrier (fully lit past its own
+    tFar), the contains-guarded probe taps (the window never becomes
+    geometry, casts a shadow or contributes AO), and the ground plane's
+    corridor/AO certificates replaced by carrier tests (content repeats
+    beyond the ball). `10R` is `LATTICE_PRESENTATION_RADIUS_MULT` — the
+    PROVISIONAL diagnostic value a measurement session edits; cell-scale
+    authoring controls stay unexposed until measured. Routing resolves
+    lattice blocks PER-ARM against each DE's authority radius (visible for
+    the descents, bounding for the forward orbits — resolveTiling throws
+    without it), refuses the empty-space grid (its floors bound the
+    attractor, not the infinite mirror image), and frames the camera on
+    the canonical cell (`latticeCameraFitBounds`: hypot(h,h,R) / hypot(h,h,h,R)).
+    Bench-pinned on verified Iris: eval 7/7 cores plus five production
+    frame legs (3D/4D × inverse/forward + ground plane) settling with
+    hit-rate gaps ≤ 0.012 and plane-rate gap 0.012; the durable browser
+    gate `scripts/surface-lattice.verify.mjs` passed 18/18.
     Finite authoring is shared Scene / Look state: B3/A4/F4 showcase presets,
     separate chamber-group and narrowing-clip rows, app-copy/reload and
     workflow behavior are real-browser gated by `scripts/tiling-ui.verify.mjs`.
-    Surface still refuses lattice until the emitted carrier is WIRED through
-    primary/shadow intervals, fog/normal/AO, ground, camera and capture paths
-    together; Points/Flame/Solid remain untiled
+    Points/Flame/Solid remain untiled
     with an adjacent explanation. Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic

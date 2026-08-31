@@ -75,6 +75,16 @@ fold-shaped, and the fragment 4D tracer carries no forward-orbit GLSL
 either, so entry is refused without compute and a mid-session loss exits
 with the same toast one family over.
 
+A TILED session (finite or mirrored-lattice) routes exactly where its
+untiled shape routes — the tiling block rides the `SurfaceComputeTarget`
+and the frame specs' params packers derive the carrier from it, so the
+lattice session marches the presentation carrier (sphere ∩ attractor-y
+slab at the PROVISIONAL 10R window) through the same bounded loop,
+shade batches, supersampling and capture tiling. The lattice camera
+frames the canonical cell, never the global lattice, and a lattice
+session never requests the empty-space grid (its floors bound the
+attractor, not the infinite mirror image).
+
 ## Targets and cores
 
 `create()` takes a `SurfaceComputeTarget` union,
