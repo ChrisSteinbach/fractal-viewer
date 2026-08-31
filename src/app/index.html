@@ -1050,25 +1050,25 @@
           </label>
         </details>
 
-        <!-- Finite reflection tiling is authored Scene / Look geometry: the
-             chosen group defines the chamber and copies; the independent
-             ShapeSpec clip can only trim content inside that chamber. It is
-             Surface-only today, but stays visible in every render mode so
-             the document's authored state and any refusal never disappear.
-             Phase-2 lattice controls deliberately do not live in this
-             finite-only editor. -->
+        <!-- Space tiling is authored Scene / Look geometry: the kind chooser
+             picks the finite reflection group or the mirrored lattice; the
+             independent ShapeSpec clip can only trim content inside the
+             chosen chamber. It is Surface-only today, but stays visible in
+             every render mode so the document's authored state and any
+             refusal never disappear. -->
         <details class="panel-section" id="tilingSection" name="panel-section">
           <summary>Surface tiling</summary>
           <p id="tilingTimingHint" class="flame-hint">
             Used next time you enter Surface.
           </p>
           <details class="panel-explainer">
-            <summary>How finite tiling works</summary>
+            <summary>How tiling works</summary>
             <p>
-              The reflection group folds space into its fixed chamber, then
-              repeats the chamber's fractal piece. Optional content clip trims
-              that piece; it does not replace or reshape the chamber. Points,
-              Flame, and Solid keep showing the untiled attractor.
+              A reflection group folds space into its fixed chamber, then
+              repeats the chamber's fractal piece; the mirrored lattice repeats
+              the piece in x and z (and w in 4D) forever. The optional content
+              clip trims that piece; it does not replace or reshape the chamber.
+              Points, Flame, and Solid keep showing the untiled attractor.
             </p>
           </details>
           <label class="checkbox-label">
@@ -1081,23 +1081,50 @@
           </label>
           <div id="tilingControls" class="hidden">
             <label class="select-label">
-              Reflection group
+              Tiling kind
               <select
-                id="tilingGroup"
+                id="tilingKind"
                 aria-describedby="tilingTimingHint tilingNote"
               >
-                <optgroup label="3D">
-                  <option value="a3">A3 · tetrahedral</option>
-                  <option value="b3">B3 · octahedral</option>
-                  <option value="h3">H3 · icosahedral</option>
-                </optgroup>
-                <optgroup label="4D">
-                  <option value="a4">A4 · pentatope</option>
-                  <option value="b4">B4 · 16-cell</option>
-                  <option value="f4">F4 · 24-cell</option>
-                </optgroup>
+                <option value="reflection">Reflection group</option>
+                <option value="lattice">Mirrored lattice</option>
               </select>
             </label>
+            <div id="tilingGroupRow">
+              <label class="select-label">
+                Reflection group
+                <select
+                  id="tilingGroup"
+                  aria-describedby="tilingTimingHint tilingNote"
+                >
+                  <optgroup label="3D">
+                    <option value="a3">A3 · tetrahedral</option>
+                    <option value="b3">B3 · octahedral</option>
+                    <option value="h3">H3 · icosahedral</option>
+                  </optgroup>
+                  <optgroup label="4D">
+                    <option value="a4">A4 · pentatope</option>
+                    <option value="b4">B4 · 16-cell</option>
+                    <option value="f4">F4 · 24-cell</option>
+                  </optgroup>
+                </select>
+              </label>
+            </div>
+            <div id="tilingCellScaleRow" class="hidden">
+              <label class="range-label">
+                Cell scale
+                <span id="tilingCellScaleLabel" class="value-label">1.50×</span>
+                <input
+                  type="range"
+                  id="tilingCellScaleSlider"
+                  min="1.25"
+                  max="4"
+                  step="0.05"
+                  value="1.5"
+                  aria-describedby="tilingTimingHint tilingNote"
+                />
+              </label>
+            </div>
             <label class="select-label">
               Optional content clip
               <select
@@ -2550,6 +2577,8 @@
                 <option value="tiledOctahedron">Tiled Octahedron · B3</option>
                 <option value="tiledPentatope">Tiled Pentatope · A4</option>
                 <option value="tiledTwentyFourCell">Tiled 24-Cell · F4</option>
+                <option value="mirroredLattice">Mirrored Lattice</option>
+                <option value="mirroredLattice4">Mirrored Lattice 4D</option>
               </optgroup>
               <optgroup label="Escape-time">
                 <option value="mandelboxClassic">Mandelbox</option>

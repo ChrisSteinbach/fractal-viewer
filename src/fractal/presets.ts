@@ -2,7 +2,7 @@ import { composeAffine } from "./affine";
 import type { FlamePaletteId, PaletteSelection } from "./palette";
 import type { Rng } from "./rng";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE, STAR_PRISM_SHAPE } from "./shapes";
-import type { FiniteTilingSpec } from "./tiling";
+import type { TilingSpec } from "./tiling";
 import type {
   HybridSchedule,
   Rotation4,
@@ -2404,6 +2404,13 @@ const PRESETS = {
   tiledOctahedron: octahedronFlake,
   tiledPentatope: pentatope,
   tiledTwentyFourCell: twentyFourCellFlake,
+  // The mirrored-lattice landscape showcases, measured by the 2026-08-31
+  // real-Iris lattice gate: the same base systems as the finite trio, the
+  // cell scale 1.6 the gate fixtures rendered at (45-75% frame coverage on
+  // the verified display). PRESET_TILINGS installs the authored lattice
+  // block the same way it installs the finite groups.
+  mirroredLattice: sierpinskiTetrahedron,
+  mirroredLattice4: pentatope,
   hyperfern,
   // The escape-time family's 4D HALF: every preset above it is
   // flat by gate, so the mode the site is named after had no 4D entry at
@@ -2487,6 +2494,8 @@ export const PRESET_RENDER_HINTS: Partial<
   tiledOctahedron: "surface",
   tiledPentatope: "surface",
   tiledTwentyFourCell: "surface",
+  mirroredLattice: "surface",
+  mirroredLattice4: "surface",
   // Patterned albedo is likewise a Surface-only concern. This one is 4D,
   // which routes it to the affine4 tracer before the hint is consumed.
   woodGrain: "surface",
@@ -2711,10 +2720,12 @@ export const PRESET_SCHEDULES: Partial<Record<Preset, () => HybridSchedule>> = {
  * authorable in the panel and is deliberately not confused with the group's
  * fixed chamber. Plain sibling presets stay untiled because main.ts clears
  * this table on every absent lookup. */
-export const PRESET_TILINGS: Partial<Record<Preset, FiniteTilingSpec>> = {
+export const PRESET_TILINGS: Partial<Record<Preset, TilingSpec>> = {
   tiledOctahedron: { group: "b3" },
   tiledPentatope: { group: "a4" },
   tiledTwentyFourCell: { group: "f4" },
+  mirroredLattice: { kind: "lattice", cellScale: 1.6 },
+  mirroredLattice4: { kind: "lattice", cellScale: 1.6 },
 };
 
 /**

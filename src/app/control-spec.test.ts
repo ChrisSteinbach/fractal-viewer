@@ -31,6 +31,11 @@ import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
 import { resolveBackground } from "./background";
 import { GEAR_SHAPE, STAR_PRISM_SHAPE } from "../fractal/shapes";
+import {
+  LATTICE_CELL_SCALE_DEFAULT,
+  LATTICE_CELL_SCALE_MAX,
+  LATTICE_CELL_SCALE_MIN,
+} from "./constants";
 import { pentatope } from "../fractal/presets";
 import { BUNDLED_SHAPES, BUNDLED_TRAP_SHAPES } from "./bundled-shapes";
 
@@ -1291,7 +1296,7 @@ describe("effects", () => {
       expect(applyScalarControl(authored, clip, "authored")).toBe(authored);
     });
 
-    it("does not let finite rows overwrite a preserved lattice block", () => {
+    it("keeps the finite group row inert on a lattice block while the shared clip row edits it", () => {
       const lattice = setTiling(initialState(true), {
         kind: "lattice",
         cellScale: 1.5,
@@ -1300,9 +1305,16 @@ describe("effects", () => {
       expect(applyScalarControl(lattice, specById("tilingGroup"), "b3")).toBe(
         lattice,
       );
-      expect(applyScalarControl(lattice, specById("tilingClip"), "gear")).toBe(
+      const clipped = applyScalarControl(
         lattice,
+        specById("tilingClip"),
+        "gear",
       );
+      expect(clipped.tiling).toEqual({
+        kind: "lattice",
+        cellScale: 1.5,
+        clip: GEAR_SHAPE,
+      });
       expect(
         applyScalarControl(lattice, specById("tilingEnabledCheckbox"), true),
       ).toBe(lattice);
@@ -1310,6 +1322,87 @@ describe("effects", () => {
         applyScalarControl(lattice, specById("tilingEnabledCheckbox"), false)
           .tiling,
       ).toBeUndefined();
+    });
+
+    it("switches arms through the kind select, preserving the shared clip", () => {
+      const finite = setTiling(initialState(true), {
+        group: "h3",
+        clip: GEAR_SHAPE,
+      });
+      const lattice = applyScalarControl(
+        finite,
+        specById("tilingKind"),
+        "lattice",
+      );
+      expect(lattice.tiling).toEqual({
+        kind: "lattice",
+        cellScale: LATTICE_CELL_SCALE_DEFAULT,
+        clip: GEAR_SHAPE,
+      });
+      expect(
+        applyScalarControl(lattice, specById("tilingKind"), "lattice"),
+      ).toBe(lattice);
+      const back = applyScalarControl(
+        lattice,
+        specById("tilingKind"),
+        "reflection",
+      );
+      expect(back.tiling).toEqual({ group: "a3", clip: GEAR_SHAPE });
+      expect(
+        applyScalarControl(finite, specById("tilingKind"), "reflection"),
+      ).toBe(finite);
+    });
+
+    it("clamps and writes the lattice cell scale", () => {
+      const lattice = setTiling(initialState(true), {
+        kind: "lattice",
+        cellScale: 1.5,
+      });
+      const edited = applyScalarControl(
+        lattice,
+        specById("tilingCellScaleSlider"),
+        "2.4",
+      );
+      expect((edited.tiling as { cellScale: number }).cellScale).toBe(2.4);
+      const clamped = applyScalarControl(
+        lattice,
+        specById("tilingCellScaleSlider"),
+        "99",
+      );
+      expect((clamped.tiling as { cellScale: number }).cellScale).toBe(
+        LATTICE_CELL_SCALE_MAX,
+      );
+      const floored = applyScalarControl(
+        lattice,
+        specById("tilingCellScaleSlider"),
+        "0.1",
+      );
+      expect((floored.tiling as { cellScale: number }).cellScale).toBe(
+        LATTICE_CELL_SCALE_MIN,
+      );
+      const finite = setTiling(initialState(true), { group: "a3" });
+      expect(
+        applyScalarControl(finite, specById("tilingCellScaleSlider"), "2"),
+      ).toBe(finite);
+    });
+
+    it("reads a mesh-backed bundled clip as authored, not a selectable kind", () => {
+      const meshClipped = setTiling(initialState(true), {
+        group: "a3",
+        clip: STAR_PRISM_SHAPE,
+      });
+      expect(tilingClipSelectValue(meshClipped)).toBe("authored");
+      const analytic = setTiling(initialState(true), {
+        group: "a3",
+        clip: GEAR_SHAPE,
+      });
+      expect(tilingClipSelectValue(analytic)).toBe("gear");
+      const latticeClipped = setTiling(initialState(true), {
+        kind: "lattice",
+        cellScale: 1.5,
+        clip: GEAR_SHAPE,
+      });
+      expect(tilingClipSelectValue(latticeClipped)).toBe("gear");
     });
 
     it("refreshes eligibility everywhere and restarts only an active Surface", () => {

@@ -147,8 +147,8 @@ import {
   type RangeNumberControl,
 } from "./range-number-control";
 import {
-  BUNDLED_SHAPES,
   BUNDLED_EMITTER_SHAPES,
+  BUNDLED_TILING_CLIP_SHAPES,
   BUNDLED_TRAP_SHAPES,
   bundledEmitterForShape,
   bundledShapeEntry,
@@ -2178,13 +2178,17 @@ export class Ui {
   private readonly fogNote: HTMLElement;
   private readonly symmetryNote: HTMLElement;
   private readonly symmetryEditHint: HTMLElement;
-  /** Finite reflection tiling is shared authored Scene / Look state. Its
-   * editor remains visible in every renderer; these rows disclose the active
-   * renderer's next-entry/restart behavior and all composition refusals. */
+  /** Space tiling is shared authored Scene / Look state. Its editor remains
+   * visible in every renderer; these rows disclose the active renderer's
+   * next-entry/restart behavior and all composition refusals. The arm
+   * chooser (finite groups vs mirrored lattice) drives which parameter rows
+   * are visible. */
   private readonly tilingControls: HTMLElement;
   private readonly tilingTimingHint: HTMLElement;
   private readonly tilingNote: HTMLElement;
   private readonly tilingAuthoredClipOption: HTMLOptionElement;
+  private readonly tilingGroupRow: HTMLElement;
+  private readonly tilingCellScaleRow: HTMLElement;
   /** The Hybrid schedule section's controls — see the UiHandlers schedule
    * trio for the contract each drives. */
   private readonly scheduleSource: HTMLSelectElement;
@@ -2862,6 +2866,8 @@ export class Ui {
     this.tilingControls = this.byId("tilingControls");
     this.tilingTimingHint = this.byId("tilingTimingHint");
     this.tilingNote = this.byId("tilingNote");
+    this.tilingGroupRow = this.byId("tilingGroupRow");
+    this.tilingCellScaleRow = this.byId("tilingCellScaleRow");
     this.scheduleSource = this.byId("scheduleSource");
     this.scheduleSourceSaved = this.byId("scheduleSourceSaved");
     this.scheduleSnapshotBtn = this.byId("scheduleSnapshotBtn");
@@ -3166,7 +3172,7 @@ export class Ui {
     );
     this.appendBundledShapeOptions(
       this.scalarSelect("tilingClip"),
-      BUNDLED_SHAPES,
+      BUNDLED_TILING_CLIP_SHAPES,
       "authored",
     );
     const tilingAuthoredClipOption = Array.from(
@@ -4373,19 +4379,23 @@ export class Ui {
     if (patternTiming) patternTiming.textContent = materialTiming;
   }
 
-  /** Keep finite tiling's authored status visible across renderer changes.
-   * The fixed group supplies the chamber; the optional catalog ShapeSpec is
-   * only a narrowing clip, so the two selectors stay independent. Options
-   * from the other dimension remain named but disabled, while a mismatched
-   * imported document retains its selected value and an adjacent recovery
-   * reason. */
+  /** Keep space tiling's authored status visible across renderer changes.
+   * The arm chooser (finite groups vs mirrored lattice) drives which
+   * parameter rows are visible; the optional catalog ShapeSpec is only a
+   * narrowing clip, so it stays independent of the arm. Options from the
+   * other dimension remain named but disabled, while a mismatched imported
+   * document retains its selected value and an adjacent recovery reason. */
   private syncTilingRows(state: AppState, nonFlat: boolean): void {
     const tiling = state.tiling;
     const lattice = tiling !== undefined && isLatticeTilingSpec(tiling);
-    this.tilingControls.classList.toggle("hidden", !tiling || lattice);
+    this.tilingControls.classList.toggle("hidden", !tiling);
+    this.tilingGroupRow.classList.toggle("hidden", !tiling || lattice);
+    this.tilingCellScaleRow.classList.toggle("hidden", !tiling || !lattice);
     this.tilingTimingHint.textContent =
       state.renderMode === "surface"
-        ? "Changes restart Surface without resetting the view."
+        ? lattice
+          ? "Changing cell scale is live; changing kind or clip restarts Surface."
+          : "Changes restart Surface without resetting the view."
         : "Surface only — changes apply next time you enter Surface.";
 
     const group = this.scalarSelect("tilingGroup");
@@ -4415,8 +4425,33 @@ export class Ui {
     }
 
     if (lattice) {
-      this.tilingNote.textContent =
-        "This document carries mirrored lattice tiling: Surface renders the repeated cell at the authored cell scale. Cell-scale authoring controls are not exposed yet (the value arrives with an imported or shared document); Turn Surface tiling off to clear the block.";
+      let note: string;
+      if (state.balloonEcho) {
+        note =
+          "Unavailable with Balloon — turn Balloon off; an orbit's echo is not the echo's orbit.";
+      } else if (state.symmetry.order > 1) {
+        note =
+          "Unavailable with Symmetry — set Order to 1; both features fold query space and have no certified composition order.";
+      } else if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
+        note =
+          "Unavailable — tiling clips must be analytic. Choose None or an analytic clip.";
+      } else if (state.renderMode !== "surface") {
+        const label =
+          state.renderMode === "points"
+            ? "Points"
+            : state.renderMode === "flame"
+              ? "Flame"
+              : "Solid";
+        note = `${label} shows the untiled attractor. Enter Surface to render this mirrored landscape.`;
+      } else {
+        note =
+          "Active in Surface — the attractor repeats in x and z (and w in 4D) at the cell scale above.";
+      }
+      if (nonFlat) {
+        note +=
+          " 4D lattice tiling uses the zero-thickness W slice; slab thickness is unavailable while tiled.";
+      }
+      this.tilingNote.textContent = note;
       return;
     }
 

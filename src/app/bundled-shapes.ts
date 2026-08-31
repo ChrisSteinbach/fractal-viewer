@@ -8,6 +8,7 @@ import {
   SNOWFLAKE_PRISM_SHAPE,
   STAR_PRISM_SHAPE,
   TREFOIL_KNOT_SHAPE,
+  shapeMeshIds,
   type ShapeSpec,
 } from "../fractal/shapes";
 
@@ -119,6 +120,18 @@ export const BUNDLED_EMITTER_SHAPES: readonly BundledEmitterShape[] =
 
 export const BUNDLED_TRAP_SHAPES: readonly BundledTrapShape[] =
   BUNDLED_SHAPES.filter((entry): entry is BundledTrapShape => entry.trap);
+
+/**
+ * The tiling clip's OFFERED subset: the analytic bundled shapes only. The
+ * tiling clip path refuses mesh-bearing clips by design (the mesh-SDF
+ * delivery has not extended to tiling clips — the contract's "analytic
+ * specs only in phase 1"), so the other six catalog entries would be
+ * selectable-but-always-ineligible: every offered value must be one that
+ * can actually enter Surface. Imported mesh clips still arrive through the
+ * "Authored clip" sentinel.
+ */
+export const BUNDLED_TILING_CLIP_SHAPES: readonly BundledShape[] =
+  BUNDLED_SHAPES.filter((entry) => shapeMeshIds(entry.shape).length === 0);
 
 /** The label used in a picker option, keeping icon/name formatting central. */
 export function bundledShapeOptionLabel(
