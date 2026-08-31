@@ -6,7 +6,7 @@ import {
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { ShapeSpec } from "../fractal/shapes";
-import type { ResolvedTiling } from "../fractal/tiling";
+import type { ResolvedFiniteTiling } from "../fractal/tiling";
 import {
   SURFACE_FINISH_GLSL,
   surfaceFinishShadeSource,
@@ -2988,7 +2988,7 @@ export function surface4FragmentFor(
   condensation: readonly ShapeSpec[] | null = null,
   schedule = 0,
   chaos = 0,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): string {
   return surfaceFragmentFor(
     0,
@@ -3022,7 +3022,7 @@ export function surface4FragmentResolvedFor(
   condensation: readonly ShapeSpec[] | null = null,
   schedule = 0,
   chaos = 0,
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): string {
   return surfaceFragmentResolvedFor(
     0,
@@ -3313,7 +3313,7 @@ export function setSurfaceSystem4(
   de: SurfaceDE4,
   colors: Vec3[],
   trapIndices?: number[],
-  tiling: ResolvedTiling | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): void {
   const schedule = de.schedule && de.schedule.depth > 0 ? de.schedule : null;
   const scheduleMaps = schedule?.maps ?? [];

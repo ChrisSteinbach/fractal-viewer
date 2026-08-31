@@ -134,7 +134,7 @@ import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { surfaceDescentCostWeight } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
-import type { ResolvedTiling } from "../fractal/tiling";
+import type { ResolvedFiniteTiling } from "../fractal/tiling";
 import {
   surfaceMaterialsNeedAo,
   surfaceMaterialsNeedShadow,
@@ -4479,7 +4479,7 @@ export class FractalScene {
     de: SurfaceDE,
     colors: Vec3[],
     trapIndices: number[],
-    tiling: ResolvedTiling | null = null,
+    tiling: ResolvedFiniteTiling | null = null,
   ): void {
     this.renderNeeded = true;
     // packSurfaceSystem resets the material's grid uniforms; the texture
@@ -4567,7 +4567,7 @@ export class FractalScene {
     de: EscapeDE,
     color: Vec3,
     trap: ShapeTrap | null = null,
-    tiling: ResolvedTiling | null = null,
+    tiling: ResolvedFiniteTiling | null = null,
   ): void {
     this.renderNeeded = true;
     this.dropSurfaceGridTexture();
@@ -4631,7 +4631,7 @@ export class FractalScene {
     de: BulbDE,
     color: Vec3,
     trap: ShapeTrap | null = null,
-    tiling: ResolvedTiling | null = null,
+    tiling: ResolvedFiniteTiling | null = null,
   ): void {
     this.renderNeeded = true;
     this.dropSurfaceGridTexture();
@@ -4927,7 +4927,7 @@ export class FractalScene {
     de: SurfaceDE4,
     colors: Vec3[],
     trapIndices: number[],
-    tiling: ResolvedTiling | null = null,
+    tiling: ResolvedFiniteTiling | null = null,
   ): void {
     this.renderNeeded = true;
     // A stale 3D grid must not outlive its system just because the next

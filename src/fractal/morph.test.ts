@@ -1462,6 +1462,16 @@ describe("lerpTiling (the tiling block's morph rule)", () => {
   };
   const tilingA: TilingSpec = { group: "a3", clip: clipA };
   const tilingB: TilingSpec = { group: "b3", clip: clipB };
+  const latticeA: TilingSpec = {
+    kind: "lattice",
+    cellScale: 1,
+    clip: clipA,
+  };
+  const latticeB: TilingSpec = {
+    kind: "lattice",
+    cellScale: 7,
+    clip: clipB,
+  };
 
   it("is endpoint-exact by reference at t = 0 and t = 1", () => {
     expect(lerpTiling(tilingA, tilingB, 0)).toBe(tilingA);
@@ -1472,8 +1482,12 @@ describe("lerpTiling (the tiling block's morph rule)", () => {
 
   it("POPS the target's discrete group at the leg's first push — never interpolated", () => {
     // Every intermediate, however small, carries B's group.
-    expect(lerpTiling(tilingA, tilingB, 0.01)!.group).toBe("b3");
-    expect(lerpTiling(tilingA, tilingB, 0.5)!.group).toBe("b3");
+    expect(lerpTiling(tilingA, tilingB, 0.01)).toEqual(
+      expect.objectContaining({ group: "b3" }),
+    );
+    expect(lerpTiling(tilingA, tilingB, 0.5)).toEqual(
+      expect.objectContaining({ group: "b3" }),
+    );
     // The whole block pops when the target carries none.
     expect(lerpTiling(tilingA, null, 0.25)).toBeNull();
     // A group-only target pops the group and stays clip-less.
@@ -1483,8 +1497,34 @@ describe("lerpTiling (the tiling block's morph rule)", () => {
 
   it("rides the target's clip verbatim when both clips are deeply equal (the trap's shape rule)", () => {
     const mid = lerpTiling(tilingA, tilingB, 0.5)!;
-    expect(mid.group).toBe("b3");
+    expect(mid).toEqual(expect.objectContaining({ group: "b3" }));
     expect(mid.clip).toBe(tilingB.clip);
+  });
+
+  it("lerps same-kind lattice cellScale without a default and keeps endpoints in-domain", () => {
+    expect(lerpTiling(latticeA, latticeB, 0)).toBe(latticeA);
+    expect(lerpTiling(latticeA, latticeB, 1)).toBe(latticeB);
+    expect(lerpTiling(latticeA, latticeB, 0.25)).toEqual({
+      kind: "lattice",
+      cellScale: 2.5,
+      clip: latticeB.clip,
+    });
+    expect(lerpTiling(latticeA, latticeB, 0.5)).toEqual({
+      kind: "lattice",
+      cellScale: 4,
+      clip: latticeB.clip,
+    });
+  });
+
+  it("pops the complete target on finite/lattice kind changes or differing clips", () => {
+    expect(lerpTiling(tilingA, latticeB, 0.01)).toBe(latticeB);
+    expect(lerpTiling(latticeA, tilingB, 0.01)).toBe(tilingB);
+    const different: TilingSpec = {
+      kind: "lattice",
+      cellScale: 3,
+      clip: GEAR_SHAPE,
+    };
+    expect(lerpTiling(latticeA, different, 0.5)).toBe(different);
   });
 
   it("POPS the target's whole block for every other clip pair: one-sided, or clips that differ", () => {
@@ -1510,7 +1550,7 @@ describe("lerpTiling (the tiling block's morph rule)", () => {
       system({ tiling: tilingB }),
       0.5,
     );
-    expect(mid.tiling?.group).toBe("b3");
+    expect(mid.tiling).toEqual(expect.objectContaining({ group: "b3" }));
     expect(mid.tiling?.clip).toBe(tilingB.clip);
     // A tiling-bearing morph into an untiled target pops to absence.
     expect(

@@ -2873,7 +2873,18 @@ describe("setTiling (the space-tiling block)", () => {
 
   it("never normalizes: every shipped group stores as authored", () => {
     for (const group of ["a3", "b3", "h3", "a4", "b4", "f4"] as const) {
-      expect(setTiling(base, { group }).tiling?.group).toBe(group);
+      expect(setTiling(base, { group }).tiling).toEqual({ group });
     }
+  });
+
+  it("stores explicit lattice scale and clip verbatim, then clears the same block", () => {
+    const lattice = {
+      kind: "lattice" as const,
+      cellScale: 6.75,
+      clip: PEACE_SIGN_SHAPE,
+    };
+    const on = setTiling(base, lattice);
+    expect(on.tiling).toBe(lattice);
+    expect(setTiling(on, null).tiling).toBeUndefined();
   });
 });

@@ -27,9 +27,12 @@ import type { VoxelWorkerCommand } from "./voxel-worker-core";
 import { hexToRgb01 } from "./constants";
 import {
   bundledShapeEntry,
+  bundledShapeForShape,
   bundledTrapForShape,
+  type BundledShapeKind,
   type BundledTrapKind,
 } from "./bundled-shapes";
+import { isLatticeTilingSpec, TILING_GROUPS } from "../fractal/tiling";
 import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_SOLID_PALETTE,
@@ -98,6 +101,7 @@ import {
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
+  setTiling,
   SOLID_ITERATION_DETENTS,
   SURFACE_ANTIALIAS_DETENTS,
   setShapeTrap,
@@ -543,6 +547,32 @@ const surfaceParamsEffect: ControlEffect = (state, fx) => {
 const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
   fx.scene.setSurfaceShapeTrap(state.shapeTrap ?? null);
 };
+
+/** Finite tiling's panel-IA record (`docs/panel-ia.md`): Scene / Look;
+ * consumed only by Surface IFS/escape/bulb in the matching dimension, while
+ * Points/Flame/Solid deliberately keep showing the untiled attractor;
+ * document lifetime; every edit restarts an active Surface session with its
+ * inspection view preserved, or applies on the next Surface entry elsewhere.
+ * Eligibility refresh is immediate because group dimension, Balloon and
+ * kaleidoscope are explicit refusals. */
+const tilingEffect: ControlEffect = (state, fx) => {
+  fx.refreshSurfaceEligibility();
+  if (state.renderMode === "surface") fx.restartSurfaceRender();
+};
+
+/** Display the optional clip by canonical catalog identity. An imported
+ * analytic ShapeSpec that is not a bundled choice stays on the authored
+ * sentinel and is never rewritten merely by synchronizing the panel. */
+export function tilingClipSelectValue(
+  state: AppState,
+): "" | BundledShapeKind | "authored" {
+  const clip =
+    state.tiling && !isLatticeTilingSpec(state.tiling)
+      ? state.tiling.clip
+      : undefined;
+  if (!clip) return "";
+  return bundledShapeForShape(clip)?.kind ?? "authored";
+}
 
 /** Patch one component of the trap's position through the block's one
  * normalization domain (state.ts's updateShapeTrap). */
@@ -1350,6 +1380,56 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => String(s.symmetry.twist ?? 0),
     apply: (s, raw) => setSymmetryTwist(s, Number(raw)),
     effect: symmetryEffect,
+  },
+  // ——— Finite reflection tiling: authored Scene geometry, not a Surface
+  // renderer preference. The fixed selector is the finite phase-1 vocabulary
+  // only; the chamber comes from that group and the optional ShapeSpec below
+  // only NARROWS its content. Points/Flame/Solid intentionally do not consume
+  // it, so those modes author for next Surface entry. ———
+  {
+    kind: "checkbox",
+    id: "tilingEnabledCheckbox",
+    read: (s) => s.tiling !== undefined,
+    apply: (s, checked) =>
+      checked
+        ? s.tiling
+          ? s
+          : setTiling(s, { group: systemIsNonFlat(s) ? "a4" : "a3" })
+        : setTiling(s, null),
+    effect: tilingEffect,
+  },
+  {
+    kind: "select",
+    id: "tilingGroup",
+    read: (s) =>
+      s.tiling && !isLatticeTilingSpec(s.tiling)
+        ? s.tiling.group
+        : systemIsNonFlat(s)
+          ? "a4"
+          : "a3",
+    apply: (s, raw) => {
+      if (!s.tiling || isLatticeTilingSpec(s.tiling)) return s;
+      const group = TILING_GROUPS.find((candidate) => candidate === raw);
+      return group ? setTiling(s, { ...s.tiling, group }) : s;
+    },
+    effect: tilingEffect,
+  },
+  {
+    kind: "select",
+    id: "tilingClip",
+    read: tilingClipSelectValue,
+    apply: (s, raw) => {
+      if (!s.tiling || isLatticeTilingSpec(s.tiling) || raw === "authored") {
+        return s;
+      }
+      if (raw === "") {
+        const { clip: _clip, ...groupOnly } = s.tiling;
+        return setTiling(s, groupOnly);
+      }
+      const clip = bundledShapeEntry(raw)?.shape;
+      return clip ? setTiling(s, { ...s.tiling, clip }) : s;
+    },
+    effect: tilingEffect,
   },
   // ——— 4D look (non-flat systems only; each row lives beside its flat
   // sibling in the Color or Depth section) ———

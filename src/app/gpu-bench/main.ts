@@ -157,7 +157,7 @@ import {
   estimateEscapeDistanceTiled,
 } from "../../fractal/tiling-de";
 import { resolveTiling } from "../../fractal/tiling";
-import type { ResolvedTiling } from "../../fractal/tiling";
+import type { ResolvedFiniteTiling } from "../../fractal/tiling";
 import {
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_MAP4_VEC4,
@@ -6708,7 +6708,7 @@ async function runSurfaceEvalDispatch(
 interface SurfaceTilingAbiSpec {
   name: string;
   core: SurfaceKernelConfig["core"];
-  tiling: ResolvedTiling;
+  tiling: ResolvedFiniteTiling;
   params: ArrayBuffer;
   maps: Float32Array;
   queries: Vec3[];

@@ -37,7 +37,7 @@ import {
 import type { CondensationDepthBand } from "../fractal/condensation-de";
 import { SHAPE_TRAP_GEOMETRY_LEVEL_MAX } from "../fractal/shape-trap";
 import { TILING_GROUPS } from "../fractal/tiling";
-import type { TilingSpec } from "../fractal/tiling";
+import type { FiniteTilingSpec, LatticeTilingSpec } from "../fractal/tiling";
 import {
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
@@ -161,10 +161,19 @@ const TRAP_FIELDS = {
   geometryLevelMin: true,
   geometryLevelMax: true,
 } satisfies Fields<ShapeTrap>;
-const TILING_FIELDS = {
+const FINITE_TILING_FIELDS = {
   group: true,
   clip: true,
-} satisfies Fields<TilingSpec>;
+} satisfies Fields<FiniteTilingSpec>;
+const LATTICE_TILING_FIELDS = {
+  kind: true,
+  cellScale: true,
+  clip: true,
+} satisfies Fields<LatticeTilingSpec>;
+const TILING_FIELDS = {
+  ...FINITE_TILING_FIELDS,
+  ...LATTICE_TILING_FIELDS,
+};
 const SYMMETRY_FIELDS = {
   order: true,
   plane: true,
@@ -770,7 +779,26 @@ function trap(value: unknown, path: string): void {
 
 function tiling(value: unknown, path: string): void {
   const entry = object(value, path, TILING_FIELDS);
-  enumeration(required(entry, "group", path), TILING_GROUPS, `${path}.group`);
+  if (entry.kind === undefined) {
+    if (entry.cellScale !== undefined) {
+      throw new TypeError(`${path}.cellScale belongs only to a lattice`);
+    }
+    enumeration(required(entry, "group", path), TILING_GROUPS, `${path}.group`);
+  } else {
+    if (entry.kind !== "lattice") {
+      throw new RangeError(`${path}.kind is not a supported tiling kind`);
+    }
+    if (entry.group !== undefined) {
+      throw new TypeError(`${path}.group belongs only to finite tiling`);
+    }
+    const cellScale = finite(
+      required(entry, "cellScale", path),
+      `${path}.cellScale`,
+    );
+    if (cellScale < 1) {
+      throw new RangeError(`${path}.cellScale must be >= 1`);
+    }
+  }
   if (entry.clip !== undefined) shape(entry.clip, `${path}.clip`);
 }
 

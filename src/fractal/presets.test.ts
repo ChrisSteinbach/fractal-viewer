@@ -66,9 +66,11 @@ import {
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
   PRESET_SYMMETRIES,
+  PRESET_TILINGS,
   PRESET_TRAPS,
   PRESET_SURFACE_ROOMS,
   presetTransforms,
+  type Preset,
   radiolarian,
   sierpinskiPyramid,
   sierpinskiTetrahedron,
@@ -1296,6 +1298,38 @@ describe("PRESET_RENDER_HINTS", () => {
     for (const key of Object.keys(PRESET_RENDER_HINTS)) {
       expect(PRESET_NAMES).toContain(key);
     }
+  });
+});
+
+describe("PRESET_TILINGS", () => {
+  it("ships the measured 3D B3 and genuinely 4D A4/F4 showcase matrix", () => {
+    expect(PRESET_TILINGS).toEqual({
+      tiledOctahedron: { group: "b3" },
+      tiledPentatope: { group: "a4" },
+      tiledTwentyFourCell: { group: "f4" },
+    });
+    const nonFlat = (name: Preset) =>
+      systemPartsAreNonFlat(presetTransforms(name), null, {
+        order: 1,
+        plane: "xz",
+      });
+    expect(nonFlat("tiledOctahedron")).toBe(false);
+    expect(nonFlat("tiledPentatope")).toBe(true);
+    expect(nonFlat("tiledTwentyFourCell")).toBe(true);
+  });
+
+  it("opens every tiling showcase in Surface and leaves the familiar sibling presets untiled", () => {
+    for (const name of [
+      "tiledOctahedron",
+      "tiledPentatope",
+      "tiledTwentyFourCell",
+    ] as const) {
+      expect(PRESET_NAMES).toContain(name);
+      expect(PRESET_RENDER_HINTS[name]).toBe("surface");
+    }
+    expect(PRESET_TILINGS.octahedron).toBeUndefined();
+    expect(PRESET_TILINGS.pentatope).toBeUndefined();
+    expect(PRESET_TILINGS.twentyFourCell).toBeUndefined();
   });
 });
 

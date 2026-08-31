@@ -487,6 +487,10 @@ describe("crossover-v1 field policy", () => {
       geometryLevelMin: 2,
       geometryLevelMax: 6,
     };
+    primary.tiling = {
+      group: "a3",
+      clip: sphereEmitter(0.45),
+    };
     primary.symmetry = { order: 3, plane: "xy", twist: 1 };
     secondary.finalTransform = {
       id: 99,
@@ -509,6 +513,11 @@ describe("crossover-v1 field policy", () => {
       shape: sphereEmitter(0.9),
       mode: "threshold",
       threshold: 0.2,
+    };
+    secondary.tiling = {
+      kind: "lattice",
+      cellScale: 5.5,
+      clip: sphereEmitter(0.85),
     };
     secondary.symmetry = { order: 5, plane: "yz" };
     const plan = prepared({ snapshot: primary }, { snapshot: secondary });
@@ -538,6 +547,12 @@ describe("crossover-v1 field policy", () => {
       expect([primary.shapeTrap, secondary.shapeTrap]).toContainEqual(
         child.shapeTrap,
       );
+      expect([primary.tiling, secondary.tiling]).toContainEqual(child.tiling);
+      if (child.tiling && "kind" in child.tiling) {
+        expect(child.tiling).toEqual(secondary.tiling);
+      } else {
+        expect(child.tiling).toEqual(primary.tiling);
+      }
       expect([primary.symmetry, secondary.symmetry]).toContainEqual(
         child.symmetry,
       );

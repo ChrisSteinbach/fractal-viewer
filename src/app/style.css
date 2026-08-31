@@ -966,6 +966,14 @@ input[type="range"] {
   cursor: pointer;
 }
 
+/* The finite-tiling gate is authored through trusted keyboard/touch input in
+   both desktop and phone-width panels. Its full label is the activation
+   target, so keep the target at the project-wide 44px floor even when the
+   desktop panel's generic checkbox rows remain compact. */
+#tilingSection > .checkbox-label {
+  min-height: 44px;
+}
+
 .select-label {
   display: block;
   margin-bottom: 10px;

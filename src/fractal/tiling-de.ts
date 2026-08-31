@@ -10,27 +10,27 @@ import type { SurfaceDE } from "./surface-de";
 import { estimateDistance, estimateDistanceRefined } from "./surface-de";
 import type { SurfaceDE4 } from "./surface-de-4d";
 import { estimateDistance4, estimateDistance4Refined } from "./surface-de-4d";
-import { foldToChamber } from "./tiling";
+import {
+  foldLattice3,
+  foldLattice4,
+  foldToChamber,
+  isResolvedLatticeTiling,
+} from "./tiling";
 import type { ResolvedTiling } from "./tiling";
 import type { Vec3, Vec4 } from "./types";
 
 /**
- * The query-space tiling wrappers — the estimator side of the space-tiling
- * vocabulary (`docs/tiling-contract.md` is the frozen record; `tiling.ts`
- * owns the groups, the fold and the resolver). This module owns exactly one
- * thing: the seven public estimator entries below, each of which folds the
- * query into the chamber with {@link foldToChamber} FIRST — once, before
- * anything else in the estimator path — evaluates the UNTOUCHED core at the
- * folded point with every other argument passed through unchanged, and
- * maxes the result with the clip's raw signed SDF. The cores stay
- * byte-identical (that is the point); this is the contract's wrapper order
- * (step 1, the tiling fold, and step 5, the clip max) applied OUTSIDE them,
- * the `descendLens`/`descendLens4` idiom — the wrapper owns the public
- * estimator names, so tiling absent means nothing anywhere changes.
+ * The dependency-free CPU estimator authority for both space-tiling arms
+ * (`docs/tiling-contract.md` is the frozen record; `tiling.ts` owns the
+ * union, resolver and folds). Each of the seven inverse/forward, 3D/4D public
+ * entries folds the query ONCE before the UNTOUCHED core and then applies the
+ * selected arm's narrowing terms. Every other core argument passes through
+ * unchanged; absent tiling never calls these wrappers.
  *
- * THE COMPOSITION, exactly as the contract's soundness chain:
+ * THE TWO COMPOSITIONS, exactly as the contract's soundness chain:
  *
- *     estimate(q) = max(DE(F(q)), clipDist(F(q)))
+ *     finite:  max(DE(F(q)), clipDist(F(q)))
+ *     lattice: max(DE(F(q)), length(F(q)) - R, clipDist(F(q)))
  *
  * with `DE(q') ≤ d(q', A)` the core's own lower bound, `clipDist` the
  * clip's conservative SDF, and the NEAREST-COPY THEOREM
@@ -38,10 +38,13 @@ import type { Vec3, Vec4 } from "./types";
  *
  *     DE(F(q)) ≤ d(F(q), A) ≤ d(F(q), A∩C∩clip) = d(q, T)
  *
- * — so the wrapper never overshoots: `estimate(q) ≤ d(q, T)` for the
- * rendered set `T = G·(A∩C∩clip)`. The chamber enters ONLY through the
- * fold: the wall distance is deliberately not a term (unsound as a max,
- * false geometry as a min), and the clip term uses the RAW SIGNED SDF —
+ * — so the wrapper never overshoots. The finite arm uses
+ * {@link foldToChamber}; the lattice arm mirrors x/z or x/z/w and preserves
+ * y. Its mandatory origin-centred ball term keeps canonical content inside
+ * the cell because the resolver proves `h >= R`, making the same theorem
+ * sound for the infinite product reflection group. The chamber enters ONLY
+ * through the fold: wall/seam distance is deliberately not a term (unsound as
+ * a max, false geometry as a min), and the clip term uses the RAW SIGNED SDF —
  * never a `max(0, ·)` — because `sdf ≤ d(q', clip) ≤ d(q', S)` holds
  * everywhere, so maxing with it never breaks soundness, and inside the
  * clip the negative term lets the estimate stay the DE (a point inside the
@@ -53,13 +56,13 @@ import type { Vec3, Vec4 } from "./types";
  * returns `>= cutoff`, the clip term (computed exactly, no early-out) or
  * the core's exact result holds the value; if it returns `< cutoff`, then
  * `inner < cutoff` (the core's guarantee: the full inner value is
- * `< cutoff`) AND `clip < cutoff`, so the full `max(inner, clip)` is
- * `< cutoff` too. The wrapper's contract is therefore the core's, with the
+ * `< cutoff`) AND every exact narrowing term is `< cutoff`, so the full max
+ * is `< cutoff` too. The wrapper's contract is therefore the core's, with the
  * core's `cutoff` argument threaded through unmodified.
  *
- * THE `null` FOLD RETURNS 0 — fully conservative, never an overshoot, and
- * by the fold's proven step bound (24 for F4, capped at
- * `tiling.ts`'s 32) it never fires.
+ * A `null` FINITE fold returns 0 — fully conservative, never an overshoot,
+ * and by the fold's proven step bound (24 for F4, capped at `tiling.ts`'s 32)
+ * it never fires. The lattice fold has fixed work and cannot fail.
  *
  * REFUSALS. Enforced HERE: the 4D slab (`halfExtent` a real segment
  * throws, both 4D entries) — the fold of a segment is a bent polyline
@@ -69,7 +72,7 @@ import type { Vec3, Vec4 } from "./types";
  * this module (a wrapper handed a refused combination has no way to know
  * it): the kaleidoscope (both are query-space folds, and the descent
  * cores' swept rotation has no certified lower-bound order after a tiling
- * fold — phase 1 never combines them), and the balloon (an orbit's echo
+ * fold), and the balloon (an orbit's echo
  * is not the echo's orbit). The H4/reducible-group refusals live in the
  * group vocabulary itself (`tiling.ts`'s `TILING_GROUPS`). A forward core
  * read here may still carry ITS OWN kaleidoscope (a query-space wedge
@@ -93,10 +96,10 @@ import type { Vec3, Vec4 } from "./types";
  * synchronous and single-threaded and every core copies its input point
  * before reading it.
  *
- * THESE ARE THE CPU ORACLES the GLSL tracers' and WGSL cores' compile-gated
- * tiling arms mirror; the surface-grid floors, the shading probe taps and
- * the march-epsilon cutoffs all ride the wrapper — every estimator
- * evaluation, probe included, folds first.
+ * THESE ARE THE CPU ORACLES. The existing finite GLSL/WGSL arms mirror the
+ * finite branch. A lattice renderer must mirror this same fold/ball/clip
+ * order for primary, normal, shadow and AO queries; routing currently refuses
+ * lattice until those shader and carrier paths land.
  */
 
 /** The folded 3D query, reused across calls — the wrappers run ~1e7 times
@@ -107,6 +110,51 @@ const FOLDED3: Vec3 = [0, 0, 0];
 
 /** The folded 4D query — `FOLDED3` one dimension up. */
 const FOLDED4: Vec4 = [0, 0, 0, 0];
+
+/** Fold through the selected tiling arm. The finite arm retains its guarded
+ * null result; the lattice arm has fixed work and cannot fail. */
+function foldQuery3(tiling: ResolvedTiling, p: Vec3): Vec3 | null {
+  return isResolvedLatticeTiling(tiling)
+    ? foldLattice3(p, tiling.h, FOLDED3)
+    : (foldToChamber(tiling.info, p, FOLDED3) as Vec3 | null);
+}
+
+function foldQuery4(tiling: ResolvedTiling, p: Vec4): Vec4 | null {
+  return isResolvedLatticeTiling(tiling)
+    ? foldLattice4(p, tiling.h, FOLDED4)
+    : (foldToChamber(tiling.info, p, FOLDED4) as Vec4 | null);
+}
+
+/** Finish the common 3D composition. The lattice ball is mandatory: it
+ * narrows canonical-cell content to the certified origin-centred ball whose
+ * radius derived `h`, making the infinite nearest-copy theorem applicable.
+ * Finite behavior stays value-identical because that arm skips this term. */
+function finish3(tiling: ResolvedTiling, q: Vec3, inner: number): number {
+  let result = inner;
+  if (isResolvedLatticeTiling(tiling)) {
+    result = Math.max(result, Math.hypot(q[0], q[1], q[2]) - tiling.radius);
+  }
+  if (tiling.clip) {
+    result = Math.max(result, shapeSdf(tiling.clip, q[0], q[1], q[2]));
+  }
+  return result;
+}
+
+/** 4D twin: the certified ball is the full visible 4D ball, never the
+ * slice-adjusted one; the authored clip remains extruded through w. */
+function finish4(tiling: ResolvedTiling, q: Vec4, inner: number): number {
+  let result = inner;
+  if (isResolvedLatticeTiling(tiling)) {
+    result = Math.max(
+      result,
+      Math.hypot(q[0], q[1], q[2], q[3]) - tiling.radius,
+    );
+  }
+  if (tiling.clip) {
+    result = Math.max(result, shapeSdf(tiling.clip, q[0], q[1], q[2]));
+  }
+  return result;
+}
 
 /** True when `halfExtent` describes a real slab rather than the point
  * query — replicated from `surface-de-4d.ts`'s private `isSegment` (not
@@ -139,12 +187,11 @@ export function estimateDistanceTiled(
   cutoff = 0,
   footprint = 0,
 ): number {
-  const folded = foldToChamber(tiling.info, p, FOLDED3);
+  const folded = foldQuery3(tiling, p);
   if (folded === null) return 0;
-  const q = folded as Vec3;
+  const q = folded;
   const inner = estimateDistance(de, q, cutoff, footprint);
-  if (!tiling.clip) return inner;
-  return Math.max(inner, shapeSdf(tiling.clip, q[0], q[1], q[2]));
+  return finish3(tiling, q, inner);
 }
 
 /**
@@ -160,12 +207,11 @@ export function estimateDistanceRefinedTiled(
   cutoff = 0,
   footprint = 0,
 ): number {
-  const folded = foldToChamber(tiling.info, p, FOLDED3);
+  const folded = foldQuery3(tiling, p);
   if (folded === null) return 0;
-  const q = folded as Vec3;
+  const q = folded;
   const inner = estimateDistanceRefined(de, q, cutoff, footprint);
-  if (!tiling.clip) return inner;
-  return Math.max(inner, shapeSdf(tiling.clip, q[0], q[1], q[2]));
+  return finish3(tiling, q, inner);
 }
 
 /**
@@ -189,12 +235,11 @@ export function estimateDistance4Tiled(
         "docs/tiling-contract.md); tiled 4D sessions run slice 0",
     );
   }
-  const folded = foldToChamber(tiling.info, p, FOLDED4);
+  const folded = foldQuery4(tiling, p);
   if (folded === null) return 0;
-  const q = folded as Vec4;
+  const q = folded;
   const inner = estimateDistance4(de, q, halfExtent);
-  if (!tiling.clip) return inner;
-  return Math.max(inner, shapeSdf(tiling.clip, q[0], q[1], q[2]));
+  return finish4(tiling, q, inner);
 }
 
 /**
@@ -217,12 +262,11 @@ export function estimateDistance4RefinedTiled(
         "docs/tiling-contract.md); tiled 4D sessions run slice 0",
     );
   }
-  const folded = foldToChamber(tiling.info, p, FOLDED4);
+  const folded = foldQuery4(tiling, p);
   if (folded === null) return 0;
-  const q = folded as Vec4;
+  const q = folded;
   const inner = estimateDistance4Refined(de, q, cutoff, halfExtent);
-  if (!tiling.clip) return inner;
-  return Math.max(inner, shapeSdf(tiling.clip, q[0], q[1], q[2]));
+  return finish4(tiling, q, inner);
 }
 
 /**
@@ -241,12 +285,11 @@ export function estimateEscapeDistanceTiled(
   maxIterations = ESCAPE_TIME_ITERATIONS,
   trap: ResolvedShapeTrap | null = null,
 ): number {
-  const folded = foldToChamber(tiling.info, p, FOLDED3);
+  const folded = foldQuery3(tiling, p);
   if (folded === null) return 0;
-  const q = folded as Vec3;
+  const q = folded;
   const inner = estimateEscapeDistance(de, q, maxIterations, trap);
-  if (!tiling.clip) return inner;
-  return Math.max(inner, shapeSdf(tiling.clip, q[0], q[1], q[2]));
+  return finish3(tiling, q, inner);
 }
 
 /**
@@ -260,12 +303,11 @@ export function estimateBulbDistanceTiled(
   p: Vec3,
   maxIterations = BULB_ITERATIONS,
 ): number {
-  const folded = foldToChamber(tiling.info, p, FOLDED3);
+  const folded = foldQuery3(tiling, p);
   if (folded === null) return 0;
-  const q = folded as Vec3;
+  const q = folded;
   const inner = estimateBulbDistance(de, q, maxIterations);
-  if (!tiling.clip) return inner;
-  return Math.max(inner, shapeSdf(tiling.clip, q[0], q[1], q[2]));
+  return finish3(tiling, q, inner);
 }
 
 /**
@@ -281,10 +323,9 @@ export function estimateEscapeDistance4Tiled(
   maxIterations = ESCAPE_TIME_ITERATIONS,
   trap: ResolvedShapeTrap | null = null,
 ): number {
-  const folded = foldToChamber(tiling.info, p, FOLDED4);
+  const folded = foldQuery4(tiling, p);
   if (folded === null) return 0;
-  const q = folded as Vec4;
+  const q = folded;
   const inner = estimateEscapeDistance4(de, q, maxIterations, trap);
-  if (!tiling.clip) return inner;
-  return Math.max(inner, shapeSdf(tiling.clip, q[0], q[1], q[2]));
+  return finish4(tiling, q, inner);
 }

@@ -111,7 +111,7 @@ import {
   TILING_GROUP_INFO,
   tilingFoldSource,
   tilingGroupCode,
-  type ResolvedTiling,
+  type ResolvedFiniteTiling,
 } from "./tiling";
 
 /** Two-map pure-boxfold system (the pure-fold shape used throughout
@@ -8136,7 +8136,7 @@ describe("finite reflection tiling WGSL and params ABI", () => {
   function expectTilingTail(
     plain: ArrayBuffer,
     tiled: ArrayBuffer,
-    tiling: ResolvedTiling,
+    tiling: ResolvedFiniteTiling,
   ): void {
     expect(SURFACE_GPU_TILING_BYTES).toBe(16);
     expect(tiled.byteLength).toBe(plain.byteLength + 16);
@@ -8515,7 +8515,7 @@ describe("finite reflection tiling WGSL and params ABI", () => {
     const nonCanonical = {
       ...tiled3,
       info: { ...tiled3.info },
-    } satisfies ResolvedTiling;
+    } satisfies ResolvedFiniteTiling;
     expect(() =>
       surfaceDeKernelWgsl(kernelOpts({ tiling: nonCanonical })),
     ).toThrow(/canonical resolveTiling result/);

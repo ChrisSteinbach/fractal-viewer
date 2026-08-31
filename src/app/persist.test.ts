@@ -7002,8 +7002,36 @@ describe("tiling codec (the space-tiling block)", () => {
     const result = decodeScene(
       encodeScene({ ...baseSnapshot(), tiling: { group: "f4", clip } }),
     );
-    expect(result!.tiling?.group).toBe("f4");
-    expect(result!.tiling?.clip).toEqual(clip);
+    expect(result!.tiling).toEqual({ group: "f4", clip });
+  });
+
+  it("round-trips the lattice arm with required cellScale and the shared clip codec", () => {
+    const clip: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.75 },
+          combine: "union",
+          pose: { offset: [0.2, 0, -0.1] },
+        },
+      ],
+    };
+    for (const cellScale of [1, 1.375, 8, Number.MAX_VALUE]) {
+      const tiling = { kind: "lattice" as const, cellScale, clip };
+      expect(
+        decodeScene(encodeScene({ ...baseSnapshot(), tiling }))!.tiling,
+      ).toEqual(tiling);
+    }
+  });
+
+  it("writes the lattice discriminator and explicit scale only — no default or provisional range", () => {
+    const wire = decodePayload(
+      encodeScene({
+        ...baseSnapshot(),
+        tiling: { kind: "lattice", cellScale: 12.5 },
+      }),
+    ).tiling as Record<string, unknown>;
+    expect(wire).toEqual({ kind: "lattice", cellScale: 12.5 });
+    expect(Object.keys(wire).sort()).toEqual(["cellScale", "kind"]);
   });
 
   it("writes nothing without a block — an unauthored scene stays byte-identical to one predating the field", () => {
@@ -7061,6 +7089,16 @@ describe("tiling codec (the space-tiling block)", () => {
       { group: "a3", clip: { parts: "x" } },
       { group: "a3", clip: ["s", "1"] },
       { group: "a3", clip: { parts: [{ primitive: { kind: "wobble" } }] } },
+      { kind: "translation", cellScale: 2 },
+      { kind: "lattice" },
+      { kind: "lattice", cellScale: "2" },
+      { kind: "lattice", cellScale: null },
+      { kind: "lattice", cellScale: 0.999 },
+      { kind: "lattice", cellScale: Infinity },
+      { kind: "lattice", cellScale: NaN },
+      { kind: "lattice", cellScale: 2, group: "a3" },
+      { group: "a3", cellScale: 2 },
+      { kind: "lattice", cellScale: 2, clip: { parts: "x" } },
     ]) {
       const decoded = mangle(patch);
       expect(decoded).not.toBeNull();

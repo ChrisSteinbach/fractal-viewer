@@ -13,6 +13,8 @@ import {
 import {
   TILING_GROUP_INFO,
   enumerateOrbit,
+  foldLattice3,
+  foldLattice4,
   foldToChamber,
   isInChamber,
   resolveTiling,
@@ -775,5 +777,176 @@ describe("forward family — decomposition identity only (test 9)", () => {
         ).toBe(Math.max(inner, clipTerm));
       }
     }
+  });
+});
+
+describe("mirrored lattice estimator composition", () => {
+  const clip = sphereClip([0.25, -0.1, 0.2], 0.8);
+
+  it("applies x/z mirror, certified ball, and clip to inverse 3D plain/refined cores", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    const t = resolveTiling(
+      { kind: "lattice", cellScale: 1.75, clip },
+      de.visibleBoundingRadius,
+    );
+    const rng = mulberry32(0x1a13);
+    for (let i = 0; i < 100; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 30,
+        (rng() - 0.5) * 6,
+        (rng() - 0.5) * 30,
+      ];
+      const q = foldLattice3(p, t.h, [0, 0, 0]);
+      const ball = Math.hypot(q[0], q[1], q[2]) - t.radius;
+      const clipTerm = shapeSdf(clip, q[0], q[1], q[2]);
+      expect(estimateDistanceTiled(t, de, p)).toBe(
+        Math.max(estimateDistance(de, q), ball, clipTerm),
+      );
+      expect(estimateDistanceRefinedTiled(t, de, p)).toBe(
+        Math.max(estimateDistanceRefined(de, q), ball, clipTerm),
+      );
+    }
+  });
+
+  it("has no seam status or false zero: exact and adjacent walls evaluate ordinary content", () => {
+    const fixed: Vec3 = [0.34, 0.06, 0.21];
+    const de = buildSurfaceDE(pointAttractor(fixed));
+    const t = resolveTiling(
+      { kind: "lattice", cellScale: 1.5 },
+      de.visibleBoundingRadius,
+    );
+    for (const axis of [0, 2] as const) {
+      for (const wall of [-t.h, t.h]) {
+        const at: Vec3 = [0, fixed[1], 0];
+        at[axis] = wall;
+        at[axis === 0 ? 2 : 0] = fixed[axis === 0 ? 2 : 0];
+        const value = estimateDistanceTiled(t, de, at);
+        expect(value).toBeGreaterThan(1e-3);
+        for (const delta of [-1e-9, 1e-9]) {
+          const adjacent: Vec3 = [...at];
+          adjacent[axis] += delta;
+          expect(estimateDistanceTiled(t, de, adjacent)).toBeCloseTo(value, 7);
+        }
+      }
+    }
+  });
+
+  it("applies x/z/w mirror and the full visible 4D ball to both inverse entries", () => {
+    const de = buildSurfaceDE4(pentatope());
+    const t = resolveTiling(
+      { kind: "lattice", cellScale: 2, clip },
+      de.visibleBoundingRadius,
+    );
+    const rng = mulberry32(0x1a14);
+    for (let i = 0; i < 80; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 20,
+        (rng() - 0.5) * 5,
+        (rng() - 0.5) * 20,
+        (rng() - 0.5) * 20,
+      ];
+      const q = foldLattice4(p, t.h, [0, 0, 0, 0]);
+      const ball = Math.hypot(q[0], q[1], q[2], q[3]) - t.radius;
+      const clipTerm = shapeSdf(clip, q[0], q[1], q[2]);
+      expect(estimateDistance4Tiled(t, de, p)).toBe(
+        Math.max(estimateDistance4(de, q), ball, clipTerm),
+      );
+      expect(estimateDistance4RefinedTiled(t, de, p)).toBe(
+        Math.max(estimateDistance4Refined(de, q), ball, clipTerm),
+      );
+    }
+  });
+
+  it("keeps inverse/forward families on the same lattice wrapper", () => {
+    const inverse = buildSurfaceDE(mandelboxKifs());
+    const escape = buildEscapeDE([canonicalMandelbox()]);
+    const bulb = buildBulbDE(mandelbulbClassic());
+    const escape4 = buildEscapeDE4([
+      canonicalMandelbox(),
+      canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+    ]);
+    const rows = [
+      {
+        de: inverse,
+        radius: inverse.visibleBoundingRadius,
+        core: (q: Vec3) => estimateDistance(inverse, q),
+        wrapped: (t: ReturnType<typeof resolveTiling>, p: Vec3) =>
+          estimateDistanceTiled(t!, inverse, p),
+      },
+      {
+        de: escape,
+        radius: escape.boundingRadius,
+        core: (q: Vec3) => estimateEscapeDistance(escape, q),
+        wrapped: (t: ReturnType<typeof resolveTiling>, p: Vec3) =>
+          estimateEscapeDistanceTiled(t!, escape, p),
+      },
+      {
+        de: bulb,
+        radius: bulb.boundingRadius,
+        core: (q: Vec3) => estimateBulbDistance(bulb, q),
+        wrapped: (t: ReturnType<typeof resolveTiling>, p: Vec3) =>
+          estimateBulbDistanceTiled(t!, bulb, p),
+      },
+    ];
+    const p: Vec3 = [-7.3, 0.2, 8.4];
+    for (const row of rows) {
+      const t = resolveTiling({ kind: "lattice", cellScale: 1.4 }, row.radius);
+      const q = foldLattice3(p, t.h, [0, 0, 0]);
+      expect(row.wrapped(t, p)).toBe(
+        Math.max(row.core(q), Math.hypot(q[0], q[1], q[2]) - t.radius),
+      );
+    }
+
+    const t4 = resolveTiling(
+      { kind: "lattice", cellScale: 1.4 },
+      escape4.boundingRadius,
+    );
+    const p4: Vec4 = [-7.3, 0.2, 8.4, -4.8];
+    const q4 = foldLattice4(p4, t4.h, [0, 0, 0, 0]);
+    expect(estimateEscapeDistance4Tiled(t4, escape4, p4)).toBe(
+      Math.max(
+        estimateEscapeDistance4(escape4, q4),
+        Math.hypot(q4[0], q4[1], q4[2], q4[3]) - t4.radius,
+      ),
+    );
+  });
+
+  it("folds a genuine inverse-rotated xw slice query before evaluating w", () => {
+    const de = buildSurfaceDE4(pentatope());
+    const t = resolveTiling(
+      { kind: "lattice", cellScale: 1.3 },
+      de.visibleBoundingRadius,
+    );
+    const angle = 0.63;
+    const w0 = 0.37;
+    const p: Vec3 = [4.2, -0.15, -3.1];
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const attractorQuery: Vec4 = [
+      c * p[0] + s * w0,
+      p[1],
+      p[2],
+      -s * p[0] + c * w0,
+    ];
+    const folded = foldLattice4(attractorQuery, t.h, [0, 0, 0, 0]);
+    expect(estimateDistance4Tiled(t, de, attractorQuery)).toBe(
+      Math.max(
+        estimateDistance4(de, folded),
+        Math.hypot(folded[0], folded[1], folded[2], folded[3]) - t.radius,
+      ),
+    );
+    // Omitting w repetition produces a different query for this pose.
+    expect(folded[3]).not.toBeCloseTo(attractorQuery[3], 10);
+  });
+
+  it("keeps the existing 4D slab refusal for the lattice arm", () => {
+    const de = buildSurfaceDE4(pentatope());
+    const t = resolveTiling(
+      { kind: "lattice", cellScale: 1 },
+      de.visibleBoundingRadius,
+    );
+    expect(() =>
+      estimateDistance4Tiled(t, de, [0.1, 0.2, 0.3, 0.4], [0, 0, 0, 0.1]),
+    ).toThrow(/segment|slab|polyline/);
   });
 });

@@ -105,6 +105,7 @@ function populatedSnapshot(): SceneSnapshot {
     geometryLevelMin: 1,
     geometryLevelMax: 5,
   };
+  snapshot.tiling = { kind: "lattice", cellScale: 9.5 };
   snapshot.customPalette = {
     stops: [
       [0, 0.25, 1],
@@ -172,6 +173,11 @@ function trap(snapshot: SceneSnapshot) {
   return snapshot.shapeTrap;
 }
 
+function tiling(snapshot: SceneSnapshot): Record<string, unknown> {
+  if (!snapshot.tiling) throw new Error("test fixture lacks tiling");
+  return record(snapshot.tiling);
+}
+
 function corrupt(change: Corruption): SceneSnapshot {
   const snapshot = populatedSnapshot();
   change(snapshot);
@@ -228,6 +234,7 @@ describe("crossover-v1 exact SceneSnapshot validation", () => {
     });
     primary.transforms[0].position[0] = -0;
     primary.colorGamma = 1.2345678901234567;
+    secondary.tiling = { group: "f4" };
 
     const result = prepareEvolutionCrossover(
       { snapshot: primary },
@@ -327,6 +334,7 @@ describe("crossover-v1 exact SceneSnapshot validation", () => {
       (s) => Object.assign(record(s.condensationDepthBand), { futureBand: 1 }),
     ],
     ["shape trap", (s) => Object.assign(trap(s), { futureTrap: 1 })],
+    ["tiling", (s) => Object.assign(tiling(s), { futureTiling: 1 })],
     ["ShapeSpec", (s) => Object.assign(trap(s).shape, { futureShape: 1 })],
     [
       "ShapePart",
@@ -430,6 +438,18 @@ describe("crossover-v1 exact SceneSnapshot validation", () => {
     ["bad trap mode", (s) => (record(trap(s)).mode = "closest")],
     ["bad trap boolean", (s) => (record(trap(s)).geometry = 1)],
     ["reversed trap levels", (s) => (trap(s).geometryLevelMin = 6)],
+    ["unknown tiling kind", (s) => (tiling(s).kind = "translation")],
+    ["missing lattice scale", (s) => delete tiling(s).cellScale],
+    ["string lattice scale", (s) => (tiling(s).cellScale = "2")],
+    ["sub-one lattice scale", (s) => (tiling(s).cellScale = 0.999)],
+    ["non-finite lattice scale", (s) => (tiling(s).cellScale = Infinity)],
+    ["group on lattice", (s) => (tiling(s).group = "a3")],
+    [
+      "finite tiling cellScale",
+      (s) => (record(s).tiling = { group: "a3", cellScale: 2 }),
+    ],
+    ["bad finite tiling group", (s) => (record(s).tiling = { group: "x3" })],
+    ["bad lattice clip", (s) => (tiling(s).clip = { parts: "not-an-array" })],
     ["bad schedule depth", (s) => (record(s.schedule).depth = 6)],
     [
       "schedule variation",

@@ -129,7 +129,7 @@ import {
 } from "../fractal/chaos-game";
 import { MAX_SHAPE_PARTS } from "../fractal/shapes";
 import type { ShapePart, ShapePose, ShapeSpec } from "../fractal/shapes";
-import { TILING_GROUPS } from "../fractal/tiling";
+import { TILING_GROUPS, isLatticeTilingSpec } from "../fractal/tiling";
 import type { TilingGroup, TilingSpec } from "../fractal/tiling";
 import { isMeshAssetId } from "../fractal/mesh-shapes";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
@@ -1213,19 +1213,40 @@ function decodeShapeTrap(raw: unknown): ShapeTrap | undefined {
  * block, a clip that fails {@link decodeEmitter}'s spec codec — drops the
  * ENTIRE block to `undefined` rather than rejecting the scene or salvaging
  * fields (tiling is one composition, not a bag of leaves), and never throws.
- * The group decodes by EXACT string match against the shipped union
- * (`TILING_GROUPS` — the runtime set built from the const array, the same
- * validator discipline the color-mode sets use), so a future group a newer
- * build shipped is dropped whole by an older build rather than decoded into
- * a group the resolver would throw on; the clip rides the shape spec codec
- * exactly as the trap's shape does (one spec vocabulary, one codec).
+ * The legacy finite arm keeps its exact `{group,clip?}` wire. The lattice arm
+ * is `{kind:"lattice",cellScale,clip?}` and requires an explicit finite
+ * `cellScale >= 1`: no provisional default or narrower UI range is frozen in
+ * persistence. Cross-arm leaves (group on a lattice, kind/cellScale on a
+ * finite block), unknown kinds, and malformed clips drop the whole block.
  */
 function decodeTiling(raw: unknown): TilingSpec | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return undefined;
   }
   const o = raw as Record<string, unknown>;
+  if (o.kind !== undefined) {
+    if (
+      o.kind !== "lattice" ||
+      o.group !== undefined ||
+      typeof o.cellScale !== "number" ||
+      !Number.isFinite(o.cellScale) ||
+      o.cellScale < 1
+    ) {
+      return undefined;
+    }
+    const tiling: TilingSpec = {
+      kind: "lattice",
+      cellScale: o.cellScale,
+    };
+    if (o.clip !== undefined) {
+      const clip = decodeEmitter(o.clip);
+      if (clip === undefined) return undefined;
+      tiling.clip = clip;
+    }
+    return tiling;
+  }
   if (
+    o.cellScale !== undefined ||
     typeof o.group !== "string" ||
     !TILING_GROUPS.some((g) => g === o.group)
   ) {
@@ -2762,10 +2783,16 @@ export function encodeScene(s: SceneSnapshot): string {
     };
     condensationDepthBand?: CondensationDepthBand;
     shapeTrap?: EncodedShapeTrap;
-    tiling?: {
-      group: TilingGroup;
-      clip?: EncodedShapeSpec;
-    };
+    tiling?:
+      | {
+          group: TilingGroup;
+          clip?: EncodedShapeSpec;
+        }
+      | {
+          kind: "lattice";
+          cellScale: number;
+          clip?: EncodedShapeSpec;
+        };
     numPoints: number;
     pointSize: number;
     colorMode: ColorMode;
@@ -3074,18 +3101,19 @@ export function encodeScene(s: SceneSnapshot): string {
       payload.shapeTrap = trap;
     }
   }
-  // The space-tiling block: written only when present — the schedule's
-  // discipline one block down. The group is a discrete string written
-  // verbatim; the optional clip rides the emitter spec's encoder (one spec
-  // vocabulary, one codec) and is written only when present AND when it
-  // survives the encoder (each optional field's own rule), so a group-only
-  // block carries the group alone.
+  // The one space-tiling block, written only when present. The finite arm
+  // retains its historical `{group,clip?}` bytes. The lattice arm writes its
+  // discriminator plus REQUIRED authored cellScale — no implicit default.
+  // Both arms share the emitter spec encoder for their optional clip.
   if (s.tiling) {
     const clip =
       s.tiling.clip === undefined ? undefined : encodeEmitter(s.tiling.clip);
-    const encoded: { group: TilingGroup; clip?: EncodedShapeSpec } = {
-      group: s.tiling.group,
-    };
+    const encoded:
+      | { group: TilingGroup; clip?: EncodedShapeSpec }
+      | { kind: "lattice"; cellScale: number; clip?: EncodedShapeSpec } =
+      isLatticeTilingSpec(s.tiling)
+        ? { kind: "lattice", cellScale: s.tiling.cellScale }
+        : { group: s.tiling.group };
     if (clip !== undefined) encoded.clip = clip;
     payload.tiling = encoded;
   }

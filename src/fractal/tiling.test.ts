@@ -7,15 +7,24 @@ import {
   TILING_GROUPS,
   chamberDistance,
   enumerateOrbit,
+  foldLattice3,
+  foldLattice4,
   foldToChamber,
   foldToChamberWithSteps,
   isInChamber,
+  isResolvedLatticeTiling,
+  mirrorLatticeCoordinate,
   reflectAcrossWall,
   resolveTiling,
   tilingFoldSource,
   tilingGroupCode,
 } from "./tiling";
-import type { TilingGroup, TilingGroupInfo, TilingSpec } from "./tiling";
+import type {
+  FiniteTilingSpec,
+  TilingGroup,
+  TilingGroupInfo,
+  TilingSpec,
+} from "./tiling";
 import type { Vec3, Vec4 } from "./types";
 
 /** The frozen contract's tables, written out here independently of the
@@ -657,7 +666,101 @@ describe("resolveTiling", () => {
 
   it("throws on an unknown group", () => {
     expect(() =>
-      resolveTiling({ group: "x4" } as unknown as TilingSpec),
+      resolveTiling({ group: "x4" } as unknown as FiniteTilingSpec),
     ).toThrow(/unknown tiling group/);
+  });
+
+  it("resolves an explicitly-authored lattice from the certified radius, without a default or upper clamp", () => {
+    const clip: ShapeSpec = {
+      parts: [{ primitive: { kind: "sphere", radius: 0.5 }, combine: "union" }],
+    };
+    const r = resolveTiling({ kind: "lattice", cellScale: 7.25, clip }, 2.4);
+    expect(isResolvedLatticeTiling(r)).toBe(true);
+    expect(r).toEqual({
+      kind: "lattice",
+      cellScale: 7.25,
+      radius: 2.4,
+      h: 17.4,
+      clip,
+    });
+  });
+
+  it("requires the accepted lattice domain and a certified positive radius", () => {
+    // @ts-expect-error A lattice cannot resolve without its certified radius.
+    expect(() => resolveTiling({ kind: "lattice", cellScale: 1 })).toThrow(
+      /radius/,
+    );
+    for (const cellScale of [0.999, 0, -1, Infinity, -Infinity, NaN]) {
+      expect(() =>
+        resolveTiling({ kind: "lattice", cellScale } as TilingSpec, 2),
+      ).toThrow(/cellScale/);
+    }
+    for (const radius of [undefined, 0, -1, Infinity, NaN]) {
+      expect(() =>
+        resolveTiling({ kind: "lattice", cellScale: 1 }, radius as number),
+      ).toThrow(/radius/);
+    }
+    expect(() =>
+      resolveTiling(
+        { kind: "lattice", cellScale: Number.MAX_VALUE },
+        Number.MAX_VALUE,
+      ),
+    ).toThrow(/overflow/);
+    expect(() =>
+      resolveTiling({ kind: "lattice", cellScale: Number.MAX_VALUE }, 1),
+    ).toThrow(/f32 4h period/);
+    const maxHalfCell = 3.4028234663852886e38 / 4;
+    const edge = resolveTiling({ kind: "lattice", cellScale: maxHalfCell }, 1);
+    expect(Number.isFinite(mirrorLatticeCoordinate(0, edge.h))).toBe(true);
+    expect(() =>
+      resolveTiling(
+        { kind: "lattice", cellScale: maxHalfCell * (1 + 1e-6) },
+        1,
+      ),
+    ).toThrow(/f32 4h period/);
+  });
+});
+
+describe("mirrored affine-A1 lattice fold", () => {
+  const h = 1.7;
+
+  it("is continuous and non-zero-generating at exact and adjacent seams", () => {
+    for (const wall of [-h, h]) {
+      const at = mirrorLatticeCoordinate(wall, h);
+      expect(mirrorLatticeCoordinate(wall - 1e-10, h)).toBeCloseTo(at, 8);
+      expect(mirrorLatticeCoordinate(wall + 1e-10, h)).toBeCloseTo(at, 8);
+      expect(Math.abs(at)).toBeCloseTo(h, 12);
+    }
+  });
+
+  it("uses floor-mod semantics for negative cells and preserves phase at large supported coordinates", () => {
+    const probes = [-6.73, -3.41, -0.37, 0.37, 2.91, 8.13];
+    for (const x of probes) {
+      const folded = mirrorLatticeCoordinate(x, h);
+      expect(folded).toBeGreaterThanOrEqual(-h);
+      expect(folded).toBeLessThanOrEqual(h);
+      for (const cell of [-2048, -127, 127, 2048]) {
+        expect(mirrorLatticeCoordinate(x + 4 * h * cell, h)).toBeCloseTo(
+          folded,
+          9,
+        );
+      }
+    }
+  });
+
+  it("folds x/z in 3D and x/z/w in 4D while leaving y exact", () => {
+    const p3: Vec3 = [-6.2, -0.375, 8.1];
+    const p4: Vec4 = [-6.2, -0.375, 8.1, -4.7];
+    expect(foldLattice3(p3, h, [0, 0, 0])).toEqual([
+      mirrorLatticeCoordinate(p3[0], h),
+      p3[1],
+      mirrorLatticeCoordinate(p3[2], h),
+    ]);
+    expect(foldLattice4(p4, h, [0, 0, 0, 0])).toEqual([
+      mirrorLatticeCoordinate(p4[0], h),
+      p4[1],
+      mirrorLatticeCoordinate(p4[2], h),
+      mirrorLatticeCoordinate(p4[3], h),
+    ]);
   });
 });
