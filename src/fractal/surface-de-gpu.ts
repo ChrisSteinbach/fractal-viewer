@@ -50,6 +50,12 @@ import {
 } from "./surface-finish";
 import { surfacePatternShadeSourceWgsl } from "./surface-pattern-shade";
 import {
+  TILING_GROUP_INFO,
+  tilingFoldSource,
+  tilingGroupCode,
+  type ResolvedTiling,
+} from "./tiling";
+import {
   surfaceMaterialLanes,
   type ResolvedSurfaceMaterial,
 } from "./surface-material-wire";
@@ -1065,6 +1071,98 @@ export const SURFACE_GPU_PARAMS_TRAP_BYTES =
  * the offset is 624 and the pads under it are the guarantee.) */
 export const SURFACE_GPU_PARAMS4_TRAP_BYTES =
   SURFACE_GPU_PARAMS4_PLANE_BYTES + 64;
+/** Finite tiling appends one live group-id `u32` after EVERY existing legal
+ * params tail, plus the 12 zero bytes required to round the uniform struct's
+ * size back to its 16-byte alignment. Roots and the optional analytic clip
+ * are baked into the compiled source; the word is a stale-source/wire guard,
+ * with 0 reserved for the absent case. Balloon has deliberately NO tiling
+ * twin: the two are refused (an orbit's echo is not the echo's orbit). */
+export const SURFACE_GPU_TILING_BYTES = 16;
+
+// 3D legal-combination audit: plane x condensation x schedule x chaos,
+// plus the forward trap tail. Lens shares the base 288-byte prefix.
+export const SURFACE_GPU_PARAMS_TILING_BYTES =
+  SURFACE_GPU_PARAMS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_TILING_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_CONDENSATION_TILING_BYTES =
+  SURFACE_GPU_PARAMS_CONDENSATION_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_CONDENSATION_TILING_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_SCHEDULE_TILING_BYTES =
+  SURFACE_GPU_PARAMS_SCHEDULE_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_SCHEDULE_TILING_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_TILING_BYTES =
+  SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_TILING_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES +
+  SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_CONDENSATION_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS_CONDENSATION_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_CONDENSATION_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_CONDENSATION_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_SCHEDULE_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS_SCHEDULE_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_CHAOS_BYTES +
+  SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_CHAOS_BYTES +
+  SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS_TRAP_TILING_BYTES =
+  SURFACE_GPU_PARAMS_TRAP_BYTES + SURFACE_GPU_TILING_BYTES;
+
+// 4D legal-combination audit. A plain descent appends at 464; a lens and
+// escape4 append at their frozen 576-byte variant tail; later blocks keep
+// their existing forced-576 layout. The names intentionally mirror 3D.
+export const SURFACE_GPU_PARAMS4_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_LENS_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_LENS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_ESCAPE_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_ESCAPE_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_CONDENSATION_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_CONDENSATION_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_SCHEDULE_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_SCHEDULE_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES +
+  SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_CONDENSATION_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_CONDENSATION_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_SCHEDULE_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_SCHEDULE_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CHAOS_BYTES + SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_CHAOS_BYTES +
+  SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_CHAOS_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_CHAOS_BYTES +
+  SURFACE_GPU_TILING_BYTES;
+export const SURFACE_GPU_PARAMS4_TRAP_TILING_BYTES =
+  SURFACE_GPU_PARAMS4_TRAP_BYTES + SURFACE_GPU_TILING_BYTES;
 export const SURFACE_GPU_MAP_VEC4 = 7;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
 /** vec4f slots per 4D map (`struct GpuMap4`): four invM rows, invT, and
@@ -1354,6 +1452,47 @@ function writeSurfaceChaosBlock(
   }
 }
 
+/** Validate and transfer the resolver's finite-tiling answer. The packer and
+ * source generator both call this ONE defensive seam, so neither can accept a
+ * stale/non-canonical group table, a group from the wrong dimension, or a mesh
+ * clip that this compile-gated source path cannot bind. The group code itself
+ * comes from `tiling.ts`; no GPU mirror re-derives the document mapping. */
+function surfaceTilingWireInfo(
+  tiling: ResolvedTiling | null | undefined,
+  dimension: 3 | 4,
+): { code: number; tiling: ResolvedTiling } | null {
+  if (!tiling) return null;
+  if (
+    tiling.info !== TILING_GROUP_INFO[tiling.group] ||
+    tiling.info.id !== tiling.group
+  ) {
+    throw new Error(
+      "surface-de-gpu: tiling must be the canonical resolveTiling result",
+    );
+  }
+  if (tiling.info.dim !== dimension) {
+    throw new Error(
+      `surface-de-gpu: tiling group ${tiling.group} is ${tiling.info.dim}D, ` +
+        `but this is a ${dimension}D core`,
+    );
+  }
+  if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
+    throw new Error(
+      "surface-de-gpu: mesh-bearing tiling clips are unsupported; finite " +
+        "tiling accepts analytic ShapeSpecs only",
+    );
+  }
+  return { code: tilingGroupCode(tiling.group), tiling };
+}
+
+function writeSurfaceTilingBlock(
+  view: DataView,
+  offset: number,
+  tiling: { code: number },
+): void {
+  view.setUint32(offset, tiling.code, true);
+}
+
 /** Shade uniform size under the pattern gate (shade mode): the 224-byte
  * layout plus the calibration quartet at the frozen offset 224 (layout
  * contract in the module doc). Only a shade kernel generated with
@@ -1494,6 +1633,17 @@ export interface SurfaceGpuKernelOptions {
    * and `lens` composes exactly as the GLSL side's stripped lens+plane
    * program does. Inert in eval mode (no rays terminate). */
   groundPlane?: boolean;
+  /** Finite reflection tiling, resolved by `tiling.ts` before this seam.
+   * The group roots and optional analytic clip are baked into the source;
+   * a one-u32 group id appends after every enabled params tail and guards
+   * the compiled group against a stale wire. The wrapper folds the query
+   * FIRST, calls the otherwise untouched compiled core/lens at that folded
+   * point, then maxes with the clip's raw signed SDF — the CPU wrappers in
+   * `tiling-de.ts` exactly. Null/absent emits the pre-tiling source byte for
+   * byte. All seven cores compose; `balloon`, kaleidoscope and a real 4D
+   * slab are refused by the codegen/pack seams with the contract's reasons.
+   * Mesh-bearing clips are refused until tiling owns a mesh-atlas binding. */
+  tiling?: ResolvedTiling | null;
   /** Per-slot surface FINISHES (surface-finish.ts): replace the shade
    * entry's fixed Blinn-Phong lines with the emitted `finishShade`
    * (`surfaceFinishShadeSource(SURFACE_FINISH_WGSL)`) reading each hit
@@ -1825,16 +1975,30 @@ export function packSurfaceGpuParams(
   run: SurfaceGpuRunParams,
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
   groundPlane: SurfaceGpuGroundPlane | null = null,
+  tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
   const chaos = surfaceChaosWireInfo(de);
+  const tilingInfo = surfaceTilingWireInfo(tiling, 3);
   validateSurfacePhysicalMapCount(de, condensation?.emitterCount ?? 0);
   if (balloon && groundPlane) {
     throw new Error(
       "surface-de-gpu: groundPlane+balloon: excluded — the two " +
         "blocks share the frozen offset 288 and the kernels refuse the " +
         "pair",
+    );
+  }
+  if (balloon && tilingInfo) {
+    throw new Error(
+      "surface-de-gpu: tiling+balloon is excluded — an orbit's echo is " +
+        "not the echo's orbit, so there is no certified composition",
+    );
+  }
+  if (tilingInfo && de.symmetry.order > 1) {
+    throw new Error(
+      "surface-de-gpu: tiling+kaleidoscope is excluded — both are " +
+        "query-space folds and phase 1 has no certified order",
     );
   }
   if (de.foldFinal && de.final) {
@@ -1888,7 +2052,9 @@ export function packSurfaceGpuParams(
           ? SURFACE_GPU_PARAMS_PLANE_BYTES
           : SURFACE_GPU_PARAMS_BYTES;
   const buf = new ArrayBuffer(
-    baseBytes + (chaos ? SURFACE_GPU_CHAOS_BYTES : 0),
+    baseBytes +
+      (chaos ? SURFACE_GPU_CHAOS_BYTES : 0) +
+      (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0),
   );
   const view = new DataView(buf);
   const rootBound = schedule ? de.schedule?.bounds[0] : undefined;
@@ -2005,6 +2171,13 @@ export function packSurfaceGpuParams(
   if (chaos) {
     writeSurfaceChaosBlock(view, baseBytes, chaos);
   }
+  if (tilingInfo) {
+    writeSurfaceTilingBlock(
+      view,
+      baseBytes + (chaos ? SURFACE_GPU_CHAOS_BYTES : 0),
+      tilingInfo,
+    );
+  }
   return buf;
 }
 
@@ -2077,13 +2250,22 @@ export function packEscapeGpuParams(
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   shapeTrap: ResolvedShapeTrap | null = null,
+  tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
+  const tilingInfo = surfaceTilingWireInfo(tiling, 3);
+  if (tilingInfo && de.symmetryOrder > 1) {
+    throw new Error(
+      "surface-de-gpu: tiling+kaleidoscope is excluded — both are " +
+        "query-space folds and phase 1 has no certified order",
+    );
+  }
+  const baseBytes = shapeTrap
+    ? SURFACE_GPU_PARAMS_TRAP_BYTES
+    : groundPlane
+      ? SURFACE_GPU_PARAMS_PLANE_BYTES
+      : SURFACE_GPU_PARAMS_BYTES;
   const buf = new ArrayBuffer(
-    shapeTrap
-      ? SURFACE_GPU_PARAMS_TRAP_BYTES
-      : groundPlane
-        ? SURFACE_GPU_PARAMS_PLANE_BYTES
-        : SURFACE_GPU_PARAMS_BYTES,
+    baseBytes + (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0),
   );
   const view = new DataView(buf);
   view.setFloat32(12, de.boundingRadius, true);
@@ -2152,6 +2334,9 @@ export function packEscapeGpuParams(
   // floor — the unconditional-pad contract that keeps ONE offset).
   if (shapeTrap) {
     writeShapeTrap(view, 336, shapeTrap);
+  }
+  if (tilingInfo) {
+    writeSurfaceTilingBlock(view, baseBytes, tilingInfo);
   }
   return buf;
 }
@@ -2258,18 +2443,21 @@ export function packBulbGpuParams(
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   shapeTrap: ResolvedShapeTrap | null = null,
+  tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   if (shapeTrap?.geometry) {
     throw new Error(
       "surface-de-gpu: shape-trap geometry is excluded from the bulb/power core",
     );
   }
+  const tilingInfo = surfaceTilingWireInfo(tiling, 3);
+  const baseBytes = shapeTrap
+    ? SURFACE_GPU_PARAMS_TRAP_BYTES
+    : groundPlane
+      ? SURFACE_GPU_PARAMS_PLANE_BYTES
+      : SURFACE_GPU_PARAMS_BYTES;
   const buf = new ArrayBuffer(
-    shapeTrap
-      ? SURFACE_GPU_PARAMS_TRAP_BYTES
-      : groundPlane
-        ? SURFACE_GPU_PARAMS_PLANE_BYTES
-        : SURFACE_GPU_PARAMS_BYTES,
+    baseBytes + (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0),
   );
   const view = new DataView(buf);
   view.setFloat32(12, de.boundingRadius, true);
@@ -2328,6 +2516,9 @@ export function packBulbGpuParams(
   // packer's — one offset across the 3D forward cores.
   if (shapeTrap) {
     writeShapeTrap(view, 336, shapeTrap);
+  }
+  if (tilingInfo) {
+    writeSurfaceTilingBlock(view, baseBytes, tilingInfo);
   }
   return buf;
 }
@@ -2405,16 +2596,36 @@ export function packSurface4GpuParams(
   run: SurfaceGpuRunParams,
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
   groundPlane: SurfaceGpuGroundPlane | null = null,
+  tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
   const chaos = surfaceChaosWireInfo(de);
+  const tilingInfo = surfaceTilingWireInfo(tiling, 4);
   validateSurfacePhysicalMapCount(de, condensation?.emitterCount ?? 0);
   if (balloon && groundPlane) {
     throw new Error(
       "surface-de-gpu: groundPlane+balloon: excluded — the two " +
         "blocks share the frozen offset 576 in 4D exactly as they share " +
         "288 in 3D, and the kernels refuse the pair",
+    );
+  }
+  if (balloon && tilingInfo) {
+    throw new Error(
+      "surface-de-gpu: tiling+balloon is excluded — an orbit's echo is " +
+        "not the echo's orbit, so there is no certified composition",
+    );
+  }
+  if (tilingInfo && de.symmetry.order > 1) {
+    throw new Error(
+      "surface-de-gpu: tiling+kaleidoscope is excluded — both are " +
+        "query-space folds and phase 1 has no certified order",
+    );
+  }
+  if (tilingInfo && view4.sliceHalfW !== 0) {
+    throw new Error(
+      "surface-de-gpu: tiling+4D slab is excluded — the fold of a " +
+        "segment is a bent polyline; tiled 4D sessions run slice 0",
     );
   }
   if ((run.footprint ?? 0) > 0) {
@@ -2462,7 +2673,9 @@ export function packSurface4GpuParams(
               ? SURFACE_GPU_PARAMS4_LENS_BYTES
               : SURFACE_GPU_PARAMS4_BYTES;
   const buf = new ArrayBuffer(
-    baseBytes + (chaos ? SURFACE_GPU_CHAOS_BYTES : 0),
+    baseBytes +
+      (chaos ? SURFACE_GPU_CHAOS_BYTES : 0) +
+      (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0),
   );
   const view = new DataView(buf);
   const rootBound = schedule ? de.schedule?.bounds[0] : undefined;
@@ -2613,6 +2826,13 @@ export function packSurface4GpuParams(
   if (chaos) {
     writeSurfaceChaosBlock(view, baseBytes, chaos);
   }
+  if (tilingInfo) {
+    writeSurfaceTilingBlock(
+      view,
+      baseBytes + (chaos ? SURFACE_GPU_CHAOS_BYTES : 0),
+      tilingInfo,
+    );
+  }
   return buf;
 }
 
@@ -2661,7 +2881,21 @@ export function packEscape4GpuParams(
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   shapeTrap: ResolvedShapeTrap | null = null,
+  tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
+  const tilingInfo = surfaceTilingWireInfo(tiling, 4);
+  if (tilingInfo && de.symmetryOrder > 1) {
+    throw new Error(
+      "surface-de-gpu: tiling+kaleidoscope is excluded — both are " +
+        "query-space folds and phase 1 has no certified order",
+    );
+  }
+  if (tilingInfo && view4.sliceHalfW !== 0) {
+    throw new Error(
+      "surface-de-gpu: tiling+4D slab is excluded — the fold of a " +
+        "segment is a bent polyline; tiled 4D sessions run slice 0",
+    );
+  }
   if (view4.sliceHalfW > 0) {
     throw new Error(
       "surface-de-gpu: the escape4 core takes no slab — a forward orbit " +
@@ -2669,12 +2903,13 @@ export function packEscape4GpuParams(
         "clamp sliceHalfW to 0 for this session",
     );
   }
+  const baseBytes = shapeTrap
+    ? SURFACE_GPU_PARAMS4_TRAP_BYTES
+    : groundPlane
+      ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+      : SURFACE_GPU_PARAMS4_ESCAPE_BYTES;
   const buf = new ArrayBuffer(
-    shapeTrap
-      ? SURFACE_GPU_PARAMS4_TRAP_BYTES
-      : groundPlane
-        ? SURFACE_GPU_PARAMS4_PLANE_BYTES
-        : SURFACE_GPU_PARAMS4_ESCAPE_BYTES,
+    baseBytes + (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0),
   );
   const view = new DataView(buf);
   const R = de.boundingRadius;
@@ -2742,6 +2977,9 @@ export function packEscape4GpuParams(
   // INSIDE it: the lens4Fold corruption's shape, one append later).
   if (shapeTrap) {
     writeShapeTrap(view, 624, shapeTrap);
+  }
+  if (tilingInfo) {
+    writeSurfaceTilingBlock(view, baseBytes, tilingInfo);
   }
   return buf;
 }
@@ -3386,6 +3624,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // that is BOTH — it takes the 4D tail and the `GpuMap4` layout from the
   // descent cores and the orbit from the 3D escape one.
   const forward = core === "escape" || core === "bulb" || core === "escape4";
+  // Finite tiling is a compile gate: the resolved group and analytic clip
+  // bake into the source, while the params tail carries only the resolver's
+  // group id. Validate dimension/canonical authority before any body text is
+  // assembled so malformed options fail before pipeline submission.
+  const tilingInfo = surfaceTilingWireInfo(opts.tiling, core4 ? 4 : 3);
+  const tiling = tilingInfo?.tiling ?? null;
   let schedule: NonNullable<SurfaceGpuKernelOptions["schedule"]> | null = null;
   if (opts.schedule && opts.schedule.scheduleMapCount !== 0) {
     if (
@@ -3521,6 +3765,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // module doc). Absent means no balloon, so every no-balloon config
   // generates byte-identical source.
   const balloon = opts.balloon ?? false;
+  if (balloon && tiling) {
+    throw new Error(
+      "surface-de-gpu: tiling+balloon is excluded — an orbit's echo is " +
+        "not the echo's orbit, so there is no certified composition",
+    );
+  }
   if (balloon && core === "escape") {
     throw new Error(
       "surface-de-gpu: balloon+escape: excluded — the escape solid's " +
@@ -3638,6 +3888,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     meshIds.length > 0 ? `${surfaceMeshSdfWgslSource(meshIds)}\n` : "";
   const meshIndex = (id: MeshAssetId): number =>
     meshSdfAtlasShaderIndex(sourceMeshIds, id);
+  const tilingFoldText = tiling
+    ? `${tilingFoldSource(tiling.info, "wgsl", "tilingFold")}\n`
+    : "";
+  const tilingClipText = tiling?.clip
+    ? `${shapeSdfSource(tiling.clip, "wgsl", "tilingClipSdf")}\n`
+    : "";
   // Per-slot finish lighting (option doc). Absent means the fixed
   // Blinn-Phong lines, so every config predating the option generates
   // byte-identical source; no throw anywhere — the flag composes with
@@ -3659,6 +3915,10 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // forward core throws under balloon — so the balloon rename strings stay
   // untouched text). 1.0 is the far value; the bodies overwrite it.
   const trapCtorArg = shapeTrap ? ", 1.0" : "";
+  // Tiling-only shading attribution: the outer wrapper fills the folded
+  // chamber point so height/radius/pattern repeat with the chamber content,
+  // while normals, lighting and fog keep using the visible world position.
+  const tilingCtorArg = tiling ? ", vec4f(0.0)" : "";
   // The trap's per-body splices — the ONE formula (`escape-de.ts`'s
   // shapeTrapCandidate/shapeTrapValue) in its f32 formulation, emitted only
   // into the three forward hit-info orbits. `-1e+30` is
@@ -3947,7 +4207,8 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
       shapeTrap !== null ||
       condensationShapes !== null ||
       schedule !== null ||
-      chaos !== null);
+      chaos !== null ||
+      (tiling !== null && core === "escape4"));
   // The slab's register-pressure probe (option doc).
   // Meaningful only under the 4D DESCENT cores — every other core reads
   // `true` unconditionally, so `opts.slabExt` is never even consulted for
@@ -3955,6 +4216,10 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // escape4 core is 4D and takes no slab at all (a forward orbit cannot
   // thread a segment), so it sits with the 3D cores here.
   const slabExt = core4 && !forward ? (opts.slabExt ?? true) : true;
+  // A 4D fold/lens wrapper must run before the core's affine-final prologue.
+  // Both the lens and finite tiling therefore hoist the view lift and hand an
+  // already-lifted vec4 into the otherwise shared core body.
+  const core4ExternalLift = core4 && (lens || tiling !== null);
   // The maps-load probe (option doc). Same structural inertness
   // as slabExt — only the 4D descent cores ever consult it.
   const mapsUniform = core4 && !forward ? (opts.mapsUniform ?? false) : false;
@@ -4189,7 +4454,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     dot(params.finalM1, p) + params.finalT1,
     dot(params.finalM2, p) + params.finalT2,
   );
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -4431,7 +4696,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     dot(params.finalM1, p) + params.finalT1,
     dot(params.finalM2, p) + params.finalT2,
   );
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -4843,9 +5108,9 @@ ${
   }fn surfaceDEHitInfo(${core4Params(
     "p",
     slabExt,
-    lens,
+    core4ExternalLift,
   )}, li: u32) -> SurfaceHitInfo {
-${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
+${lift4Text("p", "", slabExt, core4ExternalLift)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -5375,9 +5640,9 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
   }fn surfaceDEHitInfo(${core4Params(
     "p",
     slabExt,
-    lens,
+    core4ExternalLift,
   )}, li: u32) -> SurfaceHitInfo {
-${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
+${lift4Text("p", "", slabExt, core4ExternalLift)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -5730,7 +5995,7 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
   // GLSL overload also returns the DE, so its dr accumulator is the one
   // value-side term trimmed here.
   const escapeHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
   let q = foldQuerySector(p);
   var v = q;
   var r = length(v);
@@ -5837,9 +6102,9 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   // the quaternion square in its FULL form. `sheets` still reads `v.y`:
   // the orbit runs in the ATTRACTOR frame, exactly as the 4D descents'
   // colour sources do.
-  const escape4HitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
-  let q = foldQuerySector4(liftEscape4(p));
+  const escape4HitInfoText = /* wgsl */ `fn surfaceDEHitInfo(${tiling ? "qIn: vec4f" : "p: vec3f"}, li: u32) -> SurfaceHitInfo {
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+  let q = foldQuerySector4(${tiling ? "qIn" : "liftEscape4(p)"});
   var v = q;
   var r = length(v);
   let n = params.mapCount;
@@ -5898,7 +6163,7 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
     clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);${trapFinal}
-${pattern ? `  info.source4 = liftEscape4(p);` : ""}
+${pattern ? `  info.source4 = ${tiling ? "q" : "liftEscape4(p)"};` : ""}
   return info;
 }`;
 
@@ -5912,7 +6177,7 @@ ${pattern ? `  info.source4 = liftEscape4(p);` : ""}
   // Colors-only convention (every hit-info body's): the estimate's dr
   // accumulator is the one value-side term trimmed here.
   const bulbHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
   let bail = params.bulbParams.y;
   let c = vec3f(
     dot(params.bulbM0, p) + params.bulbT0,
@@ -6104,8 +6369,20 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   // no cutoff exits (a shading call has neither), the shell guard plain-
   // skipping, and an identity-branch fallback so a fully pruned loop
   // still hands the core hit call a sane point.
-  const lens4HitWrapText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  let pq = rotorInvApply4(vec4f(p, params.w0));
+  const lens4HitParams = tiling
+    ? slabExt
+      ? "pFolded: vec4f, pFoldedExt: vec4f"
+      : "pFolded: vec4f"
+    : "p: vec3f";
+  const lens4HitLiftText = tiling
+    ? slabExt
+      ? `  let pq = pFolded;
+  let segment = params.sliceHalfW > 0.0;
+  var pExt = pFoldedExt;
+`
+      : `  let pq = pFolded;
+`
+    : `  let pq = rotorInvApply4(vec4f(p, params.w0));
 ${
   slabExt
     ? `  let segment = params.sliceHalfW > 0.0;
@@ -6115,7 +6392,9 @@ ${
   }
 `
     : ``
-}  let kind = u32(params.lens4Params.x);
+}`;
+  const lens4HitWrapText = /* wgsl */ `fn surfaceDEHitInfo(${lens4HitParams}, li: u32) -> SurfaceHitInfo {
+${lens4HitLiftText}  let kind = u32(params.lens4Params.x);
   let absW = params.lens4Params.z;
   let u = pq * params.lens4Params.y;
   let fr = foldRadiiOf(params.lens4Fold);
@@ -6461,9 +6740,9 @@ ${
           : core === "bulb"
             ? bulbHitInfoText
             : core === "affine4"
-              ? affine4HitInfoText(slabExt, lens)
+              ? affine4HitInfoText(slabExt, core4ExternalLift)
               : core === "fold4"
-                ? fold4HitInfoText(slabExt, lens)
+                ? fold4HitInfoText(slabExt, core4ExternalLift)
                 : foldHitInfoText;
   const coreHitInfoText = scheduleCoreSource(rawCoreHitInfoText, true);
   const lensedHitInfoText = lens
@@ -6538,6 +6817,44 @@ ${core4 ? lens4HitWrapText : lensHitWrapText}`
 // public, the lens sweep's mechanism one level further out.
 ${balloonHitWrapText}`
     : lensedHitInfoText;
+  const tilingLiftExpression = core4
+    ? core === "escape4"
+      ? "liftEscape4(p)"
+      : "rotorInvApply4(vec4f(p, params.w0))"
+    : "p";
+  const tilingHitCoreArgs = core4
+    ? `folded.point${!forward && slabExt ? ", vec4f(0.0)" : ""}, li`
+    : "folded.point, li";
+  const tilingHitPoint4 = core4 ? "folded.point" : "vec4f(folded.point, 0.0)";
+  const tilingRawPoint4 = core4
+    ? "rawTilingPoint"
+    : "vec4f(rawTilingPoint, 0.0)";
+  const tiledHitInfoText = tiling
+    ? `${balloonRename(
+        hitInfoText,
+        "fn surfaceDEHitInfo(",
+        "fn surfaceDEHitInfoTilingCore(",
+      )}
+
+// Finite tiling hit attribution: fold FIRST, then ask the untouched
+// core/lens trajectory at that folded point. The optional clip moves only
+// the distance max; it has no transform-slot trajectory of its own.
+fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  let rawTilingPoint = ${tilingLiftExpression};
+  var failed = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+  failed.tilingPoint = ${tilingRawPoint4};
+  if (params.tilingGroup != ${tilingInfo!.code}u) {
+    return failed;
+  }
+  let folded = tilingFold(rawTilingPoint);
+  if (!folded.ok) {
+    return failed;
+  }
+  var info = surfaceDEHitInfoTilingCore(${tilingHitCoreArgs});
+  info.tilingPoint = ${tilingHitPoint4};
+  return info;
+}`
+    : hitInfoText;
 
   // The two LUT color sources whose NORMALIZER is dimension-specific
   // (every other shade term reconciles under the packing contract).
@@ -6562,10 +6879,23 @@ ${balloonHitWrapText}`
   // pairs that point with the same source descent's sStar before the rotor
   // lift, matching the GLSL arm's cpos routing.
   const shadeHeightU = core4
-    ? `u = clamp(${balloon ? "hi.colorPos" : "pos"}.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
+    ? tiling
+      ? `let tiledViewY = dot(
+        vec4f(
+          params.rotorInvR0.y,
+          params.rotorInvR1.y,
+          params.rotorInvR2.y,
+          params.rotorInvR3.y,
+        ),
+        hi.tilingPoint,
+      );
+      u = clamp(tiledViewY / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
+      : `u = clamp(${balloon ? "hi.colorPos" : "pos"}.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
     : balloon
       ? `u = clamp(hi.colorPos.y / visR * 0.5 + 0.5, 0.0, 1.0);`
-      : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
+      : tiling
+        ? `u = clamp(hi.tilingPoint.y / visR * 0.5 + 0.5, 0.0, 1.0);`
+        : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
   const shadeRadiusU =
     core === "escape4"
       ? // The same attractor-frame radius ramp, through this
@@ -6574,13 +6904,25 @@ ${balloonHitWrapText}`
         // packer fills the band with (0, 0, 1/visRadius4), so the ramp is
         // |q4| over the bailout ball — an escape chain has no probe-fit
         // band to normalize against.
-        `let q4c = liftEscape4(pos);
+        tiling
+        ? `let q4c = hi.tilingPoint;
+      u = clamp(
+        (length(q4c - params.radiusCenter4) - params.radiusMinD) *
+          params.radiusInvRange,
+        0.0, 1.0);`
+        : `let q4c = liftEscape4(pos);
       u = clamp(
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
           params.radiusInvRange,
         0.0, 1.0);`
       : core4
-        ? `let hitW = params.w0 + hi.sStar * params.sliceHalfW;
+        ? tiling
+          ? `let q4c = hi.tilingPoint;
+      u = clamp(
+        (length(q4c - params.radiusCenter4) - params.radiusMinD) *
+          params.radiusInvRange,
+        0.0, 1.0);`
+          : `let hitW = params.w0 + hi.sStar * params.sliceHalfW;
       let q4c = rotorInvApply4(vec4f(${balloon ? "hi.colorPos" : "pos"}, hitW));
       u = clamp(
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
@@ -6588,7 +6930,9 @@ ${balloonHitWrapText}`
         0.0, 1.0);`
         : balloon
           ? `u = clamp(length(hi.colorPos) / visR, 0.0, 1.0);`
-          : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
+          : tiling
+            ? `u = clamp(length(hi.tilingPoint.xyz) / visR, 0.0, 1.0);`
+            : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
 
   // Independent balloon palette first, then the orthogonal tint. The
   // coordinate is balloon-de.ts's renderer-neutral normalized radius of
@@ -6649,11 +6993,11 @@ ${balloonHitWrapText}`
   const shadePattern = pattern
     ? core4
       ? `
-  let objectP = hi.source4.xyz / params.boundingRadius;
+  let objectP = ${tiling ? "hi.tilingPoint" : "hi.source4"}.xyz / params.boundingRadius;
   let patternFootprint = params.pixelEps * t / params.boundingRadius;
   base = patternShade(base, objectP, fb, shade.patternCalibration, hi.sheets, patternFootprint);`
       : `
-  let objectP = (hi.source4.xyz - params.boundCenter) / params.boundingRadius;
+  let objectP = (${tiling ? "hi.tilingPoint" : "hi.source4"}.xyz - params.boundCenter) / params.boundingRadius;
   let patternFootprint = params.pixelEps * t / params.boundingRadius;
   base = patternShade(base, objectP, fb, shade.patternCalibration, hi.sheets, patternFootprint);`
     : "";
@@ -6945,6 +7289,14 @@ struct SurfaceHitInfo {
   shapeTrap: f32,`
       : ""
   }${
+    tiling
+      ? `
+  // Finite tiling only: the folded chamber point which supplied this
+  // repeated copy's authored material. Height/radius/pattern use it;
+  // normals, lighting and fog deliberately stay in visible world space.
+  tilingPoint: vec4f,`
+      : ""
+  }${
     balloon
       ? `
   // Balloon only: the winning union term's SOURCE query
@@ -6963,7 +7315,7 @@ struct SurfaceHitInfo {
   }
 }
 
-${trapHelperText}${hitInfoText}
+${trapHelperText}${tiledHitInfoText}
 ${backgroundShapeSource(BACKGROUND_SHAPE_WGSL)}
 fn surfaceCoc(cameraDepth: f32) -> f32 {
   let signedCoc = clamp(
@@ -7554,7 +7906,8 @@ struct Params {
               groundPlane ||
               condensationShapes ||
               schedule ||
-              chaos
+              chaos ||
+              tiling
             ? /* wgsl */ `
   lensM0: vec3f,
   lensT0: f32,
@@ -7575,6 +7928,7 @@ struct Params {
   }${chaos ? chaosStructFields : ""}`
             : ""
   }
+${tiling ? "  tilingGroup: u32,\n" : ""}
 }${
     !mapsBinding
       ? ""
@@ -10081,7 +10435,7 @@ ${
 // shadow and AO light a hit the full-width march already certified, so
 // they ride a width-${probeWidth} frontier (width 1 = the greedy
 // descent). Same body as surfaceDE, renamed.
-${renameToProbe4(fold4DescentFnText(probeWidth, slabExt, lens))}`;
+${renameToProbe4(fold4DescentFnText(probeWidth, slabExt, core4ExternalLift))}`;
 
   // The ESCAPE core: escape-de.ts's estimateEscapeDistance —
   // the forward fold orbit with the Buddhi/Rrrola scalar derivative,
@@ -10340,8 +10694,8 @@ fn liftEscape4(pIn: vec3f) -> vec4f {
   );
 }
 
-fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
-  let q = foldQuerySector4(liftEscape4(pIn));
+fn surfaceDE(${tiling ? "qIn: vec4f" : "pIn: vec3f"}, cutoff: f32, li: u32) -> f32 {
+  let q = foldQuerySector4(${tiling ? "qIn" : "liftEscape4(pIn)"});
   var v = q;
   var dr = 1.0;
   var r = length(v);
@@ -10499,11 +10853,11 @@ ${bulbDescentText}`
               ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
 // the estimator the 4D GLSL tracer marches (surface-material-4d.ts), in
 // that mirror's f32 formulation. Fixed width 4.
-${affine4DescentText(slabExt, lens)}`
+${affine4DescentText(slabExt, core4ExternalLift)}`
               : core === "fold4"
                 ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
 // view lift — the 4D fold-branch frontier, f32.
-${fold4DescentFnText(width, slabExt, lens)}${probe4DeFns}`
+${fold4DescentFnText(width, slabExt, core4ExternalLift)}${probe4DeFns}`
                 : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
@@ -10715,8 +11069,25 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
   const lens4CoreCall = `surfaceDECore(q, ${slabExt ? "qExt, " : ""}${
     lens4Refined ? "innerCutoff" : "0.0"
   }, li)`;
-  const lens4WrapText = /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
-  // The cores' view lift, hoisted: ONE rotor apply for the whole sweep
+  const lens4WrapParams = tiling
+    ? slabExt
+      ? "pFolded: vec4f, pFoldedExt: vec4f"
+      : "pFolded: vec4f"
+    : "pIn: vec3f";
+  const lens4LiftText = tiling
+    ? slabExt
+      ? `  // The tiling wrapper already lifted and folded the point before
+  // this plot-time lens. Tiled 4D sessions pin sliceHalfW to zero, so the
+  // transported extent is the explicit zero passed by that wrapper.
+  let p = pFolded;
+  let segment = params.sliceHalfW > 0.0;
+  var pExt = pFoldedExt;
+`
+      : `  // The tiling wrapper already lifted and folded the point before
+  // this plot-time lens.
+  let p = pFolded;
+`
+    : `  // The cores' view lift, hoisted: ONE rotor apply for the whole sweep
   // (and one half-extent seed under a slab), where the no-lens bodies do
   // it per call.
   let p = rotorInvApply4(vec4f(pIn, params.w0));
@@ -10727,11 +11098,17 @@ ${
   if (segment) {
     pExt = rotorInvWCol4() * params.sliceHalfW;
   }
-  let visBound = segmentRadius4(p, pExt) - params.visRadius4;
 `
-    : `  let visBound = length(p) - params.visRadius4;
+    : ``
+}`;
+  const lens4WrapText = /* wgsl */ `fn surfaceDE(${lens4WrapParams}, cutoff: f32, li: u32) -> f32 {
+${lens4LiftText}${
+    slabExt
+      ? `  let visBound = segmentRadius4(p, pExt) - params.visRadius4;
 `
-}  let kind = u32(params.lens4Params.x);
+      : `  let visBound = length(p) - params.visRadius4;
+`
+  }  let kind = u32(params.lens4Params.x);
   let absW = params.lens4Params.z;
   let u = p * params.lens4Params.y;
   let fr = foldRadiiOf(params.lens4Fold);
@@ -11069,9 +11446,64 @@ ${balloonProbeWrapText}`
       }`
     : lensedBodyBlock;
 
-  return /* wgsl */ `${headerText}${scheduleHelperText}${chaosHelperText}
+  const tilingValueLiftExpression = core4
+    ? core === "escape4"
+      ? "liftEscape4(pIn)"
+      : "rotorInvApply4(vec4f(pIn, params.w0))"
+    : "pIn";
+  const tilingValueCoreArgs = core4
+    ? `folded.point${!forward && slabExt ? ", vec4f(0.0)" : ""}`
+    : "folded.point";
+  const tilingClipReturn = tiling?.clip
+    ? `return max(inner, tilingClipSdf(folded.point${core4 ? ".xyz" : ""}));`
+    : "return inner;";
+  const tilingDeWrapText = tiling
+    ? /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  if (params.tilingGroup != ${tilingInfo!.code}u) {
+    return 0.0;
+  }
+  let folded = tilingFold(${tilingValueLiftExpression});
+  if (!folded.ok) {
+    return 0.0;
+  }
+  let inner = surfaceDETilingCore(${tilingValueCoreArgs}, cutoff, li);
+  ${tilingClipReturn}
+}`
+    : "";
+  const tilingProbeWrapText = tiling
+    ? tilingDeWrapText
+        .replace("fn surfaceDE(", "fn surfaceDEProbe(")
+        .replaceAll("surfaceDETilingCore(", "surfaceDEProbeTilingCore(")
+    : "";
+  const tiledBodyBlock = tiling
+    ? `${balloonRename(
+        probeWidth === null
+          ? bodyBlock
+          : balloonRename(
+              bodyBlock,
+              "fn surfaceDEProbe(",
+              "fn surfaceDEProbeTilingCore(",
+            ),
+        "fn surfaceDE(",
+        "fn surfaceDETilingCore(",
+      )}
 
-${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${bodyBlock}
+// Finite reflection tiling: fold once, evaluate the untouched compiled
+// core/lens, then intersect with the optional authored analytic clip through
+// max(core, signed SDF). The group word refuses stale source/params pairings.
+${tilingDeWrapText}${
+        probeWidth === null
+          ? ""
+          : `
+
+// The shade taps' probe width gets the identical outer composition.
+${tilingProbeWrapText}`
+      }`
+    : bodyBlock;
+
+  return /* wgsl */ `${headerText}${tilingFoldText}${tilingClipText}${scheduleHelperText}${chaosHelperText}
+
+${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}
 ${entry}
 `;
 }

@@ -1,13 +1,12 @@
-# Space Tiling — the opening contract (fr-sq8y)
+# Space Tiling — finite reflection and mirrored-lattice contract
 
-The frozen record for the finite-reflection tiling feature (epic fr-b84r, phase
-1). Everything a later bead must not re-decide lives here: the group
-vocabulary, the fold-to-chamber algorithm and its bound, the wrapper order and
-the exact composition, the renderer and wire matrix, the legal-combination
-table and the refusals with their reasons. Phase-2 lattice semantics are
-explicitly NOT decided here — fr-mbfp owns that door; this contract only
-requires that phase 2 extend the same `TilingSpec` union rather than inventing
-a second model.
+The frozen record for both space-tiling constructions. The finite-reflection
+phase fixes the group vocabulary, the fold-to-chamber algorithm and its bound,
+the wrapper order and the exact composition, the renderer and wire matrix, the
+legal-combination table and the refusals with their reasons. The lattice phase
+selects affine A1 mirror repetition, fixes its 3D/4D and unbounded-march
+semantics, and refuses classic translational opRep. Both extend the same
+`TilingSpec` and resolver; there is no second landscape model.
 
 ## The rendered set and the soundness theorem
 
@@ -60,8 +59,8 @@ is closed, so where its far-side pieces approach the wall its crossing points
 stop is then correct. The residual case is an attractor piece that
 approaches the wall without crossing — a long tentacle — and the authored
 clip, whose term keeps the marcher marching toward the clip, is the in-hand
-mitigant. The harness bead measures this on every ship fixture; any false
-chamber wall on a fixture is a no-go that changes this contract, not a
+mitigant. The finite-tiling harness measures this on every ship fixture; any
+false chamber wall on a fixture is a no-go that changes this contract, not a
 tolerance to raise.
 
 ## The group vocabulary
@@ -85,7 +84,7 @@ Root conventions, frozen: simple roots `n_i` are unit vectors with pairings
 `⟨n_i, n_j⟩ = −cos(π/m_ij)` (the Cartan matrix of the diagram), chosen as the
 inward normals of the chamber walls, so the closed chamber is exactly
 `C = {x : ⟨x, n_i⟩ ≥ 0 for all i}`. The exact literal root tables live in
-`tiling.ts` (fr-nr7w) and are pinned by group-axiom tests: pairwise inner
+`tiling.ts` and are pinned by group-axiom tests: pairwise inner
 products, reflection closure (the orbit of each root is the full root
 system), the orbit count = group order, and the max word length. The 4D
 tables use real named 4D axes — the F4 roots genuinely use `w` — and the
@@ -143,9 +142,72 @@ wrapper — every estimator evaluation, probe included, folds first.
 | route                                                            | tiling                                                                                                                                                                                                               |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CPU oracles: affine, fold, affine4, fold4, escape, bulb, escape4 | in — the wrapper above                                                                                                                                                                                               |
-| WGSL cores: affine, fold, affine4, fold4, escape, bulb, escape4  | in — compile-gated wrapper, fr-eser                                                                                                                                                                                  |
-| GLSL tracers: 3D and 4D                                          | in — compile-gated arm, fr-fn9j; Mesa cliff measured before                                                                                                                                                          |
+| WGSL cores: affine, fold, affine4, fold4, escape, bulb, escape4  | in — compile-gated wrapper                                                                                                                                                                                           |
+| GLSL tracers: 3D and 4D                                          | in — compile-gated arm; Mesa cliff measured before                                                                                                                                                                   |
 | Points, Flame, Solid                                             | NOT in — a query-space fold has no chaos-game meaning. The authored block persists and those modes render the UNTILED attractor with the adjacent explanation; a document never silently renders a different object. |
+
+### GLSL landing evidence
+
+The 3D and 4D fragment tracers compile the wrapper only when a resolved
+tiling block is present. `tilingFoldSource` is the shared, dialect-parametric
+source authority over the frozen roots and fold arithmetic; the material arm
+token-renames the existing estimator entries and owns their public overloads.
+The one live GLSL uniform is the one-based group code (`0` remains off), while
+the roots and analytic `tilingClipSdf` are source-baked. Material installation
+also requires the canonical `TILING_GROUP_INFO[group]` object by identity, so
+a forged or stale resolved record cannot compile a different root table under
+the same group word.
+
+Hit attribution follows the folded source copy for height, radius and
+object-attached pattern. Normals, lighting, the ground plane, finish position,
+reflection and fog deliberately retain the visible world position: those
+describe where the replicated copy is drawn, not which chamber copy supplied
+its material. In 4D the outer wrapper folds the true
+`uInvRotor * vec4(p, uW0)` query, then hands that folded vec4 to the untouched
+sliced estimator through the same token-rename adapter; a nonzero slab remains
+refused.
+
+Source-generation tests enumerate every legal source option combination,
+including clip absent/present: 336 in 3D and 128 in 4D, plus all six compatible
+group/dimension pairings. Every emitted source remains below the unchanged
+65,536-byte strip ceiling. Measurements on the landed generator, in resolved /
+emitted bytes:
+
+| compiled arm                                 | resolved | emitted |
+| -------------------------------------------- | -------: | ------: |
+| 3D A3 plain                                  |   86,521 |  32,025 |
+| 3D A3 + sphere clip                          |   86,794 |  32,285 |
+| 3D A3 + lens                                 |   89,792 |  31,849 |
+| 3D A3 + plane                                |   94,387 |  35,498 |
+| 3D A3 escape                                 |   59,324 |  59,324 |
+| 3D A3 bulb                                   |   42,836 |  42,836 |
+| 3D A3 + finish + pattern                     |  100,480 |  42,325 |
+| 3D A3 + condensation + schedule + chaos      |  101,560 |  42,693 |
+| 4D F4 plain                                  |   67,056 |  19,229 |
+| 4D F4 + sphere clip                          |   67,341 |  19,501 |
+| 4D F4 + plane                                |   75,892 |  22,702 |
+| 4D F4 + finish + pattern                     |   79,800 |  29,488 |
+| 4D F4 + condensation + schedule + chaos      |   76,575 |  26,526 |
+| 3D H3 clip + every descent arm               |  127,771 |  56,373 |
+| 3D H3 clip + escape + finish + geometry trap |   64,650 |  64,650 |
+| 4D F4 clip + every legal arm                 |   99,661 |  41,464 |
+
+The tightest emitted row has 886 bytes of headroom under the strip ceiling;
+real-driver link/render qualification is serialized with the integrated
+routing build rather than run beside concurrent shader work.
+
+The 2026-08-31 Iris production-browser run exercised eight hash-authored legs:
+forced WebGL and WebGPU for inverse 3D, forward 3D and inverse 4D; compute for
+forward 4D; and a second WebGL inverse-3D leg with an analytic clip. Every leg
+entered through the real Surface button, chose the requested engine, settled,
+preserved the tiling block in the document hash and drew foreground on a
+hardware backend. The final clip leg changed 8.40% of the comparison image
+against a
+1% floor. The first run caught a GLSL-only wrapper typo in the clip arm—an
+out-of-scope local left over from the fold-result spelling—which source-text
+tests had asserted rather than compiled; the corrected generated source and
+the browser verifier now pin that path. The runnable record is
+`scripts/surface-tiling.verify.mjs`.
 
 Forward cores get the fold free (they are in) — their kaleidoscope already
 is a query-space wedge fold by `escape-de.ts`'s own argument, and the same
@@ -165,7 +227,7 @@ composition chain above.
 | tiling + H4 / reducible groups                                   | REFUSED — vocabulary above                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | tiling + escape4                                                 | in — no slab, no lens, no kaleidoscope by the refusals above; the forward orbit is seeded at the folded point exactly as its kaleidoscope seeds at the sector-folded point                                                                                                                                                                                                                                                                             |
 
-## Wire placement (frozen rule; byte table is fr-eser's audit)
+## Wire placement (frozen rule)
 
 The tiling block is ONE `u32` (the group id; it also keys the compile gate —
 a stale buffer from a different group is refused at pack). The roots are
@@ -179,32 +241,36 @@ the tiling clip (analytic specs only in phase 1).
 Placement: the block appends at the END of every legal combination — after
 the frozen variant/lens/plane-balloon/trap tails and after the
 condensation/schedule/chaos tails that follow them, so every existing
-combination constant gains a `_TILING` twin = existing + 4 bytes. The 3D
-maximum combination today ends at 544 (`PLANE_SCHEDULE_CONDENSATION_CHAOS`),
-the 4D at 832; the tiling u32 lands at 544/832 in those combinations and at
-each combination's own end otherwise. The fr-eser bead enumerates and
-exports every combination constant and pins them by test; the standing
-hazard note applies verbatim (a block appended blind at 4D offset 560 lands
-INSIDE the `lens4Fold` quartet).
+combination constant gains a `_TILING` twin with a **16-byte aligned tail**,
+not a four-byte tail. In the finite arm the first word is the one live `u32`
+and the remaining 12 bytes are zero padding. The largest pre-tiling 3D
+combination ends at 544 (`PLANE_SCHEDULE_CONDENSATION_CHAOS`) and grows to
+560; the 4D maximum grows from 832 to 848. The tiling word therefore lands at
+544/832 in those maximum combinations and at each smaller combination's own
+aligned tail otherwise. Every combination constant is exported and test-
+pinned; the standing hazard note applies verbatim (a block appended blind at
+4D offset 560 lands INSIDE the `lens4Fold` quartet).
 
 ## Document vocabulary and applicability
 
 `TilingSpec { group, clip? }` — scene-level, one per document, beside
-ShapeTrap and HybridSchedule. ABSENT MEANS OFF byte-identically: no block,
-no arithmetic, every emitted shader byte for byte the pre-tiling build.
+ShapeTrap and HybridSchedule — is the finite arm; the lattice arm is defined
+below. ABSENT MEANS OFF byte-identically: no block, no arithmetic, every
+emitted shader byte for byte the pre-tiling build.
 `resolveTiling` is the ONE authority for defaults and domains (the
 `resolveFoldRadii`/`resolveShapeTrap` precedent); persistence carries
 authored values at fidelity and the resolver owns the clamps. The group is
 discrete — morphs never interpolate it (the target's block pops at the leg's
 first push, the HybridSchedule precedent); the clip follows the ShapeTrap
 morph precedent. A malformed block decodes to undefined, never rejects the
-scene. The panel family is authored scene geometry (its home is decided in
-fr-zpg4 per `docs/panel-ia.md`); the group cell is NEVER presented as a
+scene. The panel family is authored scene geometry (placed under the rules in
+`docs/panel-ia.md`); the group cell is NEVER presented as a
 free-form clip and vice versa.
 
 ## Evidence owed (summary)
 
-The harness sheet (fr-7db3) measures, with the SHARED instruments only:
+The finite harness sheet (`scripts/tiling.harness.ts`) measures, with the
+SHARED instruments only:
 zero overshoot against membership and explicit orbit-enumerator oracles on
 every ship fixture (the explicit enumerator is the test oracle of
 `tiling.ts`, never a runtime path); the fold-step distribution; per-query
@@ -217,11 +283,145 @@ fixtures ship at least one 3D and two genuinely 4D groups from the table
 above, entering Surface unaided, settling, drawing distinct tiled geometry
 and taking the expected engine.
 
-## Phase 2 door (not decided here)
+## Phase 2: mirrored affine A1 lattice
 
-Lattice repetition (fr-mbfp) extends the SAME `TilingSpec` union with its
-own kind, cell geometry and seam semantics; the mirrored-lattice route is
-covered by the same inequality as phase 1 (free), the cell-contained
-translation route needs its wall clamp, and unclamped translational opRep
-is refused outright — but those are fr-mbfp's decisions, preserved here
-only as the requirement that phase 2 not invent a second model.
+**Decision: ship mirrored repetition; defer certified translation and refuse
+unclamped translational opRep.** The executable argument is
+`scripts/lattice-tiling.harness.ts`; its measured rows are catalogued in
+`docs/harness-sheets.md`.
+
+### Cell, content and fold
+
+The cell has one scalar half-width `h`, is centred at the canonical origin,
+and has no separately authored pose. In 3D it repeats attractor-frame `x` and
+`z` and leaves `y` vertical. In 4D it repeats attractor-frame `x`, `z` and `w`
+and leaves `y` vertical. One scalar fold is
+
+    mirror(x, h) = h - abs(mod(x + h, 4h) - 2h),  h > 0
+
+with `mod(a,b) = a - b floor(a/b)`. Its closed chamber is `[-h,h]`, its full
+period is `4h`, and adjacent periods alternate orientation. The CPU, GLSL and
+WGSL bodies use this exact floor formulation; shader copies do not substitute
+a remainder operator whose negative-input convention differs. The vector
+folds are
+
+    F3(x,y,z)   = (mirror(x,h), y, mirror(z,h))
+    F4(x,y,z,w) = (mirror(x,h), y, mirror(z,h), mirror(w,h)).
+
+The content is `S = A ∩ ball(0,R) ∩ clip`, where `R` is the estimator's
+certified full visible radius (the full 4D `visibleBoundingRadius` in 4D,
+never the slice-adjusted radius). The resolver must enforce `h >= R`; this
+puts `S` inside the closed chamber. The public estimate is
+
+    max(coreDE(F(q)), length(F(q)) - R, clipDist(F(q))).
+
+The ball and clip terms are absent only when their authorities prove them
+redundant. Product reflections are isometries and the fold is a metric
+retraction toward every point of the rectangular chamber, so the finite
+nearest-copy theorem applies to this infinite affine reflection group:
+`d(q, G·S) = d(F(q), S)`. One core evaluation follows two fixed scalar folds
+in 3D or three in 4D; there is no data-dependent fold loop.
+
+The cell walls are not geometry. The fold value is continuous there (only its
+derivative changes sign), and a wall query evaluates the ordinary content DE;
+it returns zero only when real content reaches the wall. Primary marches,
+normal taps, shadow rays and AO taps all call the same scalar wrapper. There is
+no wall-distance min, zero-seam status, epsilon nudge, or special shading path.
+The finite presentation window below also bounds query magnitudes, so shader
+arithmetic never relies on preserving a modulo phase thousands of cells from
+the origin.
+
+The document model becomes a discriminated union with a lattice arm beside
+the existing finite `{ group, clip? }` arm. Its authored cell size is a
+dimensionless `cellScale = h/R`; the resolver alone derives world-unit `h`
+from the current estimator. Absent tiling stays byte-identically off. A
+lattice program uses the same 16-byte WGSL tail: the first word is the lattice
+kind code, the next `f32` is resolved `h`, and the final eight bytes remain
+zero. GLSL receives the same `h` through its lattice-only uniform. Changing
+kind remains a source-regenerating edit; changing cell scale is a geometry
+edit and restarts accumulation without recompiling the formula.
+
+**PROVISIONAL, not gated by this sheet:** `cellScale` default 1.5 and authored
+range 1.25–4.0. The mathematical gate proves only `cellScale >= 1`; the
+default and narrower minimum/maximum require real renderer fixtures and a UI
+range gate before they can be frozen.
+
+### Genuine 4D meaning
+
+The view query is lifted and inverse-rotated first,
+`q4 = invRotor * vec4(p, w0)`, then `F4` folds its attractor-frame `x/z/w`.
+Thus the live rotor rotates the whole lattice with the object, while moving
+the slice changes the phase and cross-section of the same fixed 4D lattice.
+Folding in view 3D or omitting `w` would draw a different object and is
+refused. The decision sheet pins an xw rotation of 0.63 at `w0 = 0.37`
+against an explicit 4D orbit (zero violations in 20,000 queries). A thick 4D
+slab remains refused: folding a segment point-by-point makes a bent,
+multi-cell path and the existing segment bound does not survive it.
+
+### Finite presentation of an unbounded set
+
+The visible sphere can no longer mean “the object ends here.” A lattice ray
+instead intersects two analytic presentation carriers:
+
+1. the origin-centred 3D presentation window; and
+2. the unrepeated-axis slab `abs(q.y) <= R` in attractor space (in 4D,
+   `q = invRotor * vec4(p,w0)`, so this is still a linear ray/slab
+   intersection at an arbitrary rotor pose).
+
+Their intersection supplies `tEnter` and `tFar`; a camera already inside
+starts at zero. A miss goes directly to the backdrop or ground plane. Every
+primary, preview and capture ray retains the existing full-DE step budget and
+cancellation points, but it stops at this finite `tFar`; no loop searches for
+the “end” of an infinite set. Fog measures distance from this `tEnter` and
+uses `R` as its scale. Capture bands use the same world-space carriers and
+full-image background coordinates as the live frame, so resolution, strip
+height and supersampling never change which cells exist. The camera fits the
+canonical cell carrier — conservatively `sqrt(2h^2 + R^2)` in 3D and
+`sqrt(3h^2 + R^2)` before the 4D slice — targets the canonical origin, and
+never tries to fit the lattice's global extent.
+
+Normal and AO taps outside the carriers are treated as open space. Shadow
+rays intersect the same carrier pair and become fully lit after their own
+`tFar`; both use the mirrored DE inside. This prevents the artificial hard
+window from casting a shadow or contributing AO. The existing step/tap caps,
+capture raster limits, strip pump and abort/cancellation behavior remain the
+runtime limits.
+
+**PROVISIONAL, not gated by this sheet:** fade lattice coverage/fog to the
+backdrop from radius `8R` and stop at the hard `10R` presentation window. The
+sheet's preview uses a fixed radius of ten _cell half-widths_ only to compare
+the candidates; it does not gate the 8R/10R choice. Those constants require
+live GLSL/WGSL capture and grazing-ray measurements before freezing.
+
+### Ground plane
+
+The plane stays ordinary sliced-view 3D geometry, at the existing
+origin/radius-derived height, and is never folded. Its intersection competes
+with the lattice carrier's nearest hit and retains the existing radial fade.
+It receives shadows and contact AO from repeated content through the same
+mirrored estimator, clipped to the same presentation carriers. The current
+single-ball corridor and “too far from the ball for AO” shortcuts are invalid
+for an infinite lattice and must be disabled or replaced by carrier tests in
+the lattice arm. This is especially load-bearing in 4D: an arbitrary rotor
+tilts the attractor-frame carrier relative to the world-space plane, but the
+plane itself stays horizontal and unfurled.
+
+### Translation refusal
+
+Classic half-open opRep chooses one cell discontinuously. For asymmetric
+cell-contained content the selected representative need not contain the
+nearest translated copy, so the returned DE can exceed the true union
+distance; the sheet measured 12,753 overshoots in 50,000 probes, up to
+0.760348. It is refused outright.
+
+Taking `min(opRepDE, distanceToCellWall)` repairs the lower bound but makes
+every wall exactly zero. The sheet found 1,407 false-zero samples out of
+1,407 wall probes while true geometry stayed at least 0.504497 away, and the
+shared marcher shaded all 25,600 pixels as false walls. Making those zeros
+non-geometry requires a two-channel distance/cell-crossing result through the
+primary march, normals, shadows and AO; a scalar epsilon skip is not a proof.
+Exact neighbour union avoids the seam, but even the directional minimum needs
+four core evaluations per 3D query and eight per 4D query (the deliberately
+simple sheet oracle uses nine in 3D). Certified translation is therefore
+deferred until one of those complete contracts earns its cost. It must never
+be approximated by unclamped opRep or by shading a wall clamp.

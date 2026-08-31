@@ -134,6 +134,7 @@ import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { surfaceDescentCostWeight } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import type { ResolvedTiling } from "../fractal/tiling";
 import {
   surfaceMaterialsNeedAo,
   surfaceMaterialsNeedShadow,
@@ -4474,7 +4475,12 @@ export class FractalScene {
    * kaleidoscope copies inherit their base map's color exactly like the
    * explorer's "By Transform" mode.
    */
-  setSurfaceSystem(de: SurfaceDE, colors: Vec3[], trapIndices: number[]): void {
+  setSurfaceSystem(
+    de: SurfaceDE,
+    colors: Vec3[],
+    trapIndices: number[],
+    tiling: ResolvedTiling | null = null,
+  ): void {
     this.renderNeeded = true;
     // packSurfaceSystem resets the material's grid uniforms; the texture
     // itself is ours to free.
@@ -4483,7 +4489,13 @@ export class FractalScene {
     // source's fallback resolution keys on this (the stored document block
     // survives for the next forward session).
     this.surfaceShapeTrapLive = false;
-    packSurfaceSystem(this.surfaceMaterial, de, colors, trapIndices);
+    // A preceding balloon session can leave its compile gate on until this
+    // new system's stored intent is re-applied below. Clear that stale arm
+    // before installing tiling so the material packer's explicit
+    // tiling+balloon refusal continues to mean a real simultaneous request,
+    // not ordinary balloon -> tiled session replacement.
+    if (tiling) packSurfaceBalloon(this.surfaceMaterial, null);
+    packSurfaceSystem(this.surfaceMaterial, de, colors, trapIndices, tiling);
     // The balloon certifies against the DE's OWN ball, so a
     // new system re-derives it and re-applies the stored on/rMult — a
     // session entered with the balloon already on wraps the new system's
@@ -4555,6 +4567,7 @@ export class FractalScene {
     de: EscapeDE,
     color: Vec3,
     trap: ShapeTrap | null = null,
+    tiling: ResolvedTiling | null = null,
   ): void {
     this.renderNeeded = true;
     this.dropSurfaceGridTexture();
@@ -4563,7 +4576,8 @@ export class FractalScene {
     // source stops resolving to its fallback.
     this.surfaceShapeTrap = trap;
     this.surfaceShapeTrapLive = trap !== null;
-    packEscapeSystem(this.surfaceMaterial, de, color, trap);
+    if (tiling) packSurfaceBalloon(this.surfaceMaterial, null);
+    packEscapeSystem(this.surfaceMaterial, de, color, trap, tiling);
     // NO balloon ball for escape sessions (measured): the
     // escape set is a FILLED solid whose interior reaches the ball
     // center (never-escaping orbits return DE ~ 0 throughout), and the
@@ -4613,13 +4627,19 @@ export class FractalScene {
    * ball are different numbers here, so the balls below take
    * `de.boundingRadius` — the marching one.
    */
-  setBulbSystem(de: BulbDE, color: Vec3, trap: ShapeTrap | null = null): void {
+  setBulbSystem(
+    de: BulbDE,
+    color: Vec3,
+    trap: ShapeTrap | null = null,
+    tiling: ResolvedTiling | null = null,
+  ): void {
     this.renderNeeded = true;
     this.dropSurfaceGridTexture();
     // The escape twin's trap store, verbatim.
     this.surfaceShapeTrap = trap;
     this.surfaceShapeTrapLive = trap !== null;
-    packBulbSystem(this.surfaceMaterial, de, color, trap);
+    if (tiling) packSurfaceBalloon(this.surfaceMaterial, null);
+    packBulbSystem(this.surfaceMaterial, de, color, trap, tiling);
     // NO balloon ball, for the escape solid's reason re-measured on this
     // object: the Mandelbulb is a FILLED solid whose interior
     // reaches the ball centre — DE(0) = 0 and 100% of a 0.1R neighbourhood
@@ -4907,6 +4927,7 @@ export class FractalScene {
     de: SurfaceDE4,
     colors: Vec3[],
     trapIndices: number[],
+    tiling: ResolvedTiling | null = null,
   ): void {
     this.renderNeeded = true;
     // A stale 3D grid must not outlive its system just because the next
@@ -4916,7 +4937,9 @@ export class FractalScene {
     // The 4D fragment tracer carries no trap arm (escape4 is
     // compute-only), so the channel is never live here.
     this.surfaceShapeTrapLive = false;
-    packSurfaceSystem4(this.surfaceMaterial4, de, colors, trapIndices);
+    // The 3D install's session-replacement clear, one dimension up.
+    if (tiling) packSurface4Balloon(this.surfaceMaterial4, null);
+    packSurfaceSystem4(this.surfaceMaterial4, de, colors, trapIndices, tiling);
     this.activeSurfaceMaterial = this.surfaceMaterial4;
     this.surfaceQuad.material = this.surfaceMaterial4;
     // The floor and the balloon install here exactly as they do for a 3D

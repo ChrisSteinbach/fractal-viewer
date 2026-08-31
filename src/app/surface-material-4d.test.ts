@@ -13,6 +13,7 @@ import {
 } from "./surface-material-4d";
 import {
   createSurfaceMaterial,
+  materialSurfaceTiling,
   packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
   SURFACE_CONDENSATION_GLSL_DEPTH_MAX,
@@ -31,6 +32,12 @@ import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import { CLASSIC_SURFACE_FOLD_RADII } from "../fractal/surface-de";
+import {
+  resolveTiling,
+  TILING_GROUP_INFO,
+  TILING_GROUPS,
+  type ResolvedTiling,
+} from "../fractal/tiling";
 import type { ShapeSpec } from "../fractal/shapes";
 import { twentyFourCellFlake } from "../fractal/presets";
 import { createHash } from "node:crypto";
@@ -1175,6 +1182,200 @@ describe("the 4D tracer's variant arms", () => {
         "base = mix(base, uBalloonTint, uBalloonTintStrength * shell);",
       ),
     );
+  });
+});
+
+describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
+  const f4 = resolveTiling({ group: "f4" })!;
+  const clippedF4 = resolveTiling({ group: "f4", clip: COND4_SPHERE })!;
+
+  const sourceFor = (
+    tiling: ResolvedTiling,
+    {
+      plane = 0,
+      finish = 0,
+      pattern = 0,
+      condensation = null,
+      schedule = 0,
+      chaos = 0,
+    }: {
+      plane?: number;
+      finish?: number;
+      pattern?: number;
+      condensation?: readonly ShapeSpec[] | null;
+      schedule?: number;
+      chaos?: number;
+    } = {},
+  ): string =>
+    surface4FragmentResolvedFor(
+      0,
+      plane,
+      finish,
+      pattern,
+      condensation,
+      schedule,
+      chaos,
+      tiling,
+    );
+
+  it("keeps an absent block byte-identical across every pre-existing legal arm", () => {
+    const variants: Parameters<typeof surface4FragmentResolvedFor>[] = [
+      [],
+      [0, 1],
+      [0, 0, 1, 1],
+      [0, 1, 1, 1, [COND4_SPHERE], 1, 1],
+    ];
+    for (const args of variants) {
+      const [balloon, plane, finish, pattern, condensation, schedule, chaos] =
+        args;
+      expect(surface4FragmentResolvedFor(...args)).toBe(
+        surface4FragmentResolvedFor(
+          balloon,
+          plane,
+          finish,
+          pattern,
+          condensation,
+          schedule,
+          chaos,
+          null,
+        ),
+      );
+    }
+  });
+
+  it("folds the true vec4 query before the untouched sliced core and clips in folded xyz", () => {
+    const source = sourceFor(clippedF4);
+    expect(source).toContain("vec4 surfaceTilingQuery4;");
+    expect(source.indexOf("precision highp float;")).toBeLessThan(
+      source.indexOf("vec4 surfaceTilingQuery4;"),
+    );
+    expect(source).toContain("TilingFoldResult tilingFold(vec4 pIn)");
+    expect(source).toContain(
+      "TilingFoldResult folded = tilingFold(uInvRotor * vec4(p, uW0));",
+    );
+    expect(source).toContain("vec4 q = surfaceTilingQuery4;");
+    expect(source).toContain("float inner = surfaceDETilingCore(p, cutoff);");
+    expect(source).toContain("return max(inner, tilingClipSdf(q.xyz));");
+    expect(source).toContain("uTilingGroup != 6 || uSliceHalfW > 0.0");
+    expect(sourceFor(f4)).not.toContain("tilingClipSdf");
+  });
+
+  it("attributes 4D height, radius and pattern to the folded query while retaining visible world-space finish", () => {
+    const source = sourceFor(f4, { finish: 1, pattern: 1 });
+    expect(source).toContain(
+      "(transpose(uInvRotor) * surfaceTilingHitPoint).y / uVisibleRadius",
+    );
+    expect(source).toContain("vec4 q4 = surfaceTilingHitPoint;");
+    expect(source).toContain("vec4 patternLifted = surfaceTilingHitPoint;");
+    expect(source).toContain("finishShade(base, pos, n, rd");
+  });
+
+  it("source-generates every legal 4D group and orthogonal variant", () => {
+    for (const group of TILING_GROUPS.slice(3)) {
+      const source = sourceFor(resolveTiling({ group })!);
+      expect(source).toContain("TilingFoldResult tilingFold(vec4 pIn)");
+    }
+    const variants = [
+      sourceFor(f4, { plane: 1 }),
+      sourceFor(f4, { finish: 1, pattern: 1 }),
+      sourceFor(f4, {
+        condensation: [COND4_SPHERE],
+        schedule: 1,
+        chaos: 1,
+      }),
+    ];
+    for (const source of variants) {
+      expect(source).toContain("surfaceDETilingCore");
+      expect(source).toContain("surfaceTilingHitPoint");
+    }
+  });
+
+  it("emits all 128 legal 4D option combinations below the source ceiling", () => {
+    let count = 0;
+    for (const clip of [null, COND4_SPHERE] as const) {
+      const tiling = resolveTiling({
+        group: "f4",
+        ...(clip ? { clip } : {}),
+      })!;
+      for (const plane of [0, 1])
+        for (const finish of [0, 1])
+          for (const pattern of [0, 1])
+            for (const condensation of [0, 1])
+              for (const schedule of [0, 1])
+                for (const chaos of [0, 1]) {
+                  const source = surface4FragmentFor(
+                    0,
+                    plane,
+                    finish,
+                    pattern,
+                    condensation ? [COND4_SPHERE] : null,
+                    schedule,
+                    chaos,
+                    tiling,
+                  );
+                  expect(source.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+                  count++;
+                }
+    }
+    expect(count).toBe(128);
+  });
+
+  it("defensively rejects wrong-dimensional, forged, mesh, and balloon pairings", () => {
+    for (const group of TILING_GROUPS.slice(0, 3)) {
+      expect(() => sourceFor(resolveTiling({ group })!)).toThrow(/3D.*4D/);
+    }
+    const forged = {
+      ...f4,
+      info: { ...TILING_GROUP_INFO.f4 },
+    };
+    expect(() => sourceFor(forged)).toThrow(/canonical frozen group info/);
+    expect(() =>
+      sourceFor(resolveTiling({ group: "f4", clip: MESH4_SHAPE })!),
+    ).toThrow(/mesh clips are refused/);
+    expect(() =>
+      surface4FragmentResolvedFor(1, 0, 0, 0, null, 0, 0, f4),
+    ).toThrow(/cannot compile into the balloon variant/);
+  });
+
+  it("installs one live group word and refuses kaleidoscope, slab, and balloon", () => {
+    const material = createSurfaceMaterial4();
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, f4);
+    expect(materialSurfaceTiling(material, true)).toBe(f4);
+    expect(material.uniforms.uTilingGroup.value).toBe(6);
+    expect(material.defines.SURFACE4_TILING).toBe(1);
+    expect(material.fragmentShader).toContain("surfaceTilingFold");
+
+    setSurface4GroundPlane(material, groundSpec());
+    expect(materialSurfaceTiling(material, true)).toBe(f4);
+    expect(material.fragmentShader).toContain("surfaceTilingFold");
+    expect(material.fragmentShader).toContain("shadeGroundPlane");
+    setSurface4GroundPlane(material, null);
+    expect(() => setSurfaceView4(material, IDENTITY4, 0.25, 0)).not.toThrow();
+
+    const version = material.version;
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, f4);
+    expect(material.version).toBe(version);
+    expect(() =>
+      setSurfaceSystem4(
+        material,
+        de4([map4()], { order: 3, stepBack: IDENTITY4 }),
+        [[0, 0, 0]],
+        undefined,
+        f4,
+      ),
+    ).toThrow(/cannot compose with kaleidoscope/);
+    expect(() => setSurfaceView4(material, IDENTITY4, 0, 0.1)).toThrow(
+      /cannot compose with a 4D slab/,
+    );
+    expect(() => setSurface4Balloon(material, balloonSpec())).toThrow(
+      /cannot compose with balloon/,
+    );
+
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, null);
+    expect(materialSurfaceTiling(material, true)).toBeNull();
+    expect(material.uniforms.uTilingGroup.value).toBe(0);
+    expect(material.defines.SURFACE4_TILING).toBeUndefined();
+    expect(material.fragmentShader).not.toContain("surfaceTilingFold");
   });
 });
 

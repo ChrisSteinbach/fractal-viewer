@@ -43,7 +43,10 @@ import {
   SURFACE_GPU_CHAOS_BYTES,
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_PARAMS4_CHAOS_BYTES,
+  SURFACE_GPU_PARAMS4_ESCAPE_TILING_BYTES,
   SURFACE_GPU_PARAMS_CHAOS_BYTES,
+  SURFACE_GPU_PARAMS4_TILING_BYTES,
+  SURFACE_GPU_PARAMS_TILING_BYTES,
   SURFACE_GPU_PARAMS4_SCHEDULE_BYTES,
   SURFACE_GPU_PARAMS_SCHEDULE_BYTES,
   SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
@@ -56,12 +59,15 @@ import { buildSurfaceDE } from "../fractal/surface-de";
 import { buildSurfaceDE4 } from "../fractal/surface-de-4d";
 import { buildEscapeDE } from "../fractal/escape-de";
 import { buildEscapeDE4 } from "../fractal/escape-de-4d";
+import { buildBulbDE } from "../fractal/bulb-de";
+import { resolveTiling } from "../fractal/tiling";
 import { resolveShapeTrap } from "../fractal/shape-trap";
 import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
 import {
   defaultTransforms,
   foldChain,
   gearworks,
+  mandelbulbClassic,
   mandelboxBrick,
   PRESET_TRAPS,
   starFoundry,
@@ -1415,6 +1421,7 @@ interface PaletteResourceHarness {
   renderer: SurfaceComputeRenderer;
   layoutDescriptors: GPUBindGroupLayoutDescriptor[];
   bufferDescriptors: GPUBufferDescriptor[];
+  paramsBuffer: GPUBuffer;
   shaderSources: string[];
   textureDescriptors: GPUTextureDescriptor[];
   textureWrites: ReturnType<typeof vi.fn>;
@@ -1438,6 +1445,7 @@ async function createPaletteResourceHarness(
   const bindGroups: GPUBindGroupDescriptor[] = [];
   const textureWrites = vi.fn();
   const bufferWrites = vi.fn();
+  const buffers: GPUBuffer[] = [];
   const textures: GPUTexture[] = [];
   const neverLost = new Promise<GPUDeviceLostInfo>(() => {});
   const device = {
@@ -1467,7 +1475,9 @@ async function createPaletteResourceHarness(
     createComputePipelineAsync: async () => ({}),
     createBuffer: (descriptor: GPUBufferDescriptor) => {
       bufferDescriptors.push(descriptor);
-      return { destroy: vi.fn() };
+      const buffer = { destroy: vi.fn() } as unknown as GPUBuffer;
+      buffers.push(buffer);
+      return buffer;
     },
     createTexture: (descriptor: GPUTextureDescriptor) => {
       textureDescriptors.push(descriptor);
@@ -1517,6 +1527,7 @@ async function createPaletteResourceHarness(
     renderer,
     layoutDescriptors,
     bufferDescriptors,
+    paramsBuffer: buffers[0],
     shaderSources,
     textureDescriptors,
     textureWrites,
@@ -1526,6 +1537,170 @@ async function createPaletteResourceHarness(
     balloonTexture: textures[1] ?? null,
   };
 }
+
+/** Stop a real host frame at its first Params upload. Everything through
+ * target routing and the selected production packer has run; command
+ * encoding/readback remain outside this host-only fake-device seam. */
+async function captureParamsWrite(
+  harness: PaletteResourceHarness,
+  spec: SurfaceComputeFrameSpec,
+): Promise<ArrayBuffer> {
+  const opaqueBuffer = (): GPUBuffer => ({}) as GPUBuffer;
+  Reflect.set(harness.renderer, "allocateFrameBuffers", async () => ({
+    rays: spec.width * spec.height,
+    layerPrefill: new Uint8Array(spec.width * spec.height * 4),
+    states: opaqueBuffer(),
+    active: opaqueBuffer(),
+    color: opaqueBuffer(),
+    layer: opaqueBuffer(),
+  }));
+  Reflect.set(harness.renderer, "uploadedLutVersion", spec.lutVersion);
+  harness.bufferWrites.mockClear();
+
+  const stop = new Error("params upload observed");
+  let params: ArrayBuffer | null = null;
+  harness.bufferWrites.mockImplementation(
+    (buffer: GPUBuffer, _offset: number, data: ArrayBuffer) => {
+      if (buffer === harness.paramsBuffer) {
+        params = data;
+        throw stop;
+      }
+    },
+  );
+  const run = Reflect.get(harness.renderer, "runFrame") as (
+    token: number,
+    frame: SurfaceComputeFrameSpec,
+    opts: Record<string, never>,
+  ) => Promise<unknown>;
+  await expect(run.call(harness.renderer, 0, spec, {})).rejects.toBe(stop);
+  expect(params).not.toBeNull();
+  return params!;
+}
+
+describe("SurfaceComputeRenderer finite-tiling target integration", () => {
+  it("routes every 3D/4D target through tiled codegen and an exactly sized Params allocation/write", async () => {
+    const clip = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.4 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const tiling3 = resolveTiling({ group: "a3", clip })!;
+    const tiling4 = resolveTiling({ group: "f4", clip })!;
+    const cases: {
+      label: string;
+      target: SurfaceComputeTarget;
+      dimension: 3 | 4;
+      groupCode: number;
+      expectedBytes: number;
+    }[] = [
+      {
+        label: "ifs",
+        target: {
+          kind: "ifs",
+          de: buildSurfaceDE(defaultTransforms(), null, {
+            order: 1,
+            plane: "xz",
+          }),
+          tiling: tiling3,
+        },
+        dimension: 3,
+        groupCode: 1,
+        expectedBytes: SURFACE_GPU_PARAMS_TILING_BYTES,
+      },
+      {
+        label: "escape",
+        target: {
+          kind: "escape",
+          de: buildEscapeDE(foldChain()),
+          tiling: tiling3,
+        },
+        dimension: 3,
+        groupCode: 1,
+        expectedBytes: SURFACE_GPU_PARAMS_TILING_BYTES,
+      },
+      {
+        label: "bulb",
+        target: {
+          kind: "bulb",
+          de: buildBulbDE(mandelbulbClassic()),
+          tiling: tiling3,
+        },
+        dimension: 3,
+        groupCode: 1,
+        expectedBytes: SURFACE_GPU_PARAMS_TILING_BYTES,
+      },
+      {
+        label: "escape4",
+        target: {
+          kind: "escape4",
+          de: buildEscapeDE4(mandelboxBrick()),
+          tiling: tiling4,
+        },
+        dimension: 4,
+        groupCode: 6,
+        expectedBytes: SURFACE_GPU_PARAMS4_ESCAPE_TILING_BYTES,
+      },
+      {
+        label: "ifs4",
+        target: {
+          kind: "ifs4",
+          de: buildSurfaceDE4(defaultTransforms(), null, {
+            order: 1,
+            plane: "xz",
+          }),
+          tiling: tiling4,
+        },
+        dimension: 4,
+        groupCode: 6,
+        expectedBytes: SURFACE_GPU_PARAMS4_TILING_BYTES,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const harness = await createPaletteResourceHarness(
+        false,
+        testCase.target,
+      );
+      expect(harness.shaderSources.length, testCase.label).toBeGreaterThan(0);
+      for (const source of harness.shaderSources) {
+        expect(source, testCase.label).toContain(
+          `fn tilingFold(pIn: vec${testCase.dimension}f)`,
+        );
+        expect(source, testCase.label).toContain("fn tilingClipSdf(");
+        expect(source, testCase.label).toContain(
+          `params.tilingGroup != ${testCase.groupCode}u`,
+        );
+      }
+
+      const spec = frameSpec();
+      if (testCase.dimension === 4) {
+        spec.view4 = {
+          rotor: rotorMatrix(identityRotorPair()),
+          w0: 0,
+          sliceHalfW: 0,
+        };
+      }
+      const params = await captureParamsWrite(harness, spec);
+      expect(harness.bufferDescriptors[0].size, testCase.label).toBe(
+        testCase.expectedBytes,
+      );
+      expect(params.byteLength, testCase.label).toBe(testCase.expectedBytes);
+      const tilingOffset = testCase.expectedBytes - 16;
+      expect(
+        new DataView(params).getUint32(tilingOffset, true),
+        testCase.label,
+      ).toBe(testCase.groupCode);
+      expect(
+        Array.from(new Uint8Array(params, tilingOffset + 4, 12)),
+        testCase.label,
+      ).toEqual(new Array(12).fill(0));
+      harness.renderer.destroy();
+    }
+  });
+});
 
 describe("SurfaceComputeRenderer condensation session resources", () => {
   it("does not allocate, upload, or bind a mesh atlas for an analytic scene", async () => {

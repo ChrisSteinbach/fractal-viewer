@@ -1135,6 +1135,63 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
     expect(tiled.status).not.toBe("ineligible");
   });
 
+  it("refuses a finite group whose dimension does not match the document", () => {
+    const group4On3 = deriveWithTiling("mandelboxKifs", { group: "a4" });
+    expect(group4On3).toMatchObject({ status: "ineligible", kind: null });
+    expect(group4On3.note).toContain("A4 tiling group is 4D");
+    expect(group4On3.note).toContain("document is 3D");
+
+    const group3On4 = deriveWithTiling("pentatope", { group: "a3" });
+    expect(group3On4).toMatchObject({ status: "ineligible", kind: null });
+    expect(group3On4.note).toContain("A3 tiling group is 3D");
+    expect(group3On4.note).toContain("document is 4D");
+  });
+
+  it("refuses mesh-backed tiling clips before either shader backend can ignore them", () => {
+    const result = deriveWithTiling("mandelboxKifs", {
+      group: "a3",
+      clip: {
+        parts: [
+          {
+            primitive: { kind: "mesh", meshId: "star-prism-v1" },
+            combine: "union",
+          },
+        ],
+      },
+    });
+    expect(result).toMatchObject({ status: "ineligible", kind: null });
+    expect(result.note).toContain("analytic shapes");
+    expect(result.note).toContain("preserved in the document");
+  });
+
+  it("prices the tiling clip together with another baked authored shape", () => {
+    const transforms = sierpinskiTetrahedron().map((transform, index) =>
+      index === 0 ? { ...transform, emitter: NEAR_BUDGET_SHAPE } : transform,
+    );
+    const withoutClip = deriveSurfaceEligibility(
+      transforms,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      { group: "a3" },
+    );
+    expect(withoutClip.status).not.toBe("ineligible");
+
+    const withClip = deriveSurfaceEligibility(
+      transforms,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      { group: "a3", clip: NEAR_BUDGET_SHAPE },
+    );
+    expect(withClip).toMatchObject({ status: "ineligible", kind: null });
+    expect(withClip.note).toContain("Authored custom-shape source needs");
+  });
+
   it("never consults machine availability for the tiling refusal — a tiled kaleidoscope document is refused on every backend", () => {
     const document = presetDocument("mandelboxKifs");
     const withTiling = (computeAvailable: boolean) =>

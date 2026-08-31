@@ -92,6 +92,7 @@ import {
 } from "../fractal/shapes";
 import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
 import type { MeshAssetId } from "../fractal/mesh-shapes";
+import type { ResolvedTiling } from "../fractal/tiling";
 import type {
   SurfaceGpu4View,
   SurfaceGpuGroundPlane,
@@ -146,6 +147,7 @@ import {
   SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
+  SURFACE_GPU_TILING_BYTES,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
 import {
@@ -435,11 +437,18 @@ export class SurfaceComputeFrameSizeError extends Error {}
  * re-measured on the Mandelbulb).
  */
 export type SurfaceComputeTarget =
-  | { kind: "ifs"; de: SurfaceDE; balloon?: boolean; groundPlane?: boolean }
+  | {
+      kind: "ifs";
+      de: SurfaceDE;
+      balloon?: boolean;
+      groundPlane?: boolean;
+      tiling?: ResolvedTiling;
+    }
   | {
       kind: "escape";
       de: EscapeDE;
       groundPlane?: boolean;
+      tiling?: ResolvedTiling;
       /** The shape-trap channel's CREATE-TIME geometry (`AppState.shapeTrap`'s
        * shape): compiles the trap accumulator + baked SDF into the kernels
        * and grows their params struct; the LIVE pose/mode block then rides
@@ -458,6 +467,7 @@ export type SurfaceComputeTarget =
       kind: "bulb";
       de: BulbDE;
       groundPlane?: boolean;
+      tiling?: ResolvedTiling;
       shapeTrap?: ShapeSpec;
       shapeTrapGeometry?: Pick<
         ResolvedShapeTrap,
@@ -468,6 +478,7 @@ export type SurfaceComputeTarget =
       kind: "escape4";
       de: EscapeDE4;
       groundPlane?: boolean;
+      tiling?: ResolvedTiling;
       shapeTrap?: ShapeSpec;
       shapeTrapGeometry?: Pick<
         ResolvedShapeTrap,
@@ -479,6 +490,7 @@ export type SurfaceComputeTarget =
       de: SurfaceDE4;
       balloon?: boolean;
       groundPlane?: boolean;
+      tiling?: ResolvedTiling;
     };
 
 /** The FORWARD-orbit kinds (escape, bulb, escape4): a forward orbit
@@ -1853,6 +1865,11 @@ export class SurfaceComputeRenderer {
           // and a balloon+plane target is a caller bug the codegen
           // rejects loudly.
           groundPlane: target.groundPlane === true,
+          // Finite reflection tiling is frozen with the session just like
+          // the estimator core and authored clip source. The resolved group
+          // bakes its fold/clip into both pipeline modules; the params tail
+          // carries the matching live group code as a stale-source guard.
+          tiling: target.tiling ?? null,
           // The shape-trap channel — FORWARD kinds only (the target union
           // carries the field nowhere else). Baked geometry: the create-time
           // decision, so a shape edit re-enters the session with fresh
@@ -2128,7 +2145,9 @@ export class SurfaceComputeRenderer {
                   SURFACE_GPU_PARAMS_PLANE_BYTES
                 : SURFACE_GPU_PARAMS_BYTES;
     const paramsBufferSize =
-      baseParamsBufferSize + (targetHasChaos ? SURFACE_GPU_CHAOS_BYTES : 0);
+      baseParamsBufferSize +
+      (targetHasChaos ? SURFACE_GPU_CHAOS_BYTES : 0) +
+      (target.tiling ? SURFACE_GPU_TILING_BYTES : 0);
     const paramsBuf = device.createBuffer({
       // Hybrid schedules append their live depth/map-range/bound block after
       // the legacy variant regions. Use the matching host allocation for
@@ -3239,7 +3258,14 @@ export class SurfaceComputeRenderer {
         : null;
     const packParams: (run: SurfaceGpuRunParams) => ArrayBuffer =
       target.kind === "escape"
-        ? (run) => packEscapeGpuParams(target.de, run, groundPlane, shapeTrap)
+        ? (run) =>
+            packEscapeGpuParams(
+              target.de,
+              run,
+              groundPlane,
+              shapeTrap,
+              target.tiling ?? null,
+            )
         : target.kind === "escape4"
           ? (run) =>
               packEscape4GpuParams(
@@ -3248,13 +3274,21 @@ export class SurfaceComputeRenderer {
                 run,
                 groundPlane,
                 shapeTrap,
+                target.tiling ?? null,
               )
           : target.kind === "bulb"
             ? // The escape packer's twin — one asymmetry, and it
               // is inside packBulbGpuParams: the ORBIT bailout and the
               // QUERY-space marching ball are different numbers for this
               // object, so the frozen radii take the latter.
-              (run) => packBulbGpuParams(target.de, run, groundPlane, shapeTrap)
+              (run) =>
+                packBulbGpuParams(
+                  target.de,
+                  run,
+                  groundPlane,
+                  shapeTrap,
+                  target.tiling ?? null,
+                )
             : target.kind === "ifs4"
               ? (() => {
                   // A balloon 4D session's spec must carry the live balloon
@@ -3267,7 +3301,14 @@ export class SurfaceComputeRenderer {
                       );
                     }
                     return (run: SurfaceGpuRunParams) =>
-                      packSurface4GpuParams(target.de, view4!, run, balloon);
+                      packSurface4GpuParams(
+                        target.de,
+                        view4!,
+                        run,
+                        balloon,
+                        null,
+                        target.tiling ?? null,
+                      );
                   }
                   return (run: SurfaceGpuRunParams) =>
                     packSurface4GpuParams(
@@ -3276,6 +3317,7 @@ export class SurfaceComputeRenderer {
                       run,
                       null,
                       groundPlane,
+                      target.tiling ?? null,
                     );
                 })()
               : (() => {
@@ -3292,10 +3334,22 @@ export class SurfaceComputeRenderer {
                       );
                     }
                     return (run: SurfaceGpuRunParams) =>
-                      packSurfaceGpuParams(target.de, run, balloon);
+                      packSurfaceGpuParams(
+                        target.de,
+                        run,
+                        balloon,
+                        null,
+                        target.tiling ?? null,
+                      );
                   }
                   return (run: SurfaceGpuRunParams) =>
-                    packSurfaceGpuParams(target.de, run, null, groundPlane);
+                    packSurfaceGpuParams(
+                      target.de,
+                      run,
+                      null,
+                      groundPlane,
+                      target.tiling ?? null,
+                    );
                 })();
     // An ifs4 frame at the shipped sliceHalfW 0 rides the slab-free
     // kernel pair (measured 2.2-2.4x cheaper at every kaleidoscope order

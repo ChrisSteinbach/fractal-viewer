@@ -9,6 +9,14 @@ Commands section points here rather than carrying these numbers inline.
 It pins `surface-de-gpu.ts` — both the eval/march baselines and the app
 path's march-unproject/shade — to the CPU estimator.
 
+Finite chamber tiling adds a mandatory compact ABI/agreement gate across all
+seven kernel cores. Each core must compile, bind a params buffer at its exact
+legal byte length, dispatch, and agree with the matching `tiling-de.ts` CPU
+wrapper at three probes: a chamber crossing, an active analytic clip and, for
+F4, a genuinely w-dependent fold. This is deliberately one all-or-nothing
+gate rather than seven benchmark rows: its purpose is to keep every core and
+every trailing uniform layout live, including the aligned 16-byte tiling tail.
+
 The condensation addition appends two Gearworks gates without changing any
 existing fixture or timing baseline. `gearworksCondensation` runs the normal
 700-query affine agreement comparator against a dedicated WGSL program with
@@ -114,7 +122,8 @@ npx vitest run src/app/gpu-bench/condensation.test.ts \
   src/fractal/escape-de-4d.test.ts \
   src/app/surface-compute.test.ts src/app/surface-eligibility.test.ts \
   src/app/surface-material.test.ts src/app/surface-material-4d.test.ts \
-  src/fractal/surface-grid.test.ts src/fractal/balloon-de.test.ts
+  src/fractal/surface-grid.test.ts src/fractal/balloon-de.test.ts \
+  src/fractal/tiling.test.ts
 npx tsc --noEmit
 npm run bench:surface -- --display=:0
 ```
@@ -142,6 +151,11 @@ condensation unproject row, both trap-geometry agreement rows and both
 two corresponding chaos rows must satisfy the graph gates above. The section
 verdict must be `pass`. The JSON artifact remains the evidence record; do not
 infer real-driver timing from SwiftShader.
+
+The 2026-08-31 real-Iris run passed the finite-tiling gate: all seven cores
+compiled, bound exact-size params, dispatched, and agreed with their CPU
+wrappers at all three probes. The adapter reported Intel gen-12lp and the full
+Surface section verdict was `pass`.
 
 Measured on real Iris (gen-12lp), both geometry rows passed with `fail=0`.
 `escChainPair+trap-geometry` reported `maxAbs=7.34e-7`, 71 excluded and

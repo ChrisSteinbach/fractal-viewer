@@ -291,6 +291,125 @@ export const TILING_GROUP_INFO: Record<TilingGroup, TilingGroupInfo> =
   });
 
 /**
+ * Stable shader-wire code for a finite reflection group. Zero is reserved
+ * for "tiling off"; live groups are one-based in {@link TILING_GROUPS}'s
+ * append-only order. Both shader engines use this authority rather than
+ * restating an enum beside their independently frozen params layouts.
+ */
+export function tilingGroupCode(group: TilingGroup): number {
+  return TILING_GROUPS.indexOf(group) + 1;
+}
+
+/** A finite number as a shader float literal. `String` preserves the solved
+ * roots' full f64 text; integral values gain `.0`, valid in both dialects. */
+function shaderFloatLit(x: number): string {
+  if (!Number.isFinite(x)) {
+    throw new Error(`tiling: non-finite baked constant (${x})`);
+  }
+  const s = String(x);
+  return /[.e]/.test(s) ? s : `${s}.0`;
+}
+
+/** Validate a source-generated function name at the trust boundary. */
+function shaderIdentifier(name: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new Error(`tiling: invalid shader function name "${name}"`);
+  }
+  return name;
+}
+
+/**
+ * Emit the finite fold-to-chamber primitive from the SAME frozen group table
+ * the CPU oracle reads. Roots are baked because a group change is already a
+ * source-regenerating edit; the only runtime wire is the caller-owned group
+ * id from {@link tilingGroupCode}. The result owns both the folded point and
+ * success flag so the wrapper can turn the cap guard into estimator 0.
+ *
+ * The arithmetic is one generated body in two dialect spellings: start from
+ * the query, select the most-negative pairing below `-FOLD_EPS`, reflect by
+ * `q -= 2*dot*n`, and after {@link MAX_TILING_FOLD_STEPS} accept only if the
+ * final point is within the same tolerance. The root comparisons are
+ * unrolled from `info.roots`; this avoids dynamic local-array indexing on
+ * GLSL drivers while leaving the mathematical source authoritative here.
+ * `TilingFoldResult` is intentionally fixed: one compiled program carries
+ * exactly one authored tiling group.
+ */
+export function tilingFoldSource(
+  info: TilingGroupInfo,
+  dialect: "glsl" | "wgsl",
+  functionName = "tilingFold",
+): string {
+  const name = shaderIdentifier(functionName);
+  const dim = info.dim;
+  const vector = dialect === "glsl" ? `vec${dim}` : `vec${dim}f`;
+  const roots = Array.from({ length: dim }, (_, i) =>
+    info.roots.slice(i * dim, i * dim + dim).map(shaderFloatLit),
+  );
+  const pairings = roots
+    .map(
+      (root, i) =>
+        `    ${dialect === "glsl" ? "float" : "let"} pairing${i} = dot(q, ${vector}(${root.join(", ")}));`,
+    )
+    .join("\n");
+  const selections = roots
+    .map(
+      (_, i) =>
+        `    if (pairing${i} < worstDot) { worstDot = pairing${i}; worst = ${i}; }`,
+    )
+    .join("\n");
+  const reflections = roots
+    .map(
+      (root, i) =>
+        `    ${i === 0 ? "if" : "else if"} (worst == ${i}) { q -= 2.0 * worstDot * ${vector}(${root.join(", ")}); }`,
+    )
+    .join("\n");
+  const finalPairings = roots.map(
+    (root) => `dot(q, ${vector}(${root.join(", ")}))`,
+  );
+  let minDot = finalPairings[finalPairings.length - 1];
+  for (let i = finalPairings.length - 2; i >= 0; i--) {
+    minDot = `min(${finalPairings[i]}, ${minDot})`;
+  }
+  const eps = shaderFloatLit(FOLD_EPS);
+  if (dialect === "glsl") {
+    return `struct TilingFoldResult {
+  ${vector} point;
+  bool ok;
+};
+TilingFoldResult ${name}(${vector} pIn) {
+  ${vector} q = pIn;
+  for (int step = 0; step < ${MAX_TILING_FOLD_STEPS}; step++) {
+    int worst = -1;
+    float worstDot = -${eps};
+${pairings}
+${selections}
+    if (worst < 0) { return TilingFoldResult(q, true); }
+${reflections}
+  }
+  float minDot = ${minDot};
+  return TilingFoldResult(q, minDot >= -${eps});
+}`;
+  }
+  return `struct TilingFoldResult {
+  point: ${vector},
+  ok: bool,
+}
+fn ${name}(pIn: ${vector}) -> TilingFoldResult {
+  var q = pIn;
+  for (var step = 0; step < ${MAX_TILING_FOLD_STEPS}; step++) {
+    var worst: i32 = -1;
+    var worstDot: f32 = -${eps};
+${pairings}
+${selections}
+    if (worst < 0) { return TilingFoldResult(q, true); }
+${reflections}
+  }
+  let minDot = ${minDot};
+  return TilingFoldResult(q, minDot >= -${eps});
+}`;
+}
+
+/**
  * The ONE authority over the tiling block: `resolveTiling(spec)` returns
  * `null` when the scene carries no block (absent means off), otherwise the
  * resolved value — the group's frozen {@link TilingGroupInfo} and the clip

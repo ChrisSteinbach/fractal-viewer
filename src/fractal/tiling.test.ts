@@ -12,6 +12,8 @@ import {
   isInChamber,
   reflectAcrossWall,
   resolveTiling,
+  tilingFoldSource,
+  tilingGroupCode,
 } from "./tiling";
 import type { TilingGroup, TilingGroupInfo, TilingSpec } from "./tiling";
 import type { Vec3, Vec4 } from "./types";
@@ -491,6 +493,67 @@ describe("foldToChamber", () => {
     expect(chamberDistance(info, wall as Vec3 | Vec4)).toBe(0);
     const outside = interior.map((v, j) => v - 2 * root(info, 0)[j]);
     expect(chamberDistance(info, outside as Vec3 | Vec4)).toBe(0);
+  });
+});
+
+describe("shader source authority", () => {
+  it("assigns one-based append-only group codes with zero reserved for off", () => {
+    expect(TILING_GROUPS.map(tilingGroupCode)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it("emits the 3D GLSL fold from A3's frozen roots and shared bounds", () => {
+    const source = tilingFoldSource(TILING_GROUP_INFO.a3, "glsl");
+    expect(source).toContain("struct TilingFoldResult");
+    expect(source).toContain("TilingFoldResult tilingFold(vec3 pIn)");
+    expect(source).toContain(`step < ${MAX_TILING_FOLD_STEPS}`);
+    expect(source).toContain(`float worstDot = -${FOLD_EPS}`);
+    expect(source).toContain("dot(q, vec3(1.0, 0.0, 0.0))");
+    expect(source).toContain("q -= 2.0 * worstDot * vec3(");
+    expect(source).toContain("return TilingFoldResult(q, minDot >=");
+    expect(source).not.toContain("vec4");
+  });
+
+  it("emits the 4D WGSL fold from F4's w-dependent frozen roots", () => {
+    const source = tilingFoldSource(TILING_GROUP_INFO.f4, "wgsl");
+    expect(source).toContain("point: vec4f");
+    expect(source).toContain("fn tilingFold(pIn: vec4f) -> TilingFoldResult");
+    expect(source).toContain(`step < ${MAX_TILING_FOLD_STEPS}`);
+    expect(source).toContain(`var worstDot: f32 = -${FOLD_EPS}`);
+    const w = TILING_GROUP_INFO.f4.roots[15];
+    expect(w).not.toBe(0);
+    expect(source).toContain(String(w));
+    expect(source).toContain("q -= 2.0 * worstDot * vec4f(");
+    expect(source).not.toContain("vec3f");
+  });
+
+  it("keeps the fold arithmetic text aligned across shader dialects", () => {
+    const canon = (source: string): string =>
+      source
+        .replace(/struct TilingFoldResult \{[\s\S]*?\};?\n/, "")
+        .replace(/^TilingFoldResult tilingFold\(vec3 pIn\) \{/m, "fn {")
+        .replace(/^fn tilingFold\(pIn: vec3f\) -> TilingFoldResult \{/m, "fn {")
+        .replace(
+          /\b(?:vec3|float|int) (q|pairing\d+|minDot|worst|worstDot|step)\b/g,
+          "$1",
+        )
+        .replace(/\b(?:let|var) (pairing\d+|minDot|q)\b(?:: f32)?/g, "$1")
+        .replace(/var (worst|step): i32/g, "$1")
+        .replace(/var step/g, "step")
+        .replace(/var worstDot: f32/g, "worstDot")
+        .replace(/vec3f/g, "V")
+        .replace(/vec3/g, "V")
+        .replace(/;\s*\}/g, "; }")
+        .replace(/\s+/g, " ")
+        .trim();
+    expect(canon(tilingFoldSource(TILING_GROUP_INFO.a3, "glsl"))).toBe(
+      canon(tilingFoldSource(TILING_GROUP_INFO.a3, "wgsl")),
+    );
+  });
+
+  it("rejects an invalid emitted function name", () => {
+    expect(() =>
+      tilingFoldSource(TILING_GROUP_INFO.a3, "glsl", "fold-now"),
+    ).toThrow(/invalid shader function name/);
   });
 });
 
