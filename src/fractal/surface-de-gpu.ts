@@ -7268,7 +7268,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   // --- shade: surface-material.ts main()'s hit path, term for term ---
   let pos = ro + rd * t;
   // The pre-dither carrier entry — exactly main()'s tEnter fog origin.
-  let tEnter = carrier.ok ? max(carrier.tEnter, 0.0) : t;`
+  let tEnter = select(t, max(carrier.tEnter, 0.0), carrier.ok);`
       : `  // Sphere-gate recompute, only for tEnter (the fog origin) — cheaper
   // than persisting it in the march state.
   let radius = params.visibleRadius * 1.02;
@@ -7769,10 +7769,11 @@ ${shadeGate}
   // Soft shadow: DE penumbra toward the light, started just off the
   // surface; near-black penumbras and leaving the sphere end early.${
     latticeTiling
-      ? ` The lattice shadow ray computes its OWN presentation carrier:
-  content exists only inside it, so past its own tFar the ray is fully
-  lit (the contract's shadow rule), and a ray that never enters it stays
-  lit.`
+      ? `
+  // The lattice shadow ray computes its OWN presentation carrier:
+  // content exists only inside it, so past its own tFar the ray is fully
+  // lit (the contract's shadow rule), and a ray that never enters it
+  // stays lit.`
       : ""
   }
   var shadow = 1.0;

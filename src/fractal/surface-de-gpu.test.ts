@@ -8914,7 +8914,7 @@ describe("mirrored lattice WGSL and params ABI", () => {
         "let carrier = latticePresentationInterval(ro, rd, params.",
       );
       expect(shade, core).toContain(
-        "let tEnter = carrier.ok ? max(carrier.tEnter, 0.0) : t;",
+        "let tEnter = select(t, max(carrier.tEnter, 0.0), carrier.ok);",
       );
       expect(shade, core).toContain(
         "let shadowCarrier = latticePresentationInterval(pos + n * h * 2.0, shade.lightDir, params.",
