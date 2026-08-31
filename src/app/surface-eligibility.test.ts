@@ -1150,19 +1150,23 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
     expect(group3On4.note).toContain("document is 4D");
   });
 
-  it("preserves but refuses the pending lattice renderer in both 3D and genuine 4D", () => {
+  it("admits the lattice arm through the same analysers the finite arm routes", () => {
+    // The lattice renderer is live: the derivation no longer refuses the
+    // recognized block — the routing arms resolve it against each
+    // estimator's authority radius after the DE exists (the eligibility
+    // gate's job ends at the shared refusals: balloon, kaleidoscope, the
+    // 4D slab, mesh clips).
     for (const preset of ["sierpinski", "pentatope"] as Preset[]) {
       const result = deriveWithTiling(preset, {
         kind: "lattice",
         cellScale: 1,
       });
-      expect(result).toMatchObject({ status: "ineligible", kind: null });
-      expect(result.note).toContain("preserved");
-      expect(result.note).toContain("renderer path");
+      expect(result.status).not.toBe("ineligible");
+      expect(result.kind).not.toBeNull();
     }
   });
 
-  it("makes the pending lattice boundary independent of backend availability", () => {
+  it("keeps the lattice arm's backend independence", () => {
     const document = presetDocument("sierpinski");
     const derive = (computeAvailable: boolean) =>
       deriveSurfaceEligibility(
@@ -1175,6 +1179,7 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
         { kind: "lattice", cellScale: 2 },
       );
     expect(derive(false)).toEqual(derive(true));
+    expect(derive(false).status).not.toBe("ineligible");
   });
 
   it("refuses mesh-backed tiling clips before either shader backend can ignore them", () => {
@@ -1248,15 +1253,14 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
     expect(deriveSurfaceDocumentEligibility(tiled).status).toBe("ineligible");
   });
 
-  it("deriveSurfaceDocumentEligibility carries the same pending lattice refusal", () => {
+  it("deriveSurfaceDocumentEligibility admits the lattice arm at neutral parity", () => {
     const tiled: SurfaceEligibilityDocument = {
       ...presetDocument("pentatope"),
       tiling: { kind: "lattice", cellScale: 3 },
     };
     expectNeutralParity(tiled);
-    expect(deriveSurfaceDocumentEligibility(tiled)).toMatchObject({
-      status: "ineligible",
-      kind: null,
-    });
+    const result = deriveSurfaceDocumentEligibility(tiled);
+    expect(result.status).not.toBe("ineligible");
+    expect(result.kind).not.toBeNull();
   });
 });

@@ -24,7 +24,13 @@ import { buildEscapeDE4 } from "../fractal/escape-de-4d";
 import { buildBulbDE } from "../fractal/bulb-de";
 import { buildBalloon } from "../fractal/balloon-de";
 import { resolveShapeTrap } from "../fractal/shape-trap";
-import { isLatticeTilingSpec, resolveTiling } from "../fractal/tiling";
+import {
+  isResolvedLatticeTiling,
+  resolveTiling,
+  type ResolvedLatticeTiling,
+  type ResolvedTiling,
+} from "../fractal/tiling";
+import { latticeCameraFitBounds } from "../fractal/lattice-march";
 import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
@@ -5277,20 +5283,14 @@ async function main(): Promise<void> {
       // group independently. Balloon remains a hard combination refusal:
       // an orbit's inverted echo is not the echo's orbit, so there is no
       // certified estimator composition to render.
-      // The CPU/document lattice authority lands before its shader twins.
-      // deriveSurfaceEligibility refuses this arm above; keep a local
-      // backstop so the finite-only renderer types cannot accidentally accept
-      // a lattice if a future entry path bypasses that shared gate.
+      // The lattice arm resolves ONLY after the relevant DE exists: h =
+      // cellScale * R derives from the estimator's certified radius, and
+      // which radius is the authority depends on the arm (visible for the
+      // inverse descents, bounding for the forward orbits). resolveTiling
+      // THROWS for a lattice block without that radius, so each arm below
+      // resolves against its own DE — never here, where no DE exists yet.
       const surfaceTilingSpec = state.tiling;
-      if (surfaceTilingSpec && isLatticeTilingSpec(surfaceTilingSpec)) {
-        ui.flashToast(
-          "Surface render stopped: mirrored lattice tiling is preserved in the document but its renderer path is not available in this build yet.",
-        );
-        queueMicrotask(() => surfaceSession.exit());
-        return { post: () => {}, terminate: () => teardownSurfaceCompute() };
-      }
-      const surfaceTiling = resolveTiling(surfaceTilingSpec);
-      if (surfaceTiling && state.balloonEcho) {
+      if (surfaceTilingSpec && state.balloonEcho) {
         ui.flashToast(
           "Surface tiling is unavailable while Balloon echo is on; turn off either authored effect.",
         );
@@ -5301,13 +5301,35 @@ async function main(): Promise<void> {
       // Clear that stored/material arm before either tiled system installer
       // runs; otherwise its deliberate simultaneous-composition guard would
       // mistake stale renderer state for this (already validated) document.
-      if (surfaceTiling) {
+      if (surfaceTilingSpec) {
         scene.setSurfaceBalloon(false, state.balloonRadius);
       }
       // Set when this session routes to the WebGPU compute path — fold 3D,
       // escape, ifs4 and bulb kinds alike — the gate below then awaits
       // device + pipeline instead of the GLSL link.
       let computeTarget: SurfaceComputeTarget | null = null;
+      // Resolve the authored tiling block against ONE arm's estimator
+      // authority radius — the exact rule the shader wrappers and packers
+      // enforce (a lattice block resolved against a different radius
+      // throws at pack). Each arm calls this with its own authority after
+      // its DE exists; finite blocks ignore the radius.
+      const resolveSurfaceTiling = (radius: number): ResolvedTiling | null =>
+        resolveTiling(surfaceTilingSpec, radius);
+      // The lattice camera fit: target the CANONICAL CELL around the
+      // origin, never the global lattice (docs/tiling-contract.md's
+      // camera paragraph) — the explorer's cloud fit frames the untiled
+      // attractor, which sits far inside the window and opens the session
+      // staring at the middle of the floor.
+      const fitLatticeCamera = (
+        tiling: ResolvedLatticeTiling,
+        fourD: boolean,
+      ): void => {
+        if (preserveCamera) return;
+        cameraTween.fitToBounds(
+          latticeCameraFitBounds(tiling.h, tiling.radius, fourD),
+          { fov: scene.camera.fov, aspect: scene.camera.aspect },
+        );
+      };
       // The session's authored materials, gated (null = classic+none) —
       // assigned by the same routing arms that build the DE (every arm,
       // the 4D chain's included — it shipped one review round without its
@@ -5378,6 +5400,12 @@ async function main(): Promise<void> {
               state.finalTransform ?? null,
               state.symmetry,
             );
+            // Lattice: the forward chain's marching ball is the
+            // estimator authority (escape4's packer pins the same radius).
+            const surfaceTiling = resolveSurfaceTiling(de.boundingRadius);
+            if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
+              fitLatticeCamera(surfaceTiling, true);
+            }
             // The head link's finish, exactly as the 3D escape/bulb arms
             // take it: the 4D chain's kernels leave firstChoice at 0 too,
             // so slot 0 is the whole wire one dimension up. This arm
@@ -5458,6 +5486,15 @@ async function main(): Promise<void> {
                 schedule: state.schedule ?? null,
               },
             );
+            // Lattice: the 4D descent's FULL visible radius is the
+            // estimator authority (never the slice-adjusted one), and the
+            // camera frames the canonical cell, not the lattice.
+            const surfaceTiling = resolveSurfaceTiling(
+              de.visibleBoundingRadius,
+            );
+            if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
+              fitLatticeCamera(surfaceTiling, true);
+            }
             sessionMaterials = gatedSlotMaterials(
               ifsShadeSlots(de),
               de.patternCalibration,
@@ -5649,6 +5686,12 @@ async function main(): Promise<void> {
               state.finalTransform ?? null,
               state.symmetry,
             );
+            // Lattice: the forward chain's bailout marching ball is the
+            // estimator authority.
+            const surfaceTiling = resolveSurfaceTiling(de.boundingRadius);
+            if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
+              fitLatticeCamera(surfaceTiling, false);
+            }
             R = de.boundingRadius;
             sessionMaterials = escapeSlotMaterials(de.patternCalibration);
             // The gate admits shapes whose non-escaping set is EMPTY, and
@@ -5718,6 +5761,12 @@ async function main(): Promise<void> {
               state.finalTransform ?? null,
               state.symmetry,
             );
+            // Lattice: the bulb's query-space marching ball is the
+            // estimator authority.
+            const surfaceTiling = resolveSurfaceTiling(de.boundingRadius);
+            if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
+              fitLatticeCamera(surfaceTiling, false);
+            }
             sessionMaterials = escapeSlotMaterials(de.patternCalibration);
             // NOT the orbit bailout: the bulb's marching ball is its own
             // query-space bound, the one number every radius here wants.
@@ -5785,6 +5834,12 @@ async function main(): Promise<void> {
               schedule: state.schedule ?? null,
             },
           );
+          // Lattice: the 3D descent's visible radius is the estimator
+          // authority, and the camera frames the canonical cell.
+          const surfaceTiling = resolveSurfaceTiling(de.visibleBoundingRadius);
+          if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
+            fitLatticeCamera(surfaceTiling, false);
+          }
           sessionMaterials = gatedSlotMaterials(
             ifsShadeSlots(de),
             de.patternCalibration,
@@ -5871,12 +5926,17 @@ async function main(): Promise<void> {
             // barely reachable — the shipped radius is the rest one, the
             // balloon checkbox re-enters the session, and the Inflate
             // sweep starts from rest rather than being entered from.
+            // A lattice session never requests a grid: the empty-space
+            // chain's floors bound the ATTRACTOR inside the cube, but the
+            // rendered content is the infinite mirrored lattice, which
+            // repeats beyond any box — the floors would bound nothing.
             const gridValidAtEntry =
-              !state.balloonEcho ||
-              balloonClearsGridBox(
-                buildBalloon(de, state.balloonRadius),
-                surfaceGridSpec(de).halfExtent,
-              );
+              !surfaceTiling &&
+              (!state.balloonEcho ||
+                balloonClearsGridBox(
+                  buildBalloon(de, state.balloonRadius),
+                  surfaceGridSpec(de).halfExtent,
+                ));
             if (gridValidAtEntry) {
               const document = currentDocument();
               const meshAssets = customMeshWires(document);

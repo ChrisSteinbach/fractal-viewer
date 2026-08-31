@@ -4416,7 +4416,7 @@ export class Ui {
 
     if (lattice) {
       this.tilingNote.textContent =
-        "This document carries mirrored lattice tiling. Its renderer and authoring controls are not available yet; the block is preserved. Turn Surface tiling off to clear it.";
+        "This document carries mirrored lattice tiling: Surface renders the repeated cell at the authored cell scale. Cell-scale authoring controls are not exposed yet (the value arrives with an imported or shared document); Turn Surface tiling off to clear the block.";
       return;
     }
 

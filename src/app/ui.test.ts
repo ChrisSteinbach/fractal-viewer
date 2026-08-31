@@ -10568,7 +10568,7 @@ describe("Ui finite tiling controls", () => {
     );
     expect(el("tilingControls").classList.contains("hidden")).toBe(true);
     expect(el("tilingNote").textContent).toMatch(
-      /mirrored lattice tiling.*controls are not available yet.*block is preserved.*off to clear/i,
+      /mirrored lattice tiling.*Surface renders the repeated cell.*authoring controls are not exposed yet.*off to clear/i,
     );
     expect(current().tiling).toEqual({ kind: "lattice", cellScale: 1.5 });
 
