@@ -157,7 +157,18 @@ import {
   estimateEscapeDistanceTiled,
 } from "../../fractal/tiling-de";
 import { resolveTiling } from "../../fractal/tiling";
-import type { ResolvedTiling } from "../../fractal/tiling";
+import type {
+  ResolvedLatticeTiling,
+  ResolvedTiling,
+} from "../../fractal/tiling";
+import {
+  LATTICE_PRESENTATION_RADIUS_MULT,
+  intersectLatticePresentation3,
+  intersectLatticePresentation4,
+  latticeCameraCarrierRadius3,
+  latticeCameraCarrierRadius4,
+} from "../../fractal/lattice-march";
+import type { LatticePresentation } from "../../fractal/lattice-march";
 import {
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_MAP4_VEC4,
@@ -185,6 +196,7 @@ import {
 } from "../../fractal/surface-de-gpu";
 import type {
   SurfaceGpu4View,
+  SurfaceGpuGroundPlane,
   SurfaceGpuPose,
 } from "../../fractal/surface-de-gpu";
 import type {
@@ -223,6 +235,7 @@ import {
 import type {
   SurfaceComputeFrame,
   SurfaceComputeFrameSpec,
+  SurfaceComputeTarget,
 } from "../surface-compute";
 import { surfaceSlotColors, surfaceTrapIndices } from "../surface-slots";
 
@@ -8698,6 +8711,420 @@ async function runSurfaceComputeFramePlaneLeg(
   }
 }
 
+/**
+ * The lattice frame legs' CPU-system descriptor — one union for the four
+ * lattice families, each carrying the system state the shared leg body
+ * needs (the family selects the kernel core, the CPU oracle, the
+ * authority radius and the 4D view).
+ */
+type SurfaceLatticeFrameSystem =
+  | { family: "inverse3"; sys: SurfaceSystemState }
+  | { family: "escape"; sys: SurfaceEscapeSystemState }
+  | { family: "inverse4"; sys: Surface4SystemState }
+  | { family: "escape4"; sys: SurfaceEscape4SystemState };
+
+/** The lattice estimator authority for a family — the kernel wrappers'
+ * ball-term rule: the full visible radius for the inverse descents, the
+ * bailout marching ball for the forward orbits. */
+function surfaceLatticeAuthorityRadius(
+  family: SurfaceLatticeFrameSystem["family"],
+  de: { boundingRadius: number; visibleBoundingRadius: number },
+): number {
+  return family === "escape" || family === "escape4"
+    ? de.boundingRadius
+    : de.visibleBoundingRadius;
+}
+
+/** The 4D carrier's inverse rotor from the bench's view: the view's
+ * `rotor` array is the WORLD rotor (row-major), and the carrier's slab
+ * coordinate is the ATTRACTOR y of the lifted query — the inverse rotor's
+ * y row = the rotor's transpose (the lift's own math, `rot[i]·p.x +
+ * rot[4+i]·p.y + …`, which is exactly what the kernel's packed
+ * `rotorInvR1` holds). */
+function surfaceLatticeInverseRotor(view: SurfaceGpu4View): number[] {
+  const rot = view.rotor;
+  const out = new Array<number>(16);
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 4; c++) out[r * 4 + c] = rot[c * 4 + r];
+  }
+  return out;
+}
+
+/** The lattice frame legs' strided CPU sanity march: the kernel's own
+ * unproject rays over the identical f32 matrix, the lattice marcher's
+ * quantities — the PRESENTATION CARRIER interval (world sphere ∩
+ * attractor-y slab, the PROVISIONAL window multiplier) as the march gate
+ * instead of the visible-sphere gate, eps = max(acceptEps·t, R·hitFloor)
+ * — over the family's own TILED CPU oracle (the exact estimator the
+ * kernel wrapper mirrors), every SURFACE_SANITY_STRIDE-th pixel. The
+ * plane classification applies surfaceGroundPlaneStatus to MISS terminals
+ * exactly where the kernel splices groundPlaneStatus in (carrier-miss
+ * rays included). */
+function surfaceLatticeCpuSanity(
+  system: SurfaceLatticeFrameSystem,
+  tiling: ResolvedLatticeTiling,
+  invProjView: Float32Array,
+  ro: Vec3,
+  width: number,
+  height: number,
+  groundPlane: SurfaceGpuGroundPlane | null,
+): { hits: number; planes: number; samples: number } {
+  const family = system.family;
+  const de = system.sys.de;
+  const fourD = family === "inverse4" || family === "escape4";
+  const R = surfaceLatticeAuthorityRadius(
+    family,
+    de as { boundingRadius: number; visibleBoundingRadius: number },
+  );
+  const presentation: LatticePresentation = {
+    contentRadius: R,
+    outerRadius: R * LATTICE_PRESENTATION_RADIUS_MULT,
+  };
+  const inverseRotor = fourD
+    ? surfaceLatticeInverseRotor(
+        (
+          system as {
+            family: "inverse4" | "escape4";
+            sys: { view4: SurfaceGpu4View };
+          }
+        ).sys.view4,
+      )
+    : null;
+  const view4 = fourD
+    ? (
+        system as {
+          family: "inverse4" | "escape4";
+          sys: { view4: SurfaceGpu4View };
+        }
+      ).sys.view4
+    : null;
+  const lift = (p: Vec3): Vec4 => {
+    const rot = view4!.rotor;
+    return [
+      rot[0] * p[0] + rot[4] * p[1] + rot[8] * p[2] + rot[12] * view4!.w0,
+      rot[1] * p[0] + rot[5] * p[1] + rot[9] * p[2] + rot[13] * view4!.w0,
+      rot[2] * p[0] + rot[6] * p[1] + rot[10] * p[2] + rot[14] * view4!.w0,
+      rot[3] * p[0] + rot[7] * p[1] + rot[11] * p[2] + rot[15] * view4!.w0,
+    ];
+  };
+  const estimate = (p: Vec3, eps: number): number => {
+    switch (family) {
+      case "inverse3": {
+        const d = system.sys.de;
+        return deHasFolds(d)
+          ? estimateDistanceTiled(tiling, d, p, eps)
+          : estimateDistanceRefinedTiled(tiling, d, p, eps);
+      }
+      case "escape": {
+        const d = system.sys.de;
+        return estimateEscapeDistanceTiled(tiling, d, p);
+      }
+      case "inverse4": {
+        const d = system.sys.de;
+        const q = lift(p);
+        return deHasFolds4(d)
+          ? estimateDistance4Tiled(tiling, d, q)
+          : estimateDistance4RefinedTiled(tiling, d, q);
+      }
+      case "escape4": {
+        const d = system.sys.de;
+        return estimateEscapeDistance4Tiled(tiling, d, lift(p));
+      }
+    }
+  };
+  const stepScale =
+    family === "escape" || family === "escape4"
+      ? ESCAPE_STEP_SCALE
+      : (de as SurfaceDE).stepScale;
+  const hitFloorR =
+    family === "escape" || family === "escape4"
+      ? R
+      : (de as SurfaceDE).boundingRadius;
+  let hits = 0;
+  let planes = 0;
+  const sampled = surfaceSanityPixels(width, height);
+  for (const ray of sampled) {
+    const px = ray % width;
+    const py = Math.floor(ray / width);
+    const rd = surfaceUnprojectRay(invProjView, px, py, width, height);
+    const interval = fourD
+      ? intersectLatticePresentation4(
+          ro,
+          rd,
+          view4!.w0,
+          inverseRotor!,
+          presentation,
+        )
+      : intersectLatticePresentation3(ro, rd, presentation);
+    if (interval === null) {
+      // The kernel's carrier-miss path: the gate writes MISS, and the
+      // ground-plane splice classifies that MISS — mirror it.
+      if (
+        groundPlane &&
+        surfaceGroundPlaneStatus(ro, rd, groundPlane) === SURFACE_GPU_RAY_PLANE
+      ) {
+        planes++;
+      }
+      continue;
+    }
+    let t = interval.tEnter;
+    let hit = false;
+    for (let i = 0; i < SURFACE_MARCH_STEPS && t <= interval.tFar; i++) {
+      const eps = Math.max(
+        SURFACE_PIXEL_EPS * t,
+        hitFloorR * SURFACE_GPU_HIT_FLOOR,
+      );
+      const d = estimate(
+        [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t],
+        eps,
+      );
+      if (d < eps) {
+        hit = true;
+        break;
+      }
+      t += d * stepScale;
+    }
+    if (hit) {
+      hits++;
+    } else if (
+      groundPlane &&
+      surfaceGroundPlaneStatus(ro, rd, groundPlane) === SURFACE_GPU_RAY_PLANE
+    ) {
+      planes++;
+    }
+  }
+  return { hits, planes, samples: sampled.length };
+}
+
+/**
+ * The lattice carrier frame leg — one end-to-end frame through the
+ * PRODUCTION `SurfaceComputeRenderer` for each of the four lattice
+ * families (3D inverse, 3D escape, 4D inverse, 4D escape, each with an
+ * optional ground plane), the acceptance matrix's seam-crossing
+ * march/unproject/shade proof: the production host loop marches the
+ * kernel's unproject rays across the canonical cell (framed by the
+ * contract's cell carrier radius, so the raster genuinely crosses the
+ * x/z — and in 4D the w — seams), runs the FULL shade pass (normal,
+ * shadow, AO, fog from the carrier's tEnter), and a strided CPU sanity
+ * march over the same rays with the family's tiled oracle and the same
+ * carrier gate gates the hit rate — plus the PLANE terminal count when
+ * `plane` is set, against the CPU's own ground-plane classification.
+ *
+ * The camera frames the CANONICAL CELL rather than the untiled attractor
+ * (docs/tiling-contract.md's camera paragraph) — a raster framed on R
+ * alone would stare at the middle of the floor with the seams far
+ * outside the frustum.
+ */
+interface SurfaceLatticeFrameRow {
+  system: string;
+  family: SurfaceLatticeFrameSystem["family"];
+  width: number;
+  height: number;
+  wallMs: number;
+  gpuMs: number;
+  passes: number;
+  truncated: boolean;
+  counts: {
+    hit: number;
+    miss: number;
+    exhausted: number;
+    active: number;
+    plane: number;
+  };
+  sanityGpuHitRate: number;
+  sanityCpuHitRate: number;
+  sanityGpuPlaneRate?: number;
+  sanityCpuPlaneRate?: number;
+  sanitySamples: number;
+}
+
+async function runSurfaceLatticeFrameLeg(
+  system: SurfaceLatticeFrameSystem,
+  tiling: ResolvedLatticeTiling,
+  software: boolean,
+  dom: SurfaceSectionDom,
+  status: (text: string) => void,
+  activity: ActivityBadge,
+  options: { plane?: boolean } = {},
+): Promise<SurfaceLatticeFrameRow> {
+  const family = system.family;
+  const sys = system.sys;
+  const de = sys.de;
+  const fourD = family === "inverse4" || family === "escape4";
+  const width = software ? SURFACE_FRAME_WIDTH_SW : SURFACE_FRAME_WIDTH;
+  const height = software ? SURFACE_FRAME_HEIGHT_SW : SURFACE_FRAME_HEIGHT;
+  const budgetMs = software
+    ? SURFACE_FRAME_BUDGET_SW_MS
+    : SURFACE_FRAME_BUDGET_MS;
+  const R = surfaceLatticeAuthorityRadius(
+    family,
+    de as { boundingRadius: number; visibleBoundingRadius: number },
+  );
+  const cellR = fourD
+    ? latticeCameraCarrierRadius4(tiling.h, R)
+    : latticeCameraCarrierRadius3(tiling.h, R);
+  // The canonical-cell framing: the standard pose at
+  // SURFACE_POSE_DIST_FACTOR × the CELL carrier radius.
+  const pose = buildSurfacePose(
+    { visibleBoundingRadius: R },
+    width,
+    height,
+    (SURFACE_POSE_DIST_FACTOR * cellR) / R,
+  );
+  const invProjView = surfaceInvProjView({ boundingRadius: R }, pose);
+  const groundPlane: SurfaceGpuGroundPlane | null = options.plane
+    ? (() => {
+        const ball = { center: [0, 0, 0] as Vec3, radius: R };
+        return {
+          y: ball.center[1] - ball.radius * SURFACE_PLANE_DROP,
+          fadeStart: ball.radius * SURFACE_PLANE_FADE_START,
+          fadeEnd: ball.radius * SURFACE_PLANE_FADE_END,
+          ballCenter: ball.center,
+          ballRadius: ball.radius,
+          albedo: SURFACE_PLANE_ALBEDO,
+        };
+      })()
+    : null;
+
+  const kind: SurfaceComputeTarget["kind"] =
+    family === "escape"
+      ? "escape"
+      : family === "escape4"
+        ? "escape4"
+        : family === "inverse4"
+          ? "ifs4"
+          : "ifs";
+  const label = `lattice ${family}${options.plane ? " plane" : ""}`;
+  activity.setState("gpu", `Surface ${label} (app path)`);
+  status(`${label}: creating SurfaceComputeRenderer…`);
+  const renderer = await SurfaceComputeRenderer.create(
+    {
+      kind,
+      de,
+      tiling,
+      groundPlane: options.plane ?? false,
+    } as SurfaceComputeTarget,
+    family === "escape" || family === "escape4"
+      ? [[0.8, 0.5, 0.2]]
+      : surfaceSlotColors(
+          (sys as { transforms: Transform[] }).transforms,
+          (de as SurfaceDE).maps,
+        ),
+    family === "escape" || family === "escape4"
+      ? [0]
+      : surfaceTrapIndices(
+          (sys as { transforms: Transform[] }).transforms,
+          (de as SurfaceDE).maps,
+        ),
+  );
+  try {
+    const canvas = surfaceLabeledCanvas(
+      dom,
+      `frame-lattice-${family}`,
+      `lattice carrier frame — ${family}`,
+      width,
+      height,
+    );
+    const spec: SurfaceComputeFrameSpec = {
+      width,
+      height,
+      invProjView,
+      camPos: pose.ro,
+      camForward: pose.fwd,
+      focusDepth: surfaceCameraDepth(pose, [0, 0, 0]),
+      acceptPixelEps: SURFACE_PIXEL_EPS,
+      tracePixelEps:
+        (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
+      maxDepth:
+        family === "escape" || family === "escape4"
+          ? ESCAPE_TIME_ITERATIONS
+          : (de as SurfaceDE).maxDepth,
+      marchSteps: SURFACE_MARCH_STEPS,
+      shadowSteps: SURFACE_FRAME_SHADOW_STEPS,
+      aoTaps: SURFACE_FRAME_AO_TAPS,
+      hitFloor: SURFACE_GPU_HIT_FLOOR,
+      lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
+      ambient: 0.25,
+      // Harness convention: black backdrop — the leg compares RATES,
+      // never miss-pixel colors.
+      bgTop: [0, 0, 0],
+      bgBottom: [0, 0, 0],
+      colorSource: 0,
+      colorSpeed: 0.5,
+      lut: null,
+      lutVersion: 0,
+      dither: true,
+      ...(fourD
+        ? {
+            view4: (sys as { view4: SurfaceGpu4View }).view4,
+          }
+        : {}),
+      ...(groundPlane ? { groundPlane } : {}),
+    };
+    status(`${label}: rendering ${width}x${height}…`);
+    console.info(
+      `[surface-bench] ${label}: rendering ${String(width)}x${String(height)} (budget ${String(budgetMs)}ms)…`,
+    );
+    const frame = await renderer.renderFrame(spec, {
+      budgetMs,
+      onProgress: (pixels) => {
+        drawSurfaceComputeFrame(canvas, pixels, width, height);
+      },
+    });
+    if (!frame) {
+      throw new Error(`${label}: renderFrame resolved null`);
+    }
+    drawSurfaceComputeFrame(canvas, frame.pixels, width, height);
+    const sanity = surfaceLatticeCpuSanity(
+      system,
+      tiling,
+      invProjView,
+      pose.ro,
+      width,
+      height,
+      groundPlane,
+    );
+    const rays = width * height;
+    const samples = Math.max(1, sanity.samples);
+    const sanityGpuHitRate = frame.counts.hit / rays;
+    const sanityCpuHitRate = sanity.hits / samples;
+    const sanityGpuPlaneRate = groundPlane
+      ? frame.counts.plane / rays
+      : undefined;
+    const sanityCpuPlaneRate = groundPlane
+      ? sanity.planes / samples
+      : undefined;
+    console.info(
+      `[surface-bench] ${label}: done — ${String(frame.passes)} passes, ` +
+        `${frame.wallMs.toFixed(0)}ms wall, hit=${String(frame.counts.hit)} ` +
+        `plane=${String(frame.counts.plane)} ` +
+        `(gpu hit ${sanityGpuHitRate.toFixed(3)} vs cpu ${sanityCpuHitRate.toFixed(3)}` +
+        (groundPlane
+          ? `, gpu plane ${sanityGpuPlaneRate!.toFixed(3)} vs cpu ${sanityCpuPlaneRate!.toFixed(3)})`
+          : ")") +
+        `${frame.truncated ? ", TRUNCATED" : ""}`,
+    );
+    return {
+      system: sys.name,
+      family,
+      width: frame.width,
+      height: frame.height,
+      wallMs: frame.wallMs,
+      gpuMs: frame.gpuMs,
+      passes: frame.passes,
+      truncated: frame.truncated,
+      counts: frame.counts,
+      sanityGpuHitRate,
+      sanityCpuHitRate,
+      sanityGpuPlaneRate,
+      sanityCpuPlaneRate,
+      sanitySamples: samples,
+    };
+  } finally {
+    renderer.destroy();
+  }
+}
+
 /** The ifs4 frame leg's strided CPU sanity march (affine4 first, then
  * widened to the fold4 core): the kernel's own unproject rays
  * over the identical f32 matrix, the affine4/fold4 marcher's shared
@@ -12567,6 +12994,112 @@ async function runSurfaceDeSection(
     render();
     await canaryCheck("the lattice-tiling ABI agreement leg");
 
+    // ----- Mirrored lattice: the routed carrier acceptance matrix -----
+    // The ABI leg above pins the ESTIMATOR; these frame legs pin the LIVE
+    // carrier use end to end through the production renderer: the march's
+    // unproject rays across the canonical cell (framed by the contract's
+    // cell carrier radius, so the raster genuinely crosses the seams), the
+    // full shade pass (normal/shadow/AO/fog from the carrier's tEnter),
+    // and — in the plane row — the fifth PLANE terminal. The CPU sanity
+    // marches the SAME rays with the family's tiled oracle through the
+    // SAME carrier gate, and the hit/plane rate bands gate agreement the
+    // way the other frame legs do.
+    let latticeFrameFailed = false;
+    try {
+      const latticeFrames: {
+        system: SurfaceLatticeFrameSystem;
+        tiling: ResolvedLatticeTiling;
+        plane?: boolean;
+      }[] = [
+        {
+          system: { family: "inverse3", sys: tilingFold },
+          tiling: latticeFold,
+        },
+        {
+          system: { family: "escape", sys: tilingEscape },
+          tiling: latticeEscape,
+        },
+        {
+          system: { family: "inverse4", sys: tilingAffine4 },
+          tiling: latticeAffine4,
+        },
+        {
+          system: { family: "escape4", sys: tilingEscape4 },
+          tiling: latticeEscape4,
+        },
+        {
+          system: { family: "inverse3", sys: tilingFold },
+          tiling: latticeFold,
+          plane: true,
+        },
+      ];
+      for (const frame of latticeFrames) {
+        const row = await runSurfaceLatticeFrameLeg(
+          frame.system,
+          frame.tiling,
+          acquired.software,
+          dom,
+          status,
+          activity,
+          { plane: frame.plane },
+        );
+        const gap = Math.abs(row.sanityGpuHitRate - row.sanityCpuHitRate);
+        const planeGap =
+          row.sanityGpuPlaneRate === undefined ||
+          row.sanityCpuPlaneRate === undefined
+            ? null
+            : Math.abs(row.sanityGpuPlaneRate - row.sanityCpuPlaneRate);
+        results.notes.push(
+          `lattice frame ${row.family}${frame.plane ? " plane" : ""} ` +
+            `${row.width}x${row.height}: passes=${String(row.passes)} ` +
+            `hit=${String(row.counts.hit)} miss=${String(row.counts.miss)} ` +
+            `plane=${String(row.counts.plane)} truncated=${String(row.truncated)} ` +
+            `hitRate gpu=${row.sanityGpuHitRate.toFixed(3)} cpu=${row.sanityCpuHitRate.toFixed(3)}` +
+            (planeGap === null
+              ? ""
+              : ` planeRate gpu=${row.sanityGpuPlaneRate!.toFixed(3)} cpu=${row.sanityCpuPlaneRate!.toFixed(3)}`),
+        );
+        if (row.truncated) {
+          results.notes.push(
+            `lattice frame ${row.family}: truncated at its ${acquired.software ? SURFACE_FRAME_BUDGET_SW_MS : SURFACE_FRAME_BUDGET_MS}ms budget — ` +
+              (acquired.software
+                ? "accepted on a software adapter"
+                : "failing the leg: a real-adapter lattice frame must complete"),
+          );
+          if (!acquired.software) latticeFrameFailed = true;
+        } else {
+          if (row.counts.hit === 0 && !acquired.software) {
+            latticeFrameFailed = true;
+            results.notes.push(
+              `lattice frame ${row.family}: zero hit rays on a real adapter — failing the leg`,
+            );
+          }
+          if (gap > SURFACE_SANITY_HIT_RATE_TOL && !acquired.software) {
+            latticeFrameFailed = true;
+            results.notes.push(
+              `lattice frame ${row.family}: hit-rate gap ${gap.toFixed(3)} vs the CPU sanity march exceeds ${String(SURFACE_SANITY_HIT_RATE_TOL)} — failing the leg`,
+            );
+          }
+          if (
+            planeGap !== null &&
+            planeGap > SURFACE_SANITY_HIT_RATE_TOL &&
+            !acquired.software
+          ) {
+            latticeFrameFailed = true;
+            results.notes.push(
+              `lattice frame ${row.family}: plane-rate gap ${planeGap.toFixed(3)} vs the CPU sanity march exceeds ${String(SURFACE_SANITY_HIT_RATE_TOL)} — failing the leg`,
+            );
+          }
+        }
+        render();
+      }
+    } catch (e) {
+      latticeFrameFailed = true;
+      results.notes.push(`lattice frame: ${describeError(e)}`);
+    }
+    render();
+    await canaryCheck("the lattice carrier frame legs");
+
     // ----- Agreement protocol (the correctness pin — always runs) -----
     const gpuByKey = new Map<string, Float32Array>();
     for (const cfg of evalConfigs) {
@@ -15884,7 +16417,8 @@ async function runSurfaceDeSection(
       lens4PackGuardFailed ||
       aff4SweepFailed ||
       tilingAbiFailed ||
-      latticeTilingAbiFailed
+      latticeTilingAbiFailed ||
+      latticeFrameFailed
     ) {
       results.verdict = "fail";
       results.reason = compileFailed
@@ -15917,7 +16451,9 @@ async function runSurfaceDeSection(
                                   ? "finite-tiling compile/bind/numeric ABI agreement failure — see notes"
                                   : latticeTilingAbiFailed
                                     ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
-                                    : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                                    : latticeFrameFailed
+                                      ? "lattice carrier frame failure — see notes"
+                                      : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
