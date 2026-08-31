@@ -6,6 +6,7 @@ import {
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { ShapeSpec } from "../fractal/shapes";
+import type { ResolvedTiling } from "../fractal/tiling";
 import {
   SURFACE_FINISH_GLSL,
   surfaceFinishShadeSource,
@@ -24,6 +25,8 @@ import {
   SURFACE_FULL_HIT_FLOOR,
   SURFACE_FULL_MARCH_STEPS,
   SURFACE_FULL_SHADOW_STEPS,
+  installSurfaceTiling,
+  materialSurfaceTiling,
   setSurfaceShapeMeshSdf,
   surfaceShapeMeshSdfUniform,
   surfaceFragmentFor,
@@ -2985,6 +2988,7 @@ export function surface4FragmentFor(
   condensation: readonly ShapeSpec[] | null = null,
   schedule = 0,
   chaos = 0,
+  tiling: ResolvedTiling | null = null,
 ): string {
   return surfaceFragmentFor(
     0,
@@ -3001,6 +3005,7 @@ export function surface4FragmentFor(
     0,
     schedule,
     chaos,
+    tiling,
   );
 }
 
@@ -3017,6 +3022,7 @@ export function surface4FragmentResolvedFor(
   condensation: readonly ShapeSpec[] | null = null,
   schedule = 0,
   chaos = 0,
+  tiling: ResolvedTiling | null = null,
 ): string {
   return surfaceFragmentResolvedFor(
     0,
@@ -3033,6 +3039,7 @@ export function surface4FragmentResolvedFor(
     0,
     schedule,
     chaos,
+    tiling,
   );
 }
 
@@ -3206,6 +3213,9 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uGroundPattern: { value: 0 },
       uGroundTileScale: { value: 0.64 },
       uGroundEmission: { value: 0 },
+      // Same one-word finite-tiling wire as the 3D material; roots/clip are
+      // source-baked and zero is off.
+      uTilingGroup: { value: 0 },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -3303,6 +3313,7 @@ export function setSurfaceSystem4(
   de: SurfaceDE4,
   colors: Vec3[],
   trapIndices?: number[],
+  tiling: ResolvedTiling | null = null,
 ): void {
   const schedule = de.schedule && de.schedule.depth > 0 ? de.schedule : null;
   const scheduleMaps = schedule?.maps ?? [];
@@ -3327,6 +3338,12 @@ export function setSurfaceSystem4(
       `surface DE needs ${shadeCount} map/emitter colors, but received ${colors.length}`,
     );
   }
+  if (tiling && de.symmetry.order > 1) {
+    throw new RangeError(
+      "Surface tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
+    );
+  }
+  const tilingChanged = installSurfaceTiling(material, tiling, true);
   const maps = mapBuffers.get(material);
   if (!maps) {
     throw new TypeError(
@@ -3453,7 +3470,8 @@ export function setSurfaceSystem4(
     material.defines.SURFACE4_CONDENSATION !== wantCondensation ||
     (material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0) !== wantSchedule ||
     (material.defines.SURFACE4_CHAOS === 1 ? 1 : 0) !== wantChaos ||
-    (data.surfaceCondensationShapeKey4 ?? null) !== condensationKey
+    (data.surfaceCondensationShapeKey4 ?? null) !== condensationKey ||
+    tilingChanged
   ) {
     material.defines.SURFACE4_CONDENSATION = wantCondensation;
     if (wantChaos) material.defines.SURFACE4_CHAOS = 1;
@@ -3470,6 +3488,7 @@ export function setSurfaceSystem4(
       condensationShapes,
       wantSchedule,
       wantChaos,
+      tiling,
     );
     material.needsUpdate = true;
   }
@@ -3574,6 +3593,11 @@ export function setSurfaceView4(
   w0: number,
   sliceHalfW: number,
 ): void {
+  if (sliceHalfW > 0 && materialSurfaceTiling(material, true)) {
+    throw new RangeError(
+      "Surface tiling cannot compose with a 4D slab: the fold of a segment is a bent polyline",
+    );
+  }
   const u = material.uniforms;
   const invRotor = u.uInvRotor.value as THREE.Matrix4;
   invRotor.set(
@@ -3635,6 +3659,12 @@ export function setSurface4Balloon(
   material: THREE.ShaderMaterial,
   spec: SurfaceBalloonSpec | null,
 ): void {
+  const tiling = materialSurfaceTiling(material, true);
+  if (spec && tiling) {
+    throw new RangeError(
+      "Surface tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+    );
+  }
   const u = material.uniforms;
   const center = u.uBalloonCenter.value as THREE.Vector3;
   if (spec) {
@@ -3668,6 +3698,7 @@ export function setSurface4Balloon(
       materialCondensationSpecs4(material),
       material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0,
       material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
+      tiling,
     );
     material.needsUpdate = true;
   }
@@ -3712,6 +3743,7 @@ export function setSurface4GroundPlane(
           materialCondensationSpecs4(material),
           material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0,
           material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
+          materialSurfaceTiling(material, true),
         );
   const u = material.uniforms;
   if (spec) {
@@ -3814,6 +3846,7 @@ export function setSurface4Materials(
       materialCondensationSpecs4(material),
       material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0,
       material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
+      materialSurfaceTiling(material, true),
     );
     material.needsUpdate = true;
   }

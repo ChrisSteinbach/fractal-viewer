@@ -34,8 +34,9 @@ import {
   systemHasChaos,
   transformHasEmitter,
 } from "../fractal/chaos-game";
-import { shapeSdfSource } from "../fractal/shapes";
+import { shapeMeshIds, shapeSdfSource } from "../fractal/shapes";
 import type { ShapeSpec } from "../fractal/shapes";
+import { TILING_GROUP_INFO } from "../fractal/tiling";
 import type { TilingSpec } from "../fractal/tiling";
 import type {
   HybridSchedule,
@@ -197,6 +198,7 @@ function activeEmitterShapes(transforms: Transform[]): ShapeSpec[] {
 function surfaceShapeSourceRefusal(
   result: SurfaceEligibilityResult,
   shapes: readonly ShapeSpec[],
+  tiling: TilingSpec | null = null,
 ): string | null {
   let glsl = 0;
   let wgsl = 0;
@@ -245,6 +247,16 @@ function surfaceShapeSourceRefusal(
       if (wgslError) return wgslError;
     }
   }
+  // The tiling wrapper owns a distinct function in both dialects. Price it
+  // under its production identifier rather than folding it into the
+  // emitter/trap list above: identical authored specs still emit two bodies
+  // because they live in independent compile-gated consumers.
+  if (tiling?.clip) {
+    const glslError = add(tiling.clip, "glsl", "tilingClipSdf");
+    if (glslError) return glslError;
+    const wgslError = add(tiling.clip, "wgsl", "tilingClipSdf");
+    if (wgslError) return wgslError;
+  }
   if (
     glsl <= SURFACE_SHAPE_SOURCE_BUDGET_BYTES &&
     wgsl <= SURFACE_SHAPE_SOURCE_BUDGET_BYTES
@@ -260,8 +272,13 @@ function surfaceShapeSourceRefusal(
 function withSurfaceShapeSourceBudget(
   result: SurfaceEligibilityResult,
   shapes: readonly ShapeSpec[],
+  tiling: TilingSpec | null = null,
 ): SurfaceEligibilityResult {
-  const refusal = surfaceShapeSourceRefusal(result, shapes);
+  // The tiling clip is a baked SDF on BOTH renderer paths, beside an IFS
+  // session's condensation shapes or a forward session's color trap. Price
+  // the aggregate program rather than admitting two individually legal
+  // authored blocks whose combined source crosses the shared ceiling.
+  const refusal = surfaceShapeSourceRefusal(result, shapes, tiling);
   return refusal === null
     ? result
     : { status: "ineligible", note: refusal, kind: null };
@@ -411,6 +428,25 @@ export function deriveSurfaceEligibility(
   const scheduleRecords = scheduleRecordCount(schedule);
   const hasSchedule = scheduleRecords > 0;
   const hasChaos = systemHasChaos(transforms);
+  const fourD = systemPartsAreNonFlat(transforms, finalTransform, symmetry);
+  if (tiling && TILING_GROUP_INFO[tiling.group].dim !== (fourD ? 4 : 3)) {
+    return {
+      status: "ineligible",
+      note: `The ${tiling.group.toUpperCase()} tiling group is ${TILING_GROUP_INFO[tiling.group].dim}D, but this document is ${fourD ? "4D" : "3D"}; choose a group with the same dimension as the fractal.`,
+      kind: null,
+    };
+  }
+  // Phase 1 deliberately bakes analytic clips into both shader dialects.
+  // Mesh clips need an atlas binding and stable dispatch index in every
+  // tiling wrapper; neither renderer carries that delivery yet, so refuse at
+  // the shared document gate instead of letting one backend ignore the clip.
+  if (tiling?.clip && shapeMeshIds(tiling.clip).length > 0) {
+    return {
+      status: "ineligible",
+      note: "A tiling clip must use analytic shapes; mesh/catalog clips are preserved in the document but are not yet available to Surface tiling.",
+      kind: null,
+    };
+  }
   // The tiling block wraps EVERY estimator core, so its combination
   // refusals gate the whole derivation before any analyzer routes. The
   // kaleidoscope refusal is the one the document alone proves: both are
@@ -435,7 +471,7 @@ export function deriveSurfaceEligibility(
   // A 4D document routes to the 4D analysis — what used to be this gate's
   // blanket "extends into 4D" disqualifier is now the 4D tracer's
   // admission ticket.
-  if (systemPartsAreNonFlat(transforms, finalTransform, symmetry)) {
+  if (fourD) {
     const analysis = analyzeSurfaceSystem4(
       transforms,
       finalTransform,
@@ -508,6 +544,7 @@ export function deriveSurfaceEligibility(
             kind: "escape4",
           },
           shapeTrap ? [shapeTrap.shape] : [],
+          tiling,
         );
       }
       // qsquare's complement, one dimension up — see the 3D arm below for
@@ -573,11 +610,13 @@ export function deriveSurfaceEligibility(
           kind: "ifs4",
         },
         activeEmitterShapes(transforms),
+        tiling,
       );
     }
     return withSurfaceShapeSourceBudget(
       { status: "eligible", note: null, kind: "ifs4" },
       activeEmitterShapes(transforms),
+      tiling,
     );
   }
 
@@ -638,6 +677,7 @@ export function deriveSurfaceEligibility(
           kind: "escape",
         },
         shapeTrap ? [shapeTrap.shape] : [],
+        tiling,
       );
     }
     // The escape family's second complement: a single pure triplex-power
@@ -666,6 +706,7 @@ export function deriveSurfaceEligibility(
           kind: "bulb",
         },
         shapeTrap ? [shapeTrap.shape] : [],
+        tiling,
       );
     }
     // qsquare's complement: unlike the fold and bulb arms above, there is
@@ -717,11 +758,13 @@ export function deriveSurfaceEligibility(
         kind: "ifs",
       },
       activeEmitterShapes(transforms),
+      tiling,
     );
   }
   return withSurfaceShapeSourceBudget(
     { status: "eligible", note: null, kind: "ifs" },
     activeEmitterShapes(transforms),
+    tiling,
   );
 }
 

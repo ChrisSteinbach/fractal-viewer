@@ -1,0 +1,672 @@
+#!/usr/bin/env node
+/**
+ * Finite Surface-tiling browser gate. This is not an npm script because it
+ * drives a production build through a real browser:
+ *
+ *   npm run build && npm run preview &
+ *   node scripts/surface-tiling.verify.mjs [--display=:0] [--url=…]
+ *
+ * All fixtures are embedded JSON documents encoded to `#v1=` at runtime — no
+ * preset table and no not-yet-shipped tiling UI is involved. The route matrix
+ * covers:
+ *
+ *   - 3D inverse IFS: forced WebGL and forced WebGPU;
+ *   - 3D forward escape: forced WebGL and WebGPU;
+ *   - genuinely non-flat 4D inverse IFS: forced WebGL and WebGPU;
+ *   - genuinely 4D forward escape: its compute-only route.
+ *
+ * Every leg must enter Surface from the real mode button, reach the
+ * `?surfacestate` settled latch, draw a non-backdrop share in a SCREENSHOT,
+ * retain its authored tiling block in the document hash, and report the
+ * expected engine. `?surfacegl` forces fragment WebGL; `?surfacecompute`
+ * forces compute where the production routing rule otherwise prefers WebGL
+ * and is harmless on already-compute routes. With `--display`, every leg must
+ * additionally report a non-software backend, making the compute rows a real-
+ * display WebGPU gate rather than a SwiftShader exercise.
+ *
+ * The A3 inverse fixture is aligned to the frozen group. Its second WebGL leg
+ * changes ONLY the tiling block by adding an analytic sphere clip around the
+ * chamber vertex. The two settled canvas screenshots must differ
+ * structurally, which proves the block is not merely persisted and silently
+ * ignored by the renderer. Screenshot PNGs are decoded through an offscreen
+ * 2D canvas only AFTER capture; this never calls getImageData on the live
+ * WebGL canvas (that readback is empty outside its own rAF).
+ *
+ * Options:
+ *   --url=URL        app origin (default https://localhost:4173)
+ *   --display=:0     headed X11 run; omit for headless SwiftShader
+ *   --settle=MS      per-leg settle budget (default 180000)
+ *   --viewport=WxH   browser viewport (default 800x500)
+ *   --draw=FRACTION  minimum non-backdrop screenshot share (default 0.005)
+ *   --diff=FRACTION  minimum clipped/unclipped structural diff (default 0.01)
+ *   --outdir=PATH    screenshot directory (default .playwright-mcp/surface-tiling)
+ *
+ * Exit 0 = every leg and the screenshot comparison passed.
+ * Exit 1 = CHECKING/setup failure (bad args, browser/navigation/image decode);
+ *          rerun — this is not a renderer verdict.
+ * Exit 3 = a scene verdict failed (entry, settle, draw, document, backend,
+ *          engine, page error, or distinctness); the failing rows are printed.
+ */
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright-core";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_OUT_DIR = path.resolve(
+  SCRIPT_DIR,
+  "..",
+  ".playwright-mcp",
+  "surface-tiling",
+);
+const POLL_MS = 250;
+const NON_BACKDROP_TOLERANCE = 10;
+const STRUCTURAL_DELTA = 12;
+const OVERLAYS = [
+  "#panel",
+  "#help",
+  "#legend",
+  "#menuToggle",
+  "#loading",
+  "#error",
+  "#updateBanner",
+  "#renderError",
+  "#toast",
+];
+
+const COMMON_DOCUMENT = {
+  numPoints: 100_000,
+  pointSize: 1,
+  colorMode: "transform",
+  colorGamma: 1,
+  rampPaletteId: "legacy",
+  fourDColor: "wBlueOrange",
+  fourDDepthFade: false,
+  renderStyle: "depthFade",
+  showGuides: false,
+  flame: {
+    exposure: 1,
+    iterations: 20_000_000,
+    gamma: 2.4,
+    vibrancy: 1,
+    supersample: 2,
+    estimatorRadius: 6,
+    estimatorMinimumRadius: 0,
+    estimatorCurve: 0.4,
+    paletteId: "spectrum",
+  },
+  solid: {
+    resolution: 192,
+    iterations: 20_000_000,
+    threshold: 0.3,
+    lightAzimuth: 135,
+    lightElevation: 50,
+    ambient: 0.25,
+    paletteId: "spectrum",
+  },
+  surface: {
+    antialiasSamples: 1,
+    lightAzimuth: 135,
+    lightElevation: 50,
+    ambient: 0.25,
+    colorSource: "transform",
+    paletteId: "spectrum",
+    colorSpeed: 0.5,
+  },
+  symmetry: { order: 1, plane: "xz" },
+  glowBrightness: 1,
+  balloonEcho: false,
+  balloonRadius: 1.6,
+  fogDensity: 0.8,
+  fogTint: "#ffffff",
+  fogTintStrength: 0,
+  groundPlane: false,
+  background: { mode: "dark" },
+};
+
+const HALF_SCALE = [0.5, 0.5, 0.5];
+const ZERO_ROTATION = [0, 0, 0];
+
+/** A3-aligned tetrahedron: the chamber vertex's four-point orbit. */
+const IFS3_TRANSFORMS = [
+  [0.6532, 0.3771, 0.2667],
+  [-0.6532, 0.3771, 0.2667],
+  [0, -0.7542, 0.2667],
+  [0, 0, -0.8],
+].map((position) => ({
+  position,
+  rotation: ZERO_ROTATION,
+  scale: HALF_SCALE,
+}));
+
+/** A4-aligned pentatope: non-flat because every map carries authored w. */
+const IFS4_TRANSFORMS = [
+  [[-0.6325, -0.3651, -0.2582], -0.2],
+  [[0.6325, -0.3651, -0.2582], -0.2],
+  [[0, 0.7303, -0.2582], -0.2],
+  [[0, 0, 0.7746], -0.2],
+  [[0, 0, 0], 0.8],
+].map(([position, w]) => ({
+  position,
+  rotation: ZERO_ROTATION,
+  scale: HALF_SCALE,
+  w: { position: w },
+}));
+
+const ESCAPE3_TRANSFORMS = [
+  {
+    position: [0, 0, 0],
+    rotation: ZERO_ROTATION,
+    scale: [1, 1, 1],
+    variations: [{ type: "mandelbox", weight: 2 }],
+  },
+];
+
+/** W rotation keeps the forward family genuinely 4D, not a flat lift. */
+const ESCAPE4_TRANSFORMS = [
+  {
+    position: [0, 0, 0],
+    rotation: ZERO_ROTATION,
+    scale: [1, 1, 1],
+    variations: [{ type: "mandelbox", weight: 2 }],
+    w: { rotation: { xw: 0.4 } },
+  },
+  {
+    position: [0, 0, 0],
+    rotation: ZERO_ROTATION,
+    scale: [1, 1, 1],
+    variations: [{ type: "boxfold", weight: 1.6 }],
+  },
+];
+
+const A3_CLIP = {
+  parts: [
+    {
+      primitive: { kind: "sphere", radius: 0.55 },
+      combine: "union",
+      pose: { offset: [1.3064, 0.7542, 0.5333] },
+    },
+  ],
+};
+
+function sceneDocument(transforms, tiling) {
+  return {
+    ...COMMON_DOCUMENT,
+    transforms,
+    tiling,
+  };
+}
+
+const FIXTURES = [
+  {
+    name: "ifs3",
+    family: "inverse 3D",
+    document: sceneDocument(IFS3_TRANSFORMS, { group: "a3" }),
+    arms: ["webgl", "compute"],
+  },
+  {
+    name: "ifs3-clip",
+    family: "inverse 3D + analytic clip",
+    document: sceneDocument(IFS3_TRANSFORMS, {
+      group: "a3",
+      clip: A3_CLIP,
+    }),
+    arms: ["webgl"],
+  },
+  {
+    name: "escape3",
+    family: "forward 3D",
+    document: sceneDocument(ESCAPE3_TRANSFORMS, { group: "b3" }),
+    arms: ["webgl", "compute"],
+  },
+  {
+    name: "ifs4",
+    family: "inverse 4D",
+    document: sceneDocument(IFS4_TRANSFORMS, { group: "a4" }),
+    arms: ["webgl", "compute"],
+  },
+  {
+    name: "escape4",
+    family: "forward 4D",
+    document: sceneDocument(ESCAPE4_TRANSFORMS, { group: "f4" }),
+    arms: ["compute"],
+  },
+];
+
+function parseArgs(argv) {
+  const args = {
+    url: "https://localhost:4173",
+    display: undefined,
+    settle: 180_000,
+    viewport: "800x500",
+    draw: 0.005,
+    diff: 0.01,
+    outdir: DEFAULT_OUT_DIR,
+  };
+  for (const raw of argv) {
+    if (!raw.startsWith("--")) throw new Error(`unknown argument ${raw}`);
+    const eq = raw.indexOf("=");
+    const key = raw.slice(2, eq === -1 ? undefined : eq);
+    const value = eq === -1 ? "" : raw.slice(eq + 1);
+    if (!(key in args)) throw new Error(`unknown flag --${key}`);
+    if (key === "display") args.display = value || ":0";
+    else if (["settle", "draw", "diff"].includes(key)) {
+      args[key] = Number(value);
+      if (!Number.isFinite(args[key])) {
+        throw new Error(`--${key} wants a finite number`);
+      }
+    } else if (key === "url") args.url = value.replace(/\/+$/, "");
+    else args[key] = value;
+  }
+  const viewport = /^(\d+)x(\d+)$/.exec(args.viewport);
+  if (!viewport) {
+    throw new Error(`--viewport wants WxH (got ${args.viewport})`);
+  }
+  args.width = Number(viewport[1]);
+  args.height = Number(viewport[2]);
+  if (args.width < 320 || args.height < 240) {
+    throw new Error("--viewport must be at least 320x240");
+  }
+  if (args.settle <= 0 || args.draw < 0 || args.diff < 0) {
+    throw new Error("--settle must be positive and fractions nonnegative");
+  }
+  if (!args.url) throw new Error("--url must not be empty");
+  return args;
+}
+
+function encodeHash(document) {
+  return `#v1=${Buffer.from(JSON.stringify(document), "utf8").toString("base64url")}`;
+}
+
+function decodeHash(hash) {
+  const raw = hash.replace(/^#v1=/, "");
+  return JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+}
+
+function launchOptions(args) {
+  const env = { ...process.env };
+  const flags = [
+    "--enable-unsafe-webgpu",
+    "--enable-features=Vulkan",
+    "--ignore-gpu-blocklist",
+    // Playwright's context exception does not cover the service-worker
+    // process on this self-signed local preview certificate. Without this
+    // browser-level exception the renderer can succeed while the unrelated
+    // SW registration emits a console error and trips this gate.
+    "--ignore-certificate-errors",
+    "--no-sandbox",
+  ];
+  if (args.display !== undefined) {
+    env.DISPLAY = args.display;
+  } else {
+    delete env.DISPLAY;
+    flags.push(
+      "--headless=new",
+      "--use-webgpu-adapter=swiftshader",
+      "--use-vulkan=swiftshader",
+    );
+  }
+  return { env, args: flags };
+}
+
+async function waitForBoot(page) {
+  await page.waitForFunction(
+    () => {
+      const count = document.getElementById("pointCount")?.textContent ?? "";
+      return (
+        typeof window.__surfaceState === "function" &&
+        Number(count.replace(/[^\d]/g, "")) > 0
+      );
+    },
+    undefined,
+    { timeout: 60_000, polling: 100 },
+  );
+}
+
+async function hideOverlays(page) {
+  await page.evaluate((selectors) => {
+    for (const selector of selectors) {
+      for (const element of document.querySelectorAll(selector)) {
+        element.style.setProperty("visibility", "hidden", "important");
+      }
+    }
+  }, OVERLAYS);
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => resolve())),
+  );
+}
+
+async function visibleErrorText(page) {
+  return page.evaluate(() =>
+    ["#error", "#renderError"]
+      .map((selector) => document.querySelector(selector))
+      .filter((element) => {
+        if (!element || element.classList.contains("hidden")) return false;
+        const style = getComputedStyle(element);
+        return (
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          Number(style.opacity) !== 0
+        );
+      })
+      .map((element) => element.textContent ?? "")
+      .join(" ")
+      .trim(),
+  );
+}
+
+async function screenshotMetrics(page, png) {
+  return page.evaluate(
+    async ({ base64, tolerance }) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${base64}`;
+      await image.decode();
+      const width = 128;
+      const height = Math.max(
+        1,
+        Math.round((image.naturalHeight / image.naturalWidth) * width),
+      );
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("screenshot 2D decode context unavailable");
+      ctx.drawImage(image, 0, 0, width, height);
+      const data = ctx.getImageData(0, 0, width, height).data;
+      const pixel = (x, y) => {
+        const at = (y * width + x) * 4;
+        return [data[at], data[at + 1], data[at + 2]];
+      };
+      const corners = [
+        pixel(0, 0),
+        pixel(width - 1, 0),
+        pixel(0, height - 1),
+        pixel(width - 1, height - 1),
+      ];
+      let nonBackdrop = 0;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const p = pixel(x, y);
+          const backdrop = corners.some(
+            (c) =>
+              Math.abs(c[0] - p[0]) <= tolerance &&
+              Math.abs(c[1] - p[1]) <= tolerance &&
+              Math.abs(c[2] - p[2]) <= tolerance,
+          );
+          if (!backdrop) nonBackdrop++;
+        }
+      }
+      return {
+        coverage: nonBackdrop / (width * height),
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+      };
+    },
+    { base64: png.toString("base64"), tolerance: NON_BACKDROP_TOLERANCE },
+  );
+}
+
+async function screenshotDiff(page, a, b) {
+  return page.evaluate(
+    async ({ a64, b64, threshold }) => {
+      async function decode(base64) {
+        const image = new Image();
+        image.src = `data:image/png;base64,${base64}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("diff 2D decode context unavailable");
+        ctx.drawImage(image, 0, 0);
+        return {
+          width: canvas.width,
+          height: canvas.height,
+          data: ctx.getImageData(0, 0, canvas.width, canvas.height).data,
+        };
+      }
+      const A = await decode(a64);
+      const B = await decode(b64);
+      if (A.width !== B.width || A.height !== B.height) {
+        throw new Error(
+          `screenshot size mismatch ${A.width}x${A.height} vs ${B.width}x${B.height}`,
+        );
+      }
+      // Ignore a 5% edge band where browser/compositor clipping is least
+      // stable. Overlay elements were hidden before both screenshots.
+      const x0 = Math.floor(A.width * 0.05);
+      const x1 = Math.ceil(A.width * 0.95);
+      const y0 = Math.floor(A.height * 0.05);
+      const y1 = Math.ceil(A.height * 0.95);
+      let compared = 0;
+      let structural = 0;
+      let maxDelta = 0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const at = (y * A.width + x) * 4;
+          const delta = Math.max(
+            Math.abs(A.data[at] - B.data[at]),
+            Math.abs(A.data[at + 1] - B.data[at + 1]),
+            Math.abs(A.data[at + 2] - B.data[at + 2]),
+          );
+          compared++;
+          if (delta > threshold) structural++;
+          if (delta > maxDelta) maxDelta = delta;
+        }
+      }
+      return {
+        fraction: compared > 0 ? structural / compared : 0,
+        structural,
+        compared,
+        maxDelta,
+      };
+    },
+    {
+      a64: a.toString("base64"),
+      b64: b.toString("base64"),
+      threshold: STRUCTURAL_DELTA,
+    },
+  );
+}
+
+async function runLeg(browser, args, fixture, arm, index) {
+  const context = await browser.newContext({
+    ignoreHTTPSErrors: true,
+    viewport: { width: args.width, height: args.height },
+  });
+  const page = await context.newPage();
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  const expectedHash = encodeHash(fixture.document);
+  const force = arm === "webgl" ? "surfacegl" : "surfacecompute";
+  const url = `${args.url}/?surfacestate&${force}&tilingcase=${index}${expectedHash}`;
+  const started = Date.now();
+  let png = null;
+  try {
+    await page.goto(url, { waitUntil: "load", timeout: 60_000 });
+    await page.bringToFront();
+    await waitForBoot(page);
+    const button = await page.$eval("#modeSurfaceBtn", (element) => ({
+      disabled: element.disabled,
+      title: element.title,
+    }));
+    if (button.disabled) {
+      return {
+        ok: false,
+        name: fixture.name,
+        family: fixture.family,
+        arm,
+        reason: `Surface button disabled: ${button.title}`,
+        elapsedMs: Date.now() - started,
+        pageErrors,
+        consoleErrors,
+      };
+    }
+    await page.click("#modeSurfaceBtn");
+
+    let entered = false;
+    let state = null;
+    const deadline = Date.now() + args.settle;
+    while (Date.now() < deadline) {
+      state = await page.evaluate(() => window.__surfaceState?.() ?? null);
+      if (state?.firstFrame) entered = true;
+      if (state?.settled || (state && state.mode !== "surface")) break;
+      await page.waitForTimeout(POLL_MS);
+    }
+
+    const settled = Boolean(state?.settled);
+    const engine = state?.engine ?? null;
+    const backend = state?.backend ?? null;
+    const persisted = decodeHash(await page.evaluate(() => location.hash));
+    const documentPass =
+      persisted.tiling?.group === fixture.document.tiling.group &&
+      Boolean(persisted.tiling?.clip) === Boolean(fixture.document.tiling.clip);
+    // Read this BEFORE hideOverlays mutates visibility for the screenshot;
+    // otherwise the verifier itself could conceal the app's failure banner.
+    const errorText = await visibleErrorText(page);
+    let metrics = null;
+    if (entered) {
+      await hideOverlays(page);
+      const canvas = await page.$("canvas");
+      if (!canvas) throw new Error("main canvas is missing");
+      png = await canvas.screenshot({ type: "png" });
+      metrics = await screenshotMetrics(page, png);
+      await mkdir(args.outdir, { recursive: true });
+      await writeFile(
+        path.join(args.outdir, `${fixture.name}-${arm}.png`),
+        png,
+      );
+    }
+    const realBackendPass =
+      args.display === undefined || backend?.software === false;
+    const ok =
+      entered &&
+      settled &&
+      engine === arm &&
+      documentPass &&
+      metrics !== null &&
+      metrics.coverage >= args.draw &&
+      realBackendPass &&
+      pageErrors.length === 0 &&
+      consoleErrors.length === 0 &&
+      errorText.length === 0;
+    return {
+      ok,
+      name: fixture.name,
+      family: fixture.family,
+      arm,
+      entered,
+      settled,
+      engine,
+      backend,
+      documentPass,
+      coverage: metrics?.coverage ?? null,
+      elapsedMs: Date.now() - started,
+      pageErrors,
+      consoleErrors,
+      errorText,
+      png,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+function printLeg(result) {
+  const coverage =
+    result.coverage === null || result.coverage === undefined
+      ? "n/a"
+      : `${(result.coverage * 100).toFixed(2)}%`;
+  const backend = result.backend
+    ? `${result.backend.software ? "software" : "hardware"}:${result.backend.label ?? "?"}`
+    : "n/a";
+  process.stdout.write(
+    `${result.ok ? "PASS" : "FAIL"}  ${result.name.padEnd(11)} ${result.arm.padEnd(7)} ` +
+      `entered=${String(Boolean(result.entered)).padEnd(5)} ` +
+      `settled=${String(Boolean(result.settled)).padEnd(5)} ` +
+      `engine=${String(result.engine ?? "none").padEnd(7)} ` +
+      `drawn=${coverage.padEnd(7)} document=${String(Boolean(result.documentPass)).padEnd(5)} ` +
+      `backend=${backend} time=${(result.elapsedMs / 1000).toFixed(1)}s\n` +
+      `  ${result.family}${result.reason ? ` — ${result.reason}` : ""}\n`,
+  );
+  for (const error of result.pageErrors ?? []) {
+    process.stdout.write(`  page error: ${error}\n`);
+  }
+  for (const error of result.consoleErrors ?? []) {
+    process.stdout.write(`  console error: ${error}\n`);
+  }
+  if (result.errorText)
+    process.stdout.write(`  app error: ${result.errorText}\n`);
+}
+
+async function run() {
+  const args = parseArgs(process.argv.slice(2));
+  // Make the authored-document claim executable before a browser is opened.
+  for (const fixture of FIXTURES) {
+    const decoded = decodeHash(encodeHash(fixture.document));
+    if (decoded.tiling?.group !== fixture.document.tiling.group) {
+      throw new Error(
+        `${fixture.name}: embedded tiling hash failed round-trip`,
+      );
+    }
+  }
+  const browser = await chromium.launch({
+    executablePath: process.env.CHROME_PATH ?? "/usr/bin/google-chrome",
+    headless: false,
+    ...launchOptions(args),
+  });
+  const results = new Map();
+  let verdictFailed = false;
+  try {
+    let index = 0;
+    for (const fixture of FIXTURES) {
+      for (const arm of fixture.arms) {
+        const result = await runLeg(browser, args, fixture, arm, index++);
+        results.set(`${fixture.name}:${arm}`, result);
+        printLeg(result);
+        if (!result.ok) verdictFailed = true;
+      }
+    }
+
+    const plain = results.get("ifs3:webgl")?.png;
+    const clipped = results.get("ifs3-clip:webgl")?.png;
+    if (!plain || !clipped) {
+      process.stdout.write(
+        "FAIL  comparison screenshots unavailable (ifs3:webgl / ifs3-clip:webgl)\n",
+      );
+      verdictFailed = true;
+    } else {
+      const context = await browser.newContext({ ignoreHTTPSErrors: true });
+      const page = await context.newPage();
+      let diff;
+      try {
+        diff = await screenshotDiff(page, plain, clipped);
+      } finally {
+        await context.close();
+      }
+      const pass = diff.fraction >= args.diff;
+      if (!pass) verdictFailed = true;
+      process.stdout.write(
+        `${pass ? "PASS" : "FAIL"}  analytic clip distinctness ` +
+          `structural=${(diff.fraction * 100).toFixed(2)}% ` +
+          `(floor ${(args.diff * 100).toFixed(2)}%, maxDelta ${diff.maxDelta}, ` +
+          `${diff.structural}/${diff.compared} pixels)\n`,
+      );
+    }
+  } finally {
+    await browser.close();
+  }
+  process.exit(verdictFailed ? 3 : 0);
+}
+
+run().catch((error) => {
+  process.stderr.write(
+    `[surface-tiling] ${error instanceof Error ? error.stack : String(error)}\n`,
+  );
+  process.exit(1);
+});

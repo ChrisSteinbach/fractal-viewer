@@ -11,6 +11,7 @@ import {
   buildSurfaceFragment,
   createSurfaceBlitMaterial,
   createSurfaceMaterial,
+  materialSurfaceTiling,
   packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
   setBulbSystem,
@@ -74,6 +75,12 @@ import {
   SURFACE_FOLD_BEAM_WIDTH,
 } from "../fractal/surface-de";
 import type { SurfaceDE, SurfaceDEMap } from "../fractal/surface-de";
+import {
+  resolveTiling,
+  TILING_GROUP_INFO,
+  TILING_GROUPS,
+  type ResolvedTiling,
+} from "../fractal/tiling";
 import { defaultTransforms, sierpinskiTetrahedron } from "../fractal/presets";
 import type { ShapeTrap, Transform, Vec3 } from "../fractal/types";
 import { createHash } from "node:crypto";
@@ -1306,6 +1313,339 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
     expect(surfaceFragmentResolvedFor(0, 0, 0, 0, 1).length).toBeLessThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
+  });
+});
+
+describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
+  const a3 = resolveTiling({ group: "a3" })!;
+  const clippedA3 = resolveTiling({ group: "a3", clip: COND_SPHERE })!;
+
+  const sourceFor = (
+    tiling: ResolvedTiling,
+    {
+      escape = 0,
+      lens = 0,
+      plane = 0,
+      bulb = 0,
+      finish = 0,
+      pattern = 0,
+      trap = null,
+      condensation = null,
+      trapGeometry = 0,
+      schedule = 0,
+      chaos = 0,
+    }: {
+      escape?: number;
+      lens?: number;
+      plane?: number;
+      bulb?: number;
+      finish?: number;
+      pattern?: number;
+      trap?: ShapeSpec | null;
+      condensation?: readonly ShapeSpec[] | null;
+      trapGeometry?: number;
+      schedule?: number;
+      chaos?: number;
+    } = {},
+  ): string =>
+    surfaceFragmentResolvedFor(
+      escape,
+      lens,
+      0,
+      plane,
+      bulb,
+      finish,
+      pattern,
+      undefined,
+      trap,
+      condensation,
+      false,
+      trapGeometry,
+      schedule,
+      chaos,
+      tiling,
+    );
+
+  it("keeps an absent block byte-identical across every pre-existing legal arm", () => {
+    const variants: Parameters<typeof surfaceFragmentResolvedFor>[] = [
+      [0, 0],
+      [0, 1],
+      [0, 0, 0, 1],
+      [1, 0],
+      [0, 0, 0, 0, 1],
+      [0, 0, 0, 0, 0, 1, 1],
+      [0, 1, 0, 1, 0, 1, 1, undefined, null, [COND_SPHERE]],
+    ];
+    for (const args of variants) {
+      const [
+        escape,
+        lens,
+        balloon,
+        plane,
+        bulb,
+        finish,
+        pattern,
+        source,
+        trap,
+        condensation,
+        condensation4,
+        trapGeometry,
+        schedule,
+        chaos,
+      ] = args;
+      expect(surfaceFragmentResolvedFor(...args)).toBe(
+        surfaceFragmentResolvedFor(
+          escape,
+          lens,
+          balloon,
+          plane,
+          bulb,
+          finish,
+          pattern,
+          source,
+          trap,
+          condensation,
+          condensation4,
+          trapGeometry,
+          schedule,
+          chaos,
+          null,
+        ),
+      );
+    }
+  });
+
+  it("wraps the untouched core in CPU order and bakes the analytic clip under the fixed name", () => {
+    const source = sourceFor(clippedA3, { pattern: 1 });
+    expect(source).toContain("float surfaceDETilingCore(vec3 p, float cutoff)");
+    expect(source).toContain("TilingFoldResult tilingFold(vec3 pIn)");
+    expect(source).toContain("uniform int uTilingGroup;");
+    expect(source).toContain("uTilingGroup != 1");
+    expect(source).toContain("float tilingClipSdf(vec3 p)");
+    expect(source).toContain("float inner = surfaceDETilingCore(q, cutoff);");
+    expect(source).toContain("return max(inner, tilingClipSdf(q));");
+    expect(sourceFor(a3)).not.toContain("tilingClipSdf");
+  });
+
+  it("attributes copied height, radius and object pattern to the folded hit while retaining world-space finish", () => {
+    const source = sourceFor(a3, { finish: 1, pattern: 1 });
+    expect(source).toContain("surfaceTilingHitPoint.y / uVisibleRadius");
+    expect(source).toContain("length(surfaceTilingHitPoint) / uVisibleRadius");
+    expect(source).toContain("patternSource = surfaceTilingHitPoint;");
+    expect(source).toContain("finishShade(base, pos, n, rd");
+  });
+
+  it("source-generates every legal group and orthogonal 3D variant", () => {
+    for (const group of TILING_GROUPS.slice(0, 3)) {
+      expect(() => sourceFor(resolveTiling({ group })!)).not.toThrow();
+    }
+    const variants = [
+      sourceFor(a3, { lens: 1 }),
+      sourceFor(a3, { plane: 1 }),
+      sourceFor(a3, { finish: 1, pattern: 1 }),
+      sourceFor(a3, { condensation: [COND_SPHERE], schedule: 1, chaos: 1 }),
+      sourceFor(a3, {
+        escape: 1,
+        trap: COND_SPHERE,
+        trapGeometry: 1,
+      }),
+      sourceFor(a3, { bulb: 1, trap: COND_SPHERE }),
+    ];
+    for (const source of variants) {
+      expect(source).toContain("surfaceDETilingCore");
+      expect(source).toContain("surfaceTilingHitPoint");
+    }
+  });
+
+  it("emits all 336 legal 3D option combinations below the source ceiling", () => {
+    let count = 0;
+    for (const clip of [null, COND_SPHERE] as const) {
+      const tiling = resolveTiling({
+        group: "h3",
+        ...(clip ? { clip } : {}),
+      })!;
+      for (const lens of [0, 1])
+        for (const plane of [0, 1])
+          for (const finish of [0, 1])
+            for (const pattern of [0, 1])
+              for (const condensation of [0, 1])
+                for (const schedule of [0, 1])
+                  for (const chaos of [0, 1]) {
+                    const source = surfaceFragmentFor(
+                      0,
+                      lens,
+                      0,
+                      plane,
+                      0,
+                      finish,
+                      pattern,
+                      undefined,
+                      null,
+                      condensation ? [COND_SPHERE] : null,
+                      false,
+                      0,
+                      schedule,
+                      chaos,
+                      tiling,
+                    );
+                    expect(source.length).toBeLessThan(
+                      SURFACE_GLSL_STRIP_BYTES,
+                    );
+                    count++;
+                  }
+      for (const family of ["escape", "bulb"] as const)
+        for (const plane of [0, 1])
+          for (const finish of [0, 1])
+            for (const pattern of [0, 1])
+              for (const trap of [0, 1])
+                for (const trapGeometry of trap && family === "escape"
+                  ? [0, 1]
+                  : [0]) {
+                  const source = surfaceFragmentFor(
+                    family === "escape" ? 1 : 0,
+                    0,
+                    0,
+                    plane,
+                    family === "bulb" ? 1 : 0,
+                    finish,
+                    pattern,
+                    undefined,
+                    trap ? COND_SPHERE : null,
+                    null,
+                    false,
+                    trapGeometry,
+                    0,
+                    0,
+                    tiling,
+                  );
+                  expect(source.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+                  count++;
+                }
+    }
+    expect(count).toBe(336);
+  });
+
+  it("defensively rejects wrong-dimensional, forged, mesh, and balloon pairings", () => {
+    for (const group of TILING_GROUPS.slice(3)) {
+      expect(() => sourceFor(resolveTiling({ group })!)).toThrow(/4D.*3D/);
+    }
+    const forged = {
+      ...a3,
+      info: { ...TILING_GROUP_INFO.a3 },
+    };
+    expect(() => sourceFor(forged)).toThrow(/canonical frozen group info/);
+    expect(() =>
+      sourceFor(resolveTiling({ group: "a3", clip: MESH_SHAPE })!),
+    ).toThrow(/mesh clips are refused/);
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        a3,
+      ),
+    ).toThrow(/cannot compile into the balloon variant/);
+  });
+
+  it("installs one live group word, regenerates only for baked state, and refuses kaleidoscope or balloon", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, a3);
+    expect(materialSurfaceTiling(material)).toBe(a3);
+    expect(material.uniforms.uTilingGroup.value).toBe(1);
+    expect(material.defines.SURFACE_TILING).toBe(1);
+    expect(material.fragmentShader).toContain("surfaceTilingFold");
+
+    setSurfaceGroundPlane(material, {
+      y: -1.5,
+      fadeStart: 3,
+      fadeEnd: 9,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [0.4, 0.5, 0.6],
+      pattern: 1,
+      tileScale: 0.64,
+      emission: 0,
+    });
+    expect(materialSurfaceTiling(material)).toBe(a3);
+    expect(material.fragmentShader).toContain("surfaceTilingFold");
+    expect(material.fragmentShader).toContain("shadeGroundPlane");
+    setSurfaceGroundPlane(material, null);
+
+    const version = material.version;
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, a3);
+    expect(material.version).toBe(version);
+    expect(() =>
+      setSurfaceSystem(
+        material,
+        de3([map3()], {
+          order: 3,
+          plane: "xz",
+          stepCos: -0.5,
+          stepSin: Math.sqrt(3) / 2,
+        }),
+        [black],
+        undefined,
+        a3,
+      ),
+    ).toThrow(/cannot compose with kaleidoscope/);
+    expect(() =>
+      setSurfaceBalloon(material, {
+        center: [0, 0, 0],
+        R: 1,
+        rho: 1,
+        far: 2,
+      }),
+    ).toThrow(/cannot compose with balloon/);
+
+    setSurfaceSystem(material, de3([map3()]), [black], undefined, null);
+    expect(materialSurfaceTiling(material)).toBeNull();
+    expect(material.uniforms.uTilingGroup.value).toBe(0);
+    expect(material.defines.SURFACE_TILING).toBeUndefined();
+    expect(material.fragmentShader).not.toContain("surfaceTilingFold");
+  });
+
+  it("keeps the tiling gate installed while the two forward-family packers replace each other", () => {
+    const material = createSurfaceMaterial();
+    const escape = buildEscapeDE([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 1 }],
+      },
+    ]);
+    setEscapeSystem(material, escape, black, null, a3);
+    expect(material.defines.SURFACE_ESCAPE).toBe(1);
+    expect(material.fragmentShader).toContain("surfaceTilingFold");
+    expect(material.fragmentShader).toContain("surfaceDETilingCore");
+
+    const bulb = buildBulbDE([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "bulb", weight: 1 }],
+      },
+    ]);
+    setBulbSystem(material, bulb, black, null, a3);
+    expect(material.defines.SURFACE_BULB).toBe(1);
+    expect(material.defines.SURFACE_ESCAPE).toBe(0);
+    expect(materialSurfaceTiling(material)).toBe(a3);
+    expect(material.fragmentShader).toContain("surfaceTilingFold");
+    expect(material.fragmentShader).toContain("bulbPow8");
   });
 });
 

@@ -364,9 +364,9 @@ The CPU cost contract remains three value-noise octaves: macro samples cost
 48/48/24 lattice hashes and two-sample detail LOD costs 96/96/48 for
 Wood/Marble/Strata.
 
-The production coordinate/calibration contract landed in `fr-cmtl.3`.
-`surface-pattern-frame.ts` names the raw-attractor source hit and its exact
-reverse-routing order (balloon source, inverse 4D view at
+The production coordinate/calibration contract is implemented in
+`surface-pattern-frame.ts`, which names the raw-attractor source hit and its
+exact reverse-routing order (balloon source, inverse 4D view at
 `w0 + sStar*sliceHalfW`, then the affine or winning fold-final inverse).
 `SurfaceDE`, `SurfaceDE4`, `EscapeDE`, `BulbDE`, and `EscapeDE4` each carry one
 camera-independent `patternCalibration` with the shader-ready order
@@ -729,7 +729,7 @@ neither a central difference nor a secant reads as > 1. Sampler cost: 5.93 /
 solid / gear outline), while every mesh costs 4.00.
 
 Peace's torus and capsules overlap deliberately. The shared device
-min-index correction was already gated by `fr-4wre` with genuinely
+min-index correction was already gated with genuinely
 overlapping-sphere fixtures: its corrected 50.3M equal-N SwiftShader run
 measured normalized density TV 0.005883 in 3D and 0.005872 in 4D, below the
 0.03 gate. Those are correction-algorithm results, not a Peace-specific live
@@ -792,7 +792,40 @@ G-invariance of the shipped gaskets (0.022-0.238R — they are symmetric under
 a CONJUGATE of the frozen groups, which is what makes the tiling cut them),
 the nearest-copy theorem at fp precision (identity gap 5.1e-7 = the fold's
 disclosed epsilon-stop bound), the fold-step distribution and wrapper cost
-(0.75-1.20x), and the pre-tiling GLSL headroom for the fr-fn9j bead (largest
-legal 3D combination 112494 B resolved; the tiling arm's ~2-4KB resolved
-growth crosses the tightest rows' strip threshold — benign strip, the
-escape+balloon precedent).
+(0.75-1.20x), and the pre-tiling GLSL headroom for the subsequent tracer work
+(largest legal 3D combination 112494 B resolved; the tiling arm's ~2-4KB
+resolved growth crosses the tightest rows' strip threshold — benign strip,
+the escape+balloon precedent).
+
+### lattice-tiling
+
+The phase-2 route decision (`scripts/lattice-tiling.harness.ts`). An
+asymmetric sphere sits wholly inside one canonical cell so its explicit
+mirrored and translated infinite orbits are exact, independent truth oracles.
+The sheet compares the affine A1 mirror, classic half-open opRep, a
+wall-clamped translation and exact translated-neighbour enumeration over
+50,000 seeded 3D queries. It also takes the chosen x/z/w fold through an xw
+rotor of 0.63 at the off-centre slice `w0 = 0.37`, renders all candidates
+through the shared preview marcher, and measures finite observation-ball
+occupancy through the shared membership instrument.
+
+MEASURED VERDICT: **SHIP THE MIRROR; DEFER CERTIFIED TRANSLATION; REFUSE
+UNCLAMPED OPREP.** The mirror had 0/50,000 overshoots in 3D and 0/20,000 in
+the rotated 4D slice (maximum equality error `8.88e-16`). OpRep overshot
+12,753/50,000 queries by up to 0.760348. Both translation repairs were sound,
+but the wall clamp returned a false zero on all 1,407 seam probes while true
+geometry remained at least 0.504497 away. The shared 160px/160-step panels
+reported hits / exhausted / evaluations of 5,528 / 0 / 354,799 for the 3D
+mirror, 25,600 / 0 / 25,600 for the clamp (every pixel became false wall),
+4,101 / 0 / 354,822 for exact translation, and 1,672 / 0 / 306,218 for the 4D
+mirror slice. The exact-neighbour prototype pays nine core calls per 3D query;
+even the directional exact minimum still needs four in 3D and eight in 4D,
+where the mirror needs one after two/three scalar folds.
+
+Within the deliberately finite radius-4 observation ball, 32,768 membership
+samples read mirror 0.534058% fill / 3.99910 reach and translation 0.524902% /
+3.99449. Those are comparable-local-presence rows, not global extents: both
+sets have infinite reach. The preview's radius-ten window is likewise ten
+cell half-widths, not evidence for production range. Proposed cell-scale
+default/minimum/maximum and the 8R/10R presentation veil remain explicitly
+PROVISIONAL until live GLSL/WGSL, capture and grazing-ray gates measure them.

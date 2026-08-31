@@ -53,6 +53,7 @@ import {
   SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
+  SURFACE_GPU_TILING_BYTES,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   surfaceDeKernelWgsl,
   surfaceMeshSdfWgslSource,
@@ -105,6 +106,13 @@ import {
   type ResolvedSurfaceMaterial,
 } from "./surface-material-wire";
 import type { Transform } from "./types";
+import {
+  resolveTiling,
+  TILING_GROUP_INFO,
+  tilingFoldSource,
+  tilingGroupCode,
+  type ResolvedTiling,
+} from "./tiling";
 
 /** Two-map pure-boxfold system (the pure-fold shape used throughout
  * surface-de.test.ts and scripts/harness-profiles.ts's foldBoxfoldPair) — a
@@ -8110,5 +8118,450 @@ describe("graph-directed Surface GPU ABI", () => {
         ),
       ).toThrow(/graph-directed.*descent cores/);
     }
+  });
+});
+
+describe("finite reflection tiling WGSL and params ABI", () => {
+  const tiled3 = resolveTiling({ group: "b3", clip: GEAR_SHAPE })!;
+  const tiled4 = resolveTiling({ group: "f4", clip: GEAR_SHAPE })!;
+  const plane: SurfaceGpuGroundPlane = {
+    y: -1.25,
+    fadeStart: 2,
+    fadeEnd: 4,
+    ballCenter: [0, 0, 0],
+    ballRadius: 4,
+    albedo: [0.4, 0.5, 0.6],
+  };
+
+  function expectTilingTail(
+    plain: ArrayBuffer,
+    tiled: ArrayBuffer,
+    tiling: ResolvedTiling,
+  ): void {
+    expect(SURFACE_GPU_TILING_BYTES).toBe(16);
+    expect(tiled.byteLength).toBe(plain.byteLength + 16);
+    expect(new Uint8Array(tiled, 0, plain.byteLength)).toEqual(
+      new Uint8Array(plain),
+    );
+    const view = new DataView(tiled);
+    expect(view.getUint32(plain.byteLength, true)).toBe(
+      tilingGroupCode(tiling.group),
+    );
+    expect(Array.from(new Uint8Array(tiled, plain.byteLength + 4, 12))).toEqual(
+      new Array(12).fill(0),
+    );
+  }
+
+  function withTilingChaos3(de: SurfaceDE): SurfaceDE {
+    return {
+      ...de,
+      chaos: {
+        activeStateCount: 1,
+        predecessorMasks: Uint32Array.of(1),
+        emitterStateIndices: Uint8Array.from(
+          de.condensation?.emitters.map(() => 0) ?? [],
+        ),
+      },
+    };
+  }
+
+  function withTilingChaos4(de: SurfaceDE4): SurfaceDE4 {
+    return {
+      ...de,
+      chaos: {
+        activeStateCount: 1,
+        predecessorMasks: Uint32Array.of(1),
+        emitterStateIndices: Uint8Array.from(
+          de.condensation?.emitters.map(() => 0) ?? [],
+        ),
+      },
+    };
+  }
+
+  it("keeps omitted, undefined, and null source byte-identical for all seven cores in every mode", () => {
+    for (const core of [
+      "affine",
+      "fold",
+      "escape",
+      "bulb",
+      "affine4",
+      "fold4",
+      "escape4",
+    ] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const classic = surfaceDeKernelWgsl(kernelOpts({ core, mode }));
+        expect(
+          surfaceDeKernelWgsl(kernelOpts({ core, mode, tiling: undefined })),
+        ).toBe(classic);
+        expect(
+          surfaceDeKernelWgsl(kernelOpts({ core, mode, tiling: null })),
+        ).toBe(classic);
+        expect(classic).not.toContain("tilingGroup");
+        expect(classic).not.toContain("TilingFoldResult");
+      }
+    }
+  });
+
+  it("wraps all seven public cores outside their untouched bodies and emits the shared dimensional fold plus analytic clip", () => {
+    for (const core of ["affine", "fold", "escape", "bulb"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ core, mode: "shade", tiling: tiled3, pattern: true }),
+      );
+      expect(wgsl).toContain(tilingFoldSource(tiled3.info, "wgsl"));
+      expect(wgsl).toContain("tilingGroup: u32");
+      expect(wgsl).toContain(
+        `if (params.tilingGroup != ${tilingGroupCode(tiled3.group)}u)`,
+      );
+      expect(wgsl).toContain("fn tilingClipSdf(p: vec3f) -> f32");
+      expect(wgsl).toContain("fn surfaceDETilingCore(");
+      expect(wgsl).toContain("fn surfaceDE(pIn: vec3f");
+      expect(wgsl).toContain("let folded = tilingFold(pIn);");
+      expect(wgsl).toContain("return max(inner, tilingClipSdf(folded.point));");
+      expect(wgsl).toContain("info.tilingPoint = vec4f(folded.point, 0.0)");
+    }
+
+    for (const core of ["affine4", "fold4", "escape4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ core, mode: "shade", tiling: tiled4, pattern: true }),
+      );
+      // This exact shared-emitter inclusion pins F4's named fourth root,
+      // including its non-zero w coefficient, instead of accepting a 3D
+      // root table padded with zero.
+      expect(wgsl).toContain(tilingFoldSource(TILING_GROUP_INFO.f4, "wgsl"));
+      expect(wgsl).toContain("point: vec4f");
+      expect(wgsl).toContain("fn surfaceDETilingCore(qIn: vec4f");
+      expect(wgsl).toContain("fn surfaceDE(pIn: vec3f");
+      expect(wgsl).toContain(
+        "return max(inner, tilingClipSdf(folded.point.xyz));",
+      );
+      expect(wgsl).toContain("info.tilingPoint = folded.point");
+      if (core === "escape4") {
+        expect(wgsl).toContain("let folded = tilingFold(liftEscape4(pIn));");
+        expect(wgsl).toContain("surfaceDETilingCore(folded.point, cutoff, li)");
+      } else {
+        expect(wgsl).toContain(
+          "let folded = tilingFold(rotorInvApply4(vec4f(pIn, params.w0)));",
+        );
+        expect(wgsl).toContain(
+          "surfaceDETilingCore(folded.point, vec4f(0.0), cutoff, li)",
+        );
+      }
+    }
+  });
+
+  it("composes outside lens, probe, floor, finish, pattern, condensation, schedule, chaos, and forward trap variants", () => {
+    const descent = surfaceDeKernelWgsl(
+      kernelOpts({
+        core: "fold4",
+        mode: "shade",
+        tiling: tiled4,
+        lens: true,
+        groundPlane: true,
+        finish: true,
+        pattern: true,
+        shadeDeWidth: 1,
+        schedule: { mapCount: 1, scheduleMapCount: 1 },
+        condensation: {
+          mapCount: 1,
+          emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 1 }],
+        },
+        chaos: { activeStateCount: 1, predecessorMasks: [1] },
+      }),
+    );
+    expect(descent).toContain("fn surfaceDEProbeTilingCore(");
+    expect(descent).toContain("fn surfaceDEProbe(pIn: vec3f");
+    expect(descent).toContain("fn shadeGroundPlane(");
+    expect(descent).toContain("fn finishShade(");
+    expect(descent).toContain("fn patternShade(");
+    expect(descent).toContain("fn condensationTerm(");
+    expect(descent).toContain("fn scheduleBound(");
+    expect(descent).toContain("fn chaosAllows(");
+
+    const trap = resolveShapeTrap({
+      shape: PEACE_SIGN_SHAPE,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: 1,
+      mode: "threshold",
+      threshold: 0.2,
+      fade: 0.05,
+    });
+    const forward = surfaceDeKernelWgsl(
+      kernelOpts({
+        core: "escape",
+        mode: "shade",
+        tiling: tiled3,
+        groundPlane: true,
+        shapeTrap: trap.spec,
+        pattern: true,
+      }),
+    );
+    expect(forward).toContain("shapeTrap: f32");
+    expect(forward).toContain("tilingPoint: vec4f");
+    expect(forward).toContain("fn surfaceDEHitInfoTilingCore(");
+  });
+
+  it("appends one live word and twelve zero pad bytes for the packer serving every core", () => {
+    const surface3 = buildSurfaceDE(foldSystemTransforms());
+    const escape3 = buildEscapeDE([canonicalMandelbox(), rotatedBoxfold()]);
+    const bulb = buildBulbDE([canonicalBulb()]);
+    const surface4 = buildSurfaceDE4(fourDSystemTransforms());
+    const escape4 = buildEscapeDE4([
+      escape4Mandelbox(),
+      escape4RotatedBoxfold(),
+    ]);
+    const run = { itemCount: 3 };
+
+    const packers = [
+      {
+        name: "affine",
+        plain: () => packSurfaceGpuParams(surface3, run),
+        tiled: () => packSurfaceGpuParams(surface3, run, null, null, tiled3),
+        tiling: tiled3,
+      },
+      {
+        name: "fold",
+        plain: () => packSurfaceGpuParams(surface3, run),
+        tiled: () => packSurfaceGpuParams(surface3, run, null, null, tiled3),
+        tiling: tiled3,
+      },
+      {
+        name: "escape",
+        plain: () => packEscapeGpuParams(escape3, run),
+        tiled: () => packEscapeGpuParams(escape3, run, null, null, tiled3),
+        tiling: tiled3,
+      },
+      {
+        name: "bulb",
+        plain: () => packBulbGpuParams(bulb, run),
+        tiled: () => packBulbGpuParams(bulb, run, null, null, tiled3),
+        tiling: tiled3,
+      },
+      {
+        name: "affine4",
+        plain: () => packSurface4GpuParams(surface4, view4(), run),
+        tiled: () =>
+          packSurface4GpuParams(surface4, view4(), run, null, null, tiled4),
+        tiling: tiled4,
+      },
+      {
+        name: "fold4",
+        plain: () => packSurface4GpuParams(surface4, view4(), run),
+        tiled: () =>
+          packSurface4GpuParams(surface4, view4(), run, null, null, tiled4),
+        tiling: tiled4,
+      },
+      {
+        name: "escape4",
+        plain: () => packEscape4GpuParams(escape4, view4(), run),
+        tiled: () =>
+          packEscape4GpuParams(escape4, view4(), run, null, null, tiled4),
+        tiling: tiled4,
+      },
+    ];
+    for (const entry of packers) {
+      expect(entry.name).toBeTruthy();
+      expectTilingTail(entry.plain(), entry.tiled(), entry.tiling);
+    }
+  });
+
+  it("places the tiling word after every 3D and 4D descent-tail combination, including the corrected 560/848 maxima", () => {
+    for (const dimension of [3, 4] as const) {
+      for (const condensation of [false, true]) {
+        for (const schedule of [false, true]) {
+          for (const chaos of [false, true]) {
+            for (const groundPlane of [false, true]) {
+              if (dimension === 3) {
+                let de = condensation
+                  ? buildSurfaceDE(condensationTransforms(), null, undefined, {
+                      condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+                    })
+                  : buildSurfaceDE(foldSystemTransforms());
+                if (schedule) de = withSchedule3(de, 1, 1);
+                if (chaos) de = withTilingChaos3(de);
+                const gp = groundPlane ? plane : null;
+                const plain = packSurfaceGpuParams(
+                  de,
+                  { itemCount: 1 },
+                  null,
+                  gp,
+                );
+                const tiled = packSurfaceGpuParams(
+                  de,
+                  { itemCount: 1 },
+                  null,
+                  gp,
+                  tiled3,
+                );
+                expectTilingTail(plain, tiled, tiled3);
+                if (condensation && schedule && chaos && groundPlane) {
+                  expect(tiled.byteLength).toBe(560);
+                }
+              } else {
+                let de = condensation
+                  ? buildSurfaceDE4(condensationTransforms(), null, undefined, {
+                      condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+                    })
+                  : buildSurfaceDE4(fourDSystemTransforms());
+                if (schedule) de = withSchedule4(de, 1, 1);
+                if (chaos) de = withTilingChaos4(de);
+                const gp = groundPlane ? plane : null;
+                const plain = packSurface4GpuParams(
+                  de,
+                  view4(),
+                  { itemCount: 1 },
+                  null,
+                  gp,
+                );
+                const tiled = packSurface4GpuParams(
+                  de,
+                  view4(),
+                  { itemCount: 1 },
+                  null,
+                  gp,
+                  tiled4,
+                );
+                expectTilingTail(plain, tiled, tiled4);
+                if (condensation && schedule && chaos && groundPlane) {
+                  expect(tiled.byteLength).toBe(848);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("appends after the lens and every forward trap tail without moving a frozen byte", () => {
+    const lens3 = buildSurfaceDE(
+      foldSystemTransforms(),
+      spherefoldFinalTransform(),
+    );
+    const lens4 = buildSurfaceDE4(
+      fourDSystemTransforms(),
+      fourDBoxfoldFinalTransform(),
+    );
+    expectTilingTail(
+      packSurfaceGpuParams(lens3, { itemCount: 1 }),
+      packSurfaceGpuParams(lens3, { itemCount: 1 }, null, null, tiled3),
+      tiled3,
+    );
+    expectTilingTail(
+      packSurface4GpuParams(lens4, view4(), { itemCount: 1 }),
+      packSurface4GpuParams(
+        lens4,
+        view4(),
+        { itemCount: 1 },
+        null,
+        null,
+        tiled4,
+      ),
+      tiled4,
+    );
+
+    const trap = resolveShapeTrap({
+      shape: PEACE_SIGN_SHAPE,
+      position: [0.3, -0.2, 0.5],
+      rotation: [0.2, 0, 0.4],
+      scale: 0.7,
+      mode: "threshold",
+      threshold: 0.3,
+      fade: 0.05,
+    });
+    const escape3 = buildEscapeDE([canonicalMandelbox()]);
+    const bulb = buildBulbDE([canonicalBulb()]);
+    const escape4 = buildEscapeDE4([escape4Mandelbox()]);
+    expectTilingTail(
+      packEscapeGpuParams(escape3, { itemCount: 1 }, null, trap),
+      packEscapeGpuParams(escape3, { itemCount: 1 }, null, trap, tiled3),
+      tiled3,
+    );
+    expectTilingTail(
+      packBulbGpuParams(bulb, { itemCount: 1 }, null, trap),
+      packBulbGpuParams(bulb, { itemCount: 1 }, null, trap, tiled3),
+      tiled3,
+    );
+    expectTilingTail(
+      packEscape4GpuParams(escape4, view4(), { itemCount: 1 }, null, trap),
+      packEscape4GpuParams(
+        escape4,
+        view4(),
+        { itemCount: 1 },
+        null,
+        trap,
+        tiled4,
+      ),
+      tiled4,
+    );
+  });
+
+  it("defensively refuses wrong-dimensional, non-canonical, mesh, balloon, kaleidoscope, and real-slab combinations", () => {
+    const wrong3 = resolveTiling({ group: "a4" })!;
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "fold", tiling: wrong3 })),
+    ).toThrow(/a4 is 4D.*3D core/);
+    expect(() =>
+      packSurface4GpuParams(
+        buildSurfaceDE4(fourDSystemTransforms()),
+        view4(),
+        { itemCount: 1 },
+        null,
+        null,
+        tiled3,
+      ),
+    ).toThrow(/b3 is 3D.*4D core/);
+
+    const nonCanonical = {
+      ...tiled3,
+      info: { ...tiled3.info },
+    } satisfies ResolvedTiling;
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ tiling: nonCanonical })),
+    ).toThrow(/canonical resolveTiling result/);
+    const meshTiling = resolveTiling({ group: "b3", clip: MESH_SHAPE })!;
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ tiling: meshTiling })),
+    ).toThrow(/mesh-bearing tiling clips/);
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ tiling: tiled3, balloon: true })),
+    ).toThrow(/tiling\+balloon/);
+
+    const symmetric3: SurfaceDE = {
+      ...buildSurfaceDE(foldSystemTransforms()),
+      symmetry: {
+        ...buildSurfaceDE(foldSystemTransforms()).symmetry,
+        order: 3,
+      },
+    };
+    expect(() =>
+      packSurfaceGpuParams(symmetric3, { itemCount: 1 }, null, null, tiled3),
+    ).toThrow(/tiling\+kaleidoscope/);
+    expect(() =>
+      packSurface4GpuParams(
+        buildSurfaceDE4(fourDSystemTransforms()),
+        view4({ sliceHalfW: 0.1 }),
+        { itemCount: 1 },
+        null,
+        null,
+        tiled4,
+      ),
+    ).toThrow(/tiling\+4D slab/);
+
+    const balloon = {
+      center: [0, 0, 0] as [number, number, number],
+      rho: 1,
+      R: 2,
+      far: 4,
+    };
+    expect(() =>
+      packSurfaceGpuParams(
+        buildSurfaceDE(foldSystemTransforms()),
+        { itemCount: 1 },
+        balloon,
+        null,
+        tiled3,
+      ),
+    ).toThrow(/tiling\+balloon/);
   });
 });

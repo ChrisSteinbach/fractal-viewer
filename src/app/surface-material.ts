@@ -33,6 +33,12 @@ import {
   SYM_PLANE_CODE,
 } from "../fractal/surface-de";
 import {
+  TILING_GROUP_INFO,
+  tilingFoldSource,
+  tilingGroupCode,
+  type ResolvedTiling,
+} from "../fractal/tiling";
+import {
   BACKGROUND_SHAPE_GLSL,
   backgroundShapeSource,
 } from "../fractal/background-shape";
@@ -5686,6 +5692,9 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uGroundPattern: { value: 0 },
       uGroundTileScale: { value: 0.64 },
       uGroundEmission: { value: 0 },
+      // One live word; group roots and the optional clip are baked source.
+      // Zero is off, matching tilingGroupCode's one-based authority.
+      uTilingGroup: { value: 0 },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -5789,6 +5798,7 @@ export function setSurfaceSystem(
   de: SurfaceDE,
   colors: Vec3[],
   trapIndices?: number[],
+  tiling: ResolvedTiling | null = null,
 ): void {
   const schedule = de.schedule && de.schedule.depth > 0 ? de.schedule : null;
   const scheduleMaps = schedule?.maps ?? [];
@@ -5813,6 +5823,12 @@ export function setSurfaceSystem(
       `surface DE needs ${shadeCount} map/emitter colors, but received ${colors.length}`,
     );
   }
+  if (tiling && de.symmetry.order > 1) {
+    throw new RangeError(
+      "Surface tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
+    );
+  }
+  const tilingChanged = installSurfaceTiling(material, tiling);
   // A new system invalidates every floor of the old system's grid — march
   // gridless until the fresh build lands. The caller owns the old
   // texture's disposal.
@@ -5948,7 +5964,8 @@ export function setSurfaceSystem(
     (material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0) !== wantSchedule ||
     (material.defines.SURFACE_CHAOS === 1 ? 1 : 0) !== wantChaos ||
     material.defines.SURFACE_CONDENSATION !== wantCondensation ||
-    oldCondensationKey !== condensationKey
+    oldCondensationKey !== condensationKey ||
+    tilingChanged
   ) {
     material.defines.SURFACE_FOLDS = wantFolds;
     material.defines.SURFACE_FOLD_LENS = wantLens;
@@ -5992,6 +6009,7 @@ export function setSurfaceSystem(
       0,
       wantSchedule,
       wantChaos,
+      tiling,
     );
     material.needsUpdate = true;
   }
@@ -6205,6 +6223,212 @@ function resolveVariantArms(
 export const SURFACE_GLSL_STRIP_BYTES = 64 * 1024;
 
 /**
+ * Compile-gate the finite tiling wrapper around one tracer source. This is
+ * deliberately a SOURCE transform rather than another conditional threaded
+ * through the estimators: with `tiling === null` the function is never
+ * called, so the pre-feature source is returned byte for byte; with tiling
+ * present, the existing public `surfaceDE` entries in the estimator prefix
+ * are token-renamed to `surfaceDETilingCore`, then one outer wrapper owns the
+ * public overloads. The split point is the ground-plane arm: floor probes are
+ * consumers of the public tiled estimator and therefore remain outside the
+ * renamed prefix.
+ *
+ * 4D's public tracer takes a sliced `vec3` but its tiling fold is genuinely
+ * four-dimensional. The compiled-only adapter replaces the two estimator
+ * prologues' view lift with `surfaceTilingQuery4`, which the outer wrapper
+ * fills from `tilingFold(uInvRotor * vec4(p, uW0))` before calling the
+ * otherwise untouched bodies. Slabs are refused: the fold of a segment is a
+ * bent polyline, so a tiled 4D program returns the conservative guard value 0
+ * if a stale caller leaves `uSliceHalfW` live (the material setter throws
+ * before that state can be authored).
+ */
+function withTilingGlsl(
+  source: string,
+  tiling: ResolvedTiling,
+  fourD: boolean,
+  trap: ShapeSpec | null,
+): string {
+  const expectedDim = fourD ? 4 : 3;
+  const canonicalInfo = TILING_GROUP_INFO[tiling.group];
+  if (!canonicalInfo || tiling.info !== canonicalInfo) {
+    throw new RangeError(
+      "Surface tiling must use resolveTiling's canonical frozen group info",
+    );
+  }
+  if (tiling.info.dim !== expectedDim) {
+    throw new RangeError(
+      `${tiling.group} is ${tiling.info.dim}D and cannot compile into the ${expectedDim}D Surface tracer`,
+    );
+  }
+  if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
+    throw new RangeError(
+      "Surface tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
+    );
+  }
+  const marker = /\n#if SURFACE_GROUND_PLANE\n {2}\/\*\* Ground plane/.exec(
+    source,
+  );
+  if (!marker || marker.index === undefined) {
+    throw new Error("surface-material: tiling wrapper split point is missing");
+  }
+  const split = marker.index + 1;
+  let core = source
+    .slice(0, split)
+    .replace(/\bsurfaceDE\b/g, "surfaceDETilingCore");
+  if (fourD) {
+    let replaced = 0;
+    core = core.replace(/vec4 q = uInvRotor \* vec4\(p, uW0\);/g, () => {
+      replaced++;
+      return "vec4 q = surfaceTilingQuery4;";
+    });
+    if (replaced !== 2) {
+      throw new Error(
+        `surface-material: expected two 4D tiling query prologues, found ${replaced}`,
+      );
+    }
+    // A fragment shader has no implicit float precision. Keep Three's
+    // leading precision declaration first, then make the adapter query a
+    // global before either renamed estimator body references it.
+    const precision = "precision highp float;";
+    const precisionAt = core.indexOf(precision);
+    if (precisionAt < 0) {
+      throw new Error(
+        "surface-material: 4D tiling query precision anchor is missing",
+      );
+    }
+    const declarationAt = precisionAt + precision.length;
+    core = `${core.slice(0, declarationAt)}\nvec4 surfaceTilingQuery4;${core.slice(declarationAt)}`;
+  }
+  let rest = source.slice(split);
+  const replaceRequired = (from: string, to: string): void => {
+    if (!rest.includes(from)) {
+      throw new Error(
+        `surface-material: tiling attribution site is missing (${from})`,
+      );
+    }
+    rest = rest.replace(from, to);
+  };
+  // Hit ATTRIBUTION follows the folded source copy: replicated images keep
+  // the chamber content's height/radius and object-attached pattern. World
+  // position deliberately remains raw for normals, light, room/floor
+  // reflection and fog — those describe where the visible copy actually is,
+  // not which source copy supplied its authored material.
+  if (fourD) {
+    replaceRequired(
+      "u = clamp(pos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);",
+      "u = clamp((transpose(uInvRotor) * surfaceTilingHitPoint).y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);",
+    );
+    replaceRequired(
+      "vec4 q4 = uInvRotor * vec4(pos, uW0 + sStar * uSliceHalfW);",
+      "vec4 q4 = surfaceTilingHitPoint;",
+    );
+    replaceRequired(
+      "vec4 patternLifted = uInvRotor * patternSource4;",
+      "vec4 patternLifted = surfaceTilingHitPoint;",
+    );
+  } else {
+    replaceRequired(
+      "u = clamp(pos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);",
+      "u = clamp(surfaceTilingHitPoint.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);",
+    );
+    replaceRequired(
+      "u = clamp(length(pos) / uVisibleRadius, 0.0, 1.0);",
+      "u = clamp(length(surfaceTilingHitPoint) / uVisibleRadius, 0.0, 1.0);",
+    );
+    replaceRequired(
+      "patternSource = pos;",
+      "patternSource = surfaceTilingHitPoint;",
+    );
+  }
+  const point = fourD ? "vec4" : "vec3";
+  const rawQuery = fourD ? "uInvRotor * vec4(p, uW0)" : "p";
+  const clipSource = tiling.clip
+    ? `${shapeSdfSource(tiling.clip, "glsl", "tilingClipSdf")}\n`
+    : "";
+  const clipTerm = tiling.clip
+    ? `return max(inner, tilingClipSdf(q${fourD ? ".xyz" : ""}));`
+    : "return inner;";
+  const guard = fourD
+    ? `uTilingGroup != ${tilingGroupCode(tiling.group)} || uSliceHalfW > 0.0`
+    : `uTilingGroup != ${tilingGroupCode(tiling.group)}`;
+  const failHit = fourD
+    ? "firstChoice = 0; trap = 0.0; rings = 0.0; sheets = 0.0; sStar = 0.0;"
+    : trap
+      ? "firstChoice = 0; trap = 0.0; rings = 0.0; sheets = 0.0; shapeTrap = 0.0;"
+      : "firstChoice = 0; trap = 0.0; rings = 0.0; sheets = 0.0;";
+  const hitSignature = fourD
+    ? `
+float surfaceDE(
+  vec3 p,
+  out int firstChoice,
+  out float trap,
+  out float rings,
+  out float sheets,
+  out float sStar
+)`
+    : trap
+      ? `
+float surfaceDE(
+  vec3 p,
+  out int firstChoice,
+  out float trap,
+  out float rings,
+  out float sheets,
+  out float shapeTrap
+)`
+      : `
+float surfaceDE(
+  vec3 p,
+  out int firstChoice,
+  out float trap,
+  out float rings,
+  out float sheets
+)`;
+  const hitArgs = fourD
+    ? "firstChoice, trap, rings, sheets, sStar"
+    : trap
+      ? "firstChoice, trap, rings, sheets, shapeTrap"
+      : "firstChoice, trap, rings, sheets";
+  const wrapper = `
+// Finite reflection tiling: fold once, evaluate the untouched core, then
+// intersect with the optional authored clip through max(core, signed SDF).
+uniform int uTilingGroup;
+${tilingFoldSource(tiling.info, "glsl")}
+${clipSource}bool surfaceTilingFold(vec3 p, out ${point} q) {
+  if (${guard}) return false;
+  TilingFoldResult folded = tilingFold(${rawQuery});
+  q = folded.point;
+  return folded.ok;
+}
+${point} surfaceTilingHitPoint;
+float surfaceDE(vec3 p, float cutoff) {
+  ${point} q;
+  if (!surfaceTilingFold(p, q)) return 0.0;
+${fourD ? "  surfaceTilingQuery4 = q;\n" : ""}  float inner = surfaceDETilingCore(${fourD ? "p" : "q"}, cutoff);
+  ${clipTerm}
+}
+float surfaceDE(vec3 p) {
+  ${point} q;
+  if (!surfaceTilingFold(p, q)) return 0.0;
+${fourD ? "  surfaceTilingQuery4 = q;\n" : ""}  float inner = surfaceDETilingCore(${fourD ? "p" : "q"});
+  ${clipTerm}
+}
+${hitSignature} {
+  ${point} q;
+  if (!surfaceTilingFold(p, q)) {
+    surfaceTilingHitPoint = ${rawQuery};
+    ${failHit}
+    return 0.0;
+  }
+  surfaceTilingHitPoint = q;
+${fourD ? "  surfaceTilingQuery4 = q;\n" : ""}  float inner = surfaceDETilingCore(${fourD ? "p" : "q"}, ${hitArgs});
+  ${clipTerm}
+}
+`;
+  return `${core}${wrapper}${rest}`;
+}
+
+/**
  * Resolve the variant arms and return the raw composed source, before the
  * strip decision — the quantity {@link SURFACE_GLSL_STRIP_BYTES} is
  * compared against, and therefore the number the "measure before adding
@@ -6243,6 +6467,7 @@ export function surfaceFragmentResolvedFor(
   trapGeometry = 0,
   schedule = 0,
   chaos = 0,
+  tiling: ResolvedTiling | null = null,
 ): string {
   if (plane !== 0 && balloon !== 0) {
     throw new RangeError(
@@ -6255,6 +6480,11 @@ export function surfaceFragmentResolvedFor(
     // surfaceDE twice. Callers gate on the system's shape (a system is
     // either fold-shaped or bulb-shaped), so reaching this is a bug.
     throw new RangeError("SURFACE_BULB and SURFACE_ESCAPE are exclusive");
+  }
+  if (tiling !== null && balloon !== 0) {
+    throw new RangeError(
+      "SURFACE_TILING cannot compile into the balloon variant: an orbit's echo is not the echo's orbit",
+    );
   }
   if (trap !== null && escape === 0 && bulb === 0) {
     // The shape trap is the escape FAMILY's color channel: only the two
@@ -6294,7 +6524,10 @@ export function surfaceFragmentResolvedFor(
   // only rather than silently changing the bulb distance.
   const resolvedTrapGeometry =
     trap !== null && escape !== 0 && trapGeometry !== 0 ? 1 : 0;
-  const resolved = resolveVariantArms(source, {
+  const gatedSource = tiling
+    ? withTilingGlsl(source, tiling, condensation4, trap)
+    : source;
+  const resolved = resolveVariantArms(gatedSource, {
     SURFACE_ESCAPE: escape,
     SURFACE_BULB: bulb,
     SURFACE_FOLD_LENS: lens,
@@ -6412,6 +6645,7 @@ export function surfaceFragmentFor(
   trapGeometry = 0,
   schedule = 0,
   chaos = 0,
+  tiling: ResolvedTiling | null = null,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -6428,10 +6662,85 @@ export function surfaceFragmentFor(
     trapGeometry,
     schedule,
     chaos,
+    tiling,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
     : resolved;
+}
+
+/** Read the source-regenerating tiling block currently installed on a GLSL
+ * material. Kept in userData because group roots and the optional clip are
+ * baked source, not live uniforms; the one live word is uTilingGroup. */
+export function materialSurfaceTiling(
+  material: THREE.ShaderMaterial,
+  fourD = false,
+): ResolvedTiling | null {
+  const data = material.userData as {
+    surfaceTiling?: ResolvedTiling | null;
+    surfaceTiling4?: ResolvedTiling | null;
+  };
+  return (fourD ? data.surfaceTiling4 : data.surfaceTiling) ?? null;
+}
+
+/** Validate and install the material-side compile gate. Returns whether the
+ * baked group/clip changed, so the owning system setter can rebuild exactly
+ * once alongside its other source-regenerating state. */
+export function installSurfaceTiling(
+  material: THREE.ShaderMaterial,
+  tiling: ResolvedTiling | null,
+  fourD = false,
+): boolean {
+  const expectedDim = fourD ? 4 : 3;
+  const canonicalInfo = tiling ? TILING_GROUP_INFO[tiling.group] : null;
+  if (tiling && (!canonicalInfo || tiling.info !== canonicalInfo)) {
+    throw new RangeError(
+      "Surface tiling must use resolveTiling's canonical frozen group info",
+    );
+  }
+  if (tiling && tiling.info.dim !== expectedDim) {
+    throw new RangeError(
+      `${tiling.group} is ${tiling.info.dim}D and cannot install on a ${expectedDim}D Surface material`,
+    );
+  }
+  if (tiling?.clip && shapeMeshIds(tiling.clip).length > 0) {
+    throw new RangeError(
+      "Surface tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
+    );
+  }
+  const balloonKey = fourD ? "SURFACE4_BALLOON" : "SURFACE_BALLOON";
+  if (tiling && material.defines[balloonKey] === 1) {
+    throw new RangeError(
+      "Surface tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+    );
+  }
+  const key = tiling
+    ? JSON.stringify({ group: tiling.group, clip: tiling.clip })
+    : null;
+  const data = material.userData as {
+    surfaceTiling?: ResolvedTiling | null;
+    surfaceTiling4?: ResolvedTiling | null;
+    surfaceTilingKey?: string | null;
+    surfaceTilingKey4?: string | null;
+  };
+  const oldKey = fourD
+    ? (data.surfaceTilingKey4 ?? null)
+    : (data.surfaceTilingKey ?? null);
+  if (fourD) {
+    data.surfaceTiling4 = tiling;
+    data.surfaceTilingKey4 = key;
+    if (tiling) material.defines.SURFACE4_TILING = 1;
+    else delete material.defines.SURFACE4_TILING;
+  } else {
+    data.surfaceTiling = tiling;
+    data.surfaceTilingKey = key;
+    if (tiling) material.defines.SURFACE_TILING = 1;
+    else delete material.defines.SURFACE_TILING;
+  }
+  material.uniforms.uTilingGroup.value = tiling
+    ? tilingGroupCode(tiling.group)
+    : 0;
+  return oldKey !== key;
 }
 
 /**
@@ -6551,12 +6860,19 @@ export function setEscapeSystem(
   de: EscapeDE,
   color: Vec3,
   trap: ShapeTrap | null = null,
+  tiling: ResolvedTiling | null = null,
 ): void {
   if (de.links.length > SURFACE_MAX_MAPS) {
     throw new RangeError(
       `escape DE has ${de.links.length} links, but the material carries at most ${SURFACE_MAX_MAPS}`,
     );
   }
+  if (tiling && de.symmetryOrder > 1) {
+    throw new RangeError(
+      "Surface tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
+    );
+  }
+  const tilingChanged = installSurfaceTiling(material, tiling);
   setSurfaceGrid(material, null);
   const u = material.uniforms;
   const escM = u.uEscM.value as THREE.Matrix3[];
@@ -6621,7 +6937,8 @@ export function setEscapeSystem(
     currentTrapGeometry !== trapInstall.wantGeometry ||
     // A trap SPEC swap at the same define state still bakes a different
     // shape body — the key catches what the defines cannot.
-    trapInstall.changed
+    trapInstall.changed ||
+    tilingChanged
   ) {
     material.defines.SURFACE_ESCAPE = 1;
     // The two forward-orbit variants are exclusive: a previous Mandelbulb
@@ -6660,6 +6977,9 @@ export function setEscapeSystem(
       null,
       false,
       trapInstall.wantGeometry,
+      0,
+      0,
+      tiling,
     );
     material.needsUpdate = true;
   }
@@ -6683,7 +7003,9 @@ export function setBulbSystem(
   de: BulbDE,
   color: Vec3,
   trap: ShapeTrap | null = null,
+  tiling: ResolvedTiling | null = null,
 ): void {
+  const tilingChanged = installSurfaceTiling(material, tiling);
   setSurfaceGrid(material, null);
   const u = material.uniforms;
   const m = de.m;
@@ -6738,7 +7060,8 @@ export function setBulbSystem(
     material.defines.SURFACE_CONDENSATION !== 0 ||
     material.defines.SURFACE_SHAPE_TRAP !== trapInstall.wantTrap ||
     currentTrapGeometry !== 0 ||
-    trapInstall.changed
+    trapInstall.changed ||
+    tilingChanged
   ) {
     material.defines.SURFACE_BULB = 1;
     material.defines.SURFACE_ESCAPE = 0;
@@ -6773,6 +7096,12 @@ export function setBulbSystem(
       pattern,
       undefined,
       trapInstall.spec,
+      null,
+      false,
+      0,
+      0,
+      0,
+      tiling,
     );
     material.needsUpdate = true;
   }
@@ -6808,6 +7137,12 @@ export function setSurfaceBalloon(
   material: THREE.ShaderMaterial,
   spec: SurfaceBalloonSpec | null,
 ): void {
+  const tiling = materialSurfaceTiling(material);
+  if (spec && tiling) {
+    throw new RangeError(
+      "Surface tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+    );
+  }
   const u = material.uniforms;
   const center = u.uBalloonCenter.value as THREE.Vector3;
   if (spec) {
@@ -6851,6 +7186,7 @@ export function setSurfaceBalloon(
       materialTrapGeometry(material),
       material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0,
       material.defines.SURFACE_CHAOS === 1 ? 1 : 0,
+      tiling,
     );
     material.needsUpdate = true;
   }
@@ -6982,6 +7318,7 @@ export function setSurfaceGroundPlane(
       materialTrapGeometry(material),
       material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0,
       material.defines.SURFACE_CHAOS === 1 ? 1 : 0,
+      materialSurfaceTiling(material),
     );
     material.needsUpdate = true;
   }
@@ -7048,6 +7385,7 @@ export function setSurfaceMaterials(
       materialTrapGeometry(material),
       material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0,
       material.defines.SURFACE_CHAOS === 1 ? 1 : 0,
+      materialSurfaceTiling(material),
     );
     material.needsUpdate = true;
   }

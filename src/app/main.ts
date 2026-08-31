@@ -24,6 +24,7 @@ import { buildEscapeDE4 } from "../fractal/escape-de-4d";
 import { buildBulbDE } from "../fractal/bulb-de";
 import { buildBalloon } from "../fractal/balloon-de";
 import { resolveShapeTrap } from "../fractal/shape-trap";
+import { resolveTiling } from "../fractal/tiling";
 import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
@@ -5269,6 +5270,27 @@ async function main(): Promise<void> {
         queueMicrotask(() => surfaceSession.exit());
         return { post: () => {}, terminate: () => teardownSurfaceCompute() };
       }
+      // Resolve the finite reflection group exactly once at the session
+      // door. Both engines receive this same canonical record; neither
+      // renderer is allowed to re-derive roots or interpret the authored
+      // group independently. Balloon remains a hard combination refusal:
+      // an orbit's inverted echo is not the echo's orbit, so there is no
+      // certified estimator composition to render.
+      const surfaceTiling = resolveTiling(state.tiling ?? undefined);
+      if (surfaceTiling && state.balloonEcho) {
+        ui.flashToast(
+          "Surface tiling is unavailable while Balloon echo is on; turn off either authored effect.",
+        );
+        queueMicrotask(() => surfaceSession.exit());
+        return { post: () => {}, terminate: () => teardownSurfaceCompute() };
+      }
+      // Session replacement can arrive from a previously ballooned scene.
+      // Clear that stored/material arm before either tiled system installer
+      // runs; otherwise its deliberate simultaneous-composition guard would
+      // mistake stale renderer state for this (already validated) document.
+      if (surfaceTiling) {
+        scene.setSurfaceBalloon(false, state.balloonRadius);
+      }
       // Set when this session routes to the WebGPU compute path — fold 3D,
       // escape, ifs4 and bulb kinds alike — the gate below then awaits
       // device + pipeline instead of the GLSL link.
@@ -5368,6 +5390,7 @@ async function main(): Promise<void> {
                 kind: "escape4",
                 de,
                 groundPlane: state.groundPlane,
+                tiling: surfaceTiling ?? undefined,
                 // The 3D escape arm's trap wiring, one dimension up — the
                 // channel's 4D half is this ONE core (no fragment mirror
                 // exists by design).
@@ -5434,7 +5457,11 @@ async function main(): Promise<void> {
             // those sessions clamp sliceHalfW to 0 at every view push below
             // (the packer's own guard would throw) and the panel hides the
             // thickness row.
-            surface4SlabExact = slabExact4(de);
+            // A finite chamber fold maps a 4D slab segment to a bent
+            // polyline, so its exact segment certificate no longer applies.
+            // Tiled 4D sessions therefore render the centre slice only on
+            // both engines; the params packers keep this as a loud backstop.
+            surface4SlabExact = surfaceTiling ? false : slabExact4(de);
             ui.setFourDSlabAvailable(surface4SlabExact);
             // Routing by MEASURED verdict: PLAIN 4D prefers compute, EVERY 4D
             // SESSION PREFERS COMPUTE, kaleidoscope included. The fragment 4D
@@ -5504,6 +5531,7 @@ async function main(): Promise<void> {
                 de,
                 balloon: state.balloonEcho,
                 groundPlane: groundPlane4,
+                tiling: surfaceTiling ?? undefined,
               };
               scene.enterSurfaceCompute4Session(
                 de,
@@ -5538,6 +5566,7 @@ async function main(): Promise<void> {
                 de,
                 surfaceSlotColors(state.transforms, ifsShadeSlots(de)),
                 surfaceTrapIndices(state.transforms, ifsShadeSlots(de)),
+                surfaceTiling,
               );
             }
             scene.setSurface4View(
@@ -5639,6 +5668,7 @@ async function main(): Promise<void> {
                 kind: "escape",
                 de,
                 groundPlane: state.groundPlane,
+                tiling: surfaceTiling ?? undefined,
                 // The shape-trap channel — create-time geometry on the
                 // target (the kernels bake the SDF), the live pose block
                 // riding every frame spec off the scene's stored
@@ -5656,6 +5686,7 @@ async function main(): Promise<void> {
                 de,
                 escapeSlotColor(),
                 state.shapeTrap ?? null,
+                surfaceTiling,
               );
             }
           } else {
@@ -5683,6 +5714,7 @@ async function main(): Promise<void> {
                 kind: "bulb",
                 de,
                 groundPlane: state.groundPlane,
+                tiling: surfaceTiling ?? undefined,
                 // The escape arm's trap wiring, one formula over.
                 ...computeShapeTrapTarget(),
               };
@@ -5697,6 +5729,7 @@ async function main(): Promise<void> {
                 de,
                 escapeSlotColor(),
                 state.shapeTrap ?? null,
+                surfaceTiling,
               );
             }
           }
@@ -5775,6 +5808,7 @@ async function main(): Promise<void> {
               de,
               balloon: state.balloonEcho,
               groundPlane,
+              tiling: surfaceTiling ?? undefined,
             };
             scene.enterSurfaceComputeSession(
               de,
@@ -5794,6 +5828,7 @@ async function main(): Promise<void> {
               de,
               surfaceSlotColors(state.transforms, ifsShadeSlots(de)),
               surfaceTrapIndices(state.transforms, ifsShadeSlots(de)),
+              surfaceTiling,
             );
             // Kick the empty-space grid build. Async and optional: the
             // session renders gridless until it lands, and a superseding
