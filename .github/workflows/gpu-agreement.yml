@@ -78,8 +78,52 @@ jobs:
       # "script trips first" ordering below is untouched. Prefer
       # re-partitioning here over raising either constant: a bigger cap only
       # makes a genuinely hung scenario take longer to name.
+      #
+      # RAISED 12 -> 25 for the same measured reason, not a precaution: the
+      # Points/Flame tiling wave grew the roster 23 -> 30 (five 3D tiling
+      # legs including the 24-map multisystem composition, two 4D), which
+      # gives six shards a third scenario at 12. All six ran 20.5-24 min of
+      # bench work against the script's 20-minute whole-shard cap; four
+      # timed out (shards 1/2/4/6, on variation-zoo-4d, fold-zoo-4d, the
+      # ss=1 check and emitter-menagerie — shard 1 was ~15s from finishing
+      # its last scenario), and the two that passed had under a minute of
+      # margin. Measured legs: ~5-7 min typical, ~9-14 for the heavy four
+      # (tiling-multisystem-3d's GPU equal-N alone reads ~12 min at
+      # ~70K iter/s), so NO pairing of the multisystem leg with anything
+      # fits the cap and 25 is the smallest split that leaves it alone —
+      # round-robin pairs index i with i+25, so every index in the second
+      # round (5..29) is a single — with the remaining pairs at most
+      # ~14 min and the slowest single ~14, restoring the margin twelve
+      # was chosen for.
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard:
+          [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+          ]
       # A gate wants every failing shard named, not just the first one: with
       # fail-fast the surviving shards are cancelled and their verdicts are
       # lost, which turns "these three scenarios disagree" into "something
