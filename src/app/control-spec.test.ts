@@ -1417,6 +1417,7 @@ describe("effects", () => {
       expect(fx.setSurfaceLatticeScale).toHaveBeenCalledWith(2.4);
       expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
       expect(fx.refreshSurfaceEligibility).not.toHaveBeenCalled();
+      expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
     });
 
     it("regenerates Points for lattice cell scale outside an active Surface session", () => {
@@ -1499,6 +1500,9 @@ describe("effects", () => {
           expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(
             renderMode === "surface" ? 1 : 0,
           );
+          // The generated Flame backdrop follows every tiling edit, even
+          // when Points' Auto-update is off.
+          expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
         }
       }
     });
