@@ -52,6 +52,16 @@ import {
 import type { PreparedChaosGame } from "./chaos-game";
 import { balloonPaletteCoordinate, invertBalloon } from "./balloon-de";
 import type { Balloon } from "./balloon-de";
+import {
+  POINT_TILING_ACCUMULATION_FANOUT_CAP,
+  createPointTilingCursorState,
+  visitPointTilingAttemptBounded,
+} from "./point-tiling";
+import type {
+  PointTilingCursorState,
+  PointTilingImageVisitor,
+  PointTilingPlan,
+} from "./point-tiling";
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
 
@@ -180,6 +190,13 @@ export interface FlameHistogram {
    * not). Only meaningful on the chi path, like {@link orbitPrevBase}.
    */
   orbitChaosLeft: number;
+  /**
+   * Plot-time tiling continuation. Lazily attached only when an active
+   * {@link PointTilingPlan} is supplied, so every untiled histogram retains
+   * its historical runtime shape. Credit and cursor live beside the orbit so
+   * progressive chunk boundaries cannot change the weighted image sequence.
+   */
+  pointTiling?: PointTilingCursorState;
 }
 
 /** A fresh, empty histogram: every bucket at zero hits, ready to accumulate into. */
@@ -319,6 +336,12 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  *
  * Pass a seeded {@link Rng} for reproducible output (tests); the app passes
  * `Math.random`.
+ *
+ * Pass `tilingPlan` to filter each already-plotted canonical point and
+ * deposit its bounded weighted finite/lattice images. Images never feed back
+ * into the orbit and consume no chaos RNG. The plan is deliberately the last
+ * optional argument, and its state is attached lazily to the histogram, so
+ * omitting it preserves the original accumulation path and histogram shape.
  */
 export function accumulateFlame(
   prepared: PreparedChaosGame,
@@ -332,6 +355,7 @@ export function accumulateFlame(
   colorLUT?: Float32Array,
   echo?: FlameBalloonEcho,
   echoColorLUT?: Float32Array,
+  tilingPlan?: PointTilingPlan,
 ): FlameHistogram {
   if (projection.length !== 16) {
     throw new RangeError(
@@ -344,6 +368,16 @@ export function accumulateFlame(
       `accumulateFlame: histogram is ${hist.width}x${hist.height}, but ${width}x${height} was requested`,
     );
   }
+  if (tilingPlan !== undefined && tilingPlan.dimension !== 3) {
+    throw new RangeError("3D flame requires a 3D point-tiling plan");
+  }
+  if (tilingPlan !== undefined && echo !== undefined) {
+    throw new RangeError("Flame point tiling is unavailable with Balloon");
+  }
+  const pointTiling =
+    tilingPlan === undefined
+      ? undefined
+      : (hist.pointTiling ??= createPointTilingCursorState());
 
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
@@ -419,6 +453,34 @@ export function accumulateFlame(
   const rw1 = projection[13];
   const rw2 = projection[14];
   const rw3 = projection[15];
+
+  // One callback per accumulation call, not per source attempt. Its mutable
+  // color lanes are loaded from the canonical source immediately before the
+  // visitor runs; every selected image therefore copies that source's color
+  // attribution while applying only the visitor's density weight.
+  let tiledR = 0;
+  let tiledG = 0;
+  let tiledB = 0;
+  let tiledImageVisitor: PointTilingImageVisitor | undefined;
+  if (tilingPlan !== undefined) {
+    tiledImageVisitor = (imageX, imageY, imageZ, _w, weight) => {
+      const cw = rw0 * imageX + rw1 * imageY + rw2 * imageZ + rw3;
+      if (cw <= 0) return;
+      const cx = rx0 * imageX + rx1 * imageY + rx2 * imageZ + rx3;
+      const cy = ry0 * imageX + ry1 * imageY + ry2 * imageZ + ry3;
+      const col = Math.floor((cx / cw + 1) * 0.5 * width);
+      const row = Math.floor((1 - cy / cw) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) return;
+
+      const bucket = row * width + col;
+      const hit = (hits[bucket] += weight);
+      if (hit > maxHits) maxHits = hit;
+      const o = bucket * 3;
+      sumRGB[o] += tiledR * weight;
+      sumRGB[o + 1] += tiledG * weight;
+      sumRGB[o + 2] += tiledB * weight;
+    };
+  }
 
   for (let n = 0; n < iterations; n++) {
     // Sub-orbit re-fuse (chaos-game.ts's CHAOS_SUB_ORBIT_POINTS): every K
@@ -589,6 +651,31 @@ export function accumulateFlame(
         py = fy;
         pz = fz;
       }
+    }
+
+    if (tilingPlan !== undefined) {
+      if (colorLUT !== undefined) {
+        const li = Math.min(255, (c * 256) | 0) * 3;
+        tiledR = colorLUT[li];
+        tiledG = colorLUT[li + 1];
+        tiledB = colorLUT[li + 2];
+      } else {
+        const rgb = palette[baseIdx] ?? FALLBACK_COLOR;
+        tiledR = rgb[0];
+        tiledG = rgb[1];
+        tiledB = rgb[2];
+      }
+      visitPointTilingAttemptBounded(
+        tilingPlan,
+        px,
+        py,
+        pz,
+        0,
+        POINT_TILING_ACCUMULATION_FANOUT_CAP,
+        pointTiling!,
+        tiledImageVisitor!,
+      );
+      continue;
     }
 
     // Keep the original no-echo projection/deposit path textually intact.
