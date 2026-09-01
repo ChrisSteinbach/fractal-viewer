@@ -915,15 +915,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     affine/fold/forward progress→settled routing/persistence/distinctness matrix. Tiling-bearing
     cancel, real-Firefox teardown, WebGL fallback and fold-4D refusal are
     pinned by their owning lifecycle gates.
-    Tiling authoring is shared Scene / Look state: B3/A4/F4 and paired lattice
-    showcases, arm-specific controls, app-copy/reload and workflow behavior
-    are real-browser gated by `scripts/tiling-ui.verify.mjs`.
-    `mirroredLattice` and `mirroredLattice4` are the lattice arm's paired
-    3D/4D showcase presets.
-    Points/Flame/Solid remain untiled with an adjacent explanation; their
-    frozen lift filters after schedule/final: Points uses 256-unit finite
-    quotas plus one-proposal V/u lattice thinning; accumulators use 32-weighted
-    acceptance credit, all before raw-space 8R->10R and 4D view reduction.
+    Tiling authoring, presets (`mirroredLattice`/`mirroredLattice4`), app-copy
+    and workflow behavior are real-browser gated by `scripts/tiling-ui.verify.mjs`.
+    Points SHIPS tiled in 3D/4D after schedule/final: bounded finite/lattice
+    recorders copy canonical color provenance, retain raw 4D, stop at 8N and
+    report complete/underfilled/empty. Absent/refused uses the literal legacy
+    recorder. Flame/Solid stay untiled; their frozen lift uses 32-weighted credit.
     Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Surface-tiling AUTHORING AND PRESET gate. This drives the production
+ * Space-tiling AUTHORING, PRESET, AND POINTS gate. This drives the production
  * app through the same panel controls and preset menu a person uses; it does
  * not construct a tiling block by editing the document hash.
  *
@@ -38,8 +38,15 @@
  * - the kind selector replaces finite with lattice while retaining only the
  *   shared clip, ArrowRight edits the exact lattice cell scale, and the return
  *   to finite clears the lattice discriminator/scale;
- * - Points, Flame, and Sampled Solid each disclose beside the still-visible
- *   controls that they show the untiled attractor;
+ * - 3D lattice and 4D finite Points fixtures create and reply through the real
+ *   cloud Worker, survive an app-copied link, land an active `complete`
+ *   result, draw foreground, and differ from a same-view disabled result;
+ * - the 3D Points fixture covers Auto-update-off/manual regeneration and a
+ *   rapid superseding edit: the older reply must stay labeled stale and the
+ *   final reply must match the latest authored tiling; the 4D fixture changes
+ *   tumble/slice view state and pixels without posting another cloud request;
+ * - Flame and Sampled Solid still disclose beside the visible controls that
+ *   they show the untiled attractor;
  * - Balloon and order>1 Symmetry leave the authored checkbox available as a
  *   clear route while disabling both dependent finite detail controls and
  *   explaining the refusal next to them.
@@ -51,8 +58,10 @@
  *
  * This gate deliberately does NOT compare the five presets with each other,
  * certify the fold algebra (the CPU/kernel tests and renderer gates own that),
- * exercise imported/custom clips, or test phone layout (the panel must be open
- * at a viewport wider than the 640px breakpoint).
+ * force a costly near-empty/underfilled Points carrier (the deterministic
+ * point-tiling, worker and UI tests own those terminal states), exercise
+ * imported/custom clips, or test phone layout (the panel must be open at a
+ * viewport wider than the 640px breakpoint).
  *
  * MEASURED 2026-08-31 on verified Mesa Intel Iris Xe, settled 8/8 at 800x640:
  * B3 routed WebGL and drew/differed from untiled by 40.22%/6.62%; A4 compute
@@ -61,20 +70,32 @@
  * five exposed progress before settling. Exact finite/lattice replacement,
  * the 2.4 numeric edit, both finite and lattice app-copied links, and the
  * lattice copied link's WebGL progress/settle/draw at 46.85% all passed. So
- * did three lattice-authored untiled-mode notices, Balloon/Symmetry dormancy,
- * explicit clear routes, and three malformed-block fallbacks, without page
- * or console errors.
+ * did three lattice-authored untiled-mode notices (the then-current
+ * Points/Flame/Solid contract), Balloon/Symmetry dormancy, explicit clear
+ * routes, and three malformed-block fallbacks, without page or console errors.
+ *
+ * MEASURED 2026-09-01 on SwiftShader with `--scope=points --settle=120000`:
+ * both real cloud-Worker fixtures passed without page, console or app errors.
+ * Mirrored Lattice completed in 11.0s; copied-link restore, Auto-update-off,
+ * manual stale reply, rapid latest-wins reply and terminal static-Off labeling
+ * all passed, and its tiled/untiled frames differed by 11.85%. Tiled Pentatope
+ * completed in 14.5s; its copied link restored, all eight focused-canvas rotor
+ * keys were accepted, persisted p/q and slice true/0.35 changed while Worker
+ * requests/replies stayed 2->2, and its tiled/untiled frames differed by
+ * 15.27% (rotor-only/view frame differences were 14.54%/13.37%).
  *
  * Usage (build + `npm run preview` first):
  *   node scripts/tiling-ui.verify.mjs
  *   node scripts/tiling-ui.verify.mjs --mode=x11::0
  *   node scripts/tiling-ui.verify.mjs --stage=1
+ *   node scripts/tiling-ui.verify.mjs --scope=points
  *
  * Options:
  *   --url=URL        app origin (default https://localhost:4173)
  *   --mode=MODE      sw (default) or x11:<display>
+ *   --scope=SCOPE    all (default) or points
  *   --viewport=WxH   viewport, width must be >=641 (default 800x640)
- *   --settle=MS      per-preset target-stage budget (default 300000)
+ *   --settle=MS      per-preset Surface/Points target budget (default 300000)
  *   --stage=N        completed-pass target, 8 = settled latch (default 8)
  *   --dwell=MS       settled-latch hold time at stage 8 (default 1500)
  *   --draw=FRACTION  minimum non-backdrop screenshot share (default 0.005)
@@ -153,12 +174,20 @@ const PRESETS = [
   },
 ];
 
+// Cross the two construction arms with the two dimensions without duplicating
+// the algebra matrix already owned by the point-tiling harness and unit tests.
+const POINTS_PRESETS = [
+  { preset: PRESETS[3], fourD: false, lifecycle: true },
+  { preset: PRESETS[1], fourD: true, lifecycle: false },
+];
+
 class CheckingError extends Error {}
 
 function parseArgs(argv) {
   const args = {
     url: "https://localhost:4173",
     mode: "sw",
+    scope: "all",
     viewport: "800x640",
     settle: 300_000,
     stage: SETTLE_SAMPLES,
@@ -185,6 +214,11 @@ function parseArgs(argv) {
   if (args.mode !== "sw" && !args.mode.startsWith("x11:")) {
     throw new CheckingError(
       `--mode must be sw or x11:<display> (got ${args.mode})`,
+    );
+  }
+  if (args.scope !== "all" && args.scope !== "points") {
+    throw new CheckingError(
+      `--scope must be all or points (got ${args.scope})`,
     );
   }
   const viewport = /^(\d+)x(\d+)$/.exec(args.viewport);
@@ -310,6 +344,74 @@ async function openApp(browser, args) {
     reducedMotion: "reduce",
   });
   const page = await context.newPage();
+  // Observe the production Worker boundary without replacing its computation
+  // or messages. Boot paints synchronously, so a created cloud Worker plus a
+  // matching request/reply pair is the proof that an edited Points cloud did
+  // not quietly take the main-thread fallback.
+  await page.addInitScript(() => {
+    const probe = { workers: [] };
+    Object.defineProperty(window, "__tilingCloudWorkerProbe", {
+      value: probe,
+      configurable: true,
+    });
+    const NativeWorker = window.Worker;
+    if (typeof NativeWorker !== "function") return;
+    const cloneJson = (value) => {
+      if (value === undefined || value === null) return null;
+      return JSON.parse(JSON.stringify(value));
+    };
+    const InstrumentedWorker = new Proxy(NativeWorker, {
+      construct(target, argumentsList) {
+        const worker = Reflect.construct(target, argumentsList);
+        const entry = {
+          url: String(argumentsList[0] ?? ""),
+          requests: [],
+          replies: [],
+        };
+        probe.workers.push(entry);
+        const nativePostMessage = worker.postMessage.bind(worker);
+        worker.postMessage = (message, transfer) => {
+          entry.requests.push({
+            id: Number.isSafeInteger(message?.id) ? message.id : null,
+            fourD: message?.fourD === true,
+            numPoints: Number.isSafeInteger(message?.numPoints)
+              ? message.numPoints
+              : null,
+            tiling: cloneJson(message?.tiling),
+          });
+          return transfer === undefined
+            ? nativePostMessage(message)
+            : nativePostMessage(message, transfer);
+        };
+        worker.addEventListener("message", (event) => {
+          const data = event.data;
+          const reply = {
+            id: Number.isSafeInteger(data?.id) ? data.id : null,
+            fourD: data?.fourD === true,
+            count: Number.isSafeInteger(data?.count) ? data.count : null,
+            pointTiling: cloneJson(data?.pointTiling),
+            noteBeforeDispatch:
+              document.getElementById("tilingNote")?.textContent ?? "",
+            noteAfterDispatch: null,
+          };
+          entry.replies.push(reply);
+          // main.ts's onmessage handler runs in this same event dispatch. The
+          // next task records the label after that result was offered to the
+          // scene; a two-million-point successor cannot overtake this sample.
+          setTimeout(() => {
+            reply.noteAfterDispatch =
+              document.getElementById("tilingNote")?.textContent ?? "";
+          }, 0);
+        });
+        return worker;
+      },
+    });
+    Object.defineProperty(window, "Worker", {
+      value: InstrumentedWorker,
+      configurable: true,
+      writable: true,
+    });
+  });
   const pageErrors = [];
   const consoleErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -361,7 +463,76 @@ async function openApp(browser, args) {
   }
 }
 
+async function readCloudWorkerProbe(page) {
+  return page.evaluate(() => {
+    const workers = window.__tilingCloudWorkerProbe?.workers ?? [];
+    const cloud = workers.filter((worker) =>
+      worker.url.includes("cloud-worker"),
+    );
+    return {
+      created: cloud.length,
+      requests: cloud.flatMap((worker) => worker.requests),
+      replies: cloud.flatMap((worker) => worker.replies),
+    };
+  });
+}
+
+async function waitForCloudWorkerProbe(page, predicate, timeout) {
+  const deadline = Date.now() + timeout;
+  let probe = await readCloudWorkerProbe(page);
+  while (Date.now() < deadline) {
+    if (predicate(probe)) return { ok: true, probe };
+    await page.waitForTimeout(POLL_MS);
+    probe = await readCloudWorkerProbe(page);
+  }
+  return { ok: false, probe };
+}
+
+function matchingWorkerRequest(probe, tiling, afterId = 0, numPoints = null) {
+  return [...probe.requests]
+    .reverse()
+    .find(
+      (request) =>
+        request.id > afterId &&
+        exact(request.tiling) === exact(tiling) &&
+        (numPoints === null || request.numPoints === numPoints),
+    );
+}
+
+function matchingWorkerRound(probe, tiling, afterId = 0, numPoints = null) {
+  const request = matchingWorkerRequest(probe, tiling, afterId, numPoints);
+  if (!request) return null;
+  const reply = probe.replies.find((candidate) => candidate.id === request.id);
+  if (!reply) return null;
+  if (tiling === null) {
+    return reply.pointTiling === null ? { request, reply } : null;
+  }
+  return reply.pointTiling?.availability === "active" &&
+    reply.pointTiling.fill === "complete"
+    ? { request, reply }
+    : null;
+}
+
+async function waitForWorkerRound(
+  page,
+  tiling,
+  timeout,
+  afterId = 0,
+  numPoints = null,
+) {
+  const waited = await waitForCloudWorkerProbe(
+    page,
+    (probe) => matchingWorkerRound(probe, tiling, afterId, numPoints) !== null,
+    timeout,
+  );
+  return {
+    ...waited,
+    round: matchingWorkerRound(waited.probe, tiling, afterId, numPoints),
+  };
+}
+
 async function openSection(page, id) {
+  await openPanel(page);
   const section = page.locator(`#${id}`);
   if ((await section.count()) !== 1) {
     throw new CheckingError(`missing panel section #${id}`);
@@ -372,6 +543,35 @@ async function openSection(page, id) {
   await page.waitForFunction(
     (sectionId) => document.getElementById(sectionId)?.open === true,
     id,
+    { timeout: 5_000 },
+  );
+}
+
+async function closePanel(page) {
+  const panel = page.locator("#panel");
+  if (await panel.evaluate((element) => element.classList.contains("open"))) {
+    await page.locator("#menuToggle").click();
+  }
+  await page.waitForFunction(
+    () => !document.getElementById("panel")?.classList.contains("open"),
+    undefined,
+    { timeout: 5_000 },
+  );
+  // The class flips at the start of the 320ms slide. Camera/canvas viewport
+  // state must be sampled only after that layout transition has settled.
+  await page.waitForTimeout(400);
+}
+
+async function openPanel(page) {
+  const panel = page.locator("#panel");
+  if (
+    !(await panel.evaluate((element) => element.classList.contains("open")))
+  ) {
+    await page.locator("#menuToggle").click();
+  }
+  await page.waitForFunction(
+    () => document.getElementById("panel")?.classList.contains("open") === true,
+    undefined,
     { timeout: 5_000 },
   );
 }
@@ -767,6 +967,374 @@ async function runPresetLeg(browser, args, preset) {
   }
 }
 
+async function runPointsPresetLeg(browser, args, fixture) {
+  const { preset, fourD, lifecycle } = fixture;
+  const app = await openApp(browser, args);
+  const { context, page, pageErrors, consoleErrors } = app;
+  const started = Date.now();
+  const checks = [];
+  const check = (name, ok, detail) => checks.push({ name, ok, detail });
+  try {
+    const loaded = await loadPreset(page, preset.key);
+    const installed = await waitForExactTiling(page, preset.tiling);
+    const mode = await waitForModeNote(
+      page,
+      "modePointsBtn",
+      /Active in Points — .* · complete/,
+      args.settle,
+    );
+    const initialRound = await waitForWorkerRound(
+      page,
+      preset.tiling,
+      args.settle,
+    );
+    check(
+      "initial Worker result",
+      loaded &&
+        installed.ok &&
+        mode.ok &&
+        initialRound.probe.created > 0 &&
+        initialRound.round !== null &&
+        initialRound.round.request.fourD === fourD,
+      `created=${initialRound.probe.created}, request=${exact(initialRound.round?.request ?? null)}, status=${mode.note || "none"}`,
+    );
+
+    const shareLink = await copyShareLink(page);
+    const validShareLink = shareLink.includes("#v1=");
+    await page.goto(shareLink, { waitUntil: "load", timeout: 60_000 });
+    await page.waitForFunction(
+      () => {
+        const count = document.getElementById("pointCount")?.textContent ?? "";
+        return Number(count.replace(/[^\d]/g, "")) > 0;
+      },
+      undefined,
+      { timeout: 60_000 },
+    );
+    const restored = await waitForExactTiling(page, preset.tiling);
+    const restoredMode = await waitForModeNote(
+      page,
+      "modePointsBtn",
+      /Active in Points — .* · complete/,
+      args.settle,
+    );
+    // Boot itself intentionally computes synchronously. Regenerate the
+    // restored document once so this copied-link cell also crosses the real
+    // Worker boundary rather than passing on boot's fallback-shaped path.
+    const restoredBefore = await readCloudWorkerProbe(page);
+    const restoredAfterId = maxWorkerRequestId(restoredBefore);
+    await openSection(page, "rendererQualitySection");
+    await page.locator("#regenerateBtn").click();
+    const restoredRound = await waitForWorkerRound(
+      page,
+      preset.tiling,
+      args.settle,
+      restoredAfterId,
+    );
+    const restoredSettled = await waitForTilingNote(
+      page,
+      /Active in Points — .* · complete/,
+      args.settle,
+    );
+    check(
+      "copied-link Worker restore",
+      validShareLink &&
+        restored.ok &&
+        restoredMode.ok &&
+        restoredRound.probe.created > 0 &&
+        restoredRound.round !== null &&
+        restoredSettled.ok,
+      `link=${validShareLink}, tiling=${restored.ok}, created=${restoredRound.probe.created}, request=${exact(restoredRound.round?.request ?? null)}, status=${restoredSettled.note || restoredMode.note || "none"}`,
+    );
+
+    if (lifecycle) {
+      const lifecycleResult = await exercisePointsLifecycle(page, args);
+      for (const result of lifecycleResult.checks) checks.push(result);
+    }
+
+    let viewCapture = null;
+    if (fourD) {
+      const viewResult = await exerciseFourDPointsView(page, args, preset.key);
+      for (const result of viewResult.checks) checks.push(result);
+      viewCapture = viewResult.capture;
+    }
+
+    const tiledCapture =
+      viewCapture ??
+      (await captureCanvas(page, args, `${preset.key}-points-tiled`));
+    const beforeClear = await readCloudWorkerProbe(page);
+    const clearAfterId = maxWorkerRequestId(beforeClear);
+    await openSection(page, "tilingSection");
+    await page.locator("#tilingEnabledCheckbox").scrollIntoViewIfNeeded();
+    await page.locator("#tilingEnabledCheckbox").focus();
+    await page.locator("#tilingEnabledCheckbox").press("Space");
+    const cleared = await waitForDocument(
+      page,
+      (document) => document.tiling === undefined,
+    );
+    const ordinaryRound = await waitForWorkerRound(
+      page,
+      null,
+      args.settle,
+      clearAfterId,
+    );
+    const clearedNote = await page.evaluate(
+      () => document.getElementById("tilingNote")?.textContent ?? "",
+    );
+    const untiledCapture = await captureCanvas(
+      page,
+      args,
+      `${preset.key}-points-untiled`,
+    );
+    const distinctness = await screenshotDiff(
+      page,
+      tiledCapture.png,
+      untiledCapture.png,
+    );
+    const minDiff = preset.minDiff ?? args.diff;
+    check(
+      "tiled/disabled frame",
+      cleared.ok &&
+        ordinaryRound.round !== null &&
+        clearedNote ===
+          "Off — Points and Surface render the original attractor once." &&
+        tiledCapture.metrics.coverage >= args.draw &&
+        untiledCapture.metrics.coverage >= args.draw &&
+        distinctness.fraction >= minDiff,
+      `cleared=${cleared.ok}, note=${clearedNote || "none"}, tiled=${(tiledCapture.metrics.coverage * 100).toFixed(2)}%, untiled=${(untiledCapture.metrics.coverage * 100).toFixed(2)}%, diff=${(distinctness.fraction * 100).toFixed(2)}%/${(minDiff * 100).toFixed(2)}%, request=${exact(ordinaryRound.round?.request ?? null)}`,
+    );
+
+    const errorText = await visibleErrorText(page);
+    check(
+      "page errors",
+      pageErrors.length === 0,
+      pageErrors.length ? pageErrors.join(" | ") : "none",
+    );
+    check(
+      "console errors",
+      consoleErrors.length === 0,
+      consoleErrors.length ? consoleErrors.join(" | ") : "none",
+    );
+    check("visible app error", errorText.length === 0, errorText || "none");
+    return {
+      ok: checks.every((entry) => entry.ok),
+      preset,
+      checks,
+      elapsedMs: Date.now() - started,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+async function exercisePointsLifecycle(page, args) {
+  const checks = [];
+  const check = (name, ok, detail) => checks.push({ name, ok, detail });
+  await openSection(page, "transformsSection");
+  const autoUpdate = page.locator("#autoUpdate");
+  if (await autoUpdate.isChecked()) await autoUpdate.click();
+
+  await openSection(page, "rendererQualitySection");
+  await setRangeValue(page, "#numPointsSlider", 10);
+  await openSection(page, "tilingSection");
+  await setRangeValue(page, "#tilingCellScaleSlider", 1.7);
+  const authored = await waitForDocument(
+    page,
+    (document) =>
+      document.numPoints === 2_000_000 &&
+      document.tiling?.kind === "lattice" &&
+      document.tiling.cellScale === 1.7,
+  );
+  const stale = await waitForTilingNote(
+    page,
+    /Stale Points result — Auto-update is off/,
+    10_000,
+  );
+  const beforeManual = await readCloudWorkerProbe(page);
+  await page.waitForTimeout(2 * POLL_MS);
+  const afterIdle = await readCloudWorkerProbe(page);
+  check(
+    "Auto-update-off stale disclosure",
+    authored.ok &&
+      stale.ok &&
+      afterIdle.requests.length === beforeManual.requests.length,
+    `${stale.note || "no status"}; requests=${beforeManual.requests.length}->${afterIdle.requests.length}`,
+  );
+
+  const manualAfterId = maxWorkerRequestId(afterIdle);
+  // One JS task makes the ordering unambiguous: the manual 1.70 request is
+  // posted first, then the document advances to 1.80 and Auto-update resumes.
+  // A Worker message cannot interleave until all three edits have completed.
+  await page.evaluate(() => {
+    document.getElementById("regenerateBtn")?.click();
+    const scale = document.getElementById("tilingCellScaleSlider");
+    if (!(scale instanceof HTMLInputElement)) {
+      throw new Error("lattice scale control missing");
+    }
+    scale.value = "1.8";
+    scale.dispatchEvent(new Event("input", { bubbles: true }));
+    scale.dispatchEvent(new Event("change", { bubbles: true }));
+    document.getElementById("autoUpdate")?.click();
+  });
+  const latestAuthored = await waitForDocument(
+    page,
+    (document) =>
+      document.numPoints === 2_000_000 &&
+      document.tiling?.kind === "lattice" &&
+      document.tiling.cellScale === 1.8,
+  );
+  const manualRound = await waitForWorkerRound(
+    page,
+    { kind: "lattice", cellScale: 1.7 },
+    args.settle,
+    manualAfterId,
+    2_000_000,
+  );
+  const manualId = manualRound.round?.request.id ?? manualAfterId;
+  const latestRound = await waitForWorkerRound(
+    page,
+    { kind: "lattice", cellScale: 1.8 },
+    args.settle,
+    manualId,
+    2_000_000,
+  );
+  const latest = await waitForTilingNote(
+    page,
+    /Active in Points — .* · complete/,
+    args.settle,
+  );
+  await page.waitForTimeout(POLL_MS);
+  const landedProbe = await readCloudWorkerProbe(page);
+  const staleReply = landedProbe.replies.find(
+    (reply) => reply.id === manualRound.round?.request.id,
+  );
+  const finalReply = landedProbe.replies.find(
+    (reply) => reply.id === latestRound.round?.request.id,
+  );
+  const staleReplyNote = staleReply?.noteAfterDispatch ?? "";
+  check(
+    "manual stale reply",
+    manualRound.round !== null &&
+      /Awaiting regeneration/.test(staleReply?.noteBeforeDispatch ?? "") &&
+      /Awaiting regeneration/.test(staleReplyNote) &&
+      !/Active in Points/.test(staleReplyNote),
+    `request=${exact(manualRound.round?.request ?? null)}, post-reply=${staleReplyNote || "none"}`,
+  );
+  check(
+    "rapid latest-wins result",
+    latestAuthored.ok &&
+      latestRound.round !== null &&
+      finalReply?.noteAfterDispatch?.includes("Active in Points") === true &&
+      latest.ok,
+    `request=${exact(latestRound.round?.request ?? null)}, post-reply=${finalReply?.noteAfterDispatch || "none"}`,
+  );
+  return { checks };
+}
+
+async function exerciseFourDPointsView(page, args, key) {
+  const checks = [];
+  const beforeProbe = await readCloudWorkerProbe(page);
+  await openSection(page, "viewControls");
+  const autoMotion = page.locator("#autoMotionToggle");
+  if (await autoMotion.isChecked()) await autoMotion.click();
+  await setRangeValue(page, "#fourDTumbleSpeedSlider", 3);
+  await page.waitForTimeout(250);
+  const beforeLink = await copyShareLink(page);
+  const beforeDocument = decodeHash(new URL(beforeLink).hash);
+  await closePanel(page);
+  const before = await captureCanvas(page, args, `${key}-points-view-before`);
+  const canvas = page.locator("#container canvas").first();
+  await canvas.evaluate((element) => {
+    window.__tilingRotorAccepted = 0;
+    element.addEventListener("keydown", (event) => {
+      if (event.key.startsWith("Arrow") && event.defaultPrevented) {
+        window.__tilingRotorAccepted += 1;
+      }
+    });
+  });
+  await canvas.focus();
+  await page.keyboard.down("Shift");
+  for (let step = 0; step < 4; step++) {
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowUp");
+  }
+  await page.keyboard.up("Shift");
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => resolve())),
+  );
+  await openPanel(page);
+  const rotorLink = await copyShareLink(page);
+  const rotorDocument = decodeHash(new URL(rotorLink).hash);
+  await closePanel(page);
+  const rotorFrame = await captureCanvas(
+    page,
+    args,
+    `${key}-points-view-rotor`,
+  );
+  const rotorDiff = await screenshotDiff(page, before.png, rotorFrame.png);
+  await openPanel(page);
+  await openSection(page, "viewControls");
+  const slice = page.locator("#fourDSliceToggle");
+  if (!(await slice.isChecked())) await slice.click();
+  await setRangeValue(page, "#fourDSliceSlider", 0.35);
+  // Live view state is deliberately out of the continuously saved hash. Two
+  // app-owned Copy Link snapshots bracket the focused-canvas rotor keys so the gate
+  // proves the rotor itself moved, independently of the later slice edit.
+  const posedLink = await copyShareLink(page);
+  const posedDocument = decodeHash(new URL(posedLink).hash);
+  await closePanel(page);
+  const pairChanged =
+    exact({ p: rotorDocument.fourD?.p, q: rotorDocument.fourD?.q }) !==
+    exact({ p: beforeDocument.fourD?.p, q: beforeDocument.fourD?.q });
+  const posed =
+    posedDocument.fourD?.sliceOn === true &&
+    posedDocument.fourD.sliceCenter === 0.35 &&
+    pairChanged;
+  await page.waitForTimeout(750);
+  const after = await captureCanvas(page, args, `${key}-points-view-after`);
+  const afterProbe = await readCloudWorkerProbe(page);
+  const viewDiff = await screenshotDiff(page, before.png, after.png);
+  const view = await page.evaluate(() => ({
+    motion: document.getElementById("autoMotionToggle")?.checked === true,
+    slice: document.getElementById("fourDSliceToggle")?.checked === true,
+    position: document.getElementById("fourDSliceSlider")?.value ?? "",
+    speed: document.getElementById("fourDTumbleSpeedSlider")?.value ?? "",
+    note: document.getElementById("tilingNote")?.textContent ?? "",
+    rotorAccepted: window.__tilingRotorAccepted ?? 0,
+  }));
+  checks.push({
+    name: "4D rotor/slice is view-only",
+    ok:
+      !view.motion &&
+      view.slice &&
+      Number(view.position) === 0.35 &&
+      Number(view.speed) === 3 &&
+      posed &&
+      view.rotorAccepted === 8 &&
+      rotorDiff.fraction >= 0.0005 &&
+      view.note.includes("Active in Points") &&
+      afterProbe.requests.length === beforeProbe.requests.length &&
+      afterProbe.replies.length === beforeProbe.replies.length &&
+      viewDiff.fraction >= 0.0005,
+    detail: `requests=${beforeProbe.requests.length}->${afterProbe.requests.length}, replies=${beforeProbe.replies.length}->${afterProbe.replies.length}, rotorDiff=${(rotorDiff.fraction * 100).toFixed(2)}%, sliceDiff=${(viewDiff.fraction * 100).toFixed(2)}%, rotor=${posed} (pair=${pairChanged}, accepted=${view.rotorAccepted}, savedSlice=${posedDocument.fourD?.sliceOn ?? "missing"}/${posedDocument.fourD?.sliceCenter ?? "missing"}), motion=${view.motion}, slice=${view.position}, speed=${view.speed}`,
+  });
+  return { checks, capture: after };
+}
+
+function maxWorkerRequestId(probe) {
+  return Math.max(0, ...probe.requests.map((request) => request.id ?? 0));
+}
+
+async function setRangeValue(page, selector, value) {
+  await page.locator(selector).evaluate((element, next) => {
+    if (!(element instanceof HTMLInputElement)) {
+      throw new Error(`${element.id || "range"} is not an input`);
+    }
+    element.value = String(next);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
+}
+
 function exact(value) {
   return JSON.stringify(value);
 }
@@ -833,9 +1401,9 @@ async function readActivationTargets(
   );
 }
 
-async function waitForModeNote(page, buttonId, expression) {
+async function waitForModeNote(page, buttonId, expression, timeout = 10_000) {
   await page.locator(`#${buttonId}`).click();
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + timeout;
   let note = "";
   while (Date.now() < deadline) {
     const state = await page.evaluate(
@@ -848,6 +1416,19 @@ async function waitForModeNote(page, buttonId, expression) {
     );
     note = state.note;
     if (state.pressed && expression.test(note)) return { ok: true, note };
+    await page.waitForTimeout(POLL_MS);
+  }
+  return { ok: false, note };
+}
+
+async function waitForTilingNote(page, expression, timeout = 10_000) {
+  const deadline = Date.now() + timeout;
+  let note = "";
+  while (Date.now() < deadline) {
+    note = await page.evaluate(
+      () => document.getElementById("tilingNote")?.textContent ?? "",
+    );
+    if (expression.test(note)) return { ok: true, note };
     await page.waitForTimeout(POLL_MS);
   }
   return { ok: false, note };
@@ -1169,7 +1750,8 @@ async function runAuthoringLeg(browser, args) {
       const linkFixturePoints = await waitForModeNote(
         page,
         "modePointsBtn",
-        /Points shows the untiled attractor/,
+        /Active in Points — .* · complete/,
+        args.settle,
       );
       const linkFixture = await waitForExactTiling(page, {
         kind: "lattice",
@@ -1202,12 +1784,18 @@ async function runAuthoringLeg(browser, args) {
         kind: "lattice",
         cellScale: 1.6,
       });
+      const latticeReloadedPoints = await waitForModeNote(
+        page,
+        "modePointsBtn",
+        /Active in Points — .* · complete/,
+        args.settle,
+      );
       check(
         "lattice copied-link reload",
-        validLatticeShareLink && latticeReloaded.ok,
-        validLatticeShareLink && latticeReloaded.ok
-          ? "app-copied link restored the exact lattice showcase object"
-          : "app-copied link changed or lost the lattice object",
+        validLatticeShareLink && latticeReloaded.ok && latticeReloadedPoints.ok,
+        validLatticeShareLink && latticeReloaded.ok && latticeReloadedPoints.ok
+          ? "app-copied link restored the exact lattice object and landed complete tiled Points"
+          : `link=${validLatticeShareLink}, tiling=${latticeReloaded.ok}, points=${latticeReloadedPoints.note || "no status"}`,
       );
 
       // Copy Link intentionally emits a clean public URL and therefore drops
@@ -1288,12 +1876,17 @@ async function runAuthoringLeg(browser, args) {
 
     await openSection(page, "tilingSection");
     const modeChecks = [
-      ["modePointsBtn", /Points shows the untiled attractor/],
+      ["modePointsBtn", /Active in Points — .* · complete/],
       ["modeFlameBtn", /Flame shows the untiled attractor/],
       ["modeSolidBtn", /Solid shows the untiled attractor/],
     ];
     for (const [button, expression] of modeChecks) {
-      const mode = await waitForModeNote(page, button, expression);
+      const mode = await waitForModeNote(
+        page,
+        button,
+        expression,
+        button === "modePointsBtn" ? args.settle : 10_000,
+      );
       check(
         `${button} disclosure`,
         mode.ok,
@@ -1303,7 +1896,8 @@ async function runAuthoringLeg(browser, args) {
         await waitForModeNote(
           page,
           "modePointsBtn",
-          /Points shows the untiled attractor/,
+          /Active in Points — .* · complete/,
+          args.settle,
         );
       }
     }
@@ -1549,6 +2143,19 @@ function printPreset(result) {
     process.stdout.write(`  app error: ${result.errorText}\n`);
 }
 
+function printPointsPreset(result) {
+  process.stdout.write(
+    `${result.ok ? "PASS" : "FAIL"}  ${`${result.preset.label} Points`.padEnd(27)} ` +
+      `tiling=${exact(result.preset.tiling)} ` +
+      `time=${((result.elapsedMs ?? 0) / 1000).toFixed(1)}s\n`,
+  );
+  for (const check of result.checks) {
+    process.stdout.write(
+      `  ${check.ok ? "PASS" : "FAIL"}  ${check.name} — ${check.detail}\n`,
+    );
+  }
+}
+
 async function run() {
   const args = parseArgs(process.argv.slice(2));
   const launch = launchOptions(args.mode);
@@ -1560,35 +2167,45 @@ async function run() {
   try {
     process.stdout.write(
       `[tiling-ui] mode=${args.mode}, viewport=${args.width}x${args.height}, ` +
-        `target=${args.stage === SETTLE_SAMPLES ? "settled" : `${args.stage}/${SETTLE_SAMPLES} completed passes`}\n`,
+        `scope=${args.scope}, target=${args.stage === SETTLE_SAMPLES ? "settled" : `${args.stage}/${SETTLE_SAMPLES} completed passes`}\n`,
     );
-    for (const preset of PRESETS) {
-      const result = await runPresetLeg(browser, args, preset);
-      printPreset(result);
+    if (args.scope === "all") {
+      for (const preset of PRESETS) {
+        const result = await runPresetLeg(browser, args, preset);
+        printPreset(result);
+        if (!result.ok) failed = true;
+      }
+    }
+
+    for (const fixture of POINTS_PRESETS) {
+      const result = await runPointsPresetLeg(browser, args, fixture);
+      printPointsPreset(result);
       if (!result.ok) failed = true;
     }
 
-    const clear = await runClearLeakLeg(browser, args);
-    process.stdout.write(
-      `${clear.ok ? "PASS" : "FAIL"}  absent-means-clear — ${clear.reason}\n`,
-    );
-    if (!clear.ok) failed = true;
-
-    const authoring = await runAuthoringLeg(browser, args);
-    for (const result of authoring.checks) {
+    if (args.scope === "all") {
+      const clear = await runClearLeakLeg(browser, args);
       process.stdout.write(
-        `${result.ok ? "PASS" : "FAIL"}  ${result.name} — ${result.detail}\n`,
+        `${clear.ok ? "PASS" : "FAIL"}  absent-means-clear — ${clear.reason}\n`,
       );
-    }
-    if (!authoring.ok) failed = true;
+      if (!clear.ok) failed = true;
 
-    const malformed = await runMalformedDecodeLeg(browser, args);
-    for (const result of malformed.checks) {
-      process.stdout.write(
-        `${result.ok ? "PASS" : "FAIL"}  malformed ${result.name} — ${result.detail}\n`,
-      );
+      const authoring = await runAuthoringLeg(browser, args);
+      for (const result of authoring.checks) {
+        process.stdout.write(
+          `${result.ok ? "PASS" : "FAIL"}  ${result.name} — ${result.detail}\n`,
+        );
+      }
+      if (!authoring.ok) failed = true;
+
+      const malformed = await runMalformedDecodeLeg(browser, args);
+      for (const result of malformed.checks) {
+        process.stdout.write(
+          `${result.ok ? "PASS" : "FAIL"}  malformed ${result.name} — ${result.detail}\n`,
+        );
+      }
+      if (!malformed.ok) failed = true;
     }
-    if (!malformed.ok) failed = true;
   } finally {
     await browser.close().catch(() => {});
   }

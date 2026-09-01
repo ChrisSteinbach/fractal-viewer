@@ -33,6 +33,20 @@ tetrahedron; with the 20 edge maps of a subdivided cube you get a Menger sponge.
 The RNG is injected, so passing a seeded `mulberry32` (from `rng.ts`) makes a run
 fully reproducible — which is what the tests rely on.
 
+Space-tiled Points use separate `runChaosGameTiledPoints` and
+`runChaosGame4TiledPoints` recorders; the ordinary functions above remain the
+literal untiled branch. The tiled recorders run the same orbit, schedule and
+final lens, then test the plotted source against canonical chamber/clip or
+lattice membership. Accepted sources emit bounded images which never feed
+back into the orbit. Each image copies its source transform and canonical
+coordinates for color, while 4D images retain raw `xyzw` until the live rotor,
+projection and soft slice. The authored point count is an output cap, not a
+promise: work stops after `8N` source attempts (and `8N` lattice proposals),
+and the worker reports `complete`, `underfilled`, or `empty` rather than
+substituting an untiled cloud. Selection has its own deterministic cursor and
+consumes no chaos RNG, so source-attempt numbering continues to drive xaos
+re-fusing and per-iteration RNG exactly as in the untiled recorder.
+
 ## Affine transforms
 
 Each `Transform` is a position, an Euler rotation (radians, **XYZ order**), and a
