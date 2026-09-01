@@ -130,6 +130,8 @@ import {
 } from "../../fractal/project4";
 import type { FourDView } from "../../fractal/project4";
 import { mulberry32 } from "../../fractal/rng";
+import { resolvePointTilingPlan } from "../../fractal/point-tiling";
+import type { PointTilingPlan } from "../../fractal/point-tiling";
 import {
   buildSurfaceDE,
   deHasFolds,
@@ -425,6 +427,9 @@ interface ScenarioDef3D {
    * post-word -> lens order, and the appended B slots.
    */
   schedule?: HybridSchedule;
+  /** Optional plot-time image plan, shared by the CPU oracle and production
+   * backend. Tiling scenarios keep order 1 and Balloon absent by contract. */
+  pointTilingPlan?: PointTilingPlan;
   /**
    * Per-scenario override of `AGREEMENT_MAE_THRESHOLD`. The equal-N MAE
    * between two INDEPENDENT samplings of the same attractor never reaches 0
@@ -492,6 +497,8 @@ interface ScenarioDef4D {
    * the flat 3D form both the 4D prepare and the 4D packer lift through
    * `toTransform4`. */
   schedule?: HybridSchedule;
+  /** True raw-xyzw point images before the frozen bench tumble/slice. */
+  pointTilingPlan?: PointTilingPlan;
   /** See {@link ScenarioDef3D.maeThreshold} — same scenario-owned noise
    * floor override, one dimension up. */
   maeThreshold?: number;
@@ -515,6 +522,102 @@ const SIERPINSKI_CAMERA: Pick<ScenarioDef3D, "cameraPos" | "lookAt"> = {
 const FERN_CAMERA: Pick<ScenarioDef3D, "cameraPos" | "lookAt"> = {
   cameraPos: [0, 0, 4.2],
   lookAt: [0, 0, 0],
+};
+
+function benchPointTilingPlan(
+  dimension: 3 | 4,
+  kind: "finite" | "lattice",
+  opts: { cellScale?: number; empty?: boolean } = {},
+): PointTilingPlan {
+  // Every active agreement leg carries a packed analytic clip. The ordinary
+  // fixture uses a deliberately generous ball so the clip branch is live
+  // without changing the carrier under test; the empty leg moves that same
+  // ball away from the whole attractor.
+  const clip = {
+    parts: [
+      {
+        primitive: { kind: "sphere" as const, radius: opts.empty ? 0.25 : 4 },
+        combine: "union" as const,
+        ...(opts.empty ? { pose: { offset: [100, 100, 100] as Vec3 } } : {}),
+      },
+    ],
+  };
+  const resolved =
+    kind === "finite"
+      ? resolveTiling({ group: dimension === 3 ? "a3" : "f4", clip })
+      : resolveTiling(
+          { kind: "lattice", cellScale: opts.cellScale ?? 1, clip },
+          2,
+        );
+  const plan = resolvePointTilingPlan(resolved, dimension);
+  if (!plan) throw new Error("GPU bench point-tiling plan did not resolve");
+  return plan;
+}
+
+/** Two contractive 4D maps whose whole attractor sits strictly inside the
+ * frozen F4 chamber. That makes the maximal-order bench leg concentrated
+ * rather than waiting roughly 1/1152 attempts for an unrelated preset to
+ * wander into canonical content. The two fixed points differ in every axis,
+ * including w, so the replicated images still exercise the true F4 action. */
+function f4ChamberDust(): Transform[] {
+  const scale = 0.16;
+  const fixedPoints: Vec4[] = [
+    [0.085, 0.16, 0.395, 0.89],
+    [0.1, 0.175, 0.41, 0.905],
+  ];
+  return fixedPoints.map((point, id) => ({
+    id,
+    position: [
+      (1 - scale) * point[0],
+      (1 - scale) * point[1],
+      (1 - scale) * point[2],
+    ],
+    rotation: [0, 0, 0],
+    scale: [scale, scale, scale],
+    w: { position: (1 - scale) * point[3], scale },
+    colorIndex: id,
+  }));
+}
+
+/** The widest legal point-family composition: an emitter table (including a
+ * catalog mesh), non-trivial xaos rows, a scheduled affine post-word, a final
+ * lens, an analytic clip and finite image selection. Kaleidoscope and balloon
+ * are absent because those combinations are explicitly refused upstream. */
+function tiledMultiSystem(): Transform[] {
+  const chaosRows = [
+    [1, 0.25, 0.05],
+    [0.1, 1, 0.2],
+    [0.3, 0.15, 1],
+  ];
+  return emitterMenagerie().map((transform, index) => ({
+    ...transform,
+    chaos: chaosRows[index],
+  }));
+}
+
+const TILED_MULTI_SYSTEM_FINAL: Transform = {
+  id: 90,
+  position: [0.05, -0.04, 0.02],
+  rotation: [0.08, -0.05, 0.12],
+  scale: [0.92, 0.88, 0.9],
+};
+
+const TILED_MULTI_SYSTEM_SCHEDULE: HybridSchedule = {
+  transforms: [
+    {
+      id: 91,
+      position: [-0.12, 0.02, 0],
+      rotation: [0, 0, 0.1],
+      scale: [0.84, 0.8, 0.82],
+    },
+    {
+      id: 92,
+      position: [0.14, -0.03, 0.02],
+      rotation: [0, 0, -0.08],
+      scale: [0.8, 0.86, 0.83],
+    },
+  ],
+  depth: 2,
 };
 
 /** A fixed w-mixing tumble shared by the 4D scenarios — three plane angles
@@ -879,6 +982,75 @@ const SCENARIOS: ScenarioDef[] = [
   },
   {
     kind: "3d",
+    name: "tiling-finite-3d",
+    transforms: sierpinskiTetrahedron(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "spectrum",
+    ...SIERPINSKI_CAMERA,
+    pointTilingPlan: benchPointTilingPlan(3, "finite"),
+    // Pins chamber membership, credit banking, finite matrix images and
+    // source-owned structural color through the active binding-8 kernel.
+  },
+  {
+    kind: "3d",
+    name: "tiling-lattice-3d",
+    transforms: sierpinskiTetrahedron(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "aurora",
+    ...SIERPINSKI_CAMERA,
+    pointTilingPlan: benchPointTilingPlan(3, "lattice"),
+    // Minimum cell scale: analytic x/z images, quantized proposal CDF and
+    // 8R->10R coverage in the production kernel.
+    // Measured Iris equal-N noise floor is 0.940 MAE: the wide repeated
+    // carrier leaves many low-density colored pixels. Two is a little over
+    // twice that floor while retaining a useful divergence bar.
+    maeThreshold: 2,
+  },
+  {
+    kind: "3d",
+    name: "tiling-lattice-max-3d",
+    transforms: sierpinskiTetrahedron(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "aurora",
+    ...SIERPINSKI_CAMERA,
+    pointTilingPlan: benchPointTilingPlan(3, "lattice", { cellScale: 4 }),
+    // The opposite authored scale boundary from the minimum-scale leg. The
+    // same active kernel reads a smaller packed cell/CDF table and a wider h.
+    maeThreshold: 2,
+  },
+  {
+    kind: "3d",
+    name: "tiling-empty-3d",
+    transforms: sierpinskiTetrahedron(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "spectrum",
+    ...SIERPINSKI_CAMERA,
+    pointTilingPlan: benchPointTilingPlan(3, "finite", { empty: true }),
+    // A valid, packed analytic clip excludes the entire source. Both engines
+    // must complete with a genuinely empty accumulation and never deposit the
+    // untiled attractor as a fallback.
+  },
+  {
+    kind: "3d",
+    name: "tiling-multisystem-3d",
+    transforms: tiledMultiSystem(),
+    finalTransform: TILED_MULTI_SYSTEM_FINAL,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "spectrum",
+    schedule: TILED_MULTI_SYSTEM_SCHEDULE,
+    cameraPos: [0, 0, 5],
+    lookAt: [0, 0, 0],
+    pointTilingPlan: benchPointTilingPlan(3, "finite"),
+    // The maximum legal composition keeps binding 7's real emitter prefix
+    // live while its appended tiling plan follows xaos, schedule and lens.
+    maeThreshold: 2,
+  },
+  {
+    kind: "3d",
     name: "fern",
     transforms: barnsleyFern(),
     finalTransform: null,
@@ -1231,6 +1403,46 @@ const SCENARIOS: ScenarioDef[] = [
       weight: 1,
     },
     balloonPaletteId: "spectrum",
+  },
+  {
+    kind: "4d",
+    name: "tiling-finite-4d",
+    system: f4ChamberDust,
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    rotation: BENCH_TUMBLE,
+    paletteId: "legacy",
+    colorMode: "radius",
+    rampPalette: "dusk",
+    sliceOn: true,
+    sliceCenter: 0.2,
+    sliceWidth: 0.35,
+    sliceRelativeColor: false,
+    pointTilingPlan: benchPointTilingPlan(4, "finite"),
+    // F4 matrices genuinely mix w before the tumble. Radius stays owned by
+    // the canonical source while the soft-slice weight follows each image.
+  },
+  {
+    kind: "4d",
+    name: "tiling-lattice-4d",
+    system: hyperfern,
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    rotation: BENCH_TUMBLE,
+    paletteId: "legacy",
+    colorMode: "wBlueOrange",
+    sliceOn: true,
+    sliceCenter: -0.15,
+    sliceWidth: 0.3,
+    sliceRelativeColor: true,
+    pointTilingPlan: benchPointTilingPlan(4, "lattice"),
+    // Minimum-scale x/z/w repetition before projection; wRamp and slice are
+    // recomputed from every raw image rather than copied from the source.
+    // Measured Iris equal-N MAE is 2.790 with essentially zero signed bias
+    // and density TV 0.047: image-owned wRamp intentionally gives independent
+    // samplings high per-hit color variance. Five keeps the established
+    // roughly-2x noise-floor procedure without weakening other scenarios.
+    maeThreshold: 5,
   },
   {
     kind: "4d",
@@ -1622,6 +1834,7 @@ function toGpuBackendRequest(
     progressiveFilterRadius: FLAME_FILTER_RADIUS,
     echo: def.balloonEcho,
     echoColorLUT,
+    pointTilingPlan: def.pointTilingPlan,
   };
 }
 
@@ -1720,6 +1933,7 @@ function prepare3D(def: ScenarioDef3D): ScenarioEngines {
         lut,
         def.balloonEcho,
         echoColorLUT,
+        def.pointTilingPlan,
       ),
     createBackend: () =>
       createGpuFlameBackend(toGpuBackendRequest(def, projection)),
@@ -1864,6 +2078,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
         balloonEcho ? rotorProjection : undefined,
         balloonEcho ? camera : undefined,
         echoColorLUT,
+        def.pointTilingPlan,
       ),
     createBackend: () =>
       createGpuFlameBackend4({
@@ -1886,6 +2101,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
         rotorProjection: balloonEcho ? rotorProjection : undefined,
         cameraProjection: balloonEcho ? camera : undefined,
         schedule: def.schedule ?? null,
+        pointTilingPlan: def.pointTilingPlan,
       } satisfies GpuBackendRequest4),
   };
 }

@@ -713,7 +713,10 @@ function gcd(a: number, b: number): number {
   return x;
 }
 
-function cursorStride(count: number): number {
+/** Coprime walk used by every bounded finite-image consumer. Exported for
+ * the GPU tail packer so the CPU visitor and both kernels share the stride
+ * instead of independently solving the same permutation. */
+export function pointTilingCursorStride(count: number): number {
   if (count <= 1) return 1;
   let stride = Math.max(1, Math.floor(count * 0.6180339887498948));
   while (gcd(stride, count) !== 1) stride++;
@@ -977,7 +980,7 @@ function visitFiniteBounded(
     sourceW,
   );
   const representatives = plan.representativesByWallMask[mask];
-  const stride = cursorStride(representatives.length);
+  const stride = pointTilingCursorStride(representatives.length);
   const weight = representatives.length / selected;
   for (let sample = 0; sample < selected; sample++) {
     const ordinal =
@@ -1083,7 +1086,7 @@ function visitFinitePoints(
     sourceW,
   );
   const representatives = plan.representativesByWallMask[mask];
-  const stride = cursorStride(representatives.length);
+  const stride = pointTilingCursorStride(representatives.length);
   for (let sample = 0; sample < quota; sample++) {
     const ordinal =
       (((state.cursor % representatives.length) + sample) * stride) %
