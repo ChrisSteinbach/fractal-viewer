@@ -139,6 +139,7 @@ import {
 import type { ExportProgressInit } from "./export-progress";
 import {
   pointCountLabel,
+  type FlameTilingOutcome,
   type PointTilingOutcome,
 } from "./point-tiling-outcome";
 import { videoCaptureSupported } from "./recorder";
@@ -1888,6 +1889,11 @@ export class Ui {
   private landedPointCount = 0;
   private landedPointTilingOutcome: PointTilingOutcome | undefined;
   private pointTilingMatchesAuthored = true;
+  /** Worker-associated Flame tiling disclosure. A pending restart keeps its
+   * last outcome so the panel can distinguish first preparation from applying
+   * a later edit to an already-resolved session. */
+  private flameTilingOutcome: FlameTilingOutcome | undefined;
+  private flameTilingPending = false;
   private readonly legend: HTMLElement;
   private readonly legendBar: HTMLElement;
   private readonly legendLabels: HTMLElement;
@@ -4406,11 +4412,13 @@ export class Ui {
         ? state.autoUpdate
           ? "Auto-update is on — changes regenerate Points automatically."
           : "Auto-update is off — use Regenerate to apply changes to Points."
-        : state.renderMode === "surface"
-          ? lattice
-            ? "Changing cell scale is live; changing kind or clip restarts Surface."
-            : "Changes restart Surface without resetting the view."
-          : `${state.renderMode === "flame" ? "Flame" : "Solid"} stays untiled — edits apply to Points through ${state.autoUpdate ? "Auto-update" : "Regenerate"} and to Surface on entry.`;
+        : state.renderMode === "flame"
+          ? "Tiling edits restart Flame from the same seed and frozen view."
+          : state.renderMode === "surface"
+            ? lattice
+              ? "Changing cell scale is live; changing kind or clip restarts Surface."
+              : "Changes restart Surface without resetting the view."
+            : `Solid stays untiled — edits apply to Points through ${state.autoUpdate ? "Auto-update" : "Regenerate"}, restart Flame from the same seed and frozen view, and apply to Surface on entry.`;
 
     const kind = this.scalarSelect("tilingKind");
     const group = this.scalarSelect("tilingGroup");
@@ -4442,7 +4450,7 @@ export class Ui {
         ? state.autoUpdate
           ? "Off is authored — Points still shows the earlier tiled cloud while its untiled replacement runs."
           : "Off is authored, but Points still shows the earlier tiled cloud — Auto-update is off; use Regenerate to apply Off."
-        : "Off — Points and Surface render the original attractor once.";
+        : "Off — Points, Flame, and Surface render the original attractor once; Solid stays untiled.";
       return;
     }
 
@@ -4462,16 +4470,20 @@ export class Ui {
           this.pointsTilingPendingSuffix(state);
       } else if (state.renderMode === "points") {
         note = this.pointsTilingNote(state);
-      } else if (state.renderMode !== "surface") {
-        const label = state.renderMode === "flame" ? "Flame" : "Solid";
-        note = `${label} shows the untiled attractor. Enter Surface to render this mirrored landscape.`;
+      } else if (state.renderMode === "flame") {
+        note = this.flameTilingNote();
+      } else if (state.renderMode === "solid") {
+        note =
+          "Solid stays untiled. Enter Points, Flame, or Surface to render this mirrored landscape.";
       } else {
         note =
           "Active in Surface — the attractor repeats in x and z (and w in 4D) at the cell scale above.";
       }
       if (nonFlat) {
         note +=
-          " 4D lattice tiling uses the zero-thickness W slice; slab thickness is unavailable while tiled.";
+          state.renderMode === "flame"
+            ? " In 4D Flame, raw lattice images are reduced by the frozen rotor and soft slice."
+            : " 4D lattice tiling uses the zero-thickness W slice; slab thickness is unavailable while tiled.";
       }
       this.tilingNote.textContent = note;
       return;
@@ -4500,16 +4512,20 @@ export class Ui {
         this.pointsTilingPendingSuffix(state);
     } else if (state.renderMode === "points") {
       note = this.pointsTilingNote(state);
-    } else if (state.renderMode !== "surface") {
-      const label = state.renderMode === "flame" ? "Flame" : "Solid";
-      note = `${label} shows the untiled attractor. Enter Surface to render these reflected copies.`;
+    } else if (state.renderMode === "flame") {
+      note = this.flameTilingNote();
+    } else if (state.renderMode === "solid") {
+      note =
+        "Solid stays untiled. Enter Points, Flame, or Surface to render these reflected copies.";
     } else {
       note =
         "Active in Surface; edits restart the render and preserve its view.";
     }
     if (nonFlat) {
       note +=
-        " 4D finite tiling uses the zero-thickness W slice; slab thickness is unavailable while tiled.";
+        state.renderMode === "flame"
+          ? " In 4D Flame, raw reflected images are reduced by the frozen rotor and soft slice."
+          : " 4D finite tiling uses the zero-thickness W slice; slab thickness is unavailable while tiled.";
     }
     this.tilingNote.textContent = note;
   }
@@ -4541,6 +4557,32 @@ export class Ui {
       return `Active in Points — ${label}; no canonical source produced a tiled image.`;
     }
     return `Active in Points — ${label}.`;
+  }
+
+  /** Worker-associated Flame half of the shared tiling disclosure. Keeping
+   * the last result while a new session is pending lets an authored edit read
+   * as "Applying"; the first result, with nothing yet associated, reads as
+   * "Preparing" instead. Static document conflicts are handled before this
+   * method so their adjacent recovery remains authoritative. */
+  private flameTilingNote(): string {
+    const outcome = this.flameTilingOutcome;
+    if (this.flameTilingPending) {
+      return outcome === undefined
+        ? "Preparing in Flame — resolving the authored tiling before accumulation; Flame will restart from the same seed and frozen view."
+        : "Applying in Flame — restarting with the authored tiling from the same seed and frozen view.";
+    }
+    if (outcome === undefined) {
+      return "Preparing in Flame — waiting for the authored tiling result before accumulation.";
+    }
+    if (outcome.availability === "off") {
+      return "Applying in Flame — waiting for the authored tiling to replace the worker's untiled result from the same seed and frozen view.";
+    }
+    if (outcome.availability === "refused") {
+      return `Unavailable in Flame — ${outcome.note}`;
+    }
+    return outcome.kind === "lattice"
+      ? "Active in Flame — bounded mirrored lattice images accumulate with coverage-weighted density."
+      : "Active in Flame — bounded reflected images accumulate with multiplicity-correct weighted density.";
   }
 
   /** Suffix for a document-level refusal while Points is still showing an
@@ -5342,6 +5384,17 @@ export class Ui {
     this.landedPointTilingOutcome = outcome;
     this.pointTilingMatchesAuthored = matchesAuthored;
     this.pointCount.textContent = pointCountLabel(count, outcome);
+  }
+
+  /** Associate the latest worker-resolved Flame tiling result with the panel.
+   * Starting a pending restart without a replacement outcome retains the last
+   * result solely for Preparing-vs-Applying disclosure; passing `pending`
+   * false with no outcome clears the association. */
+  setFlameTilingOutcome(outcome?: FlameTilingOutcome, pending = false): void {
+    if (outcome !== undefined || !pending) {
+      this.flameTilingOutcome = outcome;
+    }
+    this.flameTilingPending = pending;
   }
 
   /** Display-only count for Watch-it-build. Unlike {@link setPointCount},
