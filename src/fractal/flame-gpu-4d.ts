@@ -91,6 +91,8 @@ import {
 } from "./color";
 import { sliceColorRemap, SLICE_GHOST_FLOOR } from "./project4";
 import type { FourDView, RotorProjection4 } from "./project4";
+import { pointTilingGpuWgsl } from "./point-tiling-gpu";
+import type { PackedGpuPointTiling } from "./point-tiling-gpu";
 // Value imports for the packing functions below the kernel — mirrors
 // flame-gpu.ts's own split between type-only and value imports.
 import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
@@ -1311,6 +1313,168 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
   }
 }
 `;
+
+function uniqueKernelMarker(
+  source: string,
+  marker: string,
+  label: string,
+): number {
+  const first = source.indexOf(marker);
+  if (first < 0 || source.indexOf(marker, first + marker.length) >= 0) {
+    throw new Error(`4D Flame point-tiling ${label} marker drifted`);
+  }
+  return first;
+}
+
+/** Build the active point-tiling specialization without changing the
+ * historical exported kernel. The backend calls this only when it also
+ * installs the binding-7 plan tail and binding-8 chain-state buffer; absent
+ * tiling continues to compile {@link FLAME_GPU_KERNEL_4D_WGSL} literally. */
+export function buildFlameGpuPointTilingKernel4(
+  packed: PackedGpuPointTiling,
+): string {
+  if (packed.dimension !== 4) {
+    throw new Error("4D Flame point-tiling kernel requires a 4D packed plan");
+  }
+  const bindingMarker =
+    "@group(0) @binding(7) var<storage, read> emitterTriangleTable: array<f32>;";
+  const plotStartMarker =
+    "      // Color and slice weight belong to the PLOTTED source point";
+  const plotEndMarker = "    }\n  }\n\n  chains[chainIdx]";
+  const bindingAt = uniqueKernelMarker(
+    FLAME_GPU_KERNEL_4D_WGSL,
+    bindingMarker,
+    "binding",
+  );
+  const plotStart = uniqueKernelMarker(
+    FLAME_GPU_KERNEL_4D_WGSL,
+    plotStartMarker,
+    "plot start",
+  );
+  const plotEnd = uniqueKernelMarker(
+    FLAME_GPU_KERNEL_4D_WGSL,
+    plotEndMarker,
+    "plot end",
+  );
+  if (!(bindingAt < plotStart && plotStart < plotEnd)) {
+    throw new Error("4D Flame point-tiling kernel markers are out of order");
+  }
+
+  const activePlot = /* wgsl */ `      let pointTilingState = &pointTilingStates[chainIdx];
+      let pointTilingAttempt = pointTilingBegin(pp, pointTilingState);
+
+      // Every color except wRamp belongs to the canonical raw point. Image
+      // selection may move that point in w, so wRamp is deliberately deferred
+      // to the image loop beside the soft-slice weight.
+      var pointTilingSourceRgb: vec3u;
+      switch params.colorKind {
+        case 0u: { // structural: the source orbit's flam3 color coordinate.
+          let ci = min(u32(colorCoord * 256.0), 255u);
+          pointTilingSourceRgb = colors[ci].xyz;
+        }
+        case 1u: { // wRamp: recomputed from each raw 4D image below.
+          pointTilingSourceRgb = vec3u(0u);
+        }
+        case 2u: { // transform: the source orbit's picked BASE map.
+          pointTilingSourceRgb = colors[idx % params.baseTransformCount].xyz;
+        }
+        case 3u: { // radius: the canonical source point's raw 4D distance.
+          let d4 = distance(pp, params.center4);
+          let t = clamp((d4 - params.minD) * params.invRadiusRange, 0.0, 1.0);
+          let li = u32(t * 255.0 + 0.5);
+          pointTilingSourceRgb = colors[li].xyz;
+        }
+        case 4u: { // height: canonical raw authored Y.
+          let t = clamp(
+            (pp.y - params.colorMin.y) * params.colorInvRangeGamma.y,
+            0.0,
+            1.0,
+          );
+          pointTilingSourceRgb = colors[u32(t * 255.0 + 0.5)].xyz;
+        }
+        case 5u: { // position: canonical raw authored XYZ.
+          var t = clamp(
+            (pp.xyz - params.colorMin.xyz) * params.colorInvRangeGamma.xyz,
+            vec3f(0.0),
+            vec3f(1.0),
+          );
+          if (params.colorInvRangeGamma.w != 1.0) {
+            t = pow(t, vec3f(params.colorInvRangeGamma.w));
+          }
+          let c = min(
+            vec3f(1.0),
+            vec3f(${POSITION_COLOR_OFFSET}) + ${POSITION_COLOR_SCALE} *
+              (t.x * params.axisX.xyz + t.y * params.axisY.xyz + t.z * params.axisZ.xyz),
+          );
+          pointTilingSourceRgb = vec3u(round(c * ${COLOR_FIXED_POINT_SCALE}.0));
+        }
+        default: { // 6u, source-owned uniform cyan.
+          pointTilingSourceRgb = vec3u(round(
+            params.uniformColor.xyz * ${COLOR_FIXED_POINT_SCALE}.0,
+          ));
+        }
+      }
+
+      for (var pointTilingSample = 0u;
+        pointTilingSample < pointTilingAttempt.selected;
+        pointTilingSample++) {
+        let pointTilingImage = pointTilingImageAt(
+          pp, pointTilingAttempt, pointTilingSample,
+        );
+        if (pointTilingImage.emitted == 1u) {
+          let pointTilingSRaw = dot(params.projS, pointTilingImage.point)
+            + params.projC.w;
+          let pointTilingS = clamp(
+            pointTilingSRaw * params.invWAmp,
+            -1.0,
+            1.0,
+          );
+          var pointTilingSliceWeight = 1.0;
+          if (params.sliceOn == 1u) {
+            let pointTilingD =
+              (pointTilingS - params.sliceCenter) / params.sliceWidth;
+            pointTilingSliceWeight = SLICE_FLOOR
+              + (1.0 - SLICE_FLOOR) * exp(-0.5 * pointTilingD * pointTilingD);
+          }
+
+          var pointTilingRgb = pointTilingSourceRgb;
+          if (params.colorKind == 1u) {
+            let pointTilingSc = clamp(
+              (pointTilingS - params.sliceColorShift) * params.sliceColorInvScale,
+              -1.0,
+              1.0,
+            );
+            pointTilingRgb = vec3u(round(
+              wRampColor(pointTilingSc) * ${COLOR_FIXED_POINT_SCALE}.0,
+            ));
+          }
+
+          let pointTilingWeightFix = u32(round(
+            pointTilingImage.weight * pointTilingSliceWeight
+              * ${WEIGHT_FIXED_POINT_SCALE}.0,
+          ));
+          depositPrimary(
+            pointTilingImage.point,
+            pointTilingRgb,
+            pointTilingWeightFix,
+          );
+          pointTilingRecordEmitted(pointTilingState);
+        }
+      }
+`;
+  const withPlot =
+    FLAME_GPU_KERNEL_4D_WGSL.slice(0, plotStart) +
+    activePlot +
+    FLAME_GPU_KERNEL_4D_WGSL.slice(plotEnd);
+  const pointTilingWgsl = pointTilingGpuWgsl(packed);
+  const bindingEnd = bindingAt + bindingMarker.length;
+  return (
+    withPlot.slice(0, bindingEnd) +
+    "\n" +
+    pointTilingWgsl +
+    withPlot.slice(bindingEnd)
+  );
+}
 
 /**
  * Byte-layout element offsets — 4-byte units into each buffer's combined
