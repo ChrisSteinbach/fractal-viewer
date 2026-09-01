@@ -735,6 +735,35 @@ neither marcher then has a presentable field. Worker teardown uses a live-gated
 host, so a queued callback from a terminated Solid entry cannot install a stale
 snapshot or tear down the next render.
 
+Point-space tiling reaches Sampled Solid through that worker, split by
+dimension exactly like the renderers' other tiling consumers. In 3D the plan
+is material-live: `resolveSolidTilingSession` resolves it and
+`voxel-material.ts`'s compile-gated arms fold every density/color query, with
+the max-density hierarchy suspended while tiled (a straight ray maps to
+reflected source segments, so node skips are invalid across them) and no
+worker involvement. In 4D the same resolver routes to the WORKER-BAKED arm,
+because the uploaded volume is a rotor-projected, w-sliced slice no query
+fold can act on: the worker resolves the raw authored block before its seeded
+orbit and `accumulateVoxels4` deposits bounded pre-projection images at the
+plot boundary — the projected IMAGE's coverage and importance into density
+and the running RGB mean, while structural/Transform/Height/Radius/Position/
+Uniform color provenance stays owned by the canonical source and only the
+w-ramp is recomputed from each raw image (the geometry/color provenance
+split: color normalization keeps its own center/half-extents so canonical
+colors survive the tiled geometry pivot, and an entry carrier radius keeps
+an Active→Off or refused replacement from deriving support from a tiled cube
+AABB). Nothing folds in displayed space, so the max-density hierarchy stays
+VALID and enabled for baked 4D tiling — the inverse of 3D's suspension — and
+`VoxelGrid.pointTiling` carries the credit/cursor across chunks exactly as
+`FlameHistogram` does. Every tiling edit restarts the worker from the entry
+seed (images are baked into density), retaining the displayed geometry frame;
+settled rotor/slice endpoints rebuild inside that worker under the
+revisioned `setFourDView` protocol, and stale-revision replies never publish.
+The full representation record — the selection policies, the measured
+refusals and the 10R carrier caveat — is `docs/tiling-contract.md`'s
+"4D Solid representation" section; the browser gate is
+`scripts/tiling-ui.verify.mjs --scope=solid4`.
+
 `solid-render-status.ts` is the one user-facing model over that lifecycle. It
 always identifies the mode as **Sampled Solid**, records requested and effective
 N³ resolution separately, and derives convergence solely from

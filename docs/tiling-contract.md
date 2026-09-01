@@ -831,7 +831,7 @@ The frozen budgets are:
 | Flame WebGPU             | SHIPPED in 3D and 4D — the shared binding-7 plan tail and binding-8 per-chain state drive the same 32-image weighted estimator; active tiling uses the normal GPU route with CPU fallback, never an untiled GPU substitute                                                                                                               |
 | Generated Flame backdrop | SHIPPED — same 32-image rule inside its fixed one-million-step job; schedule, tiling and the balloon legality bit join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                                                                                            |
 | 3D Solid                 | SHIPPED — no replicated voxel memory: the canonical density texture stays put and the material folds every query; the march budget scales with the presentation carrier at the source-voxel stride, capped at 8192 steps                                                                                                                 |
-| 4D Solid                 | DECIDED, NOT YET IMPLEMENTED — at most 32 weighted pre-projection images per accepted source, deposited into the unchanged displayed volume; no new voxel memory and no material change. The representation, its two per-arm selection policies and the refused alternatives are the section below                                       |
+| 4D Solid                 | SHIPPED — at most 32 weighted pre-projection images per accepted source, deposited into the unchanged displayed volume; no new voxel memory and no material change. The representation, its two per-arm selection policies and the refused alternatives are the section below                                                            |
 
 The sheet measured all six finite groups on a balanced 16,384-point acceptance
 fixture and got exactly `1/order`. At ~262k output work, equal-density finite
@@ -975,16 +975,17 @@ unit and measures from the carrier entry.
 
 The frozen combination matrix and edit timing: Balloon and kaleidoscope
 order > 1 refuse (the volume bakes the kaleidoscope into the attractor, so
-only order 1 is canonical chamber content), mesh clips refuse, a 4D document
-refuses until the 4D Solid lift (its volume is a 3D slice no 4D fold can act
-on — the representation that replaces the fold is the section below),
-forward escape/bulb volumes refuse as reset debris, and the
-floor/environment presentation compose. `resolveSolidTilingSession` is the
-ONE derivation (off/refused/active, mirrors `point-tiling-session.ts`);
-`installVoxelTiling` is the material compile gate (canonical records by
-identity, mirroring `installSurfaceTiling`). The panel's Solid rows read the
-session status like Flame's read their worker outcome; the mode's documented
-timing is that tiling edits are live.
+only order 1 is canonical chamber content), mesh clips refuse, forward
+escape/bulb volumes refuse as reset debris, and the floor/environment
+presentation compose. A 4D document does not take the query-space fold —
+its volume is a projected slice no 4D fold can act on — it takes the
+worker-baked pre-projection arm below. `resolveSolidTilingSession` is the
+ONE derivation (off/refused/active, mirrors `point-tiling-session.ts`,
+dimension-resolved per arm); `installVoxelTiling` is the 3D material compile
+gate (canonical records by identity, mirroring `installSurfaceTiling`). The
+panel's Solid rows read the ACTIVE session's status like Flame's read their
+worker outcome, so a held session discloses its entry dimension even after
+the authored document crosses 3D/4D.
 
 ### 4D Solid representation
 
@@ -993,6 +994,31 @@ displayed volume.** No new voxel memory, no new buffer shape, and no shader
 work at all: the whole lift is the voxel worker's plot boundary, taken
 exactly the way `accumulateFlame4` took it one renderer over. The executable
 argument is `scripts/solid-tiling-4d.harness.ts`.
+
+SHIPPED along exactly that line (2026-09-01). `VoxelGrid` carries an
+optional lazily-allocated `pointTiling` cursor (untiled storage and wire
+byte-identical, pinned by the omitted-vs-explicit-undefined test);
+`accumulateVoxels4` visits the shared bounded visitor on raw post-schedule/
+post-lens `xyzw` and deposits the PROJECTED image — coverage and importance
+into density, importance into the running RGB mean — while structural/
+Transform/Height/Radius/Position/Uniform color provenance stays owned by the
+canonical source and only the w-ramp is recomputed from the emitted image.
+Finite A4/B4/F4 keep the bounded 32-image estimator; lattice uses the
+settled-pose `u_k v_k` proposal with the shared `1e-3` omission gate and the
+A1 POST-spend cursor phase `(cursor + selected) >>> 0` (pinned against A0's
+pre-spend phase by a multi-cell test the one-cell coverage test cannot
+distinguish). The tiled view policy pivots at the ORIGIN with
+`invWAmp = 1/carrierRadius`; active tiled bounds are the EXACT carrier cube
+(finite `ball(0,R)`, lattice the presentation outer radius) consuming no
+orbit RNG. The worker resolves tiling before the seeded orbit, rebuilds the
+lattice proposal per settled view, and keeps the max-density hierarchy
+ENABLED; an entry carrier radius (`entryCarrierRadius`) keeps an
+Active→Off/refused replacement from deriving rotation-invariant support from
+a tiled cube AABB, and color normalization keeps its own
+`colorCenter`/`colorHalfExtents` frame so canonical colors survive the
+geometry pivot. The browser record is `scripts/tiling-ui.verify.mjs
+--scope=solid4`; the settlement's representative figures are in that
+header and in the edit-timing paragraph below.
 
 The obstruction is mechanical rather than aesthetic. `accumulateVoxels4`
 deposits into a rotor-projected, w-sliced 3D grid — rows 0-2 of a
@@ -1145,7 +1171,22 @@ frame lands. The generated Flame backdrop follows every tiling and schedule
 edit through `trackAutoBackground` — even with Points' Auto-update off, where
 the pane keeps the stale cloud while the replacement backdrop renders —
 while 3D Solid applies tiling edits live (material-only) and Surface keeps
-its existing restart-on-kind/clip and live lattice-scale behavior. Browser-gated by
+its existing restart-on-kind/clip and live lattice-scale behavior. 4D Solid
+RESTARTS the voxel worker on every tiling edit, always from the entry seed,
+and on every settled rotor/slice endpoint that needs a rebuild — the images
+are baked into density — while an inert color-only endpoint stages over the
+still-valid frame without advancing its revision; the replacement retains the
+entry geometry frame and the canonical color provenance separately, so an
+Active→Off or refused replacement can never adopt tiled support as untiled
+geometry. Stale worker replies never publish: a grid whose `viewRevision` is
+not the active endpoint's is dropped, and the worker may legitimately finish
+an old endpoint's chunk after a newer command is queued. Browser-gated by
+`scripts/tiling-ui.verify.mjs --scope=solid4`: real-worker entry with the
+hierarchy present, same-seed worker replacement on an authored edit, in-worker
+revisioned view endpoints, and structurally distinct same-seed tiled/Off
+frames (Iris 18.53%/35.50%; SwiftShader 19.50%/35.47%; the 3D scope on the
+same build keeps its material-only 1→1 worker contract, Iris diffs
+11.11%/24.69%). Browser-gated for the backdrop by
 `scripts/tiling-ui.verify.mjs --scope=backdrop`: the frozen-cloud fixture
 isolates the backdrop's tiled/untiled pixel difference (measured 44.01% /
 30.66% on Iris, 40.82% / 32.45% on SwiftShader).
