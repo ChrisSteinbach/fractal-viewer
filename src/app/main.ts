@@ -2548,6 +2548,7 @@ async function main(): Promise<void> {
   // the stale-color guard and applyFourDColor's mode dispatch, which
   // deliberately let an edit that landed mid-flight win.
   function applyCloudResult(result: CloudResult, request: CloudRequest): void {
+    const pointTilingDisclosureWasStale = !landedPointTilingMatchesAuthored;
     // A landing generation replaces the buffers a replay was revealing —
     // stop it and show the fresh cloud whole. (scene.setPoints* also clears
     // the prefix defensively, but the caption/cursor/count are app state.)
@@ -2697,7 +2698,9 @@ async function main(): Promise<void> {
     scene.setBalloonEchoEnabled(
       state.balloonEcho && result.pointTiling?.availability !== "active",
     );
-    if (result.pointTiling || state.tiling) ui.updateLabels(state);
+    if (result.pointTiling || state.tiling || pointTilingDisclosureWasStale) {
+      ui.updateLabels(state);
+    }
 
     // Auto-frame the camera on a whole-system load's fresh attractor —
     // deferred to arrival with everything else, so it frames the cloud
