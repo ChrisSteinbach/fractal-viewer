@@ -46,10 +46,10 @@
  *   final reply must match the latest authored tiling; the 4D fixture changes
  *   tumble/slice view state and pixels without posting another cloud request;
  * - 3D lattice and 4D finite Flame fixtures start a real worker from an
- *   app-copied document, intentionally select CPU accumulation, finish and
- *   draw, differ from the same-seed Off render, and keep only the latest of a
- *   rapid pair of 3D edits; the 4D fixture changes its settled rotor/slice in
- *   the same worker;
+ *   app-copied document, run the active GPU tiling kernel (accepting a clearly
+ *   disclosed software adapter), finish and draw, differ from the same-seed
+ *   Off render, and keep only the latest of a rapid pair of 3D edits; the 4D
+ *   fixture changes its settled rotor/slice in the same worker;
  * - Sampled Solid still discloses beside the visible controls that it stays
  *   untiled;
  * - Balloon and order>1 Symmetry leave the authored checkbox available as a
@@ -89,8 +89,9 @@
  * requests/replies stayed 2->2, and its tiled/untiled frames differed by
  * 15.27% (rotor-only/view frame differences were 14.54%/13.37%).
  *
- * MEASURED 2026-09-01 on SwiftShader with `--scope=flame --settle=120000`:
- * both 1M/1x CPU fixtures finished without page, console or app errors.
+ * PRE-LIFT BASELINE MEASURED 2026-09-01 on SwiftShader with
+ * `--scope=flame --settle=120000`: both 1M/1x CPU fixtures finished without
+ * page, console or app errors.
  * Mirrored Lattice completed in 41.1s; the copied link restored, the worker
  * reported CPU as intentional, the retired rapid edit produced no terminal or
  * active relabel, the seed survived both the latest edit and Off, and the
@@ -426,7 +427,8 @@ async function openApp(browser, args) {
             pointTiling: cloneJson(data?.pointTiling),
             outcome: cloneJson(data?.outcome),
             backend: data?.backend ?? null,
-            forcedBy: data?.forcedBy ?? null,
+            adapter: data?.adapter ?? null,
+            software: data?.software === true,
             iterationsDone: Number.isFinite(data?.iterationsDone)
               ? data.iterationsDone
               : null,
@@ -604,6 +606,10 @@ async function readFlameUi(page) {
       "true",
     note: document.getElementById("tilingNote")?.textContent ?? "",
     backend: document.getElementById("flameBackendNote")?.textContent ?? "",
+    backendWarning:
+      document
+        .getElementById("flameBackendNote")
+        ?.classList.contains("flame-note") === true,
     progress: document.getElementById("flameProgress")?.textContent ?? "",
   }));
 }
@@ -632,9 +638,9 @@ async function waitForFlameRound(
       ? round?.outcome?.outcome?.availability === "active"
       : true;
     const backendPass = active
-      ? round?.backend?.backend === "cpu" &&
-        round.backend.forcedBy === "tiling" &&
-        ui.backend === "CPU accumulation — space tiling uses CPU"
+      ? round?.backend?.backend === "gpu" &&
+        ui.backend.startsWith("GPU accumulation") &&
+        ui.backendWarning === (round.backend.software === true)
       : round?.backend !== undefined;
     const notePass = active
       ? ui.note.includes("Active in Flame")
@@ -1755,13 +1761,13 @@ async function runFlamePresetLeg(browser, args, fixture) {
       `link=${shareLink.includes("#v1=")}, tiling=${restored.ok}, quality=${quality.iterations}/${quality.supersample}, workers=${beforeFlame.workers.length}->${initial.probe.workers.length}, start=${exact(initial.round?.start ?? null)}`,
     );
     check(
-      "intentional CPU terminal",
+      "active GPU terminal",
       initial.ok &&
         initial.round?.outcome?.outcome?.availability === "active" &&
-        initial.round.backend?.backend === "cpu" &&
-        initial.round.backend.forcedBy === "tiling" &&
+        initial.round.backend?.backend === "gpu" &&
         initial.round.terminal !== null &&
-        initial.ui.backend === "CPU accumulation — space tiling uses CPU",
+        initial.ui.backend.startsWith("GPU accumulation") &&
+        initial.ui.backendWarning === (initial.round.backend.software === true),
       `outcome=${exact(initial.round?.outcome?.outcome ?? null)}, backend=${exact(initial.round?.backend ?? null)}, terminal=${exact(initial.round?.terminal ?? null)}, status=${initial.ui.note || "none"}`,
     );
 
