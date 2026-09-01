@@ -4583,8 +4583,8 @@ ${foldValueFormGlsl(shadeDeWidth)}
           // which at any radius the enable admits lies entirely outside
           // the cube. So an out-of-box sample takes no skip at all — the
           // same in-box restriction the balloon's coverage measurement
-          // modelled, whose 18.6-33.2% of steps skipped is the rate AFTER
-          // it. Inside the box the stored floor is a valid union bound by
+          // modelled, whose admitted-system 18.1-31.1% of steps skipped is
+          // the rate AFTER it. Inside the box the stored floor is a valid union bound by
           // that measurement's own per-cell check (surface-grid.ts's
           // balloon section).
           vec3 gridUv = (ro + rd * t) * uGridInvSpan + 0.5;

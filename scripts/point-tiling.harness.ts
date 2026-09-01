@@ -17,11 +17,13 @@
  * multiplying work by F4's order / every visible lattice cell?
  *
  * CANDIDATES. The sheet compares exhaustive replication, complete-orbit
- * output budgeting, one-image cycling, and acceptance-credit stratified
- * fanout. Every stochastic-looking choice below is an integer cursor over a
- * deterministic coprime permutation; the chaos stream is not consulted.
- * Bounded samples carry inverse-inclusion weights, and histogram comparisons
- * are normalized so brightness cannot disguise missing spatial detail.
+ * output budgeting, one-image cycling, acceptance-credit stratified fanout,
+ * and a Points-only equal-density realization. Finite Points use an integer
+ * stabilizer-proportional quota plus image cycling; lattice Points sample the
+ * proposal CDF and thin by V/u. Every stochastic-looking choice below is an
+ * explicit deterministic cursor; the chaos stream is not consulted.
+ * Accumulation samples retain inverse-inclusion weights, and histogram
+ * comparisons are normalized so brightness cannot disguise missing detail.
  *
  * CARRIER QUESTION. The existing 4D point/flame projection has a 0.06 ghost
  * floor, so a displayed-3D carrier leaves infinitely many raw-w lattice
@@ -37,8 +39,10 @@
  * - 16,384 independent points measure canonical acceptance here; production
  *   needs no acceptance pilot because each attempted source earns one fanout
  *   credit and accepted sources can spend only banked credit;
- * - Points: at most 256 images per accepted source and 8× requested source
- *   attempts, while output arrays never exceed the authored point count;
+ * - Points: finite groups emit at most 256 equal-weight images per accepted
+ *   source; lattices test one CDF proposal per accepted source and thin it by
+ *   V/u; source attempts and lattice proposal tests each stop at 8× requested,
+ *   while output arrays never exceed the authored point count;
  * - Flame CPU/WebGPU, its backdrop, and pre-projection 4D Solid: at most 32
  *   image deposits per accepted source; authored iteration budgets continue
  *   to count primary orbit steps;
@@ -48,17 +52,21 @@
  * - empty/underfilled is a result, never permission to emit the untiled point.
  *
  * MEASURED VERDICT (Node 22, 2026-09-01). Canonical acceptance was exactly
- * 1/order for all six groups. At equal output work, the selected Points caps
- * retained 98.2% of F4 reference occupancy at L1 0.0484, versus 97.5% / L1
- * 0.1195 for complete-orbit budgeting and 29.8% / L1 0.8885 for one-image
- * cycling. The 32-image accumulation cap retained 89.5% / L1 0.1551 in F4;
- * acceptance credit held cumulative deposits <= attempts and collapsed dense
- * canonical input to one deposit/attempt. Tight 10R plans held 97/739 cells
- * at minimum scale in 3D/4D; one-test CDF stratification retained 68.7% of the
- * 4D reference occupancy at L1 0.2888. Raw-4D carrier membership changed zero
- * times under the adversarial rotor (max fade delta 2.78e-15), while the
- * projected alternative exposed 9/17/33 ghosted raw-w cells as its sampled
- * window grew. Every simple-wall orbit was exactly half the group order.
+ * 1/order for all six groups. Equal-density finite Points matched the weighted
+ * F4 estimator exactly: 98.2% reference occupancy at L1 0.0484, versus 97.5%
+ * / L1 0.1195 for complete-orbit budgeting and 29.8% / L1 0.8885 for one-image
+ * cycling. A B4 wall got 128 equal dots against a generic source's 256, exactly
+ * its 192/384 orbit ratio. Proposal-CDF thinning filled 4,096 equal lattice
+ * dots in 5,008/5,555 tests in 3D/4D, retaining 70.1%/63.7% occupancy at L1
+ * 0.2242/0.2895; the weighted comparators retained 74.4%/68.7% at L1
+ * 0.1903/0.2888. Whole and irregularly chunked finite/lattice runs emitted
+ * identical sequences. The 32-image accumulation cap retained 89.5% / L1
+ * 0.1551 in F4; its acceptance credit held cumulative deposits <= attempts.
+ * Tight 10R plans held 97/739 cells at minimum scale in 3D/4D. Raw-4D carrier
+ * membership changed zero times under the adversarial rotor (max fade delta
+ * 2.78e-15), while the projected alternative exposed 9/17/33 ghosted raw-w
+ * cells as its sampled window grew. Every simple-wall orbit was exactly half
+ * the group order.
  *
  * Run:
  *   npx vitest run --config scripts/vitest.harness.config.ts \
@@ -88,9 +96,11 @@ import {
 const ACCEPTANCE_PILOT_POINTS = 16_384;
 const POINT_FANOUT_CAP = 256;
 const POINT_ATTEMPT_FACTOR = 8;
+const POINT_LATTICE_PROPOSAL_FACTOR = 8;
 const ACCUMULATION_FANOUT_CAP = 32;
 const PLAN_MEMORY_CAP_BYTES = 256 * 1024;
 const MAX_LATTICE_PLAN_CELLS = 739;
+const STABILIZER_EPS = 0.5e-9;
 
 const MOTIF_POINTS = 1_024;
 const LATTICE_MOTIF_POINTS = 4_096;
@@ -264,12 +274,13 @@ function balancedSource(
 
 function boundaryMask(info: TilingGroupInfo, point: Point): number {
   let mask = 0;
+  const tolerance = STABILIZER_EPS * norm(point);
   for (let wall = 0; wall < info.dim; wall++) {
     let dot = 0;
     for (let axis = 0; axis < info.dim; axis++) {
       dot += point[axis] * info.roots[wall * info.dim + axis];
     }
-    if (Math.abs(dot) <= FOLD_EPS) mask |= 1 << wall;
+    if (Math.abs(dot) <= tolerance) mask |= 1 << wall;
   }
   return mask;
 }
@@ -334,6 +345,91 @@ interface CreditTrace {
   deposits: number;
   remainingCredit: number;
   cursor: number;
+}
+
+interface FiniteEqualState {
+  imageCursor: number;
+  quotaRemainder: number;
+  deposits: number;
+}
+
+interface FiniteEqualResult {
+  histogram: Float64Array;
+  emissions: string[];
+  state: FiniteEqualState;
+}
+
+/**
+ * Points-only equal-density realization. Generic sources emit one fixed quota;
+ * stabilizers receive that quota in exact proportion to their distinct orbit
+ * size through an integer remainder. Every emitted point therefore has unit
+ * weight, while a coprime cursor distributes partial orbits without an RNG.
+ */
+function finiteEqualDensityChunk(
+  info: TilingGroupInfo,
+  matrices: readonly Matrix[],
+  source: readonly Point[],
+  requested: number,
+  state: FiniteEqualState,
+  histogram: Float64Array,
+  emissions: string[],
+  captureEmissions = false,
+): void {
+  for (const point of source) {
+    if (state.deposits >= requested) return;
+    const images =
+      boundaryMask(info, point) === 0
+        ? matrices.map((matrix) => applyMatrix(matrix, point, info.dim))
+        : uniqueImages(matrices, point, info.dim);
+    let quota: number;
+    if (info.order <= POINT_FANOUT_CAP) {
+      quota = images.length;
+    } else {
+      const numerator = state.quotaRemainder + POINT_FANOUT_CAP * images.length;
+      quota = Math.floor(numerator / info.order);
+      state.quotaRemainder = numerator - quota * info.order;
+    }
+    quota = Math.min(quota, requested - state.deposits);
+    const stride = cursorStride(images.length);
+    for (let sample = 0; sample < quota; sample++) {
+      const image =
+        images[((state.imageCursor + sample) * stride) % images.length];
+      addHistogram(histogram, image, info.dim, 1, 1.2);
+      if (captureEmissions) {
+        emissions.push(image.map((value) => value.toPrecision(17)).join(","));
+      }
+    }
+    state.imageCursor =
+      (state.imageCursor + quota) % Math.max(1, images.length);
+    state.deposits += quota;
+  }
+}
+
+function finiteEqualDensityHistogram(
+  info: TilingGroupInfo,
+  matrices: readonly Matrix[],
+  source: readonly Point[],
+  requested = Number.MAX_SAFE_INTEGER,
+  captureEmissions = false,
+): FiniteEqualResult {
+  const histogram = new Float64Array(HIST_SIZE * HIST_SIZE);
+  const emissions: string[] = [];
+  const state: FiniteEqualState = {
+    imageCursor: 0,
+    quotaRemainder: 0,
+    deposits: 0,
+  };
+  finiteEqualDensityChunk(
+    info,
+    matrices,
+    source,
+    requested,
+    state,
+    histogram,
+    emissions,
+    captureEmissions,
+  );
+  return { histogram, emissions, state };
 }
 
 /**
@@ -514,8 +610,8 @@ function latticeCandidates(
     if (
       axes.some(
         (axis, i) =>
-          Math.abs(Math.abs(point[axis]) - cellScale) <= FOLD_EPS &&
-          Math.abs(cell.index[i]) % 2 === 1,
+          Math.abs(Math.abs(point[axis]) - cellScale) <=
+            STABILIZER_EPS * cellScale && Math.abs(cell.index[i]) % 2 === 1,
       )
     ) {
       continue;
@@ -600,24 +696,19 @@ interface LatticeStratifiedResult {
   upperWeight: number;
 }
 
-/**
- * The selected fixed-work lattice policy. Cell k carries the source-independent
- * visibility ceiling u_k = V(max(0, |centre_k|-R)). Stratification samples
- * that CDF without scanning the cell list per source; the exact point weight
- * v_k then contributes U/K * v_k/u_k. Since v_k <= u_k, outer cells cannot
- * acquire an explosive importance weight.
- */
-function latticeStratifiedHistogram(
+interface LatticeProposalPlan {
+  weighted: { cell: LatticeCell; upper: number }[];
+  cumulative: Float64Array;
+  upperWeight: number;
+}
+
+function latticeProposalPlan(
   dim: 3 | 4,
   cellScale: number,
-  source: readonly Point[],
-  fanout: number,
-  fadeStartRadius = LATTICE_PRESENTATION_FADE_START_MULT,
-  outerRadius = LATTICE_PRESENTATION_RADIUS_MULT,
-): LatticeStratifiedResult {
-  const histogram = new Float64Array(HIST_SIZE * HIST_SIZE);
-  const allCells = latticeCellPlan(dim, cellScale, outerRadius);
-  const weighted = allCells
+  fadeStartRadius: number,
+  outerRadius: number,
+): LatticeProposalPlan {
+  const weighted = latticeCellPlan(dim, cellScale, outerRadius)
     .map((cell) => {
       const centreRadius =
         2 * cellScale * Math.sqrt(cell.index.reduce((s, k) => s + k * k, 0));
@@ -635,16 +726,42 @@ function latticeStratifiedHistogram(
     upperWeight += upper;
     cumulative[index] = upperWeight;
   });
-  const locate = (target: number): number => {
-    let lo = 0;
-    let hi = cumulative.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (target < cumulative[mid]) hi = mid;
-      else lo = mid + 1;
-    }
-    return lo;
-  };
+  return { weighted, cumulative, upperWeight };
+}
+
+function locateCdf(cumulative: Float64Array, target: number): number {
+  let lo = 0;
+  let hi = cumulative.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (target < cumulative[mid]) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/**
+ * The selected fixed-work lattice policy. Cell k carries the source-independent
+ * visibility ceiling u_k = V(max(0, |centre_k|-R)). Stratification samples
+ * that CDF without scanning the cell list per source; the exact point weight
+ * v_k then contributes U/K * v_k/u_k. Since v_k <= u_k, outer cells cannot
+ * acquire an explosive importance weight.
+ */
+function latticeStratifiedHistogram(
+  dim: 3 | 4,
+  cellScale: number,
+  source: readonly Point[],
+  fanout: number,
+  fadeStartRadius = LATTICE_PRESENTATION_FADE_START_MULT,
+  outerRadius = LATTICE_PRESENTATION_RADIUS_MULT,
+): LatticeStratifiedResult {
+  const histogram = new Float64Array(HIST_SIZE * HIST_SIZE);
+  const { weighted, cumulative, upperWeight } = latticeProposalPlan(
+    dim,
+    cellScale,
+    fadeStartRadius,
+    outerRadius,
+  );
   let deposits = 0;
   let candidateTests = 0;
   const phi = 0.6180339887498948;
@@ -652,7 +769,7 @@ function latticeStratifiedHistogram(
     const phase = (sourceIndex * phi) % 1;
     for (let sample = 0; sample < fanout; sample++) {
       const unit = ((sample + phase) / fanout) % 1;
-      const selected = weighted[locate(unit * upperWeight)];
+      const selected = weighted[locateCdf(cumulative, unit * upperWeight)];
       candidateTests++;
       const image = latticeImage(point, selected.cell, dim, cellScale);
       const radial = norm(image);
@@ -679,6 +796,124 @@ function latticeStratifiedHistogram(
     candidateTests,
     cells: weighted.length,
     upperWeight,
+  };
+}
+
+function radicalInverse(index: number, base: number): number {
+  let value = index;
+  let place = 1 / base;
+  let out = 0;
+  while (value > 0) {
+    out += (value % base) * place;
+    value = Math.floor(value / base);
+    place /= base;
+  }
+  return out;
+}
+
+interface LatticeEqualState {
+  proposalCursor: number;
+  candidateTests: number;
+  deposits: number;
+}
+
+interface LatticeEqualResult {
+  histogram: Float64Array;
+  emissions: string[];
+  state: LatticeEqualState;
+  cells: number;
+  upperWeight: number;
+}
+
+/**
+ * Points-only realization of the same proposal CDF without vertex weights.
+ * A base-2 cursor selects p(k)=u_k/U and an independent base-3 cursor keeps
+ * the proposal iff t < V(image)/u_k. Thus every emitted dot has equal mass,
+ * while its density is proportional to the exhaustive fade-weighted images.
+ * One proposal per canonical source maximizes source diversity and bounds
+ * candidate tests independently of the number of planned lattice cells.
+ */
+function latticeEqualDensityChunk(
+  dim: 3 | 4,
+  cellScale: number,
+  source: readonly Point[],
+  requested: number,
+  candidateTestCap: number,
+  state: LatticeEqualState,
+  histogram: Float64Array,
+  emissions: string[],
+  fadeStartRadius = LATTICE_PRESENTATION_FADE_START_MULT,
+  outerRadius = LATTICE_PRESENTATION_RADIUS_MULT,
+): LatticeProposalPlan {
+  const plan = latticeProposalPlan(
+    dim,
+    cellScale,
+    fadeStartRadius,
+    outerRadius,
+  );
+  for (const point of source) {
+    if (
+      state.deposits >= requested ||
+      state.candidateTests >= candidateTestCap
+    ) {
+      return plan;
+    }
+    const ordinal = state.proposalCursor++;
+    state.candidateTests++;
+    const proposalUnit = radicalInverse(ordinal + 1, 2);
+    const selected =
+      plan.weighted[
+        locateCdf(plan.cumulative, proposalUnit * plan.upperWeight)
+      ];
+    const image = latticeImage(point, selected.cell, dim, cellScale);
+    const radial = norm(image);
+    const visibility =
+      radial <= outerRadius
+        ? latticePresentationVisibility(radial, fadeStartRadius, outerRadius)
+        : 0;
+    const thinningUnit = radicalInverse(ordinal + 1, 3);
+    if (thinningUnit >= visibility / selected.upper) continue;
+    addHistogram(histogram, image, dim, 1, 1.1 * outerRadius);
+    emissions.push(
+      `${selected.cell.index.join("/")}:${image
+        .map((value) => value.toPrecision(17))
+        .join(",")}`,
+    );
+    state.deposits++;
+  }
+  return plan;
+}
+
+function latticeEqualDensityHistogram(
+  dim: 3 | 4,
+  cellScale: number,
+  source: readonly Point[],
+  requested: number,
+  candidateTestCap = requested * POINT_LATTICE_PROPOSAL_FACTOR,
+): LatticeEqualResult {
+  const histogram = new Float64Array(HIST_SIZE * HIST_SIZE);
+  const emissions: string[] = [];
+  const state: LatticeEqualState = {
+    proposalCursor: 0,
+    candidateTests: 0,
+    deposits: 0,
+  };
+  const plan = latticeEqualDensityChunk(
+    dim,
+    cellScale,
+    source,
+    requested,
+    candidateTestCap,
+    state,
+    histogram,
+    emissions,
+  );
+  return {
+    histogram,
+    emissions,
+    state,
+    cells: plan.weighted.length,
+    upperWeight: plan.upperWeight,
   };
 }
 
@@ -749,6 +984,14 @@ describe("point-space tiling decision", () => {
       const pointStart = performance.now();
       const point = finiteHistogram(info, matrices, motif, pointFanout);
       const pointMs = performance.now() - pointStart;
+      const equalStart = performance.now();
+      const equal = finiteEqualDensityHistogram(
+        info,
+        matrices,
+        motif,
+        point.deposits,
+      );
+      const equalMs = performance.now() - equalStart;
       const accumulationStart = performance.now();
       const accumulation = finiteHistogram(
         info,
@@ -791,6 +1034,13 @@ describe("point-space tiling decision", () => {
           metric: histogramMetric(point.histogram, exhaustive.histogram),
         },
         {
+          label: "points-equal-density",
+          fanout: Math.min(info.order, POINT_FANOUT_CAP),
+          deposits: equal.state.deposits,
+          sourcePoints: motif.length,
+          metric: histogramMetric(equal.histogram, exhaustive.histogram),
+        },
+        {
           label: "accumulation",
           fanout: accumulationFanout,
           deposits: accumulation.deposits,
@@ -813,6 +1063,7 @@ describe("point-space tiling decision", () => {
           exhaustive: exhaustiveMs,
           one: oneMs,
           points: pointMs,
+          pointsEqualDensity: equalMs,
           accumulation: accumulationMs,
         },
         gpuShapedDepositsPerPrimaryStep: {
@@ -828,9 +1079,14 @@ describe("point-space tiling decision", () => {
       expect(accumulationFanout).toBeLessThanOrEqual(ACCUMULATION_FANOUT_CAP);
       expect(matrixBytes).toBeLessThanOrEqual(PLAN_MEMORY_CAP_BYTES);
       const pointMetric = policyRows[2].metric;
-      const accumulationMetric = policyRows[3].metric;
+      const equalMetric = policyRows[3].metric;
+      const accumulationMetric = policyRows[4].metric;
       expect(pointMetric.occupiedOfReference).toBeGreaterThan(0.78);
       expect(pointMetric.l1).toBeLessThan(0.55);
+      expect(equal.state.deposits).toBe(point.deposits);
+      expect(equalMetric.occupiedOfReference).toBeGreaterThan(0.78);
+      expect(equalMetric.l1).toBeLessThan(0.55);
+      expect(equalMetric.l1).toBeLessThan(pointMetric.l1 + 0.15);
       expect(accumulationMetric.occupiedOfReference).toBeGreaterThan(0.45);
       expect(accumulationMetric.l1).toBeLessThan(0.9);
     }
@@ -872,6 +1128,13 @@ describe("point-space tiling decision", () => {
         expect(unique.length).toBeLessThan(info.order);
         expect(norm(onWall.map((x, axis) => x - reflected[axis]))).toBeLessThan(
           1e-12,
+        );
+        const nearWall = onWall.map(
+          (x, axis) => x + (FOLD_EPS / 2) * normal[axis],
+        );
+        expect(boundaryMask(info, nearWall) & (1 << wall)).toBe(0);
+        expect(uniqueImages(matrices, nearWall, info.dim)).toHaveLength(
+          info.order,
         );
         rows.push({ group, wall, orbit: unique.length, order: info.order });
       }
@@ -989,14 +1252,21 @@ describe("point-space tiling decision", () => {
     expect(carrierCandidates[0].cells).toBeLessThan(carrierCandidates[1].cells);
     expect(carrierCandidates[1].cells).toBeLessThan(carrierCandidates[2].cells);
     const wall3: Point = [1, 0, 0];
+    const nearWall3: Point = [1 - FOLD_EPS / 2, 0, 0];
     const wallCells = latticeCellPlan(3, 1);
     const stabilized = latticeCandidates(wall3, wallCells, 3, 1);
+    const nearWallCandidates = latticeCandidates(nearWall3, wallCells, 3, 1);
     const coordinateDedupe = uniquePointList(
       wallCells
         .map((cell) => latticeImage(wall3, cell, 3, 1))
         .filter((point) => norm(point) < LATTICE_PRESENTATION_RADIUS_MULT),
     );
     expect(stabilized).toHaveLength(coordinateDedupe.length);
+    expect(
+      nearWallCandidates.some(
+        ({ point }) => Math.abs(point[0] - (1 + FOLD_EPS / 2)) < 1e-12,
+      ),
+    ).toBe(true);
     console.log(
       "lattice carrier rows",
       JSON.stringify(
@@ -1011,6 +1281,193 @@ describe("point-space tiling decision", () => {
             distinctInCarrier: coordinateDedupe.length,
             selected: stabilized.length,
           },
+        },
+        null,
+        2,
+      ),
+    );
+  });
+
+  it("realizes Points coverage as equal density with chunk-stable cursors", () => {
+    const finiteInfo = TILING_GROUP_INFO.b4;
+    const finiteMatrices = buildGroupMatrices(finiteInfo);
+    const finiteSource = canonicalMotif(finiteInfo, 48);
+    const finiteRequested = finiteSource.length * POINT_FANOUT_CAP;
+    const finiteWhole = finiteEqualDensityHistogram(
+      finiteInfo,
+      finiteMatrices,
+      finiteSource,
+      finiteRequested,
+      true,
+    );
+    const finiteChunkHistogram = new Float64Array(HIST_SIZE * HIST_SIZE);
+    const finiteChunkEmissions: string[] = [];
+    const finiteChunkState: FiniteEqualState = {
+      imageCursor: 0,
+      quotaRemainder: 0,
+      deposits: 0,
+    };
+    let finiteOffset = 0;
+    for (const size of [1, 7, 13, 2, 25]) {
+      finiteEqualDensityChunk(
+        finiteInfo,
+        finiteMatrices,
+        finiteSource.slice(finiteOffset, finiteOffset + size),
+        finiteRequested,
+        finiteChunkState,
+        finiteChunkHistogram,
+        finiteChunkEmissions,
+        true,
+      );
+      finiteOffset += size;
+    }
+    expect(finiteOffset).toBe(finiteSource.length);
+    expect(finiteChunkState).toEqual(finiteWhole.state);
+    expect(finiteChunkHistogram).toEqual(finiteWhole.histogram);
+    expect(finiteChunkEmissions).toEqual(finiteWhole.emissions);
+
+    // A source on one simple wall has half B4's generic orbit. The integer
+    // quota makes it contribute half as many equal dots, including when the
+    // generic quota is capped below the group order.
+    const generic = finiteSource[0];
+    const normal = finiteInfo.roots.slice(0, finiteInfo.dim);
+    let dot = 0;
+    for (let axis = 0; axis < finiteInfo.dim; axis++) {
+      dot += generic[axis] * normal[axis];
+    }
+    const onWall = generic.map((value, axis) => value - dot * normal[axis]);
+    const wallOrbit = uniqueImages(
+      finiteMatrices,
+      onWall,
+      finiteInfo.dim,
+    ).length;
+    const quotaState: FiniteEqualState = {
+      imageCursor: 0,
+      quotaRemainder: 0,
+      deposits: 0,
+    };
+    const quotaHistogram = new Float64Array(HIST_SIZE * HIST_SIZE);
+    const quotaEmissions: string[] = [];
+    finiteEqualDensityChunk(
+      finiteInfo,
+      finiteMatrices,
+      [generic],
+      Number.MAX_SAFE_INTEGER,
+      quotaState,
+      quotaHistogram,
+      quotaEmissions,
+    );
+    const genericQuota = quotaState.deposits;
+    finiteEqualDensityChunk(
+      finiteInfo,
+      finiteMatrices,
+      [onWall],
+      Number.MAX_SAFE_INTEGER,
+      quotaState,
+      quotaHistogram,
+      quotaEmissions,
+    );
+    const wallQuota = quotaState.deposits - genericQuota;
+    expect(wallOrbit).toBe(finiteInfo.order / 2);
+    expect(genericQuota).toBe(POINT_FANOUT_CAP);
+    expect(wallQuota).toBe(POINT_FANOUT_CAP / 2);
+
+    const latticeRows: Record<string, unknown>[] = [];
+    for (const dim of [3, 4] as const) {
+      const info = dim === 3 ? TILING_GROUP_INFO.a3 : TILING_GROUP_INFO.a4;
+      const referenceSource = canonicalMotif(info, LATTICE_MOTIF_POINTS);
+      const proposalSource = canonicalMotif(
+        info,
+        LATTICE_MOTIF_POINTS * POINT_LATTICE_PROPOSAL_FACTOR,
+      );
+      const exhaustive = latticeHistogram(
+        dim,
+        1,
+        referenceSource,
+        Number.MAX_SAFE_INTEGER,
+      );
+      const weighted = latticeStratifiedHistogram(dim, 1, referenceSource, 1);
+      const equal = latticeEqualDensityHistogram(
+        dim,
+        1,
+        proposalSource,
+        LATTICE_MOTIF_POINTS,
+      );
+      const weightedMetric = histogramMetric(
+        weighted.histogram,
+        exhaustive.histogram,
+      );
+      const equalMetric = histogramMetric(
+        equal.histogram,
+        exhaustive.histogram,
+      );
+      expect(equal.state.deposits).toBe(LATTICE_MOTIF_POINTS);
+      expect(equal.state.candidateTests).toBeLessThanOrEqual(
+        LATTICE_MOTIF_POINTS * POINT_LATTICE_PROPOSAL_FACTOR,
+      );
+      expect(equalMetric.occupiedOfReference).toBeGreaterThan(0.6);
+      expect(equalMetric.l1).toBeLessThan(0.55);
+
+      const chunkHistogram = new Float64Array(HIST_SIZE * HIST_SIZE);
+      const chunkEmissions: string[] = [];
+      const chunkState: LatticeEqualState = {
+        proposalCursor: 0,
+        candidateTests: 0,
+        deposits: 0,
+      };
+      let offset = 0;
+      const chunkSizes = [1, 31, 257, 2_048, 3, 8_191];
+      let chunkIndex = 0;
+      while (offset < proposalSource.length) {
+        const size = chunkSizes[chunkIndex++ % chunkSizes.length];
+        latticeEqualDensityChunk(
+          dim,
+          1,
+          proposalSource.slice(offset, offset + size),
+          LATTICE_MOTIF_POINTS,
+          LATTICE_MOTIF_POINTS * POINT_LATTICE_PROPOSAL_FACTOR,
+          chunkState,
+          chunkHistogram,
+          chunkEmissions,
+        );
+        offset += size;
+      }
+      expect(chunkState).toEqual(equal.state);
+      expect(chunkHistogram).toEqual(equal.histogram);
+      expect(chunkEmissions).toEqual(equal.emissions);
+      latticeRows.push({
+        dim,
+        requested: LATTICE_MOTIF_POINTS,
+        weighted: {
+          deposits: weighted.deposits,
+          candidateTests: weighted.candidateTests,
+          metric: weightedMetric,
+          perVertexWeightRequired: true,
+        },
+        equalDensity: {
+          deposits: equal.state.deposits,
+          candidateTests: equal.state.candidateTests,
+          proposalCap: LATTICE_MOTIF_POINTS * POINT_LATTICE_PROPOSAL_FACTOR,
+          metric: equalMetric,
+          perVertexWeightRequired: false,
+        },
+      });
+    }
+    console.log(
+      "equal-density Points rows",
+      JSON.stringify(
+        {
+          finite: {
+            group: "b4",
+            requested: finiteRequested,
+            deposits: finiteWhole.state.deposits,
+            chunkReplayExact: true,
+            genericQuota,
+            wallOrbit,
+            wallQuota,
+          },
+          lattice: latticeRows,
+          primaryRngDrawsAdded: 0,
         },
         null,
         2,

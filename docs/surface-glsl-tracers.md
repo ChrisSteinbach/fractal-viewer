@@ -1070,9 +1070,11 @@ distance to the set), but it bounds nothing about the SHELL, which at every
 radius the gate admits lies entirely outside the cube. So the balloon arm
 refuses the skip outright when the sample's texture coordinate leaves
 `[0,1]^3`, which is exactly the in-box restriction the gate's coverage
-measurement modelled: its 18.6-33.2% of a balloon march's steps skipped
-(48.7-76.3% of what the same grid buys the plain march over the same rays)
-is the rate AFTER it. The guard is compiled into the `SURFACE_BALLOON` arm
+measurement modelled: its 18.1-31.1% of a balloon march's steps skipped
+(48.7-71.1% of what the same grid buys the plain march over the same rays)
+is the rate AFTER it across the four admitted measured systems. Spherefold's
+corrected origin-visible cube fails the clearance gate at rest and therefore
+never reads its unsafe diagnostic floors. The guard is compiled into the `SURFACE_BALLOON` arm
 alone — every other variant's march is confined to the `1.02 *
 uVisibleRadius` sphere inscribed in the `1.03` cube and can never meet it,
 so their sources stay byte-identical.

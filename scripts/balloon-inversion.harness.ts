@@ -177,16 +177,17 @@
  * now the one the code actually computes at any margin setting).
  * `|boundCenter|` is 0.0000 for default/spiral/lens (already
  * origin-centred), negligible for mandelboxKifs (0.0067), small for
- * boxfold sym3 (0.0414, farCorner 1.4092 -> boxFarFromC 1.4506), and
- * material for spherefold pair (0.7857 — about 46% of its own
- * visibleBoundingRadius — farCorner 3.0532 -> boxFarFromC 3.8389, a 26%
- * increase). No verdict flips: REST (1.6rho) still CLEARS on all 6
- * systems, both inflation regimes still fail to clear on all 6. But the
- * REST margin is no longer uniform once boundCenter is accounted for —
- * spherefold's margin shrinks from 43.5% over (the uncorrected,
- * origin-centred reading) to 14.1% over (`shellNear=4.3812` vs
- * `boxFarFromC=3.8389`) — still positive, but the one system among the
- * six where this correction is not just a formality.
+ * boxfold sym3 (0.0414, certified origin-visible radius 0.8313,
+ * farCorner 1.4831 -> boxFarFromC 1.5244), and material for spherefold
+ * pair (0.7857, raw radius 1.7114 but certified origin-visible radius
+ * 2.4971, farCorner 4.4549 -> boxFarFromC 5.2407). REST (1.6rho) CLEARS
+ * on 5 of 6 systems and both inflation regimes fail to clear on all 6;
+ * spherefold fails at rest too (`shellNear=4.3812 <= 5.2407`) and must
+ * keep the grid off. HISTORICALLY this sheet sized that plain grid from
+ * the raw radius: farCorner 3.0532 -> boxFarFromC 3.8389, which read as a
+ * 14.1% clearance margin. That cube did not cover the origin-visible set;
+ * once `visibleBoundingRadius` was corrected to restore the fitted ball's
+ * centre offset, the apparent clearance disappeared.
  *
  * COVERAGE (4b), rest (R=1.6rho), production estimator per class, cutoff
  * engaged, same rays as section (2), PER TERM, `gridSkip@64` as a
@@ -195,19 +196,21 @@
  * (fractal-only) vs plain's fractal-only rate vs the ratio between them,
  * then the shell-term figure reported separately and labelled NOT
  * proposed/NOT costed — default 26.4% vs 50.5% (52.3%), shell 19.3%;
- * spiral 31.1% vs 43.7% (71.1%), shell 22.0%; boxfold sym3 18.6% vs 33.9%
- * (54.9%), shell 11.3%; spherefold 33.2% vs 43.5% (76.3%), shell 14.8%;
- * lens 25.8% vs 52.9% (48.7%), shell 27.5%. The FRACTAL term — the one
- * actually proposed — is the LARGER of the two on 4 of 5
- * measured systems, not the smaller one a "far p, near-center invert(p)"
- * intuition would predict; lens is the one exception, and even there the
- * two are close (25.8% vs 27.5%). As scoped it realizes 48.7-76.3% of
- * the plain grid's own rate — CLOSER to the combined figure a first cut
+ * spiral 31.1% vs 43.7% (71.1%), shell 22.0%; boxfold sym3 18.1% vs 32.9%
+ * (54.9%), shell 10.7%; lens 25.8% vs 52.9% (48.7%), shell 27.5%.
+ * Spherefold's now-refused row is diagnostic only: 37.0% vs 48.5%
+ * (76.3%), shell 18.0%; the proposal cannot legally realize it because
+ * (4a)'s clearance premise fails. The FRACTAL term — the one actually
+ * proposed — is the LARGER of the two on 3 of 4 admitted measured systems,
+ * not the smaller one a "far p, near-center invert(p)" intuition would
+ * predict; lens is the one exception, and even there the two are close
+ * (25.8% vs 27.5%). As scoped it realizes 48.7-71.1% of the plain grid's
+ * own rate — CLOSER to the combined figure a first cut
  * of this section reported than a pessimistic reading of "two terms
  * averaged" would suggest, because the two terms are not that far apart
  * for most systems here. `mandelboxKifs` (grid too costly to build twice
  * here) is bounded geometrically instead of measured: fractal-term
- * posFloorSphere@64 69.1% (balloon) vs 86.4% (plain) — an upper bound
+ * posFloorSphere@64 69.3% (balloon) vs 86.7% (plain) — an upper bound
  * only, not a measured skip rate.
  *
  * SOUNDNESS (4c). "Shell clears the box" is an AGGREGATE statement — it
@@ -239,47 +242,45 @@
  * direction. Both ratios are printed; the `SUFFICIENT:` one is the one to
  * read.
  *
- * MEASURED, under the sufficient condition: 0 violations, on every system,
- * at both resolutions, over 115,739-140,267 positive-floor cells at res 64
- * and 13,152-18,519 at res 32 — not a single stored floor exceeded its
- * cell's conservative distance-to-shell bound. Not a knife-edge rescued by
- * rounding either: the CLOSEST call, `max (floor + cellRadius) /
- * distToShellBound` over every positive-floor cell, violating or not, runs
- * 0.389-0.572 at res 64 and 0.376-0.580 at res 32 — 42-62% margin
- * remaining at the tightest cell. (The loose `floor/dist` column reads
- * 0.338-0.547 and 0.338-0.529; the correction costs 2-5 points, and res 32
- * tightens more than res 64 because `cellRadius` doubles against an
- * unchanged shell distance. That is the direction to watch — a predicate
- * sound at 64 and not at 32 would matter, since
- * `pickSurfaceGridResolution` downshifts under load and nothing tells the
- * user which one they got — but at these margins it does not bite.)
+ * MEASURED, under the sufficient condition: 0 violations on every ADMITTED
+ * built grid at both resolutions, over 118,808-140,267 positive-floor cells
+ * at res 64 and 13,822-18,519 at res 32 — not a single stored floor exceeded
+ * its cell's conservative distance-to-shell bound. Not a knife-edge rescued
+ * by rounding either: the CLOSEST call, `max (floor + cellRadius) /
+ * distToShellBound` over every admitted positive-floor cell runs 0.389-0.470
+ * at res 64 and 0.394-0.491 at res 32 — 51-61% margin remaining at the
+ * tightest cell. The refused spherefold grid is the reachability proof that
+ * the premise matters: 7,696/138,402 sufficient-condition violations at res
+ * 64 (closest ratio 1.721) and 1,438/17,697 at res 32 (1.886). Its enlarged
+ * origin-visible cube contains cells the shell has not cleared, exactly as
+ * (4a) predicts; production never reads those floors because the clearance
+ * predicate returns false.
  *
- * So "shell clears the box" (4a) turned out to be SUFFICIENT as well as
- * necessary for every system and resolution measured here, though the
- * argument for why (stored floors are bounded by local fractal geometry,
- * typically far smaller than the rest-state shell clearance) is
- * EMPIRICAL OVER FIVE SYSTEMS, not a proof that no system could violate
- * it.
+ * So "shell clears the box" (4a) remains SUFFICIENT on every admitted system
+ * and resolution measured here, and the one newly refused system is also the
+ * one whose floors become unsafe. The evidence is stronger than the old
+ * all-admitted table, though still EMPIRICAL OVER FIVE BUILT SYSTEMS rather
+ * than a proof that no clearing system could violate it.
  *
  * VERDICT. The originally-reported "cave gap" finding survives revision —
  * roughly HALF of a balloon march's evaluations still land outside the
  * grid box — but the SCOPE and SAFETY questions the review raised both
  * came back cleaner than the pessimistic reading of either would predict.
  * SCOPE: the proposal itself — re-enable the grid, gate it at rest —
- * reaches the FRACTAL-term query alone, and that alone would skip
- * 18.6-33.2% of a balloon march's STEPS at res 64 across the five
- * measured systems, realizing 48.7-76.3% of what the identical grid buys
+ * reaches the FRACTAL-term query alone, and that alone skips 18.1-31.1% of
+ * a balloon march's STEPS at res 64 across the four admitted measured
+ * systems, realizing 48.7-71.1% of what the identical grid buys
  * the plain march over the identical rays. That is the number to build
- * against; the SHELL-term figure (11.3-27.5%) is a real but SEPARATE
+ * against; the SHELL-term figure (10.7-27.5%) is a real but SEPARATE
  * opportunity this measurement did not cost, needing a second grid read
- * and a rescale the proposal does not include. SAFETY: the re-enable rule as
- * literally stated (shell clears the box) is not automatically sufficient
- * for a per-cell floor guarantee — but measured directly over 5 systems x
- * 2 resolutions, under the `floor + cellRadius` condition rather than the
- * looser one, it held with 0 violations and 42-62% margin at every
- * positive-floor cell, so no floor clamp or extra predicate is needed on
- * this evidence. What this measurement does NOT settle is whether an
- * 18.6-33.2% step-skip rate is worth a validity predicate's complexity
+ * and a rescale the proposal does not include. SAFETY: measured directly
+ * over 5 built systems x 2 resolutions, under the `floor + cellRadius`
+ * condition rather than the looser one, the clearance predicate separates
+ * the table exactly: 0 violations with 51-61% margin on every admitted grid;
+ * thousands on the refused spherefold grid. No floor clamp or extra
+ * predicate is needed on this evidence. What this measurement does NOT
+ * settle is whether an 18.1-31.1% step-skip rate is worth a validity
+ * predicate's complexity
  * plus the mid-inflation transient (section (1)'s own disclosed soft
  * regime) it would need to stay clear of, or whether the shell-term
  * extension is worth building on top later — cost/benefit calls for the

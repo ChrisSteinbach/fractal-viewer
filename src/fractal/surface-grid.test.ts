@@ -497,19 +497,19 @@ describe("balloonClearsGridBox", () => {
   }
 
   // The `spherefold pair` row, reconstructed from the measurement's
-  // own printed figures: |boundCenter| 0.7857, the box's far corner from
-  // the ORIGIN 3.0532, and R^2/rho at rest 4.3812. It is the row where
-  // the origin offset is not a formality — 0.7857 is ~46% of the system's
-  // own visibleBoundingRadius.
+  // own corrected figures: |boundCenter| 0.7857, origin-visible radius
+  // 2.4971, and R^2/rho at rest 4.3812. It is the row where the restored
+  // centre offset makes the grid's far reach exceed the shell clearance.
   const SPHEREFOLD_CENTER: Vec3 = [0.7857, 0, 0];
-  const SPHEREFOLD_HALF_EXTENT = 3.0532 / Math.sqrt(3);
+  const SPHEREFOLD_ORIGIN_VISIBLE_RADIUS = 2.4971;
+  const SPHEREFOLD_HALF_EXTENT = SPHEREFOLD_ORIGIN_VISIBLE_RADIUS * 1.03;
   const SPHEREFOLD_RAW_RADIUS = (4.3812 * BALLOON_RHO_MARGIN) / 1.6 ** 2;
 
-  it("clears at the rest radius, where the shell has swallowed the whole grid box", () => {
-    // R^2/rho = 4.3812 against a box reaching 3.8389 from the balloon
-    // center: the 14.1% rest margin the measurement reports for this row.
+  it("refuses at the rest radius, where the shell has not swallowed the corrected origin-visible grid box", () => {
+    // R^2/rho = 4.3812 against a box reaching ~5.2407 from the balloon
+    // centre. The historical raw-radius cube reached only 3.8389.
     const rest = balloonAt(SPHEREFOLD_RAW_RADIUS, SPHEREFOLD_CENTER, 1.6);
-    expect(balloonClearsGridBox(rest, SPHEREFOLD_HALF_EXTENT)).toBe(true);
+    expect(balloonClearsGridBox(rest, SPHEREFOLD_HALF_EXTENT)).toBe(false);
   });
 
   it("fails at the early-inflation radius, where the echo is still a crumpled ball inside the box", () => {
@@ -523,12 +523,12 @@ describe("balloonClearsGridBox", () => {
   });
 
   it("measures the box from the BALLOON CENTER, refusing a radius an origin-centered reading would admit", () => {
-    // The grid cube is origin-centered; this balloon is not. At rMult 1.41
+    // The grid cube is origin-centered; this balloon is not. At rMult 1.65
     // the shell has cleared the box's far corner as measured FROM THE
-    // ORIGIN (3.0532) but not as measured from the balloon center
-    // (3.8389) — so a predicate written against the origin would enable
+    // ORIGIN (~4.4548) but not as measured from the balloon center
+    // (~5.2405) — so a predicate written against the origin would enable
     // fractal-only floors with the shell still cutting through the box.
-    const b = balloonAt(SPHEREFOLD_RAW_RADIUS, SPHEREFOLD_CENTER, 1.41);
+    const b = balloonAt(SPHEREFOLD_RAW_RADIUS, SPHEREFOLD_CENTER, 1.65);
     const shellNear = (b.R * b.R) / b.rho;
     expect(shellNear).toBeGreaterThan(Math.sqrt(3) * SPHEREFOLD_HALF_EXTENT);
     expect(balloonClearsGridBox(b, SPHEREFOLD_HALF_EXTENT)).toBe(false);

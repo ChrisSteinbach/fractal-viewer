@@ -16,6 +16,7 @@ import {
   SURFACE_FOLD_NONE,
   SURFACE_FOLD_SPHEREFOLD,
   surfaceDescentCostWeight,
+  surfaceOriginVisibleRadius,
   transformSigmas,
 } from "./surface-de";
 import type {
@@ -3170,6 +3171,50 @@ describe("probe-fit centered bounding ball", () => {
       shifted.boundCenter[2] - d[2],
     );
     expect(centerOffset).toBeLessThan(shifted.boundingRadius);
+  });
+
+  it("restores a plain off-origin ball's center offset in its certified origin-visible radius", () => {
+    const d: Vec3 = [5, -3, 4];
+    const shiftedTransforms = translated(sierpinskiTetrahedron(), d);
+    const shifted = buildSurfaceDE(shiftedTransforms);
+    const expected =
+      Math.hypot(
+        shifted.boundCenter[0],
+        shifted.boundCenter[1],
+        shifted.boundCenter[2],
+      ) + shifted.boundingRadius;
+
+    expect(Math.hypot(...shifted.boundCenter)).toBeGreaterThan(0);
+    expect(surfaceOriginVisibleRadius(shifted)).toBeCloseTo(expected, 12);
+    expect(shifted.visibleBoundingRadius).toBeCloseTo(expected, 12);
+  });
+
+  it("uses the already-origin-visible radius of affine and fold final lenses", () => {
+    const shiftedTransforms = translated(sierpinskiTetrahedron(), [5, -3, 4]);
+    const affine = buildSurfaceDE(
+      shiftedTransforms,
+      map({
+        id: 90,
+        position: [1, -2, 0.5],
+        scale: [0.8, 0.8, 0.8],
+      }),
+    );
+    const fold = buildSurfaceDE(
+      shiftedTransforms,
+      map({
+        id: 91,
+        position: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "boxfold", weight: 1 }],
+      }),
+    );
+
+    expect(affine.final).not.toBeNull();
+    expect(surfaceOriginVisibleRadius(affine)).toBe(
+      affine.visibleBoundingRadius,
+    );
+    expect(fold.foldFinal).not.toBeNull();
+    expect(surfaceOriginVisibleRadius(fold)).toBe(fold.visibleBoundingRadius);
   });
 
   it("keeps a far-translated system's estimates valid and un-degraded by |d|", () => {

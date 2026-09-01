@@ -203,14 +203,17 @@ measured — the verdict
 `balloon-de.ts` ships on.
 
 Section (4) answers a different question: re-enabling the
-empty-space grid in balloon mode (shipped OFF) would skip 18.6-33.2%
-of a march's FRACTAL-term steps at res 64, realizing 48.7-76.3% of
+empty-space grid in balloon mode (shipped OFF) skips 18.1-31.1%
+of a march's FRACTAL-term steps at res 64 across the four admitted measured
+systems, realizing 48.7-71.1% of
 what the identical grid buys the plain march over the same rays —
-the SHELL term (11.3-27.5%, a second grid read plus a rescale) is a
-real but separate, uncosted opportunity. Safety holds too: under the
-correct per-cell sufficient condition
+the SHELL term (10.7-27.5%, a second grid read plus a rescale) is a
+real but separate, uncosted opportunity. The corrected origin-visible grid
+radius refuses spherefold at rest; its diagnostic grid has thousands of
+unsafe floors. Safety holds on every admitted grid: under the correct
+per-cell sufficient condition
 (`floor + cellRadius <= distToShellBound`), 0 violations over
-115k-140k positive-floor cells at res 64 (13k-18k at res 32), 42-62%
+118k-140k positive-floor cells at res 64 (13k-18k at res 32), 51-61%
 margin at the tightest cell.
 
 ### solid-balloon
