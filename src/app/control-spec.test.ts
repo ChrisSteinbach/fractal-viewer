@@ -79,6 +79,7 @@ function mockEffects(shared = false): ControlEffects {
     recolor: vi.fn(),
     applyFourDColor: vi.fn(),
     restartSolidRender: vi.fn(),
+    syncSolidTiling: vi.fn(),
     restartFlameRender: vi.fn(),
     restartFlameTilingRender: vi.fn(),
     setSurfaceLatticeScale: vi.fn(),

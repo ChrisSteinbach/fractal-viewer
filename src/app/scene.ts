@@ -63,8 +63,11 @@ import {
   configureVoxelTexture,
   createVoxelMaterial,
   emptyVoxelTexture,
+  finiteTilingPresentationRadius,
+  installVoxelTiling,
   lightDirection,
   marchStepsForGrid,
+  materialVoxelTiling,
   packVoxelBalloonPalette,
   packVoxelBalloonTint,
   packVoxelPresentation,
@@ -3059,6 +3062,13 @@ export class FractalScene {
       },
       this.balloonEchoRadius,
     );
+    // Tiling and Balloon are a frozen combination refusal: the material never
+    // compiles both, so a balloon landing while a tiled arm is installed
+    // clears the query arm here — main.ts's session resolution and panel
+    // disclosure own the refusal and its recovery.
+    if (materialVoxelTiling(this.voxelMaterial)) {
+      installVoxelTiling(this.voxelMaterial, null);
+    }
     setVoxelBalloon(this.voxelMaterial, {
       center: balloon.center,
       radius: sphere.radius,
@@ -4329,6 +4339,10 @@ export class FractalScene {
     );
     u.uTexel.value = 1 / size;
     u.uMarchSteps.value = marchStepsForGrid(size);
+    // The finite arm's presentation carrier radius derives from THIS grid's
+    // AABB; a grid event moves the bounds (and the reflected copies with
+    // them), so re-derive it after every upload while a finite arm is live.
+    this.syncVoxelTilingPresentationRadius();
     if (this.solidBalloonSourceSphereReady) {
       const center = this.solidBalloonSourceSphere.center;
       this.solidBalloonCenterAlpha = sampleVoxelAlpha(
@@ -4402,6 +4416,36 @@ export class FractalScene {
         emission: params.floorEmission,
       }),
     });
+  }
+
+  /**
+   * Install or clear the Solid query-space tiling arm. The density volume and
+   * the worker are never touched: tiling is pure material state, so edits are
+   * live. Balloon is a frozen combination refusal — installing tiling over a
+   * balloon arm clears that arm first, exactly like the surface system
+   * setters' `if (tiling) packSurfaceBalloon(material, null)`, and main.ts's
+   * session resolution owns the refusal disclosure.
+   */
+  setVoxelTiling(tiling: ResolvedTiling | null): void {
+    this.renderNeeded = true;
+    if (tiling) setVoxelBalloon(this.voxelMaterial, null);
+    installVoxelTiling(this.voxelMaterial, tiling);
+    this.syncVoxelTilingPresentationRadius();
+  }
+
+  /** Re-derive the finite arm's presentation carrier radius from the CURRENT
+   * grid's AABB — the fold's isometry confines every reflected copy to the
+   * ball of the farthest corner norm, and the AABB moves per grid event. */
+  private syncVoxelTilingPresentationRadius(): void {
+    const tiling = materialVoxelTiling(this.voxelMaterial);
+    if (!tiling || isResolvedLatticeTiling(tiling)) return;
+    const u = this.voxelMaterial.uniforms;
+    const boundsMin = u.uBoundsMin.value as THREE.Vector3;
+    const boundsSize = u.uBoundsSize.value as THREE.Vector3;
+    u.uTilingPresentationR.value = finiteTilingPresentationRadius(
+      [boundsMin.x, boundsMin.y, boundsMin.z],
+      [boundsSize.x, boundsSize.y, boundsSize.z],
+    );
   }
 
   /**
