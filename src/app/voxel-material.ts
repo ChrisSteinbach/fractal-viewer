@@ -4,6 +4,21 @@ import {
   backgroundShapeSource,
 } from "../fractal/background-shape";
 import { BALLOON_FAR_CAP_RHO } from "../fractal/balloon-de";
+import {
+  latticePresentationCarrierSource,
+  LATTICE_PRESENTATION_RADIUS_MULT,
+} from "../fractal/lattice-march";
+import { shapeMeshIds, shapeSdfSource } from "../fractal/shapes";
+import {
+  isCanonicalResolvedLatticeTiling,
+  isResolvedLatticeTiling,
+  LATTICE_TILING_CODE,
+  latticeFoldSource,
+  tilingFoldSource,
+  tilingGroupCode,
+  TILING_GROUP_INFO,
+  type ResolvedTiling,
+} from "../fractal/tiling";
 import type { PresentationFloorSpec } from "../fractal/presentation-floor";
 import type { Vec3 } from "../fractal/types";
 import {
@@ -279,9 +294,10 @@ const VOXEL_FRAGMENT = /* glsl */ `
 export const SOLID_BALLOON_ECHO_WEIGHT = 1;
 
 /** Hard safety ceiling for a very distant camera. The ordinary balloon pose
- * stays far below it; without a ceiling an extreme zoom-out could turn one
- * synchronous full-screen draw into an effectively unbounded shader loop. */
-const SOLID_BALLOON_MAX_MARCH_STEPS = 8192;
+ * and the tiled presentation carriers stay far below it; without a ceiling an
+ * extreme zoom-out could turn one synchronous full-screen draw into an
+ * effectively unbounded shader loop. */
+const SOLID_MAX_MARCH_STEPS = 8192;
 
 /** Replace one exact fragment-source seam, failing at module evaluation if a
  * future shader edit silently removes or duplicates the seam. The off program
@@ -481,7 +497,7 @@ function buildVoxelBalloonFragment(): string {
     float tFar = length(ro - uBalloonCenter) + uBalloonFar;
     float baseSpan = max(max(uBoundsSize.x, uBoundsSize.y), uBoundsSize.z);
     int marchSteps = min(
-      ${String(SOLID_BALLOON_MAX_MARCH_STEPS)},
+      ${String(SOLID_MAX_MARCH_STEPS)},
       max(uMarchSteps, int(ceil(tFar * float(uMarchSteps) / max(baseSpan, 1.0e-6))))
     );
     float dt = tFar / float(marchSteps);
@@ -828,6 +844,352 @@ const VOXEL_BALLOON_ACCELERATED_FRAGMENT = buildVoxelAcceleratedFragment(
   true,
 );
 
+/** A finite number as a shader float literal, mirroring tiling.ts's own. */
+function shaderFloatLit(x: number): string {
+  const s = String(x);
+  return /[.e]/.test(s) ? s : `${s}.0`;
+}
+
+/** The baked-source identity of a resolved tiling block — the part a program
+ * compiles (the group's roots, the analytic clip SDF, the lattice's normalized
+ * fade ratio), as opposed to the live uniforms (lattice h, presentation radii).
+ * JSON round-trips f64 exactly, the surface-material install-key discipline. */
+function tilingSourceKey(tiling: ResolvedTiling): string {
+  if (isResolvedLatticeTiling(tiling)) {
+    return JSON.stringify({
+      kind: "lattice",
+      clip: tiling.clip ?? null,
+      fadeRatio:
+        tiling.presentation.fadeStartRadius / tiling.presentation.outerRadius,
+    });
+  }
+  return JSON.stringify({ group: tiling.group, clip: tiling.clip ?? null });
+}
+
+/** The exact norm of the farthest AABB corner — the finite arm's presentation
+ * carrier radius. Every chamber wall passes through the origin and the fold
+ * is an exact isometry, so every reflected copy of the source box lies within
+ * `ball(0, maxCornerNorm)`, and the box's convex hull does too: the carrier
+ * is exact, never an artificial window. */
+export function finiteTilingPresentationRadius(
+  boundsMin: Vec3,
+  boundsSize: Vec3,
+): number {
+  let maxNorm = 0;
+  for (let x = 0; x < 2; x++) {
+    for (let y = 0; y < 2; y++) {
+      for (let z = 0; z < 2; z++) {
+        const dx = boundsMin[0] + x * boundsSize[0];
+        const dy = boundsMin[1] + y * boundsSize[1];
+        const dz = boundsMin[2] + z * boundsSize[2];
+        const norm = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (norm > maxNorm) maxNorm = norm;
+      }
+    }
+  }
+  return maxNorm;
+}
+
+/**
+ * Build the query-space tiling arm over the unchanged canonical density
+ * texture: the finite-reflection or mirrored-lattice fold, the gates, and the
+ * presentation carrier that replaces the source-AABB ray interval.
+ *
+ * Every density and color query — primary, refine, gradient, shadow, AO,
+ * floor shadow and floor AO — folds first through one shared wrapper, so no
+ * path can draw a different object. The clip (analytic only, baked from the
+ * authored ShapeSpec exactly like the surface tracers) narrows the folded
+ * source; the lattice additionally gates the certified origin ball and the
+ * presentation carrier (a probe outside the artificial window is open space,
+ * never geometry, shadow or AO).
+ *
+ * The ray interval is independent of the source texture AABB: the finite arm
+ * marches the exact ball of the AABB's farthest corner norm (the fold's
+ * isometry confines every copy to it), the lattice marches the shared
+ * sphere ∩ attractor-y slab carrier. Step budgets scale with the interval so
+ * the source-voxel stride is retained, capped at {@link SOLID_MAX_MARCH_STEPS}.
+ *
+ * The absent path never calls this builder, preserving the literal source.
+ * Balloon is REFUSED before this point (the frozen combination matrix); the
+ * max-density hierarchy is suspended while tiled (a straight visible ray maps
+ * to reflected source segments, so the node skip is not valid across them).
+ */
+function buildVoxelTilingGeometry(
+  input: string,
+  tiling: ResolvedTiling,
+): string {
+  let source = input;
+  const lattice = isResolvedLatticeTiling(tiling);
+  const clipSource = tiling.clip
+    ? `${shapeSdfSource(tiling.clip, "glsl", "tilingClipSdf")}\n`
+    : "";
+  const clipGate = tiling.clip
+    ? "    if (tilingClipSdf(q) > 0.0) return false;\n"
+    : "";
+  const foldSource = lattice
+    ? latticeFoldSource("glsl", 3, "voxelTilingFold")
+    : tilingFoldSource(tiling.info, "glsl", "voxelTilingFold");
+  const code = lattice ? LATTICE_TILING_CODE : tilingGroupCode(tiling.group);
+  const queryBody = lattice
+    ? `    if (uTilingGroup != ${code}) return false;
+    // Probes outside the finite presentation carrier are OPEN SPACE: the
+    // artificial window must never read as geometry, cast a shadow or
+    // contribute AO (lattice-march.ts's contract).
+    if (!latticePresentationContains(p, uTilingContentR, uTilingPresentationR)) {
+      return false;
+    }
+    q = voxelTilingFold(p, uTilingH);
+    if (length(q) > uTilingContentR) return false;
+${clipGate}    return true;`
+    : `    if (uTilingGroup != ${code}) return false;
+    TilingFoldResult folded = voxelTilingFold(p);
+    if (!folded.ok) return false;
+    q = folded.point;
+${clipGate}    return true;`;
+  const carrierSource = lattice
+    ? latticePresentationCarrierSource(3, "glsl")
+    : `  /** Exact origin-centred sphere interval — the finite arm's presentation
+   * carrier: the fold preserves |p| (every wall passes through the origin),
+   * so all copies of the source box lie within ball(0, uTilingPresentationR). */
+  bool sphereInterval(vec3 ro, vec3 rd, float radius, out float tEnter, out float tFar) {
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - radius * radius;
+    float disc = b * b - c;
+    if (disc < 0.0) return false;
+    float root = sqrt(disc);
+    tEnter = -b - root;
+    tFar = -b + root;
+    return tEnter <= tFar;
+  }
+`;
+  const uniformBlock = lattice
+    ? `  uniform int uTilingGroup;
+  uniform float uTilingH;
+  uniform float uTilingContentR;
+  uniform float uTilingPresentationR;
+`
+    : `  uniform int uTilingGroup;
+  uniform float uTilingPresentationR;
+`;
+  source = spliceVoxelBalloon(
+    source,
+    "  uniform float uFogTintStrength;\n",
+    `  uniform float uFogTintStrength;
+  // Space tiling: every density/color query folds first through the baked
+  // group (or mirrored lattice) below. The canonical density volume is
+  // unchanged; uTilingGroup is the frozen wire code (finite 1..6, lattice 7,
+  // 0 off) and doubles as the stale-uniform guard.
+${uniformBlock}`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    `  float densityAt(vec3 p) {
+    return texture(uVolume, (p - uBoundsMin) / uBoundsSize).a;
+  }
+
+  vec3 colorAt(vec3 p) {
+    return texture(uVolume, (p - uBoundsMin) / uBoundsSize).rgb;
+  }
+`,
+    `  // ClampToEdge is correct sampler state for the ordinary box march, but
+  // WRONG for a folded query: outside the finite source volume means zero,
+  // not a boundary voxel smeared across the chamber.
+  vec4 boundedVolumeSample(vec3 p) {
+    vec3 uvw = (p - uBoundsMin) / uBoundsSize;
+    if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0)))) {
+      return vec4(0.0);
+    }
+    return texture(uVolume, uvw);
+  }
+
+${foldSource}
+${carrierSource}
+${clipSource}  bool tilingFoldQuery(vec3 p, out vec3 q) {
+${queryBody}
+  }
+
+  float densityAt(vec3 p) {
+    vec3 q;
+    if (!tilingFoldQuery(p, q)) return 0.0;
+    return boundedVolumeSample(q).a;
+  }
+
+  vec3 colorAt(vec3 p) {
+    vec3 q;
+    if (!tilingFoldQuery(p, q)) return vec3(0.0);
+    return boundedVolumeSample(q).rgb;
+  }
+`,
+  );
+  const interval = lattice
+    ? `    LatticeCarrierInterval latticeCarrier = latticePresentationInterval(
+      ro, rd, uTilingContentR, uTilingPresentationR
+    );
+    bool carrierOk = latticeCarrier.ok && uTilingGroup == ${code};
+    float tEnter = latticeCarrier.tEnter;
+    float tFar = latticeCarrier.tFar;`
+    : `    float tEnter;
+    float tFar;
+    bool carrierOk = uTilingGroup == ${code} &&
+      sphereInterval(ro, rd, uTilingPresentationR, tEnter, tFar);`;
+  source = spliceVoxelBalloon(
+    source,
+    `    vec2 tRange = boxIntersect(ro, rd);
+    float tFar = tRange.y;
+    float t = max(tRange.x, 0.0);
+    if (tRange.x > tRange.y || tFar <= 0.0) {
+      outColor = vec4(background, 1.0);
+      return;
+    }
+
+    float dt = (tFar - t) / float(uMarchSteps);
+    t += dt * hash(gl_FragCoord.xy);
+`,
+    `    // The presentation interval replaces the source AABB: reflected
+    // copies sit outside it, and the carrier is where the accepted set can
+    // be. The lattice arm's interval is the shared sphere ∩ attractor-y
+    // slab; the finite arm's is the exact ball of the AABB's farthest
+    // corner norm.
+${interval}
+    if (!carrierOk || tFar <= 0.0) {
+      outColor = vec4(background, 1.0);
+      return;
+    }
+    float t = max(tEnter, 0.0);
+    float tSpan = tFar - t;
+    float baseSpan = max(max(uBoundsSize.x, uBoundsSize.y), uBoundsSize.z);
+    // Scale the step budget with the interval so the source-voxel stride
+    // the untiled 220 was tuned for is retained, and cap it so a far
+    // camera cannot turn the draw into an unbounded loop.
+    int marchSteps = min(
+      ${String(SOLID_MAX_MARCH_STEPS)},
+      max(uMarchSteps, int(ceil(tSpan * float(uMarchSteps) / max(baseSpan, 1.0e-6))))
+    );
+    float dt = tSpan / float(marchSteps);
+    t += dt * hash(gl_FragCoord.xy);
+`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    `    // --- primary march: first sample past the isosurface -------------------
+    float tPrev = t;
+    bool hit = false;
+    for (int i = 0; i < uMarchSteps; i++) {
+      if (densityAt(ro + rd * t) > uThreshold) {
+        hit = true;
+        break;
+      }
+      tPrev = t;
+      t += dt;
+    }
+    if (!hit) {
+      outColor = vec4(background, 1.0);
+      return;
+    }
+`,
+    `    // --- primary march: first sample past the isosurface -------------------
+    float tPrev = t;
+    bool hit = false;
+    for (int i = 0; i < marchSteps; i++) {
+      if (densityAt(ro + rd * t) > uThreshold) {
+        hit = true;
+        break;
+      }
+      tPrev = t;
+      t += dt;
+    }
+    if (!hit) {
+      outColor = vec4(background, 1.0);
+      return;
+    }
+`,
+  );
+  const shadowInterval = lattice
+    ? `    LatticeCarrierInterval shadowCarrier = latticePresentationInterval(
+      sp, uLightDir, uTilingContentR, uTilingPresentationR
+    );
+    bool shadowCarrierOk = shadowCarrier.ok;
+    float shadowTEnter = shadowCarrier.tEnter;
+    float shadowTFar = shadowCarrier.tFar;`
+    : `    float shadowTEnter;
+    float shadowTFar;
+    bool shadowCarrierOk =
+      sphereInterval(sp, uLightDir, uTilingPresentationR, shadowTEnter, shadowTFar);`;
+  source = spliceVoxelBalloon(
+    source,
+    `    // Hard shadow ray: march from just off the surface toward the light; any
+    // above-threshold sample occludes.
+    float shadow = 1.0;
+    vec3 sp = pos + n * inset * 1.5;
+    float shadowStep = inset * 1.5;
+    for (int i = 0; i < SHADOW_STEPS; i++) {
+      sp += uLightDir * shadowStep;
+      vec3 uvw = (sp - uBoundsMin) / uBoundsSize;
+      if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0)))) {
+        break; // left the volume: reached the light.
+      }
+      if (texture(uVolume, uvw).a > uThreshold) {
+        shadow = 0.0;
+        break;
+      }
+    }
+`,
+    `    // The shadow ray marches through its OWN presentation carrier: past it
+    // no copy has content, so the ray is fully lit. The step count keeps
+    // the ~1.5-voxel stride the fixed 48 steps held on the source box.
+    float shadow = 1.0;
+    vec3 sp = pos + n * inset * 1.5;
+${shadowInterval}
+    if (shadowCarrierOk && shadowTFar > 0.0) {
+      float shadowNear = max(shadowTEnter, 0.0);
+      float shadowSpan = shadowTFar - shadowNear;
+      int shadowSteps = min(
+        ${String(SOLID_MAX_MARCH_STEPS)},
+        max(SHADOW_STEPS, int(ceil(shadowSpan / max(inset * 1.5, 1.0e-6))))
+      );
+      float shadowStep = shadowSpan / float(shadowSteps);
+      float shadowT = shadowNear + shadowStep * 0.5;
+      for (int i = 0; i < shadowSteps; i++) {
+        if (densityAt(sp + uLightDir * shadowT) > uThreshold) {
+          shadow = 0.0;
+          break;
+        }
+        shadowT += shadowStep;
+      }
+    }
+`,
+  );
+  const coverage = lattice
+    ? `
+    // The lattice is unbounded, so the artificial 8R->10R window fades the
+    // displayed hit toward the backdrop — coverage only, never a distance
+    // term, shadow or AO source, and hit alpha stays terminal.
+    float tilingCoverage = latticePresentationVisibility(
+      pos,
+      uTilingPresentationR * ${shaderFloatLit(tiling.presentation.fadeStartRadius / tiling.presentation.outerRadius)},
+      uTilingPresentationR
+    );
+    col = mix(background, col, tilingCoverage);
+`
+    : "";
+  return spliceVoxelBalloon(
+    source,
+    `    float fogR = 0.5 * length(uBoundsSize);
+    float fog = 1.0 -
+      exp(-0.12 * pow((hi - max(tRange.x, 0.0)) * uFogDensity / max(fogR, 1.0e-6), 2.0));
+    col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
+`,
+    `    // Fog origin is the presentation carrier's entry (copies can sit far
+    // outside the source box), while the unit stays the source box
+    // half-diagonal so the Fog control's established scale is unchanged.
+    float fogR = 0.5 * length(uBoundsSize);
+    float fog = 1.0 -
+      exp(-0.12 * pow((hi - max(tEnter, 0.0)) * uFogDensity / max(fogR, 1.0e-6), 2.0));
+    col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
+${coverage}`,
+  );
+}
+
 function replaceEveryVoxelSeam(
   source: string,
   seam: string,
@@ -842,43 +1204,18 @@ function replaceEveryVoxelSeam(
 }
 
 /**
- * Layer the two presentation features over one already-resolved geometry /
- * acceleration program. This ordering is intentional: presentation never
- * chooses a query implementation, so adding it cannot drop Balloon's echo or
- * the hierarchy's conservative traversal.
+ * Emit the one-sided shared floor's shade helper. Without tiling this is the
+ * literal historical text; with tiling the floor's shadow and AO read the
+ * tiled density authority through the presentation carrier — an infinite
+ * lattice repeats content beyond the single-ball shortcuts, so the carrier
+ * interval and contains gates replace the AABB gate and "too far" skip.
  */
-function buildVoxelPresentationFragment(
-  input: string,
-  balloon: boolean,
+function voxelFloorHelper(
   environment: boolean,
-  floor: boolean,
+  tiling: ResolvedTiling | null,
 ): string {
-  let source = input;
-  let presentationUniforms = "";
-  if (environment) {
-    presentationUniforms += `  // Surface-parity two-stop hue environment.\n  uniform float uEnvLight;\n`;
-  }
-  if (floor) {
-    presentationUniforms += `  // Shared world-space presentation floor.\n  uniform float uGroundY;\n  uniform float uGroundFadeStart;\n  uniform float uGroundFadeEnd;\n  uniform float uGroundBallR;\n  uniform vec3 uGroundBallC;\n  uniform vec3 uGroundAlbedo;\n  uniform int uGroundPattern;\n  uniform float uGroundTileScale;\n  uniform float uGroundEmission;\n`;
-  }
-  source = spliceVoxelBalloon(
-    source,
-    "  uniform float uFogTintStrength;\n",
-    `  uniform float uFogTintStrength;\n${presentationUniforms}`,
-  );
-
-  const envHelper = environment
-    ? `  /** Surface's normalized two-stop hue convention: strength changes
-   * tint, never the light's peak brightness. */
-  vec3 voxelEnvTint(vec3 n) {
-    vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
-    return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
-  }
-
-`
-    : "";
-  const floorHelper = floor
-    ? `  /** Shade only a density MISS against the one-sided shared floor. */
+  if (!tiling) {
+    return `  /** Shade only a density MISS against the one-sided shared floor. */
   vec3 shadeVoxelFloor(vec3 ro, vec3 rd, vec3 background) {
     if (ro.y <= uGroundY || rd.y >= -1.0e-6) {
       return background;
@@ -971,14 +1308,167 @@ function buildVoxelPresentationFragment(
     return mix(background, col, fade);
   }
 
+`;
+  }
+  const lattice = isResolvedLatticeTiling(tiling);
+  const shadowInterval = lattice
+    ? `    LatticeCarrierInterval floorShadowCarrier = latticePresentationInterval(
+      shadowOrigin, uLightDir, uTilingContentR, uTilingPresentationR
+    );
+    bool floorShadowCarrierOk = floorShadowCarrier.ok;
+    float floorShadowTEnter = floorShadowCarrier.tEnter;
+    float floorShadowTFar = floorShadowCarrier.tFar;`
+    : `    float floorShadowTEnter;
+    float floorShadowTFar;
+    bool floorShadowCarrierOk =
+      sphereInterval(shadowOrigin, uLightDir, uTilingPresentationR, floorShadowTEnter, floorShadowTFar);`;
+  const aoTap = lattice
+    ? `      vec3 aoPos = hp + vec3(0.0, aoStep * float(k), 0.0);
+      if (latticePresentationContains(aoPos, uTilingContentR, uTilingPresentationR)) {
+        occlusion += densityAt(aoPos);
+      }`
+    : `      vec3 aoPos = hp + vec3(0.0, aoStep * float(k), 0.0);
+      occlusion += densityAt(aoPos);`;
+  return `  /** Shade only a density MISS against the one-sided shared floor. */
+  vec3 shadeVoxelFloor(vec3 ro, vec3 rd, vec3 background) {
+    if (ro.y <= uGroundY || rd.y >= -1.0e-6) {
+      return background;
+    }
+    float tp = (uGroundY - ro.y) / rd.y;
+    vec3 hp = ro + rd * tp;
+    vec2 rel = hp.xz - uGroundBallC.xz;
+    float fade = 1.0 - smoothstep(
+      uGroundFadeStart,
+      uGroundFadeEnd,
+      length(rel)
+    );
+    if (fade <= 0.0) {
+      return background;
+    }
+
+    // The floor receives a hard density shadow through the same tiled
+    // authority, clipped to the presentation carrier: past it no copy has
+    // content, so the ray is fully lit, and the carrier bounds the work
+    // independently of the floor's infinite analytic extent.
+    float shadow = 1.0;
+    float lift = max(
+      uGroundBallR * 4.0e-4,
+      length(uBoundsSize) * uTexel * 0.5
+    );
+    vec3 shadowOrigin = hp + vec3(0.0, lift, 0.0);
+${shadowInterval}
+    if (floorShadowCarrierOk && floorShadowTFar > 0.0) {
+      float shadowNear = max(floorShadowTEnter, 0.0);
+      float shadowSpan = floorShadowTFar - shadowNear;
+      int shadowSteps = min(
+        ${String(SOLID_MAX_MARCH_STEPS)},
+        max(SHADOW_STEPS, int(ceil(shadowSpan / max(lift * 1.5, 1.0e-6))))
+      );
+      float shadowStep = shadowSpan / float(shadowSteps);
+      float shadowT = shadowNear + shadowStep * 0.5;
+      for (int i = 0; i < shadowSteps; i++) {
+        if (densityAt(shadowOrigin + uLightDir * shadowT) > uThreshold) {
+          shadow = 0.0;
+          break;
+        }
+        shadowT += shadowStep;
+      }
+    }
+
+    // Solid's density AO convention, sampled upward through the same tiled
+    // authority. The lattice arm gates each tap on the presentation carrier —
+    // a tap outside the artificial window is open space, so the window never
+    // contributes AO. Deliberately local and bounded to four taps.
+    float occlusion = 0.0;
+    float aoStep = max(uGroundBallR * 0.02, lift);
+    for (int k = 1; k <= 4; k++) {
+${aoTap}
+    }
+    float ao = clamp(1.0 - occlusion * 0.35, 0.0, 1.0);
+    float diffuse = max(uLightDir.y, 0.0);
+    ${
+      environment
+        ? "vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *\n      voxelEnvTint(vec3(0.0, 1.0, 0.0));"
+        : "float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;"
+    }
+
+    vec3 floorAlbedo = uGroundAlbedo;
+    if (uGroundPattern == 1) {
+      float cell = max(uGroundBallR * uGroundTileScale, 1.0e-4);
+      ivec2 tile = ivec2(floor((hp.xz - uGroundBallC.xz) / cell));
+      int checker = ((tile.x + tile.y) % 2 + 2) % 2;
+      floorAlbedo *= mix(0.035, 1.0, float(checker));
+    }
+    // Albedo is authored sRGB; light and emission operate in linear space.
+    vec3 floorLinear = pow(floorAlbedo, vec3(2.2));
+    vec3 col = pow(
+      floorLinear * (lit + ${environment ? "vec3(uGroundEmission)" : "uGroundEmission"}),
+      vec3(1.0 / 2.2)
+    );
+
+    // Surface's floor fog origin: closest approach to the presentation ball
+    // along the camera-to-plane segment, then the shared squared exponential.
+    float dist = tp - clamp(dot(uGroundBallC - ro, rd), 0.0, tp);
+    float fog = 1.0 - exp(-0.12 * pow(
+      dist * uFogDensity / max(uGroundBallR, 1.0e-6),
+      2.0
+    ));
+    col = mix(
+      col,
+      mix(background, uFogTint, uFogTintStrength),
+      clamp(fog, 0.0, 1.0)
+    );
+    return mix(background, col, fade);
+  }
+
+`;
+}
+
+/**
+ * Layer the two presentation features over one already-resolved geometry /
+ * acceleration program. This ordering is intentional: presentation never
+ * chooses a query implementation, so adding it cannot drop Balloon's echo or
+ * the hierarchy's conservative traversal. When `tiling` is present the
+ * floor's shadow/AO queries read the tiled density authority through the
+ * presentation carrier (see {@link voxelFloorHelper}).
+ */
+function buildVoxelPresentationFragment(
+  input: string,
+  balloon: boolean,
+  environment: boolean,
+  floor: boolean,
+  tiling: ResolvedTiling | null = null,
+): string {
+  let source = input;
+  let presentationUniforms = "";
+  if (environment) {
+    presentationUniforms += `  // Surface-parity two-stop hue environment.\n  uniform float uEnvLight;\n`;
+  }
+  if (floor) {
+    presentationUniforms += `  // Shared world-space presentation floor.\n  uniform float uGroundY;\n  uniform float uGroundFadeStart;\n  uniform float uGroundFadeEnd;\n  uniform float uGroundBallR;\n  uniform vec3 uGroundBallC;\n  uniform vec3 uGroundAlbedo;\n  uniform int uGroundPattern;\n  uniform float uGroundTileScale;\n  uniform float uGroundEmission;\n`;
+  }
+  source = spliceVoxelBalloon(
+    source,
+    "  uniform float uFogTintStrength;\n",
+    `  uniform float uFogTintStrength;\n${presentationUniforms}`,
+  );
+
+  const envHelper = environment
+    ? `  /** Surface's normalized two-stop hue convention: strength changes
+   * tint, never the light's peak brightness. */
+  vec3 voxelEnvTint(vec3 n) {
+    vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
+    return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
+  }
+
 `
     : "";
+  const floorHelper = floor ? voxelFloorHelper(environment, tiling) : "";
   source = spliceVoxelBalloon(
     source,
     "  void main() {\n",
     `${envHelper}${floorHelper}  void main() {\n`,
   );
-
   if (environment) {
     source = spliceVoxelBalloon(
       source,
@@ -1011,18 +1501,51 @@ function buildVoxelPresentationFragment(
 const VOXEL_PRESENTATION_FRAGMENTS = new Map<string, string>();
 
 /**
- * Resolve a Solid shader from four orthogonal booleans. The presentation
- * cache is bounded to the small feature matrix (and Balloon refuses Floor),
- * while the environment strength and every floor scalar remain uniforms.
- * With both presentation booleans false, the exact historical source object
- * is returned for all balloon/hierarchy arms.
+ * Resolve a Solid shader from four orthogonal booleans plus an optional
+ * resolved tiling block. The presentation cache is bounded to the small
+ * feature matrix (and Balloon refuses Floor), while the environment strength
+ * and every floor scalar remain uniforms. With both presentation booleans
+ * false and no tiling, the exact historical source object is returned for
+ * all balloon/hierarchy arms.
+ *
+ * A tiling block selects the query-space arm family: the frozen combination
+ * matrix refuses it with Balloon, and the max-density hierarchy is suspended
+ * while tiled (a straight visible ray maps to reflected source segments, so
+ * the hierarchy's node skip is not valid across them) — both throw rather
+ * than silently drawing a different object.
  */
 export function voxelFragmentFor(
   balloon: boolean,
   accelerated = false,
   environment = false,
   floor = false,
+  tiling: ResolvedTiling | null = null,
 ): string {
+  if (tiling) {
+    if (balloon) {
+      throw new RangeError(
+        "Voxel tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+      );
+    }
+    if (accelerated) {
+      throw new RangeError(
+        "Voxel tiling suspends the max-density hierarchy: a straight visible ray maps to reflected source segments, so the node skip is not valid across them",
+      );
+    }
+    const key = `t${tilingSourceKey(tiling)}:${environment ? "e" : "n"}${floor ? "f" : "n"}`;
+    const cached = VOXEL_PRESENTATION_FRAGMENTS.get(key);
+    if (cached) return cached;
+    let resolved = buildVoxelTilingGeometry(VOXEL_FRAGMENT, tiling);
+    resolved = buildVoxelPresentationFragment(
+      resolved,
+      false,
+      environment,
+      floor,
+      tiling,
+    );
+    VOXEL_PRESENTATION_FRAGMENTS.set(key, resolved);
+    return resolved;
+  }
   const base = accelerated
     ? balloon
       ? VOXEL_BALLOON_ACCELERATED_FRAGMENT
@@ -1135,14 +1658,94 @@ const HIERARCHY_FALLBACK_KEY = "voxelMaxHierarchyFallback";
 const BALLOON_ENABLED_KEY = "voxelBalloonEnabled";
 const ENVIRONMENT_ENABLED_KEY = "voxelEnvironmentEnabled";
 const FLOOR_REQUESTED_KEY = "voxelFloorRequested";
+const TILING_KEY = "voxelTiling";
+
+/** Read the resolved tiling block currently installed on a Solid material.
+ * Kept in userData because the group's roots and the optional clip are baked
+ * source; the selector, lattice half-cell and presentation radii are live
+ * uniforms. */
+export function materialVoxelTiling(
+  material: THREE.ShaderMaterial,
+): ResolvedTiling | null {
+  return (material.userData[TILING_KEY] as ResolvedTiling | null) ?? null;
+}
+
+/** Validate a resolved tiling for the Solid material, mirroring
+ * `installSurfaceTiling`'s canonical-record checks: the frozen group info by
+ * identity, the 3D-only domain (the 4D lift is a separate decision), the
+ * analytic-only clip, and the canonical lattice geometry. */
+function validateVoxelTiling(tiling: ResolvedTiling): void {
+  if (isResolvedLatticeTiling(tiling)) {
+    if (!isCanonicalResolvedLatticeTiling(tiling)) {
+      throw new RangeError(
+        "Solid lattice tiling must use resolveTiling's canonical resolved geometry",
+      );
+    }
+  } else {
+    if (tiling.info !== TILING_GROUP_INFO[tiling.group]) {
+      throw new RangeError(
+        "Solid tiling must use resolveTiling's canonical frozen group info",
+      );
+    }
+    if (tiling.info.dim !== 3) {
+      throw new RangeError(
+        `${tiling.group} is ${tiling.info.dim}D and cannot install on a 3D Solid material`,
+      );
+    }
+  }
+  if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
+    throw new RangeError(
+      "Solid tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
+    );
+  }
+}
+
+/**
+ * Validate and install the material-side compile gate for the Solid
+ * query-space tiling arm. Absent clears the arm and restores the literal
+ * untiled program (and, with it, the max-density hierarchy's program
+ * selection — the hierarchy texture itself is untouched). Tiling is refused
+ * with Balloon, mirroring the frozen combination matrix.
+ */
+export function installVoxelTiling(
+  material: THREE.ShaderMaterial,
+  tiling: ResolvedTiling | null,
+): void {
+  if (tiling && material.userData[BALLOON_ENABLED_KEY] === true) {
+    throw new RangeError(
+      "Voxel tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+    );
+  }
+  if (tiling) validateVoxelTiling(tiling);
+  const lattice = tiling && isResolvedLatticeTiling(tiling) ? tiling : null;
+  const finite = tiling && !isResolvedLatticeTiling(tiling) ? tiling : null;
+  const u = material.uniforms;
+  u.uTilingGroup.value = lattice
+    ? LATTICE_TILING_CODE
+    : finite
+      ? tilingGroupCode(finite.group)
+      : 0;
+  u.uTilingH.value = lattice ? lattice.h : 1;
+  u.uTilingContentR.value = lattice ? lattice.radius : 0;
+  // The lattice's presentation window; the finite arm's carrier radius is
+  // derived from the current grid's AABB at every setVoxelGrid
+  // (finiteTilingPresentationRadius) and starts at this placeholder.
+  u.uTilingPresentationR.value = lattice
+    ? lattice.presentation.outerRadius
+    : LATTICE_PRESENTATION_RADIUS_MULT;
+  material.userData[TILING_KEY] = tiling;
+  syncVoxelFragment(material);
+}
 
 function syncVoxelFragment(material: THREE.ShaderMaterial): void {
   const balloon = material.userData[BALLOON_ENABLED_KEY] === true;
+  const tiling = materialVoxelTiling(material);
   const next = voxelFragmentFor(
     balloon,
-    material.uniforms.uMaxHierarchyEnabled.value === 1,
+    material.uniforms.uMaxHierarchyEnabled.value === 1 && tiling === null,
     material.userData[ENVIRONMENT_ENABLED_KEY] === true,
     material.userData[FLOOR_REQUESTED_KEY] === true && !balloon,
+    tiling,
   );
   if (material.fragmentShader !== next) {
     material.fragmentShader = next;
@@ -1440,6 +2043,14 @@ export function createVoxelMaterial(
       uBalloonTintStrength: { value: 0 },
       uBalloonColorLUT: { value: new THREE.Texture() },
       uBalloonPaletteEnabled: { value: 0 },
+      // Tiling uniforms are inert while the exact off source is installed
+      // (and bound from construction so installs are allocation-free). The
+      // finite arm's presentation radius is re-derived from every grid's
+      // AABB; the lattice's rides the resolved presentation policy.
+      uTilingGroup: { value: 0 },
+      uTilingH: { value: 1 },
+      uTilingContentR: { value: 1 },
+      uTilingPresentationR: { value: LATTICE_PRESENTATION_RADIUS_MULT },
     },
     vertexShader: VOXEL_VERTEX,
     fragmentShader: voxelFragmentFor(false),
@@ -1450,6 +2061,7 @@ export function createVoxelMaterial(
   material.userData[BALLOON_ENABLED_KEY] = false;
   material.userData[ENVIRONMENT_ENABLED_KEY] = false;
   material.userData[FLOOR_REQUESTED_KEY] = false;
+  material.userData[TILING_KEY] = null;
   material.addEventListener("dispose", () => hierarchyFallback.dispose());
   return material;
 }

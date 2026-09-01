@@ -334,6 +334,14 @@ export interface ControlEffects {
    * Render click) — the resolution slider's only path to a new grid while
    * active, since a grid's dimensions are fixed at allocation. */
   restartSolidRender(): void;
+  /**
+   * Re-resolve the authored tiling against the current document and install
+   * or clear the Solid material's query-space arm — material-only, live, no
+   * worker restart (the canonical density volume is unchanged by tiling).
+   * Fires on session entry and on every edit that can move the resolution:
+   * the tiling controls, the balloon toggle, and the symmetry controls.
+   */
+  syncSolidTiling(): void;
   /** Restart the whole flame render session — the Export-size select's only
    * path to a new accumulation while a flame render is active, since the
    * histogram/shared-frame dimensions are fixed at `start`; the flame twin
@@ -528,6 +536,9 @@ const symmetryEffect: ControlEffect = (state, fx, previous) => {
   // user through Points regeneration before re-entry. Same-dimension edits
   // retain the cheap live accumulation restart below.
   if (systemIsNonFlat(state) !== systemIsNonFlat(previous)) return;
+  // A symmetry order crossing 1 re-opens or closes the Solid tiling arm
+  // (the frozen kaleidoscope refusal) without a worker restart.
+  if (state.renderMode === "solid") fx.syncSolidTiling();
   const command = {
     type: "setSymmetry",
     order: state.symmetry.order,
@@ -586,13 +597,15 @@ const tilingEffect: ControlEffect = (state, fx) => {
   fx.refreshSurfaceEligibility();
   if (state.renderMode === "flame") fx.restartFlameTilingRender();
   if (state.renderMode === "surface") fx.restartSurfaceRender();
+  if (state.renderMode === "solid") fx.syncSolidTiling();
   fx.trackAutoBackground();
 };
 
 /** The lattice scale is live inside Surface but changes which bounded raw
  * images Points and Flame contain. Points follows Auto-update, Flame restarts
  * from its source seed, Surface rewrites its params word without re-entry,
- * and the generated Flame backdrop re-renders (trackAutoBackground). */
+ * Solid re-folds per frame (material-only), and the generated Flame backdrop
+ * re-renders (trackAutoBackground). */
 const tilingScaleEffect: ControlEffect = (state, fx) => {
   fx.regenerateIfAutoUpdate();
   if (state.renderMode === "flame") fx.restartFlameTilingRender();
@@ -603,6 +616,7 @@ const tilingScaleEffect: ControlEffect = (state, fx) => {
   ) {
     fx.setSurfaceLatticeScale(state.tiling.cellScale);
   }
+  if (state.renderMode === "solid") fx.syncSolidTiling();
   fx.trackAutoBackground();
 };
 
@@ -1280,6 +1294,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       if (s.tiling) fx.regenerateIfAutoUpdate();
       if (s.renderMode === "flame") fx.restartFlameRender();
       if (s.renderMode === "surface") fx.restartSurfaceRender();
+      // The frozen combination matrix refuses tiling with Balloon; the Solid
+      // arm re-resolves (and clears) so the scene never compiles both.
+      if (s.renderMode === "solid") fx.syncSolidTiling();
     },
   },
   {

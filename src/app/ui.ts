@@ -142,6 +142,7 @@ import {
   type FlameTilingOutcome,
   type PointTilingOutcome,
 } from "./point-tiling-outcome";
+import type { SolidTilingSessionResolution } from "../fractal/solid-tiling-session";
 import { videoCaptureSupported } from "./recorder";
 import { offlineExportSupported } from "./video-encode";
 import { installSliderScrollGuard } from "./slider-scroll-guard";
@@ -1894,6 +1895,10 @@ export class Ui {
    * a later edit to an already-resolved session. */
   private flameTilingOutcome: FlameTilingOutcome | undefined;
   private flameTilingPending = false;
+  /** Synchronous Solid tiling disclosure: the material-local resolution
+   * main.ts re-derives on entry and on every tiling/balloon/symmetry edit.
+   * Null until the first Solid session resolves. */
+  private solidTilingStatus: SolidTilingSessionResolution | null = null;
   private readonly legend: HTMLElement;
   private readonly legendBar: HTMLElement;
   private readonly legendLabels: HTMLElement;
@@ -4418,7 +4423,7 @@ export class Ui {
             ? lattice
               ? "Changing cell scale is live; changing kind or clip restarts Surface."
               : "Changes restart Surface without resetting the view."
-            : `Solid stays untiled — edits apply to Points through ${state.autoUpdate ? "Auto-update" : "Regenerate"}, restart Flame from the same seed and frozen view, and apply to Surface on entry.`;
+            : "Tiling edits are live in Solid — the canonical density volume is unchanged; reflected copies re-fold per frame.";
 
     const kind = this.scalarSelect("tilingKind");
     const group = this.scalarSelect("tilingGroup");
@@ -4450,7 +4455,7 @@ export class Ui {
         ? state.autoUpdate
           ? "Off is authored — Points still shows the earlier tiled cloud while its untiled replacement runs."
           : "Off is authored, but Points still shows the earlier tiled cloud — Auto-update is off; use Regenerate to apply Off."
-        : "Off — Points, Flame, and Surface render the original attractor once; Solid stays untiled.";
+        : "Off — Points, Flame, Solid, and Surface render the original attractor once.";
       return;
     }
 
@@ -4473,13 +4478,12 @@ export class Ui {
       } else if (state.renderMode === "flame") {
         note = this.flameTilingNote();
       } else if (state.renderMode === "solid") {
-        note =
-          "Solid stays untiled. Enter Points, Flame, or Surface to render this mirrored landscape.";
+        note = this.solidTilingNote(lattice);
       } else {
         note =
           "Active in Surface — the attractor repeats in x and z (and w in 4D) at the cell scale above.";
       }
-      if (nonFlat) {
+      if (nonFlat && state.renderMode !== "solid") {
         note +=
           state.renderMode === "flame"
             ? " In 4D Flame, raw lattice images are reduced by the frozen rotor and soft slice."
@@ -4515,13 +4519,12 @@ export class Ui {
     } else if (state.renderMode === "flame") {
       note = this.flameTilingNote();
     } else if (state.renderMode === "solid") {
-      note =
-        "Solid stays untiled. Enter Points, Flame, or Surface to render these reflected copies.";
+      note = this.solidTilingNote(lattice);
     } else {
       note =
         "Active in Surface; edits restart the render and preserve its view.";
     }
-    if (nonFlat) {
+    if (nonFlat && state.renderMode !== "solid") {
       note +=
         state.renderMode === "flame"
           ? " In 4D Flame, raw reflected images are reduced by the frozen rotor and soft slice."
@@ -4583,6 +4586,26 @@ export class Ui {
     return outcome.kind === "lattice"
       ? "Active in Flame — bounded mirrored lattice images accumulate with coverage-weighted density."
       : "Active in Flame — bounded reflected images accumulate with multiplicity-correct weighted density.";
+  }
+
+  /** Synchronously-resolved Solid half of the shared tiling disclosure. The
+   * resolution is material-local (main.ts's `syncSolidTiling`), so unlike the
+   * Flame worker's outcome there is no pending/applying distinction — only
+   * the pre-first-resolution Preparing placeholder. */
+  private solidTilingNote(lattice: boolean): string {
+    const status = this.solidTilingStatus;
+    if (!status) {
+      return "Preparing in Solid — resolving the authored tiling before accumulation.";
+    }
+    if (status.status === "off") {
+      return "Solid renders the original attractor — tiling is off.";
+    }
+    if (status.status === "refused") {
+      return `Unavailable in Solid — ${status.note}`;
+    }
+    return lattice
+      ? "Active in Solid — the canonical density volume mirrors in x and z at the cell scale above."
+      : "Active in Solid — reflected copies render through the canonical density volume.";
   }
 
   /** Suffix for a document-level refusal while Points is still showing an
@@ -5395,6 +5418,15 @@ export class Ui {
       this.flameTilingOutcome = outcome;
     }
     this.flameTilingPending = pending;
+  }
+
+  /** Associate the latest synchronously-resolved Solid tiling session with the
+   * panel. The resolution is material-local and re-derived on entry and on
+   * every tiling/balloon/symmetry edit (main.ts's `syncSolidTiling`); the
+   * Solid disclosure rows read it the way the Flame rows read their worker
+   * outcome. */
+  setSolidTilingStatus(status: SolidTilingSessionResolution | null): void {
+    this.solidTilingStatus = status;
   }
 
   /** Display-only count for Watch-it-build. Unlike {@link setPointCount},

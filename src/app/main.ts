@@ -46,6 +46,7 @@ import {
   surfaceOriginVisibleRadius,
   type SurfaceDE,
 } from "../fractal/surface-de";
+import { resolveSolidTilingSession } from "../fractal/solid-tiling-session";
 import {
   isForwardTarget,
   setSurfaceComputeSchedulePins,
@@ -350,6 +351,7 @@ import {
   setTiling,
   setTransforms,
   setTransformEmitter,
+  systemIsNonFlat,
   updateTransform,
 } from "./state";
 import type { AppState, RenderMode } from "./state";
@@ -3988,6 +3990,28 @@ async function main(): Promise<void> {
     }
   }
 
+  // The Solid tiling arm is pure material state over the unchanged canonical
+  // density volume: the session re-resolves on entry, and every edit that can
+  // move the resolution — the tiling controls, the balloon toggle, the
+  // symmetry order — re-syncs it live (no worker restart, and the worker
+  // density and untiled material stay untouched). The same resolution drives
+  // the panel's Solid disclosure through ui.setSolidTilingStatus.
+  function syncSolidTiling(): void {
+    const resolution = resolveSolidTilingSession(
+      state.transforms,
+      state.finalTransform ?? null,
+      state.symmetry,
+      state.schedule ?? null,
+      state.tiling ?? null,
+      state.balloonEcho,
+      systemIsNonFlat(state),
+    );
+    scene.setVoxelTiling(
+      resolution.status === "active" ? resolution.resolved : null,
+    );
+    ui.setSolidTilingStatus(resolution);
+  }
+
   // The solid voxel render session: accumulate a world-space density
   // volume of the current system in a fresh worker. Its enter/exit/terminate +
   // first-frame-gate choreography is shared with the flame session above
@@ -3999,6 +4023,7 @@ async function main(): Promise<void> {
   // only builds and kicks off.
   const solidSession = new RenderSession<VoxelWorkerCommand>({
     start: () => {
+      syncSolidTiling();
       const fourD = fourDRenderSnapshot();
       const seed = solidSeedOverride ?? nextRenderSeed();
       solidSeedOverride = null;
@@ -9069,6 +9094,7 @@ async function main(): Promise<void> {
     recolor,
     applyFourDColor,
     restartSolidRender: () => solidSession.enter(),
+    syncSolidTiling,
     restartFlameRender: () => {
       flameGpuFallbackHeldReason = null;
       flameSession.enter();

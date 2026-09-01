@@ -66,6 +66,7 @@ import { to255 } from "../fractal/vec";
 import { FOUR_D_COLOR_MODES, SYMMETRY_PLANES } from "../fractal/types";
 import type { Transform } from "../fractal/types";
 import { GEAR_SHAPE, STAR_PRISM_SHAPE } from "../fractal/shapes";
+import { resolveTiling, type TilingSpec } from "../fractal/tiling";
 import {
   BUNDLED_TILING_CLIP_SHAPES,
   BUNDLED_EMITTER_SHAPES,
@@ -10135,6 +10136,7 @@ describe("Ui symmetry controls", () => {
       postVoxel,
       regenerateIfAutoUpdate: vi.fn(),
       refreshSurfaceEligibility,
+      syncSolidTiling: vi.fn(),
     } as unknown as ControlEffects;
     return { fx, postFlame, postVoxel, refreshSurfaceEligibility };
   }
@@ -10461,6 +10463,12 @@ describe("Ui finite tiling controls", () => {
       candidateTests: 0,
     });
     ui.setFlameTilingOutcome({ availability: "active", kind: "finite" });
+    ui.setSolidTilingStatus({
+      status: "active",
+      resolved: resolveTiling({ group: "a3" })!,
+      originVisibleRadius: 1,
+      note: null,
+    });
 
     for (const renderMode of ["points", "flame", "solid", "surface"] as const) {
       ui.updateLabels({ ...tiled, renderMode });
@@ -10472,7 +10480,7 @@ describe("Ui finite tiling controls", () => {
             ? "restart Flame from the same seed and frozen view"
             : renderMode === "surface"
               ? "restart Surface"
-              : "Solid stays untiled",
+              : "Tiling edits are live in Solid",
       );
       expect(el("tilingNote").textContent, renderMode).toContain(
         renderMode === "surface"
@@ -10481,9 +10489,82 @@ describe("Ui finite tiling controls", () => {
             ? "Active in Points"
             : renderMode === "flame"
               ? "Active in Flame"
-              : "Solid stays untiled",
+              : "Active in Solid",
       );
     }
+  });
+
+  it("reads the Solid status for active, refused, off, and 4D resolutions", () => {
+    const ui = new Ui(document);
+    const solid = (tiling: TilingSpec) =>
+      ({
+        ...setTiling(initialState(true), tiling),
+        renderMode: "solid",
+      }) as const;
+    const active = {
+      status: "active" as const,
+      resolved: resolveTiling({ group: "a3" })!,
+      originVisibleRadius: 1,
+      note: null,
+    };
+
+    ui.setSolidTilingStatus(active);
+    ui.updateLabels(solid({ group: "a3" }));
+    expect(el("tilingNote").textContent).toMatch(
+      /Active in Solid.*reflected copies render through the canonical density volume/i,
+    );
+    expect(el("tilingTimingHint").textContent).toMatch(
+      /edits are live in Solid/i,
+    );
+
+    ui.setSolidTilingStatus(active);
+    ui.updateLabels(solid({ kind: "lattice", cellScale: 1.5 }));
+    expect(el("tilingNote").textContent).toMatch(
+      /Active in Solid.*mirrors in x and z at the cell scale above/i,
+    );
+
+    ui.setSolidTilingStatus({
+      status: "refused",
+      resolved: null,
+      originVisibleRadius: null,
+      note: "Solid tiling is unavailable with Balloon; turn Balloon off.",
+    });
+    ui.updateLabels(solid({ group: "a3" }));
+    expect(el("tilingNote").textContent).toMatch(
+      /Unavailable in Solid.*turn Balloon off/i,
+    );
+
+    ui.setSolidTilingStatus({
+      status: "off",
+      resolved: null,
+      originVisibleRadius: null,
+      note: null,
+    });
+    ui.updateLabels(solid({ group: "a3" }));
+    expect(el("tilingNote").textContent).toMatch(
+      /Solid renders the original attractor.*tiling is off/i,
+    );
+
+    // A 4D document with a matching 4D group reaches the Solid-specific
+    // refusal (the dimension mismatch row would otherwise say the recovery
+    // is a 4D group — which still cannot render here).
+    ui.setSolidTilingStatus({
+      status: "refused",
+      resolved: null,
+      originVisibleRadius: null,
+      note: "4D Solid tiling is not shipped yet; it lands with the 4D Solid lift.",
+    });
+    ui.updateLabels({
+      ...setTiling(
+        { ...initialState(true), transforms: nonFlatTransforms() },
+        { group: "a4" },
+      ),
+      renderMode: "solid",
+    });
+    expect(el("tilingNote").textContent).toMatch(
+      /Unavailable in Solid.*4D Solid tiling is not shipped/i,
+    );
+    expect(el("tilingNote").textContent).not.toMatch(/zero-thickness/i);
   });
 
   it("distinguishes Flame preparation, applying edits, refusal, and active results", () => {
@@ -10562,12 +10643,12 @@ describe("Ui finite tiling controls", () => {
     },
   );
 
-  it("names the Off consumers while keeping Solid explicitly untiled", () => {
+  it("names every consumer of the Off state", () => {
     const ui = new Ui(document);
     ui.updateLabels(initialState(true));
 
     expect(el("tilingNote").textContent).toBe(
-      "Off — Points, Flame, and Surface render the original attractor once; Solid stays untiled.",
+      "Off — Points, Flame, Solid, and Surface render the original attractor once.",
     );
   });
 

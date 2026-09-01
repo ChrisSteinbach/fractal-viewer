@@ -5,7 +5,10 @@ import {
   createVoxelMaterial,
   emptyVoxelMaxHierarchyTexture,
   emptyVoxelTexture,
+  finiteTilingPresentationRadius,
+  installVoxelTiling,
   marchStepsForGrid,
+  materialVoxelTiling,
   packVoxelBalloonPalette,
   packVoxelBalloonTint,
   packVoxelPresentation,
@@ -18,8 +21,23 @@ import {
   voxelFragmentFor,
 } from "./voxel-material";
 import { presentationFloorSpec } from "../fractal/presentation-floor";
+import { resolveTiling } from "../fractal/tiling";
 import { buildVoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
 import { VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN } from "../fractal/voxel-max-hierarchy";
+
+const A3 = resolveTiling({ group: "a3" });
+const CLIPPED_A3 = resolveTiling({
+  group: "a3",
+  clip: {
+    parts: [
+      {
+        primitive: { kind: "sphere", radius: 0.4 },
+        combine: "union",
+      },
+    ],
+  },
+});
+const LATTICE = resolveTiling({ kind: "lattice", cellScale: 1.5 }, 2);
 
 describe("marchStepsForGrid", () => {
   it("holds the 220-step floor below the 256³ tuning point", () => {
@@ -507,5 +525,221 @@ describe("Solid balloon volume/refusal sampling", () => {
   it("refuses only a strict above-threshold centre (ties are not hits)", () => {
     expect(solidBalloonCenterIsEmpty(0.3, 0.3)).toBe(true);
     expect(solidBalloonCenterIsEmpty(0.301, 0.3)).toBe(false);
+  });
+});
+
+describe("Solid tiling query-space programs", () => {
+  it("keeps every untiled source exactly and free of tiling code", () => {
+    for (const source of [
+      voxelFragmentFor(false),
+      voxelFragmentFor(false, true),
+      voxelFragmentFor(true),
+      voxelFragmentFor(true, true),
+      voxelFragmentFor(false, false, true, true),
+    ]) {
+      expect(source).not.toContain("tilingFoldQuery");
+      expect(source).not.toContain("voxelTilingFold");
+      expect(source).not.toContain("uTilingGroup");
+      expect(source).not.toContain("sphereInterval");
+    }
+  });
+
+  it("folds every query through the finite group and marches the exact copy ball", () => {
+    const source = voxelFragmentFor(false, false, false, false, A3);
+
+    expect(source).toContain("uniform int uTilingGroup;");
+    expect(source).toContain("uTilingGroup != 1");
+    expect(source).toContain("TilingFoldResult folded = voxelTilingFold(p);");
+    expect(source).toContain("bool sphereInterval(vec3 ro, vec3 rd,");
+    expect(source).toContain(
+      "sphereInterval(ro, rd, uTilingPresentationR, tEnter, tFar)",
+    );
+    expect(source).toContain("boundedVolumeSample(q).a");
+    expect(source).toContain("boundedVolumeSample(q).rgb");
+    expect(source).not.toContain("uTilingH");
+    expect(source).not.toContain("latticePresentationInterval");
+    expect(source).not.toContain("latticePresentationContains");
+    // The primary, refine, gradient, shadow and AO paths all read densityAt.
+    expect(source).toContain("for (int i = 0; i < marchSteps; i++)");
+    expect(source).toContain("for (int i = 0; i < shadowSteps; i++)");
+  });
+
+  it("bakes the analytic clip as a narrowing gate on the folded source", () => {
+    const clipped = voxelFragmentFor(false, false, false, false, CLIPPED_A3);
+    const plain = voxelFragmentFor(false, false, false, false, A3);
+
+    expect(clipped).toContain("float tilingClipSdf(vec3 p)");
+    expect(clipped).toContain("if (tilingClipSdf(q) > 0.0) return false;");
+    expect(plain).not.toContain("tilingClipSdf");
+  });
+
+  it("mirrors the lattice through the shared carrier with ball and window gates", () => {
+    const source = voxelFragmentFor(false, false, false, false, LATTICE);
+
+    expect(source).toContain("uTilingGroup != 7");
+    expect(source).toContain("uniform float uTilingH;");
+    expect(source).toContain("q.x = voxelTilingFoldCoordinate(q.x, h);");
+    expect(source).toContain("q.z = voxelTilingFoldCoordinate(q.z, h);");
+    expect(source).toContain(
+      "if (!latticePresentationContains(p, uTilingContentR, uTilingPresentationR))",
+    );
+    expect(source).toContain("if (length(q) > uTilingContentR) return false;");
+    expect(source).toContain(
+      "LatticeCarrierInterval latticeCarrier = latticePresentationInterval(",
+    );
+    expect(source).toContain(
+      "LatticeCarrierInterval shadowCarrier = latticePresentationInterval(",
+    );
+    // The 8R->10R smoothstep coverage fades the displayed hit toward the
+    // backdrop and never touches hit alpha.
+    expect(source).toContain("uTilingPresentationR * 0.8");
+    expect(source).toContain(
+      "float tilingCoverage = latticePresentationVisibility(",
+    );
+    expect(source).toContain("col = mix(background, col, tilingCoverage);");
+    expect(source).toContain("outColor = vec4(col, 1.0);");
+  });
+
+  it("composes environment and floor with the tiling arm", () => {
+    const finite = voxelFragmentFor(false, false, true, true, A3);
+    const lattice = voxelFragmentFor(false, false, true, true, LATTICE);
+
+    for (const source of [finite, lattice]) {
+      expect(source).toContain("voxelEnvTint(n)");
+      expect(source).toContain("shadeVoxelFloor(ro, rd, background)");
+      expect(source).toContain("densityAt(shadowOrigin + uLightDir * shadowT)");
+    }
+    expect(finite).toContain(
+      "sphereInterval(shadowOrigin, uLightDir, uTilingPresentationR",
+    );
+    expect(finite).toContain("occlusion += densityAt(aoPos);");
+    expect(lattice).toContain(
+      "LatticeCarrierInterval floorShadowCarrier = latticePresentationInterval(",
+    );
+    expect(lattice).toContain(
+      "if (latticePresentationContains(aoPos, uTilingContentR, uTilingPresentationR))",
+    );
+  });
+
+  it("refuses balloon and the accelerated hierarchy while tiled", () => {
+    expect(() => voxelFragmentFor(true, false, false, false, A3)).toThrow(
+      /cannot compose with balloon/,
+    );
+    expect(() => voxelFragmentFor(false, true, false, false, A3)).toThrow(
+      /suspends the max-density hierarchy/,
+    );
+  });
+
+  it("caches one program per baked tiling identity", () => {
+    const first = voxelFragmentFor(false, false, false, false, A3);
+    const second = voxelFragmentFor(false, false, false, false, A3);
+    const scaleEdited = resolveTiling({ kind: "lattice", cellScale: 2 }, 2);
+
+    expect(second).toBe(first);
+    expect(voxelFragmentFor(false, false, false, false, scaleEdited)).toBe(
+      voxelFragmentFor(false, false, false, false, LATTICE),
+    );
+  });
+});
+
+describe("Solid tiling material lifecycle", () => {
+  it("installs and clears the finite arm, and writes the wire uniforms", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    const untiled = material.fragmentShader;
+
+    installVoxelTiling(material, A3);
+    expect(materialVoxelTiling(material)).toBe(A3);
+    expect(material.fragmentShader).toBe(
+      voxelFragmentFor(false, false, false, false, A3),
+    );
+    expect(material.uniforms.uTilingGroup.value).toBe(1);
+    expect(material.uniforms.uTilingH.value).toBe(1);
+    expect(material.version).toBeGreaterThan(0);
+
+    installVoxelTiling(material, null);
+    expect(materialVoxelTiling(material)).toBeNull();
+    expect(material.fragmentShader).toBe(untiled);
+  });
+
+  it("keeps lattice scale and radius edits uniform-only", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    installVoxelTiling(material, LATTICE);
+    const version = material.version;
+
+    expect(material.uniforms.uTilingGroup.value).toBe(7);
+    expect(material.uniforms.uTilingH.value).toBe(3);
+    expect(material.uniforms.uTilingContentR.value).toBe(2);
+    expect(material.uniforms.uTilingPresentationR.value).toBe(20);
+
+    installVoxelTiling(
+      material,
+      resolveTiling({ kind: "lattice", cellScale: 2.5 }, 2),
+    );
+    expect(material.version).toBe(version);
+    expect(material.uniforms.uTilingH.value).toBe(5);
+    expect(material.fragmentShader).toBe(
+      voxelFragmentFor(false, false, false, false, LATTICE),
+    );
+  });
+
+  it("refuses installing tiling over an active balloon arm", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    setVoxelBalloon(material, {
+      center: [0, 0, 0],
+      radius: 1,
+      rho: 1.02,
+      R: 1.6,
+    });
+
+    expect(() => installVoxelTiling(material, A3)).toThrow(
+      /cannot compose with balloon/,
+    );
+    expect(materialVoxelTiling(material)).toBeNull();
+  });
+
+  it("suspends the max-density hierarchy while tiled and restores it exactly", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    const packed = new Uint8Array(32 ** 3 * 4);
+    for (let i = 0; i < 32 ** 3; i++) packed[i * 4 + 3] = i & 0xff;
+    const texture = updateVoxelMaxHierarchyTexture(
+      material,
+      null,
+      buildVoxelMaxHierarchy(packed, 32),
+    );
+    expect(material.fragmentShader).toBe(voxelFragmentFor(false, true));
+
+    installVoxelTiling(material, A3);
+    // The hierarchy is still PRESENT (a grid event can re-upload it), but
+    // the traversal program is not selected: a straight visible ray maps to
+    // reflected source segments, so the node skip is not valid across them.
+    expect(material.uniforms.uMaxHierarchyEnabled.value).toBe(1);
+    expect(material.fragmentShader).not.toContain("maxHierarchyNode");
+
+    updateVoxelMaxHierarchyTexture(
+      material,
+      texture,
+      buildVoxelMaxHierarchy(packed, 32),
+    );
+    expect(material.fragmentShader).not.toContain("maxHierarchyNode");
+
+    installVoxelTiling(material, null);
+    expect(material.fragmentShader).toBe(voxelFragmentFor(false, true));
+    expect(material.fragmentShader).toContain("maxHierarchyNode");
+  });
+});
+
+describe("finiteTilingPresentationRadius", () => {
+  it("is the farthest AABB corner norm, in any position", () => {
+    expect(finiteTilingPresentationRadius([-1, -1, -1], [2, 2, 2])).toBeCloseTo(
+      Math.sqrt(3),
+      10,
+    );
+    expect(finiteTilingPresentationRadius([-1, 0, 0], [1, 1, 1])).toBeCloseTo(
+      Math.sqrt(3),
+      10,
+    );
+    expect(
+      finiteTilingPresentationRadius([0.5, 0.5, 0.5], [1, 1, 1]),
+    ).toBeCloseTo(1.5 * Math.sqrt(3), 10);
   });
 });
