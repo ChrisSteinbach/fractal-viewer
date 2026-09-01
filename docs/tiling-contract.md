@@ -661,3 +661,182 @@ four core evaluations per 3D query and eight per 4D query (the deliberately
 simple sheet oracle uses nine in 3D). Certified translation is therefore
 deferred until one of those complete contracts earns its cost. It must never
 be approximated by unclamped opRep or by shading a wall clamp.
+
+## Phase 3: point-space images
+
+Surface answers a query by folding it into canonical content. The forward
+renderers cannot do that: putting a reflection or mirror fold into the chaos
+game changes the recurrence and therefore changes the attractor. Their exact
+construction is instead
+
+```text
+ordinary orbit (including xaos/emitter/symmetry)
+  -> scheduled affine post-word
+  -> final lens
+  -> canonical membership
+  -> bounded finite/lattice images
+  -> 4D rotor, projection and slice
+  -> renderer deposit
+```
+
+The source point is filtered, never folded, and no emitted image is fed back.
+Thus finite tiling draws `G · (A ∩ C ∩ clip)` and the lattice draws bounded
+presentation images of `A ∩ ball(0,R) ∩ clip`. The analytic clip is tested
+once on the canonical source, with its existing xyz embedding in 4D, and is
+not retested on images. Schedule and the final lens precede membership because
+they are already plot-stage maps. The point-image layer consumes no primary or
+auxiliary chaos draw.
+
+This construction applies to genuine IFS/source-orbit documents. The Points,
+Flame and Solid views of a forward escape-time or bulb document are
+escape-reset pilot debris rather than samples of the set rendered by Surface;
+tiling those points would claim cross-renderer agreement where none exists, so
+those combinations remain refused. This is distinct from Surface's genuine
+forward estimator, whose tiled escape set remains supported.
+
+### Shared radius and canonical membership
+
+The point family reuses the IFS Surface build as its certified-bound authority;
+a sampled cloud maximum is seed- and quality-dependent and is not a bound. The
+one origin-visible radius is:
+
+- 3D without a final lens: `|boundCenter| + boundingRadius`;
+- 3D with either final lens: `visibleBoundingRadius`;
+- 4D: the origin-anchored `visibleBoundingRadius` already produced by
+  `buildSurfaceDE4`.
+
+The first row also corrects a latent Surface lattice seam: a plain 3D DE can
+carry a tighter off-origin ball, so passing `boundingRadius` alone to an
+origin-centred lattice ball can exclude certified content. Every caller must
+go through the shared origin-radius helper. As before, `h = cellScale · R` and
+resolution rejects a non-positive/non-finite radius, a zero f32 half-cell, or
+an unrepresentable `4h` period.
+
+Finite membership is the closed chamber test
+`dot(p, root_i) >= -FOLD_EPS` for every simple wall, then the optional analytic
+clip. Lattice membership is `|p| <= R`, then that clip. Boundary points belong
+to the set, but multiplicity is not brightness: a finite source on walls uses
+one representative per right coset of its stabilizer, while a lattice source
+on `|coordinate| = h` retains the even-index representative of each coincident
+odd/even pair. The executable oracle found every simple-wall finite orbit to
+be exactly half its group order (12/24 through 576/1152), with agreement to
+`enumerateOrbit`; the 3D lattice wall fixture selected exactly the 39 distinct
+in-carrier images rather than the 97-cell plan.
+
+Finite matrices are generated deterministically from the canonical Coxeter
+roots: reflection `S_i = I - 2 n_i n_i^T`, breadth-first closure from identity,
+cached by group. `enumerateOrbit` stays the independently written slow oracle.
+The largest runtime matrix table is F4's 1,152 f64 4x4 matrices, 147,456 bytes.
+
+For a lattice cell index `k`, the exact scalar image is
+`I_k(u) = (-1)^k u + 2hk`. It applies on x/z in 3D and x/z/w in 4D. A radial
+cell plan is tighter than the surrounding Cartesian cube: retain integer
+tuples satisfying
+
+```text
+sum(k_i^2) <= ((outerRadius + R) / (2h))^2.
+```
+
+At the mathematical minimum `cellScale = 1`, the 10R carrier needs 97 cells
+in 3D and 739 in 4D, not the loose 1,331-cell 4D cube. At the authored scales
+1.25 and 4 those counts are 61/5 and 365/7. The measured mean exact candidates
+per accepted point were 77.34/48.76/5 in 3D and 514.51/261.39/7 in 4D.
+
+### Finite presentation in 3D and 4D
+
+Point-family lattice presentation uses the same measured 8R-to-10R smoothstep
+coverage as Surface, but the carrier is evaluated in the source dimension:
+an origin-centred 3-ball in 3D and origin-centred 4-ball in 4D. The tiled 4D
+view pivot is therefore frozen at the origin. Only after carrier membership
+and fade does the live/frozen renderer view rotate and project the image and
+apply its ordinary soft slice.
+
+This dimensional order is load-bearing. At the identity rotor, projection
+drops raw w while the current 4D slice keeps a 0.06 ghost floor; widening a
+raw-w test window from 4 to 8 to 16 cells therefore left 9, 17 and 33 projected
+images visible, with minimum total ghost weight 0.54, 1.02 and 1.98. A
+displayed-3D carrier is consequently not locally finite. The raw-4D carrier
+changed membership zero times under the sheet's adversarial xw rotation and
+its maximum fade-weight delta was `2.78e-15`. The measured 6R->8R, 8R->10R
+and 10R->12R candidates at scale 1.25 required 179, 365 and 619 cells; the
+middle pair is retained to agree with the already-qualified Surface edge.
+
+The carrier fade is coverage, not source density or a new color channel.
+Transform index, structural color state, Height, Radius and Position remain
+properties of the canonical source and are copied to every image. The 4D
+w-ramp, slice-relative color, slice weight, lighting, fog and lattice coverage
+are properties of the raw or displayed image and are evaluated after the
+relevant image/view transform.
+
+### Bounded work and normalization
+
+Exhaustive replication remains the oracle, not the production budget. Every
+source attempt earns one integer fanout credit. Rejection banks it; acceptance
+spends `K = min(credit, distinctCandidates, rendererCap)` and advances a
+stable coprime cursor. Credit and cursor persist across worker chunks and GPU
+dispatches. This makes cumulative chosen candidates no greater than source
+attempts, bounds an accepted burst, adapts automatically from dense chamber
+content (`K = 1`) to rare content, and requires neither a probability pilot
+nor an RNG draw.
+
+Finite selection gives each chosen image weight `m/K`, where `m` is the
+stabilizer-safe distinct orbit size. A lattice plan precomputes the
+source-independent ceiling
+`u_k = V(max(0, |cellCenter_k| - R))` and its CDF. Stratified selection then
+tests exactly K cells and gives a visible image weight
+`(U/K) * V(|image|)/u_k`, where `U = sum(u_k)` and the quotient is at most
+one. These inverse-inclusion weights reproduce the exhaustive copy density;
+renderers keep their existing completed-field normalization. The GPU lift
+must prove its fixed-point range at the full export budget before enabling the
+specialization.
+
+The frozen budgets are:
+
+| Consumer                 | Budget and terminal behavior                                                                                                                                                                                                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Points                   | authored point count remains the maximum allocated/displayed output; at most 256 images from one accepted source; at most 8x the requested source attempts; returns `complete`, `underfilled`, or `empty`, never an untiled substitute |
+| Flame CPU/WebGPU         | authored iterations remain primary orbit steps; at most 32 image deposits at one acceptance and no more selected candidates cumulatively than attempts; credit/cursor are chunk/dispatch state                                         |
+| Generated Flame backdrop | same 32-image rule inside its fixed one-million-step job; schedule and tiling join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                              |
+| 3D Solid                 | no replicated voxel memory: keep the canonical density texture and transform material queries; its separate march budget is measured by the Solid lift                                                                                 |
+| 4D Solid                 | at most 32 weighted pre-projection images per accepted source; the representation and exact volume budget remain the responsibility of its dedicated decision                                                                          |
+
+The sheet measured all six finite groups on a balanced 16,384-point
+acceptance fixture and got exactly `1/order`. At equal ~262k output work, the
+F4 Points cap retained 98.2% of exhaustive histogram occupancy with normalized
+L1 0.0484; complete-orbit budgeting retained 97.5% at L1 0.1195 because it
+represented only 227 source motifs, and one-image cycling retained 29.8% at
+L1 0.8885. The 32-image accumulation cap retained 89.5% at L1 0.1551. Across
+the other groups the cap was exact through B3 for Points, while accumulation
+occupancy ranged from 100% down to that F4 floor. For the minimum-scale raw-4D
+lattice, one fixed CDF test per source retained 68.7% occupancy at L1 0.2888
+against 2,107,439 exhaustive deposits; it performed 4,096 candidate tests.
+The deliberately nearly-empty F4+clip model reaches only about 5,555 outputs
+under a 100,000-point request and 800,000-attempt cap, so `underfilled` is a
+first-class valid result. Zero accepted content installs the renderer's normal
+empty output: zero Points geometry, transparent Flame, dark composed backdrop,
+or zero-density Solid.
+
+### Legal combinations and edit timing
+
+| Layer                                                                                      | Point-family verdict                                                |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| matching-dimension finite group or 3D/4D lattice                                           | supported                                                           |
+| analytic clip                                                                              | supported; canonical-source membership before images                |
+| schedule, final lens, xaos, emitter/condensation                                           | supported in their existing plot order                              |
+| soft 4D view slice                                                                         | supported after true 4D images; not Surface's refused thick DE slab |
+| Balloon, kaleidoscope order > 1, mesh-backed clip, dimension mismatch, H4/reducible groups | preserve the existing authored-state refusal with adjacent reason   |
+| escape-time/bulb debris in Points, Flame or Solid                                          | refused; it is not a sampler for Surface's set                      |
+
+Points tiling edits follow Auto-update and the existing latest-wins one-shot
+regeneration. Flame edits clear/restart accumulation while preserving its
+frozen camera and settled 4D view. The generated backdrop uses the same
+snapshot with its existing 300 ms trailing debounce and latest-wins publish.
+The 3D Solid finite kind/clip change recompiles the query wrapper and lattice
+scale is uniform-live; its canonical voxel worker does not restart. A tiled
+3D query cannot use the canonical max-density hierarchy until that hierarchy
+has a reflected-ray certificate. Every 4D Solid geometry/carrier edit
+repilots and rebuilds atomically because tiling precedes projection. Surface
+keeps its existing restart-on-kind/clip and live lattice-scale behavior.
+
+The complete executable record, including timings and the carrier alternatives,
+is `scripts/point-tiling.harness.ts`.

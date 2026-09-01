@@ -907,3 +907,33 @@ real mid-drain cancel with no download and exact A3 collection encoding.
 the exact block retained. Finally, `surface-fallback.verify.mjs ... fg`
 painted the 4D lattice through WebGL with a visible "compute unavailable"
 transition and refused the fold-4D lattice with its WebGPU reason.
+
+### point-tiling
+
+The forward-renderer decision sheet (`scripts/point-tiling.harness.ts`) makes
+the exact finite-group matrices and mirrored-lattice images locally, with
+`enumerateOrbit` and exhaustive cell expansion as independent oracles. It
+compares complete-orbit output budgeting, one-image cycling and bounded
+acceptance-credit stratification on normalized 64x64 histograms; measures all
+six group orders, analytic clipping and stabilizers; and tests 3D/4D lattice
+scale extremes plus an adversarial xw rotor and the projected ghost-floor
+counterexample.
+
+MEASURED VERDICT (2026-09-01, Node 22): **USE ACCEPTANCE CREDIT WITH A
+256-IMAGE POINTS BURST, A 32-IMAGE ACCUMULATION BURST, AND A RAW-SPACE
+8R->10R CARRIER.** Canonical acceptance was exactly 1/order. At equal output
+work F4 Points retained 98.2% of exhaustive occupancy at normalized L1
+0.0484, versus 97.5% / 0.1195 for complete-orbit budgeting and 29.8% / 0.8885
+for one-image cycling. The 32-image F4 accumulation row retained 89.5% / L1
+0.1551, while credit accounting kept cumulative deposits no greater than
+attempts and reduced dense canonical input to one deposit per attempt.
+
+The tight minimum-scale 10R plans contained 97 cells in 3D and 739 in 4D;
+one-test lattice CDF stratification retained 68.7% of the exhaustive 4D
+occupancy at L1 0.2888. Raw-4D membership changed zero times under rotation
+(maximum fade delta `2.78e-15`), while successively wider projected raw-w
+windows exposed 9, 17 and 33 visible ghosted cells. Every simple-wall finite
+orbit was exactly half its group order and the lattice seam fixture selected
+exactly its 39 distinct images. Full formulas, legal combinations, renderer
+budgets, empty/underfilled behavior and edit timing are in
+`docs/tiling-contract.md` phase 3.
