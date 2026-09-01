@@ -108,17 +108,32 @@
  * kept rotor/slice edits in the original Worker, and differed from Off by
  * 42.46% (the posed 4D view changed 19.69%).
  *
+ * BACKDROP LIFT MEASURED 2026-09-01 (`--scope=backdrop --settle=120000`):
+ * each fixture freezes the displayed Points cloud (Auto-update off) so a
+ * tiling edit re-renders ONLY the generated backdrop between captures —
+ * the frame difference is the backdrop's and nothing else's. On SwiftShader
+ * the Mirrored Lattice backdrop drew 70.96% coverage and its untiled round
+ * differed by 40.82%; Tiled Pentatope drew 50.52% and differed by 32.45%.
+ * On verified Mesa Intel Iris Xe: 72.26% / 44.01% and 51.80% / 30.66%.
+ * Both rounds in both engines ran the fixed backdrop seed (0x5f3759df)
+ * through the CPU accumulator with the exact authored tiling block then
+ * none, the cloud stayed frozen at 2->2 requests, and no page, console or
+ * app error appeared. This is the pixel evidence the lift's acceptance
+ * criteria demanded: the backdrop the pane shows is the tiled one, and a
+ * tiling edit invalidates it even with Points' Auto-update off.
+ *
  * Usage (build + `npm run preview` first):
  *   node scripts/tiling-ui.verify.mjs
  *   node scripts/tiling-ui.verify.mjs --mode=x11::0
  *   node scripts/tiling-ui.verify.mjs --stage=1
  *   node scripts/tiling-ui.verify.mjs --scope=points
  *   node scripts/tiling-ui.verify.mjs --scope=flame
+ *   node scripts/tiling-ui.verify.mjs --scope=backdrop
  *
  * Options:
  *   --url=URL        app origin (default https://localhost:4173)
  *   --mode=MODE      sw (default) or x11:<display>
- *   --scope=SCOPE    all (default), points, or flame
+ *   --scope=SCOPE    all (default), points, flame, or backdrop
  *   --viewport=WxH   viewport, width must be >=641 (default 800x640)
  *   --settle=MS      per-preset Surface/Points/Flame target budget (default 300000)
  *   --stage=N        completed-pass target, 8 = settled latch (default 8)
@@ -213,6 +228,16 @@ const FLAME_PRESETS = [
   { preset: PRESETS[1], fourD: true, lifecycle: false },
 ];
 
+// The generated Flame backdrop legs: one construction arm per dimension,
+// same pairing as the flame fixtures. The gate freezes the Points cloud
+// (Auto-update off) so a tiling edit re-renders ONLY the backdrop between
+// captures — the isolated pixel evidence the backdrop lift's acceptance
+// needs, where payloads alone would not prove what the pane shows.
+const BACKDROP_PRESETS = [
+  { preset: PRESETS[3], fourD: false },
+  { preset: PRESETS[1], fourD: true },
+];
+
 class CheckingError extends Error {}
 
 function parseArgs(argv) {
@@ -248,9 +273,9 @@ function parseArgs(argv) {
       `--mode must be sw or x11:<display> (got ${args.mode})`,
     );
   }
-  if (!["all", "points", "flame"].includes(args.scope)) {
+  if (!["all", "points", "flame", "backdrop"].includes(args.scope)) {
     throw new CheckingError(
-      `--scope must be all, points, or flame (got ${args.scope})`,
+      `--scope must be all, points, flame, or backdrop (got ${args.scope})`,
     );
   }
   const viewport = /^(\d+)x(\d+)$/.exec(args.viewport);
@@ -418,6 +443,9 @@ async function openApp(browser, args) {
             tiling: cloneJson(message?.tiling),
             seed: Number.isSafeInteger(message?.seed) ? message.seed : null,
             gpuPreference: message?.gpuPreference ?? null,
+            iterationsBudget: Number.isSafeInteger(message?.iterationsBudget)
+              ? message.iterationsBudget
+              : null,
             view: cloneJson(message?.view),
           });
           return transfer === undefined
@@ -699,6 +727,67 @@ async function waitForAdditionalFlameTerminal(
     probe = await readFlameWorkerProbe(page);
   }
   return { ok: false, probe, worker: probe.workers[workerIndex] ?? null };
+}
+
+// ---------------------------------------------------------------------------
+// Generated Flame backdrop rounds
+// ---------------------------------------------------------------------------
+
+/** The generator's fixed low-budget policy (flame-backdrop-generator.ts). */
+const BACKDROP_ITERATIONS = 1_000_000;
+/** main.ts's fixed backdrop seed: authored changes, not random noise, decide
+ * how the echo changes — the same-seed control this leg's frame pairs rely
+ * on. 0x5f3759df. */
+const BACKDROP_SEED = 1597463007;
+
+function isBackdropStart(request) {
+  return (
+    request.type === "start" &&
+    request.gpuPreference === "off" &&
+    request.iterationsBudget === BACKDROP_ITERATIONS
+  );
+}
+
+function matchingBackdropRound(probe, tiling, afterSequence = 0) {
+  const workers = probe.workers.filter((worker) =>
+    worker.url.includes("flame-worker"),
+  );
+  for (let at = workers.length - 1; at >= 0; at--) {
+    const worker = workers[at];
+    const start = worker.requests
+      .filter(
+        (request) =>
+          request.sequence > afterSequence && isBackdropStart(request),
+      )
+      .filter((request) => exact(request.tiling) === exact(tiling))
+      .at(-1);
+    if (!start) continue;
+    const terminal = worker.replies
+      .filter(
+        (reply) =>
+          reply.sequence > start.sequence &&
+          reply.type === "progress" &&
+          reply.iterationsBudget > 0 &&
+          reply.iterationsDone >= reply.iterationsBudget,
+      )
+      .at(-1);
+    if (!terminal) continue;
+    return { worker, start, terminal };
+  }
+  return null;
+}
+
+async function waitForBackdropRound(page, tiling, timeout, afterSequence = 0) {
+  const deadline = Date.now() + timeout;
+  let probe = await readFlameWorkerProbe(page);
+  let round = matchingBackdropRound(probe, tiling, afterSequence);
+  while (Date.now() < deadline) {
+    if (round !== null) return { ok: true, probe, round };
+    await page.waitForTimeout(POLL_MS);
+    probe = await readFlameWorkerProbe(page);
+    round = matchingBackdropRound(probe, tiling, afterSequence);
+  }
+  return { ok: false, probe, round };
 }
 
 function matchingWorkerRequest(probe, tiling, afterId = 0, numPoints = null) {
@@ -1897,6 +1986,151 @@ function maxWorkerRequestId(probe) {
   return Math.max(0, ...probe.requests.map((request) => request.id ?? 0));
 }
 
+/** The generated Flame backdrop legs. Each fixture freezes the displayed
+ * Points cloud (Auto-update off) and then re-renders the backdrop alone
+ * across a tiling edit, so the frame difference between captures is the
+ * backdrop's and nothing else's — the pixel evidence a payload-only
+ * assertion cannot supply. */
+async function runBackdropPresetLeg(browser, args, fixture) {
+  const { preset, fourD } = fixture;
+  const { context, page, pageErrors, consoleErrors } = await openApp(
+    browser,
+    args,
+  );
+  const started = Date.now();
+  const checks = [];
+  const check = (name, ok, detail) => checks.push({ name, ok, detail });
+  try {
+    const loaded = await loadPreset(page, preset.key);
+    const installed = await waitForExactTiling(page, preset.tiling);
+    const points = await waitForModeNote(
+      page,
+      "modePointsBtn",
+      /Active in Points — .* · complete/,
+      args.settle,
+    );
+    // Freeze the cloud: no further edit may regenerate it, so the tiled
+    // cloud stays on screen while the backdrop alone re-renders.
+    await openSection(page, "transformsSection");
+    const autoUpdate = page.locator("#autoUpdate");
+    if (await autoUpdate.isChecked()) await autoUpdate.click();
+    await openSection(page, "atmosphereSection");
+    await page.locator("#background").selectOption("flame");
+    const tiled = await waitForBackdropRound(page, preset.tiling, args.settle);
+    const tiledCloudProbe = await readCloudWorkerProbe(page);
+    await closePanel(page);
+    const tiledCapture = await captureCanvas(
+      page,
+      args,
+      `${preset.key}-backdrop-tiled`,
+    );
+    check(
+      "tiled backdrop worker round",
+      loaded &&
+        installed.ok &&
+        points.ok &&
+        tiled.ok &&
+        tiled.round.start.seed === BACKDROP_SEED &&
+        exact(tiled.round.start.tiling) === exact(preset.tiling) &&
+        tiled.round.terminal !== null &&
+        tiledCapture.metrics.coverage >= args.draw,
+      `link=${loaded}, tiling=${installed.ok}, points=${points.ok}, fourD=${fourD}, seed=${tiled.round?.start.seed ?? "none"}/${BACKDROP_SEED}, tiling=${exact(tiled.round?.start.tiling ?? null)}, drawn=${(tiledCapture.metrics.coverage * 100).toFixed(2)}%`,
+    );
+    if (!tiled.ok || !tiled.round) {
+      check(
+        "backdrop page errors",
+        pageErrors.length === 0,
+        pageErrors.length ? pageErrors.join(" | ") : "none",
+      );
+      check(
+        "backdrop console errors",
+        consoleErrors.length === 0,
+        consoleErrors.length ? consoleErrors.join(" | ") : "none",
+      );
+      return {
+        ok: checks.every((entry) => entry.ok),
+        preset,
+        checks,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    // Clear tiling from the panel. Auto-update stays off, so Points keeps
+    // the tiled cloud; the backdrop re-renders untiled because the tiling
+    // control now tracks the generated backdrop even without a regenerate.
+    await openSection(page, "tilingSection");
+    const toggle = page.locator("#tilingEnabledCheckbox");
+    if (await toggle.isChecked()) await toggle.click();
+    // exact(null) cannot represent ABSENT tiling (JSON.stringify(undefined)
+    // is undefined), so wait on the decoded document directly.
+    const cleared = await waitForDocument(
+      page,
+      (document) => document.tiling === undefined,
+    );
+    const untiled = await waitForBackdropRound(
+      page,
+      null,
+      args.settle,
+      tiled.round.start.sequence,
+    );
+    const untiledCloudProbe = await readCloudWorkerProbe(page);
+    await closePanel(page);
+    const untiledCapture = await captureCanvas(
+      page,
+      args,
+      `${preset.key}-backdrop-untiled`,
+    );
+    const distinctness = await screenshotDiff(
+      page,
+      tiledCapture.png,
+      untiledCapture.png,
+    );
+    check(
+      "untiled backdrop round keeps the cloud frozen and differs",
+      cleared.ok &&
+        untiled.ok &&
+        untiled.round.start.seed === BACKDROP_SEED &&
+        exact(untiled.round.start.tiling) === exact(null) &&
+        distinctness.fraction >= args.diff &&
+        untiledCloudProbe.requests.length === tiledCloudProbe.requests.length,
+      `cleared=${cleared.ok}, seed=${untiled.round?.start.seed ?? "none"}/${BACKDROP_SEED}, tiling=${exact(untiled.round?.start.tiling ?? null)}, diff=${(distinctness.fraction * 100).toFixed(2)}%/${(args.diff * 100).toFixed(2)}%, cloudRequests=${tiledCloudProbe.requests.length}->${untiledCloudProbe.requests.length}, terminal=${untiled.round?.terminal !== null}`,
+    );
+
+    const errorText = await visibleErrorText(page);
+    check(
+      "page errors",
+      pageErrors.length === 0,
+      pageErrors.length ? pageErrors.join(" | ") : "none",
+    );
+    check(
+      "console errors",
+      consoleErrors.length === 0,
+      consoleErrors.length ? consoleErrors.join(" | ") : "none",
+    );
+    check("visible app error", errorText.length === 0, errorText || "none");
+    return {
+      ok: checks.every((entry) => entry.ok),
+      preset,
+      checks,
+      elapsedMs: Date.now() - started,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+function printBackdropPreset(result) {
+  process.stdout.write(
+    `${result.ok ? "PASS" : "FAIL"}  ${`${result.preset.label} backdrop`.padEnd(30)} ` +
+      `time=${((result.elapsedMs ?? 0) / 1000).toFixed(1)}s\n`,
+  );
+  for (const check of result.checks) {
+    process.stdout.write(
+      `  ${check.ok ? "PASS" : "FAIL"}  ${check.name} — ${check.detail}\n`,
+    );
+  }
+}
+
 async function setRangeValue(page, selector, value) {
   await page.locator(selector).evaluate((element, next) => {
     if (!(element instanceof HTMLInputElement)) {
@@ -2774,6 +3008,14 @@ async function run() {
       for (const fixture of FLAME_PRESETS) {
         const result = await runFlamePresetLeg(browser, args, fixture);
         printFlamePreset(result);
+        if (!result.ok) failed = true;
+      }
+    }
+
+    if (args.scope === "all" || args.scope === "backdrop") {
+      for (const fixture of BACKDROP_PRESETS) {
+        const result = await runBackdropPresetLeg(browser, args, fixture);
+        printBackdropPreset(result);
         if (!result.ok) failed = true;
       }
     }
