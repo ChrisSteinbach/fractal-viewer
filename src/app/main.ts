@@ -43,6 +43,7 @@ import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
   deHasFolds,
+  surfaceOriginVisibleRadius,
   type SurfaceDE,
 } from "../fractal/surface-de";
 import {
@@ -5560,14 +5561,16 @@ async function main(): Promise<void> {
                 schedule: state.schedule ?? null,
               },
             );
-            // Lattice: the 4D descent's FULL visible radius is the
+            // Lattice: the shared origin-visible authority remains the 4D
+            // descent's FULL visible radius
             // estimator authority (never the slice-adjusted one), the
             // camera frames the canonical cell, not the lattice, and the
             // clip pose is measured from the folded 4D content.
+            const originVisibleRadius = surfaceOriginVisibleRadius(de);
             const surfaceTiling = poseTilingForSession(
-              resolveSurfaceTiling(de.visibleBoundingRadius),
+              resolveSurfaceTiling(originVisibleRadius),
               false,
-              de.visibleBoundingRadius,
+              originVisibleRadius,
               true,
             );
             if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
@@ -5922,13 +5925,16 @@ async function main(): Promise<void> {
               schedule: state.schedule ?? null,
             },
           );
-          // Lattice: the 3D descent's visible radius is the estimator
-          // authority, the camera frames the canonical cell, and the clip
-          // pose is measured from the folded 3D content.
+          // Lattice: the 3D descent's certified origin-visible radius restores
+          // a plain tight ball's bound-centre offset; final lenses already
+          // carry that offset in visibleBoundingRadius. The camera frames the
+          // canonical cell, and the clip pose is measured from the folded 3D
+          // content.
+          const originVisibleRadius = surfaceOriginVisibleRadius(de);
           const surfaceTiling = poseTilingForSession(
-            resolveSurfaceTiling(de.visibleBoundingRadius),
+            resolveSurfaceTiling(originVisibleRadius),
             false,
-            de.visibleBoundingRadius,
+            originVisibleRadius,
             false,
           );
           if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {

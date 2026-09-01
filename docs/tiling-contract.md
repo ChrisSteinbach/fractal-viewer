@@ -761,60 +761,97 @@ its maximum fade-weight delta was `2.78e-15`. The measured 6R->8R, 8R->10R
 and 10R->12R candidates at scale 1.25 required 179, 365 and 619 cells; the
 middle pair is retained to agree with the already-qualified Surface edge.
 
-The carrier fade is coverage, not source density or a new color channel.
-Transform index, structural color state, Height, Radius and Position remain
-properties of the canonical source and are copied to every image. The 4D
-w-ramp, slice-relative color, slice weight, lighting, fog and lattice coverage
-are properties of the raw or displayed image and are evaluated after the
-relevant image/view transform.
+The carrier fade is coverage, not source color. Points realizes that coverage
+as spatial density through the proposal/thinning rule below, so it needs no
+new per-vertex alpha, opacity, size or material specialization. Transform
+index, structural color state, Height, Radius and Position remain properties
+of the canonical source and are copied to every image. The 4D w-ramp,
+slice-relative color, slice weight, lighting and fog remain properties of the
+raw or displayed image and are evaluated after the relevant image/view
+transform.
 
 ### Bounded work and normalization
 
-Exhaustive replication remains the oracle, not the production budget. Every
-source attempt earns one integer fanout credit. Rejection banks it; acceptance
-spends `K = min(credit, distinctCandidates, rendererCap)` and advances a
-stable coprime cursor. Credit and cursor persist across worker chunks and GPU
-dispatches. This makes cumulative chosen candidates no greater than source
-attempts, bounds an accepted burst, adapts automatically from dense chamber
-content (`K = 1`) to rare content, and requires neither a probability pilot
-nor an RNG draw.
+Exhaustive replication remains the oracle, not the production budget. The
+runtime has two deliberately separate realizations because Points has no
+per-vertex weight in any of its existing materials, while accumulators already
+sum weighted deposits.
 
-Finite selection gives each chosen image weight `m/K`, where `m` is the
-stabilizer-safe distinct orbit size. A lattice plan precomputes the
-source-independent ceiling
-`u_k = V(max(0, |cellCenter_k| - R))` and its CDF. Stratified selection then
-tests exactly K cells and gives a visible image weight
-`(U/K) * V(|image|)/u_k`, where `U = sum(u_k)` and the quotient is at most
-one. These inverse-inclusion weights reproduce the exhaustive copy density;
-renderers keep their existing completed-field normalization. The GPU lift
-must prove its fixed-point range at the full export budget before enabling the
-specialization.
+**Points uses equal-density output.** For a finite group of order `g`, a source
+with `m` stabilizer-safe distinct images receives `m` dots when `g <= 256`.
+For a larger group its mean integer quota is `256m/g`: carry the exact integer
+remainder `remainder += 256m; K = floor(remainder/g); remainder %= g` across
+accepted sources. Generic B4/F4 sources therefore receive exactly 256 dots,
+while a simple-wall source receives 128; smaller stabilizers retain their
+correct proportional mass even when their quota is below one dot per source.
+A wrapping coprime image cursor chooses `K` distinct representatives and is
+carried across chunks. Every emitted dot has weight one.
+
+For lattice Points, precompute the source-independent ceiling
+`u_k = V(max(0, |cellCenter_k| - R))`, its exact f64 CDF, and
+`U = sum(u_k)`. Each accepted canonical source receives exactly one proposal:
+a base-2 radical-inverse coordinate selects cell `k` with probability
+`u_k/U`, and the paired base-3 coordinate retains its image iff it is below
+`V(|image|)/u_k`. The unconditional retained density is therefore
+`(u_k/U)(V/u_k) = V/U`, exactly the exhaustive fade-weighted image density,
+without storing coverage. The wrapping-u32 proposal ordinal
+is explicit state, never a chaos RNG draw, and makes arbitrary worker chunking
+emit the identical sequence. One proposal per source maximizes source
+diversity; a thin clip may consequently finish underfilled rather than borrow
+brightness from a different source.
+
+**Accumulation consumers retain the weighted estimator.** Every source attempt
+earns one integer fanout credit. Rejection banks it; acceptance spends
+`K = min(credit, distinctCandidates, rendererCap)` and advances the existing
+cursor. Finite samples carry `m/K`; lattice samples carry
+`(U/K) * V(|image|)/u_k`. Credit and cursor persist across chunks/dispatches,
+cumulative candidate tests stay no greater than primary attempts, and the
+existing completed-field normalization remains unchanged. A GPU lift must
+still prove its fixed-point range at the full export budget before enabling
+that specialization.
 
 The frozen budgets are:
 
-| Consumer                 | Budget and terminal behavior                                                                                                                                                                                                           |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Points                   | authored point count remains the maximum allocated/displayed output; at most 256 images from one accepted source; at most 8x the requested source attempts; returns `complete`, `underfilled`, or `empty`, never an untiled substitute |
-| Flame CPU/WebGPU         | authored iterations remain primary orbit steps; at most 32 image deposits at one acceptance and no more selected candidates cumulatively than attempts; credit/cursor are chunk/dispatch state                                         |
-| Generated Flame backdrop | same 32-image rule inside its fixed one-million-step job; schedule and tiling join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                              |
-| 3D Solid                 | no replicated voxel memory: keep the canonical density texture and transform material queries; its separate march budget is measured by the Solid lift                                                                                 |
-| 4D Solid                 | at most 32 weighted pre-projection images per accepted source; the representation and exact volume budget remain the responsibility of its dedicated decision                                                                          |
+| Consumer                 | Budget and terminal behavior                                                                                                                                                                                                                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Points                   | authored point count remains the maximum allocated/displayed output; finite: at most 256 equal dots from one accepted source; lattice: one proposal per accepted source, with at most `8N` source attempts and `8N` proposal tests for request `N`; returns `complete`, `underfilled`, or `empty`, never an untiled substitute |
+| Flame CPU/WebGPU         | authored iterations remain primary orbit steps; at most 32 image deposits at one acceptance and no more selected candidates cumulatively than attempts; credit/cursor are chunk/dispatch state                                                                                                                                 |
+| Generated Flame backdrop | same 32-image rule inside its fixed one-million-step job; schedule and tiling join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                                                                                                                      |
+| 3D Solid                 | no replicated voxel memory: keep the canonical density texture and transform material queries; its separate march budget is measured by the Solid lift                                                                                                                                                                         |
+| 4D Solid                 | at most 32 weighted pre-projection images per accepted source; the representation and exact volume budget remain the responsibility of its dedicated decision                                                                                                                                                                  |
 
-The sheet measured all six finite groups on a balanced 16,384-point
-acceptance fixture and got exactly `1/order`. At equal ~262k output work, the
-F4 Points cap retained 98.2% of exhaustive histogram occupancy with normalized
-L1 0.0484; complete-orbit budgeting retained 97.5% at L1 0.1195 because it
-represented only 227 source motifs, and one-image cycling retained 29.8% at
-L1 0.8885. The 32-image accumulation cap retained 89.5% at L1 0.1551. Across
-the other groups the cap was exact through B3 for Points, while accumulation
-occupancy ranged from 100% down to that F4 floor. For the minimum-scale raw-4D
-lattice, one fixed CDF test per source retained 68.7% occupancy at L1 0.2888
-against 2,107,439 exhaustive deposits; it performed 4,096 candidate tests.
-The deliberately nearly-empty F4+clip model reaches only about 5,555 outputs
-under a 100,000-point request and 800,000-attempt cap, so `underfilled` is a
-first-class valid result. Zero accepted content installs the renderer's normal
-empty output: zero Points geometry, transparent Flame, dark composed backdrop,
-or zero-density Solid.
+The sheet measured all six finite groups on a balanced 16,384-point acceptance
+fixture and got exactly `1/order`. At ~262k output work, equal-density finite
+Points matched the weighted F4 estimator exactly: 98.2% of exhaustive
+histogram occupancy with normalized L1 0.0484. Complete-orbit budgeting
+retained 97.5% at L1 0.1195 because it represented only 227 source motifs, and
+one-image cycling retained 29.8% at L1 0.8885. A B4 simple-wall fixture emitted
+128 equal dots against a generic source's 256, exactly its 192/384 orbit ratio.
+The 32-image accumulation cap retained 89.5% at L1 0.1551.
+
+At minimum lattice scale, proposal-CDF thinning filled 4,096 equal dots after
+5,008 proposal tests in 3D and 5,555 in 4D, well below the 32,768 (`8N`) cap.
+It retained 70.1%/63.7% of exhaustive occupancy at L1 0.2242/0.2895; the
+weighted one-test comparators retained 74.4%/68.7% at L1 0.1903/0.2888.
+Irregular chunk splits reproduced both the finite and lattice emission
+sequences exactly. The deliberately nearly-empty F4+clip model still reaches
+only about 5,555 outputs under a 100,000-point request and 800,000-attempt cap,
+so `underfilled` is a first-class valid result. Zero accepted content installs
+the renderer's normal empty output: zero Points geometry, transparent Flame,
+dark composed backdrop, or zero-density Solid.
+
+**Implementation verdict.** Add a Points-specific bounded visitor beside the
+weighted accumulator visitor; do not change the latter. Its callback carries
+`x/y/z/w` and candidate attribution but no variable weight (or passes the
+literal `1` through the shared callback). Its state is `{ cursor,
+quotaRemainder, attempts, accepted, candidateTests, emitted }`: finite uses
+`cursor + quotaRemainder`, lattice uses `cursor` as the base-2/base-3 proposal
+ordinal, and both serialize that state across worker chunks. The Points worker
+allocates only its existing position/index/color outputs—no weight or coverage
+array—and stops before writing point `N`. It reports `complete` only at `N`,
+`empty` at zero, and otherwise `underfilled` after either `8N` source attempts
+or (for lattice) `8N` proposal tests. Untiled generation must continue through
+its literal historical branch and never construct this state.
 
 ### Legal combinations and edit timing
 

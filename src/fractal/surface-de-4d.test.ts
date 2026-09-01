@@ -28,6 +28,7 @@ import {
   SURFACE_FOLD_MANDELBOX,
   SURFACE_FOLD_NONE,
   SURFACE_FOLD_SPHEREFOLD,
+  surfaceOriginVisibleRadius,
 } from "./surface-de";
 import { composeAffine } from "./affine";
 import {
@@ -1326,6 +1327,7 @@ describe("buildSurfaceDE4 with a final transform", () => {
     const de = buildSurfaceDE4(pentatope());
     expect(de.final).toBeNull();
     expect(de.visibleBoundingRadius).toBe(de.boundingRadius);
+    expect(surfaceOriginVisibleRadius(de)).toBe(de.visibleBoundingRadius);
   });
 
   it("populates the lens and derives visibleBoundingRadius from the lifted final transform's sigma_max and translation norm", () => {
@@ -1346,6 +1348,7 @@ describe("buildSurfaceDE4 with a final transform", () => {
       sigmas.max * de.boundingRadius +
       Math.hypot(affine.t[0], affine.t[1], affine.t[2], affine.t[3]);
     expect(de.visibleBoundingRadius).toBeCloseTo(expected, 9);
+    expect(surfaceOriginVisibleRadius(de)).toBe(de.visibleBoundingRadius);
   });
 
   it("throws when the final transform makes the system ineligible", () => {

@@ -83,14 +83,15 @@ import type { Vec3 } from "./types";
  * `R^2/rho`. Right side: the cube is ORIGIN-centred while `c` is the DE's
  * own `boundCenter`, so the cube's farthest reach FROM `c` is `|c|` plus
  * its own far corner. The `|c|` term is not a formality — `spherefold
- * pair` sits 0.7857 off-origin, ~46% of its own `visibleBoundingRadius`,
- * and dropping it would quote that system a 43.5% rest margin where the
- * real one is 14.1%.
+ * pair` sits 0.7857 off-origin. Its raw 1.7114-radius cube historically
+ * appeared to clear at rest by 14.1%; restoring the centre offset makes the
+ * certified origin-visible radius 2.4971, whose grid reaches 5.2407 from
+ * `c`, past the shell's 4.3812 nearest approach.
  *
  * MEASURED (`scripts/balloon-inversion.harness.ts` section 4, six
- * systems): the predicate CLEARS at rest (`rMult` 1.6) on all six and
- * FAILS in both inflation regimes (0.35, 0.9) on all six — which is why
- * it is a per-FRAME enable rather than a build-time decision. It is
+ * systems): the predicate CLEARS at rest (`rMult` 1.6) on five and refuses
+ * spherefold; it FAILS in both inflation regimes (0.35, 0.9) on all six —
+ * which is why it is a per-FRAME enable rather than a build-time decision. It is
  * monotone in `R`, the only live term, so a radius sweep flips it exactly
  * once per crossing; there is nothing to debounce. The grid REQUEST and
  * the enable stay two decisions: one build at session enter serves every
@@ -101,10 +102,12 @@ import type { Vec3 } from "./types";
  * positive-floor cell directly against `floor + cellRadius <= max(0,
  * R^2/rho - |cellCentre - c|)` — the sufficient condition, the bare-floor
  * comparison being looser by exactly one `cellRadius` in the UNSAFE
- * direction. 0 violations over 115,739-140,267 cells at resolution 64 and
- * 13,152-18,519 at 32, five systems, tightest cell 42-62% margin. So NO
- * FLOOR CLAMP ships. That is EMPIRICAL OVER FIVE SYSTEMS, NOT A PROOF —
- * the margin is thinnest at resolution 32, where `cellRadius` doubles
+ * direction. Every admitted built grid has 0 violations over
+ * 118,808-140,267 cells at resolution 64 and 13,822-18,519 at 32, with
+ * 51-61% margin at the tightest cell. The refused spherefold grid has 7,696
+ * violations at 64 and 1,438 at 32, proving the gate excludes the newly
+ * unsafe row. So NO FLOOR CLAMP ships. That is EMPIRICAL OVER FIVE BUILT
+ * SYSTEMS, NOT A PROOF — the margin is thinnest at resolution 32, where `cellRadius` doubles
  * against an unchanged shell distance and which
  * {@link pickSurfaceGridResolution} can downshift to without telling
  * anyone.
@@ -118,8 +121,8 @@ import type { Vec3 } from "./types";
  * <= dist(p, A)`), but it bounds NOTHING about the shell, which at rest
  * lies entirely outside the cube. The balloon arm of the GLSL march
  * therefore refuses out-of-box samples outright — the same in-box
- * restriction the coverage measurement modelled, whose 18.6-33.2% of
- * steps skipped is the rate AFTER it.
+ * restriction the coverage measurement modelled, whose 18.1-31.1% of
+ * steps skipped on admitted systems is the rate AFTER it.
  *
  * THREE DIMENSIONS ONLY, and that is a REFUSAL rather than an unfinished
  * lift. A 4D session's rotor and w-slice are LIVE per-frame view state

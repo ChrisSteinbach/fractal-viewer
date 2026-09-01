@@ -838,8 +838,9 @@ export interface SurfaceDE {
    * is unchanged while off-center attractors stop paying their offset as
    * slack through every level (brief §3.2, factor B). */
   boundCenter: Vec3;
-  /** Radius bounding the VISIBLE set `F(attractor)` — equals
-   * `boundingRadius` when there is no final transform. */
+  /** Origin-centred radius bounding the VISIBLE set `F(attractor)`. Without a
+   * final transform this is `|boundCenter| + boundingRadius`; a final lens
+   * replaces it with the corresponding origin-visible image bound. */
   visibleBoundingRadius: number;
   /** Camera-independent p03/p97 calibration of the greedy native rings and
    * sheets carriers. Derived from the RAW pre-final probe, so neither an
@@ -901,6 +902,31 @@ export interface SurfaceDE {
 export interface SurfaceDEBuildOptions {
   condensationDepthBand?: CondensationDepthBand;
   schedule?: HybridSchedule | null;
+}
+
+/** Minimal shared shape accepted by {@link surfaceOriginVisibleRadius}. The
+ * 4D descriptor deliberately has no `boundCenter`: its raw and visible balls
+ * are already origin-centred. */
+interface SurfaceOriginVisibleBounds {
+  boundingRadius: number;
+  visibleBoundingRadius: number;
+  boundCenter?: readonly number[];
+  final: object | null;
+  foldFinal: object | null;
+}
+
+/** Certified radius of the rendered set about the origin. A plain 3D inverse
+ * IFS may use a tighter off-origin descent ball, so its origin-visible radius
+ * restores the centre offset. Affine/fold final lenses already bake that
+ * offset into `visibleBoundingRadius`, as do all 4D descriptors. */
+export function surfaceOriginVisibleRadius(
+  de: SurfaceOriginVisibleBounds,
+): number {
+  const center = de.boundCenter;
+  if (center && de.final === null && de.foldFinal === null) {
+    return Math.hypot(center[0], center[1], center[2]) + de.boundingRadius;
+  }
+  return de.visibleBoundingRadius;
 }
 
 /** Prepared CPU form of a scheduled hybrid. `bounds[d]` encloses
@@ -2417,7 +2443,8 @@ export function buildSurfaceDE(
 
   let final: SurfaceDE["final"] = null;
   let foldFinal: SurfaceDE["foldFinal"] = null;
-  let visibleBoundingRadius = boundingRadius;
+  let visibleBoundingRadius =
+    Math.hypot(boundCenter[0], boundCenter[1], boundCenter[2]) + boundingRadius;
   if (finalTransform) {
     const affine = composeAffine(finalTransform);
     const invM = inverse3(affine.m);

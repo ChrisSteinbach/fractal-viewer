@@ -142,7 +142,7 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "5898a35d60540b64",
   },
   "3D balloon finish0": {
-    resolved: "cf3993a5bb63e38a",
+    resolved: "2553770bebb22d4a",
     emitted: "27c0cc0f1b1b5fc0",
   },
   "3D plane finish0": {
@@ -150,7 +150,7 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "cdb41fd6ff2c1784",
   },
   "3D lens+balloon finish0": {
-    resolved: "85835dc8f5c693ad",
+    resolved: "ffe6bdf2d90a7920",
     emitted: "6579e37fd4ec9597",
   },
   "3D lens+plane finish0": {
@@ -162,7 +162,7 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "fc3b5eecf090fd50",
   },
   "3D escape+balloon finish0": {
-    resolved: "73ab8e8cf15dc8ff",
+    resolved: "78f3949f80bbac2c",
     emitted: "441881d3d6dcddf5",
   },
   "3D escape+plane finish0": {
@@ -174,8 +174,8 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "68625d8191aae5d9",
   },
   "3D bulb+balloon finish0": {
-    resolved: "1a8be3a870ec0ee3",
-    emitted: "1a8be3a870ec0ee3",
+    resolved: "ee6815b4a9b46f01",
+    emitted: "ee6815b4a9b46f01",
   },
   "3D bulb+plane finish0": {
     resolved: "52e3a9619ac1764d",
@@ -190,7 +190,7 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "887c47b063db1b7f",
   },
   "3D balloon finish1": {
-    resolved: "44b4ae7c9f6b0e3d",
+    resolved: "1ba3183defc84a98",
     emitted: "56853af5a9459b54",
   },
   "3D plane finish1": {
@@ -198,7 +198,7 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "e806201d0cf3b015",
   },
   "3D lens+balloon finish1": {
-    resolved: "5447b05868aae46e",
+    resolved: "dee76813efd09bcd",
     emitted: "d826e47ceaf72e34",
   },
   "3D lens+plane finish1": {
@@ -210,7 +210,7 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "ec3e7ee94f8643e3",
   },
   "3D escape+balloon finish1": {
-    resolved: "f3a49755c3848638",
+    resolved: "076b79080509f31d",
     emitted: "6d98c7e3bf1564de",
   },
   "3D escape+plane finish1": {
@@ -222,8 +222,8 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "8a2cd95308953315",
   },
   "3D bulb+balloon finish1": {
-    resolved: "f253055d4b2352f2",
-    emitted: "f253055d4b2352f2",
+    resolved: "250de4bfd8daad20",
+    emitted: "250de4bfd8daad20",
   },
   "3D bulb+plane finish1": {
     resolved: "0dc18c2d33878971",

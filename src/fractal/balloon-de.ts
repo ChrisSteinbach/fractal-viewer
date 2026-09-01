@@ -109,10 +109,10 @@
  * rows. The empty-space grid is CONDITIONAL in balloon mode — its floors
  * bound the fractal alone, and are a valid bound on the union exactly
  * while the shell clears the grid box (`surface-grid.ts`'s
- * `balloonClearsGridBox`: `R^2/rho > |c| + sqrt(3)*halfExtent`, which the
- * rest state satisfies on every measured system and both inflation regimes
- * fail). The blanket OFF this module shipped with was the same rule before
- * anything measured where it holds.
+ * `balloonClearsGridBox`: `R^2/rho > |c| + sqrt(3)*halfExtent`. Rest clears
+ * five of six measured systems; corrected spherefold refuses, and both
+ * inflation regimes fail). The blanket OFF this module shipped with was the
+ * same rule before anything measured where it holds.
  *
  * MEASURED VERDICT (the spike, CLOUD=300k, margin 1): 0 off-set
  * conservativeness violations anywhere; erosion transports, never
