@@ -1586,17 +1586,23 @@ upstream legality refusal, so no tiled kernel can deposit an echo.
 
 The lattice proposal CDF is transferred as strictly increasing endpoint and
 mass high/low-16 pairs, all exactly representable in f32, with a final endpoint
-of 2^32 and at least one integer tick per proposal. The largest finite splat is
-F4's 1,152; x256 weight quantization makes the largest weight add 294,912, and
-the additional x256 color factor makes 75,497,472, both safely within one u32
-atomic add before the existing emulated-u64 accumulation. The packed lattice
-bound is below 740.
+of 2^32 and at least one integer tick per proposal. Selection and importance
+correction use the same quantized mass; the packer rejects any non-finite f32
+wire value. The largest finite splat is F4's 1,152; x256 weight quantization
+makes the largest weight add 294,912, and the additional x256 color factor
+makes 75,497,472, both safely within one u32 atomic add before the existing
+emulated-u64 accumulation. The packed lattice bound is below 740.
 
 Targeted agreement on verified Mesa Intel Iris Xe passed every scenario-owned
 noise bar: finite 3D MAE 0.0065 / density TV 0.0163; minimum-scale lattice 3D
 MAE 0.940 / TV 0.0375 (threshold 2); the F4 chamber 4D fixture MAE 0.000657 /
 TV 0.00636; and minimum-scale lattice 4D MAE 2.790 / TV 0.0471 with near-zero
 signed bias (threshold 5).
+
+The extended Iris matrix also passed maximum-scale lattice 3D (MAE 0.132 / TV
+0.0154), an excluding analytic clip with both histograms exactly empty, and a
+single legal emitter + xaos + schedule + final-lens composition (MAE 0.00695 /
+TV 0.00523), keeping the real emitter prefix and appended plan live together.
 
 ## Save-PNG readiness
 
