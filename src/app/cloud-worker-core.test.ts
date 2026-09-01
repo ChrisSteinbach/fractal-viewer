@@ -1,4 +1,9 @@
-import { cloudResultTransfers, generateCloud } from "./cloud-worker-core";
+import {
+  canonicalColorSourceByteCeiling,
+  cloudResultTransfers,
+  generateCloud,
+  MAX_CANONICAL_COLOR_SOURCE_BYTES,
+} from "./cloud-worker-core";
 import type {
   CloudRequest,
   CloudResult,
@@ -11,9 +16,25 @@ import { toTransform4 } from "../fractal/affine4";
 import { buildColors } from "../fractal/color";
 import type { PositionAxisColors } from "../fractal/color";
 import { mulberry32 } from "../fractal/rng";
-import { doubleRotation, sierpinskiTetrahedron } from "../fractal/presets";
-import type { Transform } from "../fractal/types";
+import {
+  doubleRotation,
+  pentatope,
+  sierpinskiTetrahedron,
+} from "../fractal/presets";
+import { foldToChamber, TILING_GROUP_INFO } from "../fractal/tiling";
+import {
+  isResolvedLatticeTiling,
+  type TilingGroup,
+  type TilingSpec,
+} from "../fractal/tiling";
+import { resolvePointTilingSession } from "../fractal/point-tiling-session";
+import {
+  latticeCameraCarrierRadius4,
+  latticeCameraFitBounds,
+} from "../fractal/lattice-march";
+import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import { framingBounds, framingRadius4 } from "./framing-bounds";
+import { MAX_NUM_POINTS } from "./state";
 import {
   hasMeshAsset,
   uninstallCustomMeshAsset,
@@ -87,6 +108,103 @@ function as3D(result: CloudResult): CloudResult3D {
 function as4D(result: CloudResult): CloudResult4D {
   if (!result.fourD) throw new Error("expected a 4D CloudResult");
   return result;
+}
+
+function pointTilingFixture(fourD: boolean): {
+  transforms: Transform[];
+  tiling: TilingSpec;
+} {
+  return fourD
+    ? { transforms: pentatope(), tiling: { group: "a4" } }
+    : { transforms: sierpinskiTetrahedron(), tiling: { group: "a3" } };
+}
+
+function farClipTiling(fourD: boolean): TilingSpec {
+  return {
+    group: fourD ? "a4" : "a3",
+    clip: {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.1 },
+          combine: "union",
+          pose: { offset: [100, 100, 100] },
+        },
+      ],
+    },
+  };
+}
+
+function foldedPoint(group: TilingGroup, input: Vec3 | Vec4): Vec3 | Vec4 {
+  const point = foldToChamber(
+    TILING_GROUP_INFO[group],
+    input,
+    input.length === 4 ? [0, 0, 0, 0] : [0, 0, 0],
+  );
+  if (!point) throw new Error("test point did not fold into the chamber");
+  return point;
+}
+
+/** A low-probability contractive map lands in a tiny authored chamber clip;
+ * the dominant map lands outside it. The accepted rare source emits a full
+ * finite orbit, but the shared 8N source cap expires before filling N. */
+function underfilledPointTilingFixture(fourD: boolean): {
+  transforms: Transform[];
+  tiling: TilingSpec;
+} {
+  const group = fourD ? "a4" : "a3";
+  const rare = foldedPoint(
+    group,
+    fourD ? [0.17, -0.31, 0.53, 0.71] : [0.17, -0.31, 0.53],
+  );
+  const common = foldedPoint(
+    group,
+    fourD ? [-0.61, 0.37, -0.23, 0.11] : [-0.61, 0.37, -0.23],
+  );
+  const contraction = 0.01;
+  const translation = 1 - contraction;
+  const rareWeight = 1;
+  const commonWeight = fourD ? 1199 : 399;
+  const transform = (
+    id: number,
+    fixed: Vec3 | Vec4,
+    weight: number,
+  ): Transform => ({
+    id,
+    position: [
+      fixed[0] * translation,
+      fixed[1] * translation,
+      fixed[2] * translation,
+    ],
+    rotation: [0, 0, 0],
+    scale: [contraction, contraction, contraction],
+    weight,
+    ...(fourD
+      ? {
+          w: {
+            position: (fixed as Vec4)[3] * translation,
+            scale: contraction,
+          },
+        }
+      : {}),
+  });
+  return {
+    transforms: [
+      transform(0, common, commonWeight),
+      transform(1, rare, rareWeight),
+    ],
+    tiling: {
+      group,
+      clip: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.04 },
+            combine: "union",
+            pose: { offset: [rare[0], rare[1], rare[2]] },
+          },
+        ],
+      },
+    },
+  };
 }
 
 describe("generateCloud 3D", () => {
@@ -502,6 +620,338 @@ describe("generateCloud 4D", () => {
   });
 });
 
+describe("generateCloud point tiling integration", () => {
+  it.each([false, true] as const)(
+    "returns a complete active finite tiled cloud with canonical provenance in %sD",
+    (fourD) => {
+      const fixture = pointTilingFixture(fourD);
+      const requested = fourD ? 240 : 96;
+      const request = cloudRequest({
+        ...fixture,
+        id: fourD ? 42 : 41,
+        fourD,
+        numPoints: requested,
+        colorMode: "height",
+      });
+      const result = generateCloud(request);
+
+      expect(result.count).toBe(requested);
+      expect(result.pointTiling).toEqual(
+        expect.objectContaining({
+          availability: "active",
+          kind: "finite",
+          fill: "complete",
+          requested,
+        }),
+      );
+      if (result.pointTiling?.availability !== "active") {
+        throw new Error("expected an active point-tiling outcome");
+      }
+      expect(result.pointTiling.attempts).toBeGreaterThan(0);
+      expect(result.pointTiling.attempts).toBeLessThanOrEqual(requested * 8);
+      expect(result.pointTiling.accepted).toBeGreaterThan(0);
+      expect(result.canonicalColorSource).toBeDefined();
+
+      if (result.fourD) {
+        const source = result.canonicalColorSource!;
+        expect(source.positions).toHaveLength(requested * 3);
+        expect(source.w).toHaveLength(requested);
+        expect(source.center).not.toEqual(result.center);
+        expect(source.positions.byteLength + source.w.byteLength).toBe(
+          canonicalColorSourceByteCeiling(result.count, true),
+        );
+      } else {
+        const source = result.canonicalColorSource!;
+        expect(source.positions).toHaveLength(requested * 3);
+        expect(source.positions).not.toEqual(result.positions);
+        expect(result.colors).toEqual(
+          buildColors(
+            result,
+            request.transforms,
+            request.colorMode,
+            request.colorGamma,
+            request.rampPalette,
+            request.positionAxisColors,
+            source,
+          ),
+        );
+        expect(source.positions.byteLength).toBe(
+          canonicalColorSourceByteCeiling(result.count, false),
+        );
+      }
+    },
+  );
+
+  it.each([
+    ["a3", false],
+    ["b3", false],
+    ["h3", false],
+    ["a4", true],
+    ["b4", true],
+    ["f4", true],
+  ] as const)(
+    "routes finite group %s through the active worker path within both caps",
+    (group, fourD) => {
+      const requested = 12;
+      const result = generateCloud(
+        cloudRequest({
+          transforms: fourD ? pentatope() : sierpinskiTetrahedron(),
+          tiling: { group },
+          fourD,
+          numPoints: requested,
+          seed: 101,
+        }),
+      );
+
+      expect(result.pointTiling).toEqual(
+        expect.objectContaining({
+          availability: "active",
+          kind: "finite",
+          requested,
+        }),
+      );
+      if (result.pointTiling?.availability !== "active") {
+        throw new Error(`expected active point tiling for ${group}`);
+      }
+      expect(result.count).toBeGreaterThan(0);
+      expect(result.count).toBeLessThanOrEqual(requested);
+      expect(result.pointTiling.attempts).toBeLessThanOrEqual(requested * 8);
+      expect(result.pointTiling.candidateTests).toBeLessThanOrEqual(
+        requested * 8,
+      );
+      expect(result.positions).toHaveLength(result.count * 3);
+      expect(result.transformIndices).toHaveLength(result.count);
+      expect(result.canonicalColorSource?.positions).toHaveLength(
+        result.count * 3,
+      );
+      if (result.fourD) {
+        expect(result.w).toHaveLength(result.count);
+        expect(result.canonicalColorSource?.w).toHaveLength(result.count);
+      } else {
+        expect(result.colors).toHaveLength(result.count * 3);
+      }
+    },
+  );
+
+  it.each([false, true] as const)(
+    "runs the active mirrored-lattice path and frames its canonical cell in %sD",
+    (fourD) => {
+      const transforms = fourD ? pentatope() : sierpinskiTetrahedron();
+      const tiling: TilingSpec = { kind: "lattice", cellScale: 1 };
+      const request = cloudRequest({
+        transforms,
+        tiling,
+        fourD,
+        numPoints: 64,
+      });
+      const session = resolvePointTilingSession(
+        transforms,
+        null,
+        request.symmetry,
+        null,
+        tiling,
+        false,
+        fourD,
+      );
+      if (
+        session.status !== "active" ||
+        !isResolvedLatticeTiling(session.resolved)
+      ) {
+        throw new Error("expected an active resolved lattice fixture");
+      }
+
+      const result = generateCloud(request);
+
+      expect(result.count).toBe(request.numPoints);
+      expect(result.pointTiling).toEqual(
+        expect.objectContaining({
+          availability: "active",
+          kind: "lattice",
+          fill: "complete",
+          requested: request.numPoints,
+        }),
+      );
+      expect(result.canonicalColorSource).toBeDefined();
+      if (result.fourD) {
+        expect(result.frameRadius).toBe(
+          latticeCameraCarrierRadius4(
+            session.resolved.h,
+            session.resolved.radius,
+          ),
+        );
+      } else {
+        expect(result.frameBounds).toEqual(
+          latticeCameraFitBounds(
+            session.resolved.h,
+            session.resolved.radius,
+            false,
+          ),
+        );
+      }
+    },
+  );
+
+  it.each([false, true] as const)(
+    "keeps a refused %sD request on the byte-identical ordinary path",
+    (fourD) => {
+      const fixture = pointTilingFixture(fourD);
+      const request = cloudRequest({
+        ...fixture,
+        fourD,
+        numPoints: 80,
+        balloonEcho: true,
+      });
+      const refused = generateCloud(request);
+      const ordinary = generateCloud({
+        ...request,
+        tiling: null,
+        balloonEcho: false,
+      });
+
+      expect(refused.count).toBe(request.numPoints);
+      expect(refused.positions).toEqual(ordinary.positions);
+      expect(refused.transformIndices).toEqual(ordinary.transformIndices);
+      expect(refused.bounds).toEqual(ordinary.bounds);
+      expect(refused.canonicalColorSource).toBeUndefined();
+      expect(refused.pointTiling).toEqual({
+        availability: "refused",
+        note: "Point tiling is unavailable with Balloon; turn Balloon off.",
+      });
+      if (refused.fourD && ordinary.fourD) {
+        expect(refused.w).toEqual(ordinary.w);
+        expect(refused.center).toEqual(ordinary.center);
+        expect(refused.radius).toBe(ordinary.radius);
+      } else if (!refused.fourD && !ordinary.fourD) {
+        expect(refused.colors).toEqual(ordinary.colors);
+        expect(refused.frameBounds).toEqual(ordinary.frameBounds);
+      } else {
+        throw new Error("refused and ordinary result dimensions disagreed");
+      }
+    },
+  );
+
+  it.each([false, true] as const)(
+    "returns an explicit empty active %sD result at 8N with no ordinary fallback",
+    (fourD) => {
+      const fixture = pointTilingFixture(fourD);
+      const requested = 7;
+      const result = generateCloud(
+        cloudRequest({
+          transforms: fixture.transforms,
+          tiling: farClipTiling(fourD),
+          fourD,
+          numPoints: requested,
+        }),
+      );
+
+      expect(result.count).toBe(0);
+      expect(result.positions).toHaveLength(0);
+      expect(result.transformIndices).toHaveLength(0);
+      expect(result.canonicalColorSource?.positions).toHaveLength(0);
+      expect(result.pointTiling).toEqual({
+        availability: "active",
+        kind: "finite",
+        fill: "empty",
+        requested,
+        attempts: requested * 8,
+        accepted: 0,
+        candidateTests: 0,
+      });
+      if (result.fourD) {
+        expect(result.w).toHaveLength(0);
+        expect(result.canonicalColorSource?.w).toHaveLength(0);
+      } else {
+        expect(result.colors).toHaveLength(0);
+      }
+    },
+  );
+
+  it.each([false, true] as const)(
+    "reports a capped underfilled active finite cloud in %sD",
+    (fourD) => {
+      const fixture = underfilledPointTilingFixture(fourD);
+      const requested = fourD ? 300 : 100;
+      const result = generateCloud(
+        cloudRequest({
+          ...fixture,
+          fourD,
+          numPoints: requested,
+          seed: fourD ? 73 : 71,
+        }),
+      );
+
+      expect(result.count).toBeGreaterThan(0);
+      expect(result.count).toBeLessThan(requested);
+      expect(result.pointTiling).toEqual(
+        expect.objectContaining({
+          availability: "active",
+          kind: "finite",
+          fill: "underfilled",
+          requested,
+          attempts: requested * 8,
+        }),
+      );
+      expect(result.canonicalColorSource?.positions).toHaveLength(
+        result.count * 3,
+      );
+      if (result.fourD) {
+        const source = result.canonicalColorSource!;
+        expect(source.w).toHaveLength(result.count);
+        expect(
+          source.positions.buffer.byteLength + source.w.buffer.byteLength,
+        ).toBe(canonicalColorSourceByteCeiling(requested, true));
+      } else {
+        expect(result.canonicalColorSource!.positions.buffer.byteLength).toBe(
+          canonicalColorSourceByteCeiling(requested, false),
+        );
+      }
+    },
+  );
+});
+
+describe("canonical color source memory ceiling", () => {
+  it("caps canonical provenance at 60 MB in 3D and 80 MB in 4D at the authored 5M maximum", () => {
+    expect(MAX_NUM_POINTS).toBe(5_000_000);
+    expect(MAX_CANONICAL_COLOR_SOURCE_BYTES).toBe(80_000_000);
+    expect(canonicalColorSourceByteCeiling(MAX_NUM_POINTS, false)).toBe(
+      60_000_000,
+    );
+    expect(canonicalColorSourceByteCeiling(MAX_NUM_POINTS, true)).toBe(
+      MAX_CANONICAL_COLOR_SOURCE_BYTES,
+    );
+  });
+
+  it("rejects an oversized active 4D tiled wire before reading transforms or allocating its cloud", () => {
+    const request = cloudRequest({
+      transforms: pentatope(),
+      tiling: { group: "a4" },
+      fourD: true,
+      numPoints: MAX_NUM_POINTS + 1,
+    });
+    let transformsRead = false;
+    Object.defineProperty(request, "transforms", {
+      get: () => {
+        transformsRead = true;
+        return pentatope();
+      },
+    });
+
+    expect(() => generateCloud(request)).toThrow(
+      /80000016 bytes, exceeding the 80000000-byte worker ceiling/,
+    );
+    expect(transformsRead).toBe(false);
+  });
+
+  it("rejects invalid capacities instead of returning an unsafe byte budget", () => {
+    expect(() => canonicalColorSourceByteCeiling(-1, false)).toThrow(
+      /non-negative safe integer/,
+    );
+    expect(() =>
+      canonicalColorSourceByteCeiling(Number.MAX_SAFE_INTEGER, true),
+    ).toThrow(/byte ceiling is unsafe/);
+  });
+});
+
 describe("cloudResultTransfers", () => {
   it("lists positions, transformIndices, and colors buffers for a 3D result", () => {
     const result = as3D(generateCloud(cloudRequest()));
@@ -525,4 +975,34 @@ describe("cloudResultTransfers", () => {
     expect(transfers[1]).toBe(result.transformIndices.buffer);
     expect(transfers[2]).toBe(result.w.buffer);
   });
+
+  it.each([false, true] as const)(
+    "adds each canonical provenance buffer exactly once for an active tiled %sD result",
+    (fourD) => {
+      const fixture = pointTilingFixture(fourD);
+      const result = generateCloud(
+        cloudRequest({ ...fixture, fourD, numPoints: fourD ? 240 : 96 }),
+      );
+
+      const transfers = cloudResultTransfers(result);
+
+      expect(new Set(transfers).size).toBe(transfers.length);
+      if (result.fourD) {
+        expect(transfers).toEqual([
+          result.positions.buffer,
+          result.transformIndices.buffer,
+          result.w.buffer,
+          result.canonicalColorSource!.positions.buffer,
+          result.canonicalColorSource!.w.buffer,
+        ]);
+      } else {
+        expect(transfers).toEqual([
+          result.positions.buffer,
+          result.transformIndices.buffer,
+          result.colors.buffer,
+          result.canonicalColorSource!.positions.buffer,
+        ]);
+      }
+    },
+  );
 });

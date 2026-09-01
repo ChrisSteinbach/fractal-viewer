@@ -192,6 +192,29 @@ describe("CloudGenerator request()", () => {
     expect(h.delivered).toHaveLength(0);
   });
 
+  it("posts the raw tiling wire as structured-clone-safe request state", () => {
+    const h = harness();
+    const tiling = {
+      kind: "lattice" as const,
+      cellScale: 1.25,
+      clip: {
+        parts: [
+          {
+            primitive: { kind: "sphere" as const, radius: 0.75 },
+            combine: "union" as const,
+          },
+        ],
+      },
+    };
+
+    h.generator.request(params({ tiling, balloonEcho: false }));
+
+    const cloned = structuredClone(h.posted[0]);
+    expect(cloned.tiling).toEqual(tiling);
+    expect(cloned.tiling).not.toBe(tiling);
+    expect(cloned.balloonEcho).toBe(false);
+  });
+
   it("parks a request made while one is in flight; the in-flight result dispatches it, then delivers", () => {
     const h = harness();
 
