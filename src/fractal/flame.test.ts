@@ -29,7 +29,9 @@ import { buildPaletteLUT } from "./palette";
 import { balloonPaletteCoordinate, buildBalloonFromBall } from "./balloon-de";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
+import { resolvePointTilingPlan } from "./point-tiling";
 import { GEAR_SHAPE } from "./shapes";
+import { resolveTiling } from "./tiling";
 import type { Transform, Vec3 } from "./types";
 
 function makeTransforms(count: number): Transform[] {
@@ -199,6 +201,416 @@ describe("accumulateFlame projection and bucketing", () => {
       transformColors(1),
     );
     expect(front.hits.reduce((a, b) => a + b, 0)).toBe(50);
+  });
+});
+
+describe("accumulateFlame point-space tiling", () => {
+  it("deposits bounded finite images with their multiplicity weights and canonical color", () => {
+    const plan = resolvePointTilingPlan(resolveTiling({ group: "a3" }), 3)!;
+    const palette: Vec3[] = [[0.25, 0.5, 0.75]];
+    const iterations = 40;
+    const hist = accumulateFlame(
+      prepareChaosGame(fixedPointSystem([0.3, 0.3, 0.3])),
+      ORTHOGRAPHIC,
+      64,
+      64,
+      iterations,
+      mulberry32(3),
+      palette,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      plan,
+    );
+
+    expect(hist.pointTiling).toEqual({
+      credit: 0,
+      cursor: iterations,
+      attempts: iterations,
+      accepted: iterations,
+      selected: iterations,
+      emitted: iterations,
+    });
+    const totalWeight = hist.hits.reduce((sum, hit) => sum + hit, 0);
+    // One selected image per accepted source carries the generic A3 orbit's
+    // full 24-image multiplicity.
+    expect(totalWeight).toBe(iterations * 24);
+    expect(hist.hits.filter((hit) => hit > 0).length).toBeGreaterThan(12);
+    for (let channel = 0; channel < 3; channel++) {
+      let sum = 0;
+      for (let i = channel; i < hist.sumRGB.length; i += 3) {
+        sum += hist.sumRGB[i];
+      }
+      expect(sum).toBe(palette[0][channel] * totalWeight);
+    }
+  });
+
+  it("tests canonical membership after the scheduled post-word and final lens", () => {
+    const plan = resolvePointTilingPlan(
+      resolveTiling(
+        {
+          kind: "lattice",
+          cellScale: 4,
+          clip: {
+            parts: [
+              {
+                primitive: { kind: "sphere", radius: 0.05 },
+                combine: "union",
+                pose: { offset: [1.2, 0.5, 0.6] },
+              },
+            ],
+          },
+        },
+        3,
+      ),
+      3,
+    )!;
+    const prepared = prepareChaosGame(
+      fixedPointSystem([0.1, 0.2, 0.3]),
+      {
+        id: 0,
+        position: [0.2, 0.3, -0.4],
+        rotation: [0, 0, 0],
+        scale: [2, 2, 2],
+      },
+      { order: 1, plane: "xz" },
+      {
+        depth: 1,
+        transforms: [
+          {
+            id: 0,
+            position: [0.4, -0.1, 0.2],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+          },
+        ],
+      },
+    );
+    const hist = accumulateFlame(
+      prepared,
+      [0.03, 0, 0, 0, 0, 0.03, 0, 0, 0, 0, 0.03, 0, 0, 0, 0, 1],
+      32,
+      32,
+      1,
+      mulberry32(5),
+      [[1, 1, 1]],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      plan,
+    );
+
+    expect(hist.pointTiling?.attempts).toBe(1);
+    expect(hist.pointTiling?.accepted).toBe(1);
+    expect(hist.pointTiling?.emitted).toBe(1);
+    expect(hist.hits.reduce((sum, hit) => sum + hit, 0)).toBeGreaterThan(0);
+  });
+
+  it("uses the lattice weighted estimator without exceeding source-attempt work", () => {
+    const plan = resolvePointTilingPlan(
+      resolveTiling({ kind: "lattice", cellScale: 4 }, 1),
+      3,
+    )!;
+    const iterations = 200;
+    const hist = accumulateFlame(
+      prepareChaosGame(fixedPointSystem([0.2, 0.1, 0.3])),
+      [0.08, 0, 0, 0, 0, 0.08, 0, 0, 0, 0, 0.08, 0, 0, 0, 0, 1],
+      64,
+      64,
+      iterations,
+      mulberry32(7),
+      [[1, 1, 1]],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      plan,
+    );
+
+    expect(hist.pointTiling?.attempts).toBe(iterations);
+    expect(hist.pointTiling?.accepted).toBe(iterations);
+    expect(hist.pointTiling?.selected).toBeLessThanOrEqual(iterations);
+    expect(hist.pointTiling?.emitted).toBeLessThanOrEqual(
+      hist.pointTiling!.selected,
+    );
+    expect(hist.pointTiling?.emitted).toBeGreaterThan(0);
+    expect(hist.hits.reduce((sum, hit) => sum + hit, 0)).toBeGreaterThan(0);
+    expect(hist.hits.filter((hit) => hit > 0).length).toBeGreaterThan(1);
+  });
+
+  it("banks empty attempts, then caps one accepted finite source at 32 images", () => {
+    const plan = resolvePointTilingPlan(
+      resolveTiling({
+        group: "b3",
+        clip: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.05 },
+              combine: "union",
+              pose: { offset: [0.3, 0.3, 0.6] },
+            },
+          ],
+        },
+      }),
+      3,
+    )!;
+    const rng = mulberry32(19);
+    const empty = accumulateFlame(
+      prepareChaosGame(fixedPointSystem([0.3, 0.3, 0.9])),
+      ORTHOGRAPHIC,
+      64,
+      64,
+      40,
+      rng,
+      [[1, 1, 1]],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      plan,
+    );
+
+    expect(empty.hits.every((hit) => hit === 0)).toBe(true);
+    expect(empty.maxHits).toBe(0);
+    expect(empty.pointTiling).toEqual({
+      credit: 40,
+      cursor: 0,
+      attempts: 40,
+      accepted: 0,
+      selected: 0,
+      emitted: 0,
+    });
+
+    const resumed = accumulateFlame(
+      prepareChaosGame(fixedPointSystem([0.3, 0.3, 0.6])),
+      ORTHOGRAPHIC,
+      64,
+      64,
+      1,
+      rng,
+      [[1, 1, 1]],
+      empty,
+      undefined,
+      undefined,
+      undefined,
+      plan,
+    );
+    expect(resumed.pointTiling).toEqual({
+      credit: 9,
+      cursor: 32,
+      attempts: 41,
+      accepted: 1,
+      selected: 32,
+      emitted: 32,
+    });
+    expect(resumed.hits.reduce((sum, hit) => sum + hit, 0)).toBe(48);
+  });
+
+  it.each(["finite", "lattice"] as const)(
+    "keeps %s cursor, weights, and deposits identical across chunks",
+    (kind) => {
+      const plan = resolvePointTilingPlan(
+        kind === "finite"
+          ? resolveTiling({ group: "a3" })
+          : resolveTiling({ kind: "lattice", cellScale: 4 }, 1),
+        3,
+      )!;
+      const prepared = prepareChaosGame(fixedPointSystem([0.3, 0.3, 0.3]));
+      const palette: Vec3[] = [[0.2, 0.4, 0.6]];
+      const chunkRng = mulberry32(23);
+      let chunked = accumulateFlame(
+        prepared,
+        ORTHOGRAPHIC,
+        64,
+        64,
+        37,
+        chunkRng,
+        palette,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        plan,
+      );
+      chunked = accumulateFlame(
+        prepared,
+        ORTHOGRAPHIC,
+        64,
+        64,
+        63,
+        chunkRng,
+        palette,
+        chunked,
+        undefined,
+        undefined,
+        undefined,
+        plan,
+      );
+      const oneShot = accumulateFlame(
+        prepared,
+        ORTHOGRAPHIC,
+        64,
+        64,
+        100,
+        mulberry32(23),
+        palette,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        plan,
+      );
+
+      expect(Array.from(chunked.hits)).toEqual(Array.from(oneShot.hits));
+      expect(Array.from(chunked.sumRGB)).toEqual(Array.from(oneShot.sumRGB));
+      expect(chunked.maxHits).toBe(oneShot.maxHits);
+      expect(chunked.orbit).toEqual(oneShot.orbit);
+      expect(chunked.pointTiling).toEqual(oneShot.pointTiling);
+    },
+  );
+
+  it("does not let tiling perturb xaos, emitter, schedule, final, or color state", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [-0.2, 0.1, 0],
+        rotation: [0, 0.2, 0],
+        scale: [0.45, 0.45, 0.45],
+        chaos: [1, 0.2],
+        emitter: GEAR_SHAPE,
+      },
+      {
+        id: 1,
+        position: [0.25, -0.1, 0.15],
+        rotation: [0.1, 0, -0.2],
+        scale: [0.5, 0.5, 0.5],
+        chaos: [0.3, 1],
+      },
+    ];
+    const prepared = prepareChaosGame(
+      transforms,
+      {
+        id: 0,
+        position: [0.1, 0, -0.1],
+        rotation: [0, 0.15, 0],
+        scale: [0.8, 0.8, 0.8],
+      },
+      { order: 1, plane: "xz" },
+      {
+        depth: 2,
+        transforms: [
+          {
+            id: 0,
+            position: [0.05, -0.05, 0],
+            rotation: [0, 0, 0],
+            scale: [0.9, 0.9, 0.9],
+          },
+        ],
+      },
+    );
+    const plan = resolvePointTilingPlan(
+      resolveTiling({ kind: "lattice", cellScale: 4 }, 4),
+      3,
+    )!;
+    const palette = transformColors(2);
+    const colorLUT = buildPaletteLUT("aurora")!;
+    const plainRng = mulberry32(101);
+    const tiledRng = mulberry32(101);
+    const plain = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      48,
+      48,
+      300,
+      plainRng,
+      palette,
+      undefined,
+      colorLUT,
+    );
+    const tiled = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      48,
+      48,
+      300,
+      tiledRng,
+      palette,
+      undefined,
+      colorLUT,
+      undefined,
+      undefined,
+      plan,
+    );
+
+    expect(tiled.orbit).toEqual(plain.orbit);
+    expect(tiled.orbitColor).toBe(plain.orbitColor);
+    expect(tiled.orbitPrevBase).toBe(plain.orbitPrevBase);
+    expect(tiled.orbitChaosLeft).toBe(plain.orbitChaosLeft);
+    expect(tiledRng()).toBe(plainRng());
+    expect(tiled.pointTiling?.attempts).toBe(300);
+  });
+
+  it("keeps an explicitly absent plan value-identical and state-free", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const palette = transformColors(4);
+    const plain = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      5000,
+      mulberry32(17),
+      palette,
+    );
+    const absent = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      5000,
+      mulberry32(17),
+      palette,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+
+    expect(Array.from(absent.hits)).toEqual(Array.from(plain.hits));
+    expect(Array.from(absent.sumRGB)).toEqual(Array.from(plain.sumRGB));
+    expect(absent.maxHits).toBe(plain.maxHits);
+    expect(absent.orbit).toEqual(plain.orbit);
+    expect(absent.orbitColor).toBe(plain.orbitColor);
+    expect(Object.keys(absent)).toEqual(Object.keys(plain));
+    expect(absent.pointTiling).toBeUndefined();
+  });
+
+  it("rejects a raw Balloon plus active tiling invariant violation", () => {
+    const plan = resolvePointTilingPlan(resolveTiling({ group: "a3" }), 3)!;
+    expect(() =>
+      accumulateFlame(
+        prepareChaosGame(fixedPointSystem([0.3, 0.3, 0.3])),
+        ORTHOGRAPHIC,
+        8,
+        8,
+        1,
+        mulberry32(2),
+        [[1, 1, 1]],
+        undefined,
+        undefined,
+        {
+          balloon: buildBalloonFromBall({ center: [0, 0, 0], radius: 1 }, 1),
+          tint: [0, 0, 0],
+          tintStrength: 0,
+          weight: 1,
+        },
+        undefined,
+        plan,
+      ),
+    ).toThrow("Flame point tiling is unavailable with Balloon");
   });
 });
 
