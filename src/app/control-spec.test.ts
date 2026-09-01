@@ -73,6 +73,8 @@ function mockEffects(shared = false): ControlEffects {
     postVoxel: vi.fn(),
     presentSharedFlameFrame: vi.fn(() => shared),
     regenerateIfAutoUpdate: vi.fn(),
+    resumePointAutoUpdate: vi.fn(),
+    syncPointBalloonEcho: vi.fn(),
     refreshSurfaceEligibility: vi.fn(),
     recolor: vi.fn(),
     applyFourDColor: vi.fn(),
@@ -613,7 +615,7 @@ describe("effects", () => {
       expect(fx.scene.setBalloonPalette).toHaveBeenCalledWith(
         buildPaletteLUT("aurora"),
       );
-      expect(fx.scene.setBalloonEchoEnabled).toHaveBeenCalledWith(true);
+      expect(fx.syncPointBalloonEcho).toHaveBeenCalledWith(true);
       expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(
         state.balloonRadius,
       );
@@ -638,6 +640,18 @@ describe("effects", () => {
       // session is restarted below from the full current state instead of
       // receiving a redundant live-palette command first.
       expect(fx.postFlame).not.toHaveBeenCalled();
+    });
+
+    it("queues the ordinary Points replacement when Balloon makes authored tiling dormant", () => {
+      const spec = specById("balloonEchoCheckbox");
+      const previous = setTiling(initialState(true), { group: "a3" });
+      const state = applyScalarControl(previous, spec, true);
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.syncPointBalloonEcho).toHaveBeenCalledWith(true);
+      expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
     });
 
     it("balloonRadiusSlider effect forwards the radius and cancels an in-flight sweep", () => {
@@ -851,7 +865,7 @@ describe("effects", () => {
 
       spec.effect?.(state, fx, previous);
 
-      expect(fx.scene.setBalloonEchoEnabled).toHaveBeenCalledWith(true);
+      expect(fx.syncPointBalloonEcho).toHaveBeenCalledWith(true);
       expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(
         state.balloonRadius,
       );
@@ -871,7 +885,7 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(state.balloonEcho).toBe(true);
-      expect(fx.scene.setBalloonEchoEnabled).toHaveBeenCalledWith(true);
+      expect(fx.syncPointBalloonEcho).toHaveBeenCalledWith(true);
       expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(
         state.balloonRadius,
       );
@@ -1387,7 +1401,7 @@ describe("effects", () => {
       ).toBe(finite);
     });
 
-    it("pushes lattice cell scale live on Surface without restarting", () => {
+    it("regenerates Points and pushes lattice cell scale live on Surface without restarting", () => {
       const spec = specById("tilingCellScaleSlider");
       const previous = setTiling(
         { ...initialState(true), renderMode: "surface" },
@@ -1398,12 +1412,13 @@ describe("effects", () => {
 
       spec.effect?.(state, fx, previous);
 
+      expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
       expect(fx.setSurfaceLatticeScale).toHaveBeenCalledWith(2.4);
       expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
       expect(fx.refreshSurfaceEligibility).not.toHaveBeenCalled();
     });
 
-    it("only stores lattice cell scale outside an active Surface session", () => {
+    it("regenerates Points for lattice cell scale outside an active Surface session", () => {
       const spec = specById("tilingCellScaleSlider");
       const previous = setTiling(initialState(true), {
         kind: "lattice",
@@ -1414,6 +1429,7 @@ describe("effects", () => {
 
       spec.effect?.(state, fx, previous);
 
+      expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
       expect(fx.setSurfaceLatticeScale).not.toHaveBeenCalled();
       expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
     });
@@ -1455,6 +1471,7 @@ describe("effects", () => {
           const fx = mockEffects();
           spec.effect?.(state, fx, state);
 
+          expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
           expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
           expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(
             renderMode === "surface" ? 1 : 0,
@@ -2188,6 +2205,28 @@ describe("table policy", () => {
     const state = applyScalarControl(initial, spec, false);
 
     expect(state.autoUpdate).toBe(false);
+  });
+
+  it("turning Auto-update back on resumes a stale Points replacement", () => {
+    const spec = specById("autoUpdate");
+    const previous = { ...initialState(true), autoUpdate: false };
+    const state = applyScalarControl(previous, spec, true);
+    const fx = mockEffects();
+
+    spec.effect?.(state, fx, previous);
+
+    expect(fx.resumePointAutoUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("turning Auto-update off does not request a replacement", () => {
+    const spec = specById("autoUpdate");
+    const previous = initialState(true);
+    const state = applyScalarControl(previous, spec, false);
+    const fx = mockEffects();
+
+    spec.effect?.(state, fx, previous);
+
+    expect(fx.resumePointAutoUpdate).not.toHaveBeenCalled();
   });
 
   it("adaptiveResolutionCheckbox apply flips state.adaptiveResolution", () => {

@@ -137,6 +137,10 @@ import {
   MAX_GUIDE_SCALE,
 } from "./constants";
 import type { ExportProgressInit } from "./export-progress";
+import {
+  pointCountLabel,
+  type PointTilingOutcome,
+} from "./point-tiling-outcome";
 import { videoCaptureSupported } from "./recorder";
 import { offlineExportSupported } from "./video-encode";
 import { installSliderScrollGuard } from "./slider-scroll-guard";
@@ -1878,6 +1882,12 @@ export class Ui {
   private readonly panelTitle: HTMLElement;
   private readonly helpText: HTMLElement;
   private readonly pointCount: HTMLElement;
+  /** Result-associated Points tiling disclosure. The authored document may
+   * move ahead while its worker request is queued; `pointTilingMatchesAuthored`
+   * keeps that stale landed result distinct until the matching request lands. */
+  private landedPointCount = 0;
+  private landedPointTilingOutcome: PointTilingOutcome | undefined;
+  private pointTilingMatchesAuthored = true;
   private readonly legend: HTMLElement;
   private readonly legendBar: HTMLElement;
   private readonly legendLabels: HTMLElement;
@@ -4392,24 +4402,29 @@ export class Ui {
     this.tilingGroupRow.classList.toggle("hidden", !tiling || lattice);
     this.tilingCellScaleRow.classList.toggle("hidden", !tiling || !lattice);
     this.tilingTimingHint.textContent =
-      state.renderMode === "surface"
-        ? lattice
-          ? "Changing cell scale is live; changing kind or clip restarts Surface."
-          : "Changes restart Surface without resetting the view."
-        : "Surface only — changes apply next time you enter Surface.";
+      state.renderMode === "points"
+        ? state.autoUpdate
+          ? "Auto-update is on — changes regenerate Points automatically."
+          : "Auto-update is off — use Regenerate to apply changes to Points."
+        : state.renderMode === "surface"
+          ? lattice
+            ? "Changing cell scale is live; changing kind or clip restarts Surface."
+            : "Changes restart Surface without resetting the view."
+          : `${state.renderMode === "flame" ? "Flame" : "Solid"} stays untiled — edits apply to Points through ${state.autoUpdate ? "Auto-update" : "Regenerate"} and to Surface on entry.`;
 
+    const kind = this.scalarSelect("tilingKind");
     const group = this.scalarSelect("tilingGroup");
     const clip = this.scalarSelect("tilingClip");
-    // Balloon and kaleidoscope make an otherwise valid finite block dormant,
-    // so its dependent detail rows disable while the shared checkbox remains
-    // live as the explicit clear route. Dimension and clip-shape refusals do
-    // NOT disable: those selectors are their adjacent recovery paths.
-    const finiteDormant =
-      tiling !== undefined &&
-      !lattice &&
-      (state.balloonEcho || state.symmetry.order > 1);
-    group.disabled = finiteDormant;
-    clip.disabled = finiteDormant;
+    // Balloon and kaleidoscope make either authored arm dormant, so every
+    // dependent detail disables while the shared checkbox remains the clear
+    // route. Dimension and clip-shape refusals do NOT disable: those
+    // selectors are their adjacent recovery paths.
+    const dormant =
+      tiling !== undefined && (state.balloonEcho || state.symmetry.order > 1);
+    kind.disabled = dormant;
+    group.disabled = dormant;
+    clip.disabled = dormant;
+    this.setScalarDisabled("tilingCellScaleSlider", dormant);
     for (const option of Array.from(group.options)) {
       option.disabled = nonFlat
         ? option.value.endsWith("3")
@@ -4419,8 +4434,15 @@ export class Ui {
     this.tilingAuthoredClipOption.hidden = clipValue !== "authored";
 
     if (!tiling) {
-      this.tilingNote.textContent =
-        "Off — Surface renders the original attractor once.";
+      const staleTiledPoints =
+        state.renderMode === "points" &&
+        !this.pointTilingMatchesAuthored &&
+        this.landedPointTilingOutcome?.availability === "active";
+      this.tilingNote.textContent = staleTiledPoints
+        ? state.autoUpdate
+          ? "Off is authored — Points still shows the earlier tiled cloud while its untiled replacement runs."
+          : "Off is authored, but Points still shows the earlier tiled cloud — Auto-update is off; use Regenerate to apply Off."
+        : "Off — Points and Surface render the original attractor once.";
       return;
     }
 
@@ -4428,20 +4450,20 @@ export class Ui {
       let note: string;
       if (state.balloonEcho) {
         note =
-          "Unavailable with Balloon — turn Balloon off; an orbit's echo is not the echo's orbit.";
+          "Unavailable with Balloon — turn Balloon off; an orbit's echo is not the echo's orbit." +
+          this.pointsTilingPendingSuffix(state, "Balloon");
       } else if (state.symmetry.order > 1) {
         note =
-          "Unavailable with Symmetry — set Order to 1; both features fold query space and have no certified composition order.";
+          "Unavailable with Symmetry — set Order to 1; both features fold query space and have no certified composition order." +
+          this.pointsTilingPendingSuffix(state, "Symmetry");
       } else if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
         note =
-          "Unavailable — tiling clips must be analytic. Choose None or an analytic clip.";
+          "Unavailable — tiling clips must be analytic. Choose None or an analytic clip." +
+          this.pointsTilingPendingSuffix(state);
+      } else if (state.renderMode === "points") {
+        note = this.pointsTilingNote(state);
       } else if (state.renderMode !== "surface") {
-        const label =
-          state.renderMode === "points"
-            ? "Points"
-            : state.renderMode === "flame"
-              ? "Flame"
-              : "Solid";
+        const label = state.renderMode === "flame" ? "Flame" : "Solid";
         note = `${label} shows the untiled attractor. Enter Surface to render this mirrored landscape.`;
       } else {
         note =
@@ -4462,22 +4484,24 @@ export class Ui {
     // that tells the author how to re-enable it.
     if (state.balloonEcho) {
       note =
-        "Unavailable with Balloon — turn Balloon off; an orbit's echo is not the echo's orbit.";
+        "Unavailable with Balloon — turn Balloon off; an orbit's echo is not the echo's orbit." +
+        this.pointsTilingPendingSuffix(state, "Balloon");
     } else if (state.symmetry.order > 1) {
       note =
-        "Unavailable with Symmetry — set Order to 1; both features fold query space and have no certified composition order.";
+        "Unavailable with Symmetry — set Order to 1; both features fold query space and have no certified composition order." +
+        this.pointsTilingPendingSuffix(state, "Symmetry");
     } else if (wants4 !== nonFlat) {
-      note = `${tiling.group.toUpperCase()} is a ${wants4 ? "4D" : "3D"} group, but this document is ${nonFlat ? "4D" : "3D"}. Choose a group under ${nonFlat ? "4D" : "3D"}.`;
+      note =
+        `${tiling.group.toUpperCase()} is a ${wants4 ? "4D" : "3D"} group, but this document is ${nonFlat ? "4D" : "3D"}. Choose a group under ${nonFlat ? "4D" : "3D"}.` +
+        this.pointsTilingPendingSuffix(state);
     } else if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
       note =
-        "Unavailable — finite tiling clips must be analytic. Choose None or an analytic clip.";
+        "Unavailable — finite tiling clips must be analytic. Choose None or an analytic clip." +
+        this.pointsTilingPendingSuffix(state);
+    } else if (state.renderMode === "points") {
+      note = this.pointsTilingNote(state);
     } else if (state.renderMode !== "surface") {
-      const label =
-        state.renderMode === "points"
-          ? "Points"
-          : state.renderMode === "flame"
-            ? "Flame"
-            : "Solid";
+      const label = state.renderMode === "flame" ? "Flame" : "Solid";
       note = `${label} shows the untiled attractor. Enter Surface to render these reflected copies.`;
     } else {
       note =
@@ -4488,6 +4512,62 @@ export class Ui {
         " 4D finite tiling uses the zero-thickness W slice; slab thickness is unavailable while tiled.";
     }
     this.tilingNote.textContent = note;
+  }
+
+  /** Request-associated Points half of the shared tiling disclosure. Static
+   * document refusals are handled before this method, so a landed worker
+   * outcome can never mask the adjacent Balloon/Symmetry/dimension/mesh
+   * recovery reason. */
+  private pointsTilingNote(state: AppState): string {
+    if (!this.pointTilingMatchesAuthored) {
+      return state.autoUpdate
+        ? "Awaiting regeneration — Points is still showing an earlier point-cloud result while the latest request runs."
+        : "Stale Points result — Auto-update is off; use Regenerate to apply the authored tiling.";
+    }
+    const outcome = this.landedPointTilingOutcome;
+    if (!outcome) {
+      return state.autoUpdate
+        ? "Awaiting regeneration — the authored tiling has not produced a Points result yet."
+        : "Awaiting regeneration — Auto-update is off; use Regenerate to apply the authored tiling.";
+    }
+    if (outcome.availability === "refused") {
+      return `Unavailable in Points — ${outcome.note}`;
+    }
+    const label = pointCountLabel(this.landedPointCount, outcome);
+    if (outcome.fill === "underfilled") {
+      return `Active in Points — ${label}; the bounded source-attempt budget was exhausted.`;
+    }
+    if (outcome.fill === "empty") {
+      return `Active in Points — ${label}; no canonical source produced a tiled image.`;
+    }
+    return `Active in Points — ${label}.`;
+  }
+
+  /** Suffix for a document-level refusal while Points is still showing an
+   * older result. Balloon gets the stronger safety disclosure because the
+   * echo is held dormant over active tiled geometry until ordinary geometry
+   * lands. */
+  private pointsTilingPendingSuffix(
+    state: AppState,
+    conflict?: "Balloon" | "Symmetry",
+  ): string {
+    if (
+      state.renderMode !== "points" ||
+      this.pointTilingMatchesAuthored ||
+      this.landedPointTilingOutcome?.availability !== "active"
+    ) {
+      return "";
+    }
+    const replacement = state.autoUpdate
+      ? "the replacement request lands"
+      : "you use Regenerate";
+    if (conflict === "Balloon") {
+      return ` Points still shows the earlier tiled cloud, so Balloon stays dormant until ${replacement}.`;
+    }
+    if (conflict === "Symmetry") {
+      return ` Points still shows the earlier order-1 tiled cloud until ${replacement}.`;
+    }
+    return ` Points still shows the earlier tiled cloud until ${replacement}.`;
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -5253,7 +5333,23 @@ export class Ui {
     editor.remove.disabled = stops.length <= MIN_CUSTOM_PALETTE_STOPS;
   }
 
-  setPointCount(count: number): void {
+  setPointCount(
+    count: number,
+    outcome?: PointTilingOutcome,
+    matchesAuthored = true,
+  ): void {
+    this.landedPointCount = count;
+    this.landedPointTilingOutcome = outcome;
+    this.pointTilingMatchesAuthored = matchesAuthored;
+    this.pointCount.textContent = pointCountLabel(count, outcome);
+  }
+
+  /** Display-only count for Watch-it-build. Unlike {@link setPointCount},
+   * this must not overwrite the landed tiling outcome or its authored-match
+   * bit: a panel refresh during replay still describes the cloud being
+   * revealed, and the normal count can be restored from that retained state
+   * when replay ends. */
+  setReplayPointCount(count: number): void {
     this.pointCount.textContent = `${count.toLocaleString()} pts`;
   }
 
