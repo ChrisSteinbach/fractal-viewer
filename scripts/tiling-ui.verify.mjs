@@ -122,6 +122,16 @@
  * criteria demanded: the backdrop the pane shows is the tiled one, and a
  * tiling edit invalidates it even with Points' Auto-update off.
  *
+ * SOLID LIFT MEASURED 2026-09-01 (`--scope=solid --settle=240000`): each
+ * fixture drives the REAL 128³/1M voxel session to a converged budget,
+ * captures the tiled frame, clears the tiling checkbox, and captures again —
+ * the tiling edit is material-only (the voxel worker probe stays 1->1) and
+ * the frame difference is the tiled geometry's and nothing else's. On
+ * SwiftShader the Mirrored Lattice solid drew 43.93% and its untiled round
+ * differed by 11.01%; Tiled Octahedron drew 47.99% and differed by 24.63%.
+ * Both rounds disclosed "Active in Solid" on entry and the Off consumer list
+ * after clearing, with no page, console or app error.
+ *
  * Usage (build + `npm run preview` first):
  *   node scripts/tiling-ui.verify.mjs
  *   node scripts/tiling-ui.verify.mjs --mode=x11::0
@@ -129,11 +139,12 @@
  *   node scripts/tiling-ui.verify.mjs --scope=points
  *   node scripts/tiling-ui.verify.mjs --scope=flame
  *   node scripts/tiling-ui.verify.mjs --scope=backdrop
+ *   node scripts/tiling-ui.verify.mjs --scope=solid
  *
  * Options:
  *   --url=URL        app origin (default https://localhost:4173)
  *   --mode=MODE      sw (default) or x11:<display>
- *   --scope=SCOPE    all (default), points, flame, or backdrop
+ *   --scope=SCOPE    all (default), points, flame, backdrop, or solid
  *   --viewport=WxH   viewport, width must be >=641 (default 800x640)
  *   --settle=MS      per-preset Surface/Points/Flame target budget (default 300000)
  *   --stage=N        completed-pass target, 8 = settled latch (default 8)
@@ -238,6 +249,18 @@ const BACKDROP_PRESETS = [
   { preset: PRESETS[1], fourD: true },
 ];
 
+// The Sampled Solid legs: one per 3D construction arm (4D Solid tiling is
+// refused until its representation lift, so there is no 4D fixture). The
+// leg drives the REAL solid session to a converged budget, captures the
+// tiled frame, flips the tiling checkbox, and captures again: a tiling
+// edit must be material-only (the voxel worker probe shows no replacement)
+// and the frame difference is the tiled geometry's and nothing else's —
+// the isolated pixel evidence the Solid lift's acceptance needs.
+const SOLID_PRESETS = [
+  { preset: PRESETS[3], fourD: false },
+  { preset: PRESETS[0], fourD: false },
+];
+
 class CheckingError extends Error {}
 
 function parseArgs(argv) {
@@ -273,9 +296,9 @@ function parseArgs(argv) {
       `--mode must be sw or x11:<display> (got ${args.mode})`,
     );
   }
-  if (!["all", "points", "flame", "backdrop"].includes(args.scope)) {
+  if (!["all", "points", "flame", "backdrop", "solid"].includes(args.scope)) {
     throw new CheckingError(
-      `--scope must be all, points, flame, or backdrop (got ${args.scope})`,
+      `--scope must be all, points, flame, backdrop, or solid (got ${args.scope})`,
     );
   }
   const viewport = /^(\d+)x(\d+)$/.exec(args.viewport);
@@ -680,7 +703,7 @@ async function waitForFlameRound(
       : round?.backend !== undefined;
     const notePass = active
       ? ui.note.includes("Active in Flame")
-      : ui.note.startsWith("Off — Points, Flame, and Surface");
+      : ui.note.startsWith("Off — Points, Flame, Solid, and Surface");
     if (
       round?.terminal != null &&
       ui.active &&
@@ -1398,7 +1421,7 @@ async function runPointsPresetLeg(browser, args, fixture) {
       cleared.ok &&
         ordinaryRound.round !== null &&
         clearedNote ===
-          "Off — Points and Surface render the original attractor once." &&
+          "Off — Points, Flame, Solid, and Surface render the original attractor once." &&
         tiledCapture.metrics.coverage >= args.draw &&
         untiledCapture.metrics.coverage >= args.draw &&
         distinctness.fraction >= minDiff,
@@ -2131,6 +2154,18 @@ function printBackdropPreset(result) {
   }
 }
 
+function printSolidPreset(result) {
+  process.stdout.write(
+    `${result.ok ? "PASS" : "FAIL"}  ${`${result.preset.label} solid`.padEnd(30)} ` +
+      `time=${((result.elapsedMs ?? 0) / 1000).toFixed(1)}s\n`,
+  );
+  for (const check of result.checks) {
+    process.stdout.write(
+      `  ${check.ok ? "PASS" : "FAIL"}  ${check.name} — ${check.detail}\n`,
+    );
+  }
+}
+
 async function setRangeValue(page, selector, value) {
   await page.locator(selector).evaluate((element, next) => {
     if (!(element instanceof HTMLInputElement)) {
@@ -2317,6 +2352,183 @@ async function runClearLeakLeg(browser, args) {
       reason: cleared.ok
         ? "finite -> lattice -> finite replaced exactly; ordinary cleared"
         : `ordinary preset retained ${exact(cleared.document?.tiling)}`,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/** The focused Solid quality: the smallest stepped grid and budget the panel
+ * offers, so the leg's worker and marcher converge quickly without changing
+ * the tiling block. */
+async function configureFocusedSolidQuality(page) {
+  await openSection(page, "rendererQualitySection");
+  await setRangeValue(page, "#solidIterationsSlider", 0);
+  await setRangeValue(page, "#solidResolutionSlider", 128);
+  return page.evaluate(() => ({
+    iterations:
+      document.getElementById("solidIterationsLabel")?.textContent ?? "",
+    resolution:
+      document.getElementById("solidResolutionLabel")?.textContent ?? "",
+  }));
+}
+
+/** The voxel worker probe: Solid's accumulation host. A tiling edit must NOT
+ * replace it (the density volume is unchanged), so the leg counts hosts. */
+function readSolidWorkerProbe(page) {
+  return page.evaluate(() => {
+    const workers = window.__tilingCloudWorkerProbe?.workers ?? [];
+    return {
+      workers: workers
+        .filter((worker) => worker.url.includes("voxel-worker"))
+        .map((worker) => ({
+          url: worker.url,
+          terminated: worker.terminated === true,
+          requests: worker.requests,
+        })),
+    };
+  });
+}
+
+async function waitForSolidConverged(page, timeout = 300_000) {
+  const deadline = Date.now() + timeout;
+  let text = "";
+  while (Date.now() < deadline) {
+    text = await page.evaluate(
+      () => document.getElementById("solidProgress")?.textContent ?? "",
+    );
+    if (text.includes("converged")) return { ok: true, text };
+    await page.waitForTimeout(POLL_MS);
+  }
+  return { ok: false, text };
+}
+
+/** The Sampled Solid legs: drive the real voxel session to a converged
+ * budget, capture the tiled frame, flip the tiling checkbox, and capture
+ * again. The edit must be material-only — the same worker host with the same
+ * grid, re-folding queries per frame — so the frame difference is the tiled
+ * geometry's and nothing else's, exactly like the backdrop scope's frozen
+ * cloud isolates the backdrop layer. */
+async function runSolidPresetLeg(browser, args, fixture) {
+  const { preset } = fixture;
+  const { context, page, pageErrors, consoleErrors } = await openApp(
+    browser,
+    args,
+  );
+  const started = Date.now();
+  const checks = [];
+  const check = (name, ok, detail) => checks.push({ name, ok, detail });
+  try {
+    const loaded = await loadPreset(page, preset.key);
+    const installed = await waitForExactTiling(page, preset.tiling);
+    const points = await waitForModeNote(
+      page,
+      "modePointsBtn",
+      /Active in Points — .* · complete/,
+      args.settle,
+    );
+    const quality = await configureFocusedSolidQuality(page);
+    const beforeSolid = await readSolidWorkerProbe(page);
+    const mode = await waitForModeNote(
+      page,
+      "modeSolidBtn",
+      /(Active|Unavailable) in Solid/,
+      args.settle,
+    );
+    const converged = await waitForSolidConverged(page, args.settle);
+    check(
+      "Solid entry and converged budget",
+      loaded &&
+        installed.ok &&
+        points.ok &&
+        quality.iterations === "1.0M" &&
+        quality.resolution === "128³" &&
+        mode.ok &&
+        mode.note.includes("Active in Solid") &&
+        converged.ok,
+      `quality=${quality.iterations}/${quality.resolution}, note=${mode.note || "none"}, status=${converged.text || "none"}`,
+    );
+    if (!converged.ok) {
+      const errorText = await visibleErrorText(page);
+      check(
+        "page errors",
+        pageErrors.length === 0,
+        pageErrors.length ? pageErrors.join(" | ") : "none",
+      );
+      check(
+        "console errors",
+        consoleErrors.length === 0,
+        consoleErrors.length ? consoleErrors.join(" | ") : "none",
+      );
+      check("visible app error", errorText.length === 0, errorText || "none");
+      return {
+        ok: false,
+        preset,
+        checks,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    const tiledCapture = await captureCanvas(
+      page,
+      args,
+      `${preset.key}-solid-tiled`,
+    );
+    const beforeOff = await readSolidWorkerProbe(page);
+    await openSection(page, "tilingSection");
+    await page.locator("#tilingEnabledCheckbox").scrollIntoViewIfNeeded();
+    await page.locator("#tilingEnabledCheckbox").focus();
+    await page.locator("#tilingEnabledCheckbox").press("Space");
+    const cleared = await waitForDocument(
+      page,
+      (document) => document.tiling === undefined,
+    );
+    const off = await waitForTilingNote(
+      page,
+      /Off — Points, Flame, Solid, and Surface render the original attractor once/,
+      args.settle,
+    );
+    await page.waitForTimeout(1_000);
+    const untiledCapture = await captureCanvas(
+      page,
+      args,
+      `${preset.key}-solid-off`,
+    );
+    const distinctness = await screenshotDiff(
+      page,
+      tiledCapture.png,
+      untiledCapture.png,
+    );
+    const afterOff = await readSolidWorkerProbe(page);
+    const minDiff = preset.minDiff ?? args.diff;
+    check(
+      "tiled/Off Solid frame with unchanged worker",
+      cleared.ok &&
+        off.ok &&
+        beforeOff.workers.length === afterOff.workers.length &&
+        tiledCapture.metrics.coverage >= args.draw &&
+        untiledCapture.metrics.coverage >= args.draw &&
+        distinctness.fraction >= minDiff,
+      `cleared=${cleared.ok}, workers=${beforeOff.workers.length}->${afterOff.workers.length}, tiled=${(tiledCapture.metrics.coverage * 100).toFixed(2)}%, off=${(untiledCapture.metrics.coverage * 100).toFixed(2)}%, diff=${(distinctness.fraction * 100).toFixed(2)}%/${(minDiff * 100).toFixed(2)}%, status=${off.note || "none"}`,
+    );
+
+    const errorText = await visibleErrorText(page);
+    check(
+      "page errors",
+      pageErrors.length === 0,
+      pageErrors.length ? pageErrors.join(" | ") : "none",
+    );
+    check(
+      "console errors",
+      consoleErrors.length === 0,
+      consoleErrors.length ? consoleErrors.join(" | ") : "none",
+    );
+    check("visible app error", errorText.length === 0, errorText || "none");
+    return {
+      ok: checks.every((entry) => entry.ok),
+      preset,
+      checks,
+      elapsedMs: Date.now() - started,
     };
   } finally {
     await context.close().catch(() => {});
@@ -2684,7 +2896,7 @@ async function runAuthoringLeg(browser, args) {
     await openSection(page, "tilingSection");
     const modeChecks = [
       ["modePointsBtn", /Active in Points — .* · complete/],
-      ["modeSolidBtn", /Solid stays untiled/],
+      ["modeSolidBtn", /(Active|Unavailable) in Solid/],
     ];
     for (const [button, expression] of modeChecks) {
       const mode = await waitForModeNote(
@@ -3016,6 +3228,14 @@ async function run() {
       for (const fixture of BACKDROP_PRESETS) {
         const result = await runBackdropPresetLeg(browser, args, fixture);
         printBackdropPreset(result);
+        if (!result.ok) failed = true;
+      }
+    }
+
+    if (args.scope === "all" || args.scope === "solid") {
+      for (const fixture of SOLID_PRESETS) {
+        const result = await runSolidPresetLeg(browser, args, fixture);
+        printSolidPreset(result);
         if (!result.ok) failed = true;
       }
     }
