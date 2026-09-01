@@ -8,11 +8,20 @@ import { foldToChamber, resolveTiling } from "./tiling";
 import { sierpinskiTetrahedron, pentatope } from "./presets";
 import { shapeSdf, type ShapeSpec } from "./shapes";
 import { runChaosGame } from "./chaos-game";
+import { runChaosGame4 } from "./chaos-game-4d";
+import { toTransform4 } from "./affine4";
 import { mulberry32 } from "./rng";
-import type { Vec3 } from "./types";
+import type {
+  HybridSchedule,
+  SymmetryParams,
+  Transform,
+  Vec3,
+  Vec4,
+} from "./types";
 
 const TETRA = sierpinskiTetrahedron();
 const PENTATOPE = pentatope();
+const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
 const GEAR: ShapeSpec = {
   parts: [
     {
@@ -78,6 +87,111 @@ describe("chamberContentFit", () => {
     expect(
       chamberContentFit([], null, resolveTiling({ group: "a3" })!, false),
     ).toBeNull();
+  });
+
+  it("measures the scheduled post-word in both seeded 4D passes", () => {
+    const tiling = resolveTiling({ group: "a4" })!;
+    const schedule: HybridSchedule = {
+      transforms: [
+        {
+          id: 90,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [2, 2, 2],
+        },
+      ],
+      depth: 1,
+    };
+    const scheduled = chamberContentFit(
+      PENTATOPE,
+      null,
+      tiling,
+      true,
+      NO_SYMMETRY,
+      schedule,
+      4_000,
+    )!;
+    const run = runChaosGame4(
+      PENTATOPE.map(toTransform4),
+      4_000,
+      mulberry32(0x7a7c),
+      null,
+      NO_SYMMETRY,
+      undefined,
+      schedule,
+    );
+    const folded: Vec4[] = [];
+    for (let i = 0; i < run.count; i++) {
+      const q = foldToChamber(
+        tiling.info,
+        [
+          run.positions[i * 3],
+          run.positions[i * 3 + 1],
+          run.positions[i * 3 + 2],
+          run.w[i],
+        ],
+        [0, 0, 0, 0],
+      );
+      if (q) folded.push(q as Vec4);
+    }
+    const expectedCenter: Vec3 = [
+      folded.reduce((sum, q) => sum + q[0], 0) / folded.length,
+      folded.reduce((sum, q) => sum + q[1], 0) / folded.length,
+      folded.reduce((sum, q) => sum + q[2], 0) / folded.length,
+    ];
+    const expectedRadius = folded.reduce(
+      (radius, q) =>
+        Math.max(
+          radius,
+          Math.hypot(
+            q[0] - expectedCenter[0],
+            q[1] - expectedCenter[1],
+            q[2] - expectedCenter[2],
+          ),
+        ),
+      0,
+    );
+    expect(scheduled.center[0]).toBeCloseTo(expectedCenter[0], 10);
+    expect(scheduled.center[1]).toBeCloseTo(expectedCenter[1], 10);
+    expect(scheduled.center[2]).toBeCloseTo(expectedCenter[2], 10);
+    expect(scheduled.radius).toBeCloseTo(expectedRadius, 10);
+  });
+
+  it("uses the requested symmetry in the centroid and radius passes", () => {
+    const system: Transform[] = [
+      {
+        id: 0,
+        position: [1, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.2, 0.2, 0.2],
+      },
+    ];
+    const symmetry: SymmetryParams = { order: 2, plane: "xy" };
+    const tiling = resolveTiling({ kind: "lattice", cellScale: 10 }, 10);
+    const fit = chamberContentFit(
+      system,
+      null,
+      tiling,
+      false,
+      symmetry,
+      null,
+      4_000,
+    )!;
+    const run = runChaosGame(system, 4_000, mulberry32(0x7a7c), null, symmetry);
+    let expectedRadius = 0;
+    for (let i = 0; i < run.count; i++) {
+      expectedRadius = Math.max(
+        expectedRadius,
+        Math.hypot(
+          run.positions[i * 3] - fit.center[0],
+          run.positions[i * 3 + 1] - fit.center[1],
+          run.positions[i * 3 + 2] - fit.center[2],
+        ),
+      );
+    }
+    expect(Math.abs(fit.center[0])).toBeLessThan(0.1);
+    expect(fit.radius).toBeCloseTo(expectedRadius, 10);
+    expect(fit.radius).toBeGreaterThan(0.5);
   });
 });
 

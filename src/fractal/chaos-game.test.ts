@@ -16,6 +16,7 @@ import {
   prepareChaosGame,
   prepareEmitters,
   runChaosGame,
+  runChaosGameTiledPoints,
   stepOrbit,
   symmetryRotation,
   systemHasChaos,
@@ -31,7 +32,187 @@ import { composeVariations } from "./variations";
 import { iterationRng, mulberry32 } from "./rng";
 import type { IterationRng, Rng } from "./rng";
 import { fernSpongeIsolated, sierpinskiTetrahedron } from "./presets";
+import { resolvePointTilingPlan } from "./point-tiling";
+import { resolveTiling, TILING_GROUP_INFO } from "./tiling";
 import type { Bounds, SymmetryParams, Transform } from "./types";
+
+describe("runChaosGameTiledPoints", () => {
+  it("copies canonical source attribution onto bounded finite images", () => {
+    const info = TILING_GROUP_INFO.a3;
+    const source: [number, number, number] = [0, 0, 0];
+    const coefficients = [3, 4, 3];
+    for (let wall = 0; wall < 3; wall++) {
+      for (let axis = 0; axis < 3; axis++) {
+        source[axis] += coefficients[wall] * info.roots[wall * 3 + axis];
+      }
+    }
+    const plan = resolvePointTilingPlan(resolveTiling({ group: "a3" }), 3)!;
+    const result = runChaosGameTiledPoints(
+      [
+        {
+          id: 0,
+          position: source,
+          rotation: [0, 0, 0],
+          scale: [0, 0, 0],
+        },
+      ],
+      25,
+      plan,
+      mulberry32(5),
+    );
+
+    expect(result.count).toBe(25);
+    expect(result.positions).toHaveLength(75);
+    expect(result.canonicalPositions).toHaveLength(75);
+    expect(result.transformIndices).toHaveLength(25);
+    expect(result.pointTilingState.attempts).toBe(2);
+    expect(result.pointTilingState.emitted).toBe(25);
+    expect(new Set(result.transformIndices)).toEqual(new Set([0]));
+    for (let i = 0; i < result.count; i++) {
+      expect(
+        Array.from(result.canonicalPositions.subarray(i * 3, i * 3 + 3)),
+      ).toEqual(source.map(Math.fround));
+    }
+    expect(new Set(Array.from(result.positions))).not.toEqual(
+      new Set(source.map(Math.fround)),
+    );
+    expect(result.canonicalBounds.minX).toBe(source[0]);
+    expect(result.canonicalBounds.maxX).toBe(source[0]);
+  });
+
+  it("tests canonical membership only after the scheduled post-word and final lens", () => {
+    const plan = resolvePointTilingPlan(
+      resolveTiling({ kind: "lattice", cellScale: 4 }, 3),
+      3,
+    )!;
+    const result = runChaosGameTiledPoints(
+      [
+        {
+          id: 0,
+          position: [0.1, 0.2, 0.3],
+          rotation: [0, 0, 0],
+          scale: [0, 0, 0],
+        },
+      ],
+      4,
+      plan,
+      mulberry32(8),
+      {
+        id: 0,
+        position: [0.2, 0.3, -0.4],
+        rotation: [0, 0, 0],
+        scale: [2, 2, 2],
+      },
+      { order: 1, plane: "xz" },
+      undefined,
+      {
+        depth: 1,
+        transforms: [
+          {
+            id: 0,
+            position: [0.4, -0.1, 0.2],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+          },
+        ],
+      },
+    );
+
+    expect(result.count).toBe(4);
+    for (let i = 0; i < result.count; i++) {
+      expect(
+        Array.from(result.canonicalPositions.subarray(i * 3, i * 3 + 3)),
+      ).toEqual([1.2, 0.5, 0.6].map(Math.fround));
+    }
+  });
+
+  it("stops empty canonical content at 8N without substituting untiled points", () => {
+    const plan = resolvePointTilingPlan(
+      resolveTiling({
+        group: "a3",
+        clip: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.1 },
+              combine: "union",
+              pose: { offset: [100, 100, 100] },
+            },
+          ],
+        },
+      }),
+      3,
+    )!;
+    const result = runChaosGameTiledPoints(
+      sierpinskiTetrahedron(),
+      7,
+      plan,
+      mulberry32(12),
+    );
+
+    expect(result.count).toBe(0);
+    expect(result.positions).toHaveLength(0);
+    expect(result.canonicalPositions).toHaveLength(0);
+    expect(result.pointTilingState.attempts).toBe(56);
+    expect(result.pointTilingState.candidateTests).toBe(0);
+    expect(result.bounds).toEqual({
+      minX: 0,
+      maxX: 0,
+      minY: 0,
+      maxY: 0,
+      minZ: 0,
+      maxZ: 0,
+      minR: 0,
+      maxR: 0,
+    });
+  });
+
+  it("uses source attempts for chi re-fuse and iteration numbering", () => {
+    const plan = resolvePointTilingPlan(
+      resolveTiling({
+        group: "a3",
+        clip: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.1 },
+              combine: "union",
+              pose: { offset: [100, 100, 100] },
+            },
+          ],
+        },
+      }),
+      3,
+    )!;
+    const transforms = fernSpongeIsolated();
+    const requested = 600;
+    const attempts = requested * 8;
+    const tiledPrimary = mulberry32(91);
+    const legacyPrimary = mulberry32(91);
+    const tiledIteration = iterationRng(1234);
+    const legacyIteration = iterationRng(1234);
+
+    const tiled = runChaosGameTiledPoints(
+      transforms,
+      requested,
+      plan,
+      tiledPrimary,
+      null,
+      { order: 1, plane: "xz" },
+      tiledIteration,
+    );
+    runChaosGame(
+      transforms,
+      attempts,
+      legacyPrimary,
+      null,
+      { order: 1, plane: "xz" },
+      legacyIteration,
+    );
+
+    expect(tiled.pointTilingState.attempts).toBe(attempts);
+    expect(tiledPrimary()).toBe(legacyPrimary());
+    expect(tiledIteration.draw()).toBe(legacyIteration.draw());
+  });
+});
 
 function makeTransforms(count: number): Transform[] {
   return Array.from({ length: count }, (_, id) => ({

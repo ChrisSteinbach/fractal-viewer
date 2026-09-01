@@ -3,6 +3,8 @@ import type { ChaosGame4Result } from "./chaos-game-4d";
 import { buildPaletteLUT } from "./palette";
 import type { PaletteSpec, RgbStop } from "./palette";
 import type {
+  Bounds,
+  Bounds4,
   ColorMode,
   FourDAttributeColorMode,
   FourDColorMode,
@@ -11,6 +13,29 @@ import type {
   Vec4,
   WDepthColorMode,
 } from "./types";
+
+/**
+ * Optional point-aligned geometry which owns the structural color of a 3D
+ * output cloud. Plot-time image layers such as space tiling can move a point
+ * without changing the canonical source whose Height/Radius/Position color it
+ * carries; callers retain that source position and its normalization bounds
+ * here while the ordinary result continues to own output positions and
+ * transform provenance.
+ */
+export interface PointColorSource3D {
+  positions: Float32Array;
+  bounds: Bounds;
+}
+
+/** Raw-4D twin of {@link PointColorSource3D}. The separate `w` lane and
+ * canonical center preserve `buildColors4`'s rotation-invariant 4D Radius
+ * semantics independently of a plot-time image's raw xyzw position. */
+export interface PointColorSource4D {
+  positions: Float32Array;
+  w: Float32Array;
+  bounds: Bounds4;
+  center: Vec4;
+}
 
 function hue2rgb(q: number, p: number, t: number): number {
   let h = t;
@@ -473,8 +498,11 @@ export function buildColors(
   colorGamma = 1,
   rampPalette: PaletteSpec = "legacy",
   positionAxisColors?: PositionAxisColors,
+  source?: PointColorSource3D,
 ): Float32Array {
-  const { positions, transformIndices, count, bounds } = result;
+  const { transformIndices, count } = result;
+  const positions = source?.positions ?? result.positions;
+  const bounds = source?.bounds ?? result.bounds;
   const colors = new Float32Array(count * 3);
 
   const rangeX = bounds.maxX - bounds.minX || 1;
@@ -771,8 +799,13 @@ export function buildColors4(
   colorIndexes?: readonly (number | undefined)[],
   colorGamma = 1,
   positionAxisColors?: PositionAxisColors,
+  source?: PointColorSource4D,
 ): Float32Array {
-  const { positions, w, transformIndices, count, center, bounds } = result;
+  const { transformIndices, count } = result;
+  const positions = source?.positions ?? result.positions;
+  const w = source?.w ?? result.w;
+  const center = source?.center ?? result.center;
+  const bounds = source?.bounds ?? result.bounds;
   const colors = new Float32Array(count * 3);
 
   if (mode === "transform") {
