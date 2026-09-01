@@ -23,7 +23,12 @@ type FlameStartCommand = Extract<FlameWorkerCommand, { type: "start" }>;
 /** The complete dimensional/render snapshot whose authored values can vary.
  * The low-budget tone-map, blur, supersample and CPU settings stay private to
  * this generator so call sites cannot accidentally turn the backdrop into a
- * full flame render. */
+ * full flame render.
+ * `schedule`/`tiling`/`balloonEchoEnabled` are the pre-tiling plot-stage
+ * inputs the frozen order needs: the worker resolves the raw authored block
+ * in its own realm and the balloon flag keeps the global Balloon + tiling
+ * legality refusal effective even though the backdrop omits the echo payload
+ * itself. */
 export type FlameBackdropParams = Pick<
   FlameStartCommand,
   | "transforms"
@@ -38,6 +43,9 @@ export type FlameBackdropParams = Pick<
   | "twist"
   | "fourD"
   | "meshAssets"
+  | "schedule"
+  | "tiling"
+  | "balloonEchoEnabled"
 >;
 
 /** One immutable, top-origin RGBA backdrop. Structurally compatible with

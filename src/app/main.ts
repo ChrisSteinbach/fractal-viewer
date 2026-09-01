@@ -3652,6 +3652,17 @@ async function main(): Promise<void> {
       order: state.symmetry.order,
       plane: state.symmetry.plane,
       twist: state.symmetry.twist ?? 0,
+      // The scheduled-hybrid post-word, snapshotted like the full flame
+      // session's start so the backdrop follows the same frozen plot order.
+      schedule: state.schedule ?? null,
+      // Raw authored block: the worker resolves its typed-array plan in its
+      // own realm before constructing the seeded stream. Absent preserves
+      // the historical backdrop command and lifecycle shape.
+      ...(state.tiling ? { tiling: state.tiling } : {}),
+      // Only the legality bit: the backdrop deliberately omits the echo
+      // payload itself, so a tiled+balloon document refuses tiling exactly
+      // like full Flame and renders the plain image.
+      ...(state.balloonEcho ? { balloonEchoEnabled: true } : {}),
       fourD: fourDRenderSnapshot(),
     });
   }
@@ -9258,6 +9269,10 @@ async function main(): Promise<void> {
     applyDiscreteTransformEdit(() => {
       state = setSchedule(state, { transforms, depth });
     }, true);
+    // A schedule edit is a plot-stage change the generated Flame backdrop
+    // must follow even when Points' Auto-update is off (the pane keeps the
+    // stale cloud while the replacement backdrop renders).
+    trackAutoBackground();
     if (losesShape) {
       ui.flashToast(
         "System B keeps only the source's affine part — its variations, 4D parts or chaos rows don't ride the schedule.",
@@ -9459,6 +9474,9 @@ async function main(): Promise<void> {
         applyDiscreteTransformEdit(() => {
           state = setSchedule(state, null);
         }, true);
+        // Clearing the post-word changes the plot order the generated Flame
+        // backdrop follows; track it like the install path.
+        trackAutoBackground();
         return;
       }
       const transforms = resolveScheduleSourceTransforms(source);
@@ -9492,6 +9510,9 @@ async function main(): Promise<void> {
         },
         () => ui.updateLabels(state),
       );
+      // The depth slider is live like the tiling controls: the debounce
+      // collapses the per-input requests into one backdrop render.
+      trackAutoBackground();
     },
     // The Xaos construction gesture: resolve the picked source, measure
     // both systems' extent to seat the new block apart
