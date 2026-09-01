@@ -603,20 +603,20 @@ per-cell blur radius widens where samples are sparse. Handing a previous
 histogram back resumes the orbit exactly, so a render refines progressively
 rather than restarting.
 
-The CPU accumulator's optional point-space tiling plan sits at that same plot
-boundary: one canonical source iteration still owns transform selection, xaos,
-emitter draws, schedule, final lens and structural color, then a bounded visitor
-deposits at most 32 weighted finite or lattice images. Credit and image cursor
-ride `FlameHistogram`, making arbitrary progressive chunks identical and
-leaving the chaos RNG untouched. `accumulateFlame4` performs the true raw-xyzw
-image action before its frozen rotor, projection and soft slice; source color
-provenance remains canonical except for image-owned w-ramp and slice weight.
-The worker resolves the raw document block before seeding, completes valid
-empty content as a transparent frame, and deliberately selects CPU for an
-active plan until both WGSL kernels carry the same state. Tiling edits replace
-the worker from the same source seed and frozen view, preserving a learned CPU
+The optional point-space tiling plan sits at that same plot boundary in both
+CPU accumulators and both WebGPU kernels: one canonical source iteration still
+owns transform selection, xaos, emitter draws, schedule, final lens and source
+color, then a bounded visitor deposits at most 32 weighted finite or lattice
+images. CPU credit and image cursor ride `FlameHistogram`; the GPU twin keeps
+equivalent state per chain across dispatches. Neither spends a chaos RNG draw.
+The 4D paths perform the true raw-xyzw image action before the frozen rotor,
+projection and soft slice; source color provenance remains canonical except
+for image-owned w-ramp and slice weight. The worker resolves the raw document
+block before seeding, completes valid empty content as a transparent frame,
+and uses the ordinary GPU route with CPU fallback. Tiling edits replace the
+worker from the same source seed and frozen view, preserving a learned CPU
 fallback and detaching stale hosts for latest-wins delivery. Absent/refused
-plans keep the literal historical accumulator and backend path.
+plans keep the literal historical accumulator, kernel and backend path.
 
 Flame color comes from `palette.ts`: Inigo-Quilez cosine gradients
 (`channel(t) = a + b·cos(2π(c·t + d))`), precomputed once per render into a flat
@@ -1567,12 +1567,36 @@ fixed-point factor just divides out on readback). The gpu-bench page's 4D
 scenarios pin it against `accumulateFlame4` across all four color modes and
 both slice states.
 
-Point-space tiling is the temporary exception to that GPU route: the CPU twins
-ship the bounded weighted visitor in both dimensions, while an active tiling
-plan makes the worker skip GPU creation rather than let either current kernel
-silently draw the untiled attractor. The panel reports this intentional CPU
-choice separately from an adapter failure. Off and refused plans remain GPU
-eligible; the kernel lift is a separately gated delivery.
+Point-space tiling rides that paired route in both dimensions. Only an active
+plan builds a specialized kernel: binding 7 retains the existing emitter
+float table and appends an aligned 16-float plan header plus clip, finite
+root/matrix/directory data or lattice cell/CDF data; binding 8 is then the
+32-byte-per-chain credit/cursor/diagnostic state. Keeping that state separate
+preserves the established 32-byte 3D and 4D orbit-chain wires and both Params
+layouts. Off and refused plans compile the literal historical kernel source
+and retain the old binding layout and buffers byte for byte.
+
+The specialization replaces only the plot color/deposit arm. Orbit stepping,
+xaos/emitter draws, scheduled post-word and final lens run once before
+canonical membership; selected images never feed back. In 4D the finite or
+lattice action occurs on raw xyzw before projection. Structural, transform,
+radius, height, position and uniform colors remain source-owned, while w-ramp
+and soft-slice weight are recomputed from each raw image. Balloon remains an
+upstream legality refusal, so no tiled kernel can deposit an echo.
+
+The lattice proposal CDF is transferred as strictly increasing endpoint and
+mass high/low-16 pairs, all exactly representable in f32, with a final endpoint
+of 2^32 and at least one integer tick per proposal. The largest finite splat is
+F4's 1,152; x256 weight quantization makes the largest weight add 294,912, and
+the additional x256 color factor makes 75,497,472, both safely within one u32
+atomic add before the existing emulated-u64 accumulation. The packed lattice
+bound is below 740.
+
+Targeted agreement on verified Mesa Intel Iris Xe passed every scenario-owned
+noise bar: finite 3D MAE 0.0065 / density TV 0.0163; minimum-scale lattice 3D
+MAE 0.940 / TV 0.0375 (threshold 2); the F4 chamber 4D fixture MAE 0.000657 /
+TV 0.00636; and minimum-scale lattice 4D MAE 2.790 / TV 0.0471 with near-zero
+signed bias (threshold 5).
 
 ## Save-PNG readiness
 

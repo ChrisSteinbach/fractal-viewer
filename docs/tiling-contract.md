@@ -818,9 +818,9 @@ earns one integer fanout credit. Rejection banks it; acceptance spends
 cursor. Finite samples carry `m/K`; lattice samples carry
 `(U/K) * V(|image|)/u_k`. Credit and cursor persist across chunks/dispatches,
 cumulative candidate tests stay no greater than primary attempts, and the
-existing completed-field normalization remains unchanged. A GPU lift must
-still prove its fixed-point range at the full export budget before enabling
-that specialization.
+existing completed-field normalization remains unchanged. The paired GPU lift
+retains this estimator and pins its largest possible fixed-point add below u32
+before the existing emulated-u64 histogram accumulation.
 
 The frozen budgets are:
 
@@ -828,7 +828,7 @@ The frozen budgets are:
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Points                   | SHIPPED — authored point count remains the maximum allocated/displayed output; finite: at most 256 equal dots from one accepted source; lattice: one proposal per accepted source, with at most `8N` source attempts and `8N` proposal tests for request `N`; returns `complete`, `underfilled`, or `empty`, never an untiled substitute |
 | Flame CPU                | SHIPPED — authored iterations remain primary orbit steps; at most 32 weighted image deposits at one acceptance and no more selected candidates cumulatively than attempts; credit/cursor persist in the histogram across arbitrary worker chunks                                                                                         |
-| Flame WebGPU             | FROZEN, NOT SHIPPED — the same plan/state must be packed into both kernels after its full-export fixed-point range is pinned; active tiling deliberately selects CPU rather than rendering an untiled GPU result                                                                                                                         |
+| Flame WebGPU             | SHIPPED in 3D and 4D — the shared binding-7 plan tail and binding-8 per-chain state drive the same 32-image weighted estimator; active tiling uses the normal GPU route with CPU fallback, never an untiled GPU substitute                                                                                                               |
 | Generated Flame backdrop | FROZEN, NOT SHIPPED — same 32-image rule inside its fixed one-million-step job; schedule and tiling join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                                                                                                          |
 | 3D Solid                 | FROZEN, NOT SHIPPED — no replicated voxel memory: keep the canonical density texture and transform material queries; its separate march budget is measured by the Solid lift                                                                                                                                                             |
 | 4D Solid                 | FROZEN, NOT SHIPPED — at most 32 weighted pre-projection images per accepted source; the representation and exact volume budget remain the responsibility of its dedicated decision                                                                                                                                                      |
@@ -881,12 +881,53 @@ position/uniform colors stay source-owned while w-ramp and slice weight follow
 the image. Empty accepted content completes as a transparent histogram.
 
 The Flame worker resolves raw authored tiling before constructing the seeded
-orbit, reports active/refused association to the panel, and routes an active
-plan to CPU until the paired kernels ship. A tiling edit replaces the worker
-from the same source seed and frozen camera/rotor/slice; detached old hosts make
-rapid edits latest-wins, old deposits cannot survive, and a CPU fallback already
-learned by that live session is retained rather than probed again. Refused and
-absent plans keep the literal historical accumulator/backend lifecycle.
+orbit, reports active/refused association to the panel, and passes an active
+plan through the normal GPU route with CPU fallback. A tiling edit replaces the
+worker from the same source seed and frozen camera/rotor/slice; detached old
+hosts make rapid edits latest-wins, old deposits cannot survive, and a CPU
+fallback already learned by that live session is retained rather than probed
+again. Refused and absent plans keep the literal historical
+accumulator/backend lifecycle.
+
+### Flame WebGPU image specialization
+
+Both dimension-specific kernels consume one shared point-image WGSL body and
+keep their historical exports unchanged. An active plan appends an aligned
+tail to binding 7's existing emitter float table: a 16-float header addresses
+the analytic clip and either finite roots, matrices and wall-mask directories,
+or lattice cells and proposal-CDF records. Binding 8 adds one zero-initialized
+32-byte accumulator state per orbit chain for credit, cursor and diagnostics.
+That separate buffer preserves both established 32-byte orbit-chain wires and
+the 3D/4D Params layouts. Absent or refused tiling compiles the literal old
+kernel and retains its old bind-group layout and allocations byte for byte.
+
+The generated adapter replaces only the active PLOT color/deposit block.
+Orbit stepping, xaos and emitter draws are unchanged; schedule and final lens
+still precede canonical membership, and image selection never feeds the orbit
+or consumes its RNG. The 4D adapter acts on raw xyzw before the frozen rotor,
+projection and slice. Structural/transform/radius/height/position/uniform
+colors belong to the canonical source; w-ramp and soft-slice weight are
+recomputed per raw 4D image, whose image weight multiplies the slice weight.
+Balloon is refused before packing, so the tiled specialization has no echo
+deposit. Warmup remains outside this arm through the existing `PLOT=false`
+specialization.
+
+The lattice CDF packer quantizes every positive interval without collapse:
+endpoint and mass are exact f32 high/low-16 pairs, endpoints are strictly
+increasing, and the final endpoint is exactly 2^32. F4 bounds a finite splat at
+1,152; the x256 weight scale therefore caps one weight add at 294,912, and the
+additional x256 color scale caps one color add at 75,497,472. Both fit u32
+before the existing emulated-u64 accumulation; every packed lattice plan is
+additionally checked below its 740 weight ceiling.
+
+MEASURED (targeted agreement, verified Mesa Intel Iris Xe): finite 3D passed
+at MAE 0.0065 and density TV 0.0163; minimum-scale lattice 3D passed at MAE
+0.940 and TV 0.0375 under its scenario threshold 2; the F4 chamber 4D fixture
+passed at MAE 0.000657 and TV 0.00636; and minimum-scale lattice 4D passed at
+MAE 2.790 and TV 0.0471 with near-zero signed bias under threshold 5. These
+four rows exercise finite matrices, lattice CDF selection, source-owned color,
+true raw-4D action, image-owned w-ramp and the soft slice on the production
+backend.
 
 ### Legal combinations and edit timing
 
