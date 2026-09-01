@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Space-tiling AUTHORING, PRESET, AND POINTS gate. This drives the production
+ * Space-tiling AUTHORING, PRESET, POINTS, AND FLAME gate. This drives the production
  * app through the same panel controls and preset menu a person uses; it does
  * not construct a tiling block by editing the document hash.
  *
@@ -45,8 +45,13 @@
  *   rapid superseding edit: the older reply must stay labeled stale and the
  *   final reply must match the latest authored tiling; the 4D fixture changes
  *   tumble/slice view state and pixels without posting another cloud request;
- * - Flame and Sampled Solid still disclose beside the visible controls that
- *   they show the untiled attractor;
+ * - 3D lattice and 4D finite Flame fixtures start a real worker from an
+ *   app-copied document, intentionally select CPU accumulation, finish and
+ *   draw, differ from the same-seed Off render, and keep only the latest of a
+ *   rapid pair of 3D edits; the 4D fixture changes its settled rotor/slice in
+ *   the same worker;
+ * - Sampled Solid still discloses beside the visible controls that it stays
+ *   untiled;
  * - Balloon and order>1 Symmetry leave the authored checkbox available as a
  *   clear route while disabling both dependent finite detail controls and
  *   explaining the refusal next to them.
@@ -84,18 +89,29 @@
  * requests/replies stayed 2->2, and its tiled/untiled frames differed by
  * 15.27% (rotor-only/view frame differences were 14.54%/13.37%).
  *
+ * MEASURED 2026-09-01 on SwiftShader with `--scope=flame --settle=120000`:
+ * both 1M/1x CPU fixtures finished without page, console or app errors.
+ * Mirrored Lattice completed in 41.1s; the copied link restored, the worker
+ * reported CPU as intentional, the retired rapid edit produced no terminal or
+ * active relabel, the seed survived both the latest edit and Off, and the
+ * tiled/Off frames differed by 27.75%. Tiled Pentatope completed in 35.3s;
+ * the copied link restored, all eight rotor keys plus slice true/0.35 produced
+ * three view commands and another terminal frame in the original worker, and
+ * the posed tiled/Off frames differed by 48.41% (the view changed 21.72%).
+ *
  * Usage (build + `npm run preview` first):
  *   node scripts/tiling-ui.verify.mjs
  *   node scripts/tiling-ui.verify.mjs --mode=x11::0
  *   node scripts/tiling-ui.verify.mjs --stage=1
  *   node scripts/tiling-ui.verify.mjs --scope=points
+ *   node scripts/tiling-ui.verify.mjs --scope=flame
  *
  * Options:
  *   --url=URL        app origin (default https://localhost:4173)
  *   --mode=MODE      sw (default) or x11:<display>
- *   --scope=SCOPE    all (default) or points
+ *   --scope=SCOPE    all (default), points, or flame
  *   --viewport=WxH   viewport, width must be >=641 (default 800x640)
- *   --settle=MS      per-preset Surface/Points target budget (default 300000)
+ *   --settle=MS      per-preset Surface/Points/Flame target budget (default 300000)
  *   --stage=N        completed-pass target, 8 = settled latch (default 8)
  *   --dwell=MS       settled-latch hold time at stage 8 (default 1500)
  *   --draw=FRACTION  minimum non-backdrop screenshot share (default 0.005)
@@ -181,6 +197,13 @@ const POINTS_PRESETS = [
   { preset: PRESETS[1], fourD: true, lifecycle: false },
 ];
 
+// The complementary accumulator leg crosses both construction arms and both
+// dimensions without repeating the complete preset matrix.
+const FLAME_PRESETS = [
+  { preset: PRESETS[3], fourD: false, lifecycle: true },
+  { preset: PRESETS[1], fourD: true, lifecycle: false },
+];
+
 class CheckingError extends Error {}
 
 function parseArgs(argv) {
@@ -216,9 +239,9 @@ function parseArgs(argv) {
       `--mode must be sw or x11:<display> (got ${args.mode})`,
     );
   }
-  if (args.scope !== "all" && args.scope !== "points") {
+  if (!["all", "points", "flame"].includes(args.scope)) {
     throw new CheckingError(
-      `--scope must be all or points (got ${args.scope})`,
+      `--scope must be all, points, or flame (got ${args.scope})`,
     );
   }
   const viewport = /^(\d+)x(\d+)$/.exec(args.viewport);
@@ -345,9 +368,8 @@ async function openApp(browser, args) {
   });
   const page = await context.newPage();
   // Observe the production Worker boundary without replacing its computation
-  // or messages. Boot paints synchronously, so a created cloud Worker plus a
-  // matching request/reply pair is the proof that an edited Points cloud did
-  // not quietly take the main-thread fallback.
+  // or messages. A cloud request/reply proves Points did not quietly take its
+  // fallback; Flame starts/events prove the accumulator ran in its real host.
   await page.addInitScript(() => {
     const probe = { workers: [] };
     Object.defineProperty(window, "__tilingCloudWorkerProbe", {
@@ -365,6 +387,8 @@ async function openApp(browser, args) {
         const worker = Reflect.construct(target, argumentsList);
         const entry = {
           url: String(argumentsList[0] ?? ""),
+          terminated: false,
+          sequence: 0,
           requests: [],
           replies: [],
         };
@@ -372,12 +396,20 @@ async function openApp(browser, args) {
         const nativePostMessage = worker.postMessage.bind(worker);
         worker.postMessage = (message, transfer) => {
           entry.requests.push({
+            sequence: ++entry.sequence,
+            type: typeof message?.type === "string" ? message.type : "cloud",
             id: Number.isSafeInteger(message?.id) ? message.id : null,
-            fourD: message?.fourD === true,
+            fourD:
+              message?.type === "start"
+                ? message?.fourD !== undefined
+                : message?.fourD === true,
             numPoints: Number.isSafeInteger(message?.numPoints)
               ? message.numPoints
               : null,
             tiling: cloneJson(message?.tiling),
+            seed: Number.isSafeInteger(message?.seed) ? message.seed : null,
+            gpuPreference: message?.gpuPreference ?? null,
+            view: cloneJson(message?.view),
           });
           return transfer === undefined
             ? nativePostMessage(message)
@@ -386,10 +418,21 @@ async function openApp(browser, args) {
         worker.addEventListener("message", (event) => {
           const data = event.data;
           const reply = {
+            sequence: ++entry.sequence,
+            type: typeof data?.type === "string" ? data.type : "cloud",
             id: Number.isSafeInteger(data?.id) ? data.id : null,
             fourD: data?.fourD === true,
             count: Number.isSafeInteger(data?.count) ? data.count : null,
             pointTiling: cloneJson(data?.pointTiling),
+            outcome: cloneJson(data?.outcome),
+            backend: data?.backend ?? null,
+            forcedBy: data?.forcedBy ?? null,
+            iterationsDone: Number.isFinite(data?.iterationsDone)
+              ? data.iterationsDone
+              : null,
+            iterationsBudget: Number.isFinite(data?.iterationsBudget)
+              ? data.iterationsBudget
+              : null,
             noteBeforeDispatch:
               document.getElementById("tilingNote")?.textContent ?? "",
             noteAfterDispatch: null,
@@ -403,6 +446,12 @@ async function openApp(browser, args) {
               document.getElementById("tilingNote")?.textContent ?? "";
           }, 0);
         });
+        const nativeTerminate = worker.terminate.bind(worker);
+        worker.terminate = () => {
+          entry.terminated = true;
+          entry.sequence++;
+          return nativeTerminate();
+        };
         return worker;
       },
     });
@@ -486,6 +535,156 @@ async function waitForCloudWorkerProbe(page, predicate, timeout) {
     probe = await readCloudWorkerProbe(page);
   }
   return { ok: false, probe };
+}
+
+async function readFlameWorkerProbe(page) {
+  return page.evaluate(() => {
+    const workers = window.__tilingCloudWorkerProbe?.workers ?? [];
+    return {
+      workers: workers
+        .filter((worker) => worker.url.includes("flame-worker"))
+        .map((worker, index) => ({
+          index,
+          url: worker.url,
+          terminated: worker.terminated === true,
+          requests: worker.requests,
+          replies: worker.replies,
+        })),
+    };
+  });
+}
+
+function flameTerminalReplies(worker) {
+  return worker.replies.filter(
+    (reply) =>
+      (reply.type === "progress" || reply.type === "sharedFrame") &&
+      reply.iterationsBudget > 0 &&
+      reply.iterationsDone >= reply.iterationsBudget,
+  );
+}
+
+function matchingFlameRound(
+  probe,
+  tiling,
+  fourD,
+  afterCreated = 0,
+  expectedSeed = null,
+) {
+  for (let at = probe.workers.length - 1; at >= afterCreated; at--) {
+    const worker = probe.workers[at];
+    const start = worker.requests.find(
+      (request) =>
+        request.type === "start" &&
+        request.fourD === fourD &&
+        (expectedSeed === null || request.seed === expectedSeed) &&
+        exact(request.tiling) === exact(tiling),
+    );
+    if (!start) continue;
+    const outcome = worker.replies.find(
+      (reply) => reply.type === "tilingOutcome",
+    );
+    const backend = worker.replies.find((reply) => reply.type === "backend");
+    const terminals = flameTerminalReplies(worker);
+    return {
+      worker,
+      start,
+      outcome,
+      backend,
+      terminal: terminals.at(-1) ?? null,
+      terminalCount: terminals.length,
+    };
+  }
+  return null;
+}
+
+async function readFlameUi(page) {
+  return page.evaluate(() => ({
+    active:
+      document.getElementById("modeFlameBtn")?.getAttribute("aria-pressed") ===
+      "true",
+    note: document.getElementById("tilingNote")?.textContent ?? "",
+    backend: document.getElementById("flameBackendNote")?.textContent ?? "",
+    progress: document.getElementById("flameProgress")?.textContent ?? "",
+  }));
+}
+
+async function waitForFlameRound(
+  page,
+  tiling,
+  fourD,
+  afterCreated,
+  timeout,
+  expectedSeed = null,
+) {
+  const deadline = Date.now() + timeout;
+  let probe = await readFlameWorkerProbe(page);
+  let round = matchingFlameRound(
+    probe,
+    tiling,
+    fourD,
+    afterCreated,
+    expectedSeed,
+  );
+  let ui = await readFlameUi(page);
+  while (Date.now() < deadline) {
+    const active = tiling !== null;
+    const outcomePass = active
+      ? round?.outcome?.outcome?.availability === "active"
+      : true;
+    const backendPass = active
+      ? round?.backend?.backend === "cpu" &&
+        round.backend.forcedBy === "tiling" &&
+        ui.backend === "CPU accumulation — space tiling uses CPU"
+      : round?.backend !== undefined;
+    const notePass = active
+      ? ui.note.includes("Active in Flame")
+      : ui.note.startsWith("Off — Points, Flame, and Surface");
+    if (
+      round?.terminal != null &&
+      ui.active &&
+      outcomePass &&
+      backendPass &&
+      notePass
+    ) {
+      return { ok: true, probe, round, ui };
+    }
+    await page.waitForTimeout(POLL_MS);
+    probe = await readFlameWorkerProbe(page);
+    round = matchingFlameRound(
+      probe,
+      tiling,
+      fourD,
+      afterCreated,
+      expectedSeed,
+    );
+    ui = await readFlameUi(page);
+  }
+  return { ok: false, probe, round, ui };
+}
+
+async function waitForAdditionalFlameTerminal(
+  page,
+  workerIndex,
+  afterSequence,
+  timeout,
+) {
+  const deadline = Date.now() + timeout;
+  let probe = await readFlameWorkerProbe(page);
+  while (Date.now() < deadline) {
+    const worker = probe.workers[workerIndex];
+    if (
+      worker &&
+      flameTerminalReplies(worker).some(
+        (reply) => reply.sequence > afterSequence,
+      ) &&
+      (await readFlameUi(page)).note.includes("Active in Flame")
+    ) {
+      return { ok: true, probe, worker };
+    }
+    await page.waitForTimeout(POLL_MS);
+    probe = await readFlameWorkerProbe(page);
+  }
+  return { ok: false, probe, worker: probe.workers[workerIndex] ?? null };
 }
 
 function matchingWorkerRequest(probe, tiling, afterId = 0, numPoints = null) {
@@ -1320,6 +1519,366 @@ async function exerciseFourDPointsView(page, args, key) {
   return { checks, capture: after };
 }
 
+async function configureFocusedFlameQuality(page) {
+  await openSection(page, "rendererQualitySection");
+  await setRangeValue(page, "#flameIterationsSlider", 0);
+  await setRangeValue(page, "#flameSupersampleSlider", 1);
+  return page.evaluate(() => ({
+    iterations:
+      document.getElementById("flameIterationsLabel")?.textContent ?? "",
+    supersample:
+      document.getElementById("flameSupersampleLabel")?.textContent ?? "",
+  }));
+}
+
+async function exerciseFlameLatestWins(page, args, seed) {
+  const checks = [];
+  const before = await readFlameWorkerProbe(page);
+  const afterCreated = before.workers.length;
+  await openSection(page, "tilingSection");
+  // Both edits happen in one main-thread task. The first replacement host is
+  // therefore observable but cannot finish before the second edit retires it.
+  await page.evaluate(() => {
+    const scale = document.getElementById("tilingCellScaleSlider");
+    if (!(scale instanceof HTMLInputElement)) {
+      throw new Error("lattice scale control missing");
+    }
+    for (const value of ["1.7", "1.8"]) {
+      scale.value = value;
+      scale.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+  const authored = await waitForExactTiling(page, {
+    kind: "lattice",
+    cellScale: 1.8,
+  });
+  const latest = await waitForFlameRound(
+    page,
+    { kind: "lattice", cellScale: 1.8 },
+    false,
+    afterCreated,
+    args.settle,
+  );
+  const replacements = latest.probe.workers.slice(afterCreated);
+  const stale = replacements.find((worker) =>
+    worker.requests.some(
+      (request) =>
+        request.type === "start" &&
+        exact(request.tiling) === exact({ kind: "lattice", cellScale: 1.7 }),
+    ),
+  );
+  const staleTerminals = stale ? flameTerminalReplies(stale) : [];
+  const staleActiveRelabel = stale?.replies.some(
+    (reply) =>
+      reply.noteAfterDispatch?.includes("Active in Flame") === true ||
+      reply.noteAfterDispatch?.includes("bounded mirrored lattice") === true,
+  );
+  checks.push({
+    name: "rapid latest-wins Flame edit",
+    ok:
+      authored.ok &&
+      stale !== undefined &&
+      stale.terminated &&
+      staleTerminals.length === 0 &&
+      staleActiveRelabel !== true &&
+      latest.ok &&
+      latest.round?.start.seed === seed,
+    detail: `workers=${before.workers.length}->${latest.probe.workers.length}, staleTerminals=${staleTerminals.length}, staleRelabel=${Boolean(staleActiveRelabel)}, latest=${exact(latest.round?.start ?? null)}, status=${latest.ui.note || "none"}`,
+  });
+  return { checks, target: latest };
+}
+
+async function exerciseFourDFlameView(page, args, key, target, before) {
+  const checks = [];
+  if (!target.ok || !target.round) {
+    checks.push({
+      name: "4D Flame rotor/slice stays in one worker",
+      ok: false,
+      detail:
+        "no completed active Flame worker was available for view commands",
+    });
+    return { checks, capture: before, target };
+  }
+  const workerIndex = target.round.worker.index;
+  const beforeProbe = await readFlameWorkerProbe(page);
+  const beforeWorker = beforeProbe.workers[workerIndex];
+  const beforeStarts = beforeWorker.requests.filter(
+    (request) => request.type === "start",
+  ).length;
+  const beforeRequestCount = beforeWorker.requests.length;
+  await openSection(page, "viewControls");
+  const autoMotion = page.locator("#autoMotionToggle");
+  if (await autoMotion.isChecked()) await autoMotion.click();
+  await setRangeValue(page, "#fourDTumbleSpeedSlider", 3);
+  const beforeLink = await copyShareLink(page);
+  const beforeDocument = decodeHash(new URL(beforeLink).hash);
+  await closePanel(page);
+
+  const canvas = page.locator("#container canvas").first();
+  await canvas.evaluate((element) => {
+    window.__tilingFlameRotorAccepted = 0;
+    element.addEventListener("keydown", (event) => {
+      if (event.key.startsWith("Arrow") && event.defaultPrevented) {
+        window.__tilingFlameRotorAccepted += 1;
+      }
+    });
+  });
+  await canvas.focus();
+  await page.keyboard.down("Shift");
+  for (let step = 0; step < 4; step++) {
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowUp");
+  }
+  await page.keyboard.up("Shift");
+
+  await openSection(page, "viewControls");
+  const slice = page.locator("#fourDSliceToggle");
+  if (!(await slice.isChecked())) await slice.click();
+  await setRangeValue(page, "#fourDSliceSlider", 0.35);
+  const posedLink = await copyShareLink(page);
+  const posedDocument = decodeHash(new URL(posedLink).hash);
+  await closePanel(page);
+
+  const afterCommands = await readFlameWorkerProbe(page);
+  const commandWorker = afterCommands.workers[workerIndex];
+  const viewCommands = commandWorker.requests
+    .slice(beforeRequestCount)
+    .filter((request) => request.type === "setFourDView");
+  const lastViewCommand = viewCommands.at(-1);
+  const settled = lastViewCommand
+    ? await waitForAdditionalFlameTerminal(
+        page,
+        workerIndex,
+        lastViewCommand.sequence,
+        args.settle,
+      )
+    : { ok: false, probe: afterCommands, worker: commandWorker };
+  const after = await captureCanvas(page, args, `${key}-flame-view-after`);
+  const diff = await screenshotDiff(page, before.png, after.png);
+  const finalWorker = settled.probe.workers[workerIndex];
+  const finalStarts = finalWorker?.requests.filter(
+    (request) => request.type === "start",
+  ).length;
+  const pairChanged =
+    exact({ p: posedDocument.fourD?.p, q: posedDocument.fourD?.q }) !==
+    exact({ p: beforeDocument.fourD?.p, q: beforeDocument.fourD?.q });
+  const view = await page.evaluate(() => ({
+    motion: document.getElementById("autoMotionToggle")?.checked === true,
+    slice: document.getElementById("fourDSliceToggle")?.checked === true,
+    position: document.getElementById("fourDSliceSlider")?.value ?? "",
+    rotorAccepted: window.__tilingFlameRotorAccepted ?? 0,
+    note: document.getElementById("tilingNote")?.textContent ?? "",
+  }));
+  checks.push({
+    name: "4D Flame rotor/slice stays in one worker",
+    ok:
+      settled.ok &&
+      settled.probe.workers.length === beforeProbe.workers.length &&
+      finalWorker?.terminated === false &&
+      finalStarts === beforeStarts &&
+      viewCommands.length >= 2 &&
+      lastViewCommand?.view?.sliceOn === true &&
+      lastViewCommand.view.sliceCenter === 0.35 &&
+      pairChanged &&
+      posedDocument.fourD?.sliceOn === true &&
+      posedDocument.fourD.sliceCenter === 0.35 &&
+      view.rotorAccepted === 8 &&
+      !view.motion &&
+      view.slice &&
+      Number(view.position) === 0.35 &&
+      view.note.includes("Active in Flame") &&
+      diff.fraction >= 0.0005,
+    detail: `workers=${beforeProbe.workers.length}->${settled.probe.workers.length}, starts=${beforeStarts}->${finalStarts}, viewCommands=${viewCommands.length}, terminal=${settled.ok}, diff=${(diff.fraction * 100).toFixed(2)}%, pair=${pairChanged}, accepted=${view.rotorAccepted}, savedSlice=${posedDocument.fourD?.sliceOn ?? "missing"}/${posedDocument.fourD?.sliceCenter ?? "missing"}`,
+  });
+  return { checks, capture: after, target };
+}
+
+async function runFlamePresetLeg(browser, args, fixture) {
+  const { preset, fourD, lifecycle } = fixture;
+  const { context, page, pageErrors, consoleErrors } = await openApp(
+    browser,
+    args,
+  );
+  const started = Date.now();
+  const checks = [];
+  const check = (name, ok, detail) => checks.push({ name, ok, detail });
+  try {
+    const loaded = await loadPreset(page, preset.key);
+    const installed = await waitForExactTiling(page, preset.tiling);
+    const points = await waitForModeNote(
+      page,
+      "modePointsBtn",
+      /Active in Points — .* · complete/,
+      args.settle,
+    );
+    const shareLink = await copyShareLink(page);
+    const shared = decodeHash(new URL(shareLink).hash);
+    await page.goto(shareLink, { waitUntil: "load", timeout: 60_000 });
+    await page.waitForFunction(
+      () => {
+        const count = document.getElementById("pointCount")?.textContent ?? "";
+        return Number(count.replace(/[^\d]/g, "")) > 0;
+      },
+      undefined,
+      { timeout: 60_000 },
+    );
+    const restored = await waitForExactTiling(page, preset.tiling);
+    const restoredPoints = await waitForModeNote(
+      page,
+      "modePointsBtn",
+      /Active in Points — .* · complete/,
+      args.settle,
+    );
+    const quality = await configureFocusedFlameQuality(page);
+    const beforeFlame = await readFlameWorkerProbe(page);
+    await page.locator("#modeFlameBtn").click();
+    const initial = await waitForFlameRound(
+      page,
+      preset.tiling,
+      fourD,
+      beforeFlame.workers.length,
+      args.settle,
+    );
+    check(
+      "copied-link Flame Worker",
+      loaded &&
+        installed.ok &&
+        points.ok &&
+        shareLink.includes("#v1=") &&
+        exact(shared.tiling) === exact(preset.tiling) &&
+        restored.ok &&
+        restoredPoints.ok &&
+        quality.iterations === "1.0M" &&
+        quality.supersample === "1×" &&
+        initial.ok &&
+        initial.round?.start.fourD === fourD,
+      `link=${shareLink.includes("#v1=")}, tiling=${restored.ok}, quality=${quality.iterations}/${quality.supersample}, workers=${beforeFlame.workers.length}->${initial.probe.workers.length}, start=${exact(initial.round?.start ?? null)}`,
+    );
+    check(
+      "intentional CPU terminal",
+      initial.ok &&
+        initial.round?.outcome?.outcome?.availability === "active" &&
+        initial.round.backend?.backend === "cpu" &&
+        initial.round.backend.forcedBy === "tiling" &&
+        initial.round.terminal !== null &&
+        initial.ui.backend === "CPU accumulation — space tiling uses CPU",
+      `outcome=${exact(initial.round?.outcome?.outcome ?? null)}, backend=${exact(initial.round?.backend ?? null)}, terminal=${exact(initial.round?.terminal ?? null)}, status=${initial.ui.note || "none"}`,
+    );
+
+    if (!initial.ok || !initial.round) {
+      const errorText = await visibleErrorText(page);
+      check(
+        "page errors",
+        pageErrors.length === 0,
+        pageErrors.length ? pageErrors.join(" | ") : "none",
+      );
+      check(
+        "console errors",
+        consoleErrors.length === 0,
+        consoleErrors.length ? consoleErrors.join(" | ") : "none",
+      );
+      check("visible app error", errorText.length === 0, errorText || "none");
+      return {
+        ok: false,
+        preset,
+        checks,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    let tiledCapture = await captureCanvas(
+      page,
+      args,
+      `${preset.key}-flame-tiled`,
+    );
+    let activeTarget = initial;
+    if (fourD) {
+      const viewResult = await exerciseFourDFlameView(
+        page,
+        args,
+        preset.key,
+        initial,
+        tiledCapture,
+      );
+      for (const result of viewResult.checks) checks.push(result);
+      tiledCapture = viewResult.capture;
+    }
+    if (lifecycle) {
+      const latest = await exerciseFlameLatestWins(
+        page,
+        args,
+        initial.round?.start.seed,
+      );
+      for (const result of latest.checks) checks.push(result);
+      activeTarget = latest.target;
+      tiledCapture = await captureCanvas(
+        page,
+        args,
+        `${preset.key}-flame-latest`,
+      );
+    }
+
+    const beforeOff = await readFlameWorkerProbe(page);
+    await openSection(page, "tilingSection");
+    await page.locator("#tilingEnabledCheckbox").focus();
+    await page.locator("#tilingEnabledCheckbox").press("Space");
+    const cleared = await waitForDocument(
+      page,
+      (document) => document.tiling === undefined,
+    );
+    const off = await waitForFlameRound(
+      page,
+      null,
+      fourD,
+      beforeOff.workers.length,
+      args.settle,
+      activeTarget.round?.start.seed ?? null,
+    );
+    const untiledCapture = await captureCanvas(
+      page,
+      args,
+      `${preset.key}-flame-off`,
+    );
+    const distinctness = await screenshotDiff(
+      page,
+      tiledCapture.png,
+      untiledCapture.png,
+    );
+    const minDiff = preset.minDiff ?? args.diff;
+    check(
+      "same-seed tiled/Off Flame frame",
+      cleared.ok &&
+        off.ok &&
+        off.round?.start.seed === activeTarget.round?.start.seed &&
+        tiledCapture.metrics.coverage >= args.draw &&
+        untiledCapture.metrics.coverage >= args.draw &&
+        distinctness.fraction >= minDiff,
+      `cleared=${cleared.ok}, seed=${activeTarget.round?.start.seed}->${off.round?.start.seed}, tiled=${(tiledCapture.metrics.coverage * 100).toFixed(2)}%, off=${(untiledCapture.metrics.coverage * 100).toFixed(2)}%, diff=${(distinctness.fraction * 100).toFixed(2)}%/${(minDiff * 100).toFixed(2)}%, status=${off.ui.note || "none"}`,
+    );
+
+    const errorText = await visibleErrorText(page);
+    check(
+      "page errors",
+      pageErrors.length === 0,
+      pageErrors.length ? pageErrors.join(" | ") : "none",
+    );
+    check(
+      "console errors",
+      consoleErrors.length === 0,
+      consoleErrors.length ? consoleErrors.join(" | ") : "none",
+    );
+    check("visible app error", errorText.length === 0, errorText || "none");
+    return {
+      ok: checks.every((entry) => entry.ok),
+      preset,
+      checks,
+      elapsedMs: Date.now() - started,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 function maxWorkerRequestId(probe) {
   return Math.max(0, ...probe.requests.map((request) => request.id ?? 0));
 }
@@ -1877,8 +2436,7 @@ async function runAuthoringLeg(browser, args) {
     await openSection(page, "tilingSection");
     const modeChecks = [
       ["modePointsBtn", /Active in Points — .* · complete/],
-      ["modeFlameBtn", /Flame shows the untiled attractor/],
-      ["modeSolidBtn", /Solid shows the untiled attractor/],
+      ["modeSolidBtn", /Solid stays untiled/],
     ];
     for (const [button, expression] of modeChecks) {
       const mode = await waitForModeNote(
@@ -2156,6 +2714,19 @@ function printPointsPreset(result) {
   }
 }
 
+function printFlamePreset(result) {
+  process.stdout.write(
+    `${result.ok ? "PASS" : "FAIL"}  ${`${result.preset.label} Flame`.padEnd(27)} ` +
+      `tiling=${exact(result.preset.tiling)} ` +
+      `time=${((result.elapsedMs ?? 0) / 1000).toFixed(1)}s\n`,
+  );
+  for (const check of result.checks) {
+    process.stdout.write(
+      `  ${check.ok ? "PASS" : "FAIL"}  ${check.name} — ${check.detail}\n`,
+    );
+  }
+}
+
 async function run() {
   const args = parseArgs(process.argv.slice(2));
   const launch = launchOptions(args.mode);
@@ -2177,10 +2748,20 @@ async function run() {
       }
     }
 
-    for (const fixture of POINTS_PRESETS) {
-      const result = await runPointsPresetLeg(browser, args, fixture);
-      printPointsPreset(result);
-      if (!result.ok) failed = true;
+    if (args.scope === "all" || args.scope === "points") {
+      for (const fixture of POINTS_PRESETS) {
+        const result = await runPointsPresetLeg(browser, args, fixture);
+        printPointsPreset(result);
+        if (!result.ok) failed = true;
+      }
+    }
+
+    if (args.scope === "all" || args.scope === "flame") {
+      for (const fixture of FLAME_PRESETS) {
+        const result = await runFlamePresetLeg(browser, args, fixture);
+        printFlamePreset(result);
+        if (!result.ok) failed = true;
+      }
     }
 
     if (args.scope === "all") {
