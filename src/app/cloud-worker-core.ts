@@ -18,13 +18,27 @@
  * drag frame at high point counts). The at-most-one-in-flight policy lives in
  * `cloud-generator.ts`, so this module never sees overlapping requests.
  */
-import { runChaosGame } from "../fractal/chaos-game";
+import { runChaosGame, runChaosGameTiledPoints } from "../fractal/chaos-game";
 import type { ChaosGameResult } from "../fractal/chaos-game";
-import { runChaosGame4 } from "../fractal/chaos-game-4d";
+import {
+  runChaosGame4,
+  runChaosGame4TiledPoints,
+} from "../fractal/chaos-game-4d";
 import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
 import { toTransform4 } from "../fractal/affine4";
 import { buildColors } from "../fractal/color";
-import type { PositionAxisColors } from "../fractal/color";
+import type {
+  PointColorSource3D,
+  PointColorSource4D,
+  PositionAxisColors,
+} from "../fractal/color";
+import { pointTilingStatus } from "../fractal/point-tiling";
+import { resolvePointTilingSession } from "../fractal/point-tiling-session";
+import { isResolvedLatticeTiling, type TilingSpec } from "../fractal/tiling";
+import {
+  latticeCameraCarrierRadius4,
+  latticeCameraFitBounds,
+} from "../fractal/lattice-march";
 import type { PaletteSpec } from "../fractal/palette";
 import {
   hasMeshAsset,
@@ -45,6 +59,7 @@ import type {
   Transform,
 } from "../fractal/types";
 import { framingBounds, framingRadius4 } from "./framing-bounds";
+import type { PointTilingOutcome } from "./point-tiling-outcome";
 
 /**
  * Main thread → worker: one point-cloud generation request. Everything the
@@ -87,6 +102,14 @@ export interface CloudRequest {
    * `null`/absent — every pre-feature document — runs both chaos games
    * byte-identically to before the field existed. */
   schedule: HybridSchedule | null;
+  /** Raw, structured-clone-safe authored space-tiling block. The worker
+   * resolves estimator radius, session clip pose and point-image tables in
+   * its own module realm; resolved finite plans must never cross this wire. */
+  tiling?: TilingSpec | null;
+  /** Balloon is a presentation-level refusal for point tiling. It travels
+   * with the request so a delayed result reports the policy it actually ran,
+   * never whatever the live checkbox says when it arrives. */
+  balloonEcho?: boolean;
   /** 3D color bake inputs (`buildColors`); unused on the 4D path, where color
    * is shader-owned or rebaked main-side per mode (see main.ts's
    * `applyFourDColor`). */
@@ -135,6 +158,12 @@ export interface CloudResult3D extends ChaosGameResult {
    * still read.
    */
   frameBounds: Bounds;
+  /** Active tiled clouds retain the canonical post-schedule/post-lens source
+   * aligned to every emitted image so live structural recolor stays attached
+   * to the source rather than the replicated carrier. */
+  canonicalColorSource?: PointColorSource3D;
+  /** Present only when the request authored tiling (active or refused). */
+  pointTiling?: PointTilingOutcome;
 }
 
 /** The 4D result: the 4D chaos-game output as-is. No baked colors — the 4D
@@ -152,10 +181,43 @@ export interface CloudResult4D extends ChaosGame4Result {
    * culling sphere and w-color normalization, which must cover every point.
    */
   frameRadius: number;
+  canonicalColorSource?: PointColorSource4D;
+  pointTiling?: PointTilingOutcome;
 }
 
 /** Worker → main thread: the generated cloud, tagged with the request's id. */
 export type CloudResult = CloudResult3D | CloudResult4D;
+
+/** Hard worker-wire ceiling for active tiled color provenance. At the
+ * authored 5M-point maximum the larger 4D source is exactly 80 MB; 3D is
+ * 60 MB. This is intentionally the provenance increment, not a claim about
+ * the cloud result's complete resident size. */
+export const MAX_CANONICAL_COLOR_SOURCE_BYTES = 80_000_000;
+
+/**
+ * Extra resident/transfer storage retained only for an active tiled cloud's
+ * canonical color provenance. The source is aligned one-for-one with the
+ * delivered carrier, so its upper bound is a pure multiple of the authored
+ * output capacity: xyz f32 in 3D, xyz+w f32 in 4D. Keeping this calculation
+ * explicit lets the worker integration gate the 5M-point document ceiling
+ * without allocating a maximum-sized cloud in a unit test.
+ */
+export function canonicalColorSourceByteCeiling(
+  pointCapacity: number,
+  fourD: boolean,
+): number {
+  if (!Number.isSafeInteger(pointCapacity) || pointCapacity < 0) {
+    throw new RangeError(
+      "canonical color source capacity must be a non-negative safe integer",
+    );
+  }
+  const bytes =
+    pointCapacity * Float32Array.BYTES_PER_ELEMENT * (fourD ? 4 : 3);
+  if (!Number.isSafeInteger(bytes)) {
+    throw new RangeError("canonical color source byte ceiling is unsafe");
+  }
+  return bytes;
+}
 
 /**
  * XOR'd into `request.seed` to derive the iteration-local stream's own seed
@@ -239,8 +301,164 @@ function installRequestMeshAssets(
  * visibly boiled.
  */
 export function generateCloud(request: CloudRequest): CloudResult {
+  // Guard the raw authored wire before mesh installation, session fitting,
+  // RNG construction or any output-capacity typed arrays. Main-thread state
+  // already clamps authored points to 5M; this makes that memory invariant
+  // independently executable in the worker/fallback boundary.
+  if (request.tiling) {
+    const canonicalBytes = canonicalColorSourceByteCeiling(
+      request.numPoints,
+      request.fourD,
+    );
+    if (canonicalBytes > MAX_CANONICAL_COLOR_SOURCE_BYTES) {
+      throw new RangeError(
+        `canonical color source requires ${canonicalBytes} bytes, exceeding the ${MAX_CANONICAL_COLOR_SOURCE_BYTES}-byte worker ceiling`,
+      );
+    }
+  }
+
   installRequestMeshAssets(request.meshAssets, request.meshAssetIds);
 
+  // Resolve legality and the worker-local matrix/CDF plan before constructing
+  // either request-seeded stream. The clip-fit probes use their own fixed
+  // seed, so neither a legal plan nor a refusal can perturb the ordinary
+  // orbit's primary/auxiliary RNG contract.
+  const pointTiling = resolvePointTilingSession(
+    request.transforms,
+    request.finalTransform,
+    request.symmetry,
+    request.schedule,
+    request.tiling ?? null,
+    request.balloonEcho ?? false,
+    request.fourD,
+  );
+
+  if (pointTiling.status === "active") {
+    const rng = mulberry32(request.seed);
+    const iterRng = iterationRng(request.seed ^ ITERATION_SEED_XOR);
+    if (request.fourD) {
+      const transforms4 = request.transforms.map(toTransform4);
+      const final4 = request.finalTransform
+        ? toTransform4(request.finalTransform)
+        : null;
+      const result = runChaosGame4TiledPoints(
+        transforms4,
+        request.numPoints,
+        pointTiling.plan,
+        rng,
+        final4,
+        request.symmetry,
+        iterRng,
+        request.schedule,
+      );
+      const canonicalColorSource: PointColorSource4D = {
+        positions: result.canonicalPositions,
+        w: result.canonicalW,
+        bounds: result.canonicalBounds,
+        center: result.canonicalCenter,
+      };
+      const frameRadius = isResolvedLatticeTiling(pointTiling.resolved)
+        ? latticeCameraCarrierRadius4(
+            pointTiling.resolved.h,
+            pointTiling.resolved.radius,
+          )
+        : framingRadius4(
+            result.positions,
+            result.w,
+            result.count,
+            result.center,
+          );
+      const outcome: PointTilingOutcome = {
+        availability: "active",
+        kind: pointTiling.plan.kind,
+        fill: pointTilingStatus(request.numPoints, result.count),
+        requested: request.numPoints,
+        attempts: result.pointTilingState.attempts,
+        accepted: result.pointTilingState.accepted,
+        candidateTests: result.pointTilingState.candidateTests,
+      };
+      const {
+        canonicalPositions: _canonicalPositions,
+        canonicalW: _canonicalW,
+        canonicalBounds: _canonicalBounds,
+        canonicalCenter: _canonicalCenter,
+        pointTilingState: _pointTilingState,
+        ...cloud
+      } = result;
+      return {
+        id: request.id,
+        fourD: true,
+        ...cloud,
+        frameRadius,
+        canonicalColorSource,
+        pointTiling: outcome,
+      };
+    }
+
+    const result = runChaosGameTiledPoints(
+      request.transforms,
+      request.numPoints,
+      pointTiling.plan,
+      rng,
+      request.finalTransform,
+      request.symmetry,
+      iterRng,
+      request.schedule,
+    );
+    const canonicalColorSource: PointColorSource3D = {
+      positions: result.canonicalPositions,
+      bounds: result.canonicalBounds,
+    };
+    const colors = buildColors(
+      result,
+      request.transforms,
+      request.colorMode,
+      request.colorGamma,
+      request.rampPalette,
+      request.positionAxisColors,
+      canonicalColorSource,
+    );
+    const frameBounds = isResolvedLatticeTiling(pointTiling.resolved)
+      ? latticeCameraFitBounds(
+          pointTiling.resolved.h,
+          pointTiling.resolved.radius,
+          false,
+        )
+      : framingBounds(result.positions, result.count);
+    const outcome: PointTilingOutcome = {
+      availability: "active",
+      kind: pointTiling.plan.kind,
+      fill: pointTilingStatus(request.numPoints, result.count),
+      requested: request.numPoints,
+      attempts: result.pointTilingState.attempts,
+      accepted: result.pointTilingState.accepted,
+      candidateTests: result.pointTilingState.candidateTests,
+    };
+    const {
+      canonicalPositions: _canonicalPositions,
+      canonicalBounds: _canonicalBounds,
+      pointTilingState: _pointTilingState,
+      ...cloud
+    } = result;
+    return {
+      id: request.id,
+      fourD: false,
+      ...cloud,
+      colors,
+      frameBounds,
+      canonicalColorSource,
+      pointTiling: outcome,
+    };
+  }
+
+  // The classic/refused arm below is deliberately the historical generation
+  // path: same calls, arrays and RNG construction. A refusal adds only
+  // request-associated disclosure metadata; it never substitutes a tiled
+  // empty/underfilled result, because those return from the active arm above.
+  const refusedOutcome: PointTilingOutcome | undefined =
+    pointTiling.status === "refused"
+      ? { availability: "refused", note: pointTiling.note }
+      : undefined;
   const rng = mulberry32(request.seed);
   const iterRng = iterationRng(request.seed ^ ITERATION_SEED_XOR);
   if (request.fourD) {
@@ -263,7 +481,13 @@ export function generateCloud(request: CloudRequest): CloudResult {
       result.count,
       result.center,
     );
-    return { id: request.id, fourD: true, ...result, frameRadius };
+    return {
+      id: request.id,
+      fourD: true,
+      ...result,
+      frameRadius,
+      ...(refusedOutcome ? { pointTiling: refusedOutcome } : {}),
+    };
   }
   const result = runChaosGame(
     request.transforms,
@@ -283,7 +507,14 @@ export function generateCloud(request: CloudRequest): CloudResult {
     request.positionAxisColors,
   );
   const frameBounds = framingBounds(result.positions, result.count);
-  return { id: request.id, fourD: false, ...result, colors, frameBounds };
+  return {
+    id: request.id,
+    fourD: false,
+    ...result,
+    colors,
+    frameBounds,
+    ...(refusedOutcome ? { pointTiling: refusedOutcome } : {}),
+  };
 }
 
 /**
@@ -304,8 +535,19 @@ export function cloudResultTransfers(result: CloudResult): ArrayBuffer[] {
   ];
   if (result.fourD) {
     transfers.push(result.w.buffer as ArrayBuffer);
+    if (result.canonicalColorSource) {
+      transfers.push(
+        result.canonicalColorSource.positions.buffer as ArrayBuffer,
+        result.canonicalColorSource.w.buffer as ArrayBuffer,
+      );
+    }
   } else {
     transfers.push(result.colors.buffer as ArrayBuffer);
+    if (result.canonicalColorSource) {
+      transfers.push(
+        result.canonicalColorSource.positions.buffer as ArrayBuffer,
+      );
+    }
   }
   return transfers;
 }
