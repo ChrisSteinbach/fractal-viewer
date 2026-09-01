@@ -19,6 +19,14 @@ export type PointTilingOutcome =
       candidateTests: number;
     };
 
+/** Worker-resolved Flame availability. Unlike Points, a Flame accumulation
+ * has a fixed source-iteration budget rather than a requested output count;
+ * the lifecycle therefore needs only off/refused/active and the active arm. */
+export type FlameTilingOutcome =
+  | { availability: "off" }
+  | { availability: "refused"; note: string }
+  | { availability: "active"; kind: "finite" | "lattice" };
+
 /** Compact pane readout. Ordinary Points keeps its historical `N pts` text;
  * an active tiled request additionally exposes the authored output budget and
  * the terminal fill verdict. */

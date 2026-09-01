@@ -339,6 +339,9 @@ export interface ControlEffects {
    * histogram/shared-frame dimensions are fixed at `start`; the flame twin
    * of {@link restartSolidRender}. */
   restartFlameRender(): void;
+  /** Restart Flame for a space-tiling edit while retaining its source seed
+   * and any session-learned CPU fallback across the replacement worker. */
+  restartFlameTilingRender(): void;
   /** Update the mirrored lattice's resolved half-cell on the active Surface
    * session without rebuilding its baked kind/clip source. Both engines
    * consume the new scale on the next frame. */
@@ -568,22 +571,25 @@ const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
 };
 
 /** Space tiling's panel-IA record (`docs/panel-ia.md`): Scene / Look;
- * consumed by Points and Surface in the matching dimension; document
+ * consumed by Points, Flame and Surface in the matching dimension; document
  * lifetime. Points follows the existing Auto-update/manual-Regenerate
- * contract, while an active Surface session restarts with its inspection
- * view preserved. Eligibility refresh is immediate because group dimension,
+ * contract; Flame restarts its in-worker accumulation while preserving the
+ * frozen view and fallback state; Surface restarts with its inspection view
+ * preserved. Eligibility refresh is immediate because group dimension,
  * Balloon and kaleidoscope are explicit refusals. */
 const tilingEffect: ControlEffect = (state, fx) => {
   fx.regenerateIfAutoUpdate();
   fx.refreshSurfaceEligibility();
+  if (state.renderMode === "flame") fx.restartFlameTilingRender();
   if (state.renderMode === "surface") fx.restartSurfaceRender();
 };
 
-/** The lattice scale is live inside Surface but still changes which bounded
- * raw images a Points cloud contains, so Points follows Auto-update while
- * Surface rewrites its uniform/params word without re-entry. */
+/** The lattice scale is live inside Surface but changes which bounded raw
+ * images Points and Flame contain. Points follows Auto-update, Flame restarts
+ * from its source seed, and Surface rewrites its params word without re-entry. */
 const tilingScaleEffect: ControlEffect = (state, fx) => {
   fx.regenerateIfAutoUpdate();
+  if (state.renderMode === "flame") fx.restartFlameTilingRender();
   if (
     state.renderMode === "surface" &&
     state.tiling &&
@@ -1428,8 +1434,8 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   // preference. The arm chooser picks the finite reflection vocabulary or
   // the mirrored lattice; the chamber comes from the group and the optional
   // ShapeSpec clip below only NARROWS the content (both arms).
-  // Points consumes the bounded image plan; Flame/Solid remain authored for
-  // later lifts, while Surface keeps its query-fold implementation. ———
+  // Points and Flame consume the bounded image plan; Solid remains authored
+  // for its later lift, while Surface keeps its query-fold implementation. ———
   {
     kind: "checkbox",
     id: "tilingEnabledCheckbox",

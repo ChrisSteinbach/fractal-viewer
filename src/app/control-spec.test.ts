@@ -80,6 +80,7 @@ function mockEffects(shared = false): ControlEffects {
     applyFourDColor: vi.fn(),
     restartSolidRender: vi.fn(),
     restartFlameRender: vi.fn(),
+    restartFlameTilingRender: vi.fn(),
     setSurfaceLatticeScale: vi.fn(),
     restartSurfaceRender: vi.fn(),
     applyBackground: vi.fn(),
@@ -1434,6 +1435,24 @@ describe("effects", () => {
       expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
     });
 
+    it("restarts lattice scale from the same seed only in an active Flame session", () => {
+      const spec = specById("tilingCellScaleSlider");
+      const previous = setTiling(
+        { ...initialState(true), renderMode: "flame" },
+        { kind: "lattice", cellScale: 1.5 },
+      );
+      const state = applyScalarControl(previous, spec, "2.4");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
+      expect(fx.restartFlameTilingRender).toHaveBeenCalledTimes(1);
+      expect(fx.restartFlameRender).not.toHaveBeenCalled();
+      expect(fx.setSurfaceLatticeScale).not.toHaveBeenCalled();
+      expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
+    });
+
     it("reads a mesh-backed bundled clip as authored, not a selectable kind", () => {
       const meshClipped = setTiling(initialState(true), {
         group: "a3",
@@ -1453,7 +1472,7 @@ describe("effects", () => {
       expect(tilingClipSelectValue(latticeClipped)).toBe("gear");
     });
 
-    it("restarts kind, group, clip, and toggle edits only on an active Surface", () => {
+    it("restarts kind, group, clip, and toggle edits in their active Flame or Surface consumer", () => {
       for (const id of [
         "tilingEnabledCheckbox",
         "tilingKind",
@@ -1463,7 +1482,7 @@ describe("effects", () => {
         const spec = specById(id);
         expect(spec.persisted).not.toBe(false);
 
-        for (const renderMode of ["points", "surface"] as const) {
+        for (const renderMode of ["points", "flame", "surface"] as const) {
           const state = setTiling(
             { ...initialState(true), renderMode },
             { group: "b3" },
@@ -1473,6 +1492,10 @@ describe("effects", () => {
 
           expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
           expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
+          expect(fx.restartFlameTilingRender).toHaveBeenCalledTimes(
+            renderMode === "flame" ? 1 : 0,
+          );
+          expect(fx.restartFlameRender).not.toHaveBeenCalled();
           expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(
             renderMode === "surface" ? 1 : 0,
           );

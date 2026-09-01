@@ -109,6 +109,7 @@ import {
   type FlameBackdropImage,
 } from "./flame-backdrop-generator";
 import type { RenderSessionHandle } from "./render-session";
+import type { FlameTilingOutcome } from "./point-tiling-outcome";
 import { createRenderWorkerHost } from "./render-worker-host";
 import { voxelAccumBudgetBytes } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
@@ -3217,6 +3218,13 @@ async function main(): Promise<void> {
   // that why is what made field reports of this flakiness undiagnosable.
   // Cleared by `clearNotes` on every fresh session start.
   let flameGpuUnavailableReason: "no-webgpu" | "error" | null = null;
+  // A tiling edit replaces the worker, but it must not turn a device already
+  // proven unavailable into another expensive GPU probe. Generic Flame entry
+  // and non-tiling restarts retain the historical fresh-attempt behavior.
+  let flameGpuFallbackHeldReason: "no-webgpu" | "error" | null = null;
+  let activeFlameTilingOutcome: FlameTilingOutcome | undefined;
+  let flameTilingPending = false;
+  let retainFlameTilingDisclosureOnNextEntry = false;
 
   // Allocate the two shared display-resolution frame slots, or null to fall
   // back to transfer mode: when the page isn't cross-origin isolated the
@@ -3267,6 +3275,13 @@ async function main(): Promise<void> {
     scene.setFlameImage(image, width, height);
   }
 
+  function settleFlameTilingOutcome(): void {
+    if (!flameTilingPending) return;
+    flameTilingPending = false;
+    ui.setFlameTilingOutcome(activeFlameTilingOutcome, false);
+    ui.updateLabels(state);
+  }
+
   function handleFlameEvent(event: FlameWorkerEvent): void {
     switch (event.type) {
       case "progress":
@@ -3278,6 +3293,7 @@ async function main(): Promise<void> {
           event.iterationsBudget,
         );
         flameSession.markFirstFrame();
+        settleFlameTilingOutcome();
         break;
       case "sharedFrame":
         // Shared-mode counterpart to "progress": the frame is already in
@@ -3294,6 +3310,7 @@ async function main(): Promise<void> {
             event.iterationsBudget,
           );
           flameSession.markFirstFrame();
+          settleFlameTilingOutcome();
         }
         break;
       case "restarted":
@@ -3304,33 +3321,44 @@ async function main(): Promise<void> {
         // markFirstFrame: there is no frame yet.
         ui.setFlameProgress(0, event.iterationsBudget);
         noteRenderProgress("flame", 0, event.iterationsBudget);
+        flameSession.invalidateFirstFrame();
+        if (activeFlameTilingOutcome?.availability === "active") {
+          flameTilingPending = true;
+          ui.setFlameTilingOutcome(activeFlameTilingOutcome, true);
+          ui.updateLabels(state);
+        }
         break;
       case "supersampleNote":
         ui.setFlameSupersampleNote(event.effective, event.requested);
         break;
       case "backend":
-        ui.setFlameBackendNote(
-          event.backend,
-          event.adapter,
-          // A CPU backend AFTER a gpuUnavailable is a fallback — say why,
-          // briefly. A CPU backend with no preceding gpuUnavailable is just
-          // a CPU render (GPU never attempted): no reason to show. Chaos
-          // rows and then shape emitters each carried a twin disclosure
-          // here — "a document feature the kernels don't know yet" — until
-          // the WGSL kernels learned both; no document forces CPU any more.
-          // Wording per the render-backend disclosure's legibility lesson:
-          // no API names inside negations — "WebGPU unavailable" was
-          // field-misread as a positive WebGPU indicator (the eye catches
-          // the API name, not the negation).
-          event.backend === "cpu" && flameGpuUnavailableReason !== null
-            ? flameGpuUnavailableReason === "no-webgpu"
-              ? "no GPU API in this browser"
-              : "GPU failed"
-            : undefined,
-          // Software adapters escalate the note to the warning tier
-          // — SwiftShader accumulation must not pass as the GPU.
-          event.software === true,
-        );
+        {
+          const fallbackReason =
+            flameGpuUnavailableReason ?? flameGpuFallbackHeldReason;
+          ui.setFlameBackendNote(
+            event.backend,
+            event.adapter,
+            // A CPU backend AFTER a gpuUnavailable is a fallback — say why,
+            // briefly. A CPU backend with no preceding gpuUnavailable is just
+            // a CPU render (GPU never attempted): no reason to show. Active
+            // tiling is the explicit exception until its WGSL twin lands, and
+            // `forcedBy` keeps that policy distinct from a failed device.
+            // Wording per the render-backend disclosure's legibility lesson:
+            // no API names inside negations — "WebGPU unavailable" was
+            // field-misread as a positive WebGPU indicator (the eye catches
+            // the API name, not the negation).
+            event.forcedBy === "tiling"
+              ? "space tiling uses CPU"
+              : event.backend === "cpu" && fallbackReason !== null
+                ? fallbackReason === "no-webgpu"
+                  ? "no GPU API in this browser"
+                  : "GPU failed"
+                : undefined,
+            // Software adapters escalate the note to the warning tier
+            // — SwiftShader accumulation must not pass as the GPU.
+            event.software === true,
+          );
+        }
         break;
       case "gpuUnavailable":
         // The worker's GPU recovery ladder is exhausted — it will fall back
@@ -3338,6 +3366,13 @@ async function main(): Promise<void> {
         // event's CPU note can say WHY. No escalation: the worker's CPU path
         // is the correct, universal fallback.
         flameGpuUnavailableReason = event.reason;
+        flameGpuFallbackHeldReason = event.reason;
+        break;
+      case "tilingOutcome":
+        activeFlameTilingOutcome = event.outcome;
+        flameTilingPending = event.outcome.availability === "active";
+        ui.setFlameTilingOutcome(event.outcome, flameTilingPending);
+        ui.updateLabels(state);
         break;
       case "estimating":
         ui.setFlameEstimating();
@@ -3396,7 +3431,11 @@ async function main(): Promise<void> {
     | undefined {
     if (!viewIs4D || !fourDResult) return undefined;
     const rotor = fourDView.matrix();
-    const b = fourDResult.bounds;
+    // Tiling moves raw display images but Height/Radius/Position—and the
+    // still-untiled Solid worker—belong to the canonical source. The arrays
+    // stay output-aligned, so the result count remains the shared loop bound.
+    const source = fourDResult.canonicalColorSource ?? fourDResult;
+    const b = source.bounds;
     const halfExtents: Vec4 = [
       (b.maxX - b.minX) / 2,
       (b.maxY - b.minY) / 2,
@@ -3410,7 +3449,8 @@ async function main(): Promise<void> {
     // The "radius" color mode's normalization: the same min→max 4D-distance
     // range over the explorer's own cloud that buildColors4's radius branch
     // bakes with, so the render's ramp matches the explorer's colors.
-    const { positions, w, count, center } = fourDResult;
+    const { positions, w, center } = source;
+    const { count } = fourDResult;
     let radiusMin = Infinity;
     let radiusMax = 0;
     for (let i = 0; i < count; i++) {
@@ -3429,7 +3469,7 @@ async function main(): Promise<void> {
         ? toTransform4(state.finalTransform)
         : null,
       rotor,
-      center: fourDResult.center,
+      center,
       halfExtents,
       invWAmp,
       sliceOn: fourDView.sliceOn,
@@ -3739,6 +3779,7 @@ async function main(): Promise<void> {
         estimatorCurve: state.flame.estimatorCurve,
         palette: resolvePalette(state.flame.paletteId, state.customPalette),
         balloonEcho: flameBalloonEchoSnapshot(),
+        ...(state.balloonEcho ? { balloonEchoEnabled: true } : {}),
         // Optional by construction: omitted is the worker's exact inherit
         // path. Only send a resolved independent gradient while the balloon
         // is enabled, avoiding even a LUT build in an echo-off session.
@@ -3750,17 +3791,18 @@ async function main(): Promise<void> {
         // transform set (document form for both dimensions — the worker's
         // 4D prepare lifts it).
         schedule: state.schedule ?? null,
+        // Raw document block: the worker resolves its typed-array plan in
+        // its own realm before constructing the seeded Flame stream. Absent
+        // preserves the historical worker command and lifecycle shape.
+        ...(state.tiling ? { tiling: state.tiling } : {}),
         // SAB-backed views structured-clone by SHARING their buffers — the
         // worker sees the same memory these frames wrap, nothing is copied.
         sharedFrames: flameShared?.frames,
-        // WebGPU accumulation: "auto" everywhere — try GPU first, fall back
-        // to CPU automatically via the worker's gpuFailed ratchet. A device
-        // whose maxStorageBufferBindingSize can't fit the histogram fails
-        // backend creation cleanly into that same CPU fallback (see
-        // flame-gpu-backend.ts's limit guard). A 4D session (fourD below)
-        // takes the same auto-with-fallback path through the 4D kernel
-        // (flame-gpu-4d.ts).
-        gpuPreference: "auto",
+        // Try GPU unless a tiling-only replacement worker is carrying a
+        // failure already learned by this live session. An active plan still
+        // selects CPU worker-side until its WGSL twin lands; off/refused plans
+        // keep this ordinary auto-with-fallback path in both dimensions.
+        gpuPreference: flameGpuFallbackHeldReason === null ? "auto" : "off",
         // Per-chunk throughput instrumentation, off unless `?flameperf`
         // asks.
         instrument: flamePerfEnabled(),
@@ -3774,6 +3816,15 @@ async function main(): Promise<void> {
       ui.setFlameSupersampleNote(null); // clear any note from a previous render before the fresh session reports its own.
       ui.setFlameBackendNote(null); // clear any note from a previous render before the fresh session reports its own.
       flameGpuUnavailableReason = null; // a fresh session gets a fresh GPU verdict.
+      if (retainFlameTilingDisclosureOnNextEntry) {
+        flameTilingPending = true;
+        ui.setFlameTilingOutcome(undefined, true);
+        retainFlameTilingDisclosureOnNextEntry = false;
+      } else {
+        activeFlameTilingOutcome = undefined;
+        flameTilingPending = false;
+        ui.setFlameTilingOutcome(undefined, false);
+      }
     },
     resetProgress: () => {
       ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
@@ -3795,6 +3846,8 @@ async function main(): Promise<void> {
       flameSeedOverride = null;
       flameShared = null; // drop our half of the shared buffers; with the worker's half gone too, the SABs are collectable.
       flameRenderDims = null; // no session, no accumulation size.
+      flameGpuFallbackHeldReason = null;
+      retainFlameTilingDisclosureOnNextEntry = false;
       // Reset only the mode this session owns — the exact semantics the old
       // per-mode boolean had (clearing flameActive could never touch
       // solidActive), so an idempotent exit() while some OTHER mode is
@@ -6431,8 +6484,10 @@ async function main(): Promise<void> {
     scene.setPointsViewLayout(
       target === "points" ? pointsViewLayout : "single",
     );
-    if (target === "flame") flameSession.enter();
-    else if (target === "solid") solidSession.enter();
+    if (target === "flame") {
+      flameGpuFallbackHeldReason = null;
+      flameSession.enter();
+    } else if (target === "solid") solidSession.enter();
     else if (target === "surface") surfaceSession.enter();
   }
 
@@ -6646,6 +6701,7 @@ async function main(): Promise<void> {
         ) {
           flameSeedOverride = activeFlameSeed;
         }
+        flameGpuFallbackHeldReason = null;
         flameSession.enter();
         return;
       case "restart-solid":
@@ -9006,7 +9062,16 @@ async function main(): Promise<void> {
     recolor,
     applyFourDColor,
     restartSolidRender: () => solidSession.enter(),
-    restartFlameRender: () => flameSession.enter(),
+    restartFlameRender: () => {
+      flameGpuFallbackHeldReason = null;
+      flameSession.enter();
+    },
+    restartFlameTilingRender: () => {
+      if (state.renderMode !== "flame") return;
+      if (activeFlameSeed !== null) flameSeedOverride = activeFlameSeed;
+      retainFlameTilingDisclosureOnNextEntry = true;
+      flameSession.enter();
+    },
     setSurfaceLatticeScale: (cellScale) => {
       surfaceComputeRenderer?.setLatticeScale(cellScale);
       scene.setSurfaceLatticeScale(cellScale);
