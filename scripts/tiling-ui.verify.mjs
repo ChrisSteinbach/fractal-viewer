@@ -50,8 +50,9 @@
  *   disclosed software adapter), finish and draw, differ from the same-seed
  *   Off render, and keep only the latest of a rapid pair of 3D edits; the 4D
  *   fixture changes its settled rotor/slice in the same worker;
- * - Sampled Solid still discloses beside the visible controls that it stays
- *   untiled;
+ * - 3D Solid applies tiling in its live material, while 4D Solid replaces
+ *   the worker for authored tiling edits and bakes raw images into density
+ *   before projection;
  * - Balloon and order>1 Symmetry leave the authored checkbox available as a
  *   clear route while disabling both dependent finite detail controls and
  *   explaining the refusal next to them.
@@ -132,6 +133,32 @@
  * Both rounds disclosed "Active in Solid" on entry and the Off consumer list
  * after clearing, with no page, console or app error.
  *
+ * SOLID4 LIFT MEASURED 2026-09-01 (`--scope=solid4 --settle=240000`): each
+ * fixture enters 4D Solid on a REAL voxel worker whose start payload carries
+ * the authored tiling and whose converged grid reports the hierarchy
+ * present; an authored tiling edit (A4 -> B4, lattice scale 1.6 -> 1.7)
+ * REPLACES the worker from the same seed (prior worker terminated true,
+ * worker count +1) while settled rotor/slice endpoints stay inside the
+ * replacement worker (three setFourDView commands, zero extra starts, the
+ * last command's viewRevision equal to the terminal grid's); clearing the
+ * checkbox replaces the worker once more, still on the entry seed, and the
+ * same-seed tiled/Off frames differ structurally. On verified Mesa Intel
+ * Iris Xe: Pentatope completed in 5.6s, drew 45.12%, its posed view frame
+ * differed 27.54% and its untiled round 18.53%; Mirrored Lattice 4D
+ * completed in 6.7s, drew 55.14%, view difference 99.99%, untiled round
+ * 35.50%. On SwiftShader: 14.3s/43.14%/28.86%/19.50% and
+ * 17.7s/54.09%/99.97%/35.47%. The 3D scope on the same build keeps its
+ * material-only contract (worker 1->1; Iris diffs 11.11%/24.69%), the
+ * intended contrast. Both solid scopes disclose the entry dimension
+ * ("Active in 3D/4D Solid") and clear to the Off consumer list, with no
+ * page, console or app error. Two harness corrections were made while
+ * landing this leg: the view leg waits for the terminal grid of the LAST
+ * view command's viewRevision — the worker may legitimately post an older
+ * endpoint's converged grid in the same delivery window the newer command
+ * is recorded in, and the app's revision guard drops it (probe sequence
+ * alone ranked that stale reply first); and the 3D leg's note regex moved
+ * to the dimension-explicit "Active in 3D Solid" this lift discloses.
+ *
  * Usage (build + `npm run preview` first):
  *   node scripts/tiling-ui.verify.mjs
  *   node scripts/tiling-ui.verify.mjs --mode=x11::0
@@ -140,11 +167,12 @@
  *   node scripts/tiling-ui.verify.mjs --scope=flame
  *   node scripts/tiling-ui.verify.mjs --scope=backdrop
  *   node scripts/tiling-ui.verify.mjs --scope=solid
+ *   node scripts/tiling-ui.verify.mjs --scope=solid4
  *
  * Options:
  *   --url=URL        app origin (default https://localhost:4173)
  *   --mode=MODE      sw (default) or x11:<display>
- *   --scope=SCOPE    all (default), points, flame, backdrop, or solid
+ *   --scope=SCOPE    all (default), points, flame, backdrop, solid, or solid4
  *   --viewport=WxH   viewport, width must be >=641 (default 800x640)
  *   --settle=MS      per-preset Surface/Points/Flame target budget (default 300000)
  *   --stage=N        completed-pass target, 8 = settled latch (default 8)
@@ -249,9 +277,8 @@ const BACKDROP_PRESETS = [
   { preset: PRESETS[1], fourD: true },
 ];
 
-// The Sampled Solid legs: one per 3D construction arm (4D Solid tiling is
-// refused until its representation lift, so there is no 4D fixture). The
-// leg drives the REAL solid session to a converged budget, captures the
+// The Sampled Solid legs: one per 3D construction arm. The leg drives the
+// REAL solid session to a converged budget, captures the
 // tiled frame, flips the tiling checkbox, and captures again: a tiling
 // edit must be material-only (the voxel worker probe shows no replacement)
 // and the frame difference is the tiled geometry's and nothing else's —
@@ -259,6 +286,18 @@ const BACKDROP_PRESETS = [
 const SOLID_PRESETS = [
   { preset: PRESETS[3], fourD: false },
   { preset: PRESETS[0], fourD: false },
+];
+
+// The worker-baked 4D Solid legs cross the finite and mirrored-lattice arms.
+// Each proves replacement-worker/same-seed tiling edits, a same-worker
+// settled rotor/slice rebuild, exact hierarchy publication, and a visible
+// same-seed Off negative control.
+const SOLID4_PRESETS = [
+  { preset: PRESETS[1], nextTiling: { group: "b4" } },
+  {
+    preset: PRESETS[4],
+    nextTiling: { kind: "lattice", cellScale: 1.7 },
+  },
 ];
 
 class CheckingError extends Error {}
@@ -296,9 +335,13 @@ function parseArgs(argv) {
       `--mode must be sw or x11:<display> (got ${args.mode})`,
     );
   }
-  if (!["all", "points", "flame", "backdrop", "solid"].includes(args.scope)) {
+  if (
+    !["all", "points", "flame", "backdrop", "solid", "solid4"].includes(
+      args.scope,
+    )
+  ) {
     throw new CheckingError(
-      `--scope must be all, points, flame, backdrop, or solid (got ${args.scope})`,
+      `--scope must be all, points, flame, backdrop, solid, or solid4 (got ${args.scope})`,
     );
   }
   const viewport = /^(\d+)x(\d+)$/.exec(args.viewport);
@@ -470,6 +513,9 @@ async function openApp(browser, args) {
               ? message.iterationsBudget
               : null,
             view: cloneJson(message?.view),
+            viewRevision: Number.isSafeInteger(message?.viewRevision)
+              ? message.viewRevision
+              : null,
           });
           return transfer === undefined
             ? nativePostMessage(message)
@@ -494,6 +540,15 @@ async function openApp(browser, args) {
             iterationsBudget: Number.isFinite(data?.iterationsBudget)
               ? data.iterationsBudget
               : null,
+            viewRevision: Number.isSafeInteger(data?.viewRevision)
+              ? data.viewRevision
+              : null,
+            hierarchy:
+              data?.type === "grid" &&
+              (data?.hierarchy?.status === "present" ||
+                data?.hierarchy?.status === "absent")
+                ? data.hierarchy.status
+                : null,
             noteBeforeDispatch:
               document.getElementById("tilingNote")?.textContent ?? "",
             noteAfterDispatch: null,
@@ -2373,21 +2428,155 @@ async function configureFocusedSolidQuality(page) {
   }));
 }
 
-/** The voxel worker probe: Solid's accumulation host. A tiling edit must NOT
- * replace it (the density volume is unchanged), so the leg counts hosts. */
+/** The voxel worker probe: Solid's accumulation host. The 3D material leg
+ * requires one unchanged host; the 4D deposition leg requires replacement
+ * for authored tiling edits but same-host settled view commands. */
 function readSolidWorkerProbe(page) {
   return page.evaluate(() => {
     const workers = window.__tilingCloudWorkerProbe?.workers ?? [];
     return {
       workers: workers
         .filter((worker) => worker.url.includes("voxel-worker"))
-        .map((worker) => ({
+        .map((worker, index) => ({
+          index,
           url: worker.url,
           terminated: worker.terminated === true,
           requests: worker.requests,
+          replies: worker.replies,
         })),
     };
   });
+}
+
+function solidTerminalGrids(worker) {
+  return worker.replies.filter(
+    (reply) =>
+      reply.type === "grid" &&
+      reply.iterationsBudget > 0 &&
+      reply.iterationsDone >= reply.iterationsBudget,
+  );
+}
+
+function matchingSolidRound(
+  probe,
+  tiling,
+  fourD,
+  afterCreated = 0,
+  expectedSeed = null,
+) {
+  for (let at = probe.workers.length - 1; at >= afterCreated; at--) {
+    const worker = probe.workers[at];
+    const start = worker.requests.find(
+      (request) =>
+        request.type === "start" &&
+        request.fourD === fourD &&
+        (expectedSeed === null || request.seed === expectedSeed) &&
+        exact(request.tiling) === exact(tiling),
+    );
+    if (!start) continue;
+    return {
+      worker,
+      start,
+      terminal: solidTerminalGrids(worker).at(-1) ?? null,
+    };
+  }
+  return null;
+}
+
+async function readSolidUi(page) {
+  return page.evaluate(() => ({
+    active:
+      document.getElementById("modeSolidBtn")?.getAttribute("aria-pressed") ===
+      "true",
+    note: document.getElementById("tilingNote")?.textContent ?? "",
+    progress: document.getElementById("solidProgress")?.textContent ?? "",
+  }));
+}
+
+async function waitForSolidRound(
+  page,
+  tiling,
+  fourD,
+  afterCreated,
+  timeout,
+  expectedSeed = null,
+) {
+  const deadline = Date.now() + timeout;
+  let probe = await readSolidWorkerProbe(page);
+  let round = matchingSolidRound(
+    probe,
+    tiling,
+    fourD,
+    afterCreated,
+    expectedSeed,
+  );
+  let ui = await readSolidUi(page);
+  while (Date.now() < deadline) {
+    const notePass =
+      tiling === null
+        ? ui.note.startsWith("Off — Points, Flame, Solid, and Surface")
+        : ui.note.includes("Active in 4D Solid");
+    if (
+      round?.terminal !== null &&
+      ui.active &&
+      ui.progress.includes("converged") &&
+      notePass
+    ) {
+      return { ok: true, probe, round, ui };
+    }
+    await page.waitForTimeout(POLL_MS);
+    probe = await readSolidWorkerProbe(page);
+    round = matchingSolidRound(
+      probe,
+      tiling,
+      fourD,
+      afterCreated,
+      expectedSeed,
+    );
+    ui = await readSolidUi(page);
+  }
+  return { ok: false, probe, round, ui };
+}
+
+async function waitForAdditionalSolidTerminal(
+  page,
+  workerIndex,
+  afterSequence,
+  timeout,
+  expectedRevision = null,
+) {
+  const deadline = Date.now() + timeout;
+  let probe = await readSolidWorkerProbe(page);
+  while (Date.now() < deadline) {
+    const worker = probe.workers[workerIndex];
+    // Match the LAST command's revision, not merely "any terminal after the
+    // command": the worker may post an older endpoint's converged grid in
+    // the same delivery window the newer command is recorded in, so probe
+    // sequence alone can rank a stale (and, by the app's own revision guard,
+    // never-displayed) reply first. Those stale publishes are legitimate
+    // worker behavior; the endpoint under test is the newest revision's.
+    const terminal = worker
+      ? solidTerminalGrids(worker).find(
+          (reply) =>
+            reply.sequence > afterSequence &&
+            (expectedRevision === null ||
+              reply.viewRevision === expectedRevision),
+        )
+      : null;
+    const ui = await readSolidUi(page);
+    if (terminal && ui.active && ui.progress.includes("converged")) {
+      return { ok: true, probe, worker, terminal, ui };
+    }
+    await page.waitForTimeout(POLL_MS);
+    probe = await readSolidWorkerProbe(page);
+  }
+  return {
+    ok: false,
+    probe,
+    worker: probe.workers[workerIndex] ?? null,
+    terminal: null,
+    ui: await readSolidUi(page),
+  };
 }
 
 async function waitForSolidConverged(page, timeout = 300_000) {
@@ -2432,7 +2621,7 @@ async function runSolidPresetLeg(browser, args, fixture) {
     const mode = await waitForModeNote(
       page,
       "modeSolidBtn",
-      /(Active|Unavailable) in Solid/,
+      /(Active in 3D Solid|Unavailable in Solid)/,
       args.settle,
     );
     const converged = await waitForSolidConverged(page, args.settle);
@@ -2444,7 +2633,7 @@ async function runSolidPresetLeg(browser, args, fixture) {
         quality.iterations === "1.0M" &&
         quality.resolution === "128³" &&
         mode.ok &&
-        mode.note.includes("Active in Solid") &&
+        mode.note.includes("Active in 3D Solid") &&
         converged.ok,
       `quality=${quality.iterations}/${quality.resolution}, note=${mode.note || "none"}, status=${converged.text || "none"}`,
     );
@@ -2510,6 +2699,304 @@ async function runSolidPresetLeg(browser, args, fixture) {
         untiledCapture.metrics.coverage >= args.draw &&
         distinctness.fraction >= minDiff,
       `cleared=${cleared.ok}, workers=${beforeOff.workers.length}->${afterOff.workers.length}, tiled=${(tiledCapture.metrics.coverage * 100).toFixed(2)}%, off=${(untiledCapture.metrics.coverage * 100).toFixed(2)}%, diff=${(distinctness.fraction * 100).toFixed(2)}%/${(minDiff * 100).toFixed(2)}%, status=${off.note || "none"}`,
+    );
+
+    const errorText = await visibleErrorText(page);
+    check(
+      "page errors",
+      pageErrors.length === 0,
+      pageErrors.length ? pageErrors.join(" | ") : "none",
+    );
+    check(
+      "console errors",
+      consoleErrors.length === 0,
+      consoleErrors.length ? consoleErrors.join(" | ") : "none",
+    );
+    check("visible app error", errorText.length === 0, errorText || "none");
+    return {
+      ok: checks.every((entry) => entry.ok),
+      preset,
+      checks,
+      elapsedMs: Date.now() - started,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+async function authorSolid4TilingEdit(page, nextTiling) {
+  await openSection(page, "tilingSection");
+  if (nextTiling.kind === "lattice") {
+    await setRangeValue(page, "#tilingCellScaleSlider", nextTiling.cellScale);
+  } else {
+    await page.locator("#tilingGroup").selectOption(nextTiling.group);
+  }
+  return waitForExactTiling(page, nextTiling);
+}
+
+async function exerciseFourDSolidView(page, args, key, target, before) {
+  const checks = [];
+  if (!target.ok || !target.round) {
+    return {
+      checks: [
+        {
+          name: "4D Solid rotor/slice stays in one worker",
+          ok: false,
+          detail: "no completed active Solid worker was available",
+        },
+      ],
+      capture: before,
+      target,
+    };
+  }
+  const workerIndex = target.round.worker.index;
+  const beforeProbe = await readSolidWorkerProbe(page);
+  const beforeWorker = beforeProbe.workers[workerIndex];
+  const beforeStarts = beforeWorker.requests.filter(
+    (request) => request.type === "start",
+  ).length;
+  const beforeRequestCount = beforeWorker.requests.length;
+  await openSection(page, "viewControls");
+  const autoMotion = page.locator("#autoMotionToggle");
+  if (await autoMotion.isChecked()) await autoMotion.click();
+  await setRangeValue(page, "#fourDTumbleSpeedSlider", 3);
+  await closePanel(page);
+
+  const canvas = page.locator("#container canvas").first();
+  await canvas.evaluate((element) => {
+    window.__tilingSolidRotorAccepted = 0;
+    element.addEventListener("keydown", (event) => {
+      if (event.key.startsWith("Arrow") && event.defaultPrevented) {
+        window.__tilingSolidRotorAccepted += 1;
+      }
+    });
+  });
+  await canvas.focus();
+  await page.keyboard.down("Shift");
+  for (let step = 0; step < 4; step++) {
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowUp");
+  }
+  await page.keyboard.up("Shift");
+
+  await openSection(page, "viewControls");
+  const slice = page.locator("#fourDSliceToggle");
+  if (!(await slice.isChecked())) await slice.click();
+  await setRangeValue(page, "#fourDSliceSlider", 0.35);
+  await closePanel(page);
+
+  const afterCommands = await readSolidWorkerProbe(page);
+  const commandWorker = afterCommands.workers[workerIndex];
+  const viewCommands = commandWorker.requests
+    .slice(beforeRequestCount)
+    .filter((request) => request.type === "setFourDView");
+  const lastViewCommand = viewCommands.at(-1);
+  const settled = lastViewCommand
+    ? await waitForAdditionalSolidTerminal(
+        page,
+        workerIndex,
+        lastViewCommand.sequence,
+        args.settle,
+        lastViewCommand.viewRevision,
+      )
+    : {
+        ok: false,
+        probe: afterCommands,
+        worker: commandWorker,
+        terminal: null,
+        ui: await readSolidUi(page),
+      };
+  const after = await captureCanvas(page, args, `${key}-solid4-view-after`);
+  const diff = await screenshotDiff(page, before.png, after.png);
+  const finalWorker = settled.probe.workers[workerIndex];
+  const finalStarts = finalWorker?.requests.filter(
+    (request) => request.type === "start",
+  ).length;
+  const view = await page.evaluate(() => ({
+    motion: document.getElementById("autoMotionToggle")?.checked === true,
+    slice: document.getElementById("fourDSliceToggle")?.checked === true,
+    position: document.getElementById("fourDSliceSlider")?.value ?? "",
+    rotorAccepted: window.__tilingSolidRotorAccepted ?? 0,
+    note: document.getElementById("tilingNote")?.textContent ?? "",
+  }));
+  checks.push({
+    name: "4D Solid rotor/slice stays in one worker",
+    ok:
+      settled.ok &&
+      settled.probe.workers.length === beforeProbe.workers.length &&
+      finalWorker?.terminated === false &&
+      finalStarts === beforeStarts &&
+      viewCommands.length >= 2 &&
+      lastViewCommand?.view?.sliceOn === true &&
+      lastViewCommand.view.sliceCenter === 0.35 &&
+      lastViewCommand.viewRevision === settled.terminal?.viewRevision &&
+      settled.terminal?.hierarchy === "present" &&
+      view.rotorAccepted === 8 &&
+      !view.motion &&
+      view.slice &&
+      Number(view.position) === 0.35 &&
+      view.note.includes("Active in 4D Solid") &&
+      after.metrics.coverage >= args.draw &&
+      diff.fraction >= 0.0005,
+    detail: `workers=${beforeProbe.workers.length}->${settled.probe.workers.length}, starts=${beforeStarts}->${finalStarts}, viewCommands=${viewCommands.length}, revisions=${lastViewCommand?.viewRevision ?? "none"}/${settled.terminal?.viewRevision ?? "none"}, hierarchy=${settled.terminal?.hierarchy ?? "none"}, terminal=${settled.ok}, draw=${(after.metrics.coverage * 100).toFixed(2)}%, diff=${(diff.fraction * 100).toFixed(2)}%, accepted=${view.rotorAccepted}`,
+  });
+  return { checks, capture: after, target };
+}
+
+/** The 4D Solid representation gate. Unlike the 3D material leg above, an
+ * authored tiling edit replaces the voxel worker while retaining its seed;
+ * settled rotor/slice endpoints then rebuild inside that replacement worker. */
+async function runSolid4PresetLeg(browser, args, fixture) {
+  const { preset, nextTiling } = fixture;
+  const { context, page, pageErrors, consoleErrors } = await openApp(
+    browser,
+    args,
+  );
+  const started = Date.now();
+  const checks = [];
+  const check = (name, ok, detail) => checks.push({ name, ok, detail });
+  try {
+    const loaded = await loadPreset(page, preset.key);
+    const installed = await waitForExactTiling(page, preset.tiling);
+    const points = await waitForModeNote(
+      page,
+      "modePointsBtn",
+      /Active in Points — .* · complete/,
+      args.settle,
+    );
+    const quality = await configureFocusedSolidQuality(page);
+    const beforeSolid = await readSolidWorkerProbe(page);
+    const mode = await waitForModeNote(
+      page,
+      "modeSolidBtn",
+      /Active in 4D Solid/,
+      args.settle,
+    );
+    const initial = await waitForSolidRound(
+      page,
+      preset.tiling,
+      true,
+      beforeSolid.workers.length,
+      args.settle,
+    );
+    check(
+      "4D Solid worker-baked entry",
+      loaded &&
+        installed.ok &&
+        points.ok &&
+        quality.iterations === "1.0M" &&
+        quality.resolution === "128³" &&
+        mode.ok &&
+        initial.ok &&
+        initial.round?.start.fourD === true &&
+        initial.round.terminal?.hierarchy === "present",
+      `quality=${quality.iterations}/${quality.resolution}, workers=${beforeSolid.workers.length}->${initial.probe.workers.length}, start=${exact(initial.round?.start ?? null)}, hierarchy=${initial.round?.terminal?.hierarchy ?? "none"}, status=${initial.ui.note || mode.note || "none"}`,
+    );
+    if (!initial.ok || !initial.round) {
+      const errorText = await visibleErrorText(page);
+      check(
+        "page errors",
+        pageErrors.length === 0,
+        pageErrors.length ? pageErrors.join(" | ") : "none",
+      );
+      check(
+        "console errors",
+        consoleErrors.length === 0,
+        consoleErrors.length ? consoleErrors.join(" | ") : "none",
+      );
+      check("visible app error", errorText.length === 0, errorText || "none");
+      return {
+        ok: false,
+        preset,
+        checks,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    const beforeEdit = await readSolidWorkerProbe(page);
+    const installedEdit = await authorSolid4TilingEdit(page, nextTiling);
+    const edited = await waitForSolidRound(
+      page,
+      nextTiling,
+      true,
+      beforeEdit.workers.length,
+      args.settle,
+      initial.round.start.seed,
+    );
+    const priorWorker = edited.probe.workers[initial.round.worker.index];
+    check(
+      "same-seed 4D tiling edit replaces the worker",
+      installedEdit.ok &&
+        edited.ok &&
+        priorWorker?.terminated === true &&
+        edited.probe.workers.length === beforeEdit.workers.length + 1 &&
+        edited.round?.start.seed === initial.round.start.seed &&
+        edited.round?.terminal?.hierarchy === "present",
+      `authored=${installedEdit.ok}, workers=${beforeEdit.workers.length}->${edited.probe.workers.length}, terminated=${priorWorker?.terminated ?? "missing"}, seed=${initial.round.start.seed}->${edited.round?.start.seed ?? "none"}, hierarchy=${edited.round?.terminal?.hierarchy ?? "none"}`,
+    );
+    if (!edited.ok || !edited.round) {
+      return {
+        ok: false,
+        preset,
+        checks,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    let tiledCapture = await captureCanvas(
+      page,
+      args,
+      `${preset.key}-solid4-edited`,
+    );
+    const viewResult = await exerciseFourDSolidView(
+      page,
+      args,
+      preset.key,
+      edited,
+      tiledCapture,
+    );
+    for (const result of viewResult.checks) checks.push(result);
+    tiledCapture = viewResult.capture;
+
+    const beforeOff = await readSolidWorkerProbe(page);
+    await openSection(page, "tilingSection");
+    await page.locator("#tilingEnabledCheckbox").focus();
+    await page.locator("#tilingEnabledCheckbox").press("Space");
+    const cleared = await waitForDocument(
+      page,
+      (document) => document.tiling === undefined,
+    );
+    const off = await waitForSolidRound(
+      page,
+      null,
+      true,
+      beforeOff.workers.length,
+      args.settle,
+      edited.round.start.seed,
+    );
+    const untiledCapture = await captureCanvas(
+      page,
+      args,
+      `${preset.key}-solid4-off`,
+    );
+    const distinctness = await screenshotDiff(
+      page,
+      tiledCapture.png,
+      untiledCapture.png,
+    );
+    const minDiff = preset.minDiff ?? args.diff;
+    check(
+      "same-seed tiled/Off 4D Solid frame",
+      cleared.ok &&
+        off.ok &&
+        off.round?.start.seed === edited.round.start.seed &&
+        off.round?.terminal?.hierarchy === "present" &&
+        off.probe.workers[edited.round.worker.index]?.terminated === true &&
+        off.probe.workers.length === beforeOff.workers.length + 1 &&
+        tiledCapture.metrics.coverage >= args.draw &&
+        untiledCapture.metrics.coverage >= args.draw &&
+        distinctness.fraction >= minDiff,
+      `cleared=${cleared.ok}, workers=${beforeOff.workers.length}->${off.probe.workers.length}, seed=${edited.round.start.seed}->${off.round?.start.seed ?? "none"}, hierarchy=${off.round?.terminal?.hierarchy ?? "none"}, tiled=${(tiledCapture.metrics.coverage * 100).toFixed(2)}%, off=${(untiledCapture.metrics.coverage * 100).toFixed(2)}%, diff=${(distinctness.fraction * 100).toFixed(2)}%/${(minDiff * 100).toFixed(2)}%, status=${off.ui.note || "none"}`,
     );
 
     const errorText = await visibleErrorText(page);
@@ -3235,6 +3722,14 @@ async function run() {
     if (args.scope === "all" || args.scope === "solid") {
       for (const fixture of SOLID_PRESETS) {
         const result = await runSolidPresetLeg(browser, args, fixture);
+        printSolidPreset(result);
+        if (!result.ok) failed = true;
+      }
+    }
+
+    if (args.scope === "all" || args.scope === "solid4") {
+      for (const fixture of SOLID4_PRESETS) {
+        const result = await runSolid4PresetLeg(browser, args, fixture);
         printSolidPreset(result);
         if (!result.ok) failed = true;
       }
