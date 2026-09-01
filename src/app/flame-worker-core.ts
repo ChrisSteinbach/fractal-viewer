@@ -299,6 +299,16 @@ export type FlameWorkerCommand =
          * normalization against this session's support, never a newer
          * document cloud. */
         halfExtents: Vec4;
+        /** Optional canonical-source color normalization frame. Tiled views
+         * may keep an origin/carrier geometry pivot while Height/Radius/
+         * Position remain attached to the canonical source. Absent preserves
+         * the legacy one-frame-for-both contract. */
+        colorCenter?: Vec4;
+        colorHalfExtents?: Vec4;
+        /** Optional rotation-invariant geometry carrier. Solid consumes this
+         * shared snapshot field; Flame currently resolves its own active plan
+         * and otherwise retains the historical AABB support. */
+        entryCarrierRadius?: number;
         /** `1 / wSupport(rotor, halfExtents)` at render entry — see
          * `project4.ts`'s `FourDView.invWAmp` and `rotor4.ts`'s
          * `wSupport`. */
@@ -1659,8 +1669,10 @@ export class FlameWorkerSession {
       this.fourDEntryCenter = [...fourD.center];
       this.fourDEntryHalfExtents = [...fourD.halfExtents];
       this.fourDCenter = [...fourD.center];
-      this.fourDColorCenter = [...fourD.center];
-      this.fourDColorHalfExtents = [...fourD.halfExtents];
+      this.fourDColorCenter = [...(fourD.colorCenter ?? fourD.center)];
+      this.fourDColorHalfExtents = [
+        ...(fourD.colorHalfExtents ?? fourD.halfExtents),
+      ];
       this.fourDRadiusMin = fourD.radiusMin;
       this.fourDRadiusMax = fourD.radiusMax;
       this.fourDColorGamma = fourD.colorGamma ?? 1;

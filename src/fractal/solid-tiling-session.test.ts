@@ -33,13 +33,21 @@ function resolve(
 
 describe("resolveSolidTilingSession", () => {
   it("is off with no tiling block", () => {
-    expect(resolve(undefined)).toMatchObject({ status: "off" });
+    expect(resolve(undefined)).toMatchObject({
+      status: "off",
+      application: "material-live",
+    });
+    expect(resolve(undefined, false, true)).toMatchObject({
+      status: "off",
+      application: "worker-baked",
+    });
   });
 
   it("resolves a 3D finite group to active with the certified radius and posed clip", () => {
     const result = resolve({ group: "a3" });
     expect(result.status).toBe("active");
     if (result.status !== "active") return;
+    expect(result.application).toBe("material-live");
     expect(result.resolved).toMatchObject({ group: "a3" });
     expect(result.originVisibleRadius).toBeGreaterThan(0);
   });
@@ -87,18 +95,27 @@ describe("resolveSolidTilingSession", () => {
     expect(result.note).toMatch(/4D group/);
   });
 
-  it("refuses any tiling on a non-flat (4D) document", () => {
+  it("routes matching finite and lattice tiling to the 4D worker-baked arm", () => {
     const tilings: TilingSpec[] = [
       { group: "a4" },
+      { group: "b4" },
+      { group: "f4" },
       { kind: "lattice", cellScale: 1.5 },
-      { group: "a3" },
     ];
     for (const tiling of tilings) {
       const result = resolve(tiling, false, true);
-      expect(result.status).toBe("refused");
-      if (result.status !== "refused") return;
-      expect(result.note).toMatch(/4D Solid tiling is not shipped/);
+      expect(result.status).toBe("active");
+      if (result.status !== "active") return;
+      expect(result.application).toBe("worker-baked");
+      expect(result.originVisibleRadius).toBeGreaterThan(0);
     }
+  });
+
+  it("refuses a 3D finite group on a non-flat (4D) render", () => {
+    const result = resolve({ group: "a3" }, false, true);
+    expect(result.status).toBe("refused");
+    if (result.status !== "refused") return;
+    expect(result.note).toMatch(/3D group.*4D/i);
   });
 
   it("refuses forward escape-time documents as reset debris", () => {

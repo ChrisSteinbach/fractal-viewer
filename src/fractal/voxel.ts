@@ -44,6 +44,7 @@ import {
 } from "./color";
 import type { PositionAxisColors } from "./color";
 import type { PaletteSpec } from "./palette";
+import type { PointTilingCursorState } from "./point-tiling";
 import type { Rng } from "./rng";
 import type { Bounds, ColorMode, Vec3 } from "./types";
 
@@ -259,6 +260,12 @@ export interface VoxelGrid {
    * {@link orbitPrevBase}.
    */
   orbitChaosLeft: number;
+  /**
+   * Plot-time tiling selection continuation for the 4D worker-baked Solid
+   * arm. Lazily attached by `accumulateVoxels4` only when a plan is active,
+   * so the ordinary 3D/4D grid object and all of its arrays stay literal.
+   */
+  pointTiling?: PointTilingCursorState;
 }
 
 /** A fresh, empty grid over `bounds`: every voxel at zero, orbit not started,

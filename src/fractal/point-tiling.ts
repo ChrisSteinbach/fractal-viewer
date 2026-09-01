@@ -128,6 +128,21 @@ export interface LatticePointTilingPlan {
   memoryBytes: number;
 }
 
+/**
+ * A consumer-specific lattice proposal over the SAME raw cells as a
+ * {@link LatticePointTilingPlan}. The plan's `upper` table remains the
+ * source-independent presentation ceiling; this object only changes how a
+ * bounded consumer spends its samples. One CDF per canonical-wall mask keeps
+ * the plan's exact stabilizer de-duplication on measure-zero seam sources.
+ *
+ * A proposal may be empty for every mask. That is a real bounded result (for
+ * example, a settled 4D slice which cannot see any carrier cell), never a
+ * reason to fall back to untiled output.
+ */
+export interface LatticePointTilingProposal {
+  cdfByWallMask: readonly LatticePointTilingCdf[];
+}
+
 export type PointTilingPlan = FinitePointTilingPlan | LatticePointTilingPlan;
 
 interface FiniteGroupCache {
@@ -434,15 +449,26 @@ function cellIsStabilizedDuplicate(
 
 function buildLatticeCdf(
   cells: Int16Array,
-  upper: Float64Array,
+  proposalWeight: Float64Array,
   repeated: number,
   wallMask: number,
+  allowEmpty = false,
 ): LatticePointTilingCdf {
   const ordinals: number[] = [];
-  for (let cell = 0; cell < upper.length; cell++) {
+  for (let cell = 0; cell < proposalWeight.length; cell++) {
     if (cellIsStabilizedDuplicate(cells, repeated, cell, wallMask)) continue;
-    if (upper[cell] <= 0) continue;
+    if (proposalWeight[cell] <= 0) continue;
     ordinals.push(cell);
+  }
+  if (ordinals.length === 0) {
+    if (!allowEmpty) {
+      throw new Error("point tiling: lattice proposal CDF has no finite mass");
+    }
+    return {
+      cellOrdinals: new Uint16Array(0),
+      cumulative: new Float64Array(0),
+      upperTotal: 0,
+    };
   }
   // Add ceilings from smallest to largest. With at most 739 terms, every
   // positive addend remains representable relative to the partial f64 sum;
@@ -450,9 +476,9 @@ function buildLatticeCdf(
   // The u32 phase-grid discrepancy is separately bounded by the exported
   // POINT_TILING_MAX_LATTICE_CURSOR_MASS_ERROR. Cell ordinal breaks equal-
   // weight ties deterministically.
-  ordinals.sort((a, b) => upper[a] - upper[b] || a - b);
+  ordinals.sort((a, b) => proposalWeight[a] - proposalWeight[b] || a - b);
   let upperTotal = 0;
-  for (const cell of ordinals) upperTotal += upper[cell];
+  for (const cell of ordinals) upperTotal += proposalWeight[cell];
   if (!(upperTotal > 0) || !Number.isFinite(upperTotal)) {
     throw new Error("point tiling: lattice proposal CDF has no finite mass");
   }
@@ -460,7 +486,7 @@ function buildLatticeCdf(
   let running = 0;
   let previous = 0;
   for (let index = 0; index < ordinals.length; index++) {
-    running += upper[ordinals[index]];
+    running += proposalWeight[ordinals[index]];
     const normalized = running / upperTotal;
     if (!(normalized > previous)) {
       throw new Error("point tiling: lattice proposal CDF lost positive mass");
@@ -472,6 +498,48 @@ function buildLatticeCdf(
     cellOrdinals: Uint16Array.from(ordinals),
     cumulative,
     upperTotal,
+  };
+}
+
+/**
+ * Build a bounded lattice proposal by multiplying the plan's exact
+ * presentation ceilings by one non-negative consumer ceiling per cell.
+ * Products below `minimumProduct` are omitted; equality stays live. The
+ * caller proves those omitted products cannot pass its own contribution
+ * gate. Empty per-mask tables are deliberately valid.
+ */
+export function createLatticePointTilingProposal(
+  plan: LatticePointTilingPlan,
+  multipliers: Float64Array,
+  minimumProduct = 0,
+): LatticePointTilingProposal {
+  if (multipliers.length !== plan.upper.length) {
+    throw new RangeError(
+      `point tiling: lattice proposal has ${multipliers.length} multipliers for ${plan.upper.length} cells`,
+    );
+  }
+  if (!Number.isFinite(minimumProduct) || minimumProduct < 0) {
+    throw new RangeError(
+      "point tiling: lattice proposal minimum product must be finite and non-negative",
+    );
+  }
+  const products = new Float64Array(plan.upper.length);
+  for (let cell = 0; cell < products.length; cell++) {
+    const multiplier = multipliers[cell];
+    if (!Number.isFinite(multiplier) || multiplier < 0) {
+      throw new RangeError(
+        "point tiling: lattice proposal multipliers must be finite and non-negative",
+      );
+    }
+    const product = plan.upper[cell] * multiplier;
+    products[cell] = product < minimumProduct ? 0 : product;
+  }
+  return {
+    cdfByWallMask: Object.freeze(
+      Array.from({ length: 1 << plan.repeatedAxes }, (_, mask) =>
+        buildLatticeCdf(plan.cells, products, plan.repeatedAxes, mask, true),
+      ),
+    ),
   };
 }
 
@@ -1027,9 +1095,8 @@ function visitLatticeBounded(
   selected: number,
   cursor: number,
   visitor: PointTilingImageVisitor,
+  cdf: LatticePointTilingCdf,
 ): number {
-  const mask = latticeStabilizerMask(plan, sourceX, sourceZ, sourceW);
-  const cdf = plan.cdfByWallMask[mask];
   const phase = u32Phase(cursor) / U32_RANGE;
   let emitted = 0;
   for (let sample = 0; sample < selected; sample++) {
@@ -1265,11 +1332,17 @@ export function visitPointTilingAttemptBounded(
   fanoutCap: number,
   state: PointTilingCursorState,
   visitor: PointTilingImageVisitor,
+  latticeProposal?: LatticePointTilingProposal,
 ): number {
   if (!Number.isSafeInteger(fanoutCap) || fanoutCap <= 0) {
     throw new RangeError("point tiling: fanoutCap must be a positive integer");
   }
   validateCursorState(state);
+  if (plan.kind === "finite" && latticeProposal !== undefined) {
+    throw new RangeError(
+      "point tiling: a lattice proposal cannot select finite-group images",
+    );
+  }
   if (
     state.credit === Number.MAX_SAFE_INTEGER ||
     state.attempts === Number.MAX_SAFE_INTEGER
@@ -1285,6 +1358,7 @@ export function visitPointTilingAttemptBounded(
     throw new RangeError("point tiling: accepted counter exceeds safe integer");
   }
   let candidates: number;
+  let latticeCdf: LatticePointTilingCdf | undefined;
   if (plan.kind === "finite") {
     const mask = finiteStabilizerMask(
       plan.tiling.info,
@@ -1296,7 +1370,13 @@ export function visitPointTilingAttemptBounded(
     candidates = plan.representativesByWallMask[mask].length;
   } else {
     const mask = latticeStabilizerMask(plan, sourceX, sourceZ, sourceW);
-    candidates = plan.cdfByWallMask[mask].cellOrdinals.length;
+    latticeCdf = (latticeProposal ?? plan).cdfByWallMask[mask];
+    if (!latticeCdf) {
+      throw new RangeError(
+        "point tiling: lattice proposal is missing a stabilizer-mask CDF",
+      );
+    }
+    candidates = latticeCdf.cellOrdinals.length;
   }
   const selected = Math.min(state.credit, candidates, fanoutCap);
   if (
@@ -1328,8 +1408,11 @@ export function visitPointTilingAttemptBounded(
           sourceZ,
           sourceW,
           selected,
-          state.cursor,
+          latticeProposal === undefined
+            ? state.cursor
+            : (state.cursor + selected) >>> 0,
           visitor,
+          latticeCdf!,
         );
   state.cursor = (state.cursor + selected) >>> 0;
   state.selected += selected;

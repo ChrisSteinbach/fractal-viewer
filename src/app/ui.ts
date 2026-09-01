@@ -70,7 +70,10 @@ import type {
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
-import { isLatticeTilingSpec } from "../fractal/tiling";
+import {
+  isLatticeTilingSpec,
+  isResolvedLatticeTiling,
+} from "../fractal/tiling";
 import type { MutationDomain } from "../fractal/mutate-system";
 import type { EvolutionComparisonSlot } from "./evolution-comparison";
 import type { SavedScene } from "./collection";
@@ -1895,8 +1898,8 @@ export class Ui {
    * a later edit to an already-resolved session. */
   private flameTilingOutcome: FlameTilingOutcome | undefined;
   private flameTilingPending = false;
-  /** Synchronous Solid tiling disclosure: the material-local resolution
-   * main.ts re-derives on entry and on every tiling/balloon/symmetry edit.
+  /** Synchronous Solid tiling disclosure: main.ts re-derives the 3D live-
+   * material or 4D worker-baked application arm on entry and relevant edits.
    * Null until the first Solid session resolves. */
   private solidTilingStatus: SolidTilingSessionResolution | null = null;
   private readonly legend: HTMLElement;
@@ -4409,6 +4412,16 @@ export class Ui {
   private syncTilingRows(state: AppState, nonFlat: boolean): void {
     const tiling = state.tiling;
     const lattice = tiling !== undefined && isLatticeTilingSpec(tiling);
+    // A symmetry edit can author a 3D↔4D transition while Solid deliberately
+    // keeps its entry worker/frame until Points regenerates and the renderer
+    // is re-entered. An active resolution therefore owns the timing label;
+    // current document dimensionality is only the pre-entry/refusal fallback.
+    const solidWorkerBaked =
+      this.solidTilingStatus !== null
+        ? this.solidTilingStatus.application === "worker-baked"
+        : nonFlat;
+    const solidDimensionHeld =
+      this.solidTilingStatus !== null && solidWorkerBaked !== nonFlat;
     this.tilingControls.classList.toggle("hidden", !tiling);
     this.tilingGroupRow.classList.toggle("hidden", !tiling || lattice);
     this.tilingCellScaleRow.classList.toggle("hidden", !tiling || !lattice);
@@ -4423,7 +4436,11 @@ export class Ui {
             ? lattice
               ? "Changing cell scale is live; changing kind or clip restarts Surface."
               : "Changes restart Surface without resetting the view."
-            : "Tiling edits are live in Solid — the canonical density volume is unchanged; reflected copies re-fold per frame.";
+            : solidDimensionHeld
+              ? "This Solid frame keeps its entry dimension; authored tiling applies after Points regeneration and renderer re-entry."
+              : solidWorkerBaked
+                ? "Tiling edits replace the 4D Solid worker and restart accumulation; rotor and W-slice edits restart the active worker after release."
+                : "Tiling edits are live in 3D Solid — the canonical density volume is unchanged; reflected copies re-fold per frame.";
 
     const kind = this.scalarSelect("tilingKind");
     const group = this.scalarSelect("tilingGroup");
@@ -4478,7 +4495,7 @@ export class Ui {
       } else if (state.renderMode === "flame") {
         note = this.flameTilingNote();
       } else if (state.renderMode === "solid") {
-        note = this.solidTilingNote(lattice);
+        note = this.solidTilingNote(nonFlat);
       } else {
         note =
           "Active in Surface — the attractor repeats in x and z (and w in 4D) at the cell scale above.";
@@ -4519,7 +4536,7 @@ export class Ui {
     } else if (state.renderMode === "flame") {
       note = this.flameTilingNote();
     } else if (state.renderMode === "solid") {
-      note = this.solidTilingNote(lattice);
+      note = this.solidTilingNote(nonFlat);
     } else {
       note =
         "Active in Surface; edits restart the render and preserve its view.";
@@ -4589,13 +4606,16 @@ export class Ui {
   }
 
   /** Synchronously-resolved Solid half of the shared tiling disclosure. The
-   * resolution is material-local (main.ts's `syncSolidTiling`), so unlike the
-   * Flame worker's outcome there is no pending/applying distinction — only
-   * the pre-first-resolution Preparing placeholder. */
-  private solidTilingNote(lattice: boolean): string {
+   * application discriminator keeps the 3D material fold distinct from 4D's
+   * pre-projection worker deposition. */
+  private solidTilingNote(nonFlat: boolean): string {
     const status = this.solidTilingStatus;
     if (!status) {
       return "Preparing in Solid — resolving the authored tiling before accumulation.";
+    }
+    const workerBaked = status.application === "worker-baked";
+    if (workerBaked !== nonFlat) {
+      return `Held in ${workerBaked ? "4D" : "3D"} Solid — the current frame keeps its entry tiling; authored changes apply after Points regeneration and renderer re-entry.`;
     }
     if (status.status === "off") {
       return "Solid renders the original attractor — tiling is off.";
@@ -4603,9 +4623,15 @@ export class Ui {
     if (status.status === "refused") {
       return `Unavailable in Solid — ${status.note}`;
     }
+    const lattice = isResolvedLatticeTiling(status.resolved);
+    if (workerBaked) {
+      return lattice
+        ? "Active in 4D Solid — bounded mirrored x/z/w images are baked into density before projection; edits restart accumulation."
+        : "Active in 4D Solid — bounded reflected images are baked into density before projection; edits restart accumulation.";
+    }
     return lattice
-      ? "Active in Solid — the canonical density volume mirrors in x and z at the cell scale above."
-      : "Active in Solid — reflected copies render through the canonical density volume.";
+      ? "Active in 3D Solid — the canonical density volume mirrors in x and z at the cell scale above."
+      : "Active in 3D Solid — reflected copies render through the canonical density volume.";
   }
 
   /** Suffix for a document-level refusal while Points is still showing an
@@ -5421,10 +5447,8 @@ export class Ui {
   }
 
   /** Associate the latest synchronously-resolved Solid tiling session with the
-   * panel. The resolution is material-local and re-derived on entry and on
-   * every tiling/balloon/symmetry edit (main.ts's `syncSolidTiling`); the
-   * Solid disclosure rows read it the way the Flame rows read their worker
-   * outcome. */
+   * panel. The resolution names the dimension-specific application arm and
+   * is re-derived on entry and on every tiling/balloon/symmetry edit. */
   setSolidTilingStatus(status: SolidTilingSessionResolution | null): void {
     this.solidTilingStatus = status;
   }

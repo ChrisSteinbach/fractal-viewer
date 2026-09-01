@@ -10134,6 +10134,7 @@ describe("Ui symmetry controls", () => {
     const fx = {
       postFlame,
       postVoxel,
+      activeRendererAcceptsSymmetryEdit: vi.fn(() => true),
       regenerateIfAutoUpdate: vi.fn(),
       refreshSurfaceEligibility,
       syncSolidTiling: vi.fn(),
@@ -10465,6 +10466,7 @@ describe("Ui finite tiling controls", () => {
     ui.setFlameTilingOutcome({ availability: "active", kind: "finite" });
     ui.setSolidTilingStatus({
       status: "active",
+      application: "material-live",
       resolved: resolveTiling({ group: "a3" })!,
       originVisibleRadius: 1,
       note: null,
@@ -10480,7 +10482,7 @@ describe("Ui finite tiling controls", () => {
             ? "restart Flame from the same seed and frozen view"
             : renderMode === "surface"
               ? "restart Surface"
-              : "Tiling edits are live in Solid",
+              : "Tiling edits are live in 3D Solid",
       );
       expect(el("tilingNote").textContent, renderMode).toContain(
         renderMode === "surface"
@@ -10489,7 +10491,7 @@ describe("Ui finite tiling controls", () => {
             ? "Active in Points"
             : renderMode === "flame"
               ? "Active in Flame"
-              : "Active in Solid",
+              : "Active in 3D Solid",
       );
     }
   });
@@ -10503,6 +10505,7 @@ describe("Ui finite tiling controls", () => {
       }) as const;
     const active = {
       status: "active" as const,
+      application: "material-live" as const,
       resolved: resolveTiling({ group: "a3" })!,
       originVisibleRadius: 1,
       note: null,
@@ -10511,20 +10514,24 @@ describe("Ui finite tiling controls", () => {
     ui.setSolidTilingStatus(active);
     ui.updateLabels(solid({ group: "a3" }));
     expect(el("tilingNote").textContent).toMatch(
-      /Active in Solid.*reflected copies render through the canonical density volume/i,
+      /Active in 3D Solid.*reflected copies render through the canonical density volume/i,
     );
     expect(el("tilingTimingHint").textContent).toMatch(
-      /edits are live in Solid/i,
+      /edits are live in 3D Solid/i,
     );
 
-    ui.setSolidTilingStatus(active);
+    ui.setSolidTilingStatus({
+      ...active,
+      resolved: resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1),
+    });
     ui.updateLabels(solid({ kind: "lattice", cellScale: 1.5 }));
     expect(el("tilingNote").textContent).toMatch(
-      /Active in Solid.*mirrors in x and z at the cell scale above/i,
+      /Active in 3D Solid.*mirrors in x and z at the cell scale above/i,
     );
 
     ui.setSolidTilingStatus({
       status: "refused",
+      application: "material-live",
       resolved: null,
       originVisibleRadius: null,
       note: "Solid tiling is unavailable with Balloon; turn Balloon off.",
@@ -10536,6 +10543,7 @@ describe("Ui finite tiling controls", () => {
 
     ui.setSolidTilingStatus({
       status: "off",
+      application: "material-live",
       resolved: null,
       originVisibleRadius: null,
       note: null,
@@ -10545,14 +10553,14 @@ describe("Ui finite tiling controls", () => {
       /Solid renders the original attractor.*tiling is off/i,
     );
 
-    // A 4D document with a matching 4D group reaches the Solid-specific
-    // refusal (the dimension mismatch row would otherwise say the recovery
-    // is a 4D group — which still cannot render here).
+    // A 4D document with a matching group uses worker-baked pre-projection
+    // images and discloses its restart timing.
     ui.setSolidTilingStatus({
-      status: "refused",
-      resolved: null,
-      originVisibleRadius: null,
-      note: "4D Solid tiling is not shipped yet; it lands with the 4D Solid lift.",
+      status: "active",
+      application: "worker-baked",
+      resolved: resolveTiling({ group: "a4" })!,
+      originVisibleRadius: 1,
+      note: null,
     });
     ui.updateLabels({
       ...setTiling(
@@ -10562,9 +10570,60 @@ describe("Ui finite tiling controls", () => {
       renderMode: "solid",
     });
     expect(el("tilingNote").textContent).toMatch(
-      /Unavailable in Solid.*4D Solid tiling is not shipped/i,
+      /Active in 4D Solid.*baked into density before projection/i,
     );
-    expect(el("tilingNote").textContent).not.toMatch(/zero-thickness/i);
+    expect(el("tilingTimingHint").textContent).toMatch(
+      /replace the 4D Solid worker and restart accumulation/i,
+    );
+
+    // A dimensionality-changing symmetry edit is authored while the active
+    // Solid session deliberately keeps its entry worker/frame. Timing must
+    // describe that session arm, not the newer document dimensionality.
+    ui.setSolidTilingStatus(active);
+    ui.updateLabels({
+      ...setTiling(
+        { ...initialState(true), transforms: nonFlatTransforms() },
+        { group: "a4" },
+      ),
+      renderMode: "solid",
+    });
+    expect(el("tilingTimingHint").textContent).toMatch(
+      /keeps its entry dimension.*after Points regeneration and renderer re-entry/i,
+    );
+    expect(el("tilingNote").textContent).toMatch(
+      /Held in 3D Solid.*authored changes apply after Points regeneration and renderer re-entry/i,
+    );
+
+    ui.setSolidTilingStatus({
+      status: "active",
+      application: "worker-baked",
+      resolved: resolveTiling({ group: "a4" })!,
+      originVisibleRadius: 1,
+      note: null,
+    });
+    ui.updateLabels(solid({ group: "a3" }));
+    expect(el("tilingTimingHint").textContent).toMatch(
+      /keeps its entry dimension.*after Points regeneration and renderer re-entry/i,
+    );
+    expect(el("tilingNote").textContent).toMatch(
+      /Held in 4D Solid.*authored changes apply after Points regeneration and renderer re-entry/i,
+    );
+
+    ui.setSolidTilingStatus({
+      status: "refused",
+      application: "material-live",
+      resolved: null,
+      originVisibleRadius: null,
+      note: "Solid tiling is unavailable with kaleidoscope symmetry above order 1.",
+    });
+    ui.updateLabels({
+      ...setTiling(
+        { ...initialState(true), transforms: nonFlatTransforms() },
+        { group: "a4" },
+      ),
+      renderMode: "solid",
+    });
+    expect(el("tilingNote").textContent).toMatch(/Held in 3D Solid/i);
   });
 
   it("distinguishes Flame preparation, applying edits, refusal, and active results", () => {
