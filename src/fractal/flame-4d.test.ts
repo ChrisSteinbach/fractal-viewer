@@ -7,6 +7,7 @@ import {
   derivedColorIndex,
 } from "./chaos-game";
 import { plotPoint4, prepareChaosGame4, stepOrbit4 } from "./chaos-game-4d";
+import type { PreparedChaosGame4 } from "./chaos-game-4d";
 import { rotationMatrix4, toTransform4 } from "./affine4";
 import {
   buildColorModeLUT,
@@ -21,13 +22,25 @@ import {
   composeFlameProjection4,
   composeRotorProjection4,
   sliceWeight,
+  SLICE_GHOST_FLOOR,
 } from "./project4";
 import type { FourDView } from "./project4";
 import { createFlameHistogram } from "./flame";
-import type { Mat4 } from "./flame";
+import type { FlameHistogram, Mat4 } from "./flame";
 import { pentatope } from "./presets";
 import { mulberry32 } from "./rng";
+import type { Rng } from "./rng";
+import {
+  createPointTilingCursorState,
+  POINT_TILING_ACCUMULATION_FANOUT_CAP,
+  resolvePointTilingPlan,
+  visitPointTilingAttemptBounded,
+  visitPointTilingImagesExhaustive,
+} from "./point-tiling";
+import type { PointTilingPlan } from "./point-tiling";
 import type { ShapeSpec } from "./shapes";
+import { foldToChamber, resolveTiling, TILING_GROUP_INFO } from "./tiling";
+import type { TilingSpec } from "./tiling";
 import type { Transform4, Vec3, Vec4 } from "./types";
 
 /** A single map that ignores its input and always lands exactly on `point`:
@@ -84,6 +97,66 @@ const FLAT_VIEW: FourDView = {
   sliceWidth: 1,
   sliceRelativeColor: false,
 };
+
+// Every raw image lands in the sole pixel, while the fourth row exposes raw
+// image w unchanged for w-ramp and slice tests.
+const RAW_W_PROJECTION = new Float64Array([
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0,
+]);
+
+function pointPlan4(spec: TilingSpec, radius?: number): PointTilingPlan {
+  let resolved;
+  if ("kind" in spec) {
+    if (radius === undefined) throw new Error("lattice fixture needs a radius");
+    resolved = resolveTiling(spec, radius);
+  } else {
+    resolved = resolveTiling(spec);
+  }
+  if (!resolved) throw new Error("test tiling did not resolve");
+  const plan = resolvePointTilingPlan(resolved, 4);
+  if (!plan) throw new Error("test point-tiling plan did not resolve");
+  return plan;
+}
+
+function genericF4ChamberPoint(): Vec4 {
+  const point = foldToChamber(
+    TILING_GROUP_INFO.f4,
+    [0.11, -0.17, 0.19, 0.23],
+    [0, 0, 0, 0],
+  );
+  if (!point) throw new Error("F4 fixture did not fold");
+  return point as Vec4;
+}
+
+function accumulateTiled4(
+  prepared: PreparedChaosGame4,
+  projection: Float64Array,
+  view: FourDView,
+  width: number,
+  height: number,
+  iterations: number,
+  rng: Rng,
+  color: FourDRenderColor,
+  plan: PointTilingPlan,
+  histogram?: FlameHistogram,
+): FlameHistogram {
+  return accumulateFlame4(
+    prepared,
+    projection,
+    view,
+    width,
+    height,
+    iterations,
+    rng,
+    color,
+    histogram,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    plan,
+  );
+}
 
 describe("accumulateFlame4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () => {
   it("matches a reference loop built directly from stepOrbit4/plotPoint4 and the rotor+camera projection, iteration for iteration", () => {
@@ -1654,5 +1727,391 @@ describe("accumulateFlame4 shape emitters (correctness oracle)", () => {
     expect(actual.orbit).toEqual(expected.orbit);
     expect(actual.orbitW).toBe(expected.orbitW);
     expect(emitterDeposits).toBeGreaterThan(iterations / 10);
+  });
+});
+
+describe("accumulateFlame4 point-space tiling", () => {
+  it("uses the bounded F4 estimator while keeping Height color on the canonical source", () => {
+    const source = genericF4ChamberPoint();
+    const plan = pointPlan4({ group: "f4" });
+    const prepared = prepareChaosGame4(fixedPointSystem4(source));
+    const lut = buildColorModeLUT("height", 1);
+    const color: FourDRenderColor = {
+      kind: "height",
+      lut,
+      minY: -1,
+      maxY: 1,
+    };
+    const histogram = createFlameHistogram(1, 1);
+    histogram.pointTiling = {
+      ...createPointTilingCursorState(),
+      credit: 31,
+      attempts: 31,
+    };
+    let exhaustiveWeight = 0;
+    const exhaustiveCount = visitPointTilingImagesExhaustive(
+      plan,
+      ...source,
+      (_x, _y, _z, _w, weight) => {
+        exhaustiveWeight += weight;
+      },
+    );
+
+    const actual = accumulateTiled4(
+      prepared,
+      RAW_W_PROJECTION,
+      FLAT_VIEW,
+      1,
+      1,
+      1,
+      mulberry32(7),
+      color,
+      plan,
+      histogram,
+    );
+
+    const t = (source[1] + 1) / 2;
+    const li = ((t * 255 + 0.5) | 0) * 3;
+    expect(exhaustiveCount).toBe(TILING_GROUP_INFO.f4.order);
+    expect(actual.hits[0]).toBeCloseTo(exhaustiveWeight, 11);
+    expect(actual.sumRGB[0]).toBeCloseTo(lut[li] * exhaustiveWeight, 10);
+    expect(actual.sumRGB[1]).toBeCloseTo(lut[li + 1] * exhaustiveWeight, 10);
+    expect(actual.sumRGB[2]).toBeCloseTo(lut[li + 2] * exhaustiveWeight, 10);
+    expect(actual.pointTiling).toEqual({
+      credit: 0,
+      cursor: 32,
+      attempts: 32,
+      accepted: 1,
+      selected: POINT_TILING_ACCUMULATION_FANOUT_CAP,
+      emitted: POINT_TILING_ACCUMULATION_FANOUT_CAP,
+    });
+  });
+
+  it("derives lattice w-ramp color and soft-slice density from each raw xyzw image", () => {
+    const source: Vec4 = [0.08, 0.03, -0.07, 0.11];
+    const plan = pointPlan4({ kind: "lattice", cellScale: 1 }, 0.5);
+    const prepared = prepareChaosGame4(fixedPointSystem4(source));
+    const side = W_SIDE_PALETTES.wBlueOrange;
+    const view: FourDView = {
+      invWAmp: 0.2,
+      sliceOn: true,
+      sliceCenter: 0.15,
+      sliceWidth: 0.25,
+      sliceRelativeColor: false,
+    };
+    const initialState = {
+      ...createPointTilingCursorState(),
+      credit: 31,
+      attempts: 31,
+    };
+    const expectedState = { ...initialState };
+    let expectedHits = 0;
+    const expectedRGB = [0, 0, 0];
+    const imageW: number[] = [];
+    visitPointTilingAttemptBounded(
+      plan,
+      ...source,
+      POINT_TILING_ACCUMULATION_FANOUT_CAP,
+      expectedState,
+      (_x, _y, _z, w, tilingWeight) => {
+        imageW.push(w);
+        const scaled = w * view.invWAmp;
+        const s = scaled < -1 ? -1 : scaled > 1 ? 1 : scaled;
+        const weight =
+          tilingWeight *
+          sliceWeight(s, view.sliceCenter, view.sliceWidth, SLICE_GHOST_FLOOR);
+        const rgb = wRampColor(s, side);
+        expectedHits += weight;
+        expectedRGB[0] += rgb[0] * weight;
+        expectedRGB[1] += rgb[1] * weight;
+        expectedRGB[2] += rgb[2] * weight;
+      },
+    );
+    const histogram = createFlameHistogram(1, 1);
+    histogram.pointTiling = { ...initialState };
+
+    const actual = accumulateTiled4(
+      prepared,
+      RAW_W_PROJECTION,
+      view,
+      1,
+      1,
+      1,
+      mulberry32(9),
+      { kind: "wRamp", side },
+      plan,
+      histogram,
+    );
+
+    expect(
+      new Set(imageW.map((value) => value.toFixed(9))).size,
+    ).toBeGreaterThan(1);
+    expect(actual.hits[0]).toBe(expectedHits);
+    expect(Array.from(actual.sumRGB)).toEqual(expectedRGB);
+    expect(actual.pointTiling).toEqual(expectedState);
+  });
+
+  it.each([
+    ["finite", pointPlan4({ group: "f4" })],
+    ["lattice", pointPlan4({ kind: "lattice", cellScale: 1 }, 0.5)],
+  ] as const)(
+    "resumes %s cursor/credit exactly across serialized irregular chunks",
+    (_kind, plan) => {
+      const source = genericF4ChamberPoint();
+      const prepared = prepareChaosGame4(fixedPointSystem4(source));
+      const color: FourDRenderColor = {
+        kind: "uniform",
+        color: [0.2, 0.4, 0.8],
+      };
+      const chunkedRng = mulberry32(13);
+      let chunked = accumulateTiled4(
+        prepared,
+        RAW_W_PROJECTION,
+        FLAT_VIEW,
+        1,
+        1,
+        13,
+        chunkedRng,
+        color,
+        plan,
+      );
+      expect(chunked.pointTiling).toBeDefined();
+      chunked.pointTiling = { ...chunked.pointTiling! };
+      chunked = accumulateTiled4(
+        prepared,
+        RAW_W_PROJECTION,
+        FLAT_VIEW,
+        1,
+        1,
+        17,
+        chunkedRng,
+        color,
+        plan,
+        chunked,
+      );
+      chunked.pointTiling = { ...chunked.pointTiling! };
+      chunked = accumulateTiled4(
+        prepared,
+        RAW_W_PROJECTION,
+        FLAT_VIEW,
+        1,
+        1,
+        19,
+        chunkedRng,
+        color,
+        plan,
+        chunked,
+      );
+
+      const singleRng = mulberry32(13);
+      const single = accumulateTiled4(
+        prepared,
+        RAW_W_PROJECTION,
+        FLAT_VIEW,
+        1,
+        1,
+        49,
+        singleRng,
+        color,
+        plan,
+      );
+
+      expect(Array.from(chunked.hits)).toEqual(Array.from(single.hits));
+      expect(Array.from(chunked.sumRGB)).toEqual(Array.from(single.sumRGB));
+      expect(chunked.maxHits).toBe(single.maxHits);
+      expect(chunked.orbit).toEqual(single.orbit);
+      expect(chunked.orbitW).toBe(single.orbitW);
+      expect(chunked.orbitColor).toBe(single.orbitColor);
+      expect(chunked.pointTiling).toEqual(single.pointTiling);
+      expect(chunkedRng()).toBe(singleRng());
+    },
+  );
+
+  it("completes valid empty canonical content without an untiled deposit", () => {
+    const source = genericF4ChamberPoint();
+    const plan = pointPlan4({
+      group: "f4",
+      clip: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.01 },
+            combine: "union",
+            pose: { offset: [100, 100, 100] },
+          },
+        ],
+      },
+    });
+    const iterations = 37;
+
+    const actual = accumulateTiled4(
+      prepareChaosGame4(fixedPointSystem4(source)),
+      RAW_W_PROJECTION,
+      FLAT_VIEW,
+      1,
+      1,
+      iterations,
+      mulberry32(15),
+      { kind: "uniform", color: [1, 1, 1] },
+      plan,
+    );
+
+    expect(Array.from(actual.hits)).toEqual([0]);
+    expect(Array.from(actual.sumRGB)).toEqual([0, 0, 0]);
+    expect(actual.maxHits).toBe(0);
+    expect(actual.pointTiling).toEqual({
+      credit: iterations,
+      cursor: 0,
+      attempts: iterations,
+      accepted: 0,
+      selected: 0,
+      emitted: 0,
+    });
+  });
+
+  it("consumes the same primary RNG and leaves the same orbit for equal source work", () => {
+    const prepared = prepareChaosGame4(weightedPentatope());
+    const plan = pointPlan4({ kind: "lattice", cellScale: 1 }, 2);
+    const color: FourDRenderColor = {
+      kind: "uniform",
+      color: [0.3, 0.5, 0.7],
+    };
+    const untiledRng = mulberry32(17);
+    const untiled = accumulateFlame4(
+      prepared,
+      RAW_W_PROJECTION,
+      FLAT_VIEW,
+      1,
+      1,
+      200,
+      untiledRng,
+      color,
+    );
+    const tiledRng = mulberry32(17);
+    const tiled = accumulateTiled4(
+      prepared,
+      RAW_W_PROJECTION,
+      FLAT_VIEW,
+      1,
+      1,
+      200,
+      tiledRng,
+      color,
+      plan,
+    );
+
+    expect(tiled.orbit).toEqual(untiled.orbit);
+    expect(tiled.orbitW).toBe(untiled.orbitW);
+    expect(tiled.orbitColor).toBe(untiled.orbitColor);
+    expect(tiled.orbitPrevBase).toBe(untiled.orbitPrevBase);
+    expect(tiled.orbitChaosLeft).toBe(untiled.orbitChaosLeft);
+    expect(tiled.pointTiling?.attempts).toBe(200);
+    expect(tiled.pointTiling!.selected).toBeLessThanOrEqual(200);
+    expect(tiledRng()).toBe(untiledRng());
+  });
+
+  it("keeps the absent-plan call value-identical and state-free", () => {
+    const prepared = prepareChaosGame4(weightedPentatope());
+    const color: FourDRenderColor = {
+      kind: "transform",
+      palette: transformColors(5),
+    };
+    const omitted = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      12,
+      12,
+      300,
+      mulberry32(19),
+      color,
+    );
+    const explicit = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      12,
+      12,
+      300,
+      mulberry32(19),
+      color,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+
+    expect(explicit).toEqual(omitted);
+    expect(explicit.pointTiling).toBeUndefined();
+    expect(omitted.pointTiling).toBeUndefined();
+  });
+
+  it("rejects wrong-dimensional, Balloon, and kaleidoscope combinations", () => {
+    const source = genericF4ChamberPoint();
+    const prepared = prepareChaosGame4(fixedPointSystem4(source));
+    const plan = pointPlan4({ group: "f4" });
+    const threeDResolved = resolveTiling({ group: "a3" });
+    if (!threeDResolved) throw new Error("3D test tiling did not resolve");
+    const threeDPlan = resolvePointTilingPlan(threeDResolved, 3);
+    if (!threeDPlan) throw new Error("3D test plan did not resolve");
+    const echo = {
+      balloon: buildBalloonFromBall(
+        { center: [0, 0, 0] as Vec3, radius: 1 },
+        1,
+      ),
+      tint: [0, 0, 0] as Vec3,
+      tintStrength: 0,
+      weight: 0.5,
+    };
+    const base = [
+      RAW_W_PROJECTION,
+      FLAT_VIEW,
+      1,
+      1,
+      1,
+      mulberry32(21),
+      { kind: "uniform", color: [1, 1, 1] } as FourDRenderColor,
+    ] as const;
+
+    expect(() =>
+      accumulateFlame4(
+        prepared,
+        ...base,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        threeDPlan,
+      ),
+    ).toThrow(/requires a 4D point-tiling plan/);
+    expect(() =>
+      accumulateFlame4(
+        prepared,
+        ...base,
+        undefined,
+        echo,
+        composeRotorProjection4(IDENTITY_ROTOR, [0, 0, 0, 0]),
+        ORTHOGRAPHIC,
+        undefined,
+        plan,
+      ),
+    ).toThrow(/unavailable with Balloon/);
+    expect(() =>
+      accumulateFlame4(
+        prepareChaosGame4(fixedPointSystem4(source), null, {
+          order: 2,
+          plane: "xz",
+        }),
+        ...base,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        plan,
+      ),
+    ).toThrow(/kaleidoscope symmetry above order 1/);
   });
 });

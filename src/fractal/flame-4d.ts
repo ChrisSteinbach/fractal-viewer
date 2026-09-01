@@ -82,8 +82,22 @@ import {
 import type { FourDRenderColor } from "./color";
 import { sliceColorRemap, sliceWeight, SLICE_GHOST_FLOOR } from "./project4";
 import type { FourDView, RotorProjection4 } from "./project4";
+import {
+  createPointTilingCursorState,
+  POINT_TILING_ACCUMULATION_FANOUT_CAP,
+  visitPointTilingAttemptBounded,
+} from "./point-tiling";
+import type { PointTilingCursorState, PointTilingPlan } from "./point-tiling";
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
+
+declare module "./flame" {
+  interface FlameHistogram {
+    /** Active point-image accumulation cursor/credit, lazily attached only
+     * when a tiling plan is actually supplied. */
+    pointTiling?: PointTilingCursorState;
+  }
+}
 
 /** Color for a transform/bucket outside `palette` — shouldn't happen; mirrors
  * `flame.ts`'s `FALLBACK_COLOR` and `color.ts`'s `buildColors4` fallback. */
@@ -118,7 +132,11 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * tail parameters so every existing no-echo caller keeps its original call
  * shape; see the module doc for why the nonlinear echo needs the two maps
  * separately. `echoColorLUT` is also a tail parameter; omit it for exact
- * inherited primary color.
+ * inherited primary color. `tilingPlan` is the final optional tail so every
+ * historical call shape stays literal. It applies the shared bounded weighted
+ * visitor to raw post-schedule/post-lens xyzw, before this function's existing
+ * rotor/projection/slice deposit; its cursor state is lazily attached to the
+ * active histogram so it resumes across progressive chunks.
  *
  * Pass a seeded {@link Rng} for reproducible output (tests); the app passes
  * `Math.random`.
@@ -137,6 +155,7 @@ export function accumulateFlame4(
   rotorProjection?: RotorProjection4,
   cameraProjection?: Mat4,
   echoColorLUT?: Float32Array,
+  tilingPlan?: PointTilingPlan,
 ): FlameHistogram {
   if (projection.length !== 20) {
     throw new RangeError(
@@ -153,12 +172,32 @@ export function accumulateFlame4(
       `accumulateFlame4: balloon echo requires a 16-entry cameraProjection, got ${cameraProjection?.length ?? 0}`,
     );
   }
+  if (tilingPlan !== undefined && tilingPlan.dimension !== 4) {
+    throw new RangeError("accumulateFlame4 requires a 4D point-tiling plan");
+  }
+  if (tilingPlan !== undefined && echo !== undefined) {
+    throw new RangeError(
+      "accumulateFlame4 point tiling is unavailable with Balloon",
+    );
+  }
+  if (
+    tilingPlan !== undefined &&
+    prepared.transformCount !== prepared.baseTransformCount
+  ) {
+    throw new RangeError(
+      "accumulateFlame4 point tiling is unavailable with kaleidoscope symmetry above order 1",
+    );
+  }
   const hist = histogram ?? createFlameHistogram(width, height);
   if (hist.width !== width || hist.height !== height) {
     throw new RangeError(
       `accumulateFlame4: histogram is ${hist.width}x${hist.height}, but ${width}x${height} was requested`,
     );
   }
+  const pointTilingState =
+    tilingPlan === undefined
+      ? undefined
+      : (hist.pointTiling ??= createPointTilingCursorState());
 
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
@@ -254,6 +293,64 @@ export function accumulateFlame4(
   // slice is on and the option was chosen, so the wRamp branch below applies
   // it unconditionally (see sliceColorRemap's doc).
   const { shift: colorShift, invScale: colorInvScale } = sliceColorRemap(view);
+
+  // Active tiling reuses one allocation-free callback for every canonical
+  // source. The mutable RGB lanes are SOURCE provenance; raw image xyzw alone
+  // drives rotor projection, w-ramp and soft-slice weight below.
+  let tiledSourceR = 0;
+  let tiledSourceG = 0;
+  let tiledSourceB = 0;
+  const tiledVisitor =
+    tilingPlan === undefined
+      ? undefined
+      : (
+          imageX: number,
+          imageY: number,
+          imageZ: number,
+          imageW: number,
+          imageWeight: number,
+        ): void => {
+          const cw =
+            rw0 * imageX + rw1 * imageY + rw2 * imageZ + rw3 * imageW + rw4;
+          if (cw <= 0) return;
+          const cx =
+            rx0 * imageX + rx1 * imageY + rx2 * imageZ + rx3 * imageW + rx4;
+          const cy =
+            ry0 * imageX + ry1 * imageY + ry2 * imageZ + ry3 * imageW + ry4;
+          const col = Math.floor((cx / cw + 1) * 0.5 * width);
+          const row = Math.floor((1 - cy / cw) * 0.5 * height);
+          if (col < 0 || col >= width || row < 0 || row >= height) return;
+
+          const sRaw =
+            rs0 * imageX + rs1 * imageY + rs2 * imageZ + rs3 * imageW + rs4;
+          const sScaled = sRaw * invWAmp;
+          const s = sScaled < -1 ? -1 : sScaled > 1 ? 1 : sScaled;
+          const weight =
+            imageWeight *
+            (sliceOn
+              ? sliceWeight(s, sliceCenter, sliceWidth, SLICE_GHOST_FLOOR)
+              : 1);
+          let r = tiledSourceR;
+          let g = tiledSourceG;
+          let b = tiledSourceB;
+          if (color.kind === "wRamp") {
+            const rgb = wRampColor(
+              (s - colorShift) * colorInvScale,
+              color.side,
+            );
+            r = rgb[0];
+            g = rgb[1];
+            b = rgb[2];
+          }
+
+          const bucket = row * width + col;
+          const hit = (hits[bucket] += weight);
+          if (hit > maxHits) maxHits = hit;
+          const offset = bucket * 3;
+          sumRGB[offset] += r * weight;
+          sumRGB[offset + 1] += g * weight;
+          sumRGB[offset + 2] += b * weight;
+        };
 
   for (let n = 0; n < iterations; n++) {
     // Sub-orbit re-fuse — accumulateFlame's chi block, four coordinates (see
@@ -448,6 +545,97 @@ export function accumulateFlame4(
         pz = fz;
         pw = fw;
       }
+    }
+
+    if (tilingPlan !== undefined) {
+      // Source-owned color is resolved once, before any image transform.
+      // wRamp is the deliberate exception: its coordinate is the image's raw
+      // w after the tiling action and is resolved inside tiledVisitor.
+      tiledSourceR = 0;
+      tiledSourceG = 0;
+      tiledSourceB = 0;
+      switch (color.kind) {
+        case "structural": {
+          const li = Math.min(255, (c * 256) | 0) * 3;
+          tiledSourceR = color.lut[li];
+          tiledSourceG = color.lut[li + 1];
+          tiledSourceB = color.lut[li + 2];
+          break;
+        }
+        case "wRamp":
+          break;
+        case "transform": {
+          const rgb = color.palette[baseIdx] ?? FALLBACK_COLOR;
+          tiledSourceR = rgb[0];
+          tiledSourceG = rgb[1];
+          tiledSourceB = rgb[2];
+          break;
+        }
+        case "height": {
+          const t = (py - color.minY) / (color.maxY - color.minY || 1);
+          const li = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 255 + 0.5) | 0) * 3;
+          tiledSourceR = color.lut[li];
+          tiledSourceG = color.lut[li + 1];
+          tiledSourceB = color.lut[li + 2];
+          break;
+        }
+        case "radius": {
+          const dx = px - color.center[0];
+          const dy = py - color.center[1];
+          const dz = pz - color.center[2];
+          const dw = pw - color.center[3];
+          const distance = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
+          const t = (distance - color.minD) / (color.maxD - color.minD || 1);
+          const li = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 255 + 0.5) | 0) * 3;
+          tiledSourceR = color.lut[li];
+          tiledSourceG = color.lut[li + 1];
+          tiledSourceB = color.lut[li + 2];
+          break;
+        }
+        case "position": {
+          const tx0 = (px - color.min[0]) / (color.max[0] - color.min[0] || 1);
+          const ty0 = (py - color.min[1]) / (color.max[1] - color.min[1] || 1);
+          const tz0 = (pz - color.min[2]) / (color.max[2] - color.min[2] || 1);
+          const tx = tx0 <= 0 ? 0 : tx0 >= 1 ? 1 : tx0;
+          const ty = ty0 <= 0 ? 0 : ty0 >= 1 ? 1 : ty0;
+          const tz = tz0 <= 0 ? 0 : tz0 >= 1 ? 1 : tz0;
+          const gx = color.colorGamma === 1 ? tx : tx ** color.colorGamma;
+          const gy = color.colorGamma === 1 ? ty : ty ** color.colorGamma;
+          const gz = color.colorGamma === 1 ? tz : tz ** color.colorGamma;
+          if (color.axisColors === undefined) {
+            tiledSourceR = gx * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+            tiledSourceG = gy * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+            tiledSourceB = gz * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+          } else {
+            writePositionColor(
+              positionScratch!,
+              0,
+              gx,
+              gy,
+              gz,
+              color.axisColors,
+            );
+            tiledSourceR = positionScratch![0];
+            tiledSourceG = positionScratch![1];
+            tiledSourceB = positionScratch![2];
+          }
+          break;
+        }
+        case "uniform":
+          [tiledSourceR, tiledSourceG, tiledSourceB] = color.color;
+          break;
+      }
+      visitPointTilingAttemptBounded(
+        tilingPlan,
+        px,
+        py,
+        pz,
+        pw,
+        POINT_TILING_ACCUMULATION_FANOUT_CAP,
+        pointTilingState!,
+        tiledVisitor!,
+      );
+      continue;
     }
 
     // Keep the original no-echo projection/deposit path textually intact.
