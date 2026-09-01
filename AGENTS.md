@@ -920,8 +920,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Points SHIPS tiled in 3D/4D after schedule/final: bounded recorders keep
     canonical color, raw 4D, the 8N cap and explicit terminal status. Flame CPU
     and both WGSL twins SHIP the shared 32-weighted visitor; active tiling
-    restarts from one seed/frozen view and remains GPU-eligible. Backdrop/Solid
-    stay untiled; absent/refused stays literal legacy.
+    restarts from one seed/frozen view and remains GPU-eligible. The generated
+    Flame backdrop SHIPS the same block (schedule + raw tiling + the balloon
+    legality bit, never the echo payload), invalidated by tiling and schedule
+    edits even with Auto-update off; Solid stays
+    untiled; absent/refused stays literal legacy.
     Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic
@@ -1663,7 +1666,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     the terminal cloud `resume()`s one fresh request. It screen-composites the
     worker image over dark off-thread output, publishes immutable opaque RGBA
     plus its mean fog color, and exposes `settle()` to frame-exact export.
-    Pure controller, tested.
+    Its snapshot carries the schedule/tiling/balloon-legality inputs the
+    frozen plot order needs (tiling.ts's bullet). Pure controller, tested.
   - `flame-gpu-backend.ts` — drives flame WGSL kernels inside the flame worker
     behind `FlameAccumBackend` seam. Error-scoped resource creation
     (`FlameGpuSizeError`). `destroy()` defers the real `device.destroy()`
