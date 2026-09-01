@@ -829,7 +829,7 @@ The frozen budgets are:
 | Points                   | SHIPPED — authored point count remains the maximum allocated/displayed output; finite: at most 256 equal dots from one accepted source; lattice: one proposal per accepted source, with at most `8N` source attempts and `8N` proposal tests for request `N`; returns `complete`, `underfilled`, or `empty`, never an untiled substitute |
 | Flame CPU                | SHIPPED — authored iterations remain primary orbit steps; at most 32 weighted image deposits at one acceptance and no more selected candidates cumulatively than attempts; credit/cursor persist in the histogram across arbitrary worker chunks                                                                                         |
 | Flame WebGPU             | SHIPPED in 3D and 4D — the shared binding-7 plan tail and binding-8 per-chain state drive the same 32-image weighted estimator; active tiling uses the normal GPU route with CPU fallback, never an untiled GPU substitute                                                                                                               |
-| Generated Flame backdrop | FROZEN, NOT SHIPPED — same 32-image rule inside its fixed one-million-step job; schedule and tiling join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                                                                                                          |
+| Generated Flame backdrop | SHIPPED — same 32-image rule inside its fixed one-million-step job; schedule, tiling and the balloon legality bit join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                                                                                            |
 | 3D Solid                 | FROZEN, NOT SHIPPED — no replicated voxel memory: keep the canonical density texture and transform material queries; its separate march budget is measured by the Solid lift                                                                                                                                                             |
 | 4D Solid                 | FROZEN, NOT SHIPPED — at most 32 weighted pre-projection images per accepted source; the representation and exact volume budget remain the responsibility of its dedicated decision                                                                                                                                                      |
 
@@ -958,8 +958,14 @@ emitter prefix with the appended plan.
 Points tiling edits follow Auto-update and the existing latest-wins one-shot
 regeneration. An active Flame edit restarts accumulation from the same source
 seed and frozen view; the panel shows Preparing/Applying until the replacement
-frame lands. The generated backdrop and Solid remain explicitly untiled, while
-Surface keeps its existing restart-on-kind/clip and live lattice-scale behavior.
+frame lands. The generated Flame backdrop follows every tiling and schedule
+edit through `trackAutoBackground` — even with Points' Auto-update off, where
+the pane keeps the stale cloud while the replacement backdrop renders —
+while Solid remains explicitly untiled, and Surface keeps its existing
+restart-on-kind/clip and live lattice-scale behavior. Browser-gated by
+`scripts/tiling-ui.verify.mjs --scope=backdrop`: the frozen-cloud fixture
+isolates the backdrop's tiled/untiled pixel difference (measured 44.01% /
+30.66% on Iris, 40.82% / 32.45% on SwiftShader).
 
 The complete executable record, including timings and the carrier alternatives,
 is `scripts/point-tiling.harness.ts`. Deterministic unit/worker/UI tests own the

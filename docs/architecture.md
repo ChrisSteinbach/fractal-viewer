@@ -618,6 +618,14 @@ worker from the same source seed and frozen view, preserving a learned CPU
 fallback and detaching stale hosts for latest-wins delivery. Absent/refused
 plans keep the literal historical accumulator, kernel and backend path.
 
+The generated Flame backdrop follows the same authored block: its snapshot
+carries the schedule, the raw tiling and the balloon legality bit (never the
+echo payload — the backdrop deliberately omits that outer layer), so the
+decorative one-million-step CPU render shows the same tiled object the full
+render does, and the tiling/schedule controls invalidate it through
+`trackAutoBackground` even with Points' Auto-update off. Pixel evidence in
+`scripts/tiling-ui.verify.mjs`'s backdrop scope.
+
 Flame color comes from `palette.ts`: Inigo-Quilez cosine gradients
 (`channel(t) = a + b·cos(2π(c·t + d))`), precomputed once per render into a flat
 256×3 LUT by `buildPaletteLUT`. A structural color coordinate rides the orbit —
