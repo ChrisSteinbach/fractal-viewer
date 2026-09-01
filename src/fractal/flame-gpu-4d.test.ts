@@ -6,6 +6,7 @@ import {
   PARAMS4_ITERS_OFFSET_BYTES,
   SLOT4_STRIDE_BYTES,
   WEIGHT_FIXED_POINT_SCALE,
+  buildFlameGpuPointTilingKernel4,
   convertGpuDisplayHistogram4,
   convertGpuHistogram4,
   packGpuChains4,
@@ -41,6 +42,7 @@ import {
 import { VARIATION_TYPES } from "./types";
 import type { SymmetryParams, Transform4, Vec3, Vec4 } from "./types";
 import type { FourDView } from "./project4";
+import type { PackedGpuPointTiling } from "./point-tiling-gpu";
 import { GEAR_SHAPE, ORBIT_RING_SHAPE, PEACE_SIGN_SHAPE } from "./shapes";
 import type { ShapeSpec } from "./shapes";
 
@@ -1693,6 +1695,50 @@ describe("convertGpuDisplayHistogram4", () => {
 });
 
 describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
+  it("adds only the active tiled plot adapter and keeps raw-image color ownership", () => {
+    const historical = FLAME_GPU_KERNEL_4D_WGSL;
+    const packed: PackedGpuPointTiling = {
+      auxTable: new ArrayBuffer(0),
+      baseFloat: 16,
+      kind: 1,
+      dimension: 4,
+      states: new ArrayBuffer(32),
+      maxLatticeWeight: 0,
+    };
+    const active = buildFlameGpuPointTilingKernel4(packed);
+
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toBe(historical);
+    expect(historical).not.toContain("@group(0) @binding(8)");
+    expect(active).toContain(
+      "@group(0) @binding(8) var<storage, read_write> pointTilingStates",
+    );
+    expect(active).toContain(
+      "let pointTilingAttempt = pointTilingBegin(pp, pointTilingState);",
+    );
+    expect(active).toContain("let d4 = distance(pp, params.center4);");
+    expect(active).toContain("dot(params.projS, pointTilingImage.point)");
+    expect(active).toContain(
+      "pointTilingImage.weight * pointTilingSliceWeight",
+    );
+    expect(active).toContain(
+      "depositPrimary(\n            pointTilingImage.point",
+    );
+    expect(active).not.toContain("depositEcho(inv, echoRgb, echoWeightFix);");
+  });
+
+  it("refuses a 3D packed plan at the 4D kernel boundary", () => {
+    expect(() =>
+      buildFlameGpuPointTilingKernel4({
+        auxTable: new ArrayBuffer(0),
+        baseFloat: 0,
+        kind: 1,
+        dimension: 3,
+        states: new ArrayBuffer(32),
+        maxLatticeWeight: 0,
+      }),
+    ).toThrow(/requires a 4D packed plan/);
+  });
+
   it("colors Height/Position from the raw plotted point, before view projection", () => {
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
       "(pp.y - params.colorMin.y) * params.colorInvRangeGamma.y",
