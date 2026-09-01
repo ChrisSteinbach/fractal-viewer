@@ -1,4 +1,9 @@
-import { accumulateVoxels4, computeVoxelBounds4 } from "./voxel-4d";
+import {
+  VOXEL4_SKIP_WEIGHT,
+  accumulateVoxels4,
+  computeVoxelBounds4,
+  prepareVoxelPointTiling4,
+} from "./voxel-4d";
 import { BOUNDS_MARGIN, BOUNDS_QUANTILE, createVoxelGrid } from "./voxel";
 import type { VoxelBounds } from "./voxel";
 import {
@@ -18,11 +23,21 @@ import {
 } from "./color";
 import type { FourDRenderColor } from "./color";
 import { buildPaletteLUT } from "./palette";
-import { composeRotorProjection4 } from "./project4";
+import { composeRotorProjection4, sliceWeight } from "./project4";
 import type { FourDView, RotorProjection4 } from "./project4";
+import {
+  POINT_TILING_ACCUMULATION_FANOUT_CAP,
+  createPointTilingCursorState,
+  pointTilingLatticeVisibility,
+  resolvePointTilingPlan,
+  visitPointTilingAttemptBounded,
+} from "./point-tiling";
+import type { PointTilingPlan } from "./point-tiling";
 import { pentatope } from "./presets";
 import { mulberry32 } from "./rng";
 import type { ShapeSpec } from "./shapes";
+import { TILING_GROUP_INFO, foldToChamber, resolveTiling } from "./tiling";
+import type { TilingGroup } from "./tiling";
 import type { Transform4, Vec3, Vec4 } from "./types";
 
 /** A single map that ignores its input and always lands exactly on `point`:
@@ -86,6 +101,22 @@ const FLAT_VIEW: FourDView = {
   sliceWidth: 1,
   sliceRelativeColor: false,
 };
+
+function finitePlan4(group: TilingGroup): {
+  plan: PointTilingPlan;
+  source: Vec4;
+} {
+  const resolved = resolveTiling({ group });
+  const plan = resolvePointTilingPlan(resolved, 4);
+  if (!plan) throw new Error(`expected ${group} point-tiling plan`);
+  const source = foldToChamber(
+    TILING_GROUP_INFO[group],
+    [0.13, 0.27, 0.39, 0.51],
+    [0, 0, 0, 0],
+  );
+  if (!source) throw new Error(`expected ${group} chamber point`);
+  return { plan, source: source as Vec4 };
+}
 
 describe("accumulateVoxels4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () => {
   it("matches a reference loop built directly from stepOrbit4/plotPoint4 and the two-step rotor projection, iteration for iteration", () => {
@@ -440,6 +471,435 @@ describe("accumulateVoxels4 bucketing and the w-slice", () => {
     const bucket = 2 * 16 + 2 * 4 + 2;
     expect(grid.density[bucket]).toBe(10);
     expect(grid.maxDensity).toBe(10);
+  });
+});
+
+describe("accumulateVoxels4 pre-projection 4D tiling", () => {
+  it.each(["a4", "b4", "f4"] as const)(
+    "deposits a normalized bounded burst of raw %s images before an XW projection",
+    (group) => {
+      const { plan, source } = finitePlan4(group);
+      const rotorProj = composeRotorProjection4(
+        rotationMatrix4({ xw: 0.41, yw: -0.17 }),
+        [0, 0, 0, 0],
+      );
+      const tiling = prepareVoxelPointTiling4(plan, 1, rotorProj, FLAT_VIEW);
+      const grid = createVoxelGrid(32, unitishBounds(1));
+      grid.pointTiling = createPointTilingCursorState();
+      // One source attempt can now spend the full frozen Solid cap.
+      grid.pointTiling.credit = POINT_TILING_ACCUMULATION_FANOUT_CAP - 1;
+
+      const lut = new Float32Array(256 * 3);
+      for (let index = 0; index < 256; index++) {
+        lut[index * 3] = index / 255;
+        lut[index * 3 + 1] = 0.4;
+        lut[index * 3 + 2] = 0.6;
+      }
+      accumulateVoxels4(
+        prepareChaosGame4(fixedPointSystem4(source)),
+        grid,
+        1,
+        mulberry32(17),
+        rotorProj,
+        FLAT_VIEW,
+        { kind: "height", lut, minY: -1, maxY: 1 },
+        tiling,
+      );
+
+      const total = Array.from(grid.density).reduce((sum, d) => sum + d, 0);
+      // Bounded finite selection is an unbiased image-count estimator:
+      // K selected representatives each carry |G|/K, so one accepted source
+      // deposits the full group's mass even when |G| exceeds the cap.
+      expect(total).toBeCloseTo(TILING_GROUP_INFO[group].order, 5);
+      expect(grid.pointTiling).toMatchObject({
+        attempts: 1,
+        accepted: 1,
+        selected: POINT_TILING_ACCUMULATION_FANOUT_CAP,
+        emitted: POINT_TILING_ACCUMULATION_FANOUT_CAP,
+      });
+      expect(
+        Array.from(grid.density).filter((d) => d > 0).length,
+      ).toBeGreaterThan(1);
+      const colorIndex = Math.max(
+        0,
+        Math.min(255, (((source[1] + 1) / 2) * 255 + 0.5) | 0),
+      );
+      for (let bucket = 0; bucket < grid.density.length; bucket++) {
+        if (grid.density[bucket] === 0) continue;
+        expect(grid.avgRGB[bucket * 3]).toBeCloseTo(lut[colorIndex * 3], 6);
+        expect(grid.avgRGB[bucket * 3 + 1]).toBeCloseTo(0.4, 6);
+        expect(grid.avgRGB[bucket * 3 + 2]).toBeCloseTo(0.6, 6);
+      }
+    },
+  );
+
+  it("colors finite images from each raw image w instead of copying the source w-ramp", () => {
+    const { plan, source } = finitePlan4("a4");
+    const grid = createVoxelGrid(64, unitishBounds(1));
+    grid.pointTiling = createPointTilingCursorState();
+    grid.pointTiling.credit = POINT_TILING_ACCUMULATION_FANOUT_CAP - 1;
+    const side = W_SIDE_PALETTES.wBlueOrange;
+    accumulateVoxels4(
+      prepareChaosGame4(fixedPointSystem4(source)),
+      grid,
+      1,
+      mulberry32(23),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "wRamp", side },
+      prepareVoxelPointTiling4(plan, 1, FLAT_ROTOR_PROJ, FLAT_VIEW),
+    );
+
+    const imageColors = new Set<string>();
+    for (let bucket = 0; bucket < grid.density.length; bucket++) {
+      if (grid.density[bucket] === 0) continue;
+      imageColors.add(
+        Array.from(grid.avgRGB.slice(bucket * 3, bucket * 3 + 3))
+          .map((channel) => channel.toFixed(5))
+          .join(","),
+      );
+    }
+    const sourceColor = wRampColor(source[3], side)
+      .map((channel) => channel.toFixed(5))
+      .join(",");
+    expect(imageColors.size).toBeGreaterThan(1);
+    expect([...imageColors].some((color) => color !== sourceColor)).toBe(true);
+  });
+
+  it("matches the shared bounded lattice oracle with a slice-aware proposal and no untiled fallback", () => {
+    const resolved = resolveTiling({ kind: "lattice", cellScale: 1 }, 1);
+    const plan = resolvePointTilingPlan(resolved, 4);
+    if (!plan || plan.kind !== "lattice") {
+      throw new Error("expected 4D lattice point-tiling plan");
+    }
+    const source: Vec4 = [0.12, 0.2, -0.17, 0.31];
+    const rotorProj = composeRotorProjection4(
+      rotationMatrix4({ xw: 0.37, zw: -0.22 }),
+      [0, 0, 0, 0],
+    );
+    const view: FourDView = {
+      invWAmp: 1 / plan.tiling.presentation.outerRadius,
+      sliceOn: true,
+      sliceCenter: 0.63,
+      sliceWidth: 0.18,
+      sliceRelativeColor: false,
+    };
+    const tiling = prepareVoxelPointTiling4(plan, 1, rotorProj, view);
+    expect(tiling.latticeProposal).toBeDefined();
+    expect(
+      tiling.latticeProposal!.cdfByWallMask[0].cellOrdinals.length,
+    ).toBeLessThan(plan.cdfByWallMask[0].cellOrdinals.length);
+    // Independently rebuild the mask-0 slice ceiling and its normalized
+    // products. Every omitted cell must be unable to clear the deposit gate;
+    // every retained probability must be q_k = u_k v_k / sum(u v).
+    const products = new Float64Array(plan.upper.length);
+    const live = [];
+    const h2 = 2 * plan.tiling.h;
+    const halfWidth = plan.tiling.radius * view.invWAmp;
+    for (let cell = 0; cell < plan.upper.length; cell++) {
+      const base = cell * plan.repeatedAxes;
+      const rawCenter =
+        rotorProj[15] * h2 * plan.cells[base] +
+        rotorProj[17] * h2 * plan.cells[base + 1] +
+        rotorProj[18] * h2 * plan.cells[base + 2] +
+        rotorProj[19];
+      const center = rawCenter * view.invWAmp;
+      const lo = Math.max(-1, Math.min(1, center - halfWidth));
+      const hi = Math.max(-1, Math.min(1, center + halfWidth));
+      const visibility =
+        view.sliceCenter >= lo && view.sliceCenter <= hi
+          ? 1
+          : sliceWeight(
+              Math.abs(lo - view.sliceCenter) < Math.abs(hi - view.sliceCenter)
+                ? lo
+                : hi,
+              view.sliceCenter,
+              view.sliceWidth,
+              0,
+            );
+      products[cell] = plan.upper[cell] * visibility;
+      if (products[cell] >= VOXEL4_SKIP_WEIGHT) live.push(cell);
+      else expect(products[cell]).toBeLessThan(VOXEL4_SKIP_WEIGHT);
+    }
+    const proposalCdf = tiling.latticeProposal!.cdfByWallMask[0];
+    expect(new Set(proposalCdf.cellOrdinals)).toEqual(new Set(live));
+    const totalProduct = live.reduce((sum, cell) => sum + products[cell], 0);
+    let previous = 0;
+    for (let index = 0; index < proposalCdf.cellOrdinals.length; index++) {
+      const probability = proposalCdf.cumulative[index] - previous;
+      previous = proposalCdf.cumulative[index];
+      expect(probability).toBeCloseTo(
+        products[proposalCdf.cellOrdinals[index]] / totalProduct,
+        13,
+      );
+    }
+
+    const bounds = unitishBounds(tiling.carrierRadius);
+    const actual = createVoxelGrid(24, bounds);
+    actual.pointTiling = createPointTilingCursorState();
+    actual.pointTiling.credit = POINT_TILING_ACCUMULATION_FANOUT_CAP - 1;
+    accumulateVoxels4(
+      prepareChaosGame4(fixedPointSystem4(source)),
+      actual,
+      1,
+      mulberry32(29),
+      rotorProj,
+      view,
+      { kind: "uniform", color: [1, 1, 1] },
+      tiling,
+    );
+
+    const expected = createVoxelGrid(24, bounds);
+    const state = createPointTilingCursorState();
+    state.credit = POINT_TILING_ACCUMULATION_FANOUT_CAP - 1;
+    const invCell = expected.size / (bounds.max[0] - bounds.min[0]);
+    visitPointTilingAttemptBounded(
+      plan,
+      ...source,
+      POINT_TILING_ACCUMULATION_FANOUT_CAP,
+      state,
+      (imageX, imageY, imageZ, imageW, imageWeight) => {
+        const projX =
+          rotorProj[0] * imageX +
+          rotorProj[1] * imageY +
+          rotorProj[2] * imageZ +
+          rotorProj[3] * imageW +
+          rotorProj[4];
+        const projY =
+          rotorProj[5] * imageX +
+          rotorProj[6] * imageY +
+          rotorProj[7] * imageZ +
+          rotorProj[8] * imageW +
+          rotorProj[9];
+        const projZ =
+          rotorProj[10] * imageX +
+          rotorProj[11] * imageY +
+          rotorProj[12] * imageZ +
+          rotorProj[13] * imageW +
+          rotorProj[14];
+        const sRaw =
+          rotorProj[15] * imageX +
+          rotorProj[16] * imageY +
+          rotorProj[17] * imageZ +
+          rotorProj[18] * imageW +
+          rotorProj[19];
+        const sScaled = sRaw * view.invWAmp;
+        const s = Math.max(-1, Math.min(1, sScaled));
+        const slice = sliceWeight(s, view.sliceCenter, view.sliceWidth, 0);
+        const coverage = pointTilingLatticeVisibility(
+          plan,
+          Math.hypot(imageX, imageY, imageZ, imageW),
+        );
+        if (coverage * slice < VOXEL4_SKIP_WEIGHT) return;
+        const weight = imageWeight * slice;
+        const vx = Math.floor((projX - bounds.min[0]) * invCell);
+        const vy = Math.floor((projY - bounds.min[1]) * invCell);
+        const vz = Math.floor((projZ - bounds.min[2]) * invCell);
+        if (
+          vx < 0 ||
+          vx >= expected.size ||
+          vy < 0 ||
+          vy >= expected.size ||
+          vz < 0 ||
+          vz >= expected.size
+        ) {
+          return;
+        }
+        const bucket =
+          vz * expected.size * expected.size + vy * expected.size + vx;
+        expected.density[bucket] += weight;
+        expected.maxDensity = Math.max(
+          expected.maxDensity,
+          expected.density[bucket],
+        );
+        expected.avgRGB.fill(1, bucket * 3, bucket * 3 + 3);
+      },
+      tiling.latticeProposal,
+    );
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    // The stored density arrays round through Float32; maxDensity retains the
+    // pre-store f64 running sum in both production accumulation paths.
+    expect(actual.maxDensity).toBeCloseTo(expected.maxDensity, 6);
+    expect(actual.pointTiling).toEqual(state);
+    expect(actual.maxDensity).toBeGreaterThan(0);
+  });
+
+  it("keeps both finite and lattice cursor/deposition state identical across chunks", () => {
+    const finite = finitePlan4("a4");
+    const latticeResolved = resolveTiling({ kind: "lattice", cellScale: 1 }, 1);
+    const lattice = resolvePointTilingPlan(latticeResolved, 4);
+    if (!lattice || lattice.kind !== "lattice") {
+      throw new Error("expected lattice plan");
+    }
+
+    for (const fixture of [finite, { plan: lattice, source: finite.source }]) {
+      const tiling = prepareVoxelPointTiling4(
+        fixture.plan,
+        1,
+        FLAT_ROTOR_PROJ,
+        FLAT_VIEW,
+      );
+      const prepared = prepareChaosGame4(fixedPointSystem4(fixture.source));
+      const color: FourDRenderColor = {
+        kind: "uniform",
+        color: [0.3, 0.5, 0.7],
+      };
+      const bounds = unitishBounds(tiling.carrierRadius);
+      const oneShot = accumulateVoxels4(
+        prepared,
+        createVoxelGrid(20, bounds),
+        47,
+        mulberry32(71),
+        FLAT_ROTOR_PROJ,
+        FLAT_VIEW,
+        color,
+        tiling,
+      );
+      const chunked = createVoxelGrid(20, bounds);
+      const rng = mulberry32(71);
+      accumulateVoxels4(
+        prepared,
+        chunked,
+        13,
+        rng,
+        FLAT_ROTOR_PROJ,
+        FLAT_VIEW,
+        color,
+        tiling,
+      );
+      accumulateVoxels4(
+        prepared,
+        chunked,
+        34,
+        rng,
+        FLAT_ROTOR_PROJ,
+        FLAT_VIEW,
+        color,
+        tiling,
+      );
+      expect(chunked.density).toEqual(oneShot.density);
+      expect(chunked.avgRGB).toEqual(oneShot.avgRGB);
+      expect(chunked.maxDensity).toBe(oneShot.maxDensity);
+      expect(chunked.pointTiling).toEqual(oneShot.pointTiling);
+      expect(chunked.orbit).toEqual(oneShot.orbit);
+      expect(chunked.orbitW).toBe(oneShot.orbitW);
+    }
+  });
+
+  it("treats an excluding finite clip as an empty tiled set, never as untiled output", () => {
+    const resolved = resolveTiling({
+      group: "a4",
+      clip: {
+        parts: [
+          {
+            combine: "union",
+            primitive: { kind: "sphere", radius: 0.05 },
+            pose: { offset: [10, 0, 0] },
+          },
+        ],
+      },
+    });
+    const plan = resolvePointTilingPlan(resolved, 4);
+    if (!plan) throw new Error("expected clipped finite plan");
+    const grid = createVoxelGrid(8, unitishBounds(1));
+    accumulateVoxels4(
+      prepareChaosGame4(fixedPointSystem4([0.1, 0.2, 0.3, 0.4])),
+      grid,
+      5,
+      mulberry32(3),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "uniform", color: [1, 1, 1] },
+      prepareVoxelPointTiling4(plan, 1, FLAT_ROTOR_PROJ, FLAT_VIEW),
+    );
+    expect(Array.from(grid.density).every((d) => d === 0)).toBe(true);
+    expect(grid.pointTiling).toMatchObject({
+      attempts: 5,
+      accepted: 0,
+      emitted: 0,
+    });
+  });
+
+  it("omitted tiling and explicit-undefined tiling are identical and leave grid.pointTiling literally undefined", () => {
+    const prepared = prepareChaosGame4(weightedPentatope());
+    const color: FourDRenderColor = {
+      kind: "transform",
+      palette: transformColors(5),
+    };
+    const bounds = unitishBounds(6);
+    const omitted = accumulateVoxels4(
+      prepared,
+      createVoxelGrid(8, bounds),
+      2000,
+      mulberry32(5),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      color,
+    );
+    const explicit = accumulateVoxels4(
+      prepared,
+      createVoxelGrid(8, bounds),
+      2000,
+      mulberry32(5),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      color,
+      undefined,
+    );
+    expect(explicit.density).toEqual(omitted.density);
+    expect(explicit.avgRGB).toEqual(omitted.avgRGB);
+    expect(explicit.maxDensity).toBe(omitted.maxDensity);
+    expect(explicit.maxDensity).toBeGreaterThan(0);
+    // The cursor is allocated lazily for tiled accumulation only: an untiled
+    // run must never materialize grid.pointTiling.
+    expect(omitted.pointTiling).toBe(undefined);
+    expect(explicit.pointTiling).toBe(undefined);
+  });
+});
+
+describe("computeVoxelBounds4 tiled carrier cubes", () => {
+  it("returns exact finite and lattice carrier cubes without consuming the orbit RNG", () => {
+    const finite = finitePlan4("b4").plan;
+    const latticeResolved = resolveTiling(
+      { kind: "lattice", cellScale: 1 },
+      0.75,
+    );
+    const lattice = resolvePointTilingPlan(latticeResolved, 4);
+    if (!lattice || lattice.kind !== "lattice") {
+      throw new Error("expected lattice plan");
+    }
+    const fixtures = [
+      prepareVoxelPointTiling4(finite, 0.75, FLAT_ROTOR_PROJ, FLAT_VIEW),
+      prepareVoxelPointTiling4(lattice, 0.75, FLAT_ROTOR_PROJ, FLAT_VIEW),
+    ];
+    for (const tiling of fixtures) {
+      const bounds = computeVoxelBounds4(
+        prepareChaosGame4(fixedPointSystem4([0, 0, 0, 0])),
+        FLAT_ROTOR_PROJ,
+        FLAT_VIEW,
+        () => {
+          throw new Error("tiled exact bounds consumed RNG");
+        },
+        100,
+        tiling,
+      );
+      expect(bounds.min).toEqual([
+        -tiling.carrierRadius,
+        -tiling.carrierRadius,
+        -tiling.carrierRadius,
+      ]);
+      expect(bounds.max).toEqual([
+        tiling.carrierRadius,
+        tiling.carrierRadius,
+        tiling.carrierRadius,
+      ]);
+    }
+    expect(fixtures[0].carrierRadius).toBe(0.75);
+    expect(fixtures[1].carrierRadius).toBe(
+      lattice.tiling.presentation.outerRadius,
+    );
   });
 });
 

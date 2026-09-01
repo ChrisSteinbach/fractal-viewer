@@ -295,6 +295,10 @@ export interface ControlEffects {
   postFlame(command: FlameWorkerCommand): void;
   /** Forward a command to the solid render worker (no-op while inactive). */
   postVoxel(command: VoxelWorkerCommand): void;
+  /** Whether the active fixed-dimension Flame/Solid session can accept a
+   * symmetry command from the current document. False keeps every edit
+   * staged after a 3D/4D crossing until Points regeneration and re-entry. */
+  activeRendererAcceptsSymmetryEdit(): boolean;
   /**
    * Re-run the tone-map on the main thread over the live shared flame
    * buckets, when the session is shared-memory — the change lands instantly,
@@ -334,12 +338,15 @@ export interface ControlEffects {
    * Render click) — the resolution slider's only path to a new grid while
    * active, since a grid's dimensions are fixed at allocation. */
   restartSolidRender(): void;
+  /** Apply a Solid tiling edit against the ACTIVE session dimension. A
+   * document/session dimension mismatch preserves the existing frame until
+   * Points regeneration and renderer re-entry. */
+  applySolidTilingEdit(): void;
   /**
    * Re-resolve the authored tiling against the current document and install
-   * or clear the Solid material's query-space arm — material-only, live, no
-   * worker restart (the canonical density volume is unchanged by tiling).
-   * Fires on session entry and on every edit that can move the resolution:
-   * the tiling controls, the balloon toggle, and the symmetry controls.
+   * or clear the dimension-appropriate Solid application arm. Flat Solid is
+   * material-only/live; 4D clears material tiling because its replacement
+   * worker bakes the images into density.
    */
   syncSolidTiling(): void;
   /** Restart the whole flame render session — the Export-size select's only
@@ -534,8 +541,12 @@ const symmetryEffect: ControlEffect = (state, fx, previous) => {
   // restart would still snapshot the old, not-yet-regenerated Points view.
   // Keep the existing frame intact and let the adjacent panel hint direct the
   // user through Points regeneration before re-entry. Same-dimension edits
-  // retain the cheap live accumulation restart below.
+  // retain the cheap live accumulation restart below. The capability check
+  // also catches every later edit after that first crossing: current and
+  // previous documents then agree with each other, but not with the worker
+  // dimension still on screen.
   if (systemIsNonFlat(state) !== systemIsNonFlat(previous)) return;
+  if (!fx.activeRendererAcceptsSymmetryEdit()) return;
   // A symmetry order crossing 1 re-opens or closes the Solid tiling arm
   // (the frozen kaleidoscope refusal) without a worker restart.
   if (state.renderMode === "solid") fx.syncSolidTiling();
@@ -586,7 +597,8 @@ const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
  * lifetime. Points follows the existing Auto-update/manual-Regenerate
  * contract; Flame restarts its in-worker accumulation while preserving the
  * frozen view and fallback state; Surface restarts with its inspection view
- * preserved. Eligibility refresh is immediate because group dimension,
+ * preserved. Flat Solid updates its material live; 4D Solid replaces its
+ * worker because images are baked into density. Eligibility refresh is immediate because group dimension,
  * Balloon and kaleidoscope are explicit refusals. The generated Flame
  * backdrop is invalidated like an authored edit too — a tiled scene must
  * not keep the untiled echo behind Points — via trackAutoBackground,
@@ -597,15 +609,15 @@ const tilingEffect: ControlEffect = (state, fx) => {
   fx.refreshSurfaceEligibility();
   if (state.renderMode === "flame") fx.restartFlameTilingRender();
   if (state.renderMode === "surface") fx.restartSurfaceRender();
-  if (state.renderMode === "solid") fx.syncSolidTiling();
+  if (state.renderMode === "solid") fx.applySolidTilingEdit();
   fx.trackAutoBackground();
 };
 
 /** The lattice scale is live inside Surface but changes which bounded raw
  * images Points and Flame contain. Points follows Auto-update, Flame restarts
  * from its source seed, Surface rewrites its params word without re-entry,
- * Solid re-folds per frame (material-only), and the generated Flame backdrop
- * re-renders (trackAutoBackground). */
+ * flat Solid re-folds per frame, 4D Solid replaces its baked worker, and the
+ * generated Flame backdrop re-renders (trackAutoBackground). */
 const tilingScaleEffect: ControlEffect = (state, fx) => {
   fx.regenerateIfAutoUpdate();
   if (state.renderMode === "flame") fx.restartFlameTilingRender();
@@ -616,7 +628,7 @@ const tilingScaleEffect: ControlEffect = (state, fx) => {
   ) {
     fx.setSurfaceLatticeScale(state.tiling.cellScale);
   }
-  if (state.renderMode === "solid") fx.syncSolidTiling();
+  if (state.renderMode === "solid") fx.applySolidTilingEdit();
   fx.trackAutoBackground();
 };
 
@@ -1294,9 +1306,13 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       if (s.tiling) fx.regenerateIfAutoUpdate();
       if (s.renderMode === "flame") fx.restartFlameRender();
       if (s.renderMode === "surface") fx.restartSurfaceRender();
-      // The frozen combination matrix refuses tiling with Balloon; the Solid
-      // arm re-resolves (and clears) so the scene never compiles both.
-      if (s.renderMode === "solid") fx.syncSolidTiling();
+      // The frozen combination matrix refuses tiling with Balloon. The
+      // active-session router clears a flat material live or replaces 4D
+      // density, while preserving a dimension-mismatched held frame.
+      if (s.renderMode === "solid") {
+        if (s.tiling) fx.applySolidTilingEdit();
+        else fx.syncSolidTiling();
+      }
     },
   },
   {

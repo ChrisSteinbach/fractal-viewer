@@ -46,7 +46,10 @@ import {
   surfaceOriginVisibleRadius,
   type SurfaceDE,
 } from "../fractal/surface-de";
-import { resolveSolidTilingSession } from "../fractal/solid-tiling-session";
+import {
+  resolveSolidTilingSession,
+  type SolidTilingSessionResolution,
+} from "../fractal/solid-tiling-session";
 import {
   isForwardTarget,
   setSurfaceComputeSchedulePins,
@@ -1065,6 +1068,16 @@ async function main(): Promise<void> {
    * changed endpoint crosses the asynchronous worker boundary, while an
    * unchanged commit remains a true no-op and cannot strand that gate shut. */
   let activeSolidWorkerView: FourDWorkerView | null = null;
+  /** Geometry frame actually seeded into the active 4D Solid worker. A
+   * tiling-only replacement retains it when the new block is off/refused, so
+   * the visible rotor/slice cannot jump back to a stale canonical subset. */
+  let activeSolidGeometryFrame: {
+    center: Vec4;
+    halfExtents: Vec4;
+    invWAmp: number;
+    carrierRadius: number | null;
+  } | null = null;
+  let retainSolidGeometryFrameOnNextEntry = false;
   /** Revision expected on generation-bearing events from the active Solid
    * worker. Undefined is the entry view; settled endpoint posts increment it. */
   let activeSolidViewRevision: number | undefined;
@@ -3429,16 +3442,24 @@ async function main(): Promise<void> {
     | undefined {
     if (!viewIs4D || !fourDResult) return undefined;
     const rotor = fourDView.matrix();
-    // Tiling moves raw display images but Height/Radius/Position—and the
-    // still-untiled Solid worker—belong to the canonical source. The arrays
-    // stay output-aligned, so the result count remains the shared loop bound.
-    const source = fourDResult.canonicalColorSource ?? fourDResult;
-    const b = source.bounds;
+    // Tiling moves raw display images, while Height/Radius/Position belong to
+    // the canonical source. Keep those frames independent: active render
+    // workers replace the geometry frame with their certified carrier, but
+    // color normalization must never follow that pivot.
+    const colorSource = fourDResult.canonicalColorSource ?? fourDResult;
+    const b = fourDResult.bounds;
     const halfExtents: Vec4 = [
       (b.maxX - b.minX) / 2,
       (b.maxY - b.minY) / 2,
       (b.maxZ - b.minZ) / 2,
       (b.maxW - b.minW) / 2,
+    ];
+    const colorBounds = colorSource.bounds;
+    const colorHalfExtents: Vec4 = [
+      (colorBounds.maxX - colorBounds.minX) / 2,
+      (colorBounds.maxY - colorBounds.minY) / 2,
+      (colorBounds.maxZ - colorBounds.minZ) / 2,
+      (colorBounds.maxW - colorBounds.minW) / 2,
     ];
     // Mirrors scene.ts's updateWAmp4 exactly (same support function, same
     // 1e-6 degenerate-cloud floor) so the workers' normalized signed-w
@@ -3447,15 +3468,16 @@ async function main(): Promise<void> {
     // The "radius" color mode's normalization: the same min→max 4D-distance
     // range over the explorer's own cloud that buildColors4's radius branch
     // bakes with, so the render's ramp matches the explorer's colors.
-    const { positions, w, center } = source;
+    const { positions, w, center: colorCenter } = colorSource;
+    const center = fourDResult.center;
     const { count } = fourDResult;
     let radiusMin = Infinity;
     let radiusMax = 0;
     for (let i = 0; i < count; i++) {
-      const dx = positions[i * 3] - center[0];
-      const dy = positions[i * 3 + 1] - center[1];
-      const dz = positions[i * 3 + 2] - center[2];
-      const dw = w[i] - center[3];
+      const dx = positions[i * 3] - colorCenter[0];
+      const dy = positions[i * 3 + 1] - colorCenter[1];
+      const dz = positions[i * 3 + 2] - colorCenter[2];
+      const dw = w[i] - colorCenter[3];
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
       if (d < radiusMin) radiusMin = d;
       if (d > radiusMax) radiusMax = d;
@@ -3469,6 +3491,8 @@ async function main(): Promise<void> {
       rotor,
       center,
       halfExtents,
+      colorCenter,
+      colorHalfExtents,
       invWAmp,
       sliceOn: fourDView.sliceOn,
       sliceCenter: fourDView.sliceCenter,
@@ -3990,13 +4014,12 @@ async function main(): Promise<void> {
     }
   }
 
-  // The Solid tiling arm is pure material state over the unchanged canonical
-  // density volume: the session re-resolves on entry, and every edit that can
-  // move the resolution — the tiling controls, the balloon toggle, the
-  // symmetry order — re-syncs it live (no worker restart, and the worker
-  // density and untiled material stay untouched). The same resolution drives
-  // the panel's Solid disclosure through ui.setSolidTilingStatus.
-  function syncSolidTiling(): void {
+  // Resolve Solid's dimension-specific application arm. Flat sessions install
+  // the live query fold over the canonical volume. 4D sessions ALWAYS clear
+  // material tiling: their raw images are baked before projection in the
+  // worker, and leaving a material block here would both draw the rejected
+  // post-projection object and suspend the valid max-density hierarchy.
+  function syncSolidTiling(): SolidTilingSessionResolution {
     const resolution = resolveSolidTilingSession(
       state.transforms,
       state.finalTransform ?? null,
@@ -4007,9 +4030,13 @@ async function main(): Promise<void> {
       systemIsNonFlat(state),
     );
     scene.setVoxelTiling(
-      resolution.status === "active" ? resolution.resolved : null,
+      resolution.status === "active" &&
+        resolution.application === "material-live"
+        ? resolution.resolved
+        : null,
     );
     ui.setSolidTilingStatus(resolution);
+    return resolution;
   }
 
   // The solid voxel render session: accumulate a world-space density
@@ -4023,8 +4050,51 @@ async function main(): Promise<void> {
   // only builds and kicks off.
   const solidSession = new RenderSession<VoxelWorkerCommand>({
     start: () => {
-      syncSolidTiling();
-      const fourD = fourDRenderSnapshot();
+      const tilingResolution = syncSolidTiling();
+      let fourD = fourDRenderSnapshot();
+      if (fourD) {
+        let geometry = {
+          center: [...fourD.center] as Vec4,
+          halfExtents: [...fourD.halfExtents] as Vec4,
+          invWAmp: fourD.invWAmp,
+          carrierRadius: null as number | null,
+        };
+        if (
+          tilingResolution.status === "active" &&
+          tilingResolution.application === "worker-baked"
+        ) {
+          const radius = isResolvedLatticeTiling(tilingResolution.resolved)
+            ? tilingResolution.resolved.presentation.outerRadius
+            : tilingResolution.originVisibleRadius;
+          geometry = {
+            center: [0, 0, 0, 0],
+            halfExtents: [radius, radius, radius, radius],
+            invWAmp: 1 / Math.max(radius, 1e-6),
+            carrierRadius: radius,
+          };
+        } else if (
+          retainSolidGeometryFrameOnNextEntry &&
+          activeSolidGeometryFrame !== null
+        ) {
+          geometry = {
+            center: [...activeSolidGeometryFrame.center],
+            halfExtents: [...activeSolidGeometryFrame.halfExtents],
+            invWAmp: activeSolidGeometryFrame.invWAmp,
+            carrierRadius: activeSolidGeometryFrame.carrierRadius,
+          };
+        }
+        fourD = {
+          ...fourD,
+          center: geometry.center,
+          halfExtents: geometry.halfExtents,
+          invWAmp: geometry.invWAmp,
+          ...(geometry.carrierRadius === null
+            ? {}
+            : { entryCarrierRadius: geometry.carrierRadius }),
+        };
+        activeSolidGeometryFrame = geometry;
+      }
+      retainSolidGeometryFrameOnNextEntry = false;
       const seed = solidSeedOverride ?? nextRenderSeed();
       solidSeedOverride = null;
       activeSolidSeed = seed;
@@ -4089,6 +4159,11 @@ async function main(): Promise<void> {
         // The scheduled-hybrid post-word, snapshotted at entry like the
         // transform set — the flame start's field, verbatim.
         schedule: state.schedule ?? null,
+        // Raw document block: only a 4D worker consumes it, resolving its
+        // typed-array plan in-realm before constructing the seeded orbit.
+        // Flat Solid keeps today's material-only fold.
+        ...(state.tiling ? { tiling: state.tiling } : {}),
+        ...(state.balloonEcho ? { balloonEchoEnabled: true } : {}),
         // The entry 4D view, or undefined for the unchanged 3D path. Settled
         // manual edits later arrive through setFourDView.
         fourD,
@@ -4130,6 +4205,8 @@ async function main(): Promise<void> {
       activeSolidSeed = null;
       activeSolidNonFlat = false;
       activeSolidWorkerView = null;
+      activeSolidGeometryFrame = null;
+      retainSolidGeometryFrameOnNextEntry = false;
       activeSolidViewRevision = undefined;
       solidSeedOverride = null;
       // Reset only the mode this session owns — see the flame session's
@@ -9070,6 +9147,16 @@ async function main(): Promise<void> {
     scene,
     postFlame: (command) => flameSession.post(command),
     postVoxel: (command) => solidSession.post(command),
+    activeRendererAcceptsSymmetryEdit: () => {
+      const documentNonFlat = systemIsNonFlat(state);
+      if (state.renderMode === "flame") {
+        return activeFlameNonFlat === documentNonFlat;
+      }
+      if (state.renderMode === "solid") {
+        return activeSolidNonFlat === documentNonFlat;
+      }
+      return true;
+    },
     presentSharedFlameFrame: () => {
       if (!flameShared) return false;
       presentSharedFrame();
@@ -9094,6 +9181,21 @@ async function main(): Promise<void> {
     recolor,
     applyFourDColor,
     restartSolidRender: () => solidSession.enter(),
+    applySolidTilingEdit: () => {
+      if (state.renderMode !== "solid") return;
+      // Symmetry may have authored a dimensional transition while the active
+      // session deliberately keeps its entry worker/frame. A later tiling or
+      // Balloon edit cannot retarget that worker; keep the same adjacent
+      // re-entry contract until regenerated Points establishes the new view.
+      if (activeSolidNonFlat !== systemIsNonFlat(state)) return;
+      if (activeSolidNonFlat) {
+        if (activeSolidSeed !== null) solidSeedOverride = activeSolidSeed;
+        retainSolidGeometryFrameOnNextEntry = true;
+        solidSession.enter();
+      } else {
+        syncSolidTiling();
+      }
+    },
     syncSolidTiling,
     restartFlameRender: () => {
       flameGpuFallbackHeldReason = null;

@@ -107,6 +107,27 @@ const XW_QUARTER_TURN = [
  -1, 0, 0, 0,
 ];
 
+/** +45 degrees in XW: the signed-w row has two nonzero coefficients, so a
+ * cube-AABB support differs from a rotation-invariant carrier radius. */
+const XW_MIXED = [
+  Math.SQRT1_2,
+  0,
+  0,
+  Math.SQRT1_2,
+  0,
+  1,
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
+  -Math.SQRT1_2,
+  0,
+  0,
+  Math.SQRT1_2,
+];
+
 /** A simple pentatope-ish 4D system: every map contracts all of 4-space
  * toward the same fixed point, converging to (0.5, 0.5, 0.5, 0.5) — the 4D
  * twin of this file's implicit 3D fixture (`sierpinskiTetrahedron`), just
@@ -238,6 +259,7 @@ function harness(
     textureData: overrides.textureData,
     buildHierarchy: overrides.buildHierarchy,
     computeBounds4: overrides.computeBounds4,
+    accumulate4: overrides.accumulate4,
     maxBytes: overrides.maxBytes,
     initialChunkSize: overrides.initialChunkSize,
     boundsSamples: overrides.boundsSamples ?? 500,
@@ -1129,6 +1151,192 @@ describe("VoxelWorkerSession memory guards", () => {
 // ---------------------------------------------------------------------------
 
 describe("VoxelWorkerSession 4D solid render", () => {
+  it("resolves a finite 4D tiling inside the worker and reuses its prepared policy for every chunk", () => {
+    type WorkerTiling = Parameters<typeof computeVoxelBounds4>[5];
+    const boundsTilings: WorkerTiling[] = [];
+    const chunkTilings: WorkerTiling[] = [];
+    const computeBounds4: typeof computeVoxelBounds4 = (...args) => {
+      boundsTilings.push(args[5]);
+      return computeVoxelBounds4(...args);
+    };
+    const accumulate4: NonNullable<VoxelWorkerDeps["accumulate4"]> = (
+      ...args
+    ) => {
+      chunkTilings.push(args[7]);
+      return args[1];
+    };
+    const { session, events, scheduler } = harness({
+      computeBounds4,
+      accumulate4,
+      initialChunkSize: 20,
+      boundsSamples: 40,
+    });
+
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        tiling: { group: "a4" },
+        iterationsBudget: 80,
+        resolution: 8,
+      }),
+    );
+    scheduler.drain();
+
+    expect(boundsTilings).toHaveLength(1);
+    expect(boundsTilings[0]?.plan).toMatchObject({
+      kind: "finite",
+      dimension: 4,
+    });
+    expect(chunkTilings.length).toBeGreaterThan(1);
+    expect(chunkTilings.every((tiling) => tiling === chunkTilings[0])).toBe(
+      true,
+    );
+    expect(gridEvents(events).at(-1)?.iterationsDone).toBe(80);
+    expectHierarchyMatchesTexture(gridEvents(events).at(-1)!);
+  });
+
+  it("rebuilds a lattice's settled-view proposal in the same worker and keeps exact carrier bounds", () => {
+    type WorkerTiling = Parameters<typeof computeVoxelBounds4>[5];
+    const boundsTilings: WorkerTiling[] = [];
+    const chunkTilings: WorkerTiling[] = [];
+    const chunkViews: FourDView[] = [];
+    const computeBounds4: typeof computeVoxelBounds4 = (...args) => {
+      boundsTilings.push(args[5]);
+      return computeVoxelBounds4(...args);
+    };
+    const accumulate4: NonNullable<VoxelWorkerDeps["accumulate4"]> = (
+      ...args
+    ) => {
+      chunkViews.push({ ...args[5] });
+      chunkTilings.push(args[7]);
+      return args[1];
+    };
+    const { session, events, scheduler } = harness({
+      computeBounds4,
+      accumulate4,
+      initialChunkSize: 25,
+      boundsSamples: 40,
+    });
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        tiling: { kind: "lattice", cellScale: 1 },
+        iterationsBudget: 50,
+        resolution: 8,
+      }),
+    );
+    scheduler.drain();
+    const firstPolicy = chunkTilings.at(-1);
+    const firstBounds = gridEvents(events).at(-1)!;
+
+    session.handle({
+      type: "setFourDView",
+      viewRevision: 6,
+      view: fourDWorkerView({
+        rotor: XW_QUARTER_TURN,
+        sliceOn: true,
+        sliceCenter: 0.6,
+        sliceWidth: 0.15,
+      }),
+    });
+    scheduler.drain();
+
+    const secondPolicy = chunkTilings.at(-1);
+    const secondBounds = gridEvents(events).at(-1)!;
+    expect(firstPolicy?.plan.kind).toBe("lattice");
+    expect(firstPolicy?.latticeProposal).toBeDefined();
+    expect(secondPolicy?.latticeProposal).toBeDefined();
+    expect(secondPolicy).not.toBe(firstPolicy);
+    expect(secondPolicy?.plan).toBe(firstPolicy?.plan);
+    expect(secondPolicy?.latticeProposal).not.toBe(
+      firstPolicy?.latticeProposal,
+    );
+    expect(boundsTilings).toEqual([firstPolicy, secondPolicy]);
+    expect(firstBounds.boundsMin).toEqual(secondBounds.boundsMin);
+    expect(firstBounds.boundsMax).toEqual(secondBounds.boundsMax);
+    expect(secondBounds.viewRevision).toBe(6);
+    expectHierarchyMatchesTexture(secondBounds);
+    expect(chunkViews.at(-1)?.invWAmp).toBeCloseTo(
+      1 / secondPolicy!.carrierRadius,
+      12,
+    );
+  });
+
+  it("drops worker-baked tiling when a live symmetry edit makes the composition refused", () => {
+    type WorkerTiling = Parameters<typeof computeVoxelBounds4>[5];
+    const boundsTilings: WorkerTiling[] = [];
+    const chunkTilings: WorkerTiling[] = [];
+    const chunkViews: FourDView[] = [];
+    const chunkProjections: Parameters<
+      NonNullable<VoxelWorkerDeps["accumulate4"]>
+    >[4][] = [];
+    const chunkColors: Parameters<
+      NonNullable<VoxelWorkerDeps["accumulate4"]>
+    >[6][] = [];
+    const computeBounds4: typeof computeVoxelBounds4 = (...args) => {
+      boundsTilings.push(args[5]);
+      return computeVoxelBounds4(...args);
+    };
+    const accumulate4: NonNullable<VoxelWorkerDeps["accumulate4"]> = (
+      ...args
+    ) => {
+      chunkProjections.push(args[4]);
+      chunkViews.push({ ...args[5] });
+      chunkColors.push(args[6]);
+      chunkTilings.push(args[7]);
+      return args[1];
+    };
+    const { session, scheduler } = harness({
+      computeBounds4,
+      accumulate4,
+      boundsSamples: 40,
+    });
+    session.handle(
+      startCommand({
+        fourD: {
+          ...defaultFourD(),
+          rotor: XW_MIXED,
+          center: [0, 0, 0, 0],
+          halfExtents: [2, 2, 2, 2],
+          invWAmp: 0.5,
+          entryCarrierRadius: 2,
+          colorCenter: [10, 20, 30, 40],
+          colorHalfExtents: [1, 2, 3, 4],
+          colorMode: "height",
+        },
+        tiling: { group: "a4" },
+        iterationsBudget: 20,
+        resolution: 8,
+      }),
+    );
+    scheduler.drain();
+    expect(chunkTilings.at(-1)).toBeDefined();
+
+    session.handle({ type: "setSymmetry", order: 2, plane: "xz" });
+    scheduler.drain();
+
+    expect(boundsTilings).toHaveLength(2);
+    expect(boundsTilings[1]).toBeUndefined();
+    expect(chunkTilings.at(-1)).toBeUndefined();
+    // Refusal restores the entry geometry frame (origin + carrier support),
+    // never the independent canonical-source color normalization frame.
+    expect(chunkViews.at(-1)?.invWAmp).toBe(0.5);
+    const refusedProjection = chunkProjections.at(-1)!;
+    expect(
+      [
+        refusedProjection[4],
+        refusedProjection[9],
+        refusedProjection[14],
+        refusedProjection[19],
+      ].every((value) => Math.abs(value) === 0),
+    ).toBe(true);
+    expect(chunkColors.at(-1)).toMatchObject({
+      kind: "height",
+      minY: 18,
+      maxY: 22,
+    });
+  });
+
   it("setFourDView rebuilds projected bounds around the retained entry centre and restarts once", () => {
     // Fixed point (0.5, 0.2, 0.3, 0.1): an XW quarter-turn moves projected
     // x from 0.5 to 0.1, making a bounds re-pilot directly observable.

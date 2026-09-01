@@ -36,7 +36,12 @@ import {
   clampVoxelResolutionToMemoryBudget,
   voxelResolutionMemoryByteLength,
 } from "../fractal/voxel-memory";
-import { accumulateVoxels4, computeVoxelBounds4 } from "../fractal/voxel-4d";
+import {
+  accumulateVoxels4,
+  computeVoxelBounds4,
+  prepareVoxelPointTiling4,
+} from "../fractal/voxel-4d";
+import type { PreparedVoxelPointTiling4 } from "../fractal/voxel-4d";
 import { symmetryIsNonFlat } from "../fractal/affine4";
 import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
@@ -60,6 +65,8 @@ import { composeRotorProjection4 } from "../fractal/project4";
 import type { FourDView, RotorProjection4 } from "../fractal/project4";
 import { buildPaletteLUT } from "../fractal/palette";
 import type { PaletteSpec } from "../fractal/palette";
+import type { PointTilingPlan } from "../fractal/point-tiling";
+import { resolvePointTilingSession } from "../fractal/point-tiling-session";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
 import {
@@ -88,6 +95,7 @@ import {
 } from "./four-d-worker-view";
 import { wSupport } from "./rotor4";
 import { MAX_CUSTOM_MESHES_PER_SCENE } from "../fractal/custom-mesh";
+import type { TilingSpec } from "../fractal/tiling";
 
 // ---------------------------------------------------------------------------
 // Protocol
@@ -211,6 +219,13 @@ export type VoxelWorkerCommand =
        * absent, both prepares take their byte-identical no-post-word paths.
        */
       schedule?: HybridSchedule | null;
+      /** Raw authored tiling. A 4D session resolves its worker-local typed
+       * array plan before constructing the seeded orbit; 3D leaves it to the
+       * live material arm. */
+      tiling?: TilingSpec | null;
+      /** Authored Balloon legality bit. No echo payload enters the voxel
+       * tiling path; this only preserves the shared composition refusal. */
+      balloonEchoEnabled?: boolean;
       /**
        * Optional 4D solid render (mirroring the flame's):
        * present when the explorer was in 4D mode when the render was
@@ -245,6 +260,14 @@ export type VoxelWorkerCommand =
          * normalization against this session's support, never a newer
          * document cloud. */
         halfExtents: Vec4;
+        /** Optional canonical-source color normalization frame. Active 4D
+         * tiling uses an origin/carrier geometry pivot while source-owned
+         * Height/Radius/Position retain this independent frame. */
+        colorCenter?: Vec4;
+        colorHalfExtents?: Vec4;
+        /** Rotation-invariant entry carrier retained across an active tiled
+         * session becoming Off/refused. Absent means ordinary AABB support. */
+        entryCarrierRadius?: number;
         /** `1 / wSupport(rotor, halfExtents)` at render-entry — see
          * `project4.ts`'s `FourDView.invWAmp` and `rotor4.ts`'s `wSupport`. */
         invWAmp: number;
@@ -403,6 +426,9 @@ export interface VoxelWorkerDeps {
   /** Defaults to the real {@link computeVoxelBounds4}; overridable so tests
    * can inspect the worker-owned view normalization passed to the 4D pilot. */
   computeBounds4?: typeof computeVoxelBounds4;
+  /** Defaults to the real {@link accumulateVoxels4}; injectable so tests can
+   * prove the prepared tiling policy reaches every worker chunk. */
+  accumulate4?: typeof accumulateVoxels4;
   /** Fallback byte budget for `start` commands that don't carry their own
    * `maxBytes` (defaults to the exact peak for 256 cubed); overridable so a
    * test can trigger the proactive memory guard cheaply. */
@@ -546,6 +572,7 @@ export class VoxelWorkerSession {
    * repeatedly allocate under the same session-wide memory pressure. */
   private hierarchyEnabled = true;
   private readonly computeBounds4: typeof computeVoxelBounds4;
+  private readonly accumulate4: typeof accumulateVoxels4;
   /** Fallback budget for starts that don't carry one — see VoxelWorkerDeps. */
   private readonly defaultMaxBytes: number;
   /** The budget the CURRENT session runs under: the `start` command's
@@ -597,7 +624,21 @@ export class VoxelWorkerSession {
   private fourDWorkerView: FourDWorkerView | null = null;
   /** Main-thread endpoint revision echoed on generation-bearing events. */
   private fourDViewRevision: number | undefined;
+  /** Raw authored block retained for plan resolution at start/symmetry. */
+  private tilingSpec: TilingSpec | null = null;
+  private balloonEchoEnabled = false;
+  private pointTilingPlan: PointTilingPlan | null = null;
+  private pointTilingOriginRadius: number | null = null;
+  /** Settled-view deposition policy reused by every worker chunk. */
+  private preparedVoxelPointTiling4: PreparedVoxelPointTiling4 | null = null;
   private fourDColorMode: FourDColorMode = "wBlueOrange";
+  /** Entry/source color centre, never replaced by tiling's origin pivot. */
+  private fourDColorCenter: Vec4 = [0, 0, 0, 0];
+  private fourDColorHalfExtents: Vec4 = [0, 0, 0, 0];
+  /** Entry geometry frame. Active tiling may intentionally seed this as the
+   * origin/carrier so a later in-worker refusal preserves the frozen view. */
+  private fourDEntryCenter: Vec4 = [0, 0, 0, 0];
+  private fourDEntryCarrierRadius: number | null = null;
   private fourDCenter: Vec4 = [0, 0, 0, 0];
   /** The active entry cloud's axis-aligned support, paired with
    * `fourDCenter` and deliberately unchanged by live document edits. */
@@ -668,6 +709,7 @@ export class VoxelWorkerSession {
     this.textureData = deps.textureData ?? voxelTextureData;
     this.buildHierarchy = deps.buildHierarchy ?? buildVoxelMaxHierarchy;
     this.computeBounds4 = deps.computeBounds4 ?? computeVoxelBounds4;
+    this.accumulate4 = deps.accumulate4 ?? accumulateVoxels4;
     this.defaultMaxBytes = deps.maxBytes ?? VOXEL_ACCUM_FLOOR_BYTES;
     this.maxBytes = this.defaultMaxBytes;
     this.initialChunkSize = deps.initialChunkSize ?? VOXEL_CHUNK_INITIAL;
@@ -746,6 +788,79 @@ export class VoxelWorkerSession {
       : symmetry;
   }
 
+  /** Resolve the raw authored block inside the worker realm. Typed-array
+   * plans never cross postMessage, and resolution precedes RNG construction
+   * on `start`. Flat Solid deliberately leaves its canonical worker volume
+   * untouched because its live material owns the 3D fold. */
+  private resolvePointTiling(): void {
+    if (!this.is4D) {
+      this.pointTilingPlan = null;
+      this.pointTilingOriginRadius = null;
+      this.preparedVoxelPointTiling4 = null;
+      return;
+    }
+    const resolution = resolvePointTilingSession(
+      this.baseTransforms,
+      this.baseFinalTransform,
+      this.symmetry(),
+      this.hybridSchedule,
+      this.tilingSpec,
+      this.balloonEchoEnabled,
+      true,
+    );
+    this.pointTilingPlan =
+      resolution.status === "active" ? resolution.plan : null;
+    this.pointTilingOriginRadius =
+      resolution.status === "active" ? resolution.originVisibleRadius : null;
+  }
+
+  /**
+   * Apply the dimensional-reduction policy for the current settled endpoint.
+   * Active tiling rotates about the origin and normalizes signed-w by the
+   * rotation-invariant carrier. Off/refused sessions restore the exact entry
+   * centre/support. A lattice's pose-dependent proposal is built here once,
+   * never in the chunk loop.
+   */
+  private applyPointTilingViewPolicy(): void {
+    if (!this.is4D || this.fourDWorkerView === null) return;
+    const planRadius =
+      this.pointTilingPlan === null || this.pointTilingOriginRadius === null
+        ? null
+        : this.pointTilingPlan.kind === "lattice"
+          ? this.pointTilingPlan.tiling.presentation.outerRadius
+          : this.pointTilingOriginRadius;
+    const normalizationRadius = planRadius ?? this.fourDEntryCarrierRadius;
+    this.fourDCenter =
+      planRadius === null ? [...this.fourDEntryCenter] : [0, 0, 0, 0];
+    this.rotorProj4 = composeRotorProjection4(
+      this.fourDWorkerView.rotor,
+      this.fourDCenter,
+    );
+    this.fourDView = {
+      invWAmp:
+        normalizationRadius === null
+          ? 1 /
+            Math.max(
+              wSupport(this.fourDWorkerView.rotor, this.fourDHalfExtents),
+              1e-6,
+            )
+          : 1 / Math.max(normalizationRadius, 1e-6),
+      sliceOn: this.fourDWorkerView.sliceOn,
+      sliceCenter: this.fourDWorkerView.sliceCenter,
+      sliceWidth: this.fourDWorkerView.sliceWidth,
+      sliceRelativeColor: this.fourDWorkerView.sliceRelativeColor,
+    };
+    this.preparedVoxelPointTiling4 =
+      this.pointTilingPlan === null || this.pointTilingOriginRadius === null
+        ? null
+        : prepareVoxelPointTiling4(
+            this.pointTilingPlan,
+            this.pointTilingOriginRadius,
+            this.rotorProj4,
+            this.fourDView,
+          );
+  }
+
   private start(cmd: Extract<VoxelWorkerCommand, { type: "start" }>): void {
     installStartMeshAssets(cmd.meshAssets);
     this.hierarchyEnabled = true;
@@ -753,6 +868,8 @@ export class VoxelWorkerSession {
     this.baseTransforms = cmd.transforms;
     this.baseFinalTransform = cmd.finalTransform;
     this.hybridSchedule = cmd.schedule ?? null;
+    this.tilingSpec = cmd.tiling ?? null;
+    this.balloonEchoEnabled = cmd.balloonEchoEnabled ?? false;
     this.symmetryOrder = cmd.order;
     this.symmetryPlane = cmd.plane;
     this.symmetryTwist = cmd.twist ?? 0;
@@ -770,7 +887,6 @@ export class VoxelWorkerSession {
       cmd.transforms.length,
       cmd.transforms.map((t) => t.colorIndex),
     );
-    this.rng = mulberry32(cmd.seed);
     this.colorMode = cmd.colorMode;
     this.positionAxisColors = cmd.positionAxisColors;
     this.colorGamma = cmd.colorGamma;
@@ -814,6 +930,17 @@ export class VoxelWorkerSession {
         sliceRelativeColor: fourD.sliceRelativeColor,
       };
       this.fourDColorMode = fourD.colorMode;
+      this.fourDEntryCenter = [...fourD.center];
+      this.fourDEntryCarrierRadius =
+        fourD.entryCarrierRadius !== undefined &&
+        Number.isFinite(fourD.entryCarrierRadius) &&
+        fourD.entryCarrierRadius > 0
+          ? fourD.entryCarrierRadius
+          : null;
+      this.fourDColorCenter = [...(fourD.colorCenter ?? fourD.center)];
+      this.fourDColorHalfExtents = [
+        ...(fourD.colorHalfExtents ?? fourD.halfExtents),
+      ];
       this.fourDCenter = [...fourD.center];
       this.fourDHalfExtents = [...fourD.halfExtents];
       this.fourDRadiusMin = fourD.radiusMin;
@@ -828,11 +955,24 @@ export class VoxelWorkerSession {
       this.rotorProj4 = null;
       this.fourDView = null;
       this.fourDWorkerView = null;
+      this.fourDEntryCenter = [0, 0, 0, 0];
+      this.fourDEntryCarrierRadius = null;
+      this.fourDColorCenter = [0, 0, 0, 0];
+      this.fourDColorHalfExtents = [0, 0, 0, 0];
+      this.fourDCenter = [0, 0, 0, 0];
       this.fourDHalfExtents = [0, 0, 0, 0];
     }
 
-    // The bounds pilot is part of the same seeded run, so a given seed
-    // produces one reproducible render, bounds included.
+    // Resolve and prepare worker-local tiling before constructing the seeded
+    // stream. The resolver's fixed probe has its own RNG and cannot perturb
+    // the chaos orbit; absent/refused keeps the literal historical path.
+    this.resolvePointTiling();
+    this.applyPointTilingViewPolicy();
+    this.rng = mulberry32(cmd.seed);
+
+    // The untiled bounds pilot is part of the same seeded run. Active tiling
+    // instead selects the exact certified carrier cube and consumes no orbit
+    // draws before accumulation.
     this.bounds = this.is4D
       ? this.computeBounds4(
           this.prepared4!,
@@ -840,6 +980,7 @@ export class VoxelWorkerSession {
           this.fourDView!,
           this.rng,
           this.boundsSamples,
+          this.preparedVoxelPointTiling4 ?? undefined,
         )
       : computeVoxelBounds(this.prepared, this.rng, this.boundsSamples);
     this.startAccumulation();
@@ -902,8 +1043,8 @@ export class VoxelWorkerSession {
             this.fourDColorGamma,
             this.fourDRampPalette,
           ),
-          minY: this.fourDCenter[1] - this.fourDHalfExtents[1],
-          maxY: this.fourDCenter[1] + this.fourDHalfExtents[1],
+          minY: this.fourDColorCenter[1] - this.fourDColorHalfExtents[1],
+          maxY: this.fourDColorCenter[1] + this.fourDColorHalfExtents[1],
         };
       case "radius":
         return {
@@ -913,7 +1054,7 @@ export class VoxelWorkerSession {
             this.fourDColorGamma,
             this.fourDRampPalette,
           ),
-          center: this.fourDCenter,
+          center: this.fourDColorCenter,
           minD: this.fourDRadiusMin,
           maxD: this.fourDRadiusMax,
         };
@@ -921,14 +1062,14 @@ export class VoxelWorkerSession {
         return {
           kind: "position",
           min: [
-            this.fourDCenter[0] - this.fourDHalfExtents[0],
-            this.fourDCenter[1] - this.fourDHalfExtents[1],
-            this.fourDCenter[2] - this.fourDHalfExtents[2],
+            this.fourDColorCenter[0] - this.fourDColorHalfExtents[0],
+            this.fourDColorCenter[1] - this.fourDColorHalfExtents[1],
+            this.fourDColorCenter[2] - this.fourDColorHalfExtents[2],
           ],
           max: [
-            this.fourDCenter[0] + this.fourDHalfExtents[0],
-            this.fourDCenter[1] + this.fourDHalfExtents[1],
-            this.fourDCenter[2] + this.fourDHalfExtents[2],
+            this.fourDColorCenter[0] + this.fourDColorHalfExtents[0],
+            this.fourDColorCenter[1] + this.fourDColorHalfExtents[1],
+            this.fourDColorCenter[2] + this.fourDColorHalfExtents[2],
           ],
           colorGamma: this.fourDColorGamma,
           axisColors: this.fourDPositionAxisColors,
@@ -1040,28 +1181,14 @@ export class VoxelWorkerSession {
       return;
     }
 
-    this.rotorProj4 = composeRotorProjection4(
-      this.fourDWorkerView.rotor,
-      this.fourDCenter,
-    );
-    this.fourDView = {
-      invWAmp:
-        1 /
-        Math.max(
-          wSupport(this.fourDWorkerView.rotor, this.fourDHalfExtents),
-          1e-6,
-        ),
-      sliceOn: view.sliceOn,
-      sliceCenter: view.sliceCenter,
-      sliceWidth: view.sliceWidth,
-      sliceRelativeColor: view.sliceRelativeColor,
-    };
+    this.applyPointTilingViewPolicy();
     this.bounds = this.computeBounds4(
       this.prepared4!,
-      this.rotorProj4,
-      this.fourDView,
+      this.rotorProj4!,
+      this.fourDView!,
       this.rng,
       this.boundsSamples,
+      this.preparedVoxelPointTiling4 ?? undefined,
     );
     this.startAccumulation();
   }
@@ -1102,6 +1229,8 @@ export class VoxelWorkerSession {
         this.hybridSchedule,
       );
     }
+    this.resolvePointTiling();
+    this.applyPointTilingViewPolicy();
     // Symmetry changes the attractor's spatial extent — a kaleidoscope can be
     // considerably wider than the base system — so the bounds pilot has to
     // rerun too, not just the accumulation (unlike setIterationsBudget above,
@@ -1118,6 +1247,7 @@ export class VoxelWorkerSession {
           this.fourDView!,
           this.rng,
           this.boundsSamples,
+          this.preparedVoxelPointTiling4 ?? undefined,
         )
       : computeVoxelBounds(this.prepared!, this.rng, this.boundsSamples);
     this.startAccumulation();
@@ -1219,7 +1349,7 @@ export class VoxelWorkerSession {
     );
     const t0 = this.now();
     if (this.is4D) {
-      accumulateVoxels4(
+      this.accumulate4(
         this.prepared4!,
         grid,
         chunk,
@@ -1227,6 +1357,7 @@ export class VoxelWorkerSession {
         this.rotorProj4!,
         this.fourDView!,
         this.fourDColor!,
+        this.preparedVoxelPointTiling4 ?? undefined,
       );
     } else {
       accumulateVoxels(

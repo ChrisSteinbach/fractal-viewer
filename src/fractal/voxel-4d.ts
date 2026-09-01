@@ -33,6 +33,17 @@ import {
 import type { FourDRenderColor } from "./color";
 import type { FourDView, RotorProjection4 } from "./project4";
 import { sliceColorRemap, sliceWeight } from "./project4";
+import {
+  createLatticePointTilingProposal,
+  createPointTilingCursorState,
+  POINT_TILING_ACCUMULATION_FANOUT_CAP,
+  pointTilingLatticeVisibility,
+  visitPointTilingAttemptBounded,
+} from "./point-tiling";
+import type {
+  LatticePointTilingProposal,
+  PointTilingPlan,
+} from "./point-tiling";
 import { BOUNDS_MARGIN, BOUNDS_QUANTILE, VOXEL_BOUNDS_SAMPLES } from "./voxel";
 import type { VoxelBounds, VoxelGrid } from "./voxel";
 import type { Rng } from "./rng";
@@ -59,6 +70,98 @@ const SLICE_TRIM_THRESHOLD = 0.05;
  * merely-uninteresting one.
  */
 const SLICE_TRIM_MIN_FRACTION = 0.01;
+
+/** Shared by the settled-view proposal and the actual voxel deposit. */
+export const VOXEL4_SKIP_WEIGHT = 1e-3;
+
+/**
+ * One worker-local 4D Solid tiling policy, prepared once per settled view and
+ * reused by every accumulation chunk. The raw plan is dimension/geometry
+ * state; only a lattice's proposal depends on the rotor and slice.
+ */
+export interface PreparedVoxelPointTiling4 {
+  plan: PointTilingPlan;
+  originVisibleRadius: number;
+  carrierRadius: number;
+  latticeProposal?: LatticePointTilingProposal;
+}
+
+/**
+ * Prepare the selected 4D Solid deposition policy. Finite groups retain the
+ * shared estimator verbatim. A lattice reweights its cell proposal by a
+ * source-independent ceiling on the settled slice visibility, preserving all
+ * stabilizer-mask CDFs in `point-tiling.ts`.
+ */
+export function prepareVoxelPointTiling4(
+  plan: PointTilingPlan,
+  originVisibleRadius: number,
+  rotorProj: RotorProjection4,
+  view: FourDView,
+): PreparedVoxelPointTiling4 {
+  if (plan.dimension !== 4) {
+    throw new RangeError("4D voxel tiling requires a 4D point-tiling plan");
+  }
+  if (!(originVisibleRadius > 0) || !Number.isFinite(originVisibleRadius)) {
+    throw new RangeError(
+      "4D voxel tiling requires a positive finite origin radius",
+    );
+  }
+  if (plan.kind === "finite") {
+    return {
+      plan,
+      originVisibleRadius,
+      carrierRadius: originVisibleRadius,
+    };
+  }
+
+  const multipliers = new Float64Array(plan.upper.length);
+  if (!view.sliceOn) {
+    multipliers.fill(1);
+  } else {
+    const halfWidth = plan.tiling.radius * view.invWAmp;
+    const h2 = 2 * plan.tiling.h;
+    for (let cell = 0; cell < plan.upper.length; cell++) {
+      const base = cell * plan.repeatedAxes;
+      const cellX = h2 * plan.cells[base];
+      const cellZ = h2 * plan.cells[base + 1];
+      const cellW = h2 * plan.cells[base + 2];
+      const sRawCenter =
+        rotorProj[15] * cellX +
+        rotorProj[17] * cellZ +
+        rotorProj[18] * cellW +
+        rotorProj[19];
+      const center = sRawCenter * view.invWAmp;
+      let lo = center - halfWidth;
+      let hi = center + halfWidth;
+      lo = lo < -1 ? -1 : lo > 1 ? 1 : lo;
+      hi = hi < -1 ? -1 : hi > 1 ? 1 : hi;
+      if (view.sliceCenter >= lo && view.sliceCenter <= hi) {
+        multipliers[cell] = 1;
+      } else {
+        const nearest =
+          Math.abs(lo - view.sliceCenter) < Math.abs(hi - view.sliceCenter)
+            ? lo
+            : hi;
+        multipliers[cell] = sliceWeight(
+          nearest,
+          view.sliceCenter,
+          view.sliceWidth,
+          0,
+        );
+      }
+    }
+  }
+  return {
+    plan,
+    originVisibleRadius,
+    carrierRadius: plan.tiling.presentation.outerRadius,
+    latticeProposal: createLatticePointTilingProposal(
+      plan,
+      multipliers,
+      VOXEL4_SKIP_WEIGHT,
+    ),
+  };
+}
 
 /**
  * The 4D twin of `voxel.ts`'s `computeVoxelBounds`: estimate the world-space
@@ -101,7 +204,25 @@ export function computeVoxelBounds4(
   view: FourDView,
   rng: Rng,
   samples: number = VOXEL_BOUNDS_SAMPLES,
+  tiling?: PreparedVoxelPointTiling4,
 ): VoxelBounds {
+  if (tiling !== undefined) {
+    const half = tiling.carrierRadius;
+    return {
+      min: [-half, -half, -half],
+      max: [half, half, half],
+      color: {
+        minX: -half,
+        maxX: half,
+        minY: -half,
+        maxY: half,
+        minZ: -half,
+        maxZ: half,
+        minR: 0,
+        maxR: half,
+      },
+    };
+  }
   const allX = new Float64Array(samples);
   const allY = new Float64Array(samples);
   const allZ = new Float64Array(samples);
@@ -327,7 +448,11 @@ export function accumulateVoxels4(
   rotorProj: RotorProjection4,
   view: FourDView,
   color: FourDRenderColor,
+  tiling?: PreparedVoxelPointTiling4,
 ): VoxelGrid {
+  if (tiling !== undefined && tiling.plan.dimension !== 4) {
+    throw new RangeError("accumulateVoxels4 requires a 4D point-tiling plan");
+  }
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
   const { baseTransformCount, schedule, emitters } = prepared;
@@ -398,10 +523,99 @@ export function accumulateVoxels4(
   // slice is on and the option was chosen, so the wRamp branch below applies
   // it unconditionally (see sliceColorRemap's doc).
   const { shift: colorShift, invScale: colorInvScale } = sliceColorRemap(view);
-  // Below this weight, a point's contribution would round away to nothing in
-  // the packed texture — skip it entirely rather than pay for bucket math
-  // and a color computation nobody will ever see (see this function's doc).
-  const SKIP_WEIGHT = 1e-3;
+  const pointTilingState =
+    tiling === undefined
+      ? undefined
+      : (grid.pointTiling ??= createPointTilingCursorState());
+
+  // Tiled images copy source-owned color provenance. W-ramp alone belongs to
+  // the raw image's post-tiling signed-w and is resolved inside the visitor.
+  let tiledSourceR = 0;
+  let tiledSourceG = 0;
+  let tiledSourceB = 0;
+  const tiledVisitor =
+    tiling === undefined
+      ? undefined
+      : (
+          imageX: number,
+          imageY: number,
+          imageZ: number,
+          imageW: number,
+          imageWeight: number,
+        ): void => {
+          const projX =
+            rotorProj[0] * imageX +
+            rotorProj[1] * imageY +
+            rotorProj[2] * imageZ +
+            rotorProj[3] * imageW +
+            rotorProj[4];
+          const projY =
+            rotorProj[5] * imageX +
+            rotorProj[6] * imageY +
+            rotorProj[7] * imageZ +
+            rotorProj[8] * imageW +
+            rotorProj[9];
+          const projZ =
+            rotorProj[10] * imageX +
+            rotorProj[11] * imageY +
+            rotorProj[12] * imageZ +
+            rotorProj[13] * imageW +
+            rotorProj[14];
+          const sRaw =
+            rotorProj[15] * imageX +
+            rotorProj[16] * imageY +
+            rotorProj[17] * imageZ +
+            rotorProj[18] * imageW +
+            rotorProj[19];
+          const sScaled = sRaw * invWAmp;
+          const s = sScaled < -1 ? -1 : sScaled > 1 ? 1 : sScaled;
+          const slice = sliceOn
+            ? sliceWeight(s, sliceCenter, sliceWidth, 0)
+            : 1;
+          const weight = imageWeight * slice;
+          if (tiling.plan.kind === "lattice") {
+            // The lattice oracle applies the contribution gate BEFORE
+            // importance reweighting. A cell omitted by the proposal has
+            // coverage*slice below this same threshold for every source.
+            const coverage = pointTilingLatticeVisibility(
+              tiling.plan,
+              Math.hypot(imageX, imageY, imageZ, imageW),
+            );
+            if (coverage * slice < VOXEL4_SKIP_WEIGHT) return;
+          } else if (weight < VOXEL4_SKIP_WEIGHT) {
+            return;
+          }
+
+          const vx = Math.floor((projX - minX) * invCellX);
+          if (vx < 0 || vx >= size) return;
+          const vy = Math.floor((projY - minY) * invCellY);
+          if (vy < 0 || vy >= size) return;
+          const vz = Math.floor((projZ - minZ) * invCellZ);
+          if (vz < 0 || vz >= size) return;
+
+          const bucket = vz * sizeSq + vy * size + vx;
+          const d = density[bucket] + weight;
+          density[bucket] = d;
+          if (d > maxDensity) maxDensity = d;
+
+          let r = tiledSourceR;
+          let g = tiledSourceG;
+          let b = tiledSourceB;
+          if (color.kind === "wRamp") {
+            const rgb = wRampColor(
+              (s - colorShift) * colorInvScale,
+              color.side,
+            );
+            r = rgb[0];
+            g = rgb[1];
+            b = rgb[2];
+          }
+          const offset = bucket * 3;
+          const invWeight = weight / d;
+          avgRGB[offset] += (r - avgRGB[offset]) * invWeight;
+          avgRGB[offset + 1] += (g - avgRGB[offset + 1]) * invWeight;
+          avgRGB[offset + 2] += (b - avgRGB[offset + 2]) * invWeight;
+        };
 
   for (let n = 0; n < iterations; n++) {
     // Sub-orbit re-fuse — accumulateVoxels' chi block, four coordinates (see
@@ -596,6 +810,99 @@ export function accumulateVoxels4(
       }
     }
 
+    if (tiling !== undefined) {
+      // Resolve canonical-source color once, before any image transform.
+      // W-ramp is the deliberate exception and reads the image in the
+      // allocation-free visitor above.
+      tiledSourceR = 0;
+      tiledSourceG = 0;
+      tiledSourceB = 0;
+      switch (color.kind) {
+        case "structural": {
+          const li = Math.min(255, (c * 256) | 0) * 3;
+          tiledSourceR = color.lut[li];
+          tiledSourceG = color.lut[li + 1];
+          tiledSourceB = color.lut[li + 2];
+          break;
+        }
+        case "wRamp":
+          break;
+        case "transform": {
+          const rgb = color.palette[baseIdx] ?? FALLBACK_COLOR;
+          tiledSourceR = rgb[0];
+          tiledSourceG = rgb[1];
+          tiledSourceB = rgb[2];
+          break;
+        }
+        case "height": {
+          const t = (py - color.minY) / (color.maxY - color.minY || 1);
+          const li = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 255 + 0.5) | 0) * 3;
+          tiledSourceR = color.lut[li];
+          tiledSourceG = color.lut[li + 1];
+          tiledSourceB = color.lut[li + 2];
+          break;
+        }
+        case "radius": {
+          const dx = px - color.center[0];
+          const dy = py - color.center[1];
+          const dz = pz - color.center[2];
+          const dw = pw - color.center[3];
+          const distance = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
+          const t = (distance - color.minD) / (color.maxD - color.minD || 1);
+          const li = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 255 + 0.5) | 0) * 3;
+          tiledSourceR = color.lut[li];
+          tiledSourceG = color.lut[li + 1];
+          tiledSourceB = color.lut[li + 2];
+          break;
+        }
+        case "position": {
+          const tx0 = (px - color.min[0]) / (color.max[0] - color.min[0] || 1);
+          const ty0 = (py - color.min[1]) / (color.max[1] - color.min[1] || 1);
+          const tz0 = (pz - color.min[2]) / (color.max[2] - color.min[2] || 1);
+          const tx = tx0 <= 0 ? 0 : tx0 >= 1 ? 1 : tx0;
+          const ty = ty0 <= 0 ? 0 : ty0 >= 1 ? 1 : ty0;
+          const tz = tz0 <= 0 ? 0 : tz0 >= 1 ? 1 : tz0;
+          const gx = color.colorGamma === 1 ? tx : tx ** color.colorGamma;
+          const gy = color.colorGamma === 1 ? ty : ty ** color.colorGamma;
+          const gz = color.colorGamma === 1 ? tz : tz ** color.colorGamma;
+          if (color.axisColors === undefined) {
+            tiledSourceR = gx * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+            tiledSourceG = gy * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+            tiledSourceB = gz * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+          } else {
+            writePositionColor(
+              positionScratch!,
+              0,
+              gx,
+              gy,
+              gz,
+              color.axisColors,
+            );
+            tiledSourceR = positionScratch![0];
+            tiledSourceG = positionScratch![1];
+            tiledSourceB = positionScratch![2];
+          }
+          break;
+        }
+        case "uniform":
+          [tiledSourceR, tiledSourceG, tiledSourceB] = color.color;
+          break;
+      }
+      visitPointTilingAttemptBounded(
+        tiling.plan,
+        px,
+        py,
+        pz,
+        pw,
+        POINT_TILING_ACCUMULATION_FANOUT_CAP,
+        pointTilingState!,
+        tiledVisitor!,
+        tiling.latticeProposal,
+      );
+      continue;
+    }
+
+    // Keep the original no-tiling projection/deposit path textually intact.
     // --- project through the frozen rotor and weigh by the w-slice --------
     const projX =
       rotorProj[0] * px +
@@ -625,7 +932,7 @@ export function accumulateVoxels4(
     const s = sScaled < -1 ? -1 : sScaled > 1 ? 1 : sScaled;
     // Floor 0 — UNLIKE the flame's 0.06 ghost floor. See this function's doc.
     const weight = sliceOn ? sliceWeight(s, sliceCenter, sliceWidth, 0) : 1;
-    if (weight < SKIP_WEIGHT) continue;
+    if (weight < VOXEL4_SKIP_WEIGHT) continue;
 
     // --- bucket into the voxel grid ----------------------------------------
     const vx = Math.floor((projX - minX) * invCellX);

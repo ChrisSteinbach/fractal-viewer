@@ -7,6 +7,7 @@ import {
   POINT_TILING_POINTS_ATTEMPT_FACTOR,
   POINT_TILING_POINTS_FANOUT_CAP,
   POINT_TILING_STABILIZER_REL_EPS,
+  createLatticePointTilingProposal,
   createPointTilingCursorState,
   createPointTilingPointsState,
   pointTilingContains,
@@ -578,6 +579,135 @@ describe("point tiling lattice plans", () => {
 });
 
 describe("point tiling bounded runtime policy", () => {
+  it("builds every stabilizer-mask variant and accepts a genuinely empty custom lattice proposal", () => {
+    const plan = latticePlan(4);
+    const identity = createLatticePointTilingProposal(
+      plan,
+      new Float64Array(plan.upper.length).fill(1),
+    );
+    expect(identity.cdfByWallMask).toHaveLength(8);
+    for (let mask = 0; mask < 8; mask++) {
+      expect(identity.cdfByWallMask[mask].cellOrdinals).toEqual(
+        plan.cdfByWallMask[mask].cellOrdinals,
+      );
+      expect(identity.cdfByWallMask[mask].cumulative).toEqual(
+        plan.cdfByWallMask[mask].cumulative,
+      );
+    }
+
+    const empty = createLatticePointTilingProposal(
+      plan,
+      new Float64Array(plan.upper.length),
+      1e-3,
+    );
+    const state = createPointTilingCursorState();
+    const emitted = visitPointTilingAttemptBounded(
+      plan,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      32,
+      state,
+      () => {
+        throw new Error("empty proposal emitted an image");
+      },
+      empty,
+    );
+    expect(emitted).toBe(0);
+    expect(state).toMatchObject({ attempts: 1, accepted: 1, selected: 0 });
+  });
+
+  it("uses a custom lattice proposal probability without changing coverage", () => {
+    const plan = latticePlan(4);
+    const source = [0.1, 0.2, 0.3, 0.4] as const;
+    const target = Math.floor(plan.upper.length / 2);
+    const multipliers = new Float64Array(plan.upper.length);
+    multipliers[target] = 0.25;
+    const proposal = createLatticePointTilingProposal(plan, multipliers);
+    const expected = visitAll(plan, source).find(
+      (image) => image.candidate === target,
+    );
+    expect(expected).toBeDefined();
+    if (!expected) return;
+    const state = createPointTilingCursorState();
+    let actual: Image | undefined;
+    visitPointTilingAttemptBounded(
+      plan,
+      ...source,
+      32,
+      state,
+      (x, y, z, w, weight, candidate) => {
+        actual = { point: [x, y, z, w], weight, candidate };
+      },
+      proposal,
+    );
+    expect(actual?.candidate).toBe(target);
+    expect(actual?.point).toEqual(expected.point);
+    // One live proposal cell has probability 1 and K=1.
+    expect(actual?.weight).toBeCloseTo(expected.weight, 14);
+  });
+
+  it("selects custom lattice proposals at the post-spend cursor phase, including u32 wrap", () => {
+    const plan = latticePlan(4);
+    const identity = createLatticePointTilingProposal(
+      plan,
+      new Float64Array(plan.upper.length).fill(1),
+    );
+    const source = [-0.9, 0, 0.3, -0.2] as const;
+    const goldenUnit = 0x9e3779b1 / 2 ** 32;
+    const wrappedUnit = (2 ** 32 - 0x9e3779b1) / 2 ** 32;
+    const firstInterval = (cumulative: Float64Array, unit: number): number =>
+      cumulative.findIndex((value) => unit < value);
+
+    const run = (cursor: number) => {
+      const state = createPointTilingCursorState();
+      state.cursor = cursor;
+      const images: Image[] = [];
+      visitPointTilingAttemptBounded(
+        plan,
+        ...source,
+        32,
+        state,
+        (x, y, z, w, weight, candidate) => {
+          images.push({ point: [x, y, z, w], weight, candidate });
+        },
+        identity,
+      );
+      return { state, images };
+    };
+
+    // With a proposal the visit sees the POST-spend cursor 1, whose golden
+    // phase must reproduce the emitted image through exactly one mask CDF —
+    // the pre-spend arm's phase-0 unit would select interval 0 instead.
+    const fresh = run(0);
+    expect(fresh.images).toHaveLength(1);
+    const freshCdfs = plan.cdfByWallMask.filter(
+      (cdf) =>
+        cdf.cellOrdinals[firstInterval(cdf.cumulative, goldenUnit)] ===
+        fresh.images[0].candidate,
+    );
+    expect(freshCdfs).toHaveLength(1);
+    const cdf = freshCdfs[0];
+    const freshInterval = firstInterval(cdf.cumulative, goldenUnit);
+    expect(freshInterval).toBeGreaterThan(0);
+    expect(fresh.images[0].candidate).toBe(cdf.cellOrdinals[freshInterval]);
+    expect(fresh.state.cursor).toBe(1);
+    expect(fresh.state.selected).toBe(1);
+
+    // The post-spend cursor (0xffffffff + 1) >>> 0 wraps to 0, so the
+    // phase-0 unit selects interval 0 — while the pre-spend arm's phase
+    // (1 - goldenUnit) selects a strictly later interval.
+    const wrap = run(0xffff_ffff);
+    expect(wrap.state.cursor).toBe(0);
+    expect(wrap.state.selected).toBe(1);
+    expect(wrap.images).toHaveLength(1);
+    expect(wrap.images[0].candidate).toBe(cdf.cellOrdinals[0]);
+    const a0Interval = firstInterval(cdf.cumulative, wrappedUnit);
+    expect(a0Interval).toBeGreaterThan(0);
+    expect(cdf.cellOrdinals[a0Interval]).not.toBe(wrap.images[0].candidate);
+  });
+
   it("banks rejection credit, spends capped bursts, normalizes finite weight, and wraps u32", () => {
     const plan = planForGroup("b4");
     const accepted = chamberPoint(TILING_GROUP_INFO.b4);

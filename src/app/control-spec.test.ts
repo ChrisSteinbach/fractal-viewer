@@ -71,6 +71,7 @@ function mockEffects(shared = false): ControlEffects {
     },
     postFlame: vi.fn(),
     postVoxel: vi.fn(),
+    activeRendererAcceptsSymmetryEdit: vi.fn(() => true),
     presentSharedFlameFrame: vi.fn(() => shared),
     regenerateIfAutoUpdate: vi.fn(),
     resumePointAutoUpdate: vi.fn(),
@@ -79,6 +80,7 @@ function mockEffects(shared = false): ControlEffects {
     recolor: vi.fn(),
     applyFourDColor: vi.fn(),
     restartSolidRender: vi.fn(),
+    applySolidTilingEdit: vi.fn(),
     syncSolidTiling: vi.fn(),
     restartFlameRender: vi.fn(),
     restartFlameTilingRender: vi.fn(),
@@ -1225,6 +1227,24 @@ describe("effects", () => {
       expect(fx.postVoxel).not.toHaveBeenCalled();
     });
 
+    it("keeps later symmetry edits staged while the active renderer holds the pre-crossing dimension", () => {
+      const spec = specById("symmetryOrderSlider");
+      const previous = setSymmetryPlane(
+        setSymmetryOrder(initialState(true), 3),
+        "zw",
+      );
+      const state = setSymmetryOrder(previous, 4);
+      const fx = mockEffects();
+      vi.mocked(fx.activeRendererAcceptsSymmetryEdit).mockReturnValue(false);
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.activeRendererAcceptsSymmetryEdit).toHaveBeenCalledTimes(1);
+      expect(fx.syncSolidTiling).not.toHaveBeenCalled();
+      expect(fx.postFlame).not.toHaveBeenCalled();
+      expect(fx.postVoxel).not.toHaveBeenCalled();
+    });
+
     it("symmetryPlane effect posts the identical setSymmetry shape to both render workers", () => {
       const spec = specById("symmetryPlane");
       const previous = initialState(true);
@@ -1455,6 +1475,32 @@ describe("effects", () => {
       expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
     });
 
+    it("routes both document dimensions through the active Solid session authority", () => {
+      const spec = specById("tilingCellScaleSlider");
+      const flatPrevious = setTiling(
+        { ...initialState(true), renderMode: "solid" },
+        { kind: "lattice", cellScale: 1.5 },
+      );
+      const flat = applyScalarControl(flatPrevious, spec, "2.4");
+      const flatFx = mockEffects();
+      spec.effect?.(flat, flatFx, flatPrevious);
+      expect(flatFx.applySolidTilingEdit).toHaveBeenCalledTimes(1);
+      expect(flatFx.syncSolidTiling).not.toHaveBeenCalled();
+
+      const nonFlatPrevious = {
+        ...flatPrevious,
+        transforms: [
+          { ...flatPrevious.transforms[0], w: { position: 0.5 } },
+          ...flatPrevious.transforms.slice(1),
+        ],
+      };
+      const nonFlat = applyScalarControl(nonFlatPrevious, spec, "2.4");
+      const nonFlatFx = mockEffects();
+      spec.effect?.(nonFlat, nonFlatFx, nonFlatPrevious);
+      expect(nonFlatFx.applySolidTilingEdit).toHaveBeenCalledTimes(1);
+      expect(nonFlatFx.syncSolidTiling).not.toHaveBeenCalled();
+    });
+
     it("reads a mesh-backed bundled clip as authored, not a selectable kind", () => {
       const meshClipped = setTiling(initialState(true), {
         group: "a3",
@@ -1505,6 +1551,33 @@ describe("effects", () => {
           // when Points' Auto-update is off.
           expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
         }
+      }
+    });
+
+    it("routes kind, group, clip, and toggle edits through the active Solid session", () => {
+      for (const id of [
+        "tilingEnabledCheckbox",
+        "tilingKind",
+        "tilingGroup",
+        "tilingClip",
+      ]) {
+        const spec = specById(id);
+        const base = initialState(true);
+        const state = setTiling(
+          {
+            ...base,
+            renderMode: "solid",
+            transforms: [
+              { ...base.transforms[0], w: { position: 0.5 } },
+              ...base.transforms.slice(1),
+            ],
+          },
+          { group: "b4" },
+        );
+        const fx = mockEffects();
+        spec.effect?.(state, fx, state);
+        expect(fx.applySolidTilingEdit, id).toHaveBeenCalledTimes(1);
+        expect(fx.syncSolidTiling, id).not.toHaveBeenCalled();
       }
     });
   });
