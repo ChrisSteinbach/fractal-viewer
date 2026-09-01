@@ -627,15 +627,15 @@ unchanged hash under read-only instrumentation.
 The final matrix keeps each stateful question in the gate that already owns
 that lifecycle rather than building a second monolith:
 
-| Contract                                                                                                          | Durable gate                                                                                                  | 2026-08-31 verdict                                                                                   |
-| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Finite/lattice presets, exact authoring, replacement, copied links, unsupported-mode disclosure, malformed decode | `scripts/tiling-ui.verify.mjs`                                                                                | Five settled hardware presets plus all authoring/recovery checks passed                              |
-| Minimal inverse affine/fold and forward, 3D/4D, WebGL/compute, clip, plane, progress and structural controls      | `scripts/surface-lattice.verify.mjs` and `scripts/surface-tiling.verify.mjs`                                  | Both real-Iris route matrices passed                                                                 |
-| Carrier choice, cross-engine fade, fog/DoF/radial background and completed Save PNG                               | `scripts/lattice-presentation.verify.mjs`                                                                     | 22/22 scene rows and ten capture comparisons passed                                                  |
-| Completed export, mid-drain cancellation, interaction and collection encoding with authored tiling                | `scripts/capture-export.verify.mjs --tiling=a3`                                                               | 15/15 on SwiftShader; exact A3 survived every phase                                                  |
-| Renderer teardown during submitted compute work                                                                   | `scripts/surface-teardown.verify.mjs --lens --tiling=a3 --toggleId=__modeExit --toggles=20 --toggleGapMs=900` | 20/20 on real Firefox/Iris compute; exact A3 and hardware backend retained                           |
-| WebGPU-unavailable fallback and compute-only refusal with lattice authored                                        | `scripts/surface-fallback.verify.mjs https://localhost:5173 fg`                                               | 4D lattice painted through WebGL with visible disclosure; fold-4D lattice refused with WebGPU reason |
-| Phone target/layout and exact-number interaction                                                                  | `scripts/panel-numeric-control.verify.mjs`                                                                    | 87 slider companions over 84 states passed                                                           |
+| Contract                                                                                                     | Durable gate                                                                                                  | Recorded verdict / current coverage                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Finite/lattice presets, authoring, links, Points lifecycle/draw, other-mode disclosure and malformed decode  | `scripts/tiling-ui.verify.mjs`                                                                                | Surface/panel baseline passed; 2026-09-01 scoped SwiftShader Points legs passed real Worker, copied-link, stale/latest-wins, negative-frame and 4D view-only checks |
+| Minimal inverse affine/fold and forward, 3D/4D, WebGL/compute, clip, plane, progress and structural controls | `scripts/surface-lattice.verify.mjs` and `scripts/surface-tiling.verify.mjs`                                  | Both real-Iris route matrices passed                                                                                                                                |
+| Carrier choice, cross-engine fade, fog/DoF/radial background and completed Save PNG                          | `scripts/lattice-presentation.verify.mjs`                                                                     | 22/22 scene rows and ten capture comparisons passed                                                                                                                 |
+| Completed export, mid-drain cancellation, interaction and collection encoding with authored tiling           | `scripts/capture-export.verify.mjs --tiling=a3`                                                               | 15/15 on SwiftShader; exact A3 survived every phase                                                                                                                 |
+| Renderer teardown during submitted compute work                                                              | `scripts/surface-teardown.verify.mjs --lens --tiling=a3 --toggleId=__modeExit --toggles=20 --toggleGapMs=900` | 20/20 on real Firefox/Iris compute; exact A3 and hardware backend retained                                                                                          |
+| WebGPU-unavailable fallback and compute-only refusal with lattice authored                                   | `scripts/surface-fallback.verify.mjs https://localhost:5173 fg`                                               | 4D lattice painted through WebGL with visible disclosure; fold-4D lattice refused with WebGPU reason                                                                |
+| Phone target/layout and exact-number interaction                                                             | `scripts/panel-numeric-control.verify.mjs`                                                                    | 87 slider companions over 84 states passed                                                                                                                          |
 
 The repository gates then passed 6,761 unit tests across 168 files, the two
 tiling sheets (11/11), production build, WebGL smoke, and the real-Iris
@@ -770,6 +770,18 @@ slice-relative color, slice weight, lighting and fog remain properties of the
 raw or displayed image and are evaluated after the relevant image/view
 transform.
 
+That provenance has one exact, output-aligned storage shape: three f32 source
+coordinates (`12 B`) per emitted 3D point, or source `xyz+w` (`16 B`) per 4D
+point. At the authored five-million-point ceiling the increment is therefore
+exactly 60 MB / 80 MB. A deduplicated source table plus a u32 image-to-source
+index is not a smaller worst-case representation: lattice Points may retain
+only one image from each accepted source, making the table output-sized before
+the extra 20 MB index exists. The worker strips the recorder's duplicate field
+names into one `canonicalColorSource`, transfers each canonical buffer once,
+and the main thread retains that source with the landed cloud for live
+recoloring. A landing in the opposite dimension releases the stale cloud and
+its provenance rather than caching both dimensional maxima.
+
 ### Bounded work and normalization
 
 Exhaustive replication remains the oracle, not the production budget. The
@@ -812,13 +824,13 @@ that specialization.
 
 The frozen budgets are:
 
-| Consumer                 | Budget and terminal behavior                                                                                                                                                                                                                                                                                                   |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Points                   | authored point count remains the maximum allocated/displayed output; finite: at most 256 equal dots from one accepted source; lattice: one proposal per accepted source, with at most `8N` source attempts and `8N` proposal tests for request `N`; returns `complete`, `underfilled`, or `empty`, never an untiled substitute |
-| Flame CPU/WebGPU         | authored iterations remain primary orbit steps; at most 32 image deposits at one acceptance and no more selected candidates cumulatively than attempts; credit/cursor are chunk/dispatch state                                                                                                                                 |
-| Generated Flame backdrop | same 32-image rule inside its fixed one-million-step job; schedule and tiling join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                                                                                                                      |
-| 3D Solid                 | no replicated voxel memory: keep the canonical density texture and transform material queries; its separate march budget is measured by the Solid lift                                                                                                                                                                         |
-| 4D Solid                 | at most 32 weighted pre-projection images per accepted source; the representation and exact volume budget remain the responsibility of its dedicated decision                                                                                                                                                                  |
+| Consumer                 | Budget and terminal behavior                                                                                                                                                                                                                                                                                                             |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Points                   | SHIPPED — authored point count remains the maximum allocated/displayed output; finite: at most 256 equal dots from one accepted source; lattice: one proposal per accepted source, with at most `8N` source attempts and `8N` proposal tests for request `N`; returns `complete`, `underfilled`, or `empty`, never an untiled substitute |
+| Flame CPU/WebGPU         | FROZEN, NOT SHIPPED — authored iterations remain primary orbit steps; at most 32 image deposits at one acceptance and no more selected candidates cumulatively than attempts; credit/cursor are chunk/dispatch state                                                                                                                     |
+| Generated Flame backdrop | FROZEN, NOT SHIPPED — same 32-image rule inside its fixed one-million-step job; schedule and tiling join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                                                                                                          |
+| 3D Solid                 | FROZEN, NOT SHIPPED — no replicated voxel memory: keep the canonical density texture and transform material queries; its separate march budget is measured by the Solid lift                                                                                                                                                             |
+| 4D Solid                 | FROZEN, NOT SHIPPED — at most 32 weighted pre-projection images per accepted source; the representation and exact volume budget remain the responsibility of its dedicated decision                                                                                                                                                      |
 
 The sheet measured all six finite groups on a balanced 16,384-point acceptance
 fixture and got exactly `1/order`. At ~262k output work, equal-density finite
@@ -840,18 +852,21 @@ so `underfilled` is a first-class valid result. Zero accepted content installs
 the renderer's normal empty output: zero Points geometry, transparent Flame,
 dark composed backdrop, or zero-density Solid.
 
-**Implementation verdict.** Add a Points-specific bounded visitor beside the
-weighted accumulator visitor; do not change the latter. Its callback carries
-`x/y/z/w` and candidate attribution but no variable weight (or passes the
-literal `1` through the shared callback). Its state is `{ cursor,
-quotaRemainder, attempts, accepted, candidateTests, emitted }`: finite uses
-`cursor + quotaRemainder`, lattice uses `cursor` as the base-2/base-3 proposal
-ordinal, and both serialize that state across worker chunks. The Points worker
-allocates only its existing position/index/color outputs—no weight or coverage
-array—and stops before writing point `N`. It reports `complete` only at `N`,
-`empty` at zero, and otherwise `underfilled` after either `8N` source attempts
-or (for lattice) `8N` proposal tests. Untiled generation must continue through
-its literal historical branch and never construct this state.
+**Implementation verdict.** `point-tiling.ts` ships the Points-specific bounded
+visitor beside the unchanged weighted accumulator visitor. Its callback passes
+literal weight `1`; state is `{ cursor, quotaRemainder, attempts, accepted,
+candidateTests, emitted }`. `runChaosGameTiledPoints` and
+`runChaosGame4TiledPoints` preserve the ordinary hot-loop order and copy
+canonical source coordinates plus transform attribution to every emitted
+image. The 4D recorder emits raw `xyzw`, fixes the image-cloud centre at the
+origin, and computes its exact maximum origin radius before view reduction.
+The worker selects these recorders only for an active certified plan, stops
+before point `N`, and exposes `complete`, `underfilled`, or `empty` beside the
+point count. Refused sessions and absent tiling continue through the literal
+historical recorder branch; neither constructs tiling state nor substitutes a
+tiled empty result. Canonical color buffers are transferred only for the
+active arm as `canonicalColorSource` and retained with the landed result for
+live recoloring; landing the opposite dimension releases the stale cache.
 
 ### Legal combinations and edit timing
 
@@ -865,15 +880,14 @@ its literal historical branch and never construct this state.
 | escape-time/bulb debris in Points, Flame or Solid                                          | refused; it is not a sampler for Surface's set                      |
 
 Points tiling edits follow Auto-update and the existing latest-wins one-shot
-regeneration. Flame edits clear/restart accumulation while preserving its
-frozen camera and settled 4D view. The generated backdrop uses the same
-snapshot with its existing 300 ms trailing debounce and latest-wins publish.
-The 3D Solid finite kind/clip change recompiles the query wrapper and lattice
-scale is uniform-live; its canonical voxel worker does not restart. A tiled
-3D query cannot use the canonical max-density hierarchy until that hierarchy
-has a reflected-ray certificate. Every 4D Solid geometry/carrier edit
-repilots and rebuilds atomically because tiling precedes projection. Surface
-keeps its existing restart-on-kind/clip and live lattice-scale behavior.
+regeneration. Flame, its generated backdrop, and Solid still render the
+untiled attractor with an adjacent explanation; their rows above freeze the
+later lifts rather than claiming implementation. Surface keeps its existing
+restart-on-kind/clip and live lattice-scale behavior.
 
 The complete executable record, including timings and the carrier alternatives,
-is `scripts/point-tiling.harness.ts`.
+is `scripts/point-tiling.harness.ts`. Deterministic unit/worker/UI tests own the
+deliberately empty and underfilled terminal fixtures; the browser gate uses
+complete showcase clouds so it can instead qualify the real Worker boundary,
+copied-link restoration, stale/latest-wins labeling, visible tiled/untiled
+frames, and 4D view-only interaction without an expensive near-empty scene.
