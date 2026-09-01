@@ -940,3 +940,47 @@ orbit was exactly half its group order and the lattice seam fixture selected
 exactly its 39 distinct images. Full formulas, legal combinations, renderer
 budgets, empty/underfilled behavior and edit timing are in
 `docs/tiling-contract.md` phase 3.
+
+### solid-tiling-4d
+
+The 4D Sampled Solid representation decision sheet
+(`scripts/solid-tiling-4d.harness.ts`). `accumulateVoxels4` deposits into a
+rotor-projected, w-sliced 3D grid, so 3D Solid's query-space fold cannot be
+lifted onto that texture. The sheet reduces five candidates to one
+displayed-3D density grid and mass-normalizes every one of them: exhaustive
+replication as truth; direct weighted deposition through the shipped 32-image
+credit estimator; a Solid-only slice-aware importance selection; a raw-4D
+`N^4` canonical volume rendered by a query-space 4D fold with w-taps; and the
+refused post-projection displayed-3D fold. Fixture is `pentatope` under A4,
+B4, F4 and the shipped `mirroredLattice4` lattice, at an identity pose and a
+genuine xw rotation of 0.63 rad at slice centre 0.37.
+
+MEASURED VERDICT (2026-09-01, Node 22): **DEPOSIT BOUNDED PRE-PROJECTION
+IMAGES INTO THE UNCHANGED DISPLAYED VOLUME — SHIPPED ESTIMATOR ON THE FINITE
+ARMS, A SLICE-AWARE PROPOSAL CDF ON THE LATTICE.** Normalized L1 against
+exhaustive replication at the w-mixing pose was 0.1659/0.3213/0.5571/0.0875
+for the shipped estimator on A4/B4/F4/lattice and 0.0624/0.1798/0.3297/0.0529
+with slice-aware selection, against 0.7392-1.0554 for the raw-4D volume and
+1.8241-1.9650 for the post-projection fold. The selected architecture holds
+today's 27.0 MB texture and 108.0 MB working set, measures a per-ray fetch
+multiplier of 0.968-1.000 against the untiled baseline's 162.64 fetches/ray,
+and rebuilds a settled rotor/slice edit at 0.82x-1.28x the untiled restart.
+
+The raw-4D volume is the only candidate that keeps a genuine 4D fold and the
+only one that makes rotor and slice edits free — proven pose-independent,
+byte-identical between a volume built at one pose and rendered at another —
+and it fails anyway: at N = 64 it holds 22,017 occupied cells of 16,777,216
+(0.13%), so a 3-plane through it retains 1.43-1.61 of the reference occupancy
+on the finite arms and 0.30-0.34 on the lattice, and its w-taps multiply all
+seven folded query paths by 24 (finite) or 231 (lattice). Slice-aware
+selection on the FINITE arms is better per attempt and not better per second
+above A4, and it reaches 3.63x-8.04x attempts in candidate tests. The lattice
+arm's 19.20 voxels per content diameter at the frozen 10R carrier misses the
+sheet's predeclared floor of 32; the carrier sweep measured 10R/8R/6R/4R at
+171/81/33/19 cells and L1 0.0875/0.0873/0.0791/0.0987, so 6R is the first row
+that clears the floor and carries the best error — a presentation-policy
+decision left open rather than settled by the renderer that wanted it. The
+sheet also corrects an inherited figure: canonical finite acceptance is
+`1/order` only for a chamber-balanced fixture, and pentatope measured
+3.026%/1.955%/0.698% under A4/B4/F4. Full architecture, per-arm policies and
+refusals are in `docs/tiling-contract.md`'s 4D Solid representation section.

@@ -908,13 +908,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     without it), refuses the empty-space grid (its floors bound the
     attractor, not the infinite mirror image), and frames the camera on
     the canonical cell (`latticeCameraFitBounds`: hypot(h,h,R) / hypot(h,h,h,R)).
-    Bench-pinned on verified Iris: eval 7/7 cores plus five production
-    frame legs (3D/4D × inverse/forward + ground plane) settling with
-    hit-rate gaps ≤ 0.012 and plane-rate gap 0.012; the durable browser
-    gate `scripts/surface-lattice.verify.mjs` passes its full inverse
-    affine/fold/forward progress→settled routing/persistence/distinctness matrix. Tiling-bearing
-    cancel, real-Firefox teardown, WebGL fallback and fold-4D refusal are
-    pinned by their owning lifecycle gates.
+    Bench-pinned on verified Iris (eval 7/7 cores plus five production frame
+    legs) and browser-gated by `scripts/surface-lattice.verify.mjs`;
+    tiling-bearing cancel, real-Firefox teardown, WebGL fallback and fold-4D
+    refusal are pinned by their owning lifecycle gates.
     Tiling authoring, presets (`mirroredLattice`/`mirroredLattice4`), app-copy
     and workflow behavior are real-browser gated by `scripts/tiling-ui.verify.mjs`.
     Points SHIPS tiled in 3D/4D after schedule/final: bounded recorders keep
@@ -924,15 +921,17 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Flame backdrop SHIPS the same block (schedule + raw tiling + the balloon
     legality bit, never the echo payload), invalidated by tiling and schedule
     edits even with Auto-update off; 3D Solid SHIPS tiled (compile-gated
-    folds, hierarchy suspended, material-only; 4D refused until its lift);
-    absent/refused stays literal legacy.
+    folds, hierarchy suspended, material-only); 4D Solid's representation is
+    DECIDED — bounded pre-projection images into the UNCHANGED displayed
+    volume (no new voxel memory, no material change, hierarchy KEPT, tiling
+    edits RESTART), shipped estimator on the finite arms and a slice-aware
+    proposal CDF on the lattice; raw-4D volumes and post-projection folds are
+    MEASURED refusals. Absent/refused stays literal legacy.
     Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic
     opRep is REFUSED for overshoot and a wall clamp for false-zero geometry;
-    exact translation is deferred. The deterministic lattice sheet
-    calls the production scalar fold and pins orbit/seam, translation-
-    overshoot, false-wall and preview evidence. Full contract and proof:
+    exact translation is deferred. Full contract and proof:
     `docs/tiling-contract.md`.
   - `surface-finish.ts` — the per-transform surface FINISH's meaning:
     `resolveSurfaceFinish` is the ONE absent-means-classic definition +
