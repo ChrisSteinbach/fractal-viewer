@@ -27,6 +27,12 @@ import { composeVariations4 } from "./variations4";
 import type { VariationBlend4 } from "./variations4";
 import { mulberry32 } from "./rng";
 import type { IterationRng, Rng } from "./rng";
+import {
+  createPointTilingPointsState,
+  pointTilingPointsAttemptLimit,
+  visitPointTilingPointsAttemptBounded,
+} from "./point-tiling";
+import type { PointTilingPlan, PointTilingPointsState } from "./point-tiling";
 import type {
   Bounds4,
   HybridSchedule,
@@ -121,6 +127,17 @@ export interface ChaosGame4Result {
    * shell cannot pulse or resize with the frozen slice snapshot. Computed in
    * the same second pass as `radius`, with no extra worker traversal. */
   originRadius: number;
+}
+
+/** Raw-4D tiled Points result. Image and canonical-source arrays remain
+ * parallel so source-attached color survives replication while image xyzw
+ * continues downstream to the live rotor, projection and slice. */
+export interface TiledChaosGame4Result extends ChaosGame4Result {
+  canonicalPositions: Float32Array;
+  canonicalW: Float32Array;
+  canonicalBounds: Bounds4;
+  canonicalCenter: Vec4;
+  pointTilingState: PointTilingPointsState;
 }
 
 /** {@link prepareChaosGame4}'s default `symmetry`, mirroring `chaos-game.ts`'s
@@ -1121,5 +1138,378 @@ export function runChaosGame4(
     center,
     radius,
     originRadius,
+  };
+}
+
+/**
+ * Raw-4D twin of the bounded tiled Points recorder. The chaos orbit and its
+ * plot-time schedule/lens remain ordinary 4D; only accepted canonical source
+ * points emit raw xyzw group/lattice images, which never feed back.
+ */
+export function runChaosGame4TiledPoints(
+  transforms: Transform4[],
+  numPoints: number,
+  pointTilingPlan: PointTilingPlan,
+  rng: Rng = Math.random,
+  finalTransform: Transform4 | null = null,
+  symmetry: SymmetryParams = NO_SYMMETRY4,
+  iterationRng?: IterationRng,
+  schedule: HybridSchedule | null = null,
+): TiledChaosGame4Result {
+  if (pointTilingPlan.dimension !== 4) {
+    throw new RangeError("4D chaos game requires a 4D point-tiling plan");
+  }
+  const pointTilingState = createPointTilingPointsState();
+  if (transforms.length === 0 || numPoints <= 0) {
+    return {
+      positions: new Float32Array(0),
+      w: new Float32Array(0),
+      canonicalPositions: new Float32Array(0),
+      canonicalW: new Float32Array(0),
+      transformIndices: new Uint8Array(0),
+      count: 0,
+      bounds: emptyBounds4(),
+      canonicalBounds: emptyBounds4(),
+      center: [0, 0, 0, 0],
+      canonicalCenter: [0, 0, 0, 0],
+      radius: 0,
+      originRadius: 0,
+      pointTilingState,
+    };
+  }
+
+  const prepared = prepareChaosGame4(
+    transforms,
+    finalTransform,
+    symmetry,
+    schedule,
+  );
+  const positions = new Float32Array(numPoints * 3);
+  const wBuffer = new Float32Array(numPoints);
+  const canonicalPositions = new Float32Array(numPoints * 3);
+  const canonicalW = new Float32Array(numPoints);
+  const transformIndices = new Uint8Array(numPoints);
+
+  let x = rng() - 0.5;
+  let y = rng() - 0.5;
+  let z = rng() - 0.5;
+  let w = rng() - 0.5;
+  const aux = iterationRng ? iterationRng.draw : rng;
+  const chaosOn = prepared.chaosRows !== null;
+  let prevBase = -1;
+
+  for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+    if (iterationRng) iterationRng.begin(i);
+    const s = stepOrbit4(prepared, x, y, z, w, rng, aux, prevBase);
+    x = s.x;
+    y = s.y;
+    z = s.z;
+    w = s.w;
+    prevBase = s.escaped ? -1 : s.index;
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let minW = Infinity;
+  let maxW = -Infinity;
+  let canonicalMinX = Infinity;
+  let canonicalMaxX = -Infinity;
+  let canonicalMinY = Infinity;
+  let canonicalMaxY = -Infinity;
+  let canonicalMinZ = Infinity;
+  let canonicalMaxZ = -Infinity;
+  let canonicalMinW = Infinity;
+  let canonicalMaxW = -Infinity;
+
+  const { affines, variations, postRotations, finalAffine, finalWarp } =
+    prepared;
+  const { baseTransformCount, schedule: preparedSchedule, emitters } = prepared;
+  const emitterStream = createEmitterStream();
+  const emitterDraw = emitterStream.draw;
+  const attemptLimit = pointTilingPointsAttemptLimit(numPoints);
+
+  for (
+    let sourceAttempt = 0;
+    sourceAttempt < attemptLimit &&
+    pointTilingState.emitted < numPoints &&
+    (pointTilingPlan.kind === "finite" ||
+      pointTilingState.candidateTests < attemptLimit);
+    sourceAttempt++
+  ) {
+    if (
+      chaosOn &&
+      sourceAttempt > 0 &&
+      sourceAttempt % CHAOS_SUB_ORBIT_POINTS === 0
+    ) {
+      const sub = sourceAttempt / CHAOS_SUB_ORBIT_POINTS;
+      if (iterationRng) iterationRng.begin(chaosRefuseIteration(sub));
+      x = aux() - 0.5;
+      y = aux() - 0.5;
+      z = aux() - 0.5;
+      w = aux() - 0.5;
+      prevBase = -1;
+      for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+        if (iterationRng) {
+          iterationRng.begin(chaosRefuseIteration(sub) + 1 + k);
+        }
+        const s = stepOrbit4(prepared, x, y, z, w, rng, aux, prevBase);
+        x = s.x;
+        y = s.y;
+        z = s.z;
+        w = s.w;
+        prevBase = s.escaped ? -1 : s.index;
+      }
+    }
+
+    if (iterationRng) {
+      iterationRng.begin(
+        chaosOn
+          ? chaosPointIteration(sourceAttempt)
+          : WARMUP_ITERATIONS + sourceAttempt,
+      );
+    }
+    const idx = pickIndex4(prepared, rng, prevBase);
+    const baseIdx = idx % baseTransformCount;
+    const emitter = emitters !== null ? emitters[baseIdx] : null;
+    let nx: number;
+    let ny: number;
+    let nz: number;
+    let nw: number;
+    if (emitter !== null) {
+      emitterStream.reseed(emitterSeed(rng));
+      const sample = emitter(emitterDraw);
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      nx = m[0] * sample[0] + m[1] * sample[1] + m[2] * sample[2] + t[0];
+      ny = m[4] * sample[0] + m[5] * sample[1] + m[6] * sample[2] + t[1];
+      nz = m[8] * sample[0] + m[9] * sample[1] + m[10] * sample[2] + t[2];
+      nw = m[12] * sample[0] + m[13] * sample[1] + m[14] * sample[2] + t[3];
+    } else {
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      const ax = m[0] * x + m[1] * y + m[2] * z + m[3] * w + t[0];
+      const ay = m[4] * x + m[5] * y + m[6] * z + m[7] * w + t[1];
+      const az = m[8] * x + m[9] * y + m[10] * z + m[11] * w + t[2];
+      const aw = m[12] * x + m[13] * y + m[14] * z + m[15] * w + t[3];
+      const warp = variations[idx];
+      if (warp === null) {
+        nx = ax;
+        ny = ay;
+        nz = az;
+        nw = aw;
+      } else {
+        const q = warp(ax, ay, az, aw, aux);
+        nx = q[0];
+        ny = q[1];
+        nz = q[2];
+        nw = q[3];
+      }
+    }
+
+    const post = postRotations[idx];
+    if (post !== null) {
+      const rx = post[0] * nx + post[1] * ny + post[2] * nz + post[3] * nw;
+      const ry = post[4] * nx + post[5] * ny + post[6] * nz + post[7] * nw;
+      const rz = post[8] * nx + post[9] * ny + post[10] * nz + post[11] * nw;
+      const rw = post[12] * nx + post[13] * ny + post[14] * nz + post[15] * nw;
+      nx = rx;
+      ny = ry;
+      nz = rz;
+      nw = rw;
+    }
+
+    let escaped = false;
+    if (
+      !Number.isFinite(nx) ||
+      !Number.isFinite(ny) ||
+      !Number.isFinite(nz) ||
+      !Number.isFinite(nw) ||
+      Math.abs(nx) > ESCAPE_LIMIT ||
+      Math.abs(ny) > ESCAPE_LIMIT ||
+      Math.abs(nz) > ESCAPE_LIMIT ||
+      Math.abs(nw) > ESCAPE_LIMIT
+    ) {
+      nx = aux() - 0.5;
+      ny = aux() - 0.5;
+      nz = aux() - 0.5;
+      nw = aux() - 0.5;
+      escaped = true;
+    }
+    x = nx;
+    y = ny;
+    z = nz;
+    w = nw;
+    prevBase = escaped ? -1 : baseIdx;
+
+    let px = x;
+    let py = y;
+    let pz = z;
+    let pw = w;
+    if (preparedSchedule !== null) {
+      let sx = px;
+      let sy = py;
+      let sz = pz;
+      let sw = pw;
+      for (let d = 0; d < preparedSchedule.depth; d++) {
+        const b =
+          preparedSchedule.affines[pickScheduleIndex(preparedSchedule, rng)];
+        const bm = b.m;
+        const bt = b.t;
+        const bx = bm[0] * sx + bm[1] * sy + bm[2] * sz + bm[3] * sw + bt[0];
+        const by = bm[4] * sx + bm[5] * sy + bm[6] * sz + bm[7] * sw + bt[1];
+        const bz = bm[8] * sx + bm[9] * sy + bm[10] * sz + bm[11] * sw + bt[2];
+        const bw =
+          bm[12] * sx + bm[13] * sy + bm[14] * sz + bm[15] * sw + bt[3];
+        sx = bx;
+        sy = by;
+        sz = bz;
+        sw = bw;
+      }
+      if (
+        Number.isFinite(sx) &&
+        Number.isFinite(sy) &&
+        Number.isFinite(sz) &&
+        Number.isFinite(sw)
+      ) {
+        px = sx;
+        py = sy;
+        pz = sz;
+        pw = sw;
+      }
+    }
+    if (finalAffine !== null) {
+      const fm = finalAffine.m;
+      const ft = finalAffine.t;
+      let fx = fm[0] * px + fm[1] * py + fm[2] * pz + fm[3] * pw + ft[0];
+      let fy = fm[4] * px + fm[5] * py + fm[6] * pz + fm[7] * pw + ft[1];
+      let fz = fm[8] * px + fm[9] * py + fm[10] * pz + fm[11] * pw + ft[2];
+      let fw = fm[12] * px + fm[13] * py + fm[14] * pz + fm[15] * pw + ft[3];
+      if (finalWarp !== null) {
+        const q = finalWarp(fx, fy, fz, fw, aux);
+        fx = q[0];
+        fy = q[1];
+        fz = q[2];
+        fw = q[3];
+      }
+      if (
+        Number.isFinite(fx) &&
+        Number.isFinite(fy) &&
+        Number.isFinite(fz) &&
+        Number.isFinite(fw)
+      ) {
+        px = fx;
+        py = fy;
+        pz = fz;
+        pw = fw;
+      }
+    }
+
+    let writeIndex = pointTilingState.emitted;
+    visitPointTilingPointsAttemptBounded(
+      pointTilingPlan,
+      px,
+      py,
+      pz,
+      pw,
+      numPoints - writeIndex,
+      pointTilingState,
+      (imageX, imageY, imageZ, imageW, weight) => {
+        if (weight !== 1) {
+          throw new Error("Points tiling emitted a non-unit image weight");
+        }
+        const offset = writeIndex * 3;
+        positions[offset] = imageX;
+        positions[offset + 1] = imageY;
+        positions[offset + 2] = imageZ;
+        wBuffer[writeIndex] = imageW;
+        canonicalPositions[offset] = px;
+        canonicalPositions[offset + 1] = py;
+        canonicalPositions[offset + 2] = pz;
+        canonicalW[writeIndex] = pw;
+        transformIndices[writeIndex] = baseIdx;
+        writeIndex++;
+
+        minX = Math.min(minX, imageX);
+        maxX = Math.max(maxX, imageX);
+        minY = Math.min(minY, imageY);
+        maxY = Math.max(maxY, imageY);
+        minZ = Math.min(minZ, imageZ);
+        maxZ = Math.max(maxZ, imageZ);
+        minW = Math.min(minW, imageW);
+        maxW = Math.max(maxW, imageW);
+        canonicalMinX = Math.min(canonicalMinX, px);
+        canonicalMaxX = Math.max(canonicalMaxX, px);
+        canonicalMinY = Math.min(canonicalMinY, py);
+        canonicalMaxY = Math.max(canonicalMaxY, py);
+        canonicalMinZ = Math.min(canonicalMinZ, pz);
+        canonicalMaxZ = Math.max(canonicalMaxZ, pz);
+        canonicalMinW = Math.min(canonicalMinW, pw);
+        canonicalMaxW = Math.max(canonicalMaxW, pw);
+      },
+    );
+    if (writeIndex !== pointTilingState.emitted) {
+      throw new Error("Points tiling callback count disagrees with its state");
+    }
+  }
+
+  const count = pointTilingState.emitted;
+  const imageBounds =
+    count === 0
+      ? emptyBounds4()
+      : { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW };
+  const canonicalBounds =
+    count === 0
+      ? emptyBounds4()
+      : {
+          minX: canonicalMinX,
+          maxX: canonicalMaxX,
+          minY: canonicalMinY,
+          maxY: canonicalMaxY,
+          minZ: canonicalMinZ,
+          maxZ: canonicalMaxZ,
+          minW: canonicalMinW,
+          maxW: canonicalMaxW,
+        };
+  const canonicalCenter: Vec4 =
+    count === 0
+      ? [0, 0, 0, 0]
+      : [
+          (canonicalMinX + canonicalMaxX) / 2,
+          (canonicalMinY + canonicalMaxY) / 2,
+          (canonicalMinZ + canonicalMaxZ) / 2,
+          (canonicalMinW + canonicalMaxW) / 2,
+        ];
+
+  let radiusSquared = 0;
+  for (let i = 0; i < count; i++) {
+    const px = positions[i * 3];
+    const py = positions[i * 3 + 1];
+    const pz = positions[i * 3 + 2];
+    const pw = wBuffer[i];
+    const distanceSquared = px * px + py * py + pz * pz + pw * pw;
+    if (distanceSquared > radiusSquared) radiusSquared = distanceSquared;
+  }
+  const radius = Math.sqrt(radiusSquared);
+
+  return {
+    positions: positions.subarray(0, count * 3),
+    w: wBuffer.subarray(0, count),
+    canonicalPositions: canonicalPositions.subarray(0, count * 3),
+    canonicalW: canonicalW.subarray(0, count),
+    transformIndices: transformIndices.subarray(0, count),
+    count,
+    bounds: imageBounds,
+    canonicalBounds,
+    center: [0, 0, 0, 0],
+    canonicalCenter,
+    radius,
+    originRadius: radius,
+    pointTilingState,
   };
 }

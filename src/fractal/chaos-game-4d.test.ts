@@ -22,16 +22,192 @@ import {
   plotPoint4,
   prepareChaosGame4,
   runChaosGame4,
+  runChaosGame4TiledPoints,
   stepOrbit4,
 } from "./chaos-game-4d";
 import type { PreparedChaosGame4 } from "./chaos-game-4d";
-import { pentatope, sierpinskiTetrahedron } from "./presets";
+import {
+  fernSpongeIsolated,
+  pentatope,
+  sierpinskiTetrahedron,
+} from "./presets";
 import { prepareShapeSampler } from "./shapes";
 import type { ShapeSpec } from "./shapes";
 import { iterationRng, mulberry32 } from "./rng";
 import type { IterationRng, Rng } from "./rng";
 import { composeVariations4 } from "./variations4";
+import { resolvePointTilingPlan } from "./point-tiling";
+import { foldToChamber, resolveTiling, TILING_GROUP_INFO } from "./tiling";
 import type { Bounds4, Transform, Transform4, Vec4 } from "./types";
+
+describe("runChaosGame4TiledPoints", () => {
+  it("applies genuine 4D finite images before view reduction with an origin pivot", () => {
+    const source = foldToChamber(
+      TILING_GROUP_INFO.f4,
+      [0.13, -0.27, 0.41, 0.59],
+      [0, 0, 0, 0],
+    )! as Vec4;
+    const plan = resolvePointTilingPlan(resolveTiling({ group: "f4" }), 4)!;
+    const result = runChaosGame4TiledPoints(
+      [{ position: source, scale: [0, 0, 0, 0] }],
+      300,
+      plan,
+      mulberry32(7),
+    );
+
+    expect(result.count).toBe(300);
+    expect(result.positions).toHaveLength(900);
+    expect(result.w).toHaveLength(300);
+    expect(result.canonicalPositions).toHaveLength(900);
+    expect(result.canonicalW).toHaveLength(300);
+    expect(result.pointTilingState.attempts).toBe(2);
+    expect(result.center).toEqual([0, 0, 0, 0]);
+    expect(result.canonicalCenter).toEqual(source);
+    expect(result.originRadius).toBe(result.radius);
+    expect(
+      Array.from(result.w).some((value) => value !== Math.fround(source[3])),
+    ).toBe(true);
+    for (let i = 0; i < result.count; i++) {
+      expect(
+        Array.from(result.canonicalPositions.subarray(i * 3, i * 3 + 3)),
+      ).toEqual(source.slice(0, 3).map(Math.fround));
+      expect(result.canonicalW[i]).toBe(Math.fround(source[3]));
+      expect(result.transformIndices[i]).toBe(0);
+    }
+    let expectedRadius = 0;
+    for (let i = 0; i < result.count; i++) {
+      expectedRadius = Math.max(
+        expectedRadius,
+        Math.hypot(
+          result.positions[i * 3],
+          result.positions[i * 3 + 1],
+          result.positions[i * 3 + 2],
+          result.w[i],
+        ),
+      );
+    }
+    expect(result.radius).toBe(expectedRadius);
+  });
+
+  it("bounds minimum-scale lattice proposals and keeps unit-density source provenance", () => {
+    const plan = resolvePointTilingPlan(
+      resolveTiling({ kind: "lattice", cellScale: 1 }, 1),
+      4,
+    )!;
+    const source: Vec4 = [0.1, 0.2, 0.3, 0.4];
+    const result = runChaosGame4TiledPoints(
+      [{ position: source, scale: [0, 0, 0, 0] }],
+      64,
+      plan,
+      mulberry32(19),
+    );
+
+    expect(result.count).toBe(64);
+    expect(result.pointTilingState.attempts).toBeLessThanOrEqual(512);
+    expect(result.pointTilingState.candidateTests).toBe(
+      result.pointTilingState.attempts,
+    );
+    expect(result.pointTilingState.candidateTests).toBeLessThanOrEqual(512);
+    for (let i = 0; i < result.count; i++) {
+      expect(
+        Array.from(result.canonicalPositions.subarray(i * 3, i * 3 + 3)),
+      ).toEqual(source.slice(0, 3).map(Math.fround));
+      expect(result.canonicalW[i]).toBe(Math.fround(source[3]));
+    }
+  });
+
+  it("returns zero-length raw and canonical prefixes for empty content", () => {
+    const plan = resolvePointTilingPlan(
+      resolveTiling({
+        group: "a4",
+        clip: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.1 },
+              combine: "union",
+              pose: { offset: [100, 100, 100] },
+            },
+          ],
+        },
+      }),
+      4,
+    )!;
+    const result = runChaosGame4TiledPoints(
+      pentatopeGasket(),
+      9,
+      plan,
+      mulberry32(23),
+    );
+
+    expect(result.count).toBe(0);
+    expect(result.positions).toHaveLength(0);
+    expect(result.w).toHaveLength(0);
+    expect(result.canonicalPositions).toHaveLength(0);
+    expect(result.canonicalW).toHaveLength(0);
+    expect(result.pointTilingState.attempts).toBe(72);
+    expect(result.center).toEqual([0, 0, 0, 0]);
+    expect(result.canonicalCenter).toEqual([0, 0, 0, 0]);
+    expect(result.radius).toBe(0);
+    expect(result.originRadius).toBe(0);
+    expect(result.bounds).toEqual({
+      minX: 0,
+      maxX: 0,
+      minY: 0,
+      maxY: 0,
+      minZ: 0,
+      maxZ: 0,
+      minW: 0,
+      maxW: 0,
+    });
+  });
+
+  it("uses 4D source attempts for chi re-fuse and iteration numbering", () => {
+    const plan = resolvePointTilingPlan(
+      resolveTiling({
+        group: "a4",
+        clip: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.1 },
+              combine: "union",
+              pose: { offset: [100, 100, 100] },
+            },
+          ],
+        },
+      }),
+      4,
+    )!;
+    const transforms = fernSpongeIsolated().map(toTransform4);
+    const requested = 600;
+    const attempts = requested * 8;
+    const tiledPrimary = mulberry32(117);
+    const legacyPrimary = mulberry32(117);
+    const tiledIteration = iterationRng(991);
+    const legacyIteration = iterationRng(991);
+
+    const tiled = runChaosGame4TiledPoints(
+      transforms,
+      requested,
+      plan,
+      tiledPrimary,
+      null,
+      { order: 1, plane: "xz" },
+      tiledIteration,
+    );
+    runChaosGame4(
+      transforms,
+      attempts,
+      legacyPrimary,
+      null,
+      { order: 1, plane: "xz" },
+      legacyIteration,
+    );
+
+    expect(tiled.pointTilingState.attempts).toBe(attempts);
+    expect(tiledPrimary()).toBe(legacyPrimary());
+    expect(tiledIteration.draw()).toBe(legacyIteration.draw());
+  });
+});
 
 // presets4.ts (the 4D spike's native-Transform4 preset module) was deleted
 // once "4D" was unified into an ordinary Transform's optional `w`

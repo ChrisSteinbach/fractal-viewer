@@ -14,7 +14,11 @@ import {
   transformColors,
   wRampColor,
 } from "./color";
-import type { PositionAxisColors } from "./color";
+import type {
+  PointColorSource3D,
+  PointColorSource4D,
+  PositionAxisColors,
+} from "./color";
 import { buildPaletteLUT } from "./palette";
 import type { CustomPalette } from "./palette";
 import { runChaosGame } from "./chaos-game";
@@ -174,6 +178,113 @@ describe("buildColors", () => {
       [colors[6], colors[7], colors[8]],
       hslToRgb(2 / 3, 0.8, 0.6),
     );
+  });
+});
+
+describe("buildColors canonical source provenance", () => {
+  const transforms = defaultTransforms().slice(0, 2);
+  const imageResult: ChaosGameResult = {
+    positions: new Float32Array([-8, 9, -7, 8, -9, 7, -6, -5, 9, 6, 5, -9]),
+    transformIndices: new Uint8Array([0, 1, 0, 1]),
+    count: 4,
+    bounds: {
+      minX: -8,
+      maxX: 8,
+      minY: -9,
+      maxY: 9,
+      minZ: -9,
+      maxZ: 9,
+      minR: Math.sqrt(194),
+      maxR: Math.sqrt(194),
+    },
+  };
+  const source: PointColorSource3D = {
+    // Two plot-time images of each canonical source.
+    positions: new Float32Array([0, -1, 0, 0, -1, 0, 2, 1, 4, 2, 1, 4]),
+    bounds: {
+      minX: 0,
+      maxX: 2,
+      minY: -1,
+      maxY: 1,
+      minZ: 0,
+      maxZ: 4,
+      minR: 1,
+      maxR: Math.sqrt(21),
+    },
+  };
+  const axes: PositionAxisColors = {
+    x: [0.2, 0.9, 0.1],
+    y: [0.8, 0.1, 0.4],
+    z: [0.1, 0.3, 1],
+  };
+
+  it.each(["height", "radius", "position"] as const)(
+    "uses canonical %s coordinates and bounds for every replicated image",
+    (mode) => {
+      const actual = buildColors(
+        imageResult,
+        transforms,
+        mode,
+        1.7,
+        "ember",
+        axes,
+        source,
+      );
+      const canonicalResult: ChaosGameResult = {
+        ...imageResult,
+        positions: source.positions,
+        bounds: source.bounds,
+      };
+      expect(actual).toEqual(
+        buildColors(canonicalResult, transforms, mode, 1.7, "ember", axes),
+      );
+      expect(Array.from(actual.slice(0, 3))).toEqual(
+        Array.from(actual.slice(3, 6)),
+      );
+      expect(Array.from(actual.slice(6, 9))).toEqual(
+        Array.from(actual.slice(9, 12)),
+      );
+    },
+  );
+
+  it("keeps Transform keyed to the output result's transform indices", () => {
+    const withSource = buildColors(
+      imageResult,
+      transforms,
+      "transform",
+      1,
+      "legacy",
+      undefined,
+      source,
+    );
+    expect(withSource).toEqual(
+      buildColors(imageResult, transforms, "transform"),
+    );
+    expect(Array.from(withSource.slice(0, 3))).not.toEqual(
+      Array.from(withSource.slice(3, 6)),
+    );
+  });
+
+  it("keeps every absent-source mode exactly on the original path", () => {
+    for (const mode of [
+      "transform",
+      "height",
+      "radius",
+      "position",
+      "uniform",
+    ] as const) {
+      expect(
+        buildColors(
+          imageResult,
+          transforms,
+          mode,
+          1.7,
+          "ember",
+          axes,
+          undefined,
+        ),
+      ).toEqual(buildColors(imageResult, transforms, mode, 1.7, "ember", axes));
+    }
   });
 });
 
@@ -1023,6 +1134,170 @@ describe("buildColors4", () => {
     expect(colors[3]).toBeCloseTo(warm[0], 5);
     expect(colors[4]).toBeCloseTo(warm[1], 5);
     expect(colors[5]).toBeCloseTo(warm[2], 5);
+  });
+});
+
+describe("buildColors4 canonical source provenance", () => {
+  const imageResult: ChaosGame4Result = {
+    positions: new Float32Array([-8, 9, -7, 8, -9, 7, -6, -5, 9, 6, 5, -9]),
+    w: new Float32Array([-8, 8, -6, 6]),
+    transformIndices: new Uint8Array([0, 1, 0, 1]),
+    count: 4,
+    bounds: {
+      minX: -8,
+      maxX: 8,
+      minY: -9,
+      maxY: 9,
+      minZ: -9,
+      maxZ: 9,
+      minW: -8,
+      maxW: 8,
+    },
+    center: [0, 0, 0, 0],
+    radius: 20,
+    originRadius: 20,
+  };
+  const source: PointColorSource4D = {
+    // Two raw-4D images of each canonical source.
+    positions: new Float32Array([0, -1, 0, 0, -1, 0, 2, 1, 4, 2, 1, 4]),
+    w: new Float32Array([2, 2, 6, 6]),
+    bounds: {
+      minX: 0,
+      maxX: 2,
+      minY: -1,
+      maxY: 1,
+      minZ: 0,
+      maxZ: 4,
+      minW: 2,
+      maxW: 6,
+    },
+    center: [0, -1, 0, 2],
+  };
+  const axes: PositionAxisColors = {
+    x: [0.2, 0.9, 0.1],
+    y: [0.8, 0.1, 0.4],
+    z: [0.1, 0.3, 1],
+  };
+
+  it.each(["height", "radius", "position"] as const)(
+    "uses canonical %s coordinates for every replicated raw-4D image",
+    (mode) => {
+      const actual = buildColors4(
+        imageResult,
+        2,
+        mode,
+        "ember",
+        undefined,
+        1.7,
+        axes,
+        source,
+      );
+      const canonicalResult: ChaosGame4Result = {
+        ...imageResult,
+        positions: source.positions,
+        w: source.w,
+        bounds: source.bounds,
+        center: source.center,
+      };
+      expect(actual).toEqual(
+        buildColors4(canonicalResult, 2, mode, "ember", undefined, 1.7, axes),
+      );
+      expect(Array.from(actual.slice(0, 3))).toEqual(
+        Array.from(actual.slice(3, 6)),
+      );
+      expect(Array.from(actual.slice(6, 9))).toEqual(
+        Array.from(actual.slice(9, 12)),
+      );
+    },
+  );
+
+  it("computes Radius from canonical w and center, not the image geometry", () => {
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 10, 0, 0]),
+      w: new Float32Array([0, 0, 0]),
+      transformIndices: new Uint8Array(3),
+      count: 3,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 10,
+      originRadius: 10,
+    };
+    const canonical: PointColorSource4D = {
+      positions: new Float32Array([3, 0, 0, 3, 0, 0, 3, 0, 0]),
+      w: new Float32Array([5, 7, 9]),
+      bounds: {
+        minX: 3,
+        maxX: 3,
+        minY: 0,
+        maxY: 0,
+        minZ: 0,
+        maxZ: 0,
+        minW: 5,
+        maxW: 9,
+      },
+      center: [3, 0, 0, 5],
+    };
+    const actual = buildColors4(
+      result,
+      1,
+      "radius",
+      "legacy",
+      undefined,
+      1,
+      undefined,
+      canonical,
+    );
+    const expectedResult: ChaosGame4Result = {
+      ...result,
+      positions: canonical.positions,
+      w: canonical.w,
+      bounds: canonical.bounds,
+      center: canonical.center,
+    };
+    expect(actual).toEqual(buildColors4(expectedResult, 1, "radius"));
+    expect(actual).not.toEqual(buildColors4(result, 1, "radius"));
+  });
+
+  it("keeps Transform keyed to the output result's transform indices", () => {
+    const withSource = buildColors4(
+      imageResult,
+      2,
+      "transform",
+      "legacy",
+      undefined,
+      1,
+      undefined,
+      source,
+    );
+    expect(withSource).toEqual(buildColors4(imageResult, 2, "transform"));
+    expect(Array.from(withSource.slice(0, 3))).not.toEqual(
+      Array.from(withSource.slice(3, 6)),
+    );
+  });
+
+  it("keeps every absent-source mode exactly on the original path", () => {
+    for (const mode of [
+      "transform",
+      "height",
+      "radius",
+      "position",
+      "uniform",
+    ] as const) {
+      expect(
+        buildColors4(
+          imageResult,
+          2,
+          mode,
+          "ember",
+          undefined,
+          1.7,
+          axes,
+          undefined,
+        ),
+      ).toEqual(
+        buildColors4(imageResult, 2, mode, "ember", undefined, 1.7, axes),
+      );
+    }
   });
 });
 

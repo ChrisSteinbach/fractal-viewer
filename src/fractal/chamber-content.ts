@@ -9,7 +9,13 @@ import {
   type ResolvedTiling,
 } from "./tiling";
 import { mulberry32 } from "./rng";
-import type { Transform, Vec3, Vec4 } from "./types";
+import type {
+  HybridSchedule,
+  SymmetryParams,
+  Transform,
+  Vec3,
+  Vec4,
+} from "./types";
 
 /**
  * Dependency-free measurement of WHERE a tiled system's chamber content
@@ -51,6 +57,7 @@ export const CHAMBER_CONTENT_FIT_SAMPLES = 20_000;
 export const TILING_CLIP_POSE_SCALE = 1;
 
 const CHAMBER_CONTENT_FIT_SEED = 0x7a7c;
+const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
 
 /** The one fold the renderer applies for this resolved tiling, per point. */
 function foldFor(
@@ -77,13 +84,16 @@ function foldFor(
  * fall back to not posing). FORWARD systems must NOT use this: their chaos
  * game samples escape-reset debris near the origin, not the escape set —
  * the routing arms pass the bailout ball's {origin, boundingRadius} fit
- * instead.
+ * instead. Symmetry and the scheduled post-word are part of the plotted
+ * system, so both seeded passes consume the same full request semantics.
  */
 export function chamberContentFit(
   transforms: Transform[],
   finalTransform: Transform | null,
   tiling: ResolvedTiling,
   fourD: boolean,
+  symmetry: SymmetryParams = NO_SYMMETRY,
+  schedule: HybridSchedule | null = null,
   samples = CHAMBER_CONTENT_FIT_SAMPLES,
 ): ChamberContentFit | null {
   const rng = mulberry32(CHAMBER_CONTENT_FIT_SEED);
@@ -94,7 +104,15 @@ export function chamberContentFit(
   if (fourD) {
     const transforms4 = transforms.map(toTransform4);
     const final4 = finalTransform ? toTransform4(finalTransform) : null;
-    const run = runChaosGame4(transforms4, samples, rng, final4);
+    const run = runChaosGame4(
+      transforms4,
+      samples,
+      rng,
+      final4,
+      symmetry,
+      undefined,
+      schedule,
+    );
     for (let i = 0; i < run.count; i++) {
       const p: Vec4 = [
         run.positions[i * 3],
@@ -110,7 +128,15 @@ export function chamberContentFit(
       foldedCount++;
     }
   } else {
-    const run = runChaosGame(transforms, samples, rng, finalTransform);
+    const run = runChaosGame(
+      transforms,
+      samples,
+      rng,
+      finalTransform,
+      symmetry,
+      undefined,
+      schedule,
+    );
     for (let i = 0; i < run.count; i++) {
       const p: Vec3 = [
         run.positions[i * 3],
@@ -147,6 +173,9 @@ export function chamberContentFit(
       samples,
       mulberry32(CHAMBER_CONTENT_FIT_SEED),
       final4,
+      symmetry,
+      undefined,
+      schedule,
     );
     for (let i = 0; i < run.count; i++) {
       const p: Vec4 = [
@@ -164,6 +193,9 @@ export function chamberContentFit(
       samples,
       mulberry32(CHAMBER_CONTENT_FIT_SEED),
       finalTransform,
+      symmetry,
+      undefined,
+      schedule,
     );
     for (let i = 0; i < run.count; i++) {
       const p: Vec3 = [

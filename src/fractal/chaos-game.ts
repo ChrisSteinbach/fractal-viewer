@@ -7,6 +7,12 @@ import { composeVariations } from "./variations";
 import type { VariationBlend } from "./variations";
 import { mulberry32 } from "./rng";
 import type { IterationRng, Rng } from "./rng";
+import {
+  createPointTilingPointsState,
+  pointTilingPointsAttemptLimit,
+  visitPointTilingPointsAttemptBounded,
+} from "./point-tiling";
+import type { PointTilingPlan, PointTilingPointsState } from "./point-tiling";
 import type {
   Bounds,
   HybridSchedule,
@@ -25,6 +31,18 @@ export interface ChaosGameResult {
   count: number;
   /** Spatial extent of the cloud, used for normalized coloring. */
   bounds: Bounds;
+}
+
+/** Points-only tiled recording result. Image positions and canonical source
+ * positions are parallel arrays: every image copies the plotted source that
+ * supplied its transform/color attribution. */
+export interface TiledChaosGameResult extends ChaosGameResult {
+  /** Canonical post-schedule/post-lens xyz copied once per emitted image. */
+  canonicalPositions: Float32Array;
+  /** Bounds of those canonical positions, independent of replicated images. */
+  canonicalBounds: Bounds;
+  /** Deterministic equal-density selection state at the terminal cap. */
+  pointTilingState: PointTilingPointsState;
 }
 
 /**
@@ -1635,5 +1653,309 @@ export function runChaosGame(
     transformIndices,
     count: numPoints,
     bounds: { minX, maxX, minY, maxY, minZ, maxZ, minR, maxR },
+  };
+}
+
+/**
+ * Record bounded point-space tiling images without ever feeding an image back
+ * into the chaos orbit. The ordinary orbit, scheduled post-word and final lens
+ * are identical to {@link runChaosGame}; only the recording sink differs.
+ * `numPoints` is an output capacity, while canonical source attempts stop at
+ * the shared `8N` cap. Tiling selection consumes no RNG.
+ */
+export function runChaosGameTiledPoints(
+  transforms: Transform[],
+  numPoints: number,
+  pointTilingPlan: PointTilingPlan,
+  rng: Rng = Math.random,
+  finalTransform: Transform | null = null,
+  symmetry: SymmetryParams = NO_SYMMETRY,
+  iterationRng?: IterationRng,
+  schedule: HybridSchedule | null = null,
+): TiledChaosGameResult {
+  if (pointTilingPlan.dimension !== 3) {
+    throw new RangeError("3D chaos game requires a 3D point-tiling plan");
+  }
+  const pointTilingState = createPointTilingPointsState();
+  if (transforms.length === 0 || numPoints <= 0) {
+    return {
+      positions: new Float32Array(0),
+      canonicalPositions: new Float32Array(0),
+      transformIndices: new Uint8Array(0),
+      count: 0,
+      bounds: emptyBounds(),
+      canonicalBounds: emptyBounds(),
+      pointTilingState,
+    };
+  }
+
+  const prepared = prepareChaosGame(
+    transforms,
+    finalTransform,
+    symmetry,
+    schedule,
+  );
+  const positions = new Float32Array(numPoints * 3);
+  const canonicalPositions = new Float32Array(numPoints * 3);
+  const transformIndices = new Uint8Array(numPoints);
+
+  let x = rng() - 0.5;
+  let y = rng() - 0.5;
+  let z = rng() - 0.5;
+  const aux = iterationRng ? iterationRng.draw : rng;
+  const chaosOn = prepared.chaosRows !== null;
+  let prevBase = -1;
+
+  for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+    if (iterationRng) iterationRng.begin(i);
+    const s = stepOrbit(prepared, x, y, z, rng, aux, prevBase);
+    x = s.x;
+    y = s.y;
+    z = s.z;
+    prevBase = s.escaped ? -1 : s.index;
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let minR = Infinity;
+  let maxR = -Infinity;
+  let canonicalMinX = Infinity;
+  let canonicalMaxX = -Infinity;
+  let canonicalMinY = Infinity;
+  let canonicalMaxY = -Infinity;
+  let canonicalMinZ = Infinity;
+  let canonicalMaxZ = -Infinity;
+  let canonicalMinR = Infinity;
+  let canonicalMaxR = -Infinity;
+
+  const { affines, variations, postRotations, finalAffine, finalWarp } =
+    prepared;
+  const { baseTransformCount, schedule: preparedSchedule, emitters } = prepared;
+  const emitterStream = createEmitterStream();
+  const emitterDraw = emitterStream.draw;
+  const attemptLimit = pointTilingPointsAttemptLimit(numPoints);
+
+  for (
+    let sourceAttempt = 0;
+    sourceAttempt < attemptLimit &&
+    pointTilingState.emitted < numPoints &&
+    (pointTilingPlan.kind === "finite" ||
+      pointTilingState.candidateTests < attemptLimit);
+    sourceAttempt++
+  ) {
+    if (
+      chaosOn &&
+      sourceAttempt > 0 &&
+      sourceAttempt % CHAOS_SUB_ORBIT_POINTS === 0
+    ) {
+      const sub = sourceAttempt / CHAOS_SUB_ORBIT_POINTS;
+      if (iterationRng) iterationRng.begin(chaosRefuseIteration(sub));
+      x = aux() - 0.5;
+      y = aux() - 0.5;
+      z = aux() - 0.5;
+      prevBase = -1;
+      for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+        if (iterationRng) {
+          iterationRng.begin(chaosRefuseIteration(sub) + 1 + k);
+        }
+        const s = stepOrbit(prepared, x, y, z, rng, aux, prevBase);
+        x = s.x;
+        y = s.y;
+        z = s.z;
+        prevBase = s.escaped ? -1 : s.index;
+      }
+    }
+
+    if (iterationRng) {
+      iterationRng.begin(
+        chaosOn
+          ? chaosPointIteration(sourceAttempt)
+          : WARMUP_ITERATIONS + sourceAttempt,
+      );
+    }
+    const idx = pickIndex(prepared, rng, prevBase);
+    const baseIdx = idx % baseTransformCount;
+    const emitter = emitters !== null ? emitters[baseIdx] : null;
+    let nx: number;
+    let ny: number;
+    let nz: number;
+    if (emitter !== null) {
+      emitterStream.reseed(emitterSeed(rng));
+      const sample = emitter(emitterDraw);
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      nx = m[0] * sample[0] + m[1] * sample[1] + m[2] * sample[2] + t[0];
+      ny = m[3] * sample[0] + m[4] * sample[1] + m[5] * sample[2] + t[1];
+      nz = m[6] * sample[0] + m[7] * sample[1] + m[8] * sample[2] + t[2];
+    } else {
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      const ax = m[0] * x + m[1] * y + m[2] * z + t[0];
+      const ay = m[3] * x + m[4] * y + m[5] * z + t[1];
+      const az = m[6] * x + m[7] * y + m[8] * z + t[2];
+      const warp = variations[idx];
+      if (warp === null) {
+        nx = ax;
+        ny = ay;
+        nz = az;
+      } else {
+        const q = warp(ax, ay, az, aux);
+        nx = q[0];
+        ny = q[1];
+        nz = q[2];
+      }
+    }
+
+    const post = postRotations[idx];
+    if (post !== null) {
+      const rx = post[0] * nx + post[1] * ny + post[2] * nz;
+      const ry = post[3] * nx + post[4] * ny + post[5] * nz;
+      const rz = post[6] * nx + post[7] * ny + post[8] * nz;
+      nx = rx;
+      ny = ry;
+      nz = rz;
+    }
+
+    let escaped = false;
+    if (
+      !Number.isFinite(nx) ||
+      !Number.isFinite(ny) ||
+      !Number.isFinite(nz) ||
+      Math.abs(nx) > ESCAPE_LIMIT ||
+      Math.abs(ny) > ESCAPE_LIMIT ||
+      Math.abs(nz) > ESCAPE_LIMIT
+    ) {
+      nx = aux() - 0.5;
+      ny = aux() - 0.5;
+      nz = aux() - 0.5;
+      escaped = true;
+    }
+    x = nx;
+    y = ny;
+    z = nz;
+    prevBase = escaped ? -1 : baseIdx;
+
+    let px = x;
+    let py = y;
+    let pz = z;
+    if (preparedSchedule !== null) {
+      let sx = px;
+      let sy = py;
+      let sz = pz;
+      for (let d = 0; d < preparedSchedule.depth; d++) {
+        const b =
+          preparedSchedule.affines[pickScheduleIndex(preparedSchedule, rng)];
+        const bm = b.m;
+        const bt = b.t;
+        const bx = bm[0] * sx + bm[1] * sy + bm[2] * sz + bt[0];
+        const by = bm[3] * sx + bm[4] * sy + bm[5] * sz + bt[1];
+        const bz = bm[6] * sx + bm[7] * sy + bm[8] * sz + bt[2];
+        sx = bx;
+        sy = by;
+        sz = bz;
+      }
+      if (Number.isFinite(sx) && Number.isFinite(sy) && Number.isFinite(sz)) {
+        px = sx;
+        py = sy;
+        pz = sz;
+      }
+    }
+    if (finalAffine !== null) {
+      const fm = finalAffine.m;
+      const ft = finalAffine.t;
+      let fx = fm[0] * px + fm[1] * py + fm[2] * pz + ft[0];
+      let fy = fm[3] * px + fm[4] * py + fm[5] * pz + ft[1];
+      let fz = fm[6] * px + fm[7] * py + fm[8] * pz + ft[2];
+      if (finalWarp !== null) {
+        const q = finalWarp(fx, fy, fz, aux);
+        fx = q[0];
+        fy = q[1];
+        fz = q[2];
+      }
+      if (Number.isFinite(fx) && Number.isFinite(fy) && Number.isFinite(fz)) {
+        px = fx;
+        py = fy;
+        pz = fz;
+      }
+    }
+
+    let writeIndex = pointTilingState.emitted;
+    visitPointTilingPointsAttemptBounded(
+      pointTilingPlan,
+      px,
+      py,
+      pz,
+      0,
+      numPoints - writeIndex,
+      pointTilingState,
+      (imageX, imageY, imageZ, _imageW, weight) => {
+        if (weight !== 1) {
+          throw new Error("Points tiling emitted a non-unit image weight");
+        }
+        const offset = writeIndex * 3;
+        positions[offset] = imageX;
+        positions[offset + 1] = imageY;
+        positions[offset + 2] = imageZ;
+        canonicalPositions[offset] = px;
+        canonicalPositions[offset + 1] = py;
+        canonicalPositions[offset + 2] = pz;
+        transformIndices[writeIndex] = baseIdx;
+        writeIndex++;
+
+        minX = Math.min(minX, imageX);
+        maxX = Math.max(maxX, imageX);
+        minY = Math.min(minY, imageY);
+        maxY = Math.max(maxY, imageY);
+        minZ = Math.min(minZ, imageZ);
+        maxZ = Math.max(maxZ, imageZ);
+        const imageR = Math.hypot(imageX, imageY, imageZ);
+        minR = Math.min(minR, imageR);
+        maxR = Math.max(maxR, imageR);
+        canonicalMinX = Math.min(canonicalMinX, px);
+        canonicalMaxX = Math.max(canonicalMaxX, px);
+        canonicalMinY = Math.min(canonicalMinY, py);
+        canonicalMaxY = Math.max(canonicalMaxY, py);
+        canonicalMinZ = Math.min(canonicalMinZ, pz);
+        canonicalMaxZ = Math.max(canonicalMaxZ, pz);
+        const sourceR = Math.hypot(px, py, pz);
+        canonicalMinR = Math.min(canonicalMinR, sourceR);
+        canonicalMaxR = Math.max(canonicalMaxR, sourceR);
+      },
+    );
+    if (writeIndex !== pointTilingState.emitted) {
+      throw new Error("Points tiling callback count disagrees with its state");
+    }
+  }
+
+  const count = pointTilingState.emitted;
+  return {
+    positions: positions.subarray(0, count * 3),
+    canonicalPositions: canonicalPositions.subarray(0, count * 3),
+    transformIndices: transformIndices.subarray(0, count),
+    count,
+    bounds:
+      count === 0
+        ? emptyBounds()
+        : { minX, maxX, minY, maxY, minZ, maxZ, minR, maxR },
+    canonicalBounds:
+      count === 0
+        ? emptyBounds()
+        : {
+            minX: canonicalMinX,
+            maxX: canonicalMaxX,
+            minY: canonicalMinY,
+            maxY: canonicalMaxY,
+            minZ: canonicalMinZ,
+            maxZ: canonicalMaxZ,
+            minR: canonicalMinR,
+            maxR: canonicalMaxR,
+          },
+    pointTilingState,
   };
 }
