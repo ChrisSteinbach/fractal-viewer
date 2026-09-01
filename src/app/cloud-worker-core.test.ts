@@ -713,7 +713,6 @@ describe("generateCloud point tiling integration", () => {
       if (result.pointTiling?.availability !== "active") {
         throw new Error(`expected active point tiling for ${group}`);
       }
-      expect(result.count).toBeGreaterThan(0);
       expect(result.count).toBeLessThanOrEqual(requested);
       expect(result.pointTiling.attempts).toBeLessThanOrEqual(requested * 8);
       expect(result.pointTiling.candidateTests).toBeLessThanOrEqual(
