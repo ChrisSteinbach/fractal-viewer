@@ -920,8 +920,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     are real-browser gated by `scripts/tiling-ui.verify.mjs`.
     `mirroredLattice` and `mirroredLattice4` are the lattice arm's paired
     3D/4D showcase presets.
-    Points/Flame/Solid remain untiled
-    with an adjacent explanation. Balloon, kaleidoscope and 4D slab remain
+    Points/Flame/Solid remain untiled with an adjacent explanation; their
+    frozen lift filters after schedule/final, uses 256/32 acceptance-credit
+    caps and a raw-space 8R->10R carrier before 4D view reduction.
+    Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic
     opRep is REFUSED for overshoot and a wall clamp for false-zero geometry;
