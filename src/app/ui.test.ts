@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
-import type { PointTilingOutcome } from "./point-tiling-outcome";
+import type {
+  FlameTilingOutcome,
+  PointTilingOutcome,
+} from "./point-tiling-outcome";
 import {
   beginSampledSolidStatus,
   endSampledSolidStatus,
@@ -10457,6 +10460,7 @@ describe("Ui finite tiling controls", () => {
       accepted: 1,
       candidateTests: 0,
     });
+    ui.setFlameTilingOutcome({ availability: "active", kind: "finite" });
 
     for (const renderMode of ["points", "flame", "solid", "surface"] as const) {
       ui.updateLabels({ ...tiled, renderMode });
@@ -10464,9 +10468,11 @@ describe("Ui finite tiling controls", () => {
       expect(el("tilingTimingHint").textContent, renderMode).toContain(
         renderMode === "points"
           ? "regenerate Points automatically"
-          : renderMode === "surface"
-            ? "restart Surface"
-            : "stays untiled",
+          : renderMode === "flame"
+            ? "restart Flame from the same seed and frozen view"
+            : renderMode === "surface"
+              ? "restart Surface"
+              : "Solid stays untiled",
       );
       expect(el("tilingNote").textContent, renderMode).toContain(
         renderMode === "surface"
@@ -10474,10 +10480,95 @@ describe("Ui finite tiling controls", () => {
           : renderMode === "points"
             ? "Active in Points"
             : renderMode === "flame"
-              ? "Flame shows the untiled"
-              : "Solid shows the untiled",
+              ? "Active in Flame"
+              : "Solid stays untiled",
       );
     }
+  });
+
+  it("distinguishes Flame preparation, applying edits, refusal, and active results", () => {
+    const ui = new Ui(document);
+    const flame = {
+      ...setTiling(initialState(true), { group: "a3" }),
+      renderMode: "flame" as const,
+    };
+
+    ui.updateLabels(flame);
+    expect(el("tilingNote").textContent).toMatch(/Preparing in Flame/i);
+
+    ui.setFlameTilingOutcome(undefined, true);
+    ui.updateLabels(flame);
+    expect(el("tilingNote").textContent).toMatch(
+      /Preparing in Flame.*same seed and frozen view/i,
+    );
+
+    ui.setFlameTilingOutcome({ availability: "active", kind: "finite" });
+    ui.updateLabels(flame);
+    expect(el("tilingNote").textContent).toMatch(
+      /Active in Flame.*multiplicity-correct weighted density/i,
+    );
+
+    // An omitted outcome on a pending edit retains the landed result only as
+    // the association needed to say this is an application, not first prep.
+    ui.setFlameTilingOutcome(undefined, true);
+    ui.updateLabels(flame);
+    expect(el("tilingNote").textContent).toMatch(
+      /Applying in Flame.*same seed and frozen view/i,
+    );
+
+    ui.setFlameTilingOutcome({
+      availability: "refused",
+      note: "Forward escape debris is not the rendered set.",
+    });
+    ui.updateLabels(flame);
+    expect(el("tilingNote").textContent).toMatch(
+      /Unavailable in Flame.*Forward escape debris/i,
+    );
+
+    ui.setFlameTilingOutcome({ availability: "off" });
+    ui.updateLabels(flame);
+    expect(el("tilingNote").textContent).toMatch(
+      /Applying in Flame.*worker's untiled result.*same seed and frozen view/i,
+    );
+  });
+
+  it.each([
+    [
+      setTiling(
+        { ...initialState(true), transforms: nonFlatTransforms() },
+        { group: "a4" },
+      ),
+      { availability: "active", kind: "finite" },
+      /raw reflected images.*frozen rotor and soft slice/i,
+    ],
+    [
+      setTiling(
+        { ...initialState(true), transforms: nonFlatTransforms() },
+        { kind: "lattice", cellScale: 1.5 },
+      ),
+      { availability: "active", kind: "lattice" },
+      /raw lattice images.*frozen rotor and soft slice/i,
+    ],
+  ] satisfies ReadonlyArray<[AppState, FlameTilingOutcome, RegExp]>)(
+    "describes 4D Flame tiling as raw-image rotor and soft-slice reduction %#",
+    (state, outcome, wording) => {
+      const ui = new Ui(document);
+      ui.setFlameTilingOutcome(outcome);
+      ui.updateLabels({ ...state, renderMode: "flame" });
+
+      expect(el("tilingNote").textContent).toContain("Active in Flame");
+      expect(el("tilingNote").textContent).toMatch(wording);
+      expect(el("tilingNote").textContent).not.toMatch(/zero-thickness/i);
+    },
+  );
+
+  it("names the Off consumers while keeping Solid explicitly untiled", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(initialState(true));
+
+    expect(el("tilingNote").textContent).toBe(
+      "Off — Points, Flame, and Surface render the original attractor once; Solid stays untiled.",
+    );
   });
 
   it("offers exactly the fixed finite groups and the analytic clip subset", () => {
