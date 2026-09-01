@@ -919,9 +919,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     and workflow behavior are real-browser gated by `scripts/tiling-ui.verify.mjs`.
     Points SHIPS tiled in 3D/4D after schedule/final: bounded recorders keep
     canonical color, raw 4D, the 8N cap and explicit terminal status. Flame CPU
-    SHIPS the shared 32-weighted visitor in both dimensions; active tiling
-    restarts from one seed/frozen view and forces CPU until its WGSL lift.
-    GPU/backdrop/Solid stay untiled; absent/refused stays literal legacy.
+    and both WGSL twins SHIP the shared 32-weighted visitor; active tiling
+    restarts from one seed/frozen view and remains GPU-eligible. Backdrop/Solid
+    stay untiled; absent/refused stays literal legacy.
     Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic

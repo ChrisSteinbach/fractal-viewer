@@ -914,11 +914,20 @@ specialization.
 
 The lattice CDF packer quantizes every positive interval without collapse:
 endpoint and mass are exact f32 high/low-16 pairs, endpoints are strictly
-increasing, and the final endpoint is exactly 2^32. F4 bounds a finite splat at
-1,152; the x256 weight scale therefore caps one weight add at 294,912, and the
-additional x256 color scale caps one color add at 75,497,472. Both fit u32
-before the existing emulated-u64 accumulation; every packed lattice plan is
-additionally checked below its 740 weight ceiling.
+increasing, and the final endpoint is exactly 2^32. Selection and importance
+weight both read that quantized mass, so rounding cannot bias the estimator or
+turn a tiny ideal ceiling into a division by zero. Every scalar is rejected if
+it cannot remain finite on the f32 wire. Stabilizer tests retain the canonical
+tight relative epsilon and add only a four-ULP f32 input/dot-product envelope,
+which keeps all six groups' generic/wall/edge/vertex masks intact.
+
+F4 bounds a finite splat at 1,152; the x256 weight scale therefore caps one
+weight add at 294,912, and the additional x256 color scale caps one color add
+at 75,497,472. Both fit u32 before the existing emulated-u64 accumulation;
+every packed lattice plan is additionally checked below its 740 weight
+ceiling. Even the adversarial 2B-iteration, 4x-area export with a conservative
+2x dispatch overshoot puts at most 4,831,838,208,000,000,000 in one color
+lane, below 2^64.
 
 MEASURED (targeted agreement, verified Mesa Intel Iris Xe): finite 3D passed
 at MAE 0.0065 and density TV 0.0163; minimum-scale lattice 3D passed at MAE
@@ -928,6 +937,12 @@ MAE 2.790 and TV 0.0471 with near-zero signed bias under threshold 5. These
 four rows exercise finite matrices, lattice CDF selection, source-owned color,
 true raw-4D action, image-owned w-ramp and the soft slice on the production
 backend.
+
+The same verified-Iris sweep gates the remaining seams: maximum-scale lattice
+3D passed at MAE 0.132 / TV 0.0154; an excluding analytic clip completed with
+zero hits on both engines; and the legal emitter + xaos + schedule + final-lens
+composition passed at MAE 0.00695 / TV 0.00523 while sharing binding 7's real
+emitter prefix with the appended plan.
 
 ### Legal combinations and edit timing
 

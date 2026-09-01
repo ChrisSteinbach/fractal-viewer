@@ -100,6 +100,14 @@
  * three view commands and another terminal frame in the original worker, and
  * the posed tiled/Off frames differed by 48.41% (the view changed 21.72%).
  *
+ * POST-LIFT MEASURED 2026-09-01 on verified Mesa Intel Iris Xe with
+ * `--scope=flame --settle=120000`: both fixtures selected the active WebGPU
+ * backend (`intel gen-12lp`) without page, console or app errors. Mirrored
+ * Lattice completed in 6.6s, survived a rapid latest-wins edit, and differed
+ * from the same-seed Off frame by 27.65%. Tiled Pentatope completed in 8.3s,
+ * kept rotor/slice edits in the original Worker, and differed from Off by
+ * 42.46% (the posed 4D view changed 19.69%).
+ *
  * Usage (build + `npm run preview` first):
  *   node scripts/tiling-ui.verify.mjs
  *   node scripts/tiling-ui.verify.mjs --mode=x11::0
