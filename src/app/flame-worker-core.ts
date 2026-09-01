@@ -479,9 +479,6 @@ export type FlameWorkerEvent =
        * software rasterization must not pass as a normal GPU render.
        * Absent for CPU backends. */
       software?: boolean;
-      /** Present when CPU was selected intentionally for a document feature,
-       * rather than because GPU creation/accumulation failed. */
-      forcedBy?: "tiling";
     }
   | {
       /** Worker-resolved point-space tiling availability for the active
@@ -842,6 +839,9 @@ export interface GpuBackendRequest {
    * start command — `packGpuSystem` appends B's affine slots and the kernel
    * runs the plot-time post-word; absent/`null` is byte-identical. */
   schedule?: HybridSchedule | null;
+  /** Worker-resolved point-space tiling plan for this accumulation. `null`/
+   * absent preserves the historical one-attractor kernel path. */
+  pointTilingPlan?: PointTilingPlan | null;
   /** ACCUMULATION resolution (display size x effective supersample) — NOT
    * the display resolution `start.width`/`height` carry. */
   width: number;
@@ -902,6 +902,9 @@ export interface GpuBackendRequest4 {
    * `packGpuSystem4` lifts it exactly as `prepareSchedule4` lifts the CPU
    * oracle's; absent/`null` is byte-identical. */
   schedule?: HybridSchedule | null;
+  /** Worker-resolved 4D point-space tiling plan. `null`/absent preserves the
+   * historical one-attractor kernel path. */
+  pointTilingPlan?: PointTilingPlan | null;
   /** The current accumulation's 4D view (signed-w normalization + soft slice) — see
    * `project4.ts`'s `FourDView`. */
   view: FourDView;
@@ -1822,18 +1825,13 @@ export class FlameWorkerSession {
    * (which acts on it) and `computeEffectiveSupersample` (whose GPU-size
    * clamp must apply exactly when the GPU will be attempted — clamping a
    * CPU-only accumulation by a GPU ceiling would shrink it for no reason).
-   * Chaos rows and shape emitters no longer affect this choice because their
-   * WGSL twins consume the same wires. Point-space tiling remains the one
-   * document gate until its separate kernel lift lands.
+   * Chaos rows, shape emitters, and point-space tiling no longer affect this
+   * choice because their WGSL twins consume the same worker-resolved inputs.
    */
   private gpuEligible(): boolean {
     return (
       this.gpuPreference === "auto" &&
       !this.gpuFailed &&
-      // The CPU twins now consume the worker-local plan. Until the paired
-      // WGSL lift lands, never let an active authored tiling silently render
-      // the ordinary attractor merely because this machine has WebGPU.
-      this.pointTilingPlan === null &&
       (this.is4D
         ? this.createGpuBackend4 !== undefined
         : this.createGpuBackend !== undefined)
@@ -2478,6 +2476,7 @@ export class FlameWorkerSession {
       echo: this.balloonEcho,
       echoColorLUT: this.balloonColorLUT ?? undefined,
       schedule: this.hybridSchedule,
+      pointTilingPlan: this.pointTilingPlan,
       width: this.accumWidth,
       height: this.accumHeight,
       seed: Math.floor(this.rng() * 0x100000000) >>> 0,
@@ -2504,6 +2503,7 @@ export class FlameWorkerSession {
       echo: this.balloonEcho,
       echoColorLUT: this.balloonColorLUT ?? undefined,
       schedule: this.hybridSchedule,
+      pointTilingPlan: this.pointTilingPlan,
       view: this.fourDView!,
       color: this.fourDColor!,
       width: this.accumWidth,
@@ -2663,9 +2663,6 @@ export class FlameWorkerSession {
         backend: created.kind,
         adapter: created.adapterLabel,
         software: created.software,
-        ...(created.kind === "cpu" && this.pointTilingPlan !== null
-          ? { forcedBy: "tiling" as const }
-          : {}),
       });
     }
     const backend = this.backend;
