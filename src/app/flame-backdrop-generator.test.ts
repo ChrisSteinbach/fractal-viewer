@@ -130,6 +130,83 @@ describe("FlameBackdropGenerator request policy", () => {
     expect(h.generator.busy).toBe(false);
   });
 
+  it("carries the authored tiling, schedule and balloon legality bit verbatim", () => {
+    const h = harness();
+    const tiling: NonNullable<FlameBackdropParams["tiling"]> = {
+      kind: "lattice",
+      cellScale: 1.8,
+    };
+    const schedule: NonNullable<FlameBackdropParams["schedule"]> = {
+      transforms: [
+        {
+          id: 0,
+          position: [-0.6, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+      depth: 2,
+    };
+
+    h.generator.request(params({ tiling, schedule, balloonEchoEnabled: true }));
+    h.fireDebounce();
+
+    expect(h.workers[0].posted[0]).toMatchObject({
+      tiling,
+      schedule,
+      balloonEchoEnabled: true,
+      gpuPreference: "off",
+    });
+  });
+
+  it("snapshots a 4D finite block with the existing view snapshot untouched", () => {
+    const h = harness();
+    const fourD: NonNullable<FlameBackdropParams["fourD"]> = {
+      transforms4: [],
+      finalTransform4: null,
+      rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      center: [0, 0, 0, 0],
+      halfExtents: [1, 1, 1, 1],
+      invWAmp: 0.5,
+      sliceOn: false,
+      sliceCenter: 0,
+      sliceWidth: 0.25,
+      sliceRelativeColor: false,
+      colorMode: "radius",
+      radiusMin: 1,
+      radiusMax: 5,
+      rampPalette: "legacy",
+    };
+
+    h.generator.request(params({ tiling: { group: "a4" }, fourD }));
+    h.fireDebounce();
+
+    const posted = h.workers[0].posted[0];
+    expect(posted).toMatchObject({ tiling: { group: "a4" }, fourD });
+    expect("balloonEcho" in posted).toBe(false);
+  });
+
+  it("keeps the absent-tiling start byte-identical to the historical shape", () => {
+    const h = harness();
+
+    h.generator.request(params());
+    h.fireDebounce();
+
+    const posted = h.workers[0].posted[0];
+    expect(posted).toMatchObject({
+      type: "start",
+      requestedSupersample: 1,
+      iterationsBudget: 1_000_000,
+      gpuPreference: "off",
+    });
+    // The absent document block must not mint new keys: the worker's
+    // absent-means-off path stays the only one that can run.
+    expect("tiling" in posted).toBe(false);
+    expect("schedule" in posted).toBe(false);
+    expect("balloonEchoEnabled" in posted).toBe(false);
+    expect("balloonEcho" in posted).toBe(false);
+  });
+
   it("debounces the complete 4D snapshot into one fixed low-budget CPU start", () => {
     const h = harness();
     const fourD: NonNullable<FlameBackdropParams["fourD"]> = {
@@ -213,6 +290,27 @@ describe("FlameBackdropGenerator request policy", () => {
     h.fireDebounce();
     expect(h.workers[0].posted).toHaveLength(2);
     expect(h.workers[0].posted[1]).toMatchObject({ seed: 2 });
+  });
+
+  it("collapses parked tiling edits to the latest authored block across suspend", () => {
+    const h = harness();
+
+    h.generator.request(params({ tiling: { group: "a3" } }));
+    h.fireDebounce();
+    h.generator.suspend();
+    // Two tiling edits during the morph hold: only the latest may survive.
+    h.generator.request(params({ tiling: { group: "b3" } }));
+    h.generator.request(params({ tiling: { kind: "lattice", cellScale: 2 } }));
+    h.generator.resume();
+    h.fireDebounce();
+    // The held a3 render is still draining; its terminal is suppressed
+    // across the boundary but releases the pipeline for the parked edit.
+    h.workers[0].emit(terminal());
+
+    expect(h.workers[0].posted).toHaveLength(2);
+    expect(h.workers[0].posted[1]).toMatchObject({
+      tiling: { kind: "lattice", cellScale: 2 },
+    });
   });
 });
 
