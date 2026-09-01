@@ -917,10 +917,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     pinned by their owning lifecycle gates.
     Tiling authoring, presets (`mirroredLattice`/`mirroredLattice4`), app-copy
     and workflow behavior are real-browser gated by `scripts/tiling-ui.verify.mjs`.
-    Points SHIPS tiled in 3D/4D after schedule/final: bounded finite/lattice
-    recorders copy canonical color provenance, retain raw 4D, stop at 8N and
-    report complete/underfilled/empty. Absent/refused uses the literal legacy
-    recorder. Flame/Solid stay untiled; their frozen lift uses 32-weighted credit.
+    Points SHIPS tiled in 3D/4D after schedule/final: bounded recorders keep
+    canonical color, raw 4D, the 8N cap and explicit terminal status. Flame CPU
+    SHIPS the shared 32-weighted visitor in both dimensions; active tiling
+    restarts from one seed/frozen view and forces CPU until its WGSL lift.
+    GPU/backdrop/Solid stay untiled; absent/refused stays literal legacy.
     Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic

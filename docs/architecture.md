@@ -603,6 +603,21 @@ per-cell blur radius widens where samples are sparse. Handing a previous
 histogram back resumes the orbit exactly, so a render refines progressively
 rather than restarting.
 
+The CPU accumulator's optional point-space tiling plan sits at that same plot
+boundary: one canonical source iteration still owns transform selection, xaos,
+emitter draws, schedule, final lens and structural color, then a bounded visitor
+deposits at most 32 weighted finite or lattice images. Credit and image cursor
+ride `FlameHistogram`, making arbitrary progressive chunks identical and
+leaving the chaos RNG untouched. `accumulateFlame4` performs the true raw-xyzw
+image action before its frozen rotor, projection and soft slice; source color
+provenance remains canonical except for image-owned w-ramp and slice weight.
+The worker resolves the raw document block before seeding, completes valid
+empty content as a transparent frame, and deliberately selects CPU for an
+active plan until both WGSL kernels carry the same state. Tiling edits replace
+the worker from the same source seed and frozen view, preserving a learned CPU
+fallback and detaching stale hosts for latest-wins delivery. Absent/refused
+plans keep the literal historical accumulator and backend path.
+
 Flame color comes from `palette.ts`: Inigo-Quilez cosine gradients
 (`channel(t) = a + b·cos(2π(c·t + d))`), precomputed once per render into a flat
 256×3 LUT by `buildPaletteLUT`. A structural color coordinate rides the orbit —
@@ -1551,6 +1566,13 @@ display-downsample pipeline (the filter is linear, so the 4D buckets' extra
 fixed-point factor just divides out on readback). The gpu-bench page's 4D
 scenarios pin it against `accumulateFlame4` across all four color modes and
 both slice states.
+
+Point-space tiling is the temporary exception to that GPU route: the CPU twins
+ship the bounded weighted visitor in both dimensions, while an active tiling
+plan makes the worker skip GPU creation rather than let either current kernel
+silently draw the untiled attractor. The panel reports this intentional CPU
+choice separately from an adapter failure. Off and refused plans remain GPU
+eligible; the kernel lift is a separately gated delivery.
 
 ## Save-PNG readiness
 
