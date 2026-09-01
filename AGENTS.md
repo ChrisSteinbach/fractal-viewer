@@ -923,8 +923,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     restarts from one seed/frozen view and remains GPU-eligible. The generated
     Flame backdrop SHIPS the same block (schedule + raw tiling + the balloon
     legality bit, never the echo payload), invalidated by tiling and schedule
-    edits even with Auto-update off; Solid stays
-    untiled; absent/refused stays literal legacy.
+    edits even with Auto-update off; 3D Solid SHIPS tiled (compile-gated
+    folds, hierarchy suspended, material-only; 4D refused until its lift);
+    absent/refused stays literal legacy.
     Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic

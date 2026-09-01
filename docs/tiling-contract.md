@@ -830,7 +830,7 @@ The frozen budgets are:
 | Flame CPU                | SHIPPED — authored iterations remain primary orbit steps; at most 32 weighted image deposits at one acceptance and no more selected candidates cumulatively than attempts; credit/cursor persist in the histogram across arbitrary worker chunks                                                                                         |
 | Flame WebGPU             | SHIPPED in 3D and 4D — the shared binding-7 plan tail and binding-8 per-chain state drive the same 32-image weighted estimator; active tiling uses the normal GPU route with CPU fallback, never an untiled GPU substitute                                                                                                               |
 | Generated Flame backdrop | SHIPPED — same 32-image rule inside its fixed one-million-step job; schedule, tiling and the balloon legality bit join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                                                                                            |
-| 3D Solid                 | FROZEN, NOT SHIPPED — no replicated voxel memory: keep the canonical density texture and transform material queries; its separate march budget is measured by the Solid lift                                                                                                                                                             |
+| 3D Solid                 | SHIPPED — no replicated voxel memory: the canonical density texture stays put and the material folds every query; the march budget scales with the presentation carrier at the source-voxel stride, capped at 8192 steps                                                                                                                 |
 | 4D Solid                 | FROZEN, NOT SHIPPED — at most 32 weighted pre-projection images per accepted source; the representation and exact volume budget remain the responsibility of its dedicated decision                                                                                                                                                      |
 
 The sheet measured all six finite groups on a balanced 16,384-point acceptance
@@ -944,6 +944,47 @@ zero hits on both engines; and the legal emitter + xaos + schedule + final-lens
 composition passed at MAE 0.00695 / TV 0.00523 while sharing binding 7's real
 emitter prefix with the appended plan.
 
+### 3D Solid landing
+
+Solid's density volume is camera-independent and the tiling is pure
+query-space material state, so the lift shipped with NO new voxel memory and
+NO worker restart: `voxel-material.ts`'s compile-gated tiling arms fold every
+density/color query — primary, refine, gradient, shadow, AO, floor shadow and
+floor AO — through one shared wrapper, so no path can draw a different object.
+The canonical density texture, the worker, and every untiled program stay
+byte-identical; the max-density hierarchy is suspended while tiled (a straight
+visible ray maps to reflected source segments, so its node skip is not valid
+across them) and restored exactly when tiling clears. Tiling edits are live:
+kind/clip/scale re-resolve the session and recompile the material only.
+
+The ray interval is independent of the source AABB. The FINITE arm marches
+the exact ball of the AABB's farthest corner norm — every chamber wall passes
+through the origin and the fold preserves |p|, so all copies of the box lie in
+`ball(0, maxCorner)` and the carrier is exact, never an artificial window. The
+LATTICE arm marches the shared `sphere(0, 10R) ∩ attractor-y slab` carrier and
+applies the mandatory `|F(q)| <= R` content ball plus the 8R→10R smoothstep
+coverage fade at the displayed hit (never geometry, shadow or AO; hit alpha
+stays terminal). Step budgets scale with the carrier at the source-voxel
+stride (the untiled 220's ~1.16 voxel face-on stride) capped at 8192, so a
+larger visible window never silently under-samples cells; the shadow and floor
+rays march their own carrier intervals and are fully lit past them. The
+optional analytic clip is baked from the authored ShapeSpec and narrows the
+folded source; the session poses an unposed clip on the measured chamber
+content exactly like the surface arms. Fog keeps the source box half-diagonal
+unit and measures from the carrier entry.
+
+The frozen combination matrix and edit timing: Balloon and kaleidoscope
+order > 1 refuse (the volume bakes the kaleidoscope into the attractor, so
+only order 1 is canonical chamber content), mesh clips refuse, a 4D document
+refuses until the 4D Solid lift (its volume is a 3D slice no 4D fold can act
+on), forward escape/bulb volumes refuse as reset debris, and the
+floor/environment presentation compose. `resolveSolidTilingSession` is the
+ONE derivation (off/refused/active, mirrors `point-tiling-session.ts`);
+`installVoxelTiling` is the material compile gate (canonical records by
+identity, mirroring `installSurfaceTiling`). The panel's Solid rows read the
+session status like Flame's read their worker outcome; the mode's documented
+timing is that tiling edits are live.
+
 ### Legal combinations and edit timing
 
 | Layer                                                                                      | Point-family verdict                                                |
@@ -961,8 +1002,8 @@ seed and frozen view; the panel shows Preparing/Applying until the replacement
 frame lands. The generated Flame backdrop follows every tiling and schedule
 edit through `trackAutoBackground` — even with Points' Auto-update off, where
 the pane keeps the stale cloud while the replacement backdrop renders —
-while Solid remains explicitly untiled, and Surface keeps its existing
-restart-on-kind/clip and live lattice-scale behavior. Browser-gated by
+while 3D Solid applies tiling edits live (material-only) and Surface keeps
+its existing restart-on-kind/clip and live lattice-scale behavior. Browser-gated by
 `scripts/tiling-ui.verify.mjs --scope=backdrop`: the frozen-cloud fixture
 isolates the backdrop's tiled/untiled pixel difference (measured 44.01% /
 30.66% on Iris, 40.82% / 32.45% on SwiftShader).
