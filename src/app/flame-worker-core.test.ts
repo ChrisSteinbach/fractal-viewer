@@ -514,20 +514,21 @@ describe("FlameWorkerSession start", () => {
 });
 
 describe("FlameWorkerSession point-space tiling", () => {
-  it("resolves a 3D plan before accumulation and deliberately routes it to CPU", () => {
-    const seenPlans: unknown[] = [];
+  it("resolves a 3D plan before accumulation and forwards it to the GPU backend", async () => {
+    let captured: GpuBackendRequest | undefined;
     const createGpuBackend = vi.fn(
-      async (_request: GpuBackendRequest): Promise<FlameAccumBackend> => {
-        throw new Error("active tiling must not request a GPU backend");
+      async (request: GpuBackendRequest): Promise<FlameAccumBackend> => {
+        captured = request;
+        return {
+          kind: "gpu",
+          accumulate: async (n) => n,
+          snapshot: async () =>
+            createFlameHistogram(request.width, request.height),
+          destroy: () => {},
+        };
       },
     );
-    const { session, events, scheduler } = harness({
-      createGpuBackend,
-      accumulate: (...args) => {
-        seenPlans.push(args[11]);
-        return accumulateFlame(...args);
-      },
-    });
+    const { session, events, scheduler } = harness({ createGpuBackend });
 
     session.handle(
       startCommand({
@@ -536,9 +537,10 @@ describe("FlameWorkerSession point-space tiling", () => {
         iterationsBudget: 80,
       }),
     );
-    scheduler.drain();
+    await drainAsync(scheduler);
 
-    expect(createGpuBackend).not.toHaveBeenCalled();
+    expect(createGpuBackend).toHaveBeenCalledOnce();
+    expect(captured?.pointTilingPlan).toMatchObject({ dimension: 3 });
     expect(tilingOutcomeEvents(events)).toEqual([
       {
         type: "tilingOutcome",
@@ -548,21 +550,10 @@ describe("FlameWorkerSession point-space tiling", () => {
     expect(backendEvents(events)).toEqual([
       {
         type: "backend",
-        backend: "cpu",
+        backend: "gpu",
         adapter: undefined,
-        forcedBy: "tiling",
       },
     ]);
-    expect(seenPlans.length).toBeGreaterThan(0);
-    expect(
-      seenPlans.every(
-        (plan) =>
-          typeof plan === "object" &&
-          plan !== null &&
-          "dimension" in plan &&
-          plan.dimension === 3,
-      ),
-    ).toBe(true);
     expect(progressEvents(events).at(-1)?.iterationsDone).toBe(80);
   });
 
@@ -607,10 +598,18 @@ describe("FlameWorkerSession point-space tiling", () => {
     expect(backendEvents(events)[0]).not.toHaveProperty("forcedBy");
   });
 
-  it("resolves and renders the 4D twin without requesting its GPU backend", () => {
+  it("resolves and forwards the 4D twin to its GPU backend", async () => {
+    let captured: GpuBackendRequest4 | undefined;
     const createGpuBackend4 = vi.fn(
-      async (_request: GpuBackendRequest4): Promise<FlameAccumBackend> => {
-        throw new Error("active tiling must not request a 4D GPU backend");
+      async (request: GpuBackendRequest4): Promise<FlameAccumBackend> => {
+        captured = request;
+        return {
+          kind: "gpu",
+          accumulate: async (n) => n,
+          snapshot: async () =>
+            createFlameHistogram(request.width, request.height),
+          destroy: () => {},
+        };
       },
     );
     const { session, events, scheduler } = harness({ createGpuBackend4 });
@@ -622,9 +621,10 @@ describe("FlameWorkerSession point-space tiling", () => {
         iterationsBudget: 80,
       }),
     );
-    scheduler.drain();
+    await drainAsync(scheduler);
 
-    expect(createGpuBackend4).not.toHaveBeenCalled();
+    expect(createGpuBackend4).toHaveBeenCalledOnce();
+    expect(captured?.pointTilingPlan).toMatchObject({ dimension: 4 });
     expect(tilingOutcomeEvents(events)).toEqual([
       {
         type: "tilingOutcome",
@@ -632,8 +632,7 @@ describe("FlameWorkerSession point-space tiling", () => {
       },
     ]);
     expect(backendEvents(events)[0]).toMatchObject({
-      backend: "cpu",
-      forcedBy: "tiling",
+      backend: "gpu",
     });
     expect(progressEvents(events).at(-1)?.iterationsDone).toBe(80);
   });
