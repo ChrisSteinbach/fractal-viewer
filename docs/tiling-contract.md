@@ -627,15 +627,15 @@ unchanged hash under read-only instrumentation.
 The final matrix keeps each stateful question in the gate that already owns
 that lifecycle rather than building a second monolith:
 
-| Contract                                                                                                     | Durable gate                                                                                                  | Recorded verdict / current coverage                                                                                                                                 |
-| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Finite/lattice presets, authoring, links, Points lifecycle/draw, other-mode disclosure and malformed decode  | `scripts/tiling-ui.verify.mjs`                                                                                | Surface/panel baseline passed; 2026-09-01 scoped SwiftShader Points legs passed real Worker, copied-link, stale/latest-wins, negative-frame and 4D view-only checks |
-| Minimal inverse affine/fold and forward, 3D/4D, WebGL/compute, clip, plane, progress and structural controls | `scripts/surface-lattice.verify.mjs` and `scripts/surface-tiling.verify.mjs`                                  | Both real-Iris route matrices passed                                                                                                                                |
-| Carrier choice, cross-engine fade, fog/DoF/radial background and completed Save PNG                          | `scripts/lattice-presentation.verify.mjs`                                                                     | 22/22 scene rows and ten capture comparisons passed                                                                                                                 |
-| Completed export, mid-drain cancellation, interaction and collection encoding with authored tiling           | `scripts/capture-export.verify.mjs --tiling=a3`                                                               | 15/15 on SwiftShader; exact A3 survived every phase                                                                                                                 |
-| Renderer teardown during submitted compute work                                                              | `scripts/surface-teardown.verify.mjs --lens --tiling=a3 --toggleId=__modeExit --toggles=20 --toggleGapMs=900` | 20/20 on real Firefox/Iris compute; exact A3 and hardware backend retained                                                                                          |
-| WebGPU-unavailable fallback and compute-only refusal with lattice authored                                   | `scripts/surface-fallback.verify.mjs https://localhost:5173 fg`                                               | 4D lattice painted through WebGL with visible disclosure; fold-4D lattice refused with WebGPU reason                                                                |
-| Phone target/layout and exact-number interaction                                                             | `scripts/panel-numeric-control.verify.mjs`                                                                    | 87 slider companions over 84 states passed                                                                                                                          |
+| Contract                                                                                                     | Durable gate                                                                                                  | Recorded verdict / current coverage                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Finite/lattice presets, authoring, links, Points/Flame lifecycle and draw, disclosure and malformed decode   | `scripts/tiling-ui.verify.mjs`                                                                                | Surface/panel baseline plus scoped SwiftShader Points and Flame legs passed real Workers, copied links, latest-wins, negative frames, same-seed Off controls and 4D view-only restarts |
+| Minimal inverse affine/fold and forward, 3D/4D, WebGL/compute, clip, plane, progress and structural controls | `scripts/surface-lattice.verify.mjs` and `scripts/surface-tiling.verify.mjs`                                  | Both real-Iris route matrices passed                                                                                                                                                   |
+| Carrier choice, cross-engine fade, fog/DoF/radial background and completed Save PNG                          | `scripts/lattice-presentation.verify.mjs`                                                                     | 22/22 scene rows and ten capture comparisons passed                                                                                                                                    |
+| Completed export, mid-drain cancellation, interaction and collection encoding with authored tiling           | `scripts/capture-export.verify.mjs --tiling=a3`                                                               | 15/15 on SwiftShader; exact A3 survived every phase                                                                                                                                    |
+| Renderer teardown during submitted compute work                                                              | `scripts/surface-teardown.verify.mjs --lens --tiling=a3 --toggleId=__modeExit --toggles=20 --toggleGapMs=900` | 20/20 on real Firefox/Iris compute; exact A3 and hardware backend retained                                                                                                             |
+| WebGPU-unavailable fallback and compute-only refusal with lattice authored                                   | `scripts/surface-fallback.verify.mjs https://localhost:5173 fg`                                               | 4D lattice painted through WebGL with visible disclosure; fold-4D lattice refused with WebGPU reason                                                                                   |
+| Phone target/layout and exact-number interaction                                                             | `scripts/panel-numeric-control.verify.mjs`                                                                    | 87 slider companions over 84 states passed                                                                                                                                             |
 
 The repository gates then passed 6,761 unit tests across 168 files, the two
 tiling sheets (11/11), production build, WebGL smoke, and the real-Iris
@@ -827,7 +827,8 @@ The frozen budgets are:
 | Consumer                 | Budget and terminal behavior                                                                                                                                                                                                                                                                                                             |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Points                   | SHIPPED — authored point count remains the maximum allocated/displayed output; finite: at most 256 equal dots from one accepted source; lattice: one proposal per accepted source, with at most `8N` source attempts and `8N` proposal tests for request `N`; returns `complete`, `underfilled`, or `empty`, never an untiled substitute |
-| Flame CPU/WebGPU         | FROZEN, NOT SHIPPED — authored iterations remain primary orbit steps; at most 32 image deposits at one acceptance and no more selected candidates cumulatively than attempts; credit/cursor are chunk/dispatch state                                                                                                                     |
+| Flame CPU                | SHIPPED — authored iterations remain primary orbit steps; at most 32 weighted image deposits at one acceptance and no more selected candidates cumulatively than attempts; credit/cursor persist in the histogram across arbitrary worker chunks                                                                                         |
+| Flame WebGPU             | FROZEN, NOT SHIPPED — the same plan/state must be packed into both kernels after its full-export fixed-point range is pinned; active tiling deliberately selects CPU rather than rendering an untiled GPU result                                                                                                                         |
 | Generated Flame backdrop | FROZEN, NOT SHIPPED — same 32-image rule inside its fixed one-million-step job; schedule and tiling join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                                                                                                          |
 | 3D Solid                 | FROZEN, NOT SHIPPED — no replicated voxel memory: keep the canonical density texture and transform material queries; its separate march budget is measured by the Solid lift                                                                                                                                                             |
 | 4D Solid                 | FROZEN, NOT SHIPPED — at most 32 weighted pre-projection images per accepted source; the representation and exact volume budget remain the responsibility of its dedicated decision                                                                                                                                                      |
@@ -853,7 +854,7 @@ the renderer's normal empty output: zero Points geometry, transparent Flame,
 dark composed backdrop, or zero-density Solid.
 
 **Implementation verdict.** `point-tiling.ts` ships the Points-specific bounded
-visitor beside the unchanged weighted accumulator visitor. Its callback passes
+visitor beside the weighted accumulator visitor. Its callback passes
 literal weight `1`; state is `{ cursor, quotaRemainder, attempts, accepted,
 candidateTests, emitted }`. `runChaosGameTiledPoints` and
 `runChaosGame4TiledPoints` preserve the ordinary hot-loop order and copy
@@ -868,6 +869,25 @@ tiled empty result. Canonical color buffers are transferred only for the
 active arm as `canonicalColorSource` and retained with the landed result for
 live recoloring; landing the opposite dimension releases the stale cache.
 
+`accumulateFlame` and `accumulateFlame4` consume that weighted visitor only at
+the outer plot boundary. The orbit, xaos/emitter draws, schedule, final lens
+and source color advance once per authored iteration; accepted images then
+project and deposit with the visitor's finite multiplicity or lattice coverage
+weight. Their `{ credit, cursor, attempts, accepted, selected, emitted }`
+state rides `FlameHistogram`, so one-shot and irregularly chunked renders agree
+without spending a chaos RNG draw. The 4D twin applies true raw-xyzw images
+before its frozen rotor and soft slice; structural/transform/height/radius/
+position/uniform colors stay source-owned while w-ramp and slice weight follow
+the image. Empty accepted content completes as a transparent histogram.
+
+The Flame worker resolves raw authored tiling before constructing the seeded
+orbit, reports active/refused association to the panel, and routes an active
+plan to CPU until the paired kernels ship. A tiling edit replaces the worker
+from the same source seed and frozen camera/rotor/slice; detached old hosts make
+rapid edits latest-wins, old deposits cannot survive, and a CPU fallback already
+learned by that live session is retained rather than probed again. Refused and
+absent plans keep the literal historical accumulator/backend lifecycle.
+
 ### Legal combinations and edit timing
 
 | Layer                                                                                      | Point-family verdict                                                |
@@ -880,10 +900,10 @@ live recoloring; landing the opposite dimension releases the stale cache.
 | escape-time/bulb debris in Points, Flame or Solid                                          | refused; it is not a sampler for Surface's set                      |
 
 Points tiling edits follow Auto-update and the existing latest-wins one-shot
-regeneration. Flame, its generated backdrop, and Solid still render the
-untiled attractor with an adjacent explanation; their rows above freeze the
-later lifts rather than claiming implementation. Surface keeps its existing
-restart-on-kind/clip and live lattice-scale behavior.
+regeneration. An active Flame edit restarts accumulation from the same source
+seed and frozen view; the panel shows Preparing/Applying until the replacement
+frame lands. The generated backdrop and Solid remain explicitly untiled, while
+Surface keeps its existing restart-on-kind/clip and live lattice-scale behavior.
 
 The complete executable record, including timings and the carrier alternatives,
 is `scripts/point-tiling.harness.ts`. Deterministic unit/worker/UI tests own the
