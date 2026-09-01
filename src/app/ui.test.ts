@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
+import type { PointTilingOutcome } from "./point-tiling-outcome";
 import {
   beginSampledSolidStatus,
   endSampledSolidStatus,
@@ -2929,6 +2930,63 @@ describe("Ui.setPointCount", () => {
     ui.setPointCount(100000);
     expect(document.getElementById("pointCount")?.textContent).toBe(
       `${(100000).toLocaleString()} pts`,
+    );
+  });
+
+  it.each([
+    ["complete", 100],
+    ["underfilled", 73],
+    ["empty", 0],
+  ] as const)(
+    "formats an active %s tiled result as displayed/requested",
+    (fill, count) => {
+      const ui = new Ui(document);
+      const outcome: PointTilingOutcome = {
+        availability: "active",
+        kind: "finite",
+        fill,
+        requested: 100,
+        attempts: 8,
+        accepted: 3,
+        candidateTests: 0,
+      };
+      ui.setPointCount(count, outcome);
+      expect(document.getElementById("pointCount")?.textContent).toBe(
+        `${count.toLocaleString()} / ${(100).toLocaleString()} pts · ${fill}`,
+      );
+    },
+  );
+
+  it("keeps a refused result on the historical count label", () => {
+    const ui = new Ui(document);
+    ui.setPointCount(73, {
+      availability: "refused",
+      note: "This document is not a point-sampled IFS.",
+    });
+    expect(document.getElementById("pointCount")?.textContent).toBe(
+      `${(73).toLocaleString()} pts`,
+    );
+  });
+
+  it("shows replay progress without replacing the landed tiling outcome", () => {
+    const ui = new Ui(document);
+    const state = setTiling(initialState(true), { group: "a3" });
+    ui.setPointCount(73, {
+      availability: "active",
+      kind: "finite",
+      fill: "underfilled",
+      requested: 100,
+      attempts: 800,
+      accepted: 73,
+      candidateTests: 0,
+    });
+
+    ui.setReplayPointCount(12);
+    expect(document.getElementById("pointCount")?.textContent).toBe("12 pts");
+    ui.updateLabels(state);
+
+    expect(document.getElementById("tilingNote")?.textContent).toMatch(
+      /Active in Points.*73 \/ 100 pts.*underfilled/i,
     );
   });
 });
@@ -10390,18 +10448,31 @@ describe("Ui finite tiling controls", () => {
     const ui = new Ui(document);
     const tiled = setTiling(initialState(true), { group: "b3" });
     const section = el("tilingSection");
+    ui.setPointCount(100, {
+      availability: "active",
+      kind: "finite",
+      fill: "complete",
+      requested: 100,
+      attempts: 1,
+      accepted: 1,
+      candidateTests: 0,
+    });
 
     for (const renderMode of ["points", "flame", "solid", "surface"] as const) {
       ui.updateLabels({ ...tiled, renderMode });
       expect(section.classList.contains("hidden"), renderMode).toBe(false);
       expect(el("tilingTimingHint").textContent, renderMode).toContain(
-        renderMode === "surface" ? "restart Surface" : "next time",
+        renderMode === "points"
+          ? "regenerate Points automatically"
+          : renderMode === "surface"
+            ? "restart Surface"
+            : "stays untiled",
       );
       expect(el("tilingNote").textContent, renderMode).toContain(
         renderMode === "surface"
           ? "Active in Surface"
           : renderMode === "points"
-            ? "Points shows the untiled"
+            ? "Active in Points"
             : renderMode === "flame"
               ? "Flame shows the untiled"
               : "Solid shows the untiled",
@@ -10448,12 +10519,21 @@ describe("Ui finite tiling controls", () => {
       kind: "lattice",
       cellScale: 1.8,
     });
+    ui.setPointCount(80, {
+      availability: "active",
+      kind: "lattice",
+      fill: "complete",
+      requested: 80,
+      attempts: 97,
+      accepted: 97,
+      candidateTests: 97,
+    });
     ui.updateLabels(latticeState);
     expect(el("tilingControls").classList.contains("hidden")).toBe(false);
     expect(el("tilingGroupRow").classList.contains("hidden")).toBe(true);
     expect(el("tilingCellScaleRow").classList.contains("hidden")).toBe(false);
     expect((el("tilingKind") as HTMLSelectElement).value).toBe("lattice");
-    expect(el("tilingNote").textContent).toContain("mirrored landscape");
+    expect(el("tilingNote").textContent).toContain("Active in Points");
     // In a live Surface session the lattice hint discloses the live edit.
     ui.updateLabels({ ...latticeState, renderMode: "surface" });
     expect(el("tilingTimingHint").textContent).toContain("live");
@@ -10466,6 +10546,103 @@ describe("Ui finite tiling controls", () => {
     ui.updateLabels(initialState(true));
     expect(el("tilingControls").classList.contains("hidden")).toBe(true);
     expect(el("tilingNote").textContent).toContain("Off");
+  });
+
+  it("repaints Points fill, refusal, and stale outcomes after each landed result", () => {
+    const ui = new Ui(document);
+    const points = {
+      ...setTiling(initialState(true), { group: "b3" }),
+      renderMode: "points" as const,
+    };
+    const active = (fill: "complete" | "underfilled" | "empty") =>
+      ({
+        availability: "active",
+        kind: "finite",
+        fill,
+        requested: 100,
+        attempts: fill === "complete" ? 1 : 800,
+        accepted: fill === "empty" ? 0 : 2,
+        candidateTests: 0,
+      }) satisfies PointTilingOutcome;
+
+    // updateLabels may run before a worker result lands; the later main call
+    // stores the outcome, and the next label sync must repaint this note.
+    ui.updateLabels(points);
+    expect(el("tilingNote").textContent).toMatch(/Awaiting regeneration/i);
+
+    for (const [fill, count] of [
+      ["complete", 100],
+      ["underfilled", 73],
+      ["empty", 0],
+    ] as const) {
+      ui.setPointCount(count, active(fill));
+      ui.updateLabels(points);
+      expect(el("tilingNote").textContent).toContain("Active in Points");
+      expect(el("tilingNote").textContent).toContain(fill);
+      if (fill === "underfilled") {
+        expect(el("tilingNote").textContent).toMatch(/budget was exhausted/i);
+      }
+      if (fill === "empty") {
+        expect(el("tilingNote").textContent).toMatch(/no canonical source/i);
+      }
+    }
+
+    ui.setPointCount(73, {
+      availability: "refused",
+      note: "Forward escape debris is not the rendered set.",
+    });
+    ui.updateLabels(points);
+    expect(el("tilingNote").textContent).toMatch(
+      /Unavailable in Points.*Forward escape debris/i,
+    );
+
+    ui.setPointCount(100, active("complete"), false);
+    ui.updateLabels(points);
+    expect(el("tilingNote").textContent).toMatch(
+      /Awaiting regeneration.*earlier point-cloud result.*latest request runs/i,
+    );
+
+    ui.updateLabels({ ...points, autoUpdate: false });
+    expect(el("tilingTimingHint").textContent).toMatch(
+      /Auto-update is off.*use Regenerate/i,
+    );
+    expect(el("tilingNote").textContent).toMatch(
+      /Stale Points result.*use Regenerate/i,
+    );
+  });
+
+  it("discloses a manually removed tiling while the old tiled cloud remains", () => {
+    const ui = new Ui(document);
+    ui.setPointCount(100, {
+      availability: "active",
+      kind: "finite",
+      fill: "complete",
+      requested: 100,
+      attempts: 1,
+      accepted: 1,
+      candidateTests: 0,
+    });
+    // Preserve the actually displayed active outcome while only changing its
+    // association bit, as main.ts does when an authored edit occurs.
+    ui.setPointCount(
+      100,
+      {
+        availability: "active",
+        kind: "finite",
+        fill: "complete",
+        requested: 100,
+        attempts: 1,
+        accepted: 1,
+        candidateTests: 0,
+      },
+      false,
+    );
+
+    ui.updateLabels({ ...initialState(true), autoUpdate: false });
+
+    expect(el("tilingNote").textContent).toMatch(
+      /Off is authored.*still shows the earlier tiled cloud.*use Regenerate/i,
+    );
   });
 
   it("disables the other dimension's groups without deleting a mismatched authored choice", () => {
@@ -10541,6 +10718,46 @@ describe("Ui finite tiling controls", () => {
       expect((el("tilingEnabledCheckbox") as HTMLInputElement).disabled).toBe(
         false,
       );
+    }
+  });
+
+  it("keeps every lattice detail dormant across Balloon and Symmetry conflicts", () => {
+    const ui = new Ui(document);
+    const base = setTiling(initialState(true), {
+      kind: "lattice",
+      cellScale: 1.5,
+    });
+    const outcome: PointTilingOutcome = {
+      availability: "active",
+      kind: "lattice",
+      fill: "complete",
+      requested: 100,
+      attempts: 1,
+      accepted: 1,
+      candidateTests: 1,
+    };
+
+    for (const [state, feature] of [
+      [{ ...base, balloonEcho: true }, "Balloon"],
+      [{ ...base, symmetry: { order: 2, plane: "xz" as const } }, "Symmetry"],
+    ] as const) {
+      ui.setPointCount(100, outcome, false);
+      ui.updateLabels(state);
+      expect((el("tilingKind") as HTMLSelectElement).disabled).toBe(true);
+      expect((el("tilingCellScaleSlider") as HTMLInputElement).disabled).toBe(
+        true,
+      );
+      expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(true);
+      expect((el("tilingEnabledCheckbox") as HTMLInputElement).disabled).toBe(
+        false,
+      );
+      expect(el("tilingNote").textContent).toContain(feature);
+      expect(el("tilingNote").textContent).toMatch(
+        /earlier (?:order-1 )?tiled cloud/i,
+      );
+      if (feature === "Balloon") {
+        expect(el("tilingNote").textContent).toMatch(/stays dormant/i);
+      }
     }
   });
 

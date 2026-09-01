@@ -2099,9 +2099,20 @@ export class FractalScene {
     // if a future caller forgets.
     this.setDrawCount(null);
     this.setReplayCursor(null);
-    this.pointGeometry.computeBoundingSphere();
+    if (positions.length === 0) {
+      // A legal tiled request may deterministically produce no accepted
+      // images. Install that empty geometry as-is: Three's empty-position
+      // warning is not an error condition here, and no stale source ball may
+      // keep Balloon/Solid presentation alive over the vanished cloud.
+      this.pointGeometry.boundingSphere = new THREE.Sphere(
+        new THREE.Vector3(),
+        0,
+      );
+    } else {
+      this.pointGeometry.computeBoundingSphere();
+    }
     const sphere = this.pointGeometry.boundingSphere;
-    if (sphere) {
+    if (positions.length > 0 && sphere) {
       this.balloonEchoSourceSphere.copy(sphere);
       this.balloonEchoSourceSphereReady = true;
       this.solidBalloonSourceSphere.copy(sphere);
@@ -2185,7 +2196,7 @@ export class FractalScene {
     // (and pulsing) from each projected pose.
     this.balloonEchoSourceSphere.center.set(center[0], center[1], center[2]);
     this.balloonEchoSourceSphere.radius = radius;
-    this.balloonEchoSourceSphereReady = true;
+    this.balloonEchoSourceSphereReady = positions.length > 0;
     // Solid slices to a 3D grid BEFORE the material ever sees it. Its
     // inversion nevertheless uses balloonBall4's semantic ball: origin plus
     // the FULL 4D visible radius, never the slice-aware voxel AABB or Points'
@@ -2194,7 +2205,7 @@ export class FractalScene {
     // invariant under the frozen rotor/slice snapshot.
     this.solidBalloonSourceSphere.center.set(0, 0, 0);
     this.solidBalloonSourceSphere.radius = originRadius;
-    this.solidBalloonSourceSphereReady = true;
+    this.solidBalloonSourceSphereReady = positions.length > 0;
     this.applySolidPresentation();
     this.solidBalloonCenterAlpha = 0;
     this.syncBalloonEchoUniforms();

@@ -979,6 +979,45 @@ async function main(): Promise<void> {
   // fitCameraToAttractor; the fit reads the worker-baked `frameRadius`).
   // Null whenever the view isn't showing 4D.
   let fourDResult: CloudResult4D | null = null;
+  // Whether the landed request still matches the authored tiling/refusal
+  // inputs. Auto-update-off edits deliberately leave the previous cloud on
+  // screen; the panel must then say that regeneration is pending rather than
+  // relabeling the old result as the newly authored one.
+  let landedPointTilingMatchesAuthored = true;
+
+  /** Mark the displayed cloud as older than the authored Points request.
+   * This happens at EDIT time, not only when a stale worker reply arrives:
+   * with Auto-update off there may be no newer request yet, and the panel
+   * still owes an immediate "use Regenerate" disclosure. Equality-guarded
+   * because morph frames and slider bursts can call it many times before
+   * one replacement lands. */
+  function markLandedPointCloudStale(): void {
+    if (!landedPointTilingMatchesAuthored) return;
+    landedPointTilingMatchesAuthored = false;
+    const result = viewIs4D ? fourDResult : lastResult;
+    if (result) {
+      ui.setPointCount(result.count, result.pointTiling, false);
+    }
+    ui.updateLabels(state);
+  }
+
+  /** Does this result describe the current authored point-generation
+   * request? Reference comparisons are intentional: AppState's document
+   * fields are immutable, and morph terminal samples return the target by
+   * reference. This catches an older in-flight result after transforms,
+   * final lens, schedule, symmetry, tiling, Balloon, or output budget moved
+   * ahead — not just the tiling block itself. */
+  function pointRequestMatchesAuthored(request: CloudRequest): boolean {
+    return (
+      request.transforms === state.transforms &&
+      request.finalTransform === (state.finalTransform ?? null) &&
+      request.schedule === (state.schedule ?? null) &&
+      request.symmetry === state.symmetry &&
+      (request.tiling ?? null) === (state.tiling ?? null) &&
+      (request.balloonEcho ?? false) === state.balloonEcho &&
+      request.numPoints === state.numPoints
+    );
+  }
 
   // The exact transform support that produced the cloud currently on screen.
   // A newer document may already be authored while its latest-wins request is
@@ -1240,8 +1279,14 @@ async function main(): Promise<void> {
     // "transform", so `showcase.color` alone wouldn't re-bake).
     const spotlightWasShowing = replaySpotlight !== null;
     replaySpotlight = null;
-    const count = viewIs4D ? fourDResult?.count : lastResult?.count;
-    if (count !== undefined) ui.setPointCount(count);
+    const result = viewIs4D ? fourDResult : lastResult;
+    if (result) {
+      ui.setPointCount(
+        result.count,
+        result.pointTiling,
+        landedPointTilingMatchesAuthored,
+      );
+    }
     // Disarm the showcase overrides: put the motion flag back and
     // re-derive guides/colors from the (never-touched) document. Cleared
     // BEFORE the refreshers run so they fold the user's own settings again.
@@ -2293,6 +2338,7 @@ async function main(): Promise<void> {
     // this call IS the coalesced run (the coalescer clears its handle before
     // invoking us).
     regenScheduler.cancel();
+    markLandedPointCloudStale();
     cloudGenerator.request(cloudParams(replaced, fit));
   }
 
@@ -2399,6 +2445,7 @@ async function main(): Promise<void> {
   // as every intermediate, so the settled cloud is the flow's own endpoint
   // rather than a fresh re-roll.
   function requestMorphSample(sample: MorphSample): void {
+    markLandedPointCloudStale();
     cloudGenerator.request(
       cloudParams(sample.final, sample.final && morphFinalFit, sample),
     );
@@ -2435,7 +2482,7 @@ async function main(): Promise<void> {
     fit: boolean,
     morph?: MorphSample,
   ): CloudParams {
-    const { transforms, finalTransform, symmetry } =
+    const { transforms, finalTransform, symmetry, tiling } =
       morph?.system ?? currentMorphSystem();
     const meshAssets = customMeshWires(
       morph ? morphSnapshot(morph.system) : toSnapshot(state),
@@ -2451,6 +2498,15 @@ async function main(): Promise<void> {
       // where the background SHAPE pops (pushBackground reads the current
       // document's shape the same way).
       schedule: state.schedule ?? null,
+      // Raw authored state only. The worker resolves the estimator authority
+      // radius, session clip pose and point-image plan in its own realm; a
+      // resolved finite plan contains singleton metadata which structured
+      // clone must not duplicate.
+      tiling: tiling ?? null,
+      // Balloon wins the presentation conflict. Keeping it in the same
+      // request snapshot lets a delayed result disclose the policy it
+      // actually generated under instead of consulting the live checkbox.
+      balloonEcho: state.balloonEcho,
       // Intermediates run at the adaptive budget — sized from measured
       // generation latency so each frame's request fits in roughly one
       // animation frame on this device (morph-budget.ts), scaled by the
@@ -2564,31 +2620,49 @@ async function main(): Promise<void> {
     }
 
     if (result.fourD) {
-      // 4D projection path: upload the projected xyz + separate w. Leaves
-      // `lastResult` (the 3D cloud) untouched so a later flat edit restores
-      // the 3D path cleanly; color lives in the shader (or is rebaked just
-      // below), so the result carries no color buffer.
+      // 4D projection path: upload raw xyz + separate w; the shader applies
+      // the live rotor/projection. Color likewise lives in the shader (or is
+      // rebaked just below), so the result carries no color buffer.
       fourDResult = result;
+      // Canonical recolor metadata can add 16 bytes per tiled point. The
+      // opposite-dimensional cache is never displayed and a later dimension
+      // flip arrives with its own replacement result, so release it here
+      // instead of retaining two large provenance buffers at once.
+      lastResult = null;
       const b4 = result.bounds;
+      const tiled = result.pointTiling?.availability === "active";
       scene.setPoints4(
         result.positions,
         result.w,
         result.center,
         result.radius,
         result.originRadius,
-        [
-          (b4.maxX - b4.minX) / 2,
-          (b4.maxY - b4.minY) / 2,
-          (b4.maxZ - b4.minZ) / 2,
-          (b4.maxW - b4.minW) / 2,
-        ],
+        tiled
+          ? [
+              Math.max(Math.abs(b4.minX), Math.abs(b4.maxX)),
+              Math.max(Math.abs(b4.minY), Math.abs(b4.maxY)),
+              Math.max(Math.abs(b4.minZ), Math.abs(b4.maxZ)),
+              Math.max(Math.abs(b4.minW), Math.abs(b4.maxW)),
+            ]
+          : [
+              (b4.maxX - b4.minX) / 2,
+              (b4.maxY - b4.minY) / 2,
+              (b4.maxZ - b4.minZ) / 2,
+              (b4.maxW - b4.minW) / 2,
+            ],
       );
       // setPoints4 dropped the previous cloud's color attribute; re-point the
       // shader at the CURRENT mode's source (re-baking for the baked modes).
       applyFourDColor();
-      ui.setPointCount(result.count);
+      landedPointTilingMatchesAuthored = pointRequestMatchesAuthored(request);
+      ui.setPointCount(
+        result.count,
+        result.pointTiling,
+        landedPointTilingMatchesAuthored,
+      );
     } else {
       lastResult = result;
+      fourDResult = null;
       scene.setPoints(result.positions, result.colors);
       // The colors were baked worker-side at REQUEST-time mode/contrast/ramp
       // palette; if any changed while this generation was in flight, recolor
@@ -2608,8 +2682,22 @@ async function main(): Promise<void> {
       ) {
         recolor();
       }
-      ui.setPointCount(result.count);
+      landedPointTilingMatchesAuthored = pointRequestMatchesAuthored(request);
+      ui.setPointCount(
+        result.count,
+        result.pointTiling,
+        landedPointTilingMatchesAuthored,
+      );
     }
+
+    // Balloon and tiled Points are mutually exclusive. Presentation follows
+    // the LANDED geometry: an authored Balloon waits disabled while a tiled
+    // result remains on screen, then becomes live when its queued/refused
+    // ordinary cloud lands. Empty/underfilled active tiling is still active.
+    scene.setBalloonEchoEnabled(
+      state.balloonEcho && result.pointTiling?.availability !== "active",
+    );
+    if (result.pointTiling || state.tiling) ui.updateLabels(state);
 
     // Auto-frame the camera on a whole-system load's fresh attractor —
     // deferred to arrival with everything else, so it frames the cloud
@@ -2811,6 +2899,7 @@ async function main(): Promise<void> {
       state.colorGamma,
       resolvePalette(state.rampPaletteId, state.customPalette),
       state.positionAxisColors,
+      lastResult.canonicalColorSource,
     );
     scene.setColors(colors);
   }
@@ -2839,6 +2928,7 @@ async function main(): Promise<void> {
           state.transforms.map((t) => t.colorIndex),
           state.colorGamma,
           state.positionAxisColors,
+          fourDResult.canonicalColorSource,
         ),
       });
     } else {
@@ -2873,6 +2963,9 @@ async function main(): Promise<void> {
             "transform",
             resolvePalette(state.rampPaletteId, state.customPalette),
             state.transforms.map((t) => t.colorIndex),
+            1,
+            undefined,
+            fourDResult.canonicalColorSource,
           ),
           fourDResult.transformIndices,
           fourDResult.count,
@@ -2891,6 +2984,7 @@ async function main(): Promise<void> {
             state.colorGamma,
             resolvePalette(state.rampPaletteId, state.customPalette),
             state.positionAxisColors,
+            lastResult.canonicalColorSource,
           ),
           lastResult.transformIndices,
           lastResult.count,
@@ -6529,8 +6623,10 @@ async function main(): Promise<void> {
   }
 
   function applyPointsTransformEffect(effect: PointsTransformEditEffect): void {
-    if (effect === "regenerate") regenScheduler.schedule();
-    else if (effect === "recolor-flat") recolor();
+    if (effect === "regenerate") {
+      markLandedPointCloudStale();
+      regenScheduler.schedule();
+    } else if (effect === "recolor-flat") recolor();
     else if (effect === "recolor-4d") applyFourDColor();
   }
 
@@ -7602,6 +7698,7 @@ async function main(): Promise<void> {
     editSession.beginEdit(effect === "always" ? "replace" : "tweak");
     applyReducer();
     pinCurrentCustomMeshes();
+    markLandedPointCloudStale();
     if (effect === "always") {
       regenerateReplaced(morphFrom, true, morphMs);
     } else if (state.autoUpdate) {
@@ -8888,7 +8985,19 @@ async function main(): Promise<void> {
       return true;
     },
     regenerateIfAutoUpdate: () => {
+      markLandedPointCloudStale();
       if (state.autoUpdate) regenScheduler.schedule();
+    },
+    resumePointAutoUpdate: () => {
+      if (state.autoUpdate && !landedPointTilingMatchesAuthored) {
+        regenScheduler.schedule();
+      }
+    },
+    syncPointBalloonEcho: (enabled) => {
+      const result = viewIs4D ? fourDResult : lastResult;
+      scene.setBalloonEchoEnabled(
+        enabled && result?.pointTiling?.availability !== "active",
+      );
     },
     refreshSurfaceEligibility,
     recolor,
@@ -11487,7 +11596,7 @@ async function main(): Promise<void> {
         replayFrame.phase === "done" ? null : replayFrame.revealed,
       );
       scene.setReplayCursor(replayFrame.cursor);
-      ui.setPointCount(replayFrame.revealed);
+      ui.setReplayPointCount(replayFrame.revealed);
       // The spotlight tour: re-bake the dimmed colors only when the
       // spotlighted map changes (once per step, and once more for the null
       // that restores the finale's full colors — never per frame).

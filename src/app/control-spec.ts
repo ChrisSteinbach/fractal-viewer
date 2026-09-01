@@ -306,6 +306,14 @@ export interface ControlEffects {
   /** `regenerate()` gated on `state.autoUpdate` — for controls that reshape
    * the live point cloud, not just a render-only setting. */
   regenerateIfAutoUpdate(): void;
+  /** Resume a document-true Points request when Auto-update is switched back
+   * on after manual edits. Unlike `regenerateIfAutoUpdate`, this preference
+   * edit does not itself make a settled cloud stale. */
+  resumePointAutoUpdate(): void;
+  /** Apply Balloon to the landed Points geometry only when that geometry is
+   * untiled. An authored enable over a tiled cloud stays presentation-dormant
+   * until the matching ordinary regeneration lands. */
+  syncPointBalloonEcho(enabled: boolean): void;
   /**
    * Re-derive the Surface mode button's eligibility gate from the current
    * document — for effects whose edit can move the system across an
@@ -559,22 +567,23 @@ const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
   fx.scene.setSurfaceShapeTrap(state.shapeTrap ?? null);
 };
 
-/** Finite tiling's panel-IA record (`docs/panel-ia.md`): Scene / Look;
- * consumed only by Surface IFS/escape/bulb in the matching dimension, while
- * Points/Flame/Solid deliberately keep showing the untiled attractor;
- * document lifetime; every edit restarts an active Surface session with its
- * inspection view preserved, or applies on the next Surface entry elsewhere.
- * Eligibility refresh is immediate because group dimension, Balloon and
- * kaleidoscope are explicit refusals. */
+/** Space tiling's panel-IA record (`docs/panel-ia.md`): Scene / Look;
+ * consumed by Points and Surface in the matching dimension; document
+ * lifetime. Points follows the existing Auto-update/manual-Regenerate
+ * contract, while an active Surface session restarts with its inspection
+ * view preserved. Eligibility refresh is immediate because group dimension,
+ * Balloon and kaleidoscope are explicit refusals. */
 const tilingEffect: ControlEffect = (state, fx) => {
+  fx.regenerateIfAutoUpdate();
   fx.refreshSurfaceEligibility();
   if (state.renderMode === "surface") fx.restartSurfaceRender();
 };
 
-/** The lattice scale is the tiling family's live exception: kind and clip are
- * baked source, but `h = cellScale * R` rides a GLSL uniform / WGSL params
- * word and therefore updates the active session without re-entry. */
+/** The lattice scale is live inside Surface but still changes which bounded
+ * raw images a Points cloud contains, so Points follows Auto-update while
+ * Surface rewrites its uniform/params word without re-entry. */
 const tilingScaleEffect: ControlEffect = (state, fx) => {
+  fx.regenerateIfAutoUpdate();
   if (
     state.renderMode === "surface" &&
     state.tiling &&
@@ -1218,6 +1227,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     persisted: false,
     read: (s) => s.autoUpdate,
     apply: (s, checked) => setAutoUpdate(s, checked),
+    effect: (s, fx) => {
+      if (s.autoUpdate) fx.resumePointAutoUpdate();
+    },
   },
   {
     // The adaptive-resolution governor's opt-out: like autoUpdate, a
@@ -1249,9 +1261,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, checked) => setBalloonEcho(s, checked),
     effect: (s, fx) => {
       if (s.balloonEcho) applyBalloonPaletteToScene(s, fx);
-      fx.scene.setBalloonEchoEnabled(s.balloonEcho);
+      fx.syncPointBalloonEcho(s.balloonEcho);
       fx.scene.setBalloonEchoRadius(s.balloonRadius);
       fx.cancelBalloonSweep();
+      if (s.tiling) fx.regenerateIfAutoUpdate();
       if (s.renderMode === "flame") fx.restartFlameRender();
       if (s.renderMode === "surface") fx.restartSurfaceRender();
     },
@@ -1415,8 +1428,8 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   // preference. The arm chooser picks the finite reflection vocabulary or
   // the mirrored lattice; the chamber comes from the group and the optional
   // ShapeSpec clip below only NARROWS the content (both arms).
-  // Points/Flame/Solid intentionally do not consume it, so those modes
-  // author for next Surface entry. ———
+  // Points consumes the bounded image plan; Flame/Solid remain authored for
+  // later lifts, while Surface keeps its query-fold implementation. ———
   {
     kind: "checkbox",
     id: "tilingEnabledCheckbox",
@@ -1481,10 +1494,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   },
   {
     // The mirrored lattice's one authored parameter: h = cellScale * R,
-    // where R is the estimator's certified radius. LIVE per frame on both
-    // engines (the GLSL uniform and the WGSL params tail both derive from
-    // the resolved tiling; scale is deliberately absent from the
-    // source-regeneration key), so the slider never restarts the session.
+    // where R is the estimator's certified radius. Surface consumes it live
+    // through the GLSL uniform / WGSL params tail; Points must regenerate
+    // because the bounded raw image carrier changes with h.
     kind: "range",
     id: "tilingCellScaleSlider",
     label: {
