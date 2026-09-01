@@ -576,17 +576,23 @@ const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
  * contract; Flame restarts its in-worker accumulation while preserving the
  * frozen view and fallback state; Surface restarts with its inspection view
  * preserved. Eligibility refresh is immediate because group dimension,
- * Balloon and kaleidoscope are explicit refusals. */
+ * Balloon and kaleidoscope are explicit refusals. The generated Flame
+ * backdrop is invalidated like an authored edit too — a tiled scene must
+ * not keep the untiled echo behind Points — via trackAutoBackground,
+ * which fires even when Points' Auto-update is off (the pane shows the
+ * stale cloud while the replacement backdrop renders). */
 const tilingEffect: ControlEffect = (state, fx) => {
   fx.regenerateIfAutoUpdate();
   fx.refreshSurfaceEligibility();
   if (state.renderMode === "flame") fx.restartFlameTilingRender();
   if (state.renderMode === "surface") fx.restartSurfaceRender();
+  fx.trackAutoBackground();
 };
 
 /** The lattice scale is live inside Surface but changes which bounded raw
  * images Points and Flame contain. Points follows Auto-update, Flame restarts
- * from its source seed, and Surface rewrites its params word without re-entry. */
+ * from its source seed, Surface rewrites its params word without re-entry,
+ * and the generated Flame backdrop re-renders (trackAutoBackground). */
 const tilingScaleEffect: ControlEffect = (state, fx) => {
   fx.regenerateIfAutoUpdate();
   if (state.renderMode === "flame") fx.restartFlameTilingRender();
@@ -597,6 +603,7 @@ const tilingScaleEffect: ControlEffect = (state, fx) => {
   ) {
     fx.setSurfaceLatticeScale(state.tiling.cellScale);
   }
+  fx.trackAutoBackground();
 };
 
 /** Display the optional clip by canonical catalog identity. An imported
