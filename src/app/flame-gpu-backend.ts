@@ -53,6 +53,7 @@ import {
   PARAMS_ITERS_OFFSET_BYTES,
   WARMUP_ITERATIONS,
   WORKGROUP_SIZE,
+  buildFlameGpuPointTilingKernel,
   convertGpuDisplayHistogram,
   convertGpuHistogram,
   packGpuChains,
@@ -63,8 +64,14 @@ import {
   planGpuDispatches,
 } from "../fractal/flame-gpu";
 import {
+  assertGpuPointTilingCompatibility,
+  packGpuPointTiling,
+  pointTilingGpuWgsl,
+} from "../fractal/point-tiling-gpu";
+import {
   FLAME_GPU_KERNEL_4D_WGSL,
   PARAMS4_ITERS_OFFSET_BYTES,
+  buildFlameGpuPointTilingKernel4,
   convertGpuDisplayHistogram4,
   convertGpuHistogram4,
   packGpuChains4,
@@ -178,6 +185,9 @@ interface GpuProgramSpec {
    * historical packer field remains `gearTable`; absent aliases binding 7
    * to `colors`, and each slot's own flag/kind gates shader reads. */
   gearTable?: ArrayBuffer;
+  /** Active point-image state at binding 8. Absent keeps the historical
+   * seven-storage-buffer layout and kernel literally unchanged. */
+  pointTilingStateBytes?: number;
   chains: ArrayBuffer;
   convertSnapshot: SnapshotConverter;
   convertDisplay: DisplayConverter;
@@ -780,6 +790,17 @@ async function buildBackendOnDevice(
   });
   device.queue.writeBuffer(chainsBuffer, 0, program.chains);
 
+  // Tiling state is accumulator state, deliberately separate from the
+  // dimension-specific orbit chains. WebGPU zero-initializes a fresh buffer;
+  // no upload can accidentally seed credit/cursor from stale host memory.
+  const pointTilingStatesBuffer = program.pointTilingStateBytes
+    ? device.createBuffer({
+        label: "flame-gpu point tiling states",
+        size: program.pointTilingStateBytes,
+        usage: GPUBufferUsage.STORAGE,
+      })
+    : undefined;
+
   // Zero-initialized by WebGPU (createBuffer with no mappedAtCreation) —
   // exactly the fresh histogram createFlameHistogram would hand back.
   const histBuffer = device.createBuffer({
@@ -841,6 +862,15 @@ async function buildBackendOnDevice(
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: "read-only-storage" },
       },
+      ...(pointTilingStatesBuffer
+        ? [
+            {
+              binding: 8,
+              visibility: GPUShaderStage.COMPUTE,
+              buffer: { type: "storage" as const },
+            },
+          ]
+        : []),
     ],
   });
   // An explicit (not "auto") pipeline layout, shared by both pipelines
@@ -905,6 +935,14 @@ async function buildBackendOnDevice(
       { binding: 5, resource: { buffer: echoColorsBuffer } },
       { binding: 6, resource: { buffer: chaosRowsBuffer } },
       { binding: 7, resource: { buffer: triangleTableBuffer } },
+      ...(pointTilingStatesBuffer
+        ? [
+            {
+              binding: 8,
+              resource: { buffer: pointTilingStatesBuffer },
+            },
+          ]
+        : []),
     ],
   });
 
@@ -1154,6 +1192,14 @@ async function buildBackendOnDevice(
 export async function createGpuFlameBackend(
   request: GpuBackendRequest,
 ): Promise<FlameAccumBackend> {
+  if (request.pointTilingPlan) {
+    assertGpuPointTilingCompatibility(
+      request.pointTilingPlan,
+      3,
+      request.order,
+      request.echo !== undefined,
+    );
+  }
   const packed = packGpuSystem({
     transforms: request.transforms,
     finalTransform: request.finalTransform,
@@ -1161,6 +1207,9 @@ export async function createGpuFlameBackend(
     palette: request.palette,
     schedule: request.schedule ?? null,
   });
+  const pointTiling = request.pointTilingPlan
+    ? packGpuPointTiling(request.pointTilingPlan, packed.gearTable, NUM_CHAINS)
+    : null;
   // itersPerInvocation starts at WARMUP_ITERATIONS: the FIRST dispatch this
   // backend ever runs is the warmup one (see createBackendForProgram), which
   // reads this very same Params field (warmup and accumulate are two
@@ -1169,7 +1218,9 @@ export async function createGpuFlameBackend(
   // backend whose `currentItersPerInvocation` already agrees with this value.
   return createBackendForProgram({
     label: "3D kernel",
-    kernel: FLAME_GPU_KERNEL_WGSL,
+    kernel: pointTiling
+      ? buildFlameGpuPointTilingKernel(pointTilingGpuWgsl(pointTiling))
+      : FLAME_GPU_KERNEL_WGSL,
     multiPartEmitters: packed.multiPartEmitters,
     params: packGpuParams({
       projection: request.projection,
@@ -1198,7 +1249,8 @@ export async function createGpuFlameBackend(
       ? packGpuColorLUT(request.echoColorLUT)
       : undefined,
     chaosRows: packed.chaosRows ?? undefined,
-    gearTable: packed.gearTable ?? undefined,
+    gearTable: pointTiling?.auxTable ?? packed.gearTable ?? undefined,
+    pointTilingStateBytes: pointTiling?.stateBytes,
     chains: packGpuChains(NUM_CHAINS, request.seed),
     convertSnapshot: convertGpuHistogram,
     convertDisplay: convertGpuDisplayHistogram,
@@ -1220,6 +1272,14 @@ export async function createGpuFlameBackend(
 export async function createGpuFlameBackend4(
   request: GpuBackendRequest4,
 ): Promise<FlameAccumBackend> {
+  if (request.pointTilingPlan) {
+    assertGpuPointTilingCompatibility(
+      request.pointTilingPlan,
+      4,
+      request.order,
+      request.echo !== undefined,
+    );
+  }
   const packed = packGpuSystem4({
     transforms4: request.transforms4,
     finalTransform4: request.finalTransform4,
@@ -1231,11 +1291,16 @@ export async function createGpuFlameBackend4(
     color: request.color,
     schedule: request.schedule ?? null,
   });
+  const pointTiling = request.pointTilingPlan
+    ? packGpuPointTiling(request.pointTilingPlan, packed.gearTable, NUM_CHAINS)
+    : null;
   // itersPerInvocation starts at WARMUP_ITERATIONS — same warmup contract as
   // the 3D factory above.
   return createBackendForProgram({
     label: "4D kernel",
-    kernel: FLAME_GPU_KERNEL_4D_WGSL,
+    kernel: pointTiling
+      ? buildFlameGpuPointTilingKernel4(pointTiling)
+      : FLAME_GPU_KERNEL_4D_WGSL,
     multiPartEmitters: packed.multiPartEmitters,
     params: packGpuParams4({
       projection: request.projection,
@@ -1267,7 +1332,8 @@ export async function createGpuFlameBackend4(
       ? packGpuColorLUT(request.echoColorLUT)
       : undefined,
     chaosRows: packed.chaosRows ?? undefined,
-    gearTable: packed.gearTable ?? undefined,
+    gearTable: pointTiling?.auxTable ?? packed.gearTable ?? undefined,
+    pointTilingStateBytes: pointTiling?.stateBytes,
     chains: packGpuChains4(NUM_CHAINS, request.seed),
     convertSnapshot: convertGpuHistogram4,
     convertDisplay: convertGpuDisplayHistogram4,

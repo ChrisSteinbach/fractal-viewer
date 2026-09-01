@@ -1361,7 +1361,7 @@ export function buildFlameGpuPointTilingKernel4(
   }
 
   const activePlot = /* wgsl */ `      let pointTilingState = &pointTilingStates[chainIdx];
-      let pointTilingAttempt = pointTilingBegin(pp, pointTilingState);
+      let pointTilingAttempt = pointTilingBegin(pp, pointTilingState, chainIdx);
 
       // Every color except wRamp belongs to the canonical raw point. Image
       // selection may move that point in w, so wRamp is deliberately deferred

@@ -1267,6 +1267,60 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
+/** Build the active point-tiling specialization without changing the
+ * historical exported kernel. The backend calls this only when it also
+ * installs the binding-7 plan tail and binding-8 chain-state buffer; absent
+ * tiling continues to compile {@link FLAME_GPU_KERNEL_WGSL} literally. */
+export function buildFlameGpuPointTilingKernel(
+  pointTilingWgsl: string,
+): string {
+  const bindingMarker =
+    "@group(0) @binding(7) var<storage, read> emitterTriangleTable: array<f32>;";
+  const plotStartMarker = "      var ci = baseIdx;";
+  const plotEndMarker = "    }\n  }\n\n  chains[chainIdx]";
+  const bindingAt = FLAME_GPU_KERNEL_WGSL.indexOf(bindingMarker);
+  const plotStart = FLAME_GPU_KERNEL_WGSL.indexOf(plotStartMarker);
+  const plotEnd = FLAME_GPU_KERNEL_WGSL.indexOf(plotEndMarker, plotStart);
+  if (bindingAt < 0 || plotStart < 0 || plotEnd < 0) {
+    throw new Error("3D Flame point-tiling kernel markers drifted");
+  }
+  const withBinding =
+    FLAME_GPU_KERNEL_WGSL.slice(0, bindingAt + bindingMarker.length) +
+    "\n" +
+    pointTilingWgsl +
+    FLAME_GPU_KERNEL_WGSL.slice(bindingAt + bindingMarker.length);
+  const inserted = withBinding.length - FLAME_GPU_KERNEL_WGSL.length;
+  const activePlot = /* wgsl */ `      var ci = baseIdx;
+      if (params.colorMode == 1u) {
+        ci = min(u32(colorCoord * 256.0), 255u);
+      }
+      let rgb = colors[ci].xyz;
+      let pointTilingState = &pointTilingStates[chainIdx];
+      let pointTilingAttempt = pointTilingBegin(
+        vec4f(pp, 0.0), pointTilingState, chainIdx,
+      );
+      for (var pointTilingSample = 0u;
+        pointTilingSample < pointTilingAttempt.selected;
+        pointTilingSample++) {
+        let pointTilingImage = pointTilingImageAt(
+          vec4f(pp, 0.0), pointTilingAttempt, pointTilingSample,
+        );
+        if (pointTilingImage.emitted == 1u) {
+          let pointTilingWeightFix = u32(round(
+            pointTilingImage.weight * ${WEIGHT_FIXED_POINT_SCALE}.0,
+          ));
+          depositPoint(pointTilingImage.point.xyz, rgb, pointTilingWeightFix);
+          pointTilingRecordEmitted(pointTilingState);
+        }
+      }
+`;
+  return (
+    withBinding.slice(0, plotStart + inserted) +
+    activePlot +
+    withBinding.slice(plotEnd + inserted)
+  );
+}
+
 /**
  * Byte-layout element offsets — 4-byte units into each buffer's combined
  * `Float32Array`/`Uint32Array` view, restating the byte-layout doc comment
@@ -2700,10 +2754,9 @@ export function planGpuDispatches(
 
 /**
  * Combine an emulated-u64 (lo, hi) word pair into a JS number — the inverse
- * of the kernel's `addU64`. Exact for any value a `Float64` can represent
- * (up to 2^53), which covers every count/sum this histogram will see this
- * side of geological time (see the module doc's "~three SECONDS" ceiling the
- * OLD single-u32 counters hit — this emulated-u64 scheme is the fix).
+ * of the kernel's `addU64`. Values through 2^53 are exact; a deliberately
+ * adversarial maximum-export tiled render can exceed that while remaining
+ * finite with negligible Float64 relative error at that scale.
  */
 function combineU64(lo: number, hi: number): number {
   return lo + hi * 2 ** 32;

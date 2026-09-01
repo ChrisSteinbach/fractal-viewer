@@ -3340,20 +3340,16 @@ async function main(): Promise<void> {
             event.adapter,
             // A CPU backend AFTER a gpuUnavailable is a fallback — say why,
             // briefly. A CPU backend with no preceding gpuUnavailable is just
-            // a CPU render (GPU never attempted): no reason to show. Active
-            // tiling is the explicit exception until its WGSL twin lands, and
-            // `forcedBy` keeps that policy distinct from a failed device.
+            // a CPU render (GPU never attempted): no reason to show.
             // Wording per the render-backend disclosure's legibility lesson:
             // no API names inside negations — "WebGPU unavailable" was
             // field-misread as a positive WebGPU indicator (the eye catches
             // the API name, not the negation).
-            event.forcedBy === "tiling"
-              ? "space tiling uses CPU"
-              : event.backend === "cpu" && fallbackReason !== null
-                ? fallbackReason === "no-webgpu"
-                  ? "no GPU API in this browser"
-                  : "GPU failed"
-                : undefined,
+            event.backend === "cpu" && fallbackReason !== null
+              ? fallbackReason === "no-webgpu"
+                ? "no GPU API in this browser"
+                : "GPU failed"
+              : undefined,
             // Software adapters escalate the note to the warning tier
             // — SwiftShader accumulation must not pass as the GPU.
             event.software === true,

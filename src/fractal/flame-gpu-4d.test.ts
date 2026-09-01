@@ -1702,7 +1702,7 @@ describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
       baseFloat: 16,
       kind: 1,
       dimension: 4,
-      states: new ArrayBuffer(32),
+      stateBytes: 32,
       maxLatticeWeight: 0,
     };
     const active = buildFlameGpuPointTilingKernel4(packed);
@@ -1713,7 +1713,7 @@ describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
       "@group(0) @binding(8) var<storage, read_write> pointTilingStates",
     );
     expect(active).toContain(
-      "let pointTilingAttempt = pointTilingBegin(pp, pointTilingState);",
+      "let pointTilingAttempt = pointTilingBegin(pp, pointTilingState, chainIdx);",
     );
     expect(active).toContain("let d4 = distance(pp, params.center4);");
     expect(active).toContain("dot(params.projS, pointTilingImage.point)");
@@ -1733,7 +1733,7 @@ describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
         baseFloat: 0,
         kind: 1,
         dimension: 3,
-        states: new ArrayBuffer(32),
+        stateBytes: 32,
         maxLatticeWeight: 0,
       }),
     ).toThrow(/requires a 4D packed plan/);
