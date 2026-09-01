@@ -831,7 +831,7 @@ The frozen budgets are:
 | Flame WebGPU             | SHIPPED in 3D and 4D — the shared binding-7 plan tail and binding-8 per-chain state drive the same 32-image weighted estimator; active tiling uses the normal GPU route with CPU fallback, never an untiled GPU substitute                                                                                                               |
 | Generated Flame backdrop | SHIPPED — same 32-image rule inside its fixed one-million-step job; schedule, tiling and the balloon legality bit join the semantic snapshot; the existing untiled Balloon omission is not changed implicitly                                                                                                                            |
 | 3D Solid                 | SHIPPED — no replicated voxel memory: the canonical density texture stays put and the material folds every query; the march budget scales with the presentation carrier at the source-voxel stride, capped at 8192 steps                                                                                                                 |
-| 4D Solid                 | FROZEN, NOT SHIPPED — at most 32 weighted pre-projection images per accepted source; the representation and exact volume budget remain the responsibility of its dedicated decision                                                                                                                                                      |
+| 4D Solid                 | DECIDED, NOT YET IMPLEMENTED — at most 32 weighted pre-projection images per accepted source, deposited into the unchanged displayed volume; no new voxel memory and no material change. The representation, its two per-arm selection policies and the refused alternatives are the section below                                       |
 
 The sheet measured all six finite groups on a balanced 16,384-point acceptance
 fixture and got exactly `1/order`. At ~262k output work, equal-density finite
@@ -977,13 +977,155 @@ The frozen combination matrix and edit timing: Balloon and kaleidoscope
 order > 1 refuse (the volume bakes the kaleidoscope into the attractor, so
 only order 1 is canonical chamber content), mesh clips refuse, a 4D document
 refuses until the 4D Solid lift (its volume is a 3D slice no 4D fold can act
-on), forward escape/bulb volumes refuse as reset debris, and the
+on — the representation that replaces the fold is the section below),
+forward escape/bulb volumes refuse as reset debris, and the
 floor/environment presentation compose. `resolveSolidTilingSession` is the
 ONE derivation (off/refused/active, mirrors `point-tiling-session.ts`);
 `installVoxelTiling` is the material compile gate (canonical records by
 identity, mirroring `installSurfaceTiling`). The panel's Solid rows read the
 session status like Flame's read their worker outcome; the mode's documented
 timing is that tiling edits are live.
+
+### 4D Solid representation
+
+**Decision: deposit bounded pre-projection images into the UNCHANGED
+displayed volume.** No new voxel memory, no new buffer shape, and no shader
+work at all: the whole lift is the voxel worker's plot boundary, taken
+exactly the way `accumulateFlame4` took it one renderer over. The executable
+argument is `scripts/solid-tiling-4d.harness.ts`.
+
+The obstruction is mechanical rather than aesthetic. `accumulateVoxels4`
+deposits into a rotor-projected, w-sliced 3D grid — rows 0-2 of a
+`RotorProjection4` give xyz, row 3 gives `sRaw`, which becomes a Gaussian
+slice WEIGHT (floor 0) and never a coordinate — so w is gone before the
+material sees the texture. 3D Solid's query-space fold cannot be lifted onto
+that texture; it would fold the displayed space instead of the attractor's.
+
+**The selected architecture.** Buffers, wire and material are literally
+today's. `VoxelGrid` stays `size³` Float32 density plus Float32 3-channel
+weighted mean; the wire stays the RGBA8 `size³` texture plus a `Vec3`
+min/max; `voxel-material.ts` is untouched, so there is no `tilingFoldQuery`,
+no carrier interval, no coverage fade and no `installVoxelTiling` in the 4D
+arm. Two consequences invert 3D's rules and must be stated rather than
+inherited: the max-density hierarchy STAYS ENABLED (a straight visible ray
+maps to no reflected source segments, because nothing folds), and tiling
+edits RESTART the worker instead of recompiling a material, because the
+images are baked into the density.
+
+At the plot boundary the worker resolves the raw authored tiling before
+constructing its seeded orbit, then calls the shared bounded visitor on raw
+post-schedule/post-lens `xyzw` and projects the IMAGE — never the source —
+through the frozen `rotorProj`, weighting by `sliceWeight(s, ·, ·, 0)`,
+Solid's floor-0 convention rather than the flame's 0.06, under the existing
+`SKIP_WEIGHT` gate. Cursor state rides `VoxelGrid` the way it rides
+`FlameHistogram`, so chunk boundaries stay irrelevant. The tiled 4D view
+pivot is frozen at the ORIGIN and `invWAmp` is `1/carrierRadius` — the
+carrier ball is rotation-invariant, so its signed-w amplitude IS its radius
+at every rotor pose (the Flame precedent). Bounds: the pilot must be tiled
+too or the cube crops the copies. The finite cube is `ball(0,R)` — images are
+4D isometries fixing the origin and orthographic projection of a rotation is
+non-expanding — MEASURED rather than assumed, as the max displayed radius
+over every finite reference run. The lattice cube is the presentation
+`outerRadius`. Coverage is realized as DENSITY, the Points precedent: Solid
+has no per-voxel coverage channel, and the reference the sheet measures
+against realizes it the same way.
+
+**Two per-arm selection policies, and the asymmetry is structural.** The
+FINITE arms keep the shipped `visitPointTilingAttemptBounded` at the frozen
+32-image cap. The LATTICE arm keeps the same credit rule but re-weights its
+proposal CDF by a per-cell slice-visibility ceiling `v_k`, derived once per
+settled pose from the cell centre's `s_k` widened by `±R·invWAmp` (row 3 of
+the rotor is a unit vector, so the mirrored source part moves `s` by at most
+`R·invWAmp`; a cell whose `u_k·v_k` falls under `SKIP_WEIGHT` cannot
+contribute, since coverage is at most `u_k` and slice weight at most `v_k`,
+so dropping it from the CDF is exact, not an approximation). Sampling cell
+`k` with probability `u_k v_k / S` and depositing
+`coverage·slice·S/(u_k v_k K)` is unbiased cell for cell against exhaustive
+replication.
+
+That refinement is legal only because Solid's deposit stage owns the SETTLED
+rotor and slice, and affordable only on the lattice, where the ceiling is
+source-INDEPENDENT. The finite groups' per-image visibility is
+source-DEPENDENT, so the same idea costs a full orbit enumeration per
+acceptance; it is REFUSED on measurement, below.
+
+**MEASURED** (`scripts/solid-tiling-4d.harness.ts`, Node 22, 2026-09-01;
+`pentatope` at R = 1.0317, 2,000,000 source attempts, 192³ native / 128³
+shared fine grid, slice width 0.12, at an identity pose and a genuine xw
+rotation of 0.63 rad at slice centre 0.37; every grid mass-normalized).
+Normalized L1 against exhaustive replication, at the w-mixing pose:
+
+| Arm         | A0 shipped | A1 slice-aware | B raw-4D N=64 | X post-projection |
+| ----------- | ---------- | -------------- | ------------- | ----------------- |
+| A4 (120)    | 0.1659     | 0.0624         | 0.7976        | 1.8399            |
+| B4 (384)    | 0.3213     | 0.1798         | 0.7610        | 1.8241            |
+| F4 (1152)   | 0.5571     | 0.3297         | 0.7392        | 1.9476            |
+| lattice 1.6 | 0.0875     | 0.0529         | 1.0554        | 1.9650            |
+
+The selected architecture costs nothing it did not already cost: 27.0 MB of
+texture and 108.0 MB of working set at 192³, identical to untiled, and a
+measured per-ray fetch multiplier of 0.968-1.000 against the untiled
+baseline's mean 162.64 fetches/ray — slightly BELOW one, because a tiled
+volume terminates rays marginally sooner. A settled rotor/slice edit costs
+0.82x-1.28x today's untiled 4D restart.
+
+**The lattice arm misses its own detail bar, and the bar is the carrier, not
+the representation.** At the frozen 10R carrier a 192³ volume resolves the
+canonical content at 19.20 voxels per content diameter, against a
+predeclared floor of 32 and against the untiled 4D volume's 205 — the
+order-of-magnitude loss the decision predicted, now measured. That number is
+NOT an argument for a raw-4D volume: candidate B bought 64 voxels per content
+diameter and lost the object, at L1 1.0554 with only 30.1% of the reference
+occupancy. Two levers exist and neither is a representation change — the
+authored Solid resolution (256³ gives 25.6) and a Solid-specific carrier. The
+carrier sweep at the w-mixing pose, each row referenced against its own
+exhaustive run, measured 10R/8R/6R/4R at 171/81/33/19 cells, 19.20/24.00/
+32.00/48.00 voxels per content diameter and L1 0.0875/0.0873/0.0791/0.0987:
+6R is the first row that clears the floor and also carries the best measured
+L1. `resolvePointTilingPlan` refuses every presentation but 8R->10R, so that
+is a presentation-policy decision with its own evidence, deliberately left
+open here rather than settled by a renderer that wanted a smaller number.
+
+**REFUSED: a raw-4D canonical volume with a query-space 4D fold.** It is the
+only candidate that keeps a 4D fold, and it is the architecture that would
+have made rotor and slice edits free — proven pose-independent, byte-identical
+between a volume built at one pose and rendered at another, because the raw
+volume reads no pose at all. It still fails, on two independent grounds. At
+N = 64, the largest resolution inside both memory caps and exactly at the
+64 MiB texture cap with a 256 MB working set, the 4D grid holds 22,017
+occupied cells out of 16,777,216 — 0.13% — and a 3-plane through a grid that
+sparse misses most of what it should intersect: occupancy retained is
+1.43-1.61 on the finite arms (an over-filled blur) and 0.30-0.34 on the
+lattice (under-filled), with L1 0.739-1.055 everywhere. Depositing and then
+slicing integrates the slice exactly, from continuous orbit points;
+voxelizing in 4D and then slicing loses it. And its per-query cost multiplies
+EVERY one of the seven folded query paths by its w-tap count — 24 taps on the
+finite arms and 231 on the lattice, against a 2x fetch cap. Sparse or bricked
+4D storage would move the memory number, not either of those two.
+
+**REFUSED: the post-projection displayed-3D fold**, at L1 1.82-1.97 with an
+occupancy symmetric difference of 0.83-2.52 against exhaustive replication.
+It draws a different object, and a different wrong one at each pose.
+
+**REFUSED for the finite arms: slice-aware importance selection.** It is
+strictly better per ATTEMPT (L1 0.5571 -> 0.3297 on F4, and every emitted
+image lands in the visible slice: visible fraction 0.62-0.70 -> 1.0000), but
+it is not better per SECOND above A4 — at matched wall clock its F4 row
+(0.3297 in 2.44 s) loses to simply spending the same time on more attempts
+(A0 at 4x: 0.2953 in 2.41 s) — and it breaks two frozen bounds: cumulative
+candidate tests reach 3.63x-8.04x attempts, and the settled-edit rebuild
+reaches 1.84x-3.39x the untiled restart.
+
+**A measured correction to this contract's own acceptance figure.** Canonical
+finite acceptance is `1/order` only for a fixture balanced against the
+CANONICAL chamber, which is what the point-family sheet used. An authored
+system's attractor sits in its own frame, unrelated to the canonical Coxeter
+roots, so its acceptance is whatever that misalignment makes it: pentatope
+measured 3.026%/1.955%/0.698% under A4/B4/F4, i.e. 3.63x/7.51x/8.04x the
+`1/order` prediction. Nothing downstream breaks — every comparison is
+mass-normalized and the credit rule is defined on attempts, not on a
+predicted acceptance — but any cost bound written in terms of `1/order` is
+not a bound, which is exactly what retired the finite slice-aware arm above.
 
 ### Legal combinations and edit timing
 
