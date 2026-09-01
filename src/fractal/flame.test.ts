@@ -612,6 +612,29 @@ describe("accumulateFlame point-space tiling", () => {
       ),
     ).toThrow("Flame point tiling is unavailable with Balloon");
   });
+
+  it("rejects a kaleidoscope-prepared system plus active tiling invariant violation", () => {
+    const plan = resolvePointTilingPlan(resolveTiling({ group: "a3" }), 3)!;
+    expect(() =>
+      accumulateFlame(
+        prepareChaosGame(fixedPointSystem([0.3, 0.3, 0.3]), null, {
+          order: 2,
+          plane: "xz",
+        }),
+        ORTHOGRAPHIC,
+        8,
+        8,
+        1,
+        mulberry32(2),
+        [[1, 1, 1]],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        plan,
+      ),
+    ).toThrow("kaleidoscope symmetry above order 1");
+  });
 });
 
 describe("accumulateFlame balloon echo", () => {

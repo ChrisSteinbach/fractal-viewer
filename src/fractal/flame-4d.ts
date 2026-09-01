@@ -87,17 +87,9 @@ import {
   POINT_TILING_ACCUMULATION_FANOUT_CAP,
   visitPointTilingAttemptBounded,
 } from "./point-tiling";
-import type { PointTilingCursorState, PointTilingPlan } from "./point-tiling";
+import type { PointTilingPlan } from "./point-tiling";
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
-
-declare module "./flame" {
-  interface FlameHistogram {
-    /** Active point-image accumulation cursor/credit, lazily attached only
-     * when a tiling plan is actually supplied. */
-    pointTiling?: PointTilingCursorState;
-  }
-}
 
 /** Color for a transform/bucket outside `palette` — shouldn't happen; mirrors
  * `flame.ts`'s `FALLBACK_COLOR` and `color.ts`'s `buildColors4` fallback. */

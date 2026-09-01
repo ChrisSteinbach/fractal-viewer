@@ -374,6 +374,14 @@ export function accumulateFlame(
   if (tilingPlan !== undefined && echo !== undefined) {
     throw new RangeError("Flame point tiling is unavailable with Balloon");
   }
+  if (
+    tilingPlan !== undefined &&
+    prepared.transformCount !== prepared.baseTransformCount
+  ) {
+    throw new RangeError(
+      "Flame point tiling is unavailable with kaleidoscope symmetry above order 1",
+    );
+  }
   const pointTiling =
     tilingPlan === undefined
       ? undefined

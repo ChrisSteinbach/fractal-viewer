@@ -343,6 +343,12 @@ function restartedEvents(
   return events.filter((e) => e.type === "restarted");
 }
 
+function tilingOutcomeEvents(
+  events: FlameWorkerEvent[],
+): Extract<FlameWorkerEvent, { type: "tilingOutcome" }>[] {
+  return events.filter((e) => e.type === "tilingOutcome");
+}
+
 // ---------------------------------------------------------------------------
 // Basic session lifecycle
 // ---------------------------------------------------------------------------
@@ -504,6 +510,179 @@ describe("FlameWorkerSession start", () => {
 
     expect(seenLuts.length).toBeGreaterThan(0);
     expect(seenLuts.every((lut) => lut === undefined)).toBe(true);
+  });
+});
+
+describe("FlameWorkerSession point-space tiling", () => {
+  it("resolves a 3D plan before accumulation and deliberately routes it to CPU", () => {
+    const seenPlans: unknown[] = [];
+    const createGpuBackend = vi.fn(
+      async (_request: GpuBackendRequest): Promise<FlameAccumBackend> => {
+        throw new Error("active tiling must not request a GPU backend");
+      },
+    );
+    const { session, events, scheduler } = harness({
+      createGpuBackend,
+      accumulate: (...args) => {
+        seenPlans.push(args[11]);
+        return accumulateFlame(...args);
+      },
+    });
+
+    session.handle(
+      startCommand({
+        tiling: { group: "a3" },
+        gpuPreference: "auto",
+        iterationsBudget: 80,
+      }),
+    );
+    scheduler.drain();
+
+    expect(createGpuBackend).not.toHaveBeenCalled();
+    expect(tilingOutcomeEvents(events)).toEqual([
+      {
+        type: "tilingOutcome",
+        outcome: { availability: "active", kind: "finite" },
+      },
+    ]);
+    expect(backendEvents(events)).toEqual([
+      {
+        type: "backend",
+        backend: "cpu",
+        adapter: undefined,
+        forcedBy: "tiling",
+      },
+    ]);
+    expect(seenPlans.length).toBeGreaterThan(0);
+    expect(
+      seenPlans.every(
+        (plan) =>
+          typeof plan === "object" &&
+          plan !== null &&
+          "dimension" in plan &&
+          plan.dimension === 3,
+      ),
+    ).toBe(true);
+    expect(progressEvents(events).at(-1)?.iterationsDone).toBe(80);
+  });
+
+  it("keeps the absent document path event- and object-shape exact", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 40 }));
+    scheduler.drain();
+
+    expect(tilingOutcomeEvents(events)).toHaveLength(0);
+    expect(backendEvents(events)).toHaveLength(1);
+    expect(backendEvents(events)[0]).not.toHaveProperty("forcedBy");
+  });
+
+  it("refuses authored Balloon even when no enclosing-ball payload was available", () => {
+    const seenPlans: unknown[] = [];
+    const { session, events, scheduler } = harness({
+      accumulate: (...args) => {
+        seenPlans.push(args[11]);
+        return accumulateFlame(...args);
+      },
+    });
+    session.handle(
+      startCommand({
+        tiling: { group: "a3" },
+        balloonEchoEnabled: true,
+        balloonEcho: undefined,
+        iterationsBudget: 40,
+      }),
+    );
+    scheduler.drain();
+
+    expect(tilingOutcomeEvents(events)).toEqual([
+      {
+        type: "tilingOutcome",
+        outcome: {
+          availability: "refused",
+          note: expect.stringMatching(/unavailable with Balloon/),
+        },
+      },
+    ]);
+    expect(seenPlans.every((plan) => plan === undefined)).toBe(true);
+    expect(backendEvents(events)[0]).not.toHaveProperty("forcedBy");
+  });
+
+  it("resolves and renders the 4D twin without requesting its GPU backend", () => {
+    const createGpuBackend4 = vi.fn(
+      async (_request: GpuBackendRequest4): Promise<FlameAccumBackend> => {
+        throw new Error("active tiling must not request a 4D GPU backend");
+      },
+    );
+    const { session, events, scheduler } = harness({ createGpuBackend4 });
+    session.handle(
+      startCommand({
+        tiling: { group: "a4" },
+        fourD: defaultFourD(),
+        gpuPreference: "auto",
+        iterationsBudget: 80,
+      }),
+    );
+    scheduler.drain();
+
+    expect(createGpuBackend4).not.toHaveBeenCalled();
+    expect(tilingOutcomeEvents(events)).toEqual([
+      {
+        type: "tilingOutcome",
+        outcome: { availability: "active", kind: "finite" },
+      },
+    ]);
+    expect(backendEvents(events)[0]).toMatchObject({
+      backend: "cpu",
+      forcedBy: "tiling",
+    });
+    expect(progressEvents(events).at(-1)?.iterationsDone).toBe(80);
+  });
+
+  it("re-resolves a live symmetry change from active to refused before restart", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({ tiling: { group: "a3" }, iterationsBudget: 40 }),
+    );
+    scheduler.drain();
+
+    session.handle({ type: "setSymmetry", order: 2, plane: "xz" });
+    scheduler.drain();
+
+    expect(tilingOutcomeEvents(events).at(-1)?.outcome).toEqual({
+      availability: "refused",
+      note: expect.stringMatching(/symmetry above order 1/),
+    });
+    expect(backendEvents(events).at(-1)).not.toHaveProperty("forcedBy");
+    expect(progressEvents(events).at(-1)?.iterationsDone).toBe(40);
+  });
+
+  it("finishes an active but empty clipped accumulation with a transparent frame", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        tiling: {
+          group: "a3",
+          clip: {
+            parts: [
+              {
+                primitive: { kind: "sphere", radius: 1e-9 },
+                combine: "union",
+                pose: { offset: [100, 100, 100] },
+              },
+            ],
+          },
+        },
+        iterationsBudget: 80,
+      }),
+    );
+    scheduler.drain();
+
+    expect(tilingOutcomeEvents(events).at(-1)?.outcome.availability).toBe(
+      "active",
+    );
+    const terminal = progressEvents(events).at(-1)!;
+    expect(terminal.iterationsDone).toBe(80);
+    expect(terminal.image.every((channel) => channel === 0)).toBe(true);
   });
 });
 

@@ -84,6 +84,10 @@ import { buildPaletteLUT } from "../fractal/palette";
 import type { PaletteSpec } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
+import type { FlameTilingOutcome } from "./point-tiling-outcome";
+import { resolvePointTilingSession } from "../fractal/point-tiling-session";
+import type { PointTilingPlan } from "../fractal/point-tiling";
+import type { TilingSpec } from "../fractal/tiling";
 import {
   hasMeshAsset,
   installCustomMeshAsset,
@@ -234,6 +238,10 @@ export type FlameWorkerCommand =
        * byte-identical single-splat path.
        */
       balloonEcho?: FlameBalloonEcho;
+      /** Authored Balloon state, independent of whether the main thread had
+       * a usable enclosing ball for the optional render payload above. Space
+       * tiling legality follows the document bit, never payload availability. */
+      balloonEchoEnabled?: boolean;
       /**
        * Independent balloon gradient. Omitted means inherit the primary
        * sample color exactly; callers resolve custom selections to their
@@ -249,6 +257,13 @@ export type FlameWorkerCommand =
        * no-post-word paths.
        */
       schedule?: HybridSchedule | null;
+      /**
+       * Authored point-space tiling. The worker resolves this raw document
+       * block locally against the session geometry; active plans take the CPU
+       * accumulator until the separate GPU-kernel lift lands. Off/refused
+       * sessions retain their literal historical backend path.
+       */
+      tiling?: TilingSpec | null;
       /** Kaleidoscope symmetry, 4D as well as 3D — which is also why
        * `twist` rides along (the second angle of a 4D double rotation, which
        * only the 4D path can express). Absent `twist` means 0. */
@@ -464,6 +479,16 @@ export type FlameWorkerEvent =
        * software rasterization must not pass as a normal GPU render.
        * Absent for CPU backends. */
       software?: boolean;
+      /** Present when CPU was selected intentionally for a document feature,
+       * rather than because GPU creation/accumulation failed. */
+      forcedBy?: "tiling";
+    }
+  | {
+      /** Worker-resolved point-space tiling availability for the active
+       * Flame session. This is result-associated: the main thread must not
+       * infer forward-debris or estimator refusals from authored state. */
+      type: "tilingOutcome";
+      outcome: FlameTilingOutcome;
     }
   | { type: "error"; message: string }
   | {
@@ -944,6 +969,7 @@ class CpuFlameBackend implements FlameAccumBackend {
     private readonly colorLUT: Float32Array | null,
     private readonly echo: FlameBalloonEcho | undefined,
     private readonly echoColorLUT: Float32Array | null,
+    private readonly tilingPlan: PointTilingPlan | null,
   ) {}
 
   accumulate(iterations: number): number {
@@ -959,6 +985,7 @@ class CpuFlameBackend implements FlameAccumBackend {
       this.colorLUT ?? undefined,
       this.echo,
       this.echoColorLUT ?? undefined,
+      this.tilingPlan ?? undefined,
     );
     return iterations; // CPU always retires exactly what it was asked for.
   }
@@ -1008,6 +1035,7 @@ class Cpu4DFlameBackend implements FlameAccumBackend {
     private readonly rotorProjection: RotorProjection4 | undefined,
     private readonly cameraProjection: Mat4 | undefined,
     private readonly echoColorLUT: Float32Array | null,
+    private readonly tilingPlan: PointTilingPlan | null,
   ) {}
 
   accumulate(iterations: number): number {
@@ -1025,6 +1053,7 @@ class Cpu4DFlameBackend implements FlameAccumBackend {
       this.rotorProjection,
       this.cameraProjection,
       this.echoColorLUT ?? undefined,
+      this.tilingPlan ?? undefined,
     );
     return iterations; // CPU always retires exactly what it was asked for.
   }
@@ -1091,8 +1120,18 @@ export class FlameWorkerSession {
   private projection: Mat4 | null = null;
   /** Balloon echo snapshotted at session start; absent is the off path. */
   private balloonEcho: FlameBalloonEcho | undefined;
+  private balloonEchoEnabled = false;
   /** Independent echo-only gradient; null is the exact inherit path. */
   private balloonColorLUT: Float32Array | null = null;
+  /** Raw authored block retained so a live symmetry edit can re-resolve the
+   * active/refused policy without a new start command. */
+  private tilingSpec: TilingSpec | null = null;
+  /** Worker-local matrix/CDF plan. Non-null is also the temporary explicit
+   * CPU-routing gate until the GPU kernels consume the same plan. */
+  private pointTilingPlan: PointTilingPlan | null = null;
+  /** Certified origin radius from the active resolver, used by the genuine
+   * 4D carrier/view policy. Null for off/refused sessions. */
+  private pointTilingOriginRadius: number | null = null;
   /** True when the current session's `start` carried a `fourD` block — see
    * that field's doc. Set once per `start`; a restart (setSupersample/
    * setPalette) never toggles it, since a session's dimensionality doesn't
@@ -1111,10 +1150,14 @@ export class FlameWorkerSession {
    * de-duplication and for rebuilding the projection around `fourDCenter`. */
   private fourDWorkerView: FourDWorkerView | null = null;
   private fourDColorMode: FourDColorMode = "wBlueOrange";
+  /** Entry geometry retained independently of the active tiling view so a
+   * live symmetry refusal can return to the exact untiled pivot/support. */
+  private fourDEntryCenter: Vec4 = [0, 0, 0, 0];
+  private fourDEntryHalfExtents: Vec4 = [0, 0, 0, 0];
   private fourDCenter: Vec4 = [0, 0, 0, 0];
-  /** The active entry cloud's axis-aligned support, paired with
-   * `fourDCenter` and deliberately unchanged by live document edits. */
-  private fourDHalfExtents: Vec4 = [0, 0, 0, 0];
+  /** Canonical-source normalization stays independent of the image carrier. */
+  private fourDColorCenter: Vec4 = [0, 0, 0, 0];
+  private fourDColorHalfExtents: Vec4 = [0, 0, 0, 0];
   private fourDRadiusMin = 0;
   private fourDRadiusMax = 1;
   private fourDColorGamma = 1;
@@ -1461,12 +1504,90 @@ export class FlameWorkerSession {
       : symmetry;
   }
 
+  /** Resolve the authored point-space block inside the worker realm. Plans
+   * contain cached typed arrays and never cross postMessage; only this compact
+   * outcome returns to the panel. Re-run after a live symmetry edit because
+   * order > 1 is a deliberate composition refusal. */
+  private resolvePointTiling(): void {
+    const resolution = resolvePointTilingSession(
+      this.baseTransforms,
+      this.baseFinalTransform,
+      this.symmetry(),
+      this.hybridSchedule,
+      this.tilingSpec,
+      this.balloonEchoEnabled,
+      this.is4D,
+    );
+    this.pointTilingPlan =
+      resolution.status === "active" ? resolution.plan : null;
+    this.pointTilingOriginRadius =
+      resolution.status === "active" ? resolution.originVisibleRadius : null;
+    if (resolution.status !== "off") {
+      this.emit({
+        type: "tilingOutcome",
+        outcome:
+          resolution.status === "active"
+            ? { availability: "active", kind: resolution.plan.kind }
+            : resolution.status === "refused"
+              ? { availability: "refused", note: resolution.note }
+              : { availability: "off" },
+      });
+    }
+    this.applyPointTilingViewPolicy();
+  }
+
+  /** A tiled 4D Flame reduces raw images around the certified origin-centred
+   * carrier, independently of the explorer cloud that happened to be landed
+   * when the render began. The carrier is a rotation-invariant ball, so its
+   * signed-w amplitude is exactly its radius at every rotor pose. Off/refused
+   * sessions restore the historical entry pivot and sampled-box support. */
+  private applyPointTilingViewPolicy(): void {
+    if (
+      !this.is4D ||
+      this.fourDWorkerView === null ||
+      this.projection === null
+    ) {
+      return;
+    }
+    const radius =
+      this.pointTilingPlan === null || this.pointTilingOriginRadius === null
+        ? null
+        : this.pointTilingPlan.kind === "lattice"
+          ? this.pointTilingPlan.tiling.presentation.outerRadius
+          : this.pointTilingOriginRadius;
+    this.fourDCenter =
+      radius === null ? [...this.fourDEntryCenter] : [0, 0, 0, 0];
+    this.rotorProjection4 = composeRotorProjection4(
+      this.fourDWorkerView.rotor,
+      this.fourDCenter,
+    );
+    this.projection4 = composeFlameProjection4(
+      this.projection,
+      this.rotorProjection4,
+    );
+    this.fourDView = {
+      invWAmp:
+        radius === null
+          ? 1 /
+            Math.max(
+              wSupport(this.fourDWorkerView.rotor, this.fourDEntryHalfExtents),
+              1e-6,
+            )
+          : 1 / Math.max(radius, 1e-6),
+      sliceOn: this.fourDWorkerView.sliceOn,
+      sliceCenter: this.fourDWorkerView.sliceCenter,
+      sliceWidth: this.fourDWorkerView.sliceWidth,
+      sliceRelativeColor: this.fourDWorkerView.sliceRelativeColor,
+    };
+  }
+
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
     installStartMeshAssets(cmd.meshAssets);
 
     this.baseTransforms = cmd.transforms;
     this.baseFinalTransform = cmd.finalTransform;
     this.hybridSchedule = cmd.schedule ?? null;
+    this.tilingSpec = cmd.tiling ?? null;
     this.symmetryOrder = cmd.order;
     this.symmetryPlane = cmd.plane;
     this.symmetryTwist = cmd.twist ?? 0;
@@ -1480,6 +1601,7 @@ export class FlameWorkerSession {
     );
     this.projection = cmd.projection;
     this.balloonEcho = cmd.balloonEcho;
+    this.balloonEchoEnabled = cmd.balloonEchoEnabled ?? false;
     // A palette without an echo is inert: avoid even building its LUT. A
     // resolved spec that unexpectedly has no gradient (currently "legacy")
     // degrades to inherit rather than inventing a renderer-local meaning.
@@ -1531,8 +1653,11 @@ export class FlameWorkerSession {
         sliceRelativeColor: fourD.sliceRelativeColor,
       };
       this.fourDColorMode = fourD.colorMode;
+      this.fourDEntryCenter = [...fourD.center];
+      this.fourDEntryHalfExtents = [...fourD.halfExtents];
       this.fourDCenter = [...fourD.center];
-      this.fourDHalfExtents = [...fourD.halfExtents];
+      this.fourDColorCenter = [...fourD.center];
+      this.fourDColorHalfExtents = [...fourD.halfExtents];
       this.fourDRadiusMin = fourD.radiusMin;
       this.fourDRadiusMax = fourD.radiusMax;
       this.fourDColorGamma = fourD.colorGamma ?? 1;
@@ -1546,8 +1671,14 @@ export class FlameWorkerSession {
       this.rotorProjection4 = null;
       this.fourDView = null;
       this.fourDWorkerView = null;
-      this.fourDHalfExtents = [0, 0, 0, 0];
+      this.fourDEntryCenter = [0, 0, 0, 0];
+      this.fourDEntryHalfExtents = [0, 0, 0, 0];
+      this.fourDColorCenter = [0, 0, 0, 0];
+      this.fourDColorHalfExtents = [0, 0, 0, 0];
     }
+    // Plan resolution precedes RNG construction: estimator fitting owns its
+    // own fixed probe stream and must never perturb the Flame orbit.
+    this.resolvePointTiling();
     this.rng = mulberry32(cmd.seed);
     this.width = cmd.width;
     this.height = cmd.height;
@@ -1648,8 +1779,8 @@ export class FlameWorkerSession {
             this.fourDColorGamma,
             this.fourDRampPalette,
           ),
-          minY: this.fourDCenter[1] - this.fourDHalfExtents[1],
-          maxY: this.fourDCenter[1] + this.fourDHalfExtents[1],
+          minY: this.fourDColorCenter[1] - this.fourDColorHalfExtents[1],
+          maxY: this.fourDColorCenter[1] + this.fourDColorHalfExtents[1],
         };
       case "radius":
         return {
@@ -1659,7 +1790,7 @@ export class FlameWorkerSession {
             this.fourDColorGamma,
             this.fourDRampPalette,
           ),
-          center: this.fourDCenter,
+          center: this.fourDColorCenter,
           minD: this.fourDRadiusMin,
           maxD: this.fourDRadiusMax,
         };
@@ -1667,14 +1798,14 @@ export class FlameWorkerSession {
         return {
           kind: "position",
           min: [
-            this.fourDCenter[0] - this.fourDHalfExtents[0],
-            this.fourDCenter[1] - this.fourDHalfExtents[1],
-            this.fourDCenter[2] - this.fourDHalfExtents[2],
+            this.fourDColorCenter[0] - this.fourDColorHalfExtents[0],
+            this.fourDColorCenter[1] - this.fourDColorHalfExtents[1],
+            this.fourDColorCenter[2] - this.fourDColorHalfExtents[2],
           ],
           max: [
-            this.fourDCenter[0] + this.fourDHalfExtents[0],
-            this.fourDCenter[1] + this.fourDHalfExtents[1],
-            this.fourDCenter[2] + this.fourDHalfExtents[2],
+            this.fourDColorCenter[0] + this.fourDColorHalfExtents[0],
+            this.fourDColorCenter[1] + this.fourDColorHalfExtents[1],
+            this.fourDColorCenter[2] + this.fourDColorHalfExtents[2],
           ],
           colorGamma: this.fourDColorGamma,
           axisColors: this.fourDPositionAxisColors,
@@ -1691,16 +1822,18 @@ export class FlameWorkerSession {
    * (which acts on it) and `computeEffectiveSupersample` (whose GPU-size
    * clamp must apply exactly when the GPU will be attempted — clamping a
    * CPU-only accumulation by a GPU ceiling would shrink it for no reason).
-   * Document-independent now: chaos rows and shape emitters both used to
-   * force CPU here in turn, one selection layer at a time, until their WGSL
-   * kernels learned to read them (`packGpuSystem`/`packGpuSystem4` transfer
-   * chi rows and emitter blocks alike), so every document now takes
-   * whatever backend the machine offers.
+   * Chaos rows and shape emitters no longer affect this choice because their
+   * WGSL twins consume the same wires. Point-space tiling remains the one
+   * document gate until its separate kernel lift lands.
    */
   private gpuEligible(): boolean {
     return (
       this.gpuPreference === "auto" &&
       !this.gpuFailed &&
+      // The CPU twins now consume the worker-local plan. Until the paired
+      // WGSL lift lands, never let an active authored tiling silently render
+      // the ordinary attractor merely because this machine has WebGPU.
+      this.pointTilingPlan === null &&
       (this.is4D
         ? this.createGpuBackend4 !== undefined
         : this.createGpuBackend !== undefined)
@@ -1981,26 +2114,7 @@ export class FlameWorkerSession {
       return;
     }
 
-    this.rotorProjection4 = composeRotorProjection4(
-      this.fourDWorkerView.rotor,
-      this.fourDCenter,
-    );
-    this.projection4 = composeFlameProjection4(
-      this.projection!,
-      this.rotorProjection4,
-    );
-    this.fourDView = {
-      invWAmp:
-        1 /
-        Math.max(
-          wSupport(this.fourDWorkerView.rotor, this.fourDHalfExtents),
-          1e-6,
-        ),
-      sliceOn: view.sliceOn,
-      sliceCenter: view.sliceCenter,
-      sliceWidth: view.sliceWidth,
-      sliceRelativeColor: view.sliceRelativeColor,
-    };
+    this.applyPointTilingViewPolicy();
     this.startAccumulation(
       this.lastRequestedSupersample ?? this.effectiveSupersample,
     );
@@ -2040,6 +2154,7 @@ export class FlameWorkerSession {
         this.hybridSchedule,
       );
     }
+    this.resolvePointTiling();
     // The accumulated color sums (and the slot layout itself) assume the OLD
     // geometry — symmetry changes which slots exist, not just a tone-map
     // parameter — so, like setPalette, this can't be re-applied to the
@@ -2321,6 +2436,7 @@ export class FlameWorkerSession {
       this.colorLUT,
       this.balloonEcho,
       this.balloonColorLUT,
+      this.pointTilingPlan,
     );
   }
 
@@ -2341,6 +2457,7 @@ export class FlameWorkerSession {
       this.balloonEcho ? this.rotorProjection4! : undefined,
       this.balloonEcho ? this.projection! : undefined,
       this.balloonColorLUT,
+      this.pointTilingPlan,
     );
   }
 
@@ -2546,6 +2663,9 @@ export class FlameWorkerSession {
         backend: created.kind,
         adapter: created.adapterLabel,
         software: created.software,
+        ...(created.kind === "cpu" && this.pointTilingPlan !== null
+          ? { forcedBy: "tiling" as const }
+          : {}),
       });
     }
     const backend = this.backend;
