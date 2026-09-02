@@ -182,6 +182,23 @@
  * against this sheet's own local mirror of `buildLatticePlan`, pinned
  * cell-for-cell against the shipped builder at the 10R row.
  *
+ * DECISION (the presentation-policy question this sheet left open): the
+ * 8R -> 10R policy STAYS ONE frozen pair across every renderer, including
+ * 4D Solid's volume extent, and the lattice arm's copy detail is DISCLOSED
+ * rather than re-windowed. The 6R Solid-specific carrier is refused on the
+ * cross-renderer one-object rule — the same document would draw 33 cells in
+ * Solid and 171 in Points/Flame/Surface — with no measured advantage to
+ * offset it (L1 flat across carriers; fewer, sharper copies is a
+ * presentation preference against an already-qualified shared window, and
+ * would re-qualify every `lattice-presentation.verify.mjs` row per
+ * renderer). Raising the authored resolution cannot reach the floor it is
+ * raised for: 32 voxels per content diameter at 10R needs 320^3 (~131 MiB
+ * RGBA8 texture, ~524 MiB working set), past both predeclared memory caps,
+ * so 256^3 buys 1.33x detail for a cap-breaking 2.33x texture. Full
+ * rationale and figures in `docs/tiling-contract.md`'s 4D Solid
+ * representation section; the shipped user-facing disclosure is the panel's
+ * 4D Solid lattice note.
+ *
  * Run (the recorded numbers):
  *   NODE_OPTIONS=--max-old-space-size=8192 \
  *   npx vitest run --config scripts/vitest.harness.config.ts \

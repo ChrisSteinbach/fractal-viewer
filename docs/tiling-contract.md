@@ -1108,9 +1108,33 @@ carrier sweep at the w-mixing pose, each row referenced against its own
 exhaustive run, measured 10R/8R/6R/4R at 171/81/33/19 cells, 19.20/24.00/
 32.00/48.00 voxels per content diameter and L1 0.0875/0.0873/0.0791/0.0987:
 6R is the first row that clears the floor and also carries the best measured
-L1. `resolvePointTilingPlan` refuses every presentation but 8R->10R, so that
-is a presentation-policy decision with its own evidence, deliberately left
-open here rather than settled by a renderer that wanted a smaller number.
+L1.
+
+**DECISION: the presentation policy stays ONE frozen 8R→10R pair across every
+renderer, including 4D Solid's volume extent; the 4D Solid lattice's copy
+detail is DISCLOSED, not re-windowed.** Neither lever is taken. A
+Solid-specific 6R carrier makes the same document draw 33 cells in Solid and
+171 in Points, Flame and Surface — the cross-renderer one-object discrepancy
+this contract exists to prevent, reopened in the dimension it most cares
+about — and the sweep's own numbers give it no evidence advantage: L1 is
+essentially flat across carriers (0.0875/0.0873/0.0791/0.0987), so 6R renders
+FEWER copies each sharper, a presentation preference against an
+already-qualified shared window (`lattice-presentation.verify.mjs`, 22/22
+rows), not a better object. Opening the policy per-renderer would also
+re-qualify every row of that gate per renderer and split
+`resolvePointTilingPlan`'s frozen-presentation refusal into per-renderer
+variants. Raising the authored resolution cannot reach the floor it is
+raised for: 32 voxels per content diameter at the frozen 10R carrier needs
+320³ — about 131 MiB of RGBA8 texture and a 524 MiB working set, past both
+predeclared memory caps (64 MiB texture, 300 MiB working set) — so the
+256³ candidate buys 19.2→25.6 voxels per content diameter (1.33x) for a
+cap-breaking 2.33x texture (67.1 MB) on the heaviest renderer, and would
+make tiled 4D lattice sessions' memory an outlier conditioned on an authored
+block. The shipped disclosure: the panel's 4D Solid lattice note names the
+coarser copies and why (the volume spans the shared window), and this
+paragraph carries the figures. `resolvePointTilingPlan`'s
+"point-family lattice presentation is frozen at 8R -> 10R" refusal is
+unchanged by this decision and is what makes the policy enforceable.
 
 **REFUSED: a raw-4D canonical volume with a query-space 4D fold.** It is the
 only candidate that keeps a 4D fold, and it is the architecture that would

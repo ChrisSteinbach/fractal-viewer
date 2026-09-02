@@ -4626,7 +4626,7 @@ export class Ui {
     const lattice = isResolvedLatticeTiling(status.resolved);
     if (workerBaked) {
       return lattice
-        ? "Active in 4D Solid — bounded mirrored x/z/w images are baked into density before projection; edits restart accumulation."
+        ? "Active in 4D Solid — bounded mirrored x/z/w images are baked into density before projection; copies resolve coarser than in the other renderers because the volume spans the shared lattice window; edits restart accumulation."
         : "Active in 4D Solid — bounded reflected images are baked into density before projection; edits restart accumulation.";
     }
     return lattice
