@@ -874,52 +874,47 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `tiling.ts` — the ONE space-tiling vocabulary and resolver. The legacy
     finite arm stays `{group, clip?}`; mirrored affine-A1 repetition is
     `{kind: "lattice", cellScale, clip?}` with required finite
-    `cellScale >= 1`, no core-authored default/max, and `h = cellScale·R`
-    derived from the core's certified origin-centred visible radius. The
+    `cellScale >= 1`, no core-authored default/max, `h = cellScale·R`
+    from the core's certified origin-centred visible radius. The
     finite arm owns A3/B3/H3 and A4/B4/F4, their proven fold bound (32
     including jitter guard), roots and explicit-orbit test oracle; its estimate is
     `max(DE(fold(q)), clipDist(fold(q)))`. The lattice folds attractor-frame
     x/z in 3D and x/z/w in 4D with fixed work (resolution refuses an `h`
-    that rounds to zero or a `4h` period that cannot fit the frozen f32
-    shader representation);
-    `tiling-de.ts` is the one-core-call CPU authority for all seven inverse/forward families and additionally
+    or `4h` period the frozen f32 wire cannot represent);
+    `tiling-de.ts` is the one-core-call CPU authority for all seven inverse/forward families and
     maxes the mandatory certified ball. Walls/seams are NEVER distance terms.
     `latticeFoldSource` is the ONE GLSL/WGSL floor-modulo emitter; code 7 + h
     reuse the 16-byte tail as `(7, h, 10R, 0)`; all seven WGSL and both GLSL
     wrappers are driver-qualified, with canonical resolver/full-radius seams.
-    `lattice-march.ts` owns exact sphere∩attractor-y-slab intervals, probe and
-    shadow membership, entry-relative fog, the shared GLSL/WGSL carrier-source
+    `lattice-march.ts` owns exact sphere∩attractor-y-slab intervals, probe/shadow
+    membership, entry-relative fog, the shared carrier-source
     emitter and a bounded reference march against an EXPLICIT outer radius.
     THE CARRIER IS WIRED: the live lattice session marches only inside
     sphere(10R) ∩ slab(|attractor-y| ≤ R) on both engines/dimensions — primary,
-    fog, shadow, probe and ground-plane paths all use it, and the window never
+    fog, shadow, probe and ground-plane paths all use it; the window never
     becomes geometry, shadow or AO. After depth fog, shared-dialect smoothstep
-    coverage fades displayed-3D hits from 8R to the pixel backdrop at 10R;
-    capture/DOF carries that fraction while hit alpha stays terminal. The pair
-    is renderer-only, real-Iris gated, and not document state. The panel
-    family is SPACE TILING (Scene / Look, visible in every render mode):
-    arm kind, analytic clip on either arm, and lattice cell scale over
-    the FROZEN 1.25–4 range (default 1.5), with per-mode edit timing
-    disclosed beside the controls (Points follows Auto-update, Flame
-    restarts from its seed and frozen view, 3D Solid is live in the
-    material, 4D Solid restarts its worker, Surface restarts on kind/clip
-    and keeps lattice scale live). An entirely unposed clip
+    coverage fades displayed-3D hits from 8R to the backdrop at 10R;
+    capture/DOF carries that fraction while hit alpha stays terminal.
+    Renderer-only, real-Iris gated, not document state. The panel
+    family is SPACE TILING (Scene / Look, every render mode): arm kind,
+    analytic clip on either arm, lattice cell scale over the FROZEN 1.25–4
+    range (default 1.5), per-mode edit timing disclosed beside the controls.
+    An entirely unposed clip
     composition gets one shared per-entry pose from the folded-content fit
-    (the bailout ball for forward families), without changing the document;
+    (the bailout ball for forward families), never changing the document;
     any authored part pose preserves the whole composition. Routing resolves
     lattice blocks PER-ARM against each DE's authority radius (visible for
     the descents, bounding for the forward orbits — resolveTiling throws
     without it), refuses the empty-space grid (its floors bound the
     attractor, not the infinite mirror image), and frames the camera on
-    the canonical cell (`latticeCameraFitBounds`: hypot(h,h,R) / hypot(h,h,h,R)).
-    Bench-pinned on verified Iris (eval 7/7 cores plus five production frame
-    legs) and browser-gated by `scripts/surface-lattice.verify.mjs`;
-    tiling-bearing cancel, real-Firefox teardown, WebGL fallback and fold-4D
-    refusal are pinned by their owning lifecycle gates.
-    Tiling authoring, presets (`mirroredLattice`/`mirroredLattice4`), app-copy
-    and workflow behavior are real-browser gated by `scripts/tiling-ui.verify.mjs`.
+    the canonical cell (`latticeCameraFitBounds`).
+    Bench-pinned on verified Iris (7/7 eval cores plus five frame legs) and
+    browser-gated by `scripts/surface-lattice.verify.mjs`; authoring,
+    presets, app-copy and workflow behavior by `scripts/tiling-ui.verify.mjs`;
+    cancel, real-Firefox teardown, WebGL fallback and fold-4D refusal ride
+    their owning lifecycle gates.
     Points SHIPS tiled in 3D/4D after schedule/final: bounded recorders keep
-    canonical color, raw 4D, the 8N cap and explicit terminal status. Flame CPU
+    canonical color, raw 4D, the 8N cap, explicit terminal status. Flame CPU
     and both WGSL twins SHIP the shared 32-weighted visitor; active tiling
     restarts from one seed/frozen view and remains GPU-eligible. The generated
     Flame backdrop SHIPS the same block (schedule + raw tiling + the balloon
@@ -928,20 +923,17 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     folds, hierarchy suspended, material-only); 4D Solid SHIPS it — bounded
     pre-projection images into the UNCHANGED displayed volume (no new voxel
     memory, no material change, hierarchy KEPT, edits RESTART the worker
-    from the entry seed), shipped estimator on the finite arms and a
-    slice-aware proposal CDF on the lattice; raw-4D volumes and
+    from the entry seed), the shipped finite estimator and a slice-aware
+    lattice proposal CDF; raw-4D volumes and
     post-projection folds are MEASURED refusals, and so is any
     renderer-specific lattice window: the 8R→10R presentation stays ONE
-    frozen policy across every renderer, with 4D Solid's lattice copy
-    detail DISCLOSED in the panel rather than re-windowed (the 6R
-    Solid-specific carrier redraws 33 cells where the others draw 171 with
-    L1 flat; 320³ is the smallest resolution that reaches the sheet's
-    32-voxel floor and costs ~131 MiB of texture). Absent/refused stays
-    literal legacy.
-    Balloon, kaleidoscope and 4D slab remain
-    refused for the proof reasons in the contract. Finite WGSL wire is one
+    policy across every renderer, 4D Solid's lattice copy detail
+    DISCLOSED, not re-windowed (figures in the contract). Absent/refused
+    stays literal legacy.
+    Balloon, kaleidoscope and 4D slab stay refused (proof in the contract).
+    Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic
-    opRep is REFUSED for overshoot and a wall clamp for false-zero geometry;
+    opRep is REFUSED (overshoot; a wall clamp gives false-zero geometry);
     exact translation is deferred. Full contract and proof:
     `docs/tiling-contract.md`.
   - `surface-finish.ts` — the per-transform surface FINISH's meaning:
