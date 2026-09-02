@@ -11056,7 +11056,7 @@ describe("Ui finite tiling controls", () => {
     new Ui(document);
     const section = el("tilingSection");
     expect(section.querySelector(":scope > summary")?.textContent).toBe(
-      "Surface tiling",
+      "Space tiling",
     );
     expect(el("tilingNote").getAttribute("role")).toBe("status");
     expect(el("tilingNote").getAttribute("aria-live")).toBe("polite");

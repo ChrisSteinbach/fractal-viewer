@@ -113,7 +113,7 @@ Transform** sliders that appear in the panel while a transform is selected.
 ## Panel controls
 
 The panel's active editing categories — including **Transforms**, **Xaos**,
-**Hybrid schedule**, **Cloud**, **Scene color**, **Balloon**, **Atmosphere**, **Symmetry**, **Surface tiling**, and the
+**Hybrid schedule**, **Cloud**, **Scene color**, **Balloon**, **Atmosphere**, **Symmetry**, **Space tiling**, and the
 contextual renderer inspector — come before the shared contextual **Quality**
 section, then **Performance** and **View**, then the always-available
 workflow sections **Systems**, **Collection**, **Timeline**, **Capture**, and **Share**.
@@ -1618,16 +1618,18 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   the Surface button and its adjacent eligibility explanation update
   immediately if the new order, plane, or twist changes what the tracer can
   render.
-- **Surface tiling** — repeated Surface geometry authored as shared Scene /
-  Look state. Turn it on, then use **Tiling kind** to choose either arm:
+- **Space tiling** — repeated space authored as shared Scene / Look state and
+  rendered by every mode. Turn it on, then use **Tiling kind** to choose
+  either arm:
 
   - **Reflection group** folds space into one fixed fundamental chamber and
     repeats that chamber's fractal piece. Its arm-specific row offers **A3 ·
     tetrahedral**, **B3 · octahedral**, or **H3 · icosahedral** for a flat
     system, and **A4 · pentatope**, **B4 · 16-cell**, or **F4 · 24-cell** for
     a genuinely 4D system.
-  - **Mirrored lattice** repeats the piece forever across x and z, plus w in
-    4D, while leaving y vertical. Its **Cell scale** runs from 1.25× to 4× in
+  - **Mirrored lattice** repeats the piece across x and z, plus w in 4D,
+    while leaving y vertical, across a bounded presentation window that
+    fades to the backdrop. Its **Cell scale** runs from 1.25× to 4× in
     0.05 steps and defaults to 1.5×. Smaller cells pack more mirrored copies
     into the view and can read as dense or noisy; larger cells show fewer
     repetitions and approach a sparse, single-cell view.
@@ -1637,10 +1639,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   “use the whole piece,” not “turn tiling off.” The picker offers only the
   analytic **Cog**, **Orbit Ring**, and **Peace sign** shapes. An imported clip
   outside those offered choices remains intact as **Authored clip** instead of
-  being rewritten; an authored clip containing a mesh is preserved but
-  Surface refuses it with an adjacent reason until tiling supports mesh clips.
+  being rewritten; an authored clip containing a mesh is preserved but every
+  renderer refuses it with an adjacent reason until tiling supports mesh
+  clips.
 
-  When every part of a clip is unposed, each Surface entry fits it to the
+  When every part of a clip is unposed, each render session fits it to the
   current folded content for that session, so an origin-centred catalog shape
   visibly intersects the piece. This automatic pose changes only the session's
   resolved copy and never mutates the document. If any clip part has an
@@ -1648,17 +1651,44 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   untouched instead. The fit is derived again on each entry, including after
   a morph or randomization.
 
-  Both arms apply to supported 3D and 4D Surface IFS and escape-time sessions,
-  and to the existing 3D Mandelbulb family; there is no 4D Mandelbulb. Points,
-  Flame and Solid deliberately keep showing the original untiled attractor,
-  but the editor and authored status remain visible there. Turning tiling on
-  or off, or changing its kind, reflection group, or clip, restarts an active
-  Surface without resetting the inspection view; changing lattice cell scale
-  is live. Edits made in another renderer apply on the next Surface entry.
-  Adjacent status names the recovery when a finite group has the wrong
-  dimension, a clip contains a mesh, Balloon is on, Symmetry order is above 1,
-  or a 4D slab would be required. Tiled 4D uses the zero-thickness W slice, and
-  the empty-space grid stays off for the unbounded lattice.
+  Every render mode draws the tiled object; no mode falls back to the
+  untiled attractor while a valid block is authored. Each discloses its own
+  edit timing beside the controls:
+
+  - **Points** follows the Auto-update / **Regenerate Points** contract and
+    reports its fill verdict — `complete`, `underfilled`, or `empty` — beside
+    the point count, so a valid clip that admits nothing reads as an
+    intentionally empty result, never an error.
+  - **Flame** restarts its accumulation from the same source seed and frozen
+    view (CPU or WebGPU alike); the panel shows Preparing/Applying until the
+    replacement lands. The generated Flame backdrop re-renders with every
+    tiling edit, even while Points' Auto-update is off.
+  - **3D Solid** applies edits live: the canonical density volume is
+    untouched and the material re-folds every query per frame, so an edit
+    only recompiles the material.
+  - **4D Solid** bakes bounded pre-projection images into its density, so a
+    tiling edit replaces the worker and restarts accumulation from the entry
+    seed. Because that volume spans the same lattice presentation window the
+    other renderers draw, each mirrored copy resolves coarser there than in
+    Points, Flame or Surface (measured 19.2 voxels per copy diameter at the
+    default 192³ grid against the untiled volume's 205); the panel note
+    discloses this.
+  - **Surface** restarts on tiling kind, group, or clip edits without
+    resetting its inspection view, and applies lattice cell scale live per
+    frame.
+
+  Refusals are scoped and named adjacent to the editor: a finite group with
+  the wrong dimension, a clip containing a mesh, Balloon echo, Symmetry order
+  above 1 (both fold query space with no certified composition order), a
+  4D slab under Surface's tiling arm, and forward escape-time or Mandelbulb
+  content in the point-family renderers (their clouds and volumes are reset
+  debris, not samples of the tiled set — Surface's own tiled escape-time and
+  Mandelbulb estimators do render them). Valid empty content is reported as
+  such — zero Points geometry, a transparent Flame histogram, a dark composed
+  backdrop, a zero-density Solid, or Surface's own empty-set notice — and is
+  never replaced by the untiled attractor. Tiled 4D uses the zero-thickness
+  W slice; slab thickness is unavailable while tiled. The empty-space grid
+  stays off for the unbounded lattice.
 
   The Systems menu includes five tiling showcases: **Tiled Octahedron · B3**
   (3D), **Tiled Pentatope · A4** and **Tiled 24-Cell · F4** (both genuinely

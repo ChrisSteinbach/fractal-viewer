@@ -3344,7 +3344,7 @@ export function setSurfaceSystem4(
   }
   if (tiling && de.symmetry.order > 1) {
     throw new RangeError(
-      "Surface tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
+      "Space tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
     );
   }
   const tilingChanged = installSurfaceTiling(
@@ -3604,7 +3604,7 @@ export function setSurfaceView4(
 ): void {
   if (sliceHalfW > 0 && materialSurfaceTiling(material, true)) {
     throw new RangeError(
-      "Surface tiling cannot compose with a 4D slab: the fold of a segment is a bent polyline",
+      "Space tiling cannot compose with a 4D slab: the fold of a segment is a bent polyline",
     );
   }
   const u = material.uniforms;
@@ -3671,7 +3671,7 @@ export function setSurface4Balloon(
   const tiling = materialSurfaceTiling(material, true);
   if (spec && tiling) {
     throw new RangeError(
-      "Surface tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+      "Space tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
     );
   }
   const u = material.uniforms;
