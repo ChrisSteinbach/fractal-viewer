@@ -139,12 +139,12 @@ wrapper — every estimator evaluation, probe included, folds first.
 
 ## Finite-reflection renderer matrix (frozen)
 
-| route                                                            | finite reflection                                                                                                                                                                                                    |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CPU oracles: affine, fold, affine4, fold4, escape, bulb, escape4 | in — the wrapper above                                                                                                                                                                                               |
-| WGSL cores: affine, fold, affine4, fold4, escape, bulb, escape4  | in — compile-gated wrapper                                                                                                                                                                                           |
-| GLSL tracers: 3D and 4D                                          | in — compile-gated arm; Mesa cliff measured before                                                                                                                                                                   |
-| Points, Flame, Solid                                             | NOT in — a query-space fold has no chaos-game meaning. The authored block persists and those modes render the UNTILED attractor with the adjacent explanation; a document never silently renders a different object. |
+| route                                                            | finite reflection                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| CPU oracles: affine, fold, affine4, fold4, escape, bulb, escape4 | in — the wrapper above                                                                                                                                                                                                                                 |
+| WGSL cores: affine, fold, affine4, fold4, escape, bulb, escape4  | in — compile-gated wrapper                                                                                                                                                                                                                             |
+| GLSL tracers: 3D and 4D                                          | in — compile-gated arm; Mesa cliff measured before                                                                                                                                                                                                     |
+| Points, Flame, Solid                                             | NOT in this query-fold route — a query-space fold has no chaos-game meaning. Their shipped route is the bounded point-space image construction of Phase 3 below; the authored block persists and a document never silently renders a different object. |
 
 ### GLSL landing evidence
 

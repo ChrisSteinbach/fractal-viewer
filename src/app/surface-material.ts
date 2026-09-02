@@ -5841,7 +5841,7 @@ export function setSurfaceSystem(
   }
   if (tiling && de.symmetry.order > 1) {
     throw new RangeError(
-      "Surface tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
+      "Space tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
     );
   }
   const tilingChanged = installSurfaceTiling(
@@ -6276,7 +6276,7 @@ function withTilingGlsl(
   const canonicalInfo = TILING_GROUP_INFO[tiling.group];
   if (!canonicalInfo || tiling.info !== canonicalInfo) {
     throw new RangeError(
-      "Surface tiling must use resolveTiling's canonical frozen group info",
+      "Space tiling must use resolveTiling's canonical frozen group info",
     );
   }
   if (tiling.info.dim !== expectedDim) {
@@ -6286,7 +6286,7 @@ function withTilingGlsl(
   }
   if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
     throw new RangeError(
-      "Surface tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
+      "Space tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
     );
   }
   const marker = /\n#if SURFACE_GROUND_PLANE\n {2}\/\*\* Ground plane/.exec(
@@ -6471,7 +6471,7 @@ function withLatticeTilingGlsl(
   }
   if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
     throw new RangeError(
-      "Surface tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
+      "Space tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
     );
   }
   const fadeStartMult =
@@ -7108,7 +7108,7 @@ export function installSurfaceTiling(
   const canonicalInfo = finite ? TILING_GROUP_INFO[finite.group] : null;
   if (finite && (!canonicalInfo || finite.info !== canonicalInfo)) {
     throw new RangeError(
-      "Surface tiling must use resolveTiling's canonical frozen group info",
+      "Space tiling must use resolveTiling's canonical frozen group info",
     );
   }
   if (finite && finite.info.dim !== expectedDim) {
@@ -7118,13 +7118,13 @@ export function installSurfaceTiling(
   }
   if (tiling?.clip && shapeMeshIds(tiling.clip).length > 0) {
     throw new RangeError(
-      "Surface tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
+      "Space tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
     );
   }
   const balloonKey = fourD ? "SURFACE4_BALLOON" : "SURFACE_BALLOON";
   if (tiling && material.defines[balloonKey] === 1) {
     throw new RangeError(
-      "Surface tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+      "Space tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
     );
   }
   // Lattice scale and the authority radius are live state: only a kind/clip
@@ -7299,7 +7299,7 @@ export function setEscapeSystem(
   }
   if (tiling && de.symmetryOrder > 1) {
     throw new RangeError(
-      "Surface tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
+      "Space tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
     );
   }
   const tilingChanged = installSurfaceTiling(
@@ -7580,7 +7580,7 @@ export function setSurfaceBalloon(
   const tiling = materialSurfaceTiling(material);
   if (spec && tiling) {
     throw new RangeError(
-      "Surface tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+      "Space tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
     );
   }
   const u = material.uniforms;

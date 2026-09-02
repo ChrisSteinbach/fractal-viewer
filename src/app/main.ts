@@ -5584,7 +5584,7 @@ async function main(): Promise<void> {
       const surfaceTilingSpec = state.tiling;
       if (surfaceTilingSpec && state.balloonEcho) {
         ui.flashToast(
-          "Surface tiling is unavailable while Balloon echo is on; turn off either authored effect.",
+          "Space tiling is unavailable while Balloon echo is on; turn off either authored effect.",
         );
         queueMicrotask(() => surfaceSession.exit());
         return { post: () => {}, terminate: () => teardownSurfaceCompute() };

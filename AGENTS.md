@@ -896,10 +896,14 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     becomes geometry, shadow or AO. After depth fog, shared-dialect smoothstep
     coverage fades displayed-3D hits from 8R to the pixel backdrop at 10R;
     capture/DOF carries that fraction while hit alpha stays terminal. The pair
-    is renderer-only, real-Iris gated, and not document state. Scene / Look
-    exposes arm kind, analytic clip on either arm, and lattice cell scale over
-    the FROZEN 1.25–4 range (default 1.5); the panel discloses that kind/clip
-    restart while scale is live per frame. An entirely unposed clip
+    is renderer-only, real-Iris gated, and not document state. The panel
+    family is SPACE TILING (Scene / Look, visible in every render mode):
+    arm kind, analytic clip on either arm, and lattice cell scale over
+    the FROZEN 1.25–4 range (default 1.5), with per-mode edit timing
+    disclosed beside the controls (Points follows Auto-update, Flame
+    restarts from its seed and frozen view, 3D Solid is live in the
+    material, 4D Solid restarts its worker, Surface restarts on kind/clip
+    and keeps lattice scale live). An entirely unposed clip
     composition gets one shared per-entry pose from the folded-content fit
     (the bailout ball for forward families), without changing the document;
     any authored part pose preserves the whole composition. Routing resolves
@@ -926,7 +930,13 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     memory, no material change, hierarchy KEPT, edits RESTART the worker
     from the entry seed), shipped estimator on the finite arms and a
     slice-aware proposal CDF on the lattice; raw-4D volumes and
-    post-projection folds are MEASURED refusals. Absent/refused stays
+    post-projection folds are MEASURED refusals, and so is any
+    renderer-specific lattice window: the 8R→10R presentation stays ONE
+    frozen policy across every renderer, with 4D Solid's lattice copy
+    detail DISCLOSED in the panel rather than re-windowed (the 6R
+    Solid-specific carrier redraws 33 cells where the others draw 171 with
+    L1 flat; 320³ is the smallest resolution that reaches the sheet's
+    32-voxel floor and costs ~131 MiB of texture). Absent/refused stays
     literal legacy.
     Balloon, kaleidoscope and 4D slab remain
     refused for the proof reasons in the contract. Finite WGSL wire is one

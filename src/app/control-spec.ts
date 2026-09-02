@@ -593,7 +593,8 @@ const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
 };
 
 /** Space tiling's panel-IA record (`docs/panel-ia.md`): Scene / Look;
- * consumed by Points, Flame and Surface in the matching dimension; document
+ * consumed by Points, Flame, Solid and Surface in the matching dimension;
+ * document
  * lifetime. Points follows the existing Auto-update/manual-Regenerate
  * contract; Flame restarts its in-worker accumulation while preserving the
  * frozen view and fallback state; Surface restarts with its inspection view
@@ -1474,8 +1475,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   // preference. The arm chooser picks the finite reflection vocabulary or
   // the mirrored lattice; the chamber comes from the group and the optional
   // ShapeSpec clip below only NARROWS the content (both arms).
-  // Points and Flame consume the bounded image plan; Solid remains authored
-  // for its later lift, while Surface keeps its query-fold implementation. ———
+  // Points and Flame consume the bounded image plan; Solid folds its material
+  // (3D) or bakes pre-projection images (4D); Surface keeps its query-fold
+  // implementation. ———
   {
     kind: "checkbox",
     id: "tilingEnabledCheckbox",

@@ -1053,22 +1053,26 @@
         <!-- Space tiling is authored Scene / Look geometry: the kind chooser
              picks the finite reflection group or the mirrored lattice; the
              independent ShapeSpec clip can only trim content inside the
-             chosen chamber. It is Surface-only today, but stays visible in
-             every render mode so the document's authored state and any
-             refusal never disappear. -->
+             chosen chamber. Every render mode draws it; the note below
+             discloses what the active renderer did with each edit. -->
         <details class="panel-section" id="tilingSection" name="panel-section">
-          <summary>Surface tiling</summary>
+          <summary>Space tiling</summary>
           <p id="tilingTimingHint" class="flame-hint">
-            Used next time you enter Surface.
+            Every render mode draws it; this hint updates to the active
+            renderer's timing.
           </p>
           <details class="panel-explainer">
             <summary>How tiling works</summary>
             <p>
               A reflection group folds space into its fixed chamber, then
               repeats the chamber's fractal piece; the mirrored lattice repeats
-              the piece in x and z (and w in 4D) forever. The optional content
-              clip trims that piece; it does not replace or reshape the chamber.
-              Points, Flame, and Solid keep showing the untiled attractor.
+              the piece in x and z (and w in 4D) across a bounded presentation
+              window. The optional content clip trims that piece; it does not
+              replace or reshape the chamber. A clip that admits nothing renders
+              an intentionally empty result — reported as such, never replaced
+              by the untiled attractor. Every render mode draws the tiled
+              object; the note below reports what the active one did with your
+              last edit.
             </p>
           </details>
           <label class="checkbox-label">
@@ -1077,7 +1081,7 @@
               id="tilingEnabledCheckbox"
               aria-describedby="tilingTimingHint tilingNote"
             />
-            Surface tiling
+            Space tiling
           </label>
           <div id="tilingControls" class="hidden">
             <label class="select-label">
@@ -2573,7 +2577,7 @@
               <option value="mandelboxKifs">Mandelbox KIFS</option>
               <option value="fourFinishes">Four Finishes</option>
               <option value="metalStudio">Metal Studio</option>
-              <optgroup label="Surface tiling">
+              <optgroup label="Space tiling">
                 <option value="tiledOctahedron">Tiled Octahedron · B3</option>
                 <option value="tiledPentatope">Tiled Pentatope · A4</option>
                 <option value="tiledTwentyFourCell">Tiled 24-Cell · F4</option>

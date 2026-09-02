@@ -8,7 +8,7 @@ import {
   setSurfaceBalloon as packSurfaceBalloon,
 } from "./surface-material";
 
-describe("FractalScene Surface tiling lifecycle", () => {
+describe("FractalScene Space tiling lifecycle", () => {
   it("clears a stale balloon material arm before installing a tiled replacement session", () => {
     const material = createSurfaceMaterial();
     packSurfaceBalloon(material, {

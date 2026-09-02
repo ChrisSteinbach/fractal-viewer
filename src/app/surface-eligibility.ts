@@ -447,7 +447,7 @@ export function deriveSurfaceEligibility(
   if (tiling?.clip && shapeMeshIds(tiling.clip).length > 0) {
     return {
       status: "ineligible",
-      note: "A tiling clip must use analytic shapes; mesh/catalog clips are preserved in the document but are not yet available to Surface tiling.",
+      note: "A tiling clip must use analytic shapes; mesh/catalog clips are preserved in the document but are not yet available to Space tiling.",
       kind: null,
     };
   }
