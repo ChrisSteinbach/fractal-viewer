@@ -10576,6 +10576,27 @@ describe("Ui finite tiling controls", () => {
       /replace the 4D Solid worker and restart accumulation/i,
     );
 
+    // The 4D lattice arm discloses its measured copy-detail cost: the volume
+    // spans the same 10R presentation window every renderer draws, so each
+    // copy resolves coarser here than in Points, Flame or Surface.
+    ui.setSolidTilingStatus({
+      status: "active",
+      application: "worker-baked",
+      resolved: resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1),
+      originVisibleRadius: 1,
+      note: null,
+    });
+    ui.updateLabels({
+      ...setTiling(
+        { ...initialState(true), transforms: nonFlatTransforms() },
+        { kind: "lattice", cellScale: 1.5 },
+      ),
+      renderMode: "solid",
+    });
+    expect(el("tilingNote").textContent).toMatch(
+      /Active in 4D Solid.*baked into density before projection.*copies resolve coarser than in the other renderers/i,
+    );
+
     // A dimensionality-changing symmetry edit is authored while the active
     // Solid session deliberately keeps its entry worker/frame. Timing must
     // describe that session arm, not the newer document dimensionality.
