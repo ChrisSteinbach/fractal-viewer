@@ -87,7 +87,10 @@ import {
   POINT_TILING_ACCUMULATION_FANOUT_CAP,
   visitPointTilingAttemptBounded,
 } from "./point-tiling";
-import type { PointTilingPlan } from "./point-tiling";
+import type {
+  LatticePointTilingProposal,
+  PointTilingPlan,
+} from "./point-tiling";
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
 
@@ -124,11 +127,18 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * tail parameters so every existing no-echo caller keeps its original call
  * shape; see the module doc for why the nonlinear echo needs the two maps
  * separately. `echoColorLUT` is also a tail parameter; omit it for exact
- * inherited primary color. `tilingPlan` is the final optional tail so every
+ * inherited primary color. `tilingPlan` is an optional tail so every
  * historical call shape stays literal. It applies the shared bounded weighted
  * visitor to raw post-schedule/post-lens xyzw, before this function's existing
  * rotor/projection/slice deposit; its cursor state is lazily attached to the
- * active histogram so it resumes across progressive chunks.
+ * active histogram so it resumes across progressive chunks. The optional
+ * `tilingProposal` (the final tail) re-weights only the LATTICE arm's
+ * selection CDF. It is legal here because the frozen-view contract pins
+ * rotor+slice for the whole accumulation — a settled `setFourDView` restarts
+ * the accumulation rather than mutating a live one (see
+ * `flame-worker-core.ts`'s restart contract) — and the compensation in
+ * `visitLatticeBounded` reads the proposal's own probabilities, so the
+ * composed estimator stays unbiased for any positive ceilings.
  *
  * Pass a seeded {@link Rng} for reproducible output (tests); the app passes
  * `Math.random`.
@@ -148,6 +158,7 @@ export function accumulateFlame4(
   cameraProjection?: Mat4,
   echoColorLUT?: Float32Array,
   tilingPlan?: PointTilingPlan,
+  tilingProposal?: LatticePointTilingProposal,
 ): FlameHistogram {
   if (projection.length !== 20) {
     throw new RangeError(
@@ -626,6 +637,7 @@ export function accumulateFlame4(
         POINT_TILING_ACCUMULATION_FANOUT_CAP,
         pointTilingState!,
         tiledVisitor!,
+        tilingProposal,
       );
       continue;
     }

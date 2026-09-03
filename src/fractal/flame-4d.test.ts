@@ -31,13 +31,18 @@ import { pentatope } from "./presets";
 import { mulberry32 } from "./rng";
 import type { Rng } from "./rng";
 import {
+  createLatticePointTilingProposal,
   createPointTilingCursorState,
   POINT_TILING_ACCUMULATION_FANOUT_CAP,
   resolvePointTilingPlan,
   visitPointTilingAttemptBounded,
   visitPointTilingImagesExhaustive,
 } from "./point-tiling";
-import type { PointTilingPlan } from "./point-tiling";
+import type {
+  LatticePointTilingProposal,
+  PointTilingCursorState,
+  PointTilingPlan,
+} from "./point-tiling";
 import type { ShapeSpec } from "./shapes";
 import { foldToChamber, resolveTiling, TILING_GROUP_INFO } from "./tiling";
 import type { TilingSpec } from "./tiling";
@@ -139,6 +144,7 @@ function accumulateTiled4(
   color: FourDRenderColor,
   plan: PointTilingPlan,
   histogram?: FlameHistogram,
+  proposal?: LatticePointTilingProposal,
 ): FlameHistogram {
   return accumulateFlame4(
     prepared,
@@ -155,6 +161,7 @@ function accumulateTiled4(
     undefined,
     undefined,
     plan,
+    proposal,
   );
 }
 
@@ -1849,6 +1856,89 @@ describe("accumulateFlame4 point-space tiling", () => {
     expect(actual.hits[0]).toBe(expectedHits);
     expect(Array.from(actual.sumRGB)).toEqual(expectedRGB);
     expect(actual.pointTiling).toEqual(expectedState);
+  });
+
+  it("treats a lattice proposal as an optional selection re-weight: it keeps the state counters and orbit while re-weighting which cells each acceptance spends", () => {
+    const source: Vec4 = [0.08, 0.03, -0.07, 0.11];
+    const plan = pointPlan4({ kind: "lattice", cellScale: 1 }, 0.5);
+    if (plan.kind !== "lattice") throw new Error("expected a lattice plan");
+    const prepared = prepareChaosGame4(fixedPointSystem4(source));
+    const color: FourDRenderColor = {
+      kind: "uniform",
+      color: [0.2, 0.4, 0.8],
+    };
+    const view: FourDView = {
+      invWAmp: 0.2,
+      sliceOn: true,
+      sliceCenter: 0.15,
+      sliceWidth: 0.25,
+      sliceRelativeColor: false,
+    };
+
+    const baseline = accumulateTiled4(
+      prepared,
+      RAW_W_PROJECTION,
+      view,
+      1,
+      1,
+      64,
+      mulberry32(11),
+      color,
+      plan,
+    );
+    const identity = createLatticePointTilingProposal(
+      plan,
+      new Float64Array(plan.upper.length).fill(1),
+    );
+    const withIdentity = accumulateTiled4(
+      prepared,
+      RAW_W_PROJECTION,
+      view,
+      1,
+      1,
+      64,
+      mulberry32(11),
+      color,
+      plan,
+      undefined,
+      identity,
+    );
+    const reweight = createLatticePointTilingProposal(
+      plan,
+      Float64Array.from(plan.upper, (_, cell) => (cell % 2 === 0 ? 2 : 0.25)),
+    );
+    const withReweight = accumulateTiled4(
+      prepared,
+      RAW_W_PROJECTION,
+      view,
+      1,
+      1,
+      64,
+      mulberry32(11),
+      color,
+      plan,
+      undefined,
+      reweight,
+    );
+
+    expect(baseline.hits[0]).toBeGreaterThan(0);
+    expect(withIdentity.hits[0]).toBeGreaterThan(0);
+    expect(withReweight.hits[0]).not.toBe(baseline.hits[0]);
+    expect(Number.isFinite(withReweight.hits[0])).toBe(true);
+    expect(withReweight.hits[0]).toBeGreaterThan(0);
+    const stableFields = (state: PointTilingCursorState) => ({
+      accepted: state.accepted,
+      attempts: state.attempts,
+      credit: state.credit,
+      cursor: state.cursor,
+      selected: state.selected,
+    });
+    expect(stableFields(withIdentity.pointTiling!)).toEqual(
+      stableFields(baseline.pointTiling!),
+    );
+    expect(stableFields(withReweight.pointTiling!)).toEqual(
+      stableFields(baseline.pointTiling!),
+    );
   });
 
   it.each([
