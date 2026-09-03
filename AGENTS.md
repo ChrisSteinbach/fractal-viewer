@@ -948,13 +948,13 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     of the byte-identity story, the compile gates being the byte-true
     half. `Transform.finish` persists/morphs/mutates on the fold lengths'
     exact treatment (random-system deliberately never rolls one).
-    `surfaceFinishPatternAlbedo` is PRODUCTION-DEAD, kept as a
-    measurement's record (`qjulia-de.ts`'s stance):
-    `scripts/finish-pattern.harness.ts` refused Tier-2 wood off `rings`
-    (at 1x it is speckle, not grain — `rings` varies at the fractal's own
-    detail frequency) while CONFIRMING the zoom premise that motivated it
-    (native coarsens into bands where world-space noise goes flat). The
-    survivor — banding off `sheets` — is filed, not wired.
+    The pattern-albedo experiment was REFUSED, its helper DELETED;
+    `scripts/finish-pattern.harness.ts` is the executable record: it
+    refused Tier-2 wood off `rings` (at 1x it is speckle, not grain —
+    `rings` varies at the fractal's own detail frequency) while
+    CONFIRMING the zoom premise that motivated it (native coarsens into
+    bands where world-space noise goes flat). The survivor — banding off
+    `sheets` — is filed, not wired.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more
