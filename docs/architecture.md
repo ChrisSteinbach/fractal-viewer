@@ -592,16 +592,44 @@ histogram, one bucket per display pixel, accumulating a **hit count** and a
 are `Float64Array`, not `Float32` — a converged bucket's summed color can climb
 past 2²⁴ and silently stop growing in f32 while its hit count keeps rising,
 desaturating exactly the brightest region. `tonemapFlame` sends accumulated
-density through a `log1p(hits) / log1p(maxHits)` curve under four controls:
+density through a `log1p(h / mean) / log1p(32)` curve — `mean` the MEAN
+DEPOSITED density (`hitMass / (width * height)`, `hitMass` the exact running
+sum of deposited weights; 32 = `FLAME_DENSITY_SATURATION`, calibrated to the
+median max/mean of the shipped systems, ~31.5) — under four controls:
 `exposure`, `gamma` (with a `gammaThreshold` below which a linear chord replaces
 the power curve, so lone speckles don't blow up), and `vibrancy` (density-scaled
 color vs. a flat gamma curve) — collapsing byte-for-byte to the pre-gamma
-tone-map at `gamma: 1, vibrancy: 1`. Supersampled buckets are boxed down each
+tone-map at `gamma: 1, vibrancy: 1`. The anchor is the mean, not the hottest
+bucket, deliberately: flam3's own `rect.c` curve is hits-relative-to-mean, and
+anchoring on `maxHits` made whole-image brightness a function of the single
+hottest bucket — one contractive map's tiny image region drove max/mean to
+21356 and crushed the frame, and a converging render's exposure drifted with
+the budget (max/mean 20.5 -> 10.0 across a 16x ladder on one system). Because
+the mean is a property of the histogram itself (maintained at every deposit
+site, recomputed exactly by both downsamplers and all four GPU converters), the
+curve is invariant under more iterations, under supersample pooling, and under
+tiling/echo deposit weights — the image converges in appearance, not just in
+detail. Supersampled buckets are boxed down each
 frame by the cheap fixed-radius `downsampleFlame`; a finished or paused render
 can also run `adaptiveDownsampleFlame`, the flam3 density-estimation filter whose
 per-cell blur radius widens where samples are sparse. Handing a previous
 histogram back resumes the orbit exactly, so a render refines progressively
 rather than restarting.
+
+**Saved scenes re-render at a different brightness — deliberately, with no
+decoder migration.** The anchor change above is a look fix, and a
+decoder-side exposure compensation would need the old render's `maxHits`,
+which is unknowable at decode time (the histogram doesn't ride the document);
+forking the tone map per document version would be worse than a disclosed
+re-render. So existing saved scenes and shared links re-render at whatever
+exposure the mean-anchored curve gives them — typically close to before (the
+constant was calibrated to the shipped systems' median max/mean), visibly
+brighter for contractive-map systems that the old anchor crushed, and
+possibly darker for sparse ones with a huge hottest bucket. If a saved scene
+now exposes wrong, adjust the **Exposure** slider (it persists with the scene
+as before, unchanged in encoding and range). `maxHits` survives on the
+histogram as an instrument only — gpu-bench's agreement legs and the tiling
+sheets report it — and anchors nothing.
 
 The optional point-space tiling plan sits at that same plot boundary in both
 CPU accumulators and both WebGPU kernels: one canonical source iteration still
@@ -677,9 +705,11 @@ the flame's f64 trick). Color tracks the live point cloud exactly — the same
 a `buildColorModeLUT`, so a solidified attractor can never drift in hue from the
 explorer it was captured from — or a palette gradient, as in the flame.
 `voxelTextureData` packs the grid into an RGBA8 volume: color in RGB,
-**log-normalized density in alpha** via the same `log1p` curve the flame
-tone-maps with, so "solid enough to cross the isosurface" and "bright in a flame
-of the same system" line up. Density plus running RGB is the complete authored
+**log-normalized density in alpha** via the same `log1p` curve family the
+flame tone-map uses — anchored on the grid's own hottest voxel rather than the
+flame's mean deposited density (see `voxelTextureData`'s doc), since a solid's
+isosurface threshold keys on per-voxel solidity against the densest voxel, not
+on whole-image exposure. Density plus running RGB is the complete authored
 voxel payload; the acceleration structure below is derived from packed alpha,
 not another accumulation channel. The payload audit and the condition for ever
 reopening that decision are recorded in

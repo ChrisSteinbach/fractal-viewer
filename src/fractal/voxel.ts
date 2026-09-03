@@ -787,12 +787,17 @@ export function accumulateVoxels(
 /**
  * Pack a {@link VoxelGrid} into RGBA8 3D-texture bytes (x-fastest, matching
  * the grid's own layout): RGB is the voxel's running-mean color, A is its
- * log-normalized density — `log1p(count) / log1p(maxDensity)`, the same
- * curve `tonemapFlame` brightens by, so "solid" on the GPU's isosurface
- * threshold lines up with "bright" in a flame of the same system. Empty
- * voxels are fully transparent black; a grid with nothing accumulated yet
- * packs to all zeros (the raymarcher then hits nothing and shows only the
- * backdrop).
+ * log-normalized density — `log1p(count) / log1p(maxDensity)`, anchored on
+ * the grid's own hottest voxel. The flame's tone-map no longer shares this
+ * curve: `tonemapFlame` anchors its density on the MEAN deposited density
+ * (see `FlameHistogram.hitMass`), which a solid's isosurface threshold has
+ * no use for — the alpha here is a per-voxel solidity measure against the
+ * densest voxel, and that is the quantity "crosses the isosurface" keys on.
+ * The curves are therefore SIBLINGS (same `log1p` family, different
+ * normalizer), not one definition.
+ * Empty voxels are fully transparent black; a grid with nothing accumulated
+ * yet packs to all zeros (the raymarcher then hits nothing and shows only
+ * the backdrop).
  *
  * Allocates the output (the worker transfers it to the main thread per
  * update, so the buffer must be fresh each call).

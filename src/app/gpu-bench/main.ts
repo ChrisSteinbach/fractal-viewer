@@ -321,8 +321,17 @@ interface DisplayDownsampleMetrics {
   /** |gpu.maxHits - cpu.maxHits| / cpu.maxHits (or |gpu.maxHits| when
    * cpu.maxHits is exactly 0). */
   maxHitsRelError: number;
+  /** |gpu.hitMass - cpu.hitMass| / cpu.hitMass (or |gpu.hitMass| when
+   * cpu.hitMass is exactly 0). Nearly free as an extra leg: both sides
+   * derive their tone-map anchor from the same arrays (the mass is the sum
+   * of the converted/downsampled `hits` — see `FlameHistogram.hitMass`), so
+   * mass agreement is the tone-map agreement's PRECONDITION, and the old
+   * dispatch-rounding worry (GPU workgroup-order accumulation vs a single
+   * CPU running sum) is gone — the mass is recomputed host-side from the
+   * readback arrays on both engines, identically. */
+  massRelError: number;
   /** Every hits/sumRGB bucket within `max(1e-6, 1e-4 * max(|cpu|, 1))`, AND
-   * `maxHitsRelError <= 1e-4`. */
+   * `maxHitsRelError <= 1e-4` AND `massRelError <= 1e-4`. */
   pass: boolean;
 }
 
@@ -2525,11 +2534,20 @@ function compareDisplayDownsample(
     cpu.maxHits !== 0
       ? Math.abs(gpu.maxHits - cpu.maxHits) / cpu.maxHits
       : Math.abs(gpu.maxHits);
+  // Same shape and bound as the maxHits leg. Both masses are host-side sums
+  // over the SAME arrays' worth of buckets (see the field's doc), so this is
+  // the tone-map anchor's own precondition, not an independent accumulator
+  // comparison.
+  const massRelError =
+    cpu.hitMass !== 0
+      ? Math.abs(gpu.hitMass - cpu.hitMass) / cpu.hitMass
+      : Math.abs(gpu.hitMass);
   return {
     maxAbsHitsError,
     maxAbsColorError,
     maxHitsRelError,
-    pass: withinTolerance && maxHitsRelError <= 1e-4,
+    massRelError,
+    pass: withinTolerance && maxHitsRelError <= 1e-4 && massRelError <= 1e-4,
   };
 }
 

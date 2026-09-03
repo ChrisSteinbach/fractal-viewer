@@ -171,8 +171,9 @@ function installStartMeshAssets(
  * in the `start` command (structured clone of a SAB-backed view shares the
  * buffer — nothing is copied or transferred). Same bucket layout as
  * {@link FlameHistogram}'s `hits`/`sumRGB`, at display resolution: that plus
- * a per-notification `maxHits` is everything `tonemapFlame` needs, so the
- * main thread can tone-map a live view of the worker's downsample output.
+ * the per-notification `maxHits`/`hitMass` scalars are everything
+ * `tonemapFlame` needs, so the main thread can tone-map a live view of the
+ * worker's downsample output.
  */
 export interface SharedFrameBuffers {
   /** Hit count per display bucket, row-major, length `width * height`. */
@@ -434,9 +435,15 @@ export type FlameWorkerEvent =
       type: "sharedFrame";
       /** Index into `sharedFrames` of the slot that was just (re)written. */
       slot: number;
-      /** `maxHits` of the display histogram in that slot — the one input
-       * `tonemapFlame` needs that doesn't live in the shared arrays. */
+      /** `maxHits` of the display histogram in that slot — an instrument
+       * scalar (gpu-bench reports it, the tiling sheets read it); it no
+       * longer anchors the tone-map. */
       maxHits: number;
+      /** `hitMass` of the display histogram in that slot — the sum of the
+       * slot's `hits` and the ONE input `tonemapFlame` needs that doesn't
+       * live in the shared arrays: its density curve normalizes on the mean
+       * deposited density, `hitMass / (width * height)`. */
+      hitMass: number;
       iterationsDone: number;
       iterationsBudget: number;
     }
@@ -1705,6 +1712,7 @@ export class FlameWorkerSession {
             cmd.height,
             frame.hits,
             frame.sumRGB,
+            0,
             0,
           ),
         )
@@ -2997,6 +3005,7 @@ export class FlameWorkerSession {
         type: "sharedFrame",
         slot: this.lastDisplaySlot,
         maxHits: display.maxHits,
+        hitMass: display.hitMass,
         iterationsDone: this.iterationsDone,
         iterationsBudget: this.iterationsBudget,
       });
