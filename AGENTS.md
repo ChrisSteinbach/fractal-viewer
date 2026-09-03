@@ -241,8 +241,7 @@ Reproduce the COOP/COEP first-visit reload locally:
 `node scripts/isolation-reload.verify.mjs` (not an npm script) —
 serves the production build over a plain static server with no COOP/COEP
 and a deliberately delayed `sw.js`, widening the reload window on demand;
-`npm run preview` can trigger the same dance, but only at real,
-easy-to-miss localhost timing.
+`npm run preview` can trigger the same dance, but only at real localhost timing.
 
 The post-deploy live-site gate (not an npm script):
 `node scripts/live-site.verify.mjs [url]` boots the REAL deployed origin
@@ -283,8 +282,7 @@ INFORMATIONAL, not a gate on the deferred teardown: leaving flame mode never
 calls `destroy()` at all, since main.ts kills the worker with
 `worker.terminate()`, orphaning a live map a different way. MEASURED a
 regression gate rather than a reproduction: the crash does not reproduce on
-this stack either way,
-12/12 clean pre-fix and fixed, with the figures in the script's header.
+this stack.
 
 The flame Save-PNG gate (not an npm script — it asserts what a
 downloaded IMAGE contains, which no unit test reaches):
@@ -293,10 +291,9 @@ downloaded IMAGE contains, which no unit test reaches):
 PNG is asked only which of two pinned references it is closer to — the
 POINTS cloud or the converged FLAME — and whether it landed only once the
 accumulation FINISHED; SOLID's phase asks the same of the TRACE, since the
-explorer re-seeds its chaos game on every mode switch. MEASURED 16/16 on
-the fixed build and 6 failures on the pre-fix one, naming every symptom.
-Full record — the comparison's design, solid's substitution and the pre-fix
-figures — in `docs/architecture.md`.
+explorer re-seeds its chaos game on every mode switch. MEASURED 16/16 fixed
+vs 6 pre-fix failures. Full record — the comparison's design, solid's
+substitution and the pre-fix figures — in `docs/architecture.md`.
 
 ## Pre-commit Hooks
 
@@ -908,8 +905,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     without it), refuses the empty-space grid (its floors bound the
     attractor, not the infinite mirror image), and frames the camera on
     the canonical cell (`latticeCameraFitBounds`).
-    Bench-pinned on verified Iris (7/7 eval cores plus five frame legs) and
-    browser-gated by `scripts/surface-lattice.verify.mjs`; authoring,
+    Bench-pinned on verified Iris and browser-gated by
+    `scripts/surface-lattice.verify.mjs`; authoring,
     presets, app-copy, workflow behavior, forward-renderer qualification
     scopes and both Firefox teardowns (--tiling) ride
     `scripts/tiling-ui.verify.mjs` and `flame-teardown`, qualified
@@ -918,7 +915,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Points SHIPS tiled in 3D/4D after schedule/final: bounded recorders keep
     canonical color, raw 4D, the 8N cap, explicit terminal status. Flame CPU
     and both WGSL twins SHIP the shared 32-weighted visitor; active tiling
-    restarts from one seed/frozen view and remains GPU-eligible. The generated
+    restarts from one seed/frozen view and remains GPU-eligible; the
+    slice-aware lattice proposal CDF is MEASURED REFUSED for Flame (the
+    tonemapped display's ghost cost — SLICE_GHOST_FLOOR's, unpaid by Solid's
+    floor-0 — is the non-closing cost; `accumulateFlame4`'s `tilingProposal`
+    param is the sheet's instrument;
+    `scripts/flame-tiling-4d.harness.ts`). The generated
     Flame backdrop SHIPS the same block (schedule + raw tiling + the balloon
     legality bit, never the echo payload), invalidated by tiling and schedule
     edits even with Auto-update off; 3D Solid SHIPS tiled (compile-gated
@@ -1644,9 +1646,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     wait is the voxel grid with no partial
     to deliver. The press LATCHES and is honoured only once
     `hasFirstFrame`, which makes the feature "wait for the FIRST FRAME
-    instead of the whole BUDGET" — without that latch a press in the
-    Export-size restart gap delivered the PREVIOUS session's canvas at the
-    PREVIOUS session's size, i.e. that same bug through a new door.
+    instead of the whole BUDGET".
     Ties go to the BUDGET (the wait loop re-checks readiness before any
     stop check), so a press the finished render beat to the line gets an
     ordinary toast rather than one labelled rough. `cancelled` survives as
