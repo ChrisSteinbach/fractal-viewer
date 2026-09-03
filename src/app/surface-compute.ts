@@ -2113,7 +2113,10 @@ export class SurfaceComputeRenderer {
                     SURFACE_GPU_PARAMS4_ESCAPE_BYTES
                   : target.de.foldFinal !== null || targetHasChaos
                     ? // A fold FINAL grows the params with
-                      // the lens block past the 4D tail.
+                      // the lens block past the 4D tail; a chaos
+                      // session shares that base because its masks
+                      // append after the unconditionally declared
+                      // lens4 region (chaos bytes added below).
                       SURFACE_GPU_PARAMS4_LENS_BYTES
                     : SURFACE_GPU_PARAMS4_BYTES
       : targetHasSchedule
