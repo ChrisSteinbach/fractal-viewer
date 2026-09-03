@@ -57,6 +57,11 @@ jobs:
 
       - run: npm ci
 
+      # The shipped dependency graph only (three, workbox); dev-dep advisories
+      # do not gate — they ride dependabot's weekly pass instead.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Production build
         run: npm run build
 
