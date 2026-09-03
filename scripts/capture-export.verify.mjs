@@ -74,6 +74,13 @@
  * settle 10.0s, completed PNG 73.6s/12,952 bytes, cancel 0.7s with no second
  * download, and synchronous collection thumbnail 1.7s; exact A3 survived
  * every phase and the collection entry's encoded document.
+ * Re-qualified 2026-09-02 on a visibly slower SwiftShader: the UNTILED first
+ * save measured 209.8s end to end and the tiled A3 export 332.3s / 12,952
+ * bytes — both past the old 240s download bound, which aborted healthy
+ * drains (documented at EXPORT_DOWNLOAD_TIMEOUT_MS, now 480s). 15/15 with
+ * the raised budget; settle 18.0s, cancel 0.7s, exact A3 through every
+ * phase. The gate's own assertion is unchanged; only the checking budget
+ * moved, with the measured figures on record.
  *
  * ROBUSTNESS. The settle wait (phase 1) and the download wait (phase 2) are
  * the two places a hung drain would otherwise wedge this script forever;
@@ -124,7 +131,10 @@ const SETTLE_POLL_MS = 2_000;
  * design, turns one slow readback into micro-strip passes), so 240s is
  * ~3x over the worst observed mode where "5x over the typical run" would
  * sit dangerously inside it. */
-const EXPORT_DOWNLOAD_TIMEOUT_MS = 240_000;
+// MEASURED 2026-09-02 on SwiftShader: the untiled first save needed 209.8s
+// end to end on this box and the --tiling=a3 export exceeded 240s, so the
+// old 240s budget aborted a healthy drain. 480s bounds the same assertion.
+const EXPORT_DOWNLOAD_TIMEOUT_MS = 480_000;
 /** Bound on waiting out the "Export cancelled" toast (phase 3). */
 const CANCEL_TOAST_TIMEOUT_MS = 30_000;
 const CANCEL_TOAST_POLL_MS = 500;

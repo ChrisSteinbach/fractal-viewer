@@ -40,6 +40,13 @@
  *   phase 4  no modal, so nothing to cancel.
  *   phase 5  a Save on SOLID's entry landed with its readout at 0%.
  *
+ * RE-QUALIFIED 2026-09-02, 16/16: phase 5's readout proxy had gone stale —
+ * `#solidProgress`'s completed disclosure dropped the "(N%)" suffix (the
+ * Solid presentation work's "Sampled Solid · 192³ voxels · converged ·
+ * 20.0M / 20.0M iterations" format), so a CORRECT grid wait read as "this
+ * is the points explorer". The proxy now accepts the converged disclosure
+ * as the same positive evidence; the wait itself never regressed.
+ *
  * HOW A PNG IS CLASSIFIED, and why it is a comparison rather than a
  * heuristic: the script first saves a POINTS reference (points mode) and a
  * FLAME reference (a converged flame), from the SAME camera, and then asks
@@ -162,10 +169,20 @@ try {
         // cannot answer "had the render finished when the PNG landed".
         est: /density estimate/.test(text),
         solidPct: (() => {
-          const sm = /\((\d+)%\)/.exec(
-            document.getElementById("solidProgress")?.textContent ?? "",
-          );
-          return sm ? Number(sm[1]) : null;
+          const row = document.getElementById("solidProgress");
+          const text =
+            row && !row.classList.contains("hidden")
+              ? (row.textContent ?? "")
+              : "";
+          const sm = /\((\d+)%\)/.exec(text);
+          if (sm) return Number(sm[1]);
+          // MEASURED 2026-09-02: the row's completed disclosure dropped the
+          // "(N%)" suffix — it now reads "Sampled Solid · 192³ voxels ·
+          // converged · 20.0M / 20.0M iterations" — so a converged/complete
+          // read is the same positive evidence the percentage used to be.
+          // A hidden or empty row stays null: that is still the points
+          // explorer, which is what this proxy exists to catch.
+          return /converged|complete/i.test(text) ? 100 : null;
         })(),
         pngs: window.__pngs.length,
         modal: modal ? !modal.classList.contains("hidden") : false,
