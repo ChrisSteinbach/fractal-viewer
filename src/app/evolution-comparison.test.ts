@@ -393,6 +393,10 @@ describe("EvolutionComparisonSession", () => {
     expect(released).toEqual([]);
   });
 
+  // The suite's heaviest pure-CPU test (2000 pinned iterations, an expect
+  // each): the 5s default holds in isolation but fails under full-suite
+  // parallel load, so this test carries its own budget. It asserts
+  // identity-bounding behavior, not speed.
   it("bounds external authority identity across a long replacement session", () => {
     const released: string[] = [];
     const { lineage } = branch();
@@ -413,7 +417,7 @@ describe("EvolutionComparisonSession", () => {
     comparison.dispose();
     expect(comparison.externalAuthorityCount).toBe(0);
     expect(released).toHaveLength(2_001);
-  });
+  }, 20_000);
 
   it("keeps external pins across lineage reset while retained pins become missing", () => {
     const { lineage, comparison, firstId } = branch();
