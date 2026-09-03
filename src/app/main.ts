@@ -11981,6 +11981,46 @@ async function main(): Promise<void> {
   animate();
 }
 
+// Window crash surface: boot failures are covered by the catch on main()
+// below, but an uncaught exception or unhandled rejection during a session
+// otherwise reaches only the console. The FIRST one latches the fatal-looking
+// #error box; later ones stay console-only, so a mid-session storm cannot
+// spam it (and a healthy boot must never show it — the live-site gate asserts
+// #error empty). Neither handler calls preventDefault, so the browser's own
+// console reporting is untouched, and both must never throw themselves.
+let windowErrorLatched = false;
+const describeCrash = (value: unknown): string => {
+  try {
+    if (value instanceof Error) return value.message;
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    if (typeof value === "object" && value !== null) {
+      // JSON.stringify returns undefined for exotic objects (a toJSON that
+      // yields one), and an unbounded reason would flood the box.
+      const text = JSON.stringify(value) ?? "";
+      if (!text) return "unknown error";
+      return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+    }
+    return "unknown error";
+  } catch {
+    return "unknown error";
+  }
+};
+window.addEventListener("error", (event) => {
+  if (windowErrorLatched) return;
+  windowErrorLatched = true;
+  showError(
+    `Something went wrong: ${describeCrash(event.message || event.error)}`,
+  );
+});
+window.addEventListener("unhandledrejection", (event) => {
+  if (windowErrorLatched) return;
+  windowErrorLatched = true;
+  showError(`Something went wrong: ${describeCrash(event.reason)}`);
+});
+
 void main().catch((error: unknown) => {
   showError(
     `Fractal Explorer could not start: ${
