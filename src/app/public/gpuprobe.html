@@ -2,8 +2,8 @@
 <meta charset="utf-8" />
 <!-- Meta CSP: GitHub Pages sends no headers, so this standalone page carries
      its policy in-band (index.html's CSP covers only itself — its comment
-     already names this page as the uncovered gap, and is not weakened for
-     it). Derived from what the page does and nothing more: the whole
+     names this page's own scoped policy, and neither is weakened for
+     the other). Derived from what the page does and nothing more: the whole
      program is ONE inline module script (script-src 'unsafe-inline'; no
      external script, no eval), the WebGPU worker is built from a Blob URL
      (worker-src blob:), the only styling is the inline <style> block
