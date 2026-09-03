@@ -159,6 +159,62 @@
  * alone ranked that stale reply first); and the 3D leg's note regex moved
  * to the dimension-explicit "Active in 3D Solid" this lift discloses.
  *
+ * MATRIX SCOPE (`--scope=matrix`): the finite-group and extrema browser matrix,
+ * Points renderer only. Six finite groups authored through the panel (A3, B3,
+ * H3 on octahedron; A4, B4, F4 on pentatope), lattice scale extrema (3D 1.25,
+ * 4D 4.0), and analytic clip leg (finite A3 with gear clip). Each leg asserts
+ * document matches, worker round, non-backdrop coverage, structural difference
+ * from disabled tiling (or from no-clip), and no errors. Includes cloud-worker
+ * crash sub-leg testing the synchronous fallback contract.
+ *
+ * EXPORT SCOPE (`--scope=export`): Save-PNG readiness + tiled export
+ * classification through the app's OWN export flow (what a person clicks),
+ * one fixture per renderer, each leg an independent openApp context:
+ * Points: preset `mirroredLattice`. Solid: preset `tiledOctahedron`.
+ * Flame: preset `tiledPentatope`. Each leg loads preset, awaits tiled
+ * completion, saves PNG at default export size (1x) to a completed download,
+ * clears tiling through the live checkbox, saves PNG again, screenshots differ
+ * ≥ args.diff, tiled export's non-backdrop coverage ≥ args.draw, no errors.
+ *
+ * FLAME-CPU SCOPE (`--scope=flame-cpu`): the Flame GPU→CPU ladder's terminal
+ * arm with tiling, REAL browser with WebGPU disabled via launch flags.
+ * One fixture: preset `mirroredLattice`, same flow as runFlamePresetLeg minus
+ * GPU-specific asserts. Awaits CPU backend (`backend: "cpu"`), accumulation
+ * completes, note Active, structural diff vs Off ≥ args.diff, tail error checks.
+ *
+ * QUALIFICATION MEASURED 2026-09-02 (`--scope=matrix`): all ten legs passed on
+ * SwiftShader and on verified Mesa Intel Iris Xe. Same-viewport tiled/untiled
+ * structural differences at the shared 1% floor — Iris: A3 5.97%, B3 6.07%,
+ * H3 7.45%, A4 13.38%, B4 13.75%, F4 13.26%, lattice 1.25 (3D) 12.68%,
+ * lattice 4.0 (4D) 11.06%, a3+gear-clip vs a3 2.21%; SwiftShader ran the same
+ * rows at 7.5-16.5% (clip 2.17-2.21%). Every leg authored its tiling through
+ * the live panel on an identical untiled base (`octahedron` 3D, `pentatope`
+ * 4D), landed an exact worker request and an "Active in Points · complete"
+ * note, and drew non-backdrop. The crash-fallback leg crashed the real cloud
+ * worker through the proxy's error-event hook and the generator's PERMANENT
+ * synchronous fallback re-rendered the same tiled object on the main thread
+ * with worker requests 4->4 (broken mode posts none), draw 41.92% Iris /
+ * 38.05% SwiftShader, and only the app's own expected fallback console
+ * disclosure. (The panel cannot author a guaranteed-empty clip — clips are
+ * content-fitted — so the empty/underfilled terminal states stay owned by
+ * the deterministic point-tiling, worker and UI tests, as the header note
+ * above records.)
+ *
+ * QUALIFICATION MEASURED 2026-09-02 (`--scope=export`): all three Save-PNG
+ * legs passed on both engines through the app's own export flow at the
+ * default 1x export size — Points mirroredLattice 5.62% Iris / 10.39%
+ * SwiftShader, Solid tiledOctahedron 24.97% / 24.21%, Flame tiledPentatope
+ * 20.01% / 20.76% between each leg's tiled and untiled downloads; every
+ * download completed (readiness held through Solid's converged grid and
+ * Flame's 1M budget) with coverage 36.4-41.8% and no page or console errors.
+ *
+ * QUALIFICATION MEASURED 2026-09-02 (`--scope=flame-cpu`): with WebGPU
+ * disabled by launch flags on BOTH SwiftShader and the real Iris display the
+ * worker reported `backend: "cpu"` for the tiled 1M/1x accumulation, the
+ * terminal frame landed with the Active note, and the same-seed Off frame
+ * differed by 32.35% Iris / 31.92% SwiftShader — the GPU→CPU ladder's
+ * terminal arm carries the tiling plan intact.
+ *
  * Usage (build + `npm run preview` first):
  *   node scripts/tiling-ui.verify.mjs
  *   node scripts/tiling-ui.verify.mjs --mode=x11::0
@@ -167,12 +223,15 @@
  *   node scripts/tiling-ui.verify.mjs --scope=flame
  *   node scripts/tiling-ui.verify.mjs --scope=backdrop
  *   node scripts/tiling-ui.verify.mjs --scope=solid
- *   node scripts/tiling-ui.verify.mjs --scope=solid4
+ *   node scripts/tiling-ui.verify.mjs --scope=matrix
+ *   node scripts/tiling-ui.verify.mjs --scope=export
+ *   node scripts/tiling-ui.verify.mjs --scope=flame-cpu
  *
  * Options:
  *   --url=URL        app origin (default https://localhost:4173)
  *   --mode=MODE      sw (default) or x11:<display>
- *   --scope=SCOPE    all (default), points, flame, backdrop, solid, or solid4
+ *   --scope=SCOPE    all (default), points, flame, backdrop, solid, solid4,
+ *                    matrix, export, or flame-cpu
  *   --viewport=WxH   viewport, width must be >=641 (default 800x640)
  *   --settle=MS      per-preset Surface/Points/Flame target budget (default 300000)
  *   --stage=N        completed-pass target, 8 = settled latch (default 8)
@@ -187,7 +246,7 @@
  *          decode, app boot, or missing instrumentation/control); rerun after
  *          correcting the checking environment.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, copyFile, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -300,6 +359,96 @@ const SOLID4_PRESETS = [
   },
 ];
 
+// Finite-group and extrema browser matrix: six finite groups, lattice extrema,
+// and analytic clip leg. Each leg runs in independent openApp context.
+const MATRIX_PRESETS = [
+  {
+    key: "octahedron",
+    label: "Octahedron",
+    tiling: { group: "a3" },
+  },
+  {
+    key: "octahedron",
+    label: "Octahedron",
+    tiling: { group: "b3" },
+  },
+  {
+    key: "octahedron",
+    label: "Octahedron",
+    tiling: { group: "h3" },
+  },
+  {
+    key: "pentatope",
+    label: "Pentatope",
+    tiling: { group: "a4" },
+  },
+  {
+    key: "pentatope",
+    label: "Pentatope",
+    tiling: { group: "b4" },
+  },
+  {
+    key: "pentatope",
+    label: "Pentatope",
+    tiling: { group: "f4" },
+  },
+  {
+    key: "octahedron",
+    label: "Octahedron",
+    tiling: { kind: "lattice", cellScale: 1.25 },
+    latticeExtrema: { dimension: 3, scale: 1.25 },
+  },
+  {
+    key: "pentatope",
+    label: "Pentatope",
+    tiling: { kind: "lattice", cellScale: 4.0 },
+    latticeExtrema: { dimension: 4, scale: 4.0 },
+  },
+  {
+    key: "octahedron",
+    label: "Octahedron",
+    tiling: { group: "a3", clip: "gear" },
+    analyticClip: true,
+  },
+  {
+    // The crash-fallback leg: the cloud worker dies while the tiled cloud is
+    // live and the generator's PERMANENT synchronous fallback must re-render
+    // the same tiled object on the main thread. It carries no negative
+    // control — broken mode posts no further worker request, so the
+    // worker-round clear below could never run after it.
+    key: "octahedron",
+    label: "Octahedron",
+    tiling: { group: "b3" },
+    crashFallback: true,
+  },
+];
+
+// Export scope fixtures: Points, Solid, Flame
+const EXPORT_PRESETS = [
+  {
+    preset: PRESETS[3], // mirroredLattice
+    renderer: "points",
+    minDiff: 0.0, // will be measured and calibrated
+  },
+  {
+    preset: PRESETS[0], // tiledOctahedron
+    renderer: "solid",
+    minDiff: 0.0,
+  },
+  {
+    preset: PRESETS[1], // tiledPentatope
+    renderer: "flame",
+    minDiff: 0.0,
+  },
+];
+
+// Flame CPU fixture
+const FLAME_CPU_PRESETS = [
+  {
+    preset: PRESETS[3], // mirroredLattice
+  },
+];
+
 class CheckingError extends Error {}
 
 function parseArgs(argv) {
@@ -336,12 +485,20 @@ function parseArgs(argv) {
     );
   }
   if (
-    !["all", "points", "flame", "backdrop", "solid", "solid4"].includes(
-      args.scope,
-    )
+    ![
+      "all",
+      "points",
+      "flame",
+      "backdrop",
+      "solid",
+      "solid4",
+      "matrix",
+      "export",
+      "flame-cpu",
+    ].includes(args.scope)
   ) {
     throw new CheckingError(
-      `--scope must be all, points, flame, backdrop, solid, or solid4 (got ${args.scope})`,
+      `--scope must be all, points, flame, backdrop, solid, solid4, matrix, export, or flame-cpu (got ${args.scope})`,
     );
   }
   const viewport = /^(\d+)x(\d+)$/.exec(args.viewport);
@@ -568,6 +725,20 @@ async function openApp(browser, args) {
           entry.sequence++;
           return nativeTerminate();
         };
+        // A page-callable crash for the fallback sub-leg. A bare terminate()
+        // fires no error event and the generator would stay healthy, so the
+        // hook ALSO raises the error event main.ts's `worker.onerror` wiring
+        // treats as a fatal worker failure (cloud-generator.ts then flips
+        // permanently to its synchronous fallback).
+        entry.crash = () => {
+          entry.terminated = true;
+          entry.sequence++;
+          worker.dispatchEvent(
+            new ErrorEvent("error", {
+              message: "simulated worker crash (tiling-ui gate)",
+            }),
+          );
+        };
         return worker;
       },
     });
@@ -735,6 +906,7 @@ async function waitForFlameRound(
   afterCreated,
   timeout,
   expectedSeed = null,
+  expectedBackend = "gpu",
 ) {
   const deadline = Date.now() + timeout;
   let probe = await readFlameWorkerProbe(page);
@@ -751,10 +923,15 @@ async function waitForFlameRound(
     const outcomePass = active
       ? round?.outcome?.outcome?.availability === "active"
       : true;
+    // The CPU fallback arm asserts the backend the WORKER reported and
+    // skips the "GPU accumulation" pane-string pairing, which is a
+    // GPU-backend disclosure.
     const backendPass = active
-      ? round?.backend?.backend === "gpu" &&
-        ui.backend.startsWith("GPU accumulation") &&
-        ui.backendWarning === (round.backend.software === true)
+      ? expectedBackend === "gpu"
+        ? round?.backend?.backend === "gpu" &&
+          ui.backend.startsWith("GPU accumulation") &&
+          ui.backendWarning === (round.backend.software === true)
+        : round?.backend?.backend === expectedBackend
       : round?.backend !== undefined;
     const notePass = active
       ? ui.note.includes("Active in Flame")
@@ -891,6 +1068,47 @@ function matchingWorkerRound(probe, tiling, afterId = 0, numPoints = null) {
     reply.pointTiling.fill === "complete"
     ? { request, reply }
     : null;
+}
+
+/**
+ * Round matcher for clip-authored matrix fixtures. The document hash stores
+ * an authored clip as the compact encoded array while the worker request
+ * carries the full structured ShapeSpec, so exact string equality never
+ * holds across that boundary; match on the group plus the clip's presence
+ * (or absence, for the clip-removal control) instead.
+ */
+function clipWorkerRound(probe, group, withClip, afterId = 0) {
+  const request = [...probe.requests].reverse().find((candidate) => {
+    if (candidate.id <= afterId) return false;
+    const tiling = candidate.tiling;
+    if (!tiling || tiling.group !== group) return false;
+    return withClip ? tiling.clip !== undefined : tiling.clip === undefined;
+  });
+  if (!request) return null;
+  const reply = probe.replies.find((candidate) => candidate.id === request.id);
+  if (!reply) return null;
+  return reply.pointTiling?.availability === "active" &&
+    reply.pointTiling.fill === "complete"
+    ? { request, reply }
+    : null;
+}
+
+async function waitForClipWorkerRound(
+  page,
+  group,
+  withClip,
+  timeout,
+  afterId = 0,
+) {
+  const waited = await waitForCloudWorkerProbe(
+    page,
+    (probe) => clipWorkerRound(probe, group, withClip, afterId) !== null,
+    timeout,
+  );
+  return {
+    ...waited,
+    round: clipWorkerRound(waited.probe, group, withClip, afterId),
+  };
 }
 
 async function waitForWorkerRound(
@@ -3383,7 +3601,12 @@ async function runAuthoringLeg(browser, args) {
     await openSection(page, "tilingSection");
     const modeChecks = [
       ["modePointsBtn", /Active in Points — .* · complete/],
-      ["modeSolidBtn", /(Active|Unavailable) in Solid/],
+      // The Solid disclosures are dimension-explicit since the 4D Solid lift
+      // ("Active in 3D Solid" / "Active in 4D Solid"); match both.
+      [
+        "modeSolidBtn",
+        /(Active in 3D Solid|Active in 4D Solid|Unavailable in Solid)/,
+      ],
     ];
     for (const [button, expression] of modeChecks) {
       const mode = await waitForModeNote(
@@ -3531,6 +3754,325 @@ async function runAuthoringLeg(browser, args) {
   }
 }
 
+/** Run a matrix leg: finite groups, lattice extrema, analytic clip, and crash sub-leg. */
+async function runMatrixLeg(browser, args, fixture) {
+  const { context, page, pageErrors, consoleErrors } = await openApp(
+    browser,
+    args,
+  );
+  const started = Date.now();
+  const checks = [];
+  const check = (name, ok, detail) => checks.push({ name, ok, detail });
+  try {
+    // Load base preset
+    const loaded = await loadPreset(page, fixture.key);
+    if (!loaded) {
+      return {
+        ok: false,
+        fixture,
+        reason: "base preset never changed the document",
+      };
+    }
+
+    // Author tiling through panel
+    await openSection(page, "tilingSection");
+
+    // Enable tiling if not already enabled
+    const checkbox = page.locator("#tilingEnabledCheckbox");
+    if (!(await checkbox.isChecked())) {
+      await checkbox.scrollIntoViewIfNeeded();
+      await checkbox.focus();
+      await checkbox.press("Space");
+    }
+
+    // Set tiling kind if lattice
+    if (fixture.tiling.kind === "lattice") {
+      await page.locator("#tilingKind").selectOption("lattice");
+
+      // For lattice extrema legs, set exact scale via numeric companion
+      if (fixture.latticeExtrema) {
+        const numberInput = page.locator("#tilingCellScaleSliderNumber");
+        await numberInput.evaluate((element) => {
+          element.focus();
+          element.select();
+        });
+        await page.keyboard.type(String(fixture.latticeExtrema.scale));
+        await page.keyboard.press("Enter");
+      } else {
+        // Regular lattice leg uses default scale from preset
+        await waitForExactTiling(page, fixture.tiling);
+      }
+    } else {
+      // Finite group (the freshly enabled block's kind is already the
+      // reflection group; selecting the group is the only edit needed)
+      await page.locator("#tilingGroup").selectOption(fixture.tiling.group);
+
+      // Add clip if analyticClip is true. The document carries the clip as a
+      // full ShapeSpec object, so the expected tiling is read back from the
+      // document rather than guessed from the select's option value.
+      if (fixture.analyticClip) {
+        await page.locator("#tilingClip").selectOption("gear");
+      }
+    }
+
+    // Wait for document to match. The clip leg's expected object is whatever
+    // the app actually resolved for the authored clip.
+    const installed = await waitForDocument(page, (document) =>
+      fixture.analyticClip
+        ? document.tiling?.group === fixture.tiling.group &&
+          document.tiling.clip !== undefined
+        : exact(document.tiling) === exact(fixture.tiling),
+    );
+    const expectedTiling = installed.document?.tiling ?? null;
+    check(
+      "document matches authored tiling",
+      installed.ok && expectedTiling !== null,
+      `expected ${exact(fixture.analyticClip ? "finite group + clip object" : fixture.tiling)}, got ${exact(installed.document?.tiling)}`,
+    );
+
+    // Wait for worker round and active note
+    const mode = await waitForModeNote(
+      page,
+      "modePointsBtn",
+      /Active in Points — .* · complete/,
+      args.settle,
+    );
+    const initialRound = fixture.analyticClip
+      ? await waitForClipWorkerRound(
+          page,
+          fixture.tiling.group,
+          true,
+          args.settle,
+        )
+      : await waitForWorkerRound(page, expectedTiling, args.settle);
+    check(
+      "initial Worker result",
+      installed.ok &&
+        mode.ok &&
+        initialRound.probe.created > 0 &&
+        initialRound.round !== null,
+      `created=${initialRound.probe.created}, request=${exact(initialRound.round?.request ?? null)}, status=${mode.note || "none"}`,
+    );
+
+    // Capture tiled frame
+    const tiledCapture = await captureCanvas(
+      page,
+      args,
+      `${fixture.key}-matrix-tiled`,
+    );
+
+    // The crash-fallback fixture ends here: cloud-generator.ts's fallback is
+    // PERMANENT (broken mode posts no further worker requests), so the
+    // worker-round negative control below could never run after it.
+    if (fixture.crashFallback) {
+      const crashResult = await runCrashSubLeg(page, args, fixture);
+      for (const result of crashResult.checks) checks.push(result);
+      // The crash's own disclosure — main.ts's worker-host log of the
+      // fallback ("Point-cloud worker failed; falling back to main-thread
+      // generation.") — is an EXPECTED console error here; any other is not.
+      const unexpectedConsole = consoleErrors.filter(
+        (message) =>
+          !/Point-cloud worker failed; falling back to main-thread generation/.test(
+            message,
+          ),
+      );
+      const errorText = await visibleErrorText(page);
+      check(
+        "page errors",
+        pageErrors.length === 0,
+        pageErrors.length ? pageErrors.join(" | ") : "none",
+      );
+      check(
+        "console errors",
+        unexpectedConsole.length === 0,
+        unexpectedConsole.length
+          ? unexpectedConsole.join(" | ")
+          : consoleErrors.length
+            ? "only the expected fallback disclosure"
+            : "none",
+      );
+      check("visible app error", errorText.length === 0, errorText || "none");
+      return {
+        ok: checks.every((entry) => entry.ok),
+        fixture,
+        checks,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    // Negative control. The clip leg's sharper pair removes ONLY the clip —
+    // the same finite group keeps rendering — while every other leg clears
+    // the tiling block outright through the live checkbox.
+    const beforeClear = await readCloudWorkerProbe(page);
+    const clearAfterId = maxWorkerRequestId(beforeClear);
+    let untiledCapture;
+    let distinctness;
+    if (fixture.analyticClip) {
+      await page.locator("#tilingClip").selectOption("");
+      const clipRemoved = await waitForDocument(
+        page,
+        (document) =>
+          document.tiling?.group === fixture.tiling.group &&
+          document.tiling.clip === undefined,
+      );
+      const clipRemovedRound = await waitForClipWorkerRound(
+        page,
+        fixture.tiling.group,
+        false,
+        args.settle,
+        clearAfterId,
+      );
+      untiledCapture = await captureCanvas(
+        page,
+        args,
+        `${fixture.key}-matrix-no-clip`,
+      );
+      distinctness = await screenshotDiff(
+        page,
+        tiledCapture.png,
+        untiledCapture.png,
+      );
+      check(
+        "clip removal worker round",
+        clipRemoved.ok && clipRemovedRound.round !== null,
+        `clipRemoved=${clipRemoved.ok}, tiling=${exact(clipRemoved.document?.tiling)}, request=${exact(clipRemovedRound.round?.request ?? null)}`,
+      );
+    } else {
+      const checkbox = page.locator("#tilingEnabledCheckbox");
+      await checkbox.scrollIntoViewIfNeeded();
+      await checkbox.focus();
+      await checkbox.press("Space");
+      const cleared = await waitForDocument(
+        page,
+        (document) => document.tiling === undefined,
+      );
+      const ordinaryRound = await waitForWorkerRound(
+        page,
+        null,
+        args.settle,
+        clearAfterId,
+      );
+      const clearedNote = await page.evaluate(
+        () => document.getElementById("tilingNote")?.textContent ?? "",
+      );
+      untiledCapture = await captureCanvas(
+        page,
+        args,
+        `${fixture.key}-matrix-untiled`,
+      );
+      distinctness = await screenshotDiff(
+        page,
+        tiledCapture.png,
+        untiledCapture.png,
+      );
+      check(
+        "tiled/disabled frame",
+        cleared.ok &&
+          ordinaryRound.round !== null &&
+          clearedNote ===
+            "Off — Points, Flame, Solid, and Surface render the original attractor once.",
+        `cleared=${cleared.ok}, note=${clearedNote || "none"}, request=${exact(ordinaryRound.round?.request ?? null)}`,
+      );
+    }
+
+    const minDiff = fixture.minDiff ?? args.diff;
+    check(
+      "structural difference",
+      tiledCapture.metrics.coverage >= args.draw &&
+        untiledCapture.metrics.coverage >= args.draw &&
+        distinctness.fraction >= minDiff,
+      `tiled=${(tiledCapture.metrics.coverage * 100).toFixed(2)}%, untiled=${(untiledCapture.metrics.coverage * 100).toFixed(2)}%, diff=${(distinctness.fraction * 100).toFixed(2)}%/${(minDiff * 100).toFixed(2)}%`,
+    );
+
+    const errorText = await visibleErrorText(page);
+    check(
+      "page errors",
+      pageErrors.length === 0,
+      pageErrors.length ? pageErrors.join(" | ") : "none",
+    );
+    check(
+      "console errors",
+      consoleErrors.length === 0,
+      consoleErrors.length ? consoleErrors.join(" | ") : "none",
+    );
+    check("visible app error", errorText.length === 0, errorText || "none");
+
+    return {
+      ok: checks.every((entry) => entry.ok),
+      fixture,
+      checks,
+      elapsedMs: Date.now() - started,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * Cloud-worker crash sub-leg: kill the cloud worker the way a real crash
+ * arrives (the error event main.ts's `worker.onerror` wiring forwards to
+ * CloudGenerator.handleError — cloud-generator.ts:264) and prove the tiled
+ * cloud SURVIVES the permanent synchronous fallback. handleError re-runs the
+ * freshest outstanding request through `computeSync` — the same pure
+ * `generateCloud` the worker runs, tiling included — and broken mode posts
+ * nothing further, so the probe must show NO new worker request while the
+ * note returns to Active and the frame draws.
+ */
+async function runCrashSubLeg(page, args, fixture) {
+  const checks = [];
+  const check = (name, ok, detail) => checks.push({ name, ok, detail });
+
+  const before = await readCloudWorkerProbe(page);
+  const crashState = await page.evaluate(() => {
+    const worker = window.__tilingCloudWorkerProbe?.workers?.find((w) =>
+      w.url.includes("cloud-worker"),
+    );
+    if (!worker || typeof worker.crash !== "function") return null;
+    worker.crash();
+    return { terminated: worker.terminated };
+  });
+  check(
+    "cloud worker crashed",
+    crashState !== null && crashState.terminated === true,
+    crashState === null
+      ? "no cloud worker entry with a crash hook was found"
+      : `terminated=${crashState.terminated}`,
+  );
+
+  // The crash itself may already have re-run the outstanding request
+  // synchronously (handleError's `pending ?? inFlight` recompute), so the
+  // note can flip to Active without any further edit. Click regenerate
+  // anyway: in broken mode it MUST go through computeAndDeliver — no post.
+  await openSection(page, "rendererQualitySection");
+  await page.locator("#regenerateBtn").click();
+  const regenerated = await waitForTilingNote(
+    page,
+    /Active in Points — .* · complete/,
+    args.settle,
+  );
+  await page.waitForTimeout(2 * POLL_MS);
+  const after = await readCloudWorkerProbe(page);
+  const pointCount = await page.evaluate(() => {
+    const count = document.getElementById("pointCount")?.textContent ?? "";
+    return Number(count.replace(/[^\d]/g, "")) > 0;
+  });
+  const capture = await captureCanvas(
+    page,
+    args,
+    `${fixture.key}-matrix-crash-fallback`,
+  );
+  check(
+    "crash fallback keeps the tiled cloud",
+    regenerated.ok &&
+      after.requests.length === before.requests.length &&
+      pointCount &&
+      capture.metrics.coverage >= args.draw,
+    `regenerated=${regenerated.ok}, worker requests=${before.requests.length}->${after.requests.length} (sync fallback posts none), pointCount=${pointCount}, draw=${(capture.metrics.coverage * 100).toFixed(2)}%`,
+  );
+
+  return { checks };
+}
+
 async function runMalformedDecodeLeg(browser, args) {
   const { context, page, pageErrors, consoleErrors } = await openApp(
     browser,
@@ -3615,6 +4157,304 @@ async function runMalformedDecodeLeg(browser, args) {
   }
 }
 
+/** Save-PNG export leg: loads preset, awaits tiled completion, saves PNG,
+ * clears tiling, saves PNG again, compares downloaded files. */
+async function runExportPresetLeg(browser, args, fixture) {
+  const { context, page, pageErrors, consoleErrors } = await openApp(
+    browser,
+    args,
+  );
+  const started = Date.now();
+  const checks = [];
+  const check = (name, ok, detail) => checks.push({ name, ok, detail });
+  try {
+    // Load preset and await tiled completion
+    const loaded = await loadPreset(page, fixture.preset.key);
+    const installed = await waitForExactTiling(page, fixture.preset.tiling);
+    let completion;
+    if (fixture.renderer === "points") {
+      const mode = await waitForModeNote(
+        page,
+        "modePointsBtn",
+        /Active in Points — .* · complete/,
+        args.settle,
+      );
+      const round = await waitForWorkerRound(
+        page,
+        fixture.preset.tiling,
+        args.settle,
+      );
+      completion = { ok: mode.ok && round.round !== null };
+    } else if (fixture.renderer === "flame") {
+      const fourD = fixture.preset.tiling?.group?.endsWith("4") ?? false;
+      const quality = await configureFocusedFlameQuality(page);
+      const beforeFlame = await readFlameWorkerProbe(page);
+      await page.locator("#modeFlameBtn").click();
+      const initial = await waitForFlameRound(
+        page,
+        fixture.preset.tiling,
+        fourD,
+        beforeFlame.workers.length,
+        args.settle,
+      );
+      completion = { ok: initial.ok && initial.round?.terminal !== null };
+    } else if (fixture.renderer === "solid") {
+      const quality = await configureFocusedSolidQuality(page);
+      const beforeSolid = await readSolidWorkerProbe(page);
+      const mode = await waitForModeNote(
+        page,
+        "modeSolidBtn",
+        /(Active in 3D Solid|Unavailable in Solid)/,
+        args.settle,
+      );
+      const converged = await waitForSolidConverged(page, args.settle);
+      completion = {
+        ok: mode.ok && mode.note.includes("Active in 3D Solid") && converged.ok,
+      };
+    }
+    check(
+      `${fixture.renderer} tiled completion`,
+      loaded && installed.ok && completion?.ok === true,
+      `loaded=${loaded}, tiling=${installed.ok}, completion=${completion?.ok}`,
+    );
+
+    // Save PNG at default export size (1x)
+    await openSection(page, "captureSection");
+    // Ensure export scale is 1x
+    const exportScale = page.locator("#exportScale");
+    await exportScale.selectOption("1");
+    await page.waitForTimeout(500);
+
+    // Wait for download
+    const dlPromise = page.waitForEvent("download", {
+      timeout: 240_000,
+    });
+    await page.click("#savePngBtn");
+    let download = null;
+    try {
+      download = await dlPromise;
+    } catch (err) {
+      check(
+        "tiled PNG download completed",
+        false,
+        `no download within 240s: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return {
+        ok: false,
+        preset: fixture.preset,
+        checks,
+        elapsedMs: Date.now() - started,
+      };
+    }
+    const tiledPath = await download.path();
+    const tiledSize = tiledPath ? (await stat(tiledPath)).size : 0;
+    const tiledFilename = `${fixture.preset.key}-export-tiled.png`;
+    const tiledDest = path.join(args.outdir, tiledFilename);
+    await mkdir(args.outdir, { recursive: true });
+    if (tiledPath) {
+      await copyFile(tiledPath, tiledDest);
+    }
+    check(
+      "tiled PNG download completed",
+      download !== null && tiledSize > 5_500,
+      `"${download.suggestedFilename()}" ${tiledSize} bytes -> ${tiledFilename}`,
+    );
+
+    // Clear tiling through live checkbox
+    const beforeClear = await readCloudWorkerProbe(page);
+    const clearAfterId = maxWorkerRequestId(beforeClear);
+    await openSection(page, "tilingSection");
+    await page.locator("#tilingEnabledCheckbox").scrollIntoViewIfNeeded();
+    await page.locator("#tilingEnabledCheckbox").focus();
+    await page.locator("#tilingEnabledCheckbox").press("Space");
+    const cleared = await waitForDocument(
+      page,
+      (document) => document.tiling === undefined,
+    );
+
+    // Await untiled renderer completion
+    let untiledCompletion;
+    if (fixture.renderer === "points") {
+      const ordinaryRound = await waitForWorkerRound(
+        page,
+        null,
+        args.settle,
+        clearAfterId,
+      );
+      untiledCompletion = { ok: ordinaryRound.round !== null };
+    } else if (fixture.renderer === "flame") {
+      const off = await waitForFlameRound(
+        page,
+        null,
+        fixture.preset.tiling?.group?.endsWith("4") ?? false,
+        // The Off accumulation restarts in the SAME worker — search every
+        // worker, newest first, rather than excluding the existing one.
+        0,
+        args.settle,
+      );
+      untiledCompletion = { ok: off.ok };
+    } else if (fixture.renderer === "solid") {
+      const off = await waitForTilingNote(
+        page,
+        /Off — Points, Flame, Solid, and Surface render the original attractor once/,
+        args.settle,
+      );
+      await page.waitForTimeout(1_000);
+      untiledCompletion = { ok: off.ok };
+    }
+    check(
+      "untiled renderer completion",
+      cleared.ok && untiledCompletion?.ok === true,
+      `cleared=${cleared.ok}, completion=${untiledCompletion?.ok}`,
+    );
+
+    // Save PNG again
+    await openSection(page, "captureSection");
+    const dlPromise2 = page.waitForEvent("download", {
+      timeout: 240_000,
+    });
+    await page.click("#savePngBtn");
+    let download2 = null;
+    try {
+      download2 = await dlPromise2;
+    } catch (err) {
+      check(
+        "untiled PNG download completed",
+        false,
+        `no download within 240s: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return {
+        ok: false,
+        preset: fixture.preset,
+        checks,
+        elapsedMs: Date.now() - started,
+      };
+    }
+    const untiledPath = await download2.path();
+    const untiledSize = untiledPath ? (await stat(untiledPath)).size : 0;
+    const untiledFilename = `${fixture.preset.key}-export-untiled.png`;
+    const untiledDest = path.join(args.outdir, untiledFilename);
+    if (untiledPath) {
+      await copyFile(untiledPath, untiledDest);
+    }
+    check(
+      "untiled PNG download completed",
+      download2 !== null && untiledSize > 5_500,
+      `"${download2.suggestedFilename()}" ${untiledSize} bytes -> ${untiledFilename}`,
+    );
+
+    // Compare downloaded PNGs
+    const tiledBuffer = tiledPath ? await readFile(tiledPath) : Buffer.from("");
+    const untiledBuffer = untiledPath
+      ? await readFile(untiledPath)
+      : Buffer.from("");
+    const distinctness = await screenshotDiff(page, tiledBuffer, untiledBuffer);
+
+    // Compute coverage from tiled PNG (reuse screenshotDiff's decode logic)
+    const coverage = await page.evaluate(async (base64) => {
+      async function decode(base64) {
+        const image = new Image();
+        image.src = `data:image/png;base64,${base64}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("2D decode context unavailable");
+        context.drawImage(image, 0, 0);
+        const data = context.getImageData(
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        ).data;
+        return {
+          width: canvas.width,
+          height: canvas.height,
+          data,
+        };
+      }
+      const img = await decode(base64);
+      const width = img.width;
+      const height = img.height;
+      const corners = [
+        [img.data[0], img.data[1], img.data[2]],
+        [
+          img.data[(height - 1) * width * 4],
+          img.data[(height - 1) * width * 4 + 1],
+          img.data[(height - 1) * width * 4 + 2],
+        ],
+        [
+          img.data[(width - 1) * 4],
+          img.data[(width - 1) * 4 + 1],
+          img.data[(width - 1) * 4 + 2],
+        ],
+        [
+          img.data[((height - 1) * width + (width - 1)) * 4],
+          img.data[((height - 1) * width + (width - 1)) * 4 + 1],
+          img.data[((height - 1) * width + (width - 1)) * 4 + 2],
+        ],
+      ];
+      let nonBackdrop = 0;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const at = (y * width + x) * 4;
+          const p = [img.data[at], img.data[at + 1], img.data[at + 2]];
+          const backdrop = corners.some(
+            (corner) =>
+              Math.abs(corner[0] - p[0]) <= 10 &&
+              Math.abs(corner[1] - p[1]) <= 10 &&
+              Math.abs(corner[2] - p[2]) <= 10,
+          );
+          if (!backdrop) nonBackdrop++;
+        }
+      }
+      return nonBackdrop / (width * height);
+    }, tiledBuffer.toString("base64"));
+
+    const minDiff = fixture.minDiff > 0 ? fixture.minDiff : args.diff;
+    check(
+      "export PNGs differ structurally with sufficient coverage",
+      coverage >= args.draw && distinctness.fraction >= minDiff,
+      `coverage=${(coverage * 100).toFixed(2)}%/${(args.draw * 100).toFixed(2)}%, diff=${(distinctness.fraction * 100).toFixed(2)}%/${(minDiff * 100).toFixed(2)}%`,
+    );
+
+    const errorText = await visibleErrorText(page);
+    check(
+      "page errors",
+      pageErrors.length === 0,
+      pageErrors.length ? pageErrors.join(" | ") : "none",
+    );
+    check(
+      "console errors",
+      consoleErrors.length === 0,
+      consoleErrors.length ? consoleErrors.join(" | ") : "none",
+    );
+    check("visible app error", errorText.length === 0, errorText || "none");
+
+    return {
+      ok: checks.every((entry) => entry.ok),
+      preset: fixture.preset,
+      checks,
+      elapsedMs: Date.now() - started,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+function printExportPreset(result) {
+  process.stdout.write(
+    `${result.ok ? "PASS" : "FAIL"}  ${`${result.preset.label} export`.padEnd(30)} ` +
+      `time=${((result.elapsedMs ?? 0) / 1000).toFixed(1)}s\n`,
+  );
+  for (const check of result.checks) {
+    process.stdout.write(
+      `  ${check.ok ? "PASS" : "FAIL"}  ${check.name} — ${check.detail}\n`,
+    );
+  }
+}
+
 function printPreset(result) {
   const coverage =
     result.coverage === null || result.coverage === undefined
@@ -3674,6 +4514,206 @@ function printFlamePreset(result) {
   }
 }
 
+function printMatrixLeg(result) {
+  const fixture = result.fixture;
+  let label = `${fixture.label}`;
+  if (fixture.tiling.kind === "lattice") {
+    label += ` Lattice ${fixture.tiling.cellScale}`;
+  } else if (fixture.tiling.group) {
+    label += ` ${fixture.tiling.group.toUpperCase()}`;
+  }
+  if (fixture.analyticClip) {
+    label += ` + gear clip`;
+  }
+  if (fixture.crashFallback) {
+    label += ` (crash fallback)`;
+  }
+  process.stdout.write(
+    `${result.ok ? "PASS" : "FAIL"}  ${label.padEnd(27)} ` +
+      `time=${((result.elapsedMs ?? 0) / 1000).toFixed(1)}s\n`,
+  );
+  for (const check of result.checks) {
+    process.stdout.write(
+      `  ${check.ok ? "PASS" : "FAIL"}  ${check.name} — ${check.detail}\n`,
+    );
+  }
+}
+
+/** Flame CPU leg: WebGPU disabled via --disable-features=Vulkan, --disable-features=WebGPU,
+ * or other flag that works. Verifies backend: "cpu" and accumulation completes. */
+async function runFlameCpuPresetLeg(browser, args, fixture) {
+  // Create a separate browser with WebGPU disabled
+  const cpuLaunch = launchOptionsForCpu(args.mode);
+  const cpuBrowser = await chromium.launch({
+    executablePath: process.env.CHROME_PATH ?? "/usr/bin/google-chrome",
+    ...cpuLaunch,
+  });
+
+  try {
+    const { context, page, pageErrors, consoleErrors } = await openApp(
+      cpuBrowser,
+      args,
+    );
+    const started = Date.now();
+    const checks = [];
+    const check = (name, ok, detail) => checks.push({ name, ok, detail });
+    try {
+      const loaded = await loadPreset(page, fixture.preset.key);
+      const installed = await waitForExactTiling(page, fixture.preset.tiling);
+      const points = await waitForModeNote(
+        page,
+        "modePointsBtn",
+        /Active in Points — .* · complete/,
+        args.settle,
+      );
+      const shareLink = await copyShareLink(page);
+      const shared = decodeHash(new URL(shareLink).hash);
+      await page.goto(shareLink, { waitUntil: "load", timeout: 60_000 });
+      await page.waitForFunction(
+        () => {
+          const count =
+            document.getElementById("pointCount")?.textContent ?? "";
+          return Number(count.replace(/[^\d]/g, "")) > 0;
+        },
+        undefined,
+        { timeout: 60_000 },
+      );
+      const restored = await waitForExactTiling(page, fixture.preset.tiling);
+      const restoredPoints = await waitForModeNote(
+        page,
+        "modePointsBtn",
+        /Active in Points — .* · complete/,
+        args.settle,
+      );
+      const quality = await configureFocusedFlameQuality(page);
+      const beforeFlame = await readFlameWorkerProbe(page);
+      await page.locator("#modeFlameBtn").click();
+      const initial = await waitForFlameRound(
+        page,
+        fixture.preset.tiling,
+        false, // mirroredLattice is 3D
+        beforeFlame.workers.length,
+        args.settle,
+        null,
+        "cpu",
+      );
+      check(
+        "copied-link Flame Worker",
+        loaded &&
+          installed.ok &&
+          points.ok &&
+          shareLink.includes("#v1=") &&
+          exact(shared.tiling) === exact(fixture.preset.tiling) &&
+          restored.ok &&
+          restoredPoints.ok &&
+          quality.iterations === "1.0M" &&
+          quality.supersample === "1×" &&
+          initial.ok &&
+          initial.round?.start.fourD === false,
+        `link=${shareLink.includes("#v1=")}, tiling=${restored.ok}, quality=${quality.iterations}/${quality.supersample}, workers=${beforeFlame.workers.length}->${initial.probe.workers.length}, start=${exact(initial.round?.start ?? null)}`,
+      );
+      check(
+        "CPU backend reported",
+        initial.round?.backend?.backend === "cpu",
+        `backend=${exact(initial.round?.backend ?? null)}, expected="cpu"`,
+      );
+      check(
+        "active terminal",
+        initial.round?.outcome?.outcome?.availability === "active" &&
+          initial.round?.terminal !== null,
+        `outcome=${exact(initial.round?.outcome?.outcome ?? null)}, terminal=${exact(initial.round?.terminal ?? null)}, status=${initial.ui.note || "none"}`,
+      );
+      const tiledCapture = await captureCanvas(
+        page,
+        args,
+        `${fixture.preset.key}-flame-cpu-tiled`,
+      );
+      await openSection(page, "tilingSection");
+      await page.locator("#tilingEnabledCheckbox").focus();
+      await page.locator("#tilingEnabledCheckbox").press("Space");
+      const cleared = await waitForDocument(
+        page,
+        (document) => document.tiling === undefined,
+      );
+      const off = await waitForFlameRound(
+        page,
+        null,
+        false,
+        // The Off accumulation restarts in the SAME worker — search every
+        // worker, newest first, rather than excluding the existing one.
+        0,
+        args.settle,
+        initial.round?.start.seed ?? null,
+      );
+      const untiledCapture = await captureCanvas(
+        page,
+        args,
+        `${fixture.preset.key}-flame-cpu-off`,
+      );
+      const distinctness = await screenshotDiff(
+        page,
+        tiledCapture.png,
+        untiledCapture.png,
+      );
+      const minDiff = fixture.preset.minDiff ?? args.diff;
+      check(
+        "same-seed tiled/Off Flame frame",
+        cleared.ok &&
+          off.round?.start.seed === initial.round?.start.seed &&
+          tiledCapture.metrics.coverage >= args.draw &&
+          untiledCapture.metrics.coverage >= args.draw &&
+          distinctness.fraction >= minDiff,
+        `cleared=${cleared.ok}, seed=${initial.round?.start.seed}->${off.round?.start.seed}, tiled=${(tiledCapture.metrics.coverage * 100).toFixed(2)}%, off=${(untiledCapture.metrics.coverage * 100).toFixed(2)}%, diff=${(distinctness.fraction * 100).toFixed(2)}%/${(minDiff * 100).toFixed(2)}%, status=${off.ui.note || "none"}`,
+      );
+
+      const errorText = await visibleErrorText(page);
+      check(
+        "page errors",
+        pageErrors.length === 0,
+        pageErrors.length ? pageErrors.join(" | ") : "none",
+      );
+      check(
+        "console errors",
+        consoleErrors.length === 0,
+        consoleErrors.length ? consoleErrors.join(" | ") : "none",
+      );
+      check("visible app error", errorText.length === 0, errorText || "none");
+      return {
+        ok: checks.every((entry) => entry.ok),
+        preset: fixture.preset,
+        checks,
+        elapsedMs: Date.now() - started,
+      };
+    } finally {
+      await context.close().catch(() => {});
+    }
+  } finally {
+    await cpuBrowser.close().catch(() => {});
+  }
+}
+
+/** Launch options with WebGPU disabled for flame-cpu scope. */
+function launchOptionsForCpu(mode) {
+  const env = { ...process.env };
+  const flags = [
+    "--ignore-certificate-errors",
+    "--ignore-gpu-blocklist",
+    "--no-sandbox",
+    "--disable-webgpu", // Direct disable
+    "--disable-features=WebGPU,Vulkan", // Both features
+    "--disable-gpu", // Disable all GPU acceleration
+    "--use-gl=angle",
+    "--use-angle=swiftshader",
+  ];
+  if (mode.startsWith("x11:")) {
+    env.DISPLAY = mode.slice(4);
+    return { env, args: flags, headless: false };
+  }
+  delete env.DISPLAY;
+  flags.push("--enable-unsafe-swiftshader");
+  return { env, args: flags, headless: true };
+}
+
 async function run() {
   const args = parseArgs(process.argv.slice(2));
   const launch = launchOptions(args.mode);
@@ -3731,6 +4771,30 @@ async function run() {
       for (const fixture of SOLID4_PRESETS) {
         const result = await runSolid4PresetLeg(browser, args, fixture);
         printSolidPreset(result);
+        if (!result.ok) failed = true;
+      }
+    }
+
+    if (args.scope === "all" || args.scope === "matrix") {
+      for (const fixture of MATRIX_PRESETS) {
+        const result = await runMatrixLeg(browser, args, fixture);
+        printMatrixLeg(result);
+        if (!result.ok) failed = true;
+      }
+    }
+
+    if (args.scope === "all" || args.scope === "export") {
+      for (const fixture of EXPORT_PRESETS) {
+        const result = await runExportPresetLeg(browser, args, fixture);
+        printExportPreset(result);
+        if (!result.ok) failed = true;
+      }
+    }
+
+    if (args.scope === "all" || args.scope === "flame-cpu") {
+      for (const fixture of FLAME_CPU_PRESETS) {
+        const result = await runFlameCpuPresetLeg(browser, args, fixture);
+        printFlamePreset(result);
         if (!result.ok) failed = true;
       }
     }
