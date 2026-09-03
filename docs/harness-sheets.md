@@ -1,6 +1,6 @@
 # Harness Sheets
 
-This is the catalogue `CLAUDE.md`'s Commands section points to. It is the
+This is the catalogue `AGENTS.md`'s Commands section points to. It is the
 full per-sheet record — every measured number, every verdict, every refuted
 hypothesis — for this project's executable measurement records. The few
 helper specs with no measured panels of their own are catalogued as helpers
