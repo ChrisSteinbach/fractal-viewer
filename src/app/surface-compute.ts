@@ -1,6 +1,7 @@
 /**
- * WebGPU compute renderer for FOLD 3D surface sessions — the app
- * integration of the WGSL kernel spike's measured verdict: the march
+ * WebGPU compute renderer for fold, escape, bulb and 4D surface sessions
+ * (`{kind:"ifs"|"escape"|"bulb"|"escape4"|"ifs4"}`) — the app integration
+ * of the WGSL kernel spike's measured verdict: the march
  * kernel traces mandelboxKifs at ~49µs/ray on the same hardware where the
  * WebGL fragment tracer is unbounded (>1300µs/ray), and compiles in
  * ~0.1-0.3s where the fold GLSL links in ~25s on Mesa (the entry cliff
