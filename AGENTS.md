@@ -910,9 +910,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     the canonical cell (`latticeCameraFitBounds`).
     Bench-pinned on verified Iris (7/7 eval cores plus five frame legs) and
     browser-gated by `scripts/surface-lattice.verify.mjs`; authoring,
-    presets, app-copy and workflow behavior by `scripts/tiling-ui.verify.mjs`;
-    cancel, real-Firefox teardown, WebGL fallback and fold-4D refusal ride
-    their owning lifecycle gates.
+    presets, app-copy, workflow behavior, forward-renderer qualification
+    scopes and both Firefox teardowns (--tiling) ride
+    `scripts/tiling-ui.verify.mjs` and `flame-teardown`, qualified
+    2026-09-02; cancel, WebGL fallback and fold-4D refusal ride their owning
+    lifecycle gates.
     Points SHIPS tiled in 3D/4D after schedule/final: bounded recorders keep
     canonical color, raw 4D, the 8N cap, explicit terminal status. Flame CPU
     and both WGSL twins SHIP the shared 32-weighted visitor; active tiling
