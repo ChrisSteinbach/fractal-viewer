@@ -361,6 +361,7 @@ export class SceneCollection {
     if (this.scenes.length === 0) return null;
     if (id === null) return this.scenes[0];
     const at = this.scenes.findIndex((s) => s.id === id);
+    if (at === -1) return this.scenes[0];
     return this.scenes[(at + 1) % this.scenes.length];
   }
 
