@@ -1419,6 +1419,41 @@ describe("lerpShapeTrap (the shape-trap block's morph rule)", () => {
     expect(lerpShapeTrap(trapA, th, 0.25)).toBe(th);
   });
 
+  it("glides between traps whose shapes are structurally equal but keyed differently", () => {
+    // The same spec built two ways — a preset literal's key order vs the
+    // order a persist-decoded document can carry. Key order is not shape.
+    const a: ShapeTrap = {
+      shape: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.5 },
+            combine: "union",
+            pose: { offset: [0.2, 0, 0] },
+          },
+        ],
+      },
+      position: [1, 0, 0],
+    };
+    const b: ShapeTrap = {
+      shape: {
+        parts: [
+          {
+            pose: { offset: [0.2, 0, 0] },
+            combine: "union",
+            primitive: { radius: 0.5, kind: "sphere" },
+          },
+        ],
+      },
+      position: [0, 1, 0],
+    };
+    const mid = lerpShapeTrap(a, b, 0.5)!;
+    // Glide: a fresh block with the pose interpolating — not the target
+    // reference the whole-block pop returns.
+    expect(mid).not.toBe(b);
+    expect(mid.shape).toBe(b.shape);
+    expect(mid.position).toEqual([0.5, 0.5, 0]);
+  });
+
   it("rides lerpSystem: a shapeTrap-less pair stays absent and a trapped pair glides", () => {
     const system = (trap: ShapeTrap | null): MorphSystem => ({
       transforms: [
@@ -1499,6 +1534,25 @@ describe("lerpTiling (the tiling block's morph rule)", () => {
     const mid = lerpTiling(tilingA, tilingB, 0.5)!;
     expect(mid).toEqual(expect.objectContaining({ group: "b3" }));
     expect(mid.clip).toBe(tilingB.clip);
+  });
+
+  it("rides the target's clip verbatim for clips equal up to key order (glide, not pop)", () => {
+    // clipA's spec with a different key insertion order — structurally the
+    // same clip, so the pair glides instead of popping the whole block.
+    const reorderedClip: ShapeSpec = {
+      parts: [
+        {
+          pose: { offset: [0.2, 0, 0] },
+          combine: "union",
+          primitive: { radius: 0.5, kind: "sphere" },
+        },
+      ],
+    };
+    const b: TilingSpec = { group: "b3", clip: reorderedClip };
+    const mid = lerpTiling(tilingA, b, 0.5)!;
+    expect(mid).not.toBe(b);
+    expect(mid).toEqual(expect.objectContaining({ group: "b3" }));
+    expect(mid.clip).toBe(reorderedClip);
   });
 
   it("lerps same-kind lattice cellScale without a default and keeps endpoints in-domain", () => {
