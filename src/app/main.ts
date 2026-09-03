@@ -4892,6 +4892,22 @@ async function main(): Promise<void> {
           );
         }
       }
+    } catch (error: unknown) {
+      // renderFrame never rejects — the renderer catches every internal
+      // failure itself (a latched device loss and a deliberate destroy
+      // included: those resolve null as cancellations, and the session's
+      // onLost owns the recovery) — so what reaches this catch is the loop
+      // body's own arithmetic throwing: spec assembly, the present, the
+      // console line. That used to escape the `void` call at the kick site
+      // as an unhandled rejection, its frame silently dropped. Log it, and
+      // only while this renderer still owns the session — a replaced
+      // renderer means a superseded frame, which the body's own staleness
+      // checks also return silently on. No re-entry here: the settle that
+      // follows the same persistent failure owns the block-and-reenter
+      // recovery, and a transient one self-heals on the next kick (the
+      // finally below clears the flight flags either way).
+      if (surfaceComputeRenderer !== renderer) return;
+      console.warn("Surface compute preview failed unexpectedly.", error);
     } finally {
       surfaceComputePreviewFlight = false;
       surfaceComputePreviewCompleting = false;
@@ -5016,6 +5032,32 @@ async function main(): Promise<void> {
             `exhausted ${String(frame.counts.exhausted)}`,
         );
       }
+    } catch (error: unknown) {
+      // renderFrame never rejects — the renderer catches every internal
+      // failure itself (a latched device loss and a deliberate destroy
+      // included: those resolve null as cancellations, and the session's
+      // onLost owns the recovery) — so what reaches this catch is the loop
+      // body's own arithmetic throwing: spec assembly, the present, the
+      // ray census, the blank notice. That used to escape the `void` call
+      // in surfaceComputeTick as an unhandled rejection, the settle
+      // silently dropped — inconsistent with the create-failure contract,
+      // which falls back. Mirror the device-loss contract instead: latch
+      // the same one-way block ("failed") and re-enter, so the routing's
+      // fallback ladder runs — the WebGL tracer, or the toast-and-exit for
+      // compute-only shapes. The guards are onLost's own plus one:
+      // renderer identity means a replaced renderer already re-entered,
+      // and `renderer.lost` keeps a loss-driven failure from re-running
+      // the ladder onLost owns (a loss resolves frames null and fires the
+      // callback exactly once — a second block-and-reenter from here would
+      // be a duplicate). The finally below still clears the flight flags,
+      // so the flight latch self-heals as before.
+      if (surfaceComputeRenderer !== renderer || renderer.lost) return;
+      console.warn(
+        "Surface compute settle failed unexpectedly; re-entering via the WebGL tracer.",
+        error,
+      );
+      surfaceComputeBlock = "failed";
+      surfaceSession.enter();
     } finally {
       surfaceComputeSettleFlight = false;
       surfaceComputeSettleProgress = null;
@@ -10933,10 +10975,13 @@ async function main(): Promise<void> {
   });
 
   // Undo/redo keyboard shortcuts. Guarded so a text-editing target keeps its
-  // native undo (no text inputs exist in the app today; belt-and-braces for
-  // future ones). Sliders/selects/checkboxes have no native undo, so a focused
-  // slider still lets Ctrl+Z time-travel the scene. Cmd+Y is deliberately NOT
-  // bound: it is the browser's history shortcut on macOS.
+  // native undo. The app's number inputs — the panel sliders' numeric
+  // companions (range-number-control.ts) — rely on that fall-through: a
+  // "number" input is not one of the excluded types below, so a focused
+  // companion keeps the browser's native undo/redo for its edits. Sliders/
+  // selects/checkboxes have no native undo, so a focused slider still lets
+  // Ctrl+Z time-travel the scene. Cmd+Y is deliberately NOT bound: it is the
+  // browser's history shortcut on macOS.
   window.addEventListener("keydown", (e) => {
     const t = e.target;
     if (t instanceof HTMLElement) {
