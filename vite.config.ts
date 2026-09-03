@@ -74,10 +74,9 @@ export default defineConfig({
       // isolation reload-once bootstrap); the auto-injected script would
       // register a second time.
       injectRegister: false,
-      // With registration and the worker both hand-written this setting is
-      // inert, but it documents the intended semantics (the worker
-      // skipWaiting()s + claims, new deploys take over silently) — and keeps
-      // them if injectRegister is ever switched back on.
+      // Inert here (registration and the worker are both hand-written); the
+      // real semantics are wait-for-consent — src/app/sw/sw.ts never
+      // auto-skipWaiting()s, takeover is register-sw.ts's SKIP_WAITING banner.
       registerType: "autoUpdate",
       manifest: {
         name: APP_NAME,
