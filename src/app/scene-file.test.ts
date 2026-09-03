@@ -725,6 +725,41 @@ describe("decodeImportFile: collection kind", () => {
     expect(decoded.scenes).toHaveLength(COLLECTION_CAP);
   });
 
+  it("stops after the sanitize-attempt budget, still importing the valid entries collected so far", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const invalid = Array.from({ length: 10 * COLLECTION_CAP }, () => ({
+      encoded: "v1=garbage",
+      createdAt: 1,
+      thumbnail: "",
+    }));
+    const file = JSON.stringify({
+      app: "fractal-viewer",
+      kind: "collection",
+      version: SCENE_FILE_VERSION,
+      exportedAt: 1,
+      scenes: [
+        { encoded, createdAt: 1, thumbnail: "" },
+        { encoded, createdAt: 2, thumbnail: "" },
+        { encoded, createdAt: 3, thumbnail: "" },
+        ...invalid,
+        { encoded, createdAt: 4, thumbnail: "" },
+      ],
+    });
+
+    const decoded = decodeImportFile(file);
+    if (decoded === null || decoded.kind !== "collection") {
+      throw new Error("expected a decoded collection file");
+    }
+
+    // The three leading valid entries land; the trailing valid one sits
+    // beyond the attempt budget and is dropped rather than hung on.
+    expect(decoded.scenes).toEqual([
+      { encoded, createdAt: 1, mode: undefined, thumbnail: "" },
+      { encoded, createdAt: 2, mode: undefined, thumbnail: "" },
+      { encoded, createdAt: 3, mode: undefined, thumbnail: "" },
+    ]);
+  });
+
   it("does not dedupe repeated encodeds — that's importScenes's job", () => {
     const encoded = encodeScene(baseSnapshot());
     const file = JSON.stringify({

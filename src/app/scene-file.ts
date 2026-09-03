@@ -92,6 +92,19 @@ export const MAX_IMPORT_THUMBNAIL_CHARS = 256_000;
 export const MAX_IMPORT_FILE_BYTES = 32 * 1024 * 1024;
 
 /**
+ * Ceiling on total sanitize ATTEMPTS (valid + invalid) per lenient version-1
+ * import loop — 10× the loop's own entry cap. A real backup holds at most
+ * that cap, so normal imports never reach this; it only bounds a hostile
+ * file of tiny entries that each fail LATE in {@link sanitizeImportedScene}/
+ * {@link sanitizeImportedStep} (a full {@link decodeScene} per entry), which
+ * the valid-entry cap alone let run over the whole file. Once spent,
+ * iteration stops and whatever valid entries were collected up to that point
+ * are returned — the lenience contract, not a rejection.
+ */
+const MAX_IMPORT_SCENE_ATTEMPTS = 10 * COLLECTION_CAP;
+const MAX_IMPORT_STEP_ATTEMPTS = 10 * TIMELINE_CAP;
+
+/**
  * A parsed, validated import file — {@link decodeImportFile}'s success
  * shape. A `"collection"` file's `scenes` may be empty (every entry turned
  * out to be individually invalid); reporting that to the user is the
@@ -490,8 +503,9 @@ function decodePortableImportFile(
  * In version 1, for `kind: "timeline"`, `steps` must be an array; entries are validated
  * INDIVIDUALLY by {@link sanitizeImportedStep}, dropping bad ones rather
  * than rejecting the file — the same lenience a `"collection"` file's
- * scenes get, below, and the same bounded-work cap, here
- * {@link TIMELINE_CAP} valid entries. A missing or non-finite `seed` becomes
+ * scenes get, below, and the same bounded-work caps, here
+ * {@link TIMELINE_CAP} valid entries and {@link MAX_IMPORT_STEP_ATTEMPTS}
+ * total sanitize attempts. A missing or non-finite `seed` becomes
  * `undefined` rather than rejecting the file — `TimelineStore.replaceAll`
  * rolls a fresh one when it sees that. The result may likewise carry an
  * empty `steps` array; reporting that is the caller's concern.
@@ -500,8 +514,9 @@ function decodePortableImportFile(
  * validated INDIVIDUALLY by {@link sanitizeImportedScene}, dropping bad ones
  * rather than rejecting the file — the same lenience `collection.ts`'s own
  * loader shows corrupt localStorage. Iteration stops once
- * {@link COLLECTION_CAP} valid entries have been collected, so a hostile
- * file with a million-entry array can't force unbounded work. The result may
+ * {@link COLLECTION_CAP} valid entries have been collected or
+ * {@link MAX_IMPORT_SCENE_ATTEMPTS} sanitize attempts have been spent, so a
+ * hostile file with a million-entry array can't force unbounded work. The result may
  * be an empty array (every entry was invalid); reporting that is the
  * caller's concern. Version 2 instead requires every entry, the exact
  * reference union, and the source-only manifest to pass together; async digest
@@ -546,8 +561,15 @@ export function decodeImportFile(text: string): ImportedFile | null {
       const { steps: rawSteps, seed } = o;
       if (!Array.isArray(rawSteps)) return null;
       const steps: ImportableTimelineStep[] = [];
+      let attempts = 0;
       for (const raw of rawSteps) {
-        if (steps.length >= TIMELINE_CAP) break;
+        if (
+          steps.length >= TIMELINE_CAP ||
+          attempts >= MAX_IMPORT_STEP_ATTEMPTS
+        ) {
+          break;
+        }
+        attempts++;
         const entry = sanitizeImportedStep(raw);
         if (entry !== null) steps.push(entry);
       }
@@ -563,8 +585,15 @@ export function decodeImportFile(text: string): ImportedFile | null {
     if (!Array.isArray(rawScenes)) return null;
 
     const scenes: ImportableScene[] = [];
+    let attempts = 0;
     for (const raw of rawScenes) {
-      if (scenes.length >= COLLECTION_CAP) break;
+      if (
+        scenes.length >= COLLECTION_CAP ||
+        attempts >= MAX_IMPORT_SCENE_ATTEMPTS
+      ) {
+        break;
+      }
+      attempts++;
       const entry = sanitizeImportedScene(raw);
       if (entry !== null) scenes.push(entry);
     }
