@@ -22,7 +22,8 @@
  * — the exact same pure `generateCloud` the worker runs — inline on the main
  * thread: coalesced-but-synchronous behavior, jankier but correct.
  * The freshest outstanding request is re-run synchronously at the moment of
- * failure, so a request can never be silently lost to a crash.
+ * failure (a synchronous post throw included), so a request can never be
+ * silently lost to a crash.
  *
  * Everything is injected (worker factory, sync compute, delivery callback),
  * so the whole policy is unit-tested without a real Worker — the same
@@ -234,7 +235,19 @@ export class CloudGenerator {
             : undefined,
       };
     }
-    this.worker?.post(workerRequest);
+    try {
+      this.worker?.post(workerRequest);
+    } catch {
+      // A synchronous post throw (e.g. a future non-cloneable field riding
+      // the request) leaves this request with no result and no error event
+      // ever coming — the stranded in-flight slot would park every later
+      // request and settle() forever. Take the same permanent fallback an
+      // async worker crash takes: handleError latches `broken` before
+      // anything it does can throw, and it clears inFlight/pending itself
+      // after capturing the freshest request to re-run — so inFlight must
+      // still be set when it is called here.
+      this.handleError();
+    }
   }
 
   private handleResult(result: CloudResult): void {
@@ -252,7 +265,12 @@ export class CloudGenerator {
     // Post the successor BEFORE delivering: the worker starts on the newer
     // request while the main thread uploads this result.
     if (next !== null) this.send(next);
-    if (result.id >= this.staleBelowId) {
+    // If that send's post threw, the fallback inside it already computed and
+    // delivered `next` — the FRESHER request — inline; delivering this older
+    // result after it would move the cloud backward, so it is suppressed.
+    // (broken can only have become true inside the send above: once fallen
+    // back, the worker is null and this handler can never fire again.)
+    if (!this.broken && result.id >= this.staleBelowId) {
       this.deps.onResult(result, request, elapsedMs);
     }
     // If next !== null, inFlight is that successor and the generator is

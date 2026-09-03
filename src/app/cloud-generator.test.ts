@@ -81,10 +81,12 @@ function fakeResult(id: number): CloudResult3D {
  * answers with `fakeResult(request.id)`; `onResult` records every delivery
  * in `delivered`. Passing `"returns-null"` or `"throws"` makes
  * `createWorker` fail the way a missing worker script or a construction-time
- * throw would, for the permanent-sync-mode tests.
+ * throw would, for the permanent-sync-mode tests; `"post-throws"` keeps the
+ * worker healthy but makes the host's `post` throw synchronously on every
+ * call, the way a structured-clone failure would.
  */
 function harness(
-  brokenWorker?: "returns-null" | "throws",
+  brokenWorker?: "returns-null" | "throws" | "post-throws",
   now?: () => number,
 ): {
   generator: CloudGenerator;
@@ -115,6 +117,18 @@ function harness(
       if (brokenWorker === "returns-null") return null;
       if (brokenWorker === "throws") {
         throw new Error("worker script failed to load");
+      }
+      if (brokenWorker === "post-throws") {
+        deliver = onResult;
+        fail = onError;
+        return {
+          post: () => {
+            throw new Error("postMessage: object could not be cloned");
+          },
+          terminate: () => {
+            terminated++;
+          },
+        };
       }
       deliver = onResult;
       fail = onError;
@@ -349,6 +363,83 @@ describe("CloudGenerator worker error recovery", () => {
     expect(h.computeSyncCalls).toHaveLength(1); // unchanged
     expect(h.terminatedCount()).toBe(1); // unchanged
     expect(h.delivered).toHaveLength(1); // unchanged
+  });
+
+  it("a synchronous post throw re-runs the request via the sync fallback instead of stranding the in-flight slot", async () => {
+    const h = harness("post-throws");
+
+    h.generator.request(params({ seed: 1 })); // the post throws synchronously
+
+    // The fallback computed and delivered the request inline; the generator
+    // is fully drained, not stranded.
+    expect(h.posted).toHaveLength(0);
+    expect(h.computeSyncCalls).toHaveLength(1);
+    expect(h.computeSyncCalls[0].seed).toBe(1);
+    expect(h.delivered).toHaveLength(1);
+    expect(h.delivered[0].request.seed).toBe(1);
+    expect(h.terminatedCount()).toBe(1); // worker torn down like a crash
+    await expect(h.generator.settle()).resolves.toBeUndefined();
+
+    // A late error event for the same request is a no-op — the fallback
+    // latched.
+    h.triggerError();
+    expect(h.computeSyncCalls).toHaveLength(1);
+    expect(h.delivered).toHaveLength(1);
+    expect(h.terminatedCount()).toBe(1);
+
+    // Subsequent requests still resolve (permanent synchronous mode).
+    h.generator.request(params({ seed: 2 }));
+    expect(h.computeSyncCalls).toHaveLength(2);
+    expect(h.delivered).toHaveLength(2);
+    expect(h.delivered[1].request.seed).toBe(2);
+    await expect(h.generator.settle()).resolves.toBeUndefined();
+  });
+
+  it("a successor post throw inside handleResult delivers only the fresher fallback result, not the stale one after it", () => {
+    // A bespoke host: the FIRST post succeeds so a successor can be parked,
+    // the SECOND (posted from handleResult when the in-flight result
+    // dispatches it) throws — the throw lands mid-handleResult.
+    const posted: CloudRequest[] = [];
+    const deliveredIds: number[] = [];
+    let syncCalls = 0;
+    let deliver: ((result: CloudResult) => void) | null = null;
+    // Routed through an arrow (the harness's deliverResult idiom) — at this
+    // scope TS narrows `deliver` to its `null` initializer, since the
+    // assignment happens inside createWorker's callback.
+    const deliverResult = (result: CloudResult): void => deliver?.(result);
+    const generator = new CloudGenerator({
+      createWorker: (onResult) => {
+        deliver = onResult;
+        return {
+          post: (request: CloudRequest) => {
+            posted.push(request);
+            if (posted.length === 2) {
+              throw new Error("postMessage: object could not be cloned");
+            }
+          },
+          terminate: () => {},
+        };
+      },
+      computeSync: () => fakeResult(100 + ++syncCalls),
+      onResult: (result) => {
+        deliveredIds.push(result.id);
+      },
+    });
+
+    generator.request(params({ seed: 1 })); // A posts fine
+    generator.request(params({ seed: 2 })); // B parks
+    deliverResult(fakeResult(1)); // A's result arrives; posting B throws
+
+    // The fallback re-ran B (the fresher request) and delivered ONLY its
+    // result — A's older result is suppressed rather than arriving after
+    // it and moving the cloud backward.
+    expect(syncCalls).toBe(1);
+    expect(deliveredIds).toEqual([101]);
+
+    // Subsequent requests still resolve (permanent synchronous mode).
+    generator.request(params({ seed: 3 }));
+    expect(syncCalls).toBe(2);
+    expect(deliveredIds).toEqual([101, 102]);
   });
 });
 
