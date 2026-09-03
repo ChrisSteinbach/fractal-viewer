@@ -27,9 +27,10 @@
          'self' already says exactly that), and frame-ancestors is omitted
          because a meta CSP IGNORES it — a directive that cannot be enforced
          from here would only read as protection this page does not have.
-         SCOPE: this covers index.html alone. public/gpuprobe.html is a
-         separate page with no policy of its own, and it builds a blob: worker
-         — do not weaken this one to accommodate it. -->
+         SCOPE: this covers index.html alone. public/gpuprobe.html carries
+         its own scoped meta CSP (it builds a blob: worker, so its policy
+         differs from this one) — neither page's policy should be weakened
+         carelessly to accommodate the other. -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
