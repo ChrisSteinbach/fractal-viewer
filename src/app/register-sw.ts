@@ -51,7 +51,9 @@
  * `updatefound` once a fresh install completes — and reports it through
  * `onUpdateAvailable`, handing the app an `acceptUpdate` callback. Accepting
  * posts `SKIP_WAITING` to the waiting worker and reloads once on the
- * resulting `controllerchange`; ignoring the banner costs nothing, because
+ * resulting `controllerchange` — with a timed plain-reload fallback for the
+ * dropped-message case (the worker went redundant mid-click, so no
+ * `controllerchange` ever fires); ignoring the banner costs nothing, because
  * the OLD worker keeps serving the OLD precache for as long as this tab
  * stays open — lazily-loaded chunks (the flame/voxel workers) can no longer
  * 404 mid-session. The only takeover-without-asking left is another tab
@@ -66,6 +68,13 @@
 
 /** sessionStorage key marking "the load after our own isolation reload". */
 const RELOADED_KEY = "coi-reloaded";
+
+/** How long an accepted update may take to reach `controllerchange` before
+ * the click falls back to a plain reload: SKIP_WAITING posted to a waiting
+ * worker that went redundant between the read and the delivery is dropped
+ * (SW spec), so the change listener alone can dead-end a click. Generous —
+ * a slow activation still beats a surprise reload. */
+const UPDATE_RELOAD_FALLBACK_MS = 10_000;
 
 /** Read-and-clear the reload marker: true exactly when THIS page load is the
  * one `reloadForIsolation` produced — the once-only guard that stops the
@@ -131,6 +140,14 @@ export function registerServiceWorker(hooks: ServiceWorkerHooks = {}): void {
 
   let registration: ServiceWorkerRegistration | null = null;
   let updateReloadArranged = false;
+  let updateReloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearUpdateReloadTimer = (): void => {
+    if (updateReloadTimer !== null) {
+      clearTimeout(updateReloadTimer);
+      updateReloadTimer = null;
+    }
+  };
 
   const acceptUpdate = (): void => {
     const waiting = registration?.waiting ?? null;
@@ -147,10 +164,18 @@ export function registerServiceWorker(hooks: ServiceWorkerHooks = {}): void {
       // this one is armed only on explicit user accept, so it cannot loop.
       navigator.serviceWorker.addEventListener(
         "controllerchange",
-        () => window.location.reload(),
+        () => {
+          clearUpdateReloadTimer();
+          window.location.reload();
+        },
         { once: true },
       );
     }
+    clearUpdateReloadTimer();
+    updateReloadTimer = setTimeout(() => {
+      updateReloadTimer = null;
+      window.location.reload();
+    }, UPDATE_RELOAD_FALLBACK_MS);
     waiting.postMessage({ type: "SKIP_WAITING" }); // handled in sw/sw.ts
   };
 
