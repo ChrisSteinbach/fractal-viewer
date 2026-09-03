@@ -6,10 +6,8 @@ import {
 } from "../fractal/custom-mesh";
 import {
   isCustomMeshAssetId,
-  serializeCustomMeshAsset,
   type CustomMeshAssetId,
   type MeshAssetId,
-  type SerializedPreparedMeshAsset,
 } from "../fractal/mesh-shapes";
 import { shapeMeshIds, type ShapeSpec } from "../fractal/shapes";
 import type { Transform } from "../fractal/types";
@@ -47,14 +45,6 @@ export function sceneCustomMeshIds(
 
 export function sceneHasCustomMeshes(snapshot: SceneSnapshot): boolean {
   return sceneCustomMeshIds(snapshot).length > 0;
-}
-
-/** Fresh independently owned wires for posting a scene's installed local
- * sources into another JS realm. */
-export function sceneCustomMeshWires(
-  snapshot: SceneSnapshot,
-): SerializedPreparedMeshAsset[] {
-  return sceneCustomMeshIds(snapshot).map(serializeCustomMeshAsset);
 }
 
 /** Enforce this release's explicit active custom-asset cap before a staged
