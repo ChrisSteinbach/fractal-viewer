@@ -474,9 +474,12 @@ export class GpuFlameBackend implements FlameAccumBackend {
       await this.stagingBuffer.mapAsync(GPUMapMode.READ);
       // Convert BEFORE unmap(): unmap() detaches the ArrayBuffer backing
       // getMappedRange()'s view, so reading `words` after it would throw.
-      const words = new Uint32Array(this.stagingBuffer.getMappedRange());
-      this.convertSnapshot(words, this.width, this.height, this.outHistogram);
-      this.stagingBuffer.unmap();
+      try {
+        const words = new Uint32Array(this.stagingBuffer.getMappedRange());
+        this.convertSnapshot(words, this.width, this.height, this.outHistogram);
+      } finally {
+        this.stagingBuffer.unmap();
+      }
       return this.outHistogram;
     } finally {
       this.releaseOp();
@@ -517,9 +520,14 @@ export class GpuFlameBackend implements FlameAccumBackend {
       this.device.queue.submit([encoder.finish()]);
       await this.displayStagingBuffer.mapAsync(GPUMapMode.READ);
       // Convert BEFORE unmap() — same reason as snapshot()'s own readback above.
-      const data = new Float32Array(this.displayStagingBuffer.getMappedRange());
-      this.convertDisplay(data, this.displayWidth, this.displayHeight, out);
-      this.displayStagingBuffer.unmap();
+      try {
+        const data = new Float32Array(
+          this.displayStagingBuffer.getMappedRange(),
+        );
+        this.convertDisplay(data, this.displayWidth, this.displayHeight, out);
+      } finally {
+        this.displayStagingBuffer.unmap();
+      }
       return out;
     } finally {
       this.releaseOp();

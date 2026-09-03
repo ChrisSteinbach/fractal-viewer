@@ -7,7 +7,7 @@
  * exists — a fake GPUDevice/GPUBuffer pair is the only way to drive a state
  * machine whose real inputs are a GPU driver's timing.
  */
-import { GpuFlameBackend } from "./flame-gpu-backend";
+import { GpuFlameBackend, type GpuFlameBackendInit } from "./flame-gpu-backend";
 import { createFlameHistogram } from "../fractal/flame";
 
 // `GPUMapMode` is a real runtime global in a browser/WebGPU context, not just
@@ -54,20 +54,27 @@ function flushMicrotasks(): Promise<void> {
  * `mapAsync` on directly — overridable for the two staging buffers a test
  * needs to park and later resolve/reject. `getMappedRange` returns a real,
  * 4-byte-aligned `ArrayBuffer` since the class immediately wraps it in a
- * `Uint32Array`/`Float32Array` view. `destroy` is a spy: the fix under
- * test means production code must never call it — every buffer-destroy
- * assertion in this file reads this spy. */
+ * `Uint32Array`/`Float32Array` view. `destroy` and `unmap` are spies:
+ * production code must never call `destroy` (the deferred-teardown
+ * discipline — every buffer-destroy assertion in this file reads that spy),
+ * while `unmap`'s spy lets a test pin that a mapped section always unmaps,
+ * converter throw or not. */
 function createFakeBuffer(
   mapAsync: () => Promise<undefined> = () => new Promise(() => {}),
-): { buffer: GPUBuffer; destroy: ReturnType<typeof vi.fn> } {
+): {
+  buffer: GPUBuffer;
+  destroy: ReturnType<typeof vi.fn>;
+  unmap: ReturnType<typeof vi.fn>;
+} {
   const destroy = vi.fn();
+  const unmap = vi.fn();
   const buffer = {
     mapAsync,
     getMappedRange: () => new ArrayBuffer(64),
-    unmap: () => {},
+    unmap,
     destroy,
   } as unknown as GPUBuffer;
-  return { buffer, destroy };
+  return { buffer, destroy, unmap };
 }
 
 interface Harness {
@@ -91,6 +98,10 @@ interface Harness {
   /** Settles `snapshotDisplay()`'s parked `displayStagingBuffer.mapAsync()`. */
   resolveDisplayMap: () => void;
   rejectDisplayMap: (reason: unknown) => void;
+  /** The two staging buffers' `unmap` spies — pin that a snapshot's mapped
+   * section unmaps even when its converter throws. */
+  stagingUnmap: ReturnType<typeof vi.fn>;
+  displayStagingUnmap: ReturnType<typeof vi.fn>;
 }
 
 /**
@@ -106,6 +117,9 @@ interface Harness {
 function createHarness(
   overrides: {
     lost?: Promise<{ reason: "destroyed" | "unknown"; message: string }>;
+    /** Replaces the default pass-through snapshot converter — lets a test
+     * throw from inside the mapped section. */
+    convertSnapshot?: GpuFlameBackendInit["convertSnapshot"];
   } = {},
 ): Harness {
   const work = deferred();
@@ -149,7 +163,8 @@ function createHarness(
     histBuffer: hist.buffer,
     stagingBuffer: staging.buffer,
     paramsItersOffsetBytes: 0,
-    convertSnapshot: (_words, _width, _height, out) => out,
+    convertSnapshot:
+      overrides.convertSnapshot ?? ((_words, _width, _height, out) => out),
     convertDisplay: (_data, _width, _height, out) => out,
     width: 2,
     height: 2,
@@ -180,6 +195,8 @@ function createHarness(
     rejectSnapshotMap: snapshotMap.reject,
     resolveDisplayMap: displayMap.resolve,
     rejectDisplayMap: displayMap.reject,
+    stagingUnmap: staging.unmap,
+    displayStagingUnmap: displayStaging.unmap,
   };
 }
 
@@ -298,6 +315,24 @@ describe("GpuFlameBackend teardown", () => {
 
     await expect(pending).rejects.toThrow("simulated map failure");
     expect(deviceDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("unmaps the staging buffer even when the snapshot converter throws", async () => {
+    // A converter throw inside the mapped section used to leave the ONE
+    // reusable staging buffer mapped, so every later mapAsync rejected and
+    // the session's failure ladder demoted a healthy device to CPU.
+    const { backend, stagingUnmap, resolveSnapshotMap } = createHarness({
+      convertSnapshot: () => {
+        throw new Error("simulated conversion failure");
+      },
+    });
+    const pending = backend.snapshot();
+    await flushMicrotasks();
+
+    resolveSnapshotMap();
+
+    await expect(pending).rejects.toThrow("simulated conversion failure");
+    expect(stagingUnmap).toHaveBeenCalledTimes(1);
   });
 
   it("refuses new ops once destroy() has been requested, without reaching the queue", async () => {
