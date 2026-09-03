@@ -114,7 +114,6 @@ import {
 } from "./flame-backdrop-generator";
 import type { RenderSessionHandle } from "./render-session";
 import type { FlameTilingOutcome } from "./point-tiling-outcome";
-import { createRenderWorkerHost } from "./render-worker-host";
 import { voxelAccumBudgetBytes } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { CloudGenerator } from "./cloud-generator";
@@ -2779,35 +2778,26 @@ async function main(): Promise<void> {
       const worker = new Worker(new URL("./cloud-worker.ts", import.meta.url), {
         type: "module",
       });
-      worker.onmessage = (e: MessageEvent<CloudResult>) => onResult(e.data);
-      worker.onerror = (e) => {
-        console.error(
-          "Point-cloud worker failed; falling back to main-thread generation.",
-          e,
-        );
-        onError();
-      };
-      // A reply that fails to deserialize (shouldn't happen for our own
-      // structured-clonable results) would otherwise strand the in-flight
-      // request forever — treat it like a crash.
-      worker.onmessageerror = () => {
-        console.error(
-          "Point-cloud worker reply failed to deserialize; falling back to main-thread generation.",
-        );
-        onError();
-      };
-      return {
-        post: (request) => worker.postMessage(request),
-        terminate: () => {
-          // Detach the handlers BEFORE terminating so an already-queued
-          // reply can't reach a generator that has moved on (the same
-          // closed gap as the flame worker host's terminate).
-          worker.onmessage = null;
-          worker.onerror = null;
-          worker.onmessageerror = null;
-          worker.terminate();
+      return createWorkerHost<CloudRequest, CloudResult>(
+        worker,
+        onResult,
+        (e) => {
+          console.error(
+            "Point-cloud worker failed; falling back to main-thread generation.",
+            e,
+          );
+          onError();
         },
-      };
+        // A reply that fails to deserialize (shouldn't happen for our own
+        // structured-clonable results) would otherwise strand the in-flight
+        // request forever — treat it like a crash.
+        () => {
+          console.error(
+            "Point-cloud worker reply failed to deserialize; falling back to main-thread generation.",
+          );
+          onError();
+        },
+      );
     },
     computeSync: generateCloud,
     onResult: (result, request, elapsedMs) => {
@@ -2847,21 +2837,12 @@ async function main(): Promise<void> {
         new URL("./surface-grid-worker.ts", import.meta.url),
         { type: "module" },
       );
-      worker.onmessage = (e: MessageEvent<SurfaceGridResult>) =>
-        onResult(e.data);
-      worker.onerror = (e) => onError(e);
-      worker.onmessageerror = (e) => onError(e);
-      return {
-        post: (request: SurfaceGridRequest) => worker.postMessage(request),
-        terminate: () => {
-          // Detach before terminating so an already-queued reply can't
-          // reach a client that has moved on (the cloud handle's gap).
-          worker.onmessage = null;
-          worker.onerror = null;
-          worker.onmessageerror = null;
-          worker.terminate();
-        },
-      };
+      return createWorkerHost<SurfaceGridRequest, SurfaceGridResult>(
+        worker,
+        onResult,
+        onError,
+        onError,
+      );
     },
     onGrid: (grid) => {
       // A capture owns the tracer's uniforms for the whole of its drain.
@@ -3399,32 +3380,64 @@ async function main(): Promise<void> {
     }
   }
 
+  // The one worker-host lifecycle every worker this file constructs shares,
+  // so the detach-before-terminate discipline can't drift per site: attach
+  // the message/error handlers behind a live gate (onmessageerror only when
+  // the caller handles one), and a terminate that detaches them BEFORE
+  // worker.terminate().
+  function createWorkerHost<Command, Event>(
+    worker: Worker,
+    onEvent: (event: Event) => void,
+    onError: (event: ErrorEvent) => void,
+    onMessageError?: (event: MessageEvent) => void,
+  ): { post: (command: Command) => void; terminate: () => void } {
+    let live = true;
+    worker.onmessage = (event: MessageEvent<Event>) => {
+      if (live) onEvent(event.data);
+    };
+    worker.onerror = (event) => {
+      if (live) onError(event);
+    };
+    if (onMessageError) {
+      worker.onmessageerror = (event) => {
+        if (live) onMessageError(event);
+      };
+    }
+    return {
+      post: (command) => worker.postMessage(command),
+      terminate: () => {
+        // Detach the handlers BEFORE terminating so a message the worker
+        // already queued to this thread can't still reach a handler acting
+        // for a host that has been torn down (a stale "error" exiting a
+        // render session after re-entry; an already-queued reply reaching a
+        // generator that has moved on). A terminated worker posts nothing
+        // new; this closes the already-queued gap. The live gate is the
+        // second half: a handler reference captured by an event already
+        // dispatching stays inert.
+        live = false;
+        worker.onmessage = null;
+        worker.onerror = null;
+        worker.onmessageerror = null;
+        worker.terminate();
+      },
+    };
+  }
+
   // Wraps the real flame Worker in a RenderSessionHandle so RenderSession's
   // start/post/exit can drive it uniformly (same shape the solid worker uses).
   function createFlameWorkerHost(): RenderSessionHandle<FlameWorkerCommand> {
     const worker = new Worker(new URL("./flame-worker.ts", import.meta.url), {
       type: "module",
     });
-    worker.onmessage = (e: MessageEvent<FlameWorkerEvent>) =>
-      handleFlameEvent(e.data);
-    worker.onerror = (e) => {
-      console.error("Flame worker crashed; returning to explorer.", e);
-      showRenderError();
-      flameSession.exit();
-    };
-    return {
-      post: (command) => worker.postMessage(command),
-      terminate: () => {
-        // Detach the handlers BEFORE terminating so a message the worker
-        // already queued to this thread can't still reach handleFlameEvent
-        // and act on a session this host no longer represents (e.g. a stale
-        // "error" calling flameSession.exit() after re-entry). A terminated
-        // worker posts nothing new; this closes the already-queued gap.
-        worker.onmessage = null;
-        worker.onerror = null;
-        worker.terminate();
+    return createWorkerHost<FlameWorkerCommand, FlameWorkerEvent>(
+      worker,
+      handleFlameEvent,
+      (e) => {
+        console.error("Flame worker crashed; returning to explorer.", e);
+        showRenderError();
+        flameSession.exit();
       },
-    };
+    );
   }
 
   // Snapshot the entry 4D view for a render worker: the current rotor + the
@@ -3616,20 +3629,13 @@ async function main(): Promise<void> {
     const worker = new Worker(new URL("./flame-worker.ts", import.meta.url), {
       type: "module",
     });
-    worker.onmessage = (event: MessageEvent<FlameWorkerEvent>) =>
-      onEvent(event.data);
-    worker.onerror = (event) => onError(event);
-    worker.onmessageerror = () =>
-      onError(new Error("Flame backdrop worker reply failed to deserialize"));
-    return {
-      post: (command: FlameWorkerCommand) => worker.postMessage(command),
-      terminate: () => {
-        worker.onmessage = null;
-        worker.onerror = null;
-        worker.onmessageerror = null;
-        worker.terminate();
-      },
-    };
+    return createWorkerHost<FlameWorkerCommand, FlameWorkerEvent>(
+      worker,
+      onEvent,
+      onError,
+      () =>
+        onError(new Error("Flame backdrop worker reply failed to deserialize")),
+    );
   }
 
   function applyFlameBackdropImage(image: FlameBackdropImage): void {
@@ -4104,19 +4110,20 @@ async function main(): Promise<void> {
       const worker = new Worker(new URL("./voxel-worker.ts", import.meta.url), {
         type: "module",
       });
-      const handle = createRenderWorkerHost<
-        VoxelWorkerCommand,
-        VoxelWorkerEvent
-      >(worker, handleSolidEvent, (e) => {
-        publishSampledSolidStatus(
-          endSampledSolidStatus(sampledSolidStatus, "failed"),
-        );
-        console.error("Solid worker crashed; returning to explorer.", e);
-        showRenderError(
-          `${sampledSolidStatusText(sampledSolidStatus)} — returning to the explorer; try reloading.`,
-        );
-        solidSession.exit();
-      });
+      const handle = createWorkerHost<VoxelWorkerCommand, VoxelWorkerEvent>(
+        worker,
+        handleSolidEvent,
+        (e) => {
+          publishSampledSolidStatus(
+            endSampledSolidStatus(sampledSolidStatus, "failed"),
+          );
+          console.error("Solid worker crashed; returning to explorer.", e);
+          showRenderError(
+            `${sampledSolidStatusText(sampledSolidStatus)} — returning to the explorer; try reloading.`,
+          );
+          solidSession.exit();
+        },
+      );
 
       // Post the `start` via the fresh handle — typed, so the payload is
       // checked — NOT solidSession.post: RenderSession.enter only stores this
