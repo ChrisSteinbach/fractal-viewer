@@ -12,10 +12,11 @@
  * copy keeps its notices too. Runs before `vite build` (see the `build`
  * script in package.json).
  *
- * What it covers: the transitive runtime-dependency closure of
- *   - every entry in package.json `dependencies` (bundled into the app), and
- *   - the SW_BUNDLED_SEEDS below (devDependencies that vite-plugin-pwa
- *     bundles into the service worker build of src/app/sw/sw.ts).
+ * What it covers: the transitive runtime-dependency closure of every entry
+ * in package.json `dependencies` — including workbox-precaching, which sits
+ * there (not in devDependencies) because vite-plugin-pwa bundles it into
+ * the shipped service worker build of src/app/sw/sw.ts, and a devDependency
+ * would be invisible to `npm audit --omit=dev`.
  *
  * Fails loudly if a package in the closure is missing from node_modules or
  * ships no license file, so a new dependency can't silently ship unattributed.
@@ -23,13 +24,6 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-/**
- * devDependencies whose code is nevertheless bundled into shipped output.
- * Keep in sync with the imports of src/app/sw/sw.ts (the service worker is
- * built and bundled separately by vite-plugin-pwa's injectManifest).
- */
-const SW_BUNDLED_SEEDS = ["workbox-precaching"];
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const outFile = join(root, "src/app/public/THIRD-PARTY-LICENSES.txt");
@@ -55,11 +49,10 @@ function readLicenseText(name) {
 }
 
 const rootPkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const seeds = [...Object.keys(rootPkg.dependencies ?? {}), ...SW_BUNDLED_SEEDS];
 
-// Walk the transitive runtime-dependency closure of the seeds.
+// Walk the transitive runtime-dependency closure of the root dependencies.
 const closure = new Map();
-const queue = [...seeds];
+const queue = [...Object.keys(rootPkg.dependencies ?? {})];
 const problems = [];
 while (queue.length > 0) {
   const name = queue.shift();
