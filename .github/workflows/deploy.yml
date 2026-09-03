@@ -139,3 +139,69 @@ jobs:
         uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
+
+  # Post-deploy gate: scripts/live-site.verify.mjs boots the REAL deployed
+  # origin in headless SwiftShader Chromium and asserts what only the live
+  # host can prove — HTTP OK, app boot, the service worker's COOP/COEP
+  # compensation completing, a controlling worker, no console errors.
+  # Exit 0 is PASS, 1 is a FAIL verdict on the deploy, 2 is INCONCLUSIVE
+  # (the CHECKING side failed: browser or network) — only 2 retries.
+  verify-live:
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The top-level block grants pages/id-token for the deploy job; this
+    # job only reads the public site, so it inherits neither.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Same cache key and install as ci.yml's smoke job (which records why
+      # the bin is `playwright-core` and why NO --with-deps) — on a hit the
+      # install is a no-op and both jobs share one browser cache.
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      - name: Install Playwright Chromium
+        run: npx playwright-core install chromium
+
+      # Up to 3 attempts; only exit 2 reruns. The default URL
+      # (https://fractal-4d.com) is the published origin, so none is passed.
+      - name: Verify live site
+        run: |
+          attempts=0
+          max=3
+          while :; do
+            attempts=$((attempts + 1))
+            echo "Attempt ${attempts}/${max}: live-site verification"
+            set +e
+            node scripts/live-site.verify.mjs
+            code=$?
+            set -e
+            if [ "$code" -eq 0 ]; then
+              echo "live-site verification PASS (attempt ${attempts})."
+              exit 0
+            fi
+            if [ "$code" -ne 2 ]; then
+              echo "::error::live-site verification FAIL (exit ${code}, attempt ${attempts}) — site verdict, not rerunning."
+              exit "$code"
+            fi
+            if [ "$attempts" -ge "$max" ]; then
+              echo "::error::live-site verification INCONCLUSIVE (exit 2) on all ${max} attempts — giving up."
+              exit 2
+            fi
+            echo "exit 2 is a checking-side failure — retrying in 20s."
+            sleep 20
+          done
