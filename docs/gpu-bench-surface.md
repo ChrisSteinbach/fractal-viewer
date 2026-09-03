@@ -1,6 +1,6 @@
 # GPU Bench: Surface (`npm run bench:surface`)
 
-This is the full measurement record behind `npm run bench:surface`. CLAUDE.md's
+This is the full measurement record behind `npm run bench:surface`. AGENTS.md's
 Commands section points here rather than carrying these numbers inline.
 
 ## What the bench pins
