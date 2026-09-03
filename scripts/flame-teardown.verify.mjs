@@ -62,6 +62,18 @@
  *   because order 1 matched the already-loaded default (`setSymmetry`'s own
  *   equality guard); `--toggleId=__modeExit` 2/2.
  *
+ *   TILING ARM, MEASURED 2026-09-02 (same Firefox build, headed DISPLAY=:0,
+ *   `--tiling=a3 --toggles=12`): exit 0, gpu=true, restarts=11/12 (the
+ *   equality-guarded no-op slot as in the symmetry arm), backend never
+ *   flipped to CPU, and the authored `{group:"a3"}` block was read back from
+ *   the panel identical before and after the storm — the palette storm now
+ *   runs the TILED accumulation (binding-8 plot adapter, 32-image bounded
+ *   estimator) through every teardown it reaches. A 2-toggle smoke of the
+ *   same arm earlier returned exit 2 INCONCLUSIVE (no backend-up count at
+ *   that toggle depth) with tilingBefore/After already exact, which is the
+ *   inconclusive-not-pass discipline the header demands of a run that never
+ *   exercised the path.
+ *
  * ARMS:
  *
  *   --toggleId=flamePalette (default)
@@ -134,6 +146,12 @@
  *   --iterations=N      flameIterationsSlider detent index, 0-10 (default 10)
  *   --viewport=WxH      browser viewport (default 1280x720)
  *   --headless          run headless (default headed)
+ *   --tiling=<preset>  enable a space-tiling block in the scene document before
+ *                       entering Flame mode — currently only `a3` is accepted.
+ *                       Requires `--toggles=N` together. Tiling edits reach
+ *                       `startAccumulation` exactly like palette edits, so the
+ *                       storm now runs the tiled accumulation; retention is
+ *                       asserted before/after.
  *
  * Proving the storm isn't vacuous, two different ways: (1) the GPU backend
  * check — `#flameBackendNote`'s text must start with "GPU accumulation" AND
@@ -181,6 +199,7 @@ const args = Object.fromEntries(
     return m ? [m[1], m[2] ?? true] : [a, true];
   }),
 );
+
 // The dev server's port, matching surface-teardown.verify.mjs. This gate
 // exercises renderer/backend LIFECYCLE, not built output, so `npm run dev`
 // is the cheaper and equally valid host; pass --url to point it anywhere
@@ -195,6 +214,14 @@ const TOGGLE_GAP_MS = Number(args.toggleGapMs ?? 700);
 // header doc for why 10 (the slider's own max, 2,000,000,000) is the
 // conservative default.
 const ITERATIONS_INDEX = Number(args.iterations ?? 10);
+const TILING = args.tiling ?? null;
+if (TILING !== null && TILING !== "a3") {
+  throw new Error("--tiling currently accepts only a3");
+}
+if (TILING !== null && args.toggles === undefined) {
+  throw new Error("--tiling qualification requires --toggles=N");
+}
+const EXPECTED_TILING = TILING === "a3" ? { group: "a3" } : null;
 const FIREFOX_BIN = path.join(
   os.homedir(),
   ".cache/ms-playwright/firefox-1532/firefox/firefox",
@@ -203,6 +230,51 @@ const [vw, vh] = String(args.viewport ?? "1280x720")
   .split("x")
   .map(Number);
 const VIEWPORT = { width: vw || 1280, height: vh || 720 };
+
+const enc = (s) =>
+  "#v1=" + Buffer.from(JSON.stringify(s)).toString("base64url");
+
+/** The "swirl" preset's transforms (src/fractal/presets.ts's swirlFlame),
+ * transcribed plain Node, no TS loader. */
+function swirlTransforms() {
+  const base = [
+    {
+      id: -1, // id will be assigned by the app
+      position: [0.35, 0.25, 0],
+      rotation: [0, 0, 0.5],
+      scale: [0.7, 0.7, 0.7],
+    },
+    {
+      id: -1,
+      position: [-0.45, -0.2, 0.15],
+      rotation: [0.25, 0, 1.3],
+      scale: [0.55, 0.55, 0.55],
+    },
+  ];
+  // withVariations adds the same variation blend to every map
+  const variations = [
+    { type: "swirl", weight: 1 },
+    { type: "linear", weight: 0.2 },
+  ];
+  return base.map((t) => ({ ...t, variations }));
+}
+
+/** Create a scene document for the given preset with optional tiling. */
+function sceneForPreset(presetName) {
+  if (presetName !== "swirl") {
+    throw new Error(`Only "swirl" preset is supported for tiling arm`);
+  }
+  const scene = {
+    transforms: swirlTransforms(),
+    numPoints: 100000,
+    pointSize: 1,
+    colorMode: "transform",
+    renderStyle: "depthFade",
+    showGuides: false,
+    ...(EXPECTED_TILING ? { tiling: EXPECTED_TILING } : {}),
+  };
+  return scene;
+}
 
 const log = (...a) => console.log("[flame-teardown]", ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -365,6 +437,8 @@ async function runFlameStorm(browser) {
     restartsObserved: 0,
     lastRow: "",
     lines,
+    tilingBefore: null,
+    tilingAfter: null,
   };
   let ctx;
   try {
@@ -383,8 +457,26 @@ async function runFlameStorm(browser) {
     page.on("pageerror", (e) => lines.push(`[pageerror] ${String(e)}`));
     page.on("crash", () => lines.push("[page] CRASHED"));
 
-    await page.goto(`${BASE}/`, { waitUntil: "load", timeout: 60000 });
+    const url =
+      TILING !== null ? `${BASE}/${enc(sceneForPreset(PRESET))}` : `${BASE}/`;
+
+    await page.goto(url, { waitUntil: "load", timeout: 60000 });
     await sleep(2500);
+
+    // Read tiling state if tiling is enabled
+    if (TILING !== null) {
+      const before = await page.evaluate(() => {
+        const checkbox = document.getElementById("tilingEnabledCheckbox");
+        const group = document.getElementById("tilingGroup");
+        return {
+          tiling:
+            checkbox?.checked === true && group?.value
+              ? { group: group.value }
+              : null,
+        };
+      });
+      result.tilingBefore = before.tiling;
+    }
 
     // Boot readiness (isolation-reload.verify.mjs's own idiom): wait for the
     // FIRST real chaos-game render before touching any control — measured
@@ -403,20 +495,32 @@ async function runFlameStorm(browser) {
       { timeout: 30000, polling: 100 },
     );
 
-    // The preset door (scripts/isolation-reload.verify.mjs's own idiom):
-    // selecting a flame-hinted preset auto-enters Flame mode. #modeFlameBtn
-    // itself is never disabled — unlike Surface, there is no eligibility
-    // gate — but going through a real composition exercises the storm
-    // against a real accumulation rather than an empty one.
-    await page.selectOption("#presetSelect", PRESET);
-    await page.waitForFunction(
-      () =>
-        document
-          .getElementById("modeFlameBtn")
-          ?.getAttribute("aria-pressed") === "true",
-      undefined,
-      { timeout: 30000, polling: 100 },
-    );
+    // Only use preset selection if we didn't already load via hash
+    if (TILING === null) {
+      await page.selectOption("#presetSelect", PRESET);
+      await page.waitForFunction(
+        () =>
+          document
+            .getElementById("modeFlameBtn")
+            ?.getAttribute("aria-pressed") === "true",
+        undefined,
+        { timeout: 30000, polling: 100 },
+      );
+    } else {
+      // With tiling, we already have the scene loaded via hash
+      // Need to enter Flame mode manually
+      await page.evaluate(() => {
+        document.getElementById("modeFlameBtn")?.click();
+      });
+      await page.waitForFunction(
+        () =>
+          document
+            .getElementById("modeFlameBtn")
+            ?.getAttribute("aria-pressed") === "true",
+        undefined,
+        { timeout: 30000, polling: 100 },
+      );
+    }
 
     // Set the iterations budget high right away, before the storm starts, so
     // every toggle below necessarily lands against a still-running
@@ -491,6 +595,46 @@ async function runFlameStorm(browser) {
     // still land in the tally.
     await sleep(1500);
     if (backendUpCount > prevBackendUpCount) result.restartsObserved++;
+
+    // Read tiling state after the storm
+    if (TILING !== null) {
+      const after = await page.evaluate(() => {
+        const checkbox = document.getElementById("tilingEnabledCheckbox");
+        const group = document.getElementById("tilingGroup");
+        return {
+          tiling:
+            checkbox?.checked === true && group?.value
+              ? { group: group.value }
+              : null,
+        };
+      });
+      result.tilingAfter = after.tiling;
+
+      // Qualification checks similar to surface-teardown
+      const qualificationFailures = [];
+      if (
+        JSON.stringify(result.tilingBefore) !== JSON.stringify(EXPECTED_TILING)
+      ) {
+        qualificationFailures.push(
+          `before tiling=${JSON.stringify(result.tilingBefore)}`,
+        );
+      }
+      if (result.togglesRun !== TOGGLES) {
+        qualificationFailures.push(`toggles=${result.togglesRun}/${TOGGLES}`);
+      }
+      if (
+        JSON.stringify(result.tilingAfter) !== JSON.stringify(EXPECTED_TILING)
+      ) {
+        qualificationFailures.push(
+          `after tiling=${JSON.stringify(result.tilingAfter)}`,
+        );
+      }
+      if (qualificationFailures.length > 0) {
+        result.outcome = "QUALIFICATION FAILED";
+        result.detail = qualificationFailures.join("; ");
+      }
+    }
+
     await ctx.close();
     return result;
   } catch (e) {
@@ -507,7 +651,7 @@ async function runFlameStorm(browser) {
 
 async function main() {
   log(
-    `url=${BASE} preset=${PRESET} toggleId=${TOGGLE_ID} toggles=${TOGGLES} toggleGapMs=${TOGGLE_GAP_MS} iterationsIdx=${ITERATIONS_INDEX}`,
+    `url=${BASE} preset=${PRESET} toggleId=${TOGGLE_ID} toggles=${TOGGLES} toggleGapMs=${TOGGLE_GAP_MS} iterationsIdx=${ITERATIONS_INDEX} tiling=${TILING ?? "off"}`,
   );
   const browser = await launch();
   const r = await runFlameStorm(browser);
@@ -521,16 +665,23 @@ async function main() {
   log(
     `    ${r.outcome} | gpu=${r.gpuConfirmed} | restarts=${r.restartsObserved}/${r.togglesRun} | flipped=${r.backendFlipped} | row="${r.lastRow}" ${r.detail ? "| " + r.detail : ""}`,
   );
+  if (TILING !== null) {
+    log(
+      `    tiling before=${JSON.stringify(r.tilingBefore)} after=${JSON.stringify(r.tilingAfter)}`,
+    );
+  }
   for (const l of r.lines.slice(-8)) log(`      ${l}`);
   if (browserAlive) await browser.close().catch(() => {});
 
   console.log("\n=== summary ===");
   console.log(
-    `${r.label.padEnd(46)} ${r.outcome.padEnd(14)} gpu=${String(r.gpuConfirmed).padEnd(5)} restarts=${String(r.restartsObserved).padEnd(3)}/${String(r.togglesRun).padEnd(3)} flipped=${String(r.backendFlipped).padEnd(5)} backend="${r.backend}"`,
+    `${r.label.padEnd(46)} ${r.outcome.padEnd(14)} gpu=${String(r.gpuConfirmed).padEnd(5)} restarts=${String(r.restartsObserved).padEnd(3)}/${String(r.togglesRun).padEnd(3)} flipped=${String(r.backendFlipped).padEnd(5)} backend="${r.backend}"${TILING !== null ? ` tilingBefore=${JSON.stringify(r.tilingBefore)} tilingAfter=${JSON.stringify(r.tilingAfter)}` : ""}`,
   );
 
   const reproduced =
-    r.outcome === "CRASH/ERROR" || r.outcome === "BROWSER DIED";
+    r.outcome === "CRASH/ERROR" ||
+    r.outcome === "BROWSER DIED" ||
+    r.outcome === "QUALIFICATION FAILED";
   // A pass that never actually caught the fix's own precondition — a GPU
   // backend, restarted while genuinely in flight — would be exactly the
   // vacuous "looks clean because it tested nothing" result this gate exists
