@@ -10035,6 +10035,33 @@ describe("Ui.setSurfaceProgress", () => {
     expect(skipButton()?.classList.contains("hidden")).toBe(true);
   });
 
+  it("treats a repeated identical call as a no-op, and a changed call still lands", () => {
+    const ui = new Ui(document);
+    const row = progress() as HTMLElement;
+    ui.setSurfaceProgress({
+      label: "Preview · WebGL",
+      pct: 3,
+      skippable: true,
+    });
+    const setProperty = row.style.setProperty.bind(row.style);
+    let writes = 0;
+    row.style.setProperty = (...args: Parameters<typeof setProperty>) => {
+      writes += 1;
+      setProperty(...args);
+    };
+    ui.setSurfaceProgress({
+      label: "Preview · WebGL",
+      pct: 3,
+      skippable: true,
+    });
+    expect(writes).toBe(0);
+    expect(progress()?.textContent).toBe("Preview · WebGL 3%");
+    // Same percentage, but the skip affordance flipped: must still land.
+    ui.setSurfaceProgress({ label: "Preview · WebGL", pct: 3 });
+    expect(writes).toBe(1);
+    expect(skipButton()?.classList.contains("hidden")).toBe(true);
+  });
+
   it("fires onSurfaceSkipPreview when the Skip button is clicked", () => {
     const ui = new Ui(document);
     const handlers = noopHandlers();
