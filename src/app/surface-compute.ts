@@ -2396,6 +2396,18 @@ export class SurfaceComputeRenderer {
    * loops must never interleave. */
   private chain: Promise<unknown> = Promise.resolve();
   private frame: FrameBuffers | null = null;
+  /** {@link runFrame}'s per-raster upload seeds, contents pass-invariant —
+   * states seeds one -1 per ray's distance slot, active the identity list —
+   * so they are cached at exact size and refilled only when the raster
+   * changes. Nothing writes into either array once built: the pass loop
+   * reads `active` and rebinds its local at each sweep's rebuild. */
+  private statesSeed: Float32Array<ArrayBuffer> | null = null;
+  private activeSeed: Uint32Array<ArrayBuffer> | null = null;
+  /** {@link runSamples}' supersampling accumulators, zero-filled per job —
+   * the sibling of scene.ts's `beginSurfaceSamples` reuse. */
+  private sampleAccum: Float32Array | null = null;
+  private sampleLayerAccum: Float32Array | null = null;
+  private sampleCoc: Uint8Array | null = null;
   private uploadedLutVersion: number | null = null;
   private uploadedBalloonLutVersion: number | null = null;
   private background: {
@@ -2545,10 +2557,18 @@ export class SurfaceComputeRenderer {
     const samples = Math.max(1, Math.floor(opts.samples ?? 1));
     if (samples === 1) return this.runFrame(token, spec, opts);
     const rays = spec.width * spec.height;
-    const accum = new Float32Array(rays * 3);
-    const layerAccum = new Float32Array(rays * 3);
-    const frontmostCoc = new Uint8Array(rays);
-    frontmostCoc.fill(255);
+    const accum =
+      this.sampleAccum?.length === rays * 3
+        ? this.sampleAccum.fill(0)
+        : (this.sampleAccum = new Float32Array(rays * 3));
+    const layerAccum =
+      this.sampleLayerAccum?.length === rays * 3
+        ? this.sampleLayerAccum.fill(0)
+        : (this.sampleLayerAccum = new Float32Array(rays * 3));
+    const frontmostCoc =
+      this.sampleCoc?.length === rays
+        ? this.sampleCoc.fill(255)
+        : (this.sampleCoc = new Uint8Array(rays).fill(255));
     let taken = 0;
     let out: SurfaceComputeFrame | null = null;
     let wallMs = 0;
@@ -2957,9 +2977,14 @@ export class SurfaceComputeRenderer {
     bytes: number,
   ): Promise<ArrayBuffer> {
     await staging.mapAsync(GPUMapMode.READ, 0, bytes);
-    const copy = staging.getMappedRange(0, bytes).slice(0);
-    staging.unmap();
-    return copy;
+    // Copy out BEFORE unmap(): unmap() detaches the range getMappedRange()
+    // views, and a throw between map and unmap would leave the buffer
+    // wedged mapped for every later mapAsync.
+    try {
+      return staging.getMappedRange(0, bytes).slice(0);
+    } finally {
+      staging.unmap();
+    }
   }
 
   private async runFrame(
@@ -3111,12 +3136,24 @@ export class SurfaceComputeRenderer {
       0,
       rays * 4,
     );
-    const states = new Float32Array(rays * 4);
-    for (let i = 0; i < rays; i++) states[i * 4] = -1;
+    let states: Float32Array<ArrayBuffer>;
+    if (this.statesSeed !== null && this.statesSeed.length === rays * 4) {
+      states = this.statesSeed;
+    } else {
+      states = new Float32Array(rays * 4);
+      for (let i = 0; i < rays; i++) states[i * 4] = -1;
+      this.statesSeed = states;
+    }
     device.queue.writeBuffer(buffers.states, 0, states);
 
-    let active = new Uint32Array(rays);
-    for (let i = 0; i < rays; i++) active[i] = i;
+    let active: Uint32Array<ArrayBuffer>;
+    if (this.activeSeed !== null && this.activeSeed.length === rays) {
+      active = this.activeSeed;
+    } else {
+      active = new Uint32Array(rays);
+      for (let i = 0; i < rays; i++) active[i] = i;
+      this.activeSeed = active;
+    }
     // Rays that turned terminal in a march pass, awaiting a shade batch.
     // The QUEUES are the v2 architecture's point: shading a freshly-HIT
     // ray costs ~40 zero-cutoff on-surface DE evals — orders of
