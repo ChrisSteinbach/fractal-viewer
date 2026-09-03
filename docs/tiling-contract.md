@@ -1182,6 +1182,65 @@ mass-normalized and the credit rule is defined on attempts, not on a
 predicted acceptance — but any cost bound written in terms of `1/order` is
 not a bound, which is exactly what retired the finite slice-aware arm above.
 
+### 4D Flame lattice proposal: measured refusal
+
+The lattice slice-aware proposal was tried in 4D Flame
+(`scripts/flame-tiling-4d.harness.ts`, Node 22, 2026-09-03; the Solid
+sheet's fixture — `pentatope` at cellScale 1.6, 171 cells, identity and
+xw-0.63/slice-centre-0.37 poses, slice width 0.12, 2,000,000 seeded
+attempts, 256² histogram — with `accumulateFlame4` itself as the shipped
+arm through its new optional `tilingProposal` tail param, and exhaustive
+replication as truth). The mechanism transfers to the accumulator: raw
+mass-normalized histogram L1 falls to 0.63x (identity) / 0.72x (w-mixing)
+of shipped, unbiased to 6.7e-5 relative mass on the shared source set
+(3.9e-4 at an eighth budget), cost-free (min-of-5 wall-clock ratios
+1.039/0.976, identical selected counts — the proposal keeps every live
+cell, `minimumProduct = 0`, because flame's ghost floor means the deposit
+side has no skip gate for a dropped cell to match), with zero carrier
+violations (max |source| 0.999162 ≤ R) — and it wins every same-budget
+raw row of a 0.25x–2x convergence sweep.
+
+**REFUSED for 4D Flame on the shipped display.** The bead's question —
+whether the gain survives the tone-mapped histogram — is answered no at
+the off-center pose: same-budget tonemapped L1 against each rung's own
+exhaustive REF measures 1.56x shipped at 1x and 2.46x at 2x, and the gap
+does not close with budget. A class decomposition (deposits binned by
+the slice weight each image applied: visible ≥ 0.5, ghost < 0.1) proves
+the regression is ENTIRELY ghost-borne — the visible subject improves on
+every instrument at every budget (raw 0.0162 vs 0.0259 at 1x; 0.0113 vs
+0.0183 at 2x; its own class tonemap 0.0106 vs 0.0280 and 0.0103 vs
+0.0125), while the ghost class degrades ~2–3x on all of them. The
+mechanism is structural, not a metric preference: `tonemapFlame`'s
+log1p curve compresses exactly the bright-subject error the proposal
+buys and preserves the dim-ghost error it pays with, and the
+concentration (`q_k ∝ u_k·v_k`) is by construction. The deeper reason
+the Solid verdict and this one legitimately diverge: **the ghost context
+is flame-authored mass Solid does not have.** `SLICE_GHOST_FLOOR` (0.06)
+keeps out-of-slice context visible — 14.9% of display mass at the
+w-mixing pose — where Solid's floor-0 display deposits literally
+nothing, so the same ceiling was free there and display-visible here. A
+softened ceiling (`max(v_k, c)`) was considered and REFUSED without
+measurement: it would mint a second, unprincipled definition of "the
+slice-aware ceiling" beside Solid's shipped one.
+
+Two things ship from the refusal. `accumulateFlame4`'s optional
+`tilingProposal` tail param stays as the sheet's instrument —
+production-dead by this verdict (no renderer passes one; the
+`qjulia-de.ts` stance), legacy-silent and pinned by
+`flame-4d.test.ts` — so a future perceptual instrument or tonemap
+change re-runs the sheet through the production entry. And the WGSL
+256 KiB question is answered by arithmetic for any future lift: YES,
+with wide margin at authored scales — the worst legal plan (739 cells
+at cellScale 1) is 34.7 KB CPU / ~66 KB binding-7 tail, a same-shape
+proposal CDF adds ~50 KB there (~30 KB at the shipped cellScale range's
+365-cell max), totals ~122 KB / ~62 KB against the 256 KiB
+`POINT_TILING_PLAN_MEMORY_CAP_BYTES` (which a packer extension would
+have to count; today it does not) — but `packGpuPointTiling`'s lattice
+splat bound (< 740) derives from `sum(u_k) ≤ 739` and WOULD throw: a
+proposal's per-splat ceiling is `S/v_min ≈ 16.7·S` (up to ~12,300), so
+the bound must be re-derived from the proposal's own quantized masses
+(the fixed-point weight scale itself is safe: 12,317 × 256 ≪ 2³²).
+
 ### Legal combinations and edit timing
 
 | Layer                                                                                      | Point-family verdict                                                |
