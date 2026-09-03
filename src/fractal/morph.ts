@@ -939,6 +939,33 @@ export function lerpSystem(
 }
 
 /**
+ * Key-order-insensitive JSON text for the block comparisons below: an
+ * object's own keys sort, so two structurally equal blocks built by
+ * different paths — a hand-authored preset literal vs a persist-decoded
+ * document — compare equal whatever order their keys were inserted in.
+ * Per-value text is `JSON.stringify`'s own (undefined-valued keys drop,
+ * non-finite numbers and array holes become null), so a pair the
+ * same-order comparison called equal still is.
+ */
+function canonicalJson(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${Array.from(value, canonicalJson).join(",")}]`;
+  }
+  const entries: string[] = [];
+  for (const key of Object.keys(value).sort()) {
+    const v = (value as Record<string, unknown>)[key];
+    if (v !== undefined) {
+      entries.push(`${JSON.stringify(key)}:${canonicalJson(v)}`);
+    }
+  }
+  return `{${entries.join(",")}}`;
+}
+
+/**
  * The shape-trap block's interpolation ({@link MorphSystem.shapeTrap}'s
  * rule): a pose glide when both sides trap the SAME object — deeply-equal
  * specs, same mode — through the block's own absent-means-classic
@@ -958,7 +985,7 @@ export function lerpShapeTrap(
   if (t <= 0) return a;
   if (t >= 1) return b;
   if (!a || !b) return b;
-  if (JSON.stringify(a.shape) !== JSON.stringify(b.shape)) return b;
+  if (canonicalJson(a.shape) !== canonicalJson(b.shape)) return b;
   const aMode = a.mode === "threshold" ? "threshold" : "min";
   const bMode = b.mode === "threshold" ? "threshold" : "min";
   if (aMode !== bMode) return b;
@@ -1040,7 +1067,7 @@ export function lerpTiling(
   // between two shapes, the trap's own pop. Deeply-equal clips glide by
   // riding the target's verbatim (the trap carries the target's shape the
   // same way while its pose fields glide).
-  if (JSON.stringify(a.clip) !== JSON.stringify(b.clip)) return b;
+  if (canonicalJson(a.clip) !== canonicalJson(b.clip)) return b;
   if (aLattice && bLattice) {
     const out: TilingSpec = {
       kind: "lattice",
