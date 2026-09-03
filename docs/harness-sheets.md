@@ -2,7 +2,9 @@
 
 This is the catalogue `CLAUDE.md`'s Commands section points to. It is the
 full per-sheet record — every measured number, every verdict, every refuted
-hypothesis — for this project's executable measurement records.
+hypothesis — for this project's executable measurement records. The few
+helper specs with no measured panels of their own are catalogued as helpers
+and say so.
 
 ## What a harness sheet is
 
@@ -54,6 +56,19 @@ about 61 ms for the sparse fixture and 85 ms for the dense fixture; both add
 exactly 1,048,560 bytes (0.1481 bytes per source voxel, 3.70% of RGBA8). The
 proof, full table, progressive rebuild rule and allocation fallback are in
 `docs/solid-density-acceleration.md`.
+
+### solid-hierarchy-verify-helpers
+
+The production-WebGL Solid verifier's helper spec
+(`scripts/solid-hierarchy.verify.mjs`, the companion real-WebGL verifier
+`voxel-hierarchy-traversal` names), not a measured sheet of its own. It pins
+the helper module the verifier's verdicts are computed with —
+`solid-hierarchy-verify-helpers.ts`'s CLI parsing (historical SwiftShader
+defaults, hardware/display/chrome overrides, de-duplicated fixtures, range
+refusals), median and stable-sample selection, the pixel gate's
+channel-delta arithmetic, the software-adapter label test, and the known
+service-worker SSL-noise filter. No measured panels; the numbers the
+verifier itself produces are recorded under `voxel-hierarchy-traversal`.
 
 ## The surface DE's sheets
 
@@ -563,6 +578,22 @@ the named family and a distinct replacement; downgrade metadata on an
 approval and duplicate responses are rejected. No measured panels; the
 protocol it serves is the `pattern-release production-browser gate` section
 above.
+
+### finish-pattern-model
+
+The accepted V3 pattern arithmetic's own executable pin, run through the
+compatibility re-export (`scripts/finish-pattern-model.ts` ->
+`src/fractal/surface-pattern.ts`) so the prototype evidence and the document
+domain cannot acquire separate definitions. It asserts the model's behavior
+rather than rendering new panels: deterministic p03/p97 carrier calibration
+with clamps and the degenerate-span disable bit, the footprint detail gate's
+off/full endpoints, wood's cylindrical axis response and
+longitudinal-not-isotropic grain (cross/axial phase-gradient ratio > 5),
+marble's sparse core/halo vein fractions and strata's at-least-three
+coherent beds, the exact macro/detail crossfade, macro-only ignoring rings
+and sheets exactly, `none`/strength-zero exact albedo identities, and
+finite in-gamut output across a kind x axis x scale x strength x footprint
+grid.
 
 ## The Surprise Me generator's sheet
 
