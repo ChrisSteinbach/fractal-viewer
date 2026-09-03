@@ -22,10 +22,15 @@ correction — linked from the rule or gate it supports.
 The reason is mechanical rather than editorial: every importing harness pays
 for this file in its launch context, and moving text into an import buys no
 room. CI therefore guards the combined size of this file and its harness shims
-below 145k. So when a session measures something new, **the numbers go in the
-subsystem doc or reproducing harness and the verdict comes back here as one
-line**. A bullet that has grown a table, or a paragraph opening "MEASURED", is
-due for a split.
+below 145k, and the budget is effectively always full. So when a session
+measures something new, **the numbers go in the subsystem doc or reproducing
+harness and the verdict comes back here as one line**. A bullet that has grown
+a table, or a paragraph opening "MEASURED", is due for a split. A verdict
+ADDED here must condense an equal amount of duplicated detail out of its own
+bullet in the same commit — measured figures and per-consumer enumerations
+belong in the owning doc, never here; a genuinely new verdict with nowhere to
+compress is the trigger to split the oldest settled bullet into its subsystem
+doc entirely.
 
 Nothing was dropped in the split — every figure and every refuted claim is in
 the subsystem records below or its owning harness header:
@@ -887,12 +892,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     membership, entry-relative fog, the shared carrier-source
     emitter and a bounded reference march against an EXPLICIT outer radius.
     THE CARRIER IS WIRED: the live lattice session marches only inside
-    sphere(10R) ∩ slab(|attractor-y| ≤ R) on both engines/dimensions — primary,
-    fog, shadow, probe and ground-plane paths all use it; the window never
-    becomes geometry, shadow or AO. After depth fog, shared-dialect smoothstep
-    coverage fades displayed-3D hits from 8R to the backdrop at 10R;
-    capture/DOF carries that fraction while hit alpha stays terminal.
-    Renderer-only, real-Iris gated, not document state. The panel
+    sphere(10R) ∩ slab(|attractor-y| ≤ R) on both engines/dimensions — the
+    window never becomes geometry, shadow or AO, and the 8R→10R presentation
+    stays ONE policy across every renderer, not a per-renderer lattice
+    window. Renderer-only, real-Iris gated, not document state. The panel
     family is SPACE TILING (Scene / Look, every render mode): arm kind,
     analytic clip on either arm, lattice cell scale over the FROZEN 1.25–4
     range (default 1.5), per-mode edit timing disclosed beside the controls.
@@ -905,40 +908,28 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     without it), refuses the empty-space grid (its floors bound the
     attractor, not the infinite mirror image), and frames the camera on
     the canonical cell (`latticeCameraFitBounds`).
-    Bench-pinned on verified Iris and browser-gated by
-    `scripts/surface-lattice.verify.mjs`; authoring,
-    presets, app-copy, workflow behavior, forward-renderer qualification
-    scopes and both Firefox teardowns (--tiling) ride
+    PER-CONSUMER SHIPPING — Points (3D/4D, bounded recorders, raw 4D, 8N
+    cap, terminal status), Flame CPU + both WGSL twins (the shared
+    32-weighted visitor, restart from one seed/frozen view, GPU-eligible),
+    the generated Flame backdrop (schedule + raw tiling + balloon legality
+    bit, never the echo payload), 3D Solid (compile-gated folds, hierarchy
+    suspended, material-only) and 4D Solid (bounded pre-projection images
+    into the UNCHANGED displayed volume, hierarchy KEPT, edits RESTART the
+    worker from the entry seed) — plus every measured refusal (Flame's
+    slice-aware lattice proposal CDF, raw-4D volumes, post-projection
+    folds, balloon, kaleidoscope, 4D slab, classic opRep — exact
+    translation deferred) is the contract's consumer matrix, each with its
+    own edit/restart contract and figures. Absent/refused stays literal
+    legacy.
+    Finite WGSL wire is one
+    live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Bench-pinned
+    on verified Iris and browser-gated by `scripts/surface-lattice.verify.mjs`;
+    authoring, presets, app-copy, workflow behavior, forward-renderer
+    qualification scopes and both Firefox teardowns (--tiling) ride
     `scripts/tiling-ui.verify.mjs` and `flame-teardown`, qualified
     2026-09-02; cancel, WebGL fallback and fold-4D refusal ride their owning
-    lifecycle gates.
-    Points SHIPS tiled in 3D/4D after schedule/final: bounded recorders keep
-    canonical color, raw 4D, the 8N cap, explicit terminal status. Flame CPU
-    and both WGSL twins SHIP the shared 32-weighted visitor; active tiling
-    restarts from one seed/frozen view and remains GPU-eligible; the
-    slice-aware lattice proposal CDF is MEASURED REFUSED for Flame (the
-    tonemapped display's ghost cost — SLICE_GHOST_FLOOR's, unpaid by Solid's
-    floor-0 — is the non-closing cost; `accumulateFlame4`'s `tilingProposal`
-    param is the sheet's instrument;
-    `scripts/flame-tiling-4d.harness.ts`). The generated
-    Flame backdrop SHIPS the same block (schedule + raw tiling + the balloon
-    legality bit, never the echo payload), invalidated by tiling and schedule
-    edits even with Auto-update off; 3D Solid SHIPS tiled (compile-gated
-    folds, hierarchy suspended, material-only); 4D Solid SHIPS it — bounded
-    pre-projection images into the UNCHANGED displayed volume (no new voxel
-    memory, no material change, hierarchy KEPT, edits RESTART the worker
-    from the entry seed), the shipped finite estimator and a slice-aware
-    lattice proposal CDF; raw-4D volumes and
-    post-projection folds are MEASURED refusals, and so is any
-    renderer-specific lattice window: the 8R→10R presentation stays ONE
-    policy across every renderer, 4D Solid's lattice copy detail
-    DISCLOSED, not re-windowed (figures in the contract). Absent/refused
-    stays literal legacy.
-    Balloon, kaleidoscope and 4D slab stay refused (proof in the contract).
-    Finite WGSL wire is one
-    live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Classic
-    opRep is REFUSED (overshoot; a wall clamp gives false-zero geometry);
-    exact translation is deferred. Full contract and proof:
+    lifecycle gates; the Flame proposal-CDF refusal's sheet is
+    `scripts/flame-tiling-4d.harness.ts`. Full contract and proof:
     `docs/tiling-contract.md`.
   - `surface-finish.ts` — the per-transform surface FINISH's meaning:
     `resolveSurfaceFinish` is the ONE absent-means-classic definition +
