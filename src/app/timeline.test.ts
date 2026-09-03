@@ -11,6 +11,7 @@ import {
 import type { SampledSolidStatus } from "./solid-render-status";
 import { encodeScene, toSnapshot } from "./persist";
 import { initialState } from "./state";
+import { MAX_IMPORT_THUMBNAIL_CHARS } from "./collection";
 import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 
 function memoryStorage(initial: Record<string, string> = {}) {
@@ -184,13 +185,13 @@ describe("TimelineStore setThumbnail", () => {
   it("replaces the step's thumbnail and persists it", () => {
     const storage = memoryStorage();
     const timeline = new TimelineStore({ storage });
-    timeline.add("v1=a", "points-picture");
+    timeline.add("v1=a", "data:image/png;base64,points");
     const id = timeline.all()[0].id;
 
-    expect(timeline.setThumbnail(id, "solid-picture")).toBe(true);
+    expect(timeline.setThumbnail(id, "data:image/png;base64,solid")).toBe(true);
 
     const reloaded = new TimelineStore({ storage });
-    expect(reloaded.all()[0].thumbnail).toBe("solid-picture");
+    expect(reloaded.all()[0].thumbnail).toBe("data:image/png;base64,solid");
   });
 
   it("leaves the step's encoded, mode and timings alone", () => {
@@ -336,6 +337,89 @@ describe("TimelineStore persistence", () => {
       "v1=good-a",
       "v1=good-b",
     ]);
+  });
+
+  it('loads a hostile (non-"data:image/") stored thumbnail as "" while keeping the step, and leaves storage as written', () => {
+    const raw = JSON.stringify({
+      seed: 1,
+      steps: [
+        {
+          id: "1",
+          encoded: "v1=a",
+          thumbnail: "https://evil.example/x.png",
+          morphMs: 1000,
+          holdMs: 500,
+        },
+      ],
+    });
+    const storage = memoryStorage({ [TIMELINE_STORAGE_KEY]: raw });
+
+    const timeline = new TimelineStore({ storage });
+
+    expect(timeline.all()).toEqual([
+      {
+        id: "1",
+        encoded: "v1=a",
+        thumbnail: "",
+        morphMs: 1000,
+        holdMs: 500,
+        mode: undefined,
+      },
+    ]);
+    // Validation happens at DECODE time — storage keeps whatever was written.
+    expect(storage.store[TIMELINE_STORAGE_KEY]).toBe(raw);
+  });
+
+  it('loads an over-long stored data: thumbnail as "" while keeping the step', () => {
+    const storage = memoryStorage({
+      [TIMELINE_STORAGE_KEY]: JSON.stringify({
+        seed: 1,
+        steps: [
+          {
+            id: "1",
+            encoded: "v1=a",
+            thumbnail:
+              "data:image/png;base64," + "a".repeat(MAX_IMPORT_THUMBNAIL_CHARS),
+            morphMs: 1000,
+            holdMs: 500,
+          },
+        ],
+      }),
+    });
+
+    const timeline = new TimelineStore({ storage });
+
+    expect(timeline.all()).toEqual([
+      {
+        id: "1",
+        encoded: "v1=a",
+        thumbnail: "",
+        morphMs: 1000,
+        holdMs: 500,
+        mode: undefined,
+      },
+    ]);
+  });
+
+  it("loads a valid stored data:image thumbnail unchanged", () => {
+    const storage = memoryStorage({
+      [TIMELINE_STORAGE_KEY]: JSON.stringify({
+        seed: 1,
+        steps: [
+          {
+            id: "1",
+            encoded: "v1=a",
+            thumbnail: "data:image/png;base64,aaa",
+            morphMs: 1000,
+            holdMs: 500,
+          },
+        ],
+      }),
+    });
+
+    const timeline = new TimelineStore({ storage });
+
+    expect(timeline.all()[0].thumbnail).toBe("data:image/png;base64,aaa");
   });
 
   it("clamps a non-finite stored timing rather than dropping the step", () => {
@@ -539,7 +623,7 @@ describe("TimelineStore mode", () => {
           {
             id: "1",
             encoded: "v1=a",
-            thumbnail: "thumb-a",
+            thumbnail: "data:image/png;base64,aaa",
             morphMs: 1000,
             holdMs: 500,
           },
@@ -553,7 +637,7 @@ describe("TimelineStore mode", () => {
     expect(timeline.all()[0]).toEqual({
       id: "1",
       encoded: "v1=a",
-      thumbnail: "thumb-a",
+      thumbnail: "data:image/png;base64,aaa",
       morphMs: 1000,
       holdMs: 500,
       mode: undefined,

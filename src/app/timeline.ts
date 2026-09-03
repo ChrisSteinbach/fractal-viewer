@@ -1,5 +1,5 @@
 import { mulberry32 } from "../fractal/rng";
-import { sanitizedMode } from "./collection";
+import { sanitizedMode, sanitizeThumbnailDataUrl } from "./collection";
 import type { SavedSceneMode } from "./collection";
 import {
   sanitizeSampledSolidStatus,
@@ -178,7 +178,12 @@ function sanitizedSolidStatusFields(
  * (`isTimelineStep`) and dropped alone if malformed, survivors have their
  * timings clamped (`clampMs`) and are truncated to the first `TIMELINE_CAP`
  * — sliced AFTER filtering, so a dropped entry doesn't shift a later valid
- * one out of the window — since the list is stored in playback order.
+ * one out of the window — since the list is stored in playback order. A
+ * survivor's `thumbnail` is sanitized at decode time via
+ * `sanitizeThumbnailDataUrl` (imported from `collection.ts` — the one
+ * validator the storage loads and the import path share): a hostile or
+ * corrupt stored value degrades to `""`, never a non-image URL under the
+ * player's `img.src`, while storage keeps whatever was written.
  */
 function loadTimeline(
   storage: Pick<Storage, "getItem" | "setItem"> | undefined,
@@ -202,7 +207,7 @@ function loadTimeline(
           .map((s) => ({
             id: s.id,
             encoded: s.encoded,
-            thumbnail: s.thumbnail,
+            thumbnail: sanitizeThumbnailDataUrl(s.thumbnail),
             morphMs: clampMs(s.morphMs),
             holdMs: clampMs(s.holdMs),
             mode: sanitizedMode(s.mode),

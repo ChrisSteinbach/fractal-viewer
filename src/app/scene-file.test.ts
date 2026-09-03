@@ -6,10 +6,14 @@ import {
   MAX_IMPORT_THUMBNAIL_CHARS,
   PORTABLE_SCENE_FILE_VERSION,
   SCENE_FILE_VERSION,
+  sanitizeThumbnailDataUrl,
 } from "./scene-file";
 import { decodeScene, encodeScene } from "./persist";
 import type { SceneSnapshot } from "./persist";
-import { COLLECTION_CAP } from "./collection";
+import {
+  COLLECTION_CAP,
+  sanitizeThumbnailDataUrl as fromCollection,
+} from "./collection";
 import type { SavedScene } from "./collection";
 import type { SampledSolidStatus } from "./solid-render-status";
 import { TIMELINE_CAP } from "./timeline";
@@ -1016,6 +1020,18 @@ describe("decodeImportFile: timeline kind", () => {
 });
 
 describe("decodeImportFile: thumbnail sanitizing", () => {
+  it("re-exports collection.ts's sanitizeThumbnailDataUrl — one definition across the import and storage load paths", () => {
+    // scene-file.ts re-exports the validator `collection.ts` owns (its
+    // storage loader cannot import this module without a cycle), so the
+    // import path and the localStorage loads cannot drift apart. This pin
+    // fails the moment the re-export becomes a copy.
+    expect(sanitizeThumbnailDataUrl).toBe(fromCollection);
+    expect(sanitizeThumbnailDataUrl("data:image/png;base64,aa")).toBe(
+      "data:image/png;base64,aa",
+    );
+    expect(sanitizeThumbnailDataUrl("https://evil.example/x.png")).toBe("");
+  });
+
   it('replaces a non-"data:image/" thumbnail with ""', () => {
     const encoded = encodeScene(baseSnapshot());
     const file = JSON.stringify({

@@ -39,7 +39,11 @@
  * unmodified.
  */
 import { decodeScene } from "./persist";
-import { COLLECTION_CAP } from "./collection";
+import {
+  COLLECTION_CAP,
+  MAX_IMPORT_THUMBNAIL_CHARS,
+  sanitizeThumbnailDataUrl,
+} from "./collection";
 import type { ImportableScene, SavedScene, SavedSceneMode } from "./collection";
 import { TIMELINE_CAP } from "./timeline";
 import type { ImportableTimelineStep, TimelineStep } from "./timeline";
@@ -54,6 +58,16 @@ import {
   sceneCustomMeshIds,
 } from "./scene-mesh-assets";
 import type { CustomMeshAssetId } from "../fractal/mesh-shapes";
+
+/**
+ * The ONE thumbnail validator and its length cap, re-exported from
+ * `collection.ts`, where they live (the storage layer cannot import this
+ * module — see the helper's doc there) so the import path and the
+ * collection/timeline localStorage loads share a single definition. The
+ * gallery-facing names are unchanged; the sanitizers below consume the
+ * imported bindings directly.
+ */
+export { MAX_IMPORT_THUMBNAIL_CHARS, sanitizeThumbnailDataUrl };
 
 /**
  * Original asset-free format version. Asset-free export remains byte-compatible
@@ -73,18 +87,7 @@ export const PORTABLE_SCENE_FILE_VERSION = 2;
 const SCENE_FILE_APP = "fractal-viewer";
 
 /**
- * Ceiling on one imported thumbnail's data-URL length, in characters.
- * {@link decodeImportFile} replaces an oversized (or non-`data:image/`)
- * thumbnail with `""` rather than dropping the entry — a thumbnail is
- * cosmetic, not worth losing a scene over — so a hostile file can't use it
- * to bloat localStorage once the entry lands in the collection. Real
- * captured thumbnails (see `scene.ts`'s `captureThumbnail`) run roughly
- * 10-20k characters.
- */
-export const MAX_IMPORT_THUMBNAIL_CHARS = 256_000;
-
-/**
- * Sanity ceiling on an import file's byte size, for the CALLER to check
+ * Ceiling on an import file's byte size, for the CALLER to check
  * before reading the file into memory — this module only ever sees already-
  * read `text`. A full {@link COLLECTION_CAP}-entry backup with every
  * thumbnail at {@link MAX_IMPORT_THUMBNAIL_CHARS} stays well under this.
@@ -249,22 +252,6 @@ function sanitizedImportMode(v: unknown): SavedSceneMode | undefined {
 }
 
 /**
- * The entry's `thumbnail` if it is a string, starts with `data:image/`, and
- * is no longer than {@link MAX_IMPORT_THUMBNAIL_CHARS} — else `""` (the
- * entry is kept regardless; a thumbnail is cosmetic, see that constant's
- * doc). The `data:image/` prefix requirement doubles as a safety net: it is
- * what guarantees an imported string can never smuggle a non-image URL into
- * the gallery's `img.src`.
- */
-function sanitizedImportThumbnail(v: unknown): string {
-  return typeof v === "string" &&
-    v.startsWith("data:image/") &&
-    v.length <= MAX_IMPORT_THUMBNAIL_CHARS
-    ? v
-    : "";
-}
-
-/**
  * Validate one untrusted parsed entry from a `"collection"` file's `scenes`
  * array into an {@link ImportableScene}, or `null` to drop it — the same
  * per-entry lenience `collection.ts`'s `isSavedScene` shows corrupt
@@ -297,7 +284,7 @@ function sanitizeImportedScene(v: unknown): ImportableScene | null {
     createdAt,
     mode: sanitizedMode,
     ...(sampledStatus ? { solidStatus: sampledStatus } : {}),
-    thumbnail: sanitizedImportThumbnail(thumbnail),
+    thumbnail: sanitizeThumbnailDataUrl(thumbnail),
   };
 }
 
@@ -336,7 +323,7 @@ function sanitizeImportedStep(v: unknown): ImportableTimelineStep | null {
     holdMs,
     mode: sanitizedMode,
     ...(sampledStatus ? { solidStatus: sampledStatus } : {}),
-    thumbnail: sanitizedImportThumbnail(thumbnail),
+    thumbnail: sanitizeThumbnailDataUrl(thumbnail),
   };
 }
 
