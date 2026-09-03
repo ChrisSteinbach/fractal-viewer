@@ -1,5 +1,26 @@
 <!doctype html>
 <meta charset="utf-8" />
+<!-- Meta CSP: GitHub Pages sends no headers, so this standalone page carries
+     its policy in-band (index.html's CSP covers only itself — its comment
+     already names this page as the uncovered gap, and is not weakened for
+     it). Derived from what the page does and nothing more: the whole
+     program is ONE inline module script (script-src 'unsafe-inline'; no
+     external script, no eval), the WebGPU worker is built from a Blob URL
+     (worker-src blob:), the only styling is the inline <style> block
+     (style-src 'unsafe-inline'), and every other fetch the browser could
+     make here is the same-origin favicon, covered by default-src 'self'.
+     WebGPU and WebGL themselves are not CSP-governed — no directive
+     carries them. No fetch/XHR, no fonts (system monospace only), no
+     media, no frames: those directives are omitted rather than restated
+     (default-src 'self' already says exactly that), and frame-ancestors is
+     omitted because a meta CSP IGNORES it — a directive that cannot be
+     enforced from here would only read as protection this page does not
+     have. object-src/base-uri/form-action are 'none' because the page uses
+     none of those. -->
+<meta
+  http-equiv="Content-Security-Policy"
+  content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'"
+/>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>WebGPU probe</title>
 <style>
