@@ -42,10 +42,12 @@ import {
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
   MAX_CUSTOM_PALETTE_STOPS,
+  MAX_RAMP_ENTRIES,
   MIN_CUSTOM_PALETTE_STOPS,
   hexToRgb,
   type CustomPalette,
   type PaletteSelection,
+  type RampPalette,
 } from "../fractal/palette";
 import type { PositionAxisColors } from "../fractal/color";
 import {
@@ -281,6 +283,10 @@ const SURFACE_FIELDS = {
   floorEmission: true,
 } satisfies Fields<SurfaceParams>;
 const CUSTOM_PALETTE_FIELDS = { stops: true } satisfies Fields<CustomPalette>;
+const RAMP_PALETTE_FIELDS = {
+  kind: true,
+  entries: true,
+} satisfies Fields<RampPalette>;
 const AXIS_COLOR_FIELDS = {
   x: true,
   y: true,
@@ -820,7 +826,21 @@ function symmetry(value: unknown, path: string): void {
   }
 }
 
+/**
+ * A custom-palette payload — an authored 2–8-stop {@link CustomPalette} or
+ * a full-resolution imported {@link RampPalette}, discriminated on the
+ * payload's own `kind` field (the one the codec and app state both use).
+ * The two are validated as the different objects they are — a ramp is never
+ * coerced into (or truncated toward) the 8-stop editor vocabulary, and a
+ * stops payload never grows into a ramp — with the ramp's own
+ * [2, {@link MAX_RAMP_ENTRIES}] domain mirroring the parser cap
+ * (`flame-file.ts`) and the portable codec's validator (`persist.ts`).
+ */
 function customPalette(value: unknown, path: string): void {
+  if (isRampPaletteShape(value)) {
+    rampPalette(value, path);
+    return;
+  }
   const entry = object(value, path, CUSTOM_PALETTE_FIELDS);
   const stops = array(required(entry, "stops", path), `${path}.stops`);
   if (
@@ -830,6 +850,32 @@ function customPalette(value: unknown, path: string): void {
     throw new RangeError(`${path}.stops exceeds the palette cap`);
   }
   stops.forEach((stop, index) => rgb(stop, `${path}.stops[${index}]`));
+}
+
+/** Shape predicate for the ramp half of the custom-palette union: the
+ * discriminator is the payload's own `kind` field, exactly as the codec and
+ * `buildPaletteLUT` read it. */
+function isRampPaletteShape(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).kind === "ramp"
+  );
+}
+
+/** The {@link RampPalette} half of {@link customPalette}. */
+function rampPalette(value: unknown, path: string): void {
+  const entry = object(value, path, RAMP_PALETTE_FIELDS);
+  enumeration(required(entry, "kind", path), ["ramp"], `${path}.kind`);
+  const entries = array(required(entry, "entries", path), `${path}.entries`);
+  if (
+    entries.length < MIN_CUSTOM_PALETTE_STOPS ||
+    entries.length > MAX_RAMP_ENTRIES
+  ) {
+    throw new RangeError(`${path}.entries exceeds the palette cap`);
+  }
+  entries.forEach((stop, index) => rgb(stop, `${path}.entries[${index}]`));
 }
 
 function axisColors(value: unknown, path: string): void {

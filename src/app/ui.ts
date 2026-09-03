@@ -23,12 +23,14 @@ import {
   hexToRgb,
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
+  quantizeByte,
   resolvePalette,
   rgbToHex,
 } from "../fractal/palette";
 import type {
   CustomPalette,
   PaletteSelection,
+  RampPalette,
   RgbStop,
 } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
@@ -2570,7 +2572,10 @@ export class Ui {
    * `AppState.customPalette`
    * slot (see {@link syncCustomPaletteEditors}) — only which row is visible
    * differs, keyed on that palette select's own paletteId
-   * (background/flame/solid/surface) or `rampPaletteId` (solid-ramp/ramp). */
+   * (background/flame/solid/surface) or `rampPaletteId` (solid-ramp/ramp).
+   * `rampNote` is the conversion disclosure shown while the payload behind
+   * the editor is an imported full-resolution ramp (see
+   * {@link rampEditorSeedStops}). */
   private readonly customPaletteEditors: Record<
     "background" | "flame" | "solid" | "solidRamp" | "surface" | "ramp",
     {
@@ -2580,6 +2585,7 @@ export class Ui {
       stops: HTMLElement;
       add: HTMLButtonElement;
       remove: HTMLButtonElement;
+      rampNote: HTMLElement;
     }
   >;
 
@@ -2591,6 +2597,7 @@ export class Ui {
     stops: HTMLElement;
     add: HTMLButtonElement;
     remove: HTMLButtonElement;
+    rampNote: HTMLElement;
   };
 
   /** Per-mode fallback for the accordion when the previously open section is
@@ -3227,6 +3234,7 @@ export class Ui {
         stops: this.byId("backgroundCustomPaletteStops"),
         add: this.byId("backgroundCustomPaletteAdd"),
         remove: this.byId("backgroundCustomPaletteRemove"),
+        rampNote: this.byId("backgroundCustomPaletteRampNote"),
       },
       flame: {
         row: this.byId("flameCustomPaletteRow"),
@@ -3235,6 +3243,7 @@ export class Ui {
         stops: this.byId("flameCustomPaletteStops"),
         add: this.byId("flameCustomPaletteAdd"),
         remove: this.byId("flameCustomPaletteRemove"),
+        rampNote: this.byId("flameCustomPaletteRampNote"),
       },
       solid: {
         row: this.byId("solidCustomPaletteRow"),
@@ -3243,6 +3252,7 @@ export class Ui {
         stops: this.byId("solidCustomPaletteStops"),
         add: this.byId("solidCustomPaletteAdd"),
         remove: this.byId("solidCustomPaletteRemove"),
+        rampNote: this.byId("solidCustomPaletteRampNote"),
       },
       solidRamp: {
         row: this.byId("solidRampCustomPaletteRow"),
@@ -3251,6 +3261,7 @@ export class Ui {
         stops: this.byId("solidRampCustomPaletteStops"),
         add: this.byId("solidRampCustomPaletteAdd"),
         remove: this.byId("solidRampCustomPaletteRemove"),
+        rampNote: this.byId("solidRampCustomPaletteRampNote"),
       },
       surface: {
         row: this.byId("surfaceCustomPaletteRow"),
@@ -3259,6 +3270,7 @@ export class Ui {
         stops: this.byId("surfaceCustomPaletteStops"),
         add: this.byId("surfaceCustomPaletteAdd"),
         remove: this.byId("surfaceCustomPaletteRemove"),
+        rampNote: this.byId("surfaceCustomPaletteRampNote"),
       },
       ramp: {
         row: this.byId("rampCustomPaletteRow"),
@@ -3267,6 +3279,7 @@ export class Ui {
         stops: this.byId("rampCustomPaletteStops"),
         add: this.byId("rampCustomPaletteAdd"),
         remove: this.byId("rampCustomPaletteRemove"),
+        rampNote: this.byId("rampCustomPaletteRampNote"),
       },
     };
     this.balloonCustomPaletteEditor = {
@@ -3276,6 +3289,7 @@ export class Ui {
       stops: this.byId("balloonCustomPaletteStops"),
       add: this.byId("balloonCustomPaletteAdd"),
       remove: this.byId("balloonCustomPaletteRemove"),
+      rampNote: this.byId("balloonCustomPaletteRampNote"),
     };
 
     // Panel accordion: the sections are exclusive-open <details
@@ -5306,6 +5320,54 @@ export class Ui {
   }
 
   /**
+   * Derive the 8 editor-display stops shown while the document payload behind
+   * an editor is a full-resolution imported {@link RampPalette}: the ramp's
+   * own {@link buildPaletteLUT} sampled at {@link MAX_CUSTOM_PALETTE_STOPS}
+   * evenly-spaced entries — exactly {@link seedCustomStops}'s sampling shape,
+   * one level out — each channel {@link quantizeByte byte-quantized} so the
+   * displayed values survive the color inputs' `#rrggbb` round-trip exactly.
+   * These stops are a PREVIEW of the conversion, never document state: the
+   * ramp payload itself stays intact until an actual edit replaces it (see
+   * the conversion disclosure in {@link syncCustomPaletteEditors}).
+   */
+  private rampEditorSeedStops(ramp: RampPalette): RgbStop[] {
+    const lut = buildPaletteLUT(ramp);
+    if (lut === null) throw new Error("a ramp palette always has a LUT");
+    const stops: RgbStop[] = [];
+    for (let j = 0; j < MAX_CUSTOM_PALETTE_STOPS; j++) {
+      const index = Math.round(
+        (j / (MAX_CUSTOM_PALETTE_STOPS - 1)) * (lut.length / 3 - 1),
+      );
+      const o = index * 3;
+      stops.push([
+        quantizeByte(lut[o]),
+        quantizeByte(lut[o + 1]),
+        quantizeByte(lut[o + 2]),
+      ]);
+    }
+    return stops;
+  }
+
+  /**
+   * Set a ramp editor's conversion disclosure: visible prose naming the
+   * conversion, so an edit that replaces the imported gradient with an
+   * 8-stop palette is chosen with the consequence on screen (the
+   * no-silent-conversion rule this feature is judged by).
+   */
+  private syncRampNote(
+    editor: { rampNote: HTMLElement },
+    ramp: RampPalette | null,
+  ): void {
+    editor.rampNote.classList.toggle("hidden", ramp === null);
+    if (ramp !== null) {
+      this.setReasonNote(
+        editor.rampNote,
+        `Imported ${ramp.entries.length}-color ramp — editing converts it to an ${MAX_CUSTOM_PALETTE_STOPS}-stop palette`,
+      );
+    }
+  }
+
+  /**
    * Sync the background/flame/solid/solid-ramp/surface/ramp gradient-stop
    * editors to `state.customPalette`, called from {@link updateLabels} right
    * after the table-driven scalar sync loop. Six rows now: the background
@@ -5352,13 +5414,19 @@ export class Ui {
       editor.row.classList.toggle("hidden", !isCustom);
       if (!isCustom) continue;
 
-      // Safe: resolvePalette always returns a CustomPalette (never a bare
-      // FlamePaletteId) when the selection is CUSTOM_PALETTE_ID — see its doc.
+      // Safe: resolvePalette always returns a CustomPalette or a RampPalette
+      // (never a bare FlamePaletteId) when the selection is
+      // CUSTOM_PALETTE_ID — see its doc. A ramp payload shows 8 derived
+      // seed stops plus the conversion disclosure instead of its full
+      // entry list, which the editor's vocabulary cannot hold.
       const resolved = resolvePalette(
         CUSTOM_PALETTE_ID,
         state.customPalette,
-      ) as CustomPalette;
-      const { stops } = resolved;
+      ) as CustomPalette | RampPalette;
+      const isRamp = "kind" in resolved;
+      const stops: readonly RgbStop[] = isRamp
+        ? this.rampEditorSeedStops(resolved)
+        : resolved.stops;
 
       const inputs = Array.from(
         editor.stops.querySelectorAll<HTMLInputElement>('input[type="color"]'),
@@ -5388,10 +5456,11 @@ export class Ui {
       }
 
       // Safe: buildPaletteLUT only returns null for the "legacy" sentinel,
-      // never for a CustomPalette payload.
+      // never for a CustomPalette or RampPalette payload.
       editor.strip.style.background = lutGradient(buildPaletteLUT(resolved)!);
       editor.add.disabled = stops.length >= MAX_CUSTOM_PALETTE_STOPS;
       editor.remove.disabled = stops.length <= MIN_CUSTOM_PALETTE_STOPS;
+      this.syncRampNote(editor, isRamp ? resolved : null);
     }
   }
 
@@ -5407,8 +5476,14 @@ export class Ui {
     if (!isCustom) return;
 
     // The selection check above excludes resolveBalloonPalette's null arm.
-    const resolved = resolveBalloonPalette(state) as CustomPalette;
-    const { stops } = resolved;
+    // A ramp payload shows 8 derived seed stops plus the conversion
+    // disclosure, exactly like the shared editors.
+    const resolved = resolveBalloonPalette(state) as
+      CustomPalette | RampPalette;
+    const isRamp = "kind" in resolved;
+    const stops: readonly RgbStop[] = isRamp
+      ? this.rampEditorSeedStops(resolved)
+      : resolved.stops;
     const inputs = Array.from(
       editor.stops.querySelectorAll<HTMLInputElement>('input[type="color"]'),
     );
@@ -5435,6 +5510,7 @@ export class Ui {
     editor.strip.style.background = lutGradient(buildPaletteLUT(resolved)!);
     editor.add.disabled = stops.length >= MAX_CUSTOM_PALETTE_STOPS;
     editor.remove.disabled = stops.length <= MIN_CUSTOM_PALETTE_STOPS;
+    this.syncRampNote(editor, isRamp ? resolved : null);
   }
 
   setPointCount(

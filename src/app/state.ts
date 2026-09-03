@@ -20,6 +20,7 @@ import type {
   FlamePaletteId,
   PaletteSelection,
   PaletteSpec,
+  RampPalette,
   RgbStop,
 } from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
@@ -622,9 +623,11 @@ export interface AppState {
    * separate from {@link customPalette}: editing or selecting one slot must
    * never mutate the other. Optional until the balloon palette first selects
    * Custom, and retained while unselected so an authored gradient survives a
-   * round trip through Inherit or a built-in palette.
+   * round trip through Inherit or a built-in palette. Same payload union as
+   * {@link customPalette} — an imported ramp rides here too, converted to an
+   * 8-stop palette by its first editor edit exactly like the primary slot.
    */
-  balloonCustomPalette?: CustomPalette;
+  balloonCustomPalette?: CustomPalette | RampPalette;
   /**
    * The balloon echo/surface-balloon shell's tint color, a
    * `#rrggbb` hex string paired with {@link balloonTintStrength} — ONE
@@ -712,8 +715,20 @@ export interface AppState {
    * tweakable copy of the current look. It persists as one scene field (see
    * `persist.ts`) and survives while unselected, so switching away and back
    * never loses the authored shared gradient.
+   *
+   * The payload is either an authored 2–8-stop {@link CustomPalette} or a
+   * full-resolution imported {@link RampPalette} — a `.flame` import lands
+   * here (see `flame-file.ts`'s `parseFlamePalette`). The two are kept
+   * deliberately apart: an imported ramp is NOT an 8-stop palette with more
+   * entries, and every code path that means "the stops the user edited" keeps
+   * saying so in its own type. The one conversion runs FORWARD only: the
+   * first edit through the gradient editor replaces a ramp with a plain
+   * {@link CustomPalette} ({@link setCustomPaletteStops} writes stops, and
+   * {@link sanitizeCustomPaletteStops} is the edit path's own 8-stop trim) —
+   * disclosed in the editor (see `ui.ts`), never a silent truncation on any
+   * encode or render path.
    */
-  customPalette?: CustomPalette;
+  customPalette?: CustomPalette | RampPalette;
   /**
    * The position color mode's three user-picked axis colors (see
    * `color.ts`'s `writePositionColor`). Absent = the legacy XYZ→RGB identity

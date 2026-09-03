@@ -200,7 +200,7 @@ describe("decodeFlameFile", () => {
     expect(snap!.transforms).toHaveLength(2);
   });
 
-  it("downsamples an Apophysis-style <palette> hex block onto an 8-stop custom palette", () => {
+  it("imports an Apophysis-style <palette> hex block as a full-resolution ramp", () => {
     const hex = Array.from({ length: 256 }, (_, i) => {
       if (i === 0) return "ff0000";
       if (i === 255) return "0000ff";
@@ -210,31 +210,51 @@ describe("decodeFlameFile", () => {
 
     const snap = loadFirstScene(xml);
     expect(snap.customPalette).toBeDefined();
-    const stops = snap.customPalette!.stops;
-    expect(stops).toHaveLength(8);
-    expect(stops[0][0]).toBeCloseTo(1, 3);
-    expect(stops[0][1]).toBeCloseTo(0, 3);
-    expect(stops[0][2]).toBeCloseTo(0, 3);
-    expect(stops[7][0]).toBeCloseTo(0, 3);
-    expect(stops[7][1]).toBeCloseTo(0, 3);
-    expect(stops[7][2]).toBeCloseTo(1, 3);
+    const palette = snap.customPalette!;
+    if (!("kind" in palette)) throw new Error("expected a ramp palette");
+    expect(palette.entries).toHaveLength(256);
+    expect(palette.entries[0]).toEqual([1, 0, 0]);
+    expect(palette.entries[255]).toEqual([0, 0, 1]);
+    // An interior entry keeps its own color — the 8-stop point-sample this
+    // module used to take never let one survive to the scene.
+    expect(palette.entries[128]).toEqual([0x80 / 255, 0x80 / 255, 0x80 / 255]);
     expect(snap.flame.paletteId).toBe("custom");
     expect(snap.rampPaletteId).toBe("custom");
   });
 
-  it("downsamples flam3-style <color> entries onto a custom palette", () => {
+  it("imports flam3-style <color> entries as a ramp with every entry", () => {
     const xml = `<flame><xform weight="1" coefs="0.5 0 0 0.5 0 0"/><color index="0" rgb="255 0 0"/><color index="1" rgb="0 255 0"/><color index="2" rgb="0 0 255"/><color index="3" rgb="255 255 0"/></flame>`;
 
     const snap = loadFirstScene(xml);
     expect(snap.customPalette).toBeDefined();
-    const stops = snap.customPalette!.stops;
-    expect(stops[0][0]).toBeCloseTo(1, 3);
-    expect(stops[0][1]).toBeCloseTo(0, 3);
-    expect(stops[0][2]).toBeCloseTo(0, 3);
-    const last = stops[stops.length - 1];
-    expect(last[0]).toBeCloseTo(1, 3);
-    expect(last[1]).toBeCloseTo(1, 3);
-    expect(last[2]).toBeCloseTo(0, 3);
+    const palette = snap.customPalette!;
+    if (!("kind" in palette)) throw new Error("expected a ramp palette");
+    expect(palette.entries).toHaveLength(4);
+    expect(palette.entries[0]).toEqual([1, 0, 0]);
+    expect(palette.entries[3]).toEqual([1, 1, 0]);
+  });
+
+  it("preserves a banded palette's bright band and hard hue jump end to end", () => {
+    // The import-path twin of palette.test.ts's banded-ramp acceptance
+    // test: a one-entry bright band amid black and an adjacent-entry
+    // red→blue jump — the features an 8-stop point sample flattened — must
+    // survive the whole import → encode → decodeScene chain (which also
+    // exercises the ramp wire form's validator against a real import).
+    const hex = Array.from({ length: 256 }, (_, i) => {
+      if (i === 100) return "ffffff";
+      if (i === 200) return "ff0000";
+      if (i === 201) return "0000ff";
+      return "000000";
+    }).join("");
+    const xml = `<flame><xform weight="1" coefs="0.5 0 0 0.5 0 0"/><palette count="256" format="RGB">${hex}</palette></flame>`;
+
+    const snap = loadFirstScene(xml);
+    const palette = snap.customPalette!;
+    if (!("kind" in palette)) throw new Error("expected a ramp palette");
+    expect(palette.entries[100]).toEqual([1, 1, 1]);
+    expect(palette.entries[200]).toEqual([1, 0, 0]);
+    expect(palette.entries[201]).toEqual([0, 0, 1]);
+    expect(palette.entries[99]).toEqual([0, 0, 0]);
   });
 
   it("leaves the palette at its default when the flame carries none", () => {
@@ -815,11 +835,18 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
     const { xml } = encodeFlameFile(source, "custom-palette");
     const back = loadFirstScene(xml);
     expect(back.customPalette).toBeDefined();
-    const stops = back.customPalette!.stops;
-    expect(stops[0][0]).toBeCloseTo(1, 3);
-    expect(stops[0][1]).toBeCloseTo(0, 3);
-    expect(stops[0][2]).toBeCloseTo(0, 3);
-    const last = stops[stops.length - 1];
+    // The export writes the scene's resolved 256-entry LUT as the `<palette>`
+    // block, and the import now preserves that block whole — so the payload
+    // comes back as a full-resolution ramp whose endpoints land on the
+    // authored stops.
+    const palette = back.customPalette!;
+    if (!("kind" in palette)) throw new Error("expected a ramp palette");
+    expect(palette.entries).toHaveLength(256);
+    const first = palette.entries[0];
+    expect(first[0]).toBeCloseTo(1, 3);
+    expect(first[1]).toBeCloseTo(0, 3);
+    expect(first[2]).toBeCloseTo(0, 3);
+    const last = palette.entries[palette.entries.length - 1];
     expect(last[0]).toBeCloseTo(0, 3);
     expect(last[1]).toBeCloseTo(0, 3);
     expect(last[2]).toBeCloseTo(1, 3);

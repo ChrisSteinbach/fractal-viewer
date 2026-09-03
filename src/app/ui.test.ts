@@ -52,12 +52,14 @@ import {
   PRESET_NAMES,
 } from "../fractal/presets";
 import {
+  buildPaletteLUT,
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
+  rgbToHex,
 } from "../fractal/palette";
-import type { RgbStop } from "../fractal/palette";
+import type { CustomPalette, RampPalette, RgbStop } from "../fractal/palette";
 import {
   buildColorModeLUT,
   LEGACY_POSITION_AXIS_COLORS,
@@ -8567,6 +8569,146 @@ describe("custom palette editor", () => {
   });
 });
 
+describe("ramp-backed palette editors", () => {
+  // Every editor behaves identically behind a ramp payload — the primary
+  // five (which share AppState.customPalette) plus the Balloon's own slot —
+  // so this suite walks all seven rows over the same shapes.
+  const editorPrefixes = [
+    "ramp",
+    "background",
+    "flame",
+    "solid",
+    "surface",
+    "solidRamp",
+    "balloon",
+  ] as const;
+
+  /** A 256-entry imported ramp: black, a one-entry white band at 100, red at
+   * 200, blue at 201. The LUT (a straight copy) is what the editor's seed
+   * stops sample. */
+  function importedRamp(): RampPalette {
+    return {
+      kind: "ramp",
+      entries: Array.from({ length: 256 }, (_, i) => {
+        if (i === 100) return [1, 1, 1];
+        if (i === 200) return [1, 0, 0];
+        if (i === 201) return [0, 0, 1];
+        return [0, 0, 0];
+      }),
+    };
+  }
+
+  /** Eight evenly-spaced, byte-quantized samples of the ramp's LUT — the
+   * derived stops the editor is expected to display (seedCustomStops's
+   * sampling shape applied to the ramp payload). */
+  function expectedSeedStops(): RgbStop[] {
+    const lut = buildPaletteLUT(importedRamp())!;
+    return Array.from({ length: MAX_CUSTOM_PALETTE_STOPS }, (_, j) => {
+      const index = Math.round((j / (MAX_CUSTOM_PALETTE_STOPS - 1)) * 255);
+      return [
+        Math.round(lut[index * 3] * 255) / 255,
+        Math.round(lut[index * 3 + 1] * 255) / 255,
+        Math.round(lut[index * 3 + 2] * 255) / 255,
+      ];
+    });
+  }
+
+  function stateWithRamp(kind: (typeof editorPrefixes)[number]): AppState {
+    void kind;
+    const base = initialState(true);
+    const ramp = importedRamp();
+    return {
+      ...base,
+      colorMode: "height",
+      rampPaletteId: "custom",
+      background: { mode: "flame", flamePaletteId: "custom" },
+      flame: { ...base.flame, paletteId: "custom" },
+      solid: { ...base.solid, paletteId: "custom" },
+      surface: { ...base.surface, colorSource: "palette", paletteId: "custom" },
+      customPalette: ramp,
+      balloonPaletteId: "custom",
+      balloonCustomPalette: ramp,
+    };
+  }
+
+  it.each(editorPrefixes)(
+    "%s editor shows 8 derived seed stops plus the conversion note for a ramp payload",
+    (kind) => {
+      const ui = new Ui(document);
+      ui.updateLabels(stateWithRamp(kind));
+
+      const values = Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          `#${kind}CustomPaletteStops input[type='color']`,
+        ),
+      ).map((input) => input.value);
+      expect(values).toEqual(expectedSeedStops().map(rgbToHex));
+
+      const note = document.getElementById(
+        `${kind}CustomPaletteRampNote`,
+      ) as HTMLElement;
+      expect(note.classList.contains("hidden")).toBe(false);
+      expect(note.textContent?.trim()).toBe(
+        "Imported 256-color ramp — editing converts it to an 8-stop palette",
+      );
+    },
+  );
+
+  it.each(editorPrefixes)(
+    "%s editor hides the conversion note for an authored stops payload",
+    (kind) => {
+      const ui = new Ui(document);
+      ui.updateLabels({
+        ...stateWithRamp(kind),
+        customPalette: {
+          stops: [
+            [1, 0, 0],
+            [0, 0, 1],
+          ],
+        },
+        balloonCustomPalette: {
+          stops: [
+            [1, 0, 0],
+            [0, 0, 1],
+          ],
+        },
+      });
+
+      const note = document.getElementById(
+        `${kind}CustomPaletteRampNote`,
+      ) as HTMLElement;
+      expect(note.classList.contains("hidden")).toBe(true);
+    },
+  );
+
+  it.each(editorPrefixes)(
+    "%s editor converts the ramp payload on edit through the existing stops callback",
+    (kind) => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.updateLabels(stateWithRamp(kind));
+      const first = document.querySelector<HTMLInputElement>(
+        `#${kind}CustomPaletteStops input[type='color']`,
+      )!;
+
+      first.value = "#123456";
+      first.dispatchEvent(new Event("input", { bubbles: true }));
+
+      const expected = expectedSeedStops().map((stop, i) =>
+        i === 0 ? [0x12 / 255, 0x34 / 255, 0x56 / 255] : stop,
+      );
+      if (kind === "balloon") {
+        expect(handlers.onBalloonCustomPaletteStops).toHaveBeenCalledWith(
+          expected,
+        );
+      } else {
+        expect(handlers.onCustomPaletteStops).toHaveBeenCalledWith(expected);
+      }
+    },
+  );
+});
+
 describe("Ui ramp palette", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
@@ -14586,7 +14728,7 @@ describe("Ui background backdrop row", () => {
       document.querySelectorAll(
         '#backgroundCustomPaletteStops input[type="color"]',
       ),
-    ).toHaveLength(state.customPalette!.stops.length);
+    ).toHaveLength((state.customPalette as CustomPalette).stops.length);
   });
 
   it("reports edits from the Flame backdrop's Custom gradient editor", () => {
@@ -14609,7 +14751,7 @@ describe("Ui background backdrop row", () => {
 
     expect(handlers.onCustomPaletteStops).toHaveBeenCalledWith([
       [1 / 255, 2 / 255, 3 / 255],
-      ...state.customPalette!.stops.slice(1),
+      ...(state.customPalette as CustomPalette).stops.slice(1),
     ]);
   });
 
