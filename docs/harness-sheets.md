@@ -291,6 +291,21 @@ was measured at ~10% fewer march steps for 1.4-2.4x the work per
 evaluation and NOT shipped. Its app-level half is
 `scripts/slice-cliff.probe.mjs`.
 
+### condensation-surface
+
+The Gearworks condensation surface's visual proof, rendered entirely through
+the SHIPPED estimators: `buildSurfaceDE`/`estimateDistanceRefined` in 3D and
+`buildSurfaceDE4`/`estimateDistance4` at the exact w=0 point slice in 4D,
+over the condensation depth band's three arms (all levels / root 0 /
+levels 1-2), with no private estimator and no second marcher.
+
+VISUAL VERDICT (2026-08-25): condensation reads — 3D coverage
+23.6/22.1/22.0% and 4D 24.6/23.9/23.8% at 196px, zero exhausted rays at 700
+steps. ROOT isolates the posed master cog, LEVELS 1-2 its first recursive
+cog images at the tetrahedron cells, ALL their recursive closure; the 4D
+embedded-solid slice resolves the same distinctions including gear holes and
+tooth silhouettes, not a w-extruded slab.
+
 ## The surface finish's sheet
 
 ### finish-pattern
@@ -515,6 +530,40 @@ the current names, and malformed or pending input fails closed. A machine pass
 remains pending, never a material-name release verdict, until that blinded
 owner decision passes.
 
+### finish-reflection
+
+The reflection half of the "the metal does not look like metal" rejection's
+missing instrument. Four verdicts: a fractal is NOT a mirror — a
+self-similar surface reflects INCOHERENTLY at rendering resolution (16x
+supersampling converges to grey), and the sheet refuted its own first
+draft's "returns the environment's mean" (checkerboard vs equal-mean uniform
+sky: a flat 85/255); the reflection normal must be FILTERED — widening the
+shading normal's tap for the reflection direction alone recovers coherence
+(mean luminance unchanged, 25.6/255 of every pixel moves) — but the filter
+has a window and fights the tracer, and its pixel-multiple parameterisation
+is wrong (the coherence peak moved 8x -> 20x under a 1.53x panel resize), so
+the shippable form is a world-space width or Toksvig/LEAN-style variance
+filtering; and a tracer TRANSPORTS light, never creates it — on the shipped
+dark backdrop three traced bounces moved mean luminance 26.7 -> 23.7, so the
+emitting environment (widened sun lobe, radiating floor/sky room) is the
+input tracing consumes and comes first, after which one bounce buys
+properly-dark recesses (1.0% -> 18.5%) and the per-transform colour transfer
+no cheaper approach reaches. Its local shading is pinned `finishShadeTs`-exact
+at the shipped constants.
+
+### finish-pattern-review-score
+
+The blinded owner-review validator's own test harness
+(`scripts/finish-pattern-review-score.ts`, the module
+`npm run verify:pattern-release-review` executes): it pins the schema-3
+fail-closed contract — an explicit owner `approve` passes with recognition
+reported as evidence, not turned into a threshold; a pending template
+without a frozen verdict is rejected; a `downgrade-name` verdict requires
+the named family and a distinct replacement; downgrade metadata on an
+approval and duplicate responses are rejected. No measured panels; the
+protocol it serves is the `pattern-release production-browser gate` section
+above.
+
 ## The Surprise Me generator's sheet
 
 ### surprise-residual
@@ -576,6 +625,24 @@ sweep measured it flat on a fold one.
 
 The supersampling and palette-ramp evidence: the speckle is sub-pixel, the
 ramp is bottom-heavy.
+
+### escape-trap-geometry
+
+The shape-trap geometry decision: the production estimator ships
+`min(escapeSet, trap)`, this sheet keeps the rejected trap-only arm local,
+and the rendered sheet draws base / min-union / trap-only over the canonical
+Mandelbox and the two-link fold chain with the peace sign and gear. Its
+numeric leg compares local shape damping at 1.0 / the production 0.9 / a
+stronger 0.7, probing ten fixed directions per check — a hit is an overshoot
+witness; a miss is comparative evidence only, not a bound proof.
+
+VERDICT (2026-08-25): ship `min(set, trap)` — union preserves the escape
+object and grows legible trapped structure from it (84,386 hits vs base
+78,988 vs trap-only 38,494, base and union exhausting zero rays), and
+damping 0.9 improves the undamped full-radius comparison (92/74/75 at
+1.0/0.9/0.7) without worsening the shipped 0.35 step comparison (44/44/33);
+the stronger 0.7 buys nothing that justifies a second safety constant beside
+the shared 0.9.
 
 ### slab-ball-slack
 
@@ -984,3 +1051,16 @@ sheet also corrects an inherited figure: canonical finite acceptance is
 `1/order` only for a chamber-balanced fixture, and pentatope measured
 3.026%/1.955%/0.698% under A4/B4/F4. Full architecture, per-arm policies and
 refusals are in `docs/tiling-contract.md`'s 4D Solid representation section.
+
+### flame-tiling-4d
+
+The 4D Flame slice-aware lattice proposal CDF's sheet: whether Solid's
+slice-visibility re-weighting transfers to Flame's 2D histogram prior to any
+WGSL lift (the 256 KiB plan-cap question is a later phase and deliberately
+not measured here). The verdict and its full record are in
+`docs/tiling-contract.md`'s "4D Flame lattice proposal: measured refusal"
+section: the raw accumulator gain is real, unbiased and cost-free (L1
+0.63x/0.72x of shipped), but the proposal is REFUSED on the shipped
+tone-mapped display — the off-centre regression is entirely ghost-borne, and
+the ghost mass the log-density curve amplifies is flame-authored mass
+Solid's display lacks.

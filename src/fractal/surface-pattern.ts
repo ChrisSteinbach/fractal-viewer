@@ -2,8 +2,12 @@
  * The document domain and accepted CPU oracle for per-transform surface
  * patterns. This module is deliberately dependency-free: persistence keeps
  * authored values faithfully, while this module alone owns defaults, clamps,
- * stable wire ids, and the V3 pattern arithmetic the renderers will mirror.
- * No renderer reads the document field yet.
+ * stable wire ids, and the V3 pattern arithmetic. The field SHIPS end to
+ * end: persistence round-trips it (encode/decodeSurfacePattern),
+ * surface-slots.ts routes each transform's authored pattern into the
+ * surface material slots, and all three renderers — the 3D and 4D GLSL
+ * tracers and the WGSL compute kernel — embed surface-pattern-shade.ts's
+ * emitted mirror of this module's arithmetic.
  */
 type Vec3 = [number, number, number];
 
@@ -42,7 +46,8 @@ export const SURFACE_PATTERN_SCALE_MIN = 0.5;
 export const SURFACE_PATTERN_SCALE_MAX = 32;
 export const SURFACE_PATTERN_DEFAULT_STRENGTH = 1;
 
-/** Stable exact-float ids reserved for the later shared material packer. */
+/** Stable exact-float ids the shared material packer encodes
+ * (`surface-material-wire.ts`). */
 export const SURFACE_PATTERN_KIND_WIRE_ID: Readonly<
   Record<PatternKind, 0 | 1 | 2 | 3>
 > = { none: 0, wood: 1, marble: 2, strata: 3 };
@@ -70,11 +75,13 @@ export interface SurfaceNativeCarrierSample {
 }
 
 /**
- * Compact host/shader contract for both native carriers. The future shader
- * wire is exactly `(ringsLow, ringsInvSpan, sheetsLow, sheetsInvSpan)`.
- * `invSpan === 0` is the sole disabled-carrier signal; percentile diagnostics
- * (`high`, `enabled`, and `sampleCount`) remain host-side evidence rather than
- * consuming renderer storage.
+ * Compact host/shader contract for both native carriers. The shader wire is
+ * exactly `(ringsLow, ringsInvSpan, sheetsLow, sheetsInvSpan)` — the order
+ * `surface-pattern-shade.ts`'s shade body and its `patternShadeTs` mirror
+ * read, carried to the tracers on `surface-material-wire.ts`'s
+ * patternCalibration. `invSpan === 0` is the sole disabled-carrier signal;
+ * percentile diagnostics (`high`, `enabled`, and `sampleCount`) remain
+ * host-side evidence rather than consuming renderer storage.
  */
 export interface SurfaceNativeCalibration {
   ringsLow: number;
@@ -129,7 +136,9 @@ export const PATTERN_DETAIL_MIX: Readonly<
   strata: 1,
 };
 
-/** Exact prototype defaults to carry into the downstream authoring bead. */
+/** Exact accepted V3 default scales, read by ui.ts's pattern controls,
+ * morph.ts's absent-side lerp fallback, and surface-pattern-shade.ts's
+ * marble normalization. */
 export const PATTERN_DEFAULT_SCALE: Readonly<
   Record<SurfacePatternKind, number>
 > = {
