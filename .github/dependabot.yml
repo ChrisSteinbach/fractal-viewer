@@ -36,3 +36,6 @@ updates:
       # npm view typescript-eslint peerDependencies
       - dependency-name: typescript
         versions: [">=6.0.0"]
+      # Toolchain-consistency hold: the types must track the Node 22 engine line.
+      - dependency-name: "@types/node"
+        versions: [">=23.0.0"]
