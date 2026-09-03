@@ -2305,6 +2305,19 @@ export class Ui {
    */
   private surfaceAnnouncedEngine: string | null = null;
   private surfaceAntialiasingAnnounced = false;
+  /**
+   * The progress state {@link setSurfaceProgress} last actually rendered —
+   * surface mode's caller re-sends a settled frame's snapshot every RAF tick,
+   * so the setter compares before writing. Keyed on the FULL rendered state
+   * (text, bar, row visibility, skip visibility), never pct alone: a cheap
+   * system's null -> 100% -> null cycle must keep landing.
+   */
+  private surfaceProgressApplied: {
+    text: string;
+    progressValue: string;
+    rowHidden: boolean;
+    skipHidden: boolean;
+  } | null = null;
   // The render-mode blocks that are NOT part of any accordion section. They
   // sit above ALL the sections in index.html: floating content wedged between
   // two collapsed headers reads as the open content of the header above it.
@@ -7104,24 +7117,41 @@ export class Ui {
       skippable?: boolean;
     } | null,
   ): void {
-    this.surfaceSkipPreviewBtn.classList.toggle(
-      "hidden",
-      progress?.skippable !== true,
-    );
+    const text =
+      progress === null
+        ? ""
+        : `${progress.label} ${String(progress.pct)}%${progress.detail ? ` — ${progress.detail}` : ""}`;
+    const progressValue = progress === null ? "0%" : `${String(progress.pct)}%`;
+    const rowHidden = progress === null;
+    const skipHidden = progress?.skippable !== true;
+    const applied = this.surfaceProgressApplied;
+    if (
+      applied !== null &&
+      applied.text === text &&
+      applied.progressValue === progressValue &&
+      applied.rowHidden === rowHidden &&
+      applied.skipHidden === skipHidden
+    ) {
+      return;
+    }
+    this.surfaceProgressApplied = {
+      text,
+      progressValue,
+      rowHidden,
+      skipHidden,
+    };
+    this.surfaceSkipPreviewBtn.classList.toggle("hidden", skipHidden);
     if (progress === null) {
       // Clear text too, not just hide: a stale "99%" left in textContent
       // reads as a live percent to settle-scraping harnesses.
       this.surfaceProgress.textContent = "";
       this.surfaceProgress.classList.add("hidden");
-      this.surfaceProgress.style.setProperty("--progress", "0%");
+      this.surfaceProgress.style.setProperty("--progress", progressValue);
       this.announceSurfaceProgress(null);
       return;
     }
-    this.surfaceProgress.textContent = `${progress.label} ${String(progress.pct)}%${progress.detail ? ` — ${progress.detail}` : ""}`;
-    this.surfaceProgress.style.setProperty(
-      "--progress",
-      `${String(progress.pct)}%`,
-    );
+    this.surfaceProgress.textContent = text;
+    this.surfaceProgress.style.setProperty("--progress", progressValue);
     this.surfaceProgress.classList.remove("hidden");
     this.announceSurfaceProgress(progress);
   }
