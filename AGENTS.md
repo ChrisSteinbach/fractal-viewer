@@ -123,7 +123,8 @@ ordering and examples are in `docs/panel-ia.md`.
 ## Commands
 
 ```bash
-npm test              # Lint + tests (runs npm run lint, then vitest run)
+npm test              # Tests only (vitest run)
+npm run typecheck     # The three tsc programs lint type-checks
 npm run test:watch    # Tests in watch mode
 npm run test:coverage # Tests with coverage report
 npm run lint          # Type-check + ESLint + Stylelint + Prettier check
@@ -138,6 +139,9 @@ npm run preview       # Preview the production build locally
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
 npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
 npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores; eval/march baselines + the app path's march-unproject/shade) to its CPU oracles; add --display=:0 for real-driver timing. Run it on a QUIET machine, never beside the test suite: a contended software device corrupts mid-run readbacks, which the contended-device canary reports as verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido carries a known SwiftShader-only false failure and the flip cap must NOT be raised to make it green. Fixtures, caps and measured rows: docs/gpu-bench-surface.md
+npm run bench:mesh-sdf # 64³ trefoil cold-bake vs its 2s budget, BVH-vs-exact agreement
+npm run verify:pattern-release # Production-browser owner gate: drives the built app (preflight calibration, 128-cell machine matrix) -> blinded owner deck
+npm run verify:pattern-release-review # Scores a frozen blinded owner review; only an explicit "approve" passes
 ```
 
 **`--display=:0` NEEDS AN X COOKIE, and without it every gate that offers it
@@ -304,7 +308,7 @@ substitution and the pre-fix figures — in `docs/architecture.md`.
 
 Husky runs lint-staged on every commit, auto-fixing ESLint + Prettier on staged
 `src/` `.ts` files (a staged `scripts/*.ts` gets Prettier only — its lint waits
-for `npm test`) and Stylelint + Prettier on staged `.css` files. Hooks are installed by
+for `npm run lint`) and Stylelint + Prettier on staged `.css` files. Hooks are installed by
 `npm install` (via the `prepare` script). The beads integration block in each hook
 keeps issues synced with git.
 
@@ -2141,7 +2145,7 @@ When ending a work session, work is NOT complete until `git push` succeeds.
    the PR description and the closing summary with the reason and a shaped bead.
    See **Dimensional Parity** at the top of this file.
 2. **File issues for remaining work** — capture follow-ups in `bd`.
-3. **Run quality gates** (if code changed) — `npm test`, `npm run build`.
+3. **Run quality gates** (if code changed) — `npm test`, `npm run lint`, `npm run build`.
 4. **Update issue status** — close finished work, update in-progress items.
 5. **Push to remote** — rebase on its remote when one exists, push the feature
    branch and open a PR to `main`.
