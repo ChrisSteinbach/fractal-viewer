@@ -535,7 +535,7 @@ async function main() {
       ? SURFACE_SHADE_AB_TIMEOUT_MS
       : SURFACE_BENCH_TIMEOUT_MS
     : BENCH_TIMEOUT_MS;
-  // fr-fnx4: only the unsharded flame sweep scales its wait with completed
+  // Only the unsharded flame sweep scales its wait with completed
   // scenarios. CI's `--shard` contract and the surface section's separately
   // calibrated 30/60-minute caps stay byte-for-byte in their old total-wait
   // mode, preserving the workflow's script-trips-before-job ordering.

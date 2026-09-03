@@ -82,8 +82,8 @@
  *     threshold — crossing strips benignly, the escape+balloon precedent)
  *     and the documented ~80KB Mesa link cliff (82.2KB crashed Mesa
  *     outright; `docs/surface-glsl-tracers.md`). This is the budget the
- *     compile-gated tiling arm (fr-fn9j's bead) must fit into; the real
- *     Mesa link is that bead's own gate.
+ *     compile-gated finite tiling arm must fit into; the real
+ *     Mesa link of an armed session is that arm's own gate.
  *
  * THE VERDICT. GO iff every fixture shows zero measured overshoot
  * (jittered/uniform/wall classes hard zero at the 1e-9 threshold; the
@@ -196,7 +196,7 @@
  *   today) — a benign strip that SHRINKS the emitted program (the
  *   escape+balloon precedent: 64681 B resolved -> ~13KB emitted), and the
  *   emitted side stays under the cliff with the documented ~1/3 margin by
- *   construction. The fr-fn9j bead's budget: the resolved headroom of the
+ *   construction. The tiling arm's own budget: the resolved headroom of the
  *   combo the tiling arm lands on; the Mesa link is its own gate.
  *
  *   THE CLIP RULE'S MEASURED HISTORY (why it is what it is): the first

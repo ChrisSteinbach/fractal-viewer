@@ -1,5 +1,6 @@
 /**
- * Solid balloon acceptance sheet (fr-s1e7).
+ * Solid balloon acceptance sheet: measurements for the query-space echo in
+ * `voxel-material.ts`.
  *
  * This is the measurement counterpart of the query-space implementation in
  * `voxel-material.ts`.  It deliberately voxelizes the attractor ONCE, then
@@ -7,7 +8,7 @@
  * query `I(p)`.  A second echo grid would answer a different question and is
  * specifically not built here.
  *
- * The two sections measure the two risks called out by the bead:
+ * The two sections measure the two acceptance risks:
  *
  *  1. CENTRE REFUSAL. Every shipped preset is routed through the same 3D/4D
  *     flatness decision as the app, the same seeded bounds pilot and voxel
@@ -626,7 +627,7 @@ function measureWeights(fixture: Fixture): Record<string, string | number>[] {
   });
 }
 
-describe("fr-s1e7 Solid balloon acceptance measurements", () => {
+describe("Solid balloon acceptance measurements", () => {
   it("probes the packed density at every selected shipped preset's dimension-correct balloon centre", () => {
     const rows: Record<string, string | number>[] = [];
     const refused: Preset[] = [];

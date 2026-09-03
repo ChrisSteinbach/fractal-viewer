@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Declarative persisted-document fixtures for the fr-cmtl.8 pattern release
+ * Declarative persisted-document fixtures for the pattern release
  * gate. This module deliberately contains no browser or renderer code. It owns
  * only exact audited scene inputs, engine-arm legality, immutable document
  * derivation, and the hero matrix coordinate contract.

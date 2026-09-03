@@ -7319,9 +7319,9 @@ export class Ui {
   }
 
   /**
-   * The leak-dial rows: one per block pair from {@link detectXaosLeaks},
-   * "the isolated → 1% → full-merge continuum as one slider before anyone
-   * opens the matrix" (fr-wo2j.6's design). Hidden entirely with fewer
+   * The leak-dial rows: one per block pair from {@link detectXaosLeaks}.
+   * The design places the isolated → 1% → full-merge continuum as one
+   * slider before anyone opens the matrix. Hidden entirely with fewer
    * than two blocks (an untouched, or fully merged, system) — there is no
    * pair to dial. A pair whose cross entries are not a single uniform
    * value (`XaosLeak.value === null`, a hand edit) reads as "Customized"
@@ -7416,7 +7416,7 @@ export class Ui {
    * every cell a NUMERIC input rather than a slider — a grid of two dozen
    * or more tiny range thumbs is exactly the tap-jump/pan hazard
    * `slider-scroll-guard.ts` exists to police, and a plain number input
-   * sidesteps the question outright (fr-wo2j.6's own touch-hazard note).
+   * sidesteps the question outright.
    * Cells commit on `change` (blur/Enter), not `input`: the matrix rebuilds
    * itself on every commit (to refresh the leak rows and the degenerate-row
    * warnings, which a single cell edit can change), and rebuilding on

@@ -106,9 +106,7 @@ function naiveComponentBlur(
 
 describe("pattern effect release constants", () => {
   it("publishes one deeply immutable versioned threshold contract", () => {
-    expect(PATTERN_EFFECT_THRESHOLD_VERSION).toBe(
-      "fr-cmtl.8-effect-metrics-v2",
-    );
+    expect(PATTERN_EFFECT_THRESHOLD_VERSION).toBe("pattern-effect-metrics-v2");
     expect(PATTERN_EFFECT_THRESHOLDS.version).toBe(
       PATTERN_EFFECT_THRESHOLD_VERSION,
     );

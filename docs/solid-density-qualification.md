@@ -1,9 +1,10 @@
 # Sampled Solid production qualification
 
 Status: **PASS** on 2026-08-29. This file defines the release gate and is the
-durable operator record for `fr-qxyt.9`. Ignored local evidence is under
-`bench-results/fr-qxyt.9/`; the committed summary below records the environment,
-commands, thresholds, timings, pixel deltas, and verdicts needed to audit it.
+durable operator record for the upgraded-Solid real-GPU qualification. Ignored
+local evidence is under `bench-results/solid-qualification/`; the committed
+summary below records the environment, commands, thresholds, timings, pixel
+deltas, and verdicts needed to audit it.
 
 ## Contract under qualification
 
@@ -59,7 +60,7 @@ same browser context that renders the captures.
 | Field                                | Result                                                                                                                             |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
 | Date/time and timezone               | 2026-08-29 14:01–14:04 CEST (`Europe/Stockholm`)                                                                                   |
-| Git revision and branch              | `f9236e0f536ce4bdd8d7cc8d2fa28964a8fa01be`, `codex/fr-qxyt`                                                                        |
+| Git revision and branch              | `f9236e0f536ce4bdd8d7cc8d2fa28964a8fa01be`, qualification working branch                                                           |
 | Working tree clean                   | Yes before build and both timed matrices                                                                                           |
 | OS/kernel and architecture           | Linux 7.0.0-30-generic, x86_64                                                                                                     |
 | CPU and memory                       | Intel Core i7-1165G7, 8 logical CPUs, 15.4 GiB RAM                                                                                 |
@@ -148,7 +149,7 @@ it the smoke script starts a development server rather than testing `dist/`.
 ```bash
 npm run smoke -- \
   --url=https://127.0.0.1:4173 \
-  --screenshot=bench-results/fr-qxyt.9/webgl-smoke.png
+  --screenshot=bench-results/solid-qualification/webgl-smoke.png
 ```
 
 Run the same production fixture matrix through the verifier's explicit
@@ -163,7 +164,7 @@ DISPLAY=:0 node scripts/solid-hierarchy.verify.mjs \
   --resolution=192 \
   --warmups=2 \
   --captures=5 \
-  --outdir=bench-results/fr-qxyt.9/swiftshader
+  --outdir=bench-results/solid-qualification/swiftshader
 ```
 
 Run the mandatory physical-GPU arm with the same inputs. The hardware driver
@@ -181,7 +182,7 @@ node scripts/solid-hierarchy.verify.mjs \
   --resolution=192 \
   --warmups=2 \
   --captures=5 \
-  --outdir=bench-results/fr-qxyt.9/intel-iris-xe
+  --outdir=bench-results/solid-qualification/intel-iris-xe
 ```
 
 The built-in fixture ids are `default`, `affine`, `nonlinear`, `stochastic`,
@@ -247,14 +248,14 @@ produced 1.093. Both sets are retained and reported; the threshold was unchanged
 
 ### Commands and artifacts
 
-| Purpose                | Exact command/result summary                                                                                                                             | Exit/result         | Artifact                                              |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------- |
-| Commit/tree identity   | `git rev-parse HEAD && git status --short`                                                                                                               | `f9236e0...`, clean | This document                                         |
-| Full quality gates     | `npm run lint`; `npm run build`; coverage command above; both hierarchy harness commands                                                                 | PASS                | Terminal output                                       |
-| Software browser A/B   | Verifier above with `--driver=swiftshader --fixtures=affine,nonlinear,stochastic,nonlinear4d --resolution=192 --warmups=2 --captures=5 --timeout=300000` | PASS                | `bench-results/fr-qxyt.9/swiftshader/`                |
-| Hardware browser A/B   | Verifier above with `--driver=hardware --fixtures=affine,nonlinear,stochastic,nonlinear4d --resolution=192 --warmups=2 --captures=5 --timeout=300000`    | PASS                | `bench-results/fr-qxyt.9/intel-iris-xe/`              |
-| Hardware timing repeat | Same hardware command, `--fixtures=nonlinear --captures=15`                                                                                              | PASS, ratio 1.093   | `bench-results/fr-qxyt.9/intel-iris-xe-nonlinear-15/` |
-| Hardware adapter probe | `glxinfo -B`; verifier WebGL renderer query                                                                                                              | Direct Intel/Mesa   | Environment table and local `results.json`            |
+| Purpose                | Exact command/result summary                                                                                                                             | Exit/result         | Artifact                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------- |
+| Commit/tree identity   | `git rev-parse HEAD && git status --short`                                                                                                               | `f9236e0...`, clean | This document                                                   |
+| Full quality gates     | `npm run lint`; `npm run build`; coverage command above; both hierarchy harness commands                                                                 | PASS                | Terminal output                                                 |
+| Software browser A/B   | Verifier above with `--driver=swiftshader --fixtures=affine,nonlinear,stochastic,nonlinear4d --resolution=192 --warmups=2 --captures=5 --timeout=300000` | PASS                | `bench-results/solid-qualification/swiftshader/`                |
+| Hardware browser A/B   | Verifier above with `--driver=hardware --fixtures=affine,nonlinear,stochastic,nonlinear4d --resolution=192 --warmups=2 --captures=5 --timeout=300000`    | PASS                | `bench-results/solid-qualification/intel-iris-xe/`              |
+| Hardware timing repeat | Same hardware command, `--fixtures=nonlinear --captures=15`                                                                                              | PASS, ratio 1.093   | `bench-results/solid-qualification/intel-iris-xe-nonlinear-15/` |
+| Hardware adapter probe | `glxinfo -B`; verifier WebGL renderer query                                                                                                              | Direct Intel/Mesa   | Environment table and local `results.json`                      |
 
 ### Matched capture and timing data
 

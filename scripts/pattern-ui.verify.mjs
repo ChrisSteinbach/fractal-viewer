@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Surface PATTERN AUTHORING UI gate (fr-cmtl.7): does the REAL panel — the
+ * Surface PATTERN AUTHORING UI gate: does the REAL panel — the
  * transform editor's Pattern group and the Finish group's Material menu —
  * author a document that (a) stays byte-identical through every non-write
  * interaction, (b) returns to its exact original bytes when the pattern is

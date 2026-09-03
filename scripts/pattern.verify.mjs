@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * Surface PATTERN gate (fr-cmtl.5): does an AUTHORED per-transform
+ * Surface PATTERN gate: does an AUTHORED per-transform
  * `surfacePattern` visibly change the settled Surface render on the WebGL
  * fragment tracers — 3D and 4D — from a real `#v1=` document driven through
  * the real app?
  *
- * WHAT IT PROVES, and what it deliberately does not. In fr-cmtl.5 the
- * pattern ALBEDO exists only in the GLSL tracers: the WGSL compute kernel's
- * pattern math is fr-cmtl.6's bead, so a pattern-authored session on
+ * WHAT IT PROVES, and what it deliberately does not. The pattern ALBEDO
+ * this gate covers exists only in the GLSL tracers: the WGSL compute
+ * kernel's pattern math is the compute twin's
+ * (scripts/pattern.compute.verify.mjs), so a pattern-authored session on
  * compute carries the wire but still renders unpatterned. THIS GATE
  * THEREFORE FORCES THE WEBGL ARM (`?surfacegl`) ON EVERY LEG and asserts the
  * engine at capture time — a compute leg would be a false negative by
@@ -74,7 +75,7 @@
  * effect the object cannot fill.
  *
  * REAL DRIVER (--mode=x11::0, Intel Iris Xe / Mesa, ANGLE — the same
- * adapter the fr-cmtl.4 WGSL bench recorded): all three scenes reached
+ * adapter the WGSL material-slot bench recorded): all three scenes reached
  * the SETTLED 8-pass latch in both compared legs, with the same verdict
  * shape — lens3 3.81% / 0.000%, ifs4plane 1.13% / 0.000%, escape3
  * 9.19% / 0.000% — so the strength-0 identity and the pattern effect
@@ -522,9 +523,10 @@ async function runLeg(browser, args, leg, stopAt, budgetMs, log) {
     page.on("pageerror", (err) => pageErrors.push(err.message));
     await page.bringToFront();
     const base = args.url.replace(/\/+$/, "");
-    // The WebGL arm is FORCED on every leg: fr-cmtl.5's pattern math exists
-    // only in the GLSL tracers, and a compute leg would render unpatterned
-    // by design until fr-cmtl.6.
+    // The WebGL arm is FORCED on every leg: the pattern math this gate
+    // checks exists only in the GLSL tracers (the compute twin is
+    // pattern.compute.verify.mjs), so a compute leg would render
+    // unpatterned by design.
     await bootScene(page, `${base}/?surfacestate&surfacegl${leg.hash}`);
     result.labels = await readBackendLabels(page);
     const btn = await enterSurface(page);

@@ -1860,7 +1860,8 @@ export function doubleRotation(): Transform[] {
  * the object-attached grain change direction with the structure instead of
  * reading as one screen-space overlay.
  *
- * WHY THIS EXACT SYSTEM. The fr-cmtl.8 real-Intel release gate's ordinary 1x,
+ * WHY THIS EXACT SYSTEM. The pattern release gate's real-Intel matrix —
+ * its ordinary 1x,
  * slice-0 affine4 Wood card passed every effect gate, retained its variance
  * through 64x, and was the only Wood card the blinded owner named Wood. The
  * evidence remains deliberately modest (confidence 2/5 and only 2/9 exact
@@ -2099,7 +2100,7 @@ export function hyperfern(): Transform[] {
  * own internal geometry exactly.
  *
  * Exported for `state.ts`'s `appendXaosBlock` — the Xaos matrix editor's
- * "Add system as isolated block" gesture (fr-wo2j.6) reuses this exact
+ * "Add system as isolated block" gesture reuses this exact
  * algebra to seat an arbitrary picked system beside whatever is already
  * authored, rather than restating it for a general pair.
  */

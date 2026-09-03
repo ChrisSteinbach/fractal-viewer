@@ -2037,8 +2037,8 @@ function xaosBalanceTarget(existing: Transform[]): number {
 export type XaosBlockAppend = { transforms: Transform[] } | { refused: string };
 
 /**
- * "Add system as isolated block" (fr-wo2j.6's construction gesture):
- * append `incoming`'s maps to `existing`, conjugated apart along x by
+ * "Add system as isolated block" (the xaos matrix editor's construction
+ * gesture): append `incoming`'s maps to `existing`, conjugated apart along x by
  * `offsetX` ({@link computeXaosBlockOffset}, via `presets.ts`'s
  * `conjugateApart`), with block-structured chaos rows written
  * automatically — every EXISTING map's row extends with 0s toward the new
