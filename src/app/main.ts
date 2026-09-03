@@ -8691,6 +8691,14 @@ async function main(): Promise<void> {
         }
         renderEvolutionNeighborhood();
         if (result.node.childIds.length === 0) buildMutationGrid();
+      })
+      .catch((error: unknown) => {
+        if (selectionTicket !== evolutionSelectionTicket) return;
+        console.warn("Evolution selection failed unexpectedly.", error);
+        evolutionBusy = false;
+        syncEvolutionWorkspace(
+          "Retained scene was not loaded; selection stayed unchanged.",
+        );
       });
   }
 
@@ -8760,6 +8768,16 @@ async function main(): Promise<void> {
         }
         evolutionComparisonStatus = `Displaying ${slot} for comparison only.`;
         renderEvolutionNeighborhood();
+      })
+      .catch((error: unknown) => {
+        console.warn("Evolution comparison load failed unexpectedly.", error);
+        evolutionBusy = false;
+        evolutionComparisonPending = false;
+        evolutionComparisonStatus = comparisonFailureStatus(
+          slot,
+          "load-failed",
+        );
+        syncEvolutionWorkspace();
       });
   }
 
@@ -8808,6 +8826,16 @@ async function main(): Promise<void> {
           evolutionComparisonStatus =
             "Selected node could not be restored. The displayed scene is detached; start a new root to continue.";
         }
+        renderEvolutionNeighborhood();
+      })
+      .catch((error: unknown) => {
+        console.warn("Evolution restore failed unexpectedly.", error);
+        evolutionBusy = false;
+        evolutionComparisonPending = false;
+        if (clearAfter) comparison.clear(clearAfter);
+        workspace.noteOutsideEdit();
+        evolutionComparisonStatus =
+          "Selected node could not be restored. The displayed scene is detached; start a new root to continue.";
         renderEvolutionNeighborhood();
       });
   }
