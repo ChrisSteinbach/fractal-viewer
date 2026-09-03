@@ -69,6 +69,18 @@ export const COLLECTION_STORAGE_KEY = "fractal-viewer:collection";
 /** Cap on stored scenes; the oldest is evicted once a save pushes past it. */
 export const COLLECTION_CAP = 60;
 
+/**
+ * Ceiling on one thumbnail's data-URL length, in characters, enforced on
+ * EVERY path a thumbnail can enter the app from — the import file
+ * (`scene-file.ts` re-exports this constant) and the collection's and
+ * timeline's own localStorage loads, where a corrupt write, a manual edit,
+ * or a hostile hand-edit could otherwise park an arbitrarily large string
+ * in memory and under the gallery's `img.src`. The IMPORT in the name is
+ * the path it was born on. Real captured thumbnails (see `scene.ts`'s
+ * `captureThumbnail`) run roughly 10-20k characters.
+ */
+export const MAX_IMPORT_THUMBNAIL_CHARS = 256_000;
+
 /** Injectable dependencies; both default to browser globals. */
 export interface CollectionDeps {
   storage?: Pick<Storage, "getItem" | "setItem">;
@@ -114,6 +126,36 @@ export function sanitizedMode(v: unknown): SavedSceneMode | undefined {
   return v === "flame" || v === "solid" || v === "surface" ? v : undefined;
 }
 
+/**
+ * The ONE thumbnail validator, shared by every untrusted-input path a
+ * thumbnail arrives on: `scene-file.ts`'s import files (which re-export
+ * this helper and feed it every imported entry) and the collection's and
+ * timeline's own localStorage loads (`loadScenes` here, `loadTimeline` in
+ * `timeline.ts` — the same reuse pattern {@link sanitizedMode} established
+ * for the persisted mode). Returns the value unchanged when it is a string
+ * starting with `data:image/` and no longer than
+ * {@link MAX_IMPORT_THUMBNAIL_CHARS}; anything else — a non-string, a
+ * `http(s)`: URL, an over-long data URL — becomes `""`, the same degraded
+ * cosmetic form the import path has always shown. Never throws.
+ *
+ * It lives HERE, not in `scene-file.ts`, because the storage layer cannot
+ * import the file codec: `scene-file.ts` already imports this module (and
+ * evaluates `10 * COLLECTION_CAP` at its top level), so the reverse import
+ * would be a cycle that boots or crashes depending on which module the
+ * entry graph reaches first — the same reason this module deliberately
+ * imports neither `scene-file.ts` nor `persist.ts`. The `data:image/`
+ * prefix requirement doubles as the safety net: it is what guarantees a
+ * thumbnail string can never smuggle a non-image URL into the gallery's
+ * `img.src`, whichever path carried it in.
+ */
+export function sanitizeThumbnailDataUrl(v: unknown): string {
+  return typeof v === "string" &&
+    v.startsWith("data:image/") &&
+    v.length <= MAX_IMPORT_THUMBNAIL_CHARS
+    ? v
+    : "";
+}
+
 function sanitizedSolidStatusFields(
   mode: SavedSceneMode | undefined,
   value: unknown,
@@ -129,7 +171,12 @@ function sanitizedSolidStatusFields(
  * empty list. Malformed entries are dropped individually (see
  * `isSavedScene`) rather than discarding a whole otherwise-valid list, and
  * the survivors are truncated to `COLLECTION_CAP` — sliced from the front,
- * since the list is stored newest-first.
+ * since the list is stored newest-first. A survivor's `thumbnail` is
+ * sanitized at decode time via `sanitizeThumbnailDataUrl` — a hostile or
+ * corrupt stored value (anything not a `data:image/` string within the
+ * length cap) degrades to `""` exactly as the import path's does, while
+ * storage itself keeps whatever was written — so the gallery's `img.src`
+ * never sees a non-image URL from this path.
  */
 function loadScenes(
   storage: Pick<Storage, "getItem" | "setItem"> | undefined,
@@ -146,7 +193,7 @@ function loadScenes(
       .map((s) => ({
         id: s.id,
         encoded: s.encoded,
-        thumbnail: s.thumbnail,
+        thumbnail: sanitizeThumbnailDataUrl(s.thumbnail),
         createdAt: s.createdAt,
         mode: sanitizedMode(s.mode),
         ...sanitizedSolidStatusFields(

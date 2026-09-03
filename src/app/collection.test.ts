@@ -1,7 +1,9 @@
 import {
   COLLECTION_CAP,
   COLLECTION_STORAGE_KEY,
+  MAX_IMPORT_THUMBNAIL_CHARS,
   SceneCollection,
+  sanitizeThumbnailDataUrl,
 } from "./collection";
 import type { SampledSolidStatus } from "./solid-render-status";
 import { encodeScene, toSnapshot } from "./persist";
@@ -80,12 +82,14 @@ describe("SceneCollection setThumbnail", () => {
   it("replaces the entry's thumbnail and persists it", () => {
     const storage = fakeStorage();
     const collection = new SceneCollection({ storage });
-    const scene = collection.add("v1=a", "points-picture");
+    const scene = collection.add("v1=a", "data:image/png;base64,points");
 
-    expect(collection.setThumbnail(scene.id, "flame-picture")).toBe(true);
+    expect(
+      collection.setThumbnail(scene.id, "data:image/png;base64,flame"),
+    ).toBe(true);
 
     const reloaded = new SceneCollection({ storage });
-    expect(reloaded.all()[0].thumbnail).toBe("flame-picture");
+    expect(reloaded.all()[0].thumbnail).toBe("data:image/png;base64,flame");
   });
 
   it("leaves the entry's id, encoded, createdAt and mode alone", () => {
@@ -290,6 +294,75 @@ describe("SceneCollection persistence", () => {
     expect(collection.all()[0].encoded).toBe("v1=good");
   });
 
+  it('loads a hostile (non-"data:image/") stored thumbnail as "" while keeping the entry, and leaves storage as written', () => {
+    const raw = JSON.stringify([
+      {
+        id: "1",
+        encoded: "v1=good",
+        thumbnail: "https://evil.example/x.png",
+        createdAt: 100,
+      },
+    ]);
+    const storage = fakeStorage({ [COLLECTION_STORAGE_KEY]: raw });
+
+    const collection = new SceneCollection({ storage });
+
+    expect(collection.all()).toEqual([
+      {
+        id: "1",
+        encoded: "v1=good",
+        thumbnail: "",
+        createdAt: 100,
+        mode: undefined,
+      },
+    ]);
+    // Validation happens at DECODE time — storage keeps whatever was written.
+    expect(storage.store[COLLECTION_STORAGE_KEY]).toBe(raw);
+  });
+
+  it('loads an over-long stored data: thumbnail as "" while keeping the entry', () => {
+    const storage = fakeStorage({
+      [COLLECTION_STORAGE_KEY]: JSON.stringify([
+        {
+          id: "1",
+          encoded: "v1=good",
+          thumbnail:
+            "data:image/png;base64," + "a".repeat(MAX_IMPORT_THUMBNAIL_CHARS),
+          createdAt: 100,
+        },
+      ]),
+    });
+
+    const collection = new SceneCollection({ storage });
+
+    expect(collection.all()).toEqual([
+      {
+        id: "1",
+        encoded: "v1=good",
+        thumbnail: "",
+        createdAt: 100,
+        mode: undefined,
+      },
+    ]);
+  });
+
+  it("loads a valid stored data:image thumbnail unchanged", () => {
+    const storage = fakeStorage({
+      [COLLECTION_STORAGE_KEY]: JSON.stringify([
+        {
+          id: "1",
+          encoded: "v1=good",
+          thumbnail: "data:image/png;base64,aaa",
+          createdAt: 100,
+        },
+      ]),
+    });
+
+    const collection = new SceneCollection({ storage });
+
+    expect(collection.all()[0].thumbnail).toBe("data:image/png;base64,aaa");
+  });
+
   it("never throws on garbage JSON and starts empty", () => {
     const storage = fakeStorage({ [COLLECTION_STORAGE_KEY]: "not json{" });
     const collection = new SceneCollection({ storage });
@@ -315,6 +388,35 @@ describe("SceneCollection persistence", () => {
     const collection = new SceneCollection({ storage });
     expect(() => collection.add("v1=a", "")).not.toThrow();
     expect(collection.size).toBe(1);
+  });
+});
+
+describe("sanitizeThumbnailDataUrl", () => {
+  it('keeps a string that starts with "data:image/" and fits the length cap', () => {
+    expect(sanitizeThumbnailDataUrl("data:image/jpeg;base64,abcd")).toBe(
+      "data:image/jpeg;base64,abcd",
+    );
+  });
+
+  it('returns "" for a non-data:image URL (never throws)', () => {
+    expect(sanitizeThumbnailDataUrl("https://evil.example/x.png")).toBe("");
+    expect(sanitizeThumbnailDataUrl("javascript:alert(1)")).toBe("");
+    expect(sanitizeThumbnailDataUrl("data:text/html;base64,AAAA")).toBe("");
+  });
+
+  it('returns "" for an over-long data URL', () => {
+    expect(
+      sanitizeThumbnailDataUrl(
+        "data:image/png;base64," + "a".repeat(MAX_IMPORT_THUMBNAIL_CHARS),
+      ),
+    ).toBe("");
+  });
+
+  it('returns "" for non-string and absent values (never throws)', () => {
+    expect(sanitizeThumbnailDataUrl(undefined)).toBe("");
+    expect(sanitizeThumbnailDataUrl(null)).toBe("");
+    expect(sanitizeThumbnailDataUrl(123)).toBe("");
+    expect(sanitizeThumbnailDataUrl({})).toBe("");
   });
 });
 
