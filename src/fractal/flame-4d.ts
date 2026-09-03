@@ -207,6 +207,10 @@ export function accumulateFlame4(
   const { baseTransformCount, schedule, emitters } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
+  // The tone-map normalizer's input — every deposit below adds its weight
+  // here, exactly alongside the maxHits update it sits beside (flame.ts's
+  // accumulateFlame mirrors this; see FlameHistogram.hitMass).
+  let hitMass = hist.hitMass;
   // Emitter-sample stream — accumulateFlame's per-run reseedable object, one
   // primary seed draw per emitter step (chaos-game.ts's emitterSeed). Inert
   // without emitters.
@@ -349,6 +353,7 @@ export function accumulateFlame4(
           const bucket = row * width + col;
           const hit = (hits[bucket] += weight);
           if (hit > maxHits) maxHits = hit;
+          hitMass += weight;
           const offset = bucket * 3;
           sumRGB[offset] += r * weight;
           sumRGB[offset + 1] += g * weight;
@@ -674,6 +679,7 @@ export function accumulateFlame4(
       const bucket = row * width + col;
       const hit = (hits[bucket] += weight);
       if (hit > maxHits) maxHits = hit;
+      hitMass += weight;
       const o = bucket * 3;
 
       let r: number;
@@ -864,6 +870,7 @@ export function accumulateFlame4(
         const bucket = row * width + col;
         const hit = (hits[bucket] += sourceWeight);
         if (hit > maxHits) maxHits = hit;
+        hitMass += sourceWeight;
         const o = bucket * 3;
         sumRGB[o] += r * sourceWeight;
         sumRGB[o + 1] += g * sourceWeight;
@@ -914,6 +921,7 @@ export function accumulateFlame4(
         const echoWeight = sourceWeight * echo.weight;
         const hit = (hits[bucket] += echoWeight);
         if (hit > maxHits) maxHits = hit;
+        hitMass += echoWeight;
         const o = bucket * 3;
         const t = echo.tintStrength;
         sumRGB[o] += (er + (echo.tint[0] - er) * t) * echoWeight;
@@ -929,5 +937,6 @@ export function accumulateFlame4(
   hist.orbitPrevBase = prevBase;
   hist.orbitChaosLeft = chaosLeft;
   hist.maxHits = maxHits;
+  hist.hitMass = hitMass;
   return hist;
 }

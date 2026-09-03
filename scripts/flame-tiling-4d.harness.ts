@@ -123,15 +123,20 @@
  *   PER-CHANNEL-SUM (all width*height*3 channels pooled, alpha excluded —
  *   transparent buckets are black — both images normalized to a common total
  *   before the L1). TWO VARIANTS are reported per pose: `tonemapL1` maps
- *   each arm with its OWN maxHits (shipped-display behavior), and
- *   `tonemapL1Pinned` maps ALL THREE arms against the SAME maxHits — REF's —
- *   via `viewFlameHistogram` copies over each arm's own bucket arrays. The
- *   pinned variant is an INSTRUMENT, not a claim about shipped display: a
- *   concentration-driven maxHits shift renormalizes `tonemapFlame`'s whole
- *   `log1p(h)/log1p(maxHits)` curve and can masquerade as a structure
- *   change, so the pinned columns separate structure from that brightness
- *   renormalization. `maxHits` for REF/A0/A1 is reported per pose so the
- *   renormalization hypothesis is checkable directly.
+ *   each arm with its OWN normalizer (shipped-display behavior), and
+ *   `tonemapL1Pinned` maps ALL THREE arms against the SAME normalizer —
+ *   REF's — via `viewFlameHistogram` copies over each arm's own bucket
+ *   arrays. The pinned variant is an INSTRUMENT, not a claim about shipped
+ *   display: a concentration-driven normalizer shift renormalizes
+ *   `tonemapFlame`'s whole log-density curve and can masquerade as a
+ *   structure change, so the pinned columns separate structure from that
+ *   brightness renormalization. The normalizer WAS `maxHits`
+ *   (`log1p(h)/log1p(maxHits)`) when the figures below were measured;
+ *   AMENDMENT 2026-09: the curve anchors on the MEAN deposited density
+ *   (`log1p(h/mean)/log1p(FLAME_DENSITY_SATURATION)` — see flame.ts), so the
+ *   pinned instrument now pins `hitMass` and the maxHits columns are
+ *   instruments-only. The measured history below is quoted as measured and
+ *   not re-run under the new anchor.
  *
  * PREDECLARED VERDICT THRESHOLDS. Fixed here BEFORE the measured figures
  * below; a threshold failure fails the sheet loudly (that is the point):
@@ -812,12 +817,17 @@ function classSumRGB(classHits: Float64Array): Float64Array {
 
 /**
  * The CLASS tonemap instrument: tonemap one class histogram with ITS OWN
- * class maxHits (the log curve anchored to that class's own dynamic range).
+ * class mean density (the log curve anchored to that class's own deposited
+ * mass — `tonemapFlame`'s normalizer is `hitMass / (width * height)` since
+ * the mean-density-anchor change, and a `viewFlameHistogram` copy must carry
+ * the mass consistent with the arrays it wraps).
  * This is an instrument for locating WHERE a display regression lives, not
- * a shipped-display claim — the full histogram's own-maxHits tonemap stays
+ * a shipped-display claim — the full histogram's own tonemap stays
  * the shipped-behavior metric.
  */
 function tonemapClass(hits: Float64Array): Uint8ClampedArray {
+  let mass = 0;
+  for (let i = 0; i < hits.length; i++) mass += hits[i];
   return tonemapFlame(
     viewFlameHistogram(
       HIST,
@@ -825,6 +835,7 @@ function tonemapClass(hits: Float64Array): Uint8ClampedArray {
       hits,
       classSumRGB(hits),
       Math.max(classMaxHits(hits), 1e-300),
+      Math.max(mass, 1e-300),
     ),
     TONEMAP,
   );
@@ -1107,19 +1118,23 @@ const fixed = (value: number, digits = 4): string =>
   Number.isFinite(value) ? value.toFixed(digits) : "n/a";
 
 /**
- * The PINNED tonemap instrument: tonemap an arm against the SAME maxHits —
- * REF's — via a `viewFlameHistogram` copy over the arm's own bucket arrays.
- * `tonemapFlame` reads `maxHits` at entry and never writes it, so the copy
- * needs no restore. `tonemapFlame`'s density is `log1p(h)/log1p(maxHits)`:
- * a concentration-driven maxHits SHIFT renormalizes the whole curve and can
- * masquerade as a structure change. This instrument separates structure
- * from that brightness renormalization — it is NOT a claim about shipped
- * display, which always tonemaps with the histogram's own maxHits (that is
- * the unpinned `tonemapL1` column).
+ * The PINNED tonemap instrument: tonemap an arm against the SAME mean-density
+ * normalizer — REF's `hitMass` — via a `viewFlameHistogram` copy over the
+ * arm's own bucket arrays. `tonemapFlame` reads `hitMass` at entry and never
+ * writes it, so the copy needs no restore. `tonemapFlame`'s density is
+ * `log1p(h / mean) / log1p(FLAME_DENSITY_SATURATION)` since the
+ * mean-density-anchor change (it reads `maxHits` not at all — that scalar is
+ * carried only to keep the wrapped histogram's instrument bookkeeping
+ * consistent): a concentration-driven mass SHIFT renormalizes the whole curve
+ * and can masquerade as a structure change. This instrument separates
+ * structure from that brightness renormalization — it is NOT a claim about
+ * shipped display, which always tonemaps with the histogram's own mass (that
+ * is the unpinned `tonemapL1` column).
  */
 function tonemapPinned(
   hist: FlameHistogram,
   refMaxHits: number,
+  refMass: number,
 ): Uint8ClampedArray {
   return tonemapFlame(
     viewFlameHistogram(
@@ -1128,6 +1143,7 @@ function tonemapPinned(
       hist.hits,
       hist.sumRGB,
       refMaxHits,
+      refMass,
     ),
     TONEMAP,
   );
@@ -1250,16 +1266,19 @@ describe("4D Flame slice-aware lattice proposal sheet", () => {
       const toneA1 = tonemapFlame(a1.hist, TONEMAP);
       const toneL0 = tonemapRgbL1(toneA0, toneRef);
       const toneL1 = tonemapRgbL1(toneA1, toneRef);
-      // The pinned variant: all three arms tonemapped against REF's maxHits,
-      // so a maxHits renormalization cannot masquerade as a structure change.
+      // The pinned variant: all three arms tonemapped against REF's
+      // mean-density normalizer (its hitMass — the scalar the curve actually
+      // reads since the mean-density-anchor change), so a mass
+      // renormalization cannot masquerade as a structure change.
       const refMaxHits = ref.hist.maxHits;
+      const refMass = ref.hist.hitMass;
       const toneL0Pinned = tonemapRgbL1(
-        tonemapPinned(a0.hist, refMaxHits),
-        tonemapPinned(ref.hist, refMaxHits),
+        tonemapPinned(a0.hist, refMaxHits, refMass),
+        tonemapPinned(ref.hist, refMaxHits, refMass),
       );
       const toneL1Pinned = tonemapRgbL1(
-        tonemapPinned(a1.hist, refMaxHits),
-        tonemapPinned(ref.hist, refMaxHits),
+        tonemapPinned(a1.hist, refMaxHits, refMass),
+        tonemapPinned(ref.hist, refMaxHits, refMass),
       );
       const meanSlice0 =
         a0Track.stats.sliceSum / Math.max(a0Track.stats.emitted, 1);
@@ -1377,6 +1396,7 @@ describe("4D Flame slice-aware lattice proposal sheet", () => {
       // The comparison target for EVERY budget is the main run's
       // full-budget exhaustive REF — the same truth both arms converge to.
       const refMaxHits = refHist.maxHits;
+      const refMass = refHist.hitMass;
       const toneRef = tonemapFlame(refHist, TONEMAP);
       for (const factor of BUDGETS) {
         const attempts = Math.max(1, Math.round(ATTEMPTS * factor));
@@ -1392,7 +1412,7 @@ describe("4D Flame slice-aware lattice proposal sheet", () => {
           const metric = hitsMetric(hist.hits, refHist.hits);
           const toneOwn = tonemapRgbL1(tonemapFlame(hist, TONEMAP), toneRef);
           const tonePinned = tonemapRgbL1(
-            tonemapPinned(hist, refMaxHits),
+            tonemapPinned(hist, refMaxHits, refMass),
             toneRef,
           );
           rows.push({
@@ -1410,12 +1430,16 @@ describe("4D Flame slice-aware lattice proposal sheet", () => {
       }
       // SCALE CONTROL (report-only): REF's own histogram with hits AND
       // sumRGB doubled — a zero-noise 2x-exposure image of the SAME truth.
-      // Tonemapped against REF itself, whatever this scores is the log1p
-      // curve's scale non-invariance ALONE (2x counts reshape the density
-      // curve), with no estimation error and no proposal — bounding how
-      // much of any 2x-budget row's tonemapped L1 is instrument rather
-      // than estimator quality. The pinned variant is the control for the
-      // pinned 2x rows.
+      // Tonemapped against REF itself, whatever this scores is the log curve's
+      // scale (non-)invariance ALONE, with no estimation error and no
+      // proposal — bounding how much of any 2x-budget row's tonemapped L1 is
+      // instrument rather than estimator quality. Under the MEAN-DENSITY
+      // ANCHOR (tonemapFlame's density reads h/hitMass-mean since 2026-09)
+      // doubling hits AND mass leaves every h/mean ratio untouched, so the
+      // own variant now scores ~0 by construction — it is the ratio
+      // invariance's executable witness; the pinned variant (doubled hits
+      // against REF's UNDOUBLED mass) is the genuine 2x-exposure control for
+      // the pinned 2x rows.
       const doubled = new Float64Array(refHist.hits.length);
       const doubledRGB = new Float64Array(refHist.sumRGB.length);
       for (let i = 0; i < doubled.length; i++) {
@@ -1432,6 +1456,7 @@ describe("4D Flame slice-aware lattice proposal sheet", () => {
             doubled,
             doubledRGB,
             refHist.maxHits * 2,
+            refHist.hitMass * 2,
           ),
           TONEMAP,
         ),
@@ -1445,8 +1470,10 @@ describe("4D Flame slice-aware lattice proposal sheet", () => {
             doubled,
             doubledRGB,
             refHist.maxHits,
+            refHist.hitMass,
           ),
           refMaxHits,
+          refMass,
         ),
         toneRef,
       );

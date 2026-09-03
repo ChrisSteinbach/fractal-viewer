@@ -3190,15 +3190,17 @@ async function main(): Promise<void> {
   // of a tone-mapped image. Either way the big oversampled accumulator never
   // leaves the worker. The shared-transport session: the two SAB-backed frame
   // slots this side allocated for the current render, plus which slot the
-  // worker most recently told us to read (and its maxHits — the one
-  // tonemapFlame input that isn't in the shared arrays). null whenever the
+  // worker most recently told us to read (and its two scalars — maxHits, an
+  // instrument, and hitMass, the sum of the slot's hits, which is the one
+  // tonemapFlame input that isn't in the shared arrays: the tone-map's mean
+  // deposited density normalizer). null whenever the
   // current render runs in transfer mode (not isolated, or the slots failed
   // to allocate).
   interface FlameSharedSession {
     frames: [SharedFrameBuffers, SharedFrameBuffers];
     width: number;
     height: number;
-    last: { slot: number; maxHits: number } | null;
+    last: { slot: number; maxHits: number; hitMass: number } | null;
   }
   let flameShared: FlameSharedSession | null = null;
   // What the CURRENT flame session actually accumulates at, i.e. what a
@@ -3260,7 +3262,14 @@ async function main(): Promise<void> {
     const { frames, width, height, last } = flameShared;
     const frame = frames[last.slot];
     const image = tonemapFlame(
-      viewFlameHistogram(width, height, frame.hits, frame.sumRGB, last.maxHits),
+      viewFlameHistogram(
+        width,
+        height,
+        frame.hits,
+        frame.sumRGB,
+        last.maxHits,
+        last.hitMass,
+      ),
       {
         exposure: state.flame.exposure,
         gamma: state.flame.gamma,
@@ -3293,11 +3302,16 @@ async function main(): Promise<void> {
         break;
       case "sharedFrame":
         // Shared-mode counterpart to "progress": the frame is already in
-        // the named shared slot; remember which one (plus its maxHits) and
-        // tone-map it here. The guard is defensive — a sharedFrame can only
-        // arrive from a session this side started WITH shared frames.
+        // the named shared slot; remember which one (plus its maxHits and
+        // hitMass) and tone-map it here. The guard is defensive — a
+        // sharedFrame can only arrive from a session this side started WITH
+        // shared frames.
         if (flameShared) {
-          flameShared.last = { slot: event.slot, maxHits: event.maxHits };
+          flameShared.last = {
+            slot: event.slot,
+            maxHits: event.maxHits,
+            hitMass: event.hitMass,
+          };
           presentSharedFrame();
           ui.setFlameProgress(event.iterationsDone, event.iterationsBudget);
           noteRenderProgress(

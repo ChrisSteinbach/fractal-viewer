@@ -1,5 +1,6 @@
 import {
   DEFAULT_GAMMA_THRESHOLD,
+  FLAME_DENSITY_SATURATION,
   accumulateFlame,
   adaptiveDownsampleFlame,
   clampSupersampleToBudget,
@@ -853,6 +854,149 @@ describe("accumulateFlame balloon echo", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The hitMass invariant: the tone-map's normalizer must be the exact sum of
+// the `hits` array, so EVERY deposit site — the plain plot, the tiling
+// visitor's weighted mirrors, the balloon echo's second splat — has to
+// account its weight into the running mass. One missed site fails these
+// loudly instead of silently shifting every render's exposure.
+// ---------------------------------------------------------------------------
+
+/** sum(hist.hits) === hist.hitMass within a relative 1e-9 (fp-tolerant). */
+function expectMassEqualsHits(hist: FlameHistogram): void {
+  let sum = 0;
+  for (let i = 0; i < hist.hits.length; i++) sum += hist.hits[i];
+  expect(Math.abs(hist.hitMass - sum)).toBeLessThanOrEqual(
+    1e-9 * Math.max(1, Math.abs(sum)),
+  );
+}
+
+describe("FlameHistogram hitMass invariant", () => {
+  it("accumulateFlame: hitMass is the exact sum of hits after a plain run", () => {
+    const hist = accumulateFlame(
+      prepareChaosGame(sierpinskiTetrahedron()),
+      ORTHOGRAPHIC,
+      32,
+      32,
+      20_000,
+      mulberry32(3),
+      transformColors(4),
+    );
+    expectMassEqualsHits(hist);
+  });
+
+  it("accumulateFlame: hitMass survives chunked accumulation exactly like one shot", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const palette = transformColors(4);
+    const rng = mulberry32(5);
+    let chunked = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      2000,
+      rng,
+      palette,
+    );
+    chunked = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      3000,
+      rng,
+      palette,
+      chunked,
+    );
+    const oneShot = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      5000,
+      mulberry32(5),
+      palette,
+    );
+    expect(chunked.hitMass).toBe(oneShot.hitMass);
+    expectMassEqualsHits(chunked);
+  });
+
+  it("accumulateFlame: echo deposits count their weight into the mass", () => {
+    const hist = accumulateFlame(
+      prepareChaosGame(fixedPointSystem([0.25, 0, 0])),
+      ORTHOGRAPHIC,
+      20,
+      20,
+      6,
+      mulberry32(2),
+      [[0.8, 0.2, 0.1]],
+      undefined,
+      undefined,
+      {
+        balloon: buildBalloonFromBall(
+          { center: [0, 0, 0] as Vec3, radius: 0.5 },
+          Math.SQRT1_2,
+        ),
+        tint: [0, 1, 0],
+        tintStrength: 1,
+        weight: 0.5,
+      },
+    );
+    // 6 primary hits (weight 1 each) + 6 echo splats (weight 0.5 each).
+    expect(hist.hitMass).toBeCloseTo(6 + 6 * 0.5, 12);
+    expectMassEqualsHits(hist);
+  });
+
+  it("accumulateFlame: tiling mirror deposits count their weight into the mass", () => {
+    const plan = resolvePointTilingPlan(resolveTiling({ group: "a3" }), 3)!;
+    const hist = accumulateFlame(
+      prepareChaosGame(fixedPointSystem([0.3, 0.3, 0.3])),
+      ORTHOGRAPHIC,
+      16,
+      16,
+      200,
+      mulberry32(3),
+      [[1, 1, 1]],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      plan,
+    );
+    expect(hist.pointTiling).toBeDefined();
+    expectMassEqualsHits(hist);
+  });
+
+  it("downsampleFlame: recomputes the mass exactly from its output buckets", () => {
+    const oversized = unevenSource();
+    const out = downsampleFlame(oversized, 3, 3, 0.5);
+    expectMassEqualsHits(out);
+    // And into a reused (dirty) target, where a leaked stale mass would
+    // shift the whole tone map.
+    const target = dirtyTarget();
+    downsampleFlame(oversized, 3, 3, 0.5, target);
+    expectMassEqualsHits(target);
+  });
+
+  it("adaptiveDownsampleFlame: recomputes the mass exactly from its output buckets", () => {
+    const oversized = unevenSource();
+    const params: DensityEstimatorParams = {
+      estimatorRadius: 3,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 0.4,
+    };
+    const out = adaptiveDownsampleFlame(oversized, 3, 3, {
+      estimatorRadius: 3,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 0.4,
+    });
+    expectMassEqualsHits(out);
+    const target = dirtyTarget();
+    adaptiveDownsampleFlame(oversized, 3, 3, params, target);
+    expectMassEqualsHits(target);
+  });
+});
+
 describe("accumulateFlame determinism", () => {
   it("produces identical histograms for the same seed", () => {
     const prepared = prepareChaosGame(makeTransforms(3));
@@ -1521,20 +1665,29 @@ function neutral(exposure: number): TonemapParams {
   };
 }
 
-/** The plain log-density tone-map, written out independently — the oracle
- * "collapses to the neutral tonemap" pins tonemapFlame against. */
+/**
+ * The mean-relative log-density tone-map, written out independently — the
+ * oracle "collapses to the neutral tonemap" pins tonemapFlame against. It
+ * implements the NEW density form (`log1p(h / mean) /
+ * log1p(FLAME_DENSITY_SATURATION)`, mean = hitMass / (width * height)) and
+ * reads the same declared input (`hitMass`) the production curve does; that
+ * the mass really is the sum of the `hits` array is pinned separately by the
+ * hitMass invariant tests below, so this file never compares two copies of a
+ * broken bookkeeping against each other blind.
+ */
 function tonemapFlameNeutralOracle(
   histogram: FlameHistogram,
   exposure: number,
 ): Uint8ClampedArray {
-  const { width, height, hits, sumRGB, maxHits } = histogram;
+  const { width, height, hits, sumRGB, hitMass } = histogram;
   const out = new Uint8ClampedArray(width * height * 4);
-  if (maxHits <= 0) return out;
-  const logMax = Math.log1p(maxHits);
+  if (hitMass <= 0) return out;
+  const mean = hitMass / (width * height);
+  const logSaturation = Math.log1p(FLAME_DENSITY_SATURATION);
   for (let i = 0; i < hits.length; i++) {
     const h = hits[i];
     if (h <= 0) continue;
-    const brightness = (Math.log1p(h) / logMax) * exposure;
+    const brightness = (Math.log1p(h / mean) / logSaturation) * exposure;
     const invHits = 1 / h;
     const o = i * 3;
     const oi = i * 4;
@@ -1879,6 +2032,7 @@ describe("tonemapFlame", () => {
   ): FlameHistogram {
     const hist = createFlameHistogram(width, height);
     let maxHits = 0;
+    let hitMass = 0;
     for (const { bucket, hits, color } of entries) {
       hist.hits[bucket] = hits;
       const o = bucket * 3;
@@ -1886,8 +2040,10 @@ describe("tonemapFlame", () => {
       hist.sumRGB[o + 1] = color[1] * hits;
       hist.sumRGB[o + 2] = color[2] * hits;
       maxHits = Math.max(maxHits, hits);
+      hitMass += hits;
     }
     hist.maxHits = maxHits;
+    hist.hitMass = hitMass;
     return hist;
   }
 
@@ -1913,15 +2069,31 @@ describe("tonemapFlame", () => {
     expect(image[0 * 4]).toBeLessThan(image[1 * 4]);
   });
 
-  it("compresses via log density: a single hit still reads well above black", () => {
+  it("keeps a lone hit legible when the frame is sparse (mean-relative, by hand)", () => {
+    // One hit in a 4x4 frame: mean deposited density = 1/16, so the bucket
+    // sits at 16x the mean and its density is log1p(16)/log1p(32) ~= 0.817
+    // by hand — a LINEAR hits-vs-area ratio would read 16/65536 of full
+    // brightness (byte 0). The log keeps sparse structure legible.
+    const hist = histogramWith([{ bucket: 0, hits: 1, color: [1, 1, 1] }]);
+    const image = tonemapFlame(hist, neutral(1));
+    const density = Math.log1p(16) / Math.log1p(FLAME_DENSITY_SATURATION);
+    const expected = new Uint8ClampedArray([density * 255]);
+    expect(image[0]).toBe(expected[0]);
+    expect(image[0]).toBeGreaterThan(10);
+  });
+
+  it("dims a lone hit that rides beside a bucket 10^6 times denser (the hot core may saturate, the mean anchors)", () => {
+    // THE LOOK CHANGE, pinned: under the old maxHits curve this lone hit
+    // read ~10 (log1p(1)/log1p(1e6+1)); under the mean-relative curve the
+    // 1e6-hit bucket drags the mean up and the lone hit's h/mean collapses
+    // to ~1.6e-5 — byte 0. A single stray hit no longer glows in a
+    // converged frame; that is the anchor's point.
     const hist = histogramWith([
       { bucket: 0, hits: 1, color: [1, 1, 1] },
       { bucket: 1, hits: 1_000_000, color: [1, 1, 1] },
     ]);
     const image = tonemapFlame(hist, neutral(1));
-    // A linear hits/maxHits ratio would put this near 0/255; log-density
-    // keeps a lone visited bucket clearly legible.
-    expect(image[0]).toBeGreaterThan(10);
+    expect(image[0]).toBe(0);
   });
 
   it("scales brightness with exposure", () => {
@@ -1954,8 +2126,8 @@ describe("tonemapFlame", () => {
 
 describe("tonemapFlame collapses to the neutral tonemap at gamma: 1, vibrancy: 1", () => {
   // A render that never touches gamma/vibrancy must see byte-for-byte the
-  // plain log-density tone-map: the controls' terms must be exact no-ops at
-  // their neutral values, not merely close.
+  // mean-relative log-density tone-map: the controls' terms must be exact
+  // no-ops at their neutral values, not merely close.
   function histogramWith(
     entries: { bucket: number; hits: number; color: Vec3 }[],
     width: number,
@@ -1963,6 +2135,7 @@ describe("tonemapFlame collapses to the neutral tonemap at gamma: 1, vibrancy: 1
   ): FlameHistogram {
     const hist = createFlameHistogram(width, height);
     let maxHits = 0;
+    let hitMass = 0;
     for (const { bucket, hits, color } of entries) {
       hist.hits[bucket] = hits;
       const o = bucket * 3;
@@ -1970,8 +2143,10 @@ describe("tonemapFlame collapses to the neutral tonemap at gamma: 1, vibrancy: 1
       hist.sumRGB[o + 1] = color[1] * hits;
       hist.sumRGB[o + 2] = color[2] * hits;
       maxHits = Math.max(maxHits, hits);
+      hitMass += hits;
     }
     hist.maxHits = maxHits;
+    hist.hitMass = hitMass;
     return hist;
   }
 
@@ -2018,10 +2193,16 @@ describe("tonemapFlame gamma", () => {
     hist.sumRGB[1] = hits;
     hist.sumRGB[2] = hits;
     hist.maxHits = maxHits;
+    // A consistent fixture: the mass IS the sum of the hits array (the mean
+    // is then hits / 2 across the two buckets), which is the discipline
+    // every tonemap fixture in this file keeps.
+    hist.hitMass = hits;
     return hist;
   }
 
   it("above 1, brightens a faint (low-density) bucket relative to gamma: 1", () => {
+    // h/mean = 2 -> density = log1p(2)/log1p(32) ~= 0.317, well below the
+    // hot end, so the gamma reshape has room to brighten it.
     const hist = singleBucketHist(2, 1_000_000);
     const plain = tonemapFlame(hist, {
       exposure: 1,
@@ -2055,9 +2236,26 @@ describe("tonemapFlame gamma", () => {
     expect(flat[0]).toBeLessThan(plain[0]);
   });
 
-  it("leaves the fully-saturated (maximum-density) bucket at full brightness regardless of gamma", () => {
-    // density = 1 at the hottest bucket; 1 ** (1/gamma) === 1 for any gamma.
-    const hist = singleBucketHist(1_000_000, 1_000_000);
+  it("leaves a bucket at exactly FLAME_DENSITY_SATURATION x mean at full brightness regardless of gamma", () => {
+    // density = 1 exactly where h/mean = FLAME_DENSITY_SATURATION (the
+    // curve's own ceiling): log1p(32)/log1p(32) === 1, and 1 ** (1/gamma)
+    // === 1 for any gamma. Built by hand: one bucket at 3200 hits plus
+    // 3200 more spread over the other 63 buckets of a 64-wide row gives
+    // mass 6400, mean 100, h/mean 32 for bucket 0.
+    const hist = createFlameHistogram(64, 1);
+    hist.hits[0] = 3200;
+    hist.sumRGB[0] = 3200;
+    hist.sumRGB[1] = 3200;
+    hist.sumRGB[2] = 3200;
+    for (let i = 1; i < 64; i++) {
+      hist.hits[i] = i === 1 ? 100 : 50;
+      hist.sumRGB[i * 3] = hist.hits[i];
+      hist.sumRGB[i * 3 + 1] = hist.hits[i];
+      hist.sumRGB[i * 3 + 2] = hist.hits[i];
+    }
+    hist.maxHits = 3200;
+    hist.hitMass = 6400;
+
     const gamma1 = tonemapFlame(hist, {
       exposure: 1,
       gamma: 1,
@@ -2070,6 +2268,41 @@ describe("tonemapFlame gamma", () => {
       gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
       vibrancy: 1,
     });
+    expect(gamma1[0]).toBe(255);
+    expect(gamma4[0]).toBe(gamma1[0]);
+  });
+
+  it("saturates a bucket far above the ceiling to the same full brightness", () => {
+    // The h/mean = 32 point is the anchor, not a clamp on the curve's value:
+    // past it the density keeps rising (here h/mean = 42.7, density 1.09)
+    // and the 8-bit output has nowhere to go but white, at any gamma.
+    const hist = createFlameHistogram(64, 1);
+    hist.hits[0] = 12_800;
+    hist.sumRGB[0] = 12_800;
+    hist.sumRGB[1] = 12_800;
+    hist.sumRGB[2] = 12_800;
+    for (let i = 1; i < 64; i++) {
+      hist.hits[i] = 100;
+      hist.sumRGB[i * 3] = hist.hits[i];
+      hist.sumRGB[i * 3 + 1] = hist.hits[i];
+      hist.sumRGB[i * 3 + 2] = hist.hits[i];
+    }
+    hist.maxHits = 12_800;
+    hist.hitMass = 12_800 + 63 * 100;
+
+    const gamma1 = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 1,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 1,
+    });
+    const gamma4 = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 4,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 1,
+    });
+    expect(gamma1[0]).toBe(255);
     expect(gamma4[0]).toBe(gamma1[0]);
   });
 });
@@ -2077,28 +2310,38 @@ describe("tonemapFlame gamma", () => {
 describe("tonemapFlame gammaThreshold", () => {
   it("is continuous across the threshold: densities just below and just above it read nearly identically", () => {
     // Solve for the (real-valued) hit count whose density lands exactly on
-    // the threshold, then take the integer hit counts immediately below and
-    // above it — their densities straddle the threshold as tightly as an
-    // integer hit count allows. A large maxHits keeps consecutive integers'
-    // densities close together near the crossing (log1p is steep for small
-    // maxHits, which would make even adjacent integers straddle by a lot).
-    const maxHits = 1_000_000_000;
+    // the threshold — under the mean-relative form, log1p(h/mean) /
+    // log1p(FLAME_DENSITY_SATURATION) = threshold means
+    // h = mean * expm1(threshold * log1p(FLAME_DENSITY_SATURATION)) — then
+    // take the integer hit counts immediately below and above it. A third
+    // filler bucket pins the mean independently of the two straddling
+    // buckets (with only two buckets the mean would move to meet them and
+    // the straddle could not be tight); a large mean keeps consecutive
+    // integers' h/mean ratios close together near the crossing, exactly the
+    // role the old curve's large maxHits played.
+    const mean = 1_000_000;
     const threshold = 0.2;
     const gamma = 5;
-    const targetH = Math.expm1(threshold * Math.log1p(maxHits));
+    const targetH =
+      mean * Math.expm1(threshold * Math.log1p(FLAME_DENSITY_SATURATION));
     const hBelow = Math.floor(targetH);
     const hAbove = hBelow + 1;
 
-    const hist = createFlameHistogram(2, 1);
+    const hist = createFlameHistogram(3, 1);
     hist.hits[0] = hBelow;
     hist.hits[1] = hAbove;
+    hist.hits[2] = 3 * mean - hBelow - hAbove;
     hist.sumRGB[0] = hBelow;
     hist.sumRGB[1] = hBelow;
     hist.sumRGB[2] = hBelow;
     hist.sumRGB[3] = hAbove;
     hist.sumRGB[4] = hAbove;
     hist.sumRGB[5] = hAbove;
-    hist.maxHits = maxHits;
+    hist.sumRGB[6] = hist.hits[2];
+    hist.sumRGB[7] = hist.hits[2];
+    hist.sumRGB[8] = hist.hits[2];
+    hist.maxHits = Math.max(hBelow, hAbove, hist.hits[2]);
+    hist.hitMass = 3 * mean;
     const params: TonemapParams = {
       exposure: 1,
       gamma,
@@ -2116,6 +2359,7 @@ describe("tonemapFlame gammaThreshold", () => {
     hist.sumRGB[1] = 3;
     hist.sumRGB[2] = 3;
     hist.maxHits = 10_000;
+    hist.hitMass = 3;
     const low = tonemapFlame(hist, {
       exposure: 1,
       gamma: 1,
@@ -2136,12 +2380,15 @@ describe("tonemapFlame vibrancy", () => {
   function twoToneHist(): FlameHistogram {
     // A hot, saturated-red bucket: density-scaled (vivid) and flat-gamma
     // color diverge sharply here, so vibrancy's effect is easy to see.
+    // Mass is consistent with the hits array; in a 1x1 histogram the bucket
+    // IS the mean, so h/mean = 1 and density = log1p(1)/log1p(32) = 0.2.
     const hist = createFlameHistogram(1, 1);
     hist.hits[0] = 500;
     hist.sumRGB[0] = 500; // r = 1
     hist.sumRGB[1] = 0; // g = 0
     hist.sumRGB[2] = 0; // b = 0
-    hist.maxHits = 1_000_000;
+    hist.maxHits = 500;
+    hist.hitMass = 500;
     return hist;
   }
 
@@ -2166,7 +2413,9 @@ describe("tonemapFlame vibrancy", () => {
       gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
       vibrancy: 1,
     });
-    const density = Math.log1p(500) / Math.log1p(1_000_000);
+    // By hand under the mean-relative form: h/mean = 1 in a 1x1 histogram,
+    // so density = log1p(1)/log1p(FLAME_DENSITY_SATURATION), then invGamma.
+    const density = Math.log1p(1) / Math.log1p(FLAME_DENSITY_SATURATION);
     const alpha = density ** 0.5; // invGamma = 1/2.
     // Route through a Uint8ClampedArray rather than hand-rounding, so this
     // matches its actual round-half-to-even clamping rule instead of risking
@@ -2189,6 +2438,158 @@ describe("tonemapFlame vibrancy", () => {
     const hi = Math.max(flat[0], vivid[0]);
     expect(mid[0]).toBeGreaterThanOrEqual(lo);
     expect(mid[0]).toBeLessThanOrEqual(hi);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The mean-density anchor's acceptance tests. The old curve anchored the
+// log-density normalizer on the hottest bucket, which made whole-image
+// brightness a function of that single bucket (one contractive map measured
+// max/mean 21356; max/mean drifted 20.5 -> 10.0 across a 16x budget ladder on
+// one system). These tests pin the replacement's invariances on real
+// accumulated scenes; tolerances below were measured against the new curve
+// and against the old maxHits-anchored one (noted per test).
+// ---------------------------------------------------------------------------
+
+/** Mean Rec.709 luminance over the image's populated (alpha > 0) pixels. */
+function meanLuminanceOverPopulated(
+  image: Uint8ClampedArray,
+  width: number,
+  height: number,
+): number {
+  let sum = 0;
+  let populated = 0;
+  for (let i = 0; i < width * height; i++) {
+    if (image[i * 4 + 3] === 0) continue;
+    sum +=
+      0.2126 * image[i * 4] +
+      0.7152 * image[i * 4 + 1] +
+      0.0722 * image[i * 4 + 2];
+    populated++;
+  }
+  return populated > 0 ? sum / populated : 0;
+}
+
+describe("tonemapFlame mean-density anchor (acceptance)", () => {
+  // The app's shipped look (exposure 1, gamma 2.4, vibrancy 1).
+  const LOOK: TonemapParams = {
+    exposure: 1,
+    gamma: 2.4,
+    gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+    vibrancy: 1,
+  };
+
+  function accumulate(
+    transforms: Transform[],
+    width: number,
+    height: number,
+    iterations: number,
+    seed: number,
+  ): FlameHistogram {
+    return accumulateFlame(
+      prepareChaosGame(transforms),
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(seed),
+      transformColors(transforms.length),
+    );
+  }
+
+  it("is invariant under the iteration budget: 1x and 16x tone-map to the same mean luminance within 5%", () => {
+    // MEASURED on this fixture: the new curve's mean luminance moves 2.3%
+    // across the ladder (residual noise reshaping, not anchoring); the old
+    // maxHits curve moved 9.3% (its normalizer rode max/mean 31 -> 33) and
+    // the brief's calibration system measured 20.5 -> 10.0 across 16x.
+    const base = sierpinskiTetrahedron();
+    const sparse = accumulate(base, 32, 32, 20_000, 7);
+    const converged = accumulate(base, 32, 32, 320_000, 7);
+    const luminance = (hist: FlameHistogram): number => {
+      const image = tonemapFlame(hist, LOOK);
+      return meanLuminanceOverPopulated(image, hist.width, hist.height);
+    };
+    const lo = luminance(sparse);
+    const hi = luminance(converged);
+    expect(Math.abs(lo - hi) / Math.max(lo, hi)).toBeLessThan(0.05);
+  });
+
+  it("is invariant under supersample pooling: ss 1 and ss 4 (through downsampleFlame) agree within 8% over the shared silhouette", () => {
+    // ss 4 accumulates the SAME per-display-pixel mass (16x the iterations
+    // over 16x the buckets) and is pooled by downsampleFlame into the same
+    // display grid. The pooled buckets are weighted MEANS, so per-bucket
+    // h/mean — the curve's whole input — survives the pooling; the mass is
+    // recomputed from the output. Compared over the INTERSECTION of the two
+    // images' populated pixels because the Gaussian's silhouette spread (a
+    // real pooling effect, ~90 populated display buckets apart here) is a
+    // boundary effect, not an exposure one — over the shared silhouette the
+    // new curve measured 1.9% apart (the old curve, 3.6%, so this pins
+    // invariance rather than discriminating the old anchor).
+    const base = sierpinskiTetrahedron();
+    const ss1 = accumulate(base, 32, 32, 20_000, 7);
+    const ss4 = downsampleFlame(
+      accumulate(base, 128, 128, 320_000, 7),
+      32,
+      32,
+      0.4,
+    );
+    const image1 = tonemapFlame(ss1, LOOK);
+    const image4 = tonemapFlame(ss4, LOOK);
+    // Mean luminance over pixels populated in BOTH images, per image.
+    const intersectionMean = (
+      image: Uint8ClampedArray,
+    ): { mean: number; count: number } => {
+      let sum = 0;
+      let n = 0;
+      for (let i = 0; i < 32 * 32; i++) {
+        if (image1[i * 4 + 3] === 0 || image4[i * 4 + 3] === 0) continue;
+        sum +=
+          0.2126 * image[i * 4] +
+          0.7152 * image[i * 4 + 1] +
+          0.0722 * image[i * 4 + 2];
+        n++;
+      }
+      return { mean: n > 0 ? sum / n : 0, count: n };
+    };
+    const shared = intersectionMean(image1).count;
+    expect(shared).toBeGreaterThan(0); // the silhouettes genuinely overlap.
+    const luminance1 = intersectionMean(image1).mean;
+    const luminance4 = intersectionMean(image4).mean;
+    expect(
+      Math.abs(luminance1 - luminance4) / Math.max(luminance1, luminance4),
+    ).toBeLessThan(0.08);
+  });
+
+  it("renders a strongly contractive map at close to the brightness of the same scene without it", () => {
+    // One map at scale 1e-3 concentrates its picks into ~1 bucket: max/mean
+    // measured 382 here (the brief's calibration case measured 21356). The
+    // old maxHits anchor let that single bucket drag the whole frame down
+    // (measured with/without luminance ratio 0.62 at gamma 1; the new curve
+    // measures 0.765). The residual gap is the map's legitimate mass
+    // redistribution — 25% of the iterations no longer land on the base
+    // structure — so the floor sits below that, at 0.70, leaving the old
+    // curve's failure 13% below the line.
+    const contractive: Transform = {
+      id: 4,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1e-3, 1e-3, 1e-3],
+    };
+    const base = sierpinskiTetrahedron();
+    const without = accumulate(base, 64, 64, 20_000, 11);
+    const withMap = accumulate([...base, contractive], 64, 64, 20_000, 11);
+    const luminance = (hist: FlameHistogram): number => {
+      const image = tonemapFlame(hist, {
+        exposure: 1,
+        gamma: 1,
+        gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+        vibrancy: 1,
+      });
+      return meanLuminanceOverPopulated(image, hist.width, hist.height);
+    };
+    const lo = luminance(without);
+    const hi = luminance(withMap);
+    expect(hi / lo).toBeGreaterThanOrEqual(0.7);
   });
 });
 
@@ -2786,8 +3187,12 @@ describe("adaptiveDownsampleFlame into a reused out histogram", () => {
 describe("viewFlameHistogram", () => {
   it("wraps external arrays without copying, and tone-maps identically to the histogram it mirrors", () => {
     // Accumulate something real, then rebuild it as a view over the SAME
-    // arrays plus the scalar maxHits — the exact reconstruction the main
-    // thread performs over shared memory in the worker's shared-frame mode.
+    // arrays plus the scalar maxHits and the scalar hitMass — the exact
+    // reconstruction the main thread performs over shared memory in the
+    // worker's shared-frame mode. Mass is a PARAMETER of the reconstruction
+    // (it cannot be recomputed from a live view mid-accumulation), and the
+    // byte-identical tone-map below is the canary that the worker's
+    // hitMass really travels with the frame.
     const prepared = prepareChaosGame(sierpinskiTetrahedron(), null);
     const hist = accumulateFlame(
       prepared,
@@ -2799,7 +3204,14 @@ describe("viewFlameHistogram", () => {
       transformColors(4),
     );
 
-    const view = viewFlameHistogram(8, 8, hist.hits, hist.sumRGB, hist.maxHits);
+    const view = viewFlameHistogram(
+      8,
+      8,
+      hist.hits,
+      hist.sumRGB,
+      hist.maxHits,
+      hist.hitMass,
+    );
     expect(view.hits).toBe(hist.hits); // shares, never copies.
     expect(view.sumRGB).toBe(hist.sumRGB);
 

@@ -352,4 +352,14 @@ c[2][1]`) and Apophysis' writer; both tools agree, y-up, no flips.
   otherwise. We prefer `color_speed` on import (order-independent) and write
   both, consistently, on export.
 - `weight` is a relative pick probability, like ours.
-- flam3's default `brightness` is 4 ↔ our default `exposure` is 1.
+- flam3's default `brightness` is 4 ↔ our default `exposure` is 1. The
+  exchange is a control convention, not a byte-exactness claim: our tone-map
+  anchors its log-density curve on the MEAN deposited density
+  (`log1p(h / mean) / log1p(32)` — `FlameHistogram.hitMass`, see `flame.ts`),
+  which is the same shape flam3's own `rect.c` computes (`k1 · log(1 + c[3] ·
+k2)` with `k2 ∝ 1/(area · sample_density)`), so an imported file's
+  `brightness` now behaves comparatively like flam3's would rather than being
+  skewed by whichever render lands the hottest bucket. The factor itself
+  (`BRIGHTNESS_PER_EXPOSURE` in `flame-file.ts`) is kept at 4 pending the
+  differential-render harness against a real flam3 build; exact per-file
+  brightness parity is not certified.

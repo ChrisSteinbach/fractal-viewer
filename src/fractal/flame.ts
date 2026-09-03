@@ -38,6 +38,22 @@
  * `balloon-de.ts`'s {@link invertBalloon}, retaining its float64
  * `BALLOON_CENTER_FLOOR` rather than restating the algebra or borrowing the
  * GPU's coarser float32 floor.
+ *
+ * **The tone-map anchor is the MEAN deposited density, not the hottest
+ * bucket.** {@link tonemapFlame}'s density curve reads `log1p(h / mean) /
+ * log1p(FLAME_DENSITY_SATURATION)`, where `mean` is {@link FlameHistogram.hitMass}
+ * (the exact running sum of deposited hit weights) divided by the bucket
+ * count. Anchoring on the hottest bucket instead made whole-image brightness a
+ * function of that single bucket: one contractive map's tiny image region
+ * drove max/mean to 21356 and crushed the frame, and a converging render never
+ * settled in appearance (max/mean drifted 20.5 -> 13.6 -> 10.0 across a 16x
+ * budget ladder on one system — more iterations dimmed the image even though
+ * the object was the same). The ratio form is invariant under more
+ * iterations, under supersample pooling (the downsamplers write weighted
+ * MEANS — hits and mass stay proportional), and under tiling/echo deposit
+ * weights (they raise hits and mass in lockstep), so a render's exposure no
+ * longer moves while it converges. See {@link FLAME_DENSITY_SATURATION} for
+ * the constant and its calibration.
  */
 import {
   CHAOS_SUB_ORBIT_POINTS,
@@ -142,7 +158,31 @@ export interface FlameHistogram {
   hits: Float64Array;
   /** Summed color per bucket, interleaved RGB, length `width * height * 3`. */
   sumRGB: Float64Array;
-  /** Highest hit count seen in any bucket so far — anchors {@link tonemapFlame}'s log-density curve. */
+  /**
+   * The running sum of DEPOSITED hit weights — the exact sum of the `hits`
+   * array at any moment the same sites write both (tiling mirror deposits and
+   * the balloon echo's second splat included), so the mean
+   * `hitMass / (width * height)` is the actual mean of the `hits` array and
+   * `h / mean` in {@link tonemapFlame} is a pure ratio. "Samples per pixel"
+   * is deliberately NOT the definition: weighted deposits (density
+   * estimation, tiling, the echo) make a plot count ambiguous and would fork
+   * CPU/GPU definitions, while mass is derivable from the histogram itself
+   * on both engines. Maintained at every deposit site, recomputed exactly by
+   * both downsamplers and all four GPU converters (each already walks every
+   * output bucket for `maxHits`), and pinned by an invariant test —
+   * `sum(hist.hits) === hist.hitMass` within fp tolerance — so a missed site
+   * fails loudly.
+   */
+  hitMass: number;
+  /**
+   * Highest hit count seen in any bucket so far. INSTRUMENT ONLY — it no
+   * longer anchors {@link tonemapFlame} (the log-density curve now
+   * normalizes on the mean deposited density, see {@link hitMass}); it stays
+   * because diagnostics read it (gpu-bench's agreement legs report
+   * maxHits CPU/GPU, the tiling sheets report it per pose) and its
+   * maintenance sites are the cheapest per-bucket scan the converters and
+   * downsamplers already perform.
+   */
   maxHits: number;
   /**
    * Orbit continuation point: where the chaos-game iterator left off. Not
@@ -210,6 +250,7 @@ export function createFlameHistogram(
     hits: new Float64Array(width * height),
     sumRGB: new Float64Array(width * height * 3),
     maxHits: 0,
+    hitMass: 0,
     orbit: [0, 0, 0],
     orbitColor: 0.5,
     orbitW: 0,
@@ -227,6 +268,14 @@ export function createFlameHistogram(
  * sides need the same wrapper, and neither should have to know that `orbit`/
  * `orbitColor` are meaningless filler on a display-only histogram (see
  * `downsampleFlame`'s closing comment for why).
+ *
+ * `maxHits`/`hitMass` are parameters (not recomputed) because the caller —
+ * the shared-frame notification, or a GPU readback converter — already knows
+ * both scalars for the array it is handing over; `hitMass` is the tone-map's
+ * normalizer and MUST be the sum of the wrapped `hits` (the worker's
+ * downsamplers and GPU converters maintain it exactly like `maxHits`), or
+ * every bucket's density — and with it the whole image's brightness —
+ * shifts.
  */
 export function viewFlameHistogram(
   width: number,
@@ -234,6 +283,7 @@ export function viewFlameHistogram(
   hits: Float64Array,
   sumRGB: Float64Array,
   maxHits: number,
+  hitMass: number,
 ): FlameHistogram {
   return {
     width,
@@ -241,6 +291,7 @@ export function viewFlameHistogram(
     hits,
     sumRGB,
     maxHits,
+    hitMass,
     orbit: [0, 0, 0],
     orbitColor: 0.5,
     orbitW: 0,
@@ -392,6 +443,9 @@ export function accumulateFlame(
   const { baseTransformCount, schedule, emitters } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
+  // The tone-map normalizer's input: every deposit below adds its weight
+  // here, exactly alongside the maxHits update it sits beside.
+  let hitMass = hist.hitMass;
   // Emitter-sample stream — runChaosGame's per-run reseedable object, one
   // primary seed draw per emitter step (chaos-game.ts's emitterSeed). Inert
   // without emitters.
@@ -483,6 +537,7 @@ export function accumulateFlame(
       const bucket = row * width + col;
       const hit = (hits[bucket] += weight);
       if (hit > maxHits) maxHits = hit;
+      hitMass += weight;
       const o = bucket * 3;
       sumRGB[o] += tiledR * weight;
       sumRGB[o + 1] += tiledG * weight;
@@ -705,6 +760,7 @@ export function accumulateFlame(
       const bucket = row * width + col;
       const hit = ++hits[bucket];
       if (hit > maxHits) maxHits = hit;
+      hitMass += 1;
       const o = bucket * 3;
       if (colorLUT !== undefined) {
         // c is in [0, 1]; the min guards the c === 1 edge (256 -> 255).
@@ -750,6 +806,7 @@ export function accumulateFlame(
         const bucket = row * width + col;
         const hit = ++hits[bucket];
         if (hit > maxHits) maxHits = hit;
+        hitMass += 1;
         const o = bucket * 3;
         sumRGB[o] += r;
         sumRGB[o + 1] += g;
@@ -783,6 +840,7 @@ export function accumulateFlame(
         const bucket = row * width + col;
         const hit = (hits[bucket] += echo.weight);
         if (hit > maxHits) maxHits = hit;
+        hitMass += echo.weight;
         const o = bucket * 3;
         const t = echo.tintStrength;
         sumRGB[o] += (er + (echo.tint[0] - er) * t) * echo.weight;
@@ -797,6 +855,7 @@ export function accumulateFlame(
   hist.orbitPrevBase = prevBase;
   hist.orbitChaosLeft = chaosLeft;
   hist.maxHits = maxHits;
+  hist.hitMass = hitMass;
   return hist;
 }
 
@@ -807,6 +866,34 @@ export function accumulateFlame(
  * something users routinely tune.
  */
 export const DEFAULT_GAMMA_THRESHOLD = 0.01;
+
+/**
+ * The mean-density-multiple at which {@link tonemapFlame}'s log-density curve
+ * reaches 1 — the explicit ceiling that replaces the hottest bucket as the
+ * curve's anchor. The density is `log1p(h / mean) / log1p(32)`, so a bucket
+ * at 32x the mean deposited density lands at density 1 (full brightness) and
+ * denser buckets keep rising past it only to clamp in the 8-bit output —
+ * the hot core saturates to white instead of dragging every other bucket
+ * darker. The curve's SHAPE is flam3's own: `rect.c` computes
+ * `k1 * log(1 + c[3] * k2)` with `k2 ∝ 1/(area * sample_density)` — the log
+ * argument is hits RELATIVE to mean sample density, never the hottest
+ * bucket. This form is that curve with an explicit ceiling constant instead
+ * of a per-render normalizer.
+ *
+ * 32 is calibrated against the shipped systems: the median max/mean ratio
+ * over seven preset-class systems at a fixed 1M-iteration budget is ~31.5
+ * (default 17.4, mengerSponge 13.6, chiralLace 31.5, spiral 65.5,
+ * dodecahedronFlake 10.2, barnsleyFern 130.5, sierpinskiTetrahedron 583), so
+ * a typical default render keeps its ballpark exposure — the old curve put
+ * the mean bucket at `log1p(1)/log1p(max/mean)`, which for the median system
+ * (max/mean ≈ 31.5) is 0.201, and the new curve puts it at
+ * `log1p(1)/log1p(32)` = 0.200 — while the VARIANCE across systems and
+ * budgets dies (the old anchor made whole-image brightness swing with the
+ * single hottest bucket: max/mean 21356 for one contractive-map system vs
+ * 17.4 for the default, and 20.5 -> 10.0 drift across a 16x budget ladder on
+ * one system).
+ */
+export const FLAME_DENSITY_SATURATION = 32;
 
 /**
  * Tone-mapping controls: `exposure` alone was enough to make a converging
@@ -821,16 +908,15 @@ export interface TonemapParams {
    */
   exposure: number;
   /**
-   * Reshapes the normalized [0, 1] log-density curve by `density **
-   * (1/gamma)`; 1 leaves the log-density curve exactly as the original
-   * log-density tonemap shipped it (no reshaping — the collapse point every
-   * gamma-related test is pinned
+   * Reshapes the log-density curve by `density ** (1/gamma)`; 1 leaves the
+   * log-density curve exactly as the original log-density tonemap shipped
+   * it (no reshaping — the collapse point every gamma-related test is pinned
    * to). Above 1 pushes faint, sparsely-visited detail brighter relative to
-   * the hottest buckets — the "punchy" flame look; below 1 does the reverse.
+   * the hot buckets — the "punchy" flame look; below 1 does the reverse.
    */
   gamma: number;
   /**
-   * Below this normalized density, the gamma curve is replaced by a straight
+   * Below this density, the gamma curve is replaced by a straight
    * line through the origin whose value matches `density ** (1/gamma)`
    * exactly at the threshold (continuous — no jump), though not its slope
    * there (a faint kink, not a discontinuity). `density ** (1/gamma)` has
@@ -853,12 +939,21 @@ export interface TonemapParams {
 /**
  * Render a {@link FlameHistogram} to an RGBA image (row-major, top row
  * first, matching `ImageData`/canvas conventions): brightness is the
- * log-density of hits, so a bucket with a single hit stays faintly visible
- * instead of vanishing while the hottest bucket anchors the top of the
- * curve — the classic flame tone-map that keeps both a blazing core and
- * wispy, sparsely-visited tendrils legible in one image. `gamma` reshapes
- * that curve and `vibrancy` blends the density-scaled color against a flat
- * gamma-only one (see {@link TonemapParams}). Buckets with no hits are fully
+ * log-density of hits RELATIVE TO THE MEAN deposited density
+ * (`log1p(h / mean) / log1p(FLAME_DENSITY_SATURATION)`, where
+ * `mean = hitMass / (width * height)`), so a bucket with a single hit stays
+ * faintly visible instead of vanishing while a bucket at 32x the mean
+ * density anchors the top of the curve — the classic flame tone-map that
+ * keeps both a blazing core and wispy, sparsely-visited tendrils legible in
+ * one image, WITHOUT the old hottest-bucket anchor that let one contractive
+ * map's hot spot (max/mean 21356) crush the whole frame and made a
+ * converging render's brightness drift with the iteration budget. Because
+ * `mean` is a property of the histogram itself (see
+ * {@link FlameHistogram.hitMass}), the curve is invariant under more
+ * iterations, supersample pooling, and deposit weighting — the image
+ * converges in appearance, not just in detail. `gamma` reshapes that curve
+ * and `vibrancy` blends the density-scaled color against a flat gamma-only
+ * one (see {@link TonemapParams}). Buckets with no hits are fully
  * transparent black, so the image composites cleanly over any backdrop.
  *
  * At `gamma: 1, vibrancy: 1` every term those controls introduce provably
@@ -876,9 +971,12 @@ export function tonemapFlame(
   histogram: FlameHistogram,
   params: TonemapParams,
 ): Uint8ClampedArray<ArrayBuffer> {
-  const { width, height, hits, sumRGB, maxHits } = histogram;
+  const { width, height, hits, sumRGB, hitMass } = histogram;
   const out = new Uint8ClampedArray(width * height * 4);
-  if (maxHits <= 0) return out; // Nothing accumulated yet — fully transparent.
+  // Mass is the normalizer's own input and is > 0 iff some bucket is > 0 —
+  // the exact semantics the old `maxHits <= 0` empty guard had, read off the
+  // quantity the formula below actually divides by.
+  if (hitMass <= 0) return out; // Nothing accumulated yet — fully transparent.
 
   const { exposure, gamma, gammaThreshold, vibrancy } = params;
   const invGamma = 1 / gamma;
@@ -891,15 +989,19 @@ export function tonemapFlame(
   // with the power branch at the collapse point.
   const thresholdSlope =
     gammaThreshold > 0 ? gammaThreshold ** invGamma / gammaThreshold : 1;
-  // log1p(hits), not log(hits): finite (and 0) at hits = 0 or 1, so a bucket
-  // with a single hit lands near the bottom of the curve instead of at
+  // The MEAN DEPOSITED DENSITY over every bucket (empty ones included), and
+  // the curve's anchor: density is a function of h/mean ONLY, so the image's
+  // brightness no longer depends on the single hottest bucket. log1p of the
+  // RATIO, not of h: finite (and 0) at h = 0 or mean, so a bucket at exactly
+  // the mean density lands near the bottom of the curve instead of at
   // -Infinity or needing a discontinuous special case.
-  const logMax = Math.log1p(maxHits);
+  const mean = hitMass / (width * height);
+  const logSaturation = Math.log1p(FLAME_DENSITY_SATURATION);
 
   for (let i = 0; i < hits.length; i++) {
     const h = hits[i];
     if (h <= 0) continue;
-    const density = Math.log1p(h) / logMax;
+    const density = Math.log1p(h / mean) / logSaturation;
     // Gamma-reshape the log-density curve; linear below gammaThreshold so a
     // lone hit's infinite-slope singularity at density = 0 never blows out
     // into a bright speckle (see TonemapParams.gammaThreshold). density is
@@ -999,6 +1101,14 @@ const MIN_FILTER_SIGMA = 1e-3;
  * churning a multi-megabyte allocation per tick) and, in shared-memory mode
  * downsample straight into SharedArrayBuffer-backed buckets the
  * main thread tone-maps from with no copy in between.
+ *
+ * `maxHits` and {@link FlameHistogram.hitMass} are both RECOMPUTED from the
+ * written output in the same pass that produces it — mass especially: the
+ * output buckets are weighted MEANS, and per-bucket mean density survives
+ * that pooling exactly (the kernel's weights are normalized per cell), but
+ * border renormalization makes a scaled-copy derivation second-order, so
+ * the mass is summed from the written values — exact, and it needs no
+ * scaling argument about what pooling "should" do to a total.
  */
 export function downsampleFlame(
   oversized: FlameHistogram,
@@ -1061,6 +1171,7 @@ export function downsampleFlame(
   }
 
   let maxHits = 0;
+  let hitMass = 0;
   for (let oy = 0; oy < outHeight; oy++) {
     const baseY = oy * scaleY; // exact integer: the output cell's home row.
     for (let ox = 0; ox < outWidth; ox++) {
@@ -1105,6 +1216,7 @@ export function downsampleFlame(
         dstRGB[dOff + 1] = gSum * norm;
         dstRGB[dOff + 2] = bSum * norm;
         if (hVal > maxHits) maxHits = hVal;
+        hitMass += hVal;
       } else {
         // A skipped cell must still be WRITTEN now that `out` can be a reused
         // (dirty) histogram — a fresh allocation showed 0 here for free, and
@@ -1118,6 +1230,7 @@ export function downsampleFlame(
   }
 
   target.maxHits = maxHits;
+  target.hitMass = hitMass;
   // The oversized accumulator is the real progressive state (see
   // FlameHistogram.orbit) — this filtered view is a display-only derivative
   // that must never be fed back into accumulateFlame, so its own orbit is
@@ -1266,7 +1379,12 @@ const MIN_ADAPTIVE_FILTER_SIGMA = 0.3;
  * `out` reuses an existing `outWidth` x `outHeight` histogram instead of
  * allocating (throws `RangeError` on a size mismatch), with every bucket
  * fully overwritten — same contract, and same shared-memory/allocation-churn
- * reasoning, as `downsampleFlame`'s `out`.
+ * reasoning, as `downsampleFlame`'s `out`. `maxHits` and
+ * {@link FlameHistogram.hitMass} are recomputed from the written output for
+ * the same reason `downsampleFlame`'s are — see its doc: the output buckets
+ * are weighted means, per-bucket mean density survives the pooling exactly,
+ * and border renormalization makes a scaled-copy mass second-order, so the
+ * mass is summed from the written values in the same pass.
  */
 export function adaptiveDownsampleFlame(
   oversized: FlameHistogram,
@@ -1384,6 +1502,7 @@ export function adaptiveDownsampleFlame(
   }
 
   let maxHits = 0;
+  let hitMass = 0;
   for (let oy = 0; oy < outHeight; oy++) {
     const baseY = oy * scaleY; // exact integer: the output cell's home row.
     for (let ox = 0; ox < outWidth; ox++) {
@@ -1475,6 +1594,7 @@ export function adaptiveDownsampleFlame(
         dstRGB[dOff + 1] = gSum * norm;
         dstRGB[dOff + 2] = bSum * norm;
         if (hVal > maxHits) maxHits = hVal;
+        hitMass += hVal;
       } else {
         // Written, not skipped, for reused-out parity — see downsampleFlame.
         dstHits[dstBucket] = 0;
@@ -1486,6 +1606,7 @@ export function adaptiveDownsampleFlame(
   }
 
   target.maxHits = maxHits;
+  target.hitMass = hitMass;
   // Same non-answer as downsampleFlame's — see its doc — this is a
   // display-only derivative, never fed back into accumulateFlame.
   return target;

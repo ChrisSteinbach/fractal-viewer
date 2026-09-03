@@ -182,7 +182,18 @@ const EXPORT_SIZE = 1024;
 const EXPORT_MARGIN = 1.15;
 
 /** flam3's default `brightness` is 4 and our default `exposure` is 1, so the
- * two tone-map scales exchange through this factor. */
+ * two tone-map scales exchange through this factor.
+ *
+ * KEPT AS-IS by the mean-density-anchor change (flame.ts's `tonemapFlame`):
+ * our curve now normalizes on the mean deposited density — the same shape
+ * flam3's own rect.c computes (`k1 * log(1 + c[3] * k2)` with
+ * `k2 ∝ 1/(area * sample_density)`) — but this factor is an exchange rate
+ * between the two tools' brightness CONTROLS, not a claim that the two
+ * curves render a given file identically. Its honest re-derivation needs the
+ * differential-render harness against a real flam3 build (the interop epic's
+ * sibling item); guessing now would just be a second guess. A file imported
+ * and rendered here may therefore expose differently than flam3 would render
+ * it — adjust the Exposure slider. */
 const BRIGHTNESS_PER_EXPOSURE = 4;
 
 /** Seed for the export framing probe — any fixed value keeps exports stable. */

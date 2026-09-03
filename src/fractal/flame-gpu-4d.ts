@@ -2314,9 +2314,10 @@ function combineU64(lo: number, hi: number): number {
  * Convert a 4D-kernel `hist` readback into a {@link FlameHistogram} — the
  * inverse of the kernel's fixed-point/emulated-u64 accumulation. Identical
  * contract to flame-gpu.ts's `convertGpuHistogram` (length/dimension
- * `RangeError`s, unconditional-overwrite `out` reuse, recomputed `maxHits`,
- * meaningless `orbit`/`orbitColor` filler), with the 4D scales: `hits`
- * divides by {@link WEIGHT_FIXED_POINT_SCALE} and each `sumRGB` channel by
+ * `RangeError`s, unconditional-overwrite `out` reuse, recomputed
+ * `maxHits`/`hitMass`, meaningless `orbit`/`orbitColor` filler), with the 4D
+ * scales: `hits` divides by {@link WEIGHT_FIXED_POINT_SCALE} and each
+ * `sumRGB` channel by
  * `COLOR_FIXED_POINT_SCALE * WEIGHT_FIXED_POINT_SCALE` (see the module doc's
  * fixed-point-weight scheme). Both divisors are powers of two, so the
  * division is exact in f64 for any value the emulated-u64 pair can carry.
@@ -2343,18 +2344,21 @@ export function convertGpuHistogram4(
   const { hits, sumRGB } = hist;
   const colorScale = COLOR_FIXED_POINT_SCALE * WEIGHT_FIXED_POINT_SCALE;
   let maxHits = 0;
+  let hitMass = 0;
   for (let i = 0; i < bucketCount; i++) {
     const w = i * HIST_U32_PER_BUCKET;
     const hitCount =
       combineU64(words[w], words[w + 1]) / WEIGHT_FIXED_POINT_SCALE;
     hits[i] = hitCount;
     if (hitCount > maxHits) maxHits = hitCount;
+    hitMass += hitCount;
     const o = i * 3;
     sumRGB[o] = combineU64(words[w + 2], words[w + 3]) / colorScale;
     sumRGB[o + 1] = combineU64(words[w + 4], words[w + 5]) / colorScale;
     sumRGB[o + 2] = combineU64(words[w + 6], words[w + 7]) / colorScale;
   }
   hist.maxHits = maxHits;
+  hist.hitMass = hitMass;
   return hist;
 }
 
@@ -2390,16 +2394,19 @@ export function convertGpuDisplayHistogram4(
   }
   const { hits, sumRGB } = out;
   let maxHits = 0;
+  let hitMass = 0;
   for (let i = 0; i < bucketCount; i++) {
     const w = i * 4;
     const hitVal = data[w] / WEIGHT_FIXED_POINT_SCALE;
     hits[i] = hitVal;
     if (hitVal > maxHits) maxHits = hitVal;
+    hitMass += hitVal;
     const o = i * 3;
     sumRGB[o] = data[w + 1] / WEIGHT_FIXED_POINT_SCALE;
     sumRGB[o + 1] = data[w + 2] / WEIGHT_FIXED_POINT_SCALE;
     sumRGB[o + 2] = data[w + 3] / WEIGHT_FIXED_POINT_SCALE;
   }
   out.maxHits = maxHits;
+  out.hitMass = hitMass;
   return out;
 }

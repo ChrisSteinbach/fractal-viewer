@@ -1614,12 +1614,14 @@ describe("convertGpuHistogram4", () => {
       2 ** 32 / (COLOR_FIXED_POINT_SCALE * WEIGHT_FIXED_POINT_SCALE),
     );
     expect(hist.maxHits).toBe(2);
+    expect(hist.hitMass).toBe(2); // the single bucket IS the sum.
   });
 
   it("combines the hi word into the hits count (hitsHi=1 -> 2^32 / WEIGHT_FIXED_POINT_SCALE)", () => {
     const words = makeWords(1, 1, { 0: [0, 1, 0, 0, 0, 0, 0, 0] });
     const hist = convertGpuHistogram4(words, 1, 1);
     expect(hist.hits[0]).toBe(2 ** 32 / WEIGHT_FIXED_POINT_SCALE);
+    expect(hist.hitMass).toBe(2 ** 32 / WEIGHT_FIXED_POINT_SCALE);
   });
 
   it("throws RangeError on a words length mismatch", () => {
@@ -1647,6 +1649,7 @@ describe("convertGpuHistogram4", () => {
     expect(Array.from(hist.hits)).toEqual([0, 0]);
     expect(Array.from(hist.sumRGB)).toEqual([0, 0, 0, 0, 0, 0]);
     expect(hist.maxHits).toBe(0);
+    expect(hist.hitMass).toBe(0);
   });
 });
 
@@ -1659,6 +1662,7 @@ describe("convertGpuDisplayHistogram4", () => {
     expect(hist.hits[0]).toBe(1);
     expect(Array.from(hist.sumRGB)).toEqual([2, 3, 4]);
     expect(hist.maxHits).toBe(1);
+    expect(hist.hitMass).toBe(1);
   });
 
   it("throws RangeError on a data length mismatch", () => {
@@ -1691,6 +1695,7 @@ describe("convertGpuDisplayHistogram4", () => {
     expect(hist.hits[1]).toBe(0); // stale 6789 must not survive.
     expect(Array.from(hist.sumRGB)).toEqual([0, 0, 0, 0, 0, 0]);
     expect(hist.maxHits).toBe(7);
+    expect(hist.hitMass).toBe(7);
   });
 });
 

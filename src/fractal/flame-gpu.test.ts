@@ -1985,6 +1985,9 @@ describe("convertGpuHistogram", () => {
     });
     const hist = convertGpuHistogram(words, 2, 1);
     expect(hist.maxHits).toBe(999 / WEIGHT_FIXED_POINT_SCALE);
+    // The mass is the tone-map's normalizer input: the exact sum of the
+    // converted hits, recomputed in the same pass.
+    expect(hist.hitMass).toBe(1009 / WEIGHT_FIXED_POINT_SCALE);
   });
 
   it("throws RangeError naming both the actual and expected word count on a length mismatch", () => {
@@ -2012,6 +2015,7 @@ describe("convertGpuHistogram", () => {
     expect(hist.hits[1]).toBe(0); // stale 6789 must not survive.
     expect(Array.from(hist.sumRGB)).toEqual([0, 0, 0, 0, 0, 0]);
     expect(hist.maxHits).toBe(7 / WEIGHT_FIXED_POINT_SCALE);
+    expect(hist.hitMass).toBe(7 / WEIGHT_FIXED_POINT_SCALE);
   });
 
   it("throws RangeError when out has different dimensions than requested", () => {
@@ -2178,6 +2182,9 @@ describe("convertGpuDisplayHistogram", () => {
     const data = new Float32Array([5, 0, 0, 0, 999, 0, 0, 0]);
     const hist = convertGpuDisplayHistogram(data, 2, 1, out);
     expect(hist.maxHits).toBe(999 / WEIGHT_FIXED_POINT_SCALE);
+    // The mass is the tone-map's normalizer input: the exact sum of the
+    // converted hits, recomputed in the same pass.
+    expect(hist.hitMass).toBe(1004 / WEIGHT_FIXED_POINT_SCALE);
   });
 
   it("fully overwrites a reused out histogram's stale nonzero buckets", () => {
@@ -2194,6 +2201,7 @@ describe("convertGpuDisplayHistogram", () => {
     expect(hist.hits[1]).toBe(0); // stale 6789 must not survive.
     expect(Array.from(hist.sumRGB)).toEqual([0, 0, 0, 0, 0, 0]);
     expect(hist.maxHits).toBe(7 / WEIGHT_FIXED_POINT_SCALE);
+    expect(hist.hitMass).toBe(7 / WEIGHT_FIXED_POINT_SCALE);
   });
 
   it("throws RangeError naming both the actual and expected length on a data length mismatch", () => {

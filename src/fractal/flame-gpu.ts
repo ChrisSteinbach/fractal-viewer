@@ -2775,8 +2775,11 @@ function combineU64(lo: number, hi: number): number {
  * {@link COLOR_FIXED_POINT_SCALE}. This is the exact inverse of the kernel's
  * weighted deposit; a normal one-splat hit carries exactly 256 and therefore
  * converts to the same integer hit/color values as before the echo existed.
- * `maxHits` is recomputed as the max over every converted bucket, exactly
- * like a fresh CPU histogram's own bookkeeping.
+ * `maxHits` and {@link FlameHistogram.hitMass} are both recomputed as the
+ * max/sum over every converted bucket in this one pass, exactly like a fresh
+ * CPU histogram's own bookkeeping — the mass especially, since
+ * `tonemapFlame`'s normalizer is the MEAN deposited density and must be the
+ * exact sum of the converted `hits` array.
  *
  * Pass `out` to convert into an existing histogram instead of allocating —
  * the same contract as `downsampleFlame`'s `out`: dimensions must match (or
@@ -2812,18 +2815,21 @@ export function convertGpuHistogram(
   const { hits, sumRGB } = hist;
   const colorScale = COLOR_FIXED_POINT_SCALE * WEIGHT_FIXED_POINT_SCALE;
   let maxHits = 0;
+  let hitMass = 0;
   for (let i = 0; i < bucketCount; i++) {
     const w = i * HIST_U32_PER_BUCKET;
     const hitCount =
       combineU64(words[w], words[w + 1]) / WEIGHT_FIXED_POINT_SCALE;
     hits[i] = hitCount;
     if (hitCount > maxHits) maxHits = hitCount;
+    hitMass += hitCount;
     const o = i * 3;
     sumRGB[o] = combineU64(words[w + 2], words[w + 3]) / colorScale;
     sumRGB[o + 1] = combineU64(words[w + 4], words[w + 5]) / colorScale;
     sumRGB[o + 2] = combineU64(words[w + 6], words[w + 7]) / colorScale;
   }
   hist.maxHits = maxHits;
+  hist.hitMass = hitMass;
   return hist;
 }
 
@@ -3145,8 +3151,9 @@ export function packGpuDownsample(
  * a fresh one per redisplay tick) — see `flame-worker-core.ts`'s
  * `FlameAccumBackend.snapshotDisplay` doc. Every bucket is unconditionally
  * overwritten (the same dirty-reuse contract as `convertGpuHistogram`'s
- * `out`), and `maxHits` is recomputed as the max over every converted
- * bucket.
+ * `out`), and `maxHits`/`hitMass` are recomputed as the max/sum over every
+ * converted bucket in this pass — the mass being the tone-map's normalizer,
+ * summed from the output exactly like `downsampleFlame`'s.
  *
  * Throws `RangeError` (naming both the actual and expected length/dims) on a
  * `data` length mismatch or an `out` dimension mismatch — same shape as
@@ -3172,16 +3179,19 @@ export function convertGpuDisplayHistogram(
   }
   const { hits, sumRGB } = out;
   let maxHits = 0;
+  let hitMass = 0;
   for (let i = 0; i < bucketCount; i++) {
     const w = i * 4;
     const hitVal = data[w] / WEIGHT_FIXED_POINT_SCALE;
     hits[i] = hitVal;
     if (hitVal > maxHits) maxHits = hitVal;
+    hitMass += hitVal;
     const o = i * 3;
     sumRGB[o] = data[w + 1] / WEIGHT_FIXED_POINT_SCALE;
     sumRGB[o + 1] = data[w + 2] / WEIGHT_FIXED_POINT_SCALE;
     sumRGB[o + 2] = data[w + 3] / WEIGHT_FIXED_POINT_SCALE;
   }
   out.maxHits = maxHits;
+  out.hitMass = hitMass;
   return out;
 }
