@@ -11,6 +11,7 @@ import {
   isLegacyPositionAxisColors,
   fourDColorModeUsesGamma,
   fourDColorModeUsesRampPalette,
+  sameFlatRenderColorInputs,
   transformColors,
   wRampColor,
 } from "./color";
@@ -18,9 +19,10 @@ import type {
   PointColorSource3D,
   PointColorSource4D,
   PositionAxisColors,
+  RenderColorInputs,
 } from "./color";
 import { buildPaletteLUT } from "./palette";
-import type { CustomPalette } from "./palette";
+import type { CustomPalette, PaletteSpec, RgbStop } from "./palette";
 import { runChaosGame } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import { defaultTransforms } from "./presets";
@@ -1506,3 +1508,88 @@ describe("dimColorsExcept", () => {
     expect(out[5]).toBe(0.09375);
   });
 });
+
+describe("sameFlatRenderColorInputs with a RampPalette", () => {
+  // samePaletteSpec (the private comparer these tests exercise) is reached
+  // through its exported consumer: colorMode "height" is the branch that
+  // reads rampPalette, so two flat inputs differing only in the palette
+  // payload decide exactly the palette-equality question.
+  const flatInputs = (rampPalette: PaletteSpec): RenderColorInputs["flat"] => ({
+    colorMode: "height",
+    colorGamma: 1,
+    rampPalette,
+  });
+
+  it("treats two equal ramps as equal", () => {
+    const ramp = { kind: "ramp" as const, entries: bandedRamp() };
+    expect(sameFlatRenderColorInputs(flatInputs(ramp), flatInputs(ramp))).toBe(
+      true,
+    );
+    // A structurally equal CLONE (the worker-message case) too.
+    expect(
+      sameFlatRenderColorInputs(
+        flatInputs(ramp),
+        flatInputs({ kind: "ramp", entries: bandedRamp() }),
+      ),
+    ).toBe(true);
+  });
+
+  it("sees two ramps of different lengths as different", () => {
+    expect(
+      sameFlatRenderColorInputs(
+        flatInputs({ kind: "ramp", entries: bandedRamp() }),
+        flatInputs({
+          kind: "ramp",
+          entries: bandedRamp()
+            .slice(0, 255)
+            .concat([[1, 1, 1]]),
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("sees two ramps differing in one channel as different", () => {
+    const other = bandedRamp();
+    other[200] = [1, 0, 0.5];
+    expect(
+      sameFlatRenderColorInputs(
+        flatInputs({ kind: "ramp", entries: bandedRamp() }),
+        flatInputs({ kind: "ramp", entries: other }),
+      ),
+    ).toBe(false);
+  });
+
+  it("sees a ramp and a stops palette as different payloads", () => {
+    // Even with the same gradient — they are different document objects
+    // (an imported ramp vs an authored 8-stop palette), and collapsing
+    // them would skip a legitimate conversion edit's restart.
+    expect(
+      sameFlatRenderColorInputs(
+        flatInputs({
+          kind: "ramp",
+          entries: [
+            [0, 0, 0],
+            [1, 1, 1],
+          ],
+        }),
+        flatInputs({
+          stops: [
+            [0, 0, 0],
+            [1, 1, 1],
+          ],
+        }),
+      ),
+    ).toBe(false);
+  });
+});
+
+/** The 256-entry banded fixture from palette.test.ts, reshaped here for the
+ * equality tests. */
+function bandedRamp(): RgbStop[] {
+  return Array.from({ length: 256 }, (_, i) => {
+    if (i === 100) return [1, 1, 1];
+    if (i === 200) return [1, 0, 0];
+    if (i === 201) return [0, 0, 1];
+    return [0, 0, 0];
+  });
+}

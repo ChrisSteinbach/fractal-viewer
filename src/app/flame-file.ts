@@ -75,11 +75,11 @@ import {
 import { transformColors } from "../fractal/color";
 import {
   CUSTOM_PALETTE_ID,
-  MAX_CUSTOM_PALETTE_STOPS,
+  MAX_RAMP_ENTRIES,
   buildPaletteLUT,
   resolvePalette,
 } from "../fractal/palette";
-import type { CustomPalette, RgbStop } from "../fractal/palette";
+import type { RampPalette, RgbStop } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
@@ -539,19 +539,27 @@ function xformToTransform(
 /**
  * Parse a flame's palette: the compact `<palette count format="RGB">hex…`
  * block (Apophysis style) or `<color index rgb="R G B"/>` entries (flam3
- * style), downsampled evenly onto a {@link CustomPalette}'s
- * {@link MAX_CUSTOM_PALETTE_STOPS} stops. `null` when absent or unusable —
- * the scene simply keeps the default palette; a palette is cosmetic and
- * never worth a warning that would drown the structural ones.
+ * style), preserved at its FULL native entry count as a {@link RampPalette}
+ * — a 256-entry flam3 gradient keeps its narrow bright bands, hard hue jumps
+ * and dark gaps, which the 8-stop point-sample this module used to take
+ * flattened away (the ramp rides the scene's usual Custom palette slots;
+ * see `palette.ts`'s "Ramp palettes"). Entries past {@link MAX_RAMP_ENTRIES}
+ * truncate, silently — a palette is cosmetic and never worth a warning that
+ * would drown the structural ones. `null` when absent or unusable — the
+ * scene simply keeps the default palette.
  */
-function parseFlamePalette(flameEl: Element): CustomPalette | null {
+function parseFlamePalette(flameEl: Element): RampPalette | null {
   const entries: RgbStop[] = [];
 
   const paletteEl = flameEl.getElementsByTagName("palette")[0];
   if (paletteEl?.textContent) {
     const hex = paletteEl.textContent.replace(/\s+/g, "");
     if (/^[0-9a-fA-F]*$/.test(hex)) {
-      for (let o = 0; o + 6 <= hex.length; o += 6) {
+      for (
+        let o = 0;
+        o + 6 <= hex.length && entries.length < MAX_RAMP_ENTRIES;
+        o += 6
+      ) {
         entries.push([
           Number.parseInt(hex.slice(o, o + 2), 16) / 255,
           Number.parseInt(hex.slice(o + 2, o + 4), 16) / 255,
@@ -583,18 +591,16 @@ function parseFlamePalette(flameEl: Element): CustomPalette | null {
       const clamp01 = (v: number) => Math.min(1, Math.max(0, v / 255));
       byIndex[index] = [clamp01(rgb[0]), clamp01(rgb[1]), clamp01(rgb[2])];
     }
-    for (const stop of byIndex) if (stop !== undefined) entries.push(stop);
+    for (const stop of byIndex) {
+      if (stop !== undefined) {
+        if (entries.length >= MAX_RAMP_ENTRIES) break;
+        entries.push(stop);
+      }
+    }
   }
 
   if (entries.length < 2) return null;
-  const stops: RgbStop[] = [];
-  for (let j = 0; j < MAX_CUSTOM_PALETTE_STOPS; j++) {
-    const index = Math.round(
-      (j / (MAX_CUSTOM_PALETTE_STOPS - 1)) * (entries.length - 1),
-    );
-    stops.push(entries[index]);
-  }
-  return { stops };
+  return { kind: "ramp", entries };
 }
 
 /**

@@ -520,8 +520,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     exactly; `wildcard` option adds structural kicks. Quality-gated by
     `scoreSystem`.
   - `palette.ts` — Iq cosine-gradient palettes (`buildPaletteLUT` → 256×3 LUT)
-    - user-authored `CustomPalette` (2–8 stops). `PaletteSelection` = UI/state,
-      `PaletteSpec` = worker/GPU wire, `resolvePalette` = bridge.
+    - user-authored `CustomPalette` (2–8 stops) and imported full-resolution
+      `RampPalette` (`{kind:"ramp"}`, up to `MAX_RAMP_ENTRIES` — the shape a
+      `.flame` palette lands in, so narrow bands and hue jumps survive; first
+      editor edit converts it forward-only, disclosed). `PaletteSelection` =
+      UI/state, `PaletteSpec` = worker/GPU wire, `resolvePalette` = bridge.
   - `presets.ts` — default + named systems (`fourFinishes` is the FINISH
     showcase: four corner maps under a boxfold lens, three finishes and
     one deliberately UNAUTHORED control, since a showcase that authors
@@ -1513,7 +1516,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `flame-file.ts` — flam3/Apophysis `.flame` XML codec (see
     `docs/flame-interop.md`). Import QR-decomposes 2D coefs onto our
     `Transform`, folds pure-linear blends/posts, degrades unsupported features
-    to warnings; palette becomes 8-stop `CustomPalette`. Export writes XY
+    to warnings; palette becomes a full-resolution `RampPalette` (preserved
+    whole — see `docs/flame-interop.md`). Export writes XY
     shadow with kaleidoscope baked into explicit xforms. Xaos rows parse and
     export in raw xform order, reindex around dropped maps, and omit at unity.
     DOMParser-tied (jsdom tests). Pure, tested.

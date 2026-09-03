@@ -39,6 +39,25 @@
  * set, and keeping it out lets the persistence validator and `<select>`
  * option list (both built from that array) skip special-casing it — the app
  * layer owns the sentinel.
+ *
+ * **Ramp palettes**: a second document-facing payload variant,
+ * {@link RampPalette}, carries a gradient at its FULL native resolution —
+ * the shape a `.flame` import lands in (`flame-file.ts`'s
+ * `parseFlamePalette`), where flam3/Apophysis gradients arrive as 256
+ * entries and point-sampling eight stops for the {@link CustomPalette}
+ * editor's benefit destroys exactly what makes them look the way they do:
+ * narrow bright bands, hard hue jumps and dark gaps. The authoring gradient
+ * ({@link CustomPalette}, 2–8 stops, the editor's vocabulary) and the
+ * imported gradient (a ramp, up to {@link MAX_RAMP_ENTRIES} entries) are
+ * deliberately different types rather than one widened list — a ramp is not
+ * an 8-stop palette with more entries, and every producer that means "the
+ * stops the user edited" keeps saying so in its own type. Consumers never
+ * see the difference: both ride {@link PaletteSpec} into
+ * {@link buildPaletteLUT} and come out as the same 256×3 LUT every renderer
+ * already reads. The first edit in the gradient editor converts a ramp to a
+ * plain {@link CustomPalette} (see `ui.ts`'s editor disclosure); the wire
+ * forms live in `persist.ts` (hex stop strings vs one concatenated hex
+ * ramp string).
  */
 
 /** A readonly RGB coefficient triple — one value per channel. */
@@ -71,6 +90,21 @@ export type RgbStop = readonly [number, number, number];
  */
 export interface CustomPalette {
   readonly stops: readonly RgbStop[];
+}
+
+/**
+ * A full-resolution gradient palette — the shape an imported `.flame`
+ * palette lands in (see the module doc's "Ramp palettes" paragraph): up to
+ * {@link MAX_RAMP_ENTRIES} {@link RgbStop}s spanning `t ∈ [0, 1]` evenly
+ * (entry `j` sits at `t = j / (entries.length - 1)`), preserved at the
+ * source's own entry count rather than downsampled onto the editor's
+ * 8-stop vocabulary. Structure mirrors {@link CustomPalette} with a
+ * `kind` discriminator, so `{ stops: ... }` literals and ramp payloads
+ * can never be confused at a glance or by a structural check.
+ */
+export interface RampPalette {
+  readonly kind: "ramp";
+  readonly entries: readonly RgbStop[];
 }
 
 /**
@@ -163,18 +197,28 @@ export type PaletteSelection = FlamePaletteId | typeof CUSTOM_PALETTE_ID;
 
 /**
  * What {@link buildPaletteLUT} — and, downstream, the render workers' GPU
- * packing — actually consumes: a built-in {@link FlamePaletteId}, or a
- * self-contained {@link CustomPalette} payload. Never the bare `"custom"`
+ * packing — actually consumes: a built-in {@link FlamePaletteId}, a
+ * self-contained {@link CustomPalette} payload, or a full-resolution
+ * {@link RampPalette} payload. Never the bare `"custom"`
  * string; {@link resolvePalette} is what turns a {@link PaletteSelection}
  * into one of these.
  */
-export type PaletteSpec = FlamePaletteId | CustomPalette;
+export type PaletteSpec = FlamePaletteId | CustomPalette | RampPalette;
 
 /** Fewest stops a {@link CustomPalette} may have — a single color isn't a gradient. */
 export const MIN_CUSTOM_PALETTE_STOPS = 2;
 
 /** Most stops a {@link CustomPalette} may have, so the gradient editor UI stays usable. */
 export const MAX_CUSTOM_PALETTE_STOPS = 8;
+
+/**
+ * Most entries a {@link RampPalette} may carry — the shared cap for the
+ * `.flame` parser (which truncates rather than warn; a palette is cosmetic)
+ * and the persistence validator (which drops a payload past it). 4096
+ * matches `flame-file.ts`'s existing `<color index>` ceiling; a 256-entry
+ * flam3/Apophysis gradient sits far below it.
+ */
+export const MAX_RAMP_ENTRIES = 4096;
 
 /** Stops {@link seedCustomStops} samples when a user first switches a palette to Custom. */
 export const CUSTOM_PALETTE_SEED_STOPS = 5;
@@ -203,9 +247,11 @@ function cosineChannel(
  * Byte-quantize a channel to the nearest of 256 values (`round(v * 255) /
  * 255`), so a sampled color survives the gradient editor's
  * `<input type="color">` (`#rrggbb`) round-trip exactly (see
- * {@link seedCustomStops}).
+ * {@link seedCustomStops}). Also what `ui.ts`'s ramp-backed editor display
+ * applies when it derives 8 seed stops from an imported ramp — the derived
+ * stops must be byte-aligned for the same round-trip reason.
  */
-function quantizeByte(v: number): number {
+export function quantizeByte(v: number): number {
   return Math.round(v * 255) / 255;
 }
 
@@ -268,6 +314,74 @@ function buildCustomPaletteLUT(palette: CustomPalette): Float32Array {
 }
 
 /**
+ * Render a {@link RampPalette}'s full-resolution gradient into a flat
+ * `256 * 3` LUT, in one of three branches keyed on the entry count:
+ *
+ * - **Exactly 256**: copy straight through, entry for entry — the
+ *   overwhelmingly common case (every flam3/Apophysis `<palette>` block and
+ *   every `<color index>` run lands here) and EXACT: the source resolution
+ *   already matches the LUT, so any resampling would only round.
+ * - **Fewer than 256**: the existing piecewise-linear lerp, by delegating to
+ *   {@link buildCustomPaletteLUT} — a sparse ramp IS an authored gradient
+ *   (entries evenly spaced across `t`), so the Custom path's two-product
+ *   lerp and endpoint exactness apply verbatim.
+ * - **More than 256**: bin-overlap-weighted averaging. Output entry `i`
+ *   covers footprint `[i·N/256, (i+1)·N/256)` in source-cell space (source
+ *   entry `j` is the mean of cell `[j, j+1)`), and the output is the
+ *   overlap-weighted mean of every source cell it touches — NEVER point
+ *   sampling, which would alias a ramp's fine structure away whenever
+ *   N > 256 (a one-entry bright band can land between two sample points
+ *   and vanish entirely). The overlap fractions partition the output
+ *   footprint exactly, so the weights sum to one per entry and a constant
+ *   ramp averages to itself.
+ *
+ * Assumes at least two entries, per the same contract as
+ * {@link buildCustomPaletteLUT} (the parser and the persistence validator
+ * both enforce the minimum upstream).
+ */
+function buildRampLUT(palette: RampPalette): Float32Array {
+  const { entries } = palette;
+  const count = entries.length;
+  if (count === LUT_SIZE) {
+    const lut = new Float32Array(LUT_SIZE * 3);
+    for (let i = 0; i < LUT_SIZE; i++) {
+      const [r, g, b] = entries[i];
+      lut[i * 3] = r;
+      lut[i * 3 + 1] = g;
+      lut[i * 3 + 2] = b;
+    }
+    return lut;
+  }
+  if (count < LUT_SIZE) return buildCustomPaletteLUT({ stops: entries });
+
+  // Bin-overlap averaging (count > LUT_SIZE): `step` is each output entry's
+  // footprint width in source cells.
+  const step = count / LUT_SIZE;
+  const lut = new Float32Array(LUT_SIZE * 3);
+  for (let i = 0; i < LUT_SIZE; i++) {
+    const start = i * step;
+    const end = start + step;
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    const j0 = Math.floor(start);
+    const j1 = Math.min(count - 1, Math.floor(end));
+    for (let j = j0; j <= j1; j++) {
+      const overlap = Math.min(end, j + 1) - Math.max(start, j);
+      if (overlap <= 0) continue;
+      r += entries[j][0] * overlap;
+      g += entries[j][1] * overlap;
+      b += entries[j][2] * overlap;
+    }
+    const o = i * 3;
+    lut[o] = clamp01(r / step);
+    lut[o + 1] = clamp01(g / step);
+    lut[o + 2] = clamp01(b / step);
+  }
+  return lut;
+}
+
+/**
  * Precompute a palette's gradient into a flat `256 * 3` RGB lookup table
  * (interleaved, sRGB in `[0, 1]`): entry `i` is the palette colour at
  * `t = i / 255`. The flame hot loop indexes it per iteration by
@@ -280,12 +394,20 @@ function buildCustomPaletteLUT(palette: CustomPalette): Float32Array {
  * has no coordinate gradient (see {@link FLAME_PALETTES}); the caller falls
  * back to the per-transform palette, keeping legacy renders byte-identical —
  * and a {@link buildGradientLUT cosine-gradient LUT} for every other preset.
- * A {@link CustomPalette} object instead builds its
- * {@link buildCustomPaletteLUT piecewise-linear gradient}. Existing callers
- * that only ever pass a {@link FlamePaletteId} see byte-identical behavior.
+ * A {@link CustomPalette} object builds its
+ * {@link buildCustomPaletteLUT piecewise-linear gradient}; a
+ * {@link RampPalette} builds its {@link buildRampLUT full-resolution
+ * gradient} (discriminated on the payload's own `kind` field — every
+ * existing `{ stops: ... }` literal keeps its exact behavior). Existing
+ * callers that only ever pass a {@link FlamePaletteId} see byte-identical
+ * behavior.
  */
 export function buildPaletteLUT(palette: PaletteSpec): Float32Array | null {
-  if (typeof palette !== "string") return buildCustomPaletteLUT(palette);
+  if (typeof palette !== "string") {
+    return "kind" in palette
+      ? buildRampLUT(palette)
+      : buildCustomPaletteLUT(palette);
+  }
   const preset: CosinePalette | null = FLAME_PALETTES[palette];
   return preset === null ? null : buildGradientLUT(preset);
 }
@@ -295,17 +417,20 @@ export function buildPaletteLUT(palette: PaletteSpec): Float32Array | null {
  * into a {@link PaletteSpec} (what {@link buildPaletteLUT} — and,
  * downstream, the render workers' GPU packing — consume). A built-in id,
  * including `"legacy"`, passes through unchanged. For
- * {@link CUSTOM_PALETTE_ID}, returns `custom` when the caller has one;
- * otherwise falls back to a freshly {@link seedCustomStops seeded} gradient
- * rather than `null` or throwing, so this stays a total function. Callers
- * should never actually hit that fallback in practice — selecting Custom in
- * the UI always seeds a payload into `AppState` first — but it keeps e.g. a
- * hand-crafted or stale-decoded (`persist.ts`) state from producing a blank
- * render.
+ * {@link CUSTOM_PALETTE_ID}, returns the authored payload when the caller
+ * has one — either a {@link CustomPalette} or a full-resolution
+ * {@link RampPalette} (an imported gradient, which rides the same slot and
+ * passes through untouched — never truncated to fit the editor's
+ * vocabulary); otherwise falls back to a freshly
+ * {@link seedCustomStops seeded} gradient rather than `null` or throwing,
+ * so this stays a total function. Callers should never actually hit that
+ * fallback in practice — selecting Custom in the UI always seeds a payload
+ * into `AppState` first — but it keeps e.g. a hand-crafted or stale-decoded
+ * (`persist.ts`) state from producing a blank render.
  */
 export function resolvePalette(
   selection: PaletteSelection,
-  custom: CustomPalette | undefined,
+  custom: CustomPalette | RampPalette | undefined,
 ): PaletteSpec {
   if (selection !== CUSTOM_PALETTE_ID) return selection;
   return custom ?? { stops: seedCustomStops(CUSTOM_PALETTE_ID) };

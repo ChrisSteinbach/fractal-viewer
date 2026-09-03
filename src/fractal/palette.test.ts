@@ -146,6 +146,128 @@ describe("buildPaletteLUT with a CustomPalette", () => {
   });
 });
 
+// A synthetic 256-entry ramp carrying the two features an 8-stop point
+// sample destroys: a ONE-ENTRY bright band (entry 100 = white amid black)
+// and a HARD hue jump (adjacent entries red→blue with nothing between).
+// The old import path sampled 8 evenly-spaced entries and piecewise-lerped
+// them, which interpolates straight across both features — the band's
+// amplitude dropped to 0 and the jump smeared into a smooth blend.
+const bandedEntries: RgbStop[] = Array.from({ length: 256 }, (_, i) => {
+  if (i === 100) return [1, 1, 1];
+  if (i === 200) return [1, 0, 0];
+  if (i === 201) return [0, 0, 1];
+  return [0, 0, 0];
+});
+
+describe("buildPaletteLUT with a RampPalette", () => {
+  it("preserves a one-entry bright band at full amplitude", () => {
+    const lut = buildPaletteLUT({ kind: "ramp", entries: bandedEntries });
+    if (!lut) throw new Error("ramp palette should have a LUT");
+    expect([lut[100 * 3], lut[100 * 3 + 1], lut[100 * 3 + 2]]).toEqual([
+      1, 1, 1,
+    ]);
+  });
+
+  it("keeps the band's black neighbors black instead of interpolating across it", () => {
+    const lut = buildPaletteLUT({ kind: "ramp", entries: bandedEntries });
+    if (!lut) throw new Error("ramp palette should have a LUT");
+    for (const i of [99, 101]) {
+      expect([lut[i * 3], lut[i * 3 + 1], lut[i * 3 + 2]]).toEqual([0, 0, 0]);
+    }
+  });
+
+  it("survives a hard hue jump between adjacent entries", () => {
+    const lut = buildPaletteLUT({ kind: "ramp", entries: bandedEntries });
+    if (!lut) throw new Error("ramp palette should have a LUT");
+    expect([lut[200 * 3], lut[200 * 3 + 1], lut[200 * 3 + 2]]).toEqual([
+      1, 0, 0,
+    ]);
+    expect([lut[201 * 3], lut[201 * 3 + 1], lut[201 * 3 + 2]]).toEqual([
+      0, 0, 1,
+    ]);
+  });
+
+  it("copies a 256-entry ramp straight through, exactly", () => {
+    const entries: RgbStop[] = Array.from({ length: 256 }, (_, i) => [
+      i / 255,
+      (255 - i) / 255,
+      (i % 7) / 255,
+    ]);
+    const lut = buildPaletteLUT({ kind: "ramp", entries });
+    if (!lut) throw new Error("ramp palette should have a LUT");
+    // The LUT is a Float32Array, so "straight through, exactly" means the
+    // stored value is exactly fround(entry) — the same pin the
+    // CustomPalette endpoint test above makes.
+    for (let i = 0; i < 256; i++) {
+      expect([lut[i * 3], lut[i * 3 + 1], lut[i * 3 + 2]]).toEqual([
+        Math.fround(entries[i][0]),
+        Math.fround(entries[i][1]),
+        Math.fround(entries[i][2]),
+      ]);
+    }
+  });
+
+  it("piecewise-lerps a sparse ramp exactly like the same stops as a CustomPalette", () => {
+    const entries: RgbStop[] = [
+      [0.25, 0.5, 0.75],
+      [1, 0.75, 0.125],
+      [0, 0, 1],
+    ];
+    const rampLut = buildPaletteLUT({ kind: "ramp", entries });
+    const customLut = buildPaletteLUT({ stops: entries });
+    expect(Array.from(rampLut!)).toEqual(Array.from(customLut!));
+  });
+
+  it("averages an over-256 ramp by bin overlap rather than point-sampling it", () => {
+    // 512 entries: black for the first half, white for the second. The
+    // boundary between output entries 127 and 128 is clean — 127's
+    // footprint [254, 256) is entirely black, 128's [256, 258) entirely
+    // white — where point sampling could smear or alias the step.
+    const entries: RgbStop[] = Array.from({ length: 512 }, (_, i) =>
+      i < 256 ? ([0, 0, 0] as const) : ([1, 1, 1] as const),
+    );
+    const lut = buildPaletteLUT({ kind: "ramp", entries });
+    if (!lut) throw new Error("ramp palette should have a LUT");
+    expect([lut[127 * 3], lut[127 * 3 + 1], lut[127 * 3 + 2]]).toEqual([
+      0, 0, 0,
+    ]);
+    expect([lut[128 * 3], lut[128 * 3 + 1], lut[128 * 3 + 2]]).toEqual([
+      1, 1, 1,
+    ]);
+  });
+
+  it("averages a one-entry band that a point sample would miss entirely", () => {
+    // A 512-entry ramp with white only at source entry 101 — an odd index,
+    // so neither of output entry 50's straddled cells is centered on it.
+    // Overlap weighting gives entry 50 (footprint [100, 102)) the mean
+    // 0.5; a 256-way point sample picking even source indices would read 0.
+    const entries: RgbStop[] = Array.from(
+      { length: 512 },
+      () => [0, 0, 0] as const,
+    );
+    entries[101] = [1, 1, 1];
+    const lut = buildPaletteLUT({ kind: "ramp", entries });
+    if (!lut) throw new Error("ramp palette should have a LUT");
+    expect(lut[50 * 3]).toBeCloseTo(0.5, 6);
+    expect(lut[50 * 3 + 1]).toBeCloseTo(0.5, 6);
+    expect(lut[50 * 3 + 2]).toBeCloseTo(0.5, 6);
+  });
+
+  it("keeps every averaged channel within [0, 1]", () => {
+    const entries: RgbStop[] = Array.from({ length: 300 }, (_, i) => [
+      ((i * 7) % 256) / 255,
+      ((i * 13) % 256) / 255,
+      ((i * 29) % 256) / 255,
+    ]);
+    const lut = buildPaletteLUT({ kind: "ramp", entries });
+    if (!lut) throw new Error("ramp palette should have a LUT");
+    for (let i = 0; i < lut.length; i++) {
+      expect(lut[i]).toBeGreaterThanOrEqual(0);
+      expect(lut[i]).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
 describe("resolvePalette", () => {
   it("passes a preset id through unchanged", () => {
     expect(resolvePalette("sunset", undefined)).toBe("sunset");
@@ -165,10 +287,15 @@ describe("resolvePalette", () => {
     expect(resolvePalette(CUSTOM_PALETTE_ID, custom)).toBe(custom);
   });
 
+  it("passes a ramp payload through unchanged", () => {
+    const ramp = { kind: "ramp" as const, entries: bandedEntries };
+    expect(resolvePalette(CUSTOM_PALETTE_ID, ramp)).toBe(ramp);
+  });
+
   it("falls back to a 5-stop seeded gradient when custom has no payload", () => {
     const resolved = resolvePalette(CUSTOM_PALETTE_ID, undefined);
-    if (typeof resolved === "string")
-      throw new Error("expected a custom palette");
+    if (typeof resolved === "string" || "kind" in resolved)
+      throw new Error("expected a custom stops palette");
     expect(resolved.stops).toHaveLength(5);
   });
 });

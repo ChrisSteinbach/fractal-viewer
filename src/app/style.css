@@ -1545,6 +1545,21 @@ summary.editor-group-title {
   line-height: 1.45;
 }
 
+/* The conversion disclosure shown while the payload behind an editor is an
+   imported full-resolution ramp (see ui.ts's syncCustomPaletteEditors):
+   styled like the static disclosure above, hidden while the payload is an
+   ordinary authored stops palette. Same specificity trap as
+   `.custom-palette-row.hidden` — restate the hide so it wins over the row's
+   own display rules. */
+.custom-palette-ramp-note {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.custom-palette-ramp-note.hidden {
+  display: none;
+}
+
 .custom-palette-strip {
   width: 100%;
   height: 14px;

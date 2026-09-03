@@ -3271,6 +3271,135 @@ describe("decodeScene customPalette", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Ramp palettes — the full-resolution payload an imported `.flame` gradient
+// rides in both palette slots. The `{ ramp }` wire form is one concatenated
+// lowercase-hex string, 6 chars per entry; the decode contract is the same
+// quiet-drop-never-repair rule as the stops form. See decodeRampPalette.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene ramp palettes", () => {
+  it("round-trips a ramp in the shared slot with entries intact", () => {
+    // Channel values of the form k/255 are byte-exact through the hex form.
+    const ramp = { kind: "ramp" as const, entries: byteRamp(64) };
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      rampPaletteId: "custom",
+      customPalette: ramp,
+    };
+    const encoded = encodeScene(s);
+    const payload = decodePayload(encoded);
+    const result = decodeScene(encoded)!;
+
+    expect(payload.customPalette).toEqual({
+      ramp: byteRampHex(64),
+    });
+    expect(result.customPalette).toEqual(ramp);
+    expect(result.rampPaletteId).toBe("custom");
+  });
+
+  it("round-trips a ramp in the balloon's independent slot", () => {
+    const ramp = { kind: "ramp" as const, entries: byteRamp(3) };
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      balloonPaletteId: "custom",
+      balloonCustomPalette: ramp,
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.balloonCustomPalette).toEqual(ramp);
+    expect(result!.balloonPaletteId).toBe("custom");
+  });
+
+  it("does not quantize an already byte-aligned ramp's channels", () => {
+    const ramp = { kind: "ramp" as const, entries: byteRamp(5) };
+    const result = decodeScene(
+      encodeScene({ ...baseSnapshot(), customPalette: ramp }),
+    );
+    expect(result!.customPalette).toEqual(ramp);
+  });
+
+  it.each([
+    ["a non-string ramp", 42],
+    ["a null ramp", null],
+    ["a length that is not a multiple of 6", "ff0000f"],
+    ["an empty ramp", ""],
+    ["one entry (below the minimum)", "ff0000"],
+    ["bad hex characters", "ff00zz000000"],
+  ])("quietly drops %s", (_name, rampValue) => {
+    const raw = { ...baseSnapshot(), customPalette: { ramp: rampValue } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("quietly drops a ramp past MAX_RAMP_ENTRIES instead of truncating it", () => {
+    const hex = byteRampHex(4097);
+    const raw = { ...baseSnapshot(), customPalette: { ramp: hex } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("accepts a ramp at exactly MAX_RAMP_ENTRIES", () => {
+    const ramp = { kind: "ramp" as const, entries: byteRamp(4096) };
+    const result = decodeScene(
+      encodeScene({ ...baseSnapshot(), customPalette: ramp }),
+    );
+    expect(result!.customPalette).toEqual(ramp);
+  });
+
+  it("accepts uppercase hex digits in a hand-crafted ramp", () => {
+    const raw = { ...baseSnapshot(), customPalette: { ramp: "FF00000000FF" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.customPalette).toEqual({
+      kind: "ramp",
+      entries: [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+    });
+  });
+
+  it("reads a payload carrying both keys as the stops form it predates", () => {
+    const raw = {
+      ...baseSnapshot(),
+      customPalette: { stops: ["#ff0000", "#0000ff"], ramp: "ffff00" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.customPalette).toEqual({
+      stops: [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+    });
+  });
+});
+
+/** An `n`-entry ramp whose channels are all exact k/255 byte values, so the
+ * wire round-trip is byte-exact (the real flam3 import case). */
+function byteRamp(n: number): [number, number, number][] {
+  return Array.from({ length: n }, (_, i) => [
+    (i % 256) / 255,
+    (255 - (i % 256)) / 255,
+    i % 2 === 0 ? 64 / 255 : 191 / 255,
+  ]);
+}
+
+/** The concatenated hex wire form of {@link byteRamp}, 6 chars per entry. */
+function byteRampHex(n: number): string {
+  return byteRamp(n)
+    .map((stop) =>
+      stop
+        .map((v) =>
+          Math.round(Math.min(1, Math.max(0, v)) * 255)
+            .toString(16)
+            .padStart(2, "0"),
+        )
+        .join(""),
+    )
+    .join("");
+}
+
+// ---------------------------------------------------------------------------
 // Position axis colors — the "by position" color mode's three
 // user-picked axis colors. Optional like customPalette, and shares its
 // quiet-fallback decode contract; see color.ts's PositionAxisColors.
@@ -3450,6 +3579,24 @@ describe("toSnapshot / fromSnapshot customPalette", () => {
     // than leave it untouched.
     const snapshot = toSnapshot(initialState(true));
     expect(fromSnapshot(snapshot, base).customPalette).toBeUndefined();
+  });
+
+  it("toSnapshot carries a ramp payload through untouched — no 8-stop trim intercepts it", () => {
+    // The regression this feature exists to stop: a ramp entering any
+    // `stops.slice(0, MAX_CUSTOM_PALETTE_STOPS)` path would silently render
+    // a flattened import. Neither the state projection nor the encode path
+    // may repair, trim or convert the payload.
+    const ramp = { kind: "ramp" as const, entries: byteRamp(256) };
+    const state: AppState = {
+      ...initialState(true),
+      rampPaletteId: "custom",
+      customPalette: ramp,
+    };
+    const snapshot = toSnapshot(state);
+    expect(snapshot.customPalette).toBe(ramp);
+    const result = decodeScene(encodeScene(snapshot));
+    expect(result!.customPalette).toEqual(ramp);
+    expect(result!.rampPaletteId).toBe("custom");
   });
 });
 

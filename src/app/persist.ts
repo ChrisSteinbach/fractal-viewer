@@ -18,6 +18,7 @@ import {
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
   MAX_CUSTOM_PALETTE_STOPS,
+  MAX_RAMP_ENTRIES,
   MIN_CUSTOM_PALETTE_STOPS,
   hexToRgb,
   rgbToHex,
@@ -25,6 +26,7 @@ import {
 import type {
   CustomPalette,
   PaletteSelection,
+  RampPalette,
   RgbStop,
 } from "../fractal/palette";
 import {
@@ -257,10 +259,13 @@ export interface SceneSnapshot {
    * Flame, Solid, Surface, and generated Flame background (see
    * {@link AppState.customPalette}). Optional like `finalTransform` — absent
    * until one of those palette selections first lands on Custom — unlike the
-   * always-present settings blocks above. Balloon's independent Custom
-   * gradient is {@link balloonCustomPalette} below.
+   * always-present settings blocks above. The payload is either an
+   * authored 2–8-stop {@link CustomPalette} or a full-resolution imported
+   * {@link RampPalette} (a `.flame` import lands here; see
+   * {@link encodePaletteWire} for the two wire forms). Balloon's independent
+   * Custom gradient is {@link balloonCustomPalette} below.
    */
-  customPalette?: CustomPalette;
+  customPalette?: CustomPalette | RampPalette;
   /**
    * The position mode's custom axis colors (see
    * {@link AppState.positionAxisColors}). Optional like `customPalette` —
@@ -337,8 +342,9 @@ export interface SceneSnapshot {
   /**
    * Independently-authored balloon Custom gradient. Retained even while a
    * built-in or Inherit is selected so dormant authoring survives save/load.
+   * Same payload union as {@link customPalette} above.
    */
-  balloonCustomPalette?: CustomPalette;
+  balloonCustomPalette?: CustomPalette | RampPalette;
   /**
    * The balloon shell's tint color (see `state.ts`'s
    * {@link AppState.balloonTint}) — persisted alongside `balloonRadius` the
@@ -1612,6 +1618,13 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
  * the exact same quiet fallback here, unlike `decodeTransform`, whose `null`
  * distinguishes "reject the scene" from a genuinely absent optional field.
  *
+ * The wire form is a discriminated union (see {@link EncodedPaletteWire}):
+ * `{ stops: string[] }` for an authored {@link CustomPalette},
+ * `{ ramp: string }` for a full-resolution imported {@link RampPalette}.
+ * The shapes are tried in that order and an unknown shape drops the whole
+ * field; the encoder never writes both keys, and a payload that does is
+ * read as the stops form it predates.
+ *
  * Unlike the live gradient editor's reducer (`setCustomPaletteStops` in
  * `state.ts`), which TRIMS an overlong stop list down to
  * {@link MAX_CUSTOM_PALETTE_STOPS} rather than reject it, a hand-crafted stop
@@ -1619,30 +1632,64 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
  * here drops the WHOLE payload — the quiet-fallback contract for a malformed
  * enum-ish field is "drop the field", not "repair it" (see `decodeSymmetry`'s
  * axis or `decodeFlameParams`'s paletteId for the same rule applied to a
- * single value rather than an array).
+ * single value rather than an array). The ramp form validates the same way
+ * (see {@link decodeRampPalette}): any failure drops the whole palette, never
+ * a truncated version of it.
  *
  * Called before every primary palette selection is decoded in `decodeScene`,
  * so Flame, Solid, Surface, the Points ramp, and the generated Flame background
  * can each tell whether a `"custom"` selection has a payload to back it.
  */
-function decodeCustomPalette(raw: unknown): CustomPalette | undefined {
+function decodeCustomPalette(
+  raw: unknown,
+): CustomPalette | RampPalette | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const p = raw as Record<string, unknown>;
-  if (!Array.isArray(p.stops)) return undefined;
-  if (
-    p.stops.length < MIN_CUSTOM_PALETTE_STOPS ||
-    p.stops.length > MAX_CUSTOM_PALETTE_STOPS
-  )
-    return undefined;
+  if (Array.isArray(p.stops)) {
+    if (
+      p.stops.length < MIN_CUSTOM_PALETTE_STOPS ||
+      p.stops.length > MAX_CUSTOM_PALETTE_STOPS
+    )
+      return undefined;
 
-  const stops: RgbStop[] = [];
-  for (const entry of p.stops) {
-    if (typeof entry !== "string") return undefined;
-    const stop = hexToRgb(entry);
-    if (stop === null) return undefined;
-    stops.push(stop);
+    const stops: RgbStop[] = [];
+    for (const entry of p.stops) {
+      if (typeof entry !== "string") return undefined;
+      const stop = hexToRgb(entry);
+      if (stop === null) return undefined;
+      stops.push(stop);
+    }
+    return { stops };
   }
-  return { stops };
+  return decodeRampPalette(p.ramp);
+}
+
+/**
+ * Validate the `{ ramp: string }` wire form (see {@link decodeCustomPalette}
+ * for the quiet-fallback contract): ONE concatenated lowercase-hex string,
+ * 6 characters per entry in entry order (see {@link encodePaletteWire}'s
+ * encoding decision paragraph). STRICT like the stops form's
+ * {@link hexToRgb} entries — the string must be present, its length a
+ * multiple of 6, the entry count within
+ * [2, {@link MAX_RAMP_ENTRIES}] (the shared `.flame` parse cap), and every
+ * 6-char chunk must parse as a color — and ANY failure drops the whole
+ * palette field rather than keeping a truncated ramp, because a half-decoded
+ * gradient is a silently different object, exactly the thing this feature
+ * exists to stop rendering.
+ */
+function decodeRampPalette(raw: unknown): RampPalette | undefined {
+  if (typeof raw !== "string") return undefined;
+  if (raw.length === 0 || raw.length % 6 !== 0) return undefined;
+  const count = raw.length / 6;
+  if (count < MIN_CUSTOM_PALETTE_STOPS || count > MAX_RAMP_ENTRIES)
+    return undefined;
+  const entries: RgbStop[] = [];
+  for (let o = 0; o < raw.length; o += 6) {
+    const entry = hexToRgb(`#${raw.slice(o, o + 6)}`);
+    if (entry === null) return undefined;
+    entries.push(entry);
+  }
+  return { kind: "ramp", entries };
 }
 
 /**
@@ -2763,6 +2810,48 @@ function encodeTransform(
 }
 
 /**
+ * The wire form of a palette payload slot ({@link SceneSnapshot.customPalette}
+ * and {@link SceneSnapshot.balloonCustomPalette}) — a discriminated union on
+ * the payload's own shape: an authored {@link CustomPalette} rides as
+ * `{ stops: string[] }` (one `#rrggbb` hex string per stop, the file's
+ * per-color convention since the slot shipped), an imported
+ * {@link RampPalette} rides as `{ ramp: string }` (ONE concatenated
+ * lowercase-hex string, 6 characters per entry in entry order). The
+ * discriminator is the payload shape itself rather than an added `kind` tag,
+ * so every existing `{ stops: ... }` document decodes byte-identically.
+ */
+type EncodedPaletteWire = { stops: string[] } | { ramp: string };
+
+/**
+ * Encode a palette payload slot for the wire (see {@link EncodedPaletteWire}).
+ *
+ * WHY ONE CONCATENATED HEX STRING for a ramp, rather than base64-of-bytes:
+ * it reuses the file's existing per-color convention — `rgbToHex`'s
+ * `Math.round(clamp01(v)·255)` byte rounding and its lowercase 2-digit
+ * digits — and validates inline with the existing hex machinery
+ * ({@link hexToRgb} on each 6-char chunk), so the decoder needs no second
+ * decode path. Base64 would shave ~25% off the wire (a 256-entry ramp is
+ * ~1.5KB hex vs ~1KB base64 — noise in a `#v1=` hash that already carries a
+ * whole scene) at the cost of a second encoding and a bytes-vs-channels
+ * mismatch to keep straight. Byte quantization is LOSSLESS for real flam3
+ * palettes: both parse forms (`<palette>` hex and `<color index rgb>`)
+ * produce channel/255 values, so nothing rounds on the way out — and an
+ * in-memory ramp with non-byte-aligned channels quantizes on encode exactly
+ * like every other color in the document (CustomPalette stops are hex
+ * strings on this wire today too).
+ */
+function encodePaletteWire(
+  palette: CustomPalette | RampPalette,
+): EncodedPaletteWire {
+  if ("kind" in palette) {
+    return {
+      ramp: palette.entries.map((stop) => rgbToHex(stop).slice(1)).join(""),
+    };
+  }
+  return { stops: palette.stops.map(rgbToHex) };
+}
+
+/**
  * Produce a compact, URL-safe `v1=<base64url>` string for `s`. Floats are
  * rounded to 4 decimal places; transform ids are omitted and reassigned from
  * the array index on decode.
@@ -2813,7 +2902,7 @@ export function encodeScene(s: SceneSnapshot): string {
     balloonEcho: boolean;
     balloonRadius: number;
     balloonPaletteId?: BalloonPaletteSelection;
-    balloonCustomPalette?: { stops: string[] };
+    balloonCustomPalette?: EncodedPaletteWire;
     balloonTint: string;
     balloonTintStrength: number;
     fogDensity: number;
@@ -2827,7 +2916,7 @@ export function encodeScene(s: SceneSnapshot): string {
       shape?: BackgroundShape;
       flamePaletteId?: PaletteSelection;
     };
-    customPalette?: { stops: string[] };
+    customPalette?: EncodedPaletteWire;
     positionAxisColors?: { x: string; y: string; z: string };
     camera?: {
       target: number[];
@@ -3118,10 +3207,11 @@ export function encodeScene(s: SceneSnapshot): string {
     payload.tiling = encoded;
   }
   // Written only when present, like finalTransform above — never-authored
-  // scenes keep their short URLs. Encoded as hex strings for URL
-  // compactness — see rgbToHex.
+  // scenes keep their short URLs. Encoded as hex (per-stop strings for an
+  // authored gradient, one concatenated ramp string for an imported one) for
+  // URL compactness — see encodePaletteWire for the two forms' rationale.
   if (s.customPalette)
-    payload.customPalette = { stops: s.customPalette.stops.map(rgbToHex) };
+    payload.customPalette = encodePaletteWire(s.customPalette);
   // Inherit is the compact, legacy-preserving default. The independently
   // authored payload is still written whenever valid, even while dormant.
   if (
@@ -3130,9 +3220,7 @@ export function encodeScene(s: SceneSnapshot): string {
     payload.balloonPaletteId = s.balloonPaletteId;
   }
   if (s.balloonCustomPalette) {
-    payload.balloonCustomPalette = {
-      stops: s.balloonCustomPalette.stops.map(rgbToHex),
-    };
+    payload.balloonCustomPalette = encodePaletteWire(s.balloonCustomPalette);
   }
   // Written only when present, like customPalette above — the legacy
   // identity is expressed by absence (see AppState.positionAxisColors),

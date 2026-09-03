@@ -117,26 +117,26 @@ more valuable property to protect.
 
 ## Import (`.flame` → scene)
 
-| flame                                                | explorer                                                                                                                       |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `coefs`                                              | QR → position/rotation/scale/shear (exact)                                                                                     |
-| pure `linear="w"` blend                              | folded into the affine (`w·A`, `w·t`), list omitted (exact)                                                                    |
-| known variation attrs                                | `variations: [{type, weight}]` by name (exact)                                                                                 |
-| `post` on a purely affine map                        | composed into the affine (exact)                                                                                               |
-| `post` on a nonlinear map                            | **dropped + warning** (nothing to hang it on)                                                                                  |
-| unknown variations/parameters                        | **ignored + one aggregated warning** naming the attributes                                                                     |
-| `weight`                                             | `Transform.weight`; all-equal weights omitted (uniform)                                                                        |
-| `weight ≤ 0` xform                                   | **skipped + warning**                                                                                                          |
-| `chaos` (xaos)                                       | `Transform.chaos` row: sanitized, pad/truncated to the base xform count, reindexed around any dropped xform — see "Xaos" below |
-| `opacity="0"`                                        | imported visible + warning (no per-map opacity)                                                                                |
-| `color`                                              | `Transform.colorIndex`, clamped to `[0, 1]`; absent ⇒ key omitted                                                              |
-| `color_speed`                                        | `Transform.colorSpeed`, clamped to `[0, 1]`; wins over `symmetry` when both appear                                             |
-| `symmetry` (deprecated)                              | `Transform.colorSpeed = (1 - symmetry) / 2`, clamped                                                                           |
-| `<finalxform>`                                       | `finalTransform` (same rules; its weight ignored)                                                                              |
-| palette (`<palette>` hex block or `<color>` entries) | downsampled onto an 8-stop `CustomPalette`; `flame.paletteId` and `rampPaletteId` become `"custom"`                            |
-| `brightness` / `gamma` / `vibrancy`                  | `flame.exposure` (`brightness / 4`) / `gamma` / `vibrancy`, clamped to our ranges                                              |
-| `supersample`/`oversample`, `estimator_*`            | the matching `FlameParams` fields, clamped                                                                                     |
-| `size`/`center`/`scale`/`rotate`                     | ignored — the explorer auto-fits its own camera                                                                                |
+| flame                                                | explorer                                                                                                                                  |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `coefs`                                              | QR → position/rotation/scale/shear (exact)                                                                                                |
+| pure `linear="w"` blend                              | folded into the affine (`w·A`, `w·t`), list omitted (exact)                                                                               |
+| known variation attrs                                | `variations: [{type, weight}]` by name (exact)                                                                                            |
+| `post` on a purely affine map                        | composed into the affine (exact)                                                                                                          |
+| `post` on a nonlinear map                            | **dropped + warning** (nothing to hang it on)                                                                                             |
+| unknown variations/parameters                        | **ignored + one aggregated warning** naming the attributes                                                                                |
+| `weight`                                             | `Transform.weight`; all-equal weights omitted (uniform)                                                                                   |
+| `weight ≤ 0` xform                                   | **skipped + warning**                                                                                                                     |
+| `chaos` (xaos)                                       | `Transform.chaos` row: sanitized, pad/truncated to the base xform count, reindexed around any dropped xform — see "Xaos" below            |
+| `opacity="0"`                                        | imported visible + warning (no per-map opacity)                                                                                           |
+| `color`                                              | `Transform.colorIndex`, clamped to `[0, 1]`; absent ⇒ key omitted                                                                         |
+| `color_speed`                                        | `Transform.colorSpeed`, clamped to `[0, 1]`; wins over `symmetry` when both appear                                                        |
+| `symmetry` (deprecated)                              | `Transform.colorSpeed = (1 - symmetry) / 2`, clamped                                                                                      |
+| `<finalxform>`                                       | `finalTransform` (same rules; its weight ignored)                                                                                         |
+| palette (`<palette>` hex block or `<color>` entries) | preserved at full entry count as a `RampPalette` (`customPalette.kind = "ramp"`); `flame.paletteId` and `rampPaletteId` become `"custom"` |
+| `brightness` / `gamma` / `vibrancy`                  | `flame.exposure` (`brightness / 4`) / `gamma` / `vibrancy`, clamped to our ranges                                                         |
+| `supersample`/`oversample`, `estimator_*`            | the matching `FlameParams` fields, clamped                                                                                                |
+| `size`/`center`/`scale`/`rotate`                     | ignored — the explorer auto-fits its own camera                                                                                           |
 
 "Known variation attrs" matches any of our seventeen `VARIATION_TYPES` by name
 — the fold family and the two power maps included, per the deviation above.
@@ -149,6 +149,24 @@ Everything else about the imported scene (point count, render style, color
 mode, …) takes the app's defaults. A file with several `<flame>` elements
 imports every one (capped at the collection size); the UI loads a single
 flame as the current scene and merges a multi-flame file into the collection.
+
+### The palette is preserved whole
+
+Both palette forms — the Apophysis `<palette count format="RGB">` hex block
+and flam3's `<color index rgb="…"/>` entries — import as a full-resolution
+`RampPalette` (`palette.ts`), NOT an 8-stop point sample. Earlier versions
+downsampled every gradient onto the 8-stop `CustomPalette` the gradient
+editor authors, which interpolated straight across exactly what makes these
+gradients look the way they do: narrow bright bands, hard hue jumps and dark
+gaps. The imported ramp rides the scene's usual Custom palette slots
+(`snapshot.customPalette` + `paletteId`/`rampPaletteId` → `"custom"`) and
+renders through the same 256-wide LUT every renderer already samples, so no
+render path changes; entries past `MAX_RAMP_ENTRIES` (4096) truncate without
+a warning (a palette is cosmetic), and fewer than two usable entries leaves
+the default palette. On the wire the ramp encodes as one concatenated hex
+string (see `persist.ts`'s `encodePaletteWire`), and the gradient editor
+discloses the conversion: it displays 8 stops derived from the ramp, and the
+first edit replaces the ramp with an authored 8-stop palette.
 
 `decodeFlameFile` is a never-throwing trust boundary like `scene-file.ts`'s
 `decodeImportFile`: unusable input returns `null` (not a flame file) or drops

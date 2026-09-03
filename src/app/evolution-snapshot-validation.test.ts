@@ -7,6 +7,7 @@ import {
 } from "./evolution-crossover";
 import { createEvolutionCrossoverCandidate } from "./evolution-crossover-candidate";
 import { toSnapshot, type SceneSnapshot } from "./persist";
+import type { RampPalette } from "../fractal/palette";
 import { initialState } from "./state";
 
 type Corruption = (snapshot: SceneSnapshot) => void;
@@ -242,6 +243,58 @@ describe("crossover-v1 exact SceneSnapshot validation", () => {
     );
     if (!result.accepted) throw new Error(result.refusal.detail);
     expect(result.accepted).toBe(true);
+  });
+
+  it("accepts a full-resolution ramp palette payload as its own object", () => {
+    // The ramp half of the custom-palette union: validated as the different
+    // object it is, never coerced toward the 8-stop editor vocabulary.
+    const primary = populatedSnapshot();
+    const ramp: RampPalette = {
+      kind: "ramp",
+      entries: [
+        [0, 0, 0],
+        [1, 1, 1],
+        [0.5, 0.25, 0.75],
+      ],
+    };
+    primary.customPalette = ramp;
+    const result = prepareEvolutionCrossover(
+      { snapshot: primary },
+      { snapshot: populatedSnapshot() },
+    );
+    if (!result.accepted) throw new Error(result.refusal.detail);
+    expect(result.accepted).toBe(true);
+  });
+
+  it.each<[string, Corruption]>([
+    [
+      "unknown ramp kind",
+      (s) => (record(s.customPalette!).kind = "future-ramp"),
+    ],
+    [
+      "unknown ramp field",
+      (s) => Object.assign(record(s.customPalette), { stops: undefined }),
+    ],
+    ["one ramp entry", (s) => (record(s.customPalette!).entries = [[1, 1, 1]])],
+    [
+      "bad ramp entry RGB",
+      (s) => ((record(s.customPalette!).entries as number[][])[0][0] = 2),
+    ],
+  ])("rejects a malformed ramp payload: %s", (_name, change) => {
+    const withRamp: SceneSnapshot = populatedSnapshot();
+    withRamp.customPalette = {
+      kind: "ramp",
+      entries: [
+        [0, 0, 0],
+        [1, 1, 1],
+      ],
+    };
+    change(withRamp);
+    const primaryResult = prepareEvolutionCrossover(
+      { snapshot: withRamp },
+      { snapshot: populatedSnapshot() },
+    );
+    expect(primaryResult.accepted).toBe(false);
   });
 
   it.each<[string, Corruption]>([
@@ -506,7 +559,7 @@ describe("crossover-v1 exact SceneSnapshot validation", () => {
     ["bad fourD thickness", (s) => (record(s.fourD).sliceThickness = 0.75)],
     [
       "bad custom RGB",
-      (s) => ((s.customPalette!.stops[0] as unknown as number[])[0] = 2),
+      (s) => ((record(s.customPalette).stops as string[])[0] = "2ff8800"),
     ],
     ["bad axis RGB length", (s) => (record(s.positionAxisColors).x = [1, 0])],
     [
