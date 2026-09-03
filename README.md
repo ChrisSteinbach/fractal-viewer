@@ -116,7 +116,7 @@ and [AGENTS.md](AGENTS.md) for the complete module map.
 ## Testing & quality
 
 ```bash
-npm test               # lint + run all tests
+npm test               # run all tests
 npm run test:watch     # tests in watch mode
 npm run test:coverage  # tests with a coverage report
 npm run lint           # type-check + ESLint + Stylelint + Prettier
