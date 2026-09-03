@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * Surface PATTERN gate on the WGSL COMPUTE kernel (fr-cmtl.6): does an
+ * Surface PATTERN gate on the WGSL COMPUTE kernel: does an
  * AUTHORED per-transform `surfacePattern` visibly change the settled
  * Surface render on the WebGPU compute path — every core family — from a
  * real `#v1=` document driven through the real app?
  *
- * THE ROLE INVERSION from scripts/pattern.verify.mjs (.5's gate): there the
+ * THE ROLE INVERSION from scripts/pattern.verify.mjs (the GLSL twin's
+ * gate): there the
  * pattern ALBEDO existed only in the GLSL tracers, so every leg FORCED the
  * WebGL arm (`?surfacegl`) and asserted engine=webgl. Here the pattern math
  * exists ONLY in the WGSL shade kernel (surface-de-gpu.ts's `pattern` gate),
@@ -13,7 +14,8 @@
  * time — a WebGL leg would be a false negative by design, and the engine
  * assertion is what makes the green row honest. The same documents now
  * render patterned on BOTH engines; the durable cross-engine parity gate
- * is fr-cmtl.8's, not this script's.
+ * is the pattern release gate's (pattern-release-fixtures.mjs), not this
+ * script's.
  *
  * THE SCENES cover the pattern arm's frame reconstruction per core:
  *
@@ -525,7 +527,7 @@ async function runLeg(browser, args, leg, stopAt, budgetMs, log) {
     page.on("pageerror", (err) => pageErrors.push(err.message));
     await page.bringToFront();
     const base = args.url.replace(/\/+$/, "");
-    // NO ?surfacegl: fr-cmtl.6's pattern math lives in the WGSL shade
+    // NO ?surfacegl: the pattern math under test lives in the WGSL shade
     // kernel, so the default compute-preferring routing is the arm under
     // test — a WebGL leg would render unpatterned by design, and the
     // engine assertion below is what makes the green row honest.

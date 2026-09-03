@@ -453,8 +453,7 @@ export interface ChaosSelection {
  * FALLS BACK to the global table for that draw ({@link pickIndex}) —
  * flam3's tolerance, avoiding stuck orbits. Deliberately NO console warning
  * here: this runs inside workers per generation, and UI disclosure of a
- * degenerate row belongs to the chi matrix editor (a fresh session may name
- * the open item it waits on: fr-wo2j.6).
+ * degenerate row belongs to the chi matrix editor.
  *
  * Selection has no dimension — this is shared by `prepareChaosGame` and
  * `chaos-game-4d.ts`'s `prepareChaosGame4` rather than duplicated, exactly

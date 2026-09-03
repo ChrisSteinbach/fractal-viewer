@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Deterministic cold-bake benchmark for fr-w863.2.
- *
- * This exercises the production catalog trefoil: procedural geometry,
- * ingestion, lazy BVH construction and the complete conservative 64^3 bake.
+ * Deterministic cold-bake benchmark for the scaled conservative mesh-SDF
+ * delivery: procedural geometry, ingestion, lazy BVH construction and the
+ * complete conservative 64^3 bake of the production catalog trefoil,
+ * against the measured sub-2-second cold-bake budget.
  */
 import { performance } from "node:perf_hooks";
 import {

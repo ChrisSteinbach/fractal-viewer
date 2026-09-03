@@ -898,13 +898,13 @@ session anything.
 
 ### The pattern arm's sizes
 
-The per-transform pattern arm (`SURFACE_PATTERN`, fr-cmtl.5) is the
+The per-transform pattern arm (`SURFACE_PATTERN`) is the
 second additively-independent arm measured across every pairing in both
 states: the same fifteen variants as the finish table, pattern off and
 on, against the previous table's figures. "Off" is byte-identical to
 the pre-pattern build — pinned by commit-hash baselines in
-`src/app/surface-pattern-baseline.ts`, generated from the pre-.5 tree
-(8f5fb4d) — and "on" is what a document authors a pattern from then.
+`src/app/surface-pattern-baseline.ts`, generated from the pre-pattern
+tree (8f5fb4d) — and "on" is what a document authors a pattern from then.
 
 | variant               | off resolved | off emitted | on resolved | on emitted | Δ resolved |
 | --------------------- | ------------ | ----------- | ----------- | ---------- | ---------- |
@@ -971,10 +971,10 @@ between 17.9 and 42.9 KB — far under the 82.2 KB that crashed Mesa. The
 whole UNRESOLVED 3D template grew to ~155 KB, still under the ~190 KB a
 resolved source would need for its stripped third to reach the crash.
 
-REAL-BROWSER COMPILE + RENDER (fr-cmtl.5's `scripts/pattern.verify.mjs`,
+REAL-BROWSER COMPILE + RENDER (`scripts/pattern.verify.mjs`,
 640x360): every leg forces the WebGL arm (`?surfacegl`) — the WGSL
-compute kernel's pattern math is fr-cmtl.6's, so a compute leg would
-render unpatterned by design — and the compared captures assert
+compute kernel's pattern math lands with the WGSL twin below, so a
+compute leg would render unpatterned by design — and the compared captures assert
 engine=webgl. Three routes, each three legs (none, patterned, strength-0
 control): lens3 (3D fold-FINAL lens, wood on transform 0)
 patterned-vs-none 3.80% central-region structural and strength-0-vs-none
@@ -991,7 +991,7 @@ reaches the SETTLED 8-pass latch; on the REAL DRIVER (--mode=x11::0,
 Intel Iris Xe / Mesa via ANGLE) all three routes settle: lens3 3.81%,
 ifs4plane 1.13%, escape3 9.19%, strength-0 0.000% everywhere.
 
-THE WGSL TWIN (fr-cmtl.6) renders the SAME documents on the compute path
+THE WGSL TWIN renders the SAME documents on the compute path
 with the same effect: `scripts/pattern.compute.verify.mjs` (no
 `?surfacegl`, engine=compute asserted at capture time) measures lens3
 3.81%, ifs4plane 1.13%, escape3 9.19% — byte-for-byte the WebGL rows —

@@ -391,7 +391,7 @@ describe("patternShadeTs vs the accepted V3 oracle", () => {
       .update(surfacePatternShadeSource())
       .digest("hex");
     expect(hash).toBe(
-      // fr-cmtl.6: patternDetailWarpPoint now mutates an explicit `out`
+      // patternDetailWarpPoint mutates an explicit `out`
       // copy of the parameter instead of the parameter itself — value
       // identical in f32 (a copy is exact), and the form the WGSL dialect
       // needs (WGSL parameters are immutable) and the TS mirror already

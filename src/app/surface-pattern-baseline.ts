@@ -1,11 +1,12 @@
 /**
  * SHA-256 (16-hex-char prefix) of every pattern-off variant's RESOLVED and
- * EMITTED source. Initially measured at the pre-fr-cmtl.5 tree (8f5fb4d,
- * "Unify surface material slot packing"), then advanced for two intentional
- * global shader changes: fr-plxs's invisible terminal-ray alpha code, and
+ * EMITTED source. Initially measured at the pre-pattern-arm tree (8f5fb4d,
+ * "Unify surface material slot packing"), then advanced for each
+ * intentional global shader change since: the invisible terminal-ray alpha
+ * side channel (a hit's coverage flag that must never reach the canvas),
  * the corrected live material B-lane/source comments in the resolved GLSL,
- * fr-cmtl.8's zero-tap-safe AO identity for provably AO-independent
- * authored finishes, and fr-q6ca's second fragment output carrying the
+ * the zero-tap-safe AO identity for provably AO-independent authored
+ * finishes, and the second fragment output carrying the
  * background-recomposition coverage/fog/beta sidecar.
  * This remains the pattern-OFF baseline the byte-identity tests compare
  * pattern-off emissions against.

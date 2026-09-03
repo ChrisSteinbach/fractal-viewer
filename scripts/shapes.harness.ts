@@ -40,8 +40,9 @@
  * documented band rejection.
  *
  * Peace's deliberately overlapping torus/capsules exercise the shared
- * multi-part correction. fr-4wre's corrected 50.3M equal-N SwiftShader
- * bench measured density TV 0.005883 in 3D and 0.005872 in 4D against its
+ * multi-part correction. The corrected 50.3M equal-N SwiftShader
+ * bench (after the device emitter sampler's min-index overlap fix)
+ * measured density TV 0.005883 in 3D and 0.005872 in 4D against its
  * 0.03 gate using overlapping-sphere fixtures; those figures validate the
  * device correction, not Peace specifically. Focused production tests pin
  * canonical Peace's CPU/packed 3D/4D inputs and overlap-adjacent behavior

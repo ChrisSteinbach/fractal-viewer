@@ -1,5 +1,6 @@
 /**
- * Balloon-echo histogram weight sheet (fr-d8ro).
+ * Balloon-echo histogram weight sheet for the flame render's
+ * sphere-inverted echo.
  *
  * The Points renderer's 0.5 dim constant is an additive-sprite exposure
  * choice, not a histogram policy: log-density makes the same numeric weight
@@ -384,7 +385,7 @@ function writeSheet(panels: Uint8Array[]): string {
   return path;
 }
 
-describe("fr-d8ro flame balloon weight measurement", () => {
+describe("flame balloon weight measurement", () => {
   it("renders the production comparison sheet and discloses the balance metrics", () => {
     const panels: Uint8Array[] = [];
     const rows: Record<string, string | number>[] = [];

@@ -14,7 +14,7 @@
  *   node scripts/solid-hierarchy.verify.mjs \
  *     --url=https://localhost:5173 --driver=hardware --display=:0 \
  *     --fixtures=affine,nonlinear,stochastic,nonlinear4d \
- *     --outdir=bench-results/fr-qxyt.9
+ *     --outdir=bench-results/solid-qualification
  *
  * `--fixture` may be repeated. Besides the built-ins above (and `default`, the
  * historical seeded boot document), a fixture can be a `v1=...` scene string

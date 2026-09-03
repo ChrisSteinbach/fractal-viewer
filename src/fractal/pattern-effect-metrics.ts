@@ -122,12 +122,12 @@ export interface PatternEffectVarianceRetention {
 }
 
 export const PATTERN_EFFECT_THRESHOLD_VERSION =
-  "fr-cmtl.8-effect-metrics-v2" as const;
+  "pattern-effect-metrics-v2" as const;
 
 /**
  * Frozen release-gate constants. Attachment is explicitly measurement-only:
- * neither the epic nor fr-cmtl.8 supplied a defensible numeric swim threshold,
- * so this module does not manufacture one.
+ * neither the pattern epic nor its release gate supplied a defensible
+ * numeric swim threshold, so this module does not manufacture one.
  */
 export const PATTERN_EFFECT_THRESHOLDS = Object.freeze({
   version: PATTERN_EFFECT_THRESHOLD_VERSION,
