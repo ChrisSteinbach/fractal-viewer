@@ -27,12 +27,17 @@ Four facts line the two vocabularies up better than they first appear:
    spans those rank-deficient matrices exactly.) Round-trip error is only
    `persist.ts`'s 4-decimal rounding.
 
-2. **The variations match by name — for twelve of them.** Our first twelve
+2. **The variations match by name — for fifteen of them.** Fifteen of our
    `VARIATION_TYPES` — linear, sinusoidal, spherical, swirl, horseshoe, polar,
-   handkerchief, heart, disc, spiral, bubble, julia — are flam3's variation
+   handkerchief, heart, disc, spiral, bubble, julia, and the parametric
+   julian, juliascope, curl — are flam3's variation
    _attribute names_, with the same formulas at `z = 0` (`variations.ts` lifts
    the radial ones through the 3D radius, which equals the planar radius at
-   `z = 0`, and carries `z` through the angular ones). `composeVariations` is
+   `z = 0`, and carries `z` through the angular ones). The three parametric
+   ones carry flam3's own per-variation parameters through their own
+   attribute names (`julian_power`, `julian_dist`, `juliascope_power`,
+   `juliascope_dist`, `curl_c1`, `curl_c2`) — see the import/export notes
+   below. `composeVariations` is
    flam3's own semantics: an unnormalized weighted sum that replaces the
    affine point. Imported maps pin `scale.z = 0` and every z field to 0, so
    the orbit lives in the `z = 0` plane and our 3D engine reproduces flam3's
@@ -69,7 +74,7 @@ Four facts line the two vocabularies up better than they first appear:
 
 ## A deliberate deviation: the fold family isn't flam3's
 
-Fact 2 above has a carve-out. Twelve of our seventeen `VARIATION_TYPES` are
+Fact 2 above has a carve-out. Fifteen of our twenty `VARIATION_TYPES` are
 flam3's own attribute names; five are ours — the Mandelbox fold family,
 `boxfold`/`spherefold`/`mandelbox`, and the two escape-time power
 maps, `qsquare` and `bulb`. flam3 and Apophysis have
@@ -95,9 +100,11 @@ after the fact:
   unknown-variations warning, because the name-matching import path can't
   tell it apart from a real one.
 - **Custom radii.** A fold variation's `minRadius`/`fixedRadius`/
-  `boxLimit` have no flam3 attribute to live in at all — the format has no
-  per-variation parameter concept for a plain named variation, just a single
-  weight. Export therefore always writes the bare `type="weight"` attribute,
+  `boxLimit` have no flam3 attribute to live in — flam3's per-variation
+  parameters exist only where a plugin defines them (the parametric julia
+  family's `julian_power` and friends below), and no fold-shaped plugin's
+  parameter names match ours. Export therefore always writes the bare
+  `type="weight"` attribute,
   regardless of the document's lengths, and warns whenever they would render
   differently than what a `.flame` reader (ours re-importing included) sees:
   absent lengths, or lengths present but numerically equal to the classic
@@ -106,7 +113,10 @@ after the fact:
   classic lengths. Import has nothing to recover — there is nowhere in the
   XML the value could have come from, so a re-imported fold variation is
   always unparameterized. (`qsquare`/`bulb` carry no per-variation
-  parameters of their own — this bullet is fold-only, unlike the two above.)
+  parameters of their own — this bullet is fold-only, unlike the two above.
+  The parametric julia family and curl DO carry parameters, and theirs
+  round-trip losslessly through flam3's own attributes — see the import and
+  export notes below.)
 
 `VARIATION_NAMES` (the set `decodeFlameFile`/`encodeFlameFile` match against)
 stays mechanically derived from `VARIATION_TYPES` — one array, not a
@@ -117,33 +127,46 @@ more valuable property to protect.
 
 ## Import (`.flame` → scene)
 
-| flame                                                | explorer                                                                                                                                  |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `coefs`                                              | QR → position/rotation/scale/shear (exact)                                                                                                |
-| pure `linear="w"` blend                              | folded into the affine (`w·A`, `w·t`), list omitted (exact)                                                                               |
-| known variation attrs                                | `variations: [{type, weight}]` by name (exact)                                                                                            |
-| `post` on a purely affine map                        | composed into the affine (exact)                                                                                                          |
-| `post` on a nonlinear map                            | **dropped + warning** (nothing to hang it on)                                                                                             |
-| unknown variations/parameters                        | **ignored + one aggregated warning** naming the attributes                                                                                |
-| `weight`                                             | `Transform.weight`; all-equal weights omitted (uniform)                                                                                   |
-| `weight ≤ 0` xform                                   | **skipped + warning**                                                                                                                     |
-| `chaos` (xaos)                                       | `Transform.chaos` row: sanitized, pad/truncated to the base xform count, reindexed around any dropped xform — see "Xaos" below            |
-| `opacity="0"`                                        | imported visible + warning (no per-map opacity)                                                                                           |
-| `color`                                              | `Transform.colorIndex`, clamped to `[0, 1]`; absent ⇒ key omitted                                                                         |
-| `color_speed`                                        | `Transform.colorSpeed`, clamped to `[0, 1]`; wins over `symmetry` when both appear                                                        |
-| `symmetry` (deprecated)                              | `Transform.colorSpeed = (1 - symmetry) / 2`, clamped                                                                                      |
-| `<finalxform>`                                       | `finalTransform` (same rules; its weight ignored)                                                                                         |
-| palette (`<palette>` hex block or `<color>` entries) | preserved at full entry count as a `RampPalette` (`customPalette.kind = "ramp"`); `flame.paletteId` and `rampPaletteId` become `"custom"` |
-| `brightness` / `gamma` / `vibrancy`                  | `flame.exposure` (`brightness / 4`) / `gamma` / `vibrancy`, clamped to our ranges                                                         |
-| `supersample`/`oversample`, `estimator_*`            | the matching `FlameParams` fields, clamped                                                                                                |
-| `size`/`center`/`scale`/`rotate`                     | ignored — the explorer auto-fits its own camera                                                                                           |
+| flame                                                    | explorer                                                                                                                                  |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `coefs`                                                  | QR → position/rotation/scale/shear (exact)                                                                                                |
+| pure `linear="w"` blend                                  | folded into the affine (`w·A`, `w·t`), list omitted (exact)                                                                               |
+| known variation attrs                                    | `variations: [{type, weight}]` by name (exact)                                                                                            |
+| `julian_power`/`julian_dist` beside `julian`             | `julianPower`/`julianDist` on the matched entry (exact; absent ⇒ classic)                                                                 |
+| `juliascope_power`/`juliascope_dist` beside `juliascope` | `juliascopePower`/`juliascopeDist` on the matched entry (exact; absent ⇒ classic)                                                         |
+| `curl_c1`/`curl_c2` beside `curl`                        | `curlC1`/`curlC2` on the matched entry (exact; absent ⇒ classic)                                                                          |
+| `post` on a purely affine map                            | composed into the affine (exact)                                                                                                          |
+| `post` on a nonlinear map                                | **dropped + warning** (nothing to hang it on)                                                                                             |
+| unknown variations/parameters                            | **ignored + one aggregated warning** naming the attributes                                                                                |
+| `weight`                                                 | `Transform.weight`; all-equal weights omitted (uniform)                                                                                   |
+| `weight ≤ 0` xform                                       | **skipped + warning**                                                                                                                     |
+| `chaos` (xaos)                                           | `Transform.chaos` row: sanitized, pad/truncated to the base xform count, reindexed around any dropped xform — see "Xaos" below            |
+| `opacity="0"`                                            | imported visible + warning (no per-map opacity)                                                                                           |
+| `color`                                                  | `Transform.colorIndex`, clamped to `[0, 1]`; absent ⇒ key omitted                                                                         |
+| `color_speed`                                            | `Transform.colorSpeed`, clamped to `[0, 1]`; wins over `symmetry` when both appear                                                        |
+| `symmetry` (deprecated)                                  | `Transform.colorSpeed = (1 - symmetry) / 2`, clamped                                                                                      |
+| `<finalxform>`                                           | `finalTransform` (same rules; its weight ignored)                                                                                         |
+| palette (`<palette>` hex block or `<color>` entries)     | preserved at full entry count as a `RampPalette` (`customPalette.kind = "ramp"`); `flame.paletteId` and `rampPaletteId` become `"custom"` |
+| `brightness` / `gamma` / `vibrancy`                      | `flame.exposure` (`brightness / 4`) / `gamma` / `vibrancy`, clamped to our ranges                                                         |
+| `supersample`/`oversample`, `estimator_*`                | the matching `FlameParams` fields, clamped                                                                                                |
+| `size`/`center`/`scale`/`rotate`                         | ignored — the explorer auto-fits its own camera                                                                                           |
 
-"Known variation attrs" matches any of our seventeen `VARIATION_TYPES` by name
+"Known variation attrs" matches any of our twenty `VARIATION_TYPES` by name
 — the fold family and the two power maps included, per the deviation above.
 A genuine flam3/Apophysis file essentially never carries a
 `boxfold`/`spherefold`/`mandelbox`/`qsquare`/`bulb` attribute, but one that
 does gets read as our variation rather than flagged as an unsupported
 feature.
+
+The parametric family's parameter attributes are read by explicit name
+beside their own variation's weight, so attribute ORDER never matters (a
+`julian_power` listed before its `julian` still lands on the entry). Absent
+parameter attributes leave the field absent, which resolves to the classic
+value exactly as if the attribute had never been written — flam3's own
+absent-means-default convention, resolved through `variations.ts`'s
+`resolveJuliaParams`/`resolveCurlParams`. A parameter attribute on an xform
+WITHOUT its variation is silently skipped (it is known, so it raises no
+warning; it has nothing to attach to).
 
 Everything else about the imported scene (point count, render style, color
 mode, …) takes the app's defaults. A file with several `<flame>` elements
@@ -197,6 +220,14 @@ The export writes the system's **XY shadow**:
   kaleidoscope-copy expansion, and the final-transform exclusion.
 - `finalTransform` → `<finalxform>`; variations pass through by name (merged
   by type — XML attributes must be unique); weights pass through as-is.
+  The parametric julia family and curl additionally write their RESOLVED
+  parameters beside the weight (`julian_power="3" julian_dist="1"`,
+  `curl_c1="0.5" curl_c2="0"`) whenever they are anything but the classic
+  defaults — resolved, so an out-of-domain authored value exports in the
+  form the render actually uses and re-imports to the same shape. Lossless:
+  no export-loss warning is needed, unlike the fold radii below. A
+  classic-parameterized entry writes the bare weight only, matching flam3's
+  own absent-means-default convention.
 - Per-xform colors are written **resolved**: a map's authored
   `colorIndex`/`colorSpeed`, else the same fallbacks the render resolves
   through — `derivedColorIndex`'s even spread `i / (n - 1)` (`0.5` for a lone

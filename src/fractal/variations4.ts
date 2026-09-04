@@ -1,15 +1,29 @@
 import type { Rng } from "./rng";
 import type { Variation, VariationType, Vec4 } from "./types";
 import {
+  CLASSIC_CURL_C1,
+  CLASSIC_CURL_C2,
+  CLASSIC_JULIA_DIST,
+  CLASSIC_JULIA_POWER,
+  isClassicCurlParams,
   isClassicFoldRadii,
+  isClassicJuliaParams,
   isFoldVariationType,
+  isParametricVariationType,
+  resolveCurlParams,
   resolveFoldRadii,
+  resolveJuliaParams,
 } from "./variations";
-import type { FoldRadii } from "./variations";
+import type {
+  CurlParams,
+  FoldRadii,
+  JuliaParams,
+  ParametricVariationType,
+} from "./variations";
 import { clamp } from "./vec";
 
 /**
- * The 4D lift of the seventeen nonlinear variation functions, the fourth
+ * The 4D lift of the twenty nonlinear variation functions, the fourth
  * dimension raised over `variations.ts` by the SAME convention that file already
  * documents for its 2D → 3D lift — read that header first. One dimension up:
  *
@@ -23,6 +37,11 @@ import { clamp } from "./vec";
  *   - **Fold warps** (`boxfold`, `spherefold`, `mandelbox`) treat `w` exactly
  *     like the spatial axes: the box fold reflects all four axes and the
  *     sphere fold inverts through the full 4-D radius.
+ *   - **The parametric julia family and curl** (`julian`, `juliascope`,
+ *     `curl`) are xy-plane warps — logarithmic spiral sector sweeps and a
+ *     complex reciprocal read nothing but the planar angle and radius — so
+ *     they lift like the angular warps: the EXACT 2D form applied to (x, y),
+ *     with z AND w carried through. `bulb` already rode that same treatment.
  *   - `sinusoidal` folds each of the four axes through a sine; `linear` is the
  *     identity.
  *   - `qsquare` is the only entry whose 4D form is the DEFINITION and whose
@@ -41,8 +60,9 @@ import { clamp } from "./vec";
  * the 3D expression `x*x + y*y + z*z` — hence identical `c`, identical x/y/z, and
  * `w' = w·c = 0`. Fold warps anchor the same way: `foldAxis(0) = 0` exactly, and
  * the sphere-fold radius ends in `+ w*w`. `bulb` carries `w` like an angular
- * warp and duplicates its x/y/z arithmetic term for term. The equality is
- * exact (not merely close) for all seventeen; the tests pin `toEqual`. That is what makes an
+ * warp and duplicates its x/y/z arithmetic term for term, and so do the three
+ * parametric warps — all three read (x, y) alone. The equality is
+ * exact (not merely close) for all twenty; the tests pin `toEqual`. That is what makes an
  * embedded 3D system's `w = 0` slice warp bit-for-bit like the native 3D path.
  */
 export type VariationFn4 = (
@@ -62,6 +82,11 @@ export type VariationFn4 = (
  * which the chaos game's escape check then reseeds — far better than a NaN).
  */
 const EPS = 1e-12;
+
+/** 2π — identical to `variations.ts`'s `TWO_PI` (duplicated under the
+ * twin-file convention like `EPS`), so the julia family's branch arithmetic
+ * stays term-for-term identical across the embed. */
+const TWO_PI = Math.PI * 2;
 
 /**
  * One axis of the Mandelbox box fold — identical arithmetic to
@@ -116,6 +141,66 @@ function foldVariationFn4(
     const c = factor(bx * bx + by * by + bz * bz + bw * bw);
     return [bx * c, by * c, bz * c, bw * c];
   };
+}
+
+/**
+ * The parametric julia family's two warps at arbitrary parameters —
+ * `variations.ts`'s {@link juliaVariationFn} one dimension up, the
+ * twin-file convention's second exception: the ARITHMETIC is duplicated as
+ * always, but the domain rule ({@link resolveJuliaParams}) and the classic
+ * constants are IMPORTED, exactly as the fold family's are — "what does an
+ * absent field mean" must have one answer across both dimensions. The three
+ * warps are xy-plane sweeps (planar angle and radius only), so the lift is
+ * the angular warps': the 2D form on (x, y), z AND w carried through — and
+ * the RNG draw count matches the 3D closure's exactly (one), which is what
+ * keeps an embedded julia's branch bit identical to the native 3D path's.
+ * Returns the shared classic entry at classic parameters.
+ */
+function juliaVariationFn4(
+  type: "julian" | "juliascope",
+  p: JuliaParams,
+): VariationFn4 {
+  if (isClassicJuliaParams(p)) return VARIATIONS4[type];
+  const { power, dist } = p;
+  return (x, y, z, w, rng) => {
+    const t = Math.trunc(Math.abs(power) * rng());
+    const a = Math.atan2(y, x);
+    const theta =
+      type === "julian"
+        ? (a + TWO_PI * t) / power
+        : (TWO_PI * t + (t % 2 === 0 ? a : -a)) / power;
+    const r = Math.pow(x * x + y * y, dist / (2 * power));
+    return [r * Math.cos(theta), r * Math.sin(theta), z, w];
+  };
+}
+
+/**
+ * The curl warp at arbitrary coefficients — {@link curlVariationFn} one
+ * dimension up: the complex reciprocal over the input's xy-plane, z AND w
+ * carried through, the divisor's EPS floor duplicated term for term so the
+ * anchor property stays exact. Returns the shared classic entry at classic
+ * coefficients.
+ */
+function curlVariationFn4(p: CurlParams): VariationFn4 {
+  if (isClassicCurlParams(p)) return VARIATIONS4.curl;
+  const { c1, c2 } = p;
+  return (x, y, z, w) => {
+    const re = 1 + c1 * x + c2 * (x * x - y * y);
+    const im = c1 * y + 2 * c2 * x * y;
+    const r = 1 / (re * re + im * im + EPS);
+    return [(x * re + y * im) * r, (y * re - x * im) * r, z, w];
+  };
+}
+
+/** The parametric family's blend dispatch one dimension up — the fold
+ * family's own dispatcher shape beside {@link foldVariationFn4}: resolves
+ * once per compose, never per plotted point. */
+function parametricVariationFn4(
+  type: ParametricVariationType,
+  v: Variation,
+): VariationFn4 {
+  if (type === "curl") return curlVariationFn4(resolveCurlParams(v));
+  return juliaVariationFn4(type, resolveJuliaParams(type, v));
 }
 
 /**
@@ -304,6 +389,42 @@ const VARIATIONS4: Record<VariationType, VariationFn4> = {
     const v8 = 2 * u4 * v4;
     return [rho * s * u8, rho * s * v8, zOut, w];
   },
+
+  // The three parametric warps, at their classic parameters — the values
+  // an absent params object resolves to. The 3D registry entries' arithmetic
+  // duplicated under the twin-file convention on (x, y) alone, z AND w
+  // carried through (the angular warps' lift), which is exactly what makes
+  // the anchor property hold: w = 0 in gives w' = 0 out, with x/y
+  // arithmetic duplicated term for term from the 3D file.
+  julian: (x, y, z, w, rng) => {
+    const t = Math.trunc(Math.abs(CLASSIC_JULIA_POWER) * rng());
+    const theta = (Math.atan2(y, x) + TWO_PI * t) / CLASSIC_JULIA_POWER;
+    const r = Math.pow(
+      x * x + y * y,
+      CLASSIC_JULIA_DIST / (2 * CLASSIC_JULIA_POWER),
+    );
+    return [r * Math.cos(theta), r * Math.sin(theta), z, w];
+  },
+
+  juliascope: (x, y, z, w, rng) => {
+    const t = Math.trunc(Math.abs(CLASSIC_JULIA_POWER) * rng());
+    const a = Math.atan2(y, x);
+    const theta = (TWO_PI * t + (t % 2 === 0 ? a : -a)) / CLASSIC_JULIA_POWER;
+    const r = Math.pow(
+      x * x + y * y,
+      CLASSIC_JULIA_DIST / (2 * CLASSIC_JULIA_POWER),
+    );
+    return [r * Math.cos(theta), r * Math.sin(theta), z, w];
+  },
+
+  // The complex reciprocal over the xy-plane — see `variations.ts`'s `curl`
+  // for the classic reduction and the EPS floor.
+  curl: (x, y, z, w) => {
+    const re = 1 + CLASSIC_CURL_C1 * x + CLASSIC_CURL_C2 * (x * x - y * y);
+    const im = CLASSIC_CURL_C1 * y + 2 * CLASSIC_CURL_C2 * x * y;
+    const r = 1 / (re * re + im * im + EPS);
+    return [(x * re + y * im) * r, (y * re - x * im) * r, z, w];
+  },
 };
 
 /**
@@ -346,7 +467,9 @@ export function composeVariations4(
   const fns: VariationFn4[] = active.map((v) =>
     isFoldVariationType(v.type)
       ? foldVariationFn4(v.type, resolveFoldRadii(v))
-      : VARIATIONS4[v.type],
+      : isParametricVariationType(v.type)
+        ? parametricVariationFn4(v.type, v)
+        : VARIATIONS4[v.type],
   );
   const weights: number[] = active.map((v) => v.weight);
   const n = fns.length;

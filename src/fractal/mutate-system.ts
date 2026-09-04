@@ -41,7 +41,12 @@ import type {
   Vec3,
   WExtension,
 } from "./types";
-import { CLASSIC_FOLD_RADII, isFoldVariationType } from "./variations";
+import {
+  CLASSIC_FOLD_RADII,
+  isFoldVariationType,
+  isParametricVariationType,
+  JULIA_POWER_FLOOR,
+} from "./variations";
 import { clamp } from "./vec";
 
 /**
@@ -64,8 +69,18 @@ export interface MutationOptions {
  * rule requires a new version instead of silently changing existing lineage
  * nodes. The injected-RNG {@link mutateSystem} API above remains the legacy
  * compatibility profile and deliberately does not claim this version.
+ *
+ * Version 2's cause: the parametric julia family and curl joined the
+ * vocabulary, which widened the wildcard swap pool ({@link
+ * NON_LINEAR_VARIATION_TYPES} derives from `VARIATION_TYPES`) — a
+ * candidate-selection change to the `nonlinearVariations` domain's output,
+ * exactly the class of change this boundary exists to make loud. Version 1
+ * nodes re-deriving under version 2 refuse rather than re-derive
+ * differently; the jitter rules for every pre-existing field are unchanged
+ * (the parametric family's own jitter arm only fires for documents already
+ * carrying its parameters, which no version-1 document does).
  */
-export const SEEDED_MUTATION_ALGORITHM_VERSION = 1 as const;
+export const SEEDED_MUTATION_ALGORITHM_VERSION = 2 as const;
 export type SeededMutationAlgorithmVersion =
   typeof SEEDED_MUTATION_ALGORITHM_VERSION;
 
@@ -75,7 +90,8 @@ export type SeededMutationAlgorithmVersion =
  *
  * - `spatialGeometry`: position, rotation, scale, shear, and the affine
  *   wildcard rotation reroll;
- * - `nonlinearVariations`: base-map variation weights/fold parameters and a
+ * - `nonlinearVariations`: base-map variation weights, fold lengths, and the
+ *   parametric julia/curl parameters (present-only jitter), plus a
  *   wildcard variation-type swap;
  * - `finalLens`: final-transform variation weights/fold parameters;
  * - `fourDExtension`: authored leaves of a base map's `w` block;
@@ -83,7 +99,7 @@ export type SeededMutationAlgorithmVersion =
  * - `appearance`: authored color index/speed, finish, and surface pattern.
  *
  * Symmetry and emitters are pass-through structure, not mutation knobs in
- * version 1. Absent optional fields remain absent. The wildcard may replace
+ * any version. Absent optional fields remain absent. The wildcard may replace
  * the type of an existing nonlinear entry, but never creates an entry or an
  * optional block.
  */
@@ -471,12 +487,68 @@ function jitterBoxLimit(rng: Rng, value: number, spread: number): number {
 }
 
 /**
+ * Multiplicative, sign-preserving jitter for a julia-family power
+ * (`julianPower`/`juliascopePower`): {@link jitterScaleAxis}'s shape — a
+ * power's SIGN is shape (a negative power runs the spiral backwards, flam3's
+ * own real-valued behavior), so a mutation nudges how many sectors fan out,
+ * never which side of zero they fan on. Clamped at
+ * {@link JULIA_POWER_FLOOR} in magnitude — imported, so a mutant can never
+ * cross into the resolver's fallback domain — and at
+ * {@link FOLD_RADIUS_CLAMP_MAX} for the repeated-re-mutation ceiling.
+ */
+function jitterJuliaPower(rng: Rng, value: number, spread: number): number {
+  const magnitude = clamp(
+    Math.abs(value) *
+      uniform(
+        rng,
+        1 - FOLD_RADIUS_JITTER_HALF_RANGE * spread,
+        1 + FOLD_RADIUS_JITTER_HALF_RANGE * spread,
+      ),
+    JULIA_POWER_FLOOR,
+    FOLD_RADIUS_CLAMP_MAX,
+  );
+  return value < 0 ? -magnitude : magnitude;
+}
+
+/**
+ * Additive jitter for a curl coefficient or a julia-family `dist`:
+ * `U(-0.08, 0.08)`·spread, matching {@link BOX_LIMIT_JITTER}'s magnitude —
+ * additive rather than multiplicative (unlike the radii and the power
+ * above) so a deliberate 0 can still move under a mutation instead of
+ * multiplying to a permanent 0. Both `dist = 0` (a unit ring) and `c1 = 0`
+ * (a pure c2 term) are legitimate authored shapes the resolvers keep, and
+ * the clamp bounds are the same repeated-re-mutation ceiling ±
+ * {@link FOLD_RADIUS_CLAMP_MAX}.
+ */
+const CURL_COEFFICIENT_JITTER = 0.08;
+function jitterVariationCoefficient(
+  rng: Rng,
+  value: number,
+  spread: number,
+): number {
+  return clamp(
+    value +
+      uniform(
+        rng,
+        -CURL_COEFFICIENT_JITTER * spread,
+        CURL_COEFFICIENT_JITTER * spread,
+      ),
+    -FOLD_RADIUS_CLAMP_MAX,
+    FOLD_RADIUS_CLAMP_MAX,
+  );
+}
+
+/**
  * Jitter one variation entry: `weight` always moves (unchanged
- * rule), and — for the fold family only (`boxfold`/`spherefold`/
+ * rule), and — for the fold family (`boxfold`/`spherefold`/
  * `mandelbox`, see `variations.ts`'s `isFoldVariationType`) — each of
  * `minRadius`/`fixedRadius`/`boxLimit` that is already PRESENT on `v` is
  * nudged and clamped (see {@link jitterFoldRadius}/{@link jitterBoxLimit}).
- * An absent length ALWAYS stays absent — a mutation never materializes one,
+ * For the parametric julia/curl family (`variations.ts`'s
+ * `isParametricVariationType`) the same rule applies to its own six
+ * parameters through {@link jitterParametricVariationEntry}, routed from
+ * here so every call site dispatches through one function. An absent length
+ * or parameter ALWAYS stays absent — a mutation never materializes one,
  * `wildcard` included.
  *
  * That is narrower than "a mutation nudges what the author has" would
@@ -514,6 +586,12 @@ function jitterVariationEntry(
   v: Variation,
   spread: number,
 ): Variation {
+  // The parametric julia/curl family has its own parameter rules — same
+  // weight jitter, family-specific parameters, absent stays absent. Routed
+  // here so every jitter call site dispatches through ONE function.
+  if (isParametricVariationType(v.type)) {
+    return jitterParametricVariationEntry(rng, v, spread);
+  }
   const result: Variation = {
     ...v,
     weight: jitterVariationWeight(rng, v.weight, spread),
@@ -538,6 +616,54 @@ function jitterVariationEntry(
     result.boxLimit = jitterBoxLimit(rng, v.boxLimit, spread);
   }
 
+  return result;
+}
+
+/**
+ * Jitter one parametric variation entry: `weight` always moves (the
+ * unchanged rule, same as every other type), and each of the family's own
+ * parameters that is already PRESENT on `v` is nudged — the powers through
+ * {@link jitterJuliaPower}'s sign-preserving shape, the dist/c1/c2
+ * coefficients through {@link jitterVariationCoefficient}'s additive one.
+ * An absent parameter ALWAYS stays absent — a mutation never materializes
+ * one, `wildcard` included. The fold-radii arm's exact verdict one feature
+ * over: a mutation grid must stay a grid of the system you brought it, so a
+ * cell may perturb a parameter the author already carries but must never
+ * invent shape parameters the base system never had. The entry is COPIED
+ * rather than rebuilt ({@link jitterVariationEntry}'s standing rule), so a
+ * field this function has no rule for rides through untouched.
+ */
+function jitterParametricVariationEntry(
+  rng: Rng,
+  v: Variation,
+  spread: number,
+): Variation {
+  const result: Variation = {
+    ...v,
+    weight: jitterVariationWeight(rng, v.weight, spread),
+  };
+  if (v.curlC1 !== undefined) {
+    result.curlC1 = jitterVariationCoefficient(rng, v.curlC1, spread);
+  }
+  if (v.curlC2 !== undefined) {
+    result.curlC2 = jitterVariationCoefficient(rng, v.curlC2, spread);
+  }
+  if (v.julianDist !== undefined) {
+    result.julianDist = jitterVariationCoefficient(rng, v.julianDist, spread);
+  }
+  if (v.juliascopeDist !== undefined) {
+    result.juliascopeDist = jitterVariationCoefficient(
+      rng,
+      v.juliascopeDist,
+      spread,
+    );
+  }
+  if (v.julianPower !== undefined) {
+    result.julianPower = jitterJuliaPower(rng, v.julianPower, spread);
+  }
+  if (v.juliascopePower !== undefined) {
+    result.juliascopePower = jitterJuliaPower(rng, v.juliascopePower, spread);
+  }
   return result;
 }
 

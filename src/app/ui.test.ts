@@ -4551,6 +4551,115 @@ describe("Ui variation editor", () => {
     ]);
   });
 
+  it("offers a parametric variation only the parameters that type reads, seeded from the document or the classic value", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        variations: [{ type: "julian", weight: 1, julianPower: 3 }],
+      },
+      0,
+      1,
+    );
+    // Julian reads exactly Power and Dist; the document authored only the
+    // power, so the dist row seeds from the classic 1.
+    expect(editorSlider("Julian power").value).toBe("3");
+    expect(editorSlider("Julian dist").value).toBe("1");
+
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        variations: [{ type: "curl", weight: 1 }],
+      },
+      0,
+      1,
+    );
+    expect(editorSlider("Curl c1").value).toBe("1");
+    expect(editorSlider("Curl c2").value).toBe("0");
+
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        variations: [{ type: "juliascope", weight: 1, juliascopeDist: 0.5 }],
+      },
+      0,
+      1,
+    );
+    expect(editorSlider("Juliascope power").value).toBe("1");
+    expect(editorSlider("Juliascope dist").value).toBe("0.5");
+  });
+
+  it("writes a parametric parameter only once its own slider moves, and removes it again at the classic value", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, variations: [{ type: "julian", weight: 1 }] },
+      0,
+      1,
+    );
+
+    const power = editorSlider("Julian power");
+    power.value = "3";
+    power.dispatchEvent(new Event("input"));
+    // Only the parameter that moved: the dist stays ABSENT, which is what
+    // keeps "absent means classic byte-identically" true through an edit.
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "julian", weight: 1, julianPower: 3 },
+    ]);
+
+    // Dragging back to the classic 1 REMOVES the field again.
+    power.value = "1";
+    power.dispatchEvent(new Event("input"));
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "julian", weight: 1 },
+    ]);
+  });
+
+  it("picks up a parametric parameter that changed under a stable selection, instead of writing the stale one back", () => {
+    // variationsEqual's gotcha: the editor keeps a WORKING COPY and only
+    // refreshes it when the incoming list differs. A comparison that
+    // ignored the new fields would let a morph or an undo change julianPower
+    // under a stable selection and silently revert it on the next drag.
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const at = (curlC2: number): Transform => ({
+      ...plain,
+      variations: [{ type: "curl", weight: 2, curlC2 }],
+    });
+    ui.renderTransformEditor(at(0.3), 0, 1);
+    ui.renderTransformEditor(at(0.4), 0, 1);
+
+    const slider = editorSlider("Variation curl");
+    slider.value = "1.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "curl", weight: 1.5, curlC2: 0.4 },
+    ]);
+  });
+
+  it("adds a parametric variation carrying none of its optional parameters", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    const select = addSelect();
+    select.value = "julian";
+    select.dispatchEvent(new Event("change"));
+
+    // Absent means the classic params, so a freshly added parametric
+    // variation must not materialize them — the add-dropdown has no
+    // opinion about the family's parameters.
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "julian", weight: 1 },
+    ]);
+  });
+
   it("carries the min radius down when the fixed radius drops below it — the fold's own domain, not a silent clamp", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);

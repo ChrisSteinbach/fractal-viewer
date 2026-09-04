@@ -101,6 +101,12 @@ const VARIATION_FIELDS = {
   minRadius: true,
   fixedRadius: true,
   boxLimit: true,
+  julianPower: true,
+  julianDist: true,
+  juliascopePower: true,
+  juliascopeDist: true,
+  curlC1: true,
+  curlC2: true,
 } satisfies Fields<Variation>;
 const FINISH_FIELDS = {
   specular: true,
@@ -514,6 +520,12 @@ function variation(value: unknown, path: string): string {
   finiteOptional(entry, "minRadius", path);
   finiteOptional(entry, "fixedRadius", path);
   finiteOptional(entry, "boxLimit", path);
+  finiteOptional(entry, "julianPower", path);
+  finiteOptional(entry, "julianDist", path);
+  finiteOptional(entry, "juliascopePower", path);
+  finiteOptional(entry, "juliascopeDist", path);
+  finiteOptional(entry, "curlC1", path);
+  finiteOptional(entry, "curlC2", path);
   return type;
 }
 

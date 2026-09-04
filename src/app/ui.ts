@@ -39,7 +39,13 @@ import {
   shapeMeshIds,
   type ShapeSpec,
 } from "../fractal/shapes";
-import { CLASSIC_FOLD_RADII, isFoldVariationType } from "../fractal/variations";
+import {
+  CLASSIC_CURL_PARAMS,
+  CLASSIC_FOLD_RADII,
+  CLASSIC_JULIA_PARAMS,
+  isFoldVariationType,
+  isParametricVariationType,
+} from "../fractal/variations";
 import {
   CLASSIC_SURFACE_FINISH,
   isClassicSurfaceFinish,
@@ -813,6 +819,71 @@ const BOX_LIMIT_MIN = 0;
 const BOX_LIMIT_MAX = 3;
 const FOLD_RADIUS_STEP = 0.005;
 
+/**
+ * The parametric julia family and curl's authored parameters, in row order
+ * per type — the fold family's {@link FOLD_RADIUS_FIELDS} one feature over.
+ * A julia type reads exactly its power and dist, curl its c1 and c2; every
+ * other type reads nothing.
+ */
+type VariationParamKey =
+  | "julianPower"
+  | "julianDist"
+  | "juliascopePower"
+  | "juliascopeDist"
+  | "curlC1"
+  | "curlC2";
+
+const PARAMETRIC_PARAM_FIELDS: Record<
+  "julian" | "juliascope" | "curl",
+  readonly (readonly [VariationParamKey, string])[]
+> = {
+  julian: [
+    ["julianPower", "Power"],
+    ["julianDist", "Dist"],
+  ],
+  juliascope: [
+    ["juliascopePower", "Power"],
+    ["juliascopeDist", "Dist"],
+  ],
+  curl: [
+    ["curlC1", "C1"],
+    ["curlC2", "C2"],
+  ],
+};
+
+/**
+ * Parametric-parameter slider bounds — the classic value each row's
+ * write/remove rule compares against lives in
+ * {@link PARAMETRIC_PARAM_CLASSIC} below, imported from `variations.ts`
+ * (the CLASSIC_JULIA_* and CLASSIC_CURL_* constants), never re-typed. The
+ * powers span flam3's real-valued domain with its usual integer sweet spot
+ * centered (negative power runs the spiral backwards, a legal flam3
+ * authoring); the dist exponent and the curl coefficients span the values
+ * that actually move the shape (the classic 1 / 1 / 0 sit inside
+ * comfortably). `step` is the Arrow increment only — the exact-value
+ * companions keep PRECISION the domain, never the step.
+ */
+const PARAMETRIC_PARAM_BOUNDS: Record<
+  VariationParamKey,
+  { min: number; max: number; step: number }
+> = {
+  julianPower: { min: -12, max: 12, step: 0.05 },
+  julianDist: { min: -3, max: 3, step: 0.005 },
+  juliascopePower: { min: -12, max: 12, step: 0.05 },
+  juliascopeDist: { min: -3, max: 3, step: 0.005 },
+  curlC1: { min: -3, max: 3, step: 0.005 },
+  curlC2: { min: -3, max: 3, step: 0.005 },
+};
+
+const PARAMETRIC_PARAM_CLASSIC: Record<VariationParamKey, number> = {
+  julianPower: CLASSIC_JULIA_PARAMS.power,
+  julianDist: CLASSIC_JULIA_PARAMS.dist,
+  juliascopePower: CLASSIC_JULIA_PARAMS.power,
+  juliascopeDist: CLASSIC_JULIA_PARAMS.dist,
+  curlC1: CLASSIC_CURL_PARAMS.c1,
+  curlC2: CLASSIC_CURL_PARAMS.c2,
+};
+
 /** The surface finish's six authored fields, in row order. */
 type FinishKey = keyof ResolvedSurfaceFinish;
 
@@ -1380,7 +1451,13 @@ function variationsEqual(a: Variation[], b: Variation[]): boolean {
         v.weight === b[i].weight &&
         v.minRadius === b[i].minRadius &&
         v.fixedRadius === b[i].fixedRadius &&
-        v.boxLimit === b[i].boxLimit,
+        v.boxLimit === b[i].boxLimit &&
+        v.julianPower === b[i].julianPower &&
+        v.julianDist === b[i].julianDist &&
+        v.juliascopePower === b[i].juliascopePower &&
+        v.juliascopeDist === b[i].juliascopeDist &&
+        v.curlC1 === b[i].curlC1 &&
+        v.curlC2 === b[i].curlC2,
     )
   );
 }
@@ -9721,6 +9798,8 @@ export class Ui {
       editor.variationList.appendChild(row);
       if (isFoldVariationType(variation.type)) {
         this.appendFoldRadiusRows(variation.type, i);
+      } else if (isParametricVariationType(variation.type)) {
+        this.appendVariationParamRows(variation.type, i);
       }
     });
   }
@@ -9828,6 +9907,86 @@ export class Ui {
         },
       });
       if (key === "minRadius") minRow.push({ slider, readout, numeric });
+      editor.variationList.appendChild(row);
+    }
+  }
+
+  /**
+   * The parametric julia family and curl's authored parameters, as rows
+   * nested under their own variation's weight row — only the ones that type
+   * reads ({@link PARAMETRIC_PARAM_FIELDS}), the fold lengths' rows one
+   * feature over.
+   *
+   * The SAME TWO RULES keep `types.ts`'s "absent means classic
+   * byte-identically" true through an editing session: a parameter is
+   * written into the document ONLY once its own slider moves, and dragging
+   * one back to its classic value REMOVES it again (the classic value being
+   * flam3's own param default — {@link PARAMETRIC_PARAM_CLASSIC}, imported
+   * so the row can never disagree with the resolver about what "classic"
+   * is). Opening the editor on an unparameterized import, or touching a
+   * neighbouring control, leaves it with no parameter keys at all.
+   */
+  private appendVariationParamRows(
+    type: "julian" | "juliascope" | "curl",
+    index: number,
+  ): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const valueOf = (key: VariationParamKey): number =>
+      editor.variations[index][key] ?? PARAMETRIC_PARAM_CLASSIC[key];
+    const write = (key: VariationParamKey, value: number): void => {
+      if (value === PARAMETRIC_PARAM_CLASSIC[key]) {
+        delete editor.variations[index][key];
+      } else {
+        editor.variations[index][key] = value;
+      }
+    };
+    for (const [key, label] of PARAMETRIC_PARAM_FIELDS[type]) {
+      const bounds = PARAMETRIC_PARAM_BOUNDS[key];
+      const row = this.doc.createElement("div");
+      row.className = "editor-row variation-row variation-fold-row";
+
+      const name = this.doc.createElement("span");
+      name.className = "axis";
+      name.textContent = label;
+
+      const slider = this.doc.createElement("input");
+      slider.type = "range";
+      slider.min = String(bounds.min);
+      slider.max = String(bounds.max);
+      slider.step = String(bounds.step);
+      slider.value = String(valueOf(key));
+      slider.setAttribute(
+        "aria-label",
+        `${variationLabel(type)} ${label.toLowerCase()}`,
+      );
+
+      const readout = this.doc.createElement("span");
+      readout.className = "value";
+      readout.textContent = valueOf(key).toFixed(3);
+
+      slider.addEventListener("input", () => {
+        const value = Number(slider.value);
+        write(key, value);
+        readout.textContent = value.toFixed(3);
+        this.emitGeometry();
+      });
+
+      row.append(name, slider, readout);
+      this.pairDynamicRange({
+        slider,
+        readout,
+        min: bounds.min,
+        max: bounds.max,
+        step: bounds.step,
+        value: valueOf(key),
+        ariaLabel: `${variationLabel(type)} ${label.toLowerCase()}`,
+        onNumberInput: (value) => {
+          write(key, value);
+          readout.textContent = value.toFixed(3);
+          this.emitGeometry();
+        },
+      });
       editor.variationList.appendChild(row);
     }
   }

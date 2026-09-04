@@ -31,6 +31,10 @@ export type VariationFn = (x: number, y: number, z: number, rng: Rng) => Vec3;
  */
 const EPS = 1e-12;
 
+/** 2π, restated here (the file carries no angle constants today) for the
+ * julia family's branch sweep and its WGSL mirrors' shared convention. */
+const TWO_PI = Math.PI * 2;
+
 /**
  * One axis of the Mandelbox box fold: reflect `t` back off the `|t| = 1`
  * planes. `2·clamp(t, −1, 1) − t` is the branchless closed form — inside the
@@ -219,6 +223,263 @@ export function isFoldVariationType(
   type: VariationType,
 ): type is "boxfold" | "spherefold" | "mandelbox" {
   return type === "boxfold" || type === "spherefold" || type === "mandelbox";
+}
+
+/* ---- the parametric julia family and curl --------------------------- */
+
+/** The julian/juliascope classic power. An absent `Variation.julianPower`
+ * (or `juliascopePower`) is exactly this — flam3's own param default
+ * (`variations.c`'s julian/juliascope init). */
+export const CLASSIC_JULIA_POWER = 1;
+
+/** The julian/juliascope classic distance exponent. An absent
+ * `Variation.julianDist` (or `juliascopeDist`) is exactly this. */
+export const CLASSIC_JULIA_DIST = 1;
+
+/** The curl classic real coefficient. An absent `Variation.curlC1` is
+ * exactly this — flam3's own default, a well-defined complex reciprocal. */
+export const CLASSIC_CURL_C1 = 1;
+
+/** The curl classic anti-holomorphic coefficient. An absent
+ * `Variation.curlC2` is exactly this — flam3's default curl is a pure c1
+ * term. */
+export const CLASSIC_CURL_C2 = 0;
+
+/**
+ * Smallest `|power|` the julia machinery works in. Anything below it —
+ * including 0 and every non-finite value — resolves to the classic power
+ * instead. This is not merely defensive: the output angle divides by
+ * `power`, so at `power = 0` the angle itself explodes, and near-zero
+ * powers send `2πt/power` and the radius exponent `dist/(2·power)` to
+ * garbage. flam3 has no such guard (its params arrive pre-validated);
+ * ours lives here so every consumer — CPU blend, GPU lane packer, morph,
+ * mutation — inherits one domain. Exported because mutate-system's power
+ * jitter clamps at the resolver's own floor rather than re-typing it.
+ */
+export const JULIA_POWER_FLOOR = 1e-6;
+
+/** The julian/juliascope parameters, resolved: never absent, never
+ * non-finite, `power` never smaller in magnitude than 1e-6. */
+export interface JuliaParams {
+  /** The angular copy count and angle divisor. */
+  power: number;
+  /** The radius exponent's numerator. */
+  dist: number;
+}
+
+/** The curl parameters, resolved: never absent, never non-finite. */
+export interface CurlParams {
+  /** The holomorphic coefficient. */
+  c1: number;
+  /** The anti-holomorphic coefficient. */
+  c2: number;
+}
+
+/** The classic parameter sets, shared so a caller can compare against the
+ * defaults by identity rather than by re-typing the numbers. */
+export const CLASSIC_JULIA_PARAMS: JuliaParams = {
+  power: CLASSIC_JULIA_POWER,
+  dist: CLASSIC_JULIA_DIST,
+};
+export const CLASSIC_CURL_PARAMS: CurlParams = {
+  c1: CLASSIC_CURL_C1,
+  c2: CLASSIC_CURL_C2,
+};
+
+/**
+ * A julia-family variation's power and dist, with absent and out-of-domain
+ * values resolved — THE ONE PLACE the "absent means classic" rule for
+ * {@link Variation.julianPower}/`julianDist`/`juliascopePower`/
+ * `juliascopeDist` is written down. Both julia types share identical
+ * machinery, so one resolver serves both: the TYPE says which FIELDS to
+ * read (flam3's params are per-variation wire attributes, so the document
+ * stores them under the type's own names) while the resolved SHAPE is the
+ * same. Every consumer — the CPU blend, both WGSL lane packers, the
+ * `.flame` import/export and the UI rows — reads its values from here, so
+ * none of them can disagree about what an under-specified document means.
+ *
+ * The domain it enforces, and why each part is not merely defensive:
+ * - `power` below 1e-6 in magnitude (0, sub-float noise, NaN, absent) falls
+ *   back to the classic 1. The angle division is the reason — see
+ *   {@link JULIA_POWER_FLOOR} — and the FALLBACK (rather than a clamp) is
+ *   what keeps a morph that would cross power 0 from hanging on a
+ *   degenerate frame: the value crosses into the classic map and stays
+ *   there, continuous in the rendered point the way `resolveFoldRadii`'s
+ *   clamp is.
+ * - `dist` is kept for any finite value. 0 is a unit ring (every point maps
+ *   onto the unit circle — total, and a legitimate authored shape);
+ *   negative values invert the radius power exactly as flam3's real-valued
+ *   dist does. The one degenerate corner, `x = y = 0` with a NEGATIVE
+ *   exponent (`dist / (2·power) < 0`), sends `0^negative` to `+Infinity` —
+ *   flam3's own behavior, and the chaos game's escape-reseed catches an
+ *   infinite landing exactly as it catches a large-but-finite one.
+ */
+export function resolveJuliaParams(
+  type: "julian" | "juliascope",
+  v: Variation,
+): JuliaParams {
+  const rawPower = type === "julian" ? v.julianPower : v.juliascopePower;
+  const rawDist = type === "julian" ? v.julianDist : v.juliascopeDist;
+  return {
+    power:
+      Number.isFinite(rawPower) &&
+      Math.abs(rawPower as number) >= JULIA_POWER_FLOOR
+        ? (rawPower as number)
+        : CLASSIC_JULIA_POWER,
+    dist: Number.isFinite(rawDist) ? (rawDist as number) : CLASSIC_JULIA_DIST,
+  };
+}
+
+/**
+ * A curl variation's c1/c2, with absent and out-of-domain values resolved —
+ * the curl twin of {@link resolveJuliaParams}. Both coefficients accept any
+ * finite value: at the classic c1 = 1, c2 = 0 the map is the complex
+ * reciprocal `(x+iy) / (1 + z)`, well-defined everywhere the module's own
+ * EPS floor reaches; c1 = 0 is a pure c2 term and equally total (the
+ * divisor below carries the same EPS floor `spherical` and `horseshoe`
+ * carry, so the one exactly-singular input flam3 would divide by zero on —
+ * `re = im = 0` — pushes to a large-but-finite spot instead).
+ */
+export function resolveCurlParams(v: Variation): CurlParams {
+  return {
+    c1: Number.isFinite(v.curlC1) ? (v.curlC1 as number) : CLASSIC_CURL_C1,
+    c2: Number.isFinite(v.curlC2) ? (v.curlC2 as number) : CLASSIC_CURL_C2,
+  };
+}
+
+/** Are these the classic parameters — i.e. does this julia variation render
+ * exactly as it would with the fields absent? The blend branches on it to
+ * return the ORIGINAL shared function object, so "absent is byte-identical"
+ * holds by construction rather than by an argument about floating point. */
+export function isClassicJuliaParams(p: JuliaParams): boolean {
+  return p.power === CLASSIC_JULIA_POWER && p.dist === CLASSIC_JULIA_DIST;
+}
+
+/** {@link isClassicJuliaParams}' curl twin. */
+export function isClassicCurlParams(p: CurlParams): boolean {
+  return p.c1 === CLASSIC_CURL_C1 && p.c2 === CLASSIC_CURL_C2;
+}
+
+/**
+ * The parametric julia family and curl, as a type guard — the variations
+ * that read the parameters resolved by
+ * {@link resolveJuliaParams}/{@link resolveCurlParams}. Everything else
+ * ignores the six fields entirely. This is the guard the fold family's
+ * {@link isFoldVariationType} role is to the folds: the packers, the UI
+ * rows and the analyzers gate on it, so a parametric variation's params can
+ * never be silently ignored at a site that still thinks in
+ * type -> weight maps.
+ */
+export type ParametricVariationType = "julian" | "juliascope" | "curl";
+
+export function isParametricVariationType(
+  type: VariationType,
+): type is ParametricVariationType {
+  return type === "julian" || type === "juliascope" || type === "curl";
+}
+
+/**
+ * The ACTIVE parametric entries' types, in list order — the eligibility
+ * gates' named-refusal helper. Each Surface/escape/bulb analyzer keeps its
+ * own private whitelist of estimable warps, so a parametric one is refused
+ * by default; this helper lets each refusal NAME what it refuses
+ * (`surface-eligibility.ts`'s qsquare-hint precedent) instead of the
+ * generic "uses variations" that leaves the reader guessing which warp.
+ * "Active" is `composeVariations`' filter (finite, nonzero weight), the
+ * same criterion the analyzers already apply.
+ */
+export function activeParametricVariationTypes(
+  variations: Variation[] | undefined,
+): ParametricVariationType[] {
+  const out: ParametricVariationType[] = [];
+  for (const v of variations ?? []) {
+    if (
+      isParametricVariationType(v.type) &&
+      Number.isFinite(v.weight) &&
+      v.weight !== 0 &&
+      !out.includes(v.type)
+    ) {
+      out.push(v.type);
+    }
+  }
+  return out;
+}
+
+/**
+ * The julian/juliascope warps at arbitrary parameters — {@link VARIATIONS}'s
+ * two julia entries with their constants lifted out. Both apply the SAME
+ * complex-power machinery to the input's xy-plane (flam3's var31/var33
+ * verbatim semantics):
+ *
+ *     t     = trunc(|power| · rand01)                    — one RNG draw
+ *     theta = (atan2(y, x) + 2π·t) / power               (julian)
+ *     theta = (2π·t ± atan2(y, x)) / power, sign by
+ *             branch parity: even t keeps +atan2, odd flips to −atan2
+ *                                                            (juliascope)
+ *     r     = (x² + y²)^(dist / (2·power))
+ *
+ * The weight multiplies OUTSIDE the function (`composeVariations`' blend),
+ * the existing registry convention — so `r` carries no `w` here. Returns
+ * the SHARED classic entry when the parameters are classic, so an
+ * unparameterized document does not merely compute the same numbers, it
+ * runs the same function — {@link foldVariationFn}'s early-return pattern
+ * reproduced for the parametric family.
+ */
+export function juliaVariationFn(
+  type: "julian" | "juliascope",
+  p: JuliaParams,
+): VariationFn {
+  if (isClassicJuliaParams(p)) return VARIATIONS[type];
+  const { power, dist } = p;
+  return (x, y, z, rng) => {
+    const t = Math.trunc(Math.abs(power) * rng());
+    const a = Math.atan2(y, x);
+    const theta =
+      type === "julian"
+        ? (a + TWO_PI * t) / power
+        : (TWO_PI * t + (t % 2 === 0 ? a : -a)) / power;
+    const r = Math.pow(x * x + y * y, dist / (2 * power));
+    return [r * Math.cos(theta), r * Math.sin(theta), z];
+  };
+}
+
+/**
+ * The curl warp at arbitrary coefficients — flam3's var46 verbatim: the
+ * complex reciprocal `(x+iy) / (1 + c1·z + c2·z²)` expanded into real
+ * arithmetic over the input's xy-plane,
+ *
+ *     re = 1 + c1·x + c2·(x² − y²)
+ *     im = c1·y + 2·c2·x·y
+ *     r  = w / (re² + im²)          — weight outside, per the registry
+ *     x' = (x·re + y·im)·r,  y' = (y·re − x·im)·r
+ *
+ * The divisor carries the module's own EPS floor (the `spherical`/
+ * `horseshoe` convention): at the classic c1 = 1, c2 = 0 the exact
+ * reciprocal's `re² + im²` vanishes at exactly (−1, 0), and an EPS-floor is
+ * what keeps this module's totality promise there rather than a flam3-
+ * faithful 1/0. Returns the SHARED classic entry at classic parameters.
+ */
+export function curlVariationFn(p: CurlParams): VariationFn {
+  if (isClassicCurlParams(p)) return VARIATIONS.curl;
+  const { c1, c2 } = p;
+  return (x, y, z) => {
+    const re = 1 + c1 * x + c2 * (x * x - y * y);
+    const im = c1 * y + 2 * c2 * x * y;
+    const r = 1 / (re * re + im * im + EPS);
+    return [(x * re + y * im) * r, (y * re - x * im) * r, z];
+  };
+}
+
+/** The parametric family's blend dispatch — {@link composeVariations}' and
+ * {@link composeVariations4}'s shared second arm beside the fold family's:
+ * resolves ONCE per compose, never per plotted point, and returns the
+ * shared classic function object when nothing was authored. */
+export function parametricVariationFn(
+  type: ParametricVariationType,
+  v: Variation,
+): VariationFn {
+  if (type === "curl") return curlVariationFn(resolveCurlParams(v));
+  return juliaVariationFn(type, resolveJuliaParams(type, v));
 }
 
 /**
@@ -426,6 +687,57 @@ const VARIATIONS: Record<VariationType, VariationFn> = {
   // anything past the unit sphere away fast, which `chaos-game.ts`'s
   // ESCAPE_LIMIT reseed then catches, exactly as it does for `qsquare`).
   bulb: triplexPow8,
+
+  // The three PARAMETRIC warps, at their classic parameters — the values
+  // an absent params object resolves to ({@link resolveJuliaParams}/
+  // {@link resolveCurlParams}). `julian`/`juliascope` share machinery, so
+  // their entries are one shared body's two spellings: the branch sweep
+  // `t = trunc(|power|·rand01)` (ONE RNG draw, like `julia`'s bit) over
+  // `n = trunc(|power|)` sectors and the radius power `dist/(2·power)`,
+  // with juliascope flipping the input angle's sign on odd branches (flam3's
+  // var33) where julian keeps it. At the classic power 1 / dist 1 both
+  // reduce to the weight-scaled identity in xy (t is always 0 — one draw,
+  // one branch), which is why an unparameterized document was never able to
+  // carry these types at all before the GPU lane existed. Parameterized
+  // documents do NOT run these entries: `juliaVariationFn`/`curlVariationFn`
+  // build the parameterized closures, and only the classic parameters
+  // resolve back to these shared objects.
+  //
+  // julian at power 2, dist 1: theta = atan2/2 + π·t over t ∈ {0, 1} — the
+  // two-valued julia map behind flame "juliaN" flowers.
+  julian: (x, y, z, rng) => {
+    const t = Math.trunc(Math.abs(CLASSIC_JULIA_POWER) * rng());
+    const theta = (Math.atan2(y, x) + TWO_PI * t) / CLASSIC_JULIA_POWER;
+    const r = Math.pow(
+      x * x + y * y,
+      CLASSIC_JULIA_DIST / (2 * CLASSIC_JULIA_POWER),
+    );
+    return [r * Math.cos(theta), r * Math.sin(theta), z];
+  },
+
+  juliascope: (x, y, z, rng) => {
+    const t = Math.trunc(Math.abs(CLASSIC_JULIA_POWER) * rng());
+    const a = Math.atan2(y, x);
+    const theta = (TWO_PI * t + (t % 2 === 0 ? a : -a)) / CLASSIC_JULIA_POWER;
+    const r = Math.pow(
+      x * x + y * y,
+      CLASSIC_JULIA_DIST / (2 * CLASSIC_JULIA_POWER),
+    );
+    return [r * Math.cos(theta), r * Math.sin(theta), z];
+  },
+
+  // The complex reciprocal `(x+iy) / (1 + c1·z + c2·z²)` (z = x + iy), at
+  // flam3's own defaults c1 = 1, c2 = 0 — a gentle conformal swirl that
+  // folds the plane toward the point (−1, 0), where the module's EPS floor
+  // takes over from flam3's own 1/0 (see {@link curlVariationFn}). No RNG.
+  // An xy-plane warp: carries the third coordinate through like the angular
+  // warps do, which is what keeps the 4D lift bit-exact at w = 0.
+  curl: (x, y, z) => {
+    const re = 1 + CLASSIC_CURL_C1 * x + CLASSIC_CURL_C2 * (x * x - y * y);
+    const im = CLASSIC_CURL_C1 * y + 2 * CLASSIC_CURL_C2 * x * y;
+    const r = 1 / (re * re + im * im + EPS);
+    return [(x * re + y * im) * r, (y * re - x * im) * r, z];
+  },
 };
 
 /**
@@ -466,15 +778,20 @@ export function composeVariations(
   );
   if (active.length === 0) return null;
 
-  // The fold family reads its three lengths off the entry; every other
-  // type is the shared parameterless warp. Resolved here, ONCE per
-  // compose, never per plotted point. Parallel arrays rather than a
-  // [fn, weight] tuple list, so the hot closure below indexes two flat
-  // arrays instead of destructuring a tuple on every call.
+  // The fold family reads its three lengths off the entry and the
+  // parametric julia/curl family its own parameters; every other type is
+  // the shared parameterless warp. Resolved here, ONCE per compose, never
+  // per plotted point — and the classic branch returns the SHARED
+  // parameterless function object in both families, so an unparameterized
+  // document runs the same functions, not merely the same numbers. Parallel
+  // arrays rather than a [fn, weight] tuple list, so the hot closure below
+  // indexes two flat arrays instead of destructuring a tuple on every call.
   const fns: VariationFn[] = active.map((v) =>
     isFoldVariationType(v.type)
       ? foldVariationFn(v.type, resolveFoldRadii(v))
-      : VARIATIONS[v.type],
+      : isParametricVariationType(v.type)
+        ? parametricVariationFn(v.type, v)
+        : VARIATIONS[v.type],
   );
   const weights: number[] = active.map((v) => v.weight);
   const n = fns.length;

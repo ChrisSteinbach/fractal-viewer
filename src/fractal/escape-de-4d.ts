@@ -128,7 +128,11 @@ import type {
 } from "./surface-pattern";
 import { CONTRACTION_LIMIT } from "./surface-de";
 import { transformSigmas4 } from "./surface-de-4d";
-import { resolveFoldRadii, sphereFoldLipschitz } from "./variations";
+import {
+  activeParametricVariationTypes,
+  resolveFoldRadii,
+  sphereFoldLipschitz,
+} from "./variations";
 import type {
   SymmetryParams,
   SymmetryPlane,
@@ -198,7 +202,9 @@ type EscapeCalibrationDE4 = Omit<EscapeDE4, "patternCalibration">;
 /** {@link import("./escape-de").EscapeDE}'s `linkVariation` one dimension up
  * — the single active entry a link may carry. `bulb` is RECOGNISED here so
  * the gate can refuse it by name (module doc) rather than reporting the
- * generic "not a pure fold or power map". */
+ * generic "not a pure fold or power map". The parametric julia family and
+ * curl are likewise not links, and are refused by name through
+ * {@link parametricLink4Refusal}. */
 function linkVariation4(t: Transform): Variation | null {
   const active = (t.variations ?? []).filter(
     (v) => Number.isFinite(v.weight) && v.weight !== 0,
@@ -212,6 +218,20 @@ function linkVariation4(t: Transform): Variation | null {
     v.type === "qsquare"
     ? v
     : null;
+}
+
+/** The named clause appended beside the generic link refusal when the map
+ * carries one of the PARAMETRIC warps — 3D's
+ * `parametricLinkRefusal` one dimension up, `surface-eligibility.ts`'s
+ * qsquare-hint precedent. `null` when nothing parametric is active. */
+function parametricLink4Refusal(label: string, t: Transform): string | null {
+  const types = activeParametricVariationTypes(t.variations);
+  if (types.length === 0) return null;
+  const plural = types.length > 1 ? "s" : "";
+  return (
+    `${label} uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `which the 4D escape chain has no link for`
+  );
 }
 
 /** The maps that make up the chain: active, in DOCUMENT ORDER — 3D's
@@ -265,6 +285,8 @@ export function analyzeEscapeSystem4(
     const v = linkVariation4(map);
     if (!v) {
       reasons.push(`${label} is not a pure fold or power map`);
+      const clause = parametricLink4Refusal(label, map);
+      if (clause) reasons.push(clause);
     } else if (v.type === "bulb") {
       reasons.push(
         `${label} is a triplex power, which has no fourth component ` +

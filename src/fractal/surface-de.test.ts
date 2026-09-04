@@ -257,6 +257,45 @@ describe("analyzeSurfaceSystem eligibility", () => {
     expect(analysis.reasons[0]).toContain("map 1");
   });
 
+  it("names a parametric variation the descent cannot estimate, beside the generic reason", () => {
+    // The named-refusal rule (surface-eligibility.ts's qsquare-hint
+    // precedent): the ordinary "uses variations" refusal stays, and a
+    // SECOND clause says WHICH warp — julian/juliascope/curl are refused
+    // by default (the gate's whitelist), but a refusal that doesn't name
+    // the offender leaves the reader guessing.
+    for (const type of ["julian", "juliascope", "curl"] as const) {
+      const analysis = analyzeSurfaceSystem([
+        map({ variations: [{ type, weight: 1 }] }),
+      ]);
+      expect(analysis.status).toBe("ineligible");
+      expect(analysis.reasons).toContain("map 1 uses variations");
+      const named = analysis.reasons.find((r) => r !== "map 1 uses variations");
+      expect(named).toContain(type);
+      expect(named).toContain("no inverse descent");
+    }
+  });
+
+  it("names a parametric variation on a blended map and in the final transform too", () => {
+    const blended = analyzeSurfaceSystem([
+      map({
+        variations: [
+          { type: "mandelbox", weight: 1 },
+          { type: "julian", weight: 0.5 },
+        ],
+      }),
+    ]);
+    expect(blended.status).toBe("ineligible");
+    expect(blended.reasons.some((r) => r.includes("julian"))).toBe(true);
+
+    const final = analyzeSurfaceSystem(
+      [map()],
+      map({ id: 99, variations: [{ type: "curl", weight: 1 }] }),
+    );
+    expect(final.status).toBe("ineligible");
+    expect(final.reasons).toContain("final transform uses variations");
+    expect(final.reasons.some((r) => r.includes("curl"))).toBe(true);
+  });
+
   it("treats a weight-0 variation as inert, staying eligible", () => {
     const analysis = analyzeSurfaceSystem([
       map({ variations: [{ type: "spherical", weight: 0 }] }),

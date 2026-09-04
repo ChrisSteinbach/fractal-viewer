@@ -113,6 +113,7 @@
 import { composeAffine4, toTransform4 } from "./affine4";
 import { effectiveSymmetryOrder } from "./chaos-game";
 import { transformSigmas4 } from "./surface-de-4d";
+import { activeParametricVariationTypes } from "./variations";
 import type { SymmetryParams, Transform, Variation, Vec4 } from "./types";
 
 /**
@@ -187,13 +188,29 @@ export interface QJuliaDE {
 }
 
 /** `composeVariations`' active filter again (the twin of `escape-de.ts`'s
- * `pureFoldVariation`): the single active `qsquare` entry, or null. */
+ * `pureFoldVariation`): the single active `qsquare` entry, or null. The
+ * parametric julia family and curl are not quaternion squares and are
+ * refused by name through {@link parametricQJuliaRefusal}. */
 function pureQSquareVariation(t: Transform): Variation | null {
   const active = (t.variations ?? []).filter(
     (v) => Number.isFinite(v.weight) && v.weight !== 0,
   );
   if (active.length !== 1) return null;
   return active[0].type === "qsquare" ? active[0] : null;
+}
+
+/** The named clause appended beside the generic "not a pure quaternion
+ * square" refusal when the map carries one of the PARAMETRIC warps —
+ * `surface-eligibility.ts`'s qsquare-hint precedent. `null` when nothing
+ * parametric is active. */
+function parametricQJuliaRefusal(t: Transform): string | null {
+  const types = activeParametricVariationTypes(t.variations);
+  if (types.length === 0) return null;
+  const plural = types.length > 1 ? "s" : "";
+  return (
+    `the map uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `which the quaternion render does not iterate`
+  );
 }
 
 /**
@@ -246,6 +263,8 @@ export function analyzeQJuliaSystem(
     const q = pureQSquareVariation(map);
     if (!q) {
       reasons.push("the map is not a pure quaternion square");
+      const clause = parametricQJuliaRefusal(map);
+      if (clause) reasons.push(clause);
     } else if (q.weight !== 1) {
       // A weight other than 1 makes the map `w·(Mv + t)²`, which is the
       // same object under the change of variable `v -> v/w` only when the

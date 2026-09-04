@@ -74,6 +74,30 @@ describe("analyzeQJuliaSystem", () => {
     );
   });
 
+  it("refuses the parametric warps BY NAME, beside the generic reason", () => {
+    // julian/juliascope/curl are not quaternion squares and the render
+    // does not iterate them; the refusal names which warp it saw.
+    for (const type of ["julian", "juliascope", "curl"] as const) {
+      const map: Transform = {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type, weight: 1 }],
+      };
+      const analysis = analyzeQJuliaSystem([map]);
+      expect(analysis.status).toBe("ineligible");
+      expect(analysis.reasons).toContain(
+        "the map is not a pure quaternion square",
+      );
+      const named = analysis.reasons.find(
+        (r) => r !== "the map is not a pure quaternion square",
+      );
+      expect(named).toContain(type);
+      expect(named).toContain("does not iterate");
+    }
+  });
+
   it("refuses a second active map", () => {
     const c: Vec4 = [-0.2, 0.6, 0.2, 0];
     const analysis = analyzeQJuliaSystem([

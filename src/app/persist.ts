@@ -715,6 +715,26 @@ function decodeFoldRadius(raw: unknown): number | undefined {
 }
 
 /**
+ * Decode one optional per-variation parameter leaf on an untrusted variation
+ * entry — `julianPower`, `julianDist`, `juliascopePower`, `juliascopeDist`,
+ * `curlC1`, or `curlC2` (see `types.ts`'s {@link Variation}). QUIET fallback
+ * exactly like {@link decodeFoldRadius}, one feature over: a malformed value
+ * never rejects the whole scene, it just leaves the field absent — and the
+ * fold lengths' two deliberate deviations apply verbatim: NO `Number(x)`
+ * coercion (only a genuine, finite `number` survives — a numeric string, a
+ * boolean, `null`, `NaN`/`Infinity`, or an object all drop) and NO clamp.
+ * Each parameter's domain belongs entirely to `variations.ts`'s
+ * `resolveJuliaParams`/`resolveCurlParams`; persist's job here is fidelity,
+ * so an out-of-domain but genuinely finite value (e.g. a `curlC2` the
+ * resolver would keep as-is, or a `julianPower` below its floor) survives
+ * the decode untouched and is resolved at read time exactly as an authored
+ * one would be.
+ */
+function decodeVariationParam(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+/**
  * Decode one transform's optional chaos row (`types.ts`'s
  * {@link Transform.chaos}). QUIET fallback like {@link decodeFoldRadius}: a
  * malformed row never rejects the whole scene, it just leaves the field
@@ -1300,6 +1320,19 @@ function decodeVariations(raw: unknown): Variation[] | null {
     if (fixedRadius !== undefined) decoded.fixedRadius = fixedRadius;
     const boxLimit = decodeFoldRadius(v.boxLimit);
     if (boxLimit !== undefined) decoded.boxLimit = boxLimit;
+    const julianPower = decodeVariationParam(v.julianPower);
+    if (julianPower !== undefined) decoded.julianPower = julianPower;
+    const julianDist = decodeVariationParam(v.julianDist);
+    if (julianDist !== undefined) decoded.julianDist = julianDist;
+    const juliascopePower = decodeVariationParam(v.juliascopePower);
+    if (juliascopePower !== undefined)
+      decoded.juliascopePower = juliascopePower;
+    const juliascopeDist = decodeVariationParam(v.juliascopeDist);
+    if (juliascopeDist !== undefined) decoded.juliascopeDist = juliascopeDist;
+    const curlC1 = decodeVariationParam(v.curlC1);
+    if (curlC1 !== undefined) decoded.curlC1 = curlC1;
+    const curlC2 = decodeVariationParam(v.curlC2);
+    if (curlC2 !== undefined) decoded.curlC2 = curlC2;
     variations.push(decoded);
   }
   return variations;
@@ -2329,8 +2362,10 @@ function decodeFourDPose(raw: unknown): FourDPose | undefined {
 
 /**
  * The compact wire form of one variation entry: `{ type, weight }` plus the
- * fold's three optional lengths, each present only when the
- * source field is finite (see `encodeTransform`'s `encodeFoldRadius`).
+ * fold's three optional lengths and the parametric julia/curl family's six
+ * optional parameters, each present only when the
+ * source field is finite (see `encodeTransform`'s `encodeFoldRadius` and
+ * `encodeVariationParam`).
  */
 interface EncodedVariation {
   type: VariationType;
@@ -2338,6 +2373,12 @@ interface EncodedVariation {
   minRadius?: number;
   fixedRadius?: number;
   boxLimit?: number;
+  julianPower?: number;
+  julianDist?: number;
+  juliascopePower?: number;
+  juliascopeDist?: number;
+  curlC1?: number;
+  curlC2?: number;
 }
 
 /**
@@ -2378,6 +2419,19 @@ type EncodedShapeTrap = Omit<ShapeTrap, "shape"> & {
  * them.
  */
 function encodeFoldRadius(n: number | undefined): number | undefined {
+  return n !== undefined && Number.isFinite(n) ? round4(n) : undefined;
+}
+
+/**
+ * Round one of the parametric julia/curl family's six parameters for the
+ * wire IFF it's present and finite — the identical shape as
+ * {@link encodeFoldRadius} one feature over: `undefined` in, `undefined`
+ * out, so an absent `julianPower`/`julianDist`/`juliascopePower`/
+ * `juliascopeDist`/`curlC1`/`curlC2` writes nothing and a document that
+ * never authored these fields encodes byte-identically to one that predates
+ * them.
+ */
+function encodeVariationParam(n: number | undefined): number | undefined {
   return n !== undefined && Number.isFinite(n) ? round4(n) : undefined;
 }
 
@@ -2759,6 +2813,21 @@ function encodeTransform(
         if (fixedRadius !== undefined) ev.fixedRadius = fixedRadius;
         const boxLimit = encodeFoldRadius(v.boxLimit);
         if (boxLimit !== undefined) ev.boxLimit = boxLimit;
+        // The parametric julia/curl family's six parameters, the identical
+        // present-and-finite-only rule one feature over — see
+        // encodeVariationParam.
+        const julianPower = encodeVariationParam(v.julianPower);
+        if (julianPower !== undefined) ev.julianPower = julianPower;
+        const julianDist = encodeVariationParam(v.julianDist);
+        if (julianDist !== undefined) ev.julianDist = julianDist;
+        const juliascopePower = encodeVariationParam(v.juliascopePower);
+        if (juliascopePower !== undefined) ev.juliascopePower = juliascopePower;
+        const juliascopeDist = encodeVariationParam(v.juliascopeDist);
+        if (juliascopeDist !== undefined) ev.juliascopeDist = juliascopeDist;
+        const curlC1 = encodeVariationParam(v.curlC1);
+        if (curlC1 !== undefined) ev.curlC1 = curlC1;
+        const curlC2 = encodeVariationParam(v.curlC2);
+        if (curlC2 !== undefined) ev.curlC2 = curlC2;
         return ev;
       });
     if (active.length > 0) e.variations = active;

@@ -108,6 +108,10 @@ import type {
 } from "./types";
 import {
   BOX_FOLD_LIMIT,
+  CLASSIC_CURL_C1,
+  CLASSIC_CURL_C2,
+  CLASSIC_JULIA_DIST,
+  CLASSIC_JULIA_POWER,
   SPHERE_FOLD_FIXED_RADIUS,
   SPHERE_FOLD_MIN_RADIUS,
 } from "./variations";
@@ -249,14 +253,20 @@ function lerpWPlanes(
   return Object.keys(result).length === 0 ? undefined : result;
 }
 
-/** One type's pooled data: the summed weight plus whichever fold lengths
- * its entries carried — the shape {@link lerpVariations} unions
- * across both sides. */
+/** One type's pooled data: the summed weight plus whichever fold lengths and
+ * parametric julia/curl parameters its entries carried — the shape
+ * {@link lerpVariations} unions across both sides. */
 type VariationInfo = {
   weight: number;
   minRadius?: number;
   fixedRadius?: number;
   boxLimit?: number;
+  julianPower?: number;
+  julianDist?: number;
+  juliascopePower?: number;
+  juliascopeDist?: number;
+  curlC1?: number;
+  curlC2?: number;
 };
 
 /** Sum a variation list into a type -> {@link VariationInfo} map (duplicate
@@ -279,6 +289,12 @@ function variationInfo(
         minRadius: v.minRadius,
         fixedRadius: v.fixedRadius,
         boxLimit: v.boxLimit,
+        julianPower: v.julianPower,
+        julianDist: v.julianDist,
+        juliascopePower: v.juliascopePower,
+        juliascopeDist: v.juliascopeDist,
+        curlC1: v.curlC1,
+        curlC2: v.curlC2,
       });
       continue;
     }
@@ -286,6 +302,14 @@ function variationInfo(
     if (v.minRadius !== undefined) existing.minRadius = v.minRadius;
     if (v.fixedRadius !== undefined) existing.fixedRadius = v.fixedRadius;
     if (v.boxLimit !== undefined) existing.boxLimit = v.boxLimit;
+    if (v.julianPower !== undefined) existing.julianPower = v.julianPower;
+    if (v.julianDist !== undefined) existing.julianDist = v.julianDist;
+    if (v.juliascopePower !== undefined)
+      existing.juliascopePower = v.juliascopePower;
+    if (v.juliascopeDist !== undefined)
+      existing.juliascopeDist = v.juliascopeDist;
+    if (v.curlC1 !== undefined) existing.curlC1 = v.curlC1;
+    if (v.curlC2 !== undefined) existing.curlC2 = v.curlC2;
   }
   return info;
 }
@@ -349,6 +373,45 @@ function lerpVariations(
       t,
     );
     if (boxLimit !== undefined) result.boxLimit = boxLimit;
+    // The parametric julia/curl family's six parameters, the identical
+    // rule one feature over: each through {@link lerpOptional} with its OWN
+    // classic value as the absent side's fallback (`variations.ts`'s
+    // CLASSIC_JULIA_*/CLASSIC_CURL_* constants — flam3's own param defaults,
+    // imported, never re-typed here as magic numbers), so `julianPower: 3`
+    // against a side that omits it morphs 3 -> 1, never toward a synthesized
+    // hole, and a field absent on both sides stays absent.
+    const julianPower = lerpOptional(
+      av?.julianPower,
+      bv?.julianPower,
+      CLASSIC_JULIA_POWER,
+      t,
+    );
+    if (julianPower !== undefined) result.julianPower = julianPower;
+    const julianDist = lerpOptional(
+      av?.julianDist,
+      bv?.julianDist,
+      CLASSIC_JULIA_DIST,
+      t,
+    );
+    if (julianDist !== undefined) result.julianDist = julianDist;
+    const juliascopePower = lerpOptional(
+      av?.juliascopePower,
+      bv?.juliascopePower,
+      CLASSIC_JULIA_POWER,
+      t,
+    );
+    if (juliascopePower !== undefined) result.juliascopePower = juliascopePower;
+    const juliascopeDist = lerpOptional(
+      av?.juliascopeDist,
+      bv?.juliascopeDist,
+      CLASSIC_JULIA_DIST,
+      t,
+    );
+    if (juliascopeDist !== undefined) result.juliascopeDist = juliascopeDist;
+    const curlC1 = lerpOptional(av?.curlC1, bv?.curlC1, CLASSIC_CURL_C1, t);
+    if (curlC1 !== undefined) result.curlC1 = curlC1;
+    const curlC2 = lerpOptional(av?.curlC2, bv?.curlC2, CLASSIC_CURL_C2, t);
+    if (curlC2 !== undefined) result.curlC2 = curlC2;
     return result;
   });
 }
