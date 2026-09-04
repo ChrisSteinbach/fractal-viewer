@@ -52,7 +52,11 @@ import type {
   SurfaceFoldRadii,
   SurfaceChaosDE,
 } from "./surface-de";
-import { resolveFoldRadii, sphereFoldLipschitz } from "./variations";
+import {
+  activeParametricVariationTypes,
+  resolveFoldRadii,
+  sphereFoldLipschitz,
+} from "./variations";
 import type {
   HybridSchedule,
   SymmetryParams,
@@ -519,6 +523,21 @@ function pureFoldVariation(t: Transform): Variation | null {
   return FOLD_VARIATION_TYPES.has(v.type) ? v : null;
 }
 
+/** The named clause for a variation list the 4D fold-branch sweep cannot
+ * decompose: when the list carries one of the PARAMETRIC warps, name it —
+ * 3D's `parametricRefusal` one dimension up, same helper, same wording up
+ * to the dimension. Returned rather than pushed so the caller appends it to
+ * ITS OWN reasons array; `null` when nothing parametric is active. */
+function parametricRefusal4(label: string, t: Transform): string | null {
+  const types = activeParametricVariationTypes(t.variations);
+  if (types.length === 0) return null;
+  const plural = types.length > 1 ? "s" : "";
+  return (
+    `${label} uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `which the 4D fold descent has no branch for`
+  );
+}
+
 /** Forward Lipschitz bound of a pure-fold variation, weight folded in —
  * copied from `surface-de.ts`. The constants are dimension-free: a boxfold
  * branch is a reflection isometry per axis (L = 1) in any dimension at any
@@ -785,6 +804,8 @@ export function analyzeSurfaceSystem4(
     const fold = pureFoldVariation(t);
     if (!fold && hasActiveVariations(t)) {
       reasons.push(`${label} uses variations`);
+      const clause = parametricRefusal4(label, t);
+      if (clause) reasons.push(clause);
     }
     // The composite gate below cannot catch w ≈ 0 — a smaller weight only
     // ever helps contraction — but the descent divides by w. See
@@ -822,6 +843,8 @@ export function analyzeSurfaceSystem4(
     const foldFinal = pureFoldVariation(finalTransform);
     if (!foldFinal && hasActiveVariations(finalTransform)) {
       reasons.push("final transform uses variations");
+      const clause = parametricRefusal4("final transform", finalTransform);
+      if (clause) reasons.push(clause);
     }
     // The lens has no contraction gate at all, so the weight floor is the
     // ONLY thing standing between a hand-edited w ≈ 0 and the lens's 1/w

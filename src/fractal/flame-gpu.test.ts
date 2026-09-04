@@ -522,16 +522,151 @@ describe("packGpuSystem fold radii", () => {
     }
   });
 
+  it("leaves the fold lanes untouched by the parametric family's own block — the julia block sits after the emitter block", () => {
+    // The julia block appended at the END of the Slot: every pre-julia
+    // offset (the variation lanes, FOLD_RADII at 72, the emitter block at
+    // 84) stays byte-identical. The stride must grow by exactly the block's
+    // 48 bytes.
+    expect(SLOT_STRIDE_BYTES).toBe(1168);
+    expect(FOLD_RADII).toBe(72);
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "spherefold", weight: 1 }],
+      },
+    ];
+    const f32 = new Float32Array(packGpuSystem(baseSpec({ transforms })).slots);
+    // The fold lane is untouched and the params block zero — the julia
+    // family's parameters live ONLY in their own lanes.
+    expect(Array.from(f32.slice(FOLD_RADII + 4, FOLD_RADII + 7))).toEqual([
+      0.25, 1, 1,
+    ]);
+  });
+});
+
+describe("packGpuSystem parametric variation params", () => {
+  /** Element index of parametric type `i`'s lane in slot 0 — the module's
+   * own SLOT_VAR_PARAMS at 280 (byte 1120, immediately after the emitter
+   * block), restated as a literal so a mistake there cannot coincidentally
+   * agree with a matching mistake here. */
+  const VAR_PARAMS = 280;
+
+  it("packs each julia type's resolved power/dist into its type's lane, unsquared", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [
+          { type: "julian", weight: 1, julianPower: 3, julianDist: 1.5 },
+          {
+            type: "juliascope",
+            weight: 1,
+            juliascopePower: -2,
+            juliascopeDist: 0,
+          },
+        ],
+      },
+    ];
+    const f32 = new Float32Array(packGpuSystem(baseSpec({ transforms })).slots);
+    // Lane 0 = julian: authored power 3, dist 1.5, both kept as-is (NOT
+    // squared — that is the sphere pair's form).
+    expect(Array.from(f32.slice(VAR_PARAMS, VAR_PARAMS + 4))).toEqual([
+      3, 1.5, 0, 0,
+    ]);
+    // Lane 1 = juliascope: the negative power and the deliberate dist 0
+    // (a unit ring) both survive the resolver.
+    expect(Array.from(f32.slice(VAR_PARAMS + 4, VAR_PARAMS + 8))).toEqual([
+      -2, 0, 0, 0,
+    ]);
+  });
+
+  it("packs curl's resolved coefficients into lane 2, and the classic set for absent params", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [
+          { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1.25 },
+          { type: "julian", weight: 1 },
+        ],
+      },
+    ];
+    const f32 = new Float32Array(packGpuSystem(baseSpec({ transforms })).slots);
+    // Lane 2 = curl: authored c1/c2.
+    expect(Array.from(f32.slice(VAR_PARAMS + 8, VAR_PARAMS + 12))).toEqual([
+      0.5, -1.25, 0, 0,
+    ]);
+    // Lane 0 = julian: absent params resolve to the classic (1, 1).
+    expect(Array.from(f32.slice(VAR_PARAMS, VAR_PARAMS + 4))).toEqual([
+      1, 1, 0, 0,
+    ]);
+  });
+
+  it("replicates a base map's parameters into every kaleidoscope copy, like the fold lane", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "juliascope", weight: 1, juliascopePower: 5 }],
+      },
+    ];
+    const packed = packGpuSystem(
+      baseSpec({ transforms, symmetry: { order: 3, plane: "xz" } }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    const perSlot = SLOT_STRIDE_BYTES / 4;
+    for (let s = 0; s < 3; s++) {
+      const lane = s * perSlot + VAR_PARAMS + 4;
+      expect(Array.from(f32.slice(lane, lane + 4))).toEqual([5, 1, 0, 0]);
+    }
+  });
+
+  it("resolves an out-of-domain power to the classic lane value, not the authored one", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "julian", weight: 1, julianPower: 0 }],
+      },
+    ];
+    const f32 = new Float32Array(packGpuSystem(baseSpec({ transforms })).slots);
+    // Power 0 is degenerate (the angle division explodes); the resolver's
+    // floor falls back to the classic 1, and the LANE carries the resolved
+    // value so the kernel never sees a zero divisor.
+    expect(Array.from(f32.slice(VAR_PARAMS, VAR_PARAMS + 2))).toEqual([1, 1]);
+  });
+});
+
+describe("packGpuSystem fold radii kernel reads", () => {
   it("reads its lengths off the slot in the kernel rather than the classic literals", () => {
     expect(FLAME_GPU_KERNEL_WGSL).toContain("foldRadii: array<vec4f, 3>");
-    expect(FLAME_GPU_KERNEL_WGSL).toContain(
-      "applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz)",
-    );
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("slots[slotIdx].foldRadii[fi].xyz");
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("slots[slotIdx].varParams[pi].xyz");
     expect(FLAME_GPU_KERNEL_WGSL).not.toContain("clamp(dot(p, p), 0.25, 1.0)");
     expect(FLAME_GPU_KERNEL_WGSL).not.toContain("clamp(dot(b, b), 0.25, 1.0)");
     expect(FLAME_GPU_KERNEL_WGSL).not.toContain(
       "clamp(p, vec3f(-1.0), vec3f(1.0))",
     );
+    // The parametric julia family and curl's classic parameters
+    // (power 1 / dist 1, c1 1 / c2 0) must ride the varParams lane exactly
+    // as the fold radii ride theirs — a kernel frozen at flam3's own
+    // defaults would render every parameterized document as the classic
+    // object, and no test would notice.
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("varParams: array<vec4f, 3>");
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("if (ty >= 17u && ty <= 19u) {");
+    expect(FLAME_GPU_KERNEL_WGSL).not.toContain("trunc(1.0 * rand01");
+    expect(FLAME_GPU_KERNEL_WGSL).not.toContain("1.0 + p.x + 0.0 * (p.x");
   });
 });
 
@@ -733,7 +868,7 @@ describe("packGpuSystem shape emitters", () => {
       const packed = packGpuSystem(
         baseSpec({ transforms: [transformWithEmitter(spec)] }),
       );
-      expect(SLOT_STRIDE_BYTES).toBe(1120);
+      expect(SLOT_STRIDE_BYTES).toBe(1168);
       const f32 = new Float32Array(packed.slots);
       const p = EMITTER_PARTS;
       expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
@@ -949,7 +1084,7 @@ describe("packGpuSystem shape emitters", () => {
     );
     const u32 = new Uint32Array(packed.slots);
     expect(u32[EMITTER_FALLBACK_PART]).toBe(1);
-    expect(SLOT_STRIDE_BYTES).toBe(1120);
+    expect(SLOT_STRIDE_BYTES).toBe(1168);
   });
 
   it("bounds min-index overlap acceptance and keeps every posed containment formula in both dimensions", () => {
@@ -2295,6 +2430,9 @@ describe("FLAME_GPU_KERNEL_WGSL variation switch", () => {
       mandelbox: 14,
       qsquare: 15,
       bulb: 16,
+      julian: 17,
+      juliascope: 18,
+      curl: 19,
     });
   });
 

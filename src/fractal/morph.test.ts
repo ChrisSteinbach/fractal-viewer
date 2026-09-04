@@ -322,6 +322,75 @@ describe("lerpSystem fold radii", () => {
     expect(v.boxLimit).toBeCloseTo(1, 10);
   });
 
+  it("lerps the parametric julia/curl parameters when both sides set them, through their own classic fallbacks when one side omits", () => {
+    const a = system({
+      transforms: [
+        transform({
+          variations: [
+            { type: "julian", weight: 1, julianPower: 3, julianDist: 1.5 },
+            { type: "curl", weight: 1, curlC1: 2, curlC2: -1 },
+          ],
+        }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({
+          variations: [
+            { type: "julian", weight: 1, julianPower: 5 },
+            { type: "curl", weight: 1, curlC1: 0 },
+          ],
+        }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    const [julian, curl] = mid.transforms[0].variations!;
+    expect(julian.julianPower).toBeCloseTo(4, 10);
+    // b omits julianDist: the absent side reads the CLASSIC 1 (flam3's own
+    // default, imported — never a synthesized 0), so the midpoint sits
+    // halfway to that.
+    expect(julian.julianDist).toBeCloseTo(1.25, 10);
+    expect(curl.curlC1).toBeCloseTo(1, 10);
+    expect(curl.curlC2).toBeCloseTo(-0.5, 10);
+  });
+
+  it("keeps parametric parameters absent at the midpoint when both sides omit them", () => {
+    const a = system({
+      transforms: [transform({ variations: [{ type: "julian", weight: 1 }] })],
+    });
+    const b = system({
+      transforms: [
+        transform({
+          variations: [{ type: "julian", weight: 0.4 }],
+          position: [1, 1, 1],
+        }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    const v = mid.transforms[0].variations![0];
+    expect(v.julianPower).toBeUndefined();
+    expect(v.julianDist).toBeUndefined();
+  });
+
+  it("keeps a variation's parameters absent when the type exists on only one side of a disjoint pair", () => {
+    // A union by type: julian exists on `a` alone, so `b`'s side reads the
+    // weight-0 phantom — and a phantom's absent params must stay absent,
+    // not materialize the classic values as authored fields (the same
+    // "absent stays absent" rule the fold lengths carry).
+    const a = system({
+      transforms: [transform({ variations: [{ type: "julian", weight: 1 }] })],
+    });
+    const b = system({
+      transforms: [transform({ variations: [{ type: "curl", weight: 1 }] })],
+    });
+    const mid = lerpSystem(a, b, 0.25);
+    const types = mid.transforms[0].variations!.map((v) => v.type);
+    expect(types).toEqual(["julian", "curl"]);
+    const [julian, curl] = mid.transforms[0].variations!;
+    expect(julian.julianPower).toBeUndefined();
+    expect(curl.curlC1).toBeUndefined();
+  });
+
   it("interpolates a present minRadius against an absent one through the classic value's midpoint", () => {
     const a = system({
       transforms: [

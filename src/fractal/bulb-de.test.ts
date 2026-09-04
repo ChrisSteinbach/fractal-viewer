@@ -129,6 +129,24 @@ describe("analyzeBulbSystem", () => {
     expect(analysis.reasons).toContain("the map is not a pure triplex power");
   });
 
+  it("refuses the parametric warps BY NAME, beside the generic reason", () => {
+    // julian/juliascope/curl are not triplex powers and the render does
+    // not iterate them; the refusal names which warp it saw instead of
+    // leaving the generic "not a pure triplex power" to speak for it.
+    for (const type of ["julian", "juliascope", "curl"] as const) {
+      const analysis = analyzeBulbSystem([
+        bulbSystem({ variations: [{ type, weight: 1 }] }),
+      ]);
+      expect(analysis.status).toBe("ineligible");
+      expect(analysis.reasons).toContain("the map is not a pure triplex power");
+      const named = analysis.reasons.find(
+        (r) => r !== "the map is not a pure triplex power",
+      );
+      expect(named).toContain(type);
+      expect(named).toContain("does not iterate");
+    }
+  });
+
   it("refuses a second active map", () => {
     const analysis = analyzeBulbSystem([bulbSystem(), bulbSystem({ id: 2 })]);
 

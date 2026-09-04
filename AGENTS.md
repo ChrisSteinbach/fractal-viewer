@@ -498,8 +498,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `foldRadii: array<vec4f, 3>` indexed by variation type minus 12,
     `(mR², fR², wall)` — not a per-LANE one: `packVariations`' own invariant
     is that a transform carries at most one entry per type, so three lanes
-    cover every fold a slot can hold where seventeen would be needed to
-    cover every lane. Squared because that is the form `foldVariationFn`'s
+    cover every fold a slot can hold where one-per-lane would be needed to
+    cover the vocabulary. Squared because that is the form `foldVariationFn`'s
     closure computes once. Mirroring flame was not optional: the mode has
     TWO backends over one document (`flame.ts` reaches the fold through
     `composeVariations`, which reads the lengths), so leaving the kernel
@@ -1199,25 +1199,33 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of
-    truth). `Variation` is `{type, weight}` plus the fold's three
-    optional lengths `minRadius`/`fixedRadius`/`boxLimit`, the FIRST
-    per-variation parameters in a document every other producer treats as a
-    type -> weight MAP; they deliberately break that model rather than
-    pretending to fit it (each belongs to two of the seventeen types and the
-    rest ignore all three), and ABSENT MEANS THE CLASSIC MANDELBOX VALUES
-    (0.5, 1, 1) BYTE-IDENTICALLY — the `weight`/`colorIndex` convention, and
-    what keeps every existing document, preset, morph and `.flame` import
-    unmoved. There is no fourth SIZE field on purpose: only two dimensionless
-    ratios of the three lengths are new shape, because a uniform
-    rescale is equivariant through both folds and is therefore already what
-    the transform's own affine part does.
-  - `variations.ts` — seventeen nonlinear flame variations as pure functions:
+    truth). `Variation` is `{type, weight}` plus per-variation parameters:
+    the fold's three optional lengths `minRadius`/`fixedRadius`/`boxLimit`
+    and — the SECOND parameterized family, established by the flame-fidelity
+    work — the parametric warps' six optional fields
+    (`julianPower`/`julianDist`/`juliascopePower`/`juliascopeDist`/
+    `curlC1`/`curlC2`). Both families deliberately break the type -> weight
+    MAP model rather than pretending to fit it (each field belongs to one or
+    two of the twenty types and the rest ignore them all), and ABSENT MEANS
+    THE CLASSIC VALUES (folds 0.5, 1, 1; julia family power 1, dist 1; curl
+    1, 0 — flam3's own defaults) BYTE-IDENTICALLY — the
+    `weight`/`colorIndex` convention, and what keeps every existing
+    document, preset, morph and `.flame` import unmoved. There is no fourth
+    fold SIZE field on purpose: only two dimensionless ratios of the three
+    lengths are new shape, because a uniform rescale is equivariant through
+    both folds and is therefore already what the transform's own affine part
+    does.
+  - `variations.ts` — twenty nonlinear flame variations as pure functions:
     a dozen classics, the Mandelbox fold family (`boxfold`/`spherefold`/
-    `mandelbox`), and the two escape-time POWER maps — `qsquare` (the
-    quaternion square) and `bulb` (the White/Nylander triplex power).
-    Those two exist so their renderers can gate on a document shape, and
-    they are also CHAIN LINKS: `escape-de.ts` admits either beside a
-    fold, which is what makes the seventeen-variation vocabulary compose
+    `mandelbox`), the two escape-time POWER maps — `qsquare` (the
+    quaternion square) and `bulb` (the White/Nylander triplex power) — and
+    the three PARAMETRIC warps `julian`/`juliascope`/`curl` (flam3's wire
+    spellings; one shared resolver per family owns the absent-means-classic
+    rule and the domain, and the GPU lane wire is the fold lane's
+    type-indexed pattern one block over).
+    The power maps exist so their renderers can gate on a document shape,
+    and they are also CHAIN LINKS: `escape-de.ts` admits either beside a
+    fold, which is what makes the twenty-variation vocabulary compose
     instead of merely coexist.
     `bulb` is the triplex
     8th power, `triplexPow8`: a TRIG-FREE closed form via the Chebyshev

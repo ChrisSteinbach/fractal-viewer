@@ -132,7 +132,13 @@ import type {
   GpuFlameBalloonEchoFields,
 } from "./flame-gpu";
 import { mulberry32 } from "./rng";
-import { isFoldVariationType, resolveFoldRadii } from "./variations";
+import {
+  isFoldVariationType,
+  isParametricVariationType,
+  resolveCurlParams,
+  resolveJuliaParams,
+  resolveFoldRadii,
+} from "./variations";
 import { MAX_SHAPE_PARTS } from "./shapes";
 import type { ShapeSpec } from "./shapes";
 
@@ -214,9 +220,10 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   64 trans vec4f (t0..t3)
  *   80 postX vec4f (symmetry post-rotation row 0) | 96 postY | 112 postZ | 128 postW
  *   144 varWeights array<vec4f, 5> | 224 varTypes array<vec4u, 5> (20 lanes of
- *   storage, 17 used — one per `VariationType`; `bulb` took the
- *   count past the 16 four vec4s held, and a vec4 array cannot be widened by
- *   less than four lanes, so three ride spare)
+ *   storage, all 20 used — one per `VariationType`; the Mandelbox fold
+ *   family and the two power maps filled the arrays in order, and the
+ *   parametric julia family and curl filled the three lanes that rode
+ *   spare, landing exactly ON the capacity with no struct widening)
  *   304 varCount u32 | 308 hasPost u32 | 312 cumWeight f32
  *   316 colorIndex f32 | 320 colorSpeed f32 (the flam3 color pair,
  *   resolved per BASE map and written into EVERY kaleidoscope copy of it —
@@ -241,6 +248,14 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   4x4+t affine poses it, `stepOrbit4`'s emitter branch (module doc's own
  *   dimensional-parity paragraph). Its 64-proposal min-index overlap
  *   correction and positive-measure fallback are the 3D Slot's verbatim.
+ *   1168 varParams array<vec4f, 3> — the parametric julia family and
+ *   curl's AUTHORED parameters, the 3D Slot's lane verbatim, indexed by
+ *   variation type MINUS 17 ([julian, juliascope, curl]): (power, dist)
+ *   for the two julia types, (c1, c2) for curl. Shared meaning across the
+ *   two kernels for the same reason `variations4.ts` imports
+ *   `resolveJuliaParams`/`resolveCurlParams` rather than restating them —
+ *   and appended AFTER the emitter block so every pre-julia offset stays
+ *   byte-identical, exactly as the 3D Slot did.
  *
  * The stride arithmetic: the pre-symmetry 224 was exactly 14 x 16
  * with no slack — the flam3 color pair had already taken this struct's last
@@ -252,7 +267,10 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * added a 17th `VariationType` (`bulb`), which does not fit 16 lanes: both
  * lane arrays grew by one `vec4` (+32 bytes, the smallest step available),
  * so content runs to 324 and the struct rounds 324 -> 336, keeping the same
- * three trailing pad words.
+ * three trailing pad words. The parametric julia family and curl brought
+ * the count to 20 — exactly the lane capacity — and their 48-byte `varParams`
+ * block appends after the emitter block, so the stride runs 1168 -> 1216
+ * (content 1168 + 48 = 1216, alignment-exact with no new pad).
  *
  * Chain4 (storage array element, {@link CHAIN4_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (the FULL 4D orbit point — unlike the 3D Chain, no lane is
@@ -291,7 +309,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * seam.
  */
 export const PARAMS4_BYTES = 480;
-export const SLOT4_STRIDE_BYTES = 1168;
+export const SLOT4_STRIDE_BYTES = 1216;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
  * rewrites mid-session, exactly like the 3D layout's
@@ -401,6 +419,11 @@ struct Slot {
   emitterTotalWeight: f32,
   emitterFallbackPart: u32,
   emitterParts: array<EmitterPart, ${MAX_SHAPE_PARTS}>,
+  // The parametric julia family and curl's authored parameters — the 3D
+  // Slot's lane verbatim, indexed by type - 17, (power, dist) / (c1, c2).
+  // Appended AFTER the emitter block so every pre-julia offset stays
+  // byte-identical.
+  varParams: array<vec4f, 3>,
 }
 
 // "aux", not "meta": meta is a WGSL reserved identifier (3D kernel's note).
@@ -822,7 +845,7 @@ fn emitterSampleSlot(state: ptr<function, u32>, slotIdx: u32) -> vec3f {
 // lifted per variations4.ts's own convention: radial warps (spherical,
 // bubble) and swirl use the FULL 4D radius, angular warps act in the
 // xy-plane and carry z AND w through, sinusoidal folds all four axes.
-fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>, fr: vec3f) -> vec4f {
+fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>, fr: vec3f, vp: vec3f) -> vec4f {
   switch t {
     case 0u: { // linear
       return p;
@@ -917,6 +940,33 @@ fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>, fr: vec3f) -> vec
       let v8 = 2.0 * u4 * v4;
       return vec4f(rho * s * u8, rho * s * v8, zOut, p.w);
     }
+    case 17u: { // julian — the 3D kernel's log-spiral sector sweep, one
+      // dimension up: an xy-plane warp, so z AND w carry through untouched
+      // (the angular warps' lift) and the x/y arithmetic is the 3D case's
+      // term for term. vp = (power, dist). Exactly ONE rand01 draw, matching
+      // the CPU closure's single rng() call.
+      let t = trunc(abs(vp.x) * rand01(rng));
+      let theta = (atan2(p.y, p.x) + 2.0 * PI * t) / vp.x;
+      let r = pow(p.x * p.x + p.y * p.y, vp.y / (2.0 * vp.x));
+      return vec4f(r * cos(theta), r * sin(theta), p.z, p.w);
+    }
+    case 18u: { // juliascope — julian's machinery, angle sign flipped by
+      // branch parity (flam3 var33): even branches keep +atan2, odd ones
+      // flip to −atan2, both divided by power. One rand01 draw, like julian.
+      let t = u32(trunc(abs(vp.x) * rand01(rng)));
+      let a = atan2(p.y, p.x);
+      let theta = (2.0 * PI * f32(t) + select(a, -a, (t & 1u) == 1u)) / vp.x;
+      let r = pow(p.x * p.x + p.y * p.y, vp.y / (2.0 * vp.x));
+      return vec4f(r * cos(theta), r * sin(theta), p.z, p.w);
+    }
+    case 19u: { // curl — the complex reciprocal over the xy-plane; z AND w
+      // carried through. flam3 var46 term for term, the divisor's EPS floor
+      // the 3D kernel's own.
+      let re = 1.0 + vp.x * p.x + vp.y * (p.x * p.x - p.y * p.y);
+      let im = vp.x * p.y + 2.0 * vp.y * p.x * p.y;
+      let r = 1.0 / (re * re + im * im + EPS);
+      return vec4f((p.x * re + p.y * im) * r, (p.y * re - p.x * im) * r, p.z, p.w);
+    }
     default: {
       return p;
     }
@@ -962,14 +1012,27 @@ fn applySlot(slotIdx: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
         // applySlot.
         let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
         let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
-        // The fold family's own lengths, the 3D kernel's selection
-        // verbatim — explicit bounds because 15/16 would index past the
-        // three lanes.
+        // The fold family (12..14) reads its own authored lengths off the
+        // slot and the parametric julia/curl family (17..19) its own — the
+        // 3D kernel's selection verbatim. Explicit bounds, not unchecked
+        // subtraction: 15/16 would index past the fold lanes, and a future
+        // kind that satisfied BOTH tests would run both branches — the
+        // negative-kind mistake this guard class exists to stop.
         var fi = 0u;
         if (ty >= 12u && ty <= 14u) {
           fi = ty - 12u;
         }
-        acc += w * applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz);
+        var pi = 0u;
+        if (ty >= 17u && ty <= 19u) {
+          pi = ty - 17u;
+        }
+        acc += w * applyVariation(
+          ty,
+          a,
+          rng,
+          slots[slotIdx].foldRadii[fi].xyz,
+          slots[slotIdx].varParams[pi].xyz,
+        );
       }
       q = acc;
     }
@@ -1484,7 +1547,7 @@ export function buildFlameGpuPointTilingKernel4(
  * CONTRACT with its own literal offsets, so a mistake here cannot
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 292.
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 304.
 const SLOT4_ROW_X = 0;
 const SLOT4_ROW_Y = 4;
 const SLOT4_ROW_Z = 8;
@@ -1496,7 +1559,7 @@ const SLOT4_POST_X = 20;
 const SLOT4_POST_Y = 24;
 const SLOT4_POST_Z = 28;
 const SLOT4_POST_W = 32;
-/** `varWeights: array<vec4f, 5>` — 20 lanes of storage, 17 used (one per
+/** `varWeights: array<vec4f, 5>` — 20 lanes of storage, all 20 used (one per
  * `VariationType`) — contiguous lanes, same
  * flattening argument as flame-gpu.ts's `SLOT_VAR_WEIGHTS`. */
 const SLOT4_VAR_WEIGHTS = 36;
@@ -1528,6 +1591,15 @@ const SLOT4_EMITTER_TOTAL_WEIGHT = 98;
 const SLOT4_EMITTER_FALLBACK_PART = 99;
 const SLOT4_EMITTER_PARTS = 100;
 const F32_PER_EMITTER_PART = EMITTER_PART_STRIDE_BYTES / 4; // 24.
+/**
+ * `varParams: array<vec4f, 3>` — the parametric julia family and curl's
+ * AUTHORED parameters, the 3D Slot's lane verbatim, 12 contiguous elements
+ * after the emitter block (byte 1168, the first offset the julia family
+ * moved), indexed by variation type MINUS 17: (power, dist) for the two
+ * julia types, (c1, c2) for curl. Type `17 + i`'s lane sits at
+ * `SLOT4_VAR_PARAMS + i * 4`.
+ */
+const SLOT4_VAR_PARAMS = 292;
 
 const F32_PER_CHAIN4 = CHAIN4_STRIDE_BYTES / 4; // 8.
 const CHAIN4_POS = 0; // pos.xyzw: the full 4D orbit point.
@@ -1985,17 +2057,37 @@ function writeSlot4Variations(
   variations: Transform4["variations"],
 ): void {
   const { types, weights } = packVariations(variations);
-  // The fold family's authored lengths, keyed by TYPE — the 3D
-  // packer's loop verbatim (see writeSlotVariations for why it walks the
-  // raw list rather than the filtered lanes).
+  // The fold family's authored lengths and the parametric julia/curl
+  // family's parameters, keyed by TYPE — the 3D packer's loop verbatim
+  // (see writeSlotVariations for why it walks the raw list rather than the
+  // filtered lanes).
   for (const v of variations ?? []) {
-    if (!isFoldVariationType(v.type)) continue;
-    const r = resolveFoldRadii(v);
-    const lane =
-      base + SLOT4_FOLD_RADII + (KERNEL_VARIATION_INDEX[v.type] - 12) * 4;
-    f32[lane] = r.minRadius * r.minRadius;
-    f32[lane + 1] = r.fixedRadius * r.fixedRadius;
-    f32[lane + 2] = r.boxLimit;
+    if (isFoldVariationType(v.type)) {
+      const r = resolveFoldRadii(v);
+      const lane =
+        base + SLOT4_FOLD_RADII + (KERNEL_VARIATION_INDEX[v.type] - 12) * 4;
+      f32[lane] = r.minRadius * r.minRadius;
+      f32[lane + 1] = r.fixedRadius * r.fixedRadius;
+      f32[lane + 2] = r.boxLimit;
+      continue;
+    }
+    // The parametric julia family and curl's parameters, the 3D packer's
+    // walk verbatim — keyed by TYPE, NOT squared, only the two lanes the
+    // type actually reads written.
+    if (isParametricVariationType(v.type)) {
+      const lane =
+        base + SLOT4_VAR_PARAMS + (KERNEL_VARIATION_INDEX[v.type] - 17) * 4;
+      if (v.type === "curl") {
+        const c = resolveCurlParams(v);
+        f32[lane] = c.c1;
+        f32[lane + 1] = c.c2;
+      } else {
+        const p = resolveJuliaParams(v.type, v);
+        f32[lane] = p.power;
+        f32[lane + 1] = p.dist;
+      }
+      continue;
+    }
   }
   for (let v = 0; v < types.length; v++) {
     f32[base + SLOT4_VAR_WEIGHTS + v] = weights[v];

@@ -151,7 +151,7 @@ const COLOR_SPEED = 80; // byte 320
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
     expect(PARAMS4_BYTES).toBe(480);
-    expect(SLOT4_STRIDE_BYTES).toBe(1168);
+    expect(SLOT4_STRIDE_BYTES).toBe(1216);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
     expect(WEIGHT_FIXED_POINT_SCALE).toBe(256);
@@ -354,6 +354,54 @@ describe("packGpuSystem4 variation filtering", () => {
 });
 
 describe("packGpuSystem4 fold radii", () => {
+  /** Element index of parametric type `i`'s lane in slot 0 — the module's
+   * own SLOT4_VAR_PARAMS at 292 (byte 1168, immediately after the emitter
+   * block), restated as a literal for the same reason the rest of this
+   * file restates offsets. */
+  const VAR4_PARAMS = 292;
+
+  it("packs each julia type's resolved power/dist and curl's coefficients into their type's lanes, unsquared", () => {
+    const transforms4: Transform4[] = [
+      {
+        position: [0, 0, 0, 0],
+        scale: [1, 1, 1, 1],
+        variations: [
+          { type: "julian", weight: 1, julianPower: 3, julianDist: 1.5 },
+          { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1.25 },
+        ],
+      },
+    ];
+    const f32 = new Float32Array(
+      packGpuSystem4(baseSpec4({ transforms4 })).slots,
+    );
+    // Lane 0 = julian, lane 2 = curl — indexed by type MINUS 17.
+    expect(Array.from(f32.slice(VAR4_PARAMS, VAR4_PARAMS + 4))).toEqual([
+      3, 1.5, 0, 0,
+    ]);
+    expect(Array.from(f32.slice(VAR4_PARAMS + 8, VAR4_PARAMS + 12))).toEqual([
+      0.5, -1.25, 0, 0,
+    ]);
+  });
+
+  it("packs the classic set for absent params and leaves lane 1 zeroed for an absent juliascope", () => {
+    const transforms4: Transform4[] = [
+      {
+        position: [0, 0, 0, 0],
+        scale: [1, 1, 1, 1],
+        variations: [{ type: "julian", weight: 1 }],
+      },
+    ];
+    const f32 = new Float32Array(
+      packGpuSystem4(baseSpec4({ transforms4 })).slots,
+    );
+    expect(Array.from(f32.slice(VAR4_PARAMS, VAR4_PARAMS + 4))).toEqual([
+      1, 1, 0, 0,
+    ]);
+    expect(Array.from(f32.slice(VAR4_PARAMS + 4, VAR4_PARAMS + 8))).toEqual([
+      0, 0, 0, 0,
+    ]);
+  });
+
   /** Element index of fold `i`'s lane in slot 0 — the module's own
    * SLOT4_FOLD_RADII at 84, restated as a literal for the same reason the
    * rest of this file restates offsets. */
@@ -393,7 +441,10 @@ describe("packGpuSystem4 fold radii", () => {
   it("reads its lengths off the slot in the kernel rather than the classic literals", () => {
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("foldRadii: array<vec4f, 3>");
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
-      "applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz)",
+      "slots[slotIdx].foldRadii[fi].xyz",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "slots[slotIdx].varParams[pi].xyz",
     );
     expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain(
       "clamp(dot(p, p), 0.25, 1.0)",
@@ -401,6 +452,13 @@ describe("packGpuSystem4 fold radii", () => {
     expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain(
       "clamp(p, vec4f(-1.0), vec4f(1.0))",
     );
+    // The parametric family's classic parameters ride the varParams lane
+    // exactly as the 3D kernel's do — the shared-lane discipline, one
+    // dimension up.
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("varParams: array<vec4f, 3>");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("if (ty >= 17u && ty <= 19u) {");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain("trunc(1.0 * rand01");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain("1.0 + p.x + 0.0 * (p.x");
   });
 });
 
@@ -539,7 +597,7 @@ describe("packGpuSystem4 shape emitters", () => {
         symmetry: { order: 1, plane: "xz" },
         palette: "legacy",
       });
-      expect(SLOT4_STRIDE_BYTES).toBe(1168);
+      expect(SLOT4_STRIDE_BYTES).toBe(1216);
       const f32 = new Float32Array(packed4.slots);
       const p = EMITTER_PARTS;
       expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
@@ -639,7 +697,7 @@ describe("packGpuSystem4 shape emitters", () => {
       baseSpec4({ transforms4: [transform4WithEmitter(spec)] }),
     );
     expect(new Uint32Array(packed.slots)[EMITTER_FALLBACK_PART]).toBe(1);
-    expect(SLOT4_STRIDE_BYTES).toBe(1168);
+    expect(SLOT4_STRIDE_BYTES).toBe(1216);
     expect(packed.multiPartEmitters).toBe(true);
   });
 

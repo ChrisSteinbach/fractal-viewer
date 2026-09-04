@@ -141,7 +141,11 @@ describe("decodeFlameFile", () => {
   });
 
   it("aggregates unknown variation attributes into one warning naming them", () => {
-    const xml = `<flame><xform weight="1" julian="1" julian_power="2" coefs="0.5 0 0 0.5 0.1 0.2"/></flame>`;
+    // `rings2`/`rings2_colors` are still unimplemented warps (the drop-list
+    // shrank by exactly the parametric julia family and curl; rings2 is
+    // what took julian's place in this fixture — it was the example here
+    // before julian was implemented).
+    const xml = `<flame><xform weight="1" rings2="1" rings2_colors="2" coefs="0.5 0 0 0.5 0.1 0.2"/></flame>`;
     const file = decodeFlameFile(xml);
     expect(file).not.toBeNull();
 
@@ -153,8 +157,109 @@ describe("decodeFlameFile", () => {
       /Unsupported flame features/i.test(w),
     );
     expect(unsupported).toHaveLength(1);
-    expect(unsupported[0]).toContain("julian");
-    expect(unsupported[0]).toContain("julian_power");
+    expect(unsupported[0]).toContain("rings2");
+    expect(unsupported[0]).toContain("rings2_colors");
+  });
+
+  it("imports a parametric julian with its params, cleanly — the genome needs no unsupported-features warning at all", () => {
+    const xml = `<flame><xform weight="1" julian="0.5" julian_power="3" julian_dist="1" coefs="0.5 0 0 0.5 0.1 0.2"/></flame>`;
+    const file = decodeFlameFile(xml);
+    expect(file).not.toBeNull();
+    expect(
+      file!.warnings.some((w) => /Unsupported flame features/i.test(w)),
+    ).toBe(false);
+
+    const snap = decodeScene(file!.scenes[0].encoded);
+    expect(snap).not.toBeNull();
+    expect(snap!.transforms[0].variations).toEqual([
+      { type: "julian", weight: 0.5, julianPower: 3, julianDist: 1 },
+    ]);
+  });
+
+  it("imports curl and juliascope params by their own attribute names, whatever the attribute order", () => {
+    const xml = `<flame><xform weight="1" curl_c2="0.75" curl="2" curl_c1="0.25" juliascope="1" juliascope_power="4" juliascope_dist="0.8" coefs="0.5 0 0 0.5 0 0"/></flame>`;
+    const file = decodeFlameFile(xml);
+    expect(file).not.toBeNull();
+    expect(
+      file!.warnings.some((w) => /Unsupported flame features/i.test(w)),
+    ).toBe(false);
+    const snap = decodeScene(file!.scenes[0].encoded);
+    expect(snap!.transforms[0].variations).toEqual([
+      { type: "curl", weight: 2, curlC1: 0.25, curlC2: 0.75 },
+      {
+        type: "juliascope",
+        weight: 1,
+        juliascopePower: 4,
+        juliascopeDist: 0.8,
+      },
+    ]);
+  });
+
+  it("leaves a parametric variation's params absent when the file writes only the weight", () => {
+    const xml = `<flame><xform weight="1" julian="1" coefs="0.5 0 0 0.5 0 0"/></flame>`;
+    const file = decodeFlameFile(xml);
+    const snap = decodeScene(file!.scenes[0].encoded);
+    expect(snap!.transforms[0].variations).toEqual([
+      { type: "julian", weight: 1 },
+    ]);
+  });
+
+  it("round-trips parametric parameters through export and re-import", () => {
+    const scene: SceneSnapshot = {
+      ...toSnapshot(initialState(false)),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0],
+          variations: [
+            { type: "julian", weight: 1, julianPower: 3, julianDist: 1.5 },
+          ],
+        },
+        {
+          id: 1,
+          position: [0.2, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0],
+          variations: [{ type: "curl", weight: 1, curlC1: 0.5, curlC2: -1 }],
+        },
+      ],
+    };
+    const exported = encodeFlameFile(scene, "params round-trip");
+    expect(
+      exported.warnings.some((w) => /parametric|julian|curl/i.test(w)),
+    ).toBe(false);
+    const reimported = decodeFlameFile(exported.xml);
+    expect(reimported).not.toBeNull();
+    const snap = decodeScene(reimported!.scenes[0].encoded);
+    expect(snap!.transforms[0].variations).toEqual([
+      { type: "julian", weight: 1, julianPower: 3, julianDist: 1.5 },
+    ]);
+    expect(snap!.transforms[1].variations).toEqual([
+      { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1 },
+    ]);
+  });
+
+  it("exports a classic-parameterized entry as the bare weight — flam3's absent-means-default convention", () => {
+    const scene: SceneSnapshot = {
+      ...toSnapshot(initialState(false)),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0],
+          // julian_power="1" julian_dist="1" is what the resolver would
+          // hand back anyway: writing them would be noise.
+          variations: [{ type: "julian", weight: 2, julianPower: 1 }],
+        },
+      ],
+    };
+    const exported = encodeFlameFile(scene, "classic params");
+    expect(exported.xml).toContain('julian="2"');
+    expect(exported.xml).not.toContain("julian_power");
+    expect(exported.xml).not.toContain("julian_dist");
   });
 
   it("drops a post transform on a nonlinear map with a warning, leaving coefs untouched", () => {

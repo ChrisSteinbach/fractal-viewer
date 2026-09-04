@@ -683,7 +683,11 @@ import {
   SURFACE_FOLD_SPHEREFOLD,
   transformSigmas,
 } from "./surface-de";
-import { resolveFoldRadii, sphereFoldLipschitz } from "./variations";
+import {
+  activeParametricVariationTypes,
+  resolveFoldRadii,
+  sphereFoldLipschitz,
+} from "./variations";
 import type {
   SymmetryParams,
   SymmetryPlane,
@@ -902,7 +906,10 @@ type EscapeCalibrationDE = Omit<EscapeDE, "patternCalibration">;
  * copy private): the single active entry a LINK may carry — the fold
  * family, plus the two escape-time power maps — or null.
  * Exactly the set whose forward local Lipschitz factor is known in closed
- * form, which is the whole requirement for a link. */
+ * form, which is the whole requirement for a link. The parametric julia
+ * family and curl are NOT links (their local Lipschitz factors are not
+ * closed-form constants of the machinery) and are refused by name where
+ * the generic refusal fires. */
 function linkVariation(t: Transform): Variation | null {
   const active = (t.variations ?? []).filter(
     (v) => Number.isFinite(v.weight) && v.weight !== 0,
@@ -916,6 +923,20 @@ function linkVariation(t: Transform): Variation | null {
     v.type === "qsquare"
     ? v
     : null;
+}
+
+/** The named clause appended beside the generic "not a pure fold or power
+ * map" refusal when the map actually carries one of the PARAMETRIC warps —
+ * `surface-eligibility.ts`'s qsquare-hint precedent. `null` when nothing
+ * parametric is active. */
+function parametricLinkRefusal(label: string, t: Transform): string | null {
+  const types = activeParametricVariationTypes(t.variations);
+  if (types.length === 0) return null;
+  const plural = types.length > 1 ? "s" : "";
+  return (
+    `${label} uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `which the escape chain has no link for`
+  );
 }
 
 /** Which of {@link linkVariation}'s types is a POWER map — the two the
@@ -994,6 +1015,8 @@ export function analyzeEscapeSystem(
     const v = linkVariation(map);
     if (!v) {
       reasons.push(`${label} is not a pure fold or power map`);
+      const clause = parametricLinkRefusal(label, map);
+      if (clause) reasons.push(clause);
     } else if (!isFlatTransform(map)) {
       // ROUTING, not a refusal: `escape-de-4d.ts` renders exactly this
       // shape, and main.ts reaches it first — a non-flat document never

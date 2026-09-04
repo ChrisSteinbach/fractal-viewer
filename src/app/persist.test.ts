@@ -939,6 +939,148 @@ describe("decodeScene transform variation fold radii", () => {
     expect(encodeScene(withUndefinedFields)).toBe(encodeScene(withoutFields));
   });
 
+  it("round-trips a parametric variation with all its parameters set", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "julian",
+              weight: 2,
+              julianPower: 3,
+              julianDist: 1.5,
+            },
+            {
+              type: "juliascope",
+              weight: 1,
+              juliascopePower: -2,
+              juliascopeDist: 0,
+            },
+            { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1.25 },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].variations).toEqual([
+      { type: "julian", weight: 2, julianPower: 3, julianDist: 1.5 },
+      {
+        type: "juliascope",
+        weight: 1,
+        juliascopePower: -2,
+        juliascopeDist: 0,
+      },
+      { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1.25 },
+    ]);
+  });
+
+  it("round-trips a parametric variation with only one parameter set, leaving the others absent", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "curl", weight: 1, curlC2: 0.75 }],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    const [curl] = result!.transforms[0].variations!;
+    expect(curl.type).toBe("curl");
+    expect(curl.curlC2).toBe(0.75);
+    expect(curl.curlC1).toBeUndefined();
+  });
+
+  it("leaves parametric parameters undefined when the payload never carried them", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "julian", weight: 1 }],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    const [julian] = result!.transforms[0].variations!;
+    expect(julian.julianPower).toBeUndefined();
+    expect(julian.julianDist).toBeUndefined();
+  });
+
+  it("encodes byte-identically whether a parametric parameter is omitted or explicitly undefined", () => {
+    const without: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "julian", weight: 1 }],
+        },
+      ],
+    };
+    const withUndefined: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "julian",
+              weight: 1,
+              julianPower: undefined,
+              julianDist: undefined,
+            },
+          ],
+        },
+      ],
+    };
+    expect(encodeScene(withUndefined)).toBe(encodeScene(without));
+  });
+
+  it("leaves parametric parameters absent for non-numeric garbage, without rejecting the scene", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "julian",
+              weight: 1,
+              julianPower: "3",
+              julianDist: true,
+            },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    const [julian] = result!.transforms[0].variations!;
+    // The fold lengths' no-coercion deviation applies: a numeric string or
+    // a boolean DROPS rather than becoming a parameter value.
+    expect(julian.julianPower).toBeUndefined();
+    expect(julian.julianDist).toBeUndefined();
+  });
+
   it("leaves fold lengths absent for non-numeric garbage, without rejecting the scene", () => {
     const raw = {
       ...baseSnapshot(),

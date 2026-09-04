@@ -155,6 +155,7 @@
  */
 import { composeAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
+import { activeParametricVariationTypes } from "./variations";
 import {
   effectiveSymmetryOrder,
   systemHasChaos,
@@ -269,13 +270,29 @@ export interface BulbDE {
 type BulbCalibrationDE = Omit<BulbDE, "patternCalibration">;
 
 /** `composeVariations`' active filter again (the twin of `escape-de.ts`'s
- * `pureFoldVariation`): the single active `bulb` entry, or null. */
+ * `pureFoldVariation`): the single active `bulb` entry, or null. The
+ * parametric julia family and curl are not triplex powers and are refused
+ * by name through {@link parametricBulbRefusal}. */
 function pureBulbVariation(t: Transform): Variation | null {
   const active = (t.variations ?? []).filter(
     (v) => Number.isFinite(v.weight) && v.weight !== 0,
   );
   if (active.length !== 1) return null;
   return active[0].type === "bulb" ? active[0] : null;
+}
+
+/** The named clause appended beside the generic "not a pure triplex power"
+ * refusal when the map carries one of the PARAMETRIC warps —
+ * `surface-eligibility.ts`'s qsquare-hint precedent. `null` when nothing
+ * parametric is active. */
+function parametricBulbRefusal(t: Transform): string | null {
+  const types = activeParametricVariationTypes(t.variations);
+  if (types.length === 0) return null;
+  const plural = types.length > 1 ? "s" : "";
+  return (
+    `the map uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `which the Mandelbulb render does not iterate`
+  );
 }
 
 /**
@@ -302,6 +319,8 @@ export function analyzeBulbSystem(
     const bulb = pureBulbVariation(map);
     if (!bulb) {
       reasons.push("the map is not a pure triplex power");
+      const clause = parametricBulbRefusal(map);
+      if (clause) reasons.push(clause);
     } else if (bulb.weight !== 1) {
       // A weight other than 1 iterates `w·V(Mv + t) + p`, which is a
       // different object, not a rescaling of this one: the offset `+ p` does
