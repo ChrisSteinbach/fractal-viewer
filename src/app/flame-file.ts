@@ -17,15 +17,18 @@
  *    `scale.z = 0` (and every z field to 0), so the orbit lives in the
  *    `z = 0` plane where our 3D variation lifts reproduce flam3's planar
  *    formulas bit-for-bit.
- *  - Twelve of our seventeen {@link VARIATION_TYPES} ARE flam3 variation
+ *  - Fifteen of our twenty {@link VARIATION_TYPES} ARE flam3 variation
  *    names, with matching formulas at `z = 0` and the same unnormalized
  *    weighted-sum blend (`variations.ts`'s `composeVariations` ≡ flam3's
- *    variation sum), so those pass through by name in both directions. The
- *    other three — the Mandelbox fold family — are ours, not
- *    flam3's; see `docs/flame-interop.md` for the round-trip consequences
- *    (their `minRadius`/`fixedRadius`/`boxLimit` have no XML slot
- *    at all and export with a warning whenever they're not the classic
- *    lengths).
+ *    variation sum), so those pass through by name in both directions — the
+ *    parametric julia family and curl carrying their per-variation params
+ *    through their own attribute names (`julian_power`, `curl_c1`, …). The
+ *    other five — the Mandelbox fold family and the two escape-time power
+ *    maps — are ours, not flam3's; see `docs/flame-interop.md` for the
+ *    round-trip consequences (the folds' `minRadius`/`fixedRadius`/
+ *    `boxLimit` have no XML slot at all and export with a warning whenever
+ *    they're not the classic lengths; the parametric family's parameters
+ *    round-trip losslessly through flam3's own param attributes).
  *  - flam3's `<finalxform>` is a plot-time lens that never feeds back into
  *    the orbit — exactly our `finalTransform`.
  *  - An xform's `color` is a palette COORDINATE, not an RGB triple: the slot
@@ -75,11 +78,11 @@ import {
 import { transformColors } from "../fractal/color";
 import {
   CUSTOM_PALETTE_ID,
-  MAX_CUSTOM_PALETTE_STOPS,
+  MAX_RAMP_ENTRIES,
   buildPaletteLUT,
   resolvePalette,
 } from "../fractal/palette";
-import type { CustomPalette, RgbStop } from "../fractal/palette";
+import type { RampPalette, RgbStop } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
@@ -90,10 +93,16 @@ import type {
   VariationType,
 } from "../fractal/types";
 import {
+  isClassicCurlParams,
   isClassicFoldRadii,
+  isClassicJuliaParams,
   isFoldVariationType,
+  isParametricVariationType,
+  resolveCurlParams,
   resolveFoldRadii,
+  resolveJuliaParams,
 } from "../fractal/variations";
+import type { ParametricVariationType } from "../fractal/variations";
 import { COLLECTION_CAP } from "./collection";
 import { decodeScene, encodeScene, toSnapshot } from "./persist";
 import type { SceneSnapshot } from "./persist";
@@ -133,18 +142,75 @@ export interface FlameFileExport {
 // Shared constants
 // ---------------------------------------------------------------------------
 
-/** Our variation names — flam3's attribute names for the twelve classics,
- * plus our own fold family (see the header + docs/flame-interop.md). */
+/** Our variation names — flam3's attribute names for the twelve classics
+ * plus the parametric julia family and curl, plus our own fold family (see
+ * the header + docs/flame-interop.md). */
 const VARIATION_NAMES = new Set<string>(VARIATION_TYPES);
+
+/**
+ * The parametric julia family and curl's per-variation parameters, as the
+ * flam3 wire attribute each one rides beside its variation's own weight
+ * attribute — `julian="0.5" julian_power="3" julian_dist="1"` is ONE
+ * variation whose weight attribute names the type and whose params are
+ * separate attributes (see the module doc). Only the weight attribute is
+ * matched by {@link VARIATION_NAMES}; the params are read here by explicit
+ * name at the weight's match site, so attribute ORDER never matters (a
+ * `julian_power` listed before its `julian` still lands on the entry).
+ */
+type ParametricParamKey =
+  | "julianPower"
+  | "julianDist"
+  | "juliascopePower"
+  | "juliascopeDist"
+  | "curlC1"
+  | "curlC2";
+
+const PARAMETRIC_PARAM_ATTRS: Record<
+  ParametricVariationType,
+  readonly (readonly [string, ParametricParamKey])[]
+> = {
+  julian: [
+    ["julian_power", "julianPower"],
+    ["julian_dist", "julianDist"],
+  ],
+  juliascope: [
+    ["juliascope_power", "juliascopePower"],
+    ["juliascope_dist", "juliascopeDist"],
+  ],
+  curl: [
+    ["curl_c1", "curlC1"],
+    ["curl_c2", "curlC2"],
+  ],
+};
+
+/** Attach a parametric variation's authored parameters, read off the same
+ * xform element beside its weight. Only present, finite attributes attach
+ * ({@link attrNumber}'s parse); absent ones leave the field absent, which
+ * resolves to the classic value exactly as if the attribute had never been
+ * written — the resolver's own domain, not a clamp invented here. */
+function attachVariationParams(el: Element, v: Variation): void {
+  if (!isParametricVariationType(v.type)) return;
+  for (const [attr, field] of PARAMETRIC_PARAM_ATTRS[v.type]) {
+    const n = attrNumber(el, attr);
+    if (n === undefined) continue;
+    (v as Record<ParametricParamKey, number | undefined>)[field] = n;
+  }
+}
 
 /**
  * Standard xform attributes that are NOT variation weights and need no
  * warning when skipped: either handled elsewhere in this module (`weight`,
  * `coefs`, `post`, `opacity`, `chaos`, and the per-xform
- * color trio `color` / `color_speed` / `symmetry`) or genuinely inert for us
+ * color trio `color` / `color_speed` / `symmetry`), genuinely inert for us
  * (animation flags, editor labels, `var_color`'s per-variation color
- * weighting). Anything outside this set and {@link VARIATION_NAMES} is
- * reported as an unsupported feature.
+ * weighting), or the parametric julia/curl family's per-variation
+ * parameters — `julian_power`/`julian_dist`/`juliascope_power`/
+ * `juliascope_dist`/`curl_c1`/`curl_c2` — which the variation branch reads
+ * by name beside their own variation's weight, and which must be KNOWN even
+ * out of order (or without their variation) so a corpus genome carrying
+ * only these variations imports with NO aggregated-unsupported warning.
+ * Anything outside this set and {@link VARIATION_NAMES} is reported as an
+ * unsupported feature.
  */
 const KNOWN_XFORM_ATTRS = new Set([
   "weight",
@@ -161,6 +227,14 @@ const KNOWN_XFORM_ATTRS = new Set([
   "var_color",
   "motion_frequency",
   "motion_offset",
+  // The parametric julia family and curl's flam3 wire attributes — the
+  // import branch reads them by name beside the matching weight attribute.
+  "julian_power",
+  "julian_dist",
+  "juliascope_power",
+  "juliascope_dist",
+  "curl_c1",
+  "curl_c2",
 ]);
 
 /** Mirror of `persist.ts`'s variation-weight clamp, applied at build time so
@@ -182,7 +256,18 @@ const EXPORT_SIZE = 1024;
 const EXPORT_MARGIN = 1.15;
 
 /** flam3's default `brightness` is 4 and our default `exposure` is 1, so the
- * two tone-map scales exchange through this factor. */
+ * two tone-map scales exchange through this factor.
+ *
+ * KEPT AS-IS by the mean-density-anchor change (flame.ts's `tonemapFlame`):
+ * our curve now normalizes on the mean deposited density — the same shape
+ * flam3's own rect.c computes (`k1 * log(1 + c[3] * k2)` with
+ * `k2 ∝ 1/(area * sample_density)`) — but this factor is an exchange rate
+ * between the two tools' brightness CONTROLS, not a claim that the two
+ * curves render a given file identically. Its honest re-derivation needs the
+ * differential-render harness against a real flam3 build (the interop epic's
+ * sibling item); guessing now would just be a second guess. A file imported
+ * and rendered here may therefore expose differently than flam3 would render
+ * it — adjust the Exposure slider. */
 const BRIGHTNESS_PER_EXPOSURE = 4;
 
 /** Seed for the export framing probe — any fixed value keeps exports stable. */
@@ -434,13 +519,20 @@ function xformToTransform(
     if (VARIATION_NAMES.has(name)) {
       const w = attrNumber(el, name);
       if (w === undefined || w === 0) continue;
-      variations.push({
+      const variation: Variation = {
         type: name as VariationType,
         weight: Math.max(
           -MAX_VARIATION_WEIGHT,
           Math.min(MAX_VARIATION_WEIGHT, w),
         ),
-      });
+      };
+      // The parametric julia family and curl carry their parameters as
+      // separate attributes beside the weight — read by name here, so
+      // attribute order never matters. Non-parametric types have none.
+      if (isParametricVariationType(name as VariationType)) {
+        attachVariationParams(el, variation);
+      }
+      variations.push(variation);
       continue;
     }
     if (KNOWN_XFORM_ATTRS.has(name)) {
@@ -491,9 +583,13 @@ function xformToTransform(
   }
 
   // `post` applies AFTER the variation sum. On a purely affine xform the
-  // composition post∘affine is itself affine — fold it in exactly. With
-  // nonlinear variations in between there is nothing in our vocabulary to
-  // hang it on, so it is dropped with a warning.
+  // composition post∘affine is itself affine — fold it in exactly, so a
+  // plain map imports as one affine with no second matrix to carry (the
+  // round-trip stays exact: export writes the same composition back into
+  // post=, where a re-import folds it again). On a nonlinear xform the post
+  // is the engine's own per-map post stage — `Transform.post` — which every
+  // renderer realizes; it is no longer dropped with a shape warning.
+  let importedPost: Coefs2D | null = null;
   const rawPost = el.getAttribute("post");
   if (rawPost !== null) {
     const post = parseCoefs(rawPost);
@@ -503,9 +599,7 @@ function xformToTransform(
       if (variations.length === 0) {
         coefs = composeCoefs(post, coefs);
       } else {
-        warnings.add(
-          "Ignored a post transform on a nonlinear map (shape will differ)",
-        );
+        importedPost = post;
       }
     }
   }
@@ -521,6 +615,27 @@ function xformToTransform(
   };
   if (Math.abs(shear) > 1e-9) transform.shear = [shear, 0, 0];
   if (variations.length > 0) transform.variations = variations;
+  if (importedPost !== null) {
+    // flam3's post is PLANAR ("a b c d e f"): x' = a·x + c·y + e,
+    // y' = b·x + d·y + f, z untouched. The lift is the faithful reading on
+    // our 3D engine: the 2x2 rides the upper-left block, the z row and
+    // column stay the identity and the z translation 0 — so z passes
+    // through exactly as flam3's own 3D mode passes it through.
+    transform.post = {
+      m: [
+        importedPost.a,
+        importedPost.c,
+        0,
+        importedPost.b,
+        importedPost.d,
+        0,
+        0,
+        0,
+        1,
+      ],
+      t: [importedPost.e, importedPost.f, 0],
+    };
+  }
 
   // Per-xform color: `color` is the palette slot and
   // `color_speed`/`symmetry` the blend rate — our `colorIndex`/`colorSpeed`
@@ -539,19 +654,27 @@ function xformToTransform(
 /**
  * Parse a flame's palette: the compact `<palette count format="RGB">hex…`
  * block (Apophysis style) or `<color index rgb="R G B"/>` entries (flam3
- * style), downsampled evenly onto a {@link CustomPalette}'s
- * {@link MAX_CUSTOM_PALETTE_STOPS} stops. `null` when absent or unusable —
- * the scene simply keeps the default palette; a palette is cosmetic and
- * never worth a warning that would drown the structural ones.
+ * style), preserved at its FULL native entry count as a {@link RampPalette}
+ * — a 256-entry flam3 gradient keeps its narrow bright bands, hard hue jumps
+ * and dark gaps, which the 8-stop point-sample this module used to take
+ * flattened away (the ramp rides the scene's usual Custom palette slots;
+ * see `palette.ts`'s "Ramp palettes"). Entries past {@link MAX_RAMP_ENTRIES}
+ * truncate, silently — a palette is cosmetic and never worth a warning that
+ * would drown the structural ones. `null` when absent or unusable — the
+ * scene simply keeps the default palette.
  */
-function parseFlamePalette(flameEl: Element): CustomPalette | null {
+function parseFlamePalette(flameEl: Element): RampPalette | null {
   const entries: RgbStop[] = [];
 
   const paletteEl = flameEl.getElementsByTagName("palette")[0];
   if (paletteEl?.textContent) {
     const hex = paletteEl.textContent.replace(/\s+/g, "");
     if (/^[0-9a-fA-F]*$/.test(hex)) {
-      for (let o = 0; o + 6 <= hex.length; o += 6) {
+      for (
+        let o = 0;
+        o + 6 <= hex.length && entries.length < MAX_RAMP_ENTRIES;
+        o += 6
+      ) {
         entries.push([
           Number.parseInt(hex.slice(o, o + 2), 16) / 255,
           Number.parseInt(hex.slice(o + 2, o + 4), 16) / 255,
@@ -583,18 +706,16 @@ function parseFlamePalette(flameEl: Element): CustomPalette | null {
       const clamp01 = (v: number) => Math.min(1, Math.max(0, v / 255));
       byIndex[index] = [clamp01(rgb[0]), clamp01(rgb[1]), clamp01(rgb[2])];
     }
-    for (const stop of byIndex) if (stop !== undefined) entries.push(stop);
+    for (const stop of byIndex) {
+      if (stop !== undefined) {
+        if (entries.length >= MAX_RAMP_ENTRIES) break;
+        entries.push(stop);
+      }
+    }
   }
 
   if (entries.length < 2) return null;
-  const stops: RgbStop[] = [];
-  for (let j = 0; j < MAX_CUSTOM_PALETTE_STOPS; j++) {
-    const index = Math.round(
-      (j / (MAX_CUSTOM_PALETTE_STOPS - 1)) * (entries.length - 1),
-    );
-    stops.push(entries[index]);
-  }
-  return { stops };
+  return { kind: "ramp", entries };
 }
 
 /**
@@ -882,12 +1003,41 @@ function colorSpeedAttrs(speed: number): string {
   return ` color_speed="${fmt(speed)}" symmetry="${fmt(1 - 2 * speed)}"`;
 }
 
-/** Variation attributes for an xform: the merged list, or `linear="1"` for a
- * purely affine map (flam3 xforms need at least one variation term). */
-function variationAttrs(merged: Map<VariationType, number>): string {
+/** Variation attributes for an xform: the merged list — with the parametric
+ * julia family and curl's RESOLVED parameters written beside their weight
+ * whenever they are anything but the classic defaults — or `linear="1"` for
+ * a purely affine map (flam3 xforms need at least one variation term).
+ *
+ * Params read RESOLVED (`resolveJuliaParams`/`resolveCurlParams`), the
+ * fold-radii export's own discipline: an out-of-domain authored value
+ * exports in the form the render actually uses, so the file states what we
+ * draw and re-importing resolves it back to the same shape — lossless,
+ * which is why (unlike the fold radii) the parametric family needs NO
+ * export-loss warning. The bare weight for a classic-parameterized entry:
+ * flam3's own convention is that a file without the param attributes means
+ * the defaults, so writing `julian_power="1"` would be noise.
+ */
+function variationAttrs(t: Transform): string {
+  const merged = mergedVariations(t);
   if (merged.size === 0) return ` linear="1"`;
   let out = "";
-  for (const [type, weight] of merged) out += ` ${type}="${fmt(weight)}"`;
+  for (const [type, weight] of merged) {
+    out += ` ${type}="${fmt(weight)}"`;
+    if (!isParametricVariationType(type)) continue;
+    const entry = (t.variations ?? []).find((v) => v.type === type);
+    if (!entry) continue;
+    if (type === "curl") {
+      const c = resolveCurlParams(entry);
+      if (!isClassicCurlParams(c)) {
+        out += ` curl_c1="${fmt(c.c1)}" curl_c2="${fmt(c.c2)}"`;
+      }
+    } else {
+      const p = resolveJuliaParams(type, entry);
+      if (!isClassicJuliaParams(p)) {
+        out += ` ${type}_power="${fmt(p.power)}" ${type}_dist="${fmt(p.dist)}"`;
+      }
+    }
+  }
   return out;
 }
 
@@ -1148,11 +1298,45 @@ export function encodeFlameFile(
 
       let coefs: Coefs2D;
       let post = "";
+      // The map's own post-affine (`Transform.post`, read back from a
+      // nonlinear xform's post= on import), in flam3's spelling. An
+      // affine-only map never carries one here: the import folded its post
+      // into the coefficients exactly, and this loop's affine branch below
+      // writes the rotation back the same way.
+      const userPost: Coefs2D | null = t.post
+        ? {
+            a: t.post.m[0],
+            b: t.post.m[3],
+            c: t.post.m[1],
+            d: t.post.m[4],
+            e: t.post.t[0],
+            f: t.post.t[1],
+          }
+        : null;
+      // flam3 has ONE post= slot and ours must carry the copy's whole POST
+      // stage — the copy rotation applied AFTER the user post, the engine
+      // ordering (affine -> variations -> post -> rotation). Copy rotation
+      // OUTER is what makes a flam3 render reproduce it: flam3 applies its
+      // post after the variation sum, exactly where our stage sits.
+      const rotCoefs: Coefs2D = {
+        a: rot === null ? 1 : rot[0],
+        b: rot === null ? 0 : rot[3],
+        c: rot === null ? 0 : rot[1],
+        d: rot === null ? 1 : rot[4],
+        e: 0,
+        f: 0,
+      };
       if (rot === null) {
         coefs = affineToCoefs(affine.m, affine.t);
-      } else if (isAffineBlend(merged)) {
-        // Affine map: the copy's rotation composes into the coefficients
-        // exactly (rotate the linear block and the translation).
+        if (userPost !== null) {
+          // Copy 0: no rotation to compose — the map's own post is the
+          // whole stage.
+          post = ` post="${coefsAttr(userPost)}"`;
+        }
+      } else if (isAffineBlend(merged) && userPost === null) {
+        // Affine map, no post: the copy's rotation composes into the
+        // coefficients exactly (rotate the linear block and the
+        // translation) — the cheapest spelling, unchanged.
         const m = mul3(rot, affine.m);
         const tx =
           rot[0] * affine.t[0] + rot[1] * affine.t[1] + rot[2] * affine.t[2];
@@ -1160,23 +1344,27 @@ export function encodeFlameFile(
           rot[3] * affine.t[0] + rot[4] * affine.t[1] + rot[5] * affine.t[2];
         coefs = affineToCoefs(m, [tx, ty]);
       } else {
-        // Nonlinear map: our copy rotation applies AFTER the variation
-        // blend — exactly what flam3's `post` does.
+        // Nonlinear map, or an affine map carrying a real post: the copy's
+        // rotation can no longer fold into the coefficients (a post in the
+        // way would flip the composition order), so the whole POST stage —
+        // rotation composed over the user post — exports into flam3's one
+        // post= slot.
         coefs = affineToCoefs(affine.m, affine.t);
-        post = ` post="${fmt(rot[0])} ${fmt(rot[3])} ${fmt(rot[1])} ${fmt(rot[4])} 0 0"`;
+        const stage =
+          userPost !== null ? composeCoefs(rotCoefs, userPost) : rotCoefs;
+        post = ` post="${coefsAttr(stage)}"`;
       }
 
       xforms.push(
         `    <xform weight="${fmt(weight)}" color="${fmt(color)}"` +
           `${colorSpeedAttrs(colorSpeed)}` +
           `${hasChaos ? chaosAttrs[i] : ""}` +
-          `${variationAttrs(merged)} coefs="${coefsAttr(coefs)}"${post}/>`,
+          `${variationAttrs(t)} coefs="${coefsAttr(coefs)}"${post}/>`,
       );
     }
   }
 
   if (finalAffine !== null && s.finalTransform) {
-    const merged = mergedVariations(s.finalTransform);
     // The lens does not recolor: `flame.ts` walks the color
     // coordinate on the BASE map it picked and applies `finalTransform` at
     // plot time only. flam3 DOES blend through its final xform, at
@@ -1185,10 +1373,24 @@ export function encodeFlameFile(
     // the speed to 0, the one value that makes a flam3 render agree with ours.
     // The authored slot still rides along, inert, for tools that display it.
     const color = s.finalTransform.colorIndex ?? 0;
+    // The lens's own post-affine rides flam3's post= the same way a base
+    // map's does (the lens never carries a copy rotation — symmetry does
+    // not rotate the final transform — so its post is the whole stage).
+    const lensPost: Coefs2D | null = s.finalTransform.post
+      ? {
+          a: s.finalTransform.post.m[0],
+          b: s.finalTransform.post.m[3],
+          c: s.finalTransform.post.m[1],
+          d: s.finalTransform.post.m[4],
+          e: s.finalTransform.post.t[0],
+          f: s.finalTransform.post.t[1],
+        }
+      : null;
     xforms.push(
       `    <finalxform color="${fmt(color)}"${colorSpeedAttrs(0)}` +
-        `${variationAttrs(merged)}` +
-        ` coefs="${coefsAttr(affineToCoefs(finalAffine.m, finalAffine.t))}"/>`,
+        `${variationAttrs(s.finalTransform)}` +
+        ` coefs="${coefsAttr(affineToCoefs(finalAffine.m, finalAffine.t))}"` +
+        `${lensPost !== null ? ` post="${coefsAttr(lensPost)}"` : ""}/>`,
     );
   }
 

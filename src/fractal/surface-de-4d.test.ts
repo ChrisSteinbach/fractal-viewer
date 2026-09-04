@@ -493,6 +493,30 @@ describe("analyzeSurfaceSystem4 eligibility", () => {
     expect(analysis.reasons[0]).toContain("map 1");
   });
 
+  it("names a parametric variation the 4D descent has no branch for, beside the generic reason", () => {
+    // The 3D gate's named-refusal rule one dimension up (parity): the
+    // ordinary "uses variations" refusal stays, and a SECOND clause says
+    // WHICH warp — the refusal must not leave the reader guessing.
+    for (const type of ["julian", "juliascope", "curl"] as const) {
+      const analysis = analyzeSurfaceSystem4([
+        map4({ variations: [{ type, weight: 1 }] }),
+      ]);
+      expect(analysis.status).toBe("ineligible");
+      expect(analysis.reasons).toContain("map 1 uses variations");
+      const named = analysis.reasons.find((r) => r !== "map 1 uses variations");
+      expect(named).toContain(type);
+      expect(named).toContain("no branch for");
+    }
+
+    const final = analyzeSurfaceSystem4(
+      [map4()],
+      map4({ id: 99, variations: [{ type: "curl", weight: 1 }] }),
+    );
+    expect(final.status).toBe("ineligible");
+    expect(final.reasons).toContain("final transform uses variations");
+    expect(final.reasons.some((r) => r.includes("curl"))).toBe(true);
+  });
+
   it("treats a weight-0 variation as inert, staying eligible", () => {
     const analysis = analyzeSurfaceSystem4([
       map4({ variations: [{ type: "swirl", weight: 0 }] }),
@@ -2268,6 +2292,10 @@ function expandedReference4(
       maps.push({
         invM: multiply4x4(base.invM, rotT),
         invT: base.invT,
+        // The per-map post inverse is copy-independent (the sector sweep
+        // carries the copy dependence), so every copy shares the base's.
+        postInvM: base.postInvM,
+        postInvT: base.postInvT,
         sigmaMin: base.sigmaMin,
         baseIndex: base.baseIndex,
         // Copied through for type completeness exactly like 3D's

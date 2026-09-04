@@ -1133,10 +1133,16 @@ describe("mutateSystemSeeded versioned domain streams", () => {
     ).not.toEqual(mutateSystemSeeded(base, request));
   });
 
-  it("pins the complete v1 output behind the algorithm version", () => {
+  it("pins the complete v3 output behind the algorithm version", () => {
+    // v3's cause, and why this hash changed from v2's e4e3b70e (itself v1's
+    // 3fba2659): the per-transform POST-AFFINE joined the spatialGeometry
+    // domain with its own derived stream — a deliberate, versioned field
+    // assignment (see SEEDED_MUTATION_ALGORITHM_VERSION's doc). The base
+    // fixture carries no post, so the hash movement is the stream-seed
+    // derivation alone (the version feeds it), not a changed jitter rule.
     expect(
       jsonFnv1a(mutateSystemSeeded(richSeededMutationBase(), request)),
-    ).toBe("3fba2659");
+    ).toBe("88abb300");
   });
 
   it("keeps every unrelated domain byte-identical when any one domain is locked", () => {
@@ -1252,8 +1258,13 @@ describe("mutateSystemSeeded versioned domain streams", () => {
     expect(() =>
       mutateSystemSeeded(base, {
         ...request,
-        algorithmVersion: 2 as typeof SEEDED_MUTATION_ALGORITHM_VERSION,
+        // One past the CURRENT version — deliberately a literal so the
+        // constant's own bump cannot silently re-validate this refusal.
+        algorithmVersion: (SEEDED_MUTATION_ALGORITHM_VERSION +
+          1) as typeof SEEDED_MUTATION_ALGORITHM_VERSION,
       }),
-    ).toThrow("Unsupported seeded mutation algorithm version: 2");
+    ).toThrow(
+      `Unsupported seeded mutation algorithm version: ${SEEDED_MUTATION_ALGORITHM_VERSION + 1}`,
+    );
   });
 });

@@ -546,6 +546,103 @@ describe("decodeScene transform weight", () => {
 // ---------------------------------------------------------------------------
 
 describe("decodeScene transform shear", () => {
+  it("round-trips a post-affine through the 12-number wire shape, rounding to 4 decimals", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          post: {
+            m: [0.4, 0.12345678, 0, 0, 0.35, 0.05, 0, 0, 0.4],
+            t: [0.02, -0.03, 0.01],
+          },
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    // round4(0.12345678) = 0.1235 — the wire rounds like every float.
+    expect(result!.transforms[0].post).toEqual({
+      m: [0.4, 0.1235, 0, 0, 0.35, 0.05, 0, 0, 0.4],
+      t: [0.02, -0.03, 0.01],
+    });
+  });
+
+  it("omits a structurally-identity post, decoding it back as undefined", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          post: { m: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0] },
+        },
+      ],
+    };
+    expect(decodeScene(encodeScene(s))!.transforms[0].post).toBeUndefined();
+  });
+
+  it("rejects a present-but-malformed post (the whole transform, per the strict decoder's contract)", () => {
+    const base: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          post: {
+            m: [0.4, 0.1, 0, 0, 0.35, 0.05, 0, 0, 0.4],
+            t: [0.02, -0.03, 0.01],
+          },
+        },
+      ],
+    };
+    // Round-trip through the same v1 wire the decoder reads: base64url
+    // (URL-safe alphabet, no padding) of the JSON payload.
+    const encoded = encodeScene(base);
+    const payload = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(
+          atob(
+            encoded.replace(/^v1=/, "").replace(/-/g, "+").replace(/_/g, "/"),
+          ),
+          (c) => c.charCodeAt(0),
+        ),
+      ),
+    );
+    const rewire = (p: unknown): string =>
+      `v1=${btoa(
+        String.fromCharCode(...new TextEncoder().encode(JSON.stringify(p))),
+      )
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "")}`;
+    // 11 numbers: the wire shape is exactly 12.
+    payload.transforms[0].post.pop();
+    expect(decodeScene(rewire(payload))).toBeNull();
+    // A numeric string is malformed — no Number() coercion at this leaf.
+    payload.transforms[0].post = [
+      0.4,
+      0.1,
+      0,
+      0,
+      0.35,
+      0.05,
+      0,
+      0,
+      0.4,
+      0.02,
+      -0.03,
+      "0.01",
+    ];
+    expect(decodeScene(rewire(payload))).toBeNull();
+  });
+
   it("round-trips a shear vector", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
@@ -937,6 +1034,148 @@ describe("decodeScene transform variation fold radii", () => {
       ],
     };
     expect(encodeScene(withUndefinedFields)).toBe(encodeScene(withoutFields));
+  });
+
+  it("round-trips a parametric variation with all its parameters set", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "julian",
+              weight: 2,
+              julianPower: 3,
+              julianDist: 1.5,
+            },
+            {
+              type: "juliascope",
+              weight: 1,
+              juliascopePower: -2,
+              juliascopeDist: 0,
+            },
+            { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1.25 },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].variations).toEqual([
+      { type: "julian", weight: 2, julianPower: 3, julianDist: 1.5 },
+      {
+        type: "juliascope",
+        weight: 1,
+        juliascopePower: -2,
+        juliascopeDist: 0,
+      },
+      { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1.25 },
+    ]);
+  });
+
+  it("round-trips a parametric variation with only one parameter set, leaving the others absent", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "curl", weight: 1, curlC2: 0.75 }],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    const [curl] = result!.transforms[0].variations!;
+    expect(curl.type).toBe("curl");
+    expect(curl.curlC2).toBe(0.75);
+    expect(curl.curlC1).toBeUndefined();
+  });
+
+  it("leaves parametric parameters undefined when the payload never carried them", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "julian", weight: 1 }],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    const [julian] = result!.transforms[0].variations!;
+    expect(julian.julianPower).toBeUndefined();
+    expect(julian.julianDist).toBeUndefined();
+  });
+
+  it("encodes byte-identically whether a parametric parameter is omitted or explicitly undefined", () => {
+    const without: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "julian", weight: 1 }],
+        },
+      ],
+    };
+    const withUndefined: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "julian",
+              weight: 1,
+              julianPower: undefined,
+              julianDist: undefined,
+            },
+          ],
+        },
+      ],
+    };
+    expect(encodeScene(withUndefined)).toBe(encodeScene(without));
+  });
+
+  it("leaves parametric parameters absent for non-numeric garbage, without rejecting the scene", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "julian",
+              weight: 1,
+              julianPower: "3",
+              julianDist: true,
+            },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    const [julian] = result!.transforms[0].variations!;
+    // The fold lengths' no-coercion deviation applies: a numeric string or
+    // a boolean DROPS rather than becoming a parameter value.
+    expect(julian.julianPower).toBeUndefined();
+    expect(julian.julianDist).toBeUndefined();
   });
 
   it("leaves fold lengths absent for non-numeric garbage, without rejecting the scene", () => {
@@ -3271,6 +3510,135 @@ describe("decodeScene customPalette", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Ramp palettes — the full-resolution payload an imported `.flame` gradient
+// rides in both palette slots. The `{ ramp }` wire form is one concatenated
+// lowercase-hex string, 6 chars per entry; the decode contract is the same
+// quiet-drop-never-repair rule as the stops form. See decodeRampPalette.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene ramp palettes", () => {
+  it("round-trips a ramp in the shared slot with entries intact", () => {
+    // Channel values of the form k/255 are byte-exact through the hex form.
+    const ramp = { kind: "ramp" as const, entries: byteRamp(64) };
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      rampPaletteId: "custom",
+      customPalette: ramp,
+    };
+    const encoded = encodeScene(s);
+    const payload = decodePayload(encoded);
+    const result = decodeScene(encoded)!;
+
+    expect(payload.customPalette).toEqual({
+      ramp: byteRampHex(64),
+    });
+    expect(result.customPalette).toEqual(ramp);
+    expect(result.rampPaletteId).toBe("custom");
+  });
+
+  it("round-trips a ramp in the balloon's independent slot", () => {
+    const ramp = { kind: "ramp" as const, entries: byteRamp(3) };
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      balloonPaletteId: "custom",
+      balloonCustomPalette: ramp,
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.balloonCustomPalette).toEqual(ramp);
+    expect(result!.balloonPaletteId).toBe("custom");
+  });
+
+  it("does not quantize an already byte-aligned ramp's channels", () => {
+    const ramp = { kind: "ramp" as const, entries: byteRamp(5) };
+    const result = decodeScene(
+      encodeScene({ ...baseSnapshot(), customPalette: ramp }),
+    );
+    expect(result!.customPalette).toEqual(ramp);
+  });
+
+  it.each([
+    ["a non-string ramp", 42],
+    ["a null ramp", null],
+    ["a length that is not a multiple of 6", "ff0000f"],
+    ["an empty ramp", ""],
+    ["one entry (below the minimum)", "ff0000"],
+    ["bad hex characters", "ff00zz000000"],
+  ])("quietly drops %s", (_name, rampValue) => {
+    const raw = { ...baseSnapshot(), customPalette: { ramp: rampValue } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("quietly drops a ramp past MAX_RAMP_ENTRIES instead of truncating it", () => {
+    const hex = byteRampHex(4097);
+    const raw = { ...baseSnapshot(), customPalette: { ramp: hex } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("accepts a ramp at exactly MAX_RAMP_ENTRIES", () => {
+    const ramp = { kind: "ramp" as const, entries: byteRamp(4096) };
+    const result = decodeScene(
+      encodeScene({ ...baseSnapshot(), customPalette: ramp }),
+    );
+    expect(result!.customPalette).toEqual(ramp);
+  });
+
+  it("accepts uppercase hex digits in a hand-crafted ramp", () => {
+    const raw = { ...baseSnapshot(), customPalette: { ramp: "FF00000000FF" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.customPalette).toEqual({
+      kind: "ramp",
+      entries: [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+    });
+  });
+
+  it("reads a payload carrying both keys as the stops form it predates", () => {
+    const raw = {
+      ...baseSnapshot(),
+      customPalette: { stops: ["#ff0000", "#0000ff"], ramp: "ffff00" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.customPalette).toEqual({
+      stops: [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+    });
+  });
+});
+
+/** An `n`-entry ramp whose channels are all exact k/255 byte values, so the
+ * wire round-trip is byte-exact (the real flam3 import case). */
+function byteRamp(n: number): [number, number, number][] {
+  return Array.from({ length: n }, (_, i) => [
+    (i % 256) / 255,
+    (255 - (i % 256)) / 255,
+    i % 2 === 0 ? 64 / 255 : 191 / 255,
+  ]);
+}
+
+/** The concatenated hex wire form of {@link byteRamp}, 6 chars per entry. */
+function byteRampHex(n: number): string {
+  return byteRamp(n)
+    .map((stop) =>
+      stop
+        .map((v) =>
+          Math.round(Math.min(1, Math.max(0, v)) * 255)
+            .toString(16)
+            .padStart(2, "0"),
+        )
+        .join(""),
+    )
+    .join("");
+}
+
+// ---------------------------------------------------------------------------
 // Position axis colors — the "by position" color mode's three
 // user-picked axis colors. Optional like customPalette, and shares its
 // quiet-fallback decode contract; see color.ts's PositionAxisColors.
@@ -3450,6 +3818,24 @@ describe("toSnapshot / fromSnapshot customPalette", () => {
     // than leave it untouched.
     const snapshot = toSnapshot(initialState(true));
     expect(fromSnapshot(snapshot, base).customPalette).toBeUndefined();
+  });
+
+  it("toSnapshot carries a ramp payload through untouched — no 8-stop trim intercepts it", () => {
+    // The regression this feature exists to stop: a ramp entering any
+    // `stops.slice(0, MAX_CUSTOM_PALETTE_STOPS)` path would silently render
+    // a flattened import. Neither the state projection nor the encode path
+    // may repair, trim or convert the payload.
+    const ramp = { kind: "ramp" as const, entries: byteRamp(256) };
+    const state: AppState = {
+      ...initialState(true),
+      rampPaletteId: "custom",
+      customPalette: ramp,
+    };
+    const snapshot = toSnapshot(state);
+    expect(snapshot.customPalette).toBe(ramp);
+    const result = decodeScene(encodeScene(snapshot));
+    expect(result!.customPalette).toEqual(ramp);
+    expect(result!.rampPaletteId).toBe("custom");
   });
 });
 

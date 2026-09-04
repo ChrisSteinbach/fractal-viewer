@@ -107,7 +107,23 @@ export const FLAME_BACKDROP_ITERATIONS = 1_000_000;
  * ambient orbit/tumble, bounded enough not to keep a CPU worker spinning. */
 export const FLAME_BACKDROP_MOTION_COOLDOWN_MS = 500;
 const FLAME_BACKDROP_SUPERSAMPLE = 1;
-const FLAME_BACKDROP_EXPOSURE = 0.2;
+/**
+ * Re-derived for the mean-density tone-map anchor (flame.ts's
+ * `tonemapFlame`): the backdrop's whole-image brightness used to depend on
+ * the hottest bucket; anchoring the curve on the mean deposited density
+ * dimmed this 1M-iteration/256px-class render of the default system, so the
+ * exposure constant was re-calibrated against the SAME fixture, pre- and
+ * post-change. MEASURED (default system, seed 0x5f3759df, 256x256, ss 1,
+ * estimator 4/4/0.4, gamma 2.4, vibrancy 1): mean Rec.709 luminance over
+ * populated pixels was 19.414 at exposure 0.2 pre-change and 11.875 at 0.2
+ * post-change — a 1.635x drop, and luminance is linear in exposure across
+ * 0.05-0.8 (~59.4 luma per exposure unit, no 8-bit clamping anywhere in the
+ * range), so 0.2 * 1.635 = 0.327 lands the composite back on its pre-change
+ * level: 0.33 measures 19.60, within 1% of the pre-change 19.414 (the
+ * composited backdrop's meanRgb moved 0.131/0.161/0.234 -> 0.139/0.171/0.243,
+ * likewise within a few percent per channel).
+ */
+const FLAME_BACKDROP_EXPOSURE = 0.33;
 const FLAME_BACKDROP_GAMMA = 2.4;
 const FLAME_BACKDROP_VIBRANCY = 1;
 const FLAME_BACKDROP_BLUR_RADIUS = 4;

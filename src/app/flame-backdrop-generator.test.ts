@@ -242,7 +242,9 @@ describe("FlameBackdropGenerator request policy", () => {
       ...params({ seed: 2, twist: 0.75, fourD }),
       requestedSupersample: 1,
       iterationsBudget: 1_000_000,
-      exposure: 0.2,
+      // Re-derived for the mean-density tone-map anchor — see the constant's
+      // doc in flame-backdrop-generator.ts for the measured pre/post numbers.
+      exposure: 0.33,
       gamma: 2.4,
       vibrancy: 1,
       estimatorRadius: 4,

@@ -60,6 +60,13 @@
  *   field absent on both sides stays absent. Both `finish` objects absent
  *   stays absent, keeping an unparameterized morph byte-identical to before
  *   the field existed.
+ * - `Transform.post` (the per-transform POST-AFFINE — flam3's `post=`)
+ *   lerps the fold lengths' rule one matrix up: every entry and translation
+ *   component goes through {@link lerpPost} with the IDENTITY as the absent
+ *   side's fallback (absence renders the identity map, so that is what a
+ *   one-sided post fades from and to), and both sides absent stays absent.
+ *   An endpooint pair that never authored a post morphs byte-identically to
+ *   before the field existed.
  * - `Transform.chaos` (graph-directed selection rows) lerps entrywise with
  *   the absent side reading all-1s at the other side's length, and an
  *   all-1s result is dropped — see {@link lerpChaos}. A transform-count
@@ -84,6 +91,11 @@
  *   by-reference returns.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
+import type { Affine } from "./types";
+/** The identity post the one-sided `lerpPost` falls back to — a fresh
+ * row-major identity and zero translation, matching `isIdentityAffine`'s
+ * exact shape. */
+const IDENTITY_POST_M = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 import type { CondensationDepthBand } from "./condensation-de";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "./shape-trap";
@@ -108,6 +120,10 @@ import type {
 } from "./types";
 import {
   BOX_FOLD_LIMIT,
+  CLASSIC_CURL_C1,
+  CLASSIC_CURL_C2,
+  CLASSIC_JULIA_DIST,
+  CLASSIC_JULIA_POWER,
   SPHERE_FOLD_FIXED_RADIUS,
   SPHERE_FOLD_MIN_RADIUS,
 } from "./variations";
@@ -249,14 +265,20 @@ function lerpWPlanes(
   return Object.keys(result).length === 0 ? undefined : result;
 }
 
-/** One type's pooled data: the summed weight plus whichever fold lengths
- * its entries carried — the shape {@link lerpVariations} unions
- * across both sides. */
+/** One type's pooled data: the summed weight plus whichever fold lengths and
+ * parametric julia/curl parameters its entries carried — the shape
+ * {@link lerpVariations} unions across both sides. */
 type VariationInfo = {
   weight: number;
   minRadius?: number;
   fixedRadius?: number;
   boxLimit?: number;
+  julianPower?: number;
+  julianDist?: number;
+  juliascopePower?: number;
+  juliascopeDist?: number;
+  curlC1?: number;
+  curlC2?: number;
 };
 
 /** Sum a variation list into a type -> {@link VariationInfo} map (duplicate
@@ -279,6 +301,12 @@ function variationInfo(
         minRadius: v.minRadius,
         fixedRadius: v.fixedRadius,
         boxLimit: v.boxLimit,
+        julianPower: v.julianPower,
+        julianDist: v.julianDist,
+        juliascopePower: v.juliascopePower,
+        juliascopeDist: v.juliascopeDist,
+        curlC1: v.curlC1,
+        curlC2: v.curlC2,
       });
       continue;
     }
@@ -286,6 +314,14 @@ function variationInfo(
     if (v.minRadius !== undefined) existing.minRadius = v.minRadius;
     if (v.fixedRadius !== undefined) existing.fixedRadius = v.fixedRadius;
     if (v.boxLimit !== undefined) existing.boxLimit = v.boxLimit;
+    if (v.julianPower !== undefined) existing.julianPower = v.julianPower;
+    if (v.julianDist !== undefined) existing.julianDist = v.julianDist;
+    if (v.juliascopePower !== undefined)
+      existing.juliascopePower = v.juliascopePower;
+    if (v.juliascopeDist !== undefined)
+      existing.juliascopeDist = v.juliascopeDist;
+    if (v.curlC1 !== undefined) existing.curlC1 = v.curlC1;
+    if (v.curlC2 !== undefined) existing.curlC2 = v.curlC2;
   }
   return info;
 }
@@ -349,6 +385,45 @@ function lerpVariations(
       t,
     );
     if (boxLimit !== undefined) result.boxLimit = boxLimit;
+    // The parametric julia/curl family's six parameters, the identical
+    // rule one feature over: each through {@link lerpOptional} with its OWN
+    // classic value as the absent side's fallback (`variations.ts`'s
+    // CLASSIC_JULIA_*/CLASSIC_CURL_* constants — flam3's own param defaults,
+    // imported, never re-typed here as magic numbers), so `julianPower: 3`
+    // against a side that omits it morphs 3 -> 1, never toward a synthesized
+    // hole, and a field absent on both sides stays absent.
+    const julianPower = lerpOptional(
+      av?.julianPower,
+      bv?.julianPower,
+      CLASSIC_JULIA_POWER,
+      t,
+    );
+    if (julianPower !== undefined) result.julianPower = julianPower;
+    const julianDist = lerpOptional(
+      av?.julianDist,
+      bv?.julianDist,
+      CLASSIC_JULIA_DIST,
+      t,
+    );
+    if (julianDist !== undefined) result.julianDist = julianDist;
+    const juliascopePower = lerpOptional(
+      av?.juliascopePower,
+      bv?.juliascopePower,
+      CLASSIC_JULIA_POWER,
+      t,
+    );
+    if (juliascopePower !== undefined) result.juliascopePower = juliascopePower;
+    const juliascopeDist = lerpOptional(
+      av?.juliascopeDist,
+      bv?.juliascopeDist,
+      CLASSIC_JULIA_DIST,
+      t,
+    );
+    if (juliascopeDist !== undefined) result.juliascopeDist = juliascopeDist;
+    const curlC1 = lerpOptional(av?.curlC1, bv?.curlC1, CLASSIC_CURL_C1, t);
+    if (curlC1 !== undefined) result.curlC1 = curlC1;
+    const curlC2 = lerpOptional(av?.curlC2, bv?.curlC2, CLASSIC_CURL_C2, t);
+    if (curlC2 !== undefined) result.curlC2 = curlC2;
     return result;
   });
 }
@@ -691,6 +766,34 @@ function lerpSurfacePattern(
   };
 }
 
+/**
+ * The per-transform POST-AFFINE's morph: each of the nine matrix entries
+ * and three translation components lerps with the IDENTITY as the absent
+ * side's fallback — the fold lengths' rule (the classic value, never a
+ * synthesized zero), because absence renders the identity map and that is
+ * what a one-sided post must fade from and to. Both sides absent stays
+ * absent; the result is written sparse-but-complete (a present pair always
+ * lerps to a full post object). Endpoint-exact by construction: at t = 0
+ * every entry equals `a`'s (or the identity), at t = 1 `b`'s.
+ */
+function lerpPost(
+  a: Affine | undefined,
+  b: Affine | undefined,
+  t: number,
+): Affine | undefined {
+  if (a === undefined && b === undefined) return undefined;
+  const ma = a?.m ?? IDENTITY_POST_M;
+  const mb = b?.m ?? IDENTITY_POST_M;
+  const ta = a?.t ?? [0, 0, 0];
+  const tb = b?.t ?? [0, 0, 0];
+  const m = ma.map((v, i) => lerp(v, mb[i], t));
+  const post: Affine = {
+    m,
+    t: [lerp(ta[0], tb[0], t), lerp(ta[1], tb[1], t), lerp(ta[2], tb[2], t)],
+  };
+  return post;
+}
+
 /** Lerp one paired transform, field by field, assigning `id` from the pair's
  * position rather than either side's own id (mid-morph ids are
  * display-only — see the module header). `colorIndexFallback` is the
@@ -736,6 +839,18 @@ function lerpTransformPair(
 
   const variations = lerpVariations(a.variations, b.variations, t);
   if (variations !== undefined) result.variations = variations;
+
+  // The per-transform POST-AFFINE: every matrix entry and translation
+  // component lerps with the IDENTITY side as the absent side's fallback
+  // (the fold lengths' rule — the classic value, never a synthesized zero:
+  // a post morphing in from nothing must fade from the IDENTITY map, since
+  // that is what absence renders), both-absent stays absent. A post that
+  // lerps back to exactly the identity stays — a present-but-identity post
+  // renders identically to absent (the engine applies it and the
+  // identity-skip is value-exact), and dropping it mid-morph would be a
+  // second, undocumented cleanup rule.
+  const post = lerpPost(a.post, b.post, t);
+  if (post !== undefined) result.post = post;
 
   const chaos = lerpChaos(a.chaos, b.chaos, t);
   if (chaos !== undefined) result.chaos = chaos;

@@ -23,12 +23,14 @@ import {
   hexToRgb,
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
+  quantizeByte,
   resolvePalette,
   rgbToHex,
 } from "../fractal/palette";
 import type {
   CustomPalette,
   PaletteSelection,
+  RampPalette,
   RgbStop,
 } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
@@ -37,7 +39,13 @@ import {
   shapeMeshIds,
   type ShapeSpec,
 } from "../fractal/shapes";
-import { CLASSIC_FOLD_RADII, isFoldVariationType } from "../fractal/variations";
+import {
+  CLASSIC_CURL_PARAMS,
+  CLASSIC_FOLD_RADII,
+  CLASSIC_JULIA_PARAMS,
+  isFoldVariationType,
+  isParametricVariationType,
+} from "../fractal/variations";
 import {
   CLASSIC_SURFACE_FINISH,
   isClassicSurfaceFinish,
@@ -67,6 +75,7 @@ import type {
   VariationType,
   Vec3,
   WExtension,
+  Affine,
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
@@ -811,6 +820,71 @@ const BOX_LIMIT_MIN = 0;
 const BOX_LIMIT_MAX = 3;
 const FOLD_RADIUS_STEP = 0.005;
 
+/**
+ * The parametric julia family and curl's authored parameters, in row order
+ * per type — the fold family's {@link FOLD_RADIUS_FIELDS} one feature over.
+ * A julia type reads exactly its power and dist, curl its c1 and c2; every
+ * other type reads nothing.
+ */
+type VariationParamKey =
+  | "julianPower"
+  | "julianDist"
+  | "juliascopePower"
+  | "juliascopeDist"
+  | "curlC1"
+  | "curlC2";
+
+const PARAMETRIC_PARAM_FIELDS: Record<
+  "julian" | "juliascope" | "curl",
+  readonly (readonly [VariationParamKey, string])[]
+> = {
+  julian: [
+    ["julianPower", "Power"],
+    ["julianDist", "Dist"],
+  ],
+  juliascope: [
+    ["juliascopePower", "Power"],
+    ["juliascopeDist", "Dist"],
+  ],
+  curl: [
+    ["curlC1", "C1"],
+    ["curlC2", "C2"],
+  ],
+};
+
+/**
+ * Parametric-parameter slider bounds — the classic value each row's
+ * write/remove rule compares against lives in
+ * {@link PARAMETRIC_PARAM_CLASSIC} below, imported from `variations.ts`
+ * (the CLASSIC_JULIA_* and CLASSIC_CURL_* constants), never re-typed. The
+ * powers span flam3's real-valued domain with its usual integer sweet spot
+ * centered (negative power runs the spiral backwards, a legal flam3
+ * authoring); the dist exponent and the curl coefficients span the values
+ * that actually move the shape (the classic 1 / 1 / 0 sit inside
+ * comfortably). `step` is the Arrow increment only — the exact-value
+ * companions keep PRECISION the domain, never the step.
+ */
+const PARAMETRIC_PARAM_BOUNDS: Record<
+  VariationParamKey,
+  { min: number; max: number; step: number }
+> = {
+  julianPower: { min: -12, max: 12, step: 0.05 },
+  julianDist: { min: -3, max: 3, step: 0.005 },
+  juliascopePower: { min: -12, max: 12, step: 0.05 },
+  juliascopeDist: { min: -3, max: 3, step: 0.005 },
+  curlC1: { min: -3, max: 3, step: 0.005 },
+  curlC2: { min: -3, max: 3, step: 0.005 },
+};
+
+const PARAMETRIC_PARAM_CLASSIC: Record<VariationParamKey, number> = {
+  julianPower: CLASSIC_JULIA_PARAMS.power,
+  julianDist: CLASSIC_JULIA_PARAMS.dist,
+  juliascopePower: CLASSIC_JULIA_PARAMS.power,
+  juliascopeDist: CLASSIC_JULIA_PARAMS.dist,
+  curlC1: CLASSIC_CURL_PARAMS.c1,
+  curlC2: CLASSIC_CURL_PARAMS.c2,
+};
+
 /** The surface finish's six authored fields, in row order. */
 type FinishKey = keyof ResolvedSurfaceFinish;
 
@@ -1378,7 +1452,13 @@ function variationsEqual(a: Variation[], b: Variation[]): boolean {
         v.weight === b[i].weight &&
         v.minRadius === b[i].minRadius &&
         v.fixedRadius === b[i].fixedRadius &&
-        v.boxLimit === b[i].boxLimit,
+        v.boxLimit === b[i].boxLimit &&
+        v.julianPower === b[i].julianPower &&
+        v.julianDist === b[i].julianDist &&
+        v.juliascopePower === b[i].juliascopePower &&
+        v.juliascopeDist === b[i].juliascopeDist &&
+        v.curlC1 === b[i].curlC1 &&
+        v.curlC2 === b[i].curlC2,
     )
   );
 }
@@ -1618,6 +1698,12 @@ interface EditorState {
      * family returns to none, while `scale`/`strength` ride the finish
      * fields' per-field rule (see {@link Ui.writePatternFamily}). */
     surfacePattern: SurfacePattern | undefined;
+    /** Working copy of the transform's optional POST-AFFINE (flam3's
+     * `post=`, import-only this PR) — a CLONE of the document's object,
+     * `undefined` exactly when the map authors none. No rows render for
+     * it; the working copy exists purely so an imported post SURVIVES
+     * every emitted edit (see {@link Ui.emitGeometry}). */
+    post: Affine | undefined;
   };
   /**
    * Has the user moved a finish slider or picked a bundle since this
@@ -2570,7 +2656,10 @@ export class Ui {
    * `AppState.customPalette`
    * slot (see {@link syncCustomPaletteEditors}) — only which row is visible
    * differs, keyed on that palette select's own paletteId
-   * (background/flame/solid/surface) or `rampPaletteId` (solid-ramp/ramp). */
+   * (background/flame/solid/surface) or `rampPaletteId` (solid-ramp/ramp).
+   * `rampNote` is the conversion disclosure shown while the payload behind
+   * the editor is an imported full-resolution ramp (see
+   * {@link rampEditorSeedStops}). */
   private readonly customPaletteEditors: Record<
     "background" | "flame" | "solid" | "solidRamp" | "surface" | "ramp",
     {
@@ -2580,6 +2669,7 @@ export class Ui {
       stops: HTMLElement;
       add: HTMLButtonElement;
       remove: HTMLButtonElement;
+      rampNote: HTMLElement;
     }
   >;
 
@@ -2591,6 +2681,7 @@ export class Ui {
     stops: HTMLElement;
     add: HTMLButtonElement;
     remove: HTMLButtonElement;
+    rampNote: HTMLElement;
   };
 
   /** Per-mode fallback for the accordion when the previously open section is
@@ -3227,6 +3318,7 @@ export class Ui {
         stops: this.byId("backgroundCustomPaletteStops"),
         add: this.byId("backgroundCustomPaletteAdd"),
         remove: this.byId("backgroundCustomPaletteRemove"),
+        rampNote: this.byId("backgroundCustomPaletteRampNote"),
       },
       flame: {
         row: this.byId("flameCustomPaletteRow"),
@@ -3235,6 +3327,7 @@ export class Ui {
         stops: this.byId("flameCustomPaletteStops"),
         add: this.byId("flameCustomPaletteAdd"),
         remove: this.byId("flameCustomPaletteRemove"),
+        rampNote: this.byId("flameCustomPaletteRampNote"),
       },
       solid: {
         row: this.byId("solidCustomPaletteRow"),
@@ -3243,6 +3336,7 @@ export class Ui {
         stops: this.byId("solidCustomPaletteStops"),
         add: this.byId("solidCustomPaletteAdd"),
         remove: this.byId("solidCustomPaletteRemove"),
+        rampNote: this.byId("solidCustomPaletteRampNote"),
       },
       solidRamp: {
         row: this.byId("solidRampCustomPaletteRow"),
@@ -3251,6 +3345,7 @@ export class Ui {
         stops: this.byId("solidRampCustomPaletteStops"),
         add: this.byId("solidRampCustomPaletteAdd"),
         remove: this.byId("solidRampCustomPaletteRemove"),
+        rampNote: this.byId("solidRampCustomPaletteRampNote"),
       },
       surface: {
         row: this.byId("surfaceCustomPaletteRow"),
@@ -3259,6 +3354,7 @@ export class Ui {
         stops: this.byId("surfaceCustomPaletteStops"),
         add: this.byId("surfaceCustomPaletteAdd"),
         remove: this.byId("surfaceCustomPaletteRemove"),
+        rampNote: this.byId("surfaceCustomPaletteRampNote"),
       },
       ramp: {
         row: this.byId("rampCustomPaletteRow"),
@@ -3267,6 +3363,7 @@ export class Ui {
         stops: this.byId("rampCustomPaletteStops"),
         add: this.byId("rampCustomPaletteAdd"),
         remove: this.byId("rampCustomPaletteRemove"),
+        rampNote: this.byId("rampCustomPaletteRampNote"),
       },
     };
     this.balloonCustomPaletteEditor = {
@@ -3276,6 +3373,7 @@ export class Ui {
       stops: this.byId("balloonCustomPaletteStops"),
       add: this.byId("balloonCustomPaletteAdd"),
       remove: this.byId("balloonCustomPaletteRemove"),
+      rampNote: this.byId("balloonCustomPaletteRampNote"),
     };
 
     // Panel accordion: the sections are exclusive-open <details
@@ -5306,6 +5404,54 @@ export class Ui {
   }
 
   /**
+   * Derive the 8 editor-display stops shown while the document payload behind
+   * an editor is a full-resolution imported {@link RampPalette}: the ramp's
+   * own {@link buildPaletteLUT} sampled at {@link MAX_CUSTOM_PALETTE_STOPS}
+   * evenly-spaced entries — exactly {@link seedCustomStops}'s sampling shape,
+   * one level out — each channel {@link quantizeByte byte-quantized} so the
+   * displayed values survive the color inputs' `#rrggbb` round-trip exactly.
+   * These stops are a PREVIEW of the conversion, never document state: the
+   * ramp payload itself stays intact until an actual edit replaces it (see
+   * the conversion disclosure in {@link syncCustomPaletteEditors}).
+   */
+  private rampEditorSeedStops(ramp: RampPalette): RgbStop[] {
+    const lut = buildPaletteLUT(ramp);
+    if (lut === null) throw new Error("a ramp palette always has a LUT");
+    const stops: RgbStop[] = [];
+    for (let j = 0; j < MAX_CUSTOM_PALETTE_STOPS; j++) {
+      const index = Math.round(
+        (j / (MAX_CUSTOM_PALETTE_STOPS - 1)) * (lut.length / 3 - 1),
+      );
+      const o = index * 3;
+      stops.push([
+        quantizeByte(lut[o]),
+        quantizeByte(lut[o + 1]),
+        quantizeByte(lut[o + 2]),
+      ]);
+    }
+    return stops;
+  }
+
+  /**
+   * Set a ramp editor's conversion disclosure: visible prose naming the
+   * conversion, so an edit that replaces the imported gradient with an
+   * 8-stop palette is chosen with the consequence on screen (the
+   * no-silent-conversion rule this feature is judged by).
+   */
+  private syncRampNote(
+    editor: { rampNote: HTMLElement },
+    ramp: RampPalette | null,
+  ): void {
+    editor.rampNote.classList.toggle("hidden", ramp === null);
+    if (ramp !== null) {
+      this.setReasonNote(
+        editor.rampNote,
+        `Imported ${ramp.entries.length}-color ramp — editing converts it to an ${MAX_CUSTOM_PALETTE_STOPS}-stop palette`,
+      );
+    }
+  }
+
+  /**
    * Sync the background/flame/solid/solid-ramp/surface/ramp gradient-stop
    * editors to `state.customPalette`, called from {@link updateLabels} right
    * after the table-driven scalar sync loop. Six rows now: the background
@@ -5352,13 +5498,19 @@ export class Ui {
       editor.row.classList.toggle("hidden", !isCustom);
       if (!isCustom) continue;
 
-      // Safe: resolvePalette always returns a CustomPalette (never a bare
-      // FlamePaletteId) when the selection is CUSTOM_PALETTE_ID — see its doc.
+      // Safe: resolvePalette always returns a CustomPalette or a RampPalette
+      // (never a bare FlamePaletteId) when the selection is
+      // CUSTOM_PALETTE_ID — see its doc. A ramp payload shows 8 derived
+      // seed stops plus the conversion disclosure instead of its full
+      // entry list, which the editor's vocabulary cannot hold.
       const resolved = resolvePalette(
         CUSTOM_PALETTE_ID,
         state.customPalette,
-      ) as CustomPalette;
-      const { stops } = resolved;
+      ) as CustomPalette | RampPalette;
+      const isRamp = "kind" in resolved;
+      const stops: readonly RgbStop[] = isRamp
+        ? this.rampEditorSeedStops(resolved)
+        : resolved.stops;
 
       const inputs = Array.from(
         editor.stops.querySelectorAll<HTMLInputElement>('input[type="color"]'),
@@ -5388,10 +5540,11 @@ export class Ui {
       }
 
       // Safe: buildPaletteLUT only returns null for the "legacy" sentinel,
-      // never for a CustomPalette payload.
+      // never for a CustomPalette or RampPalette payload.
       editor.strip.style.background = lutGradient(buildPaletteLUT(resolved)!);
       editor.add.disabled = stops.length >= MAX_CUSTOM_PALETTE_STOPS;
       editor.remove.disabled = stops.length <= MIN_CUSTOM_PALETTE_STOPS;
+      this.syncRampNote(editor, isRamp ? resolved : null);
     }
   }
 
@@ -5407,8 +5560,14 @@ export class Ui {
     if (!isCustom) return;
 
     // The selection check above excludes resolveBalloonPalette's null arm.
-    const resolved = resolveBalloonPalette(state) as CustomPalette;
-    const { stops } = resolved;
+    // A ramp payload shows 8 derived seed stops plus the conversion
+    // disclosure, exactly like the shared editors.
+    const resolved = resolveBalloonPalette(state) as
+      CustomPalette | RampPalette;
+    const isRamp = "kind" in resolved;
+    const stops: readonly RgbStop[] = isRamp
+      ? this.rampEditorSeedStops(resolved)
+      : resolved.stops;
     const inputs = Array.from(
       editor.stops.querySelectorAll<HTMLInputElement>('input[type="color"]'),
     );
@@ -5435,6 +5594,7 @@ export class Ui {
     editor.strip.style.background = lutGradient(buildPaletteLUT(resolved)!);
     editor.add.disabled = stops.length >= MAX_CUSTOM_PALETTE_STOPS;
     editor.remove.disabled = stops.length <= MIN_CUSTOM_PALETTE_STOPS;
+    this.syncRampNote(editor, isRamp ? resolved : null);
   }
 
   setPointCount(
@@ -7720,6 +7880,15 @@ export class Ui {
       finish: cloneFinish(transform.finish),
       // The pattern's own clone — see {@link cloneSurfacePattern}.
       surfacePattern: cloneSurfacePattern(transform.surfacePattern),
+      // The per-transform POST-AFFINE (flam3's post=, import-only): cloned
+      // deep and RAW-presence like the color pair, so an imported post
+      // SURVIVES an editing session — every emitted edit carries it back —
+      // while a map that authors none emits geometry with no `post` key at
+      // all. No rows render for it (there is no editing surface this PR);
+      // survival through unrelated edits is the whole contract.
+      post: transform.post
+        ? { m: [...transform.post.m], t: clone3(transform.post.t) }
+        : undefined,
     };
     const controls: Record<Channel, AxisControl[]> = {
       position: [],
@@ -9645,6 +9814,8 @@ export class Ui {
       editor.variationList.appendChild(row);
       if (isFoldVariationType(variation.type)) {
         this.appendFoldRadiusRows(variation.type, i);
+      } else if (isParametricVariationType(variation.type)) {
+        this.appendVariationParamRows(variation.type, i);
       }
     });
   }
@@ -9752,6 +9923,86 @@ export class Ui {
         },
       });
       if (key === "minRadius") minRow.push({ slider, readout, numeric });
+      editor.variationList.appendChild(row);
+    }
+  }
+
+  /**
+   * The parametric julia family and curl's authored parameters, as rows
+   * nested under their own variation's weight row — only the ones that type
+   * reads ({@link PARAMETRIC_PARAM_FIELDS}), the fold lengths' rows one
+   * feature over.
+   *
+   * The SAME TWO RULES keep `types.ts`'s "absent means classic
+   * byte-identically" true through an editing session: a parameter is
+   * written into the document ONLY once its own slider moves, and dragging
+   * one back to its classic value REMOVES it again (the classic value being
+   * flam3's own param default — {@link PARAMETRIC_PARAM_CLASSIC}, imported
+   * so the row can never disagree with the resolver about what "classic"
+   * is). Opening the editor on an unparameterized import, or touching a
+   * neighbouring control, leaves it with no parameter keys at all.
+   */
+  private appendVariationParamRows(
+    type: "julian" | "juliascope" | "curl",
+    index: number,
+  ): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const valueOf = (key: VariationParamKey): number =>
+      editor.variations[index][key] ?? PARAMETRIC_PARAM_CLASSIC[key];
+    const write = (key: VariationParamKey, value: number): void => {
+      if (value === PARAMETRIC_PARAM_CLASSIC[key]) {
+        delete editor.variations[index][key];
+      } else {
+        editor.variations[index][key] = value;
+      }
+    };
+    for (const [key, label] of PARAMETRIC_PARAM_FIELDS[type]) {
+      const bounds = PARAMETRIC_PARAM_BOUNDS[key];
+      const row = this.doc.createElement("div");
+      row.className = "editor-row variation-row variation-fold-row";
+
+      const name = this.doc.createElement("span");
+      name.className = "axis";
+      name.textContent = label;
+
+      const slider = this.doc.createElement("input");
+      slider.type = "range";
+      slider.min = String(bounds.min);
+      slider.max = String(bounds.max);
+      slider.step = String(bounds.step);
+      slider.value = String(valueOf(key));
+      slider.setAttribute(
+        "aria-label",
+        `${variationLabel(type)} ${label.toLowerCase()}`,
+      );
+
+      const readout = this.doc.createElement("span");
+      readout.className = "value";
+      readout.textContent = valueOf(key).toFixed(3);
+
+      slider.addEventListener("input", () => {
+        const value = Number(slider.value);
+        write(key, value);
+        readout.textContent = value.toFixed(3);
+        this.emitGeometry();
+      });
+
+      row.append(name, slider, readout);
+      this.pairDynamicRange({
+        slider,
+        readout,
+        min: bounds.min,
+        max: bounds.max,
+        step: bounds.step,
+        value: valueOf(key),
+        ariaLabel: `${variationLabel(type)} ${label.toLowerCase()}`,
+        onNumberInput: (value) => {
+          write(key, value);
+          readout.textContent = value.toFixed(3);
+          this.emitGeometry();
+        },
+      });
       editor.variationList.appendChild(row);
     }
   }
@@ -10107,6 +10358,11 @@ export class Ui {
       shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
       w: cloneW(transform.w),
+      // The post rides the sync too (raw presence, cloned deep) — an
+      // undo/preset landing under a stable selection still carries it.
+      post: transform.post
+        ? { m: [...transform.post.m], t: clone3(transform.post.t) }
+        : undefined,
       // Raw again (see buildEditor): an undo back past the first Color edit
       // returns a transform with the keys gone, and the working copy has to
       // forget them too or the next unrelated edit would write them back.
@@ -10314,6 +10570,17 @@ export class Ui {
       // aliases the editor's own live-mutated working copy.
       ...(editor.geometry.w !== undefined
         ? { w: cloneW(editor.geometry.w) }
+        : {}),
+      // The post, sparse exactly like `w`: present-only, cloned, so an
+      // imported post rides every edit and an unauthored one emits no key
+      // (state.ts's updateTransform merges — absence preserves absence).
+      ...(editor.geometry.post !== undefined
+        ? {
+            post: {
+              m: [...editor.geometry.post.m],
+              t: clone3(editor.geometry.post.t),
+            },
+          }
         : {}),
     };
     if (editor.target === "final") {

@@ -1822,11 +1822,14 @@ describe("FlameWorkerSession shared-frame transport", () => {
     expect(frame.slot).toBe(0); // the double buffer starts at slot 0.
 
     // The named slot really holds the downsampled frame, and the event's
-    // maxHits is that slot's own peak — together the exact inputs the main
-    // thread's tone-map needs.
+    // maxHits is that slot's own peak and its hitMass the slot's exact
+    // deposited mass — together the inputs the main thread's tone-map needs
+    // (the mass is the curve's normalizer, the max an instrument scalar).
     const slotHits = frames[frame.slot].hits;
     expect(Math.max(...slotHits)).toBeGreaterThan(0);
     expect(frame.maxHits).toBe(Math.max(...slotHits));
+    const slotMass = Array.from(slotHits).reduce((a, b) => a + b, 0);
+    expect(frame.hitMass).toBeCloseTo(slotMass, 9);
   });
 
   it("produces the byte-identical image the transfer transport would, for the same seed (oracle)", () => {
@@ -1842,8 +1845,9 @@ describe("FlameWorkerSession shared-frame transport", () => {
     const note = sharedFrameEvents(shared.events).at(-1)!;
 
     // Reconstruct exactly what main.ts's presentSharedFrame does: a view
-    // over the shared buckets plus the notified maxHits, tone-mapped with
-    // the same (start-command) params the transfer-mode worker used.
+    // over the shared buckets plus the notified maxHits and hitMass,
+    // tone-mapped with the same (start-command) params the transfer-mode
+    // worker used.
     const image = tonemapFlame(
       viewFlameHistogram(
         8,
@@ -1851,6 +1855,7 @@ describe("FlameWorkerSession shared-frame transport", () => {
         frames[note.slot].hits,
         frames[note.slot].sumRGB,
         note.maxHits,
+        note.hitMass,
       ),
       {
         exposure: 1,
@@ -1926,6 +1931,7 @@ describe("FlameWorkerSession shared-frame transport", () => {
     const relabeled = sharedFrameEvents(events).at(-1)!;
     expect(relabeled.slot).toBe(finished.slot); // nothing re-downsampled — same frame, fresh scalars.
     expect(relabeled.maxHits).toBe(finished.maxHits);
+    expect(relabeled.hitMass).toBe(finished.hitMass);
     expect(relabeled.iterationsDone).toBe(500);
     expect(relabeled.iterationsBudget).toBe(20);
   });

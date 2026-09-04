@@ -93,6 +93,8 @@
  * one function.
  */
 import { composeAffine4, toTransform4 } from "./affine4";
+/** The row-major 4x4 identity the post4 identity test compares against. */
+const IDENTITY_POST4_M = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 import {
   effectiveSymmetryOrder,
   systemHasChaos,
@@ -128,7 +130,11 @@ import type {
 } from "./surface-pattern";
 import { CONTRACTION_LIMIT } from "./surface-de";
 import { transformSigmas4 } from "./surface-de-4d";
-import { resolveFoldRadii, sphereFoldLipschitz } from "./variations";
+import {
+  activeParametricVariationTypes,
+  resolveFoldRadii,
+  sphereFoldLipschitz,
+} from "./variations";
 import type {
   SymmetryParams,
   SymmetryPlane,
@@ -146,6 +152,13 @@ export interface EscapeLink4 {
   m: number[];
   /** Forward translation t. */
   t: Vec4;
+  /** The map's own POST-AFFINE (a 3D `post` lifted through the embed, or a
+   * native `post4`), or `null` — `escape-de.ts`'s `EscapeLink.postM` one
+   * dimension up, applied after the weighted variation output and before
+   * the `+ p` offset. */
+  postM: number[] | null;
+  /** The post's translation — `null` with {@link postM}. */
+  postT: Vec4 | null;
   /** The map applied after the affine part. Never
    * {@link import("./escape-de").ESCAPE_LINK_BULB} — the gate refuses a
    * triplex power here (module doc). */
@@ -198,7 +211,9 @@ type EscapeCalibrationDE4 = Omit<EscapeDE4, "patternCalibration">;
 /** {@link import("./escape-de").EscapeDE}'s `linkVariation` one dimension up
  * — the single active entry a link may carry. `bulb` is RECOGNISED here so
  * the gate can refuse it by name (module doc) rather than reporting the
- * generic "not a pure fold or power map". */
+ * generic "not a pure fold or power map". The parametric julia family and
+ * curl are likewise not links, and are refused by name through
+ * {@link parametricLink4Refusal}. */
 function linkVariation4(t: Transform): Variation | null {
   const active = (t.variations ?? []).filter(
     (v) => Number.isFinite(v.weight) && v.weight !== 0,
@@ -212,6 +227,20 @@ function linkVariation4(t: Transform): Variation | null {
     v.type === "qsquare"
     ? v
     : null;
+}
+
+/** The named clause appended beside the generic link refusal when the map
+ * carries one of the PARAMETRIC warps — 3D's
+ * `parametricLinkRefusal` one dimension up, `surface-eligibility.ts`'s
+ * qsquare-hint precedent. `null` when nothing parametric is active. */
+function parametricLink4Refusal(label: string, t: Transform): string | null {
+  const types = activeParametricVariationTypes(t.variations);
+  if (types.length === 0) return null;
+  const plural = types.length > 1 ? "s" : "";
+  return (
+    `${label} uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `which the 4D escape chain has no link for`
+  );
 }
 
 /** The maps that make up the chain: active, in DOCUMENT ORDER — 3D's
@@ -265,6 +294,8 @@ export function analyzeEscapeSystem4(
     const v = linkVariation4(map);
     if (!v) {
       reasons.push(`${label} is not a pure fold or power map`);
+      const clause = parametricLink4Refusal(label, map);
+      if (clause) reasons.push(clause);
     } else if (v.type === "bulb") {
       reasons.push(
         `${label} is a triplex power, which has no fourth component ` +
@@ -326,9 +357,20 @@ function buildEscapeLink4(map: Transform): EscapeLink4 {
   const lifted = toTransform4(map);
   const affine = composeAffine4(lifted);
   const radii = resolveFoldRadii(v);
+  // The lift carries a 3D post into post4 (w-identity); identity stays
+  // absent, exactly the 3D builder's rule one dimension up.
+  const post4 = lifted.post4;
+  const postLive =
+    post4 !== undefined &&
+    !(
+      post4.m.every((v2, idx) => v2 === IDENTITY_POST4_M[idx]) &&
+      post4.t.every((v2) => v2 === 0)
+    );
   return {
     m: affine.m,
     t: affine.t,
+    postM: postLive ? [...post4.m] : null,
+    postT: postLive ? ([...post4.t] as Vec4) : null,
     kind:
       v.type === "boxfold"
         ? ESCAPE_LINK_BOXFOLD
@@ -565,10 +607,29 @@ function runEscapeOrbit4(
       fw = 2 * yx * yw;
       localL = 2 * Math.sqrt(yx * yx + yy * yy + yz * yz + yw * yw);
     }
-    vx = link.w * fx + qx;
-    vy = link.w * fy + qy;
-    vz = link.w * fz + qz;
-    vw = link.w * fw + qw;
+    // The link's own POST-AFFINE, after the weighted variation output and
+    // BEFORE the `+ p` offset — the 3D orbit's rule one dimension up.
+    if (link.postM !== null && link.postT !== null) {
+      const pm = link.postM;
+      const pt = link.postT;
+      const wx = link.w * fx;
+      const wy = link.w * fy;
+      const wz = link.w * fz;
+      const ww = link.w * fw;
+      fx = pm[0] * wx + pm[1] * wy + pm[2] * wz + pm[3] * ww + pt[0];
+      fy = pm[4] * wx + pm[5] * wy + pm[6] * wz + pm[7] * ww + pt[1];
+      fz = pm[8] * wx + pm[9] * wy + pm[10] * wz + pm[11] * ww + pt[2];
+      fw = pm[12] * wx + pm[13] * wy + pm[14] * wz + pm[15] * ww + pt[3];
+    } else {
+      fx = link.w * fx;
+      fy = link.w * fy;
+      fz = link.w * fz;
+      fw = link.w * fw;
+    }
+    vx = fx + qx;
+    vy = fy + qy;
+    vz = fz + qz;
+    vw = fw + qw;
     dr = link.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
     // Both trap uses sample xyz and deliberately DROP w. `dr` is the
@@ -671,10 +732,29 @@ function escapePatternCarrierSample4(
       fz = 2 * yx * yz;
       fw = 2 * yx * yw;
     }
-    vx = link.w * fx + qx;
-    vy = link.w * fy + qy;
-    vz = link.w * fz + qz;
-    vw = link.w * fw + qw;
+    // The link's own POST-AFFINE, after the weighted variation output and
+    // BEFORE the `+ p` offset — the 3D orbit's rule one dimension up.
+    if (link.postM !== null && link.postT !== null) {
+      const pm = link.postM;
+      const pt = link.postT;
+      const wx = link.w * fx;
+      const wy = link.w * fy;
+      const wz = link.w * fz;
+      const ww = link.w * fw;
+      fx = pm[0] * wx + pm[1] * wy + pm[2] * wz + pm[3] * ww + pt[0];
+      fy = pm[4] * wx + pm[5] * wy + pm[6] * wz + pm[7] * ww + pt[1];
+      fz = pm[8] * wx + pm[9] * wy + pm[10] * wz + pm[11] * ww + pt[2];
+      fw = pm[12] * wx + pm[13] * wy + pm[14] * wz + pm[15] * ww + pt[3];
+    } else {
+      fx = link.w * fx;
+      fy = link.w * fy;
+      fz = link.w * fz;
+      fw = link.w * fw;
+    }
+    vx = fx + qx;
+    vy = fy + qy;
+    vz = fz + qz;
+    vw = fw + qw;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
     rings = Math.min(rings, r / de.boundingRadius);
     sheets = Math.min(sheets, Math.abs(vy) / de.boundingRadius);

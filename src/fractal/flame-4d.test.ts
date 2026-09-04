@@ -286,6 +286,7 @@ describe("accumulateFlame4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () =
       const bucket = row * width + col;
       expected.hits[bucket] += weight;
       expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      expected.hitMass += weight;
       const rgb = palette[step.index] ?? [1, 1, 1];
       const o = bucket * 3;
       expected.sumRGB[o] += rgb[0] * weight;
@@ -298,6 +299,7 @@ describe("accumulateFlame4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () =
     expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
     expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
     expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.hitMass).toBe(expected.hitMass);
     expect(actual.orbit).toEqual(expected.orbit);
     expect(actual.orbitW).toBe(expected.orbitW);
   });
@@ -460,6 +462,7 @@ describe("accumulateFlame4 progressive accumulation", () => {
     expect(Array.from(chunked.hits)).toEqual(Array.from(singleShot.hits));
     expect(Array.from(chunked.sumRGB)).toEqual(Array.from(singleShot.sumRGB));
     expect(chunked.maxHits).toBe(singleShot.maxHits);
+    expect(chunked.hitMass).toBe(singleShot.hitMass);
     expect(chunked.orbit).toEqual(singleShot.orbit);
     expect(chunked.orbitW).toBe(singleShot.orbitW);
     expect(chunked.orbitColor).toBe(singleShot.orbitColor);
@@ -783,6 +786,7 @@ describe("accumulateFlame4 structural coloring: per-transform colorIndex/colorSp
     expect(Array.from(explicit.hits)).toEqual(Array.from(absent.hits));
     expect(Array.from(explicit.sumRGB)).toEqual(Array.from(absent.sumRGB));
     expect(explicit.maxHits).toBe(absent.maxHits);
+    expect(explicit.hitMass).toBe(absent.hitMass);
     expect(explicit.orbitColor).toBe(absent.orbitColor);
   });
 
@@ -862,6 +866,7 @@ describe("accumulateFlame4 structural coloring: per-transform colorIndex/colorSp
 
     expect(Array.from(withColors.hits)).toEqual(Array.from(plain.hits));
     expect(withColors.maxHits).toBe(plain.maxHits);
+    expect(withColors.hitMass).toBe(plain.hitMass);
   });
 });
 
@@ -940,6 +945,7 @@ describe("accumulateFlame4 with symmetry", () => {
       const bucket = row * width + col;
       expected.hits[bucket] += 1;
       expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      expected.hitMass += 1;
       // step.index is already the BASE map (see chaos-game-4d.ts's
       // stepOrbit4), so this indexes `palette` — sized to transforms4.length,
       // NOT the expanded slot count — exactly like the no-symmetry oracle.
@@ -953,6 +959,7 @@ describe("accumulateFlame4 with symmetry", () => {
     expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
     expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
     expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.hitMass).toBe(expected.hitMass);
     expect(actual.orbit).toEqual([x, y, z]);
     expect(actual.orbitW).toBe(w);
   });
@@ -987,6 +994,7 @@ describe("accumulateFlame4 with symmetry", () => {
     expect(Array.from(orderOne.hits)).toEqual(Array.from(omitted.hits));
     expect(Array.from(orderOne.sumRGB)).toEqual(Array.from(omitted.sumRGB));
     expect(orderOne.maxHits).toBe(omitted.maxHits);
+    expect(orderOne.hitMass).toBe(omitted.hitMass);
     expect(orderOne.orbit).toEqual(omitted.orbit);
     expect(orderOne.orbitW).toBe(omitted.orbitW);
     expect(orderOne.orbitColor).toBe(omitted.orbitColor);
@@ -1161,6 +1169,57 @@ describe("accumulateFlame4 balloon echo", () => {
     expect(hist.hits[wrong4DInversionBucket]).toBe(0);
   });
 
+  it("counts every weighted deposit — soft slice and echo alike — into hitMass exactly", () => {
+    // The 4D twin of flame.test.ts's hitMass invariant: the slice-weighted
+    // primary and the echo's second splat both add their deposited weight to
+    // the running mass, so sum(hits) === hitMass to fp tolerance — the
+    // discipline that keeps the tone-map's mean a pure function of the array.
+    const point: Vec4 = [0.25, 0, 0, 2];
+    const prepared = prepareChaosGame4(fixedPointSystem4(point));
+    const rotorProjection = composeRotorProjection4(
+      IDENTITY_ROTOR,
+      [0, 0, 0, 0],
+    );
+    const projection = composeFlameProjection4(ORTHOGRAPHIC, rotorProjection);
+    const view: FourDView = {
+      ...FLAT_VIEW,
+      sliceOn: true,
+      sliceCenter: 0,
+      sliceWidth: 0.5,
+    };
+    const iterations = 8;
+    const hist = accumulateFlame4(
+      prepared,
+      projection,
+      view,
+      20,
+      20,
+      iterations,
+      mulberry32(3),
+      { kind: "transform", palette: [[0.8, 0.2, 0.1]] },
+      undefined,
+      {
+        balloon: buildBalloonFromBall(
+          { center: [0, 0, 0], radius: 0.5 },
+          Math.SQRT1_2,
+        ),
+        tint: [0, 1, 0],
+        tintStrength: 1,
+        weight: 0.25,
+      },
+      rotorProjection,
+      ORTHOGRAPHIC,
+    );
+    const sourceWeight = sliceWeight(1, 0, 0.5, 0.06);
+    const expectedMass = iterations * (sourceWeight + sourceWeight * 0.25);
+    expect(hist.hitMass).toBeCloseTo(expectedMass, 12);
+    let sum = 0;
+    for (let i = 0; i < hist.hits.length; i++) sum += hist.hits[i];
+    expect(Math.abs(hist.hitMass - sum)).toBeLessThanOrEqual(
+      1e-9 * Math.max(1, Math.abs(sum)),
+    );
+  });
+
   it("samples the independent palette from the projected pre-inversion 3D source before tint and weight", () => {
     const source4: Vec4 = [0.25, 0, 0, 2];
     const palette: Vec3[] = [[0.8, 0.2, 0.1]];
@@ -1256,6 +1315,7 @@ describe("accumulateFlame4 balloon echo", () => {
     expect(Array.from(absent.hits)).toEqual(Array.from(plain.hits));
     expect(Array.from(absent.sumRGB)).toEqual(Array.from(plain.sumRGB));
     expect(absent.maxHits).toBe(plain.maxHits);
+    expect(absent.hitMass).toBe(plain.hitMass);
     expect(absent.orbit).toEqual(plain.orbit);
     expect(absent.orbitW).toBe(plain.orbitW);
     expect(absent.orbitColor).toBe(plain.orbitColor);
@@ -1633,6 +1693,7 @@ describe("accumulateFlame4 scheduled-hybrid post-word (correctness oracle)", () 
       const bucket = row * width + col;
       expected.hits[bucket] += 1;
       expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      expected.hitMass += 1;
       const rgb = palette[step.index] ?? [1, 1, 1];
       const o = bucket * 3;
       expected.sumRGB[o] += rgb[0];
@@ -1645,6 +1706,7 @@ describe("accumulateFlame4 scheduled-hybrid post-word (correctness oracle)", () 
     expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
     expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
     expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.hitMass).toBe(expected.hitMass);
     expect(actual.orbit).toEqual(expected.orbit);
     expect(actual.orbitW).toBe(expected.orbitW);
   });
@@ -1718,6 +1780,7 @@ describe("accumulateFlame4 shape emitters (correctness oracle)", () => {
       const bucket = row * width + col;
       expected.hits[bucket] += 1;
       expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      expected.hitMass += 1;
       const rgb = palette[step.index] ?? [1, 1, 1];
       const o = bucket * 3;
       expected.sumRGB[o] += rgb[0];
@@ -1731,6 +1794,7 @@ describe("accumulateFlame4 shape emitters (correctness oracle)", () => {
     expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
     expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
     expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.hitMass).toBe(expected.hitMass);
     expect(actual.orbit).toEqual(expected.orbit);
     expect(actual.orbitW).toBe(expected.orbitW);
     expect(emitterDeposits).toBeGreaterThan(iterations / 10);
@@ -2009,6 +2073,7 @@ describe("accumulateFlame4 point-space tiling", () => {
       expect(Array.from(chunked.hits)).toEqual(Array.from(single.hits));
       expect(Array.from(chunked.sumRGB)).toEqual(Array.from(single.sumRGB));
       expect(chunked.maxHits).toBe(single.maxHits);
+      expect(chunked.hitMass).toBe(single.hitMass);
       expect(chunked.orbit).toEqual(single.orbit);
       expect(chunked.orbitW).toBe(single.orbitW);
       expect(chunked.orbitColor).toBe(single.orbitColor);
@@ -2048,6 +2113,7 @@ describe("accumulateFlame4 point-space tiling", () => {
     expect(Array.from(actual.hits)).toEqual([0]);
     expect(Array.from(actual.sumRGB)).toEqual([0, 0, 0]);
     expect(actual.maxHits).toBe(0);
+    expect(actual.hitMass).toBe(0);
     expect(actual.pointTiling).toEqual({
       credit: iterations,
       cursor: 0,

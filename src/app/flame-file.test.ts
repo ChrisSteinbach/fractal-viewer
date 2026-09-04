@@ -141,7 +141,11 @@ describe("decodeFlameFile", () => {
   });
 
   it("aggregates unknown variation attributes into one warning naming them", () => {
-    const xml = `<flame><xform weight="1" julian="1" julian_power="2" coefs="0.5 0 0 0.5 0.1 0.2"/></flame>`;
+    // `rings2`/`rings2_colors` are still unimplemented warps (the drop-list
+    // shrank by exactly the parametric julia family and curl; rings2 is
+    // what took julian's place in this fixture — it was the example here
+    // before julian was implemented).
+    const xml = `<flame><xform weight="1" rings2="1" rings2_colors="2" coefs="0.5 0 0 0.5 0.1 0.2"/></flame>`;
     const file = decodeFlameFile(xml);
     expect(file).not.toBeNull();
 
@@ -153,15 +157,117 @@ describe("decodeFlameFile", () => {
       /Unsupported flame features/i.test(w),
     );
     expect(unsupported).toHaveLength(1);
-    expect(unsupported[0]).toContain("julian");
-    expect(unsupported[0]).toContain("julian_power");
+    expect(unsupported[0]).toContain("rings2");
+    expect(unsupported[0]).toContain("rings2_colors");
   });
 
-  it("drops a post transform on a nonlinear map with a warning, leaving coefs untouched", () => {
+  it("imports a parametric julian with its params, cleanly — the genome needs no unsupported-features warning at all", () => {
+    const xml = `<flame><xform weight="1" julian="0.5" julian_power="3" julian_dist="1" coefs="0.5 0 0 0.5 0.1 0.2"/></flame>`;
+    const file = decodeFlameFile(xml);
+    expect(file).not.toBeNull();
+    expect(
+      file!.warnings.some((w) => /Unsupported flame features/i.test(w)),
+    ).toBe(false);
+
+    const snap = decodeScene(file!.scenes[0].encoded);
+    expect(snap).not.toBeNull();
+    expect(snap!.transforms[0].variations).toEqual([
+      { type: "julian", weight: 0.5, julianPower: 3, julianDist: 1 },
+    ]);
+  });
+
+  it("imports curl and juliascope params by their own attribute names, whatever the attribute order", () => {
+    const xml = `<flame><xform weight="1" curl_c2="0.75" curl="2" curl_c1="0.25" juliascope="1" juliascope_power="4" juliascope_dist="0.8" coefs="0.5 0 0 0.5 0 0"/></flame>`;
+    const file = decodeFlameFile(xml);
+    expect(file).not.toBeNull();
+    expect(
+      file!.warnings.some((w) => /Unsupported flame features/i.test(w)),
+    ).toBe(false);
+    const snap = decodeScene(file!.scenes[0].encoded);
+    expect(snap!.transforms[0].variations).toEqual([
+      { type: "curl", weight: 2, curlC1: 0.25, curlC2: 0.75 },
+      {
+        type: "juliascope",
+        weight: 1,
+        juliascopePower: 4,
+        juliascopeDist: 0.8,
+      },
+    ]);
+  });
+
+  it("leaves a parametric variation's params absent when the file writes only the weight", () => {
+    const xml = `<flame><xform weight="1" julian="1" coefs="0.5 0 0 0.5 0 0"/></flame>`;
+    const file = decodeFlameFile(xml);
+    const snap = decodeScene(file!.scenes[0].encoded);
+    expect(snap!.transforms[0].variations).toEqual([
+      { type: "julian", weight: 1 },
+    ]);
+  });
+
+  it("round-trips parametric parameters through export and re-import", () => {
+    const scene: SceneSnapshot = {
+      ...toSnapshot(initialState(false)),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0],
+          variations: [
+            { type: "julian", weight: 1, julianPower: 3, julianDist: 1.5 },
+          ],
+        },
+        {
+          id: 1,
+          position: [0.2, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0],
+          variations: [{ type: "curl", weight: 1, curlC1: 0.5, curlC2: -1 }],
+        },
+      ],
+    };
+    const exported = encodeFlameFile(scene, "params round-trip");
+    expect(
+      exported.warnings.some((w) => /parametric|julian|curl/i.test(w)),
+    ).toBe(false);
+    const reimported = decodeFlameFile(exported.xml);
+    expect(reimported).not.toBeNull();
+    const snap = decodeScene(reimported!.scenes[0].encoded);
+    expect(snap!.transforms[0].variations).toEqual([
+      { type: "julian", weight: 1, julianPower: 3, julianDist: 1.5 },
+    ]);
+    expect(snap!.transforms[1].variations).toEqual([
+      { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1 },
+    ]);
+  });
+
+  it("exports a classic-parameterized entry as the bare weight — flam3's absent-means-default convention", () => {
+    const scene: SceneSnapshot = {
+      ...toSnapshot(initialState(false)),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0],
+          // julian_power="1" julian_dist="1" is what the resolver would
+          // hand back anyway: writing them would be noise.
+          variations: [{ type: "julian", weight: 2, julianPower: 1 }],
+        },
+      ],
+    };
+    const exported = encodeFlameFile(scene, "classic params");
+    expect(exported.xml).toContain('julian="2"');
+    expect(exported.xml).not.toContain("julian_power");
+    expect(exported.xml).not.toContain("julian_dist");
+  });
+
+  it("imports a post transform on a nonlinear map as the map's own post-affine, leaving coefs untouched", () => {
     const xml = `<flame><xform weight="1" spherical="1" coefs="0.5 0 0 0.5 0.1 0.2" post="0 1 -1 0 0.3 0.4"/></flame>`;
     const file = decodeFlameFile(xml);
     expect(file).not.toBeNull();
-    expect(file!.warnings.some((w) => /post transform/i.test(w))).toBe(true);
+    // The post is no longer dropped — no shape warning.
+    expect(file!.warnings.some((w) => /post transform/i.test(w))).toBe(false);
 
     const snap = decodeScene(file!.scenes[0].encoded);
     expect(snap).not.toBeNull();
@@ -171,6 +277,13 @@ describe("decodeFlameFile", () => {
     const got = coefsOf(snap!.transforms[0]);
     const want = [0.5, 0, 0, 0.5, 0.1, 0.2];
     for (let i = 0; i < 6; i++) expect(got[i]).toBeCloseTo(want[i], 3);
+    // flam3's post="a b c d e f" (x' = a·x + c·y + e, y' = b·x + d·y + f)
+    // rides Transform.post as a row-major 3x3 with the identity z
+    // row/column, and the translation in t.
+    expect(snap!.transforms[0].post).toEqual({
+      m: [0, -1, 0, 1, 0, 0, 0, 0, 1],
+      t: [0.3, 0.4, 0],
+    });
   });
 
   it("imports a chaos row without any warning, truncating a column past the base transform count", () => {
@@ -200,7 +313,7 @@ describe("decodeFlameFile", () => {
     expect(snap!.transforms).toHaveLength(2);
   });
 
-  it("downsamples an Apophysis-style <palette> hex block onto an 8-stop custom palette", () => {
+  it("imports an Apophysis-style <palette> hex block as a full-resolution ramp", () => {
     const hex = Array.from({ length: 256 }, (_, i) => {
       if (i === 0) return "ff0000";
       if (i === 255) return "0000ff";
@@ -210,31 +323,51 @@ describe("decodeFlameFile", () => {
 
     const snap = loadFirstScene(xml);
     expect(snap.customPalette).toBeDefined();
-    const stops = snap.customPalette!.stops;
-    expect(stops).toHaveLength(8);
-    expect(stops[0][0]).toBeCloseTo(1, 3);
-    expect(stops[0][1]).toBeCloseTo(0, 3);
-    expect(stops[0][2]).toBeCloseTo(0, 3);
-    expect(stops[7][0]).toBeCloseTo(0, 3);
-    expect(stops[7][1]).toBeCloseTo(0, 3);
-    expect(stops[7][2]).toBeCloseTo(1, 3);
+    const palette = snap.customPalette!;
+    if (!("kind" in palette)) throw new Error("expected a ramp palette");
+    expect(palette.entries).toHaveLength(256);
+    expect(palette.entries[0]).toEqual([1, 0, 0]);
+    expect(palette.entries[255]).toEqual([0, 0, 1]);
+    // An interior entry keeps its own color — the 8-stop point-sample this
+    // module used to take never let one survive to the scene.
+    expect(palette.entries[128]).toEqual([0x80 / 255, 0x80 / 255, 0x80 / 255]);
     expect(snap.flame.paletteId).toBe("custom");
     expect(snap.rampPaletteId).toBe("custom");
   });
 
-  it("downsamples flam3-style <color> entries onto a custom palette", () => {
+  it("imports flam3-style <color> entries as a ramp with every entry", () => {
     const xml = `<flame><xform weight="1" coefs="0.5 0 0 0.5 0 0"/><color index="0" rgb="255 0 0"/><color index="1" rgb="0 255 0"/><color index="2" rgb="0 0 255"/><color index="3" rgb="255 255 0"/></flame>`;
 
     const snap = loadFirstScene(xml);
     expect(snap.customPalette).toBeDefined();
-    const stops = snap.customPalette!.stops;
-    expect(stops[0][0]).toBeCloseTo(1, 3);
-    expect(stops[0][1]).toBeCloseTo(0, 3);
-    expect(stops[0][2]).toBeCloseTo(0, 3);
-    const last = stops[stops.length - 1];
-    expect(last[0]).toBeCloseTo(1, 3);
-    expect(last[1]).toBeCloseTo(1, 3);
-    expect(last[2]).toBeCloseTo(0, 3);
+    const palette = snap.customPalette!;
+    if (!("kind" in palette)) throw new Error("expected a ramp palette");
+    expect(palette.entries).toHaveLength(4);
+    expect(palette.entries[0]).toEqual([1, 0, 0]);
+    expect(palette.entries[3]).toEqual([1, 1, 0]);
+  });
+
+  it("preserves a banded palette's bright band and hard hue jump end to end", () => {
+    // The import-path twin of palette.test.ts's banded-ramp acceptance
+    // test: a one-entry bright band amid black and an adjacent-entry
+    // red→blue jump — the features an 8-stop point sample flattened — must
+    // survive the whole import → encode → decodeScene chain (which also
+    // exercises the ramp wire form's validator against a real import).
+    const hex = Array.from({ length: 256 }, (_, i) => {
+      if (i === 100) return "ffffff";
+      if (i === 200) return "ff0000";
+      if (i === 201) return "0000ff";
+      return "000000";
+    }).join("");
+    const xml = `<flame><xform weight="1" coefs="0.5 0 0 0.5 0 0"/><palette count="256" format="RGB">${hex}</palette></flame>`;
+
+    const snap = loadFirstScene(xml);
+    const palette = snap.customPalette!;
+    if (!("kind" in palette)) throw new Error("expected a ramp palette");
+    expect(palette.entries[100]).toEqual([1, 1, 1]);
+    expect(palette.entries[200]).toEqual([1, 0, 0]);
+    expect(palette.entries[201]).toEqual([0, 0, 1]);
+    expect(palette.entries[99]).toEqual([0, 0, 0]);
   });
 
   it("leaves the palette at its default when the flame carries none", () => {
@@ -690,7 +823,7 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
     for (let i = 0; i < 6; i++) expect(got[i]).toBeCloseTo(want[i], 3);
   });
 
-  it("bakes a nonlinear kaleidoscope copy's rotation into `post`, not `coefs`", () => {
+  it("bakes a nonlinear kaleidoscope copy's rotation into `post`, not `coefs`, composed over the map's own post", () => {
     const transforms: Transform[] = [
       {
         id: 0,
@@ -712,7 +845,9 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
 
     const file = decodeFlameFile(xml);
     expect(file).not.toBeNull();
-    expect(file!.warnings.some((w) => /post transform/i.test(w))).toBe(true);
+    // The copy rotation imports as the copy's own post-affine now — the
+    // same stage it exported into — so no shape warning.
+    expect(file!.warnings.some((w) => /post transform/i.test(w))).toBe(false);
 
     const back = decodeScene(file!.scenes[0].encoded);
     expect(back).not.toBeNull();
@@ -815,11 +950,18 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
     const { xml } = encodeFlameFile(source, "custom-palette");
     const back = loadFirstScene(xml);
     expect(back.customPalette).toBeDefined();
-    const stops = back.customPalette!.stops;
-    expect(stops[0][0]).toBeCloseTo(1, 3);
-    expect(stops[0][1]).toBeCloseTo(0, 3);
-    expect(stops[0][2]).toBeCloseTo(0, 3);
-    const last = stops[stops.length - 1];
+    // The export writes the scene's resolved 256-entry LUT as the `<palette>`
+    // block, and the import now preserves that block whole — so the payload
+    // comes back as a full-resolution ramp whose endpoints land on the
+    // authored stops.
+    const palette = back.customPalette!;
+    if (!("kind" in palette)) throw new Error("expected a ramp palette");
+    expect(palette.entries).toHaveLength(256);
+    const first = palette.entries[0];
+    expect(first[0]).toBeCloseTo(1, 3);
+    expect(first[1]).toBeCloseTo(0, 3);
+    expect(first[2]).toBeCloseTo(0, 3);
+    const last = palette.entries[palette.entries.length - 1];
     expect(last[0]).toBeCloseTo(0, 3);
     expect(last[1]).toBeCloseTo(0, 3);
     expect(last[2]).toBeCloseTo(1, 3);

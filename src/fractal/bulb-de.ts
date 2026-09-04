@@ -153,8 +153,9 @@
  * `analyzeSurfaceSystem` refuses every map with a non-fold variation
  * ("map N uses variations"), so the IFS complement is automatic.
  */
-import { composeAffine } from "./affine";
+import { composeAffine, isIdentityAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
+import { activeParametricVariationTypes } from "./variations";
 import {
   effectiveSymmetryOrder,
   systemHasChaos,
@@ -269,13 +270,29 @@ export interface BulbDE {
 type BulbCalibrationDE = Omit<BulbDE, "patternCalibration">;
 
 /** `composeVariations`' active filter again (the twin of `escape-de.ts`'s
- * `pureFoldVariation`): the single active `bulb` entry, or null. */
+ * `pureFoldVariation`): the single active `bulb` entry, or null. The
+ * parametric julia family and curl are not triplex powers and are refused
+ * by name through {@link parametricBulbRefusal}. */
 function pureBulbVariation(t: Transform): Variation | null {
   const active = (t.variations ?? []).filter(
     (v) => Number.isFinite(v.weight) && v.weight !== 0,
   );
   if (active.length !== 1) return null;
   return active[0].type === "bulb" ? active[0] : null;
+}
+
+/** The named clause appended beside the generic "not a pure triplex power"
+ * refusal when the map carries one of the PARAMETRIC warps —
+ * `surface-eligibility.ts`'s qsquare-hint precedent. `null` when nothing
+ * parametric is active. */
+function parametricBulbRefusal(t: Transform): string | null {
+  const types = activeParametricVariationTypes(t.variations);
+  if (types.length === 0) return null;
+  const plural = types.length > 1 ? "s" : "";
+  return (
+    `the map uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `which the Mandelbulb render does not iterate`
+  );
 }
 
 /**
@@ -302,6 +319,8 @@ export function analyzeBulbSystem(
     const bulb = pureBulbVariation(map);
     if (!bulb) {
       reasons.push("the map is not a pure triplex power");
+      const clause = parametricBulbRefusal(map);
+      if (clause) reasons.push(clause);
     } else if (bulb.weight !== 1) {
       // A weight other than 1 iterates `w·V(Mv + t) + p`, which is a
       // different object, not a rescaling of this one: the offset `+ p` does
@@ -314,6 +333,19 @@ export function analyzeBulbSystem(
       );
     } else if (!isFlatTransform(map)) {
       reasons.push("the map extends into 4D (the Mandelbulb is a 3D object)");
+    } else if (map.post !== undefined && !isIdentityAffine(map.post)) {
+      // A POST-AFFINE on the lone map is REFUSED, not ignored: the bulb
+      // core's params wire is frozen (the variant block ends at 288 with
+      // the shared plane/balloon block beside it — no room for a post's
+      // rows), and an orbit that silently dropped the post would march a
+      // different object than the points modes render for the same
+      // document. `analyzeEscapeSystem` owns the composed chain for a
+      // posted bulb: two links (a fold beside the power) route there
+      // instead, and a LONE posted bulb is a disclosed dead end in
+      // Surface mode.
+      reasons.push(
+        "the map carries a post-affine, which the Mandelbulb estimator has no wire for (chain it with a fold to render one)",
+      );
     } else if (transformSigmas(map).min <= 0) {
       // A singular M collapses the orbit onto a subspace, where the escape
       // radius below has no solution and the bounding ball is unbounded.

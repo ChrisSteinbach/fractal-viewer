@@ -202,11 +202,22 @@ export function accumulateFlame4(
       ? undefined
       : (hist.pointTiling ??= createPointTilingCursorState());
 
-  const { affines, variations, postRotations, finalAffine, finalWarp } =
-    prepared;
+  const {
+    affines,
+    variations,
+    postRotations,
+    posts,
+    finalAffine,
+    finalWarp,
+    finalPost,
+  } = prepared;
   const { baseTransformCount, schedule, emitters } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
+  // The tone-map normalizer's input — every deposit below adds its weight
+  // here, exactly alongside the maxHits update it sits beside (flame.ts's
+  // accumulateFlame mirrors this; see FlameHistogram.hitMass).
+  let hitMass = hist.hitMass;
   // Emitter-sample stream — accumulateFlame's per-run reseedable object, one
   // primary seed draw per emitter step (chaos-game.ts's emitterSeed). Inert
   // without emitters.
@@ -349,6 +360,7 @@ export function accumulateFlame4(
           const bucket = row * width + col;
           const hit = (hits[bucket] += weight);
           if (hit > maxHits) maxHits = hit;
+          hitMass += weight;
           const offset = bucket * 3;
           sumRGB[offset] += r * weight;
           sumRGB[offset + 1] += g * weight;
@@ -438,6 +450,23 @@ export function accumulateFlame4(
         ny = q[1];
         nz = q[2];
         nw = q[3];
+      }
+      // The slot's POST-AFFINE — stepOrbit4's insertion exactly (this loop
+      // is its hand-inlined mirror, pinned by the oracle test). Emitter
+      // steps skip it.
+      const slotPost = posts[idx];
+      if (slotPost !== null) {
+        const sm = slotPost.m;
+        const st = slotPost.t;
+        const sx = sm[0] * nx + sm[1] * ny + sm[2] * nz + sm[3] * nw + st[0];
+        const sy = sm[4] * nx + sm[5] * ny + sm[6] * nz + sm[7] * nw + st[1];
+        const sz = sm[8] * nx + sm[9] * ny + sm[10] * nz + sm[11] * nw + st[2];
+        const sw =
+          sm[12] * nx + sm[13] * ny + sm[14] * nz + sm[15] * nw + st[3];
+        nx = sx;
+        ny = sy;
+        nz = sz;
+        nw = sw;
       }
     }
 
@@ -536,6 +565,21 @@ export function accumulateFlame4(
         fy = q[1];
         fz = q[2];
         fw = q[3];
+      }
+      // The lens's own post-affine, after its variation blend — plotPoint4's
+      // lens order exactly.
+      if (finalPost !== null) {
+        const pm = finalPost.m;
+        const pt = finalPost.t;
+        const gx = pm[0] * fx + pm[1] * fy + pm[2] * fz + pm[3] * fw + pt[0];
+        const gy = pm[4] * fx + pm[5] * fy + pm[6] * fz + pm[7] * fw + pt[1];
+        const gz = pm[8] * fx + pm[9] * fy + pm[10] * fz + pm[11] * fw + pt[2];
+        const gw =
+          pm[12] * fx + pm[13] * fy + pm[14] * fz + pm[15] * fw + pt[3];
+        fx = gx;
+        fy = gy;
+        fz = gz;
+        fw = gw;
       }
       if (
         Number.isFinite(fx) &&
@@ -674,6 +718,7 @@ export function accumulateFlame4(
       const bucket = row * width + col;
       const hit = (hits[bucket] += weight);
       if (hit > maxHits) maxHits = hit;
+      hitMass += weight;
       const o = bucket * 3;
 
       let r: number;
@@ -864,6 +909,7 @@ export function accumulateFlame4(
         const bucket = row * width + col;
         const hit = (hits[bucket] += sourceWeight);
         if (hit > maxHits) maxHits = hit;
+        hitMass += sourceWeight;
         const o = bucket * 3;
         sumRGB[o] += r * sourceWeight;
         sumRGB[o + 1] += g * sourceWeight;
@@ -914,6 +960,7 @@ export function accumulateFlame4(
         const echoWeight = sourceWeight * echo.weight;
         const hit = (hits[bucket] += echoWeight);
         if (hit > maxHits) maxHits = hit;
+        hitMass += echoWeight;
         const o = bucket * 3;
         const t = echo.tintStrength;
         sumRGB[o] += (er + (echo.tint[0] - er) * t) * echoWeight;
@@ -929,5 +976,6 @@ export function accumulateFlame4(
   hist.orbitPrevBase = prevBase;
   hist.orbitChaosLeft = chaosLeft;
   hist.maxHits = maxHits;
+  hist.hitMass = hitMass;
   return hist;
 }

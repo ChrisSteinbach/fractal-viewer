@@ -198,6 +198,7 @@ import {
   presetTransforms,
 } from "../fractal/presets";
 import { seedCustomStops } from "../fractal/palette";
+import type { CustomPalette } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import { chaosRowIsNonTrivial, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import type { ShapeTrap, Transform } from "../fractal/types";
@@ -1679,7 +1680,11 @@ describe("setCustomPaletteStops", () => {
       (_, i) => [i / 8, i / 8, i / 8],
     );
     const next = setCustomPaletteStops(initialState(true), nineStops);
-    expect(next.customPalette?.stops).toEqual(nineStops.slice(0, 8));
+    // The stops reducer always writes an authored CustomPalette (never a
+    // ramp) — the cast names the contract this test pins.
+    expect((next.customPalette as CustomPalette).stops).toEqual(
+      nineStops.slice(0, 8),
+    );
   });
 
   it("returns the state unchanged when a channel is NaN or Infinity", () => {
@@ -2249,7 +2254,9 @@ describe("setBackgroundFlamePaletteId", () => {
     const next = setBackgroundFlamePaletteId(authored, "custom");
 
     expect(next.background.flamePaletteId).toBe("custom");
-    expect(next.customPalette?.stops).toEqual(seedCustomStops("sunset"));
+    expect((next.customPalette as CustomPalette).stops).toEqual(
+      seedCustomStops("sunset"),
+    );
   });
 });
 

@@ -768,6 +768,32 @@ fade.
 
 The compositions three flame presets were picked from.
 
+### flame-differential
+
+The flame-render fidelity differential over Electric Sheep genomes
+(`scripts/flame-differential.harness.ts`, corpus + flam3-render provisioned
+ephemerally under /tmp/opencode — the sheet skips legs and says so when
+either is missing). Leg A filters a seeded genome sample through
+`decodeFlameFile` (CLEAN = empty warning set, i.e. only what we implement)
+and tables the ignored-attribute frequency; leg B renders up to 12 clean
+genomes through BOTH renderers at 320x180 / flam3 quality 10 with the
+per-genome framing re-fit disclosed as a residual; leg C ladders one fixed
+clean genome at 0.25x-16x budgets, MAD to each side's own 64x reference.
+
+MEASURED VERDICT (2026-09-03, seed 860158, 200-genome sample + 3,697-file
+cohort top-up): fidelity-first, not patience. Only 12 of 3,879 scanned
+genomes (0.3%; the sample-only estimate is 0.5%) import CLEAN — the corpus is
+wall-to-wall unimplemented variations (pie 27 genomes, bent2 24, ex 24,
+popcorn 24, rings 23, wedge_julia 22, juliascope 21, super_shape 21, pdj 20,
+curl 19), which is the variation-shortlist evidence. On the 12 clean paired
+renders ours reads consistently SOFTER at the same budget — lit fraction
+lower on 9/12, MAD |RGB| 10.4-38.4 (median ~24.2), the two extreme rows
+flung-outlier framing blowups of the disclosed re-fit residual — while the
+noise ladder reads ours 2.095/1.638/1.157/0.655 vs flam3 3.270/2.216/1.323/
+0.707 at 0.25x/1x/4x/16x: flam3 is noisier at every rung, both fall ~3x, so
+at equal patience the complaint is the tone/sharpening pipeline and the
+framing re-fit, not Monte-Carlo noise.
+
 ### spherefold-radius-sweep
 
 The ratio sweep: the sphere fold's frozen `mR`/`fR` and the box wall, swept

@@ -41,7 +41,12 @@ import type {
   Vec3,
   WExtension,
 } from "./types";
-import { CLASSIC_FOLD_RADII, isFoldVariationType } from "./variations";
+import {
+  CLASSIC_FOLD_RADII,
+  isFoldVariationType,
+  isParametricVariationType,
+  JULIA_POWER_FLOOR,
+} from "./variations";
 import { clamp } from "./vec";
 
 /**
@@ -64,8 +69,26 @@ export interface MutationOptions {
  * rule requires a new version instead of silently changing existing lineage
  * nodes. The injected-RNG {@link mutateSystem} API above remains the legacy
  * compatibility profile and deliberately does not claim this version.
+ *
+ * Version 2's cause: the parametric julia family and curl joined the
+ * vocabulary, which widened the wildcard swap pool ({@link
+ * NON_LINEAR_VARIATION_TYPES} derives from `VARIATION_TYPES`) — a
+ * candidate-selection change to the `nonlinearVariations` domain's output,
+ * exactly the class of change this boundary exists to make loud. Version 1
+ * nodes re-deriving under version 2 refuse rather than re-derive
+ * differently; the jitter rules for every pre-existing field are unchanged
+ * (the parametric family's own jitter arm only fires for documents already
+ * carrying its parameters, which no version-1 document does).
+ *
+ * Version 3's cause: the per-transform POST-AFFINE joined the
+ * `spatialGeometry` domain (present-only jitter, {@link mutatePost}) — a
+ * new field assignment, whose derived stream (`spatialGeometry` over the
+ * map key's `:post` suffix) leaves every pre-existing stream untouched, but
+ * whose output perturbs any document that carries a post. Version 2 nodes
+ * re-deriving under version 3 refuse rather than re-derive differently; a
+ * version-2 document carries no post, so its jitter rules are unchanged.
  */
-export const SEEDED_MUTATION_ALGORITHM_VERSION = 1 as const;
+export const SEEDED_MUTATION_ALGORITHM_VERSION = 3 as const;
 export type SeededMutationAlgorithmVersion =
   typeof SEEDED_MUTATION_ALGORITHM_VERSION;
 
@@ -73,9 +96,11 @@ export type SeededMutationAlgorithmVersion =
  * Lockable mutation domains. Every field currently mutated by the legacy
  * kernel has exactly one owner:
  *
- * - `spatialGeometry`: position, rotation, scale, shear, and the affine
- *   wildcard rotation reroll;
- * - `nonlinearVariations`: base-map variation weights/fold parameters and a
+ * - `spatialGeometry`: position, rotation, scale, shear, the affine
+ *   wildcard rotation reroll, and a PRESENT per-transform post-affine
+ *   (import-only authoring; never materialized — the folds' rule);
+ * - `nonlinearVariations`: base-map variation weights, fold lengths, and the
+ *   parametric julia/curl parameters (present-only jitter), plus a
  *   wildcard variation-type swap;
  * - `finalLens`: final-transform variation weights/fold parameters;
  * - `fourDExtension`: authored leaves of a base map's `w` block;
@@ -83,7 +108,7 @@ export type SeededMutationAlgorithmVersion =
  * - `appearance`: authored color index/speed, finish, and surface pattern.
  *
  * Symmetry and emitters are pass-through structure, not mutation knobs in
- * version 1. Absent optional fields remain absent. The wildcard may replace
+ * any version. Absent optional fields remain absent. The wildcard may replace
  * the type of an existing nonlinear entry, but never creates an entry or an
  * optional block.
  */
@@ -167,6 +192,12 @@ const MIN_WEIGHT = 1e-6;
 /** Additive jitter half-range for shear: `U(-0.05, 0.05)`, matched to
  * {@link randomSystem}'s own shear roll being the gentlest-textured field. */
 const SHEAR_JITTER = 0.05;
+/** Additive jitter half-range for a PRESENT post-affine's matrix entries and
+ * translation components: `U(-0.05, 0.05)`, the same gentle texture as the
+ * shear jitter — a post is a fine-structure control, not a framing knob.
+ * Present-only (see {@link mutatePost}), so this never touches a document
+ * that authors none. */
+const POST_JITTER = 0.05;
 /** Shear clamp, mirroring the editor's Shear slider range (`ui.ts`'s
  * `CHANNELS.shear`, `±2`). */
 const SHEAR_CLAMP = 2;
@@ -471,12 +502,68 @@ function jitterBoxLimit(rng: Rng, value: number, spread: number): number {
 }
 
 /**
+ * Multiplicative, sign-preserving jitter for a julia-family power
+ * (`julianPower`/`juliascopePower`): {@link jitterScaleAxis}'s shape — a
+ * power's SIGN is shape (a negative power runs the spiral backwards, flam3's
+ * own real-valued behavior), so a mutation nudges how many sectors fan out,
+ * never which side of zero they fan on. Clamped at
+ * {@link JULIA_POWER_FLOOR} in magnitude — imported, so a mutant can never
+ * cross into the resolver's fallback domain — and at
+ * {@link FOLD_RADIUS_CLAMP_MAX} for the repeated-re-mutation ceiling.
+ */
+function jitterJuliaPower(rng: Rng, value: number, spread: number): number {
+  const magnitude = clamp(
+    Math.abs(value) *
+      uniform(
+        rng,
+        1 - FOLD_RADIUS_JITTER_HALF_RANGE * spread,
+        1 + FOLD_RADIUS_JITTER_HALF_RANGE * spread,
+      ),
+    JULIA_POWER_FLOOR,
+    FOLD_RADIUS_CLAMP_MAX,
+  );
+  return value < 0 ? -magnitude : magnitude;
+}
+
+/**
+ * Additive jitter for a curl coefficient or a julia-family `dist`:
+ * `U(-0.08, 0.08)`·spread, matching {@link BOX_LIMIT_JITTER}'s magnitude —
+ * additive rather than multiplicative (unlike the radii and the power
+ * above) so a deliberate 0 can still move under a mutation instead of
+ * multiplying to a permanent 0. Both `dist = 0` (a unit ring) and `c1 = 0`
+ * (a pure c2 term) are legitimate authored shapes the resolvers keep, and
+ * the clamp bounds are the same repeated-re-mutation ceiling ±
+ * {@link FOLD_RADIUS_CLAMP_MAX}.
+ */
+const CURL_COEFFICIENT_JITTER = 0.08;
+function jitterVariationCoefficient(
+  rng: Rng,
+  value: number,
+  spread: number,
+): number {
+  return clamp(
+    value +
+      uniform(
+        rng,
+        -CURL_COEFFICIENT_JITTER * spread,
+        CURL_COEFFICIENT_JITTER * spread,
+      ),
+    -FOLD_RADIUS_CLAMP_MAX,
+    FOLD_RADIUS_CLAMP_MAX,
+  );
+}
+
+/**
  * Jitter one variation entry: `weight` always moves (unchanged
- * rule), and — for the fold family only (`boxfold`/`spherefold`/
+ * rule), and — for the fold family (`boxfold`/`spherefold`/
  * `mandelbox`, see `variations.ts`'s `isFoldVariationType`) — each of
  * `minRadius`/`fixedRadius`/`boxLimit` that is already PRESENT on `v` is
  * nudged and clamped (see {@link jitterFoldRadius}/{@link jitterBoxLimit}).
- * An absent length ALWAYS stays absent — a mutation never materializes one,
+ * For the parametric julia/curl family (`variations.ts`'s
+ * `isParametricVariationType`) the same rule applies to its own six
+ * parameters through {@link jitterParametricVariationEntry}, routed from
+ * here so every call site dispatches through one function. An absent length
+ * or parameter ALWAYS stays absent — a mutation never materializes one,
  * `wildcard` included.
  *
  * That is narrower than "a mutation nudges what the author has" would
@@ -514,6 +601,12 @@ function jitterVariationEntry(
   v: Variation,
   spread: number,
 ): Variation {
+  // The parametric julia/curl family has its own parameter rules — same
+  // weight jitter, family-specific parameters, absent stays absent. Routed
+  // here so every jitter call site dispatches through ONE function.
+  if (isParametricVariationType(v.type)) {
+    return jitterParametricVariationEntry(rng, v, spread);
+  }
   const result: Variation = {
     ...v,
     weight: jitterVariationWeight(rng, v.weight, spread),
@@ -538,6 +631,54 @@ function jitterVariationEntry(
     result.boxLimit = jitterBoxLimit(rng, v.boxLimit, spread);
   }
 
+  return result;
+}
+
+/**
+ * Jitter one parametric variation entry: `weight` always moves (the
+ * unchanged rule, same as every other type), and each of the family's own
+ * parameters that is already PRESENT on `v` is nudged — the powers through
+ * {@link jitterJuliaPower}'s sign-preserving shape, the dist/c1/c2
+ * coefficients through {@link jitterVariationCoefficient}'s additive one.
+ * An absent parameter ALWAYS stays absent — a mutation never materializes
+ * one, `wildcard` included. The fold-radii arm's exact verdict one feature
+ * over: a mutation grid must stay a grid of the system you brought it, so a
+ * cell may perturb a parameter the author already carries but must never
+ * invent shape parameters the base system never had. The entry is COPIED
+ * rather than rebuilt ({@link jitterVariationEntry}'s standing rule), so a
+ * field this function has no rule for rides through untouched.
+ */
+function jitterParametricVariationEntry(
+  rng: Rng,
+  v: Variation,
+  spread: number,
+): Variation {
+  const result: Variation = {
+    ...v,
+    weight: jitterVariationWeight(rng, v.weight, spread),
+  };
+  if (v.curlC1 !== undefined) {
+    result.curlC1 = jitterVariationCoefficient(rng, v.curlC1, spread);
+  }
+  if (v.curlC2 !== undefined) {
+    result.curlC2 = jitterVariationCoefficient(rng, v.curlC2, spread);
+  }
+  if (v.julianDist !== undefined) {
+    result.julianDist = jitterVariationCoefficient(rng, v.julianDist, spread);
+  }
+  if (v.juliascopeDist !== undefined) {
+    result.juliascopeDist = jitterVariationCoefficient(
+      rng,
+      v.juliascopeDist,
+      spread,
+    );
+  }
+  if (v.julianPower !== undefined) {
+    result.julianPower = jitterJuliaPower(rng, v.julianPower, spread);
+  }
+  if (v.juliascopePower !== undefined) {
+    result.juliascopePower = jitterJuliaPower(rng, v.juliascopePower, spread);
+  }
   return result;
 }
 
@@ -1164,6 +1305,13 @@ function cloneTransformForMutation(base: Transform): Transform {
     scale: [...base.scale] as Vec3,
   };
   if (base.shear !== undefined) result.shear = [...base.shear] as Vec3;
+  // The post-affine is cloned DEEP (fresh m/t arrays) but never
+  // MATERIALIZED: a jitter arm perturbs a present post below, an absent
+  // one stays absent — the folds' rule, so a mutation grid stays a grid of
+  // the system you brought it.
+  if (base.post !== undefined) {
+    result.post = { m: [...base.post.m], t: [...base.post.t] as Vec3 };
+  }
   if (base.variations !== undefined) {
     result.variations = base.variations.map((variation) => ({ ...variation }));
   }
@@ -1275,6 +1423,34 @@ function mutateFourDExtension(
   if (base.w !== undefined) result.w = jitterW(rng, base.w, spread);
 }
 
+/**
+ * The post-affine's jitter arm — PRESENT-ONLY (the fold lengths' verdict,
+ * one feature over): a post is import-only authoring this PR, so
+ * materializing one on an unauthored map would move a system the user
+ * never parameterized, and a mutation grid must stay a grid of the system
+ * you brought it. A present post's matrix entries and translation
+ * components each take a small additive nudge (±`POST_JITTER` scaled), no
+ * clamps — the domain is all of R³×ᵀ and an expansive jitter outcome is
+ * the user's retry, not the engine's refusal.
+ */
+function mutatePost(
+  result: Transform,
+  base: Transform,
+  rng: Rng,
+  spread: number,
+): void {
+  if (base.post !== undefined) {
+    result.post = {
+      m: base.post.m.map(
+        (v) => v + uniform(rng, -POST_JITTER * spread, POST_JITTER * spread),
+      ),
+      t: base.post.t.map(
+        (v) => v + uniform(rng, -POST_JITTER * spread, POST_JITTER * spread),
+      ) as Vec3,
+    };
+  }
+}
+
 function mutateMapSelectionXaos(
   result: Transform,
   base: Transform,
@@ -1371,6 +1547,16 @@ function buildSeededMutant(
         result,
         baseMap,
         derivedMutationRng(context, attempt, "spatialGeometry", key),
+        spread,
+      );
+      // The post-affine rides the same lockable domain (it is affine
+      // geometry), but derives its own stream — the map key's `:post`
+      // suffix keeps it from disturbing the geometry stream's consumption —
+      // and only fires for a document already carrying a post.
+      mutatePost(
+        result,
+        baseMap,
+        derivedMutationRng(context, attempt, "spatialGeometry", `${key}:post`),
         spread,
       );
     }

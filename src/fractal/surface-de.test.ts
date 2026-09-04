@@ -131,6 +131,10 @@ function expandedReference(de: SurfaceDE): SurfaceDE {
         foldSigma: base.foldSigma,
         foldRadii: base.foldRadii,
         baseIndex: base.baseIndex,
+        // The per-map post inverse is copy-independent (the sector sweep
+        // carries the copy dependence), so every copy shares the base's.
+        postInvM: base.postInvM,
+        postInvT: base.postInvT,
         // Rotations leave singular values (and invT) alone, so the
         // composed copy's stage-2 scalars are the base map's exactly;
         // the directional bound rotates with the matrix:
@@ -255,6 +259,45 @@ describe("analyzeSurfaceSystem eligibility", () => {
     expect(analysis.reasons).toHaveLength(1);
     expect(analysis.reasons[0]).toMatch(/uses variations/);
     expect(analysis.reasons[0]).toContain("map 1");
+  });
+
+  it("names a parametric variation the descent cannot estimate, beside the generic reason", () => {
+    // The named-refusal rule (surface-eligibility.ts's qsquare-hint
+    // precedent): the ordinary "uses variations" refusal stays, and a
+    // SECOND clause says WHICH warp — julian/juliascope/curl are refused
+    // by default (the gate's whitelist), but a refusal that doesn't name
+    // the offender leaves the reader guessing.
+    for (const type of ["julian", "juliascope", "curl"] as const) {
+      const analysis = analyzeSurfaceSystem([
+        map({ variations: [{ type, weight: 1 }] }),
+      ]);
+      expect(analysis.status).toBe("ineligible");
+      expect(analysis.reasons).toContain("map 1 uses variations");
+      const named = analysis.reasons.find((r) => r !== "map 1 uses variations");
+      expect(named).toContain(type);
+      expect(named).toContain("no inverse descent");
+    }
+  });
+
+  it("names a parametric variation on a blended map and in the final transform too", () => {
+    const blended = analyzeSurfaceSystem([
+      map({
+        variations: [
+          { type: "mandelbox", weight: 1 },
+          { type: "julian", weight: 0.5 },
+        ],
+      }),
+    ]);
+    expect(blended.status).toBe("ineligible");
+    expect(blended.reasons.some((r) => r.includes("julian"))).toBe(true);
+
+    const final = analyzeSurfaceSystem(
+      [map()],
+      map({ id: 99, variations: [{ type: "curl", weight: 1 }] }),
+    );
+    expect(final.status).toBe("ineligible");
+    expect(final.reasons).toContain("final transform uses variations");
+    expect(final.reasons.some((r) => r.includes("curl"))).toBe(true);
   });
 
   it("treats a weight-0 variation as inert, staying eligible", () => {
@@ -4355,5 +4398,148 @@ describe("analyzeSurfaceSystem shape emitters", () => {
     expect(estimateDistance(root, p)).toBeGreaterThan(0.2);
     expect(estimateDistance(depth1, p)).toBeCloseTo(-0.054, 12);
     expect(estimateDistance(all, p)).toBe(estimateDistance(depth1, p));
+  });
+});
+
+describe("transformSigmas with a post-affine", () => {
+  it("prices the composite linear map once a post exists (the fast path is invalid)", () => {
+    const t = map({ post: { m: [2, 0, 0, 0, 2, 0, 0, 0, 2], t: [0, 0, 0] } });
+    // Composite = 2 · diag(0.5) = 1 on every axis.
+    const s = transformSigmas(t);
+    expect(s.min).toBeCloseTo(1, 12);
+    expect(s.max).toBeCloseTo(1, 12);
+  });
+  it("an identity post prices exactly as absence", () => {
+    const bare = transformSigmas(map());
+    const withIdentity = transformSigmas(
+      map({ post: { m: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0] } }),
+    );
+    expect(withIdentity).toEqual(bare);
+  });
+});
+
+describe("analyzeSurfaceSystem eligibility with posts", () => {
+  it("a strongly-contracting post keeps a system eligible, sigmas pricing the composite", () => {
+    const transforms: Transform[] = sierpinskiTetrahedron().map((t) => ({
+      ...t,
+      post: {
+        m: [0.25, 0, 0, 0, 0.25, 0, 0, 0, 0.25],
+        t: [0, 0, 0] as Vec3,
+      },
+    }));
+    const analysis = analyzeSurfaceSystem(transforms);
+    expect(analysis.status).toBe("eligible");
+    // Composite contraction: 0.5 · 0.25 = 0.125.
+    for (const s of analysis.sigmas) {
+      expect(s.max).toBeCloseTo(0.125, 12);
+    }
+  });
+  it("an expanding post refuses with the existing 'does not contract' reason", () => {
+    const transforms: Transform[] = sierpinskiTetrahedron().map((t) => ({
+      ...t,
+      post: { m: [4, 0, 0, 0, 4, 0, 0, 0, 4], t: [0, 0, 0] as Vec3 },
+    }));
+    const analysis = analyzeSurfaceSystem(transforms);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons.some((r) => r.includes("does not contract"))).toBe(
+      true,
+    );
+  });
+});
+
+describe("the inverse descent with a per-map post-affine", () => {
+  // A shearing, NON-orthogonal post with a translation: the exact shape the
+  // old transpose-only shortcut could not represent.
+  const post = {
+    m: [0.4, 0.1, 0, 0, 0.35, 0.05, 0, 0, 0.4],
+    t: [0.02, -0.03, 0.01] as [number, number, number],
+  };
+  const postedSierpinski = (): Transform[] =>
+    sierpinskiTetrahedron().map((t) => ({ ...t, post }));
+
+  it("forward-maps the query through the chaos game's actual step algebra: inv(post)∘post ≈ identity", () => {
+    const m = post.m;
+    const t = post.t;
+    const det =
+      m[0] * (m[4] * m[8] - m[5] * m[7]) -
+      m[1] * (m[3] * m[8] - m[5] * m[6]) +
+      m[2] * (m[3] * m[7] - m[4] * m[6]);
+    expect(Math.abs(det)).toBeGreaterThan(1e-6);
+    const inv = 1 / det;
+    const im = [
+      (m[4] * m[8] - m[5] * m[7]) * inv,
+      (m[2] * m[7] - m[1] * m[8]) * inv,
+      (m[1] * m[5] - m[2] * m[4]) * inv,
+      (m[5] * m[6] - m[3] * m[8]) * inv,
+      (m[0] * m[8] - m[2] * m[6]) * inv,
+      (m[2] * m[3] - m[0] * m[5]) * inv,
+      (m[3] * m[7] - m[4] * m[6]) * inv,
+      (m[1] * m[6] - m[0] * m[7]) * inv,
+      (m[0] * m[4] - m[1] * m[3]) * inv,
+    ];
+    // The descent's own inverse form: P⁻¹(x) = invM·x + (−invM·t).
+    const invT: Vec3 = [
+      -(im[0] * t[0] + im[1] * t[1] + im[2] * t[2]),
+      -(im[3] * t[0] + im[4] * t[1] + im[5] * t[2]),
+      -(im[6] * t[0] + im[7] * t[1] + im[8] * t[2]),
+    ];
+    const rng = mulberry32(7);
+    for (let i = 0; i < 32; i++) {
+      const p: Vec3 = [rng() - 0.5, rng() - 0.5, rng() - 0.5];
+      const y = applyAffine({ m, t }, p[0], p[1], p[2]);
+      const round = applyAffine({ m: im, t: invT }, y[0], y[1], y[2]);
+      expect(round[0]).toBeCloseTo(p[0], 10);
+      expect(round[1]).toBeCloseTo(p[1], 10);
+      expect(round[2]).toBeCloseTo(p[2], 10);
+    }
+  });
+
+  it("the DE descends queries on the attractor the POSTED chaos game plots (affine maps)", () => {
+    const transforms = postedSierpinski();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 8192, mulberry32(0x5eed));
+    for (let i = 0; i < cloud.count; i += 7) {
+      const p: Vec3 = [
+        cloud.positions[i * 3],
+        cloud.positions[i * 3 + 1],
+        cloud.positions[i * 3 + 2],
+      ];
+      const d = estimateDistanceRefined(de, p);
+      // A point ON the attractor descends to <= 0 (up to sampling slack):
+      // the nearest sampled neighbour bounds how close to the surface a
+      // cloud point can be expected to sit.
+      const truth = nearestDistance(cloud, p);
+      expect(d).toBeLessThan(truth + 0.05);
+    }
+  });
+
+  it("the DE's un-post stage agrees with the forward algebra at kaleidoscope order 3", () => {
+    const transforms = postedSierpinski();
+    const symmetry = { order: 3, plane: "xy" as const };
+    const de = buildSurfaceDE(transforms, null, symmetry);
+    // Sanity: the estimator is finite, and query points of the POSTED
+    // plotted cloud descend non-positive more often than the pre-post
+    // cloud's would — the plotted set itself is the ground truth here.
+    const cloud = runChaosGame(
+      transforms,
+      8192,
+      mulberry32(0x5eed),
+      null,
+      symmetry,
+    );
+    let inside = 0;
+    let total = 0;
+    for (let i = 0; i < cloud.count; i += 5) {
+      const p: Vec3 = [
+        cloud.positions[i * 3],
+        cloud.positions[i * 3 + 1],
+        cloud.positions[i * 3 + 2],
+      ];
+      const d = estimateDistanceRefined(de, p);
+      total++;
+      if (d <= 0.02) inside++;
+    }
+    // At least half the sampled attractor points read as on/at the set.
+    expect(inside / total).toBeGreaterThan(0.5);
   });
 });

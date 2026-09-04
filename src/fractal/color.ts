@@ -238,15 +238,25 @@ export interface RenderColorInputs {
 
 /** Structural equality for a resolved palette payload. Worker messages clone
  * Custom objects, so reference equality would turn an unrelated color edit
- * into a false ramp change and an unnecessary accumulation restart. */
+ * into a false ramp change and an unnecessary accumulation restart. A ramp
+ * payload compares the same way — element by element — rather than by any
+ * content hash: 768 float comparisons per check is noise next to the cost of
+ * a false accumulation restart, and the historical hazard was forgetting the
+ * variant existed, not the compare's cost. A ramp and a stops palette are
+ * different payloads even when they would sample to the same gradient. */
 function samePaletteSpec(a: PaletteSpec, b: PaletteSpec): boolean {
   if (typeof a === "string" || typeof b === "string") return a === b;
-  if (a.stops.length !== b.stops.length) return false;
-  return a.stops.every(
+  const aIsRamp = "kind" in a;
+  const bIsRamp = "kind" in b;
+  if (aIsRamp !== bIsRamp) return false;
+  const aList = aIsRamp ? a.entries : a.stops;
+  const bList = bIsRamp ? b.entries : b.stops;
+  if (aList.length !== bList.length) return false;
+  return aList.every(
     (stop, i) =>
-      stop[0] === b.stops[i][0] &&
-      stop[1] === b.stops[i][1] &&
-      stop[2] === b.stops[i][2],
+      stop[0] === bList[i][0] &&
+      stop[1] === bList[i][1] &&
+      stop[2] === bList[i][2],
   );
 }
 

@@ -8,6 +8,7 @@
  * All browser globals are accessed through injectable `PersistDeps` so the
  * module stays fully testable without a real DOM.
  */
+import { isIdentityAffine } from "../fractal/affine";
 import { isFlatTransform } from "../fractal/affine4";
 import {
   SURFACE_PATTERN_AXES,
@@ -18,6 +19,7 @@ import {
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
   MAX_CUSTOM_PALETTE_STOPS,
+  MAX_RAMP_ENTRIES,
   MIN_CUSTOM_PALETTE_STOPS,
   hexToRgb,
   rgbToHex,
@@ -25,6 +27,7 @@ import {
 import type {
   CustomPalette,
   PaletteSelection,
+  RampPalette,
   RgbStop,
 } from "../fractal/palette";
 import {
@@ -257,10 +260,13 @@ export interface SceneSnapshot {
    * Flame, Solid, Surface, and generated Flame background (see
    * {@link AppState.customPalette}). Optional like `finalTransform` — absent
    * until one of those palette selections first lands on Custom — unlike the
-   * always-present settings blocks above. Balloon's independent Custom
-   * gradient is {@link balloonCustomPalette} below.
+   * always-present settings blocks above. The payload is either an
+   * authored 2–8-stop {@link CustomPalette} or a full-resolution imported
+   * {@link RampPalette} (a `.flame` import lands here; see
+   * {@link encodePaletteWire} for the two wire forms). Balloon's independent
+   * Custom gradient is {@link balloonCustomPalette} below.
    */
-  customPalette?: CustomPalette;
+  customPalette?: CustomPalette | RampPalette;
   /**
    * The position mode's custom axis colors (see
    * {@link AppState.positionAxisColors}). Optional like `customPalette` —
@@ -337,8 +343,9 @@ export interface SceneSnapshot {
   /**
    * Independently-authored balloon Custom gradient. Retained even while a
    * built-in or Inherit is selected so dormant authoring survives save/load.
+   * Same payload union as {@link customPalette} above.
    */
-  balloonCustomPalette?: CustomPalette;
+  balloonCustomPalette?: CustomPalette | RampPalette;
   /**
    * The balloon shell's tint color (see `state.ts`'s
    * {@link AppState.balloonTint}) — persisted alongside `balloonRadius` the
@@ -705,6 +712,26 @@ function isVec3(v: unknown): v is Vec3 {
  * resolved at read time exactly as an authored one would be.
  */
 function decodeFoldRadius(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+/**
+ * Decode one optional per-variation parameter leaf on an untrusted variation
+ * entry — `julianPower`, `julianDist`, `juliascopePower`, `juliascopeDist`,
+ * `curlC1`, or `curlC2` (see `types.ts`'s {@link Variation}). QUIET fallback
+ * exactly like {@link decodeFoldRadius}, one feature over: a malformed value
+ * never rejects the whole scene, it just leaves the field absent — and the
+ * fold lengths' two deliberate deviations apply verbatim: NO `Number(x)`
+ * coercion (only a genuine, finite `number` survives — a numeric string, a
+ * boolean, `null`, `NaN`/`Infinity`, or an object all drop) and NO clamp.
+ * Each parameter's domain belongs entirely to `variations.ts`'s
+ * `resolveJuliaParams`/`resolveCurlParams`; persist's job here is fidelity,
+ * so an out-of-domain but genuinely finite value (e.g. a `curlC2` the
+ * resolver would keep as-is, or a `julianPower` below its floor) survives
+ * the decode untouched and is resolved at read time exactly as an authored
+ * one would be.
+ */
+function decodeVariationParam(raw: unknown): number | undefined {
   return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 }
 
@@ -1294,6 +1321,19 @@ function decodeVariations(raw: unknown): Variation[] | null {
     if (fixedRadius !== undefined) decoded.fixedRadius = fixedRadius;
     const boxLimit = decodeFoldRadius(v.boxLimit);
     if (boxLimit !== undefined) decoded.boxLimit = boxLimit;
+    const julianPower = decodeVariationParam(v.julianPower);
+    if (julianPower !== undefined) decoded.julianPower = julianPower;
+    const julianDist = decodeVariationParam(v.julianDist);
+    if (julianDist !== undefined) decoded.julianDist = julianDist;
+    const juliascopePower = decodeVariationParam(v.juliascopePower);
+    if (juliascopePower !== undefined)
+      decoded.juliascopePower = juliascopePower;
+    const juliascopeDist = decodeVariationParam(v.juliascopeDist);
+    if (juliascopeDist !== undefined) decoded.juliascopeDist = juliascopeDist;
+    const curlC1 = decodeVariationParam(v.curlC1);
+    if (curlC1 !== undefined) decoded.curlC1 = curlC1;
+    const curlC2 = decodeVariationParam(v.curlC2);
+    if (curlC2 !== undefined) decoded.curlC2 = curlC2;
     variations.push(decoded);
   }
   return variations;
@@ -1451,6 +1491,34 @@ function decodeWPlanes(
 }
 
 /**
+ * Decode one untrusted transform's optional `post` (the per-transform
+ * POST-AFFINE, `Transform.post`). The wire is the flat 12-number array
+ * `[m0..m8, tx, ty, tz]` the encoder writes — `isVec3`'s strict
+ * genuine-finite-number rule over all twelve (NO `Number()` coercion, the
+ * fold lengths' deviation: a numeric string or boolean is malformed, not a
+ * radius a coercion could salvage), so a present-but-invalid post returns
+ * `null` and the caller rejects the whole transform. `undefined` in,
+ * `undefined` out — absent stays absent.
+ */
+function decodePostAffine(
+  raw: unknown,
+): { m: number[]; t: [number, number, number] } | null | undefined {
+  if (raw === undefined) return undefined;
+  if (
+    !Array.isArray(raw) ||
+    raw.length !== 12 ||
+    !raw.every(
+      (n: unknown): n is number => typeof n === "number" && Number.isFinite(n),
+    )
+  ) {
+    return null;
+  }
+  const m = raw.slice(0, 9);
+  const t: [number, number, number] = [raw[9], raw[10], raw[11]];
+  return { m, t };
+}
+
+/**
  * Validate one untrusted transform into a {@link Transform} with the given `id`,
  * or `null` when anything is malformed so the caller rejects the whole scene.
  * Requires three valid Vec3 fields; `weight` / `shear` / `variations` / `w` are
@@ -1513,6 +1581,17 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
     const variations = decodeVariations(tf.variations);
     if (variations === null) return null;
     if (variations.length > 0) decoded.variations = variations;
+  }
+  // post: optional per-transform POST-AFFINE. Present ⇒ must be the exact
+  // 12-number wire shape (see decodePostAffine); a present-but-invalid post
+  // REJECTS the whole transform — shear's contract, not colorIndex's quiet
+  // fallback: a wrong-shaped post is geometry, and silently rendering a
+  // different shape than the authoring document is the one failure this
+  // decoder must never cause.
+  if (tf.post !== undefined) {
+    const post = decodePostAffine(tf.post);
+    if (post === null) return null;
+    if (post !== undefined) decoded.post = post;
   }
   // chaos: optional graph-directed selection row — quiet whole-row fallback,
   // no coercion, no clamp; see decodeChaosRow.
@@ -1612,6 +1691,13 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
  * the exact same quiet fallback here, unlike `decodeTransform`, whose `null`
  * distinguishes "reject the scene" from a genuinely absent optional field.
  *
+ * The wire form is a discriminated union (see {@link EncodedPaletteWire}):
+ * `{ stops: string[] }` for an authored {@link CustomPalette},
+ * `{ ramp: string }` for a full-resolution imported {@link RampPalette}.
+ * The shapes are tried in that order and an unknown shape drops the whole
+ * field; the encoder never writes both keys, and a payload that does is
+ * read as the stops form it predates.
+ *
  * Unlike the live gradient editor's reducer (`setCustomPaletteStops` in
  * `state.ts`), which TRIMS an overlong stop list down to
  * {@link MAX_CUSTOM_PALETTE_STOPS} rather than reject it, a hand-crafted stop
@@ -1619,30 +1705,64 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
  * here drops the WHOLE payload — the quiet-fallback contract for a malformed
  * enum-ish field is "drop the field", not "repair it" (see `decodeSymmetry`'s
  * axis or `decodeFlameParams`'s paletteId for the same rule applied to a
- * single value rather than an array).
+ * single value rather than an array). The ramp form validates the same way
+ * (see {@link decodeRampPalette}): any failure drops the whole palette, never
+ * a truncated version of it.
  *
  * Called before every primary palette selection is decoded in `decodeScene`,
  * so Flame, Solid, Surface, the Points ramp, and the generated Flame background
  * can each tell whether a `"custom"` selection has a payload to back it.
  */
-function decodeCustomPalette(raw: unknown): CustomPalette | undefined {
+function decodeCustomPalette(
+  raw: unknown,
+): CustomPalette | RampPalette | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const p = raw as Record<string, unknown>;
-  if (!Array.isArray(p.stops)) return undefined;
-  if (
-    p.stops.length < MIN_CUSTOM_PALETTE_STOPS ||
-    p.stops.length > MAX_CUSTOM_PALETTE_STOPS
-  )
-    return undefined;
+  if (Array.isArray(p.stops)) {
+    if (
+      p.stops.length < MIN_CUSTOM_PALETTE_STOPS ||
+      p.stops.length > MAX_CUSTOM_PALETTE_STOPS
+    )
+      return undefined;
 
-  const stops: RgbStop[] = [];
-  for (const entry of p.stops) {
-    if (typeof entry !== "string") return undefined;
-    const stop = hexToRgb(entry);
-    if (stop === null) return undefined;
-    stops.push(stop);
+    const stops: RgbStop[] = [];
+    for (const entry of p.stops) {
+      if (typeof entry !== "string") return undefined;
+      const stop = hexToRgb(entry);
+      if (stop === null) return undefined;
+      stops.push(stop);
+    }
+    return { stops };
   }
-  return { stops };
+  return decodeRampPalette(p.ramp);
+}
+
+/**
+ * Validate the `{ ramp: string }` wire form (see {@link decodeCustomPalette}
+ * for the quiet-fallback contract): ONE concatenated lowercase-hex string,
+ * 6 characters per entry in entry order (see {@link encodePaletteWire}'s
+ * encoding decision paragraph). STRICT like the stops form's
+ * {@link hexToRgb} entries — the string must be present, its length a
+ * multiple of 6, the entry count within
+ * [2, {@link MAX_RAMP_ENTRIES}] (the shared `.flame` parse cap), and every
+ * 6-char chunk must parse as a color — and ANY failure drops the whole
+ * palette field rather than keeping a truncated ramp, because a half-decoded
+ * gradient is a silently different object, exactly the thing this feature
+ * exists to stop rendering.
+ */
+function decodeRampPalette(raw: unknown): RampPalette | undefined {
+  if (typeof raw !== "string") return undefined;
+  if (raw.length === 0 || raw.length % 6 !== 0) return undefined;
+  const count = raw.length / 6;
+  if (count < MIN_CUSTOM_PALETTE_STOPS || count > MAX_RAMP_ENTRIES)
+    return undefined;
+  const entries: RgbStop[] = [];
+  for (let o = 0; o < raw.length; o += 6) {
+    const entry = hexToRgb(`#${raw.slice(o, o + 6)}`);
+    if (entry === null) return undefined;
+    entries.push(entry);
+  }
+  return { kind: "ramp", entries };
 }
 
 /**
@@ -2282,8 +2402,10 @@ function decodeFourDPose(raw: unknown): FourDPose | undefined {
 
 /**
  * The compact wire form of one variation entry: `{ type, weight }` plus the
- * fold's three optional lengths, each present only when the
- * source field is finite (see `encodeTransform`'s `encodeFoldRadius`).
+ * fold's three optional lengths and the parametric julia/curl family's six
+ * optional parameters, each present only when the
+ * source field is finite (see `encodeTransform`'s `encodeFoldRadius` and
+ * `encodeVariationParam`).
  */
 interface EncodedVariation {
   type: VariationType;
@@ -2291,6 +2413,12 @@ interface EncodedVariation {
   minRadius?: number;
   fixedRadius?: number;
   boxLimit?: number;
+  julianPower?: number;
+  julianDist?: number;
+  juliascopePower?: number;
+  juliascopeDist?: number;
+  curlC1?: number;
+  curlC2?: number;
 }
 
 /**
@@ -2311,6 +2439,13 @@ interface EncodedTransform {
   colorSpeed?: number;
   shear?: number[];
   variations?: EncodedVariation[];
+  /** The per-transform POST-AFFINE (`Transform.post`), as one flat
+   * 12-number array `[m0..m8, tx, ty, tz]` — the `Affine` shape flattened,
+   * matrix entries first, translation last. Written only when present and
+   * NOT structurally identity (see {@link isIdentityAffine}), so an
+   * unauthored document encodes byte-identically to one predating the
+   * field. */
+  post?: number[];
   chaos?: number[];
   w?: WExtension;
   finish?: SurfaceFinish;
@@ -2331,6 +2466,19 @@ type EncodedShapeTrap = Omit<ShapeTrap, "shape"> & {
  * them.
  */
 function encodeFoldRadius(n: number | undefined): number | undefined {
+  return n !== undefined && Number.isFinite(n) ? round4(n) : undefined;
+}
+
+/**
+ * Round one of the parametric julia/curl family's six parameters for the
+ * wire IFF it's present and finite — the identical shape as
+ * {@link encodeFoldRadius} one feature over: `undefined` in, `undefined`
+ * out, so an absent `julianPower`/`julianDist`/`juliascopePower`/
+ * `juliascopeDist`/`curlC1`/`curlC2` writes nothing and a document that
+ * never authored these fields encodes byte-identically to one that predates
+ * them.
+ */
+function encodeVariationParam(n: number | undefined): number | undefined {
   return n !== undefined && Number.isFinite(n) ? round4(n) : undefined;
 }
 
@@ -2694,6 +2842,15 @@ function encodeTransform(
     e.colorSpeed = round4(t.colorSpeed);
   }
   if (t.shear && t.shear.some((v) => v !== 0)) e.shear = t.shear.map(round4);
+  // The post-affine: written only when present and NOT structurally
+  // identity — shear's exact-zero pattern one matrix up (see
+  // isIdentityAffine), so an unauthored document encodes byte-identically
+  // to one predating the field and an identity post is indistinguishable
+  // from an absent one on the wire. Flattened to [m0..m8, tx, ty, tz]; every
+  // float round4'd like the rest of the wire.
+  if (t.post && !isIdentityAffine(t.post)) {
+    e.post = [...t.post.m, ...t.post.t].map(round4);
+  }
   if (t.variations && t.variations.length > 0) {
     const active: EncodedVariation[] = t.variations
       .filter((v) => Number.isFinite(v.weight) && v.weight !== 0)
@@ -2712,6 +2869,21 @@ function encodeTransform(
         if (fixedRadius !== undefined) ev.fixedRadius = fixedRadius;
         const boxLimit = encodeFoldRadius(v.boxLimit);
         if (boxLimit !== undefined) ev.boxLimit = boxLimit;
+        // The parametric julia/curl family's six parameters, the identical
+        // present-and-finite-only rule one feature over — see
+        // encodeVariationParam.
+        const julianPower = encodeVariationParam(v.julianPower);
+        if (julianPower !== undefined) ev.julianPower = julianPower;
+        const julianDist = encodeVariationParam(v.julianDist);
+        if (julianDist !== undefined) ev.julianDist = julianDist;
+        const juliascopePower = encodeVariationParam(v.juliascopePower);
+        if (juliascopePower !== undefined) ev.juliascopePower = juliascopePower;
+        const juliascopeDist = encodeVariationParam(v.juliascopeDist);
+        if (juliascopeDist !== undefined) ev.juliascopeDist = juliascopeDist;
+        const curlC1 = encodeVariationParam(v.curlC1);
+        if (curlC1 !== undefined) ev.curlC1 = curlC1;
+        const curlC2 = encodeVariationParam(v.curlC2);
+        if (curlC2 !== undefined) ev.curlC2 = curlC2;
         return ev;
       });
     if (active.length > 0) e.variations = active;
@@ -2760,6 +2932,48 @@ function encodeTransform(
   const emitter = encodeEmitter(t.emitter);
   if (emitter !== undefined) e.emitter = emitter;
   return e;
+}
+
+/**
+ * The wire form of a palette payload slot ({@link SceneSnapshot.customPalette}
+ * and {@link SceneSnapshot.balloonCustomPalette}) — a discriminated union on
+ * the payload's own shape: an authored {@link CustomPalette} rides as
+ * `{ stops: string[] }` (one `#rrggbb` hex string per stop, the file's
+ * per-color convention since the slot shipped), an imported
+ * {@link RampPalette} rides as `{ ramp: string }` (ONE concatenated
+ * lowercase-hex string, 6 characters per entry in entry order). The
+ * discriminator is the payload shape itself rather than an added `kind` tag,
+ * so every existing `{ stops: ... }` document decodes byte-identically.
+ */
+type EncodedPaletteWire = { stops: string[] } | { ramp: string };
+
+/**
+ * Encode a palette payload slot for the wire (see {@link EncodedPaletteWire}).
+ *
+ * WHY ONE CONCATENATED HEX STRING for a ramp, rather than base64-of-bytes:
+ * it reuses the file's existing per-color convention — `rgbToHex`'s
+ * `Math.round(clamp01(v)·255)` byte rounding and its lowercase 2-digit
+ * digits — and validates inline with the existing hex machinery
+ * ({@link hexToRgb} on each 6-char chunk), so the decoder needs no second
+ * decode path. Base64 would shave ~25% off the wire (a 256-entry ramp is
+ * ~1.5KB hex vs ~1KB base64 — noise in a `#v1=` hash that already carries a
+ * whole scene) at the cost of a second encoding and a bytes-vs-channels
+ * mismatch to keep straight. Byte quantization is LOSSLESS for real flam3
+ * palettes: both parse forms (`<palette>` hex and `<color index rgb>`)
+ * produce channel/255 values, so nothing rounds on the way out — and an
+ * in-memory ramp with non-byte-aligned channels quantizes on encode exactly
+ * like every other color in the document (CustomPalette stops are hex
+ * strings on this wire today too).
+ */
+function encodePaletteWire(
+  palette: CustomPalette | RampPalette,
+): EncodedPaletteWire {
+  if ("kind" in palette) {
+    return {
+      ramp: palette.entries.map((stop) => rgbToHex(stop).slice(1)).join(""),
+    };
+  }
+  return { stops: palette.stops.map(rgbToHex) };
 }
 
 /**
@@ -2813,7 +3027,7 @@ export function encodeScene(s: SceneSnapshot): string {
     balloonEcho: boolean;
     balloonRadius: number;
     balloonPaletteId?: BalloonPaletteSelection;
-    balloonCustomPalette?: { stops: string[] };
+    balloonCustomPalette?: EncodedPaletteWire;
     balloonTint: string;
     balloonTintStrength: number;
     fogDensity: number;
@@ -2827,7 +3041,7 @@ export function encodeScene(s: SceneSnapshot): string {
       shape?: BackgroundShape;
       flamePaletteId?: PaletteSelection;
     };
-    customPalette?: { stops: string[] };
+    customPalette?: EncodedPaletteWire;
     positionAxisColors?: { x: string; y: string; z: string };
     camera?: {
       target: number[];
@@ -3118,10 +3332,11 @@ export function encodeScene(s: SceneSnapshot): string {
     payload.tiling = encoded;
   }
   // Written only when present, like finalTransform above — never-authored
-  // scenes keep their short URLs. Encoded as hex strings for URL
-  // compactness — see rgbToHex.
+  // scenes keep their short URLs. Encoded as hex (per-stop strings for an
+  // authored gradient, one concatenated ramp string for an imported one) for
+  // URL compactness — see encodePaletteWire for the two forms' rationale.
   if (s.customPalette)
-    payload.customPalette = { stops: s.customPalette.stops.map(rgbToHex) };
+    payload.customPalette = encodePaletteWire(s.customPalette);
   // Inherit is the compact, legacy-preserving default. The independently
   // authored payload is still written whenever valid, even while dormant.
   if (
@@ -3130,9 +3345,7 @@ export function encodeScene(s: SceneSnapshot): string {
     payload.balloonPaletteId = s.balloonPaletteId;
   }
   if (s.balloonCustomPalette) {
-    payload.balloonCustomPalette = {
-      stops: s.balloonCustomPalette.stops.map(rgbToHex),
-    };
+    payload.balloonCustomPalette = encodePaletteWire(s.balloonCustomPalette);
   }
   // Written only when present, like customPalette above — the legacy
   // identity is expressed by absence (see AppState.positionAxisColors),

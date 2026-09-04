@@ -13,6 +13,7 @@ import {
   SHAPE_TRAP_MODES,
   SYMMETRY_PLANES,
   VARIATION_TYPES,
+  type Affine,
   type HybridSchedule,
   type ShapeTrap,
   type SurfaceFinish,
@@ -42,10 +43,12 @@ import {
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
   MAX_CUSTOM_PALETTE_STOPS,
+  MAX_RAMP_ENTRIES,
   MIN_CUSTOM_PALETTE_STOPS,
   hexToRgb,
   type CustomPalette,
   type PaletteSelection,
+  type RampPalette,
 } from "../fractal/palette";
 import type { PositionAxisColors } from "../fractal/color";
 import {
@@ -99,6 +102,12 @@ const VARIATION_FIELDS = {
   minRadius: true,
   fixedRadius: true,
   boxLimit: true,
+  julianPower: true,
+  julianDist: true,
+  juliascopePower: true,
+  juliascopeDist: true,
+  curlC1: true,
+  curlC2: true,
 } satisfies Fields<Variation>;
 const FINISH_FIELDS = {
   specular: true,
@@ -125,6 +134,10 @@ const W_PLANE_FIELDS = {
   yw: true,
   zw: true,
 } satisfies Fields<NonNullable<WExtension["rotation"]>>;
+const POST_AFFINE_FIELDS = {
+  m: true,
+  t: true,
+} satisfies Fields<Affine>;
 const TRANSFORM_FIELDS = {
   id: true,
   position: true,
@@ -135,6 +148,7 @@ const TRANSFORM_FIELDS = {
   colorSpeed: true,
   shear: true,
   variations: true,
+  post: true,
   w: true,
   chaos: true,
   finish: true,
@@ -281,6 +295,10 @@ const SURFACE_FIELDS = {
   floorEmission: true,
 } satisfies Fields<SurfaceParams>;
 const CUSTOM_PALETTE_FIELDS = { stops: true } satisfies Fields<CustomPalette>;
+const RAMP_PALETTE_FIELDS = {
+  kind: true,
+  entries: true,
+} satisfies Fields<RampPalette>;
 const AXIS_COLOR_FIELDS = {
   x: true,
   y: true,
@@ -508,6 +526,12 @@ function variation(value: unknown, path: string): string {
   finiteOptional(entry, "minRadius", path);
   finiteOptional(entry, "fixedRadius", path);
   finiteOptional(entry, "boxLimit", path);
+  finiteOptional(entry, "julianPower", path);
+  finiteOptional(entry, "julianDist", path);
+  finiteOptional(entry, "juliascopePower", path);
+  finiteOptional(entry, "juliascopeDist", path);
+  finiteOptional(entry, "curlC1", path);
+  finiteOptional(entry, "curlC2", path);
   return type;
 }
 
@@ -624,6 +648,22 @@ function primitive(value: unknown, path: string): void {
   }
 }
 
+/** A {@link Transform.post} affine: `{ m: 9 finite numbers, t: 3 finite
+ * numbers }` — `affine.ts`'s `Affine` shape, validated structurally (the
+ * identity test is persist's encode-side concern; here any well-formed
+ * affine is accepted). */
+function postAffine(value: unknown, path: string): void {
+  const entry = object(value, path, POST_AFFINE_FIELDS);
+  tuple(required(entry, "m", path), 9, `${path}.m`);
+  tuple(required(entry, "t", path), 3, `${path}.t`);
+  for (let i = 0; i < 9; i++) {
+    finite((entry.m as unknown[])[i], `${path}.m[${i}]`);
+  }
+  for (let i = 0; i < 3; i++) {
+    finite((entry.t as unknown[])[i], `${path}.t[${i}]`);
+  }
+}
+
 function shape(value: unknown, path: string): void {
   const spec = object(value, path, SHAPE_FIELDS);
   const parts = array(required(spec, "parts", path), `${path}.parts`);
@@ -693,6 +733,7 @@ function transform(
       variation(item, `${path}.variations[${index}]`),
     );
   }
+  if (entry.post !== undefined) postAffine(entry.post, `${path}.post`);
   if (entry.w !== undefined) wExtension(entry.w, `${path}.w`);
   if (entry.chaos !== undefined) {
     const chaos = array(entry.chaos, `${path}.chaos`);
@@ -820,7 +861,21 @@ function symmetry(value: unknown, path: string): void {
   }
 }
 
+/**
+ * A custom-palette payload — an authored 2–8-stop {@link CustomPalette} or
+ * a full-resolution imported {@link RampPalette}, discriminated on the
+ * payload's own `kind` field (the one the codec and app state both use).
+ * The two are validated as the different objects they are — a ramp is never
+ * coerced into (or truncated toward) the 8-stop editor vocabulary, and a
+ * stops payload never grows into a ramp — with the ramp's own
+ * [2, {@link MAX_RAMP_ENTRIES}] domain mirroring the parser cap
+ * (`flame-file.ts`) and the portable codec's validator (`persist.ts`).
+ */
 function customPalette(value: unknown, path: string): void {
+  if (isRampPaletteShape(value)) {
+    rampPalette(value, path);
+    return;
+  }
   const entry = object(value, path, CUSTOM_PALETTE_FIELDS);
   const stops = array(required(entry, "stops", path), `${path}.stops`);
   if (
@@ -830,6 +885,32 @@ function customPalette(value: unknown, path: string): void {
     throw new RangeError(`${path}.stops exceeds the palette cap`);
   }
   stops.forEach((stop, index) => rgb(stop, `${path}.stops[${index}]`));
+}
+
+/** Shape predicate for the ramp half of the custom-palette union: the
+ * discriminator is the payload's own `kind` field, exactly as the codec and
+ * `buildPaletteLUT` read it. */
+function isRampPaletteShape(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).kind === "ramp"
+  );
+}
+
+/** The {@link RampPalette} half of {@link customPalette}. */
+function rampPalette(value: unknown, path: string): void {
+  const entry = object(value, path, RAMP_PALETTE_FIELDS);
+  enumeration(required(entry, "kind", path), ["ramp"], `${path}.kind`);
+  const entries = array(required(entry, "entries", path), `${path}.entries`);
+  if (
+    entries.length < MIN_CUSTOM_PALETTE_STOPS ||
+    entries.length > MAX_RAMP_ENTRIES
+  ) {
+    throw new RangeError(`${path}.entries exceeds the palette cap`);
+  }
+  entries.forEach((stop, index) => rgb(stop, `${path}.entries[${index}]`));
 }
 
 function axisColors(value: unknown, path: string): void {

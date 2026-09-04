@@ -128,6 +128,7 @@ const TRANSFORM_FIELDS = {
   colorSpeed: "appearance",
   shear: "geometry",
   variations: "variations",
+  post: "geometry",
   w: "w",
   chaos: "chaosMatrix",
   finish: "appearance",

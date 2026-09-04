@@ -161,6 +161,11 @@ const FINAL_VARIATION_TYPES: VariationType[] = [
   // blow up the system. spherefold/mandelbox stay out of this pool — a
   // deliberate call, measured when the fold family joined the roll.
   "boxfold",
+  // The parametric julia family and curl stay out of this pool, the same
+  // deliberate call one feature over: a rolled lens can never carry params
+  // (see randomVariations' fold-radii note), and the parametric family at
+  // its ABSENT params renders the weight-scaled identity (julian/juliascope)
+  // or a mild reciprocal (curl) — rolling them would author an inert lens.
 ];
 
 /**
@@ -470,6 +475,21 @@ function randomVariationType(rng: Rng, exclude?: VariationType): VariationType {
  * The generator does not roll `Transform.chaos` rows either, the identical
  * stance: no evidence they improve the generator, and a rolled chi matrix
  * moves systems across the surface-eligibility seam behind the user's back.
+ *
+ * The parametric julia family and curl are rolled TYPE-wise (they derive
+ * into `NON_LINEAR_VARIATION_TYPES` like every other nonlinear warp, at
+ * absent params), but their parameters are NEVER rolled — the identical
+ * stance as the fold lengths above: the ratios move systems across the
+ * surface-eligibility seam behind the user's back, and a rolled parameter
+ * set is exactly that kind of unmeasured axis. `mutate-system.ts` is where
+ * a document that already carries parameters gets to explore near them.
+ *
+ * The per-transform POST-AFFINE (`Transform.post`) is never rolled either,
+ * the identical stance one matrix up: it is import-only authoring this PR,
+ * and a rolled general affine moves systems across the same eligibility
+ * seam (an expansive post refuses the surface gate outright). Absent stays
+ * absent — every generated system renders byte-identically to one that
+ * predates the field.
  */
 function randomVariations(rng: Rng): Variation[] | undefined {
   const variations: Variation[] = [];

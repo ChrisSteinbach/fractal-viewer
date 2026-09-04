@@ -52,12 +52,14 @@ import {
   PRESET_NAMES,
 } from "../fractal/presets";
 import {
+  buildPaletteLUT,
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
+  rgbToHex,
 } from "../fractal/palette";
-import type { RgbStop } from "../fractal/palette";
+import type { CustomPalette, RampPalette, RgbStop } from "../fractal/palette";
 import {
   buildColorModeLUT,
   LEGACY_POSITION_AXIS_COLORS,
@@ -4549,6 +4551,115 @@ describe("Ui variation editor", () => {
     ]);
   });
 
+  it("offers a parametric variation only the parameters that type reads, seeded from the document or the classic value", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        variations: [{ type: "julian", weight: 1, julianPower: 3 }],
+      },
+      0,
+      1,
+    );
+    // Julian reads exactly Power and Dist; the document authored only the
+    // power, so the dist row seeds from the classic 1.
+    expect(editorSlider("Julian power").value).toBe("3");
+    expect(editorSlider("Julian dist").value).toBe("1");
+
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        variations: [{ type: "curl", weight: 1 }],
+      },
+      0,
+      1,
+    );
+    expect(editorSlider("Curl c1").value).toBe("1");
+    expect(editorSlider("Curl c2").value).toBe("0");
+
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        variations: [{ type: "juliascope", weight: 1, juliascopeDist: 0.5 }],
+      },
+      0,
+      1,
+    );
+    expect(editorSlider("Juliascope power").value).toBe("1");
+    expect(editorSlider("Juliascope dist").value).toBe("0.5");
+  });
+
+  it("writes a parametric parameter only once its own slider moves, and removes it again at the classic value", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, variations: [{ type: "julian", weight: 1 }] },
+      0,
+      1,
+    );
+
+    const power = editorSlider("Julian power");
+    power.value = "3";
+    power.dispatchEvent(new Event("input"));
+    // Only the parameter that moved: the dist stays ABSENT, which is what
+    // keeps "absent means classic byte-identically" true through an edit.
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "julian", weight: 1, julianPower: 3 },
+    ]);
+
+    // Dragging back to the classic 1 REMOVES the field again.
+    power.value = "1";
+    power.dispatchEvent(new Event("input"));
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "julian", weight: 1 },
+    ]);
+  });
+
+  it("picks up a parametric parameter that changed under a stable selection, instead of writing the stale one back", () => {
+    // variationsEqual's gotcha: the editor keeps a WORKING COPY and only
+    // refreshes it when the incoming list differs. A comparison that
+    // ignored the new fields would let a morph or an undo change julianPower
+    // under a stable selection and silently revert it on the next drag.
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const at = (curlC2: number): Transform => ({
+      ...plain,
+      variations: [{ type: "curl", weight: 2, curlC2 }],
+    });
+    ui.renderTransformEditor(at(0.3), 0, 1);
+    ui.renderTransformEditor(at(0.4), 0, 1);
+
+    const slider = editorSlider("Variation curl");
+    slider.value = "1.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "curl", weight: 1.5, curlC2: 0.4 },
+    ]);
+  });
+
+  it("adds a parametric variation carrying none of its optional parameters", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    const select = addSelect();
+    select.value = "julian";
+    select.dispatchEvent(new Event("change"));
+
+    // Absent means the classic params, so a freshly added parametric
+    // variation must not materialize them — the add-dropdown has no
+    // opinion about the family's parameters.
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "julian", weight: 1 },
+    ]);
+  });
+
   it("carries the min radius down when the fixed radius drops below it — the fold's own domain, not a silent clamp", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -8565,6 +8676,146 @@ describe("custom palette editor", () => {
         ?.classList.contains("hidden"),
     ).toBe(true);
   });
+});
+
+describe("ramp-backed palette editors", () => {
+  // Every editor behaves identically behind a ramp payload — the primary
+  // five (which share AppState.customPalette) plus the Balloon's own slot —
+  // so this suite walks all seven rows over the same shapes.
+  const editorPrefixes = [
+    "ramp",
+    "background",
+    "flame",
+    "solid",
+    "surface",
+    "solidRamp",
+    "balloon",
+  ] as const;
+
+  /** A 256-entry imported ramp: black, a one-entry white band at 100, red at
+   * 200, blue at 201. The LUT (a straight copy) is what the editor's seed
+   * stops sample. */
+  function importedRamp(): RampPalette {
+    return {
+      kind: "ramp",
+      entries: Array.from({ length: 256 }, (_, i) => {
+        if (i === 100) return [1, 1, 1];
+        if (i === 200) return [1, 0, 0];
+        if (i === 201) return [0, 0, 1];
+        return [0, 0, 0];
+      }),
+    };
+  }
+
+  /** Eight evenly-spaced, byte-quantized samples of the ramp's LUT — the
+   * derived stops the editor is expected to display (seedCustomStops's
+   * sampling shape applied to the ramp payload). */
+  function expectedSeedStops(): RgbStop[] {
+    const lut = buildPaletteLUT(importedRamp())!;
+    return Array.from({ length: MAX_CUSTOM_PALETTE_STOPS }, (_, j) => {
+      const index = Math.round((j / (MAX_CUSTOM_PALETTE_STOPS - 1)) * 255);
+      return [
+        Math.round(lut[index * 3] * 255) / 255,
+        Math.round(lut[index * 3 + 1] * 255) / 255,
+        Math.round(lut[index * 3 + 2] * 255) / 255,
+      ];
+    });
+  }
+
+  function stateWithRamp(kind: (typeof editorPrefixes)[number]): AppState {
+    void kind;
+    const base = initialState(true);
+    const ramp = importedRamp();
+    return {
+      ...base,
+      colorMode: "height",
+      rampPaletteId: "custom",
+      background: { mode: "flame", flamePaletteId: "custom" },
+      flame: { ...base.flame, paletteId: "custom" },
+      solid: { ...base.solid, paletteId: "custom" },
+      surface: { ...base.surface, colorSource: "palette", paletteId: "custom" },
+      customPalette: ramp,
+      balloonPaletteId: "custom",
+      balloonCustomPalette: ramp,
+    };
+  }
+
+  it.each(editorPrefixes)(
+    "%s editor shows 8 derived seed stops plus the conversion note for a ramp payload",
+    (kind) => {
+      const ui = new Ui(document);
+      ui.updateLabels(stateWithRamp(kind));
+
+      const values = Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          `#${kind}CustomPaletteStops input[type='color']`,
+        ),
+      ).map((input) => input.value);
+      expect(values).toEqual(expectedSeedStops().map(rgbToHex));
+
+      const note = document.getElementById(
+        `${kind}CustomPaletteRampNote`,
+      ) as HTMLElement;
+      expect(note.classList.contains("hidden")).toBe(false);
+      expect(note.textContent?.trim()).toBe(
+        "Imported 256-color ramp — editing converts it to an 8-stop palette",
+      );
+    },
+  );
+
+  it.each(editorPrefixes)(
+    "%s editor hides the conversion note for an authored stops payload",
+    (kind) => {
+      const ui = new Ui(document);
+      ui.updateLabels({
+        ...stateWithRamp(kind),
+        customPalette: {
+          stops: [
+            [1, 0, 0],
+            [0, 0, 1],
+          ],
+        },
+        balloonCustomPalette: {
+          stops: [
+            [1, 0, 0],
+            [0, 0, 1],
+          ],
+        },
+      });
+
+      const note = document.getElementById(
+        `${kind}CustomPaletteRampNote`,
+      ) as HTMLElement;
+      expect(note.classList.contains("hidden")).toBe(true);
+    },
+  );
+
+  it.each(editorPrefixes)(
+    "%s editor converts the ramp payload on edit through the existing stops callback",
+    (kind) => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.updateLabels(stateWithRamp(kind));
+      const first = document.querySelector<HTMLInputElement>(
+        `#${kind}CustomPaletteStops input[type='color']`,
+      )!;
+
+      first.value = "#123456";
+      first.dispatchEvent(new Event("input", { bubbles: true }));
+
+      const expected = expectedSeedStops().map((stop, i) =>
+        i === 0 ? [0x12 / 255, 0x34 / 255, 0x56 / 255] : stop,
+      );
+      if (kind === "balloon") {
+        expect(handlers.onBalloonCustomPaletteStops).toHaveBeenCalledWith(
+          expected,
+        );
+      } else {
+        expect(handlers.onCustomPaletteStops).toHaveBeenCalledWith(expected);
+      }
+    },
+  );
 });
 
 describe("Ui ramp palette", () => {
@@ -14586,7 +14837,7 @@ describe("Ui background backdrop row", () => {
       document.querySelectorAll(
         '#backgroundCustomPaletteStops input[type="color"]',
       ),
-    ).toHaveLength(state.customPalette!.stops.length);
+    ).toHaveLength((state.customPalette as CustomPalette).stops.length);
   });
 
   it("reports edits from the Flame backdrop's Custom gradient editor", () => {
@@ -14609,7 +14860,7 @@ describe("Ui background backdrop row", () => {
 
     expect(handlers.onCustomPaletteStops).toHaveBeenCalledWith([
       [1 / 255, 2 / 255, 3 / 255],
-      ...state.customPalette!.stops.slice(1),
+      ...(state.customPalette as CustomPalette).stops.slice(1),
     ]);
   });
 

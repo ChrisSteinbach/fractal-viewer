@@ -264,6 +264,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
      * UniformsGroup. */
     vec4 uMapFinishA[MAX_MAPS];
     vec4 uMapFinishB[MAX_MAPS];
+    // The POST-AFFINE inverses — see the UniformsGroup for the full why.
+    mat4 uInvPostM[MAX_MAPS];
+    vec4 uInvPostT[MAX_MAPS];
   };
   uniform int uMapCount;
 #if SURFACE_SCHEDULE
@@ -718,8 +721,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
         int childState = surfaceChaosChildState4(depth, j);
         if (!surfaceChaosAllows4(currentState, childState)) continue;
 #endif
-        vec4 jImg = uInvM[j] * sImg + uInvT[j];
-        vec4 jExt = segment ? uInvM[j] * sExt : vec4(0.0);
+        vec4 jImg =
+          uInvM[j] * (uInvPostM[j] * sImg + uInvPostT[j]) + uInvT[j];
+        vec4 jExt = segment ? uInvM[j] * uInvPostM[j] * sExt : vec4(0.0);
         float rj = segmentRadius(jImg, jExt);
 #if SURFACE_SCHEDULE
         inner = min(inner, uMapColorSigma[j].w * (rj - childBound.x));
@@ -1089,11 +1093,11 @@ uniform float uBalloonPaletteEnabled;
             int childState = surfaceChaosChildState4(depth, j);
             if (!surfaceChaosAllows4(pState, childState)) continue;
 #endif
-            vec4 img = uInvM[j] * sQ + uInvT[j];
-            // uInvM[j] carries no translation — uInvT[j] is a separate
-            // member — so this IS the inverse map's linear part, all a
-            // segment's half-extent ever sees.
-            vec4 imgExt = segment ? uInvM[j] * sExt : vec4(0.0);
+            // Un-post stage, then the base inverse.
+            vec4 img =
+              uInvM[j] * (uInvPostM[j] * sQ + uInvPostT[j]) + uInvT[j];
+            vec4 imgExt =
+              segment ? uInvM[j] * uInvPostM[j] * sExt : vec4(0.0);
             float r = segmentRadius(img, imgExt);
 #if SURFACE_SCHEDULE
             float key = pScale * (r - childBound.x);
@@ -1768,11 +1772,11 @@ uniform float uBalloonPaletteEnabled;
             int childState = surfaceChaosChildState4(depth, j);
             if (!surfaceChaosAllows4(pState, childState)) continue;
 #endif
-            vec4 img = uInvM[j] * sQ + uInvT[j];
-            // uInvM[j] carries no translation — uInvT[j] is a separate
-            // member — so this IS the inverse map's linear part, all a
-            // segment's half-extent ever sees.
-            vec4 imgExt = segment ? uInvM[j] * sExt : vec4(0.0);
+            // Un-post stage, then the base inverse.
+            vec4 img =
+              uInvM[j] * (uInvPostM[j] * sQ + uInvPostT[j]) + uInvT[j];
+            vec4 imgExt =
+              segment ? uInvM[j] * uInvPostM[j] * sExt : vec4(0.0);
             float r = segmentRadius(img, imgExt);
 #if SURFACE_SCHEDULE
             float key = pScale * (r - childBound.x);
@@ -3053,6 +3057,11 @@ interface Surface4MapBuffers {
   readonly invM: Float32Array;
   /** MAX_MAPS * 4 floats: `-inv(M_i) . t_i`. */
   readonly invT: Float32Array;
+  /** MAX_MAPS * 16 floats: the POST-AFFINE inverse, COLUMN-major —
+   * identity until a map authors one. */
+  readonly invPostM: Float32Array;
+  /** MAX_MAPS * 4 floats: the post's inverse translation (zero until). */
+  readonly invPostT: Float32Array;
   /** MAX_MAPS * 4 floats: (r, g, b, sigmaMin). */
   readonly colorSigma: Float32Array;
   /** MAX_MAPS * 4 floats: (trapIndex, unused, unused, unused). */
@@ -3070,6 +3079,9 @@ interface Surface4MapBuffers {
  * rather than retyped — the 3D material's own constant, restated here
  * because it is module-private there and the two files are twins by
  * convention, not by import of each other's privates. */
+/** Row-major 4x4 identity — the no-post inverse placeholder, exactly the
+ * test-side IDENTITY4 constant's shape. */
+const IDENTITY4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const CLASSIC_MATERIAL_LANES = surfaceMaterialLanes(CLASSIC_SURFACE_MATERIAL);
 
 /** Which buffers back which material's map block. A WeakMap rather than
@@ -3099,6 +3111,8 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
   const buffers: Surface4MapBuffers = {
     invM: new Float32Array(SURFACE4_MAX_MAPS * 16),
     invT: new Float32Array(SURFACE4_MAX_MAPS * 4),
+    invPostM: new Float32Array(SURFACE4_MAX_MAPS * 16),
+    invPostT: new Float32Array(SURFACE4_MAX_MAPS * 4),
     colorSigma: new Float32Array(SURFACE4_MAX_MAPS * 4),
     trap: new Float32Array(SURFACE4_MAX_MAPS * 4),
     finishA: new Float32Array(SURFACE4_MAX_MAPS * 4),
@@ -3114,6 +3128,9 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
   // classic B lane).
   for (let j = 0; j < SURFACE4_MAX_MAPS; j++) {
     for (let d = 0; d < 4; d++) buffers.invM[j * 16 + d * 4 + d] = 1;
+    // The post-inverse placeholders are identity/zero — the value-exact
+    // "no post" apply — so a stray read of an unwritten slot is inert.
+    for (let d = 0; d < 4; d++) buffers.invPostM[j * 16 + d * 4 + d] = 1;
     buffers.colorSigma[j * 4 + 3] = 1;
     buffers.finishA.set(CLASSIC_MATERIAL_LANES.a, j * 4);
     buffers.finishB.set(CLASSIC_MATERIAL_LANES.b, j * 4);
@@ -3141,6 +3158,13 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
   // the block are the price; the unfinished program's VALUES are untouched.
   maps.add(new THREE.Uniform(buffers.finishA));
   maps.add(new THREE.Uniform(buffers.finishB));
+  // The post-inverse pair rides UNCONDITIONALLY (the finish pair's rule)
+  // and APPENDED LAST (the finish pair's own append discipline): the block
+  // declares it whether or not any gate reads it, so the std140 offsets of
+  // every pre-post member can never move on a toggle — or on this
+  // feature's own arrival.
+  maps.add(new THREE.Uniform(buffers.invPostM));
+  maps.add(new THREE.Uniform(buffers.invPostT));
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
@@ -3387,6 +3411,20 @@ export function setSurfaceSystem4(
       }
     }
     maps.invT.set(map.invT, j * 4);
+    // The map's own post inverse, COLUMN-major like invM; identity/zero
+    // when the map authors none (the value-exact "no post" apply).
+    if (map.postInvM !== null && map.postInvT !== null) {
+      const pm = map.postInvM;
+      for (let c = 0; c < 4; c++) {
+        for (let r = 0; r < 4; r++) {
+          maps.invPostM[base + c * 4 + r] = pm[r * 4 + c];
+        }
+      }
+      maps.invPostT.set(map.postInvT, j * 4);
+    } else {
+      maps.invPostM.set(IDENTITY4, base);
+      maps.invPostT.fill(0, j * 4, j * 4 + 4);
+    }
     // Lane w of the color slot, not an array of its own: see the std140
     // block's member list in SURFACE4_FRAGMENT.
     maps.colorSigma.set(colors[j], j * 4);
@@ -3402,6 +3440,9 @@ export function setSurfaceSystem4(
       }
     }
     maps.invT.set(map.invT, slot * 4);
+    // B is affine-only by the document rule: its post slot stays identity.
+    maps.invPostM.set(IDENTITY4, base);
+    maps.invPostT.fill(0, slot * 4, slot * 4 + 4);
     maps.colorSigma.fill(0, slot * 4, slot * 4 + 3);
     maps.colorSigma[slot * 4 + 3] = map.sigmaMin;
     maps.trap.fill(0, slot * 4, slot * 4 + 4);
@@ -3419,6 +3460,10 @@ export function setSurfaceSystem4(
       }
     }
     maps.invT.set(emitter.invT, slot * 4);
+    // Emitter steps skip the map's own post-affine (the emitter rule): the
+    // slot's un-post stays identity.
+    maps.invPostM.set(IDENTITY4, base);
+    maps.invPostT.fill(0, slot * 4, slot * 4 + 4);
     maps.colorSigma[slot * 4 + 3] = emitter.sigmaMin;
     const key = JSON.stringify(emitter.shape);
     let shape = shapeSlots.get(key);

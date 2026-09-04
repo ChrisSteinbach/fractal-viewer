@@ -470,6 +470,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     and `accumulateVoxels` share.
   - `flame.ts` — CPU fractal-flame: `accumulateFlame` (2D histogram) +
     `tonemapFlame` (exposure/gamma/vibrancy). CPU oracle for `flame-gpu.ts`.
+    The tone-map anchor is the MEAN deposited density (`hitMass`/buckets,
+    `log1p(h/mean)/log1p(32)`), never the hottest bucket — a ratio, so
+    exposure is invariant under budget, supersample pooling and deposit
+    weights; `maxHits` is an instrument only. flam3's own `rect.c` curve is
+    the precedent; the differential harness is
+    `scripts/flame-differential.harness.ts`.
     Its optional balloon echo deposits one full-weight, tint-only second
     splat into that SAME histogram; there is deliberately no separate
     compositing, conformal magnification, or radial fade. The executable
@@ -492,8 +498,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `foldRadii: array<vec4f, 3>` indexed by variation type minus 12,
     `(mR², fR², wall)` — not a per-LANE one: `packVariations`' own invariant
     is that a transform carries at most one entry per type, so three lanes
-    cover every fold a slot can hold where seventeen would be needed to
-    cover every lane. Squared because that is the form `foldVariationFn`'s
+    cover every fold a slot can hold where one-per-lane would be needed to
+    cover the vocabulary. Squared because that is the form `foldVariationFn`'s
     closure computes once. Mirroring flame was not optional: the mode has
     TWO backends over one document (`flame.ts` reaches the fold through
     `composeVariations`, which reads the lengths), so leaving the kernel
@@ -520,8 +526,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     exactly; `wildcard` option adds structural kicks. Quality-gated by
     `scoreSystem`.
   - `palette.ts` — Iq cosine-gradient palettes (`buildPaletteLUT` → 256×3 LUT)
-    - user-authored `CustomPalette` (2–8 stops). `PaletteSelection` = UI/state,
-      `PaletteSpec` = worker/GPU wire, `resolvePalette` = bridge.
+    - user-authored `CustomPalette` (2–8 stops) and imported full-resolution
+      `RampPalette` (`{kind:"ramp"}`, up to `MAX_RAMP_ENTRIES` — the shape a
+      `.flame` palette lands in, so narrow bands and hue jumps survive; first
+      editor edit converts it forward-only, disclosed). `PaletteSelection` =
+      UI/state, `PaletteSpec` = worker/GPU wire, `resolvePalette` = bridge.
   - `presets.ts` — default + named systems (`fourFinishes` is the FINISH
     showcase: four corner maps under a boxfold lens, three finishes and
     one deliberately UNAUTHORED control, since a showcase that authors
@@ -1190,25 +1199,33 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of
-    truth). `Variation` is `{type, weight}` plus the fold's three
-    optional lengths `minRadius`/`fixedRadius`/`boxLimit`, the FIRST
-    per-variation parameters in a document every other producer treats as a
-    type -> weight MAP; they deliberately break that model rather than
-    pretending to fit it (each belongs to two of the seventeen types and the
-    rest ignore all three), and ABSENT MEANS THE CLASSIC MANDELBOX VALUES
-    (0.5, 1, 1) BYTE-IDENTICALLY — the `weight`/`colorIndex` convention, and
-    what keeps every existing document, preset, morph and `.flame` import
-    unmoved. There is no fourth SIZE field on purpose: only two dimensionless
-    ratios of the three lengths are new shape, because a uniform
-    rescale is equivariant through both folds and is therefore already what
-    the transform's own affine part does.
-  - `variations.ts` — seventeen nonlinear flame variations as pure functions:
+    truth). `Variation` is `{type, weight}` plus per-variation parameters:
+    the fold's three optional lengths `minRadius`/`fixedRadius`/`boxLimit`
+    and — the SECOND parameterized family, established by the flame-fidelity
+    work — the parametric warps' six optional fields
+    (`julianPower`/`julianDist`/`juliascopePower`/`juliascopeDist`/
+    `curlC1`/`curlC2`). Both families deliberately break the type -> weight
+    MAP model rather than pretending to fit it (each field belongs to one or
+    two of the twenty types and the rest ignore them all), and ABSENT MEANS
+    THE CLASSIC VALUES (folds 0.5, 1, 1; julia family power 1, dist 1; curl
+    1, 0 — flam3's own defaults) BYTE-IDENTICALLY — the
+    `weight`/`colorIndex` convention, and what keeps every existing
+    document, preset, morph and `.flame` import unmoved. There is no fourth
+    fold SIZE field on purpose: only two dimensionless ratios of the three
+    lengths are new shape, because a uniform rescale is equivariant through
+    both folds and is therefore already what the transform's own affine part
+    does.
+  - `variations.ts` — twenty nonlinear flame variations as pure functions:
     a dozen classics, the Mandelbox fold family (`boxfold`/`spherefold`/
-    `mandelbox`), and the two escape-time POWER maps — `qsquare` (the
-    quaternion square) and `bulb` (the White/Nylander triplex power).
-    Those two exist so their renderers can gate on a document shape, and
-    they are also CHAIN LINKS: `escape-de.ts` admits either beside a
-    fold, which is what makes the seventeen-variation vocabulary compose
+    `mandelbox`), the two escape-time POWER maps — `qsquare` (the
+    quaternion square) and `bulb` (the White/Nylander triplex power) — and
+    the three PARAMETRIC warps `julian`/`juliascope`/`curl` (flam3's wire
+    spellings; one shared resolver per family owns the absent-means-classic
+    rule and the domain, and the GPU lane wire is the fold lane's
+    type-indexed pattern one block over).
+    The power maps exist so their renderers can gate on a document shape,
+    and they are also CHAIN LINKS: `escape-de.ts` admits either beside a
+    fold, which is what makes the twenty-variation vocabulary compose
     instead of merely coexist.
     `bulb` is the triplex
     8th power, `triplexPow8`: a TRIG-FREE closed form via the Chebyshev
@@ -1513,7 +1530,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `flame-file.ts` — flam3/Apophysis `.flame` XML codec (see
     `docs/flame-interop.md`). Import QR-decomposes 2D coefs onto our
     `Transform`, folds pure-linear blends/posts, degrades unsupported features
-    to warnings; palette becomes 8-stop `CustomPalette`. Export writes XY
+    to warnings; palette becomes a full-resolution `RampPalette` (preserved
+    whole — see `docs/flame-interop.md`). Export writes XY
     shadow with kaleidoscope baked into explicit xforms. Xaos rows parse and
     export in raw xform order, reindex around dropped maps, and omit at unity.
     DOMParser-tied (jsdom tests). Pure, tested.
