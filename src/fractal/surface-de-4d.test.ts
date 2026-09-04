@@ -2292,6 +2292,10 @@ function expandedReference4(
       maps.push({
         invM: multiply4x4(base.invM, rotT),
         invT: base.invT,
+        // The per-map post inverse is copy-independent (the sector sweep
+        // carries the copy dependence), so every copy shares the base's.
+        postInvM: base.postInvM,
+        postInvT: base.postInvT,
         sigmaMin: base.sigmaMin,
         baseIndex: base.baseIndex,
         // Copied through for type completeness exactly like 3D's

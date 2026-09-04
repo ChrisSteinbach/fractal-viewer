@@ -1133,14 +1133,16 @@ describe("mutateSystemSeeded versioned domain streams", () => {
     ).not.toEqual(mutateSystemSeeded(base, request));
   });
 
-  it("pins the complete v2 output behind the algorithm version", () => {
-    // v2's cause, and why this hash changed from v1's 3fba2659: the
-    // parametric julia family and curl joined the vocabulary, widening the
-    // wildcard swap pool — a deliberate, versioned selection change (see
-    // SEEDED_MUTATION_ALGORITHM_VERSION's doc).
+  it("pins the complete v3 output behind the algorithm version", () => {
+    // v3's cause, and why this hash changed from v2's e4e3b70e (itself v1's
+    // 3fba2659): the per-transform POST-AFFINE joined the spatialGeometry
+    // domain with its own derived stream — a deliberate, versioned field
+    // assignment (see SEEDED_MUTATION_ALGORITHM_VERSION's doc). The base
+    // fixture carries no post, so the hash movement is the stream-seed
+    // derivation alone (the version feeds it), not a changed jitter rule.
     expect(
       jsonFnv1a(mutateSystemSeeded(richSeededMutationBase(), request)),
-    ).toBe("e4e3b70e");
+    ).toBe("88abb300");
   });
 
   it("keeps every unrelated domain byte-identical when any one domain is locked", () => {

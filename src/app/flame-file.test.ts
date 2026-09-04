@@ -262,11 +262,12 @@ describe("decodeFlameFile", () => {
     expect(exported.xml).not.toContain("julian_dist");
   });
 
-  it("drops a post transform on a nonlinear map with a warning, leaving coefs untouched", () => {
+  it("imports a post transform on a nonlinear map as the map's own post-affine, leaving coefs untouched", () => {
     const xml = `<flame><xform weight="1" spherical="1" coefs="0.5 0 0 0.5 0.1 0.2" post="0 1 -1 0 0.3 0.4"/></flame>`;
     const file = decodeFlameFile(xml);
     expect(file).not.toBeNull();
-    expect(file!.warnings.some((w) => /post transform/i.test(w))).toBe(true);
+    // The post is no longer dropped — no shape warning.
+    expect(file!.warnings.some((w) => /post transform/i.test(w))).toBe(false);
 
     const snap = decodeScene(file!.scenes[0].encoded);
     expect(snap).not.toBeNull();
@@ -276,6 +277,13 @@ describe("decodeFlameFile", () => {
     const got = coefsOf(snap!.transforms[0]);
     const want = [0.5, 0, 0, 0.5, 0.1, 0.2];
     for (let i = 0; i < 6; i++) expect(got[i]).toBeCloseTo(want[i], 3);
+    // flam3's post="a b c d e f" (x' = a·x + c·y + e, y' = b·x + d·y + f)
+    // rides Transform.post as a row-major 3x3 with the identity z
+    // row/column, and the translation in t.
+    expect(snap!.transforms[0].post).toEqual({
+      m: [0, -1, 0, 1, 0, 0, 0, 0, 1],
+      t: [0.3, 0.4, 0],
+    });
   });
 
   it("imports a chaos row without any warning, truncating a column past the base transform count", () => {
@@ -815,7 +823,7 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
     for (let i = 0; i < 6; i++) expect(got[i]).toBeCloseTo(want[i], 3);
   });
 
-  it("bakes a nonlinear kaleidoscope copy's rotation into `post`, not `coefs`", () => {
+  it("bakes a nonlinear kaleidoscope copy's rotation into `post`, not `coefs`, composed over the map's own post", () => {
     const transforms: Transform[] = [
       {
         id: 0,
@@ -837,7 +845,9 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
 
     const file = decodeFlameFile(xml);
     expect(file).not.toBeNull();
-    expect(file!.warnings.some((w) => /post transform/i.test(w))).toBe(true);
+    // The copy rotation imports as the copy's own post-affine now — the
+    // same stage it exported into — so no shape warning.
+    expect(file!.warnings.some((w) => /post transform/i.test(w))).toBe(false);
 
     const back = decodeScene(file!.scenes[0].encoded);
     expect(back).not.toBeNull();

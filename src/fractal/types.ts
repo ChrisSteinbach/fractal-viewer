@@ -1,10 +1,17 @@
 import type { ShapeSpec } from "./shapes";
 import type { SurfacePattern } from "./surface-pattern";
+import type { Affine } from "./affine";
+import type { Affine4 } from "./affine4";
 export type {
   SurfacePattern,
   SurfacePatternAxis,
   SurfacePatternKind,
 } from "./surface-pattern";
+// The affine shapes ride the document vocabulary: Transform.post is an
+// `Affine`, Transform4.post4 an `Affine4`, and the app-side validators and
+// UI import them from here like every other document-facing type.
+export type { Affine } from "./affine";
+export type { Affine4 } from "./affine4";
 
 /** A 3-component vector: `[x, y, z]`. */
 export type Vec3 = [number, number, number];
@@ -348,6 +355,42 @@ export interface Transform {
    * purely affine, leaving every existing system byte-for-byte unchanged.
    */
   variations?: Variation[];
+  /**
+   * Optional per-transform POST-AFFINE — flam3's `post=` attribute on a
+   * nonlinear xform. A general affine (`affine.ts`'s {@link Affine} shape:
+   * row-major 3x3 linear part plus a translation, translation included —
+   * flam3's own post carries one) applied to the variation sum's OUTPUT,
+   * immediately BEFORE the kaleidoscope's symmetry post-rotation. The full
+   * engine ordering a step realizes is
+   *
+   *     affine -> variation sum -> POST-AFFINE -> symmetry post-rotation
+   *     -> escape guard -> [orbit] -> scheduled-hybrid post-word -> final lens
+   *
+   * so the per-copy forward map is `Rot_k ∘ P ∘ V ∘ A` — which is also the
+   * exact decomposition Surface mode's inverse descent walks back
+   * (`surface-de.ts`: un-rotate, un-post, un-fold branch, un-affine).
+   *
+   * Omitted ⇒ identity, BYTE-IDENTICALLY — the `weight?`/`shear?`/
+   * `variations?` convention: every document, preset, morph and `.flame`
+   * import predating this field renders exactly as it did, and an
+   * identity-shaped post is indistinguishable from an absent one
+   * (`persist.ts` omits it on encode; the mirrors identity-skip it).
+   * Authored today by `.flame` import only (`flame-file.ts`), which is why
+   * there is no editing UI: an imported post must SURVIVE editing sessions
+   * (the transform-list equality carries it) rather than be silently
+   * dropped on the next knob turn.
+   *
+   * Read by every chaos-game consumer (points, both Flame backends, solid,
+   * and their WGSL twins — where the post composes with the copy rotation
+   * into the slot's single post block), by Surface's inverse descent (which
+   * inverts it per map, replacing the orthogonal-only transpose shortcut),
+   * and by the eligibility gates through `transformSigmas` (a post
+   * participates in the map's contraction). Shape-EMITTER steps skip it
+   * exactly as they skip the variations: a condensation set is a fixed
+   * compact shape, and the post is part of the warp pipeline the emitter
+   * branch replaces.
+   */
+  post?: Affine;
   /**
    * Optional 4D extension (see {@link WExtension}): the degrees of freedom
    * that let this map act in 4-space — a `w` position, an independent `w`
@@ -812,6 +855,23 @@ export interface Transform4 {
    * `variations4.ts`). Omitted or empty ⇒ the map stays purely affine.
    */
   variations?: Variation[];
+  /**
+   * Optional per-transform POST-AFFINE, mirroring {@link Transform.post}
+   * one dimension up — `affine4.ts`'s {@link Affine4} shape (row-major 4x4
+   * plus a `Vec4` translation), applied to the variation sum's output
+   * immediately BEFORE the kaleidoscope's symmetry post-rotation, exactly
+   * the 3D engine ordering one dimension up. Omitted ⇒ identity,
+   * byte-identically.
+   *
+   * CARRIED ACROSS THE 3D → 4D LIFT: `affine4.ts`'s `embedTransform3`
+   * splices a present {@link Transform.post} into `post4` — the 3D post's
+   * 3x3 rides the upper-left block, the `w` row/column stay the identity
+   * and the `w` translation 0 (the choice is documented there) — so a 3D
+   * map that authors one keeps it in every 4D render rather than being
+   * silently dropped. Authored today by `.flame` import on the 3D side
+   * only; a native-4D document may author one directly.
+   */
+  post4?: Affine4;
   /**
    * Relative selection weight for the 4D chaos game, mirroring
    * {@link Transform.weight}. Omitted ⇒ 1.

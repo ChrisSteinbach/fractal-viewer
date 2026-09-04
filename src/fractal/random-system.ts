@@ -483,6 +483,13 @@ function randomVariationType(rng: Rng, exclude?: VariationType): VariationType {
  * surface-eligibility seam behind the user's back, and a rolled parameter
  * set is exactly that kind of unmeasured axis. `mutate-system.ts` is where
  * a document that already carries parameters gets to explore near them.
+ *
+ * The per-transform POST-AFFINE (`Transform.post`) is never rolled either,
+ * the identical stance one matrix up: it is import-only authoring this PR,
+ * and a rolled general affine moves systems across the same eligibility
+ * seam (an expansive post refuses the surface gate outright). Absent stays
+ * absent — every generated system renders byte-identically to one that
+ * predates the field.
  */
 function randomVariations(rng: Rng): Variation[] | undefined {
   const variations: Variation[] = [];

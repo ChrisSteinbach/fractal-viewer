@@ -79,8 +79,16 @@ export interface MutationOptions {
  * differently; the jitter rules for every pre-existing field are unchanged
  * (the parametric family's own jitter arm only fires for documents already
  * carrying its parameters, which no version-1 document does).
+ *
+ * Version 3's cause: the per-transform POST-AFFINE joined the
+ * `spatialGeometry` domain (present-only jitter, {@link mutatePost}) — a
+ * new field assignment, whose derived stream (`spatialGeometry` over the
+ * map key's `:post` suffix) leaves every pre-existing stream untouched, but
+ * whose output perturbs any document that carries a post. Version 2 nodes
+ * re-deriving under version 3 refuse rather than re-derive differently; a
+ * version-2 document carries no post, so its jitter rules are unchanged.
  */
-export const SEEDED_MUTATION_ALGORITHM_VERSION = 2 as const;
+export const SEEDED_MUTATION_ALGORITHM_VERSION = 3 as const;
 export type SeededMutationAlgorithmVersion =
   typeof SEEDED_MUTATION_ALGORITHM_VERSION;
 
@@ -88,8 +96,9 @@ export type SeededMutationAlgorithmVersion =
  * Lockable mutation domains. Every field currently mutated by the legacy
  * kernel has exactly one owner:
  *
- * - `spatialGeometry`: position, rotation, scale, shear, and the affine
- *   wildcard rotation reroll;
+ * - `spatialGeometry`: position, rotation, scale, shear, the affine
+ *   wildcard rotation reroll, and a PRESENT per-transform post-affine
+ *   (import-only authoring; never materialized — the folds' rule);
  * - `nonlinearVariations`: base-map variation weights, fold lengths, and the
  *   parametric julia/curl parameters (present-only jitter), plus a
  *   wildcard variation-type swap;
@@ -183,6 +192,12 @@ const MIN_WEIGHT = 1e-6;
 /** Additive jitter half-range for shear: `U(-0.05, 0.05)`, matched to
  * {@link randomSystem}'s own shear roll being the gentlest-textured field. */
 const SHEAR_JITTER = 0.05;
+/** Additive jitter half-range for a PRESENT post-affine's matrix entries and
+ * translation components: `U(-0.05, 0.05)`, the same gentle texture as the
+ * shear jitter — a post is a fine-structure control, not a framing knob.
+ * Present-only (see {@link mutatePost}), so this never touches a document
+ * that authors none. */
+const POST_JITTER = 0.05;
 /** Shear clamp, mirroring the editor's Shear slider range (`ui.ts`'s
  * `CHANNELS.shear`, `±2`). */
 const SHEAR_CLAMP = 2;
@@ -1290,6 +1305,13 @@ function cloneTransformForMutation(base: Transform): Transform {
     scale: [...base.scale] as Vec3,
   };
   if (base.shear !== undefined) result.shear = [...base.shear] as Vec3;
+  // The post-affine is cloned DEEP (fresh m/t arrays) but never
+  // MATERIALIZED: a jitter arm perturbs a present post below, an absent
+  // one stays absent — the folds' rule, so a mutation grid stays a grid of
+  // the system you brought it.
+  if (base.post !== undefined) {
+    result.post = { m: [...base.post.m], t: [...base.post.t] as Vec3 };
+  }
   if (base.variations !== undefined) {
     result.variations = base.variations.map((variation) => ({ ...variation }));
   }
@@ -1401,6 +1423,34 @@ function mutateFourDExtension(
   if (base.w !== undefined) result.w = jitterW(rng, base.w, spread);
 }
 
+/**
+ * The post-affine's jitter arm — PRESENT-ONLY (the fold lengths' verdict,
+ * one feature over): a post is import-only authoring this PR, so
+ * materializing one on an unauthored map would move a system the user
+ * never parameterized, and a mutation grid must stay a grid of the system
+ * you brought it. A present post's matrix entries and translation
+ * components each take a small additive nudge (±`POST_JITTER` scaled), no
+ * clamps — the domain is all of R³×ᵀ and an expansive jitter outcome is
+ * the user's retry, not the engine's refusal.
+ */
+function mutatePost(
+  result: Transform,
+  base: Transform,
+  rng: Rng,
+  spread: number,
+): void {
+  if (base.post !== undefined) {
+    result.post = {
+      m: base.post.m.map(
+        (v) => v + uniform(rng, -POST_JITTER * spread, POST_JITTER * spread),
+      ),
+      t: base.post.t.map(
+        (v) => v + uniform(rng, -POST_JITTER * spread, POST_JITTER * spread),
+      ) as Vec3,
+    };
+  }
+}
+
 function mutateMapSelectionXaos(
   result: Transform,
   base: Transform,
@@ -1497,6 +1547,16 @@ function buildSeededMutant(
         result,
         baseMap,
         derivedMutationRng(context, attempt, "spatialGeometry", key),
+        spread,
+      );
+      // The post-affine rides the same lockable domain (it is affine
+      // geometry), but derives its own stream — the map key's `:post`
+      // suffix keeps it from disturbing the geometry stream's consumption —
+      // and only fires for a document already carrying a post.
+      mutatePost(
+        result,
+        baseMap,
+        derivedMutationRng(context, attempt, "spatialGeometry", `${key}:post`),
         spread,
       );
     }

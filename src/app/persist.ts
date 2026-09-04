@@ -8,6 +8,7 @@
  * All browser globals are accessed through injectable `PersistDeps` so the
  * module stays fully testable without a real DOM.
  */
+import { isIdentityAffine } from "../fractal/affine";
 import { isFlatTransform } from "../fractal/affine4";
 import {
   SURFACE_PATTERN_AXES,
@@ -1490,6 +1491,34 @@ function decodeWPlanes(
 }
 
 /**
+ * Decode one untrusted transform's optional `post` (the per-transform
+ * POST-AFFINE, `Transform.post`). The wire is the flat 12-number array
+ * `[m0..m8, tx, ty, tz]` the encoder writes — `isVec3`'s strict
+ * genuine-finite-number rule over all twelve (NO `Number()` coercion, the
+ * fold lengths' deviation: a numeric string or boolean is malformed, not a
+ * radius a coercion could salvage), so a present-but-invalid post returns
+ * `null` and the caller rejects the whole transform. `undefined` in,
+ * `undefined` out — absent stays absent.
+ */
+function decodePostAffine(
+  raw: unknown,
+): { m: number[]; t: [number, number, number] } | null | undefined {
+  if (raw === undefined) return undefined;
+  if (
+    !Array.isArray(raw) ||
+    raw.length !== 12 ||
+    !raw.every(
+      (n: unknown): n is number => typeof n === "number" && Number.isFinite(n),
+    )
+  ) {
+    return null;
+  }
+  const m = raw.slice(0, 9);
+  const t: [number, number, number] = [raw[9], raw[10], raw[11]];
+  return { m, t };
+}
+
+/**
  * Validate one untrusted transform into a {@link Transform} with the given `id`,
  * or `null` when anything is malformed so the caller rejects the whole scene.
  * Requires three valid Vec3 fields; `weight` / `shear` / `variations` / `w` are
@@ -1552,6 +1581,17 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
     const variations = decodeVariations(tf.variations);
     if (variations === null) return null;
     if (variations.length > 0) decoded.variations = variations;
+  }
+  // post: optional per-transform POST-AFFINE. Present ⇒ must be the exact
+  // 12-number wire shape (see decodePostAffine); a present-but-invalid post
+  // REJECTS the whole transform — shear's contract, not colorIndex's quiet
+  // fallback: a wrong-shaped post is geometry, and silently rendering a
+  // different shape than the authoring document is the one failure this
+  // decoder must never cause.
+  if (tf.post !== undefined) {
+    const post = decodePostAffine(tf.post);
+    if (post === null) return null;
+    if (post !== undefined) decoded.post = post;
   }
   // chaos: optional graph-directed selection row — quiet whole-row fallback,
   // no coercion, no clamp; see decodeChaosRow.
@@ -2399,6 +2439,13 @@ interface EncodedTransform {
   colorSpeed?: number;
   shear?: number[];
   variations?: EncodedVariation[];
+  /** The per-transform POST-AFFINE (`Transform.post`), as one flat
+   * 12-number array `[m0..m8, tx, ty, tz]` — the `Affine` shape flattened,
+   * matrix entries first, translation last. Written only when present and
+   * NOT structurally identity (see {@link isIdentityAffine}), so an
+   * unauthored document encodes byte-identically to one predating the
+   * field. */
+  post?: number[];
   chaos?: number[];
   w?: WExtension;
   finish?: SurfaceFinish;
@@ -2795,6 +2842,15 @@ function encodeTransform(
     e.colorSpeed = round4(t.colorSpeed);
   }
   if (t.shear && t.shear.some((v) => v !== 0)) e.shear = t.shear.map(round4);
+  // The post-affine: written only when present and NOT structurally
+  // identity — shear's exact-zero pattern one matrix up (see
+  // isIdentityAffine), so an unauthored document encodes byte-identically
+  // to one predating the field and an identity post is indistinguishable
+  // from an absent one on the wire. Flattened to [m0..m8, tx, ty, tz]; every
+  // float round4'd like the rest of the wire.
+  if (t.post && !isIdentityAffine(t.post)) {
+    e.post = [...t.post.m, ...t.post.t].map(round4);
+  }
   if (t.variations && t.variations.length > 0) {
     const active: EncodedVariation[] = t.variations
       .filter((v) => Number.isFinite(v.weight) && v.weight !== 0)

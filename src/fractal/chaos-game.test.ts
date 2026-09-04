@@ -1081,6 +1081,51 @@ describe("runChaosGame vs. stepOrbit/plotPoint (allocation-free oracle)", () => 
     };
   }
 
+  it("matches for a system carrying per-transform POST-AFFINES (shearing, non-orthogonal, with translations)", () => {
+    // The un-post/un-lens mirror sites fire on every recorded point here:
+    // a post between the variation sum and the post-rotation, plus a
+    // posted final lens, is the widest pass through the new stage.
+    const post = {
+      m: [0.4, 0.1, 0, 0, 0.35, 0.05, 0, 0, 0.4],
+      t: [0.02, -0.03, 0.01] as [number, number, number],
+    };
+    const finalPost = {
+      m: [1, 0, 0.2, 0, 1, 0, 0, 0, 1],
+      t: [0.05, 0, 0] as [number, number, number],
+    };
+    const transforms: Transform[] = sierpinskiTetrahedron().map((t, i) => ({
+      ...t,
+      post,
+      // One map carries NO post, exercising the identity-skip branch too.
+      ...(i === 2 ? { post: undefined } : {}),
+      variations: [{ type: "julian", weight: 0.6 }],
+    }));
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.05, -0.05, 0],
+      rotation: [0, 0, 0.3],
+      scale: [0.8, 0.6, 0.7],
+      post: finalPost,
+    };
+    const numPoints = 800;
+    const seed = 42;
+
+    const actual = runChaosGame(
+      transforms,
+      numPoints,
+      mulberry32(seed),
+      finalTransform,
+    );
+    const reference = referenceChaosGame(
+      prepareChaosGame(transforms, finalTransform),
+      numPoints,
+      mulberry32(seed),
+    );
+    expect(actual.positions).toEqual(reference.positions);
+    expect(actual.transformIndices).toEqual(reference.transformIndices);
+    expect(actual.bounds).toEqual(reference.bounds);
+  });
+
   it("matches for a plain multi-transform system (no variations, no final transform)", () => {
     const transforms = sierpinskiTetrahedron();
     const numPoints = 800;

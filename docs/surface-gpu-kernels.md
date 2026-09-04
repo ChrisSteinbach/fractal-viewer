@@ -164,8 +164,10 @@ The params sizes are append-only. In 3D, base/lens grows 288 -> 304 bytes,
 balloon 320 -> 336 and plane 336 -> 352. In 4D condensation forces the shared
 576-byte variant prefix even without a lens, then ends at 592 bytes; balloon
 ends at 624 and plane at 640. Feature-off buffers retain every pre-existing
-size and byte. Emitter inverse records reuse the 7-vec4 `GpuMap` or 9-vec4
-`GpuMap4` stride, and the low-level guard caps total A + B + emitter records
+size and byte. Emitter inverse records reuse the 10-vec4 `GpuMap` or 14-vec4
+`GpuMap4` stride (each grew again by the per-map POST-AFFINE-inverse tail —
+3 vec4 in 3D, 5 in 4D — appended at the struct's end; the escape packers
+store the FORWARD post on those lanes), and the low-level guard caps total A + B + emitter records
 and unique shade slots independently at 24. Symmetry copies keep their base
 emitter's shade index, so geometry can expand without inventing material
 slots.
@@ -200,7 +202,9 @@ pre-feature WGSL source byte for byte.
 ## The fold's authored lengths
 
 The fold's authored lengths ride a dedicated `fold` lane in both map
-layouts — `GpuMap` grew 6 -> 7 vec4, `GpuMap4` grew 8 -> 9 vec4 — carrying
+layouts — `GpuMap` grew 6 -> 7 vec4, `GpuMap4` grew 8 -> 9 vec4 (then 7 -> 10
+and 9 -> 14 by the per-map POST-AFFINE-inverse tails, appended at the
+struct's end) — carrying
 `resolveFoldRadii`'s own output `(mR, fR, wall)`. A generated
 `foldRadiiOf` re-derives the branch algebra from that lane
 (`surfaceFoldRadii` field for field), once per map per descent level,
@@ -417,7 +421,8 @@ the ROW-MAJOR bytes of the matrix the body applies, the packer performing
 the one real transpose (pose rotor → world-to-attractor, `setSurfaceView4`'s
 exact dance) — plus w0/sliceHalfW/`visRadius4` and the radius-ramp band
 (`SurfaceDE4.radiusBand` as center4/minD/invRange); maps are the `GpuMap4`
-layout (`packSurfaceGpuMaps4`, 128-byte 4D stride).
+layout (`packSurfaceGpuMaps4`, 224-byte 4D stride — 128 pre-post, +96 for
+the post-inverse tail).
 
 Two frozen slots carry 4D semantics: `visibleRadius` packs the
 SLICE-ADJUSTED `sliceVisR` so the shared march entry's sphere gate is

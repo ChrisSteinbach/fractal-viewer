@@ -13,6 +13,7 @@ import {
   SHAPE_TRAP_MODES,
   SYMMETRY_PLANES,
   VARIATION_TYPES,
+  type Affine,
   type HybridSchedule,
   type ShapeTrap,
   type SurfaceFinish,
@@ -133,6 +134,10 @@ const W_PLANE_FIELDS = {
   yw: true,
   zw: true,
 } satisfies Fields<NonNullable<WExtension["rotation"]>>;
+const POST_AFFINE_FIELDS = {
+  m: true,
+  t: true,
+} satisfies Fields<Affine>;
 const TRANSFORM_FIELDS = {
   id: true,
   position: true,
@@ -143,6 +148,7 @@ const TRANSFORM_FIELDS = {
   colorSpeed: true,
   shear: true,
   variations: true,
+  post: true,
   w: true,
   chaos: true,
   finish: true,
@@ -642,6 +648,22 @@ function primitive(value: unknown, path: string): void {
   }
 }
 
+/** A {@link Transform.post} affine: `{ m: 9 finite numbers, t: 3 finite
+ * numbers }` — `affine.ts`'s `Affine` shape, validated structurally (the
+ * identity test is persist's encode-side concern; here any well-formed
+ * affine is accepted). */
+function postAffine(value: unknown, path: string): void {
+  const entry = object(value, path, POST_AFFINE_FIELDS);
+  tuple(required(entry, "m", path), 9, `${path}.m`);
+  tuple(required(entry, "t", path), 3, `${path}.t`);
+  for (let i = 0; i < 9; i++) {
+    finite((entry.m as unknown[])[i], `${path}.m[${i}]`);
+  }
+  for (let i = 0; i < 3; i++) {
+    finite((entry.t as unknown[])[i], `${path}.t[${i}]`);
+  }
+}
+
 function shape(value: unknown, path: string): void {
   const spec = object(value, path, SHAPE_FIELDS);
   const parts = array(required(spec, "parts", path), `${path}.parts`);
@@ -711,6 +733,7 @@ function transform(
       variation(item, `${path}.variations[${index}]`),
     );
   }
+  if (entry.post !== undefined) postAffine(entry.post, `${path}.post`);
   if (entry.w !== undefined) wExtension(entry.w, `${path}.w`);
   if (entry.chaos !== undefined) {
     const chaos = array(entry.chaos, `${path}.chaos`);

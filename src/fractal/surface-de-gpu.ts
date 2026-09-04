@@ -1063,14 +1063,25 @@ export const SURFACE_GPU_PARAMS4_TILING_BYTES =
   SURFACE_GPU_PARAMS4_BYTES + SURFACE_GPU_TILING_BYTES;
 export const SURFACE_GPU_PARAMS4_ESCAPE_TILING_BYTES =
   SURFACE_GPU_PARAMS4_ESCAPE_BYTES + SURFACE_GPU_TILING_BYTES;
-export const SURFACE_GPU_MAP_VEC4 = 7;
+export const SURFACE_GPU_MAP_VEC4 = 10;
+/** vec4f slots of the 3D map's POST-AFFINE-inverse tail (`postI0..2`): the
+ * per-map post's inverse 3x3 with its translation in the rows' `.w`
+ * lanes — identity/zero packed for every map that authors none (the
+ * unconditional apply is value-exact). APPENDED at the struct's end, the
+ * fold lane's own growth discipline, so every pre-post offset is
+ * unchanged. */
+export const SURFACE_GPU_MAP_POST_VEC4 = 3;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
 /** vec4f slots per 4D map (`struct GpuMap4`): four invM rows, invT, and
  * the three parameter lanes p0/bnb/p1 (the 4D fold-branch sweep grew it
  * from 6 — the fold lanes the fold4 core decodes, plus the stage-2 lanes
  * both 4D cores leave unread). The field layout is its own contract;
  * nothing shares sizing math with the 3D {@link SURFACE_GPU_MAP_VEC4}. */
-export const SURFACE_GPU_MAP4_VEC4 = 9;
+export const SURFACE_GPU_MAP4_VEC4 = 14;
+/** vec4f slots of the 4D map's POST-AFFINE-inverse tail: the inverse 4x4
+ * rows (4 vec4f) plus the inverse translation (1 vec4f), appended at the
+ * struct's end like the 3D tail. */
+export const SURFACE_GPU_MAP4_POST_VEC4 = 5;
 /** Byte size of the ShadeParams uniform (march "unproject" + mode
  * "shade"; layout contract in the module doc). 144 through the fog tint
  * pair, then 160 with `pixelJitter` at 144 — a WGSL uniform struct rounds
@@ -2372,6 +2383,24 @@ export function packEscapeGpuMaps(de: EscapeDE): Float32Array {
     out[base + 24] = link.minRadius2;
     out[base + 25] = link.fixedRadius2;
     out[base + 26] = link.boxLimit;
+    // The link's own POST-AFFINE, read FORWARD by the kernel's
+    // linkPostForward (this packer's lane meaning — the descent cores pack
+    // the INVERSE there). IDENTITY/zero when the link authors none: the
+    // orbit's unconditional apply is value-exact, and an unwritten lane
+    // would COLLAPSE the orbit to the query point, so the identity is
+    // mandatory here, never a leave-as-zero.
+    if (link.postM !== null && link.postT !== null) {
+      for (let r = 0; r < 3; r++) {
+        out[base + 28 + r * 4] = link.postM[r * 3];
+        out[base + 28 + r * 4 + 1] = link.postM[r * 3 + 1];
+        out[base + 28 + r * 4 + 2] = link.postM[r * 3 + 2];
+        out[base + 28 + r * 4 + 3] = link.postT[r];
+      }
+    } else {
+      out[base + 28] = 1;
+      out[base + 32 + 1] = 1;
+      out[base + 36 + 2] = 1;
+    }
   });
   return out;
 }
@@ -2973,6 +3002,23 @@ export function packEscape4GpuMaps(de: EscapeDE4): Float32Array {
     out[base + 32] = link.minRadius2;
     out[base + 33] = link.fixedRadius2;
     out[base + 34] = link.boxLimit;
+    // The link's own POST-AFFINE, read FORWARD by the kernel's
+    // linkPostForward4 — IDENTITY/zero when absent (mandatory: an
+    // unwritten lane would collapse the orbit to the query point).
+    if (link.postM !== null && link.postT !== null) {
+      for (let i = 0; i < 16; i++) {
+        out[base + 36 + i] = link.postM[i];
+      }
+      out[base + 52] = link.postT[0];
+      out[base + 53] = link.postT[1];
+      out[base + 54] = link.postT[2];
+      out[base + 55] = link.postT[3];
+    } else {
+      out[base + 36] = 1;
+      out[base + 36 + 5] = 1;
+      out[base + 36 + 10] = 1;
+      out[base + 36 + 15] = 1;
+    }
   });
   return out;
 }
@@ -3018,6 +3064,22 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
     out[base + 24] = m.foldRadii.minR;
     out[base + 25] = m.foldRadii.fixedR;
     out[base + 26] = m.foldRadii.wall;
+    // The map's own POST-AFFINE inverse (the un-post stage): row xyz with
+    // the translation in .w. IDENTITY/zero when the map authors none —
+    // the kernel's unconditional apply is value-exact.
+    if (m.postInvM !== null && m.postInvT !== null) {
+      const pm = m.postInvM;
+      for (let r = 0; r < 3; r++) {
+        out[base + 28 + r * 4] = pm[r * 3];
+        out[base + 28 + r * 4 + 1] = pm[r * 3 + 1];
+        out[base + 28 + r * 4 + 2] = pm[r * 3 + 2];
+        out[base + 28 + r * 4 + 3] = m.postInvT[r];
+      }
+    } else {
+      out[base + 28] = 1;
+      out[base + 32 + 1] = 1;
+      out[base + 36 + 2] = 1;
+    }
   });
   if (schedule) {
     const scheduleMaps = de.schedule?.maps ?? [];
@@ -3043,6 +3105,11 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
       out[base + 24] = m.foldRadii?.minR ?? 0.5;
       out[base + 25] = m.foldRadii?.fixedR ?? 1;
       out[base + 26] = m.foldRadii?.wall ?? 1;
+      // B is affine-only by the document rule: its post stage stays
+      // identity (the value-exact "no post" apply).
+      out[base + 28] = 1;
+      out[base + 32 + 1] = 1;
+      out[base + 36 + 2] = 1;
     });
   }
   de.condensation?.emitters.forEach((emitter, j) => {
@@ -3064,6 +3131,11 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
     out[base + 12] = emitter.sigmaMin;
     out[base + 13] = emitter.shadeIndex;
     out[base + 14] = emitter.shadeIndex - de.maps.length;
+    // Emitter steps skip the map's own post-affine (the emitter rule): the
+    // slot's un-post stays identity.
+    out[base + 28] = 1;
+    out[base + 32 + 1] = 1;
+    out[base + 36 + 2] = 1;
   });
   return out;
 }
@@ -3115,6 +3187,23 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
     out[base + 32] = m.foldRadii.minR;
     out[base + 33] = m.foldRadii.fixedR;
     out[base + 34] = m.foldRadii.wall;
+    // The map's own POST-AFFINE inverse (the un-post stage, 4 rows +
+    // translation at the struct's appended tail). IDENTITY/zero when the
+    // map authors none — the kernel's unconditional apply is value-exact.
+    if (m.postInvM !== null && m.postInvT !== null) {
+      for (let i = 0; i < 16; i++) {
+        out[base + 36 + i] = m.postInvM[i];
+      }
+      out[base + 52] = m.postInvT[0];
+      out[base + 53] = m.postInvT[1];
+      out[base + 54] = m.postInvT[2];
+      out[base + 55] = m.postInvT[3];
+    } else {
+      out[base + 36] = 1;
+      out[base + 36 + 5] = 1;
+      out[base + 36 + 10] = 1;
+      out[base + 36 + 15] = 1;
+    }
   });
   if (schedule) {
     const scheduleMaps = de.schedule?.maps ?? [];
@@ -3133,6 +3222,12 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
       out[base + 32] = m.foldRadii?.minR ?? 0.5;
       out[base + 33] = m.foldRadii?.fixedR ?? 1;
       out[base + 34] = m.foldRadii?.wall ?? 1;
+      // B is affine-only by the document rule: its post stage stays
+      // identity (the value-exact "no post" apply).
+      out[base + 36] = 1;
+      out[base + 36 + 5] = 1;
+      out[base + 36 + 10] = 1;
+      out[base + 36 + 15] = 1;
     });
   }
   de.condensation?.emitters.forEach((emitter, j) => {
@@ -3149,6 +3244,12 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
     out[base + 20] = emitter.sigmaMin;
     out[base + 21] = emitter.shadeIndex;
     out[base + 22] = emitter.shadeIndex - de.maps.length;
+    // Emitter steps skip the map's own post-affine (the emitter rule): the
+    // slot's un-post stays identity.
+    out[base + 36] = 1;
+    out[base + 36 + 5] = 1;
+    out[base + 36 + 10] = 1;
+    out[base + 36 + 15] = 1;
   });
   return out;
 }
@@ -4527,7 +4628,7 @@ ${
         var sfSigma = 1.0;
         var sfRd = 0.0;
         if (kind != 0u) {
-          u = sQ * m.p0.y;
+          u = mapUnpost(m, sQ) * m.p0.y;
           if (kind == 1u) {
             pre0 = u;
             pre1 = fr.wall2 - u;
@@ -4543,7 +4644,7 @@ ${
           var branchSigma: f32;
           var branchRd = 0.0;
           if (kind == 0u) {
-            img = mapApply(m, sQ);
+            img = mapApply(m, mapUnpost(m, sQ));
             branchSigma = mapSigma;
           } else {
             if (kind == 2u || (kind == 3u && (b % 27u) == 0u)) {
@@ -4812,7 +4913,7 @@ ${
     : ""
 }
           let m = maps[j];
-          let img = mapApply(m, sQ);
+          let img = mapApply(m, mapUnpost(m, sQ));
           let r = length(img - params.boundCenter);
           let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
@@ -5311,12 +5412,12 @@ ${
     : ""
 }
           let m = maps[j];
-          let img = mapApply4(m, sQ);
+          let img = mapApply4(m, mapUnpost4(m, sQ));
 ${
   slabExt
     ? `          var imgExt = vec4f(0.0);
           if (segment) {
-            imgExt = mapApplyLinear4(m, sExt);
+            imgExt = mapApplyLinear4(m, mapUnpost4(m, sExt));
           }
           let r = segmentRadius4(img, imgExt);
 `
@@ -5742,11 +5843,15 @@ ${
         var sfSigma = 1.0;
         var sfRd = 0.0;
         if (kind != 0u) {
-          u = sQ * m.p0.y;
+          u = mapUnpost4(m, sQ) * m.p0.y;
 ${
   slabExt
     ? `          if (segment) {
-            eu = sExt * m.p0.y;
+            // u-space is a SCALAR multiple of world space, so the
+            // half-extent scales with the point and stays a segment — and
+            // it rides the UN-POSTED extent, the CPU's
+            // applyLinear4(postInvM, ext) before the invW scale.
+            eu = mapUnpostLinear4(m, sExt) * m.p0.y;
           }
 `
     : ``
@@ -5779,11 +5884,11 @@ ${
 }          var branchSigma: f32;
           var branchRd = 0.0;
           if (kind == 0u) {
-            img = mapApply4(m, sQ);
+            img = mapApply4(m, mapUnpost4(m, sQ));
 ${
   slabExt
     ? `            if (segment) {
-              imgExt = mapApplyLinear4(m, sExt);
+              imgExt = mapApplyLinear4(m, mapUnpost4(m, sExt));
             }
 `
     : ``
@@ -6004,7 +6109,12 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
   // always 0 (one map). Colors-only convention (the fold twin's): the
   // GLSL overload also returns the DE, so its dr accumulator is the one
   // value-side term trimmed here.
-  const escapeHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  const escapeHitInfoText = /* wgsl */ `
+// linkPostForward is DEFINED ONCE, in escapeDescentText below — every
+// escape kernel (eval, march, shade) includes that text, so re-declaring
+// the helper here would collide in the shade kernel (march hit-info walks
+// the same links). See the descent's own comment.
+fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
   let q = foldQuerySector(p);
   var v = q;
@@ -6060,7 +6170,9 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
       // \`v x v\` term drops.
       y = vec3f(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
     }
-    v = L.p0.y * y + q;
+    // The link's own POST-AFFINE, forward, before the +q offset (the
+    // escape packer stores the forward post on the lanes).
+    v = linkPostForward(L, L.p0.y * y) + q;
     r = length(v);
     growth = L.p0.z;
     // The DEGREE of the link that produced this r — 0 for a
@@ -6112,7 +6224,11 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   // the quaternion square in its FULL form. `sheets` still reads `v.y`:
   // the orbit runs in the ATTRACTOR frame, exactly as the 4D descents'
   // colour sources do.
-  const escape4HitInfoText = /* wgsl */ `fn surfaceDEHitInfo(${tiling ? "qIn: vec4f" : "p: vec3f"}, li: u32) -> SurfaceHitInfo {
+  const escape4HitInfoText = /* wgsl */ `
+// linkPostForward4 is DEFINED ONCE, in escape4DescentText below — the
+// 3D escape hit-info's rule (redeclaring it here would collide in the
+// shade kernel, whose march hit-info walks the same links).
+fn surfaceDEHitInfo(${tiling ? "qIn: vec4f" : "p: vec3f"}, li: u32) -> SurfaceHitInfo {
   var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
   let q = foldQuerySector4(${tiling ? "qIn" : "liftEscape4(p)"});
   var v = q;
@@ -6147,7 +6263,9 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
         2.0 * y.x * y.w,
       );
     }
-    v = L.p0.y * y + q;
+    // The link's own POST-AFFINE, forward, before the +q offset (the
+    // escape packer stores the forward post on the lanes).
+    v = linkPostForward4(L, L.p0.y * y) + q;
     r = length(v);
     growth = L.p0.z;
     lastPower = select(0.0, 2.0, kind == 5u);
@@ -7749,7 +7867,6 @@ ${shadeLighting}
   // in-loop case analysis): value no-ops, generated only on request.
   const stage2ChainHoist = bnbStage2
     ? `
-      let chainNormSq = dot(sQ0, sQ0);
       let invPScale = 1.0 / pScale;`
     : "";
   const stage2MapHoist = bnbStage2
@@ -7768,12 +7885,12 @@ ${shadeLighting}
   const stage2AffineSkipFor = (Wstr: string): string =>
     bnbStage2
       ? `
-            let rDir = dot(bnbG, sQ) + bnbT;
+            let rDir = dot(bnbG, preQ) + bnbT;
             let rEsc = R + best * invChildScale;
             if (rDir > params.escapeRadius && rDir >= rEsc) {
               continue;
             }
-            let sTerm = chainNormSq * bnbSigmaSq;
+            let sTerm = dot(preQ, preQ) * bnbSigmaSq;
             if (sTerm > needESq) {
               let needC = rEsc + bnbT;
               if (needC <= 0.0 || sTerm >= needC * needC) {
@@ -8094,6 +8211,13 @@ struct GpuMap4 {
   bnb: vec4f,
   p1: vec4f,
   fold: vec4f,
+  // The map's own POST-AFFINE inverse (the un-post stage): four rows plus
+  // the inverse translation. IDENTITY/zero packed when absent.
+  postI0: vec4f,
+  postI1: vec4f,
+  postI2: vec4f,
+  postI3: vec4f,
+  postT: vec4f,
 }`
         : /* wgsl */ `
 
@@ -8105,6 +8229,12 @@ struct GpuMap {
   bnb: vec4f,
   p1: vec4f,
   fold: vec4f,
+  // The map's own POST-AFFINE inverse (the un-post stage): three rows with
+  // the translation in the .w lanes. IDENTITY/zero packed when absent —
+  // the unconditional apply is value-exact.
+  postI0: vec4f,
+  postI1: vec4f,
+  postI2: vec4f,
 }`
   }
 
@@ -8144,8 +8274,32 @@ fn mapApply4(m: GpuMap4, x: vec4f) -> vec4f {
   return vec4f(dot(m.r0, x), dot(m.r1, x), dot(m.r2, x), dot(m.r3, x)) + m.t;
 }
 
+// The UN-POST stage one dimension up (see mapUnpost): identity/zero rows
+// make the absent case a value-exact skip.
+fn mapUnpost4(m: GpuMap4, x: vec4f) -> vec4f {
+  return vec4f(
+    dot(m.postI0, x),
+    dot(m.postI1, x),
+    dot(m.postI2, x),
+    dot(m.postI3, x),
+  ) + m.postT;
+}
+
 fn mapApplyLinear4(m: GpuMap4, x: vec4f) -> vec4f {
   return vec4f(dot(m.r0, x), dot(m.r1, x), dot(m.r2, x), dot(m.r3, x));
+}
+
+// The un-post's LINEAR part — a slab half-extent rides the post-inverse
+// rows only (a translation slides a segment's centre, never its extent),
+// the CPU's applyLinear4(postInvM, ext) mirrored. Identity rows make it
+// the value-exact identity for every map that authors no post.
+fn mapUnpostLinear4(m: GpuMap4, x: vec4f) -> vec4f {
+  return vec4f(
+    dot(m.postI0, x),
+    dot(m.postI1, x),
+    dot(m.postI2, x),
+    dot(m.postI3, x),
+  );
 }
 
 fn stepSector4(v: vec4f) -> vec4f {
@@ -8238,6 +8392,19 @@ fn mapApply(m: GpuMap, x: vec3f) -> vec3f {
     dot(m.r0.xyz, x) + m.r0.w,
     dot(m.r1.xyz, x) + m.r1.w,
     dot(m.r2.xyz, x) + m.r2.w,
+  );
+}
+
+// The UN-POST stage: the map's own post-affine inverse, applied to the
+// swept chain point between the sector sweep and the branch/base-inverse
+// machinery (the forward map is Rot_k o P o V o A, so P^-1 sits exactly
+// there). IDENTITY/zero rows make the absent case a value-exact skip —
+// no branch.
+fn mapUnpost(m: GpuMap, x: vec3f) -> vec3f {
+  return vec3f(
+    dot(m.postI0.xyz, x) + m.postI0.w,
+    dot(m.postI1.xyz, x) + m.postI1.w,
+    dot(m.postI2.xyz, x) + m.postI2.w,
   );
 }
 
@@ -8499,7 +8666,7 @@ ${
           var sfSigma = 1.0;
           var sfRd = 0.0;
           if (kind != 0u) {
-            u = sQ * m.p0.y;
+            u = mapUnpost(m, sQ) * m.p0.y;
             if (kind == 1u) {
               pre0 = u;
               pre1 = fr.wall2 - u;
@@ -8521,8 +8688,17 @@ ${
             if (kind == 0u) {
               if (candFloor > 0.0 && candFloor >= best) {
                 continue;
-              }${stage2AffineSkipFor(Wstr)}
-              img = mapApply(m, sQ);
+              }
+              // The UN-POSTED chain point: the stage-2 bound and the base
+              // inverse both price the point the affine inverse actually
+              // applies to, which is unpost(sQ) once a map carries its own
+              // post-affine — the chain-point hoist (chainNormSq) is
+              // sector-invariant, not post-invariant. Identity/zero post
+              // rows make mapUnpost the identity, so a post-free map prices
+              // the same bounds it always did (a sound bound's skip set
+              // never changes the returned value).
+              let preQ = mapUnpost(m, sQ);${stage2AffineSkipFor(Wstr)}
+              img = mapApply(m, preQ);
               branchSigma = mapSigma;
             } else {
               var branchRd: f32;
@@ -8865,7 +9041,7 @@ ${
     : ""
 }
       let m = maps[j];
-      let jImg = mapApply(m, sImg);
+      let jImg = mapApply(m, mapUnpost(m, sImg));
       inner = min(
         inner,
         m.p0.x * (length(jImg - params.boundCenter) - params.boundingRadius),
@@ -9009,7 +9185,7 @@ ${
     : ""
 }
           let m = maps[j];
-          let img = mapApply(m, sQ);
+          let img = mapApply(m, mapUnpost(m, sQ));
           let r = length(img - params.boundCenter);
           let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
@@ -9336,12 +9512,12 @@ ${
     : ""
 }
       let m = maps[j];
-      let jImg = mapApply4(m, sImg);
+      let jImg = mapApply4(m, mapUnpost4(m, sImg));
 ${
   slabExt
     ? `      var jExt = vec4f(0.0);
       if (segment) {
-        jExt = mapApplyLinear4(m, sExt);
+        jExt = mapApplyLinear4(m, mapUnpost4(m, sExt));
       }
 `
     : ``
@@ -9625,7 +9801,7 @@ ${
     : ""
 }
           let m = maps[j];
-          let img = mapApply4(m, sQ);
+          let img = mapApply4(m, mapUnpost4(m, sQ));
 ${
   slabExt
     ? `          // GpuMap4 keeps translation in its own t field, so the
@@ -9633,7 +9809,7 @@ ${
           // segment's half-extent ever sees.
           var imgExt = vec4f(0.0);
           if (segment) {
-            imgExt = mapApplyLinear4(m, sExt);
+            imgExt = mapApplyLinear4(m, mapUnpost4(m, sExt));
           }
           let r = segmentRadius4(img, imgExt);
 `
@@ -10180,13 +10356,17 @@ ${
           var sfSigma = 1.0;
           var sfRd = 0.0;
           if (kind != 0u) {
-            u = sQ * m.p0.y;
+            u = mapUnpost4(m, sQ) * m.p0.y;
 ${
   slabExt
     ? `            // u-space is a SCALAR multiple of world space, so the
             // half-extent scales with the point and stays a segment.
             if (segment) {
-              eu = sExt * m.p0.y;
+              // u-space is a SCALAR multiple of world space, so the
+              // half-extent scales with the point and stays a segment — and
+              // it rides the UN-POSTED extent (the post-inverse's linear
+              // part), the hit-info body's rule above.
+              eu = mapUnpostLinear4(m, sExt) * m.p0.y;
             }
 `
     : ``
@@ -10242,11 +10422,11 @@ ${
               if (candFloor > 0.0 && candFloor >= best) {
                 continue;
               }
-              img = mapApply4(m, sQ);
+              img = mapApply4(m, mapUnpost4(m, sQ));
 ${
   slabExt
     ? `              if (segment) {
-                imgExt = mapApplyLinear4(m, sExt);
+                imgExt = mapApplyLinear4(m, mapUnpost4(m, sExt));
               }
 `
     : ``
@@ -10609,6 +10789,16 @@ ${renameToProbe4(fold4DescentFnText(probeWidth, slabExt, core4ExternalLift))}`;
   // factor to the ONE shared `dr`, whose `+ 1` (the per-link offset's own
   // derivative) floors it once per link.
   const escapeDescentText = /* wgsl */ `${bulbPow8Text}
+// The link's own POST-AFFINE, read FORWARD off the post lanes (the escape
+// packer stores the FORWARD post rows + translation there — each packer
+// transfers its own oracle's numbers). Identity/zero when absent.
+fn linkPostForward(L: GpuMap, x: vec3f) -> vec3f {
+  return vec3f(
+    dot(L.postI0.xyz, x) + L.postI0.w,
+    dot(L.postI1.xyz, x) + L.postI1.w,
+    dot(L.postI2.xyz, x) + L.postI2.w,
+  );
+}
 
 // escape-de.ts's foldQueryIntoSector — the kaleidoscope as a
 // QUERY-SPACE wedge fold applied ONCE before the orbit, never as an orbit
@@ -10711,8 +10901,8 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     }
     // The Mandelbrot form's offset — the QUERY POINT (folded before the
     // orbit), not the document's t (which stays the pre-fold offset
-    // inside y above).
-    v = L.p0.y * y + q;
+    // inside y above). The link's own POST-AFFINE, forward, before it.
+    v = linkPostForward(L, L.p0.y * y) + q;
     dr = L.p0.z * localL * dr + 1.0;
     r = length(v);${trapGeometryStep("v", "i")}
     link++;
@@ -10843,6 +11033,18 @@ fn liftEscape4(pIn: vec3f) -> vec4f {
   );
 }
 
+// The link's own POST-AFFINE, read FORWARD off the post lanes (the escape
+// packer stores the FORWARD post rows + translation there). Identity/zero
+// when absent.
+fn linkPostForward4(L: GpuMap4, x: vec4f) -> vec4f {
+  return vec4f(
+    dot(L.postI0, x),
+    dot(L.postI1, x),
+    dot(L.postI2, x),
+    dot(L.postI3, x),
+  ) + L.postT;
+}
+
 fn surfaceDE(${tiling ? "qIn: vec4f" : "pIn: vec3f"}, cutoff: f32, li: u32) -> f32 {
   let q = foldQuerySector4(${tiling ? "qIn" : "liftEscape4(pIn)"});
   var v = q;
@@ -10896,7 +11098,8 @@ fn surfaceDE(${tiling ? "qIn: vec4f" : "pIn: vec3f"}, cutoff: f32, li: u32) -> f
       );
     }
     // The Mandelbrot form's offset — the QUERY POINT, folded and lifted.
-    v = L.p0.y * y + q;
+    // The link's own POST-AFFINE, forward, before the +q offset.
+    v = linkPostForward4(L, L.p0.y * y) + q;
     dr = L.p0.z * localL * dr + 1.0;
     r = length(v);${trapGeometryStep("v.xyz", "i")}
     link++;

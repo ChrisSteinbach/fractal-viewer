@@ -60,6 +60,13 @@
  *   field absent on both sides stays absent. Both `finish` objects absent
  *   stays absent, keeping an unparameterized morph byte-identical to before
  *   the field existed.
+ * - `Transform.post` (the per-transform POST-AFFINE — flam3's `post=`)
+ *   lerps the fold lengths' rule one matrix up: every entry and translation
+ *   component goes through {@link lerpPost} with the IDENTITY as the absent
+ *   side's fallback (absence renders the identity map, so that is what a
+ *   one-sided post fades from and to), and both sides absent stays absent.
+ *   An endpooint pair that never authored a post morphs byte-identically to
+ *   before the field existed.
  * - `Transform.chaos` (graph-directed selection rows) lerps entrywise with
  *   the absent side reading all-1s at the other side's length, and an
  *   all-1s result is dropped — see {@link lerpChaos}. A transform-count
@@ -84,6 +91,11 @@
  *   by-reference returns.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
+import type { Affine } from "./types";
+/** The identity post the one-sided `lerpPost` falls back to — a fresh
+ * row-major identity and zero translation, matching `isIdentityAffine`'s
+ * exact shape. */
+const IDENTITY_POST_M = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 import type { CondensationDepthBand } from "./condensation-de";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "./shape-trap";
@@ -754,6 +766,34 @@ function lerpSurfacePattern(
   };
 }
 
+/**
+ * The per-transform POST-AFFINE's morph: each of the nine matrix entries
+ * and three translation components lerps with the IDENTITY as the absent
+ * side's fallback — the fold lengths' rule (the classic value, never a
+ * synthesized zero), because absence renders the identity map and that is
+ * what a one-sided post must fade from and to. Both sides absent stays
+ * absent; the result is written sparse-but-complete (a present pair always
+ * lerps to a full post object). Endpoint-exact by construction: at t = 0
+ * every entry equals `a`'s (or the identity), at t = 1 `b`'s.
+ */
+function lerpPost(
+  a: Affine | undefined,
+  b: Affine | undefined,
+  t: number,
+): Affine | undefined {
+  if (a === undefined && b === undefined) return undefined;
+  const ma = a?.m ?? IDENTITY_POST_M;
+  const mb = b?.m ?? IDENTITY_POST_M;
+  const ta = a?.t ?? [0, 0, 0];
+  const tb = b?.t ?? [0, 0, 0];
+  const m = ma.map((v, i) => lerp(v, mb[i], t));
+  const post: Affine = {
+    m,
+    t: [lerp(ta[0], tb[0], t), lerp(ta[1], tb[1], t), lerp(ta[2], tb[2], t)],
+  };
+  return post;
+}
+
 /** Lerp one paired transform, field by field, assigning `id` from the pair's
  * position rather than either side's own id (mid-morph ids are
  * display-only — see the module header). `colorIndexFallback` is the
@@ -799,6 +839,18 @@ function lerpTransformPair(
 
   const variations = lerpVariations(a.variations, b.variations, t);
   if (variations !== undefined) result.variations = variations;
+
+  // The per-transform POST-AFFINE: every matrix entry and translation
+  // component lerps with the IDENTITY side as the absent side's fallback
+  // (the fold lengths' rule — the classic value, never a synthesized zero:
+  // a post morphing in from nothing must fade from the IDENTITY map, since
+  // that is what absence renders), both-absent stays absent. A post that
+  // lerps back to exactly the identity stays — a present-but-identity post
+  // renders identically to absent (the engine applies it and the
+  // identity-skip is value-exact), and dropping it mid-morph would be a
+  // second, undocumented cleanup rule.
+  const post = lerpPost(a.post, b.post, t);
+  if (post !== undefined) result.post = post;
 
   const chaos = lerpChaos(a.chaos, b.chaos, t);
   if (chaos !== undefined) result.chaos = chaos;

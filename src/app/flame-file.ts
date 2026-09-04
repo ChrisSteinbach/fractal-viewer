@@ -583,9 +583,13 @@ function xformToTransform(
   }
 
   // `post` applies AFTER the variation sum. On a purely affine xform the
-  // composition post∘affine is itself affine — fold it in exactly. With
-  // nonlinear variations in between there is nothing in our vocabulary to
-  // hang it on, so it is dropped with a warning.
+  // composition post∘affine is itself affine — fold it in exactly, so a
+  // plain map imports as one affine with no second matrix to carry (the
+  // round-trip stays exact: export writes the same composition back into
+  // post=, where a re-import folds it again). On a nonlinear xform the post
+  // is the engine's own per-map post stage — `Transform.post` — which every
+  // renderer realizes; it is no longer dropped with a shape warning.
+  let importedPost: Coefs2D | null = null;
   const rawPost = el.getAttribute("post");
   if (rawPost !== null) {
     const post = parseCoefs(rawPost);
@@ -595,9 +599,7 @@ function xformToTransform(
       if (variations.length === 0) {
         coefs = composeCoefs(post, coefs);
       } else {
-        warnings.add(
-          "Ignored a post transform on a nonlinear map (shape will differ)",
-        );
+        importedPost = post;
       }
     }
   }
@@ -613,6 +615,27 @@ function xformToTransform(
   };
   if (Math.abs(shear) > 1e-9) transform.shear = [shear, 0, 0];
   if (variations.length > 0) transform.variations = variations;
+  if (importedPost !== null) {
+    // flam3's post is PLANAR ("a b c d e f"): x' = a·x + c·y + e,
+    // y' = b·x + d·y + f, z untouched. The lift is the faithful reading on
+    // our 3D engine: the 2x2 rides the upper-left block, the z row and
+    // column stay the identity and the z translation 0 — so z passes
+    // through exactly as flam3's own 3D mode passes it through.
+    transform.post = {
+      m: [
+        importedPost.a,
+        importedPost.c,
+        0,
+        importedPost.b,
+        importedPost.d,
+        0,
+        0,
+        0,
+        1,
+      ],
+      t: [importedPost.e, importedPost.f, 0],
+    };
+  }
 
   // Per-xform color: `color` is the palette slot and
   // `color_speed`/`symmetry` the blend rate — our `colorIndex`/`colorSpeed`
@@ -1275,11 +1298,45 @@ export function encodeFlameFile(
 
       let coefs: Coefs2D;
       let post = "";
+      // The map's own post-affine (`Transform.post`, read back from a
+      // nonlinear xform's post= on import), in flam3's spelling. An
+      // affine-only map never carries one here: the import folded its post
+      // into the coefficients exactly, and this loop's affine branch below
+      // writes the rotation back the same way.
+      const userPost: Coefs2D | null = t.post
+        ? {
+            a: t.post.m[0],
+            b: t.post.m[3],
+            c: t.post.m[1],
+            d: t.post.m[4],
+            e: t.post.t[0],
+            f: t.post.t[1],
+          }
+        : null;
+      // flam3 has ONE post= slot and ours must carry the copy's whole POST
+      // stage — the copy rotation applied AFTER the user post, the engine
+      // ordering (affine -> variations -> post -> rotation). Copy rotation
+      // OUTER is what makes a flam3 render reproduce it: flam3 applies its
+      // post after the variation sum, exactly where our stage sits.
+      const rotCoefs: Coefs2D = {
+        a: rot === null ? 1 : rot[0],
+        b: rot === null ? 0 : rot[3],
+        c: rot === null ? 0 : rot[1],
+        d: rot === null ? 1 : rot[4],
+        e: 0,
+        f: 0,
+      };
       if (rot === null) {
         coefs = affineToCoefs(affine.m, affine.t);
-      } else if (isAffineBlend(merged)) {
-        // Affine map: the copy's rotation composes into the coefficients
-        // exactly (rotate the linear block and the translation).
+        if (userPost !== null) {
+          // Copy 0: no rotation to compose — the map's own post is the
+          // whole stage.
+          post = ` post="${coefsAttr(userPost)}"`;
+        }
+      } else if (isAffineBlend(merged) && userPost === null) {
+        // Affine map, no post: the copy's rotation composes into the
+        // coefficients exactly (rotate the linear block and the
+        // translation) — the cheapest spelling, unchanged.
         const m = mul3(rot, affine.m);
         const tx =
           rot[0] * affine.t[0] + rot[1] * affine.t[1] + rot[2] * affine.t[2];
@@ -1287,10 +1344,15 @@ export function encodeFlameFile(
           rot[3] * affine.t[0] + rot[4] * affine.t[1] + rot[5] * affine.t[2];
         coefs = affineToCoefs(m, [tx, ty]);
       } else {
-        // Nonlinear map: our copy rotation applies AFTER the variation
-        // blend — exactly what flam3's `post` does.
+        // Nonlinear map, or an affine map carrying a real post: the copy's
+        // rotation can no longer fold into the coefficients (a post in the
+        // way would flip the composition order), so the whole POST stage —
+        // rotation composed over the user post — exports into flam3's one
+        // post= slot.
         coefs = affineToCoefs(affine.m, affine.t);
-        post = ` post="${fmt(rot[0])} ${fmt(rot[3])} ${fmt(rot[1])} ${fmt(rot[4])} 0 0"`;
+        const stage =
+          userPost !== null ? composeCoefs(rotCoefs, userPost) : rotCoefs;
+        post = ` post="${coefsAttr(stage)}"`;
       }
 
       xforms.push(
@@ -1311,10 +1373,24 @@ export function encodeFlameFile(
     // the speed to 0, the one value that makes a flam3 render agree with ours.
     // The authored slot still rides along, inert, for tools that display it.
     const color = s.finalTransform.colorIndex ?? 0;
+    // The lens's own post-affine rides flam3's post= the same way a base
+    // map's does (the lens never carries a copy rotation — symmetry does
+    // not rotate the final transform — so its post is the whole stage).
+    const lensPost: Coefs2D | null = s.finalTransform.post
+      ? {
+          a: s.finalTransform.post.m[0],
+          b: s.finalTransform.post.m[3],
+          c: s.finalTransform.post.m[1],
+          d: s.finalTransform.post.m[4],
+          e: s.finalTransform.post.t[0],
+          f: s.finalTransform.post.t[1],
+        }
+      : null;
     xforms.push(
       `    <finalxform color="${fmt(color)}"${colorSpeedAttrs(0)}` +
         `${variationAttrs(s.finalTransform)}` +
-        ` coefs="${coefsAttr(affineToCoefs(finalAffine.m, finalAffine.t))}"/>`,
+        ` coefs="${coefsAttr(affineToCoefs(finalAffine.m, finalAffine.t))}"` +
+        `${lensPost !== null ? ` post="${coefsAttr(lensPost)}"` : ""}/>`,
     );
   }
 

@@ -652,7 +652,7 @@
  * lifted triplex power carries `w` untouched, which is honest for the
  * chaos game and useless to an estimator.
  */
-import { composeAffine } from "./affine";
+import { composeAffine, isIdentityAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import { BULB_POWER } from "./bulb-de";
 import {
@@ -833,6 +833,15 @@ export interface EscapeLink {
   m: number[];
   /** Forward translation t. */
   t: Vec3;
+  /** The map's own POST-AFFINE (flam3's `post=`), or `null` — every link
+   * predating the field. The forward map per step is `P ∘ (w·V) ∘ A`, so
+   * the orbit applies `postM·(w·f) + postT` after the fold/power body and
+   * BEFORE the `+ p` offset; `derivGrowth` prices the composite
+   * (`transformSigmas`), so the derivative recurrence absorbs the post's
+   * linear stretch without a second factor. */
+  postM: number[] | null;
+  /** The post's translation — `null` with {@link postM}. */
+  postT: Vec3 | null;
   /** The map applied after the affine part — a fold, or one of the two
    * power maps. */
   kind: EscapeLinkKind;
@@ -1093,6 +1102,12 @@ export function analyzeEscapeSystem(
 function buildEscapeLink(map: Transform): EscapeLink {
   const v = linkVariation(map)!;
   const affine = composeAffine(map);
+  // The link's own post-affine, when it authors a non-identity one — the
+  // forward map is P ∘ (w·V) ∘ A and the orbit applies it after the fold.
+  const postLive = map.post !== undefined && !isIdentityAffine(map.post);
+  const post = map.post;
+  const postM = postLive ? [...post!.m] : null;
+  const postT: Vec3 | null = postLive ? ([...post!.t] as Vec3) : null;
   // A POWER link has no fold apparatus at all, and `resolveFoldRadii`
   // returns the CLASSIC set for a variation carrying none — so its lane
   // travels the wire holding the numbers every unparameterised fold link
@@ -1102,6 +1117,8 @@ function buildEscapeLink(map: Transform): EscapeLink {
   return {
     m: affine.m,
     t: affine.t,
+    postM,
+    postT,
     kind:
       v.type === "boxfold"
         ? ESCAPE_LINK_BOXFOLD
@@ -1392,9 +1409,27 @@ function runEscapeOrbit(
       fz = 2 * yx * yz;
       localL = 2 * Math.sqrt(yx * yx + yy * yy + yz * yz);
     }
-    vx = link.w * fx + qx;
-    vy = link.w * fy + qy;
-    vz = link.w * fz + qz;
+    // The link's own POST-AFFINE, after the weighted variation output and
+    // BEFORE the `+ p` offset — the forward map P ∘ (w·V) ∘ A read in the
+    // orbit's order. A post-free link keeps the exact `w·f` it always
+    // applied (the weight fold-in); a posted link's post absorbs it.
+    if (link.postM !== null && link.postT !== null) {
+      const pm = link.postM;
+      const pt = link.postT;
+      const wx = link.w * fx;
+      const wy = link.w * fy;
+      const wz = link.w * fz;
+      fx = pm[0] * wx + pm[1] * wy + pm[2] * wz + pt[0];
+      fy = pm[3] * wx + pm[4] * wy + pm[5] * wz + pt[1];
+      fz = pm[6] * wx + pm[7] * wy + pm[8] * wz + pt[2];
+    } else {
+      fx = link.w * fx;
+      fy = link.w * fy;
+      fz = link.w * fz;
+    }
+    vx = fx + qx;
+    vy = fy + qy;
+    vz = fz + qz;
     dr = link.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
     // Trap color and geometry share this ONE local-SDF evaluation and the
@@ -1518,9 +1553,27 @@ function escapePatternCarrierSample(
       fy = 2 * yx * yy;
       fz = 2 * yx * yz;
     }
-    vx = link.w * fx + qx;
-    vy = link.w * fy + qy;
-    vz = link.w * fz + qz;
+    // The link's own POST-AFFINE, after the weighted variation output and
+    // BEFORE the `+ p` offset — the forward map P ∘ (w·V) ∘ A read in the
+    // orbit's order. A post-free link keeps the exact `w·f` it always
+    // applied (the weight fold-in); a posted link's post absorbs it.
+    if (link.postM !== null && link.postT !== null) {
+      const pm = link.postM;
+      const pt = link.postT;
+      const wx = link.w * fx;
+      const wy = link.w * fy;
+      const wz = link.w * fz;
+      fx = pm[0] * wx + pm[1] * wy + pm[2] * wz + pt[0];
+      fy = pm[3] * wx + pm[4] * wy + pm[5] * wz + pt[1];
+      fz = pm[6] * wx + pm[7] * wy + pm[8] * wz + pt[2];
+    } else {
+      fx = link.w * fx;
+      fy = link.w * fy;
+      fz = link.w * fz;
+    }
+    vx = fx + qx;
+    vy = fy + qy;
+    vz = fz + qz;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
     rings = Math.min(rings, r / de.boundingRadius);
     sheets = Math.min(sheets, Math.abs(vy) / de.boundingRadius);

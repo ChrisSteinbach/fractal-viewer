@@ -794,6 +794,14 @@ export interface PreparedChaosGame {
   /** Composed final-transform variation blend, or `null`. */
   finalWarp: VariationBlend | null;
   /**
+   * The final transform's own post-affine ({@link Transform.post}), or
+   * `null` — the lens's map is affine -> variations -> post exactly like a
+   * base map's, so {@link plotPoint} applies this after `finalWarp` and
+   * Surface's lens inverse un-applies it first. `null` for every lens
+   * predating the field and for every absent final transform.
+   */
+  finalPost: Affine | null;
+  /**
    * The draw range for the unweighted uniform pick in `pickIndex`: every
    * rotated-copy SLOT, not just the base maps — `baseTransformCount *
    * effectiveSymmetryOrder(...)`. Equal to `baseTransformCount` at symmetry
@@ -849,6 +857,21 @@ export interface PreparedChaosGame {
    * nothing to rotate. See {@link stepOrbit}.
    */
   postRotations: (number[] | null)[];
+  /**
+   * The per-slot POST-AFFINE stage ({@link Transform.post}, flam3's
+   * `post=`), indexed like `affines`/`variations` — the composed
+   * post of the slot's BASE map, identical across its kaleidoscope copies
+   * (the post applies BEFORE the copy rotation, so it carries no
+   * copy-dependence of its own), or `null` for a map that authors none —
+   * every slot of every document predating the field. Read by
+   * {@link stepOrbit} between the variation sum and the post-rotation; an
+   * emitter step skips it exactly as it skips the variations (a condensation
+   * set is a fixed compact shape — the post is part of the warp pipeline the
+   * emitter branch replaces). Surface's inverse descent carries the INVERSE
+   * of these (`surface-de.ts`'s per-map post inverses) so the plotted set
+   * and the estimated set cannot disagree.
+   */
+  posts: (Affine | null)[];
   /**
    * The scheduled-hybrid post-word stage ({@link prepareSchedule}), or
    * `null` for a document with no schedule block — the common case, in
@@ -935,6 +958,12 @@ export function prepareChaosGame(
   // is null for the existing presets, so `stepOrbit` takes the exact same path
   // (and touches the RNG identically) as before variations existed.
   const baseVariations = transforms.map((t) => composeVariations(t.variations));
+  // Per-transform POST-AFFINE (flam3's post=), or null — the common case,
+  // every document predating the field. The post applies BEFORE the copy
+  // rotation, so every kaleidoscope copy of a map carries the SAME entry
+  // (copy-major expansion below just repeats it, matching the postRotations
+  // layout so both arrays index alike).
+  const basePosts = transforms.map((t) => t.post ?? null);
   // The optional final transform: one more affine + variation map applied only
   // when a point is plotted (`plotPoint`), never fed back into the orbit. Both
   // stay null when absent, so `plotPoint` keeps the pre-feature code path.
@@ -942,6 +971,7 @@ export function prepareChaosGame(
   const finalWarp = finalTransform
     ? composeVariations(finalTransform.variations)
     : null;
+  const finalPost = finalTransform ? (finalTransform.post ?? null) : null;
 
   // Expand into one prepared SLOT per (copy, base map) pair, slot k*n+i —
   // copy 0 first (unrotated), then copy 1, etc. — so `idx % baseTransformCount`
@@ -953,6 +983,7 @@ export function prepareChaosGame(
   const affines: Affine[] = [];
   const variations: (VariationBlend | null)[] = [];
   const postRotations: (number[] | null)[] = [];
+  const posts: (Affine | null)[] = [];
   for (let k = 0; k < order; k++) {
     const post =
       k === 0
@@ -962,6 +993,7 @@ export function prepareChaosGame(
       affines.push(baseAffines[i]);
       variations.push(baseVariations[i]);
       postRotations.push(post);
+      posts.push(basePosts[i]);
     }
   }
   const transformCount = affines.length;
@@ -1025,6 +1057,7 @@ export function prepareChaosGame(
     variations,
     finalAffine,
     finalWarp,
+    finalPost,
     transformCount,
     baseTransformCount,
     weighted,
@@ -1034,6 +1067,7 @@ export function prepareChaosGame(
     chaosRowTotals: chaos ? chaos.chaosRowTotals : null,
     chaosFallbackRows: chaos ? chaos.chaosFallbackRows : null,
     postRotations,
+    posts,
     schedule: prepareSchedule(schedule),
     emitters: prepareEmitters(transforms),
     colorIndex,
@@ -1147,6 +1181,14 @@ export interface OrbitStep {
  * per-transform coloring and the editor's selection keep meaning "logical
  * map" regardless of which kaleidoscope copy actually fired.
  *
+ * POST-AFFINE: a slot's `posts` entry (flam3's `post=`) applies to the
+ * variation sum's output immediately BEFORE the post-rotation, in the
+ * non-emitter branch only — emitter steps skip it exactly as they skip the
+ * variations (a condensation set is fixed; the post is part of the warp
+ * pipeline the emitter branch replaces), while the SYMMETRY rotation still
+ * bends an emitted point. `null` entries skip with zero extra work — the
+ * identity-skip every mirror shares.
+ *
  * `auxRng` is the stream every ITERATION-LOCAL draw comes from —
  * a stochastic variation's coin flips (`julia`) and the escape-reseed
  * coordinates; the transform pick alone stays on `rng`. It defaults to `rng`
@@ -1235,6 +1277,24 @@ export function stepOrbit(
       ny = q[1];
       nz = q[2];
     }
+    // The slot's POST-AFFINE (flam3's post=), between the variation sum and
+    // the symmetry post-rotation — the engine ordering every mirror
+    // realizes. `null` (every map that authors none) skips: the affine
+    // result passes through untouched, byte-identically. Emitter steps
+    // never reach here — their branch above replaces the whole
+    // affine+variation application, and the post is part of the pipeline it
+    // replaces.
+    const post = prepared.posts[idx];
+    if (post !== null) {
+      const m = post.m;
+      const t = post.t;
+      const px = m[0] * nx + m[1] * ny + m[2] * nz + t[0];
+      const py = m[3] * nx + m[4] * ny + m[5] * nz + t[1];
+      const pz = m[6] * nx + m[7] * ny + m[8] * nz + t[2];
+      nx = px;
+      ny = py;
+      nz = pz;
+    }
   }
   const post = prepared.postRotations[idx];
   if (post !== null) {
@@ -1299,7 +1359,7 @@ export function plotPoint(
   rng: Rng,
   auxRng: Rng = rng,
 ): Vec3 {
-  const { finalAffine, finalWarp, schedule } = prepared;
+  const { finalAffine, finalWarp, finalPost, schedule } = prepared;
   let px = x;
   let py = y;
   let pz = z;
@@ -1334,6 +1394,18 @@ export function plotPoint(
     fx = q[0];
     fy = q[1];
     fz = q[2];
+  }
+  // The lens's own post-affine, after its variation blend — the same
+  // affine -> variations -> post order a base map realizes, one lens over.
+  if (finalPost !== null) {
+    const m = finalPost.m;
+    const t = finalPost.t;
+    const gx = m[0] * fx + m[1] * fy + m[2] * fz + t[0];
+    const gy = m[3] * fx + m[4] * fy + m[5] * fz + t[1];
+    const gz = m[6] * fx + m[7] * fy + m[8] * fz + t[2];
+    fx = gx;
+    fy = gy;
+    fz = gz;
   }
   if (Number.isFinite(fx) && Number.isFinite(fy) && Number.isFinite(fz)) {
     return [fx, fy, fz];
@@ -1455,8 +1527,15 @@ export function runChaosGame(
   // stepOrbit/plotPoint by the oracle test in chaos-game.test.ts
   // ("allocation-free oracle"), so the two paths can never silently drift
   // apart.
-  const { affines, variations, postRotations, finalAffine, finalWarp } =
-    prepared;
+  const {
+    affines,
+    variations,
+    postRotations,
+    posts,
+    finalAffine,
+    finalWarp,
+    finalPost,
+  } = prepared;
   const { baseTransformCount, schedule: preparedSchedule, emitters } = prepared;
   // Emitter-sample stream: one reseedable object per run (allocation-free
   // per step), reseeded from the primary stream by exactly one draw per
@@ -1537,6 +1616,21 @@ export function runChaosGame(
         nx = q[0];
         ny = q[1];
         nz = q[2];
+      }
+      // The slot's POST-AFFINE, between the variation sum and the
+      // post-rotation — stepOrbit's insertion exactly (this loop is its
+      // hand-inlined mirror, pinned by the oracle test). Emitter steps
+      // skip it (their branch replaced the pipeline it belongs to).
+      const slotPost = posts[idx];
+      if (slotPost !== null) {
+        const sm = slotPost.m;
+        const st = slotPost.t;
+        const sx = sm[0] * nx + sm[1] * ny + sm[2] * nz + st[0];
+        const sy = sm[3] * nx + sm[4] * ny + sm[5] * nz + st[1];
+        const sz = sm[6] * nx + sm[7] * ny + sm[8] * nz + st[2];
+        nx = sx;
+        ny = sy;
+        nz = sz;
       }
     }
 
@@ -1619,6 +1713,18 @@ export function runChaosGame(
         fx = q[0];
         fy = q[1];
         fz = q[2];
+      }
+      // The lens's own post-affine, after its variation blend — plotPoint's
+      // lens order exactly.
+      if (finalPost !== null) {
+        const pm = finalPost.m;
+        const pt = finalPost.t;
+        const gx = pm[0] * fx + pm[1] * fy + pm[2] * fz + pt[0];
+        const gy = pm[3] * fx + pm[4] * fy + pm[5] * fz + pt[1];
+        const gz = pm[6] * fx + pm[7] * fy + pm[8] * fz + pt[2];
+        fx = gx;
+        fy = gy;
+        fz = gz;
       }
       if (Number.isFinite(fx) && Number.isFinite(fy) && Number.isFinite(fz)) {
         px = fx;
@@ -1731,8 +1837,15 @@ export function runChaosGameTiledPoints(
   let canonicalMinR = Infinity;
   let canonicalMaxR = -Infinity;
 
-  const { affines, variations, postRotations, finalAffine, finalWarp } =
-    prepared;
+  const {
+    affines,
+    variations,
+    postRotations,
+    posts,
+    finalAffine,
+    finalWarp,
+    finalPost,
+  } = prepared;
   const { baseTransformCount, schedule: preparedSchedule, emitters } = prepared;
   const emitterStream = createEmitterStream();
   const emitterDraw = emitterStream.draw;
@@ -1809,6 +1922,19 @@ export function runChaosGameTiledPoints(
         ny = q[1];
         nz = q[2];
       }
+      // The slot's POST-AFFINE — stepOrbit's insertion exactly (this loop is
+      // its hand-inlined mirror). Emitter steps skip it.
+      const slotPost = posts[idx];
+      if (slotPost !== null) {
+        const sm = slotPost.m;
+        const st = slotPost.t;
+        const sx = sm[0] * nx + sm[1] * ny + sm[2] * nz + st[0];
+        const sy = sm[3] * nx + sm[4] * ny + sm[5] * nz + st[1];
+        const sz = sm[6] * nx + sm[7] * ny + sm[8] * nz + st[2];
+        nx = sx;
+        ny = sy;
+        nz = sz;
+      }
     }
 
     const post = postRotations[idx];
@@ -1876,6 +2002,18 @@ export function runChaosGameTiledPoints(
         fx = q[0];
         fy = q[1];
         fz = q[2];
+      }
+      // The lens's own post-affine, after its variation blend — plotPoint's
+      // lens order exactly.
+      if (finalPost !== null) {
+        const pm = finalPost.m;
+        const pt = finalPost.t;
+        const gx = pm[0] * fx + pm[1] * fy + pm[2] * fz + pt[0];
+        const gy = pm[3] * fx + pm[4] * fy + pm[5] * fz + pt[1];
+        const gz = pm[6] * fx + pm[7] * fy + pm[8] * fz + pt[2];
+        fx = gx;
+        fy = gy;
+        fz = gz;
       }
       if (Number.isFinite(fx) && Number.isFinite(fy) && Number.isFinite(fz)) {
         px = fx;

@@ -134,100 +134,106 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D affine finish0": {
-    resolved: "87155b2380d0ce9d",
-    emitted: "9e8ffc12aa11c2f8",
+    resolved: "9d6ee7a9e422f9ff" /* post-affine stage */,
+    emitted: "e5ccc4f5a46f938a" /* post-affine stage */,
   },
   "3D lens finish0": {
-    resolved: "a588c95b6a9357b2",
-    emitted: "5898a35d60540b64",
+    resolved: "9ec4a8f6ab4a1474" /* post-affine stage */,
+    emitted: "6493ac0b772e6a47" /* post-affine stage */,
   },
   "3D balloon finish0": {
-    resolved: "2553770bebb22d4a",
-    emitted: "27c0cc0f1b1b5fc0",
+    resolved: "b2d14e25bd42db22" /* post-affine stage */,
+    emitted: "935f9dd248f613c8" /* post-affine stage */,
   },
   "3D plane finish0": {
-    resolved: "ee58344008c3c12e",
-    emitted: "cdb41fd6ff2c1784",
+    resolved: "2a5e060e1249833a" /* post-affine stage */,
+    emitted: "5d6adcfdbff98b2e" /* post-affine stage */,
   },
   "3D lens+balloon finish0": {
-    resolved: "ffe6bdf2d90a7920",
-    emitted: "6579e37fd4ec9597",
+    resolved: "1c7e79a07d368e05" /* post-affine stage */,
+    emitted: "b434efb5534eb4c8" /* post-affine stage */,
   },
   "3D lens+plane finish0": {
-    resolved: "f206a3e9b71b8642",
-    emitted: "cbc63d042d9a1f35",
+    resolved: "e52b327f434dae48" /* post-affine stage */,
+    emitted: "4db055fbe4a1e6b5" /* post-affine stage */,
   },
   "3D escape finish0": {
-    resolved: "fc3b5eecf090fd50",
-    emitted: "fc3b5eecf090fd50",
+    resolved:
+      "2f7e019c6ab723ef" /* post-affine stage; escape-arm post uniforms */,
+    emitted:
+      "2f7e019c6ab723ef" /* post-affine stage; escape-arm post uniforms */,
   },
   "3D escape+balloon finish0": {
-    resolved: "78f3949f80bbac2c",
-    emitted: "441881d3d6dcddf5",
+    resolved:
+      "bde5df23054eb6fb" /* post-affine stage; escape-arm post uniforms */,
+    emitted:
+      "2a600e5c3cc972d0" /* post-affine stage; escape-arm post uniforms */,
   },
   "3D escape+plane finish0": {
-    resolved: "56ac81a3bf8adfc2",
-    emitted: "44138e09099bbd38",
+    resolved:
+      "ae6b15f29b375f47" /* post-affine stage; escape-arm post uniforms */,
+    emitted:
+      "b503b0565114e71b" /* post-affine stage; escape-arm post uniforms */,
   },
   "3D bulb finish0": {
-    resolved: "68625d8191aae5d9",
-    emitted: "68625d8191aae5d9",
+    resolved: "c048fece640d2217" /* post-affine stage */,
+    emitted: "c048fece640d2217" /* post-affine stage */,
   },
   "3D bulb+balloon finish0": {
-    resolved: "ee6815b4a9b46f01",
-    emitted: "ee6815b4a9b46f01",
+    resolved: "599f3186a270307b" /* post-affine stage */,
+    emitted: "599f3186a270307b" /* post-affine stage */,
   },
   "3D bulb+plane finish0": {
-    resolved: "52e3a9619ac1764d",
-    emitted: "38ff35ac5765e842",
+    resolved: "41fd22ce25ed5d9c" /* post-affine stage */,
+    emitted: "71eac638788eebe6" /* post-affine stage */,
   },
   "3D affine finish1": {
-    resolved: "a0619b96de2c5aac",
-    emitted: "03580e57ec07fe47",
+    resolved: "29e4b44c843f1d1b" /* post-affine stage */,
+    emitted: "54cb513febc00beb" /* post-affine stage */,
   },
   "3D lens finish1": {
-    resolved: "ab8ff01454039c55",
-    emitted: "887c47b063db1b7f",
+    resolved: "94b2d6bf9e67529b" /* post-affine stage */,
+    emitted: "3fdf631aeaeaf897" /* post-affine stage */,
   },
   "3D balloon finish1": {
-    resolved: "1ba3183defc84a98",
-    emitted: "56853af5a9459b54",
+    resolved: "f8baf4fefa12d740" /* post-affine stage */,
+    emitted: "bb5219302a3621b1" /* post-affine stage */,
   },
   "3D plane finish1": {
-    resolved: "f7ddf629f2765877",
-    emitted: "e806201d0cf3b015",
+    resolved: "54ee1053c36b8dd4" /* post-affine stage */,
+    emitted: "ec16ccd8498618f6" /* post-affine stage */,
   },
   "3D lens+balloon finish1": {
-    resolved: "dee76813efd09bcd",
-    emitted: "d826e47ceaf72e34",
+    resolved: "ae3a0b403111c080" /* post-affine stage */,
+    emitted: "36214417d2a04c60" /* post-affine stage */,
   },
   "3D lens+plane finish1": {
-    resolved: "fa81806a0940b144",
-    emitted: "c6826145915a35ee",
+    resolved: "e1620b99304ee870" /* post-affine stage */,
+    emitted: "bfbd79f5c8cab7c1" /* post-affine stage */,
   },
   "3D escape finish1": {
-    resolved: "ec3e7ee94f8643e3",
-    emitted: "ec3e7ee94f8643e3",
+    resolved: "a6515505cc6f144e" /* escape-arm post uniforms */,
+    emitted: "a6515505cc6f144e" /* escape-arm post uniforms */,
   },
   "3D escape+balloon finish1": {
-    resolved: "076b79080509f31d",
-    emitted: "6d98c7e3bf1564de",
+    resolved: "3ca2c308dc74e5b0" /* escape-arm post uniforms */,
+    emitted: "63bf0307d9b1ac52" /* escape-arm post uniforms */,
   },
   "3D escape+plane finish1": {
-    resolved: "3527516ca49ffdd7",
-    emitted: "dca6b4cb765dc2aa",
+    resolved: "c338fee06d75eccf" /* escape-arm post uniforms */,
+    emitted: "2a8e15c4bbd05962" /* escape-arm post uniforms */,
   },
   "3D bulb finish1": {
-    resolved: "8a2cd95308953315",
-    emitted: "8a2cd95308953315",
+    resolved: "36db592004087c60",
+    emitted: "36db592004087c60",
   },
   "3D bulb+balloon finish1": {
-    resolved: "250de4bfd8daad20",
-    emitted: "250de4bfd8daad20",
+    resolved: "590d5ebcb964b53a",
+    emitted: "590d5ebcb964b53a",
   },
   "3D bulb+plane finish1": {
-    resolved: "0dc18c2d33878971",
-    emitted: "6b667e362c8cdd28",
+    resolved: "561295bb49aa4b4a",
+    emitted: "c160c09a87dc824b",
   },
 };
 
@@ -248,6 +254,8 @@ function map3(overrides: Partial<SurfaceDEMap> = {}): SurfaceDEMap {
   return {
     invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
     invT: [0, 0, 0],
+    postInvM: null,
+    postInvT: null,
     sigmaMin: 0.5,
     foldKind: 0,
     foldInvW: 1,
@@ -1172,6 +1180,8 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
       foldKind: 2,
       invW: 1,
       absW: 1,
+      postInvM: null,
+      postInvT: null,
       foldRadii: surfaceFoldRadii({
         type: "spherefold",
         weight: 1,
@@ -1418,7 +1428,7 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(a3))).toBe(
-      "9f3290c2d2a2133279eae88b11227711803af6db543f080e325bec471372c651",
+      "1426bde6844b55945689718857a4f98db406a5e38502d06c6bd2fcb5a5844670", // moved from 9f3290c2… by the per-map POST-AFFINE inverse stage (uInvPostM/uInvPostT + the un-post lines), the first source change since the lattice pass
     );
     expect(
       sha256(
@@ -1440,9 +1450,11 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
           a3,
         ),
       ),
-    ).toBe("6b43c768ac2a2cabeebe8d9f40a8c9832d12a41b73f334c2ce9b71e5d105b1ce");
+    ).toBe(
+      "90cfa48025047e0afa7b4cc3e24e9cd18f1800a1f85e14a9661aaba3f89018c8" /* post-affine stage */,
+    );
     expect(sha256(sourceFor(a3, { escape: 1 }))).toBe(
-      "0b1a8765b8d7a8a910442f81c8dd897d15b2efb9c2873a5724bdf3b3dfd67d6d",
+      "0cdd6b0d64672eec5e48a44b9bc6f0d767e5d6af0d49a0aed6d8fc18263ce6b6" /* post-affine stage; escape-arm post uniforms */,
     );
   });
 
@@ -2065,6 +2077,8 @@ describe("setSurfaceSystem fold final lens packing", () => {
       foldKind: 1,
       invW: 1 / 1.4,
       absW: 1.4,
+      postInvM: null,
+      postInvT: null,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, de, [black]);
@@ -2103,6 +2117,8 @@ describe("setSurfaceSystem fold final lens packing", () => {
       foldKind: 1,
       invW: 1,
       absW: 1,
+      postInvM: null,
+      postInvT: null,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -2120,6 +2136,8 @@ describe("setSurfaceSystem fold final lens packing", () => {
       foldKind: 3,
       invW: 1,
       absW: 1,
+      postInvM: null,
+      postInvT: null,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -2417,6 +2435,8 @@ describe("SURFACE_BALLOON variant", () => {
       foldKind: 1,
       invW: 1,
       absW: 1,
+      postInvM: null,
+      postInvT: null,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -2588,7 +2608,10 @@ describe("SURFACE_GROUND_PLANE variant", () => {
     // Mesa prices — so no comment marker of either style survives.
     expect(resolved).not.toContain("//");
     expect(resolved).not.toContain("/*");
-    expect(resolved.length).toBeLessThan(40 * 1024);
+    // The per-map POST-AFFINE stage added ~250 resolved bytes (one
+    // un-post line per descent site + the two uniforms) — still half
+    // the ~80KB Mesa cliff the margin guards.
+    expect(resolved.length).toBeLessThan(41 * 1024);
   });
 
   it("composes under the lens and escape variants, both staying far under the Mesa-cliff budget", () => {
@@ -2668,6 +2691,8 @@ describe("SURFACE_GROUND_PLANE variant", () => {
       foldKind: 1,
       invW: 1,
       absW: 1,
+      postInvM: null,
+      postInvT: null,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -3129,7 +3154,10 @@ describe("SURFACE_BULB variant", () => {
     expect(resolved).not.toContain("#if SURFACE_FOLD_LENS");
     // The affine/folds split stays a driver-side conditional.
     expect(resolved).toContain("#if SURFACE_FOLDS");
-    expect(resolved.length).toBeLessThan(40 * 1024);
+    // The per-map POST-AFFINE stage added ~250 resolved bytes (one
+    // un-post line per descent site + the two uniforms) — still half
+    // the ~80KB Mesa cliff the margin guards.
+    expect(resolved.length).toBeLessThan(41 * 1024);
   });
 
   it("carries the three terms an identity-map fixture cannot see: the sigma seed, the sigma floor, and the ln|y| clamp", () => {
@@ -3170,7 +3198,10 @@ describe("SURFACE_BULB variant", () => {
     const resolved = surfaceFragmentFor(0, 0, 0, 1, 1);
     expect(resolved).toContain("shadeGroundPlane");
     expect(resolved).toContain("uBulbParams");
-    expect(resolved.length).toBeLessThan(40 * 1024);
+    // The per-map POST-AFFINE stage added ~250 resolved bytes (one
+    // un-post line per descent site + the two uniforms) — still half
+    // the ~80KB Mesa cliff the margin guards.
+    expect(resolved.length).toBeLessThan(41 * 1024);
   });
 
   it("setBulbSystem packs the DE onto the bulb uniforms and flips the variant, with the ORBIT bailout kept off the marching radius", () => {
@@ -3810,6 +3841,8 @@ describe("SURFACE_FINISH variant", () => {
       foldKind: 1,
       invW: 1,
       absW: 1,
+      postInvM: null,
+      postInvT: null,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -3961,6 +3994,11 @@ describe("SURFACE_PATTERN variant", () => {
       transmit: 0.2,
     });
 
+  // Every hash in this block moved once, together, when the per-map
+  // POST-AFFINE stage landed in the GLSL (uInvPostM/uInvPostT + the un-post
+  // lines at each descent site — the value-exact identity apply, so only
+  // the BYTES moved, never any pre-post value). Later source edits move
+  // them again.
   it("matches the pinned pattern-off byte identity for every variant", () => {
     const variants: [string, number[]][] = [
       ["3D affine", [0, 0, 0, 0, 0]],
@@ -4173,6 +4211,8 @@ describe("SURFACE_PATTERN variant", () => {
       foldKind: 1,
       invW: 1,
       absW: 1,
+      postInvM: null,
+      postInvT: null,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -4287,7 +4327,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     const cases = [
       {
         source: surfaceFragmentResolvedFor(1, 0),
-        hash: "fc3b5eecf090fd501baed63e808f088d6d56b6b7ef98d2d36a124eacfeaae610",
+        hash: "2f7e019c6ab723ef0a225be1951467e93f820fa3edda5d4aa71cc5f58d42dfeb" /* post-affine stage; escape-arm post uniforms */,
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -4301,7 +4341,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "3c9f51402e8cbd9ee207d9009068ed8019edfd1073f15b9d82b275dfccf41e8b",
+        hash: "20510ad5b85171e01e703687fb27e8b682d04f9e27a6669b31438535cc5123d8" /* post-affine stage; escape-arm post uniforms */,
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -4315,7 +4355,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "5ce6434ccbc2cc3252eedcc4292fed2256cc71935125a397866f392cd325810a",
+        hash: "619fcb4e22c8ca8be28cc4ca38fc28be9b4639288f55802caaba2b36760b4a5c" /* post-affine stage; escape-arm post uniforms */,
       },
     ];
     for (const { source, hash } of cases) {

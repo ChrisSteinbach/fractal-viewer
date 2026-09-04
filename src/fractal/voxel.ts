@@ -437,8 +437,15 @@ export function accumulateVoxels(
   rampPalette: PaletteSpec = "legacy",
   positionAxisColors?: PositionAxisColors,
 ): VoxelGrid {
-  const { affines, variations, postRotations, finalAffine, finalWarp } =
-    prepared;
+  const {
+    affines,
+    variations,
+    postRotations,
+    posts,
+    finalAffine,
+    finalWarp,
+    finalPost,
+  } = prepared;
   const { baseTransformCount, schedule, emitters } = prepared;
   const { size, density, avgRGB } = grid;
   let maxDensity = grid.maxDensity;
@@ -607,6 +614,20 @@ export function accumulateVoxels(
         ny = q[1];
         nz = q[2];
       }
+      // The slot's POST-AFFINE — stepOrbit's insertion exactly (this loop is
+      // its hand-inlined mirror, pinned by the oracle test). Emitter steps
+      // skip it.
+      const slotPost = posts[idx];
+      if (slotPost !== null) {
+        const sm = slotPost.m;
+        const st = slotPost.t;
+        const sx = sm[0] * nx + sm[1] * ny + sm[2] * nz + st[0];
+        const sy = sm[3] * nx + sm[4] * ny + sm[5] * nz + st[1];
+        const sz = sm[6] * nx + sm[7] * ny + sm[8] * nz + st[2];
+        nx = sx;
+        ny = sy;
+        nz = sz;
+      }
     }
 
     // Symmetry: rotate this slot's FULL affine + variation output —
@@ -685,6 +706,18 @@ export function accumulateVoxels(
         fx = q[0];
         fy = q[1];
         fz = q[2];
+      }
+      // The lens's own post-affine, after its variation blend — plotPoint's
+      // lens order exactly.
+      if (finalPost !== null) {
+        const pm = finalPost.m;
+        const pt = finalPost.t;
+        const gx = pm[0] * fx + pm[1] * fy + pm[2] * fz + pt[0];
+        const gy = pm[3] * fx + pm[4] * fy + pm[5] * fz + pt[1];
+        const gz = pm[6] * fx + pm[7] * fy + pm[8] * fz + pt[2];
+        fx = gx;
+        fy = gy;
+        fz = gz;
       }
       if (Number.isFinite(fx) && Number.isFinite(fy) && Number.isFinite(fz)) {
         px = fx;
