@@ -66,28 +66,28 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "4D base finish0": {
-    resolved: "8248aba6382b9a4e",
-    emitted: "8248aba6382b9a4e",
+    resolved: "91b6d57191b9c41d" /* post-affine stage */,
+    emitted: "91b6d57191b9c41d" /* post-affine stage */,
   },
   "4D balloon finish0": {
-    resolved: "a6b1d39f778a691b",
-    emitted: "b99a52e0f70aea2c",
+    resolved: "8678049224600b09",
+    emitted: "2af17599644dcb23",
   },
   "4D plane finish0": {
-    resolved: "ca7b92ca9e64278e",
-    emitted: "8800bea40c8a62ae",
+    resolved: "3ebede498a768ee7",
+    emitted: "cfff02462664a362",
   },
   "4D base finish1": {
-    resolved: "c2310c52de115b63",
-    emitted: "c2310c52de115b63",
+    resolved: "5b5f711ec4d79377",
+    emitted: "5b5f711ec4d79377",
   },
   "4D balloon finish1": {
-    resolved: "898bef0145e8d230",
-    emitted: "047caf9d7122a79b",
+    resolved: "cb2c6588ae56a655",
+    emitted: "c344ed33440faa54",
   },
   "4D plane finish1": {
-    resolved: "88e962ee6787fb59",
-    emitted: "c1238e6ba2bf9863",
+    resolved: "8cef6acea17148b9",
+    emitted: "538790988a3a3303",
   },
 };
 
@@ -106,6 +106,8 @@ function map4(overrides: Partial<SurfaceDE4Map> = {}): SurfaceDE4Map {
   return {
     invM: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
     invT: [0, 0, 0, 0],
+    postInvM: null,
+    postInvT: null,
     sigmaMin: 0.5,
     baseIndex: 0,
     // Inert affine-slot defaults for the 4D fold fields — this packer
@@ -444,7 +446,7 @@ describe("4D GLSL reverse-chi packing and source", () => {
     expect(material.uniforms.uCondState.value.slice(0, 2)).toEqual([2, 2]);
     expect(material.uniforms.uShadeCount.value).toBe(3);
     expect(material.uniforms.uCondCount.value).toBe(2);
-    expect(material.uniformsGroups[0].uniforms).toHaveLength(6);
+    expect(material.uniformsGroups[0].uniforms).toHaveLength(8);
   });
 
   it("keeps root/B wildcard state and filters A/refiner/condensation predecessors without symmetry-expanded state", () => {
@@ -1246,10 +1248,10 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(f4))).toBe(
-      "54d31287457d9b798e36832f580d36dd0bc3031b4ee4789be49afdef7fda8dc0",
+      "1dbeb1345a24d7438b17e9f1875a47e164e8f54e2b7b71dfc95f2af1309b30d6" /* post-affine stage */,
     );
     expect(sha256(surface4FragmentFor(0, 0, 0, 0, null, 0, 0, f4))).toBe(
-      "46cd3064b93759d6f21ad1ad72f046d1b8c69f1e0f3fc1dabc502b62fa11bc94",
+      "008c4db07d3f00f80c55c127ae3b9204424b915c4904566376e6e106a7cfd757" /* post-affine stage */,
     );
   });
 
@@ -1983,6 +1985,11 @@ describe("the 4D tracer's finish arm", () => {
         "vec4 uMapTrap[MAX_MAPS];",
         "vec4 uMapFinishA[MAX_MAPS];",
         "vec4 uMapFinishB[MAX_MAPS];",
+        // The per-map POST-AFFINE inverses, appended after the finish pair
+        // by the same append-at-the-end discipline — UNCONDITIONAL, so the
+        // std140 offsets never move on any toggle.
+        "mat4 uInvPostM[MAX_MAPS];",
+        "vec4 uInvPostT[MAX_MAPS];",
       ]);
     }
   });
@@ -2047,7 +2054,7 @@ describe("the 4D tracer's finish arm", () => {
     const material = createSurfaceMaterial4();
     expect(material.defines.SURFACE4_FINISH).toBe(0);
     const group = material.uniformsGroups[0];
-    expect(group.uniforms).toHaveLength(6);
+    expect(group.uniforms).toHaveLength(8);
     const maps = mapBlock(material);
     expect(maps.finishA).toHaveLength(SURFACE4_MAX_MAPS * 4);
     expect(maps.finishB).toHaveLength(SURFACE4_MAX_MAPS * 4);
@@ -2132,7 +2139,7 @@ describe("the 4D tracer's finish arm", () => {
     const material = createSurfaceMaterial4();
     const group = material.uniformsGroups[0];
     setSurface4Materials(material, patternMaterials());
-    expect(group.uniforms).toHaveLength(6);
+    expect(group.uniforms).toHaveLength(8);
     expect(material.defines.SURFACE4_FINISH).toBe(0);
     expect(material.defines.SURFACE4_PATTERN).toBe(1);
     expect(material.fragmentShader).not.toContain("finishShade");
@@ -2149,7 +2156,7 @@ describe("the 4D tracer's finish arm", () => {
 
     setSurface4Materials(material, null);
     expect("SURFACE4_PATTERN" in material.defines).toBe(false);
-    expect(group.uniforms).toHaveLength(6);
+    expect(group.uniforms).toHaveLength(8);
     expect(material.fragmentShader).toBe(surface4FragmentFor());
   });
 
@@ -2297,6 +2304,11 @@ describe("the 4D tracer's pattern arm", () => {
         "vec4 uMapTrap[MAX_MAPS];",
         "vec4 uMapFinishA[MAX_MAPS];",
         "vec4 uMapFinishB[MAX_MAPS];",
+        // The per-map POST-AFFINE inverses, appended after the finish pair
+        // by the same append-at-the-end discipline — UNCONDITIONAL, so the
+        // std140 offsets never move on any toggle.
+        "mat4 uInvPostM[MAX_MAPS];",
+        "vec4 uInvPostT[MAX_MAPS];",
       ]);
     }
     // The plane-over-balloon refusal holds with the pattern on.
@@ -2349,7 +2361,7 @@ describe("the 4D tracer's pattern arm", () => {
     const material = createSurfaceMaterial4();
     const group = material.uniformsGroups[0];
     setSurface4Materials(material, patternMaterials());
-    expect(group.uniforms).toHaveLength(6);
+    expect(group.uniforms).toHaveLength(8);
     expect(material.defines.SURFACE4_FINISH).toBe(0);
     expect(material.defines.SURFACE4_PATTERN).toBe(1);
     expect(material.fragmentShader).toContain("vec3 patternShade(");

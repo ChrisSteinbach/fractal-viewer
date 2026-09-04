@@ -1228,6 +1228,35 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
     };
   }
 
+  it("matches for a system carrying POST4 post-affines (shearing, with translations, one map absent)", () => {
+    const post4 = {
+      m: [0.4, 0.1, 0, 0, 0, 0.35, 0.05, 0, 0, 0, 0.4, 0.02, 0, 0, 0, 0.45],
+      t: [0.02, -0.03, 0.01, 0.015] as [number, number, number, number],
+    };
+    const transforms: Transform4[] = pentatopeGasket().map((t, i) => ({
+      ...t,
+      ...(i === 3 ? {} : { post4 }),
+      variations: [{ type: "julian", weight: 0.6 }],
+    }));
+    const numPoints = 800;
+    const seed = 42;
+
+    const actual = runChaosGame4(transforms, numPoints, mulberry32(seed));
+    const reference = referenceChaosGame4(
+      prepareChaosGame4(transforms),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.w)).toEqual(Array.from(reference.w));
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+  });
+
   it("matches for a plain multi-transform system (no variations, no final transform)", () => {
     const transforms = pentatopeGasket();
     const numPoints = 800;

@@ -886,6 +886,8 @@ describe("probeEscapeFill4", () => {
         0, 0, 0, 1,
       ],
       t: [0, 0, 0, 0],
+      postM: null,
+      postT: null,
       kind: ESCAPE_LINK_BOXFOLD,
       w: 0,
       derivGrowth: 0,

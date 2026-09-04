@@ -75,6 +75,7 @@ import type {
   VariationType,
   Vec3,
   WExtension,
+  Affine,
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
@@ -1697,6 +1698,12 @@ interface EditorState {
      * family returns to none, while `scale`/`strength` ride the finish
      * fields' per-field rule (see {@link Ui.writePatternFamily}). */
     surfacePattern: SurfacePattern | undefined;
+    /** Working copy of the transform's optional POST-AFFINE (flam3's
+     * `post=`, import-only this PR) — a CLONE of the document's object,
+     * `undefined` exactly when the map authors none. No rows render for
+     * it; the working copy exists purely so an imported post SURVIVES
+     * every emitted edit (see {@link Ui.emitGeometry}). */
+    post: Affine | undefined;
   };
   /**
    * Has the user moved a finish slider or picked a bundle since this
@@ -7873,6 +7880,15 @@ export class Ui {
       finish: cloneFinish(transform.finish),
       // The pattern's own clone — see {@link cloneSurfacePattern}.
       surfacePattern: cloneSurfacePattern(transform.surfacePattern),
+      // The per-transform POST-AFFINE (flam3's post=, import-only): cloned
+      // deep and RAW-presence like the color pair, so an imported post
+      // SURVIVES an editing session — every emitted edit carries it back —
+      // while a map that authors none emits geometry with no `post` key at
+      // all. No rows render for it (there is no editing surface this PR);
+      // survival through unrelated edits is the whole contract.
+      post: transform.post
+        ? { m: [...transform.post.m], t: clone3(transform.post.t) }
+        : undefined,
     };
     const controls: Record<Channel, AxisControl[]> = {
       position: [],
@@ -10342,6 +10358,11 @@ export class Ui {
       shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
       w: cloneW(transform.w),
+      // The post rides the sync too (raw presence, cloned deep) — an
+      // undo/preset landing under a stable selection still carries it.
+      post: transform.post
+        ? { m: [...transform.post.m], t: clone3(transform.post.t) }
+        : undefined,
       // Raw again (see buildEditor): an undo back past the first Color edit
       // returns a transform with the keys gone, and the working copy has to
       // forget them too or the next unrelated edit would write them back.
@@ -10549,6 +10570,17 @@ export class Ui {
       // aliases the editor's own live-mutated working copy.
       ...(editor.geometry.w !== undefined
         ? { w: cloneW(editor.geometry.w) }
+        : {}),
+      // The post, sparse exactly like `w`: present-only, cloned, so an
+      // imported post rides every edit and an unauthored one emits no key
+      // (state.ts's updateTransform merges — absence preserves absence).
+      ...(editor.geometry.post !== undefined
+        ? {
+            post: {
+              m: [...editor.geometry.post.m],
+              t: clone3(editor.geometry.post.t),
+            },
+          }
         : {}),
     };
     if (editor.target === "final") {

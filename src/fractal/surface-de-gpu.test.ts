@@ -507,6 +507,8 @@ describe("packSurfaceGpuParams final-transform lens", () => {
         foldKind: 3,
         invW: 2.5,
         absW: 0.4,
+        postInvM: null,
+        postInvT: null,
         foldRadii: CLASSIC_SURFACE_FOLD_RADII,
       },
     };
@@ -600,6 +602,8 @@ describe("packSurfaceGpuParams final-transform lens", () => {
         foldKind: SURFACE_FOLD_BOXFOLD,
         invW: 1,
         absW: 1,
+        postInvM: null,
+        postInvT: null,
         foldRadii: CLASSIC_SURFACE_FOLD_RADII,
       },
     };
@@ -623,6 +627,8 @@ describe("packSurfaceGpuParams final-transform lens", () => {
         foldKind: SURFACE_FOLD_BOXFOLD,
         invW: 1,
         absW: 1,
+        postInvM: null,
+        postInvT: null,
         foldRadii: CLASSIC_SURFACE_FOLD_RADII,
       },
     };
@@ -809,8 +815,10 @@ describe("packSurfaceGpuParams run overrides", () => {
 describe("packSurfaceGpuMaps", () => {
   it("packs each map's invM/invT/sigmaMin/foldInvW/foldSigma/foldKind/bnbDir/invTNorm/invMSigmaMin at the documented word offsets", () => {
     // Grown 6 -> 7 by the `fold` lane carrying the map's three
-    // AUTHORED fold lengths, pinned by its own test below.
-    expect(SURFACE_GPU_MAP_VEC4).toBe(7);
+    // AUTHORED fold lengths, pinned by its own test below. Then 7 -> 10 by
+    // the per-map POST-AFFINE-inverse tail (postI0..2, the un-post stage),
+    // appended at the struct's end — every pre-post word offset unchanged.
+    expect(SURFACE_GPU_MAP_VEC4).toBe(10);
     const de = buildSurfaceDE(foldSystemTransforms());
     const out = packSurfaceGpuMaps(de);
     const stride = SURFACE_GPU_MAP_VEC4 * 4;
@@ -3755,7 +3763,7 @@ describe("surfaceDeKernelWgsl escape core (core)", () => {
     // Mandelbrot offset lands per link — never once per pass (chaining
     // fattens the set to 37.1% of the bailout ball at six links, against
     // cycling's 0.2%).
-    expect(wgsl).toContain("v = L.p0.y * y + q;");
+    expect(wgsl).toContain("v = linkPostForward(L, L.p0.y * y) + q;");
   });
 
   it("mode 'eval' folds the query into the kaleidoscope's wedge ONCE before the orbit, dihedrally", () => {
@@ -5602,7 +5610,7 @@ describe("packSurfaceGpuMaps4", () => {
     // Grown 6 -> 8 by the 4D fold-branch sweep: ONE layout for both 4D cores,
     // exactly as the 3D GpuMap carries fold lanes the affine core never
     // reads. Then 8 -> 9 by the authored-lengths `fold` lane, the 3D one verbatim.
-    expect(SURFACE_GPU_MAP4_VEC4).toBe(9);
+    expect(SURFACE_GPU_MAP4_VEC4).toBe(14);
     const de = buildSurfaceDE4(fourDFoldSystemTransforms());
     const out = packSurfaceGpuMaps4(de);
     const stride = SURFACE_GPU_MAP4_VEC4 * 4;
@@ -6255,7 +6263,9 @@ describe("packEscape4GpuMaps", () => {
   it("packs one 36-float GpuMap4 stride per link: 16 forward matrix entries, translation at 16..19, (kind, w, derivGrowth) at 20..22, squared radii + wall at 32..34, every other lane 0", () => {
     const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
     const stride = SURFACE_GPU_MAP4_VEC4 * 4;
-    expect(stride).toBe(36);
+    // 36 -> 56: the per-link POST-AFFINE lane (forward rows + translation,
+    // the escape packer's own lane meaning) appended at the struct's end.
+    expect(stride).toBe(56);
     const maps = packEscape4GpuMaps(de);
     expect(maps.length).toBe(2 * stride);
     de.links.forEach((link, j) => {

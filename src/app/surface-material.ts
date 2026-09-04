@@ -420,6 +420,10 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
               kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
             float absW = fp.z / uSigmaMin[j];
             FoldRadii fr = foldRadiiOf(uFoldRadii[j].xyz);
+            // The un-post stage: the map's own post-affine inverse,
+            // between the sector sweep and the branch machinery (identity
+            // when the map authors no post — value-exact skip).
+            vec3 pQ = uInvPostM[j] * sQ + uInvPostT[j];
             // Branch-and-bound stage 2 is deliberately CPU-ONLY. The
             // oracle's branch-and-bound skips (descendFold) are VALUE
             // no-ops, so this mirror computes identical values without them
@@ -445,7 +449,7 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
             float sfSigma = 1.0;
             float sfRd = 0.0;
             if (kind != 0) {
-              u = sQ * fp.y;
+              u = pQ * fp.y;
               if (kind == 1) {
                 pre0 = u;
                 pre1 = fr.wall2 - u;
@@ -469,7 +473,7 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                 if (candFloor > 0.0 && candFloor >= best) {
                   continue;
                 }
-                img = uInvM[j] * sQ + uInvT[j];
+                img = uInvM[j] * pQ + uInvT[j];
                 branchSigma = uSigmaMin[j];
               } else {
                 float branchRd;
@@ -878,6 +882,16 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform mat3 uInvM[MAX_MAPS];
   /** Inverse translation per map: -inv(M_i) . t_i. */
   uniform vec3 uInvT[MAX_MAPS];
+  /** The map's own POST-AFFINE inverse per map (Transform.post), the
+   * descent's un-post stage: applied to the swept chain point BETWEEN the
+   * sector un-rotation and the fold-branch/base-inverse machinery, because
+   * the forward map is Rot_k ∘ P ∘ V ∘ A and P⁻¹ sits exactly there. Packed
+   * as the IDENTITY and zero translation for every map that authors none —
+   * the unconditional apply is value-exact (x·I + 0 = x) and keeps the
+   * shader branch-free. */
+  uniform mat3 uInvPostM[MAX_MAPS];
+  /** The post's inverse translation -inv(P.m) . P.t (zero when absent). */
+  uniform vec3 uInvPostT[MAX_MAPS];
   /** Smallest singular value of each FORWARD map — the certified
    * contraction factor multiplied into the running scale product. */
   uniform float uSigmaMin[MAX_MAPS];
@@ -1448,7 +1462,7 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
         int nextState = surfaceChaosChildState(depth, j);
         if (!surfaceChaosAllows(currentState, nextState)) continue;
 #endif
-        vec3 jImg = uInvM[j] * sImg + uInvT[j];
+        vec3 jImg = uInvM[j] * (uInvPostM[j] * sImg + uInvPostT[j]) + uInvT[j];
 #if SURFACE_SCHEDULE
         inner = min(
           inner,
@@ -1597,6 +1611,17 @@ uniform float uBalloonPaletteEnabled;
   uniform mat3 uEscM[MAX_MAPS];
   uniform vec3 uEscT[MAX_MAPS];
   uniform vec4 uEscParams[MAX_MAPS];
+  /** Each LINK's own POST-AFFINE (flam3's post=, escape-de.ts's
+   * EscapeLink.postM/postT), read FORWARD — the link's forward map is
+   * P ∘ (w·V) ∘ A, so the orbit applies uEscPostM[li] * (w·f(y)) +
+   * uEscPostT[li] after the fold/power body and BEFORE the + q offset,
+   * exactly the WGSL escape core's linkPostForward and the CPU orbit's
+   * posted arm. Packed IDENTITY/zero for a post-free link — the
+   * unconditional mat3 apply is value-exact there (x·I + 0 = x), which
+   * keeps a post-free chain's frame bit for bit. Declared INSIDE the arm
+   * beside the three arrays above: no other variant pays these bytes. */
+  uniform mat3 uEscPostM[MAX_MAPS];
+  uniform vec3 uEscPostT[MAX_MAPS];
   /** Each LINK's own fold lengths, SQUARED for the sphere pair:
    * (minRadius^2, fixedRadius^2, boxLimit, unused), which is the form
    * EscapeLink keeps and the form fR2/clamp(r2, mR2, fR2) wants. A chain
@@ -1826,8 +1851,9 @@ uniform float uBalloonPaletteEnabled;
       }
       // The Mandelbrot form's offset — the QUERY POINT (folded before the
       // orbit), not the document's t (which stays the pre-fold offset
-      // inside y above).
-      v = prm.y * y + q;
+      // inside y above). The link's own POST-AFFINE sits between the
+      // weighted fold output and that offset, the CPU orbit's rule.
+      v = uEscPostM[li] * (prm.y * y) + uEscPostT[li] + q;
       // EVERY LINK CONTRIBUTES ITS OWN FACTOR to the one shared dr, and
       // the "+ 1" — the per-link offset's own derivative — floors it once
       // per link rather than once per pass.
@@ -1961,7 +1987,10 @@ uniform float uBalloonPaletteEnabled;
         localL = 2.0 * length(y);
         y = vec3(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
       }
-      v = prm.y * y + q;
+      // The link's own POST-AFFINE, forward, before the +q offset — the
+      // value form's rule above (hit-info shares the orbit's arithmetic so
+      // the two interpolants cannot disagree about what a link is).
+      v = uEscPostM[li] * (prm.y * y) + uEscPostT[li] + q;
       dr = prm.z * localL * dr + 1.0;
       r = length(v);
       growth = prm.z;
@@ -2567,7 +2596,7 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
             int childState = surfaceChaosChildState(depth, j);
             if (!surfaceChaosAllows(pState, childState)) continue;
 #endif
-            vec3 img = uInvM[j] * sQ + uInvT[j];
+            vec3 img = uInvM[j] * (uInvPostM[j] * sQ + uInvPostT[j]) + uInvT[j];
 #if SURFACE_SCHEDULE
             float r = length(img - childBound.xyz);
             float key = pScale * (r - childBound.w);
@@ -3096,6 +3125,8 @@ ${foldValueFormGlsl(shadeDeWidth)}
             kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
           float absW = fp.z / uSigmaMin[j];
           FoldRadii fr = foldRadiiOf(uFoldRadii[j].xyz);
+          // The un-post stage (identity when absent — value-exact skip).
+          vec3 pQ = uInvPostM[j] * sQ + uInvPostT[j];
           vec3 u = vec3(0.0);
           float ru = 0.0;
           vec3 pre0 = vec3(0.0);
@@ -3107,7 +3138,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
           float sfSigma = 1.0;
           float sfRd = 0.0;
           if (kind != 0) {
-            u = sQ * fp.y;
+            u = pQ * fp.y;
             if (kind == 1) {
               pre0 = u;
               pre1 = fr.wall2 - u;
@@ -3123,7 +3154,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
             float branchSigma;
             float branchRd = 0.0;
             if (kind == 0) {
-              img = uInvM[j] * sQ + uInvT[j];
+              img = uInvM[j] * pQ + uInvT[j];
               branchSigma = uSigmaMin[j];
             } else {
               if (kind == 2 || (kind == 3 && b % 27 == 0)) {
@@ -3484,7 +3515,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
             int childState = surfaceChaosChildState(depth, j);
             if (!surfaceChaosAllows(pState, childState)) continue;
 #endif
-            vec3 img = uInvM[j] * sQ + uInvT[j];
+            vec3 img = uInvM[j] * (uInvPostM[j] * sQ + uInvPostT[j]) + uInvT[j];
 #if SURFACE_SCHEDULE
             float r = length(img - childBound.xyz);
             float key = pScale * (r - childBound.w);
@@ -5526,6 +5557,20 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
           () => new THREE.Vector3(),
         ),
       },
+      // The per-map POST-AFFINE inverses — identity/zero by default, which
+      // is exactly the value-exact "no post" apply the shader makes.
+      uInvPostM: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Matrix3(),
+        ),
+      },
+      uInvPostT: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Vector3(),
+        ),
+      },
       uSigmaMin: { value: new Array<number>(SURFACE_MAX_MAPS).fill(1) },
       uMapColor: {
         value: Array.from(
@@ -5629,6 +5674,21 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
         ),
       },
       uEscT: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Vector3(),
+        ),
+      },
+      // The links' own POST-AFFINEs, read FORWARD (see the shader's
+      // declaration): identity/zero defaults, the value-exact "no post"
+      // apply, so an unreached or post-free slot is inert.
+      uEscPostM: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Matrix3(),
+        ),
+      },
+      uEscPostT: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
           () => new THREE.Vector3(),
@@ -5857,6 +5917,8 @@ export function setSurfaceSystem(
   const u = material.uniforms;
   const invM = u.uInvM.value as THREE.Matrix3[];
   const invT = u.uInvT.value as THREE.Vector3[];
+  const invPostM = u.uInvPostM.value as THREE.Matrix3[];
+  const invPostT = u.uInvPostT.value as THREE.Vector3[];
   const sigmaMin = u.uSigmaMin.value as number[];
   const mapColor = u.uMapColor.value as THREE.Vector3[];
   const trapIndex = u.uTrapIndex.value as number[];
@@ -5886,6 +5948,26 @@ export function setSurfaceSystem(
     // `mat3 * vec3` product expects, so this is a straight pass-through.
     invM[j].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     invT[j].set(...map.invT);
+    // The map's own post inverse, packed as IDENTITY/zero when the map
+    // authors none — the shader's unconditional apply is value-exact.
+    if (map.postInvM !== null && map.postInvT !== null) {
+      const pm = map.postInvM;
+      invPostM[j].set(
+        pm[0],
+        pm[1],
+        pm[2],
+        pm[3],
+        pm[4],
+        pm[5],
+        pm[6],
+        pm[7],
+        pm[8],
+      );
+      invPostT[j].set(...map.postInvT);
+    } else {
+      invPostM[j].identity();
+      invPostT[j].set(0, 0, 0);
+    }
     sigmaMin[j] = map.sigmaMin;
     mapColor[j].set(...colors[j]);
     const trap = trapIndices ? trapIndices[j] : 0;
@@ -5910,6 +5992,9 @@ export function setSurfaceSystem(
     const m = map.invM;
     invM[slot].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     invT[slot].set(...map.invT);
+    // B is affine-only by the document rule: its post slot stays identity.
+    invPostM[slot].identity();
+    invPostT[slot].set(0, 0, 0);
     sigmaMin[slot] = map.sigmaMin;
     trapIndex[slot] = 0;
     // B is a finite affine plot-stage word: it never inherits A's fold,
@@ -5923,6 +6008,10 @@ export function setSurfaceSystem(
     const m = emitter.invM;
     invM[slot].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     invT[slot].set(...emitter.invT);
+    // Emitter steps skip the map's own post-affine (the emitter rule): the
+    // slot's un-post stays identity.
+    invPostM[slot].identity();
+    invPostT[slot].set(0, 0, 0);
     sigmaMin[slot] = emitter.sigmaMin;
     const key = JSON.stringify(emitter.shape);
     let shape = shapeSlots.get(key);
@@ -7314,6 +7403,8 @@ export function setEscapeSystem(
   const escT = u.uEscT.value as THREE.Vector3[];
   const escParams = u.uEscParams.value as THREE.Vector4[];
   const escRadii = u.uEscRadii.value as THREE.Vector4[];
+  const escPostM = u.uEscPostM.value as THREE.Matrix3[];
+  const escPostT = u.uEscPostT.value as THREE.Vector3[];
   de.links.forEach((link, i) => {
     const m = link.m;
     escM[i].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
@@ -7324,6 +7415,28 @@ export function setEscapeSystem(
     // them. A chain may hold a different apparatus per link, which is why
     // this is per-slot.
     escRadii[i].set(link.minRadius2, link.fixedRadius2, link.boxLimit, 0);
+    // The link's own POST-AFFINE, read FORWARD — identity/zero for a
+    // post-free link, the value-exact "no post" apply. The row-major
+    // postM passes straight through Matrix3.set, exactly uInvM's own
+    // packing comment.
+    if (link.postM !== null && link.postT !== null) {
+      const pm = link.postM;
+      escPostM[i].set(
+        pm[0],
+        pm[1],
+        pm[2],
+        pm[3],
+        pm[4],
+        pm[5],
+        pm[6],
+        pm[7],
+        pm[8],
+      );
+      escPostT[i].set(...link.postT);
+    } else {
+      escPostM[i].identity();
+      escPostT[i].set(0, 0, 0);
+    }
   });
   (u.uMapColor.value as THREE.Vector3[])[0].set(...color);
   (u.uTrapIndex.value as number[])[0] = 0;

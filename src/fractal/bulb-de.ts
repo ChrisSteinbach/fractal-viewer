@@ -153,7 +153,7 @@
  * `analyzeSurfaceSystem` refuses every map with a non-fold variation
  * ("map N uses variations"), so the IFS complement is automatic.
  */
-import { composeAffine } from "./affine";
+import { composeAffine, isIdentityAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
 import { activeParametricVariationTypes } from "./variations";
 import {
@@ -333,6 +333,19 @@ export function analyzeBulbSystem(
       );
     } else if (!isFlatTransform(map)) {
       reasons.push("the map extends into 4D (the Mandelbulb is a 3D object)");
+    } else if (map.post !== undefined && !isIdentityAffine(map.post)) {
+      // A POST-AFFINE on the lone map is REFUSED, not ignored: the bulb
+      // core's params wire is frozen (the variant block ends at 288 with
+      // the shared plane/balloon block beside it — no room for a post's
+      // rows), and an orbit that silently dropped the post would march a
+      // different object than the points modes render for the same
+      // document. `analyzeEscapeSystem` owns the composed chain for a
+      // posted bulb: two links (a fold beside the power) route there
+      // instead, and a LONE posted bulb is a disclosed dead end in
+      // Surface mode.
+      reasons.push(
+        "the map carries a post-affine, which the Mandelbulb estimator has no wire for (chain it with a fold to render one)",
+      );
     } else if (transformSigmas(map).min <= 0) {
       // A singular M collapses the orbit onto a subspace, where the escape
       // radius below has no solution and the bounding ball is unbounded.

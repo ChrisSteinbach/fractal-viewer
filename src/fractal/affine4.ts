@@ -1,4 +1,5 @@
 import type {
+  Affine,
   Rotation4,
   Shear4,
   SymmetryParams,
@@ -288,6 +289,81 @@ export function applyAffine4(
   ];
 }
 
+/** Row-major 4x4 matrix product `a · b`, exported for the post-affine's
+ * packers and descent construction (`surface-de-4d.ts` composes the lifted
+ * post into the kaleidoscope copy rotations and inverts it per map). The
+ * module-internal {@link multiply4} stays private for the rotation builder;
+ * this is the same arithmetic under a public name. */
+export function multiply4x4(
+  a: readonly number[],
+  b: readonly number[],
+): number[] {
+  return multiply4([...a], [...b]);
+}
+
+/**
+ * A 3D post-affine's 4D LIFT — the embedding decision for
+ * {@link Transform4.post4}, stated once: the 3D post's 3x3 rides the
+ * upper-left block, the `w` row and column stay the identity and the `w`
+ * translation stays 0, so the lifted post acts on the visible `(x, y, z)`
+ * exactly as the 3D post does and carries `w` through untouched.
+ *
+ * WHY W-IDENTITY (and not, say, the map's derived `scale_w`): the whole
+ * point of the 3D → 4D embed is that the `w = 0` slice of the lifted system
+ * IS the source 3D fractal. A flat system's orbit has `w ≡ 0`; a post with
+ * an identity `w` row keeps `w ≡ 0` through the post stage, so the lifted
+ * system's slice renders the same object the 3D system does — post, kernel
+ * and all. Deriving the `w` row from `scale_w` would contract a nonzero
+ * `w` coordinate at a rate the post has no authored reason to know about,
+ * and would make the post's meaning depend on fields it never reads.
+ * A NATIVE-4D `post4` (authored directly, not lifted) may of course carry
+ * any `w` structure its 16 entries express — this function only fixes what
+ * the 3D → 4D LIFT writes.
+ */
+export function liftPostToPost4(post: Affine): Affine4 {
+  const m = identity4();
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      m[r * 4 + c] = post.m[r * 3 + c];
+    }
+  }
+  return { m, t: [post.t[0], post.t[1], post.t[2], 0] };
+}
+
+/**
+ * The 4D forward POST stage of one kaleidoscope copy: a linear-only 4x4
+ * (the copy's rotation, applied AFTER the post) composed with a general
+ * {@link Affine4} — the one-dimension-up twin of `affine.ts`'s
+ * `composeLinearAffine`, the ONE composition the WGSL packers and the 4D
+ * descent construction share.
+ */
+export function composeLinearAffine4(
+  linear: readonly number[],
+  post: Affine4,
+): Affine4 {
+  return {
+    m: multiply4x4(linear, post.m),
+    t: [
+      linear[0] * post.t[0] +
+        linear[1] * post.t[1] +
+        linear[2] * post.t[2] +
+        linear[3] * post.t[3],
+      linear[4] * post.t[0] +
+        linear[5] * post.t[1] +
+        linear[6] * post.t[2] +
+        linear[7] * post.t[3],
+      linear[8] * post.t[0] +
+        linear[9] * post.t[1] +
+        linear[10] * post.t[2] +
+        linear[11] * post.t[3],
+      linear[12] * post.t[0] +
+        linear[13] * post.t[1] +
+        linear[14] * post.t[2] +
+        linear[15] * post.t[3],
+    ],
+  };
+}
+
 /**
  * A 3D scale's mean contraction magnitude `(|sx| + |sy| + |sz|) / 3` — the
  * derived `scale_w` a lifted map gets while `w.scale` is unset (see
@@ -348,7 +424,9 @@ export function meanContraction(scale: Vec3): number {
  * (the three `w`-column entries `xw`/`yw`/`zw` absent, i.e. 0 — the embedded map
  * shears only within the `w = 0` slice), and the variation list is copied as-is
  * (its 4D lift reproduces the 3D warp bit-for-bit on the `w = 0` slice — see
- * `variations4.ts`). So the `w = 0` slice of the embedded 4D system is exactly
+ * `variations4.ts`). The per-transform post-affine carries as `post4` through
+ * {@link liftPostToPost4} (w-identity; its own doc carries the choice). So the
+ * `w = 0` slice of the embedded 4D system is exactly
  * the source 3D fractal, shear, variations and all.
  */
 export function embedTransform3(t: Transform): Transform4 {
@@ -374,6 +452,13 @@ export function embedTransform3(t: Transform): Transform4 {
     embedded.variations = t.variations.map((v) => ({ ...v }));
   }
   if (t.weight !== undefined) embedded.weight = t.weight;
+  // The per-transform POST-AFFINE rides the lift as `post4` (see
+  // liftPostToPost4 for the w-identity embedding choice): a 3D map that
+  // authors one keeps it in every 4D render, rather than being silently
+  // dropped there — the dimensional-parity rule this module's lift exists
+  // to enforce. Absent stays absent, so an unauthored document lifts to
+  // exactly the Transform4 it always did.
+  if (t.post !== undefined) embedded.post4 = liftPostToPost4(t.post);
   // The flame color-authoring pair rides along untouched: absent
   // stays absent, so a 4D render derives the same slot the 3D one does.
   if (t.colorIndex !== undefined) embedded.colorIndex = t.colorIndex;

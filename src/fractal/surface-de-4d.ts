@@ -1,4 +1,10 @@
-import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
+import {
+  composeAffine4,
+  multiply4x4,
+  symmetryRotation4,
+  toTransform4,
+} from "./affine4";
+import type { Affine4 } from "./affine4";
 import {
   effectiveSymmetryOrder,
   prepareSchedule,
@@ -459,9 +465,20 @@ export function singularValues4(m: number[]): MapSigmas {
  * orthogonal, so the singular values are exactly `|scale|`'s extremes — no
  * eigen-solve needed. With shear, `M` is no longer orthogonal-times-diagonal
  * and {@link singularValues4} on the fully composed matrix is the only way.
+ *
+ * A PRESENT POST-AFFINE (`Transform4.post4`) is priced through the
+ * composite — the map's forward linear chain is `post4.m · M`, so the
+ * sigmas come off `singularValues4` of the product (the `|scale|` fast
+ * path is invalid once a post exists). One pricing, both dimensions: 3D's
+ * `transformSigmas` makes the same move one dimension down, so a system
+ * and its lift cannot disagree about what a post contracts.
  */
 export function transformSigmas4(t: Transform4): MapSigmas {
-  const { shear } = t;
+  const { post4, shear } = t;
+  const postLive = post4 !== undefined && !isIdentityAffine4(post4);
+  if (postLive) {
+    return singularValues4(multiply4x4(post4.m, composeAffine4(t).m));
+  }
   const sheared =
     shear !== undefined &&
     ((shear.xy ?? 0) !== 0 ||
@@ -481,6 +498,36 @@ export function transformSigmas4(t: Transform4): MapSigmas {
     };
   }
   return singularValues4(composeAffine4(t).m);
+}
+
+/** The 4D identity-post test — `affine.ts`'s `isIdentityAffine` one
+ * dimension up (exact 16-entry identity, zero translation), so an
+ * identity-shaped `post4` prices and packs exactly as absence. */
+function isIdentityAffine4(a: Affine4): boolean {
+  const { m, t } = a;
+  return (
+    m.length === 16 &&
+    m[0] === 1 &&
+    m[1] === 0 &&
+    m[2] === 0 &&
+    m[3] === 0 &&
+    m[4] === 0 &&
+    m[5] === 1 &&
+    m[6] === 0 &&
+    m[7] === 0 &&
+    m[8] === 0 &&
+    m[9] === 0 &&
+    m[10] === 1 &&
+    m[11] === 0 &&
+    m[12] === 0 &&
+    m[13] === 0 &&
+    m[14] === 0 &&
+    m[15] === 1 &&
+    t[0] === 0 &&
+    t[1] === 0 &&
+    t[2] === 0 &&
+    t[3] === 0
+  );
 }
 
 /** Mirrors `composeVariations`' active filter exactly (copied from
@@ -792,7 +839,13 @@ export function analyzeSurfaceSystem4(
       // Surface consumes the emitter's SDF directly, so an intersection is
       // still a condensation shape even though point modes cannot sample it.
       // The reset event uses the lifted affine only and is not iterated.
-      if (sigmas[i].min < NEAR_SINGULAR_SIGMA) {
+      // The pose prices WITHOUT the post (the emitter step skips it — the
+      // 3D gate's own rule one dimension up).
+      const emitterSig = transformSigmas4({
+        ...toTransform4(t),
+        post4: undefined,
+      });
+      if (emitterSig.min < NEAR_SINGULAR_SIGMA) {
         reasons.push(`${label} emitter is nearly flat (scale ≈ 0)`);
       }
       return;
@@ -997,6 +1050,18 @@ export interface SurfaceDE4Map {
   invM: number[];
   /** `-inv(M_i) . t_i`. */
   invT: Vec4;
+  /**
+   * The map's own POST-AFFINE inverse ({@link Transform4.post4}), or
+   * `null` when the map authors none — 3D's `SurfaceDEMap.postInvM` one
+   * dimension up. The forward per-copy map is `Rot_k ∘ P ∘ V ∘ A`, so the
+   * descent un-rotates (the sector sweep), un-posts (THIS — per map, the
+   * sweep carrying the copy dependence), then runs the branch/affine
+   * inverse machinery. `null` skips, byte-identically.
+   */
+  postInvM: number[] | null;
+  /** The post's inverse translation `−P⁻¹.m · P.t` — `null` with
+   * {@link postInvM}. */
+  postInvT: Vec4 | null;
   /** Smallest singular value of the FORWARD map — the certified contraction
    * factor multiplied into the running `dr` product. */
   sigmaMin: number;
@@ -1128,7 +1193,9 @@ export interface SurfaceDE4 {
    * `dist(q, F(A)) >= sigma_min(F) * dist(F^-1(q), A)` holds in any
    * dimension (see the module doc's VALIDITY TRANSFERS VERBATIM section), so
    * the slice lower-bound argument is unaffected by the lens. Mutually
-   * exclusive with {@link foldFinal}. */
+   * exclusive with {@link foldFinal}. The lens's own post-affine folds
+   * INTO these rows (inv(P∘A) composed at build time), exactly 3D's
+   * affine-lens treatment. */
   final: { invM: number[]; invT: Vec4; sigmaMin: number } | null;
   /** Pure-fold FINAL lens (3D's `foldFinal` one
    * dimension up), or `null`. When set, {@link final} is `null` and the
@@ -1136,7 +1203,10 @@ export interface SurfaceDE4 {
    * into ONE round of branch root descents around the untouched cores.
    * `invM`/`invT` invert the lens's AFFINE part; `invW`/`absW` carry the
    * fold weight; `sigmaMin` is the affine part's smallest singular value
-   * (the per-branch descent factor is `absW · sigma_branch · sigmaMin`). */
+   * (the per-branch descent factor is `absW · sigma_branch · sigmaMin`).
+   * A lens post-affine rides as its own factor (`postInvM`/`postInvT`,
+   * un-applied by descendLens4 BEFORE its branch sweep) — the branch
+   * enumeration sits between P⁻¹ and the affine inverse. `null` skips. */
   foldFinal: {
     invM: number[];
     invT: Vec4;
@@ -1147,6 +1217,9 @@ export interface SurfaceDE4 {
     /** The lens fold's authored lengths, in the same branch-algebra form
      * the base maps carry. */
     foldRadii: SurfaceFoldRadii;
+    /** The lens's own post-affine inverse, or `null`. */
+    postInvM: number[] | null;
+    postInvT: Vec4 | null;
   } | null;
 }
 
@@ -1234,6 +1307,42 @@ export function buildSurfaceDE4(
       -(invM[8] * tx + invM[9] * ty + invM[10] * tz + invM[11] * tw),
       -(invM[12] * tx + invM[13] * ty + invM[14] * tz + invM[15] * tw),
     ];
+    // The map's own post inverse (the 3D descent's un-post stage one
+    // dimension up), read off the LIFTED transform — a 3D post arrives as
+    // post4 through the lift's w-identity embedding: P⁻¹(x) =
+    // inv(post4.m)·x − inv(post4.m)·post4.t.
+    const postLive =
+      lifted[i].post4 !== undefined && !isIdentityAffine4(lifted[i].post4);
+    const post = lifted[i].post4;
+    const postInvM = postLive ? inverse4(post!.m) : null;
+    const postInvT: Vec4 | null = postLive
+      ? [
+          -(
+            postInvM![0] * post!.t[0] +
+            postInvM![1] * post!.t[1] +
+            postInvM![2] * post!.t[2] +
+            postInvM![3] * post!.t[3]
+          ),
+          -(
+            postInvM![4] * post!.t[0] +
+            postInvM![5] * post!.t[1] +
+            postInvM![6] * post!.t[2] +
+            postInvM![7] * post!.t[3]
+          ),
+          -(
+            postInvM![8] * post!.t[0] +
+            postInvM![9] * post!.t[1] +
+            postInvM![10] * post!.t[2] +
+            postInvM![11] * post!.t[3]
+          ),
+          -(
+            postInvM![12] * post!.t[0] +
+            postInvM![13] * post!.t[1] +
+            postInvM![14] * post!.t[2] +
+            postInvM![15] * post!.t[3]
+          ),
+        ]
+      : null;
     const sigmaMin = analysis.sigmas[i].min;
     // Pure-fold maps carry their fold family + weight into the descent's
     // branch expansion (3D's fold-branch sweep one dimension up);
@@ -1250,6 +1359,8 @@ export function buildSurfaceDE4(
     maps.push({
       invM,
       invT,
+      postInvM,
+      postInvT,
       sigmaMin,
       baseIndex: i,
       ...(hasChaos ? { stateIndex: maps.length } : {}),
@@ -1259,9 +1370,13 @@ export function buildSurfaceDE4(
       foldRadii: surfaceFoldRadii(fold),
       // Reciprocal singular values: sigma(inv(M)) = 1/sigma(M), so the
       // smallest of the inverse is exactly one over the largest of the
-      // forward map (the stage-2 bound data). Origin-centered — this
+      // forward map's OWN linear part — PRE-post when a post exists (the
+      // stage-2 bound prices invM directly, the un-post already applied).
+      // Origin-centered — this
       // module has no probe-fit ball, so the plain invT forms are exact.
-      invMSigmaMin: 1 / analysis.sigmas[i].max,
+      invMSigmaMin: postLive
+        ? 1 / singularValues4(affine.m).max
+        : 1 / analysis.sigmas[i].max,
       invTNorm,
       bnbDir:
         invTNorm > 0
@@ -1309,10 +1424,15 @@ export function buildSurfaceDE4(
         -(invM[8] * tx + invM[9] * ty + invM[10] * tz + invM[11] * tw),
         -(invM[12] * tx + invM[13] * ty + invM[14] * tz + invM[15] * tw),
       ];
-      const sigmas = transformSigmas4(liftedB);
+      const sigmas = transformSigmas4({ ...liftedB, post4: undefined });
       return {
         invM,
         invT,
+        // B is affine-only by the document rule and the post-word stage
+        // applies B's composed affines with no post stage, so a stray post4
+        // on a B entry is INERT — priced as absent, never as live geometry.
+        postInvM: null,
+        postInvT: null,
         sigmaMin: sigmas.min,
         baseIndex: i,
         foldKind: SURFACE_FOLD_NONE,
@@ -1408,6 +1528,10 @@ export function buildSurfaceDE4(
         let invM = baseInv;
         let center: Vec4 = [tx, ty, tz, tw];
         if (post !== null) {
+          // inv(P·M) = inv(M)·P^T — STILL SOUND WITH POSTS: an emitter step
+          // skips its transform's own post-affine (the emitter rule), so the
+          // copy's forward map is the affine alone under the orthogonal
+          // symmetry rotation, and the transpose shortcut stays exact here.
           invM = new Array<number>(16);
           for (let r = 0; r < 4; r++) {
             for (let c = 0; c < 4; c++) {
@@ -1425,13 +1549,16 @@ export function buildSurfaceDE4(
             post[12] * tx + post[13] * ty + post[14] * tz + post[15] * tw,
           ];
         }
+        // The emitter's sigmas price the map WITHOUT its post (the emitter
+        // step skips it), so the pre-post linear part scales the SDF/ball.
+        const emitterSigmas = singularValues4(affine.m);
         emitters.push({
           shape: t.emitter!,
           invM,
           invT,
-          sigmaMin: analysis.sigmas[i].min,
+          sigmaMin: emitterSigmas.min,
           center,
-          radius: analysis.sigmas[i].max * shapeBoundingRadius(t.emitter!),
+          radius: emitterSigmas.max * shapeBoundingRadius(t.emitter!),
           baseIndex: i,
           shadeIndex: shadeIndices.get(i)!,
         });
@@ -1474,10 +1601,48 @@ export function buildSurfaceDE4(
       const affine = composeAffine4(lifted[i]);
       let image: Vec4 = [affine.t[0], affine.t[1], affine.t[2], affine.t[3]];
       const fold = pureFoldVariation(transforms[i]);
-      let lipschitz = analysis.sigmas[i].max;
+      // The certified Lipschitz INCLUDING the map's own post (the certified
+      // product form — sigma_max(post)·sigma_max(M) — since the fold's local
+      // Jacobian sits between them); without a post this is exactly
+      // `analysis.sigmas[i].max`, bit for bit.
+      const postLive =
+        lifted[i].post4 !== undefined && !isIdentityAffine4(lifted[i].post4!);
+      let lipschitz = postLive
+        ? singularValues4(lifted[i].post4!.m).max *
+          singularValues4(affine.m).max
+        : analysis.sigmas[i].max;
       if (fold) {
         image = applyPureFold4(fold, image[0], image[1], image[2], image[3]);
         lipschitz *= foldLipschitz(fold);
+      }
+      // The map's own post-affine, applied before the origin-distance read
+      // (its translation moves the image; the SYMMETRY rotation stays
+      // inert here — an isometry about the anchored origin).
+      if (postLive) {
+        const pm = lifted[i].post4!.m;
+        const pt = lifted[i].post4!.t;
+        image = [
+          pm[0] * image[0] +
+            pm[1] * image[1] +
+            pm[2] * image[2] +
+            pm[3] * image[3] +
+            pt[0],
+          pm[4] * image[0] +
+            pm[5] * image[1] +
+            pm[6] * image[2] +
+            pm[7] * image[3] +
+            pt[1],
+          pm[8] * image[0] +
+            pm[9] * image[1] +
+            pm[10] * image[2] +
+            pm[11] * image[3] +
+            pt[2],
+          pm[12] * image[0] +
+            pm[13] * image[1] +
+            pm[14] * image[2] +
+            pm[15] * image[3] +
+            pt[3],
+        ];
       }
       condensationInvariantRadius = Math.max(
         condensationInvariantRadius,
@@ -1655,6 +1820,9 @@ export function buildSurfaceDE4(
   if (finalTransform) {
     const liftedFinal = toTransform4(finalTransform);
     const affine = composeAffine4(liftedFinal);
+    const postLive =
+      liftedFinal.post4 !== undefined && !isIdentityAffine4(liftedFinal.post4);
+    const lensPost = liftedFinal.post4;
     const invM = inverse4(affine.m);
     const [tx, ty, tz, tw] = affine.t;
     const invT: Vec4 = [
@@ -1675,6 +1843,38 @@ export function buildSurfaceDE4(
             ? SURFACE_FOLD_SPHEREFOLD
             : SURFACE_FOLD_MANDELBOX;
       const radii = surfaceFoldRadii(fold);
+      // A fold lens's own post rides as its own factor (3D's rule one
+      // dimension up) — the branch enumeration sits between P⁻¹ and the
+      // affine inverse.
+      const postInvM = postLive ? inverse4(lensPost!.m) : null;
+      const postInvT: Vec4 | null = postLive
+        ? [
+            -(
+              postInvM![0] * lensPost!.t[0] +
+              postInvM![1] * lensPost!.t[1] +
+              postInvM![2] * lensPost!.t[2] +
+              postInvM![3] * lensPost!.t[3]
+            ),
+            -(
+              postInvM![4] * lensPost!.t[0] +
+              postInvM![5] * lensPost!.t[1] +
+              postInvM![6] * lensPost!.t[2] +
+              postInvM![7] * lensPost!.t[3]
+            ),
+            -(
+              postInvM![8] * lensPost!.t[0] +
+              postInvM![9] * lensPost!.t[1] +
+              postInvM![10] * lensPost!.t[2] +
+              postInvM![11] * lensPost!.t[3]
+            ),
+            -(
+              postInvM![12] * lensPost!.t[0] +
+              postInvM![13] * lensPost!.t[1] +
+              postInvM![14] * lensPost!.t[2] +
+              postInvM![15] * lensPost!.t[3]
+            ),
+          ]
+        : null;
       foldFinal = {
         invM,
         invT,
@@ -1683,6 +1883,8 @@ export function buildSurfaceDE4(
         invW: 1 / fold.weight,
         absW: Math.abs(fold.weight),
         foldRadii: radii,
+        postInvM,
+        postInvT,
       };
       // Bound the visible set w·V(M·A + t). Per axis the boxfold obeys
       // |fold(t)| <= max(|t|, wall), so |boxfold(y)|² <= Σ max(y_a², wall²)
@@ -1702,7 +1904,58 @@ export function buildSurfaceDE4(
             ? Math.max(affineR, radii.outputR)
             : Math.max(boxR, radii.outputR));
     } else {
-      final = { invM, invT, sigmaMin: s.min };
+      // An AFFINE lens's own post folds into the stored inverse exactly
+      // (inv(P∘A) composed at build time), 3D's treatment one dimension up.
+      if (postLive) {
+        const pm = inverse4(lensPost!.m);
+        const pt = lensPost!.t;
+        const invPt: Vec4 = [
+          -(pm[0] * pt[0] + pm[1] * pt[1] + pm[2] * pt[2] + pm[3] * pt[3]),
+          -(pm[4] * pt[0] + pm[5] * pt[1] + pm[6] * pt[2] + pm[7] * pt[3]),
+          -(pm[8] * pt[0] + pm[9] * pt[1] + pm[10] * pt[2] + pm[11] * pt[3]),
+          -(pm[12] * pt[0] + pm[13] * pt[1] + pm[14] * pt[2] + pm[15] * pt[3]),
+        ];
+        // Composed linear part invM·pm; composed translation
+        // invM·invPt + invT — the 3x3 compose's 4D form.
+        const cm = new Array<number>(16);
+        for (let r = 0; r < 4; r++) {
+          for (let c = 0; c < 4; c++) {
+            let value = 0;
+            for (let a = 0; a < 4; a++) {
+              value += invM[r * 4 + a] * pm[a * 4 + c];
+            }
+            cm[r * 4 + c] = value;
+          }
+        }
+        final = {
+          invM: cm,
+          invT: [
+            invM[0] * invPt[0] +
+              invM[1] * invPt[1] +
+              invM[2] * invPt[2] +
+              invM[3] * invPt[3] +
+              invT[0],
+            invM[4] * invPt[0] +
+              invM[5] * invPt[1] +
+              invM[6] * invPt[2] +
+              invM[7] * invPt[3] +
+              invT[1],
+            invM[8] * invPt[0] +
+              invM[9] * invPt[1] +
+              invM[10] * invPt[2] +
+              invM[11] * invPt[3] +
+              invT[2],
+            invM[12] * invPt[0] +
+              invM[13] * invPt[1] +
+              invM[14] * invPt[2] +
+              invM[15] * invPt[3] +
+              invT[3],
+          ],
+          sigmaMin: s.min,
+        };
+      } else {
+        final = { invM, invT, sigmaMin: s.min };
+      }
       visibleBoundingRadius = affineR;
     }
   }
@@ -1842,12 +2095,25 @@ function surfaceAffineNativeCarriers4(
             : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
           const im = map.invM;
           const it = map.invT;
-          const ix = im[0] * sx + im[1] * sy + im[2] * sz + im[3] * sw + it[0];
-          const iy = im[4] * sx + im[5] * sy + im[6] * sz + im[7] * sw + it[1];
+          // The un-post stage, mirrored so the carrier calibration samples
+          // the geometry the descent estimates.
+          let pX = sx;
+          let pY = sy;
+          let pZ = sz;
+          let pW = sw;
+          if (map.postInvM !== null) {
+            unpostPoint4(map, sx, sy, sz, sw, null);
+            pX = UNPOST4[0];
+            pY = UNPOST4[1];
+            pZ = UNPOST4[2];
+            pW = UNPOST4[3];
+          }
+          const ix = im[0] * pX + im[1] * pY + im[2] * pZ + im[3] * pW + it[0];
+          const iy = im[4] * pX + im[5] * pY + im[6] * pZ + im[7] * pW + it[1];
           const iz =
-            im[8] * sx + im[9] * sy + im[10] * sz + im[11] * sw + it[2];
+            im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
           const iw =
-            im[12] * sx + im[13] * sy + im[14] * sz + im[15] * sw + it[3];
+            im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
           const r = Math.hypot(ix, iy, iz, iw);
           const candidateKey = pScale * (r - R);
           let slot = 0;
@@ -1961,6 +2227,19 @@ function surfaceFoldNativeCarriers4(
         const absW = map.foldSigma / map.sigmaMin;
         const fr = map.foldRadii;
         const wall2 = 2 * fr.wall;
+        // The un-post stage, mirrored into the fold-carrier calibration
+        // (applied before the u-space point below).
+        let pX = sx;
+        let pY = sy;
+        let pZ = sz;
+        let pW = sw;
+        if (map.postInvM !== null) {
+          unpostPoint4(map, sx, sy, sz, sw, null);
+          pX = UNPOST4[0];
+          pY = UNPOST4[1];
+          pZ = UNPOST4[2];
+          pW = UNPOST4[3];
+        }
         let ux = 0;
         let uy = 0;
         let uz = 0;
@@ -1993,10 +2272,10 @@ function surfaceFoldNativeCarriers4(
         let sfSigma = 1;
         let sfRd = 0;
         if (kind !== SURFACE_FOLD_NONE) {
-          ux = sx * map.foldInvW;
-          uy = sy * map.foldInvW;
-          uz = sz * map.foldInvW;
-          uw = sw * map.foldInvW;
+          ux = pX * map.foldInvW;
+          uy = pY * map.foldInvW;
+          uz = pZ * map.foldInvW;
+          uw = pW * map.foldInvW;
           if (kind === SURFACE_FOLD_BOXFOLD) {
             px0 = ux;
             px1 = wall2 - ux;
@@ -2031,10 +2310,10 @@ function surfaceFoldNativeCarriers4(
           let branchSigma: number;
           let branchRd = 0;
           if (kind === SURFACE_FOLD_NONE) {
-            cx = sx;
-            cy = sy;
-            cz = sz;
-            cw = sw;
+            cx = pX;
+            cy = pY;
+            cz = pZ;
+            cw = pW;
             branchSigma = map.sigmaMin;
           } else {
             if (
@@ -2257,6 +2536,36 @@ function segmentRadius(
   const dz = qz + s * e[2];
   const dw = qw + s * e[3];
   return Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
+}
+
+/**
+ * The UN-POST stage shared by every 4D descent loop — the map's own
+ * post-affine inverse ({@link SurfaceDE4Map.postInvM}, null-skipped)
+ * applied to the swept chain point, and its LINEAR part to a slab
+ * half-extent (a translation slides a segment's centre, never its extent).
+ * The sector sweep carries the copy dependence (Rot_kᵀ), so this factor is
+ * per-MAP; `null` maps skip with the point untouched, byte-identically.
+ * Writes the un-posted point into {@link UNPOST4} (module-scope scratch —
+ * single-threaded by construction, like every descent scratch here) and
+ * the un-posted extent into UNPOST_EXT4 when given.
+ */
+const UNPOST4 = new Float64Array(4);
+const UNPOST_EXT4 = new Float64Array(4);
+function unpostPoint4(
+  map: SurfaceDE4Map,
+  x: number,
+  y: number,
+  z: number,
+  w: number,
+  ext: Float64Array | null,
+): void {
+  const pm = map.postInvM!;
+  const pt = map.postInvT!;
+  UNPOST4[0] = pm[0] * x + pm[1] * y + pm[2] * z + pm[3] * w + pt[0];
+  UNPOST4[1] = pm[4] * x + pm[5] * y + pm[6] * z + pm[7] * w + pt[1];
+  UNPOST4[2] = pm[8] * x + pm[9] * y + pm[10] * z + pm[11] * w + pt[2];
+  UNPOST4[3] = pm[12] * x + pm[13] * y + pm[14] * z + pm[15] * w + pt[3];
+  if (ext !== null) applyLinear4(pm, ext, UNPOST_EXT4);
 }
 
 /**
@@ -2687,13 +2996,32 @@ function descend4(
             : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
           const im = map.invM;
           const it = map.invT;
-          const ix = im[0] * sX + im[1] * sY + im[2] * sZ + im[3] * sW + it[0];
-          const iy = im[4] * sX + im[5] * sY + im[6] * sZ + im[7] * sW + it[1];
+          // The map's own POST-AFFINE inverse — the un-post stage between
+          // the sector sweep and the base inverse (null: untouched).
+          let pX = sX;
+          let pY = sY;
+          let pZ = sZ;
+          let pW = sW;
+          if (map.postInvM !== null) {
+            unpostPoint4(map, sX, sY, sZ, sW, segment ? sweepExt : null);
+            pX = UNPOST4[0];
+            pY = UNPOST4[1];
+            pZ = UNPOST4[2];
+            pW = UNPOST4[3];
+          }
+          const ix = im[0] * pX + im[1] * pY + im[2] * pZ + im[3] * pW + it[0];
+          const iy = im[4] * pX + im[5] * pY + im[6] * pZ + im[7] * pW + it[1];
           const iz =
-            im[8] * sX + im[9] * sY + im[10] * sZ + im[11] * sW + it[2];
+            im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
           const iw =
-            im[12] * sX + im[13] * sY + im[14] * sZ + im[15] * sW + it[3];
-          if (segment) applyLinear4(im, sweepExt, imgExt);
+            im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
+          if (segment) {
+            if (map.postInvM !== null) {
+              applyLinear4(im, UNPOST_EXT4, imgExt);
+            } else {
+              applyLinear4(im, sweepExt, imgExt);
+            }
+          }
           const r = segmentRadius(ix, iy, iz, iw, imgExt);
           const key = pScale * (r - R);
           const childScale = pScale * map.sigmaMin;
@@ -3292,15 +3620,33 @@ function descend4Refined(
         }
         const imJ = mapJ.invM;
         const itJ = mapJ.invT;
+        // The un-post stage (null: untouched), before the base inverse.
+        let pX = sx;
+        let pY = sy;
+        let pZ = sz;
+        let pW = sw;
+        if (mapJ.postInvM !== null) {
+          unpostPoint4(mapJ, sx, sy, sz, sw, segment ? certSweepExt : null);
+          pX = UNPOST4[0];
+          pY = UNPOST4[1];
+          pZ = UNPOST4[2];
+          pW = UNPOST4[3];
+        }
         const jx =
-          imJ[0] * sx + imJ[1] * sy + imJ[2] * sz + imJ[3] * sw + itJ[0];
+          imJ[0] * pX + imJ[1] * pY + imJ[2] * pZ + imJ[3] * pW + itJ[0];
         const jy =
-          imJ[4] * sx + imJ[5] * sy + imJ[6] * sz + imJ[7] * sw + itJ[1];
+          imJ[4] * pX + imJ[5] * pY + imJ[6] * pZ + imJ[7] * pW + itJ[1];
         const jz =
-          imJ[8] * sx + imJ[9] * sy + imJ[10] * sz + imJ[11] * sw + itJ[2];
+          imJ[8] * pX + imJ[9] * pY + imJ[10] * pZ + imJ[11] * pW + itJ[2];
         const jw =
-          imJ[12] * sx + imJ[13] * sy + imJ[14] * sz + imJ[15] * sw + itJ[3];
-        if (segment) applyLinear4(imJ, certSweepExt, innerExt);
+          imJ[12] * pX + imJ[13] * pY + imJ[14] * pZ + imJ[15] * pW + itJ[3];
+        if (segment) {
+          if (mapJ.postInvM !== null) {
+            applyLinear4(imJ, UNPOST_EXT4, innerExt);
+          } else {
+            applyLinear4(imJ, certSweepExt, innerExt);
+          }
+        }
         const rj = segmentRadius(jx, jy, jz, jw, innerExt);
         const innerTerm = mapJ.sigmaMin * (rj - childR);
         if (innerTerm < inner) inner = innerTerm;
@@ -3555,13 +3901,32 @@ function descend4Refined(
             : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
           const im = map.invM;
           const it = map.invT;
-          const ix = im[0] * sX + im[1] * sY + im[2] * sZ + im[3] * sW + it[0];
-          const iy = im[4] * sX + im[5] * sY + im[6] * sZ + im[7] * sW + it[1];
+          // The map's own POST-AFFINE inverse — the un-post stage between
+          // the sector sweep and the base inverse (null: untouched).
+          let pX = sX;
+          let pY = sY;
+          let pZ = sZ;
+          let pW = sW;
+          if (map.postInvM !== null) {
+            unpostPoint4(map, sX, sY, sZ, sW, segment ? sweepExt : null);
+            pX = UNPOST4[0];
+            pY = UNPOST4[1];
+            pZ = UNPOST4[2];
+            pW = UNPOST4[3];
+          }
+          const ix = im[0] * pX + im[1] * pY + im[2] * pZ + im[3] * pW + it[0];
+          const iy = im[4] * pX + im[5] * pY + im[6] * pZ + im[7] * pW + it[1];
           const iz =
-            im[8] * sX + im[9] * sY + im[10] * sZ + im[11] * sW + it[2];
+            im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
           const iw =
-            im[12] * sX + im[13] * sY + im[14] * sZ + im[15] * sW + it[3];
-          if (segment) applyLinear4(im, sweepExt, imgExt);
+            im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
+          if (segment) {
+            if (map.postInvM !== null) {
+              applyLinear4(im, UNPOST_EXT4, imgExt);
+            } else {
+              applyLinear4(im, sweepExt, imgExt);
+            }
+          }
           const r = segmentRadius(ix, iy, iz, iw, imgExt);
           const key = pScale * (r - R);
           const childScale = pScale * map.sigmaMin;
@@ -4239,18 +4604,33 @@ function refinedCertValue4(
       const fr = mapJ.foldRadii;
       const wall = fr.wall;
       const wall2 = 2 * wall;
+      // The map's own POST-AFFINE inverse — the un-post stage (null:
+      // untouched), applied before the u-space point and the affine
+      // inverse below.
+      let pX = sx;
+      let pY = sy;
+      let pZ = sz;
+      let pW = sw;
+      if (mapJ.postInvM !== null) {
+        unpostPoint4(mapJ, sx, sy, sz, sw, segment ? CERT_SWEEP_EXT4 : null);
+        pX = UNPOST4[0];
+        pY = UNPOST4[1];
+        pZ = UNPOST4[2];
+        pW = UNPOST4[3];
+      }
       if (kindJ !== SURFACE_FOLD_NONE) {
-        ux = sx * mapJ.foldInvW;
-        uy = sy * mapJ.foldInvW;
-        uz = sz * mapJ.foldInvW;
-        uw = sw * mapJ.foldInvW;
+        ux = pX * mapJ.foldInvW;
+        uy = pY * mapJ.foldInvW;
+        uz = pZ * mapJ.foldInvW;
+        uw = pW * mapJ.foldInvW;
         if (segment) {
           // u-space is a SCALAR multiple of world space, so the segment's
           // half-extent scales with it and stays a segment.
-          euX = CERT_SWEEP_EXT4[0] * mapJ.foldInvW;
-          euY = CERT_SWEEP_EXT4[1] * mapJ.foldInvW;
-          euZ = CERT_SWEEP_EXT4[2] * mapJ.foldInvW;
-          euW = CERT_SWEEP_EXT4[3] * mapJ.foldInvW;
+          const ext0 = mapJ.postInvM !== null ? UNPOST_EXT4 : CERT_SWEEP_EXT4;
+          euX = ext0[0] * mapJ.foldInvW;
+          euY = ext0[1] * mapJ.foldInvW;
+          euZ = ext0[2] * mapJ.foldInvW;
+          euW = ext0[3] * mapJ.foldInvW;
         }
         if (kindJ === SURFACE_FOLD_BOXFOLD) {
           px0 = ux;
@@ -4301,12 +4681,18 @@ function refinedCertValue4(
         let branchSigma: number;
         let branchRd = 0;
         if (kindJ === SURFACE_FOLD_NONE) {
-          jx = imJ[0] * sx + imJ[1] * sy + imJ[2] * sz + imJ[3] * sw + itJ[0];
-          jy = imJ[4] * sx + imJ[5] * sy + imJ[6] * sz + imJ[7] * sw + itJ[1];
-          jz = imJ[8] * sx + imJ[9] * sy + imJ[10] * sz + imJ[11] * sw + itJ[2];
+          jx = imJ[0] * pX + imJ[1] * pY + imJ[2] * pZ + imJ[3] * pW + itJ[0];
+          jy = imJ[4] * pX + imJ[5] * pY + imJ[6] * pZ + imJ[7] * pW + itJ[1];
+          jz = imJ[8] * pX + imJ[9] * pY + imJ[10] * pZ + imJ[11] * pW + itJ[2];
           jw =
-            imJ[12] * sx + imJ[13] * sy + imJ[14] * sz + imJ[15] * sw + itJ[3];
-          if (segment) applyLinear4(imJ, CERT_SWEEP_EXT4, CERT_IMG_EXT4);
+            imJ[12] * pX + imJ[13] * pY + imJ[14] * pZ + imJ[15] * pW + itJ[3];
+          if (segment) {
+            if (mapJ.postInvM !== null) {
+              applyLinear4(imJ, UNPOST_EXT4, CERT_IMG_EXT4);
+            } else {
+              applyLinear4(imJ, CERT_SWEEP_EXT4, CERT_IMG_EXT4);
+            }
+          }
           branchSigma = mapJ.sigmaMin;
         } else {
           if (
@@ -4681,6 +5067,19 @@ function descendFold4(
           const kind = map.foldKind;
           const branchCount = foldBranchCount4(kind);
           const absW = map.foldSigma / map.sigmaMin;
+          // The map's own POST-AFFINE inverse — the un-post stage between
+          // the sector sweep and the branch machinery (null: untouched).
+          let pX = sX;
+          let pY = sY;
+          let pZ = sZ;
+          let pW = sW;
+          if (map.postInvM !== null) {
+            unpostPoint4(map, sX, sY, sZ, sW, segment ? FOLD_SWEEP_EXT4 : null);
+            pX = UNPOST4[0];
+            pY = UNPOST4[1];
+            pZ = UNPOST4[2];
+            pW = UNPOST4[3];
+          }
           // Stage 2 (branch-and-bound skip): a candidate whose
           // processing is provably a STATE no-op — nothing folded below
           // best, nothing displaced in the frontier — can be skipped
@@ -4785,17 +5184,21 @@ function descendFold4(
           const wall = fr.wall;
           const wall2 = 2 * wall;
           if (kind !== SURFACE_FOLD_NONE) {
-            ux = sX * map.foldInvW;
-            uy = sY * map.foldInvW;
-            uz = sZ * map.foldInvW;
-            uw = sW * map.foldInvW;
+            // The un-posted chain point, then un-weighted into u-space —
+            // the forward order affine -> variations -> post read backwards.
+            ux = pX * map.foldInvW;
+            uy = pY * map.foldInvW;
+            uz = pZ * map.foldInvW;
+            uw = pW * map.foldInvW;
             if (segment) {
               // u-space is a SCALAR multiple of world space, so the
               // half-extent scales with the point and stays a segment.
-              euX = FOLD_SWEEP_EXT4[0] * map.foldInvW;
-              euY = FOLD_SWEEP_EXT4[1] * map.foldInvW;
-              euZ = FOLD_SWEEP_EXT4[2] * map.foldInvW;
-              euW = FOLD_SWEEP_EXT4[3] * map.foldInvW;
+              const ext0 =
+                map.postInvM !== null ? UNPOST_EXT4 : FOLD_SWEEP_EXT4;
+              euX = ext0[0] * map.foldInvW;
+              euY = ext0[1] * map.foldInvW;
+              euZ = ext0[2] * map.foldInvW;
+              euW = ext0[3] * map.foldInvW;
             }
             if (kind === SURFACE_FOLD_BOXFOLD) {
               px0 = ux;
@@ -4866,10 +5269,20 @@ function descendFold4(
               // Stage-2 B&B skips (see the hoist comment above), point
               // queries only.
               if (!segment && !inB) {
-                const rDir = gX * sX + gY * sY + gZ * sZ + gW * sW + bnbT;
+                // A post-carrying map prices `pre` = the UN-POSTED point
+                // (the chain-point hoist is sector-invariant, not
+                // post-invariant); post-free maps keep the hoisted forms.
+                const postLiveArm = map.postInvM !== null;
+                const rDir =
+                  (postLiveArm
+                    ? gX * pX + gY * pY + gZ * pZ + gW * pW
+                    : gX * sX + gY * sY + gZ * sZ + gW * sW) + bnbT;
+                const sTerm0 = postLiveArm
+                  ? pX * pX + pY * pY + pZ * pZ + pW * pW
+                  : chainNormSq;
                 const rEsc = R + best * invChildScale;
                 if (rDir > escapeRadius && rDir >= rEsc) continue;
-                const sTerm = chainNormSq * bnbSigmaSq;
+                const sTerm = sTerm0 * bnbSigmaSq;
                 if (sTerm > needESq) {
                   const needC = rEsc + bnbT;
                   if (needC <= 0 || sTerm >= needC * needC) continue;
@@ -4886,12 +5299,18 @@ function descendFold4(
                   if (sTerm >= need * need) continue;
                 }
               }
-              ix = im[0] * sX + im[1] * sY + im[2] * sZ + im[3] * sW + it[0];
-              iy = im[4] * sX + im[5] * sY + im[6] * sZ + im[7] * sW + it[1];
-              iz = im[8] * sX + im[9] * sY + im[10] * sZ + im[11] * sW + it[2];
+              ix = im[0] * pX + im[1] * pY + im[2] * pZ + im[3] * pW + it[0];
+              iy = im[4] * pX + im[5] * pY + im[6] * pZ + im[7] * pW + it[1];
+              iz = im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
               iw =
-                im[12] * sX + im[13] * sY + im[14] * sZ + im[15] * sW + it[3];
-              if (segment) applyLinear4(im, FOLD_SWEEP_EXT4, FOLD_IMG_EXT4);
+                im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
+              if (segment) {
+                if (map.postInvM !== null) {
+                  applyLinear4(im, UNPOST_EXT4, FOLD_IMG_EXT4);
+                } else {
+                  applyLinear4(im, FOLD_SWEEP_EXT4, FOLD_IMG_EXT4);
+                }
+              }
               branchSigma = map.sigmaMin;
             } else {
               let branchRd: number;
@@ -5479,11 +5898,28 @@ function descendLens4(
   const im = lens.invM;
   const it = lens.invT;
   const sigmaMinM = lens.sigmaMin;
+  // The lens's own post-affine inverse, un-applied FIRST (the lens's map is
+  // affine -> variations -> post, so its inverse starts with the un-post).
+  // `null` — every lens predating posts — skips with the query untouched.
+  const lensHasPost = lens.postInvM !== null;
+  let pqx = p[0];
+  let pqy = p[1];
+  let pqz = p[2];
+  let pqw = p[3];
+  if (lensHasPost) {
+    const pm = lens.postInvM!;
+    const pt = lens.postInvT!;
+    pqx = pm[0] * p[0] + pm[1] * p[1] + pm[2] * p[2] + pm[3] * p[3] + pt[0];
+    pqy = pm[4] * p[0] + pm[5] * p[1] + pm[6] * p[2] + pm[7] * p[3] + pt[1];
+    pqz = pm[8] * p[0] + pm[9] * p[1] + pm[10] * p[2] + pm[11] * p[3] + pt[2];
+    pqw = pm[12] * p[0] + pm[13] * p[1] + pm[14] * p[2] + pm[15] * p[3] + pt[3];
+    if (segment) applyLinear4(pm, LENS_EXT4, LENS_EXT4);
+  }
 
-  const ux = p[0] * lens.invW;
-  const uy = p[1] * lens.invW;
-  const uz = p[2] * lens.invW;
-  const uw = p[3] * lens.invW;
+  const ux = pqx * lens.invW;
+  const uy = pqy * lens.invW;
+  const uz = pqz * lens.invW;
+  const uw = pqw * lens.invW;
   // u-space is a SCALAR multiple of world space, so a slab query's
   // half-extent scales with the point and stays a segment.
   const euX = LENS_EXT4[0] * lens.invW;

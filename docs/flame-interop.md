@@ -136,7 +136,7 @@ more valuable property to protect.
 | `juliascope_power`/`juliascope_dist` beside `juliascope` | `juliascopePower`/`juliascopeDist` on the matched entry (exact; absent ⇒ classic)                                                         |
 | `curl_c1`/`curl_c2` beside `curl`                        | `curlC1`/`curlC2` on the matched entry (exact; absent ⇒ classic)                                                                          |
 | `post` on a purely affine map                            | composed into the affine (exact)                                                                                                          |
-| `post` on a nonlinear map                                | **dropped + warning** (nothing to hang it on)                                                                                             |
+| `post` on a nonlinear map                                | `Transform.post` — the map's own post-affine, lifted with the identity z row/column (exact; applied before the symmetry post-rotation)    |
 | unknown variations/parameters                            | **ignored + one aggregated warning** naming the attributes                                                                                |
 | `weight`                                                 | `Transform.weight`; all-equal weights omitted (uniform)                                                                                   |
 | `weight ≤ 0` xform                                       | **skipped + warning**                                                                                                                     |
@@ -209,12 +209,21 @@ The export writes the system's **XY shadow**:
   attractor is confined to a z-plane, so expect a different (often still
   pleasing) figure in Apophysis.
 - Kaleidoscope copies are baked into explicit xforms, the same way flam3's
-  own symmetry macro materializes them: an affine map's copy composes the
-  copy rotation straight into `coefs`; a nonlinear map keeps its base
-  `coefs` and carries the rotation as `post` (our copy rotation applies to
-  the variation _output_, which is exactly flam3's `post` slot). A z-axis
-  kaleidoscope of a z-flat system therefore exports exactly; x/y-axis
-  kaleidoscopes flatten with a warning.
+  own symmetry macro materializes them: an affine map's copy with NO post
+  composes the copy rotation straight into `coefs` (the cheapest exact
+  spelling); a nonlinear map keeps its base `coefs` and carries the
+  rotation as `post` (our copy rotation applies to the variation _output_,
+  which is exactly flam3's `post` slot). Whenever a map carries its own
+  post-affine — imported from a nonlinear xform's `post=` — the affine
+  shortcut is OFF (a post in the way would flip the composition order) and
+  the one `post=` slot carries the COMPOSED stage `Rot_k ∘ P`: the copy
+  rotation OUTER, matching the engine ordering (affine → variation sum →
+  post → copy rotation). flam3 has one `post=` slot, so the two must ride
+  it together; the affine-only import folds it back out exactly, so the
+  round trip stays exact. A z-axis kaleidoscope of a z-flat system
+  therefore exports exactly; x/y-axis kaleidoscopes flatten with a
+  warning. A `finalxform` carries its lens's own post the same way (no
+  copy rotation — symmetry never rotates the lens).
 - `chaos` rows export when the system carries any non-trivial one
   (`systemHasChaos`) — see "Xaos" below for the write gate, the
   kaleidoscope-copy expansion, and the final-transform exclusion.
@@ -342,7 +351,6 @@ restates).
 - A final xform's color blending (export — our lens doesn't recolor, so the
   export pins its `color_speed` to 0 rather than reproducing an imported
   one; see the export notes above).
-- `post` on nonlinear xforms (import — warned).
 - The ~90 flam3/Apophysis variations we don't implement (import — warned,
   aggregated). The affine skeleton still imports, which often preserves the
   large-scale composition.

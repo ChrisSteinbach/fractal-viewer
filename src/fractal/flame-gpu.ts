@@ -90,7 +90,11 @@ import type { PaletteSpec } from "./palette";
 // which the byte-layout/kernel section above did not — kept as separate
 // statements (rather than merged into the type-only imports above) so the
 // authored imports above stay untouched.
-import { composeAffine, rotationMatrixXYZ } from "./affine";
+import {
+  composeAffine,
+  composeLinearAffine,
+  rotationMatrixXYZ,
+} from "./affine";
 import {
   CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
@@ -215,7 +219,12 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * `transformCount + 1` and are drawn only by the plot loop's own schedule
  * pick, never by the transform pick:
  *   0 rowX vec4f (m0 m1 m2 t0) | 16 rowY | 32 rowZ
- *   48 postX vec4f (symmetry post-rotation row, w unused) | 64 postY | 80 postZ
+ *   48 postX vec4f (post stage row 0: m0 m1 m2, t0 in .w) | 64 postY | 80 postZ
+ *     — the slot's POST stage: the kaleidoscope copy rotation composed with
+ *     the base map's own post-affine (`Rot_k ∘ P`) when it authors one, the
+ *     rotation alone otherwise; the translation rides the rows' free `.w`
+ *     lanes, so the wire did not move when posts arrived. `hasPost = 0`
+ *     (the zero default) means no stage at all.
  *   96 varWeights array<vec4f, 5> | 176 varTypes array<vec4u, 5> (20 lanes of
  *   storage, all 20 used — one per {@link VariationType}; the Mandelbox fold
  *   family added `boxfold`/`spherefold`/`mandelbox`, `qsquare` filled the
@@ -1094,10 +1103,16 @@ fn applySlot(slotIdx: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
     }
   }
   if (s.hasPost == 1u) {
+    // The slot's POST stage — the kaleidoscope copy rotation composed with
+    // the base map's own post-affine (flam3's post=) when it authors one,
+    // the rotation alone otherwise. The translation rides the rows' free
+    // .w lanes (the wire's one post block — see the Slot layout doc); for
+    // a rotation-only stage those lanes are zero and the added term is
+    // exactly the linear-only apply this block was before posts existed.
     q = vec3f(
-      dot(s.postX.xyz, q),
-      dot(s.postY.xyz, q),
-      dot(s.postZ.xyz, q),
+      dot(s.postX.xyz, q) + s.postX.w,
+      dot(s.postY.xyz, q) + s.postY.w,
+      dot(s.postZ.xyz, q) + s.postZ.w,
     );
   }
   return q;
@@ -1585,27 +1600,43 @@ function writeSlotRows(
 }
 
 /**
- * Write a copy's post-rotation rows and set `hasPost`. `post === null`
- * (copy 0, or any copy at symmetry order 1) leaves postX/Y/Z and `hasPost`
- * at the `ArrayBuffer`'s zero default — exactly the kernel's "no rotation"
- * case, mirroring `prepareChaosGame`'s `null` for the same slots.
+ * Write one slot's POST stage rows and set `hasPost`. `post === null`
+ * (no post stage — copy 0 of a map with no post-affine, or any copy at
+ * symmetry order 1 of one) leaves postX/Y/Z and `hasPost` at the
+ * `ArrayBuffer`'s zero default — exactly the kernel's "no post" case,
+ * mirroring `prepareChaosGame`'s `null` for the same slots.
+ *
+ * The stage is the COMPOSED post the packer built per copy: the copy
+ * rotation (orthogonal, linear-only) applied AFTER the base map's own
+ * post-affine — `composeLinearAffine`'s output — so the kernel applies
+ * `Rot_k ∘ P` in one block where the CPU oracle applies `P` then `Rot_k`
+ * sequentially (the engine ordering). Row `r`'s xyz is the composed
+ * matrix's row `r`; its `.w` lane carries the composed translation —
+ * the free wire space the Slot layout reserves, which is why the layout
+ * did not move when posts arrived. A rotation-only stage packs zero
+ * translations, byte-identical to the pre-post wire.
  */
 function writeSlotPost(
   f32: Float32Array,
   u32: Uint32Array,
   base: number,
-  post: number[] | null,
+  post: { m: number[]; t: readonly number[] } | null,
 ): void {
   if (post === null) return;
-  f32[base + SLOT_POST_X] = post[0];
-  f32[base + SLOT_POST_X + 1] = post[1];
-  f32[base + SLOT_POST_X + 2] = post[2];
-  f32[base + SLOT_POST_Y] = post[3];
-  f32[base + SLOT_POST_Y + 1] = post[4];
-  f32[base + SLOT_POST_Y + 2] = post[5];
-  f32[base + SLOT_POST_Z] = post[6];
-  f32[base + SLOT_POST_Z + 1] = post[7];
-  f32[base + SLOT_POST_Z + 2] = post[8];
+  const m = post.m;
+  const t = post.t;
+  f32[base + SLOT_POST_X] = m[0];
+  f32[base + SLOT_POST_X + 1] = m[1];
+  f32[base + SLOT_POST_X + 2] = m[2];
+  f32[base + SLOT_POST_X + 3] = t[0];
+  f32[base + SLOT_POST_Y] = m[3];
+  f32[base + SLOT_POST_Y + 1] = m[4];
+  f32[base + SLOT_POST_Y + 2] = m[5];
+  f32[base + SLOT_POST_Y + 3] = t[1];
+  f32[base + SLOT_POST_Z] = m[6];
+  f32[base + SLOT_POST_Z + 1] = m[7];
+  f32[base + SLOT_POST_Z + 2] = m[8];
+  f32[base + SLOT_POST_Z + 3] = t[2];
   u32[base + SLOT_HAS_POST] = 1;
 }
 
@@ -2490,9 +2521,16 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
   const gearBuilder = createGearTableBuilder();
 
   // Copy-major expansion: copy 0 (unrotated) first, then copy 1, etc. — see
-  // prepareChaosGame's identical loop shape.
+  // prepareChaosGame's identical loop shape. Each slot's POST stage composes
+  // the copy rotation with the base map's own post-affine (`Rot_k ∘ P`, the
+  // engine ordering — the kernel applies the block once where the CPU
+  // applies `P` then `Rot_k`); a rotation-only slot packs zero translations.
+  // EMITTER slots deliberately skip the user post (chaos-game's emitter rule:
+  // a condensation set is fixed, the post is part of the warp pipeline the
+  // emitter branch replaces — but the copy rotation still bends an emitted
+  // point), so their stage is the rotation alone.
   for (let k = 0; k < order; k++) {
-    const post =
+    const rot =
       k === 0
         ? null
         : symmetryPostRotation(symmetry.plane, (2 * Math.PI * k) / order);
@@ -2501,7 +2539,15 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
       const base = s * F32_PER_SLOT;
       const affine = baseAffines[i];
       writeSlotRows(slotF32, base, affine.m, affine.t);
-      writeSlotPost(slotF32, slotU32, base, post);
+      const userPost =
+        emitters !== null && emitters[i] !== null ? null : transforms[i].post;
+      const stage =
+        rot === null
+          ? (userPost ?? null)
+          : userPost
+            ? composeLinearAffine(rot, userPost)
+            : { m: rot, t: [0, 0, 0] as const };
+      writeSlotPost(slotF32, slotU32, base, stage);
       writeSlotVariations(slotF32, slotU32, base, transforms[i].variations);
       slotF32[base + SLOT_CUM_WEIGHT] = cumWeights[s];
       slotF32[base + SLOT_COLOR_INDEX] = colorIndices[i];
@@ -2520,12 +2566,17 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
 
   // The final-transform lens: one extra slot, never chosen by pickIndex
   // (params.transformCount bounds that search), read only when hasFinal = 1.
-  // hasPost stays 0 (the ArrayBuffer's zero default) — a lens never rotates.
+  // The lens's own post-affine rides the same post block (hasPost = 1) — the
+  // lens's map is affine -> variations -> post exactly like a base map's, so
+  // the kernel's applySlot realizes the CPU lens order unchanged. Absent ⇒
+  // the slot stays at the `ArrayBuffer`'s zero default — a lens never
+  // rotates and (predating posts) never translates either.
   if (finalTransform !== null) {
     const finalBase = transformCount * F32_PER_SLOT;
     const finalAffine = composeAffine(finalTransform);
     writeSlotRows(slotF32, finalBase, finalAffine.m, finalAffine.t);
     writeSlotVariations(slotF32, slotU32, finalBase, finalTransform.variations);
+    writeSlotPost(slotF32, slotU32, finalBase, finalTransform.post ?? null);
   }
 
   // The schedule's B slots, appended after the lens slot: affine rows +

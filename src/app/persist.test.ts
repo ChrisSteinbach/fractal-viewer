@@ -546,6 +546,103 @@ describe("decodeScene transform weight", () => {
 // ---------------------------------------------------------------------------
 
 describe("decodeScene transform shear", () => {
+  it("round-trips a post-affine through the 12-number wire shape, rounding to 4 decimals", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          post: {
+            m: [0.4, 0.12345678, 0, 0, 0.35, 0.05, 0, 0, 0.4],
+            t: [0.02, -0.03, 0.01],
+          },
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    // round4(0.12345678) = 0.1235 — the wire rounds like every float.
+    expect(result!.transforms[0].post).toEqual({
+      m: [0.4, 0.1235, 0, 0, 0.35, 0.05, 0, 0, 0.4],
+      t: [0.02, -0.03, 0.01],
+    });
+  });
+
+  it("omits a structurally-identity post, decoding it back as undefined", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          post: { m: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0] },
+        },
+      ],
+    };
+    expect(decodeScene(encodeScene(s))!.transforms[0].post).toBeUndefined();
+  });
+
+  it("rejects a present-but-malformed post (the whole transform, per the strict decoder's contract)", () => {
+    const base: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          post: {
+            m: [0.4, 0.1, 0, 0, 0.35, 0.05, 0, 0, 0.4],
+            t: [0.02, -0.03, 0.01],
+          },
+        },
+      ],
+    };
+    // Round-trip through the same v1 wire the decoder reads: base64url
+    // (URL-safe alphabet, no padding) of the JSON payload.
+    const encoded = encodeScene(base);
+    const payload = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(
+          atob(
+            encoded.replace(/^v1=/, "").replace(/-/g, "+").replace(/_/g, "/"),
+          ),
+          (c) => c.charCodeAt(0),
+        ),
+      ),
+    );
+    const rewire = (p: unknown): string =>
+      `v1=${btoa(
+        String.fromCharCode(...new TextEncoder().encode(JSON.stringify(p))),
+      )
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "")}`;
+    // 11 numbers: the wire shape is exactly 12.
+    payload.transforms[0].post.pop();
+    expect(decodeScene(rewire(payload))).toBeNull();
+    // A numeric string is malformed — no Number() coercion at this leaf.
+    payload.transforms[0].post = [
+      0.4,
+      0.1,
+      0,
+      0,
+      0.35,
+      0.05,
+      0,
+      0,
+      0.4,
+      0.02,
+      -0.03,
+      "0.01",
+    ];
+    expect(decodeScene(rewire(payload))).toBeNull();
+  });
+
   it("round-trips a shear vector", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),

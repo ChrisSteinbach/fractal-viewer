@@ -95,7 +95,12 @@ import { pointTilingGpuWgsl } from "./point-tiling-gpu";
 import type { PackedGpuPointTiling } from "./point-tiling-gpu";
 // Value imports for the packing functions below the kernel — mirrors
 // flame-gpu.ts's own split between type-only and value imports.
-import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
+import {
+  composeAffine4,
+  composeLinearAffine4,
+  symmetryRotation4,
+  toTransform4,
+} from "./affine4";
 import {
   CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
@@ -202,7 +207,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   416 axisX vec4f | 432 axisY | 448 axisZ (position colors, w unused) |
  *   464 uniformColor vec4f (xyz, w unused)
  *
- * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 1168 stride);
+ * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 1232 stride);
  * slot count = transformCount + 1 + scheduleCount — the expanded transform
  * slots, then the final-transform lens slot (read only when hasFinal = 1,
  * never drawn by the transform pick), then the scheduled-hybrid post-word's
@@ -218,7 +223,13 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * with a spare `.w`):
  *   0 rowX vec4f (m0..m3) | 16 rowY (m4..m7) | 32 rowZ (m8..m11) | 48 rowW (m12..m15)
  *   64 trans vec4f (t0..t3)
- *   80 postX vec4f (symmetry post-rotation row 0) | 96 postY | 112 postZ | 128 postW
+ *   80 postX vec4f (post stage row 0) | 96 postY | 112 postZ | 128 postW
+ *     — the slot's POST stage: the copy rotation composed with the base
+ *     map's own post-affine (`Rot_k ∘ P`) when it authors one, the rotation
+ *     alone otherwise; `hasPost = 0` (the zero default) means no stage.
+ *     The four rows are FULL 4x4 rows (no spare `.w`), so the composed
+ *     translation rides the appended `postTrans` vec4 at the struct's end
+ *     (byte 1216) rather than the 3D Slot's free row lanes.
  *   144 varWeights array<vec4f, 5> | 224 varTypes array<vec4u, 5> (20 lanes of
  *   storage, all 20 used — one per `VariationType`; the Mandelbox fold
  *   family and the two power maps filled the arrays in order, and the
@@ -269,8 +280,12 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * so content runs to 324 and the struct rounds 324 -> 336, keeping the same
  * three trailing pad words. The parametric julia family and curl brought
  * the count to 20 — exactly the lane capacity — and their 48-byte `varParams`
- * block appends after the emitter block, so the stride runs 1168 -> 1216
- * (content 1168 + 48 = 1216, alignment-exact with no new pad).
+ * block appends after the emitter block. The per-transform POST-AFFINE pass
+ * appended one more `vec4f` (`postTrans`, the composed post stage's
+ * translation — the four post rows are full, so unlike the 3D Slot there is
+ * no free `.w` to hide it in), moving the stride 1216 -> 1232 with every
+ * pre-post offset byte-identical (the varParams append's discipline, the
+ * one layout rule this struct's history keeps re-earning).
  *
  * Chain4 (storage array element, {@link CHAIN4_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (the FULL 4D orbit point — unlike the 3D Chain, no lane is
@@ -309,7 +324,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * seam.
  */
 export const PARAMS4_BYTES = 480;
-export const SLOT4_STRIDE_BYTES = 1216;
+export const SLOT4_STRIDE_BYTES = 1232;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
  * rewrites mid-session, exactly like the 3D layout's
@@ -424,6 +439,11 @@ struct Slot {
   // Appended AFTER the emitter block so every pre-julia offset stays
   // byte-identical.
   varParams: array<vec4f, 3>,
+  // The POST stage's translation — the composed affine's Rot_k · P.t,
+  // appended at the struct's end (the varParams append's discipline) because
+  // the four post rows are FULL 4x4 rows with no spare lane. Zero for a
+  // rotation-only stage, byte-identical to the pre-post wire.
+  postTrans: vec4f,
 }
 
 // "aux", not "meta": meta is a WGSL reserved identifier (3D kernel's note).
@@ -1038,12 +1058,17 @@ fn applySlot(slotIdx: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
     }
   }
   if (s.hasPost == 1u) {
+    // The slot's POST stage — the copy rotation composed with the base
+    // map's own post-affine when it authors one (the 3D kernel's note),
+    // applied in one block where the CPU applies P then Rot_k. The
+    // translation rides the appended postTrans lane; zero for a
+    // rotation-only stage.
     q = vec4f(
       dot(s.postX, q),
       dot(s.postY, q),
       dot(s.postZ, q),
       dot(s.postW, q),
-    );
+    ) + s.postTrans;
   }
   return q;
 }
@@ -1547,14 +1572,19 @@ export function buildFlameGpuPointTilingKernel4(
  * CONTRACT with its own literal offsets, so a mistake here cannot
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 304.
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 308.
 const SLOT4_ROW_X = 0;
 const SLOT4_ROW_Y = 4;
 const SLOT4_ROW_Z = 8;
 const SLOT4_ROW_W = 12;
 const SLOT4_TRANS = 16;
-/** The four rows of a kaleidoscope copy's 4x4 post-rotation —
- * every lane used, unlike the 3D Slot's three rows with a spare `.w`. */
+/** The four rows of a slot's POST stage — the kaleidoscope copy's 4x4
+ * rotation composed with the base map's own post-affine (`Rot_k ∘ P`) when
+ * it authors one, the rotation alone otherwise. Every lane of the rows is
+ * used (a 4x4 has no spare `.w`), which is why the composed translation
+ * rides the `SLOT4_POST_TRANS` vec4 APPENDED at the struct's end — the
+ * varParams append's exact discipline, keeping every pre-post offset
+ * byte-identical — rather than the 3D Slot's free row `.w` lanes. */
 const SLOT4_POST_X = 20;
 const SLOT4_POST_Y = 24;
 const SLOT4_POST_Z = 28;
@@ -1600,6 +1630,11 @@ const F32_PER_EMITTER_PART = EMITTER_PART_STRIDE_BYTES / 4; // 24.
  * `SLOT4_VAR_PARAMS + i * 4`.
  */
 const SLOT4_VAR_PARAMS = 292;
+/** The POST stage's translation vec4, APPENDED at the struct's end (element
+ * 304, byte 1216 — the first offset this post-affine pass moved; stride
+ * 1216 -> 1232). Zero for a rotation-only stage, so every pre-post slot
+ * packs byte-identically. */
+const SLOT4_POST_TRANS = 304;
 
 const F32_PER_CHAIN4 = CHAIN4_STRIDE_BYTES / 4; // 8.
 const CHAIN4_POS = 0; // pos.xyzw: the full 4D orbit point.
@@ -1892,10 +1927,13 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
   const gearBuilder = createGearTableBuilder();
 
   // Copy-major expansion: copy 0 (unrotated) first, then copy 1, etc. — see
-  // prepareChaosGame4's identical loop shape.
+  // prepareChaosGame4's identical loop shape. Each slot's POST stage composes
+  // the copy rotation with the base map's own post-affine (`Rot_k ∘ P`) —
+  // the 3D packer's rule one dimension up, EMITTER slots skipping the user
+  // post (a condensation set is fixed) so their stage is the rotation alone.
   const twist = symmetry.twist ?? 0;
   for (let k = 0; k < order; k++) {
-    const post =
+    const rot =
       k === 0
         ? null
         : symmetryRotation4(symmetry.plane, (2 * Math.PI * k) / order, twist);
@@ -1903,7 +1941,15 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
       const s = k * baseTransformCount + i;
       const base = s * F32_PER_SLOT4;
       writeSlot4Affine(slotF32, base, transforms4[i]);
-      writeSlot4Post(slotF32, slotU32, base, post);
+      const userPost =
+        emitters !== null && emitters[i] !== null ? null : transforms4[i].post4;
+      const stage =
+        rot === null
+          ? (userPost ?? null)
+          : userPost
+            ? composeLinearAffine4(rot, userPost)
+            : { m: [...rot], t: [0, 0, 0, 0] as const };
+      writeSlot4Post(slotF32, slotU32, base, stage);
       writeSlot4Variations(slotF32, slotU32, base, transforms4[i].variations);
       slotF32[base + SLOT4_CUM_WEIGHT] = cumWeights[s];
       slotF32[base + SLOT4_COLOR_INDEX] = colorIndices[i];
@@ -1922,6 +1968,8 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
 
   // The final-transform lens: one extra slot, never chosen by the pick
   // (params.transformCount bounds that search), read only when hasFinal = 1.
+  // The lens's own post-affine rides the same post block — the lens's map is
+  // affine -> variations -> post exactly like a base map's.
   if (finalTransform4 !== null) {
     const finalBase = transformCount * F32_PER_SLOT4;
     writeSlot4Affine(slotF32, finalBase, finalTransform4);
@@ -1931,6 +1979,7 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
       finalBase,
       finalTransform4.variations,
     );
+    writeSlot4Post(slotF32, slotU32, finalBase, finalTransform4.post4 ?? null);
   }
 
   // The schedule's B slots, appended after the lens slot — the 3D packer's
@@ -2020,25 +2069,30 @@ function writeSlot4Affine(
 }
 
 /**
- * Write a kaleidoscope copy's post-rotation rows and set `hasPost` — the 4D
- * twin of flame-gpu.ts's `writeSlotPost`, with four FULL rows instead of
- * three xyz ones. `post === null` (copy 0, or any copy at symmetry order 1)
- * leaves postX/Y/Z/W and `hasPost` at the `ArrayBuffer`'s zero default —
- * exactly the kernel's "no rotation" case, mirroring `prepareChaosGame4`'s
- * `null` for the same slots.
+ * Write a slot's POST stage rows + translation and set `hasPost` — the 4D
+ * twin of flame-gpu.ts's `writeSlotPost`, with four FULL rows (no spare
+ * lane) and the composed translation riding the APPENDED `SLOT4_POST_TRANS`
+ * vec4. `post === null` (no post stage) leaves postX/Y/Z/W, the translation
+ * and `hasPost` at the `ArrayBuffer`'s zero default — exactly the kernel's
+ * "no post" case, mirroring `prepareChaosGame4`'s `null` for the same
+ * slots. The stage is the COMPOSED post the packer built per copy
+ * (`composeLinearAffine4`'s `Rot_k ∘ P`), the rotation-only stage packing
+ * zero translations.
  */
 function writeSlot4Post(
   f32: Float32Array,
   u32: Uint32Array,
   base: number,
-  post: number[] | null,
+  post: { m: number[]; t: readonly number[] } | null,
 ): void {
   if (post === null) return;
+  const m = post.m;
   for (let c = 0; c < 4; c++) {
-    f32[base + SLOT4_POST_X + c] = post[c];
-    f32[base + SLOT4_POST_Y + c] = post[4 + c];
-    f32[base + SLOT4_POST_Z + c] = post[8 + c];
-    f32[base + SLOT4_POST_W + c] = post[12 + c];
+    f32[base + SLOT4_POST_X + c] = m[c];
+    f32[base + SLOT4_POST_Y + c] = m[4 + c];
+    f32[base + SLOT4_POST_Z + c] = m[8 + c];
+    f32[base + SLOT4_POST_W + c] = m[12 + c];
+    f32[base + SLOT4_POST_TRANS + c] = post.t[c];
   }
   u32[base + SLOT4_HAS_POST] = 1;
 }

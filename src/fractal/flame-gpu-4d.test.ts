@@ -151,7 +151,7 @@ const COLOR_SPEED = 80; // byte 320
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
     expect(PARAMS4_BYTES).toBe(480);
-    expect(SLOT4_STRIDE_BYTES).toBe(1216);
+    expect(SLOT4_STRIDE_BYTES).toBe(1232); // +1 vec4: the post stage translation (postTrans), appended at the struct end.
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
     expect(WEIGHT_FIXED_POINT_SCALE).toBe(256);
@@ -597,7 +597,7 @@ describe("packGpuSystem4 shape emitters", () => {
         symmetry: { order: 1, plane: "xz" },
         palette: "legacy",
       });
-      expect(SLOT4_STRIDE_BYTES).toBe(1216);
+      expect(SLOT4_STRIDE_BYTES).toBe(1232); // +1 vec4: the post stage translation (postTrans), appended at the struct end.
       const f32 = new Float32Array(packed4.slots);
       const p = EMITTER_PARTS;
       expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
@@ -697,7 +697,7 @@ describe("packGpuSystem4 shape emitters", () => {
       baseSpec4({ transforms4: [transform4WithEmitter(spec)] }),
     );
     expect(new Uint32Array(packed.slots)[EMITTER_FALLBACK_PART]).toBe(1);
-    expect(SLOT4_STRIDE_BYTES).toBe(1216);
+    expect(SLOT4_STRIDE_BYTES).toBe(1232); // +1 vec4: the post stage translation (postTrans), appended at the struct end.
     expect(packed.multiPartEmitters).toBe(true);
   });
 

@@ -1199,6 +1199,99 @@ describe("accumulateFlame vs. stepOrbit/plotPoint (correctness oracle)", () => {
     expect(actual.maxHits).toBe(expected.maxHits);
     expect(actual.orbit).toEqual(expected.orbit);
   });
+
+  it("matches the same reference loop for a system carrying POST-AFFINES (shearing, plus a posted lens)", () => {
+    // The post stage fires between the variation sum and the post-rotation
+    // on every recorded point here, and the lens's own post after its
+    // variation blend — the widest pass through the new plot sites. One
+    // map carries NO post, exercising the identity-skip branch.
+    const post = {
+      m: [0.4, 0.1, 0, 0, 0.35, 0.05, 0, 0, 0.4],
+      t: [0.02, -0.03, 0.01] as [number, number, number],
+    };
+    const transforms: Transform[] = sierpinskiTetrahedron().map((t, i) => ({
+      ...t,
+      ...(i === 1 ? {} : { post }),
+      variations: [{ type: "julian", weight: 0.6 }],
+    }));
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.2, -0.1, 0],
+      rotation: [0, 0.3, 0],
+      scale: [1.2, 1.2, 1.2],
+      post: { m: [1, 0, 0.2, 0, 1, 0, 0, 0, 1], t: [0.05, 0, 0] },
+    };
+    const prepared = prepareChaosGame(transforms, finalTransform);
+    const palette = transformColors(transforms.length);
+    const width = 64;
+    const height = 64;
+    const iterations = 5000;
+    const projection = ORTHOGRAPHIC;
+
+    const actual = accumulateFlame(
+      prepared,
+      projection,
+      width,
+      height,
+      iterations,
+      mulberry32(42),
+      palette,
+    );
+
+    const rng = mulberry32(42);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const expected = createFlameHistogram(width, height);
+    for (let i = 0; i < iterations; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const cw =
+        projection[12] * px +
+        projection[13] * py +
+        projection[14] * pz +
+        projection[15];
+      if (cw <= 0) continue;
+      const cx =
+        projection[0] * px +
+        projection[1] * py +
+        projection[2] * pz +
+        projection[3];
+      const cy =
+        projection[4] * px +
+        projection[5] * py +
+        projection[6] * pz +
+        projection[7];
+      const ndcX = cx / cw;
+      const ndcY = cy / cw;
+      const col = Math.floor((ndcX + 1) * 0.5 * width);
+      const row = Math.floor((1 - ndcY) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      const rgb = palette[s.index] ?? [1, 1, 1];
+      const o = bucket * 3;
+      expected.sumRGB[o] += rgb[0];
+      expected.sumRGB[o + 1] += rgb[1];
+      expected.sumRGB[o + 2] += rgb[2];
+    }
+    expected.orbit = [x, y, z];
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.orbit).toEqual(expected.orbit);
+  });
 });
 
 describe("accumulateFlame escape-reseed", () => {
