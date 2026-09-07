@@ -64,6 +64,11 @@ describe("GPU workflow gates", () => {
     expect(deploy.jobs["gpu-full"].uses).toBe(
       "./.github/workflows/gpu-agreement.yml",
     );
+    expect(deploy.jobs["gpu-full"].needs).toBe("preflight");
+    expect(deploy.jobs.preflight.steps[0].name).toBe(
+      "Require green CI for this commit",
+    );
+    expect(deploy.jobs.preflight.if).toBeUndefined();
     expect(deploy.jobs["gpu-full"].if).toBeUndefined();
     expect(deploy.jobs["gpu-full"].with).toBeUndefined();
   });

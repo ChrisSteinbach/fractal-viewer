@@ -64,7 +64,9 @@ export function imports(file: string, source: string): string[] {
       ) {
         add(node.arguments[0]);
       } else if (
-        /import\.meta\.(glob|resolve)|\brequire\b|^eval$/.test(expression)
+        /import\.meta\.(glob|resolve)|\brequire\b|(?:^|\.)fetch$|^eval$/.test(
+          expression,
+        )
       ) {
         throw new Error(`unknown loader in ${file}`);
       }
@@ -73,6 +75,13 @@ export function imports(file: string, source: string): string[] {
       node.expression.getText(parsed) === "URL"
     ) {
       add(node.arguments?.[0]);
+    } else if (
+      ts.isNewExpression(node) &&
+      ["Worker", "SharedWorker", "Function"].includes(
+        node.expression.getText(parsed),
+      )
+    ) {
+      throw new Error(`unsupported runtime loader in ${file}`);
     }
     ts.forEachChild(node, visit);
   };
@@ -207,7 +216,12 @@ export function scenarioRoster(
   visit(file);
   if (!list) throw new Error("Cannot find literal SCENARIOS roster");
   const roster = list.elements.map((element) => {
-    if (!ts.isObjectLiteralExpression(element))
+    if (
+      !ts.isObjectLiteralExpression(element) ||
+      element.properties.some(
+        (p) => p.name && ts.isComputedPropertyName(p.name),
+      )
+    )
       throw new Error("Nonliteral scenario");
     const field = (name: string): string => {
       const index = element.properties

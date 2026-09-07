@@ -8,13 +8,20 @@ const git = (...args) =>
 function tree(ref) {
   // Resolve first: refs are data, never shell text or git options.
   const sha = git("rev-parse", "--verify", `${ref}^{commit}`).trim();
-  const files = new Set(
-    git("ls-tree", "-r", "--name-only", "-z", sha).split("\0").filter(Boolean),
+  const entries = git("ls-tree", "-r", "-z", sha).split("\0").filter(Boolean);
+  const modes = new Map(
+    entries.map((entry) => [
+      entry.slice(entry.indexOf("\t") + 1),
+      entry.split(" ")[0],
+    ]),
   );
+  const files = new Set(modes.keys());
   const cache = new Map();
   return {
     files,
     read(file) {
+      if (!["100644", "100755"].includes(modes.get(file)))
+        throw new Error(`unsupported symlink/submodule: ${file}`);
       if (!cache.has(file)) cache.set(file, git("show", `${sha}:${file}`));
       return cache.get(file);
     },

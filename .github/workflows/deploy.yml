@@ -38,27 +38,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Full agreement is a prerequisite at the exact dispatched commit, even
-  # when its ordinary PR/push was GPU-independent. The reusable workflow has
-  # no impact baseline on dispatch, and includes both dimensional halves.
-  gpu-full:
+  # Refuse missing/red main CI before spending a full GPU sweep. Preserve the
+  # existing exact-commit preflight and early post-rebase refusal behavior.
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
     permissions:
       contents: read
-    uses: ./.github/workflows/gpu-agreement.yml
-
-  deploy:
-    needs: gpu-full
-    runs-on: ubuntu-latest
-    # Load-bearing now that cancel-in-progress is false — a hung run (npm ci
-    # stall, runner loss, a gh api hang in the gate step) would otherwise
-    # hold the pages concurrency group for GitHub's 360min default, and the
-    # rollback flow (revert + fresh dispatch) queues BEHIND the zombie.
-    # Measured deploys run 34s-2min; 10 is the ci.yml margin.
-    timeout-minutes: 10
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       # The only quality gate before this job existed was `npm run build`
       # below — a commit that compiles but fails lint or tests could reach
@@ -67,8 +53,8 @@ jobs:
       # commit and fails fast, naming whatever is missing or not green,
       # rather than waiting for in-flight CI — a dispatch on a commit CI
       # hasn't finished with should be re-dispatched once it has, not
-      # blocked here. GPU agreement is required by the gpu-full dependency
-      # above, rather than inferred from possibly impact-selected PR checks.
+      # blocked here. GPU agreement follows this preflight as the gpu-full job, rather than
+      # being inferred from possibly impact-selected PR checks.
       # Reads check-runs unauthenticated-equivalent (verified: this public
       # repo's check-runs endpoint returns 200 with no token at all), so no
       # extra `checks: read` permission is added beyond this job's existing
@@ -116,6 +102,29 @@ jobs:
           fi
           echo "ci.yml is green for $COMMIT_SHA (lint, build, test, smoke) — proceeding."
 
+  # Full agreement is a prerequisite at the exact dispatched commit, even
+  # when its ordinary PR/push was GPU-independent. The reusable workflow has
+  # no impact baseline on dispatch, and includes both dimensional halves.
+  gpu-full:
+    needs: preflight
+    permissions:
+      contents: read
+    uses: ./.github/workflows/gpu-agreement.yml
+
+  deploy:
+    needs: gpu-full
+    runs-on: ubuntu-latest
+    # Load-bearing now that cancel-in-progress is false — a hung run (npm ci
+    # stall, runner loss, a gh api hang in the gate step) would otherwise
+    # hold the pages concurrency group for GitHub's 360min default, and the
+    # rollback flow (revert + fresh dispatch) queues BEHIND the zombie.
+    # Measured deploys run 34s-2min; 10 is the ci.yml margin.
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7

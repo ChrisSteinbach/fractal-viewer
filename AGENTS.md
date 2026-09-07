@@ -492,8 +492,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     3D point, then applies the camera — never a 4D inversion.
   - `flame-gpu.ts` — WebGPU flame kernel (WGSL) + packing/dispatch/histogram
     layer. Pinned against CPU oracle by `src/app/gpu-bench/` (`npm run bench:gpu`).
-    CI selects both dimensional import closures and fails closed; full agreement
-    runs nightly, manually and before deploy. Policy/costs: `docs/gpu-agreement-ci.md`.
+    CI fails closed over the 3D/4D import graph; full runs nightly and at
+    dispatch/deploy. Policy: `docs/gpu-agreement-ci.md`.
     XAOS VERDICT: one draw through chi or fallback, oracle-built cumulative
     rows transferred, chain stride held at 32 via a spare aux lane.
     EMITTER VERDICT: bounded device samplers reproduce the CPU MEASURE rather
