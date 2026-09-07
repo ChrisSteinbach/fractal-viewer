@@ -96,6 +96,9 @@ describe("GPU impact policy", () => {
   it.each([
     "import(name)",
     'import.meta.glob("./*.ts")',
+    'fetch("./wire.ts")',
+    'new Worker("./wire.ts")',
+    'new Function("return import(path)")',
     'import "./missing"',
     'import "unregistered-package"',
     "export const = ;",
@@ -162,6 +165,7 @@ describe("full scenario union", () => {
     'const SCENARIOS = [{name:"only",kind:"3d"}];',
     'const SCENARIOS = [{name:"same",kind:"3d"},{name:"same",kind:"4d"}];',
     "const SCENARIOS = [...additionalScenarios];",
+    'const SCENARIOS = [{name:"a",kind:"3d",[key]: value},{name:"b",kind:"4d"}];',
   ])("refuses an uncheckable roster: %s", (roster) => {
     expect(() => scenarioRoster(roster)).toThrow();
   });

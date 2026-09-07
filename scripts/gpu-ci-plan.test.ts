@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -76,6 +77,19 @@ describe("GPU planner against real git history", () => {
   });
   it("uses push.before, covering all commits in the push", () => {
     expect(plan([], "push", { before: base }).full).toBe(false);
+  });
+  it("fails closed when an imported symlink could hide a transitive dependency", () => {
+    symlinkSync("../panel.ts", join(dir, "src/app/gpu-bench/link.ts"));
+    write(
+      "src/app/gpu-bench/main.ts",
+      'import "./link"; const SCENARIOS = [{name:"a",kind:"3d"},{name:"b",kind:"4d"}];',
+    );
+    git("add", ".");
+    git("commit", "-qm", "import symlink");
+    const before = git("rev-parse", "HEAD");
+    write("src/app/panel.ts", 'export const title = "Linked source changed";');
+    git("commit", "-qam", "linked dependency edit");
+    expect(plan([`--base=${before}`]).full).toBe(true);
   });
   it.each(["schedule", "workflow_dispatch"])(
     "forces the full union on %s even with an independent diff",

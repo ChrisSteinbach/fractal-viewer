@@ -39,7 +39,8 @@ For each changed path, in order:
 
 An unresolved import, unknown package or alias, computed import, glob loader,
 unsupported import assignment, parse failure, missing root or unavailable git
-history selects full agreement. Selector execution failure makes the aggregate
+history selects full agreement. Symlink/submodule source and runtime fetch,
+worker or generated-function loaders are also uncertain. Selector execution failure makes the aggregate
 red. Unsupported scenario-roster structure also makes it red because the union
 cannot then be established. New dependency syntax must earn support through
 tests before it can prove independence.
@@ -118,8 +119,9 @@ require this name, never the variable shard names. Tests execute the actual
 aggregate shell against these success/failure states and inspect the existing
 required-check events and deploy dependency.
 
-Deploy's `gpu-full` reusable call must finish successfully before `deploy`
-starts. The existing exact-SHA checks for lint/build/test/smoke still apply.
+Deploy first runs the existing exact-SHA lint/build/test/smoke preflight, so a
+missing or red ordinary check refuses before spending the full GPU sweep.
+Its `gpu-full` reusable call must then finish successfully before `deploy` starts.
 This lengthens a deployment or rollback by one full sweep; an old PR's green
 GPU result or an independent-change result cannot substitute. Deployment stays
 manual. Rebase merges still need main CI to finish before dispatch, and the
@@ -150,11 +152,26 @@ about nine minutes beyond the longest individual job. Logs and API job/step
 timestamps distinguish queue time from execution. The measurement helper
 reproduces wall time and runner-minute totals without downloading images.
 
+The independent-source probe changed one existing `src/app/ui.ts` tooltip,
+with identical imports, in a disposable PR against the implementation branch.
+Its GPU workflow [34155886040](https://github.com/ChrisSteinbach/fractal-viewer/actions/runs/34155886040)
+passed with `full: false`, both GPU jobs skipped, and the stable aggregate
+green. It took **5m08s elapsed and 0.467 runner-minutes**: selection used 25s
+and the aggregate 3s. The remaining 4m40s was queue/orchestration time while the
+separate full matrix occupied the hosted runner pool. This deliberately reports
+the observed wall time under contention, not 28 seconds as a latency claim.
+Against the old policy's identical-GPU-input baseline, allocated runner time
+fell **99.86%**; no agreement scenario ran. The before row reuses the measured
+full sweep because the tooltip changes none of its inputs; it does not claim a
+second historical run of that exact tooltip commit.
+
 Local backend smoke on 2026-09-07: all four programs passed on bundled Chromium
 SwiftShader in **23.15 seconds of page work**. Injecting invalid WGSL into the
 4D module produced a named 4D compilation failure and process exit 1 after the
 two 3D programs passed. The injected source was restored. This is a negative
-execution check, in addition to the selector's unit tests.
+execution check, in addition to the selector's unit tests. Removing
+`navigator.gpu` through a browser initialization script also produced a fatal
+"WebGPU is not available" result, with no completion or smoke pass.
 
 ## Execution substrate and batching
 
