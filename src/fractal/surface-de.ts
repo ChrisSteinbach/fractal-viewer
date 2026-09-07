@@ -45,7 +45,7 @@ import type {
   Vec3,
 } from "./types";
 import {
-  activeParametricVariationTypes,
+  activeExactFlam3VariationTypes,
   CLASSIC_FOLD_RADII,
   foldVariationFn,
   resolveFoldRadii,
@@ -1705,18 +1705,18 @@ function pureFoldVariation(t: Transform): Variation | null {
 }
 
 /** The named clause for a variation list the fold-branch sweep cannot
- * decompose: when the list carries one of the PARAMETRIC warps, name it —
+ * decompose: when the list carries an exact flam3 warp, name it —
  * `surface-eligibility.ts`'s qsquare-hint precedent, so the ordinary
  * "uses variations" refusal says WHICH warp it has no inverse descent for
  * instead of leaving the reader to guess. Returned rather than pushed so
  * the caller appends it to ITS OWN reasons array; `null` when nothing
- * parametric is active. */
-function parametricRefusal(label: string, t: Transform): string | null {
-  const types = activeParametricVariationTypes(t.variations);
+ * such warp is active. */
+function exactFlam3Refusal(label: string, t: Transform): string | null {
+  const types = activeExactFlam3VariationTypes(t.variations);
   if (types.length === 0) return null;
   const plural = types.length > 1 ? "s" : "";
   return (
-    `${label} uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `${label} uses the variation${plural} ${types.join(", ")}, ` +
     `which Surface has no inverse descent for`
   );
 }
@@ -1910,7 +1910,7 @@ export function analyzeSurfaceSystem(
     const fold = pureFoldVariation(t);
     if (!fold && hasActiveVariations(t)) {
       reasons.push(`${label} uses variations`);
-      const clause = parametricRefusal(label, t);
+      const clause = exactFlam3Refusal(label, t);
       if (clause) reasons.push(clause);
     }
     // The composite gate below cannot catch w ≈ 0 — a smaller weight only
@@ -1954,7 +1954,7 @@ export function analyzeSurfaceSystem(
     const foldFinal = pureFoldVariation(finalTransform);
     if (!foldFinal && hasActiveVariations(finalTransform)) {
       reasons.push("final transform uses variations");
-      const clause = parametricRefusal("final transform", finalTransform);
+      const clause = exactFlam3Refusal("final transform", finalTransform);
       if (clause) reasons.push(clause);
     }
     // The lens has no contraction gate at all, so the weight floor is the

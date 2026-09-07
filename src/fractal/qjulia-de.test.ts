@@ -74,10 +74,19 @@ describe("analyzeQJuliaSystem", () => {
     );
   });
 
-  it("refuses the parametric warps BY NAME, beside the generic reason", () => {
-    // julian/juliascope/curl are not quaternion squares and the render
+  it("refuses exact-flam3 warps BY NAME, beside the generic reason", () => {
+    // Exact flam3 warps are not quaternion squares and the render
     // does not iterate them; the refusal names which warp it saw.
-    for (const type of ["julian", "juliascope", "curl"] as const) {
+    for (const type of [
+      "julian",
+      "juliascope",
+      "curl",
+      "bipolar",
+      "diamond",
+      "ex",
+      "pdj",
+      "rings",
+    ] as const) {
       const map: Transform = {
         id: 1,
         position: [0, 0, 0],

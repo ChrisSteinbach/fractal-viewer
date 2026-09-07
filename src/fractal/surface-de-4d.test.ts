@@ -592,11 +592,20 @@ describe("analyzeSurfaceSystem4 eligibility", () => {
     expect(analysis.reasons[0]).toContain("map 1");
   });
 
-  it("names a parametric variation the 4D descent has no branch for, beside the generic reason", () => {
+  it("names every exact-flam3 warp the 4D descent cannot estimate", () => {
     // The 3D gate's named-refusal rule one dimension up (parity): the
     // ordinary "uses variations" refusal stays, and a SECOND clause says
     // WHICH warp — the refusal must not leave the reader guessing.
-    for (const type of ["julian", "juliascope", "curl"] as const) {
+    for (const type of [
+      "julian",
+      "juliascope",
+      "curl",
+      "bipolar",
+      "diamond",
+      "ex",
+      "pdj",
+      "rings",
+    ] as const) {
       const analysis = analyzeSurfaceSystem4([
         map4({ variations: [{ type, weight: 1 }] }),
       ]);

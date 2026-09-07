@@ -684,7 +684,7 @@ import {
   transformSeparatedSigmas,
 } from "./surface-de";
 import {
-  activeParametricVariationTypes,
+  activeExactFlam3VariationTypes,
   resolveFoldRadii,
   sphereFoldLipschitz,
 } from "./variations";
@@ -935,15 +935,15 @@ function linkVariation(t: Transform): Variation | null {
 }
 
 /** The named clause appended beside the generic "not a pure fold or power
- * map" refusal when the map actually carries one of the PARAMETRIC warps —
+ * map" refusal when the map carries an exact flam3 warp —
  * `surface-eligibility.ts`'s qsquare-hint precedent. `null` when nothing
- * parametric is active. */
-function parametricLinkRefusal(label: string, t: Transform): string | null {
-  const types = activeParametricVariationTypes(t.variations);
+ * no such warp is active. */
+function exactFlam3LinkRefusal(label: string, t: Transform): string | null {
+  const types = activeExactFlam3VariationTypes(t.variations);
   if (types.length === 0) return null;
   const plural = types.length > 1 ? "s" : "";
   return (
-    `${label} uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `${label} uses the variation${plural} ${types.join(", ")}, ` +
     `which the escape chain has no link for`
   );
 }
@@ -1024,7 +1024,7 @@ export function analyzeEscapeSystem(
     const v = linkVariation(map);
     if (!v) {
       reasons.push(`${label} is not a pure fold or power map`);
-      const clause = parametricLinkRefusal(label, map);
+      const clause = exactFlam3LinkRefusal(label, map);
       if (clause) reasons.push(clause);
     } else if (!isFlatTransform(map)) {
       // ROUTING, not a refusal: `escape-de-4d.ts` renders exactly this

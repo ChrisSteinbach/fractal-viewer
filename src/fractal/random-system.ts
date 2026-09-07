@@ -145,7 +145,10 @@ const VARIATION_WEIGHT_MAX = 0.9;
 const LINEAR_COMPANION_WEIGHT_MIN = 0.4;
 const LINEAR_COMPANION_WEIGHT_MAX = 0.8;
 const NON_LINEAR_VARIATION_TYPES = VARIATION_TYPES.filter(
-  (type) => type !== "linear",
+  // PDJ's flam3 default is four zero coefficients, hence a constant map.
+  // This generator deliberately authors no variation parameters, so rolling
+  // PDJ here would add a broken warp rather than a usable random feature.
+  (type) => type !== "linear" && type !== "pdj",
 );
 
 const FINAL_TRANSFORM_NULL_PROBABILITY = 0.75;
@@ -476,13 +479,16 @@ function randomVariationType(rng: Rng, exclude?: VariationType): VariationType {
  * stance: no evidence they improve the generator, and a rolled chi matrix
  * moves systems across the surface-eligibility seam behind the user's back.
  *
- * The parametric julia family and curl are rolled TYPE-wise (they derive
+ * Parameterized variations are rolled TYPE-wise (they derive
  * into `NON_LINEAR_VARIATION_TYPES` like every other nonlinear warp, at
  * absent params), but their parameters are NEVER rolled — the identical
  * stance as the fold lengths above: the ratios move systems across the
  * surface-eligibility seam behind the user's back, and a rolled parameter
  * set is exactly that kind of unmeasured axis. `mutate-system.ts` is where
  * a document that already carries parameters gets to explore near them.
+ * PDJ is the sole exception: all four absent/default coefficients are zero,
+ * which is a constant map, so it stays out until this generator has an
+ * authored safe-parameter policy.
  *
  * The per-transform POST-AFFINE (`Transform.post`) is never rolled either,
  * the identical stance one matrix up: it is import-only authoring this PR,

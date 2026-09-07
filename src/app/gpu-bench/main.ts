@@ -732,6 +732,70 @@ function variationZoo4(): Transform[] {
   ];
 }
 
+/** The measured five-family flam3 fidelity batch. Each map keeps a linear
+ * contraction beside the new warp so the equal-N image comparison measures
+ * formulas and packing rather than an escape-dominated cloud. Bipolar and
+ * PDJ use non-classic parameters; the rings map has a nonzero pre-affine x
+ * translation because flam3 var21 reads that transform coefficient. */
+function exactFlam3Batch(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.38, 0.12, 0.16],
+      rotation: [0.12, -0.08, 0.2],
+      scale: [0.38, 0.34, 0.36],
+      weight: 1.2,
+      variations: [
+        { type: "linear", weight: 0.55 },
+        { type: "bipolar", weight: 0.16, bipolarShift: 0.37 },
+        { type: "diamond", weight: 0.22 },
+      ],
+    },
+    {
+      id: 1,
+      position: [-0.34, 0.28, -0.14],
+      rotation: [-0.18, 0.11, -0.16],
+      scale: [0.35, 0.39, 0.33],
+      weight: 0.9,
+      variations: [
+        { type: "linear", weight: 0.5 },
+        { type: "ex", weight: 0.18 },
+        {
+          type: "pdj",
+          weight: 0.2,
+          pdjA: 1.3,
+          pdjB: -0.7,
+          pdjC: 2.1,
+          pdjD: -1.6,
+        },
+      ],
+    },
+    {
+      id: 2,
+      position: [0.27, -0.32, 0.2],
+      rotation: [0.14, 0.2, -0.1],
+      scale: [0.32, 0.36, 0.35],
+      weight: 1.5,
+      variations: [
+        { type: "linear", weight: 0.58 },
+        { type: "rings", weight: 0.28 },
+      ],
+    },
+  ];
+}
+
+/** {@link exactFlam3Batch} one dimension up. Every map authors a distinct
+ * w block and the frozen tumble also mixes w, so this is a genuine 4D
+ * agreement leg rather than a w=0 replay of the 3D one. */
+function exactFlam3Batch4(): Transform[] {
+  const [t0, t1, t2] = exactFlam3Batch();
+  return [
+    { ...t0, w: { position: 0.18, scale: 0.72, rotation: { xw: 0.34 } } },
+    { ...t1, w: { position: -0.22, scale: 0.64, rotation: { yw: -0.28 } } },
+    { ...t2, w: { position: 0.12, scale: 0.58, rotation: { zw: 0.31 } } },
+  ];
+}
+
 /**
  * The "fold zoo" — three contractive maps, each pairing one of the
  * Mandelbox fold family (`boxfold`/`spherefold`/`mandelbox`) with a small
@@ -1150,6 +1214,23 @@ const SCENARIOS: ScenarioDef[] = [
   },
   {
     kind: "3d",
+    name: "exact-flam3-batch",
+    transforms: exactFlam3Batch(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "spectrum",
+    cameraPos: [0.95, 0.57, 1.1],
+    lookAt: [0, 0, 0.08],
+    // Authoritative Iris agreement measured density TV 0.000787. The image
+    // is compact, so density — normalized independently of framing — is the
+    // direct formula-divergence ruler; 0.02 leaves >25x noise margin while a
+    // wrong map affecting one of three selected slots redistributes real mass.
+    densityTvThreshold: 0.02,
+    // Uniquely pins all five appended variation cases, both shared parameter
+    // packs, split old/extra lane lookup, and rings' live rowX.w coefficient.
+  },
+  {
+    kind: "3d",
     name: "fold-zoo",
     transforms: foldZoo(),
     finalTransform: null,
@@ -1532,6 +1613,25 @@ const SCENARIOS: ScenarioDef[] = [
     // kernel, run over genuinely 4D orbits via variationZoo4's w-mixing
     // blocks (see its doc), and the 4D kernel's final-transform lens slot —
     // neither exercised by the four 4D scenarios above.
+  },
+  {
+    kind: "4d",
+    name: "exact-flam3-batch-4d",
+    system: exactFlam3Batch4,
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    rotation: BENCH_TUMBLE,
+    paletteId: "spectrum",
+    colorMode: "wBlueOrange",
+    sliceOn: true,
+    sliceCenter: 0.05,
+    sliceWidth: 0.45,
+    sliceRelativeColor: true,
+    // Iris agreement measured 0.001196 density TV with the live soft slice;
+    // share the 3D leg's direct 0.02 redistribution bar.
+    densityTvThreshold: 0.02,
+    // The 3D leg's five cases over genuinely w-mixing orbits, including
+    // Slot4's appended lanes and rings' live trans.x coefficient.
   },
   {
     kind: "4d",

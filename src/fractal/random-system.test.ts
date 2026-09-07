@@ -128,6 +128,18 @@ describe("randomSystem", () => {
     }
   });
 
+  it("never rolls default-zero PDJ without authoring a usable parameter set", () => {
+    for (let seed = 0; seed < RANDOM_SYSTEM_CORPUS.length; seed++) {
+      for (const transform of RANDOM_SYSTEM_CORPUS[seed].transforms) {
+        expect(
+          transform.variations?.some((variation) => variation.type === "pdj") ??
+            false,
+          `seed ${seed}`,
+        ).toBe(false);
+      }
+    }
+  });
+
   it("never rolls one type twice in a blend, so a second variation is always a second warp", () => {
     // Sized like FOUR_D_SEED_SAMPLE_SIZE, and for the same reason: a
     // collision needs a map to roll a SECOND nonlinear variation (12% of

@@ -108,6 +108,11 @@ const VARIATION_FIELDS = {
   juliascopeDist: true,
   curlC1: true,
   curlC2: true,
+  bipolarShift: true,
+  pdjA: true,
+  pdjB: true,
+  pdjC: true,
+  pdjD: true,
 } satisfies Fields<Variation>;
 const FINISH_FIELDS = {
   specular: true,
@@ -532,6 +537,11 @@ function variation(value: unknown, path: string): string {
   finiteOptional(entry, "juliascopeDist", path);
   finiteOptional(entry, "curlC1", path);
   finiteOptional(entry, "curlC2", path);
+  finiteOptional(entry, "bipolarShift", path);
+  finiteOptional(entry, "pdjA", path);
+  finiteOptional(entry, "pdjB", path);
+  finiteOptional(entry, "pdjC", path);
+  finiteOptional(entry, "pdjD", path);
   return type;
 }
 

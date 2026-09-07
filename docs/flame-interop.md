@@ -27,21 +27,26 @@ Four facts line the two vocabularies up better than they first appear:
    spans those rank-deficient matrices exactly.) Round-trip error is only
    `persist.ts`'s 4-decimal rounding.
 
-2. **The variations match by name — for fifteen of them.** Fifteen of our
+2. **The variations match by name — for twenty of them.** Twenty of our
    `VARIATION_TYPES` — linear, sinusoidal, spherical, swirl, horseshoe, polar,
-   handkerchief, heart, disc, spiral, bubble, julia, and the parametric
-   julian, juliascope, curl — are flam3's variation
-   _attribute names_, with the same formulas at `z = 0` (`variations.ts` lifts
-   the radial ones through the 3D radius, which equals the planar radius at
-   `z = 0`, and carries `z` through the angular ones). The three parametric
-   ones carry flam3's own per-variation parameters through their own
+   handkerchief, heart, disc, spiral, bubble, julia, and the parametric julian,
+   juliascope, curl, plus bipolar, diamond, ex, pdj and rings — are flam3's
+   variation _attribute names_, with the same formulas at nonsingular `z = 0`
+   points (`variations.ts` lifts the radial ones through the 3D radius, which
+   equals the planar radius at `z = 0`, and carries `z` through the angular
+   ones). Five parameter-bearing ones carry flam3's own parameters through their own
    attribute names (`julian_power`, `julian_dist`, `juliascope_power`,
-   `juliascope_dist`, `curl_c1`, `curl_c2`) — see the import/export notes
-   below. `composeVariations` is
+   `juliascope_dist`, `curl_c1`, `curl_c2`, `bipolar_shift`, and
+   `pdj_a`/`pdj_b`/`pdj_c`/`pdj_d`) — see the import/export notes below.
+   Legacy `rings` is coupled to the xform's pre-affine x translation exactly
+   as flam3 is; it has no separate parameter attribute. `composeVariations` is
    flam3's own semantics: an unnormalized weighted sum that replaces the
    affine point. Imported maps pin `scale.z = 0` and every z field to 0, so
    the orbit lives in the `z = 0` plane and our 3D engine reproduces flam3's
-   planar dynamics exactly. (The other five — `boxfold`, `spherefold`,
+   ordinary planar dynamics exactly. At isolated analytic poles, the project's
+   standing totality rule returns a finite extension instead of flam3's
+   NaN/Infinity (`bipolar` at `(±1,0)`, `diamond`/`rings` at the origin, and
+   the older `curl` pole). (The other five — `boxfold`, `spherefold`,
    `mandelbox`, `qsquare`, and `bulb` — are ours, not flam3's; see "A
    deliberate deviation" below.)
 
@@ -74,7 +79,7 @@ Four facts line the two vocabularies up better than they first appear:
 
 ## A deliberate deviation: the fold family isn't flam3's
 
-Fact 2 above has a carve-out. Fifteen of our twenty `VARIATION_TYPES` are
+Fact 2 above has a carve-out. Twenty of our twenty-five `VARIATION_TYPES` are
 flam3's own attribute names; five are ours — the Mandelbox fold family,
 `boxfold`/`spherefold`/`mandelbox`, and the two escape-time power
 maps, `qsquare` and `bulb`. flam3 and Apophysis have
@@ -101,8 +106,8 @@ after the fact:
   tell it apart from a real one.
 - **Custom radii.** A fold variation's `minRadius`/`fixedRadius`/
   `boxLimit` have no flam3 attribute to live in — flam3's per-variation
-  parameters exist only where a plugin defines them (the parametric julia
-  family's `julian_power` and friends below), and no fold-shaped plugin's
+  parameters exist only where a variation/plugin defines them (the
+  parameter-bearing families' attributes below), and no fold-shaped plugin's
   parameter names match ours. Export therefore always writes the bare
   `type="weight"` attribute,
   regardless of the document's lengths, and warns whenever they would render
@@ -114,7 +119,7 @@ after the fact:
   XML the value could have come from, so a re-imported fold variation is
   always unparameterized. (`qsquare`/`bulb` carry no per-variation
   parameters of their own — this bullet is fold-only, unlike the two above.
-  The parametric julia family and curl DO carry parameters, and theirs
+  The five parameter-bearing flam3 variations DO carry parameters, and theirs
   round-trip losslessly through flam3's own attributes — see the import and
   export notes below.)
 
@@ -135,6 +140,9 @@ more valuable property to protect.
 | `julian_power`/`julian_dist` beside `julian`             | `julianPower`/`julianDist` on the matched entry (exact; absent ⇒ classic)                                                                 |
 | `juliascope_power`/`juliascope_dist` beside `juliascope` | `juliascopePower`/`juliascopeDist` on the matched entry (exact; absent ⇒ classic)                                                         |
 | `curl_c1`/`curl_c2` beside `curl`                        | `curlC1`/`curlC2` on the matched entry (exact; absent ⇒ classic)                                                                          |
+| `bipolar_shift` beside `bipolar`                         | `bipolarShift` on the matched entry (exact; absent ⇒ 0)                                                                                   |
+| `pdj_a`/`pdj_b`/`pdj_c`/`pdj_d` beside `pdj`             | `pdjA`/`pdjB`/`pdjC`/`pdjD` on the matched entry (exact; absent ⇒ 0)                                                                      |
+| `rings`                                                  | legacy rings warp; its radius bands read the imported `coefs` x translation live (finite extension at the origin)                         |
 | `post` on a purely affine map                            | composed into the affine (exact)                                                                                                          |
 | `post` on a nonlinear map                                | `Transform.post` — the map's own post-affine, lifted with the identity z row/column (exact; applied before the symmetry post-rotation)    |
 | unknown variations/parameters                            | **ignored + one aggregated warning** naming the attributes                                                                                |
@@ -151,22 +159,24 @@ more valuable property to protect.
 | `supersample`/`oversample`, `estimator_*`                | the matching `FlameParams` fields, clamped                                                                                                |
 | `size`/`center`/`scale`/`rotate`                         | ignored — the explorer auto-fits its own camera                                                                                           |
 
-"Known variation attrs" matches any of our twenty `VARIATION_TYPES` by name
+"Known variation attrs" matches any of our twenty-five `VARIATION_TYPES` by name
 — the fold family and the two power maps included, per the deviation above.
 A genuine flam3/Apophysis file essentially never carries a
 `boxfold`/`spherefold`/`mandelbox`/`qsquare`/`bulb` attribute, but one that
 does gets read as our variation rather than flagged as an unsupported
 feature.
 
-The parametric family's parameter attributes are read by explicit name
+The parameter-bearing variations' attributes are read by explicit name
 beside their own variation's weight, so attribute ORDER never matters (a
 `julian_power` listed before its `julian` still lands on the entry). Absent
 parameter attributes leave the field absent, which resolves to the classic
 value exactly as if the attribute had never been written — flam3's own
-absent-means-default convention, resolved through `variations.ts`'s
-`resolveJuliaParams`/`resolveCurlParams`. A parameter attribute on an xform
-WITHOUT its variation is silently skipped (it is known, so it raises no
-warning; it has nothing to attach to).
+absent-means-default convention, resolved through `variations.ts`'s shared
+family resolvers. A parameter attribute on an xform WITHOUT its
+variation is silently skipped (it is known, so it raises no warning; it has
+nothing to attach to). `rings` has no such attribute: editing or morphing the
+pre-affine x translation changes the ring spacing immediately, so no duplicate
+snapshot can go stale.
 
 Everything else about the imported scene (point count, render style, color
 mode, …) takes the app's defaults. A file with several `<flame>` elements
@@ -229,9 +239,10 @@ The export writes the system's **XY shadow**:
   kaleidoscope-copy expansion, and the final-transform exclusion.
 - `finalTransform` → `<finalxform>`; variations pass through by name (merged
   by type — XML attributes must be unique); weights pass through as-is.
-  The parametric julia family and curl additionally write their RESOLVED
+  The parameter-bearing variations additionally write their RESOLVED
   parameters beside the weight (`julian_power="3" julian_dist="1"`,
-  `curl_c1="0.5" curl_c2="0"`) whenever they are anything but the classic
+  `curl_c1="0.5" curl_c2="0"`, `bipolar_shift="0.25"`,
+  `pdj_a="1" pdj_b="2" pdj_c="3" pdj_d="4"`) whenever they are anything but the classic
   defaults — resolved, so an out-of-domain authored value exports in the
   form the render actually uses and re-imports to the same shape. Lossless:
   no export-loss warning is needed, unlike the fold radii below. A

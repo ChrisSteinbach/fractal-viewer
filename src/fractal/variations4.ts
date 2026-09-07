@@ -1,35 +1,42 @@
 import type { Rng } from "./rng";
 import type { Variation, VariationType, Vec4 } from "./types";
 import {
+  BIPOLAR_SAFE_TERM,
   CLASSIC_CURL_C1,
   CLASSIC_CURL_C2,
+  CLASSIC_BIPOLAR_SHIFT,
   CLASSIC_JULIA_DIST,
   CLASSIC_JULIA_POWER,
+  CLASSIC_PDJ_PARAMS,
   isClassicCurlParams,
   isClassicFoldRadii,
   isClassicJuliaParams,
   isFoldVariationType,
   isParametricVariationType,
   resolveCurlParams,
+  resolveBipolarShift,
   resolveFoldRadii,
   resolveJuliaParams,
+  resolvePdjParams,
 } from "./variations";
 import type {
   CurlParams,
   FoldRadii,
   JuliaParams,
   ParametricVariationType,
+  PdjParams,
 } from "./variations";
 import { clamp } from "./vec";
 
 /**
- * The 4D lift of the twenty nonlinear variation functions, the fourth
+ * The 4D lift of the twenty-five nonlinear variation functions, the fourth
  * dimension raised over `variations.ts` by the SAME convention that file already
  * documents for its 2D → 3D lift — read that header first. One dimension up:
  *
- *   - **Angular warps** (`polar`, `handkerchief`, `heart`, `disc`, `spiral`,
- *     `julia`) act in the xy-plane — angle `θ = atan2(y, x)`, planar radius
- *     `√(x²+y²)` — and carry `z` AND `w` through unchanged, warping every
+ *   - **Angular/planar warps** (`polar`, `handkerchief`, `heart`, `disc`,
+ *     `spiral`, `julia`, `bipolar`, `diamond`, `ex`, `pdj`, `rings`) act in
+ *     the xy-plane — retaining each flam3 warp's own angle convention — and
+ *     carry `z` AND `w` through unchanged, warping every
  *     (z, w)-slice the same way.
  *   - **Radial warps** (`spherical`, `bubble`) and `swirl` use the full 4-D
  *     radius `x²+y²+z²+w²`, so `w` genuinely participates; where the 3D code
@@ -62,7 +69,7 @@ import { clamp } from "./vec";
  * the sphere-fold radius ends in `+ w*w`. `bulb` carries `w` like an angular
  * warp and duplicates its x/y/z arithmetic term for term, and so do the three
  * parametric warps — all three read (x, y) alone. The equality is
- * exact (not merely close) for all twenty; the tests pin `toEqual`. That is what makes an
+ * exact (not merely close) for all twenty-five; the tests pin `toEqual`. That is what makes an
  * embedded 3D system's `w = 0` slice warp bit-for-bit like the native 3D path.
  */
 export type VariationFn4 = (
@@ -82,6 +89,9 @@ export type VariationFn4 = (
  * which the chaos game's escape check then reseeds — far better than a NaN).
  */
 const EPS = 1e-12;
+
+/** flam3's own EPS, used literally by legacy `rings`. */
+const FLAM3_EPS = 1e-10;
 
 /** 2π — identical to `variations.ts`'s `TWO_PI` (duplicated under the
  * twin-file convention like `EPS`), so the julia family's branch arithmetic
@@ -201,6 +211,52 @@ function parametricVariationFn4(
 ): VariationFn4 {
   if (type === "curl") return curlVariationFn4(resolveCurlParams(v));
   return juliaVariationFn4(type, resolveJuliaParams(type, v));
+}
+
+/** flam3 var55 one dimension up: exact xy arithmetic, z/w carried. */
+function bipolarVariationFn4(shift: number): VariationFn4 {
+  return (x, y, z, w) => {
+    const x2y2 = x * x + y * y;
+    const t = x2y2 + 1;
+    const x2 = 2 * x;
+    let a = 0.5 * Math.atan2(2 * y, x2y2 - 1) - (Math.PI / 2) * shift;
+    if (a > Math.PI / 2) {
+      a = -Math.PI / 2 + ((a + Math.PI / 2) % Math.PI);
+    } else if (a < -Math.PI / 2) {
+      a = Math.PI / 2 - ((Math.PI / 2 - a) % Math.PI);
+    }
+    const numerator = t + x2;
+    const denominator = t - x2;
+    const logRatio = Math.log(
+      (numerator > 0 ? numerator : BIPOLAR_SAFE_TERM) /
+        (denominator > 0 ? denominator : BIPOLAR_SAFE_TERM),
+    );
+    return [0.25 * (2 / Math.PI) * logRatio, (2 / Math.PI) * a, z, w];
+  };
+}
+
+/** flam3 var24 one dimension up: exact xy arithmetic, z/w carried. */
+function pdjVariationFn4(p: PdjParams): VariationFn4 {
+  const { a, b, c, d } = p;
+  return (x, y, z, w) => [
+    Math.sin(a * y) - Math.cos(b * x),
+    Math.sin(c * x) - Math.cos(d * y),
+    z,
+    w,
+  ];
+}
+
+/** flam3 var21 one dimension up, bound to the transform's live composed
+ * pre-affine x translation. */
+function ringsVariationFn4(preTranslateX: number): VariationFn4 {
+  const tx = Number.isFinite(preTranslateX) ? preTranslateX : 0;
+  const dx = tx * tx + FLAM3_EPS;
+  return (x, y, z, w) => {
+    const radius = Math.hypot(x, y);
+    if (radius === 0) return [0, 0, z, w];
+    const warpedRadius = ((radius + dx) % (2 * dx)) - dx + radius * (1 - dx);
+    return [(y / radius) * warpedRadius, (x / radius) * warpedRadius, z, w];
+  };
 }
 
 /**
@@ -425,6 +481,33 @@ const VARIATIONS4: Record<VariationType, VariationFn4> = {
     const r = 1 / (re * re + im * im + EPS);
     return [(x * re + y * im) * r, (y * re - x * im) * r, z, w];
   },
+
+  bipolar: bipolarVariationFn4(CLASSIC_BIPOLAR_SHIFT),
+
+  diamond: (x, y, z, w) => {
+    const radius = Math.hypot(x, y);
+    if (radius === 0) return [0, 0, z, w];
+    return [
+      (x / radius) * Math.cos(radius),
+      (y / radius) * Math.sin(radius),
+      z,
+      w,
+    ];
+  },
+
+  ex: (x, y, z, w) => {
+    const radius = Math.hypot(x, y);
+    const angle = Math.atan2(x, y);
+    const n0 = Math.sin(angle + radius);
+    const n1 = Math.cos(angle - radius);
+    const m0 = n0 * n0 * n0 * radius;
+    const m1 = n1 * n1 * n1 * radius;
+    return [m0 + m1, m0 - m1, z, w];
+  },
+
+  pdj: pdjVariationFn4(CLASSIC_PDJ_PARAMS),
+
+  rings: ringsVariationFn4(0),
 };
 
 /**
@@ -457,6 +540,7 @@ export type VariationBlend4 = (
  */
 export function composeVariations4(
   variations: Variation[] | undefined,
+  preTranslateX = 0,
 ): VariationBlend4 | null {
   if (!variations || variations.length === 0) return null;
   const active = variations.filter(
@@ -464,13 +548,32 @@ export function composeVariations4(
   );
   if (active.length === 0) return null;
 
-  const fns: VariationFn4[] = active.map((v) =>
-    isFoldVariationType(v.type)
-      ? foldVariationFn4(v.type, resolveFoldRadii(v))
-      : isParametricVariationType(v.type)
-        ? parametricVariationFn4(v.type, v)
-        : VARIATIONS4[v.type],
-  );
+  const fns: VariationFn4[] = active.map((v) => {
+    if (isFoldVariationType(v.type)) {
+      return foldVariationFn4(v.type, resolveFoldRadii(v));
+    }
+    if (isParametricVariationType(v.type)) {
+      return parametricVariationFn4(v.type, v);
+    }
+    if (v.type === "bipolar") {
+      const shift = resolveBipolarShift(v);
+      return shift === CLASSIC_BIPOLAR_SHIFT
+        ? VARIATIONS4.bipolar
+        : bipolarVariationFn4(shift);
+    }
+    if (v.type === "pdj") {
+      const p = resolvePdjParams(v);
+      return p.a === 0 && p.b === 0 && p.c === 0 && p.d === 0
+        ? VARIATIONS4.pdj
+        : pdjVariationFn4(p);
+    }
+    if (v.type === "rings") {
+      return preTranslateX === 0
+        ? VARIATIONS4.rings
+        : ringsVariationFn4(preTranslateX);
+    }
+    return VARIATIONS4[v.type];
+  });
   const weights: number[] = active.map((v) => v.weight);
   const n = fns.length;
   const out: Vec4 = [0, 0, 0, 0];

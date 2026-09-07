@@ -370,6 +370,7 @@ describe("mutateSystem wildcard structural kick", () => {
         mapsWithTypeChange++;
         const changed = mutantTypes[diffIndices[0]];
         expect(changed).not.toBe("linear");
+        expect(changed).not.toBe("pdj");
         expect(changed).not.toBe(baseTypes[diffIndices[0]]);
         expect(VARIATION_TYPES).toContain(changed);
       }
@@ -578,6 +579,41 @@ describe("mutateSystem colorIndex/colorSpeed", () => {
       finalTransform: null,
       symmetry: { order: 1, plane: "xz" },
     });
+  });
+});
+
+describe("mutateSystem exact-flam3 parameters", () => {
+  it("jitters authored bipolar/PDJ fields and leaves every absent field absent", () => {
+    const map: Transform = {
+      ...sierpinskiTetrahedron()[0],
+      variations: [
+        { type: "bipolar", weight: 0.5, bipolarShift: 0.99 },
+        { type: "pdj", weight: 0.5, pdjA: 2.99, pdjC: -2.99 },
+        { type: "linear", weight: 0.6 },
+      ],
+    };
+    const base = system({
+      transforms: [map, ...sierpinskiTetrahedron().slice(1)],
+    });
+
+    let sawShiftChange = false;
+    let sawPdjChange = false;
+    for (let seed = 0; seed < 12; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed));
+      const [bipolar, pdj] = mutant.transforms[0].variations!;
+      sawShiftChange ||= bipolar.bipolarShift !== 0.99;
+      sawPdjChange ||= pdj.pdjA !== 2.99 || pdj.pdjC !== -2.99;
+      expect(bipolar.bipolarShift).toBeGreaterThanOrEqual(-1);
+      expect(bipolar.bipolarShift).toBeLessThanOrEqual(1);
+      expect(pdj.pdjA).toBeGreaterThanOrEqual(-3);
+      expect(pdj.pdjA).toBeLessThanOrEqual(3);
+      expect(pdj.pdjC).toBeGreaterThanOrEqual(-3);
+      expect(pdj.pdjC).toBeLessThanOrEqual(3);
+      expect("pdjB" in pdj, `seed ${seed}`).toBe(false);
+      expect("pdjD" in pdj, `seed ${seed}`).toBe(false);
+    }
+    expect(sawShiftChange).toBe(true);
+    expect(sawPdjChange).toBe(true);
   });
 });
 
@@ -1133,16 +1169,14 @@ describe("mutateSystemSeeded versioned domain streams", () => {
     ).not.toEqual(mutateSystemSeeded(base, request));
   });
 
-  it("pins the complete v3 output behind the algorithm version", () => {
-    // v3's cause, and why this hash changed from v2's e4e3b70e (itself v1's
-    // 3fba2659): the per-transform POST-AFFINE joined the spatialGeometry
-    // domain with its own derived stream — a deliberate, versioned field
-    // assignment (see SEEDED_MUTATION_ALGORITHM_VERSION's doc). The base
-    // fixture carries no post, so the hash movement is the stream-seed
-    // derivation alone (the version feeds it), not a changed jitter rule.
+  it("pins the complete v4 output behind the algorithm version", () => {
+    // v4's exact-flam3 vocabulary/parameter assignment is a deliberate
+    // versioned output change. This fixture carries none of the new fields,
+    // so its hash movement from v3's 88abb300 is the version-fed derived
+    // stream seed rather than a changed pre-existing jitter rule.
     expect(
       jsonFnv1a(mutateSystemSeeded(richSeededMutationBase(), request)),
-    ).toBe("88abb300");
+    ).toBe("57a19825");
   });
 
   it("keeps every unrelated domain byte-identical when any one domain is locked", () => {
@@ -1255,6 +1289,12 @@ describe("mutateSystemSeeded versioned domain streams", () => {
         wildcard: request.profile.wildcard,
       }),
     );
+    expect(() =>
+      mutateSystemSeeded(base, {
+        ...request,
+        algorithmVersion: 3 as typeof SEEDED_MUTATION_ALGORITHM_VERSION,
+      }),
+    ).toThrow("Unsupported seeded mutation algorithm version: 3");
     expect(() =>
       mutateSystemSeeded(base, {
         ...request,

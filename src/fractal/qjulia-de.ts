@@ -114,7 +114,7 @@ import { isIdentityAffine } from "./affine";
 import { composeAffine4, toTransform4 } from "./affine4";
 import { effectiveSymmetryOrder } from "./chaos-game";
 import { transformSigmas4 } from "./surface-de-4d";
-import { activeParametricVariationTypes } from "./variations";
+import { activeExactFlam3VariationTypes } from "./variations";
 import type { SymmetryParams, Transform, Variation, Vec4 } from "./types";
 
 /**
@@ -190,8 +190,8 @@ export interface QJuliaDE {
 
 /** `composeVariations`' active filter again (the twin of `escape-de.ts`'s
  * `pureFoldVariation`): the single active `qsquare` entry, or null. The
- * parametric julia family and curl are not quaternion squares and are
- * refused by name through {@link parametricQJuliaRefusal}. */
+ * exact flam3 warps are not quaternion squares and are refused by name
+ * through {@link exactFlam3QJuliaRefusal}. */
 function pureQSquareVariation(t: Transform): Variation | null {
   const active = (t.variations ?? []).filter(
     (v) => Number.isFinite(v.weight) && v.weight !== 0,
@@ -201,15 +201,13 @@ function pureQSquareVariation(t: Transform): Variation | null {
 }
 
 /** The named clause appended beside the generic "not a pure quaternion
- * square" refusal when the map carries one of the PARAMETRIC warps —
- * `surface-eligibility.ts`'s qsquare-hint precedent. `null` when nothing
- * parametric is active. */
-function parametricQJuliaRefusal(t: Transform): string | null {
-  const types = activeParametricVariationTypes(t.variations);
+ * square" refusal when the map carries an exact flam3 warp. */
+function exactFlam3QJuliaRefusal(t: Transform): string | null {
+  const types = activeExactFlam3VariationTypes(t.variations);
   if (types.length === 0) return null;
   const plural = types.length > 1 ? "s" : "";
   return (
-    `the map uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `the map uses the variation${plural} ${types.join(", ")}, ` +
     `which the quaternion render does not iterate`
   );
 }
@@ -264,7 +262,7 @@ export function analyzeQJuliaSystem(
     const q = pureQSquareVariation(map);
     if (!q) {
       reasons.push("the map is not a pure quaternion square");
-      const clause = parametricQJuliaRefusal(map);
+      const clause = exactFlam3QJuliaRefusal(map);
       if (clause) reasons.push(clause);
     } else if (q.weight !== 1) {
       // A weight other than 1 makes the map `w·(Mv + t)²`, which is the

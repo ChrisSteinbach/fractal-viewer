@@ -12,6 +12,9 @@ import {
   CLASSIC_CURL_PARAMS,
   isParametricVariationType,
   activeParametricVariationTypes,
+  activeExactFlam3VariationTypes,
+  resolveBipolarShift,
+  resolvePdjParams,
 } from "./variations";
 import { mulberry32 } from "./rng";
 import type { Rng } from "./rng";
@@ -32,6 +35,16 @@ function warp(
 }
 
 describe("variation functions", () => {
+  it("keeps the measured flam3 batch append-only at project ids 20..24", () => {
+    expect(VARIATION_TYPES.slice(20)).toEqual([
+      "bipolar",
+      "diamond",
+      "ex",
+      "pdj",
+      "rings",
+    ]);
+  });
+
   it("linear returns the point unchanged", () => {
     expect(warp("linear", 0.3, -0.7, 0.2)).toEqual([0.3, -0.7, 0.2]);
   });
@@ -150,6 +163,124 @@ describe("variation functions", () => {
         }
       }
     }
+  });
+});
+
+describe("exact flam3 variation batch", () => {
+  it("matches flam3 var55 bipolar, including shift wrapping and finite foci", () => {
+    const shift = 0.75;
+    const blend = composeVariations([
+      { type: "bipolar", weight: 1, bipolarShift: shift },
+    ])!;
+    const x = 0.3;
+    const y = -0.7;
+    const x2y2 = x * x + y * y;
+    const t = x2y2 + 1;
+    const x2 = 2 * x;
+    let a = 0.5 * Math.atan2(2 * y, x2y2 - 1) - (Math.PI / 2) * shift;
+    if (a > Math.PI / 2) {
+      a = -Math.PI / 2 + ((a + Math.PI / 2) % Math.PI);
+    } else if (a < -Math.PI / 2) {
+      a = Math.PI / 2 - ((Math.PI / 2 - a) % Math.PI);
+    }
+    expect(blend(x, y, 0.4, Math.random)).toEqual([
+      0.25 * (2 / Math.PI) * Math.log((t + x2) / (t - x2)),
+      (2 / Math.PI) * a,
+      0.4,
+    ]);
+    for (const focus of [-1, 1]) {
+      for (const c of blend(focus, 0, 0, Math.random)) {
+        expect(Number.isFinite(c)).toBe(true);
+      }
+    }
+    // A nearby nonsingular point must retain flam3's quotient-and-log order,
+    // rather than being widened by the exact-focus finite extension.
+    const near = 1 - 1e-7;
+    const nt = near * near + 1;
+    expect(blend(near, 0, 0, Math.random)[0]).toBe(
+      0.25 * (2 / Math.PI) * Math.log((nt + 2 * near) / (nt - 2 * near)),
+    );
+  });
+
+  it("matches flam3 var11 diamond and var12 ex angle conventions", () => {
+    const x = 3;
+    const y = 4;
+    const radius = 5;
+    expect(warp("diamond", x, y, 0.25)).toEqual([
+      (x / radius) * Math.cos(radius),
+      (y / radius) * Math.sin(radius),
+      0.25,
+    ]);
+    const angle = Math.atan2(x, y); // flam3 precalc_atan, intentionally x/y
+    const n0 = Math.sin(angle + radius);
+    const n1 = Math.cos(angle - radius);
+    const m0 = n0 * n0 * n0 * radius;
+    const m1 = n1 * n1 * n1 * radius;
+    expect(warp("ex", x, y, -0.5)).toEqual([m0 + m1, m0 - m1, -0.5]);
+    expect(warp("diamond", 0, 0, 2)).toEqual([0, 0, 2]);
+  });
+
+  it("matches flam3 var24 PDJ and resolves absent/non-finite params to zero", () => {
+    const params = { pdjA: 1.2, pdjB: -0.7, pdjC: 0.4, pdjD: 2.1 };
+    const blend = composeVariations([{ type: "pdj", weight: 1, ...params }])!;
+    const x = 0.3;
+    const y = -0.8;
+    expect(blend(x, y, 0.6, Math.random)).toEqual([
+      Math.sin(params.pdjA * y) - Math.cos(params.pdjB * x),
+      Math.sin(params.pdjC * x) - Math.cos(params.pdjD * y),
+      0.6,
+    ]);
+    expect(resolvePdjParams({ type: "pdj", weight: 1 })).toEqual({
+      a: 0,
+      b: 0,
+      c: 0,
+      d: 0,
+    });
+    expect(
+      resolvePdjParams({ type: "pdj", weight: 1, pdjA: NaN, pdjD: Infinity }),
+    ).toEqual({ a: 0, b: 0, c: 0, d: 0 });
+    expect(resolveBipolarShift({ type: "bipolar", weight: 1 })).toBe(0);
+    expect(
+      resolveBipolarShift({ type: "bipolar", weight: 1, bipolarShift: NaN }),
+    ).toBe(0);
+  });
+
+  it("matches flam3 var21 rings and binds the live pre-affine x translation", () => {
+    const preX = 0.4;
+    const blend = composeVariations([{ type: "rings", weight: 1 }], preX)!;
+    const x = 0.3;
+    const y = -0.8;
+    const radius = Math.hypot(x, y);
+    const dx = preX * preX + 1e-10;
+    const rr = ((radius + dx) % (2 * dx)) - dx + radius * (1 - dx);
+    expect(blend(x, y, 0.6, Math.random)).toEqual([
+      (y / radius) * rr,
+      (x / radius) * rr,
+      0.6,
+    ]);
+    expect(blend(0, 0, -2, Math.random)).toEqual([0, 0, -2]);
+    expect(blend(x, y, 0, Math.random)).not.toEqual(
+      composeVariations([{ type: "rings", weight: 1 }], 0)!(
+        x,
+        y,
+        0,
+        Math.random,
+      ),
+    );
+  });
+
+  it("names every active member of the full measured batch", () => {
+    expect(
+      activeExactFlam3VariationTypes([
+        { type: "linear", weight: 1 },
+        { type: "diamond", weight: 0.5 },
+        { type: "rings", weight: 0 },
+        { type: "julian", weight: 1 },
+        { type: "pdj", weight: 1 },
+        { type: "diamond", weight: 1 },
+        { type: "ex", weight: NaN },
+      ]),
+    ).toEqual(["diamond", "julian", "pdj"]);
   });
 });
 

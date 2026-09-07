@@ -17,18 +17,19 @@
  *    `scale.z = 0` (and every z field to 0), so the orbit lives in the
  *    `z = 0` plane where our 3D variation lifts reproduce flam3's planar
  *    formulas bit-for-bit.
- *  - Fifteen of our twenty {@link VARIATION_TYPES} ARE flam3 variation
- *    names, with matching formulas at `z = 0` and the same unnormalized
- *    weighted-sum blend (`variations.ts`'s `composeVariations` ≡ flam3's
- *    variation sum), so those pass through by name in both directions — the
- *    parametric julia family and curl carrying their per-variation params
- *    through their own attribute names (`julian_power`, `curl_c1`, …). The
+ *  - Twenty of our twenty-five {@link VARIATION_TYPES} ARE flam3 variation
+ *    names, with matching formulas at nonsingular `z = 0` points and the same
+ *    unnormalized weighted-sum blend (`variations.ts`'s `composeVariations` ≡
+ *    flam3's variation sum), so those pass through by name in both directions.
+ *    Five parameter-bearing families carry their values through flam3's own
+ *    names (`julian_power`, `curl_c1`, `bipolar_shift`, `pdj_a`, …); isolated
+ *    poles use `variations.ts`'s documented finite extensions. The
  *    other five — the Mandelbox fold family and the two escape-time power
  *    maps — are ours, not flam3's; see `docs/flame-interop.md` for the
  *    round-trip consequences (the folds' `minRadius`/`fixedRadius`/
  *    `boxLimit` have no XML slot at all and export with a warning whenever
- *    they're not the classic lengths; the parametric family's parameters
- *    round-trip losslessly through flam3's own param attributes).
+ *    they're not the classic lengths; the flam3 parameter fields round-trip
+ *    losslessly through their own attributes).
  *  - flam3's `<finalxform>` is a plot-time lens that never feeds back into
  *    the orbit — exactly our `finalTransform`.
  *  - An xform's `color` is a palette COORDINATE, not an RGB triple: the slot
@@ -93,14 +94,18 @@ import type {
   VariationType,
 } from "../fractal/types";
 import {
+  CLASSIC_BIPOLAR_SHIFT,
+  CLASSIC_PDJ_PARAMS,
   isClassicCurlParams,
   isClassicFoldRadii,
   isClassicJuliaParams,
   isFoldVariationType,
   isParametricVariationType,
   resolveCurlParams,
+  resolveBipolarShift,
   resolveFoldRadii,
   resolveJuliaParams,
+  resolvePdjParams,
 } from "../fractal/variations";
 import type { ParametricVariationType } from "../fractal/variations";
 import { COLLECTION_CAP } from "./collection";
@@ -142,14 +147,14 @@ export interface FlameFileExport {
 // Shared constants
 // ---------------------------------------------------------------------------
 
-/** Our variation names — flam3's attribute names for the twelve classics
- * plus the parametric julia family and curl, plus our own fold family (see
+/** Our variation names — flam3's attribute names for the classic and exact
+ * measured families, plus our own fold family (see
  * the header + docs/flame-interop.md). */
 const VARIATION_NAMES = new Set<string>(VARIATION_TYPES);
 
 /**
- * The parametric julia family and curl's per-variation parameters, as the
- * flam3 wire attribute each one rides beside its variation's own weight
+ * The five parameter-bearing flam3 families, as the wire attribute each
+ * value rides beside its variation's own weight
  * attribute — `julian="0.5" julian_power="3" julian_dist="1"` is ONE
  * variation whose weight attribute names the type and whose params are
  * separate attributes (see the module doc). Only the weight attribute is
@@ -163,10 +168,17 @@ type ParametricParamKey =
   | "juliascopePower"
   | "juliascopeDist"
   | "curlC1"
-  | "curlC2";
+  | "curlC2"
+  | "bipolarShift"
+  | "pdjA"
+  | "pdjB"
+  | "pdjC"
+  | "pdjD";
+
+type FlameParametricVariationType = ParametricVariationType | "bipolar" | "pdj";
 
 const PARAMETRIC_PARAM_ATTRS: Record<
-  ParametricVariationType,
+  FlameParametricVariationType,
   readonly (readonly [string, ParametricParamKey])[]
 > = {
   julian: [
@@ -181,6 +193,13 @@ const PARAMETRIC_PARAM_ATTRS: Record<
     ["curl_c1", "curlC1"],
     ["curl_c2", "curlC2"],
   ],
+  bipolar: [["bipolar_shift", "bipolarShift"]],
+  pdj: [
+    ["pdj_a", "pdjA"],
+    ["pdj_b", "pdjB"],
+    ["pdj_c", "pdjC"],
+    ["pdj_d", "pdjD"],
+  ],
 };
 
 /** Attach a parametric variation's authored parameters, read off the same
@@ -189,8 +208,9 @@ const PARAMETRIC_PARAM_ATTRS: Record<
  * resolves to the classic value exactly as if the attribute had never been
  * written — the resolver's own domain, not a clamp invented here. */
 function attachVariationParams(el: Element, v: Variation): void {
-  if (!isParametricVariationType(v.type)) return;
-  for (const [attr, field] of PARAMETRIC_PARAM_ATTRS[v.type]) {
+  if (!(v.type in PARAMETRIC_PARAM_ATTRS)) return;
+  const type = v.type as FlameParametricVariationType;
+  for (const [attr, field] of PARAMETRIC_PARAM_ATTRS[type]) {
     const n = attrNumber(el, attr);
     if (n === undefined) continue;
     (v as Record<ParametricParamKey, number | undefined>)[field] = n;
@@ -203,9 +223,9 @@ function attachVariationParams(el: Element, v: Variation): void {
  * `coefs`, `post`, `opacity`, `chaos`, and the per-xform
  * color trio `color` / `color_speed` / `symmetry`), genuinely inert for us
  * (animation flags, editor labels, `var_color`'s per-variation color
- * weighting), or the parametric julia/curl family's per-variation
- * parameters — `julian_power`/`julian_dist`/`juliascope_power`/
- * `juliascope_dist`/`curl_c1`/`curl_c2` — which the variation branch reads
+ * weighting), or the parameterized flam3 variations' per-variation
+ * parameters — the julian/juliascope/curl fields plus `bipolar_shift` and
+ * `pdj_a`/`pdj_b`/`pdj_c`/`pdj_d` — which the variation branch reads
  * by name beside their own variation's weight, and which must be KNOWN even
  * out of order (or without their variation) so a corpus genome carrying
  * only these variations imports with NO aggregated-unsupported warning.
@@ -227,7 +247,7 @@ const KNOWN_XFORM_ATTRS = new Set([
   "var_color",
   "motion_frequency",
   "motion_offset",
-  // The parametric julia family and curl's flam3 wire attributes — the
+  // The parameterized flam3 variations' wire attributes — the
   // import branch reads them by name beside the matching weight attribute.
   "julian_power",
   "julian_dist",
@@ -235,6 +255,11 @@ const KNOWN_XFORM_ATTRS = new Set([
   "juliascope_dist",
   "curl_c1",
   "curl_c2",
+  "bipolar_shift",
+  "pdj_a",
+  "pdj_b",
+  "pdj_c",
+  "pdj_d",
 ]);
 
 /** Mirror of `persist.ts`'s variation-weight clamp, applied at build time so
@@ -526,12 +551,9 @@ function xformToTransform(
           Math.min(MAX_VARIATION_WEIGHT, w),
         ),
       };
-      // The parametric julia family and curl carry their parameters as
-      // separate attributes beside the weight — read by name here, so
-      // attribute order never matters. Non-parametric types have none.
-      if (isParametricVariationType(name as VariationType)) {
-        attachVariationParams(el, variation);
-      }
+      // Parameterized flam3 variations carry separate attributes beside the
+      // weight — read by name here, so attribute order never matters.
+      attachVariationParams(el, variation);
       variations.push(variation);
       continue;
     }
@@ -1003,8 +1025,8 @@ function colorSpeedAttrs(speed: number): string {
   return ` color_speed="${fmt(speed)}" symmetry="${fmt(1 - 2 * speed)}"`;
 }
 
-/** Variation attributes for an xform: the merged list — with the parametric
- * julia family and curl's RESOLVED parameters written beside their weight
+/** Variation attributes for an xform: the merged list — with parameterized
+ * flam3 variations' RESOLVED parameters written beside their weight
  * whenever they are anything but the classic defaults — or `linear="1"` for
  * a purely affine map (flam3 xforms need at least one variation term).
  *
@@ -1023,9 +1045,24 @@ function variationAttrs(t: Transform): string {
   let out = "";
   for (const [type, weight] of merged) {
     out += ` ${type}="${fmt(weight)}"`;
-    if (!isParametricVariationType(type)) continue;
+    if (!(type in PARAMETRIC_PARAM_ATTRS)) continue;
     const entry = (t.variations ?? []).find((v) => v.type === type);
     if (!entry) continue;
+    if (type === "bipolar") {
+      const shift = resolveBipolarShift(entry);
+      if (shift !== CLASSIC_BIPOLAR_SHIFT)
+        out += ` bipolar_shift="${fmt(shift)}"`;
+      continue;
+    }
+    if (type === "pdj") {
+      const p = resolvePdjParams(entry);
+      if (p.a !== CLASSIC_PDJ_PARAMS.a) out += ` pdj_a="${fmt(p.a)}"`;
+      if (p.b !== CLASSIC_PDJ_PARAMS.b) out += ` pdj_b="${fmt(p.b)}"`;
+      if (p.c !== CLASSIC_PDJ_PARAMS.c) out += ` pdj_c="${fmt(p.c)}"`;
+      if (p.d !== CLASSIC_PDJ_PARAMS.d) out += ` pdj_d="${fmt(p.d)}"`;
+      continue;
+    }
+    if (!isParametricVariationType(type)) continue;
     if (type === "curl") {
       const c = resolveCurlParams(entry);
       if (!isClassicCurlParams(c)) {

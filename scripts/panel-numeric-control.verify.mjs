@@ -17,8 +17,8 @@
  *    and the xaos leak dials), and a spec table cannot see those. This walks
  *    the app through the states that MINT them — every visible panel section
  *    in every reachable render mode, every transform-editor group, a
- *    mandelbox variation for the fold-length rows, an emitter shape for the
- *    part editor, a xaos-carrying preset for the leak dials — and after each
+ *    mandelbox plus parameterized variations for their nested rows, an emitter
+ *    shape for the part editor, a xaos-carrying preset for the leak dials — and after each
  *    one enumerates every `input[type=range]` in the document, visible or
  *    not, requiring each to sit in a `.range-number-pair` holding exactly
  *    one `.range-number-input`, and every pair to be available or
@@ -565,17 +565,26 @@ async function main() {
     await walkSections("points");
 
     // The transform editor: every group, plus the two rows that only exist
-    // once something is authored (a mandelbox's fold lengths, an emitter
-    // shape's part editor).
+    // once something is authored (fold lengths, variation parameters, an
+    // emitter shape's part editor).
     await openSection(page, "transformsSection");
     await selectTransform(page);
-    await page.evaluate(() => {
-      const add = document.querySelector("#transformEditor .variation-add");
-      if (add) {
-        add.value = "mandelbox";
-        add.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-    });
+    for (const variationType of [
+      "mandelbox",
+      "julian",
+      "curl",
+      "bipolar",
+      "pdj",
+    ]) {
+      await page.evaluate((type) => {
+        const add = document.querySelector("#transformEditor .variation-add");
+        if (add) {
+          add.value = type;
+          add.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }, variationType);
+      await sleep(100);
+    }
     await sleep(400);
     await page.evaluate(() => {
       const add = document.getElementById("addEmitterSelect");

@@ -91,6 +91,16 @@ export const VARIATION_TYPES = [
   "julian",
   "juliascope",
   "curl",
+  // The measured flam3 fidelity batch. Append-only project ids 20..24 (the
+  // upstream variation numbers differ): five exact flam3 maps selected by the
+  // differential harness. All five act in the xy-plane and carry z/w. Rings
+  // is the legacy transform-coupled form: it reads the composed PRE-affine x
+  // translation, not a new authored variation parameter.
+  "bipolar",
+  "diamond",
+  "ex",
+  "pdj",
+  "rings",
 ] as const;
 
 /** One nonlinear warp a transform can apply after its affine part. */
@@ -145,6 +155,14 @@ export type VariationType = (typeof VARIATION_TYPES)[number];
  * plays for the folds. As with the folds, the classic branch returns the
  * SHARED parameterless function object, so an unparameterized document runs
  * the same code it always would have.
+ *
+ * THE MEASURED FLAM3 FIDELITY BATCH adds two parameter families:
+ * `bipolarShift` belongs to `bipolar`, and `pdjA`/`pdjB`/`pdjC`/`pdjD`
+ * belong to `pdj`. ABSENT MEANS flam3's own zero defaults for all five
+ * fields. `variations.ts`'s `resolveBipolarShift`/`resolvePdjParams` are the
+ * one definitions; every other type ignores these fields. The `rings` warp
+ * has no new field: exactly like flam3 var21, it reads the transform's live
+ * composed pre-affine x translation.
  */
 export interface Variation {
   type: VariationType;
@@ -207,6 +225,19 @@ export interface Variation {
    * finite value. Resolved through {@link resolveCurlParams}.
    */
   curlC2?: number;
+  /**
+   * The bipolar variation's vertical phase shift. Absent or non-finite ⇒ 0,
+   * flam3's own default. `bipolar` only.
+   */
+  bipolarShift?: number;
+  /** PDJ coefficient `a` in `sin(a·y) - cos(b·x)`. Absent ⇒ 0. `pdj` only. */
+  pdjA?: number;
+  /** PDJ coefficient `b` in `sin(a·y) - cos(b·x)`. Absent ⇒ 0. `pdj` only. */
+  pdjB?: number;
+  /** PDJ coefficient `c` in `sin(c·x) - cos(d·y)`. Absent ⇒ 0. `pdj` only. */
+  pdjC?: number;
+  /** PDJ coefficient `d` in `sin(c·x) - cos(d·y)`. Absent ⇒ 0. `pdj` only. */
+  pdjD?: number;
 }
 
 /**

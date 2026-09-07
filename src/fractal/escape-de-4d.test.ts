@@ -149,11 +149,19 @@ describe("analyzeEscapeSystem4 lifts the whole render mode", () => {
     ).toBe("eligible");
   });
 
-  it("refuses a parametric link BY NAME, beside the generic reason", () => {
-    // The 4D twin of the 3D gate's named refusal: the parametric julia
-    // family and curl are not links (no closed-form local Lipschitz
-    // factor), and the refusal names which warp it has no link for.
-    for (const type of ["julian", "juliascope", "curl"] as const) {
+  it("refuses every exact-flam3 non-link BY NAME", () => {
+    // The 4D twin of the 3D gate's named refusal: these warps have no escape
+    // link, and the refusal names which one it saw.
+    for (const type of [
+      "julian",
+      "juliascope",
+      "curl",
+      "bipolar",
+      "diamond",
+      "ex",
+      "pdj",
+      "rings",
+    ] as const) {
       const chain = [foldMap(0, type, 2)];
       const analysis = analyzeEscapeSystem4(chain);
       expect(analysis.status).toBe("ineligible");

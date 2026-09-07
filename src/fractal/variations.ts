@@ -12,8 +12,9 @@ import { clamp } from "./vec";
  * The classic variations are planar. Here each is generalised to 3-D under a
  * consistent scheme: the *radial* warps (`spherical`, `bubble`) and `swirl` use
  * the full 3-D radius `x²+y²+z²`, so depth genuinely participates; the *angular*
- * warps (`polar`, `handkerchief`, `heart`, `disc`, `spiral`, `julia`) act in the
- * xy-plane — angle `θ = atan2(y, x)`, planar radius `√(x²+y²)` — and carry `z`
+ * warps (`polar`, `handkerchief`, `heart`, `disc`, `spiral`, `julia`, plus the
+ * exact flam3 `bipolar`/`diamond`/`ex`/`pdj`/`rings` batch) act in the
+ * xy-plane — with each warp retaining flam3's own angle convention — and carry `z`
  * through unchanged, warping every z-slice the same way. The *fold* warps
  * (`boxfold`, `spherefold`, `mandelbox`) are natively 3-D: per-axis plane
  * reflections and a full-3D-radius ball inversion, the Mandelbox's two
@@ -30,6 +31,11 @@ export type VariationFn = (x: number, y: number, z: number, rng: Rng) => Vec3;
  * whole orbit.
  */
 const EPS = 1e-12;
+
+/** flam3's own `EPS` constant. Kept separate because legacy `rings` puts it
+ * directly into the authored formula, rather than using this module's newer
+ * totality floor. */
+const FLAM3_EPS = 1e-10;
 
 /** 2π, restated here (the file carries no angle constants today) for the
  * julia family's branch sweep and its WGSL mirrors' shared convention. */
@@ -405,6 +411,137 @@ export function activeParametricVariationTypes(
   return out;
 }
 
+/* ---- measured exact-flam3 batch ---------------------------------- */
+
+/** flam3's absent/default `bipolar_shift`. */
+export const CLASSIC_BIPOLAR_SHIFT = 0;
+
+/** Cross-backend finite extension for bipolar's two exact log foci. Positive
+ * nonsingular source terms are never clamped. */
+export const BIPOLAR_SAFE_TERM = 1e-30;
+
+/** The four coefficients of flam3's PDJ variation. */
+export interface PdjParams {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+}
+
+/** flam3 initializes every PDJ coefficient to zero. */
+export const CLASSIC_PDJ_PARAMS: Readonly<PdjParams> = {
+  a: 0,
+  b: 0,
+  c: 0,
+  d: 0,
+};
+
+/** Resolve bipolar's sole parameter once per composed blend. */
+export function resolveBipolarShift(v: Variation): number {
+  return Number.isFinite(v.bipolarShift)
+    ? (v.bipolarShift as number)
+    : CLASSIC_BIPOLAR_SHIFT;
+}
+
+/** Resolve PDJ's four parameters once per composed blend. */
+export function resolvePdjParams(v: Variation): PdjParams {
+  return {
+    a: Number.isFinite(v.pdjA) ? (v.pdjA as number) : CLASSIC_PDJ_PARAMS.a,
+    b: Number.isFinite(v.pdjB) ? (v.pdjB as number) : CLASSIC_PDJ_PARAMS.b,
+    c: Number.isFinite(v.pdjC) ? (v.pdjC as number) : CLASSIC_PDJ_PARAMS.c,
+    d: Number.isFinite(v.pdjD) ? (v.pdjD as number) : CLASSIC_PDJ_PARAMS.d,
+  };
+}
+
+/** The whole measured exact-flam3 vocabulary batch, including the three
+ * already-shipped types. Surface-family refusals use this broader set rather
+ * than the parameter-only guard so `diamond`, `ex`, and `rings` are named. */
+export type ExactFlam3VariationType =
+  ParametricVariationType | "bipolar" | "diamond" | "ex" | "pdj" | "rings";
+
+export function isExactFlam3VariationType(
+  type: VariationType,
+): type is ExactFlam3VariationType {
+  return (
+    isParametricVariationType(type) ||
+    type === "bipolar" ||
+    type === "diamond" ||
+    type === "ex" ||
+    type === "pdj" ||
+    type === "rings"
+  );
+}
+
+/** Active exact-flam3 batch entries in document order, deduplicated. */
+export function activeExactFlam3VariationTypes(
+  variations: Variation[] | undefined,
+): ExactFlam3VariationType[] {
+  const out: ExactFlam3VariationType[] = [];
+  for (const v of variations ?? []) {
+    if (
+      isExactFlam3VariationType(v.type) &&
+      Number.isFinite(v.weight) &&
+      v.weight !== 0 &&
+      !out.includes(v.type)
+    ) {
+      out.push(v.type);
+    }
+  }
+  return out;
+}
+
+/** flam3 var55 (`bipolar`) at an already-resolved shift. The two logarithm
+ * arguments are algebraic squares, `(x±1)^2+y^2`; flooring only their exact
+ * singular zeros extends flam3's formula to a finite total map. */
+export function bipolarVariationFn(shift: number): VariationFn {
+  return (x, y, z) => {
+    const x2y2 = x * x + y * y;
+    const t = x2y2 + 1;
+    const x2 = 2 * x;
+    let a = 0.5 * Math.atan2(2 * y, x2y2 - 1) - (Math.PI / 2) * shift;
+    if (a > Math.PI / 2) {
+      a = -Math.PI / 2 + ((a + Math.PI / 2) % Math.PI);
+    } else if (a < -Math.PI / 2) {
+      a = Math.PI / 2 - ((Math.PI / 2 - a) % Math.PI);
+    }
+    const numerator = t + x2;
+    const denominator = t - x2;
+    // Preserve flam3's quotient-and-log operation for every nonsingular
+    // input. Only an algebraic zero (or a negative from final-bit rounding)
+    // takes the shared finite extension. The safe term is large enough that
+    // this quotient remains representable in both f32 WGSL and f64 TS.
+    const logRatio = Math.log(
+      (numerator > 0 ? numerator : BIPOLAR_SAFE_TERM) /
+        (denominator > 0 ? denominator : BIPOLAR_SAFE_TERM),
+    );
+    return [0.25 * (2 / Math.PI) * logRatio, (2 / Math.PI) * a, z];
+  };
+}
+
+/** flam3 var24 (`pdj`) at already-resolved coefficients. */
+export function pdjVariationFn(p: PdjParams): VariationFn {
+  const { a, b, c, d } = p;
+  return (x, y, z) => [
+    Math.sin(a * y) - Math.cos(b * x),
+    Math.sin(c * x) - Math.cos(d * y),
+    z,
+  ];
+}
+
+/** flam3 var21 (`rings`). `preTranslateX` is the live composed pre-affine
+ * x translation (`c[2][0]` on flam3's wire), deliberately not a new
+ * per-variation parameter. */
+export function ringsVariationFn(preTranslateX: number): VariationFn {
+  const tx = Number.isFinite(preTranslateX) ? preTranslateX : 0;
+  const dx = tx * tx + FLAM3_EPS;
+  return (x, y, z) => {
+    const radius = Math.hypot(x, y);
+    if (radius === 0) return [0, 0, z];
+    const warpedRadius = ((radius + dx) % (2 * dx)) - dx + radius * (1 - dx);
+    return [(y / radius) * warpedRadius, (x / radius) * warpedRadius, z];
+  };
+}
+
 /**
  * The julian/juliascope warps at arbitrary parameters — {@link VARIATIONS}'s
  * two julia entries with their constants lifted out. Both apply the SAME
@@ -738,6 +875,39 @@ const VARIATIONS: Record<VariationType, VariationFn> = {
     const r = 1 / (re * re + im * im + EPS);
     return [(x * re + y * im) * r, (y * re - x * im) * r, z];
   },
+
+  // flam3 var55. The parameterized closure below owns the exact formula;
+  // the registry entry is its absent-means-zero instance.
+  bipolar: bipolarVariationFn(CLASSIC_BIPOLAR_SHIFT),
+
+  // flam3 var11: sin/cos of planar angle and radius, z carried through.
+  diamond: (x, y, z) => {
+    const radius = Math.hypot(x, y);
+    if (radius === 0) return [0, 0, z];
+    return [
+      (x / radius) * Math.cos(radius),
+      (y / radius) * Math.sin(radius),
+      z,
+    ];
+  },
+
+  // flam3 var12: the cubed sin/cos lobes of angle +/- radius.
+  ex: (x, y, z) => {
+    const radius = Math.hypot(x, y);
+    const angle = Math.atan2(x, y);
+    const n0 = Math.sin(angle + radius);
+    const n1 = Math.cos(angle - radius);
+    const m0 = n0 * n0 * n0 * radius;
+    const m1 = n1 * n1 * n1 * radius;
+    return [m0 + m1, m0 - m1, z];
+  },
+
+  // flam3 var24 at its four absent-means-zero coefficients.
+  pdj: pdjVariationFn(CLASSIC_PDJ_PARAMS),
+
+  // flam3 var21 at c[2][0] = 0. A composed blend replaces this shared entry
+  // when its transform's live pre-affine x translation is nonzero.
+  rings: ringsVariationFn(0),
 };
 
 /**
@@ -771,6 +941,7 @@ export type VariationBlend = (
  */
 export function composeVariations(
   variations: Variation[] | undefined,
+  preTranslateX = 0,
 ): VariationBlend | null {
   if (!variations || variations.length === 0) return null;
   const active = variations.filter(
@@ -786,13 +957,32 @@ export function composeVariations(
   // document runs the same functions, not merely the same numbers. Parallel
   // arrays rather than a [fn, weight] tuple list, so the hot closure below
   // indexes two flat arrays instead of destructuring a tuple on every call.
-  const fns: VariationFn[] = active.map((v) =>
-    isFoldVariationType(v.type)
-      ? foldVariationFn(v.type, resolveFoldRadii(v))
-      : isParametricVariationType(v.type)
-        ? parametricVariationFn(v.type, v)
-        : VARIATIONS[v.type],
-  );
+  const fns: VariationFn[] = active.map((v) => {
+    if (isFoldVariationType(v.type)) {
+      return foldVariationFn(v.type, resolveFoldRadii(v));
+    }
+    if (isParametricVariationType(v.type)) {
+      return parametricVariationFn(v.type, v);
+    }
+    if (v.type === "bipolar") {
+      const shift = resolveBipolarShift(v);
+      return shift === CLASSIC_BIPOLAR_SHIFT
+        ? VARIATIONS.bipolar
+        : bipolarVariationFn(shift);
+    }
+    if (v.type === "pdj") {
+      const p = resolvePdjParams(v);
+      return p.a === 0 && p.b === 0 && p.c === 0 && p.d === 0
+        ? VARIATIONS.pdj
+        : pdjVariationFn(p);
+    }
+    if (v.type === "rings") {
+      return preTranslateX === 0
+        ? VARIATIONS.rings
+        : ringsVariationFn(preTranslateX);
+    }
+    return VARIATIONS[v.type];
+  });
   const weights: number[] = active.map((v) => v.weight);
   const n = fns.length;
   const out: Vec3 = [0, 0, 0];

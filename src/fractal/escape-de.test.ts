@@ -495,10 +495,19 @@ describe("analyzeEscapeSystem eligibility, widened to chains", () => {
       ]).reasons,
     ).toEqual(["map 1 is not a pure fold or power map"]);
 
-    // The parametric warps are refused TOO (no link exists for them), and
+    // Exact flam3 warps are refused TOO (no link exists for them), and
     // the refusal NAMES the warp beside the generic reason — the
     // qsquare-hint precedent.
-    for (const type of ["julian", "juliascope", "curl"] as const) {
+    for (const type of [
+      "julian",
+      "juliascope",
+      "curl",
+      "bipolar",
+      "diamond",
+      "ex",
+      "pdj",
+      "rings",
+    ] as const) {
       const analysis = analyzeEscapeSystem([
         canonicalMandelbox({ variations: [{ type, weight: 2 }] }),
       ]);

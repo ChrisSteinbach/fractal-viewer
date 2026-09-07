@@ -155,7 +155,7 @@
  */
 import { composeAffine, isIdentityAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
-import { activeParametricVariationTypes } from "./variations";
+import { activeExactFlam3VariationTypes } from "./variations";
 import {
   effectiveSymmetryOrder,
   systemHasChaos,
@@ -271,8 +271,8 @@ type BulbCalibrationDE = Omit<BulbDE, "patternCalibration">;
 
 /** `composeVariations`' active filter again (the twin of `escape-de.ts`'s
  * `pureFoldVariation`): the single active `bulb` entry, or null. The
- * parametric julia family and curl are not triplex powers and are refused
- * by name through {@link parametricBulbRefusal}. */
+ * exact flam3 warps are not triplex powers and are refused by name through
+ * {@link exactFlam3BulbRefusal}. */
 function pureBulbVariation(t: Transform): Variation | null {
   const active = (t.variations ?? []).filter(
     (v) => Number.isFinite(v.weight) && v.weight !== 0,
@@ -282,15 +282,13 @@ function pureBulbVariation(t: Transform): Variation | null {
 }
 
 /** The named clause appended beside the generic "not a pure triplex power"
- * refusal when the map carries one of the PARAMETRIC warps —
- * `surface-eligibility.ts`'s qsquare-hint precedent. `null` when nothing
- * parametric is active. */
-function parametricBulbRefusal(t: Transform): string | null {
-  const types = activeParametricVariationTypes(t.variations);
+ * refusal when the map carries an exact flam3 warp. */
+function exactFlam3BulbRefusal(t: Transform): string | null {
+  const types = activeExactFlam3VariationTypes(t.variations);
   if (types.length === 0) return null;
   const plural = types.length > 1 ? "s" : "";
   return (
-    `the map uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `the map uses the variation${plural} ${types.join(", ")}, ` +
     `which the Mandelbulb render does not iterate`
   );
 }
@@ -319,7 +317,7 @@ export function analyzeBulbSystem(
     const bulb = pureBulbVariation(map);
     if (!bulb) {
       reasons.push("the map is not a pure triplex power");
-      const clause = parametricBulbRefusal(map);
+      const clause = exactFlam3BulbRefusal(map);
       if (clause) reasons.push(clause);
     } else if (bulb.weight !== 1) {
       // A weight other than 1 iterates `w·V(Mv + t) + p`, which is a

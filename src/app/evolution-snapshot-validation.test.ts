@@ -24,7 +24,16 @@ function populatedSnapshot(): SceneSnapshot {
   snapshot.transforms = sierpinskiTetrahedron();
   snapshot.symmetry = { order: 2, plane: "xz", twist: 1 };
   snapshot.transforms[0].variations = [
-    { type: "linear", weight: 1, minRadius: -3.25 },
+    {
+      type: "linear",
+      weight: 1,
+      minRadius: -3.25,
+      bipolarShift: 7.25,
+      pdjA: -8.5,
+      pdjB: 2,
+      pdjC: -3,
+      pdjD: 4.5,
+    },
   ];
   snapshot.transforms[0].w = {
     position: -0,
@@ -443,6 +452,8 @@ describe("crossover-v1 exact SceneSnapshot validation", () => {
     ["over-cap variation weight", (s) => (variation(s).weight = 101)],
     ["unknown variation", (s) => (variation(s).type = "future-fold")],
     ["non-finite fold value", (s) => (variation(s).minRadius = Infinity)],
+    ["non-finite bipolar shift", (s) => (variation(s).bipolarShift = NaN)],
+    ["non-finite PDJ coefficient", (s) => (variation(s).pdjD = Infinity)],
     ["bad transform id", (s) => (record(s.transforms[0]).id = 1.5)],
     ["bad transform weight", (s) => (record(s.transforms[0]).weight = 0)],
     ["bad color index", (s) => (record(s.transforms[0]).colorIndex = 2)],

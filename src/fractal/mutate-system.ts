@@ -87,8 +87,13 @@ export interface MutationOptions {
  * whose output perturbs any document that carries a post. Version 2 nodes
  * re-deriving under version 3 refuse rather than re-derive differently; a
  * version-2 document carries no post, so its jitter rules are unchanged.
+ *
+ * Version 4's cause: the exact-flam3 batch widened the wildcard variation
+ * vocabulary and assigned bipolar/PDJ's present-only authored parameters to
+ * `nonlinearVariations`. Version 3 nodes refuse instead of silently
+ * re-deriving under either changed choice set or field assignment.
  */
-export const SEEDED_MUTATION_ALGORITHM_VERSION = 3 as const;
+export const SEEDED_MUTATION_ALGORITHM_VERSION = 4 as const;
 export type SeededMutationAlgorithmVersion =
   typeof SEEDED_MUTATION_ALGORITHM_VERSION;
 
@@ -99,8 +104,8 @@ export type SeededMutationAlgorithmVersion =
  * - `spatialGeometry`: position, rotation, scale, shear, the affine
  *   wildcard rotation reroll, and a PRESENT per-transform post-affine
  *   (import-only authoring; never materialized — the folds' rule);
- * - `nonlinearVariations`: base-map variation weights, fold lengths, and the
- *   parametric julia/curl parameters (present-only jitter), plus a
+ * - `nonlinearVariations`: base-map variation weights, fold lengths, and
+ *   authored variation parameters (present-only jitter), plus a
  *   wildcard variation-type swap;
  * - `finalLens`: final-transform variation weights/fold parameters;
  * - `fourDExtension`: authored leaves of a base map's `w` block;
@@ -381,7 +386,9 @@ const WILDCARD_SPREAD = 2.5;
  * from, duplicated here for the same reason {@link uniform} is: this module
  * only reaches into `random-system.ts` through its public exports. */
 const NON_LINEAR_VARIATION_TYPES = VARIATION_TYPES.filter(
-  (type) => type !== "linear",
+  // PDJ's flam3 default is four zero coefficients, hence a constant map.
+  // Wildcard swaps do not invent parameters, so PDJ is not an honest target.
+  (type) => type !== "linear" && type !== "pdj",
 );
 
 /**
@@ -553,15 +560,36 @@ function jitterVariationCoefficient(
   );
 }
 
+/** The exact-flam3 additions use their editor/flam3 authoring domains rather
+ * than curl's older repeated-mutation ceiling. */
+const BIPOLAR_SHIFT_CLAMP = 1;
+const PDJ_COEFFICIENT_CLAMP = 3;
+function jitterExactFlam3Coefficient(
+  rng: Rng,
+  value: number,
+  spread: number,
+  limit: number,
+): number {
+  return clamp(
+    value +
+      uniform(
+        rng,
+        -CURL_COEFFICIENT_JITTER * spread,
+        CURL_COEFFICIENT_JITTER * spread,
+      ),
+    -limit,
+    limit,
+  );
+}
+
 /**
  * Jitter one variation entry: `weight` always moves (unchanged
  * rule), and — for the fold family (`boxfold`/`spherefold`/
  * `mandelbox`, see `variations.ts`'s `isFoldVariationType`) — each of
  * `minRadius`/`fixedRadius`/`boxLimit` that is already PRESENT on `v` is
  * nudged and clamped (see {@link jitterFoldRadius}/{@link jitterBoxLimit}).
- * For the parametric julia/curl family (`variations.ts`'s
- * `isParametricVariationType`) the same rule applies to its own six
- * parameters through {@link jitterParametricVariationEntry}, routed from
+ * For parameterized variations the same rule applies to their own fields
+ * through {@link jitterParametricVariationEntry}, routed from
  * here so every call site dispatches through one function. An absent length
  * or parameter ALWAYS stays absent — a mutation never materializes one,
  * `wildcard` included.
@@ -601,10 +629,14 @@ function jitterVariationEntry(
   v: Variation,
   spread: number,
 ): Variation {
-  // The parametric julia/curl family has its own parameter rules — same
+  // Parameterized variations have their own parameter rules — same
   // weight jitter, family-specific parameters, absent stays absent. Routed
   // here so every jitter call site dispatches through ONE function.
-  if (isParametricVariationType(v.type)) {
+  if (
+    isParametricVariationType(v.type) ||
+    v.type === "bipolar" ||
+    v.type === "pdj"
+  ) {
     return jitterParametricVariationEntry(rng, v, spread);
   }
   const result: Variation = {
@@ -639,7 +671,8 @@ function jitterVariationEntry(
  * unchanged rule, same as every other type), and each of the family's own
  * parameters that is already PRESENT on `v` is nudged — the powers through
  * {@link jitterJuliaPower}'s sign-preserving shape, the dist/c1/c2
- * coefficients through {@link jitterVariationCoefficient}'s additive one.
+ * coefficients, bipolar shift, and PDJ coefficients through
+ * {@link jitterVariationCoefficient}'s additive one.
  * An absent parameter ALWAYS stays absent — a mutation never materializes
  * one, `wildcard` included. The fold-radii arm's exact verdict one feature
  * over: a mutation grid must stay a grid of the system you brought it, so a
@@ -662,6 +695,46 @@ function jitterParametricVariationEntry(
   }
   if (v.curlC2 !== undefined) {
     result.curlC2 = jitterVariationCoefficient(rng, v.curlC2, spread);
+  }
+  if (v.bipolarShift !== undefined) {
+    result.bipolarShift = jitterExactFlam3Coefficient(
+      rng,
+      v.bipolarShift,
+      spread,
+      BIPOLAR_SHIFT_CLAMP,
+    );
+  }
+  if (v.pdjA !== undefined) {
+    result.pdjA = jitterExactFlam3Coefficient(
+      rng,
+      v.pdjA,
+      spread,
+      PDJ_COEFFICIENT_CLAMP,
+    );
+  }
+  if (v.pdjB !== undefined) {
+    result.pdjB = jitterExactFlam3Coefficient(
+      rng,
+      v.pdjB,
+      spread,
+      PDJ_COEFFICIENT_CLAMP,
+    );
+  }
+  if (v.pdjC !== undefined) {
+    result.pdjC = jitterExactFlam3Coefficient(
+      rng,
+      v.pdjC,
+      spread,
+      PDJ_COEFFICIENT_CLAMP,
+    );
+  }
+  if (v.pdjD !== undefined) {
+    result.pdjD = jitterExactFlam3Coefficient(
+      rng,
+      v.pdjD,
+      spread,
+      PDJ_COEFFICIENT_CLAMP,
+    );
   }
   if (v.julianDist !== undefined) {
     result.julianDist = jitterVariationCoefficient(rng, v.julianDist, spread);

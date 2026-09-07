@@ -130,7 +130,7 @@ function baseSpec4(
 // flame-gpu-4d.ts's byte-layout doc comment (byte offset / 4) — independent
 // of that module's own (private) offset constants, so a mistake in the
 // implementation could not coincidentally agree with a matching mistake here.
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 96
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 324
 const ROW_X = 0; // byte 0
 const ROW_Y = 4; // byte 16
 const ROW_Z = 8; // byte 32
@@ -147,14 +147,25 @@ const HAS_POST = 77; // byte 308
 const CUM_WEIGHT = 78; // byte 312
 const COLOR_INDEX = 79; // byte 316
 const COLOR_SPEED = 80; // byte 320
+const VAR_WEIGHTS_EXTRA = 308; // byte 1232, array<vec4f, 2>
+const VAR_TYPES_EXTRA = 316; // byte 1264, array<vec4u, 2>
 
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
     expect(PARAMS4_BYTES).toBe(480);
-    expect(SLOT4_STRIDE_BYTES).toBe(1232); // +1 vec4: the post stage translation (postTrans), appended at the struct end.
+    expect(SLOT4_STRIDE_BYTES).toBe(1296); // +64 bytes: appended extra variation weight/type blocks.
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
     expect(WEIGHT_FIXED_POINT_SCALE).toBe(256);
+  });
+
+  it("preserves the complete legacy Slot4 prefix and appends exactly 64 bytes of extra variation lanes", () => {
+    expect(VAR_WEIGHTS).toBe(36);
+    expect(VAR_TYPES).toBe(56);
+    expect(VAR_COUNT).toBe(76);
+    expect(VAR_WEIGHTS_EXTRA * 4).toBe(1232);
+    expect(VAR_TYPES_EXTRA * 4).toBe(1264);
+    expect(SLOT4_STRIDE_BYTES).toBe(1296);
   });
 
   it("maps every FourDRenderColor kind to the kernel's colorKind switch value", () => {
@@ -255,13 +266,46 @@ describe("packGpuSystem4 slot layout (byte-layout pinning)", () => {
     const f32 = new Float32Array(packed.slots);
     const u32 = new Uint32Array(packed.slots);
     expect(u32[VAR_COUNT]).toBe(0);
-    // All 16 storage lanes (15 used variation types + 1 spare), not just the
-    // old 12 — a zero-fill regression in the unused 16th lane, or in lanes
-    // 12-14 (the Mandelbox fold family), must fail here.
-    for (let v = 0; v < 16; v++) {
+    for (let v = 0; v < 20; v++) {
       expect(f32[VAR_WEIGHTS + v]).toBe(0);
       expect(u32[VAR_TYPES + v]).toBe(0);
     }
+    expect(
+      Array.from(f32.slice(VAR_WEIGHTS_EXTRA, VAR_WEIGHTS_EXTRA + 8)),
+    ).toEqual(new Array(8).fill(0));
+    expect(Array.from(u32.slice(VAR_TYPES_EXTRA, VAR_TYPES_EXTRA + 8))).toEqual(
+      new Array(8).fill(0),
+    );
+  });
+
+  it("keeps lanes 0..19 in the legacy arrays and writes lanes 20..24 only in the appended arrays", () => {
+    const variations = VARIATION_TYPES.map((type, index) => ({
+      type,
+      weight: index + 0.25,
+    }));
+    const transform: Transform4 = {
+      position: [0, 0, 0, 0],
+      scale: [1, 1, 1, 1],
+      variations,
+    };
+    const packed = packGpuSystem4(baseSpec4({ transforms4: [transform] }));
+    const f32 = new Float32Array(packed.slots);
+    const u32 = new Uint32Array(packed.slots);
+    expect(u32[VAR_COUNT]).toBe(25);
+    for (let v = 0; v < 20; v++) {
+      expect(f32[VAR_WEIGHTS + v]).toBe(Math.fround(v + 0.25));
+      expect(u32[VAR_TYPES + v]).toBe(v);
+    }
+    for (let v = 20; v < 25; v++) {
+      expect(f32[VAR_WEIGHTS_EXTRA + v - 20]).toBe(Math.fround(v + 0.25));
+      expect(u32[VAR_TYPES_EXTRA + v - 20]).toBe(v);
+    }
+    expect(
+      Array.from(f32.slice(VAR_WEIGHTS_EXTRA + 5, VAR_WEIGHTS_EXTRA + 8)),
+    ).toEqual([0, 0, 0]);
+    expect(
+      Array.from(u32.slice(VAR_TYPES_EXTRA + 5, VAR_TYPES_EXTRA + 8)),
+    ).toEqual([0, 0, 0]);
   });
 
   it("accumulates cumWeight as the running sum over weights [2, 3, 5]", () => {
@@ -402,6 +446,30 @@ describe("packGpuSystem4 fold radii", () => {
     ]);
   });
 
+  it("packs bipolar and PDJ into the same spare varParams words as the 3D slot", () => {
+    const transform: Transform4 = {
+      position: [0.4, 0, 0, 0.2],
+      scale: [1, 1, 1, 1],
+      variations: [
+        { type: "bipolar", weight: 1, bipolarShift: 0.375 },
+        {
+          type: "pdj",
+          weight: 1,
+          pdjA: 1.25,
+          pdjB: -0.5,
+          pdjC: 2,
+          pdjD: -3,
+        },
+      ],
+    };
+    const f32 = new Float32Array(
+      packGpuSystem4(baseSpec4({ transforms4: [transform] })).slots,
+    );
+    expect(Array.from(f32.slice(VAR4_PARAMS, VAR4_PARAMS + 12))).toEqual([
+      0, 0, 0.375, 1.25, 0, 0, -0.5, 2, 0, 0, -3, 0,
+    ]);
+  });
+
   /** Element index of fold `i`'s lane in slot 0 — the module's own
    * SLOT4_FOLD_RADII at 84, restated as a literal for the same reason the
    * rest of this file restates offsets. */
@@ -456,7 +524,16 @@ describe("packGpuSystem4 fold radii", () => {
     // exactly as the 3D kernel's do — the shared-lane discipline, one
     // dimension up.
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("varParams: array<vec4f, 3>");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "varWeightsExtra: array<vec4f, 2>",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "varTypesExtra: array<vec4u, 2>",
+    );
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("if (ty >= 17u && ty <= 19u) {");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "slots[slotIdx].trans.x * slots[slotIdx].trans.x + FLAM3_EPS",
+    );
     expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain("trunc(1.0 * rand01");
     expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain("1.0 + p.x + 0.0 * (p.x");
   });
@@ -597,7 +674,7 @@ describe("packGpuSystem4 shape emitters", () => {
         symmetry: { order: 1, plane: "xz" },
         palette: "legacy",
       });
-      expect(SLOT4_STRIDE_BYTES).toBe(1232); // +1 vec4: the post stage translation (postTrans), appended at the struct end.
+      expect(SLOT4_STRIDE_BYTES).toBe(1296); // +64 bytes: appended extra variation weight/type blocks.
       const f32 = new Float32Array(packed4.slots);
       const p = EMITTER_PARTS;
       expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
@@ -697,7 +774,7 @@ describe("packGpuSystem4 shape emitters", () => {
       baseSpec4({ transforms4: [transform4WithEmitter(spec)] }),
     );
     expect(new Uint32Array(packed.slots)[EMITTER_FALLBACK_PART]).toBe(1);
-    expect(SLOT4_STRIDE_BYTES).toBe(1232); // +1 vec4: the post stage translation (postTrans), appended at the struct end.
+    expect(SLOT4_STRIDE_BYTES).toBe(1296); // +64 bytes: appended extra variation weight/type blocks.
     expect(packed.multiPartEmitters).toBe(true);
   });
 

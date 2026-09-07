@@ -1059,6 +1059,15 @@ describe("decodeScene transform variation fold radii", () => {
               juliascopeDist: 0,
             },
             { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1.25 },
+            { type: "bipolar", weight: 0.75, bipolarShift: 7.25 },
+            {
+              type: "pdj",
+              weight: 1.25,
+              pdjA: -8.5,
+              pdjB: 2,
+              pdjC: -3,
+              pdjD: 4.5,
+            },
           ],
         },
       ],
@@ -1073,6 +1082,15 @@ describe("decodeScene transform variation fold radii", () => {
         juliascopeDist: 0,
       },
       { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1.25 },
+      { type: "bipolar", weight: 0.75, bipolarShift: 7.25 },
+      {
+        type: "pdj",
+        weight: 1.25,
+        pdjA: -8.5,
+        pdjB: 2,
+        pdjC: -3,
+        pdjD: 4.5,
+      },
     ]);
   });
 
@@ -1164,6 +1182,8 @@ describe("decodeScene transform variation fold radii", () => {
               weight: 1,
               julianPower: "3",
               julianDist: true,
+              bipolarShift: Infinity,
+              pdjA: NaN,
             },
           ],
         },
@@ -1176,6 +1196,8 @@ describe("decodeScene transform variation fold radii", () => {
     // a boolean DROPS rather than becoming a parameter value.
     expect(julian.julianPower).toBeUndefined();
     expect(julian.julianDist).toBeUndefined();
+    expect(julian.bipolarShift).toBeUndefined();
+    expect(julian.pdjA).toBeUndefined();
   });
 
   it("leaves fold lengths absent for non-numeric garbage, without rejecting the scene", () => {
