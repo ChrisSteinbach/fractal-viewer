@@ -371,6 +371,7 @@ interface ScenarioResultRecord {
 }
 
 interface BenchResults {
+  backendSmoke?: { pass: boolean; scenarios: string[]; wallMs: number };
   userAgent: string;
   timestamp: string;
   adapter: BenchAdapterInfo | null;
@@ -1046,34 +1047,34 @@ function emitterMenagerie(): Transform[] {
 
 const SCENARIOS: ScenarioDef[] = [
   {
+    ...SIERPINSKI_CAMERA,
     kind: "3d",
     name: "sierpinski",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
     symmetry: { order: 1, plane: "xz" },
     paletteId: "legacy",
-    ...SIERPINSKI_CAMERA,
   },
   {
+    ...SIERPINSKI_CAMERA,
     kind: "3d",
     name: "tiling-finite-3d",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
     symmetry: { order: 1, plane: "xz" },
     paletteId: "spectrum",
-    ...SIERPINSKI_CAMERA,
     pointTilingPlan: benchPointTilingPlan(3, "finite"),
     // Pins chamber membership, credit banking, finite matrix images and
     // source-owned structural color through the active binding-8 kernel.
   },
   {
+    ...SIERPINSKI_CAMERA,
     kind: "3d",
     name: "tiling-lattice-3d",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
     symmetry: { order: 1, plane: "xz" },
     paletteId: "aurora",
-    ...SIERPINSKI_CAMERA,
     pointTilingPlan: benchPointTilingPlan(3, "lattice"),
     // Minimum cell scale: analytic x/z images, quantized proposal CDF and
     // 8R->10R coverage in the production kernel.
@@ -1083,26 +1084,26 @@ const SCENARIOS: ScenarioDef[] = [
     maeThreshold: 2,
   },
   {
+    ...SIERPINSKI_CAMERA,
     kind: "3d",
     name: "tiling-lattice-max-3d",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
     symmetry: { order: 1, plane: "xz" },
     paletteId: "aurora",
-    ...SIERPINSKI_CAMERA,
     pointTilingPlan: benchPointTilingPlan(3, "lattice", { cellScale: 4 }),
     // The opposite authored scale boundary from the minimum-scale leg. The
     // same active kernel reads a smaller packed cell/CDF table and a wider h.
     maeThreshold: 2,
   },
   {
+    ...SIERPINSKI_CAMERA,
     kind: "3d",
     name: "tiling-empty-3d",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
     symmetry: { order: 1, plane: "xz" },
     paletteId: "spectrum",
-    ...SIERPINSKI_CAMERA,
     pointTilingPlan: benchPointTilingPlan(3, "finite", { empty: true }),
     // A valid, packed analytic clip excludes the entire source. Both engines
     // must complete with a genuinely empty accumulation and never deposit the
@@ -1124,13 +1125,13 @@ const SCENARIOS: ScenarioDef[] = [
     maeThreshold: 2,
   },
   {
+    ...FERN_CAMERA,
     kind: "3d",
     name: "fern",
     transforms: barnsleyFern(),
     finalTransform: null,
     symmetry: { order: 1, plane: "xz" },
     paletteId: "ember",
-    ...FERN_CAMERA,
     // The controlled balloon leg for the 3D kernel. R = 0.9 rho keeps both
     // source and echo substantially on-screen under the source-fit camera.
     balloonEcho: {
@@ -1142,6 +1143,7 @@ const SCENARIOS: ScenarioDef[] = [
     balloonPaletteId: "aurora",
   },
   {
+    ...FERN_CAMERA,
     kind: "3d",
     name: "xform-color",
     transforms: xformColorFern(),
@@ -1153,7 +1155,6 @@ const SCENARIOS: ScenarioDef[] = [
     // entirely unread. "spectrum" spreads hue widely across the gradient, so
     // a wrong slot reads as a hue shift rather than a shade of one hue.
     paletteId: "spectrum",
-    ...FERN_CAMERA,
     // Uniquely pins: the per-transform colorIndex/colorSpeed pair
     // the kernels' structural walk reads off each Slot, and the walk formula
     // itself at speeds either side of the old hard-coded 0.5. Every OTHER
@@ -1174,13 +1175,13 @@ const SCENARIOS: ScenarioDef[] = [
     lookAt: [0, 0, 0],
   },
   {
+    ...SIERPINSKI_CAMERA,
     kind: "3d",
     name: "kaleido",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
     symmetry: { order: 5, plane: "xz" },
     paletteId: "aurora",
-    ...SIERPINSKI_CAMERA,
   },
   {
     kind: "3d",
@@ -1390,6 +1391,7 @@ const SCENARIOS: ScenarioDef[] = [
     maeThreshold: 1.2,
   },
   {
+    ...SIERPINSKI_CAMERA,
     kind: "3d",
     name: "emitter-gearworks",
     transforms: gearworks(),
@@ -1406,7 +1408,6 @@ const SCENARIOS: ScenarioDef[] = [
     // annulus-rejection one. Legacy palette: gearworks authors per-transform
     // colorIndex pairs (cog vs. structure hue), which only the legacy
     // per-BASE-map palette path reads.
-    ...SIERPINSKI_CAMERA,
     // Emitters are not chaotic forward orbits (no per-step feedback through
     // a nonlinear map) — plain equal-N agreement holds without the escape
     // legs' classifier machinery, chi-isolated's own reasoning one selection
@@ -1810,8 +1811,10 @@ const SCENARIOS: ScenarioDef[] = [
  * orbit). */
 const SEED = 0xc0ffee;
 
-const DISPLAY_WIDTH = 960;
-const DISPLAY_HEIGHT = 540;
+const BACKEND_SMOKE =
+  new URLSearchParams(window.location.search).get("backendSmoke") === "1";
+const DISPLAY_WIDTH = BACKEND_SMOKE ? 32 : 960;
+const DISPLAY_HEIGHT = BACKEND_SMOKE ? 24 : 540;
 const SUPERSAMPLE = 2;
 const ACCUM_WIDTH = DISPLAY_WIDTH * SUPERSAMPLE;
 const ACCUM_HEIGHT = DISPLAY_HEIGHT * SUPERSAMPLE;
@@ -2302,6 +2305,55 @@ function buildBenchFourDColor(
 /** Build whichever dimension's engines a scenario calls for. */
 function buildEngines(def: ScenarioDef): ScenarioEngines {
   return def.kind === "3d" ? prepare3D(def) : prepare4D(def);
+}
+
+/** Production warmup, accumulation, staging readback and both downsample
+ * passes, through each emitted program (3D/4D, plain/tiled). This is a
+ * separate liveness gate; the agreement roster and its budgets stay intact. */
+async function runBackendSmoke(): Promise<
+  NonNullable<BenchResults["backendSmoke"]>
+> {
+  const start = performance.now();
+  const scenarios: string[] = [];
+  for (const kind of ["3d", "4d"] as const) {
+    for (const tiled of [false, true]) {
+      const def = SCENARIOS.find(
+        (s) => s.kind === kind && Boolean(s.pointTilingPlan) === tiled,
+      );
+      if (!def)
+        throw new Error(
+          `Missing backend smoke program: ${kind}, tiled=${String(tiled)}`,
+        );
+      window.__BENCH_ACTIVE__ = `backend-smoke: ${def.name}`;
+      const backend = await buildEngines(def).createBackend();
+      try {
+        if (backend.kind !== "gpu" || !backend.snapshotDisplay)
+          throw new Error("GPU backend/downsample unavailable");
+        if ((await backend.accumulate(1)) < 1)
+          throw new Error("GPU retired no iterations");
+        const full = await backend.snapshot();
+        if (!(full.hitMass > 0))
+          throw new Error(`Empty GPU readback: ${def.name}`);
+        const display = await backend.snapshotDisplay(
+          createFlameHistogram(DISPLAY_WIDTH, DISPLAY_HEIGHT),
+        );
+        const expected = downsampleFlame(
+          full,
+          DISPLAY_WIDTH,
+          DISPLAY_HEIGHT,
+          FLAME_FILTER_RADIUS,
+        );
+        if (!compareDisplayDownsample(display, expected).pass)
+          throw new Error(`GPU smoke downsample disagreement: ${def.name}`);
+        scenarios.push(def.name);
+        console.log(`[gpu-bench] backend smoke passed: ${def.name}`);
+      } finally {
+        backend.destroy();
+      }
+    }
+  }
+  window.__BENCH_ACTIVE__ = null;
+  return { pass: true, scenarios, wallMs: performance.now() - start };
 }
 
 // ---------------------------------------------------------------------------
@@ -17248,11 +17300,21 @@ async function main(): Promise<void> {
           .filter((s) => s.length > 0),
       )
     : null;
+  if (
+    filterNames &&
+    [...filterNames].some((name) => !SCENARIOS.some((s) => s.name === name))
+  ) {
+    throw new Error("Unknown scenario name; refusing partial coverage");
+  }
   // The shard applies AFTER any name filter, so the two compose: `?shard=`
   // alone splits the full sweep (the CI case), and `?scenarios=a,b,c&shard=`
   // splits a hand-picked subset when reproducing one shard locally.
   const activeScenarios = applyScenarioShard(
-    filterNames ? SCENARIOS.filter((s) => filterNames.has(s.name)) : SCENARIOS,
+    BACKEND_SMOKE
+      ? []
+      : filterNames
+        ? SCENARIOS.filter((s) => filterNames.has(s.name))
+        : SCENARIOS,
     params.get("shard"),
   );
 
@@ -17418,7 +17480,12 @@ async function main(): Promise<void> {
   renderResults();
 
   if (autorun) {
-    await runAll();
+    if (BACKEND_SMOKE) {
+      benchResults.backendSmoke = await runBackendSmoke();
+      renderResults();
+    } else {
+      await runAll();
+    }
     window.__BENCH_DONE__ = true;
   }
 }

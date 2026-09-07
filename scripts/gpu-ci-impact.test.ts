@@ -1,0 +1,168 @@
+import { readFileSync } from "node:fs";
+import {
+  dependencyClosure,
+  fullMatrix,
+  scenarioRoster,
+  selectImpact,
+} from "./gpu-ci-impact";
+import type { SourceTree } from "./gpu-ci-impact";
+import { applyScenarioShard } from "../src/app/gpu-bench/shard";
+
+const roots = ["src/bench.ts"];
+function tree(changes: Record<string, string | null> = {}): SourceTree {
+  const files: Record<string, string> = {
+    "package.json": '{"dependencies":{"three":"1"}}',
+    "src/bench.ts": 'import "./gpu"; import "./gpu4";',
+    "src/gpu.ts": 'export * from "./math";',
+    "src/gpu4.ts": 'import type { Params } from "./wire";',
+    "src/math.ts": 'import "./wire";',
+    "src/wire.ts": "export interface Params { x: number }",
+    "src/panel.ts": "export const label = 'hello';",
+    "docs/guide.md": "Guide",
+    "src/texture.json": "[]",
+  };
+  for (const [file, source] of Object.entries(changes)) {
+    if (source === null) delete files[file];
+    else files[file] = source;
+  }
+  return {
+    files: new Set(Object.keys(files)),
+    read: (file) => {
+      if (!(file in files)) throw new Error(`Missing ${file}`);
+      return files[file];
+    },
+  };
+}
+
+describe("GPU impact policy", () => {
+  it("allows an existing independent panel edit without GPU work", () => {
+    expect(
+      selectImpact(
+        tree(),
+        tree({ "src/panel.ts": "export const label = 'world';" }),
+        ["src/panel.ts"],
+        roots,
+      ).full,
+    ).toBe(false);
+  });
+  it.each(["src/gpu.ts", "src/gpu4.ts", "src/math.ts", "src/wire.ts"])(
+    "covers both halves for %s, including transitive type dependencies",
+    (file) => {
+      expect(selectImpact(tree(), tree(), [file], roots).groups).toEqual([
+        "flame-3d",
+        "flame-4d",
+      ]);
+    },
+  );
+  it("retains dependencies removed in the head graph", () => {
+    expect(
+      selectImpact(
+        tree(),
+        tree({ "src/math.ts": "", "src/gpu4.ts": "" }),
+        ["src/wire.ts"],
+        roots,
+      ).full,
+    ).toBe(true);
+  });
+  it("follows literal dynamic imports, re-exports and URL assets", () => {
+    const graph = tree({
+      "src/bench.ts":
+        'export * from "./gpu"; void import("./gpu4"); new URL("./texture.json", import.meta.url);',
+    });
+    expect(dependencyClosure(graph, roots)).toContain("src/texture.json");
+    expect(dependencyClosure(graph, roots)).toContain("src/wire.ts");
+  });
+  it.each<Record<string, string | null>>([
+    { "src/new.ts": "export const x = 1;" },
+    { "src/panel.ts": null },
+    { "package.json": '{"dependencies":{"three":"2"}}' },
+    { "vite.config.ts": "export default {};" },
+    { "src/texture.json": "[1]" },
+  ])("fails closed for new/deleted/unclassified files: %j", (changes) => {
+    expect(
+      selectImpact(tree(), tree(changes), Object.keys(changes), roots).full,
+    ).toBe(true);
+  });
+  it("fails closed for a new dependency from an independent file", () => {
+    expect(
+      selectImpact(
+        tree(),
+        tree({ "src/panel.ts": 'import "./wire";' }),
+        ["src/panel.ts"],
+        roots,
+      ).full,
+    ).toBe(true);
+  });
+  it.each([
+    "import(name)",
+    'import.meta.glob("./*.ts")',
+    'import "./missing"',
+    'import "unregistered-package"',
+    "export const = ;",
+  ])("fails closed when a dependency cannot be established: %s", (source) => {
+    expect(
+      selectImpact(
+        tree(),
+        tree({ "src/gpu.ts": source }),
+        ["src/panel.ts"],
+        roots,
+      ).full,
+    ).toBe(true);
+  });
+  it("skips ordinary documentation but follows imported documentation", () => {
+    expect(selectImpact(tree(), tree(), ["docs/guide.md"], roots).full).toBe(
+      false,
+    );
+    const imported = tree({ "src/bench.ts": 'import "../docs/guide.md?raw";' });
+    expect(
+      selectImpact(imported, imported, ["docs/guide.md"], roots).full,
+    ).toBe(true);
+  });
+  it("rejects a missing root even for an otherwise inert change", () => {
+    expect(
+      selectImpact(
+        tree(),
+        tree({ "src/bench.ts": null }),
+        ["docs/guide.md"],
+        roots,
+      ).full,
+    ).toBe(true);
+  });
+});
+
+describe("full scenario union", () => {
+  const source = readFileSync(
+    new URL("../src/app/gpu-bench/main.ts", import.meta.url),
+    "utf8",
+  );
+  it("partitions the actual page roster exactly as the browser does", () => {
+    const roster = scenarioRoster(source);
+    const matrix = fullMatrix(roster);
+    expect(matrix.flatMap((row) => row.scenarios).sort()).toEqual(
+      roster.map((s) => s.name).sort(),
+    );
+    for (const row of matrix)
+      expect(row.scenarios).toEqual(
+        applyScenarioShard(roster, `${row.shard}/${row.total}`).map(
+          (s) => s.name,
+        ),
+      );
+  });
+  it("includes a newly appended scenario without editing workflow lists", () => {
+    const roster = [
+      ...scenarioRoster(source),
+      { name: "future-4d", kind: "4d" },
+    ];
+    expect(fullMatrix(roster).flatMap((row) => row.scenarios)).toContain(
+      "future-4d",
+    );
+  });
+  it.each([
+    "const SCENARIOS = makeScenarios();",
+    'const SCENARIOS = [{name:"only",kind:"3d"}];',
+    'const SCENARIOS = [{name:"same",kind:"3d"},{name:"same",kind:"4d"}];',
+    "const SCENARIOS = [...additionalScenarios];",
+  ])("refuses an uncheckable roster: %s", (roster) => {
+    expect(() => scenarioRoster(roster)).toThrow();
+  });
+});

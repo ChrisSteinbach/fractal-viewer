@@ -1,22 +1,11 @@
 /**
  * Splitting the GPU-agreement scenario sweep across CI jobs.
  *
- * The agreement gate is ~18 min against 1m50s for the next-slowest CI job,
- * so it is the whole critical path; four shards cut that to roughly setup
- * plus a quarter of the sweep, for about 1.3x the runner-minutes (setup is
- * what gets duplicated, and the workflow caches the browser download).
- *
- * THIS PARTITIONS THE SCENARIO LIST ITSELF, which is the whole reason it
- * lives here rather than as a matrix of `?scenarios=` name lists in the
- * workflow. A hand-written matrix fails OPEN: add a fifteenth scenario,
- * forget to add it to a shard, and it is silently never verified again —
- * the same failure mode `.github/workflows/gpu-agreement.yml`'s fail-safe
- * `paths-ignore` filter exists to avoid, and the one `gpu-flame-bench.mjs`
- * refuses when it exits non-zero on a "skipped" verdict rather than letting
- * a runner that lost its WebGPU adapter keep passing while pinning nothing.
- * Partitioning by INDEX makes the union of the shards the full list BY
- * CONSTRUCTION, so a new entry is picked up by whichever shard its index
- * lands in without anyone touching CI.
+ * The workflow selector reads the page's own roster and emits this same
+ * partition. Its tests compare the complete union and each shard with this
+ * function, including roster growth. Impact selection is conservative across
+ * both dimensions; uncertainty selects all scenarios. Policy, measured costs
+ * and the partition history live in docs/gpu-agreement-ci.md.
  *
  * ROUND-ROBIN (`index % n`), not contiguous blocks: the scenarios differ
  * several-fold in cost (a parameterized fold zoo against `sierpinski`), and
