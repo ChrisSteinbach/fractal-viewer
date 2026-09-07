@@ -78,6 +78,7 @@ import type { BulbDE } from "../../fractal/bulb-de";
 import {
   analyzeEscapeSystem,
   buildEscapeDE,
+  ESCAPE_LINK_SPHEREFOLD,
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
   estimateEscapeDistance,
@@ -3244,24 +3245,30 @@ interface SurfaceUnprojectRow {
   silhouetteFlips: number;
   /** The exclusion rule, verbatim, so the row is self-reporting. */
   boundaryFlipRule: string;
-  /** Max |gpuT − cpuT| over rays where BOTH sides hit — grazes included,
-   * so a nonzero {@link hitTGrazes} row legitimately shows a large max. */
+  /** Max |gpuT − cpuT| over rays where BOTH sides hit — corridor matches
+   * included, so a nonzero match count can legitimately show a large max. */
   maxAbsT: number;
-  /** Both-hit rays over the t tolerance whose GPU endpoint the CPU oracle
-   * CONFIRMS on-surface (see {@link boundaryFlipRule}) — silhouette grazes
-   * resolved to a different sheet: at a graze one f32 trajectory fires
-   * `d < eps` on the near sheet where the other skims past at `d ≥ eps`
-   * and hits genuinely deeper (measured: 1 ray of 660 hits on Iris Xe,
-   * Δt 2e-2). Excluded from the gate. */
-  hitTGrazes: number;
+  /** Rays where both sides hit but their sampled terminal t differs, while
+   * the strict CPU oracle confirms some on-ray `d < eps` point inside the
+   * existing t tolerance. This directly compares output geometry rather
+   * than requiring a discontinuous DE's marcher to sample the same sheet. */
+  hitTCorridorMatches: number;
+  /** Smaller of the hard-seven and three-percent caps for corridor matches. */
+  hitTCorridorCap: number;
+  /** Rays on which both CPU and GPU report HIT. */
+  bothHits: number;
   /** Both-hit rays whose |gpuT − cpuT| exceeded the eval gate's tolerance
    * formula applied to the hit distance —
    * `max(2e-4·R, 2e-3·max(|cpuT|, 0.05·R))` — AND whose GPU endpoint the
    * oracle could NOT confirm on-surface: real disagreement. */
   hitTFailures: number;
-  /** `(statusMismatches − boundaryFlips − silhouetteFlips) + hitTFailures` —
-   * any nonzero fails the section. */
+  /** Unexcluded status/depth failures plus any corridor matches over their
+   * prevalence cap; any nonzero fails the section. */
   failures: number;
+  /** Per-ray evidence persisted in JSON as well as logged. Failure and
+   * informational diagnostics have separate caps so exclusions cannot hide
+   * the first real failure. */
+  diagnostics: string[];
   gpuHits: number;
   cpuHits: number;
   compileMs: number;
@@ -3522,9 +3529,9 @@ interface SurfaceDeResults {
   /** Leg A (gating) — absent until the leg runs; SkippedResult when
    * it could not run (the error is also in notes, and the verdict fails). */
   marchUnproject?: SurfaceUnprojectRow | SkippedResult;
-  /** Stage C: leg A over the lens field class
-   * (lensMandelboxOverAffine) — the affine core under the 81-branch
-   * mandelbox lens, marched by the app's exact ray derivation. Gates like
+  /** Stage C: leg A over the post-bearing lens field class
+   * (lensBoxfoldPostOverAffine) — a posted affine core under a posted
+   * boxfold lens, marched by the app's exact ray derivation. Gates like
    * {@link marchUnproject}. */
   marchUnprojectLens?: SurfaceUnprojectRow | SkippedResult;
   /** balloonMarch: leg A over the balloon inverted-union — one fold
@@ -3564,8 +3571,8 @@ interface SurfaceDeResults {
    * must finish with a clean HIT/MISS terminal mix. */
   computeFrameChaos?: SurfaceComputeFrameRow | SkippedResult;
   /** Stage C: leg B over the lens field class — the PRODUCTION
-   * SurfaceComputeRenderer on lensMandelboxOverAffine (affine core +
-   * 81-branch mandelbox lens, branch-scaled priors). Gates like
+   * SurfaceComputeRenderer on lensBoxfoldPostOverAffine (posted affine
+   * core + posted boxfold lens, branch-scaled priors). Gates like
    * {@link computeFrame} (zero hits on real hardware fails). */
   computeFrameLens?: SurfaceComputeFrameRow | SkippedResult;
   /** Tier-3 mesh condensation through the PRODUCTION renderer: Star Foundry
@@ -3692,12 +3699,15 @@ const SURFACE_MARCH_STEPS = 160;
 const SURFACE_MISMATCH_DIAG_CAP = 8;
 /** How far the CPU march's closest approach may sit from the acceptance
  * threshold — as a factor either side of `d / eps == 1` — and still count
- * as a silhouette flip rather than a real disagreement. Matches
- * the `1.5·eps` convention the both-hit graze branch already uses, and
+ * as a silhouette flip rather than a real disagreement. The 1.5 band
  * discriminates sharply: the two measured flips read 0.994 and 1.02, while
  * a solid hit the other side never approached, or a genuinely empty ray,
  * reads orders of magnitude away. */
 const SURFACE_SILHOUETTE_RATIO_BAND = 1.5;
+/** Direct local-output matches never get enough prevalence to hide a
+ * systematic divergence. */
+const SURFACE_HIT_T_CORRIDOR_CAP_FRACTION = 0.03;
+const SURFACE_HIT_T_CORRIDOR_HARD_CAP = 7;
 
 /** poseRays pose (scripts/fold-cost-split.harness.ts): off-axis orbit
  * angles deliberately not aligned to any coordinate plane or mandelboxKifs's
@@ -4008,6 +4018,27 @@ const SURFACE_SHADE_AB_NEAR_DIST_FACTOR = 1.4;
  * apart. */
 const SURFACE_SHADE_AB_DIFF_THRESHOLD = 8;
 
+/** One small rigid post-affine shared by the surface agreement fixtures in
+ * both dimensions. Its quarter-turn is not self-inverse and its translation
+ * is nonzero, so the WGSL rows exercise matrix orientation, inverse descent,
+ * and forward escape application without changing contraction or stiffness.
+ * Every coefficient is exactly representable in f32: this gate is about the
+ * post stage, not decimal-literal drift compounded by a chaotic orbit.
+ * The 4D builders lift it with an identity w row/column, which exercises the
+ * real document-to-GpuMap4 path rather than a hand-built kernel record. */
+const SURFACE_BENCH_POST: NonNullable<Transform["post"]> = {
+  m: [0, 1, 0, -1, 0, 0, 0, 0, 1],
+  t: [0.03125, -0.015625, 0.0078125],
+};
+
+/** Add the post to one existing fixed fixture without adding another system
+ * (and therefore another 700-query agreement row) to the already-long gate. */
+function withSurfaceBenchPost(transforms: Transform[], index = 0): Transform[] {
+  return transforms.map((transform, j) =>
+    j === index ? { ...transform, post: SURFACE_BENCH_POST } : transform,
+  );
+}
+
 /** Both maps pure `spherefold` — the hardest void-false-hit profile in the
  * pure-fold set. Mirrors scripts/harness-profiles.ts — keep in sync
  * (importing from scripts/ into the Vite page is off-limits). */
@@ -4167,12 +4198,14 @@ function surfaceAffineTwistFinal(): Transform {
     position: [0.12, -0.08, 0.05],
     rotation: [0.25, 0.15, -0.3],
     scale: [0.85, 0.85, 0.85],
+    post: SURFACE_BENCH_POST,
   };
 }
 
 /** Stage B (M1a): the LENS_HASH archetype's FINAL —
- * scripts/surface-fold.verify.mjs:52's pure-fold lens verbatim (boxfold
- * weight 0.55 over a rotated, offset, shrunk affine part). Sits over
+ * scripts/surface-fold.verify.mjs:52's pure-fold lens affine/fold fields
+ * verbatim (boxfold weight 0.55 over a rotated, offset, shrunk affine part),
+ * plus {@link SURFACE_BENCH_POST} to keep the final post stage live. Sits over
  * {@link surfaceAffineTetra}, so the M1 row pins the lens wrapper around
  * the SAME affine core M0's affineTetra row pins bare. */
 function surfaceLensBoxfoldFinal(): Transform {
@@ -4182,6 +4215,7 @@ function surfaceLensBoxfoldFinal(): Transform {
     rotation: [0.2, 0.3, 0.1],
     scale: [0.9, 0.9, 0.9],
     variations: [{ type: "boxfold", weight: 0.55 }],
+    post: SURFACE_BENCH_POST,
   };
 }
 
@@ -4398,6 +4432,7 @@ function surfaceAff4Final(): Transform {
     rotation: [0.3, -0.2, 0.1],
     scale: [0.7, 0.7, 0.7],
     w: { position: -0.05, rotation: { yw: 0.2 } },
+    post: SURFACE_BENCH_POST,
   };
 }
 
@@ -4515,7 +4550,7 @@ function surfaceFold4Parameterized(): Transform[] {
  * `boxfoldFinal4` verbatim (same numbers, same live w block): bench and
  * CPU tests pin the identical lens, the same discipline
  * `surfaceFold4Boxfold`'s `pureBoxfoldPair4` copy above already follows.
- * Reused over BOTH an affine base (`lens4BoxOverAffine`, and re-viewed
+ * Reused over BOTH an affine base (`lens4BoxPostOverAffine`, and re-viewed
  * through `aff4Slab`'s own slab as `lens4Slab`) and a fold base
  * (`lens4BoxOverFold`, "the same boxfold final" over `fold4Boxfold`'s own
  * pair) rather than forking a second fixture per base — one lens, three
@@ -4529,6 +4564,7 @@ function surfaceLens4BoxfoldFinal(): Transform {
     scale: [0.9, 0.9, 0.9],
     w: { position: 0.1, rotation: { yw: 0.2 } },
     variations: [{ type: "boxfold", weight: 0.55 }],
+    post: SURFACE_BENCH_POST,
   };
 }
 
@@ -4542,7 +4578,9 @@ function surfaceLens4BoxfoldFinal(): Transform {
  * leg's field-class/worst-case role rather than reuse it verbatim — a
  * growing lens is also the shape that most exercises the
  * `surface4ToleranceR` fix above (its `visibleBoundingRadius` clears its
- * `boundingRadius` by a wide margin). */
+ * `boundingRadius` by a wide margin). It carries the shared post so every
+ * member of the one-pipeline lens4 family has the same compile-gated params
+ * tail; 3D's separate boxfold row is the march-stable posted control. */
 function surfaceLens4MandelboxFinal(): Transform {
   return {
     id: 198,
@@ -4551,6 +4589,7 @@ function surfaceLens4MandelboxFinal(): Transform {
     scale: [0.85, 0.85, 0.85],
     w: { position: -0.08, rotation: { yw: -0.2 } },
     variations: [{ type: "mandelbox", weight: 1.1 }],
+    post: SURFACE_BENCH_POST,
   };
 }
 
@@ -4988,7 +5027,7 @@ function escape4Queries(
  * M0's `foldFinal ? visibleBoundingRadius : boundingRadius` analog one
  * dimension up. ONE definition, shared by the query generator and the
  * comparator so the two cannot drift. Checks BOTH lens shapes
- * (`de.final`, the plain affine lens M3's `aff4Final` carries, and
+ * (`de.final`, the plain affine lens M3's `aff4PostFinal` carries, and
  * `de.foldFinal`, the fold lens the M5 leg's lens4
  * systems carry — the two are mutually exclusive on any built DE, so this
  * is never ambiguous): `visibleBoundingRadius` already equals
@@ -5211,6 +5250,13 @@ function affine4Queries(
  * estimators there is no min-of-several-chains to absorb it) from actual
  * kernel arithmetic bugs. See `compareSurfaceForwardAgreement`'s doc for how
  * the gap between the two oracles is used.
+ *
+ * POST REGRESSION CENSUS (the first posted spherefold run): omitting the
+ * forward post from this twin excluded 286/700 while the GPU had zero numeric
+ * failures — 131/400 uniform, 55/200 bisection and 100/100 origin-cluster
+ * queries, all rejected by the BASE twin before any one-ULP neighbor was
+ * considered. Applying the authored post below returns that row to 0/700.
+ * That class shape proves a stale oracle, not a chaotic spherefold field.
  */
 function trapGeometryDistanceF32(
   trap: ResolvedShapeTrap,
@@ -5237,6 +5283,13 @@ function estimateEscapeDistanceF32(
   const links = de.links.map((link) => ({
     m: link.m.map(f),
     t: link.t.map(f),
+    // The escape packer transfers the FORWARD post, unlike the descent
+    // cores' inverse-post lanes. Keep it inside this f32 twin too: omitting
+    // it makes the stability classifier compare a different authored
+    // system against the f64 oracle, then misreport the resulting drift as
+    // chaotic-orbit exclusions before the GPU is ever consulted.
+    postM: link.postM?.map(f) ?? null,
+    postT: link.postT?.map(f) ?? null,
     w: f(link.w),
     g: f(link.derivGrowth),
     kind: link.kind,
@@ -5367,9 +5420,26 @@ function estimateEscapeDistanceF32(
       yy = ny;
       yz = nz;
     }
-    vx = f(f(link.w * yx) + q[0]);
-    vy = f(f(link.w * yy) + q[1]);
-    vz = f(f(link.w * yz) + q[2]);
+    // P ∘ (w·V) ∘ A, then the Mandelbrot +q offset — the production
+    // WGSL's `linkPostForward(L, L.p0.y * y) + q`, term for term. The
+    // absent-post arm stays the old value-exact weight fold-in.
+    if (link.postM !== null && link.postT !== null) {
+      const pm = link.postM;
+      const pt = link.postT;
+      const wx = f(link.w * yx);
+      const wy = f(link.w * yy);
+      const wz = f(link.w * yz);
+      const fx = f(f(f(f(pm[0] * wx) + f(pm[1] * wy)) + f(pm[2] * wz)) + pt[0]);
+      const fy = f(f(f(f(pm[3] * wx) + f(pm[4] * wy)) + f(pm[5] * wz)) + pt[1]);
+      const fz = f(f(f(f(pm[6] * wx) + f(pm[7] * wy)) + f(pm[8] * wz)) + pt[2]);
+      vx = f(fx + q[0]);
+      vy = f(fy + q[1]);
+      vz = f(fz + q[2]);
+    } else {
+      vx = f(f(link.w * yx) + q[0]);
+      vy = f(f(link.w * yy) + q[1]);
+      vz = f(f(link.w * yz) + q[2]);
+    }
     dr = f(f(f(link.g * localL) * dr) + 1);
     r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
     if (
@@ -5479,10 +5549,8 @@ function liftEscape4F32(view4: SurfaceGpu4View, q: Vec3): Vec4 {
  * their shipped count:
  *
  *   mutation                                     row that catches it
- *   the classic fold lengths instead of the      esc4ChainParameterized
- *     link's own                                   78 -> 301
- *   the HEAD link's lengths for every link       esc4ChainParameterized
- *                                                  78 -> 248
+ *   omit the link's forward post                 esc4SpherefoldPost
+ *                                                  0 -> 290
  *   `x² − y² − z²` for the quaternion square     esc4ChainQsquare
  *     (the 3D restriction, `w` dropped)            58 -> 203
  *   the box fold reflecting x/y/z only           ALL SIX rows
@@ -5516,6 +5584,11 @@ function estimateEscapeDistance4F32(
   const links = de.links.map((link) => ({
     m: link.m.map(f),
     t: link.t.map(f),
+    // Forward post rows/translation, matching packSurfaceEscape4GpuMaps.
+    // This is part of the orbit the classifier must model, not metadata:
+    // dropping it compares an unposted twin with the posted f64 oracle.
+    postM: link.postM?.map(f) ?? null,
+    postT: link.postT?.map(f) ?? null,
     w: f(link.w),
     g: f(link.derivGrowth),
     kind: link.kind,
@@ -5625,10 +5698,45 @@ function estimateEscapeDistance4F32(
       yz = nz;
       yw = nw;
     }
-    vx = f(f(link.w * yx) + q[0]);
-    vy = f(f(link.w * yy) + q[1]);
-    vz = f(f(link.w * yz) + q[2]);
-    vw = f(f(link.w * yw) + q[3]);
+    // The production WGSL's `linkPostForward4(L, L.p0.y * y) + q`, with
+    // the same row-major post and f32 operation boundaries. The no-post
+    // arm remains the exact pre-existing weight fold-in.
+    if (link.postM !== null && link.postT !== null) {
+      const pm = link.postM;
+      const pt = link.postT;
+      const wx = f(link.w * yx);
+      const wy = f(link.w * yy);
+      const wz = f(link.w * yz);
+      const ww = f(link.w * yw);
+      const fx = f(
+        f(f(f(f(pm[0] * wx) + f(pm[1] * wy)) + f(pm[2] * wz)) + f(pm[3] * ww)) +
+          pt[0],
+      );
+      const fy = f(
+        f(f(f(f(pm[4] * wx) + f(pm[5] * wy)) + f(pm[6] * wz)) + f(pm[7] * ww)) +
+          pt[1],
+      );
+      const fz = f(
+        f(
+          f(f(f(pm[8] * wx) + f(pm[9] * wy)) + f(pm[10] * wz)) + f(pm[11] * ww),
+        ) + pt[2],
+      );
+      const fw = f(
+        f(
+          f(f(f(pm[12] * wx) + f(pm[13] * wy)) + f(pm[14] * wz)) +
+            f(pm[15] * ww),
+        ) + pt[3],
+      );
+      vx = f(fx + q[0]);
+      vy = f(fy + q[1]);
+      vz = f(fz + q[2]);
+      vw = f(fw + q[3]);
+    } else {
+      vx = f(f(link.w * yx) + q[0]);
+      vy = f(f(link.w * yy) + q[1]);
+      vz = f(f(link.w * yz) + q[2]);
+      vw = f(f(link.w * yw) + q[3]);
+    }
     dr = f(f(f(link.g * localL) * dr) + 1);
     r = f(
       Math.sqrt(f(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz)) + f(vw * vw))),
@@ -6028,6 +6136,31 @@ function surfaceUnprojectRay(
   return [f(dx / len), f(dy / len), f(dz / len)];
 }
 
+/** Legal interval of the production march gate on one ray. */
+function surfaceCpuMarchInterval(
+  de: SurfaceDE,
+  ro: Vec3,
+  rd: Vec3,
+  balloon: SurfaceCpuBalloon | null,
+): { tEnter: number; tFar: number } | null {
+  if (balloon) {
+    const c = balloon.b.center;
+    return {
+      tEnter: 0,
+      tFar: Math.hypot(ro[0] - c[0], ro[1] - c[1], ro[2] - c[2]) + balloon.far,
+    };
+  }
+  const radius = de.visibleBoundingRadius * 1.02;
+  const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
+  const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
+  const disc = b * b - c;
+  if (disc < 0) return null;
+  const sq = Math.sqrt(disc);
+  const tFar = -b + sq;
+  if (tFar <= 0) return null;
+  return { tEnter: Math.max(-b - sq, 0), tFar };
+}
+
 /**
  * {@link surfaceCpuMarch} with the terminal CONTRACT surfaced — status +
  * final `t`, mirroring marchRays' persisted-state semantics exactly (one
@@ -6047,26 +6180,10 @@ function surfaceCpuMarchState(
   maxSteps: number,
   balloon: SurfaceCpuBalloon | null = null,
 ): { status: number; t: number } {
-  let t: number;
-  let tFar: number;
-  if (balloon) {
-    // The balloon march entry, the kernel's marchGate mirrored
-    // — no visible-sphere gate (every ray can hit the enclosing shell),
-    // t = 0 start, far horizon |ro − c| + far; the DE below is the union.
-    const c = balloon.b.center;
-    tFar = Math.hypot(ro[0] - c[0], ro[1] - c[1], ro[2] - c[2]) + balloon.far;
-    t = 0;
-  } else {
-    const radius = de.visibleBoundingRadius * 1.02;
-    const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
-    const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
-    const disc = b * b - c;
-    if (disc < 0) return { status: SURFACE_GPU_RAY_MISS, t: -1 };
-    const sq = Math.sqrt(disc);
-    tFar = -b + sq;
-    if (tFar <= 0) return { status: SURFACE_GPU_RAY_MISS, t: -1 };
-    t = Math.max(-b - sq, 0);
-  }
+  const interval = surfaceCpuMarchInterval(de, ro, rd, balloon);
+  if (!interval) return { status: SURFACE_GPU_RAY_MISS, t: -1 };
+  let t = interval.tEnter;
+  const { tFar } = interval;
   let steps = 0;
   for (;;) {
     if (t > tFar) return { status: SURFACE_GPU_RAY_MISS, t };
@@ -6117,25 +6234,10 @@ function surfaceCpuMarchApproach(
   maxSteps: number,
   balloon: SurfaceCpuBalloon | null = null,
 ): { minRatio: number; tAtMin: number } {
-  let t: number;
-  let tFar: number;
-  if (balloon) {
-    // The balloon entry, exactly surfaceCpuMarchState's —
-    // the silhouette classifier must walk the same trajectory it judges.
-    const c = balloon.b.center;
-    tFar = Math.hypot(ro[0] - c[0], ro[1] - c[1], ro[2] - c[2]) + balloon.far;
-    t = 0;
-  } else {
-    const radius = de.visibleBoundingRadius * 1.02;
-    const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
-    const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
-    const disc = b * b - c;
-    if (disc < 0) return { minRatio: Infinity, tAtMin: -1 };
-    const sq = Math.sqrt(disc);
-    tFar = -b + sq;
-    if (tFar <= 0) return { minRatio: Infinity, tAtMin: -1 };
-    t = Math.max(-b - sq, 0);
-  }
+  const interval = surfaceCpuMarchInterval(de, ro, rd, balloon);
+  if (!interval) return { minRatio: Infinity, tAtMin: -1 };
+  let t = interval.tEnter;
+  const { tFar } = interval;
   let minRatio = Infinity;
   let tAtMin = -1;
   for (let steps = 0; steps < maxSteps && t <= tFar; steps++) {
@@ -6159,6 +6261,52 @@ function surfaceCpuMarchApproach(
 }
 
 /**
+ * Pointwise CPU-oracle search inside an already-authorized hit-distance
+ * corridor, clamped to the legal production march interval. This directly
+ * tests output geometry: one of 65 evenly spaced points must satisfy the
+ * ordinary strict `d < eps(t)` condition. It does not claim why two marchers
+ * sampled different points, or widen either the t tolerance or hit test.
+ *
+ * Called only for the handful of both-hit rays already outside the t gate,
+ * so the deliberately dense oracle scan is immaterial to benchmark timing.
+ */
+function surfaceCpuHitTCorridor(
+  de: SurfaceDE,
+  ro: Vec3,
+  rd: Vec3,
+  pixelEps: number,
+  center: number,
+  radius: number,
+  balloon: SurfaceCpuBalloon | null = null,
+): { hit: boolean; minRatio: number; tAtMin: number } {
+  const segments = 64;
+  const interval = surfaceCpuMarchInterval(de, ro, rd, balloon);
+  if (!interval) return { hit: false, minRatio: Infinity, tAtMin: -1 };
+  const lo = Math.max(interval.tEnter, center - radius);
+  const hi = Math.min(interval.tFar, center + radius);
+  if (lo > hi) return { hit: false, minRatio: Infinity, tAtMin: -1 };
+  let minRatio = Infinity;
+  let tAtMin = lo;
+  for (let i = 0; i <= segments; i++) {
+    const t = lo + ((hi - lo) * i) / segments;
+    const eps = Math.max(
+      pixelEps * t,
+      de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
+    );
+    const p: Vec3 = [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t];
+    const d = balloon
+      ? surfaceBalloonMarchEstimate(de, balloon, p, eps)
+      : surfaceMarchEstimate(de, p, eps);
+    const ratio = d / eps;
+    if (ratio < minRatio) {
+      minRatio = ratio;
+      tAtMin = t;
+    }
+  }
+  return { hit: minRatio < 1, minRatio, tAtMin };
+}
+
+/**
  * What a status mismatch the boundary rule did not cover prints
  * about ITSELF — whether it went on to be excluded as a silhouette flip or
  * to fail the gate (the caller tags which). The aggregate counters name a
@@ -6169,9 +6317,9 @@ function surfaceCpuMarchApproach(
  * instead:
  *
  * - `oracle` — the CPU oracle's distance at the HITTING side's endpoint,
- *   relative to that endpoint's own acceptance eps (the same question the
- *   both-hit graze branch asks). Below ~1.5 the hitting side stopped on a
- *   genuine surface point, so the other side merely stepped past it.
+ *   relative to that endpoint's own acceptance eps. The corridor test may
+ *   still confirm nearby output geometry when this single point lies across
+ *   a discontinuity.
  * - `approach` — the caller's already-computed {@link surfaceCpuMarchApproach}
  *   result (closest approach in eps units), supplied rather than recomputed
  *   here — the caller already needed it for the silhouetteFlips test. Just
@@ -6189,6 +6337,7 @@ function describeSurfaceUnprojectMismatch(
     py: number;
     gpuStatus: number;
     gpuT: number;
+    gpuLastD?: number;
     cpuStatus: number;
     cpuT: number;
     tol: number;
@@ -6212,21 +6361,48 @@ function describeSurfaceUnprojectMismatch(
       pixelEps * hitT,
       de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
     );
-    // A balloon hit's endpoint can sit on the SHELL, so the
-    // on-surface question is the union's, not the fractal's alone.
-    const d = balloon
-      ? estimateBalloonDistance(estimateDistance, de, balloon.b, p, eps * 1.5).d
-      : estimateDistance(de, p, eps * 1.5);
+    // A balloon hit's endpoint can sit on the SHELL, so the on-surface
+    // question is the union's, not the fractal's alone. Route the core the
+    // same way the march does: fold-free systems use the refined ladder.
+    const distanceAt = (q: Vec3): number =>
+      balloon
+        ? surfaceBalloonMarchEstimate(de, balloon, q, eps)
+        : surfaceMarchEstimate(de, q, eps);
+    const d = distanceAt(p);
+    // The kernel constructs p in f32. Report both legal host-side models of
+    // that expression as diagnostic evidence: implementations may contract
+    // `ro + rd * t` into an FMA, while the split form rounds the product
+    // first. The f64 reconstruction above can lie on another side of a thin
+    // fold boundary even when the stored ray/t agree exactly.
+    const pFused = p.map((v) => Math.fround(v)) as Vec3;
+    const pSplit = ro.map((v, i) =>
+      Math.fround(v + Math.fround(rd[i] * hitT)),
+    ) as Vec3;
+    const dFused = distanceAt(pFused);
+    const dSplit = distanceAt(pSplit);
     const side = info.gpuStatus === SURFACE_GPU_RAY_HIT ? "gpu" : "cpu";
     oracle =
       `${side} endpoint d/eps=${(d / eps).toExponential(2)} ` +
-      `(d=${d.toExponential(2)} eps=${eps.toExponential(2)})`;
+      `(f32 fused=${(dFused / eps).toExponential(2)} ` +
+      `split=${(dSplit / eps).toExponential(2)} ` +
+      `d=${d.toExponential(2)} eps=${eps.toExponential(2)})`;
   }
+  const gpuTerminal =
+    info.gpuStatus === SURFACE_GPU_RAY_HIT && info.gpuLastD !== undefined
+      ? (() => {
+          const eps = Math.max(
+            Math.fround(Math.fround(pixelEps) * Math.fround(info.gpuT)),
+            Math.fround(de.boundingRadius * SURFACE_GPU_HIT_FLOOR),
+          );
+          return `gpuTerminalD/eps=${(info.gpuLastD / eps).toExponential(2)} `;
+        })()
+      : "";
   return (
     `ray=${String(info.ray)} px=${String(info.px)},${String(info.py)} ` +
     `gpu=${surfaceRayStatusName(info.gpuStatus)}@t=${info.gpuT.toExponential(4)} ` +
     `cpu=${surfaceRayStatusName(info.cpuStatus)}@t=${info.cpuT.toExponential(4)} ` +
     `|dt|=${Math.abs(info.gpuT - info.cpuT).toExponential(2)} tol=${info.tol.toExponential(2)} ` +
+    gpuTerminal +
     `rd=[${rd.map((v) => v.toFixed(6)).join(",")}] ` +
     `oracle: ${oracle} ` +
     `approach: minD/eps=${approach.minRatio.toExponential(2)}@t=${approach.tAtMin.toExponential(4)}`
@@ -7971,6 +8147,7 @@ async function runSurfaceUnprojectLeg(
     // source (explicit fold core + lens:false are the pinned off state).
     core: sys.core,
     lens: sys.de.foldFinal !== null,
+    lensPost: (sys.de.foldFinal?.postInvM ?? null) !== null,
     balloon: balloonPack !== null,
     width:
       sys.core === "fold"
@@ -8108,9 +8285,10 @@ async function runSurfaceUnprojectLeg(
       "excluded from failures: (a) boundaryFlips — status mismatch with " +
       "|tGpu − tCpu| <= max(2e-4·R, 2e-3·max(|tCpu|, 0.05·R)): same " +
       "trajectory, terminal event reclassified by f32/f64 noise; (b) " +
-      "hitTGrazes — both-hit rays over that t tolerance whose GPU endpoint " +
-      "the CPU oracle confirms on-surface (estimateDistance(ro + rd·tGpu) " +
-      "< 1.5·eps(tGpu)): a silhouette graze resolved to a different sheet; " +
+      "hitTCorridorMatches — both-hit rays over that t tolerance with a " +
+      "strict CPU d < eps point inside the same legal march corridor " +
+      "[tGpu-tol,tGpu+tol], excluded only up to min(7, floor(3% of " +
+      "both-hit rays)); " +
       "(c) silhouetteFlips — one-side-HIT status mismatch whose CPU closest " +
       "approach lands within the hit-t tolerance of the hitting side's t AND " +
       "within 1.5x either side of d/eps == 1: same trajectory, same point, " +
@@ -8131,9 +8309,12 @@ async function runSurfaceUnprojectLeg(
       silhouetteFlips: 0,
       boundaryFlipRule,
       maxAbsT: 0,
-      hitTGrazes: 0,
+      hitTCorridorMatches: 0,
+      hitTCorridorCap: 0,
+      bothHits: 0,
       hitTFailures: 0,
       failures: 0,
+      diagnostics: [],
       gpuHits: 0,
       cpuHits: 0,
       compileMs,
@@ -8180,14 +8361,19 @@ async function runSurfaceUnprojectLeg(
     // can confirm the silhouette rule fired on the rays it was meant to and
     // not on others. Capped: a whole-feature divergence would otherwise
     // print thousands of lines to say one thing.
-    const mismatchDiagnostics: string[] = [];
+    const failureDiagnostics: string[] = [];
+    const informationalDiagnostics: string[] = [];
     for (let ray = 0; ray < rays; ray++) {
       const gpuStatus = outcome.states[ray * 4 + 1];
       const gpuT = outcome.states[ray * 4];
+      const gpuLastD = outcome.states[ray * 4 + 3];
       const cs = cpuStatus[ray];
       const ct = cpuT[ray];
       if (gpuStatus === SURFACE_GPU_RAY_HIT) row.gpuHits++;
       if (cs === SURFACE_GPU_RAY_HIT) row.cpuHits++;
+      if (gpuStatus === SURFACE_GPU_RAY_HIT && cs === SURFACE_GPU_RAY_HIT) {
+        row.bothHits++;
+      }
       const tol = Math.max(2e-4 * R, 2e-3 * Math.max(Math.abs(ct), 0.05 * R));
       if (gpuStatus !== cs) {
         row.statusMismatches++;
@@ -8200,11 +8386,9 @@ async function runSurfaceUnprojectLeg(
           // Ask instead whether the CPU march's own CLOSEST APPROACH (not
           // just its terminal event) lands at the hitting side's t: same
           // trajectory, same point, disagreeing only about which side of
-          // d < eps that point fell on. Measured on real Iris Xe hardware:
-          // GPU MISS / CPU HIT on foldSpherefoldPair (minD/eps=9.94e-1 at
-          // the CPU hit's own t) and GPU HIT / CPU MISS on
-          // lensMandelboxOverAffine (minD/eps=1.02e+0, 2e-4 from the GPU
-          // hit's t) — both silhouette flips, not estimator disagreement.
+          // d < eps that point fell on. Measured real-Iris examples on both
+          // the fold and lens field classes land immediately around
+          // d/eps=1 — silhouette flips, not estimator disagreement.
           const px = ray % width;
           const py = Math.floor(ray / width);
           const rd = surfaceUnprojectRay(invProjView, px, py, width, height);
@@ -8228,8 +8412,11 @@ async function runSurfaceUnprojectLeg(
             approach.minRatio <= SURFACE_SILHOUETTE_RATIO_BAND &&
             approach.minRatio >= 1 / SURFACE_SILHOUETTE_RATIO_BAND;
           if (silhouette) row.silhouetteFlips++;
-          if (mismatchDiagnostics.length < SURFACE_MISMATCH_DIAG_CAP) {
-            mismatchDiagnostics.push(
+          const target = silhouette
+            ? informationalDiagnostics
+            : failureDiagnostics;
+          if (target.length < SURFACE_MISMATCH_DIAG_CAP) {
+            target.push(
               (silhouette ? "silhouette (excluded) " : "FAILS ") +
                 describeSurfaceUnprojectMismatch(
                   sys.de,
@@ -8243,6 +8430,7 @@ async function runSurfaceUnprojectLeg(
                     py,
                     gpuStatus,
                     gpuT,
+                    gpuLastD,
                     cpuStatus: cs,
                     cpuT: ct,
                     tol,
@@ -8256,58 +8444,93 @@ async function runSurfaceUnprojectLeg(
         const err = Math.abs(gpuT - ct);
         if (err > row.maxAbsT) row.maxAbsT = err;
         if (err > tol) {
-          // Divergent both-hit t. At a silhouette graze the two f32
-          // trajectories legitimately resolve different sheets — one
-          // fires d < eps on the near sheet where the other skims past
-          // at d ≥ eps and hits deeper — so before failing, ask the CPU
-          // oracle whether the GPU's endpoint is a genuine surface point
-          // at its own acceptance eps. A phantom reads far above it
-          // (kernel-vs-oracle noise here measures ~1e-5 abs; eps ~1e-2),
-          // so 1.5·eps discriminates sharply and real disagreement still
-          // fails. Measured need: 1 ray of 660 hits on Iris Xe.
+          // Compare output geometry, not the first samples chosen by two
+          // marchers: accept only when the strict CPU d < eps condition
+          // occurs inside the existing legal t corridor.
           const px = ray % width;
           const py = Math.floor(ray / width);
           const rd = surfaceUnprojectRay(invProjView, px, py, width, height);
-          const pGpu: Vec3 = [
-            ro[0] + rd[0] * gpuT,
-            ro[1] + rd[1] * gpuT,
-            ro[2] + rd[2] * gpuT,
-          ];
-          const epsGpu = Math.max(
-            pose.pixelEps * gpuT,
-            R * SURFACE_GPU_HIT_FLOOR,
+          const corridor = surfaceCpuHitTCorridor(
+            sys.de,
+            ro,
+            rd,
+            pose.pixelEps,
+            gpuT,
+            tol,
+            balloonCpu,
           );
-          // Under the balloon a both-hit endpoint can sit on
-          // the SHELL — confirm against the union, not the fractal alone.
-          const dGpu = balloonCpu
-            ? estimateBalloonDistance(
-                estimateDistance,
-                sys.de,
-                balloonCpu.b,
-                pGpu,
-                epsGpu * 1.5,
-              ).d
-            : estimateDistance(sys.de, pGpu, epsGpu * 1.5);
-          if (dGpu < epsGpu * 1.5) {
-            row.hitTGrazes++;
+          if (corridor.hit) {
+            row.hitTCorridorMatches++;
           } else {
             row.hitTFailures++;
           }
+          const target = corridor.hit
+            ? informationalDiagnostics
+            : failureDiagnostics;
+          if (target.length < SURFACE_MISMATCH_DIAG_CAP) {
+            const approach = surfaceCpuMarchApproach(
+              sys.de,
+              ro,
+              rd,
+              pose.pixelEps,
+              SURFACE_MARCH_STEPS,
+              balloonCpu,
+            );
+            target.push(
+              (corridor.hit ? "corridor match " : "FAILS ") +
+                describeSurfaceUnprojectMismatch(
+                  sys.de,
+                  ro,
+                  rd,
+                  pose.pixelEps,
+                  approach,
+                  {
+                    ray,
+                    px,
+                    py,
+                    gpuStatus,
+                    gpuT,
+                    gpuLastD,
+                    cpuStatus: cs,
+                    cpuT: ct,
+                    tol,
+                  },
+                  balloonCpu,
+                ) +
+                ` corridor: minD/eps=${corridor.minRatio.toExponential(2)}` +
+                `@t=${corridor.tAtMin.toExponential(4)}`,
+            );
+          }
         }
       }
+    }
+    row.hitTCorridorCap = Math.min(
+      SURFACE_HIT_T_CORRIDOR_HARD_CAP,
+      Math.floor(row.bothHits * SURFACE_HIT_T_CORRIDOR_CAP_FRACTION),
+    );
+    const corridorOverflow = Math.max(
+      0,
+      row.hitTCorridorMatches - row.hitTCorridorCap,
+    );
+    if (corridorOverflow > 0) {
+      failureDiagnostics.unshift(
+        `FAILS corridor matches ${String(row.hitTCorridorMatches)} exceed cap ${String(row.hitTCorridorCap)}`,
+      );
     }
     row.failures =
       row.statusMismatches -
       row.boundaryFlips -
       row.silhouetteFlips +
-      row.hitTFailures;
-    for (const diag of mismatchDiagnostics) {
+      row.hitTFailures +
+      corridorOverflow;
+    row.diagnostics = [...failureDiagnostics, ...informationalDiagnostics];
+    for (const diag of row.diagnostics) {
       console.info(`[surface-bench] march-unproject: mismatch — ${diag}`);
     }
     console.info(
       `[surface-bench] march-unproject: compared — statusMm=${String(row.statusMismatches)} ` +
         `boundary=${String(row.boundaryFlips)} silhouette=${String(row.silhouetteFlips)} ` +
-        `graze=${String(row.hitTGrazes)} ` +
+        `corridor=${String(row.hitTCorridorMatches)}/${String(row.hitTCorridorCap)} ` +
         `hitTFail=${String(row.hitTFailures)} ` +
         `maxAbsT=${row.maxAbsT.toExponential(2)} fail=${String(row.failures)}`,
     );
@@ -10926,15 +11149,15 @@ async function runSurfaceDeSection(
     // (surfaceSystems=synthetic), and that leg's fixture should not change
     // because a new agreement row arrived.
     {
-      name: "foldParameterizedPair",
-      transforms: surfaceFoldParameterizedPair(),
+      name: "foldParameterizedPostPair",
+      transforms: withSurfaceBenchPost(surfaceFoldParameterizedPair()),
     },
     // M0 — the AFFINE core's systems. Fold-free base maps, so the
     // routing below hands them the refined ladder and its own oracle.
     { name: "affineTetra", transforms: surfaceAffineTetra() },
     {
-      name: "affineTwistFinal",
-      transforms: surfaceAffineTwist(),
+      name: "affineTwistPostFinal",
+      transforms: withSurfaceBenchPost(surfaceAffineTwist()),
       finalTransform: surfaceAffineTwistFinal(),
       symmetry: { order: 3, plane: "xz" },
     },
@@ -10943,8 +11166,8 @@ async function runSurfaceDeSection(
     // below route through `descendLens` on their own, and the M1 leg
     // compiles the kernel with `lens: true` around each system's core.
     {
-      name: "lensBoxfoldOverAffine",
-      transforms: surfaceAffineTetra(),
+      name: "lensBoxfoldPostOverAffine",
+      transforms: withSurfaceBenchPost(surfaceAffineTetra()),
       finalTransform: surfaceLensBoxfoldFinal(),
     },
     {
@@ -11019,6 +11242,50 @@ async function runSurfaceDeSection(
       results.notes.push(`${def.name}: skipped — ${describeError(e)}`);
     }
     render();
+  }
+  const foldPostSystem = systems.find(
+    (system) => system.name === "foldParameterizedPostPair",
+  );
+  const affineFinalPostSystem = systems.find(
+    (system) => system.name === "affineTwistPostFinal",
+  );
+  const productionPostLensSystem = systems.find(
+    (system) => system.name === "lensBoxfoldPostOverAffine",
+  );
+  if (!foldPostSystem?.de.maps.some((map) => map.postInvM !== null)) {
+    throw new Error("required Surface fold post fixture did not build live");
+  }
+  if (
+    !affineFinalPostSystem?.de.maps.some((map) => map.postInvM !== null) ||
+    affineFinalPostSystem.de.final === null ||
+    systemDefs.find((def) => def.name === "affineTwistPostFinal")
+      ?.finalTransform?.post === undefined
+  ) {
+    throw new Error(
+      "required Surface affine map/final post fixture did not build live",
+    );
+  }
+  if (
+    !productionPostLensSystem?.de.maps.some((map) => map.postInvM !== null) ||
+    productionPostLensSystem.de.foldFinal?.postInvM === null ||
+    productionPostLensSystem.de.foldFinal?.postInvM === undefined
+  ) {
+    throw new Error(
+      "required production Surface map/lens post fixture did not build live",
+    );
+  }
+  const mandelboxStressSystem = systems.find(
+    (system) => system.name === "lensMandelboxOverAffine",
+  );
+  if (
+    mandelboxStressSystem === undefined ||
+    mandelboxStressSystem.de.foldFinal === null ||
+    mandelboxStressSystem.de.maps.some((map) => map.postInvM !== null) ||
+    mandelboxStressSystem.de.foldFinal.postInvM !== null
+  ) {
+    throw new Error(
+      "required unposted Mandelbox lens stress fixture did not build cleanly",
+    );
   }
 
   // Tier 3's mesh field deliberately stays out of `systems`: the direct
@@ -11124,12 +11391,17 @@ async function runSurfaceDeSection(
   // `buildSurfaceDE` refuses these shapes by design (single non-contracting
   // pure-fold map — `analyzeEscapeSystem` is its deliberate complement), so
   // they never enter `systemDefs`/`systems` above and never touch
-  // `deHasFolds`/fold/affine routing. Five SINGLE-MAP systems: both fold arms gated
-  // solo (boxfold, spherefold), both together (mandelbox), an off-axis
-  // rotated/scaled matrix with a negative fold weight, and — since the
-  // per-iteration offset moved onto the query point — the
-  // ZERO-offset mandelbox, which is the textbook object the escape presets
-  // ship and the only fixture whose pre-fold offset contributes nothing.
+  // `deHasFolds`/fold/affine routing. Five SINGLE-MAP systems: both fold arms
+  // gated solo (boxfold, spherefold), both together (mandelbox), an off-axis
+  // rotated/scaled matrix with a negative fold weight, and a second
+  // spherefold carrying the live post-affine. The radial-only spherefold is
+  // deliberate: the replaced posted Mandelbox fixture put 242/700 queries
+  // outside the existing f32-stability gate even after reducing the post.
+  // This replacement is a POST-WIRE row, not a second shape census: none of
+  // its 700 f64 samples reaches the nominal DE < 0.02 shell. Its first run's
+  // 286 exclusions were instead the stale f32 twin documented above; after
+  // that twin applies the post, all 700 queries are stable and still compare
+  // the GPU's posted result against the independent f64 oracle.
   //
   // THREE MORE SINCE THE CHAIN LANDED, and they are the load-bearing ones
   // for the chain: the orbit CYCLES through the document's transform list,
@@ -11194,17 +11466,17 @@ async function runSurfaceDeSection(
       ],
     },
     {
-      name: "escMandelboxPure",
+      name: "escSpherefoldPost",
       seed: 405,
-      transforms: [
+      transforms: withSurfaceBenchPost([
         {
           id: 0,
-          position: [0, 0, 0],
+          position: [0.4, 0.3, 0.2],
           rotation: [0, 0, 0],
           scale: [1, 1, 1],
-          variations: [{ type: "mandelbox", weight: 2 }],
+          variations: [{ type: "spherefold", weight: 2 }],
         },
-      ],
+      ]),
     },
     {
       name: "escMandelboxRot",
@@ -11574,6 +11846,18 @@ async function runSurfaceDeSection(
     }
     render();
   }
+  const escapePostSystem = escapeSystems.find(
+    (system) => system.name === "escSpherefoldPost",
+  );
+  if (
+    escapePostSystem?.de.links.length !== 1 ||
+    escapePostSystem.de.links[0].kind !== ESCAPE_LINK_SPHEREFOLD ||
+    escapePostSystem.de.links[0].postM === null
+  ) {
+    throw new Error(
+      "required post-affine escape fixture escSpherefoldPost did not build live",
+    );
+  }
 
   // ----- Escape4 systems: the escape gate's 4D HALF -----------
   // `analyzeEscapeSystem4` is `analyzeEscapeSystem` with the flatness
@@ -11597,12 +11881,10 @@ async function runSurfaceDeSection(
   //                          whose tail link ROTATES into `w` (`xw` 0.35).
   //                          Identity view, so the orbit is the only 4D
   //                          thing in the row.
-  //   esc4ChainParameterized the authored fold lengths per LINK: link 0 a
-  //                          mandelbox at (0.65, 0.95, 0.8), link 1 a
-  //                          boxfold at wall 0.7 with its sphere pair
-  //                          ABSENT — which is the half that pins "absent
-  //                          means classic" ACROSS THE WIRE, exactly as
-  //                          `escChainParameterized` does in 3D.
+  //   esc4SpherefoldPost     a single radial fold with the live post plus a
+  //                          small xw rotation, so this row pins the forward
+  //                          post wire on a genuinely 4D orbit without the
+  //                          Mandelbox's f32-chaotic box seams.
   //   esc4ChainQsquare       the FULL quaternion square beside a fold, at a
   //                          nonzero `w` TRANSLATION (the quaternion `k`
   //                          component), under a NON-IDENTITY rotor. The
@@ -11635,31 +11917,23 @@ async function runSurfaceDeSection(
   //   escMandelbox        (3D control)  fill 3.42%  excl  58  nearBnd 283
   //   escChainPair        (3D control)  fill 1.56%  excl  71  nearBnd 281
   //   esc4ChainWRot                     fill 0.66%  excl  78  nearBnd 176
-  //   esc4ChainParameterized            fill 4.15%  excl  78  nearBnd 183
   //   esc4ChainQsquare                  fill 1.73%  excl  58  nearBnd 163
   //   esc4ChainKaleido                  fill 0.68%  excl  69  nearBnd 174
   //   esc4ChainSlice                    fill 0.46%  excl  44  nearBnd 171
   //   esc4ChainSliceRot                 fill 0.46%  excl  70  nearBnd 178
   //
-  // — every row inside `SURFACE_ESCAPE_EXCLUDED_CAP` (140) with room to
-  // spare, and in the same band as the 3D controls, which is the useful
-  // result: adding a dimension does not by itself widen the marginal
-  // population the classifier exists to bracket.
-  //
-  // AND PICKED FOR WHAT THE ROW TESTS, not for the smallest number. The
-  // instructive rejections are all on `esc4ChainParameterized`, whose
-  // authored lengths move the object hard: the 3D fixture's own
-  // (0.375, 0.5, 0.75) lifts to a set with 0.00% fill and 70 boundary
-  // queries — legal, and nearly useless, since a row whose bisections
-  // never reach a boundary is a row that samples the far field. Widening
-  // link 1's wall is what actually empties these chains (wall 2.2 at
-  // otherwise CLASSIC lengths reads 0.00%/nearBnd 3 where wall 1.0 reads
-  // 0.63%/nearBnd 171), because a box fold that folds nothing back lets
-  // the orbit escape on the first pass; the shipped (0.65, 0.95, 0.8) over
-  // wall 0.7 was chosen from that sweep for fill 4.15% at nearBnd 183, the
-  // richest object in the set. `esc4ChainQsquare`'s 0.4 pre-scale is
-  // `escChainQsquare`'s own, re-measured here rather than inherited (0.5
-  // reads fill 0.29%/nearBnd 151, 0.3 reads 8.50%/nearBnd 158 at excl 61).
+  // — every measured row inside `SURFACE_ESCAPE_EXCLUDED_CAP` (140) with
+  // room to spare, and in the same band as the 3D controls. The new posted
+  // spherefold replaces a posted parameterized Mandelbox chain that excluded
+  // 250/700 even with a smaller post; changing field class preserves the
+  // classifier rather than weakening it. Like its 3D twin it is deliberately
+  // a POST-WIRE row rather than a boundary-shape datum (0/700 samples below
+  // DE 0.02). Omitting its post from the f32 twin produced 290 base-orbit
+  // exclusions (117 uniform + 73 bisection + all 100 origin-cluster); applying
+  // the post returns it to 0/700 without a special comparator. The existing
+  // f64-oracle gate therefore stays unchanged. `esc4ChainQsquare`'s 0.4
+  // pre-scale is `escChainQsquare`'s own, re-measured here rather than inherited
+  // (0.5 reads fill 0.29%/nearBnd 151, 0.3 reads 8.50%/nearBnd 158 at excl 61).
   const escape4SystemDefs: {
     name: string;
     transforms: Transform[];
@@ -11697,34 +11971,18 @@ async function runSurfaceDeSection(
       }),
     },
     {
-      name: "esc4ChainParameterized",
+      name: "esc4SpherefoldPost",
       seed: 802,
-      transforms: [
+      transforms: withSurfaceBenchPost([
         {
           id: 0,
           position: [0.4, 0.3, 0.2],
           rotation: [0, 0, 0],
           scale: [1, 1, 1],
-          w: { rotation: { zw: 0.35 } },
-          variations: [
-            {
-              type: "mandelbox",
-              weight: 2,
-              minRadius: 0.65,
-              fixedRadius: 0.95,
-              boxLimit: 0.8,
-            },
-          ],
+          w: { rotation: { xw: 0.12 } },
+          variations: [{ type: "spherefold", weight: 2 }],
         },
-        {
-          id: 1,
-          position: [-0.1, 0.2, 0],
-          rotation: [0.2, 0, 0.1],
-          scale: [1, 1, 1],
-          w: { position: 0.15 },
-          variations: [{ type: "boxfold", weight: 1.6, boxLimit: 0.7 }],
-        },
-      ],
+      ]),
       view4: () => ({
         rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
         w0: 0,
@@ -11897,6 +12155,21 @@ async function runSurfaceDeSection(
     }
     render();
   }
+  const escape4PostSystem = escape4Systems.find(
+    (system) => system.name === "esc4SpherefoldPost",
+  );
+  if (
+    escape4PostSystem?.de.links.length !== 1 ||
+    escape4PostSystem.de.links[0].kind !== ESCAPE_LINK_SPHEREFOLD ||
+    escape4PostSystem.de.links[0].postM === null ||
+    ![3, 7, 11, 12, 13, 14].some(
+      (i) => escape4PostSystem.de.links[0].m[i] !== 0,
+    )
+  ) {
+    throw new Error(
+      "required post-affine escape4 fixture esc4SpherefoldPost did not build live",
+    );
+  }
 
   // ----- Mandelbulb systems: the escape gate's SIBLING -----
   // `analyzeBulbSystem` admits exactly one shape — a lone pure triplex
@@ -12056,9 +12329,9 @@ async function runSurfaceDeSection(
       }),
     },
     {
-      name: "aff4Final",
+      name: "aff4PostFinal",
       seed: 503,
-      transforms: surfaceAff4FinalBase(),
+      transforms: withSurfaceBenchPost(surfaceAff4FinalBase()),
       finalTransform: surfaceAff4Final(),
       view4: () => ({
         rotor: symmetryRotation4("xw", 0.7),
@@ -12069,7 +12342,7 @@ async function runSurfaceDeSection(
     {
       name: "aff4Slab",
       seed: 504,
-      transforms: surfaceAff4Tetra(),
+      transforms: withSurfaceBenchPost(surfaceAff4Tetra()),
       view4: (de) => ({
         rotor: symmetryRotation4("yw", 0.55),
         w0: 0.15 * de.boundingRadius,
@@ -12124,6 +12397,26 @@ async function runSurfaceDeSection(
       stable,
     });
     render();
+  }
+  const aff4PostFinalSystem = affine4Systems.find(
+    (system) => system.name === "aff4PostFinal",
+  );
+  const aff4SlabSystem = affine4Systems.find(
+    (system) => system.name === "aff4Slab",
+  );
+  if (
+    !aff4PostFinalSystem?.de.maps.some((map) => map.postInvM !== null) ||
+    aff4PostFinalSystem.de.final === null ||
+    affine4SystemDefs.find((def) => def.name === "aff4PostFinal")
+      ?.finalTransform?.post === undefined
+  ) {
+    throw new Error("required affine4 map/final post fixture is not live");
+  }
+  if (
+    !aff4SlabSystem?.de.maps.some((map) => map.postInvM !== null) ||
+    !(aff4SlabSystem.view4.sliceHalfW > 0)
+  ) {
+    throw new Error("required affine4 post+slab fixture is not live");
   }
 
   // The same shipped fixture flat-lifted to 4D. Identity rotor, w0=0 and
@@ -12279,7 +12572,7 @@ async function runSurfaceDeSection(
     {
       name: "fold4Slab",
       seed: 524,
-      transforms: surfaceFold4Boxfold(),
+      transforms: withSurfaceBenchPost(surfaceFold4Boxfold()),
       view4: (de) => ({
         rotor: symmetryRotation4("yw", 0.55),
         w0: 0.15 * de.boundingRadius,
@@ -12287,13 +12580,13 @@ async function runSurfaceDeSection(
       }),
     },
     // The fold's AUTHORED lengths one dimension up (see
-    // surfaceFold4Parameterized's doc). Viewed at the same nonzero w0 as
-    // fold4Boxfold/fold4Mandelbox above, so the radii are the only thing
-    // separating this row from the family's plain ones.
+    // surfaceFold4Parameterized's doc), plus the family's live post-affine
+    // coverage. Viewed at the same nonzero w0 as fold4Boxfold/fold4Mandelbox
+    // above.
     {
-      name: "fold4Parameterized",
+      name: "fold4ParameterizedPost",
       seed: 525,
-      transforms: surfaceFold4Parameterized(),
+      transforms: withSurfaceBenchPost(surfaceFold4Parameterized()),
       view4: (de) => ({
         rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
         w0: 0.2 * de.boundingRadius,
@@ -12356,6 +12649,17 @@ async function runSurfaceDeSection(
     });
     render();
   }
+  for (const required of ["fold4Slab", "fold4ParameterizedPost"]) {
+    const system = fold4Systems.find(
+      (candidate) => candidate.name === required,
+    );
+    if (
+      !system?.de.maps.some((map) => map.postInvM !== null) ||
+      (required === "fold4Slab" && !(system.view4.sliceHalfW > 0))
+    ) {
+      throw new Error(`required fold4 post fixture ${required} is not live`);
+    }
+  }
 
   // The 4D LENS fixture family (M5 below) — a fold FINAL
   // over the affine4/fold4 fixtures' own base shapes, `descendLens4`'s
@@ -12372,10 +12676,11 @@ async function runSurfaceDeSection(
   // Three systems wrap the REFINED affine4 ladder: `pentatope()` carries no
   // fold maps of its own (`deHasFolds4` false), so `descendLens4`'s root
   // descents run the plain ladder and the lens mirrors
-  // `estimateDistance4Refined` — `lens4BoxOverAffine` (the boxfold lens at
-  // the shipped identity-rotor view), `lens4MandelboxOverAffine` (the
-  // 243-branch mandelbox lens fan, this leg's widest per-query branch
-  // count), and `lens4Slab` (the SAME boxfold lens re-viewed through
+  // `estimateDistance4Refined` — `lens4BoxPostOverAffine` (the posted
+  // boxfold lens over a posted base at the shipped identity-rotor view),
+  // `lens4MandelboxOverAffine` (the unposted 243-branch mandelbox lens fan,
+  // this leg's widest per-query branch count), and `lens4Slab` (the SAME
+  // boxfold lens re-viewed through
   // `aff4Slab`'s exact slab — boxfold-only on both the base, trivially
   // true here, and the lens keeps `slabExact4` true, so the slab's
   // segment machinery rides through the lens too). The fourth,
@@ -12392,9 +12697,9 @@ async function runSurfaceDeSection(
     view4: (de: SurfaceDE4) => SurfaceGpu4View;
   }[] = [
     {
-      name: "lens4BoxOverAffine",
+      name: "lens4BoxPostOverAffine",
       seed: 541,
-      transforms: pentatope(),
+      transforms: withSurfaceBenchPost(pentatope()),
       finalTransform: surfaceLens4BoxfoldFinal(),
       view4: (de) => ({
         rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
@@ -12548,6 +12853,23 @@ async function runSurfaceDeSection(
       stable,
     });
     render();
+  }
+  const lens4BoxPostSystem = lens4AffineSystems.find(
+    (system) => system.name === "lens4BoxPostOverAffine",
+  );
+  if (
+    !lens4BoxPostSystem?.de.maps.some((map) => map.postInvM !== null) ||
+    lens4BoxPostSystem.de.foldFinal?.postInvM === null ||
+    lens4BoxPostSystem.de.foldFinal?.postInvM === undefined
+  ) {
+    throw new Error("required lens4 map/lens post fixture is not live");
+  }
+  for (const system of [...lens4AffineSystems, ...lens4FoldSystems]) {
+    if ((system.de.foldFinal?.postInvM ?? null) === null) {
+      throw new Error(
+        `required lens4 post fixture ${system.name} did not build live`,
+      );
+    }
   }
 
   // Lens systems are their own leg: `lens` is a per-SYSTEM kernel option
@@ -13613,6 +13935,7 @@ async function runSurfaceDeSection(
           mode: "eval",
           core: sys.core,
           lens: true,
+          lensPost: (sys.de.foldFinal?.postInvM ?? null) !== null,
           width: cfg.width,
           workgroupSize: cfg.wg,
           sharedFrontier: false,
@@ -13652,9 +13975,11 @@ async function runSurfaceDeSection(
     // certified descents the kernels already mirror — the wrapper adds
     // ~3 flops. Rows gate through the standard agreement machinery.
     const balloonEvalSystems = systems.filter((s) =>
-      ["affineTetra", "foldSpherefoldPair", "lensBoxfoldOverAffine"].includes(
-        s.name,
-      ),
+      [
+        "affineTetra",
+        "foldSpherefoldPair",
+        "lensBoxfoldPostOverAffine",
+      ].includes(s.name),
     );
     for (const sys of balloonEvalSystems) {
       for (const rMult of [0.35, 1.6]) {
@@ -13677,6 +14002,7 @@ async function runSurfaceDeSection(
             mode: "eval",
             core: sys.core,
             lens: sys.de.foldFinal !== null,
+            lensPost: (sys.de.foldFinal?.postInvM ?? null) !== null,
             balloon: true,
             width: cfg.width,
             workgroupSize: cfg.wg,
@@ -14414,6 +14740,7 @@ async function runSurfaceDeSection(
           mode: "eval",
           core: "affine4",
           lens: true,
+          lensPost: true,
           width: lens4AffineConfig.width,
           workgroupSize: lens4AffineConfig.wg,
           sharedFrontier: false,
@@ -14487,6 +14814,7 @@ async function runSurfaceDeSection(
             mode: "eval",
             core: "fold4",
             lens: true,
+            lensPost: true,
             width: cfg.width,
             workgroupSize: cfg.wg,
             sharedFrontier: false,
@@ -15374,16 +15702,15 @@ async function runSurfaceDeSection(
         render();
       }
 
-      // Stage C: the same gate over the lens field class — the affine
-      // core under the 81-branch mandelbox lens, the exact kernel the app
-      // renderer compiles for the truncated-preview system shape. Same
-      // truncation/failure gating as the fold leg above.
+      // Stage C: the same gate over a posted lens field class — the posted
+      // affine core under the posted boxfold lens. Same truncation/failure
+      // gating as the fold leg above.
       const lensSys = lensSystems.find(
-        (s) => s.name === "lensMandelboxOverAffine",
+        (s) => s.name === "lensBoxfoldPostOverAffine",
       );
       if (!lensSys) {
         results.marchUnprojectLens = {
-          skipped: "lensMandelboxOverAffine did not build (see notes)",
+          skipped: "lensBoxfoldPostOverAffine did not build (see notes)",
         };
         render();
       } else {
@@ -16033,16 +16360,16 @@ async function runSurfaceDeSection(
       }
       render();
 
-      // Stage C: the PRODUCTION renderer over the lens field
-      // class — lensMandelboxOverAffine through the same create/frame
-      // protocol (its DE derives core "affine" + lens:true and the
-      // branch-scaled priors inside the renderer). Same gates.
+      // Stage C: the PRODUCTION renderer over the posted lens field class —
+      // lensBoxfoldPostOverAffine through the same create/frame protocol
+      // (its DE derives core "affine" + lens:true and the branch-scaled
+      // priors inside the renderer). Same gates.
       const lensSys = lensSystems.find(
-        (s) => s.name === "lensMandelboxOverAffine",
+        (s) => s.name === "lensBoxfoldPostOverAffine",
       );
       if (!lensSys) {
         results.computeFrameLens = {
-          skipped: "lensMandelboxOverAffine did not build (see notes)",
+          skipped: "lensBoxfoldPostOverAffine did not build (see notes)",
         };
       } else {
         try {

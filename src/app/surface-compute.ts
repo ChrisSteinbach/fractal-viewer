@@ -116,6 +116,8 @@ import {
   packSurfaceGpuParams,
   packSurfaceGpuShade,
   packSurfaceGpuShadeMaps,
+  SURFACE_GPU_LENS4_POST_BYTES,
+  SURFACE_GPU_LENS_POST_BYTES,
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS4_BALLOON_BYTES,
   SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES,
@@ -1814,6 +1816,9 @@ export class SurfaceComputeRenderer {
     // the ray derivation swapped to the app's unproject, and the shade
     // kernel runs over host-sized batches of terminal rays so no shading
     // submission is ever unbounded.
+    const targetHasLensPost =
+      !isForwardTarget(target) &&
+      (target.de.foldFinal?.postInvM ?? null) !== null;
     const compileEntry = async (
       mode: "march" | "shade",
       slabExt: boolean,
@@ -1860,6 +1865,7 @@ export class SurfaceComputeRenderer {
                       ? "fold"
                       : "affine",
           lens: !isForwardTarget(target) && target.de.foldFinal !== null,
+          lensPost: targetHasLensPost,
           // A balloon ifs/ifs4 target compiles the inverted-union wrapper
           // over whichever core+lens the DE picked; the FORWARD kinds
           // never set the flag (their codegen throws are the backstop).
@@ -2156,7 +2162,12 @@ export class SurfaceComputeRenderer {
     const paramsBufferSize =
       baseParamsBufferSize +
       (targetHasChaos ? SURFACE_GPU_CHAOS_BYTES : 0) +
-      (target.tiling ? SURFACE_GPU_TILING_BYTES : 0);
+      (target.tiling ? SURFACE_GPU_TILING_BYTES : 0) +
+      (targetHasLensPost
+        ? isFourDTarget(target)
+          ? SURFACE_GPU_LENS4_POST_BYTES
+          : SURFACE_GPU_LENS_POST_BYTES
+        : 0);
     const paramsBuf = device.createBuffer({
       // Hybrid schedules append their live depth/map-range/bound block after
       // the legacy variant regions. Use the matching host allocation for

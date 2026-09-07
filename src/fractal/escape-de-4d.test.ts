@@ -23,7 +23,7 @@ import { toTransform4 } from "./affine4";
 import { effectiveSymmetryOrder } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import { PEACE_SIGN_SHAPE, SHAPE_MARCH_SAFETY } from "./shapes";
-import { transformSigmas4 } from "./surface-de-4d";
+import { transformSeparatedSigmas4 } from "./surface-de-4d";
 import { SYMMETRY_PLANES } from "./types";
 import type {
   SymmetryParams,
@@ -348,13 +348,14 @@ describe("buildEscapeDE4", () => {
     expect(classic.fixedRadius2).toBe(1);
   });
 
-  it("prices derivGrowth as |weight| * transformSigmas4(toTransform4(map)).max", () => {
+  it("prices derivGrowth as |weight| times the separated 4D stage bound", () => {
     const map = canonicalMandelbox({
       scale: [2, 0.5, 1],
       variations: [{ type: "mandelbox", weight: -1.5 }],
     });
     const de = buildEscapeDE4([map]);
-    const want = Math.abs(-1.5) * transformSigmas4(toTransform4(map)).max;
+    const want =
+      Math.abs(-1.5) * transformSeparatedSigmas4(toTransform4(map)).max;
     expect(de.links[0].derivGrowth).toBe(want);
   });
 });

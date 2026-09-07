@@ -11,6 +11,8 @@ import {
   packSurfaceGpuShade,
   packSurfaceGpuShadeMaps,
   SURFACE_GPU_HIT_FLOOR,
+  SURFACE_GPU_LENS4_POST_BYTES,
+  SURFACE_GPU_LENS_POST_BYTES,
   SURFACE_GPU_MAP4_VEC4,
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS4_BALLOON_BYTES,
@@ -117,6 +119,46 @@ import {
   type ResolvedLatticeTiling,
 } from "./tiling";
 
+/** A proper quarter-turn plus translation whose forward and inverse rows are
+ * deliberately different. The exact 0/1 coefficients make the storage
+ * orientation assertions readable while the translation distinguishes
+ * forward escape links from inverse descent records. */
+const POST_WIRE_AFFINE: NonNullable<Transform["post"]> = {
+  m: [0, 1, 0, -1, 0, 0, 0, 0, 1],
+  t: [0.25, -0.5, 0.75],
+};
+
+const POST_WIRE_INVERSE_3 = [0, -1, 0, -0.5, 1, 0, 0, -0.25, 0, 0, 1, -0.75];
+
+const POST_WIRE_FORWARD_3 = [0, 1, 0, 0.25, -1, 0, 0, -0.5, 0, 0, 1, 0.75];
+
+const POST_WIRE_INVERSE_4 = [
+  0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -0.5, -0.25, -0.75, 0,
+];
+
+const POST_WIRE_FORWARD_4 = [
+  0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0.25, -0.5, 0.75, 0,
+];
+
+/** Powers-of-two anisotropic post: its sigmaMin 0.5 makes the fold region
+ * floor's spare-lane scale distinguishable from the absent-post identity. */
+const POST_WIRE_SCALED: NonNullable<Transform["post"]> = {
+  m: [0.5, 0, 0, 0, 1, 0, 0, 0, 2],
+  t: [0.25, -0.5, 0.75],
+};
+
+const POST_WIRE_SCALED_INVERSE_3 = [
+  2, 0, 0, -0.5, 0, 1, 0, 0.5, 0, 0, 0.5, -0.375,
+];
+
+const POST_WIRE_SCALED_INVERSE_4 = [
+  2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1, -0.5, 0.5, -0.375, 0,
+];
+
+function normalizeSignedZero(values: Float32Array): number[] {
+  return Array.from(values, (value) => (value === 0 ? 0 : value));
+}
+
 /** Two-map pure-boxfold system (the pure-fold shape used throughout
  * surface-de.test.ts and scripts/harness-profiles.ts's foldBoxfoldPair) — a
  * minimal ELIGIBLE fold system, so buildSurfaceDE gives a real SurfaceDE with
@@ -157,13 +199,14 @@ function affineFinalTransform(): Transform {
  * identity-final-under-the-lens contract and the 208+ block are pinned
  * against `buildSurfaceDE`'s own output rather than a hand-crafted object
  * (the fold-lens port's stage B). */
-function spherefoldFinalTransform(): Transform {
+function spherefoldFinalTransform(withPost = false): Transform {
   return {
     id: 98,
     position: [0.12, -0.05, 0.08],
     rotation: [0.3, 0.1, -0.2],
     scale: [0.9, 0.9, 0.9],
     variations: [{ type: "spherefold", weight: 0.9 }],
+    ...(withPost ? { post: POST_WIRE_SCALED } : {}),
   };
 }
 
@@ -509,6 +552,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
         absW: 0.4,
         postInvM: null,
         postInvT: null,
+        postSigmaMin: 1,
         foldRadii: CLASSIC_SURFACE_FOLD_RADII,
       },
     };
@@ -590,6 +634,49 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     expect(view.getFloat32(268, true)).toBe(Math.fround(lens.sigmaMin));
   });
 
+  it("appends a live foldFinal post inverse after the frozen 288-byte prefix", () => {
+    const de = buildSurfaceDE(
+      foldSystemTransforms(),
+      spherefoldFinalTransform(true),
+    );
+    const lens = de.foldFinal;
+    if (!lens?.postInvM || !lens.postInvT) {
+      throw new Error("expected a post-bearing foldFinal lens");
+    }
+    const packed = packSurfaceGpuParams(de, { itemCount: 1 });
+    expect(packed.byteLength).toBe(
+      SURFACE_GPU_PARAMS_BYTES + SURFACE_GPU_LENS_POST_BYTES,
+    );
+    expect(normalizeSignedZero(new Float32Array(packed, 288, 12))).toEqual(
+      POST_WIRE_SCALED_INVERSE_3,
+    );
+    expect(new Float32Array(packed, 288, 12)).not.toEqual(
+      new Float32Array(POST_WIRE_FORWARD_3),
+    );
+    expect(new DataView(packed).getFloat32(284, true)).toBe(
+      Math.fround(lens.postSigmaMin),
+    );
+    expect(lens.postSigmaMin).toBeCloseTo(0.5, 12);
+  });
+
+  it("normalizes undefined foldFinal post fields before pair validation", () => {
+    const de = buildSurfaceDE(
+      foldSystemTransforms(),
+      spherefoldFinalTransform(true),
+    );
+    if (!de.foldFinal) throw new Error("expected a foldFinal lens");
+    const malformed: SurfaceDE = {
+      ...de,
+      foldFinal: {
+        ...de.foldFinal,
+        postInvT: undefined,
+      } as unknown as NonNullable<SurfaceDE["foldFinal"]>,
+    };
+    expect(() => packSurfaceGpuParams(malformed, { itemCount: 1 })).toThrow(
+      /both matrix and translation/,
+    );
+  });
+
   it("throws when a footprint is combined with a foldFinal lens (the fold-lens cut boundary)", () => {
     const de = buildSurfaceDE(foldSystemTransforms());
     const withFoldFinal: SurfaceDE = {
@@ -604,6 +691,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
         absW: 1,
         postInvM: null,
         postInvT: null,
+        postSigmaMin: 1,
         foldRadii: CLASSIC_SURFACE_FOLD_RADII,
       },
     };
@@ -629,6 +717,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
         absW: 1,
         postInvM: null,
         postInvT: null,
+        postSigmaMin: 1,
         foldRadii: CLASSIC_SURFACE_FOLD_RADII,
       },
     };
@@ -869,6 +958,58 @@ describe("packSurfaceGpuMaps", () => {
     expect(out.length).toBe(stride);
     expect(Array.from(out)).toEqual(new Array(stride).fill(0));
   });
+
+  it("packs a live 3D post inverse row-major with translation in each row's w lane", () => {
+    const de = buildSurfaceDE([
+      {
+        id: 0,
+        position: [0.1, -0.2, 0.3],
+        rotation: [0.2, -0.1, 0.3],
+        scale: [0.25, 0.25, 0.25],
+        post: POST_WIRE_AFFINE,
+      },
+    ]);
+    const out = packSurfaceGpuMaps(de);
+    expect(SURFACE_GPU_MAP_VEC4 * 4).toBe(40);
+    expect(out.length).toBe(SURFACE_GPU_MAP_VEC4 * 4);
+    expect(normalizeSignedZero(out.slice(28, 40))).toEqual(POST_WIRE_INVERSE_3);
+    expect(Array.from(out.slice(28, 40))).not.toEqual(POST_WIRE_FORWARD_3);
+  });
+
+  it("packs the lifted 4D post inverse at the appended GpuMap4 tail", () => {
+    const de = buildSurfaceDE4([
+      {
+        id: 0,
+        position: [0.1, -0.2, 0.3],
+        rotation: [0.2, -0.1, 0.3],
+        scale: [0.25, 0.25, 0.25],
+        w: { position: 0.1, scale: 0.25, rotation: { xw: 0.2 } },
+        post: POST_WIRE_AFFINE,
+      },
+    ]);
+    const out = packSurfaceGpuMaps4(de);
+    expect(SURFACE_GPU_MAP4_VEC4 * 4).toBe(56);
+    expect(out.length).toBe(SURFACE_GPU_MAP4_VEC4 * 4);
+    expect(normalizeSignedZero(out.slice(36, 56))).toEqual(POST_WIRE_INVERSE_4);
+    expect(Array.from(out.slice(36, 56))).not.toEqual(POST_WIRE_FORWARD_4);
+  });
+
+  it("packs a fold map's post sigma into fold.w in both dimensions", () => {
+    const transform: Transform = {
+      id: 0,
+      position: [0.1, -0.2, 0.3],
+      rotation: [0.2, -0.1, 0.3],
+      scale: [0.25, 0.25, 0.25],
+      variations: [{ type: "boxfold", weight: 1 }],
+      post: POST_WIRE_SCALED,
+    };
+    const de3 = buildSurfaceDE([transform]);
+    const de4 = buildSurfaceDE4([transform]);
+    expect(de3.maps[0].postSigmaMin).toBeCloseTo(0.5, 12);
+    expect(de4.maps[0].postSigmaMin).toBeCloseTo(0.5, 12);
+    expect(packSurfaceGpuMaps(de3)[27]).toBe(0.5);
+    expect(packSurfaceGpuMaps4(de4)[35]).toBe(0.5);
+  });
 });
 
 describe("the fold's authored lengths on the wire", () => {
@@ -911,9 +1052,9 @@ describe("the fold's authored lengths on the wire", () => {
     ]);
     const stride = SURFACE_GPU_MAP_VEC4 * 4;
     const out = packSurfaceGpuMaps(de);
-    expect(Array.from(out.slice(24, 28))).toEqual([0.375, 0.5, 0.75, 0]);
+    expect(Array.from(out.slice(24, 28))).toEqual([0.375, 0.5, 0.75, 1]);
     expect(Array.from(out.slice(stride + 24, stride + 28))).toEqual([
-      0.25, 0.5, 2, 0,
+      0.25, 0.5, 2, 1,
     ]);
   });
 
@@ -923,7 +1064,7 @@ describe("the fold's authored lengths on the wire", () => {
     const out = packSurfaceGpuMaps(de);
     de.maps.forEach((_, j) => {
       expect(Array.from(out.slice(j * stride + 24, j * stride + 28))).toEqual([
-        0.5, 1, 1, 0,
+        0.5, 1, 1, 1,
       ]);
     });
   });
@@ -948,8 +1089,8 @@ describe("the fold's authored lengths on the wire", () => {
     ];
     const out3 = packSurfaceGpuMaps(buildSurfaceDE(transforms));
     const out4 = packSurfaceGpuMaps4(buildSurfaceDE4(transforms));
-    expect(Array.from(out3.slice(24, 28))).toEqual([0.375, 0.5, 0.75, 0]);
-    expect(Array.from(out4.slice(32, 36))).toEqual([0.375, 0.5, 0.75, 0]);
+    expect(Array.from(out3.slice(24, 28))).toEqual([0.375, 0.5, 0.75, 1]);
+    expect(Array.from(out4.slice(32, 36))).toEqual([0.375, 0.5, 0.75, 1]);
   });
 
   it("carries each escape LINK's lengths SQUARED, which is the form its forward orbit reads", () => {
@@ -1008,7 +1149,7 @@ describe("the fold's authored lengths on the wire", () => {
     expect(view.getFloat32(272, true)).toBe(0.375);
     expect(view.getFloat32(276, true)).toBe(1.5);
     expect(view.getFloat32(280, true)).toBe(0.75);
-    expect(view.getFloat32(284, true)).toBe(0);
+    expect(view.getFloat32(284, true)).toBe(1);
 
     const plain = buildSurfaceDE(foldSystemTransforms());
     expect(plain.foldFinal).toBeNull();
@@ -1043,7 +1184,7 @@ describe("the fold's authored lengths on the wire", () => {
     expect(view.getFloat32(560, true)).toBe(0.375);
     expect(view.getFloat32(564, true)).toBe(1.5);
     expect(view.getFloat32(568, true)).toBe(0.75);
-    expect(view.getFloat32(572, true)).toBe(0);
+    expect(view.getFloat32(572, true)).toBe(1);
   });
 
   it("derives the branch algebra from the wire in every kernel that enumerates fold branches, and in no other", () => {
@@ -1572,6 +1713,17 @@ describe("surfaceDeKernelWgsl mode selection", () => {
     expect(wgsl).not.toContain("fn evalQueries");
   });
 
+  it("persists the terminal HIT distance in the march state's lastD lane", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "march" }));
+    const evalAt = wgsl.indexOf("let d = surfaceDE(ro + rd * t, eps, li);");
+    const storeAt = wgsl.indexOf("st.w = d;", evalAt);
+    const hitAt = wgsl.indexOf("if (d < eps) {", evalAt);
+    expect(evalAt).toBeGreaterThan(0);
+    expect(storeAt).toBeGreaterThan(evalAt);
+    expect(storeAt).toBeLessThan(hitAt);
+    expect(wgsl.indexOf("st.w = d;", storeAt + 1)).toBe(-1);
+  });
+
   it("mode 'shade' generates fn shadeRays over the ray-state bindings, with no march or eval entry", () => {
     const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
     expect(wgsl).toContain("fn shadeRays");
@@ -2002,9 +2154,7 @@ describe("surfaceDeKernelWgsl descent core (core)", () => {
     // region-floor prune, plus the frontier index helper.
     expect(wgsl).toContain("fn frontierIx(");
     expect(wgsl).toContain("fnWorstKey = -1e30;");
-    expect(wgsl).toContain(
-      "candFloor = max(candFloor, pScale * absW * branchRd);",
-    );
+    expect(wgsl).toContain("pScale * absW * m.fold.w * branchRd");
     // …and none of the affine ladder's.
     expect(wgsl).not.toContain("fn refinedCert(");
     expect(wgsl).not.toContain("v1Live");
@@ -2127,6 +2277,43 @@ describe("surfaceDeKernelWgsl fold-lens wrapper (lens)", () => {
       expect(omitted).not.toContain("surfaceDECore");
       expect(omitted).not.toContain("lensParams");
     }
+  });
+
+  it("compile-gates the appended 3D lens post and un-applies it before every value/probe/hit sweep", () => {
+    const absent = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold", lens: true }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          mode: "shade",
+          core: "fold",
+          lens: true,
+          lensPost: false,
+        }),
+      ),
+    ).toBe(absent);
+    expect(absent).not.toContain("lensPostI0");
+
+    const live = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold",
+        lens: true,
+        lensPost: true,
+        shadeDeWidth: 1,
+      }),
+    );
+    expect(live).toContain("lensPostI0: vec3f");
+    expect(live).toContain("fn lensUnpost(v: vec3f)");
+    expect(live).toContain("let p = lensUnpost(pIn);");
+    expect(live).toContain("let pq = lensUnpost(p);");
+    expect(live).toContain("let u = p * params.lensParams.y;");
+    expect(live).toContain("let u = pq * params.lensParams.y;");
+    expect(live).toContain("absW * params.lensFold.w * branchRd");
+    expect(() => surfaceDeKernelWgsl(kernelOpts({ lensPost: true }))).toThrow(
+      /lensPost requires/,
+    );
   });
 
   it("lens:true renames the descent body to surfaceDECore and emits the sweep wrapper as the one public surfaceDE, for BOTH cores", () => {
@@ -3663,6 +3850,17 @@ describe("packEscapeGpuMaps (the formula chain)", () => {
     expect(maps[12]).not.toBe(maps[stride + 12]);
   });
 
+  it("packs a live 3D escape post FORWARD, not as the descent inverse", () => {
+    const de = buildEscapeDE([
+      { ...canonicalMandelbox(), post: POST_WIRE_AFFINE },
+    ]);
+    const maps = packEscapeGpuMaps(de);
+    expect(SURFACE_GPU_MAP_VEC4 * 4).toBe(40);
+    expect(maps.length).toBe(SURFACE_GPU_MAP_VEC4 * 4);
+    expect(Array.from(maps.slice(28, 40))).toEqual(POST_WIRE_FORWARD_3);
+    expect(Array.from(maps.slice(28, 40))).not.toEqual(POST_WIRE_INVERSE_3);
+  });
+
   it("agrees with the params block's head link — the wire's one redundancy cannot drift", () => {
     const de = buildEscapeDE([canonicalMandelbox(), rotatedBoxfold()]);
     const maps = packEscapeGpuMaps(de);
@@ -4303,6 +4501,16 @@ describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, the register-pr
     expect(explicit).toBe(omitted);
   });
 
+  it("un-posts every slab extent with the linear helper only", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const source = surfaceDeKernelWgsl(kernelOpts({ core, mode }));
+        expect(source).toContain("mapUnpostLinear4(m, sExt)");
+        expect(source).not.toContain("mapUnpost4(m, sExt)");
+      }
+    }
+  });
+
   it("false strips the half-extent machinery from the eval-mode descent (fn refinedCert / fn surfaceDE), leaving the shared segmentRadius4 helper declared but uncalled", () => {
     const withExt = surfaceDeKernelWgsl(kernelOpts({ core: "affine4" }));
     const withoutExt = surfaceDeKernelWgsl(
@@ -4799,6 +5007,41 @@ describe("surfaceDeKernelWgsl 4D fold-lens wrapper (lens)", () => {
     }
   });
 
+  it("compile-gates the appended 4D lens post and transports the slab extent through its linear inverse", () => {
+    const absent = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold4", lens: true }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          mode: "shade",
+          core: "fold4",
+          lens: true,
+          lensPost: false,
+        }),
+      ),
+    ).toBe(absent);
+    expect(absent).not.toContain("lens4PostI0");
+
+    const live = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold4",
+        lens: true,
+        lensPost: true,
+      }),
+    );
+    expect(live).toContain("lens4PostI0: vec4f");
+    expect(live).toContain("fn lensUnpost4(v: vec4f)");
+    expect(live).toContain("fn lensUnpostLinear4(v: vec4f)");
+    expect(live).toContain("let pUnpost = lensUnpost4(p);");
+    expect(live).toContain("let pUnpost = lensUnpost4(pq);");
+    expect(live).toContain(
+      "eu = lensUnpostLinear4(pExt) * params.lens4Params.y;",
+    );
+    expect(live).toContain("absW * params.lens4Fold.w * branchRd");
+  });
+
   it("renames the core, hoists the VIEW LIFT into the wrapper, and declares the lens4 params block — for both 4D cores", () => {
     for (const core of ["affine4", "fold4"] as const) {
       const wgsl = surfaceDeKernelWgsl(kernelOpts({ core, lens: true }));
@@ -5070,13 +5313,14 @@ function fourDSpherefoldSystemTransforms(): Transform[] {
  * matters: `u = p/w` reaches past the fold planes, so the non-identity
  * branches carry real geometry instead of degenerating to the affine part,
  * and boxfold is the ONE fold family a slab query survives (slabExact4). */
-function fourDBoxfoldFinalTransform(): Transform {
+function fourDBoxfoldFinalTransform(withPost = false): Transform {
   return {
     id: 99,
     position: [0.15, -0.1, 0.05],
     rotation: [0.2, 0.3, 0.1],
     scale: [0.9, 0.9, 0.9],
     variations: [{ type: "boxfold", weight: 0.55 }],
+    ...(withPost ? { post: POST_WIRE_SCALED } : {}),
     w: { position: 0.1, rotation: { yw: 0.2 } },
   };
 }
@@ -5521,6 +5765,46 @@ describe("packSurface4GpuParams fold-final lens block", () => {
     expect(view.getFloat32(556, true)).toBe(Math.fround(lens.sigmaMin));
     // A real lens, not a degenerate one: weight 0.55 gives invW ~1.82.
     expect(lens.absW).toBeCloseTo(0.55, 12);
+  });
+
+  it("appends a live 4D foldFinal post inverse after the frozen 576-byte lens prefix", () => {
+    const de = buildSurfaceDE4(
+      fourDSystemTransforms(),
+      fourDBoxfoldFinalTransform(true),
+    );
+    const lens = de.foldFinal;
+    if (!lens?.postInvM || !lens.postInvT) {
+      throw new Error("expected a post-bearing 4D foldFinal lens");
+    }
+    const packed = packSurface4GpuParams(de, view4(), { itemCount: 1 });
+    expect(packed.byteLength).toBe(
+      SURFACE_GPU_PARAMS4_LENS_BYTES + SURFACE_GPU_LENS4_POST_BYTES,
+    );
+    expect(normalizeSignedZero(new Float32Array(packed, 576, 20))).toEqual(
+      POST_WIRE_SCALED_INVERSE_4,
+    );
+    expect(new DataView(packed).getFloat32(572, true)).toBe(
+      Math.fround(lens.postSigmaMin),
+    );
+    expect(lens.postSigmaMin).toBeCloseTo(0.5, 12);
+  });
+
+  it("normalizes undefined 4D foldFinal post fields before pair validation", () => {
+    const de = buildSurfaceDE4(
+      fourDSystemTransforms(),
+      fourDBoxfoldFinalTransform(true),
+    );
+    if (!de.foldFinal) throw new Error("expected a 4D foldFinal lens");
+    const malformed: SurfaceDE4 = {
+      ...de,
+      foldFinal: {
+        ...de.foldFinal,
+        postInvT: undefined,
+      } as unknown as NonNullable<SurfaceDE4["foldFinal"]>,
+    };
+    expect(() =>
+      packSurface4GpuParams(malformed, view4(), { itemCount: 1 }),
+    ).toThrow(/both matrix and translation/);
   });
 
   it("round-trips SurfaceDE4.radiusBand at 432..455 — center, minD, the shared radiusBandInvRange, zero spares", () => {
@@ -6260,7 +6544,7 @@ describe("packEscape4GpuParams slab refusal and ground-plane block", () => {
 });
 
 describe("packEscape4GpuMaps", () => {
-  it("packs one 36-float GpuMap4 stride per link: 16 forward matrix entries, translation at 16..19, (kind, w, derivGrowth) at 20..22, squared radii + wall at 32..34, every other lane 0", () => {
+  it("packs one 56-float GpuMap4 stride per link: 16 forward matrix entries, translation at 16..19, (kind, w, derivGrowth) at 20..22, squared radii + wall at 32..34, every other pre-post lane 0", () => {
     const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
     const stride = SURFACE_GPU_MAP4_VEC4 * 4;
     // 36 -> 56: the per-link POST-AFFINE lane (forward rows + translation,
@@ -6299,6 +6583,17 @@ describe("packEscape4GpuMaps", () => {
     const tail = Array.from(maps.slice(stride, 2 * stride));
     expect(head).not.toEqual(tail);
     expect(maps[20]).not.toBe(maps[stride + 20]);
+  });
+
+  it("packs a lifted 4D escape post FORWARD at the GpuMap4 tail", () => {
+    const de = buildEscapeDE4([
+      { ...escape4Mandelbox(), post: POST_WIRE_AFFINE },
+    ]);
+    const maps = packEscape4GpuMaps(de);
+    expect(SURFACE_GPU_MAP4_VEC4 * 4).toBe(56);
+    expect(maps.length).toBe(SURFACE_GPU_MAP4_VEC4 * 4);
+    expect(Array.from(maps.slice(36, 56))).toEqual(POST_WIRE_FORWARD_4);
+    expect(Array.from(maps.slice(36, 56))).not.toEqual(POST_WIRE_INVERSE_4);
   });
 
   it("pads to one zero stride rather than an empty array, like packEscapeGpuMaps", () => {

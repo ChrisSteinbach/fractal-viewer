@@ -129,7 +129,7 @@ import type {
   SurfaceNativeCarrierSample,
 } from "./surface-pattern";
 import { CONTRACTION_LIMIT } from "./surface-de";
-import { transformSigmas4 } from "./surface-de-4d";
+import { transformSeparatedSigmas4 } from "./surface-de-4d";
 import {
   activeParametricVariationTypes,
   resolveFoldRadii,
@@ -260,7 +260,7 @@ function foldLipschitz4(fold: Variation, map: Transform): number {
     (fold.type === "boxfold"
       ? 1
       : sphereFoldLipschitz(resolveFoldRadii(fold))) *
-    transformSigmas4(toTransform4(map)).max
+    transformSeparatedSigmas4(toTransform4(map)).max
   );
 }
 
@@ -380,7 +380,7 @@ function buildEscapeLink4(map: Transform): EscapeLink4 {
             ? ESCAPE_LINK_MANDELBOX
             : ESCAPE_LINK_QSQUARE,
     w: v.weight,
-    derivGrowth: Math.abs(v.weight) * transformSigmas4(lifted).max,
+    derivGrowth: Math.abs(v.weight) * transformSeparatedSigmas4(lifted).max,
     boxLimit: radii.boxLimit,
     minRadius2: radii.minRadius * radii.minRadius,
     fixedRadius2: radii.fixedRadius * radii.fixedRadius,

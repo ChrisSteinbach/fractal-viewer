@@ -66,27 +66,27 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "4D base finish0": {
-    resolved: "91b6d57191b9c41d" /* post-affine stage */,
-    emitted: "91b6d57191b9c41d" /* post-affine stage */,
+    resolved: "c6897201fb0264d3" /* post-affine stage */,
+    emitted: "c6897201fb0264d3" /* post-affine stage */,
   },
   "4D balloon finish0": {
-    resolved: "8678049224600b09",
+    resolved: "80a0be5c012e902d",
     emitted: "2af17599644dcb23",
   },
   "4D plane finish0": {
-    resolved: "3ebede498a768ee7",
+    resolved: "7191bd55127a53a4",
     emitted: "cfff02462664a362",
   },
   "4D base finish1": {
-    resolved: "5b5f711ec4d79377",
-    emitted: "5b5f711ec4d79377",
+    resolved: "7c43181090e3d22e",
+    emitted: "7c43181090e3d22e",
   },
   "4D balloon finish1": {
-    resolved: "cb2c6588ae56a655",
+    resolved: "53bf23b33e8b8182",
     emitted: "c344ed33440faa54",
   },
   "4D plane finish1": {
-    resolved: "8cef6acea17148b9",
+    resolved: "94881001359cb219",
     emitted: "538790988a3a3303",
   },
 };
@@ -108,6 +108,7 @@ function map4(overrides: Partial<SurfaceDE4Map> = {}): SurfaceDE4Map {
     invT: [0, 0, 0, 0],
     postInvM: null,
     postInvT: null,
+    postSigmaMin: 1,
     sigmaMin: 0.5,
     baseIndex: 0,
     // Inert affine-slot defaults for the 4D fold fields — this packer
@@ -1248,7 +1249,7 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(f4))).toBe(
-      "1dbeb1345a24d7438b17e9f1875a47e164e8f54e2b7b71dfc95f2af1309b30d6" /* post-affine stage */,
+      "ffbfa751ca9ea940efd4d8c5ad46ca4fca8aaeacf4ea3dd193ac24a98ff4f531" /* post-affine stage */,
     );
     expect(sha256(surface4FragmentFor(0, 0, 0, 0, null, 0, 0, f4))).toBe(
       "008c4db07d3f00f80c55c127ae3b9204424b915c4904566376e6e106a7cfd757" /* post-affine stage */,

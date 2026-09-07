@@ -24,6 +24,37 @@ flam3's convention. The per-level decay is now the Color speed slider
 (default 0.5, which reproduces that original fixed behavior), and the
 rings/sheets orbit-trap color sources ride the same hit-info descent.
 
+### Post-affine wire and stage order
+
+A 3D program with any live map or final-lens post defines `SURFACE_POST` and
+attaches one std140 `SurfacePosts3` block: 24 homogeneous map matrices plus one
+lens matrix, 1,600 bytes against WebGL2's guaranteed 16 KiB minimum block size.
+Keeping the maps' 96 vec4-equivalents plus the lens's four outside the default
+block is load-bearing because the classic map arrays already consume about
+seven vectors per slot against the guaranteed 224 fragment-vector floor. Descent and
+fold-lens records carry the inverse post, while escape-chain records carry the
+forward post, matching their CPU oracles' opposite traversal directions. A
+posted final fold is un-posted before the fold-final inverse and its visible
+radius includes the forward post matrix and translation.
+
+Fold region floors are measured after that un-post and therefore return to
+outer space through `sigma_min(post)`. Map factors reuse `uFoldRadii.w`; a
+posted fold-final widens `uLensRadii` from vec3 to vec4 under the same compile
+gate and uses its `.w`. Neither consumes another default-block vector, and the
+post-free source retains the earlier vec3 declaration and arithmetic.
+
+The group exists before compilation but is attached only while the resolved
+source contains `SURFACE_POST`; returning to a post-free system detaches it and
+restores the exact earlier fragment source. Unit tests pin column-major packing,
+identity slots, live-map/escape/lens stage order, teardown, and source identity.
+The durable real-driver compile/draw check is
+`scripts/surface-post.verify.mjs`: it forces `?surfacegl&surfacestate` through
+the UI for recursive affine, recursive folded-map, affine-base plus posted
+final-fold, and forward-escape fixtures, then gates WebGL engine selection,
+settled draw, post persistence and the unmasked renderer. On 2026-09-07 all
+four linked and settled on verified Mesa Intel Iris Xe with screenshot coverage
+14.84%, 11.85%, 16.40% and 18.89%, respectively.
+
 ## Mirrored-lattice carrier (routed)
 
 Both fragment tracers generate the mirrored affine-A1 estimator wrapper AND
@@ -93,7 +124,9 @@ affine-only B records in `schedule.maps`; `setSurfaceSystem` /
 `[A][B][symmetry-expanded condensation emitters]` order. `uMapCount` remains
 the A recursive count, `uScheduleCount` names B's contiguous suffix and
 `uCondMapCount` points past both to the emitter suffix. B slots are initialized
-with no fold, trap, color or finish state. The 24-record gate covers the whole
+with no fold, post, trap, color or finish state. Authored B posts are also
+stripped from the schedule's certified inner bounds, matching the point
+engine's affine-only schedule contract. The 24-record gate covers the whole
 physical sequence, while the independent shade count remains A plus unique
 emitters.
 
@@ -1142,8 +1175,9 @@ flame/solid-4D's frozen snapshot. The slider is normalized rotated-w;
 `scene.ts`'s `setSurface4View` converts it to the tracer's world `uW0`
 through `wSupport`, so one slider position is one hyperplane across every
 mode. The 24-map cap matches 3D's — the per-map arrays ride a std140 uniform
-BLOCK (2688 bytes of the guaranteed 16KB, where default-block arrays would
-have taken 192 of the guaranteed 224 fragment uniform vectors) — and the
+BLOCK (5,376 bytes with its current eight members, still within the guaranteed
+16KB; the original four-member core was 2,688 bytes, and the current arrays
+would exceed the guaranteed 224 default-block fragment vectors) — and the
 kaleidoscope SWEEPS like 3D's, so 24 slots means 24 transforms at any order.
 
 Since the 4D cut, this tracer is the PLAIN-4D fallback arm (`?surfacegl` /
@@ -1212,9 +1246,9 @@ define would move every offset on every finish toggle, and a group built
 for one layout bound to a program compiled for the other is SILENT offset
 corruption — the wrong floats in the wrong lanes, no error. Declaring
 `vec4 uMapFinishA[MAX_MAPS]` / `uMapFinishB[MAX_MAPS]` unconditionally,
-APPENDED at the END of the block (after `uMapTrap`) and appended in the
-same A-then-B order at the end of the group, means the layout is one
-layout in both states; only the READ is define-gated. The price is
+after `uMapTrap` and before the later inverse-post pair, in the same A-then-B
+order in the group, means the layout is one layout in both states; only the
+READ is define-gated. The price is
 measured, not estimated: 768 B of the 16 KB block (2688 → 3456 B, 24 × 2
 × 16), ZERO default-block uniform vectors, +56 B of live tokens in every
 4D program (the two declarations; +377 B raw with their doc before the
@@ -1225,8 +1259,8 @@ placeholders are the CLASSIC lanes (`(0.4, 32, 0, 0)` / `(0, 0, 0, 0)`),
 written by the same placeholder loop that seeds `colorSigma`'s unit
 sigma and for the same reason: a stray read of an unwritten slot
 renders the fixed highlight rather than a black one. A test pins the
-member list — all six, in order, A then B last — against the block
-text, and the group's length at six.
+member list — all eight in order, finish A/B followed by inverse-post M/T —
+against the block text, and the group's length at eight.
 
 ## What could not be copied
 

@@ -737,6 +737,12 @@ export interface SurfaceDEMap {
   /** The post's inverse translation `−P⁻¹.m · P.t` — `null` with
    * {@link postInvM}. */
   postInvT: Vec3 | null;
+  /** Smallest singular value of the authored post-affine. This stays 1
+   * when the post is absent or identity. Fold region floors are measured
+   * after the descent un-posts the query, so they multiply this factor to
+   * return to the outer space; the ordinary chain factor in
+   * {@link foldSigma} already includes it. */
+  postSigmaMin: number;
   /** Smallest singular value of the FORWARD map — the certified contraction
    * factor multiplied into the running `dr` product. */
   sigmaMin: number;
@@ -916,8 +922,9 @@ export interface SurfaceDE {
    * fold into them (the branch enumeration sits between `P⁻¹` and the
    * affine inverse), so it rides as its own factor: the lens applies
    * `postInvM`/`postInvT` to the query BEFORE its branch sweep — the same
-   * un-post stage the base maps carry, one lens over. `null` fields (the
-   * common case, every lens predating posts) skip. */
+   * un-post stage the base maps carry, one lens over. `postSigmaMin` prices
+   * the region floors measured after that un-post. `null` fields and a
+   * unit factor (the common case, every lens predating posts) skip. */
   foldFinal: {
     invM: number[];
     invT: Vec3;
@@ -931,6 +938,7 @@ export interface SurfaceDE {
     /** The lens's own post-affine inverse, or `null`. */
     postInvM: number[] | null;
     postInvT: Vec3 | null;
+    postSigmaMin: number;
   } | null;
 }
 
@@ -1448,6 +1456,8 @@ function evaluateFoldSurfaceNativeCarriersRaw(
         const kind = map.foldKind;
         const branchCount = foldBranchCount(kind);
         const absW = map.foldSigma / map.sigmaMin;
+        const regionAbsW =
+          map.postInvM === null ? absW : absW * map.postSigmaMin;
         const fr = map.foldRadii;
         const wall = fr.wall;
         const wall2 = 2 * wall;
@@ -1630,7 +1640,7 @@ function evaluateFoldSurfaceNativeCarriersRaw(
           if (branchRegionDistance > 0) {
             candidateFloor = Math.max(
               candidateFloor,
-              parentScale * absW * branchRegionDistance,
+              parentScale * regionAbsW * branchRegionDistance,
             );
           }
           let key = parentScale * (r - R);
@@ -1778,39 +1788,66 @@ export function singularValues3(m: number[]): MapSigmas {
   };
 }
 
-/**
- * Singular values of a transform's linear part. Without shear,
- * `M = R · diag(scale)` and the singular values are exactly `|scale|`
- * (closed form, no eigen solve); with shear, fall through to
- * {@link singularValues3} on the composed matrix.
- *
- * A PRESENT POST-AFFINE (`Transform.post`) is priced through the composite:
- * the map's forward linear chain is `post.m · M`, so the sigmas are
- * `singularValues3(mul3(post.m, composeAffine(t).m))` — the fast path's
- * `|scale|` reading is INVALID once a post exists (the post can contract or
- * expand any axis, and its product with M's own anisotropy is the map's
- * real linear action). This is the ONE pricing both gates read
- * (`analyzeSurfaceSystem` here, `analyzeEscapeSystem`'s imported copy), so
- * they move in lockstep across the Surface/escape-time seam as a post
- * arrives. An IDENTITY post (isIdentityAffine) prices exactly as absence —
- * the composite of an identity is M, and the fast path stays live.
- */
-export function transformSigmas(t: Transform): MapSigmas {
+/** Singular values of the base affine and, when live, the separate post
+ * stage. Keeping the factors separate is required around a nonlinear V;
+ * absence/identity returns `post: null`. */
+export function transformStageSigmas(t: Transform): {
+  base: MapSigmas;
+  post: MapSigmas | null;
+} {
   const { post, shear } = t;
-  const postLive = post !== undefined && !isIdentityAffine(post);
-  if (postLive) {
-    return singularValues3(multiply3x3(post.m, composeAffine(t).m));
+  const base =
+    !shear || (shear[0] === 0 && shear[1] === 0 && shear[2] === 0)
+      ? {
+          min: Math.min(
+            Math.abs(t.scale[0]),
+            Math.abs(t.scale[1]),
+            Math.abs(t.scale[2]),
+          ),
+          max: Math.max(
+            Math.abs(t.scale[0]),
+            Math.abs(t.scale[1]),
+            Math.abs(t.scale[2]),
+          ),
+        }
+      : singularValues3(composeAffine(t).m);
+  return {
+    base,
+    post:
+      post !== undefined && !isIdentityAffine(post)
+        ? singularValues3(post.m)
+        : null,
+  };
+}
+
+/**
+ * Conservative singular factors when a nonlinear variation separates the
+ * base affine A from its post-affine P. `sigma(P*A)` is exact only when the
+ * two matrices are adjacent; for `P ∘ V ∘ A`, submultiplicativity gives the
+ * sound factors `sigmaMin(P)*sigmaMin(A)` and
+ * `sigmaMax(P)*sigmaMax(A)`. The absent/identity branch returns the base
+ * object directly so the pre-post numeric path does not acquire even a
+ * multiply by one.
+ */
+export function transformSeparatedSigmas(t: Transform): MapSigmas {
+  const stages = transformStageSigmas(t);
+  return stages.post === null
+    ? stages.base
+    : {
+        min: stages.post.min * stages.base.min,
+        max: stages.post.max * stages.base.max,
+      };
+}
+
+/** Exact singular values of the adjacent linear composite `P·A`. This is
+ * valid for an affine-only map; callers with `P ∘ V ∘ A` must use
+ * {@link transformSeparatedSigmas}. */
+export function transformSigmas(t: Transform): MapSigmas {
+  const stages = transformStageSigmas(t);
+  if (stages.post !== null) {
+    return singularValues3(multiply3x3(t.post!.m, composeAffine(t).m));
   }
-  if (!shear || (shear[0] === 0 && shear[1] === 0 && shear[2] === 0)) {
-    const sx = Math.abs(t.scale[0]);
-    const sy = Math.abs(t.scale[1]);
-    const sz = Math.abs(t.scale[2]);
-    return {
-      min: Math.min(sx, sy, sz),
-      max: Math.max(sx, sy, sz),
-    };
-  }
-  return singularValues3(composeAffine(t).m);
+  return stages.base;
 }
 
 /**
@@ -1827,7 +1864,10 @@ export function analyzeSurfaceSystem(
   schedule: HybridSchedule | null = null,
 ): SurfaceEligibility {
   const reasons: string[] = [];
-  const sigmas = transforms.map(transformSigmas);
+  const stageSigmas = transforms.map(transformStageSigmas);
+  const sigmas = transforms.map((t) =>
+    pureFoldVariation(t) ? transformSeparatedSigmas(t) : transformSigmas(t),
+  );
   const active = transforms.filter(isActive);
   let anisotropy = 1;
 
@@ -1883,12 +1923,16 @@ export function analyzeSurfaceSystem(
       reasons.push(`${label} extends into 4D`);
     }
     const s = sigmas[i];
+    const stageMin = Math.min(
+      stageSigmas[i].base.min,
+      stageSigmas[i].post?.min ?? Infinity,
+    );
     // A pure-fold map iterates w·V(Mp + t), so contraction is gated on the
     // composite Lipschitz bound |w|·L_V·sigma_max — the affine part alone
     // may even expand when the fold weight compensates. Invertibility
     // (near-flat) stays on M: every fold branch descends through inv(M).
     const lip = fold ? foldLipschitz(fold) * s.max : s.max;
-    if (s.min < NEAR_SINGULAR_SIGMA) {
+    if (stageMin < NEAR_SINGULAR_SIGMA) {
       reasons.push(`${label} is nearly flat (scale ≈ 0)`);
     } else if (lip >= CONTRACTION_LIMIT) {
       reasons.push(`${label} does not contract`);
@@ -1922,8 +1966,12 @@ export function analyzeSurfaceSystem(
     if (!isFlatTransform(finalTransform)) {
       reasons.push("final transform extends into 4D");
     }
-    const s = transformSigmas(finalTransform);
-    if (s.min < NEAR_SINGULAR_SIGMA) {
+    const stages = transformStageSigmas(finalTransform);
+    const s = foldFinal
+      ? transformSeparatedSigmas(finalTransform)
+      : transformSigmas(finalTransform);
+    const stageMin = Math.min(stages.base.min, stages.post?.min ?? Infinity);
+    if (stageMin < NEAR_SINGULAR_SIGMA) {
       reasons.push("final transform is nearly flat (scale ≈ 0)");
     } else {
       anisotropy = Math.max(anisotropy, s.max / s.min);
@@ -1940,7 +1988,9 @@ export function analyzeSurfaceSystem(
       if (!isFlatTransform(t)) {
         reasons.push(`${label} extends into 4D`);
       }
-      const s = transformSigmas(t);
+      // B is affine-only and its authored post is stripped by
+      // prepareSchedule, so price the same stripped map the engine applies.
+      const s = transformSigmas({ ...t, post: undefined });
       if (s.min < NEAR_SINGULAR_SIGMA) {
         reasons.push(`${label} is nearly flat (scale ≈ 0)`);
       } else {
@@ -2105,9 +2155,11 @@ export function buildSurfaceDE(
           ),
         ]
       : null;
+    const postSigmaMin = postLive ? singularValues3(post!.m).min : 1;
     // The chain's contraction factor prices the FULL forward map including
-    // the post (transformSigmas' composite), so a contracting post
-    // contracts the certificates with it and an expanding one loosens them.
+    // the post. A pure fold separates A and P with nonlinear V, so its
+    // conservative factor is sigmaMin(P)*sigmaMin(A); an affine-only map
+    // retains the exact sigmaMin(P*A).
     // The stage-2 bound data stays PRE-post: it prices |invM·pre| directly,
     // with `pre` the branch preimage AFTER the un-post step.
     const sigmaMin = analysis.sigmas[i].min;
@@ -2128,6 +2180,7 @@ export function buildSurfaceDE(
       invT,
       postInvM,
       postInvT,
+      postSigmaMin,
       sigmaMin,
       foldKind,
       foldInvW: fold ? 1 / fold.weight : 1,
@@ -2176,6 +2229,7 @@ export function buildSurfaceDE(
         ],
         postInvM: null,
         postInvT: null,
+        postSigmaMin: 1,
         sigmaMin: sigmas.min,
         foldKind: SURFACE_FOLD_NONE,
         foldInvW: 1,
@@ -2500,7 +2554,9 @@ export function buildSurfaceDE(
               image[1] - center[1],
               image[2] - center[2],
             ) +
-              transformSigmas(t).max * previous.radius,
+              // Scheduled B is affine-only and prepareSchedule strips its
+              // authored post. Certify the map the orbit actually applies.
+              transformSigmas({ ...t, post: undefined }).max * previous.radius,
           );
         }
         return radius;
@@ -2621,6 +2677,7 @@ export function buildSurfaceDE(
     const postLive =
       finalTransform.post !== undefined &&
       !isIdentityAffine(finalTransform.post);
+    const lensPost = finalTransform.post;
     const invM = inverse3x3(affine.m);
     const [tx, ty, tz] = affine.t;
     const invT: Vec3 = [
@@ -2628,20 +2685,20 @@ export function buildSurfaceDE(
       -(invM[3] * tx + invM[4] * ty + invM[5] * tz),
       -(invM[6] * tx + invM[7] * ty + invM[8] * tz),
     ];
+    const stages = transformStageSigmas(finalTransform);
     const s = transformSigmas(finalTransform);
     const fold = pureFoldVariation(finalTransform);
-    // The affine image of ball(boundCenter, R) is inside the ball at
-    // `M·boundCenter + t` of radius `sigma_max·R`, so from the origin
-    // `|M x + t| <= |M·boundCenter + t| + sigma_max·R` — with the origin
-    // center this reduces to the historical `sigma_max·R + |t|` exactly.
+    // The PRE-VARIATION affine image of ball(boundCenter, R) is inside the
+    // ball at `M·boundCenter + t` of radius `sigma_max(M)·R`. A fold post
+    // is not adjacent to M and is therefore applied to the folded radius
+    // below; an affine lens may use the tighter composite sigma(P·M), but
+    // its center still has to pass through P as well.
     const [bx, by, bz] = boundCenter;
-    const affineR =
-      s.max * boundingRadius +
-      Math.hypot(
-        affine.m[0] * bx + affine.m[1] * by + affine.m[2] * bz + tx,
-        affine.m[3] * bx + affine.m[4] * by + affine.m[5] * bz + ty,
-        affine.m[6] * bx + affine.m[7] * by + affine.m[8] * bz + tz,
-      );
+    const affineCenter: Vec3 = [
+      affine.m[0] * bx + affine.m[1] * by + affine.m[2] * bz + tx,
+      affine.m[3] * bx + affine.m[4] * by + affine.m[5] * bz + ty,
+      affine.m[6] * bx + affine.m[7] * by + affine.m[8] * bz + tz,
+    ];
     if (fold) {
       const kind: SurfaceFoldKind =
         fold.type === "boxfold"
@@ -2653,7 +2710,6 @@ export function buildSurfaceDE(
       // A fold lens's own post CANNOT fold into invM/invT — the branch
       // enumeration sits between P⁻¹ and the affine inverse — so it rides
       // as its own factor and descendLens un-applies it first.
-      const lensPost = finalTransform.post;
       const postInvM = postLive ? inverse3x3(lensPost!.m) : null;
       const postInvT: Vec3 | null = postLive
         ? [
@@ -2677,13 +2733,14 @@ export function buildSurfaceDE(
       foldFinal = {
         invM,
         invT,
-        sigmaMin: s.min,
+        sigmaMin: transformSeparatedSigmas(finalTransform).min,
         foldKind: kind,
         invW: 1 / fold.weight,
         absW: Math.abs(fold.weight),
         foldRadii: radii,
         postInvM,
         postInvT,
+        postSigmaMin: stages.post?.min ?? 1,
       };
       // Bound the visible set w·V(M·A + t). Per axis the boxfold obeys
       // |fold(t)| <= max(|t|, wall), so |boxfold(y)|² <= Σ max(y_a², wall²)
@@ -2692,22 +2749,27 @@ export function buildSurfaceDE(
       // (fR, fR²/mR], the inner region tops out at (fR²/mR²)·mR = fR²/mR);
       // the mandelbox chains the two. At the classic lengths those are the
       // `+ 3` and the `2` that shipped before the lengths were authorable.
-      const boxR = Math.sqrt(affineR * affineR + 3 * radii.wall * radii.wall);
-      visibleBoundingRadius =
+      const preFoldR =
+        stages.base.max * boundingRadius + Math.hypot(...affineCenter);
+      const boxR = Math.sqrt(preFoldR * preFoldR + 3 * radii.wall * radii.wall);
+      const foldedR =
         foldFinal.absW *
         (kind === SURFACE_FOLD_BOXFOLD
           ? boxR
           : kind === SURFACE_FOLD_SPHEREFOLD
-            ? Math.max(affineR, radii.outputR)
+            ? Math.max(preFoldR, radii.outputR)
             : Math.max(boxR, radii.outputR));
+      visibleBoundingRadius = postLive
+        ? stages.post!.max * foldedR + Math.hypot(...lensPost!.t)
+        : foldedR;
     } else {
       // An AFFINE lens's own post folds into the stored inverse exactly:
       // inv(P∘A)(x) = invM·(inv(post.m)·x + inv(post).t') + invT — one
       // composed affine inverse, applied by the descent prologue unchanged.
       if (postLive) {
-        const lensPost = finalTransform.post as Affine;
-        const pm = inverse3x3(lensPost.m);
-        const pt = lensPost.t;
+        const livePost = lensPost as Affine;
+        const pm = inverse3x3(livePost.m);
+        const pt = livePost.t;
         const invPt: Vec3 = [
           -(pm[0] * pt[0] + pm[1] * pt[1] + pm[2] * pt[2]),
           -(pm[3] * pt[0] + pm[4] * pt[1] + pm[5] * pt[2]),
@@ -2746,7 +2808,24 @@ export function buildSurfaceDE(
       } else {
         final = { invM, invT, sigmaMin: s.min };
       }
-      visibleBoundingRadius = affineR;
+      const visibleCenter = postLive
+        ? ([
+            lensPost!.m[0] * affineCenter[0] +
+              lensPost!.m[1] * affineCenter[1] +
+              lensPost!.m[2] * affineCenter[2] +
+              lensPost!.t[0],
+            lensPost!.m[3] * affineCenter[0] +
+              lensPost!.m[4] * affineCenter[1] +
+              lensPost!.m[5] * affineCenter[2] +
+              lensPost!.t[1],
+            lensPost!.m[6] * affineCenter[0] +
+              lensPost!.m[7] * affineCenter[1] +
+              lensPost!.m[8] * affineCenter[2] +
+              lensPost!.t[2],
+          ] as Vec3)
+        : affineCenter;
+      visibleBoundingRadius =
+        s.max * boundingRadius + Math.hypot(...visibleCenter);
     }
   }
 
@@ -3143,6 +3222,8 @@ function refinedCertValue(
               ? 3
               : 81;
       const absWJ = mapJ.foldSigma / mapJ.sigmaMin;
+      const regionAbsWJ =
+        mapJ.postInvM === null ? absWJ : absWJ * mapJ.postSigmaMin;
       let ux = 0;
       let uy = 0;
       let uz = 0;
@@ -3245,7 +3326,7 @@ function refinedCertValue(
               if (ru < fr.midMinR) {
                 // Same shell stand-in the frontier folds, in the frozen
                 // child's own frame.
-                const shellTerm = absWJ * (fr.fixedR - ru);
+                const shellTerm = regionAbsWJ * (fr.fixedR - ru);
                 if (shellTerm < inner) inner = shellTerm;
                 if (kindJ === SURFACE_FOLD_MANDELBOX) b += 26;
                 continue;
@@ -3340,7 +3421,7 @@ function refinedCertValue(
         const rj = Math.sqrt(jcx * jcx + jcy * jcy + jcz * jcz);
         let innerTerm = branchSigma * (rj - R);
         if (branchRd > 0) {
-          const regionTerm = absWJ * branchRd;
+          const regionTerm = regionAbsWJ * branchRd;
           if (regionTerm > innerTerm) innerTerm = regionTerm;
         }
         if (innerTerm < inner) inner = innerTerm;
@@ -4309,6 +4390,8 @@ function descendFold(
                   ? 3
                   : 81;
           const absW = map.foldSigma / map.sigmaMin;
+          const regionAbsW =
+            map.postInvM === null ? absW : absW * map.postSigmaMin;
           // The map's own POST-AFFINE inverse, between the sector sweep and
           // the branch machinery (the un-post stage — applied BEFORE the
           // un-weighted u-space point below, since the forward order is
@@ -4520,7 +4603,7 @@ function descendFold(
                     // never a near-zero ghost term — and skip the branch
                     // (box expansion included). A settled fold, so the
                     // standard exits apply.
-                    let shellCert = pScale * absW * (fr.fixedR - ru);
+                    let shellCert = pScale * regionAbsW * (fr.fixedR - ru);
                     if (pFloor > shellCert) shellCert = pFloor;
                     if (shellCert < best) {
                       best = shellCert;
@@ -4622,7 +4705,7 @@ function descendFold(
                       : sfSigma * boxRd;
               }
               if (branchRd > 0) {
-                const flr = pScale * absW * branchRd;
+                const flr = pScale * regionAbsW * branchRd;
                 if (flr > candFloor) candFloor = flr;
               }
               // Floor-vs-best prune: every fold the candidate's subtree
@@ -5012,6 +5095,7 @@ function descendLens(
   const im = lens.invM;
   const it = lens.invT;
   const sigmaMinM = lens.sigmaMin;
+  const regionAbsW = lens.postInvM === null ? absW : absW * lens.postSigmaMin;
   // The lens's own post-affine inverse, un-applied FIRST (the lens's map is
   // affine -> variations -> post, so its inverse starts with the un-post).
   // `null` — every lens predating posts — skips with the query untouched.
@@ -5107,7 +5191,7 @@ function descendLens(
         if (ru < fr.midMinR) {
           // Shell guard (see doc): fold the settled shell bound and skip
           // the branch, box expansion included.
-          const shellCert = absW * (fr.fixedR - ru);
+          const shellCert = regionAbsW * (fr.fixedR - ru);
           if (shellCert < best) {
             best = shellCert;
             if (best <= visBound) return visBound;
@@ -5180,7 +5264,7 @@ function descendLens(
             ? sfRd
             : sfSigma * boxRd;
     }
-    const floor = absW * branchRd;
+    const floor = regionAbsW * branchRd;
     if (floor > 0 && floor >= best) continue;
     const qx = im[0] * cx + im[1] * cy + im[2] * cz + it[0];
     const qy = im[3] * cx + im[4] * cy + im[5] * cz + it[1];

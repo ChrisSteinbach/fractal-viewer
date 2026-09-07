@@ -20,12 +20,15 @@ import { analyzeBulbSystem } from "../fractal/bulb-de";
 import { analyzeEscapeSystem, systemHasPowerLink } from "../fractal/escape-de";
 import { analyzeEscapeSystem4 } from "../fractal/escape-de-4d";
 import { systemHasActiveQSquare } from "../fractal/qjulia-de";
-import { analyzeSurfaceSystem, transformSigmas } from "../fractal/surface-de";
+import {
+  analyzeSurfaceSystem,
+  transformStageSigmas,
+} from "../fractal/surface-de";
 import type { SurfaceEligibilityStatus } from "../fractal/surface-de";
 import {
   analyzeSurfaceSystem4,
   systemFoldShaped4,
-  transformSigmas4,
+  transformStageSigmas4,
 } from "../fractal/surface-de-4d";
 import {
   buildScheduleTable,
@@ -369,10 +372,13 @@ export function surfaceTrapGeometryRestriction(
   for (let i = 0; i < transforms.length; i++) {
     const transform = transforms[i];
     if ((transform.weight ?? 1) <= 0) continue;
-    const sigmas = fourD
-      ? transformSigmas4(toTransform4(transform))
-      : transformSigmas(transform);
-    const ratio = sigmas.min > 0 ? sigmas.max / sigmas.min : Infinity;
+    const stages = fourD
+      ? transformStageSigmas4(toTransform4(transform))
+      : transformStageSigmas(transform);
+    const ratioOf = (sigmas: { min: number; max: number } | null): number =>
+      sigmas === null ? 1 : sigmas.min > 0 ? sigmas.max / sigmas.min : Infinity;
+    const ratios = [ratioOf(stages.base), ratioOf(stages.post)];
+    const ratio = Math.max(...ratios);
     // Geometry needs a scalar derivative scale, not the inverse-descent
     // gate's looser "conformal-enough" performance class. Rotation and
     // uniform scale resolve to exact equal singular values in both helpers;

@@ -681,7 +681,7 @@ import {
   SURFACE_FOLD_BOXFOLD,
   SURFACE_FOLD_MANDELBOX,
   SURFACE_FOLD_SPHEREFOLD,
-  transformSigmas,
+  transformSeparatedSigmas,
 } from "./surface-de";
 import {
   activeParametricVariationTypes,
@@ -985,7 +985,7 @@ function foldLipschitz(fold: Variation, map: Transform): number {
     (fold.type === "boxfold"
       ? 1
       : sphereFoldLipschitz(resolveFoldRadii(fold))) *
-    transformSigmas(map).max
+    transformSeparatedSigmas(map).max
   );
 }
 
@@ -1130,7 +1130,7 @@ function buildEscapeLink(map: Transform): EscapeLink {
               ? ESCAPE_LINK_BULB
               : ESCAPE_LINK_QSQUARE,
     w: v.weight,
-    derivGrowth: Math.abs(v.weight) * transformSigmas(map).max,
+    derivGrowth: Math.abs(v.weight) * transformSeparatedSigmas(map).max,
     boxLimit: radii.boxLimit,
     minRadius2: radii.minRadius * radii.minRadius,
     fixedRadius2: radii.fixedRadius * radii.fixedRadius,

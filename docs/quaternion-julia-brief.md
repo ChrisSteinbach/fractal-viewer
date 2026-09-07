@@ -16,6 +16,13 @@
 > "solid (DE/Surface ray marching)". There are four — explorer, flame, solid (voxel) and surface (DE) —
 > and solid and surface are different renderers, not one.
 
+One later scope correction applies to the retained CPU oracle: a transform
+with a non-identity post-affine is refused by `analyzeQJuliaSystem` and
+`buildQJuliaDE`. Its recurrence initializes `y0=A(p)` and then iterates
+`y'=A(V(y))`, but has no `A(P(V(y)))` post-bearing recurrence; silently
+accepting the field would therefore estimate a different object from the same
+document. An explicit identity post remains equivalent to absence.
+
 **Purpose of this document.** Summary of a design conversation (2026-08-13) about adding Julia sets to
 fractal-4d.com. Part 1 is mathematical background explaining how Julia sets relate to IFS (relevant to the
 existing flame mode). Part 2 plus the task list is the actionable part: how to get realistic 3D Julia

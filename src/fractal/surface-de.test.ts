@@ -17,6 +17,7 @@ import {
   SURFACE_FOLD_SPHEREFOLD,
   surfaceDescentCostWeight,
   surfaceOriginVisibleRadius,
+  transformSeparatedSigmas,
   transformSigmas,
 } from "./surface-de";
 import type {
@@ -135,6 +136,7 @@ function expandedReference(de: SurfaceDE): SurfaceDE {
         // carries the copy dependence), so every copy shares the base's.
         postInvM: base.postInvM,
         postInvT: base.postInvT,
+        postSigmaMin: base.postSigmaMin,
         // Rotations leave singular values (and invT) alone, so the
         // composed copy's stage-2 scalars are the base map's exactly;
         // the directional bound rotates with the matrix:
@@ -2955,6 +2957,23 @@ describe("buildSurfaceDE with a pure-fold final lens", () => {
     expect(de.foldFinal!.foldKind).toBe(SURFACE_FOLD_MANDELBOX);
     expect(cloud.bounds.maxR).toBeLessThanOrEqual(de.visibleBoundingRadius);
   });
+
+  it("includes a final post-affine in affine and fold visible bounds", () => {
+    const transforms = sierpinskiTetrahedron();
+    const post = {
+      m: [1.5, 0, 0, 0, 0.75, 0, 0, 0, 0.5],
+      t: [20, -4, 3] as Vec3,
+    };
+    for (const final of [
+      map({ id: 98, scale: [0.9, 0.9, 0.9], post }),
+      { ...boxfoldFinal(), post },
+    ]) {
+      const de = buildSurfaceDE(transforms, final);
+      const cloud = runChaosGame(transforms, 20000, mulberry32(0x65), final);
+      expect(de.visibleBoundingRadius).toBeGreaterThan(20);
+      expect(cloud.bounds.maxR).toBeLessThanOrEqual(de.visibleBoundingRadius);
+    }
+  });
 });
 
 describe("estimateDistance / estimateDistanceRefined with a fold final lens", () => {
@@ -4415,6 +4434,102 @@ describe("transformSigmas with a post-affine", () => {
       map({ post: { m: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0] } }),
     );
     expect(withIdentity).toEqual(bare);
+  });
+
+  it("keeps base and post singular factors separated around a nonlinear fold", () => {
+    const t = map({
+      scale: [0.1, 0.8, 0.8],
+      variations: [{ type: "boxfold", weight: 0.2 }],
+      post: { m: [8, 0, 0, 0, 0.125, 0, 0, 0, 0.125], t: [0, 0, 0] },
+    });
+    // P*A happens to contract on every axis, but P and A sit on opposite
+    // sides of the nonlinear fold and their anisotropy cannot cancel.
+    expect(transformSigmas(t).max).toBeCloseTo(0.8, 12);
+    expect(transformSeparatedSigmas(t).min).toBeCloseTo(0.0125, 12);
+    expect(transformSeparatedSigmas(t).max).toBeCloseTo(6.4, 12);
+    const analysis = analyzeSurfaceSystem([t]);
+    expect(analysis.sigmas[0].min).toBeCloseTo(0.0125, 12);
+    expect(analysis.sigmas[0].max).toBeCloseTo(6.4, 12);
+    expect(analysis.reasons).toContain("map 1 does not contract");
+  });
+
+  it("records the post factor separately from the already-complete fold/core factor", () => {
+    const t = map({
+      scale: [0.1, 0.8, 0.8],
+      variations: [{ type: "boxfold", weight: 0.2 }],
+      post: { m: [0.5, 0, 0, 0, 0.125, 0, 0, 0, 0.125], t: [0, 0, 0] },
+    });
+    const built = buildSurfaceDE([t]).maps[0];
+    expect(built.postSigmaMin).toBeCloseTo(0.125, 12);
+    expect(built.sigmaMin).toBeCloseTo(0.0125, 12);
+    expect(built.foldSigma).toBeCloseTo(0.2 * 0.0125, 12);
+    expect(
+      buildSurfaceDE([{ ...t, post: undefined }]).maps[0].postSigmaMin,
+    ).toBe(1);
+  });
+
+  it("prices a contracting post on fold-map and fold-lens region floors in both value paths", () => {
+    const post = {
+      m: [0.25, 0, 0, 0, 0.25, 0, 0, 0, 0.25],
+      t: [0, 0, 0] as Vec3,
+    };
+    const foldMap = map({
+      scale: [0.2, 0.2, 0.2],
+      variations: [{ type: "mandelbox", weight: 0.2 }],
+      post,
+    });
+    const companion = map({
+      id: 1,
+      position: [-0.35, 0.2, -0.1],
+      scale: [0.2, 0.2, 0.2],
+      variations: [{ type: "mandelbox", weight: 0.2 }],
+    });
+    const mapDE = buildSurfaceDE([foldMap, companion]);
+    mapDE.maxDepth = 4;
+    const oldMapDE: SurfaceDE = {
+      ...mapDE,
+      maps: mapDE.maps.map((slot) => ({ ...slot, postSigmaMin: 1 })),
+    };
+    const lensDE = buildSurfaceDE(sierpinskiTetrahedron(), {
+      ...boxfoldFinal(),
+      post,
+    });
+    lensDE.maxDepth = 4;
+    const oldLensDE: SurfaceDE = {
+      ...lensDE,
+      foldFinal: { ...lensDE.foldFinal!, postSigmaMin: 1 },
+    };
+    let mapStrict = 0;
+    let lensStrict = 0;
+    let carrierStrict = 0;
+    for (let xi = -3; xi <= 3; xi++) {
+      for (let yi = -3; yi <= 3; yi++) {
+        for (let zi = -3; zi <= 3; zi++) {
+          const p: Vec3 = [xi * 0.19, yi * 0.19, zi * 0.19];
+          for (const estimate of [estimateDistance, estimateDistanceRefined]) {
+            const mapNow = estimate(mapDE, p);
+            const mapOld = estimate(oldMapDE, p);
+            expect(mapNow).toBeLessThanOrEqual(mapOld + 1e-12);
+            if (mapNow < mapOld - 1e-9) mapStrict++;
+            const lensNow = estimate(lensDE, p);
+            const lensOld = estimate(oldLensDE, p);
+            expect(lensNow).toBeLessThanOrEqual(lensOld + 1e-12);
+            if (lensNow < lensOld - 1e-9) lensStrict++;
+          }
+          const carrierNow = evaluateSurfaceNativeCarriers(mapDE, p);
+          const carrierOld = evaluateSurfaceNativeCarriers(oldMapDE, p);
+          if (
+            Math.abs(carrierNow.rings - carrierOld.rings) > 1e-9 ||
+            Math.abs(carrierNow.sheets - carrierOld.sheets) > 1e-9
+          ) {
+            carrierStrict++;
+          }
+        }
+      }
+    }
+    expect(mapStrict).toBeGreaterThan(0);
+    expect(lensStrict).toBeGreaterThan(0);
+    expect(carrierStrict).toBeGreaterThan(0);
   });
 });
 

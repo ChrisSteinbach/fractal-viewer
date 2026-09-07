@@ -184,6 +184,41 @@ describe("scheduled Surface production CPU oracle", () => {
     }
   });
 
+  it("strips an authored B post from the certified bounds in both dimensions", () => {
+    const rareFar = [
+      { ...B[0], weight: 1 },
+      {
+        ...map(12, [40, -30, 20], [0.75, 0.5, 0.25]),
+        weight: 1e-12,
+      },
+    ];
+    const withIgnoredPosts = rareFar.map((transform) => ({
+      ...transform,
+      post: {
+        m: [0.001, 0, 0, 0, 0.001, 0, 0, 0, 0.001],
+        t: [100, -200, 300] as Vec3,
+      },
+    }));
+    const plainSchedule = schedule(2, rareFar);
+    const postedSchedule = schedule(2, withIgnoredPosts);
+    const plain3 = buildSurfaceDE([A_POINT_MAP], null, NO_SYMMETRY, {
+      schedule: plainSchedule,
+    });
+    const posted3 = buildSurfaceDE([A_POINT_MAP], null, NO_SYMMETRY, {
+      schedule: postedSchedule,
+    });
+    const plain4 = buildSurfaceDE4([A_POINT_MAP], null, NO_SYMMETRY, {
+      schedule: plainSchedule,
+    });
+    const posted4 = buildSurfaceDE4([A_POINT_MAP], null, NO_SYMMETRY, {
+      schedule: postedSchedule,
+    });
+    expect(posted3.schedule).toEqual(plain3.schedule);
+    expect(posted3.boundingRadius).toBe(plain3.boundingRadius);
+    expect(posted4.schedule).toEqual(plain4.schedule);
+    expect(posted4.boundingRadius).toBe(plain4.boundingRadius);
+  });
+
   it("uses weighted support exactly, including the all-zero uniform fallback", () => {
     const weighted = B.map((t, i) => ({ ...t, weight: i === 0 ? 0 : 2 }));
     const weightedDE = buildSurfaceDE([A_POINT_MAP], null, NO_SYMMETRY, {

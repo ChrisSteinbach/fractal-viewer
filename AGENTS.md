@@ -319,10 +319,14 @@ and UI**, so the interesting math is unit-tested without a browser:
 
 - **`src/fractal/`** — Dependency-free core. No Three.js, no DOM.
   - `affine.ts` — Euler-XYZ rotation matrix + TRS compose/apply, matched to
-    Three.js conventions.
-  - `affine4.ts` — 4D affine group (4×4 + translation), `toTransform4` (lift
-    3D→4D), `systemIsFlat`/`systemPartsAreNonFlat` predicates (derived from
-    transforms, never stored).
+    Three.js conventions; owns the shared `multiply3x3`/`inverse3x3`/
+    `isIdentityAffine`/`composeLinearAffine` arithmetic. `composeAffine`
+    STAYS PRE-POST: its callers ask for the transform's own affine, while
+    each engine applies `Transform.post` at its explicit post stage.
+  - `affine4.ts` — 4D affine group (4×4 + translation), the
+    `multiply4x4`/`composeLinearAffine4` twins and `liftPostToPost4`
+    (upper-left 3×3, identity w row/column); `toTransform4` (lift 3D→4D),
+    `systemIsFlat`/`systemPartsAreNonFlat` derive dimensionality.
   - `background-shape.ts` — the backdrop gradient's SHAPE: "given
     a pixel, what is the mix parameter between the two stops", as against
     `background.ts`'s "given a mode, what are the two stops". The ONE
@@ -456,9 +460,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     never fed back — in all four inlined mirrors AND both flame WGSL
     kernels (bench-pinned agreement scenarios); morphs never interpolate
     it (target's block pops at the leg's first push); `spongeOfFerns` +
-    `PRESET_SCHEDULES` side table are its reachability. The four
-    hand-inlined stepper mirrors (flame, flame-4d, voxel, voxel-4d) and
-    both voxel bounds pilots carry BOTH layers, forced by oracle tests.
+    `PRESET_SCHEDULES` side table are its reachability. `Transform.post` is
+    the THIRD point-consumer layer: after the variation sum and before the
+    symmetry rotation, skipped by emitter steps. All eight CPU steppers and
+    both Flame WGSL kernels carry it, forced by oracle tests.
   - `chaos-game-4d.ts` — 4D twin (`runChaosGame4`), same loop unrolled to four
     coords. Kaleidoscope copies rotate in a PLANE, optionally with a `twist`
     (a double rotation — `affine4.ts`'s `symmetryRotation4`, which reproduces
@@ -507,7 +512,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     without.
   - `flame-gpu-4d.ts` — 4D WGSL kernel (4x4+t affines, `variations4`,
     rotor+camera projection, four `FourDRenderColor` modes). Same agreement
-    harness, and the 3D Slot's fold lane verbatim.
+    harness, and the 3D Slot's fold lane verbatim. `SLOT4_STRIDE_BYTES` is
+    1232 (was 1216): the appended `postTrans` vec4 carries the composed post
+    translation because the four 4×4 post rows have no spare lane.
   - `inversion.ts` — sphere inversion's ONE shared identity:
     `inversionBallScale`, the Möbius factor `R²/(|c|² − r²)` that takes a
     ball to a ball exactly, returning 0 — "no information", so a caller's
@@ -515,16 +522,14 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
-    (identity tuple = order/plane/twist; twist never interpolates). The
-    fold's three lengths ride the file's existing `lerpOptional`
-    with the CLASSIC length as the absent side's fallback, never a
-    synthesized 0 — so `minRadius: 0.3` against a side that omits it (the
-    field OR the whole variation entry) morphs 0.3 -> 0.5, and both sides
-    absent stays absent.
+    (identity tuple = order/plane/twist; twist never interpolates). Optional
+    fold lengths lerp against their CLASSIC defaults; `Transform.post` lerps
+    entrywise against IDENTITY. In both families both-absent stays absent.
   - `mutate-system.ts` — mutation grid perturbation (`mutateSystem`): seeded
-    nudge of every field, clamps mirror sliders, optional keys preserved
-    exactly; `wildcard` option adds structural kicks. Quality-gated by
-    `scoreSystem`.
+    nudge of every field, clamps mirror sliders, optional keys preserved;
+    `wildcard` adds structural kicks. `SEEDED_MUTATION_ALGORITHM_VERSION` is
+    3: a present post uses its own `spatialGeometry` `:post` stream and an
+    absent post is never materialized. Quality-gated by `scoreSystem`.
   - `palette.ts` — Iq cosine-gradient palettes (`buildPaletteLUT` → 256×3 LUT)
     - user-authored `CustomPalette` (2–8 stops) and imported full-resolution
       `RampPalette` (`{kind:"ramp"}`, up to `MAX_RAMP_ENTRIES` — the shape a
@@ -556,7 +561,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `sliceWeight`, `SLICE_GHOST_FLOOR` (`0.06`).
   - `random-system.ts` — "Surprise Me" generator: rolls random IFS (2–4 maps,
     optional kaleidoscope, 25% 4D), quality-gated by chaos-game probes,
-    rerolls up to 40×. Injected `Rng`.
+    rerolls up to 40×. Injected `Rng`; never rolls the optional post-affine,
+    whose absence stays identity.
   - `rng.ts` — seedable mulberry32 PRNG.
   - `shapes.ts` — the multi-system epic's shape library: ONE document-facing
     `ShapeSpec` vocabulary (flat posed-part list, max 8 parts — no
@@ -614,6 +620,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     set), with region floors, value-exact sphere/floor prunes and the
     visible-sphere pin; no contraction gate (an un-iterated lens needs
     none).
+    POST BOUNDS: affine uses the exact composite; folds keep base/post
+    singular bounds separate around V and return branch floors through
+    `sigma_min(post)`; final visible radius includes post matrix+t.
     THE FOLD'S RADII ARE AUTHORED, NOT BAKED IN: the branch algebra's
     constants became expressions of the map's own lengths (inner inverse
     `×0.25 -> ×mR²/fR²` and its sigma `4 -> fR²/mR²`, inner output region
@@ -693,17 +702,13 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     stage-2 B&B on/off (WGSL has no Mesa link cliff). Measured
     verdicts: private frontier, stage 2 OFF — the config stays
     stage-1-only.
-    THE FOLD'S AUTHORED LENGTHS ride a dedicated `fold` lane in
-    both map layouts — `GpuMap` 6 -> 7 vec4, `GpuMap4` 8 -> 9 — carrying
-    `resolveFoldRadii`'s own output `(mR, fR, wall)`, from which a
-    generated `foldRadiiOf` re-derives the branch algebra
-    (`surfaceFoldRadii` field for field). The ESCAPE core's lane says
-    something different — `(mR², fR², wall)`, the form `EscapeLink` keeps
-    and the form `fR²/clamp(r², mR², fR²)` wants — exactly as its `p0`
-    already differs; each packer transfers its OWN oracle's numbers
-    rather than recomputing them. `foldRadiiOf` is emitted only where a
-    fold branch reads it — the fold cores, or ANY core under the lens
-    wrapper — so affine kernels stay byte-identical.
+    Both map layouts keep the authored fold lane and append per-map post
+    tails (`GpuMap` 10 vec4, `GpuMap4` 14); `fold.w` carries
+    `sigma_min(post)` for branch floors. Descent stores inverse posts; escape
+    reuses the lanes FORWARD. A live fold-final post appends 48/80 B after
+    every params tail, moving no older offset. Fold radii stay
+    `(mR,fR,wall)` for descent versus squared for escape, oracle-packed;
+    `foldRadiiOf` emits only in fold-reading cores.
     THE PARAMS WIRE IS FROZEN LAYOUT, and appending to it blind is this
     file's standing hazard. 3D: 0-207 frozen, 208-271 the VARIANT block
     (escape/bulb head-link ballast, mutually exclusive with the lens block
@@ -775,7 +780,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     kaleidoscope. ITS TAIL ALWAYS STORES THE ROW-MAJOR
     BYTES of the matrix the body applies, the packer performing the one
     real transpose (`setSurfaceView4`'s exact dance); maps are `GpuMap4`
-    (`packSurfaceGpuMaps4`, 128-byte stride). Two frozen slots carry 4D
+    (`packSurfaceGpuMaps4`, 224-byte stride). Two frozen slots carry 4D
     semantics: `visibleRadius` packs the SLICE-ADJUSTED sliceVisR so the
     shared march entry's sphere gate is the 4D GLSL's textually
     unchanged, while the tail's `visRadius4` keeps the FULL radius for
@@ -1061,22 +1066,21 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     fold is discontinuous and would certify empty balls across the seam),
     free per orbit step, and `SymmetryParams.blend` is deliberately
     unread exactly as in `surface-de.ts`.
-    EACH LINK CARRIES ITS OWN FOLD LENGTHS (`EscapeLink`'s
-    `boxLimit`/`minRadius2`/`fixedRadius2`, resolved once at build), so a
-    chain may hold a different sphere/box apparatus per link, and
-    `foldLipschitz` tests the real magnification `fR²/mR²` rather than the
-    frozen 4 — which keeps this gate the exact COMPLEMENT of the IFS one
-    as the knob moves. Pinned against an INDEPENDENT oracle:
+    EACH LINK CARRIES its resolved fold lengths and optional
+    `postM`/`postT`. The forward post runs after the weighted fold/power and
+    before `+ p`; `derivGrowth` multiplies base/post sigma-max bounds around
+    the nonlinear body. Different links may carry different fold apparatus,
+    and `foldLipschitz` tests the real `fR²/mR²`, keeping this gate the IFS
+    gate's exact complement. Pinned against an INDEPENDENT oracle:
     `scripts/spherefold-radius-sweep.harness.ts`'s own parameterized copy
     of `runEscapeOrbit` agrees bit-exactly including a two-link chain
     whose links carry DIFFERENT radii.
     ONE-LINK, UNSYMMETRISED SYSTEMS ARE BIT-IDENTICAL to the original
-    single-fold loop (pinned in `escape-de.test.ts` against a frozen copy
-    of it), and the cycle carried into both shader mirrors: GLSL as one
-    `uEscM`/`uEscT`/`uEscParams` slot per link (24-slot cap, the
-    descent's own — and the mode's, since eligibility is one answer for
-    both engines), WGSL as one `GpuMap` per link on the maps storage
-    binding. `EscapeDE extends EscapeLink` survives as the head link's
+    single-fold loop (pinned in `escape-de.test.ts` against a frozen copy),
+    and the cycle carries into both shader mirrors: GLSL has per-link
+    `uEscM`/`uEscT`/`uEscParams` plus the shared post block, while WGSL uses
+    one `GpuMap` per link. `EscapeDE extends EscapeLink`
+    survives as the head link's
     flat wire, now frozen layout ballast nothing reads to render.
     The rendered set is the MANDELBROT-form set — the per-iteration
     offset is the QUERY POINT, which is what makes it the
@@ -1135,15 +1139,15 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     — i.e. `variations.ts`'s `qsquare` with the transform's translation as
     the Julia constant. `analyzeQJuliaSystem` gates, `buildQJuliaDE`
     builds, `estimateQJuliaDistance` returns the Böttcher log form
-    `0.5·|y|·ln|y| / dr`. The only CERTIFIED estimator in the escape-time
+    `0.5·|y|·ln|y| / dr`. A nonidentity post is REFUSED: this orbit has no
+    post stage. The only CERTIFIED estimator in the escape-time
     family (quaternion norm is multiplicative, so `|dq'| = 2|q|·|dq|`
     EXACTLY, where the folds' and the bulb's are heuristics) and the
     cheapest thing the marcher has ever run — 0.059 us/eval against the
     shipped fold's 0.633, at step scale 1.0 with 0.00% measured overshoot.
     NO RENDERER READS IT, deliberately: it is production-dead by the
     verdict of `scripts/qjulia-beauty.harness.ts`, whose twenty panels
-    across rotations, rotor-posed slices, non-zero `w0` and several
-    constants are all SMOOTH — shells, whorls and blobs, handsome and
+    are all SMOOTH — shells, whorls and blobs, handsome and
     entirely without fractal detail — and whose zoom sheet resolves
     nothing new at three levels on four systems. Surface mode's central
     promise is that zoom keeps resolving; for this object there is
@@ -1157,64 +1161,35 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     the escape core, needing neither its own kernel nor its own 4D lift,
     and the `hybridChainQuaternion` preset renders it. So this module's own
     prediction came true — the object that is dull alone earns its place
-    composed with a fold — while the module stays production-dead in the
-    literal sense that no renderer calls `estimateQJuliaDistance`: the
-    chain reads the map in `v` space with the linear-or-Böttcher form
+    composed with a fold — while no renderer calls its standalone estimator.
+    The chain reads the map in `v` space with the linear-or-Böttcher form
     `escape-de.ts` picks, not this file's `y`-space estimator. Its
     step-scale and bailout numbers are still ITS object's, not a
     hybrid's.
-  - `bulb-de.ts` — the Mandelbulb's CPU oracle, third object in
-    the escape-time family beside the folds and `qjulia-de.ts`: the triplex
-    8th power (`variations.ts`'s `bulb`) iterated in the MANDELBROT form
-    the escape family settled on — `v <- V(Mv + t) + p`, `t` the pre-power
-    offset and a live deformation knob, no document state. `dr` seeds at
-    `sigma_max(M)` (not 1 — `dy0/dp` IS `M`) and its trailing
-    `+ sigma_max(M)` is `escape-de.ts`'s `+ 1` carried through `M`: exact,
-    and load-bearing as a FLOOR, since `8|y|^7` shrinks wherever `|y| < 1`,
-    which is most of the interior. Estimate is the Böttcher log form off
-    `|y|`, never `|v|`, with the `ln|r|` clamp below 1 (a negative DE
-    marches backwards). A HEURISTIC unlike the quaternion square: the
-    triplex power stretches azimuthally by `8r^7·|U7(cos θ)|`, up to 8x at
-    the poles, so `dr` under-estimates there — yet MEASURED step scale 1.0,
-    because damping does not clear that residual (it lives in the boundary
-    shell) and at frame level the full step loses no geometry. 0.29 us/eval,
-    3.5x CHEAPER than the fold mode that already ships, refuting the
-    prediction going in. `scripts/bulb-preview.harness.ts` is its sheet;
-    mirrored by the `SURFACE_BULB` GLSL variant
-    (`surface-material.ts`) and the `core: "bulb"` WGSL kernel
-    (`surface-de-gpu.ts`), bench-pinned by the `bulb-forward` eval leg.
-    ROUTED: `analyzeBulbSystem` is the third arm of main.ts's flat surface
-    path (beside `analyzeSurfaceSystem` and `analyzeEscapeSystem`), the
-    compute renderer's `{kind:"bulb"}` target and the `SURFACE_BULB` GLSL
-    fallback carry it, and the `mandelbulbClassic`/`Offset`/`Rotated`
-    presets reach it from the Escape-time menu group. The same map ALSO
-    rides the escape CHAIN as a link (`ESCAPE_LINK_BULB`),
-    which is why `analyzeEscapeSystem` refuses a LONE triplex power: this
-    module's estimator is the better one for that shape (y space,
-    `dr` seeded at `sigma_max(M)`, the Böttcher form) and its gate must
-    stay the only one that admits it. Two links is a chain, and the
-    chain reads the map in `v` space with the literal `+ 1` instead —
-    the same recurrence in different coordinates, and the one thing a
-    mirror must be deliberate about.
+  - `bulb-de.ts` — the Mandelbulb CPU oracle: triplex power 8 in Mandelbrot
+    form, `v <- V(Mv + t) + p`, with `t` the live pre-power offset. `dr`
+    seeds at `sigma_max(M)` and carries that exact floor; the estimate is
+    the Böttcher log form from `|y|`, with `ln|r|` clamped below 1. It is a
+    HEURISTIC (unlike quaternion square), but measured step scale 1.0 stands;
+    evidence is in `scripts/bulb-preview.harness.ts`. `SURFACE_BULB` and the
+    WGSL `core:"bulb"` mirror it, and the three Mandelbulb presets route it.
+    A lone bulb belongs ONLY to this estimator; a bulb beside another link
+    belongs to the escape chain (`ESCAPE_LINK_BULB`), whose coordinates and
+    derivative form deliberately differ. A lone bulb with a non-identity
+    post is REFUSED: the frozen bulb params wire has no post rows; pairing it
+    with a fold routes the posted power through the chain instead.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of
-    truth). `Variation` is `{type, weight}` plus per-variation parameters:
-    the fold's three optional lengths `minRadius`/`fixedRadius`/`boxLimit`
-    and — the SECOND parameterized family, established by the flame-fidelity
-    work — the parametric warps' six optional fields
+    truth). `Transform.post`/`Transform4.post4` are optional general affines,
+    applied after the variation sum and before symmetry; ABSENT MEANS
+    IDENTITY, and the 3D→4D lift embeds the post with w untouched.
+    `Variation` is `{type, weight}` plus the fold's optional
+    `minRadius`/`fixedRadius`/`boxLimit` and the parametric warps' six fields
     (`julianPower`/`julianDist`/`juliascopePower`/`juliascopeDist`/
-    `curlC1`/`curlC2`). Both families deliberately break the type -> weight
-    MAP model rather than pretending to fit it (each field belongs to one or
-    two of the twenty types and the rest ignore them all), and ABSENT MEANS
-    THE CLASSIC VALUES (folds 0.5, 1, 1; julia family power 1, dist 1; curl
-    1, 0 — flam3's own defaults) BYTE-IDENTICALLY — the
-    `weight`/`colorIndex` convention, and what keeps every existing
-    document, preset, morph and `.flame` import unmoved. There is no fourth
-    fold SIZE field on purpose: only two dimensionless ratios of the three
-    lengths are new shape, because a uniform rescale is equivariant through
-    both folds and is therefore already what the transform's own affine part
-    does.
+    `curlC1`/`curlC2`). Those fields belong only to their applicable types;
+    absent means flam3's classic values byte-identically. There is no fourth
+    fold size: uniform rescale is already the transform affine's job.
   - `variations.ts` — twenty nonlinear flame variations as pure functions:
     a dozen classics, the Mandelbox fold family (`boxfold`/`spherefold`/
     `mandelbox`), the two escape-time POWER maps — `qsquare` (the
@@ -1478,14 +1453,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Strict never-throwing decoder. Document carries optional `CameraPose` and
     optional `FourDPose` (rotor pair + w-slice; malformed quietly drops to
     `undefined`). Undo snapshots stay camera/pose-less (history.ts dedupes by
-    string equality). A variation's three optional fold lengths encode
-    only when present and finite — an unparameterized document is
-    byte-identical to one predating them — and decode with two deliberate
-    deviations from this file's other optional numbers, both documented at
-    the function: NO `Number()` coercion (a numeric string or boolean drops
-    rather than becoming a radius) and NO clamp, since the domain belongs to
-    `variations.ts`'s `resolveFoldRadii` and persist's job at this leaf is
-    fidelity.
+    string equality). Optional fold lengths encode only when present/finite
+    and decode without coercion or clamp; their domain belongs to
+    `resolveFoldRadii`. A post encodes only when present and non-identity as
+    the strict 12-number `[m0..m8,tx,ty,tz]` wire, preserving the same
+    absent-means-pre-field byte identity.
   - `viewer-prefs.ts` — per-browser preferences under their own
     `fractal-viewer:prefs` localStorage key, deliberately OUTSIDE the scene
     document: a pref belongs to the person at this browser, so it
@@ -1755,6 +1727,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     order no longer counts against the cap. Callers gate eligibility on the
     bare active-map count first, so an over-cap count throws here rather
     than degrading silently.
+    Live map/escape/lens posts share compile-gated 1600-B `SurfacePosts3`
+    (inverse for descent/lens, forward for escape); absence stays byte-exact.
+    Browser gate: `scripts/surface-post.verify.mjs --display=:0`.
     VARIANT ARMS, resolved by `surfaceFragmentFor`: `SURFACE_FINISH`
     (per-map authored finishes over `uMapFinishA/B`, composing with EVERY
     variant in both dimensions; the 4D pair rides the `SurfaceMaps4`
@@ -1845,6 +1820,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined
     certificates + width-4 beam — the 4D spike's measured ghost eliminator
     plus the validity slots).
+    Its `uInvPostM`/`uInvPostT` arrays append UNCONDITIONALLY to the
+    `SurfaceMaps4` std140 block, growing its `UniformsGroup` from six to eight
+    arrays so no pre-post offset moves.
     The slice has a THICKNESS: `uSliceHalfW > 0` makes every
     descent query the SEGMENT spanning `|w - uW0| <= h` instead of the
     point `(p, uW0)`, so the mode renders a SLAB's projected shadow rather

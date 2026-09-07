@@ -219,7 +219,7 @@ function formatSurfaceUnprojectRow(label, row) {
     `  ${label} ${row.system} w${row.width} wg${row.wg} ${row.rasterWidth}x${row.rasterHeight}: ` +
     `rays=${row.rays} statusMm=${row.statusMismatches} boundary=${row.boundaryFlips} ` +
     `silhouette=${row.silhouetteFlips} ` +
-    `graze=${row.hitTGrazes} hitTFail=${row.hitTFailures} ` +
+    `corridor=${row.hitTCorridorMatches}/${row.hitTCorridorCap} hitTFail=${row.hitTFailures} ` +
     `maxAbsT=${row.maxAbsT.toExponential(2)} ` +
     `fail=${row.failures} hits=${row.gpuHits}/${row.cpuHits}(gpu/cpu) ` +
     `gpu=${row.gpuMs.toFixed(0)}ms passes=${row.passes}` +

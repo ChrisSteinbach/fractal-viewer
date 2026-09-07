@@ -110,6 +110,7 @@
  * flatness clause: the quaternions are natively 4D, and a `w` extension on
  * the map is exactly how the Julia constant acquires its `k` component.
  */
+import { isIdentityAffine } from "./affine";
 import { composeAffine4, toTransform4 } from "./affine4";
 import { effectiveSymmetryOrder } from "./chaos-game";
 import { transformSigmas4 } from "./surface-de-4d";
@@ -275,6 +276,11 @@ export function analyzeQJuliaSystem(
       reasons.push(
         "the quaternion square's weight must be 1 (scale the map instead)",
       );
+    } else if (map.post && !isIdentityAffine(map.post)) {
+      // This oracle initializes y0=A(p) and iterates y'=A(V(y)), not
+      // y'=A(P(V(y))). Pricing P in the bounds while omitting it from the
+      // orbit would describe no coherent set.
+      reasons.push("post-affine (unsupported in quaternion Julia mode)");
     } else if (transformSigmas4(toTransform4(map)).min <= 0) {
       // A singular M collapses the orbit onto a subspace, where the escape
       // radius below has no solution and the bounding ball is unbounded.
