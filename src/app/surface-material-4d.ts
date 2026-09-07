@@ -226,9 +226,10 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   uniform float uHitFloor;
 
   /** Everything per-map, in a std140 uniform BLOCK rather than the default
-   * block: 24 slots cost 2688 bytes of the 16 KB every WebGL2 device
-   * guarantees per block, where the same arrays as default-block uniforms
-   * would have eaten 192 of the guaranteed 224 fragment uniform vectors.
+   * block: the current eight-member layout costs 5376 bytes of the 16 KB every
+   * WebGL2 device guarantees per block (the original four-member core was
+   * 2688), while the same arrays as default-block uniforms exceed the
+   * guaranteed 224 fragment uniform vectors.
    * Only the first uMapCount slots are meaningful; the rest are
    * stale/identity and never read. One slot per INPUT transform at any
    * kaleidoscope order — sectors are swept, not expanded (see uSymOrder

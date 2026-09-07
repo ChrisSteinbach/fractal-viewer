@@ -160,9 +160,12 @@ const BG_BOTTOM = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.bottom));
  * changed nothing measured. */
 export const SURFACE_GRID_SKIP_CAP = 256;
 
-/** Compile-time size of the per-map uniform arrays: at ~7 vec4-equivalents
- * per slot (mat3 = 3, plus vec3 + float + vec3 + float), 24 maps stays
- * comfortably under WebGL2's guaranteed 224 fragment uniform vectors.
+/** Compile-time size of the per-map default-block arrays: at ~7
+ * vec4-equivalents per slot (mat3 = 3, plus vec3 + float + vec3 + float),
+ * 24 maps stays comfortably under WebGL2's guaranteed 224 fragment uniform
+ * vectors. A live post stage is deliberately NOT another default-block
+ * array: its 25 homogeneous matrices occupy a 1600-byte std140 UBO, within
+ * WebGL2's guaranteed 16 KiB maximum-uniform-block-size minimum.
  *
  * Slots are BASE maps. Kaleidoscope copies used to be expanded into slots
  * of their own, so this budget doubled as a cap on `order * baseMaps` and
@@ -419,11 +422,16 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
             int branchCount =
               kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
             float absW = fp.z / uSigmaMin[j];
+#if SURFACE_POST
+            float postSigmaMin = uFoldRadii[j].w;
+#endif
             FoldRadii fr = foldRadiiOf(uFoldRadii[j].xyz);
-            // The un-post stage: the map's own post-affine inverse,
-            // between the sector sweep and the branch machinery (identity
-            // when the map authors no post — value-exact skip).
-            vec3 pQ = uInvPostM[j] * sQ + uInvPostT[j];
+#if SURFACE_POST
+            // The un-post stage sits between the sector sweep and branch
+            // machinery. The compile-time off arm keeps the historic sQ
+            // expressions byte-for-byte and pays no map-post block.
+            vec3 postQ = applyMapPost(j, sQ);
+#endif
             // Branch-and-bound stage 2 is deliberately CPU-ONLY. The
             // oracle's branch-and-bound skips (descendFold) are VALUE
             // no-ops, so this mirror computes identical values without them
@@ -449,7 +457,11 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
             float sfSigma = 1.0;
             float sfRd = 0.0;
             if (kind != 0) {
-              u = pQ * fp.y;
+#if SURFACE_POST
+              u = postQ * fp.y;
+#else
+              u = sQ * fp.y;
+#endif
               if (kind == 1) {
                 pre0 = u;
                 pre1 = fr.wall2 - u;
@@ -473,7 +485,11 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                 if (candFloor > 0.0 && candFloor >= best) {
                   continue;
                 }
-                img = uInvM[j] * pQ + uInvT[j];
+#if SURFACE_POST
+                img = uInvM[j] * postQ + uInvT[j];
+#else
+                img = uInvM[j] * sQ + uInvT[j];
+#endif
                 branchSigma = uSigmaMin[j];
               } else {
                 float branchRd;
@@ -494,7 +510,12 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                       // f32 overflow guard: fold the unit-shell bound
                       // (~pScale * |w|, never a near-zero ghost term) and
                       // skip the branch + its box expansion.
+#if SURFACE_POST
+                      float shellCert =
+                        pScale * absW * postSigmaMin * (fr.fixedR - ru);
+#else
                       float shellCert = pScale * absW * (fr.fixedR - ru);
+#endif
                       shellCert = max(shellCert, pFloor);
                       if (shellCert < best) {
                         best = shellCert;
@@ -548,7 +569,14 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                   branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
                 }
                 if (branchRd > 0.0) {
+#if SURFACE_POST
+                  candFloor = max(
+                    candFloor,
+                    pScale * absW * postSigmaMin * branchRd
+                  );
+#else
                   candFloor = max(candFloor, pScale * absW * branchRd);
+#endif
                 }
                 // Floor-vs-best prune: the subtree's every fold is >= its
                 // floor, which already cannot advance the min. Pruned
@@ -882,16 +910,23 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform mat3 uInvM[MAX_MAPS];
   /** Inverse translation per map: -inv(M_i) . t_i. */
   uniform vec3 uInvT[MAX_MAPS];
-  /** The map's own POST-AFFINE inverse per map (Transform.post), the
-   * descent's un-post stage: applied to the swept chain point BETWEEN the
-   * sector un-rotation and the fold-branch/base-inverse machinery, because
-   * the forward map is Rot_k ∘ P ∘ V ∘ A and P⁻¹ sits exactly there. Packed
-   * as the IDENTITY and zero translation for every map that authors none —
-   * the unconditional apply is value-exact (x·I + 0 = x) and keeps the
-   * shader branch-free. */
-  uniform mat3 uInvPostM[MAX_MAPS];
-  /** The post's inverse translation -inv(P.m) . P.t (zero when absent). */
-  uniform vec3 uInvPostT[MAX_MAPS];
+#if SURFACE_POST
+  /** One homogeneous post-affine per slot. The same std140 block carries
+   * inverse posts for IFS descent and forward posts for escape links; those
+   * variants are mutually exclusive. Keeping this out of the default block
+   * avoids 96 vectors at 24 maps — enough by itself to exceed WebGL2's
+   * guaranteed 224 fragment-uniform vectors. */
+  layout(std140) uniform SurfacePosts3 {
+    mat4 uMapPost[MAX_MAPS];
+    mat4 uLensPost;
+  };
+  vec3 applyMapPost(int slot, vec3 p) {
+    return (uMapPost[slot] * vec4(p, 1.0)).xyz;
+  }
+  vec3 applyLensPost(vec3 p) {
+    return (uLensPost * vec4(p, 1.0)).xyz;
+  }
+#endif
   /** Smallest singular value of each FORWARD map — the certified
    * contraction factor multiplied into the running scale product. */
   uniform float uSigmaMin[MAX_MAPS];
@@ -1156,7 +1191,11 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   /** The lens fold's AUTHORED lengths, uFoldRadii's per-map quartet for
    * the one map that is not in the array. Zero without a lens,
    * which the wrapper never reads. */
+#if SURFACE_POST
+  uniform vec4 uLensRadii;
+#else
   uniform vec3 uLensRadii;
+#endif
   /** Base-color source: 0 = by-transform (uMapColor), 1 = orbit-trap
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
    * sheets. Sources 1-5 sample uColorLUT. */
@@ -1462,7 +1501,11 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
         int nextState = surfaceChaosChildState(depth, j);
         if (!surfaceChaosAllows(currentState, nextState)) continue;
 #endif
-        vec3 jImg = uInvM[j] * (uInvPostM[j] * sImg + uInvPostT[j]) + uInvT[j];
+#if SURFACE_POST
+        vec3 jImg = uInvM[j] * applyMapPost(j, sImg) + uInvT[j];
+#else
+        vec3 jImg = uInvM[j] * sImg + uInvT[j];
+#endif
 #if SURFACE_SCHEDULE
         inner = min(
           inner,
@@ -1611,17 +1654,6 @@ uniform float uBalloonPaletteEnabled;
   uniform mat3 uEscM[MAX_MAPS];
   uniform vec3 uEscT[MAX_MAPS];
   uniform vec4 uEscParams[MAX_MAPS];
-  /** Each LINK's own POST-AFFINE (flam3's post=, escape-de.ts's
-   * EscapeLink.postM/postT), read FORWARD — the link's forward map is
-   * P ∘ (w·V) ∘ A, so the orbit applies uEscPostM[li] * (w·f(y)) +
-   * uEscPostT[li] after the fold/power body and BEFORE the + q offset,
-   * exactly the WGSL escape core's linkPostForward and the CPU orbit's
-   * posted arm. Packed IDENTITY/zero for a post-free link — the
-   * unconditional mat3 apply is value-exact there (x·I + 0 = x), which
-   * keeps a post-free chain's frame bit for bit. Declared INSIDE the arm
-   * beside the three arrays above: no other variant pays these bytes. */
-  uniform mat3 uEscPostM[MAX_MAPS];
-  uniform vec3 uEscPostT[MAX_MAPS];
   /** Each LINK's own fold lengths, SQUARED for the sphere pair:
    * (minRadius^2, fixedRadius^2, boxLimit, unused), which is the form
    * EscapeLink keeps and the form fR2/clamp(r2, mR2, fR2) wants. A chain
@@ -1849,11 +1881,16 @@ uniform float uBalloonPaletteEnabled;
         localL = 2.0 * length(y);
         y = vec3(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
       }
+#if SURFACE_POST
+      // A live link post sits between the weighted fold output and the
+      // query offset, the CPU orbit's rule.
+      v = applyMapPost(li, prm.y * y) + q;
+#else
       // The Mandelbrot form's offset — the QUERY POINT (folded before the
       // orbit), not the document's t (which stays the pre-fold offset
-      // inside y above). The link's own POST-AFFINE sits between the
-      // weighted fold output and that offset, the CPU orbit's rule.
-      v = uEscPostM[li] * (prm.y * y) + uEscPostT[li] + q;
+      // inside y above).
+      v = prm.y * y + q;
+#endif
       // EVERY LINK CONTRIBUTES ITS OWN FACTOR to the one shared dr, and
       // the "+ 1" — the per-link offset's own derivative — floors it once
       // per link rather than once per pass.
@@ -1987,10 +2024,13 @@ uniform float uBalloonPaletteEnabled;
         localL = 2.0 * length(y);
         y = vec3(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
       }
+#if SURFACE_POST
       // The link's own POST-AFFINE, forward, before the +q offset — the
-      // value form's rule above (hit-info shares the orbit's arithmetic so
-      // the two interpolants cannot disagree about what a link is).
-      v = uEscPostM[li] * (prm.y * y) + uEscPostT[li] + q;
+      // value form's rule above (hit-info shares the orbit's arithmetic).
+      v = applyMapPost(li, prm.y * y) + q;
+#else
+      v = prm.y * y + q;
+#endif
       dr = prm.z * localL * dr + 1.0;
       r = length(v);
       growth = prm.z;
@@ -2596,7 +2636,11 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
             int childState = surfaceChaosChildState(depth, j);
             if (!surfaceChaosAllows(pState, childState)) continue;
 #endif
-            vec3 img = uInvM[j] * (uInvPostM[j] * sQ + uInvPostT[j]) + uInvT[j];
+#if SURFACE_POST
+            vec3 img = uInvM[j] * applyMapPost(j, sQ) + uInvT[j];
+#else
+            vec3 img = uInvM[j] * sQ + uInvT[j];
+#endif
 #if SURFACE_SCHEDULE
             float r = length(img - childBound.xyz);
             float key = pScale * (r - childBound.w);
@@ -3124,9 +3168,14 @@ ${foldValueFormGlsl(shadeDeWidth)}
           int branchCount =
             kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
           float absW = fp.z / uSigmaMin[j];
+#if SURFACE_POST
+          float postSigmaMin = uFoldRadii[j].w;
+#endif
           FoldRadii fr = foldRadiiOf(uFoldRadii[j].xyz);
-          // The un-post stage (identity when absent — value-exact skip).
-          vec3 pQ = uInvPostM[j] * sQ + uInvPostT[j];
+#if SURFACE_POST
+          // The un-post stage between the sector and branch machinery.
+          vec3 postQ = applyMapPost(j, sQ);
+#endif
           vec3 u = vec3(0.0);
           float ru = 0.0;
           vec3 pre0 = vec3(0.0);
@@ -3138,7 +3187,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
           float sfSigma = 1.0;
           float sfRd = 0.0;
           if (kind != 0) {
-            u = pQ * fp.y;
+#if SURFACE_POST
+            u = postQ * fp.y;
+#else
+            u = sQ * fp.y;
+#endif
             if (kind == 1) {
               pre0 = u;
               pre1 = fr.wall2 - u;
@@ -3154,7 +3207,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
             float branchSigma;
             float branchRd = 0.0;
             if (kind == 0) {
-              img = uInvM[j] * pQ + uInvT[j];
+#if SURFACE_POST
+              img = uInvM[j] * postQ + uInvT[j];
+#else
+              img = uInvM[j] * sQ + uInvT[j];
+#endif
               branchSigma = uSigmaMin[j];
             } else {
               if (kind == 2 || (kind == 3 && b % 27 == 0)) {
@@ -3219,7 +3276,14 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #endif
             float candFloor = pFloor;
             if (branchRd > 0.0) {
+#if SURFACE_POST
+              candFloor = max(
+                candFloor,
+                pScale * absW * postSigmaMin * branchRd
+              );
+#else
               candFloor = max(candFloor, pScale * absW * branchRd);
+#endif
             }
 #if SURFACE_SCHEDULE
             float key = pScale * (r - childBound.w);
@@ -3515,7 +3579,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
             int childState = surfaceChaosChildState(depth, j);
             if (!surfaceChaosAllows(pState, childState)) continue;
 #endif
-            vec3 img = uInvM[j] * (uInvPostM[j] * sQ + uInvPostT[j]) + uInvT[j];
+#if SURFACE_POST
+            vec3 img = uInvM[j] * applyMapPost(j, sQ) + uInvT[j];
+#else
+            vec3 img = uInvM[j] * sQ + uInvT[j];
+#endif
 #if SURFACE_SCHEDULE
             float r = length(img - childBound.xyz);
             float key = pScale * (r - childBound.w);
@@ -3933,8 +4001,19 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float visBound = length(p) - uVisibleRadius;
     int kind = int(uLensParams.x);
     float absW = uLensParams.z;
+#if SURFACE_POST
+    float postSigmaMin = uLensRadii.w;
+#endif
+#if SURFACE_POST
+    vec3 u = applyLensPost(p) * uLensParams.y;
+#else
     vec3 u = p * uLensParams.y;
+#endif
+#if SURFACE_POST
+    FoldRadii fr = foldRadiiOf(uLensRadii.xyz);
+#else
     FoldRadii fr = foldRadiiOf(uLensRadii);
+#endif
     float best = 1e30;
     float ru = 0.0;
     vec3 pre0 = vec3(0.0);
@@ -3970,7 +4049,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
           if (ru < fr.midMinR) {
             // Shell guard (the oracle's): fold the settled shell bound,
             // skip the branch + its box expansion.
+#if SURFACE_POST
+            float shellCert = absW * postSigmaMin * (fr.fixedR - ru);
+#else
             float shellCert = absW * (fr.fixedR - ru);
+#endif
             if (shellCert < best) {
               best = shellCert;
               if (best <= visBound) {
@@ -4021,7 +4104,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
         float boxRd = length(dd);
         branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
       }
+#if SURFACE_POST
+      float flr = absW * postSigmaMin * branchRd;
+#else
       float flr = absW * branchRd;
+#endif
       if (flr > 0.0 && flr >= best) {
         continue;
       }
@@ -4072,8 +4159,19 @@ ${foldValueFormGlsl(shadeDeWidth)}
   ) {
     int kind = int(uLensParams.x);
     float absW = uLensParams.z;
+#if SURFACE_POST
+    float postSigmaMin = uLensRadii.w;
+#endif
+#if SURFACE_POST
+    vec3 u = applyLensPost(p) * uLensParams.y;
+#else
     vec3 u = p * uLensParams.y;
+#endif
+#if SURFACE_POST
+    FoldRadii fr = foldRadiiOf(uLensRadii.xyz);
+#else
     FoldRadii fr = foldRadiiOf(uLensRadii);
+#endif
     float best = 1e30;
     float ru = 0.0;
     vec3 pre0 = vec3(0.0);
@@ -4151,7 +4249,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
         float boxRd = length(dd);
         branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
       }
+#if SURFACE_POST
+      float flr = absW * postSigmaMin * branchRd;
+#else
       float flr = absW * branchRd;
+#endif
       if (flr > 0.0 && flr >= best) {
         continue;
       }
@@ -4967,6 +5069,88 @@ ${foldValueFormGlsl(shadeDeWidth)}
  * width. */
 const SURFACE_FRAGMENT = buildSurfaceFragment(resolveShadeDeWidth());
 
+interface SurfacePostBuffers {
+  group: THREE.UniformsGroup;
+  matrices: Float32Array;
+  lens: Float32Array;
+}
+
+const surfacePostBuffers = new WeakMap<
+  THREE.ShaderMaterial,
+  SurfacePostBuffers
+>();
+
+/** Write one row-major 3x3+t affine as a column-major homogeneous mat4. */
+function writeSurfacePostMatrix(
+  target: Float32Array,
+  at: number,
+  m: readonly number[] | null,
+  t: readonly number[] | null,
+): void {
+  if (m === null || t === null) {
+    target.fill(0, at, at + 16);
+    for (let d = 0; d < 4; d++) target[at + d * 4 + d] = 1;
+    return;
+  }
+  target.set(
+    [
+      m[0],
+      m[3],
+      m[6],
+      0,
+      m[1],
+      m[4],
+      m[7],
+      0,
+      m[2],
+      m[5],
+      m[8],
+      0,
+      t[0],
+      t[1],
+      t[2],
+      1,
+    ],
+    at,
+  );
+}
+
+function writeSurfacePostSlot(
+  buffers: SurfacePostBuffers,
+  slot: number,
+  m: readonly number[] | null,
+  t: readonly number[] | null,
+): void {
+  writeSurfacePostMatrix(buffers.matrices, slot * 16, m, t);
+}
+
+function writeSurfaceLensPost(
+  buffers: SurfacePostBuffers,
+  m: readonly number[] | null,
+  t: readonly number[] | null,
+): void {
+  writeSurfacePostMatrix(buffers.lens, 0, m, t);
+}
+
+/** Attach the post UBO exactly while the resolved shader declares it. */
+function installSurfacePostBlock(
+  material: THREE.ShaderMaterial,
+  enabled: boolean,
+): boolean {
+  const buffers = surfacePostBuffers.get(material);
+  if (!buffers) {
+    throw new TypeError(
+      "surface material has no post block — build it with createSurfaceMaterial",
+    );
+  }
+  const attached = material.uniformsGroups.includes(buffers.group);
+  if (attached === enabled) return false;
+  material.uniformsGroups = enabled
+    ? [...material.uniformsGroups, buffers.group]
+    : material.uniformsGroups.filter((group) => group !== buffers.group);
+  return true;
+}
+
 /**
  * Per-tier march/shading budgets: map-heavy systems (Menger's 20 flat
  * maps, high-order kaleidoscopes — whose sectors cost no slots but still
@@ -5540,7 +5724,23 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
     1,
   );
   configureSurfaceLUTTexture(placeholderLUT);
-  return new THREE.ShaderMaterial({
+  const postMatrices = new Float32Array(SURFACE_MAX_MAPS * 16);
+  const posts = new THREE.UniformsGroup();
+  posts.setName("SurfacePosts3");
+  posts.setUsage(THREE.DynamicDrawUsage);
+  posts.add(new THREE.Uniform(postMatrices));
+  const lensPost = new Float32Array(16);
+  posts.add(new THREE.Uniform(lensPost));
+  const postBuffers: SurfacePostBuffers = {
+    group: posts,
+    matrices: postMatrices,
+    lens: lensPost,
+  };
+  for (let j = 0; j < SURFACE_MAX_MAPS; j++) {
+    writeSurfacePostSlot(postBuffers, j, null, null);
+  }
+  writeSurfaceLensPost(postBuffers, null, null);
+  const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
       ...surfaceGridUniforms(),
@@ -5552,20 +5752,6 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
         ),
       },
       uInvT: {
-        value: Array.from(
-          { length: SURFACE_MAX_MAPS },
-          () => new THREE.Vector3(),
-        ),
-      },
-      // The per-map POST-AFFINE inverses — identity/zero by default, which
-      // is exactly the value-exact "no post" apply the shader makes.
-      uInvPostM: {
-        value: Array.from(
-          { length: SURFACE_MAX_MAPS },
-          () => new THREE.Matrix3(),
-        ),
-      },
-      uInvPostT: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
           () => new THREE.Vector3(),
@@ -5622,14 +5808,15 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
           () => new THREE.Vector4(0, 1, 1, 0),
         ),
       },
-      // Per-map AUTHORED fold lengths: (minRadius, fixedRadius, boxLimit,
-      // unused). The default IS the classic Mandelbox set, so a slot
+      // Per-map fold data: AUTHORED (minRadius, fixedRadius, boxLimit) plus
+      // the post's region-floor sigma. The default IS the classic
+      // Mandelbox set with an inert post factor, so a slot
       // setSurfaceSystem has not reached reads as an unparameterized fold
       // rather than as a divide by zero.
       uFoldRadii: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
-          () => new THREE.Vector4(0.5, 1, 1, 0),
+          () => new THREE.Vector4(0.5, 1, 1, 1),
         ),
       },
       uMapCount: { value: 0 },
@@ -5662,7 +5849,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uLensInvM: { value: new THREE.Matrix3() },
       uLensInvT: { value: new THREE.Vector3() },
       // The lens fold's lengths, classic by default for uFoldRadii's reason.
-      uLensRadii: { value: new THREE.Vector3(0.5, 1, 1) },
+      uLensRadii: { value: new THREE.Vector4(0.5, 1, 1, 1) },
       // Escape-time render: inert defaults; alive only under the
       // SURFACE_ESCAPE define. One slot per CHAIN LINK (the document's
       // transform list IS the formula sequence), sized like the descent's
@@ -5674,21 +5861,6 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
         ),
       },
       uEscT: {
-        value: Array.from(
-          { length: SURFACE_MAX_MAPS },
-          () => new THREE.Vector3(),
-        ),
-      },
-      // The links' own POST-AFFINEs, read FORWARD (see the shader's
-      // declaration): identity/zero defaults, the value-exact "no post"
-      // apply, so an unreached or post-free slot is inert.
-      uEscPostM: {
-        value: Array.from(
-          { length: SURFACE_MAX_MAPS },
-          () => new THREE.Matrix3(),
-        ),
-      },
-      uEscPostT: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
           () => new THREE.Vector3(),
@@ -5856,6 +6028,12 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
     depthTest: false,
     depthWrite: false,
   });
+  surfacePostBuffers.set(material, postBuffers);
+  // The group is deliberately not attached until a system carries a live
+  // post; the post-free shader has no matching block and keeps its historic
+  // source/arithmetic path.
+  material.addEventListener("dispose", () => posts.dispose());
+  return material;
 }
 
 /** Pack a {@link SurfaceDE} + per-slot shading inputs into the material's
@@ -5915,10 +6093,19 @@ export function setSurfaceSystem(
   // texture's disposal.
   setSurfaceGrid(material, null);
   const u = material.uniforms;
+  const posts = surfacePostBuffers.get(material);
+  if (!posts) {
+    throw new TypeError(
+      "surface material has no post block — build it with createSurfaceMaterial",
+    );
+  }
+  writeSurfaceLensPost(
+    posts,
+    de.foldFinal?.postInvM ?? null,
+    de.foldFinal?.postInvT ?? null,
+  );
   const invM = u.uInvM.value as THREE.Matrix3[];
   const invT = u.uInvT.value as THREE.Vector3[];
-  const invPostM = u.uInvPostM.value as THREE.Matrix3[];
-  const invPostT = u.uInvPostT.value as THREE.Vector3[];
   const sigmaMin = u.uSigmaMin.value as number[];
   const mapColor = u.uMapColor.value as THREE.Vector3[];
   const trapIndex = u.uTrapIndex.value as number[];
@@ -5941,6 +6128,7 @@ export function setSurfaceSystem(
     }
   }
   let hasFolds = false;
+  let hasPosts = de.foldFinal !== null && de.foldFinal.postInvM !== null;
   de.maps.forEach((map, j) => {
     const m = map.invM;
     // SurfaceDEMap.invM is ROW-major; Matrix3.set takes row-major arguments
@@ -5948,26 +6136,8 @@ export function setSurfaceSystem(
     // `mat3 * vec3` product expects, so this is a straight pass-through.
     invM[j].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     invT[j].set(...map.invT);
-    // The map's own post inverse, packed as IDENTITY/zero when the map
-    // authors none — the shader's unconditional apply is value-exact.
-    if (map.postInvM !== null && map.postInvT !== null) {
-      const pm = map.postInvM;
-      invPostM[j].set(
-        pm[0],
-        pm[1],
-        pm[2],
-        pm[3],
-        pm[4],
-        pm[5],
-        pm[6],
-        pm[7],
-        pm[8],
-      );
-      invPostT[j].set(...map.postInvT);
-    } else {
-      invPostM[j].identity();
-      invPostT[j].set(0, 0, 0);
-    }
+    writeSurfacePostSlot(posts, j, map.postInvM, map.postInvT);
+    if (map.postInvM !== null) hasPosts = true;
     sigmaMin[j] = map.sigmaMin;
     mapColor[j].set(...colors[j]);
     const trap = trapIndices ? trapIndices[j] : 0;
@@ -5975,7 +6145,8 @@ export function setSurfaceSystem(
     // The fold-variant vec4 carries the trap coordinate in .w so swapping
     // uTrapIndex out keeps the swap uniform-budget neutral.
     foldParams[j].set(map.foldKind, map.foldInvW, map.foldSigma, trap);
-    // The map's three AUTHORED lengths; the shader's foldRadiiOf
+    // The map's three AUTHORED lengths plus the post-region sigma; the
+    // shader's foldRadiiOf
     // re-derives the branch algebra from them, so this ships
     // resolveFoldRadii's output rather than surfaceFoldRadii's eight
     // combinations.
@@ -5983,7 +6154,7 @@ export function setSurfaceSystem(
       map.foldRadii.minR,
       map.foldRadii.fixedR,
       map.foldRadii.wall,
-      0,
+      map.postSigmaMin,
     );
     if (map.foldKind !== SURFACE_FOLD_NONE) hasFolds = true;
   });
@@ -5993,14 +6164,13 @@ export function setSurfaceSystem(
     invM[slot].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     invT[slot].set(...map.invT);
     // B is affine-only by the document rule: its post slot stays identity.
-    invPostM[slot].identity();
-    invPostT[slot].set(0, 0, 0);
+    writeSurfacePostSlot(posts, slot, null, null);
     sigmaMin[slot] = map.sigmaMin;
     trapIndex[slot] = 0;
     // B is a finite affine plot-stage word: it never inherits A's fold,
     // material, color or trap attribution even in a fold-capable program.
     foldParams[slot].set(SURFACE_FOLD_NONE, 1, map.sigmaMin, 0);
-    foldRadii[slot].set(0.5, 1, 1, 0);
+    foldRadii[slot].set(0.5, 1, 1, 1);
   });
   const shapeSlots = new Map<string, number>();
   emitters.forEach((emitter, e) => {
@@ -6010,8 +6180,7 @@ export function setSurfaceSystem(
     invT[slot].set(...emitter.invT);
     // Emitter steps skip the map's own post-affine (the emitter rule): the
     // slot's un-post stays identity.
-    invPostM[slot].identity();
-    invPostT[slot].set(0, 0, 0);
+    writeSurfacePostSlot(posts, slot, null, null);
     sigmaMin[slot] = emitter.sigmaMin;
     const key = JSON.stringify(emitter.shape);
     let shape = shapeSlots.get(key);
@@ -6042,6 +6211,8 @@ export function setSurfaceSystem(
   const wantSchedule = schedule ? 1 : 0;
   const wantCondensation = emitters.length > 0 ? 1 : 0;
   const wantChaos = chaos ? 1 : 0;
+  const wantPost = hasPosts ? 1 : 0;
+  const postBlockChanged = installSurfacePostBlock(material, hasPosts);
   const condensationShapes = wantCondensation
     ? emitters.map((emitter) => emitter.shape)
     : null;
@@ -6073,8 +6244,10 @@ export function setSurfaceSystem(
     material.defines.SURFACE_GROUND_PLANE !== plane ||
     (material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0) !== wantSchedule ||
     (material.defines.SURFACE_CHAOS === 1 ? 1 : 0) !== wantChaos ||
+    (material.defines.SURFACE_POST === 1 ? 1 : 0) !== wantPost ||
     material.defines.SURFACE_CONDENSATION !== wantCondensation ||
     oldCondensationKey !== condensationKey ||
+    postBlockChanged ||
     tilingChanged
   ) {
     material.defines.SURFACE_FOLDS = wantFolds;
@@ -6084,6 +6257,8 @@ export function setSurfaceSystem(
     // one, so the ESCAPE/BULB flip above always accompanies this).
     material.defines.SURFACE_ESCAPE = 0;
     material.defines.SURFACE_BULB = 0;
+    if (wantPost) material.defines.SURFACE_POST = 1;
+    else delete material.defines.SURFACE_POST;
     material.defines.SURFACE_SHAPE_TRAP = 0;
     delete material.defines.SURFACE_TRAP_GEOMETRY;
     material.defines.SURFACE_CONDENSATION = wantCondensation;
@@ -6120,6 +6295,7 @@ export function setSurfaceSystem(
       wantSchedule,
       wantChaos,
       tiling,
+      wantPost,
     );
     material.needsUpdate = true;
   }
@@ -6192,10 +6368,11 @@ export function setSurfaceSystem(
     const m = lens.invM;
     lensM.set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     lensT.set(...lens.invT);
-    (u.uLensRadii.value as THREE.Vector3).set(
+    (u.uLensRadii.value as THREE.Vector4).set(
       lens.foldRadii.minR,
       lens.foldRadii.fixedR,
       lens.foldRadii.wall,
+      lens.postSigmaMin,
     );
   } else {
     (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
@@ -6203,7 +6380,7 @@ export function setSurfaceSystem(
     lensT.set(0, 0, 0);
     // Reset to the CLASSIC set, not to zero: the no-lens encoding has to be
     // a fold this arithmetic could actually run, and 0 would divide by it.
-    (u.uLensRadii.value as THREE.Vector3).set(0.5, 1, 1);
+    (u.uLensRadii.value as THREE.Vector4).set(0.5, 1, 1, 1);
   }
 }
 
@@ -6953,6 +7130,7 @@ export function surfaceFragmentResolvedFor(
   schedule = 0,
   chaos = 0,
   tiling: ResolvedTiling | null = null,
+  post = 0,
 ): string {
   if (plane !== 0 && balloon !== 0) {
     throw new RangeError(
@@ -7026,6 +7204,7 @@ export function surfaceFragmentResolvedFor(
     SURFACE_CONDENSATION: condensation !== null ? 1 : 0,
     SURFACE_SCHEDULE: schedule,
     SURFACE_CHAOS: chaos,
+    SURFACE_POST: post,
     "SURFACE_CONDENSATION || SURFACE_SCHEDULE":
       condensation !== null || schedule !== 0 ? 1 : 0,
     "SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS":
@@ -7131,6 +7310,7 @@ export function surfaceFragmentFor(
   schedule = 0,
   chaos = 0,
   tiling: ResolvedTiling | null = null,
+  post = 0,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -7148,6 +7328,7 @@ export function surfaceFragmentFor(
     schedule,
     chaos,
     tiling,
+    post,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
@@ -7399,12 +7580,16 @@ export function setEscapeSystem(
   );
   setSurfaceGrid(material, null);
   const u = material.uniforms;
+  const posts = surfacePostBuffers.get(material);
+  if (!posts) {
+    throw new TypeError(
+      "surface material has no post block — build it with createSurfaceMaterial",
+    );
+  }
   const escM = u.uEscM.value as THREE.Matrix3[];
   const escT = u.uEscT.value as THREE.Vector3[];
   const escParams = u.uEscParams.value as THREE.Vector4[];
   const escRadii = u.uEscRadii.value as THREE.Vector4[];
-  const escPostM = u.uEscPostM.value as THREE.Matrix3[];
-  const escPostT = u.uEscPostT.value as THREE.Vector3[];
   de.links.forEach((link, i) => {
     const m = link.m;
     escM[i].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
@@ -7415,29 +7600,12 @@ export function setEscapeSystem(
     // them. A chain may hold a different apparatus per link, which is why
     // this is per-slot.
     escRadii[i].set(link.minRadius2, link.fixedRadius2, link.boxLimit, 0);
-    // The link's own POST-AFFINE, read FORWARD — identity/zero for a
-    // post-free link, the value-exact "no post" apply. The row-major
-    // postM passes straight through Matrix3.set, exactly uInvM's own
-    // packing comment.
-    if (link.postM !== null && link.postT !== null) {
-      const pm = link.postM;
-      escPostM[i].set(
-        pm[0],
-        pm[1],
-        pm[2],
-        pm[3],
-        pm[4],
-        pm[5],
-        pm[6],
-        pm[7],
-        pm[8],
-      );
-      escPostT[i].set(...link.postT);
-    } else {
-      escPostM[i].identity();
-      escPostT[i].set(0, 0, 0);
-    }
+    // The link's own POST-AFFINE, read FORWARD. The homogeneous UBO slot
+    // carries matrix and translation without consuming default uniforms.
+    writeSurfacePostSlot(posts, i, link.postM, link.postT);
   });
+  const wantPost = de.links.some((link) => link.postM !== null) ? 1 : 0;
+  const postBlockChanged = installSurfacePostBlock(material, wantPost === 1);
   (u.uMapColor.value as THREE.Vector3[])[0].set(...color);
   (u.uTrapIndex.value as number[])[0] = 0;
   u.uMapCount.value = de.links.length;
@@ -7481,17 +7649,21 @@ export function setEscapeSystem(
     material.defines.SURFACE_SCHEDULE === 1 ||
     material.defines.SURFACE_CHAOS === 1 ||
     material.defines.SURFACE_CONDENSATION !== 0 ||
+    (material.defines.SURFACE_POST === 1 ? 1 : 0) !== wantPost ||
     material.defines.SURFACE_SHAPE_TRAP !== trapInstall.wantTrap ||
     currentTrapGeometry !== trapInstall.wantGeometry ||
     // A trap SPEC swap at the same define state still bakes a different
     // shape body — the key catches what the defines cannot.
     trapInstall.changed ||
+    postBlockChanged ||
     tilingChanged
   ) {
     material.defines.SURFACE_ESCAPE = 1;
     // The two forward-orbit variants are exclusive: a previous Mandelbulb
     // session must hand the bodies back here too.
     material.defines.SURFACE_BULB = 0;
+    if (wantPost) material.defines.SURFACE_POST = 1;
+    else delete material.defines.SURFACE_POST;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
     delete material.defines.SURFACE_SCHEDULE;
@@ -7528,6 +7700,7 @@ export function setEscapeSystem(
       0,
       0,
       tiling,
+      wantPost,
     );
     material.needsUpdate = true;
   }
@@ -7559,6 +7732,7 @@ export function setBulbSystem(
     false,
     de.boundingRadius,
   );
+  const postBlockChanged = installSurfacePostBlock(material, false);
   setSurfaceGrid(material, null);
   const u = material.uniforms;
   const m = de.m;
@@ -7611,13 +7785,16 @@ export function setBulbSystem(
     material.defines.SURFACE_SCHEDULE === 1 ||
     material.defines.SURFACE_CHAOS === 1 ||
     material.defines.SURFACE_CONDENSATION !== 0 ||
+    material.defines.SURFACE_POST === 1 ||
     material.defines.SURFACE_SHAPE_TRAP !== trapInstall.wantTrap ||
     currentTrapGeometry !== 0 ||
     trapInstall.changed ||
+    postBlockChanged ||
     tilingChanged
   ) {
     material.defines.SURFACE_BULB = 1;
     material.defines.SURFACE_ESCAPE = 0;
+    delete material.defines.SURFACE_POST;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
     delete material.defines.SURFACE_SCHEDULE;
@@ -7740,6 +7917,7 @@ export function setSurfaceBalloon(
       material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0,
       material.defines.SURFACE_CHAOS === 1 ? 1 : 0,
       tiling,
+      material.defines.SURFACE_POST === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -7872,6 +8050,7 @@ export function setSurfaceGroundPlane(
       material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0,
       material.defines.SURFACE_CHAOS === 1 ? 1 : 0,
       materialSurfaceTiling(material),
+      material.defines.SURFACE_POST === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -7939,6 +8118,7 @@ export function setSurfaceMaterials(
       material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0,
       material.defines.SURFACE_CHAOS === 1 ? 1 : 0,
       materialSurfaceTiling(material),
+      material.defines.SURFACE_POST === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }

@@ -37,7 +37,7 @@ import {
   SURFACE_FOLD_BOXFOLD,
   SURFACE_FOLD_MANDELBOX,
   SURFACE_FOLD_SPHEREFOLD,
-  transformSigmas,
+  transformSeparatedSigmas,
 } from "./surface-de";
 import { mulberry32 } from "./rng";
 import { composeVariations, resolveFoldRadii, triplexPow8 } from "./variations";
@@ -303,7 +303,7 @@ function referenceOrbit(
         t: affine.t,
         type: v.type,
         w: v.weight,
-        growth: Math.abs(v.weight) * transformSigmas(t).max,
+        growth: Math.abs(v.weight) * transformSeparatedSigmas(t).max,
         mR2: radii.minRadius * radii.minRadius,
         fR2: radii.fixedRadius * radii.fixedRadius,
         /** This link's forward warp, from `variations.ts` itself. */
@@ -584,6 +584,15 @@ describe("buildEscapeDE, widened to chains", () => {
     expect(de.t).toEqual([0.4, 0.3, 0.2]);
     expect(de.boundingRadius).toBe(ESCAPE_TIME_RADIUS);
     expect(de.links).toHaveLength(1);
+  });
+
+  it("does not let opposed post/base anisotropy cancel across the fold", () => {
+    const map = canonicalMandelbox({
+      scale: [0.1, 0.8, 0.8],
+      variations: [{ type: "mandelbox", weight: 0.2 }],
+      post: { m: [8, 0, 0, 0, 0.125, 0, 0, 0, 0.125], t: [0, 0, 0] },
+    });
+    expect(buildEscapeDE([map]).links[0].derivGrowth).toBeCloseTo(1.28, 12);
   });
 
   it("builds one link per ACTIVE map, in document order", () => {

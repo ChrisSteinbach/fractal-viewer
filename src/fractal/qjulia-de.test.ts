@@ -143,6 +143,23 @@ describe("analyzeQJuliaSystem", () => {
       "the map is singular (zero scale on some axis)",
     );
   });
+
+  it("refuses a non-identity post that its orbit does not implement", () => {
+    const posted = qjuliaSystem([-0.2, 0.6, 0.2, 0], {
+      post: {
+        m: [2, 0, 0, 0, 1, 0, 0, 0, 1],
+        t: [0.25, 0, 0],
+      },
+    });
+    expect(analyzeQJuliaSystem([posted]).reasons).toContain(
+      "post-affine (unsupported in quaternion Julia mode)",
+    );
+    expect(() => buildQJuliaDE([posted])).toThrow(/post-affine/);
+    const identityPost = qjuliaSystem([-0.2, 0.6, 0.2, 0], {
+      post: { m: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0] },
+    });
+    expect(analyzeQJuliaSystem([identityPost]).status).toBe("eligible");
+  });
 });
 
 describe("systemHasActiveQSquare", () => {

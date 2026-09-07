@@ -10,6 +10,7 @@ import {
   singularValues4,
   slabExact4,
   surfaceNativeCarriers4,
+  transformSeparatedSigmas4,
   transformSigmas4,
 } from "./surface-de-4d";
 import type {
@@ -451,6 +452,104 @@ describe("transformSigmas4", () => {
     };
     const expected = singularValues4(composeAffine4(t).m);
     expect(transformSigmas4(t)).toEqual(expected);
+  });
+
+  it("keeps lifted base and post factors separated around a nonlinear fold", () => {
+    const t = map4({
+      scale: [0.1, 0.8, 0.8],
+      variations: [{ type: "boxfold", weight: 0.2 }],
+      post: { m: [8, 0, 0, 0, 0.125, 0, 0, 0, 0.125], t: [0, 0, 0] },
+    });
+    const lifted = toTransform4(t);
+    expect(transformSigmas4(lifted).max).toBeCloseTo(0.8, 12);
+    expect(transformSeparatedSigmas4(lifted).max).toBeCloseTo(6.4, 12);
+    const analysis = analyzeSurfaceSystem4([t]);
+    expect(analysis.sigmas[0].max).toBeCloseTo(6.4, 12);
+    expect(analysis.reasons).toContain("map 1 does not contract");
+  });
+
+  it("records lifted post sigma separately from the complete fold/core factor", () => {
+    const t = map4({
+      scale: [0.1, 0.8, 0.8],
+      variations: [{ type: "boxfold", weight: 0.2 }],
+      post: { m: [0.5, 0, 0, 0, 0.125, 0, 0, 0, 0.125], t: [0, 0, 0] },
+    });
+    const built = buildSurfaceDE4([t]).maps[0];
+    expect(built.postSigmaMin).toBeCloseTo(0.125, 12);
+    expect(built.sigmaMin).toBeCloseTo(0.0125, 12);
+    expect(built.foldSigma).toBeCloseTo(0.2 * 0.0125, 12);
+    expect(
+      buildSurfaceDE4([{ ...t, post: undefined }]).maps[0].postSigmaMin,
+    ).toBe(1);
+  });
+
+  it("prices a contracting post on 4D fold-map and fold-lens region floors in both value paths", () => {
+    const post = {
+      m: [0.25, 0, 0, 0, 0.25, 0, 0, 0, 0.25],
+      t: [0, 0, 0] as [number, number, number],
+    };
+    const foldMap = map4({
+      scale: [0.2, 0.2, 0.2],
+      variations: [{ type: "mandelbox", weight: 0.2 }],
+      post,
+    });
+    const companion = map4({
+      id: 1,
+      position: [-0.35, 0.2, -0.1],
+      scale: [0.2, 0.2, 0.2],
+      variations: [{ type: "mandelbox", weight: 0.2 }],
+    });
+    const mapDE = buildSurfaceDE4([foldMap, companion]);
+    mapDE.maxDepth = 3;
+    const oldMapDE: SurfaceDE4 = {
+      ...mapDE,
+      maps: mapDE.maps.map((slot) => ({ ...slot, postSigmaMin: 1 })),
+    };
+    const lensDE = buildSurfaceDE4(pentatope(), {
+      ...boxfoldFinal4(),
+      post,
+    });
+    lensDE.maxDepth = 3;
+    const oldLensDE: SurfaceDE4 = {
+      ...lensDE,
+      foldFinal: { ...lensDE.foldFinal!, postSigmaMin: 1 },
+    };
+    let mapStrict = 0;
+    let lensStrict = 0;
+    let carrierStrict = 0;
+    for (let xi = -2; xi <= 2; xi++) {
+      for (let yi = -2; yi <= 2; yi++) {
+        for (let zi = -2; zi <= 2; zi++) {
+          for (let wi = -2; wi <= 2; wi++) {
+            const p: Vec4 = [xi * 0.19, yi * 0.19, zi * 0.19, wi * 0.19];
+            for (const estimate of [
+              estimateDistance4,
+              estimateDistance4Refined,
+            ]) {
+              const mapNow = estimate(mapDE, p);
+              const mapOld = estimate(oldMapDE, p);
+              expect(mapNow).toBeLessThanOrEqual(mapOld + 1e-12);
+              if (mapNow < mapOld - 1e-9) mapStrict++;
+              const lensNow = estimate(lensDE, p);
+              const lensOld = estimate(oldLensDE, p);
+              expect(lensNow).toBeLessThanOrEqual(lensOld + 1e-12);
+              if (lensNow < lensOld - 1e-9) lensStrict++;
+            }
+            const carrierNow = surfaceNativeCarriers4(mapDE, p);
+            const carrierOld = surfaceNativeCarriers4(oldMapDE, p);
+            if (
+              Math.abs(carrierNow.rings - carrierOld.rings) > 1e-9 ||
+              Math.abs(carrierNow.sheets - carrierOld.sheets) > 1e-9
+            ) {
+              carrierStrict++;
+            }
+          }
+        }
+      }
+    }
+    expect(mapStrict).toBeGreaterThan(0);
+    expect(lensStrict).toBeGreaterThan(0);
+    expect(carrierStrict).toBeGreaterThan(0);
   });
 });
 
@@ -2296,6 +2395,7 @@ function expandedReference4(
         // carries the copy dependence), so every copy shares the base's.
         postInvM: base.postInvM,
         postInvT: base.postInvT,
+        postSigmaMin: base.postSigmaMin,
         sigmaMin: base.sigmaMin,
         baseIndex: base.baseIndex,
         // Copied through for type completeness exactly like 3D's
@@ -3705,6 +3805,40 @@ describe("buildSurfaceDE4 with a pure-fold final lens", () => {
       if (r > maxR) maxR = r;
     }
     expect(maxR).toBeLessThanOrEqual(de.visibleBoundingRadius);
+  });
+
+  it("includes a lifted final post-affine in affine and fold visible bounds", () => {
+    const transforms = pentatope();
+    const post = {
+      m: [1.5, 0, 0, 0, 0.75, 0, 0, 0, 0.5],
+      t: [20, -4, 3] as [number, number, number],
+    };
+    for (const final of [
+      map4({ id: 98, scale: [0.9, 0.9, 0.9], post }),
+      { ...boxfoldFinal4(), post },
+    ]) {
+      const de = buildSurfaceDE4(transforms, final);
+      const cloud = runChaosGame4(
+        transforms.map(toTransform4),
+        20000,
+        mulberry32(0x65),
+        toTransform4(final),
+      );
+      let maxR = 0;
+      for (let i = 0; i < cloud.count; i++) {
+        maxR = Math.max(
+          maxR,
+          Math.hypot(
+            cloud.positions[i * 3],
+            cloud.positions[i * 3 + 1],
+            cloud.positions[i * 3 + 2],
+            cloud.w[i],
+          ),
+        );
+      }
+      expect(de.visibleBoundingRadius).toBeGreaterThan(20);
+      expect(maxR).toBeLessThanOrEqual(de.visibleBoundingRadius);
+    }
   });
 });
 

@@ -134,106 +134,100 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D affine finish0": {
-    resolved: "9d6ee7a9e422f9ff" /* post-affine stage */,
-    emitted: "e5ccc4f5a46f938a" /* post-affine stage */,
+    resolved: "87155b2380d0ce9d",
+    emitted: "9e8ffc12aa11c2f8",
   },
   "3D lens finish0": {
-    resolved: "9ec4a8f6ab4a1474" /* post-affine stage */,
-    emitted: "6493ac0b772e6a47" /* post-affine stage */,
+    resolved: "a588c95b6a9357b2",
+    emitted: "5898a35d60540b64",
   },
   "3D balloon finish0": {
-    resolved: "b2d14e25bd42db22" /* post-affine stage */,
-    emitted: "935f9dd248f613c8" /* post-affine stage */,
+    resolved: "2553770bebb22d4a",
+    emitted: "27c0cc0f1b1b5fc0",
   },
   "3D plane finish0": {
-    resolved: "2a5e060e1249833a" /* post-affine stage */,
-    emitted: "5d6adcfdbff98b2e" /* post-affine stage */,
+    resolved: "ee58344008c3c12e",
+    emitted: "cdb41fd6ff2c1784",
   },
   "3D lens+balloon finish0": {
-    resolved: "1c7e79a07d368e05" /* post-affine stage */,
-    emitted: "b434efb5534eb4c8" /* post-affine stage */,
+    resolved: "ffe6bdf2d90a7920",
+    emitted: "6579e37fd4ec9597",
   },
   "3D lens+plane finish0": {
-    resolved: "e52b327f434dae48" /* post-affine stage */,
-    emitted: "4db055fbe4a1e6b5" /* post-affine stage */,
+    resolved: "f206a3e9b71b8642",
+    emitted: "cbc63d042d9a1f35",
   },
   "3D escape finish0": {
-    resolved:
-      "2f7e019c6ab723ef" /* post-affine stage; escape-arm post uniforms */,
-    emitted:
-      "2f7e019c6ab723ef" /* post-affine stage; escape-arm post uniforms */,
+    resolved: "fc3b5eecf090fd50",
+    emitted: "fc3b5eecf090fd50",
   },
   "3D escape+balloon finish0": {
-    resolved:
-      "bde5df23054eb6fb" /* post-affine stage; escape-arm post uniforms */,
-    emitted:
-      "2a600e5c3cc972d0" /* post-affine stage; escape-arm post uniforms */,
+    resolved: "78f3949f80bbac2c",
+    emitted: "441881d3d6dcddf5",
   },
   "3D escape+plane finish0": {
-    resolved:
-      "ae6b15f29b375f47" /* post-affine stage; escape-arm post uniforms */,
-    emitted:
-      "b503b0565114e71b" /* post-affine stage; escape-arm post uniforms */,
+    resolved: "56ac81a3bf8adfc2",
+    emitted: "44138e09099bbd38",
   },
   "3D bulb finish0": {
-    resolved: "c048fece640d2217" /* post-affine stage */,
-    emitted: "c048fece640d2217" /* post-affine stage */,
+    resolved: "68625d8191aae5d9",
+    emitted: "68625d8191aae5d9",
   },
   "3D bulb+balloon finish0": {
-    resolved: "599f3186a270307b" /* post-affine stage */,
-    emitted: "599f3186a270307b" /* post-affine stage */,
+    resolved: "ee6815b4a9b46f01",
+    emitted: "ee6815b4a9b46f01",
   },
   "3D bulb+plane finish0": {
-    resolved: "41fd22ce25ed5d9c" /* post-affine stage */,
-    emitted: "71eac638788eebe6" /* post-affine stage */,
+    resolved: "52e3a9619ac1764d",
+    emitted: "38ff35ac5765e842",
   },
   "3D affine finish1": {
-    resolved: "29e4b44c843f1d1b" /* post-affine stage */,
-    emitted: "54cb513febc00beb" /* post-affine stage */,
+    resolved: "a0619b96de2c5aac",
+    emitted: "03580e57ec07fe47",
   },
   "3D lens finish1": {
-    resolved: "94b2d6bf9e67529b" /* post-affine stage */,
-    emitted: "3fdf631aeaeaf897" /* post-affine stage */,
+    resolved: "ab8ff01454039c55",
+    emitted: "887c47b063db1b7f",
   },
   "3D balloon finish1": {
-    resolved: "f8baf4fefa12d740" /* post-affine stage */,
-    emitted: "bb5219302a3621b1" /* post-affine stage */,
+    resolved: "1ba3183defc84a98",
+    emitted: "56853af5a9459b54",
   },
   "3D plane finish1": {
-    resolved: "54ee1053c36b8dd4" /* post-affine stage */,
-    emitted: "ec16ccd8498618f6" /* post-affine stage */,
+    resolved: "f7ddf629f2765877",
+    emitted: "e806201d0cf3b015",
   },
   "3D lens+balloon finish1": {
-    resolved: "ae3a0b403111c080" /* post-affine stage */,
-    emitted: "36214417d2a04c60" /* post-affine stage */,
+    resolved: "dee76813efd09bcd",
+    emitted: "d826e47ceaf72e34",
   },
   "3D lens+plane finish1": {
-    resolved: "e1620b99304ee870" /* post-affine stage */,
-    emitted: "bfbd79f5c8cab7c1" /* post-affine stage */,
+    resolved: "fa81806a0940b144",
+    emitted: "c6826145915a35ee",
   },
   "3D escape finish1": {
-    resolved: "a6515505cc6f144e" /* escape-arm post uniforms */,
-    emitted: "a6515505cc6f144e" /* escape-arm post uniforms */,
+    resolved: "ec3e7ee94f8643e3",
+    emitted: "ec3e7ee94f8643e3",
   },
   "3D escape+balloon finish1": {
-    resolved: "3ca2c308dc74e5b0" /* escape-arm post uniforms */,
-    emitted: "63bf0307d9b1ac52" /* escape-arm post uniforms */,
+    resolved: "076b79080509f31d",
+    emitted: "6d98c7e3bf1564de",
   },
   "3D escape+plane finish1": {
-    resolved: "c338fee06d75eccf" /* escape-arm post uniforms */,
-    emitted: "2a8e15c4bbd05962" /* escape-arm post uniforms */,
+    resolved: "3527516ca49ffdd7",
+    emitted: "dca6b4cb765dc2aa",
   },
   "3D bulb finish1": {
-    resolved: "36db592004087c60",
-    emitted: "36db592004087c60",
+    resolved: "8a2cd95308953315",
+    emitted: "8a2cd95308953315",
   },
   "3D bulb+balloon finish1": {
-    resolved: "590d5ebcb964b53a",
-    emitted: "590d5ebcb964b53a",
+    resolved: "250de4bfd8daad20",
+    emitted: "250de4bfd8daad20",
   },
   "3D bulb+plane finish1": {
-    resolved: "561295bb49aa4b4a",
-    emitted: "c160c09a87dc824b",
+    resolved: "0dc18c2d33878971",
+    emitted: "6b667e362c8cdd28",
   },
 };
 
@@ -256,6 +250,7 @@ function map3(overrides: Partial<SurfaceDEMap> = {}): SurfaceDEMap {
     invT: [0, 0, 0],
     postInvM: null,
     postInvT: null,
+    postSigmaMin: 1,
     sigmaMin: 0.5,
     foldKind: 0,
     foldInvW: 1,
@@ -302,6 +297,138 @@ function de3(
 }
 
 const black: Vec3 = [0, 0, 0];
+
+describe("SURFACE_POST GLSL block", () => {
+  const postSource = (): string =>
+    surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      0,
+      0,
+      null,
+      1,
+    );
+
+  it("costs zero default-block vectors and fits the WebGL2 minimum UBO size", () => {
+    const plain = surfaceFragmentResolvedFor(0, 0);
+    const posted = postSource();
+    const defaultUniforms = (source: string): string[] =>
+      source.match(/^\s*uniform\s+[^;]+;/gm) ?? [];
+    const withoutLensRadii = (uniforms: string[]): string[] =>
+      uniforms.filter((line) => !line.includes("uLensRadii"));
+    expect(withoutLensRadii(defaultUniforms(posted))).toEqual(
+      withoutLensRadii(defaultUniforms(plain)),
+    );
+    // vec3 and vec4 each consume one default-block vector; the live post
+    // exposes the already-paid .w lane instead of adding a uniform.
+    expect(plain).toContain("uniform vec3 uLensRadii;");
+    expect(posted).toContain("uniform vec4 uLensRadii;");
+    expect((SURFACE_MAX_MAPS + 1) * 16 * Float32Array.BYTES_PER_ELEMENT).toBe(
+      1600,
+    );
+    expect(1600).toBeLessThanOrEqual(16 * 1024);
+    expect(plain).not.toContain("SurfacePosts3");
+    expect(plain).not.toContain("applyMapPost");
+    expect(plain).not.toContain("SURFACE_POST");
+    expect(posted).toContain("layout(std140) uniform SurfacePosts3");
+    expect(posted).toContain("mat4 uMapPost[MAX_MAPS]");
+    expect(posted).toContain("mat4 uLensPost");
+  });
+
+  it("packs inverse IFS posts column-major and detaches back to exact post-free source", () => {
+    const material = createSurfaceMaterial();
+    const baseline = material.fragmentShader;
+    expect(material.uniformsGroups).toHaveLength(0);
+    setSurfaceSystem(
+      material,
+      de3([
+        map3({
+          postInvM: [2, 3, 5, 7, 11, 13, 17, 19, 23],
+          postInvT: [29, 31, 37],
+        }),
+      ]),
+      [black],
+    );
+    expect(material.defines.SURFACE_POST).toBe(1);
+    expect(material.uniformsGroups).toHaveLength(1);
+    expect(
+      (material.uniformsGroups[0] as THREE.UniformsGroup & { name: string })
+        .name,
+    ).toBe("SurfacePosts3");
+    const packed = (material.uniformsGroups[0].uniforms[0] as THREE.Uniform)
+      .value as Float32Array;
+    expect(Array.from(packed.slice(0, 16))).toEqual([
+      2, 7, 17, 0, 3, 11, 19, 0, 5, 13, 23, 0, 29, 31, 37, 1,
+    ]);
+    expect(Array.from(packed.slice(16, 32))).toEqual([
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+    ]);
+    expect(material.fragmentShader).toContain("applyMapPost");
+
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(material.defines.SURFACE_POST).toBeUndefined();
+    expect(material.uniformsGroups).toHaveLength(0);
+    expect(material.fragmentShader).toBe(baseline);
+  });
+
+  it("packs fold-map postSigmaMin in the existing radii .w lane and uses it in both value and hit-info floors", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceSystem(
+      material,
+      de3([
+        map3({
+          postInvM: [4, 0, 0, 0, 4, 0, 0, 0, 4],
+          postInvT: [0, 0, 0],
+          postSigmaMin: 0.25,
+          foldKind: 3,
+          foldInvW: 2,
+          foldSigma: 0.025,
+        }),
+      ]),
+      [black],
+    );
+    const radii = (material.uniforms.uFoldRadii.value as THREE.Vector4[])[0];
+    expect([radii.x, radii.y, radii.z, radii.w]).toEqual([0.5, 1, 1, 0.25]);
+    const source = material.fragmentShader;
+    expect(source).toContain("float postSigmaMin = uFoldRadii[j].w;");
+    expect(source).toContain("pScale * absW * postSigmaMin * (fr.fixedR - ru)");
+    expect(
+      source.match(/pScale \* absW \* postSigmaMin \* branchRd/g),
+    ).toHaveLength(3);
+  });
+
+  it("disposes the post UBO with its owning material", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceSystem(
+      material,
+      de3([
+        map3({
+          postInvM: [2, 0, 0, 0, 3, 0, 0, 0, 4],
+          postInvT: [5, 6, 7],
+        }),
+      ]),
+      [black],
+    );
+    const postGroup = material.uniformsGroups[0];
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(material.uniformsGroups).toHaveLength(0);
+    const dispose = vi.spyOn(postGroup, "dispose");
+
+    material.dispose();
+
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+});
 
 const COND_SPHERE: ShapeSpec = {
   parts: [
@@ -1182,6 +1309,7 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
       absW: 1,
       postInvM: null,
       postInvT: null,
+      postSigmaMin: 1,
       foldRadii: surfaceFoldRadii({
         type: "spherefold",
         weight: 1,
@@ -1428,7 +1556,7 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(a3))).toBe(
-      "1426bde6844b55945689718857a4f98db406a5e38502d06c6bd2fcb5a5844670", // moved from 9f3290c2… by the per-map POST-AFFINE inverse stage (uInvPostM/uInvPostT + the un-post lines), the first source change since the lattice pass
+      "9f3290c2d2a2133279eae88b11227711803af6db543f080e325bec471372c651",
     );
     expect(
       sha256(
@@ -1450,11 +1578,9 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
           a3,
         ),
       ),
-    ).toBe(
-      "90cfa48025047e0afa7b4cc3e24e9cd18f1800a1f85e14a9661aaba3f89018c8" /* post-affine stage */,
-    );
+    ).toBe("6b43c768ac2a2cabeebe8d9f40a8c9832d12a41b73f334c2ce9b71e5d105b1ce");
     expect(sha256(sourceFor(a3, { escape: 1 }))).toBe(
-      "0cdd6b0d64672eec5e48a44b9bc6f0d767e5d6af0d49a0aed6d8fc18263ce6b6" /* post-affine stage; escape-arm post uniforms */,
+      "0b1a8765b8d7a8a910442f81c8dd897d15b2efb9c2873a5724bdf3b3dfd67d6d",
     );
   });
 
@@ -2079,6 +2205,7 @@ describe("setSurfaceSystem fold final lens packing", () => {
       absW: 1.4,
       postInvM: null,
       postInvT: null,
+      postSigmaMin: 1,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, de, [black]);
@@ -2095,6 +2222,44 @@ describe("setSurfaceSystem fold final lens packing", () => {
     const finalM = u.uFinalInvM.value as THREE.Matrix3;
     expect(Array.from(finalM.elements)).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
     expect(u.uFinalSigmaMin.value).toBe(1);
+  });
+
+  it("packs a posted fold-final lens into the dedicated homogeneous matrix", () => {
+    const material = createSurfaceMaterial();
+    const de = de3([map3()]);
+    de.foldFinal = {
+      invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      invT: [0, 0, 0],
+      sigmaMin: 0.2,
+      foldKind: 1,
+      invW: 2,
+      absW: 0.5,
+      postInvM: [2, 3, 5, 7, 11, 13, 17, 19, 23],
+      postInvT: [29, 31, 37],
+      postSigmaMin: 0.125,
+      foldRadii: CLASSIC_SURFACE_FOLD_RADII,
+    };
+    setSurfaceSystem(material, de, [black]);
+    expect(material.defines.SURFACE_POST).toBe(1);
+    expect(material.fragmentShader).toContain("applyLensPost(p)");
+    const packed = (material.uniformsGroups[0].uniforms[1] as THREE.Uniform)
+      .value as Float32Array;
+    expect(Array.from(packed)).toEqual([
+      2, 7, 17, 0, 3, 11, 19, 0, 5, 13, 23, 0, 29, 31, 37, 1,
+    ]);
+    const radii = material.uniforms.uLensRadii.value as THREE.Vector4;
+    expect([radii.x, radii.y, radii.z, radii.w]).toEqual([0.5, 1, 1, 0.125]);
+    expect(material.fragmentShader).toContain(
+      "float postSigmaMin = uLensRadii.w;",
+    );
+    expect(material.fragmentShader).toContain(
+      "float shellCert = absW * postSigmaMin * (fr.fixedR - ru);",
+    );
+    expect(
+      material.fragmentShader.match(
+        /float flr = absW \* postSigmaMin \* branchRd;/g,
+      ),
+    ).toHaveLength(2);
   });
 
   it("keeps every variant's fragment source free of the other variants' text", () => {
@@ -2119,6 +2284,7 @@ describe("setSurfaceSystem fold final lens packing", () => {
       absW: 1,
       postInvM: null,
       postInvT: null,
+      postSigmaMin: 1,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -2138,6 +2304,7 @@ describe("setSurfaceSystem fold final lens packing", () => {
       absW: 1,
       postInvM: null,
       postInvT: null,
+      postSigmaMin: 1,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -2437,6 +2604,7 @@ describe("SURFACE_BALLOON variant", () => {
       absW: 1,
       postInvM: null,
       postInvT: null,
+      postSigmaMin: 1,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -2693,6 +2861,7 @@ describe("SURFACE_GROUND_PLANE variant", () => {
       absW: 1,
       postInvM: null,
       postInvT: null,
+      postSigmaMin: 1,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -2849,6 +3018,23 @@ describe("SURFACE_ESCAPE variant packing, one uniform slot per chain link", () =
       expect(escParams[i].z).toBe(link.derivGrowth);
     });
     expect(u.uMapCount.value).toBe(3);
+  });
+
+  it("packs each escape link's forward post in the same conditional block", () => {
+    const transforms = chain();
+    transforms[0].post = {
+      m: [2, 3, 5, 7, 11, 13, 17, 19, 23],
+      t: [29, 31, 37],
+    };
+    const material = createSurfaceMaterial();
+    setEscapeSystem(material, buildEscapeDE(transforms), black);
+    expect(material.defines.SURFACE_POST).toBe(1);
+    expect(material.fragmentShader).toContain("applyMapPost(li, prm.y * y)");
+    const packed = (material.uniformsGroups[0].uniforms[0] as THREE.Uniform)
+      .value as Float32Array;
+    expect(Array.from(packed.slice(0, 16))).toEqual([
+      2, 7, 17, 0, 3, 11, 19, 0, 5, 13, 23, 0, 29, 31, 37, 1,
+    ]);
   });
 
   it("resets the shared pattern-frame bound center when switching from an off-center IFS", () => {
@@ -3843,6 +4029,7 @@ describe("SURFACE_FINISH variant", () => {
       absW: 1,
       postInvM: null,
       postInvT: null,
+      postSigmaMin: 1,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -4213,6 +4400,7 @@ describe("SURFACE_PATTERN variant", () => {
       absW: 1,
       postInvM: null,
       postInvT: null,
+      postSigmaMin: 1,
       foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
@@ -4327,7 +4515,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     const cases = [
       {
         source: surfaceFragmentResolvedFor(1, 0),
-        hash: "2f7e019c6ab723ef0a225be1951467e93f820fa3edda5d4aa71cc5f58d42dfeb" /* post-affine stage; escape-arm post uniforms */,
+        hash: "fc3b5eecf090fd501baed63e808f088d6d56b6b7ef98d2d36a124eacfeaae610",
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -4341,7 +4529,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "20510ad5b85171e01e703687fb27e8b682d04f9e27a6669b31438535cc5123d8" /* post-affine stage; escape-arm post uniforms */,
+        hash: "3c9f51402e8cbd9ee207d9009068ed8019edfd1073f15b9d82b275dfccf41e8b",
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -4355,7 +4543,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "619fcb4e22c8ca8be28cc4ca38fc28be9b4639288f55802caaba2b36760b4a5c" /* post-affine stage; escape-arm post uniforms */,
+        hash: "5ce6434ccbc2cc3252eedcc4292fed2256cc71935125a397866f392cd325810a",
       },
     ];
     for (const { source, hash } of cases) {

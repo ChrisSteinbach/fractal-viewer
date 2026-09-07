@@ -42,6 +42,8 @@ import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import {
   SURFACE_GPU_CHAOS_BYTES,
   SURFACE_GPU_HIT_FLOOR,
+  SURFACE_GPU_LENS4_POST_BYTES,
+  SURFACE_GPU_LENS_POST_BYTES,
   SURFACE_GPU_PARAMS4_CHAOS_BYTES,
   SURFACE_GPU_PARAMS4_ESCAPE_TILING_BYTES,
   SURFACE_GPU_PARAMS_CHAOS_BYTES,
@@ -1697,6 +1699,62 @@ describe("SurfaceComputeRenderer finite-tiling target integration", () => {
         Array.from(new Uint8Array(params, tilingOffset + 4, 12)),
         testCase.label,
       ).toEqual(new Array(12).fill(0));
+      harness.renderer.destroy();
+    }
+  });
+});
+
+describe("SurfaceComputeRenderer fold-final post params tail", () => {
+  const finalTransform: Transform = {
+    id: 99,
+    position: [0.15, -0.1, 0.05],
+    rotation: [0.2, 0.3, 0.1],
+    scale: [0.9, 0.9, 0.9],
+    variations: [{ type: "boxfold", weight: 0.55 }],
+    post: {
+      m: [0.5, 0, 0, 0, 1, 0, 0, 0, 2],
+      t: [0.25, -0.5, 0.75],
+    },
+  };
+
+  it("compile-gates lensPost and allocates its exact appended tail in 3D and 4D", async () => {
+    const cases: {
+      label: string;
+      target: SurfaceComputeTarget;
+      expectedBytes: number;
+      marker: string;
+    }[] = [
+      {
+        label: "ifs",
+        target: {
+          kind: "ifs",
+          de: buildSurfaceDE(defaultTransforms(), finalTransform),
+        },
+        expectedBytes: 288 + SURFACE_GPU_LENS_POST_BYTES,
+        marker: "lensPostI0: vec3f",
+      },
+      {
+        label: "ifs4",
+        target: {
+          kind: "ifs4",
+          de: buildSurfaceDE4(defaultTransforms(), finalTransform),
+        },
+        expectedBytes: 576 + SURFACE_GPU_LENS4_POST_BYTES,
+        marker: "lens4PostI0: vec4f",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const harness = await createPaletteResourceHarness(
+        false,
+        testCase.target,
+      );
+      expect(harness.bufferDescriptors[0].size, testCase.label).toBe(
+        testCase.expectedBytes,
+      );
+      for (const source of harness.shaderSources) {
+        expect(source, testCase.label).toContain(testCase.marker);
+      }
       harness.renderer.destroy();
     }
   });

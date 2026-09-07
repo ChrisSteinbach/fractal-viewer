@@ -474,11 +474,19 @@ export function singularValues4(m: number[]): MapSigmas {
  * and its lift cannot disagree about what a post contracts.
  */
 export function transformSigmas4(t: Transform4): MapSigmas {
-  const { post4, shear } = t;
-  const postLive = post4 !== undefined && !isIdentityAffine4(post4);
-  if (postLive) {
-    return singularValues4(multiply4x4(post4.m, composeAffine4(t).m));
+  const stages = transformStageSigmas4(t);
+  if (stages.post !== null) {
+    return singularValues4(multiply4x4(t.post4!.m, composeAffine4(t).m));
   }
+  return stages.base;
+}
+
+/** 4D twin of {@link transformStageSigmas}. */
+export function transformStageSigmas4(t: Transform4): {
+  base: MapSigmas;
+  post: MapSigmas | null;
+} {
+  const { post4, shear } = t;
   const sheared =
     shear !== undefined &&
     ((shear.xy ?? 0) !== 0 ||
@@ -487,17 +495,31 @@ export function transformSigmas4(t: Transform4): MapSigmas {
       (shear.xw ?? 0) !== 0 ||
       (shear.yw ?? 0) !== 0 ||
       (shear.zw ?? 0) !== 0);
-  if (!sheared) {
-    const s0 = Math.abs(t.scale[0]);
-    const s1 = Math.abs(t.scale[1]);
-    const s2 = Math.abs(t.scale[2]);
-    const s3 = Math.abs(t.scale[3]);
-    return {
-      min: Math.min(s0, s1, s2, s3),
-      max: Math.max(s0, s1, s2, s3),
-    };
-  }
-  return singularValues4(composeAffine4(t).m);
+  const scales = t.scale.map(Math.abs);
+  const base = !sheared
+    ? {
+        min: Math.min(...scales),
+        max: Math.max(...scales),
+      }
+    : singularValues4(composeAffine4(t).m);
+  return {
+    base,
+    post:
+      post4 !== undefined && !isIdentityAffine4(post4)
+        ? singularValues4(post4.m)
+        : null,
+  };
+}
+
+/** 4D twin of {@link transformSeparatedSigmas}. */
+export function transformSeparatedSigmas4(t: Transform4): MapSigmas {
+  const stages = transformStageSigmas4(t);
+  return stages.post === null
+    ? stages.base
+    : {
+        min: stages.post.min * stages.base.min,
+        max: stages.post.max * stages.base.max,
+      };
 }
 
 /** The 4D identity-post test — `affine.ts`'s `isIdentityAffine` one
@@ -815,7 +837,13 @@ export function analyzeSurfaceSystem4(
   schedule: HybridSchedule | null = null,
 ): SurfaceEligibility4 {
   const reasons: string[] = [];
-  const sigmas = transforms.map((t) => transformSigmas4(toTransform4(t)));
+  const liftedTransforms = transforms.map(toTransform4);
+  const stageSigmas = liftedTransforms.map(transformStageSigmas4);
+  const sigmas = transforms.map((t, i) =>
+    pureFoldVariation(t)
+      ? transformSeparatedSigmas4(liftedTransforms[i])
+      : transformSigmas4(liftedTransforms[i]),
+  );
   const active = transforms.filter(isActive);
   let anisotropy = 1;
 
@@ -867,6 +895,10 @@ export function analyzeSurfaceSystem4(
       reasons.push(`${label} fold weight ≈ 0`);
     }
     const s = sigmas[i];
+    const stageMin = Math.min(
+      stageSigmas[i].base.min,
+      stageSigmas[i].post?.min ?? Infinity,
+    );
     // A pure-fold map iterates w·V(Mp + t), so contraction is gated on the
     // composite Lipschitz bound |w|·L_V·sigma_max — the affine part alone
     // may even expand when the fold weight compensates. Invertibility
@@ -874,7 +906,7 @@ export function analyzeSurfaceSystem4(
     // The sigmas here are the LIFTED map's, so a `w` extension is priced
     // into the same composite exactly as it is into the affine-only gate.
     const lip = fold ? foldLipschitz(fold) * s.max : s.max;
-    if (s.min < NEAR_SINGULAR_SIGMA) {
+    if (stageMin < NEAR_SINGULAR_SIGMA) {
       reasons.push(`${label} is nearly flat (scale ≈ 0)`);
     } else if (lip >= CONTRACTION_LIMIT) {
       reasons.push(`${label} does not contract`);
@@ -909,8 +941,13 @@ export function analyzeSurfaceSystem4(
     // analyzeSurfaceSystem, there is no isFlatTransform gate and no "extends
     // into 4D" reason for the final transform here: a final transform
     // extending into 4D is fine — that is this module's entire point.
-    const s = transformSigmas4(toTransform4(finalTransform));
-    if (s.min < NEAR_SINGULAR_SIGMA) {
+    const liftedFinal = toTransform4(finalTransform);
+    const stages = transformStageSigmas4(liftedFinal);
+    const s = foldFinal
+      ? transformSeparatedSigmas4(liftedFinal)
+      : transformSigmas4(liftedFinal);
+    const stageMin = Math.min(stages.base.min, stages.post?.min ?? Infinity);
+    if (stageMin < NEAR_SINGULAR_SIGMA) {
       reasons.push("final transform is nearly flat (scale ≈ 0)");
     } else {
       anisotropy = Math.max(anisotropy, s.max / s.min);
@@ -923,7 +960,8 @@ export function analyzeSurfaceSystem4(
       (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
     );
     supported.forEach((t, i) => {
-      const s = transformSigmas4(toTransform4(t));
+      // B is affine-only and prepareSchedule strips its post stage.
+      const s = transformSigmas4({ ...toTransform4(t), post4: undefined });
       if (s.min < NEAR_SINGULAR_SIGMA) {
         reasons.push(`schedule map ${i + 1} is nearly flat (scale ≈ 0)`);
       } else {
@@ -1062,6 +1100,11 @@ export interface SurfaceDE4Map {
   /** The post's inverse translation `−P⁻¹.m · P.t` — `null` with
    * {@link postInvM}. */
   postInvT: Vec4 | null;
+  /** Smallest singular value of the authored post-affine, or 1 when it is
+   * absent/identity. Fold region floors are measured after un-post and use
+   * this to return to outer space; {@link foldSigma} already prices it in
+   * the branch/core factor. */
+  postSigmaMin: number;
   /** Smallest singular value of the FORWARD map — the certified contraction
    * factor multiplied into the running `dr` product. */
   sigmaMin: number;
@@ -1206,7 +1249,9 @@ export interface SurfaceDE4 {
    * (the per-branch descent factor is `absW · sigma_branch · sigmaMin`).
    * A lens post-affine rides as its own factor (`postInvM`/`postInvT`,
    * un-applied by descendLens4 BEFORE its branch sweep) — the branch
-   * enumeration sits between P⁻¹ and the affine inverse. `null` skips. */
+   * enumeration sits between P⁻¹ and the affine inverse. Its
+   * `postSigmaMin` prices branch-region floors in outer space. `null` plus
+   * a unit factor skips. */
   foldFinal: {
     invM: number[];
     invT: Vec4;
@@ -1220,6 +1265,7 @@ export interface SurfaceDE4 {
     /** The lens's own post-affine inverse, or `null`. */
     postInvM: number[] | null;
     postInvT: Vec4 | null;
+    postSigmaMin: number;
   } | null;
 }
 
@@ -1343,6 +1389,7 @@ export function buildSurfaceDE4(
           ),
         ]
       : null;
+    const postSigmaMin = postLive ? singularValues4(post!.m).min : 1;
     const sigmaMin = analysis.sigmas[i].min;
     // Pure-fold maps carry their fold family + weight into the descent's
     // branch expansion (3D's fold-branch sweep one dimension up);
@@ -1361,6 +1408,7 @@ export function buildSurfaceDE4(
       invT,
       postInvM,
       postInvT,
+      postSigmaMin,
       sigmaMin,
       baseIndex: i,
       ...(hasChaos ? { stateIndex: maps.length } : {}),
@@ -1433,6 +1481,7 @@ export function buildSurfaceDE4(
         // on a B entry is INERT — priced as absent, never as live geometry.
         postInvM: null,
         postInvT: null,
+        postSigmaMin: 1,
         sigmaMin: sigmas.min,
         baseIndex: i,
         foldKind: SURFACE_FOLD_NONE,
@@ -1734,7 +1783,8 @@ export function buildSurfaceDE4(
       }
       let certifiedRadius = 0;
       for (const t of scheduleTransforms) {
-        const liftedB = toTransform4(t);
+        // Scheduled B is affine-only and prepareSchedule strips its post.
+        const liftedB = { ...toTransform4(t), post4: undefined };
         const affine = composeAffine4(liftedB);
         certifiedRadius = Math.max(
           certifiedRadius,
@@ -1831,9 +1881,9 @@ export function buildSurfaceDE4(
       -(invM[8] * tx + invM[9] * ty + invM[10] * tz + invM[11] * tw),
       -(invM[12] * tx + invM[13] * ty + invM[14] * tz + invM[15] * tw),
     ];
+    const stages = transformStageSigmas4(liftedFinal);
     const s = transformSigmas4(liftedFinal);
-    // |F(x)| <= sigma_max·|x| + |t| bounds the visible AFFINE image.
-    const affineR = s.max * boundingRadius + Math.hypot(tx, ty, tz, tw);
+    const affineCenter: Vec4 = [tx, ty, tz, tw];
     const fold = pureFoldVariation(finalTransform);
     if (fold) {
       const kind: SurfaceFoldKind =
@@ -1878,13 +1928,14 @@ export function buildSurfaceDE4(
       foldFinal = {
         invM,
         invT,
-        sigmaMin: s.min,
+        sigmaMin: transformSeparatedSigmas4(liftedFinal).min,
         foldKind: kind,
         invW: 1 / fold.weight,
         absW: Math.abs(fold.weight),
         foldRadii: radii,
         postInvM,
         postInvT,
+        postSigmaMin: stages.post?.min ?? 1,
       };
       // Bound the visible set w·V(M·A + t). Per axis the boxfold obeys
       // |fold(t)| <= max(|t|, wall), so |boxfold(y)|² <= Σ max(y_a², wall²)
@@ -1895,14 +1946,19 @@ export function buildSurfaceDE4(
       // tops out at (fR²/mR²)·mR = fR²/mR — all radial statements,
       // dimension-free); the mandelbox chains the two. At the classic
       // lengths those are the `+ 4` and the `2` that shipped.
-      const boxR = Math.sqrt(affineR * affineR + 4 * radii.wall * radii.wall);
-      visibleBoundingRadius =
+      const preFoldR =
+        stages.base.max * boundingRadius + Math.hypot(...affineCenter);
+      const boxR = Math.sqrt(preFoldR * preFoldR + 4 * radii.wall * radii.wall);
+      const foldedR =
         foldFinal.absW *
         (kind === SURFACE_FOLD_BOXFOLD
           ? boxR
           : kind === SURFACE_FOLD_SPHEREFOLD
-            ? Math.max(affineR, radii.outputR)
+            ? Math.max(preFoldR, radii.outputR)
             : Math.max(boxR, radii.outputR));
+      visibleBoundingRadius = postLive
+        ? stages.post!.max * foldedR + Math.hypot(...lensPost!.t)
+        : foldedR;
     } else {
       // An AFFINE lens's own post folds into the stored inverse exactly
       // (inv(P∘A) composed at build time), 3D's treatment one dimension up.
@@ -1956,7 +2012,32 @@ export function buildSurfaceDE4(
       } else {
         final = { invM, invT, sigmaMin: s.min };
       }
-      visibleBoundingRadius = affineR;
+      const visibleCenter = postLive
+        ? ([
+            lensPost!.m[0] * affineCenter[0] +
+              lensPost!.m[1] * affineCenter[1] +
+              lensPost!.m[2] * affineCenter[2] +
+              lensPost!.m[3] * affineCenter[3] +
+              lensPost!.t[0],
+            lensPost!.m[4] * affineCenter[0] +
+              lensPost!.m[5] * affineCenter[1] +
+              lensPost!.m[6] * affineCenter[2] +
+              lensPost!.m[7] * affineCenter[3] +
+              lensPost!.t[1],
+            lensPost!.m[8] * affineCenter[0] +
+              lensPost!.m[9] * affineCenter[1] +
+              lensPost!.m[10] * affineCenter[2] +
+              lensPost!.m[11] * affineCenter[3] +
+              lensPost!.t[2],
+            lensPost!.m[12] * affineCenter[0] +
+              lensPost!.m[13] * affineCenter[1] +
+              lensPost!.m[14] * affineCenter[2] +
+              lensPost!.m[15] * affineCenter[3] +
+              lensPost!.t[3],
+          ] as Vec4)
+        : affineCenter;
+      visibleBoundingRadius =
+        s.max * boundingRadius + Math.hypot(...visibleCenter);
     }
   }
 
@@ -2225,6 +2306,8 @@ function surfaceFoldNativeCarriers4(
         const kind = map.foldKind;
         const branchCount = foldBranchCount4(kind);
         const absW = map.foldSigma / map.sigmaMin;
+        const regionAbsW =
+          map.postInvM === null ? absW : absW * map.postSigmaMin;
         const fr = map.foldRadii;
         const wall2 = 2 * fr.wall;
         // The un-post stage, mirrored into the fold-carrier calibration
@@ -2424,7 +2507,7 @@ function surfaceFoldNativeCarriers4(
           const r = Math.sqrt(ix * ix + iy * iy + iz * iz + iw * iw);
           let candFloor = chFloor;
           if (branchRd > 0) {
-            candFloor = Math.max(candFloor, chScale * absW * branchRd);
+            candFloor = Math.max(candFloor, chScale * regionAbsW * branchRd);
           }
           let candidateKey = chScale * (r - R);
           if (candFloor > 0 && candFloor > candidateKey) {
@@ -4558,6 +4641,8 @@ function refinedCertValue4(
       const kindJ = mapJ.foldKind;
       const branchCountJ = foldBranchCount4(kindJ);
       const absWJ = mapJ.foldSigma / mapJ.sigmaMin;
+      const regionAbsWJ =
+        mapJ.postInvM === null ? absWJ : absWJ * mapJ.postSigmaMin;
       // u-space point + per-axis box preimage quadruple {u, 2−u, −2−u} with
       // the matching output-interval distances — FOUR axes here, `w` folded
       // exactly like x/y/z (`variations4.ts`).
@@ -4721,7 +4806,7 @@ function refinedCertValue4(
                 // Same shell stand-in the frontier folds, in the frozen
                 // child's own frame. (Unreachable under a segment: the
                 // public entries refuse spherefold/mandelbox slabs.)
-                const shellTerm = absWJ * (fr.fixedR - ru);
+                const shellTerm = regionAbsWJ * (fr.fixedR - ru);
                 if (shellTerm < inner) inner = shellTerm;
                 if (kindJ === SURFACE_FOLD_MANDELBOX) b += 80;
                 continue;
@@ -4860,7 +4945,7 @@ function refinedCertValue4(
         const rj = segmentRadius(jx, jy, jz, jw, CERT_IMG_EXT4);
         let innerTerm = branchSigma * (rj - childR);
         if (branchRd > 0) {
-          const regionTerm = absWJ * branchRd;
+          const regionTerm = regionAbsWJ * branchRd;
           if (regionTerm > innerTerm) innerTerm = regionTerm;
         }
         if (innerTerm < inner) inner = innerTerm;
@@ -5067,6 +5152,8 @@ function descendFold4(
           const kind = map.foldKind;
           const branchCount = foldBranchCount4(kind);
           const absW = map.foldSigma / map.sigmaMin;
+          const regionAbsW =
+            map.postInvM === null ? absW : absW * map.postSigmaMin;
           // The map's own POST-AFFINE inverse — the un-post stage between
           // the sector sweep and the branch machinery (null: untouched).
           let pX = sX;
@@ -5355,7 +5442,7 @@ function descendFold4(
                     // Point queries only: a spherefold map never transports
                     // a segment (`slabExact4`), so the shell bound needs no
                     // segment form.
-                    let shellCert = pScale * absW * (fr.fixedR - ru);
+                    let shellCert = pScale * regionAbsW * (fr.fixedR - ru);
                     if (pFloor > shellCert) shellCert = pFloor;
                     if (shellCert < best) {
                       best = shellCert;
@@ -5492,7 +5579,7 @@ function descendFold4(
                       : sfSigma * boxRd;
               }
               if (branchRd > 0) {
-                const flr = pScale * absW * branchRd;
+                const flr = pScale * regionAbsW * branchRd;
                 if (flr > candFloor) candFloor = flr;
               }
               // Floor-vs-best prune: every fold the candidate's subtree
@@ -5898,6 +5985,7 @@ function descendLens4(
   const im = lens.invM;
   const it = lens.invT;
   const sigmaMinM = lens.sigmaMin;
+  const regionAbsW = lens.postInvM === null ? absW : absW * lens.postSigmaMin;
   // The lens's own post-affine inverse, un-applied FIRST (the lens's map is
   // affine -> variations -> post, so its inverse starts with the un-post).
   // `null` — every lens predating posts — skips with the query untouched.
@@ -6034,7 +6122,7 @@ function descendLens4(
           // Shell guard (see doc): fold the settled shell bound and skip
           // the branch, box expansion included. Point queries only — a
           // spherefold lens never transports a segment (`slabExact4`).
-          const shellCert = absW * (fr.fixedR - ru);
+          const shellCert = regionAbsW * (fr.fixedR - ru);
           if (shellCert < best) {
             best = shellCert;
             if (best <= visBound) return visBound;
@@ -6131,7 +6219,7 @@ function descendLens4(
             ? sfRd
             : sfSigma * boxRd;
     }
-    const floor = absW * branchRd;
+    const floor = regionAbsW * branchRd;
     if (floor > 0 && floor >= best) continue;
     const qx = im[0] * cx + im[1] * cy + im[2] * cz + im[3] * cw + it[0];
     const qy = im[4] * cx + im[5] * cy + im[6] * cz + im[7] * cw + it[1];

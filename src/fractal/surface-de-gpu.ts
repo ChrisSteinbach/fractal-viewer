@@ -457,7 +457,10 @@ import type { Vec3 } from "./types";
  * final lens; and the FOLD final lens — `lens: true` wraps any DESCENT core
  * in `descendLens`'s branch sweep (both 3D cores; both 4D cores as
  * `descendLens4` — THE FOLD-LENS WRAPPER above), with the lens fields
- * appended to the params uniform. Footprint under a lens stays out ({@link
+ * appended to the params uniform. A fold final's own post-affine is
+ * compile-gated by `lensPost`: its inverse is appended after every older
+ * optional tail, then applied before the lens sweep (and only its inverse
+ * linear part is applied to a 4D slab half-extent). Footprint under a lens stays out ({@link
  * packSurfaceGpuParams} throws for 3D; the 4D packer refuses ANY
  * footprint already — the app path always passes 0). Stage C
  * finished the shade half: a per-core hit-info descent (the affine one
@@ -509,8 +512,9 @@ import type { Vec3 } from "./types";
  *                  sigmaMin), the GLSL `uLensParams` order.
  *              272 vec4f lensFold — the lens fold's three
  *                  AUTHORED lengths (minRadius, fixedRadius, boxLimit)
- *                  plus a packed-zero spare, `resolveFoldRadii`'s own
- *                  output. The wrapper re-derives the branch algebra
+ *                  plus postSigmaMin (1 when no post), `resolveFoldRadii`'s
+ *                  own output plus the outer-space scale for fold region
+ *                  floors. The wrapper re-derives the branch algebra
  *                  through the generated `foldRadiiOf`, which is
  *                  `surfaceFoldRadii` field for field; zeros when there
  *                  is no lens, which the wrapper never reads.
@@ -623,7 +627,7 @@ import type { Vec3 } from "./types";
  *              GROWS again, APPENDED past 464: {@link
  *              SURFACE_GPU_PARAMS4_LENS_BYTES} = 576 bytes total, and
  *              {@link packSurface4GpuParams} returns exactly this size
- *              when (and only when) the DE carries a `foldFinal`:
+ *              for a post-free `foldFinal`:
  *              464 vec4f lens4M row0..row3   (..527)
  *              528 vec4f lens4T
  *              544 vec4f lens4Params — (foldKind as f32, invW, absW,
@@ -634,6 +638,13 @@ import type { Vec3 } from "./types";
  *              IDENTITY/0 here (`final` is null whenever `foldFinal` is
  *              set), so the core bodies run their no-lens arithmetic
  *              and the wrapper alone applies the lens.
+ *          · `lensPost: true` — the fold-final post inverse is appended
+ *              LAST, after every older enabled feature tail. With no other
+ *              optional tail its offsets/totals are:
+ *              3D: 288 vec3f row0 + invT.x, 304 row1 + invT.y,
+ *                  320 row2 + invT.z; 336 bytes total.
+ *              4D: 576 vec4f rows0..3, 640 vec4f invT; 656 bytes total.
+ *              Absent post means no bytes and byte-identical source.
  *          · `core: "escape4"` — the SAME 464..575 region, the
  *              4D VARIANT block's other occupant, {@link
  *              SURFACE_GPU_PARAMS4_ESCAPE_BYTES} = 576 bytes total:
@@ -720,8 +731,9 @@ import type { Vec3 } from "./types";
  *   p0  = sigmaMin, foldInvW, foldSigma, foldKind (0/1/2/3 as f32)
  *   bnb = bnbDir xyz, invTNorm
  *   p1  = invMSigmaMin, 0, 0, 0
- *   fold = minRadius, fixedRadius, boxLimit, 0 — the map's
- *          three AUTHORED fold lengths, `resolveFoldRadii`'s output. The
+ *   fold = minRadius, fixedRadius, boxLimit, postSigmaMin — the map's
+ *          three AUTHORED fold lengths plus the fold-region scale in outer
+ *          space (1 when no post). The
  *          body re-derives the branch algebra from them through the
  *          generated `foldRadiiOf` (`surfaceFoldRadii` field for field)
  *          rather than reading eight packed combinations; a plain-affine
@@ -748,7 +760,8 @@ import type { Vec3 } from "./types";
  *   bnb    = bnbDir (a whole vec4 up here — 3D squeezes invTNorm into
  *            its .w; in 4D the direction fills the lane)
  *   p1     = invTNorm, invMSigmaMin, 0, 0
- *   fold   = the 3D lane exactly (minRadius, fixedRadius, boxLimit, 0):
+ *   fold   = the 3D lane exactly (minRadius, fixedRadius, boxLimit,
+ *            postSigmaMin):
  *            `SurfaceFoldRadii` is SHARED by the two oracles, so a 3D
  *            system and its 4D lift cannot disagree about what an absent
  *            field means
@@ -916,12 +929,22 @@ import type { Vec3 } from "./types";
 export const SURFACE_GPU_HIT_FLOOR = 1.0e-5;
 
 export const SURFACE_GPU_PARAMS_BYTES = 288;
+/** A live fold-final post-affine appends its inverse as three
+ * `vec3f + f32` rows after every pre-existing 3D params tail. It is
+ * compile-gated (`lensPost`) and absent posts append nothing, preserving
+ * both the old buffer bytes and generated source. */
+export const SURFACE_GPU_LENS_POST_BYTES = 48;
+/** Every `SURFACE_GPU_PARAMS*` feature constant below names the preserved
+ * prefix size. A live fold-final post adds the dimension's lens-post bytes
+ * after all feature, chaos and tiling tails; no older constant or offset
+ * moves. */
 /** Params size under `balloon: true`: the 288-byte 3D block
  * — variant members declared unconditionally, zero-filled when no lens —
  * plus the appended balloon block at the frozen offset 288 (layout
- * contract in the module doc). {@link packSurfaceGpuParams} returns THIS
- * size exactly when its `balloon` argument is non-null, and the 288-byte
- * buffer byte for byte when it is null — a no-balloon kernel's struct
+ * contract in the module doc). Without a live fold-final post,
+ * {@link packSurfaceGpuParams} returns THIS size exactly when its `balloon`
+ * argument is non-null, and the 288-byte buffer byte for byte when it is
+ * null — a no-balloon kernel's struct
  * ends at 208/288 and never reads past it, but a BALLOON kernel's struct
  * is 320 bytes, so its hosts must bind a buffer packed with the balloon
  * argument. */
@@ -934,9 +957,9 @@ export const SURFACE_GPU_PARAMS_BALLOON_BYTES = 320;
  * mutually exclusive by construction — both the codegen and the packers
  * throw on the pair). Layout: y 288, fadeStart 292, fadeEnd 296,
  * ballRadius 300, ballCenter vec3f 304, albedo vec3f 320.
- * {@link packSurfaceGpuParams}/{@link packEscapeGpuParams} return THIS
- * size exactly when their `groundPlane` argument is non-null, and their
- * usual buffer byte for byte when it is null. */
+ * Without a live fold-final post, {@link packSurfaceGpuParams} returns THIS
+ * size exactly when `groundPlane` is non-null; forward packers cannot carry
+ * a lens. */
 export const SURFACE_GPU_PARAMS_PLANE_BYTES = 336;
 /** Params sizes when condensation appends its four-u32 control block after
  * the last enabled 3D feature block. The pre-existing prefixes and their
@@ -975,11 +998,16 @@ export const SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_CHAOS_BYTES =
 export const SURFACE_GPU_PARAMS4_BYTES = 464;
 /** Params size for a 4D core under `lens: true`: the
  * 464-byte tail above plus the appended lens4 block (layout contract in
- * the module doc). {@link packSurface4GpuParams} returns THIS size exactly
- * when the DE carries a `foldFinal`, and the 464-byte buffer byte for byte
- * when it does not — a no-lens kernel's struct ends at 464 and never reads
- * past it. */
+ * the module doc). {@link packSurface4GpuParams} returns THIS size for a
+ * post-free `foldFinal`; a post-bearing lens appends
+ * {@link SURFACE_GPU_LENS4_POST_BYTES}. It returns the 464-byte buffer byte
+ * for byte when no lens exists — a no-lens kernel's struct ends at 464 and
+ * never reads past it. */
 export const SURFACE_GPU_PARAMS4_LENS_BYTES = 576;
+/** The 4D fold-final post-affine tail: four inverse-matrix rows plus one
+ * inverse-translation vec4f, appended after every pre-existing params tail.
+ * As in 3D, the absent case appends nothing. */
+export const SURFACE_GPU_LENS4_POST_BYTES = 80;
 /** Params size for `core: "escape4"` — the 464-byte 4D tail plus
  * the 4D VARIANT block, which is the lens4 block's own 464..575 region
  * carrying the chain's scalars instead. The two are mutually exclusive by
@@ -1553,6 +1581,13 @@ export interface SurfaceGpuKernelOptions {
    * (THE FOLD-LENS WRAPPER in the module doc) — and the lens rides the
    * appended {@link SURFACE_GPU_PARAMS4_LENS_BYTES} params block. */
   lens?: boolean;
+  /** Apply the fold-final transform's own post-affine inverse before the
+   * lens fold sweep. This is a separate compile gate so a lens whose post
+   * is absent retains the pre-post generated source byte for byte. Its
+   * inverse rows ride a params tail appended after every older optional
+   * block; hosts must pair this flag with a post-bearing `foldFinal` packed
+   * by {@link packSurfaceGpuParams}/{@link packSurface4GpuParams}. */
+  lensPost?: boolean;
   /** Wrap the compiled variant in the BALLOON inverted-union
    * (`balloon-de.ts`'s `estimateBalloonDistance`, the SURFACE_BALLOON
    * GLSL arm's WGSL twin): after the (optional) lens composition
@@ -1924,9 +1959,9 @@ function writeVec3(view: DataView, offset: number, v: Vec3): void {
  * signature change — out of the fold-lens cut, and the app path always
  * passes footprint 0 (GLSL parity).
  *
- * `balloon`: null — the default — returns today's 288-byte
- * buffer byte for byte; non-null returns {@link
- * SURFACE_GPU_PARAMS_BALLOON_BYTES} bytes with the balloon block packed
+ * `balloon`: null — the default — returns the preserved 288-byte base
+ * when no fold-final post is live; non-null uses {@link
+ * SURFACE_GPU_PARAMS_BALLOON_BYTES} as its prefix, with the balloon block packed
  * at the frozen offset 288 (module-doc contract) — `center`/`rho`/`R`
  * in `buildBalloon`'s convention (`rho` MARGINED, the bound's divisor;
  * `R` world units) and `far` the march cap past the center
@@ -1995,6 +2030,15 @@ export function packSurfaceGpuParams(
         "until the cap accounts for the non-stationary B prefix",
     );
   }
+  const lens = de.foldFinal;
+  const lensPostM = lens?.postInvM ?? null;
+  const lensPostT = lens?.postInvT ?? null;
+  if ((lensPostM === null) !== (lensPostT === null)) {
+    throw new Error(
+      "surface-de-gpu: a foldFinal post inverse must carry both matrix and translation",
+    );
+  }
+  const lensPost = lensPostM !== null;
   const baseBytes = schedule
     ? condensation
       ? balloon
@@ -2021,7 +2065,8 @@ export function packSurfaceGpuParams(
   const buf = new ArrayBuffer(
     baseBytes +
       (chaos ? SURFACE_GPU_CHAOS_BYTES : 0) +
-      (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0),
+      (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0) +
+      (lensPost ? SURFACE_GPU_LENS_POST_BYTES : 0),
   );
   const view = new DataView(buf);
   const rootBound = schedule ? de.schedule?.bounds[0] : undefined;
@@ -2077,7 +2122,6 @@ export function packSurfaceGpuParams(
   // vec3f+f32 interleave as the finalM rows above; the tail vec4f is the
   // GLSL `uLensParams` order (kind, invW, absW, sigmaMin), so the
   // wrapper reads like its mirror line for line.
-  const lens = de.foldFinal;
   if (lens) {
     writeVec3(view, 208, [lens.invM[0], lens.invM[1], lens.invM[2]]);
     view.setFloat32(220, lens.invT[0], true);
@@ -2096,6 +2140,7 @@ export function packSurfaceGpuParams(
     view.setFloat32(272, lens.foldRadii.minR, true);
     view.setFloat32(276, lens.foldRadii.fixedR, true);
     view.setFloat32(280, lens.foldRadii.wall, true);
+    view.setFloat32(284, lens.postSigmaMin, true);
   }
   // The balloon block at the frozen offset 288 (module-doc
   // contract) — the GLSL uBalloon* quantities in buildBalloon's
@@ -2144,6 +2189,22 @@ export function packSurfaceGpuParams(
       baseBytes + (chaos ? SURFACE_GPU_CHAOS_BYTES : 0),
       tilingInfo,
     );
+  }
+  if (lensPost) {
+    const postOffset =
+      baseBytes +
+      (chaos ? SURFACE_GPU_CHAOS_BYTES : 0) +
+      (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0);
+    const pm = lensPostM;
+    const pt = lensPostT!;
+    for (let r = 0; r < 3; r++) {
+      writeVec3(view, postOffset + r * 16, [
+        pm[r * 3],
+        pm[r * 3 + 1],
+        pm[r * 3 + 2],
+      ]);
+      view.setFloat32(postOffset + r * 16 + 12, pt[r], true);
+    }
   }
   return buf;
 }
@@ -2630,6 +2691,14 @@ export function packSurface4GpuParams(
     );
   }
   const lens4 = de.foldFinal;
+  const lens4PostM = lens4?.postInvM ?? null;
+  const lens4PostT = lens4?.postInvT ?? null;
+  if ((lens4PostM === null) !== (lens4PostT === null)) {
+    throw new Error(
+      "surface-de-gpu: a 4D foldFinal post inverse must carry both matrix and translation",
+    );
+  }
+  const lens4Post = lens4PostM !== null;
   // The appended blocks force the lens4 region to exist (zero-filled
   // without a lens), which is what keeps their own offset at 576 for
   // every 4D core — the 3D packer's frozen-288 rule one dimension up.
@@ -2663,7 +2732,8 @@ export function packSurface4GpuParams(
   const buf = new ArrayBuffer(
     baseBytes +
       (chaos ? SURFACE_GPU_CHAOS_BYTES : 0) +
-      (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0),
+      (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0) +
+      (lens4Post ? SURFACE_GPU_LENS4_POST_BYTES : 0),
   );
   const view = new DataView(buf);
   const rootBound = schedule ? de.schedule?.bounds[0] : undefined;
@@ -2776,6 +2846,7 @@ export function packSurface4GpuParams(
     view.setFloat32(560, lens4.foldRadii.minR, true);
     view.setFloat32(564, lens4.foldRadii.fixedR, true);
     view.setFloat32(568, lens4.foldRadii.wall, true);
+    view.setFloat32(572, lens4.postSigmaMin, true);
   }
   // The balloon/plane shared block at 576, the 3D packer's frozen
   // 288 one dimension up. The lens4 region above stays zero-filled when
@@ -2820,6 +2891,20 @@ export function packSurface4GpuParams(
       baseBytes + (chaos ? SURFACE_GPU_CHAOS_BYTES : 0),
       tilingInfo,
     );
+  }
+  if (lens4Post) {
+    const postOffset =
+      baseBytes +
+      (chaos ? SURFACE_GPU_CHAOS_BYTES : 0) +
+      (tilingInfo ? SURFACE_GPU_TILING_BYTES : 0);
+    const pm = lens4PostM;
+    for (let i = 0; i < 16; i++) {
+      view.setFloat32(postOffset + i * 4, pm[i], true);
+    }
+    const pt = lens4PostT!;
+    for (let i = 0; i < 4; i++) {
+      view.setFloat32(postOffset + 64 + i * 4, pt[i], true);
+    }
   }
   return buf;
 }
@@ -3064,6 +3149,7 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
     out[base + 24] = m.foldRadii.minR;
     out[base + 25] = m.foldRadii.fixedR;
     out[base + 26] = m.foldRadii.wall;
+    out[base + 27] = m.postSigmaMin;
     // The map's own POST-AFFINE inverse (the un-post stage): row xyz with
     // the translation in .w. IDENTITY/zero when the map authors none —
     // the kernel's unconditional apply is value-exact.
@@ -3105,6 +3191,7 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
       out[base + 24] = m.foldRadii?.minR ?? 0.5;
       out[base + 25] = m.foldRadii?.fixedR ?? 1;
       out[base + 26] = m.foldRadii?.wall ?? 1;
+      out[base + 27] = 1;
       // B is affine-only by the document rule: its post stage stays
       // identity (the value-exact "no post" apply).
       out[base + 28] = 1;
@@ -3131,6 +3218,7 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
     out[base + 12] = emitter.sigmaMin;
     out[base + 13] = emitter.shadeIndex;
     out[base + 14] = emitter.shadeIndex - de.maps.length;
+    out[base + 27] = 1;
     // Emitter steps skip the map's own post-affine (the emitter rule): the
     // slot's un-post stays identity.
     out[base + 28] = 1;
@@ -3187,6 +3275,7 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
     out[base + 32] = m.foldRadii.minR;
     out[base + 33] = m.foldRadii.fixedR;
     out[base + 34] = m.foldRadii.wall;
+    out[base + 35] = m.postSigmaMin;
     // The map's own POST-AFFINE inverse (the un-post stage, 4 rows +
     // translation at the struct's appended tail). IDENTITY/zero when the
     // map authors none — the kernel's unconditional apply is value-exact.
@@ -3222,6 +3311,7 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
       out[base + 32] = m.foldRadii?.minR ?? 0.5;
       out[base + 33] = m.foldRadii?.fixedR ?? 1;
       out[base + 34] = m.foldRadii?.wall ?? 1;
+      out[base + 35] = 1;
       // B is affine-only by the document rule: its post stage stays
       // identity (the value-exact "no post" apply).
       out[base + 36] = 1;
@@ -3244,6 +3334,7 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
     out[base + 20] = emitter.sigmaMin;
     out[base + 21] = emitter.shadeIndex;
     out[base + 22] = emitter.shadeIndex - de.maps.length;
+    out[base + 35] = 1;
     // Emitter steps skip the map's own post-affine (the emitter rule): the
     // slot's un-post stays identity.
     out[base + 36] = 1;
@@ -3651,6 +3742,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // lens (hit-info bodies + probe composition) landed with the
   // fold-lens port's stage C.
   const lens = opts.lens ?? false;
+  const lensPost = opts.lensPost ?? false;
+  if (lensPost && !lens) {
+    throw new Error(
+      "surface-de-gpu: lensPost requires the fold-final lens wrapper",
+    );
+  }
   if (core === "escape" && lens) {
     // analyzeEscapeSystem refuses final transforms, so no oracle or GLSL
     // arm pins a lensed escape shape — loud beats generating one.
@@ -4736,7 +4833,10 @@ ${condensationHitFold(
   "childState",
 )}          var candFloor = pFloor;
           if (branchRd > 0.0) {
-            candFloor = max(candFloor, pScale * absW * branchRd);
+            candFloor = max(
+              candFloor,
+              pScale * absW * m.fold.w * branchRd,
+            );
           }
           var key = pScale * (r - R);
           if (candFloor > 0.0 && candFloor > key) {
@@ -5417,7 +5517,7 @@ ${
   slabExt
     ? `          var imgExt = vec4f(0.0);
           if (segment) {
-            imgExt = mapApplyLinear4(m, mapUnpost4(m, sExt));
+            imgExt = mapApplyLinear4(m, mapUnpostLinear4(m, sExt));
           }
           let r = segmentRadius4(img, imgExt);
 `
@@ -5888,7 +5988,7 @@ ${
 ${
   slabExt
     ? `            if (segment) {
-              imgExt = mapApplyLinear4(m, mapUnpost4(m, sExt));
+              imgExt = mapApplyLinear4(m, mapUnpostLinear4(m, sExt));
             }
 `
     : ``
@@ -6022,7 +6122,10 @@ ${
     "childState",
   )}          var candFloor = pFloor;
           if (branchRd > 0.0) {
-            candFloor = max(candFloor, pScale * absW * branchRd);
+            candFloor = max(
+              candFloor,
+              pScale * absW * m.fold.w * branchRd,
+            );
           }
           var key = pScale * (r - R);
           if (candFloor > 0.0 && candFloor > key) {
@@ -6354,9 +6457,9 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   // plain-skips here: there is no caller cutoff and no visible pin in a
   // shading call, exactly the GLSL's shape.
   const lensHitWrapText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  let kind = u32(params.lensParams.x);
+${lensPost ? "  let pq = lensUnpost(p);\n" : ""}  let kind = u32(params.lensParams.x);
   let absW = params.lensParams.z;
-  let u = p * params.lensParams.y;
+  let u = ${lensPost ? "pq" : "p"} * params.lensParams.y;
   let fr = foldRadiiOf(params.lensFold);
   var best = 1e30;
   var ru = 0.0;
@@ -6464,7 +6567,7 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
         branchRd = max(sfRd, sfSigma * boxRd);
       }
     }
-    let flr = absW * branchRd;
+    let flr = absW * params.lensFold.w * branchRd;
     if (flr > 0.0 && flr >= best) {
       continue;
     }
@@ -6522,15 +6625,15 @@ ${
     : ``
 }`;
   const lens4HitWrapText = /* wgsl */ `fn surfaceDEHitInfo(${lens4HitParams}, li: u32) -> SurfaceHitInfo {
-${lens4HitLiftText}  let kind = u32(params.lens4Params.x);
+${lens4HitLiftText}${lensPost ? "  let pUnpost = lensUnpost4(pq);\n" : ""}  let kind = u32(params.lens4Params.x);
   let absW = params.lens4Params.z;
-  let u = pq * params.lens4Params.y;
+  let u = ${lensPost ? "pUnpost" : "pq"} * params.lens4Params.y;
   let fr = foldRadiiOf(params.lens4Fold);
 ${
   slabExt
     ? `  var eu = vec4f(0.0);
   if (segment) {
-    eu = pExt * params.lens4Params.y;
+    eu = ${lensPost ? "lensUnpostLinear4(pExt)" : "pExt"} * params.lens4Params.y;
   }
 `
     : ``
@@ -6687,7 +6790,7 @@ ${
         branchRd = max(sfRd, sfSigma * boxRd);
       }
     }
-    let flr = absW * branchRd;
+    let flr = absW * params.lens4Fold.w * branchRd;
     if (flr > 0.0 && flr >= best) {
       continue;
     }
@@ -7440,13 +7543,15 @@ ${marchGate}
     }
     let eps = max(params.pixelEps * t, params.hitFloorEps);
     let d = surfaceDE(ro + rd * t, eps, li);
+    // Persist the last evaluation for diagnostics, INCLUDING the terminal
+    // HIT sample. Shade never reads this lane.
+    st.w = d;
     steps++;
     if (d < eps) {
       st.y = ${SURFACE_GPU_RAY_HIT}.0;
       break;
     }
     t += d * params.stepScale;
-    st.w = d;
   }
   st.x = t;
   st.z = f32(steps);
@@ -8195,6 +8300,29 @@ ${
       : "  tilingGroup: u32,\n"
     : ""
 }
+${
+  lensPost
+    ? core4
+      ? /* wgsl */ `  // APPENDED fold-final post inverse: every older field and optional
+  // tail keeps its frozen offset. Translation is separate because vec4
+  // rows have no spare lane.
+  lens4PostI0: vec4f,
+  lens4PostI1: vec4f,
+  lens4PostI2: vec4f,
+  lens4PostI3: vec4f,
+  lens4PostT: vec4f,
+`
+      : /* wgsl */ `  // APPENDED fold-final post inverse: mat3 rows with inverse
+  // translation in each row's aligned spare lane.
+  lensPostI0: vec3f,
+  lensPostT0: f32,
+  lensPostI1: vec3f,
+  lensPostT1: f32,
+  lensPostI2: vec3f,
+  lensPostT2: f32,
+`
+    : ""
+}
 }${
     !mapsBinding
       ? ""
@@ -8721,7 +8849,8 @@ ${
                   if (ru < fr.midMinR) {
                     // f32 overflow guard: fold the unit-shell bound and
                     // skip the branch + its box expansion.
-                    var shellCert = pScale * absW * (fr.fixedR - ru);
+                    var shellCert =
+                      pScale * absW * m.fold.w * (fr.fixedR - ru);
                     shellCert = max(shellCert, pFloor);
                     if (shellCert < best) {
                       best = shellCert;
@@ -8794,7 +8923,10 @@ ${
                 }
               }
               if (branchRd > 0.0) {
-                candFloor = max(candFloor, pScale * absW * branchRd);
+                candFloor = max(
+                  candFloor,
+                  pScale * absW * m.fold.w * branchRd,
+                );
               }
               // Floor-vs-best prune: the subtree's every fold is >= its
               // floor, which already cannot advance the min.
@@ -9517,7 +9649,7 @@ ${
   slabExt
     ? `      var jExt = vec4f(0.0);
       if (segment) {
-        jExt = mapApplyLinear4(m, mapUnpost4(m, sExt));
+        jExt = mapApplyLinear4(m, mapUnpostLinear4(m, sExt));
       }
 `
     : ``
@@ -9809,7 +9941,7 @@ ${
           // segment's half-extent ever sees.
           var imgExt = vec4f(0.0);
           if (segment) {
-            imgExt = mapApplyLinear4(m, mapUnpost4(m, sExt));
+            imgExt = mapApplyLinear4(m, mapUnpostLinear4(m, sExt));
           }
           let r = segmentRadius4(img, imgExt);
 `
@@ -10426,7 +10558,7 @@ ${
 ${
   slabExt
     ? `              if (segment) {
-                imgExt = mapApplyLinear4(m, mapUnpost4(m, sExt));
+                imgExt = mapApplyLinear4(m, mapUnpostLinear4(m, sExt));
               }
 `
     : ``
@@ -10457,7 +10589,8 @@ ${
                     // f32 overflow guard: fold the unit-shell bound and
                     // skip the branch + its box expansion (81 wide up
                     // here). A settled fold, so the standard exits apply.
-                    var shellCert = pScale * absW * (fr.fixedR - ru);
+                    var shellCert =
+                      pScale * absW * m.fold.w * (fr.fixedR - ru);
                     shellCert = max(shellCert, pFloor);
                     if (shellCert < best) {
                       best = shellCert;
@@ -10565,7 +10698,10 @@ ${
                 }
               }
               if (branchRd > 0.0) {
-                candFloor = max(candFloor, pScale * absW * branchRd);
+                candFloor = max(
+                  candFloor,
+                  pScale * absW * m.fold.w * branchRd,
+                );
               }
               // Floor-vs-best prune: the subtree's every fold is >= its
               // floor, which already cannot advance the min.
@@ -11215,6 +11351,36 @@ ${fold4DescentFnText(width, slabExt, core4ExternalLift)}${probe4DeFns}`
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
   const descentBlock = scheduleCoreSource(rawDescentBlock, false);
 
+  const lensPostHelperText = !lensPost
+    ? ""
+    : core4
+      ? /* wgsl */ `fn lensUnpost4(v: vec4f) -> vec4f {
+  return vec4f(
+    dot(params.lens4PostI0, v),
+    dot(params.lens4PostI1, v),
+    dot(params.lens4PostI2, v),
+    dot(params.lens4PostI3, v),
+  ) + params.lens4PostT;
+}
+
+fn lensUnpostLinear4(v: vec4f) -> vec4f {
+  return vec4f(
+    dot(params.lens4PostI0, v),
+    dot(params.lens4PostI1, v),
+    dot(params.lens4PostI2, v),
+    dot(params.lens4PostI3, v),
+  );
+}
+`
+      : /* wgsl */ `fn lensUnpost(v: vec3f) -> vec3f {
+  return vec3f(
+    dot(params.lensPostI0, v) + params.lensPostT0,
+    dot(params.lensPostI1, v) + params.lensPostT1,
+    dot(params.lensPostI2, v) + params.lensPostT2,
+  );
+}
+`;
+
   // The FOLD FINAL lens: `descendLens` (surface-de.ts)
   // one level up — exactly the GLSL SURFACE_FOLD_LENS move
   // (surface-material.ts's `#define surfaceDE surfaceDECore`) in this
@@ -11236,9 +11402,9 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
   // `innerFootprint = 0`.
   const lensWrapText = /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   let visBound = length(pIn) - params.visibleRadius;
-  let kind = u32(params.lensParams.x);
+${lensPost ? "  let p = lensUnpost(pIn);\n" : ""}  let kind = u32(params.lensParams.x);
   let absW = params.lensParams.z;
-  let u = pIn * params.lensParams.y;
+  let u = ${lensPost ? "p" : "pIn"} * params.lensParams.y;
   let fr = foldRadiiOf(params.lensFold);
   var best = 1e30;
   var ru = 0.0;
@@ -11283,7 +11449,8 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
         if (ru < fr.midMinR) {
           // Shell guard (the oracle's): fold the settled shell bound,
           // skip the branch + its box expansion.
-          let shellCert = absW * (fr.fixedR - ru);
+          let shellCert =
+            absW * params.lensFold.w * (fr.fixedR - ru);
           if (shellCert < best) {
             best = shellCert;
             if (best <= visBound) {
@@ -11355,7 +11522,7 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
         branchRd = max(sfRd, sfSigma * boxRd);
       }
     }
-    let flr = absW * branchRd;
+    let flr = absW * params.lensFold.w * branchRd;
     if (flr > 0.0 && flr >= best) {
       continue;
     }
@@ -11460,9 +11627,9 @@ ${lens4LiftText}${
 `
       : `  let visBound = length(p) - params.visRadius4;
 `
-  }  let kind = u32(params.lens4Params.x);
+  }${lensPost ? "  let pUnpost = lensUnpost4(p);\n" : ""}  let kind = u32(params.lens4Params.x);
   let absW = params.lens4Params.z;
-  let u = p * params.lens4Params.y;
+  let u = ${lensPost ? "pUnpost" : "p"} * params.lens4Params.y;
   let fr = foldRadiiOf(params.lens4Fold);
 ${
   slabExt
@@ -11470,7 +11637,7 @@ ${
   // scales with the point and stays a segment.
   var eu = vec4f(0.0);
   if (segment) {
-    eu = pExt * params.lens4Params.y;
+    eu = ${lensPost ? "lensUnpostLinear4(pExt)" : "pExt"} * params.lens4Params.y;
   }
 `
     : ``
@@ -11533,7 +11700,8 @@ ${
         if (ru < fr.midMinR) {
           // Shell guard (the oracle's): fold the settled shell bound,
           // skip the branch + its 81-wide box expansion.
-          let shellCert = absW * (fr.fixedR - ru);
+          let shellCert =
+            absW * params.lens4Fold.w * (fr.fixedR - ru);
           if (shellCert < best) {
             best = shellCert;
             if (best <= visBound) {
@@ -11632,7 +11800,7 @@ ${
         branchRd = max(sfRd, sfSigma * boxRd);
       }
     }
-    let flr = absW * branchRd;
+    let flr = absW * params.lens4Fold.w * branchRd;
     if (flr > 0.0 && flr >= best) {
       continue;
     }
@@ -11717,7 +11885,9 @@ ${
   const lensedBodyBlock = lens
     ? `${descentBlock
         .replace("fn surfaceDE(", "fn surfaceDECore(")
-        .replace("fn surfaceDEProbe(", "fn surfaceDEProbeCore(")}
+        .replace("fn surfaceDEProbe(", "fn surfaceDEProbeCore(")}${
+        lensPost ? `\n\n${lensPostHelperText}` : ""
+      }
 
 // ${
         core4

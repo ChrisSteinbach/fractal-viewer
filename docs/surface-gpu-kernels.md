@@ -89,7 +89,10 @@ contiguous suffix, and condensation indexes emitters after both. The low-level
 guard and app eligibility apply the 24-record cap to the complete sequence;
 B adds no unique shade slot. Weighted schedules contain only maps in the point
 picker's support, including every map under its all-zero uniform fallback.
-The codegen refuses the schedule on forward escape/bulb cores because those
+The schedule contract is affine-only: an authored post on B is stripped from
+both the physical wire and the certified inner bounds, so ignored point-engine
+state cannot enlarge or move the rendered set. The codegen refuses the schedule
+on forward escape/bulb cores because those
 orbits have no inverse alphabet and rendering A alone would be a different
 object.
 
@@ -163,8 +166,9 @@ inclusive, root depth is 0, and an unbounded maximum is packed as `0xffffffff`.
 The params sizes are append-only. In 3D, base/lens grows 288 -> 304 bytes,
 balloon 320 -> 336 and plane 336 -> 352. In 4D condensation forces the shared
 576-byte variant prefix even without a lens, then ends at 592 bytes; balloon
-ends at 624 and plane at 640. Feature-off buffers retain every pre-existing
-size and byte. Emitter inverse records reuse the 10-vec4 `GpuMap` or 14-vec4
+ends at 624 and plane at 640. These are preserved prefixes: a live final-lens
+post appends its separate 48/80-byte tail after them. Feature-off buffers retain
+every pre-existing size and byte. Emitter inverse records reuse the 10-vec4 `GpuMap` or 14-vec4
 `GpuMap4` stride (each grew again by the per-map POST-AFFINE-inverse tail —
 3 vec4 in 3D, 5 in 4D — appended at the struct's end; the escape packers
 store the FORWARD post on those lanes), and the low-level guard caps total A + B + emitter records
@@ -205,7 +209,10 @@ The fold's authored lengths ride a dedicated `fold` lane in both map
 layouts — `GpuMap` grew 6 -> 7 vec4, `GpuMap4` grew 8 -> 9 vec4 (then 7 -> 10
 and 9 -> 14 by the per-map POST-AFFINE-inverse tails, appended at the
 struct's end) — carrying
-`resolveFoldRadii`'s own output `(mR, fR, wall)`. A generated
+`resolveFoldRadii`'s own output `(mR, fR, wall)` plus
+`sigma_min(post)` in the spare `.w`. Fold region floors and sphere-shell
+certificates are measured after un-posting the query, so that factor returns
+them to outer space without changing the separately accumulated core scale. A generated
 `foldRadiiOf` re-derives the branch algebra from that lane
 (`surfaceFoldRadii` field for field), once per map per descent level,
 outside a branch loop that runs up to 81 times.
@@ -421,7 +428,7 @@ the ROW-MAJOR bytes of the matrix the body applies, the packer performing
 the one real transpose (pose rotor → world-to-attractor, `setSurfaceView4`'s
 exact dance) — plus w0/sliceHalfW/`visRadius4` and the radius-ramp band
 (`SurfaceDE4.radiusBand` as center4/minD/invRange); maps are the `GpuMap4`
-layout (`packSurfaceGpuMaps4`, 224-byte 4D stride — 128 pre-post, +96 for
+layout (`packSurfaceGpuMaps4`, 224-byte 4D stride — 144 pre-post, +80 for
 the post-inverse tail).
 
 Two frozen slots carry 4D semantics: `visibleRadius` packs the
@@ -444,8 +451,12 @@ emission by the 3D measured verdict, and `lens:true` wraps either 4D core in
 `descendLens4`'s branch sweep (that port's second phase — the appended lens4
 params block at 464..575, `SURFACE_GPU_PARAMS4_LENS_BYTES` 576 — 464..559 as
 the port shipped it, plus the authored fold lengths' `lens4Fold` quartet at
-560; nothing follows the block, so it grew in place — packed exactly when
-the DE carries a `foldFinal`; the old "4D lens throws" rule is gone).
+560 — packed exactly when the DE carries a `foldFinal`; the old "4D lens
+throws" rule is gone). A live fold-final post appends its inverse after every
+older feature/chaos/tiling tail: 48 bytes in 3D or 80 in 4D. The generator
+compile-gates that tail, un-posts before the branch sweep, and transforms only
+the slab half-extent by its inverse linear part. A post-free params buffer has
+no tail, and every older offset remains unchanged.
 
 Bench legs `fold4Boxfold`/`Mandelbox`/`Kaleido`/`Slab` + a fold4
 compute-frame leg pin it.
@@ -480,13 +491,42 @@ and the wrapper owns the public names, entries untouched; params grew
 and footprint+lens is refused at pack time (descendLens's per-branch
 innerFootprint would need a core signature change; the app passes 0).
 
-M1 lens rows gate at ~2e-7 (81-branch mandelbox worst case included); the
-field class marched 5184 unproject rays fail=0, hits 812/811 — that leg and
-the fold-pair leg each carry ONE status mismatch on the real Iris driver
-where SwiftShader has none, excluded as `silhouetteFlips`: the two marches
-reached the same point on the same trajectory and straddled `d < eps` by
-0.6%/2% of eps, which the older same-terminal-`t` rule could never recognize
-because a miss runs on to the sphere exit while a hit stops at the surface.
+M1 lens rows gate at ~2e-7 (81-branch mandelbox worst case included). The
+unproject classifier compares rendered geometry in three disclosed classes.
+Same-status/same-depth rows pass directly; a one-sided hit can be an isolated
+`silhouetteFlip` only when the CPU march's closest approach agrees with the
+hitting side's t and straddles `d < eps` within the existing 1.5x band; and a
+both-hit depth mismatch can be a `hitTCorridorMatch` only when 65 strict CPU
+oracle samples find `d < eps` inside the existing ±t tolerance, clamped to the
+legal entry/far interval. Corridor matches are separately capped at the smaller
+of seven rays and 3% of both-hit rays; neither the t tolerance nor the hit
+threshold grows. Failure and informational diagnostics have independent print
+caps, and the kernel exposes its last evaluated d only in the benchmark state
+lane, after updating that lane before the hit branch.
+
+The 2026-09-07 verified Iris rerun covered the historical width-12,
+workgroup-64 Mandelbox/KIFS blocker: 652/652 both-hit rays, four corridor
+matches under the seven-ray cap, zero hit-t failures and `maxAbsT=0.0421`.
+The pinned ray 3300 had GPU t 4.6593, CPU first-hit t 4.6869 and GPU terminal
+`d/eps=0.497`; the CPU oracle found `d/eps=0.502` at t 4.6596 inside the
+unchanged 0.00937 tolerance. The complete reduced real-driver surface matrix
+passed. Earlier M1 lens and fold-pair rows each carried one one-sided
+`silhouetteFlip` (0.6%/2% from the threshold); these remain separate from the
+new both-hit corridor evidence because a miss runs to the sphere exit while a
+hit stops at the surface.
+
+The same run pins the POST-AFFINE additions across the production widths. The
+3D fold, affine-final and posted fold-lens rows all had zero failures (worst
+absolute error `2.01e-7`); the posted lens march had 88/88 paired hits, one
+corridor match under its cap of two, and zero failures, and its production
+frame completed with 597 hits. The 4D affine/fold/slab/four-lens matrix also
+had zero failures (worst absolute error `3.40e-7`), including the production
+fold4 slab frame. The posted forward rows closed at zero failures and zero
+exclusions in both dimensions (`4.83e-7`/`4.32e-7` maximum absolute error).
+Their first run's 286/290 exclusions exposed a stale BENCH oracle: both f32
+twins omitted the post while the independent f64 oracle and GPU included it.
+Applying `post(weight * V(Ap)) + p` in the twins removed every exclusion with
+no fixture, tolerance or cap change. Full real-Iris verdict: pass.
 
 **Re-verify surface kernel changes on `--display=:0`, not SwiftShader
 alone** — the escape port re-proved it: the escape eval leg's first
