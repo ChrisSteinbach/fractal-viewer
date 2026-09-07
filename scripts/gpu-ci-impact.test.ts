@@ -64,6 +64,10 @@ describe("GPU impact policy", () => {
       ).full,
     ).toBe(true);
   });
+  it("refuses ambiguous JavaScript/TypeScript resolution instead of dropping a possible dependency", () => {
+    const graph = tree({ "src/gpu.js": 'export * from "./wire";' });
+    expect(selectImpact(graph, graph, ["src/panel.ts"], roots).full).toBe(true);
+  });
   it("follows literal dynamic imports, re-exports and URL assets", () => {
     const graph = tree({
       "src/bench.ts":
@@ -97,6 +101,7 @@ describe("GPU impact policy", () => {
     "import(name)",
     'import.meta.glob("./*.ts")',
     'fetch("./wire.ts")',
+    'readFileSync("./wire.ts")',
     'new Worker("./wire.ts")',
     'new Function("return import(path)")',
     'import "./missing"',

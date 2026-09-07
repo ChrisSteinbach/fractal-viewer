@@ -64,7 +64,7 @@ export function imports(file: string, source: string): string[] {
       ) {
         add(node.arguments[0]);
       } else if (
-        /import\.meta\.(glob|resolve)|\brequire\b|(?:^|\.)fetch$|^eval$/.test(
+        /import\.meta\.(glob|resolve)|\brequire\b|(?:^|\.)(?:fetch|readFile|readFileSync)$|^eval$/.test(
           expression,
         )
       ) {
@@ -101,9 +101,12 @@ function resolveLocal(tree: SourceTree, from: string, spec: string): string {
   ];
   // TypeScript's extension substitution for source imports written as .js.
   if (base.endsWith(".js")) candidates.unshift(base.slice(0, -3) + ".ts");
-  const resolved = candidates.find((candidate) => tree.files.has(candidate));
-  if (!resolved) throw new Error(`unresolved ${from} -> ${spec}`);
-  return resolved;
+  const resolved = [...new Set(candidates)].filter((candidate) =>
+    tree.files.has(candidate),
+  );
+  if (resolved.length !== 1)
+    throw new Error(`unresolved/ambiguous ${from} -> ${spec}`);
+  return resolved[0];
 }
 
 export function dependencyClosure(

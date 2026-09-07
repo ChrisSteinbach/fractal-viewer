@@ -37,9 +37,9 @@ For each changed path, in order:
 5. Everything else selects full agreement: configuration, dependencies,
    workflow/runner edits, assets and files the policy does not understand.
 
-An unresolved import, unknown package or alias, computed import, glob loader,
+An unresolved or ambiguous import, unknown package or alias, computed import, glob loader,
 unsupported import assignment, parse failure, missing root or unavailable git
-history selects full agreement. Symlink/submodule source and runtime fetch,
+history selects full agreement. Symlink/submodule source and runtime fetch/file-read,
 worker or generated-function loaders are also uncertain. Selector execution failure makes the aggregate
 red. Unsupported scenario-roster structure also makes it red because the union
 cannot then be established. New dependency syntax must earn support through
