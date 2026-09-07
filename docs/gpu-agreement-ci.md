@@ -165,6 +165,34 @@ fell **99.86%**; no agreement scenario ran. The before row reuses the measured
 full sweep because the tooltip changes none of its inputs; it does not claim a
 second historical run of that exact tooltip commit.
 
+The same probe's [ordinary CI run 34155886067](https://github.com/ChrisSteinbach/fractal-viewer/actions/runs/34155886067)
+passed all four required checks: lint, build, test and WebGL smoke. This proves
+the required-check acceptance path on GitHub, beyond the selector unit test.
+The disposable [probe PR #377](https://github.com/ChrisSteinbach/fractal-viewer/pull/377)
+was then closed without merging and its branch removed.
+
+The GPU-sensitive harness/workflow implementation selected both groups in
+[full run 34155672849](https://github.com/ChrisSteinbach/fractal-viewer/actions/runs/34155672849),
+commit `2d1ccdad7635e32886b1f0f321888a52e8984271`. All 30 jobs passed: selection,
+backend smoke, 27 agreement shards and the aggregate. Its logs contain exactly
+the current roster's **32 distinct passing scenario records**, including all
+image and downsample comparisons; all 27 standalone ss=1 checks passed too.
+
+| Change class / policy                               | Full scenarios | Workflow elapsed | Allocated runner-minutes |
+| --------------------------------------------------- | -------------: | ---------------: | -----------------------: |
+| Old policy, either independent or sensitive source  |             32 |           28m37s |                   324.65 |
+| New policy, measured independent tooltip PR         |              0 |            5m08s |                    0.467 |
+| New policy, measured sensitive 3D/4D harness change |             32 |           25m54s |                   295.22 |
+
+The full after-run spent 283.15 summed minutes in agreement steps. Its selector
+took 21s, backend-smoke job 136s (129s in the browser/runner step), and aggregate
+5s. The longest shard remained 19m35s, with a 19m17s agreement step. The smaller
+full-run total is **run-to-run execution/queue variation, not a reduction in
+agreement coverage or a claimed kernel optimization**: sensitive changes
+still run the same complete workload, plus the early backend check. The
+ordinary required checks also passed in
+[implementation CI run 34155672887](https://github.com/ChrisSteinbach/fractal-viewer/actions/runs/34155672887).
+
 Local backend smoke on 2026-09-07: all four programs passed on bundled Chromium
 SwiftShader in **23.15 seconds of page work**. Injecting invalid WGSL into the
 4D module produced a named 4D compilation failure and process exit 1 after the
