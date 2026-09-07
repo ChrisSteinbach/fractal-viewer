@@ -4235,7 +4235,7 @@ export class Ui {
     this.continuousZoomRow.title = frozen
       ? active
         ? "Flame freezes the camera; Continuous zoom can still be reset or exited."
-        : "Continuous zoom cannot start while Flame freezes the camera."
+        : "Continuous zoom is unavailable while Flame freezes the camera."
       : "";
     this.continuousZoomUnavailableNote.classList.toggle("hidden", !frozen);
   }
