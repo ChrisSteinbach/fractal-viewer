@@ -40,11 +40,12 @@ import {
   type ShapeSpec,
 } from "../fractal/shapes";
 import {
+  CLASSIC_BIPOLAR_SHIFT,
   CLASSIC_CURL_PARAMS,
   CLASSIC_FOLD_RADII,
   CLASSIC_JULIA_PARAMS,
+  CLASSIC_PDJ_PARAMS,
   isFoldVariationType,
-  isParametricVariationType,
 } from "../fractal/variations";
 import {
   CLASSIC_SURFACE_FINISH,
@@ -821,10 +822,8 @@ const BOX_LIMIT_MAX = 3;
 const FOLD_RADIUS_STEP = 0.005;
 
 /**
- * The parametric julia family and curl's authored parameters, in row order
- * per type — the fold family's {@link FOLD_RADIUS_FIELDS} one feature over.
- * A julia type reads exactly its power and dist, curl its c1 and c2; every
- * other type reads nothing.
+ * Parameterized variations' authored fields, in row order per type — the
+ * fold family's {@link FOLD_RADIUS_FIELDS} one feature over.
  */
 type VariationParamKey =
   | "julianPower"
@@ -832,10 +831,18 @@ type VariationParamKey =
   | "juliascopePower"
   | "juliascopeDist"
   | "curlC1"
-  | "curlC2";
+  | "curlC2"
+  | "bipolarShift"
+  | "pdjA"
+  | "pdjB"
+  | "pdjC"
+  | "pdjD";
+
+type EditorParametricVariationType =
+  "julian" | "juliascope" | "curl" | "bipolar" | "pdj";
 
 const PARAMETRIC_PARAM_FIELDS: Record<
-  "julian" | "juliascope" | "curl",
+  EditorParametricVariationType,
   readonly (readonly [VariationParamKey, string])[]
 > = {
   julian: [
@@ -850,19 +857,36 @@ const PARAMETRIC_PARAM_FIELDS: Record<
     ["curlC1", "C1"],
     ["curlC2", "C2"],
   ],
+  bipolar: [["bipolarShift", "Shift"]],
+  pdj: [
+    ["pdjA", "A"],
+    ["pdjB", "B"],
+    ["pdjC", "C"],
+    ["pdjD", "D"],
+  ],
 };
+
+function isEditorParametricVariationType(
+  type: VariationType,
+): type is EditorParametricVariationType {
+  return type in PARAMETRIC_PARAM_FIELDS;
+}
 
 /**
  * Parametric-parameter slider bounds — the classic value each row's
  * write/remove rule compares against lives in
  * {@link PARAMETRIC_PARAM_CLASSIC} below, imported from `variations.ts`
- * (the CLASSIC_JULIA_* and CLASSIC_CURL_* constants), never re-typed. The
+ * (the CLASSIC_JULIA_*, CLASSIC_CURL_*, CLASSIC_BIPOLAR_SHIFT and
+ * CLASSIC_PDJ_PARAMS constants), never re-typed. The
  * powers span flam3's real-valued domain with its usual integer sweet spot
  * centered (negative power runs the spiral backwards, a legal flam3
  * authoring); the dist exponent and the curl coefficients span the values
  * that actually move the shape (the classic 1 / 1 / 0 sit inside
- * comfortably). `step` is the Arrow increment only — the exact-value
- * companions keep PRECISION the domain, never the step.
+ * comfortably). Bipolar spans its one non-duplicated period `[-1, 1]`; PDJ
+ * follows flam3's `[-3, 3]` coefficient randomizer. `step` is the Arrow
+ * increment only — the exact-value companions keep PRECISION the domain,
+ * never the step. An imported value outside these authoring bounds widens
+ * its own row just far enough to remain visible and editable without clamp.
  */
 const PARAMETRIC_PARAM_BOUNDS: Record<
   VariationParamKey,
@@ -874,6 +898,11 @@ const PARAMETRIC_PARAM_BOUNDS: Record<
   juliascopeDist: { min: -3, max: 3, step: 0.005 },
   curlC1: { min: -3, max: 3, step: 0.005 },
   curlC2: { min: -3, max: 3, step: 0.005 },
+  bipolarShift: { min: -1, max: 1, step: 0.005 },
+  pdjA: { min: -3, max: 3, step: 0.005 },
+  pdjB: { min: -3, max: 3, step: 0.005 },
+  pdjC: { min: -3, max: 3, step: 0.005 },
+  pdjD: { min: -3, max: 3, step: 0.005 },
 };
 
 const PARAMETRIC_PARAM_CLASSIC: Record<VariationParamKey, number> = {
@@ -883,6 +912,11 @@ const PARAMETRIC_PARAM_CLASSIC: Record<VariationParamKey, number> = {
   juliascopeDist: CLASSIC_JULIA_PARAMS.dist,
   curlC1: CLASSIC_CURL_PARAMS.c1,
   curlC2: CLASSIC_CURL_PARAMS.c2,
+  bipolarShift: CLASSIC_BIPOLAR_SHIFT,
+  pdjA: CLASSIC_PDJ_PARAMS.a,
+  pdjB: CLASSIC_PDJ_PARAMS.b,
+  pdjC: CLASSIC_PDJ_PARAMS.c,
+  pdjD: CLASSIC_PDJ_PARAMS.d,
 };
 
 /** The surface finish's six authored fields, in row order. */
@@ -1423,6 +1457,7 @@ function forwardHeadIndex(transforms: readonly Transform[]): number {
 const VARIATION_LABELS: Partial<Record<VariationType, string>> = {
   qsquare: "Quaternion square",
   bulb: "Mandelbulb power 8",
+  pdj: "PDJ",
 };
 
 /** Title-case a variation type for display, e.g. "handkerchief" → "Handkerchief". */
@@ -1458,7 +1493,12 @@ function variationsEqual(a: Variation[], b: Variation[]): boolean {
         v.juliascopePower === b[i].juliascopePower &&
         v.juliascopeDist === b[i].juliascopeDist &&
         v.curlC1 === b[i].curlC1 &&
-        v.curlC2 === b[i].curlC2,
+        v.curlC2 === b[i].curlC2 &&
+        v.bipolarShift === b[i].bipolarShift &&
+        v.pdjA === b[i].pdjA &&
+        v.pdjB === b[i].pdjB &&
+        v.pdjC === b[i].pdjC &&
+        v.pdjD === b[i].pdjD,
     )
   );
 }
@@ -9814,7 +9854,7 @@ export class Ui {
       editor.variationList.appendChild(row);
       if (isFoldVariationType(variation.type)) {
         this.appendFoldRadiusRows(variation.type, i);
-      } else if (isParametricVariationType(variation.type)) {
+      } else if (isEditorParametricVariationType(variation.type)) {
         this.appendVariationParamRows(variation.type, i);
       }
     });
@@ -9928,7 +9968,7 @@ export class Ui {
   }
 
   /**
-   * The parametric julia family and curl's authored parameters, as rows
+   * Parameterized variations' authored fields, as rows
    * nested under their own variation's weight row — only the ones that type
    * reads ({@link PARAMETRIC_PARAM_FIELDS}), the fold lengths' rows one
    * feature over.
@@ -9943,7 +9983,7 @@ export class Ui {
    * neighbouring control, leaves it with no parameter keys at all.
    */
   private appendVariationParamRows(
-    type: "julian" | "juliascope" | "curl",
+    type: EditorParametricVariationType,
     index: number,
   ): void {
     const editor = this.editor;
@@ -9959,6 +9999,13 @@ export class Ui {
     };
     for (const [key, label] of PARAMETRIC_PARAM_FIELDS[type]) {
       const bounds = PARAMETRIC_PARAM_BOUNDS[key];
+      const value = valueOf(key);
+      // Import/persistence intentionally accept every finite flam3 parameter.
+      // Keep that authored value exact instead of letting <input type=range>
+      // sanitize it to the ordinary editor domain (or making the numeric
+      // companion reject it during initialization).
+      const min = Math.min(bounds.min, value);
+      const max = Math.max(bounds.max, value);
       const row = this.doc.createElement("div");
       row.className = "editor-row variation-row variation-fold-row";
 
@@ -9968,10 +10015,10 @@ export class Ui {
 
       const slider = this.doc.createElement("input");
       slider.type = "range";
-      slider.min = String(bounds.min);
-      slider.max = String(bounds.max);
+      slider.min = String(min);
+      slider.max = String(max);
       slider.step = String(bounds.step);
-      slider.value = String(valueOf(key));
+      slider.value = String(value);
       slider.setAttribute(
         "aria-label",
         `${variationLabel(type)} ${label.toLowerCase()}`,
@@ -9979,7 +10026,7 @@ export class Ui {
 
       const readout = this.doc.createElement("span");
       readout.className = "value";
-      readout.textContent = valueOf(key).toFixed(3);
+      readout.textContent = value.toFixed(3);
 
       slider.addEventListener("input", () => {
         const value = Number(slider.value);
@@ -9992,10 +10039,10 @@ export class Ui {
       this.pairDynamicRange({
         slider,
         readout,
-        min: bounds.min,
-        max: bounds.max,
+        min,
+        max,
         step: bounds.step,
-        value: valueOf(key),
+        value,
         ariaLabel: `${variationLabel(type)} ${label.toLowerCase()}`,
         onNumberInput: (value) => {
           write(key, value);

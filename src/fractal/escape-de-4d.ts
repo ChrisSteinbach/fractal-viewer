@@ -131,7 +131,7 @@ import type {
 import { CONTRACTION_LIMIT } from "./surface-de";
 import { transformSeparatedSigmas4 } from "./surface-de-4d";
 import {
-  activeParametricVariationTypes,
+  activeExactFlam3VariationTypes,
   resolveFoldRadii,
   sphereFoldLipschitz,
 } from "./variations";
@@ -211,9 +211,8 @@ type EscapeCalibrationDE4 = Omit<EscapeDE4, "patternCalibration">;
 /** {@link import("./escape-de").EscapeDE}'s `linkVariation` one dimension up
  * — the single active entry a link may carry. `bulb` is RECOGNISED here so
  * the gate can refuse it by name (module doc) rather than reporting the
- * generic "not a pure fold or power map". The parametric julia family and
- * curl are likewise not links, and are refused by name through
- * {@link parametricLink4Refusal}. */
+ * generic "not a pure fold or power map". Exact flam3 warps that are not
+ * links are likewise refused by name through {@link exactFlam3Link4Refusal}. */
 function linkVariation4(t: Transform): Variation | null {
   const active = (t.variations ?? []).filter(
     (v) => Number.isFinite(v.weight) && v.weight !== 0,
@@ -230,15 +229,14 @@ function linkVariation4(t: Transform): Variation | null {
 }
 
 /** The named clause appended beside the generic link refusal when the map
- * carries one of the PARAMETRIC warps — 3D's
- * `parametricLinkRefusal` one dimension up, `surface-eligibility.ts`'s
- * qsquare-hint precedent. `null` when nothing parametric is active. */
-function parametricLink4Refusal(label: string, t: Transform): string | null {
-  const types = activeParametricVariationTypes(t.variations);
+ * carries an exact flam3 warp — 3D's `exactFlam3LinkRefusal` one dimension
+ * up, `surface-eligibility.ts`'s qsquare-hint precedent. */
+function exactFlam3Link4Refusal(label: string, t: Transform): string | null {
+  const types = activeExactFlam3VariationTypes(t.variations);
   if (types.length === 0) return null;
   const plural = types.length > 1 ? "s" : "";
   return (
-    `${label} uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `${label} uses the variation${plural} ${types.join(", ")}, ` +
     `which the 4D escape chain has no link for`
   );
 }
@@ -294,7 +292,7 @@ export function analyzeEscapeSystem4(
     const v = linkVariation4(map);
     if (!v) {
       reasons.push(`${label} is not a pure fold or power map`);
-      const clause = parametricLink4Refusal(label, map);
+      const clause = exactFlam3Link4Refusal(label, map);
       if (clause) reasons.push(clause);
     } else if (v.type === "bulb") {
       reasons.push(

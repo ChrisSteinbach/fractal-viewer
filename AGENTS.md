@@ -499,22 +499,17 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     EMITTER VERDICT: bounded device samplers reproduce the CPU MEASURE rather
     than its rejection-loop draw sequence; one primary draw keeps selection
     aligned, and emitters never force CPU.
-    The fold family's AUTHORED lengths ride a per-TYPE Slot lane —
-    `foldRadii: array<vec4f, 3>` indexed by variation type minus 12,
-    `(mR², fR², wall)` — not a per-LANE one: `packVariations`' own invariant
-    is that a transform carries at most one entry per type, so three lanes
-    cover every fold a slot can hold where one-per-lane would be needed to
-    cover the vocabulary. Squared because that is the form `foldVariationFn`'s
-    closure computes once. Mirroring flame was not optional: the mode has
-    TWO backends over one document (`flame.ts` reaches the fold through
-    `composeVariations`, which reads the lengths), so leaving the kernel
-    frozen would render one object with a WebGPU adapter and another
-    without.
+    THE SLOT WIRE IS APPEND-ONLY: the original 20 variation lanes and every
+    old offset stay frozen; entries 20–24 ride appended `varWeightsExtra`/
+    `varTypesExtra` arrays. The existing three `varParams` lanes keep
+    julian/juliascope/curl and spend spare words on bipolar shift + PDJ a–d
+    (one word remains spare); fold radii stay the type-indexed
+    `(mR²,fR²,wall)` block. `SLOT_STRIDE_BYTES` is 1232.
   - `flame-gpu-4d.ts` — 4D WGSL kernel (4x4+t affines, `variations4`,
     rotor+camera projection, four `FourDRenderColor` modes). Same agreement
-    harness, and the 3D Slot's fold lane verbatim. `SLOT4_STRIDE_BYTES` is
-    1232 (was 1216): the appended `postTrans` vec4 carries the composed post
-    translation because the four 4×4 post rows have no spare lane.
+    harness, with the 3D Slot's fold/parameter/extra lanes verbatim and all
+    old offsets frozen. `SLOT4_STRIDE_BYTES` is 1296: its existing
+    `postTrans` remains at 1216 and the two extra arrays append at 1232.
   - `inversion.ts` — sphere inversion's ONE shared identity:
     `inversionBallScale`, the Möbius factor `R²/(|c|² − r²)` that takes a
     ball to a ball exactly, returning 0 — "no information", so a caller's
@@ -528,8 +523,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `mutate-system.ts` — mutation grid perturbation (`mutateSystem`): seeded
     nudge of every field, clamps mirror sliders, optional keys preserved;
     `wildcard` adds structural kicks. `SEEDED_MUTATION_ALGORITHM_VERSION` is
-    3: a present post uses its own `spatialGeometry` `:post` stream and an
-    absent post is never materialized. Quality-gated by `scoreSystem`.
+    4 for the widened type pool and present-only bipolar/PDJ parameter jitter;
+    PDJ is excluded from wildcard type swaps because its zero-default map is
+    constant, but an authored PDJ still mutates. Quality-gated by `scoreSystem`.
   - `palette.ts` — Iq cosine-gradient palettes (`buildPaletteLUT` → 256×3 LUT)
     - user-authored `CustomPalette` (2–8 stops) and imported full-resolution
       `RampPalette` (`{kind:"ramp"}`, up to `MAX_RAMP_ENTRIES` — the shape a
@@ -562,7 +558,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `random-system.ts` — "Surprise Me" generator: rolls random IFS (2–4 maps,
     optional kaleidoscope, 25% 4D), quality-gated by chaos-game probes,
     rerolls up to 40×. Injected `Rng`; never rolls the optional post-affine,
-    whose absence stays identity.
+    whose absence stays identity. PDJ is excluded from type rolls: this
+    generator authors no parameters, and PDJ's zero defaults are constant.
   - `rng.ts` — seedable mulberry32 PRNG.
   - `shapes.ts` — the multi-system epic's shape library: ONE document-facing
     `ShapeSpec` vocabulary (flat posed-part list, max 8 parts — no
@@ -1184,52 +1181,32 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     truth). `Transform.post`/`Transform4.post4` are optional general affines,
     applied after the variation sum and before symmetry; ABSENT MEANS
     IDENTITY, and the 3D→4D lift embeds the post with w untouched.
-    `Variation` is `{type, weight}` plus the fold's optional
-    `minRadius`/`fixedRadius`/`boxLimit` and the parametric warps' six fields
-    (`julianPower`/`julianDist`/`juliascopePower`/`juliascopeDist`/
-    `curlC1`/`curlC2`). Those fields belong only to their applicable types;
-    absent means flam3's classic values byte-identically. There is no fourth
-    fold size: uniform rescale is already the transform affine's job.
-  - `variations.ts` — twenty nonlinear flame variations as pure functions:
-    a dozen classics, the Mandelbox fold family (`boxfold`/`spherefold`/
-    `mandelbox`), the two escape-time POWER maps — `qsquare` (the
-    quaternion square) and `bulb` (the White/Nylander triplex power) — and
-    the three PARAMETRIC warps `julian`/`juliascope`/`curl` (flam3's wire
-    spellings; one shared resolver per family owns the absent-means-classic
-    rule and the domain, and the GPU lane wire is the fold lane's
-    type-indexed pattern one block over).
-    The power maps exist so their renderers can gate on a document shape,
-    and they are also CHAIN LINKS: `escape-de.ts` admits either beside a
-    fold, which is what makes the twenty-variation vocabulary compose
-    instead of merely coexist.
-    `bulb` is the triplex
-    8th power, `triplexPow8`: a TRIG-FREE closed form via the Chebyshev
-    `T8`/`U7` polynomials plus de Moivre, an exact rewrite of the
-    `acos`/`atan2`/`sin`/`cos`/`pow` one at 6e-14 and ~11x cheaper. The
-    power is baked in because triplex multiplication is not associative —
-    `p^8` is NOT `((p^2)^2)^2`, which disagrees on 48.8% of queries — so
-    every power would need its own closed form. `composeVariations` blends
-    a transform's weighted list.
-    THE FOLD'S THREE LENGTHS ARE AUTHORABLE, and this module
-    owns what that means: `resolveFoldRadii` is the ONE place the
-    "absent means classic" rule and the domain live (`fixedRadius` below a
-    floor falls back to 1, since `fR² = 0` would divide by zero against this
-    module's stated totality guarantee; `minRadius` clamps into
-    `[fR·1e-6, fR]` — the upper end is the fold's own domain, where the mid
-    shell closes and the fold is exactly the identity, and the floor is
-    RELATIVE so the rescale equivariance survives; `boxLimit` 0 is KEPT, the
-    point reflection `t -> -t`). `isClassicFoldRadii` recognizes the default
-    set and `foldVariationFn` then returns the SHARED classic entry, so an
-    unparameterized document runs the same function object it always ran
-    rather than merely computing the same numbers. `sphereFoldLipschitz` is
-    the magnification `fR²/mR²` — tight, and the expression BOTH surface
-    gates multiply through.
-  - `variations4.ts` — same variations lifted to 4D, bit-exact at `w = 0`.
-    Duplicates the fold ARITHMETIC under the twin-file convention but
-    IMPORTS `resolveFoldRadii`/`isClassicFoldRadii`: what an absent field
-    means must have one answer across both dimensions, or a 3D system and
-    its 4D lift would render different objects (pinned — at `w = 0` the 4D
-    fold is bit-exact against the 3D one at NON-classic radii too).
+    `Variation` adds only type-owned optional fields: fold radii; julian/
+    juliascope/curl params; `bipolarShift`; and `pdjA/B/C/D`. Shared
+    resolvers own every absent default; bipolar shift and all PDJ coefficients
+    default to 0. Uniform fold size remains the transform affine's job.
+  - `variations.ts` — 25 append-only types: 20 flam3 names with its formulas,
+    plus project-only `boxfold`/`spherefold`/`mandelbox`/`qsquare`/`bulb`.
+    The measured five are frozen as follows (`r=hypot(x,y)`): bipolar is
+    `(.5/π·ln(A+/A-), 2/π·wrapπ(.5·atan2(2y,r²-1)-π·shift/2))`,
+    `A±=r²+1±2x`; diamond is `(x/r·cos(r),y/r·sin(r))`; ex uses
+    `a=atan2(x,y)`, `u=r·sin(a+r)^3`, `v=r·cos(a-r)^3`, then `(u+v,u-v)`;
+    PDJ is `(sin(a·y)-cos(b·x),sin(c·x)-cos(d·y))`; rings binds the LIVE
+    COMPOSED pre-affine x translation `tx`, with `d=tx²+1e-10`,
+    `R=fmod(r+d,2d)-d+r(1-d)`, output `(yR/r,xR/r)`. The finite extensions
+    are also frozen: bipolar replaces only non-positive `A±` by `1e-30`,
+    diamond/rings return planar zero at `r=0`, and curl keeps its EPS divisor.
+    `resolveBipolarShift`/`resolvePdjParams` are the shared zero-default rules.
+    All Surface/escape/bulb/quaternion analyzers name these eight flam3-batch
+    types when refusing them. Power maps remain escape-chain links.
+    Fold authoring is still governed solely by `resolveFoldRadii`: defaults
+    `mR/fR/wall=.5/1/1`, `mR∈[fR·1e-6,fR]`, wall 0 kept; classic params return
+    the shared function and `sphereFoldLipschitz=fR²/mR²`. `triplexPow8`
+    remains the trig-free White/Nylander form; triplex powers are not repeated
+    squaring. `composeVariations(list,preTranslateX)` binds rings once.
+  - `variations4.ts` — same 25 types, bit-exact at `w=0`; the measured five
+    apply the identical xy form and carry z/w. Fold arithmetic is twinned but
+    its resolvers are imported so authored/default meaning cannot diverge.
   - `vec.ts` — `clamp`, `clone3`, `to255` helpers.
   - `voxel.ts` — solid render: `accumulateVoxels` → 3D density grid →
     `voxelTextureData` (RGBA8 volume). `buildColorModeLUT` reuses `color.ts`.
@@ -1453,11 +1430,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Strict never-throwing decoder. Document carries optional `CameraPose` and
     optional `FourDPose` (rotor pair + w-slice; malformed quietly drops to
     `undefined`). Undo snapshots stay camera/pose-less (history.ts dedupes by
-    string equality). Optional fold lengths encode only when present/finite
-    and decode without coercion or clamp; their domain belongs to
-    `resolveFoldRadii`. A post encodes only when present and non-identity as
-    the strict 12-number `[m0..m8,tx,ty,tz]` wire, preserving the same
-    absent-means-pre-field byte identity.
+    string equality). Optional fold, julian/curl, bipolar and PDJ params encode
+    only when present/finite and decode without coercion; family resolvers own
+    defaults/domain. A post encodes only when present and non-identity as the
+    strict 12-number `[m0..m8,tx,ty,tz]` wire. Absence stays byte-identical.
   - `viewer-prefs.ts` — per-browser preferences under their own
     `fractal-viewer:prefs` localStorage key, deliberately OUTSIDE the scene
     document: a pref belongs to the person at this browser, so it
@@ -1506,6 +1482,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     whole — see `docs/flame-interop.md`). Export writes XY
     shadow with kaleidoscope baked into explicit xforms. Xaos rows parse and
     export in raw xform order, reindex around dropped maps, and omit at unity.
+    Bipolar/PDJ fields round-trip as `bipolar_shift` and `pdj_a..d`; rings has
+    no parameter attribute and reads imported/exported `coefs` translation.
     DOMParser-tied (jsdom tests). Pure, tested.
   - `ui.ts` — control panel + transform list (`createElement`). Accordion of
     `<details name="panel-section">` sections, remembers open section per

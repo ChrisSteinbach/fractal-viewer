@@ -392,8 +392,8 @@ export function prepareChaosGame4(
   // (RNG-identical) path as before variations existed.
   const baseTransformCount = transforms.length;
   const baseAffines: Affine4[] = transforms.map(composeAffine4);
-  const baseVariations: (VariationBlend4 | null)[] = transforms.map((t) =>
-    composeVariations4(t.variations),
+  const baseVariations: (VariationBlend4 | null)[] = transforms.map((t, i) =>
+    composeVariations4(t.variations, baseAffines[i].t[0]),
   );
   // Per-transform POST-AFFINE (Transform4.post4), or null — the common
   // case. Carried identically across the kaleidoscope copies (it applies
@@ -405,7 +405,7 @@ export function prepareChaosGame4(
   // when there is no final transform, so `plotPoint4` keeps the pre-lens path.
   const finalAffine = finalTransform ? composeAffine4(finalTransform) : null;
   const finalWarp = finalTransform
-    ? composeVariations4(finalTransform.variations)
+    ? composeVariations4(finalTransform.variations, finalAffine!.t[0])
     : null;
   const finalPost = finalTransform ? (finalTransform.post4 ?? null) : null;
 

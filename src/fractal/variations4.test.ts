@@ -126,6 +126,56 @@ describe("4D variation radius and carry-through", () => {
   });
 });
 
+describe("4D exact-flam3 batch parity", () => {
+  it("lifts authored bipolar/PDJ params and transform-coupled rings exactly through xy", () => {
+    const cases: Array<{ variation: Variation; preX?: number }> = [
+      {
+        variation: { type: "bipolar", weight: 0.7, bipolarShift: -1.25 },
+      },
+      {
+        variation: {
+          type: "pdj",
+          weight: 1.2,
+          pdjA: 1.1,
+          pdjB: -0.6,
+          pdjC: 0.25,
+          pdjD: 2.4,
+        },
+      },
+      { variation: { type: "rings", weight: -0.5 }, preX: 0.37 },
+      { variation: { type: "diamond", weight: 0.8 } },
+      { variation: { type: "ex", weight: 0.9 } },
+    ];
+    for (const { variation, preX = 0 } of cases) {
+      const blend3 = composeVariations([variation], preX)!;
+      const blend4 = composeVariations4([variation], preX)!;
+      for (const [x, y, z, w] of [
+        [0.3, -0.8, 0.2, -0.4],
+        [-1.1, 0.7, -0.25, 0.6],
+        [0, 0, 2, -3],
+      ] as const) {
+        const a = blend3(x, y, z, mulberry32(17));
+        const b = blend4(x, y, z, w, mulberry32(17));
+        expect(b[0]).toBe(a[0]);
+        expect(b[1]).toBe(a[1]);
+        expect(b[2]).toBe(a[2]);
+        expect(b[3]).toBe(variation.weight * w);
+      }
+    }
+  });
+
+  it("keeps bipolar's exact foci finite in the 4D lift", () => {
+    const blend = composeVariations4([
+      { type: "bipolar", weight: 1, bipolarShift: 0.5 },
+    ])!;
+    for (const x of [-1, 1]) {
+      for (const c of blend(x, 0, 0.2, -0.3, Math.random)) {
+        expect(Number.isFinite(c)).toBe(true);
+      }
+    }
+  });
+});
+
 describe("composeVariations4", () => {
   it("returns null when there is nothing to apply", () => {
     expect(composeVariations4(undefined)).toBeNull();

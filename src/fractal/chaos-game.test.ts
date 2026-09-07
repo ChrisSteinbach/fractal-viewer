@@ -495,6 +495,41 @@ describe("prepareChaosGame", () => {
     expect(prepared.finalWarp).toBeNull();
   });
 
+  it("binds rings to each base and final transform's composed pre-affine x translation", () => {
+    const rings = [{ type: "rings" as const, weight: 1 }];
+    const base: Transform = {
+      id: 0,
+      position: [0.4, 0.1, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      variations: rings,
+    };
+    const final: Transform = {
+      id: 1,
+      position: [-0.35, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: rings,
+    };
+    const prepared = prepareChaosGame([base], final);
+    const input = [0.3, -0.8, 0.2] as const;
+    expect(prepared.variations[0]!(...input, Math.random)).toEqual(
+      composeVariations(rings, composeAffine(base).t[0])!(
+        ...input,
+        Math.random,
+      ),
+    );
+    expect(prepared.finalWarp!(...input, Math.random)).toEqual(
+      composeVariations(rings, composeAffine(final).t[0])!(
+        ...input,
+        Math.random,
+      ),
+    );
+    expect(prepared.variations[0]!(...input, Math.random)).not.toEqual(
+      prepared.finalWarp!(...input, Math.random),
+    );
+  });
+
   it("flags a system as weighted only when a weight differs from 1", () => {
     const uniform = prepareChaosGame(makeTransforms(2));
     expect(uniform.weighted).toBe(false);

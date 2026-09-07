@@ -73,14 +73,17 @@ translation, and a composed case against hand-computed values.
 Strict affine maps only ever produce self-similar, straight-edged attractors.
 **Variations** are nonlinear functions applied to a transform's point _after_
 its affine part, warping space into flowing, organic, "impossible" shapes.
-`variations.ts` holds twenty as pure `(x, y, z, rng) → [x, y, z]` functions: a
+`variations.ts` holds twenty-five as pure `(x, y, z, rng) → [x, y, z]` functions: a
 dozen classics borrowed from Draves & Reckase's _fractal flame_ algorithm
 (`spherical`, `swirl`, `bubble`, `julia`, …), the parametric julia family and
 curl — flam3's own `julian`/`juliascope`/`curl` with their per-variation
 parameters (`julian_power`, `curl_c1`, …) as optional fields on `Variation`,
 absent meaning flam3's own defaults through `resolveJuliaParams`/
-`resolveCurlParams`, the fold lengths' exact treatment — plus a third family,
-the Mandelbox folds, covered below.
+`resolveCurlParams`, the fold lengths' exact treatment — five more measured
+flam3 maps (`bipolar`, `diamond`, `ex`, `pdj`, `rings`; bipolar and PDJ carry
+their native parameters, while rings reads the transform's live pre-affine x
+translation), the two escape-time power maps (`qsquare` and `bulb`), plus the
+Mandelbox fold family covered below.
 
 A transform carries an optional `variations: { type, weight }[]`. Its post-affine
 point is the **weighted blend** `Σ weight · V(type)` — flame semantics, so the
@@ -353,10 +356,11 @@ hand-unrolled DUPLICATE rather than an n-generic abstraction over the 3D path �
 the hot loop rewards branch-predictable, register-friendly, unrolled coordinates
 over a dimension-generic one — sharing only the genuinely-common constants
 (`WARMUP_ITERATIONS`, `ESCAPE_LIMIT`, `MAX_TRANSFORMS`). `variations4.ts` lifts the
-same twenty variation functions `variations.ts` documents, by the identical
+same twenty-five variation functions `variations.ts` documents, by the identical
 convention one dimension up (angular warps carry `z` AND `w` through unchanged —
-the parametric julia family and curl are xy-plane warps and lift exactly that
-way; radial warps and `swirl` use the full 4D radius `x²+y²+z²+w²`; the fold family
+all eight exact-flam3 warps added in the two fidelity batches are xy-plane
+warps and lift exactly that way; radial warps and `swirl` use the full 4D radius
+`x²+y²+z²+w²`; the fold family
 treats `w` exactly like a spatial axis, so `boxfold` reflects all four axes and
 `spherefold`/`mandelbox` invert through the full 4D radius), with an anchor
 property stronger than the rotation embed's: at `w = 0` every lifted function

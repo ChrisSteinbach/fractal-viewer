@@ -4591,6 +4591,91 @@ describe("Ui variation editor", () => {
     expect(editorSlider("Juliascope dist").value).toBe("0.5");
   });
 
+  it("offers bounded bipolar and PDJ rows at their zero defaults", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        variations: [
+          { type: "bipolar", weight: 1 },
+          { type: "pdj", weight: 1, pdjB: 1.25 },
+        ],
+      },
+      0,
+      1,
+    );
+
+    const shift = editorSlider("Bipolar shift");
+    expect([shift.min, shift.max, shift.value]).toEqual(["-1", "1", "0"]);
+    expect(editorSlider("PDJ a").value).toBe("0");
+    expect(editorSlider("PDJ b").value).toBe("1.25");
+    expect(editorSlider("PDJ c").value).toBe("0");
+    expect(editorSlider("PDJ d").value).toBe("0");
+    expect([editorSlider("PDJ a").min, editorSlider("PDJ a").max]).toEqual([
+      "-3",
+      "3",
+    ]);
+  });
+
+  it("widens bipolar and PDJ rows to preserve finite imported values outside the authoring bounds", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    expect(() =>
+      ui.renderTransformEditor(
+        {
+          ...plain,
+          variations: [
+            { type: "bipolar", weight: 1, bipolarShift: 1.5 },
+            { type: "pdj", weight: 1, pdjA: -4 },
+          ],
+        },
+        0,
+        1,
+      ),
+    ).not.toThrow();
+
+    const shift = editorSlider("Bipolar shift");
+    expect([shift.min, shift.max, shift.value]).toEqual(["-1", "1.5", "1.5"]);
+    expect(
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="Bipolar shift exact value"]',
+      )?.value,
+    ).toBe("1.500");
+
+    const pdjA = editorSlider("PDJ a");
+    expect([pdjA.min, pdjA.max, pdjA.value]).toEqual(["-4", "3", "-4"]);
+    expect(
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="PDJ a exact value"]',
+      )?.value,
+    ).toBe("-4.000");
+  });
+
+  it("writes only the moved PDJ field and removes it again at zero", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, variations: [{ type: "pdj", weight: 1 }] },
+      0,
+      1,
+    );
+
+    const a = editorSlider("PDJ a");
+    a.value = "1.5";
+    a.dispatchEvent(new Event("input"));
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "pdj", weight: 1, pdjA: 1.5 },
+    ]);
+    a.value = "0";
+    a.dispatchEvent(new Event("input"));
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "pdj", weight: 1 },
+    ]);
+  });
+
   it("writes a parametric parameter only once its own slider moves, and removes it again at the classic value", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);

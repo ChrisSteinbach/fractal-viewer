@@ -153,7 +153,7 @@ function baseSpec(
 // byte-layout doc comment (byte offset / 4) — independent of that module's
 // own (private) offset constants, so a mistake in the implementation could
 // not coincidentally agree with a matching mistake here.
-const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 72
+const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 308
 const ROW_X = 0; // byte 0
 const ROW_Y = 4; // byte 16
 const ROW_Z = 8; // byte 32
@@ -167,6 +167,8 @@ const HAS_POST = 65; // byte 260
 const CUM_WEIGHT = 66; // byte 264
 const COLOR_INDEX = 67; // byte 268
 const COLOR_SPEED = 68; // byte 272
+const VAR_WEIGHTS_EXTRA = 292; // byte 1168, array<vec4f, 2>
+const VAR_TYPES_EXTRA = 300; // byte 1200, array<vec4u, 2>
 
 describe("packGpuSystem validation", () => {
   it("rejects systems with more than MAX_TRANSFORMS transforms, matching prepareChaosGame's message", () => {
@@ -218,6 +220,15 @@ describe("packGpuSystem validation", () => {
 });
 
 describe("packGpuSystem slot layout (byte-layout pinning)", () => {
+  it("preserves the complete legacy Slot prefix and appends exactly 64 bytes of extra variation lanes", () => {
+    expect(VAR_WEIGHTS).toBe(24);
+    expect(VAR_TYPES).toBe(44);
+    expect(VAR_COUNT).toBe(64);
+    expect(VAR_WEIGHTS_EXTRA * 4).toBe(1168);
+    expect(VAR_TYPES_EXTRA * 4).toBe(1200);
+    expect(SLOT_STRIDE_BYTES).toBe(1232);
+  });
+
   // Zero rotation + a distinct diagonal scale per axis, so each affine row's
   // expected numbers are obvious by eye (m = diag(scale)) rather than
   // needing composeAffine's trig to cross-check. Base 0 is pure affine; base
@@ -441,6 +452,40 @@ describe("packGpuSystem variation filtering", () => {
     expect(f32[VAR_WEIGHTS]).toBe(1);
     expect(f32[VAR_WEIGHTS + 1]).toBe(3);
   });
+
+  it("keeps lanes 0..19 in the legacy arrays and writes lanes 20..24 only in the appended arrays", () => {
+    const variations = VARIATION_TYPES.map((type, index) => ({
+      type,
+      weight: index + 0.25,
+    }));
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations,
+      },
+    ];
+    const packed = packGpuSystem(baseSpec({ transforms }));
+    const f32 = new Float32Array(packed.slots);
+    const u32 = new Uint32Array(packed.slots);
+    expect(u32[VAR_COUNT]).toBe(25);
+    for (let v = 0; v < 20; v++) {
+      expect(f32[VAR_WEIGHTS + v]).toBe(Math.fround(v + 0.25));
+      expect(u32[VAR_TYPES + v]).toBe(v);
+    }
+    for (let v = 20; v < 25; v++) {
+      expect(f32[VAR_WEIGHTS_EXTRA + v - 20]).toBe(Math.fround(v + 0.25));
+      expect(u32[VAR_TYPES_EXTRA + v - 20]).toBe(v);
+    }
+    expect(
+      Array.from(f32.slice(VAR_WEIGHTS_EXTRA + 5, VAR_WEIGHTS_EXTRA + 8)),
+    ).toEqual([0, 0, 0]);
+    expect(
+      Array.from(u32.slice(VAR_TYPES_EXTRA + 5, VAR_TYPES_EXTRA + 8)),
+    ).toEqual([0, 0, 0]);
+  });
 });
 
 describe("packGpuSystem fold radii", () => {
@@ -525,9 +570,9 @@ describe("packGpuSystem fold radii", () => {
   it("leaves the fold lanes untouched by the parametric family's own block — the julia block sits after the emitter block", () => {
     // The julia block appended at the END of the Slot: every pre-julia
     // offset (the variation lanes, FOLD_RADII at 72, the emitter block at
-    // 84) stays byte-identical. The stride must grow by exactly the block's
-    // 48 bytes.
-    expect(SLOT_STRIDE_BYTES).toBe(1168);
+    // 84) stays byte-identical. Later variation lanes append after that
+    // block too; neither feature is allowed to move the prefix.
+    expect(SLOT_STRIDE_BYTES).toBe(1232);
     expect(FOLD_RADII).toBe(72);
     const transforms: Transform[] = [
       {
@@ -646,6 +691,32 @@ describe("packGpuSystem parametric variation params", () => {
     // value so the kernel never sees a zero divisor.
     expect(Array.from(f32.slice(VAR_PARAMS, VAR_PARAMS + 2))).toEqual([1, 1]);
   });
+
+  it("packs bipolar and PDJ into the documented spare varParams words", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.4, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [
+          { type: "bipolar", weight: 1, bipolarShift: 0.375 },
+          {
+            type: "pdj",
+            weight: 1,
+            pdjA: 1.25,
+            pdjB: -0.5,
+            pdjC: 2,
+            pdjD: -3,
+          },
+        ],
+      },
+    ];
+    const f32 = new Float32Array(packGpuSystem(baseSpec({ transforms })).slots);
+    expect(Array.from(f32.slice(VAR_PARAMS, VAR_PARAMS + 12))).toEqual([
+      0, 0, 0.375, 1.25, 0, 0, -0.5, 2, 0, 0, -3, 0,
+    ]);
+  });
 });
 
 describe("packGpuSystem fold radii kernel reads", () => {
@@ -664,7 +735,12 @@ describe("packGpuSystem fold radii kernel reads", () => {
     // defaults would render every parameterized document as the classic
     // object, and no test would notice.
     expect(FLAME_GPU_KERNEL_WGSL).toContain("varParams: array<vec4f, 3>");
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("varWeightsExtra: array<vec4f, 2>");
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("varTypesExtra: array<vec4u, 2>");
     expect(FLAME_GPU_KERNEL_WGSL).toContain("if (ty >= 17u && ty <= 19u) {");
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      "slots[slotIdx].rowX.w * slots[slotIdx].rowX.w + FLAM3_EPS",
+    );
     expect(FLAME_GPU_KERNEL_WGSL).not.toContain("trunc(1.0 * rand01");
     expect(FLAME_GPU_KERNEL_WGSL).not.toContain("1.0 + p.x + 0.0 * (p.x");
   });
@@ -868,7 +944,7 @@ describe("packGpuSystem shape emitters", () => {
       const packed = packGpuSystem(
         baseSpec({ transforms: [transformWithEmitter(spec)] }),
       );
-      expect(SLOT_STRIDE_BYTES).toBe(1168);
+      expect(SLOT_STRIDE_BYTES).toBe(1232);
       const f32 = new Float32Array(packed.slots);
       const p = EMITTER_PARTS;
       expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
@@ -1084,7 +1160,7 @@ describe("packGpuSystem shape emitters", () => {
     );
     const u32 = new Uint32Array(packed.slots);
     expect(u32[EMITTER_FALLBACK_PART]).toBe(1);
-    expect(SLOT_STRIDE_BYTES).toBe(1168);
+    expect(SLOT_STRIDE_BYTES).toBe(1232);
   });
 
   it("bounds min-index overlap acceptance and keeps every posed containment formula in both dimensions", () => {
@@ -2433,6 +2509,11 @@ describe("FLAME_GPU_KERNEL_WGSL variation switch", () => {
       julian: 17,
       juliascope: 18,
       curl: 19,
+      bipolar: 20,
+      diamond: 21,
+      ex: 22,
+      pdj: 23,
+      rings: 24,
     });
   });
 

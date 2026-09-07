@@ -957,7 +957,9 @@ export function prepareChaosGame(
   // Per-transform nonlinear warp, or null for a purely affine map. Every entry
   // is null for the existing presets, so `stepOrbit` takes the exact same path
   // (and touches the RNG identically) as before variations existed.
-  const baseVariations = transforms.map((t) => composeVariations(t.variations));
+  const baseVariations = transforms.map((t, i) =>
+    composeVariations(t.variations, baseAffines[i].t[0]),
+  );
   // Per-transform POST-AFFINE (flam3's post=), or null — the common case,
   // every document predating the field. The post applies BEFORE the copy
   // rotation, so every kaleidoscope copy of a map carries the SAME entry
@@ -969,7 +971,7 @@ export function prepareChaosGame(
   // stay null when absent, so `plotPoint` keeps the pre-feature code path.
   const finalAffine = finalTransform ? composeAffine(finalTransform) : null;
   const finalWarp = finalTransform
-    ? composeVariations(finalTransform.variations)
+    ? composeVariations(finalTransform.variations, finalAffine!.t[0])
     : null;
   const finalPost = finalTransform ? (finalTransform.post ?? null) : null;
 

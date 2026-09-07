@@ -195,6 +195,41 @@ describe("decodeFlameFile", () => {
     ]);
   });
 
+  it("imports bipolar and PDJ parameters losslessly, without treating their attrs as unsupported", () => {
+    const xml = `<flame><xform weight="1" pdj_d="4.5" bipolar="0.75" pdj="1.25" bipolar_shift="7.25" pdj_a="-8.5" pdj_b="2" pdj_c="-3" coefs="0.5 0 0 0.5 0.2 -0.1"/></flame>`;
+    const file = decodeFlameFile(xml);
+    expect(file).not.toBeNull();
+    expect(
+      file!.warnings.some((w) => /Unsupported flame features/i.test(w)),
+    ).toBe(false);
+    const snap = decodeScene(file!.scenes[0].encoded);
+    expect(snap!.transforms[0].variations).toEqual([
+      { type: "bipolar", weight: 0.75, bipolarShift: 7.25 },
+      {
+        type: "pdj",
+        weight: 1.25,
+        pdjA: -8.5,
+        pdjB: 2,
+        pdjC: -3,
+        pdjD: 4.5,
+      },
+    ]);
+  });
+
+  it("imports rings as a bare variation while preserving the affine translation it reads", () => {
+    const file = decodeFlameFile(
+      `<flame><xform weight="1" rings="1" coefs="0.5 0 0 0.5 0.2 -0.1"/></flame>`,
+    )!;
+    const snap = decodeScene(file.scenes[0].encoded)!;
+    expect(snap.transforms[0].position).toEqual([0.2, -0.1, 0]);
+    expect(snap.transforms[0].variations).toEqual([
+      { type: "rings", weight: 1 },
+    ]);
+    expect(
+      file.warnings.some((w) => /Unsupported flame features/i.test(w)),
+    ).toBe(false);
+  });
+
   it("leaves a parametric variation's params absent when the file writes only the weight", () => {
     const xml = `<flame><xform weight="1" julian="1" coefs="0.5 0 0 0.5 0 0"/></flame>`;
     const file = decodeFlameFile(xml);
@@ -239,6 +274,40 @@ describe("decodeFlameFile", () => {
     expect(snap!.transforms[1].variations).toEqual([
       { type: "curl", weight: 1, curlC1: 0.5, curlC2: -1 },
     ]);
+  });
+
+  it("exports authored bipolar and PDJ attributes and re-imports their values", () => {
+    const scene: SceneSnapshot = {
+      ...toSnapshot(initialState(false)),
+      transforms: [
+        {
+          id: 0,
+          position: [0.2, -0.1, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0],
+          variations: [
+            { type: "bipolar", weight: 0.75, bipolarShift: 1.25 },
+            {
+              type: "pdj",
+              weight: 1,
+              pdjA: -1.5,
+              pdjB: 2,
+              pdjC: 0.25,
+              pdjD: -0.75,
+            },
+          ],
+        },
+      ],
+    };
+    const exported = encodeFlameFile(scene, "new params");
+    expect(exported.xml).toContain('bipolar_shift="1.25"');
+    expect(exported.xml).toContain('pdj_a="-1.5"');
+    expect(exported.xml).toContain('pdj_d="-0.75"');
+    const reimported = decodeFlameFile(exported.xml)!;
+    const snap = decodeScene(reimported.scenes[0].encoded)!;
+    expect(snap.transforms[0].variations).toEqual(
+      scene.transforms[0].variations,
+    );
   });
 
   it("exports a classic-parameterized entry as the bare weight — flam3's absent-means-default convention", () => {

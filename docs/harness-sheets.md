@@ -794,6 +794,16 @@ noise ladder reads ours 2.095/1.638/1.157/0.655 vs flam3 3.270/2.216/1.323/
 at equal patience the complaint is the tone/sharpening pipeline and the
 framing re-fit, not Monte-Carlo noise.
 
+POST-AFFINE RERUN (2026-09-07, same seed, fresh 200-genome sample, no cohort
+top-up): the current renderer imports 2/200 clean. Exhaustively scoring every
+five-name batch against the scanner selected `bipolar`, `diamond`, `ex`, `pdj`,
+`rings`: 9/200 clean (+7), versus 5/200 for the older pie/bent2/ex/popcorn/rings
+shortlist. Sixty-two batches tie at nine; aggregate frequency 102 chooses this
+representative rather than pretending the tie has a unique mathematical
+winner. The five families therefore ship as one measured batch; rerun the
+sheet to regenerate its gitignored manifest rather than committing corpus
+output.
+
 ### spherefold-radius-sweep
 
 The ratio sweep: the sphere fold's frozen `mR`/`fR` and the box wall, swept

@@ -72,7 +72,8 @@
  *   arrays had always reserved, `bulb` took the count to 17 — widening both
  *   lane arrays by one `vec4`, the smallest step a `vec4` array has — and
  *   the parametric julia family and curl filled the three lanes that rode
- *   spare, landing exactly ON the capacity with no struct widening).
+ *   spare, landing exactly ON that capacity. The next five types use two
+ *   appended vec4 arrays, preserving every legacy field offset).
  */
 import type { Rng } from "./rng";
 import type {
@@ -110,11 +111,14 @@ import {
 import type { ChaosSelection } from "./chaos-game";
 import { transformColors } from "./color";
 import {
+  BIPOLAR_SAFE_TERM,
   isFoldVariationType,
   isParametricVariationType,
+  resolveBipolarShift,
   resolveCurlParams,
   resolveFoldRadii,
   resolveJuliaParams,
+  resolvePdjParams,
 } from "./variations";
 import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
@@ -144,10 +148,10 @@ export const WEIGHT_FIXED_POINT_SCALE = 256;
 /** Variation (type, weight) lanes per slot — equal to `VARIATION_TYPES.length`
  * (`types.ts`), so a single transform can carry every {@link VariationType}
  * at once and no system's variation list can force a CPU fallback. The
- * parametric julia family and curl brought the count to 20 — exactly the
- * lane capacity, so the struct did NOT widen for them; a fourth parametric
- * warp would widen both lane arrays and the Slot layout doc with it. */
-export const MAX_SLOT_VARIATIONS = 20;
+ * parametric julia family and curl brought the count to the frozen prefix's
+ * 20-lane capacity. The measured flam3 batch then brought it to 25, so two
+ * 8-lane blocks were appended while the original arrays stayed in place. */
+export const MAX_SLOT_VARIATIONS = 25;
 
 /** u32 words per histogram bucket: four emulated-u64 channels —
  * [hitsLo, hitsHi, rLo, rHi, gLo, gHi, bLo, bHi]. */
@@ -188,6 +192,11 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
   julian: 17,
   juliascope: 18,
   curl: 19,
+  bipolar: 20,
+  diamond: 21,
+  ex: 22,
+  pdj: 23,
+  rings: 24,
 };
 
 /**
@@ -208,7 +217,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   152 emitterOverlapAttempts u32 (the host-packed runtime loop bound,
  *   {@link EMITTER_OVERLAP_ATTEMPTS}) | 156 pad
  *
- * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 1168 stride);
+ * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 1232 stride);
  * slot count = transformCount + 1 + scheduleCount — the expanded transform
  * slots, then the final-transform lens slot (read only when hasFinal = 1,
  * never drawn by the transform pick), then the scheduled-hybrid post-word's
@@ -226,7 +235,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *     lanes, so the wire did not move when posts arrived. `hasPost = 0`
  *     (the zero default) means no stage at all.
  *   96 varWeights array<vec4f, 5> | 176 varTypes array<vec4u, 5> (20 lanes of
- *   storage, all 20 used — one per {@link VariationType}; the Mandelbox fold
+ *   FROZEN-PREFIX storage for variation-list entries 0..19; the Mandelbox fold
  *   family added `boxfold`/`spherefold`/`mandelbox`, `qsquare` filled the
  *   16 lanes the arrays had always reserved, `bulb` took the count past the
  *   16 four vec4s held, and the parametric julia family and curl filled the
@@ -301,8 +310,13 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   same at-most-one-entry-per-type invariant the fold lane leans on. The
  *   block sits AFTER the emitter block, appended at the struct's end so
  *   every pre-julia offset (the variation lanes, foldRadii, the emitter
- *   block) stays byte-identical — a fourth parametric warp would widen both
- *   lane arrays and the Slot layout doc with it.
+ *   block) stays byte-identical. Its spare words now carry bipolar shift and
+ *   PDJ a/b/c/d: lane0.z/lane0.w/lane1.z/lane1.w/lane2.z respectively;
+ *   lane2.w remains spare.
+ *   1168 varWeightsExtra array<vec4f, 2> | 1200 varTypesExtra
+ *   array<vec4u, 2> — variation-list entries 20..24 in the first five of
+ *   eight appended lanes. Appending, instead of widening the original
+ *   arrays at byte 96/176, preserves the complete old 1168-byte prefix.
  *
  * Chain (storage array element, {@link CHAIN_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (xyz orbit point, w color coordinate) | 16 aux vec4u (x rng
@@ -344,7 +358,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * bucket layout as {@link HIST_U32_PER_BUCKET} describes.
  */
 export const PARAMS_BYTES = 160;
-export const SLOT_STRIDE_BYTES = 1168;
+export const SLOT_STRIDE_BYTES = 1232;
 export const CHAIN_STRIDE_BYTES = 32;
 export const COLORS_BYTES = 256 * 16;
 /** One `EmitterPart`'s stride — 6 vec4f lanes (see the Slot layout doc's
@@ -373,6 +387,7 @@ export const FLAME_GPU_KERNEL_WGSL = /* wgsl */ `
 const ESCAPE_LIMIT: f32 = 50.0;
 const PI: f32 = 3.14159265358979;
 const EPS: f32 = 1e-12;
+const FLAM3_EPS: f32 = 1e-10;
 
 struct Params {
   projX: vec4f,
@@ -451,6 +466,11 @@ struct Slot {
   // julia types, (c1, c2) for curl. Appended AFTER the emitter block so
   // every pre-julia offset stays byte-identical.
   varParams: array<vec4f, 3>,
+  // The complete pre-widening Slot is a frozen prefix. Five new variation
+  // types therefore use two appended vec4 blocks rather than widening the
+  // original arrays in place (which would move every following field).
+  varWeightsExtra: array<vec4f, 2>,
+  varTypesExtra: array<vec4u, 2>,
 }
 
 // "aux", not "meta": meta is a WGSL reserved identifier.
@@ -900,7 +920,16 @@ fn emitterSampleSlot(state: ptr<function, u32>, slotIdx: u32) -> vec3f {
 // fr is the fold family's own lane (type - 12), vp the parametric
 // julia/curl family's (type - 17); every type ignores the argument(s) it
 // does not read.
-fn applyVariation(t: u32, p: vec3f, rng: ptr<function, vec2u>, fr: vec3f, vp: vec3f) -> vec3f {
+fn applyVariation(
+  t: u32,
+  p: vec3f,
+  rng: ptr<function, vec2u>,
+  fr: vec3f,
+  vp: vec3f,
+  extra: vec4f,
+  pdjD: f32,
+  ringsDx: f32,
+) -> vec3f {
   switch t {
     case 0u: { // linear
       return p;
@@ -1027,6 +1056,61 @@ fn applyVariation(t: u32, p: vec3f, rng: ptr<function, vec2u>, fr: vec3f, vp: ve
       let r = 1.0 / (re * re + im * im + EPS);
       return vec3f((p.x * re + p.y * im) * r, (p.y * re - p.x * im) * r, p.z);
     }
+    case 20u: { // bipolar — flam3 var55; extra.x is bipolar_shift.
+      let r2 = dot(p.xy, p.xy);
+      let t = r2 + 1.0;
+      var y = 0.5 * atan2(2.0 * p.y, r2 - 1.0) - 0.5 * PI * extra.x;
+      if (y > 0.5 * PI) {
+        let d = y + 0.5 * PI;
+        y = -0.5 * PI + d - trunc(d / PI) * PI;
+      } else if (y < -0.5 * PI) {
+        let d = 0.5 * PI - y;
+        y = 0.5 * PI - (d - trunc(d / PI) * PI);
+      }
+      let numerator = t + 2.0 * p.x;
+      let denominator = t - 2.0 * p.x;
+      var logRatio: f32;
+      if (numerator > 0.0 && denominator > 0.0) {
+        logRatio = log(numerator / denominator);
+      } else {
+        // Shared CPU/GPU exact-focus extension. 1e-30 stays normal on f32
+        // devices, avoiding implementation-dependent subnormal flushing.
+        logRatio = log(max(numerator, ${BIPOLAR_SAFE_TERM})) - log(max(denominator, ${BIPOLAR_SAFE_TERM}));
+      }
+      return vec3f(
+        (0.5 / PI) * logRatio,
+        (2.0 / PI) * y,
+        p.z,
+      );
+    }
+    case 21u: { // diamond — flam3 var11, xy-plane with z carried.
+      let r = length(p.xy);
+      let invR = select(0.0, 1.0 / r, r > 0.0);
+      return vec3f(p.x * invR * cos(r), p.y * invR * sin(r), p.z);
+    }
+    case 22u: { // ex — flam3 var12, xy-plane with z carried.
+      let r = length(p.xy);
+      let a = atan2(p.x, p.y);
+      let n0 = sin(a + r);
+      let n1 = cos(a - r);
+      let m0 = n0 * n0 * n0 * r;
+      let m1 = n1 * n1 * n1 * r;
+      return vec3f(m0 + m1, m0 - m1, p.z);
+    }
+    case 23u: { // pdj — flam3 var24; extra.yzw = a/b/c, pdjD = d.
+      return vec3f(
+        sin(extra.y * p.y) - cos(extra.z * p.x),
+        sin(extra.w * p.x) - cos(pdjD * p.y),
+        p.z,
+      );
+    }
+    case 24u: { // rings — flam3 var21; ringsDx = rowX.w² + EPS.
+      let radius = length(p.xy);
+      let d = radius + ringsDx;
+      let ringRadius = d - trunc(d / (2.0 * ringsDx)) * (2.0 * ringsDx) - ringsDx + radius * (1.0 - ringsDx);
+      let invR = select(0.0, 1.0 / radius, radius > 0.0);
+      return vec3f(p.y * invR * ringRadius, p.x * invR * ringRadius, p.z);
+    }
     default: {
       return p;
     }
@@ -1075,8 +1159,16 @@ fn applySlot(slotIdx: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
         // disagree (Tint accepts it; Naga/Firefox is stricter) — indexing
         // through a reference is unambiguously valid everywhere. The re-read
         // stays in cache; "s" still serves every constant-index field.
-        let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
-        let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
+        var w: f32;
+        var ty: u32;
+        if (v < 20u) {
+          w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
+          ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
+        } else {
+          let e = v - 20u;
+          w = slots[slotIdx].varWeightsExtra[e >> 2u][e & 3u];
+          ty = slots[slotIdx].varTypesExtra[e >> 2u][e & 3u];
+        }
         // The fold family (12..14) reads its own authored lengths off the
         // slot and the parametric julia/curl family (17..19) its own; every
         // other type ignores the arguments. Explicit bounds, not unchecked
@@ -1097,6 +1189,14 @@ fn applySlot(slotIdx: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
           rng,
           slots[slotIdx].foldRadii[fi].xyz,
           slots[slotIdx].varParams[pi].xyz,
+          vec4f(
+            slots[slotIdx].varParams[0].z,
+            slots[slotIdx].varParams[0].w,
+            slots[slotIdx].varParams[1].z,
+            slots[slotIdx].varParams[1].w,
+          ),
+          slots[slotIdx].varParams[2].z,
+          slots[slotIdx].rowX.w * slots[slotIdx].rowX.w + FLAM3_EPS,
         );
       }
       q = acc;
@@ -1426,7 +1526,7 @@ export function buildFlameGpuPointTilingKernel(
  * offsets rather than importing these, so a mistake here could not
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 292.
+const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 308.
 const SLOT_ROW_X = 0;
 const SLOT_ROW_Y = 4;
 const SLOT_ROW_Z = 8;
@@ -1434,8 +1534,7 @@ const SLOT_POST_X = 12;
 const SLOT_POST_Y = 16;
 const SLOT_POST_Z = 20;
 /**
- * `varWeights: array<vec4f, 5>` — 20 lanes of storage, all 20 used (one per
- * {@link VariationType}). A storage-buffer
+ * `varWeights: array<vec4f, 5>` — the frozen first 20 lanes. A storage-buffer
  * `array<vec4, N>` has no inter-element padding (each `vec4` is already
  * 16-byte aligned, exactly its own size), so 5 consecutive vec4s are 20
  * CONTIGUOUS elements and lane `v` sits at `SLOT_VAR_WEIGHTS + v` directly —
@@ -1500,6 +1599,10 @@ const EP_ROT2 = 20;
  * and the julia family's closures consume the lengths themselves.
  */
 const SLOT_VAR_PARAMS = 280;
+/** Appended lanes for variation-list entries 20..24. The entire 1168-byte
+ * pre-widening Slot remains a byte-identical prefix. */
+const SLOT_VAR_WEIGHTS_EXTRA = 292;
+const SLOT_VAR_TYPES_EXTRA = 300;
 
 const F32_PER_CHAIN = CHAIN_STRIDE_BYTES / 4; // 8.
 const CHAIN_POS = 0; // pos.xyzw: x, y, z, colorCoord.
@@ -1728,10 +1831,26 @@ function writeSlotVariations(
       }
       continue;
     }
+    if (v.type === "bipolar") {
+      f32[base + SLOT_VAR_PARAMS + 2] = resolveBipolarShift(v);
+      continue;
+    }
+    if (v.type === "pdj") {
+      const p = resolvePdjParams(v);
+      f32[base + SLOT_VAR_PARAMS + 3] = p.a;
+      f32[base + SLOT_VAR_PARAMS + 6] = p.b;
+      f32[base + SLOT_VAR_PARAMS + 7] = p.c;
+      f32[base + SLOT_VAR_PARAMS + 10] = p.d;
+    }
   }
   for (let v = 0; v < types.length; v++) {
-    f32[base + SLOT_VAR_WEIGHTS + v] = weights[v];
-    u32[base + SLOT_VAR_TYPES + v] = types[v];
+    if (v < 20) {
+      f32[base + SLOT_VAR_WEIGHTS + v] = weights[v];
+      u32[base + SLOT_VAR_TYPES + v] = types[v];
+    } else {
+      f32[base + SLOT_VAR_WEIGHTS_EXTRA + v - 20] = weights[v];
+      u32[base + SLOT_VAR_TYPES_EXTRA + v - 20] = types[v];
+    }
   }
   u32[base + SLOT_VAR_COUNT] = types.length;
 }

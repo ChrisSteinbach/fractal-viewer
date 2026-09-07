@@ -59,7 +59,7 @@ import type {
   SurfaceChaosDE,
 } from "./surface-de";
 import {
-  activeParametricVariationTypes,
+  activeExactFlam3VariationTypes,
   resolveFoldRadii,
   sphereFoldLipschitz,
 } from "./variations";
@@ -593,16 +593,16 @@ function pureFoldVariation(t: Transform): Variation | null {
 }
 
 /** The named clause for a variation list the 4D fold-branch sweep cannot
- * decompose: when the list carries one of the PARAMETRIC warps, name it —
- * 3D's `parametricRefusal` one dimension up, same helper, same wording up
+ * decompose: when the list carries an exact flam3 warp, name it — 3D's
+ * `exactFlam3Refusal` one dimension up, same helper, same wording up
  * to the dimension. Returned rather than pushed so the caller appends it to
- * ITS OWN reasons array; `null` when nothing parametric is active. */
-function parametricRefusal4(label: string, t: Transform): string | null {
-  const types = activeParametricVariationTypes(t.variations);
+ * ITS OWN reasons array; `null` when no such warp is active. */
+function exactFlam3Refusal4(label: string, t: Transform): string | null {
+  const types = activeExactFlam3VariationTypes(t.variations);
   if (types.length === 0) return null;
   const plural = types.length > 1 ? "s" : "";
   return (
-    `${label} uses the parametric variation${plural} ${types.join(", ")}, ` +
+    `${label} uses the variation${plural} ${types.join(", ")}, ` +
     `which the 4D fold descent has no branch for`
   );
 }
@@ -885,7 +885,7 @@ export function analyzeSurfaceSystem4(
     const fold = pureFoldVariation(t);
     if (!fold && hasActiveVariations(t)) {
       reasons.push(`${label} uses variations`);
-      const clause = parametricRefusal4(label, t);
+      const clause = exactFlam3Refusal4(label, t);
       if (clause) reasons.push(clause);
     }
     // The composite gate below cannot catch w ≈ 0 — a smaller weight only
@@ -928,7 +928,7 @@ export function analyzeSurfaceSystem4(
     const foldFinal = pureFoldVariation(finalTransform);
     if (!foldFinal && hasActiveVariations(finalTransform)) {
       reasons.push("final transform uses variations");
-      const clause = parametricRefusal4("final transform", finalTransform);
+      const clause = exactFlam3Refusal4("final transform", finalTransform);
       if (clause) reasons.push(clause);
     }
     // The lens has no contraction gate at all, so the weight floor is the

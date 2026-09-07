@@ -120,10 +120,12 @@ import type {
 } from "./types";
 import {
   BOX_FOLD_LIMIT,
+  CLASSIC_BIPOLAR_SHIFT,
   CLASSIC_CURL_C1,
   CLASSIC_CURL_C2,
   CLASSIC_JULIA_DIST,
   CLASSIC_JULIA_POWER,
+  CLASSIC_PDJ_PARAMS,
   SPHERE_FOLD_FIXED_RADIUS,
   SPHERE_FOLD_MIN_RADIUS,
 } from "./variations";
@@ -266,7 +268,7 @@ function lerpWPlanes(
 }
 
 /** One type's pooled data: the summed weight plus whichever fold lengths and
- * parametric julia/curl parameters its entries carried — the shape
+ * authored variation parameters its entries carried — the shape
  * {@link lerpVariations} unions across both sides. */
 type VariationInfo = {
   weight: number;
@@ -279,6 +281,11 @@ type VariationInfo = {
   juliascopeDist?: number;
   curlC1?: number;
   curlC2?: number;
+  bipolarShift?: number;
+  pdjA?: number;
+  pdjB?: number;
+  pdjC?: number;
+  pdjD?: number;
 };
 
 /** Sum a variation list into a type -> {@link VariationInfo} map (duplicate
@@ -307,6 +314,11 @@ function variationInfo(
         juliascopeDist: v.juliascopeDist,
         curlC1: v.curlC1,
         curlC2: v.curlC2,
+        bipolarShift: v.bipolarShift,
+        pdjA: v.pdjA,
+        pdjB: v.pdjB,
+        pdjC: v.pdjC,
+        pdjD: v.pdjD,
       });
       continue;
     }
@@ -322,6 +334,11 @@ function variationInfo(
       existing.juliascopeDist = v.juliascopeDist;
     if (v.curlC1 !== undefined) existing.curlC1 = v.curlC1;
     if (v.curlC2 !== undefined) existing.curlC2 = v.curlC2;
+    if (v.bipolarShift !== undefined) existing.bipolarShift = v.bipolarShift;
+    if (v.pdjA !== undefined) existing.pdjA = v.pdjA;
+    if (v.pdjB !== undefined) existing.pdjB = v.pdjB;
+    if (v.pdjC !== undefined) existing.pdjC = v.pdjC;
+    if (v.pdjD !== undefined) existing.pdjD = v.pdjD;
   }
   return info;
 }
@@ -385,8 +402,8 @@ function lerpVariations(
       t,
     );
     if (boxLimit !== undefined) result.boxLimit = boxLimit;
-    // The parametric julia/curl family's six parameters, the identical
-    // rule one feature over: each through {@link lerpOptional} with its OWN
+    // Variation parameters use the identical rule one feature over: each
+    // through {@link lerpOptional} with its OWN
     // classic value as the absent side's fallback (`variations.ts`'s
     // CLASSIC_JULIA_*/CLASSIC_CURL_* constants — flam3's own param defaults,
     // imported, never re-typed here as magic numbers), so `julianPower: 3`
@@ -424,6 +441,22 @@ function lerpVariations(
     if (curlC1 !== undefined) result.curlC1 = curlC1;
     const curlC2 = lerpOptional(av?.curlC2, bv?.curlC2, CLASSIC_CURL_C2, t);
     if (curlC2 !== undefined) result.curlC2 = curlC2;
+    // The exact-flam3 additions all resolve absence to zero.
+    const bipolarShift = lerpOptional(
+      av?.bipolarShift,
+      bv?.bipolarShift,
+      CLASSIC_BIPOLAR_SHIFT,
+      t,
+    );
+    if (bipolarShift !== undefined) result.bipolarShift = bipolarShift;
+    const pdjA = lerpOptional(av?.pdjA, bv?.pdjA, CLASSIC_PDJ_PARAMS.a, t);
+    if (pdjA !== undefined) result.pdjA = pdjA;
+    const pdjB = lerpOptional(av?.pdjB, bv?.pdjB, CLASSIC_PDJ_PARAMS.b, t);
+    if (pdjB !== undefined) result.pdjB = pdjB;
+    const pdjC = lerpOptional(av?.pdjC, bv?.pdjC, CLASSIC_PDJ_PARAMS.c, t);
+    if (pdjC !== undefined) result.pdjC = pdjC;
+    const pdjD = lerpOptional(av?.pdjD, bv?.pdjD, CLASSIC_PDJ_PARAMS.d, t);
+    if (pdjD !== undefined) result.pdjD = pdjD;
     return result;
   });
 }

@@ -263,13 +263,22 @@ describe("analyzeSurfaceSystem eligibility", () => {
     expect(analysis.reasons[0]).toContain("map 1");
   });
 
-  it("names a parametric variation the descent cannot estimate, beside the generic reason", () => {
+  it("names every exact-flam3 warp the descent cannot estimate", () => {
     // The named-refusal rule (surface-eligibility.ts's qsquare-hint
     // precedent): the ordinary "uses variations" refusal stays, and a
-    // SECOND clause says WHICH warp — julian/juliascope/curl are refused
+    // SECOND clause says WHICH warp — exact flam3 warps are refused
     // by default (the gate's whitelist), but a refusal that doesn't name
     // the offender leaves the reader guessing.
-    for (const type of ["julian", "juliascope", "curl"] as const) {
+    for (const type of [
+      "julian",
+      "juliascope",
+      "curl",
+      "bipolar",
+      "diamond",
+      "ex",
+      "pdj",
+      "rings",
+    ] as const) {
       const analysis = analyzeSurfaceSystem([
         map({ variations: [{ type, weight: 1 }] }),
       ]);
@@ -281,7 +290,7 @@ describe("analyzeSurfaceSystem eligibility", () => {
     }
   });
 
-  it("names a parametric variation on a blended map and in the final transform too", () => {
+  it("names an exact-flam3 warp on a blend and final transform too", () => {
     const blended = analyzeSurfaceSystem([
       map({
         variations: [

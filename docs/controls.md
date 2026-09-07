@@ -980,6 +980,16 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     it to the escape-time renderer instead — a different object, which the
     mode's own note says when you enter it. No other shipped system can
     reach that line at all.
+  - **Variations → flam3 parameters** — parameter rows likewise live directly
+    below the variation that reads them: **Power / Dist** for `julian` and
+    `juliascope`, **C1 / C2** for `curl`, **Shift** for `bipolar`, and
+    **A / B / C / D** for `pdj`. Defaults are flam3's own 1/1, 1/0, 0,
+    and four zeros; returning a row to its default clears the optional field.
+    Bipolar Shift spans `−1–1`, one complete period and flam3's own generator
+    range; PDJ and the other coefficients span `−3–3`. The exact companion
+    accepts any finite imported value without clamping. `diamond`, `ex`, and
+    `rings` have no nested parameters: legacy rings reads the transform's live
+    **Position X** exactly as flam3 reads its pre-affine x translation.
 - **+ Add / − Remove** — add or remove a transform (at least one always remains).
 - **Systems → Replace with preset** — a dropdown that replaces the whole system with a named fractal,
   from the Sierpinski tetrahedron and Menger sponge to the 12-map icosahedron

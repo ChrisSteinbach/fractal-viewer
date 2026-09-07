@@ -297,6 +297,17 @@ const KNOWN_XFORM_ATTRS_SCAN = new Set([
   "var_color",
   "motion_frequency",
   "motion_offset",
+  "julian_power",
+  "julian_dist",
+  "juliascope_power",
+  "juliascope_dist",
+  "curl_c1",
+  "curl_c2",
+  "bipolar_shift",
+  "pdj_a",
+  "pdj_b",
+  "pdj_c",
+  "pdj_d",
 ]);
 
 /**
