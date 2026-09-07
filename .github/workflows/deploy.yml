@@ -53,8 +53,8 @@ jobs:
       # commit and fails fast, naming whatever is missing or not green,
       # rather than waiting for in-flight CI — a dispatch on a commit CI
       # hasn't finished with should be re-dispatched once it has, not
-      # blocked here. GPU agreement follows this preflight as the gpu-full job, rather than
-      # being inferred from possibly impact-selected PR checks.
+      # blocked here. GPU agreement follows this preflight as the gpu-full
+      # job; impact-selected PR checks do not substitute for the full sweep.
       # Reads check-runs unauthenticated-equivalent (verified: this public
       # repo's check-runs endpoint returns 200 with no token at all), so no
       # extra `checks: read` permission is added beyond this job's existing
