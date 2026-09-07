@@ -1581,32 +1581,23 @@ runner (`scripts/gpu-flame-bench.mjs`, `npm run bench:gpu`) accumulate the
 same system on both backends from the same seed-class and check the CPU/GPU
 renders agree within measured thresholds, exiting non-zero if they don't —
 the same page also doubles as the phone-benchmarking path, since it works
-interactively over the LAN like any other dev page. CI runs the whole sweep:
-the `gpu-agreement` workflow executes the real WGSL kernels on
-SwiftShader (Chromium's bundled software Vulkan, so no GPU runner is
-needed), with the runner treating a skipped comparison (no WebGPU adapter)
-as a failure rather than a pass. The bare, unsharded local runner treats its
-20-minute flame wait as a rolling stall deadline: each completed scenario
-re-arms it, so a 23-scenario healthy sweep may exceed 20 minutes while a stuck
-scenario is still named within 20. CI shards retain the 20-minute whole-shard
-cap, preserving the script-before-workflow-timeout ordering, and surface runs
-retain their separately calibrated 30/60-minute waits. It runs on every
-push/PR EXCEPT ones whose
-every changed file is docs, markdown or the beads database (the
-sweep is ~18 min against 1m50s for the next-slowest job, so it is the whole
-critical path; the filter is deliberately a fail-safe `paths-ignore` rather
-than an allowlist of kernel paths, which would fail open). When it does run
-it is SHARDED twelve ways (`--shard=i/n`, round-robin by index), which is the
-same argument in the other direction: the page partitions its own
-`SCENARIOS` list, so the union of the shards is the whole list by
-construction and a new scenario needs no CI change, where a matrix of
-hand-written `--scenarios=` name lists would silently stop covering it. An
-empty shard is not a quiet pass — no comparison ran means `agreement:
-"skipped"`, which the runner already exits 2 on. The scenario list includes a
+interactively over the LAN like any other dev page. The `gpu-agreement`
+workflow runs affected PRs and main pushes on SwiftShader, with conservative
+import-graph selection over both dimensional halves. Unknown changes fail
+closed; existing independent source edits avoid the sweep. A short production
+backend check precedes agreement. The complete scenario union runs nightly,
+on manual dispatch, and before every deployment. The selector, unchanged
+agreement thresholds, required-check behavior, partition history and timing
+measurements are documented in [GPU agreement CI](gpu-agreement-ci.md).
+
+The local unsharded runner keeps a 20-minute stall deadline per completed
+scenario; CI retains its 20-minute whole-shard cap and 40-minute job guard.
+Surface runs retain their separate 30/60-minute waits. Missing WebGPU or an
+empty shard cannot pass. The scenario list includes a
 "variation zoo" (3D and 4D) that enables all twelve classic variation types
 across three maps plus a final-transform lens, so every hand-written WGSL
 variation formula — not just the handful the showcase presets use — is
-compared against `variations.ts`/`variations4.ts` on every CI run; a separate
+compared against `variations.ts`/`variations4.ts` on every selected full sweep; a separate
 "fold zoo" (3D and 4D) pins the three-member Mandelbox fold family
 (`boxfold`/`spherefold`/`mandelbox`) against the same oracles. vitest
 separately pins the WGSL switch's case numbering to `KERNEL_VARIATION_INDEX`

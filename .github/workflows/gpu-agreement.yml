@@ -1,161 +1,103 @@
 name: GPU agreement
 
-# The GPU-flame agreement harness (src/app/gpu-bench/) as a CI gate — the
-# WGSL kernels are the one re-implementation of the fractal core that
-# vitest cannot execute (WebGPU needs a real browser), so this job runs
-# the REAL kernels on SwiftShader (Chromium's bundled software Vulkan; no
-# GPU on the runner needed) and pins them statistically against their CPU
-# oracles (accumulateFlame / accumulateFlame4). The runner script exits
-# non-zero on agreement FAILURE and — deliberately — on "skipped" (no
-# WebGPU adapter), so a runner that silently loses WebGPU cannot keep
-# passing while verifying nothing.
-#
-# This workflow was split out of ci.yml for ONE reason: it is the whole
-# critical path. Measured on consecutive runs it takes 16m39s-19m32s where
-# the next-slowest job (smoke) takes 1m50s, so how fast this job answers IS
-# how fast a change can land. Its own workflow file is what buys the path
-# filter below — `paths-ignore` is a workflow-level trigger key, and
-# applying it in ci.yml would have skipped lint/test/build with it (the
-# docs-only change that prompted this was caught by `prettier --check .`,
-# so those jobs must keep running on markdown).
-#
-# THE FILTER IS FAIL-SAFE AND MUST STAY THAT WAY. `paths-ignore` skips the
-# workflow only when EVERY changed file matches, so the question it asks is
-# "is this change entirely inert?" and not "does this change look like
-# kernel work?". An allowlist of kernel paths would read more precisely and
-# fail OPEN — a new file that feeds the kernels but nobody added to the
-# list would silently stop being gated, which is the same failure mode the
-# comment above rejects for a lost WebGPU adapter. Anything outside docs,
-# markdown and the beads database still pays the full sweep.
+# Import-graph impact, not a kernel path allowlist. Unknown/new/deleted files,
+# changed imports, configuration, missing history or analysis uncertainty run
+# the entire 3D + 4D group. Existing source modules outside both base/head
+# closures can skip. The selector and mechanically checked roster union live
+# in scripts/gpu-ci-impact.ts; policy and measurements: docs/gpu-agreement-ci.md.
+# No workflow path filter: the aggregate reports even on documentation PRs.
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - ".beads/**"
   pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - ".beads/**"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  workflow_call:
+    # Deploy calls this same sweep at its own exact commit, without a baseline.
 
 permissions:
   contents: read
 
 concurrency:
-  group: gpu-agreement-${{ github.ref }}
-  cancel-in-progress: true
+  # A deploy's reusable call must not cancel a PR, nightly or manual full run.
+  group: gpu-agreement-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
-  gpu-agreement:
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      full: ${{ steps.plan.outputs.full }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Select agreement coverage
+        id: plan
+        run: node scripts/gpu-ci-plan.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gpu-ci-plan
+          path: gpu-ci-plan.json
+          retention-days: 30
+
+  backend-smoke:
+    needs: select
+    if: needs.select.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      # No --with-deps: ubuntu-latest already has the browser library closure.
+      # Repeated apt mirror hangs were the measured reason to remove it.
+      # A missing library fails promptly at launch; see docs/gpu-agreement-ci.md.
+      - name: Install Playwright Chromium
+        run: npx playwright-core install chromium
+
+      - name: Compile and exercise 3D/4D plain/tiled backends
+        run: npm run bench:gpu -- --chrome=bundled --swiftshader --backend-smoke --out=bench-results
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gpu-backend-smoke
+          path: bench-results/
+          retention-days: 30
+
+  agreement:
     name: gpu-agreement (shard ${{ matrix.shard }})
+    needs: [select, backend-smoke]
+    if: needs.select.outputs.full == 'true'
     runs-on: ubuntu-latest
     strategy:
-      # Shards over the scenario list, round-robin by index inside the
-      # page (see applyScenarioShard in gpu-bench/shard.ts). The count of
-      # scenarios is deliberately NOT written down here — that is the drift
-      # this design exists to prevent — but for scale, the sweep was
-      # sixteen when this landed and split 4/4/4/4.
-      # The count is NOT repeated in the --shard argument below — that reads
-      # `strategy.job-total`, so adding an entry here re-partitions the
-      # sweep on its own and the two cannot drift apart.
-      #
-      # RAISED 4 -> 8 -> 12, each time for a MEASURED wall-clock failure,
-      # not an agreement failure or a precaution. The multi-system wave's
-      # five new scenarios include expensive CPU oracles — a 24-map
-      # block-diagonal system and a condensation sampler drawing a gear
-      # profile by accept-reject for a quarter of its iterations. Four
-      # shards put two jobs past the script's own 20-minute cap. Eight was
-      # still too coarse: shard 6 timed out without a verdict, and shards 4
-      # and 7 finished only 48s and 31s inside the same cap. Backend-start
-      # timestamps show why: individual scenario legs now span roughly
-      # 2m14s-6m56s, and round-robin happened to put three ~6-minute legs on
-      # each of those slow shards. Twelve is the first split for this roster
-      # that limits every shard to at most two scenarios; the measured
-      # slowest resulting pair is about 12m43s before the small fixed checks,
-      # restoring useful margin without changing either timeout. Thus the
-      # "script trips first" ordering below is untouched. Prefer
-      # re-partitioning here over raising either constant: a bigger cap only
-      # makes a genuinely hung scenario take longer to name.
-      #
-      # RAISED 12 -> 25 for the same measured reason, not a precaution: the
-      # Points/Flame tiling wave grew the roster 23 -> 30 (five 3D tiling
-      # legs including the 24-map multisystem composition, two 4D), which
-      # gives six shards a third scenario at 12. All six ran 20.5-24 min of
-      # bench work against the script's 20-minute whole-shard cap; four
-      # timed out (shards 1/2/4/6, on variation-zoo-4d, fold-zoo-4d, the
-      # ss=1 check and emitter-menagerie — shard 1 was ~15s from finishing
-      # its last scenario), and the two that passed had under a minute of
-      # margin. Measured legs: ~5-7 min typical, ~9-14 for the heavy four
-      # (tiling-multisystem-3d's GPU equal-N alone reads ~12 min at
-      # ~70K iter/s), so NO pairing of the multisystem leg with anything
-      # fits the cap and 25 is the smallest split that leaves it alone —
-      # round-robin pairs index i with i+25, so every index in the second
-      # round (5..29) is a single — with the remaining pairs at most
-      # ~14 min and the slowest single ~14, restoring the margin twelve
-      # was chosen for.
-      #
-      # RAISED 25 -> 27 when the exact-flam3 batch grew the roster 30 -> 32.
-      # At 25, new indices 30/31 pair with old indices 5/6; index 5 is the
-      # measured ~14-minute multisystem leg that 25 was specifically chosen
-      # to leave alone, so that arithmetic would reinstate the known timeout
-      # before CI needed to rediscover it. Twenty-seven is the smallest split
-      # that keeps old indices 5+ single: only new indices 27..31 pair, with
-      # lightweight old indices 0..4. Both new agreement legs (indices 11 and
-      # 26) are single too. No timeout or agreement threshold changes.
-      matrix:
-        shard:
-          [
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15,
-            16,
-            17,
-            18,
-            19,
-            20,
-            21,
-            22,
-            23,
-            24,
-            25,
-            26,
-            27,
-          ]
-      # A gate wants every failing shard named, not just the first one: with
-      # fail-fast the surviving shards are cancelled and their verdicts are
-      # lost, which turns "these three scenarios disagree" into "something
-      # disagreed".
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
       fail-fast: false
-    # A runaway guard, deliberately looser than the runner script's own wait
-    # cap (BENCH_TIMEOUT_MS, 20 min) so the script always trips FIRST and
-    # reports which scenario hung, instead of the job being killed with no
-    # verdict. Raised 30 -> 40: setup (checkout, npm ci, Playwright + system
-    # deps) is several minutes on top of a sweep measured at ~16 min for the
-    # fourteen scenarios it had then, which left the script's cap and the
-    # job's too close together to keep that ordering reliable. Sharding only
-    # widens that margin — measured at the split, the slowest of four shards
-    # is 6m27s against the same 20-minute script cap — so the number is left
-    # where that raise put it. That margin is NOT permanent: the
-    # multi-system wave's five new scenarios ate all of it at both four and
-    # eight shards (see the re-partition note above). At twelve, the measured
-    # scenario-leg times predict about 13m20s including fixed per-shard bench
-    # work for the slowest pair, restoring roughly the original margin. A
-    # wave that adds expensive scenarios must re-check the slowest shard
-    # rather than assume that headroom is still there.
+    # Preserve the measured 20-minute whole-shard script cap and its looser
+    # 40-minute job guard. The selector partitions the actual page roster;
+    # thresholds, scenario budgets and the ss=1 check remain unchanged.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -167,10 +109,6 @@ jobs:
 
       - run: npm ci
 
-      # The browser download is several minutes of every run and changes
-      # only when playwright-core does. On a hit the install step below is
-      # a pure no-op, so the steady-state browser path costs no external
-      # network at all.
       - name: Cache Playwright browsers
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -178,48 +116,14 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
           restore-keys: ${{ runner.os }}-playwright-
 
-      # Same hermetic browser as the smoke job: only the Playwright-bundled
-      # Chromium is known to ship libvk_swiftshader.so.
-      #
-      # NO --with-deps, deliberately. It ran apt on every run — apt caches
-      # nothing here — and apt against azure.archive.ubuntu.com was the one
-      # flaky fetch left in these jobs: measured 2026-08-19, four jobs
-      # across the two workflows hung in this step on ONE pull request
-      # (smoke plus shards 1/3/4; shard 1 twice in a row) and died at their
-      # job timeouts without reaching a line of test code. The SwiftShader
-      # constraint above is about the BROWSER BINARY, not the OS libraries:
-      # ubuntu-latest ships Chrome, Chromium and Edge, so the shared-library
-      # closure the bundled Chromium loads is already on the image. If a
-      # future runner image slims that down, this fails at browser LAUNCH
-      # within seconds, naming the missing library — strictly better than
-      # the silent multi-minute hang it replaces — and the fix is to re-add
-      # --with-deps or move the job into
-      # mcr.microsoft.com/playwright:v<lockfile version>-noble. That
-      # container was considered and REFUSED for now: it swaps a solved,
-      # cached browser download for an uncacheable ~1GB image pull on every
-      # run of every job (the apt mirror's failure shape under a different
-      # hostname), its tag has to track package-lock's playwright-core by
-      # hand, and its default user is root, which Chromium refuses to run as
-      # without --no-sandbox — a flag this bench's headless SwiftShader
-      # launch deliberately omits (scripts/gpu-flame-bench.mjs passes it
-      # only on the --display real-driver path), so the container would mean
-      # changing the launch flags of the very instrument this gate exists to
-      # hold still.
+      # No --with-deps: ubuntu-latest already has the browser library closure.
+      # Repeated apt mirror hangs were the measured reason to remove it.
+      # A missing library fails promptly at launch; see docs/gpu-agreement-ci.md.
       - name: Install Playwright Chromium
         run: npx playwright-core install chromium
 
-      # --duration only shrinks the throughput-timing phase; the agreement
-      # verdict comes from the fixed equal-N legs (50.3M iterations per
-      # side per scenario), so a short duration loses no rigor.
-      #
-      # A shard that matches NO scenario does not pass quietly: computeAgreement
-      # returns "skipped" when no comparison ran and this runner exits 2 on
-      # that, the same refusal it makes for a lost WebGPU adapter.
       - name: GPU flame agreement (WebGPU kernels vs CPU oracles)
-        run: npm run bench:gpu -- --chrome=bundled --swiftshader --duration=1 --shard=${{ matrix.shard }}/${{ strategy.job-total }} --out=bench-results
-
-      # Per-shard name: upload-artifact v4+ refuses a duplicate name, so one
-      # shared name would fail every shard after the first.
+        run: npm run bench:gpu -- --chrome=bundled --swiftshader --duration=1 --shard=${{ matrix.shard }}/${{ matrix.total }} --out=bench-results
       - name: Upload bench artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -227,3 +131,28 @@ jobs:
           name: gpu-bench-shard-${{ matrix.shard }}
           path: bench-results/
           retention-days: 30
+
+  gpu-agreement:
+    # Stable optional required-check name; never require dynamic shard names.
+    # Existing lint/build/test/smoke protection remains unchanged.
+    if: always()
+    needs: [select, backend-smoke, agreement]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require the selected coverage to finish successfully
+        env:
+          SELECT: ${{ needs.select.result }}
+          FULL: ${{ needs.select.outputs.full }}
+          SMOKE: ${{ needs.backend-smoke.result }}
+          AGREEMENT: ${{ needs.agreement.result }}
+        run: |
+          test "$SELECT" = success
+          if [ "$FULL" = true ]; then
+            test "$SMOKE" = success
+            test "$AGREEMENT" = success
+          else
+            test "$FULL" = false
+            test "$SMOKE" = skipped
+            test "$AGREEMENT" = skipped
+          fi

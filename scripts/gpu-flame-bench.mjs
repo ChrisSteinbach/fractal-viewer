@@ -14,7 +14,7 @@
  *
  * Usage:
  *   node scripts/gpu-flame-bench.mjs [--duration=4] [--scenarios=a,b]
- *                                     [--shard=i/n]
+ *                                     [--shard=i/n] [--backend-smoke]
  *     [--url=https://host:port] [--headed] [--chrome=/path/to/chrome]
  *     [--swiftshader] [--out=bench-results]
  *     [--surface | --surface-only] [--display=:0]
@@ -52,9 +52,11 @@
  * bundled software Vulkan), so a GPU-less runner still executes the REAL
  * WGSL kernels — slowly, but bit-faithfully — instead of skipping the
  * agreement check. Together they are the CI invocation (see the
- * gpu-agreement workflow, .github/workflows/gpu-agreement.yml — its own
- * file, so a fail-safe paths-ignore can skip the ~18min
- * sweep on changes that are entirely docs).
+ * gpu-agreement workflow, .github/workflows/gpu-agreement.yml).
+ * `--backend-smoke` checks all four emitted 3D/4D plain/tiled programs
+ * through production warmup, accumulation, readback and downsampling at
+ * small resolution. It has a separate verdict and a five-minute cap; it
+ * never substitutes for the statistical agreement sweep.
  *
  * Without --url, this spawns `npm run dev` itself and tears it down when
  * done (including on error) — the whole point being a one-shot
@@ -146,6 +148,7 @@ function parseArgs(argv) {
     duration: "4",
     scenarios: undefined,
     shard: undefined,
+    backendSmoke: false,
     url: undefined,
     headed: false,
     chrome: DEFAULT_CHROME,
@@ -174,6 +177,9 @@ function parseArgs(argv) {
         break;
       case "shard":
         args.shard = value;
+        break;
+      case "backend-smoke":
+        args.backendSmoke = true;
         break;
       case "url":
         args.url = value.replace(/\/+$/, "");
@@ -206,6 +212,14 @@ function parseArgs(argv) {
         }
         throw new Error(`Unknown flag: --${key}`);
     }
+  }
+  if (
+    args.backendSmoke &&
+    (args.scenarios || args.shard || args.surface || args.surfaceOnly)
+  ) {
+    throw new Error(
+      "--backend-smoke cannot be combined with scenario/shard/surface selection",
+    );
   }
   return args;
 }
@@ -530,19 +544,20 @@ async function main() {
   // kernel's cost curve) — so it earns the same wider wait cap.
   const surfaceHeavyLeg =
     args.surfaceParams.surfaceShadeWidth || args.surfaceParams.surfaceAff4Sweep;
-  const benchTimeoutMs = surfaceRequested
-    ? surfaceHeavyLeg
-      ? SURFACE_SHADE_AB_TIMEOUT_MS
-      : SURFACE_BENCH_TIMEOUT_MS
-    : BENCH_TIMEOUT_MS;
+  const benchTimeoutMs = args.backendSmoke
+    ? 5 * 60_000
+    : surfaceRequested
+      ? surfaceHeavyLeg
+        ? SURFACE_SHADE_AB_TIMEOUT_MS
+        : SURFACE_BENCH_TIMEOUT_MS
+      : BENCH_TIMEOUT_MS;
   // Only the unsharded flame sweep scales its wait with completed
   // scenarios. CI's `--shard` contract and the surface section's separately
   // calibrated 30/60-minute caps stay byte-for-byte in their old total-wait
   // mode, preserving the workflow's script-trips-before-job ordering.
-  const resetWaitOnScenarioCompletion = shouldResetWaitOnScenarioCompletion(
-    surfaceRequested,
-    args.shard,
-  );
+  const resetWaitOnScenarioCompletion =
+    !args.backendSmoke &&
+    shouldResetWaitOnScenarioCompletion(surfaceRequested, args.shard);
   const outDir = path.resolve(REPO_ROOT, args.out);
   await mkdir(outDir, { recursive: true });
 
@@ -655,6 +670,7 @@ async function main() {
     });
     if (args.scenarios) query.set("scenarios", args.scenarios);
     if (args.shard) query.set("shard", args.shard);
+    if (args.backendSmoke) query.set("backendSmoke", "1");
     if (args.surfaceOnly) query.set("surface", "only");
     else if (args.surface) query.set("surface", "1");
     for (const [param, value] of Object.entries(args.surfaceParams)) {
@@ -738,7 +754,15 @@ async function main() {
     // The flame agreement gate applies exactly as before, but only when the
     // flame scenarios actually ran — under --surface-only the page skips
     // them by design, so their vacuous "skipped" must not fail the run.
-    const flameRan = !args.surfaceOnly;
+    const flameRan = !args.surfaceOnly && !args.backendSmoke;
+    if (!results) throw new Error("Bench published no results");
+    if (
+      args.backendSmoke &&
+      (results.backendSmoke?.pass !== true ||
+        results.backendSmoke.scenarios.length !== 4)
+    ) {
+      throw new Error("Backend smoke did not complete all four programs");
+    }
     if (flameRan && results && results.agreement === "fail") {
       console.error(
         "[gpu-flame-bench] agreement check FAILED — see each scenario's comparison.pass in results.json",
