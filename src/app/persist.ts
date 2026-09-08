@@ -138,6 +138,7 @@ import { isMeshAssetId } from "../fractal/mesh-shapes";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
 import { clamp } from "../fractal/vec";
+import { pureSwirlFinal } from "../fractal/swirl-lens";
 import { sceneHasCustomMeshes } from "./scene-mesh-assets";
 
 // ---------------------------------------------------------------------------
@@ -667,11 +668,12 @@ function round10(n: number): number {
   return Math.round(n * 10_000_000_000) / 10_000_000_000;
 }
 
-/** {@link round4} over a Vec3, keeping the tuple type (the emitter codec's
- * typed fields want a `Vec3` back where `.map(round4)` widens to
- * `number[]`). */
-function round4Vec3(v: Vec3): Vec3 {
-  return [round4(v[0]), round4(v[1]), round4(v[2])];
+/** Encode exactly three coordinates with the caller's geometry precision. */
+function encodeGeometryVec3(
+  v: Vec3,
+  geometryNumber: (value: number) => number = round4,
+): Vec3 {
+  return [geometryNumber(v[0]), geometryNumber(v[1]), geometryNumber(v[2])];
 }
 
 function toBase64url(s: string): string {
@@ -2474,19 +2476,22 @@ type EncodedShapeTrap = Omit<ShapeTrap, "shape"> & {
 };
 
 /**
- * Round one of the fold's three lengths for the wire IFF it's
+ * Encode one of the fold's three lengths for the wire IFF it's
  * present and finite — `encodeTransform`'s counterpart to
  * {@link decodeFoldRadius}: `undefined` in, `undefined` out, so an absent
  * `minRadius`/`fixedRadius`/`boxLimit` writes nothing and a document that
  * never authored these fields encodes byte-identically to one that predates
  * them.
  */
-function encodeFoldRadius(n: number | undefined): number | undefined {
-  return n !== undefined && Number.isFinite(n) ? round4(n) : undefined;
+function encodeFoldRadius(
+  n: number | undefined,
+  geometryNumber: (value: number) => number = round4,
+): number | undefined {
+  return n !== undefined && Number.isFinite(n) ? geometryNumber(n) : undefined;
 }
 
 /**
- * Round one variation parameter for the
+ * Encode one variation parameter for the
  * wire IFF it's present and finite — the identical shape as
  * {@link encodeFoldRadius} one feature over: `undefined` in, `undefined`
  * out, so an absent julian/juliascope/curl, bipolar, or PDJ field writes
@@ -2494,8 +2499,11 @@ function encodeFoldRadius(n: number | undefined): number | undefined {
  * never authored these fields encodes byte-identically to one that predates
  * them.
  */
-function encodeVariationParam(n: number | undefined): number | undefined {
-  return n !== undefined && Number.isFinite(n) ? round4(n) : undefined;
+function encodeVariationParam(
+  n: number | undefined,
+  geometryNumber: (value: number) => number = round4,
+): number | undefined {
+  return n !== undefined && Number.isFinite(n) ? geometryNumber(n) : undefined;
 }
 
 /**
@@ -2541,16 +2549,21 @@ function encodeFinish(
   return Object.keys(e).length > 0 ? e : undefined;
 }
 
-/** {@link encodeEmitter}'s pose leg: each field written only when present
- * (offsets/rotations round4'd like every wire float; an all-absent pose
- * writes nothing), rebuilt rather than spread so nothing foreign rides. */
-function encodeEmitterPose(pose: ShapePose | undefined): ShapePose | undefined {
+/** {@link encodeEmitter}'s pose leg: each field written only when present,
+ * with the caller's geometry precision (round4 by default; an all-absent
+ * pose writes nothing), rebuilt so nothing foreign rides. */
+function encodeEmitterPose(
+  pose: ShapePose | undefined,
+  geometryNumber: (value: number) => number = round4,
+): ShapePose | undefined {
   if (pose === undefined) return undefined;
   const encoded: ShapePose = {};
-  if (pose.offset !== undefined) encoded.offset = round4Vec3(pose.offset);
-  if (pose.rotate !== undefined) encoded.rotate = round4Vec3(pose.rotate);
+  if (pose.offset !== undefined)
+    encoded.offset = encodeGeometryVec3(pose.offset, geometryNumber);
+  if (pose.rotate !== undefined)
+    encoded.rotate = encodeGeometryVec3(pose.rotate, geometryNumber);
   if (pose.scale !== undefined && Number.isFinite(pose.scale)) {
-    encoded.scale = round4(pose.scale);
+    encoded.scale = geometryNumber(pose.scale);
   }
   return Object.keys(encoded).length > 0 ? encoded : undefined;
 }
@@ -2559,8 +2572,9 @@ function encodeEmitterPose(pose: ShapePose | undefined): ShapePose | undefined {
  * absent rather than occupying a trailing tuple slot. */
 function encodeCompactShapePose(
   pose: ShapePose | undefined,
+  geometryNumber: (value: number) => number = round4,
 ): EncodedShapePose | undefined {
-  const encoded = encodeEmitterPose(pose);
+  const encoded = encodeEmitterPose(pose, geometryNumber);
   if (encoded === undefined) return undefined;
   const compact: EncodedShapePose = {};
   if (encoded.offset !== undefined) compact.o = encoded.offset;
@@ -2617,12 +2631,13 @@ function compactGearTangential(
  * byte-identically to one predating the field ({@link encodeFoldRadius}'s
  * rule at spec scale). Parts are REBUILT from exactly the admitted fields
  * (the decoder's own discipline mirrored, so a stray field on a live
- * document object never reaches the wire) with every numeric leaf round4'd
- * like every other wire float; a spec whose parts are gone (the empty list
+ * document object never reaches the wire) with the caller's geometry
+ * precision; a spec whose parts are gone (the empty list
  * `transformHasEmitter` already calls absent) writes nothing.
  */
 function encodeEmitter(
   spec: ShapeSpec | undefined,
+  geometryNumber: (value: number) => number = round4,
 ): EncodedShapeSpec | undefined {
   if (spec === undefined || spec.parts.length === 0) return undefined;
   // Mesh bytes never ride the v1 wire: the primitive carries only a stable,
@@ -2656,34 +2671,37 @@ function encodeEmitter(
     let primitive: ShapePart["primitive"];
     switch (prim.kind) {
       case "sphere":
-        primitive = { kind: "sphere", radius: round4(prim.radius) };
+        primitive = { kind: "sphere", radius: geometryNumber(prim.radius) };
         break;
       case "box":
-        primitive = { kind: "box", half: round4Vec3(prim.half) };
+        primitive = {
+          kind: "box",
+          half: encodeGeometryVec3(prim.half, geometryNumber),
+        };
         break;
       case "torus":
         primitive = {
           kind: "torus",
-          major: round4(prim.major),
-          minor: round4(prim.minor),
+          major: geometryNumber(prim.major),
+          minor: geometryNumber(prim.minor),
         };
         break;
       case "capsule":
         primitive = {
           kind: "capsule",
-          a: round4Vec3(prim.a),
-          b: round4Vec3(prim.b),
-          radius: round4(prim.radius),
+          a: encodeGeometryVec3(prim.a, geometryNumber),
+          b: encodeGeometryVec3(prim.b, geometryNumber),
+          radius: geometryNumber(prim.radius),
         };
         break;
       case "gear":
         primitive = {
           kind: "gear",
-          teeth: round4(prim.teeth),
-          radius: round4(prim.radius),
-          tooth: [round4(prim.tooth[0]), round4(prim.tooth[1])],
-          hole: round4(prim.hole),
-          halfHeight: round4(prim.halfHeight),
+          teeth: geometryNumber(prim.teeth),
+          radius: geometryNumber(prim.radius),
+          tooth: [geometryNumber(prim.tooth[0]), geometryNumber(prim.tooth[1])],
+          hole: geometryNumber(prim.hole),
+          halfHeight: geometryNumber(prim.halfHeight),
         };
         break;
       case "mesh":
@@ -2691,7 +2709,7 @@ function encodeEmitter(
         break;
     }
     const encoded: ShapePart = { primitive, combine: part.combine };
-    const pose = encodeEmitterPose(part.pose);
+    const pose = encodeEmitterPose(part.pose, geometryNumber);
     if (pose !== undefined) encoded.pose = pose;
     return encoded;
   });
@@ -2705,7 +2723,7 @@ function encodeEmitter(
     parts[0].primitive.kind !== "mesh"
   ) {
     const part = parts[0];
-    const pose = encodeCompactShapePose(part.pose);
+    const pose = encodeCompactShapePose(part.pose, geometryNumber);
     const prim = part.primitive;
     let compact: EncodedSinglePartShape;
     switch (prim.kind) {
@@ -2840,13 +2858,15 @@ function encodeSurfacePattern(
 function encodeTransform(
   t: Transform,
   chaosBaseCount?: number,
+  geometryNumber: (value: number) => number = round4,
 ): EncodedTransform {
   const e: EncodedTransform = {
-    position: t.position.map(round4),
-    rotation: t.rotation.map(round4),
-    scale: t.scale.map(round4),
+    position: t.position.map(geometryNumber),
+    rotation: t.rotation.map(geometryNumber),
+    scale: t.scale.map(geometryNumber),
   };
-  if (t.weight !== undefined && t.weight !== 1) e.weight = round4(t.weight);
+  if (t.weight !== undefined && t.weight !== 1)
+    e.weight = geometryNumber(t.weight);
   // colorIndex: always written when present — see this function's doc
   // comment for why there is no default value to omit it against.
   if (t.colorIndex !== undefined) e.colorIndex = round4(t.colorIndex);
@@ -2857,15 +2877,16 @@ function encodeTransform(
   if (t.colorSpeed !== undefined && t.colorSpeed !== DEFAULT_COLOR_SPEED) {
     e.colorSpeed = round4(t.colorSpeed);
   }
-  if (t.shear && t.shear.some((v) => v !== 0)) e.shear = t.shear.map(round4);
+  if (t.shear && t.shear.some((v) => v !== 0))
+    e.shear = t.shear.map(geometryNumber);
   // The post-affine: written only when present and NOT structurally
   // identity — shear's exact-zero pattern one matrix up (see
   // isIdentityAffine), so an unauthored document encodes byte-identically
   // to one predating the field and an identity post is indistinguishable
-  // from an absent one on the wire. Flattened to [m0..m8, tx, ty, tz]; every
-  // float round4'd like the rest of the wire.
+  // from an absent one on the wire. Flattened to [m0..m8, tx, ty, tz], with
+  // the same precision as the pre-affine geometry.
   if (t.post && !isIdentityAffine(t.post)) {
-    e.post = [...t.post.m, ...t.post.t].map(round4);
+    e.post = [...t.post.m, ...t.post.t].map(geometryNumber);
   }
   if (t.variations && t.variations.length > 0) {
     const active: EncodedVariation[] = t.variations
@@ -2873,42 +2894,51 @@ function encodeTransform(
       .map((v) => {
         const ev: EncodedVariation = {
           type: v.type,
-          weight: round4(v.weight),
+          weight: geometryNumber(v.weight),
         };
         // The fold's three lengths: written ONLY when present and
         // finite, so a document that never authored them encodes
         // byte-identically to one predating the fields entirely — see
         // encodeFoldRadius.
-        const minRadius = encodeFoldRadius(v.minRadius);
+        const minRadius = encodeFoldRadius(v.minRadius, geometryNumber);
         if (minRadius !== undefined) ev.minRadius = minRadius;
-        const fixedRadius = encodeFoldRadius(v.fixedRadius);
+        const fixedRadius = encodeFoldRadius(v.fixedRadius, geometryNumber);
         if (fixedRadius !== undefined) ev.fixedRadius = fixedRadius;
-        const boxLimit = encodeFoldRadius(v.boxLimit);
+        const boxLimit = encodeFoldRadius(v.boxLimit, geometryNumber);
         if (boxLimit !== undefined) ev.boxLimit = boxLimit;
         // Variation parameters use the identical
         // present-and-finite-only rule one feature over — see
         // encodeVariationParam.
-        const julianPower = encodeVariationParam(v.julianPower);
+        const julianPower = encodeVariationParam(v.julianPower, geometryNumber);
         if (julianPower !== undefined) ev.julianPower = julianPower;
-        const julianDist = encodeVariationParam(v.julianDist);
+        const julianDist = encodeVariationParam(v.julianDist, geometryNumber);
         if (julianDist !== undefined) ev.julianDist = julianDist;
-        const juliascopePower = encodeVariationParam(v.juliascopePower);
+        const juliascopePower = encodeVariationParam(
+          v.juliascopePower,
+          geometryNumber,
+        );
         if (juliascopePower !== undefined) ev.juliascopePower = juliascopePower;
-        const juliascopeDist = encodeVariationParam(v.juliascopeDist);
+        const juliascopeDist = encodeVariationParam(
+          v.juliascopeDist,
+          geometryNumber,
+        );
         if (juliascopeDist !== undefined) ev.juliascopeDist = juliascopeDist;
-        const curlC1 = encodeVariationParam(v.curlC1);
+        const curlC1 = encodeVariationParam(v.curlC1, geometryNumber);
         if (curlC1 !== undefined) ev.curlC1 = curlC1;
-        const curlC2 = encodeVariationParam(v.curlC2);
+        const curlC2 = encodeVariationParam(v.curlC2, geometryNumber);
         if (curlC2 !== undefined) ev.curlC2 = curlC2;
-        const bipolarShift = encodeVariationParam(v.bipolarShift);
+        const bipolarShift = encodeVariationParam(
+          v.bipolarShift,
+          geometryNumber,
+        );
         if (bipolarShift !== undefined) ev.bipolarShift = bipolarShift;
-        const pdjA = encodeVariationParam(v.pdjA);
+        const pdjA = encodeVariationParam(v.pdjA, geometryNumber);
         if (pdjA !== undefined) ev.pdjA = pdjA;
-        const pdjB = encodeVariationParam(v.pdjB);
+        const pdjB = encodeVariationParam(v.pdjB, geometryNumber);
         if (pdjB !== undefined) ev.pdjB = pdjB;
-        const pdjC = encodeVariationParam(v.pdjC);
+        const pdjC = encodeVariationParam(v.pdjC, geometryNumber);
         if (pdjC !== undefined) ev.pdjC = pdjC;
-        const pdjD = encodeVariationParam(v.pdjD);
+        const pdjD = encodeVariationParam(v.pdjD, geometryNumber);
         if (pdjD !== undefined) ev.pdjD = pdjD;
         return ev;
       });
@@ -2922,7 +2952,7 @@ function encodeTransform(
   ) {
     // Non-trivial implies present — chaosRowIsNonTrivial is false for an
     // absent row — so t.chaos is an array here.
-    e.chaos = (t.chaos as number[]).map(round4);
+    e.chaos = (t.chaos as number[]).map(geometryNumber);
   }
   if (!isFlatTransform(t)) {
     // Safe: isFlatTransform only returns false when `t.w` is present (an
@@ -2930,23 +2960,23 @@ function encodeTransform(
     const tw = t.w as WExtension;
     const w: WExtension = {};
     if (tw.position !== undefined && tw.position !== 0) {
-      w.position = round4(tw.position);
+      w.position = geometryNumber(tw.position);
     }
-    if (tw.scale !== undefined) w.scale = round4(tw.scale);
+    if (tw.scale !== undefined) w.scale = geometryNumber(tw.scale);
     if (tw.rotation) {
       const { xw, yw, zw } = tw.rotation;
       const rotation: NonNullable<WExtension["rotation"]> = {};
-      if (xw !== undefined && xw !== 0) rotation.xw = round4(xw);
-      if (yw !== undefined && yw !== 0) rotation.yw = round4(yw);
-      if (zw !== undefined && zw !== 0) rotation.zw = round4(zw);
+      if (xw !== undefined && xw !== 0) rotation.xw = geometryNumber(xw);
+      if (yw !== undefined && yw !== 0) rotation.yw = geometryNumber(yw);
+      if (zw !== undefined && zw !== 0) rotation.zw = geometryNumber(zw);
       if (Object.keys(rotation).length > 0) w.rotation = rotation;
     }
     if (tw.shear) {
       const { xw, yw, zw } = tw.shear;
       const shear: NonNullable<WExtension["shear"]> = {};
-      if (xw !== undefined && xw !== 0) shear.xw = round4(xw);
-      if (yw !== undefined && yw !== 0) shear.yw = round4(yw);
-      if (zw !== undefined && zw !== 0) shear.zw = round4(zw);
+      if (xw !== undefined && xw !== 0) shear.xw = geometryNumber(xw);
+      if (yw !== undefined && yw !== 0) shear.yw = geometryNumber(yw);
+      if (zw !== undefined && zw !== 0) shear.zw = geometryNumber(zw);
       if (Object.keys(shear).length > 0) w.shear = shear;
     }
     e.w = w;
@@ -2955,7 +2985,7 @@ function encodeTransform(
   if (finish !== undefined) e.finish = finish;
   const surfacePattern = encodeSurfacePattern(t.surfacePattern);
   if (surfacePattern !== undefined) e.surfacePattern = surfacePattern;
-  const emitter = encodeEmitter(t.emitter);
+  const emitter = encodeEmitter(t.emitter, geometryNumber);
   if (emitter !== undefined) e.emitter = emitter;
   return e;
 }
@@ -3004,10 +3034,20 @@ function encodePaletteWire(
 
 /**
  * Produce a compact, URL-safe `v1=<base64url>` string for `s`. Floats are
- * rounded to 4 decimal places; transform ids are omitted and reassigned from
- * the array index on decode.
+ * rounded to 4 decimal places, except geometry in a scene with a pure swirl
+ * final (its radius admission must survive reload). Transform ids are omitted
+ * and reassigned from the array index on decode.
  */
 export function encodeScene(s: SceneSnapshot): string {
+  // A swirl lens's admitted radius depends on the final affine AND on the
+  // raw ball derived from base maps, fold lengths, emitters and scheduled B.
+  // Decimal rounding can push a valid endpoint over the cap after reload.
+  // Keep those existing numeric fields lossless only while this final is
+  // active; classic scenes and cosmetic fields retain the compact v1 wire.
+  const geometryNumber =
+    s.finalTransform && pureSwirlFinal(s.finalTransform)
+      ? (value: number): number => value
+      : round4;
   const payload: {
     transforms: EncodedTransform[];
     finalTransform?: EncodedTransform;
@@ -3090,7 +3130,7 @@ export function encodeScene(s: SceneSnapshot): string {
     // see encodeTransform's chaos paragraph. The finalTransform call below
     // deliberately omits it (a lens never carries a row).
     transforms: s.transforms.map((t) =>
-      encodeTransform(t, s.transforms.length),
+      encodeTransform(t, s.transforms.length, geometryNumber),
     ),
     numPoints: s.numPoints,
     pointSize: round4(s.pointSize),
@@ -3261,7 +3301,11 @@ export function encodeScene(s: SceneSnapshot): string {
   }
   // Written only when present, so lens-free systems keep their short URLs.
   if (s.finalTransform)
-    payload.finalTransform = encodeTransform(s.finalTransform);
+    payload.finalTransform = encodeTransform(
+      s.finalTransform,
+      undefined,
+      geometryNumber,
+    );
   // The scheduled-hybrid block: written only when LIVE (depth >= 1, B
   // non-empty — state.ts's setSchedule invariant, re-checked here so a
   // hand-built snapshot cannot smuggle a dead block onto the wire), through
@@ -3284,14 +3328,14 @@ export function encodeScene(s: SceneSnapshot): string {
           shear?: number[];
           weight?: number;
         } = {
-          position: t.position.map(round4),
-          rotation: t.rotation.map(round4),
-          scale: t.scale.map(round4),
+          position: t.position.map(geometryNumber),
+          rotation: t.rotation.map(geometryNumber),
+          scale: t.scale.map(geometryNumber),
         };
         if (t.shear && t.shear.some((v) => v !== 0))
-          e.shear = t.shear.map(round4);
+          e.shear = t.shear.map(geometryNumber);
         if (t.weight !== undefined && t.weight !== 1)
-          e.weight = round4(t.weight);
+          e.weight = geometryNumber(t.weight);
         return e;
       }),
       depth: Math.floor(s.schedule.depth),
@@ -3307,10 +3351,10 @@ export function encodeScene(s: SceneSnapshot): string {
     if (shape !== undefined) {
       const trap: EncodedShapeTrap = { shape };
       if (s.shapeTrap.position !== undefined) {
-        trap.position = round4Vec3(s.shapeTrap.position);
+        trap.position = encodeGeometryVec3(s.shapeTrap.position);
       }
       if (s.shapeTrap.rotation !== undefined) {
-        trap.rotation = round4Vec3(s.shapeTrap.rotation);
+        trap.rotation = encodeGeometryVec3(s.shapeTrap.rotation);
       }
       if (
         s.shapeTrap.scale !== undefined &&

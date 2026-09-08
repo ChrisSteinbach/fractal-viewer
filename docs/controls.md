@@ -1597,6 +1597,15 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   **✦ Final Transform** row under **Select to edit** with the usual
   position/rotation/scale/shear/variation sliders — but no selection weight, which
   is meaningless for a map applied to every point. Untick to remove it.
+  For **Swirl**, open **Variations → Swirl → Radius**. The slider and exact
+  number field adjust the bend while compensating the output size; **Fit for
+  Surface** brings an oversized swirl to Surface's supported radius of **0.5**.
+  This works in both 3D and 4D. Radius is calculated from the fractal and the
+  final transform's Scale and Position, which remain available for individual
+  adjustments. Swirl's weight alone only resizes the result. If another active
+  variation is blended with Swirl, or the fractal has no supported enclosing
+  bound, Radius stays disabled with an adjacent reason. Radius edits follow the
+  Transforms section's timing notice and travel through undo and shared links.
 - **Symmetry · 4D** — kaleidoscope replication of the whole attractor. This is
   the shortest route from a flat system into 4D without replacing it: set
   **Order** to 2-fold or more, then choose **XW (4D)**, **YW (4D)** or

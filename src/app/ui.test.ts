@@ -50,6 +50,8 @@ import {
   hybridChainCube,
   mandelbulbClassic,
   PRESET_NAMES,
+  swirlPentatopeLens,
+  swirlTetrahedronLens,
 } from "../fractal/presets";
 import {
   buildPaletteLUT,
@@ -145,6 +147,7 @@ function noopHandlers(): UiHandlers {
     onShapeTrapShape: vi.fn(),
     onToggleFinalTransform: vi.fn(),
     onFinalTransformGeometry: vi.fn(),
+    onFinalSwirlRadius: vi.fn(),
     onTransformCommit: vi.fn(),
     onTogglePanel: vi.fn(),
     onClosePanel: vi.fn(),
@@ -4350,6 +4353,90 @@ describe("Ui final transform", () => {
     expect(handlers.onTransformCommit).toHaveBeenCalledOnce();
     expect(handlers.onTransformCommit).toHaveBeenCalledWith("final");
   });
+
+  it.each([swirlTetrahedronLens, swirlPentatopeLens])(
+    "opens a swirl showcase's final editor with its full compensated weight (%#)",
+    (makeLens) => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      const final = makeLens();
+      ui.renderTransformEditor(final, "final", 4);
+      expect(Number(editorSlider("Variation swirl").max)).toBeGreaterThan(2);
+      const exact = document.querySelector<HTMLInputElement>(
+        '[aria-label="Variation swirl exact value"]',
+      )!;
+      expect(Number(exact.value)).toBeCloseTo(final.variations![0].weight, 2);
+      expect(document.getElementById("finalSwirlRadiusSlider")).not.toBeNull();
+    },
+  );
+
+  it("retains radius focus and commits once through a synchronous compensated edit", () => {
+    const ui = new Ui(document);
+    const handlers = noopHandlers();
+    const final = swirlPentatopeLens();
+    ui.bind(handlers);
+    ui.renderTransformEditor(final, "final", 5);
+    ui.setFinalSwirlRadius({
+      available: true,
+      radius: 0.485,
+      min: 0.02,
+      max: 2,
+      fitAvailable: true,
+    });
+    handlers.onFinalSwirlRadius = vi.fn((radius) => {
+      // An app refresh adjusts several coupled fields at once, including a
+      // Scale below the ordinary guide span and its implicit Scale W.
+      ui.renderTransformEditor(
+        {
+          ...final,
+          scale: [0.03, 0.03, 0.03],
+          variations: [{ type: "swirl", weight: 1 / 0.03 }],
+        },
+        "final",
+        5,
+      );
+      ui.setFinalSwirlRadius({
+        available: true,
+        radius,
+        min: 0.02,
+        max: 2,
+        fitAvailable: true,
+      });
+    });
+    const input = document.getElementById(
+      "finalSwirlRadiusSliderNumber",
+    ) as HTMLInputElement;
+    input.focus();
+    input.value = "0.03";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(document.activeElement).toBe(input);
+    expect(input.isConnected).toBe(true);
+    expect(handlers.onFinalSwirlRadius).toHaveBeenCalledExactlyOnceWith(0.03);
+    expect(handlers.onTransformCommit).toHaveBeenCalledExactlyOnceWith("final");
+    expect(editorSlider("Scale X").value).toBe("0.03");
+    expect(editorSlider("Scale W").value).toBe("0.03");
+  });
+
+  it("keeps an unavailable authored swirl radius disabled with its adjacent reason", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(swirlTetrahedronLens(), "final", 4);
+    ui.setFinalSwirlRadius({
+      available: false,
+      reason: "Use Swirl without another active variation.",
+    });
+    expect(editorSlider("Swirl radius").disabled).toBe(true);
+    expect(
+      (
+        document.getElementById(
+          "finalSwirlRadiusSliderNumber",
+        ) as HTMLInputElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      document.getElementById("finalSwirlRadiusNote")!.textContent,
+    ).toContain("without another active variation");
+  });
 });
 
 describe("Ui variation editor", () => {
@@ -6398,6 +6485,133 @@ describe("Ui 4D group", () => {
     // (0.2 + 0.5 + 0.8) / 3 = 0.5
     expect(editorSlider("Scale W").value).toBe("0.5");
     expect(editorReadout("Scale W").textContent).toBe("0.50 (auto)");
+  });
+
+  it.each([
+    { auto: 0.03, refused: 0.04, accepted: 0.05, arrow: "ArrowUp" },
+    { auto: 1.8, refused: 1.7, accepted: 1.5, arrow: "ArrowDown" },
+  ])(
+    "keeps automatic W=$auto sparse through refused edits and permits an explicit endpoint",
+    ({ auto, refused, accepted, arrow }) => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.renderTransformEditor(
+        {
+          ...flat,
+          scale: [auto, auto, auto],
+          w: { rotation: { xw: 0.23 } },
+          variations: [{ type: "swirl", weight: 3 }],
+        },
+        "final",
+        1,
+      );
+      const slider = editorSlider("Scale W");
+      const number = document.querySelector<HTMLInputElement>(
+        '[aria-label="Scale W exact value"]',
+      )!;
+      const mirror = mirrorButton("Mirror Scale W");
+      const note = document.getElementById("transformScaleWNote")!;
+      expect(number.value).toBe(auto.toFixed(2));
+      expect(number.disabled).toBe(false);
+      expect(slider.disabled).toBe(false);
+      expect(mirror.disabled).toBe(true);
+      expect(note.textContent).toContain("0.05 to 1.50");
+      expect(note.textContent).toContain("automatic");
+      for (const control of [slider, number, mirror]) {
+        expect(control.getAttribute("aria-describedby")).toContain(note.id);
+      }
+      mirror.click();
+      number.focus();
+      number.value = String(refused);
+      number.dispatchEvent(new Event("change", { bubbles: true }));
+      expect(document.activeElement).toBe(number);
+      expect(number.isConnected).toBe(true);
+      expect(number.value).toBe(auto.toFixed(2));
+      expect(editorReadout("Scale W").textContent).toBe(
+        `${auto.toFixed(2)} (auto)`,
+      );
+      expect(note.textContent).toContain("Scale W was not changed");
+
+      slider.value = String(refused);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      slider.dispatchEvent(new Event("change", { bubbles: true }));
+      number.dispatchEvent(
+        new KeyboardEvent("keydown", { key: arrow, bubbles: true }),
+      );
+      number.dispatchEvent(
+        new KeyboardEvent("keyup", { key: arrow, bubbles: true }),
+      );
+      expect(number.value).toBe(auto.toFixed(2));
+      expect(handlers.onFinalTransformGeometry).not.toHaveBeenCalled();
+      expect(handlers.onTransformCommit).not.toHaveBeenCalled();
+
+      // An unrelated edit exposes the retained working copy, not just the
+      // displayed refusal. No rejected W scale may ride that next mutation.
+      const position = editorSlider("Position X");
+      position.value = "0.1";
+      position.dispatchEvent(new Event("input", { bubbles: true }));
+      const unchanged = vi.mocked(handlers.onFinalTransformGeometry).mock
+        .calls[0][0];
+      expect(unchanged.w).toEqual({ rotation: { xw: 0.23 } });
+      expect(unchanged.scale).toEqual([auto, auto, auto]);
+      vi.mocked(handlers.onFinalTransformGeometry).mockClear();
+
+      number.value = String(accepted);
+      number.dispatchEvent(new Event("change", { bubbles: true }));
+      expect(document.activeElement).toBe(number);
+      expect(handlers.onFinalTransformGeometry).toHaveBeenCalledOnce();
+      const explicit = vi.mocked(handlers.onFinalTransformGeometry).mock
+        .calls[0][0];
+      expect(explicit.w).toEqual({ rotation: { xw: 0.23 }, scale: accepted });
+      expect(number.value).toBe(accepted.toFixed(2));
+      expect(mirror.disabled).toBe(false);
+      expect(note.textContent).toBe("");
+      mirror.click();
+      const mirrored = vi.mocked(handlers.onFinalTransformGeometry).mock
+        .calls[1][0];
+      expect(mirrored.w).toEqual({ rotation: { xw: 0.23 }, scale: -accepted });
+    },
+  );
+
+  it("refreshes automatic W materialization availability after radius, XYZ and undo updates", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(flat, "final", 1);
+    const mirror = mirrorButton("Mirror Scale W");
+    expect(mirror.disabled).toBe(false);
+
+    ui.renderTransformEditor(
+      { ...flat, scale: [0.03, 0.03, 0.03] },
+      "final",
+      1,
+    );
+    expect(mirrorButton("Mirror Scale W")).toBe(mirror);
+    expect(mirror.disabled).toBe(true);
+    expect(editorReadout("Scale W").textContent).toBe("0.03 (auto)");
+
+    const scaleX = editorSlider("Scale X");
+    scaleX.value = "0.15";
+    scaleX.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(mirror.disabled).toBe(false);
+    expect(editorReadout("Scale W").textContent).toBe("0.07 (auto)");
+    expect(document.getElementById("transformScaleWNote")!.textContent).toBe(
+      "",
+    );
+
+    ui.renderTransformEditor(
+      { ...flat, scale: [0.03, 0.03, 0.03] },
+      "final",
+      1,
+    );
+    expect(mirror.disabled).toBe(true);
+    expect(
+      document.getElementById("transformScaleWNote")!.textContent,
+    ).toContain("To mirror W");
+    ui.renderTransformEditor({ ...flat, w: { scale: -0.6 } }, "final", 1);
+    expect(mirror.disabled).toBe(false);
+    expect(mirror.getAttribute("aria-pressed")).toBe("true");
+    expect(editorReadout("Scale W").textContent).toBe("-0.60");
   });
 
   it("drops the auto marker and reports the explicit value once Scale W moves", () => {
