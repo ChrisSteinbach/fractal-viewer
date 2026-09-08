@@ -238,6 +238,69 @@ full-gate execution**, not a measured speedup for all 32 scenarios. It provides
 no basis to replace the successful hosted topology. Browser isolation would
 need a separate measured trial before promoting this substrate.
 
+The 2026-09-08 investigation repeated the original launch on the same Radeon
+and Mesa stack, bundled Chromium revision 1234 (Chrome 151), with the original
+runner from `026f2b2`. Fresh-browser `variation-zoo` passed in **35.876s of
+browser lifetime**; the original full, single-browser run passed **all 32
+scenarios (19 3D, 13 4D) and ss=1 in 575.675s of browser lifetime**, exiting
+normally with code 0 and no signal. These times run from Playwright's browser
+launch to process exit, including screenshots, and exclude dev-server startup
+and the runner's remaining startup timer. Each returned scenario name was
+checked against the source roster and every comparison/downsample verdict
+was true. This did not reproduce the historical exit and does not identify
+its cause. The original journal adds only the Chromium scope finishing, with
+no crash, OOM or driver report in the surrounding interval.
+
+Startup diagnostics did reveal a separate launch defect: setting `DISPLAY`
+alone still selected Wayland on this desktop, and Chromium reported
+`'--ozone-platform=wayland' is not compatible with Vulkan`. That warning
+occurred in both successful original-launch repeats, so it is **not evidence
+that Wayland caused the historical exit**. `--display` now explicitly passes
+`--ozone-platform=x11`, matching its documented contract. WebGPU still must
+identify `amd rdna-3`; a successful X connection alone does not certify the
+compute adapter.
+
+The first foreground X11 shard attempt was interrupted by an unexpected
+top-level navigation to Google after five completed scenarios. Neither the
+benchmark nor its runner requests that navigation. That attempt is not counted
+as agreement evidence and does not establish why the historical browser closed.
+It exposed two further runner problems: a replacement page could erase the
+partial snapshot, and the wait would continue on that unrelated page. The wait
+now refuses a changed URL, diagnostics record top-level navigation, and an
+empty replacement page cannot overwrite the last benchmark sample.
+
+Hardware runs now create an unfocused, minimized window by default; explicit
+`--headed` keeps it visible. `--start-minimized` alone was ineffective because
+Playwright creates a new target, and its viewport initialization restores the
+window. A minimized/background CDP target with no Playwright viewport, followed
+by direct emulation of the same 3040×1000 viewport, keeps it minimized. This was
+checked both through CDP and the live window's `_NET_WM_STATE_HIDDEN` after
+progress screenshots. This removes the automated run's interference with
+desktop keyboard focus without switching to a software GPU or changing the
+agreement workload.
+
+The minimized X11 repeat used four sequential fresh browsers, `--shard=1/4`
+through `4/4`, with diagnostics enabled and no concurrent test suite. **All
+four exited 0 normally, with no page crash or unexpected browser disconnect.**
+The eight returned names in each shard matched `applyScenarioShard` over the
+source roster; their exact union was all **32 scenarios, 19 3D and 13 4D**, with
+every comparison, display-downsample and all four ss=1 checks passing on
+`amd rdna-3`. The experiment establishes a completed isolated union on this
+host, not a reproducible explanation for the old exit or a replacement for
+the hosted CI topology.
+
+Minimization exposed a capture cost: about 85 seconds after the first shard's
+agreement finished went into per-element screenshots. Clipping rendered
+document rectangles still cost about 75 seconds on the fourth shard. The
+final runner therefore serializes the completed **2D canvas bitmaps** directly
+for minimized runs; `page.png` retains the surrounding page and CSS borders.
+Headless and explicit `--headed` element captures stay unchanged. This changes
+artifact capture, not the equal-N workload or any agreement threshold.
+The final capture path passed `sierpinski` and `chi-kaleido-4d` together with
+ss=1, produced six 960×540 PNGs, and closed normally about two seconds after
+agreement completed. Both CPU bitmaps matched the original screenshot
+interiors pixel for pixel after removing their CSS borders.
+
 Keep public PR execution on disposable hosted runners. GitHub explicitly
 [warns against persistent self-hosted runners for public PRs](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners):
 untrusted code can compromise their environment. A dedicated ephemeral GPU
@@ -265,6 +328,51 @@ of their original partitions, not predictions for this matrix.
 Local requalification passed 7,207 tests across 176 files, full lint and the
 production build; 80 targeted planner, workflow, browser-partition and wait
 tests include the roster-growth regression.
+
+### Browser exit diagnostics
+
+Use a separate output directory for each attempt:
+
+```sh
+mkdir -p scripts/out/flame-browser-exit
+export XAUTHORITY=$(ls -t /run/user/$(id -u)/.mutter-Xwaylandauth.* | head -1)
+export DISPLAY=:0
+glxinfo -B | rg 'OpenGL renderer'
+DEBUG=pw:browser npm run bench:gpu -- --chrome=bundled --display=:0 \
+  --duration=1 --diagnostics --out=scripts/out/flame-browser-exit/full \
+  > scripts/out/flame-browser-exit/full.log 2>&1
+```
+
+Add `--scenarios=variation-zoo` for a fresh-browser single-scenario check, or
+run every `--shard=i/n` sequentially
+with separate output paths for an isolated union. Verify the returned names
+against the page's roster, every comparison and downsample verdict, and each
+shard's ss=1 check; successful process exits alone do not establish coverage.
+
+`--diagnostics` uses a loopback-only Playwright browser server to access its
+child process. `browser-events.jsonl` records the actual command, browser
+version, PID, progress, page crashes, disconnects, runner errors and process
+exit code/signal. Deliberate teardown is marked separately. `browser-stderr.log`
+captures stderr after attachment. For startup stderr, repeat without
+`--diagnostics` using `DEBUG=pw:browser`; Playwright's server launch does not
+stream those initial messages. No GPU work or second browser is added by
+diagnostics.
+
+`partial-results.json` is an atomic replacement of the last successful sample,
+normally once per second. It carries the active scenario/phase, completed rows
+and the page's `done` latch; it can lag a crash and never substitutes for a
+completed gate. Final `results.json` is now written before screenshots, so an
+image-capture failure cannot erase completed numeric evidence. Reusing an
+output directory clears the prior final result before launch. Browser loss
+preserves its actual exception; only Playwright's `TimeoutError` is described
+as an elapsed deadline. Neither local rolling deadlines nor CI's total shard
+cap changes.
+
+`node scripts/gpu-bench-diagnostics.verify.mjs` exercises actual Chromium
+`Page.crash`, browser SIGKILL and navigation away. Its synthetic completed row
+tests artifact survival and failure attribution, not GPU agreement. Outputs
+live under
+`scripts/out/gpu-bench-diagnostics/`.
 
 ## Earlier partition evidence
 
