@@ -28,7 +28,7 @@
  * so a loose L may thicken details even if it never exhausts; the qualified
  * leg explicitly compensates that tolerance.
  *
- * Final policy: G=1+rho²+rho*sqrt(rho²+2) bounds ALL inverse queries against
+ * Original policy: G=1+rho²+rho*sqrt(rho²+2) bounds ALL inverse queries against
  * a set in ball(rho). Divide both certified distance and the whole primary
  * hit epsilon by G. This restores the ordinary raw acceptance shell and
  * composes through post-affines and Balloon without a query-domain cap.
@@ -52,11 +52,26 @@
  * Fixed-geometry gate: SWIRL_QUALIFY=1 and -t 'qualifies fixed'. Defaults
  * to the production cap, 128-pixel controls and 512-pixel final references.
  * Writes: scripts/out/swirl-lens.png and swirl-qualified-*.png.
+ * Paired echo gate: SWIRL_MARCH_QUALIFY=1 and -t 'qualifies paired stride'.
+ * TETRA, PENTA-TILT and TESS-TILT at rho=0.5, 128/256/512 pixels, plain
+ * and a visible R=0.35 Balloon echo. Each camera, slice, ball and raw query
+ * is fixed across paired/matched-raw/fine panels; both echo and primary
+ * hits must activate. The 600-step reference counts every step and gates
+ * the actual maximum strictly below the existing 160-step budget.
+ * Writes: scripts/out/swirl-march-*.png and per-panel .bin measurements.
  */
 import { toTransform4 } from "../src/fractal/affine4";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { serialize, deserialize } from "node:v8";
+import {
+  BALLOON_FAR_CAP_RHO,
+  buildBalloon,
+  buildBalloon4,
+  estimateBalloonDistanceSample,
+  estimateBalloonDistance4Sample,
+  invertBalloon,
+} from "../src/fractal/balloon-de";
 import { runChaosGame } from "../src/fractal/chaos-game";
 import { runChaosGame4 } from "../src/fractal/chaos-game-4d";
 import {
@@ -69,10 +84,12 @@ import { mulberry32 } from "../src/fractal/rng";
 import {
   buildSurfaceDE,
   estimateDistanceRefined,
+  estimateDistanceRefinedSample,
 } from "../src/fractal/surface-de";
 import {
   buildSurfaceDE4,
   estimateDistance4Refined,
+  estimateDistance4RefinedSample,
 } from "../src/fractal/surface-de-4d";
 import type { Transform, Vec3, Vec4 } from "../src/fractal/types";
 import {
@@ -1075,6 +1092,213 @@ describe("swirl final lens qualification", () => {
                   ),
                 ).toBeLessThan(MAX_STEPS);
             }
+          }
+        }
+      }
+    },
+  );
+  it.skipIf(process.env.SWIRL_MARCH_QUALIFY !== "1")(
+    "qualifies paired stride on fixed thin-slice geometry",
+    () => {
+      const names = (
+        process.env.SWIRL_FIXTURES ?? "TETRA,PENTA-TILT,TESS-TILT"
+      ).split(",");
+      const sizes = (process.env.SWIRL_MARCH_SIZES ?? "128,256,512")
+        .split(",")
+        .map(Number);
+      const outDir = join(import.meta.dirname, "out");
+      mkdirSync(outDir, { recursive: true });
+      for (const fixture of FIXTURES.filter((f) => names.includes(f.name))) {
+        const raw3 =
+          fixture.dimension === 3 ? buildSurfaceDE(fixture.transforms) : null;
+        const raw4 =
+          fixture.dimension === 4 ? buildSurfaceDE4(fixture.transforms) : null;
+        const radius = raw3
+          ? raw3.boundingRadius + Math.hypot(...raw3.boundCenter)
+          : raw4!.boundingRadius;
+        const rho = SWIRL_LENS_MAX_RADIUS * (1 - 1e-12);
+        const k = rho / radius;
+        const final: Transform = {
+          id: 99,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [k, k, k],
+          variations: [{ type: "swirl", weight: 1 / k }],
+          ...(fixture.dimension === 4 ? { w: { scale: k } } : {}),
+        };
+        const de3 = raw3 ? buildSurfaceDE(fixture.transforms, final) : null;
+        const de4 = raw4 ? buildSurfaceDE4(fixture.transforms, final) : null;
+        const de = de3 ?? de4!;
+        const G = de.foldFinal!.swirlLipschitz!;
+        const affineFactor = de.foldFinal!.absW * de.foldFinal!.sigmaMin;
+        const query = (p: Vec3) =>
+          slicePoint(p, fixture.angle, radius * fixture.sliceFraction);
+        const lensSample = (p: Vec3, cutoff = 0) => {
+          const q = query(p);
+          const sample = de3
+            ? estimateDistanceRefinedSample(de3, [q[0], q[1], q[2]], cutoff)
+            : estimateDistance4RefinedSample(de4!, q, cutoff);
+          return sample;
+        };
+        const rawAcceptance = (p: Vec3) => {
+          const q = query(p);
+          const u = q.map((x) => x * k) as Vec4;
+          const v = inverseSwirl4(u).map((x) => x / k) as Vec4;
+          const raw = raw3
+            ? estimateDistanceRefined(raw3, [v[0], v[1], v[2]])
+            : estimateDistance4Refined(raw4!, v);
+          return Math.max(
+            affineFactor * raw,
+            G * (Math.hypot(...q) - de.visibleBoundingRadius),
+          );
+        };
+        for (const echo of [false, true]) {
+          const b = de3 ? buildBalloon(de3, 0.35) : buildBalloon4(de4!, 0.35);
+          const label = fixture.name + (echo ? "-BALLOON" : "-PLAIN");
+          const productionSample = (p: Vec3, cutoff = 0) => {
+            if (!echo) {
+              const sample = lensSample(p, cutoff);
+              return { d: sample.d, stride: sample.d, shell: false };
+            }
+            return de3
+              ? estimateBalloonDistanceSample(
+                  (_de, q, cut = 0) => lensSample(q, cut),
+                  de3,
+                  b,
+                  p,
+                  cutoff,
+                )
+              : estimateBalloonDistance4Sample(
+                  (_de, q, cut = 0) => lensSample([q[0], q[1], q[2]], cut),
+                  de4!,
+                  b,
+                  p,
+                  0,
+                  cutoff,
+                );
+          };
+          // The shared renderer keeps epsilon in ordinary pixel units.
+          const paired = (p: Vec3, epsilon = 0) => {
+            const sample = productionSample(p, epsilon / G);
+            return { d: sample.d * G, stride: sample.stride };
+          };
+          const unionRawAcceptance = (p: Vec3) => {
+            if (!echo) return rawAcceptance(p);
+            const r = Math.max(Math.hypot(...p), 1e-12 * b.rho);
+            return Math.min(
+              rawAcceptance(p),
+              (r / b.rho) * rawAcceptance(invertBalloon(b, p)),
+            );
+          };
+          // Hold the camera on the original thin slice while admitting the
+          // echo out to the far-cap radius. Starting inside a MARCH ball is
+          // intentional here; it is not an enclosing solid.
+          const marchRadius = echo ? BALLOON_FAR_CAP_RHO * b.rho : radius;
+          const common = {
+            de: (p: Vec3) => paired(p).d,
+            boundingRadius: marchRadius,
+            eyeOffset: [1.55, 1.1, 1.8].map(
+              (x) => (x * radius) / marchRadius,
+            ) as Vec3,
+            stepScale: 1,
+            maxSteps: 600,
+            minimumStepFraction: 0,
+            ao: false,
+            shadow: false,
+            fog: false,
+            collect: true,
+          };
+          const panels: PanelStats[] = [];
+          for (const size of sizes) {
+            const stats = renderPreview({ ...common, march: paired }, size);
+            writeFileSync(
+              join(outDir, `swirl-march-${label}-${size}.bin`),
+              serialize(stats),
+            );
+            panels.push(stats);
+            console.log(
+              JSON.stringify({
+                pairedStride: label,
+                ...compareFixedGeometry(stats, stats),
+                ms: stats.ms,
+              }),
+            );
+          }
+          const control = renderPreview(
+            {
+              ...common,
+              march: (p, epsilon) => ({
+                d: unionRawAcceptance(p),
+                stride: paired(p, epsilon).stride,
+              }),
+            },
+            sizes[0],
+          );
+          const coarse = panels[0];
+          const fine = panels.at(-1)!;
+          const gaps = joinedControlGaps(coarse, control);
+          console.log(
+            JSON.stringify({
+              pairedAcceptance: label,
+              ...compareFixedGeometry(coarse, control),
+              ...gaps,
+            }),
+          );
+          console.log(
+            JSON.stringify({
+              pairedFineReference: label,
+              ...compareFixedGeometry(coarse, fine),
+              ...fineSupportToCoarse(coarse, fine),
+            }),
+          );
+          let shellHits = 0;
+          for (let i = 0; i < coarse.status!.length; i++) {
+            if (
+              coarse.status![i] === 1 &&
+              productionSample([
+                coarse.hitPos![3 * i],
+                coarse.hitPos![3 * i + 1],
+                coarse.hitPos![3 * i + 2],
+              ]).shell
+            )
+              shellHits++;
+          }
+          console.log(
+            JSON.stringify({
+              pairedAttribution: label,
+              shellHits,
+              fractalHits: coarse.hits - shellHits,
+            }),
+          );
+          console.log(
+            writeLabeledContactSheet(
+              [coarse, control, fine].map((stats, index) => ({
+                stats: downsamplePanel(stats, sizes[0]),
+                lines: [
+                  `${label} RHO=0.5`,
+                  `${["PAIRED", "MATCHED RAW", "FINE"][index]} ${stats.width}`,
+                ] as const,
+              })),
+              3,
+              `swirl-march-${label}.png`,
+            ),
+          );
+          expect(coarse.status).toEqual(control.status);
+          expect(coarse.hits).toBeGreaterThan(0);
+          if (echo) {
+            expect(shellHits).toBeGreaterThan(0);
+            expect(coarse.hits - shellHits).toBeGreaterThan(0);
+          }
+          expect(gaps.joinedGaps).toBe(0);
+          for (const stats of panels) {
+            expect(stats.exhausted).toBe(0);
+            if (stats.width <= 512)
+              expect(
+                stats.stepCount!.reduce(
+                  (maximum, value) => Math.max(maximum, value),
+                  0,
+                ),
+              ).toBeLessThan(MAX_STEPS);
           }
         }
       }

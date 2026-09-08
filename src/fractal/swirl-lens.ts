@@ -10,6 +10,17 @@ export const SURFACE_LENS_SWIRL = 4;
  * slightly larger, preserving the certificate through GPU upload. */
 export const SWIRL_LENS_MAX_RADIUS = 0.5;
 
+/** Relative cushion for the query-dependent f32 certificate's elementary
+ * operations. Shared with both shader dialects; the stored, independently
+ * certified global coefficient remains the ceiling and fallback. */
+export const SWIRL_MARCH_LIPSCHITZ_MARGIN = 1 + 2 ** -20;
+
+/** Width, in inner-cutoff units, of the Balloon echo's transition back
+ * toward the global-G stride near a hit. It changes travel only. The
+ * quarter-width qualifies both ray agreement and the default-radius budget;
+ * wider transitions and undamped travel are recorded in the module doc. */
+export const SWIRL_BALLOON_STRIDE_TRANSITION = 0.25;
+
 /** Origin bound of the PRE-SWIRL affine image of the raw estimator ball.
  * The 3D caller supplies its fitted center; the origin-centered 4D ball
  * omits it. Final variation weight and post-affine act after swirl, so
@@ -149,8 +160,8 @@ export function inverseSwirlInto(
 /** The spike's query-dependent inverse-Lipschitz certificate between the
  * query and EVERY point of a set enclosed in the origin ball `rho`, in
  * 3D or 4D. Kept for the qualification's rejected-strategy comparison;
- * production uses {@link swirlGlobalInverseLipschitz} so the same constant
- * compensates distance and hit acceptance through outer unions.
+ * production acceptance uses {@link swirlGlobalInverseLipschitz}. The
+ * separate march certificate below also reuses these segment/chord bounds.
  *
  * The derivative is a rotated rank-one shear of magnitude
  * 2|p_xy||p| <= 2r². Its norm on a radius-r ball is sqrt(1+r⁴)+r²;
@@ -167,5 +178,30 @@ export function swirlInverseLipschitz(
   return Math.min(
     Math.sqrt(1 + radiusSquared * radiusSquared) + radiusSquared,
     1 + rho * (queryRadius + rho),
+  );
+}
+
+/** Certified inverse bound used ONLY for stride. Acceptance retains G.
+ * In addition to the segment and chord certificates above, saturated
+ * rotation gives |S⁻¹(u)-S⁻¹(y)| <= |u-y|+2rho. When |u|>rho,
+ * |u-y|>=|u|-rho therefore certifies 1+2rho/(|u|-rho). This tends to
+ * one for the remote inverse queries produced by Balloon. Each bound
+ * holds against every point of the source ball, so their minimum remains
+ * sound. G bounds every query and is retained for nonfinite arithmetic.
+ * The radius is measured after un-post/un-weight, before inverse swirl,
+ * and includes every coordinate in both dimensions. */
+export function swirlMarchInverseLipschitz(
+  queryRadius: number,
+  rho: number,
+  globalLipschitz: number,
+): number {
+  if (rho === 0) return 1;
+  if (!Number.isFinite(queryRadius) || queryRadius < 0) return globalLipschitz;
+  const saturated =
+    queryRadius > rho ? 1 + (2 * rho) / (queryRadius - rho) : globalLipschitz;
+  return Math.min(
+    globalLipschitz,
+    Math.min(swirlInverseLipschitz(queryRadius, rho), saturated) *
+      SWIRL_MARCH_LIPSCHITZ_MARGIN,
   );
 }

@@ -130,35 +130,36 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   },
 };
 
-/** Lens variants gain the qualified swirl branch; all other source baselines
+/** Lens variants gain separate certified strides and global-G acceptance;
+ * all other source baselines
  * remain unchanged, including the 3D forward arms and every 4D classic arm. */
 const SWIRL_LENS_SOURCE_HASHES: Record<
   string,
   { resolved: string; emitted: string }
 > = {
   "3D lens finish0": {
-    resolved: "0cd93acc6ece55c7",
-    emitted: "521a3f587403ded7",
+    resolved: "5c7160a3f854e2dd",
+    emitted: "45e816f5d716e715",
   },
   "3D lens+balloon finish0": {
-    resolved: "3c80e3b0aea62f93",
-    emitted: "4e16a76cacacced0",
+    resolved: "a84284a9d531b96c",
+    emitted: "fd2a95a8e60cb460",
   },
   "3D lens+plane finish0": {
-    resolved: "75b2c65059f5a643",
-    emitted: "9bb33fe56b914d29",
+    resolved: "e96787236933926c",
+    emitted: "e65fb82e3cfaed66",
   },
   "3D lens finish1": {
-    resolved: "62518b639cc75c1b",
-    emitted: "b7396767fcf63114",
+    resolved: "d4ed0986c311ae5c",
+    emitted: "caa88ce115f9a009",
   },
   "3D lens+balloon finish1": {
-    resolved: "5d5f865baeb71d1e",
-    emitted: "a5c6d1a73c73df74",
+    resolved: "988fa8ee0cd8d9f1",
+    emitted: "b2074895bd911552",
   },
   "3D lens+plane finish1": {
-    resolved: "4f993cb03526d042",
-    emitted: "b9df2f0537713da3",
+    resolved: "04ee48da7dc96dac",
+    emitted: "b4384f62f0af62ac",
   },
 };
 
@@ -2546,17 +2547,17 @@ describe("SURFACE_BALLOON variant", () => {
     // re-established at the lens wrapper head, and #undef'd once more
     // where the balloon wrapper takes the public name.
     expect(
-      countOccurrences(surfaceFragmentFor(0, 0, 1), "#undef surfaceDE"),
+      countOccurrences(surfaceFragmentFor(0, 0, 1), "#undef surfaceDE\n"),
     ).toBe(1);
     expect(
-      countOccurrences(surfaceFragmentFor(1, 0, 1), "#undef surfaceDE"),
+      countOccurrences(surfaceFragmentFor(1, 0, 1), "#undef surfaceDE\n"),
     ).toBe(1);
     expect(
-      countOccurrences(surfaceFragmentFor(0, 1, 1), "#undef surfaceDE"),
+      countOccurrences(surfaceFragmentFor(0, 1, 1), "#undef surfaceDE\n"),
     ).toBe(3);
     // Without the balloon the lens keeps its single shipped #undef.
     expect(
-      countOccurrences(surfaceFragmentFor(0, 1, 0), "#undef surfaceDE"),
+      countOccurrences(surfaceFragmentFor(0, 1, 0), "#undef surfaceDE\n"),
     ).toBe(1);
     // The core rename survives the balloon exactly once.
     expect(
@@ -5069,7 +5070,7 @@ describe("qualified swirl final lens fragment mirror", () => {
       1,
     );
     expect(src).toContain(swirlLensShaderSource("glsl", 3));
-    expect(src.match(/vec3 pre = swirlLensInverse\(u\);/g)).toHaveLength(2);
+    expect(src.match(/vec3 pre = swirlLensInverse\(u\);/g)).toHaveLength(3);
     expect(src).toContain("patternFoldLensSource = q;");
     expect(src.match(/eps \*= lensEpsScale;/g)).toHaveLength(2);
     expect(src).toContain("int(uLensParams.x) == 4 ? 1.0 / uLensRadii.y : 1.0");
@@ -5094,5 +5095,33 @@ describe("qualified swirl final lens fragment mirror", () => {
     ).toEqual([0.5, 1, 1, 1]);
     expect(material.fragmentShader).not.toContain("swirlLensInverse");
     material.dispose();
+  });
+
+  it("uses one raw descent for distinct stride and acceptance through both balloon terms", () => {
+    const source = surfaceFragmentResolvedFor(0, 1, 1);
+    const start = source.indexOf("vec2 surfaceDEMarch(vec3 p, float cutoff)");
+    const sample = source.slice(
+      start,
+      source.indexOf("float surfaceDE(vec3 p)", start),
+    );
+    expect(sample.match(/surfaceDECore\(q, innerCutoff\)/g)).toHaveLength(1);
+    expect(sample).toContain(
+      "cutoff > 0.0 && visBound < cutoff ? cutoff / factor : 0.0",
+    );
+    expect(sample).toContain(
+      "if (acceptance < cutoff) return vec2(acceptance);",
+    );
+    expect(sample).toContain(
+      "swirlMarchInverseLipschitz(length(u), uLensRadii.x, uLensRadii.y)",
+    );
+    expect(source).toContain(
+      "vec2 fractal = surfaceDEMarchFractal(p, cutoff);",
+    );
+    expect(source).toContain(
+      "vec2 inner = surfaceDEMarchFractal(q, innerCutoff);",
+    );
+    expect(source).toContain("return min(shell, vec2(fractal.y));");
+    expect(source).toContain("float d = marchSample.y;");
+    expect(source).toContain("t += marchSample.x * uStepScale;");
   });
 });

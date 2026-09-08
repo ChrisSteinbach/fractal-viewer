@@ -22,7 +22,14 @@ checks from the fixed-geometry fidelity and production-browser gates.
 `marchUnprojectSwirl` additionally pins eight primary-ray rows (four cores,
 plain and Balloon), and `computeFrameSwirl` runs four small patterned Balloon
 frames to execute hit-info, source coordinates and shade probes. Balloon eval
-rows require both union terms to win. Every real-driver production frame must
+rows require both union terms to win. Eight additional `stride:balloon(...)`
+eval rows cover all four swirl cores at radii 0.35 and 1.6 through the same
+scalar readback and existing comparator. They compare the paired CPU stride,
+including the echo's empty-ball certificate, against the WGSL stride; their
+activation check compares against the primary global-G stride actually used
+by the union. Normal scalar eval and hit-info continue to use global-G
+acceptance. The march rows additionally exercise the echo's near-hit
+transition with a nonzero cutoff. Every real-driver production frame must
 finish with hits and misses, no exhausted or active rays, and the existing CPU
 sanity tolerance; an empty slice cannot pass merely by matching background.
 

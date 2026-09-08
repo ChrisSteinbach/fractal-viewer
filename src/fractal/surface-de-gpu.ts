@@ -41,7 +41,9 @@ import {
   type SurfaceDE,
 } from "./surface-de";
 import { swirlLensShaderSource } from "./swirl-lens-shader";
+import { inversionDistanceShaderSource } from "./inversion";
 import {
+  SWIRL_BALLOON_STRIDE_TRANSITION,
   validatedSwirlLensRadius,
   validatedSwirlLensLipschitz,
 } from "./swirl-lens";
@@ -259,7 +261,10 @@ import type { Vec3 } from "./types";
  *
  * Lens-only kind 4 adds qualified swirl to this same wrapper in both
  * dimensions: one exact inverse, then one untouched core evaluation scaled
- * by the certified global inverse-Lipschitz bound. The existing lens tag at
+ * by the certified global inverse-Lipschitz bound for acceptance. Balloon
+ * marches carry a separate certified echo stride, combining the local swirl
+ * certificate and inversion of the core's empty ball; the primary fractal
+ * retains its established stride. The existing lens tag at
  * 256/544 stores 4; the unused fold lengths at 272/560 store its pre-swirl
  * radius in x, the CPU-certified global denominator G in y, zero in z,
  * and the post sigma in w. No offset moves. Primary hit acceptance divides
@@ -1532,6 +1537,11 @@ export const SURFACE_GPU_FRONTIER_ARRAYS = 14;
 export interface SurfaceGpuKernelOptions {
   /** Which entry point (and binding interface) to generate. */
   mode: "eval" | "march" | "shade";
+  /** Eval diagnostic: return the certified march stride instead of the
+   * legacy acceptance distance. Uses the same scalar result buffer and
+   * cutoff contract; ordinary eval and all shading keep their old values.
+   * Inert outside eval mode. */
+  evalStride?: boolean;
   /** Which CORE BODY to emit (module doc). "fold" (the default, and
    * every config predating the second core, byte-identical source) is the
    * width-`width` fold frontier mirroring `estimateDistance`; "affine" is
@@ -3768,6 +3778,10 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // lens (hit-info bodies + probe composition) landed with the
   // fold-lens port's stage C.
   const lens = opts.lens ?? false;
+  const marchSample =
+    lens &&
+    ((mode === "march" && !!opts.balloon) ||
+      (mode === "eval" && !!opts.evalStride));
   const lensPost = opts.lensPost ?? false;
   if (lensPost && !lens) {
     throw new Error(
@@ -7540,7 +7554,7 @@ fn evalQueries(
   if (i >= params.itemCount) {
     return;
   }
-  results[i] = surfaceDE(queries[i].xyz, params.cutoff, li);
+  results[i] = ${marchSample ? "surfaceDEMarch(queries[i].xyz, params.cutoff, li).x" : "surfaceDE(queries[i].xyz, params.cutoff, li)"};
 }`
       : mode === "march"
         ? `
@@ -7601,7 +7615,12 @@ ${
       break;
     }
     let eps = max(params.pixelEps * t, params.hitFloorEps)${lens ? " * lensEpsScale" : ""};
-    let d = surfaceDE(ro + rd * t, eps, li);
+${
+  marchSample
+    ? `    let sample = surfaceDEMarch(ro + rd * t, eps, li);
+    let d = sample.y;`
+    : "    let d = surfaceDE(ro + rd * t, eps, li);"
+}
     // Persist the last evaluation for diagnostics, INCLUDING the terminal
     // HIT sample. Shade never reads this lane.
     st.w = d;
@@ -7610,7 +7629,7 @@ ${
       st.y = ${SURFACE_GPU_RAY_HIT}.0;
       break;
     }
-    t += d * params.stepScale;
+    t += ${marchSample ? "sample.x" : "d"} * params.stepScale;
   }
   st.x = t;
   st.z = f32(steps);
@@ -12157,9 +12176,91 @@ ${tilingProbeWrapText}`
       : finiteTiledBodyBlock
     : bodyBlock;
 
+  // A march sample carries (certified stride, legacy acceptance distance).
+  // Reuse the scalar lens's inverse prologue and ONE core evaluation, then
+  // transport the two quantities separately through every outer min/max.
+  // Scalar evals, shading probes and hit-info attribution retain global G.
+  const lensScalarName = balloon
+    ? "surfaceDEFractal"
+    : tiling
+      ? "surfaceDETilingCore"
+      : "surfaceDE";
+  const lensSampleArgs =
+    core4 && tiling
+      ? `pFolded${slabExt ? ", pFoldedExt" : ""}, cutoff, li`
+      : "pIn, cutoff, li";
+  const lensParamsName = core4 ? "lens4Params" : "lensParams";
+  const lensFoldName = core4 ? "lens4Fold" : "lensFold";
+  const sampleLensPrefix = (core4 ? lens4WrapText : lensWrapText)
+    .split("  let fr = foldRadiiOf(")[0]
+    .replace("fn surfaceDE(", "fn surfaceDEMarchLens(")
+    .replace(
+      ") -> f32 {",
+      `) -> vec2f {
+  if (params.${lensParamsName}.x != ${SURFACE_LENS_SWIRL}.0) {
+    return vec2f(${lensScalarName}(${lensSampleArgs}));
+  }`,
+    )
+    .replace(
+      "let innerCutoff = cutoff / factor;",
+      "let innerCutoff = select(0.0, cutoff / factor, cutoff > 0.0 && visBound < cutoff);",
+    )
+    .replace(
+      /return max\(factor \* (surfaceDECore\([^\n]+\)), visBound\);/,
+      `let raw = $1;
+    let d = max(factor * raw, visBound);
+    let localL = swirlMarchInverseLipschitz(length(u), params.${lensFoldName}.x, params.${lensFoldName}.y);
+    let stride = max((absW * params.${lensParamsName}.w / localL) * raw, visBound);
+    // Below cutoff the raw descent may be inexact. No step is taken on
+    // an accepted sample; a later rejecting clip floor must dominate both
+    // components, so use the legacy value on that early-return path.
+    return vec2f(select(stride, d, cutoff > 0.0 && d < cutoff), d);`,
+    );
+  const sampleLensText = `${sampleLensPrefix}  return vec2f(${lensScalarName}(${lensSampleArgs}));
+}`;
+  const sampleOuterText = balloon
+    ? `fn surfaceDEMarch(pIn: vec3f, cutoff: f32, li: u32) -> vec2f {
+  let fractal = surfaceDEMarchLens(pIn, cutoff, li);
+  let inv = balloonInvert(pIn);
+  let innerCutoff = select(0.0, cutoff / inv.w, cutoff > 0.0);
+  let inner = surfaceDEMarchLens(inv.xyz, innerCutoff, li);
+  var shell = inv.w * inner;
+  let radius = length(pIn - params.balloonCenter);
+  if (params.${lensParamsName}.x == ${SURFACE_LENS_SWIRL}.0 &&
+      (innerCutoff <= 0.0 || inner.y >= innerCutoff) && radius >= 1.0e-6 * params.balloonRho) {
+    shell.x = max(shell.x, inversionDistanceLowerBound(radius, params.balloonR * params.balloonR, inner.x));
+  }
+  if (innerCutoff > 0.0 && inner.y < ${1 + SWIRL_BALLOON_STRIDE_TRANSITION} * innerCutoff) {
+    let blend = max(0.0, ${(1 / SWIRL_BALLOON_STRIDE_TRANSITION).toFixed(1)} * (inner.y / innerCutoff - 1.0));
+    shell.x = shell.y + blend * (shell.x - shell.y);
+  }
+  return min(vec2f(fractal.y), shell);
+}`
+    : tiling
+      ? (latticeTiling ? latticeDeWrapText : tilingDeWrapText)
+          .replace("fn surfaceDE(", "fn surfaceDEMarch(")
+          .replace(") -> f32 {", ") -> vec2f {")
+          .replaceAll("return 0.0;", "return vec2f(0.0);")
+          .replace(
+            "return 2.0 * params.tilingPresentationR;",
+            "return vec2f(2.0 * params.tilingPresentationR);",
+          )
+          .replace("surfaceDETilingCore(", "surfaceDEMarchLens(")
+          .replace(
+            `max(inner, length(folded) - ${latticeRadiusExpr})`,
+            `max(inner, vec2f(length(folded) - ${latticeRadiusExpr}))`,
+          )
+          .replace(
+            /max\((inner|bounded), (tilingClipSdf\([^\n]+\))\)/,
+            "max($1, vec2f($2))",
+          )
+      : `fn surfaceDEMarch(pIn: vec3f, cutoff: f32, li: u32) -> vec2f {
+  return surfaceDEMarchLens(pIn, cutoff, li);
+}`;
+
   return /* wgsl */ `${headerText}${tilingFoldText}${latticeCarrierText}${tilingClipText}${scheduleHelperText}${chaosHelperText}
 
-${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}
+${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}${marchSample ? `\n${balloon ? inversionDistanceShaderSource("wgsl") : ""}\n${sampleLensText}\n${sampleOuterText}` : ""}
 ${entry}
 `;
 }

@@ -59,6 +59,8 @@ import {
   buildBalloon4,
   estimateBalloonDistance,
   estimateBalloonDistance4,
+  estimateBalloonDistanceSample,
+  estimateBalloonDistance4Sample,
   invertBalloon,
 } from "../../fractal/balloon-de";
 import type { Balloon } from "../../fractal/balloon-de";
@@ -143,16 +145,23 @@ import {
   deHasFolds,
   estimateDistance,
   estimateDistanceRefined,
+  estimateDistanceSample,
+  estimateDistanceRefinedSample,
   SURFACE_FOLD_BEAM_WIDTH,
   SYM_PLANE_CODE,
 } from "../../fractal/surface-de";
-import type { SurfaceDE } from "../../fractal/surface-de";
+import type {
+  SurfaceDE,
+  SurfaceDistanceSample,
+} from "../../fractal/surface-de";
 import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
   deHasFolds4,
   estimateDistance4,
   estimateDistance4Refined,
+  estimateDistance4Sample,
+  estimateDistance4RefinedSample,
 } from "../../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../../fractal/surface-de-4d";
 import { surfaceSwirlAcceptanceScale } from "../../fractal/swirl-lens";
@@ -5309,6 +5318,16 @@ function estimateSurface4Composed(
   refined = true,
   cutoff = 0,
 ): number {
+  const { p, ext } = surface4ComposedQuery(view4, q);
+  return refined
+    ? estimateDistance4Refined(de, p, cutoff, ext)
+    : estimateDistance4(de, p, ext);
+}
+
+function surface4ComposedQuery(
+  view4: SurfaceGpu4View,
+  q: Vec3,
+): { p: Vec4; ext: Vec4 | null } {
   const rot = view4.rotor;
   const p: Vec4 = [0, 0, 0, 0];
   for (let i = 0; i < 4; i++) {
@@ -5327,9 +5346,7 @@ function estimateSurface4Composed(
       rot[15] * view4.sliceHalfW,
     ];
   }
-  return refined
-    ? estimateDistance4Refined(de, p, cutoff, ext)
-    : estimateDistance4(de, p, ext);
+  return { p, ext };
 }
 
 /**
@@ -6261,6 +6278,27 @@ function surfaceMarchEstimate(
     : estimateDistanceRefined(de3, p, eps);
 }
 
+/** Paired CPU oracle for the production march, with the same view lift,
+ * core choice and cutoff as scalar acceptance evals. */
+function surfaceMarchSample(
+  de: SurfaceDE | SurfaceDE4,
+  p: Vec3,
+  eps: number,
+  view4: SurfaceGpu4View | null = null,
+): SurfaceDistanceSample {
+  if (view4) {
+    const de4 = de as SurfaceDE4;
+    const query = surface4ComposedQuery(view4, p);
+    return deHasFolds4(de4)
+      ? estimateDistance4Sample(de4, query.p, query.ext)
+      : estimateDistance4RefinedSample(de4, query.p, eps, query.ext);
+  }
+  const de3 = de as SurfaceDE;
+  return deHasFolds(de3)
+    ? estimateDistanceSample(de3, p, eps)
+    : estimateDistanceRefinedSample(de3, p, eps);
+}
+
 /** The march emulators' balloon arm: the oracle ball in
  * `buildBalloon`'s convention plus the march far cap — present exactly
  * when a leg marches a `balloon: true` kernel. */
@@ -6298,6 +6336,33 @@ function surfaceBalloonMarchEstimate(
     p,
     eps,
   ).d;
+}
+
+function surfaceBalloonMarchSample(
+  de: SurfaceDE | SurfaceDE4,
+  balloon: SurfaceCpuBalloon,
+  p: Vec3,
+  eps: number,
+  view4: SurfaceGpu4View | null = null,
+): SurfaceDistanceSample {
+  if (view4) {
+    return estimateBalloonDistance4Sample(
+      (d, q, cutoff = 0) =>
+        surfaceMarchSample(d, [q[0], q[1], q[2]], cutoff, view4),
+      de as SurfaceDE4,
+      balloon.b,
+      p,
+      view4.w0,
+      eps,
+    );
+  }
+  return estimateBalloonDistanceSample(
+    (d, q, cutoff = 0) => surfaceMarchSample(d, q, cutoff),
+    de as SurfaceDE,
+    balloon.b,
+    p,
+    eps,
+  );
 }
 
 function surfaceCpuMarch(
@@ -6466,12 +6531,12 @@ function surfaceCpuMarchState(
       surfaceSwirlAcceptanceScale(de) *
       Math.max(pixelEps * t, de.boundingRadius * SURFACE_GPU_HIT_FLOOR);
     const p: Vec3 = [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t];
-    const d = balloon
-      ? surfaceBalloonMarchEstimate(de, balloon, p, eps, view4)
-      : surfaceMarchEstimate(de, p, eps, view4);
+    const { d, stride } = balloon
+      ? surfaceBalloonMarchSample(de, balloon, p, eps, view4)
+      : surfaceMarchSample(de, p, eps, view4);
     steps++;
     if (d < eps) return { status: SURFACE_GPU_RAY_HIT, t };
-    t += d * de.stepScale;
+    t += (balloon ? stride : d) * de.stepScale;
   }
 }
 
@@ -6519,16 +6584,16 @@ function surfaceCpuMarchApproach(
       surfaceSwirlAcceptanceScale(de) *
       Math.max(pixelEps * t, de.boundingRadius * SURFACE_GPU_HIT_FLOOR);
     const p: Vec3 = [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t];
-    const d = balloon
-      ? surfaceBalloonMarchEstimate(de, balloon, p, eps, view4)
-      : surfaceMarchEstimate(de, p, eps, view4);
+    const { d, stride } = balloon
+      ? surfaceBalloonMarchSample(de, balloon, p, eps, view4)
+      : surfaceMarchSample(de, p, eps, view4);
     const ratio = d / eps;
     if (ratio < minRatio) {
       minRatio = ratio;
       tAtMin = t;
     }
     if (d < eps) break;
-    t += d * de.stepScale;
+    t += (balloon ? stride : d) * de.stepScale;
   }
   return { minRatio, tAtMin };
 }
@@ -7050,6 +7115,7 @@ async function runSurfaceSwirlBalloonEvalLeg(
   sys: SurfaceMarchSystem,
   wg: number,
   rMult: number,
+  evalStride = false,
 ): Promise<SurfaceAgreementRow> {
   const core = surfaceMarchCore(sys);
   const cfg: SurfaceKernelConfig = {
@@ -7064,6 +7130,7 @@ async function runSurfaceSwirlBalloonEvalLeg(
   };
   const code = surfaceDeKernelWgsl({
     mode: "eval",
+    evalStride,
     core,
     lens: true,
     lensPost: true,
@@ -7127,13 +7194,15 @@ async function runSurfaceSwirlBalloonEvalLeg(
     );
     const view4 = "view4" in sys ? sys.view4 : null;
     const estimateAt = (q: Vec3): number =>
-      surfaceBalloonMarchEstimate(sys.de, balloon, q, 0, view4);
+      evalStride
+        ? surfaceBalloonMarchSample(sys.de, balloon, q, 0, view4).stride
+        : surfaceBalloonMarchEstimate(sys.de, balloon, q, 0, view4);
     const cpu = queries.map(estimateAt);
     const shellQueries = cpu.filter(
       (value, index) =>
         value < surfaceMarchEstimate(sys.de, queries[index], 0, view4),
     ).length;
-    const name = `balloon(${sys.name})@R${String(rMult)}`;
+    const name = `${evalStride ? "stride:" : ""}balloon(${sys.name})@R${String(rMult)}`;
     if ("view4" in sys) {
       const R = surface4ToleranceR(sys.de);
       const stable = cpu.map((value, i) =>
@@ -14645,7 +14714,12 @@ async function runSurfaceDeSection(
     }
 
     for (const sys of swirlSystems) {
-      for (const rMult of [0.35, 1.6]) {
+      for (const [rMult, evalStride] of [
+        [0.35, false],
+        [1.6, false],
+        [0.35, true],
+        [1.6, true],
+      ] as const) {
         status(`agreement: swirl Balloon × ${sys.name}…`);
         activity.setState("gpu", `Swirl Balloon agreement — ${sys.name}`);
         try {
@@ -14655,6 +14729,7 @@ async function runSurfaceDeSection(
             sys,
             surfaceWgFor(config, "private"),
             rMult,
+            evalStride,
           );
           results.agreement.push(row);
           results.notes.push(

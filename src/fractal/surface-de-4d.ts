@@ -29,6 +29,7 @@ import {
   pureSwirlFinal,
   SURFACE_LENS_SWIRL,
   swirlGlobalInverseLipschitz,
+  swirlMarchInverseLipschitz,
   swirlPreRadius,
   swirlRadiusRefusal,
 } from "./swirl-lens";
@@ -38,6 +39,7 @@ import {
   calibrateSurfaceNativeCarriers,
 } from "./surface-pattern";
 import type { SurfaceNativeCalibration } from "./surface-pattern";
+import type { SurfaceDistanceSample } from "./surface-de";
 import {
   CONFORMAL_RATIO,
   CONTRACTION_LIMIT,
@@ -2799,6 +2801,27 @@ export function estimateDistance4(
   return descend4(de, p, halfExtent);
 }
 
+/** Paired primary-query twin of 3D's `estimateDistanceSample`. The plain
+ * 4D entry has no cutoff, matching {@link estimateDistance4}. Nonzero slab
+ * queries retain the public scalar refusal before a swirl is evaluated. */
+export function estimateDistance4Sample(
+  de: SurfaceDE4,
+  p: Vec4,
+  halfExtent: Vec4 | null = null,
+): SurfaceDistanceSample {
+  if (de.foldFinal?.foldKind === SURFACE_LENS_SWIRL) {
+    if (halfExtent && isSegment(halfExtent)) {
+      // Reuse the public refusal and its exact diagnostic.
+      estimateDistance4(de, p, halfExtent);
+    }
+    const sample = { d: 0, stride: 0 };
+    sample.d = descendLens4(de, p, false, 0, halfExtent, sample);
+    return sample;
+  }
+  const d = estimateDistance4(de, p, halfExtent);
+  return { d, stride: d };
+}
+
 function scheduledCondensationTerm4(
   de: SurfaceDE4,
   depth: number,
@@ -3632,6 +3655,26 @@ export function estimateDistance4Refined(
   if (de.foldFinal) return descendLens4(de, p, true, cutoff, halfExtent);
   if (deHasFolds4(de)) return descendFold4(de, p, true, cutoff, halfExtent);
   return descend4Refined(de, p, cutoff, halfExtent);
+}
+
+/** Refined primary-query pair, preserving {@link estimateDistance4Refined}
+ * acceptance, the complete epsilon/G cutoff and every slab refusal. */
+export function estimateDistance4RefinedSample(
+  de: SurfaceDE4,
+  p: Vec4,
+  cutoff = 0,
+  halfExtent: Vec4 | null = null,
+): SurfaceDistanceSample {
+  if (de.foldFinal?.foldKind === SURFACE_LENS_SWIRL) {
+    if (halfExtent && isSegment(halfExtent)) {
+      estimateDistance4Refined(de, p, cutoff, halfExtent);
+    }
+    const sample = { d: 0, stride: 0 };
+    sample.d = descendLens4(de, p, true, cutoff, halfExtent, sample);
+    return sample;
+  }
+  const d = estimateDistance4Refined(de, p, cutoff, halfExtent);
+  return { d, stride: d };
 }
 
 function descend4Refined(
@@ -6028,6 +6071,7 @@ function descendLens4(
   refine: boolean,
   cutoff: number,
   halfExtent: Vec4 | null,
+  sample?: SurfaceDistanceSample,
 ): number {
   const lens = de.foldFinal!;
   const R = de.boundingRadius;
@@ -6088,14 +6132,28 @@ function descendLens4(
       im[8] * vx + im[9] * vy + im[10] * vz + im[11] * vw + it[2];
     LENS_QUERY4[3] =
       im[12] * vx + im[13] * vy + im[14] * vz + im[15] * vw + it[3];
-    const factor = (absW * sigmaMinM) / lens.swirlLipschitz!;
-    const innerCutoff = cutoff > 0 ? cutoff / factor : 0;
+    const affineFactor = absW * sigmaMinM;
+    const factor = affineFactor / lens.swirlLipschitz!;
+    const innerCutoff =
+      cutoff > 0 && (!sample || visBound < cutoff) ? cutoff / factor : 0;
     const inner = hasFolds
       ? descendFold4(de, LENS_QUERY4, refine, innerCutoff, null)
       : refine
         ? descend4Refined(de, LENS_QUERY4, innerCutoff, null)
         : descend4(de, LENS_QUERY4, null);
-    return Math.max(visBound, factor * inner);
+    const d = Math.max(visBound, factor * inner);
+    if (sample) {
+      const lipschitz = swirlMarchInverseLipschitz(
+        Math.sqrt(ux * ux + uy * uy + uz * uz + uw * uw),
+        lens.swirlRadius!,
+        lens.swirlLipschitz!,
+      );
+      sample.stride =
+        cutoff > 0 && d < cutoff
+          ? d
+          : Math.max(visBound, (affineFactor / lipschitz) * inner);
+    }
+    return d;
   }
   // u-space is a SCALAR multiple of world space, so a slab query's
   // half-extent scales with the point and stays a segment.

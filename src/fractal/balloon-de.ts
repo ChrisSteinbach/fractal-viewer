@@ -125,9 +125,14 @@
  * exceed the full-tier budget — the animation transits it; rest is what
  * persists, and it is clean.
  */
-import type { SurfaceDE } from "./surface-de";
+import type { SurfaceDE, SurfaceDistanceSample } from "./surface-de";
 import type { SurfaceDE4 } from "./surface-de-4d";
 import type { Vec3, Vec4 } from "./types";
+import { inversionDistanceLowerBound } from "./inversion";
+import {
+  SURFACE_LENS_SWIRL,
+  SWIRL_BALLOON_STRIDE_TRANSITION,
+} from "./swirl-lens";
 
 /** Provenance margin multiplied onto the DE ball's radius before it
  * becomes the shell bound's divisor `rho` (module doc: measured ~4%
@@ -193,6 +198,13 @@ export interface BalloonDistance {
   shell: boolean;
 }
 
+/** March stride and acceptance take independent union minima: their
+ * winning terms need not agree. Shell attribution remains the strict
+ * acceptance argmin used by the established scalar/hit-info wrappers. */
+export interface BalloonDistanceSample extends BalloonDistance {
+  stride: number;
+}
+
 /** The public-estimator shape the wrapper composes over
  * (`estimateDistance` / `estimateDistanceRefined`). */
 export type BalloonEstimator = (
@@ -201,6 +213,13 @@ export type BalloonEstimator = (
   cutoff?: number,
   footprint?: number,
 ) => number;
+
+export type BalloonSampleEstimator = (
+  de: SurfaceDE,
+  p: Vec3,
+  cutoff?: number,
+  footprint?: number,
+) => SurfaceDistanceSample;
 
 /** The ball the wrapper certifies against — the DE's own, RAW
  * (unmargined): lens systems (either final shape) descend to the
@@ -274,6 +293,62 @@ export function estimateBalloonDistance(
     : { d: dFractal, shell: false };
 }
 
+/** Paired march form of {@link estimateBalloonDistance}. Each term is
+ * evaluated once. The primary fractal keeps its established stride d;
+ * the echo uses its certified local stride and inverted empty-ball bound.
+ * A single epsilon multiplied by the union's stride/acceptance ratio
+ * would instead mix different inverse queries and alter its hit set. */
+export function estimateBalloonDistanceSample(
+  fn: BalloonSampleEstimator,
+  de: SurfaceDE,
+  b: Balloon,
+  p: Vec3,
+  cutoff = 0,
+  footprint = 0,
+): BalloonDistanceSample {
+  const fractal = fn(de, p, cutoff, footprint);
+  const dx = p[0] - b.center[0];
+  const dy = p[1] - b.center[1];
+  const dz = p[2] - b.center[2];
+  const r = Math.max(Math.hypot(dx, dy, dz), BALLOON_CENTER_FLOOR * b.rho);
+  const scale = r / b.rho;
+  const innerCutoff = cutoff > 0 ? cutoff / scale : 0;
+  const innerFootprint =
+    footprint > 0 ? (footprint * (b.R * b.R)) / (r * r) : 0;
+  const echo = fn(de, invertBalloon(b, p), innerCutoff, innerFootprint);
+  const dShell = scale * echo.d;
+  let shellStride =
+    de.foldFinal?.foldKind === SURFACE_LENS_SWIRL &&
+    Math.hypot(dx, dy, dz) >= BALLOON_CENTER_FLOOR * b.rho &&
+    (innerCutoff <= 0 || echo.d >= innerCutoff)
+      ? Math.max(
+          scale * echo.stride,
+          inversionDistanceLowerBound(
+            Math.hypot(dx, dy, dz),
+            b.R * b.R,
+            echo.stride,
+          ),
+        )
+      : scale * echo.stride;
+  // A convex blend of certified bounds preserves conservative travel,
+  // while shrinking extra advance continuously at the acceptance boundary.
+  if (
+    innerCutoff > 0 &&
+    echo.d < (1 + SWIRL_BALLOON_STRIDE_TRANSITION) * innerCutoff
+  ) {
+    const blend = Math.max(
+      0,
+      (1 / SWIRL_BALLOON_STRIDE_TRANSITION) * (echo.d / innerCutoff - 1),
+    );
+    shellStride = dShell + blend * (shellStride - dShell);
+  }
+  return {
+    d: Math.min(fractal.d, dShell),
+    stride: Math.min(fractal.d, shellStride),
+    shell: dShell < fractal.d,
+  };
+}
+
 /* ------------------------------------------------------------------ *
  * The 4D lift, and the whole of it is a SEMANTIC decision
  * plus a ball choice — no new algebra.
@@ -324,6 +399,13 @@ export type BalloonEstimator4 = (
   cutoff?: number,
   halfExtent?: Vec4 | null,
 ) => number;
+
+export type BalloonSampleEstimator4 = (
+  de: SurfaceDE4,
+  p: Vec4,
+  cutoff?: number,
+  halfExtent?: Vec4 | null,
+) => SurfaceDistanceSample;
 
 /** {@link balloonBall}'s 4D twin — the origin and the FULL 4D visible
  * radius, PROJECTED to the marched 3D space (see the section note above
@@ -383,4 +465,58 @@ export function estimateBalloonDistance4(
   return dShell < dFractal
     ? { d: dShell, shell: true }
     : { d: dFractal, shell: false };
+}
+
+/** {@link estimateBalloonDistanceSample}'s slice-then-invert twin. The
+ * inverse is three-dimensional, w and the slab extent pass unchanged,
+ * and the callback owns the rotor exactly as in the scalar wrapper. */
+export function estimateBalloonDistance4Sample(
+  fn: BalloonSampleEstimator4,
+  de: SurfaceDE4,
+  b: Balloon,
+  p: Vec3,
+  w0: number,
+  cutoff = 0,
+  halfExtent: Vec4 | null = null,
+): BalloonDistanceSample {
+  const at = (q: Vec3): Vec4 => [q[0], q[1], q[2], w0];
+  const fractal = fn(de, at(p), cutoff, halfExtent);
+  const dx = p[0] - b.center[0];
+  const dy = p[1] - b.center[1];
+  const dz = p[2] - b.center[2];
+  const r = Math.max(Math.hypot(dx, dy, dz), BALLOON_CENTER_FLOOR * b.rho);
+  const scale = r / b.rho;
+  const innerCutoff = cutoff > 0 ? cutoff / scale : 0;
+  const echo = fn(de, at(invertBalloon(b, p)), innerCutoff, halfExtent);
+  const dShell = scale * echo.d;
+  let shellStride =
+    de.foldFinal?.foldKind === SURFACE_LENS_SWIRL &&
+    Math.hypot(dx, dy, dz) >= BALLOON_CENTER_FLOOR * b.rho &&
+    (innerCutoff <= 0 || echo.d >= innerCutoff)
+      ? Math.max(
+          scale * echo.stride,
+          inversionDistanceLowerBound(
+            Math.hypot(dx, dy, dz),
+            b.R * b.R,
+            echo.stride,
+          ),
+        )
+      : scale * echo.stride;
+  // A convex blend of certified bounds preserves conservative travel,
+  // while shrinking extra advance continuously at the acceptance boundary.
+  if (
+    innerCutoff > 0 &&
+    echo.d < (1 + SWIRL_BALLOON_STRIDE_TRANSITION) * innerCutoff
+  ) {
+    const blend = Math.max(
+      0,
+      (1 / SWIRL_BALLOON_STRIDE_TRANSITION) * (echo.d / innerCutoff - 1),
+    );
+    shellStride = dShell + blend * (shellStride - dShell);
+  }
+  return {
+    d: Math.min(fractal.d, dShell),
+    stride: Math.min(fractal.d, shellStride),
+    shell: dShell < fractal.d,
+  };
 }
