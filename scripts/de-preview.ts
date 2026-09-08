@@ -59,6 +59,12 @@ export type DistanceEstimator = (p: Vec3) => number;
 
 export interface PreviewScene {
   de: DistanceEstimator;
+  /** Optional primary-query pair. Acceptance `d` is compared with the
+   * supplied whole pixel epsilon, and `stride` alone advances the ray.
+   * This lets a certified wrapper keep its hit predicate independent of
+   * its travel bound without creating another renderer. Shade taps still
+   * use `de`; absent means the historical scalar path byte for byte. */
+  march?: (p: Vec3, epsilon: number) => { d: number; stride: number };
   /** The marching ball: rays enter and exit against it, centred on `target`. */
   boundingRadius: number;
   /** What the camera looks at, and the centre of the bounding ball. */
@@ -330,13 +336,18 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
             eye[1] + dir[1] * t,
             eye[2] + dir[2] * t,
           ];
-          const d = scene.de(p);
+          const epsilon = eps * Math.max(t, 1);
+          const sample = scene.march?.(p, epsilon);
+          const d = sample ? sample.d : scene.de(p);
           evals++;
-          if (d < eps * Math.max(t, 1)) {
+          if (d < epsilon) {
             hit = true;
             break;
           }
-          t += Math.max(d * scene.stepScale, eps * minimumStepFraction);
+          t += Math.max(
+            (sample ? sample.stride : d) * scene.stepScale,
+            eps * minimumStepFraction,
+          );
         }
         steps += used;
         const spent = used >= maxSteps && t < tEnd && !hit;

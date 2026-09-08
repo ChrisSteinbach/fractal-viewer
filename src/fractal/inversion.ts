@@ -74,3 +74,35 @@ export function inversionBallScale(
   const denom = dist * dist - radius * radius;
   return denom > 0 ? sphereR2 / denom : 0;
 }
+
+/** Transport an EMPTY distance ball through inversion. If a=I(p),
+ * r=|p-c|, s=|a-c|=R²/r and d<=dist(a,S), then for every y in S:
+ * |p-I(y)|=r|a-y|/|y-c| >= r|a-y|/(s+|a-y|) >= r*d/(s+d).
+ * Unlike the enclosing-set bound r*d/rho, this certificate gets tighter
+ * near source features well inside rho. It affects stride alone. The
+ * small relative margin covers the shader mirror's elementary f32 math.
+ * The caller must supply an exact (not cutoff-shortened) distance. */
+export function inversionDistanceLowerBound(
+  queryRadius: number,
+  sphereR2: number,
+  distance: number,
+): number {
+  return queryRadius > 0 && distance > 0
+    ? (queryRadius * distance) /
+        ((sphereR2 / queryRadius + distance) * (1 + 2 ** -20))
+    : 0;
+}
+
+/** One shader expression for the dimension-independent empty-ball bound. */
+export function inversionDistanceShaderSource(
+  dialect: "glsl" | "wgsl",
+): string {
+  const signature =
+    dialect === "wgsl"
+      ? "fn inversionDistanceLowerBound(queryRadius: f32, sphereR2: f32, distance: f32) -> f32"
+      : "float inversionDistanceLowerBound(float queryRadius, float sphereR2, float distance)";
+  return `${signature} {
+  if (queryRadius <= 0.0 || distance <= 0.0) { return 0.0; }
+  return (queryRadius * distance) / ((sphereR2 / queryRadius + distance) * ${1 + 2 ** -20});
+}`;
+}

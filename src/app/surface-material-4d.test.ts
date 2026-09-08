@@ -2489,7 +2489,7 @@ describe("qualified 4D swirl final lens fragment mirror", () => {
       "float surfaceDESwirlCore(vec4 pIn, float cutoff)",
     );
     expect(source.match(/vec4 q = uInvRotor \* vec4\(p, uW0\);/g)).toHaveLength(
-      2,
+      3,
     );
     expect(source.match(/vec4 q = pIn;/g)).toHaveLength(2);
     expect(source.match(/bool segment = false;/g)).toHaveLength(2);
@@ -2517,11 +2517,56 @@ describe("qualified 4D swirl final lens fragment mirror", () => {
       resolveTiling({ group: "f4" }),
       1,
     );
-    expect(tiled.match(/vec4 q = surfaceTilingQuery4;/g)).toHaveLength(2);
+    expect(tiled.match(/vec4 q = surfaceTilingQuery4;/g)).toHaveLength(3);
     expect(tiled).toContain("surfaceTilingQuery4 = q;");
     expect(
       surface4FragmentFor(0, 0, 1, 1, null, 0, 0, null, 1).length,
     ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+  });
+
+  it("retains point-only acceptance while composing the paired stride through balloon and clips", () => {
+    const source = surface4FragmentResolvedFor(1, 0, 0, 0, null, 0, 0, null, 1);
+    const start = source.indexOf("vec2 surfaceDEMarch(vec3 p, float cutoff)");
+    const sample = source.slice(
+      start,
+      source.indexOf("float surfaceDE(vec3 p)", start),
+    );
+    expect(
+      sample.match(/surfaceDESwirlCore\(rawPoint, innerCutoff\)/g),
+    ).toHaveLength(1);
+    expect(sample).toContain(
+      "cutoff > 0.0 && visBound < cutoff ? cutoff / factor : 0.0",
+    );
+    expect(sample).toContain(
+      "if (acceptance < cutoff) return vec2(acceptance);",
+    );
+    expect(sample).toContain(
+      "swirlMarchInverseLipschitz(length(u), uLensRadius, uLensLipschitz)",
+    );
+    expect(source).toContain(
+      "vec2 fractal = surfaceDEMarchFractal(p, cutoff);",
+    );
+    expect(source).toContain(
+      "vec2 inner = surfaceDEMarchFractal(q, innerCutoff);",
+    );
+    expect(source).toContain("return min(shell, vec2(fractal.y));");
+    expect(source).toContain("float d = marchSample.y;");
+    expect(source).toContain("t += marchSample.x * uStepScale;");
+    const tiled = surface4FragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      null,
+      0,
+      0,
+      resolveTiling({ group: "f4", clip: COND4_SPHERE }),
+      1,
+    );
+    expect(tiled).toContain(
+      "vec2 inner = surfaceDEMarchTilingCore(p, cutoff);",
+    );
+    expect(tiled).toContain("return max(inner, vec2(tilingClipSdf(q.xyz)));");
   });
 
   it("keeps the lens through material, balloon, floor, and system recompilation", () => {

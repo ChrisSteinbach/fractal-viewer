@@ -32,6 +32,7 @@ import {
   pureSwirlFinal,
   SURFACE_LENS_SWIRL,
   swirlGlobalInverseLipschitz,
+  swirlMarchInverseLipschitz,
   swirlPreRadius,
   swirlRadiusRefusal,
 } from "./swirl-lens";
@@ -2993,6 +2994,36 @@ export function estimateDistance(
     : descend(de, p, false, cutoff, footprint);
 }
 
+/** A primary march query separates hit acceptance from certified travel.
+ * `d` preserves the scalar estimator's hit predicate, including its
+ * global-G compensation and floors. On a miss (`d >= cutoff`), `stride`
+ * is a certified result (possibly damped near a Balloon hit); on an early
+ * accepted query it falls back to
+ * `d`, so any later rejecting clip floor dominates both components safely.
+ * Scalar value/probe callers retain their existing estimator unchanged. */
+export interface SurfaceDistanceSample {
+  d: number;
+  stride: number;
+}
+
+/** Paired primary-query form of {@link estimateDistance}. Only a swirl
+ * lens separates the quantities; all other systems retain their scalar
+ * result in both fields. A swirl samples its raw core exactly once. */
+export function estimateDistanceSample(
+  de: SurfaceDE,
+  p: Vec3,
+  cutoff = 0,
+  footprint = 0,
+): SurfaceDistanceSample {
+  if (de.foldFinal?.foldKind === SURFACE_LENS_SWIRL) {
+    const sample = { d: 0, stride: 0 };
+    sample.d = descendLens(de, p, false, cutoff, footprint, sample);
+    return sample;
+  }
+  const d = estimateDistance(de, p, cutoff, footprint);
+  return { d, stride: d };
+}
+
 /** Whether any map expands into fold branches — such systems descend via
  * {@link descendFold}'s wide frontier instead of the affine ladder body
  * (which `beamWidth` parameterizes; the fold frontier has one measured
@@ -3157,6 +3188,23 @@ export function estimateDistanceRefined(
   return deHasFolds(de)
     ? descendFold(de, p, true, cutoff, footprint)
     : descend(de, p, true, cutoff, footprint);
+}
+
+/** {@link estimateDistanceSample} with the refined core used by the
+ * production affine marcher. Cutoff and footprint keep scalar units. */
+export function estimateDistanceRefinedSample(
+  de: SurfaceDE,
+  p: Vec3,
+  cutoff = 0,
+  footprint = 0,
+): SurfaceDistanceSample {
+  if (de.foldFinal?.foldKind === SURFACE_LENS_SWIRL) {
+    const sample = { d: 0, stride: 0 };
+    sample.d = descendLens(de, p, true, cutoff, footprint, sample);
+    return sample;
+  }
+  const d = estimateDistanceRefined(de, p, cutoff, footprint);
+  return { d, stride: d };
 }
 
 /** The descent's return value for a running min: the folded terms' min
@@ -5162,6 +5210,7 @@ function descendLens(
   refine: boolean,
   cutoff = 0,
   footprint = 0,
+  sample?: SurfaceDistanceSample,
 ): number {
   const lens = de.foldFinal!;
   const R = de.boundingRadius;
@@ -5213,7 +5262,11 @@ function descendLens(
     // sigmaMin already includes the separate post-affine minimum.
     const affineFactor = absW * sigmaMinM;
     const factor = affineFactor / lens.swirlLipschitz!;
-    const innerCutoff = cutoff > 0 ? cutoff / factor : 0;
+    // A visible floor that already rejects the hit must not let an early,
+    // inexact raw result become a larger stride after division by L<G.
+    // Scalar calls retain their original cutoff and exact value behavior.
+    const innerCutoff =
+      cutoff > 0 && (!sample || visBound < cutoff) ? cutoff / factor : 0;
     // G compensates stride and acceptance, never the core's chosen LOD.
     // Dividing the footprint by factor would enlarge it by G and silently
     // coarsen the raw geometry under the otherwise compensated hit test.
@@ -5221,7 +5274,19 @@ function descendLens(
     const inner = hasFolds
       ? descendFold(de, LENS_QUERY, refine, innerCutoff, innerFootprint)
       : descend(de, LENS_QUERY, refine, innerCutoff, innerFootprint);
-    return Math.max(visBound, factor * inner);
+    const d = Math.max(visBound, factor * inner);
+    if (sample) {
+      const lipschitz = swirlMarchInverseLipschitz(
+        Math.sqrt(ux * ux + uy * uy + uz * uz),
+        lens.swirlRadius!,
+        lens.swirlLipschitz!,
+      );
+      sample.stride =
+        cutoff > 0 && d < cutoff
+          ? d
+          : Math.max(visBound, (affineFactor / lipschitz) * inner);
+    }
+    return d;
   }
   let best = Infinity;
 

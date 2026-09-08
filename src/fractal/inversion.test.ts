@@ -1,4 +1,4 @@
-import { inversionBallScale } from "./inversion";
+import { inversionBallScale, inversionDistanceLowerBound } from "./inversion";
 import { mulberry32 } from "./rng";
 
 /**
@@ -31,6 +31,43 @@ function ballPoint(rng: () => number, c: number[], r: number): number[] {
       return c.map((x, i) => x + (v[i] / n) * r * Math.cbrt(rng()));
   }
 }
+
+describe("inversionDistanceLowerBound", () => {
+  it("bounds independently inverted singleton distances inside, across and outside the inversion centre", () => {
+    const rng = mulberry32(0xbaa1100);
+    for (const dim of [3, 4]) {
+      for (let i = 0; i < 6000; i++) {
+        const R2 = 10 ** (-2 + 4 * rng());
+        const p = Array.from({ length: dim }, () => rng() - 0.5);
+        const magnitude = 10 ** (-4 + 8 * rng()) / norm(p);
+        for (let axis = 0; axis < dim; axis++) p[axis] *= magnitude;
+        const source = Array.from({ length: dim }, () => 4 * (rng() - 0.5));
+        const preimage = invert(p, R2);
+        const exactInner = norm(source.map((x, axis) => x - preimage[axis]));
+        const image = invert(source, R2);
+        const exactOuter = norm(image.map((x, axis) => x - p[axis]));
+        for (const fraction of [0.01, 0.5, 1]) {
+          const bound = inversionDistanceLowerBound(
+            norm(p),
+            R2,
+            fraction * exactInner,
+          );
+          expect(bound).toBeGreaterThanOrEqual(0);
+          expect(bound).toBeLessThanOrEqual(exactOuter);
+        }
+      }
+    }
+  });
+
+  it("reaches the nearest boundary of the inverted empty region", () => {
+    for (const distance of [0.01, 0.3, 1, 3, 100]) {
+      const p = [2, 0, 0];
+      const source = [0.5 + distance, 0, 0];
+      const exact = norm(invert(source, 1).map((x, axis) => x - p[axis]));
+      expect(inversionDistanceLowerBound(2, 1, distance)).toBeCloseTo(exact, 5);
+    }
+  });
+});
 
 describe("inversionBallScale", () => {
   it("predicts a ball that CONTAINS the image of every point of the source ball, in 3D and in 4D", () => {

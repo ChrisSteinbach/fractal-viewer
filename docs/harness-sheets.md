@@ -954,7 +954,10 @@ at several resolutions and against a control with the raw hit tolerance.
 The admitted path uses a constant all-query inverse bound and divides the
 entire march hit epsilon by that same bound. A strength cap and the
 160-step budget remain explicit; no loose image-wide threshold hides new
-components. Proof, comparisons and reproduction commands:
+components. Its `SWIRL_MARCH_QUALIFY=1` leg adds the production paired echo
+stride at fixed 3D/4D poses, plain and with visible Balloon, at 128/256/512
+pixels. Exact matched-raw masks, echo/primary activation and the unchanged
+160-step limit gate it. Proof, comparisons and reproduction commands:
 [Swirl final transforms in Surface](swirl-surface-lens.md).
 
 ### lattice-tiling

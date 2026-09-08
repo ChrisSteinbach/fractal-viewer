@@ -25,6 +25,189 @@ The CPU source of the shared constants, inverse and radius rule is
 [`src/fractal/swirl-lens.ts`](../src/fractal/swirl-lens.ts). The numerical and
 visual record is [`scripts/swirl-lens.harness.ts`](../scripts/swirl-lens.harness.ts).
 
+## Separate march stride and hit acceptance
+
+March queries have a paired `{stride, d}` form. `d` retains the original global-G
+distance, and the primary cutoff remains `max(pixelSlope*t, numericFloor)/G`.
+Scalar evals, normals, AO and hit-info attribution retain that same original
+distance. A faster stride therefore cannot make a fixed query accept a thicker
+surface or choose a different Balloon material.
+
+Production retains the established global-G stride for the primary fractal,
+including scenes without Balloon. The faster pair is used for the echo's
+inverse query. Applying the local stride to both terms finished the production
+frames but failed the existing CPU/GPU trajectory gate on three 3D rows;
+rounding the CPU inputs or step accumulator to f32 did not fix those failures.
+Those alternatives were rejected, with no tolerance changes. Retaining the
+primary stride and damping extra echo travel near a hit qualifies both the
+existing ray-agreement gate and all four default-radius production cases.
+
+Let `f = sigma_min(post) * abs(weight) * sigma_min(preAffine)`, `u` be the
+un-posted and unweighted query, and `D` the existing raw core result after
+inverse swirl and inverse affine. A lens sample uses:
+
+```
+d      = max(visibleSphereFloor, f*D/G)
+stride = max(visibleSphereFloor, f*D/L)
+```
+
+`L` is the minimum of G and the segment, chord and saturated-rotation
+certificates below, each valid against **every** point of the source ball.
+The last certificate is `1 + 2*rho/(|u|-rho)` when `|u|>rho`; it tends to one
+for remote inverse queries. The smaller bounds carry a relative `2^-20`
+rounding margin, and nonfinite query radii fall back to G. The full radius
+includes z and w; the inverse order and signed weight are unchanged.
+
+Inside the visible ball, `d < epsilon/G` is exactly `f*D < epsilon`.
+Outside it, the unchanged sphere floor can only reject extra queries.
+Positive Balloon scaling and the minimum act independently on each component:
+the acceptance minimum remains the old predicate even when the two query
+certificates differ. Analytic clip and lattice floors act componentwise by
+maximum, so they cannot enlarge it either. The acceptance argmin still owns
+the shell flag; the stride argmin is allowed to differ.
+
+The cutoff contract needs two guards. A visible floor already at or above
+cutoff forces a full raw query: an inexact raw early return must not become
+a longer usable stride. A returned acceptance below cutoff carries
+`stride=d`, because no primary step is taken there. If an outer clip rejects
+that sample, its floor dominates **both** components and is itself the safe
+stride. Each union term still evaluates its raw core once. Pixel footprints
+continue to scale by f, independently of either certificate.
+
+### Transporting the empty ball through Balloon
+
+The local swirl certificate alone did not finish the default-radius 3D
+cases. The second improvement transports the inner estimator's **empty ball**
+through inversion, supplementing Balloon's original enclosing-set bound.
+For `a=I(p)`, `r=|p-c|`, `s=|a-c|=R²/r`, and a full certified inner stride
+`h <= distance(a,S)`, every source point y satisfies:
+
+```
+|p-I(y)| = r*|a-y|/|y-c|
+         >= r*|a-y|/(s+|a-y|)
+         >= r*h/(s+h).
+```
+
+Thus the shell stride is `max(r*h/rho, r*h/(R²/r+h))`, with the same small
+rounding margin on the second certificate. This remains valid when the empty
+ball reaches the inversion centre; it does not assume that its image is a
+bounded ball. `inversionDistanceLowerBound` and its shared GLSL/WGSL expression
+own this dimension-independent arithmetic in `inversion.ts`. The 4D Surface
+wrapper still slices before inversion and therefore uses this same 3D bound.
+The extra certificate is disabled on cutoff-shortened inner hits and in the
+numeric centre-floor region. Acceptance and the original `r*d/rho` term stay
+unchanged. Non-swirl systems retain their existing strides.
+Before taking the stride minimum, the echo transitions continuously back to
+its original stride over the last quarter of an inner cutoff. With inner
+acceptance `dI`, cutoff `cI` and the new shell certificate `sNew`:
+
+```
+a = clamp(4*(dI/cI - 1), 0, 1)       when cI > 0; otherwise 1
+sOld = (r/rho)*dI
+shellStride = sOld + a*(sNew-sOld)
+stride = min(dFractal, shellStride)
+d = min(dFractal, sOld)
+```
+
+This convex combination cannot exceed the certified new bound or fall below
+the old one. It changes travel only; the complete epsilon, cutoff, hit
+predicate and shell attribution remain unchanged. The shared
+`SWIRL_BALLOON_STRIDE_TRANSITION` owns the quarter-width in CPU and shader
+mirrors. No new document field or GPU wire lane is needed.
+
+Undamped echo travel completed the default frames but used 10 hit-corridor
+exceptions where the existing GPU gate permits 7. Keeping half the extra
+advance at the boundary used 15. A transition one full cutoff wide passed ray
+agreement but left 5/2 exhausted 3D compute/WebGL rays; half-width left 1/0.
+Quarter-width passes both gates. Applying even the damped local stride to the
+primary term reintroduced a divergent CPU-hit/GPU-miss ray, so that term keeps
+G. These are stride-policy measurements, not changes to comparison limits.
+
+### Fixed camera and Balloon ball controls
+
+The production-browser baseline was preserved before any renderer edit.
+`surface-swirl-stride-control.verify.mjs` verifies a frozen source tree and
+exactly three diagnostic-only primary-advance substitutions. It replays the
+same production-copied document and checks equal camera, rotor, raw/visible
+bounds, lens coefficients, G, step scale and Balloon centre/rho/R. Multiplying
+only the advance by G is an **unsound counterfactual**, never a candidate or a
+qualification pass. It isolates the stride cost without changing geometry,
+the primary epsilon, cutoff or fixed-query predicate.
+
+AMD Radeon RX 7900 XTX, 960×540, eighth settle pass, default Balloon radius
+1.6; every row has 518,400 rays:
+
+| Scene / engine | Original exhausted | Unsound stride × G | Local swirl only | Qualified echo stride |
+| -------------- | -----------------: | -----------------: | ---------------: | --------------------: |
+| 3D compute     |              2,872 |                  5 |               74 |                     0 |
+| 3D WebGL       |              2,213 |                  4 |               43 |                     0 |
+| 4D compute     |                112 |                  0 |                0 |                     0 |
+| 4D WebGL       |                118 |                  0 |                0 |                     0 |
+
+The local-only column used local certificates on both terms. Keeping G for
+all swirl strides while adding only the empty-ball inversion
+still left 15/5 exhausted 3D compute/WebGL rays. Allowing the smaller swirl
+certificate only outside the source ball left 14/4. Both were rejected.
+The paired echo composition and near-hit transition are needed; the march budget and comparison
+tolerances are unchanged. The production gate now includes these near-cap,
+default-radius fixtures alongside the existing visible early-echo fixtures.
+`--measure` saves the whole failing census and always exits 2; it cannot pass
+the qualification accidentally.
+
+## Paired-stride qualification record
+
+Measured on the AMD Radeon RX 7900 XTX (WebGPU `amd rdna-3`,
+`software=false`; WebGL ANGLE/radeonsi), with the existing comparison limits:
+
+- `npm run bench:surface -- --display=:0 --chrome=bundled --surface-timing=0`
+  passes all 90 gating eval rows among 105 measured rows, including eight new
+  stride eval rows, and all eight swirl app-ray rows. Optional timing sweeps
+  are disabled; every numeric and production-frame gate still runs. The 3D
+  Balloon ray row uses 5 of the existing 7 permitted hit-corridor matches.
+- `node scripts/swirl-glsl.verify.mjs --display=:0` passes 2,800 actual
+  float-target queries through the production 3D/4D materials and packers,
+  with scalar acceptance, paired stride, cutoff and clip-floor comparisons.
+  Both Balloon rows exercise the transition (30/29 queries) as well as hits
+  and misses; all shader/console errors and numeric failures are zero.
+- `node scripts/surface-swirl.verify.mjs --display=:0` passes all 16
+  production captures at 960×540 after eight settle passes: plain scenes,
+  visible early echoes, near-cap default-radius echoes and menu showcases,
+  through both engines. Every capture completes all 518,400 rays with zero
+  exhausted rays; copy/reload, preset-final clearing and slab refusal also
+  pass. The saved same-camera baseline comparison above holds its document,
+  camera and Balloon ball fixed.
+
+The fixed-geometry gate is:
+
+```bash
+SWIRL_MARCH_QUALIFY=1 npx vitest run --config scripts/vitest.harness.config.ts scripts/swirl-lens.harness.ts -t 'qualifies paired stride'
+```
+
+It uses the shared renderer, at pre-swirl radius 0.5, with the original fixed
+camera and tilted zero-thickness slices. The Balloon reference uses radius
+0.35 and a fixed observation ball reaching the far-cap radius, so both the
+primary set and a visible echo participate. Its separate un-divided raw
+predicate uses exactly the same stride, camera, geometry and bounds.
+
+| Fixture          | Plain max steps, 128/256/512 | Balloon max steps, 128/256/512 | Coarse Balloon echo / primary hits |
+| ---------------- | ---------------------------- | ------------------------------ | ---------------------------------- |
+| Tetrahedron      | 60 / 84 / 115                | 68 / 92 / 123                  | 477 / 2,142                        |
+| Tilted pentatope | 67 / 75 / 108                | 76 / 87 / 116                  | 336 / 294                          |
+| Tilted tesseract | 70 / 101 / 132               | 84 / 110 / 141                 | 215 / 1,603                        |
+
+All eighteen panels have zero exhaustion. All six coarse masks equal their
+matched raw-acceptance controls exactly, with zero newly joined control gaps.
+The largest actual step count is 141, below the unchanged 160-step cap; the
+600-step reference allowance only measures exhaustion beyond that cap and
+cannot turn such a row into a pass.
+
+The finer panels also disclose the raw predicate's resolution sensitivity.
+Balloon coarse-to-fine outward maxima are 0.725, 6.769 and 13.158 coarse
+pixels for the three fixtures, respectively. These differences remain visible
+in the contact sheets and carry no relaxed passing threshold. The fixed-query
+proof and exact matched-raw masks establish acceptance equivalence separately.
+Measurements and contact sheets regenerate under `scripts/out/swirl-march-*`.
+
 ## Discoverable presets
 
 **Swirl Tetrahedron** sits beside the Surface showcases in the preset menu;
@@ -152,9 +335,9 @@ inverse under test, and known exact singleton distances. It covers 60,000
 parity. The original run's maximum round-trip residual was `9.75e-15` and
 maximum lower-bound / true-distance ratio was `0.99710`.
 
-## One constant through every wrapper
+## Original global-G policy and retained acceptance
 
-The production certificate is a different, constant bound for every query
+The original certificate, retained for acceptance, is a constant bound for every query
 against a set enclosed in `ball(0,rho)`:
 
 ```
@@ -184,7 +367,9 @@ without the additional shell introduced by the inverse certificate. G
 commutes with the positive scale and minimum in Balloon's two terms, and
 with the minimum over tiling copies. Existing sphere and region floors
 can only make acceptance stricter outside their own bounds. No separate
-per-query hit-distance API or bound on the inversion query is needed.
+per-query hit-distance API or bound on the inversion query was needed for
+that original policy. The paired API above now separates travel to recover
+its compositional march cost, while preserving this acceptance argument.
 
 `swirlGlobalInverseLipschitz` evaluates the formula with a 32-f64-epsilon
 relative margin and rounds **up** to f32. The lens stores that exact f32

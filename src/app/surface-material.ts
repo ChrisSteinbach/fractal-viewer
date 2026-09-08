@@ -34,7 +34,9 @@ import {
   SYM_PLANE_CODE,
 } from "../fractal/surface-de";
 import { swirlLensShaderSource } from "../fractal/swirl-lens-shader";
+import { inversionDistanceShaderSource } from "../fractal/inversion";
 import {
+  SWIRL_BALLOON_STRIDE_TRANSITION,
   validatedSwirlLensRadius,
   validatedSwirlLensLipschitz,
 } from "../fractal/swirl-lens";
@@ -3989,8 +3991,10 @@ ${foldValueFormGlsl(shadeDeWidth)}
   // balloon are surfaceDEFractal (the balloon wrapper past main()'s
   // prologue owns surfaceDE itself), so re-establish the rename.
   #define surfaceDE surfaceDEFractal
+  #define surfaceDEMarch surfaceDEMarchFractal
 #endif
   ${swirlLensShaderSource("glsl", 3)}
+  ${inversionDistanceShaderSource("glsl")}
   /**
    * Pure-fold FINAL lens, mirroring the oracle's descendLens line for
    * line: the visible set is F(A) with F = w*V(M p + t), so each of V's
@@ -4148,6 +4152,32 @@ ${foldValueFormGlsl(shadeDeWidth)}
       }
     }
     return max(best, visBound);
+  }
+
+  // x is the certified stride; y retains the scalar global-G acceptance.
+  // Both derive from ONE raw descent, including each balloon source query.
+  vec2 surfaceDEMarch(vec3 p, float cutoff) {
+    if (int(uLensParams.x) != ${SURFACE_LENS_SWIRL}) {
+      return vec2(surfaceDE(p, cutoff));
+    }
+    float visBound = length(p) - uVisibleRadius;
+#if SURFACE_POST
+    vec3 u = applyLensPost(p) * uLensParams.y;
+#else
+    vec3 u = p * uLensParams.y;
+#endif
+    vec3 pre = swirlLensInverse(u);
+    vec3 q = uLensInvM * pre + uLensInvT;
+    float affineFactor = uLensParams.z * uLensParams.w;
+    float factor = affineFactor / uLensRadii.y;
+    // A rejecting floor needs the exact raw value before recovering a
+    // longer stride. A below-cutoff value alone promises only a hit.
+    float innerCutoff = cutoff > 0.0 && visBound < cutoff ? cutoff / factor : 0.0;
+    float raw = surfaceDECore(q, innerCutoff);
+    float acceptance = max(factor * raw, visBound);
+    if (acceptance < cutoff) return vec2(acceptance);
+    float localLipschitz = swirlMarchInverseLipschitz(length(u), uLensRadii.x, uLensRadii.y);
+    return vec2(max((affineFactor / localLipschitz) * raw, visBound), acceptance);
   }
 
   float surfaceDE(vec3 p) {
@@ -4382,6 +4412,26 @@ ${foldValueFormGlsl(shadeDeWidth)}
       scale * balloonInnerDE(q, cutoff > 0.0 ? cutoff / scale : 0.0);
     return min(dS, dF);
   }
+#if SURFACE_FOLD_LENS
+#undef surfaceDEMarch
+  vec2 surfaceDEMarch(vec3 p, float cutoff) {
+    vec2 fractal = surfaceDEMarchFractal(p, cutoff);
+    float scale;
+    vec3 q = balloonInvert(p, scale);
+    float innerCutoff = cutoff > 0.0 ? cutoff / scale : 0.0;
+    vec2 inner = surfaceDEMarchFractal(q, innerCutoff);
+    vec2 shell = scale * inner;
+    float radius = length(p - uBalloonCenter);
+    if (uLensParams.x == 4.0 && (innerCutoff <= 0.0 || inner.y >= innerCutoff) && radius >= 1.0e-6 * uBalloonRho) {
+      shell.x = max(shell.x, inversionDistanceLowerBound(radius, uBalloonR * uBalloonR, inner.x));
+    }
+    if (innerCutoff > 0.0 && inner.y < ${1 + SWIRL_BALLOON_STRIDE_TRANSITION} * innerCutoff) {
+      float blend = max(0.0, ${(1 / SWIRL_BALLOON_STRIDE_TRANSITION).toFixed(1)} * (inner.y / innerCutoff - 1.0));
+      shell.x = shell.y + blend * (shell.x - shell.y);
+    }
+    return min(shell, vec2(fractal.y));
+  }
+#endif
   // Composes over the variant's own NO-CUTOFF form, never the cutoff form
   // above: fold systems route that form to the width-1 probe, and
   // building on the cutoff form would silently upgrade every normal/AO
@@ -4774,12 +4824,25 @@ ${foldValueFormGlsl(shadeDeWidth)}
       // The per-step cone-footprint depth cap runs CPU-side only — see
       // the note above the descent bodies for the measured Mesa link
       // cliff that keeps it out of this shader.
+#if SURFACE_FOLD_LENS
+      vec2 marchSample = surfaceDEMarch(ro + rd * t, eps);
+      float d = marchSample.y;
+#else
       float d = surfaceDE(ro + rd * t, eps);
+#endif
       if (d < eps) {
         hit = true;
         break;
       }
+#if SURFACE_FOLD_LENS
+#if SURFACE_BALLOON
+      t += marchSample.x * uStepScale;
+#else
       t += d * uStepScale;
+#endif
+#else
+      t += d * uStepScale;
+#endif
     }
     if (!hit) {
       if (t > tFar) {
@@ -6542,6 +6605,33 @@ function resolveVariantArms(
  */
 export const SURFACE_GLSL_STRIP_BYTES = 64 * 1024;
 
+/** Compose a paired march sample through the same tiling intersections as
+ * the scalar estimator. Below-cutoff samples carry acceptance in both
+ * lanes, so a rejecting clip floor also supplies a conservative stride. */
+function tilingMarchSource(
+  fourD: boolean,
+  hasClip: boolean,
+  lattice: boolean,
+): string {
+  const point = fourD ? "vec4" : "vec3";
+  const clip = `tilingClipSdf(q${fourD ? ".xyz" : ""})`;
+  const floor = lattice
+    ? hasClip
+      ? `max(length(q) - uVisibleRadius, ${clip})`
+      : "length(q) - uVisibleRadius"
+    : clip;
+  return `
+${fourD ? "" : "#if SURFACE_FOLD_LENS"}
+vec2 surfaceDEMarch(vec3 p, float cutoff) {
+  ${point} q;
+  if (!surfaceTilingFold(p, q)) return vec2(0.0);
+${fourD ? "  surfaceTilingQuery4 = q;\n" : ""}  vec2 inner = surfaceDEMarchTilingCore(${fourD ? "p" : "q"}, cutoff);
+  ${hasClip || lattice ? `return max(inner, vec2(${floor}));` : "return inner;"}
+}
+${fourD ? "" : "#endif"}
+`;
+}
+
 /**
  * Compile-gate the finite tiling wrapper around one tracer source. This is
  * deliberately a SOURCE transform rather than another conditional threaded
@@ -6567,9 +6657,10 @@ function withTilingGlsl(
   tiling: ResolvedTiling,
   fourD: boolean,
   trap: ShapeSpec | null,
+  hasMarchPair: boolean,
 ): string {
   if (isResolvedLatticeTiling(tiling)) {
-    return withLatticeTilingGlsl(source, tiling, fourD, trap);
+    return withLatticeTilingGlsl(source, tiling, fourD, trap, hasMarchPair);
   }
   const expectedDim = fourD ? 4 : 3;
   const canonicalInfo = TILING_GROUP_INFO[tiling.group];
@@ -6597,16 +6688,18 @@ function withTilingGlsl(
   const split = marker.index + 1;
   let core = source
     .slice(0, split)
-    .replace(/\bsurfaceDE\b/g, "surfaceDETilingCore");
+    .replace(/\bsurfaceDE\b/g, "surfaceDETilingCore")
+    .replace(/\bsurfaceDEMarch\b/g, "surfaceDEMarchTilingCore");
   if (fourD) {
     let replaced = 0;
     core = core.replace(/vec4 q = uInvRotor \* vec4\(p, uW0\);/g, () => {
       replaced++;
       return "vec4 q = surfaceTilingQuery4;";
     });
-    if (replaced !== 2) {
+    const expectedPrologues = hasMarchPair ? 3 : 2;
+    if (replaced !== expectedPrologues) {
       throw new Error(
-        `surface-material: expected two 4D tiling query prologues, found ${replaced}`,
+        `surface-material: expected ${expectedPrologues} 4D tiling query prologues, found ${replaced}`,
       );
     }
     // A fragment shader has no implicit float precision. Keep Three's
@@ -6748,7 +6841,10 @@ ${fourD ? "  surfaceTilingQuery4 = q;\n" : ""}  float inner = surfaceDETilingCor
   ${clipTerm}
 }
 `;
-  return `${core}${wrapper}${rest}`;
+  const marchWrapper = hasMarchPair
+    ? tilingMarchSource(fourD, tiling.clip !== undefined, false)
+    : "";
+  return `${core}${wrapper}${marchWrapper}${rest}`;
 }
 
 /** Compile the mirrored affine-A1 lattice as a distinct source arm. The
@@ -6762,6 +6858,7 @@ function withLatticeTilingGlsl(
   tiling: ResolvedLatticeTiling,
   fourD: boolean,
   trap: ShapeSpec | null,
+  hasMarchPair: boolean,
 ): string {
   if (!isCanonicalResolvedLatticeTiling(tiling)) {
     throw new RangeError(
@@ -6787,16 +6884,18 @@ function withLatticeTilingGlsl(
   const split = marker.index + 1;
   let core = source
     .slice(0, split)
-    .replace(/\bsurfaceDE\b/g, "surfaceDETilingCore");
+    .replace(/\bsurfaceDE\b/g, "surfaceDETilingCore")
+    .replace(/\bsurfaceDEMarch\b/g, "surfaceDEMarchTilingCore");
   if (fourD) {
     let replaced = 0;
     core = core.replace(/vec4 q = uInvRotor \* vec4\(p, uW0\);/g, () => {
       replaced++;
       return "vec4 q = surfaceTilingQuery4;";
     });
-    if (replaced !== 2) {
+    const expectedPrologues = hasMarchPair ? 3 : 2;
+    if (replaced !== expectedPrologues) {
       throw new Error(
-        `surface-material: expected two 4D tiling query prologues, found ${replaced}`,
+        `surface-material: expected ${expectedPrologues} 4D tiling query prologues, found ${replaced}`,
       );
     }
     const precision = "precision highp float;";
@@ -7120,7 +7219,10 @@ ${alphaComment}`,
       // lattice: the taps run unconditionally and the guarded probe
       // DE reads any out-of-carrier tap as open space.`,
   );
-  return `${core}${wrapper}${rest}`;
+  const marchWrapper = hasMarchPair
+    ? tilingMarchSource(fourD, tiling.clip !== undefined, true)
+    : "";
+  return `${core}${wrapper}${marchWrapper}${rest}`;
 }
 
 /**
@@ -7221,7 +7323,13 @@ export function surfaceFragmentResolvedFor(
   const resolvedTrapGeometry =
     trap !== null && escape !== 0 && trapGeometry !== 0 ? 1 : 0;
   const gatedSource = tiling
-    ? withTilingGlsl(source, tiling, condensation4, trap)
+    ? withTilingGlsl(
+        source,
+        tiling,
+        condensation4,
+        trap,
+        condensation4 ? source.includes("vec2 surfaceDEMarch(") : lens !== 0,
+      )
     : source;
   const resolved = resolveVariantArms(gatedSource, {
     SURFACE_ESCAPE: escape,

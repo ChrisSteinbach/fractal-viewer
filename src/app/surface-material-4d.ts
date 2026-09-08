@@ -7,10 +7,12 @@ import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import {
   SURFACE_LENS_SWIRL,
+  SWIRL_BALLOON_STRIDE_TRANSITION,
   validatedSwirlLensRadius,
   validatedSwirlLensLipschitz,
 } from "../fractal/swirl-lens";
 import { swirlLensShaderSource } from "../fractal/swirl-lens-shader";
+import { inversionDistanceShaderSource } from "../fractal/inversion";
 import { LATTICE_PRESENTATION_RADIUS_MULT } from "../fractal/lattice-march";
 import type { ShapeSpec } from "../fractal/shapes";
 import type { ResolvedTiling } from "../fractal/tiling";
@@ -2949,12 +2951,14 @@ function withSwirlLens4(source: string): string {
     );
   const declarations = `
 uniform vec4 uLensParams;
+uniform float uLensRadius;
 uniform float uLensLipschitz;
 uniform mat4 uLensInvM;
 uniform vec4 uLensInvT;
 uniform mat4 uLensPostInvM;
 uniform vec4 uLensPostInvT;
 ${swirlLensShaderSource("glsl", 4)}
+${inversionDistanceShaderSource("glsl")}
 `;
   const wrapper = `
 float surfaceDE(vec3 p, float cutoff) {
@@ -2965,6 +2969,24 @@ float surfaceDE(vec3 p, float cutoff) {
   vec4 raw = uLensInvM * pre + uLensInvT;
   float factor = uLensParams.z * uLensParams.w / uLensLipschitz;
   return max(factor * surfaceDESwirlCore(raw, cutoff / factor), visBound);
+}
+#if SURFACE_BALLOON
+#define surfaceDEMarch surfaceDEMarchFractal
+#endif
+vec2 surfaceDEMarch(vec3 p, float cutoff) {
+  vec4 q = uInvRotor * vec4(p, uW0);
+  float visBound = length(q) - uVisibleRadius;
+  vec4 u = (uLensPostInvM * q + uLensPostInvT) * uLensParams.y;
+  vec4 pre = swirlLensInverse(u);
+  vec4 rawPoint = uLensInvM * pre + uLensInvT;
+  float affineFactor = uLensParams.z * uLensParams.w;
+  float factor = affineFactor / uLensLipschitz;
+  float innerCutoff = cutoff > 0.0 && visBound < cutoff ? cutoff / factor : 0.0;
+  float raw = surfaceDESwirlCore(rawPoint, innerCutoff);
+  float acceptance = max(factor * raw, visBound);
+  if (acceptance < cutoff) return vec2(acceptance);
+  float localLipschitz = swirlMarchInverseLipschitz(length(u), uLensRadius, uLensLipschitz);
+  return vec2(max((affineFactor / localLipschitz) * raw, visBound), acceptance);
 }
 float surfaceDE(vec3 p) {
   return surfaceDE(p, 0.0);
@@ -2989,8 +3011,38 @@ float surfaceDE(
   const rest = source
     .slice(end)
     .replace(
+      "  // NO balloonInnerDE here",
+      `#undef surfaceDEMarch
+  vec2 surfaceDEMarch(vec3 p, float cutoff) {
+    vec2 fractal = surfaceDEMarchFractal(p, cutoff);
+    float scale;
+    vec3 q = balloonInvert(p, scale);
+    float innerCutoff = cutoff > 0.0 ? cutoff / scale : 0.0;
+    vec2 inner = surfaceDEMarchFractal(q, innerCutoff);
+    vec2 shell = scale * inner;
+    float radius = length(p - uBalloonCenter);
+    if ((innerCutoff <= 0.0 || inner.y >= innerCutoff) && radius >= 1.0e-6 * uBalloonRho) {
+      shell.x = max(shell.x, inversionDistanceLowerBound(radius, uBalloonR * uBalloonR, inner.x));
+    }
+    if (innerCutoff > 0.0 && inner.y < ${1 + SWIRL_BALLOON_STRIDE_TRANSITION} * innerCutoff) {
+      float blend = max(0.0, ${(1 / SWIRL_BALLOON_STRIDE_TRANSITION).toFixed(1)} * (inner.y / innerCutoff - 1.0));
+      shell.x = shell.y + blend * (shell.x - shell.y);
+    }
+    return min(shell, vec2(fractal.y));
+  }
+  // NO balloonInnerDE here`,
+    )
+    .replace(
       "float eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor);",
       "float eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor) / uLensLipschitz;",
+    )
+    .replace(
+      "float d = surfaceDE(ro + rd * t, eps);",
+      "vec2 marchSample = surfaceDEMarch(ro + rd * t, eps);\n      float d = marchSample.y;",
+    )
+    .replace(
+      "t += d * uStepScale;",
+      "#if SURFACE_BALLOON\n      t += marchSample.x * uStepScale;\n#else\n      t += d * uStepScale;\n#endif",
     )
     .replace(
       "vec4 patternRaw = uFinalInvM * patternLifted + uFinalInvT;",

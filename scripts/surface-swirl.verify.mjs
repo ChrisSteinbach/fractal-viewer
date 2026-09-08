@@ -13,6 +13,11 @@
  * Eval/march/hit-info agreement belongs to bench:surface; fixed-geometry thin-
  * slice fidelity belongs to swirl-lens.harness.ts, not an image-IoU allowance.
  *
+ * The near-cap, default-radius fixtures now gate paired echo strides with
+ * unchanged global-G acceptance. The same-camera/source-ball control and
+ * the rejected intermediate strategies live in docs/swirl-surface-lens.md.
+ * --measure records failures before returning 2; it never reports a pass.
+ *
  * Balloon is a measured compositional budget limit, not covered by the radius
  * cap alone. On AMD RX 7900 XTX at 960x540, the near-cap 3D final exhausted
  * 39,983 rays at balloon R=.6 versus 395 for its affine-output control and 38
@@ -44,8 +49,13 @@ const options = {
   display: null,
   timeoutMs: 180_000,
   outdir: "scripts/out/surface-swirl",
+  measure: false,
 };
 for (const argument of process.argv.slice(2)) {
+  if (argument === "--measure") {
+    options.measure = true;
+    continue;
+  }
   const match = /^--(url|display|settle|outdir)=(.+)$/.exec(argument);
   if (!match) throw new Error(`Unknown option ${argument}`);
   if (match[1] === "settle") options.timeoutMs = Number(match[2]);
@@ -165,6 +175,22 @@ const fixtures = [
   { name: "swirl4", fourD: true, transforms: penta },
   { name: "swirl3-balloon", fourD: false, transforms: tetra, balloon: true },
   { name: "swirl4-balloon", fourD: true, transforms: penta, balloon: true },
+  {
+    name: "swirl3-balloon-default",
+    fourD: false,
+    transforms: tetra,
+    balloon: true,
+    nearCap: true,
+    balloonRadius: COMMON.balloonRadius,
+  },
+  {
+    name: "swirl4-balloon-default",
+    fourD: true,
+    transforms: penta,
+    balloon: true,
+    nearCap: true,
+    balloonRadius: COMMON.balloonRadius,
+  },
   { name: "preset-swirl3", fourD: false, preset: "swirlTetrahedron" },
   { name: "preset-swirl4", fourD: true, preset: "swirlPentatope" },
 ];
@@ -233,13 +259,17 @@ async function copiedHash(page) {
 
 async function persistFixture(browser, fixture) {
   if (fixture.preset) return persistPresetFixture(browser, fixture);
-  const final = finalLens(fixture.fourD, fixture.balloon ?? false);
+  const final = finalLens(
+    fixture.fourD,
+    (fixture.balloon ?? false) && !fixture.nearCap,
+  );
   const initial = encode({
     ...COMMON,
     transforms: fixture.transforms,
     finalTransform: final,
     balloonEcho: fixture.balloon ?? false,
-    balloonRadius: fixture.balloon ? 0.35 : COMMON.balloonRadius,
+    balloonRadius:
+      fixture.balloonRadius ?? (fixture.balloon ? 0.35 : COMMON.balloonRadius),
   });
   let hash;
   for (const restoring of [false, true]) {
@@ -436,6 +466,7 @@ async function main() {
     options.display ? `x11:${options.display}` : "sw",
   );
   const records = [];
+  const failures = [];
   try {
     for (const fixture of fixtures) {
       const hash = await persistFixture(browser, fixture);
@@ -454,6 +485,7 @@ async function main() {
         const row = {
           name,
           engine,
+          hash,
           backend: result.backend,
           draw: null,
           drawRegion: DRAW_REGION,
@@ -494,30 +526,54 @@ async function main() {
         }
         const draw = screenshotCoverage(decoded, result.geometry.overlays);
         row.draw = draw;
-        // Preserve each census before its assertions: an exhausted row is
-        // evidence even when it prevents the remaining matrix from running.
+        // Preserve the complete matrix before enforcing scene assertions.
+        // A failing near-cap case must not erase its sibling-engine census.
         await writeFile(
           path.join(options.outdir, "results.json"),
           JSON.stringify(records, null, 2),
         );
         console.log(JSON.stringify({ name, draw }));
-        assert.ok(
-          draw > 0.002,
-          `${name}: screenshot must contain the fractal (draw=${draw})`,
-        );
-        assert.ok(
-          result.census.covered > 0,
-          `${name}: completed rays must hit`,
-        );
-        assert.equal(result.census.exhausted, 0, `${name}: rays must finish`);
+        if (!(draw > 0.002)) {
+          failures.push(
+            `${name}: screenshot must contain the fractal (draw=${draw})`,
+          );
+        }
+        if (!(result.census.covered > 0)) {
+          failures.push(`${name}: completed rays must hit`);
+        }
+        if (result.census.exhausted !== 0) {
+          failures.push(
+            `${name}: ${result.census.exhausted} rays did not finish`,
+          );
+        }
       }
     }
     await writeFile(
       path.join(options.outdir, "results.json"),
       JSON.stringify(records, null, 2),
     );
+    await writeFile(
+      path.join(options.outdir, "verdict.json"),
+      JSON.stringify(
+        { mode: options.measure ? "measurement" : "qualification", failures },
+        null,
+        2,
+      ),
+    );
+    if (options.measure) {
+      console.log(
+        `[surface-swirl] MEASUREMENT ONLY: ${records.length} captures, ${failures.length} failing assertions; no pass verdict`,
+      );
+      process.exitCode = 2;
+      return;
+    }
+    assert.deepEqual(
+      failures,
+      [],
+      "all production scenes must complete and draw",
+    );
     console.log(
-      "[surface-swirl] PASS: 3D/4D menu showcases, copy/reload, slab refusal, compute and WebGL render",
+      "[surface-swirl] PASS: 3D/4D menu showcases, copy/reload, slab refusal, default-radius Balloon, compute and WebGL render",
     );
   } finally {
     await browser.close();
