@@ -690,13 +690,32 @@ describe("generateCloud point tiling integration", () => {
     ["b4", true],
     ["f4", true],
   ] as const)(
-    "routes finite group %s through the active worker path within both caps",
+    "tiles a kaleidoscope with finite group %s through the active worker path within both caps",
     (group, fourD) => {
       const requested = 12;
+      // Seed one contracting branch safely inside this group's chamber.
+      // A kaleidoscope can otherwise have empty canonical content, which is
+      // legal but cannot prove the tiled output contains the new combination.
+      const source = foldedPoint(
+        group,
+        fourD ? [0.17, -0.31, 0.53, 0.71] : [0.17, -0.31, 0.53],
+      );
+      const transform: Transform = {
+        id: 0,
+        position: [source[0] * 0.99, source[1] * 0.99, source[2] * 0.99],
+        rotation: [0, 0, 0],
+        scale: [0.01, 0.01, 0.01],
+        ...(fourD
+          ? { w: { position: (source as Vec4)[3] * 0.99, scale: 0.01 } }
+          : {}),
+      };
       const result = generateCloud(
         cloudRequest({
-          transforms: fourD ? pentatope() : sierpinskiTetrahedron(),
+          transforms: [transform],
           tiling: { group },
+          symmetry: fourD
+            ? { order: 3, plane: "xw", twist: 1 }
+            : { order: 3, plane: "xz" },
           fourD,
           numPoints: requested,
           seed: 101,
@@ -714,6 +733,7 @@ describe("generateCloud point tiling integration", () => {
         throw new Error(`expected active point tiling for ${group}`);
       }
       expect(result.count).toBeLessThanOrEqual(requested);
+      expect(result.count).toBeGreaterThan(0);
       expect(result.pointTiling.attempts).toBeLessThanOrEqual(requested * 8);
       expect(result.pointTiling.candidateTests).toBeLessThanOrEqual(
         requested * 8,
@@ -733,13 +753,16 @@ describe("generateCloud point tiling integration", () => {
   );
 
   it.each([false, true] as const)(
-    "runs the active mirrored-lattice path and frames its canonical cell in %sD",
+    "tiles a kaleidoscope with the active mirrored-lattice path and frames its canonical cell in %sD",
     (fourD) => {
       const transforms = fourD ? pentatope() : sierpinskiTetrahedron();
       const tiling: TilingSpec = { kind: "lattice", cellScale: 1 };
       const request = cloudRequest({
         transforms,
         tiling,
+        symmetry: fourD
+          ? { order: 3, plane: "xw", twist: 1 }
+          : { order: 3, plane: "xz" },
         fourD,
         numPoints: 64,
       });

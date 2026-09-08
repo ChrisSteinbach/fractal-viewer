@@ -53,9 +53,9 @@
  * - 3D Solid applies tiling in its live material, while 4D Solid replaces
  *   the worker for authored tiling edits and bakes raw images into density
  *   before projection;
- * - Balloon and order>1 Symmetry leave the authored checkbox available as a
- *   clear route while disabling both dependent finite detail controls and
- *   explaining the refusal next to them.
+ * - Balloon leaves the authored checkbox available as a clear route while
+ *   disabling dependent details with an adjacent reason; order>1 Symmetry
+ *   keeps both tiling detail controls editable.
  *
  * Screenshots are read only after Playwright captures the canvas. The live
  * WebGL canvas is never read outside its renderer's animation frame. Overlay
@@ -215,10 +215,19 @@
  * differed by 32.35% Iris / 31.92% SwiftShader — the GPU→CPU ladder's
  * terminal arm carries the tiling plan intact.
  *
+ * AUTHORING REQUALIFIED 2026-09-08 with `--scope=authoring --mode=x11::0`
+ * on verified AMD Radeon RX 7900 XTX (Mesa 25.2.8): all 31 assertions passed.
+ * Order>1 Symmetry kept tiling active and its details editable; clearing
+ * tiling retained Symmetry. Keyboard, undo/redo, copied-link, exact numeric
+ * edit and Balloon clear/recovery checks passed. The copied lattice link
+ * re-entered WebGL Surface, settled and drew 46.78%, with no page or console
+ * errors. This scope runs only `runAuthoringLeg`.
+ *
  * Usage (build + `npm run preview` first):
  *   node scripts/tiling-ui.verify.mjs
  *   node scripts/tiling-ui.verify.mjs --mode=x11::0
  *   node scripts/tiling-ui.verify.mjs --stage=1
+ *   node scripts/tiling-ui.verify.mjs --scope=authoring
  *   node scripts/tiling-ui.verify.mjs --scope=points
  *   node scripts/tiling-ui.verify.mjs --scope=flame
  *   node scripts/tiling-ui.verify.mjs --scope=backdrop
@@ -230,8 +239,9 @@
  * Options:
  *   --url=URL        app origin (default https://localhost:4173)
  *   --mode=MODE      sw (default) or x11:<display>
- *   --scope=SCOPE    all (default), points, flame, backdrop, solid, solid4,
- *                    matrix, export, or flame-cpu
+ *   --scope=SCOPE    all (default), authoring, points, flame, backdrop, solid,
+ *                    solid4, matrix, export, or flame-cpu
+ *                    authoring runs only the authoring-control assertions
  *   --viewport=WxH   viewport, width must be >=641 (default 800x640)
  *   --settle=MS      per-preset Surface/Points/Flame target budget (default 300000)
  *   --stage=N        completed-pass target, 8 = settled latch (default 8)
@@ -240,7 +250,7 @@
  *   --diff=FRACTION  minimum tiled/untiled structural difference (default 0.01)
  *   --outdir=PATH    PNG directory (default .playwright-mcp/tiling-ui)
  *
- * Exit 0 = every preset and authoring assertion passed.
+ * Exit 0 = every assertion in the selected scope passed.
  * Exit 1 = a scene/UI verdict failed.
  * Exit 2 = a CHECKING-side failure (bad arguments, browser/navigation/image
  *          decode, app boot, or missing instrumentation/control); rerun after
@@ -487,6 +497,7 @@ function parseArgs(argv) {
   if (
     ![
       "all",
+      "authoring",
       "points",
       "flame",
       "backdrop",
@@ -498,7 +509,7 @@ function parseArgs(argv) {
     ].includes(args.scope)
   ) {
     throw new CheckingError(
-      `--scope must be all, points, flame, backdrop, solid, solid4, matrix, export, or flame-cpu (got ${args.scope})`,
+      `--scope must be all, authoring, points, flame, backdrop, solid, solid4, matrix, export, or flame-cpu (got ${args.scope})`,
     );
   }
   const viewport = /^(\d+)x(\d+)$/.exec(args.viewport);
@@ -3709,13 +3720,13 @@ async function runAuthoringLeg(browser, args) {
     await openSection(page, "tilingSection");
     const symmetry = await readDormantState(page, "Unavailable with Symmetry");
     check(
-      "Symmetry dormant details",
+      "Symmetry composes with editable tiling",
       symmetryAuthored.ok &&
         symmetry.checkboxEnabled &&
         symmetry.checkboxChecked &&
-        symmetry.groupDisabled &&
-        symmetry.clipDisabled &&
-        symmetry.reasonPass,
+        !symmetry.groupDisabled &&
+        !symmetry.clipDisabled &&
+        !symmetry.reasonPass,
       symmetry.note,
     );
     await page.locator("#tilingEnabledCheckbox").focus();
@@ -3726,7 +3737,7 @@ async function runAuthoringLeg(browser, args) {
         document.tiling === undefined && document.symmetry?.order === 2,
     );
     check(
-      "Symmetry clear recovery",
+      "Clearing tiling retains Symmetry",
       symmetryClear.ok,
       symmetryClear.ok
         ? "enabled checkbox cleared tiling without clearing Symmetry"
@@ -4805,7 +4816,9 @@ async function run() {
         `${clear.ok ? "PASS" : "FAIL"}  absent-means-clear — ${clear.reason}\n`,
       );
       if (!clear.ok) failed = true;
+    }
 
+    if (args.scope === "all" || args.scope === "authoring") {
       const authoring = await runAuthoringLeg(browser, args);
       for (const result of authoring.checks) {
         process.stdout.write(
@@ -4813,7 +4826,9 @@ async function run() {
         );
       }
       if (!authoring.ok) failed = true;
+    }
 
+    if (args.scope === "all") {
       const malformed = await runMalformedDecodeLeg(browser, args);
       for (const result of malformed.checks) {
         process.stdout.write(

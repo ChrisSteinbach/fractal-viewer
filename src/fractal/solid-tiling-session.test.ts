@@ -78,11 +78,8 @@ describe("resolveSolidTilingSession", () => {
     });
   });
 
-  it("refuses Balloon, symmetry above order 1, and mesh clips", () => {
+  it("refuses Balloon and mesh clips", () => {
     expect(resolve({ group: "a3" }, true).status).toBe("refused");
-    expect(
-      resolve({ group: "a3" }, false, false, { order: 2, plane: "xz" }).status,
-    ).toBe("refused");
     expect(resolve({ group: "a3", clip: STAR_PRISM_SHAPE }).status).toBe(
       "refused",
     );
@@ -131,14 +128,30 @@ describe("resolveSolidTilingSession", () => {
     expect(result.note).toMatch(/reset debris/);
   });
 
-  it("accepts a lattice on a kaleidoscopic system only at order 1", () => {
-    const result = resolve(
+  it.each([
+    [{ group: "a3" }, false, { order: 3, plane: "xz" }],
+    [{ kind: "lattice", cellScale: 1.5 }, false, { order: 3, plane: "xz" }],
+    [{ group: "a4" }, true, { order: 3, plane: "xw", twist: 1 }],
+    [
       { kind: "lattice", cellScale: 1.5 },
-      false,
-      false,
-      NO_SYMMETRY,
-      sierpinskiTetrahedron(),
-    );
-    expect(result.status).toBe("active");
-  });
+      true,
+      { order: 3, plane: "xw", twist: 1 },
+    ],
+  ] satisfies Array<[TilingSpec, boolean, SymmetryParams]>)(
+    "tiles a kaleidoscope through the matching Solid application arm %#",
+    (tiling, nonFlat, symmetry) => {
+      const result = resolve(
+        tiling,
+        false,
+        nonFlat,
+        symmetry,
+        sierpinskiTetrahedron(),
+      );
+      expect(result.status).toBe("active");
+      expect(result.application).toBe(
+        nonFlat ? "worker-baked" : "material-live",
+      );
+      expect(result.originVisibleRadius).toBeGreaterThan(0);
+    },
+  );
 });

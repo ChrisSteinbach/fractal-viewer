@@ -10998,7 +10998,7 @@ describe("Ui finite tiling controls", () => {
       application: "material-live",
       resolved: null,
       originVisibleRadius: null,
-      note: "Solid tiling is unavailable with kaleidoscope symmetry above order 1.",
+      note: "Solid tiling is unavailable with Balloon; turn Balloon off.",
     });
     ui.updateLabels({
       ...setTiling(
@@ -11300,11 +11300,6 @@ describe("Ui finite tiling controls", () => {
         true,
       ],
       [
-        { ...finite, symmetry: { order: 2, plane: "xz" } },
-        /Unavailable with Symmetry.*set Order to 1/i,
-        true,
-      ],
-      [
         setTiling(initialState(true), {
           group: "a3",
           clip: {
@@ -11336,7 +11331,7 @@ describe("Ui finite tiling controls", () => {
     }
   });
 
-  it("keeps every lattice detail dormant across Balloon and Symmetry conflicts", () => {
+  it("keeps every lattice detail dormant across a Balloon conflict", () => {
     const ui = new Ui(document);
     const base = setTiling(initialState(true), {
       kind: "lattice",
@@ -11352,28 +11347,19 @@ describe("Ui finite tiling controls", () => {
       candidateTests: 1,
     };
 
-    for (const [state, feature] of [
-      [{ ...base, balloonEcho: true }, "Balloon"],
-      [{ ...base, symmetry: { order: 2, plane: "xz" as const } }, "Symmetry"],
-    ] as const) {
-      ui.setPointCount(100, outcome, false);
-      ui.updateLabels(state);
-      expect((el("tilingKind") as HTMLSelectElement).disabled).toBe(true);
-      expect((el("tilingCellScaleSlider") as HTMLInputElement).disabled).toBe(
-        true,
-      );
-      expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(true);
-      expect((el("tilingEnabledCheckbox") as HTMLInputElement).disabled).toBe(
-        false,
-      );
-      expect(el("tilingNote").textContent).toContain(feature);
-      expect(el("tilingNote").textContent).toMatch(
-        /earlier (?:order-1 )?tiled cloud/i,
-      );
-      if (feature === "Balloon") {
-        expect(el("tilingNote").textContent).toMatch(/stays dormant/i);
-      }
-    }
+    ui.setPointCount(100, outcome, false);
+    ui.updateLabels({ ...base, balloonEcho: true });
+    expect((el("tilingKind") as HTMLSelectElement).disabled).toBe(true);
+    expect((el("tilingCellScaleSlider") as HTMLInputElement).disabled).toBe(
+      true,
+    );
+    expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(true);
+    expect((el("tilingEnabledCheckbox") as HTMLInputElement).disabled).toBe(
+      false,
+    );
+    expect(el("tilingNote").textContent).toContain("Balloon");
+    expect(el("tilingNote").textContent).toMatch(/earlier tiled cloud/i);
+    expect(el("tilingNote").textContent).toMatch(/stays dormant/i);
   });
 
   it("announces the refusal that actually disables details in combined invalid states", () => {
@@ -11408,11 +11394,59 @@ describe("Ui finite tiling controls", () => {
       },
     );
     ui.updateLabels(meshWithSymmetry);
-    expect((el("tilingGroup") as HTMLSelectElement).disabled).toBe(true);
-    expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(true);
+    expect((el("tilingGroup") as HTMLSelectElement).disabled).toBe(false);
+    expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(false);
     expect(el("tilingNote").textContent).toMatch(
-      /Unavailable with Symmetry.*set Order to 1/i,
+      /clips must be analytic.*Choose None/i,
     );
+  });
+
+  it("keeps finite and lattice tiling editable alongside 3D and w-plane symmetry", () => {
+    const ui = new Ui(document);
+    for (const fourD of [false, true]) {
+      for (const lattice of [false, true]) {
+        const tiling: TilingSpec = lattice
+          ? { kind: "lattice", cellScale: 1.5 }
+          : { group: fourD ? "a4" : "a3" };
+        const state = setTiling(
+          {
+            ...initialState(true),
+            symmetry: fourD
+              ? { order: 3, plane: "xw", twist: 1 }
+              : { order: 3, plane: "xz" },
+          },
+          tiling,
+        );
+        for (const renderMode of [
+          "points",
+          "flame",
+          "solid",
+          "surface",
+        ] as const) {
+          ui.updateLabels({ ...state, renderMode });
+          for (const id of [
+            "tilingKind",
+            "tilingGroup",
+            "tilingClip",
+            "tilingCellScaleSlider",
+          ]) {
+            expect(
+              (el(id) as HTMLInputElement).disabled,
+              `${renderMode}: ${id}`,
+            ).toBe(false);
+          }
+          expect(el("tilingNote").textContent).not.toMatch(
+            /Unavailable with Symmetry/i,
+          );
+          const group = el("tilingGroup") as HTMLSelectElement;
+          expect(
+            Array.from(group.options).find(
+              (option) => option.value === (fourD ? "a4" : "a3"),
+            )?.disabled,
+          ).toBe(false);
+        }
+      }
+    }
   });
 
   it("announces the adjacent status and timing from every tiling input", () => {

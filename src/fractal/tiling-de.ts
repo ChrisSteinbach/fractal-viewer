@@ -68,17 +68,13 @@ import type { Vec3, Vec4 } from "./types";
  * throws, both 4D entries) — the fold of a segment is a bent polyline
  * (per-point reflection sequences), and the slab's conservative-bound
  * contract does not survive it, so tiled 4D sessions run slice 0. Named
- * for the full legal-combination context but enforced by the ROUTING, not
- * this module (a wrapper handed a refused combination has no way to know
- * it): the kaleidoscope (both are query-space folds, and the descent
- * cores' swept rotation has no certified lower-bound order after a tiling
- * fold), and the balloon (an orbit's echo
- * is not the echo's orbit). The H4/reducible-group refusals live in the
- * group vocabulary itself (`tiling.ts`'s `TILING_GROUPS`). A forward core
- * read here may still carry ITS OWN kaleidoscope (a query-space wedge
- * fold inside the core, seeded at the folded point) — sound by the same
- * pre-fold argument, but phase 1's one-routing-rule keeps even that
- * combination off the fixtures.
+ * for context but enforced by routing: Balloon, whose composition order
+ * has not been implemented across renderers. H4/reducible-group refusals
+ * live in the group vocabulary itself (`tiling.ts`'s `TILING_GROUPS`).
+ * Kaleidoscope is part of the untouched core's set A: the same nearest-copy
+ * proof accepts it in every supported dimension and core family, without
+ * commuting its sector sweep/wedge fold past the tiling. This transports
+ * the core's existing approximation; it does not improve that approximation.
  *
  * THE 4D CLIP IS EMBEDDED EXTRUDED THROUGH `w`. The shape vocabulary is
  * deliberately 3D (`shapes.ts`'s module doc: each consumer decides its

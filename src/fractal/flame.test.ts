@@ -410,7 +410,7 @@ describe("accumulateFlame point-space tiling", () => {
   });
 
   it.each(["finite", "lattice"] as const)(
-    "keeps %s cursor, weights, and deposits identical across chunks",
+    "keeps tiled kaleidoscope %s cursor, weights, and deposits identical across chunks",
     (kind) => {
       const plan = resolvePointTilingPlan(
         kind === "finite"
@@ -418,7 +418,14 @@ describe("accumulateFlame point-space tiling", () => {
           : resolveTiling({ kind: "lattice", cellScale: 4 }, 1),
         3,
       )!;
-      const prepared = prepareChaosGame(fixedPointSystem([0.3, 0.3, 0.3]));
+      const prepared = prepareChaosGame(
+        fixedPointSystem([0.3, 0.3, 0.3]),
+        null,
+        {
+          order: 3,
+          plane: "xz",
+        },
+      );
       const palette: Vec3[] = [[0.2, 0.4, 0.6]];
       const chunkRng = mulberry32(23);
       let chunked = accumulateFlame(
@@ -469,10 +476,12 @@ describe("accumulateFlame point-space tiling", () => {
       expect(chunked.maxHits).toBe(oneShot.maxHits);
       expect(chunked.orbit).toEqual(oneShot.orbit);
       expect(chunked.pointTiling).toEqual(oneShot.pointTiling);
+      expect(oneShot.pointTiling!.accepted).toBeGreaterThan(0);
+      expect(oneShot.hitMass).toBeGreaterThan(0);
     },
   );
 
-  it("does not let tiling perturb xaos, emitter, schedule, final, or color state", () => {
+  it("does not let tiling perturb xaos, symmetry, emitter, schedule, final, or color state", () => {
     const transforms: Transform[] = [
       {
         id: 0,
@@ -498,7 +507,7 @@ describe("accumulateFlame point-space tiling", () => {
         rotation: [0, 0.15, 0],
         scale: [0.8, 0.8, 0.8],
       },
-      { order: 1, plane: "xz" },
+      { order: 3, plane: "xz" },
       {
         depth: 2,
         transforms: [
@@ -612,29 +621,6 @@ describe("accumulateFlame point-space tiling", () => {
         plan,
       ),
     ).toThrow("Flame point tiling is unavailable with Balloon");
-  });
-
-  it("rejects a kaleidoscope-prepared system plus active tiling invariant violation", () => {
-    const plan = resolvePointTilingPlan(resolveTiling({ group: "a3" }), 3)!;
-    expect(() =>
-      accumulateFlame(
-        prepareChaosGame(fixedPointSystem([0.3, 0.3, 0.3]), null, {
-          order: 2,
-          plane: "xz",
-        }),
-        ORTHOGRAPHIC,
-        8,
-        8,
-        1,
-        mulberry32(2),
-        [[1, 1, 1]],
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        plan,
-      ),
-    ).toThrow("kaleidoscope symmetry above order 1");
   });
 });
 

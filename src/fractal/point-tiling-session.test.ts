@@ -86,20 +86,32 @@ describe("resolvePointTilingSession", () => {
     expect(result.plan.tiling.h).toBeCloseTo(result.originVisibleRadius * 1.5);
   });
 
-  it("refuses Balloon, kaleidoscope symmetry, and mesh clips before analysis", () => {
+  it.each([
+    [{ group: "a3" }, false, { order: 3, plane: "xz" }],
+    [{ kind: "lattice", cellScale: 1.5 }, false, { order: 3, plane: "xz" }],
+    [{ group: "a4" }, true, { order: 3, plane: "xw", twist: 1 }],
+    [
+      { kind: "lattice", cellScale: 1.5 },
+      true,
+      { order: 3, plane: "xw", twist: 1 },
+    ],
+  ] satisfies Array<[TilingSpec, boolean, SymmetryParams]>)(
+    "tiles the symmetrized attractor in its own dimension %#",
+    (tiling, fourD, symmetry) => {
+      // The w-plane alone lifts the flat source into 4D; no preset w block
+      // is needed to make the 4D symmetry and tiling path meaningful.
+      const result = resolve(TETRA, tiling, { fourD, symmetry });
+      expect(result.status).toBe("active");
+      if (result.status !== "active") return;
+      expect(result.plan.dimension).toBe(fourD ? 4 : 3);
+      expect(result.originVisibleRadius).toBeGreaterThan(0);
+    },
+  );
+
+  it("refuses Balloon and mesh clips before analysis", () => {
     const balloon = resolve([], { group: "a3" }, { balloonEcho: true });
     expect(balloon.status).toBe("refused");
     expect(balloon.note).toMatch(/Balloon/);
-
-    const symmetry = resolve(
-      [],
-      { group: "a3" },
-      {
-        symmetry: { order: 2, plane: "xy" },
-      },
-    );
-    expect(symmetry.status).toBe("refused");
-    expect(symmetry.note).toMatch(/symmetry above order 1/);
 
     const mesh = resolve([], {
       group: "a3",

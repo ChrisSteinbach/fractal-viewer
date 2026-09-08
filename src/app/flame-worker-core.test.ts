@@ -555,6 +555,24 @@ describe("FlameWorkerSession point-space tiling", () => {
       },
     ]);
     expect(progressEvents(events).at(-1)?.iterationsDone).toBe(80);
+
+    session.handle({ type: "setSymmetry", order: 3, plane: "xz" });
+    await drainAsync(scheduler);
+    expect(captured).toMatchObject({ order: 3, plane: "xz" });
+    expect(captured?.pointTilingPlan?.dimension).toBe(3);
+
+    // A synthetic dimensionality-changing command retains the entry's 3D
+    // source in BOTH the GPU factory and the tiling resolver, just as the
+    // CPU preparer does until the user regenerates Points and re-enters.
+    session.handle({ type: "setSymmetry", order: 3, plane: "xw", twist: 1 });
+    await drainAsync(scheduler);
+    expect(captured).toMatchObject({ order: 1, plane: "xw" });
+    expect(captured?.pointTilingPlan?.dimension).toBe(3);
+    expect(tilingOutcomeEvents(events).at(-1)?.outcome).toEqual({
+      availability: "active",
+      kind: "finite",
+    });
+    expect(progressEvents(events).at(-1)?.iterationsDone).toBe(80);
   });
 
   it("keeps the absent document path event- and object-shape exact", () => {
@@ -617,6 +635,9 @@ describe("FlameWorkerSession point-space tiling", () => {
       startCommand({
         tiling: { group: "a4" },
         fourD: defaultFourD(),
+        order: 3,
+        plane: "xw",
+        twist: 1,
         gpuPreference: "auto",
         iterationsBudget: 80,
       }),
@@ -625,6 +646,7 @@ describe("FlameWorkerSession point-space tiling", () => {
 
     expect(createGpuBackend4).toHaveBeenCalledOnce();
     expect(captured?.pointTilingPlan).toMatchObject({ dimension: 4 });
+    expect(captured).toMatchObject({ order: 3, plane: "xw", twist: 1 });
     expect(tilingOutcomeEvents(events)).toEqual([
       {
         type: "tilingOutcome",
@@ -637,7 +659,7 @@ describe("FlameWorkerSession point-space tiling", () => {
     expect(progressEvents(events).at(-1)?.iterationsDone).toBe(80);
   });
 
-  it("re-resolves a live symmetry change from active to refused before restart", () => {
+  it("keeps tiling active and completes the restarted accumulation after a live symmetry edit", () => {
     const { session, events, scheduler } = harness();
     session.handle(
       startCommand({ tiling: { group: "a3" }, iterationsBudget: 40 }),
@@ -648,8 +670,8 @@ describe("FlameWorkerSession point-space tiling", () => {
     scheduler.drain();
 
     expect(tilingOutcomeEvents(events).at(-1)?.outcome).toEqual({
-      availability: "refused",
-      note: expect.stringMatching(/symmetry above order 1/),
+      availability: "active",
+      kind: "finite",
     });
     expect(backendEvents(events).at(-1)).not.toHaveProperty("forcedBy");
     expect(progressEvents(events).at(-1)?.iterationsDone).toBe(40);
@@ -1302,13 +1324,28 @@ describe("FlameWorkerSession setSymmetry", () => {
     expect(events).toHaveLength(0);
   });
 
-  it("survives a 4D kaleidoscope arriving at a 3D session, rendering it unreplicated", () => {
+  it("retains a tiled 3D orbit when a w-plane symmetry arrives before renderer re-entry", () => {
     // A live symmetry edit can turn a flat system 4D under a render session
     // whose dimension was fixed at start. `symmetryRotation` THROWS on a
     // w-plane, so without the symmetry3D guard this would kill the worker.
-    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    const preparedCounts: number[] = [];
+    const plans: Array<Parameters<typeof accumulateFlame>[11]> = [];
+    const accumulate: typeof accumulateFlame = (...args) => {
+      preparedCounts.push(args[0].transformCount);
+      plans.push(args[11]);
+      return accumulateFlame(...args);
+    };
+    const { session, events, scheduler } = harness({
+      initialChunkSize: 10,
+      accumulate,
+    });
     session.handle(
-      startCommand({ order: 1, plane: "xz", iterationsBudget: 40 }),
+      startCommand({
+        order: 1,
+        plane: "xz",
+        tiling: { group: "a3" },
+        iterationsBudget: 40,
+      }),
     );
     scheduler.drain();
 
@@ -1319,6 +1356,12 @@ describe("FlameWorkerSession setSymmetry", () => {
 
     // Still renders — the restart ran, and to the same budget.
     expect(progressEvents(events).at(-1)!.iterationsDone).toBe(40);
+    expect(preparedCounts.at(-1)).toBe(sierpinskiTetrahedron().length);
+    expect(plans.at(-1)?.dimension).toBe(3);
+    expect(tilingOutcomeEvents(events).at(-1)?.outcome).toEqual({
+      availability: "active",
+      kind: "finite",
+    });
   });
 });
 

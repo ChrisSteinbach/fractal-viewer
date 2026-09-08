@@ -8804,7 +8804,7 @@ describe("finite reflection tiling WGSL and params ABI", () => {
     );
   });
 
-  it("defensively refuses wrong-dimensional, non-canonical, mesh, balloon, kaleidoscope, and real-slab combinations", () => {
+  it("packs finite tiling with symmetry while retaining dimension, canonical, mesh, balloon, and slab guards", () => {
     const wrong3 = resolveTiling({ group: "a4" })!;
     expect(() =>
       surfaceDeKernelWgsl(kernelOpts({ core: "fold", tiling: wrong3 })),
@@ -8842,9 +8842,19 @@ describe("finite reflection tiling WGSL and params ABI", () => {
         order: 3,
       },
     };
-    expect(() =>
-      packSurfaceGpuParams(symmetric3, { itemCount: 1 }, null, null, tiled3),
-    ).toThrow(/tiling\+kaleidoscope/);
+    const symmetricParams = packSurfaceGpuParams(
+      symmetric3,
+      { itemCount: 1 },
+      null,
+      null,
+      tiled3,
+    );
+    expect(new DataView(symmetricParams).getUint32(40, true)).toBe(3);
+    expectTilingTail(
+      packSurfaceGpuParams(symmetric3, { itemCount: 1 }),
+      symmetricParams,
+      tiled3,
+    );
     expect(() =>
       packSurface4GpuParams(
         buildSurfaceDE4(fourDSystemTransforms()),
@@ -9176,15 +9186,18 @@ describe("mirrored lattice WGSL and params ABI", () => {
       { kind: "lattice", cellScale: 1.5 },
       symmetric3.visibleBoundingRadius,
     );
-    expect(() =>
-      packSurfaceGpuParams(
-        symmetric3,
-        { itemCount: 1 },
-        null,
-        null,
-        symmetricTiling,
-      ),
-    ).toThrow(/tiling\+kaleidoscope/);
+    const symmetricParams = packSurfaceGpuParams(
+      symmetric3,
+      { itemCount: 1 },
+      null,
+      null,
+      symmetricTiling,
+    );
+    expect(new DataView(symmetricParams).getUint32(40, true)).toBe(3);
+    expect(symmetricParams.byteLength).toBe(
+      packSurfaceGpuParams(symmetric3, { itemCount: 1 }).byteLength +
+        SURFACE_GPU_TILING_BYTES,
+    );
 
     const surfaceTiling4 = resolveTiling(
       { kind: "lattice", cellScale: 1.5 },

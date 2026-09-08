@@ -923,19 +923,17 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     without it), refuses the empty-space grid (its floors bound the
     attractor, not the infinite mirror image), and frames the camera on
     the canonical cell (`latticeCameraFitBounds`).
-    PER-CONSUMER SHIPPING — Points (3D/4D, bounded recorders, raw 4D, 8N
-    cap, terminal status), Flame CPU + both WGSL twins (the shared
-    32-weighted visitor, restart from one seed/frozen view, GPU-eligible),
-    the generated Flame backdrop (schedule + raw tiling + balloon legality
-    bit, never the echo payload), 3D Solid (compile-gated folds, hierarchy
-    suspended, material-only) and 4D Solid (bounded pre-projection images
-    into the UNCHANGED displayed volume, hierarchy KEPT, edits RESTART the
-    worker from the entry seed) — plus every measured refusal (Flame's
-    slice-aware lattice proposal CDF, raw-4D volumes, post-projection
-    folds, balloon, kaleidoscope, 4D slab, classic opRep — exact
-    translation deferred) is the contract's consumer matrix, each with its
-    own edit/restart contract and figures. Absent/refused stays literal
-    legacy.
+    KALEIDOSCOPE COMPOSES in both dimensions: the nearest-copy theorem takes
+    the already-symmetrized set as content; no commuting is needed. Source
+    symmetry and schedule also govern the shared automatic clip fit.
+    Point consumers preserve symmetry → schedule → lens → membership →
+    images → 4D view → deposit, with unchanged bounded work and primary RNG.
+    Solid folds queries live in 3D (hierarchy suspended) and bakes images
+    before projection in 4D (hierarchy kept, worker restarts from entry seed).
+    Per-consumer budgets, edit timing, the generated backdrop and remaining
+    refusals live in the contract's consumer matrix. Absent/refused stays
+    literal legacy; `scripts/tiling-symmetry.harness.ts` and its browser gate
+    certify the widened combination without improving the core approximation.
     Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Bench-pinned
     on verified Iris and browser-gated by `scripts/surface-lattice.verify.mjs`;

@@ -4596,12 +4596,11 @@ export class Ui {
     const kind = this.scalarSelect("tilingKind");
     const group = this.scalarSelect("tilingGroup");
     const clip = this.scalarSelect("tilingClip");
-    // Balloon and kaleidoscope make either authored arm dormant, so every
+    // Balloon makes either authored arm dormant, so every
     // dependent detail disables while the shared checkbox remains the clear
     // route. Dimension and clip-shape refusals do NOT disable: those
     // selectors are their adjacent recovery paths.
-    const dormant =
-      tiling !== undefined && (state.balloonEcho || state.symmetry.order > 1);
+    const dormant = tiling !== undefined && state.balloonEcho;
     kind.disabled = dormant;
     group.disabled = dormant;
     clip.disabled = dormant;
@@ -4633,10 +4632,6 @@ export class Ui {
         note =
           "Unavailable with Balloon — turn Balloon off; an orbit's echo is not the echo's orbit." +
           this.pointsTilingPendingSuffix(state, "Balloon");
-      } else if (state.symmetry.order > 1) {
-        note =
-          "Unavailable with Symmetry — set Order to 1; both features fold query space and have no certified composition order." +
-          this.pointsTilingPendingSuffix(state, "Symmetry");
       } else if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
         note =
           "Unavailable — tiling clips must be analytic. Choose None or an analytic clip." +
@@ -4670,10 +4665,6 @@ export class Ui {
       note =
         "Unavailable with Balloon — turn Balloon off; an orbit's echo is not the echo's orbit." +
         this.pointsTilingPendingSuffix(state, "Balloon");
-    } else if (state.symmetry.order > 1) {
-      note =
-        "Unavailable with Symmetry — set Order to 1; both features fold query space and have no certified composition order." +
-        this.pointsTilingPendingSuffix(state, "Symmetry");
     } else if (wants4 !== nonFlat) {
       note =
         `${tiling.group.toUpperCase()} is a ${wants4 ? "4D" : "3D"} group, but this document is ${nonFlat ? "4D" : "3D"}. Choose a group under ${nonFlat ? "4D" : "3D"}.` +
@@ -4703,7 +4694,7 @@ export class Ui {
 
   /** Request-associated Points half of the shared tiling disclosure. Static
    * document refusals are handled before this method, so a landed worker
-   * outcome can never mask the adjacent Balloon/Symmetry/dimension/mesh
+   * outcome can never mask the adjacent Balloon/dimension/mesh
    * recovery reason. */
   private pointsTilingNote(state: AppState): string {
     if (!this.pointTilingMatchesAuthored) {
@@ -4791,7 +4782,7 @@ export class Ui {
    * lands. */
   private pointsTilingPendingSuffix(
     state: AppState,
-    conflict?: "Balloon" | "Symmetry",
+    conflict?: "Balloon",
   ): string {
     if (
       state.renderMode !== "points" ||
@@ -4805,9 +4796,6 @@ export class Ui {
       : "you use Regenerate";
     if (conflict === "Balloon") {
       return ` Points still shows the earlier tiled cloud, so Balloon stays dormant until ${replacement}.`;
-    }
-    if (conflict === "Symmetry") {
-      return ` Points still shows the earlier order-1 tiled cloud until ${replacement}.`;
     }
     return ` Points still shows the earlier tiled cloud until ${replacement}.`;
   }

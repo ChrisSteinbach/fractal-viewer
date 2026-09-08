@@ -89,13 +89,13 @@ import type { Vec3, Vec4 } from "./types";
  * - H4 (order 14400 — no real-time use) and the reducible products (the
  *   boxfold branch sweep is exactly the A1³ vocabulary this feature does
  *   not re-implement);
- * - kaleidoscope + tiling (both query-space folds; the descent cores
- *   sweep their rotation inside the descent, after the tiling fold, and
- *   the estimate then has no certified lower-bound order);
  * - 4D slab + tiling (the fold of a segment is a bent polyline, and the
  *   slab's conservative-bound contract does not survive it);
  * - balloon + tiling (an orbit's echo is not the echo's orbit — no
  *   certified composition).
+ * Kaleidoscope composes: A is the already-symmetrized core set, and the
+ * nearest-copy theorem needs no commuting between its maps and the tiling.
+ * Proof, approximation limits and 3D/4D evidence: docs/tiling-contract.md.
  *
  * MIRRORED-LATTICE CONVENTION, frozen: one scalar fold uses the floor-based
  * mathematical modulo `h - abs(mod(x + h, 4h) - 2h)`. It performs fixed work

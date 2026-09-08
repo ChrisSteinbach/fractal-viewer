@@ -1642,7 +1642,8 @@ export interface SurfaceGpuKernelOptions {
    * with its mandatory origin ball and the clip — `tiling-de.ts` exactly.
    * Null/absent emits the pre-tiling source byte for byte, and the finite arm
    * retains its already-shipped source byte for byte. All seven cores compose;
-   * `balloon`, kaleidoscope and a real 4D slab remain refused. Mesh-bearing
+   * The core's kaleidoscope stays inside that call; no commuting is needed
+   * (docs/tiling-contract.md). Balloon and a real 4D slab remain refused. Mesh-bearing
    * clips are refused until tiling owns a mesh-atlas binding. */
   tiling?: ResolvedTiling | null;
   /** Per-slot surface FINISHES (surface-finish.ts): replace the shade
@@ -1997,12 +1998,6 @@ export function packSurfaceGpuParams(
         "not the echo's orbit, so there is no certified composition",
     );
   }
-  if (tilingInfo && de.symmetry.order > 1) {
-    throw new Error(
-      "surface-de-gpu: tiling+kaleidoscope is excluded — both are " +
-        "query-space folds and phase 1 has no certified order",
-    );
-  }
   if (de.foldFinal && de.final) {
     // buildSurfaceDE's invariant (surface-de.ts, `final` doc): the two
     // lens shapes are mutually exclusive, and the identity-final packing
@@ -2282,12 +2277,6 @@ export function packEscapeGpuParams(
 ): ArrayBuffer {
   const tilingInfo = surfaceTilingWireInfo(tiling, 3);
   validateSurfaceLatticeRadius(tilingInfo, de.boundingRadius);
-  if (tilingInfo && de.symmetryOrder > 1) {
-    throw new Error(
-      "surface-de-gpu: tiling+kaleidoscope is excluded — both are " +
-        "query-space folds and phase 1 has no certified order",
-    );
-  }
   const baseBytes = shapeTrap
     ? SURFACE_GPU_PARAMS_TRAP_BYTES
     : groundPlane
@@ -2665,12 +2654,6 @@ export function packSurface4GpuParams(
         "not the echo's orbit, so there is no certified composition",
     );
   }
-  if (tilingInfo && de.symmetry.order > 1) {
-    throw new Error(
-      "surface-de-gpu: tiling+kaleidoscope is excluded — both are " +
-        "query-space folds and phase 1 has no certified order",
-    );
-  }
   if (tilingInfo && view4.sliceHalfW !== 0) {
     throw new Error(
       "surface-de-gpu: tiling+4D slab is excluded — the fold of a " +
@@ -2958,12 +2941,6 @@ export function packEscape4GpuParams(
 ): ArrayBuffer {
   const tilingInfo = surfaceTilingWireInfo(tiling, 4);
   validateSurfaceLatticeRadius(tilingInfo, de.boundingRadius);
-  if (tilingInfo && de.symmetryOrder > 1) {
-    throw new Error(
-      "surface-de-gpu: tiling+kaleidoscope is excluded — both are " +
-        "query-space folds and phase 1 has no certified order",
-    );
-  }
   if (tilingInfo && view4.sliceHalfW !== 0) {
     throw new Error(
       "surface-de-gpu: tiling+4D slab is excluded — the fold of a " +

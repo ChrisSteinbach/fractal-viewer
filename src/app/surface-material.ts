@@ -6077,11 +6077,6 @@ export function setSurfaceSystem(
       `surface DE needs ${shadeCount} map/emitter colors, but received ${colors.length}`,
     );
   }
-  if (tiling && de.symmetry.order > 1) {
-    throw new RangeError(
-      "Space tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
-    );
-  }
   const tilingChanged = installSurfaceTiling(
     material,
     tiling,
@@ -7565,11 +7560,6 @@ export function setEscapeSystem(
   if (de.links.length > SURFACE_MAX_MAPS) {
     throw new RangeError(
       `escape DE has ${de.links.length} links, but the material carries at most ${SURFACE_MAX_MAPS}`,
-    );
-  }
-  if (tiling && de.symmetryOrder > 1) {
-    throw new RangeError(
-      "Space tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
     );
   }
   const tilingChanged = installSurfaceTiling(

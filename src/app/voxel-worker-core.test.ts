@@ -1262,7 +1262,7 @@ describe("VoxelWorkerSession 4D solid render", () => {
     );
   });
 
-  it("drops worker-baked tiling when a live symmetry edit makes the composition refused", () => {
+  it("rebuilds worker-baked tiling after a live w-plane symmetry edit while preserving source colors", () => {
     type WorkerTiling = Parameters<typeof computeVoxelBounds4>[5];
     const boundsTilings: WorkerTiling[] = [];
     const chunkTilings: WorkerTiling[] = [];
@@ -1312,24 +1312,23 @@ describe("VoxelWorkerSession 4D solid render", () => {
     scheduler.drain();
     expect(chunkTilings.at(-1)).toBeDefined();
 
-    session.handle({ type: "setSymmetry", order: 2, plane: "xz" });
+    const firstTiling = chunkTilings.at(-1)!;
+    session.handle({ type: "setSymmetry", order: 3, plane: "xw", twist: 1 });
     scheduler.drain();
 
     expect(boundsTilings).toHaveLength(2);
-    expect(boundsTilings[1]).toBeUndefined();
-    expect(chunkTilings.at(-1)).toBeUndefined();
-    // Refusal restores the entry geometry frame (origin + carrier support),
-    // never the independent canonical-source color normalization frame.
-    expect(chunkViews.at(-1)?.invWAmp).toBe(0.5);
-    const refusedProjection = chunkProjections.at(-1)!;
-    expect(
-      [
-        refusedProjection[4],
-        refusedProjection[9],
-        refusedProjection[14],
-        refusedProjection[19],
-      ].every((value) => Math.abs(value) === 0),
-    ).toBe(true);
+    const nextTiling = chunkTilings.at(-1)!;
+    expect(boundsTilings[1]).toBe(nextTiling);
+    expect(nextTiling).toBeDefined();
+    expect(nextTiling).not.toBe(firstTiling);
+    expect(nextTiling.plan.dimension).toBe(4);
+    // Symmetry repilots the displayed carrier while the canonical-source
+    // color normalization remains the entry choice.
+    expect(chunkViews.at(-1)?.invWAmp).toBeCloseTo(
+      1 / nextTiling.carrierRadius,
+      12,
+    );
+    expect(chunkProjections.at(-1)?.every(Number.isFinite)).toBe(true);
     expect(chunkColors.at(-1)).toMatchObject({
       kind: "height",
       minY: 18,

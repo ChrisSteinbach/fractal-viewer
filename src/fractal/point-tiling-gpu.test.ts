@@ -279,7 +279,7 @@ describe("point tiling GPU packing", () => {
     expect(maxOneBucketColor).toBeLessThan(1n << 64n);
   });
 
-  it("refuses dimension, kaleidoscope, and balloon mismatches at the GPU seam", () => {
+  it("accepts kaleidoscope while retaining dimension and balloon guards at the GPU seam", () => {
     const plan = finitePlan("a3");
     expect(() =>
       assertGpuPointTilingCompatibility(plan, 3, 1, false),
@@ -287,9 +287,12 @@ describe("point tiling GPU packing", () => {
     expect(() => assertGpuPointTilingCompatibility(plan, 4, 1, false)).toThrow(
       /dimension/,
     );
-    expect(() => assertGpuPointTilingCompatibility(plan, 3, 2, false)).toThrow(
-      /kaleidoscope/,
-    );
+    expect(() =>
+      assertGpuPointTilingCompatibility(plan, 3, 3, false),
+    ).not.toThrow();
+    expect(() =>
+      assertGpuPointTilingCompatibility(finitePlan("a4"), 4, 3, false),
+    ).not.toThrow();
     expect(() => assertGpuPointTilingCompatibility(plan, 3, 1, true)).toThrow(
       /balloon/,
     );

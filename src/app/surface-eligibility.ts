@@ -457,35 +457,16 @@ export function deriveSurfaceEligibility(
       kind: null,
     };
   }
-  // The tiling block wraps EVERY estimator core, so its combination
-  // refusals gate the whole derivation before any analyzer routes. The
-  // kaleidoscope refusal is the one the document alone proves: both are
-  // query-space folds, and the descent cores sweep their rotation INSIDE
-  // the descent, after the tiling fold — the estimate then has no certified
-  // lower-bound order (docs/tiling-contract.md's legal-combinations table).
-  // One uniform routing rule beats the per-family matrix, so it refuses
-  // every kind — escape and bulb included — exactly as the contract
-  // freezes. The balloon and 4D-slab refusals live at the routing seam
-  // instead: this derivation does not know either (module doc).
-  if (tiling && symmetry.order > 1) {
-    return {
-      status: "ineligible",
-      note:
-        "A tiled document cannot carry a kaleidoscope: both are query-space folds, " +
-        "and the descent sweeps its rotation inside the descent, after the tiling fold — " +
-        "the estimate then has no certified lower-bound order. Clear the tiling block or " +
-        "set symmetry order to 1.",
-      kind: null,
-    };
-  }
+  // Tiling takes the already-symmetrized set as canonical content. The
+  // nearest-copy theorem accepts any core set, so its kaleidoscope stays
+  // inside the untouched estimator; the two operations need not commute.
+  // Each family below still enforces its own symmetry/dimension limits.
   // The lattice arm resolves through the SAME estimator authority rule the
   // wrappers use (docs/tiling-contract.md's "Resolve lattice only after the
   // relevant DE exists"): the derivation below can't know the radius — the
   // DE does — so the lattice arm is admitted here and resolved in the
   // routing arms, exactly like the finite group's dimension check above.
-  // Refusals that remain: balloon (an orbit's echo is not the echo's
-  // orbit), kaleidoscope (both query-space folds, no certified order),
-  // the 4D slab (a fold of a segment is a bent polyline), and mesh clips.
+  // Balloon and the 4D slab remain session-level refusals (module doc).
   // A 4D document routes to the 4D analysis — what used to be this gate's
   // blanket "extends into 4D" disqualifier is now the 4D tracer's
   // admission ticket.

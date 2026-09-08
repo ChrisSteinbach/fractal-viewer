@@ -1687,9 +1687,13 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     resetting its inspection view, and applies lattice cell scale live per
     frame.
 
+  Kaleidoscope **Symmetry** combines with either tiling kind in 3D and 4D.
+  It shapes the source fractal before tiling selects and repeats the content;
+  changing Order can therefore change what appears inside each tile. Each
+  renderer keeps the edit timing disclosed by its Symmetry controls.
+
   Refusals are scoped and named adjacent to the editor: a finite group with
-  the wrong dimension, a clip containing a mesh, Balloon echo, Symmetry order
-  above 1 (both fold query space with no certified composition order), a
+  the wrong dimension, a clip containing a mesh, Balloon echo, a
   4D slab under Surface's tiling arm, and forward escape-time or Mandelbulb
   content in the point-family renderers (their clouds and volumes are reset
   debris, not samples of the tiled set — Surface's own tiled escape-time and

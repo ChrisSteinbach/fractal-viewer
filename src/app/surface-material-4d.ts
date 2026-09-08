@@ -3367,11 +3367,6 @@ export function setSurfaceSystem4(
       `surface DE needs ${shadeCount} map/emitter colors, but received ${colors.length}`,
     );
   }
-  if (tiling && de.symmetry.order > 1) {
-    throw new RangeError(
-      "Space tiling cannot compose with kaleidoscope: the two query-space folds have no certified order",
-    );
-  }
   const tilingChanged = installSurfaceTiling(
     material,
     tiling,
