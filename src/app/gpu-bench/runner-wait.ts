@@ -17,6 +17,7 @@ export interface BenchWaitState {
   completedScenarios: string[];
   active: string | null;
   activity: string | null;
+  url?: string;
 }
 
 export interface BenchWaitPage {
@@ -24,10 +25,12 @@ export interface BenchWaitPage {
     predicate: (arg: {
       previousCompleted: number;
       resetOnScenarioCompletion: boolean;
+      expectedUrl?: string;
     }) => boolean,
     arg: {
       previousCompleted: number;
       resetOnScenarioCompletion: boolean;
+      expectedUrl?: string;
     },
     options: { timeout: number; polling: number },
   ): Promise<unknown>;
@@ -37,6 +40,7 @@ export interface BenchWaitPage {
 export interface BenchWaitOptions {
   timeoutMs: number;
   resetOnScenarioCompletion: boolean;
+  expectedUrl?: string;
   onScenarioCompleted?: (state: BenchWaitState) => void;
 }
 
@@ -60,6 +64,7 @@ async function readBenchWaitState(
     active: window.__BENCH_ACTIVE__ ?? null,
     activity:
       document.getElementById("activityLabel")?.textContent?.trim() || null,
+    url: location.href,
   }));
 }
 
@@ -97,7 +102,9 @@ export async function waitForBenchCompletion(
         ({
           previousCompleted: completedBeforeWait,
           resetOnScenarioCompletion,
+          expectedUrl,
         }) =>
+          (expectedUrl !== undefined && location.href !== expectedUrl) ||
           window.__BENCH_DONE__ === true ||
           window.__BENCH_ERROR__ !== undefined ||
           (resetOnScenarioCompletion &&
@@ -106,10 +113,17 @@ export async function waitForBenchCompletion(
         {
           previousCompleted,
           resetOnScenarioCompletion: options.resetOnScenarioCompletion,
+          expectedUrl: options.expectedUrl,
         },
         { timeout: options.timeoutMs, polling: 250 },
       );
     } catch (cause) {
+      // A closed/crashed browser rejects immediately. Calling that a stall
+      // falsely reports that the entire deadline elapsed and hides the useful
+      // transport error behind a timeout message.
+      if (!(cause instanceof Error) || cause.name !== "TimeoutError") {
+        throw cause;
+      }
       let state: BenchWaitState | null = null;
       try {
         state = await readBenchWaitState(page);
@@ -128,6 +142,14 @@ export async function waitForBenchCompletion(
     }
 
     const state = await readBenchWaitState(page);
+    if (
+      options.expectedUrl !== undefined &&
+      state.url !== options.expectedUrl
+    ) {
+      throw new Error(
+        `benchmark navigated away to ${state.url ?? "unknown URL"}`,
+      );
+    }
     if (state.done || state.error !== null) return state;
 
     if (

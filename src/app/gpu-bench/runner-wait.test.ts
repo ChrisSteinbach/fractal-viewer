@@ -110,7 +110,9 @@ describe("waitForBenchCompletion", () => {
       active: "emitter-gearworks",
       activity: "GPU accumulating — 117493 iter/s",
     });
-    const fake = fakePage([stalled], new Error("playwright timeout"));
+    const timeout = new Error("playwright timeout");
+    timeout.name = "TimeoutError";
+    const fake = fakePage([stalled], timeout);
 
     await expect(
       waitForBenchCompletion(fake.page, {
@@ -120,6 +122,30 @@ describe("waitForBenchCompletion", () => {
     ).rejects.toThrow(
       "no scenario completed within 1200000ms; active=emitter-gearworks; activity=GPU accumulating — 117493 iter/s; completed=1",
     );
+  });
+
+  it("preserves a browser exit instead of reporting an elapsed stall deadline", async () => {
+    const closed = new Error("Target page, context or browser has been closed");
+    const fake = fakePage([], closed);
+
+    await expect(
+      waitForBenchCompletion(fake.page, {
+        timeoutMs: 1_200_000,
+        resetOnScenarioCompletion: true,
+      }),
+    ).rejects.toBe(closed);
+  });
+
+  it("fails on navigation even if the replacement page reports done", async () => {
+    const fake = fakePage([state([], { done: true, url: "about:blank" })]);
+
+    await expect(
+      waitForBenchCompletion(fake.page, {
+        timeoutMs: 1_200_000,
+        resetOnScenarioCompletion: false,
+        expectedUrl: "https://localhost:5173/gpu-bench/index.html?autorun=1",
+      }),
+    ).rejects.toThrow("benchmark navigated away to about:blank");
   });
 });
 

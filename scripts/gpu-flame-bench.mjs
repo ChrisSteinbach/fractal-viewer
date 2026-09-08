@@ -16,7 +16,7 @@
  *   node scripts/gpu-flame-bench.mjs [--duration=4] [--scenarios=a,b]
  *                                     [--shard=i/n] [--backend-smoke]
  *     [--url=https://host:port] [--headed] [--chrome=/path/to/chrome]
- *     [--swiftshader] [--out=bench-results]
+ *     [--swiftshader] [--out=bench-results] [--diagnostics]
  *     [--surface | --surface-only] [--display=:0]
  *     [--surface-widths=12,4] [--surface-timing-widths=12,8,6,4]
  *     [--surface-variants=shared,private] [--surface-wg=32]
@@ -39,10 +39,12 @@
  *
  * `--display=<d>` launches HEADED Chrome against a real X display (the
  * fold-width-sweep.mjs x11 recipe: DISPLAY in the env, no --headless=new,
- * --no-sandbox) so the WebGPU adapter is the real driver instead of
- * SwiftShader — the mode the surface timing sweep is meant to run in. The
+ * --ozone-platform=x11, --no-sandbox) so the WebGPU adapter is the real driver
+ * instead of SwiftShader — the mode the surface timing sweep is meant to run in. The
  * WebGL --use-gl/--use-angle flags are deliberately NOT added: WebGPU goes
  * through Vulkan independently of ANGLE.
+ * Hardware runs create an unfocused, minimized window; add --headed to keep
+ * it visible. Screenshots and the benchmark's viewport still work minimized.
  *
  * `--chrome=bundled` launches the Playwright-BUNDLED Chromium (the same
  * hermetic browser the WebGL smoke test uses) instead of a system Chrome —
@@ -57,6 +59,14 @@
  * through production warmup, accumulation, readback and downsampling at
  * small resolution. It has a separate verdict and a five-minute cap; it
  * never substitutes for the statistical agreement sweep.
+ * `--diagnostics` additionally saves partial-results.json once per second,
+ * browser-events.jsonl (including exit code/signal and page crashes), and
+ * browser-stderr.log. For launch-time stderr, repeat without --diagnostics
+ * using DEBUG=pw:browser (Playwright server launch does not stream it).
+ * Diagnostics use a loopback-only Playwright browser server to expose the
+ * child process. A partial result is evidence, never a completed gate.
+ * Unexpected top-level navigation fails the wait rather than starting a
+ * twenty-minute wait on a page that no longer contains the benchmark.
  *
  * Without --url, this spawns `npm run dev` itself and tears it down when
  * done (including on error) — the whole point being a one-shot
@@ -69,12 +79,13 @@
  * output statistically agrees with the CPU oracle on every scenario that ran.
  */
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import https from "node:https";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { startBenchDiagnostics } from "./gpu-bench-diagnostics.ts";
 import {
   shouldResetWaitOnScenarioCompletion,
   waitForBenchCompletion,
@@ -149,6 +160,7 @@ function parseArgs(argv) {
     scenarios: undefined,
     shard: undefined,
     backendSmoke: false,
+    diagnostics: false,
     url: undefined,
     headed: false,
     chrome: DEFAULT_CHROME,
@@ -180,6 +192,9 @@ function parseArgs(argv) {
         break;
       case "backend-smoke":
         args.backendSmoke = true;
+        break;
+      case "diagnostics":
+        args.diagnostics = true;
         break;
       case "url":
         args.url = value.replace(/\/+$/, "");
@@ -560,6 +575,9 @@ async function main() {
     shouldResetWaitOnScenarioCompletion(surfaceRequested, args.shard);
   const outDir = path.resolve(REPO_ROOT, args.out);
   await mkdir(outDir, { recursive: true });
+  // Reusing an output directory must not leave a previous success beside a
+  // new run that never reached completion.
+  await rm(path.join(outDir, "results.json"), { force: true });
 
   let devServer = null;
   let base = args.url;
@@ -591,6 +609,8 @@ async function main() {
   }
 
   let browser = null;
+  let browserServer = null;
+  let diagnostics = null;
   let exitCode = 0;
   try {
     // `--chrome=bundled` resolves to the Playwright-bundled Chromium — same
@@ -639,24 +659,75 @@ async function main() {
       // The three WebGPU flags above stay as-is — WebGPU reaches the real
       // GPU through Vulkan, independent of the ANGLE/WebGL flags the WebGL
       // sweeps need.
-      launchFlags.push("--no-sandbox");
+      // DISPLAY alone does not select X11 on a Wayland desktop. Chromium
+      // otherwise auto-selects Wayland and reports it incompatible with the
+      // Vulkan feature above, despite this runner promising an X launch.
+      launchFlags.push("--ozone-platform=x11", "--no-sandbox");
     } else if (!args.headed) {
       launchFlags.push("--headless=new");
     }
-    browser = await chromium.launch({
+    const launchOptions = {
       executablePath,
       headless: false,
       args: launchFlags,
       ...(args.display !== undefined
         ? { env: { ...process.env, DISPLAY: args.display } }
         : {}),
-    });
+    };
+    if (args.diagnostics) {
+      browserServer = await chromium.launchServer({
+        ...launchOptions,
+        host: "127.0.0.1",
+      });
+      browser = await chromium.connect(browserServer.wsEndpoint());
+    } else {
+      browser = await chromium.launch(launchOptions);
+    }
     // Wide enough that a scenario's three 960px canvases sit un-clipped in
     // one row — page.png would otherwise cut off the GPU/diff canvases.
-    const page = await browser.newPage({
+    const pageOptions = {
       ignoreHTTPSErrors: true,
       viewport: { width: 3040, height: 1000 },
-    });
+    };
+    let page;
+    if (args.display !== undefined && !args.headed) {
+      // Playwright's newPage focuses its new window; --start-minimized does
+      // not override that. Create an unfocused, minimized X11 target instead.
+      // A Playwright viewport would restore the window while initializing it,
+      // so apply identical viewport metrics directly through CDP afterwards.
+      const context = await browser.newContext({
+        ...pageOptions,
+        viewport: null,
+      });
+      const cdp = await browser.newBrowserCDPSession();
+      const { browserContextIds } = await cdp.send("Target.getBrowserContexts");
+      if (browserContextIds.length !== 1)
+        throw new Error("Expected one bench context");
+      [page] = await Promise.all([
+        context.waitForEvent("page"),
+        cdp.send("Target.createTarget", {
+          url: "about:blank",
+          browserContextId: browserContextIds[0],
+          newWindow: true,
+          background: true,
+          focus: false,
+          windowState: "minimized",
+        }),
+      ]);
+      const target = await context.newCDPSession(page);
+      await target.send("Emulation.setDeviceMetricsOverride", {
+        ...pageOptions.viewport,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      // Keep the emulation session attached for the lifetime of this page.
+      await cdp.detach();
+    } else {
+      page = await browser.newPage(pageOptions);
+    }
+    if (browserServer) {
+      diagnostics = startBenchDiagnostics(browserServer, browser, page, outDir);
+    }
     page.on("console", (msg) => {
       process.stderr.write(`[page:${msg.type()}] ${msg.text()}\n`);
     });
@@ -676,7 +747,9 @@ async function main() {
     for (const [param, value] of Object.entries(args.surfaceParams)) {
       query.set(param, value);
     }
-    const targetUrl = `${base}/gpu-bench/index.html?${query.toString()}`;
+    const targetUrl = new URL(
+      `${base}/gpu-bench/index.html?${query.toString()}`,
+    ).href;
     console.error(`[gpu-flame-bench] navigating to ${targetUrl}`);
     await page.goto(targetUrl, { waitUntil: "load" });
 
@@ -697,6 +770,7 @@ async function main() {
         : `[gpu-flame-bench] waiting up to ${benchTimeoutMs}ms for __BENCH_DONE__/__BENCH_ERROR__...`,
     );
     await waitForBenchCompletion(page, {
+      expectedUrl: targetUrl,
       timeoutMs: benchTimeoutMs,
       resetOnScenarioCompletion: resetWaitOnScenarioCompletion,
       onScenarioCompleted: (state) => {
@@ -709,6 +783,12 @@ async function main() {
 
     const results = await page.evaluate(() => window.__BENCH_RESULTS__ ?? null);
     const pageError = await page.evaluate(() => window.__BENCH_ERROR__ ?? null);
+
+    // Persist numeric evidence before screenshots: image capture can fail
+    // independently after the benchmark has already completed.
+    const resultsPath = path.join(outDir, "results.json");
+    await writeFile(resultsPath, JSON.stringify(results, null, 2));
+    console.error(`[gpu-flame-bench] results written to ${resultsPath}`);
 
     const screenshotPath = path.join(outDir, "page.png");
     await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -734,14 +814,20 @@ async function main() {
         const benchLabel = await canvases[i].getAttribute("data-bench-label");
         const suffix = benchLabel ?? labels[i] ?? String(i);
         const canvasPath = path.join(outDir, `${name}-${suffix}.png`);
-        await canvases[i].screenshot({ path: canvasPath });
+        if (args.display !== undefined && !args.headed) {
+          // These are completed 2D benchmark canvases. Serialize their native
+          // pixels without asking a minimized compositor for another frame.
+          // page.png retains the surrounding layout and CSS borders.
+          const png = await canvases[i].evaluate((canvas) =>
+            canvas.toDataURL("image/png"),
+          );
+          await writeFile(canvasPath, Buffer.from(png.split(",")[1], "base64"));
+        } else {
+          await canvases[i].screenshot({ path: canvasPath });
+        }
       }
     }
     console.error(`[gpu-flame-bench] per-canvas screenshots written`);
-
-    const resultsPath = path.join(outDir, "results.json");
-    await writeFile(resultsPath, JSON.stringify(results, null, 2));
-    console.error(`[gpu-flame-bench] results written to ${resultsPath}`);
 
     console.log(JSON.stringify(results, null, 2));
 
@@ -802,9 +888,20 @@ async function main() {
         if (exitCode === 0) exitCode = 2;
       }
     }
+  } catch (error) {
+    diagnostics?.event("runner-error", {
+      error: error instanceof Error ? error.stack : String(error),
+    });
+    throw error;
   } finally {
-    if (browser) await browser.close();
-    killDevServer(devServer);
+    diagnostics?.stop();
+    try {
+      if (browserServer) await browserServer.close();
+      else if (browser) await browser.close();
+    } finally {
+      killDevServer(devServer);
+      await diagnostics?.drain();
+    }
   }
   process.exitCode = exitCode;
 }
