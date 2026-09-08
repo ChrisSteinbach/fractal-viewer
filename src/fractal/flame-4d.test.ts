@@ -2009,10 +2009,14 @@ describe("accumulateFlame4 point-space tiling", () => {
     ["finite", pointPlan4({ group: "f4" })],
     ["lattice", pointPlan4({ kind: "lattice", cellScale: 1 }, 0.5)],
   ] as const)(
-    "resumes %s cursor/credit exactly across serialized irregular chunks",
+    "resumes a w-plane kaleidoscope's %s cursor/credit exactly across serialized irregular chunks",
     (_kind, plan) => {
       const source = genericF4ChamberPoint();
-      const prepared = prepareChaosGame4(fixedPointSystem4(source));
+      const prepared = prepareChaosGame4(fixedPointSystem4(source), null, {
+        order: 3,
+        plane: "xw",
+        twist: 1,
+      });
       const color: FourDRenderColor = {
         kind: "uniform",
         color: [0.2, 0.4, 0.8],
@@ -2078,6 +2082,8 @@ describe("accumulateFlame4 point-space tiling", () => {
       expect(chunked.orbitW).toBe(single.orbitW);
       expect(chunked.orbitColor).toBe(single.orbitColor);
       expect(chunked.pointTiling).toEqual(single.pointTiling);
+      expect(single.pointTiling!.accepted).toBeGreaterThan(0);
+      expect(single.hitMass).toBeGreaterThan(0);
       expect(chunkedRng()).toBe(singleRng());
     },
   );
@@ -2124,8 +2130,12 @@ describe("accumulateFlame4 point-space tiling", () => {
     });
   });
 
-  it("consumes the same primary RNG and leaves the same orbit for equal source work", () => {
-    const prepared = prepareChaosGame4(weightedPentatope());
+  it("consumes the same primary RNG and leaves the same symmetrized orbit for equal source work", () => {
+    const prepared = prepareChaosGame4(weightedPentatope(), null, {
+      order: 3,
+      plane: "xw",
+      twist: 1,
+    });
     const plan = pointPlan4({ kind: "lattice", cellScale: 1 }, 2);
     const color: FourDRenderColor = {
       kind: "uniform",
@@ -2203,7 +2213,7 @@ describe("accumulateFlame4 point-space tiling", () => {
     expect(omitted.pointTiling).toBeUndefined();
   });
 
-  it("rejects wrong-dimensional, Balloon, and kaleidoscope combinations", () => {
+  it("rejects wrong-dimensional and Balloon combinations", () => {
     const source = genericF4ChamberPoint();
     const prepared = prepareChaosGame4(fixedPointSystem4(source));
     const plan = pointPlan4({ group: "f4" });
@@ -2254,20 +2264,5 @@ describe("accumulateFlame4 point-space tiling", () => {
         plan,
       ),
     ).toThrow(/unavailable with Balloon/);
-    expect(() =>
-      accumulateFlame4(
-        prepareChaosGame4(fixedPointSystem4(source), null, {
-          order: 2,
-          plane: "xz",
-        }),
-        ...base,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        plan,
-      ),
-    ).toThrow(/kaleidoscope symmetry above order 1/);
   });
 });

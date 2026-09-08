@@ -60,6 +60,9 @@ function refused(note: string): PointTilingSessionRefused {
  * caller constructs its chaos-game RNG, so the classic stream stays
  * byte-identical when the document has no tiling block or is refused.
  *
+ * Kaleidoscope copies belong to the source attractor before chamber
+ * membership and image selection. Its existing bound and content probe both
+ * read that symmetry, so tiling needs no commutation rule between the two.
  * Document incompatibilities are classified before estimator construction.
  * Throws after those gates are programming-invariant failures (for example a
  * malformed lattice scalar or an impossible plan closure), not user-facing
@@ -79,11 +82,6 @@ export function resolvePointTilingSession(
   if (balloonEcho) {
     return refused(
       "Point tiling is unavailable with Balloon; turn Balloon off.",
-    );
-  }
-  if (symmetry.order > 1) {
-    return refused(
-      "Point tiling is unavailable with kaleidoscope symmetry above order 1; set Order to 1.",
     );
   }
   if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {

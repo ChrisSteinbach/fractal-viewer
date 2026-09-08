@@ -1727,7 +1727,7 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
     ).toThrow(/cannot compile into the balloon variant/);
   });
 
-  it("installs one live group word, regenerates only for baked state, and refuses kaleidoscope or balloon", () => {
+  it("installs the group beside the kaleidoscope without recompiling and still refuses balloon", () => {
     const material = createSurfaceMaterial();
     setSurfaceSystem(material, de3([map3()]), [black], undefined, a3);
     expect(materialSurfaceTiling(material)).toBe(a3);
@@ -1767,7 +1767,10 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
         undefined,
         a3,
       ),
-    ).toThrow(/cannot compose with kaleidoscope/);
+    ).not.toThrow();
+    expect(material.uniforms.uSymOrder.value).toBe(3);
+    expect(material.uniforms.uTilingGroup.value).toBe(1);
+    expect(material.version).toBe(version);
     expect(() =>
       setSurfaceBalloon(material, {
         center: [0, 0, 0],
@@ -2045,17 +2048,22 @@ describe("compile-gated mirrored lattice in the 3D GLSL tracer", () => {
     expect(() =>
       setSurfaceSystem(
         material,
-        de3([map3()], {
-          order: 3,
-          plane: "xz",
-          stepCos: -0.5,
-          stepSin: Math.sqrt(3) / 2,
-        }),
+        {
+          ...de3([map3()], {
+            order: 3,
+            plane: "xz",
+            stepCos: -0.5,
+            stepSin: Math.sqrt(3) / 2,
+          }),
+          visibleBoundingRadius: lattice.radius,
+        },
         [black],
         undefined,
         lattice,
       ),
-    ).toThrow(/cannot compose with kaleidoscope/);
+    ).not.toThrow();
+    expect(material.uniforms.uSymOrder.value).toBe(3);
+    expect(material.uniforms.uTilingGroup.value).toBe(7);
   });
 
   it("marches the presentation carrier instead of the visible sphere", () => {

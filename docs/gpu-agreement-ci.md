@@ -65,7 +65,7 @@ The ordinary image/numeric agreement budgets, thresholds and ss=1 check are
 unchanged. A failed smoke prevents spending the entire agreement matrix on
 invalid WGSL or an unavailable GPU path.
 
-The full roster currently has 32 scenarios: 19 in 3D, 13 in 4D. The selector
+The full roster currently has 34 scenarios: 20 in 3D, 14 in 4D. The selector
 reads the literal `SCENARIOS` definitions from the page with the TypeScript
 parser. Names and dimensions follow any spread properties so their identity is
 statically checkable. It generates the same 27-way round-robin partition the

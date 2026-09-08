@@ -64,10 +64,10 @@ function refused(
  * installed as the rejected post-projection material fold.
  *
  * Document incompatibilities are classified before estimator construction,
- * mirroring `point-tiling-session.ts`'s order. Refusals follow the frozen
- * combination matrix (`docs/tiling-contract.md`): the volume bakes the
- * kaleidoscope into the attractor, so symmetry order > 1 and balloon have
- * no canonical chamber content; a mesh-backed clip cannot be tested in the
+ * mirroring `point-tiling-session.ts`'s order. The volume already contains
+ * the kaleidoscope, whose intersection with the chamber is the canonical
+ * content. Both its bound and content probe include symmetry. Balloon still
+ * has no composed query path; a mesh-backed clip cannot be tested in the
  * query fold; and a forward escape-time/bulb volume is reset debris, not a
  * sample of the Surface set. Only an inverse-IFS attractor is tileable — the
  * same gate the point family's session resolves against.
@@ -95,12 +95,6 @@ export function resolveSolidTilingSession(
   if (balloonEcho) {
     return refused(
       "Solid tiling is unavailable with Balloon; turn Balloon off.",
-      application,
-    );
-  }
-  if (symmetry.order > 1) {
-    return refused(
-      "Solid tiling is unavailable with kaleidoscope symmetry above order 1; set Order to 1.",
       application,
     );
   }

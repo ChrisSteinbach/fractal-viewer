@@ -1094,7 +1094,7 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
     );
   }
 
-  it("refuses a tiled document with a kaleidoscope, naming the two query-space folds", () => {
+  it("admits tiling over a contracting kaleidoscope", () => {
     const result = deriveWithTiling(
       "mandelboxKifs",
       { group: "a3" },
@@ -1103,13 +1103,11 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
         order: 2,
       },
     );
-    expect(result.status).toBe("ineligible");
-    expect(result.kind).toBeNull();
-    expect(result.note).toContain("query-space folds");
-    expect(result.note).toContain("tiling");
+    expect(result.status).not.toBe("ineligible");
+    expect(result.kind).toBe("ifs");
   });
 
-  it("applies the one uniform refusal rule to every routing kind — escape included", () => {
+  it("admits tiling over an escape-time kaleidoscope", () => {
     const document = presetDocument("mandelboxClassic");
     const result = deriveSurfaceEligibility(
       document.transforms,
@@ -1120,9 +1118,8 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
       document.shapeTrap ?? null,
       { group: "b3" },
     );
-    expect(result.status).toBe("ineligible");
-    expect(result.kind).toBeNull();
-    expect(result.note).toContain("query-space folds");
+    expect(result.status).not.toBe("ineligible");
+    expect(result.kind).toBe("escape");
   });
 
   it("keeps a tiled document without a kaleidoscope exactly as eligible as the untiled one", () => {
@@ -1154,7 +1151,7 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
     // The lattice renderer is live: the derivation no longer refuses the
     // recognized block — the routing arms resolve it against each
     // estimator's authority radius after the DE exists (the eligibility
-    // gate's job ends at the shared refusals: balloon, kaleidoscope, the
+    // gate's job ends at the shared refusals: balloon, the
     // 4D slab, mesh clips).
     for (const preset of ["sierpinski", "pentatope"] as Preset[]) {
       const result = deriveWithTiling(preset, {
@@ -1227,7 +1224,7 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
     expect(withClip.note).toContain("Authored custom-shape source needs");
   });
 
-  it("never consults machine availability for the tiling refusal — a tiled kaleidoscope document is refused on every backend", () => {
+  it("admits a tiled 3D kaleidoscope with either backend", () => {
     const document = presetDocument("mandelboxKifs");
     const withTiling = (computeAvailable: boolean) =>
       deriveSurfaceEligibility(
@@ -1240,7 +1237,7 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
         { group: "h3" },
       );
     expect(withTiling(false)).toEqual(withTiling(true));
-    expect(withTiling(false).status).toBe("ineligible");
+    expect(withTiling(false).status).not.toBe("ineligible");
   });
 
   it("deriveSurfaceDocumentEligibility reads document.tiling (neutral parity holds for a tiled document)", () => {
@@ -1250,7 +1247,33 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
       symmetry: { ...NO_SYMMETRY, order: 2 },
     };
     expectNeutralParity(tiled);
-    expect(deriveSurfaceDocumentEligibility(tiled).status).toBe("ineligible");
+    expect(deriveSurfaceDocumentEligibility(tiled).kind).toBe("ifs");
+  });
+
+  it.each<TilingSpec>([{ group: "a4" }, { kind: "lattice", cellScale: 1.5 }])(
+    "admits a genuinely 4D kaleidoscope under %j",
+    (tiling) => {
+      const result = deriveWithTiling("pentatope", tiling, {
+        order: 3,
+        plane: "xw",
+        twist: 1,
+      });
+      expect(result.status).not.toBe("ineligible");
+      expect(result.kind).toBe("ifs4");
+    },
+  );
+
+  it("still routes dimension from a w-plane kaleidoscope before checking the finite group", () => {
+    const result = deriveWithTiling(
+      "sierpinski",
+      { group: "a3" },
+      {
+        order: 3,
+        plane: "xw",
+      },
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("this document is 4D");
   });
 
   it("deriveSurfaceDocumentEligibility admits the lattice arm at neutral parity", () => {

@@ -1146,8 +1146,7 @@ export class FlameWorkerSession {
   /** Raw authored block retained so a live symmetry edit can re-resolve the
    * active/refused policy without a new start command. */
   private tilingSpec: TilingSpec | null = null;
-  /** Worker-local matrix/CDF plan. Non-null is also the temporary explicit
-   * CPU-routing gate until the GPU kernels consume the same plan. */
+  /** Worker-local matrix/CDF plan consumed by both CPU and GPU kernels. */
   private pointTilingPlan: PointTilingPlan | null = null;
   /** Certified origin radius from the active resolver, used by the genuine
    * 4D carrier/view policy. Null for off/refused sessions. */
@@ -1170,8 +1169,8 @@ export class FlameWorkerSession {
    * de-duplication and for rebuilding the projection around `fourDCenter`. */
   private fourDWorkerView: FourDWorkerView | null = null;
   private fourDColorMode: FourDColorMode = "wBlueOrange";
-  /** Entry geometry retained independently of the active tiling view so a
-   * live symmetry refusal can return to the exact untiled pivot/support. */
+  /** Entry geometry retained independently of the active tiling view so an
+   * untiled session can return to the exact entry pivot/support. */
   private fourDEntryCenter: Vec4 = [0, 0, 0, 0];
   private fourDEntryHalfExtents: Vec4 = [0, 0, 0, 0];
   private fourDCenter: Vec4 = [0, 0, 0, 0];
@@ -1527,12 +1526,13 @@ export class FlameWorkerSession {
   /** Resolve the authored point-space block inside the worker realm. Plans
    * contain cached typed arrays and never cross postMessage; only this compact
    * outcome returns to the panel. Re-run after a live symmetry edit because
-   * order > 1 is a deliberate composition refusal. */
+   * its source attractor and fitted clip/bound have changed. Resolve against
+   * the same retained dimension and symmetry that prepared the orbit. */
   private resolvePointTiling(): void {
     const resolution = resolvePointTilingSession(
       this.baseTransforms,
       this.baseFinalTransform,
-      this.symmetry(),
+      this.is4D ? this.symmetry() : this.symmetry3D(),
       this.hybridSchedule,
       this.tilingSpec,
       this.balloonEchoEnabled,
@@ -2486,11 +2486,12 @@ export class FlameWorkerSession {
    * (`createBackend` is arg-free; a lingering `projection` parameter here
    * would suggest a per-call value where there is only the session's own). */
   private buildGpuBackendRequest(): GpuBackendRequest {
+    const symmetry = this.symmetry3D();
     return {
       transforms: this.baseTransforms,
       finalTransform: this.baseFinalTransform,
-      order: this.symmetryOrder,
-      plane: this.symmetryPlane,
+      order: symmetry.order,
+      plane: symmetry.plane,
       palette: this.paletteSpec,
       projection: this.projection!,
       echo: this.balloonEcho,

@@ -547,8 +547,8 @@ const symmetryEffect: ControlEffect = (state, fx, previous) => {
   // dimension still on screen.
   if (systemIsNonFlat(state) !== systemIsNonFlat(previous)) return;
   if (!fx.activeRendererAcceptsSymmetryEdit()) return;
-  // A symmetry order crossing 1 re-opens or closes the Solid tiling arm
-  // (the frozen kaleidoscope refusal) without a worker restart.
+  // Symmetry changes the canonical content and its fitted clip/bound even
+  // though tiling remains available. Refresh Solid's material-side plan.
   if (state.renderMode === "solid") fx.syncSolidTiling();
   const command = {
     type: "setSymmetry",
@@ -599,10 +599,10 @@ const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
  * contract; Flame restarts its in-worker accumulation while preserving the
  * frozen view and fallback state; Surface restarts with its inspection view
  * preserved. Flat Solid updates its material live; 4D Solid replaces its
- * worker because images are baked into density. Eligibility refresh is immediate because group dimension,
- * Balloon and kaleidoscope are explicit refusals. The generated Flame
- * backdrop is invalidated like an authored edit too — a tiled scene must
- * not keep the untiled echo behind Points — via trackAutoBackground,
+ * worker because images are baked into density. Eligibility refresh is
+ * immediate because group dimension and Balloon are explicit refusals. The
+ * generated Flame backdrop is invalidated like an authored edit too — a
+ * tiled scene must not keep the untiled echo behind Points — via trackAutoBackground,
  * which fires even when Points' Auto-update is off (the pane shows the
  * stale cloud while the replacement backdrop renders). */
 const tilingEffect: ControlEffect = (state, fx) => {

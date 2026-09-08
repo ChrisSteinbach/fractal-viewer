@@ -124,14 +124,15 @@ wrapper owns the public names). Evaluation order, frozen:
 
 1. **Tiling fold** — `q' = F(q)` into the chamber. Once, before anything
    else in the estimator path.
-2. **Kaleidoscope** — see the refusal below; phase 1 never combines them.
-3. **Lens** (descent cores' `foldFinal`): internal to the estimator, applied
+2. **Lens** (descent cores' final transform): internal to the estimator, applied
    after the tiling fold. A query-space PRE-fold (tiling) and a plot-time
    POST-fold (lens) compose by construction.
-4. **The estimator core** — `descend`/`descendFold`/`descendLens`,
+3. **The estimator core, including its kaleidoscope** — inverse families
+   sweep sectors during descent; forward families fold the query before
+   their orbit. The existing entries are `descend`/`descendFold`/`descendLens`,
    `descend4`/`descendFold4`/`descendLens4`, or the forward
    `estimateEscapeDistance`/`estimateBulbDistance`/`estimateEscapeDistance4`.
-5. **Max with the clip** — `clipDist(q')` (absent clip: no term).
+4. **Max with the clip** — `clipDist(q')` (absent clip: no term).
 
 The empty-space grid, the shading probe taps (normal/shadow/AO), the
 march-epsilon cutoff and the visible/bounding sphere contracts all ride the
@@ -230,16 +231,125 @@ composition chain above.
 
 ## Legal combinations and refusals (frozen)
 
-| combination                                                      | verdict                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| tiling + ground plane                                            | composes — the landscape case; the plane is world-space in the sliced 3D space, the fold never touches it                                                                                                                                                                                                                                                                                                                                                    |
-| tiling + lens (`foldFinal`)                                      | composes — pre-fold vs post-fold                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| tiling + condensation / schedule / chaos / shape trap / finishes | compose — they live at the estimator/orbit level                                                                                                                                                                                                                                                                                                                                                                                                             |
-| tiling + balloon                                                 | REFUSED, adjacent reason — the sphere-inversion echo of an orbit is not the orbit of the echo; no certified composition, and a filled solid's interior reaching the ball centre swallows the camera (the balloon's own IFS-only verdict)                                                                                                                                                                                                                     |
-| tiling + kaleidoscope                                            | REFUSED, adjacent reason — both are query-space folds and the composition argument differs per family (the descent cores sweep the rotation INSIDE the descent, after the tiling fold — the estimate then has no certified lower-bound order; the forward cores' foldK-then-foldT composition IS sound, but one uniform routing rule beats a per-family matrix). The fixtures never combine them; a later certified order requires its own measured delivery |
-| tiling + 4D slab (`halfExtent > 0`)                              | REFUSED, adjacent reason — the fold of a segment is a bent polyline (per-point reflection sequences), and the slab's conservative-bound contract does not survive it. Tiled 4D sessions run slice 0 (the shipped default)                                                                                                                                                                                                                                    |
-| tiling + H4 / reducible groups                                   | REFUSED — vocabulary above                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| tiling + escape4                                                 | in — no slab, no lens, no kaleidoscope by the refusals above; the forward orbit is seeded at the folded point exactly as its kaleidoscope seeds at the sector-folded point                                                                                                                                                                                                                                                                                   |
+| combination                                                      | verdict                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tiling + ground plane                                            | composes — the landscape case; the plane is world-space in the sliced 3D space, the fold never touches it                                                                                                                                |
+| tiling + lens (`foldFinal`)                                      | composes — pre-fold vs post-fold                                                                                                                                                                                                         |
+| tiling + condensation / schedule / chaos / shape trap / finishes | compose — they live at the estimator/orbit level                                                                                                                                                                                         |
+| tiling + balloon                                                 | REFUSED, adjacent reason — the sphere-inversion echo of an orbit is not the orbit of the echo; no certified composition, and a filled solid's interior reaching the ball centre swallows the camera (the balloon's own IFS-only verdict) |
+| tiling + kaleidoscope                                            | supported in 3D/4D wherever the core itself supports that symmetry; tiling uses the already-symmetrized set as canonical content. The nearest-copy theorem needs no commuting. Proof and qualification below.                            |
+| tiling + 4D slab (`halfExtent > 0`)                              | REFUSED, adjacent reason — the fold of a segment is a bent polyline (per-point reflection sequences), and the slab's conservative-bound contract does not survive it. Tiled 4D sessions run slice 0 (the shipped default)                |
+| tiling + H4 / reducible groups                                   | REFUSED — vocabulary above                                                                                                                                                                                                               |
+| tiling + escape4                                                 | supported without slab or final lens; its own single-plane kaleidoscope may follow the tiling fold, including w planes. Escape4 still refuses a double-rotation twist.                                                                   |
+
+## Kaleidoscope composition
+
+The original blanket refusal was too strong. Its concern was that the
+tiling fold and the inverse estimator's internal sector sweep have no
+commuting order. The nearest-copy theorem requires no such property.
+Let `A_K` be the set already rendered by the core with its kaleidoscope:
+
+```text
+S = A_K ∩ C ∩ clip
+DE_K(F_T(q)) ≤ d(F_T(q), A_K) ≤ d(F_T(q), S) = d(q, G·S).
+```
+
+The lattice uses the same argument with its existing certified origin-ball
+intersection. Neither construction changes the core, its final-lens order,
+its symmetry definition, or its approximation quality. Inverse IFS families
+keep their cyclic sector sweep; forward escape families keep their dihedral
+query fold. The lone Mandelbulb's own symmetry refusal and Escape4's twist
+refusal still apply. A w-plane or double rotation still derives a 4D document
+and requires a matching finite group. Existing Surface/point differences for
+an intermediate symmetry blend are unchanged; qualification uses full blend.
+
+Points, Flame and Solid already construct the same content by running the
+ordinary symmetrized orbit before canonical membership and bounded images.
+They retain their source RNG, image budgets, provenance, and reduction order.
+An automatic clip must be fitted to that same symmetrized and scheduled
+source on every path: Surface entry now passes both inputs to
+`chamberContentFit`, matching the point-family resolvers. Live worker symmetry
+edits re-resolve the bound and clip before restarting; a retained 3D Flame
+worker uses its prepared 3D symmetry when resolving and packing the plan.
+
+The independent `scripts/tiling-symmetry.harness.ts` measures A3 with an xy
+order-3 symmetry and A4 with an xw order-3/twist-1 symmetry, together with
+both corresponding lattices. The controls deliberately do not commute.
+Measured 2026-09-08 at the default 200,000-point cloud, 400 off-set probes per
+row and 200px shared preview:
+
+| Question                                             | Result                                                           |
+| ---------------------------------------------------- | ---------------------------------------------------------------- |
+| Independent explicit images vs nearest-copy identity | Maximum discrepancy `3.6e-15`                                    |
+| Sampled off-set distance overshoots                  | 0 / 1,600                                                        |
+| Error added to the already-symmetrical core          | Zero; existing on-source erosion was 0.28–0.90% of radius        |
+| Candidate false-wall stops                           | Three; all cleared against 1.6 million canonical-source samples  |
+| Remote explicit-image error transport                | Maximum difference `5.8e-16` over 48 probes per row              |
+| Bounded Points source provenance and true images     | 512 / 512 in each dimension; maximum image residual below `9e-7` |
+| Finite-tiled vs untiled preview change               | 20.46% in 3D, 16.77% in 4D                                       |
+| Exhausted preview rays                               | Zero in all eight panels                                         |
+
+The sample checks supplement the theorem; they do not turn the approximate
+core into an exact distance field. A point cloud approximates a subset of the
+set, up to finite warm-up and f32 quantization. Its nearest distance is an
+empirical upper bound subject to those errors; oversteps need that
+qualification, and a clean sample cannot prove the core sound. The existing
+epsilon-level chamber-wall hazard remains disclosed above. Remote explicit
+image probes own lattice coverage; the lattice preview intentionally shows
+the central cell.
+
+Production qualification uses `scripts/tiling-symmetry.verify.mjs`, the
+existing tiling authoring gate, two Flame agreement scenarios, and twelve
+Surface agreement rows. The latter have no masking clip and require their
+queries to distinguish the live symmetry from an order-1 control with the
+same bound and maps. Shader arithmetic and wire layouts are unchanged.
+
+Measured 2026-09-08 on an AMD Radeon RX 7900 XTX, Mesa 25.2.8, with the
+X11 cookie and accelerated renderer verified before launch:
+
+- The production browser sweep passed all 16 combinations of renderer,
+  dimension and tiling kind, plus four Surface WebGL fallback cases. Real
+  workers, completed output, app-copied link restoration and matched-camera
+  order-1 controls were checked. Scene-region differences were 3.82–65.22%.
+  Surface differences were 14.95–39.74% on both backends. The lattice camera
+  is reframed on entry; trusted touch restores the paired view within
+  subpixel input precision. That instrument correction is recorded in the
+  browser script's header.
+- `npm run bench:surface -- --display=:0 --duration=1` passed the complete
+  gate, including all 72 new symmetry-sensitive queries across
+  affine/fold/escape, 3D/4D and finite/lattice. The minimum difference from
+  the disabled-symmetry controls was 8.21 existing evaluation tolerances for
+  finite groups and 8.97 for lattices. No tolerance or exclusion cap changed.
+- The authoring-only browser gate passed 31/31 assertions, including
+  editable tiling with Symmetry, keyboard edits, undo/redo, exact copied
+  links and the independent Balloon clear route. The copied lattice link
+  entered WebGL Surface, settled and drew 46.78% foreground, with no page
+  or console errors.
+
+The first complete Flame sweep passed all 32 existing scenarios and the new
+3D case (MAE 0.642), but the new 4D lattice case exceeded the uncalibrated
+default image bar (MAE 2.131, normalized density TV 0.05281). The independent
+`scripts/flame-tiling-symmetry-noise.verify.mjs` then ran the exact production
+CPU benchmark twice at 50,331,648 iterations, seeds `0xc0ffee` and `0xbadcafe`,
+through the unchanged camera, chunks, filter and tone mapper. Its CPU/CPU
+noise was MAE 2.13117 and TV 0.05288, essentially the CPU/GPU difference.
+An order-1 control changing only the prepared orbit, with the same camera,
+rotor, slice and tiling plan, measured MAE 12.849 and TV 0.31071.
+
+The new 4D scenario therefore uses its own MAE bar 4.5 and an additional
+density-TV bar 0.12, both above twice the measured sampling floor and both
+rejecting the missing-symmetry control. The global signed-bias bar stays
+0.3; the control's channel biases were 4.20–10.51. Existing scenario bars,
+sample counts and image sizes are unchanged. This is a fixture calibration,
+not a change to rendered geometry or its distance tolerance.
+The targeted rerun passed both new cases with identical measured image
+differences and passed the display-downsample checks, completing qualification
+of all 34 Flame scenarios. The repository suite passed 7,205 tests in 176
+files; full lint, the production build and the SwiftShader WebGL boot smoke
+also passed.
+
+These are AMD measurements, not a requalification of the older Iris results
+elsewhere in this document.
 
 ## Finite wire placement (frozen rule)
 
@@ -517,7 +627,7 @@ entries exposed progress, installed their exact block, settled on the expected
 engine and differed from their same-camera untiled control.
 
 Surface eligibility no longer refuses the lattice arm: the shared refusals —
-balloon, kaleidoscope, mesh clips, the 4D slab — are the boundary, exactly
+balloon, mesh clips, the 4D slab — are the boundary, exactly
 as the legal-combinations table freezes. A persisted lattice document cannot
 silently render the finite or untiled object because the shader selector,
 the packer guards and the routing resolve one block through one answer.
@@ -978,9 +1088,8 @@ folded source; the session poses an unposed clip on the measured chamber
 content exactly like the surface arms. Fog keeps the source box half-diagonal
 unit and measures from the carrier entry.
 
-The frozen combination matrix and edit timing: Balloon and kaleidoscope
-order > 1 refuse (the volume bakes the kaleidoscope into the attractor, so
-only order 1 is canonical chamber content), mesh clips refuse, forward
+The combination matrix and edit timing: Balloon and mesh clips refuse; a
+kaleidoscope baked into the source volume is valid canonical content. Forward
 escape/bulb volumes refuse as reset debris, and the floor/environment
 presentation compose. A 4D document does not take the query-space fold —
 its volume is a projected slice no 4D fold can act on — it takes the
@@ -1243,14 +1352,14 @@ the bound must be re-derived from the proposal's own quantized masses
 
 ### Legal combinations and edit timing
 
-| Layer                                                                                      | Point-family verdict                                                |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| matching-dimension finite group or 3D/4D lattice                                           | supported                                                           |
-| analytic clip                                                                              | supported; canonical-source membership before images                |
-| schedule, final lens, xaos, emitter/condensation                                           | supported in their existing plot order                              |
-| soft 4D view slice                                                                         | supported after true 4D images; not Surface's refused thick DE slab |
-| Balloon, kaleidoscope order > 1, mesh-backed clip, dimension mismatch, H4/reducible groups | preserve the existing authored-state refusal with adjacent reason   |
-| escape-time/bulb debris in Points, Flame or Solid                                          | refused; it is not a sampler for Surface's set                      |
+| Layer                                                              | Point-family verdict                                                |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| matching-dimension finite group or 3D/4D lattice                   | supported                                                           |
+| analytic clip                                                      | supported; canonical-source membership before images                |
+| schedule, final lens, xaos, emitter/condensation, kaleidoscope     | supported in their existing plot order                              |
+| soft 4D view slice                                                 | supported after true 4D images; not Surface's refused thick DE slab |
+| Balloon, mesh-backed clip, dimension mismatch, H4/reducible groups | preserve the existing authored-state refusal with adjacent reason   |
+| escape-time/bulb debris in Points, Flame or Solid                  | refused; it is not a sampler for Surface's set                      |
 
 Points tiling edits follow Auto-update and the existing latest-wins one-shot
 regeneration. An active Flame edit restarts accumulation from the same source

@@ -183,14 +183,6 @@ export function accumulateFlame4(
       "accumulateFlame4 point tiling is unavailable with Balloon",
     );
   }
-  if (
-    tilingPlan !== undefined &&
-    prepared.transformCount !== prepared.baseTransformCount
-  ) {
-    throw new RangeError(
-      "accumulateFlame4 point tiling is unavailable with kaleidoscope symmetry above order 1",
-    );
-  }
   const hist = histogram ?? createFlameHistogram(width, height);
   if (hist.width !== width || hist.height !== height) {
     throw new RangeError(

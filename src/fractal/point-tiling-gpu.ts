@@ -137,22 +137,18 @@ export interface PackedGpuPointTiling {
 }
 
 /** Defend the public GPU factory seam as well as the UI resolver. The active
- * kernel replaces the historical plot adapter wholesale, so accepting one of
- * these combinations here would silently drop authored geometry. */
+ * kernel replaces the historical plot adapter wholesale, so accepting a
+ * balloon here would silently drop its echo. Symmetry already runs in the
+ * orbit step before this adapter receives the plotted source point. */
 export function assertGpuPointTilingCompatibility(
   plan: PointTilingPlan,
   dimension: 3 | 4,
-  symmetryOrder: number,
+  _symmetryOrder: number,
   balloonActive: boolean,
 ): void {
   if (plan.dimension !== dimension) {
     throw new RangeError(
       `point tiling GPU plan dimension ${plan.dimension} does not match ${dimension}D kernel`,
-    );
-  }
-  if (symmetryOrder > 1) {
-    throw new RangeError(
-      "point tiling GPU cannot compose with kaleidoscope order greater than 1",
     );
   }
   if (balloonActive) {

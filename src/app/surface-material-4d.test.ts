@@ -1350,7 +1350,7 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
     ).toThrow(/cannot compile into the balloon variant/);
   });
 
-  it("installs one live group word and refuses kaleidoscope, slab, and balloon", () => {
+  it("installs the group beside the kaleidoscope and still refuses slab and balloon", () => {
     const material = createSurfaceMaterial4();
     setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, f4);
     expect(materialSurfaceTiling(material, true)).toBe(f4);
@@ -1376,7 +1376,10 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
         undefined,
         f4,
       ),
-    ).toThrow(/cannot compose with kaleidoscope/);
+    ).not.toThrow();
+    expect(material.uniforms.uSymOrder.value).toBe(3);
+    expect(material.uniforms.uTilingGroup.value).toBe(6);
+    expect(material.version).toBe(version);
     expect(() => setSurfaceView4(material, IDENTITY4, 0, 0.1)).toThrow(
       /cannot compose with a 4D slab/,
     );
@@ -1501,7 +1504,7 @@ describe("compile-gated mirrored lattice in the 4D GLSL tracer", () => {
     }
   });
 
-  it("updates lattice scale live, recompiles for clips and finite groups, and retains slab/balloon/kaleidoscope refusals", () => {
+  it("updates lattice scale and symmetry live, recompiles for clips and finite groups, and retains slab/balloon refusals", () => {
     const material = createSurfaceMaterial4();
     const first = resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1);
     setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, first);
@@ -1556,12 +1559,17 @@ describe("compile-gated mirrored lattice in the 4D GLSL tracer", () => {
     expect(() =>
       setSurfaceSystem4(
         material,
-        de4([map4()], { order: 3, stepBack: IDENTITY4 }),
+        {
+          ...de4([map4()], { order: 3, stepBack: IDENTITY4 }),
+          visibleBoundingRadius: lattice.radius,
+        },
         [[0, 0, 0]],
         undefined,
         lattice,
       ),
-    ).toThrow(/cannot compose with kaleidoscope/);
+    ).not.toThrow();
+    expect(material.uniforms.uSymOrder.value).toBe(3);
+    expect(material.uniforms.uTilingGroup.value).toBe(7);
 
     setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, null);
     expect(material.uniforms.uTilingGroup.value).toBe(0);

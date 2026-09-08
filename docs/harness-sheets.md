@@ -934,6 +934,17 @@ disclosed epsilon-stop bound), the fold-step distribution and wrapper cost
 resolved growth crosses the tightest rows' strip threshold — benign strip,
 the escape+balloon precedent).
 
+### tiling-symmetry
+
+`scripts/tiling-symmetry.harness.ts` qualifies Space tiling over an already
+symmetrized attractor in both dimensions, for finite reflection and mirrored
+lattice arms. The nearest-copy theorem needs no commuting; independent
+explicit images, same-seed point provenance, wall checks and the shared
+preview support removing the blanket kaleidoscope refusal. It measures
+transport of the existing core's approximation, not an improvement to that
+core. Full figures and the legal-combination correction:
+`docs/tiling-contract.md`, “Kaleidoscope composition”.
+
 ### lattice-tiling
 
 The phase-2 route decision (`scripts/lattice-tiling.harness.ts`). An

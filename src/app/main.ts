@@ -3852,9 +3852,8 @@ async function main(): Promise<void> {
         // worker sees the same memory these frames wrap, nothing is copied.
         sharedFrames: flameShared?.frames,
         // Try GPU unless a tiling-only replacement worker is carrying a
-        // failure already learned by this live session. An active plan still
-        // selects CPU worker-side until its WGSL twin lands; off/refused plans
-        // keep this ordinary auto-with-fallback path in both dimensions.
+        // failure already learned by this live session. Both dimensions
+        // consume an active tiling plan through the ordinary GPU path.
         gpuPreference: flameGpuFallbackHeldReason === null ? "auto" : "off",
         // Per-chunk throughput instrumentation, off unless `?flameperf`
         // asks.
@@ -5703,6 +5702,8 @@ async function main(): Promise<void> {
               state.finalTransform ?? null,
               raw,
               fourD,
+              state.symmetry,
+              state.schedule ?? null,
             );
         return poseTilingForContent(raw, fit);
       };
@@ -9650,8 +9651,7 @@ async function main(): Promise<void> {
         // around a tiling group installs its block through its own side
         // table, and every other preset CLEARS one (a leftover tiling block
         // would route the arriving system through a group it was never
-        // composed with, and for a kaleidoscope-carrying preset would take
-        // the Surface route away outright — the eligibility refusal).
+        // composed with).
         state = setTiling(state, PRESET_TILINGS[preset] ?? null);
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's

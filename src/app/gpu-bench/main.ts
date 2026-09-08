@@ -45,6 +45,7 @@ import {
   surfaceScheduleMarchAcceptance,
 } from "./schedule";
 import { applyScenarioShard } from "./shard";
+import { buildSurfaceTilingSymmetryAbiSpecs } from "./tiling-symmetry";
 import {
   rotationMatrix4,
   symmetryRotation4,
@@ -592,8 +593,8 @@ function f4ChamberDust(): Transform[] {
 
 /** The widest legal point-family composition: an emitter table (including a
  * catalog mesh), non-trivial xaos rows, a scheduled affine post-word, a final
- * lens, an analytic clip and finite image selection. Kaleidoscope and balloon
- * are absent because those combinations are explicitly refused upstream. */
+ * lens, an analytic clip and finite image selection. Balloon stays refused;
+ * separate symmetry scenarios pin the kaleidoscope composition. */
 function tiledMultiSystem(): Transform[] {
   const chaosRows = [
     [1, 0.25, 0.05],
@@ -1070,6 +1071,18 @@ const SCENARIOS: ScenarioDef[] = [
   {
     ...SIERPINSKI_CAMERA,
     kind: "3d",
+    name: "tiling-symmetry-3d",
+    transforms: sierpinskiTetrahedron(),
+    finalTransform: null,
+    symmetry: { order: 3, plane: "xy" },
+    paletteId: "spectrum",
+    pointTilingPlan: benchPointTilingPlan(3, "finite"),
+    // The ordinary orbit includes cyclic symmetry before canonical
+    // membership. Moving symmetry after tiling changes the rendered set.
+  },
+  {
+    ...SIERPINSKI_CAMERA,
+    kind: "3d",
     name: "tiling-lattice-3d",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
@@ -1535,6 +1548,30 @@ const SCENARIOS: ScenarioDef[] = [
     // samplings high per-hit color variance. Five keeps the established
     // roughly-2x noise-floor procedure without weakening other scenarios.
     maeThreshold: 5,
+  },
+  {
+    kind: "4d",
+    name: "tiling-symmetry-4d",
+    system: pentatope,
+    finalTransform: null,
+    symmetry: { order: 3, plane: "xw", twist: 1 },
+    rotation: BENCH_TUMBLE,
+    paletteId: "legacy",
+    colorMode: "uniform",
+    sliceOn: true,
+    sliceCenter: 0.2,
+    sliceWidth: 0.35,
+    sliceRelativeColor: false,
+    pointTilingPlan: benchPointTilingPlan(4, "lattice", { cellScale: 1.5 }),
+    // Double rotation inside the source orbit, then raw lattice images,
+    // then the settled rotor/slice. Uniform colour isolates image density.
+    // The exact two-seed CPU control measures MAE 2.131 / density TV
+    // 0.05288; removing symmetry at the SAME camera measures 12.849 /
+    // 0.31071. Both bars exceed twice the measured sampling noise while
+    // rejecting that missing-geometry control. The global bias bar stays.
+    // Reproduce: scripts/flame-tiling-symmetry-noise.verify.mjs.
+    maeThreshold: 4.5,
+    densityTvThreshold: 0.12,
   },
   {
     kind: "4d",
@@ -13466,6 +13503,10 @@ async function runSurfaceDeSection(
     },
   ];
 
+  const symmetryTiling = buildSurfaceTilingSymmetryAbiSpecs(surfaceEvalTol);
+  tilingAbiSpecs.push(...symmetryTiling.finite);
+  latticeAbiSpecs.push(...symmetryTiling.lattice);
+
   // ----- Config matrices -----
   const evalConfigs: SurfaceKernelConfig[] = [];
   for (const variant of config.variants) {
@@ -13675,6 +13716,8 @@ async function runSurfaceDeSection(
       results.notes.push(
         "finite tiling ABI: 7/7 cores compiled, bound exact-size params, " +
           "dispatched, and agreed with tiling-de.ts at 3/3 queries",
+        `finite tiling + symmetry: ${symmetryTiling.finite.length}/6 families agreed at 6/6 queries; ` +
+          `minimum symmetry control margin ${Math.min(...symmetryTiling.finite.map((s) => s.minimumSymmetryDeltaTolerances)).toFixed(2)} eval tolerances`,
       );
     } catch (e) {
       tilingAbiFailed = true;
@@ -13694,6 +13737,8 @@ async function runSurfaceDeSection(
       results.notes.push(
         "lattice tiling ABI: 7/7 cores compiled, bound exact-size code+h " +
           "params, dispatched, and agreed with tiling-de.ts at 3/3 seam queries",
+        `lattice tiling + symmetry: ${symmetryTiling.lattice.length}/6 families agreed at 6/6 queries; ` +
+          `minimum symmetry control margin ${Math.min(...symmetryTiling.lattice.map((s) => s.minimumSymmetryDeltaTolerances)).toFixed(2)} eval tolerances`,
       );
     } catch (e) {
       latticeTilingAbiFailed = true;
