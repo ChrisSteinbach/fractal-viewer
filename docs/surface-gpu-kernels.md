@@ -17,6 +17,17 @@ workgroup-SHARED (banked, transposed) vs private frontier storage, and
 stage-2 branch-and-bound on/off (WGSL has no Mesa link cliff, so there's no
 reason to strip source the way the GLSL side must).
 
+## Pure swirl final lens
+
+The affine/fold and affine4/fold4 wrappers accept lens-only tag 4 at the
+existing 256/544 offsets. Its quartet at 272/560 is `(rho, G, 0, postSigma)`;
+old fold meanings and every trailing offset remain unchanged. Eval, hit-info
+and probe wrappers undo post, signed weight, swirl and pre-affine in that
+order. The shared primary march divides its complete epsilon by G, including
+the numeric floor; shade probe spacing and physical pixel footprints keep
+their ordinary units. A nonzero 4D slab remains refused. The shared math,
+support limit and qualification are in [swirl-surface-lens.md](swirl-surface-lens.md).
+
 ## Mirrored-lattice carrier (routed)
 
 All seven cores source-generate the mirrored affine-A1 lattice estimator

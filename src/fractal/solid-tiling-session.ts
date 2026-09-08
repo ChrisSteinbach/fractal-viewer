@@ -116,8 +116,8 @@ export function resolveSolidTilingSession(
   }
 
   const analysis = nonFlat
-    ? analyzeSurfaceSystem4(transforms, finalTransform, schedule)
-    : analyzeSurfaceSystem(transforms, finalTransform, schedule);
+    ? analyzeSurfaceSystem4(transforms, finalTransform, schedule, symmetry)
+    : analyzeSurfaceSystem(transforms, finalTransform, schedule, symmetry);
   if (analysis.status === "ineligible") {
     return refused(
       `Solid tiling requires an inverse-IFS attractor; ${analysis.reasons.join(

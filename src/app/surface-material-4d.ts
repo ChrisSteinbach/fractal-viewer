@@ -5,6 +5,12 @@ import {
 } from "../fractal/background-shape";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import {
+  SURFACE_LENS_SWIRL,
+  validatedSwirlLensRadius,
+  validatedSwirlLensLipschitz,
+} from "../fractal/swirl-lens";
+import { swirlLensShaderSource } from "../fractal/swirl-lens-shader";
 import { LATTICE_PRESENTATION_RADIUS_MULT } from "../fractal/lattice-march";
 import type { ShapeSpec } from "../fractal/shapes";
 import type { ResolvedTiling } from "../fractal/tiling";
@@ -2918,6 +2924,81 @@ uniform float uBalloonPaletteEnabled;
   }
 `;
 
+/** Swirl has one inverse, so its point-only wrapper can reuse the affine
+ * 4D ladder without importing the multibranch fold-final compute arm. */
+function withSwirlLens4(source: string): string {
+  const start = source.indexOf("  float surfaceDE(vec3 p, float cutoff) {");
+  const end = source.indexOf("\n#if SURFACE_BALLOON\n#undef surfaceDE", start);
+  if (start < 0 || end < 0) {
+    throw new Error(
+      "surface-material-4d: swirl lens core boundaries are missing",
+    );
+  }
+  // The wrapper owns the view lift. The unchanged affine ladder receives
+  // one point in the raw attractor frame, as the WGSL lens cores do.
+  let core = source
+    .slice(start, end)
+    .replace(/\bsurfaceDE\b/g, "surfaceDESwirlCore");
+  core = core
+    .replace(/\bvec3 p\b/g, "vec4 pIn")
+    .replaceAll("vec4 q = uInvRotor * vec4(p, uW0);", "vec4 q = pIn;")
+    .replaceAll("bool segment = uSliceHalfW > 0.0;", "bool segment = false;")
+    .replace(
+      "return surfaceDESwirlCore(p, 0.0);",
+      "return surfaceDESwirlCore(pIn, 0.0);",
+    );
+  const declarations = `
+uniform vec4 uLensParams;
+uniform float uLensLipschitz;
+uniform mat4 uLensInvM;
+uniform vec4 uLensInvT;
+uniform mat4 uLensPostInvM;
+uniform vec4 uLensPostInvT;
+${swirlLensShaderSource("glsl", 4)}
+`;
+  const wrapper = `
+float surfaceDE(vec3 p, float cutoff) {
+  vec4 q = uInvRotor * vec4(p, uW0);
+  float visBound = length(q) - uVisibleRadius;
+  vec4 u = (uLensPostInvM * q + uLensPostInvT) * uLensParams.y;
+  vec4 pre = swirlLensInverse(u);
+  vec4 raw = uLensInvM * pre + uLensInvT;
+  float factor = uLensParams.z * uLensParams.w / uLensLipschitz;
+  return max(factor * surfaceDESwirlCore(raw, cutoff / factor), visBound);
+}
+float surfaceDE(vec3 p) {
+  return surfaceDE(p, 0.0);
+}
+float surfaceDE(
+  vec3 p,
+  out int firstChoice,
+  out float trap,
+  out float rings,
+  out float sheets,
+  out float sStar
+) {
+  vec4 q = uInvRotor * vec4(p, uW0);
+  float visBound = length(q) - uVisibleRadius;
+  vec4 u = (uLensPostInvM * q + uLensPostInvT) * uLensParams.y;
+  vec4 pre = swirlLensInverse(u);
+  vec4 raw = uLensInvM * pre + uLensInvT;
+  float factor = uLensParams.z * uLensParams.w / uLensLipschitz;
+  return max(factor * surfaceDESwirlCore(raw, firstChoice, trap, rings, sheets, sStar), visBound);
+}
+`;
+  const rest = source
+    .slice(end)
+    .replace(
+      "float eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor);",
+      "float eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor) / uLensLipschitz;",
+    )
+    .replace(
+      "vec4 patternRaw = uFinalInvM * patternLifted + uFinalInvT;",
+      "vec4 patternRaw = uLensInvM * swirlLensInverse((uLensPostInvM * patternLifted + uLensPostInvT) * uLensParams.y) + uLensInvT;",
+    );
+  return `${source.slice(0, start)}${declarations}${core}${wrapper}${rest}`;
+}
+
 /**
  * Compose the fragment source for a variant selection: `balloon` and
  * `plane`, the two scene arms above, resolved JS-side so the driver only
@@ -2935,8 +3016,11 @@ uniform float uBalloonPaletteEnabled;
  * different objects — so the arms in `SURFACE4_FRAGMENT` carry the 3D
  * directive NAMES and this wrapper pins the three 3D-only flags at 0.
  * `SURFACE_ESCAPE`, `SURFACE_BULB` and `SURFACE_FOLD_LENS` simply never
- * appear in this source (fold-shaped and forward-orbit 4D sessions are
- * compute-only), so pinning them costs nothing.
+ * appear in this source. Recursive folds, fold finals and forward-orbit 4D
+ * sessions are compute-only. Qualified swirl finals instead compile the
+ * single-inverse wrapper below over this affine ladder; their nonzero slab
+ * stays refused. The wrapper owns the view lift, and its point/bound
+ * arithmetic shares swirl-lens-shader.ts with both WGSL dimensions.
  *
  * WHY JS-SIDE AT ALL, when three.js would happily prepend two defines and
  * let the driver's own preprocessor do it — preprocessor-DEAD text still
@@ -2995,6 +3079,7 @@ export function surface4FragmentFor(
   schedule = 0,
   chaos = 0,
   tiling: ResolvedTiling | null = null,
+  swirlLens = 0,
 ): string {
   return surfaceFragmentFor(
     0,
@@ -3004,7 +3089,7 @@ export function surface4FragmentFor(
     0,
     finish,
     pattern,
-    SURFACE4_FRAGMENT,
+    swirlLens ? withSwirlLens4(SURFACE4_FRAGMENT) : SURFACE4_FRAGMENT,
     null,
     condensation,
     true,
@@ -3029,6 +3114,7 @@ export function surface4FragmentResolvedFor(
   schedule = 0,
   chaos = 0,
   tiling: ResolvedTiling | null = null,
+  swirlLens = 0,
 ): string {
   return surfaceFragmentResolvedFor(
     0,
@@ -3038,7 +3124,7 @@ export function surface4FragmentResolvedFor(
     0,
     finish,
     pattern,
-    SURFACE4_FRAGMENT,
+    swirlLens ? withSwirlLens4(SURFACE4_FRAGMENT) : SURFACE4_FRAGMENT,
     null,
     condensation,
     true,
@@ -3204,6 +3290,13 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uRadiusMinD: { value: 0 },
       uRadiusInvRange: { value: 1 },
       uFinalInvM: { value: new THREE.Matrix4() },
+      uLensParams: { value: new THREE.Vector4(0, 1, 1, 1) },
+      uLensRadius: { value: 0 },
+      uLensLipschitz: { value: 1 },
+      uLensInvM: { value: new THREE.Matrix4() },
+      uLensInvT: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uLensPostInvM: { value: new THREE.Matrix4() },
+      uLensPostInvT: { value: new THREE.Vector4(0, 0, 0, 0) },
       uFinalInvT: { value: new THREE.Vector4() },
       uFinalSigmaMin: { value: 1 },
       uInvRotor: { value: new THREE.Matrix4() },
@@ -3344,6 +3437,14 @@ export function setSurfaceSystem4(
   trapIndices?: number[],
   tiling: ResolvedTiling | null = null,
 ): void {
+  const lens = de.foldFinal;
+  if (lens && lens.foldKind !== SURFACE_LENS_SWIRL) {
+    throw new RangeError("4D fold-final lenses require the compute renderer");
+  }
+  const lensRadius = lens ? validatedSwirlLensRadius(lens.swirlRadius) : 0;
+  const lensLipschitz = lens
+    ? validatedSwirlLensLipschitz(lens.swirlRadius, lens.swirlLipschitz)
+    : 1;
   const schedule = de.schedule && de.schedule.depth > 0 ? de.schedule : null;
   const scheduleMaps = schedule?.maps ?? [];
   const emitters = de.condensation?.emitters ?? [];
@@ -3380,6 +3481,10 @@ export function setSurfaceSystem4(
     );
   }
   const u = material.uniforms;
+  // System upload precedes the new view upload. A previous affine session's
+  // slab is dormant state, so installing the point-only lens clears it;
+  // setSurfaceView4 still refuses a new nonzero slab request explicitly.
+  if (lens) u.uSliceHalfW.value = 0;
   const chaos = de.chaos ?? null;
   if (chaos) {
     if (
@@ -3516,10 +3621,12 @@ export function setSurfaceSystem4(
   const wantCondensation = emitters.length > 0 ? 1 : 0;
   const wantSchedule = schedule ? 1 : 0;
   const wantChaos = chaos ? 1 : 0;
+  const wantSwirlLens = lens ? 1 : 0;
   if (
     material.defines.SURFACE4_CONDENSATION !== wantCondensation ||
     (material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0) !== wantSchedule ||
     (material.defines.SURFACE4_CHAOS === 1 ? 1 : 0) !== wantChaos ||
+    (material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0) !== wantSwirlLens ||
     (data.surfaceCondensationShapeKey4 ?? null) !== condensationKey ||
     tilingChanged
   ) {
@@ -3528,6 +3635,8 @@ export function setSurfaceSystem4(
     else delete material.defines.SURFACE4_CHAOS;
     if (wantSchedule) material.defines.SURFACE4_SCHEDULE = 1;
     else delete material.defines.SURFACE4_SCHEDULE;
+    if (wantSwirlLens) material.defines.SURFACE4_SWIRL_LENS = 1;
+    else delete material.defines.SURFACE4_SWIRL_LENS;
     data.surfaceCondensationShapeKey4 = condensationKey;
     data.surfaceCondensationShapes4 = condensationShapes;
     material.fragmentShader = surface4FragmentFor(
@@ -3539,6 +3648,7 @@ export function setSurfaceSystem4(
       wantSchedule,
       wantChaos,
       tiling,
+      wantSwirlLens,
     );
     material.needsUpdate = true;
   }
@@ -3588,6 +3698,35 @@ export function setSurfaceSystem4(
   // had one, and identity / zero / 1 is the shader's "no lens" encoding.
   const finalM = u.uFinalInvM.value as THREE.Matrix4;
   const finalT = u.uFinalInvT.value as THREE.Vector4;
+  const lensM = u.uLensInvM.value as THREE.Matrix4;
+  const lensT = u.uLensInvT.value as THREE.Vector4;
+  const lensPostM = u.uLensPostInvM.value as THREE.Matrix4;
+  const lensPostT = u.uLensPostInvT.value as THREE.Vector4;
+  if (lens) {
+    (u.uLensParams.value as THREE.Vector4).set(
+      lens.foldKind,
+      lens.invW,
+      lens.absW,
+      lens.sigmaMin,
+    );
+    lensM.fromArray(lens.invM).transpose();
+    lensT.set(...lens.invT);
+    if (lens.postInvM && lens.postInvT) {
+      lensPostM.fromArray(lens.postInvM).transpose();
+      lensPostT.set(...lens.postInvT);
+    } else {
+      lensPostM.identity();
+      lensPostT.set(0, 0, 0, 0);
+    }
+  } else {
+    (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
+    lensM.identity();
+    lensT.set(0, 0, 0, 0);
+    lensPostM.identity();
+    lensPostT.set(0, 0, 0, 0);
+  }
+  u.uLensRadius.value = lensRadius;
+  u.uLensLipschitz.value = lensLipschitz;
   if (de.final) {
     const f = de.final.invM;
     finalM.set(
@@ -3643,6 +3782,9 @@ export function setSurfaceView4(
   w0: number,
   sliceHalfW: number,
 ): void {
+  if (sliceHalfW > 0 && material.defines.SURFACE4_SWIRL_LENS === 1) {
+    throw new RangeError("A swirl final lens cannot carry a nonzero 4D slab");
+  }
   if (sliceHalfW > 0 && materialSurfaceTiling(material, true)) {
     throw new RangeError(
       "Space tiling cannot compose with a 4D slab: the fold of a segment is a bent polyline",
@@ -3749,6 +3891,7 @@ export function setSurface4Balloon(
       material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0,
       material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
       tiling,
+      material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -3794,6 +3937,7 @@ export function setSurface4GroundPlane(
           material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0,
           material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
           materialSurfaceTiling(material, true),
+          material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
         );
   const u = material.uniforms;
   if (spec) {
@@ -3897,6 +4041,7 @@ export function setSurface4Materials(
       material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0,
       material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
       materialSurfaceTiling(material, true),
+      material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }

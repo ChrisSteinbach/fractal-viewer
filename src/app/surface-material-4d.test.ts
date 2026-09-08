@@ -30,7 +30,7 @@ import {
 } from "../fractal/surface-material-wire";
 import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
-import { radiusBandInvRange } from "../fractal/surface-de-4d";
+import { buildSurfaceDE4, radiusBandInvRange } from "../fractal/surface-de-4d";
 import { CLASSIC_SURFACE_FOLD_RADII } from "../fractal/surface-de";
 import {
   resolveTiling,
@@ -43,6 +43,9 @@ import type { ShapeSpec } from "../fractal/shapes";
 import { twentyFourCellFlake } from "../fractal/presets";
 import { createHash } from "node:crypto";
 import { PRE_PATTERN_SOURCE_HASHES } from "./surface-pattern-baseline";
+import { SURFACE_LENS_SWIRL } from "../fractal/swirl-lens";
+import { swirlLensShaderSource } from "../fractal/swirl-lens-shader";
+import type { Transform } from "../fractal/types";
 
 /** Balloon-palette source advance; unaffected rows stay pinned to the shared
  * pre-pattern fixture. */
@@ -2414,5 +2417,143 @@ describe("the 4D tracer's pattern arm", () => {
         80 * 1024,
       );
     }
+  });
+});
+
+describe("qualified 4D swirl final lens fragment mirror", () => {
+  function swirlDE(): SurfaceDE4 {
+    const final: Transform = {
+      id: 99,
+      position: [0.02, -0.01, 0.03],
+      rotation: [0.1, -0.2, 0.3],
+      scale: [0.1, 0.1, 0.1],
+      variations: [{ type: "swirl", weight: -2 }],
+      post: { m: [0, -1, 0, 1, 0, 0, 0, 0, 0.5], t: [0.1, -0.2, 0.3] },
+      w: { position: 0.01, scale: 0.1, rotation: { xw: 0.2 } },
+    };
+    return buildSurfaceDE4(twentyFourCellFlake(), final);
+  }
+
+  it("packs signed weight, full-dimensional inverse rows and post without reapplying the final", () => {
+    const de = swirlDE();
+    const material = createSurfaceMaterial4();
+    setSurfaceSystem4(
+      material,
+      de,
+      de.maps.map(() => [0, 0, 0]),
+    );
+    const lens = de.foldFinal!;
+    const u = material.uniforms;
+    expect(material.defines.SURFACE4_SWIRL_LENS).toBe(1);
+    expect((u.uLensParams.value as THREE.Vector4).toArray()).toEqual([
+      SURFACE_LENS_SWIRL,
+      -0.5,
+      2,
+      lens.sigmaMin,
+    ]);
+    expect(u.uLensRadius.value).toBe(lens.swirlRadius);
+    expect(u.uLensLipschitz.value).toBe(lens.swirlLipschitz);
+    expect(rowMajorOf(u.uLensInvM.value as THREE.Matrix4)).toEqual(lens.invM);
+    expect((u.uLensInvT.value as THREE.Vector4).toArray()).toEqual(lens.invT);
+    expect(rowMajorOf(u.uLensPostInvM.value as THREE.Matrix4)).toEqual(
+      lens.postInvM,
+    );
+    expect((u.uLensPostInvT.value as THREE.Vector4).toArray()).toEqual(
+      lens.postInvT,
+    );
+    expect(rowMajorOf(u.uFinalInvM.value as THREE.Matrix4)).toEqual(IDENTITY4);
+    expect(u.uFinalSigmaMin.value).toBe(1);
+    expect(() => setSurfaceView4(material, IDENTITY4, 0, 0.01)).toThrow(
+      /swirl.*slab/,
+    );
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]]);
+    expect(material.defines.SURFACE4_SWIRL_LENS).toBeUndefined();
+    expect(u.uLensRadius.value).toBe(0);
+    expect(u.uLensLipschitz.value).toBe(1);
+    expect(material.fragmentShader).not.toContain("swirlLensInverse");
+    setSurfaceView4(material, IDENTITY4, 0, 0.01);
+    setSurfaceSystem4(
+      material,
+      de,
+      de.maps.map(() => [0, 0, 0]),
+    );
+    expect(u.uSliceHalfW.value).toBe(0);
+    expect(() => setSurfaceView4(material, IDENTITY4, 0, 0)).not.toThrow();
+    material.dispose();
+  });
+
+  it("lifts the query once, carries z/w through the inverse, and gives patterns the source point", () => {
+    const source = surface4FragmentResolvedFor(0, 0, 0, 1, null, 0, 0, null, 1);
+    expect(source).toContain(swirlLensShaderSource("glsl", 4));
+    expect(source).toContain(
+      "float surfaceDESwirlCore(vec4 pIn, float cutoff)",
+    );
+    expect(source.match(/vec4 q = uInvRotor \* vec4\(p, uW0\);/g)).toHaveLength(
+      2,
+    );
+    expect(source.match(/vec4 q = pIn;/g)).toHaveLength(2);
+    expect(source.match(/bool segment = false;/g)).toHaveLength(2);
+    expect(source).toContain(
+      "float eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor) / uLensLipschitz;",
+    );
+    expect(source).toContain(
+      "vec4 u = (uLensPostInvM * q + uLensPostInvT) * uLensParams.y;",
+    );
+    expect(source).toContain(
+      "vec4 patternRaw = uLensInvM * swirlLensInverse((uLensPostInvM * patternLifted + uLensPostInvT) * uLensParams.y) + uLensInvT;",
+    );
+    expect(source).not.toContain("surfaceSwirlLensSource4");
+    expect(source).toContain(
+      "max(factor * surfaceDESwirlCore(raw, cutoff / factor), visBound)",
+    );
+    const tiled = surface4FragmentResolvedFor(
+      0,
+      0,
+      0,
+      1,
+      null,
+      0,
+      0,
+      resolveTiling({ group: "f4" }),
+      1,
+    );
+    expect(tiled.match(/vec4 q = surfaceTilingQuery4;/g)).toHaveLength(2);
+    expect(tiled).toContain("surfaceTilingQuery4 = q;");
+    expect(
+      surface4FragmentFor(0, 0, 1, 1, null, 0, 0, null, 1).length,
+    ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+  });
+
+  it("keeps the lens through material, balloon, floor, and system recompilation", () => {
+    const de = swirlDE();
+    const material = createSurfaceMaterial4();
+    const install = () =>
+      setSurfaceSystem4(
+        material,
+        de,
+        de.maps.map(() => [0, 0, 0]),
+      );
+    install();
+    const live = () => {
+      expect(material.defines.SURFACE4_SWIRL_LENS).toBe(1);
+      expect(material.fragmentShader).toContain("swirlLensInverse");
+    };
+    setSurface4Materials(material, {
+      slots: [CLASSIC_SURFACE_MATERIAL],
+      finish: true,
+      pattern: false,
+    });
+    live();
+    setSurface4Balloon(material, balloonSpec());
+    live();
+    setSurface4Balloon(material, null);
+    setSurface4GroundPlane(material, groundSpec());
+    live();
+    install();
+    live();
+    setSurface4GroundPlane(material, null);
+    setSurface4Materials(material, null);
+    live();
+    material.dispose();
   });
 });

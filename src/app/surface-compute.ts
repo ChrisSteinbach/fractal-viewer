@@ -166,6 +166,7 @@ import {
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import { deHasFolds4, slabExact4 } from "../fractal/surface-de-4d";
+import { SURFACE_LENS_SWIRL } from "../fractal/swirl-lens";
 import type { ShapeTrap, Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { webgpuAdapterStatus } from "./render-backend";
@@ -3256,7 +3257,7 @@ export class SurfaceComputeRenderer {
         : 1;
     const lensCostScale =
       baseFoldScale *
-      (lensKind === undefined
+      (lensKind === undefined || lensKind === SURFACE_LENS_SWIRL
         ? 1
         : Math.max(
             1,

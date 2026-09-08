@@ -7,6 +7,7 @@ import {
   PRESET_TILINGS,
   PRESET_TRAPS,
   presetTransforms,
+  pentatope,
   sierpinskiTetrahedron,
 } from "../fractal/presets";
 import type { Preset } from "../fractal/presets";
@@ -25,6 +26,51 @@ import { SURFACE_MAX_MAPS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
 
 const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xy" };
+
+describe("swirl final Surface routing", () => {
+  for (const [dimension, transforms, kind] of [
+    [3, sierpinskiTetrahedron(), "ifs"],
+    [4, pentatope(), "ifs4"],
+  ] as const) {
+    it(`admits a supported ${dimension}D swirl final on the WebGL fallback`, () => {
+      const finalTransform: Transform = {
+        id: 99,
+        position: [0.01, -0.02, 0.01],
+        rotation: [0.1, -0.2, 0.15],
+        scale: [0.2, 0.2, 0.2],
+        variations: [{ type: "swirl", weight: -5 }],
+      };
+      const route = deriveSurfaceEligibility(
+        transforms,
+        finalTransform,
+        NO_SYMMETRY,
+        { computeAvailable: false },
+      );
+      expect(route.status, route.note ?? "").not.toBe("ineligible");
+      expect(route.kind).toBe(kind);
+    });
+
+    it(`refuses excessive ${dimension}D final swirl strength with an actionable reason`, () => {
+      const finalTransform: Transform = {
+        id: 99,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [2, 2, 2],
+        variations: [{ type: "swirl", weight: 0.1 }],
+      };
+      const route = deriveSurfaceEligibility(
+        transforms,
+        finalTransform,
+        NO_SYMMETRY,
+        { computeAvailable: true },
+      );
+      expect(route.status).toBe("ineligible");
+      expect(route.kind).toBeNull();
+      expect(route.note).toMatch(/swirl/i);
+      expect(route.note).toMatch(/scale|translation/i);
+    });
+  }
+});
 
 const NEAR_BUDGET_SHAPE: ShapeSpec = {
   parts: Array.from({ length: 8 }, (_, index) => ({

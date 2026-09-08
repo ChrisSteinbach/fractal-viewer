@@ -611,13 +611,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     transforms/call on mandelboxKifs; the descent takes a probe-fit
     centered bounding ball where it beats the origin ball, axis-projected
     under kaleidoscope; an optional cone-footprint parameter caps descent
-    depth per query, previewMaxDepth's argument per-step). A pure-fold
-    FINAL transform is eligible via `descendLens`: the pure-fold branch
-    vocabulary lifted one level — each lens branch seeds a root descent
-    through the UNTOUCHED cores (`final` stays null when `foldFinal` is
-    set), with region floors, value-exact sphere/floor prunes and the
-    visible-sphere pin; no contraction gate (an un-iterated lens needs
-    none).
+    depth per query, previewMaxDepth's argument per-step). Fold FINALs wrap
+    untouched cores via `descendLens`, with floors/prunes and no contraction
+    gate. Pure-swirl FINALs (lens-only tag 4) use a global inverse certificate
+    AND reciprocal full-hit-epsilon compensation in 3D/4D; enforce
+    `SWIRL_LENS_MAX_RADIUS` and refuse nonlinear slabs. Evidence:
+    `docs/swirl-surface-lens.md`, `scripts/surface-swirl.verify.mjs`.
     POST BOUNDS: affine uses the exact composite; folds keep base/post
     singular bounds separate around V and return branch floors through
     `sigma_min(post)`; final visible radius includes post matrix+t.

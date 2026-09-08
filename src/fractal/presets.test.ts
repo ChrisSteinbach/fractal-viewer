@@ -87,7 +87,9 @@ import {
   woodGrain,
 } from "./presets";
 import { mulberry32 } from "./rng";
-import { analyzeSurfaceSystem } from "./surface-de";
+import { analyzeSurfaceSystem, buildSurfaceDE } from "./surface-de";
+import { analyzeSurfaceSystem4, buildSurfaceDE4 } from "./surface-de-4d";
+import { SURFACE_LENS_SWIRL, SWIRL_LENS_MAX_RADIUS } from "./swirl-lens";
 import type { Transform, Vec4 } from "./types";
 
 describe("presets", () => {
@@ -770,8 +772,56 @@ describe("PRESET_FINALS", () => {
       "fourFinishes",
       "juliaPinwheel",
       "juliaSnowflake",
+      "swirlPentatope",
+      "swirlTetrahedron",
     ]);
   });
+});
+
+describe("Surface swirl showcases", () => {
+  for (const [name, sibling, dimension] of [
+    ["swirlTetrahedron", "sierpinski", 3],
+    ["swirlPentatope", "pentatope", 4],
+  ] as const) {
+    it(`${name} opens an eligible, visibly sized swirl over its unchanged ${dimension}D base`, () => {
+      const transforms = presetTransforms(name);
+      const final = PRESET_FINALS[name]!();
+      expect(transforms).toEqual(presetTransforms(sibling));
+      expect(PRESET_RENDER_HINTS[name]).toBe("surface");
+      expect(final.variations).toEqual([
+        { type: "swirl", weight: 1 / final.scale[0] },
+      ]);
+      expect(final.scale).toEqual(Array(3).fill(final.scale[0]));
+      expect(final.scale[0] * final.variations![0].weight).toBeCloseTo(1, 14);
+      expect(
+        systemPartsAreNonFlat(transforms, final, { order: 1, plane: "xz" }),
+      ).toBe(dimension === 4);
+
+      const analysis =
+        dimension === 3
+          ? analyzeSurfaceSystem(transforms, final)
+          : analyzeSurfaceSystem4(transforms, final);
+      expect(analysis.status, analysis.reasons.join("; ")).toBe("eligible");
+      const de =
+        dimension === 3
+          ? buildSurfaceDE(transforms, final)
+          : buildSurfaceDE4(transforms, final);
+      expect(de.foldFinal?.foldKind).toBe(SURFACE_LENS_SWIRL);
+      // Exercise the actual probe-bound gate: enough radius-dependent twist
+      // to showcase the feature, with room below its qualified strength cap.
+      expect(de.foldFinal?.swirlRadius).toBeGreaterThan(0.45);
+      expect(de.foldFinal?.swirlRadius).toBeLessThan(
+        SWIRL_LENS_MAX_RADIUS - 0.01,
+      );
+      expect(de.visibleBoundingRadius).toBeGreaterThan(1);
+
+      // Main's absent-means-clear lookup restores the ordinary sibling;
+      // neither its shape nor its renderer hint inherits the showcase lens.
+      expect(PRESET_FINALS[sibling]?.() ?? null).toBeNull();
+      expect(PRESET_RENDER_HINTS[sibling]).toBeUndefined();
+      expect(PRESET_SCAFFOLDS[name]).toBeUndefined();
+    });
+  }
 });
 
 describe("PRESET_PALETTES", () => {

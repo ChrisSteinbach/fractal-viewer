@@ -26,6 +26,35 @@ export function defaultFinalTransform(): Transform {
   return { id: 0, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
 }
 
+/** Size-preserving Surface swirl lens. The pre-scale sets the twist strength;
+ * the reciprocal variation weight restores the visible size. Cancel swirl's
+ * fixed quarter-turn so its radius-dependent bend is legible against the
+ * unwarped sibling. Both showcases keep their enclosing pre-swirl radius
+ * below the qualified 0.5 limit; presets.test.ts checks the actual builders. */
+function surfaceSwirlLens(scale: number): Transform {
+  return {
+    ...defaultFinalTransform(),
+    rotation: [0, 0, -Math.PI / 2],
+    scale: [scale, scale, scale],
+    variations: [{ type: "swirl", weight: 1 / scale }],
+  };
+}
+
+/** The ordinary Sierpinski tetrahedron through a bounded plot-time swirl. */
+export function swirlTetrahedronLens(): Transform {
+  return surfaceSwirlLens(0.27);
+}
+
+/** The ordinary Pentatope through the same lens. A fixed xw tilt gives its
+ * zero-thickness Surface slice an oblique cut even before the view tumbles;
+ * the absent w scale lifts the same uniform pre-scale into all four axes. */
+export function swirlPentatopeLens(): Transform {
+  return {
+    ...surfaceSwirlLens(0.47),
+    w: { rotation: { xw: 0.45 } },
+  };
+}
+
 /** The four-map system the viewer starts with. */
 export function defaultTransforms(): Transform[] {
   return [
@@ -2350,6 +2379,9 @@ const PRESETS = {
   // them deliberately unauthored (see fourFinishes).
   fourFinishes,
   metalStudio,
+  // The Surface swirl pair uses the original affine attractors unchanged;
+  // their bounded plot-time deformation lives in PRESET_FINALS.
+  swirlTetrahedron: sierpinskiTetrahedron,
   // The escape-time set's own presets: the mode had none, so the
   // only route in was authoring a lone fold map by hand.
   mandelboxClassic,
@@ -2387,6 +2419,7 @@ const PRESETS = {
   hybridChainQuaternion,
   // The first non-flat presets: systems whose w extension is in play.
   pentatope,
+  swirlPentatope: pentatope,
   doubleRotation,
   // The accepted patterned-material showcase. Its deliberately simple
   // affine4 partitions and exact Wood values are documented at woodGrain.
@@ -2492,6 +2525,8 @@ export const PRESET_RENDER_HINTS: Partial<
   // finish showcase opens where its subject exists.
   fourFinishes: "surface",
   metalStudio: "surface",
+  swirlTetrahedron: "surface",
+  swirlPentatope: "surface",
   tiledOctahedron: "surface",
   tiledPentatope: "surface",
   tiledTwentyFourCell: "surface",
@@ -2568,6 +2603,8 @@ export const PRESET_FINALS: Partial<Record<Preset, () => Transform>> = {
   juliaSnowflake: juliaSnowflakeLens,
   juliaPinwheel: juliaPinwheelLens,
   fourFinishes: fourFinishesLens,
+  swirlTetrahedron: swirlTetrahedronLens,
+  swirlPentatope: swirlPentatopeLens,
 };
 
 /**

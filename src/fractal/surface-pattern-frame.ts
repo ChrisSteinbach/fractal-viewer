@@ -12,7 +12,9 @@ import type { Vec3, Vec4 } from "./types";
  *
  * A fold final is multivalued. Its distance-estimator wrapper must supply the
  * winning branch's already-resolved source hit (`foldFinalSourceHit`) rather
- * than pretending the fold has one matrix inverse. The later GLSL/WGSL beads
+ * than pretending the fold has one matrix inverse. A one-to-one swirl final
+ * supplies its resolved inverse through the same source fields, with zero
+ * segment extent in 4D. The later GLSL/WGSL beads
  * compile these helpers' arithmetic only for pattern-enabled shade variants;
  * unpatterned shader source therefore remains byte-identical.
  *
@@ -66,7 +68,7 @@ export interface SurfacePatternSource3Input {
   /** Affine final-transform inverse, absent on an unlensed source. */
   affineFinal?: PatternAffineInverse3;
   /**
-   * Pure-fold final only: the lens argmin wrapper's winning raw source hit.
+   * Nonlinear final: the lens wrapper's resolved raw source hit.
    * It already includes balloon routing and takes precedence over the affine
    * path because a fold inverse is a branch set, never one matrix.
    */
@@ -92,7 +94,7 @@ export interface SurfacePatternSource4Input {
   sliceHalfW: number;
   /** Affine 4D final-transform inverse, absent on an unlensed source. */
   affineFinal?: PatternAffineInverse4;
-  /** Pure-fold final only: the lens wrapper's winning branch tuple. */
+  /** Nonlinear final: the lens wrapper's resolved source tuple. */
   foldFinalSource?: {
     /** Winning branch centre after the fold-final inverse. */
     bestQ: Vec4;

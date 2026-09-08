@@ -9,6 +9,19 @@ The tracers' separately retained background sidecar, its exact boundary, and
 the decision not to split out retained re-shading state are recorded in
 [`surface-background-layer.md`](surface-background-layer.md).
 
+## Pure swirl final lens
+
+The 3D final-lens wrapper accepts lens-only tag 4. The 4D affine tracer adds a
+source-selected `SURFACE4_SWIRL_LENS` wrapper, retaining WebGL fallback for an
+affine base under a bounded swirl final; a folded 4D base still needs compute.
+Both wrappers undo post, signed weight, the full-dimensional swirl rotation
+and pre-affine in order. The global certificate divides distance and the whole
+primary-hit epsilon together. Normal and material footprints remain in their
+existing pixel units. Installing the 4D lens clears any stale slab uniform,
+and a subsequent nonzero slab upload throws. The shared proof, supported radius,
+source-size and real-browser records live in
+[swirl-surface-lens.md](swirl-surface-lens.md).
+
 ## The 3D tracer
 
 `surface-material.ts` is a GLSL3 full-screen-quad sphere tracer mirroring
