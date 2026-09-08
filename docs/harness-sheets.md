@@ -945,6 +945,16 @@ transport of the existing core's approximation, not an improvement to that
 core. Full figures and the legal-combination correction:
 `docs/tiling-contract.md`, “Kaleidoscope composition”.
 
+### swirl-lens
+
+`scripts/swirl-lens.harness.ts` is an **unshipped** nonlinear-final prototype
+in 3D and 4D. The exact inverse swirl and a global inverse-Lipschitz bound
+passed independent forward-point certificate tests; moderate twists visibly
+deform the existing Surface objects at a practical march cost. Strong twists
+thicken fine detail under the common hit tolerance, especially in 4D slices,
+so the result does not admit arbitrary swirl into production. The script
+header records the bound, measured cost, and qualification still needed.
+
 ### lattice-tiling
 
 The phase-2 route decision (`scripts/lattice-tiling.harness.ts`). An
