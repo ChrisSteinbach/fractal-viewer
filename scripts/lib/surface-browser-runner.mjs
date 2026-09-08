@@ -36,6 +36,7 @@ export function surfaceLaunchOptions(mode) {
     return {
       env,
       args: [
+        "--ozone-platform=x11",
         "--enable-unsafe-webgpu",
         "--enable-features=Vulkan",
         "--ignore-gpu-blocklist",
