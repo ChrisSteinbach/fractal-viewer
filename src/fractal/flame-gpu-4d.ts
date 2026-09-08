@@ -1540,9 +1540,26 @@ export function buildFlameGpuPointTilingKernel4(
     plotEndMarker,
     "plot end",
   );
-  if (!(bindingAt < plotStart && plotStart < plotEnd)) {
+  const echoStart = uniqueKernelMarker(
+    FLAME_GPU_KERNEL_4D_WGSL,
+    "      if (params.echoWeight > 0.0) {",
+    "echo start",
+  );
+  if (!(
+    bindingAt < plotStart &&
+    plotStart < echoStart &&
+    echoStart < plotEnd
+  )) {
     throw new Error("4D Flame point-tiling kernel markers are out of order");
   }
+  // The same PROJECT THEN INVERT body now receives the selected raw image.
+  // Reuse its LUT/tint/floor and floating weight product before rounding;
+  // passing rounded primary weight would change the slice/echo contract.
+  const tiledEcho = FLAME_GPU_KERNEL_4D_WGSL.slice(echoStart, plotEnd)
+    .replace(/\bpp\b/g, "pointTilingImage.point")
+    .replace(/\brgb\b/g, "pointTilingRgb")
+    .replace(/\bweight\b/g, "pointTilingImage.weight * pointTilingSliceWeight")
+    .replace(/^ {6}/gm, "          ");
 
   const activePlot = /* wgsl */ `      let pointTilingState = &pointTilingStates[chainIdx];
       let pointTilingAttempt = pointTilingBegin(pp, pointTilingState, chainIdx);
@@ -1642,6 +1659,7 @@ export function buildFlameGpuPointTilingKernel4(
             pointTilingRgb,
             pointTilingWeightFix,
           );
+${tiledEcho}
           pointTilingRecordEmitted(pointTilingState);
         }
       }

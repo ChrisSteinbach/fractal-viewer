@@ -26,7 +26,7 @@ type FlameStartCommand = Extract<FlameWorkerCommand, { type: "start" }>;
  * full flame render.
  * `schedule`/`tiling`/`balloonEchoEnabled` are the pre-tiling plot-stage
  * inputs the frozen order needs: the worker resolves the raw authored block
- * in its own realm and the balloon flag keeps the global Balloon + tiling
+ * in its own realm and the balloon flag keeps the Balloon + lattice
  * legality refusal effective even though the backdrop omits the echo payload
  * itself. */
 export type FlameBackdropParams = Pick<

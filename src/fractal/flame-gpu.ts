@@ -1474,13 +1474,31 @@ export function buildFlameGpuPointTilingKernel(
   const bindingMarker =
     "@group(0) @binding(7) var<storage, read> emitterTriangleTable: array<f32>;";
   const plotStartMarker = "      var ci = baseIdx;";
+  const echoStartMarker = "      if (params.echoWeight > 0.0) {";
   const plotEndMarker = "    }\n  }\n\n  chains[chainIdx]";
   const bindingAt = FLAME_GPU_KERNEL_WGSL.indexOf(bindingMarker);
   const plotStart = FLAME_GPU_KERNEL_WGSL.indexOf(plotStartMarker);
   const plotEnd = FLAME_GPU_KERNEL_WGSL.indexOf(plotEndMarker, plotStart);
-  if (bindingAt < 0 || plotStart < 0 || plotEnd < 0) {
+  const echoStart = FLAME_GPU_KERNEL_WGSL.indexOf(echoStartMarker, plotStart);
+  if (
+    bindingAt < 0 ||
+    plotStart < 0 ||
+    echoStart < plotStart ||
+    plotEnd < echoStart ||
+    FLAME_GPU_KERNEL_WGSL.indexOf(echoStartMarker, echoStart + 1) >= 0
+  ) {
     throw new Error("3D Flame point-tiling kernel markers drifted");
   }
+  // Reuse the historical echo body verbatim apart from its source and
+  // multiplicity. The absent-tiling export and its frozen wire stay exact,
+  // while both paths keep one definition of inversion, LUT and tint.
+  const tiledEcho = FLAME_GPU_KERNEL_WGSL.slice(echoStart, plotEnd)
+    .replace(/\bpp\b/g, "pointTilingImage.point.xyz")
+    .replace(
+      "params.echoWeight *",
+      "pointTilingImage.weight * params.echoWeight *",
+    )
+    .replace(/^ {6}/gm, "          ");
   const withBinding =
     FLAME_GPU_KERNEL_WGSL.slice(0, bindingAt + bindingMarker.length) +
     "\n" +
@@ -1507,6 +1525,7 @@ export function buildFlameGpuPointTilingKernel(
             pointTilingImage.weight * ${WEIGHT_FIXED_POINT_SCALE}.0,
           ));
           depositPoint(pointTilingImage.point.xyz, rgb, pointTilingWeightFix);
+${tiledEcho}
           pointTilingRecordEmitted(pointTilingState);
         }
       }

@@ -136,10 +136,10 @@ export interface PackedGpuPointTiling {
   maxLatticeWeight: number;
 }
 
-/** Defend the public GPU factory seam as well as the UI resolver. The active
- * kernel replaces the historical plot adapter wholesale, so accepting a
- * balloon here would silently drop its echo. Symmetry already runs in the
- * orbit step before this adapter receives the plotted source point. */
+/** Defend the public GPU factory seam as well as the UI resolver. Finite
+ * image visitors echo each image after dimensional reduction. An infinite
+ * lattice has no finite enclosing ball; its presentation window cannot
+ * certify that inversion. Symmetry precedes this plot adapter. */
 export function assertGpuPointTilingCompatibility(
   plan: PointTilingPlan,
   dimension: 3 | 4,
@@ -151,8 +151,10 @@ export function assertGpuPointTilingCompatibility(
       `point tiling GPU plan dimension ${plan.dimension} does not match ${dimension}D kernel`,
     );
   }
-  if (balloonActive) {
-    throw new RangeError("point tiling GPU cannot compose with balloon echo");
+  if (balloonActive && plan.kind === "lattice") {
+    throw new RangeError(
+      "lattice point tiling GPU cannot compose with balloon echo",
+    );
   }
 }
 

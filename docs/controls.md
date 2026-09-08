@@ -1701,8 +1701,14 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   changing Order can therefore change what appears inside each tile. Each
   renderer keeps the edit timing disclosed by its Symmetry controls.
 
+  **Balloon echo** combines with finite reflections: tile first, then slice or
+  project in 4D, then invert the displayed set. The shared certified origin
+  ball keeps its size stable through view edits. Infinite lattice Balloon
+  remains unavailable because the repeated set has no finite enclosing ball;
+  the kind selector stays usable to choose finite reflections.
+
   Refusals are scoped and named adjacent to the editor: a finite group with
-  the wrong dimension, a clip containing a mesh, Balloon echo, a
+  the wrong dimension, a clip containing a mesh, lattice Balloon echo, a
   4D slab under Surface's tiling arm, and forward escape-time or Mandelbulb
   content in the point-family renderers (their clouds and volumes are reset
   debris, not samples of the tiled set — Surface's own tiled escape-time and

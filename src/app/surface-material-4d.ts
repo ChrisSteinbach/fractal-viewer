@@ -15,7 +15,10 @@ import { swirlLensShaderSource } from "../fractal/swirl-lens-shader";
 import { inversionDistanceShaderSource } from "../fractal/inversion";
 import { LATTICE_PRESENTATION_RADIUS_MULT } from "../fractal/lattice-march";
 import type { ShapeSpec } from "../fractal/shapes";
-import type { ResolvedTiling } from "../fractal/tiling";
+import {
+  isResolvedLatticeTiling,
+  type ResolvedTiling,
+} from "../fractal/tiling";
 import {
   SURFACE_FINISH_GLSL,
   surfaceFinishShadeSource,
@@ -3904,9 +3907,9 @@ export function setSurface4Balloon(
   spec: SurfaceBalloonSpec | null,
 ): void {
   const tiling = materialSurfaceTiling(material, true);
-  if (spec && tiling) {
+  if (spec && tiling && isResolvedLatticeTiling(tiling)) {
     throw new RangeError(
-      "Space tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+      "Lattice tiling cannot compose with balloon: the infinite set has no finite enclosing ball for inversion",
     );
   }
   const u = material.uniforms;

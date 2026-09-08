@@ -11529,10 +11529,13 @@ describe("Ui finite tiling controls", () => {
 
   it("places adjacent recovery reasons for illegal combinations", () => {
     const ui = new Ui(document);
-    const finite = setTiling(initialState(true), { group: "a3" });
+    const lattice = setTiling(initialState(true), {
+      kind: "lattice",
+      cellScale: 1.5,
+    });
     const states: ReadonlyArray<[AppState, RegExp, boolean]> = [
       [
-        { ...finite, balloonEcho: true },
+        { ...lattice, balloonEcho: true },
         /Unavailable with Balloon.*turn Balloon off/i,
         true,
       ],
@@ -11586,7 +11589,7 @@ describe("Ui finite tiling controls", () => {
 
     ui.setPointCount(100, outcome, false);
     ui.updateLabels({ ...base, balloonEcho: true });
-    expect((el("tilingKind") as HTMLSelectElement).disabled).toBe(true);
+    expect((el("tilingKind") as HTMLSelectElement).disabled).toBe(false);
     expect((el("tilingCellScaleSlider") as HTMLInputElement).disabled).toBe(
       true,
     );
@@ -11597,6 +11600,47 @@ describe("Ui finite tiling controls", () => {
     expect(el("tilingNote").textContent).toContain("Balloon");
     expect(el("tilingNote").textContent).toMatch(/earlier tiled cloud/i);
     expect(el("tilingNote").textContent).toMatch(/stays dormant/i);
+  });
+
+  it("discloses Balloon waiting on a held lattice when finite reflections are authored", () => {
+    const ui = new Ui(document);
+    ui.setPointCount(
+      100,
+      {
+        availability: "active",
+        kind: "lattice",
+        fill: "complete",
+        requested: 100,
+        attempts: 100,
+        accepted: 100,
+        candidateTests: 100,
+      },
+      false,
+    );
+    const state = {
+      ...setTiling(initialState(true), { group: "a3" }),
+      autoUpdate: false,
+      balloonEcho: true,
+    };
+    ui.updateLabels(state);
+    expect(el("balloonNote").textContent).toMatch(
+      /Balloon stays dormant.*lattice.*Regenerate/,
+    );
+    expect(el("balloonNote").classList.contains("hidden")).toBe(false);
+    expect((el("balloonEchoCheckbox") as HTMLInputElement).disabled).toBe(
+      false,
+    );
+    ui.setPointCount(100, {
+      availability: "active",
+      kind: "finite",
+      fill: "complete",
+      requested: 100,
+      attempts: 100,
+      accepted: 100,
+      candidateTests: 100,
+    });
+    ui.updateLabels(state);
+    expect(el("balloonNote").classList.contains("hidden")).toBe(true);
   });
 
   it("announces the refusal that actually disables details in combined invalid states", () => {
@@ -11610,10 +11654,10 @@ describe("Ui finite tiling controls", () => {
       { group: "a3" },
     );
     ui.updateLabels(wrongDimensionWithBalloon);
-    expect((el("tilingGroup") as HTMLSelectElement).disabled).toBe(true);
-    expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(true);
+    expect((el("tilingGroup") as HTMLSelectElement).disabled).toBe(false);
+    expect((el("tilingClip") as HTMLSelectElement).disabled).toBe(false);
     expect(el("tilingNote").textContent).toMatch(
-      /Unavailable with Balloon.*turn Balloon off/i,
+      /A3 is a 3D group.*document is 4D.*Choose a group under 4D/,
     );
 
     const meshWithSymmetry = setTiling(

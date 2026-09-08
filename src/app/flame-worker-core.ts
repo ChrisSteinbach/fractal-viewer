@@ -56,6 +56,10 @@ import type {
   Mat4,
   TonemapParams,
 } from "../fractal/flame";
+import {
+  BALLOON_RHO_MARGIN,
+  buildBalloonFromBall,
+} from "../fractal/balloon-de";
 import { symmetryIsNonFlat } from "../fractal/affine4";
 import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
@@ -1138,7 +1142,11 @@ export class FlameWorkerSession {
 
   private prepared: PreparedChaosGame | null = null;
   private projection: Mat4 | null = null;
-  /** Balloon echo snapshotted at session start; absent is the off path. */
+  /** Original command ball retains the authored radius multiple across live
+   * bound changes. Absent is also the generated backdrop's deliberate path. */
+  private entryBalloonEcho: FlameBalloonEcho | undefined;
+  /** Resolved ball: finite tiling replaces the entry's sampled/off-origin
+   * ball with the worker's certified origin ball in either dimension. */
   private balloonEcho: FlameBalloonEcho | undefined;
   private balloonEchoEnabled = false;
   /** Independent echo-only gradient; null is the exact inherit path. */
@@ -1542,6 +1550,23 @@ export class FlameWorkerSession {
       resolution.status === "active" ? resolution.plan : null;
     this.pointTilingOriginRadius =
       resolution.status === "active" ? resolution.originVisibleRadius : null;
+    this.balloonEcho = this.entryBalloonEcho;
+    if (
+      this.entryBalloonEcho !== undefined &&
+      resolution.status === "active" &&
+      resolution.plan.kind === "finite"
+    ) {
+      const entry = this.entryBalloonEcho;
+      const radiusMultiple =
+        entry.balloon.R / (entry.balloon.rho / BALLOON_RHO_MARGIN);
+      this.balloonEcho = {
+        ...entry,
+        balloon: buildBalloonFromBall(
+          { center: [0, 0, 0], radius: resolution.originVisibleRadius },
+          radiusMultiple,
+        ),
+      };
+    }
     if (resolution.status !== "off") {
       this.emit({
         type: "tilingOutcome",
@@ -1620,8 +1645,10 @@ export class FlameWorkerSession {
       this.hybridSchedule,
     );
     this.projection = cmd.projection;
+    this.entryBalloonEcho = cmd.balloonEcho;
     this.balloonEcho = cmd.balloonEcho;
-    this.balloonEchoEnabled = cmd.balloonEchoEnabled ?? false;
+    this.balloonEchoEnabled =
+      cmd.balloonEchoEnabled === true || cmd.balloonEcho !== undefined;
     // A palette without an echo is inert: avoid even building its LUT. A
     // resolved spec that unexpectedly has no gradient (currently "legacy")
     // degrades to inherit rather than inventing a renderer-local meaning.

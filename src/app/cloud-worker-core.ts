@@ -106,7 +106,7 @@ export interface CloudRequest {
    * resolves estimator radius, session clip pose and point-image tables in
    * its own module realm; resolved finite plans must never cross this wire. */
   tiling?: TilingSpec | null;
-  /** Balloon is a presentation-level refusal for point tiling. It travels
+  /** Balloon is a presentation-level refusal for lattice tiling. It travels
    * with the request so a delayed result reports the policy it actually ran,
    * never whatever the live checkbox says when it arrives. */
   balloonEcho?: boolean;
@@ -164,6 +164,8 @@ export interface CloudResult3D extends ChaosGameResult {
   canonicalColorSource?: PointColorSource3D;
   /** Present only when the request authored tiling (active or refused). */
   pointTiling?: PointTilingOutcome;
+  /** Certified origin ball of this landed tiled set, independent of sampling. */
+  tilingOriginRadius?: number;
 }
 
 /** The 4D result: the 4D chaos-game output as-is. No baked colors — the 4D
@@ -183,6 +185,7 @@ export interface CloudResult4D extends ChaosGame4Result {
   frameRadius: number;
   canonicalColorSource?: PointColorSource4D;
   pointTiling?: PointTilingOutcome;
+  tilingOriginRadius?: number;
 }
 
 /** Worker → main thread: the generated cloud, tagged with the request's id. */
@@ -392,6 +395,7 @@ export function generateCloud(request: CloudRequest): CloudResult {
         frameRadius,
         canonicalColorSource,
         pointTiling: outcome,
+        tilingOriginRadius: pointTiling.originVisibleRadius,
       };
     }
 
@@ -448,6 +452,7 @@ export function generateCloud(request: CloudRequest): CloudResult {
       frameBounds,
       canonicalColorSource,
       pointTiling: outcome,
+      tilingOriginRadius: pointTiling.originVisibleRadius,
     };
   }
 

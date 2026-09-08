@@ -1092,8 +1092,9 @@ export const SURFACE_GPU_PARAMS4_TRAP_BYTES =
  * params tail, plus the 12 zero bytes required to round the uniform struct's
  * size back to its 16-byte alignment. Roots and the optional analytic clip
  * are baked into the compiled source; the word is a stale-source/wire guard,
- * with 0 reserved for the absent case. Balloon has deliberately NO tiling
- * twin: the two are refused (an orbit's echo is not the echo's orbit). */
+ * with 0 reserved for the absent case. Finite Balloon combinations append
+ * after the existing Balloon/condensation/schedule/chaos tails as well;
+ * infinite lattice content remains refused because it has no enclosing ball. */
 export const SURFACE_GPU_TILING_BYTES = 16;
 
 // 3D tiling tail: the plain 288-byte prefix (lens shares it) plus the
@@ -1670,7 +1671,7 @@ export interface SurfaceGpuKernelOptions {
    * Null/absent emits the pre-tiling source byte for byte, and the finite arm
    * retains its already-shipped source byte for byte. All seven cores compose;
    * The core's kaleidoscope stays inside that call; no commuting is needed
-   * (docs/tiling-contract.md). Balloon and a real 4D slab remain refused. Mesh-bearing
+   * (docs/tiling-contract.md). Lattice Balloon and a real 4D slab remain refused. Mesh-bearing
    * clips are refused until tiling owns a mesh-atlas binding. */
   tiling?: ResolvedTiling | null;
   /** Per-slot surface FINISHES (surface-finish.ts): replace the shade
@@ -2019,10 +2020,10 @@ export function packSurfaceGpuParams(
         "pair",
     );
   }
-  if (balloon && tilingInfo) {
+  if (balloon && tilingInfo?.kind === "lattice") {
     throw new Error(
-      "surface-de-gpu: tiling+balloon is excluded — an orbit's echo is " +
-        "not the echo's orbit, so there is no certified composition",
+      "surface-de-gpu: lattice tiling+balloon is excluded — the infinite " +
+        "set has no finite enclosing ball for inversion",
     );
   }
   if (de.foldFinal && de.final) {
@@ -2691,10 +2692,10 @@ export function packSurface4GpuParams(
         "288 in 3D, and the kernels refuse the pair",
     );
   }
-  if (balloon && tilingInfo) {
+  if (balloon && tilingInfo?.kind === "lattice") {
     throw new Error(
-      "surface-de-gpu: tiling+balloon is excluded — an orbit's echo is " +
-        "not the echo's orbit, so there is no certified composition",
+      "surface-de-gpu: lattice tiling+balloon is excluded — the infinite " +
+        "set has no finite enclosing ball for inversion",
     );
   }
   if (tilingInfo && view4.sliceHalfW !== 0) {
@@ -3964,10 +3965,10 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // module doc). Absent means no balloon, so every no-balloon config
   // generates byte-identical source.
   const balloon = opts.balloon ?? false;
-  if (balloon && tiling) {
+  if (balloon && latticeTiling) {
     throw new Error(
-      "surface-de-gpu: tiling+balloon is excluded — an orbit's echo is " +
-        "not the echo's orbit, so there is no certified composition",
+      "surface-de-gpu: lattice tiling+balloon is excluded — the infinite " +
+        "set has no finite enclosing ball for inversion",
     );
   }
   if (balloon && core === "escape") {
@@ -4134,6 +4135,7 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // chamber point so height/radius/pattern repeat with the chamber content,
   // while normals, lighting and fog keep using the visible world position.
   const tilingCtorArg = tiling ? ", vec4f(0.0)" : "";
+  const balloonCtorArg = balloon ? ", vec3f(0.0), 0.0" : "";
   // The trap's per-body splices — the ONE formula (`escape-de.ts`'s
   // shapeTrapCandidate/shapeTrapValue) in its f32 formulation, emitted only
   // into the three forward hit-info orbits. `-1e+30` is
@@ -4702,7 +4704,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     dot(params.finalM1, p) + params.finalT1,
     dot(params.finalM2, p) + params.finalT2,
   );
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg}${balloonCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -4947,7 +4949,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     dot(params.finalM1, p) + params.finalT1,
     dot(params.finalM2, p) + params.finalT2,
   );
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg}${balloonCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -5361,7 +5363,7 @@ ${
     slabExt,
     core4ExternalLift,
   )}, li: u32) -> SurfaceHitInfo {
-${lift4Text("p", "", slabExt, core4ExternalLift)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+${lift4Text("p", "", slabExt, core4ExternalLift)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg}${balloonCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -5893,7 +5895,7 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
     slabExt,
     core4ExternalLift,
   )}, li: u32) -> SurfaceHitInfo {
-${lift4Text("p", "", slabExt, core4ExternalLift)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+${lift4Text("p", "", slabExt, core4ExternalLift)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg}${balloonCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -6258,7 +6260,7 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
 // the helper here would collide in the shade kernel (march hit-info walks
 // the same links). See the descent's own comment.
 fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg}${balloonCtorArg});
   let q = foldQuerySector(p);
   var v = q;
   var r = length(v);
@@ -6372,7 +6374,7 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
 // 3D escape hit-info's rule (redeclaring it here would collide in the
 // shade kernel, whose march hit-info walks the same links).
 fn surfaceDEHitInfo(${tiling ? "qIn: vec4f" : "p: vec3f"}, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg}${balloonCtorArg});
   let q = foldQuerySector4(${tiling ? "qIn" : "liftEscape4(p)"});
   var v = q;
   var r = length(v);
@@ -6448,7 +6450,7 @@ ${pattern ? `  info.source4 = ${tiling ? "q" : "liftEscape4(p)"};` : ""}
   // Colors-only convention (every hit-info body's): the estimate's dr
   // accumulator is the one value-side term trimmed here.
   const bulbHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg}${balloonCtorArg});
   let bail = params.bulbParams.y;
   let c = vec3f(
     dot(params.bulbM0, p) + params.bulbT0,
@@ -7093,26 +7095,18 @@ ${core4 ? lens4HitWrapText : lensHitWrapText}`
   hi.shell = 0.0;
   return hi;
 }`;
-  const hitInfoText = balloon
-    ? `${balloonRename(
-        // WGSL value constructors are all-or-none, so the balloon-only
-        // colorPos and shell members (struct below) must join the core's
-        // full-member constructor too — zeroed there; only the wrapper
-        // writes them. A zero `shell` there also reads as the fractal
-        // term, which is the safe direction: an untinted hit.
-        balloonRename(
-          lensedHitInfoText,
-          `SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg})`,
-          `SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}, vec3f(0.0), 0.0)`,
-        ),
-        "fn surfaceDEHitInfo(",
-        "fn surfaceDEHitInfoFractal(",
-      )}
+  const withBalloonHitInfo = (inner: string): string =>
+    balloon
+      ? `${balloonRename(
+          inner,
+          "fn surfaceDEHitInfo(",
+          "fn surfaceDEHitInfoFractal(",
+        )}
 
 // The balloon hit-info argmin wrapper — around the renamed
 // public, the lens sweep's mechanism one level further out.
 ${balloonHitWrapText}`
-    : lensedHitInfoText;
+      : inner;
   const tilingLiftExpression = core4
     ? core === "escape4"
       ? "liftEscape4(p)"
@@ -7131,7 +7125,7 @@ ${balloonHitWrapText}`
   const finiteTiledHitInfoText =
     tiling && !latticeTiling
       ? `${balloonRename(
-          hitInfoText,
+          lensedHitInfoText,
           "fn surfaceDEHitInfo(",
           "fn surfaceDEHitInfoTilingCore(",
         )}
@@ -7141,7 +7135,7 @@ ${balloonHitWrapText}`
 // the distance max; it has no transform-slot trajectory of its own.
 fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   let rawTilingPoint = ${tilingLiftExpression};
-  var failed = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+  var failed = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg}${balloonCtorArg});
   failed.tilingPoint = ${tilingRawPoint4};
   if (params.tilingGroup != ${tilingInfo!.code}u) {
     return failed;
@@ -7151,13 +7145,17 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     return failed;
   }
   var info = surfaceDEHitInfoTilingCore(${tilingHitCoreArgs});
-  info.tilingPoint = ${tilingHitPoint4};
+  info.tilingPoint = ${tilingHitPoint4};${
+    balloon && pattern && core4 && !lens
+      ? "\n  info.source4 = finalApply4(folded.point);"
+      : ""
+  }
   return info;
 }`
       : "";
   const latticeTiledHitInfoText = latticeTiling
     ? `${balloonRename(
-        hitInfoText,
+        lensedHitInfoText,
         "fn surfaceDEHitInfo(",
         "fn surfaceDEHitInfoTilingCore(",
       )}
@@ -7168,7 +7166,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
 // trajectory of its own.
 fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   let rawTilingPoint = ${tilingLiftExpression};
-  var failed = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg});
+  var failed = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg}${balloonCtorArg});
   failed.tilingPoint = ${tilingRawPoint4};
   if (params.tilingGroup != ${LATTICE_TILING_CODE}u) {
     return failed;
@@ -7179,11 +7177,13 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   return info;
 }`
     : "";
-  const tiledHitInfoText = tiling
-    ? latticeTiling
-      ? latticeTiledHitInfoText
-      : finiteTiledHitInfoText
-    : hitInfoText;
+  const tiledHitInfoText = withBalloonHitInfo(
+    tiling
+      ? latticeTiling
+        ? latticeTiledHitInfoText
+        : finiteTiledHitInfoText
+      : lensedHitInfoText,
+  );
 
   // The two LUT color sources whose NORMALIZER is dimension-specific
   // (every other shade term reconciles under the packing contract).
@@ -7220,10 +7220,10 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
       );
       u = clamp(tiledViewY / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
       : `u = clamp(${balloon ? "hi.colorPos" : "pos"}.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
-    : balloon
-      ? `u = clamp(hi.colorPos.y / visR * 0.5 + 0.5, 0.0, 1.0);`
-      : tiling
-        ? `u = clamp(hi.tilingPoint.y / visR * 0.5 + 0.5, 0.0, 1.0);`
+    : tiling
+      ? `u = clamp(hi.tilingPoint.y / visR * 0.5 + 0.5, 0.0, 1.0);`
+      : balloon
+        ? `u = clamp(hi.colorPos.y / visR * 0.5 + 0.5, 0.0, 1.0);`
         : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
   const shadeRadiusU =
     core === "escape4"
@@ -7257,10 +7257,10 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
           params.radiusInvRange,
         0.0, 1.0);`
-        : balloon
-          ? `u = clamp(length(hi.colorPos) / visR, 0.0, 1.0);`
-          : tiling
-            ? `u = clamp(length(hi.tilingPoint.xyz) / visR, 0.0, 1.0);`
+        : tiling
+          ? `u = clamp(length(hi.tilingPoint.xyz) / visR, 0.0, 1.0);`
+          : balloon
+            ? `u = clamp(length(hi.colorPos) / visR, 0.0, 1.0);`
             : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
 
   // Independent balloon palette first, then the orthogonal tint. The
@@ -7319,14 +7319,17 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   // packs from the native-height acceptPixelEps — normalized by the raw
   // bounding radius, the GLSL `uAcceptPixelEps * t / uBoundingRadius`
   // twin, so preview and settle tiers cannot change the material detail.
+  // Tiled Balloon inherits the winning descent's inverse-final frame,
+  // matching both GLSL twins. Keep the older tiling-only source byte-exact;
+  // its historical direct tilingPoint read remains outside this new arm.
   const shadePattern = pattern
     ? core4
       ? `
-  let objectP = ${tiling ? "hi.tilingPoint" : "hi.source4"}.xyz / params.boundingRadius;
+  let objectP = ${tiling && !balloon ? "hi.tilingPoint" : "hi.source4"}.xyz / params.boundingRadius;
   let patternFootprint = params.pixelEps * t / params.boundingRadius;
   base = patternShade(base, objectP, fb, shade.patternCalibration, hi.sheets, patternFootprint);`
       : `
-  let objectP = (${tiling ? "hi.tilingPoint" : "hi.source4"}.xyz - params.boundCenter) / params.boundingRadius;
+  let objectP = (${tiling && !balloon ? "hi.tilingPoint" : "hi.source4"}.xyz - params.boundCenter) / params.boundingRadius;
   let patternFootprint = params.pixelEps * t / params.boundingRadius;
   base = patternShade(base, objectP, fb, shade.patternCalibration, hi.sheets, patternFootprint);`
     : "";
@@ -12013,24 +12016,17 @@ ${core4 ? probeLens4WrapText : probeLensWrapText}`
   const balloonProbeWrapText = balloonDeWrapText
     .replace("fn surfaceDE(", "fn surfaceDEProbe(")
     .replaceAll("surfaceDEFractal(", "surfaceDEProbeFractal(");
-  const bodyBlock = balloon
-    ? `${
-        probeWidth === null
-          ? balloonRename(
-              lensedBodyBlock,
-              "fn surfaceDE(",
-              "fn surfaceDEFractal(",
-            )
-          : balloonRename(
-              balloonRename(
-                lensedBodyBlock,
-                "fn surfaceDE(",
-                "fn surfaceDEFractal(",
-              ),
-              "fn surfaceDEProbe(",
-              "fn surfaceDEProbeFractal(",
-            )
-      }
+  const withBalloonBody = (inner: string): string =>
+    balloon
+      ? `${
+          probeWidth === null
+            ? balloonRename(inner, "fn surfaceDE(", "fn surfaceDEFractal(")
+            : balloonRename(
+                balloonRename(inner, "fn surfaceDE(", "fn surfaceDEFractal("),
+                "fn surfaceDEProbe(",
+                "fn surfaceDEProbeFractal(",
+              )
+        }
 
 // The balloon inverted-union (fractal/balloon-de.ts's
 // estimateBalloonDistance, the GLSL SURFACE_BALLOON block's WGSL twin):
@@ -12054,14 +12050,14 @@ fn balloonInvert(p: vec3f) -> vec4f {
   );
 }
 ${balloonDeWrapText}${
-        probeWidth === null
-          ? ""
-          : `
+          probeWidth === null
+            ? ""
+            : `
 
 // The probe taps' own balloon union — same text, renamed.
 ${balloonProbeWrapText}`
-      }`
-    : lensedBodyBlock;
+        }`
+      : inner;
 
   const tilingValueLiftExpression = core4
     ? core === "escape4"
@@ -12122,9 +12118,9 @@ ${balloonProbeWrapText}`
     tiling && !latticeTiling
       ? `${balloonRename(
           probeWidth === null
-            ? bodyBlock
+            ? lensedBodyBlock
             : balloonRename(
-                bodyBlock,
+                lensedBodyBlock,
                 "fn surfaceDEProbe(",
                 "fn surfaceDEProbeTilingCore(",
               ),
@@ -12147,9 +12143,9 @@ ${tilingProbeWrapText}`
   const latticeTiledBodyBlock = latticeTiling
     ? `${balloonRename(
         probeWidth === null
-          ? bodyBlock
+          ? lensedBodyBlock
           : balloonRename(
-              bodyBlock,
+              lensedBodyBlock,
               "fn surfaceDEProbe(",
               "fn surfaceDEProbeTilingCore(",
             ),
@@ -12170,20 +12166,25 @@ ${latticeDeWrapText}${
 ${tilingProbeWrapText}`
       }`
     : "";
-  const tiledBodyBlock = tiling
-    ? latticeTiling
-      ? latticeTiledBodyBlock
-      : finiteTiledBodyBlock
-    : bodyBlock;
+  // In 4D tiling lifts each visible 3D query into the sliced attractor.
+  // Balloon therefore wraps this completed public estimator, keeping its
+  // inversion in the displayed 3D space and its source attribution intact.
+  const tiledBodyBlock = withBalloonBody(
+    tiling
+      ? latticeTiling
+        ? latticeTiledBodyBlock
+        : finiteTiledBodyBlock
+      : lensedBodyBlock,
+  );
 
   // A march sample carries (certified stride, legacy acceptance distance).
   // Reuse the scalar lens's inverse prologue and ONE core evaluation, then
   // transport the two quantities separately through every outer min/max.
   // Scalar evals, shading probes and hit-info attribution retain global G.
-  const lensScalarName = balloon
-    ? "surfaceDEFractal"
-    : tiling
-      ? "surfaceDETilingCore"
+  const lensScalarName = tiling
+    ? "surfaceDETilingCore"
+    : balloon
+      ? "surfaceDEFractal"
       : "surfaceDE";
   const lensSampleArgs =
     core4 && tiling
@@ -12218,12 +12219,31 @@ ${tilingProbeWrapText}`
     );
   const sampleLensText = `${sampleLensPrefix}  return vec2f(${lensScalarName}(${lensSampleArgs}));
 }`;
+  const sampleTilingText = tiling
+    ? (latticeTiling ? latticeDeWrapText : tilingDeWrapText)
+        .replace("fn surfaceDE(", "fn surfaceDEMarch(")
+        .replace(") -> f32 {", ") -> vec2f {")
+        .replaceAll("return 0.0;", "return vec2f(0.0);")
+        .replace(
+          "return 2.0 * params.tilingPresentationR;",
+          "return vec2f(2.0 * params.tilingPresentationR);",
+        )
+        .replace("surfaceDETilingCore(", "surfaceDEMarchLens(")
+        .replace(
+          `max(inner, length(folded) - ${latticeRadiusExpr})`,
+          `max(inner, vec2f(length(folded) - ${latticeRadiusExpr}))`,
+        )
+        .replace(
+          /max\((inner|bounded), (tilingClipSdf\([^\n]+\))\)/,
+          "max($1, vec2f($2))",
+        )
+    : "";
   const sampleOuterText = balloon
-    ? `fn surfaceDEMarch(pIn: vec3f, cutoff: f32, li: u32) -> vec2f {
-  let fractal = surfaceDEMarchLens(pIn, cutoff, li);
+    ? `${tiling ? sampleTilingText.replace("fn surfaceDEMarch(", "fn surfaceDEMarchFractal(") + "\n" : ""}fn surfaceDEMarch(pIn: vec3f, cutoff: f32, li: u32) -> vec2f {
+  let fractal = ${tiling ? "surfaceDEMarchFractal" : "surfaceDEMarchLens"}(pIn, cutoff, li);
   let inv = balloonInvert(pIn);
   let innerCutoff = select(0.0, cutoff / inv.w, cutoff > 0.0);
-  let inner = surfaceDEMarchLens(inv.xyz, innerCutoff, li);
+  let inner = ${tiling ? "surfaceDEMarchFractal" : "surfaceDEMarchLens"}(inv.xyz, innerCutoff, li);
   var shell = inv.w * inner;
   let radius = length(pIn - params.balloonCenter);
   if (params.${lensParamsName}.x == ${SURFACE_LENS_SWIRL}.0 &&
@@ -12237,23 +12257,7 @@ ${tilingProbeWrapText}`
   return min(vec2f(fractal.y), shell);
 }`
     : tiling
-      ? (latticeTiling ? latticeDeWrapText : tilingDeWrapText)
-          .replace("fn surfaceDE(", "fn surfaceDEMarch(")
-          .replace(") -> f32 {", ") -> vec2f {")
-          .replaceAll("return 0.0;", "return vec2f(0.0);")
-          .replace(
-            "return 2.0 * params.tilingPresentationR;",
-            "return vec2f(2.0 * params.tilingPresentationR);",
-          )
-          .replace("surfaceDETilingCore(", "surfaceDEMarchLens(")
-          .replace(
-            `max(inner, length(folded) - ${latticeRadiusExpr})`,
-            `max(inner, vec2f(length(folded) - ${latticeRadiusExpr}))`,
-          )
-          .replace(
-            /max\((inner|bounded), (tilingClipSdf\([^\n]+\))\)/,
-            "max($1, vec2f($2))",
-          )
+      ? sampleTilingText
       : `fn surfaceDEMarch(pIn: vec3f, cutoff: f32, li: u32) -> vec2f {
   return surfaceDEMarchLens(pIn, cutoff, li);
 }`;

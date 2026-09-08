@@ -30,6 +30,7 @@
  */
 import * as THREE from "three";
 import { SOFTWARE_RENDERER_RE } from "../render-backend";
+import { normalizeRotorPair, rotorMatrix } from "../rotor4";
 import {
   SURFACE_CHAOS_ROW_3D,
   SURFACE_CHAOS_ROW_4D,
@@ -57,13 +58,14 @@ import {
   balloonBall4,
   buildBalloon,
   buildBalloon4,
+  buildBalloonFromBall,
   estimateBalloonDistance,
   estimateBalloonDistance4,
   estimateBalloonDistanceSample,
   estimateBalloonDistance4Sample,
   invertBalloon,
 } from "../../fractal/balloon-de";
-import type { Balloon } from "../../fractal/balloon-de";
+import type { Balloon, BalloonDistance } from "../../fractal/balloon-de";
 import { prepareChaosGame, runChaosGame } from "../../fractal/chaos-game";
 import type { PreparedChaosGame } from "../../fractal/chaos-game";
 import { runChaosGame4, prepareChaosGame4 } from "../../fractal/chaos-game-4d";
@@ -147,6 +149,7 @@ import {
   estimateDistanceRefined,
   estimateDistanceSample,
   estimateDistanceRefinedSample,
+  surfaceOriginVisibleRadius,
   SURFACE_FOLD_BEAM_WIDTH,
   SYM_PLANE_CODE,
 } from "../../fractal/surface-de";
@@ -171,11 +174,16 @@ import {
   estimateDistance4Tiled,
   estimateDistanceRefinedTiled,
   estimateDistanceTiled,
+  estimateDistanceSampleTiled,
+  estimateDistanceRefinedSampleTiled,
+  estimateDistance4SampleTiled,
+  estimateDistance4RefinedSampleTiled,
   estimateEscapeDistance4Tiled,
   estimateEscapeDistanceTiled,
 } from "../../fractal/tiling-de";
 import { resolveTiling } from "../../fractal/tiling";
 import type {
+  ResolvedFiniteTiling,
   ResolvedLatticeTiling,
   ResolvedTiling,
 } from "../../fractal/tiling";
@@ -459,7 +467,7 @@ interface ScenarioDef3D {
    */
   schedule?: HybridSchedule;
   /** Optional plot-time image plan, shared by the CPU oracle and production
-   * backend. Tiling scenarios keep order 1 and Balloon absent by contract. */
+   * backend. Finite images compose with symmetry and Balloon. */
   pointTilingPlan?: PointTilingPlan;
   /**
    * Per-scenario override of `AGREEMENT_MAE_THRESHOLD`. The equal-N MAE
@@ -530,6 +538,10 @@ interface ScenarioDef4D {
   schedule?: HybridSchedule;
   /** True raw-xyzw point images before the frozen bench tumble/slice. */
   pointTilingPlan?: PointTilingPlan;
+  /** Certified origin ball for finite Balloon agreement. This also pins the
+   * production tiled rotor pivot and signed-w amplitude independently of the
+   * sampled explorer cloud used by historical scenarios. */
+  pointTilingOriginRadius?: number;
   /** See {@link ScenarioDef3D.maeThreshold} — same scenario-owned noise
    * floor override, one dimension up. */
   maeThreshold?: number;
@@ -612,8 +624,8 @@ function f4ChamberDust(): Transform[] {
 
 /** The widest legal point-family composition: an emitter table (including a
  * catalog mesh), non-trivial xaos rows, a scheduled affine post-word, a final
- * lens, an analytic clip and finite image selection. Balloon stays refused;
- * separate symmetry scenarios pin the kaleidoscope composition. */
+ * lens, an analytic clip and finite image selection. Separate scenarios pin
+ * the finite Balloon and kaleidoscope compositions. */
 function tiledMultiSystem(): Transform[] {
   const chaosRows = [
     [1, 0.25, 0.05],
@@ -1065,6 +1077,16 @@ function emitterMenagerie(): Transform[] {
   ];
 }
 
+function finiteTilingBalloon3DBall(): Balloon {
+  const transforms = sierpinskiTetrahedron();
+  const symmetry: SymmetryParams = { order: 3, plane: "xy" };
+  const de = buildSurfaceDE(transforms, null, symmetry);
+  return buildBalloonFromBall(
+    { center: [0, 0, 0], radius: surfaceOriginVisibleRadius(de) },
+    0.55,
+  );
+}
+
 const SCENARIOS: ScenarioDef[] = [
   {
     ...SIERPINSKI_CAMERA,
@@ -1098,6 +1120,32 @@ const SCENARIOS: ScenarioDef[] = [
     pointTilingPlan: benchPointTilingPlan(3, "finite"),
     // The ordinary orbit includes cyclic symmetry before canonical
     // membership. Moving symmetry after tiling changes the rendered set.
+  },
+  {
+    ...SIERPINSKI_CAMERA,
+    kind: "3d",
+    name: "tiling-balloon-3d",
+    transforms: sierpinskiTetrahedron(),
+    finalTransform: null,
+    symmetry: { order: 3, plane: "xy" },
+    paletteId: "spectrum",
+    pointTilingPlan: benchPointTilingPlan(3, "finite"),
+    balloonEcho: {
+      balloon: finiteTilingBalloon3DBall(),
+      tint: [0.15, 0.75, 0.3],
+      tintStrength: 0.35,
+      weight: 1,
+    },
+    balloonPaletteId: "aurora",
+    // Four full-budget CPU seeds give six noise pairs: MAE 1.78856–1.79456,
+    // density TV 0.01913–0.01927. Both bars exceed twice that noise floor;
+    // the shared signed-bias bar stays 0.3. Same-camera missing-echo and
+    // missing-tiling controls measure MAE 12.19080 / 8.65134 and density TV
+    // 0.13180 / 0.18016, so both features remain independently detectable.
+    // Reproduce: flame-tiling-symmetry-noise.verify.mjs
+    // --scenario=tiling-balloon-3d --seeds=4.
+    maeThreshold: 4.0,
+    densityTvThreshold: 0.04,
   },
   {
     ...SIERPINSKI_CAMERA,
@@ -1545,6 +1593,31 @@ const SCENARIOS: ScenarioDef[] = [
     pointTilingPlan: benchPointTilingPlan(4, "finite"),
     // F4 matrices genuinely mix w before the tumble. Radius stays owned by
     // the canonical source while the soft-slice weight follows each image.
+  },
+  {
+    kind: "4d",
+    name: "tiling-balloon-4d",
+    system: f4ChamberDust,
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    rotation: BENCH_TUMBLE,
+    paletteId: "legacy",
+    colorMode: "wBlueOrange",
+    sliceOn: true,
+    sliceCenter: 0.2,
+    sliceWidth: 0.35,
+    sliceRelativeColor: true,
+    pointTilingPlan: benchPointTilingPlan(4, "finite"),
+    pointTilingOriginRadius: surfaceOriginVisibleRadius(
+      buildSurfaceDE4(f4ChamberDust()),
+    ),
+    balloonEcho: {
+      radiusMultiple: 0.55,
+      tint: [0.2, 0.65, 0.9],
+      tintStrength: 0.4,
+      weight: 1,
+    },
+    balloonPaletteId: "dusk",
   },
   {
     kind: "4d",
@@ -2165,7 +2238,9 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
     (b.maxZ - b.minZ) / 2,
     (b.maxW - b.minW) / 2,
   ];
-  const invWAmp = 1 / Math.max(wSupport(rotor, halfExtents), 1e-6);
+  const invWAmp =
+    1 /
+    Math.max(def.pointTilingOriginRadius ?? wSupport(rotor, halfExtents), 1e-6);
   const view: FourDView = {
     invWAmp,
     sliceOn: def.sliceOn,
@@ -2201,26 +2276,37 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
   // Auto-framing camera (see this function's doc): a fixed offset direction,
   // distance proportional to the cloud's own bounding radius.
   const dir = new THREE.Vector3(0.8, 0.55, 1.0).normalize();
-  const dist = Math.max(3 * cloud.radius, 1e-3);
+  const viewCenter: Vec4 =
+    def.pointTilingOriginRadius === undefined ? center : [0, 0, 0, 0];
+  const dist = Math.max(
+    3 * (def.pointTilingOriginRadius ?? cloud.radius),
+    1e-3,
+  );
   const cameraPos: [number, number, number] = [
-    center[0] + dir.x * dist,
-    center[1] + dir.y * dist,
-    center[2] + dir.z * dist,
+    viewCenter[0] + dir.x * dist,
+    viewCenter[1] + dir.y * dist,
+    viewCenter[2] + dir.z * dist,
   ];
   const camera = buildProjection(ACCUM_WIDTH, ACCUM_HEIGHT, cameraPos, [
-    center[0],
-    center[1],
-    center[2],
+    viewCenter[0],
+    viewCenter[1],
+    viewCenter[2],
   ]);
-  const rotorProjection = composeRotorProjection4(rotor, center);
+  const rotorProjection = composeRotorProjection4(rotor, viewCenter);
   const projection = composeFlameProjection4(camera, rotorProjection);
   const balloonEcho: FlameBalloonEcho | undefined = def.balloonEcho
     ? {
-        balloon: {
-          center: [center[0], center[1], center[2]],
-          rho: cloud.radius * 1.02,
-          R: cloud.radius * def.balloonEcho.radiusMultiple,
-        },
+        balloon:
+          def.pointTilingOriginRadius === undefined
+            ? {
+                center: [center[0], center[1], center[2]],
+                rho: cloud.radius * 1.02,
+                R: cloud.radius * def.balloonEcho.radiusMultiple,
+              }
+            : buildBalloonFromBall(
+                { center: [0, 0, 0], radius: def.pointTilingOriginRadius },
+                def.balloonEcho.radiusMultiple,
+              ),
         tint: def.balloonEcho.tint,
         tintStrength: def.balloonEcho.tintStrength,
         weight: def.balloonEcho.weight,
@@ -3422,6 +3508,9 @@ interface SurfaceTimingRow {
  */
 interface SurfaceUnprojectRow {
   system: string;
+  /** Strict scalar/probe attribution at CPU hit endpoints. Present only on
+   * finite Balloon rows; both source and shell must actually be visible. */
+  finiteBalloonHits?: { source: number; shell: number };
   width: number;
   wg: number;
   rasterWidth: number;
@@ -3773,9 +3862,13 @@ interface SurfaceDeResults {
   /** Every swirl base core, in both dimensions, with and without Balloon.
    * Uses the established per-ray agreement thresholds and step budget. */
   marchUnprojectSwirl?: SurfaceUnprojectRow[];
+  /** Browser-qualified finite A3/A4 geometry through the same numerical
+   * ray gate, with strict source/shell witnesses on the actual hit rays. */
+  marchUnprojectFiniteBalloon?: SurfaceUnprojectRow[];
   /** Posted swirl + Balloon + pattern through the production marcher and
    * shade/probe pipeline, one frame per dimensional/base-core combination. */
   computeFrameSwirl?: (SurfaceComputeFrameRow & { system: string })[];
+  computeFrameFiniteBalloon?: (SurfaceComputeFrameRow & { system: string })[];
   /** Leg B (informational + canvas artifact) — absent until run;
    * SkippedResult when mandelboxKifs was excluded or the renderer broke. */
   computeFrame?: SurfaceComputeFrameRow | SkippedResult;
@@ -6196,8 +6289,9 @@ function surfaceCameraDepth(
  * 2.4 — every existing caller), vertical fov 60° — packed into the kernel's
  * {@link SurfaceGpuPose}. `distFactor` is the shade probe-width A/B leg's
  * hook for its closer "near" pose
- * ({@link SURFACE_SHADE_AB_NEAR_DIST_FACTOR}); no other caller passes
- * it. */
+ * ({@link SURFACE_SHADE_AB_NEAR_DIST_FACTOR}). The optional authored camera
+ * pins the finite Balloon frames to the production-browser fixtures while
+ * retaining this gate's established raster and acceptance epsilon. */
 function buildSurfacePose(
   // Structural pick, not the whole DE: the escape frame leg frames its
   // bailout ball through the same pose math.
@@ -6205,15 +6299,16 @@ function buildSurfacePose(
   rasterWidth: number,
   rasterHeight: number,
   distFactor: number = SURFACE_POSE_DIST_FACTOR,
+  camera?: { radius: number; theta: number; phi: number; fov: number },
 ): SurfaceGpuPose {
   const target: Vec3 = [0, 0, 0];
-  const radius = distFactor * de.visibleBoundingRadius;
+  const radius = camera?.radius ?? distFactor * de.visibleBoundingRadius;
+  const theta = camera?.theta ?? SURFACE_POSE_THETA;
+  const phi = camera?.phi ?? SURFACE_POSE_PHI;
   const ro: Vec3 = [
-    target[0] +
-      radius * Math.sin(SURFACE_POSE_PHI) * Math.sin(SURFACE_POSE_THETA),
-    target[1] + radius * Math.cos(SURFACE_POSE_PHI),
-    target[2] +
-      radius * Math.sin(SURFACE_POSE_PHI) * Math.cos(SURFACE_POSE_THETA),
+    target[0] + radius * Math.sin(phi) * Math.sin(theta),
+    target[1] + radius * Math.cos(phi),
+    target[2] + radius * Math.sin(phi) * Math.cos(theta),
   ];
   const fwd = surfaceNormalize([
     target[0] - ro[0],
@@ -6222,7 +6317,7 @@ function buildSurfacePose(
   ]);
   const right = surfaceNormalize(surfaceCross(fwd, [0, 1, 0]));
   const up = surfaceCross(right, fwd);
-  const fov = (SURFACE_POSE_FOV_DEG * Math.PI) / 180;
+  const fov = ((camera?.fov ?? SURFACE_POSE_FOV_DEG) * Math.PI) / 180;
   return {
     ro,
     right,
@@ -6267,7 +6362,21 @@ function surfaceMarchEstimate(
   p: Vec3,
   eps: number,
   view4: SurfaceGpu4View | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): number {
+  if (tiling) {
+    if (view4) {
+      const de4 = de as SurfaceDE4;
+      const query = surface4ComposedQuery(view4, p);
+      return deHasFolds4(de4)
+        ? estimateDistance4Tiled(tiling, de4, query.p, query.ext)
+        : estimateDistance4RefinedTiled(tiling, de4, query.p, eps, query.ext);
+    }
+    const de3 = de as SurfaceDE;
+    return deHasFolds(de3)
+      ? estimateDistanceTiled(tiling, de3, p, eps)
+      : estimateDistanceRefinedTiled(tiling, de3, p, eps);
+  }
   if (view4) {
     const de4 = de as SurfaceDE4;
     return estimateSurface4Composed(de4, view4, p, !deHasFolds4(de4), eps);
@@ -6285,7 +6394,27 @@ function surfaceMarchSample(
   p: Vec3,
   eps: number,
   view4: SurfaceGpu4View | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): SurfaceDistanceSample {
+  if (tiling) {
+    if (view4) {
+      const de4 = de as SurfaceDE4;
+      const query = surface4ComposedQuery(view4, p);
+      return deHasFolds4(de4)
+        ? estimateDistance4SampleTiled(tiling, de4, query.p, query.ext)
+        : estimateDistance4RefinedSampleTiled(
+            tiling,
+            de4,
+            query.p,
+            eps,
+            query.ext,
+          );
+    }
+    const de3 = de as SurfaceDE;
+    return deHasFolds(de3)
+      ? estimateDistanceSampleTiled(tiling, de3, p, eps)
+      : estimateDistanceRefinedSampleTiled(tiling, de3, p, eps);
+  }
   if (view4) {
     const de4 = de as SurfaceDE4;
     const query = surface4ComposedQuery(view4, p);
@@ -6305,12 +6434,47 @@ function surfaceMarchSample(
 interface SurfaceCpuBalloon {
   b: Balloon;
   far: number;
+  tiling?: ResolvedFiniteTiling;
 }
 
 /** {@link surfaceMarchEstimate} under the balloon union:
  * `estimateBalloonDistance` composed over the SAME core-routed estimator
  * — the exact function the balloon kernels mirror (the wrapper over the
  * public descent, `balloon-de.ts`'s oracle link). */
+function surfaceBalloonMarchDistance(
+  de: SurfaceDE | SurfaceDE4,
+  balloon: SurfaceCpuBalloon,
+  p: Vec3,
+  eps: number,
+  view4: SurfaceGpu4View | null = null,
+): BalloonDistance {
+  if (view4) {
+    return estimateBalloonDistance4(
+      (d, q, cutoff = 0) =>
+        surfaceMarchEstimate(
+          d,
+          [q[0], q[1], q[2]],
+          cutoff,
+          view4,
+          balloon.tiling,
+        ),
+      de as SurfaceDE4,
+      balloon.b,
+      p,
+      view4.w0,
+      eps,
+    );
+  }
+  return estimateBalloonDistance(
+    (d, q, cutoff = 0) =>
+      surfaceMarchEstimate(d, q, cutoff, null, balloon.tiling),
+    de as SurfaceDE,
+    balloon.b,
+    p,
+    eps,
+  );
+}
+
 function surfaceBalloonMarchEstimate(
   de: SurfaceDE | SurfaceDE4,
   balloon: SurfaceCpuBalloon,
@@ -6318,24 +6482,7 @@ function surfaceBalloonMarchEstimate(
   eps: number,
   view4: SurfaceGpu4View | null = null,
 ): number {
-  if (view4) {
-    return estimateBalloonDistance4(
-      (d, q, cutoff = 0) =>
-        surfaceMarchEstimate(d, [q[0], q[1], q[2]], cutoff, view4),
-      de as SurfaceDE4,
-      balloon.b,
-      p,
-      view4.w0,
-      eps,
-    ).d;
-  }
-  return estimateBalloonDistance(
-    (d, q, cutoff = 0) => surfaceMarchEstimate(d, q, cutoff),
-    de as SurfaceDE,
-    balloon.b,
-    p,
-    eps,
-  ).d;
+  return surfaceBalloonMarchDistance(de, balloon, p, eps, view4).d;
 }
 
 function surfaceBalloonMarchSample(
@@ -6348,7 +6495,13 @@ function surfaceBalloonMarchSample(
   if (view4) {
     return estimateBalloonDistance4Sample(
       (d, q, cutoff = 0) =>
-        surfaceMarchSample(d, [q[0], q[1], q[2]], cutoff, view4),
+        surfaceMarchSample(
+          d,
+          [q[0], q[1], q[2]],
+          cutoff,
+          view4,
+          balloon.tiling,
+        ),
       de as SurfaceDE4,
       balloon.b,
       p,
@@ -6357,7 +6510,8 @@ function surfaceBalloonMarchSample(
     );
   }
   return estimateBalloonDistanceSample(
-    (d, q, cutoff = 0) => surfaceMarchSample(d, q, cutoff),
+    (d, q, cutoff = 0) =>
+      surfaceMarchSample(d, q, cutoff, null, balloon.tiling),
     de as SurfaceDE,
     balloon.b,
     p,
@@ -7070,6 +7224,68 @@ interface Surface4SystemState {
  * protocol and per-ray comparison remain identical. */
 type SurfaceMarchSystem = SurfaceSystemState | Surface4SystemState;
 
+/** Same geometry, view, camera and normalized echo radius as
+ * scripts/tiling-balloon.verify.mjs's Surface rows. In particular Pentatope
+ * occupies A4's chamber, where the unrelated affine4 eval fixture at its
+ * identity slice was empty under F4. The older B3/F4 scalar/stride ABI rows
+ * retain the harder groups and all four inverse-descent cores. */
+function surfaceFiniteBalloonFrameFixtures(): {
+  sys: SurfaceMarchSystem;
+  tiling: ResolvedFiniteTiling;
+  balloonR: number;
+  pose: SurfaceGpuPose;
+}[] {
+  const transforms3: Transform[] = (
+    [
+      [0.5, 0.5, 0.5],
+      [-0.5, 0.5, -0.5],
+      [0.5, -0.5, -0.5],
+      [-0.5, -0.5, 0.5],
+    ] as Vec3[]
+  ).map((position, id) => ({
+    id,
+    position,
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+  }));
+  const transforms4 = pentatope();
+  const pair = normalizeRotorPair(
+    [0.9847, 0.1741, 0, 0],
+    [0.9847, -0.1741, 0, 0],
+  )!;
+  const systems: SurfaceMarchSystem[] = [
+    {
+      name: "finiteA3Tetra",
+      core: "affine",
+      de: buildSurfaceDE(transforms3, null, SURFACE_NO_SYMMETRY),
+      transforms: transforms3,
+      queries: [],
+      cpu: [],
+    },
+    {
+      name: "finiteA4Pentatope",
+      de: buildSurfaceDE4(transforms4, null, SURFACE_NO_SYMMETRY),
+      transforms: transforms4,
+      view4: { rotor: rotorMatrix(pair), w0: 0, sliceHalfW: 0 },
+      queries: [],
+      cpu: [],
+      stable: [],
+    },
+  ];
+  return systems.map((sys) => ({
+    sys,
+    tiling: resolveTiling({ group: "view4" in sys ? "a4" : "a3" })!,
+    balloonR: 0.5,
+    pose: buildSurfacePose(
+      sys.de,
+      SURFACE_UNPROJ_WIDTH,
+      SURFACE_UNPROJ_HEIGHT,
+      SURFACE_POSE_DIST_FACTOR,
+      { radius: "view4" in sys ? 3.2 : 4.7, theta: 0.71, phi: 1.1, fov: 50 },
+    ),
+  }));
+}
+
 function surfaceMarchCore(
   sys: SurfaceMarchSystem,
 ): SurfaceKernelConfig["core"] {
@@ -7084,10 +7300,11 @@ function packSurfaceMarchParams(
   sys: SurfaceMarchSystem,
   run: SurfaceGpuRunParams,
   balloon: SurfaceComputeFrameSpec["balloon"] | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): ArrayBuffer {
   return "view4" in sys
-    ? packSurface4GpuParams(sys.de, sys.view4, run, balloon)
-    : packSurfaceGpuParams(sys.de, run, balloon);
+    ? packSurface4GpuParams(sys.de, sys.view4, run, balloon, null, tiling)
+    : packSurfaceGpuParams(sys.de, run, balloon, null, tiling);
 }
 
 function surfaceCpuBalloonFor(
@@ -7095,7 +7312,16 @@ function surfaceCpuBalloonFor(
     | SurfaceFrameSystem
     | Pick<Surface4SystemState, "name" | "de" | "transforms" | "view4">,
   rMult: number,
+  tiling: ResolvedFiniteTiling | null = null,
 ): SurfaceCpuBalloon {
+  if (tiling) {
+    const radius = surfaceOriginVisibleRadius(sys.de);
+    return {
+      b: buildBalloonFromBall({ center: [0, 0, 0], radius }, rMult),
+      far: BALLOON_FAR_CAP_RHO * radius,
+      tiling,
+    };
+  }
   return "view4" in sys
     ? {
         b: buildBalloon4(sys.de, rMult),
@@ -7640,6 +7866,10 @@ async function runSurfaceEvalDispatch(
  * catches a fold/narrowing term composed at the wrong point and a host buffer
  * sized for the live fields alone instead of WGSL's 16-byte-rounded struct. */
 interface SurfaceTilingAbiSpec {
+  balloon?: boolean;
+  lens?: boolean;
+  lensPost?: boolean;
+  evalStride?: boolean;
   name: string;
   core: SurfaceKernelConfig["core"];
   tiling: ResolvedTiling;
@@ -7648,6 +7878,101 @@ interface SurfaceTilingAbiSpec {
   queries: Vec3[];
   cpu: number[];
   toleranceRadius: number;
+}
+
+/** Compact composed-field queries with explicit missing-feature controls.
+ * Both Balloon terms must win, and removing tiling or Balloon must change
+ * the answer well beyond the standing eval tolerance. Stable off-boundary
+ * queries keep this ABI leg separate from the broad frontier ensembles. */
+function surfaceFiniteBalloonAbiSpec(
+  sys: SurfaceMarchSystem,
+  tiling: ResolvedFiniteTiling,
+  evalStride = false,
+): SurfaceTilingAbiSpec {
+  const balloon = surfaceCpuBalloonFor(sys, 0.9, tiling);
+  const view4 = "view4" in sys ? sys.view4 : null;
+  const radius = surfaceOriginVisibleRadius(sys.de);
+  const toleranceRadius =
+    "view4" in sys ? surface4ToleranceR(sys.de) : sys.de.boundingRadius;
+  const scalar = (q: Vec3) =>
+    surfaceBalloonMarchEstimate(sys.de, balloon, q, 0, view4);
+  const estimate = (q: Vec3) =>
+    evalStride
+      ? surfaceBalloonMarchSample(sys.de, balloon, q, 0, view4).stride
+      : scalar(q);
+  const queries: Vec3[] = [];
+  const cpu: number[] = [];
+  const counts = [0, 0];
+  let withoutTilingMargin = 0;
+  let withoutBalloonMargin = 0;
+  const rng = mulberry32(0xb41100 + (view4 ? 4 : 3));
+  for (let attempt = 0; attempt < 2048 && queries.length < 8; attempt++) {
+    const q = [0, 1, 2].map(() =>
+      Math.fround((2 * rng() - 1) * radius * (attempt % 2 ? 2.5 : 0.7)),
+    ) as Vec3;
+    const value = estimate(q);
+    const tolerance = surfaceEvalTol(value, toleranceRadius);
+    const plain = surfaceMarchEstimate(sys.de, q, 0, view4, tiling);
+    const shell = scalar(q) < plain ? 1 : 0;
+    if (counts[shell] >= 4 || !Number.isFinite(value)) continue;
+    let stable = true;
+    for (let axis = 0; axis < 3 && stable; axis++) {
+      for (const sign of [-1, 1]) {
+        const nearby = [...q] as Vec3;
+        nearby[axis] += sign * radius * 1e-5;
+        if (Math.abs(estimate(nearby) - value) > tolerance * 0.25)
+          stable = false;
+      }
+    }
+    if (!stable) continue;
+    const noTiling = surfaceBalloonMarchEstimate(
+      sys.de,
+      { b: balloon.b, far: balloon.far },
+      q,
+      0,
+      view4,
+    );
+    withoutTilingMargin = Math.max(
+      withoutTilingMargin,
+      Math.abs(noTiling - scalar(q)) / tolerance,
+    );
+    withoutBalloonMargin = Math.max(
+      withoutBalloonMargin,
+      Math.abs(plain - scalar(q)) / tolerance,
+    );
+    counts[shell]++;
+    queries.push(q);
+    cpu.push(value);
+  }
+  if (
+    queries.length !== 8 ||
+    Math.min(withoutTilingMargin, withoutBalloonMargin) < 8
+  ) {
+    throw new Error(
+      `finite Balloon fixture ${sys.name}: requires 4+4 strict/source winners and both missing-feature controls beyond 8 eval tolerances; got ${counts.join("+")} and ${withoutTilingMargin.toFixed(2)}/${withoutBalloonMargin.toFixed(2)}`,
+    );
+  }
+  return {
+    name: `${evalStride ? "stride-" : ""}balloon-${sys.name}-${tiling.group}`,
+    core: surfaceMarchCore(sys),
+    tiling,
+    balloon: true,
+    lens: sys.de.foldFinal !== null,
+    lensPost: (sys.de.foldFinal?.postInvM ?? null) !== null,
+    evalStride,
+    params: packSurfaceMarchParams(
+      sys,
+      { itemCount: queries.length },
+      { ...balloon.b, far: balloon.far },
+      tiling,
+    ),
+    maps: new Float32Array(
+      "view4" in sys ? packSurfaceGpuMaps4(sys.de) : packSurfaceGpuMaps(sys.de),
+    ),
+    queries,
+    cpu,
+    toleranceRadius,
+  };
 }
 
 async function runSurfaceTilingAbiLeg(
@@ -7674,6 +7999,10 @@ async function runSurfaceTilingAbiLeg(
         sharedFrontier: false,
         bnbStage2: false,
         tiling: spec.tiling,
+        balloon: spec.balloon,
+        lens: spec.lens,
+        lensPost: spec.lensPost,
+        evalStride: spec.evalStride,
       }),
       "evalQueries",
       `surface-de tiling ABI ${spec.name}`,
@@ -8488,6 +8817,7 @@ async function runSurfaceUnprojectMarch(
     R: number;
     far: number;
   } | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
 ): Promise<SurfaceMarchOutcome> {
   const rays = pose.rasterWidth * pose.rasterHeight;
   const stateBytes = rays * 16;
@@ -8536,6 +8866,7 @@ async function runSurfaceUnprojectMarch(
           footprint: 0,
         },
         balloon,
+        tiling,
       );
       device.queue.writeBuffer(buffers.params, 0, params);
       device.queue.writeBuffer(buffers.active, 0, slice);
@@ -8613,13 +8944,15 @@ async function runSurfaceUnprojectLeg(
   status: (text: string) => void,
   activity: ActivityBadge,
   balloonR: number | null = null,
+  tiling: ResolvedFiniteTiling | null = null,
+  authoredPose?: SurfaceGpuPose,
 ): Promise<SurfaceUnprojectRow> {
   const core = surfaceMarchCore(sys);
   const view4 = "view4" in sys ? sys.view4 : null;
   const width = SURFACE_UNPROJ_WIDTH;
   const height = SURFACE_UNPROJ_HEIGHT;
   const rays = width * height;
-  const pose = buildSurfacePose(sys.de, width, height);
+  const pose = authoredPose ?? buildSurfacePose(sys.de, width, height);
   const invProjView = surfaceInvProjView(sys.de, pose);
   // balloonMarch: a non-null balloonR marches the SAME system
   // through the balloon kernel — buildBalloon's numbers packed at the
@@ -8629,7 +8962,7 @@ async function runSurfaceUnprojectLeg(
   // start outside the visible sphere are exactly the entry this leg
   // exists to pin).
   const balloonCpu: SurfaceCpuBalloon | null =
-    balloonR === null ? null : surfaceCpuBalloonFor(sys, balloonR);
+    balloonR === null ? null : surfaceCpuBalloonFor(sys, balloonR, tiling);
   const balloonPack =
     balloonCpu === null
       ? null
@@ -8657,6 +8990,7 @@ async function runSurfaceUnprojectLeg(
     lens: sys.de.foldFinal !== null,
     lensPost: (sys.de.foldFinal?.postInvM ?? null) !== null,
     balloon: balloonPack !== null,
+    tiling,
     width:
       core === "fold" || core === "fold4"
         ? SURFACE_FOLD_BEAM_WIDTH
@@ -8692,6 +9026,7 @@ async function runSurfaceUnprojectLeg(
         footprint: 0,
       },
       balloonPack,
+      tiling,
     ).byteLength,
     GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   );
@@ -8786,6 +9121,7 @@ async function runSurfaceUnprojectLeg(
       SURFACE_UNPROJ_CAP_MS,
       (text) => status(`march-unproject: ${text}`),
       balloonPack,
+      tiling,
     );
     console.info(
       `[surface-bench] march-unproject: march done — ${String(outcome.passes)} passes, ` +
@@ -8862,6 +9198,20 @@ async function runSurfaceUnprojectLeg(
         const ray = py * width + px;
         cpuStatus[ray] = res.status;
         cpuT[ray] = res.t;
+        if (tiling && balloonCpu && res.status === SURFACE_GPU_RAY_HIT) {
+          const p = ro.map((v, i) => v + rd[i] * res.t) as Vec3;
+          // Shade attribution uses the strict scalar/probe minimum with no
+          // acceptance cutoff; paired stride never chooses the material.
+          const hit = surfaceBalloonMarchDistance(
+            sys.de,
+            balloonCpu,
+            p,
+            0,
+            view4,
+          );
+          const counts = (row.finiteBalloonHits ??= { source: 0, shell: 0 });
+          counts[hit.shell ? "shell" : "source"]++;
+        }
       }
       status(`march-unproject: cpu emulator row ${py + 1}/${height}…`);
       await new Promise<void>((resolve) => setTimeout(resolve));
@@ -9141,6 +9491,8 @@ async function runSurfaceComputeFrameLeg(
     cheapShade?: boolean;
     deterministic?: boolean;
     balloonR?: number;
+    tiling?: ResolvedFiniteTiling;
+    pose?: SurfaceGpuPose;
     pattern?: boolean;
   } = {},
 ): Promise<SurfaceComputeFrameRow> {
@@ -9161,7 +9513,7 @@ async function runSurfaceComputeFrameLeg(
   const balloonCpu =
     options.balloonR === undefined
       ? null
-      : surfaceCpuBalloonFor(sys, options.balloonR);
+      : surfaceCpuBalloonFor(sys, options.balloonR, options.tiling);
   const balloonPack = balloonCpu
     ? { ...balloonCpu.b, far: balloonCpu.far }
     : undefined;
@@ -9175,7 +9527,7 @@ async function runSurfaceComputeFrameLeg(
         sys.de.patternCalibration,
       )
     : null;
-  const pose = buildSurfacePose(sys.de, width, height);
+  const pose = options.pose ?? buildSurfacePose(sys.de, width, height);
   const invProjView = surfaceInvProjView(sys.de, pose);
   const colors = surfaceSlotColors(sys.transforms, sys.de.maps);
   const trapIndices = surfaceTrapIndices(sys.transforms, sys.de.maps);
@@ -9185,8 +9537,18 @@ async function runSurfaceComputeFrameLeg(
   status(`${label}: creating SurfaceComputeRenderer…`);
   const renderer = await SurfaceComputeRenderer.create(
     "view4" in sys
-      ? { kind: "ifs4", de: sys.de, ...(balloonPack ? { balloon: true } : {}) }
-      : { kind: "ifs", de: sys.de, ...(balloonPack ? { balloon: true } : {}) },
+      ? {
+          kind: "ifs4",
+          de: sys.de,
+          ...(balloonPack ? { balloon: true } : {}),
+          ...(options.tiling ? { tiling: options.tiling } : {}),
+        }
+      : {
+          kind: "ifs",
+          de: sys.de,
+          ...(balloonPack ? { balloon: true } : {}),
+          ...(options.tiling ? { tiling: options.tiling } : {}),
+        },
     colors,
     trapIndices,
     materials ? { materials } : {},
@@ -9245,6 +9607,24 @@ async function runSurfaceComputeFrameLeg(
           }
         : {}),
       ...(materials ? { materials } : {}),
+      ...(options.tiling && balloonPack
+        ? {
+            // A visible independent echo palette makes the balloon-only binding
+            // and strict shell gate execute in the production shade pipeline.
+            balloonLut: Uint8Array.from({ length: 256 * 4 }, (_, i) => {
+              const channel = i % 4;
+              const step = Math.floor(i / 4);
+              return channel === 0
+                ? step
+                : channel === 1
+                  ? 255 - step
+                  : channel === 2
+                    ? 160
+                    : 255;
+            }),
+            balloonLutVersion: 1,
+          }
+        : {}),
     };
     status(`${label}: rendering ${width}x${height}…`);
     console.info(
@@ -13927,6 +14307,24 @@ async function runSurfaceDeSection(
     },
   ];
 
+  // Both dimensions and both inverse-map families, then the posted swirl
+  // lens's scalar and paired-stride forms under the same finite union.
+  const finiteBalloonBaseSystems: SurfaceMarchSystem[] = [
+    tilingAffine,
+    tilingFold,
+    { ...tilingAffine4, view4: tilingAffine4View },
+    { ...tilingFold4, view4: tilingFold4View },
+  ];
+  const finiteBalloonSpecs: SurfaceTilingAbiSpec[] = [];
+  for (const sys of [...finiteBalloonBaseSystems, ...swirlSystems]) {
+    const tiling = resolveTiling({ group: "view4" in sys ? "f4" : "b3" })!;
+    finiteBalloonSpecs.push(surfaceFiniteBalloonAbiSpec(sys, tiling));
+    if (sys.de.foldFinal)
+      finiteBalloonSpecs.push(surfaceFiniteBalloonAbiSpec(sys, tiling, true));
+  }
+  tilingAbiSpecs.push(...finiteBalloonSpecs);
+  const finiteBalloonFrames = surfaceFiniteBalloonFrameFixtures();
+
   const symmetryTiling = buildSurfaceTilingSymmetryAbiSpecs(surfaceEvalTol);
   tilingAbiSpecs.push(...symmetryTiling.finite);
   latticeAbiSpecs.push(...symmetryTiling.lattice);
@@ -14138,6 +14536,7 @@ async function runSurfaceDeSection(
       activity.setState("gpu", "Surface finite-tiling ABI agreement");
       await runSurfaceTilingAbiLeg(device, tilingAbiSpecs, tilingWg, status);
       results.notes.push(
+        `finite tiling + Balloon: ${finiteBalloonSpecs.length}/12 scalar/paired-stride rows, all four descent cores plus posted swirl, 8 queries each with both missing-feature controls beyond 8 eval tolerances`,
         "finite tiling ABI: 7/7 cores compiled, bound exact-size params, " +
           "dispatched, and agreed with tiling-de.ts at 3/3 queries",
         `finite tiling + symmetry: ${symmetryTiling.finite.length}/6 families agreed at 6/6 queries; ` +
@@ -16604,6 +17003,45 @@ async function runSurfaceDeSection(
       }
     }
 
+    results.marchUnprojectFiniteBalloon = [];
+    for (const { sys, tiling, balloonR, pose } of finiteBalloonFrames) {
+      try {
+        const row = await runSurfaceUnprojectLeg(
+          device,
+          sys,
+          acquired.software,
+          status,
+          activity,
+          balloonR,
+          tiling,
+          pose,
+        );
+        results.marchUnprojectFiniteBalloon.push(row);
+        results.notes.push(
+          `march-unproject finite Balloon ${row.system}: passes=${row.passes} failures=${row.failures} gpuHits=${row.gpuHits}/${row.rays} cpuHits=${row.cpuHits}/${row.rays} source=${String(row.finiteBalloonHits?.source ?? 0)} shell=${String(row.finiteBalloonHits?.shell ?? 0)} truncated=${row.truncated}`,
+        );
+        if (
+          row.truncated ||
+          row.failures > 0 ||
+          row.passes === 0 ||
+          row.gpuHits === 0 ||
+          row.cpuHits === 0 ||
+          row.gpuHits === row.rays ||
+          row.cpuHits === row.rays ||
+          (row.finiteBalloonHits?.source ?? 0) === 0 ||
+          (row.finiteBalloonHits?.shell ?? 0) === 0
+        ) {
+          unprojFailed = true;
+        }
+      } catch (e) {
+        unprojFailed = true;
+        results.notes.push(
+          `march-unproject finite Balloon ${sys.name}: ${describeError(e)}`,
+        );
+      }
+      render();
+    }
+
     await canaryCheck("the march-unproject legs");
 
     // ----- Timing protocol (march — the §3.7 measurement) -----
@@ -17638,6 +18076,50 @@ async function runSurfaceDeSection(
         frameFailed = true;
         results.notes.push(
           `compute frame swirl ${frameSys.name}: ${describeError(e)}`,
+        );
+      }
+      render();
+    }
+
+    results.computeFrameFiniteBalloon = [];
+    for (const { sys, tiling, balloonR, pose } of finiteBalloonFrames) {
+      try {
+        const row = await runSurfaceComputeFrameLeg(
+          sys,
+          acquired.software,
+          dom,
+          status,
+          activity,
+          {
+            canvasLabel: `frame-finite-balloon-${sys.name}`,
+            label: `finite tiling + Balloon ${sys.name}`,
+            smallRaster: true,
+            deterministic: true,
+            cpuSanity: true,
+            balloonR,
+            tiling,
+            pose,
+            pattern: true,
+          },
+        );
+        results.computeFrameFiniteBalloon.push({ ...row, system: sys.name });
+        results.notes.push(
+          `compute frame finite Balloon ${sys.name}: passes=${row.passes} hit=${row.counts.hit} miss=${row.counts.miss} exhausted=${row.counts.exhausted} active=${row.counts.active} truncated=${row.truncated} sampleMismatch=${String(row.sanityMismatchRate)}`,
+        );
+        if (
+          row.passes === 0 ||
+          row.counts.hit === 0 ||
+          row.truncated ||
+          row.counts.active > 0 ||
+          row.counts.exhausted > 0 ||
+          row.counts.miss === 0 ||
+          (row.sanityMismatchRate ?? 1) > SURFACE_SANITY_HIT_RATE_TOL
+        )
+          frameFailed = true;
+      } catch (e) {
+        frameFailed = true;
+        results.notes.push(
+          `compute frame finite Balloon ${sys.name}: ${describeError(e)}`,
         );
       }
       render();

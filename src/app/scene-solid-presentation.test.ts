@@ -19,6 +19,7 @@ function bareSolidScene(): {
   Reflect.set(scene, "solidThreshold", 0.3);
   Reflect.set(scene, "solidBalloonCenterAlpha", 0);
   Reflect.set(scene, "balloonEchoEnabled", false);
+  Reflect.set(scene, "balloonEchoPoints", { visible: false });
   Reflect.set(scene, "renderNeeded", false);
   Reflect.set(scene, "solidCapturePxCostMs", null);
   return { scene, material };

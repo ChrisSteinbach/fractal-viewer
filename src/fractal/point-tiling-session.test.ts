@@ -108,10 +108,29 @@ describe("resolvePointTilingSession", () => {
     },
   );
 
-  it("refuses Balloon and mesh clips before analysis", () => {
-    const balloon = resolve([], { group: "a3" }, { balloonEcho: true });
+  it.each([false, true])(
+    "accepts finite Balloon content with a certified ball (4D=%s)",
+    (fourD) => {
+      const result = resolve(
+        fourD ? PENTATOPE : TETRA,
+        { group: fourD ? "a4" : "a3" },
+        { fourD, balloonEcho: true },
+      );
+      expect(result.status).toBe("active");
+      if (result.status !== "active") throw new Error("finite Balloon refused");
+      expect(result.originVisibleRadius).toBeGreaterThan(0);
+      expect(result.plan.kind).toBe("finite");
+    },
+  );
+
+  it("refuses infinite lattice Balloon and mesh clips before analysis", () => {
+    const balloon = resolve(
+      [],
+      { kind: "lattice", cellScale: 1.5 },
+      { balloonEcho: true },
+    );
     expect(balloon.status).toBe("refused");
-    expect(balloon.note).toMatch(/Balloon/);
+    expect(balloon.note).toMatch(/infinite set has no finite enclosing ball/);
 
     const mesh = resolve([], {
       group: "a3",

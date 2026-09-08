@@ -27,12 +27,16 @@ import {
 } from "./chaos-game";
 import { transformColors } from "./color";
 import { buildPaletteLUT } from "./palette";
-import { balloonPaletteCoordinate, buildBalloonFromBall } from "./balloon-de";
+import {
+  balloonPaletteCoordinate,
+  buildBalloonFromBall,
+  invertBalloon,
+} from "./balloon-de";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
 import { resolvePointTilingPlan } from "./point-tiling";
 import { GEAR_SHAPE } from "./shapes";
-import { resolveTiling } from "./tiling";
+import { enumerateOrbit, resolveTiling, TILING_GROUP_INFO } from "./tiling";
 import type { Transform, Vec3 } from "./types";
 
 function makeTransforms(count: number): Transform[] {
@@ -206,6 +210,101 @@ describe("accumulateFlame projection and bucketing", () => {
 });
 
 describe("accumulateFlame point-space tiling", () => {
+  it("echoes finite images at full multiplicity even when their primary lies off-frame", () => {
+    const source: Vec3 = [2.13, 1.91, 2.07];
+    const plan = resolvePointTilingPlan(resolveTiling({ group: "a3" }), 3)!;
+    const images: number[][] = [];
+    enumerateOrbit(TILING_GROUP_INFO.a3, source, images);
+    expect(images).toHaveLength(24);
+    const palette: Vec3[] = [[0.25, 0.5, 0.75]];
+    const echoLut = buildPaletteLUT("aurora")!;
+    const echo = {
+      balloon: buildBalloonFromBall({ center: [0, 0, 0], radius: 4 }, 0.25),
+      tint: [0.1, 0.7, 0.2] as Vec3,
+      tintStrength: 0.35,
+      weight: 1,
+    };
+    const prepared = prepareChaosGame(fixedPointSystem(source));
+    let echoDraws = 0;
+    const echoRng = mulberry32(3);
+    const actual = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      97,
+      97,
+      images.length,
+      () => {
+        echoDraws++;
+        return echoRng();
+      },
+      palette,
+      undefined,
+      undefined,
+      echo,
+      echoLut,
+      plan,
+    );
+    let plainDraws = 0;
+    const plainRng = mulberry32(3);
+    const plain = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      97,
+      97,
+      images.length,
+      () => {
+        plainDraws++;
+        return plainRng();
+      },
+      palette,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      plan,
+    );
+    const expected = createFlameHistogram(97, 97);
+    const deposit = (point: Vec3, rgb: Vec3): void => {
+      const col = Math.floor((point[0] + 1) * 0.5 * 97);
+      const row = Math.floor((1 - point[1]) * 0.5 * 97);
+      if (col < 0 || col >= 97 || row < 0 || row >= 97) return;
+      const bucket = row * 97 + col;
+      expected.hits[bucket] += images.length;
+      expected.hitMass += images.length;
+      for (let channel = 0; channel < 3; channel++) {
+        expected.sumRGB[bucket * 3 + channel] += rgb[channel] * images.length;
+      }
+    };
+    for (const image of images) {
+      const p = image as Vec3;
+      deposit(p, palette[0]);
+      const u = balloonPaletteCoordinate(echo.balloon, p);
+      const li = Math.min(255, (u * 256) | 0) * 3;
+      const rgb = [0, 1, 2].map((channel) => {
+        const base = echoLut[li + channel];
+        return base + (echo.tint[channel] - base) * echo.tintStrength;
+      }) as Vec3;
+      deposit(invertBalloon(echo.balloon, p), rgb);
+    }
+    expect(echoDraws).toBe(plainDraws);
+    expect(actual.orbit).toEqual(plain.orbit);
+    expect(actual.orbitColor).toBe(plain.orbitColor);
+    expect(actual.pointTiling).toEqual(plain.pointTiling);
+    expect(actual.hitMass - plain.hitMass).toBe(24 * 24);
+    expect(actual.hitMass).toBe(expected.hitMass);
+    for (let i = 0; i < actual.hits.length; i++) {
+      expect(actual.hits[i]).toBe(expected.hits[i]);
+    }
+    let colorError = 0;
+    for (let i = 0; i < actual.sumRGB.length; i++) {
+      colorError = Math.max(
+        colorError,
+        Math.abs(actual.sumRGB[i] - expected.sumRGB[i]),
+      );
+    }
+    expect(colorError).toBeLessThan(1e-8);
+  });
+
   it("deposits bounded finite images with their multiplicity weights and canonical color", () => {
     const plan = resolvePointTilingPlan(resolveTiling({ group: "a3" }), 3)!;
     const palette: Vec3[] = [[0.25, 0.5, 0.75]];
@@ -598,8 +697,11 @@ describe("accumulateFlame point-space tiling", () => {
     expect(absent.pointTiling).toBeUndefined();
   });
 
-  it("rejects a raw Balloon plus active tiling invariant violation", () => {
-    const plan = resolvePointTilingPlan(resolveTiling({ group: "a3" }), 3)!;
+  it("rejects an infinite lattice plus Balloon", () => {
+    const plan = resolvePointTilingPlan(
+      resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1),
+      3,
+    )!;
     expect(() =>
       accumulateFlame(
         prepareChaosGame(fixedPointSystem([0.3, 0.3, 0.3])),
@@ -620,7 +722,7 @@ describe("accumulateFlame point-space tiling", () => {
         undefined,
         plan,
       ),
-    ).toThrow("Flame point tiling is unavailable with Balloon");
+    ).toThrow("Flame lattice tiling is unavailable with Balloon");
   });
 });
 

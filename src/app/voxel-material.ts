@@ -910,13 +910,15 @@ export function finiteTilingPresentationRadius(
  * the source-voxel stride is retained, capped at {@link SOLID_MAX_MARCH_STEPS}.
  *
  * The absent path never calls this builder, preserving the literal source.
- * Balloon is REFUSED before this point (the frozen combination matrix); the
- * max-density hierarchy is suspended while tiled (a straight visible ray maps
+ * Finite tiling composes beneath Balloon's inversion. Its source rays use
+ * the reflected copy ball, while the echo retains its own broad interval.
+ * The max-density hierarchy is suspended while tiled (a straight visible ray maps
  * to reflected source segments, so the node skip is not valid across them).
  */
 function buildVoxelTilingGeometry(
   input: string,
   tiling: ResolvedTiling,
+  balloon = false,
 ): string {
   let source = input;
   const lattice = isResolvedLatticeTiling(tiling);
@@ -981,6 +983,44 @@ ${clipGate}    return true;`;
   // 0 off) and doubles as the stale-uniform guard.
 ${uniformBlock}`,
   );
+  const foldQueries = `${foldSource}
+${carrierSource}
+${clipSource}  bool tilingFoldQuery(vec3 p, out vec3 q) {
+${queryBody}
+  }
+`;
+  if (balloon) {
+    // The Balloon arm already owns every public density/color query. Wrap
+    // its bounded sampler so both p and I(p) read the tiled source, including
+    // the canonical RGB and strict echo attribution used by palette/tint.
+    source = spliceVoxelBalloon(
+      source,
+      `  vec4 boundedVolumeSample(vec3 p) {
+    vec3 uvw = (p - uBoundsMin) / uBoundsSize;
+    if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0)))) {
+      return vec4(0.0);
+    }
+    return texture(uVolume, uvw);
+  }
+`,
+      `  vec4 canonicalVolumeSample(vec3 p) {
+    vec3 uvw = (p - uBoundsMin) / uBoundsSize;
+    if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0)))) {
+      return vec4(0.0);
+    }
+    return texture(uVolume, uvw);
+  }
+
+${foldQueries}
+  vec4 boundedVolumeSample(vec3 p) {
+    vec3 q;
+    if (!tilingFoldQuery(p, q)) return vec4(0.0);
+    return canonicalVolumeSample(q);
+  }
+`,
+    );
+    return buildVoxelTiledBalloonIntervals(source, code);
+  }
   source = spliceVoxelBalloon(
     source,
     `  float densityAt(vec3 p) {
@@ -1002,11 +1042,7 @@ ${uniformBlock}`,
     return texture(uVolume, uvw);
   }
 
-${foldSource}
-${carrierSource}
-${clipSource}  bool tilingFoldQuery(vec3 p, out vec3 q) {
-${queryBody}
-  }
+${foldQueries}
 
   float densityAt(vec3 p) {
     vec3 q;
@@ -1187,6 +1223,89 @@ ${shadowInterval}
       exp(-0.12 * pow((hi - max(tEnter, 0.0)) * uFogDensity / max(fogR, 1.0e-6), 2.0));
     col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
 ${coverage}`,
+  );
+}
+
+/**
+ * Retain Balloon's separate source/echo marches, adapting only the source
+ * interval to the reflected copy ball. An echo-only hit may sit outside that
+ * ball or on a ray that misses it, so no source-carrier rejection may return
+ * from the fragment before the broad echo march runs.
+ */
+function buildVoxelTiledBalloonIntervals(input: string, code: number): string {
+  let source = spliceVoxelBalloon(
+    input,
+    "  vec3 balloonInvert(vec3 p) {",
+    `  vec2 tiledSourceIntersect(vec3 ro, vec3 rd) {
+    float tEnter;
+    float tFar;
+    if (uTilingGroup != ${code} ||
+        !sphereInterval(ro, rd, uTilingPresentationR, tEnter, tFar)) {
+      return vec2(1.0, -1.0);
+    }
+    return vec2(tEnter, tFar);
+  }
+
+  vec3 balloonInvert(vec3 p) {`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    `    // Keep the original primary AABB interval, step count, jitter phase, and
+    // source sample: enabling a union must never erase a thin source hit by
+    // stretching its phase over the much longer echo interval. The echo gets
+    // its own march; the earlier refined hit is exactly the first hit of
+    // max(primary, echo).
+    vec2 tRange = boxIntersect(ro, rd);`,
+    `    // The primary is the whole finite tiled field. Keep its interval and
+    // source-voxel stride independent of the broad echo march, so enabling
+    // the union cannot erase a thin reflected source hit.
+    vec2 tRange = tiledSourceIntersect(ro, rd);`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    "      float primaryDt = (primaryFar - primaryT) / float(uMarchSteps);",
+    `      float primarySpan = primaryFar - primaryT;
+      float primaryBaseSpan = max(max(uBoundsSize.x, uBoundsSize.y), uBoundsSize.z);
+      int primarySteps = min(
+        ${String(SOLID_MAX_MARCH_STEPS)},
+        max(uMarchSteps, int(ceil(primarySpan * float(uMarchSteps) / max(primaryBaseSpan, 1.0e-6))))
+      );
+      float primaryDt = primarySpan / float(primarySteps);`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    "      for (int i = 0; i < uMarchSteps; i++) {",
+    "      for (int i = 0; i < primarySteps; i++) {",
+  );
+  source = spliceVoxelBalloon(
+    source,
+    `    // The shell receives shadows but never casts them: intersect its
+    // light ray with the ORIGINAL volume and sample only the fractal density.
+    // Starting an exterior shell hit with the old "leave box => lit" loop
+    // would never reach the attractor and could not paint its shadow.`,
+    `    // The shell receives shadows but never casts them. Intersect the
+    // light ray with the tiled source's full carrier and sample only that
+    // field, including reflected copies beyond the canonical volume box.`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    "    vec2 shadowRange = boxIntersect(sp, uLightDir);",
+    "    vec2 shadowRange = tiledSourceIntersect(sp, uLightDir);",
+  );
+  source = spliceVoxelBalloon(
+    source,
+    "      float shadowStep = (shadowRange.y - shadowNear) / float(SHADOW_STEPS);",
+    `      float shadowSpan = shadowRange.y - shadowNear;
+      int shadowSteps = min(
+        ${String(SOLID_MAX_MARCH_STEPS)},
+        max(SHADOW_STEPS, int(ceil(shadowSpan / max(inset * 1.5, 1.0e-6))))
+      );
+      float shadowStep = shadowSpan / float(shadowSteps);`,
+  );
+  return spliceVoxelBalloon(
+    source,
+    "      for (int i = 0; i < SHADOW_STEPS; i++) {",
+    "      for (int i = 0; i < shadowSteps; i++) {",
   );
 }
 
@@ -1508,8 +1627,9 @@ const VOXEL_PRESENTATION_FRAGMENTS = new Map<string, string>();
  * false and no tiling, the exact historical source object is returned for
  * all balloon/hierarchy arms.
  *
- * A tiling block selects the query-space arm family: the frozen combination
- * matrix refuses it with Balloon, and the max-density hierarchy is suspended
+ * A tiling block selects the query-space arm family. Finite reflection tiling
+ * composes beneath Balloon; the infinite lattice has no enclosing ball and
+ * refuses it. The max-density hierarchy is suspended
  * while tiled (a straight visible ray maps to reflected source segments, so
  * the hierarchy's node skip is not valid across them) — both throw rather
  * than silently drawing a different object.
@@ -1522,9 +1642,9 @@ export function voxelFragmentFor(
   tiling: ResolvedTiling | null = null,
 ): string {
   if (tiling) {
-    if (balloon) {
+    if (balloon && isResolvedLatticeTiling(tiling)) {
       throw new RangeError(
-        "Voxel tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+        "Voxel infinite lattice tiling cannot compose with balloon: the repeated set has no finite enclosing ball",
       );
     }
     if (accelerated) {
@@ -1532,15 +1652,20 @@ export function voxelFragmentFor(
         "Voxel tiling suspends the max-density hierarchy: a straight visible ray maps to reflected source segments, so the node skip is not valid across them",
       );
     }
-    const key = `t${tilingSourceKey(tiling)}:${environment ? "e" : "n"}${floor ? "f" : "n"}`;
+    const effectiveFloor = floor && !balloon;
+    const key = `t${tilingSourceKey(tiling)}:${balloon ? "b" : "p"}${environment ? "e" : "n"}${effectiveFloor ? "f" : "n"}`;
     const cached = VOXEL_PRESENTATION_FRAGMENTS.get(key);
     if (cached) return cached;
-    let resolved = buildVoxelTilingGeometry(VOXEL_FRAGMENT, tiling);
+    let resolved = buildVoxelTilingGeometry(
+      balloon ? VOXEL_BALLOON_FRAGMENT : VOXEL_FRAGMENT,
+      tiling,
+      balloon,
+    );
     resolved = buildVoxelPresentationFragment(
       resolved,
-      false,
+      balloon,
       environment,
-      floor,
+      effectiveFloor,
       tiling,
     );
     VOXEL_PRESENTATION_FRAGMENTS.set(key, resolved);
@@ -1704,16 +1829,20 @@ function validateVoxelTiling(tiling: ResolvedTiling): void {
  * Validate and install the material-side compile gate for the Solid
  * query-space tiling arm. Absent clears the arm and restores the literal
  * untiled program (and, with it, the max-density hierarchy's program
- * selection — the hierarchy texture itself is untouched). Tiling is refused
- * with Balloon, mirroring the frozen combination matrix.
+ * selection — the hierarchy texture itself is untouched). Finite tiling
+ * composes beneath Balloon; the infinite lattice remains refused.
  */
 export function installVoxelTiling(
   material: THREE.ShaderMaterial,
   tiling: ResolvedTiling | null,
 ): void {
-  if (tiling && material.userData[BALLOON_ENABLED_KEY] === true) {
+  if (
+    tiling &&
+    isResolvedLatticeTiling(tiling) &&
+    material.userData[BALLOON_ENABLED_KEY] === true
+  ) {
     throw new RangeError(
-      "Voxel tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+      "Voxel infinite lattice tiling cannot compose with balloon: the repeated set has no finite enclosing ball",
     );
   }
   if (tiling) validateVoxelTiling(tiling);
@@ -1889,6 +2018,12 @@ export function setVoxelBalloon(
   material: THREE.ShaderMaterial,
   spec: VoxelBalloonSpec | null,
 ): void {
+  const tiling = materialVoxelTiling(material);
+  if (spec && tiling && isResolvedLatticeTiling(tiling)) {
+    throw new RangeError(
+      "Voxel infinite lattice tiling cannot compose with balloon: the repeated set has no finite enclosing ball",
+    );
+  }
   const u = material.uniforms;
   const center = u.uBalloonCenter.value as THREE.Vector3;
   if (spec) {

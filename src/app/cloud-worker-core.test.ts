@@ -621,6 +621,44 @@ describe("generateCloud 4D", () => {
 });
 
 describe("generateCloud point tiling integration", () => {
+  it.each([false, true])(
+    "lands the same finite images and certified ball with Balloon on (4D=%s)",
+    (fourD) => {
+      const request = cloudRequest({
+        ...pointTilingFixture(fourD),
+        fourD,
+        numPoints: 240,
+      });
+      const ordinary = generateCloud(request);
+      const echo = generateCloud({ ...request, balloonEcho: true });
+      expect(echo).toEqual(ordinary);
+      expect(echo.pointTiling).toMatchObject({
+        availability: "active",
+        kind: "finite",
+      });
+      const resolution = resolvePointTilingSession(
+        request.transforms,
+        request.finalTransform,
+        request.symmetry,
+        request.schedule,
+        request.tiling ?? null,
+        true,
+        fourD,
+      );
+      if (resolution.status !== "active")
+        throw new Error("expected finite content");
+      expect(echo.tilingOriginRadius).toBe(resolution.originVisibleRadius);
+      for (let i = 0; i < echo.count; i++) {
+        expect(
+          Math.hypot(
+            ...echo.positions.subarray(i * 3, i * 3 + 3),
+            echo.fourD ? echo.w[i] : 0,
+          ),
+        ).toBeLessThanOrEqual(resolution.originVisibleRadius);
+      }
+    },
+  );
+
   it.each([false, true] as const)(
     "returns a complete active finite tiled cloud with canonical provenance in %sD",
     (fourD) => {
@@ -822,6 +860,7 @@ describe("generateCloud point tiling integration", () => {
         fourD,
         numPoints: 80,
         balloonEcho: true,
+        tiling: { kind: "lattice", cellScale: 1.5 },
       });
       const refused = generateCloud(request);
       const ordinary = generateCloud({
@@ -837,7 +876,9 @@ describe("generateCloud point tiling integration", () => {
       expect(refused.canonicalColorSource).toBeUndefined();
       expect(refused.pointTiling).toEqual({
         availability: "refused",
-        note: "Point tiling is unavailable with Balloon; turn Balloon off.",
+        note: expect.stringMatching(
+          /infinite set has no finite enclosing ball/,
+        ),
       });
       if (refused.fourD && ordinary.fourD) {
         expect(refused.w).toEqual(ordinary.w);

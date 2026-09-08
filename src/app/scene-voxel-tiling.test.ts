@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import * as THREE from "three";
 import { resolveTiling } from "../fractal/tiling";
 import { FractalScene } from "./scene";
 import {
@@ -10,7 +11,30 @@ import {
 } from "./voxel-material";
 
 describe("FractalScene Solid tiling lifecycle", () => {
-  it("clears a stale balloon material arm before installing a tiled session", () => {
+  it("can invert finite Solid content when the held Points cloud was empty", () => {
+    const scene = Object.create(FractalScene.prototype) as FractalScene;
+    const texture = emptyVoxelTexture();
+    const material = createVoxelMaterial(texture);
+    Reflect.set(scene, "voxelMaterial", material);
+    Reflect.set(scene, "voxelTexture", texture);
+    Reflect.set(
+      scene,
+      "solidBalloonSourceSphere",
+      new THREE.Sphere(new THREE.Vector3(), 0),
+    );
+    Reflect.set(scene, "solidBalloonSourceSphereReady", false);
+    Reflect.set(scene, "solidThreshold", 0.3);
+    Reflect.set(scene, "balloonEchoEnabled", true);
+    Reflect.set(scene, "balloonEchoRadius", 0.7);
+    scene.setVoxelTiling(null, 2);
+    expect(material.fragmentShader).toContain("densityAtEcho");
+    expect(material.uniforms.uBalloonR.value).toBe(1.4);
+    expect(scene.solidBalloonAvailable()).toBe(true);
+    material.dispose();
+    texture.dispose();
+  });
+
+  it("retains Balloon while installing finite tiling and its certified origin ball", () => {
     const material = createVoxelMaterial(emptyVoxelTexture());
     setVoxelBalloon(material, {
       center: [0, 0, 0],
@@ -22,16 +46,30 @@ describe("FractalScene Solid tiling lifecycle", () => {
 
     const scene = Object.create(FractalScene.prototype) as FractalScene;
     Reflect.set(scene, "voxelMaterial", material);
+    Reflect.set(scene, "voxelTexture", emptyVoxelTexture());
+    Reflect.set(
+      scene,
+      "solidBalloonSourceSphere",
+      new THREE.Sphere(new THREE.Vector3(1, 0, 0), 1),
+    );
+    Reflect.set(scene, "solidBalloonSourceSphereReady", true);
+    Reflect.set(scene, "solidThreshold", 0.3);
+    Reflect.set(scene, "balloonEchoEnabled", true);
+    Reflect.set(scene, "balloonEchoRadius", 0.7);
     Reflect.set(scene, "renderNeeded", false);
     const tiling = resolveTiling({ group: "a3" })!;
 
-    scene.setVoxelTiling(tiling);
-    expect(material.fragmentShader).not.toContain("densityAtEcho");
+    scene.setVoxelTiling(tiling, 2);
+    expect(material.fragmentShader).toContain("densityAtEcho");
+    expect(material.uniforms.uBalloonCenter.value.toArray()).toEqual([0, 0, 0]);
+    expect(material.uniforms.uBalloonR.value).toBe(1.4);
     expect(materialVoxelTiling(material)).toBe(tiling);
     expect(Reflect.get(scene, "renderNeeded")).toBe(true);
 
     scene.setVoxelTiling(null);
     expect(materialVoxelTiling(material)).toBeNull();
+    expect(material.uniforms.uBalloonCenter.value.toArray()).toEqual([1, 0, 0]);
+    expect(material.fragmentShader).toContain("densityAtEcho");
     material.dispose();
   });
 
