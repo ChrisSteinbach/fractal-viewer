@@ -349,7 +349,8 @@ files; full lint, the production build and the SwiftShader WebGL boot smoke
 also passed.
 
 These are AMD measurements, not a requalification of the older Iris results
-elsewhere in this document.
+elsewhere in this document. The wider restriction audit and unshipped
+nonlinear-final experiment are recorded in [Feature combinations](feature-combinations.md).
 
 ## Finite wire placement (frozen rule)
 
