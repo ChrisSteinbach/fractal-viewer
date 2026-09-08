@@ -10,7 +10,14 @@ import type { FlameBalloonEcho, FlameHistogram, Mat4 } from "../fractal/flame";
 import { W_SIDE_PALETTES, buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT } from "../fractal/palette";
 import { emitterSamplerCapability } from "../fractal/chaos-game";
-import { sierpinskiTetrahedron } from "../fractal/presets";
+import { pentatope, sierpinskiTetrahedron } from "../fractal/presets";
+import { toTransform4 } from "../fractal/affine4";
+import { BALLOON_RHO_MARGIN } from "../fractal/balloon-de";
+import {
+  buildSurfaceDE,
+  surfaceOriginVisibleRadius,
+} from "../fractal/surface-de";
+import { buildSurfaceDE4 } from "../fractal/surface-de-4d";
 import {
   composeFlameProjection4,
   composeRotorProjection4,
@@ -514,6 +521,122 @@ describe("FlameWorkerSession start", () => {
 });
 
 describe("FlameWorkerSession point-space tiling", () => {
+  it.each([false, true])(
+    "replaces a stale finite Balloon ball with the certified origin ball across restarts (4D=%s)",
+    async (fourD) => {
+      const captures: Array<GpuBackendRequest | GpuBackendRequest4> = [];
+      const factory = async (
+        request: GpuBackendRequest | GpuBackendRequest4,
+      ): Promise<FlameAccumBackend> => {
+        captures.push(request);
+        return {
+          kind: "gpu",
+          accumulate: async (n) => n,
+          snapshot: async () =>
+            createFlameHistogram(request.width, request.height),
+          destroy: () => {},
+        };
+      };
+      const { session, events, scheduler } = harness({
+        createGpuBackend: factory,
+        createGpuBackend4: factory,
+      });
+      const transforms = fourD ? pentatope() : sierpinskiTetrahedron();
+      const entry: FlameBalloonEcho = {
+        ...BALLOON_ECHO,
+        balloon: { center: [8, -3, 5], rho: 2, R: 1.5 },
+      };
+      session.handle(
+        startCommand({
+          transforms,
+          tiling: { group: fourD ? "a4" : "a3" },
+          balloonEcho: entry,
+          balloonEchoEnabled: true,
+          balloonPalette: "aurora",
+          gpuPreference: "auto",
+          iterationsBudget: 40,
+          ...(fourD
+            ? {
+                fourD: {
+                  ...defaultFourD(),
+                  transforms4: transforms.map(toTransform4),
+                  rotor: XW_QUARTER_TURN,
+                  center: [4, 2, -1, 3],
+                },
+              }
+            : {}),
+        }),
+      );
+      await drainAsync(scheduler);
+      const de = fourD
+        ? buildSurfaceDE4(transforms)
+        : buildSurfaceDE(transforms);
+      const radius = surfaceOriginVisibleRadius(de);
+      const initial = captures[0];
+      expect(initial.pointTilingPlan).toMatchObject({
+        kind: "finite",
+        dimension: fourD ? 4 : 3,
+      });
+      expect(initial.echo).toEqual({
+        ...entry,
+        balloon: {
+          center: [0, 0, 0],
+          rho: radius * BALLOON_RHO_MARGIN,
+          R:
+            radius *
+            (entry.balloon.R / (entry.balloon.rho / BALLOON_RHO_MARGIN)),
+        },
+      });
+      expect(initial.echoColorLUT).toEqual(buildPaletteLUT("aurora"));
+      if (fourD) {
+        const request = initial as GpuBackendRequest4;
+        expect(request.rotorProjection).toEqual(
+          composeRotorProjection4(XW_QUARTER_TURN, [0, 0, 0, 0]),
+        );
+        expect(request.view.invWAmp).toBe(1 / radius);
+      }
+      session.handle({ type: "setSymmetry", order: 3, plane: "xz" });
+      await drainAsync(scheduler);
+      session.handle({ type: "setSymmetry", order: 1, plane: "xz" });
+      await drainAsync(scheduler);
+      expect(captures).toHaveLength(3);
+      expect(captures[2].echo).toEqual(initial.echo);
+      expect(entry.balloon.center).toEqual([8, -3, 5]);
+      expect(
+        tilingOutcomeEvents(events).every(
+          (e) => e.outcome.availability === "active",
+        ),
+      ).toBe(true);
+      expect(progressEvents(events).at(-1)?.iterationsDone).toBe(40);
+    },
+  );
+
+  it("keeps the finite tiled generated backdrop's absent echo payload omitted", () => {
+    const seen: Array<{ echo: unknown; plan: unknown }> = [];
+    const { session, events, scheduler } = harness({
+      accumulate: (...args) => {
+        seen.push({ echo: args[9], plan: args[11] });
+        return accumulateFlame(...args);
+      },
+    });
+    session.handle(
+      startCommand({
+        tiling: { group: "a3" },
+        balloonEchoEnabled: true,
+        iterationsBudget: 40,
+      }),
+    );
+    scheduler.drain();
+    expect(seen.length).toBeGreaterThan(0);
+    expect(
+      seen.every(({ echo, plan }) => echo === undefined && plan !== undefined),
+    ).toBe(true);
+    expect(tilingOutcomeEvents(events).at(-1)?.outcome).toEqual({
+      availability: "active",
+      kind: "finite",
+    });
+  });
+
   it("resolves a 3D plan before accumulation and forwards it to the GPU backend", async () => {
     let captured: GpuBackendRequest | undefined;
     const createGpuBackend = vi.fn(
@@ -585,7 +708,7 @@ describe("FlameWorkerSession point-space tiling", () => {
     expect(backendEvents(events)[0]).not.toHaveProperty("forcedBy");
   });
 
-  it("refuses authored Balloon even when no enclosing-ball payload was available", () => {
+  it("refuses authored lattice with Balloon even when no enclosing-ball payload was available", () => {
     const seenPlans: unknown[] = [];
     const { session, events, scheduler } = harness({
       accumulate: (...args) => {
@@ -595,7 +718,7 @@ describe("FlameWorkerSession point-space tiling", () => {
     });
     session.handle(
       startCommand({
-        tiling: { group: "a3" },
+        tiling: { kind: "lattice", cellScale: 1.5 },
         balloonEchoEnabled: true,
         balloonEcho: undefined,
         iterationsBudget: 40,

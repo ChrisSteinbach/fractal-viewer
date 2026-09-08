@@ -1,3 +1,13 @@
+import { rotationMatrix4 } from "./affine4";
+import {
+  balloonBall,
+  buildBalloonFromBall,
+  estimateBalloonDistance,
+  estimateBalloonDistance4,
+  estimateBalloonDistanceSample,
+  estimateBalloonDistance4Sample,
+  invertBalloon,
+} from "./balloon-de";
 import { mulberry32 } from "./rng";
 import { shapeSdf } from "./shapes";
 import type { ShapeSpec } from "./shapes";
@@ -7,6 +17,10 @@ import {
   estimateDistance4Tiled,
   estimateDistanceRefinedTiled,
   estimateDistanceTiled,
+  estimateDistanceSampleTiled,
+  estimateDistanceRefinedSampleTiled,
+  estimateDistance4SampleTiled,
+  estimateDistance4RefinedSampleTiled,
   estimateEscapeDistance4Tiled,
   estimateEscapeDistanceTiled,
 } from "./tiling-de";
@@ -20,7 +34,11 @@ import {
   resolveTiling,
 } from "./tiling";
 import type { TilingGroup, TilingGroupInfo } from "./tiling";
-import { estimateDistance, estimateDistanceRefined } from "./surface-de";
+import {
+  estimateDistance,
+  estimateDistanceRefined,
+  surfaceOriginVisibleRadius,
+} from "./surface-de";
 import { estimateDistance4, estimateDistance4Refined } from "./surface-de-4d";
 import { estimateEscapeDistance } from "./escape-de";
 import { estimateBulbDistance } from "./bulb-de";
@@ -948,5 +966,223 @@ describe("mirrored lattice estimator composition", () => {
     expect(() =>
       estimateDistance4Tiled(t, de, [0.1, 0.2, 0.3, 0.4], [0, 0, 0, 0.1]),
     ).toThrow(/segment|slab|polyline/);
+  });
+});
+
+describe("finite tiling beneath Balloon", () => {
+  it("bounds every explicit 3D reflection image and its echo using the origin ball", () => {
+    for (const group of GROUPS3) {
+      const tiling = resolveTiling({ group })!;
+      const rng = mulberry32(731 + tiling.info.order);
+      const raw = chamberPoint(tiling.info, rng);
+      const fixed = raw.map((v) => (1.5 * v) / Math.hypot(...raw)) as Vec3;
+      const de = buildSurfaceDE(pointAttractor(fixed));
+      const radius = surfaceOriginVisibleRadius(de);
+      // A fitted ball around the single canonical point cannot enclose its
+      // reflected images. This fixture would expose that integration error.
+      expect(radius).toBeGreaterThan(balloonBall(de).radius * 100);
+      const orbit: number[][] = [];
+      enumerateOrbit(tiling.info, fixed, orbit);
+      for (const rMult of [0.35, 0.9, 1.6]) {
+        const b = buildBalloonFromBall({ center: [0, 0, 0], radius }, rMult);
+        const echo = orbit.map((q) => invertBalloon(b, q as Vec3));
+        const union = [...orbit, ...echo];
+        let shellWins = 0;
+        let sourceWins = 0;
+        for (const point of union) {
+          const q = point as Vec3;
+          const sample = estimateBalloonDistance(
+            (d, p, cutoff) =>
+              estimateDistanceRefinedTiled(tiling, d, p, cutoff),
+            de,
+            b,
+            q,
+          );
+          expect(sample.d).toBeLessThan(1e-7);
+          if (sample.shell) shellWins++;
+          else sourceWins++;
+        }
+        expect(shellWins).toBeGreaterThan(0);
+        expect(sourceWins).toBeGreaterThan(0);
+        for (let i = 0; i < 25; i++) {
+          const q = [0, 1, 2].map(() => (2 * rng() - 1) * 4) as Vec3;
+          const sample = estimateBalloonDistance(
+            (d, p, cutoff) =>
+              estimateDistanceRefinedTiled(tiling, d, p, cutoff),
+            de,
+            b,
+            q,
+          );
+          expect(sample.d).toBeLessThanOrEqual(distToSet(q, union) + 1e-8);
+        }
+      }
+    }
+  });
+
+  it("slices the rotated 4D reflected set before inversion, and rejects invert-in-4D as the same object", () => {
+    const rotor = rotationMatrix4({ xw: 0.47, yz: 0.21 });
+    const apply = (q: Vec4): Vec4 =>
+      [0, 1, 2, 3].map(
+        (i) =>
+          rotor[4 * i] * q[0] +
+          rotor[4 * i + 1] * q[1] +
+          rotor[4 * i + 2] * q[2] +
+          rotor[4 * i + 3] * q[3],
+      ) as Vec4;
+    const lift = (q: Vec4): Vec4 =>
+      [0, 1, 2, 3].map(
+        (i) =>
+          rotor[i] * q[0] +
+          rotor[4 + i] * q[1] +
+          rotor[8 + i] * q[2] +
+          rotor[12 + i] * q[3],
+      ) as Vec4;
+    for (const group of GROUPS4) {
+      const tiling = resolveTiling({ group })!;
+      const rng = mulberry32(927 + tiling.info.order);
+      const raw = chamberPoint(tiling.info, rng);
+      const fixed = raw.map((v) => (1.5 * v) / Math.hypot(...raw)) as Vec4;
+      const de = buildSurfaceDE4(
+        pointAttractor(fixed.slice(0, 3) as Vec3).map((t) => ({
+          ...t,
+          w: { position: 0.9 * fixed[3], scale: 0.1 },
+        })),
+      );
+      const orbit: number[][] = [];
+      enumerateOrbit(tiling.info, fixed, orbit);
+      const posed = orbit.map((q) => apply(q as Vec4));
+      const w0 = posed[0][3];
+      expect(Math.abs(w0)).toBeGreaterThan(0.1);
+      const slice = posed
+        .filter((q) => Math.abs(q[3] - w0) < 1e-9)
+        .map((q) => q.slice(0, 3) as Vec3);
+      const b = buildBalloonFromBall(
+        { center: [0, 0, 0], radius: surfaceOriginVisibleRadius(de) },
+        1.6,
+      );
+      const echo = slice.map((q) => invertBalloon(b, q));
+      const union = [...slice, ...echo];
+      const estimate = (p: Vec3) =>
+        estimateBalloonDistance4(
+          (d, q, cutoff) =>
+            estimateDistance4RefinedTiled(tiling, d, lift(q), cutoff),
+          de,
+          b,
+          p,
+          w0,
+        );
+      for (const q of union) expect(estimate(q).d).toBeLessThan(1e-7);
+      let wrongOrderDifferences = 0;
+      for (let i = 0; i < 30; i++) {
+        const p = [0, 1, 2].map(() => (2 * rng() - 1) * 4) as Vec3;
+        const correct = estimate(p).d;
+        expect(correct).toBeLessThanOrEqual(distToSet(p, union) + 1e-8);
+        const q = lift([...p, w0]);
+        const scale = Math.hypot(...q) / b.rho;
+        const qInverted = q.map((v) => (v * b.R * b.R) / norm2(q)) as Vec4;
+        const wrong = Math.min(
+          estimateDistance4RefinedTiled(tiling, de, q),
+          scale * estimateDistance4RefinedTiled(tiling, de, qInverted),
+        );
+        if (Math.abs(wrong - correct) > 1e-3) wrongOrderDifferences++;
+      }
+      expect(wrongOrderDifferences).toBeGreaterThan(10);
+    }
+  });
+
+  it("preserves cutoff and strict attribution through clipped 3D/4D paired samples", () => {
+    for (const dimension of [3, 4]) {
+      const tiling = resolveTiling({
+        group: dimension === 3 ? "a3" : "a4",
+        clip: sphereClip([0.4, -0.1, 0.3], 0.65),
+      })!;
+      const de3 = buildSurfaceDE(sierpinskiTetrahedron());
+      const de4 = buildSurfaceDE4(pentatope());
+      const b = buildBalloonFromBall(
+        {
+          center: [0, 0, 0],
+          radius: surfaceOriginVisibleRadius(dimension === 3 ? de3 : de4),
+        },
+        0.9,
+      );
+      const rng = mulberry32(1900 + dimension);
+      for (let i = 0; i < 40; i++) {
+        const p = [0, 1, 2].map(() => (2 * rng() - 1) * 3) as Vec3;
+        const scalar = (cutoff: number) =>
+          dimension === 3
+            ? estimateBalloonDistance(
+                (d, q, c) => estimateDistanceRefinedTiled(tiling, d, q, c),
+                de3,
+                b,
+                p,
+                cutoff,
+              )
+            : estimateBalloonDistance4(
+                (d, q, c) => estimateDistance4RefinedTiled(tiling, d, q, c),
+                de4,
+                b,
+                p,
+                0.31,
+                cutoff,
+              );
+        const full = scalar(0);
+        for (const cutoff of [0, 0.01, 0.3]) {
+          const actual = scalar(cutoff);
+          if (actual.d >= cutoff) expect(actual.d).toBe(full.d);
+          else expect(full.d).toBeLessThan(cutoff + 1e-12);
+          const paired =
+            dimension === 3
+              ? estimateBalloonDistanceSample(
+                  (d, q, c) =>
+                    estimateDistanceRefinedSampleTiled(tiling, d, q, c),
+                  de3,
+                  b,
+                  p,
+                  cutoff,
+                )
+              : estimateBalloonDistance4Sample(
+                  (d, q, c) =>
+                    estimateDistance4RefinedSampleTiled(tiling, d, q, c),
+                  de4,
+                  b,
+                  p,
+                  0.31,
+                  cutoff,
+                );
+          expect(paired.d).toBe(actual.d);
+          expect(paired.shell).toBe(actual.shell);
+          expect(paired.stride).toBe(actual.d);
+        }
+        if (dimension === 3) {
+          expect(estimateDistanceSampleTiled(tiling, de3, p).d).toBe(
+            estimateDistanceTiled(tiling, de3, p),
+          );
+        } else {
+          const q: Vec4 = [...p, 0.31];
+          expect(estimateDistance4SampleTiled(tiling, de4, q).d).toBe(
+            estimateDistance4Tiled(tiling, de4, q),
+          );
+        }
+      }
+      if (dimension === 4) {
+        expect(() =>
+          estimateDistance4SampleTiled(
+            tiling,
+            de4,
+            [0, 0, 0, 0],
+            [0, 0, 0, 0.1],
+          ),
+        ).toThrow(/slab queries are refused/);
+        expect(() =>
+          estimateDistance4RefinedSampleTiled(
+            tiling,
+            de4,
+            [0, 0, 0, 0],
+            0,
+            [0, 0, 0, 0.1],
+          ),
+        ).toThrow(/slab queries are refused/);
+      }
+    }
   });
 });

@@ -266,20 +266,22 @@ describe("point tiling GPU packing", () => {
     expect(POINT_TILING_GPU_MAX_COLOR_ADD).toBeLessThanOrEqual(0xffff_ffff);
   });
 
-  it("keeps the maximum export accumulation inside emulated u64", () => {
+  it("keeps the maximum export accumulation with full-weight Balloon inside emulated u64", () => {
     const maxAuthoredIterations = 2_000_000_000;
     const maxExportAreaScale = 4 ** 2;
     const dispatchOvershootCeiling = 2;
+    const primaryAndEcho = 2;
     const maxOneBucketColor =
       BigInt(maxAuthoredIterations) *
       BigInt(maxExportAreaScale) *
       BigInt(dispatchOvershootCeiling) *
+      BigInt(primaryAndEcho) *
       BigInt(POINT_TILING_GPU_MAX_COLOR_ADD);
-    expect(maxOneBucketColor).toBe(4_831_838_208_000_000_000n);
+    expect(maxOneBucketColor).toBe(9_663_676_416_000_000_000n);
     expect(maxOneBucketColor).toBeLessThan(1n << 64n);
   });
 
-  it("accepts kaleidoscope while retaining dimension and balloon guards at the GPU seam", () => {
+  it("accepts finite Balloon and kaleidoscope while retaining dimension and lattice guards", () => {
     const plan = finitePlan("a3");
     expect(() =>
       assertGpuPointTilingCompatibility(plan, 3, 1, false),
@@ -293,9 +295,21 @@ describe("point tiling GPU packing", () => {
     expect(() =>
       assertGpuPointTilingCompatibility(finitePlan("a4"), 4, 3, false),
     ).not.toThrow();
-    expect(() => assertGpuPointTilingCompatibility(plan, 3, 1, true)).toThrow(
-      /balloon/,
-    );
+    expect(() =>
+      assertGpuPointTilingCompatibility(plan, 3, 3, true),
+    ).not.toThrow();
+    expect(() =>
+      assertGpuPointTilingCompatibility(finitePlan("a4"), 4, 3, true),
+    ).not.toThrow();
+    for (const dimension of [3, 4] as const) {
+      const lattice = resolvePointTilingPlan(
+        resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1),
+        dimension,
+      )!;
+      expect(() =>
+        assertGpuPointTilingCompatibility(lattice, dimension, 3, true),
+      ).toThrow(/lattice.*balloon/);
+    }
   });
 
   it("generates binding-8 state only for the active kernel source", () => {

@@ -22,7 +22,7 @@ or existing implementation support, not a shipped capability.
 | Restriction                                                                       | Underlying reason                                                                                                                            | Audit result                                                                                                                                                                                                   |
 | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Space tiling + kaleidoscope                                                       | Blanket routing refusal despite a sufficient existing composition theorem                                                                    | Removed across both dimensions and all four views.                                                                                                                                                             |
-| Space tiling + Balloon                                                            | Shader and point-deposit paths disagree on which operation goes first; infinite lattice content has no finite enclosing radius               | Finite reflection tiling has a plausible complete construction: tile, reduce to the displayed space, then invert. Requires renderer work; still unavailable.                                                   |
+| Space tiling + Balloon                                                            | The inverted set needs a finite enclosing ball and one operation order across renderers                                                      | Finite reflections compose in all four modes in 3D/4D: tile, reduce to the displayed space, then invert. Infinite lattices remain refused.                                                                     |
 | Most nonlinear variations in Surface                                              | The inverse IFS descent needs tractable preimages and valid distance scaling; arbitrary blends and stochastic variations do not supply those | Pure swirl **finals** are admitted in both dimensions within an explicit strength limit, using a global inverse certificate and compensated hit tolerance. Recursive nonlinear maps and blends remain refused. |
 | Nonlinear IFS content in point-family tiling                                      | Tiling currently borrows its certified origin radius from the Surface IFS builder                                                            | A real limitation beyond Surface rendering itself. Supporting more point sources needs a trustworthy bound or explicit bounded-content semantics.                                                              |
 | Emitter-only Surface scenes                                                       | Both analyzers require a recursive map even though root condensation SDF evaluation and empty-map packing exist                              | A strong candidate for another small lift; zero-child, depth-band, schedule and GPU behavior remain to be verified.                                                                                            |
@@ -81,10 +81,14 @@ ball. This is more precise than treating all tiling as one incompatibility.
 The [Balloon oracle](../src/fractal/balloon-de.ts) already explains why a
 finite bound is sufficient.
 
-The complete implementation must put Balloon outside the tiled estimator in
-WGSL and GLSL; add echo deposits to the specialized Flame image visitors;
-compose Solid's tiled density queries beneath inversion; and synchronize the
-Points echo with the landed tiled geometry and its ball. In 4D the inversion
-must follow slicing or projection, so it echoes the object actually displayed.
-An infinite lattice's presentation window does not by itself certify the
-infinite set's inversion. Both combinations remain disabled today.
+Balloon now wraps the complete tiled estimator in WGSL and GLSL. Both Flame
+image visitors add an echo deposit after view reduction; Solid queries the
+tiled density underneath inversion; Points installs the certified ball with
+the landed geometry before showing its echo. In 4D inversion follows slicing
+or projection, so it echoes the object actually displayed. The
+[composition record](tiling-contract.md#finite-balloon-composition) carries the
+mathematical scope, renderer behavior and qualification.
+
+An infinite lattice's presentation window does not certify the infinite
+set's inversion. That combination remains disabled with an adjacent reason
+and a usable choice of finite reflections.

@@ -108,7 +108,7 @@ import {
   resolveSurfaceMaterial,
   type ResolvedSurfaceMaterial,
 } from "./surface-material-wire";
-import type { Transform } from "./types";
+import type { Transform, Vec3 } from "./types";
 import { swirlLensShaderSource } from "./swirl-lens-shader";
 import {
   LATTICE_TILING_CODE,
@@ -8611,6 +8611,147 @@ describe("finite reflection tiling WGSL and params ABI", () => {
     expect(forward).toContain("fn surfaceDEHitInfoTilingCore(");
   });
 
+  it("wraps finite tiling in the 3D Balloon union for value, probe, hit attribution and paired march in all four descent cores", () => {
+    for (const core of ["affine", "fold", "affine4", "fold4"] as const) {
+      const fourD = core.endsWith("4");
+      for (const lens of [false, true]) {
+        const source = surfaceDeKernelWgsl(
+          kernelOpts({
+            core,
+            mode: "shade",
+            lens,
+            balloon: true,
+            tiling: fourD ? tiled4 : tiled3,
+            pattern: true,
+            finish: true,
+            shadeDeWidth: core.startsWith("fold") ? 1 : undefined,
+          }),
+        );
+        expect(source).toContain("fn surfaceDEFractal(pIn: vec3f, cutoff: f32");
+        expect(source).toContain("let dF = surfaceDEFractal(pIn, cutoff, li);");
+        expect(source).toContain(
+          "let dS = inv.w * surfaceDEFractal(inv.xyz, innerCutoff, li);",
+        );
+        expect(source).toContain("fn surfaceDEHitInfoFractal(p: vec3f");
+        expect(source).toContain(
+          "var hi = surfaceDEHitInfoFractal(inv.xyz, li);",
+        );
+        expect(source).toContain("hi.colorPos = inv.xyz;");
+        expect(source).toContain("if (dS < dF)");
+        expect(source).toContain("hi.shell = 0.0;");
+        expect(source).toContain(
+          "length(hi.colorPos - params.balloonCenter) / params.balloonRho",
+        );
+        expect(source).toContain("info.tilingPoint = ");
+        expect(source).toContain("tilingPoint: vec4f");
+        expect(source).toContain("vec4f(0.0), vec3f(0.0), 0.0)");
+        if (fourD) {
+          expect(source).toContain(
+            "let folded = tilingFold(rotorInvApply4(vec4f(pIn, params.w0)));",
+          );
+          expect(source).toContain(
+            "surfaceDETilingCore(folded.point, vec4f(0.0), cutoff, li)",
+          );
+          expect(source).toMatch(
+            /fn surfaceDEHitInfoTilingCore\((?:qIn|pFolded): vec4f/,
+          );
+        } else {
+          expect(source).toContain("let folded = tilingFold(pIn);");
+          expect(source).toContain(
+            "surfaceDETilingCore(folded.point, cutoff, li)",
+          );
+          expect(source).toContain("hi.tilingPoint.y / visR");
+        }
+        if (core.startsWith("fold")) {
+          expect(source).toContain("fn surfaceDEProbeFractal(pIn: vec3f");
+          expect(source).toContain(
+            "surfaceDEProbeFractal(inv.xyz, innerCutoff, li)",
+          );
+          expect(source).toContain(
+            "let dF = surfaceDEProbeFractal(p, 0.0, li);",
+          );
+        }
+        if (lens) {
+          const march = surfaceDeKernelWgsl(
+            kernelOpts({
+              core,
+              mode: "march",
+              lens,
+              balloon: true,
+              tiling: fourD ? tiled4 : tiled3,
+            }),
+          );
+          expect(march).toContain("fn surfaceDEMarchFractal(pIn: vec3f");
+          expect(march).toContain(
+            "let inner = surfaceDEMarchFractal(inv.xyz, innerCutoff, li);",
+          );
+          expect(march).toContain("surfaceDEMarchLens(folded.point");
+          expect(march).toContain(
+            "max(inner, vec2f(tilingClipSdf(folded.point",
+          );
+        }
+      }
+    }
+  });
+
+  it("preserves the frozen Balloon prefix and appends finite tiling after all authored descent tails in both dimensions", () => {
+    const balloon = { center: [0, 0, 0] as Vec3, rho: 3.25, R: 4.5, far: 30 };
+    for (const dimension of [3, 4]) {
+      for (const condensation of [false, true]) {
+        for (const schedule of [false, true]) {
+          for (const chaos of [false, true]) {
+            let plain: ArrayBuffer;
+            let tiled: ArrayBuffer;
+            if (dimension === 3) {
+              let de = condensation
+                ? buildSurfaceDE(condensationTransforms(), null, undefined, {
+                    condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+                  })
+                : buildSurfaceDE(foldSystemTransforms());
+              if (schedule) de = withSchedule3(de, 1, 1);
+              if (chaos) de = withTilingChaos3(de);
+              plain = packSurfaceGpuParams(de, { itemCount: 1 }, balloon);
+              tiled = packSurfaceGpuParams(
+                de,
+                { itemCount: 1 },
+                balloon,
+                null,
+                tiled3,
+              );
+            } else {
+              let de = condensation
+                ? buildSurfaceDE4(condensationTransforms(), null, undefined, {
+                    condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+                  })
+                : buildSurfaceDE4(fourDSystemTransforms());
+              if (schedule) de = withSchedule4(de, 1, 1);
+              if (chaos) de = withTilingChaos4(de);
+              plain = packSurface4GpuParams(
+                de,
+                view4(),
+                { itemCount: 1 },
+                balloon,
+              );
+              tiled = packSurface4GpuParams(
+                de,
+                view4(),
+                { itemCount: 1 },
+                balloon,
+                null,
+                tiled4,
+              );
+            }
+            expectTilingTail(plain, tiled, dimension === 3 ? tiled3 : tiled4);
+            const view = new DataView(tiled);
+            const offset = dimension === 3 ? 288 : 576;
+            expect(view.getFloat32(offset + 12, true)).toBe(balloon.rho);
+            expect(view.getFloat32(offset + 16, true)).toBe(balloon.R);
+          }
+        }
+      }
+    }
+  });
+
   it("appends one live word and twelve zero pad bytes for the packer serving every core", () => {
     const surface3 = buildSurfaceDE(foldSystemTransforms());
     const escape3 = buildEscapeDE([canonicalMandelbox(), rotatedBoxfold()]);
@@ -8806,7 +8947,7 @@ describe("finite reflection tiling WGSL and params ABI", () => {
     );
   });
 
-  it("packs finite tiling with symmetry while retaining dimension, canonical, mesh, balloon, and slab guards", () => {
+  it("packs finite tiling with symmetry while retaining dimension, canonical, mesh, lattice-balloon, and slab guards", () => {
     const wrong3 = resolveTiling({ group: "a4" })!;
     expect(() =>
       surfaceDeKernelWgsl(kernelOpts({ core: "fold", tiling: wrong3 })),
@@ -8834,7 +8975,12 @@ describe("finite reflection tiling WGSL and params ABI", () => {
       surfaceDeKernelWgsl(kernelOpts({ tiling: meshTiling })),
     ).toThrow(/mesh-bearing tiling clips/);
     expect(() =>
-      surfaceDeKernelWgsl(kernelOpts({ tiling: tiled3, balloon: true })),
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          tiling: resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1),
+          balloon: true,
+        }),
+      ),
     ).toThrow(/tiling\+balloon/);
 
     const symmetric3: SurfaceDE = {
@@ -8882,7 +9028,7 @@ describe("finite reflection tiling WGSL and params ABI", () => {
         null,
         tiled3,
       ),
-    ).toThrow(/tiling\+balloon/);
+    ).not.toThrow();
   });
 });
 

@@ -120,7 +120,8 @@ the CPU oracle uses the same constant so CPU/GPU agree.
 The tiling wrapper owns the public estimator entry names and calls the
 untouched cores, the `descendLens`/`descendLens4` idiom (cores stay
 byte-identical when tiling is absent; the wrapper token-renames and the
-wrapper owns the public names). Evaluation order, frozen:
+wrapper owns the public names). Evaluation order, frozen, inside the optional
+outer Balloon union:
 
 1. **Tiling fold** — `q' = F(q)` into the chamber. Once, before anything
    else in the estimator path.
@@ -133,6 +134,10 @@ wrapper owns the public names). Evaluation order, frozen:
    `descend4`/`descendFold4`/`descendLens4`, or the forward
    `estimateEscapeDistance`/`estimateBulbDistance`/`estimateEscapeDistance4`.
 4. **Max with the clip** — `clipDist(q')` (absent clip: no term).
+
+Finite Balloon evaluates this complete public field at both the displayed
+query and its inversion. In 4D the displayed query is lifted through the
+current slice before the tiling fold. See [Finite Balloon composition](#finite-balloon-composition).
 
 The empty-space grid, the shading probe taps (normal/shadow/AO), the
 march-epsilon cutoff and the visible/bounding sphere contracts all ride the
@@ -231,16 +236,211 @@ composition chain above.
 
 ## Legal combinations and refusals (frozen)
 
-| combination                                                      | verdict                                                                                                                                                                                                                                  |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| tiling + ground plane                                            | composes — the landscape case; the plane is world-space in the sliced 3D space, the fold never touches it                                                                                                                                |
-| tiling + lens (`foldFinal`)                                      | composes — pre-fold vs post-fold                                                                                                                                                                                                         |
-| tiling + condensation / schedule / chaos / shape trap / finishes | compose — they live at the estimator/orbit level                                                                                                                                                                                         |
-| tiling + balloon                                                 | REFUSED, adjacent reason — the sphere-inversion echo of an orbit is not the orbit of the echo; no certified composition, and a filled solid's interior reaching the ball centre swallows the camera (the balloon's own IFS-only verdict) |
-| tiling + kaleidoscope                                            | supported in 3D/4D wherever the core itself supports that symmetry; tiling uses the already-symmetrized set as canonical content. The nearest-copy theorem needs no commuting. Proof and qualification below.                            |
-| tiling + 4D slab (`halfExtent > 0`)                              | REFUSED, adjacent reason — the fold of a segment is a bent polyline (per-point reflection sequences), and the slab's conservative-bound contract does not survive it. Tiled 4D sessions run slice 0 (the shipped default)                |
-| tiling + H4 / reducible groups                                   | REFUSED — vocabulary above                                                                                                                                                                                                               |
-| tiling + escape4                                                 | supported without slab or final lens; its own single-plane kaleidoscope may follow the tiling fold, including w planes. Escape4 still refuses a double-rotation twist.                                                                   |
+| combination                                                      | verdict                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tiling + ground plane                                            | composes — the landscape case; the plane is world-space in the sliced 3D space, the fold never touches it                                                                                                                 |
+| tiling + lens (`foldFinal`)                                      | composes — pre-fold vs post-fold                                                                                                                                                                                          |
+| tiling + condensation / schedule / chaos / shape trap / finishes | compose — they live at the estimator/orbit level                                                                                                                                                                          |
+| finite tiling + balloon                                          | supported in both dimensions and all four renderers: tile, slice/project, then invert the displayed set through its certified origin ball; existing IFS-only and Solid centre-density limits remain                       |
+| lattice tiling + balloon                                         | REFUSED, adjacent reason — the infinite set has no finite enclosing ball; presentation clipping cannot certify its inversion                                                                                              |
+| tiling + kaleidoscope                                            | supported in 3D/4D wherever the core itself supports that symmetry; tiling uses the already-symmetrized set as canonical content. The nearest-copy theorem needs no commuting. Proof and qualification below.             |
+| tiling + 4D slab (`halfExtent > 0`)                              | REFUSED, adjacent reason — the fold of a segment is a bent polyline (per-point reflection sequences), and the slab's conservative-bound contract does not survive it. Tiled 4D sessions run slice 0 (the shipped default) |
+| tiling + H4 / reducible groups                                   | REFUSED — vocabulary above                                                                                                                                                                                                |
+| tiling + escape4                                                 | supported without slab or final lens; its own single-plane kaleidoscope may follow the tiling fold, including w planes. Escape4 still refuses a double-rotation twist.                                                    |
+
+## Finite Balloon composition
+
+Finite reflections preserve Euclidean norm. If the canonical content lies in
+`ball(0, R)`, so does its finite orbit; clipping only removes content. The
+shared `surfaceOriginVisibleRadius` includes a 3D estimator's off-origin
+centre and uses the full visible 4D radius. This is a certified enclosing
+ball from the same authority used by tiling, independent of sampled point
+counts or the current slice. `buildBalloonFromBall` applies the existing rho
+margin and authored radius multiple to that origin ball.
+
+The displayed set is constructed in this order:
+
+```text
+source -> symmetry/schedule/final lens -> finite tiling -> slice or projection
+       -> union with the inversion of that displayed set
+```
+
+This is an explicit order, not a claim that reflection, view reduction and
+inversion commute. The 4D Surface echo is the inversion of the current 3D
+slice; Points and Flame invert the rotated/projected image; Solid inverts the
+already-reduced density volume. A rotor or slice edit never replaces the
+full origin radius with a pose-dependent sampled one.
+
+For Surface, let `D` be the complete tiled estimator, including the content
+clip and final lens. The existing Balloon bound applies to
+`min(D(p), |p| / rho * D(I(p)))`. Both shader languages put Balloon outside
+tiling for distance, hit information, normal, shadow and AO queries. The
+swirl lens's paired stride and hit-acceptance values travel through the same
+composition; clip intersection affects both, and echo attribution takes the
+strict scalar/probe distance minimum, with ties assigned to the original set. This
+preserves the core estimator's existing approximation limits; it does not
+upgrade a heuristic core into an exact signed distance. Forward escape/bulb
+Balloon remains unavailable under its existing filled-centre verdict.
+
+Flame's CPU and specialized GPU image visitors deposit the ordinary image
+and one full-weight echo after projection. The echo inherits that image's
+finite multiplicity and soft-slice weight, consumes no new chaos draw, and
+uses its own palette before tint. The worker rebuilds the origin ball from
+its own resolved session, so editing tiling before Points regeneration cannot
+hand Flame a stale sampled ball. The maximum fixed-point add is unchanged;
+the finite histogram's two-deposit u64 mass bound remains representable.
+
+Solid's 3D material folds and clips each density query below inversion.
+The source march retains the finite carrier fitted to the voxel AABB; the
+echo retains Balloon's broader interval, so images beyond the source carrier
+are reachable. The same query defines the centre-density refusal, including
+live clip edits. Strict echo attribution selects the independent palette
+before tint. In 4D the existing pre-projection image bake is retained and the
+ordinary Balloon material queries that displayed volume; its valid density
+hierarchy remains active. Neither route duplicates the density volume.
+
+Points carries its certified origin radius with the completed worker result.
+The geometry upload installs that ball before showing an enabled echo. With
+Auto-update off, a held finite cloud keeps its finite echo, while a held
+lattice cloud stays echo-free until its finite or ordinary replacement lands.
+An empty result has no echo. Finite Balloon toggles and radius/tint edits are
+live in Points and Solid; Flame restarts deposits; Surface toggles re-enter
+and radius/tint remain live. Generated decorative Flame backdrops retain
+their established omission of the Balloon deposit but accept finite tiling.
+
+Infinite lattice tiling remains refused: the presentation carrier clips the
+view of an infinite set and supplies no finite rho for its inversion. The
+panel explains this and keeps the kind selector usable as a recovery route.
+
+The executable evidence lives in the paired CPU tests, Surface and Flame GPU
+agreement gates, and `scripts/tiling-balloon.verify.mjs`, which exercises all
+four modes, both dimensions, both Surface engines, app-copy reload, PNG
+export, palette/tint controls and held Points transitions.
+An intermittent 4D WebGL settle stall seen during qualification, including
+the unchanged passing rerun and unproven hypotheses, is recorded in the
+[strip pipeline evidence](surface-strip-pipeline.md#intermittent-4d-finite-balloon-settle-observation).
+
+### Production browser qualification
+
+On 2026-09-08 the complete production gate passed all 12 rows in 170.3s on
+accelerated AMD Radeon RX 7900 XTX, Mesa 25.2.8: ten renderer/dimension/engine
+routes and two held-Points transitions. Each route restored the app's copied
+link, completed its real output, and saved an on/off PNG pair. The analyzed
+image share changed by the echo was:
+
+| Renderer        |     3D |     4D |
+| --------------- | -----: | -----: |
+| Points          |  4.27% | 23.35% |
+| Flame GPU       | 35.31% | 64.14% |
+| Solid           | 15.20% |  2.85% |
+| Surface compute | 17.68% |  7.79% |
+| Surface WebGL   | 17.67% |  7.79% |
+
+All ten PNG comparisons passed the same 1% visible-echo threshold. All 20
+separate tint/palette changes affected the enabled echo, and all 20 matching
+echo-off controls were byte-identical. Held finite and lattice Points frames
+also stayed byte-identical before regeneration, then recovered with the
+correct certified origin ball. The separate authoring scope passed 31 checks
+in 16.5s on the same build.
+
+The fixture uses 1M Points in 4D so its fixed-intensity echo remains measurable
+after image downsampling. Solid 4D uses radius multiple 0.1 to show the source
+and echo with the camera outside the shell; 75.7% of its analyzed image was
+backdrop. The instrument requires at least 10% real backdrop in every echo
+comparison. It pins only Flame/Solid worker-entry seeds, leaving browser
+randomness, production workers and their RNG streams intact.
+
+Run `node scripts/tiling-balloon.verify.mjs --display=:0 --look=true`
+after build/preview and the display-cookie preflight. The final record and
+PNGs are under `scripts/out/tiling-balloon-qualified/`; authoring uses
+`scripts/tiling-ui.verify.mjs --mode=x11::0 --scope=authoring`.
+
+### Surface GPU qualification
+
+The full `npm run bench:surface -- --display=:0 --diagnostics` gate passed
+on the same accelerated AMD adapter on 2026-09-08, with default duration and
+unchanged evaluation, ray-comparison and exclusion limits. The device canary
+completed all 25 checks of 128 values. Twelve new B3/F4 scalar and paired
+stride rows passed all 96 queries across affine/fold in both dimensions,
+including posted swirl lenses. Each row requires both original-set and
+strict echo winners, plus controls that remove tiling or Balloon and differ
+by more than eight existing evaluation tolerances.
+
+The two additional march and production-shade legs use the browser gate's
+A3 tetrahedron and A4 pentatope, authored camera, persisted normalized rotor
+and radius multiple 0.5 at the existing 96×54 raster:
+
+| Fixture | CPU source / echo hits | GPU / CPU total hits | Corridor matches / cap | Silhouette exclusions | Failures |
+| ------- | ---------------------- | -------------------- | ---------------------- | --------------------- | -------- |
+| A3      | 499 / 453              | 951 / 952            | 6 / 7                  | 1                     | 0        |
+| A4      | 122 / 175              | 298 / 297            | 3 / 7                  | 1                     | 0        |
+
+The real `SurfaceComputeRenderer` frames completed in 16 and 15 passes,
+respectively, with no active or exhausted rays and zero hit/miss mismatches
+among 84 CPU samples per frame. These frames exercise the authored pattern
+and independent echo-palette bindings; the browser gate above separately
+checks the visible effect of palette and tint edits.
+
+The initial march fixtures did not qualify. B3 over the generic affine
+tetrahedron at radius multiple 1.6 filled 4,285 of 5,184 CPU rays and needed
+40 corridor exclusions against the unchanged cap of seven, despite zero
+direct hit-distance failures. The lifted generic affine4 fixture's identity
+slice under F4 was empty in both CPU and GPU. Neither is counted as a pass.
+The replacement uses already-visible production scenes and adds explicit
+source/echo hit witnesses; it changes neither production math nor the
+comparator, epsilon, raster or caps. B3/F4 remain covered by the twelve
+evaluation rows. Final and initial records are preserved under
+`scripts/out/finite-balloon-surface-gpu/` and
+`scripts/out/finite-balloon-surface-gpu-initial/`.
+
+### Flame agreement calibration
+
+The new 3D Flame fixture adds finite reflections, full cyclic symmetry and
+an independently coloured echo to the existing tetrahedron scenario. Its
+first CPU/GPU comparison failed the default image MAE limit of 1.0, while
+the 4D fixture passed. A separate CPU-only calibration then ran the exact
+50,331,648-iteration workload at four independent seeds through the real
+benchmark's accumulator, downsample and tone mapper. All six CPU seed pairs
+also exceeded 1.0. Same-camera controls removed only the echo deposit or
+the tiling plan; neither changed the bound, projection, palette or orbit.
+
+| Comparison                | Image MAE       | Density TV      | Maximum absolute signed RGB bias |
+| ------------------------- | --------------- | --------------- | -------------------------------- |
+| Six CPU seed pairs        | 1.78856–1.79456 | 0.01913–0.01926 | 0.02714                          |
+| Initial CPU/GPU pair      | 1.85892         | 0.02066         | 0.05475                          |
+| CPU echo-disabled control | 12.19080        | 0.13180         | 13.56490                         |
+| CPU untiled control       | 8.65134         | 0.18016         | 5.55565                          |
+
+The new 3D scenario therefore owns MAE 4.0 and density TV 0.04: the next
+half-unit and hundredth above twice the maximum measured CPU noise,
+respectively. Both missing-feature controls fail those bars. The global
+signed-bias limit remains 0.3; all existing scenarios, workload sizes,
+framing and renderer math are unchanged. Four seeds measure repeatability,
+not a formal confidence interval or sensitivity to every possible defect.
+
+The same instrument qualified the 4D fixture without changing its MAE limit
+of 1.0. Its CPU seed pair measured MAE 0.00680 and density TV 0.00284;
+echo-disabled and untiled controls measured MAE 2.77615 / 4.78013 and
+density TV 0.48598 / 0.99944, respectively. The source and echo each
+deposited about 32.24 billion weighted units of visible mass, matching to
+`2.4e-12` relatively. The initial CPU/GPU pair measured MAE 0.01104 and
+density TV 0.00298.
+
+The reusable instrument is
+`node scripts/flame-tiling-symmetry-noise.verify.mjs --scenario=tiling-balloon-3d --seeds=4`.
+Its default symmetry calibration is preserved. Results include source
+digests, full-budget counters, raw RGB/mass totals and all seed-pair metrics
+under `scripts/out/finite-balloon-flame-noise-3d/` and
+`scripts/out/finite-balloon-flame-noise-4d/`; the latter uses
+`--scenario=tiling-balloon-4d`. The initial full GPU run is preserved under
+`scripts/out/finite-balloon-flame-gpu-initial/`.
+
+The final full `npm run bench:gpu -- --display=:0 --diagnostics` run passed
+all 36 agreement scenarios, all 36 display-downsample checks and the
+standalone ss=1 check on the accelerated AMD adapter. Both new rows reproduced
+their initial numerical metrics exactly; the 3D row passed its measured
+limits and the 4D row retained its original limit. No rows were skipped.
+The complete final record is `scripts/out/finite-balloon-flame-gpu/results.json`.
 
 ## Kaleidoscope composition
 
@@ -1029,9 +1229,10 @@ or consumes its RNG. The 4D adapter acts on raw xyzw before the frozen rotor,
 projection and slice. Structural/transform/radius/height/position/uniform
 colors belong to the canonical source; w-ramp and soft-slice weight are
 recomputed per raw 4D image, whose image weight multiplies the slice weight.
-Balloon is refused before packing, so the tiled specialization has no echo
-deposit. Warmup remains outside this arm through the existing `PLOT=false`
-specialization.
+Finite Balloon deposits the second splat after the image's view reduction,
+using the same image and slice weights and the independent echo palette before
+tint. Infinite lattice Balloon is refused before packing. Warmup remains
+outside this arm through the existing `PLOT=false` specialization.
 
 The lattice CDF packer quantizes every positive interval without collapse:
 endpoint and mass are exact f32 high/low-16 pairs, endpoints are strictly
@@ -1094,7 +1295,7 @@ folded source; the session poses an unposed clip on the measured chamber
 content exactly like the surface arms. Fog keeps the source box half-diagonal
 unit and measures from the carrier entry.
 
-The combination matrix and edit timing: Balloon and mesh clips refuse; a
+The combination matrix and edit timing: lattice Balloon and mesh clips refuse; a
 kaleidoscope baked into the source volume is valid canonical content. Forward
 escape/bulb volumes refuse as reset debris, and the floor/environment
 presentation compose. A 4D document does not take the query-space fold —
@@ -1358,14 +1559,14 @@ the bound must be re-derived from the proposal's own quantized masses
 
 ### Legal combinations and edit timing
 
-| Layer                                                              | Point-family verdict                                                |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| matching-dimension finite group or 3D/4D lattice                   | supported                                                           |
-| analytic clip                                                      | supported; canonical-source membership before images                |
-| schedule, final lens, xaos, emitter/condensation, kaleidoscope     | supported in their existing plot order                              |
-| soft 4D view slice                                                 | supported after true 4D images; not Surface's refused thick DE slab |
-| Balloon, mesh-backed clip, dimension mismatch, H4/reducible groups | preserve the existing authored-state refusal with adjacent reason   |
-| escape-time/bulb debris in Points, Flame or Solid                  | refused; it is not a sampler for Surface's set                      |
+| Layer                                                                      | Point-family verdict                                                |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| matching-dimension finite group or 3D/4D lattice                           | supported                                                           |
+| analytic clip                                                              | supported; canonical-source membership before images                |
+| schedule, final lens, xaos, emitter/condensation, kaleidoscope             | supported in their existing plot order                              |
+| soft 4D view slice                                                         | supported after true 4D images; not Surface's refused thick DE slab |
+| Lattice Balloon, mesh-backed clip, dimension mismatch, H4/reducible groups | preserve the authored-state refusal with adjacent reason            |
+| escape-time/bulb debris in Points, Flame or Solid                          | refused; it is not a sampler for Surface's set                      |
 
 Points tiling edits follow Auto-update and the existing latest-wins one-shot
 regeneration. An active Flame edit restarts accumulation from the same source

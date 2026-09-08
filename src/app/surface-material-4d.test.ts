@@ -1286,6 +1286,82 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
     expect(source).toContain("finishShade(base, pos, n, rd");
   });
 
+  it("inverts in visible 3D before the tiled vec4 query lift, with winning source and march pair preserved", () => {
+    for (const swirl of [0, 1]) {
+      const source = surface4FragmentResolvedFor(
+        1,
+        0,
+        1,
+        1,
+        null,
+        0,
+        0,
+        clippedF4,
+        swirl,
+      );
+      expect(source).toContain("float surfaceDEFractal(vec3 p, float cutoff)");
+      expect(source).toContain(
+        "TilingFoldResult folded = tilingFold(uInvRotor * vec4(p, uW0));",
+      );
+      expect(source).toContain("float inner = surfaceDETilingCore(p, cutoff)");
+      expect(
+        source.indexOf("float surfaceDEFractal(vec3 p, float cutoff)"),
+      ).toBeLessThan(source.indexOf("vec3 balloonInvert("));
+      expect(source).not.toContain(
+        "#define surfaceDETilingCore surfaceDEFractal",
+      );
+      expect(source).toContain(
+        "scale * surfaceDEFractal(q, cutoff > 0.0 ? cutoff / scale : 0.0)",
+      );
+      expect(source).toContain("if (dS < dF)");
+      expect(source).toContain(
+        "surfaceDEFractal(q, firstChoice, trap, rings, sheets, sStar)",
+      );
+      expect(source).toContain(
+        "(transpose(uInvRotor) * surfaceTilingHitPoint).y",
+      );
+      expect(source).toContain("vec4 q4 = surfaceTilingHitPoint;");
+      expect(source).toContain("length(cpos - uBalloonCenter) / uBalloonRho");
+      if (swirl) {
+        expect(source).toContain(
+          "vec2 surfaceDEMarchFractal(vec3 p, float cutoff)",
+        );
+        expect(source).toContain(
+          "vec2 inner = surfaceDEMarchTilingCore(p, cutoff)",
+        );
+        expect(source).toContain(
+          "return max(inner, vec2(tilingClipSdf(q.xyz)))",
+        );
+        expect(source).toContain(
+          "vec2 inner = surfaceDEMarchFractal(q, innerCutoff)",
+        );
+      }
+    }
+  });
+
+  it("emits all 128 finite Balloon 4D combinations below the unchanged source ceiling", () => {
+    for (const tiling of [f4, clippedF4])
+      for (const swirl of [0, 1])
+        for (const finish of [0, 1])
+          for (const pattern of [0, 1])
+            for (const condensation of [0, 1])
+              for (const schedule of [0, 1])
+                for (const chaos of [0, 1]) {
+                  const source = surface4FragmentFor(
+                    1,
+                    0,
+                    finish,
+                    pattern,
+                    condensation ? [COND4_SPHERE] : null,
+                    schedule,
+                    chaos,
+                    tiling,
+                    swirl,
+                  );
+                  expect(source.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+                }
+  });
+
   it("source-generates every legal 4D group and orthogonal variant", () => {
     for (const group of TILING_GROUPS.slice(3)) {
       const source = sourceFor(resolveTiling({ group })!);
@@ -1336,7 +1412,7 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
     expect(count).toBe(128);
   });
 
-  it("defensively rejects wrong-dimensional, forged, mesh, and balloon pairings", () => {
+  it("defensively rejects wrong-dimensional, forged, mesh, and lattice-balloon pairings", () => {
     for (const group of TILING_GROUPS.slice(0, 3)) {
       expect(() => sourceFor(resolveTiling({ group })!)).toThrow(/3D.*4D/);
     }
@@ -1349,11 +1425,20 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
       sourceFor(resolveTiling({ group: "f4", clip: MESH4_SHAPE })!),
     ).toThrow(/mesh clips are refused/);
     expect(() =>
-      surface4FragmentResolvedFor(1, 0, 0, 0, null, 0, 0, f4),
+      surface4FragmentResolvedFor(
+        1,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1),
+      ),
     ).toThrow(/cannot compile into the balloon variant/);
   });
 
-  it("installs the group beside the kaleidoscope and still refuses slab and balloon", () => {
+  it("installs the group beside the kaleidoscope and allows finite Balloon while retaining the slab refusal", () => {
     const material = createSurfaceMaterial4();
     setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, f4);
     expect(materialSurfaceTiling(material, true)).toBe(f4);
@@ -1386,9 +1471,9 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
     expect(() => setSurfaceView4(material, IDENTITY4, 0, 0.1)).toThrow(
       /cannot compose with a 4D slab/,
     );
-    expect(() => setSurface4Balloon(material, balloonSpec())).toThrow(
-      /cannot compose with balloon/,
-    );
+    expect(() => setSurface4Balloon(material, balloonSpec())).not.toThrow();
+    expect(material.fragmentShader).toContain("surfaceDEFractal");
+    expect(material.fragmentShader).toContain("surfaceTilingFold");
 
     setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, null);
     expect(materialSurfaceTiling(material, true)).toBeNull();

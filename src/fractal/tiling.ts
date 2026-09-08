@@ -91,8 +91,9 @@ import type { Vec3, Vec4 } from "./types";
  *   not re-implement);
  * - 4D slab + tiling (the fold of a segment is a bent polyline, and the
  *   slab's conservative-bound contract does not survive it);
- * - balloon + tiling (an orbit's echo is not the echo's orbit — no
- *   certified composition).
+ * - balloon + infinite lattice (no finite enclosing ball certifies inversion).
+ * Finite Balloon composition tiles first, then slices/projects, then inverts
+ * the displayed set through its certified origin-centred enclosing ball.
  * Kaleidoscope composes: A is the already-symmetrized core set, and the
  * nearest-copy theorem needs no commuting between its maps and the tiling.
  * Proof, approximation limits and 3D/4D evidence: docs/tiling-contract.md.

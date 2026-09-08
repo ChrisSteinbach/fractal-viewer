@@ -1639,6 +1639,90 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
     expect(source).toContain("finishShade(base, pos, n, rd");
   });
 
+  it("puts finite tiling below Balloon for values, probes, inherited material and the lens march pair", () => {
+    for (const lens of [0, 1]) {
+      const source = surfaceFragmentResolvedFor(
+        0,
+        lens,
+        1,
+        0,
+        0,
+        1,
+        1,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        clippedA3,
+      );
+      expect(source).toContain("float surfaceDEFractal(vec3 p, float cutoff)");
+      expect(source).toContain("float inner = surfaceDETilingCore(q, cutoff);");
+      expect(
+        source.indexOf("float surfaceDEFractal(vec3 p, float cutoff)"),
+      ).toBeLessThan(source.indexOf("vec3 balloonInvert("));
+      expect(source).not.toContain(
+        "#define surfaceDETilingCore surfaceDEFractal",
+      );
+      expect(source).toContain("return surfaceDEFractal(p, cutoff);");
+      expect(source).toContain(
+        "scale * balloonInnerDE(q, cutoff > 0.0 ? cutoff / scale : 0.0)",
+      );
+      expect(source).toContain("if (dS < dF)");
+      expect(source).toContain(
+        "surfaceDEFractal(q, firstChoice, trap, rings, sheets)",
+      );
+      expect(source).toContain("surfaceTilingHitPoint.y / uVisibleRadius");
+      expect(source).toContain("length(cpos - uBalloonCenter) / uBalloonRho");
+      expect(source).toContain(
+        "base = mix(base, uBalloonTint, uBalloonTintStrength * shell)",
+      );
+      if (lens) {
+        expect(source).toContain(
+          "vec2 surfaceDEMarchFractal(vec3 p, float cutoff)",
+        );
+        expect(source).toContain(
+          "vec2 inner = surfaceDEMarchTilingCore(q, cutoff)",
+        );
+        expect(source).toContain("return max(inner, vec2(tilingClipSdf(q)))");
+        expect(source).toContain(
+          "vec2 inner = surfaceDEMarchFractal(q, innerCutoff)",
+        );
+      }
+    }
+  });
+
+  it("emits all 128 finite Balloon 3D combinations below the unchanged source ceiling", () => {
+    for (const tiling of [a3, clippedA3])
+      for (const lens of [0, 1])
+        for (const finish of [0, 1])
+          for (const pattern of [0, 1])
+            for (const condensation of [0, 1])
+              for (const schedule of [0, 1])
+                for (const chaos of [0, 1]) {
+                  const source = surfaceFragmentFor(
+                    0,
+                    lens,
+                    1,
+                    0,
+                    0,
+                    finish,
+                    pattern,
+                    undefined,
+                    null,
+                    condensation ? [COND_SPHERE] : null,
+                    false,
+                    0,
+                    schedule,
+                    chaos,
+                    tiling,
+                  );
+                  expect(source.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+                }
+  });
+
   it("source-generates every legal group and orthogonal 3D variant", () => {
     for (const group of TILING_GROUPS.slice(0, 3)) {
       expect(() => sourceFor(resolveTiling({ group })!)).not.toThrow();
@@ -1729,7 +1813,7 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
     expect(count).toBe(336);
   });
 
-  it("defensively rejects wrong-dimensional, forged, mesh, and balloon pairings", () => {
+  it("defensively rejects wrong-dimensional, forged, mesh, and lattice-balloon pairings", () => {
     for (const group of TILING_GROUPS.slice(3)) {
       expect(() => sourceFor(resolveTiling({ group })!)).toThrow(/4D.*3D/);
     }
@@ -1757,12 +1841,12 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
         0,
         0,
         0,
-        a3,
+        resolveTiling({ kind: "lattice", cellScale: 1.5 }, 1),
       ),
     ).toThrow(/cannot compile into the balloon variant/);
   });
 
-  it("installs the group beside the kaleidoscope without recompiling and still refuses balloon", () => {
+  it("installs the group beside the kaleidoscope without recompiling and allows finite Balloon", () => {
     const material = createSurfaceMaterial();
     setSurfaceSystem(material, de3([map3()]), [black], undefined, a3);
     expect(materialSurfaceTiling(material)).toBe(a3);
@@ -1813,7 +1897,9 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
         rho: 1,
         far: 2,
       }),
-    ).toThrow(/cannot compose with balloon/);
+    ).not.toThrow();
+    expect(material.fragmentShader).toContain("surfaceDEFractal");
+    expect(material.fragmentShader).toContain("surfaceTilingFold");
 
     setSurfaceSystem(material, de3([map3()]), [black], undefined, null);
     expect(materialSurfaceTiling(material)).toBeNull();

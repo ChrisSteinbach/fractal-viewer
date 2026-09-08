@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { BALLOON_ECHO_VERTEX, FractalScene } from "./scene";
+import { BALLOON_RHO_MARGIN } from "../fractal/balloon-de";
 
 type TestUniform = { value: unknown };
 
@@ -161,5 +162,89 @@ describe("Points balloon palette shader", () => {
     expect(tint).toBeGreaterThan(lookup);
     expect(intensity).toBeGreaterThan(tint);
     expect(fade).toBeGreaterThan(intensity);
+  });
+});
+
+describe("landed finite Points Balloon ball", () => {
+  function uploadScene() {
+    const scene = Object.create(FractalScene.prototype) as FractalScene;
+    const uniforms = {
+      uEchoCenter: { value: new THREE.Vector3() },
+      uEchoR: { value: 0 },
+      uEchoRho: { value: 0 },
+      uEchoFloor2: { value: 0 },
+      uEchoFadeEnd: { value: 0 },
+      uEchoFadeStart: { value: 0 },
+    };
+    const echo = { visible: false };
+    Reflect.set(scene, "balloonEchoMaterial", { uniforms });
+    Reflect.set(scene, "balloonEchoPoints", echo);
+    Reflect.set(scene, "balloonEchoEnabled", true);
+    Reflect.set(scene, "balloonEchoRadius", 0.7);
+    Reflect.set(scene, "fogDensity", 1);
+    Reflect.set(scene, "pointGeometry", new THREE.BufferGeometry());
+    Reflect.set(scene, "balloonEchoSourceSphere", new THREE.Sphere());
+    Reflect.set(scene, "solidBalloonSourceSphere", new THREE.Sphere());
+    Reflect.set(scene, "fourDMaterial", {
+      uniforms: {
+        uCenter4: { value: new THREE.Vector4() },
+      },
+    });
+    for (const method of [
+      "setDrawCount",
+      "setReplayCursor",
+      "applySolidPresentation",
+      "syncSolidBalloonUniforms",
+      "updateWAmp4",
+      "updateFourDScaffoldPositions",
+    ]) {
+      Reflect.set(scene, method, vi.fn());
+    }
+    return { scene, uniforms, echo };
+  }
+
+  it.each([false, true])(
+    "uses the certified origin radius before an enabled echo becomes visible (4D=%s)",
+    (fourD) => {
+      const { scene, uniforms, echo } = uploadScene();
+      const positions = new Float32Array([0.5, 0.3, 0.1, -0.2, 0.7, -0.1]);
+      if (fourD) {
+        scene.setPoints4(
+          positions,
+          new Float32Array([0.1, -0.2]),
+          [0, 0, 0, 0],
+          0.8,
+          0.8,
+          [1, 1, 1, 1],
+          2,
+          "finite",
+        );
+      } else {
+        scene.setPoints(positions, new Float32Array(6), 2, "finite");
+      }
+      expect(uniforms.uEchoCenter.value.toArray()).toEqual([0, 0, 0]);
+      expect(uniforms.uEchoR.value).toBeCloseTo(1.4, 12);
+      expect(uniforms.uEchoRho.value).toBe(2 * BALLOON_RHO_MARGIN);
+      expect(scene.flameBalloon(0.7)).toMatchObject({
+        center: [0, 0, 0],
+        R: 1.4,
+        rho: 2 * BALLOON_RHO_MARGIN,
+      });
+      expect(echo.visible).toBe(true);
+    },
+  );
+
+  it("holds a landed lattice echo off until finite replacement installs its own ball", () => {
+    const { scene, uniforms, echo } = uploadScene();
+    const positions = new Float32Array([0.5, 0.3, 0.1]);
+    scene.setPoints(positions, new Float32Array(3), 2, "lattice");
+    scene.setBalloonEchoRadius(0.9);
+    expect(echo.visible).toBe(false);
+    scene.setPoints(positions, new Float32Array(3), 3, "finite");
+    expect(uniforms.uEchoR.value).toBe(2.7);
+    expect(echo.visible).toBe(true);
+    scene.setPoints(new Float32Array(), new Float32Array(), 3, "finite");
+    expect(echo.visible).toBe(false);
+    expect(scene.flameBalloon(0.9)).toBeNull();
   });
 });

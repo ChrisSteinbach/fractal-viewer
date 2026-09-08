@@ -1863,7 +1863,11 @@ describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
     expect(active).toContain(
       "depositPrimary(\n            pointTilingImage.point",
     );
-    expect(active).not.toContain("depositEcho(inv, echoRgb, echoWeightFix);");
+    expect(active).toContain("depositEcho(inv, echoRgb, echoWeightFix);");
+    expect(active).toContain("dot(params.echoProjX, pointTilingImage.point)");
+    expect(active).toContain(
+      "pointTilingImage.weight * pointTilingSliceWeight * params.echoWeight",
+    );
   });
 
   it("refuses a 3D packed plan at the 4D kernel boundary", () => {

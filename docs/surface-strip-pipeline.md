@@ -1,7 +1,7 @@
 # Surface strip pipeline
 
 Full evidence record for `src/app/strip-planner.ts` — the adaptive
-scissor-strip sizer behind every WebGL surface trace. `CLAUDE.md`'s
+scissor-strip sizer behind every WebGL surface trace. `AGENTS.md`'s
 `strip-planner.ts` bullet is the condensed rules-and-invariants version;
 this document is where the measured numbers, the reverted attempts and the
 historical narrative live.
@@ -425,6 +425,46 @@ draw ends up linking a second program variant instead of reusing the
 compiled one. The gate also defers `activate()`'s guide/selection refresh
 so that no other re-link request can join the driver's compile queue
 behind the fold program.
+
+## Intermittent 4D finite Balloon settle observation
+
+On 2026-09-08, `scripts/tiling-balloon.verify.mjs` exposed an intermittent
+WebGL settle stall on accelerated AMD Radeon RX 7900 XTX, Mesa 25.2.8.
+The scene was the gate's A4-tiled 4D fixture, with Balloon, a copied rotor and
+camera, and an independent echo palette. Ordinary on/off screenshots and
+PNG exports completed before a later look-control boot stopped progressing.
+Two isolated tint-strength-1 legs exceeded the unchanged 240s settle deadline
+at 46% and 71% (whole-leg times 257.2s and 256.5s). A palette-change leg held
+47% for at least 90s and was operator-aborted at 125.2s; that was not a
+completed gate. The native-randomness timeout reported a visible, focused
+page, 16.67–16.68ms rAF gaps, no browser errors, `settleActive: true`,
+`previewActive: false`, `settled: false`, and no completed census.
+
+The same tint-strength-1 fixture as the first Surface page completed its
+640×480 settle in 129ms: 54 strips, all 11 fences retired, 24,596 hits,
+282,604 misses and no exhausted rays. The full copied-link/export/look
+sequence with read-only GL counters and `surfperf` completed every settle
+in 130–280ms and every export in 0.6–1.2s. Two copies carrying a delayed
+single-flush rescue also passed before either rescue fired. Finally the
+unchanged production verifier passed the complete isolated 4D WebGL route
+in 32.6s, including both look controls and exact-zero echo-off differences.
+The final unmodified all-renderer matrix then passed all 12 rows in 170.3s
+with the same 240s settle deadline.
+The production bundle remained unchanged throughout these experiments.
+
+The cause remains unestablished. Slow-rAF presentation starvation does not
+match the measured cadence; a trailing-fence flush hypothesis was never
+tested on an actually stalled context; and a tint-value-only shader cliff
+does not explain the first-page success or the separate palette stall.
+Removing a global random override did not remove the timeout. No strip
+scheduling or shader workaround was applied from these observations.
+
+Reproduce after a production build and preview with
+`node scripts/tiling-balloon.verify.mjs --display=:0 --only=surface --dimension=4 --engine=webgl --look=true`.
+The instrument records complete settle state, visibility and recent rAF
+gaps on long waits. Original logs, copied diagnostic drivers and the
+machine-readable investigation record land under
+`scripts/out/finite-balloon-surface-investigation/`; output is untracked.
 
 ## Measured A/Bs
 

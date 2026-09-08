@@ -314,9 +314,8 @@ export interface ControlEffects {
    * on after manual edits. Unlike `regenerateIfAutoUpdate`, this preference
    * edit does not itself make a settled cloud stale. */
   resumePointAutoUpdate(): void;
-  /** Apply Balloon to the landed Points geometry only when that geometry is
-   * untiled. An authored enable over a tiled cloud stays presentation-dormant
-   * until the matching ordinary regeneration lands. */
+  /** Apply Balloon to the landed Points geometry. A lattice cloud stays
+   * dormant until finite or ordinary replacement geometry lands. */
   syncPointBalloonEcho(enabled: boolean): void;
   /**
    * Re-derive the Surface mode button's eligibility gate from the current
@@ -600,7 +599,7 @@ const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
  * frozen view and fallback state; Surface restarts with its inspection view
  * preserved. Flat Solid updates its material live; 4D Solid replaces its
  * worker because images are baked into density. Eligibility refresh is
- * immediate because group dimension and Balloon are explicit refusals. The
+ * immediate because group dimension and lattice Balloon are refusals. The
  * generated Flame backdrop is invalidated like an authored edit too — a
  * tiled scene must not keep the untiled echo behind Points — via trackAutoBackground,
  * which fires even when Points' Auto-update is off (the pane shows the
@@ -1304,14 +1303,15 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       fx.syncPointBalloonEcho(s.balloonEcho);
       fx.scene.setBalloonEchoRadius(s.balloonRadius);
       fx.cancelBalloonSweep();
-      if (s.tiling) fx.regenerateIfAutoUpdate();
+      const lattice = s.tiling && isLatticeTilingSpec(s.tiling);
+      if (lattice) fx.regenerateIfAutoUpdate();
       if (s.renderMode === "flame") fx.restartFlameRender();
       if (s.renderMode === "surface") fx.restartSurfaceRender();
-      // The frozen combination matrix refuses tiling with Balloon. The
-      // active-session router clears a flat material live or replaces 4D
-      // density, while preserving a dimension-mismatched held frame.
+      // Lattice tiling changes availability with Balloon. The router updates
+      // the live 3D material or replaces 4D density while preserving a held
+      // frame whose dimension no longer matches the document.
       if (s.renderMode === "solid") {
-        if (s.tiling) fx.applySolidTilingEdit();
+        if (lattice) fx.applySolidTilingEdit();
         else fx.syncSolidTiling();
       }
     },

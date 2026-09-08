@@ -4411,13 +4411,21 @@ export class Ui {
         ? applicability.reason
         : "";
     const showDependent = !refused && this.balloonEchoCheckbox.checked;
+    const heldLattice =
+      context.renderMode === "points" &&
+      this.balloonEchoCheckbox.checked &&
+      this.landedPointTilingOutcome?.availability === "active" &&
+      this.landedPointTilingOutcome.kind === "lattice";
+    const pendingReason = heldLattice
+      ? "Balloon stays dormant over the earlier lattice cloud until regeneration installs finite or ordinary Points. Use Regenerate if Auto-update is off."
+      : "";
 
     this.balloonEchoCheckbox.disabled = refused;
     this.balloonPaletteSelect.disabled = refused;
     this.balloonRadiusRow.classList.toggle("hidden", !showDependent);
     this.balloonTintRow.classList.toggle("hidden", !showDependent);
-    this.balloonNote.textContent = reason;
-    this.balloonNote.classList.toggle("hidden", !refused);
+    this.balloonNote.textContent = reason || pendingReason;
+    this.balloonNote.classList.toggle("hidden", !refused && !heldLattice);
 
     const editor = this.balloonCustomPaletteEditor;
     const stopInputs = Array.from(
@@ -4661,12 +4669,12 @@ export class Ui {
     const kind = this.scalarSelect("tilingKind");
     const group = this.scalarSelect("tilingGroup");
     const clip = this.scalarSelect("tilingClip");
-    // Balloon makes either authored arm dormant, so every
-    // dependent detail disables while the shared checkbox remains the clear
-    // route. Dimension and clip-shape refusals do NOT disable: those
+    // Balloon makes the infinite lattice dormant, so dependent details
+    // disable while the kind selector offers finite reflections as recovery.
+    // Dimension and clip-shape refusals do NOT disable: those
     // selectors are their adjacent recovery paths.
-    const dormant = tiling !== undefined && state.balloonEcho;
-    kind.disabled = dormant;
+    const dormant = lattice && state.balloonEcho;
+    kind.disabled = false;
     group.disabled = dormant;
     clip.disabled = dormant;
     this.setScalarDisabled("tilingCellScaleSlider", dormant);
@@ -4695,7 +4703,7 @@ export class Ui {
       let note: string;
       if (state.balloonEcho) {
         note =
-          "Unavailable with Balloon — turn Balloon off; an orbit's echo is not the echo's orbit." +
+          "Unavailable with Balloon — the infinite lattice has no finite enclosing ball. Turn Balloon off or choose finite reflections." +
           this.pointsTilingPendingSuffix(state, "Balloon");
       } else if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {
         note =
@@ -4726,11 +4734,7 @@ export class Ui {
     // Keep refusal precedence identical to the disabled-state decision above:
     // a disabled recovery selector must always be accompanied by the reason
     // that tells the author how to re-enable it.
-    if (state.balloonEcho) {
-      note =
-        "Unavailable with Balloon — turn Balloon off; an orbit's echo is not the echo's orbit." +
-        this.pointsTilingPendingSuffix(state, "Balloon");
-    } else if (wants4 !== nonFlat) {
+    if (wants4 !== nonFlat) {
       note =
         `${tiling.group.toUpperCase()} is a ${wants4 ? "4D" : "3D"} group, but this document is ${nonFlat ? "4D" : "3D"}. Choose a group under ${nonFlat ? "4D" : "3D"}.` +
         this.pointsTilingPendingSuffix(state);
@@ -4842,9 +4846,8 @@ export class Ui {
   }
 
   /** Suffix for a document-level refusal while Points is still showing an
-   * older result. Balloon gets the stronger safety disclosure because the
-   * echo is held dormant over active tiled geometry until ordinary geometry
-   * lands. */
+   * older result. Balloon stays dormant over a landed lattice until a
+   * finite or ordinary replacement lands. */
   private pointsTilingPendingSuffix(
     state: AppState,
     conflict?: "Balloon",
@@ -4859,7 +4862,10 @@ export class Ui {
     const replacement = state.autoUpdate
       ? "the replacement request lands"
       : "you use Regenerate";
-    if (conflict === "Balloon") {
+    if (
+      conflict === "Balloon" &&
+      this.landedPointTilingOutcome.kind === "lattice"
+    ) {
       return ` Points still shows the earlier tiled cloud, so Balloon stays dormant until ${replacement}.`;
     }
     return ` Points still shows the earlier tiled cloud until ${replacement}.`;

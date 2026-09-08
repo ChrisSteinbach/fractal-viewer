@@ -1,5 +1,6 @@
 import {
   isFlatTransform,
+  symmetryIsNonFlat,
   systemPartsAreNonFlat,
   toTransform4,
 } from "../fractal/affine4";
@@ -22,10 +23,12 @@ import {
 import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
 import { buildEscapeDE4 } from "../fractal/escape-de-4d";
 import { buildBulbDE } from "../fractal/bulb-de";
-import { buildBalloon } from "../fractal/balloon-de";
+import { buildBalloon, buildBalloonFromBall } from "../fractal/balloon-de";
+import { resolvePointTilingSession } from "../fractal/point-tiling-session";
 import { resolveShapeTrap } from "../fractal/shape-trap";
 import {
   isResolvedLatticeTiling,
+  isLatticeTilingSpec,
   resolveTiling,
   type ResolvedLatticeTiling,
   type ResolvedTiling,
@@ -1024,7 +1027,8 @@ async function main(): Promise<void> {
       request.schedule === (state.schedule ?? null) &&
       request.symmetry === state.symmetry &&
       (request.tiling ?? null) === (state.tiling ?? null) &&
-      (request.balloonEcho ?? false) === state.balloonEcho &&
+      (!(state.tiling && isLatticeTilingSpec(state.tiling)) ||
+        (request.balloonEcho ?? false) === state.balloonEcho) &&
       request.numPoints === state.numPoints
     );
   }
@@ -2671,6 +2675,10 @@ async function main(): Promise<void> {
               (b4.maxZ - b4.minZ) / 2,
               (b4.maxW - b4.minW) / 2,
             ],
+        result.tilingOriginRadius,
+        result.pointTiling?.availability === "active"
+          ? result.pointTiling.kind
+          : undefined,
       );
       // setPoints4 dropped the previous cloud's color attribute; re-point the
       // shader at the CURRENT mode's source (re-baking for the baked modes).
@@ -2684,7 +2692,14 @@ async function main(): Promise<void> {
     } else {
       lastResult = result;
       fourDResult = null;
-      scene.setPoints(result.positions, result.colors);
+      scene.setPoints(
+        result.positions,
+        result.colors,
+        result.tilingOriginRadius,
+        result.pointTiling?.availability === "active"
+          ? result.pointTiling.kind
+          : undefined,
+      );
       // The colors were baked worker-side at REQUEST-time mode/contrast/ramp
       // palette; if any changed while this generation was in flight, recolor
       // the fresh cloud from live state (recolor() reads the just-cached
@@ -2711,13 +2726,9 @@ async function main(): Promise<void> {
       );
     }
 
-    // Balloon and tiled Points are mutually exclusive. Presentation follows
-    // the LANDED geometry: an authored Balloon waits disabled while a tiled
-    // result remains on screen, then becomes live when its queued/refused
-    // ordinary cloud lands. Empty/underfilled active tiling is still active.
-    scene.setBalloonEchoEnabled(
-      state.balloonEcho && result.pointTiling?.availability !== "active",
-    );
+    // The scene gates lattice echoes against LANDED geometry, and the upload
+    // above installs the finite origin ball before making its echo visible.
+    scene.setBalloonEchoEnabled(state.balloonEcho);
     if (result.pointTiling || state.tiling || pointTilingDisclosureWasStale) {
       ui.updateLabels(state);
     }
@@ -3613,7 +3624,32 @@ async function main(): Promise<void> {
    */
   function flameBalloonEchoSnapshot(): FlameBalloonEcho | undefined {
     if (!state.balloonEcho) return undefined;
-    const balloon = scene.flameBalloon(state.balloonRadius);
+    let balloon = scene.flameBalloon(state.balloonRadius);
+    if (!balloon && state.tiling && !isLatticeTilingSpec(state.tiling)) {
+      // A held empty Points result has no sampled ball, but a current finite
+      // Flame source can still be nonempty. Resolve its certified ball using
+      // the same retained entry dimension/symmetry as the worker, so the echo
+      // payload keeps the authored radius/tint across that empty-cloud gap.
+      const symmetry =
+        !viewIs4D && symmetryIsNonFlat(state.symmetry)
+          ? { order: 1, plane: state.symmetry.plane }
+          : state.symmetry;
+      const resolution = resolvePointTilingSession(
+        state.transforms,
+        state.finalTransform ?? null,
+        symmetry,
+        state.schedule ?? null,
+        state.tiling,
+        true,
+        viewIs4D,
+      );
+      if (resolution.status === "active") {
+        balloon = buildBalloonFromBall(
+          { center: [0, 0, 0], radius: resolution.originVisibleRadius },
+          state.balloonRadius,
+        );
+      }
+    }
     if (!balloon) return undefined;
     return {
       balloon,
@@ -3711,8 +3747,7 @@ async function main(): Promise<void> {
       // the historical backdrop command and lifecycle shape.
       ...(state.tiling ? { tiling: state.tiling } : {}),
       // Only the legality bit: the backdrop deliberately omits the echo
-      // payload itself, so a tiled+balloon document refuses tiling exactly
-      // like full Flame and renders the plain image.
+      // payload itself while retaining finite tiling's ordinary image path.
       ...(state.balloonEcho ? { balloonEchoEnabled: true } : {}),
       fourD: fourDRenderSnapshot(),
     });
@@ -4057,6 +4092,10 @@ async function main(): Promise<void> {
       resolution.status === "active" &&
         resolution.application === "material-live"
         ? resolution.resolved
+        : null,
+      resolution.status === "active" &&
+        !isResolvedLatticeTiling(resolution.resolved)
+        ? resolution.originVisibleRadius
         : null,
     );
     ui.setSolidTilingStatus(resolution);
@@ -5639,9 +5678,8 @@ async function main(): Promise<void> {
       // Resolve the finite reflection group exactly once at the session
       // door. Both engines receive this same canonical record; neither
       // renderer is allowed to re-derive roots or interpret the authored
-      // group independently. Balloon remains a hard combination refusal:
-      // an orbit's inverted echo is not the echo's orbit, so there is no
-      // certified estimator composition to render.
+      // group independently. Finite tiling feeds the outer Balloon wrapper;
+      // only the infinite lattice lacks the enclosing ball it needs.
       // The lattice arm resolves ONLY after the relevant DE exists: h =
       // cellScale * R derives from the estimator's certified radius, and
       // which radius is the authority depends on the arm (visible for the
@@ -5649,9 +5687,13 @@ async function main(): Promise<void> {
       // THROWS for a lattice block without that radius, so each arm below
       // resolves against its own DE — never here, where no DE exists yet.
       const surfaceTilingSpec = state.tiling;
-      if (surfaceTilingSpec && state.balloonEcho) {
+      if (
+        surfaceTilingSpec &&
+        isLatticeTilingSpec(surfaceTilingSpec) &&
+        state.balloonEcho
+      ) {
         ui.flashToast(
-          "Space tiling is unavailable while Balloon echo is on; turn off either authored effect.",
+          "Lattice tiling is unavailable with Balloon: the infinite set has no finite enclosing ball. Choose finite reflections or turn Balloon off.",
         );
         queueMicrotask(() => surfaceSession.exit());
         return { post: () => {}, terminate: () => teardownSurfaceCompute() };
@@ -6322,6 +6364,7 @@ async function main(): Promise<void> {
               de,
               state.balloonEcho,
               groundPlane,
+              surfaceTiling,
             );
           } else {
             // This session runs the WebGL tracer — the progress row says why
@@ -9304,10 +9347,7 @@ async function main(): Promise<void> {
       }
     },
     syncPointBalloonEcho: (enabled) => {
-      const result = viewIs4D ? fourDResult : lastResult;
-      scene.setBalloonEchoEnabled(
-        enabled && result?.pointTiling?.availability !== "active",
-      );
+      scene.setBalloonEchoEnabled(enabled);
     },
     refreshSurfaceEligibility,
     recolor,

@@ -78,12 +78,38 @@ describe("resolveSolidTilingSession", () => {
     });
   });
 
-  it("refuses Balloon and mesh clips", () => {
-    expect(resolve({ group: "a3" }, true).status).toBe("refused");
+  it("refuses infinite lattice with Balloon in either dimension, and mesh clips", () => {
+    for (const nonFlat of [false, true]) {
+      expect(
+        resolve({ kind: "lattice", cellScale: 1.5 }, true, nonFlat),
+      ).toMatchObject({
+        status: "refused",
+        note: expect.stringMatching(/finite enclosing ball/),
+      });
+    }
     expect(resolve({ group: "a3", clip: STAR_PRISM_SHAPE }).status).toBe(
       "refused",
     );
   });
+
+  it.each([
+    ["a3", false],
+    ["b3", false],
+    ["h3", false],
+    ["a4", true],
+    ["b4", true],
+    ["f4", true],
+  ] as const)(
+    "composes Balloon with finite %s in its original application arm",
+    (group, nonFlat) => {
+      const result = resolve({ group }, true, nonFlat);
+      expect(result).toEqual(resolve({ group }, false, nonFlat));
+      expect(result).toMatchObject({
+        status: "active",
+        application: nonFlat ? "worker-baked" : "material-live",
+      });
+    },
+  );
 
   it("refuses a dimension mismatch on a 3D render", () => {
     const result = resolve({ group: "a4" });

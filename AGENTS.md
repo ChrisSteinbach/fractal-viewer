@@ -928,20 +928,19 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     symmetry and schedule also govern the shared automatic clip fit.
     Point consumers preserve symmetry → schedule → lens → membership →
     images → 4D view → deposit, with unchanged bounded work and primary RNG.
-    Solid folds queries live in 3D (hierarchy suspended) and bakes images
-    before projection in 4D (hierarchy kept, worker restarts from entry seed).
-    Per-consumer budgets, edit timing, the generated backdrop and remaining
+    FINITE BALLOON COMPOSES: tile, slice/project, then invert the displayed
+    set through its certified origin ball; lattice Balloon stays refused.
+    Solid folds live in 3D (hierarchy off) and bakes before 4D projection
+    (hierarchy kept, restarts from entry seed). Budgets, timing, backdrop and
     refusals live in the contract's consumer matrix. Absent/refused stays
     literal legacy; `scripts/tiling-symmetry.harness.ts` and its browser gate
     certify the widened combination without improving the core approximation.
     Finite WGSL wire is one
     live u32 in a 16-byte tail (12 zero pad; maxima 560 B/848 B). Bench-pinned
     on verified Iris and browser-gated by `scripts/surface-lattice.verify.mjs`;
-    authoring, presets, app-copy, workflow behavior, forward-renderer
-    qualification scopes and both Firefox teardowns (--tiling) ride
-    `scripts/tiling-ui.verify.mjs` and `flame-teardown`, qualified
-    2026-09-02; cancel, WebGL fallback and fold-4D refusal ride their owning
-    lifecycle gates; the Flame proposal-CDF refusal's sheet is
+    authoring and teardown gates are catalogued in the contract;
+    `scripts/tiling-balloon.verify.mjs` gates all modes, both Surface engines,
+    reload/export and held Points. The Flame proposal-CDF refusal's sheet is
     `scripts/flame-tiling-4d.harness.ts`. Full contract and proof:
     `docs/tiling-contract.md`.
   - `surface-finish.ts` — the per-transform surface FINISH's meaning:

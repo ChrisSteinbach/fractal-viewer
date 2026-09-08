@@ -422,8 +422,8 @@ export function accumulateFlame(
   if (tilingPlan !== undefined && tilingPlan.dimension !== 3) {
     throw new RangeError("3D flame requires a 3D point-tiling plan");
   }
-  if (tilingPlan !== undefined && echo !== undefined) {
-    throw new RangeError("Flame point tiling is unavailable with Balloon");
+  if (tilingPlan?.kind === "lattice" && echo !== undefined) {
+    throw new RangeError("Flame lattice tiling is unavailable with Balloon");
   }
   const pointTiling =
     tilingPlan === undefined
@@ -524,7 +524,15 @@ export function accumulateFlame(
   let tiledB = 0;
   let tiledImageVisitor: PointTilingImageVisitor | undefined;
   if (tilingPlan !== undefined) {
-    tiledImageVisitor = (imageX, imageY, imageZ, _w, weight) => {
+    const depositTiled = (
+      imageX: number,
+      imageY: number,
+      imageZ: number,
+      weight: number,
+      r: number,
+      g: number,
+      b: number,
+    ): void => {
       const cw = rw0 * imageX + rw1 * imageY + rw2 * imageZ + rw3;
       if (cw <= 0) return;
       const cx = rx0 * imageX + rx1 * imageY + rx2 * imageZ + rx3;
@@ -538,9 +546,40 @@ export function accumulateFlame(
       if (hit > maxHits) maxHits = hit;
       hitMass += weight;
       const o = bucket * 3;
-      sumRGB[o] += tiledR * weight;
-      sumRGB[o + 1] += tiledG * weight;
-      sumRGB[o + 2] += tiledB * weight;
+      sumRGB[o] += r * weight;
+      sumRGB[o + 1] += g * weight;
+      sumRGB[o + 2] += b * weight;
+    };
+    tiledImageVisitor = (imageX, imageY, imageZ, _w, weight) => {
+      depositTiled(imageX, imageY, imageZ, weight, tiledR, tiledG, tiledB);
+      if (echo === undefined) return;
+
+      // Echo each selected finite image, including an off-frame primary.
+      // Reflections preserve the certified origin ball. Its source colour
+      // provenance stays canonical; the independent echo LUT reads the image.
+      echoSource[0] = imageX;
+      echoSource[1] = imageY;
+      echoSource[2] = imageZ;
+      let r = tiledR;
+      let g = tiledG;
+      let b = tiledB;
+      if (echoColorLUT !== undefined) {
+        const u = balloonPaletteCoordinate(echo.balloon, echoSource);
+        const li = Math.min(255, (u * 256) | 0) * 3;
+        r = echoColorLUT[li];
+        g = echoColorLUT[li + 1];
+        b = echoColorLUT[li + 2];
+      }
+      const inv = invertBalloon(echo.balloon, echoSource, echoInverted);
+      depositTiled(
+        inv[0],
+        inv[1],
+        inv[2],
+        weight * echo.weight,
+        r + (echo.tint[0] - r) * echo.tintStrength,
+        g + (echo.tint[1] - g) * echo.tintStrength,
+        b + (echo.tint[2] - b) * echo.tintStrength,
+      );
     };
   }
 

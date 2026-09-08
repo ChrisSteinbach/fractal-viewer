@@ -66,8 +66,9 @@ function refused(
  * Document incompatibilities are classified before estimator construction,
  * mirroring `point-tiling-session.ts`'s order. The volume already contains
  * the kaleidoscope, whose intersection with the chamber is the canonical
- * content. Both its bound and content probe include symmetry. Balloon still
- * has no composed query path; a mesh-backed clip cannot be tested in the
+ * content. Both its bound and content probe include symmetry. Finite tiling
+ * composes beneath Balloon's displayed-space inversion, while an infinite
+ * lattice has no enclosing ball; a mesh-backed clip cannot be tested in the
  * query fold; and a forward escape-time/bulb volume is reset debris, not a
  * sample of the Surface set. Only an inverse-IFS attractor is tileable — the
  * same gate the point family's session resolves against.
@@ -92,9 +93,9 @@ export function resolveSolidTilingSession(
     };
   }
 
-  if (balloonEcho) {
+  if (balloonEcho && isLatticeTilingSpec(tiling)) {
     return refused(
-      "Solid tiling is unavailable with Balloon; turn Balloon off.",
+      "Infinite lattice tiling is unavailable with Balloon: the repeated set has no finite enclosing ball. Choose a finite reflection group or turn Balloon off.",
       application,
     );
   }

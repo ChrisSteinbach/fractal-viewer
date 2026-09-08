@@ -178,9 +178,9 @@ export function accumulateFlame4(
   if (tilingPlan !== undefined && tilingPlan.dimension !== 4) {
     throw new RangeError("accumulateFlame4 requires a 4D point-tiling plan");
   }
-  if (tilingPlan !== undefined && echo !== undefined) {
+  if (tilingPlan?.kind === "lattice" && echo !== undefined) {
     throw new RangeError(
-      "accumulateFlame4 point tiling is unavailable with Balloon",
+      "accumulateFlame4 lattice tiling is unavailable with Balloon",
     );
   }
   const hist = histogram ?? createFlameHistogram(width, height);
@@ -318,15 +318,21 @@ export function accumulateFlame4(
         ): void => {
           const cw =
             rw0 * imageX + rw1 * imageY + rw2 * imageZ + rw3 * imageW + rw4;
-          if (cw <= 0) return;
-          const cx =
-            rx0 * imageX + rx1 * imageY + rx2 * imageZ + rx3 * imageW + rx4;
-          const cy =
-            ry0 * imageX + ry1 * imageY + ry2 * imageZ + ry3 * imageW + ry4;
-          const col = Math.floor((cx / cw + 1) * 0.5 * width);
-          const row = Math.floor((1 - cy / cw) * 0.5 * height);
-          if (col < 0 || col >= width || row < 0 || row >= height) return;
-
+          let primaryBucket = -1;
+          if (cw > 0) {
+            const cx =
+              rx0 * imageX + rx1 * imageY + rx2 * imageZ + rx3 * imageW + rx4;
+            const cy =
+              ry0 * imageX + ry1 * imageY + ry2 * imageZ + ry3 * imageW + ry4;
+            const col = Math.floor((cx / cw + 1) * 0.5 * width);
+            const row = Math.floor((1 - cy / cw) * 0.5 * height);
+            if (col >= 0 && col < width && row >= 0 && row < height) {
+              primaryBucket = row * width + col;
+            }
+          }
+          // Keep the no-echo lattice's early camera rejection: most of its
+          // presentation carrier is off-frame and needs no colour/slice work.
+          if (primaryBucket < 0 && echo === undefined) return;
           const sRaw =
             rs0 * imageX + rs1 * imageY + rs2 * imageZ + rs3 * imageW + rs4;
           const sScaled = sRaw * invWAmp;
@@ -349,14 +355,67 @@ export function accumulateFlame4(
             b = rgb[2];
           }
 
+          if (primaryBucket >= 0) {
+            const hit = (hits[primaryBucket] += weight);
+            if (hit > maxHits) maxHits = hit;
+            hitMass += weight;
+            const offset = primaryBucket * 3;
+            sumRGB[offset] += r * weight;
+            sumRGB[offset + 1] += g * weight;
+            sumRGB[offset + 2] += b * weight;
+          }
+          if (echo === undefined) return;
+
+          // IMAGE -> PROJECT -> INVERT. Keep each image's w-ramp and slice
+          // weight, then echo the point actually displayed. A primary outside
+          // the camera can still have a visible echo, so only its deposit
+          // above is clipped. Neither image nor echo returns to the orbit.
+          const rp = rotorProjection!;
+          echoSource[0] =
+            rp[0] * imageX +
+            rp[1] * imageY +
+            rp[2] * imageZ +
+            rp[3] * imageW +
+            rp[4];
+          echoSource[1] =
+            rp[5] * imageX +
+            rp[6] * imageY +
+            rp[7] * imageZ +
+            rp[8] * imageW +
+            rp[9];
+          echoSource[2] =
+            rp[10] * imageX +
+            rp[11] * imageY +
+            rp[12] * imageZ +
+            rp[13] * imageW +
+            rp[14];
+          if (echoColorLUT !== undefined) {
+            const u = balloonPaletteCoordinate(echo.balloon, echoSource);
+            const li = Math.min(255, (u * 256) | 0) * 3;
+            r = echoColorLUT[li];
+            g = echoColorLUT[li + 1];
+            b = echoColorLUT[li + 2];
+          }
+          const inv = invertBalloon(echo.balloon, echoSource, echoInverted);
+          const cp = cameraProjection!;
+          const ecw =
+            cp[12] * inv[0] + cp[13] * inv[1] + cp[14] * inv[2] + cp[15];
+          if (ecw <= 0) return;
+          const ecx = cp[0] * inv[0] + cp[1] * inv[1] + cp[2] * inv[2] + cp[3];
+          const ecy = cp[4] * inv[0] + cp[5] * inv[1] + cp[6] * inv[2] + cp[7];
+          const col = Math.floor((ecx / ecw + 1) * 0.5 * width);
+          const row = Math.floor((1 - ecy / ecw) * 0.5 * height);
+          if (col < 0 || col >= width || row < 0 || row >= height) return;
           const bucket = row * width + col;
-          const hit = (hits[bucket] += weight);
+          const echoWeight = weight * echo.weight;
+          const hit = (hits[bucket] += echoWeight);
           if (hit > maxHits) maxHits = hit;
-          hitMass += weight;
+          hitMass += echoWeight;
           const offset = bucket * 3;
-          sumRGB[offset] += r * weight;
-          sumRGB[offset + 1] += g * weight;
-          sumRGB[offset + 2] += b * weight;
+          const t = echo.tintStrength;
+          sumRGB[offset] += (r + (echo.tint[0] - r) * t) * echoWeight;
+          sumRGB[offset + 1] += (g + (echo.tint[1] - g) * t) * echoWeight;
+          sumRGB[offset + 2] += (b + (echo.tint[2] - b) * t) * echoWeight;
         };
 
   for (let n = 0; n < iterations; n++) {

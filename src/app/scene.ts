@@ -71,7 +71,6 @@ import {
   packVoxelBalloonPalette,
   packVoxelBalloonTint,
   packVoxelPresentation,
-  sampleVoxelAlpha,
   setVoxelBalloon,
   solidBalloonCenterIsEmpty,
   updateVoxelMaxHierarchyTexture,
@@ -137,7 +136,11 @@ import { resolveShapeTrap } from "../fractal/shape-trap";
 import type { BulbDE } from "../fractal/bulb-de";
 import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
-import { surfaceDescentCostWeight } from "../fractal/surface-de";
+import {
+  surfaceDescentCostWeight,
+  surfaceOriginVisibleRadius,
+} from "../fractal/surface-de";
+import { sampleSolidTiledVoxelAlpha } from "../fractal/solid-tiling-density";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import { latticePresentationPolicyOf } from "../fractal/lattice-march";
 import {
@@ -940,6 +943,7 @@ export class FractalScene {
     0,
   );
   private balloonEchoSourceSphereReady = false;
+  private landedPointTilingKind: "finite" | "lattice" | undefined;
   /** Solid's own inversion ball. In 3D it matches the cloud sphere above; in
    * 4D it is deliberately origin-centred with a full, slice-independent 4D
    * radius, matching balloonBall4 rather than Points' projection-centred ball. */
@@ -948,6 +952,9 @@ export class FractalScene {
     0,
   );
   private solidBalloonSourceSphereReady = false;
+  /** Finite Solid content keeps its certified origin ball across live clip
+   * edits and 4D slice/rotor rebuilds, independently of the Points request. */
+  private solidTilingOriginRadius: number | null = null;
   /** Latest authored Solid look. Null only before boot's first settings push;
    * cloud uploads re-derive presentation from it without consulting the
    * camera-independent voxel grid. */
@@ -2083,8 +2090,14 @@ export class FractalScene {
   }
 
   /** Upload a freshly generated point cloud (interleaved xyz + rgb buffers). */
-  setPoints(positions: Float32Array, colors: Float32Array): void {
+  setPoints(
+    positions: Float32Array,
+    colors: Float32Array,
+    tilingOriginRadius?: number,
+    tilingKind?: "finite" | "lattice",
+  ): void {
     this.renderNeeded = true;
+    this.landedPointTilingKind = tilingKind;
     this.pointGeometry.setAttribute(
       "position",
       new THREE.BufferAttribute(positions, 3),
@@ -2117,8 +2130,12 @@ export class FractalScene {
     const sphere = this.pointGeometry.boundingSphere;
     if (positions.length > 0 && sphere) {
       this.balloonEchoSourceSphere.copy(sphere);
+      if (tilingKind === "finite" && tilingOriginRadius !== undefined) {
+        this.balloonEchoSourceSphere.center.set(0, 0, 0);
+        this.balloonEchoSourceSphere.radius = tilingOriginRadius;
+      }
       this.balloonEchoSourceSphereReady = true;
-      this.solidBalloonSourceSphere.copy(sphere);
+      this.solidBalloonSourceSphere.copy(this.balloonEchoSourceSphere);
       this.solidBalloonSourceSphereReady = true;
     } else {
       this.balloonEchoSourceSphereReady = false;
@@ -2136,6 +2153,7 @@ export class FractalScene {
     // geometry for one frame after a delayed enable.
     this.syncBalloonEchoUniforms();
     this.syncSolidBalloonUniforms();
+    this.syncBalloonEchoVisibility();
   }
 
   /**
@@ -2159,8 +2177,11 @@ export class FractalScene {
     radius: number,
     originRadius: number,
     halfExtents: Vec4,
+    tilingOriginRadius?: number,
+    tilingKind?: "finite" | "lattice",
   ): void {
     this.renderNeeded = true;
+    this.landedPointTilingKind = tilingKind;
     this.pointGeometry.setAttribute(
       "position",
       new THREE.BufferAttribute(positions, 3),
@@ -2199,6 +2220,10 @@ export class FractalScene {
     // (and pulsing) from each projected pose.
     this.balloonEchoSourceSphere.center.set(center[0], center[1], center[2]);
     this.balloonEchoSourceSphere.radius = radius;
+    if (tilingKind === "finite" && tilingOriginRadius !== undefined) {
+      this.balloonEchoSourceSphere.center.set(0, 0, 0);
+      this.balloonEchoSourceSphere.radius = tilingOriginRadius;
+    }
     this.balloonEchoSourceSphereReady = positions.length > 0;
     // Solid slices to a 3D grid BEFORE the material ever sees it. Its
     // inversion nevertheless uses balloonBall4's semantic ball: origin plus
@@ -2207,12 +2232,16 @@ export class FractalScene {
     // maximum |p4| from chaos-game-4d.ts's existing radius pass and is
     // invariant under the frozen rotor/slice snapshot.
     this.solidBalloonSourceSphere.center.set(0, 0, 0);
-    this.solidBalloonSourceSphere.radius = originRadius;
+    this.solidBalloonSourceSphere.radius =
+      tilingKind === "finite" && tilingOriginRadius !== undefined
+        ? tilingOriginRadius
+        : originRadius;
     this.solidBalloonSourceSphereReady = positions.length > 0;
     this.applySolidPresentation();
     this.solidBalloonCenterAlpha = 0;
     this.syncBalloonEchoUniforms();
     this.syncSolidBalloonUniforms();
+    this.syncBalloonEchoVisibility();
 
     // The scaffold pivots on the same center, which a fresh generation may
     // have moved — re-pose it.
@@ -2867,8 +2896,8 @@ export class FractalScene {
    * Toggle the balloon echo: a second point cloud sharing the
    * explorer's own geometry, sphere-inverted about its enclosing ball — see
    * {@link syncBalloonEchoUniforms} and fractal/balloon-de.ts's module doc.
-   * Visible exactly when `on`; the shader itself selects direct 3D inversion
-   * or 4D project-then-invert (see {@link setFourDActive}).
+   * Visible when `on` and finite/ordinary geometry has landed; the shader
+   * selects direct 3D inversion or 4D project-then-invert.
    */
   setBalloonEchoEnabled(on: boolean): void {
     if (this.balloonEchoEnabled === on) return;
@@ -3045,33 +3074,31 @@ export class FractalScene {
    */
   private syncSolidBalloonUniforms(): void {
     const available = this.solidBalloonAvailable();
+    const tiling = materialVoxelTiling(this.voxelMaterial);
+    const finiteRadius = this.solidTilingOriginRadius ?? null;
     if (
       !this.balloonEchoEnabled ||
-      !this.solidBalloonSourceSphereReady ||
-      !(this.solidBalloonSourceSphere.radius > 0) ||
-      !available
+      (finiteRadius === null &&
+        (!this.solidBalloonSourceSphereReady ||
+          !(this.solidBalloonSourceSphere.radius > 0))) ||
+      !available ||
+      (tiling !== null && isResolvedLatticeTiling(tiling))
     ) {
       setVoxelBalloon(this.voxelMaterial, null);
       return;
     }
     const sphere = this.solidBalloonSourceSphere;
-    const balloon = buildBalloonFromBall(
-      {
-        center: [sphere.center.x, sphere.center.y, sphere.center.z],
-        radius: sphere.radius,
-      },
-      this.balloonEchoRadius,
-    );
-    // Tiling and Balloon are a frozen combination refusal: the material never
-    // compiles both, so a balloon landing while a tiled arm is installed
-    // clears the query arm here — main.ts's session resolution and panel
-    // disclosure own the refusal and its recovery.
-    if (materialVoxelTiling(this.voxelMaterial)) {
-      installVoxelTiling(this.voxelMaterial, null);
-    }
+    const ball =
+      finiteRadius !== null
+        ? { center: [0, 0, 0] as Vec3, radius: finiteRadius }
+        : {
+            center: [sphere.center.x, sphere.center.y, sphere.center.z] as Vec3,
+            radius: sphere.radius,
+          };
+    const balloon = buildBalloonFromBall(ball, this.balloonEchoRadius);
     setVoxelBalloon(this.voxelMaterial, {
       center: balloon.center,
-      radius: sphere.radius,
+      radius: ball.radius,
       rho: balloon.rho,
       R: balloon.R,
     });
@@ -3093,7 +3120,10 @@ export class FractalScene {
    * not whether the authored echo exists.
    */
   private syncBalloonEchoVisibility(): void {
-    const visible = this.balloonEchoEnabled;
+    const visible =
+      this.balloonEchoEnabled &&
+      this.balloonEchoSourceSphereReady &&
+      this.landedPointTilingKind !== "lattice";
     if (this.balloonEchoPoints.visible === visible) return;
     this.balloonEchoPoints.visible = visible;
     this.renderNeeded = true;
@@ -4343,18 +4373,7 @@ export class FractalScene {
     // AABB; a grid event moves the bounds (and the reflected copies with
     // them), so re-derive it after every upload while a finite arm is live.
     this.syncVoxelTilingPresentationRadius();
-    if (this.solidBalloonSourceSphereReady) {
-      const center = this.solidBalloonSourceSphere.center;
-      this.solidBalloonCenterAlpha = sampleVoxelAlpha(
-        data,
-        size,
-        boundsMin,
-        boundsMax,
-        [center.x, center.y, center.z],
-      );
-    } else {
-      this.solidBalloonCenterAlpha = 0;
-    }
+    this.syncSolidBalloonCenterAlpha();
     // A progressive upload can cross (or clear) the centre-density refusal
     // as log normalization converges, so re-answer it on every grid event.
     this.syncSolidBalloonUniforms();
@@ -4421,16 +4440,47 @@ export class FractalScene {
   /**
    * Install or clear the Solid query-space tiling arm. The density volume and
    * the worker are never touched: tiling is pure material state, so edits are
-   * live. Balloon is a frozen combination refusal — installing tiling over a
-   * balloon arm clears that arm first, exactly like the surface system
-   * setters' `if (tiling) packSurfaceBalloon(material, null)`, and main.ts's
-   * session resolution owns the refusal disclosure.
+   * live. A finite origin radius also accompanies worker-baked 4D tiling,
+   * whose material deliberately has no query fold. Infinite lattices retain
+   * their Balloon refusal.
    */
-  setVoxelTiling(tiling: ResolvedTiling | null): void {
+  setVoxelTiling(
+    tiling: ResolvedTiling | null,
+    finiteOriginRadius: number | null = null,
+  ): void {
     this.renderNeeded = true;
-    if (tiling) setVoxelBalloon(this.voxelMaterial, null);
+    if (tiling && isResolvedLatticeTiling(tiling)) {
+      setVoxelBalloon(this.voxelMaterial, null);
+    }
+    this.solidTilingOriginRadius = finiteOriginRadius;
     installVoxelTiling(this.voxelMaterial, tiling);
     this.syncVoxelTilingPresentationRadius();
+    this.syncSolidBalloonCenterAlpha();
+    this.syncSolidBalloonUniforms();
+  }
+
+  /** Probe the same displayed density the material inverts. A live finite
+   * clip can remove an occupied centre without rebuilding its source grid. */
+  private syncSolidBalloonCenterAlpha(): void {
+    const finiteRadius = this.solidTilingOriginRadius ?? null;
+    if (!this.solidBalloonSourceSphereReady && finiteRadius === null) {
+      this.solidBalloonCenterAlpha = 0;
+      return;
+    }
+    const center = this.solidBalloonSourceSphere.center;
+    const u = this.voxelMaterial.uniforms;
+    const min = u.uBoundsMin.value as THREE.Vector3;
+    const size = u.uBoundsSize.value as THREE.Vector3;
+    const tiling = materialVoxelTiling(this.voxelMaterial);
+    const image = this.voxelTexture.image;
+    this.solidBalloonCenterAlpha = sampleSolidTiledVoxelAlpha(
+      image.data as Uint8Array,
+      image.width,
+      [min.x, min.y, min.z],
+      [min.x + size.x, min.y + size.y, min.z + size.z],
+      finiteRadius !== null ? [0, 0, 0] : [center.x, center.y, center.z],
+      tiling && !isResolvedLatticeTiling(tiling) ? tiling : null,
+    );
   }
 
   /** Re-derive the finite arm's presentation carrier radius from the CURRENT
@@ -4551,11 +4601,8 @@ export class FractalScene {
     // source's fallback resolution keys on this (the stored document block
     // survives for the next forward session).
     this.surfaceShapeTrapLive = false;
-    // A preceding balloon session can leave its compile gate on until this
-    // new system's stored intent is re-applied below. Clear that stale arm
-    // before installing tiling so the material packer's explicit
-    // tiling+balloon refusal continues to mean a real simultaneous request,
-    // not ordinary balloon -> tiled session replacement.
+    // A preceding session can leave its Balloon compile gate on. Clear it
+    // while replacing tiling, then apply the new ball and stored intent.
     if (tiling) packSurfaceBalloon(this.surfaceMaterial, null);
     packSurfaceSystem(this.surfaceMaterial, de, colors, trapIndices, tiling);
     // The balloon certifies against the DE's OWN ball, so a
@@ -4564,7 +4611,10 @@ export class FractalScene {
     // ball, not the previous one's.
     const focusBall = balloonBall(de);
     this.surfaceFocusBall = focusBall;
-    this.surfaceBalloonBall = focusBall;
+    this.surfaceBalloonBall =
+      tiling && !isResolvedLatticeTiling(tiling)
+        ? { center: [0, 0, 0], radius: surfaceOriginVisibleRadius(de) }
+        : focusBall;
     this.applySurfaceBalloon();
     // The ground plane drops under the same ball, re-derived
     // and re-asserted per install exactly like the balloon above — AFTER
@@ -4860,10 +4910,11 @@ export class FractalScene {
   } | null {
     const ball = this.surfaceBalloonBall;
     if (!ball) return null;
+    const balloon = buildBalloonFromBall(ball, this.surfaceBalloonRMult);
     return {
-      center: ball.center,
-      rho: ball.radius * BALLOON_RHO_MARGIN,
-      R: this.surfaceBalloonRMult * ball.radius,
+      center: balloon.center,
+      rho: balloon.rho,
+      R: balloon.R,
       far: BALLOON_FAR_CAP_RHO * ball.radius,
     };
   }
@@ -4875,6 +4926,11 @@ export class FractalScene {
    * into the material underneath — `setSurfaceSystem4`'s original move,
    * now needed in both directions). */
   private applySurfaceBalloon(): void {
+    // Compute owns its Balloon compile gate and re-derives the live payload
+    // from surfaceBalloonSpec at every frame. Dormant GLSL materials may
+    // still carry a previous lattice session, so do not rebuild them using
+    // this session's intent. A fallback installs its actual system first.
+    if (this.surfaceComputeActive) return;
     const spec = this.surfaceBalloonOn ? this.surfaceBalloonSpec() : null;
     const on4 = this.activeSurfaceMaterial === this.surfaceMaterial4;
     packSurfaceBalloon(this.surfaceMaterial, on4 ? null : spec);
@@ -5239,6 +5295,7 @@ export class FractalScene {
     de: SurfaceDE,
     balloon: boolean,
     groundPlane = false,
+    tiling: ResolvedTiling | null = null,
   ): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
@@ -5248,7 +5305,10 @@ export class FractalScene {
     this.surfaceShapeTrapLive = false;
     const focusBall = balloonBall(de);
     this.surfaceFocusBall = focusBall;
-    this.surfaceBalloonBall = focusBall;
+    this.surfaceBalloonBall =
+      tiling && !isResolvedLatticeTiling(tiling)
+        ? { center: [0, 0, 0], radius: surfaceOriginVisibleRadius(de) }
+        : focusBall;
     this.surfaceComputeBalloon = balloon;
     // The floor flag records the create-target's choice exactly
     // like `balloon` above; the ball it drops under is re-derived from

@@ -6658,6 +6658,7 @@ function withTilingGlsl(
   fourD: boolean,
   trap: ShapeSpec | null,
   hasMarchPair: boolean,
+  balloon = false,
 ): string {
   if (isResolvedLatticeTiling(tiling)) {
     return withLatticeTilingGlsl(source, tiling, fourD, trap, hasMarchPair);
@@ -6679,9 +6680,13 @@ function withTilingGlsl(
       "Space tiling clips support analytic ShapeSpec parts only; mesh clips are refused",
     );
   }
-  const marker = /\n#if SURFACE_GROUND_PLANE\n {2}\/\*\* Ground plane/.exec(
-    source,
-  );
+  // The finite estimator must be complete before Balloon inverts a query.
+  // Keep the historical ground-plane split for every non-balloon source.
+  const marker = (
+    balloon
+      ? /\n#if SURFACE_BALLOON\n#undef surfaceDE/
+      : /\n#if SURFACE_GROUND_PLANE\n {2}\/\*\* Ground plane/
+  ).exec(source);
   if (!marker || marker.index === undefined) {
     throw new Error("surface-material: tiling wrapper split point is missing");
   }
@@ -6690,6 +6695,14 @@ function withTilingGlsl(
     .slice(0, split)
     .replace(/\bsurfaceDE\b/g, "surfaceDETilingCore")
     .replace(/\bsurfaceDEMarch\b/g, "surfaceDEMarchTilingCore");
+  if (balloon) {
+    // The existing balloon macros rename the public descent. Tiling now
+    // owns that public boundary, so leave the renamed core/lens names local
+    // and give the tiled overloads the Fractal names explicitly below.
+    core = core
+      .replaceAll("#define surfaceDETilingCore surfaceDEFractal", "")
+      .replaceAll("#define surfaceDEMarchTilingCore surfaceDEMarchFractal", "");
+  }
   if (fourD) {
     let replaced = 0;
     core = core.replace(/vec4 q = uInvRotor \* vec4\(p, uW0\);/g, () => {
@@ -6755,6 +6768,32 @@ function withTilingGlsl(
       "patternSource = pos;",
       "patternSource = surfaceTilingHitPoint;",
     );
+  }
+  if (balloon) {
+    // The winning hit-info query has already set the canonical copy point.
+    // Keep cpos itself visible-3D for the independent balloon palette, while
+    // inherited height/radius/pattern repeat the tiled source's material.
+    replaceRequired(
+      "u = clamp(cpos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);",
+      fourD
+        ? "u = clamp((transpose(uInvRotor) * surfaceTilingHitPoint).y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);"
+        : "u = clamp(surfaceTilingHitPoint.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);",
+    );
+    if (fourD) {
+      replaceRequired(
+        "vec4 q4 = uInvRotor * vec4(cpos, uW0 + sStar * uSliceHalfW);",
+        "vec4 q4 = surfaceTilingHitPoint;",
+      );
+    } else {
+      replaceRequired(
+        "u = clamp(length(cpos) / uVisibleRadius, 0.0, 1.0);",
+        "u = clamp(length(surfaceTilingHitPoint) / uVisibleRadius, 0.0, 1.0);",
+      );
+      replaceRequired(
+        "patternSource = cpos;",
+        "patternSource = surfaceTilingHitPoint;",
+      );
+    }
   }
   const point = fourD ? "vec4" : "vec3";
   const rawQuery = fourD ? "uInvRotor * vec4(p, uW0)" : "p";
@@ -6844,7 +6883,13 @@ ${fourD ? "  surfaceTilingQuery4 = q;\n" : ""}  float inner = surfaceDETilingCor
   const marchWrapper = hasMarchPair
     ? tilingMarchSource(fourD, tiling.clip !== undefined, false)
     : "";
-  return `${core}${wrapper}${marchWrapper}${rest}`;
+  const tiled = `${wrapper}${marchWrapper}`;
+  const publicTiled = balloon
+    ? tiled
+        .replace(/\bsurfaceDE\b/g, "surfaceDEFractal")
+        .replace(/\bsurfaceDEMarch\b/g, "surfaceDEMarchFractal")
+    : tiled;
+  return `${core}${publicTiled}${rest}`;
 }
 
 /** Compile the mirrored affine-A1 lattice as a distinct source arm. The
@@ -7279,9 +7324,9 @@ export function surfaceFragmentResolvedFor(
     // either fold-shaped or bulb-shaped), so reaching this is a bug.
     throw new RangeError("SURFACE_BULB and SURFACE_ESCAPE are exclusive");
   }
-  if (tiling !== null && balloon !== 0) {
+  if (tiling && isResolvedLatticeTiling(tiling) && balloon !== 0) {
     throw new RangeError(
-      "SURFACE_TILING cannot compile into the balloon variant: an orbit's echo is not the echo's orbit",
+      "Lattice SURFACE_TILING cannot compile into the balloon variant: the infinite set has no finite enclosing ball for inversion",
     );
   }
   if (trap !== null && escape === 0 && bulb === 0) {
@@ -7329,6 +7374,7 @@ export function surfaceFragmentResolvedFor(
         condensation4,
         trap,
         condensation4 ? source.includes("vec2 surfaceDEMarch(") : lens !== 0,
+        balloon !== 0,
       )
     : source;
   const resolved = resolveVariantArms(gatedSource, {
@@ -7533,9 +7579,9 @@ export function installSurfaceTiling(
     );
   }
   const balloonKey = fourD ? "SURFACE4_BALLOON" : "SURFACE_BALLOON";
-  if (tiling && material.defines[balloonKey] === 1) {
+  if (lattice && material.defines[balloonKey] === 1) {
     throw new RangeError(
-      "Space tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+      "Lattice tiling cannot compose with balloon: the infinite set has no finite enclosing ball for inversion",
     );
   }
   // Lattice scale and the authority radius are live state: only a kind/clip
@@ -8004,9 +8050,9 @@ export function setSurfaceBalloon(
   spec: SurfaceBalloonSpec | null,
 ): void {
   const tiling = materialSurfaceTiling(material);
-  if (spec && tiling) {
+  if (spec && tiling && isResolvedLatticeTiling(tiling)) {
     throw new RangeError(
-      "Space tiling cannot compose with balloon: an orbit's echo is not the echo's orbit",
+      "Lattice tiling cannot compose with balloon: the infinite set has no finite enclosing ball for inversion",
     );
   }
   const u = material.uniforms;

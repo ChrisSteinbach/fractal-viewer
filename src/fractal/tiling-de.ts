@@ -6,10 +6,20 @@ import type { EscapeDE4 } from "./escape-de-4d";
 import { estimateEscapeDistance4 } from "./escape-de-4d";
 import { shapeSdf } from "./shapes";
 import type { ResolvedShapeTrap } from "./shape-trap";
-import type { SurfaceDE } from "./surface-de";
-import { estimateDistance, estimateDistanceRefined } from "./surface-de";
+import type { SurfaceDE, SurfaceDistanceSample } from "./surface-de";
+import {
+  estimateDistance,
+  estimateDistanceRefined,
+  estimateDistanceSample,
+  estimateDistanceRefinedSample,
+} from "./surface-de";
 import type { SurfaceDE4 } from "./surface-de-4d";
-import { estimateDistance4, estimateDistance4Refined } from "./surface-de-4d";
+import {
+  estimateDistance4,
+  estimateDistance4Refined,
+  estimateDistance4Sample,
+  estimateDistance4RefinedSample,
+} from "./surface-de-4d";
 import {
   foldLattice3,
   foldLattice4,
@@ -68,8 +78,9 @@ import type { Vec3, Vec4 } from "./types";
  * throws, both 4D entries) — the fold of a segment is a bent polyline
  * (per-point reflection sequences), and the slab's conservative-bound
  * contract does not survive it, so tiled 4D sessions run slice 0. Named
- * for context but enforced by routing: Balloon, whose composition order
- * has not been implemented across renderers. H4/reducible-group refusals
+ * for context but enforced by routing: infinite lattice + Balloon has no
+ * finite enclosing ball. Finite Balloon wraps these public estimators after
+ * dimensional reduction, with the certified origin-centred visible ball. H4/reducible-group refusals
  * live in the group vocabulary itself (`tiling.ts`'s `TILING_GROUPS`).
  * Kaleidoscope is part of the untouched core's set A: the same nearest-copy
  * proof accepts it in every supported dimension and core family, without
@@ -169,6 +180,16 @@ function isSegment(halfExtent: Vec4 | null): halfExtent is Vec4 {
   );
 }
 
+function assertTilingPoint4(halfExtent: Vec4 | null): void {
+  if (isSegment(halfExtent)) {
+    throw new Error(
+      "tiling-de: slab queries are refused under tiling — the fold of a " +
+        "segment is a bent polyline (the tiling + 4D slab refusal, " +
+        "docs/tiling-contract.md); tiled 4D sessions run slice 0",
+    );
+  }
+}
+
 /**
  * The 3D affine/fold wrapper over {@link estimateDistance}: fold the query
  * into the chamber, descend the untouched core at the folded point (cutoff
@@ -224,13 +245,7 @@ export function estimateDistance4Tiled(
   p: Vec4,
   halfExtent: Vec4 | null = null,
 ): number {
-  if (isSegment(halfExtent)) {
-    throw new Error(
-      "tiling-de: slab queries are refused under tiling — the fold of a " +
-        "segment is a bent polyline (the tiling + 4D slab refusal, " +
-        "docs/tiling-contract.md); tiled 4D sessions run slice 0",
-    );
-  }
+  assertTilingPoint4(halfExtent);
   const folded = foldQuery4(tiling, p);
   if (folded === null) return 0;
   const q = folded;
@@ -251,18 +266,84 @@ export function estimateDistance4RefinedTiled(
   cutoff = 0,
   halfExtent: Vec4 | null = null,
 ): number {
-  if (isSegment(halfExtent)) {
-    throw new Error(
-      "tiling-de: slab queries are refused under tiling — the fold of a " +
-        "segment is a bent polyline (the tiling + 4D slab refusal, " +
-        "docs/tiling-contract.md); tiled 4D sessions run slice 0",
-    );
-  }
+  assertTilingPoint4(halfExtent);
   const folded = foldQuery4(tiling, p);
   if (folded === null) return 0;
   const q = folded;
   const inner = estimateDistance4Refined(de, q, cutoff, halfExtent);
   return finish4(tiling, q, inner);
+}
+
+/** The paired march sample follows the same fold/clip composition as the
+ * scalar public estimator. Both lanes receive the same narrowing floor;
+ * below-cutoff acceptance already equals stride in the core, so a rejecting
+ * clip never exposes an inexact early-return stride. */
+export function estimateDistanceSampleTiled(
+  tiling: ResolvedTiling,
+  de: SurfaceDE,
+  p: Vec3,
+  cutoff = 0,
+  footprint = 0,
+): SurfaceDistanceSample {
+  const q = foldQuery3(tiling, p);
+  if (!q) return { d: 0, stride: 0 };
+  const inner = estimateDistanceSample(de, q, cutoff, footprint);
+  return {
+    d: finish3(tiling, q, inner.d),
+    stride: finish3(tiling, q, inner.stride),
+  };
+}
+
+/** Refined twin of the paired tiled march sample. */
+export function estimateDistanceRefinedSampleTiled(
+  tiling: ResolvedTiling,
+  de: SurfaceDE,
+  p: Vec3,
+  cutoff = 0,
+  footprint = 0,
+): SurfaceDistanceSample {
+  const q = foldQuery3(tiling, p);
+  if (!q) return { d: 0, stride: 0 };
+  const inner = estimateDistanceRefinedSample(de, q, cutoff, footprint);
+  return {
+    d: finish3(tiling, q, inner.d),
+    stride: finish3(tiling, q, inner.stride),
+  };
+}
+
+/** 4D paired twin; the same point-only tiling certificate refuses slabs. */
+export function estimateDistance4SampleTiled(
+  tiling: ResolvedTiling,
+  de: SurfaceDE4,
+  p: Vec4,
+  halfExtent: Vec4 | null = null,
+): SurfaceDistanceSample {
+  assertTilingPoint4(halfExtent);
+  const q = foldQuery4(tiling, p);
+  if (!q) return { d: 0, stride: 0 };
+  const inner = estimateDistance4Sample(de, q, halfExtent);
+  return {
+    d: finish4(tiling, q, inner.d),
+    stride: finish4(tiling, q, inner.stride),
+  };
+}
+
+/** Refined 4D paired twin, preserving the public cutoff argument. */
+export function estimateDistance4RefinedSampleTiled(
+  tiling: ResolvedTiling,
+  de: SurfaceDE4,
+  p: Vec4,
+  cutoff = 0,
+  halfExtent: Vec4 | null = null,
+): SurfaceDistanceSample {
+  assertTilingPoint4(halfExtent);
+  const q = foldQuery4(tiling, p);
+  if (!q) return { d: 0, stride: 0 };
+  const inner = estimateDistance4RefinedSample(de, q, cutoff, halfExtent);
+  return {
+    d: finish4(tiling, q, inner.d),
+    stride: finish4(tiling, q, inner.stride),
+  };
 }
 
 /**

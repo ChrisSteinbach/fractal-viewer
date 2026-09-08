@@ -17,7 +17,11 @@ import {
 } from "./color";
 import type { FourDRenderColor } from "./color";
 import { buildPaletteLUT } from "./palette";
-import { balloonPaletteCoordinate, buildBalloonFromBall } from "./balloon-de";
+import {
+  balloonPaletteCoordinate,
+  buildBalloonFromBall,
+  invertBalloon,
+} from "./balloon-de";
 import {
   composeFlameProjection4,
   composeRotorProjection4,
@@ -44,7 +48,12 @@ import type {
   PointTilingPlan,
 } from "./point-tiling";
 import type { ShapeSpec } from "./shapes";
-import { foldToChamber, resolveTiling, TILING_GROUP_INFO } from "./tiling";
+import {
+  enumerateOrbit,
+  foldToChamber,
+  resolveTiling,
+  TILING_GROUP_INFO,
+} from "./tiling";
 import type { TilingSpec } from "./tiling";
 import type { Transform4, Vec3, Vec4 } from "./types";
 
@@ -1802,6 +1811,128 @@ describe("accumulateFlame4 shape emitters (correctness oracle)", () => {
 });
 
 describe("accumulateFlame4 point-space tiling", () => {
+  it.each([false, true])(
+    "echoes each projected finite image with its slice weight (independent palette=%s)",
+    (independentPalette) => {
+      const source = foldToChamber(
+        TILING_GROUP_INFO.a4,
+        [0.11, -0.17, 0.19, 0.23],
+        [0, 0, 0, 0],
+      ) as Vec4;
+      const plan = pointPlan4({ group: "a4" });
+      const images: number[][] = [];
+      enumerateOrbit(TILING_GROUP_INFO.a4, source, images);
+      expect(images).toHaveLength(120);
+      const rotor = rotationMatrix4({ xw: 0.62, xy: 0.18, zw: -0.37 });
+      const rp = composeRotorProjection4(rotor, [0, 0, 0, 0]);
+      const projection = composeFlameProjection4(ORTHOGRAPHIC, rp);
+      const view: FourDView = {
+        ...FLAT_VIEW,
+        invWAmp: 2.3,
+        sliceOn: true,
+        sliceCenter: 0.15,
+        sliceWidth: 0.3,
+      };
+      const color: FourDRenderColor = {
+        kind: "wRamp",
+        side: W_SIDE_PALETTES.wBlueOrange,
+      };
+      const echoLut = independentPalette
+        ? buildPaletteLUT("aurora")!
+        : undefined;
+      const echo = {
+        balloon: buildBalloonFromBall({ center: [0, 0, 0], radius: 0.6 }, 0.5),
+        tint: [0.1, 0.7, 0.2] as Vec3,
+        tintStrength: 0.35,
+        weight: 1,
+      };
+      const prepared = prepareChaosGame4(fixedPointSystem4(source));
+      const actual = accumulateFlame4(
+        prepared,
+        projection,
+        view,
+        97,
+        97,
+        images.length,
+        mulberry32(7),
+        color,
+        undefined,
+        echo,
+        rp,
+        ORTHOGRAPHIC,
+        echoLut,
+        plan,
+      );
+      const expected = createFlameHistogram(97, 97);
+      const wrongOrder = createFlameHistogram(97, 97);
+      const deposit = (
+        hist: FlameHistogram,
+        p: Vec3,
+        rgb: Vec3,
+        weight: number,
+      ): void => {
+        const col = Math.floor((p[0] + 1) * 0.5 * 97);
+        const row = Math.floor((1 - p[1]) * 0.5 * 97);
+        if (col < 0 || col >= 97 || row < 0 || row >= 97) return;
+        const bucket = row * 97 + col;
+        hist.hits[bucket] += weight;
+        hist.hitMass += weight;
+        for (let channel = 0; channel < 3; channel++) {
+          hist.sumRGB[bucket * 3 + channel] += rgb[channel] * weight;
+        }
+      };
+      for (const image of images) {
+        const rotated = [0, 1, 2, 3].map((row) =>
+          image.reduce(
+            (sum, value, col) => sum + rotor[row * 4 + col] * value,
+            0,
+          ),
+        );
+        const p = rotated.slice(0, 3) as Vec3;
+        const s = Math.max(-1, Math.min(1, rotated[3] * view.invWAmp));
+        const rgb = wRampColor(s, W_SIDE_PALETTES.wBlueOrange);
+        const weight =
+          images.length *
+          sliceWeight(s, view.sliceCenter, view.sliceWidth, SLICE_GHOST_FLOOR);
+        deposit(expected, p, rgb, weight);
+        deposit(wrongOrder, p, rgb, weight);
+        const li =
+          Math.min(255, (balloonPaletteCoordinate(echo.balloon, p) * 256) | 0) *
+          3;
+        const echoRgb = [0, 1, 2].map((channel) => {
+          const base = echoLut ? echoLut[li + channel] : rgb[channel];
+          return base + (echo.tint[channel] - base) * echo.tintStrength;
+        }) as Vec3;
+        deposit(expected, invertBalloon(echo.balloon, p), echoRgb, weight);
+        // Negative control: invert in raw 4D, then project. Its larger
+        // denominator changes the displayed echo when an image carries w.
+        const scale =
+          echo.balloon.R ** 2 / image.reduce((sum, v) => sum + v * v, 0);
+        deposit(wrongOrder, p.map((v) => v * scale) as Vec3, echoRgb, weight);
+      }
+      let hitError = 0;
+      let colorError = 0;
+      let wrongOrderDifference = 0;
+      for (let i = 0; i < actual.hits.length; i++) {
+        hitError = Math.max(
+          hitError,
+          Math.abs(actual.hits[i] - expected.hits[i]),
+        );
+        wrongOrderDifference += Math.abs(expected.hits[i] - wrongOrder.hits[i]);
+      }
+      for (let i = 0; i < actual.sumRGB.length; i++) {
+        colorError = Math.max(
+          colorError,
+          Math.abs(actual.sumRGB[i] - expected.sumRGB[i]),
+        );
+      }
+      expect(actual.hitMass).toBeCloseTo(expected.hitMass, 7);
+      expect(hitError).toBeLessThan(1e-8);
+      expect(colorError).toBeLessThan(1e-8);
+      expect(wrongOrderDifference).toBeGreaterThan(expected.hitMass * 0.3);
+    },
+  );
+
   it("uses the bounded F4 estimator while keeping Height color on the canonical source", () => {
     const source = genericF4ChamberPoint();
     const plan = pointPlan4({ group: "f4" });
@@ -2213,10 +2344,10 @@ describe("accumulateFlame4 point-space tiling", () => {
     expect(omitted.pointTiling).toBeUndefined();
   });
 
-  it("rejects wrong-dimensional and Balloon combinations", () => {
+  it("rejects wrong-dimensional plans and infinite lattice with Balloon", () => {
     const source = genericF4ChamberPoint();
     const prepared = prepareChaosGame4(fixedPointSystem4(source));
-    const plan = pointPlan4({ group: "f4" });
+    const plan = pointPlan4({ kind: "lattice", cellScale: 1.5 }, 1);
     const threeDResolved = resolveTiling({ group: "a3" });
     if (!threeDResolved) throw new Error("3D test tiling did not resolve");
     const threeDPlan = resolvePointTilingPlan(threeDResolved, 3);

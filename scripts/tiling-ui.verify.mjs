@@ -3668,13 +3668,13 @@ async function runAuthoringLeg(browser, args) {
     await openSection(page, "tilingSection");
     const balloon = await readDormantState(page, "Unavailable with Balloon");
     check(
-      "Balloon dormant details",
+      "Balloon composes with editable finite tiling",
       balloonAuthored.ok &&
         balloon.checkboxEnabled &&
         balloon.checkboxChecked &&
-        balloon.groupDisabled &&
-        balloon.clipDisabled &&
-        balloon.reasonPass,
+        !balloon.groupDisabled &&
+        !balloon.clipDisabled &&
+        !balloon.reasonPass,
       balloon.note,
     );
     await page.locator("#tilingEnabledCheckbox").focus();
@@ -3689,7 +3689,7 @@ async function runAuthoringLeg(browser, args) {
       balloonClear.ok,
       balloonClear.ok
         ? "enabled checkbox cleared tiling without clearing Balloon"
-        : "checkbox did not clear the dormant tiling block",
+        : "checkbox did not clear finite tiling",
     );
 
     await openSection(page, "balloonSection");

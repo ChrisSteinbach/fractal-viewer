@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 /**
- * CPU noise calibration for the EXACT tiling-symmetry-4d GPU-bench scenario.
+ * CPU noise calibration for exact finite-tiling GPU-bench scenarios.
  *
  * Run: node scripts/flame-tiling-symmetry-noise.verify.mjs
  * Optional: --url=https://localhost:5173 --chrome=/path/to/chrome --out=DIR
+ * --scenario=tiling-balloon-3d|tiling-balloon-4d selects a Balloon fixture;
+ * the default remains tiling-symmetry-4d. --controls=NAME,NAME selects from
+ * that fixture's supported missing-feature controls (all by default).
+ * --seeds=4 adds two fixed independent seeds and reports all six pairs;
+ * the default remains the original two seeds. Every run uses the same N.
  *
  * A private Vite server and headless browser load the real benchmark without
  * autorun. The browser's response for gpu-bench/main.ts receives a diagnostic
@@ -12,7 +17,8 @@
  * modified. navigator.gpu is disabled before loading, so this never creates
  * a GPU backend or runs a GPU workload.
  *
- * Three exact 50,331,648-iteration CPU runs use the benchmark's 2M chunks:
+ * The default invocation makes three exact 50,331,648-iteration CPU runs
+ * using the benchmark's 2M chunks:
  * seeds 0xc0ffee and 0xbadcafe, then an order-1 negative control at 0xc0ffee.
  * The negative control changes ONLY prepare4D's prepared orbit symmetry;
  * its explorer cloud, camera, rotor, palette, slice and tiling plan still
@@ -23,8 +29,12 @@
  *
  * One seed pair measures a noise floor; it is not a confidence interval and
  * does not on its own authorize changing a production acceptance threshold.
+ * Balloon controls keep the original camera, rotor, bounds, palette and
+ * orbit. echo-disabled sets only the echo weight to zero, preserving the
+ * split rotor/camera path; tiling-disabled removes only the image plan.
+ * Raw mass and RGB totals expose the visible echo's branch contribution.
  *
- * MEASURED 2026-09-08 at the complete budget and 960x540 display:
+ * MEASURED default symmetry fixture, 2026-09-08, complete N and 960x540:
  * - CPU seed pair: RGB MAE 2.1311670525, density TV 0.0528759543,
  *   signed RGB bias [-0.0067766, -0.0136921, -0.0167438].
  * - Same-camera symmetry-disabled control: MAE 12.8491628086,
@@ -36,6 +46,17 @@
  * twice this floor) and TV 0.12, keeping global bias 0.3. Both controls are
  * well separated by those bars. This instrument does not set those bars,
  * does not qualify other defects, and its one seed pair remains one pair.
+ *
+ * MEASURED finite Balloon fixtures, 2026-09-08, same complete N and display:
+ * - 3D --seeds=4: six CPU pairs span MAE 1.788562886–1.794555041 and
+ *   TV 0.019130075–0.019262639; max signed bias magnitude is 0.027139275.
+ *   Missing echo / tiling: MAE 12.190796682 / 8.651343236, TV
+ *   0.131799819 / 0.180161414. The initial CPU/GPU MAE 1.858919753 and
+ *   TV 0.020664887 track sampling noise; the new row calibrated MAE 4 and
+ *   TV 0.04 against these CPU measurements, retaining global bias 0.3.
+ * - 4D --seeds=2: CPU MAE 0.006802984, TV 0.002836588. Missing echo /
+ *   tiling: MAE 2.776145190 / 4.780133745, TV 0.485980002 / 0.999438158.
+ *   Both missing features fail the unchanged MAE 1 and signed-bias bars.
  */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -55,15 +76,39 @@ const args = new Map(
   }),
 );
 for (const name of args.keys()) {
-  if (!["url", "chrome", "out"].includes(name))
+  if (!["url", "chrome", "out", "scenario", "controls", "seeds"].includes(name))
     throw new Error(`Unknown option --${name}`);
 }
+const supportedControls = {
+  "tiling-symmetry-4d": ["symmetry-disabled"],
+  "tiling-balloon-3d": ["echo-disabled", "tiling-disabled"],
+  "tiling-balloon-4d": ["echo-disabled", "tiling-disabled"],
+};
+const scenarioName = args.get("scenario") ?? "tiling-symmetry-4d";
+if (!Object.hasOwn(supportedControls, scenarioName))
+  throw new Error(`Unsupported scenario ${scenarioName}`);
+const controls = args.has("controls")
+  ? args.get("controls").split(",")
+  : supportedControls[scenarioName];
+if (
+  controls.length === 0 ||
+  new Set(controls).size !== controls.length ||
+  controls.some((name) => !supportedControls[scenarioName].includes(name))
+) {
+  throw new Error(`Unsupported or repeated control for ${scenarioName}`);
+}
+const seedCount = Number(args.get("seeds") ?? 2);
+if (seedCount !== 2 && seedCount !== 4)
+  throw new Error("--seeds must be 2 or 4");
+const seeds = [0xc0ffee, 0xbadcafe, 0x12345678, 0x9e3779b9].slice(0, seedCount);
 const out = path.resolve(
   ROOT,
-  args.get("out") ?? "scripts/out/flame-tiling-symmetry-noise",
+  args.get("out") ??
+    (scenarioName === "tiling-symmetry-4d"
+      ? "scripts/out/flame-tiling-symmetry-noise"
+      : `scripts/out/${scenarioName}-noise`),
 );
 const digest = (text) => createHash("sha256").update(text).digest("hex");
-const scenarioName = "tiling-symmetry-4d";
 const sourcePath = path.join(ROOT, "src/app/gpu-bench/main.ts");
 const sourceHash = digest(await readFile(sourcePath));
 let transformedHash = null;
@@ -72,20 +117,29 @@ let browser;
 
 const diagnostic = String.raw`
 window.__FLAME_SYMMETRY_NOISE_RUN__ = async function () {
-  const def = SCENARIOS.find((scenario) => scenario.name === "tiling-symmetry-4d");
-  if (!def || def.kind !== "4d") throw new Error("Exact 4D symmetry scenario missing");
+  const scenarioName = ${JSON.stringify(scenarioName)};
+  const controls = ${JSON.stringify(controls)};
+  const seeds = ${JSON.stringify(seeds)};
+  const def = SCENARIOS.find((scenario) => scenario.name === scenarioName);
+  if (!def) throw new Error("Exact finite-tiling scenario missing");
+  if (scenarioName === "tiling-symmetry-4d" && def.kind !== "4d") throw new Error("Exact 4D symmetry scenario changed dimension");
+  if (scenarioName.startsWith("tiling-balloon-") && (!def.balloonEcho || !def.pointTilingPlan)) throw new Error("Exact Balloon fixture lost a required feature");
   if (EQUAL_N_ITERATIONS !== 50331648 || CPU_CHUNK_ITERATIONS !== 2000000 || DISPLAY_WIDTH !== 960 || DISPLAY_HEIGHT !== 540) {
     throw new Error("Benchmark budget/resolution changed; requalify this calibration");
   }
   const results = [];
   const runs = [
-    { name: "cpu-c0ffee", seed: 0xc0ffee, disableSymmetry: false },
-    { name: "cpu-badcafe", seed: 0xbadcafe, disableSymmetry: false },
-    { name: "symmetry-disabled", seed: 0xc0ffee, disableSymmetry: true },
+    ...seeds.map((seed) => ({ name: "cpu-" + seed.toString(16), seed, control: null })),
+    ...controls.map((control) => ({ name: control, seed: 0xc0ffee, control })),
   ];
   for (const run of runs) {
-    window.__FLAME_SYMMETRY_NOISE_DISABLE__ = run.disableSymmetry;
-    const engines = buildEngines(def);
+    window.__FLAME_SYMMETRY_NOISE_DISABLE__ = run.control === "symmetry-disabled";
+    const runDef = run.control === "echo-disabled"
+      ? { ...def, balloonEcho: { ...def.balloonEcho, weight: 0 } }
+      : run.control === "tiling-disabled"
+        ? { ...def, pointTilingPlan: undefined }
+        : def;
+    const engines = buildEngines(runDef);
     window.__FLAME_SYMMETRY_NOISE_DISABLE__ = false;
     const rng = mulberry32(run.seed);
     let histogram;
@@ -105,30 +159,59 @@ window.__FLAME_SYMMETRY_NOISE_RUN__ = async function () {
     canvas.width = DISPLAY_WIDTH;
     canvas.height = DISPLAY_HEIGHT;
     drawImage(canvas, image);
+    const sumRGB = [0, 0, 0];
+    for (let i = 0; i < histogram.sumRGB.length; i += 3) {
+      sumRGB[0] += histogram.sumRGB[i];
+      sumRGB[1] += histogram.sumRGB[i + 1];
+      sumRGB[2] += histogram.sumRGB[i + 2];
+    }
     results.push({
-      ...run, iterations, elapsedMs: performance.now() - start,
+      ...run, disableSymmetry: run.control === "symmetry-disabled",
+      iterations, elapsedMs: performance.now() - start,
       hitMass: histogram.hitMass, maxHits: histogram.maxHits,
+      sumRGB, meanRGB: sumRGB.map((sum) => sum / histogram.hitMass),
       tiling: histogram.pointTiling ?? null,
       display, image, dataUrl: canvas.toDataURL("image/png"),
     });
     console.log("[symmetry-noise] completed " + run.name);
+    if (results.length === 2) {
+      console.log("[symmetry-noise] first CPU pair " + JSON.stringify(compare(results[0], results[1])));
+    }
   }
-  const compare = (a, b) => {
+  function compare(a, b) {
     const diff = buildDiffImage(a.image, b.image, DISPLAY_WIDTH, DISPLAY_HEIGHT);
     return {
       maeRGB: diff.maeRGB, biasRGB: diff.biasRGB, maxAbs: diff.maxAbs,
       densityTv: hitDensityTotalVariation(a.display, b.display),
     };
-  };
+  }
+  const controlMetrics = Object.fromEntries(results.filter((run) => run.control !== null).map((run) => [run.control, compare(results[0], run)]));
+  const pairwiseNoise = [];
+  for (let i = 0; i < seeds.length; i++) {
+    for (let j = i + 1; j < seeds.length; j++) {
+      pairwiseNoise.push({ a: results[i].name, b: results[j].name, ...compare(results[i], results[j]) });
+    }
+  }
+  const source = results.find((run) => run.control === "echo-disabled");
+  const echoMass = source ? results[0].hitMass - source.hitMass : null;
+  const echoRGB = source ? results[0].sumRGB.map((sum, channel) => sum - source.sumRGB[channel]) : null;
   return {
-    scenario: { ...def, system: def.system(), pointTilingPlan: {
+    scenario: { ...def, ...(def.kind === "4d" ? { system: def.system() } : {}), pointTilingPlan: {
       kind: def.pointTilingPlan.kind,
       dimension: def.pointTilingPlan.dimension,
       tiling: def.pointTilingPlan.tiling,
     } },
     constants: { DISPLAY_WIDTH, DISPLAY_HEIGHT, ACCUM_WIDTH, ACCUM_HEIGHT, CPU_CHUNK_ITERATIONS, EQUAL_N_ITERATIONS, FLAME_FILTER_RADIUS, TONEMAP_PARAMS },
     noise: compare(results[0], results[1]),
-    droppedSymmetry: compare(results[0], results[2]),
+    pairwiseNoise,
+    controls: controlMetrics,
+    ...(controlMetrics["symmetry-disabled"] ? { droppedSymmetry: controlMetrics["symmetry-disabled"] } : {}),
+    ...(source ? { branches: {
+      sourceMass: source.hitMass, echoMass,
+      echoToSourceMass: echoMass / source.hitMass,
+      sourceRGB: source.sumRGB, echoRGB,
+      echoMeanRGB: echoRGB.map((sum) => sum / echoMass),
+    } } : {}),
     runs: results.map(({ display, image, ...run }) => run),
     gpuAvailable: navigator.gpu !== undefined,
   };
@@ -231,7 +314,7 @@ try {
   result.source = { sourcePath, sourceHash, transformedHash };
   result.finishedAt = new Date().toISOString();
   result.method =
-    "Existing benchmark buildEngines/cpuChunk in 2M chunks, exact budget, own mulberry32 seeds, existing downsample/tonemap/diff/TV; control disables only prepared orbit symmetry, retaining original framing and plan.";
+    "Existing benchmark buildEngines/cpuChunk in 2M chunks, exact budget, own mulberry32 seeds, existing downsample/tonemap/diff/TV; controls preserve original camera/rotor/bounds and change only prepared orbit symmetry, echo weight, or the image plan as explicitly selected.";
   await writeFile(
     path.join(out, "results.json"),
     JSON.stringify(result, null, 2) + "\n",
@@ -240,7 +323,10 @@ try {
     JSON.stringify(
       {
         noise: result.noise,
+        pairwiseNoise: result.pairwiseNoise,
         droppedSymmetry: result.droppedSymmetry,
+        controls: result.controls,
+        branches: result.branches,
         runs: result.runs.map(({ tiling, ...run }) => run),
         output: out,
       },

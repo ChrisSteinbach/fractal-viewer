@@ -621,13 +621,69 @@ describe("Solid tiling query-space programs", () => {
     );
   });
 
-  it("refuses balloon and the accelerated hierarchy while tiled", () => {
-    expect(() => voxelFragmentFor(true, false, false, false, A3)).toThrow(
+  it("refuses infinite lattice with Balloon and the accelerated hierarchy with any material fold", () => {
+    expect(() => voxelFragmentFor(true, false, false, false, LATTICE)).toThrow(
       /cannot compose with balloon/,
     );
     expect(() => voxelFragmentFor(false, true, false, false, A3)).toThrow(
       /suspends the max-density hierarchy/,
     );
+    expect(() => voxelFragmentFor(true, true, false, false, A3)).toThrow(
+      /suspends the max-density hierarchy/,
+    );
+  });
+
+  it.each(["a3", "b3", "h3"] as const)(
+    "places the %s fold beneath both Balloon queries and retains echo shading",
+    (group) => {
+      const source = voxelFragmentFor(
+        true,
+        false,
+        true,
+        true,
+        resolveTiling({ group }),
+      );
+      expect(source).toContain(`  vec4 boundedVolumeSample(vec3 p) {
+    vec3 q;
+    if (!tilingFoldQuery(p, q)) return vec4(0.0);
+    return canonicalVolumeSample(q);
+  }`);
+      expect(source).toContain("boundedVolumeSample(balloonInvert(p)).a");
+      expect(source).toContain("vec4 primary = boundedVolumeSample(p);");
+      expect(source).toContain("vec4 echo = boundedVolumeSample(source);");
+      expect(source).toContain("1.0 * echo.a > primary.a");
+      expect(source).toContain("base = texture(uBalloonColorLUT");
+      expect(source).toContain(
+        "return mix(base, uBalloonTint, uBalloonTintStrength)",
+      );
+      expect(source).toContain("voxelEnvTint(n)");
+      expect(source).not.toContain("shadeVoxelFloor");
+      expect(source).not.toContain("maxHierarchyNode");
+      // All texture queries are underneath the fold: normals and AO then
+      // necessarily observe the same max(primary, echo) field as primary rays.
+      expect(source.match(/texture\(uVolume,/g)).toHaveLength(1);
+    },
+  );
+
+  it("keeps broad echo rays independent of finite source-carrier misses, with scaled primary and shadow strides", () => {
+    const source = voxelFragmentFor(true, false, false, false, CLIPPED_A3);
+    expect(source).toContain("if (tilingClipSdf(q) > 0.0) return false;");
+    expect(source).toContain("vec2 tRange = tiledSourceIntersect(ro, rd);");
+    expect(source).toContain("for (int i = 0; i < primarySteps; i++)");
+    expect(source).toContain(
+      "float tFar = length(ro - uBalloonCenter) + uBalloonFar",
+    );
+    expect(source).toContain("float hi = min(primaryHi, echoHi)");
+    expect(source).toContain(
+      "vec2 shadowRange = tiledSourceIntersect(sp, uLightDir);",
+    );
+    expect(source).toContain("for (int i = 0; i < shadowSteps; i++)");
+    expect(source).toContain("densityAtFractal(sp + uLightDir * shadowT)");
+    const march = source.slice(
+      source.indexOf("vec2 tRange = tiledSourceIntersect(ro, rd)"),
+      source.indexOf("if (!primaryHit && !echoHit)"),
+    );
+    expect(march).not.toContain("return;");
   });
 
   it("caches one program per baked tiling identity", () => {
@@ -682,7 +738,7 @@ describe("Solid tiling material lifecycle", () => {
     );
   });
 
-  it("refuses installing tiling over an active balloon arm", () => {
+  it("installs finite tiling over Balloon and restores each program when the other feature clears", () => {
     const material = createVoxelMaterial(emptyVoxelTexture());
     setVoxelBalloon(material, {
       center: [0, 0, 0],
@@ -691,10 +747,45 @@ describe("Solid tiling material lifecycle", () => {
       R: 1.6,
     });
 
-    expect(() => installVoxelTiling(material, A3)).toThrow(
+    installVoxelTiling(material, A3);
+    expect(material.fragmentShader).toBe(
+      voxelFragmentFor(true, false, false, false, A3),
+    );
+    const version = material.version;
+    packVoxelBalloonTint(material, [1, 0, 0], 0.4);
+    expect(material.version).toBe(version);
+    installVoxelTiling(material, null);
+    expect(material.fragmentShader).toBe(voxelFragmentFor(true));
+    installVoxelTiling(material, A3);
+    setVoxelBalloon(material, null);
+    expect(material.fragmentShader).toBe(
+      voxelFragmentFor(false, false, false, false, A3),
+    );
+  });
+
+  it("refuses lattice and Balloon in either installation order without changing material state", () => {
+    const material = createVoxelMaterial(emptyVoxelTexture());
+    const spec = {
+      center: [0, 0, 0] as [number, number, number],
+      radius: 1,
+      rho: 1.02,
+      R: 1.6,
+    };
+    setVoxelBalloon(material, spec);
+    const balloon = material.fragmentShader;
+    expect(() => installVoxelTiling(material, LATTICE)).toThrow(
       /cannot compose with balloon/,
     );
     expect(materialVoxelTiling(material)).toBeNull();
+    expect(material.fragmentShader).toBe(balloon);
+    setVoxelBalloon(material, null);
+    installVoxelTiling(material, LATTICE);
+    const lattice = material.fragmentShader;
+    expect(() => setVoxelBalloon(material, spec)).toThrow(
+      /finite enclosing ball/,
+    );
+    expect(material.fragmentShader).toBe(lattice);
+    expect(material.uniforms.uBalloonR.value).toBe(0);
   });
 
   it("suspends the max-density hierarchy while tiled and restores it exactly", () => {

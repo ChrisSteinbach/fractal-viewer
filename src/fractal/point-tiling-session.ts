@@ -79,9 +79,9 @@ export function resolvePointTilingSession(
 ): PointTilingSessionResolution {
   if (!tiling) return OFF;
 
-  if (balloonEcho) {
+  if (balloonEcho && isLatticeTilingSpec(tiling)) {
     return refused(
-      "Point tiling is unavailable with Balloon; turn Balloon off.",
+      "Lattice tiling is unavailable with Balloon: the infinite set has no finite enclosing ball. Turn Balloon off or choose finite reflections.",
     );
   }
   if (tiling.clip && shapeMeshIds(tiling.clip).length > 0) {

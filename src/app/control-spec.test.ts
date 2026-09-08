@@ -646,9 +646,12 @@ describe("effects", () => {
       expect(fx.postFlame).not.toHaveBeenCalled();
     });
 
-    it("queues the ordinary Points replacement when Balloon makes authored tiling dormant", () => {
+    it("queues the ordinary Points replacement when Balloon makes lattice tiling dormant", () => {
       const spec = specById("balloonEchoCheckbox");
-      const previous = setTiling(initialState(true), { group: "a3" });
+      const previous = setTiling(initialState(true), {
+        kind: "lattice",
+        cellScale: 1.5,
+      });
       const state = applyScalarControl(previous, spec, true);
       const fx = mockEffects();
 
@@ -657,6 +660,24 @@ describe("effects", () => {
       expect(fx.syncPointBalloonEcho).toHaveBeenCalledWith(true);
       expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
     });
+
+    it.each(["points", "solid"] as const)(
+      "toggles finite Balloon live in %s without regenerating geometry",
+      (renderMode) => {
+        const spec = specById("balloonEchoCheckbox");
+        const previous = setTiling(
+          { ...initialState(true), renderMode },
+          { group: "a3" },
+        );
+        const state = applyScalarControl(previous, spec, true);
+        const fx = mockEffects();
+        spec.effect?.(state, fx, previous);
+        expect(fx.syncPointBalloonEcho).toHaveBeenCalledWith(true);
+        expect(fx.regenerateIfAutoUpdate).not.toHaveBeenCalled();
+        expect(fx.applySolidTilingEdit).not.toHaveBeenCalled();
+        expect(fx.restartSolidRender).not.toHaveBeenCalled();
+      },
+    );
 
     it("balloonRadiusSlider effect forwards the radius and cancels an in-flight sweep", () => {
       const spec = specById("balloonRadiusSlider");
