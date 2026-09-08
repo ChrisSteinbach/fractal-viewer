@@ -73,6 +73,7 @@ import {
   surfaceFoldRadii,
   CLASSIC_SURFACE_FOLD_RADII,
   SURFACE_FOLD_BEAM_WIDTH,
+  SURFACE_LENS_SWIRL,
 } from "../fractal/surface-de";
 import type { SurfaceDE, SurfaceDEMap } from "../fractal/surface-de";
 import {
@@ -86,6 +87,7 @@ import { defaultTransforms, sierpinskiTetrahedron } from "../fractal/presets";
 import type { ShapeTrap, Transform, Vec3 } from "../fractal/types";
 import { createHash } from "node:crypto";
 import { PRE_PATTERN_SOURCE_HASHES } from "./surface-pattern-baseline";
+import { swirlLensShaderSource } from "../fractal/swirl-lens-shader";
 
 /** Intentional pattern-off source advance for the balloon palette arm. Kept
  * local to this feature test so the pre-pattern fixture remains the baseline
@@ -125,6 +127,38 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   "3D bulb+balloon finish1": {
     resolved: "e01c3d36251472eb",
     emitted: "e01c3d36251472eb",
+  },
+};
+
+/** Lens variants gain the qualified swirl branch; all other source baselines
+ * remain unchanged, including the 3D forward arms and every 4D classic arm. */
+const SWIRL_LENS_SOURCE_HASHES: Record<
+  string,
+  { resolved: string; emitted: string }
+> = {
+  "3D lens finish0": {
+    resolved: "0cd93acc6ece55c7",
+    emitted: "521a3f587403ded7",
+  },
+  "3D lens+balloon finish0": {
+    resolved: "3c80e3b0aea62f93",
+    emitted: "4e16a76cacacced0",
+  },
+  "3D lens+plane finish0": {
+    resolved: "75b2c65059f5a643",
+    emitted: "9bb33fe56b914d29",
+  },
+  "3D lens finish1": {
+    resolved: "62518b639cc75c1b",
+    emitted: "b7396767fcf63114",
+  },
+  "3D lens+balloon finish1": {
+    resolved: "5d5f865baeb71d1e",
+    emitted: "a5c6d1a73c73df74",
+  },
+  "3D lens+plane finish1": {
+    resolved: "4f993cb03526d042",
+    emitted: "b9df2f0537713da3",
   },
 };
 
@@ -4213,6 +4247,7 @@ describe("SURFACE_PATTERN variant", () => {
       for (const [name, [escape, lens, balloon, plane, bulb]] of variants) {
         const key = `${name} finish${finish}`;
         const expected =
+          SWIRL_LENS_SOURCE_HASHES[key] ??
           DEPTH_OF_FIELD_SOURCE_HASHES[key] ??
           BALLOON_PALETTE_SOURCE_HASHES[key] ??
           PRE_PATTERN_SOURCE_HASHES[key];
@@ -4982,5 +5017,82 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     setBulbSystem(material, de, [1, 0, 0], null);
     expect(material.defines.SURFACE_SHAPE_TRAP).toBe(0);
     expect(material.fragmentShader).not.toContain("surfaceTrapSdf");
+  });
+});
+
+describe("qualified swirl final lens fragment mirror", () => {
+  it("packs the radius and negative weight, retains inverse posts, and resets on replacement", () => {
+    const material = createSurfaceMaterial();
+    const final: Transform = {
+      id: 99,
+      position: [0.02, -0.01, 0.03],
+      rotation: [0.1, -0.2, 0.3],
+      scale: [0.1, 0.1, 0.1],
+      variations: [{ type: "swirl", weight: -2 }],
+      post: { m: [0, -1, 0, 1, 0, 0, 0, 0, 0.5], t: [0.1, -0.2, 0.3] },
+    };
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), final);
+    setSurfaceSystem(
+      material,
+      de,
+      de.maps.map(() => black),
+    );
+    expect(material.defines.SURFACE_FOLD_LENS).toBe(1);
+    expect(material.defines.SURFACE_POST).toBe(1);
+    expect(
+      (material.uniforms.uLensParams.value as THREE.Vector4).toArray(),
+    ).toEqual([SURFACE_LENS_SWIRL, -0.5, 2, de.foldFinal!.sigmaMin]);
+    expect(
+      (material.uniforms.uLensRadii.value as THREE.Vector4).toArray(),
+    ).toEqual([
+      de.foldFinal!.swirlRadius,
+      de.foldFinal!.swirlLipschitz,
+      0,
+      0.5,
+    ]);
+    const src = surfaceFragmentResolvedFor(
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      0,
+      0,
+      null,
+      1,
+    );
+    expect(src).toContain(swirlLensShaderSource("glsl", 3));
+    expect(src.match(/vec3 pre = swirlLensInverse\(u\);/g)).toHaveLength(2);
+    expect(src).toContain("patternFoldLensSource = q;");
+    expect(src.match(/eps \*= lensEpsScale;/g)).toHaveLength(2);
+    expect(src).toContain("int(uLensParams.x) == 4 ? 1.0 / uLensRadii.y : 1.0");
+    expect(src).toContain(
+      "max(factor * surfaceDECore(q, cutoff / factor), visBound)",
+    );
+    const start = src.indexOf(
+      "float surfaceDE(vec3 p, float cutoff)",
+      src.indexOf("vec3 swirlLensInverse"),
+    );
+    const body = src.slice(start, src.indexOf("FoldRadii fr =", start));
+    expect(body.indexOf("applyLensPost(p)")).toBeLessThan(
+      body.indexOf("swirlLensInverse(u)"),
+    );
+    expect(body.indexOf("swirlLensInverse(u)")).toBeLessThan(
+      body.indexOf("uLensInvM * pre"),
+    );
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(material.defines.SURFACE_FOLD_LENS).toBe(0);
+    expect(
+      (material.uniforms.uLensRadii.value as THREE.Vector4).toArray(),
+    ).toEqual([0.5, 1, 1, 1]);
+    expect(material.fragmentShader).not.toContain("swirlLensInverse");
+    material.dispose();
   });
 });

@@ -100,8 +100,8 @@ export function resolvePointTilingSession(
   }
 
   const analysis = fourD
-    ? analyzeSurfaceSystem4(transforms, finalTransform, schedule)
-    : analyzeSurfaceSystem(transforms, finalTransform, schedule);
+    ? analyzeSurfaceSystem4(transforms, finalTransform, schedule, symmetry)
+    : analyzeSurfaceSystem(transforms, finalTransform, schedule, symmetry);
   if (analysis.status === "ineligible") {
     return refused(
       `Point tiling requires an inverse-IFS attractor; ${analysis.reasons.join(

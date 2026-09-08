@@ -76,6 +76,7 @@ import {
   slabExact4,
   type SurfaceDE4,
 } from "../fractal/surface-de-4d";
+import { SURFACE_LENS_SWIRL } from "../fractal/swirl-lens";
 import {
   surfaceSlotColors,
   surfaceForwardSlot,
@@ -5770,6 +5771,7 @@ async function main(): Promise<void> {
               state.transforms,
               state.finalTransform ?? null,
               state.schedule ?? null,
+              state.symmetry,
             ).status === "ineligible"
           ) {
             // The 4D IFS gate refused, so the FORWARD-ORBIT complement one
@@ -5916,7 +5918,14 @@ async function main(): Promise<void> {
             // Tiled 4D sessions therefore render the centre slice only on
             // both engines; the params packers keep this as a loud backstop.
             surface4SlabExact = surfaceTiling ? false : slabExact4(de);
-            ui.setFourDSlabAvailable(surface4SlabExact);
+            ui.setFourDSlabAvailable(
+              surface4SlabExact,
+              surfaceTiling
+                ? "tiling"
+                : de.foldFinal?.foldKind === SURFACE_LENS_SWIRL
+                  ? "swirl"
+                  : null,
+            );
             // Routing by MEASURED verdict: PLAIN 4D prefers compute, EVERY 4D
             // SESSION PREFERS COMPUTE, kaleidoscope included. The fragment 4D
             // tracer is the fallback arm (`?surfacegl` / no adapter / device
@@ -5971,7 +5980,10 @@ async function main(): Promise<void> {
             // `?surfacegl` is the escape hatch that keeps this
             // re-measurable: rerun the two commands before changing this
             // line.
-            const foldShaped4 = deHasFolds4(de) || de.foldFinal !== null;
+            const foldShaped4 =
+              deHasFolds4(de) ||
+              (de.foldFinal !== null &&
+                de.foldFinal.foldKind !== SURFACE_LENS_SWIRL);
             if (surfaceComputeAvailable()) {
               // No GLSL system upload — the enter twin owns the session
               // resets, and the live view flows through setSurface4View into
@@ -6038,6 +6050,7 @@ async function main(): Promise<void> {
             state.transforms,
             state.finalTransform ?? null,
             state.schedule ?? null,
+            state.symmetry,
           ).status === "ineligible"
         ) {
           // The IFS gate refused — so one of the two FORWARD-ORBIT

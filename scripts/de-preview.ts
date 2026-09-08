@@ -85,6 +85,11 @@ export interface PreviewScene {
    * the answer).
    */
   maxSteps?: number;
+  /** Minimum primary step as a fraction of the frame's pixel epsilon.
+   * Defaults to the historical 0.5. Set 0 to match production's unclamped
+   * certified stride when a harness separates hit tolerance from distance
+   * scaling; a coarser inherited floor could skip that narrower hit shell. */
+  minimumStepFraction?: number;
   /**
    * The step-count AO stand-in (default on). It is a PROXY — "this ray took
    * many steps, so it sits in a crease" — and on a fold DE the step count
@@ -275,6 +280,7 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
   const light = norm([0.62, 0.78, 0.36]);
 
   const maxSteps = scene.maxSteps ?? MAX_STEPS;
+  const minimumStepFraction = scene.minimumStepFraction ?? 0.5;
   const wantAo = scene.ao ?? true;
   const wantShadow = scene.shadow ?? true;
   const rgb = new Uint8Array(size * size * 3);
@@ -330,7 +336,7 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
             hit = true;
             break;
           }
-          t += Math.max(d * scene.stepScale, eps * 0.5);
+          t += Math.max(d * scene.stepScale, eps * minimumStepFraction);
         }
         steps += used;
         const spent = used >= maxSteps && t < tEnd && !hit;

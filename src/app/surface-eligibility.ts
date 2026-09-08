@@ -475,6 +475,7 @@ export function deriveSurfaceEligibility(
       transforms,
       finalTransform,
       schedule,
+      symmetry,
     );
     if (analysis.status === "ineligible") {
       // Schedules and graph-directed chi are defined only for inverse
@@ -619,7 +620,12 @@ export function deriveSurfaceEligibility(
     );
   }
 
-  const analysis = analyzeSurfaceSystem(transforms, finalTransform, schedule);
+  const analysis = analyzeSurfaceSystem(
+    transforms,
+    finalTransform,
+    schedule,
+    symmetry,
+  );
   if (analysis.status === "ineligible") {
     // As in 4D above, no forward renderer consumes a scheduled B word or
     // graph transition state. Keep inverse refusal terminal instead of

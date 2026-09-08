@@ -2572,6 +2572,7 @@ export class Ui {
   // to the tracer that marches one, so its row shows exactly in a live 4D
   // surface session (see syncViewRows).
   private readonly fourDSliceThicknessRow: HTMLElement;
+  private readonly fourDSliceThicknessUnavailableNote: HTMLElement;
   private readonly fourDSliceThicknessSlider: HTMLInputElement;
   private readonly fourDSliceThicknessNumeric: RangeNumberControl;
   private readonly fourDSliceThicknessLabel: HTMLElement;
@@ -2596,6 +2597,7 @@ export class Ui {
    * Session-scoped, set by main.ts's routing; true outside such
    * sessions. */
   private fourDSlabAvailable = true;
+  private fourDSlabRefusal: "swirl" | "tiling" | null = null;
   /**
    * The ACTIVE surface session's shape: `"escape"` for the escape-time fold
    * render and `"bulb"` for the Mandelbulb — the two FORWARD-ORBIT objects,
@@ -3199,6 +3201,9 @@ export class Ui {
     this.fourDSliceSlider = this.byId("fourDSliceSlider");
     this.fourDSliceLabel = this.byId("fourDSliceLabel");
     this.fourDSliceThicknessRow = this.byId("fourDSliceThicknessRow");
+    this.fourDSliceThicknessUnavailableNote = this.byId(
+      "fourDSliceThicknessUnavailableNote",
+    );
     this.fourDSliceThicknessSlider = this.byId("fourDSliceThicknessSlider");
     this.fourDSliceThicknessLabel = this.byId("fourDSliceThicknessLabel");
     this.fourDSliceRelColorToggle = this.byId("fourDSliceRelColorToggle");
@@ -4208,15 +4213,28 @@ export class Ui {
     // already doing.
     this.fourDSliceThicknessRow.title = !slabRefused
       ? ""
-      : this.surfaceSessionKind === "escape"
-        ? "Slab thickness is unavailable in the escape-time render: its " +
-          "orbit runs the maps FORWARD, with no branches to thread a " +
-          "segment through, so a slab has no certificate at any fold " +
-          "family. The IFS surface render keeps it."
-        : "Slab thickness is unavailable with sphere folds: the slab's " +
-          "segment certificates are unsound under the spherefold's " +
-          "inversion branch (mandelbox includes it). Box-fold-only systems " +
-          "keep the slab.";
+      : this.fourDSlabRefusal === "swirl"
+        ? "A swirl final transform curves a thick slice. Surface currently " +
+          "supports its zero-thickness slices."
+        : this.fourDSlabRefusal === "tiling"
+          ? "Slab thickness is unavailable with Space tiling: folding a " +
+            "segment bends it across cell walls. A zero-thickness slice " +
+            "remains available."
+          : this.surfaceSessionKind === "escape"
+            ? "Slab thickness is unavailable in the escape-time render: its " +
+              "orbit runs the maps FORWARD, with no branches to thread a " +
+              "segment through, so a slab has no certificate at any fold " +
+              "family. The IFS surface render keeps it."
+            : "Slab thickness is unavailable with sphere folds: the slab's " +
+              "segment certificates are unsound under the spherefold's " +
+              "inversion branch (mandelbox includes it). Box-fold-only systems " +
+              "keep the slab.";
+    this.fourDSliceThicknessUnavailableNote.textContent =
+      this.fourDSliceThicknessRow.title;
+    this.fourDSliceThicknessUnavailableNote.classList.toggle(
+      "hidden",
+      !slabRefused,
+    );
   }
 
   /** Camera motion is frozen in Flame. An already-active saved deep view keeps
@@ -4255,9 +4273,17 @@ export class Ui {
   /** Whether the live 4D surface session can take a slab at all (see
    * {@link fourDSlabAvailable}) — main.ts sets it from `slabExact4` at
    * session routing and resets it true on session end. */
-  setFourDSlabAvailable(available: boolean): void {
-    if (this.fourDSlabAvailable === available) return;
+  setFourDSlabAvailable(
+    available: boolean,
+    reason: "swirl" | "tiling" | null = null,
+  ): void {
+    if (
+      this.fourDSlabAvailable === available &&
+      this.fourDSlabRefusal === reason
+    )
+      return;
     this.fourDSlabAvailable = available;
+    this.fourDSlabRefusal = reason;
     this.syncViewRows();
   }
 

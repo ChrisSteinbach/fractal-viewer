@@ -27,6 +27,15 @@ import type {
   CondensationEmitter3,
 } from "./condensation-de";
 import { mulberry32 } from "./rng";
+import {
+  inverseSwirlInto,
+  pureSwirlFinal,
+  SURFACE_LENS_SWIRL,
+  swirlGlobalInverseLipschitz,
+  swirlPreRadius,
+  swirlRadiusRefusal,
+} from "./swirl-lens";
+export { SURFACE_LENS_SWIRL } from "./swirl-lens";
 import { SHAPE_MARCH_SAFETY, shapeBoundingRadius, shapeSdf } from "./shapes";
 import {
   calibrateSurfaceNativeCarriers,
@@ -329,6 +338,12 @@ import {
  * (`final` stays null when `foldFinal` is set). No contraction gate
  * applies to the lens: an un-iterated map needs none, exactly like the
  * affine lens.
+ * A supported pure SWIRL final uses the same outer wrapper with one exact
+ * inverse and a global inverse-Lipschitz certificate from `swirl-lens.ts`.
+ * The pre-swirl radius cap is qualified in `docs/swirl-surface-lens.md`;
+ * weight/post resizing cannot evade it. The inverse order is un-post,
+ * un-weight, inverse-swirl, inverse-affine. Recursive swirl and blends stay
+ * refused, and the 4D twin keeps nonzero slab segments refused.
  *
  * MEASURED VERDICT (scripts/surface-beam.harness.ts section 4,
  * CLOUD=300k, both estimators): on the two-map stress pairs — boxfold,
@@ -661,6 +676,8 @@ export const SURFACE_FOLD_BOXFOLD = 1;
 export const SURFACE_FOLD_SPHEREFOLD = 2;
 export const SURFACE_FOLD_MANDELBOX = 3;
 export type SurfaceFoldKind = 0 | 1 | 2 | 3;
+/** A swirl is a one-shot lens, never an admitted recursive map. */
+export type SurfaceLensKind = SurfaceFoldKind | typeof SURFACE_LENS_SWIRL;
 
 /** The variation types the fold-branch sweep can decompose. */
 const FOLD_VARIATION_TYPES: ReadonlySet<string> = new Set([
@@ -911,30 +928,44 @@ export interface SurfaceDE {
    * rows: `inv(F) = inv(P∘A)`, composed at build time, so the descent
    * prologue applies one inverse exactly as it always did. */
   final: { invM: number[]; invT: Vec3; sigmaMin: number } | null;
-  /** Pure-FOLD final-transform lens `F = P∘(w·V(M p + t))`, or
+  /** Pure-fold or supported swirl final-transform lens `F = P∘(w·V(M p + t))`, or
    * `null`. Handled by {@link descendLens}: the fold's inverse branches
    * are enumerated ONCE at the query — each an affine-lensed root descent
    * with certified factor `|w|·sigma_branch·sigmaMin` and a region floor
    * `|w|·regionDist` (the fold-branch sweep's vocabulary, lifted one level) —
    * and the descent cores run their no-lens path untouched. `invW`/`absW` are
-   * `1/w` and `|w|`; `invM`/`invT`/`sigmaMin` are the lens's AFFINE part,
-   * exactly {@link SurfaceDE.final}'s fields. A lens post-affine CANNOT
+   * `1/w` and `|w|`; `invM`/`invT` invert the lens's pre-variation AFFINE
+   * part. `sigmaMin` includes both separated affine minima when a post is
+   * live. A lens post-affine CANNOT
    * fold into them (the branch enumeration sits between `P⁻¹` and the
    * affine inverse), so it rides as its own factor: the lens applies
    * `postInvM`/`postInvT` to the query BEFORE its branch sweep — the same
    * un-post stage the base maps carry, one lens over. `postSigmaMin` prices
    * the region floors measured after that un-post. `null` fields and a
-   * unit factor (the common case, every lens predating posts) skip. */
+   * unit factor (the common case, every lens predating posts) skip.
+   *
+   * The lens-only {@link SURFACE_LENS_SWIRL} tag has one exact inverse.
+   * `swirlRadius` bounds the pre-variation affine image of the raw ball;
+   * {@link swirlGlobalInverseLipschitz} divides the affine distance factor;
+   * the marcher divides its complete acceptance epsilon by the same stored
+   * bound, removing the added acceptance region. The radius gate bounds the
+   * qualified march cost. Weight and post change output size, never the
+   * supported twist radius. The historical
+   * `foldFinal` container keeps routing and every older wire offset stable. */
   foldFinal: {
     invM: number[];
     invT: Vec3;
     sigmaMin: number;
-    foldKind: SurfaceFoldKind;
+    foldKind: SurfaceLensKind;
     invW: number;
     absW: number;
     /** The lens fold's authored lengths, in the same branch-algebra form
      * the base maps carry. */
     foldRadii: SurfaceFoldRadii;
+    /** Origin radius before a swirl lens; unused by fold lenses. */
+    swirlRadius?: number;
+    /** Certified global inverse bound, stored as an upward-rounded f32. */
+    swirlLipschitz?: number;
     /** The lens's own post-affine inverse, or `null`. */
     postInvM: number[] | null;
     postInvT: Vec3 | null;
@@ -1862,6 +1893,7 @@ export function analyzeSurfaceSystem(
   transforms: Transform[],
   finalTransform: Transform | null = null,
   schedule: HybridSchedule | null = null,
+  symmetry: SymmetryParams = NO_SYMMETRY,
 ): SurfaceEligibility {
   const reasons: string[] = [];
   const stageSigmas = transforms.map(transformStageSigmas);
@@ -1945,14 +1977,16 @@ export function analyzeSurfaceSystem(
     if (transformHasEmitter(finalTransform)) {
       reasons.push("final transform has a shape emitter");
     }
-    // A pure-fold FINAL is eligible: the lens is applied ONCE to
-    // the query point, so its fold expands into one round of branch root
+    // A pure-fold or supported swirl FINAL is eligible: the lens applies
+    // ONCE to the query, so its inverse expands into one round of branch root
     // descents — {@link descendLens} — with no contraction requirement (an
     // un-iterated map needs none, exactly like the affine lens). Blended
     // final variation lists stay out for the iterated maps' reason: a
     // weighted sum has no branch decomposition.
     const foldFinal = pureFoldVariation(finalTransform);
-    if (!foldFinal && hasActiveVariations(finalTransform)) {
+    const swirlFinal = pureSwirlFinal(finalTransform);
+    const nonlinearFinal = foldFinal ?? swirlFinal;
+    if (!nonlinearFinal && hasActiveVariations(finalTransform)) {
       reasons.push("final transform uses variations");
       const clause = exactFlam3Refusal("final transform", finalTransform);
       if (clause) reasons.push(clause);
@@ -1960,14 +1994,19 @@ export function analyzeSurfaceSystem(
     // The lens has no contraction gate at all, so the weight floor is the
     // ONLY thing standing between a hand-edited w ≈ 0 and descendLens's
     // 1/w (see NEAR_ZERO_FOLD_WEIGHT).
-    if (foldFinal && Math.abs(foldFinal.weight) < NEAR_ZERO_FOLD_WEIGHT) {
-      reasons.push("final transform fold weight ≈ 0");
+    if (
+      nonlinearFinal &&
+      Math.abs(nonlinearFinal.weight) < NEAR_ZERO_FOLD_WEIGHT
+    ) {
+      reasons.push(
+        `final transform ${swirlFinal ? "swirl" : "fold"} weight ≈ 0`,
+      );
     }
     if (!isFlatTransform(finalTransform)) {
       reasons.push("final transform extends into 4D");
     }
     const stages = transformStageSigmas(finalTransform);
-    const s = foldFinal
+    const s = nonlinearFinal
       ? transformSeparatedSigmas(finalTransform)
       : transformSigmas(finalTransform);
     const stageMin = Math.min(stages.base.min, stages.post?.min ?? Infinity);
@@ -1999,6 +2038,28 @@ export function analyzeSurfaceSystem(
         anisotropy = Math.max(anisotropy, s.max / s.min);
       }
     });
+  }
+
+  // The qualification cap belongs to the SAME raw ball the actual descent
+  // uses, including symmetry and schedule. A raw build has no final lens,
+  // so its own analysis never re-enters this branch.
+  if (
+    reasons.length === 0 &&
+    finalTransform &&
+    pureSwirlFinal(finalTransform) &&
+    !symmetryIsNonFlat(symmetry)
+  ) {
+    const raw = buildSurfaceDE(transforms, null, symmetry, { schedule });
+    const affine = composeAffine(finalTransform);
+    const radius = swirlPreRadius(
+      affine.m,
+      affine.t,
+      transformStageSigmas(finalTransform).base.max,
+      raw.boundingRadius,
+      raw.boundCenter,
+    );
+    const refusal = swirlRadiusRefusal(radius);
+    if (refusal) reasons.push(refusal);
   }
 
   const status: SurfaceEligibilityStatus =
@@ -2085,6 +2146,7 @@ export function buildSurfaceDE(
     transforms,
     finalTransform,
     options.schedule,
+    symmetry,
   );
   if (analysis.status === "ineligible") {
     throw new Error(
@@ -2688,6 +2750,8 @@ export function buildSurfaceDE(
     const stages = transformStageSigmas(finalTransform);
     const s = transformSigmas(finalTransform);
     const fold = pureFoldVariation(finalTransform);
+    const swirl = pureSwirlFinal(finalTransform);
+    const nonlinear = fold ?? swirl;
     // The PRE-VARIATION affine image of ball(boundCenter, R) is inside the
     // ball at `M·boundCenter + t` of radius `sigma_max(M)·R`. A fold post
     // is not adjacent to M and is therefore applied to the folded radius
@@ -2699,14 +2763,15 @@ export function buildSurfaceDE(
       affine.m[3] * bx + affine.m[4] * by + affine.m[5] * bz + ty,
       affine.m[6] * bx + affine.m[7] * by + affine.m[8] * bz + tz,
     ];
-    if (fold) {
-      const kind: SurfaceFoldKind =
-        fold.type === "boxfold"
+    if (nonlinear) {
+      const kind: SurfaceLensKind = swirl
+        ? SURFACE_LENS_SWIRL
+        : nonlinear.type === "boxfold"
           ? SURFACE_FOLD_BOXFOLD
-          : fold.type === "spherefold"
+          : nonlinear.type === "spherefold"
             ? SURFACE_FOLD_SPHEREFOLD
             : SURFACE_FOLD_MANDELBOX;
-      const radii = surfaceFoldRadii(fold);
+      const radii = surfaceFoldRadii(nonlinear);
       // A fold lens's own post CANNOT fold into invM/invT — the branch
       // enumeration sits between P⁻¹ and the affine inverse — so it rides
       // as its own factor and descendLens un-applies it first.
@@ -2735,8 +2800,8 @@ export function buildSurfaceDE(
         invT,
         sigmaMin: transformSeparatedSigmas(finalTransform).min,
         foldKind: kind,
-        invW: 1 / fold.weight,
-        absW: Math.abs(fold.weight),
+        invW: 1 / nonlinear.weight,
+        absW: Math.abs(nonlinear.weight),
         foldRadii: radii,
         postInvM,
         postInvT,
@@ -2749,16 +2814,34 @@ export function buildSurfaceDE(
       // (fR, fR²/mR], the inner region tops out at (fR²/mR²)·mR = fR²/mR);
       // the mandelbox chains the two. At the classic lengths those are the
       // `+ 3` and the `2` that shipped before the lengths were authorable.
-      const preFoldR =
-        stages.base.max * boundingRadius + Math.hypot(...affineCenter);
+      const preFoldR = swirl
+        ? swirlPreRadius(
+            affine.m,
+            affine.t,
+            stages.base.max,
+            boundingRadius,
+            boundCenter,
+          )
+        : stages.base.max * boundingRadius + Math.hypot(...affineCenter);
+      if (swirl) {
+        const refusal = swirlRadiusRefusal(preFoldR);
+        if (refusal)
+          throw new Error(
+            `system has no surface distance estimator: ${refusal}`,
+          );
+        foldFinal.swirlRadius = preFoldR;
+        foldFinal.swirlLipschitz = swirlGlobalInverseLipschitz(preFoldR);
+      }
       const boxR = Math.sqrt(preFoldR * preFoldR + 3 * radii.wall * radii.wall);
       const foldedR =
         foldFinal.absW *
-        (kind === SURFACE_FOLD_BOXFOLD
-          ? boxR
-          : kind === SURFACE_FOLD_SPHEREFOLD
-            ? Math.max(preFoldR, radii.outputR)
-            : Math.max(boxR, radii.outputR));
+        (kind === SURFACE_LENS_SWIRL
+          ? preFoldR
+          : kind === SURFACE_FOLD_BOXFOLD
+            ? boxR
+            : kind === SURFACE_FOLD_SPHEREFOLD
+              ? Math.max(preFoldR, radii.outputR)
+              : Math.max(boxR, radii.outputR));
       visibleBoundingRadius = postLive
         ? stages.post!.max * foldedR + Math.hypot(...lensPost!.t)
         : foldedR;
@@ -2955,7 +3038,7 @@ export function surfaceDescentCostWeight(de: SurfaceDE): number {
       (prefixDepth * prefixWeight + (de.maxDepth - prefixDepth) * weight) /
       de.maxDepth;
   }
-  if (de.foldFinal) {
+  if (de.foldFinal && de.foldFinal.foldKind !== SURFACE_LENS_SWIRL) {
     // A fold LENS multiplies the whole trace by its root-descent count.
     // Statically that is the branch count, but the sphere/floor prunes
     // (descendLens) kill the branches whose preimages fall outside the
@@ -5116,6 +5199,30 @@ function descendLens(
   const ux = pqx * lens.invW;
   const uy = pqy * lens.invW;
   const uz = pqz * lens.invW;
+  if (kind === SURFACE_LENS_SWIRL) {
+    LENS_QUERY[0] = ux;
+    LENS_QUERY[1] = uy;
+    LENS_QUERY[2] = uz;
+    inverseSwirlInto(LENS_QUERY, LENS_QUERY);
+    const vx = LENS_QUERY[0];
+    const vy = LENS_QUERY[1];
+    const vz = LENS_QUERY[2];
+    LENS_QUERY[0] = im[0] * vx + im[1] * vy + im[2] * vz + it[0];
+    LENS_QUERY[1] = im[3] * vx + im[4] * vy + im[5] * vz + it[1];
+    LENS_QUERY[2] = im[6] * vx + im[7] * vy + im[8] * vz + it[2];
+    // sigmaMin already includes the separate post-affine minimum.
+    const affineFactor = absW * sigmaMinM;
+    const factor = affineFactor / lens.swirlLipschitz!;
+    const innerCutoff = cutoff > 0 ? cutoff / factor : 0;
+    // G compensates stride and acceptance, never the core's chosen LOD.
+    // Dividing the footprint by factor would enlarge it by G and silently
+    // coarsen the raw geometry under the otherwise compensated hit test.
+    const innerFootprint = footprint > 0 ? footprint / affineFactor : 0;
+    const inner = hasFolds
+      ? descendFold(de, LENS_QUERY, refine, innerCutoff, innerFootprint)
+      : descend(de, LENS_QUERY, refine, innerCutoff, innerFootprint);
+    return Math.max(visBound, factor * inner);
+  }
   let best = Infinity;
 
   // Per-axis box preimage triples + output-interval distances (boxfold

@@ -93,6 +93,7 @@ import {
   buildSurfaceDE,
   CLASSIC_SURFACE_FOLD_RADII,
   SURFACE_FOLD_BOXFOLD,
+  SURFACE_LENS_SWIRL,
 } from "./surface-de";
 import type { SurfaceDE } from "./surface-de";
 import { buildSurfaceDE4, radiusBandInvRange } from "./surface-de-4d";
@@ -108,6 +109,7 @@ import {
   type ResolvedSurfaceMaterial,
 } from "./surface-material-wire";
 import type { Transform } from "./types";
+import { swirlLensShaderSource } from "./swirl-lens-shader";
 import {
   LATTICE_TILING_CODE,
   latticeFoldSource,
@@ -9322,5 +9324,140 @@ describe("mirrored lattice WGSL and params ABI", () => {
       "let reach = gR * (1.02 + 0.04 * f32(shade.aoTaps));",
     );
     expect(plain).not.toContain("latticePresentationInterval");
+  });
+});
+
+describe("qualified swirl final lens GPU wire and mirrors", () => {
+  function final4(): Transform {
+    return {
+      id: 99,
+      position: [0.02, -0.03, 0.01],
+      rotation: [0.1, -0.2, 0.3],
+      scale: [0.1, 0.1, 0.1],
+      variations: [{ type: "swirl", weight: -2 }],
+      post: POST_WIRE_SCALED,
+      w: { position: 0.025, scale: 0.1, rotation: { xw: 0.2 } },
+    };
+  }
+
+  it("reuses the lens tag and radius lanes without moving post, plane, or legacy prefixes", () => {
+    const final3 = { ...final4(), w: undefined };
+    const de3 = buildSurfaceDE(
+      foldSystemTransforms().map((transform) => ({
+        ...transform,
+        variations: undefined,
+      })),
+      final3,
+    );
+    const de4 = buildSurfaceDE4(fourDSystemTransforms(), final4());
+    for (const [de, buffer, tag, radius, bytes] of [
+      [
+        de3,
+        packSurfaceGpuParams(de3, { itemCount: 1 }),
+        256,
+        272,
+        SURFACE_GPU_PARAMS_BYTES + SURFACE_GPU_LENS_POST_BYTES,
+      ],
+      [
+        de4,
+        packSurface4GpuParams(de4, view4(), { itemCount: 1 }),
+        544,
+        560,
+        SURFACE_GPU_PARAMS4_LENS_BYTES + SURFACE_GPU_LENS4_POST_BYTES,
+      ],
+    ] as const) {
+      const lens = de.foldFinal!;
+      const wire = new DataView(buffer);
+      expect(buffer.byteLength).toBe(bytes);
+      expect(wire.getFloat32(tag, true)).toBe(SURFACE_LENS_SWIRL);
+      expect(wire.getFloat32(tag + 4, true)).toBe(-0.5);
+      expect(wire.getFloat32(tag + 8, true)).toBe(2);
+      expect(wire.getFloat32(tag + 12, true)).toBe(Math.fround(lens.sigmaMin));
+      expect(wire.getFloat32(radius, true)).toBe(
+        Math.fround(lens.swirlRadius!),
+      );
+      expect(wire.getFloat32(radius + 4, true)).toBe(lens.swirlLipschitz);
+      expect(wire.getFloat32(radius + 8, true)).toBe(0);
+      expect(wire.getFloat32(radius + 12, true)).toBe(
+        Math.fround(lens.postSigmaMin),
+      );
+    }
+    expect(() =>
+      packSurface4GpuParams(de4, view4({ sliceHalfW: 0.01 }), { itemCount: 1 }),
+    ).toThrow(/slab/);
+    const missing3 = {
+      ...de3,
+      foldFinal: { ...de3.foldFinal!, swirlRadius: undefined },
+    };
+    const missing4 = {
+      ...de4,
+      foldFinal: { ...de4.foldFinal!, swirlRadius: undefined },
+    };
+    expect(() => packSurfaceGpuParams(missing3, { itemCount: 1 })).toThrow(
+      /missing.*radius/,
+    );
+    expect(() =>
+      packSurface4GpuParams(missing4, view4(), { itemCount: 1 }),
+    ).toThrow(/missing.*radius/);
+  });
+
+  it("wraps eval, hit attribution, and narrow probes in both dimensions with one inverse body", () => {
+    for (const core of ["affine", "fold", "affine4", "fold4"] as const) {
+      const fourD = core.endsWith("4");
+      const source = surfaceDeKernelWgsl(
+        kernelOpts({
+          mode: "shade",
+          core,
+          lens: true,
+          lensPost: true,
+          shadeDeWidth: core.startsWith("fold") ? 1 : undefined,
+        }),
+      );
+      expect(source).toContain(swirlLensShaderSource("wgsl", fourD ? 4 : 3));
+      expect(source.split("fn swirlLensInverse(")).toHaveLength(2);
+      for (const name of [
+        "surfaceDE",
+        "surfaceDEHitInfo",
+        ...(core.startsWith("fold") ? ["surfaceDEProbe"] : []),
+      ]) {
+        const body = source
+          .slice(source.indexOf(`fn ${name}(`))
+          .split("\n}")[0];
+        const branch = body.slice(body.indexOf("if (kind == 4u)"));
+        expect(branch).toContain("let pre = swirlLensInverse(u)");
+        expect(branch.indexOf("swirlLensInverse(u)")).toBeLessThan(
+          branch.indexOf(
+            fourD ? "dot(params.lens4MR0, pre)" : "dot(params.lensM0, pre)",
+          ),
+        );
+        expect(
+          body.indexOf(fourD ? "lensUnpost4(" : "lensUnpost("),
+        ).toBeLessThan(body.indexOf("let u ="));
+        if (name === "surfaceDEProbe") {
+          expect(branch).toContain("surfaceDEProbeCore(q,");
+          expect(branch).not.toContain("surfaceDECore(");
+        } else if (name === "surfaceDEHitInfo") {
+          expect(branch).toContain("surfaceDEHitInfoCore(q,");
+        } else {
+          expect(branch).toContain(
+            fourD ? "/ params.lens4Fold.y" : "/ params.lensFold.y",
+          );
+          expect(branch).toContain("surfaceDECore(q,");
+        }
+      }
+      expect(
+        surfaceDeKernelWgsl(kernelOpts({ core, mode: "eval" })),
+      ).not.toContain("swirlLensInverse");
+      const march = surfaceDeKernelWgsl(
+        kernelOpts({ core, mode: "march", lens: true }),
+      );
+      expect(march).toContain(
+        "max(params.pixelEps * t, params.hitFloorEps) * lensEpsScale",
+      );
+      expect(march).toContain(
+        fourD ? "1.0 / params.lens4Fold.y" : "1.0 / params.lensFold.y",
+      );
+      expect(source).not.toContain("lensEpsScale");
+    }
   });
 });

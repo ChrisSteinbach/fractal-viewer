@@ -30,8 +30,14 @@ import {
   SPHEREFOLD_MID_MIN_R,
   SURFACE_FOLD_BEAM_WIDTH,
   SURFACE_FOLD_NONE,
+  SURFACE_LENS_SWIRL,
   SYM_PLANE_CODE,
 } from "../fractal/surface-de";
+import { swirlLensShaderSource } from "../fractal/swirl-lens-shader";
+import {
+  validatedSwirlLensRadius,
+  validatedSwirlLensLipschitz,
+} from "../fractal/swirl-lens";
 import {
   LATTICE_PRESENTATION_RADIUS_MULT,
   latticePresentationCarrierSource,
@@ -3984,6 +3990,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
   // prologue owns surfaceDE itself), so re-establish the rename.
   #define surfaceDE surfaceDEFractal
 #endif
+  ${swirlLensShaderSource("glsl", 3)}
   /**
    * Pure-fold FINAL lens, mirroring the oracle's descendLens line for
    * line: the visible set is F(A) with F = w*V(M p + t), so each of V's
@@ -4009,6 +4016,12 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #else
     vec3 u = p * uLensParams.y;
 #endif
+    if (kind == ${SURFACE_LENS_SWIRL}) {
+      vec3 pre = swirlLensInverse(u);
+      vec3 q = uLensInvM * pre + uLensInvT;
+      float factor = absW * uLensParams.w / uLensRadii.y;
+      return max(factor * surfaceDECore(q, cutoff / factor), visBound);
+    }
 #if SURFACE_POST
     FoldRadii fr = foldRadiiOf(uLensRadii.xyz);
 #else
@@ -4167,6 +4180,14 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #else
     vec3 u = p * uLensParams.y;
 #endif
+    if (kind == ${SURFACE_LENS_SWIRL}) {
+      vec3 pre = swirlLensInverse(u);
+      vec3 q = uLensInvM * pre + uLensInvT;
+#if SURFACE_PATTERN
+      patternFoldLensSource = q;
+#endif
+      return surfaceDECore(q, firstChoice, trap, rings, sheets);
+    }
 #if SURFACE_POST
     FoldRadii fr = foldRadiiOf(uLensRadii.xyz);
 #else
@@ -4674,6 +4695,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // epsilon is the full-descent distance bit for bit, so the step length
     // below never drifts. The march runs the plain DE overload; the hit's
     // coloring extras are fetched once below.
+#if SURFACE_FOLD_LENS
+    float lensEpsScale = int(uLensParams.x) == ${SURFACE_LENS_SWIRL} ? 1.0 / uLensRadii.y : 1.0;
+#endif
     bool hit = false;
     // Whole-ray budget for grid cell skips, SEPARATE from uMarchSteps: a
     // skip is one texel read, orders of magnitude cheaper than the descent
@@ -4690,6 +4714,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
       // Acceptance epsilon: tier-independent by design — see
       // uAcceptPixelEps.
       float eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor);
+#if SURFACE_FOLD_LENS
+      eps *= lensEpsScale;
+#endif
       // Empty-space skip: texture reads against the precomputed grid
       // before paying a descent. The stored floor bounds the distance
       // from ANYWHERE in the sample's cell (surface-grid.ts's validity
@@ -4736,6 +4763,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
             break;
           }
           eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor);
+#if SURFACE_FOLD_LENS
+          eps *= lensEpsScale;
+#endif
         }
         if (t > tFar) {
           break;
@@ -6054,6 +6084,14 @@ export function setSurfaceSystem(
   trapIndices?: number[],
   tiling: ResolvedTiling | null = null,
 ): void {
+  const swirlRadius =
+    de.foldFinal?.foldKind === SURFACE_LENS_SWIRL
+      ? validatedSwirlLensRadius(de.foldFinal.swirlRadius)
+      : null;
+  const swirlLipschitz =
+    swirlRadius === null
+      ? null
+      : validatedSwirlLensLipschitz(swirlRadius, de.foldFinal!.swirlLipschitz);
   const schedule = de.schedule && de.schedule.depth > 0 ? de.schedule : null;
   const scheduleMaps = schedule?.maps ?? [];
   const emitters = de.condensation?.emitters ?? [];
@@ -6364,9 +6402,9 @@ export function setSurfaceSystem(
     lensM.set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     lensT.set(...lens.invT);
     (u.uLensRadii.value as THREE.Vector4).set(
-      lens.foldRadii.minR,
-      lens.foldRadii.fixedR,
-      lens.foldRadii.wall,
+      swirlRadius ?? lens.foldRadii.minR,
+      swirlLipschitz ?? lens.foldRadii.fixedR,
+      lens.foldKind === SURFACE_LENS_SWIRL ? 0 : lens.foldRadii.wall,
       lens.postSigmaMin,
     );
   } else {

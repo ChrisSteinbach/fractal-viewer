@@ -1418,7 +1418,7 @@ describe("analyzeSurfaceSystem4 with a final transform", () => {
   it("flags a final transform with an active variation as ineligible", () => {
     const analysis = analyzeSurfaceSystem4(
       [map4()],
-      map4({ variations: [{ type: "swirl", weight: 1 }] }),
+      map4({ variations: [{ type: "spherical", weight: 1 }] }),
     );
     expect(analysis.status).toBe("ineligible");
     expect(analysis.reasons).toHaveLength(1);
@@ -1486,7 +1486,7 @@ describe("buildSurfaceDE4 with a final transform", () => {
   it("throws when the final transform makes the system ineligible", () => {
     const transforms = pentatope();
     const ineligibleFinal = map4({
-      variations: [{ type: "swirl", weight: 1 }],
+      variations: [{ type: "spherical", weight: 1 }],
     });
     expect(() => buildSurfaceDE4(transforms, ineligibleFinal)).toThrow(
       /final transform uses variations/,

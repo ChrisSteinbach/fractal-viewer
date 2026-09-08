@@ -9801,6 +9801,29 @@ describe("Ui 4D surface session controls", () => {
     expect(title).not.toContain("escape-time render");
   });
 
+  it("discloses why a swirl final transform disables slab thickness", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.setSurfaceSessionKind("ifs");
+    ui.setFourDSlabAvailable(false, "swirl");
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    expect(el("fourDSliceThicknessRow").title).toContain("swirl final");
+    expect(el("fourDSliceThicknessUnavailableNote").textContent).toContain(
+      "swirl final",
+    );
+    expect(
+      el("fourDSliceThicknessUnavailableNote").classList.contains("hidden"),
+    ).toBe(false);
+    expect(el("fourDSliceThicknessRow").title).not.toContain("sphere folds");
+    expect((el("fourDSliceThicknessSlider") as HTMLInputElement).disabled).toBe(
+      true,
+    );
+
+    ui.setFourDSlabAvailable(false);
+    expect(el("fourDSliceThicknessRow").title).toContain("sphere folds");
+  });
+
   it("clears the slab reason once a session can take one", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };

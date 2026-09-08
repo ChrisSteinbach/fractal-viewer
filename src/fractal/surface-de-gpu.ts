@@ -36,9 +36,15 @@ import {
   ESCAPE_FACTOR,
   FOOTPRINT_DEPTH_FLOOR,
   SPHEREFOLD_MID_MIN_R,
+  SURFACE_LENS_SWIRL,
   SYM_PLANE_CODE,
   type SurfaceDE,
 } from "./surface-de";
+import { swirlLensShaderSource } from "./swirl-lens-shader";
+import {
+  validatedSwirlLensRadius,
+  validatedSwirlLensLipschitz,
+} from "./swirl-lens";
 import {
   radiusBandInvRange,
   slabExact4,
@@ -250,6 +256,17 @@ import type { Vec3 } from "./types";
  * port's stage A shipped it eval/march-only with a shade throw; its stage C
  * replaced the throw with the affine hit-info descent below, so every mode
  * serves every core today.
+ *
+ * Lens-only kind 4 adds qualified swirl to this same wrapper in both
+ * dimensions: one exact inverse, then one untouched core evaluation scaled
+ * by the certified global inverse-Lipschitz bound. The existing lens tag at
+ * 256/544 stores 4; the unused fold lengths at 272/560 store its pre-swirl
+ * radius in x, the CPU-certified global denominator G in y, zero in z,
+ * and the post sigma in w. No offset moves. Primary hit acceptance divides
+ * its whole epsilon by the same G; dither, shading and material pixel
+ * footprints remain unchanged. Inverse arithmetic shares
+ * swirl-lens-shader.ts with GLSL; the global bound is built only on the CPU.
+ * recursive swirl maps and nonzero 4D swirl slabs remain refused.
  *
  * THE FOLD-LENS WRAPPER (`lens`, that port's stage B) lifts `descendLens` —
  * the CPU route for `foldFinal` systems — over EITHER core. The chosen
@@ -2132,9 +2149,25 @@ export function packSurfaceGpuParams(
     // `foldRadiiOf` re-derives the branch algebra from. `SurfaceFoldRadii`
     // keeps `minR` for exactly this — every other field of it is already a
     // combination, and shipping combinations is how a mirror drifts.
-    view.setFloat32(272, lens.foldRadii.minR, true);
-    view.setFloat32(276, lens.foldRadii.fixedR, true);
-    view.setFloat32(280, lens.foldRadii.wall, true);
+    view.setFloat32(
+      272,
+      lens.foldKind === SURFACE_LENS_SWIRL
+        ? validatedSwirlLensRadius(lens.swirlRadius)
+        : lens.foldRadii.minR,
+      true,
+    );
+    view.setFloat32(
+      276,
+      lens.foldKind === SURFACE_LENS_SWIRL
+        ? validatedSwirlLensLipschitz(lens.swirlRadius, lens.swirlLipschitz)
+        : lens.foldRadii.fixedR,
+      true,
+    );
+    view.setFloat32(
+      280,
+      lens.foldKind === SURFACE_LENS_SWIRL ? 0 : lens.foldRadii.wall,
+      true,
+    );
     view.setFloat32(284, lens.postSigmaMin, true);
   }
   // The balloon block at the frozen offset 288 (module-doc
@@ -2826,9 +2859,25 @@ export function packSurface4GpuParams(
     view.setFloat32(556, lens4.sigmaMin, true);
     // The 4D lens fold's authored lengths, the 3D `lensFold`
     // quartet at this block's own offset.
-    view.setFloat32(560, lens4.foldRadii.minR, true);
-    view.setFloat32(564, lens4.foldRadii.fixedR, true);
-    view.setFloat32(568, lens4.foldRadii.wall, true);
+    view.setFloat32(
+      560,
+      lens4.foldKind === SURFACE_LENS_SWIRL
+        ? validatedSwirlLensRadius(lens4.swirlRadius)
+        : lens4.foldRadii.minR,
+      true,
+    );
+    view.setFloat32(
+      564,
+      lens4.foldKind === SURFACE_LENS_SWIRL
+        ? validatedSwirlLensLipschitz(lens4.swirlRadius, lens4.swirlLipschitz)
+        : lens4.foldRadii.fixedR,
+      true,
+    );
+    view.setFloat32(
+      568,
+      lens4.foldKind === SURFACE_LENS_SWIRL ? 0 : lens4.foldRadii.wall,
+      true,
+    );
     view.setFloat32(572, lens4.postSigmaMin, true);
   }
   // The balloon/plane shared block at 576, the 3D packer's frozen
@@ -6437,6 +6486,15 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
 ${lensPost ? "  let pq = lensUnpost(p);\n" : ""}  let kind = u32(params.lensParams.x);
   let absW = params.lensParams.z;
   let u = ${lensPost ? "pq" : "p"} * params.lensParams.y;
+  if (kind == ${SURFACE_LENS_SWIRL}u) {
+    let pre = swirlLensInverse(u);
+    let q = vec3f(
+      dot(params.lensM0, pre) + params.lensT0,
+      dot(params.lensM1, pre) + params.lensT1,
+      dot(params.lensM2, pre) + params.lensT2,
+    );
+    return surfaceDEHitInfoCore(q, li);
+  }
   let fr = foldRadiiOf(params.lensFold);
   var best = 1e30;
   var ru = 0.0;
@@ -6605,6 +6663,22 @@ ${
 ${lens4HitLiftText}${lensPost ? "  let pUnpost = lensUnpost4(pq);\n" : ""}  let kind = u32(params.lens4Params.x);
   let absW = params.lens4Params.z;
   let u = ${lensPost ? "pUnpost" : "pq"} * params.lens4Params.y;
+  if (kind == ${SURFACE_LENS_SWIRL}u) {
+    let pre = swirlLensInverse(u);
+    let q = vec4f(
+      dot(params.lens4MR0, pre),
+      dot(params.lens4MR1, pre),
+      dot(params.lens4MR2, pre),
+      dot(params.lens4MR3, pre),
+    ) + params.lens4T;
+${
+  pattern
+    ? `    var hi = surfaceDEHitInfoCore(q, ${slabExt ? "vec4f(0.0), " : ""}li);
+    hi.source4 = q;
+    return hi;`
+    : `    return surfaceDEHitInfoCore(q, ${slabExt ? "vec4f(0.0), " : ""}li);`
+}
+  }
   let fr = foldRadiiOf(params.lens4Fold);
 ${
   slabExt
@@ -7508,7 +7582,15 @@ fn marchRays(
   let py = ray / params.rasterWidth;
 ${marchRd}
 ${marchGate}
-  var steps = u32(st.z);
+${
+  lens
+    ? `  // Cancel only the swirl certificate's extra hit tolerance. Physical
+  // pixel slopes remain unchanged for material footprints and shading.
+  let lensEpsScale = select(1.0, 1.0 / params.${core4 ? "lens4Fold" : "lensFold"}.y,
+    params.${core4 ? "lens4Params" : "lensParams"}.x == ${SURFACE_LENS_SWIRL}.0);
+`
+    : ""
+}  var steps = u32(st.z);
   for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
     if (t > tFar) {
       st.y = ${marchMissStatus};
@@ -7518,7 +7600,7 @@ ${marchGate}
       st.y = ${SURFACE_GPU_RAY_EXHAUSTED}.0;
       break;
     }
-    let eps = max(params.pixelEps * t, params.hitFloorEps);
+    let eps = max(params.pixelEps * t, params.hitFloorEps)${lens ? " * lensEpsScale" : ""};
     let d = surfaceDE(ro + rd * t, eps, li);
     // Persist the last evaluation for diagnostics, INCLUDING the terminal
     // HIT sample. Shade never reads this lane.
@@ -11382,6 +11464,17 @@ fn lensUnpostLinear4(v: vec4f) -> vec4f {
 ${lensPost ? "  let p = lensUnpost(pIn);\n" : ""}  let kind = u32(params.lensParams.x);
   let absW = params.lensParams.z;
   let u = ${lensPost ? "p" : "pIn"} * params.lensParams.y;
+  if (kind == ${SURFACE_LENS_SWIRL}u) {
+    let pre = swirlLensInverse(u);
+    let q = vec3f(
+      dot(params.lensM0, pre) + params.lensT0,
+      dot(params.lensM1, pre) + params.lensT1,
+      dot(params.lensM2, pre) + params.lensT2,
+    );
+    let factor = absW * params.lensParams.w / params.lensFold.y;
+    let innerCutoff = cutoff / factor;
+    return max(factor * surfaceDECore(q, innerCutoff, li), visBound);
+  }
   let fr = foldRadiiOf(params.lensFold);
   var best = 1e30;
   var ru = 0.0;
@@ -11607,6 +11700,17 @@ ${lens4LiftText}${
   }${lensPost ? "  let pUnpost = lensUnpost4(p);\n" : ""}  let kind = u32(params.lens4Params.x);
   let absW = params.lens4Params.z;
   let u = ${lensPost ? "pUnpost" : "p"} * params.lens4Params.y;
+  if (kind == ${SURFACE_LENS_SWIRL}u) {
+    let pre = swirlLensInverse(u);
+    let q = vec4f(
+      dot(params.lens4MR0, pre),
+      dot(params.lens4MR1, pre),
+      dot(params.lens4MR2, pre),
+      dot(params.lens4MR3, pre),
+    ) + params.lens4T;
+    let factor = absW * params.lens4Params.w / params.lens4Fold.y;
+${lens4Refined ? "    let innerCutoff = cutoff / factor;\n" : ""}    return max(factor * surfaceDECore(q, ${slabExt ? "vec4f(0.0), " : ""}${lens4Refined ? "innerCutoff" : "0.0"}, li), visBound);
+  }
   let fr = foldRadiiOf(params.lens4Fold);
 ${
   slabExt
@@ -11849,16 +11953,10 @@ ${
   // text, three names; none can drift.
   const probeLensWrapText = lensWrapText
     .replace("fn surfaceDE(", "fn surfaceDEProbe(")
-    .replace(
-      "surfaceDECore(q, innerCutoff, li)",
-      "surfaceDEProbeCore(q, innerCutoff, li)",
-    );
+    .replaceAll("surfaceDECore(", "surfaceDEProbeCore(");
   const probeLens4WrapText = lens4WrapText
     .replace("fn surfaceDE(", "fn surfaceDEProbe(")
-    .replace(
-      lens4CoreCall,
-      lens4CoreCall.replace("surfaceDECore(", "surfaceDEProbeCore("),
-    );
+    .replaceAll("surfaceDECore(", "surfaceDEProbeCore(");
   const lensedBodyBlock = lens
     ? `${descentBlock
         .replace("fn surfaceDE(", "fn surfaceDECore(")
@@ -11871,6 +11969,7 @@ ${
           ? "descendLens4 (surface-de-4d.ts) — the 4D fold FINAL lens's\n// branch sweep around the core, whose view lift it now owns."
           : "descendLens (surface-de.ts) — the fold FINAL lens's branch sweep\n// around the untouched core (the pure-fold final lens's vocabulary)."
       }
+${swirlLensShaderSource("wgsl", core4 ? 4 : 3)}
 ${core4 ? lens4WrapText : lensWrapText}${
         probeWidth === null
           ? ""

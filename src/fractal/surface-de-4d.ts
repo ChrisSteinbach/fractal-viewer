@@ -24,6 +24,14 @@ import type {
   CondensationEmitter4,
 } from "./condensation-de";
 import { mulberry32 } from "./rng";
+import {
+  inverseSwirlInto,
+  pureSwirlFinal,
+  SURFACE_LENS_SWIRL,
+  swirlGlobalInverseLipschitz,
+  swirlPreRadius,
+  swirlRadiusRefusal,
+} from "./swirl-lens";
 import { SHAPE_MARCH_SAFETY, shapeBoundingRadius, shapeSdf } from "./shapes";
 import {
   SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
@@ -55,6 +63,7 @@ import type {
   MapSigmas,
   SurfaceEligibilityStatus,
   SurfaceFoldKind,
+  SurfaceLensKind,
   SurfaceFoldRadii,
   SurfaceChaosDE,
 } from "./surface-de";
@@ -835,6 +844,7 @@ export function analyzeSurfaceSystem4(
   transforms: Transform[],
   finalTransform: Transform | null = null,
   schedule: HybridSchedule | null = null,
+  symmetry: SymmetryParams = NO_SYMMETRY4,
 ): SurfaceEligibility4 {
   const reasons: string[] = [];
   const liftedTransforms = transforms.map(toTransform4);
@@ -919,14 +929,16 @@ export function analyzeSurfaceSystem4(
     if (transformHasEmitter(finalTransform)) {
       reasons.push("final transform has a shape emitter");
     }
-    // A pure-fold FINAL is eligible (3D's lens one dimension up): the lens is
-    // applied ONCE to the query point, so its fold expands into one round of
+    // A pure-fold or supported swirl FINAL is eligible (3D's lens one
+    // dimension up): the lens applies ONCE, so its inverse expands into a round of
     // branch root descents with no contraction requirement (an un-iterated
     // map needs none, exactly like the affine lens). Blended final variation
     // lists stay out for the iterated maps' reason: a weighted sum has no
     // branch decomposition.
     const foldFinal = pureFoldVariation(finalTransform);
-    if (!foldFinal && hasActiveVariations(finalTransform)) {
+    const swirlFinal = pureSwirlFinal(finalTransform);
+    const nonlinearFinal = foldFinal ?? swirlFinal;
+    if (!nonlinearFinal && hasActiveVariations(finalTransform)) {
       reasons.push("final transform uses variations");
       const clause = exactFlam3Refusal4("final transform", finalTransform);
       if (clause) reasons.push(clause);
@@ -934,8 +946,13 @@ export function analyzeSurfaceSystem4(
     // The lens has no contraction gate at all, so the weight floor is the
     // ONLY thing standing between a hand-edited w ≈ 0 and the lens's 1/w
     // (see NEAR_ZERO_FOLD_WEIGHT).
-    if (foldFinal && Math.abs(foldFinal.weight) < NEAR_ZERO_FOLD_WEIGHT) {
-      reasons.push("final transform fold weight ≈ 0");
+    if (
+      nonlinearFinal &&
+      Math.abs(nonlinearFinal.weight) < NEAR_ZERO_FOLD_WEIGHT
+    ) {
+      reasons.push(
+        `final transform ${swirlFinal ? "swirl" : "fold"} weight ≈ 0`,
+      );
     }
     // Unlike the per-map loop's isFlatTransform check in 3D's
     // analyzeSurfaceSystem, there is no isFlatTransform gate and no "extends
@@ -943,7 +960,7 @@ export function analyzeSurfaceSystem4(
     // extending into 4D is fine — that is this module's entire point.
     const liftedFinal = toTransform4(finalTransform);
     const stages = transformStageSigmas4(liftedFinal);
-    const s = foldFinal
+    const s = nonlinearFinal
       ? transformSeparatedSigmas4(liftedFinal)
       : transformSigmas4(liftedFinal);
     const stageMin = Math.min(stages.base.min, stages.post?.min ?? Infinity);
@@ -968,6 +985,26 @@ export function analyzeSurfaceSystem4(
         anisotropy = Math.max(anisotropy, s.max / s.min);
       }
     });
+  }
+
+  // Qualify against exactly the raw origin ball the 4D descent uses.
+  // No final lens reaches the nested raw build, so this does not recurse.
+  if (
+    reasons.length === 0 &&
+    finalTransform &&
+    pureSwirlFinal(finalTransform)
+  ) {
+    const raw = buildSurfaceDE4(transforms, null, symmetry, { schedule });
+    const liftedFinal = toTransform4(finalTransform);
+    const affine = composeAffine4(liftedFinal);
+    const radius = swirlPreRadius(
+      affine.m,
+      affine.t,
+      transformStageSigmas4(liftedFinal).base.max,
+      raw.boundingRadius,
+    );
+    const refusal = swirlRadiusRefusal(radius);
+    if (refusal) reasons.push(refusal);
   }
 
   const status: SurfaceEligibilityStatus =
@@ -1240,28 +1277,36 @@ export interface SurfaceDE4 {
    * INTO these rows (inv(P∘A) composed at build time), exactly 3D's
    * affine-lens treatment. */
   final: { invM: number[]; invT: Vec4; sigmaMin: number } | null;
-  /** Pure-fold FINAL lens (3D's `foldFinal` one
+  /** Pure-fold or supported swirl FINAL lens (3D's `foldFinal` one
    * dimension up), or `null`. When set, {@link final} is `null` and the
    * public estimators route through `descendLens4`: the lens fold expands
    * into ONE round of branch root descents around the untouched cores.
    * `invM`/`invT` invert the lens's AFFINE part; `invW`/`absW` carry the
-   * fold weight; `sigmaMin` is the affine part's smallest singular value
+   * variation weight; `sigmaMin` is the product of the separated affine minima
    * (the per-branch descent factor is `absW · sigma_branch · sigmaMin`).
    * A lens post-affine rides as its own factor (`postInvM`/`postInvT`,
    * un-applied by descendLens4 BEFORE its branch sweep) — the branch
    * enumeration sits between P⁻¹ and the affine inverse. Its
    * `postSigmaMin` prices branch-region floors in outer space. `null` plus
-   * a unit factor skips. */
+   * a unit factor skips. A swirl uses the shared dimension-free certificate
+   * and the FULL four-coordinate radius for its inverse angle, preserving
+   * z/w. `swirlRadius` bounds its pre-variation affine ball, and the stored
+   * `swirlLipschitz` divides both distance and primary-hit epsilon. It admits only
+   * point queries: inverse swirl bends a slab segment ({@link slabExact4}). */
   foldFinal: {
     invM: number[];
     invT: Vec4;
     sigmaMin: number;
-    foldKind: SurfaceFoldKind;
+    foldKind: SurfaceLensKind;
     invW: number;
     absW: number;
     /** The lens fold's authored lengths, in the same branch-algebra form
      * the base maps carry. */
     foldRadii: SurfaceFoldRadii;
+    /** Origin radius before a swirl lens; unused by fold lenses. */
+    swirlRadius?: number;
+    /** Certified global inverse bound, stored as an upward-rounded f32. */
+    swirlLipschitz?: number;
     /** The lens's own post-affine inverse, or `null`. */
     postInvM: number[] | null;
     postInvT: Vec4 | null;
@@ -1323,6 +1368,7 @@ export function buildSurfaceDE4(
     transforms,
     finalTransform,
     options.schedule,
+    symmetry,
   );
   if (analysis.status === "ineligible") {
     throw new Error(
@@ -1885,14 +1931,17 @@ export function buildSurfaceDE4(
     const s = transformSigmas4(liftedFinal);
     const affineCenter: Vec4 = [tx, ty, tz, tw];
     const fold = pureFoldVariation(finalTransform);
-    if (fold) {
-      const kind: SurfaceFoldKind =
-        fold.type === "boxfold"
+    const swirl = pureSwirlFinal(finalTransform);
+    const nonlinear = fold ?? swirl;
+    if (nonlinear) {
+      const kind: SurfaceLensKind = swirl
+        ? SURFACE_LENS_SWIRL
+        : nonlinear.type === "boxfold"
           ? SURFACE_FOLD_BOXFOLD
-          : fold.type === "spherefold"
+          : nonlinear.type === "spherefold"
             ? SURFACE_FOLD_SPHEREFOLD
             : SURFACE_FOLD_MANDELBOX;
-      const radii = surfaceFoldRadii(fold);
+      const radii = surfaceFoldRadii(nonlinear);
       // A fold lens's own post rides as its own factor (3D's rule one
       // dimension up) — the branch enumeration sits between P⁻¹ and the
       // affine inverse.
@@ -1930,8 +1979,8 @@ export function buildSurfaceDE4(
         invT,
         sigmaMin: transformSeparatedSigmas4(liftedFinal).min,
         foldKind: kind,
-        invW: 1 / fold.weight,
-        absW: Math.abs(fold.weight),
+        invW: 1 / nonlinear.weight,
+        absW: Math.abs(nonlinear.weight),
         foldRadii: radii,
         postInvM,
         postInvT,
@@ -1946,16 +1995,28 @@ export function buildSurfaceDE4(
       // tops out at (fR²/mR²)·mR = fR²/mR — all radial statements,
       // dimension-free); the mandelbox chains the two. At the classic
       // lengths those are the `+ 4` and the `2` that shipped.
-      const preFoldR =
-        stages.base.max * boundingRadius + Math.hypot(...affineCenter);
+      const preFoldR = swirl
+        ? swirlPreRadius(affine.m, affine.t, stages.base.max, boundingRadius)
+        : stages.base.max * boundingRadius + Math.hypot(...affineCenter);
+      if (swirl) {
+        const refusal = swirlRadiusRefusal(preFoldR);
+        if (refusal)
+          throw new Error(
+            `system has no surface distance estimator: ${refusal}`,
+          );
+        foldFinal.swirlRadius = preFoldR;
+        foldFinal.swirlLipschitz = swirlGlobalInverseLipschitz(preFoldR);
+      }
       const boxR = Math.sqrt(preFoldR * preFoldR + 4 * radii.wall * radii.wall);
       const foldedR =
         foldFinal.absW *
-        (kind === SURFACE_FOLD_BOXFOLD
-          ? boxR
-          : kind === SURFACE_FOLD_SPHEREFOLD
-            ? Math.max(preFoldR, radii.outputR)
-            : Math.max(boxR, radii.outputR));
+        (kind === SURFACE_LENS_SWIRL
+          ? preFoldR
+          : kind === SURFACE_FOLD_BOXFOLD
+            ? boxR
+            : kind === SURFACE_FOLD_SPHEREFOLD
+              ? Math.max(preFoldR, radii.outputR)
+              : Math.max(boxR, radii.outputR));
       visibleBoundingRadius = postLive
         ? stages.post!.max * foldedR + Math.hypot(...lensPost!.t)
         : foldedR;
@@ -2714,11 +2775,12 @@ function isSegment(halfExtent: Vec4 | null): halfExtent is Vec4 {
  * leaves every `k > 0` branch dead — a system without symmetry runs the
  * pre-sweep arithmetic unchanged.
  *
- * Routing (mirroring 3D's `estimateDistance`): a fold FINAL lens
- * wraps the cores in `descendLens4`'s branch sweep, fold base maps descend
+ * Routing (mirroring 3D's `estimateDistance`): a fold or supported swirl FINAL
+ * wraps the cores in `descendLens4`, fold base maps descend
  * `descendFold4`'s frontier, and the plain affine ladder below serves the
  * rest. Slab queries (`halfExtent`) are refused — thrown, not degraded —
- * when the system's fold set breaks segment exactness ({@link slabExact4}).
+ * when the system's folds or nonlinear final break segment exactness
+ * ({@link slabExact4}; swirl qualification: `docs/swirl-surface-lens.md`).
  */
 export function estimateDistance4(
   de: SurfaceDE4,
@@ -2727,7 +2789,7 @@ export function estimateDistance4(
 ): number {
   if (halfExtent && isSegment(halfExtent) && !slabExact4(de)) {
     throw new Error(
-      "surface-de-4d: slab queries are unsound for this system's folds " +
+      "surface-de-4d: slab queries are unsound for this system's nonlinear final lens, folds " +
         "or condensation shape — clamp sliceHalfW to 0 " +
         "for this system (slabExact4)",
     );
@@ -3562,7 +3624,7 @@ export function estimateDistance4Refined(
 ): number {
   if (halfExtent && isSegment(halfExtent) && !slabExact4(de)) {
     throw new Error(
-      "surface-de-4d: slab queries are unsound for this system's folds " +
+      "surface-de-4d: slab queries are unsound for this system's nonlinear final lens, folds " +
         "or condensation shape — clamp sliceHalfW to 0 " +
         "for this system (slabExact4)",
     );
@@ -6008,6 +6070,33 @@ function descendLens4(
   const uy = pqy * lens.invW;
   const uz = pqz * lens.invW;
   const uw = pqw * lens.invW;
+  if (kind === SURFACE_LENS_SWIRL) {
+    // Public entries already refuse nonzero slab segments: inverse swirl
+    // bends them, so a straight half-extent would change the drawn set.
+    LENS_QUERY4[0] = ux;
+    LENS_QUERY4[1] = uy;
+    LENS_QUERY4[2] = uz;
+    LENS_QUERY4[3] = uw;
+    inverseSwirlInto(LENS_QUERY4, LENS_QUERY4);
+    const vx = LENS_QUERY4[0];
+    const vy = LENS_QUERY4[1];
+    const vz = LENS_QUERY4[2];
+    const vw = LENS_QUERY4[3];
+    LENS_QUERY4[0] = im[0] * vx + im[1] * vy + im[2] * vz + im[3] * vw + it[0];
+    LENS_QUERY4[1] = im[4] * vx + im[5] * vy + im[6] * vz + im[7] * vw + it[1];
+    LENS_QUERY4[2] =
+      im[8] * vx + im[9] * vy + im[10] * vz + im[11] * vw + it[2];
+    LENS_QUERY4[3] =
+      im[12] * vx + im[13] * vy + im[14] * vz + im[15] * vw + it[3];
+    const factor = (absW * sigmaMinM) / lens.swirlLipschitz!;
+    const innerCutoff = cutoff > 0 ? cutoff / factor : 0;
+    const inner = hasFolds
+      ? descendFold4(de, LENS_QUERY4, refine, innerCutoff, null)
+      : refine
+        ? descend4Refined(de, LENS_QUERY4, innerCutoff, null)
+        : descend4(de, LENS_QUERY4, null);
+    return Math.max(visBound, factor * inner);
+  }
   // u-space is a SCALAR multiple of world space, so a slab query's
   // half-extent scales with the point and stays a segment.
   const euX = LENS_EXT4[0] * lens.invW;

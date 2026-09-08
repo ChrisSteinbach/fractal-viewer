@@ -9,6 +9,23 @@ Commands section points here rather than carrying these numbers inline.
 It pins `surface-de-gpu.ts` — both the eval/march baselines and the app
 path's march-unproject/shade — to the CPU estimator.
 
+Pure swirl final lenses add `lensSwirlPostOverAffine`,
+`lensSwirlPostOverFold`, `lens4SwirlPostOverAffine` and
+`lens4SwirlPostOverFold` to the existing lens rows. Their nonzero translation,
+unequal pre-scales, signed weight and post-affine pin inverse order in both
+dimensions; the 4D views also rotate through w. The CPU primary-ray references
+divide their complete hit epsilon by the same stored global certificate as
+the shader. Eval, march and hit-info retain the existing comparators and caps.
+The [swirl qualification record](swirl-surface-lens.md) separates these numeric
+checks from the fixed-geometry fidelity and production-browser gates.
+
+`marchUnprojectSwirl` additionally pins eight primary-ray rows (four cores,
+plain and Balloon), and `computeFrameSwirl` runs four small patterned Balloon
+frames to execute hit-info, source coordinates and shade probes. Balloon eval
+rows require both union terms to win. Every real-driver production frame must
+finish with hits and misses, no exhausted or active rays, and the existing CPU
+sanity tolerance; an empty slice cannot pass merely by matching background.
+
 Finite chamber tiling adds a mandatory compact ABI/agreement gate across all
 seven kernel cores. Each core must compile, bind a params buffer at its exact
 legal byte length, dispatch, and agree with the matching `tiling-de.ts` CPU

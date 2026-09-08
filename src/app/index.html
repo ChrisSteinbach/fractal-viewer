@@ -2547,13 +2547,17 @@
                 <input
                   type="range"
                   id="fourDSliceThicknessSlider"
-                  aria-describedby="fourDSavedViewScope"
+                  aria-describedby="fourDSavedViewScope fourDSliceThicknessUnavailableNote"
                   min="0"
                   max="0.5"
                   step="0.01"
                   value="0"
                 />
               </label>
+              <p
+                class="flame-hint hidden"
+                id="fourDSliceThicknessUnavailableNote"
+              ></p>
             </div>
             <label
               class="checkbox-label"
@@ -2613,6 +2617,7 @@
               <option value="mandelboxKifs">Mandelbox KIFS</option>
               <option value="fourFinishes">Four Finishes</option>
               <option value="metalStudio">Metal Studio</option>
+              <option value="swirlTetrahedron">Swirl Tetrahedron</option>
               <optgroup label="Space tiling">
                 <option value="tiledOctahedron">Tiled Octahedron · B3</option>
                 <option value="tiledPentatope">Tiled Pentatope · A4</option>
@@ -2651,6 +2656,7 @@
               </optgroup>
               <optgroup label="4D">
                 <option value="pentatope">Pentatope Gasket</option>
+                <option value="swirlPentatope">Swirl Pentatope</option>
                 <option value="sixteenCell">16-Cell Flake</option>
                 <option value="duoprism">Duoprism (3×3)</option>
                 <option value="tesseract">Tesseract Dust</option>

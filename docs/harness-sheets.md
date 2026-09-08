@@ -947,13 +947,15 @@ core. Full figures and the legal-combination correction:
 
 ### swirl-lens
 
-`scripts/swirl-lens.harness.ts` is an **unshipped** nonlinear-final prototype
-in 3D and 4D. The exact inverse swirl and a global inverse-Lipschitz bound
-passed independent forward-point certificate tests; moderate twists visibly
-deform the existing Surface objects at a practical march cost. Strong twists
-thicken fine detail under the common hit tolerance, especially in 4D slices,
-so the result does not admit arbitrary swirl into production. The script
-header records the bound, measured cost, and qualification still needed.
+`scripts/swirl-lens.harness.ts` qualifies a pure nonlinear final transform
+in both dimensions. It retains the original global-segment certificate
+experiment and its visible thin-slice failures, then compares fixed geometry
+at several resolutions and against a control with the raw hit tolerance.
+The admitted path uses a constant all-query inverse bound and divides the
+entire march hit epsilon by that same bound. A strength cap and the
+160-step budget remain explicit; no loose image-wide threshold hides new
+components. Proof, comparisons and reproduction commands:
+[Swirl final transforms in Surface](swirl-surface-lens.md).
 
 ### lattice-tiling
 
