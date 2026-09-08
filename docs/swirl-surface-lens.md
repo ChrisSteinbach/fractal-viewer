@@ -44,6 +44,57 @@ capturing it through both engines. Existing user look settings, including
 Balloon, retain the preset loader's ordinary behavior; these showcases are
 composed with Balloon off.
 
+## Editing the radius
+
+**Transforms → Final Transform → Variations → Swirl → Radius** exposes the
+derived bound directly, beside the Swirl weight. **Fit for Surface** sets an
+oversized radius to the supported endpoint. The range has an exact numeric
+companion, and an unsupported blend or raw system keeps the control disabled
+with its reason. Its Scene / Look placement and per-renderer edit timing follow
+the ordinary final-transform editor.
+
+`swirl-lens-edit.ts` derives the radius with the same raw builders, symmetry,
+schedule and 3D fitted / 4D origin-centered balls used by Surface. To change
+radius from `rho` to `target`, it multiplies the final's entire pre-affine
+matrix and translation by `target/rho`, then divides the Swirl weight by that
+ratio. This changes the radius-dependent xy turn while preserving the
+pre-post output norm and carried z/w coordinates. Rotations, shear, signed
+scales, signed weights and the post-affine remain intact. Explicit W scale and
+position follow the edit; inherited W scale remains inherited. Radius is an
+authoring convenience over existing fields, not a new variation parameter.
+
+The numeric domain respects the scene codec's weight and explicit W limits.
+An automatic W scale may be smaller than the explicit W range; its readout
+stays automatic, invalid materialization is refused with an adjacent reason,
+and valid explicit W edits remain available before mirroring.
+At exactly 0.5 the setter uses a tiny inward floating-point margin and the app
+rechecks the actual candidate before accepting it. The scene encoder retains
+full precision for radius-affecting geometry while a pure Swirl final is
+active, including base maps, fold lengths, emitter shapes and scheduled B.
+Keeping only the final precise would be insufficient: rounding a base map
+changes the raw ball too. Other scenes keep their existing compact encoding.
+
+Opening the original showcases also exposed an editor defect: their
+reciprocal weights exceed the ordinary variation range of ±2. Numeric bounds
+now expand to the authored value, including coupled scales below the guide
+range. Weight-only updates retain their DOM controls so a compensated radius
+edit keeps focus and reaches the delegated commit once.
+
+The production authoring gate is
+`node scripts/final-swirl-radius.verify.mjs --display=:0` after build/preview.
+It exercises manual construction and both showcases through trusted touch and
+keyboard input, checks the copied document after editing, undo and reload,
+then captures the resulting 3D/4D scenes through compute and WebGL.
+
+Measured on 2026-09-08 with the AMD RX 7900 XTX: all four authoring cases
+and eight resulting captures passed at 320×727, each capture completing
+518,400 rays with zero exhausted rays. The first 393px run had passed, but a
+320px follow-up caught a 46.19px field clipping its 57px content. Reclaiming
+the unused remove-button column widened the final field and track to 89.19px;
+the field remains 44px high and the corrected panels were visually inspected.
+The existing numeric-control gate also passed at 393px across 84 states and
+100 distinct sliders, including trusted touch, keyboard and refusal checks.
+
 ## Inverse and distance certificate
 
 Write `S(x)` for rotation of xy by `pi/2 - |x|²`, carrying every other

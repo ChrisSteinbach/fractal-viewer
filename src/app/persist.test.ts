@@ -30,6 +30,13 @@ import {
 } from "../fractal/shapes";
 import type { ShapeSpec } from "../fractal/shapes";
 import { VARIATION_TYPES } from "../fractal/types";
+import type { Transform, Vec3 } from "../fractal/types";
+import { buildSurfaceDE, estimateDistanceRefined } from "../fractal/surface-de";
+import {
+  buildSurfaceDE4,
+  estimateDistance4Refined,
+} from "../fractal/surface-de-4d";
+import { SWIRL_LENS_MAX_RADIUS } from "../fractal/swirl-lens";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import { MAX_PHI, MAX_RADIUS, MIN_PHI, MIN_RADIUS } from "./orbit";
 import { bundledEmitterForShape } from "./bundled-shapes";
@@ -1945,6 +1952,269 @@ describe("decodeScene final transform", () => {
       },
     };
     expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+});
+
+describe("swirl final radius persistence", () => {
+  const post: NonNullable<Transform["post"]> = {
+    m: [
+      0.923456789, 0.012345678, 0, -0.012345678, 0.923456789, 0, 0, 0,
+      0.934567891,
+    ],
+    t: [0.123456789, -0.234567891, 0.345678912],
+  };
+
+  function scene(
+    fourD: boolean,
+    kind: "affine" | "fold" | "emitter",
+  ): SceneSnapshot {
+    const transforms: Transform[] = [0, 1].map((id) => ({
+      id,
+      position:
+        id === 0
+          ? [0.431234567, -0.148765432, 0.039876543]
+          : [-0.378912345, 0.248765432, -0.198765432],
+      rotation: [0.138765432, -0.234567891, 0.045678912],
+      scale: [0.331234567, 0.331234567, 0.331234567],
+      shear: [0.001234567, -0.002345678, 0.003456789],
+      weight: id === 0 ? 1.234567891 : 0.876543219,
+      post,
+      ...(kind === "fold"
+        ? {
+            variations: [
+              {
+                type: "boxfold" as const,
+                weight: 0.987654321,
+                boxLimit: 0.312345678,
+              },
+            ],
+          }
+        : {}),
+      ...(fourD
+        ? {
+            w: {
+              position: id === 0 ? 0.187654321 : -0.112345678,
+              scale: 0.331234567,
+              rotation: { xw: 0.234567891 },
+              shear: { yw: 0.001234567 },
+            },
+          }
+        : {}),
+    }));
+    if (kind === "emitter")
+      transforms.push({
+        id: 2,
+        position: [0.178912345, -0.234567891, 0.045678912],
+        rotation: [0.056789123, 0.078912345, -0.091234567],
+        scale: [0.812345678, 0.812345678, 0.812345678],
+        emitter: {
+          parts: [
+            {
+              combine: "union",
+              primitive: { kind: "sphere", radius: 0.234567891 },
+              pose: {
+                offset: [0.034567891, -0.045678912, 0.056789123],
+                rotate: [0.123456789, -0.234567891, 0.345678912],
+                scale: 0.987654321,
+              },
+            },
+          ],
+        },
+        ...(fourD
+          ? {
+              w: {
+                position: 0.123456789,
+                scale: 0.812345678,
+                rotation: { zw: 0.123456789 },
+              },
+            }
+          : {}),
+      });
+    return {
+      ...baseSnapshot(),
+      transforms,
+      symmetry: fourD
+        ? { order: 3, plane: "xz", twist: 1 }
+        : { order: 3, plane: "xz" },
+      schedule: {
+        depth: 2,
+        transforms: [
+          {
+            id: 0,
+            position: [0.112345678, -0.223456789, 0.134567891],
+            rotation: [0.234567891, -0.345678912, 0.456789123],
+            scale: [1.012345678, 1.012345678, 1.012345678],
+            shear: [0.001234567, -0.002345678, 0.003456789],
+            weight: 1.234567891,
+          },
+        ],
+      },
+      finalTransform: {
+        id: 0,
+        position: [0.023456789, -0.012345678, 0.031234567],
+        rotation: [0.234567891, -0.345678912, 0.456789123],
+        scale: [0.1, 0.102, 0.098],
+        shear: [0.001234567, -0.002345678, 0.003456789],
+        variations: [
+          { type: "swirl", weight: fourD ? -1.765432198 : 2.234567891 },
+        ],
+        post,
+        ...(fourD
+          ? {
+              w: {
+                position: 0.012345678,
+                scale: -0.101234567,
+                rotation: {
+                  xw: 0.234567891,
+                  yw: -0.145678912,
+                  zw: 0.067891234,
+                },
+                shear: { yw: 0.001234567 },
+              },
+            }
+          : {}),
+      },
+    };
+  }
+
+  for (const fourD of [false, true]) {
+    for (const kind of ["affine", "fold", "emitter"] as const) {
+      it(`keeps the ${fourD ? "4D" : "3D"} ${kind} endpoint eligible with exact base, schedule, post and signed lens geometry`, () => {
+        const source = scene(fourD, kind);
+        const build = (snapshot: SceneSnapshot) =>
+          fourD
+            ? buildSurfaceDE4(
+                snapshot.transforms,
+                snapshot.finalTransform,
+                snapshot.symmetry,
+                { schedule: snapshot.schedule },
+              )
+            : buildSurfaceDE(
+                snapshot.transforms,
+                snapshot.finalTransform,
+                snapshot.symmetry,
+                { schedule: snapshot.schedule },
+              );
+        const seed = build(source);
+        const factor =
+          (SWIRL_LENS_MAX_RADIUS * (1 - 8 * Number.EPSILON)) /
+          seed.foldFinal!.swirlRadius!;
+        const final = source.finalTransform!;
+        final.position = final.position.map((value) => value * factor) as Vec3;
+        final.scale = final.scale.map((value) => value * factor) as Vec3;
+        final.variations![0].weight /= factor;
+        if (final.w) {
+          final.w.position! *= factor;
+          final.w.scale! *= factor;
+        }
+        const before = build(source);
+        expect(before.foldFinal!.swirlRadius).toBeLessThanOrEqual(
+          SWIRL_LENS_MAX_RADIUS,
+        );
+        expect(before.foldFinal!.swirlRadius).toBeCloseTo(
+          SWIRL_LENS_MAX_RADIUS,
+          14,
+        );
+        const encoded = encodeScene(source);
+        const decoded = decodeScene(encoded)!;
+        expect(decoded).not.toBeNull();
+        expect(decoded.transforms).toEqual(source.transforms);
+        expect(decoded.schedule).toEqual(source.schedule);
+        expect(decoded.symmetry).toEqual(source.symmetry);
+        expect(decoded.finalTransform).toEqual(source.finalTransform);
+        expect(encodeScene(decoded)).toBe(encoded);
+        const after = build(decoded);
+        expect(after.foldFinal).toEqual(before.foldFinal);
+        expect(after.boundingRadius).toBe(before.boundingRadius);
+        expect(after.visibleBoundingRadius).toBe(before.visibleBoundingRadius);
+        if (fourD) {
+          const a = buildSurfaceDE4(source.transforms, final, source.symmetry, {
+            schedule: source.schedule,
+          });
+          const b = buildSurfaceDE4(
+            decoded.transforms,
+            decoded.finalTransform,
+            decoded.symmetry,
+            { schedule: decoded.schedule },
+          );
+          expect(
+            estimateDistance4Refined(
+              b,
+              [0.712345678, -0.834567891, 0.956789123, 0.178912345],
+            ),
+          ).toBe(
+            estimateDistance4Refined(
+              a,
+              [0.712345678, -0.834567891, 0.956789123, 0.178912345],
+            ),
+          );
+        } else {
+          const a = buildSurfaceDE(source.transforms, final, source.symmetry, {
+            schedule: source.schedule,
+          });
+          const b = buildSurfaceDE(
+            decoded.transforms,
+            decoded.finalTransform,
+            decoded.symmetry,
+            { schedule: decoded.schedule },
+          );
+          expect(
+            estimateDistanceRefined(
+              b,
+              [0.712345678, -0.834567891, 0.956789123],
+            ),
+          ).toBe(
+            estimateDistanceRefined(
+              a,
+              [0.712345678, -0.834567891, 0.956789123],
+            ),
+          );
+        }
+      });
+    }
+  }
+
+  it("keeps the compact geometry codec for recursive swirl and blended or dormant finals", () => {
+    for (const variations of [
+      undefined,
+      [{ type: "swirl" as const, weight: 0 }],
+      [
+        { type: "swirl" as const, weight: 0.712345678 },
+        { type: "linear" as const, weight: 0.312345678 },
+      ],
+    ]) {
+      const source = scene(true, "affine");
+      source.transforms[0].variations = [
+        { type: "swirl", weight: 0.712345678 },
+      ];
+      source.finalTransform!.variations = variations;
+      const decoded = decodeScene(encodeScene(source))!;
+      expect(decoded.transforms[0].position[0]).toBe(0.4312);
+      expect(decoded.transforms[0].variations![0].weight).toBe(0.7123);
+      expect(decoded.schedule!.transforms[0].scale[0]).toBe(1.0123);
+      expect(decoded.finalTransform!.position[0]).toBe(0.0235);
+      expect(decoded.finalTransform!.post!.m[0]).toBe(0.9235);
+      expect(decoded.finalTransform!.w!.position).toBe(0.0123);
+    }
+  });
+
+  it("keeps cosmetic rounding and transient symmetry blend outside the precision exception", () => {
+    const source = scene(false, "affine");
+    source.transforms[0].colorIndex = 0.123456789;
+    source.transforms[0].finish = { reflect: 0.234567891 };
+    source.transforms[0].surfacePattern = {
+      kind: "wood",
+      axis: "z",
+      scale: 2.345678912,
+    };
+    source.symmetry.blend = 0.345678912;
+    source.pointSize = 1.234567891;
+    const decoded = decodeScene(encodeScene(source))!;
+    expect(decoded.transforms[0].colorIndex).toBe(0.1235);
+    expect(decoded.transforms[0].finish!.reflect).toBe(0.2346);
+    expect(decoded.transforms[0].surfacePattern!.scale).toBe(2.3457);
+    expect(decoded.pointSize).toBe(1.2346);
+    expect(decoded.symmetry.blend).toBeUndefined();
   });
 });
 

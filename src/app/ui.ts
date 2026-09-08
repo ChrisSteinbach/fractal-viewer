@@ -1,4 +1,6 @@
 import { meanContraction } from "../fractal/affine4";
+import { SWIRL_LENS_MAX_RADIUS } from "../fractal/swirl-lens";
+import type { FinalSwirlRadiusControlAnalysis } from "./swirl-radius-control";
 import {
   DEFAULT_COLOR_SPEED,
   derivedColorIndex,
@@ -456,6 +458,8 @@ export interface UiHandlers {
   /** The mutation-only final-transform counterpart to
    * {@link onTransformGeometry}. */
   onFinalTransformGeometry: (geometry: FinalGeometry) => void;
+  /** Rescale a pure swirl final's pre-affine, compensating its output weight. */
+  onFinalSwirlRadius: (radius: number) => void;
   /** A transform-editor gesture settled. Range inputs commit once through the
    * editor's delegated bubbling `change` listener; discrete editor actions
    * emit their one geometry mutation and then call this once directly. */
@@ -1478,13 +1482,17 @@ function variationLabel(type: VariationType): string {
  * the old one, and silently revert the author's value on the next unrelated
  * edit.
  */
-function variationsEqual(a: Variation[], b: Variation[]): boolean {
+function variationsEqual(
+  a: Variation[],
+  b: Variation[],
+  ignoreWeight = false,
+): boolean {
   return (
     a.length === b.length &&
     a.every(
       (v, i) =>
         v.type === b[i].type &&
-        v.weight === b[i].weight &&
+        (ignoreWeight || v.weight === b[i].weight) &&
         v.minRadius === b[i].minRadius &&
         v.fixedRadius === b[i].fixedRadius &&
         v.boxLimit === b[i].boxLimit &&
@@ -1609,6 +1617,21 @@ interface AxisControl {
   numeric: RangeNumberControl;
 }
 
+/** Convenience spans may widen to an authored value. Coupled radius edits
+ * can shrink Scale below the guide-box span or grow a variation above it. */
+function syncLinearEditorValue(
+  control: AxisControl,
+  value: number,
+  bounds: { min: number; max: number; step: number },
+): void {
+  const min = Math.min(bounds.min, value);
+  const max = Math.max(bounds.max, value);
+  control.slider.min = String(min);
+  control.slider.max = String(max);
+  control.numeric.setBounds({ min, max, step: bounds.step });
+  control.numeric.setValue(value);
+}
+
 /**
  * Live handles into the collapsed "4D" group's eight rows — one per
  * {@link WExtension} field, since unlike the plain Vec3 channels each
@@ -1618,12 +1641,20 @@ interface AxisControl {
 interface FourDControls {
   positionW: AxisControl;
   scaleW: AxisControl;
+  /** Explain why an automatic value cannot be authored explicitly. */
+  scaleWNote: HTMLElement;
   /** The Scale W group's mirror toggle: pressed ⇔ the explicit `w.scale`
    * is negative. Never pressed while auto — the derived mean is always
    * positive. */
   mirrorW: HTMLButtonElement;
   rotationW: AxisControl[];
   shearW: AxisControl[];
+}
+
+/** The automatic scale may follow XYZ outside the explicit W wire domain. */
+function canAuthorScaleW(value: number): boolean {
+  const magnitude = Math.abs(value);
+  return magnitude >= MIN_W_SCALE && magnitude <= MAX_W_SCALE;
 }
 
 /**
@@ -1788,6 +1819,10 @@ interface EditorState {
   patternControls: PatternControls | null;
   /** Working copy of the transform's variation blend, edited in place. */
   variations: Variation[];
+  /** Retained across weight-only edits, including compensated swirl edits. */
+  variationControls: AxisControl[];
+  swirlRadius:
+    (AxisControl & { note: HTMLElement; fit: HTMLButtonElement }) | null;
   /** Container the variation rows are (re)built into on add/remove. */
   variationList: HTMLElement;
   /** The "add variation" dropdown, whose options exclude already-added types. */
@@ -1796,6 +1831,9 @@ interface EditorState {
    * or not this transform currently carries a `w` block. */
   fourD: FourDControls;
 }
+
+/** The final lens's derived bound and its losslessly shareable edit domain. */
+export type FinalSwirlRadiusState = FinalSwirlRadiusControlAnalysis;
 
 /** How long a plain {@link Ui.flashToast} confirmation stays on screen. */
 const TOAST_DURATION_MS = 1800;
@@ -2743,6 +2781,7 @@ export class Ui {
   private sectionMode: RenderMode = "points";
 
   private editor: EditorState | null = null;
+  private finalSwirlRadiusState: FinalSwirlRadiusState | null = null;
 
   /**
    * Session memory of which transform-editor group is open. Every
@@ -7824,6 +7863,12 @@ export class Ui {
     }
   }
 
+  /** Refresh from authored geometry, never from the currently rendered cloud. */
+  setFinalSwirlRadius(state: FinalSwirlRadiusState | null): void {
+    this.finalSwirlRadiusState = state;
+    this.syncSwirlRadiusControl();
+  }
+
   /**
    * Create one collapsible editor group. The editor measured 786px
    * of the Transforms section's 1253px on a 393x727 phone — two and a half
@@ -7969,8 +8014,8 @@ export class Ui {
 
         const slider = this.doc.createElement("input");
         slider.type = "range";
-        slider.min = String(spec.min);
-        slider.max = String(spec.max);
+        slider.min = String(Math.min(spec.min, spec.toSlider(model)));
+        slider.max = String(Math.max(spec.max, spec.toSlider(model)));
         slider.step = String(spec.step);
         slider.value = String(spec.toSlider(model));
         slider.setAttribute("aria-label", `${spec.title} ${axisLabel}`);
@@ -7987,8 +8032,8 @@ export class Ui {
         const numeric = this.pairDynamicRange({
           slider,
           readout,
-          min: spec.min,
-          max: spec.max,
+          min: Number(slider.min),
+          max: Number(slider.max),
           step: spec.step,
           value: spec.toSlider(model),
           ariaLabel: `${spec.title} ${axisLabel}`,
@@ -8086,6 +8131,8 @@ export class Ui {
       finishControls,
       patternControls,
       variations: (transform.variations ?? []).map((v) => ({ ...v })),
+      variationControls: [],
+      swirlRadius: null,
       variationList: list,
       variationAdd: add,
       fourD,
@@ -9816,6 +9863,8 @@ export class Ui {
     const editor = this.editor;
     if (!editor) return;
     editor.variationList.replaceChildren();
+    editor.variationControls = [];
+    editor.swirlRadius = null;
     editor.variations.forEach((variation, i) => {
       const row = this.doc.createElement("div");
       row.className = "editor-row variation-row";
@@ -9826,8 +9875,11 @@ export class Ui {
 
       const slider = this.doc.createElement("input");
       slider.type = "range";
-      slider.min = String(VARIATION_WEIGHT_MIN);
-      slider.max = String(VARIATION_WEIGHT_MAX);
+      // Imported and compensated weights can exceed the convenience span.
+      // Keep their actual values editable instead of throwing while opening
+      // the editor (the swirl showcases both start above +2).
+      slider.min = String(Math.min(VARIATION_WEIGHT_MIN, variation.weight));
+      slider.max = String(Math.max(VARIATION_WEIGHT_MAX, variation.weight));
       slider.step = "0.05";
       slider.value = String(variation.weight);
       slider.setAttribute("aria-label", `Variation ${variation.type}`);
@@ -9851,11 +9903,11 @@ export class Ui {
       remove.addEventListener("click", () => this.removeVariation(i));
 
       row.append(name, slider, readout, remove);
-      this.pairDynamicRange({
+      const numeric = this.pairDynamicRange({
         slider,
         readout,
-        min: VARIATION_WEIGHT_MIN,
-        max: VARIATION_WEIGHT_MAX,
+        min: Number(slider.min),
+        max: Number(slider.max),
         step: 0.05,
         value: variation.weight,
         ariaLabel: `Variation ${variation.type}`,
@@ -9865,13 +9917,119 @@ export class Ui {
           this.emitGeometry();
         },
       });
+      editor.variationControls.push({ slider, readout, numeric });
       editor.variationList.appendChild(row);
-      if (isFoldVariationType(variation.type)) {
+      if (variation.type === "swirl" && editor.target === "final") {
+        this.appendSwirlRadiusControl();
+      } else if (isFoldVariationType(variation.type)) {
         this.appendFoldRadiusRows(variation.type, i);
       } else if (isEditorParametricVariationType(variation.type)) {
         this.appendVariationParamRows(variation.type, i);
       }
     });
+  }
+
+  /** Scene / Look; authored pre-affine and variation weight, with no new
+   * document field. Points/Flame/Solid consume it in 3D and 4D; Surface IFS
+   * consumes a supported pure swirl final (escape/bulb refuse a final).
+   * Editing follows transformTimingHint: Points follows Auto-update; flat
+   * Flame/Solid restart on release, their non-flat/Balloon sessions apply on
+   * next entry; Surface restarts on release or returns to Points if refused.
+   * Placement and disclosure: docs/panel-ia.md. */
+  private appendSwirlRadiusControl(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const row = this.doc.createElement("div");
+    row.className =
+      "editor-row variation-row variation-fold-row swirl-radius-row";
+    const name = this.doc.createElement("label");
+    name.className = "axis";
+    name.textContent = "Radius";
+    name.htmlFor = "finalSwirlRadiusSlider";
+    const slider = this.doc.createElement("input");
+    slider.type = "range";
+    slider.id = name.htmlFor;
+    slider.min = "0.01";
+    slider.max = "2";
+    slider.step = "0.001";
+    slider.value = String(SWIRL_LENS_MAX_RADIUS);
+    slider.setAttribute("aria-label", "Swirl radius");
+    slider.setAttribute(
+      "aria-describedby",
+      "transformTimingHint finalSwirlRadiusNote",
+    );
+    const readout = this.doc.createElement("span");
+    readout.className = "value";
+    slider.addEventListener("input", () =>
+      this.handlers?.onFinalSwirlRadius(Number(slider.value)),
+    );
+    row.append(name, slider, readout);
+    const numeric = this.pairDynamicRange({
+      slider,
+      readout,
+      min: 0.01,
+      max: 2,
+      step: 0.001,
+      value: SWIRL_LENS_MAX_RADIUS,
+      ariaLabel: "Swirl radius",
+      onNumberInput: (radius) => this.handlers?.onFinalSwirlRadius(radius),
+    });
+    const note = this.doc.createElement("p");
+    note.id = "finalSwirlRadiusNote";
+    note.className = "flame-note-info";
+    const fit = this.doc.createElement("button");
+    fit.type = "button";
+    fit.className = "btn btn-ghost";
+    fit.id = "finalSwirlRadiusFit";
+    fit.textContent = "Fit for Surface";
+    fit.setAttribute(
+      "aria-describedby",
+      "transformTimingHint finalSwirlRadiusNote",
+    );
+    fit.addEventListener("click", () => {
+      this.handlers?.onFinalSwirlRadius(SWIRL_LENS_MAX_RADIUS);
+      this.handlers?.onTransformCommit("final");
+    });
+    editor.variationList.append(row, note, fit);
+    this.appendPanelExplainer(
+      editor.variationList,
+      "How swirl radius works",
+      "A larger radius makes a stronger bend. Radius is derived from the " +
+        "fractal and the final transform's Scale and Position. This control " +
+        "adjusts both together, including W in 4D, and compensates Swirl's " +
+        "weight to retain the output size. Weight alone only resizes the output.",
+    );
+    editor.swirlRadius = { slider, readout, numeric, note, fit };
+    this.syncSwirlRadiusControl();
+  }
+
+  private syncSwirlRadiusControl(): void {
+    const control = this.editor?.swirlRadius;
+    if (!control) return;
+    const state = this.finalSwirlRadiusState;
+    control.numeric.setDisabled(!state?.available);
+    control.fit.disabled = true;
+    if (!state?.available) {
+      control.readout.textContent = "—";
+      control.note.textContent =
+        state?.reason ?? "Select a pure Swirl final to set its radius.";
+      return;
+    }
+    control.slider.min = String(state.min);
+    control.slider.max = String(state.max);
+    control.numeric.setBounds({ min: state.min, max: state.max, step: 0.001 });
+    control.numeric.setValue(state.radius);
+    control.readout.textContent = state.radius.toFixed(3);
+    const overLimit = state.radius > SWIRL_LENS_MAX_RADIUS;
+    const canFit = state.fitAvailable;
+    control.fit.disabled = !overLimit || !canFit;
+    control.note.textContent =
+      `Adjusts twist and compensates output size. Surface limit: ${SWIRL_LENS_MAX_RADIUS.toFixed(3)}.` +
+      (overLimit
+        ? canFit
+          ? " Reduce Radius or choose Fit for Surface."
+          : " Reduce the Swirl weight or adjust Scale and Position to fit."
+        : "");
   }
 
   /**
@@ -10138,8 +10296,8 @@ export class Ui {
 
     const slider = this.doc.createElement("input");
     slider.type = "range";
-    slider.min = String(min);
-    slider.max = String(max);
+    slider.min = String(Math.min(min, toSlider(initialModel)));
+    slider.max = String(Math.max(max, toSlider(initialModel)));
     slider.step = String(step);
     slider.value = String(toSlider(initialModel));
     slider.setAttribute("aria-label", ariaLabel);
@@ -10158,8 +10316,8 @@ export class Ui {
     const numeric = this.pairDynamicRange({
       slider,
       readout,
-      min,
-      max,
+      min: Number(slider.min),
+      max: Number(slider.max),
       step,
       value: toSlider(initialModel),
       ariaLabel,
@@ -10257,21 +10415,21 @@ export class Ui {
       (v) => ((this.editor?.geometry.w?.scale ?? 1) < 0 ? -v : v),
       (v) => v.toFixed(2),
       (model) => {
+        // Number-key Arrow steps also pass here. The display may include a
+        // smaller automatic value, but an explicit W must survive reload.
+        if (!canAuthorScaleW(model)) {
+          this.refuseScaleWEdit();
+          return;
+        }
         this.mutateW((block) => {
           block.scale = model;
         });
+        if (this.editor) {
+          this.syncScaleWControl(this.editor.fourD, model, false);
+        }
         this.emitGeometry();
       },
     );
-    // The row above always formats as a plain number — patch in the "(auto)"
-    // marker here, once, for the derived starting value. The row's own
-    // listener (buildFourDRow) already reformats with the plain `format` the
-    // instant the user actually moves it, so nothing else needs to know
-    // about the marker; {@link refreshScaleWIfAuto} re-applies it live while
-    // a 3D scale slider moves and this one stays untouched.
-    if (scaleWAuto) {
-      scaleW.readout.textContent = `${scaleWInitial.toFixed(2)} (auto)`;
-    }
 
     // The Scale W slider above is magnitude-only, so this single toggle is
     // the editor's only way to create or clear a 4D reflection — the exact
@@ -10284,6 +10442,57 @@ export class Ui {
         onToggle: () => this.onMirrorWToggle(),
       },
     ]);
+    const scaleWNote = this.doc.createElement("p");
+    scaleWNote.id = "transformScaleWNote";
+    scaleWNote.className = "flame-hint";
+    scaleWNote.setAttribute("aria-live", "polite");
+    scaleGroup.appendChild(scaleWNote);
+    for (const input of [scaleW.slider, scaleW.numeric.numberInput, mirrorW]) {
+      input.setAttribute(
+        "aria-describedby",
+        [input.getAttribute("aria-describedby"), scaleWNote.id]
+          .filter(Boolean)
+          .join(" "),
+      );
+    }
+    this.syncScaleWControl(
+      { scaleW, scaleWNote, mirrorW },
+      scaleWInitial,
+      scaleWAuto,
+    );
+    // Stop refused drafts before the shared numeric primitive accepts them
+    // or the editor's delegated change/keyup listener settles them. Capturing
+    // range input also prevents its numeric listener from re-accepting a
+    // browser-rounded copy of the restored automatic value.
+    const guardExplicitScaleW = (event: Event): void => {
+      const input = event.currentTarget as HTMLInputElement;
+      const value = Number(input.value);
+      if (
+        input.value.trim() === "" ||
+        !Number.isFinite(value) ||
+        (value >= MIN_W_SCALE && value <= MAX_W_SCALE)
+      ) {
+        return;
+      }
+      this.refuseScaleWEdit();
+      event.stopImmediatePropagation();
+    };
+    scaleW.slider.addEventListener("input", guardExplicitScaleW, true);
+    scaleW.slider.addEventListener("change", guardExplicitScaleW, true);
+    scaleW.numeric.numberInput.addEventListener(
+      "change",
+      guardExplicitScaleW,
+      true,
+    );
+    scaleW.numeric.numberInput.addEventListener(
+      "keyup",
+      (event) => {
+        if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+          guardExplicitScaleW(event);
+        }
+      },
+      true,
+    );
 
     // Rotation/Shear W share the same three plane keys (see W_PLANES) and the
     // same MIN_W_ANGLE/MAX_W_ANGLE range persist.ts clamps against on decode
@@ -10342,7 +10551,7 @@ export class Ui {
     );
 
     this.transformEditor.appendChild(details);
-    return { positionW, scaleW, mirrorW, rotationW, shearW };
+    return { positionW, scaleW, scaleWNote, mirrorW, rotationW, shearW };
   }
 
   /**
@@ -10371,8 +10580,48 @@ export class Ui {
     const editor = this.editor;
     if (!editor || editor.geometry.w?.scale !== undefined) return;
     const derived = meanContraction(editor.geometry.scale);
-    editor.fourD.scaleW.numeric.setValue(derived);
-    editor.fourD.scaleW.readout.textContent = `${derived.toFixed(2)} (auto)`;
+    this.syncScaleWControl(editor.fourD, derived, true);
+  }
+
+  /** Keep the auto readout editable while guarding explicit W materialization. */
+  private syncScaleWControl(
+    controls: Pick<FourDControls, "scaleW" | "scaleWNote" | "mirrorW">,
+    value: number,
+    auto: boolean,
+    refused = false,
+  ): void {
+    const { scaleW, scaleWNote, mirrorW } = controls;
+    syncLinearEditorValue(scaleW, Math.abs(value), {
+      min: MIN_W_SCALE,
+      max: MAX_W_SCALE,
+      step: 0.01,
+    });
+    if (refused) scaleW.numeric.setValue(Math.abs(value), { force: true });
+    scaleW.readout.textContent = auto
+      ? `${value.toFixed(2)} (auto)`
+      : value.toFixed(2);
+    const canMirror = canAuthorScaleW(value);
+    mirrorW.disabled = !canMirror;
+    mirrorW.setAttribute("aria-pressed", String(value < 0));
+    const domain = `${MIN_W_SCALE.toFixed(2)} to ${MAX_W_SCALE.toFixed(2)}`;
+    scaleWNote.textContent =
+      (refused
+        ? `Scale W was not changed. Enter a magnitude from ${domain}. `
+        : "") +
+      (!canMirror
+        ? `To mirror W, first enter a Scale W magnitude from ${domain}. The ${auto ? "automatic" : "current"} value is unchanged.`
+        : "");
+  }
+
+  private refuseScaleWEdit(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    this.syncScaleWControl(
+      editor.fourD,
+      editor.geometry.w?.scale ?? meanContraction(editor.geometry.scale),
+      editor.geometry.w?.scale === undefined,
+      true,
+    );
   }
 
   /** Re-sync the 4D group's sliders/readouts to the current working geometry
@@ -10386,16 +10635,16 @@ export class Ui {
     const { fourD } = editor;
 
     const posV = w?.position ?? 0;
-    fourD.positionW.numeric.setValue(posV);
+    syncLinearEditorValue(fourD.positionW, posV, {
+      min: MIN_W_POSITION,
+      max: MAX_W_POSITION,
+      step: 0.01,
+    });
     fourD.positionW.readout.textContent = posV.toFixed(2);
 
     const scaleAuto = w?.scale === undefined;
     const scaleV = w?.scale ?? meanContraction(editor.geometry.scale);
-    fourD.scaleW.numeric.setValue(Math.abs(scaleV));
-    fourD.scaleW.readout.textContent = scaleAuto
-      ? `${scaleV.toFixed(2)} (auto)`
-      : scaleV.toFixed(2);
-    fourD.mirrorW.setAttribute("aria-pressed", String(scaleV < 0));
+    this.syncScaleWControl(fourD, scaleV, scaleAuto);
 
     W_PLANES.forEach((plane, i) => {
       const rad = w?.rotation?.[plane] ?? 0;
@@ -10441,7 +10690,7 @@ export class Ui {
       const spec = CHANNELS[channel];
       editor.controls[channel].forEach((control, axis) => {
         const model = editor.geometry[channel][axis];
-        control.numeric.setValue(spec.toSlider(model));
+        syncLinearEditorValue(control, spec.toSlider(model), spec);
         control.readout.textContent = spec.format(model);
       });
     }
@@ -10488,13 +10737,27 @@ export class Ui {
     this.syncPatternControls();
     this.syncFourDControls();
 
-    // Variations rarely change under a stable selection (drags don't touch
-    // them), so only rebuild the rows when they actually differ.
+    // Radius changes also compensate the swirl weight. Keep weight-only
+    // edits in place so a synchronous document refresh cannot replace the
+    // focused radius field or interrupt its drag / trailing commit.
     const incoming = transform.variations ?? [];
     if (!variationsEqual(incoming, editor.variations)) {
+      const retainRows = variationsEqual(incoming, editor.variations, true);
       editor.variations = incoming.map((v) => ({ ...v }));
-      this.renderVariationRows();
-      this.refreshAddOptions();
+      if (retainRows) {
+        editor.variationControls.forEach((control, index) => {
+          const weight = editor.variations[index].weight;
+          syncLinearEditorValue(control, weight, {
+            min: VARIATION_WEIGHT_MIN,
+            max: VARIATION_WEIGHT_MAX,
+            step: 0.05,
+          });
+          control.readout.textContent = weight.toFixed(2);
+        });
+      } else {
+        this.renderVariationRows();
+        this.refreshAddOptions();
+      }
     }
   }
 
@@ -10540,13 +10803,15 @@ export class Ui {
     if (!editor) return;
     const current =
       editor.geometry.w?.scale ?? meanContraction(editor.geometry.scale);
+    if (!canAuthorScaleW(current)) {
+      this.refuseScaleWEdit();
+      return;
+    }
     const model = -current;
     this.mutateW((block) => {
       block.scale = model;
     });
-    editor.fourD.scaleW.numeric.setValue(Math.abs(model));
-    editor.fourD.scaleW.readout.textContent = model.toFixed(2);
-    editor.fourD.mirrorW.setAttribute("aria-pressed", String(model < 0));
+    this.syncScaleWControl(editor.fourD, model, false);
     this.emitGeometryAndCommit();
   }
 

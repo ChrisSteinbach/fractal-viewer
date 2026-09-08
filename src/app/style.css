@@ -1247,6 +1247,26 @@ summary.editor-group-title {
   color: var(--text-faint);
 }
 
+.swirl-radius-row .range-number-input,
+#finalSwirlRadiusFit {
+  min-height: 44px;
+}
+
+/* Radius has no remove button. Reclaim that column so the exact field stays
+   wide enough for its value and number steppers on a 320px phone. */
+.swirl-radius-row {
+  padding-right: 0;
+}
+
+.swirl-radius-row .axis {
+  width: 62px;
+  min-width: 62px;
+}
+
+#finalSwirlRadiusNote {
+  margin-top: 6px;
+}
+
 /* 24×24 hit box (WCAG 2.5.8) on a 20×20 layout footprint: the -2px margins
    let the touch target grow without moving anything — the row's 9px flex gap
    and .variation-fold-row's 29px right pad are both computed from the 20px

@@ -41,7 +41,8 @@ export function swirlRadiusRefusal(radius: number): string | null {
     radius <= SWIRL_LENS_MAX_RADIUS
     ? null
     : `final transform swirl pre-swirl radius ${radius.toFixed(3)} exceeds ` +
-        `the supported ${SWIRL_LENS_MAX_RADIUS}; reduce final scale or ` +
+        `the supported ${SWIRL_LENS_MAX_RADIUS}; set Radius under Transforms → ` +
+        "Final Transform → Variations → Swirl, or reduce final scale or " +
         "translation (swirl weight only resizes the output)";
 }
 

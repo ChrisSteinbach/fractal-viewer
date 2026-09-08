@@ -78,6 +78,10 @@ import {
 } from "../fractal/surface-de-4d";
 import { SURFACE_LENS_SWIRL } from "../fractal/swirl-lens";
 import {
+  analyzeFinalSwirlRadiusControl,
+  prepareFinalSwirlRadiusEdit,
+} from "./swirl-radius-control";
+import {
   surfaceSlotColors,
   surfaceForwardSlot,
   surfaceSlotMaterials,
@@ -6806,7 +6810,30 @@ async function main(): Promise<void> {
       eligibility.kind,
       eligibility.recovery ?? null,
     );
+    refreshFinalSwirlRadius();
     return eligibility;
+  }
+
+  /** The radius belongs to the authored final, independently of Surface's
+   * active session. Recompute at the geometry/eligibility seam so Scale,
+   * Position, symmetry, schedule and undo all update the same readout. */
+  function refreshFinalSwirlRadius(): void {
+    const final = state.finalTransform;
+    if (
+      state.selectedTransform !== "final" ||
+      !final?.variations?.some((variation) => variation.type === "swirl")
+    ) {
+      ui.setFinalSwirlRadius(null);
+      return;
+    }
+    ui.setFinalSwirlRadius(
+      analyzeFinalSwirlRadiusControl(
+        state.transforms,
+        final,
+        state.symmetry,
+        state.schedule,
+      ),
+    );
   }
 
   type TransformEditTarget = number | "final" | "schedule" | "xaos";
@@ -10789,6 +10816,40 @@ async function main(): Promise<void> {
       applyTransformInput("final", () => {
         state = setFinalTransform(state, { id: 0, ...geometry });
       });
+    },
+    onFinalSwirlRadius: (radius) => {
+      const final = state.finalTransform;
+      if (!final) return;
+      const edit = prepareFinalSwirlRadiusEdit(
+        state.transforms,
+        final,
+        radius,
+        state.symmetry,
+        state.schedule,
+      );
+      if (!edit.ok) {
+        ui.flashToast(edit.reason);
+        refreshFinalSwirlRadius();
+        return;
+      }
+      applyTransformInput(
+        "final",
+        () => {
+          state = setFinalTransform(state, edit.transform);
+        },
+        () => {
+          ui.renderTransformList(
+            state.transforms,
+            state.selectedTransform,
+            edit.transform,
+          );
+          ui.renderTransformEditor(
+            edit.transform,
+            "final",
+            state.transforms.length,
+          );
+        },
+      );
     },
     onTogglePanel: () => {
       // Opening the panel mid-replay is reaching back in: end the
