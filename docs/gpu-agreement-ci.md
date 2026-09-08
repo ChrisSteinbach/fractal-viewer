@@ -68,12 +68,14 @@ invalid WGSL or an unavailable GPU path.
 The full roster currently has 34 scenarios: 20 in 3D, 14 in 4D. The selector
 reads the literal `SCENARIOS` definitions from the page with the TypeScript
 parser. Names and dimensions follow any spread properties so their identity is
-statically checkable. It generates the same 27-way round-robin partition the
-browser uses; no scenario list is copied into YAML. Tests compare every
-generated shard with the browser's partition and check the exact union,
-including an appended scenario. Roster growth automatically enters the sweep.
-The 20-minute whole-shard cap and 40-minute job guard remain unchanged; future
-growth must still demonstrate that its heaviest shard fits.
+statically checkable. It generates one shard per scenario, using the browser's
+existing round-robin partition with the roster length as its denominator; no
+scenario list is copied into YAML. Tests compare every generated shard with
+the browser's partition and check the exact union, including roster growth
+beyond the former 27-shard ceiling. An added scenario gets its own job instead
+of changing which expensive cases must share a deadline. The 20-minute
+whole-shard cap and 40-minute job guard remain unchanged; each individual
+scenario still has to fit. The standalone ss=1 check runs in every job.
 
 The full union runs:
 
@@ -244,6 +246,26 @@ maintenance, capacity and direct-cost accounting. Faster hardware is a
 separate option for the full gate; it does not justify a full sweep after an
 unrelated source change.
 
+## Roster growth and independent deadlines
+
+The tiling/symmetry extension grew the roster from 32 to 34. In the first
+hosted run (2026-09-08, run `34202948983`), the fixed 27-way partition put
+`tiling-multisystem-3d` and `chi-kaleido-4d` together in shard 7. The first
+scenario completed; the second was still accumulating at 114.3 K iterations
+per second when their shared 20-minute script deadline expired. This was
+a whole-shard timeout, not a numerical comparison failure. The same cases
+had been assigned to different jobs in the 32-scenario roster.
+
+One scenario per generated shard removes that dependence on roster order.
+The 34-scenario matrix adds seven runner setups and seven standalone ss=1
+checks relative to the 27-job grouping. It neither increases a scenario's
+sample budget nor removes any comparison, and it leaves both deadline
+guards intact. Historical pooled-job cost figures below remain measurements
+of their original partitions, not predictions for this matrix.
+Local requalification passed 7,207 tests across 176 files, full lint and the
+production build; 80 targeted planner, workflow, browser-partition and wait
+tests include the roster-growth regression.
+
 ## Earlier partition evidence
 
 Before impact selection, the workflow moved out of `ci.yml` because it took
@@ -270,8 +292,8 @@ The exact-flam3 batch grew 30 to 32 scenarios. At 25 shards, indices 30/31
 would pair with old indices 5/6, restoring the known heavy pairing. Twenty-seven
 was the smallest round-robin count leaving old indices 5+ single; only old
 indices 0–4 pair with new indices 27–31. No timeout or agreement threshold was
-raised. This history explains the retained partition, not a policy of adding
-jobs indefinitely.
+raised. That choice depended on the roster order and was replaced by the
+per-scenario policy above when the next extension paired expensive cases.
 
 Browser setup still uses cached, lockfile-pinned Playwright Chromium, without
 `--with-deps`. On 2026-08-19 an apt mirror hung smoke and shards 1/3/4 (shard 1

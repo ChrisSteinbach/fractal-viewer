@@ -253,15 +253,17 @@ export function scenarioRoster(
   return roster;
 }
 
-// Keep the measured 27-way partition. Cap at roster length to avoid empty
-// jobs; append-only roster growth is automatically covered by round-robin.
+// Give each scenario its own job. A fixed shard count silently re-pairs heavy
+// scenarios when the roster grows or changes order, risking the unchanged
+// 20-minute whole-shard cap. The browser's round-robin partition at this count
+// selects exactly the scenario named in each row.
 export function fullMatrix(
   roster: { name: string }[],
 ): { shard: number; total: number; scenarios: string[] }[] {
-  const total = Math.min(27, roster.length);
-  return Array.from({ length: total }, (_, i) => ({
+  const total = roster.length;
+  return roster.map((scenario, i) => ({
     shard: i + 1,
     total,
-    scenarios: roster.filter((_, j) => j % total === i).map((s) => s.name),
+    scenarios: [scenario.name],
   }));
 }

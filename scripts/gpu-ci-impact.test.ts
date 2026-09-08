@@ -143,28 +143,36 @@ describe("full scenario union", () => {
     new URL("../src/app/gpu-bench/main.ts", import.meta.url),
     "utf8",
   );
-  it("partitions the actual page roster exactly as the browser does", () => {
-    const roster = scenarioRoster(source);
+  function expectIsolatedBrowserPartition(roster: { name: string }[]) {
     const matrix = fullMatrix(roster);
+    expect(matrix).toHaveLength(roster.length);
     expect(matrix.flatMap((row) => row.scenarios).sort()).toEqual(
       roster.map((s) => s.name).sort(),
     );
-    for (const row of matrix)
+    for (const row of matrix) {
+      expect(row.scenarios).toHaveLength(1);
       expect(row.scenarios).toEqual(
         applyScenarioShard(roster, `${row.shard}/${row.total}`).map(
           (s) => s.name,
         ),
       );
+    }
+  }
+  it("isolates the actual page roster exactly as the browser does", () => {
+    expectIsolatedBrowserPartition(scenarioRoster(source));
   });
-  it("includes a newly appended scenario without editing workflow lists", () => {
-    const roster = [
-      ...scenarioRoster(source),
-      { name: "future-4d", kind: "4d" },
-    ];
-    expect(fullMatrix(roster).flatMap((row) => row.scenarios)).toContain(
-      "future-4d",
-    );
-  });
+  it.each([0, 14, 28])(
+    "keeps scenarios isolated beyond 27 after inserting at index %i",
+    (index) => {
+      const roster = Array.from({ length: 28 }, (_, i) => ({
+        name: `scenario-${String(i)}`,
+        kind: i % 2 === 0 ? "3d" : "4d",
+      }));
+      expectIsolatedBrowserPartition(roster);
+      roster.splice(index, 0, { name: "future-4d", kind: "4d" });
+      expectIsolatedBrowserPartition(roster);
+    },
+  );
   it.each([
     "const SCENARIOS = makeScenarios();",
     'const SCENARIOS = [{name:"only",kind:"3d"}];',

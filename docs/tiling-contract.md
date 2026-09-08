@@ -351,6 +351,11 @@ also passed.
 These are AMD measurements, not a requalification of the older Iris results
 elsewhere in this document. The wider restriction audit and unshipped
 nonlinear-final experiment are recorded in [Feature combinations](feature-combinations.md).
+The hosted 34-scenario roster also exposed a fixed-partition timeout:
+two existing slow cases were newly paired under one deadline. CI now gives
+each scenario its own job while preserving every sample budget, comparison
+and timeout. The failure and partition correction are recorded in
+[GPU agreement CI](gpu-agreement-ci.md#roster-growth-and-independent-deadlines).
 
 ## Finite wire placement (frozen rule)
 
