@@ -330,3 +330,61 @@ render-tier, capture-drain and retained-background/DoF checks. Lifecycle changes
 also require the Firefox teardown gate; new numeric controls require the trusted
 touch/numeric-control gate. Real-driver claims require checking the adapter,
 not merely passing a display flag.
+
+## Production-browser gate, first measured run
+
+Run on a verified real driver — `glxinfo -B` reporting
+`AMD Radeon RX 7900 XTX (radeonsi, navi31)`, not SwiftShader — against
+`npm run build && npm run preview`, with
+`node scripts/cinematic-lighting.verify.mjs --display=:0`. All rows below are
+64 px. Chromium reported `amd rdna-3` for compute and
+`ANGLE (AMD, AMD Radeon RX 7900 XTX (radeonsi navi31 LLVM 20.1.2), OpenGL 4.6)`
+for WebGL, so both are real-adapter rows.
+
+| Row                     | Verdict |  Wall |
+| ----------------------- | ------- | ----: |
+| cathedral, compute      | PASS    | 28.2s |
+| cathedral, WebGL        | PASS    | 54.3s |
+| balloon-cavern, compute | PASS    | 13.0s |
+| balloon-cavern, WebGL   | PASS    | 20.9s |
+| slice4, compute         | PASS    | 72.7s |
+| slice4, WebGL           | FAIL    |     — |
+
+The appearance/entry/settle path therefore carries on both engines for both
+accepted 3D compositions and, on compute, for a genuinely non-flat 4D slice.
+The compute `slice4` row covers 2,833 of 4,096 rays with zero exhausted
+primaries and zero invalid visibility queries.
+
+Two failures are open, and neither is an appearance defect.
+
+**The 4D WebGL row is blocked by a pre-existing engine disagreement about the
+off-centre w-slice, not by lighting.** At `sliceCenter` 0.12 the fragment 4D
+tracer covers no geometry at all where the compute tracer covers 69% of rays;
+at `sliceCenter` 0 the same fixture renders normally on WebGL. Deleting the rig
+from the fixture reproduces the empty frame, which is what attributes it away
+from this feature. The gate's own fixture was also wrong until this run — it
+built `document.fourD` in the in-memory `{pair: {p, q}}` shape where the
+encoded wire is flat, so `validateFourD` dropped the pose and the app booted
+with a fresh rotor and no slice at all.
+
+**The tiled compute export does not reproduce the untiled one.** Against the
+gate's `meanDiff < 0.15` bar the measured difference is 0.699 at the diagnostic
+`--samples=1` and 0.408 at the authored eight-sample budget (changed fraction
+0.101 and 0.059). It falls with sample count but by less than independent noise
+would predict, and a row-wise diff of the two exported PNGs puts the difference
+DIFFUSELY across the frame — elevated at rows 24–30 and 44–47, where the mist
+is busiest — and NOT at the three internal band boundaries of the four-tile
+job, which rules out a seam. The sample stream is therefore not reproducing
+across the two paths at all, rather than reproducing with a boundary artifact.
+The per-pixel seed is intended to be exactly reproducible
+(`cinematicPixelSeed` hashes the full-image pixel, which `shade.bgOffset`
+supplies, against the lane-10 `sampleIndex` ordinal), so one of those two
+terms differs between the paths. The untested hypothesis worth trying first is
+that a tile does not complete the same number of antialiasing passes as the
+untiled frame — the tiled run's last progress line reads `pass 7/8` — which
+would average different sample counts per band and produce exactly this
+diffuse, sample-count-sensitive difference. The 64 px tiled export took 203 s
+at eight samples.
+
+These are gate results on one machine. They do not establish owner acceptance
+of the finished look, and no performance promise is made from them.
