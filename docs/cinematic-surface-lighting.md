@@ -388,3 +388,46 @@ at eight samples.
 
 These are gate results on one machine. They do not establish owner acceptance
 of the finished look, and no performance promise is made from them.
+
+## Remaining gates run, and what they settled
+
+The shared transport gate PASSES on the emitted shaders:
+`npx vitest run --config scripts/vitest.harness.config.ts
+scripts/surface-lighting-agreement.harness.ts` compiles 25 WGSL and 15 GLSL
+programs and finds WGSL and GLSL agreeing to the last printed digit on every
+scenario — disk irradiance at one and eight samples, an occluding wall, an
+opened aperture, a wall beyond the emitter, finite shadow exhaustion, isotropic
+and forward and backward scattering, and the zero-density identity — each
+matching its analytic reference. The largest emitted GLSL program is the 3D
+compound lattice/lens/floor arm at 72,601 bytes.
+
+The functional browser checks PASS on compute
+(`--checks=all --export=none`, 240.7 s): moving a light invalidates retained
+pixels and changes the image (mean 5.45 over 66% of pixels), a hash restore
+reproduces it (0.11), opening a geometric gap admits light (1.75 over 24%),
+a backdrop change retraces (1.26), cancellation catches an active render in
+15 ms and re-entry after cancel succeeds — and **zero mist density is exact**:
+mean difference 0 over 0 changed pixels, which is acceptance criterion 4's
+identity requirement proved rather than approximated.
+
+The authoring gate's DORMANT phase passes completely
+(`surface-lighting-ui.verify.mjs --phase=dormant`, eleven checks at phone
+widths, including exact rig retention through Collection, gallery restore and
+Undo). Its ACTIVE phase has never passed, in this session or the originating
+one, whose three retained run directories are all dormant; it reaches six
+passes and then blocks past 30 s on Save to collection.
+
+The Firefox lifecycle gate passes with the rig
+(`surface-teardown.verify.mjs --lens --lighting --toggleId=__modeExit
+--toggles=12`, exit 0, no process loss). It also surfaced an intermittent
+`Not enough memory left.` WebGPU device loss that falls back to the WebGL
+tracer. CONTROL RUNS ATTRIBUTE THAT AWAY FROM LIGHTING: the rig-less arm
+reproduces it (once in four 12-toggle runs, against two of three lit runs),
+and it is not cumulative, since a 4-toggle run lost the device where an
+8-toggle run did not. The first single control run did NOT reproduce it and
+would have supported the opposite, wrong conclusion; the repeats are why that
+claim is not in this document.
+
+Still unrun here: the WebGL engine under `--checks=all`, the trusted
+touch/numeric-control gate, and owner acceptance of the finished look in a
+browser rather than in the CPU reference deck.
