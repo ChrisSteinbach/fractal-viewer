@@ -4686,8 +4686,18 @@ fn hash2(p: vec2f) -> f32 {
     ? `  // The sub-pixel sample position, shade.pixelJitter, in place
   // of the pixel centre this line used to spell as 0.5 — its default.
   let sub = shade.pixelJitter;
-  let ndcX = ((f32(px) + sub.x) / f32(params.rasterWidth)) * 2.0 - 1.0;
-  let ndcY = ((f32(py) + sub.y) / f32(params.rasterHeight)) * 2.0 - 1.0;
+  // FULL-IMAGE NDC. A capture BAND is a sub-rectangle of the image, and
+  // its ray is the image's ray for the same full-image pixel — derived
+  // HERE, from bgOffset/bgExtent against the whole image's invProjView,
+  // rather than from a sub-frustum against the band's own raster. The two
+  // are the same ray in exact arithmetic and NOT in f32, and the
+  // difference is a march start, which a chaotic DE amplifies. On an
+  // ordinary frame bgOffset is (0, 0) and bgExtent IS
+  // (rasterWidth, rasterHeight), so these are the shipped expressions
+  // value for value.
+  let full = vec2f(f32(px), f32(py)) + shade.bgOffset;
+  let ndcX = ((full.x + sub.x) / shade.bgExtent.x) * 2.0 - 1.0;
+  let ndcY = ((full.y + sub.y) / shade.bgExtent.y) * 2.0 - 1.0;
   // The GLSL tracer's unproject (main(): near/far clip points through
   // uInvProjView); params.ro doubles as uCamPos, and the pose basis
   // right/up/fwd/tanHalf/aspect fields are ignored in this mode.
@@ -4711,9 +4721,15 @@ fn hash2(p: vec2f) -> f32 {
     // runs stay deterministic against the CPU emulator. Fed the JITTERED
     // coordinate so supersampling's passes do not all share one
     // start offset — at the default centre this is the shipped input.
+    // AT FULL-IMAGE COORDINATES, the same contract the shade entry's
+    // pixel seed and background UV already keep: a capture BAND's own
+    // raster row is not the image's row, so hashing the band-local row
+    // alone gave every band a different dither phase, and the tiled export
+    // a different march start per pixel from the untiled one. bgOffset is
+    // (0, 0) on an ordinary frame, where adding it is exact and this is
+    // the shipped input value for value.
     if ((shade.flags & 1u) != 0u) {
-      t += hash2(vec2f(f32(px) + sub.x, f32(py) + sub.y)) *
-        shade.tracePixelEps * max(t, 1.0);
+      t += hash2(full + sub) * shade.tracePixelEps * max(t, 1.0);
     }`
     : "";
 
@@ -7942,16 +7958,19 @@ fn shadeRays(
   // This pass's sub-pixel sample position, the march entry's own
   // (default (0.5, 0.5), the pixel centre these lines used to spell out).
   let sub = shade.pixelJitter;
-  // The shared background shape at this pixel's FULL-IMAGE coordinates.
-  // Deliberately NOT jittered: the backdrop shape has nothing to alias, it
-  // must agree with the host's own backgroundRows prefill, and holding it
-  // fixed keeps supersampling a no-op wherever the object is absent. For
-  // an ordinary frame bgOffset is (0,0) and bgExtent is (rasterWidth,
-  // rasterHeight), so the .y term is (f32(py) + 0.5 + 0.0) / f32(rasterHeight)
-  // — adding an exact 0.0 changes nothing — the shipping expression value
-  // for value.
-  let imageUv =
-    (vec2f(f32(px), f32(py)) + vec2f(0.5) + shade.bgOffset) / shade.bgExtent;
+  // This pixel's FULL-IMAGE coordinate — the one thing a capture BAND
+  // must not read out of its own raster. The shared background shape
+  // below AND both ray derivations further down are evaluated against it,
+  // so a band composes the image's pixel rather than a look-alike of it.
+  // For an ordinary frame bgOffset is (0,0) and bgExtent is (rasterWidth,
+  // rasterHeight), so every one of them is the shipping expression value
+  // for value — adding an exact 0.0 changes nothing.
+  // The shape is deliberately NOT jittered: the backdrop has nothing to
+  // alias, it must agree with the host's own backgroundRows prefill, and
+  // holding it fixed keeps supersampling a no-op wherever the object is
+  // absent.
+  let full = vec2f(f32(px), f32(py)) + shade.bgOffset;
+  let imageUv = (full + vec2f(0.5)) / shade.bgExtent;
   let bg = mix(shade.bgBottom, shade.bgTop, backgroundShapeT(imageUv));
 ${
   groundPlane
@@ -7959,8 +7978,8 @@ ${
     // Ground plane: the march classified this miss as
     // crossing the floor inside the fade band — unproject the ray (the
     // hit path's exact lines below) and light the analytic crossing.
-    let ndcX = ((f32(px) + sub.x) / f32(params.rasterWidth)) * 2.0 - 1.0;
-    let ndcY = ((f32(py) + sub.y) / f32(params.rasterHeight)) * 2.0 - 1.0;
+    let ndcX = ((full.x + sub.x) / shade.bgExtent.x) * 2.0 - 1.0;
+    let ndcY = ((full.y + sub.y) / shade.bgExtent.y) * 2.0 - 1.0;
     let nearP = shade.invProjView * vec4f(ndcX, ndcY, -1.0, 1.0);
     let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
     let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
@@ -7976,8 +7995,8 @@ ${
     layerOut[ray] = packSurfaceLayer(0.0, 0.0, 1.0);
     return;
   }
-  let ndcX = ((f32(px) + sub.x) / f32(params.rasterWidth)) * 2.0 - 1.0;
-  let ndcY = ((f32(py) + sub.y) / f32(params.rasterHeight)) * 2.0 - 1.0;
+  let ndcX = ((full.x + sub.x) / shade.bgExtent.x) * 2.0 - 1.0;
+  let ndcY = ((full.y + sub.y) / shade.bgExtent.y) * 2.0 - 1.0;
   // The GLSL tracer's unproject (main(): near/far clip points through
   // uInvProjView); params.ro doubles as uCamPos, and the pose basis
   // right/up/fwd/tanHalf/aspect fields are ignored in this mode.
@@ -8184,6 +8203,9 @@ fn shadeRays(
   cinematicVisibilityInvalid = 0.0;
   let px = ray % params.rasterWidth;
   let py = ray / params.rasterWidth;
+  // The FULL-IMAGE coordinate: the transport's per-pixel seed, the
+  // backdrop shape AND the ray derivation below all read it, so a capture
+  // BAND reproduces the image's pixel exactly rather than its own raster's.
   let pixel = vec2f(f32(px), f32(py)) + shade.bgOffset;
   let imageUv = (pixel + vec2f(0.5)) / shade.bgExtent;
   var bg = mix(shade.bgBottom, shade.bgTop, backgroundShapeT(imageUv));
@@ -8193,8 +8215,8 @@ fn shadeRays(
   }
   let bgLinear = pow(max(bg, vec3f(0.0)), vec3f(2.2));
   let sub = shade.pixelJitter;
-  let ndcX = ((f32(px) + sub.x) / f32(params.rasterWidth)) * 2.0 - 1.0;
-  let ndcY = ((f32(py) + sub.y) / f32(params.rasterHeight)) * 2.0 - 1.0;
+  let ndcX = ((pixel.x + sub.x) / shade.bgExtent.x) * 2.0 - 1.0;
+  let ndcY = ((pixel.y + sub.y) / shade.bgExtent.y) * 2.0 - 1.0;
   let nearP = shade.invProjView * vec4f(ndcX, ndcY, -1.0, 1.0);
   let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
   let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);

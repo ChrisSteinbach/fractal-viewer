@@ -1857,6 +1857,43 @@ describe("surfaceDeKernelWgsl march ray derivation (rays option)", () => {
   });
 });
 
+describe("full-image pixel coordinates (capture bands)", () => {
+  // A capture band traces a sub-rectangle of the image and must return the
+  // image's own bytes for it. That holds only while nothing per-pixel is
+  // derived from the band's own raster height: the band-local row reaches
+  // the ray's NDC, the march-start dither and the transport's pixel seed
+  // through shade.bgOffset/bgExtent, or those three disagree with the
+  // untiled frame. The pose ray arm is the bench baseline and is never
+  // banded, so it keeps params.rasterHeight.
+  it("the unprojected march derives NDC and the dither from the full-image pixel", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", rays: "unproject" }),
+    );
+    expect(wgsl).toContain(
+      "let full = vec2f(f32(px), f32(py)) + shade.bgOffset;",
+    );
+    expect(wgsl).toContain("((full.x + sub.x) / shade.bgExtent.x)");
+    expect(wgsl).toContain("((full.y + sub.y) / shade.bgExtent.y)");
+    expect(wgsl).toContain("hash2(full + sub)");
+    expect(wgsl).not.toContain("params.rasterHeight");
+  });
+
+  it("the pose march keeps its own-raster NDC — it is the bench baseline, never banded", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "march" }));
+    expect(wgsl).toContain("f32(params.rasterHeight)");
+    expect(wgsl).not.toContain("shade.bgExtent");
+  });
+
+  it("the shade entry derives NDC from the full-image pixel, in every core", () => {
+    for (const core of ["affine", "fold", "escape", "affine4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "shade", core }));
+      expect(wgsl).toContain("+ sub.x) / shade.bgExtent.x");
+      expect(wgsl).toContain("+ sub.y) / shade.bgExtent.y");
+      expect(wgsl, core).not.toContain("params.rasterHeight");
+    }
+  });
+});
+
 describe("surfaceDeKernelWgsl march status side-channel (statusOut)", () => {
   it("statusOut:true declares @group(0) @binding(5) var<storage, read_write> statusOut: array<u32>;, and the flag absent has no occurrence of statusOut at all", () => {
     const on = surfaceDeKernelWgsl(
