@@ -564,6 +564,202 @@ any blocking service-queue predecessor, which the current trace cannot expose.
 Artifacts for this investigation land under
 `scripts/out/surface-settle-stall/` and remain untracked.
 
+### Native GL boundary
+
+A further 2026-09-09 sweep observed existing native calls through a Linux
+preload, with no added GL calls or rescue. The actual backend resolved
+`glXGetProcAddress` through `libGL.so.1`, context switching through
+`libGLX.so.0`, and sync calls through `libGLdispatch.so.0`. This is ANGLE's
+native OpenGL/GLX path. Chromium's
+[GLFenceARB::HasCompleted](https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/ui/gl/gl_fence_arb.cc)
+uses `glClientWaitSync(sync, 0, 0)`; ANGLE's pinned
+[SyncGL::clientWait](https://chromium.googlesource.com/angle/angle/+/6dab7c7e742b528fd52233d3cc926e61b1e7d70d/src/libANGLE/renderer/gl/SyncGL.cpp)
+forwards that wait to native GL. The captured native caller matches that
+implementation in the installed binary. The Vulkan global-EGL-fence path is
+not this backend.
+
+The three-repeat 4D copied/export/look sweep completed seven of nine sequences
+and correctly exited 1. Two native sync lifetimes remained pending through
+the original 240s settle deadline:
+
+| Scene                            |   Whole sequence | Observed native pending span | Native poll lower bound | Native flushes after creation |
+| -------------------------------- | ---------------: | ---------------------------: | ----------------------: | ----------------------------: |
+| Untiled, first authored boot     | failed, 242.546s |                     239.782s |                 399,764 |                             3 |
+| Finite, independent-palette boot | failed, 268.352s |                     239.590s |                 399,161 |                             3 |
+
+Every counted native wait returned `GL_TIMEOUT_EXPIRED`, and all three flushes
+in each case returned on the fence's creation context. The first fence's
+initial native flush returned 0.029ms after creation. These native flush calls
+are observed, not inferred from JavaScript calls or Chromium source; their
+returns do not establish kernel submission or GPU completion.
+The app remained visible with normal frame cadence; its two pending fences
+held progress at 47% and 46%, respectively. These jobs had not issued their
+last pixels: the bounded queue prevented further work while its head stayed
+pending. No queue cap, completion criterion or deadline was changed.
+
+Both other finite sequences completed (34.002s and 35.626s), both other
+untiled sequences completed (12.639s and 14.501s), and all three Balloon-off
+sequences completed (20.791s, 20.387s and 20.521s). Before the finite palette
+failure, the authored, restored, echo-off and both tint boots completed,
+including the restored and echo-off PNG exports. Removing tiling does not
+exclude the observed stall. The failed pages' GPU processes disappeared after
+page closure; neither a signal nor deletion of the stalled native handle was
+observed. That truncated lifetime does not establish why a process exited.
+
+This locates an unavailable sync at the native GL API boundary. Native handles
+and timestamps alone do not identify Chromium's owning query or distinguish
+it from a FIFO predecessor. The read-only artifacts, including process maps,
+scene timestamps and sampled native calls, are under
+`scripts/out/native-fence-investigation/native-4d-02/`.
+
+### Guarded Chromium query attribution
+
+`scripts/native-gl-trace.build.mjs` builds the optional native observer on
+Linux x86-64 with glibc and a C compiler. It intercepts explicit-handle
+`dlsym` and native proc resolvers, preserving distinct original functions,
+arguments and return values. It adds no GL calls. Returned polls are sampled
+on the first call, status changes and every 256 calls; the analyzer treats
+their counts as lower bounds because the bounded poll cache can collide and
+native handles can be reused. A slot identifies a function implementation,
+not a fence namespace. The trace records returned calls, so it cannot diagnose
+a native call that never returns.
+
+With `NATIVE_GL_TRACE_STACK_AFTER_MS=5000`, the observer also records at most
+one prolonged pending stack and one successfully recovered query per process.
+Successful-query recovery has a bounded 64-attempt limit. Private field reads
+require Chromium's exact GNU build ID
+`5f6e1a6835b28b53be4483a0c48063fd3fcb3108` and matching instruction bytes.
+The installed binary lacks unwind-table coverage for the relevant frames,
+so guarded recovery follows at most 32 frame pointers within 256KiB using
+`process_vm_readv` on its own process. The exact call chain and saved-register
+instructions must match before interpreting the query, and the recovered
+`GLFenceARB` object must equal the query's selected fence. Unsupported builds
+still permit native call observation; they do not qualify private query
+identity. The guards and field offsets live in the builder beside the code
+that uses them.
+
+The successful 3D control recovered the FIFO-front
+`GL_READBACK_SHADOW_COPIES_UPDATED_CHROMIUM` (`0x84F8`) query, service ID 6,
+at the exact `ProcessQueries` call site. Its matching native GLsync returned
+`GL_ALREADY_SIGNALED`. All layout, frame, read and fence-object checks passed.
+The observed shared `QuerySync` still held process count 0 against submit
+count 1: this observation occurs inside `HasCompleted`, before
+[ProcessQueries publishes completion](https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc#2301).
+That count difference is expected even on a successful native wait and is
+not itself a publication defect. The same observer completed the full 3D
+finite/untiled/Balloon-off copied/export/look sequences in
+19.538s/12.143s/12.271s. A repeated 4D run independently validated successful
+query recovery and completed all nine sequences. Passing runs qualify the
+observer; they do not refute the earlier intermittent stall or establish a
+renderer fix.
+
+A following six-repeat finite-only 4D run captured a prolonged pending query
+during repeat 4's copied-link restored boot, after three complete
+copied/export/look sequences and the fourth authored boot. The same observer
+library was used for all these guarded runs (SHA256
+`6a7cc50592ac0379bd58aaa6a65f314d9ea52d31dee0aa42d2360db57cfa7a32`).
+At 5.001s of continuous native timeouts, GPU process 1110885's stack 26751
+identified:
+
+| Observed field                     | Value                               |
+| ---------------------------------- | ----------------------------------- |
+| Native GLsync                      | `0x3b2c07b4d100`, generation 5      |
+| Native creation/poll context       | `0x3b2c00091d00`                    |
+| Native wait                        | `glClientWaitSync(sync, 0, 0)`      |
+| Returned status                    | `GL_TIMEOUT_EXPIRED`                |
+| FIFO-front target / service ID     | `0x84F8` / `9`                      |
+| Query / decoder                    | `0x3b2c2fabea00` / `0x3b2c0848e000` |
+| QuerySync / submit / process count | `0x7fb2d7e00048` / `1` / `0`        |
+| Selected fence = recovered object  | `0x3b2c0c244e80`                    |
+| ANGLE SyncID held by that object   | `2`                                 |
+
+The verified ELF-relative frame sequence is `SyncGL::clientWait` at
+`0x77d8dc0`, `Context::clientWaitSync` at `0x76eb081`, the ANGLE entry point
+at `0xbf7ed2e`, `GLFenceARB::HasCompleted` at `0xbf2837d`, and the
+`ProcessQueries` readback-shadow branch at `0xd181420`. The native sync,
+ANGLE SyncID and service query ID are separate identifiers connected by this
+live call chain, not by their ordinal order. All memory reads and object
+consistency checks passed. This identifies the actual FIFO-front query whose
+native completion blocks service progress. Mapping a frontend JavaScript
+fence ordinal to that query is still unobserved.
+
+That native lifetime remained pending for 239.809s between its first and last
+observed polls, with a conservative lower bound of 398,420 returned timeouts
+and no observed signal or deletion. Three native flushes returned on its
+creation context; the first returned 0.031ms after creation. The restored
+boot exhausted the original 240s settle deadline, failing its whole sequence
+at 248.930s. The app stayed visible with normal 16.675ms frame cadence and
+no browser errors. Its planner had issued all 307,200 pixels, but two fences
+covering 94,720 pixels remained in flight at 69% completion. Actual app fence
+polls reached 14,380; 12 fences were created and 10 retired. The successful
+negative controls above exercised the same query recovery and complete
+settles/exports without changing caps, deadlines or GL calls.
+
+Repeat 6 reproduced the same guarded FIFO-front path in a palette boot:
+process 1129723, service query 8, decoder `0x3b2c01048000`, matching fence
+object `0x3b2c16b45820`, ANGLE SyncID 1, and native GLsync
+`0x3b2c0d047140` generation 4. The native pending span reached 239.820s
+with at least 398,408 returned timeout polls and three same-context native
+flushes. The whole sequence failed at 268.677s after its unchanged 240s boot
+deadline. The run completed four of six full sequences and exited 1;
+neither reproduced failure received a rescue.
+
+External `/proc` copy attempts for the two stalled processes produced empty
+files and do not qualify as captured snapshots; end-of-run capture found both
+processes gone. Their query identity
+comes from the recorded in-process frame chain and matching executable-image
+guards, not those unavailable external snapshots. This does not establish
+why the processes exited.
+
+The observed incompletion reaches the native GL boundary; the remaining
+cause is on the native submission/completion path. The capture does not
+distinguish upstream ordering or bookkeeping, Mesa submission/fence state
+or kernel completion. A minimized reproduction must preserve the
+copied-link/context/export sequence and identify the native fence while
+comparing those layers. Neither a driver fix nor an application workaround
+is established by these observations. The runtime query records, process
+maps, scene events and full failure diagnostics remain untracked under
+`scripts/out/native-fence-investigation/query-final-4d-finite/`; successful
+guarded controls are in the sibling `query-final-3d/` and `query-final-4d/`
+directories.
+
+Build and verify the observer without starting a browser:
+
+```bash
+node scripts/native-gl-trace.build.mjs
+node scripts/native-gl-trace.verify.mjs
+node scripts/native-gl-trace.analyze.verify.mjs
+```
+
+After building and previewing the production app, and verifying the actual
+accelerated renderer with the current Xwayland cookie, reproduce with a fresh
+output directory:
+
+```bash
+NATIVE_GL_TRACE_STACK_AFTER_MS=5000 node scripts/tiling-balloon.verify.mjs \
+  --display=:0 --only=surface --dimension=4 --engine=webgl --look=true \
+  --repeat=3 --controls=both --gltrace=true \
+  --nativegltrace="$PWD/scripts/out/native-gl-trace/native-gl-trace.so" \
+  --outdir=scripts/out/native-gl-observation-4d
+node scripts/native-gl-trace.analyze.mjs \
+  scripts/out/native-gl-observation-4d/native-gl-trace.jsonl \
+  --events=scripts/out/native-gl-observation-4d/native-gl-trace-events.jsonl \
+  --source=scripts/out/native-gl-trace/native-gl-trace.c \
+  --output=scripts/out/native-gl-observation-4d/native-summary.json
+```
+
+Use `--dimension=3` and another fresh directory for the dimensional control.
+The launcher records the library hash, browser command provenance, allowlisted
+environment, scene timestamps and available process maps without changing
+browser flags. Empty native output exits 2 while preserving the rendering
+rows' own verdicts; nonempty output alone does not prove hook coverage.
+The offline analyzer preserves pointer generations and flags ambiguous
+provider identity. Its `queryObservations` reports both raw snapshot fields
+and whether all identity guards passed. Process maps use ELF load segments
+to distinguish virtual addresses from file offsets. Neither native handle
+order nor service IDs identify the frontend observer's JavaScript fence
+ordinal across contexts.
+
 ## Measured A/Bs
 
 Quick-reference table of the headline measured results above, each tied

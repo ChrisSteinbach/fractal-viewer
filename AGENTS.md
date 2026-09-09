@@ -1414,11 +1414,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `scripts/capture-drain.verify.mjs` and `scripts/surface-tier.verify.mjs`
     (whose mid-drag softness check is that rule's);
     `scripts/fold-settle-park.repro.mjs` and `?surfacetrace` sit one module
-    over. The finite Balloon stall is an observed fence-retirement failure
-    with live polling/submission; one flush did not rescue it (`?stripdiag`,
-    `tiling-balloon.verify.mjs`). Pure, tested. Full record — the A/B measurements, the reverted
-    truncation attempts, the sync-tax arithmetic and the cost-ceiling
-    history — in `docs/surface-strip-pipeline.md`.
+    over. Balloon stalls include untiled work: a flushed native GL fence blocks
+    Chromium's readback-shadow FIFO front; an extra flush did not rescue it.
+    `tiling-balloon.verify.mjs` and `native-gl-trace.*.mjs` observe this without
+    added GL calls. Pure, tested. Evidence and the remaining backend boundary
+    are in `docs/surface-strip-pipeline.md`.
   - `state.ts` — `AppState` + pure reducers (pure, tested). Xaos blocks are
     derived from mutual-1 chi connectivity; the isolated-block gesture writes
     structure, leak dials summarize uniform cross-weights, and the matrix is
