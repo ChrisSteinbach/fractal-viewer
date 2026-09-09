@@ -11,6 +11,7 @@ import {
   encodeSurfaceComputeLayerMean,
   initialShadeHitCost,
   marchChunkFor,
+  nextLightingRayCap,
   nextShadeBatchSize,
   nextShadeHitCost,
   nextStepsPerPass,
@@ -31,7 +32,9 @@ import {
   SURFACE_COMPUTE_SHADE_MARGINAL_DECAY,
   SURFACE_COMPUTE_SHADE_HIT_CAP_START,
   SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST,
+  SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
+  surfaceComputeLightingRayBatch,
   SurfaceComputeRenderer,
   surfaceComputeTargetMeshIds,
   surfaceComputeMaxDispatchRays,
@@ -880,6 +883,58 @@ describe("shadeHitAllowanceUs", () => {
     expect(shadeHitBudgetUs(1_500_000)).toBe(ceilingUs);
     expect(shadeHitAllowanceUs(ceilingUs)).toBe(0);
     expect(shadeHitAllowanceUs(3_000_000)).toBe(0);
+  });
+});
+
+describe("nextLightingRayCap", () => {
+  it("doubles while the worst dispatch fits the lit target, and saturates at the cap", () => {
+    expect(nextLightingRayCap(64, 49)).toBe(128);
+    expect(nextLightingRayCap(2048, 49)).toBe(4096);
+    // SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS is the ceiling; nothing
+    // above it, however cheap the dispatch measured.
+    expect(nextLightingRayCap(4096, 1)).toBe(4096);
+  });
+
+  it("holds between the target and double it", () => {
+    expect(nextLightingRayCap(512, 50)).toBe(512);
+    expect(nextLightingRayCap(512, 100)).toBe(512);
+  });
+
+  it("quarters on a 2x overrun and floors at one workgroup", () => {
+    expect(nextLightingRayCap(1024, 101)).toBe(256);
+    expect(nextLightingRayCap(64, 500)).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
+  });
+
+  it("climbs one workgroup to the cap in six steps — the ladder paces, it does not leap", () => {
+    let cap = SURFACE_COMPUTE_WORKGROUP_SIZE;
+    const seen = [cap];
+    for (let i = 0; i < 6; i++) {
+      cap = nextLightingRayCap(cap, 1);
+      seen.push(cap);
+    }
+    expect(seen).toEqual([64, 128, 256, 512, 1024, 2048, 4096]);
+  });
+});
+
+describe("surfaceComputeLightingRayBatch on measured costs", () => {
+  it("widens once the lanes carry the measured medium cost, where inert lanes pinned it to the cap", () => {
+    // MEASURED on this project's own cathedral fixture: one medium
+    // dispatch is 5.63 ms + 2.04 us/ray. Both lanes then afford far more
+    // than the 4096-ray ceiling, so the capacity ladder is what paces the
+    // width — which is the division of labour the unlit queue already has.
+    const medium = { interceptUs: 5630, marginalUs: 2.04 };
+    const surface = { interceptUs: 16600, marginalUs: 7.59 };
+    expect(surfaceComputeLightingRayBatch(surface, medium, 4096)).toBe(4096);
+    // The ladder still binds while it is climbing.
+    expect(surfaceComputeLightingRayBatch(surface, medium, 256)).toBe(256);
+    // A genuinely expensive scene is held down by the model, not the cap.
+    expect(
+      surfaceComputeLightingRayBatch(
+        surface,
+        { interceptUs: 5630, marginalUs: 200 },
+        4096,
+      ),
+    ).toBe(192);
   });
 });
 
@@ -2809,7 +2864,12 @@ describe("SurfaceComputeRenderer authored lighting", () => {
       DEFAULT_SURFACE_LIGHTING.lights[0].position[0],
     );
     expect(shadeWrites[0][92]).toBe(1);
-    expect(phases).toHaveLength(20);
+    // The dispatch COUNT is now the capacity ladder's business, not a
+    // fixed width's: this frame's 128 rays over two samples used to cost
+    // 20 medium dispatches at the pinned one workgroup and cost 15 once
+    // the width is allowed to climb. Same cells, same lights, same
+    // pixels — see nextLightingRayCap for the measured reason.
+    expect(phases.length).toBeLessThan(20);
     expect(
       fences.some((count, index) => count - (fences[index - 1] ?? 0) > 1),
     ).toBe(true);
@@ -2820,8 +2880,34 @@ describe("SurfaceComputeRenderer authored lighting", () => {
           SURFACE_COMPUTE_LIGHTING_MAX_QUEUED_DISPATCHES,
       ),
     ).toBe(true);
+    // ONE CELL AND ONE LIGHT PER DISPATCH is the invariant; the WIDTH is
+    // not. Every dispatch still owns exactly one (cell, light) pair, the
+    // width starts at one workgroup with no evidence, only ever grows
+    // within a frame, and never passes the lit ceiling.
+    // ONE CELL AND ONE LIGHT PER DISPATCH — the split this test is named
+    // for. Every medium dispatch names a single (cell, light) pair, and a
+    // batch covers the 2x2 product exactly once. (How many of them share a
+    // FENCE is the separate, already-asserted concern above.)
+    const medium = phases.filter((phase) => phase.phase === 1);
+    expect(medium.every((phase) => phase.cell >= 0 && phase.light >= 0)).toBe(
+      true,
+    );
+    expect(medium).toHaveLength(phases.length - 3);
+    for (let i = 0; i < medium.length; i += 4) {
+      expect(
+        medium
+          .slice(i, i + 4)
+          .map((phase) => `${phase.cell}/${phase.light}`)
+          .sort(),
+      ).toEqual(["0/0", "0/1", "1/0", "1/1"]);
+    }
+    expect(phases[0].rays).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
     expect(
-      phases.every((phase) => phase.groups === 1 && phase.rays === 64),
+      phases.every(
+        (phase, index) =>
+          phase.rays >= (phases[index - 1]?.rays ?? 0) &&
+          phase.rays <= SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
+      ),
     ).toBe(true);
     expect(
       phases

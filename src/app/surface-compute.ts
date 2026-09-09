@@ -1469,17 +1469,28 @@ interface ShadeSizerState {
   cap: number;
   /** First pixel batch times every cell/light separately before later
    * batches amortize fences. Never shared across different camera jobs.
-   * ONLY `peakCellMs` and `pilotComplete` are live: the pilot fences one
-   * dispatch at a time (`surfaceComputeLightingFenceGroup(null)` = 1) until
-   * the first batch's whole medium sweep lands, and `peakCellMs` is a
-   * running MAX, so a later wider dispatch can only raise it — the safe
-   * direction. The cost lanes below are INERT placeholders: nothing feeds
-   * them measurements yet, so `surfaceComputeLightingRayBatch` returns one
-   * fixed conservative width for the life of the session. Wiring them to
-   * measured surface/medium dispatch cost is unfinished work. */
+   * The pilot fences one dispatch at a time
+   * (`surfaceComputeLightingFenceGroup(null)` = 1) until the first batch's
+   * whole medium sweep lands; `peakCellMs` is a running MAX so a later
+   * wider dispatch can only raise it — the safe direction for FENCE
+   * GROUPING, and the reason it is not what paces the width.
+   *
+   * `surfaceCost`/`mediumCost` are LIVE: every lit hit dispatch feeds the
+   * first and every medium fence group the second, both through
+   * `nextShadeHitCost`, so `surfaceComputeLightingRayBatch` sizes on this
+   * scene rather than on a fixed conservative width. They were inert
+   * placeholders until MEASURED (real RX 7900 XTX, cathedral, 4096 rays,
+   * one sample, width forced offline): one medium dispatch costs
+   * `5.63 ms + 2.04 us/ray`, so at the one-workgroup width that shipped,
+   * 97.7% of every medium dispatch was fixed cost and the settle ran
+   * 17.7x longer than the same pixels at 4096. `lastCellMs` is the most
+   * recent group's PER-DISPATCH medium cost — the ladder's evidence,
+   * where `peakCellMs`'s running max would freeze the climb after one
+   * slow group. */
   lighting?: {
     pilotRays: number;
     peakCellMs: number;
+    lastCellMs: number;
     pilotComplete: boolean;
     surfaceCost: ShadeHitCost;
     mediumCost: ShadeHitCost;
@@ -1514,6 +1525,52 @@ export function surfaceComputeLightingRayBatch(
     Math.floor(width / SURFACE_COMPUTE_WORKGROUP_SIZE) *
       SURFACE_COMPUTE_WORKGROUP_SIZE,
   );
+}
+
+/**
+ * The LIT capacity ladder: how fast the lit hit width may climb, paced by
+ * the worst single DISPATCH the last batch produced — its phase-0 shading
+ * or its slowest medium cell, whichever hurt more — against
+ * {@link SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS}.
+ *
+ * It exists for the same reason {@link nextShadeBatchSize} does one queue
+ * over: the two-term model sizes, the ladder paces the climb, so a scene
+ * nobody has measured cannot go from one workgroup to
+ * {@link SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS} on a single cheap
+ * dispatch. Doubling on evidence and quartering on a 2x overrun are that
+ * file's shape deliberately, not a second set of dials.
+ *
+ * WHY THE CLIMB IS WORTH PACING AT ALL, measured (real AMD RX 7900 XTX,
+ * production build, cathedral, 64x64 = 4096 rays, one sample, one fresh
+ * session per width, lit width forced through `?surfaceshadehits=N`):
+ *
+ *     width               64      256     1024     4096
+ *     ms/medium disp   5.756    7.200    9.880   13.978
+ *     medium disps      4288     1088      288       96
+ *     settle          27.22s    8.76s    3.29s    1.54s
+ *
+ * The fit over that lever is `5.63 ms + 2.04 us/ray`, so at the ONE
+ * WORKGROUP this path used to be pinned to, 97.7% of every medium
+ * dispatch was fixed cost — 64 invocations do not begin to fill the
+ * machine — and a 64x width bought only 2.4x the dispatch for a 17.7x
+ * settle. Coverage was identical (3840 covered / 256 miss / 0 exhausted)
+ * at every width: this is scheduling, and the image does not change.
+ * Pure so the safety bias is unit-tested.
+ */
+export function nextLightingRayCap(
+  current: number,
+  worstDispatchMs: number,
+): number {
+  if (
+    worstDispatchMs < SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS &&
+    current < SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS
+  ) {
+    return Math.min(current * 2, SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS);
+  }
+  if (worstDispatchMs > SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS * 2) {
+    return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.floor(current / 4));
+  }
+  return current;
 }
 
 /** Fence grouping only; each workgroup still owns one cell/light.
@@ -3574,7 +3631,13 @@ export class SurfaceComputeRenderer {
           pilotComplete: false,
           surfaceCost: initialShadeHitCost(),
           mediumCost: initialShadeHitCost(),
-          rayCap: SURFACE_COMPUTE_WORKGROUP_SIZE,
+          lastCellMs: 0,
+          // One workgroup until the frame's own dispatches say a wider one
+          // fits — {@link nextLightingRayCap}. `?surfaceshadehits=N` FIXES
+          // the width instead, which is the offline lever a two-term fit
+          // needs (`nextShadeHitCost`'s own record: "over a WIDE lever or
+          // not at all") and is how this path's terms were identified.
+          rayCap: shadeHitsPin ?? SURFACE_COMPUTE_WORKGROUP_SIZE,
         })
       : null;
     // A fold FINAL lens multiplies every march step by its branch sweep
@@ -4239,9 +4302,18 @@ export class SurfaceComputeRenderer {
             if (token !== this.frameToken || this.isLost || this.destroyed)
               return null;
             const mediumMs = performance.now() - groupStart;
+            lightingSizer!.lastCellMs = mediumMs / group;
             lightingSizer!.peakCellMs = Math.max(
               lightingSizer!.peakCellMs,
-              mediumMs / group,
+              lightingSizer!.lastCellMs,
+            );
+            // The medium's own two-term model, fed the PER-DISPATCH cost at
+            // this batch's width — the quantity `surfaceComputeLightingRayBatch`
+            // reasons about. A group is a fence, not a wider dispatch.
+            lightingSizer!.mediumCost = nextShadeHitCost(
+              lightingSizer!.mediumCost,
+              batch.length,
+              lightingSizer!.lastCellMs * 1000,
             );
             tr(
               `medium END dispatches=${group} ms=${mediumMs.toFixed(2)} peakCellMs=${lightingSizer!.peakCellMs.toFixed(2)}`,
@@ -4278,6 +4350,33 @@ export class SurfaceComputeRenderer {
           tr(
             `shade cost→${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us cap→${sizer.cap}`,
           );
+          if (lightingSizer && shadeHitsPin === null) {
+            // The lit lanes, on the same evidence rule as the unlit one
+            // above: a QUEUE-LIMITED batch may shrink the capacity and
+            // never grow it, because coming in under budget on a batch
+            // that could not be wider is not evidence that a wider one
+            // fits. A pinned width is the offline lever and is left alone.
+            lightingSizer.surfaceCost = nextShadeHitCost(
+              lightingSizer.surfaceCost,
+              batch.length,
+              shadeMs * 1000,
+            );
+            // The worst SINGLE submission this batch produced — its
+            // phase-0 shading or its slowest medium cell. The watchdog
+            // sees dispatches, not batches.
+            const litGrown = nextLightingRayCap(
+              lightingSizer.rayCap,
+              Math.max(shadeMs, lightingSizer.lastCellMs),
+            );
+            lightingSizer.rayCap =
+              batch.length < batchSize
+                ? Math.min(lightingSizer.rayCap, litGrown)
+                : litGrown;
+            tr(
+              `lit cost surf→${lightingSizer.surfaceCost.interceptUs.toFixed(0)}+n*${lightingSizer.surfaceCost.marginalUs.toFixed(1)}us ` +
+                `med→${lightingSizer.mediumCost.interceptUs.toFixed(0)}+n*${lightingSizer.mediumCost.marginalUs.toFixed(1)}us rayCap→${lightingSizer.rayCap}`,
+            );
+          }
         }
         if (!(await maybePresent())) return null;
       }
