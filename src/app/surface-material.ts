@@ -1,4 +1,10 @@
 import * as THREE from "three";
+import {
+  withSurfaceLightingGlsl,
+  surfaceLightingUniforms,
+  installSurfaceLightingUniforms,
+} from "./surface-lighting-material";
+import type { SurfaceLighting } from "../fractal/surface-lighting";
 import { condensationTraversalDepth } from "../fractal/condensation-de";
 import type { BulbDE } from "../fractal/bulb-de";
 import { BULB_ITERATIONS, BULB_STEP_SCALE } from "../fractal/bulb-de";
@@ -5842,6 +5848,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
+      ...surfaceLightingUniforms(),
       ...surfaceGridUniforms(),
       uShapeMeshSdf: surfaceShapeMeshSdfUniform(),
       uInvM: {
@@ -6399,6 +6406,7 @@ export function setSurfaceSystem(
       wantChaos,
       tiling,
       wantPost,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -7318,6 +7326,7 @@ export function surfaceFragmentResolvedFor(
   chaos = 0,
   tiling: ResolvedTiling | null = null,
   post = 0,
+  lighting = 0,
 ): string {
   if (plane !== 0 && balloon !== 0) {
     throw new RangeError(
@@ -7434,7 +7443,16 @@ export function surfaceFragmentResolvedFor(
       condensationShapeDispatch(condensation, condensation4),
     );
   }
-  return baked;
+  return lighting
+    ? withSurfaceLightingGlsl(baked, {
+        finish: finish !== 0,
+        plane: plane !== 0,
+        balloon: balloon !== 0,
+        condensation: condensation !== null,
+        lattice: tiling !== null && isResolvedLatticeTiling(tiling),
+        fourD: condensation4,
+      })
+    : baked;
 }
 
 /** A finite number as a GLSL float literal — `shapes.ts`'s `lit` rule
@@ -7505,6 +7523,7 @@ export function surfaceFragmentFor(
   chaos = 0,
   tiling: ResolvedTiling | null = null,
   post = 0,
+  lighting = 0,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -7523,6 +7542,7 @@ export function surfaceFragmentFor(
     chaos,
     tiling,
     post,
+    lighting,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
@@ -7890,6 +7910,7 @@ export function setEscapeSystem(
       0,
       tiling,
       wantPost,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -8021,6 +8042,8 @@ export function setBulbSystem(
       0,
       0,
       tiling,
+      0,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -8107,6 +8130,7 @@ export function setSurfaceBalloon(
       material.defines.SURFACE_CHAOS === 1 ? 1 : 0,
       tiling,
       material.defines.SURFACE_POST === 1 ? 1 : 0,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -8240,6 +8264,7 @@ export function setSurfaceGroundPlane(
       material.defines.SURFACE_CHAOS === 1 ? 1 : 0,
       materialSurfaceTiling(material),
       material.defines.SURFACE_POST === 1 ? 1 : 0,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -8308,7 +8333,40 @@ export function setSurfaceMaterials(
       material.defines.SURFACE_CHAOS === 1 ? 1 : 0,
       materialSurfaceTiling(material),
       material.defines.SURFACE_POST === 1 ? 1 : 0,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
+}
+
+/** Install the authored rig. Values are live uniforms; presence selects the shader. */
+export function setSurfaceLighting(
+  material: THREE.ShaderMaterial,
+  lighting: SurfaceLighting | undefined,
+): void {
+  installSurfaceLightingUniforms(material, lighting);
+  const enabled = lighting !== undefined;
+  if ((material.defines.SURFACE_LIGHTING === 1) === enabled) return;
+  if (enabled) material.defines.SURFACE_LIGHTING = 1;
+  else delete material.defines.SURFACE_LIGHTING;
+  material.fragmentShader = surfaceFragmentFor(
+    material.defines.SURFACE_ESCAPE === 1 ? 1 : 0,
+    material.defines.SURFACE_FOLD_LENS === 1 ? 1 : 0,
+    material.defines.SURFACE_BALLOON === 1 ? 1 : 0,
+    material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0,
+    material.defines.SURFACE_BULB === 1 ? 1 : 0,
+    material.defines.SURFACE_FINISH === 1 ? 1 : 0,
+    material.defines.SURFACE_PATTERN === 1 ? 1 : 0,
+    undefined,
+    materialTrapSpec(material),
+    materialCondensationSpecs(material),
+    false,
+    materialTrapGeometry(material),
+    material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0,
+    material.defines.SURFACE_CHAOS === 1 ? 1 : 0,
+    materialSurfaceTiling(material),
+    material.defines.SURFACE_POST === 1 ? 1 : 0,
+    enabled ? 1 : 0,
+  );
+  material.needsUpdate = true;
 }

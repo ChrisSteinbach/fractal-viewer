@@ -911,6 +911,12 @@ input[type="range"] {
   min-width: 0;
 }
 
+/* Preserve long exact authored values without squeezing out the slider on
+   narrow phones. Ordinary rig values keep the compact side-by-side pair. */
+.range-number-pair.surface-lighting-number-wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .range-number-input {
   width: 100%;
   min-width: 0;
@@ -972,6 +978,14 @@ input[type="range"] {
    desktop panel's generic checkbox rows remain compact. */
 #tilingSection > .checkbox-label {
   min-height: 44px;
+}
+
+/* The authored rig's nested groups and swatches are editing targets as well
+   as disclosures. Keep them usable alongside its exact numeric companions. */
+#surfaceAuthoredLightingControls .checkbox-label,
+#surfaceAuthoredLightingControls summary {
+  min-height: 44px;
+  align-content: center;
 }
 
 .select-label {
@@ -1646,6 +1660,17 @@ summary.editor-group-title {
   width: 36px;
   height: 26px;
   padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+#surfaceAuthoredLightingControls input[type="color"] {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 2px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);

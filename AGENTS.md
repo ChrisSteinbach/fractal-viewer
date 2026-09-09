@@ -949,20 +949,16 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     at 0.01, pow's domain, rather than falling back),
     `isClassicSurfaceFinish` the compile gate's predicate,
     `surfaceFinishLanes` the one wire-lane order both engines pack, and
-    `surfaceFinishShadeSource` emits the ONE finish BRDF body in both
-    shader dialects (`background-shape.ts`'s discipline applied to
-    lighting) with `finishShadeTs` as its TS mirror — EXACT at the classic
-    params against the fixed formula (324-case pin): the value-true half
-    of the byte-identity story, the compile gates being the byte-true
-    half. `Transform.finish` persists/morphs/mutates on the fold lengths'
+    `surfaceFinishShadeSource` emits ONE finish BRDF in both shader dialects;
+    `finishShadeTs` pins classic value identity, the compile gates byte identity.
+    `Transform.finish` persists/morphs/mutates on the fold lengths'
     exact treatment (random-system deliberately never rolls one).
-    The pattern-albedo experiment was REFUSED, its helper DELETED;
-    `scripts/finish-pattern.harness.ts` is the executable record: it
-    refused Tier-2 wood off `rings` (at 1x it is speckle, not grain —
-    `rings` varies at the fractal's own detail frequency) while
-    CONFIRMING the zoom premise that motivated it (native coarsens into
-    bands where world-space noise goes flat). The survivor — banding off
-    `sheets` — is filed, not wired.
+    Pattern-albedo remains REFUSED; the rings-wood refusal, confirmed zoom
+    premise and deferred sheets banding live in `scripts/finish-pattern.harness.ts`.
+    Authored rigs (`surface-lighting.ts`) share ONE shader emitter across both
+    dimensions/engines: absent state is legacy, visibility uses the displayed DE,
+    unresolved rays stay dark, medium work is bounded, HDR averages before clipping.
+    Wire and gates: `docs/cinematic-surface-lighting.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more

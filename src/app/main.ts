@@ -63,6 +63,8 @@ import {
   type SurfaceComputeTarget,
 } from "./surface-compute";
 import { surfaceComputeForceFrameKey } from "./surface-force-frame-key";
+import { createSurfaceLightingStarter } from "./surface-lighting-starters";
+import { setSurfaceLighting } from "./state";
 import {
   exactSurfaceRayCensus,
   type SurfaceRayCensus,
@@ -609,6 +611,7 @@ interface SurfaceStateProbe {
   backend: { label: string | null; software: boolean } | null;
   /** Exact terminal statuses for the current completed settle pass. */
   census: SurfaceRayCensus | null;
+  lightingVisibility?: { exhausted: number; invalid: number } | null;
   /** The session has traced its first frame (past the compile/pipeline
    * gate). Until then the canvas still shows the explorer. */
   firstFrame: boolean;
@@ -929,6 +932,8 @@ async function main(): Promise<void> {
   // Exact status tally belonging to surfaceSettled on the compute arm. The
   // WebGL arm retains its equivalent in FractalScene beside its readback.
   let surfaceComputeSettledRayCensus: SurfaceRayCensus | null = null;
+  let surfaceLightingVisibility: { exhausted: number; invalid: number } | null =
+    null;
   // A settle verdict the tier scheduler fired while a preview strip job was
   // still mid-flight: held here until the preview completes, then
   // begun. A fresh invalidation supersedes it.
@@ -3184,7 +3189,7 @@ async function main(): Promise<void> {
     orbit.spherical.phi = pose.phi;
     orbit.fov = clampCameraFov(pose.fov ?? DEFAULT_CAMERA_FOV);
     orbit.infiniteZoom =
-      pose.infiniteZoom === true || orbit.fov !== DEFAULT_CAMERA_FOV;
+      pose.infiniteZoom === true || orbit.fov < DEFAULT_CAMERA_FOV;
     syncContinuousZoomUi();
   }
 
@@ -4565,12 +4570,15 @@ async function main(): Promise<void> {
   // Fold 3D IFS sessions — base-map folds OR a fold FINAL lens (the kernel
   // wraps either core in descendLens's branch sweep, so the lens-over-affine
   // field class routes here too, off the fragile fold GLSL entirely). Plain
-  // affine systems stay on the WebGL tracer (fast there, with the refined
-  // estimator and the grid).
+  // affine systems use WebGL's refined estimator and grid unless an authored
+  // rig needs compute's separately scheduled surface and mist visibility.
   function surfaceComputeEligible(de: SurfaceDE): boolean {
     return (
       surfaceComputeAvailable() &&
-      (deHasFolds(de) || de.foldFinal !== null || surfaceComputeForced)
+      (deHasFolds(de) ||
+        de.foldFinal !== null ||
+        surfaceComputeForced ||
+        state.surface.lighting !== undefined)
     );
   }
 
@@ -4664,6 +4672,7 @@ async function main(): Promise<void> {
     surfaceComputeSettleProgress = null;
     surfaceComputePreviewProgress = null;
     surfaceComputeSettledRayCensus = null;
+    surfaceLightingVisibility = null;
     scene.exitSurfaceComputeSession();
     updateSoftwareRendererNote();
   }
@@ -4720,7 +4729,7 @@ async function main(): Promise<void> {
         : surfaceTrapIndices(state.transforms, ifsShadeSlots(target.de)),
       // The session's unified materials — null for classic+none — keeping
       // both codegen flags and stride-3 shadeMaps packing in lockstep.
-      { materials },
+      { materials, lighting: state.surface.lighting !== undefined },
     )
       .then((renderer) => {
         if (token !== surfaceCompileToken || state.renderMode !== "surface") {
@@ -4990,6 +4999,7 @@ async function main(): Promise<void> {
     if (!renderer || surfaceComputeSettleFlight || surfaceCaptureFlight) return;
     surfaceComputeSettleFlight = true;
     surfaceComputeSettledRayCensus = null;
+    surfaceLightingVisibility = null;
     surfaceComputeSettleSamples = effectiveSurfaceSettleSamples();
     try {
       renderer.cancel();
@@ -5079,6 +5089,7 @@ async function main(): Promise<void> {
         surfaceSettled = true;
         const drawn = frame.counts.hit + frame.counts.plane;
         const rays = frame.width * frame.height;
+        surfaceLightingVisibility = frame.lightingVisibility ?? null;
         surfaceComputeSettledRayCensus = exactSurfaceRayCensus(
           rays,
           drawn,
@@ -5591,6 +5602,7 @@ async function main(): Promise<void> {
       scene.clearRenderNeeded();
       surfaceSettled = false;
       surfaceComputeSettledRayCensus = null;
+      surfaceLightingVisibility = null;
       surfaceSettlePending = false;
       surfaceComputeForceKey = null;
       if (surfacePreviewsEnabled) {
@@ -6591,6 +6603,7 @@ async function main(): Promise<void> {
       surfaceWebglPreviewPending = false;
       surfaceSettled = false;
       surfaceComputeSettledRayCensus = null;
+      surfaceLightingVisibility = null;
       surfaceSettlePending = false;
       state = setRenderMode(state, "surface");
       scene.setSurfaceDisplayActive(true);
@@ -11024,11 +11037,44 @@ async function main(): Promise<void> {
     onAutoOrbitSpeedInput: (value) => {
       autoOrbitSpeed = value;
     },
-    // The surface preview tier under user control. Off takes effect
-    // IMMEDIATELY: a preview already grinding is abandoned and the full
-    // render starts now — the flip is itself the skip, just sticky. On
-    // re-invalidates so a parked view previews (and then settles) fresh
-    // rather than waiting for the next camera nudge.
+    // Every authored rig edit owns a fresh convergence. Presence also changes
+    // the compiled program and its HDR output resources.
+    onSurfaceLighting: (lighting, phase) => {
+      stopShows({ notify: true });
+      editSession.beginEdit("tweak");
+      const changedVariant =
+        (state.surface.lighting !== undefined) !== (lighting !== undefined);
+      state = setSurfaceLighting(state, lighting);
+      if (state.renderMode === "surface") {
+        if (changedVariant) surfaceSession.enter();
+        else {
+          surfaceComputeRenderer?.cancel();
+          surfaceComputeForceKey = null;
+          surfaceSettled = false;
+          surfaceComputeSettledRayCensus = null;
+          surfaceLightingVisibility = null;
+          surfaceSettlePending = false;
+          scene.abandonSurfaceSettle();
+          scene.abandonSurfacePreview();
+          scene.setSurfaceParams(state.surface);
+          scene.invalidate();
+        }
+      }
+      if (phase === "commit") editSession.flush();
+      ui.updateLabels(state);
+    },
+    onSurfaceLightingStarter: (id) => {
+      void loadSceneSnapshot(
+        createSurfaceLightingStarter(id),
+        true,
+        false,
+      ).then((loaded) => {
+        if (!loaded) return;
+        loadHints.armMode("surface");
+      });
+    },
+    // The surface preview tier under user control. Off abandons an active
+    // preview and starts the full render; On invalidates the parked view.
     onSurfacePreviewToggle: (checked) => {
       surfacePreviewsEnabled = checked;
       updateViewerPrefs({ surfacePreview: checked });
@@ -12112,8 +12158,11 @@ async function main(): Promise<void> {
     window.__surfaceState = () => {
       const inSurface = state.renderMode === "surface";
       const compute = inSurface ? surfaceComputeRenderer : null;
+      // A synchronous edit invalidates the current picture before the next
+      // animation frame consumes the trace dirty bit.
+      const completed = surfaceSettled && !scene.needsRender;
       const census =
-        !inSurface || !surfaceSettled
+        !inSurface || !completed
           ? null
           : compute !== null
             ? surfaceComputeSettledRayCensus
@@ -12136,8 +12185,18 @@ async function main(): Promise<void> {
         // Return a fresh object so a diagnostics consumer cannot mutate the
         // retained evidence for the live session.
         census: census === null ? null : { ...census },
+        ...(state.surface.lighting
+          ? {
+              lightingVisibility:
+                compute !== null &&
+                completed &&
+                surfaceLightingVisibility !== null
+                  ? { ...surfaceLightingVisibility }
+                  : null,
+            }
+          : {}),
         firstFrame: surfaceSession.hasFirstFrame,
-        settled: surfaceSettled,
+        settled: completed,
         settlePending: surfaceSettlePending,
         previewActive:
           compute !== null

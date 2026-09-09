@@ -36,6 +36,12 @@ import {
   type SurfacePattern,
 } from "../fractal/surface-pattern";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
+import {
+  SURFACE_LIGHTING_MAX_LIGHTS,
+  type SurfaceDiskLight,
+  type SurfaceLighting,
+  type SurfaceLightingMedium,
+} from "../fractal/surface-lighting";
 import { SHAPE_TRAP_GEOMETRY_LEVEL_MAX } from "../fractal/shape-trap";
 import { TILING_GROUPS } from "../fractal/tiling";
 import type { FiniteTilingSpec, LatticeTilingSpec } from "../fractal/tiling";
@@ -77,7 +83,7 @@ import {
 } from "./state";
 import { SURFACE_ANTIALIAS_DETENTS } from "./surface-sampling";
 import {
-  DEFAULT_CAMERA_FOV,
+  MAX_CAMERA_FOV,
   MAX_PHI,
   MAX_RADIUS,
   MIN_DEEP_ZOOM_FOV,
@@ -286,6 +292,7 @@ const SOLID_FIELDS = {
   paletteId: true,
 } satisfies Fields<SolidParams>;
 const SURFACE_FIELDS = {
+  lighting: true,
   antialiasSamples: true,
   depthOfField: true,
   lightAzimuth: true,
@@ -299,6 +306,27 @@ const SURFACE_FIELDS = {
   floorTileScale: true,
   floorEmission: true,
 } satisfies Fields<SurfaceParams>;
+const SURFACE_LIGHTING_FIELDS = {
+  lights: true,
+  ambient: true,
+  specular: true,
+  roughness: true,
+  medium: true,
+} satisfies Fields<SurfaceLighting>;
+const SURFACE_DISK_LIGHT_FIELDS = {
+  position: true,
+  normal: true,
+  radius: true,
+  color: true,
+  intensity: true,
+} satisfies Fields<SurfaceDiskLight>;
+const SURFACE_LIGHTING_MEDIUM_FIELDS = {
+  center: true,
+  radius: true,
+  density: true,
+  tint: true,
+  anisotropy: true,
+} satisfies Fields<SurfaceLightingMedium>;
 const CUSTOM_PALETTE_FIELDS = { stops: true } satisfies Fields<CustomPalette>;
 const RAMP_PALETTE_FIELDS = {
   kind: true,
@@ -1068,12 +1096,50 @@ function solid(value: unknown, path: string, hasCustomPalette: boolean): void {
   );
 }
 
+function surfaceLighting(value: unknown, path: string): void {
+  const entry = object(value, path, SURFACE_LIGHTING_FIELDS);
+  const lights = array(required(entry, "lights", path), `${path}.lights`);
+  if (lights.length > SURFACE_LIGHTING_MAX_LIGHTS) {
+    throw new RangeError(`${path}.lights exceeds the authored light cap`);
+  }
+  lights.forEach((value, index) => {
+    const lightPath = `${path}.lights[${index}]`;
+    const light = object(value, lightPath, SURFACE_DISK_LIGHT_FIELDS);
+    for (const key of ["position", "normal", "color"] as const) {
+      tuple(required(light, key, lightPath), 3, `${lightPath}.${key}`);
+    }
+    for (const key of ["radius", "intensity"] as const) {
+      finite(required(light, key, lightPath), `${lightPath}.${key}`);
+    }
+  });
+  tuple(required(entry, "ambient", path), 3, `${path}.ambient`);
+  for (const key of ["specular", "roughness"] as const) {
+    finite(required(entry, key, path), `${path}.${key}`);
+  }
+  if (entry.medium !== undefined) {
+    const mediumPath = `${path}.medium`;
+    const medium = object(
+      entry.medium,
+      mediumPath,
+      SURFACE_LIGHTING_MEDIUM_FIELDS,
+    );
+    for (const key of ["center", "tint"] as const) {
+      tuple(required(medium, key, mediumPath), 3, `${mediumPath}.${key}`);
+    }
+    for (const key of ["radius", "density", "anisotropy"] as const) {
+      finite(required(medium, key, mediumPath), `${mediumPath}.${key}`);
+    }
+  }
+}
+
 function surface(
   value: unknown,
   path: string,
   hasCustomPalette: boolean,
 ): void {
   const entry = object(value, path, SURFACE_FIELDS);
+  if (entry.lighting !== undefined)
+    surfaceLighting(entry.lighting, `${path}.lighting`);
   const samples = finite(
     required(entry, "antialiasSamples", path),
     `${path}.antialiasSamples`,
@@ -1151,7 +1217,7 @@ function camera(value: unknown, path: string): void {
   }
   if (entry.fov !== undefined) {
     const fov = finite(entry.fov, `${path}.fov`);
-    if (fov < MIN_DEEP_ZOOM_FOV || fov > DEFAULT_CAMERA_FOV) {
+    if (fov < MIN_DEEP_ZOOM_FOV || fov > MAX_CAMERA_FOV) {
       throw new RangeError(`${path}.fov is outside its authored domain`);
     }
   }

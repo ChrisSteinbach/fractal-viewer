@@ -2826,6 +2826,51 @@ describe("Ui preset menu", () => {
   });
 });
 
+describe("Ui authored Surface lighting", () => {
+  it("offers complete scene replacements in Systems and resets after selection", () => {
+    const handlers = { ...noopHandlers(), onSurfaceLightingStarter: vi.fn() };
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const select = document.getElementById(
+      "surfaceLightingStarterSelect",
+    ) as HTMLSelectElement;
+    expect(select.closest("details")?.id).toBe("presetSection");
+    expect(Array.from(select.options).map((option) => option.value)).toEqual([
+      "",
+      "cathedral",
+      "balloon-cavern",
+    ]);
+    select.value = "balloon-cavern";
+    select.dispatchEvent(new Event("change"));
+    expect(handlers.onSurfaceLightingStarter).toHaveBeenCalledWith(
+      "balloon-cavern",
+    );
+    expect(select.value).toBe("");
+    expect(handlers.onPreset).not.toHaveBeenCalled();
+  });
+
+  it("routes the shared authored editor callback while preserving dormant state visibility", () => {
+    const handlers = { ...noopHandlers(), onSurfaceLighting: vi.fn() };
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const state = initialState(false);
+    ui.updateLabels(state);
+    const enable = document.getElementById(
+      "surfaceRigEnabled",
+    ) as HTMLInputElement;
+    const section = document.getElementById("surfaceAuthoredLightingSection")!;
+    expect(section.classList.contains("hidden")).toBe(false);
+    expect(enable.disabled).toBe(true);
+    ui.updateLabels({ ...state, renderMode: "surface" });
+    enable.checked = true;
+    enable.dispatchEvent(new Event("change"));
+    expect(handlers.onSurfaceLighting).toHaveBeenCalledWith(
+      expect.objectContaining({ lights: expect.any(Array) }),
+      "commit",
+    );
+  });
+});
+
 describe("Ui surprise button", () => {
   function surpriseBtn(): HTMLButtonElement {
     return document.getElementById("surpriseBtn") as HTMLButtonElement;

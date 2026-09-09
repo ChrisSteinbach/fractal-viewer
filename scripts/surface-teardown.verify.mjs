@@ -92,6 +92,7 @@
  *   --plain       no fold anywhere: bare affine tetra, native WebGL. Control.
  *   --gl          the lens system forced onto WebGL. Control — the crash is
  *                 WebGPU-only, so this arm must stay clean at any --toggles.
+ *   --lighting    include finite lights and bounded mist in the live work.
  *   --floor=off / --tiling=a3 / --toggleId=... / --viewport=WxH /
  *   --toggleGapMs=N
  *
@@ -101,9 +102,7 @@
  *   node scripts/surface-teardown.verify.mjs --url=https://localhost:5174 \
  *        --lens --toggleId=__modeExit --toggles=20 --toggleGapMs=900
  */
-import { firefox } from "/home/christians/src/fractal/node_modules/playwright-core/index.mjs";
-import os from "node:os";
-import path from "node:path";
+import { firefox } from "playwright-core";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -122,6 +121,7 @@ const FORCE_GL = Boolean(args.gl);
 const LENS = Boolean(args.lens);
 const FOLD_TYPE = args.fold ?? "mandelbox";
 const PLAIN = Boolean(args.plain);
+const LIGHTING = Boolean(args.lighting);
 const TOGGLE_ID = args.toggleId ?? "surfaceGroundPlaneCheckbox";
 const TOGGLES = Number(args.toggles ?? 0);
 const TOGGLE_GAP_MS = Number(args.toggleGapMs ?? 1200);
@@ -134,10 +134,7 @@ if (TILING !== null && TOGGLES <= 0) {
 }
 const EXPECTED_TILING = TILING === "a3" ? { group: "a3" } : null;
 const POLL_MS = 500;
-const FIREFOX_BIN = path.join(
-  os.homedir(),
-  ".cache/ms-playwright/firefox-1532/firefox/firefox",
-);
+const FIREFOX_BIN = firefox.executablePath();
 const [vw, vh] = String(args.viewport ?? "1280x720")
   .split("x")
   .map(Number);
@@ -216,6 +213,33 @@ function sceneFor(radii, { lens = false, foldType = "mandelbox" } = {}) {
     // floor's fade band, which is the whole point of the Floor arm.
     camera: { target: [0, 0, 0], radius: 3.2, theta: -0.35, phi: 1.15 },
     ...(EXPECTED_TILING ? { tiling: EXPECTED_TILING } : {}),
+    ...(LIGHTING
+      ? {
+          surface: {
+            lighting: {
+              lights: [
+                {
+                  position: [0, 3, 2],
+                  normal: [0, -3, -2],
+                  radius: 0.3,
+                  color: [1, 0.6, 0.3],
+                  intensity: 20,
+                },
+              ],
+              ambient: [0.03, 0.03, 0.03],
+              specular: 0.15,
+              roughness: 0.4,
+              medium: {
+                center: [0, 0, 0],
+                radius: 4,
+                density: 0.12,
+                tint: [0.9, 0.95, 1],
+                anisotropy: 0.4,
+              },
+            },
+          },
+        }
+      : {}),
   };
   if (PLAIN) {
     // No fold anywhere: the bare Sierpinski tetra on the affine descent. The

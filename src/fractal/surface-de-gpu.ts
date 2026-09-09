@@ -59,6 +59,14 @@ import {
 } from "./surface-finish";
 import { surfacePatternShadeSourceWgsl } from "./surface-pattern-shade";
 import {
+  SURFACE_LIGHTING_LANE_COUNT,
+  SURFACE_LIGHTING_PHASE_LANE,
+  surfaceLightingLanes,
+  type SurfaceLighting,
+  type SurfaceLightingRuntime,
+} from "./surface-lighting";
+import { surfaceLightingShaderSource } from "./surface-lighting-shader";
+import {
   isResolvedLatticeTiling,
   isCanonicalResolvedLatticeTiling,
   latticeFoldSource,
@@ -1525,6 +1533,12 @@ function writeSurfaceTilingBlock(
  * returns this size exactly when its `patternCalibration` argument is
  * present, and the 224-byte buffer byte for byte when it is absent. */
 export const SURFACE_GPU_SHADE_PATTERN_BYTES = 240;
+/** Optional lighting tail starts after the frozen pattern quartet even
+ * when pattern is absent. Existing 224/240-byte packs remain unchanged. */
+export const SURFACE_GPU_SHADE_LIGHTING_BYTES =
+  SURFACE_GPU_SHADE_PATTERN_BYTES + SURFACE_LIGHTING_LANE_COUNT * 16;
+export const SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET =
+  SURFACE_GPU_SHADE_PATTERN_BYTES + SURFACE_LIGHTING_PHASE_LANE * 16;
 
 /** Ray-state status codes (the `y` component of a march state vec4).
  * PLANE exists only in `groundPlane: true` kernels: a MISS
@@ -1542,6 +1556,10 @@ export const SURFACE_GPU_RAY_PLANE = 4;
 export const SURFACE_GPU_FRONTIER_ARRAYS = 14;
 
 export interface SurfaceGpuKernelOptions {
+  /** Optional linear HDR shade path. Inert in march/eval; absence preserves
+   * shader source and the RGBA8 output layout. Binding6 becomes vec4f/ray,
+   * binding12 supplies the optional actual raster backdrop. */
+  lighting?: boolean;
   /** Which entry point (and binding interface) to generate. */
   mode: "eval" | "march" | "shade";
   /** Eval diagnostic: return the certified march stride instead of the
@@ -3401,6 +3419,9 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
  * march "unproject". `invProjView` is column-major (THREE.Matrix4.elements
  * order), the exact matrix scene.ts uploads as uInvProjView. */
 export interface SurfaceGpuShadeParams {
+  lighting?: SurfaceLighting;
+  lightingRuntime?: SurfaceLightingRuntime;
+  lightingBackground?: boolean;
   invProjView: ArrayLike<number>; // 16 floats, column-major
   lightDir: Vec3; // unit, toward the light (uLightDir)
   ambient: number; // uAmbient
@@ -3531,7 +3552,11 @@ export interface SurfaceGpuShadeParams {
 export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   const calibration = shade.patternCalibration;
   const buf = new ArrayBuffer(
-    calibration ? SURFACE_GPU_SHADE_PATTERN_BYTES : SURFACE_GPU_SHADE_BYTES,
+    shade.lighting
+      ? SURFACE_GPU_SHADE_LIGHTING_BYTES
+      : calibration
+        ? SURFACE_GPU_SHADE_PATTERN_BYTES
+        : SURFACE_GPU_SHADE_BYTES,
   );
   const view = new DataView(buf);
   for (let k = 0; k < 16; k++) {
@@ -3548,7 +3573,9 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   view.setUint32(120, shade.aoTaps, true);
   view.setUint32(
     124,
-    (shade.dither ? 1 : 0) | (shade.balloonPalette ? 2 : 0),
+    (shade.dither ? 1 : 0) |
+      (shade.balloonPalette ? 2 : 0) |
+      (shade.lighting && shade.lightingBackground ? 4 : 0),
     true,
   );
   writeVec3(view, 128, shade.fogTint ?? [1, 1, 1]);
@@ -3580,6 +3607,11 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
     view.setFloat32(228, calibration[1], true);
     view.setFloat32(232, calibration[2], true);
     view.setFloat32(236, calibration[3], true);
+  }
+  if (shade.lighting) {
+    new Float32Array(buf, SURFACE_GPU_SHADE_PATTERN_BYTES).set(
+      surfaceLightingLanes(shade.lighting, shade.lightingRuntime),
+    );
   }
   return buf;
 }
@@ -4135,6 +4167,7 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // the hit-info's source4 member, and the calibration quartet's
   // ShadeParams member all key on this flag alone.
   const pattern = opts.pattern ?? false;
+  const lighting = mode === "shade" && (opts.lighting ?? false);
   const material = finish || pattern;
   // The hit-info constructor's pattern member: WGSL value constructors
   // are all-or-none, so under the pattern gate every core's full-member
@@ -4583,6 +4616,10 @@ fn frontierIx(slot: u32, li: u32) -> u32 {
   // still ends at 224, byte for byte.
   patternCalibration: vec4f,`
       : "";
+  const shadeLightingMember = lighting
+    ? `${pattern ? "" : "\n  cinematicPatternPad: vec4f,"}
+  cinematic: array<vec4f, ${SURFACE_LIGHTING_LANE_COUNT}>,`
+    : "";
   const shadeParamsIo = (patternMember: string): string => `
 
 struct ShadeParams {
@@ -4636,9 +4673,9 @@ fn hash2(p: vec2f) -> f32 {
         ? unproject
           ? `${rayIo}${shadeParamsIo("")}${statusIo}${hash2Io}`
           : `${rayIo}${statusIo}`
-        : `${rayIo}${shadeParamsIo(shadePatternCalibrationMember)}${balloonLutIo}
+        : `${rayIo}${shadeParamsIo(shadePatternCalibrationMember + shadeLightingMember)}${balloonLutIo}${lighting ? "\n@group(0) @binding(12) var cinematicBackgroundTex: texture_2d<f32>;" : ""}
 @group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
-@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;
+@group(0) @binding(6) var<storage, read_write> colorOut: array<${lighting ? "vec4f" : "u32"}>;
 @group(0) @binding(7) var lutTex: texture_2d<f32>;
 @group(0) @binding(8) var lutSamp: sampler;
 @group(0) @binding(9) var<storage, read_write> layerOut: array<u32>;`;
@@ -7570,7 +7607,7 @@ ${surfacePatternShadeSourceWgsl()}`
   let linBase = pow(base, vec3f(2.2));
   var col = pow(linBase * lit + vec3f(specular * shadow), vec3f(1.0 / 2.2));`;
 
-  const entry =
+  let entry =
     mode === "eval"
       ? `
 @compute @workgroup_size(${workgroupSize})
@@ -8073,6 +8110,184 @@ ${shadeLighting}
   };
   layerOut[ray] = packSurfaceLayer(${latticeTiling ? "latticeVisibility" : "1.0"}, clamp(fog, 0.0, 1.0), coc);
 }`;
+
+  if (lighting) {
+    // Reuse the existing material and normal blocks verbatim. The new
+    // lighting gate replaces only transport/output, never source attribution,
+    // palette, Balloon tint, pattern attachment, or the normal estimator.
+    const baseStart = entry.indexOf("  let hi = surfaceDEHitInfo(pos, li);");
+    const normalEnd = entry.indexOf("  // Soft shadow: DE penumbra", baseStart);
+    const materialAndNormal = entry.slice(baseStart, normalEnd);
+    const entryStart = entry.lastIndexOf("@compute @workgroup_size(");
+    if (baseStart < 0 || normalEnd < 0 || entryStart < 0) {
+      throw new Error(
+        "Cinematic shade splice lost the shared material/normal block",
+      );
+    }
+    const farExpression = balloon
+      ? "length(ro - params.balloonCenter) + params.balloonFar"
+      : "1.0e30";
+    const planeHelpers = groundPlane
+      ? `
+fn cinematicPlaneBlocked(a: vec3f, b: vec3f) -> bool {
+  let da = a.y - params.groundY;
+  let db = b.y - params.groundY;
+  if (da * db >= 0.0) { return false; }
+  let p = mix(a, b, da / (da - db));
+  let rel = p.xz - params.groundBallC.xz;
+  return dot(rel, rel) < params.groundFadeEnd * params.groundFadeEnd;
+}`
+      : "fn cinematicPlaneBlocked(a: vec3f, b: vec3f) -> bool { return false; }";
+    const visibilityInterval = latticeTiling
+      ? `
+  let length = distance(a, b);
+  if (length == 0.0) { return vec2f(0.0); }
+  let carrier = latticePresentationInterval(a, (b - a) / length${
+    core4 ? ", params.w0, params.rotorInvR1" : ""
+  }, ${latticeRadiusExpr}, params.tilingPresentationR);
+  if (!carrier.ok) { return vec2f(0.0); }
+  return vec2f(max(0.0, carrier.tEnter), min(length, carrier.tFar));`
+      : "return vec2f(0.0, distance(a, b));";
+    const source = `
+fn cinematicStepScale() -> f32 { return params.stepScale; }
+fn cinematicDE(p: vec3f, workIndex: i32) -> f32 {
+  return surfaceDE(p, 0.0, u32(workIndex));
+}
+${planeHelpers}
+fn cinematicVisibilityInterval(a: vec3f, b: vec3f) -> vec2f {
+  ${visibilityInterval}
+}
+fn cinematicEnvironment(pos: vec3f, n: vec3f, rd: vec3f,
+  baseEncoded: vec3f, fa: vec4f, fb: vec4f) -> vec3f {
+  ${
+    finish
+      ? `return pow(max(finishShade(baseEncoded, ${groundPlane ? "pos, " : ""}n, rd,
+    0.0, 0.0, vec3f(0.0), fa, vec4f(0.0, fb.y, 0.0, 0.0)), vec3f(0.0)), vec3f(2.2));`
+      : "return vec3f(0.0);"
+  }
+}
+${surfaceLightingShaderSource({ language: "wgsl", field: (index) => `shade.cinematic[${index}]` })}
+fn cinematicFinite(color: vec3f) -> vec3f {
+  return select(vec3f(0.0), min(color, vec3f(1.0e20)), color >= vec3f(0.0));
+}
+@compute @workgroup_size(${workgroupSize})
+fn shadeRays(
+  @builtin(global_invocation_id) gid: vec3u,
+  @builtin(local_invocation_index) li: u32,
+) {
+  let slotI = gid.x;
+  if (slotI >= params.itemCount) { return; }
+  let ray = activeList[slotI];
+  let st = states[ray];
+  if (st.y == ${SURFACE_GPU_RAY_ACTIVE}.0) { return; }
+  cinematicVisibilityExhausted = 0.0;
+  cinematicVisibilityInvalid = 0.0;
+  let px = ray % params.rasterWidth;
+  let py = ray / params.rasterWidth;
+  let pixel = vec2f(f32(px), f32(py)) + shade.bgOffset;
+  let imageUv = (pixel + vec2f(0.5)) / shade.bgExtent;
+  var bg = mix(shade.bgBottom, shade.bgTop, backgroundShapeT(imageUv));
+  if ((shade.flags & 4u) != 0u) {
+    bg = textureSampleLevel(cinematicBackgroundTex, lutSamp,
+      vec2f(imageUv.x, 1.0 - imageUv.y), 0.0).rgb;
+  }
+  let bgLinear = pow(max(bg, vec3f(0.0)), vec3f(2.2));
+  let sub = shade.pixelJitter;
+  let ndcX = ((f32(px) + sub.x) / f32(params.rasterWidth)) * 2.0 - 1.0;
+  let ndcY = ((f32(py) + sub.y) / f32(params.rasterHeight)) * 2.0 - 1.0;
+  let nearP = shade.invProjView * vec4f(ndcX, ndcY, -1.0, 1.0);
+  let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
+  let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
+  let ro = params.ro;
+  let fullFar = ${farExpression};
+  var t = fullFar;
+  var coverage = 0.0;
+  var fades = false;
+  if (st.y == ${SURFACE_GPU_RAY_HIT}.0 || st.y == ${SURFACE_GPU_RAY_EXHAUSTED}.0) {
+    t = max(0.0, st.x);
+    coverage = select(0.0, 1.0, st.y == ${SURFACE_GPU_RAY_HIT}.0);
+  }
+${
+  groundPlane
+    ? `
+  if (st.y == ${SURFACE_GPU_RAY_PLANE}.0) {
+    t = max(0.0, (params.groundY - ro.y) / rd.y);
+    let hp = ro + rd * t;
+    coverage = 1.0 - smoothstep(params.groundFadeStart, params.groundFadeEnd,
+      length(hp.xz - params.groundBallC.xz));
+    fades = true;
+  }`
+    : ""
+}
+  let pos = ro + rd * t;
+${
+  latticeTiling
+    ? `
+  if (st.y == ${SURFACE_GPU_RAY_HIT}.0) {
+    coverage = latticePresentationVisibility(pos,
+      ${latticeRadiusExpr} * ${latticeFadeStartMultText}, params.tilingPresentationR);
+    fades = true;
+  }`
+    : ""
+}
+  // Phase1 never recomputes hit attribution or normals: one cell/light
+  // can be submitted and cancelled independently of the next one.
+  if (shade.cinematic[11].z >= 0.5) {
+    var contribution = vec3f(0.0);
+    let start = i32(shade.cinematic[11].x);
+    let end = min(start + i32(shade.cinematic[11].y), i32(shade.cinematic[10].y));
+    for (var cell = start; cell < end; cell++) {
+      var cellColor = cinematicMediumCell(ro, rd, t, pixel, cell, i32(li));
+      if (fades && coverage < 1.0) {
+        cellColor = mix(cinematicMediumCell(ro, rd, fullFar, pixel, cell, i32(li)),
+          cellColor, coverage);
+      }
+      contribution += cellColor;
+    }
+    let old = colorOut[ray];
+    let diagnostics = cinematicVisibilityExhausted + 65536.0 * cinematicVisibilityInvalid;
+    colorOut[ray] = vec4f(cinematicFinite(old.rgb + contribution), old.w + diagnostics);
+    return;
+  }
+  var terminal = bgLinear;
+  if (st.y == ${SURFACE_GPU_RAY_EXHAUSTED}.0) { terminal = vec3f(0.0); }
+  let R = params.boundingRadius;
+  let visR = params.visibleRadius;
+  if (st.y == ${SURFACE_GPU_RAY_HIT}.0) {
+${materialAndNormal}
+    terminal = cinematicSurface(pos, n, rd, base,
+      ${material ? "fa, fb" : "vec4f(0.4, 32.0, 0.0, 0.0), vec4f(0.0, 1.0, 0.0, 0.0)"},
+      bgLinear, pixel, i32(li));
+  }
+${
+  groundPlane
+    ? `
+  if (st.y == ${SURFACE_GPU_RAY_PLANE}.0) {
+    var floorAlbedo = params.groundAlbedo;
+    if (shade.balloonTint.z >= 0.5) {
+      let cell = max(params.groundBallR * shade.balloonTint.x, 1.0e-4);
+      let tile = floor((pos.xz - params.groundBallC.xz) / cell);
+      let checker = ((i32(tile.x) + i32(tile.y)) % 2 + 2) % 2;
+      floorAlbedo *= mix(0.035, 1.0, f32(checker));
+    }
+    terminal = cinematicSurface(pos, vec3f(0.0, 1.0, 0.0), rd, floorAlbedo,
+      vec4f(0.0, 32.0, 0.0, 0.0), vec4f(0.0, 1.0, 0.0, 0.0), bgLinear, pixel, i32(li)) +
+      pow(max(floorAlbedo, vec3f(0.0)), vec3f(2.2)) * shade.balloonTint.y;
+  }`
+    : ""
+}
+  var linear = terminal * cinematicTransmission(ro, rd, t);
+  if (fades && coverage < 1.0) {
+    linear = mix(bgLinear * cinematicTransmission(ro, rd, fullFar), linear, coverage);
+  }
+  let diagnostics = cinematicVisibilityExhausted + 65536.0 * cinematicVisibilityInvalid;
+  colorOut[ray] = vec4f(cinematicFinite(linear), diagnostics);
+  let coc = select(1.0, surfaceCoc(dot(pos - ro, params.fwd)), coverage > 0.0);
+  layerOut[ray] = packSurfaceLayer(coverage, 0.0, coc);
+}
+`;
+    entry = entry.slice(0, entryStart) + source;
+  }
 
   // Stage-2 branch-and-bound (surface-de.ts descendFold, the
   // in-loop case analysis): value no-ops, generated only on request.

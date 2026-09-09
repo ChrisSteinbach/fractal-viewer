@@ -16,6 +16,17 @@ import {
   STRIP_WORST_CASE_CAP_MS,
 } from "./strip-planner";
 
+it("keeps a nested-work pixel cap after arbitrarily cheap measured strips", () => {
+  const planner = createStripPlanner(50, 100, { maxStripPixels: 13 });
+  let total = 0;
+  for (let strip = planner.next(null); strip; strip = planner.next(0.001)) {
+    expect(strip.px).toBeLessThanOrEqual(13);
+    expect(strip.px).toBeGreaterThan(0);
+    total += strip.px;
+  }
+  expect(total).toBe(5000);
+});
+
 describe("createStripPlanner", () => {
   it("plans the first strip as a legacy rows-fraction probe when no prior exists", () => {
     const planner = createStripPlanner(720, 1280);

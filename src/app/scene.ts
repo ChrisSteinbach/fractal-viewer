@@ -1,4 +1,9 @@
 import * as THREE from "three";
+import {
+  surfaceLightingRuntime,
+  type SurfaceLightingRuntime,
+} from "../fractal/surface-lighting";
+import { installSurfaceLightingUniforms } from "./surface-lighting-material";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
@@ -89,6 +94,7 @@ import {
   packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
   setSurfaceMaterials as packSurfaceMaterials,
+  setSurfaceLighting as packSurfaceLighting,
   setSurfaceGroundPlane as packSurfaceGroundPlane,
   installSurfaceTiling,
   materialSurfaceTiling,
@@ -124,6 +130,7 @@ import {
 } from "./strip-evidence";
 import {
   createSurfaceMaterial4,
+  setSurface4Lighting as packSurface4Lighting,
   setSurface4Balloon as packSurface4Balloon,
   setSurface4Materials as packSurface4Materials,
   setSurface4GroundPlane as packSurface4GroundPlane,
@@ -1526,6 +1533,10 @@ export class FractalScene {
    * this latch through presentSurfaceComposite. */
   private surfaceDisplayActive = false;
   private surfaceCompositePending = false;
+  private surfaceLightingBoundRadius = 1;
+  private surfaceLightingFrameRuntime: SurfaceLightingRuntime | undefined;
+  private surfaceLightingBackgroundTexture: THREE.DataTexture | null = null;
+  private surfaceHdrReadback: Float32Array | null = null;
   /** Surface-owned retained-frame optical treatment. Metadata is produced
    * unconditionally, so this flag changes presentation without retracing. */
   private surfaceDepthOfField = false;
@@ -2680,6 +2691,7 @@ export class FractalScene {
     this.backdropShape = shape;
     this.backdropImageActive = false;
     if (
+      this.surfaceComputeParams?.lighting === undefined &&
       this.surfaceDisplayActive &&
       this.surfacePresentation !== null &&
       this.surfacePresentation.layer !== null &&
@@ -2770,6 +2782,7 @@ export class FractalScene {
     this.backdropImageActive = true;
     this.backdropTexture.needsUpdate = true;
     if (
+      this.surfaceComputeParams?.lighting === undefined &&
       this.surfaceDisplayActive &&
       this.surfacePresentation !== null &&
       this.surfacePresentation.layer !== null &&
@@ -2848,6 +2861,11 @@ export class FractalScene {
       this.surfaceComputeBackground = null;
     }
     this.surfaceDisplayActive = active;
+    if (!active) {
+      this.surfaceLightingBackgroundTexture?.dispose();
+      this.surfaceLightingBackgroundTexture = null;
+      this.surfaceHdrReadback = null;
+    }
     this.surfaceCompositePending = false;
   }
 
@@ -4616,6 +4634,7 @@ export class FractalScene {
     // ball, not the previous one's.
     const focusBall = balloonBall(de);
     this.surfaceFocusBall = focusBall;
+    this.surfaceLightingBoundRadius = de.boundingRadius;
     this.surfaceBalloonBall =
       tiling && !isResolvedLatticeTiling(tiling)
         ? { center: [0, 0, 0], radius: surfaceOriginVisibleRadius(de) }
@@ -4710,6 +4729,7 @@ export class FractalScene {
     // void — exactly the IFS attractors the spike certified. Nulling the
     // ball keeps applySurfaceBalloon packing the variant OFF however the
     // shared toggle is set, so escape sessions render plain.
+    this.surfaceLightingBoundRadius = de.boundingRadius;
     this.surfaceFocusBall = {
       center: [0, 0, 0],
       radius: de.boundingRadius,
@@ -4773,6 +4793,7 @@ export class FractalScene {
     // one object over. Nulling the ball keeps applySurfaceBalloon packing the
     // variant OFF however the shared toggle is set, so bulb sessions
     // render plain.
+    this.surfaceLightingBoundRadius = de.boundingRadius;
     this.surfaceFocusBall = {
       center: [0, 0, 0],
       radius: de.boundingRadius,
@@ -5111,6 +5132,7 @@ export class FractalScene {
     // them.
     const focusBall = balloonBall4(de);
     this.surfaceFocusBall = focusBall;
+    this.surfaceLightingBoundRadius = de.boundingRadius;
     this.surfaceBalloonBall = focusBall;
     this.surfaceGroundBall = focusBall;
     this.applySurfaceBalloon();
@@ -5195,6 +5217,33 @@ export class FractalScene {
     // The compute path reads the same document at frame-spec assembly —
     // snapshot it beside the uniform writes.
     this.surfaceComputeParams = params;
+    packSurfaceLighting(this.surfaceMaterial, params.lighting);
+    packSurface4Lighting(this.surfaceMaterial4, params.lighting);
+    const type = params.lighting ? THREE.FloatType : THREE.UnsignedByteType;
+    if (
+      params.lighting &&
+      !this.surfaceComputeActive &&
+      !this.renderer.extensions.has("EXT_color_buffer_float")
+    ) {
+      throw new Error(
+        "Cinematic Surface lighting needs floating-point render targets on this WebGL device.",
+      );
+    }
+    for (const target of [
+      this.surfacePreviewTarget,
+      this.surfaceSettleTarget,
+    ]) {
+      if (target.texture.type !== type) {
+        target.dispose();
+        target.texture.type = type;
+        // Float texture filtering is optional; nearest works on every device
+        // with EXT_color_buffer_float. Final accumulated images filter normally.
+        target.texture.minFilter = params.lighting
+          ? THREE.NearestFilter
+          : THREE.LinearFilter;
+        target.texture.magFilter = target.texture.minFilter;
+      }
+    }
     // Both tracers share the one SurfaceParams document — push to both so
     // whichever the next session activates is already current.
     for (const material of [this.surfaceMaterial, this.surfaceMaterial4]) {
@@ -5318,6 +5367,7 @@ export class FractalScene {
     this.surfaceShapeTrapLive = false;
     const focusBall = balloonBall(de);
     this.surfaceFocusBall = focusBall;
+    this.surfaceLightingBoundRadius = de.boundingRadius;
     this.surfaceBalloonBall =
       tiling && !isResolvedLatticeTiling(tiling)
         ? { center: [0, 0, 0], radius: surfaceOriginVisibleRadius(de) }
@@ -5376,6 +5426,7 @@ export class FractalScene {
     // degeneracy, re-measured on the Mandelbulb — see setEscapeSystem's
     // and setBulbSystem's comments) — null the ball
     // exactly like the WebGL install path, and the session flag with it.
+    this.surfaceLightingBoundRadius = ballRadius;
     this.surfaceFocusBall = {
       center: [0, 0, 0],
       radius: ballRadius,
@@ -5453,6 +5504,7 @@ export class FractalScene {
     // spec can attach the live block the grown params struct expects.
     const focusBall = balloonBall4(de);
     this.surfaceFocusBall = focusBall;
+    this.surfaceLightingBoundRadius = de.boundingRadius;
     this.surfaceBalloonBall = focusBall;
     this.surfaceComputeBalloon = balloon;
     this.surfaceGroundBall = groundPlane ? focusBall : null;
@@ -5488,6 +5540,7 @@ export class FractalScene {
     this.surfaceComputeShapeTrap = shapeTrap !== null;
     this.surfaceShapeTrapLive = shapeTrap !== null;
     this.surfaceShapeTrap = shapeTrap;
+    this.surfaceLightingBoundRadius = ballRadius;
     this.surfaceFocusBall = {
       center: [0, 0, 0],
       radius: ballRadius,
@@ -5681,6 +5734,19 @@ export class FractalScene {
         ? SURFACE_PREVIEW_HIT_FLOOR
         : this.surfaceFullHitFloor(),
       lightDir: [light.x, light.y, light.z],
+      ...(params.lighting
+        ? {
+            lighting: structuredClone(params.lighting),
+            lightingRuntime: surfaceLightingRuntime(params.lighting, {
+              interaction: preview,
+              dimension: this.surfaceCompute4 ? 4 : 3,
+              boundingRadius: this.surfaceLightingBoundRadius,
+            }),
+            ...(traceBackground.image
+              ? { lightingBackground: traceBackground.image }
+              : {}),
+          }
+        : {}),
       ambient: params.ambient,
       // The environment-light strength, mirroring uEnvLight.
       envLight: params.envLight,
@@ -6265,6 +6331,7 @@ export class FractalScene {
       createStripPlanner(height, width, {
         priorMsPerPx: this.surfaceStripPriorMsPerPx(),
         worstMsPerPx: this.surfaceStripWorstMsPerPx(),
+        maxStripPixels: this.surfaceLightingStripCap(),
       }),
       this.surfaceStripPriorMsPerPx(),
       // A capture NEVER presents: the export-scale target must not reach the
@@ -6370,10 +6437,44 @@ export class FractalScene {
    * path's first slice is (the shade-batch discipline); else null —
    * affine-cheap systems keep the legacy rows-fraction probe.
    */
+  private surfaceLightingWorkFactor(): number {
+    const runtime = this.surfaceLightingFrameRuntime;
+    const lighting = this.surfaceComputeParams?.lighting;
+    if (!lighting || !runtime) return 1;
+    return Math.max(
+      1,
+      (lighting.lights.length *
+        (runtime.surfaceSamples + runtime.mediumSamples) *
+        runtime.shadowSteps) /
+        SURFACE_FULL_MARCH_STEPS,
+    );
+  }
+
+  private surfaceLightingStripCap(): number | undefined {
+    if (!this.surfaceComputeParams?.lighting) return undefined;
+    const expensive =
+      this.surfaceDeFoldClass ||
+      this.activeSurfaceMaterial === this.surfaceMaterial4;
+    return this.surfaceLightingFrameRuntime?.mediumSamples
+      ? expensive
+        ? 16
+        : 128
+      : expensive
+        ? 64
+        : 512;
+  }
+
   private surfaceStripPriorMsPerPx(): number | null {
     return (
       this.surfacePreviewPxCostMs ??
-      (this.surfaceDeFoldClass ? STRIP_FOLD_PRIOR_MS_PER_PX : null)
+      (this.surfaceComputeParams?.lighting
+        ? this.surfaceLightingWorkFactor() *
+          (this.surfaceDeFoldClass
+            ? STRIP_FOLD_PRIOR_MS_PER_PX
+            : STRIP_AFFINE_WORST_MS_PER_PX)
+        : this.surfaceDeFoldClass
+          ? STRIP_FOLD_PRIOR_MS_PER_PX
+          : null)
     );
   }
 
@@ -6387,9 +6488,9 @@ export class FractalScene {
    * thousands of class-floor micro-strips of pure readback overhead. */
   private surfaceStripWorstMsPerPx(): number {
     return this.stripEvidence.price(
-      this.surfaceDeFoldClass
+      (this.surfaceDeFoldClass
         ? STRIP_FOLD_WORST_MS_PER_PX
-        : STRIP_AFFINE_WORST_MS_PER_PX,
+        : STRIP_AFFINE_WORST_MS_PER_PX) * this.surfaceLightingWorkFactor(),
     );
   }
 
@@ -6412,9 +6513,9 @@ export class FractalScene {
    * irreducible per-monster-pixel floor. */
   private surfaceStripQueueWorstMsPerPx(): number {
     return this.stripEvidence.price(
-      this.surfaceDeFoldClass
+      (this.surfaceDeFoldClass
         ? STRIP_FOLD_PRIOR_MS_PER_PX
-        : STRIP_AFFINE_WORST_MS_PER_PX,
+        : STRIP_AFFINE_WORST_MS_PER_PX) * this.surfaceLightingWorkFactor(),
     );
   }
 
@@ -6575,6 +6676,7 @@ export class FractalScene {
         targetMs: SURFACE_PREVIEW_STRIP_TARGET_MS,
         priorMsPerPx: previewPrior,
         worstMsPerPx: this.surfaceStripWorstMsPerPx(),
+        maxStripPixels: this.surfaceLightingStripCap(),
       }),
       previewPrior,
       SURFACE_PREVIEW_PRESENT_MS,
@@ -6842,12 +6944,14 @@ export class FractalScene {
     target.scissorTest = true;
     target.scissor.set(0, 0, 1, 1);
     this.renderer.setRenderTarget(target);
-    const gl = this.renderer.getContext();
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
     // Drain any error already latched by unrelated code, so the verdict
     // below is this draw's own.
     gl.getError();
     this.surfaceQuad.render(this.renderer);
+    gl.readBuffer(gl.COLOR_ATTACHMENT1);
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
     const ok = gl.getError() === gl.NO_ERROR;
     target.scissorTest = false;
     target.scissor.set(0, 0, target.width, target.height);
@@ -6971,6 +7075,19 @@ export class FractalScene {
    * COMPLETED image ({@link presentSurfaceSampleImage}), never
    * the half-traced pass being written over it. */
   private armSurfaceSamplePass(width: number, height: number): SurfaceStripJob {
+    if (
+      this.surfaceComputeParams?.lighting &&
+      this.surfaceLightingFrameRuntime
+    ) {
+      installSurfaceLightingUniforms(
+        this.activeSurfaceMaterial,
+        this.surfaceComputeParams.lighting,
+        {
+          ...this.surfaceLightingFrameRuntime,
+          sampleIndex: this.surfaceSampleIndex,
+        },
+      );
+    }
     const [sx, sy] = subPixelSample(this.surfaceSampleIndex);
     const dx = sx - 0.5;
     const dy = sy - 0.5;
@@ -6981,6 +7098,7 @@ export class FractalScene {
       createStripPlanner(height, width, {
         priorMsPerPx: this.surfaceStripPriorMsPerPx(),
         worstMsPerPx: this.surfaceStripWorstMsPerPx(),
+        maxStripPixels: this.surfaceLightingStripCap(),
       }),
       this.surfaceStripPriorMsPerPx(),
       SURFACE_SETTLE_PRESENT_MS,
@@ -7017,10 +7135,8 @@ export class FractalScene {
     const buf = tex.image.data as Uint8Array;
     const layerBuf = layerTex.image.data as Uint8Array;
     const t0 = SURFPERF ? performance.now() : 0;
-    this.renderer.readRenderTargetPixels(
+    const hdr = this.readSurfaceColor(
       this.surfaceSettleTarget,
-      0,
-      0,
       width,
       height,
       buf,
@@ -7045,9 +7161,15 @@ export class FractalScene {
       this.surfaceSettledRayCensus = decodeSurfaceRayCensus(buf, width, height);
     }
     for (let i = 0, p = 0, a = 0; i < px; i++, p += 4, a += 3) {
-      accum[a] += SRGB_TO_LINEAR[buf[p]];
-      accum[a + 1] += SRGB_TO_LINEAR[buf[p + 1]];
-      accum[a + 2] += SRGB_TO_LINEAR[buf[p + 2]];
+      accum[a] += hdr
+        ? Math.pow(Math.max(0, hdr[p]), SURFACE_OUTPUT_GAMMA)
+        : SRGB_TO_LINEAR[buf[p]];
+      accum[a + 1] += hdr
+        ? Math.pow(Math.max(0, hdr[p + 1]), SURFACE_OUTPUT_GAMMA)
+        : SRGB_TO_LINEAR[buf[p + 1]];
+      accum[a + 2] += hdr
+        ? Math.pow(Math.max(0, hdr[p + 2]), SURFACE_OUTPUT_GAMMA)
+        : SRGB_TO_LINEAR[buf[p + 2]];
       layerAccum[a] += layerBuf[p];
       layerAccum[a + 1] += layerBuf[p + 1];
       layerAccum[a + 2] += layerBuf[p + 2];
@@ -7073,26 +7195,34 @@ export class FractalScene {
     }
   }
 
-  /**
-   * Decode the completed settle target's terminal-ray census when the sample
-   * accumulator is not there to do so for free.
-   *
-   * Alpha is a trace-only status byte: 255 for a hit or lit ground plane, 0
-   * for a miss, and 128 for an exhausted ray — the WebGPU arm's terminal
-   * status tally, one engine over.
-   */
+  /** Read encoded HDR without clipping before the sample accumulator. The
+   * parallel bytes are for the current single-sample display and census. */
+  private readSurfaceColor(
+    target: THREE.WebGLRenderTarget,
+    width: number,
+    height: number,
+    bytes: Uint8Array,
+  ): Float32Array | null {
+    if (target.texture.type !== THREE.FloatType) {
+      this.renderer.readRenderTargetPixels(target, 0, 0, width, height, bytes);
+      return null;
+    }
+    if (this.surfaceHdrReadback?.length !== bytes.length)
+      this.surfaceHdrReadback = new Float32Array(bytes.length);
+    const hdr = this.surfaceHdrReadback;
+    this.renderer.readRenderTargetPixels(target, 0, 0, width, height, hdr);
+    for (let i = 0; i < bytes.length; i++)
+      bytes[i] = Math.round(255 * Math.max(0, Math.min(1, hdr[i])));
+    return hdr;
+  }
+
+  /** Count the completed target's terminal status: alpha 255 is a hit or
+   * floor, 0 a miss, and 128 exhaustion, matching the compute census. */
   private measureSurfaceRayCensus(width: number, height: number): void {
     const px = width * height;
     if (px <= 0) return;
     const buf = new Uint8Array(px * 4);
-    this.renderer.readRenderTargetPixels(
-      this.surfaceSettleTarget,
-      0,
-      0,
-      width,
-      height,
-      buf,
-    );
+    this.readSurfaceColor(this.surfaceSettleTarget, width, height, buf);
     this.surfaceSettledRayCensus = decodeSurfaceRayCensus(buf, width, height);
   }
 
@@ -7153,9 +7283,15 @@ export class FractalScene {
     const inv = 1 / this.surfaceSampleTaken;
     const invGamma = 1 / SURFACE_OUTPUT_GAMMA;
     for (let p = 0, a = 0, i = 0; p < buf.length; p += 4, a += 3, i++) {
-      buf[p] = Math.round(255 * Math.pow(accum[a] * inv, invGamma));
-      buf[p + 1] = Math.round(255 * Math.pow(accum[a + 1] * inv, invGamma));
-      buf[p + 2] = Math.round(255 * Math.pow(accum[a + 2] * inv, invGamma));
+      buf[p] = Math.round(
+        255 * Math.min(1, Math.pow(accum[a] * inv, invGamma)),
+      );
+      buf[p + 1] = Math.round(
+        255 * Math.min(1, Math.pow(accum[a + 1] * inv, invGamma)),
+      );
+      buf[p + 2] = Math.round(
+        255 * Math.min(1, Math.pow(accum[a + 2] * inv, invGamma)),
+      );
       layerBuf[p] = Math.round(layerAccum[a] * inv);
       layerBuf[p + 1] = Math.round(layerAccum[a + 1] * inv);
       layerBuf[p + 2] = Math.round(layerAccum[a + 2] * inv);
@@ -7245,8 +7381,10 @@ export class FractalScene {
     // sync a driver cannot fake (see renderSurfaceStrips); on a healthy
     // device this is microseconds.
     this.renderer.setRenderTarget(this.surfaceSettleTarget);
-    const gl = this.renderer.getContext();
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    gl.readBuffer(gl.COLOR_ATTACHMENT1);
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
     this.renderer.setRenderTarget(null);
     // The barrier above just drained any pooled backlog with the queue —
     // its fences carry nothing the settle needs (the normal
@@ -7281,6 +7419,7 @@ export class FractalScene {
       createStripPlanner(size.y, size.x, {
         priorMsPerPx: this.surfaceStripPriorMsPerPx(),
         worstMsPerPx: this.surfaceStripWorstMsPerPx(),
+        maxStripPixels: this.surfaceLightingStripCap(),
       }),
       this.surfaceStripPriorMsPerPx(),
       SURFACE_SETTLE_PRESENT_MS,
@@ -7481,6 +7620,40 @@ export class FractalScene {
     // has run for the sequence's first pass.
     (u.uPixelJitter.value as THREE.Vector4).set(0, 0, 0, 0);
     const preview = tier === "preview";
+    const lighting = this.surfaceComputeParams?.lighting;
+    this.surfaceLightingFrameRuntime = lighting
+      ? surfaceLightingRuntime(lighting, {
+          interaction: preview,
+          dimension:
+            this.activeSurfaceMaterial === this.surfaceMaterial4 ? 4 : 3,
+          boundingRadius: this.surfaceLightingBoundRadius,
+        })
+      : undefined;
+    installSurfaceLightingUniforms(
+      this.activeSurfaceMaterial,
+      lighting,
+      this.surfaceLightingFrameRuntime,
+    );
+    this.surfaceLightingBackgroundTexture?.dispose();
+    this.surfaceLightingBackgroundTexture = null;
+    if (lighting && background.image) {
+      const image = background.image;
+      const texture = new THREE.DataTexture(
+        new Uint8Array(image.rgba),
+        image.width,
+        image.height,
+      );
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.flipY = true;
+      texture.needsUpdate = true;
+      this.surfaceLightingBackgroundTexture = texture;
+    }
+    u.uCinematicBackground.value =
+      this.surfaceLightingBackgroundTexture ?? this.backdropTexture;
+    u.uCinematicBackgroundOn.value = this.surfaceLightingBackgroundTexture
+      ? 1
+      : 0;
     // Derived per frame, never cached: the clamp depends on BOTH the
     // active DE's own full depth and the live governor rung, and the two
     // change independently. A finer rung resolves smaller
@@ -7790,7 +7963,9 @@ export class FractalScene {
       if (!closeGroup()) {
         // Same dying-context degrade for a trailing open group.
         const gl2 = gl;
+        gl2.readBuffer(gl2.COLOR_ATTACHMENT1);
         gl2.readPixels(0, 0, 1, 1, gl2.RGBA, gl2.UNSIGNED_BYTE, SYNC_PIXEL);
+        gl2.readBuffer(gl2.COLOR_ATTACHMENT0);
         groupPx = 0;
       }
     }
@@ -8088,7 +8263,9 @@ export class FractalScene {
     target: THREE.WebGLRenderTarget,
   ): void {
     this.renderer.setRenderTarget(target);
+    gl.readBuffer(gl.COLOR_ATTACHMENT1);
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
     this.renderer.setRenderTarget(null);
   }
 
@@ -8116,7 +8293,9 @@ export class FractalScene {
    * on some command-buffer paths; a readback cannot). */
   private readStripCorner(gl: WebGL2RenderingContext, strip: Strip): void {
     const last = strip.rects[strip.rects.length - 1];
+    gl.readBuffer(gl.COLOR_ATTACHMENT1);
     gl.readPixels(last.x, last.y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
   }
 
   /** Undo strip scissoring on `target` and unbind it. */
@@ -8223,6 +8402,9 @@ export class FractalScene {
       return snapshotTraceBackground({
         stops: { top: mean, bottom: [...mean] },
         shape: { kind: "linear" },
+        ...(this.surfaceComputeParams?.lighting
+          ? { image: this.backdropImage }
+          : {}),
       });
     }
     return snapshotTraceBackground({
@@ -8341,6 +8523,7 @@ export class FractalScene {
     u.uHasSource.value = 1;
     u.uHasLayer.value = layer === null ? 0 : 1;
     u.uComposite.value =
+      this.surfaceComputeParams?.lighting === undefined &&
       layer !== null &&
       background !== null &&
       !traceBackgroundsEqual(background, live)
@@ -8412,6 +8595,7 @@ export class FractalScene {
     this.surfaceSampleAccum = null;
     this.surfaceSampleLayerAccum = null;
     this.surfaceSampleCoc = null;
+    this.surfaceHdrReadback = null;
     this.surfaceSampleTexture?.dispose();
     this.surfaceSampleTexture = null;
     this.surfaceSampleLayerTexture?.dispose();

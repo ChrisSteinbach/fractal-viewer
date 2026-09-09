@@ -154,6 +154,8 @@ import {
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_SHADE_LIGHTING_BYTES,
+  SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TILING_BYTES,
   surfaceDeKernelWgsl,
@@ -165,6 +167,18 @@ import {
 } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
+import {
+  cloneSurfaceLighting,
+  resolveSurfaceLighting,
+  surfaceLightingLanes,
+  surfaceLightingRuntime,
+  type SurfaceLighting,
+  type SurfaceLightingRuntime,
+} from "../fractal/surface-lighting";
+import {
+  sampleTraceBackgroundImage,
+  type TraceBackgroundImage,
+} from "../fractal/surface-background-layer";
 import { deHasFolds4, slabExact4 } from "../fractal/surface-de-4d";
 import { SURFACE_LENS_SWIRL } from "../fractal/swirl-lens";
 import type { ShapeTrap, Vec3 } from "../fractal/types";
@@ -352,12 +366,54 @@ function encodeLinearMean(
   const inv = 1 / taken;
   const invGamma = 1 / SURFACE_OUTPUT_GAMMA;
   for (let p = 0, a = 0; p < out.length; p += 4, a += 3) {
-    out[p] = Math.round(255 * Math.pow(accum[a] * inv, invGamma));
-    out[p + 1] = Math.round(255 * Math.pow(accum[a + 1] * inv, invGamma));
-    out[p + 2] = Math.round(255 * Math.pow(accum[a + 2] * inv, invGamma));
+    out[p] = Math.round(255 * Math.pow(clamp(accum[a] * inv, 0, 1), invGamma));
+    out[p + 1] = Math.round(
+      255 * Math.pow(clamp(accum[a + 1] * inv, 0, 1), invGamma),
+    );
+    out[p + 2] = Math.round(
+      255 * Math.pow(clamp(accum[a + 2] * inv, 0, 1), invGamma),
+    );
     out[p + 3] = alpha[p + 3];
   }
   return out;
+}
+
+/** Encode one linear HDR readback for presentation. The GPU values remain
+ * unclipped until the progressive sample mean is formed; RGBA8 conversion
+ * never feeds back into lighting accumulation. */
+export function encodeSurfaceComputeHdr(
+  linear: Float32Array,
+): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(linear.length);
+  const invGamma = 1 / SURFACE_OUTPUT_GAMMA;
+  for (let p = 0; p < out.length; p += 4) {
+    for (let c = 0; c < 3; c++) {
+      out[p + c] = Math.round(
+        255 * Math.pow(clamp(linear[p + c], 0, 1), invGamma),
+      );
+    }
+    out[p + 3] = 255;
+  }
+  return out;
+}
+
+/** Decode the exact integer diagnostic carried in HDR.w by lighting kernels. */
+export function surfaceComputeLightingVisibility(linear: Float32Array): {
+  exhausted: number;
+  invalid: number;
+} {
+  let exhausted = 0;
+  let invalid = 0;
+  for (let p = 3; p < linear.length; p += 4) {
+    const packed = linear[p];
+    if (!Number.isFinite(packed)) {
+      invalid++;
+      continue;
+    }
+    exhausted += packed % 65536;
+    invalid += Math.floor(packed / 65536);
+  }
+  return { exhausted, invalid };
 }
 
 /** Fold one packed layer sample into the supersample accumulators. RGB are
@@ -613,6 +669,15 @@ export interface SurfaceComputeFrameSpec {
   hitFloor: number;
   lightDir: Vec3;
   ambient: number;
+  /** Optional authored lighting. Presence is a session compile gate; values
+   * are live and copied when renderFrame is requested. */
+  lighting?: SurfaceLighting;
+  /** Shared quality policy from surfaceLightingRuntime. The renderer owns
+   * phase scheduling and advances sampleIndex for every progressive sample. */
+  lightingRuntime?: SurfaceLightingRuntime;
+  /** Immutable, top-origin authored image used directly by lit rays. The
+   * full-image coordinates also apply when this frame is a capture band. */
+  lightingBackground?: TraceBackgroundImage;
   /** Environment-light strength — the ShadeParams tail (module doc in
    * `fractal/surface-de-gpu.ts`): how far the shade kernel's AMBIENT term
    * is tinted toward the backdrop sampled along the normal. Optional so
@@ -831,6 +896,15 @@ export interface SurfaceComputeFrame {
   };
   /** Bottom-row-first raster indices for every terminal exhausted ray. */
   exhaustedIndices: readonly number[];
+  /** Conservative visibility refusals over completed lighting samples.
+   * Recorded by the lit shader without another per-ray storage buffer. */
+  lightingVisibility?: { exhausted: number; invalid: number };
+}
+
+/** Internal sample payload: retained until runSamples has added its raw
+ * radiance, never reconstructed from the clipped presentation pixels. */
+interface SurfaceComputeSample extends SurfaceComputeFrame {
+  linearPixels?: Float32Array;
 }
 
 /**
@@ -893,6 +967,32 @@ export function buildSurfaceComputeBackground(
     for (let px = 0; px < width; px++) {
       const [u, v] = backgroundImageUv(px, py, offset, extent);
       writePixel((py * width + px) * 4, u, v);
+    }
+  }
+  return out;
+}
+
+/** Linear prefill for unfinished authored-lighting rays. Image sampling uses
+ * the same full-image UV and top-origin image convention as the shader. */
+export function buildSurfaceComputeLightingBackground(
+  spec: SurfaceComputeFrameSpec,
+): Float32Array<ArrayBuffer> {
+  const out = new Float32Array(spec.width * spec.height * 4);
+  const offset = spec.bgOffset ?? [0, 0];
+  const extent = spec.bgExtent ?? [spec.width, spec.height];
+  const stops = { top: spec.bgTop, bottom: spec.bgBottom };
+  const shape = spec.bgShape ?? { kind: DEFAULT_BACKGROUND_SHAPE };
+  for (let py = 0; py < spec.height; py++) {
+    for (let px = 0; px < spec.width; px++) {
+      const [u, v] = backgroundImageUv(px, py, offset, extent);
+      const rgb = spec.lightingBackground
+        ? sampleTraceBackgroundImage(spec.lightingBackground, u, v)
+        : backgroundColorAt(u, v, stops, shape);
+      const p = (py * spec.width + px) * 4;
+      for (let c = 0; c < 3; c++) {
+        out[p + c] = Math.pow(clamp(rgb[c], 0, 1), SURFACE_OUTPUT_GAMMA);
+      }
+      // w is the packed visibility diagnostic, not display alpha.
     }
   }
   return out;
@@ -1367,6 +1467,74 @@ export function nextShadeHitCost(
 interface ShadeSizerState {
   cost: ShadeHitCost;
   cap: number;
+  /** First pixel batch times every cell/light separately before later
+   * batches amortize fences. Never shared across different camera jobs.
+   * ONLY `peakCellMs` and `pilotComplete` are live: the pilot fences one
+   * dispatch at a time (`surfaceComputeLightingFenceGroup(null)` = 1) until
+   * the first batch's whole medium sweep lands, and `peakCellMs` is a
+   * running MAX, so a later wider dispatch can only raise it — the safe
+   * direction. The cost lanes below are INERT placeholders: nothing feeds
+   * them measurements yet, so `surfaceComputeLightingRayBatch` returns one
+   * fixed conservative width for the life of the session. Wiring them to
+   * measured surface/medium dispatch cost is unfinished work. */
+  lighting?: {
+    pilotRays: number;
+    peakCellMs: number;
+    pilotComplete: boolean;
+    surfaceCost: ShadeHitCost;
+    mediumCost: ShadeHitCost;
+    rayCap: number;
+  };
+}
+
+export const SURFACE_COMPUTE_LIGHTING_MAX_QUEUED_DISPATCHES = 8;
+export const SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS = 4096;
+const SURFACE_COMPUTE_LIGHTING_FENCE_TARGET_MS = 100;
+const SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS = 50;
+
+/** Separate terminal and complete-cell-sweep economics; the more expensive
+ * model bounds the ray width. A wider dispatch still has one cell/light per
+ * invocation, and starts a fresh individually fenced medium pilot. */
+export function surfaceComputeLightingRayBatch(
+  surfaceCost: ShadeHitCost,
+  mediumCost: ShadeHitCost | null,
+  cap: number,
+): number {
+  const affordable = (cost: ShadeHitCost): number =>
+    (SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS * 1000 - cost.interceptUs) /
+    Math.max(1, cost.marginalUs);
+  const width = Math.min(
+    cap,
+    SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
+    affordable(surfaceCost),
+    mediumCost ? affordable(mediumCost) : Infinity,
+  );
+  return Math.max(
+    SURFACE_COMPUTE_WORKGROUP_SIZE,
+    Math.floor(width / SURFACE_COMPUTE_WORKGROUP_SIZE) *
+      SURFACE_COMPUTE_WORKGROUP_SIZE,
+  );
+}
+
+/** Fence grouping only; each workgroup still owns one cell/light.
+ * Two times the slowest observed cell prices the queued cancellation debt.
+ * The time is a target, while eight queued submissions is an absolute cap. */
+export function surfaceComputeLightingFenceGroup(
+  peakCellMs: number | null,
+  remainingMs = Infinity,
+): number {
+  if (peakCellMs === null || !Number.isFinite(peakCellMs) || peakCellMs < 0)
+    return 1;
+  return Math.max(
+    1,
+    Math.min(
+      SURFACE_COMPUTE_LIGHTING_MAX_QUEUED_DISPATCHES,
+      Math.floor(
+        Math.min(SURFACE_COMPUTE_LIGHTING_FENCE_TARGET_MS, remainingMs) /
+          Math.max(0.01, 2 * peakCellMs),
+      ),
+    ),
+  );
 }
 
 /** The bench host loop's adaptive pass sizing: double while the last pass
@@ -1430,6 +1598,10 @@ export const SURFACE_COMPUTE_RAY_STATE_BYTES = 16;
  * had cut 44 to 36 by trading the 16 B/ray states staging twin for a 4 B/ray
  * status side-channel and its own twin. */
 export const SURFACE_COMPUTE_RAY_BYTES = 44;
+
+/** Authored lighting replaces color and stagingColor by vec4f radiance;
+ * all six other per-ray buffers keep their frozen layout. */
+export const SURFACE_COMPUTE_LIGHTING_RAY_BYTES = 68;
 
 /** Byte count as MiB, for the size errors' messages. */
 function mib(bytes: number): string {
@@ -1649,6 +1821,10 @@ export interface SurfaceComputeRendererInit {
   balloonLutTex?: GPUTexture | null;
   /** Mesh-only conservative R32F atlas at frozen binding 11. */
   meshSdfTex?: GPUTexture | null;
+  /** Lighting-only full-image backdrop texture, initially a valid 1x1. */
+  lightingBackgroundTex?: GPUTexture | null;
+  /** Session compile gate and color-buffer ABI; absent retains RGBA8. */
+  lighting?: boolean;
   lutSamp: GPUSampler;
   /** Adapter label from create()'s requestAdapter — surfaced in the UI's
    * backend disclosure; undefined when the adapter offered no
@@ -1742,6 +1918,7 @@ export class SurfaceComputeRenderer {
        * colors beside it: a material edit reaches a live session through
        * the same session re-enter a color edit takes. */
       materials?: SurfaceMaterialSlots | null;
+      lighting?: boolean;
     } = {},
   ): Promise<SurfaceComputeRenderer> {
     if (!SurfaceComputeRenderer.supported()) {
@@ -1786,6 +1963,7 @@ export class SurfaceComputeRenderer {
         opts.shadeDeWidth ?? SURFACE_COMPUTE_SHADE_DE_WIDTH,
         adapterStatus,
         opts.materials ?? null,
+        opts.lighting ?? false,
       );
       return renderer;
     } catch (e) {
@@ -1804,6 +1982,7 @@ export class SurfaceComputeRenderer {
     shadeDeWidth: number,
     adapterStatus: { label: string | undefined; software: boolean },
     materials: SurfaceMaterialSlots | null,
+    lighting = false,
   ): Promise<SurfaceComputeRenderer> {
     // The error-scope pair (out-of-memory outside, validation inside):
     // WebGPU's createBuffer never throws on allocation failure — it
@@ -1943,6 +2122,7 @@ export class SurfaceComputeRenderer {
           // — the march never reads shadeMaps — so one flag serves both
           // kernels of the pair.
           finish: materials?.finish ?? false,
+          lighting,
           pattern: materials?.pattern ?? false,
         }),
       });
@@ -2022,6 +2202,15 @@ export class SurfaceComputeRenderer {
           sampler: { type: "filtering" },
         },
         bufferEntry(9, "storage"),
+        ...(lighting
+          ? [
+              {
+                binding: 12,
+                visibility: GPUShaderStage.COMPUTE,
+                texture: { sampleType: "float" as const },
+              },
+            ]
+          : []),
         ...(targetHasBalloon
           ? [
               {
@@ -2183,9 +2372,11 @@ export class SurfaceComputeRenderer {
       // ends at 224, and one buffer serves both pipelines of the pair — a
       // struct never reads past its own size, so binding the larger buffer
       // to the march pipeline is valid.
-      size: materials?.pattern
-        ? SURFACE_GPU_SHADE_PATTERN_BYTES
-        : SURFACE_GPU_SHADE_BYTES,
+      size: lighting
+        ? SURFACE_GPU_SHADE_LIGHTING_BYTES
+        : materials?.pattern
+          ? SURFACE_GPU_SHADE_PATTERN_BYTES
+          : SURFACE_GPU_SHADE_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     // Re-wrapped copies: the kernel packers' bare Float32Array types
@@ -2289,6 +2480,21 @@ export class SurfaceComputeRenderer {
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge",
     });
+    const lightingBackgroundTex = lighting
+      ? device.createTexture({
+          size: { width: 1, height: 1 },
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        })
+      : null;
+    if (lightingBackgroundTex) {
+      device.queue.writeTexture(
+        { texture: lightingBackgroundTex },
+        new Uint8Array([0, 0, 0, 255]),
+        { bytesPerRow: 4 },
+        { width: 1, height: 1 },
+      );
+    }
 
     const validation = await device.popErrorScope();
     const oom = await device.popErrorScope();
@@ -2315,6 +2521,8 @@ export class SurfaceComputeRenderer {
       lutTex,
       balloonLutTex,
       meshSdfTex,
+      lightingBackgroundTex,
+      lighting,
       lutSamp,
       adapterLabel: adapterStatus.label,
       software: adapterStatus.software,
@@ -2467,6 +2675,10 @@ export class SurfaceComputeRenderer {
   private readonly lutTex: GPUTexture;
   private readonly balloonLutTex: GPUTexture | null;
   private readonly meshSdfTex: GPUTexture | null;
+  private lightingBackgroundTex: GPUTexture | null;
+  private lightingBackgroundSize: [number, number] = [1, 1];
+  private uploadedLightingBackground: TraceBackgroundImage | null = null;
+  private readonly lighting: boolean;
   private readonly lutSamp: GPUSampler;
   /** See {@link SurfaceComputeRendererInit.adapterLabel}. */
   readonly adapterLabel: string | undefined;
@@ -2494,6 +2706,8 @@ export class SurfaceComputeRenderer {
     this.lutTex = init.lutTex;
     this.balloonLutTex = init.balloonLutTex ?? null;
     this.meshSdfTex = init.meshSdfTex ?? null;
+    this.lightingBackgroundTex = init.lightingBackgroundTex ?? null;
+    this.lighting = init.lighting ?? false;
     this.lutSamp = init.lutSamp;
     this.adapterLabel = init.adapterLabel;
     this.software = init.software;
@@ -2518,6 +2732,18 @@ export class SurfaceComputeRenderer {
     spec: SurfaceComputeFrameSpec,
     opts: SurfaceComputeFrameOptions = {},
   ): Promise<SurfaceComputeFrame | null> {
+    // A queued frame must retain the rig authored at request time; mutable
+    // nested light/medium arrays must not follow a later UI edit. Backdrop
+    // images already carry the immutable content/revision contract.
+    const snapshot = spec.lighting
+      ? {
+          ...spec,
+          lighting: cloneSurfaceLighting(spec.lighting),
+          ...(spec.lightingRuntime
+            ? { lightingRuntime: { ...spec.lightingRuntime } }
+            : {}),
+        }
+      : spec;
     const token = ++this.frameToken;
     // Counted from here to the .finally below, whatever the outcome —
     // this is the span destroy() waits out before it is safe to actually
@@ -2525,7 +2751,7 @@ export class SurfaceComputeRenderer {
     this.framesInFlight++;
     const run = this.chain
       .then(() =>
-        this.runSamples(token, spec, opts).catch((error: unknown) => {
+        this.runSamples(token, snapshot, opts).catch((error: unknown) => {
           // A destroyed/lost device rejects in-flight awaits — that is a
           // cancellation, not a render error. Anything else is logged once
           // and degrades to "no frame"; the session's lost-latch (not this
@@ -2589,6 +2815,8 @@ export class SurfaceComputeRenderer {
     let out: SurfaceComputeFrame | null = null;
     let wallMs = 0;
     let gpuMs = 0;
+    let lightingExhausted = 0;
+    let lightingInvalid = 0;
     // ONE hit-shade sizer for the whole job. Every pass here traces the
     // SAME pose at the SAME raster with the SAME DE — only the sub-pixel
     // offset moves — so the cost model pass 0 measured is exactly the
@@ -2623,17 +2851,22 @@ export class SurfaceComputeRenderer {
         },
         subPixelSample(s),
         jobSizer,
+        s,
       );
       if (!frame) break;
       wallMs += frame.wallMs;
       gpuMs += frame.gpuMs;
       if (s > 0 && frame.truncated) break;
+      lightingExhausted += frame.lightingVisibility?.exhausted ?? 0;
+      lightingInvalid += frame.lightingVisibility?.invalid ?? 0;
       const px = frame.pixels;
       const layers = frame.layers;
       for (let i = 0, p = 0, a = 0; i < rays; i++, p += 4, a += 3) {
-        accum[a] += SRGB_TO_LINEAR[px[p]];
-        accum[a + 1] += SRGB_TO_LINEAR[px[p + 1]];
-        accum[a + 2] += SRGB_TO_LINEAR[px[p + 2]];
+        accum[a] += frame.linearPixels?.[p] ?? SRGB_TO_LINEAR[px[p]];
+        accum[a + 1] +=
+          frame.linearPixels?.[p + 1] ?? SRGB_TO_LINEAR[px[p + 1]];
+        accum[a + 2] +=
+          frame.linearPixels?.[p + 2] ?? SRGB_TO_LINEAR[px[p + 2]];
       }
       foldSurfaceComputeLayerSample(layerAccum, frontmostCoc, layers);
       taken++;
@@ -2655,6 +2888,11 @@ export class SurfaceComputeRenderer {
         // prefill remains deliberately uncovered background.
         opts.onProgress?.(mean, layerMean, taken * rays, samples * rays);
       }
+      if (out && this.lighting)
+        out.lightingVisibility = {
+          exhausted: lightingExhausted,
+          invalid: lightingInvalid,
+        };
       if (frame.truncated) break;
     }
     return out;
@@ -2775,7 +3013,7 @@ export class SurfaceComputeRenderer {
       this.releaseFrameBuffers();
       throw new SurfaceComputeFrameSizeError(
         `Surface compute: allocating a ${String(rays)}-ray frame ` +
-          `(${mib(rays * SURFACE_COMPUTE_RAY_BYTES)} of buffers) failed: ` +
+          `(${mib(rays * (this.lighting ? SURFACE_COMPUTE_LIGHTING_RAY_BYTES : SURFACE_COMPUTE_RAY_BYTES))} of buffers) failed: ` +
           error.message,
       );
     }
@@ -2815,7 +3053,7 @@ export class SurfaceComputeRenderer {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     const color = device.createBuffer({
-      size: rays * 4,
+      size: rays * (this.lighting ? 16 : 4),
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -2837,7 +3075,7 @@ export class SurfaceComputeRenderer {
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
     const stagingColor = device.createBuffer({
-      size: rays * 4,
+      size: rays * (this.lighting ? 16 : 4),
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
     const stagingLayer = device.createBuffer({
@@ -2863,7 +3101,36 @@ export class SurfaceComputeRenderer {
           : []),
       ],
     });
-    const shadeBindGroup = device.createBindGroup({
+    const shadeBindGroup = this.createShadeBindGroup(
+      active,
+      states,
+      color,
+      layer,
+    );
+    this.frame = {
+      rays,
+      layerPrefill: buildSurfaceComputeLayerPrefill(rays),
+      states,
+      active,
+      color,
+      layer,
+      status,
+      stagingStatus,
+      stagingColor,
+      stagingLayer,
+      marchBindGroup,
+      shadeBindGroup,
+    };
+    return this.frame;
+  }
+
+  private createShadeBindGroup(
+    active: GPUBuffer,
+    states: GPUBuffer,
+    color: GPUBuffer,
+    layer: GPUBuffer,
+  ): GPUBindGroup {
+    return this.device.createBindGroup({
       layout: this.shadeLayout,
       entries: [
         { binding: 0, resource: { buffer: this.paramsBuf } },
@@ -2876,6 +3143,9 @@ export class SurfaceComputeRenderer {
         { binding: 7, resource: this.lutTex.createView() },
         { binding: 8, resource: this.lutSamp },
         { binding: 9, resource: { buffer: layer } },
+        ...(this.lightingBackgroundTex
+          ? [{ binding: 12, resource: this.lightingBackgroundTex.createView() }]
+          : []),
         ...(this.balloonLutTex
           ? [
               {
@@ -2894,21 +3164,65 @@ export class SurfaceComputeRenderer {
           : []),
       ],
     });
-    this.frame = {
-      rays,
-      layerPrefill: buildSurfaceComputeLayerPrefill(rays),
-      states,
-      active,
-      color,
-      layer,
-      status,
-      stagingStatus,
-      stagingColor,
-      stagingLayer,
-      marchBindGroup,
-      shadeBindGroup,
-    };
-    return this.frame;
+  }
+
+  /** Called only inside the serialized frame span, after all earlier GPU
+   * work unwound. Replacing a texture rebuilds only its shade bind group. */
+  private prepareLightingBackground(
+    image: TraceBackgroundImage | undefined,
+  ): void {
+    if (!image || !this.lighting) return;
+    const previous = this.uploadedLightingBackground;
+    if (
+      previous &&
+      previous.width === image.width &&
+      previous.height === image.height &&
+      previous.revision === image.revision &&
+      previous.rgba === image.rgba
+    )
+      return;
+    // Reuse the shared image validator before allocation/upload.
+    sampleTraceBackgroundImage(image, 0.5, 0.5);
+    if (
+      image.width > this.device.limits.maxTextureDimension2D ||
+      image.height > this.device.limits.maxTextureDimension2D
+    ) {
+      throw new SurfaceComputeFrameSizeError(
+        "Surface compute: lighting background exceeds the device texture limit",
+      );
+    }
+    if (
+      this.lightingBackgroundSize[0] !== image.width ||
+      this.lightingBackgroundSize[1] !== image.height
+    ) {
+      this.lightingBackgroundTex?.destroy();
+      this.lightingBackgroundTex = this.device.createTexture({
+        size: { width: image.width, height: image.height },
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+      this.lightingBackgroundSize = [image.width, image.height];
+      if (this.frame) {
+        const frame = this.frame;
+        frame.shadeBindGroup = this.createShadeBindGroup(
+          frame.active,
+          frame.states,
+          frame.color,
+          frame.layer,
+        );
+      }
+    }
+    if (!this.lightingBackgroundTex)
+      throw new Error(
+        "Surface compute: lighting background texture is missing",
+      );
+    this.device.queue.writeTexture(
+      { texture: this.lightingBackgroundTex },
+      new Uint8Array(image.rgba),
+      { bytesPerRow: image.width * 4 },
+      { width: image.width, height: image.height },
+    );
+    this.uploadedLightingBackground = image;
   }
 
   private backgroundRows(
@@ -2971,13 +3285,14 @@ export class SurfaceComputeRenderer {
     layer: GPUBuffer,
     stagingLayer: GPUBuffer,
     bytes: number,
+    colorBytes = bytes,
   ): Promise<[ArrayBuffer, ArrayBuffer]> {
     const encoder = this.device.createCommandEncoder();
-    encoder.copyBufferToBuffer(color, 0, stagingColor, 0, bytes);
+    encoder.copyBufferToBuffer(color, 0, stagingColor, 0, colorBytes);
     encoder.copyBufferToBuffer(layer, 0, stagingLayer, 0, bytes);
     this.device.queue.submit([encoder.finish()]);
     return Promise.all([
-      this.drainStaging(stagingColor, bytes),
+      this.drainStaging(stagingColor, colorBytes),
       this.drainStaging(stagingLayer, bytes),
     ]);
   }
@@ -3015,7 +3330,8 @@ export class SurfaceComputeRenderer {
      * place so each pass starts where the last one converged.
      * Absent = a fresh model and a one-workgroup capacity. */
     jobSizer?: ShadeSizerState,
-  ): Promise<SurfaceComputeFrame | null> {
+    sampleIndex = 0,
+  ): Promise<SurfaceComputeSample | null> {
     const trace = surfaceComputeTrace;
     // Read once per frame beside the trace sink, so a pin can never change
     // under a frame that is already scheduling against it (see
@@ -3034,6 +3350,39 @@ export class SurfaceComputeRenderer {
     const { width, height } = spec;
     const rays = width * height;
     const device = this.device;
+    if (this.lighting !== (spec.lighting !== undefined)) {
+      throw new Error(
+        "Surface compute: lighting presence must match the session compile gate",
+      );
+    }
+    const lighting = spec.lighting
+      ? resolveSurfaceLighting(spec.lighting)
+      : undefined;
+    const runtime = lighting
+      ? {
+          ...(spec.lightingRuntime ??
+            surfaceLightingRuntime(lighting, {
+              interaction: Number.isFinite(budgetMs),
+              dimension: isFourDTarget(this.target) ? 4 : 3,
+              boundingRadius: this.target.de.boundingRadius,
+            })),
+          sampleIndex: (spec.lightingRuntime?.sampleIndex ?? 0) + sampleIndex,
+          cellStart: 0,
+          cellCount: 1,
+          phase: 0 as const,
+          lightIndex: -1,
+        }
+      : undefined;
+    // Read the same clamped runtime lanes the shader receives; hostile or
+    // manually constructed frame specs cannot multiply host dispatch loops.
+    const lightingLanes = lighting
+      ? surfaceLightingLanes(lighting, runtime)
+      : undefined;
+    const mediumCells =
+      lighting?.medium && lighting.medium.density > 0 ? lightingLanes![41] : 0;
+    const mediumLights = mediumCells > 0 ? lighting!.lights.length : 0;
+    const colorBytes = rays * (this.lighting ? 16 : 4);
+    this.prepareLightingBackground(spec.lightingBackground);
     const buffers = await this.allocateFrameBuffers(rays);
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
 
@@ -3080,6 +3429,9 @@ export class SurfaceComputeRenderer {
         invProjView: spec.invProjView,
         lightDir: spec.lightDir,
         ambient: spec.ambient,
+        lighting,
+        lightingRuntime: runtime,
+        lightingBackground: this.lighting && !!spec.lightingBackground,
         bgTop: spec.bgTop,
         bgBottom: spec.bgBottom,
         colorSpeed: spec.colorSpeed,
@@ -3130,15 +3482,17 @@ export class SurfaceComputeRenderer {
     device.queue.writeBuffer(
       buffers.color,
       0,
-      this.backgroundRows(
-        width,
-        height,
-        spec.bgTop,
-        spec.bgBottom,
-        bgOffset,
-        bgExtent,
-        bgShape,
-      ),
+      this.lighting
+        ? buildSurfaceComputeLightingBackground(spec)
+        : this.backgroundRows(
+            width,
+            height,
+            spec.bgTop,
+            spec.bgBottom,
+            bgOffset,
+            bgExtent,
+            bgShape,
+          ),
     );
     // The layer describes this frame's CURRENT trace, never the legacy RGB
     // seed above. Until a ray reaches a terminal shade it is uncovered,
@@ -3185,6 +3539,8 @@ export class SurfaceComputeRenderer {
     // costs.
     let shadeHitQueue: number[] = [];
     let shadeFreeQueue: number[] = [];
+    // Empty mist regions cannot authorize wider geometry batches.
+    const lightingCovered = this.lighting ? new Uint8Array(rays) : null;
     // The one pin with no downstream Math.min (see the chunk and hit
     // pins' own consumption sites below), so it is clamped here — the
     // one place a pin value becomes stepsThisPass — rather than left to
@@ -3211,6 +3567,16 @@ export class SurfaceComputeRenderer {
       cost: initialShadeHitCost(),
       cap: SURFACE_COMPUTE_SHADE_HIT_CAP_START,
     };
+    const lightingSizer = this.lighting
+      ? (sizer.lighting ??= {
+          pilotRays: 0,
+          peakCellMs: 0,
+          pilotComplete: false,
+          surfaceCost: initialShadeHitCost(),
+          mediumCost: initialShadeHitCost(),
+          rayCap: SURFACE_COMPUTE_WORKGROUP_SIZE,
+        })
+      : null;
     // A fold FINAL lens multiplies every march step by its branch sweep
     // — 27 boxfold / 3 spherefold / 81 mandelbox branches around the
     // core, discounted /8 for the prunes' measured-typical survival
@@ -3478,7 +3844,7 @@ export class SurfaceComputeRenderer {
       };
       device.queue.writeBuffer(this.paramsBuf, 0, packParams(run));
     };
-    const dispatchTimed = async (
+    const submitDispatch = (
       pipeline: GPUComputePipeline,
       bindGroup: GPUBindGroup,
       count: number,
@@ -3490,7 +3856,7 @@ export class SurfaceComputeRenderer {
        * copy
        * against a `count`×`stepsThisPass` DE march). */
       copyAfter?: { src: GPUBuffer; dst: GPUBuffer; dstOffset: number },
-    ): Promise<number | null> => {
+    ): number => {
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginComputePass();
       pass.setPipeline(pipeline);
@@ -3510,6 +3876,15 @@ export class SurfaceComputeRenderer {
       }
       const t0 = performance.now();
       device.queue.submit([encoder.finish()]);
+      return t0;
+    };
+    const dispatchTimed = async (
+      pipeline: GPUComputePipeline,
+      bindGroup: GPUBindGroup,
+      count: number,
+      copyAfter?: { src: GPUBuffer; dst: GPUBuffer; dstOffset: number },
+    ): Promise<number | null> => {
+      const t0 = submitDispatch(pipeline, bindGroup, count, copyAfter);
       await device.queue.onSubmittedWorkDone();
       if (token !== this.frameToken || this.isLost || this.destroyed) {
         return null;
@@ -3536,8 +3911,11 @@ export class SurfaceComputeRenderer {
         buffers.layer,
         buffers.stagingLayer,
         rays * 4,
+        colorBytes,
       );
-      const partial = new Uint8Array(partialBytes);
+      const partial = this.lighting
+        ? encodeSurfaceComputeHdr(new Float32Array(partialBytes))
+        : new Uint8Array(partialBytes);
       const partialLayers = new Uint8Array(partialLayerBytes);
       tr("present readback END");
       if (token !== this.frameToken || this.isLost || this.destroyed) {
@@ -3668,6 +4046,7 @@ export class SurfaceComputeRenderer {
           ) {
             if (rayStatus === SURFACE_GPU_RAY_HIT) counts.hit++;
             else counts.plane++;
+            if (lightingCovered) lightingCovered[ray] = 1;
             // Plane rays are priced WITH the hits — a floor pixel pays
             // the penumbra-shadow/AO probe evals a hit pays (within
             // its corridor gates), nothing like a miss's one
@@ -3682,7 +4061,10 @@ export class SurfaceComputeRenderer {
               counts.exhausted++;
               exhaustedIndices.push(ray);
             }
-            shadeFreeQueue.push(ray);
+            // A mist ray pays visibility marches even if its primary ray
+            // missed. Keep it under the same bounded dispatch cap as hits.
+            if (mediumLights > 0) shadeHitQueue.push(ray);
+            else shadeFreeQueue.push(ray);
           }
         }
         // Steps grow only while the WHOLE active set fits a single slice
@@ -3744,7 +4126,16 @@ export class SurfaceComputeRenderer {
         const batchSize = isFree
           ? Math.min(shadeFreeQueue.length, maxDispatchRays)
           : Math.min(
-              shadeHitsPin ?? shadeHitBatchSize(sizer.cost, sizer.cap),
+              this.lighting
+                ? Math.min(
+                    shadeHitsPin ?? Infinity,
+                    surfaceComputeLightingRayBatch(
+                      lightingSizer!.surfaceCost,
+                      mediumLights > 0 ? lightingSizer!.mediumCost : null,
+                      lightingSizer!.rayCap,
+                    ),
+                  )
+                : (shadeHitsPin ?? shadeHitBatchSize(sizer.cost, sizer.cap)),
               maxDispatchRays,
             );
         // HOLD a partial hit batch for the next sweep's hits rather than
@@ -3781,11 +4172,6 @@ export class SurfaceComputeRenderer {
         const batch = Uint32Array.from(
           (isFree ? shadeFreeQueue : shadeHitQueue).slice(0, batchSize),
         );
-        if (isFree) {
-          shadeFreeQueue = shadeFreeQueue.slice(batch.length);
-        } else {
-          shadeHitQueue = shadeHitQueue.slice(batch.length);
-        }
         if (!Number.isFinite(batchSize) || batch.length === 0) {
           tr(
             `ANOMALY shade isFree=${isFree} batchSize=${batchSize} len=${batch.length} cost=${sizer.cost.interceptUs}+n*${sizer.cost.marginalUs} cap=${sizer.cap}`,
@@ -3796,6 +4182,13 @@ export class SurfaceComputeRenderer {
         );
         writeParams(batch.length, 0);
         device.queue.writeBuffer(buffers.active, 0, batch);
+        if (this.lighting) {
+          device.queue.writeBuffer(
+            this.shadeBuf,
+            SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET,
+            new Float32Array([0, 1, 0, -1]),
+          );
+        }
         const shadeMs = await dispatchTimed(
           shadePipeline,
           buffers.shadeBindGroup,
@@ -3806,6 +4199,63 @@ export class SurfaceComputeRenderer {
         gpuMs += shadeMs;
         shadeGpuMs += shadeMs;
         passes++;
+        if (this.lighting && mediumLights > 0) {
+          // Phase 0 initialized transmitted surface/background radiance.
+          // Each following submission adds one cell and one emitter, leaving
+          // HDR in place and a cancellation door between every nested march.
+          const mediumDispatches = mediumCells * mediumLights;
+          for (let index = 0; index < mediumDispatches;) {
+            if (performance.now() - wallStart > budgetMs) {
+              truncated = true;
+              tr("budget truncated (medium)");
+              break outer;
+            }
+            const group = Math.min(
+              mediumDispatches - index,
+              surfaceComputeLightingFenceGroup(
+                lightingSizer!.pilotComplete ? lightingSizer!.peakCellMs : null,
+                budgetMs - (performance.now() - wallStart),
+              ),
+            );
+            const groupStart = performance.now();
+            for (let queued = 0; queued < group; queued++, index++) {
+              const cell = Math.floor(index / mediumLights);
+              const light = index % mediumLights;
+              device.queue.writeBuffer(
+                this.shadeBuf,
+                SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET,
+                new Float32Array([cell, 1, 1, light]),
+              );
+              submitDispatch(
+                shadePipeline,
+                buffers.shadeBindGroup,
+                batch.length,
+              );
+            }
+            // Queue writes and their following submissions are ordered.
+            // This fence drains the whole bounded group before presentation,
+            // cancellation, a new active list, or any buffer teardown.
+            await device.queue.onSubmittedWorkDone();
+            if (token !== this.frameToken || this.isLost || this.destroyed)
+              return null;
+            const mediumMs = performance.now() - groupStart;
+            lightingSizer!.peakCellMs = Math.max(
+              lightingSizer!.peakCellMs,
+              mediumMs / group,
+            );
+            tr(
+              `medium END dispatches=${group} ms=${mediumMs.toFixed(2)} peakCellMs=${lightingSizer!.peakCellMs.toFixed(2)}`,
+            );
+            gpuMs += mediumMs;
+            shadeGpuMs += mediumMs;
+            passes += group;
+            if (!(await maybePresent())) return null;
+          }
+          lightingSizer!.pilotComplete = true;
+        }
+        // Credit a ray's shade half only once every medium cell is done.
+        if (isFree) shadeFreeQueue = shadeFreeQueue.slice(batch.length);
+        else shadeHitQueue = shadeHitQueue.slice(batch.length);
         if (!isFree) {
           lastHitDispatch = performance.now();
           // Hit economics only — free batches would just dilute the model
@@ -3840,8 +4290,14 @@ export class SurfaceComputeRenderer {
       buffers.layer,
       buffers.stagingLayer,
       rays * 4,
+      colorBytes,
     );
-    const pixels = new Uint8Array(pixelBytes);
+    const linearPixels = this.lighting
+      ? new Float32Array(pixelBytes)
+      : undefined;
+    const pixels = linearPixels
+      ? encodeSurfaceComputeHdr(linearPixels)
+      : new Uint8Array(pixelBytes);
     const layers = new Uint8Array(layerBytes);
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
     // The tally is kept as rays LEAVE the active list, so it needs no
@@ -3858,6 +4314,12 @@ export class SurfaceComputeRenderer {
     return {
       pixels,
       layers,
+      ...(linearPixels
+        ? {
+            linearPixels,
+            lightingVisibility: surfaceComputeLightingVisibility(linearPixels),
+          }
+        : {}),
       width,
       height,
       wallMs: performance.now() - wallStart,

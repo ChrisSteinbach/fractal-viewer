@@ -11,6 +11,15 @@
 import { isIdentityAffine } from "../fractal/affine";
 import { isFlatTransform } from "../fractal/affine4";
 import {
+  cloneSurfaceLighting,
+  SURFACE_LIGHTING_MAX_LIGHTS,
+} from "../fractal/surface-lighting";
+import type {
+  SurfaceDiskLight,
+  SurfaceLighting,
+  SurfaceLightingMedium,
+} from "../fractal/surface-lighting";
+import {
   SURFACE_PATTERN_AXES,
   SURFACE_PATTERN_KINDS,
 } from "../fractal/surface-pattern";
@@ -89,6 +98,7 @@ import {
   SURFACE_COLOR_SOURCES,
   SURFACE_FLOOR_PATTERNS,
   clampToSpec,
+  cloneSurfaceParams,
 } from "./state";
 import type {
   AppState,
@@ -460,7 +470,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     showGuides: state.showGuides,
     flame: state.flame,
     solid: state.solid,
-    surface: state.surface,
+    surface: cloneSurfaceParams(state.surface),
     symmetry: state.symmetry,
     glowBrightness: state.glowBrightness,
     background: state.background,
@@ -535,6 +545,7 @@ export function fromSnapshot(
   return {
     ...base,
     ...rest,
+    surface: cloneSurfaceParams(snapshot.surface),
     positionAxisColors: snapshot.positionAxisColors,
     // Read explicitly for positionAxisColors' reason: restoring a
     // schedule-less snapshot must clear a base session's block even when
@@ -2096,12 +2107,91 @@ function decodeSolidParams(
   };
 }
 
+/** Validate structure without quantizing or normalizing authored world values.
+ * Domain resolution belongs to the renderer; a saved rig must retain exactly
+ * the finite values its author supplied, including a non-unit disk normal. */
+function decodeSurfaceLighting(raw: unknown): SurfaceLighting | null {
+  const record = (value: unknown): Record<string, unknown> | null =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const finite = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value);
+  const vector = (value: unknown): Vec3 | null =>
+    Array.isArray(value) && value.length === 3 && value.every(finite)
+      ? [value[0], value[1], value[2]]
+      : null;
+  const value = record(raw);
+  if (
+    !value ||
+    !Array.isArray(value.lights) ||
+    value.lights.length > SURFACE_LIGHTING_MAX_LIGHTS
+  )
+    return null;
+  const lights: SurfaceDiskLight[] = [];
+  for (const entry of value.lights) {
+    const light = record(entry);
+    if (!light) return null;
+    const position = vector(light.position);
+    const normal = vector(light.normal);
+    const color = vector(light.color);
+    if (
+      !position ||
+      !normal ||
+      !color ||
+      !finite(light.radius) ||
+      !finite(light.intensity)
+    )
+      return null;
+    lights.push({
+      position,
+      normal,
+      color,
+      radius: light.radius,
+      intensity: light.intensity,
+    });
+  }
+  const ambient = vector(value.ambient);
+  if (!ambient || !finite(value.specular) || !finite(value.roughness))
+    return null;
+  let medium: SurfaceLightingMedium | undefined;
+  if (value.medium !== undefined) {
+    const block = record(value.medium);
+    if (!block) return null;
+    const center = vector(block.center);
+    const tint = vector(block.tint);
+    if (
+      !center ||
+      !tint ||
+      !finite(block.radius) ||
+      !finite(block.density) ||
+      !finite(block.anisotropy)
+    )
+      return null;
+    medium = {
+      center,
+      tint,
+      radius: block.radius,
+      density: block.density,
+      anisotropy: block.anisotropy,
+    };
+  }
+  return {
+    lights,
+    ambient,
+    specular: value.specular,
+    roughness: value.roughness,
+    ...(medium === undefined ? {} : { medium }),
+  };
+}
+
 /**
  * Validate the untrusted `surface` render-settings block,
  * following `decodeSolidParams`'s presence rules exactly: an absent block —
  * or an absent field within a present block — decodes quietly to its
  * default, while a present-but-malformed (non-finite) value rejects the
- * whole scene. Finite values are clamped into range.
+ * whole scene. Legacy scalar values are clamped into range; the optional
+ * authored lighting block preserves finite values for renderer resolution.
  *
  * `colorSource` is a QUIET-fallback enum, like `symmetry.plane` (see
  * {@link decodeSymmetry}): an unrecognized or missing value decodes to
@@ -2151,6 +2241,7 @@ function decodeSurfaceParams(
     | "colorSource"
     | "paletteId"
     | "floorPattern"
+    | "lighting"
   >[] = [
     "lightAzimuth",
     "lightElevation",
@@ -2197,6 +2288,10 @@ function decodeSurfaceParams(
       ? (s.paletteId as PaletteSelection)
       : DEFAULT_SOLID_PALETTE;
 
+  const lighting =
+    s.lighting === undefined ? undefined : decodeSurfaceLighting(s.lighting);
+  if (lighting === null) return null;
+
   return {
     antialiasSamples: out.antialiasSamples,
     depthOfField:
@@ -2219,6 +2314,7 @@ function decodeSurfaceParams(
       out.floorTileScale,
     ),
     floorEmission: clampToSpec(PARAM.surfaceFloorEmission, out.floorEmission),
+    ...(lighting === undefined ? {} : { lighting }),
   };
 }
 
@@ -2340,7 +2436,7 @@ function decodeCameraPose(raw: unknown): CameraPose | undefined {
     theta,
     phi: clampPhi(phi),
     ...(decodedFov !== DEFAULT_CAMERA_FOV ? { fov: decodedFov } : {}),
-    ...(infiniteZoom === true || decodedFov !== DEFAULT_CAMERA_FOV
+    ...(infiniteZoom === true || decodedFov < DEFAULT_CAMERA_FOV
       ? { infiniteZoom: true }
       : {}),
   };
@@ -3196,6 +3292,9 @@ export function encodeScene(s: SceneSnapshot): string {
       floorPattern: s.surface.floorPattern,
       floorTileScale: round4(s.surface.floorTileScale),
       floorEmission: round4(s.surface.floorEmission),
+      ...(s.surface.lighting === undefined
+        ? {}
+        : { lighting: cloneSurfaceLighting(s.surface.lighting) }),
     },
     symmetry: {
       order: Math.round(s.symmetry.order),
@@ -3431,19 +3530,19 @@ export function encodeScene(s: SceneSnapshot): string {
   // undo-history snapshot (which never carries a camera — see
   // SceneSnapshot.camera's doc) stays byte-identical.
   if (s.camera) {
-    const deep =
-      s.camera.infiniteZoom === true ||
-      (s.camera.fov ?? DEFAULT_CAMERA_FOV) !== DEFAULT_CAMERA_FOV;
-    const roundCamera = deep ? round10 : round4;
+    const fov = s.camera.fov ?? DEFAULT_CAMERA_FOV;
+    const deep = s.camera.infiniteZoom === true || fov < DEFAULT_CAMERA_FOV;
+    const authoredLens = deep || fov !== DEFAULT_CAMERA_FOV;
+    const roundCamera = authoredLens ? round10 : round4;
     payload.camera = {
       target: s.camera.target.map(roundCamera),
       radius: roundCamera(s.camera.radius),
       theta: roundCamera(s.camera.theta),
       phi: roundCamera(s.camera.phi),
-      ...(deep
+      ...(authoredLens
         ? {
-            fov: round10(s.camera.fov ?? DEFAULT_CAMERA_FOV),
-            infiniteZoom: true,
+            fov: round10(fov),
+            ...(deep ? { infiniteZoom: true } : {}),
           }
         : {}),
     };
