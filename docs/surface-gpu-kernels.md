@@ -753,6 +753,39 @@ rays arm) reads the new fields through the same `ShadeParams` binding as
 `bgOffset`/`bgExtent` — no core-specific change, since the shade entry's
 `imageUv`/`bg` computation is shared text across all seven cores.
 
+## Full-image pixel coordinates: rays, dither, transport seed
+
+`bgOffset`/`bgExtent` started as the BACKDROP's coordinate contract and
+are now the whole frame's. Three more quantities are derived from the same
+full-image pixel, and each one was a way for a capture BAND to render a
+different picture from the untiled image it is a slice of:
+
+- the ray's own NDC. The `march` arm's `"unproject"` rays and both shade
+  entries build `full = vec2f(f32(px), f32(py)) + shade.bgOffset` and
+  divide by `shade.bgExtent`, against the WHOLE image's `invProjView`.
+  They used to divide the band-local pixel by `params.rasterWidth` /
+  `params.rasterHeight` against a `camera.setViewOffset` SUB-FRUSTUM. The
+  two are the same ray in exact arithmetic and NOT in f32;
+- the march-start DITHER, `hash2(full + sub)`. This one is not a rounding
+  difference at all: hashing the band-local row gives every band its own
+  noise phase, so the dithered start — and with it the terminal
+  distance — differs per pixel between a band and the whole image;
+- the cinematic transport's per-pixel seed, `cinematicPixelSeed(pixel)`,
+  which already read the full-image pixel and is what made the other two
+  visible: the lit shade entry reproduced its random stream exactly while
+  the geometry underneath it did not.
+
+An ordinary frame packs offset `(0, 0)` and extent equal to its own
+raster, so every one of these is the shipped expression value for value —
+adding an exact `0.0` is exact in IEEE754, and `shade.bgExtent` holds
+`f32(rasterWidth)`/`f32(rasterHeight)` themselves. `params.rasterHeight`
+consequently reaches no per-pixel arithmetic in the app kernels; only the
+non-`unproject` `pose` ray arm (the bench baseline, never banded) still
+reads it. That is what makes a banded capture BIT-EXACT rather than merely
+close, and both gates assert it as such — measured numbers and the
+measurement's own correction in `docs/surface-compute-renderer.md`'s "A
+band is bit-exact".
+
 ## Balloon echo tint
 
 `ShadeParams` grows a `vec3f` + `f32` — `balloonTint` at offset 208,

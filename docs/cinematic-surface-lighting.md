@@ -244,9 +244,10 @@ A progressive pass samples each surface emitter once. Motion uses eight
 medium cells and the parked view uses 32; the visibility budget is 128 steps
 in 3D and 256 in 4D. Visibility epsilon is the raw geometry bounding radius
 times `2e-4`, with a `1e-7` floor. Pixel position and progressive sample ordinal
-seed the stream. Compute capture bands add their full-image offset; WebGL
-strips retain full-size target coordinates. No sampling count changes the
-emitter's total flux.
+seed the stream. Compute capture bands add their full-image offset — as does
+the ray's own NDC and the march-start dither, which is what makes a banded
+capture bit-exact rather than merely close; WebGL strips retain full-size
+target coordinates. No sampling count changes the emitter's total flux.
 
 Lit compute frames retain linear floating-point RGB and a separate byte
 coverage/depth sidecar. WebGL uses a float color attachment with the existing
@@ -355,7 +356,8 @@ accepted 3D compositions and, on compute, for a genuinely non-flat 4D slice.
 The compute `slice4` row covers 2,833 of 4,096 rays with zero exhausted
 primaries and zero invalid visibility queries.
 
-Two failures are open, and neither is an appearance defect.
+Two failures were open at that run, and neither was an appearance defect.
+One is fixed (the tiled export, below); one remains.
 
 **The 4D WebGL row is blocked by a pre-existing engine disagreement about the
 off-centre w-slice, not by lighting.** At `sliceCenter` 0.12 the fragment 4D
@@ -367,24 +369,51 @@ built `document.fourD` in the in-memory `{pair: {p, q}}` shape where the
 encoded wire is flat, so `validateFourD` dropped the pose and the app booted
 with a fresh rotor and no slice at all.
 
-**The tiled compute export does not reproduce the untiled one.** Against the
-gate's `meanDiff < 0.15` bar the measured difference is 0.699 at the diagnostic
-`--samples=1` and 0.408 at the authored eight-sample budget (changed fraction
-0.101 and 0.059). It falls with sample count but by less than independent noise
-would predict, and a row-wise diff of the two exported PNGs puts the difference
-DIFFUSELY across the frame — elevated at rows 24–30 and 44–47, where the mist
-is busiest — and NOT at the three internal band boundaries of the four-tile
-job, which rules out a seam. The sample stream is therefore not reproducing
-across the two paths at all, rather than reproducing with a boundary artifact.
-The per-pixel seed is intended to be exactly reproducible
-(`cinematicPixelSeed` hashes the full-image pixel, which `shade.bgOffset`
-supplies, against the lane-10 `sampleIndex` ordinal), so one of those two
-terms differs between the paths. The untested hypothesis worth trying first is
-that a tile does not complete the same number of antialiasing passes as the
-untiled frame — the tiled run's last progress line reads `pass 7/8` — which
-would average different sample counts per band and produce exactly this
-diffuse, sample-count-sensitive difference. The 64 px tiled export took 203 s
-at eight samples.
+**The tiled compute export did not reproduce the untiled one — FIXED, and it
+was not the sampling.** The measured difference was 0.699/255 at the
+diagnostic `--samples=1` and 0.408 at the authored eight-sample budget
+(changed fraction 0.101 and 0.059) against the gate's `meanDiff < 0.15` bar.
+A row-wise diff put it DIFFUSELY across the frame — elevated where the mist is
+busiest — and NOT at the three internal band boundaries of the four-tile job,
+which ruled out a seam.
+
+The first hypothesis, that a tile completed fewer antialiasing passes than the
+untiled frame, was WRONG: an export carries no wall budget, so no pass is ever
+truncated, and both paths ran the full eight. The `pass 7/8` progress line was
+the live pane's, not the export's. The per-pixel transport seed was innocent
+too — `cinematicPixelSeed` already hashed the full-image pixel. What differed
+was the GEOMETRY under that seed, in two places:
+
+- the march-start DITHER hashed the ray's coordinates in its OWN raster, so
+  every band past the first drew a different start offset for the same
+  full-image pixel. Unlit, that is a thin silhouette scatter (`0.006%` of
+  pixels in `surface-export-tile.verify.mjs`); lit, it is the whole frame,
+  because the dithered start moves the terminal distance and the terminal
+  distance IS the volumetric medium's integration length;
+- the band's rays came from a `camera.setViewOffset` SUB-FRUSTUM, which is the
+  full image's ray only in exact arithmetic.
+
+Both are gone. A band now traces a row range of the WHOLE image's projection,
+and the ray's NDC, the dither and the transport seed all derive from the
+full-image pixel that `bgOffset`/`bgExtent` already supplied to the backdrop
+shape — so the band's own raster height reaches no per-pixel arithmetic in the
+app kernels at all, which makes the agreement structural rather than lucky.
+MEASURED on the same real AMD RX 7900 XTX: mean 0, 0% of channels changed, at
+`--samples=1` and at the authored eight — the two 64 px PNGs are byte-identical
+files. The non-flat 4D `slice4`/compute row reads the same 0 and 0% over its
+own four bands (at one sample; the authored-eight 4D settle is hours on this
+box), and `surface-export-tile.verify.mjs`'s unlit 900x560 nine-band arm reads
+mean 0.0000/255, max 0. Both gates now assert bit-exactness instead of a
+tolerance.
+
+Seeing it took correcting the measurement as well. The gate's two export arms
+were not tracing the same document: the untiled arm exported the session
+configured through the UI and the tiled arm a reload of its saved hash, and
+`persist.ts` rounds on encode — worth 0.127/255 mean and 1.2% of channels on
+this fixture, i.e. most of what was left after the dither fix and none of it
+tiling. The gate now reloads the saved document once before either export, so
+the arms differ only in their ray cap. The 64 px tiled export took 203 s at
+eight samples.
 
 These are gate results on one machine. They do not establish owner acceptance
 of the finished look, and no performance promise is made from them.

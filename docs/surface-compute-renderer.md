@@ -1065,8 +1065,8 @@ against the watchdog and the allocator, not against the byte count).
 BANDS. Every band's spec is assembled in ONE synchronous span, because a
 tiled export must outlive an auto-orbit/drift camera move — this is the
 compute answer to the WebGL drain's frozen-uniforms approach. Each band is a
-`camera.setViewOffset` sub-frustum, traced at the FULL image's trace eps,
-with the backdrop pair left as the WHOLE image's stops and a
+row range of the WHOLE image's projection, traced at the FULL image's trace
+eps, with the backdrop pair left as the WHOLE image's stops and a
 `bgOffset`/`bgExtent` pair carrying the band's own place in that image
 instead — `fractal/background-shape.ts`'s shared shape reads FULL-IMAGE
 coordinates, so a band just reports where it sits rather than re-deriving
@@ -1089,9 +1089,57 @@ allocation. Background and DoF enable state are both frozen at capture arm.
 
 `?surfacemaxrays=N` pretends a device ceiling for testing.
 `scripts/surface-export-tile.verify.mjs` is the gate: tiled vs untiled
-export of one pinned pose measures a mean difference of 0.002/255, with
-0.006% of pixels off by more than 8 — the march-start dither's own
-per-raster hash phase, nothing structural.
+export of one pinned pose. It measured a mean difference of 0.002/255 with
+0.006% of pixels off by more than 8 while a band still derived rays from
+its own raster; it measures **0.0000/255, max 0** now — byte for byte —
+and the bar is bit-exact. See "A band is bit-exact" below.
+
+### A band is bit-exact
+
+The band used to be a `camera.setViewOffset` SUB-FRUSTUM, and its rays
+were the full image's rays only in exact arithmetic. Two things went wrong
+with that, and the second is what a lit export could not absorb:
+
+- the march-start DITHER hashed the ray's coordinates in its OWN raster
+  (`hash2(vec2f(f32(px) + sub.x, f32(py) + sub.y))`), so every band past
+  the first got a different dither phase from the whole image's — the
+  0.006% residual above, read as a thin silhouette scatter in an unlit
+  frame. In a LIT frame it is not thin: the dither moves the march start,
+  the march start moves the terminal distance, and the terminal distance
+  is the volumetric medium's whole integration length, so the mist
+  re-integrates over a slightly different segment for every pixel of every
+  band. MEASURED on the `cathedral` fixture at 64 px: 0.408/255 mean and
+  5.9% of channels at the authored eight samples, 0.699 and 10.1% at one;
+  against `scripts/cinematic-lighting.verify.mjs`'s 0.15 bar;
+- the sub-frustum's own f32 rounding, which is real but small.
+
+Both are gone. The projection stays the WHOLE image's for every band, and
+the kernels derive the ray's NDC, the dither and (with lighting) the
+transport's per-pixel seed from the FULL-IMAGE pixel — `bgOffset` plus the
+band-local one, over `bgExtent` — exactly as the backdrop shape already
+did. `params.rasterHeight` then reaches NO per-pixel arithmetic in the app
+kernels at all (the `pose` bench-baseline ray arm still uses it and is
+never banded), which is why bit-exactness is structural here rather than a
+lucky measurement: a band and the whole image feed each shared pixel the
+same numbers. `withViewBand` is gone with the sub-frustum.
+
+MEASURED after the fix, real AMD RX 7900 XTX (radeonsi):
+`surface-export-tile.verify.mjs` 900x560 in 9 bands, mean 0.0000/255,
+max 0; `cinematic-lighting.verify.mjs` `cathedral`/compute 64 px in 4
+bands, mean 0 and 0% of channels changed, at one sample and at the
+authored eight (the two PNGs are byte-identical FILES); and the same gate's
+non-flat 4D `slice4`/compute row, 64 px in 4 bands, mean 0 and 0% at one
+sample. Both dimensional halves, because the changed text is the march and
+shade entries every core shares. Both gates now assert bit-exactness
+rather than a tolerance.
+
+One measurement had to be corrected to see it. The cinematic gate's two
+export arms did not trace the same document: the untiled arm exported the
+session configured through the UI and the tiled arm a reload of its saved
+hash, and `persist.ts` ROUNDS on encode — worth 0.127/255 mean and 1.2% of
+channels on this fixture, which is most of what remained after the dither
+fix and none of it tiling. The gate now reloads the saved document once
+before either export, so the arms differ only in their ray cap.
 
 ### Radial vignette + bands
 
