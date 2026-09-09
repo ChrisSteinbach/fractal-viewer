@@ -22,8 +22,9 @@
  * Why a GATE and not a one-off check: a band is not simply "the same frame,
  * cropped". Three things have to be re-derived per band, and each fails
  * silently-but-visibly if it drifts:
- *   - the RAYS (a sub-frustum via camera.setViewOffset — get the sign of
- *     the offset wrong and the bands stack in the wrong order, or mirror);
+ *   - the RAYS (the full-image pixel, from the band's bgOffset, against
+ *     the whole image's projection — get the sign of the offset wrong and
+ *     the bands stack in the wrong order, or mirror);
  *   - the trace EPS (a band's pixels are the full image's pixels, so its
  *     cone footprint is the full image's, not its own raster's);
  *   - the BACKDROP STOPS (every tracer spreads its two stops over its OWN
@@ -56,10 +57,26 @@
  *   shipped                        mean 0.0020/255, 0.006% of px off >8
  *   whole-image stops per band     mean 7.3220/255, 53.0% — nine ramps
  *   flipped setViewOffset y        mean 68.3603/255, 89.1% — mirrored
- * i.e. the gate separates correct from broken by 3600x and 34000x on the
- * mean. The residual 0.006% is the march-start dither's per-raster hash
- * phase along silhouettes, and it is the same with and without the floor.
- * A run costs ~6 minutes on that box (two settles, two exports).
+ * i.e. the gate separated correct from broken by 3600x and 34000x on the
+ * mean. (Both mutations predate the bit-exact change below and are quoted
+ * as measured; the second one no longer has a `setViewOffset` to flip —
+ * its equivalent today is a wrong sign on the band's `bgOffset`.) A run
+ * costs ~6 minutes on that box (two settles, two exports).
+ *
+ * THE BAR IS NOW BIT-EXACT, and the 0.0020 residual above is gone with
+ * it. It was the march-start dither's per-raster hash phase along
+ * silhouettes — the band-local pixel row fed to a hash — and the same
+ * flaw cost the LIT export far more (a dithered march start moves the
+ * terminal distance, which is the volumetric medium's whole integration
+ * length): 0.408/255 mean and 5.9% of channels across an authored
+ * 8-sample cathedral capture. Fixing it took the ray's NDC with it: a
+ * band is now a row range of the WHOLE image's projection, and the
+ * full-image pixel — from bgOffset/bgExtent — is what derives the NDC,
+ * the dither and the transport's per-pixel seed alike, so the band's own
+ * raster height reaches no per-pixel arithmetic at all. MEASURED after
+ * the fix, real AMD RX 7900 XTX (radeonsi) at 900x560 in 9 bands:
+ * mean 0.0000/255, max 0, 0.000% off by >8 — byte for byte. Any drift is
+ * now a band-derived difference to explain, never a tolerance to widen.
  *
  * Usage: node scripts/surface-export-tile.verify.mjs [--url=...]
  *          [--display=:0] [--maxrays=60000] [--out=/tmp]
@@ -114,15 +131,14 @@ const SETTLE_TIMEOUT_MS = 300_000;
 const SETTLE_POLL_MS = 2_000;
 const EXPORT_TIMEOUT_MS = 300_000;
 
-/** Tiling is a pixel-exact operation everywhere except the march-start
- * DITHER, which hashes the pixel's coordinates in ITS OWN raster — so a
- * band's noise phase differs from the whole image's, and a thin scatter of
- * pixels resolves a hair differently along silhouettes. These bounds admit
- * that and nothing structural: a wrong sub-frustum sign, a band-height eps
- * or a repeated gradient all move a large FRACTION of the frame, orders of
- * magnitude past this. */
-const MEAN_DIFF_MAX = 0.5;
-const OVER8_FRACTION_MAX = 0.005;
+/** Tiling is a pixel-exact operation, full stop — see THE BAR IS NOW
+ * BIT-EXACT above. Both bounds are zero on purpose: the band derivation
+ * has no remaining source of drift, so there is no scatter to admit, and
+ * the structural failures this gate exists for (a wrong band offset sign,
+ * a band-height eps, a repeated gradient) move a large FRACTION of the
+ * frame anyway. */
+const MEAN_DIFF_MAX = 0;
+const OVER8_FRACTION_MAX = 0;
 
 const failures = [];
 function check(ok, label) {
@@ -382,12 +398,12 @@ async function main() {
             `${(diff.over8 * 100).toFixed(3)}% of pixels off by >8`,
         );
         check(
-          diff.meanDiff < MEAN_DIFF_MAX,
-          `mean channel diff ${diff.meanDiff.toFixed(4)} < ${String(MEAN_DIFF_MAX)}`,
+          diff.meanDiff <= MEAN_DIFF_MAX,
+          `mean channel diff ${diff.meanDiff.toFixed(4)} <= ${String(MEAN_DIFF_MAX)}`,
         );
         check(
-          diff.over8 < OVER8_FRACTION_MAX,
-          `pixels off by >8: ${(diff.over8 * 100).toFixed(3)}% < ` +
+          diff.over8 <= OVER8_FRACTION_MAX,
+          `pixels off by >8: ${(diff.over8 * 100).toFixed(3)}% <= ` +
             `${String(OVER8_FRACTION_MAX * 100)}%`,
         );
       }

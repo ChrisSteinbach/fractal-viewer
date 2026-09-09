@@ -12,7 +12,11 @@
  * GPU work is serial. Run on a quiet machine with a verified display cookie.
  *
  * Uses UI event handlers and the app's Collection encoder, never private scene
- * mutation hooks. Scene variants are ordinary hash documents. Pixels are read
+ * mutation hooks. Scene variants are ordinary hash documents, and every
+ * comparison after the starter is configured runs against a RELOAD of the
+ * saved document — `persist.ts` rounds on encode, so a live session and a
+ * reload of its own hash differ slightly, and that difference must not be
+ * charged to whatever two images a check happens to compare. Pixels are read
  * from screenshots/downloads; out-of-rAF WebGL readback is never evidence.
  * The aperture variant removes one visible Menger corner branch: it gates a
  * geometry edit reaching production shading, not a separate transport oracle.
@@ -488,6 +492,18 @@ async function runCase(browser, scene, engine) {
       );
       row.checks.nonFlatDocument = true;
     }
+    // FROM HERE ON THE FIXTURE IS THE SAVED DOCUMENT, not the panel state
+    // that produced it. `persist.ts` rounds on encode, so a session
+    // configured through the UI and a session reloaded from its own saved
+    // hash render a hair apart — MEASURED 0.127/255 mean, 1.2% of channels,
+    // on cathedral/compute at one sample. That is a DOCUMENT difference,
+    // and while the untiled arm exported the live session and the tiled arm
+    // a reload of it, the band comparison below was charged for it: it read
+    // 0.127 where the bands themselves were already exact. Reload once here
+    // and the two export arms differ only in their ray cap.
+    await boot(page, engine, saved.encoded);
+    await enter(page);
+    await settled(page, engine, `${label}/fixture`);
     row.initial = initial;
     row.settled = (await pollSurfaceState(page)).probe;
     row.estimatedFrameGpuBufferBytes =
@@ -554,10 +570,23 @@ async function runCase(browser, scene, engine) {
           row.singleExportBytes,
           tiled.bytes,
         );
+        // BIT-EXACT, not merely close. Nothing a band changes reaches the
+        // per-pixel arithmetic any more: the ray's NDC, the march-start
+        // dither and the transport's per-pixel seed are all derived from
+        // the FULL-IMAGE pixel (bgOffset/bgExtent), the projection is the
+        // whole image's, and the band's own raster height no longer enters
+        // the app kernels at all. So an equal document traced in four
+        // bands must return the same bytes, and any drift at all is a real
+        // band-derived difference to explain rather than a tolerance to
+        // widen. MEASURED 0 / 0% here against 0.408 mean, 5.9% of channels
+        // before the fix (authored 8 samples), 0.699 / 10.1% at one.
         assert(
           !row.tiledExport.diff.dimensionsDiffer &&
-            row.tiledExport.diff.meanDiff < 0.15,
-          `${label}: capture band seams/sample drift`,
+            row.tiledExport.diff.meanDiff === 0 &&
+            row.tiledExport.diff.changedFraction === 0,
+          `${label}: capture bands did not reproduce the untiled export ` +
+            `(mean ${row.tiledExport.diff.meanDiff?.toFixed(4) ?? "n/a"}/255, ` +
+            `${((row.tiledExport.diff.changedFraction ?? 0) * 100).toFixed(2)}% of channels)`,
         );
       }
       await boot(page, engine, saved.encoded);
