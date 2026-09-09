@@ -5651,16 +5651,19 @@ export class FractalScene {
     acceptHeight: number,
     /** The horizontal BAND of a taller image this raster covers, when it
      * is one capture tile of several: `bottom` rows above the
-     * full image's bottom row, out of `fullHeight`. The camera's
-     * sub-frustum ({@link withViewBand}) already aims the rays; what the
-     * band changes HERE is everything derived from the raster's height —
-     * the trace eps (a tile's pixels are the full image's pixels, so its
-     * cone footprint is the full image's) and the backdrop's `bgOffset`/
-     * `bgExtent` (the shared shape reads the FULL image's
-     * coordinates — see `fractal/background-shape.ts` — so a band passes
-     * its own place in that image rather than a remapped pair of stops;
-     * this retired `surfaceComputeBandStops`, which existed only because a
-     * LINEAR ramp restricted to a sub-rectangle is still linear). */
+     * full image's bottom row, out of `fullHeight`. The projection stays
+     * the WHOLE image's — no sub-frustum — and `bgOffset`/`bgExtent`
+     * carry the band's place in that image, which is what every
+     * full-image quantity in the kernels is derived from: the backdrop
+     * shape (see `fractal/background-shape.ts` — this retired
+     * `surfaceComputeBandStops`, which existed only because a LINEAR ramp
+     * restricted to a sub-rectangle is still linear), the transport's
+     * per-pixel seed, the march-start dither, AND the ray's own NDC. A
+     * sub-frustum against the band's own raster is the same ray in exact
+     * arithmetic and NOT in f32, and the difference lands on a march
+     * start that a chaotic DE amplifies. The band also changes the trace
+     * eps: a tile's pixels are the full image's pixels, so its cone
+     * footprint is the full image's. */
     band?: { bottom: number; fullHeight: number },
   ): SurfaceComputeFrameSpec {
     const params = this.surfaceComputeParams;
@@ -5991,11 +5994,13 @@ export class FractalScene {
    * returns an invalid buffer and the first REJECTION is a staging
    * `mapAsync` ("Invalid buffer"), which is how the bug reached a user as
    * a failed export and a console line naming nothing. So the export
-   * traces as full-width horizontal BANDS, each a sub-frustum of the same
-   * camera ({@link withViewBand}) at the same eps, sized under the
-   * device's own ceiling ({@link surfaceComputeTileRows}), assembled here.
-   * One tile is the whole image on any ordinary export, and that path is
-   * byte-identical to the untiled one.
+   * traces as full-width horizontal BANDS, each one a row range of the
+   * SAME whole-image projection at the same eps — the band's place in the
+   * image rides `bgOffset`/`bgExtent`, and the kernels derive every
+   * full-image quantity from that pair — sized under the device's own
+   * ceiling ({@link surfaceComputeTileRows}) and assembled here. One tile
+   * is the whole image on any ordinary export, and that path is
+   * byte-identical to the untiled one; so, now, is a banded one.
    */
   async captureSurfaceComputeFrame(
     exportScale: number,
@@ -6035,12 +6040,10 @@ export class FractalScene {
       for (let bottom = 0; bottom < height; bottom += rows) {
         const bandHeight = Math.min(rows, height - bottom);
         specs.push(
-          this.withViewBand(width, height, bottom, bandHeight, () =>
-            this.surfaceComputeFrameSpecAt("full", width, bandHeight, height, {
-              bottom,
-              fullHeight: height,
-            }),
-          ),
+          this.surfaceComputeFrameSpecAt("full", width, bandHeight, height, {
+            bottom,
+            fullHeight: height,
+          }),
         );
       }
       return specs;
@@ -6138,39 +6141,6 @@ export class FractalScene {
       );
       return exportImageFrom(this.renderer.domElement);
     });
-  }
-
-  /**
-   * Assemble something under a SUB-FRUSTUM of the live projection: the
-   * band of `bandHeight` rows sitting `bandBottom` rows above the bottom
-   * of a `fullWidth` x `fullHeight` image. Three.js's view
-   * offset is exactly this — a sub-view of a notional full image, with
-   * its own y measured from the TOP — so a band's rays are the full
-   * image's rays, no reprojection of our own. Restores through
-   * {@link syncProjection} like {@link withCenteredProjection}, whose
-   * inset-free projection this composes inside.
-   */
-  private withViewBand<T>(
-    fullWidth: number,
-    fullHeight: number,
-    bandBottom: number,
-    bandHeight: number,
-    read: () => T,
-  ): T {
-    this.camera.setViewOffset(
-      fullWidth,
-      fullHeight,
-      0,
-      fullHeight - bandBottom - bandHeight,
-      fullWidth,
-      bandHeight,
-    );
-    this.camera.updateProjectionMatrix();
-    try {
-      return read();
-    } finally {
-      this.syncProjection();
-    }
   }
 
   /**
