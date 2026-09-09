@@ -55,6 +55,7 @@ import {
   twentyFourCellFlake,
 } from "./presets";
 import { mulberry32 } from "./rng";
+import { SHAPE_MARCH_SAFETY } from "./shapes";
 import type { SymmetryParams, Transform, Transform4, Vec4 } from "./types";
 import { clamp } from "./vec";
 
@@ -4350,7 +4351,7 @@ describe("analyzeSurfaceSystem4 shape emitters", () => {
     ).toThrow(/condensation shape/);
   });
 
-  it("refuses a pure-emitter 4D system but admits an SDF-only intersection beside recursion", () => {
+  it("admits a pure-emitter 4D system and an SDF-only intersection beside recursion", () => {
     const emitter = {
       parts: [
         {
@@ -4360,10 +4361,8 @@ describe("analyzeSurfaceSystem4 shape emitters", () => {
       ],
     };
     const analysis = analyzeSurfaceSystem4([map4({ emitter })]);
-    expect(analysis.status).toBe("ineligible");
-    expect(analysis.reasons).toContain(
-      "shape emitters leave no recursive maps",
-    );
+    expect(analysis.status).toBe("eligible");
+    expect(buildSurfaceDE4([map4({ emitter })]).maps).toHaveLength(0);
 
     const intersectionSystem = [
       map4(),
@@ -4699,5 +4698,481 @@ describe("analyzeSurfaceSystem4 shape emitters", () => {
     expect(estimateDistance4(root, p)).toBeCloseTo(0.342, 12);
     expect(estimateDistance4(depth1, p)).toBe(0);
     expect(estimateDistance4(all, p)).toBe(estimateDistance4(depth1, p));
+  });
+});
+
+describe("emitter-only finite unions in 4D", () => {
+  it("agrees with independently posed embedded box/sphere distances and keeps emitter slots", () => {
+    const transforms: Transform[] = [
+      map4({ id: 0, weight: 0 }),
+      map4({
+        id: 1,
+        position: [-0.7, 0.2, -0.1],
+        scale: [1.4, 1.4, 1.4],
+        w: { position: 0.3, scale: 1.4, rotation: { xw: Math.PI / 2 } },
+        variations: [{ type: "swirl", weight: 1 }],
+        post: { m: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [20, 30, 40] },
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "box", half: [0.3, 0.2, 0.15] },
+              combine: "union",
+              pose: {
+                offset: [0.15, -0.1, 0.05],
+                rotate: [0, 0, Math.PI / 2],
+                scale: 0.8,
+              },
+            },
+          ],
+        },
+      }),
+      map4({
+        id: 2,
+        position: [0.8, -0.3, 0.15],
+        scale: [0.7, 0.7, 0.7],
+        w: { position: -0.25, scale: 0.7, rotation: { yw: Math.PI / 2 } },
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.3 },
+              combine: "union",
+              pose: { offset: [0.1, 0, 0], scale: 0.9 },
+            },
+          ],
+        },
+      }),
+    ];
+    const de = buildSurfaceDE4(transforms);
+    expect(de.maps).toHaveLength(0);
+    expect(
+      de.condensation!.emitters.map((e) => [e.baseIndex, e.shadeIndex]),
+    ).toEqual([
+      [1, 0],
+      [2, 1],
+    ]);
+    expect(slabExact4(de)).toBe(false);
+    expect(() => estimateDistance4(de, [0, 0, 0, 0], [0, 0, 0, 0.1])).toThrow(
+      /condensation shape/,
+    );
+    // The xw-tilted box lies at x=-0.7 and the yw-tilted solid sphere at
+    // y=-0.3. Direct distances to those finite 3D solids include the
+    // perpendicular coordinate; neither is a 4D extrusion.
+    const oracle = ([x, y, z, w]: Vec4) => {
+      const q = [
+        Math.abs(y - 0.06) - 0.336,
+        Math.abs(z + 0.03) - 0.168,
+        Math.abs(w - 0.51) - 0.224,
+      ];
+      const boxOutside = Math.hypot(...q.map((v) => Math.max(0, v)));
+      const sphereOutside = Math.max(
+        0,
+        Math.hypot(x - 0.87, z - 0.15, w + 0.25) - 0.189,
+      );
+      return Math.min(
+        Math.hypot(boxOutside, x + 0.7),
+        Math.hypot(sphereOutside, y + 0.3),
+      );
+    };
+    const rng = mulberry32(0x524f4f54);
+    const probes: Vec4[] = [
+      [-0.7, 0.06, -0.03, 0.51],
+      [0.87, -0.3, 0.15, -0.25],
+      [-0.7, 0.396, -0.03, 0.51],
+      [-0.6, 0.06, -0.03, 0.51],
+      [0, 0, 0, 0],
+      [10, 0, 0, 0],
+    ];
+    for (let i = 0; i < 100; i++)
+      probes.push([
+        rng() * 3 - 1.5,
+        rng() * 3 - 1.5,
+        rng() * 3 - 1.5,
+        rng() * 3 - 1.5,
+      ]);
+    for (const p of probes) {
+      const exact = oracle(p);
+      const expected = Math.max(
+        SHAPE_MARCH_SAFETY * exact,
+        Math.hypot(...p) - de.boundingRadius,
+      );
+      for (const maxDepth of [0, 1, 8, MAX_DESCENT_DEPTH]) {
+        const capped = { ...de, maxDepth };
+        expect(estimateDistance4(capped, p)).toBeCloseTo(expected, 11);
+        expect(estimateDistance4Refined(capped, p)).toBeCloseTo(expected, 11);
+        expect(estimateDistance4Refined(capped, p, 1e-4)).toBeCloseTo(
+          expected,
+          11,
+        );
+      }
+      expect(expected).toBeLessThanOrEqual(exact + 1e-12);
+    }
+  });
+
+  it("refuses root-excluding bands and keeps a directly excluded root empty", () => {
+    const emitter = map4({
+      w: { position: 0.3 },
+      emitter: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.5 },
+            combine: "union",
+          },
+        ],
+      },
+    });
+    const symmetry = { order: 1, plane: "xy" as const };
+    const band = { minDepth: 1, maxDepth: 3 };
+    const transforms = [emitter, map4({ id: 1, weight: 0 })];
+    for (const schedule of [null, { depth: 2, transforms: [map4()] }]) {
+      expect(
+        analyzeSurfaceSystem4(transforms, null, schedule, symmetry, band)
+          .reasons,
+      ).toContain(
+        "shape emitter depth band excludes the only root (depth 0); choose All levels or Root only",
+      );
+      expect(() =>
+        buildSurfaceDE4(transforms, null, symmetry, {
+          schedule,
+          condensationDepthBand: band,
+        }),
+      ).toThrow(/excludes the only root/);
+    }
+    const de = buildSurfaceDE4(transforms);
+    const empty = {
+      ...de,
+      maxDepth: 0,
+      condensation: {
+        ...de.condensation!,
+        depthBand: band,
+      },
+    };
+    for (const p of [
+      [0, 0, 0, 0],
+      [...emitter.position, 0.3],
+      [20, 0, 0, 0],
+    ] as Vec4[]) {
+      expect(estimateDistance4(empty, p)).toBe(Infinity);
+      expect(estimateDistance4Refined(empty, p, 0.01)).toBe(Infinity);
+    }
+    const reversedRoot = buildSurfaceDE4(transforms, null, symmetry, {
+      condensationDepthBand: { minDepth: 2, maxDepth: 0 },
+    });
+    expect(estimateDistance4(reversedRoot, [...emitter.position, 0.3])).toBe(0);
+  });
+
+  it("preserves the finite root through xaos support and w-plane symmetry copies", () => {
+    const shape = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.2 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const transforms = [
+      map4({
+        position: [1, 0, 0],
+        scale: [1, 1, 1],
+        w: { position: 0.2, scale: 1 },
+        emitter: shape,
+        chaos: [1, 0],
+      }),
+      map4({
+        id: 1,
+        position: [0, 0, 0.5],
+        scale: [1, 1, 1],
+        w: { scale: 1 },
+        emitter: shape,
+        chaos: [0, 0],
+      }),
+    ];
+    const de = buildSurfaceDE4(transforms, null, { order: 4, plane: "xw" });
+    expect(de.chaos?.activeStateCount).toBe(2);
+    expect(de.condensation!.emitters.map((e) => e.shadeIndex)).toEqual([
+      0, 1, 0, 1, 0, 1, 0, 1,
+    ]);
+    const oracle = ([x, y, z, w]: Vec4) =>
+      Math.min(
+        ...[
+          [x, w],
+          [w, -x],
+          [-x, -w],
+          [-w, x],
+        ].flatMap(([qx, qw]) => [
+          Math.hypot(Math.max(0, Math.hypot(qx - 1, y, z) - 0.2), qw - 0.2),
+          Math.hypot(Math.max(0, Math.hypot(qx, y, z - 0.5) - 0.2), qw),
+        ]),
+      );
+    for (const p of [
+      [0, 0, 0, 0],
+      [0.6, 0.4, 0.3, 0.2],
+      [1, 0, 0, 0.2],
+      [-0.2, 0, 0, 1],
+      [-1, 0, 0, -0.2],
+      [0.2, 0, 0, -1],
+      [0, 0, 0.5, 0],
+    ] as Vec4[]) {
+      expect(estimateDistance4(de, p)).toBeCloseTo(
+        SHAPE_MARCH_SAFETY * oracle(p),
+        12,
+      );
+      expect(estimateDistance4Refined(de, p)).toBeCloseTo(
+        SHAPE_MARCH_SAFETY * oracle(p),
+        12,
+      );
+    }
+  });
+
+  it("evaluates the full finite B word before root-only C0 at every requested budget", () => {
+    const emitter = map4({
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+      w: { scale: 1 },
+      emitter: {
+        parts: [
+          { primitive: { kind: "sphere", radius: 0.2 }, combine: "union" },
+        ],
+      },
+    });
+    for (const depth of [1, 2, 5]) {
+      const b = map4({
+        position: [0.6, 0, 0],
+        scale: [1.2, 1.2, 1.2],
+        w: { position: 0.3, scale: 1.2 },
+        post: { m: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [30, 0, 0] },
+      });
+      const de = buildSurfaceDE4(
+        [emitter],
+        null,
+        { order: 1, plane: "xy" },
+        {
+          schedule: { depth, transforms: [b] },
+          condensationDepthBand: { maxDepth: 0 },
+        },
+      );
+      const center = (0.6 * (1.2 ** depth - 1)) / 0.2;
+      const centerW = (0.3 * (1.2 ** depth - 1)) / 0.2;
+      const radius = 0.2 * 1.2 ** depth;
+      for (const dx of [0, 0.1, radius, radius + 0.03]) {
+        const p: Vec4 = [center + dx, 0, 0, centerW + 0.02];
+        const expected =
+          SHAPE_MARCH_SAFETY * Math.hypot(Math.max(0, dx - radius), 0.02);
+        for (const maxDepth of [0, depth, depth + 1, de.maxDepth]) {
+          const capped = { ...de, maxDepth };
+          expect(estimateDistance4(capped, p)).toBeCloseTo(expected, 11);
+          expect(estimateDistance4Refined(capped, p)).toBeCloseTo(expected, 11);
+        }
+      }
+    }
+  });
+  it("does not invent descendants after a five-way B prefix reaches pure C0", () => {
+    const emitter = map4({
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+      emitter: {
+        parts: [-0.4, 0.4].map((x) => ({
+          primitive: { kind: "sphere" as const, radius: 0.1 },
+          combine: "union" as const,
+          pose: { offset: [x, 0, 0] as [number, number, number] },
+        })),
+      },
+    });
+    const schedule = {
+      depth: 1,
+      transforms: Array.from({ length: 5 }, (_, id) =>
+        map4({ id, position: [0, 0, 0], scale: [1, 1, 1] }),
+      ),
+    };
+    // Every finite B map is identity, so the exact gap to the union is 0.3.
+    // The fifth in-ball child spills beyond the four-lane frontier; there
+    // is no future A level whose bounding sphere it must certify.
+    for (const band of [undefined, { maxDepth: 0 }]) {
+      const de = buildSurfaceDE4(
+        [emitter],
+        null,
+        { order: 1, plane: "xy" },
+        {
+          schedule,
+          condensationDepthBand: band,
+        },
+      );
+      expect(estimateDistance4(de, [0, 0, 0, 0])).toBeCloseTo(0.27, 12);
+      expect(estimateDistance4Refined(de, [0, 0, 0, 0])).toBeCloseTo(0.27, 12);
+    }
+  });
+
+  it("refuses emitter-only schedules that can drop an unfinished finite word", () => {
+    const emitter = map4({
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+      emitter: {
+        parts: [-0.4, 0.4].map((x) => ({
+          primitive: { kind: "sphere" as const, radius: 0.1 },
+          combine: "union" as const,
+          pose: { offset: [x, 0, 0] as [number, number, number] },
+        })),
+      },
+    });
+    const symmetry = { order: 1, plane: "xy" as const };
+    const schedule = {
+      depth: 2,
+      transforms: Array.from({ length: 5 }, (_, id) =>
+        map4({ id, position: [0, 0, 0], scale: [1, 1, 1] }),
+      ),
+    };
+    // This finite union is still the two spheres, but an unfinished fifth
+    // B word used to replace their exact +0.3 gap with a negative ball term.
+    for (const band of [undefined, { maxDepth: 0 }]) {
+      const result = analyzeSurfaceSystem4(
+        [emitter],
+        null,
+        schedule,
+        symmetry,
+        band,
+      );
+      expect(result.status).toBe("ineligible");
+      expect(result.reasons).toContain(
+        "emitter-only Surface needs at most 4 unfinished schedule branches; reduce schedule depth or the number of active B maps",
+      );
+      expect(() =>
+        buildSurfaceDE4([emitter], null, symmetry, {
+          schedule,
+          condensationDepthBand: band,
+        }),
+      ).toThrow(/unfinished schedule branches/);
+    }
+    // The restriction belongs only to this newly admitted finite geometry.
+    expect(
+      analyzeSurfaceSystem4([emitter, map4({ id: 1 })], null, schedule).status,
+    ).not.toBe("ineligible");
+  });
+
+  it("keeps exact finite gaps at each supported schedule-frontier boundary", () => {
+    const emitter = map4({
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+      emitter: {
+        parts: [-0.4, 0.4].map((x) => ({
+          primitive: { kind: "sphere" as const, radius: 0.1 },
+          combine: "union" as const,
+          pose: { offset: [x, 0, 0] as [number, number, number] },
+        })),
+      },
+    });
+    for (const [count, depth] of [
+      [1, 5],
+      [5, 1],
+      [2, 3],
+      [4, 2],
+    ]) {
+      const schedule = {
+        depth,
+        transforms: Array.from({ length: count }, (_, id) =>
+          map4({
+            id,
+            position: [(id - (count - 1) / 2) * 0.01, 0, 0],
+            scale: [1, 1, 1],
+          }),
+        ),
+      };
+      // B words only translate along x. The nearest sphere takes the
+      // innermost displacement at every letter, yielding this exact gap.
+      const exact = 0.3 - 0.005 * (count - 1) * depth;
+      for (const band of [undefined, { maxDepth: 0 }]) {
+        const de = buildSurfaceDE4(
+          [emitter],
+          null,
+          { order: 1, plane: "xy" },
+          {
+            schedule,
+            condensationDepthBand: band,
+          },
+        );
+        expect(estimateDistance4(de, [0, 0, 0, 0])).toBeCloseTo(
+          SHAPE_MARCH_SAFETY * exact,
+          12,
+        );
+        expect(estimateDistance4Refined(de, [0, 0, 0, 0])).toBeCloseTo(
+          SHAPE_MARCH_SAFETY * exact,
+          12,
+        );
+      }
+    }
+  });
+
+  it("counts scheduled support with the weighted and all-zero fallback rules", () => {
+    const emitter = map4({
+      emitter: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.1 },
+            combine: "union",
+          },
+        ],
+      },
+    });
+    const maps = Array.from({ length: 6 }, (_, id) =>
+      map4({ id, weight: id === 0 ? 1 : 0 }),
+    );
+    expect(
+      analyzeSurfaceSystem4([emitter], null, { depth: 5, transforms: maps })
+        .status,
+    ).not.toBe("ineligible");
+    const fallback = maps.map((t) => ({ ...t, weight: 0 }));
+    expect(
+      analyzeSurfaceSystem4([emitter], null, { depth: 2, transforms: fallback })
+        .reasons,
+    ).toContain(
+      "emitter-only Surface needs at most 4 unfinished schedule branches; reduce schedule depth or the number of active B maps",
+    );
+  });
+
+  it("carries a finite emitter through affine and single-region boxfold final lenses", () => {
+    const emitter = map4({
+      position: [1.25, 0, 0],
+      scale: [1, 1, 1],
+      w: { position: 0.3, scale: 1 },
+      emitter: {
+        parts: [
+          { primitive: { kind: "sphere", radius: 0.1 }, combine: "union" },
+        ],
+      },
+    });
+    const affineFinal = map4({
+      position: [0.4, -0.2, 0.1],
+      rotation: [0, 0, Math.PI / 2],
+      scale: [1.5, 1.5, 1.5],
+      w: { position: 0.2, scale: 1.5 },
+    });
+    const foldFinal = map4({
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+      w: { scale: 1 },
+      variations: [{ type: "boxfold", weight: 1 }],
+    });
+    for (const [final, center, radius] of [
+      [affineFinal, [0.4, 1.675, 0.1, 0.65], 0.15],
+      [foldFinal, [0.75, 0, 0, 0.3], 0.1],
+    ] as [Transform, Vec4, number][]) {
+      const de = buildSurfaceDE4([emitter], final);
+      for (const offset of [
+        [0, 0, 0, 0],
+        [radius, 0, 0, 0],
+        [radius + 0.04, 0, 0, 0],
+        [0, 0.3, 0.2, 0.1],
+      ] as Vec4[]) {
+        const p = center.map((v, i) => v + offset[i]) as Vec4;
+        const exact = Math.hypot(
+          Math.max(0, Math.hypot(...offset.slice(0, 3)) - radius),
+          offset[3],
+        );
+        const plain = estimateDistance4({ ...de, maxDepth: 0 }, p);
+        const refined = estimateDistance4Refined({ ...de, maxDepth: 0 }, p);
+        expect(plain).toBeCloseTo(refined, 11);
+        expect(plain).toBeLessThanOrEqual(exact + 1e-12);
+        if (exact > 0.01) expect(plain).toBeGreaterThan(0.01);
+        if (exact < 1e-12) expect(plain).toBeCloseTo(0, 11);
+      }
+    }
   });
 });

@@ -185,9 +185,11 @@ In 4D the same 3D solid is embedded at local `w = 0`, with distance
 thickness is refused because a segment query has no certified condensation counterpart.
 
 Emitter transforms are reset events, not recursive maps: their variations are skipped, symmetry copies
-share one shade/material slot, and ordinary maps remain the only descent alphabet. Surface refuses an
-unsamplable or nearly-flat emitter, an emitter-only document, and an emitter on the final transform. The
-shader wire admits at most 24 ordinary-map plus symmetry-expanded emitter records and at most 24 unique
+share one shade/material slot, and ordinary maps remain the only descent alphabet. An
+[emitter-only scene](emitter-only-surface.md) renders the finite C0 union in both dimensions
+when the band includes root depth 0. Nearly-flat poses and final-transform emitters remain refused;
+an SDF-only intersection is supported even though point consumers cannot sample it. The
+shader wire admits at most 24 ordinary A-map, supported B-map and symmetry-expanded emitter records, and at most 24 unique
 shade slots. Escape/bulb forward cores remain a different construction and refuse this condensation
 term; their shape-trap color channel and the separate trap-as-geometry work below are not aliases for it.
 

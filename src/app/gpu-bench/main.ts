@@ -248,6 +248,7 @@ import {
 } from "../flame-gpu-backend";
 import { FLAME_FILTER_RADIUS } from "../flame-worker-core";
 import { surfaceCondensationKernelSpec } from "./condensation";
+import { runSurfaceEmitterOnlyAgreement } from "./condensation-emitter-only";
 import type {
   FlameAccumBackend,
   GpuBackendRequest,
@@ -14422,6 +14423,7 @@ async function runSurfaceDeSection(
   results.adapter = acquired.adapterInfo;
   results.limits = acquired.limits;
   let compileFailed = false;
+  let emitterOnlyFailed = false;
   let tilingAbiFailed = false;
   let latticeTilingAbiFailed = false;
   // Set when the escape eval leg's f32-stability gate excludes too
@@ -14526,6 +14528,34 @@ async function runSurfaceDeSection(
     const canaryCheck = async (boundary: string): Promise<void> => {
       await canary?.check(boundary);
     };
+
+    // Zero recursive maps must still evaluate C0, preserve its winning
+    // material, and shade through the production entry in both dimensions.
+    try {
+      activity.setState(
+        "gpu",
+        "Surface emitter-only eval/hit-info/shade agreement",
+      );
+      const rows = await runSurfaceEmitterOnlyAgreement(
+        device,
+        surfaceEvalTol,
+        status,
+      );
+      for (const row of rows) {
+        results.notes.push(
+          `${row.name}: ${row.queries} eval/hit-info/shade queries, ` +
+            `max eval error ${row.evalMaxError.toExponential(3)}, ` +
+            `hit-info mismatches ${row.hitInfoMismatches}, shade byte error ${row.shadeMaxByteError}, palette byte error ${row.paletteMaxByteError}`,
+        );
+      }
+    } catch (e) {
+      emitterOnlyFailed = true;
+      results.notes.push(
+        `emitter-only eval/hit-info/shade: ${describeError(e)}`,
+      );
+    }
+    render();
+    await canaryCheck("the emitter-only eval/hit-info/shade agreement leg");
 
     // ----- Finite tiling: all-seven compile/bind/numeric ABI gate -----
     // This runs before the broad agreement matrices so a too-short uniform
@@ -18222,6 +18252,7 @@ async function runSurfaceDeSection(
       lens4GateFail ||
       lens4PackGuardFailed ||
       aff4SweepFailed ||
+      emitterOnlyFailed ||
       tilingAbiFailed ||
       latticeTilingAbiFailed ||
       latticeFrameFailed
@@ -18253,13 +18284,15 @@ async function runSurfaceDeSection(
                               ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
                               : lens4PackGuardFailed
                                 ? "lens4 pack-guard: packSurface4GpuParams did not refuse a spherefold-final slab query — see notes"
-                                : tilingAbiFailed
-                                  ? "finite-tiling compile/bind/numeric ABI agreement failure — see notes"
-                                  : latticeTilingAbiFailed
-                                    ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
-                                    : latticeFrameFailed
-                                      ? "lattice carrier frame failure — see notes"
-                                      : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                                : emitterOnlyFailed
+                                  ? "emitter-only eval/hit-info/shade agreement failure — see notes"
+                                  : tilingAbiFailed
+                                    ? "finite-tiling compile/bind/numeric ABI agreement failure — see notes"
+                                    : latticeTilingAbiFailed
+                                      ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
+                                      : latticeFrameFailed
+                                        ? "lattice carrier frame failure — see notes"
+                                        : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like

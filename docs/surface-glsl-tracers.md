@@ -1154,9 +1154,11 @@ Analytic-only source remains sampler-free and does not trigger the bake.
 
 The uniform wire is capped at 24 total A-map plus supported B-map plus
 symmetry-expanded emitter records and 24 unique shade slots. B does not add a
-shade slot. Unsamplable/nearly-flat emitters,
-emitter-only documents and final-transform emitters are rejected before this
-arm; escape and bulb use the separate forward-orbit construction and cannot
+shade slot. Nearly-flat poses and final-transform emitters are rejected before this
+arm. [Emitter-only scenes](emitter-only-surface.md) have zero A records and
+retain the active C0 suffix, with a traversal floor that completes B and the
+zero-child exit; an unbounded band cannot create future A children.
+Escape and bulb use the separate forward-orbit construction and cannot
 compile it. Balloon and the surface grid remain admissible because both wrap
 or sample the same condensation-aware public estimator.
 

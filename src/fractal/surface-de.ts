@@ -19,6 +19,7 @@ import {
   condensationBoundingRadius3,
   condensationHasFutureDepth,
   condensationTerm3,
+  condensationTraversalDepth,
   resolveCondensationDepthBand,
 } from "./condensation-de";
 import type {
@@ -528,6 +529,9 @@ export const FOOTPRINT_DEPTH_FLOOR = 4;
  * still a true lower bound, merely coarser.
  */
 function footprintDepthCap(de: SurfaceDE, footprint: number): number {
+  if (de.maps.length === 0) {
+    return condensationTraversalDepth(de, de.maxDepth);
+  }
   // A finite prefix has a non-stationary alphabet/bound sequence; the
   // classic logarithmic exponent prices repeated A levels only.
   if (de.schedule) return de.maxDepth;
@@ -1882,6 +1886,44 @@ export function transformSigmas(t: Transform): MapSigmas {
   return stages.base;
 }
 
+function surfaceSystemIsEmitterOnly(transforms: readonly Transform[]): boolean {
+  const active = transforms.filter(isActive);
+  return active.length > 0 && active.every(transformHasEmitter);
+}
+
+/** A pure emitter set is exactly C0; a root-excluding band is empty. */
+export function emitterOnlySurfaceBandRefusal(
+  transforms: readonly Transform[],
+  condensationDepthBand?: CondensationDepthBand,
+): string | null {
+  return surfaceSystemIsEmitterOnly(transforms) &&
+    resolveCondensationDepthBand(condensationDepthBand).minDepth > 0
+    ? "shape emitter depth band excludes the only root (depth 0); choose All levels or Root only"
+    : null;
+}
+
+/**
+ * Retain every unfinished finite B word before C0 is evaluated. The affine
+ * frontier has four lanes; the final level may be wider because every
+ * generated child's C0 term is folded before frontier selection. Dropping
+ * an earlier in-ball B branch can turn an actual finite-union gap into a
+ * bounding-ball hit. Ordinary recursive systems retain their existing gate.
+ */
+export function emitterOnlySurfaceScheduleRefusal(
+  transforms: readonly Transform[],
+  schedule: HybridSchedule | null | undefined,
+): string | null {
+  if (!surfaceSystemIsEmitterOnly(transforms)) return null;
+  const prepared = prepareSchedule(schedule);
+  if (!prepared || !schedule) return null;
+  const count = schedule.transforms.filter(
+    (t) => !prepared.weighted || (t.weight ?? 1) > 0,
+  ).length;
+  return count ** (prepared.depth - 1) > 4
+    ? "emitter-only Surface needs at most 4 unfinished schedule branches; reduce schedule depth or the number of active B maps"
+    : null;
+}
+
 /**
  * Classify a system for the surface render mode: does a valid distance
  * estimator exist, and how fast can it be marched? Weight-0 maps are ignored
@@ -1895,6 +1937,7 @@ export function analyzeSurfaceSystem(
   finalTransform: Transform | null = null,
   schedule: HybridSchedule | null = null,
   symmetry: SymmetryParams = NO_SYMMETRY,
+  condensationDepthBand?: CondensationDepthBand,
 ): SurfaceEligibility {
   const reasons: string[] = [];
   const stageSigmas = transforms.map(transformStageSigmas);
@@ -1910,12 +1953,12 @@ export function analyzeSurfaceSystem(
     reasons.push("every transform has weight 0");
   }
 
-  if (
-    active.length > 0 &&
-    transforms.every((t) => !isActive(t) || transformHasEmitter(t))
-  ) {
-    reasons.push("shape emitters leave no recursive maps");
-  }
+  // B's finite post-word moves A = C0 but never creates an A descendant.
+  const bandRefusal = emitterOnlySurfaceBandRefusal(
+    transforms,
+    condensationDepthBand,
+  );
+  if (bandRefusal) reasons.push(bandRefusal);
 
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
@@ -2019,6 +2062,11 @@ export function analyzeSurfaceSystem(
   }
 
   const preparedSchedule = prepareSchedule(schedule);
+  const scheduleRefusal = emitterOnlySurfaceScheduleRefusal(
+    transforms,
+    schedule,
+  );
+  if (scheduleRefusal) reasons.push(scheduleRefusal);
   if (preparedSchedule) {
     const supported = schedule!.transforms.filter(
       (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
@@ -2148,6 +2196,7 @@ export function buildSurfaceDE(
     finalTransform,
     options.schedule,
     symmetry,
+    options.condensationDepthBand,
   );
   if (analysis.status === "ineligible") {
     throw new Error(
@@ -3269,7 +3318,9 @@ function scheduledCondensationHasFutureDepth(
   if (!de.condensation) return false;
   const aDepth = nextDepth - (de.schedule?.depth ?? 0);
   return (
-    aDepth < 0 || condensationHasFutureDepth(de.condensation.depthBand, aDepth)
+    aDepth < 0 ||
+    (de.maps.length > 0 &&
+      condensationHasFutureDepth(de.condensation.depthBand, aDepth))
   );
 }
 

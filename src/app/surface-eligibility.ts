@@ -22,8 +22,10 @@ import { analyzeEscapeSystem4 } from "../fractal/escape-de-4d";
 import { systemHasActiveQSquare } from "../fractal/qjulia-de";
 import {
   analyzeSurfaceSystem,
+  emitterOnlySurfaceBandRefusal,
   transformStageSigmas,
 } from "../fractal/surface-de";
+import type { CondensationDepthBand } from "../fractal/condensation-de";
 import type { SurfaceEligibilityStatus } from "../fractal/surface-de";
 import {
   analyzeSurfaceSystem4,
@@ -63,7 +65,8 @@ export type SurfaceRouteKind = "ifs" | "escape" | "bulb" | "ifs4" | "escape4";
 /** A narrowly-scoped action the mode gate can offer to resolve the refusal
  * it is currently disclosing. This is structured analyzer output, never
  * inferred by matching user-facing prose. */
-export type SurfaceEligibilityRecovery = "disableShapeTrapGeometry";
+export type SurfaceEligibilityRecovery =
+  "disableShapeTrapGeometry" | "includeCondensationRoot";
 
 export interface SurfaceEligibilityResult {
   status: SurfaceEligibilityStatus;
@@ -76,7 +79,7 @@ export interface SurfaceEligibilityResult {
 /**
  * The document fields that decide whether Surface has a truthful route.
  * This is intentionally the Surface-relevant projection of a full scene
- * snapshot: renderer settings, view poses and transient machine state cannot
+ * snapshot: view poses and transient machine state cannot
  * change which mathematical object the document describes. That boundary is
  * why the tiling block's OTHER two combination refusals are NOT here: the
  * derivation does not know balloon-ness (a session flag, refused at the
@@ -92,6 +95,7 @@ export interface SurfaceEligibilityDocument {
   schedule?: HybridSchedule | null;
   shapeTrap?: ShapeTrap | null;
   tiling?: TilingSpec | null;
+  condensationDepthBand?: CondensationDepthBand;
 }
 
 /**
@@ -430,6 +434,7 @@ export function deriveSurfaceEligibility(
   schedule: HybridSchedule | null = null,
   shapeTrap: ShapeTrap | null = null,
   tiling: TilingSpec | null = null,
+  condensationDepthBand?: CondensationDepthBand,
 ): SurfaceEligibilityResult {
   const scheduleRecords = scheduleRecordCount(schedule);
   const hasSchedule = scheduleRecords > 0;
@@ -470,12 +475,43 @@ export function deriveSurfaceEligibility(
   // A 4D document routes to the 4D analysis — what used to be this gate's
   // blanket "extends into 4D" disqualifier is now the 4D tracer's
   // admission ticket.
+  const rootRefusal = emitterOnlySurfaceBandRefusal(
+    transforms,
+    condensationDepthBand,
+  );
+  if (rootRefusal !== null) {
+    // Shape copies is contextual to an entered Surface session. Offer a
+    // document-level way back when a saved band excludes the only shapes,
+    // but only if including the root actually restores a supported route.
+    const rootRoute = deriveSurfaceEligibility(
+      transforms,
+      finalTransform,
+      symmetry,
+      opts,
+      schedule,
+      shapeTrap,
+      tiling,
+      { maxDepth: 0 },
+    );
+    return {
+      status: "ineligible",
+      note:
+        rootRoute.status === "ineligible"
+          ? `${rootRefusal}; ${rootRoute.note}`
+          : rootRefusal,
+      kind: null,
+      ...(rootRoute.status !== "ineligible"
+        ? { recovery: "includeCondensationRoot" as const }
+        : {}),
+    };
+  }
   if (fourD) {
     const analysis = analyzeSurfaceSystem4(
       transforms,
       finalTransform,
       schedule,
       symmetry,
+      condensationDepthBand,
     );
     if (analysis.status === "ineligible") {
       // Schedules and graph-directed chi are defined only for inverse
@@ -625,6 +661,7 @@ export function deriveSurfaceEligibility(
     finalTransform,
     schedule,
     symmetry,
+    condensationDepthBand,
   );
   if (analysis.status === "ineligible") {
     // As in 4D above, no forward renderer consumes a scheduled B word or
@@ -792,5 +829,6 @@ export function deriveSurfaceDocumentEligibility(
     document.schedule ?? null,
     document.shapeTrap ?? null,
     document.tiling ?? null,
+    document.condensationDepthBand,
   );
 }

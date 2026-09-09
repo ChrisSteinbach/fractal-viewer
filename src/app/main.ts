@@ -44,6 +44,7 @@ import {
 } from "../fractal/chamber-content";
 import {
   analyzeSurfaceSystem,
+  emitterOnlySurfaceBandRefusal,
   buildSurfaceDE,
   deHasFolds,
   surfaceOriginVisibleRadius,
@@ -5679,6 +5680,7 @@ async function main(): Promise<void> {
         state.schedule ?? null,
         state.shapeTrap ?? null,
         state.tiling ?? null,
+        state.condensationDepthBand,
       );
       if (sessionEligibility.status === "ineligible") {
         ui.flashToast(
@@ -5830,6 +5832,7 @@ async function main(): Promise<void> {
               state.finalTransform ?? null,
               state.schedule ?? null,
               state.symmetry,
+              state.condensationDepthBand,
             ).status === "ineligible"
           ) {
             // The 4D IFS gate refused, so the FORWARD-ORBIT complement one
@@ -6109,6 +6112,7 @@ async function main(): Promise<void> {
             state.finalTransform ?? null,
             state.schedule ?? null,
             state.symmetry,
+            state.condensationDepthBand,
           ).status === "ineligible"
         ) {
           // The IFS gate refused — so one of the two FORWARD-ORBIT
@@ -6851,6 +6855,7 @@ async function main(): Promise<void> {
       state.schedule ?? null,
       state.shapeTrap ?? null,
       state.tiling ?? null,
+      state.condensationDepthBand,
     );
   }
 
@@ -10110,6 +10115,23 @@ async function main(): Promise<void> {
         return;
       }
       const previous = state;
+      const candidate = applyScalarControl(state, spec, raw, source);
+      if (
+        state.renderMode === "surface" &&
+        candidate.condensationDepthBand !== state.condensationDepthBand
+      ) {
+        const refusal = emitterOnlySurfaceBandRefusal(
+          candidate.transforms,
+          candidate.condensationDepthBand,
+        );
+        if (refusal !== null) {
+          // Reject before the undo checkpoint or renderer restart: an empty
+          // band would otherwise exit Surface and hide its recovery control.
+          ui.updateLabels(state);
+          ui.flashToast(`Levels unchanged: ${refusal}.`);
+          return;
+        }
+      }
       // Undoable document edits end the drift show; the session-only specs
       // (persisted: false — e.g. autoUpdate) are view preferences and leave
       // it running, like camera input. Notify: a slider/select/ checkbox edit
@@ -10118,7 +10140,7 @@ async function main(): Promise<void> {
         stopShows({ notify: true });
         editSession.beginEdit();
       }
-      state = applyScalarControl(state, spec, raw, source);
+      state = candidate;
       ui.updateLabels(state);
       spec.effect?.(state, controlEffects, previous);
       // Threshold and the shared balloon toggle/radius can change the live

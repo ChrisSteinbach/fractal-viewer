@@ -3955,16 +3955,24 @@ export class Ui {
         );
       }
     }
-    // Recovery uses the SAME table-driven checkbox path as a manual edit, so
+    // Recovery uses the SAME table-driven control path as a manual edit, so
     // reducer, undo/save, eligibility refresh and renderer effects cannot
     // drift. The app handler runs synchronously; once it re-enables Surface,
     // hand focus to the action's destination.
     this.surfaceEligibilityRecoveryBtn.addEventListener("click", () => {
-      const input = this.scalarInput("surfaceTrapGeometryCheckbox");
-      if (!(input instanceof HTMLInputElement)) {
-        throw new Error("Surface trap Geometry is not a checkbox");
+      if (this.surfaceEligibility.recovery === "includeCondensationRoot") {
+        const input = this.scalarSelect("surfaceCondensationBandMode");
+        input.value = "root";
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      } else if (
+        this.surfaceEligibility.recovery === "disableShapeTrapGeometry"
+      ) {
+        const input = this.scalarInput("surfaceTrapGeometryCheckbox");
+        if (!(input instanceof HTMLInputElement)) {
+          throw new Error("Surface trap Geometry is not a checkbox");
+        }
+        if (input.checked) input.click();
       }
-      if (input.checked) input.click();
       this.modeButtons.surface.focus();
     });
     this.finalTransformToggle.addEventListener("change", () =>
@@ -7335,8 +7343,12 @@ export class Ui {
     this.setReasonNote(this.surfaceNote, noteText);
     this.surfaceEligibilityRecoveryBtn.classList.toggle(
       "hidden",
-      !blocked || recovery !== "disableShapeTrapGeometry",
+      !blocked || recovery === null,
     );
+    this.surfaceEligibilityRecoveryBtn.textContent =
+      recovery === "includeCondensationRoot"
+        ? "Use root shapes"
+        : "Turn trap geometry off";
     // The full verdict reaches the shared transform editor: re-applied to a
     // live editor here because the gate refresh runs AFTER the editor build
     // on every refresh path. Store it rather than only its route so a later

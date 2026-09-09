@@ -1,5 +1,6 @@
 import type { ShapeSpec } from "../../fractal/shapes";
 import type { SurfaceDE } from "../../fractal/surface-de";
+import type { SurfaceDE4 } from "../../fractal/surface-de-4d";
 
 /**
  * The code-generated half of a condensation surface kernel. The numeric
@@ -17,7 +18,7 @@ export interface SurfaceCondensationKernelSpec {
  * Gearworks eval/march legs follow the same host contract as production.
  */
 export function surfaceCondensationKernelSpec(
-  de: SurfaceDE,
+  de: Pick<SurfaceDE | SurfaceDE4, "maps" | "condensation">,
 ): SurfaceCondensationKernelSpec {
   const condensation = de.condensation;
   if (!condensation || condensation.emitters.length === 0) {

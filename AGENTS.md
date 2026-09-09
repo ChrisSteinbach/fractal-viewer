@@ -440,9 +440,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `chaos-game.ts` — IFS iterator: warm-up, escape-reset, bounds tracking.
     Injected RNG for reproducibility; optional `IterationRng` keeps morphs
     point-for-point correspondent. `SymmetryParams.blend` fades kaleidoscope
-    weights continuously. TWO MULTI-SYSTEM LAYERS ride it, both
-    absent-means-classic byte-identically and both refused by every
-    surface/escape/bulb gate until their descent lifts ship.
+    weights continuously; optional multi-system layers are byte-identical
+    to classic when absent.
     `Transform.chaos` (flam3's xaos, graph-directed selection): row = FROM
     map, entry j scales the pick of base j next, `systemHasChaos`/
     `chaosRowIsNonTrivial`/`resolveChaosEntry` the ONE definitions; picks
@@ -451,9 +450,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     block); both Flame WGSL kernels transfer the oracle's row-major rows
     and keep `prevBase` across dispatches, so xaos never forces CPU; the
     fern|sponge preset pair is the reachability proof. `Transform.emitter`
-    ignores its input and spends exactly one primary draw to seed the shape
-    sampler; every point-consumer mirror carries it, while Surface refuses
-    until its condensation term lands. `HybridSchedule` (the
+    resets to a shape with exactly one primary draw in every point consumer.
+    Surface admits emitter-only C0 in 3D/4D with root depth 0 and B prefixes
+    within the affine frontier; empty bands refuse. Proof:
+    `docs/emitter-only-surface.md`. `HybridSchedule` (the
     scheduled-hybrid post-word): scene-level `{transforms, depth}`, B
     AFFINE-ONLY and stripped at every producer, applied at PLOT time —
     post-word THEN lens, `depth` primary-stream draws exactly when live,

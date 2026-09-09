@@ -5,6 +5,7 @@ import {
   condensationHasFutureDepth,
   condensationTerm3,
   condensationTerm4,
+  condensationTraversalDepth,
   resolveCondensationDepthBand,
 } from "./condensation-de";
 import type { CondensationDE3, CondensationDE4 } from "./condensation-de";
@@ -59,6 +60,17 @@ function de4(): CondensationDE4 {
 }
 
 describe("condensation depth bands", () => {
+  it("finishes an emitter-only prefix while retaining recursive preview budgets", () => {
+    const finite = { maps: [], condensation: de3(), schedule: { depth: 5 } };
+    expect(condensationTraversalDepth(finite, 4)).toBe(6);
+    expect(condensationTraversalDepth(finite, 16)).toBe(16);
+    expect(
+      condensationTraversalDepth({ maps: [], condensation: de4() }, 0),
+    ).toBe(1);
+    expect(condensationTraversalDepth({ ...finite, maps: [{}] }, 4)).toBe(4);
+    expect(condensationTraversalDepth({ maps: [] }, 0)).toBe(0);
+  });
+
   it("resolves all/root/depth-1 bands inclusively", () => {
     const all = de3();
     expect(condensationTerm3(all, 0, 1, 2, 0, 0)).toBeCloseTo(0.9, 12);

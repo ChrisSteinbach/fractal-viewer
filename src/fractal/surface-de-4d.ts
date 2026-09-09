@@ -16,6 +16,7 @@ import {
   condensationBoundingRadius4,
   condensationHasFutureDepth,
   condensationTerm4,
+  condensationTraversalDepth,
   resolveCondensationDepthBand,
 } from "./condensation-de";
 import type {
@@ -58,6 +59,8 @@ import {
   SURFACE_FOLD_SPHEREFOLD,
   SURFACE_CHAOS_WILDCARD,
   buildSurfaceChaosDE,
+  emitterOnlySurfaceBandRefusal,
+  emitterOnlySurfaceScheduleRefusal,
   surfaceChaosAllows,
   surfaceFoldRadii,
 } from "./surface-de";
@@ -847,6 +850,7 @@ export function analyzeSurfaceSystem4(
   finalTransform: Transform | null = null,
   schedule: HybridSchedule | null = null,
   symmetry: SymmetryParams = NO_SYMMETRY4,
+  condensationDepthBand?: CondensationDepthBand,
 ): SurfaceEligibility4 {
   const reasons: string[] = [];
   const liftedTransforms = transforms.map(toTransform4);
@@ -865,12 +869,11 @@ export function analyzeSurfaceSystem4(
     reasons.push("every transform has weight 0");
   }
 
-  if (
-    active.length > 0 &&
-    transforms.every((t) => !isActive(t) || transformHasEmitter(t))
-  ) {
-    reasons.push("shape emitters leave no recursive maps");
-  }
+  const bandRefusal = emitterOnlySurfaceBandRefusal(
+    transforms,
+    condensationDepthBand,
+  );
+  if (bandRefusal) reasons.push(bandRefusal);
 
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
@@ -974,6 +977,11 @@ export function analyzeSurfaceSystem4(
   }
 
   const preparedSchedule = prepareSchedule(schedule);
+  const scheduleRefusal = emitterOnlySurfaceScheduleRefusal(
+    transforms,
+    schedule,
+  );
+  if (scheduleRefusal) reasons.push(scheduleRefusal);
   if (preparedSchedule) {
     const supported = schedule!.transforms.filter(
       (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
@@ -1371,6 +1379,7 @@ export function buildSurfaceDE4(
     finalTransform,
     options.schedule,
     symmetry,
+    options.condensationDepthBand,
   );
   if (analysis.status === "ineligible") {
     throw new Error(
@@ -2865,7 +2874,9 @@ function scheduledCondensationHasFutureDepth4(
   if (!de.condensation) return false;
   const aDepth = nextDepth - (de.schedule?.depth ?? 0);
   return (
-    aDepth < 0 || condensationHasFutureDepth(de.condensation.depthBand, aDepth)
+    aDepth < 0 ||
+    (de.maps.length > 0 &&
+      condensationHasFutureDepth(de.condensation.depthBand, aDepth))
   );
 }
 
@@ -2874,6 +2885,7 @@ function descend4(
   p: Vec4,
   halfExtent: Vec4 | null = null,
 ): number {
+  const maxDepth = condensationTraversalDepth(de, de.maxDepth);
   let x = p[0];
   let y = p[1];
   let z = p[2];
@@ -2982,7 +2994,7 @@ function descend4(
   // hands the fold site a radius and a certificate only — never a point, and
   // so never an extent — so the displaced tuple's extent dies with it.
 
-  for (let depth = 0; depth < de.maxDepth; depth++) {
+  for (let depth = 0; depth < maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
     const inB = de.schedule !== undefined && depth < de.schedule.depth;
     const levelMaps = inB ? de.schedule!.maps : de.maps;
@@ -3427,7 +3439,7 @@ function descend4(
         best,
         scheduledCondensationTerm4(
           de,
-          de.maxDepth,
+          maxDepth,
           aScale,
           aX,
           aY,
@@ -3442,7 +3454,7 @@ function descend4(
         best,
         scheduledCondensationTerm4(
           de,
-          de.maxDepth,
+          maxDepth,
           bScale,
           bX,
           bY,
@@ -3457,7 +3469,7 @@ function descend4(
         best,
         scheduledCondensationTerm4(
           de,
-          de.maxDepth,
+          maxDepth,
           v1Scale,
           v1X,
           v1Y,
@@ -3472,7 +3484,7 @@ function descend4(
         best,
         scheduledCondensationTerm4(
           de,
-          de.maxDepth,
+          maxDepth,
           v2Scale,
           v2X,
           v2Y,
@@ -3484,7 +3496,7 @@ function descend4(
     }
   }
   const terminalR = de.schedule
-    ? de.schedule.bounds[Math.min(de.maxDepth, de.schedule.depth)].radius
+    ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
     : R;
   if (aLive) {
     const terminal = aScale * (aR - terminalR);
@@ -3683,6 +3695,7 @@ function descend4Refined(
   cutoff = 0,
   halfExtent: Vec4 | null = null,
 ): number {
+  const maxDepth = condensationTraversalDepth(de, de.maxDepth);
   let x = p[0];
   let y = p[1];
   let z = p[2];
@@ -3904,7 +3917,7 @@ function descend4Refined(
   const imgExt = new Float64Array(4);
   const tExt = new Float64Array(4);
 
-  for (let depth = 0; depth < de.maxDepth; depth++) {
+  for (let depth = 0; depth < maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
     const inB = de.schedule !== undefined && depth < de.schedule.depth;
     const levelMaps = inB ? de.schedule!.maps : de.maps;
@@ -4205,8 +4218,9 @@ function descend4Refined(
             // spilled tuple itself, when it beats neither slot) falls
             // through to the fold below.
             if (eKey < c3Key) {
-              // The evicted key is dead past this point — only the folded
-              // fields (point, scale, radius, certificate) survive.
+              // Condensation's future-subtree certificate reads occupancy
+              // too: an empty evicted slot must keep its infinite key.
+              const tKey = extra > 1 ? c4Key : c3Key;
               const tX = extra > 1 ? c4X : c3X;
               const tY = extra > 1 ? c4Y : c3Y;
               const tZ = extra > 1 ? c4Z : c3Z;
@@ -4238,6 +4252,7 @@ function descend4Refined(
               c3R = eR;
               c3Cert = eCert;
               c3State = eState;
+              eKey = tKey;
               eX = tX;
               eY = tY;
               eZ = tZ;
@@ -4248,6 +4263,7 @@ function descend4Refined(
               eCert = tCert;
               eState = tState;
             } else if (extra > 1 && eKey < c4Key) {
+              const tKey = c4Key;
               const tX = c4X;
               const tY = c4Y;
               const tZ = c4Z;
@@ -4267,6 +4283,7 @@ function descend4Refined(
               c4R = eR;
               c4Cert = eCert;
               c4State = eState;
+              eKey = tKey;
               eX = tX;
               eY = tY;
               eZ = tZ;
@@ -4454,7 +4471,7 @@ function descend4Refined(
         best,
         scheduledCondensationTerm4(
           de,
-          de.maxDepth,
+          maxDepth,
           aScale,
           aX,
           aY,
@@ -4469,7 +4486,7 @@ function descend4Refined(
         best,
         scheduledCondensationTerm4(
           de,
-          de.maxDepth,
+          maxDepth,
           bScale,
           bX,
           bY,
@@ -4484,7 +4501,7 @@ function descend4Refined(
         best,
         scheduledCondensationTerm4(
           de,
-          de.maxDepth,
+          maxDepth,
           v1Scale,
           v1X,
           v1Y,
@@ -4499,7 +4516,7 @@ function descend4Refined(
         best,
         scheduledCondensationTerm4(
           de,
-          de.maxDepth,
+          maxDepth,
           v2Scale,
           v2X,
           v2Y,
@@ -4511,7 +4528,7 @@ function descend4Refined(
     }
   }
   const terminalR = de.schedule
-    ? de.schedule.bounds[Math.min(de.maxDepth, de.schedule.depth)].radius
+    ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
     : R;
   if (aLive) {
     const terminal = aScale * (aR - terminalR);
