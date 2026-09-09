@@ -31,6 +31,11 @@
  * than this file's fixed approximation of one. Absent — every other
  * consumer — the fixed path runs textually unchanged.
  *
+ * The cinematic-lighting sheet adds opt-in LINEAR hit/ray hooks. The ray
+ * hook also sees misses, so a bounded medium can scatter against the sky.
+ * A capture region retains full-image rays and pixel coordinates. These
+ * hooks do not change the encoded `shade` contract or the default path.
+ *
  * Consumers: `escape-family-preview.harness.ts`, `escape-chain.harness.ts`,
  * `chain-speckle.harness.ts`, `escape-form-sweep.harness.ts`,
  * `bulb-preview.harness.ts`, `hybrid-chain.harness.ts`,
@@ -69,6 +74,14 @@ export interface PreviewScene {
   boundingRadius: number;
   /** What the camera looks at, and the centre of the bounding ball. */
   target?: Vec3;
+  /** Optional independent ball centre and absolute eye for interior views. */
+  boundingCenter?: Vec3;
+  eye?: Vec3;
+  /** An estimator-specific bounded interval, e.g. the balloon's far cap.
+   * Absent uses the historical target-centred sphere gate. */
+  marchInterval?: (origin: Vec3, direction: Vec3) => [number, number] | null;
+  /** Linear backdrop stops; absent preserves the historical gradient. */
+  background?: { top: Vec3; bottom: Vec3 };
   /**
    * March step damping. 1.0 for a conformal estimate, 0.35 for the fold
    * family's heuristic — see `escape-de.ts`'s `ESCAPE_STEP_SCALE`.
@@ -139,6 +152,14 @@ export interface PreviewScene {
    * drawn before the hook existed reproduces byte for byte.
    */
   shade?: (hit: PreviewHit) => Vec3;
+  /** Linear-light surface shading, followed by the existing linear fog.
+   * Mutually exclusive with the encoded `shade` hook. */
+  shadeLinear?: (hit: PreviewLinearHit) => Vec3;
+  /** Linear-light composition for EVERY camera ray, including background
+   * rays. Runs after surface shading/fog and before the one output encode.
+   * Cannot be combined with encoded `shade`; physical-medium sheets turn
+   * the legacy fog off. */
+  rayLinear?: (ray: PreviewRay) => Vec3;
 }
 
 /** What {@link PreviewScene.shade} is handed for one hit pixel. */
@@ -171,6 +192,37 @@ export interface PreviewHit {
    * miss at this pixel writes — so a hook can pass it as the `bg` a
    * transmissive finish blends toward. */
   bg: Vec3;
+}
+
+export interface PreviewLinearHit extends PreviewHit {
+  imageWidth: number;
+  imageHeight: number;
+  /** Primary hit tolerance in displayed-world units. */
+  epsilon: number;
+}
+
+export interface PreviewRay {
+  /** Full-image coordinates, independent of the capture region. */
+  px: number;
+  py: number;
+  imageWidth: number;
+  imageHeight: number;
+  origin: Vec3;
+  rd: Vec3;
+  /** Hit distance, Infinity for a sphere-bounded miss, or the custom march
+   * interval's far cap. Exhaustion reports only the reached distance and
+   * never certifies the untraced remainder as empty. */
+  distance: number;
+  status: typeof PREVIEW_MISS | typeof PREVIEW_HIT | typeof PREVIEW_EXHAUSTED;
+  linear: Vec3;
+}
+
+/** A subrectangle of the square full image passed as `size`. */
+export interface PreviewRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /** Per-pixel terminal state in {@link PanelStats.status}. */
@@ -269,12 +321,43 @@ function softShadow(
 }
 
 /** Render one square panel of a scene. */
-export function renderPreview(scene: PreviewScene, size: number): PanelStats {
+export function renderPreview(
+  scene: PreviewScene,
+  size: number,
+  region?: PreviewRegion,
+): PanelStats {
   const started = Date.now();
+  if (scene.shade && (scene.shadeLinear || scene.rayLinear)) {
+    throw new Error(
+      "Encoded shade cannot be combined with linear preview hooks",
+    );
+  }
+  const linearHooks = Boolean(scene.shadeLinear || scene.rayLinear);
+  if (
+    linearHooks &&
+    !(scene.stepScale > 0 && Number.isFinite(scene.stepScale))
+  ) {
+    throw new Error("Linear preview requires finite positive march damping");
+  }
+  const crop = region ?? { x: 0, y: 0, width: size, height: size };
+  if (
+    !Number.isInteger(size) ||
+    size < 1 ||
+    !Object.values(crop).every(Number.isInteger) ||
+    crop.x < 0 ||
+    crop.y < 0 ||
+    crop.width < 1 ||
+    crop.height < 1 ||
+    crop.x + crop.width > size ||
+    crop.y + crop.height > size
+  ) {
+    throw new Error("Preview region must lie inside the full image");
+  }
   const target = scene.target ?? [0, 0, 0];
+  const center = scene.boundingCenter ?? target;
   const R = scene.boundingRadius;
   const off = scene.eyeOffset ?? [1.55, 1.1, 1.8];
-  const eye: Vec3 = [
+  const eye: Vec3 = scene.eye ?? [
     target[0] + off[0] * R,
     target[1] + off[1] * R,
     target[2] + off[2] * R,
@@ -289,19 +372,23 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
   const minimumStepFraction = scene.minimumStepFraction ?? 0.5;
   const wantAo = scene.ao ?? true;
   const wantShadow = scene.shadow ?? true;
-  const rgb = new Uint8Array(size * size * 3);
-  const status = scene.collect ? new Uint8Array(size * size) : undefined;
-  const hitPos = scene.collect ? new Float32Array(size * size * 3) : undefined;
-  const stepCount = scene.collect ? new Uint16Array(size * size) : undefined;
+  const pixels = crop.width * crop.height;
+  const rgb = new Uint8Array(pixels * 3);
+  const status = scene.collect ? new Uint8Array(pixels) : undefined;
+  const hitPos = scene.collect ? new Float32Array(pixels * 3) : undefined;
+  const stepCount = scene.collect ? new Uint16Array(pixels) : undefined;
   let hits = 0;
   let evals = 0;
   let steps = 0;
   let exhausted = 0;
-  const bgTop = PREVIEW_BG_TOP;
-  const bgBot = PREVIEW_BG_BOTTOM;
+  const bgTop = scene.background?.top ?? PREVIEW_BG_TOP;
+  const bgBot = scene.background?.bottom ?? PREVIEW_BG_BOTTOM;
 
-  for (let py = 0; py < size; py++) {
-    for (let px = 0; px < size; px++) {
+  for (let row = 0; row < crop.height; row++) {
+    const py = row + crop.y;
+    for (let column = 0; column < crop.width; column++) {
+      const px = column + crop.x;
+      const pixel = row * crop.width + column;
       const u = ((px + 0.5) / size) * 2 - 1;
       const v = 1 - ((py + 0.5) / size) * 2;
       const dir = norm([
@@ -318,15 +405,32 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
       ];
       // Set by the shading hook: `col` is already in output space.
       let encoded = false;
+      let rayStatus: PreviewRay["status"] = PREVIEW_MISS;
+      let rayDistance = Infinity;
 
-      const o = sub(eye, target);
+      const o = sub(eye, center);
       const b = dot(o, dir);
       const cc = dot(o, o) - R * R;
       const disc = b * b - cc;
-      if (disc >= 0) {
-        const sq = Math.sqrt(disc);
-        let t = Math.max(0, -b - sq);
-        const tEnd = -b + sq;
+      const sq = Math.sqrt(Math.max(0, disc));
+      const interval = scene.marchInterval
+        ? scene.marchInterval(eye, dir)
+        : disc >= 0
+          ? [Math.max(0, -b - sq), -b + sq]
+          : null;
+      if (
+        scene.marchInterval &&
+        interval &&
+        (!interval.every(Number.isFinite) ||
+          interval[0] < 0 ||
+          interval[1] < interval[0])
+      ) {
+        throw new Error("Preview march interval must be finite and ordered");
+      }
+      if (interval) {
+        let t = interval[0];
+        const tEnd = interval[1];
+        if (scene.marchInterval) rayDistance = tEnd;
         const eps = (1.1 / size) * zoom;
         let hit = false;
         let used = 0;
@@ -339,6 +443,12 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
           const epsilon = eps * Math.max(t, 1);
           const sample = scene.march?.(p, epsilon);
           const d = sample ? sample.d : scene.de(p);
+          if (
+            linearHooks &&
+            (!Number.isFinite(d) || (sample && !Number.isFinite(sample.stride)))
+          ) {
+            throw new Error("Nonfinite primary DE cannot certify a linear ray");
+          }
           evals++;
           if (d < epsilon) {
             hit = true;
@@ -352,14 +462,20 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
         steps += used;
         const spent = used >= maxSteps && t < tEnd && !hit;
         if (spent) exhausted++;
+        // New linear transport cannot treat unknown geometry as a clear
+        // backdrop. Both lighting-only and medium arms receive this same
+        // black terminal; absent hooks retain the historical byte output.
+        if (linearHooks && spent) col = [0, 0, 0];
+        rayStatus = hit
+          ? PREVIEW_HIT
+          : spent
+            ? PREVIEW_EXHAUSTED
+            : PREVIEW_MISS;
+        if (hit || spent) rayDistance = t;
         if (status) {
-          status[py * size + px] = hit
-            ? PREVIEW_HIT
-            : spent
-              ? PREVIEW_EXHAUSTED
-              : PREVIEW_MISS;
+          status[pixel] = rayStatus;
         }
-        if (stepCount) stepCount[py * size + px] = Math.min(used, 65535);
+        if (stepCount) stepCount[pixel] = Math.min(used, 65535);
         if (hit) {
           hits++;
           const p: Vec3 = [
@@ -368,13 +484,16 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
             eye[2] + dir[2] * t,
           ];
           if (hitPos) {
-            const at = (py * size + px) * 3;
+            const at = pixel * 3;
             hitPos[at] = p[0];
             hitPos[at + 1] = p[1];
             hitPos[at + 2] = p[2];
           }
           const h = eps * Math.max(t, 1);
           const n = normalAt(scene.de, p, h);
+          if (linearHooks && !n.every(Number.isFinite)) {
+            throw new Error("Nonfinite normal DE cannot shade a linear ray");
+          }
           const lift: Vec3 = [
             p[0] + n[0] * h * 2,
             p[1] + n[1] * h * 2,
@@ -390,7 +509,29 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
             scene.fog === false
               ? 0
               : Math.min(1, Math.max(0, (t - R * 0.5) / (R * 2.4)));
-          if (scene.shade) {
+          if (scene.shadeLinear) {
+            const shaded = scene.shadeLinear({
+              px,
+              py,
+              imageWidth: size,
+              imageHeight: size,
+              epsilon: h,
+              p,
+              n,
+              rd: dir,
+              t,
+              light,
+              shadow: sh,
+              ao,
+              steps: used,
+              bg: [gam(col[0]), gam(col[1]), gam(col[2])],
+            });
+            col = [
+              shaded[0] + (bgBot[0] - shaded[0]) * fog,
+              shaded[1] + (bgBot[1] - shaded[1]) * fog,
+              shaded[2] + (bgBot[2] - shaded[2]) * fog,
+            ];
+          } else if (scene.shade) {
             // Hook path: the caller lights the hit in OUTPUT space (see
             // PreviewScene.shade); fog mixes toward the encoded backdrop
             // and the byte write below skips the encode.
@@ -443,11 +584,25 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
         }
       }
 
+      if (scene.rayLinear) {
+        col = scene.rayLinear({
+          px,
+          py,
+          imageWidth: size,
+          imageHeight: size,
+          origin: eye,
+          rd: dir,
+          distance: rayDistance,
+          status: rayStatus,
+          linear: col,
+        });
+      }
+
       const enc = (x: number) =>
         Math.max(0, Math.min(255, Math.round(255 * gam(x))));
       const quant = (x: number) =>
         Math.max(0, Math.min(255, Math.round(255 * x)));
-      const idx = (py * size + px) * 3;
+      const idx = pixel * 3;
       rgb[idx] = encoded ? quant(col[0]) : enc(col[0]);
       rgb[idx + 1] = encoded ? quant(col[1]) : enc(col[1]);
       rgb[idx + 2] = encoded ? quant(col[2]) : enc(col[2]);
@@ -455,8 +610,8 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
   }
   return {
     rgb,
-    width: size,
-    height: size,
+    width: crop.width,
+    height: crop.height,
     hits,
     evals,
     steps,
