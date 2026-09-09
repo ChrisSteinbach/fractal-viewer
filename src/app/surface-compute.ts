@@ -3964,6 +3964,12 @@ export class SurfaceComputeRenderer {
     // slices and shade batches alike — never only at iteration ends: a
     // full-depth shade drain can grind for minutes, and the whole point
     // of progressive presents is that the screen develops through it.
+    // Terminals whose phase 0 has landed and whose medium cells have not
+    // — see the frame-wide medium sweep after the outer loop.
+    const mediumTerminals: number[] = [];
+    // Their unfinished SHADE half, in ray units, for the progress tally:
+    // a deferred terminal has left the shade queue without being done.
+    let deferredShadeQueued = 0;
     const maybePresent = async (): Promise<boolean> => {
       if (!opts.onProgress) return true;
       if (performance.now() - lastProgress < progressMs) return true;
@@ -3994,7 +4000,8 @@ export class SurfaceComputeRenderer {
         surfaceComputeProgressDone({
           rays,
           active: active.length,
-          shadeQueued: shadeHitQueue.length + shadeFreeQueue.length,
+          shadeQueued:
+            shadeHitQueue.length + shadeFreeQueue.length + deferredShadeQueued,
           sweepSteps,
           sliced: sweepSliced,
           stepsThisPass,
@@ -4263,67 +4270,15 @@ export class SurfaceComputeRenderer {
         shadeGpuMs += shadeMs;
         passes++;
         if (this.lighting && mediumLights > 0) {
-          // Phase 0 initialized transmitted surface/background radiance.
-          // Each following submission adds one cell and one emitter, leaving
-          // HDR in place and a cancellation door between every nested march.
-          const mediumDispatches = mediumCells * mediumLights;
-          for (let index = 0; index < mediumDispatches;) {
-            if (performance.now() - wallStart > budgetMs) {
-              truncated = true;
-              tr("budget truncated (medium)");
-              break outer;
-            }
-            const group = Math.min(
-              mediumDispatches - index,
-              surfaceComputeLightingFenceGroup(
-                lightingSizer!.pilotComplete ? lightingSizer!.peakCellMs : null,
-                budgetMs - (performance.now() - wallStart),
-              ),
-            );
-            const groupStart = performance.now();
-            for (let queued = 0; queued < group; queued++, index++) {
-              const cell = Math.floor(index / mediumLights);
-              const light = index % mediumLights;
-              device.queue.writeBuffer(
-                this.shadeBuf,
-                SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET,
-                new Float32Array([cell, 1, 1, light]),
-              );
-              submitDispatch(
-                shadePipeline,
-                buffers.shadeBindGroup,
-                batch.length,
-              );
-            }
-            // Queue writes and their following submissions are ordered.
-            // This fence drains the whole bounded group before presentation,
-            // cancellation, a new active list, or any buffer teardown.
-            await device.queue.onSubmittedWorkDone();
-            if (token !== this.frameToken || this.isLost || this.destroyed)
-              return null;
-            const mediumMs = performance.now() - groupStart;
-            lightingSizer!.lastCellMs = mediumMs / group;
-            lightingSizer!.peakCellMs = Math.max(
-              lightingSizer!.peakCellMs,
-              lightingSizer!.lastCellMs,
-            );
-            // The medium's own two-term model, fed the PER-DISPATCH cost at
-            // this batch's width — the quantity `surfaceComputeLightingRayBatch`
-            // reasons about. A group is a fence, not a wider dispatch.
-            lightingSizer!.mediumCost = nextShadeHitCost(
-              lightingSizer!.mediumCost,
-              batch.length,
-              lightingSizer!.lastCellMs * 1000,
-            );
-            tr(
-              `medium END dispatches=${group} ms=${mediumMs.toFixed(2)} peakCellMs=${lightingSizer!.peakCellMs.toFixed(2)}`,
-            );
-            gpuMs += mediumMs;
-            shadeGpuMs += mediumMs;
-            passes += group;
-            if (!(await maybePresent())) return null;
-          }
-          lightingSizer!.pilotComplete = true;
+          // DEFERRED to the frame-wide sweep after the outer loop. Phase 0
+          // has just initialized this batch's transmitted surface and
+          // background radiance; its 32 cells x 2 lights are added once
+          // EVERY terminal has had its first, so the whole image gains each
+          // (cell, light) before any pixel gains its second. These rays are
+          // no longer queued for a shade batch but are not finished either,
+          // which is what `deferredShadeQueued` reports to the progress row.
+          for (const ray of batch) mediumTerminals.push(ray);
+          deferredShadeQueued += batch.length;
         }
         // Credit a ray's shade half only once every medium cell is done.
         if (isFree) shadeFreeQueue = shadeFreeQueue.slice(batch.length);
@@ -4380,6 +4335,136 @@ export class SurfaceComputeRenderer {
         }
         if (!(await maybePresent())) return null;
       }
+    }
+
+    // THE FRAME-WIDE MEDIUM SWEEP — the loop order that makes a lit frame
+    // watchable. The medium used to run INSIDE each shade batch: a batch's
+    // pixels went from prefill to fully converged in one go, and the frame
+    // filled in region by region, so at pane resolution nothing was even
+    // covered once for minutes. Running phase 0 for every terminal first
+    // and then looping (cell, light) OUTERMOST over all of them gives a
+    // complete, rough frame early that refines everywhere at once.
+    //
+    // IT IS A REORDER AND NOTHING ELSE: the same dispatches, the same
+    // count, each still owning exactly one cell and one light, and the same
+    // final pixels — the shader indexes everything by `ray`, so how the
+    // terminals are grouped into dispatches cannot change what any of them
+    // computes. The march is 0.1% of a lit frame, so deferring shading
+    // until it completes costs nothing and is what makes the whole terminal
+    // set available to batch over.
+    //
+    // The TRUNCATION CONTRACT changes shape here, deliberately: a lit frame
+    // cut by its wall budget used to leave some pixels fully lit and the
+    // rest at their prefill, and now leaves every pixel carrying the cells
+    // that landed. Both are honest partial frames; this one is the partial
+    // frame of the whole image rather than of a region of it.
+    if (mediumTerminals.length > 0 && lightingSizer) {
+      const terminals = Uint32Array.from(mediumTerminals);
+      const mediumDispatches = mediumCells * mediumLights;
+      tr(
+        `medium SWEEP BEGIN terminals=${terminals.length} dispatches=${mediumDispatches}`,
+      );
+      let queuedInFence = 0;
+      let fenceWidth = 0;
+      let fenceStart = performance.now();
+      const drainFence = async (): Promise<boolean> => {
+        if (queuedInFence === 0) return true;
+        // Queue writes and their following submissions are ordered. This
+        // fence drains the whole bounded group before presentation,
+        // cancellation, a new active list, or any buffer teardown.
+        await device.queue.onSubmittedWorkDone();
+        if (token !== this.frameToken || this.isLost || this.destroyed) {
+          return false;
+        }
+        const fenceMs = performance.now() - fenceStart;
+        lightingSizer.lastCellMs = fenceMs / queuedInFence;
+        lightingSizer.peakCellMs = Math.max(
+          lightingSizer.peakCellMs,
+          lightingSizer.lastCellMs,
+        );
+        // The medium's own two-term model, fed the PER-DISPATCH cost at the
+        // width that paid it — the quantity surfaceComputeLightingRayBatch
+        // reasons about. A fence groups dispatches; it is not a wider one.
+        lightingSizer.mediumCost = nextShadeHitCost(
+          lightingSizer.mediumCost,
+          Math.max(1, Math.round(fenceWidth / queuedInFence)),
+          lightingSizer.lastCellMs * 1000,
+        );
+        if (shadeHitsPin === null) {
+          lightingSizer.rayCap = nextLightingRayCap(
+            lightingSizer.rayCap,
+            lightingSizer.lastCellMs,
+          );
+        }
+        tr(
+          `medium END dispatches=${queuedInFence} ms=${fenceMs.toFixed(2)} peakCellMs=${lightingSizer.peakCellMs.toFixed(2)} rayCap=${lightingSizer.rayCap}`,
+        );
+        gpuMs += fenceMs;
+        shadeGpuMs += fenceMs;
+        passes += queuedInFence;
+        lightingSizer.pilotComplete = true;
+        queuedInFence = 0;
+        fenceWidth = 0;
+        fenceStart = performance.now();
+        return true;
+      };
+      sweep: for (let index = 0; index < mediumDispatches; index++) {
+        const cell = Math.floor(index / mediumLights);
+        const light = index % mediumLights;
+        for (let offset = 0; offset < terminals.length;) {
+          if (performance.now() - wallStart > budgetMs) {
+            truncated = true;
+            tr("budget truncated (medium)");
+            break sweep;
+          }
+          const width = Math.min(
+            terminals.length - offset,
+            shadeHitsPin ??
+              surfaceComputeLightingRayBatch(
+                lightingSizer.surfaceCost,
+                lightingSizer.mediumCost,
+                lightingSizer.rayCap,
+              ),
+            maxDispatchRays,
+          );
+          const batch = terminals.subarray(offset, offset + width);
+          offset += width;
+          writeParams(batch.length, 0);
+          device.queue.writeBuffer(buffers.active, 0, batch);
+          device.queue.writeBuffer(
+            this.shadeBuf,
+            SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET,
+            new Float32Array([cell, 1, 1, light]),
+          );
+          submitDispatch(shadePipeline, buffers.shadeBindGroup, batch.length);
+          queuedInFence++;
+          fenceWidth += batch.length;
+          const fenceLimit = surfaceComputeLightingFenceGroup(
+            lightingSizer.pilotComplete ? lightingSizer.peakCellMs : null,
+            budgetMs - (performance.now() - wallStart),
+          );
+          if (queuedInFence >= fenceLimit && !(await drainFence())) return null;
+        }
+        // The shade half accrues one (cell, light) at a time, frame-wide,
+        // so the progress row reports the sweep honestly instead of sitting
+        // at full coverage while the mist is still arriving.
+        deferredShadeQueued =
+          (terminals.length * (mediumDispatches - index - 1)) /
+          mediumDispatches;
+        // A (cell, light) boundary is NOT a fence in itself. Draining at
+        // every one of them would cost a small raster — where the whole
+        // frame is one dispatch wide — 64 fences a pass where the fence
+        // limit asks for 8, and the sync tax is per fence. The queue write
+        // that re-aims the active list is already ordered behind the
+        // submissions before it, so only a PRESENT needs the work landed.
+        if (opts.onProgress && performance.now() - lastProgress >= progressMs) {
+          if (!(await drainFence())) return null;
+          if (!(await maybePresent())) return null;
+        }
+      }
+      if (!(await drainFence())) return null;
+      if (!truncated) deferredShadeQueued = 0;
+      tr(`medium SWEEP END truncated=${truncated}`);
     }
 
     tr("final readback BEGIN");

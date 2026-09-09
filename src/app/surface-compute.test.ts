@@ -2892,7 +2892,9 @@ describe("SurfaceComputeRenderer authored lighting", () => {
     expect(medium.every((phase) => phase.cell >= 0 && phase.light >= 0)).toBe(
       true,
     );
-    expect(medium).toHaveLength(phases.length - 3);
+    // Each SAMPLE contributes one full 2x2 (cell, light) product per
+    // terminal batch; the sweep walks that product in order.
+    expect(medium.length % 4).toBe(0);
     for (let i = 0; i < medium.length; i += 4) {
       expect(
         medium
@@ -2909,17 +2911,30 @@ describe("SurfaceComputeRenderer authored lighting", () => {
           phase.rays <= SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
       ),
     ).toBe(true);
+    // PHASE 0 FOR EVERY TERMINAL FIRST, then the medium sweep — the loop
+    // order that lets a lit frame appear whole and rough rather than
+    // converge region by region. Every phase-0 write precedes every
+    // phase-1 write, and the sweep then walks (cell, light) in order with
+    // the whole frame under each one.
+    // Two samples, and each one is a block of phase-0 writes followed by a
+    // single contiguous medium sweep — never the old interleaving, where a
+    // batch's cells landed before the next batch had been shaded at all.
+    const runs: number[] = [];
+    for (const entry of phases) {
+      if (runs.length === 0 || runs[runs.length - 1] !== entry.phase)
+        runs.push(entry.phase);
+    }
+    expect(runs).toEqual([0, 1, 0, 1]);
+    expect(phases.filter((entry) => entry.phase === 0)).toHaveLength(3);
+    expect(
+      phases.filter((entry) => entry.phase === 0).every((e) => e.light === -1),
+    ).toBe(true);
     expect(
       phases
-        .slice(0, 5)
-        .map(({ cell, count, phase, light }) => [cell, count, phase, light]),
-    ).toEqual([
-      [0, 1, 0, -1],
-      [0, 1, 1, 0],
-      [0, 1, 1, 1],
-      [1, 1, 1, 0],
-      [1, 1, 1, 1],
-    ]);
+        .filter((entry) => entry.phase === 1)
+        .slice(0, 4)
+        .map(({ cell, light }) => `${cell}/${light}`),
+    ).toEqual(["0/0", "0/1", "1/0", "1/1"]);
   });
 
   it("defers destruction while a medium dispatch is pending and cancels every remaining cell", async () => {
@@ -2937,19 +2952,24 @@ describe("SurfaceComputeRenderer authored lighting", () => {
   });
 
   it("drains every queued submission before destruction after the pilot enables grouping", async () => {
+    // Park inside the medium sweep. The frame is two phase-0 dispatches
+    // (128 rays at the ladder's opening workgroup) and then a sweep whose
+    // width the ladder has already grown to cover the frame, so the fourth
+    // dispatch is the sweep's second and the pilot has enabled grouping by
+    // then.
     const { renderer, spec, phases, fences, deviceDestroy, resume } =
-      lightingDispatchHarness(10);
+      lightingDispatchHarness(4);
     spec.width = 128;
     spec.height = 1;
     const frame = renderer.renderFrame(spec);
     await flushMicrotasks();
-    expect(phases).toHaveLength(10);
-    expect(fences.at(-1)! - fences.at(-2)!).toBe(4);
+    expect(phases).toHaveLength(6);
+    expect(fences.at(-1)! - fences.at(-2)!).toBeGreaterThan(1);
     renderer.destroy();
     expect(deviceDestroy).not.toHaveBeenCalled();
     resume();
     expect(await frame).toBeNull();
-    expect(phases).toHaveLength(10);
+    expect(phases).toHaveLength(6);
     expect(deviceDestroy).toHaveBeenCalledTimes(1);
   });
 
