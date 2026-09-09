@@ -319,11 +319,14 @@ function simpleFourD(base) {
     phi: 1.15,
     fov: 45,
   };
+  // The ENCODED wire is flat `{p, q, ...}` (persist.ts's `validateFourD`
+  // requires `f.p`/`f.q` arrays); the nested `{pair: {p, q}}` shape is the
+  // in-memory FourDPose. Emitting the in-memory shape here made the decoder
+  // drop the whole pose, so the app booted with no slice and a fresh rotor
+  // and the non-flat assertions below failed on both engines.
   document.fourD = {
-    pair: {
-      p: [Math.cos(0.15), Math.sin(0.15), 0, 0],
-      q: [Math.cos(0.15), Math.sin(0.15), 0, 0],
-    },
+    p: [Math.cos(0.15), Math.sin(0.15), 0, 0],
+    q: [Math.cos(0.15), Math.sin(0.15), 0, 0],
     sliceOn: true,
     sliceCenter: 0.12,
     sliceThickness: 0,
