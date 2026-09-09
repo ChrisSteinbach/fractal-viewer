@@ -40,9 +40,17 @@
  * --browsertrace=true requires diagnostics and records one 3s CDP task/command
  * trace after the same 15s progress hold, before any requested flush rescue.
  * It enables no GPU timing queries. Trace completion alone is not a fence verdict.
+ * --nativegltrace=/absolute/observer.so optionally preloads a pass-through native
+ * GL observer via LD_PRELOAD and NATIVE_GL_TRACE. Use a fresh --outdir: native
+ * calls go to native-gl-trace.jsonl, launch provenance to native-gl-trace-run.json,
+ * and host row/scene timestamps to native-gl-trace-events.jsonl. It enables no
+ * additional GL calls, page observers or rescue; native calls alone are not
+ * Chromium query identity. Omission preserves the ordinary browser launch.
  * Omit --display for SwiftShader. Exit 0 qualifies unassisted completion;
  * failed legs exit 1. Completed sequences that received a flush exit 2 and carry
  * per-row assistedCompletion/rescue provenance, never pass:true.
+ * Missing native trace output also exits 2; rendering rows retain their own
+ * verdict, while native-gl-trace-run.json records observationAvailable:false.
  * This instrument's first qualification is recorded in its results.json and
  * docs/tiling-contract.md; the script contains no claimed unperformed run.
  */
@@ -59,6 +67,7 @@ import {
   surfaceStripProgress,
 } from "./lib/surface-gl-observer.mjs";
 import { captureSurfaceBrowserTrace } from "./lib/surface-browser-trace.mjs";
+import { launchNativeGLTraceBrowser } from "./lib/surface-native-gl-trace.mjs";
 
 const options = Object.fromEntries(
   process.argv.slice(2).map((arg) => {
@@ -88,6 +97,7 @@ const controls = options.controls ?? "none";
 const gltrace = options.gltrace === "true";
 const stripdiag = gltrace || options.stripdiag === "true";
 const browsertrace = options.browsertrace === "true";
+const nativegltrace = options.nativegltrace;
 const rescue = options.rescue ?? "none";
 const rescueState = { requested: rescue, attempted: false, fired: false };
 const traceState = {
@@ -106,6 +116,10 @@ assert(["none", "untiled", "balloon-off", "both"].includes(controls));
 assert(["none", "flush"].includes(rescue));
 assert(rescue === "none" || stripdiag, "--rescue=flush requires diagnostics");
 assert(!browsertrace || stripdiag, "--browsertrace=true requires diagnostics");
+assert(
+  nativegltrace !== "",
+  "--nativegltrace requires an absolute library path",
+);
 assert(
   controls === "none" ||
     (renderers.length === 1 &&
@@ -766,6 +780,9 @@ async function runScene(
   const session = await createPage(browser);
   const { context, page, errors } = session;
   const diagnostics = sceneDiagnostics(page, name);
+  let completed = false;
+  if (nativeTrace)
+    await nativeTrace.mark("scene-start", { name, renderer, selectedEngine });
   try {
     await boot(page, document, selectedEngine, restoredLink);
     if (renderer !== "points") {
@@ -821,6 +838,7 @@ async function runScene(
     const start = ready.worker?.sent.find(
       (s) => s.type === (renderer === "points" ? "cloud" : "start"),
     );
+    completed = true;
     return {
       ...session,
       png,
@@ -842,6 +860,8 @@ async function runScene(
       `${name}: ${error instanceof Error ? error.message : String(error)}; browser errors: ${exact(errors)}`,
       { cause: error },
     );
+  } finally {
+    if (nativeTrace) await nativeTrace.mark("scene-end", { name, completed });
   }
 }
 
@@ -1209,10 +1229,15 @@ async function runLifecycleLeg(browser, dimension, name) {
 }
 
 await mkdir(outdir, { recursive: true });
-const browser = await launchSurfaceBrowser(mode);
+const nativeTrace = nativegltrace
+  ? await launchNativeGLTraceBrowser(mode, nativegltrace, outdir)
+  : null;
+let nativeObservation = null;
+const browser = nativeTrace?.browser ?? (await launchSurfaceBrowser(mode));
 const results = [];
 async function record(name, run) {
   const started = Date.now();
+  if (nativeTrace) await nativeTrace.mark("row-start", { name });
   const rescueBefore = rescueState.scene;
   const rowRescue = () =>
     rescueState.scene !== rescueBefore
@@ -1244,6 +1269,16 @@ async function record(name, run) {
     };
     results.push(result);
     console.error(exact(result));
+  } finally {
+    if (nativeTrace) {
+      const result = results.at(-1);
+      await nativeTrace.mark("row-end", {
+        name,
+        completed: result.completed,
+        pass: result.pass,
+        assistedCompletion: result.assistedCompletion,
+      });
+    }
   }
 }
 try {
@@ -1287,6 +1322,7 @@ try {
     }
   }
 } finally {
+  if (nativeTrace) await nativeTrace.captureProcesses();
   await browser.close();
   await writeFile(
     path.join(outdir, "results.json"),
@@ -1297,10 +1333,20 @@ try {
       path.join(outdir, "diagnostic-run.json"),
       `${JSON.stringify({ options, repeat, controls, gltrace, stripdiag, rescue: rescueState, trace: traceState }, null, 2)}\n`,
     );
+  if (nativeTrace) {
+    nativeObservation = await nativeTrace.finish({
+      rescue: { ...rescueState },
+      completedRows: results.filter((result) => result.completed).length,
+      failedRows: results.filter((result) => !result.completed).length,
+    });
+    if (!nativeObservation.observationAvailable)
+      console.error(exact({ nativeObservation }));
+  }
 }
 process.exitCode =
   results.length === 0 || results.some((result) => !result.completed)
     ? 1
-    : results.some((result) => result.assistedCompletion)
+    : results.some((result) => result.assistedCompletion) ||
+        nativeObservation?.observationAvailable === false
       ? 2
       : 0;
