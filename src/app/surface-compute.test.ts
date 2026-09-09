@@ -1,5 +1,10 @@
 import {
   buildSurfaceComputeBackground,
+  buildSurfaceComputeLightingBackground,
+  encodeSurfaceComputeHdr,
+  surfaceComputeLightingVisibility,
+  surfaceComputeLightingFenceGroup,
+  SURFACE_COMPUTE_LIGHTING_MAX_QUEUED_DISPATCHES,
   buildSurfaceComputeLayerPrefill,
   fitSurfaceComputeRaster,
   foldSurfaceComputeLayerSample,
@@ -20,6 +25,7 @@ import {
   SURFACE_COMPUTE_PASS_TARGET_MS,
   SURFACE_COMPUTE_RAY_STATE_BYTES,
   SURFACE_COMPUTE_RAY_BYTES,
+  SURFACE_COMPUTE_LIGHTING_RAY_BYTES,
   SURFACE_COMPUTE_SHADE_COST_PIVOT,
   SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS,
   SURFACE_COMPUTE_SHADE_MARGINAL_DECAY,
@@ -41,6 +47,9 @@ import type {
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import {
   SURFACE_GPU_CHAOS_BYTES,
+  SURFACE_GPU_RAY_MISS,
+  SURFACE_GPU_SHADE_LIGHTING_BYTES,
+  SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET,
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_LENS4_POST_BYTES,
   SURFACE_GPU_LENS_POST_BYTES,
@@ -75,6 +84,11 @@ import {
   starFoundry,
 } from "../fractal/presets";
 import type { Transform } from "../fractal/types";
+import {
+  cloneSurfaceLighting,
+  DEFAULT_SURFACE_LIGHTING,
+  surfaceLightingRuntime,
+} from "../fractal/surface-lighting";
 
 describe("the two engines' full-tier hit floor (mirror pin)", () => {
   it("is ONE number: surface-de-gpu.ts's SURFACE_GPU_HIT_FLOOR is surface-material.ts's SURFACE_FULL_HIT_FLOOR", () => {
@@ -1439,6 +1453,7 @@ interface PaletteResourceHarness {
 async function createPaletteResourceHarness(
   balloon: boolean,
   targetOverride?: SurfaceComputeTarget,
+  lighting = false,
 ): Promise<PaletteResourceHarness> {
   const layoutDescriptors: GPUBindGroupLayoutDescriptor[] = [];
   const bufferDescriptors: GPUBufferDescriptor[] = [];
@@ -1514,6 +1529,7 @@ async function createPaletteResourceHarness(
     shadeDeWidth: number,
     adapterStatus: { label: string | undefined; software: boolean },
     materials: null,
+    lighting: boolean,
   ) => Promise<SurfaceComputeRenderer>;
   const renderer = await build.call(
     SurfaceComputeRenderer,
@@ -1524,6 +1540,7 @@ async function createPaletteResourceHarness(
     1,
     { label: undefined, software: false },
     null,
+    lighting,
   );
   return {
     renderer,
@@ -2543,5 +2560,349 @@ describe("SurfaceComputeRenderer device loss", () => {
 
     expect(second).not.toHaveBeenCalled();
     expect(first).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** Configured GPU outcomes through the real frame scheduler. No shader math
+ * is simulated: every primary ray misses and each readback supplies a known
+ * linear sample. Uniform writes, dispatch widths and cancellation are real
+ * host code. */
+function lightingDispatchHarness(parkMedium: boolean | number = false) {
+  const parked = deferred();
+  const phases: {
+    cell: number;
+    count: number;
+    phase: number;
+    light: number;
+    rays: number;
+    groups: number;
+  }[] = [];
+  const shadeWrites: Float32Array[] = [];
+  const fences: number[] = [];
+  const deviceDestroy = vi.fn();
+  const paramsBuf = {} as GPUBuffer;
+  const shadeBuf = {} as GPUBuffer;
+  const marchPipeline = {} as GPUComputePipeline;
+  const shadePipeline = {} as GPUComputePipeline;
+  let itemCount = 0;
+  let sampleIndex = 0;
+  let phase = [0, 1, 0, -1];
+  let lastWasShade = false;
+  const device = {
+    lost: new Promise<GPUDeviceLostInfo>(() => {}),
+    limits: {
+      maxBufferSize: 1 << 28,
+      maxStorageBufferBindingSize: 1 << 28,
+      maxComputeWorkgroupsPerDimension: 65535,
+      maxTextureDimension2D: 8192,
+    },
+    pushErrorScope: () => {},
+    popErrorScope: async () => null,
+    createBuffer: () => ({ destroy: vi.fn() }),
+    createBindGroup: () => ({}),
+    queue: {
+      writeTexture: () => {},
+      writeBuffer: (
+        buffer: GPUBuffer,
+        offset: number,
+        data: ArrayBuffer | ArrayBufferView,
+      ) => {
+        const bytes = ArrayBuffer.isView(data)
+          ? data.buffer.slice(
+              data.byteOffset,
+              data.byteOffset + data.byteLength,
+            )
+          : data;
+        if (buffer === paramsBuf)
+          itemCount = new DataView(bytes).getUint32(56, true);
+        if (buffer === shadeBuf) {
+          if (offset === SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET)
+            phase = Array.from(new Float32Array(bytes));
+          else {
+            const floats = new Float32Array(bytes);
+            shadeWrites.push(floats.slice());
+            sampleIndex = floats[103];
+          }
+        }
+      },
+      submit: () => {},
+      onSubmittedWorkDone: () => {
+        fences.push(phases.length);
+        const shouldPark =
+          typeof parkMedium === "number"
+            ? phases.length >= parkMedium
+            : parkMedium;
+        return shouldPark && lastWasShade && phase[2] === 1
+          ? parked.promise
+          : Promise.resolve();
+      },
+    },
+    createCommandEncoder: () => ({
+      beginComputePass: () => {
+        let selected: GPUComputePipeline;
+        return {
+          setPipeline: (pipeline: GPUComputePipeline) => {
+            selected = pipeline;
+          },
+          setBindGroup: () => {},
+          dispatchWorkgroups: (groups: number) => {
+            lastWasShade = selected === shadePipeline;
+            if (lastWasShade)
+              phases.push({
+                cell: phase[0],
+                count: phase[1],
+                phase: phase[2],
+                light: phase[3],
+                rays: itemCount,
+                groups,
+              });
+          },
+          end: () => {},
+        };
+      },
+      copyBufferToBuffer: () => {},
+      finish: () => ({}),
+    }),
+    destroy: deviceDestroy,
+  } as unknown as GPUDevice;
+  const de = buildSurfaceDE(defaultTransforms(), null, {
+    order: 1,
+    plane: "xz",
+  });
+  const renderer = new SurfaceComputeRenderer({
+    device,
+    target: { kind: "ifs", de },
+    marchPipeline,
+    shadePipeline,
+    marchLayout: {} as GPUBindGroupLayout,
+    shadeLayout: {} as GPUBindGroupLayout,
+    marchPipelineNoSlab: null,
+    shadePipelineNoSlab: null,
+    paramsBuf,
+    shadeBuf,
+    mapsBuf: {} as GPUBuffer,
+    shadeMapsBuf: {} as GPUBuffer,
+    lutTex: { createView: () => ({}) } as unknown as GPUTexture,
+    lightingBackgroundTex: { createView: () => ({}) } as unknown as GPUTexture,
+    lutSamp: {} as GPUSampler,
+    software: false,
+    lighting: true,
+  });
+  Reflect.set(
+    renderer,
+    "drainStaging",
+    async (_buffer: GPUBuffer, bytes: number) =>
+      new Uint32Array(bytes / 4).fill(SURFACE_GPU_RAY_MISS).buffer,
+  );
+  Reflect.set(
+    renderer,
+    "readbackFrame",
+    async (
+      _color: GPUBuffer,
+      _staging: GPUBuffer,
+      _layer: GPUBuffer,
+      _layerStaging: GPUBuffer,
+      layerBytes: number,
+      colorBytes: number,
+    ) => {
+      expect(colorBytes).toBe(layerBytes * 4);
+      const hdr = new Float32Array(colorBytes / 4);
+      for (let p = 0; p < hdr.length; p += 4) {
+        hdr[p] = sampleIndex === 0 ? 1.6 : 0;
+        hdr[p + 3] = 2 + 65536;
+      }
+      return [
+        hdr.buffer,
+        buildSurfaceComputeLayerPrefill(layerBytes / 4).buffer,
+      ];
+    },
+  );
+  const spec = frameSpec();
+  spec.lighting = cloneSurfaceLighting(DEFAULT_SURFACE_LIGHTING);
+  spec.lighting.medium = {
+    center: [0, 0, 0],
+    radius: 2,
+    density: 0.2,
+    tint: [1, 1, 1],
+    anisotropy: 0.3,
+  };
+  spec.lightingRuntime = {
+    ...surfaceLightingRuntime(spec.lighting, {
+      interaction: false,
+      dimension: 3,
+      boundingRadius: 2,
+    }),
+    mediumSamples: 2,
+  };
+  return {
+    renderer,
+    spec,
+    phases,
+    shadeWrites,
+    fences,
+    deviceDestroy,
+    resume: parked.resolve,
+  };
+}
+
+describe("SurfaceComputeRenderer authored lighting", () => {
+  it("bounds queued dispatch debt from measured latency and the remaining wall budget", () => {
+    expect(surfaceComputeLightingFenceGroup(null)).toBe(1);
+    expect(surfaceComputeLightingFenceGroup(Infinity)).toBe(1);
+    expect(surfaceComputeLightingFenceGroup(0)).toBe(
+      SURFACE_COMPUTE_LIGHTING_MAX_QUEUED_DISPATCHES,
+    );
+    expect(surfaceComputeLightingFenceGroup(10)).toBe(5);
+    expect(surfaceComputeLightingFenceGroup(50)).toBe(1);
+    expect(surfaceComputeLightingFenceGroup(10, 15)).toBe(1);
+  });
+  it("allocates the opt-in HDR ABI and background binding without moving mesh binding 11", async () => {
+    const plain = await createPaletteResourceHarness(false);
+    const lit = await createPaletteResourceHarness(false, undefined, true);
+    expect(plain.bufferDescriptors[1].size).toBe(224);
+    expect(lit.bufferDescriptors[1].size).toBe(
+      SURFACE_GPU_SHADE_LIGHTING_BYTES,
+    );
+    expect(
+      Array.from(lit.layoutDescriptors[0].entries).some(
+        (entry) => entry.binding === 12,
+      ),
+    ).toBe(false);
+    expect(
+      Array.from(lit.layoutDescriptors[1].entries).some(
+        (entry) => entry.binding === 12,
+      ),
+    ).toBe(true);
+    for (const [harness, bytes] of [
+      [plain, SURFACE_COMPUTE_RAY_BYTES],
+      [lit, SURFACE_COMPUTE_LIGHTING_RAY_BYTES],
+    ] as const) {
+      const before = harness.bufferDescriptors.length;
+      (
+        Reflect.get(harness.renderer, "ensureFrameBuffers") as (
+          rays: number,
+        ) => unknown
+      ).call(harness.renderer, 3);
+      expect(
+        harness.bufferDescriptors
+          .slice(before)
+          .reduce((sum, descriptor) => sum + descriptor.size, 0),
+      ).toBe(bytes * 3);
+    }
+  });
+
+  it("splits missed rays into one-cell one-light workgroups and averages HDR before clipping", async () => {
+    const { renderer, spec, phases, shadeWrites, fences } =
+      lightingDispatchHarness();
+    spec.width = 128;
+    spec.height = 1;
+    const pending = renderer.renderFrame(spec, { samples: 2 });
+    spec.lighting!.lights[0].position[0] = 999;
+    spec.lighting!.medium!.tint[0] = 0;
+    const frame = await pending;
+    expect(frame).not.toBeNull();
+    expect(frame!.pixels[0]).toBe(Math.round(255 * Math.pow(0.8, 1 / 2.2)));
+    expect(frame!.pixels[3]).toBe(255);
+    expect(frame!.lightingVisibility).toEqual({ exhausted: 512, invalid: 256 });
+    expect(shadeWrites.map((write) => write[103])).toEqual([0, 1]);
+    expect(shadeWrites[0][60]).toBe(
+      DEFAULT_SURFACE_LIGHTING.lights[0].position[0],
+    );
+    expect(shadeWrites[0][92]).toBe(1);
+    expect(phases).toHaveLength(20);
+    expect(
+      fences.some((count, index) => count - (fences[index - 1] ?? 0) > 1),
+    ).toBe(true);
+    expect(
+      fences.every(
+        (count, index) =>
+          count - (fences[index - 1] ?? 0) <=
+          SURFACE_COMPUTE_LIGHTING_MAX_QUEUED_DISPATCHES,
+      ),
+    ).toBe(true);
+    expect(
+      phases.every((phase) => phase.groups === 1 && phase.rays === 64),
+    ).toBe(true);
+    expect(
+      phases
+        .slice(0, 5)
+        .map(({ cell, count, phase, light }) => [cell, count, phase, light]),
+    ).toEqual([
+      [0, 1, 0, -1],
+      [0, 1, 1, 0],
+      [0, 1, 1, 1],
+      [1, 1, 1, 0],
+      [1, 1, 1, 1],
+    ]);
+  });
+
+  it("defers destruction while a medium dispatch is pending and cancels every remaining cell", async () => {
+    const { renderer, spec, phases, deviceDestroy, resume } =
+      lightingDispatchHarness(true);
+    const frame = renderer.renderFrame(spec);
+    await flushMicrotasks();
+    expect(phases.map(({ phase }) => phase)).toEqual([0, 1]);
+    renderer.destroy();
+    expect(deviceDestroy).not.toHaveBeenCalled();
+    resume();
+    expect(await frame).toBeNull();
+    expect(phases).toHaveLength(2);
+    expect(deviceDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("drains every queued submission before destruction after the pilot enables grouping", async () => {
+    const { renderer, spec, phases, fences, deviceDestroy, resume } =
+      lightingDispatchHarness(10);
+    spec.width = 128;
+    spec.height = 1;
+    const frame = renderer.renderFrame(spec);
+    await flushMicrotasks();
+    expect(phases).toHaveLength(10);
+    expect(fences.at(-1)! - fences.at(-2)!).toBe(4);
+    renderer.destroy();
+    expect(deviceDestroy).not.toHaveBeenCalled();
+    resume();
+    expect(await frame).toBeNull();
+    expect(phases).toHaveLength(10);
+    expect(deviceDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps zero-density missed rays on the cheap terminal path", async () => {
+    const { renderer, spec, phases } = lightingDispatchHarness();
+    spec.width = 128;
+    spec.height = 1;
+    spec.lighting!.medium!.density = 0;
+    await renderer.renderFrame(spec);
+    expect(phases).toHaveLength(1);
+    expect(phases[0]).toMatchObject({ phase: 0, rays: 128, groups: 2 });
+  });
+
+  it("samples an image backdrop in full-image coordinates across bands and preserves top-origin image rows", () => {
+    const spec = frameSpec();
+    spec.lightingBackground = {
+      width: 2,
+      height: 2,
+      revision: 1,
+      rgba: new Uint8Array([
+        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+      ]),
+    };
+    const full = buildSurfaceComputeLightingBackground(spec);
+    expect(Array.from(full.slice(0, 4))).toEqual([0, 0, 1, 0]);
+    const band = buildSurfaceComputeLightingBackground({
+      ...spec,
+      height: 1,
+      bgOffset: [0, 1],
+      bgExtent: [2, 2],
+    });
+    expect(band).toEqual(full.slice(8));
+    expect(
+      encodeSurfaceComputeHdr(full).filter((_value, index) => index % 4 === 3),
+    ).toEqual(new Uint8Array(4).fill(255));
+    expect(
+      surfaceComputeLightingVisibility(
+        new Float32Array([0, 0, 0, 3 + 2 * 65536, 0, 0, 0, 7]),
+      ),
+    ).toEqual({ exhausted: 10, invalid: 2 });
   });
 });

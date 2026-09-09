@@ -1,10 +1,13 @@
 # Cinematic Surface lighting
 
-The first milestone is a visual decision about colored finite lights and
-shadowed mist on existing fractals. It is a reference experiment, with no
-production controls, document fields or GPU wire changes. Owner judgment of
-depth, legibility and visual impact is required before those changes; a
-pixel-difference test cannot establish that the look succeeds.
+The owner accepted the Menger cathedral and Balloon cavern reference looks
+for production integration. The rotor-posed 4D shells composition was rejected
+and may be set aside; it is not an approved starting scene. Lighting support
+for non-flat 4D geometry remains part of the production implementation.
+
+Production integration is in progress. The reference review establishes the
+starting compositions, not browser appearance, performance or release readiness.
+A pixel-difference test cannot establish that the finished look succeeds.
 
 The comparison uses a native 3D Menger cathedral, a Balloon inverted-union
 interior and a genuinely non-flat, rotor-posed 4D slice. Each row keeps its
@@ -166,11 +169,12 @@ judgment of the finished look or for the eventual production-browser gate.
 
 ## Decision and delivery boundary
 
-**Owner visual review is pending.** The implementation issue remains open.
-The reference images and machine checks prepare that decision; they do not
-approve it.
+**The owner approved the cathedral and cavern compositions.** The shells
+composition is deferred. The reference images remain unchanged as the record
+of that decision, including their noise and weakly separated shafts. Production
+appearance and interaction still require browser qualification.
 
-After visual acceptance, one delivery includes both dimensional halves and
+The production delivery includes both dimensional halves and
 both Surface engines. The authored light/medium vocabulary and shader math must
 be shared; saved views, links, scene files, Collection, Timeline and PNG capture
 must reproduce the same state. Light-only edits must invalidate retained images
@@ -186,6 +190,87 @@ background rays, and keep long renders cancellable. The interaction tier may
 reduce sampling only with its approximation disclosed. No production sample
 budget or performance promise is established by this reference experiment.
 
+## Authoring integration
+
+`SurfaceParams.lighting` is optional: absence selects legacy lighting. Its
+finite disk lights, ambient fill, Classic material defaults and optional
+spherical medium use displayed-world coordinates in both dimensional paths.
+Light colors and fill are linear RGB, disk intensity is total flux, and mist
+tint is scattering albedo. The renderer resolves physical domains; the document
+codec retains finite authored values and exact nested lighting precision.
+
+State installation, snapshots and restored state own their nested rig arrays.
+Undo, Collection and Timeline carry the same encoded scene block. Evolution
+keeps the primary parent's complete rig as presentation state and validates
+its structure without changing authored values.
+
+The Surface lighting section is Scene / Look. Its controls remain visible but
+disabled with an adjacent reason outside Surface. Edits apply live and restart
+convergence; reduced sampling during motion is disclosed beside the controls.
+Every numeric range has the shared exact-number companion. The older light
+angle, height and ambient controls retain their role in authored finish
+reflections; their Environment tint control is dormant under the new rig.
+
+Systems offers two complete editable scene replacements through
+`createSurfaceLightingStarter`: Menger cathedral and Balloon cavern. Each owns
+its transforms, camera, constant stone palette, backdrop, rig and medium, with
+eight parked-view samples as its initial Renderer setting. The reference
+camera zooms become vertical fields of view of about 61.93° and 66.05°; these
+wider authored lenses preserve normal dolly behavior. The ordinary fitted lens
+remains 60°. Existing palette/backdrop wire quantization still applies when a
+scene is encoded, while lighting values retain their full finite precision.
+
+This authoring description does not certify the unfinished GPU and lifecycle
+integration or the final production-browser checks.
+
+## Production transport and wire
+
+`src/fractal/surface-lighting.ts` owns the authored schema, render domains and
+uniform lanes. `surface-lighting-shader.ts` emits one transport body in GLSL and
+WGSL. Its visibility callback evaluates the public displayed DE, including a
+posed 4D slice or supported slab, lens, Balloon union and tiling. A lattice clips
+the finite light segment to its presentation carrier once. The analytic floor
+is checked separately. Unresolved visibility stays dark; samples beyond the
+finite emitter cannot shadow it.
+
+The optional lighting tail starts at byte 240 of `ShadeParams`, after the
+existing pattern quartet. Twelve vec4 lanes make the lit struct 432 bytes;
+the runtime lane starts at 400 and the dispatch phase at 416. The geometry
+parameter blocks and existing shade offsets retain their layout. Both GLSL
+materials pack the same twelve lanes. Removing the rig restores the exact
+legacy shader source.
+
+A progressive pass samples each surface emitter once. Motion uses eight
+medium cells and the parked view uses 32; the visibility budget is 128 steps
+in 3D and 256 in 4D. Visibility epsilon is the raw geometry bounding radius
+times `2e-4`, with a `1e-7` floor. Pixel position and progressive sample ordinal
+seed the stream. Compute capture bands add their full-image offset; WebGL
+strips retain full-size target coordinates. No sampling count changes the
+emitter's total flux.
+
+Lit compute frames retain linear floating-point RGB and a separate byte
+coverage/depth sidecar. WebGL uses a float color attachment with the existing
+gamma encoding, then decodes into its linear sample accumulator. Both average
+unclipped radiance before the final display conversion. The finite arithmetic
+guard caps extreme radiance at `1e20`; it does not clip individual samples to
+display white. The compute frame buffers require 68 bytes per ray, excluding
+uniforms, textures, driver allocation overhead and CPU accumulators.
+
+An actual image backdrop is an immutable, owned shading input. Lighting frames
+integrate its radiance through the medium; changing it retraces the frame.
+The legacy encoded-color background replacement is disabled while a rig is
+active. Coverage and depth remain available for the existing depth-of-field
+presentation. Zero mist density removes attenuation and scattering without
+changing the authored lights.
+
+The shared transport gate is
+`scripts/surface-lighting-agreement.harness.ts`: analytic disk irradiance,
+scattering, finite occlusion, gaps, exhaustion and zero density run through
+the emitted shaders against independent reference results. Its production
+shader compilation rows complement `scripts/cinematic-lighting.verify.mjs`,
+which enters the built app through the two starting scenes and checks the
+actual engines, pixels, saved state, edits, capture and cancellation.
+
 ## Production integration audit
 
 The planning estimate is 10–18 focused engineering days after visual approval,
@@ -199,7 +284,7 @@ gain a separate WebGL geometry engine as part of lighting.
 | Transport contract    | Shared vocabulary, sampling, visibility, attenuation, phase, output policy and CPU oracle        | 2–3 days |
 | Shaders               | Both GLSL tracers and the shared WGSL shade emission; legacy identity and geometry compositions  | 3–5 days |
 | Rendering lifecycle   | Compute/strip scheduling, retained background, frame keys, accumulation and capture cancellation | 2–4 days |
-| Authoring             | Surface document state, persistence, controls and composed 3D/4D starting scenes                 | 1–2 days |
+| Authoring             | Shared 3D/4D document state, persistence, controls and two accepted interior starting scenes     | 1–2 days |
 | Browser qualification | Accepted appearance, restored state, viewport/export, cost, convergence, cancellation and memory | 2–4 days |
 
 The wire audit found `SURFACE_GPU_SHADE_BYTES = 224`, with the optional pattern

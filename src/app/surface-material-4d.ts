@@ -1,4 +1,9 @@
 import * as THREE from "three";
+import {
+  surfaceLightingUniforms,
+  installSurfaceLightingUniforms,
+} from "./surface-lighting-material";
+import type { SurfaceLighting } from "../fractal/surface-lighting";
 import { condensationTraversalDepth } from "../fractal/condensation-de";
 import {
   BACKGROUND_SHAPE_GLSL,
@@ -3141,6 +3146,7 @@ export function surface4FragmentFor(
   chaos = 0,
   tiling: ResolvedTiling | null = null,
   swirlLens = 0,
+  lighting = 0,
 ): string {
   return surfaceFragmentFor(
     0,
@@ -3158,6 +3164,8 @@ export function surface4FragmentFor(
     schedule,
     chaos,
     tiling,
+    0,
+    lighting,
   );
 }
 
@@ -3176,6 +3184,7 @@ export function surface4FragmentResolvedFor(
   chaos = 0,
   tiling: ResolvedTiling | null = null,
   swirlLens = 0,
+  lighting = 0,
 ): string {
   return surfaceFragmentResolvedFor(
     0,
@@ -3193,6 +3202,8 @@ export function surface4FragmentResolvedFor(
     schedule,
     chaos,
     tiling,
+    0,
+    lighting,
   );
 }
 
@@ -3316,6 +3327,7 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
+      ...surfaceLightingUniforms(),
       uShapeMeshSdf: surfaceShapeMeshSdfUniform(),
       uMapCount: { value: 0 },
       uScheduleCount: { value: 0 },
@@ -3711,6 +3723,7 @@ export function setSurfaceSystem4(
       wantChaos,
       tiling,
       wantSwirlLens,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -3954,6 +3967,7 @@ export function setSurface4Balloon(
       material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
       tiling,
       material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -4000,6 +4014,7 @@ export function setSurface4GroundPlane(
           material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
           materialSurfaceTiling(material, true),
           material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
+          material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
         );
   const u = material.uniforms;
   if (spec) {
@@ -4104,7 +4119,33 @@ export function setSurface4Materials(
       material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
       materialSurfaceTiling(material, true),
       material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
+}
+
+/** The displayed slice shares the 3D rig and uniform layout. */
+export function setSurface4Lighting(
+  material: THREE.ShaderMaterial,
+  lighting: SurfaceLighting | undefined,
+): void {
+  installSurfaceLightingUniforms(material, lighting);
+  const enabled = lighting !== undefined;
+  if ((material.defines.SURFACE_LIGHTING === 1) === enabled) return;
+  if (enabled) material.defines.SURFACE_LIGHTING = 1;
+  else delete material.defines.SURFACE_LIGHTING;
+  material.fragmentShader = surface4FragmentFor(
+    material.defines.SURFACE4_BALLOON === 1 ? 1 : 0,
+    material.defines.SURFACE4_GROUND_PLANE === 1 ? 1 : 0,
+    material.defines.SURFACE4_FINISH === 1 ? 1 : 0,
+    material.defines.SURFACE4_PATTERN === 1 ? 1 : 0,
+    materialCondensationSpecs4(material),
+    material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0,
+    material.defines.SURFACE4_CHAOS === 1 ? 1 : 0,
+    materialSurfaceTiling(material, true),
+    material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
+    enabled ? 1 : 0,
+  );
+  material.needsUpdate = true;
 }

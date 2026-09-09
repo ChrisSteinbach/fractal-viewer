@@ -906,7 +906,9 @@ function buildSnapshot(
     showGuides: primary.showGuides,
     flame: clone(primary.flame),
     solid: clone(primary.solid),
-    surface: clone(primary.surface),
+    // structuredClone owns the nested rig and restores mutability just as it
+    // does for the background's readonly tuples below.
+    surface: clone(primary.surface) as SceneSnapshot["surface"],
     symmetry,
     glowBrightness: primary.glowBrightness,
     background: clone(primary.background) as SceneSnapshot["background"],

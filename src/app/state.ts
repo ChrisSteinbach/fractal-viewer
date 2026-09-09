@@ -41,6 +41,8 @@ import { resolveBackground } from "./background";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
 import type { ShapeSpec } from "../fractal/shapes";
+import { cloneSurfaceLighting } from "../fractal/surface-lighting";
+import type { SurfaceLighting } from "../fractal/surface-lighting";
 import type {
   BackgroundGradient,
   BackgroundMode,
@@ -365,6 +367,13 @@ export type SurfaceFloorPattern = (typeof SURFACE_FLOOR_PATTERNS)[number];
  * neither belongs to the Surface distance estimator itself.
  */
 export interface SurfaceParams {
+  /**
+   * Authored finite lights and optional bounded scattering medium, in displayed
+   * world space for both dimensional paths. Absence preserves legacy lighting.
+   * Edits are live and restart the Surface settle; other render modes retain
+   * the block without consuming it. Sampling quality remains renderer state.
+   */
+  lighting?: SurfaceLighting;
   /** Samples per pixel used by the parked Surface settle and Save-PNG. */
   antialiasSamples: number;
   /**
@@ -2800,6 +2809,34 @@ export function setSurfaceLightAzimuth(
     surface: {
       ...state.surface,
       lightAzimuth: clampToSpec(PARAM.surfaceLightAzimuth, lightAzimuth),
+    },
+  };
+}
+
+/** Own the nested rig when crossing a document, history or render boundary. */
+export function cloneSurfaceParams(surface: SurfaceParams): SurfaceParams {
+  const { lighting, ...rest } = surface;
+  return {
+    ...rest,
+    ...(lighting === undefined
+      ? {}
+      : { lighting: cloneSurfaceLighting(lighting) }),
+  };
+}
+
+/** Install an independently owned rig, or explicitly restore legacy lighting. */
+export function setSurfaceLighting(
+  state: AppState,
+  lighting: SurfaceLighting | undefined,
+): AppState {
+  const { lighting: _previous, ...surface } = state.surface;
+  return {
+    ...state,
+    surface: {
+      ...surface,
+      ...(lighting === undefined
+        ? {}
+        : { lighting: cloneSurfaceLighting(lighting) }),
     },
   };
 }

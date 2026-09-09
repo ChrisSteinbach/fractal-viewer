@@ -7,6 +7,53 @@ function bareScene(): FractalScene {
 }
 
 describe("FractalScene Surface depth-of-field presentation", () => {
+  it("averages bright lighting samples before display clipping", () => {
+    const scene = bareScene();
+    const bytes = new Uint8Array(4);
+    let pass = 0;
+    Reflect.set(scene, "renderer", {
+      readRenderTargetPixels: (
+        _target: unknown,
+        _x: number,
+        _y: number,
+        _width: number,
+        _height: number,
+        out: Uint8Array | Float32Array,
+        _face?: number,
+        attachment?: number,
+      ) => {
+        if (attachment === 1) out.set([255, 0, 0, 128]);
+        else {
+          const encoded = pass++ === 0 ? Math.pow(1.6, 1 / 2.2) : 0;
+          out.set([encoded, encoded, encoded, 1]);
+        }
+      },
+    });
+    Reflect.set(scene, "surfaceSettleTarget", {
+      texture: { type: THREE.FloatType },
+    });
+    Reflect.set(scene, "surfaceSampleAccum", new Float32Array(3));
+    Reflect.set(scene, "surfaceSampleLayerAccum", new Float32Array(3));
+    Reflect.set(scene, "surfaceSampleCoc", new Uint8Array([255]));
+    Reflect.set(scene, "surfaceSampleTexture", { image: { data: bytes } });
+    Reflect.set(scene, "surfaceSampleLayerTexture", {
+      image: { data: new Uint8Array(4) },
+    });
+    Reflect.set(scene, "surfaceSampleWidth", 1);
+    Reflect.set(scene, "surfaceSampleHeight", 1);
+    Reflect.set(scene, "surfaceSampleTaken", 0);
+    const fold = Reflect.get(scene, "foldSurfaceSample") as () => void;
+    Reflect.apply(fold, scene, []);
+    Reflect.apply(fold, scene, []);
+    Reflect.apply(
+      Reflect.get(scene, "encodeSurfaceSampleMean") as () => void,
+      scene,
+      [],
+    );
+    const expected = Math.round(255 * Math.pow(0.8, 1 / 2.2));
+    expect(Array.from(bytes)).toEqual([expected, expected, expected, 255]);
+  });
+
   it("marks only retained presentation dirty when the setting changes", () => {
     const scene = bareScene();
     Reflect.set(scene, "surfaceDepthOfField", false);
@@ -123,7 +170,9 @@ describe("FractalScene Surface depth-of-field presentation", () => {
         },
       ),
     });
-    Reflect.set(scene, "surfaceSettleTarget", {});
+    Reflect.set(scene, "surfaceSettleTarget", {
+      texture: { type: THREE.UnsignedByteType },
+    });
     Reflect.set(scene, "surfaceSampleAccum", new Float32Array(6));
     Reflect.set(scene, "surfaceSampleLayerAccum", new Float32Array(6));
     Reflect.set(scene, "surfaceSampleCoc", new Uint8Array([255, 255]));

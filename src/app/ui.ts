@@ -101,6 +101,12 @@ import {
   type SampledSolidStatus,
 } from "./solid-render-status";
 import type { AppState, RenderMode } from "./state";
+import type { SurfaceLighting } from "../fractal/surface-lighting";
+import { SurfaceLightingControls } from "./surface-lighting-controls";
+import {
+  SURFACE_LIGHTING_STARTERS,
+  type SurfaceLightingStarterId,
+} from "./surface-lighting-starters";
 import type {
   PointsAxisProjection,
   PointsViewLayout,
@@ -245,6 +251,14 @@ export interface UiHandlers {
   /** Step the scene document forward one edit burst. */
   onRedo: () => void;
   onPreset: (preset: Preset) => void;
+  /** Complete authored rig edit; absence restores the legacy light path.
+   * Input is live; commit closes the undo burst and restarts convergence. */
+  onSurfaceLighting?: (
+    lighting: SurfaceLighting | undefined,
+    phase: "input" | "commit",
+  ) => void;
+  /** Replace with a complete saved camera/look composition and enter Surface. */
+  onSurfaceLightingStarter?: (id: SurfaceLightingStarterId) => void;
   /**
    * The Hybrid schedule section's System B picker changed: `source` is
    * `""` (None — remove the block), `"preset:<key>"` (a preset menu entry)
@@ -2091,6 +2105,9 @@ export class Ui {
   private readonly undoBtn: HTMLButtonElement;
   private readonly redoBtn: HTMLButtonElement;
   private readonly presetSelect: HTMLSelectElement;
+  private readonly surfaceLightingStarterSelect: HTMLSelectElement;
+  private readonly surfaceLightingControls: SurfaceLightingControls;
+  private readonly surfaceLightingDisclosure: HTMLElement;
   private readonly surpriseBtn: HTMLButtonElement;
   private readonly driftBtn: HTMLButtonElement;
   private readonly driftTitle: string;
@@ -2901,6 +2918,21 @@ export class Ui {
     this.undoBtn = this.byId("undoBtn");
     this.redoBtn = this.byId("redoBtn");
     this.presetSelect = this.byId("presetSelect");
+    this.surfaceLightingStarterSelect = this.byId(
+      "surfaceLightingStarterSelect",
+    );
+    for (const entry of SURFACE_LIGHTING_STARTERS) {
+      const option = doc.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.label;
+      this.surfaceLightingStarterSelect.appendChild(option);
+    }
+    this.surfaceLightingControls = new SurfaceLightingControls(
+      this.byId("surfaceAuthoredLightingControls"),
+      this.byId("surfaceAuthoredLightingNote"),
+      (lighting, phase) => this.handlers?.onSurfaceLighting?.(lighting, phase),
+    );
+    this.surfaceLightingDisclosure = this.byId("surfaceLightingDisclosure");
     this.surpriseBtn = this.byId("surpriseBtn");
     this.driftBtn = this.byId("driftBtn");
     this.driftTitle = this.driftBtn.title;
@@ -3724,6 +3756,14 @@ export class Ui {
       const preset = this.presetSelect.value;
       this.presetSelect.value = "";
       if (preset) handlers.onPreset(preset as Preset);
+    });
+    this.surfaceLightingStarterSelect.addEventListener("change", () => {
+      const id = this.surfaceLightingStarterSelect.value;
+      this.surfaceLightingStarterSelect.value = "";
+      const entry = SURFACE_LIGHTING_STARTERS.find(
+        (starter) => starter.id === id,
+      );
+      if (entry) handlers.onSurfaceLightingStarter?.(entry.id);
     });
     // The Hybrid schedule trio: the picker's value goes to the handler
     // verbatim (updateLabels re-syncs it to the document's own state — the
@@ -4924,6 +4964,16 @@ export class Ui {
     }
     this.syncCustomPaletteEditors(state);
     this.syncBalloonCustomPaletteEditor(state);
+    this.surfaceLightingControls.sync(state);
+    const authoredLighting = state.surface.lighting !== undefined;
+    this.surfaceLightingDisclosure.textContent = authoredLighting
+      ? "Authored lights set direct illumination. Angle, height and ambient remain available for finish reflections; Environment tint is dormant. Changes restart Surface convergence."
+      : "Changes affect only Surface and apply immediately. Environment is Surface-only.";
+    const environment = this.scalars.get("surfaceEnvLightSlider");
+    if (environment?.input instanceof HTMLInputElement) {
+      environment.input.disabled = authoredLighting;
+      environment.numeric?.setDisabled(authoredLighting);
+    }
 
     const effectiveOrder = effectiveSymmetryOrder(
       state.symmetry.order,

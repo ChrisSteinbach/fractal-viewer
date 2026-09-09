@@ -458,6 +458,8 @@ export interface Strip {
 }
 
 export interface StripPlannerOptions {
+  /** An independent work-count cap, unaffected by favorable timing evidence. */
+  maxStripPixels?: number;
   /** Measured GPU time (ms) each strip aims for. */
   targetMs?: number;
   /**
@@ -594,9 +596,16 @@ export function createStripPlanner(
       worstFloor !== null && worstFloor > 0
         ? Math.max(worstFloor, observedWorst)
         : 0;
-    return worst > 0
-      ? Math.max(1, Math.floor(STRIP_WORST_CASE_CAP_MS / worst))
-      : Infinity;
+    const timedCap =
+      worst > 0
+        ? Math.max(1, Math.floor(STRIP_WORST_CASE_CAP_MS / worst))
+        : Infinity;
+    return Math.min(
+      timedCap,
+      options.maxStripPixels === undefined
+        ? Infinity
+        : Math.max(1, Math.floor(options.maxStripPixels)),
+    );
   };
   const rows = Math.max(0, Math.floor(totalRows));
   const width = Math.max(0, Math.floor(rowPx));

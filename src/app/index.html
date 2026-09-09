@@ -1009,6 +1009,19 @@
           </div>
         </details>
 
+        <details
+          class="panel-section"
+          id="surfaceAuthoredLightingSection"
+          name="panel-section"
+        >
+          <summary>Surface lighting</summary>
+          <p id="surfaceAuthoredLightingNote" class="flame-hint" role="status">
+            Surface lighting is retained in other render modes. Enter Surface to
+            edit the lights and mist.
+          </p>
+          <div id="surfaceAuthoredLightingControls"></div>
+        </details>
+
         <!-- Authored Scene / Look state consumed by every renderer. Keep this
              one shared editor outside renderer-specific applicability; its
              document-level effective-order disclosure is #symmetryNote above. -->
@@ -2595,6 +2608,19 @@
           <p id="presetTimingHint" class="flame-note-info">
             Presets morph in Points, then open their saved renderer. Random
             Drift stays in Points; Collection Drift follows each saved scene.
+          </p>
+          <label class="select-label">
+            Replace with Surface scene
+            <select
+              id="surfaceLightingStarterSelect"
+              aria-describedby="surfaceLightingStarterNote"
+            >
+              <option value="">Load a lit interior…</option>
+            </select>
+          </label>
+          <p id="surfaceLightingStarterNote" class="flame-hint">
+            Replaces the scene, camera and look, then opens Surface. Edit its
+            lights and mist under Surface lighting.
           </p>
           <label class="select-label">
             Replace with preset

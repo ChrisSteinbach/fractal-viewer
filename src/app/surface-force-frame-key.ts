@@ -1,5 +1,6 @@
 import { DEFAULT_BACKGROUND_SHAPE_CENTER } from "../fractal/background-shape";
 import { resolveShapeTrap } from "../fractal/shape-trap";
+import { surfaceLightingLanes } from "../fractal/surface-lighting";
 import type { SurfaceComputeFrameSpec } from "./surface-compute";
 
 /**
@@ -81,6 +82,27 @@ export function surfaceComputeForceFrameKey(
     spec.fogDensity ?? 1,
     (spec.fogTint ?? [1, 1, 1]).join(","),
     spec.fogTintStrength ?? 0,
+    // Lighting changes repaint both surfaces and empty mist rays. The shared
+    // packed lanes resolve every authored/default domain exactly as the GPU
+    // does. Phase lanes are excluded: the renderer owns that scheduling.
+    ...(spec.lighting
+      ? [
+          "lighting",
+          Array.from(surfaceLightingLanes(spec.lighting, spec.lightingRuntime))
+            .slice(0, 44)
+            .join(","),
+          (spec.bgOffset ?? [0, 0]).join(","),
+          (spec.bgExtent ?? [spec.width, spec.height]).join(","),
+          ...(spec.lightingBackground
+            ? [
+                "lightingBackground",
+                spec.lightingBackground.width,
+                spec.lightingBackground.height,
+                spec.lightingBackground.revision,
+              ]
+            : []),
+        ]
+      : []),
     // The session's authored finishes: a timeline leg whose document
     // authors a different finish on some transform repaints every hit
     // pixel under a parked camera — fog's own rationale, per slot. Keyed

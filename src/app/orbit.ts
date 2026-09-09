@@ -6,6 +6,8 @@ export const MAX_RADIUS = 100;
 /** Ordinary perspective used by every fitted/reset view. Deep zoom narrows
  * the lens only after the physical orbit reaches {@link MIN_RADIUS}. */
 export const DEFAULT_CAMERA_FOV = 60;
+/** Wider authored interior framing; ordinary reset/fit remains 60 degrees. */
+export const MAX_CAMERA_FOV = 90;
 /** Numerical floor for continuous zoom. At this field of view the target-plane
  * footprint is ~3,300x smaller than the ordinary 60 degree lens while the
  * camera itself remains a safe unit away from the focus. Going narrower would
@@ -64,7 +66,7 @@ export interface CameraPose {
 }
 
 export function clampCameraFov(fov: number): number {
-  return Math.max(MIN_DEEP_ZOOM_FOV, Math.min(DEFAULT_CAMERA_FOV, fov));
+  return Math.max(MIN_DEEP_ZOOM_FOV, Math.min(MAX_CAMERA_FOV, fov));
 }
 
 /** Extra magnification contributed by the deep-zoom lens (1 at the ordinary

@@ -4,6 +4,12 @@ import { CLASSIC_SURFACE_FINISH } from "../fractal/surface-finish";
 import { resolveShapeTrap } from "../fractal/shape-trap";
 import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
+import {
+  cloneSurfaceLighting,
+  DEFAULT_SURFACE_LIGHTING,
+  surfaceLightingRuntime,
+  type SurfaceLighting,
+} from "../fractal/surface-lighting";
 import type {
   ResolvedSurfacePattern,
   SurfaceNativeCalibration,
@@ -44,6 +50,152 @@ function baseSpec(
 }
 
 describe("surfaceComputeForceFrameKey", () => {
+  it("invalidates every authored lighting and medium edit under a parked camera", () => {
+    const lighting = cloneSurfaceLighting(DEFAULT_SURFACE_LIGHTING);
+    lighting.medium = {
+      center: [0, 0, 0],
+      radius: 3,
+      density: 0.2,
+      tint: [0.4, 0.6, 0.8],
+      anisotropy: 0.3,
+    };
+    const original = surfaceComputeForceFrameKey(baseSpec({ lighting }));
+    const edits: ((value: SurfaceLighting) => void)[] = [
+      (value) => {
+        value.lights[0].position[0] += 1;
+      },
+      (value) => {
+        value.lights[0].normal[0] += 1;
+      },
+      (value) => {
+        value.lights[0].radius += 1;
+      },
+      (value) => {
+        value.lights[0].intensity += 1;
+      },
+      (value) => {
+        value.lights[1].color[1] += 1;
+      },
+      (value) => {
+        value.lights.pop();
+      },
+      (value) => {
+        value.ambient[1] += 1;
+      },
+      (value) => {
+        value.specular += 0.1;
+      },
+      (value) => {
+        value.roughness += 0.1;
+      },
+      (value) => {
+        value.medium!.center[1] += 1;
+      },
+      (value) => {
+        value.medium!.radius += 1;
+      },
+      (value) => {
+        value.medium!.density += 0.1;
+      },
+      (value) => {
+        value.medium!.tint[1] += 0.1;
+      },
+      (value) => {
+        value.medium!.anisotropy += 0.1;
+      },
+      (value) => {
+        delete value.medium;
+      },
+    ];
+    for (const edit of edits) {
+      const changed = cloneSurfaceLighting(lighting);
+      edit(changed);
+      expect(
+        surfaceComputeForceFrameKey(baseSpec({ lighting: changed })),
+      ).not.toBe(original);
+    }
+    expect(
+      surfaceComputeForceFrameKey(
+        baseSpec({ lighting: cloneSurfaceLighting(lighting) }),
+      ),
+    ).toBe(original);
+    expect(surfaceComputeForceFrameKey(baseSpec())).not.toBe(original);
+  });
+
+  it("keys quality, image revisions and capture coordinates, excluding renderer-owned phases", () => {
+    const lighting = cloneSurfaceLighting(DEFAULT_SURFACE_LIGHTING);
+    const runtime = surfaceLightingRuntime(lighting, {
+      interaction: false,
+      dimension: 4,
+      boundingRadius: 3,
+    });
+    const spec = baseSpec({
+      lighting,
+      lightingRuntime: runtime,
+      lightingBackground: {
+        width: 1,
+        height: 1,
+        rgba: new Uint8Array([255, 0, 0, 255]),
+        revision: 1,
+      },
+    });
+    const key = surfaceComputeForceFrameKey(spec);
+    for (const field of [
+      "surfaceSamples",
+      "mediumSamples",
+      "sampleIndex",
+      "epsilon",
+    ] as const) {
+      expect(
+        surfaceComputeForceFrameKey({
+          ...spec,
+          lightingRuntime: { ...runtime, [field]: runtime[field] + 1 },
+        }),
+      ).not.toBe(key);
+    }
+    expect(
+      surfaceComputeForceFrameKey({
+        ...spec,
+        lightingRuntime: { ...runtime, shadowSteps: 128 },
+      }),
+    ).not.toBe(key);
+    expect(
+      surfaceComputeForceFrameKey({
+        ...spec,
+        lightingRuntime: {
+          ...runtime,
+          phase: 1,
+          cellStart: 8,
+          cellCount: 2,
+          lightIndex: 0,
+        },
+      }),
+    ).toBe(key);
+    expect(
+      surfaceComputeForceFrameKey({
+        ...spec,
+        lightingBackground: { ...spec.lightingBackground!, revision: 2 },
+      }),
+    ).not.toBe(key);
+    expect(
+      surfaceComputeForceFrameKey({ ...spec, lightingBackground: undefined }),
+    ).not.toBe(key);
+    expect(surfaceComputeForceFrameKey({ ...spec, bgOffset: [0, 2] })).not.toBe(
+      key,
+    );
+    expect(surfaceComputeForceFrameKey({ ...spec, bgExtent: [4, 8] })).not.toBe(
+      key,
+    );
+    // A dormant stray runtime/image does not alter classic memo identity.
+    expect(
+      surfaceComputeForceFrameKey({
+        ...baseSpec(),
+        lightingRuntime: runtime,
+        lightingBackground: spec.lightingBackground,
+      }),
+    ).toBe(surfaceComputeForceFrameKey(baseSpec()));
+  });
+
   it("keys two value-equal specs identically, even built as separate objects", () => {
     // Every optional field this fix adds, plus the pre-existing view4 and
     // groundPlane blocks, populated in full — two independently-built specs
