@@ -345,15 +345,18 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     reports where it sits instead of remapping its stops — which is what
     retired `surfaceComputeBandStops` (a linear ramp restricted to a
     sub-rectangle is still a two-stop ramp; nothing else is) and what lets
-    a non-linear shape exist at all. `"radial"` is the second
+    a non-linear shape exist at all. THE CONTRACT IS THE WHOLE FRAME'S
+    NOW: the compute kernels derive the ray's NDC, the march-start DITHER
+    and the cinematic pixel SEED from that same full-image pixel, and a
+    capture band traces the WHOLE image's projection rather than a
+    sub-frustum, so a banded export is BIT-EXACT and not merely close —
+    the dither's per-raster hash phase cost a LIT export 0.408/255 mean;
+    both tile gates assert byte equality. `"radial"` is the second
     entry in `BACKGROUND_SHAPES`: a smoothstep vignette reading a
     host-computed `center`/`scale` (`backgroundRadialScale`, per-axis so
-    the shape stays circular in real pixels rather than elliptical in
-    normalized UV) through the SAME dialect `field` accessor
-    (`uBgCenter`/`shade.bgCenter`) both shader mirrors and the WGSL
-    `ShadeParams` tail (`surface-de-gpu.ts`, `bgCenter`/`bgScale`/`bgShape`
-    appended at 176/184/192, struct 208 B then, 224 since
-    the balloon tint pair) now carry — a SHAPE
+    the shape stays circular in real pixels) through the SAME dialect
+    `field` accessor (`uBgCenter`/`shade.bgCenter`) both shader mirrors
+    and the WGSL `ShadeParams` tail carry — a SHAPE
     orthogonal to `background.ts`'s GRADIENT modes, so every gradient mode can
     be linear or radial and `BackgroundGradient` stays the two-stop pair it
     always was. The per-pixel `"flame"` mode keeps the authored shape dormant
