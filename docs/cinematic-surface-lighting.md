@@ -105,15 +105,42 @@ The runs used Node 22.22.0 on an Intel Core i9-9900K. Native scene jobs and the
 intervention sheet ran concurrently. Timings therefore describe these CPU
 reference runs; they are neither isolated benchmarks nor GPU predictions.
 
-The non-flat 4D row has 28,346 hit pixels out of 65,536 in every column, with
-zero primary exhaustion. Its reference times were 0.937 s for legacy lighting,
-3.448 s for colored lights and 33.797 s with the medium. Surface visibility
-exhausted 82 of 215,558 rays (0.038%); medium visibility exhausted 548 of
-4,194,304 rays (0.013%). All remained dark, and no distance query was invalid.
-The first composition had a distracting bright source region and visible
+All nine owner panels have zero primary exhaustion and zero invalid visibility
+queries. Each row retains the same geometry mask across all three columns.
+
+| Scene             | Hit pixels / 65,536 | Legacy CPU time | Colored lights | Lights + medium |
+| ----------------- | ------------------: | --------------: | -------------: | --------------: |
+| Menger cathedral  |              60,429 |        29.845 s |      167.203 s |       665.343 s |
+| Balloon cavern    |              58,357 |        33.324 s |      188.015 s |       497.013 s |
+| Non-flat 4D slice |              28,346 |         0.937 s |        3.448 s |        33.797 s |
+
+The cathedral's surface visibility exhausted 2,317 of 622,062 rays (0.373%);
+medium visibility exhausted 1,529 of 4,175,088 (0.037%). The Balloon row has
+28 of 529,308 unresolved surface rays and three of 3,646,857 medium rays.
+Its echo supplies 42,168 hits, 72.26% of drawn geometry, so this is an actual
+inverted-union interior. Camera clearance is 0.32876 world units. Near-clipped
+pixels, defined by any encoded channel reaching 254, occupy 0.578% of the
+cathedral medium frame and 1.701% of the Balloon medium frame.
+
+The 4D row's surface visibility exhausted 82 of 215,558 rays (0.038%); medium
+visibility exhausted 548 of 4,194,304 rays (0.013%). Unresolved visibility stays
+dark in every row. The first 4D composition had a distracting bright source region and visible
 spherical mist edge. Moving the rim light outside the medium, enlarging the
 medium and adjusting density/fill removed those distractions in the revised
 sheet. This is a composition decision, not owner acceptance.
+
+The final deck combines `owner-256-cathedral`, `owner-256-balloon` and
+`owner-256-4d-revised` into `owner-review-final`. All nine raw pixel hashes were
+verified before assembly; Chromium loaded all nine review-page PNGs without
+page errors. This only qualifies the generated review page. It does not test
+the production fractal renderer in a browser.
+
+**Visual limitation:** the colored rig strengthens warm/cool separation, but
+the medium chiefly reads as illuminated haze or local glow. Distinct separated
+shafts remain weak, and bright source regions retain sampling noise. The
+Balloon glow also competes with the darker ceiling and wall detail. These
+remain explicit questions for owner review; numerical agreement does not
+resolve them.
 
 The separate real-Menger intervention keeps a camera in clearance and compares
 a 21-map IFS with a closed rear portal, the ordinary 20-map open portal, and
