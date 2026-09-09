@@ -25,7 +25,24 @@
  * Options: --url=URL --only=points|flame|solid|surface --dimension=3|4
  * --engine=compute|webgl|both --scope=all|render|lifecycle --look=true|false
  * --export=true|false --settle=240000 --outdir=scripts/out/tiling-balloon-browser
- * Omit --display for SwiftShader. Exit 0 passes; failed legs exit 1.
+ * --repeat=1..20 repeats whole sequences in the same browser, with fresh pages.
+ * --controls=none|untiled|balloon-off|both adds Surface diagnostic sequences:
+ * the same copied/export/look path with only tiling removed or Balloon off.
+ * These require completed output and report comparisons without qualifying
+ * echo visibility in a fixture whose geometry deliberately changed.
+ * --stripdiag=true records bounded host-only pump snapshots at long waits and
+ * every completed/failed scene. --gltrace=true also observes existing GL calls,
+ * retaining counters, fence results and trailing non-poll command order. Neither
+ * option adds synchronizing GL probes. --rescue=flush permits ONE intervention
+ * per invocation, only after 15s unchanged actual planner/fence progress with a
+ * fence pending; pre/post snapshots and whether it fired are recorded. Rescue
+ * requires either diagnostics option and never extends the settle deadline.
+ * --browsertrace=true requires diagnostics and records one 3s CDP task/command
+ * trace after the same 15s progress hold, before any requested flush rescue.
+ * It enables no GPU timing queries. Trace completion alone is not a fence verdict.
+ * Omit --display for SwiftShader. Exit 0 qualifies unassisted completion;
+ * failed legs exit 1. Completed sequences that received a flush exit 2 and carry
+ * per-row assistedCompletion/rescue provenance, never pass:true.
  * This instrument's first qualification is recorded in its results.json and
  * docs/tiling-contract.md; the script contains no claimed unperformed run.
  */
@@ -36,6 +53,12 @@ import {
   launchSurfaceBrowser,
   pollSurfaceState,
 } from "./lib/surface-browser-runner.mjs";
+import {
+  flushSurfaceIfUnchanged,
+  observeSurfaceGL,
+  surfaceStripProgress,
+} from "./lib/surface-gl-observer.mjs";
+import { captureSurfaceBrowserTrace } from "./lib/surface-browser-trace.mjs";
 
 const options = Object.fromEntries(
   process.argv.slice(2).map((arg) => {
@@ -60,12 +83,36 @@ const dimensions = options.dimension ? [Number(options.dimension)] : [3, 4];
 const scope = options.scope ?? "all";
 const exportPng = options.export !== "false";
 const lookControls = options.look === "true";
+const repeat = Number(options.repeat ?? 1);
+const controls = options.controls ?? "none";
+const gltrace = options.gltrace === "true";
+const stripdiag = gltrace || options.stripdiag === "true";
+const browsertrace = options.browsertrace === "true";
+const rescue = options.rescue ?? "none";
+const rescueState = { requested: rescue, attempted: false, fired: false };
+const traceState = {
+  requested: browsertrace,
+  attempted: false,
+  completed: false,
+};
 assert(dimensions.every((d) => d === 3 || d === 4));
 assert(["all", "render", "lifecycle"].includes(scope));
 assert(
   renderers.every((r) => ["points", "flame", "solid", "surface"].includes(r)),
 );
 assert(Number.isFinite(settle) && settle > 0);
+assert(Number.isInteger(repeat) && repeat >= 1 && repeat <= 20);
+assert(["none", "untiled", "balloon-off", "both"].includes(controls));
+assert(["none", "flush"].includes(rescue));
+assert(rescue === "none" || stripdiag, "--rescue=flush requires diagnostics");
+assert(!browsertrace || stripdiag, "--browsertrace=true requires diagnostics");
+assert(
+  controls === "none" ||
+    (renderers.length === 1 &&
+      renderers[0] === "surface" &&
+      scope !== "lifecycle"),
+  "Diagnostic controls require --only=surface and a render scope",
+);
 const viewport = { width: 640, height: 480 };
 const BACKDROP = [13, 13, 24];
 const exact = (value) => JSON.stringify(value);
@@ -75,6 +122,106 @@ const decode = (hash) =>
   JSON.parse(
     Buffer.from(hash.replace(/^#v1=/, ""), "base64url").toString("utf8"),
   );
+
+function sceneDiagnostics(page, name) {
+  if (!stripdiag) return null;
+  const samples = [];
+  let key = null;
+  let unchangedSince = null;
+  let lastProgress = null;
+  const filename = path.join(outdir, `${name}-diagnostic.json`);
+  async function sample(reason, waiting) {
+    const browserState = await page.evaluate(() => ({
+      surface: window.__surfaceState?.() ?? null,
+      gl: window.__tilingBalloonGL ?? null,
+      frameCadence: window.__tilingBalloonFrames,
+      visibility: document.visibilityState,
+      focused: document.hasFocus(),
+      href: location.href,
+    }));
+    const record = {
+      reason,
+      at: new Date().toISOString(),
+      unchangedMs: unchangedSince === null ? null : Date.now() - unchangedSince,
+      progress: lastProgress,
+      waiting,
+      ...browserState,
+      rescue: { ...rescueState },
+      trace: { ...traceState },
+    };
+    samples.push(record);
+    if (samples.length > 32) samples.shift();
+    await writeFile(
+      filename,
+      `${JSON.stringify({ name, samples }, null, 2)}\n`,
+    );
+    return record;
+  }
+  return {
+    sample,
+    async observe(waiting, deadline) {
+      lastProgress = surfaceStripProgress(waiting.surface);
+      const nextKey = lastProgress && exact(lastProgress);
+      if (nextKey !== key) {
+        key = nextKey;
+        unchangedSince = key === null ? null : Date.now();
+      }
+      if (
+        Date.now() >= deadline ||
+        unchangedSince === null ||
+        Date.now() - unchangedSince < 15_000 ||
+        !(lastProgress?.queue.inFlightCount > 0)
+      )
+        return;
+      if (browsertrace && !traceState.attempted) {
+        await sample("before-browser-trace", waiting);
+        if (Date.now() >= deadline) return;
+        traceState.attempted = true;
+        traceState.scene = name;
+        try {
+          Object.assign(
+            traceState,
+            await captureSurfaceBrowserTrace(
+              page,
+              path.join(outdir, `${name}-browser-trace.json`),
+              deadline,
+            ),
+          );
+        } catch (error) {
+          traceState.error = String(error);
+        }
+        await sample("after-browser-trace", waiting);
+        console.log(exact({ trace: traceState }));
+      }
+      if (rescue !== "flush" || rescueState.attempted || Date.now() >= deadline)
+        return;
+      const before = await sample("before-flush-rescue", waiting);
+      // Trace collection and artifact writes yield; only an unchanged live
+      // planner immediately before the flush qualifies as an intervention.
+      if (
+        Date.now() >= deadline ||
+        exact(surfaceStripProgress(before.surface)) !== key
+      )
+        return;
+      rescueState.scene = name;
+      rescueState.unchangedMs = Date.now() - unchangedSince;
+      try {
+        const result = await page.evaluate(flushSurfaceIfUnchanged, {
+          expected: lastProgress,
+          deadline,
+        });
+        if (result.fired)
+          Object.assign(rescueState, result, { attempted: true });
+        else await sample(`flush-skipped-${result.reason}`, waiting);
+      } catch (error) {
+        rescueState.attempted = true;
+        rescueState.error = String(error);
+      }
+      await sample("after-flush-rescue", waiting);
+      console.log(exact({ rescue: rescueState }));
+    },
+  };
+}
 
 function scene(dimension, renderer = "points") {
   const s = Math.sqrt(5) / 8;
@@ -310,7 +457,11 @@ function observeFrameCadence() {
   requestAnimationFrame(tick);
 }
 
-async function waitReady(page, renderer, { active = true, after = 0 } = {}) {
+async function waitReady(
+  page,
+  renderer,
+  { active = true, after = 0, diagnostics = null } = {},
+) {
   const button = `mode${renderer[0].toUpperCase()}${renderer.slice(1)}Btn`;
   const deadline = Date.now() + settle;
   let reportDue = Date.now() + 15_000;
@@ -360,7 +511,9 @@ async function waitReady(page, renderer, { active = true, after = 0 } = {}) {
       if (renderer === "surface") {
         const state = await pollSurfaceState(page);
         last.surface = state.probe;
-        if (state.settled) return { ...last, surface: state.probe };
+        if (diagnostics) await diagnostics.observe(last, deadline);
+        if (state.settled && Date.now() < deadline)
+          return { ...last, surface: state.probe };
       } else if (
         last.terminal &&
         (renderer !== "solid" || last.progress.includes("converged"))
@@ -370,6 +523,7 @@ async function waitReady(page, renderer, { active = true, after = 0 } = {}) {
       }
     }
     if (Date.now() >= reportDue) {
+      if (diagnostics) await diagnostics.sample("long-wait", last);
       console.log(
         exact({
           waiting: renderer,
@@ -385,6 +539,7 @@ async function waitReady(page, renderer, { active = true, after = 0 } = {}) {
     }
     await page.waitForTimeout(250);
   }
+  if (diagnostics) await diagnostics.sample("settle-deadline", last);
   throw new Error(`${renderer} did not complete: ${exact(last)}`);
 }
 
@@ -492,6 +647,7 @@ async function createPage(browser) {
   await page.addInitScript(observeWorkers);
   await page.addInitScript(observeEchoProgram);
   await page.addInitScript(observeFrameCadence);
+  if (gltrace) await page.addInitScript(observeSurfaceGL);
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
@@ -502,6 +658,7 @@ async function createPage(browser) {
 async function boot(page, document, engine, restoredLink) {
   const target = new URL(restoredLink ?? `${url}/${encode(document)}`);
   target.searchParams.set("surfacestate", "");
+  if (stripdiag) target.searchParams.set("stripdiag", "");
   target.searchParams.delete(
     engine === "webgl" ? "surfacecompute" : "surfacegl",
   );
@@ -608,6 +765,7 @@ async function runScene(
 ) {
   const session = await createPage(browser);
   const { context, page, errors } = session;
+  const diagnostics = sceneDiagnostics(page, name);
   try {
     await boot(page, document, selectedEngine, restoredLink);
     if (renderer !== "points") {
@@ -617,7 +775,11 @@ async function runScene(
       assert.equal(await button.isDisabled(), false, `${name} entry refused`);
       await button.evaluate((element) => element.click());
     }
-    const ready = await waitReady(page, renderer);
+    const ready = await waitReady(page, renderer, {
+      active: Boolean(document.tiling),
+      diagnostics,
+    });
+    if (diagnostics) await diagnostics.sample("completed-settle", ready);
     const copiedLink = await copyLink(page);
     const copied = decode(new URL(copiedLink).hash);
     assertAuthored(copied, document, name);
@@ -654,6 +816,7 @@ async function runScene(
     const echo = await page.evaluate(() => window.__tilingBalloonEcho);
     if (renderer === "points") assertEchoBall(ready, echo, document, name);
     const exported = save ? await savePng(page, name) : null;
+    if (diagnostics) await diagnostics.sample("completed-scene", ready);
     assert.deepEqual(errors, [], `${name} browser errors`);
     const start = ready.worker?.sent.find(
       (s) => s.type === (renderer === "points" ? "cloud" : "start"),
@@ -670,6 +833,10 @@ async function runScene(
       backend,
     };
   } catch (error) {
+    if (diagnostics)
+      await diagnostics
+        .sample("failed-scene", { error: String(error), errors })
+        .catch(() => {});
     await context.close();
     throw new Error(
       `${name}: ${error instanceof Error ? error.message : String(error)}; browser errors: ${exact(errors)}`,
@@ -697,6 +864,7 @@ async function runLookControls(
   renderer,
   selectedEngine,
   name,
+  diagnostic = false,
 ) {
   const results = [];
   // Each changed arm and its inert control boots the exact same scene seed,
@@ -719,10 +887,17 @@ async function runLookControls(
       );
       assert.equal(on.seed, reference.seed, `${name} ${key} seed`);
       const visible = await compare(on.page, reference.png, on.png);
-      assert(
-        visible.difference >= 0.001,
-        `${name} ${key} is inert: ${exact(visible)}`,
-      );
+      if (!diagnostic)
+        assert(
+          visible.difference >= 0.001,
+          `${name} ${key} is inert: ${exact(visible)}`,
+        );
+      else if (!document.balloonEcho)
+        assert.equal(
+          visible.meanAbs,
+          0,
+          `${name} ${key} changes the Balloon-off control: ${exact(visible)}`,
+        );
       await on.context.close();
       off = await runScene(
         browser,
@@ -755,14 +930,18 @@ async function runRenderLeg(
   renderer,
   selectedEngine,
   name,
+  control = "none",
 ) {
   let first;
   let positive;
   let negative;
   try {
+    const document = scene(dimension, renderer);
+    if (control === "untiled") delete document.tiling;
+    if (control === "balloon-off") document.balloonEcho = false;
     first = await runScene(
       browser,
-      scene(dimension, renderer),
+      document,
       renderer,
       `${name}-authored`,
       selectedEngine,
@@ -788,7 +967,13 @@ async function runRenderLeg(
     );
     assert.equal(positive.seed, negative.seed, `${name} paired renderer seed`);
     const pixels = await compare(negative.page, positive.png, negative.png);
-    assertVisibleEcho(pixels, name);
+    if (control === "none") assertVisibleEcho(pixels, name);
+    else if (control === "balloon-off")
+      assert.equal(
+        pixels.meanAbs,
+        0,
+        `${name} Balloon-off reload changed pixels`,
+      );
     let exported = null;
     if (exportPng) {
       exported = await compare(
@@ -796,7 +981,9 @@ async function runRenderLeg(
         positive.exported,
         negative.exported,
       );
-      assertVisibleEcho(exported, `${name} saved PNG`);
+      if (control === "none") assertVisibleEcho(exported, `${name} saved PNG`);
+      else if (control === "balloon-off")
+        assert.equal(exported.meanAbs, 0, `${name} Balloon-off exports differ`);
     }
     await negative.context.close();
     const look = lookControls
@@ -807,9 +994,23 @@ async function runRenderLeg(
           renderer,
           selectedEngine,
           name,
+          control !== "none",
         )
       : null;
     return {
+      ...(control === "none"
+        ? {}
+        : {
+            diagnosticControl: control,
+            qualified: [
+              "completed settle",
+              "drawing census",
+              "copied state",
+              "engine",
+              ...(exportPng ? ["exports"] : []),
+            ],
+            echoVisibilityQualified: false,
+          }),
       pixels,
       exported,
       look,
@@ -1012,11 +1213,21 @@ const browser = await launchSurfaceBrowser(mode);
 const results = [];
 async function record(name, run) {
   const started = Date.now();
+  const rescueBefore = rescueState.scene;
+  const rowRescue = () =>
+    rescueState.scene !== rescueBefore
+      ? { ...rescueState }
+      : { requested: rescue, attempted: false, fired: false };
   try {
+    const output = await run();
+    const intervention = rowRescue();
     const result = {
       name,
-      pass: true,
-      ...(await run()),
+      ...output,
+      completed: true,
+      pass: !intervention.fired,
+      assistedCompletion: intervention.fired,
+      rescue: intervention,
       elapsedMs: Date.now() - started,
     };
     results.push(result);
@@ -1024,7 +1235,10 @@ async function record(name, run) {
   } catch (error) {
     const result = {
       name,
+      completed: false,
       pass: false,
+      assistedCompletion: false,
+      rescue: rowRescue(),
       elapsedMs: Date.now() - started,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -1033,22 +1247,43 @@ async function record(name, run) {
   }
 }
 try {
-  if (scope !== "lifecycle") {
-    for (const renderer of renderers)
-      for (const dimension of dimensions)
-        for (const selectedEngine of renderer === "surface"
-          ? engines
-          : ["compute"]) {
-          const name = `${renderer}-${dimension}d-finite-${selectedEngine}`;
-          await record(name, () =>
-            runRenderLeg(browser, dimension, renderer, selectedEngine, name),
-          );
-        }
-  }
-  if (scope !== "render" && renderers.includes("points")) {
-    for (const dimension of dimensions) {
-      const name = `points-${dimension}d-balloon-handoff`;
-      await record(name, () => runLifecycleLeg(browser, dimension, name));
+  for (let iteration = 1; iteration <= repeat; iteration++) {
+    const suffix =
+      repeat === 1 ? "" : `-repeat-${String(iteration).padStart(2, "0")}`;
+    if (scope !== "lifecycle") {
+      for (const renderer of renderers)
+        for (const dimension of dimensions)
+          for (const selectedEngine of renderer === "surface"
+            ? engines
+            : ["compute"]) {
+            const name = `${renderer}-${dimension}d-finite-${selectedEngine}${suffix}`;
+            await record(name, () =>
+              runRenderLeg(browser, dimension, renderer, selectedEngine, name),
+            );
+            for (const control of controls === "both"
+              ? ["untiled", "balloon-off"]
+              : controls === "none"
+                ? []
+                : [controls]) {
+              const controlName = `${name}-control-${control}`;
+              await record(controlName, () =>
+                runRenderLeg(
+                  browser,
+                  dimension,
+                  renderer,
+                  selectedEngine,
+                  controlName,
+                  control,
+                ),
+              );
+            }
+          }
+    }
+    if (scope !== "render" && renderers.includes("points")) {
+      for (const dimension of dimensions) {
+        const name = `points-${dimension}d-balloon-handoff${suffix}`;
+        await record(name, () => runLifecycleLeg(browser, dimension, name));
+      }
     }
   }
 } finally {
@@ -1057,6 +1292,15 @@ try {
     path.join(outdir, "results.json"),
     `${JSON.stringify(results, null, 2)}\n`,
   );
+  if (stripdiag)
+    await writeFile(
+      path.join(outdir, "diagnostic-run.json"),
+      `${JSON.stringify({ options, repeat, controls, gltrace, stripdiag, rescue: rescueState, trace: traceState }, null, 2)}\n`,
+    );
 }
 process.exitCode =
-  results.length > 0 && results.every((result) => result.pass) ? 0 : 1;
+  results.length === 0 || results.some((result) => !result.completed)
+    ? 1
+    : results.some((result) => result.assistedCompletion)
+      ? 2
+      : 0;

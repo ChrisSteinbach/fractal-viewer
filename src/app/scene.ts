@@ -6427,6 +6427,24 @@ export class FractalScene {
       presentDue: 0,
       presentIntervalMs,
       stat: { strips: 0, polls: 0, presents: 0, calls: 0, t0: 0 },
+      diagnostic: STRIP_DIAGNOSTICS
+        ? {
+            id: ++stripDiagnosticId,
+            plannerWorstFloorMsPerPx: this.surfaceStripWorstMsPerPx(),
+            lastPumpAt: null,
+            lastPumpExitAt: null,
+            lastExitReason: "unstarted",
+            lastQueueBudgetMs: 0,
+            fencePolls: 0,
+            lastFenceResult: null,
+            lastFencePollAt: null,
+            fencesCreated: 0,
+            fenceFailures: 0,
+            fencesRetired: 0,
+            flushes: 0,
+            syncStrips: 0,
+          }
+        : null,
     };
   }
 
@@ -6668,6 +6686,39 @@ export class FractalScene {
       };
     }
     return null;
+  }
+
+  /** `?stripdiag` snapshots host-side state only. Fence results come from
+   * the pump's existing polls; reading this must never query or submit GL
+   * work, since either could repair the stalled queue being investigated. */
+  surfaceStripDiagnostics(): SurfaceStripDiagnostics | null {
+    if (!STRIP_DIAGNOSTICS) return null;
+    const nowMs = performance.now();
+    const backlog = this.surfaceStripBacklog;
+    return {
+      nowMs,
+      sampleIndex: this.surfaceSampleIndex,
+      sampleTotal: this.surfaceSampleTotal,
+      captureFlight: this.surfaceCaptureFlight,
+      preview: stripJobSnapshot(
+        this.surfacePreviewJob,
+        this.surfacePreviewTarget,
+        nowMs,
+      ),
+      settle: stripJobSnapshot(
+        this.surfaceStripJob,
+        this.surfaceSettleTarget,
+        nowMs,
+      ),
+      backlog: backlog
+        ? {
+            count: backlog.entries.length,
+            px: backlog.px,
+            busyMark: backlog.busyMark,
+            predictedMs: backlog.predictedMs,
+          }
+        : null,
+    };
   }
 
   /** The unmasked WebGL renderer string: WEBGL_debug_renderer_info where the
@@ -7556,6 +7607,12 @@ export class FractalScene {
     queueBudgetMs: number,
   ): { done: boolean; present: boolean } {
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    const diagnostic = job.diagnostic;
+    if (diagnostic) {
+      diagnostic.lastPumpAt = performance.now();
+      diagnostic.lastQueueBudgetMs = queueBudgetMs;
+      diagnostic.lastExitReason = "pumping";
+    }
     if (job.presentDue === 0) {
       job.presentDue = performance.now() + job.presentIntervalMs;
       job.stat.t0 = performance.now();
@@ -7569,7 +7626,13 @@ export class FractalScene {
     // pipelined.
     if (job.msPerPxEstimate === null && job.inFlight.length === 0) {
       const escaped = this.collapseStripsSync(job, target);
-      if (!escaped) return { done: true, present: true };
+      if (!escaped) {
+        if (diagnostic) {
+          diagnostic.lastExitReason = "sync-complete";
+          diagnostic.lastPumpExitAt = performance.now();
+        }
+        return { done: true, present: true };
+      }
     }
     // Pipelined regime: retire whatever the GPU has finished, then refill.
     this.collectStripFences(job);
@@ -7582,6 +7645,7 @@ export class FractalScene {
       present = true;
       job.stat.presents += 1;
       job.presentDue = now + job.presentIntervalMs;
+      if (diagnostic) diagnostic.lastExitReason = "present-gap";
     } else {
       // Refill in FENCE GROUPS: each strip is its own flushed draw group
       // (the preemption boundary the watchdog needs), but the ~80ms sync
@@ -7610,7 +7674,11 @@ export class FractalScene {
       const closeGroup = (): boolean => {
         if (groupPx === 0) return true;
         const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-        if (!sync) return false;
+        if (!sync) {
+          if (diagnostic) diagnostic.fenceFailures += 1;
+          return false;
+        }
+        if (diagnostic) diagnostic.fencesCreated += 1;
         job.busyMark ??= performance.now();
         job.inFlight.push({ sync, px: groupPx, inherited: false });
         job.inFlightPx += groupPx;
@@ -7654,6 +7722,7 @@ export class FractalScene {
         // without it the whole group would ride one oversized submission
         // with no preemption boundaries inside it.
         gl.flush();
+        if (diagnostic) diagnostic.flushes += 1;
         job.stat.strips += 1;
         groupPx += strip.px;
         groupStrips += 1;
@@ -7678,6 +7747,19 @@ export class FractalScene {
         submits += 1;
         now = performance.now();
       }
+      if (diagnostic) {
+        diagnostic.lastExitReason = job.planner.done
+          ? "planner-done"
+          : job.msPerPxEstimate === null
+            ? "waiting-for-price"
+            : now >= job.presentDue
+              ? "waiting-for-present-drain"
+              : submits >= SURFACE_STRIP_MAX_SUBMITS_PER_PUMP
+                ? "submit-limit"
+                : !((job.inFlightPx + groupPx) * est() < queueBudgetMs)
+                  ? "estimate-budget"
+                  : "worst-budget";
+      }
       if (!closeGroup()) {
         // Same dying-context degrade for a trailing open group.
         const gl2 = gl;
@@ -7686,6 +7768,7 @@ export class FractalScene {
       }
     }
     this.resetScissor(target);
+    if (diagnostic) diagnostic.lastPumpExitAt = performance.now();
     return { done: job.planner.done && job.inFlight.length === 0, present };
   }
 
@@ -7739,15 +7822,19 @@ export class FractalScene {
     let completedCount = 0;
     while (job.inFlight.length > 0) {
       const head = job.inFlight[0];
-      if (
-        !assumeComplete &&
-        gl.clientWaitSync(head.sync, 0, 0) === gl.TIMEOUT_EXPIRED
-      ) {
-        break;
+      if (!assumeComplete) {
+        const result = gl.clientWaitSync(head.sync, 0, 0);
+        if (job.diagnostic) {
+          job.diagnostic.fencePolls += 1;
+          job.diagnostic.lastFenceResult = result;
+          job.diagnostic.lastFencePollAt = now;
+        }
+        if (result === gl.TIMEOUT_EXPIRED) break;
       }
       // Signaled (or WAIT_FAILED on a dying context — treat as done
       // rather than polling forever): account it.
       gl.deleteSync(head.sync);
+      if (job.diagnostic) job.diagnostic.fencesRetired += 1;
       job.inFlight.shift();
       job.inFlightPx -= head.px;
       if (head.inherited) {
@@ -7802,6 +7889,7 @@ export class FractalScene {
     let strip = job.planner.next(lastMs);
     while (strip) {
       this.renderStripRects(target, strip.rects);
+      if (job.diagnostic) job.diagnostic.syncStrips += 1;
       const t0 = performance.now();
       this.readStripCorner(gl, strip);
       lastMs = performance.now() - t0;
@@ -8862,11 +8950,143 @@ interface SurfaceStripJob {
     calls: number;
     t0: number;
   };
+  /** Bounded counters only when `?stripdiag` asks. No GL handles escape
+   * through the public snapshot, and no extra driver work observes them. */
+  diagnostic: StripJobDiagnostic | null;
   /** Present cadence — tighter for the interactive preview than for the
    * parked settle, `Infinity` for a capture (which presents once, at the
    * end, and only into the export image). */
   presentIntervalMs: number;
 }
+
+interface StripJobDiagnostic {
+  id: number;
+  plannerWorstFloorMsPerPx: number;
+  lastPumpAt: number | null;
+  lastPumpExitAt: number | null;
+  lastExitReason: string;
+  lastQueueBudgetMs: number;
+  fencePolls: number;
+  lastFenceResult: number | null;
+  lastFencePollAt: number | null;
+  fencesCreated: number;
+  fenceFailures: number;
+  fencesRetired: number;
+  flushes: number;
+  syncStrips: number;
+}
+
+interface SurfaceStripJobSnapshot {
+  width: number;
+  height: number;
+  planner: {
+    done: boolean;
+    plannedPx: number;
+    totalPx: number;
+    probePx: number;
+    observedWorstMsPerPx: number;
+    worstFloorMsPerPx: number;
+    capPx: number;
+    cost: StripPlanner["cost"];
+  };
+  queue: {
+    inFlightCount: number;
+    inFlightPx: number;
+    inheritedPx: number;
+    headPx: number | null;
+    headInherited: boolean | null;
+    estimatedMs: number;
+    worstMs: number;
+    worstBudgetMs: number;
+    pricesFinite: boolean;
+  };
+  msPerPxEstimate: number | null;
+  queueWorstMsPerPx: number;
+  spentMs: number;
+  busyMark: number | null;
+  presentDue: number;
+  presentInMs: number;
+  presentIntervalMs: number;
+  stat: SurfaceStripJob["stat"];
+  diagnostic: StripJobDiagnostic;
+}
+
+interface SurfaceStripDiagnostics {
+  nowMs: number;
+  sampleIndex: number;
+  sampleTotal: number;
+  captureFlight: boolean;
+  preview: SurfaceStripJobSnapshot | null;
+  settle: SurfaceStripJobSnapshot | null;
+  backlog: {
+    count: number;
+    px: number;
+    busyMark: number;
+    predictedMs: number;
+  } | null;
+}
+
+/** Copies are made only on a diagnostics consumer's explicit read, never
+ * per pump. Numeric prices expose admission failures, including NaN/Infinity
+ * through `pricesFinite`, without asking GL about its state. */
+function stripJobSnapshot(
+  job: SurfaceStripJob | null,
+  target: THREE.WebGLRenderTarget,
+  nowMs: number,
+): SurfaceStripJobSnapshot | null {
+  if (!job?.diagnostic) return null;
+  const { planner, diagnostic } = job;
+  const est =
+    planner.cost.marginalMsPerPx > 0
+      ? planner.cost.marginalMsPerPx
+      : (job.msPerPxEstimate ?? 0);
+  const worst = Math.max(job.queueWorstMsPerPx, planner.observedWorstMsPerPx);
+  const plannerWorst = Math.max(
+    diagnostic.plannerWorstFloorMsPerPx,
+    planner.observedWorstMsPerPx,
+  );
+  const head = job.inFlight[0];
+  return {
+    width: target.width,
+    height: target.height,
+    planner: {
+      done: planner.done,
+      plannedPx: planner.plannedPx,
+      totalPx: planner.totalPx,
+      probePx: planner.probePx,
+      observedWorstMsPerPx: planner.observedWorstMsPerPx,
+      worstFloorMsPerPx: diagnostic.plannerWorstFloorMsPerPx,
+      capPx: Math.max(1, Math.floor(STRIP_WORST_CASE_CAP_MS / plannerWorst)),
+      cost: { ...planner.cost },
+    },
+    queue: {
+      inFlightCount: job.inFlight.length,
+      inFlightPx: job.inFlightPx,
+      inheritedPx: job.inheritedPx,
+      headPx: head?.px ?? null,
+      headInherited: head?.inherited ?? null,
+      estimatedMs: job.inFlightPx * est,
+      worstMs: job.inFlightPx * worst,
+      worstBudgetMs: SURFACE_STRIP_QUEUE_WORST_MS,
+      pricesFinite: Number.isFinite(est) && Number.isFinite(worst),
+    },
+    msPerPxEstimate: job.msPerPxEstimate,
+    queueWorstMsPerPx: job.queueWorstMsPerPx,
+    spentMs: job.spentMs,
+    busyMark: job.busyMark,
+    presentDue: job.presentDue,
+    presentInMs: job.presentDue - nowMs,
+    presentIntervalMs: job.presentIntervalMs,
+    stat: { ...job.stat },
+    diagnostic: { ...diagnostic },
+  };
+}
+
+const STRIP_DIAGNOSTICS =
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).has("stripdiag");
+let stripDiagnosticId = 0;
+
 /** Scratch for the strip renderer's forced-completion 1x1 readbacks. */
 const SYNC_PIXEL = new Uint8Array(4);
 
