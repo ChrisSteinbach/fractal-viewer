@@ -1354,8 +1354,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     IS SAFETY-CRITICAL: model, growth cap, floor, then
     `STRIP_WORST_CASE_CAP_MS` LAST — wherever floor and cap disagree the
     CAP WINS, because an unbounded strip draw is the kernel-confirmed
-    i915 preemption hang. The set of sizes a strip may
-    take is unchanged; only the choice within it moved. DO NOT tune the
+    i915 preemption hang. DO NOT tune the
     tax constant instead — that only moves where the same ratchet engages;
     strips of a row or more row-snap to a single scissor rect (a
     per-DRAW fixed cost tripled under 3-rect strips); and the canvas blit
@@ -1376,10 +1375,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     hidden. A capture job never presents (the export-scale target must not
     reach the canvas), ADOPTS the fence backlog like the live jobs, and
     winds its own queue down before returning from an abort so no export
-    leftovers outlive the export. THE SYNCHRONOUS DRAIN RETIRES ITS FENCES
-    WITHOUT POLLING THEM, straight after its readback (the stronger
-    barrier) — polling would read TIMEOUT_EXPIRED forever on a page that
-    never yields, spinning on a queue the GPU finished long ago.
+    leftovers outlive the export. THE SYNCHRONOUS DRAIN RETIRES FENCES
+    WITHOUT POLLING after its readback; WebGL forbids observing newly
+    signaled fences within one task.
     COST CEILINGS ARE THE SYNCHRONOUS DRAIN'S ALONE — offline
     export and thumbnails, the callers that freeze the tab and offer no way
     to stop it. There, measured evidence predicts the frame up front (never
@@ -1416,7 +1414,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `scripts/capture-drain.verify.mjs` and `scripts/surface-tier.verify.mjs`
     (whose mid-drag softness check is that rule's);
     `scripts/fold-settle-park.repro.mjs` and `?surfacetrace` sit one module
-    over. Pure, tested. Full record — the A/B measurements, the reverted
+    over. The finite Balloon stall is an observed fence-retirement failure
+    with live polling/submission; one flush did not rescue it (`?stripdiag`,
+    `tiling-balloon.verify.mjs`). Pure, tested. Full record — the A/B measurements, the reverted
     truncation attempts, the sync-tax arithmetic and the cost-ceiling
     history — in `docs/surface-strip-pipeline.md`.
   - `state.ts` — `AppState` + pure reducers (pure, tested). Xaos blocks are

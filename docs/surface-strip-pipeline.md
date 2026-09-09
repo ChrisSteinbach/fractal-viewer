@@ -466,6 +466,104 @@ gaps on long waits. Original logs, copied diagnostic drivers and the
 machine-readable investigation record land under
 `scripts/out/finite-balloon-surface-investigation/`; output is untracked.
 
+### Live queue diagnosis
+
+On 2026-09-09, the unchanged production sequence first passed in 33.3s on
+the same accelerated AMD/Mesa stack, using Chromium 151.0.7922.34. A build
+adding only opt-in host counters (`?surfacestate&stripdiag`) then reproduced
+the tint-strength-1 stall at 66%. The diagnostic reads the planner, queue,
+existing fence-poll results and outer scheduler gates; it issues no GL calls.
+The verifier used ordinary window randomness and its existing echo observer,
+without the optional GL command observer or a rescue.
+
+The stalled job had issued all 307,200 pixels in 56 strips. Ten of its twelve
+fences retired; two own fences covering 102,400 pixels remained, with a
+64,640-pixel head. Through the unchanged 240s deadline, the pump ran 14,377
+times and made 14,386 actual fence polls, still returning `TIMEOUT_EXPIRED`.
+Prices stayed finite, the accumulated attributed work stayed at 97.08ms,
+and no export, capture, preview or pending invalidation owned the scheduler.
+The page remained visible and focused with approximately 16.67ms rAF gaps.
+Device-wide busy samples were 2–5%; these are not an independent fence signal.
+The complete leg failed after 257.2s. The same copied/export/look sequence
+then completed with tiling removed (17.2s) and with Balloon disabled (20.4s).
+Across the complete three-repeat sweep, the other two finite legs passed
+(35.2s and 35.5s), and all six untiled/Balloon-off control legs completed.
+The sweep correctly exited 1 for its failed finite leg.
+
+This establishes a fence-retirement stall, rather than planner or frame-loop
+starvation, for this reproduction. It does not establish that only the final
+fence lacked submission: with two outstanding groups, the earlier fence
+necessarily precedes a later strip's explicit flush. Chromium's pinned
+implementation also submits pending query checks and flushes its underlying
+driver fences, so the JavaScript command order alone cannot locate the fault.
+See its [query tracking](https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/gpu/command_buffer/client/query_tracker.cc),
+[WebGL sync cache](https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/third_party/blink/renderer/modules/webgl/webgl_sync.cc)
+and [EGL fence implementation](https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/ui/gl/gl_fence_egl.cc).
+
+A second three-repeat sweep enabled the GL command observer and conditional
+browser trace/rescue. Its second **authored** boot stalled at 79%, before
+that repetition's copied-link or export: all pixels were issued in 65 strips,
+with one 64,000-pixel fence outstanding (11 of 12 retired). This was the
+ordinary tint-strength-0.42 fixture, so the stall does not require a
+tint-strength-1 edit. The first and third complete sequences passed in 33.55s
+and 33.52s. The middle sequence failed in 242.61s, including the unchanged
+240s settle deadline.
+
+The 3.010s trace taken on that stalled page contained 180 executed WebGL
+cache-rearm tasks, 180 compositor frame tasks, two Chromium command-buffer
+flushes advancing the put offset by 100 entries, and 2,403 GPU-service
+`PerformWork` executions. The GPU process received both flushes within 0.85ms;
+the largest gap between service-work calls was 3.54ms. Across the surrounding
+snapshots, actual JavaScript polls advanced from 925 to 1,123 while the same
+fence stayed pending. These events establish ongoing cache rearming and
+submission, but carry neither native fence status nor a per-query/service-stub
+identifier. Query handling, ANGLE and Mesa remain unresolved parts of the
+completion path; service FIFO processing can wait behind an earlier query.
+See [service scheduling](https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/gpu/ipc/service/command_buffer_stub.cc)
+and [query processing](https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc).
+
+After 18.35s of unchanged progress, the verifier rechecked that same live job
+and **executed one `gl.flush()`** on its context. The GL observer recorded the
+call; no fence retired afterward through the deadline. Unlike the earlier
+unfired rescue experiments, this is a completed negative intervention.
+Neither the trace nor the explicit flush released the stalled queue. No
+post-fence flush or scheduling workaround is justified by these measurements.
+
+Eight read-only samples of that GPU process's DRM fdinfo over 3.56s also kept
+its client gfx/compute accounting unchanged. The installed kernel identifies
+as Ubuntu 7.0.0-29 based on 7.0.12; matching upstream amdgpu accounting includes
+elapsed time for unfinished **scheduled** jobs. This weakens the long-running
+shader explanation, but excludes neither unscheduled/dependency-blocked work
+nor incorrect completion bookkeeping; Ubuntu's downstream source was not
+available for comparison. The counters are not a native fence oracle.
+See [amdgpu job accounting](https://github.com/gregkh/linux/blob/v7.0.12/drivers/gpu/drm/amd/amdgpu/amdgpu_ctx.c#L160).
+
+The extended verifier supports bounded `--repeat=1..20` and additive
+`--controls=untiled|balloon-off|both` sequences. `--stripdiag=true` preserves
+host snapshots without GL wrappers; `--gltrace=true` additionally records
+existing GL calls and pending fence IDs. `--browsertrace=true` captures one
+three-second task/submission trace after 15s unchanged planner/fence progress,
+excluding GPU timing-query instrumentation. `--rescue=flush` permits one
+explicit intervention only after rechecking that same stalled job, with
+pre/post evidence and an explicit fired status. Neither diagnostics nor a
+rescue extends the settle deadline or weakens the completed-settle gate.
+Rows explicitly distinguish completed output from unassisted qualification:
+an assisted completion records its rescue and cannot pass the native gate
+(exit 2 if it is the only qualification limitation; any failed row takes
+exit 1). Trace collection has one absolute deadline capped by the settle
+deadline, including cleanup, and a rescue rechecks that deadline in the
+browser task that would issue the flush.
+Final runs of the updated instrument passed all three sequences in each
+dimension: 3D finite/untiled/Balloon-off in 19.62/14.70/12.79s and 4D in
+33.58/14.44/20.92s, including exports, both look controls and exact-zero
+Balloon-off differences. These successful repetitions qualify the instrument
+in both dimensions; they do not erase the earlier intermittent failures or
+demonstrate a rendering fix. The application pump and shader behavior remain
+unchanged. The remaining investigation needs native query/fence identity and
+any blocking service-queue predecessor, which the current trace cannot expose.
+Artifacts for this investigation land under
+`scripts/out/surface-settle-stall/` and remain untracked.
+
 ## Measured A/Bs
 
 Quick-reference table of the headline measured results above, each tied

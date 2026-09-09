@@ -625,6 +625,18 @@ interface SurfaceStateProbe {
   /** Renderer-only lattice presentation resolved for this session. Null for
    * untiled/finite sessions; never persisted in the scene hash. */
   latticePresentation: ResolvedLatticePresentation | null;
+  /** `?stripdiag` adds host-only pump/cap/fence observations, including the
+   * outer scheduler gates that can leave rAF live without pumping a job. */
+  strips?:
+    | (NonNullable<ReturnType<FractalScene["surfaceStripDiagnostics"]>> & {
+        scheduler: {
+          offlineExport: boolean;
+          captureFlight: boolean;
+          needsRender: boolean;
+          previewPending: boolean;
+        };
+      })
+    | null;
 }
 
 declare global {
@@ -12072,6 +12084,9 @@ async function main(): Promise<void> {
   // over exists; the query survives the isolation reload with the rest of
   // the URL, so a script that asked for it keeps it.
   if (new URLSearchParams(window.location.search).has("surfacestate")) {
+    const stripDiagnostics = new URLSearchParams(window.location.search).has(
+      "stripdiag",
+    );
     window.__surfaceState = () => {
       const inSurface = state.renderMode === "surface";
       const compute = inSurface ? surfaceComputeRenderer : null;
@@ -12081,6 +12096,10 @@ async function main(): Promise<void> {
           : compute !== null
             ? surfaceComputeSettledRayCensus
             : scene.surfaceRayCensus;
+      const strips =
+        stripDiagnostics && inSurface && compute === null
+          ? scene.surfaceStripDiagnostics()
+          : null;
       return {
         mode: state.renderMode,
         engine: !inSurface ? null : compute !== null ? "compute" : "webgl",
@@ -12111,6 +12130,21 @@ async function main(): Promise<void> {
             ? null
             : { ...surfaceLatticePresentation }
           : null,
+        ...(stripDiagnostics
+          ? {
+              strips: strips
+                ? {
+                    ...strips,
+                    scheduler: {
+                      offlineExport: offlineExport !== null,
+                      captureFlight: surfaceCaptureFlight,
+                      needsRender: scene.needsRender,
+                      previewPending: surfaceWebglPreviewPending,
+                    },
+                  }
+                : null,
+            }
+          : {}),
       };
     };
   }
