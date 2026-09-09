@@ -8277,6 +8277,12 @@ export class FractalScene {
     background: TraceBackgroundReference,
   ): void {
     const u = this.surfaceBlitMaterial.uniforms;
+    // Uniform branches do not disable WebGL's framebuffer-feedback check.
+    // A previous blit (or the initial preview) may still bind this target's
+    // attachments, including the initially shared trace-background sampler.
+    u.uSrc.value = this.backdropTexture;
+    u.uLayer.value = this.backdropTexture;
+    u.uTraceBgImage.value = this.backdropTexture;
     u.uHasSource.value = 0;
     u.uHasLayer.value = 0;
     u.uComposite.value = 0;
