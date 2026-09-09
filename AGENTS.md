@@ -1888,7 +1888,13 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS`'s PLACEMENT is the
     measurement: a ceiling on the predicted TOTAL squeezes the allowance to
     nothing as the intercept approaches it, so it sits outside the range
-    real scenes measure in. No submission outruns the i915 watchdog;
+    real scenes measure in. THE LIT QUEUE IS SIZED THE SAME WAY, and was
+    not: its cost lanes shipped INERT, pinning every lit dispatch at one
+    workgroup where 97.7% of a medium dispatch is fixed cost
+    (`5.63 ms + 2.04 µs/ray`, measured) — a 5.85x settle at 64px and ~26x
+    at pane scale, for identical pixels. `nextLightingRayCap` paces it as
+    `nextShadeBatchSize` paces this one; an inert cost lane is a pinned
+    width, not a safe default. No submission outruns the i915 watchdog;
     presents are progressive; shading probes ride
     `SURFACE_COMPUTE_SHADE_DE_WIDTH`; colorOut prefills from the last frame
     so the pane never shows backdrop mid-drag.

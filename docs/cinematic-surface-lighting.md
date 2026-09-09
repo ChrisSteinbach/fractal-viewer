@@ -415,6 +415,35 @@ tiling. The gate now reloads the saved document once before either export, so
 the arms differ only in their ray cap. The 64 px tiled export took 203 s at
 eight samples.
 
+## The cost of a lit frame, and why the look could not be judged
+
+The feature could not be accepted in a browser because it could not be
+rendered in one. MEASURED, real AMD RX 7900 XTX, cathedral at 64x64 = 4096
+rays: one authored 8-sample settle took **206.6 s**, which is 50 ms per ray,
+and the session's fence tally put **95%** of GPU time in the medium
+(372,768 dispatches, 2,512,759 ms) against 4.9% in surface shading and
+**0.1%** in the primary march. The fractal was a rounding error beside the
+air around it. Scaled to a 1920x1057 pane that is ~3.6 h per antialiasing
+pass and ~26 h for a settle — the owner reported not reaching 1% of a
+cathedral in ten minutes, which is what the arithmetic predicts.
+
+The cause was host scheduling, not the transport math the agreement harness
+pins. `ShadeSizerState.lighting`'s cost lanes were inert placeholders, so
+the lit hit dispatch was one workgroup wide for the life of a session and
+each of them paid a 32-cell x 2-light medium sweep. A width sweep put one
+medium dispatch at `5.63 ms + 2.04 us/ray`, i.e. **97.7% fixed cost** at
+that width, with identical coverage at every width. Wiring the lanes and
+pacing the width with a capacity ladder took the 64px settle from 27.22 s
+to 4.655 s at one sample, and is worth ~26x at pane resolution — the full
+record, including what remains, is in `docs/surface-compute-renderer.md`'s
+"The lit dispatch width, and what one workgroup cost".
+
+THAT IS NOT YET ENOUGH. ~59 min for a pane settle is faster and still not
+judgeable, and the remaining factor is the 64 medium dispatches per shade
+batch rather than any per-ray cost. Until the medium gets its own
+progressive dimension over already-shaded terminals, acceptance criterion
+1's browser half stays unmet and this feature is not finished.
+
 These are gate results on one machine. They do not establish owner acceptance
 of the finished look, and no performance promise is made from them.
 
