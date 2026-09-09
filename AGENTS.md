@@ -1299,11 +1299,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     DEs — each buys ~2x fewer rays AND a shallower depth clamp.
     Capture/offline
     `force` frames stay full. Pure, tested, injected clock.
-  - `strip-planner.ts` — adaptive scissor-strip sizing for EVERY WebGL surface
-    trace (the compute path bounds its own submissions instead),
-    previews included (bounding them removed the preview tier's one
-    unbounded draw — the i915-preemption GPU-hang path that killed fold
-    sessions outright). Units are PIXELS, not rows: a strip is a
+  - `strip-planner.ts` — bounds every WebGL trace, previews included (closing
+    the i915 preview-hang path); compute bounds its own submissions.
+    Seeds unbind destination textures from all samplers: uniform branches
+    cannot prevent feedback validation. Evidence: `docs/surface-strip-pipeline.md`.
+    Units are PIXELS, not rows: a strip is a
     row-major pixel interval rendered as 1-3 scissor rects under ONE fence,
     so fold strips shrink below a row's cost. The probe is sized from a
     per-px cost prior — the measured preview cost when one exists, else a

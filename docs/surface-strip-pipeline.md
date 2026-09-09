@@ -19,6 +19,43 @@ Units are PIXELS, not rows: a strip is a row-major pixel interval rendered
 as 1-3 scissor rects under ONE fence, so fold strips can shrink below the
 cost of a single row.
 
+## Seeding an unfinished frame
+
+`FractalScene.seedSurfaceTarget` fills uncovered color and layer attachments
+before preview or settle strips arrive. Every active sampler must refer to
+a texture other than the destination attachment, even when a uniform flag
+disables the branch that reads it. The shared blit material originally kept
+`uSrc` and `uLayer` from its preceding blit and initialized `uTraceBgImage`
+from the preview texture. Turning off `uHasSource` and `uHasLayer` therefore
+left a framebuffer feedback loop at the seed draw.
+
+The emitter-only production gate exposed nine `GL_INVALID_OPERATION`
+feedback errors on 2026-09-09 on real AMD Radeon RX 7900 XTX: initial WebGL
+entries and root-band restarts both triggered it. Chromium's GPU-process
+stderr carried the error; the page console did not. Completed strips still
+drew the expected images, so final screenshots alone could not qualify the
+uncovered background. The seed function was unchanged from main, and the
+new emitter traversal floor is inactive for an unscheduled root's ordinary
+preview budget.
+
+A separate classic affine tetrahedron control, with neither emitters nor
+schedule, reproduced two identical GPU-process errors while settling in
+1.9 s with 4.10% drawn pixels and no exhausted rays or page-console errors.
+`node scripts/surface-emitter-only.verify.mjs --mode=x11::0
+--only=3d-webgl-classic --timeout=60000` reproduces this diagnostic control;
+filtered runs are never the complete release verdict.
+
+Seeding now rebinds `uSrc`, `uLayer` and `uTraceBgImage` to the non-target
+backdrop texture before drawing; the existing live-background update owns
+`uLiveBgImage`. The corrected classic control retained exactly 21,239 covered
+rays and 4.10% drawn pixels, with zero page or GPU-process errors. Its
+before/after reports live under
+`scripts/out/surface-emitter-only-classic-diagnostic` and
+`scripts/out/surface-emitter-only-classic-fixed`.
+This one path serves both dimensions. The production
+`scripts/surface-emitter-only.verify.mjs` gate records GPU-process stderr
+alongside its completed-settle, draw and page-console checks.
+
 ## Cost priors and the evidence chain
 
 The probe that starts a job is sized from a per-pixel cost prior, chosen in
