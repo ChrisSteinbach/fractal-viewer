@@ -1094,6 +1094,49 @@ export of one pinned pose. It measured a mean difference of 0.002/255 with
 its own raster; it measures **0.0000/255, max 0** now — byte for byte —
 and the bar is bit-exact. See "A band is bit-exact" below.
 
+### The lit dispatch width, and what one workgroup cost
+
+`ShadeSizerState.lighting`'s `surfaceCost`/`mediumCost` shipped as inert
+placeholders. `surfaceComputeLightingRayBatch`'s `affordable()` therefore
+never bound, the width fell through to `rayCap` — one workgroup, never
+updated — and every lit hit dispatch was 64 rays wide for the life of the
+session, each paying a full 32-cell x 2-light medium sweep.
+
+MEASURED (real AMD RX 7900 XTX, production build, cathedral, 64x64 = 4096
+rays, ONE sample, one fresh session per width, lit width forced offline
+through `?surfaceshadehits=N`):
+
+    width               64      256     1024     4096
+    ms/medium disp   5.756    7.200    9.880   13.978
+    medium disps      4288     1088      288       96
+    medium ms        24,647    7,791    2,754    1,120
+    settle          27.22 s   8.76 s   3.29 s   1.54 s
+
+The fit over that lever is **5.63 ms + 2.04 us/ray**. At the shipped width
+that is 0.13 ms of marginal work inside a 5.76 ms dispatch — **97.7% fixed
+cost**, because 64 invocations do not begin to fill the machine — and a
+64x width buys 2.4x the dispatch for a 17.7x settle. Coverage is identical
+(3840 covered / 256 miss / 0 exhausted) at every width: this is
+scheduling, and the image does not change. It is the same shape the unlit
+hit queue already measured and fixed (`nextShadeHitCost`'s own record,
+`283.1 ms + 64.8 us/hit`, 90% fixed at width 512).
+
+Both lanes are live now, and `nextLightingRayCap` paces the climb exactly
+as `nextShadeBatchSize` paces the unlit queue. Same fixture, ladder
+running: **27.22 s -> 4.655 s**, climbing 64/128/256/512/1024/2048/3328.
+The 64px frame pays most of that climb because its early sweeps are
+queue-limited and a queue-limited batch may not grow the capacity; a frame
+with rays to spare reaches the ceiling in six dispatches out of hundreds.
+
+WHAT IS STILL OWED, from the same fit. At 1920x1057 and 8 samples the
+frame goes from ~26 h to ~59 min, and is then 40% fixed / 60% marginal
+with 64 medium dispatches per shade batch still to answer for. The naive
+remedy — one medium cell per pass, letting supersampling average — is a
+TRAP: every pass re-runs phase 0, ~23.7 s of surface shade at pane scale,
+so reaching today's sample count would cost ~2.7 h. The medium needs its
+own progressive dimension over already-shaded terminals, which is what the
+`phase: 0` / `phase: 1` split already anticipates.
+
 ### A band is bit-exact
 
 The band used to be a `camera.setViewOffset` SUB-FRUSTUM, and its rays
