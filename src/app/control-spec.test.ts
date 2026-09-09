@@ -126,7 +126,20 @@ describe("applyScalarControl: parsing/mapping", () => {
     const state = applyScalarControl(initialState(true), spec, "4");
     const fx = mockEffects();
     spec.effect?.(state, fx, initialState(true));
+    expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
     expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a normalized custom condensation band's omitted first level as zero", () => {
+    const state = {
+      ...initialState(true),
+      condensationDepthBand: { maxDepth: 2 },
+    };
+    const spec = specById("surfaceCondensationMinSlider");
+    expect(spec.read(state)).toBe("0");
+    expect(spec.label?.text(state)).toBe("0");
+    if (spec.kind !== "range") throw new Error("First level must be a range");
+    expect(spec.numeric.read(state)).toBe(0);
   });
 
   it("authors every registered trap and maps each canonical spec back to its kind", () => {

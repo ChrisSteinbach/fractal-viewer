@@ -2347,7 +2347,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     // Condensation geometry is a Surface-only interpretation of emitter
     // documents. The preset's default is every word depth (absent on the
     // wire); root-only is the useful one-scale shortcut, and Custom exposes
-    // the inclusive endpoints. Every change rebuilds the frozen DE/session.
+    // the inclusive endpoints. Renderer family, document lifetime, 3D/4D
+    // inverse Surface consumer; changes restart the frozen DE/session.
+    // main.ts refuses edits that exclude an emitter-only scene's root before
+    // changing the document. See docs/panel-ia.md.
     kind: "select",
     id: "surfaceCondensationBandMode",
     read: (s) => condensationBandMode(s),
@@ -2365,34 +2368,40 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
                     maxDepth: 1,
                   }),
             ),
-    effect: (_s, fx) => fx.restartSurfaceRender(),
+    effect: (_s, fx) => {
+      fx.refreshSurfaceEligibility();
+      fx.restartSurfaceRender();
+    },
   },
   {
     kind: "range",
     id: "surfaceCondensationMinSlider",
     label: {
       id: "surfaceCondensationMinLabel",
-      text: (s) => String(s.condensationDepthBand?.minDepth ?? 1),
+      text: (s) => String(condensationFirstLevel(s)),
     },
     numeric: numericControl(
       "First shape-copy level",
       0,
       24,
       1,
-      (s) => s.condensationDepthBand?.minDepth ?? 1,
+      condensationFirstLevel,
       (s, value) =>
         setCondensationDepthBand(s, {
           ...(s.condensationDepthBand ?? { maxDepth: 1 }),
           minDepth: value,
         }),
     ),
-    read: (s) => String(s.condensationDepthBand?.minDepth ?? 1),
+    read: (s) => String(condensationFirstLevel(s)),
     apply: (s, raw) =>
       setCondensationDepthBand(s, {
         ...(s.condensationDepthBand ?? { maxDepth: 1 }),
         minDepth: Number(raw),
       }),
-    effect: (_s, fx) => fx.restartSurfaceRender(),
+    effect: (_s, fx) => {
+      fx.refreshSurfaceEligibility();
+      fx.restartSurfaceRender();
+    },
   },
   {
     kind: "range",
@@ -2419,7 +2428,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
         ...(s.condensationDepthBand ?? { minDepth: 1 }),
         maxDepth: Number(raw),
       }),
-    effect: (_s, fx) => fx.restartSurfaceRender(),
+    effect: (_s, fx) => {
+      fx.refreshSurfaceEligibility();
+      fx.restartSurfaceRender();
+    },
   },
   {
     // The shape trap's SHAPE — the built-ins by name, "" = no trap (the
@@ -2734,6 +2746,13 @@ export function condensationBandMode(
   const band = state.condensationDepthBand;
   if (!band) return "all";
   return band.minDepth === undefined && band.maxDepth === 0 ? "root" : "custom";
+}
+
+/** Normalization omits a zero first level inside a present custom band. */
+function condensationFirstLevel(state: AppState): number {
+  return state.condensationDepthBand
+    ? (state.condensationDepthBand.minDepth ?? 0)
+    : 1;
 }
 
 /** Display mode for trap geometry's inclusive post-link level band. The

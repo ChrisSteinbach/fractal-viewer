@@ -1846,12 +1846,19 @@
             title="Choose which recursive word depths contain copies of an emitter shape; root is depth 0"
           >
             Levels
-            <select id="surfaceCondensationBandMode">
+            <select
+              id="surfaceCondensationBandMode"
+              aria-describedby="surfaceCondensationNote"
+            >
               <option value="all">All levels</option>
               <option value="root">Root only</option>
               <option value="custom">Custom band</option>
             </select>
           </label>
+          <p id="surfaceCondensationNote" class="flame-note">
+            Changing levels restarts Surface. Scenes with only emitters need
+            level 0.
+          </p>
           <div id="surfaceCondensationCustom" class="hidden">
             <label class="select-label">
               First level: <span id="surfaceCondensationMinLabel">1</span>

@@ -166,8 +166,8 @@ append the same 96 bytes after their last enabled feature block.
 ## Condensation shape term
 
 The affine/fold and affine4/fold4 descent cores can compile Barnsley
-condensation geometry. `buildSurfaceDE` / `buildSurfaceDE4` separate active,
-samplable emitters from recursive maps, symmetry-expand their inverse poses,
+condensation geometry. `buildSurfaceDE` / `buildSurfaceDE4` separate active
+shape emitters from recursive maps, symmetry-expand their inverse poses,
 and append those emitter records after the A prefix and any B schedule suffix.
 `mapCount` therefore remains the recursive A alphabet size; the appended
 control block is
@@ -207,8 +207,12 @@ Analytic-only programs declare and allocate none of this resource.
 
 The codegen refuses condensation on the three forward cores; the 4D packer
 and CPU oracle also refuse nonzero slab thickness for a condensation system.
-Eligibility refuses unsamplable or nearly-flat emitters, emitter-only systems
-and final-transform emitters before packing. Balloon needs no kernel fork: it
+Eligibility refuses nearly-flat poses and final-transform emitters before packing.
+[Emitter-only systems](emitter-only-surface.md) use the same cores with zero
+A maps and an active root band, including qualified finite B prefixes. Their minimum
+traversal budget completes the prefix and zero-child exit; future-subtree
+certificates require real A children once B ends. No wire offsets change.
+Balloon needs no kernel fork: it
 wraps the same public estimator, and the existing balloon/plane mutual
 exclusion still applies. The separate 3D fragment-side grid also samples that
 public estimator; it is not a WGSL compute path. Absent condensation emits the

@@ -392,9 +392,16 @@ morphs into place instead of snapping (see **Presets** below).
   gate therefore counts ordinary maps plus symmetry-expanded emitter
   records; with a schedule, B's supported affine maps sit between those two
   groups. Symmetry copies share the emitter's one color/material slot.
-  Unsamplable or nearly-flat emitters,
-  emitter-only documents and an emitter on the final transform remain
-  refused. In a 4D Surface session the 3D emitter solid is embedded at local
+  A scene containing only emitters renders their finite union when **Levels**
+  includes 0. An edit excluding that root is refused without changing the
+  scene; a loaded empty band offers **Use root shapes** beside the Surface
+  button. A wide, deep **Hybrid schedule** may also be refused for these
+  finite scenes: reduce its depth or number of active B maps as the adjacent
+  reason explains. Changing levels restarts Surface. SDF-only intersections
+  are supported; nearly-flat emitter poses and an emitter on the final
+  transform remain refused. The [qualification record](emitter-only-surface.md)
+  covers scheduled words, Xaos and the zero-child descent. In a 4D Surface
+  session the 3D emitter solid is embedded at local
   w=0, so **Slice thickness** is clamped to 0 for condensation geometry.
   A non-trivial **Xaos** matrix adds no map slots: each inverse chain carries
   its current logical-map state and admits only graph predecessors. The root

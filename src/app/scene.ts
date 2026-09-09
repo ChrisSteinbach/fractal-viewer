@@ -136,6 +136,7 @@ import { resolveShapeTrap } from "../fractal/shape-trap";
 import type { BulbDE } from "../fractal/bulb-de";
 import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
+import { condensationTraversalDepth } from "../fractal/condensation-de";
 import {
   surfaceDescentCostWeight,
   surfaceOriginVisibleRadius,
@@ -1295,6 +1296,8 @@ export class FractalScene {
    * slowest contraction. Continuous zoom derives the live full depth from
    * these instead of compounding each wheel event onto the previous result. */
   private surfaceBaseMaxDepth = 0;
+  /** Finite emitter unions must finish B and visit the root even in preview. */
+  private surfaceMinimumDepth = 0;
   private surfaceSlowestSigma: number | null = null;
   private surfaceZoomMagnification = 1;
   /** Which (scale, depth) rung preview traces currently cost, driven by
@@ -2034,11 +2037,13 @@ export class FractalScene {
   private installSurfaceDepth(
     baseDepth: number,
     slowestSigma: number | null,
+    minimumDepth = 0,
   ): void {
-    this.surfaceBaseMaxDepth = baseDepth;
+    this.surfaceMinimumDepth = minimumDepth;
+    this.surfaceBaseMaxDepth = Math.max(baseDepth, minimumDepth);
     this.surfaceSlowestSigma = slowestSigma;
     const detail = adaptiveSurfaceDetail(
-      baseDepth,
+      this.surfaceBaseMaxDepth,
       this.surfaceZoomMagnification,
       slowestSigma,
     );
@@ -4623,7 +4628,11 @@ export class FractalScene {
     this.applySurfaceGroundPlane();
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
-    this.installSurfaceDepth(de.maxDepth, de.slowestSigma);
+    this.installSurfaceDepth(
+      de.maxDepth,
+      de.slowestSigma,
+      condensationTraversalDepth(de, 0),
+    );
     // Cost-weighted ladder entry: a fold-frontier DE's per-pixel
     // cost is a known static multiple of an affine system's, and the FIRST
     // trace has no measurement for the panic path to act on — the entry
@@ -5106,7 +5115,11 @@ export class FractalScene {
     this.surfaceGroundBall = focusBall;
     this.applySurfaceBalloon();
     this.applySurfaceGroundPlane();
-    this.installSurfaceDepth(de.maxDepth, de.slowestSigma);
+    this.installSurfaceDepth(
+      de.maxDepth,
+      de.slowestSigma,
+      condensationTraversalDepth(de, 0),
+    );
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.surfaceFullPxCostMs = null;
@@ -5316,7 +5329,11 @@ export class FractalScene {
     // 336-byte params struct expects.
     this.surfaceGroundBall = focusBall;
     this.surfaceComputeGroundPlane = groundPlane;
-    this.installSurfaceDepth(de.maxDepth, de.slowestSigma);
+    this.installSurfaceDepth(
+      de.maxDepth,
+      de.slowestSigma,
+      condensationTraversalDepth(de, 0),
+    );
     this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
     this.surfacePreviewPxCostMs = null;
     // A previous strip session's pooled fences must not linger into (or
@@ -5440,7 +5457,11 @@ export class FractalScene {
     this.surfaceComputeBalloon = balloon;
     this.surfaceGroundBall = groundPlane ? focusBall : null;
     this.surfaceComputeGroundPlane = groundPlane;
-    this.installSurfaceDepth(de.maxDepth, de.slowestSigma);
+    this.installSurfaceDepth(
+      de.maxDepth,
+      de.slowestSigma,
+      condensationTraversalDepth(de, 0),
+    );
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.flushStripBacklog();
@@ -5630,12 +5651,15 @@ export class FractalScene {
       focusDepth: focus.depth,
       acceptPixelEps: angularPerPixel / Math.max(acceptHeight, 1),
       tracePixelEps: angularPerPixel / Math.max(traceHeight, 1),
-      maxDepth: preview
-        ? previewMaxDepth(
-            this.surfaceFullMaxDepth,
-            this.surfacePreviewGovernor.scale,
-          )
-        : this.surfaceFullMaxDepth,
+      maxDepth: Math.max(
+        this.surfaceMinimumDepth,
+        preview
+          ? previewMaxDepth(
+              this.surfaceFullMaxDepth,
+              this.surfacePreviewGovernor.scale,
+            )
+          : this.surfaceFullMaxDepth,
+      ),
       marchSteps: preview
         ? SURFACE_PREVIEW_MARCH_STEPS
         : SURFACE_FULL_MARCH_STEPS,
@@ -7462,12 +7486,15 @@ export class FractalScene {
     // change independently. A finer rung resolves smaller
     // pixels, so it must trace deeper or its unresolved core becomes a
     // visible blob — see previewMaxDepth.
-    u.uMaxDepth.value = preview
-      ? previewMaxDepth(
-          this.surfaceFullMaxDepth,
-          this.surfacePreviewGovernor.scale,
-        )
-      : this.surfaceFullMaxDepth;
+    u.uMaxDepth.value = Math.max(
+      this.surfaceMinimumDepth,
+      preview
+        ? previewMaxDepth(
+            this.surfaceFullMaxDepth,
+            this.surfacePreviewGovernor.scale,
+          )
+        : this.surfaceFullMaxDepth,
+    );
     u.uMarchSteps.value = preview
       ? SURFACE_PREVIEW_MARCH_STEPS
       : SURFACE_FULL_MARCH_STEPS;

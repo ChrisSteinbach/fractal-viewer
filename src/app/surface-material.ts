@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { condensationTraversalDepth } from "../fractal/condensation-de";
 import type { BulbDE } from "../fractal/bulb-de";
 import { BULB_ITERATIONS, BULB_STEP_SCALE } from "../fractal/bulb-de";
 import type { EscapeDE } from "../fractal/escape-de";
@@ -396,7 +397,7 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
       if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
         return max(best, sphereBound) * uFinalSigmaMin;
       }
-      bool futureCondensation = condensationFutureAfterChild(depth);
+      bool futureCondensation = condensationFutureAfterChild(depth, uMapCount);
 #endif
       int keptCount = 0;
       float fnWorstKey = -1e30;
@@ -1027,11 +1028,12 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
     }
     return vec2(best, float(shade));
   }
-  bool condensationFutureAfterChild(int loopDepth) {
+  bool condensationFutureAfterChild(int loopDepth, int mapCount) {
 #if SURFACE_SCHEDULE
     loopDepth -= uScheduleDepth;
 #endif
-    return max(loopDepth + 2, uCondMinDepth) <= uCondMaxDepth;
+    return loopDepth + 1 < 0 ||
+      (mapCount > 0 && max(loopDepth + 2, uCondMinDepth) <= uCondMaxDepth);
   }
   void condensationFold(
     vec3 q,
@@ -2534,7 +2536,7 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
       if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
         return max(best, sphereBound) * uFinalSigmaMin;
       }
-      bool futureCondensation = condensationFutureAfterChild(depth);
+      bool futureCondensation = condensationFutureAfterChild(depth, uMapCount);
 #endif
       // The four smallest-key candidates this level, key-ascending. The
       // sentinel r = 0 keeps empty slots out of every escaped-candidate
@@ -3479,7 +3481,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
         v2State,
 #endif
         best, firstChoice);
-      bool futureCondensation = condensationFutureAfterChild(depth);
+      bool futureCondensation = condensationFutureAfterChild(depth, uMapCount);
 #endif
       float c1Key = 1e30;
       vec3 c1Q = vec3(0.0);
@@ -3790,9 +3792,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
       }
 #if SURFACE_CONDENSATION
 #if SURFACE_SCHEDULE
-      if (depth == uScheduleDepth && c1Cert < best) {
+      if (depth == uScheduleDepth && c1Key < 1e29 && c1Cert < best) {
 #else
-      if (depth == 0 && c1Cert < best) {
+      if (depth == 0 && c1Key < 1e29 && c1Cert < best) {
 #endif
 #else
 #if SURFACE_SCHEDULE
@@ -3977,6 +3979,10 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // chains start live), so trapNorm >= 1; the guard just keeps a
     // zero-map placeholder call from dividing by zero.
     trap = trapNorm > 0.0 ? trapAcc / trapNorm : 0.0;
+#if SURFACE_CONDENSATION
+    // A finite emitter union has no recursive palette choices.
+    if (uMapCount == 0) trap = uTrapIndex[firstChoice];
+#endif
     rings = clamp(rings, 0.0, 1.0);
     sheets = clamp(sheets, 0.0, 1.0);
     float d = max(best, sphereBound);
@@ -6288,6 +6294,7 @@ export function setSurfaceSystem(
     condShade[e] = emitter.shadeIndex;
     condState[e] = chaos?.emitterStateIndices[e] ?? 0;
     mapColor[emitter.shadeIndex].set(...colors[emitter.shadeIndex]);
+    trapIndex[emitter.shadeIndex] = trapIndices?.[emitter.shadeIndex] ?? 0;
   });
   for (let group = 0; group < chaosMasks.length; group++) {
     const at = group * 4;
@@ -6429,7 +6436,7 @@ export function setSurfaceSystem(
   u.uBoundingRadius.value = de.boundingRadius;
   (u.uBoundCenter.value as THREE.Vector3).set(...de.boundCenter);
   u.uEscapeRadius.value = de.escapeRadius;
-  u.uMaxDepth.value = de.maxDepth;
+  u.uMaxDepth.value = condensationTraversalDepth(de, de.maxDepth);
   u.uStepScale.value = de.stepScale;
   u.uVisibleRadius.value = de.visibleBoundingRadius;
   // The final lens must be RESET when absent — the previous system may

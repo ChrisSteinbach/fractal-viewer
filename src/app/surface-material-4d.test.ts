@@ -251,6 +251,46 @@ function condEmitter4(
   };
 }
 
+it("completes 4D emitter-only prefixes and preserves distinct shade colors and palette coordinates", () => {
+  const material = createSurfaceMaterial4();
+  for (const depth of [0, 5]) {
+    const de: SurfaceDE4 = {
+      ...de4([]),
+      maxDepth: 0,
+      condensation: {
+        emitters: [
+          condEmitter4(COND4_SPHERE, 0, [1, 0, 0, 0]),
+          condEmitter4(COND4_BOX, 1, [-1, 0, 0, 0]),
+          condEmitter4(COND4_SPHERE, 0, [0, 1, 0, 0]),
+        ],
+        depthBand: { minDepth: 0, maxDepth: 0 },
+      },
+      ...(depth ? { schedule: scheduled4([map4()], depth) } : {}),
+    };
+    setSurfaceSystem4(
+      material,
+      de,
+      [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+      [0.125, 0.875],
+    );
+    const u = material.uniforms;
+    expect(u.uMapCount.value).toBe(0);
+    expect(u.uCondMapCount.value).toBe(depth ? 1 : 0);
+    expect(u.uMaxDepth.value).toBe(depth + 1);
+    expect(u.uShadeCount.value).toBe(2);
+    expect(u.uCondShade.value.slice(0, 3)).toEqual([0, 1, 0]);
+    const block = mapBlock(material);
+    expect(Array.from(block.colorSigma.slice(0, 3))).toEqual([1, 0, 0]);
+    expect(Array.from(block.colorSigma.slice(4, 7))).toEqual([0, 0, 1]);
+    expect(block.trap[0]).toBe(0.125);
+    expect(block.trap[4]).toBe(0.875);
+  }
+  material.dispose();
+});
+
 function scheduled4(
   maps: SurfaceDE4Map[],
   depth = 2,

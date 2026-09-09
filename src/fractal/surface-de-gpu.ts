@@ -8,6 +8,7 @@ import {
   BULB_STEP_SCALE,
   type BulbDE,
 } from "./bulb-de";
+import { condensationTraversalDepth } from "./condensation-de";
 import {
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
@@ -1264,6 +1265,7 @@ interface SurfaceScheduleWireInfo {
 function surfaceScheduleWireInfo(de: {
   maps: readonly unknown[];
   schedule?: SurfaceScheduleWire | null;
+  condensation?: { emitters: readonly unknown[] };
 }): SurfaceScheduleWireInfo | null {
   const schedule = de.schedule;
   // Prepared zero-depth/empty schedules are the identity representation.
@@ -1271,9 +1273,9 @@ function surfaceScheduleWireInfo(de: {
   if (!schedule || schedule.depth === 0 || schedule.maps.length === 0) {
     return null;
   }
-  if (de.maps.length < 1) {
+  if (de.maps.length < 1 && !de.condensation?.emitters.length) {
     throw new RangeError(
-      "surface-de-gpu: a hybrid schedule requires at least one recursive A map",
+      "surface-de-gpu: a hybrid schedule requires recursive A maps or condensation emitters",
     );
   }
   if (
@@ -1299,7 +1301,11 @@ function surfaceScheduleWireInfo(de: {
 }
 
 function validateSurfacePhysicalMapCount(
-  de: { maps: readonly unknown[]; schedule?: SurfaceScheduleWire | null },
+  de: {
+    maps: readonly unknown[];
+    schedule?: SurfaceScheduleWire | null;
+    condensation?: { emitters: readonly unknown[] };
+  },
   emitterCount = 0,
 ): void {
   const scheduleCount = surfaceScheduleWireInfo(de)?.mapCount ?? 0;
@@ -2104,7 +2110,11 @@ export function packSurfaceGpuParams(
   view.setUint32(40, de.symmetry.order, true);
   view.setUint32(44, SYM_PLANE_CODE[de.symmetry.plane], true);
   view.setUint32(48, de.maps.length, true);
-  view.setUint32(52, run.maxDepth ?? de.maxDepth, true);
+  view.setUint32(
+    52,
+    condensationTraversalDepth(de, run.maxDepth ?? de.maxDepth),
+    true,
+  );
   view.setUint32(56, run.itemCount, true);
   view.setUint32(60, run.stepsThisPass ?? 0, true);
   view.setFloat32(64, run.cutoff ?? 0, true);
@@ -2775,7 +2785,11 @@ export function packSurface4GpuParams(
   view.setUint32(40, de.symmetry.order, true);
   view.setUint32(44, 1, true);
   view.setUint32(48, de.maps.length, true);
-  view.setUint32(52, run.maxDepth ?? de.maxDepth, true);
+  view.setUint32(
+    52,
+    condensationTraversalDepth(de, run.maxDepth ?? de.maxDepth),
+    true,
+  );
   view.setUint32(56, run.itemCount, true);
   view.setUint32(60, run.stepsThisPass ?? 0, true);
   view.setFloat32(64, run.cutoff ?? 0, true);
@@ -3834,7 +3848,8 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   if (opts.schedule && opts.schedule.scheduleMapCount !== 0) {
     if (
       !Number.isInteger(opts.schedule.mapCount) ||
-      opts.schedule.mapCount < 1 ||
+      opts.schedule.mapCount < 0 ||
+      (opts.schedule.mapCount === 0 && !opts.condensation?.emitters.length) ||
       !Number.isInteger(opts.schedule.scheduleMapCount) ||
       opts.schedule.scheduleMapCount < 1
     ) {
@@ -4351,7 +4366,8 @@ ${
 
 // Whether a strict descendant of this already-generated child can still
 // carry an enabled C0. The call sites pass depth + 1, matching the CPU's
-// condensationHasFutureDepth(band, depth + 1) exactly.
+// condensationHasFutureDepth(band, depth + 1) exactly. Once a finite B
+// prefix finishes, zero A maps have no descendants even with an open band.
 fn condensationHasFuture(childDepth: u32) -> bool {
 ${
   schedule
@@ -4359,8 +4375,8 @@ ${
     return true;
   }
   let aChildDepth = childDepth - params.scheduleDepth;
-  return max(aChildDepth + 1u, params.condDepthMin) <= params.condDepthMax;`
-    : "  return max(childDepth + 1u, params.condDepthMin) <= params.condDepthMax;"
+  return params.mapCount > 0u && max(aChildDepth + 1u, params.condDepthMin) <= params.condDepthMax;`
+    : "  return params.mapCount > 0u && max(childDepth + 1u, params.condDepthMin) <= params.condDepthMax;"
 }
 }
 `
@@ -4409,6 +4425,15 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // read site spelled without the token silently reads a finish lane as
   // a trap index, which is what the emitted-source stride test scans for.
   const shadeStride = material ? " * 3" : "";
+  // With no recursive A orbit, Palette belongs to the winning root emitter.
+  // A finite B prefix contributes no authored color slots of its own.
+  const emitterOnlyTrap = condensationShapes
+    ? `  if (params.mapCount == 0u) {
+    let emitterSlot = clamp(info.firstChoice, 0, i32(params.condShadeCount) - 1);
+    info.trap = shadeMaps[emitterSlot${shadeStride}].w;
+  }
+`
+    : "";
   // The 4D tail's VARIANT block (464..575) is declared whenever
   // anything is appended past it, so the shared
   // plane/balloon block lands at ONE offset (576) across every 4D core —
@@ -5169,7 +5194,7 @@ ${
 }        }
       }
     }
-    if (depth == 0u${condensationShapes ? " && c1Cert < best" : ""}) {
+    if (depth == 0u${condensationShapes ? " && c1Key < 1e29 && c1Cert < best" : ""}) {
       info.firstChoice = i32(c1Map);
     }
     trapAcc += trapW * shadeMaps[c1Map${shadeStride}].w;
@@ -5257,7 +5282,7 @@ ${
 `
     : ""
 }  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
-  info.rings = clamp(info.rings, 0.0, 1.0);
+${emitterOnlyTrap}  info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
 ${pattern ? `  info.source4 = vec4f(q, 0.0);` : ""}
   return info;
@@ -5737,7 +5762,7 @@ ${
 }        }
       }
     }
-    if (depth == 0u${condensationShapes ? " && c1Cert < best" : ""}) {
+    if (depth == 0u${condensationShapes ? " && c1Key < 1e29 && c1Cert < best" : ""}) {
       info.firstChoice = i32(c1Map);
     }
     trapAcc += trapW * shadeMaps[c1Map${shadeStride}].w;
@@ -5859,7 +5884,7 @@ ${
 `
     : ""
 }  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
-  info.rings = clamp(info.rings, 0.0, 1.0);
+${emitterOnlyTrap}  info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
 ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));` : ""}
   return info;

@@ -7787,7 +7787,7 @@ describe("surfaceDeKernelWgsl condensation", () => {
       expect(wgsl).toContain(
         "condensationTermHit(aQ, aScale, params.maxDepth)",
       );
-      expect(wgsl).toContain("depth == 0u && c1Cert < best");
+      expect(wgsl).toContain("depth == 0u && c1Key < 1e29 && c1Cert < best");
       expect(wgsl).toContain("futureCondensation && eR <= R");
       expect(wgsl).toMatch(
         /best = min\(best, refinedCert\(eQ, (?:eExt, )?eR, eScale, depth \+ 1u\)\)/,

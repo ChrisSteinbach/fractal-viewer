@@ -43,6 +43,25 @@ export function condensationHasFutureDepth(
   return Math.max(depth + 1, band.minDepth) <= band.maxDepth;
 }
 
+/**
+ * An emitter-only set has no recursive depth to approximate. Traverse its
+ * entire scheduled prefix and the root's zero-child exit even at a preview
+ * budget of zero: a depth-cap ball terminal would otherwise replace C0.
+ * Shared by the CPU estimators and the renderer's depth-budget producers.
+ */
+export function condensationTraversalDepth(
+  de: {
+    maps: readonly unknown[];
+    condensation?: { emitters: readonly unknown[] };
+    schedule?: { depth: number };
+  },
+  requested: number,
+): number {
+  return de.maps.length === 0 && (de.condensation?.emitters.length ?? 0) > 0
+    ? Math.max(requested, (de.schedule?.depth ?? 0) + 1)
+    : requested;
+}
+
 interface CondensationEmitterBase {
   shape: ShapeSpec;
   /** Input transform index, retained although emitters are not maps. */

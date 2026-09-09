@@ -27,6 +27,146 @@ import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
 
 const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xy" };
 
+describe("emitter-only Surface routing", () => {
+  for (const dimension of [3, 4] as const) {
+    const emitter: Transform = {
+      id: 1,
+      position: [0.1, -0.2, 0.3],
+      rotation: [0.2, 0.3, -0.1],
+      scale: [1.2, 1.2, 1.2],
+      emitter: {
+        parts: [
+          { primitive: { kind: "sphere", radius: 0.3 }, combine: "union" },
+        ],
+      },
+      ...(dimension === 4
+        ? {
+            w: {
+              position: 0.15,
+              rotation: { xw: 0.3 },
+              scale: 1.2,
+            },
+          }
+        : {}),
+    };
+
+    it(`admits ${dimension}D finite emitters on either backend when level zero is included`, () => {
+      for (const computeAvailable of [true, false]) {
+        for (const band of [undefined, { maxDepth: 0 }, { maxDepth: 3 }]) {
+          const result = deriveSurfaceEligibility(
+            [emitter],
+            null,
+            NO_SYMMETRY,
+            { computeAvailable },
+            null,
+            null,
+            null,
+            band,
+          );
+          expect(result).toMatchObject({
+            status: "eligible",
+            kind: dimension === 4 ? "ifs4" : "ifs",
+          });
+        }
+      }
+    });
+
+    it(`refuses a ${dimension}D empty band and offers a root-only recovery through document eligibility`, () => {
+      const document: SurfaceEligibilityDocument = {
+        transforms: [emitter, { ...emitter, emitter: undefined, weight: 0 }],
+        symmetry: NO_SYMMETRY,
+        condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+      };
+      const result = expectNeutralParity(document);
+      expect(result).toMatchObject({
+        status: "ineligible",
+        kind: null,
+        recovery: "includeCondensationRoot",
+      });
+      expect(result.note).toMatch(/root.*depth 0/);
+      expect(
+        deriveSurfaceDocumentEligibility({
+          ...document,
+          condensationDepthBand: { maxDepth: 0 },
+        }).status,
+      ).toBe("eligible");
+    });
+
+    it(`does not offer ${dimension}D root recovery when another refusal would remain`, () => {
+      const result = deriveSurfaceDocumentEligibility({
+        transforms: [{ ...emitter, scale: [0, 1, 1] }],
+        symmetry: NO_SYMMETRY,
+        condensationDepthBand: { minDepth: 1 },
+      });
+      expect(result.status).toBe("ineligible");
+      expect(result.recovery).toBeUndefined();
+      expect(result.note).toMatch(/nearly flat/);
+    });
+
+    it(`counts ${dimension}D symmetry-expanded emitters and scheduled maps against the same record limit`, () => {
+      const transforms = [emitter, { ...emitter, id: 2 }];
+      const schedule = {
+        depth: 2,
+        transforms: [
+          {
+            id: 3,
+            position: [-0.6, 0, 0] as [number, number, number],
+            rotation: [0, 0, 0] as [number, number, number],
+            scale: [0.5, 0.5, 0.5] as [number, number, number],
+          },
+          {
+            id: 4,
+            position: [0.6, 0, 0] as [number, number, number],
+            rotation: [0, 0, 0] as [number, number, number],
+            scale: [0.5, 0.5, 0.5] as [number, number, number],
+          },
+        ],
+      };
+      const atCap = deriveSurfaceEligibility(
+        transforms,
+        null,
+        { order: 11, plane: "xy" },
+        { computeAvailable: true },
+        schedule,
+      );
+      expect(atCap.status, atCap.note ?? "").toBe("eligible");
+      const overCap = deriveSurfaceEligibility(
+        transforms,
+        null,
+        { order: 12, plane: "xy" },
+        { computeAvailable: true },
+        schedule,
+      );
+      expect(overCap.status).toBe("ineligible");
+      expect(overCap.note).toMatch(/26 map\/emitter\/schedule records/);
+    });
+
+    it(`does not mistake a ${dimension}D B schedule for recursive geometry in an empty band`, () => {
+      const result = deriveSurfaceDocumentEligibility({
+        transforms: [{ ...emitter, chaos: [0] }],
+        symmetry: NO_SYMMETRY,
+        schedule: {
+          depth: 2,
+          transforms: [
+            {
+              ...emitter,
+              emitter: undefined,
+              w: undefined,
+              scale: [0.5, 0.5, 0.5],
+            },
+          ],
+        },
+        condensationDepthBand: { minDepth: 1, maxDepth: 2 },
+      });
+      expect(result).toMatchObject({
+        status: "ineligible",
+        kind: null,
+        recovery: "includeCondensationRoot",
+      });
+    });
+  }
+});
+
 describe("swirl final Surface routing", () => {
   for (const [dimension, transforms, kind] of [
     [3, sierpinskiTetrahedron(), "ifs"],
@@ -125,6 +265,7 @@ function derivePreset(
     document.schedule ?? null,
     document.shapeTrap ?? null,
     document.tiling ?? null,
+    document.condensationDepthBand,
   );
 }
 
@@ -140,6 +281,7 @@ function expectNeutralParity(
     document.schedule ?? null,
     document.shapeTrap ?? null,
     document.tiling ?? null,
+    document.condensationDepthBand,
   );
   expect(neutral).toEqual(legacyComplete);
   return neutral;
@@ -876,7 +1018,7 @@ describe("deriveSurfaceEligibility shape emitters", () => {
   });
 
   it("refuses an emitter-carrying escape-shaped document too — no arm slips through to march the plain object", () => {
-    // A non-contracting mandelbox carrying an emitter beside its fold: the
+    // A non-contracting mandelbox beside an emitter: the
     // IFS gate refuses, and the escape complement must NOT then admit it
     // (its own explicit emitter refusal is what closes that door).
     const mandelbox: Transform = {
@@ -891,12 +1033,15 @@ describe("deriveSurfaceEligibility shape emitters", () => {
         ],
       },
     };
-    const result = deriveSurfaceEligibility([mandelbox], null, NO_SYMMETRY, {
-      computeAvailable: true,
-    });
+    const result = deriveSurfaceEligibility(
+      [mandelbox, { ...mandelbox, id: 1, emitter: undefined }],
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+    );
     expect(result.status).toBe("ineligible");
     expect(result.kind).toBeNull();
-    expect(result.note).toContain("shape emitter");
+    expect(result.note).toContain("does not contract");
   });
 
   it("admits an emitter-carrying contracting 4D document", () => {

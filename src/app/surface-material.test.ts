@@ -1103,6 +1103,48 @@ f 2 3 4
     expect(u.uCondMaxDepth.value).toBe(SURFACE_CONDENSATION_GLSL_DEPTH_MAX);
   });
 
+  it("completes emitter-only prefixes and preserves distinct shade colors and palette coordinates", () => {
+    const material = createSurfaceMaterial();
+    for (const depth of [0, 5]) {
+      const de: SurfaceDE = {
+        ...de3([]),
+        maxDepth: 0,
+        condensation: {
+          emitters: [
+            condEmitter3(COND_SPHERE, 0, [1, 0, 0]),
+            condEmitter3(COND_BOX, 1, [-1, 0, 0]),
+            condEmitter3(COND_SPHERE, 0, [0, 1, 0]),
+          ],
+          depthBand: { minDepth: 0, maxDepth: 0 },
+        },
+        ...(depth ? { schedule: scheduled3([map3()], depth) } : {}),
+      };
+      setSurfaceSystem(
+        material,
+        de,
+        [
+          [1, 0, 0],
+          [0, 0, 1],
+        ],
+        [0.125, 0.875],
+      );
+      const u = material.uniforms;
+      expect(u.uMapCount.value).toBe(0);
+      expect(u.uCondMapCount.value).toBe(depth ? 1 : 0);
+      expect(u.uMaxDepth.value).toBe(depth + 1);
+      expect(u.uShadeCount.value).toBe(2);
+      expect(u.uCondShade.value.slice(0, 3)).toEqual([0, 1, 0]);
+      expect((u.uMapColor.value[0] as THREE.Vector3).toArray()).toEqual([
+        1, 0, 0,
+      ]);
+      expect((u.uMapColor.value[1] as THREE.Vector3).toArray()).toEqual([
+        0, 0, 1,
+      ]);
+      expect(u.uTrapIndex.value.slice(0, 2)).toEqual([0.125, 0.875]);
+    }
+    material.dispose();
+  });
+
   it("bakes multiple shape SDFs, the inclusive depth band, damping and future-subtree guard only into descent arms", () => {
     const glsl = surfaceFragmentFor(0, 0, 0, 0, 0, 0, 0, undefined, null, [
       COND_SPHERE,

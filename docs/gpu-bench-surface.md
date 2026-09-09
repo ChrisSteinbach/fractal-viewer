@@ -49,6 +49,15 @@ same bounded 96x54 app-ray march and per-ray CPU emulator as the established
 fold/lens/balloon legs. Either compilation failure, truncation or unexcluded
 agreement failure fails the section.
 
+The mandatory `condensation-emitter-only.ts` leg separately pins finite
+emitter unions in 3D and 4D through eval, hit-info and the production shade
+entry. Its rows cover zero requested depth, scheduled B, xaos, symmetry,
+a five-way final B expansion and both branching-prefix capacity boundaries.
+Independent posed-shape distances, authored material colors and distinct
+palette coordinates are the references; shader agreement alone cannot
+certify the newly admitted CPU path. See the
+[emitter-only qualification](emitter-only-surface.md).
+
 Trap-as-geometry adds one 3D and one 4D agreement row. Each uses a finite
 level band, recomputes the f64 oracle and its f32 stability twin with the same
 posed shape, and compares a dedicated geometry-enabled WGSL program. This

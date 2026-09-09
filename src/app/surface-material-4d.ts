@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { condensationTraversalDepth } from "../fractal/condensation-de";
 import {
   BACKGROUND_SHAPE_GLSL,
   backgroundShapeSource,
@@ -362,11 +363,12 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     }
     return vec2(best, float(shade));
   }
-  bool condensationFutureAfterChild4(int loopDepth) {
+  bool condensationFutureAfterChild4(int loopDepth, int mapCount) {
 #if SURFACE_SCHEDULE
     loopDepth -= uScheduleDepth;
 #endif
-    return max(loopDepth + 2, uCondMinDepth) <= uCondMaxDepth;
+    return loopDepth + 1 < 0 ||
+      (mapCount > 0 && max(loopDepth + 2, uCondMinDepth) <= uCondMaxDepth);
   }
   void condensationFold4(
     vec4 q,
@@ -980,7 +982,7 @@ uniform float uBalloonPaletteEnabled;
       if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
         return max(best, sphereBound) * uFinalSigmaMin;
       }
-      bool futureCondensation = condensationFutureAfterChild4(depth);
+      bool futureCondensation = condensationFutureAfterChild4(depth, uMapCount);
 #endif
       // The four smallest-key candidates this level, key-ascending. The
       // sentinel r = 0 keeps empty slots out of every escaped-candidate
@@ -1661,7 +1663,7 @@ uniform float uBalloonPaletteEnabled;
         v2State,
 #endif
         best, firstChoice);
-      bool futureCondensation = condensationFutureAfterChild4(depth);
+      bool futureCondensation = condensationFutureAfterChild4(depth, uMapCount);
 #endif
       float c1Key = 1e30;
       vec4 c1Q = vec4(0.0);
@@ -2001,9 +2003,9 @@ uniform float uBalloonPaletteEnabled;
       }
 #if SURFACE_CONDENSATION
 #if SURFACE_SCHEDULE
-      if (depth == uScheduleDepth && c1Cert < best) {
+      if (depth == uScheduleDepth && c1Key < 1e29 && c1Cert < best) {
 #else
-      if (depth == 0 && c1Cert < best) {
+      if (depth == 0 && c1Key < 1e29 && c1Cert < best) {
 #endif
 #else
 #if SURFACE_SCHEDULE
@@ -2205,6 +2207,10 @@ uniform float uBalloonPaletteEnabled;
     // chains start live), so trapNorm >= 1; the guard just keeps a
     // zero-map placeholder call from dividing by zero.
     trap = trapNorm > 0.0 ? trapAcc / trapNorm : 0.0;
+#if SURFACE_CONDENSATION
+    // A finite emitter union has no recursive palette choices.
+    if (uMapCount == 0) trap = uMapTrap[firstChoice].x;
+#endif
     rings = clamp(rings, 0.0, 1.0);
     sheets = clamp(sheets, 0.0, 1.0);
     float d = max(best, sphereBound);
@@ -3631,6 +3637,7 @@ export function setSurfaceSystem4(
     condShade[e] = emitter.shadeIndex;
     condState[e] = chaos?.emitterStateIndices[e] ?? 0;
     maps.colorSigma.set(colors[emitter.shadeIndex], emitter.shadeIndex * 4);
+    maps.trap[emitter.shadeIndex * 4] = trapIndices?.[emitter.shadeIndex] ?? 0;
   });
   const chaosMasks = u.uChaosPredecessorMasks.value as THREE.Vector4[];
   for (let group = 0; group < chaosMasks.length; group++) {
@@ -3734,7 +3741,7 @@ export function setSurfaceSystem4(
   );
   u.uBoundingRadius.value = de.boundingRadius;
   u.uEscapeRadius.value = de.escapeRadius;
-  u.uMaxDepth.value = de.maxDepth;
+  u.uMaxDepth.value = condensationTraversalDepth(de, de.maxDepth);
   u.uStepScale.value = de.stepScale;
   u.uVisibleRadius.value = de.visibleBoundingRadius;
   // Radius-ramp band: minD + 1/range via the core's ONE inverse-range
