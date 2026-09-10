@@ -17,7 +17,6 @@ import {
 import type {
   SurfaceDiskLight,
   SurfaceLighting,
-  SurfaceLightingMedium,
 } from "../fractal/surface-lighting";
 import {
   SURFACE_PATTERN_AXES,
@@ -2154,34 +2153,15 @@ function decodeSurfaceLighting(raw: unknown): SurfaceLighting | null {
   const ambient = vector(value.ambient);
   if (!ambient || !finite(value.specular) || !finite(value.roughness))
     return null;
-  let medium: SurfaceLightingMedium | undefined;
-  if (value.medium !== undefined) {
-    const block = record(value.medium);
-    if (!block) return null;
-    const center = vector(block.center);
-    const tint = vector(block.tint);
-    if (
-      !center ||
-      !tint ||
-      !finite(block.radius) ||
-      !finite(block.density) ||
-      !finite(block.anisotropy)
-    )
-      return null;
-    medium = {
-      center,
-      tint,
-      radius: block.radius,
-      density: block.density,
-      anisotropy: block.anisotropy,
-    };
-  }
+  // A `medium` block is IGNORED rather than rejected. The participating
+  // medium was removed on its measured cost, and a link or saved scene
+  // written while it existed must still open — with its lights intact and
+  // its mist simply gone, which is what the renderer would draw anyway.
   return {
     lights,
     ambient,
     specular: value.specular,
     roughness: value.roughness,
-    ...(medium === undefined ? {} : { medium }),
   };
 }
 

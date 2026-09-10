@@ -5740,8 +5740,7 @@ export class FractalScene {
       ...(params.lighting
         ? {
             lighting: structuredClone(params.lighting),
-            lightingRuntime: surfaceLightingRuntime(params.lighting, {
-              interaction: preview,
+            lightingRuntime: surfaceLightingRuntime({
               dimension: this.surfaceCompute4 ? 4 : 3,
               boundingRadius: this.surfaceLightingBoundRadius,
             }),
@@ -6413,9 +6412,7 @@ export class FractalScene {
     if (!lighting || !runtime) return 1;
     return Math.max(
       1,
-      (lighting.lights.length *
-        (runtime.surfaceSamples + runtime.mediumSamples) *
-        runtime.shadowSteps) /
+      (lighting.lights.length * runtime.surfaceSamples * runtime.shadowSteps) /
         SURFACE_FULL_MARCH_STEPS,
     );
   }
@@ -6425,13 +6422,7 @@ export class FractalScene {
     const expensive =
       this.surfaceDeFoldClass ||
       this.activeSurfaceMaterial === this.surfaceMaterial4;
-    return this.surfaceLightingFrameRuntime?.mediumSamples
-      ? expensive
-        ? 16
-        : 128
-      : expensive
-        ? 64
-        : 512;
+    return expensive ? 64 : 512;
   }
 
   private surfaceStripPriorMsPerPx(): number | null {
@@ -7592,8 +7583,7 @@ export class FractalScene {
     const preview = tier === "preview";
     const lighting = this.surfaceComputeParams?.lighting;
     this.surfaceLightingFrameRuntime = lighting
-      ? surfaceLightingRuntime(lighting, {
-          interaction: preview,
+      ? surfaceLightingRuntime({
           dimension:
             this.activeSurfaceMaterial === this.surfaceMaterial4 ? 4 : 3,
           boundingRadius: this.surfaceLightingBoundRadius,

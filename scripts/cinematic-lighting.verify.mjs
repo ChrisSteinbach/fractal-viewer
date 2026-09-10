@@ -356,13 +356,6 @@ function simpleFourD(base) {
     ambient: [0.05, 0.05, 0.06],
     specular: 0.15,
     roughness: 0.45,
-    medium: {
-      center: [0, 0, 0],
-      radius: 2.5,
-      density: 0.12,
-      tint: [0.9, 0.95, 1],
-      anisotropy: 0.3,
-    },
   };
   return document;
 }
@@ -403,7 +396,6 @@ async function runCase(browser, scene, engine) {
     errors: [],
     tiles: [],
     fences: {
-      medium: { count: 0, dispatches: 0, wallMs: 0, maxMs: 0, maxGrouped: 0 },
       surface: { count: 0, wallMs: 0, maxMs: 0 },
       march: { count: 0, wallMs: 0, maxMs: 0 },
     },
@@ -422,17 +414,6 @@ async function runCase(browser, scene, engine) {
   page.on("pageerror", (error) => row.errors.push(error.message));
   page.on("console", (message) => {
     const text = message.text();
-    const mediumFence = /medium END dispatches=(\d+) ms=([\d.]+)/.exec(text);
-    if (mediumFence) {
-      const metric = row.fences.medium;
-      const count = Number(mediumFence[1]),
-        ms = Number(mediumFence[2]);
-      metric.count++;
-      metric.dispatches += count;
-      metric.wallMs += ms;
-      metric.maxMs = Math.max(metric.maxMs, ms);
-      metric.maxGrouped = Math.max(metric.maxGrouped, count);
-    }
     const otherFence = /(shade|march) END ms=([\d.]+)/.exec(text);
     if (otherFence) {
       const metric =
@@ -631,18 +612,6 @@ async function runCase(browser, scene, engine) {
       assert(
         row.checks.hashRestore.meanDiff < 0.15,
         `${label}: restored rig/camera image drifted`,
-      );
-
-      await uiValue(page, "#surfaceRigMediumDensity", 0);
-      await settled(page, engine, `${label}/zero-density`);
-      const zero = await screenshot(page, `${label}-zero-density.png`);
-      await uiValue(page, "#surfaceRigMediumEnabled", false, true);
-      await settled(page, engine, `${label}/no-medium`);
-      const absent = await screenshot(page, `${label}-no-medium.png`);
-      row.checks.zeroDensityIdentity = await compare(page, zero, absent);
-      assert(
-        row.checks.zeroDensityIdentity.meanDiff < 0.02,
-        `${label}: zero-density differs from absent medium`,
       );
 
       await boot(page, engine, saved.encoded);

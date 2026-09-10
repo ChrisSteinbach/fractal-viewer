@@ -1,27 +1,25 @@
 /**
- * CPU reference for finite disk lights and a bounded homogeneous medium.
- * Geometry, including a rotor-posed 4D slice, arrives as ONE displayed-space
- * DE. Surface shadows and medium shadows use the SAME finite-segment query.
- * This does not upgrade a heuristic DE to a certificate.
+ * CPU reference for finite disk lights. Geometry, including a rotor-posed 4D
+ * slice, arrives as ONE displayed-space DE. This does not upgrade a
+ * heuristic DE to a certificate.
  *
  * Light intensity is total emitted flux. Uniform disk-area sampling cancels
  * its area PDF against radiance = flux / (PI * area), so larger emitters and
  * additional samples do not inject energy. One sampled point supplies the
- * light direction, normalized Phong highlight, visibility and attenuation.
- * The emitter itself is not camera-visible geometry. Ambient surface fill
- * is authored irradiance; it does not illuminate the medium.
+ * light direction, normalized Phong highlight and visibility. The emitter
+ * itself is not camera-visible geometry. Ambient surface fill is authored
+ * irradiance. Prefix low-discrepancy emitter samples use full-image pixel
+ * seeds, so capture bands reproduce whole-frame output exactly. Sampling is
+ * an approximation; no denoiser or production GPU exists here.
  *
- * The medium is single scattering with scalar extinction and RGB scattering
- * albedo. Camera-cell weights integrate extinction analytically; source taps
- * sample the truncated exponential within each cell. Light paths include
- * the same sphere-bounded extinction. Geometry clearance NEVER skips medium.
- * Prefix low-discrepancy emitter samples use full-image pixel seeds, so
- * capture bands reproduce whole-frame output exactly. Sampling is an
- * approximation; no denoiser, multiple scattering, or production GPU exists
- * here. The separate harness records image quality and the bounded work.
+ * THE BOUNDED HOMOGENEOUS MEDIUM THIS REFERENCE ALSO CARRIED IS GONE. It
+ * was single scattering with scalar extinction and an RGB scattering albedo,
+ * and it was correct; it was removed because it could not be rendered — 95%
+ * of a full-pane cathedral's GPU time, and no judgeable frame in ten
+ * minutes. What it would take to bring one back is recorded in
+ * docs/cinematic-surface-lighting.md, not here.
  */
 import {
-  PREVIEW_EXHAUSTED,
   type DistanceEstimator,
   type PreviewLinearHit,
   type PreviewRay,
@@ -37,17 +35,6 @@ export interface CinematicDiskLight {
   color: Vec3;
   /** Total flux, independent of disk size and sample count. */
   intensity: number;
-}
-
-export interface CinematicMedium {
-  center: Vec3;
-  radius: number;
-  /** Scalar extinction per displayed-world unit. Zero is exact identity. */
-  density: number;
-  /** Scattering albedo in [0,1]; extinction remains achromatic. */
-  tint: Vec3;
-  /** HG directionality, strictly between -1 and 1; positive is forward. */
-  anisotropy: number;
 }
 
 export interface CinematicMaterial {
@@ -88,14 +75,7 @@ export interface VisibilityStats {
 
 export interface CinematicLightingStats {
   surfaceSamples: number;
-  mediumRays: number;
-  mediumSamples: number;
-  mediumLightSamples: number;
-  /** Primary exhaustion keeps the known prefix's scattering, with a black
-   * terminal instead of pretending the untraced remainder is background. */
-  primaryExhausted: number;
   surfaceVisibility: VisibilityStats;
-  mediumVisibility: VisibilityStats;
 }
 
 export interface CinematicLightingOptions {
@@ -103,11 +83,8 @@ export interface CinematicLightingOptions {
   stepScale: number;
   /** The proof's small rig: up to two authored emitters. */
   lights: readonly CinematicDiskLight[];
-  medium?: CinematicMedium;
   material?: CinematicMaterial;
   surfaceSamples?: number;
-  mediumSamples?: number;
-  mediumLightSamples?: number;
   visibility?: { epsilon?: number; maxSteps?: number };
   seed?: number;
 }
@@ -185,64 +162,6 @@ export function traceLightSegment(
   return result("exhausted");
 }
 
-/** Beer-Lambert, with an explicit zero arm to preserve exact identity. */
-export function homogeneousTransmittance(
-  density: number,
-  distance: number,
-): number {
-  return density === 0 || distance === 0 ? 1 : Math.exp(-density * distance);
-}
-
-/** cosTheta is the photon deflection cosine, not two outward directions. */
-export function henyeyGreenstein(cosTheta: number, g: number): number {
-  const cosine = Math.max(-1, Math.min(1, cosTheta));
-  const magnitude = Math.abs(g);
-  const aligned = g < 0 ? -cosine : cosine;
-  // Avoid cancellation in 1 + g*g - 2*g*cos near a narrow forward peak.
-  const denominator =
-    (1 - magnitude) * (1 - magnitude) + 2 * magnitude * (1 - aligned);
-  return (
-    ((1 - magnitude) * (1 + magnitude)) /
-    (4 * Math.PI * Math.pow(denominator, 1.5))
-  );
-}
-
-/** Unit direction, forward half-ray clipped to its finite terminal. */
-export function sphereMediumInterval(
-  origin: Vec3,
-  direction: Vec3,
-  center: Vec3,
-  radius: number,
-  far = Infinity,
-): [number, number] | null {
-  const offset = sub(origin, center);
-  const b = dot(offset, direction);
-  const discriminant = b * b - dot(offset, offset) + radius * radius;
-  if (discriminant <= 0) return null;
-  const root = Math.sqrt(discriminant);
-  const near = Math.max(0, -b - root);
-  const end = Math.min(far, -b + root);
-  return end > near ? [near, end] : null;
-}
-
-export function mediumSegmentLength(
-  from: Vec3,
-  to: Vec3,
-  medium: Pick<CinematicMedium, "center" | "radius">,
-): number {
-  const delta = sub(to, from);
-  const length = Math.hypot(...delta);
-  if (length === 0) return 0;
-  const interval = sphereMediumInterval(
-    from,
-    [delta[0] / length, delta[1] / length, delta[2] / length],
-    medium.center,
-    medium.radius,
-    length,
-  );
-  return interval ? interval[1] - interval[0] : 0;
-}
-
 function hash(value: number): number {
   let x = value | 0;
   x = Math.imul(x ^ (x >>> 16), 0x7feb352d);
@@ -312,16 +231,6 @@ export function createCinematicLighting(options: CinematicLightingOptions): {
     "surfaceSamples",
     512,
   );
-  const mediumSamples = count(
-    options.mediumSamples ?? 12,
-    "mediumSamples",
-    512,
-  );
-  const mediumLightSamples = count(
-    options.mediumLightSamples ?? 1,
-    "mediumLightSamples",
-    64,
-  );
   const visibility: LightVisibilityOptions = {
     epsilon: options.visibility?.epsilon ?? 0.0002,
     maxSteps: count(options.visibility?.maxSteps ?? 96, "shadow steps", 4096),
@@ -351,18 +260,6 @@ export function createCinematicLighting(options: CinematicLightingOptions): {
     );
     return { ...light, normal, tangent, bitangent: cross(normal, tangent) };
   });
-  const medium = options.medium;
-  if (
-    medium &&
-    (!vectorFinite(medium.center) ||
-      !(medium.radius > 0 && Number.isFinite(medium.radius)) ||
-      !(medium.density >= 0 && Number.isFinite(medium.density)) ||
-      !colorValid(medium.tint) ||
-      medium.tint.some((x) => x > 1) ||
-      !(Math.abs(medium.anisotropy) < 1))
-  ) {
-    throw new Error("Invalid bounded homogeneous medium");
-  }
   const material = options.material ?? {};
   const albedo = material.albedo ?? [0.62, 0.57, 0.49];
   const ambient = material.ambient ?? [0.025, 0.03, 0.045];
@@ -380,12 +277,7 @@ export function createCinematicLighting(options: CinematicLightingOptions): {
   const seed = options.seed ?? 0;
   const stats: CinematicLightingStats = {
     surfaceSamples: 0,
-    mediumRays: 0,
-    mediumSamples: 0,
-    mediumLightSamples: 0,
-    primaryExhausted: 0,
     surfaceVisibility: visibilityStats(),
-    mediumVisibility: visibilityStats(),
   };
   const pixelSeed = (pixel: { px: number; py: number }): number =>
     hash(
@@ -399,14 +291,6 @@ export function createCinematicLighting(options: CinematicLightingOptions): {
     counter[result.status]++;
     return result.status === "visible";
   };
-  const attenuation = (from: Vec3, to: Vec3): number =>
-    medium && medium.density > 0
-      ? homogeneousTransmittance(
-          medium.density,
-          mediumSegmentLength(from, to, medium),
-        )
-      : 1;
-
   const shadeLinear = (hit: PreviewLinearHit): Vec3 => {
     const base = typeof albedo === "function" ? albedo(hit) : albedo;
     const color: Vec3 = [
@@ -438,10 +322,7 @@ export function createCinematicLighting(options: CinematicLightingOptions): {
             Math.pow(Math.max(0, -dot(reflected, hit.rd)), exponent)) /
           (2 * Math.PI);
         const weight =
-          (light.intensity *
-            emitterCosine *
-            cosine *
-            attenuation(hit.p, source)) /
+          (light.intensity * emitterCosine * cosine) /
           (Math.PI * distance2 * surfaceSamples);
         for (let channel = 0; channel < 3; channel++) {
           color[channel] +=
@@ -454,71 +335,10 @@ export function createCinematicLighting(options: CinematicLightingOptions): {
     return color;
   };
 
-  const rayLinear = (ray: PreviewRay): Vec3 => {
-    if (!medium || medium.density === 0) return ray.linear;
-    const exhausted = ray.status === PREVIEW_EXHAUSTED;
-    if (exhausted) stats.primaryExhausted++;
-    const terminal: Vec3 = exhausted ? [0, 0, 0] : ray.linear;
-    const interval = sphereMediumInterval(
-      ray.origin,
-      ray.rd,
-      medium.center,
-      medium.radius,
-      ray.distance,
-    );
-    if (!interval) return terminal;
-    stats.mediumRays++;
-    const [near, far] = interval;
-    const length = far - near;
-    const transmission = homogeneousTransmittance(medium.density, length);
-    const color: Vec3 = [
-      terminal[0] * transmission,
-      terminal[1] * transmission,
-      terminal[2] * transmission,
-    ];
-    const width = length / mediumSamples;
-    const cellMass = -Math.expm1(-medium.density * width);
-    const salt = pixelSeed(ray);
-    for (let cell = 0; cell < mediumSamples; cell++) {
-      stats.mediumSamples++;
-      const start = near + cell * width;
-      const random = sample01(cell, salt ^ 0xb5297a4d, 2);
-      const t = start - Math.log1p(-random * cellMass) / medium.density;
-      const p = addScaled(ray.origin, ray.rd, t);
-      const cameraWeight =
-        homogeneousTransmittance(medium.density, start - near) * cellMass;
-      for (let l = 0; l < lights.length; l++) {
-        const light = lights[l];
-        if (light.intensity === 0) continue;
-        for (let sample = 0; sample < mediumLightSamples; sample++) {
-          stats.mediumLightSamples++;
-          const source = sampleDisk(
-            light,
-            sample,
-            salt ^ hash(l + 1) ^ hash(cell + 0x10000),
-          );
-          const delta = sub(source, p);
-          const distance2 = dot(delta, delta);
-          if (!(distance2 > 0)) continue;
-          const wi = normalized(delta);
-          const emitterCosine = Math.max(0, -dot(light.normal, wi));
-          if (emitterCosine === 0) continue;
-          if (!visible(p, source, stats.mediumVisibility)) continue;
-          const weight =
-            (cameraWeight *
-              light.intensity *
-              emitterCosine *
-              attenuation(p, source) *
-              henyeyGreenstein(dot(wi, ray.rd), medium.anisotropy)) /
-            (Math.PI * distance2 * mediumLightSamples);
-          for (let channel = 0; channel < 3; channel++) {
-            color[channel] +=
-              light.color[channel] * medium.tint[channel] * weight;
-          }
-        }
-      }
-    }
-    return color;
-  };
+  // Nothing lights the air between the camera and its terminal, so an
+  // unshaded ray is its own linear value. The hook is kept so the two
+  // PreviewScene spread sites do not have to know that.
+  const rayLinear = (ray: PreviewRay): Vec3 => ray.linear;
+
   return { shadeLinear, rayLinear, stats };
 }

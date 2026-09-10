@@ -1,6 +1,7 @@
 import type * as THREE from "three";
 import { LATTICE_PRESENTATION_FADE_START_MULT } from "../fractal/lattice-march";
 import {
+  SURFACE_LIGHTING_LANE_COUNT,
   surfaceLightingLanes,
   surfaceLightingRuntime,
   type SurfaceLighting,
@@ -11,7 +12,7 @@ import { surfaceLightingShaderSource } from "../fractal/surface-lighting-shader"
 /** Identical uniform lanes for both displayed-space fragment tracers. */
 export function surfaceLightingUniforms(): Record<string, THREE.IUniform> {
   return {
-    uCinematic: { value: new Float32Array(48) },
+    uCinematic: { value: new Float32Array(SURFACE_LIGHTING_LANE_COUNT * 4) },
     uCinematicBackground: { value: null },
     uCinematicBackgroundOn: { value: 0 },
   };
@@ -26,8 +27,7 @@ export function installSurfaceLightingUniforms(
   const lanes = surfaceLightingLanes(
     lighting,
     runtime ??
-      surfaceLightingRuntime(lighting, {
-        interaction: true,
+      surfaceLightingRuntime({
         dimension: 3,
         boundingRadius: 1,
       }),
@@ -68,11 +68,10 @@ export function withSurfaceLightingGlsl(
     result = result.replace(from, to);
   };
   const header = `
-uniform vec4 uCinematic[12];
+uniform vec4 uCinematic[9];
 uniform sampler2D uCinematicBackground;
 uniform int uCinematicBackgroundOn;
 bool cinematicComplete = false;
-float cinematicTerminalDistance = 1.0e20;
 vec3 cinematicEncode(vec3 color) {
   vec3 finite = vec3(
     color.r >= 0.0 ? min(color.r, 1.0e20) : 0.0,
@@ -151,13 +150,11 @@ ${surfaceLightingShaderSource({ language: "glsl", field: (lane) => `uCinematic[$
     vec2 cinematicPixel = floor(gl_FragCoord.xy);
     vec3 cinematicLinear = cinematicSurface(pos, n, rd, base, cinematicFa, cinematicFb,
       pow(max(background, vec3(0.0)), vec3(2.2)), cinematicPixel, 0);
-    cinematicLinear = cinematicMedium(ro, rd, t, cinematicLinear, cinematicPixel, 0);
     float cinematicCoverage = ${covered};
     ${
       variant.lattice
-        ? `vec3 cinematicFarBackground = cinematicMedium(ro, rd, 1.0e20,
-      pow(max(background, vec3(0.0)), vec3(2.2)), cinematicPixel, 0);
-    cinematicLinear = mix(cinematicFarBackground, cinematicLinear, cinematicCoverage);`
+        ? `cinematicLinear = mix(pow(max(background, vec3(0.0)), vec3(2.2)),
+      cinematicLinear, cinematicCoverage);`
         : ""
     }
     outColor = vec4(cinematicEncode(cinematicLinear), 1.0);
@@ -167,9 +164,15 @@ ${surfaceLightingShaderSource({ language: "glsl", field: (lane) => `uCinematic[$
     return;
 `;
   result = result.slice(0, shadeStart) + shade + result.slice(shadeStart);
+  // UNRESOLVED RAYS STAY DARK. Alpha 0.5 is the EXHAUSTED status, not a
+  // miss (that exit writes alpha 0.0): a ray whose march ran out cannot be
+  // painted with the backdrop, because linear transport must not treat
+  // unknown geometry as clear sky. This mirrors the compute kernel's
+  // `if (st.y == EXHAUSTED) { terminal = vec3f(0.0); }`, and dropping it
+  // drifts a Balloon frame past cinematic-lighting.verify.mjs's bar.
   replace(
     "      outColor = vec4(background, 0.5);",
-    "      cinematicTerminalDistance = max(t, 0.0);\n      outColor = vec4(vec3(0.0), 0.5);",
+    "      outColor = vec4(vec3(0.0), 0.5);",
   );
   if (variant.plane) {
     const planeStart = result.indexOf("  vec3 shadeGroundPlane(");
@@ -188,26 +191,17 @@ ${surfaceLightingShaderSource({ language: "glsl", field: (lane) => `uCinematic[$
     vec3 cinematicFloor = cinematicSurface(hp, vec3(0.0, 1.0, 0.0), rd, cinematicFloorBase,
       vec4(0.0, 32.0, 0.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), cinematicBackgroundLinear,
       cinematicPixel, 0) + pow(cinematicFloorBase, vec3(2.2)) * uGroundEmission;
-    cinematicFloor = cinematicMedium(ro, rd, tp, cinematicFloor, cinematicPixel, 0);
-    vec3 cinematicBackground = cinematicMedium(ro, rd, 1.0e20, cinematicBackgroundLinear, cinematicPixel, 0);
     cinematicComplete = true;
-    return cinematicEncode(mix(cinematicBackground, cinematicFloor, fade));
+    return cinematicEncode(mix(cinematicBackgroundLinear, cinematicFloor, fade));
 `;
     result = result.slice(0, planeBody) + planeShade + result.slice(planeBody);
   }
+  // A ray that reached no shade site keeps the encoded backdrop the trace
+  // itself wrote: with no participating medium there is nothing to light
+  // along it, so the miss path needs no second pass at all.
   return `${result}
 void main() {
-  ${variant.balloon ? "cinematicTerminalDistance = length(uCamPos - uBalloonCenter) + uBalloonFar;" : ""}
   cinematicTraceMain();
-  if (!cinematicComplete) {
-    vec2 ndc = (vUv + uPixelJitter.xy) * 2.0 - 1.0;
-    vec4 nearP = uInvProjView * vec4(ndc, -1.0, 1.0);
-    vec4 farP = uInvProjView * vec4(ndc, 1.0, 1.0);
-    vec3 rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
-    vec3 linear = cinematicMedium(uCamPos, rd, cinematicTerminalDistance,
-      pow(max(outColor.rgb, vec3(0.0)), vec3(2.2)), floor(gl_FragCoord.xy), 0);
-    outColor.rgb = cinematicEncode(linear);
-  }
   outTraceLayer.b = 0.0;
 }
 `;

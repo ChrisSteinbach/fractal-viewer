@@ -960,8 +960,13 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     premise and deferred sheets banding live in `scripts/finish-pattern.harness.ts`.
     Authored rigs (`surface-lighting.ts`) share ONE shader emitter across both
     dimensions/engines: absent state is legacy, visibility uses the displayed DE,
-    unresolved rays stay dark, medium work is bounded, HDR averages before clipping.
-    Wire and gates: `docs/cinematic-surface-lighting.md`.
+    unresolved rays stay dark, HDR averages before clipping. NO PARTICIPATING
+    MEDIUM — one shipped and was REMOVED on measured cost (95% of a lit
+    frame's GPU time; 9.5% of one pass in five minutes at pane scale against
+    a 130 s mist-free settle), so a rig lights surfaces only and a decoded
+    `medium` block is IGNORED, never rejected.
+    Wire, removal and what a future medium owes:
+    `docs/cinematic-surface-lighting.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more

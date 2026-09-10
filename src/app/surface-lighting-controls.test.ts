@@ -32,7 +32,7 @@ describe("Surface lighting authoring controls", () => {
     const ranges = host.querySelectorAll<HTMLInputElement>(
       'input[type="range"]',
     );
-    expect(ranges.length).toBeGreaterThan(20);
+    expect(ranges.length).toBeGreaterThan(15);
     expect(host.querySelectorAll('input[type="number"]')).toHaveLength(
       ranges.length,
     );
@@ -52,8 +52,10 @@ describe("Surface lighting authoring controls", () => {
       expect(control.disabled).toBe(true);
     }
     controls.sync(state);
+    // Nothing about the rig is sampled down during motion any more: the
+    // medium's 8-vs-32 cells were the whole of that claim.
     expect(note.textContent).toContain("restart Surface convergence");
-    expect(note.textContent).toContain("reduced sampling");
+    expect(note.textContent).not.toContain("reduced sampling");
   });
 
   it("commits exact numeric values in fresh rigs without mutating the source", () => {
@@ -80,7 +82,7 @@ describe("Surface lighting authoring controls", () => {
 
   it("refuses invalid typed values without sending a document edit", () => {
     const { onEdit, input } = mount();
-    const numeric = input("surfaceRigMediumDensityNumber");
+    const numeric = input("surfaceRigRoughnessNumber");
     numeric.value = "-1";
     numeric.dispatchEvent(new Event("change", { bubbles: true }));
     expect(onEdit).not.toHaveBeenCalled();
@@ -88,7 +90,7 @@ describe("Surface lighting authoring controls", () => {
     numeric.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
     );
-    expect(Number(numeric.value)).toBe(0.42);
+    expect(Number(numeric.value)).toBe(0.52);
   });
 
   it("reflects imported values and non-unit normals without rewriting them", () => {
@@ -102,8 +104,8 @@ describe("Surface lighting authoring controls", () => {
       42.123456789,
     );
     expect(Number(input("surfaceRigKeyElevationNumber").value)).toBe(90);
-    input("surfaceRigMediumDensity").value = "0.5";
-    input("surfaceRigMediumDensity").dispatchEvent(
+    input("surfaceRigRoughness").value = "0.5";
+    input("surfaceRigRoughness").dispatchEvent(
       new Event("input", { bubbles: true }),
     );
     expect(onEdit.mock.lastCall![0].lights[0].normal).toEqual([0, 3, 0]);
@@ -160,30 +162,6 @@ describe("Surface lighting authoring controls", () => {
     expect(
       host.querySelector('input[type="range"]')?.closest(".hidden"),
     ).not.toBeNull();
-  });
-
-  it("can author zero density without deleting the bounded medium", () => {
-    const { onEdit, input } = mount();
-    input("surfaceRigMediumDensityNumber").value = "0";
-    input("surfaceRigMediumDensityNumber").dispatchEvent(
-      new Event("change", { bubbles: true }),
-    );
-    expect(onEdit.mock.lastCall![0].medium).toEqual(
-      expect.objectContaining({ density: 0, radius: 1.35 }),
-    );
-  });
-
-  it("retains the authored mist settings when toggled off and back on", () => {
-    const { onEdit, input } = mount();
-    const medium = input("surfaceRigMediumEnabled");
-    medium.checked = false;
-    medium.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(onEdit.mock.lastCall![0]).not.toHaveProperty("medium");
-    medium.checked = true;
-    medium.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(onEdit.mock.lastCall![0].medium).toEqual(
-      expect.objectContaining({ radius: 1.35, density: 0.42 }),
-    );
   });
 
   it("does not emit edits from dormant controls", () => {

@@ -8,8 +8,8 @@ import {
   SURFACE_LIGHTING_STARTERS,
 } from "./surface-lighting-starters";
 
-describe("accepted Surface lighting starting scenes", () => {
-  it("offers only the two owner-accepted interiors", () => {
+describe("Surface lighting starting scenes", () => {
+  it("offers only the two shipped interiors", () => {
     expect(SURFACE_LIGHTING_STARTERS.map((entry) => entry.id)).toEqual([
       "cathedral",
       "balloon-cavern",
@@ -17,11 +17,11 @@ describe("accepted Surface lighting starting scenes", () => {
   });
 
   it.each([
-    ["cathedral", [0.065, -0.17, 0.72], 0.6, 7, 1.35],
-    ["balloon-cavern", [1.05, -0.2, 0.95], 0.65, 40, 5.2],
+    ["cathedral", [0.065, -0.17, 0.72], 0.6, 7],
+    ["balloon-cavern", [1.05, -0.2, 0.95], 0.65, 40],
   ] as const)(
-    "preserves %s's approved camera, light and geometry clearance",
-    (id, eye, zoom, flux, mediumRadius) => {
+    "preserves %s's camera, light and geometry clearance",
+    (id, eye, zoom, flux) => {
       const scene = createSurfaceLightingStarter(id);
       const camera = scene.camera!;
       const offset = sphericalToCartesian(camera);
@@ -44,7 +44,9 @@ describe("accepted Surface lighting starting scenes", () => {
         : estimateDistanceRefined(de, actual);
       expect(clearance).toBeGreaterThan(0.02);
       expect(scene.surface.lighting!.lights[0].intensity).toBe(flux);
-      expect(scene.surface.lighting!.medium!.radius).toBe(mediumRadius);
+      // The mist these two were composed around is gone; nothing here may
+      // quietly bring a medium back (see surface-lighting-starters.ts).
+      expect(scene.surface.lighting).not.toHaveProperty("medium");
       expect(scene.groundPlane).toBe(false);
       expect(scene.fogDensity).toBe(0);
       expect(scene.surface.antialiasSamples).toBe(8);
@@ -61,7 +63,7 @@ describe("accepted Surface lighting starting scenes", () => {
     first.transforms[0].position[0] = 8;
     first.camera!.target[0] = 8;
     first.surface.lighting!.lights[0].color[0] = 8;
-    first.surface.lighting!.medium!.center[0] = 8;
+    first.surface.lighting!.ambient[0] = 8;
     expect(second).toEqual(createSurfaceLightingStarter("balloon-cavern"));
     expect(second.customPalette).not.toBe(first.customPalette);
     expect(second.background).not.toBe(first.background);
