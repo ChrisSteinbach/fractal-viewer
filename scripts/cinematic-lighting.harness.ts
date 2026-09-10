@@ -1,8 +1,9 @@
 /**
- * Owner-review reference sheet: one camera and geometry, three light models.
+ * Owner-review reference sheet: one camera and geometry, two light models.
  *
- * Columns are the shipped Surface finish/shadow/AO/fog model, two local
- * colored disk lights, and those same lights through bounded shadowed mist.
+ * Columns are the shipped Surface finish/shadow/AO/fog model and two local
+ * colored disk lights. A third column rendered those lights through bounded
+ * shadowed mist until the medium was removed on its measured cost.
  * The primary marcher and normals remain the shared CPU preview, so this is
  * a design reference, not a production-browser equivalence or speed claim.
  * In particular, the legacy Balloon shadow model receives shadows from the
@@ -17,18 +18,16 @@
  *     scripts/cinematic-lighting.harness.ts
  *
  * Useful draft controls: CINEMATIC_SIZE=96, CINEMATIC_SCENES=cathedral,cavern,
- * CINEMATIC_COLUMNS=legacy,lights,medium, CINEMATIC_SURFACE_SAMPLES=4,
- * CINEMATIC_MEDIUM_SAMPLES=24, CINEMATIC_MEDIUM_LIGHT_SAMPLES=1.
+ * CINEMATIC_COLUMNS=legacy,lights, CINEMATIC_SURFACE_SAMPLES=4.
  * CINEMATIC_RUN names a fresh output directory under ignored scripts/out/.
  * Each panel, a labeled contact sheet, and its complete JSON manifest land
  * together. A named directory refuses overwrite to preserve review evidence.
- * The default owner render uses 256px, 8 surface samples and 32 medium cells
- * with one emitter sample per light per cell. Independent row jobs can be
+ * The default owner render uses 256px and 8 surface samples. Independent row jobs can be
  * joined without re-rendering: CINEMATIC_COMBINE=run-a,run-b,run-c. Raw RGB
  * companions preserve exact panel bytes for the shared contact-sheet writer.
  * A separate real-geometry intervention uses
  * CINEMATIC_SCENES=portalClosed,portalOpen,portalMoved and
- * CINEMATIC_COLUMNS=lights,medium; it never changes the default three rows.
+ * CINEMATIC_COLUMNS=lights; it never changes the default rows.
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -62,10 +61,6 @@ import type { PanelStats, PreviewHit, PreviewScene, Vec3 } from "./de-preview";
 
 const SIZE = Number(process.env.CINEMATIC_SIZE ?? 256);
 const SURFACE_SAMPLES = Number(process.env.CINEMATIC_SURFACE_SAMPLES ?? 8);
-const MEDIUM_SAMPLES = Number(process.env.CINEMATIC_MEDIUM_SAMPLES ?? 32);
-const MEDIUM_LIGHT_SAMPLES = Number(
-  process.env.CINEMATIC_MEDIUM_LIGHT_SAMPLES ?? 1,
-);
 const VISIBILITY_STEPS = process.env.CINEMATIC_VISIBILITY_STEPS
   ? Number(process.env.CINEMATIC_VISIBILITY_STEPS)
   : undefined;
@@ -78,7 +73,7 @@ const OUT = join(
   "cinematic-lighting",
   RUN,
 );
-const ALL_COLUMNS = ["legacy", "lights", "medium"] as const;
+const ALL_COLUMNS = ["legacy", "lights"] as const;
 const BUILDERS = {
   ...CINEMATIC_SCENE_BUILDERS,
   ...CINEMATIC_INTERVENTION_BUILDERS,
@@ -92,7 +87,6 @@ const rowKeys = (process.env.CINEMATIC_SCENES?.split(",") ??
 const names: Record<Column, string> = {
   legacy: "LEGACY LIGHT + FOG",
   lights: "COLORED LIGHTS",
-  medium: "LIGHTS + MIST",
 };
 
 const clamp = (n: number, lo = 0, hi = 1): number =>
@@ -262,11 +256,8 @@ it("renders a matched, reviewable reference sheet without awarding aesthetic app
               de: scene.de,
               stepScale: meta.geometry.stepScale,
               lights: meta.lights,
-              medium: column === "medium" ? meta.medium : undefined,
               material: { albedo: meta.palette.baseLinear, ...meta.material },
               surfaceSamples: SURFACE_SAMPLES,
-              mediumSamples: MEDIUM_SAMPLES,
-              mediumLightSamples: MEDIUM_LIGHT_SAMPLES,
               visibility: {
                 epsilon: meta.geometry.boundingRadius * 2e-4,
                 maxSteps: visibilitySteps,
@@ -309,8 +300,6 @@ it("renders a matched, reviewable reference sheet without awarding aesthetic app
         wallMs: Date.now() - before,
         sampling: {
           surfaceSamples: column === "legacy" ? 0 : SURFACE_SAMPLES,
-          mediumSamples: column === "medium" ? MEDIUM_SAMPLES : 0,
-          mediumLightSamples: column === "medium" ? MEDIUM_LIGHT_SAMPLES : 0,
           visibilityMaxSteps: column === "legacy" ? 32 : visibilitySteps,
         },
         image: imageStats(panel),
@@ -376,8 +365,6 @@ it("renders a matched, reviewable reference sheet without awarding aesthetic app
       size: SIZE,
       seed: SEED,
       surfaceSamples: SURFACE_SAMPLES,
-      mediumSamples: MEDIUM_SAMPLES,
-      mediumLightSamples: MEDIUM_LIGHT_SAMPLES,
       visibilityMaxSteps: VISIBILITY_STEPS ?? "128 for 3D / 256 for 4D",
     },
     columns,
@@ -501,7 +488,6 @@ function writeReviewHtml(manifest: ReviewManifest): void {
   const headings: Record<Column, string> = {
     legacy: "Shipped lighting + fog",
     lights: "Colored key + rim",
-    medium: "Lights + shadowed mist",
   };
   const rows = manifest.rows
     .map(

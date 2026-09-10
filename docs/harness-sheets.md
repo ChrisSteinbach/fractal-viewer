@@ -74,17 +74,18 @@ verifier itself produces are recorded under `voxel-hierarchy-traversal`.
 
 ### cinematic-lighting
 
-The owner-review reference for colored finite lights and shadowed mist. Three
-matched-camera rows use real application DEs: a Menger cathedral, a Balloon
-inverted-union interior and a non-flat rotor-posed 4D slice. The columns compare
-the existing Surface shade/fog formulas, a colored key/rim rig, and that same
-rig with a bounded homogeneous medium. Primary rays use `de-preview.ts`;
-surface and medium visibility share one finite-segment query in displayed
-space. The new linear hooks and regional capture preserve legacy preview
-images, pinned by pre-change image hashes.
+The owner-review reference for colored finite lights. Three matched-camera
+rows use real application DEs: a Menger cathedral, a Balloon inverted-union
+interior and a non-flat rotor-posed 4D slice. The columns compare the existing
+Surface shade/fog formulas against a colored key/rim rig. A third column put
+that rig behind a bounded homogeneous medium until the medium was removed on
+its measured cost (`docs/cinematic-surface-lighting.md`); the rows and their
+figures below predate that. Primary rays use `de-preview.ts`; visibility is
+one finite-segment query in displayed space. The linear hooks and regional
+capture preserve legacy preview images, pinned by pre-change image hashes.
 
 Each run writes separate panels, a labeled sheet and a manifest with full
-geometry, cameras, palettes, light/medium values, sampling settings and
+geometry, cameras, palettes, light values, sampling settings and
 visibility work counts under `scripts/out/cinematic-lighting/`. The images
 prepare an owner decision; the harness never awards an aesthetic pass.
 No production UI, document wire, GPU performance or browser qualification is

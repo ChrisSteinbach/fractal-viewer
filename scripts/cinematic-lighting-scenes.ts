@@ -1,10 +1,12 @@
 /**
- * Saved reference compositions for direct lights and a participating medium.
+ * Saved reference compositions for direct lights. (They were composed around
+ * a participating medium as well; it was removed on its measured cost, so
+ * these rigs light bare geometry now — see cinematic-lighting.ts.)
  *
  * These are ordinary application geometries, queried through their public
  * estimators. The 4D adapter applies the inverse of the saved WORLD rotor to
- * every displayed-space query; primary, normal, surface visibility and medium
- * visibility all receive this same closure. No source-space shortcut exists.
+ * every displayed-space query; primary, normal and surface visibility all
+ * receive this same closure. No source-space shortcut exists.
  *
  * Coordinates, palettes and rigs are explicit so the owner sheet can be
  * reproduced without a live editor or a remembered camera gesture.
@@ -32,7 +34,7 @@ import {
 } from "../src/app/rotor4";
 import type { RotorPair } from "../src/app/rotor4";
 import type { Transform, Vec4 } from "../src/fractal/types";
-import type { CinematicDiskLight, CinematicMedium } from "./cinematic-lighting";
+import type { CinematicDiskLight } from "./cinematic-lighting";
 import type { DistanceEstimator, PreviewScene, Vec3 } from "./de-preview";
 
 export interface CinematicSceneMetadata {
@@ -63,7 +65,6 @@ export interface CinematicSceneMetadata {
   palette: { name: string; baseSrgb: Vec3; baseLinear: Vec3 };
   background: { top: Vec3; bottom: Vec3 };
   lights: CinematicDiskLight[];
-  medium: CinematicMedium;
   material: { ambient: Vec3; specular: number; roughness: number };
 }
 
@@ -175,13 +176,6 @@ function cathedral(transforms = mengerSponge()): CinematicScene {
         light([0, 0.2, -1.05], [0.08, -0.1, 0.7], 0.07, [1, 0.56, 0.22], 7),
         light([-0.95, 0, 0], [0, 0, 0], 0.14, [0.16, 0.46, 1], 4),
       ],
-      medium: {
-        center: [0, 0, 0],
-        radius: 1.35,
-        density: 0.42,
-        tint: [0.95, 0.92, 0.85],
-        anisotropy: 0.45,
-      },
       material: {
         ambient: [0.065, 0.055, 0.05],
         specular: 0.12,
@@ -205,7 +199,7 @@ function cavern(): CinematicScene {
       id: "balloon-cavern",
       title: "Balloon cavern",
       description:
-        "The camera stands between a real Menger attractor and its inverted-union echo. The inverted walls and the original fractal both occlude the local lights and illuminated mist.",
+        "The camera stands between a real Menger attractor and its inverted-union echo. The inverted walls and the original fractal both occlude the local lights.",
       dimension: 3,
       geometry: {
         preset: "menger",
@@ -240,13 +234,6 @@ function cavern(): CinematicScene {
         light([1.0, 1.3, -1.6], [1, -0.15, 0.2], 0.17, [0.18, 0.58, 1], 40),
         light([1.35, 0.65, 0.4], [-0.3, 0.1, -1.2], 0.22, [1, 0.34, 0.1], 10),
       ],
-      medium: {
-        center: [0, 0, 0],
-        radius: 5.2,
-        density: 0.18,
-        tint: [0.86, 0.94, 0.98],
-        anisotropy: 0.4,
-      },
       material: {
         ambient: [0.03, 0.07, 0.1],
         specular: 0.22,
@@ -284,7 +271,7 @@ function slice4(): CinematicScene {
       id: "posed-4d-slice",
       title: "Rotor-posed 4D shells",
       description:
-        "A genuinely non-flat 4D escape chain, cut at w = 0.18 after xw and zw view rotations. Every primary, shadow and medium query applies the same inverse rotor and slice.",
+        "A genuinely non-flat 4D escape chain, cut at w = 0.18 after xw and zw view rotations. Every primary and shadow query applies the same inverse rotor and slice.",
       dimension: 4,
       geometry: {
         preset: "hybridChainShells",
@@ -308,13 +295,6 @@ function slice4(): CinematicScene {
         light([3, 4, 4.5], [0, 0, 0], 0.4, [1, 0.68, 0.42], 160),
         light([-5.5, 2, -2], [0, 0, 0], 0.45, [0.1, 0.44, 1], 480),
       ],
-      medium: {
-        center: [0, 0, 0],
-        radius: 5,
-        density: 0.035,
-        tint: [0.9, 0.95, 1],
-        anisotropy: 0.25,
-      },
       material: {
         ambient: [0.1, 0.1, 0.11],
         specular: 0.22,

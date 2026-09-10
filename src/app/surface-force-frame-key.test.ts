@@ -50,15 +50,8 @@ function baseSpec(
 }
 
 describe("surfaceComputeForceFrameKey", () => {
-  it("invalidates every authored lighting and medium edit under a parked camera", () => {
+  it("invalidates every authored lighting edit under a parked camera", () => {
     const lighting = cloneSurfaceLighting(DEFAULT_SURFACE_LIGHTING);
-    lighting.medium = {
-      center: [0, 0, 0],
-      radius: 3,
-      density: 0.2,
-      tint: [0.4, 0.6, 0.8],
-      anisotropy: 0.3,
-    };
     const original = surfaceComputeForceFrameKey(baseSpec({ lighting }));
     const edits: ((value: SurfaceLighting) => void)[] = [
       (value) => {
@@ -88,24 +81,6 @@ describe("surfaceComputeForceFrameKey", () => {
       (value) => {
         value.roughness += 0.1;
       },
-      (value) => {
-        value.medium!.center[1] += 1;
-      },
-      (value) => {
-        value.medium!.radius += 1;
-      },
-      (value) => {
-        value.medium!.density += 0.1;
-      },
-      (value) => {
-        value.medium!.tint[1] += 0.1;
-      },
-      (value) => {
-        value.medium!.anisotropy += 0.1;
-      },
-      (value) => {
-        delete value.medium;
-      },
     ];
     for (const edit of edits) {
       const changed = cloneSurfaceLighting(lighting);
@@ -122,10 +97,9 @@ describe("surfaceComputeForceFrameKey", () => {
     expect(surfaceComputeForceFrameKey(baseSpec())).not.toBe(original);
   });
 
-  it("keys quality, image revisions and capture coordinates, excluding renderer-owned phases", () => {
+  it("keys quality, image revisions and capture coordinates", () => {
     const lighting = cloneSurfaceLighting(DEFAULT_SURFACE_LIGHTING);
-    const runtime = surfaceLightingRuntime(lighting, {
-      interaction: false,
+    const runtime = surfaceLightingRuntime({
       dimension: 4,
       boundingRadius: 3,
     });
@@ -140,12 +114,7 @@ describe("surfaceComputeForceFrameKey", () => {
       },
     });
     const key = surfaceComputeForceFrameKey(spec);
-    for (const field of [
-      "surfaceSamples",
-      "mediumSamples",
-      "sampleIndex",
-      "epsilon",
-    ] as const) {
+    for (const field of ["surfaceSamples", "sampleIndex", "epsilon"] as const) {
       expect(
         surfaceComputeForceFrameKey({
           ...spec,
@@ -159,18 +128,6 @@ describe("surfaceComputeForceFrameKey", () => {
         lightingRuntime: { ...runtime, shadowSteps: 128 },
       }),
     ).not.toBe(key);
-    expect(
-      surfaceComputeForceFrameKey({
-        ...spec,
-        lightingRuntime: {
-          ...runtime,
-          phase: 1,
-          cellStart: 8,
-          cellCount: 2,
-          lightIndex: 0,
-        },
-      }),
-    ).toBe(key);
     expect(
       surfaceComputeForceFrameKey({
         ...spec,

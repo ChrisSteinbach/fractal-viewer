@@ -41,10 +41,29 @@ for (const [name, create, lighting, balloon, plane] of [
       const material = create();
       const legacy = material.fragmentShader;
       lighting(material, DEFAULT_SURFACE_LIGHTING);
-      expect(material.fragmentShader).toContain("cinematicMedium");
+      expect(material.fragmentShader).toContain("cinematicSurface");
       expect(material.fragmentShader).not.toBe(legacy);
       lighting(material, undefined);
       expect(material.fragmentShader).toBe(legacy);
+      material.dispose();
+    });
+
+    it("keeps an exhausted ray dark rather than painting it with the backdrop", () => {
+      // Alpha 0.5 is the EXHAUSTED status (a miss writes 0.0). Linear
+      // transport must not treat unknown geometry as clear sky, which is
+      // the compute kernel's `if (st.y == EXHAUSTED) terminal = 0` — and
+      // dropping it drifts a lit Balloon frame past the browser gate's bar.
+      const material = create();
+      expect(material.fragmentShader).toContain(
+        "outColor = vec4(background, 0.5);",
+      );
+      lighting(material, DEFAULT_SURFACE_LIGHTING);
+      expect(material.fragmentShader).toContain(
+        "outColor = vec4(vec3(0.0), 0.5);",
+      );
+      expect(material.fragmentShader).not.toContain(
+        "outColor = vec4(background, 0.5);",
+      );
       material.dispose();
     });
 
@@ -52,7 +71,7 @@ for (const [name, create, lighting, balloon, plane] of [
       const material = create();
       lighting(material, DEFAULT_SURFACE_LIGHTING);
       balloon(material, { center: [0, 0, 0], rho: 1, R: 1.5, far: 12 });
-      expect(material.fragmentShader).toContain("cinematicMedium");
+      expect(material.fragmentShader).toContain("cinematicSurface");
       expect(material.fragmentShader).toContain("surfaceDEBalloonHitInfo");
       balloon(material, null);
       plane(material, {

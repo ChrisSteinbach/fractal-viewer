@@ -60,7 +60,6 @@ import {
 import { surfacePatternShadeSourceWgsl } from "./surface-pattern-shade";
 import {
   SURFACE_LIGHTING_LANE_COUNT,
-  SURFACE_LIGHTING_PHASE_LANE,
   surfaceLightingLanes,
   type SurfaceLighting,
   type SurfaceLightingRuntime,
@@ -1537,8 +1536,6 @@ export const SURFACE_GPU_SHADE_PATTERN_BYTES = 240;
  * when pattern is absent. Existing 224/240-byte packs remain unchanged. */
 export const SURFACE_GPU_SHADE_LIGHTING_BYTES =
   SURFACE_GPU_SHADE_PATTERN_BYTES + SURFACE_LIGHTING_LANE_COUNT * 16;
-export const SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET =
-  SURFACE_GPU_SHADE_PATTERN_BYTES + SURFACE_LIGHTING_PHASE_LANE * 16;
 
 /** Ray-state status codes (the `y` component of a march state vec4).
  * PLANE exists only in `groundPlane: true` kernels: a MISS
@@ -8252,25 +8249,6 @@ ${
   }`
     : ""
 }
-  // Phase1 never recomputes hit attribution or normals: one cell/light
-  // can be submitted and cancelled independently of the next one.
-  if (shade.cinematic[11].z >= 0.5) {
-    var contribution = vec3f(0.0);
-    let start = i32(shade.cinematic[11].x);
-    let end = min(start + i32(shade.cinematic[11].y), i32(shade.cinematic[10].y));
-    for (var cell = start; cell < end; cell++) {
-      var cellColor = cinematicMediumCell(ro, rd, t, pixel, cell, i32(li));
-      if (fades && coverage < 1.0) {
-        cellColor = mix(cinematicMediumCell(ro, rd, fullFar, pixel, cell, i32(li)),
-          cellColor, coverage);
-      }
-      contribution += cellColor;
-    }
-    let old = colorOut[ray];
-    let diagnostics = cinematicVisibilityExhausted + 65536.0 * cinematicVisibilityInvalid;
-    colorOut[ray] = vec4f(cinematicFinite(old.rgb + contribution), old.w + diagnostics);
-    return;
-  }
   var terminal = bgLinear;
   if (st.y == ${SURFACE_GPU_RAY_EXHAUSTED}.0) { terminal = vec3f(0.0); }
   let R = params.boundingRadius;
@@ -8298,9 +8276,9 @@ ${
   }`
     : ""
 }
-  var linear = terminal * cinematicTransmission(ro, rd, t);
+  var linear = terminal;
   if (fades && coverage < 1.0) {
-    linear = mix(bgLinear * cinematicTransmission(ro, rd, fullFar), linear, coverage);
+    linear = mix(bgLinear, linear, coverage);
   }
   let diagnostics = cinematicVisibilityExhausted + 65536.0 * cinematicVisibilityInvalid;
   colorOut[ray] = vec4f(cinematicFinite(linear), diagnostics);

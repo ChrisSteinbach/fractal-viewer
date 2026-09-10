@@ -66,9 +66,9 @@
  * THE BAR IS NOW BIT-EXACT, and the 0.0020 residual above is gone with
  * it. It was the march-start dither's per-raster hash phase along
  * silhouettes — the band-local pixel row fed to a hash — and the same
- * flaw cost the LIT export far more (a dithered march start moves the
- * terminal distance, which is the volumetric medium's whole integration
- * length): 0.408/255 mean and 5.9% of channels across an authored
+ * flaw cost the LIT export far more, when a participating medium still
+ * integrated along the whole terminal distance a dithered march start
+ * moves: 0.408/255 mean and 5.9% of channels across an authored
  * 8-sample cathedral capture. Fixing it took the ray's NDC with it: a
  * band is now a row range of the WHOLE image's projection, and the
  * full-image pixel — from bgOffset/bgExtent — is what derives the NDC,

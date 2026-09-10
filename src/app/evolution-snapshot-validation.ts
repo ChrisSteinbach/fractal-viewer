@@ -40,7 +40,6 @@ import {
   SURFACE_LIGHTING_MAX_LIGHTS,
   type SurfaceDiskLight,
   type SurfaceLighting,
-  type SurfaceLightingMedium,
 } from "../fractal/surface-lighting";
 import { SHAPE_TRAP_GEOMETRY_LEVEL_MAX } from "../fractal/shape-trap";
 import { TILING_GROUPS } from "../fractal/tiling";
@@ -311,7 +310,6 @@ const SURFACE_LIGHTING_FIELDS = {
   ambient: true,
   specular: true,
   roughness: true,
-  medium: true,
 } satisfies Fields<SurfaceLighting>;
 const SURFACE_DISK_LIGHT_FIELDS = {
   position: true,
@@ -320,13 +318,6 @@ const SURFACE_DISK_LIGHT_FIELDS = {
   color: true,
   intensity: true,
 } satisfies Fields<SurfaceDiskLight>;
-const SURFACE_LIGHTING_MEDIUM_FIELDS = {
-  center: true,
-  radius: true,
-  density: true,
-  tint: true,
-  anisotropy: true,
-} satisfies Fields<SurfaceLightingMedium>;
 const CUSTOM_PALETTE_FIELDS = { stops: true } satisfies Fields<CustomPalette>;
 const RAMP_PALETTE_FIELDS = {
   kind: true,
@@ -1115,20 +1106,6 @@ function surfaceLighting(value: unknown, path: string): void {
   tuple(required(entry, "ambient", path), 3, `${path}.ambient`);
   for (const key of ["specular", "roughness"] as const) {
     finite(required(entry, key, path), `${path}.${key}`);
-  }
-  if (entry.medium !== undefined) {
-    const mediumPath = `${path}.medium`;
-    const medium = object(
-      entry.medium,
-      mediumPath,
-      SURFACE_LIGHTING_MEDIUM_FIELDS,
-    );
-    for (const key of ["center", "tint"] as const) {
-      tuple(required(medium, key, mediumPath), 3, `${mediumPath}.${key}`);
-    }
-    for (const key of ["radius", "density", "anisotropy"] as const) {
-      finite(required(medium, key, mediumPath), `${mediumPath}.${key}`);
-    }
   }
 }
 

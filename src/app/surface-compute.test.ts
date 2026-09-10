@@ -3,8 +3,6 @@ import {
   buildSurfaceComputeLightingBackground,
   encodeSurfaceComputeHdr,
   surfaceComputeLightingVisibility,
-  surfaceComputeLightingFenceGroup,
-  SURFACE_COMPUTE_LIGHTING_MAX_QUEUED_DISPATCHES,
   buildSurfaceComputeLayerPrefill,
   fitSurfaceComputeRaster,
   foldSurfaceComputeLayerSample,
@@ -32,7 +30,6 @@ import {
   SURFACE_COMPUTE_SHADE_MARGINAL_DECAY,
   SURFACE_COMPUTE_SHADE_HIT_CAP_START,
   SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST,
-  SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   surfaceComputeLightingRayBatch,
   SurfaceComputeRenderer,
@@ -52,7 +49,6 @@ import {
   SURFACE_GPU_CHAOS_BYTES,
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_SHADE_LIGHTING_BYTES,
-  SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET,
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_LENS4_POST_BYTES,
   SURFACE_GPU_LENS_POST_BYTES,
@@ -917,20 +913,17 @@ describe("nextLightingRayCap", () => {
 });
 
 describe("surfaceComputeLightingRayBatch on measured costs", () => {
-  it("widens once the lanes carry the measured medium cost, where inert lanes pinned it to the cap", () => {
-    // MEASURED on this project's own cathedral fixture: one medium
-    // dispatch is 5.63 ms + 2.04 us/ray. Both lanes then afford far more
-    // than the 4096-ray ceiling, so the capacity ladder is what paces the
-    // width — which is the division of labour the unlit queue already has.
-    const medium = { interceptUs: 5630, marginalUs: 2.04 };
+  it("widens once the lane carries a measured cost, where an inert lane pinned it to the cap", () => {
+    // MEASURED on this project's own cathedral fixture. The model affords
+    // far more than the 4096-ray ceiling here, so the capacity ladder is
+    // what paces the width — the division of labour the unlit queue has.
     const surface = { interceptUs: 16600, marginalUs: 7.59 };
-    expect(surfaceComputeLightingRayBatch(surface, medium, 4096)).toBe(4096);
+    expect(surfaceComputeLightingRayBatch(surface, 4096)).toBe(4096);
     // The ladder still binds while it is climbing.
-    expect(surfaceComputeLightingRayBatch(surface, medium, 256)).toBe(256);
+    expect(surfaceComputeLightingRayBatch(surface, 256)).toBe(256);
     // A genuinely expensive scene is held down by the model, not the cap.
     expect(
       surfaceComputeLightingRayBatch(
-        surface,
         { interceptUs: 5630, marginalUs: 200 },
         4096,
       ),
@@ -2622,16 +2615,14 @@ describe("SurfaceComputeRenderer device loss", () => {
  * is simulated: every primary ray misses and each readback supplies a known
  * linear sample. Uniform writes, dispatch widths and cancellation are real
  * host code. */
-function lightingDispatchHarness(parkMedium: boolean | number = false) {
+/** Float offsets into the packed shade buffer: the 240-byte legacy+pattern
+ * prefix is 60 floats, then the nine lighting lanes. */
+const SHADE_LIGHTING_FLOAT = 60;
+const SHADE_SAMPLE_INDEX_FLOAT = SHADE_LIGHTING_FLOAT + 8 * 4 + 2;
+
+function lightingDispatchHarness(parkShade: boolean | number = false) {
   const parked = deferred();
-  const phases: {
-    cell: number;
-    count: number;
-    phase: number;
-    light: number;
-    rays: number;
-    groups: number;
-  }[] = [];
+  const dispatches: { rays: number; groups: number }[] = [];
   const shadeWrites: Float32Array[] = [];
   const fences: number[] = [];
   const deviceDestroy = vi.fn();
@@ -2641,7 +2632,6 @@ function lightingDispatchHarness(parkMedium: boolean | number = false) {
   const shadePipeline = {} as GPUComputePipeline;
   let itemCount = 0;
   let sampleIndex = 0;
-  let phase = [0, 1, 0, -1];
   let lastWasShade = false;
   const device = {
     lost: new Promise<GPUDeviceLostInfo>(() => {}),
@@ -2671,25 +2661,19 @@ function lightingDispatchHarness(parkMedium: boolean | number = false) {
         if (buffer === paramsBuf)
           itemCount = new DataView(bytes).getUint32(56, true);
         if (buffer === shadeBuf) {
-          if (offset === SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET)
-            phase = Array.from(new Float32Array(bytes));
-          else {
-            const floats = new Float32Array(bytes);
-            shadeWrites.push(floats.slice());
-            sampleIndex = floats[103];
-          }
+          const floats = new Float32Array(bytes);
+          shadeWrites.push(floats.slice());
+          sampleIndex = floats[SHADE_SAMPLE_INDEX_FLOAT];
         }
       },
       submit: () => {},
       onSubmittedWorkDone: () => {
-        fences.push(phases.length);
+        fences.push(dispatches.length);
         const shouldPark =
-          typeof parkMedium === "number"
-            ? phases.length >= parkMedium
-            : parkMedium;
-        return shouldPark && lastWasShade && phase[2] === 1
-          ? parked.promise
-          : Promise.resolve();
+          typeof parkShade === "number"
+            ? dispatches.length >= parkShade
+            : parkShade;
+        return shouldPark && lastWasShade ? parked.promise : Promise.resolve();
       },
     },
     createCommandEncoder: () => ({
@@ -2702,15 +2686,7 @@ function lightingDispatchHarness(parkMedium: boolean | number = false) {
           setBindGroup: () => {},
           dispatchWorkgroups: (groups: number) => {
             lastWasShade = selected === shadePipeline;
-            if (lastWasShade)
-              phases.push({
-                cell: phase[0],
-                count: phase[1],
-                phase: phase[2],
-                light: phase[3],
-                rays: itemCount,
-                groups,
-              });
+            if (lastWasShade) dispatches.push({ rays: itemCount, groups });
           },
           end: () => {},
         };
@@ -2774,25 +2750,14 @@ function lightingDispatchHarness(parkMedium: boolean | number = false) {
   );
   const spec = frameSpec();
   spec.lighting = cloneSurfaceLighting(DEFAULT_SURFACE_LIGHTING);
-  spec.lighting.medium = {
-    center: [0, 0, 0],
-    radius: 2,
-    density: 0.2,
-    tint: [1, 1, 1],
-    anisotropy: 0.3,
-  };
-  spec.lightingRuntime = {
-    ...surfaceLightingRuntime(spec.lighting, {
-      interaction: false,
-      dimension: 3,
-      boundingRadius: 2,
-    }),
-    mediumSamples: 2,
-  };
+  spec.lightingRuntime = surfaceLightingRuntime({
+    dimension: 3,
+    boundingRadius: 2,
+  });
   return {
     renderer,
     spec,
-    phases,
+    dispatches,
     shadeWrites,
     fences,
     deviceDestroy,
@@ -2801,16 +2766,6 @@ function lightingDispatchHarness(parkMedium: boolean | number = false) {
 }
 
 describe("SurfaceComputeRenderer authored lighting", () => {
-  it("bounds queued dispatch debt from measured latency and the remaining wall budget", () => {
-    expect(surfaceComputeLightingFenceGroup(null)).toBe(1);
-    expect(surfaceComputeLightingFenceGroup(Infinity)).toBe(1);
-    expect(surfaceComputeLightingFenceGroup(0)).toBe(
-      SURFACE_COMPUTE_LIGHTING_MAX_QUEUED_DISPATCHES,
-    );
-    expect(surfaceComputeLightingFenceGroup(10)).toBe(5);
-    expect(surfaceComputeLightingFenceGroup(50)).toBe(1);
-    expect(surfaceComputeLightingFenceGroup(10, 15)).toBe(1);
-  });
   it("allocates the opt-in HDR ABI and background binding without moving mesh binding 11", async () => {
     const plain = await createPaletteResourceHarness(false);
     const lit = await createPaletteResourceHarness(false, undefined, true);
@@ -2846,121 +2801,49 @@ describe("SurfaceComputeRenderer authored lighting", () => {
     }
   });
 
-  it("splits missed rays into one-cell one-light workgroups and averages HDR before clipping", async () => {
-    const { renderer, spec, phases, shadeWrites, fences } =
+  it("averages HDR before clipping and widens the lit dispatch as it learns", async () => {
+    const { renderer, spec, dispatches, shadeWrites, fences } =
       lightingDispatchHarness();
     spec.width = 128;
     spec.height = 1;
     const pending = renderer.renderFrame(spec, { samples: 2 });
+    // The spec's nested rig must not follow a later UI edit mid-frame.
     spec.lighting!.lights[0].position[0] = 999;
-    spec.lighting!.medium!.tint[0] = 0;
     const frame = await pending;
     expect(frame).not.toBeNull();
     expect(frame!.pixels[0]).toBe(Math.round(255 * Math.pow(0.8, 1 / 2.2)));
     expect(frame!.pixels[3]).toBe(255);
     expect(frame!.lightingVisibility).toEqual({ exhausted: 512, invalid: 256 });
-    expect(shadeWrites.map((write) => write[103])).toEqual([0, 1]);
-    expect(shadeWrites[0][60]).toBe(
+    expect(shadeWrites.map((write) => write[SHADE_SAMPLE_INDEX_FLOAT])).toEqual(
+      [0, 1],
+    );
+    expect(shadeWrites[0][SHADE_LIGHTING_FLOAT]).toBe(
       DEFAULT_SURFACE_LIGHTING.lights[0].position[0],
     );
-    expect(shadeWrites[0][92]).toBe(1);
-    // The dispatch COUNT is now the capacity ladder's business, not a
-    // fixed width's: this frame's 128 rays over two samples used to cost
-    // 20 medium dispatches at the pinned one workgroup and cost 15 once
-    // the width is allowed to climb. Same cells, same lights, same
-    // pixels — see nextLightingRayCap for the measured reason.
-    expect(phases.length).toBeLessThan(20);
-    expect(
-      fences.some((count, index) => count - (fences[index - 1] ?? 0) > 1),
-    ).toBe(true);
-    expect(
-      fences.every(
-        (count, index) =>
-          count - (fences[index - 1] ?? 0) <=
-          SURFACE_COMPUTE_LIGHTING_MAX_QUEUED_DISPATCHES,
-      ),
-    ).toBe(true);
-    // ONE CELL AND ONE LIGHT PER DISPATCH is the invariant; the WIDTH is
-    // not. Every dispatch still owns exactly one (cell, light) pair, the
-    // width starts at one workgroup with no evidence, only ever grows
-    // within a frame, and never passes the lit ceiling.
-    // ONE CELL AND ONE LIGHT PER DISPATCH — the split this test is named
-    // for. Every medium dispatch names a single (cell, light) pair, and a
-    // batch covers the 2x2 product exactly once. (How many of them share a
-    // FENCE is the separate, already-asserted concern above.)
-    const medium = phases.filter((phase) => phase.phase === 1);
-    expect(medium.every((phase) => phase.cell >= 0 && phase.light >= 0)).toBe(
-      true,
-    );
-    expect(medium).toHaveLength(phases.length - 3);
-    for (let i = 0; i < medium.length; i += 4) {
-      expect(
-        medium
-          .slice(i, i + 4)
-          .map((phase) => `${phase.cell}/${phase.light}`)
-          .sort(),
-      ).toEqual(["0/0", "0/1", "1/0", "1/1"]);
-    }
-    expect(phases[0].rays).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
-    expect(
-      phases.every(
-        (phase, index) =>
-          phase.rays >= (phases[index - 1]?.rays ?? 0) &&
-          phase.rays <= SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
-      ),
-    ).toBe(true);
-    expect(
-      phases
-        .slice(0, 5)
-        .map(({ cell, count, phase, light }) => [cell, count, phase, light]),
-    ).toEqual([
-      [0, 1, 0, -1],
-      [0, 1, 1, 0],
-      [0, 1, 1, 1],
-      [1, 1, 1, 0],
-      [1, 1, 1, 1],
+    // Lane 8's first word: one surface sample per pass, whatever the rig.
+    expect(shadeWrites[0][SHADE_LIGHTING_FLOAT + 8 * 4]).toBe(1);
+    // Every ray here MISSES, and a miss is free work under any rig: the
+    // whole raster drains in one dispatch per pass, which is what the
+    // participating medium used to make impossible (its rays paid
+    // visibility marches whether or not the primary ray hit anything).
+    expect(dispatches).toEqual([
+      { rays: 128, groups: 2 },
+      { rays: 128, groups: 2 },
     ]);
+    expect(fences.length).toBeGreaterThan(0);
   });
 
-  it("defers destruction while a medium dispatch is pending and cancels every remaining cell", async () => {
-    const { renderer, spec, phases, deviceDestroy, resume } =
+  it("defers destruction while a lit dispatch is parked on submitted work", async () => {
+    const { renderer, spec, dispatches, deviceDestroy, resume } =
       lightingDispatchHarness(true);
     const frame = renderer.renderFrame(spec);
     await flushMicrotasks();
-    expect(phases.map(({ phase }) => phase)).toEqual([0, 1]);
+    expect(dispatches).toHaveLength(1);
     renderer.destroy();
     expect(deviceDestroy).not.toHaveBeenCalled();
     resume();
     expect(await frame).toBeNull();
-    expect(phases).toHaveLength(2);
     expect(deviceDestroy).toHaveBeenCalledTimes(1);
-  });
-
-  it("drains every queued submission before destruction after the pilot enables grouping", async () => {
-    const { renderer, spec, phases, fences, deviceDestroy, resume } =
-      lightingDispatchHarness(10);
-    spec.width = 128;
-    spec.height = 1;
-    const frame = renderer.renderFrame(spec);
-    await flushMicrotasks();
-    expect(phases).toHaveLength(10);
-    expect(fences.at(-1)! - fences.at(-2)!).toBe(4);
-    renderer.destroy();
-    expect(deviceDestroy).not.toHaveBeenCalled();
-    resume();
-    expect(await frame).toBeNull();
-    expect(phases).toHaveLength(10);
-    expect(deviceDestroy).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps zero-density missed rays on the cheap terminal path", async () => {
-    const { renderer, spec, phases } = lightingDispatchHarness();
-    spec.width = 128;
-    spec.height = 1;
-    spec.lighting!.medium!.density = 0;
-    await renderer.renderFrame(spec);
-    expect(phases).toHaveLength(1);
-    expect(phases[0]).toMatchObject({ phase: 0, rays: 128, groups: 2 });
   });
 
   it("samples an image backdrop in full-image coordinates across bands and preserves top-origin image rows", () => {

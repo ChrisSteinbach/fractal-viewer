@@ -6,7 +6,6 @@ import {
   cloneSurfaceLighting,
   DEFAULT_SURFACE_LIGHTING,
   type SurfaceLighting,
-  type SurfaceLightingMedium,
 } from "../fractal/surface-lighting";
 import type { Vec3 } from "../fractal/types";
 import { enhanceRangeWithNumber } from "./range-number-control";
@@ -14,14 +13,6 @@ import type { AppState } from "./state";
 
 type Phase = "input" | "commit";
 type RigEdit = (rig: SurfaceLighting, value: number) => void;
-
-const DEFAULT_MEDIUM: SurfaceLightingMedium = {
-  center: [0, 0, 0],
-  radius: 3,
-  density: 0.1,
-  tint: [0.9, 0.95, 1],
-  anisotropy: 0.4,
-};
 
 const colorToHex = (rgb: Vec3): string =>
   rgbToHex(
@@ -52,7 +43,6 @@ function aimedNormal(azimuth: number, elevation: number): Vec3 {
 export class SurfaceLightingControls {
   private readonly doc: Document;
   private draft = cloneSurfaceLighting(DEFAULT_SURFACE_LIGHTING);
-  private mediumDraft = DEFAULT_MEDIUM;
   private enabled = false;
   private active = false;
   private readonly enable: HTMLInputElement;
@@ -222,90 +212,6 @@ export class SurfaceLightingControls {
       "These material defaults affect Classic finishes. Authored per-transform finishes keep their own appearance.",
     );
 
-    const medium = this.detail(this.body, "Bounded mist");
-    const mediumEnable = this.checkbox(
-      medium,
-      "surfaceRigMediumEnabled",
-      "Add mist",
-    );
-    const mediumBody = this.doc.createElement("div");
-    medium.appendChild(mediumBody);
-    mediumEnable.addEventListener("change", () => {
-      if (!this.canEdit()) return;
-      if (mediumEnable.checked) {
-        this.draft.medium = {
-          ...this.mediumDraft,
-          center: [...this.mediumDraft.center],
-          tint: [...this.mediumDraft.tint],
-        };
-      } else {
-        this.mediumDraft = this.draft.medium ?? this.mediumDraft;
-        delete this.draft.medium;
-      }
-      this.emit("commit");
-      this.refresh();
-    });
-    this.syncers.push(() => {
-      mediumEnable.checked = this.draft.medium !== undefined;
-      mediumEnable.disabled = !this.canEdit();
-      mediumBody.classList.toggle("hidden", this.draft.medium === undefined);
-    });
-    const mediumRead = () => this.draft.medium ?? DEFAULT_MEDIUM;
-    for (const [axis, label] of ["X", "Y", "Z"].entries()) {
-      this.numeric(
-        mediumBody,
-        `surfaceRigMediumCenter${label}`,
-        `Mist center ${label}`,
-        [-10, 10, 0.01],
-        () => mediumRead().center[axis],
-        (rig, value) => {
-          if (rig.medium) rig.medium.center[axis] = value;
-        },
-      );
-    }
-    this.numeric(
-      mediumBody,
-      "surfaceRigMediumRadius",
-      "Mist radius",
-      [0.01, 10, 0.01],
-      () => mediumRead().radius,
-      (rig, value) => {
-        if (rig.medium) rig.medium.radius = value;
-      },
-    );
-    this.numeric(
-      mediumBody,
-      "surfaceRigMediumDensity",
-      "Mist density",
-      [0, 2, 0.005],
-      () => mediumRead().density,
-      (rig, value) => {
-        if (rig.medium) rig.medium.density = value;
-      },
-    );
-    this.color(
-      mediumBody,
-      "surfaceRigMediumTint",
-      "Mist tint",
-      () => mediumRead().tint,
-      (rig, value) => {
-        if (rig.medium) rig.medium.tint = value;
-      },
-    );
-    this.numeric(
-      mediumBody,
-      "surfaceRigMediumAnisotropy",
-      "Forward scattering",
-      [-0.95, 0.95, 0.01],
-      () => mediumRead().anisotropy,
-      (rig, value) => {
-        if (rig.medium) rig.medium.anisotropy = value;
-      },
-    );
-    this.hint(
-      mediumBody,
-      "Mist fills a sphere around its center. Density 0 removes scattering and attenuation. Positive forward scattering emphasizes light arriving toward the camera.",
-    );
     this.refresh();
   }
 
@@ -314,11 +220,10 @@ export class SurfaceLightingControls {
     this.enabled = state.surface.lighting !== undefined;
     if (state.surface.lighting) {
       this.draft = cloneSurfaceLighting(state.surface.lighting);
-      this.mediumDraft = this.draft.medium ?? this.mediumDraft;
     }
     this.note.textContent = this.active
-      ? "Lights and mist update live and restart Surface convergence. Motion uses reduced sampling; Renderer controls the parked-view samples."
-      : "Surface lighting is retained in this render mode. Enter Surface to edit the lights and mist.";
+      ? "Lights update live and restart Surface convergence. Renderer controls the parked-view samples."
+      : "Surface lighting is retained in this render mode. Enter Surface to edit the lights.";
     this.refresh();
   }
 

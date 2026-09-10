@@ -82,15 +82,17 @@ export function surfaceComputeForceFrameKey(
     spec.fogDensity ?? 1,
     (spec.fogTint ?? [1, 1, 1]).join(","),
     spec.fogTintStrength ?? 0,
-    // Lighting changes repaint both surfaces and empty mist rays. The shared
-    // packed lanes resolve every authored/default domain exactly as the GPU
-    // does. Phase lanes are excluded: the renderer owns that scheduling.
+    // Lighting changes repaint every shaded terminal. The shared packed
+    // lanes resolve every authored/default domain exactly as the GPU does,
+    // and every one of them is keyed: the medium's dispatch-scheduling
+    // lanes, which the renderer owned and this key had to exclude, are gone
+    // with the medium itself.
     ...(spec.lighting
       ? [
           "lighting",
-          Array.from(surfaceLightingLanes(spec.lighting, spec.lightingRuntime))
-            .slice(0, 44)
-            .join(","),
+          Array.from(
+            surfaceLightingLanes(spec.lighting, spec.lightingRuntime),
+          ).join(","),
           (spec.bgOffset ?? [0, 0]).join(","),
           (spec.bgExtent ?? [spec.width, spec.height]).join(","),
           ...(spec.lightingBackground
