@@ -22,11 +22,18 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
+    // allowJs (with checkJs left off) so a .ts test can import the pure
+    // functions out of a plain-JavaScript CLI: without it the import is
+    // TS7016. The include list below admits exactly ONE .mjs rather than the
+    // directory, because a bare "." glob would pull all ~70 of scripts/'s
+    // .mjs gates into this program and cost `npm run lint` 4.5s (12.8s ->
+    // 17.3s measured) to type nothing anyone reads.
+    "allowJs": true,
     "noEmit": true,
     "rootDir": "..",
     "types": ["vitest/globals", "node", "vite/client", "@webgpu/types"]
   },
-  "include": ["../src", "."],
+  "include": ["../src", "./**/*.ts", "./gpu-ci-swept.mjs"],
   // Same conflict the root tsconfig.json avoids (see its own comment): the
   // service worker needs the WebWorker lib, which this program doesn't set,
   // so it type-checks separately under its own src/app/sw/tsconfig.json.
