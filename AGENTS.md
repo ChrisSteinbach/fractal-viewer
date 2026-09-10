@@ -252,15 +252,14 @@ serves the production build over a plain static server with no COOP/COEP
 and a deliberately delayed `sw.js`, widening the reload window on demand;
 `npm run preview` can trigger the same dance, but only at real localhost timing.
 
-The post-deploy live-site gate (not an npm script):
-`node scripts/live-site.verify.mjs [url]` boots the REAL deployed origin
-(default https://fractal-4d.com) in headless SwiftShader Chromium and
-asserts what only the live host can prove: HTTP OK, app boot
-(`#pointCount` > 0, `#error` empty), the SW's COOP/COEP compensation
-completing (`crossOriginIsolated` true through the one isolation reload),
-a controlling service worker, and no console errors. Exit 2 means the
-CHECKING side failed (browser/network) — rerun, it is not a site verdict.
-Run it after every `gh workflow run deploy.yml`.
+The post-deploy live-site gate: `node scripts/live-site.verify.mjs [url]`
+boots the deployed origin (default https://fractal-4d.com) in headless
+SwiftShader Chromium and asserts HTTP OK, app boot (`#pointCount` > 0,
+`#error` empty), COOP/COEP (`crossOriginIsolated` true post-reload), a
+controlling SW, no console errors; exit 2 is a CHECKING failure
+(browser/network), not a verdict — rerun. `deploy.yml` runs it
+automatically as `verify-live`; hand-run it for another origin, or outside
+a deploy (DNS/Pages changes, diagnosing a report against production).
 
 The WebGPU compute-surface teardown gate (not an npm script — it
 needs a real Firefox build with WebGPU enabled on a display, and it gates
