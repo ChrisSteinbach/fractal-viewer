@@ -2606,21 +2606,11 @@
           <summary>Systems</summary>
           <div class="editor-group-title">Replace or explore</div>
           <p id="presetTimingHint" class="flame-note-info">
-            Presets morph in Points, then open their saved renderer. Random
-            Drift stays in Points; Collection Drift follows each saved scene.
-          </p>
-          <label class="select-label">
-            Replace with Surface scene
-            <select
-              id="surfaceLightingStarterSelect"
-              aria-describedby="surfaceLightingStarterNote"
-            >
-              <option value="">Load a lit interior…</option>
-            </select>
-          </label>
-          <p id="surfaceLightingStarterNote" class="flame-hint">
-            Replaces the scene, camera and look, then opens Surface. Edit its
-            lights and mist under Surface lighting.
+            Presets morph in Points, then open their saved renderer. Lit
+            interiors do not morph: they replace the scene, camera and look
+            outright and open Surface, where their lights and mist stay editable
+            under Surface lighting. Random Drift stays in Points; Collection
+            Drift follows each saved scene.
           </p>
           <label class="select-label">
             Replace with preset
@@ -2701,6 +2691,14 @@
                 <option value="mandelboxColumn">Mandelbox Column</option>
                 <option value="hybridChainShells">Hybrid Shells</option>
               </optgroup>
+              <!-- Complete lit compositions, minted from
+                   SURFACE_LIGHTING_STARTERS so their ids and labels keep one
+                   definition. Their `starter:` values are not preset keys —
+                   see surface-lighting-starters.ts. -->
+              <optgroup
+                id="surfaceLightingStarterGroup"
+                label="Lit interiors"
+              ></optgroup>
             </select>
           </label>
           <button

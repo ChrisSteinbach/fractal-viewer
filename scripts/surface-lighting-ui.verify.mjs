@@ -364,7 +364,7 @@ async function active(page, fixture, width) {
   const label = `${fixture.id}-${width}-active`;
   await boot(page, fixture);
   await open(page, "presetSection");
-  await page.selectOption("#surfaceLightingStarterSelect", fixture.id);
+  await page.selectOption("#presetSelect", `starter:${fixture.id}`);
   await page.waitForFunction(
     () => window.__surfaceState().mode === "surface",
     undefined,
@@ -372,7 +372,7 @@ async function active(page, fixture, width) {
   );
   check(
     `${label}: starter menu enters Surface and resets`,
-    (await page.locator("#surfaceLightingStarterSelect").inputValue()) === "",
+    (await page.locator("#presetSelect").inputValue()) === "",
     null,
   );
   await audit(page, label, true);

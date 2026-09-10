@@ -104,7 +104,10 @@ import type { AppState, RenderMode } from "./state";
 import type { SurfaceLighting } from "../fractal/surface-lighting";
 import { SurfaceLightingControls } from "./surface-lighting-controls";
 import {
+  SURFACE_LIGHTING_STARTER_PREFIX,
   SURFACE_LIGHTING_STARTERS,
+  surfaceLightingStarterFromValue,
+  surfaceLightingStarterValue,
   type SurfaceLightingStarterId,
 } from "./surface-lighting-starters";
 import type {
@@ -2105,7 +2108,7 @@ export class Ui {
   private readonly undoBtn: HTMLButtonElement;
   private readonly redoBtn: HTMLButtonElement;
   private readonly presetSelect: HTMLSelectElement;
-  private readonly surfaceLightingStarterSelect: HTMLSelectElement;
+  private readonly surfaceLightingStarterGroup: HTMLOptGroupElement;
   private readonly surfaceLightingControls: SurfaceLightingControls;
   private readonly surfaceLightingDisclosure: HTMLElement;
   private readonly surpriseBtn: HTMLButtonElement;
@@ -2918,14 +2921,19 @@ export class Ui {
     this.undoBtn = this.byId("undoBtn");
     this.redoBtn = this.byId("redoBtn");
     this.presetSelect = this.byId("presetSelect");
-    this.surfaceLightingStarterSelect = this.byId(
-      "surfaceLightingStarterSelect",
+    // The Lit interiors group rides the preset menu itself: one
+    // "Replace with preset" door rather than a second select beside it. The
+    // entries are minted here so SURFACE_LIGHTING_STARTERS stays the single
+    // source of their ids and labels (index.html owns the PRESET names the
+    // same way, one list each).
+    this.surfaceLightingStarterGroup = this.byId<HTMLOptGroupElement>(
+      "surfaceLightingStarterGroup",
     );
     for (const entry of SURFACE_LIGHTING_STARTERS) {
       const option = doc.createElement("option");
-      option.value = entry.id;
+      option.value = surfaceLightingStarterValue(entry.id);
       option.textContent = entry.label;
-      this.surfaceLightingStarterSelect.appendChild(option);
+      this.surfaceLightingStarterGroup.appendChild(option);
     }
     this.surfaceLightingControls = new SurfaceLightingControls(
       this.byId("surfaceAuthoredLightingControls"),
@@ -3154,6 +3162,11 @@ export class Ui {
         this.presetSelect.querySelectorAll("option"),
       )) {
         if (!option.value) continue;
+        // The Lit interiors entries live in that menu but are not systems a
+        // composition can take as a source — they are whole scene documents,
+        // and `resolveScheduleSourceTransforms` reads `preset:`/`saved:` keys
+        // only, so a cloned `preset:starter:…` would resolve to nothing.
+        if (option.value.startsWith(SURFACE_LIGHTING_STARTER_PREFIX)) continue;
         const clone = this.doc.createElement("option");
         clone.value = `preset:${option.value}`;
         clone.textContent = option.textContent;
@@ -3753,17 +3766,18 @@ export class Ui {
     // The preset menu acts as a one-shot action list: fire the chosen preset,
     // then snap back to the placeholder so it never implies a persistent mode.
     this.presetSelect.addEventListener("change", () => {
-      const preset = this.presetSelect.value;
+      const value = this.presetSelect.value;
       this.presetSelect.value = "";
-      if (preset) handlers.onPreset(preset as Preset);
-    });
-    this.surfaceLightingStarterSelect.addEventListener("change", () => {
-      const id = this.surfaceLightingStarterSelect.value;
-      this.surfaceLightingStarterSelect.value = "";
-      const entry = SURFACE_LIGHTING_STARTERS.find(
-        (starter) => starter.id === id,
-      );
-      if (entry) handlers.onSurfaceLightingStarter?.(entry.id);
+      if (!value) return;
+      // The Lit interiors group shares the door, not the load path: a starter
+      // is a whole scene snapshot (camera, backdrop, palette, rig), so it
+      // routes to its own handler and never reaches onPreset.
+      const starter = surfaceLightingStarterFromValue(value);
+      if (starter) {
+        handlers.onSurfaceLightingStarter?.(starter);
+        return;
+      }
+      handlers.onPreset(value as Preset);
     });
     // The Hybrid schedule trio: the picker's value goes to the handler
     // verbatim (updateLabels re-syncs it to the document's own state — the
