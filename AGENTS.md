@@ -1880,8 +1880,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     states buffer. Shade batches are sized in HIT units, never ray units —
     misses drain the FREE queue WHOLE per sweep, and hits (plus
     ground-plane PLANE terminals) are FLOORED AT ONE WORKGROUP, NEVER ONE
-    HIT: within a workgroup cost is depth-dominated, so a sub-workgroup
-    batch buys no submission-wall safety. The sizer carries a two-term
+    HIT (within a workgroup cost is depth-dominated). The sizer carries a two-term
     model, `cost(n) = intercept + n·marginal` (`ShadeHitCost`): sizing
     reads the MARGINAL alone, its FALL is rate-limited to a halving
     (`SURFACE_COMPUTE_SHADE_MARGINAL_DECAY`), ONE sizer is shared across a
@@ -1890,31 +1889,34 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     HERE MAY BE WRITTEN IN TERMS OF `intercept` ALONE — the model only ever
     fixes the RATIO of its two terms — so `K`
     (`SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST`) is a WIDTH, not a ratio.
-    `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS`'s PLACEMENT is the
-    measurement: a ceiling on the predicted TOTAL squeezes the allowance to
-    nothing as the intercept approaches it, so it sits outside the range
-    real scenes measure in. THE LIT QUEUE IS SIZED THE SAME WAY, and was
+    `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` sits outside the range
+    real scenes measure in, and that PLACEMENT is the measurement. THE LIT QUEUE IS SIZED THE SAME WAY, and was
     not: its cost lanes shipped INERT, pinning every lit dispatch at one
-    workgroup where 97.7% of a medium dispatch is fixed cost
-    (`5.63 ms + 2.04 µs/ray`, measured) — a 5.85x settle at 64px and ~26x
-    at pane scale, for identical pixels. `nextLightingRayCap` paces it as
-    `nextShadeBatchSize` paces this one; an inert cost lane is a pinned
-    width, not a safe default. No submission outruns the i915 watchdog;
+    workgroup for a measured 5.85-26x settle at identical pixels.
+    `nextLightingRayCap` paces it as `nextShadeBatchSize` paces this one;
+    an inert cost lane is a pinned width, not a safe default. AND NO
+    SIZING MODEL OR LADDER MAY READ A RAW DISPATCH TIME: `dispatchTimed`
+    fences, so it calibrates the session's own round-trip once (MINIMUM of
+    five null dispatches — over-subtracting is the unbounded direction)
+    and returns wall time for the tally beside fence-free `workMs` for
+    every model, ladder and EMA. Measured 2.4 ms Chrome against ~100 ms
+    Firefox, which put the lit ladder's 50 ms target out of reach and
+    pinned it at one workgroup (20.3x lit / 2.44x unlit Firefox settles,
+    Chrome unmoved). Gate: `scripts/surface-fence-cost.verify.mjs`. No submission outruns the i915 watchdog;
     presents are progressive; shading probes ride
     `SURFACE_COMPUTE_SHADE_DE_WIDTH`; colorOut prefills from the last frame
     so the pane never shows backdrop mid-drag.
     SUPERSAMPLING rides the loop as `opts.samples`: N FRAMES at N sub-pixel
-    offsets (`subPixelSample`), averaged in LINEAR light (both tracers end
-    `pow(lit, 1/2.2)`; averaging bytes is the edge-darkening bug) — N
-    frames not N rays, so every per-ray buffer/watchdog bound stays as
-    measured. PROGRESSIVE; main.ts spends the persisted
+    offsets (`subPixelSample`), averaged in LINEAR light (averaging bytes
+    is the edge-darkening bug) — N frames not N rays, so every per-ray
+    buffer/watchdog bound stays as measured. PROGRESSIVE; main.ts spends the persisted
     `surface.antialiasSamples` choice (1/2/4/8/16, default 8) on the live
     SETTLE and Save-PNG, never a preview or offline VIDEO frame; the
     progress row discloses a trailing `antialiasing pass k/N`, silent
-    through pass 1. `?surfacesamples=N` (1–64) is a page-load override,
-    disclosed beside Antialiasing, supplied to BOTH engines — the WEBGL
-    STRIP ARM imports `subPixelSample` from here, so "N samples" has ONE
-    meaning whichever engine a machine has.
+    through pass 1. `?surfacesamples=N` (1–64) is a page-load override
+    supplied to BOTH engines — the WebGL strip arm imports
+    `subPixelSample` from here, so "N samples" has ONE meaning on every
+    machine.
     A FRAME'S RASTER IS BOUNDED BY THE DEVICE, NOT THE CALLER:
     `maxFrameRays = min(maxBufferSize, maxStorageBufferBindingSize)/16`,
     and a frame past it THROWS `SurfaceComputeFrameSizeError` UP FRONT
@@ -1925,12 +1927,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `scripts/surface-export-tile.verify.mjs` is the gate.
     `destroy()` defers the real `device.destroy()` until every in-flight
     frame unwinds (tearing it down under a parked frame took down the
-    WHOLE Firefox process). `destroyed` means teardown REQUESTED,
-    `deviceDestroyed` means device GONE — NEVER call `device.destroy()`
-    twice. Same shape as `flame-gpu-backend.ts` (OPS there, frames here);
-    pinned by `surface-compute.test.ts` over a fake device, with the
-    real-Firefox `scripts/surface-teardown.verify.mjs` the authority on
-    drivers.
+    WHOLE Firefox process) — the fence calibration included. `destroyed`
+    means teardown REQUESTED, `deviceDestroyed` means device GONE — NEVER
+    call `device.destroy()` twice. Same shape as `flame-gpu-backend.ts`
+    (OPS there, frames here); pinned by `surface-compute.test.ts` over a
+    fake device, with the real-Firefox
+    `scripts/surface-teardown.verify.mjs` the authority on drivers.
     scene.ts presents frames as a DataTexture through the shared surface
     blit; main.ts routes and choreographs. Where a fragment arm exists,
     fallback is one-way — create failure or device loss re-enters the

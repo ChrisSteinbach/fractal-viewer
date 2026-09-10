@@ -25,12 +25,15 @@ import {
   SURFACE_COMPUTE_RAY_STATE_BYTES,
   SURFACE_COMPUTE_RAY_BYTES,
   SURFACE_COMPUTE_LIGHTING_RAY_BYTES,
+  SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
   SURFACE_COMPUTE_SHADE_COST_PIVOT,
   SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS,
   SURFACE_COMPUTE_SHADE_MARGINAL_DECAY,
   SURFACE_COMPUTE_SHADE_HIT_CAP_START,
   SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
+  surfaceComputeDispatchWorkMs,
+  surfaceComputeFenceRoundTripMs,
   surfaceComputeLightingRayBatch,
   SurfaceComputeRenderer,
   surfaceComputeTargetMeshIds,
@@ -974,6 +977,130 @@ describe("nextShadeBatchSize", () => {
     expect(
       nextShadeBatchSize(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH, 1, 250),
     ).toBe(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
+  });
+});
+
+describe("surfaceComputeFenceRoundTripMs", () => {
+  it("takes the smallest probe, so a cold outlier cannot set the constant", () => {
+    // A Firefox-class probe run whose first fence landed on a cold
+    // compositor tick. The mean of these is 148.4ms — 48ms of a
+    // round-trip nothing after the warm-up ever pays again, which would
+    // be subtracted from every dispatch for the life of the session.
+    expect(surfaceComputeFenceRoundTripMs([100, 101, 100, 340, 101])).toBe(100);
+  });
+
+  it("reads no samples as 'not measured' — a zero subtraction", () => {
+    expect(surfaceComputeFenceRoundTripMs([])).toBe(0);
+  });
+
+  it("never subtracts more than the cheapest round-trip actually observed", () => {
+    // The over-subtracting direction is the unbounded one: a corrected
+    // reading floors at zero, and a calibrated cost model reads it
+    // directly with no ladder pacing it.
+    expect(surfaceComputeFenceRoundTripMs([3, 5, 9, 11])).toBe(3);
+  });
+
+  it("never returns a negative round-trip", () => {
+    // A clock that went backwards must not turn the subtraction into an
+    // ADDITION on every later dispatch.
+    expect(surfaceComputeFenceRoundTripMs([-5, -1, -3])).toBe(0);
+  });
+});
+
+describe("surfaceComputeDispatchWorkMs", () => {
+  it("takes the session's fence round-trip out of the measured wall time", () => {
+    expect(surfaceComputeDispatchWorkMs(106, 101)).toBeCloseTo(5, 10);
+  });
+
+  it("floors at zero when the dispatch came in under the measured fence", () => {
+    // Under a polling-tick fence a dispatch can land early in the tick it
+    // is charged to, so the wall time can read below the calibrated
+    // constant. That is not negative work.
+    expect(surfaceComputeDispatchWorkMs(98, 101)).toBe(0);
+  });
+
+  it("is the identity when the fence has not been measured", () => {
+    // fenceMs 0 is what an unmeasured session carries, and it must render
+    // today's behaviour value for value.
+    expect(surfaceComputeDispatchWorkMs(106, 0)).toBe(106);
+  });
+});
+
+describe("the lit capacity ladder under a Firefox-class fence", () => {
+  it("walks the lit cap to the one-workgroup floor and pins it there on RAW wall time", () => {
+    // A ~5ms lit dispatch measured across Firefox's ~101ms fence reads
+    // 106ms — over double nextLightingRayCap's 50ms target, so the ladder
+    // can only ever quarter. One full-pane lit pass then turns Chrome's
+    // few hundred dispatches into tens of thousands, each paying another
+    // fence.
+    const rawMs = 106;
+    let cap = SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS;
+    const seen = [cap];
+    for (let i = 0; i < 6; i++) {
+      cap = nextLightingRayCap(cap, rawMs);
+      seen.push(cap);
+    }
+    expect(seen).toEqual([4096, 1024, 256, 64, 64, 64, 64]);
+  });
+
+  it("climbs the same dispatch back to the ceiling once its fence is subtracted", () => {
+    // Identical measurements, read through surfaceComputeDispatchWorkMs:
+    // 5ms of actual work fits the 50ms target, so the ladder doubles out
+    // of the floor the raw reading pinned it at.
+    const workMs = surfaceComputeDispatchWorkMs(106, 101);
+    let cap = SURFACE_COMPUTE_WORKGROUP_SIZE;
+    const seen = [cap];
+    for (let i = 0; i < 6; i++) {
+      cap = nextLightingRayCap(cap, workMs);
+      seen.push(cap);
+    }
+    expect(seen).toEqual([64, 128, 256, 512, 1024, 2048, 4096]);
+  });
+});
+
+describe("the unlit hit capacity ladder under a Firefox-class fence", () => {
+  it("freezes the hit capacity on RAW wall time, where the fence-free work would grow it", () => {
+    // The budget the sizer aimed at, from a measured intercept: 250ms,
+    // shadeHitAllowanceUs's PASS_TARGET floor. A 200ms hit dispatch FIT
+    // that budget, but measured across Firefox's ~101ms fence it reads
+    // 301ms and the ladder reads a batch that overran.
+    const budgetMs = shadeHitBudgetUs(16_600) / 1000;
+    expect(budgetMs).toBe(250);
+    expect(nextShadeBatchSize(512, 301, budgetMs)).toBe(512);
+    expect(
+      nextShadeBatchSize(512, surfaceComputeDispatchWorkMs(301, 101), budgetMs),
+    ).toBe(1024);
+  });
+
+  it("stays pinned at the starting capacity for the whole run on RAW wall time", () => {
+    // Iterated, the frozen ladder is the damage: the capacity never
+    // leaves the width it started at, so every hit batch of the session
+    // is sized by a cap that has learned nothing.
+    const budgetMs = shadeHitBudgetUs(16_600) / 1000;
+    let rawCap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
+    let workCap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
+    for (let i = 0; i < 8; i++) {
+      rawCap = nextShadeBatchSize(rawCap, 301, budgetMs);
+      workCap = nextShadeBatchSize(
+        workCap,
+        surfaceComputeDispatchWorkMs(301, 101),
+        budgetMs,
+      );
+    }
+    expect(rawCap).toBe(SURFACE_COMPUTE_SHADE_HIT_CAP_START);
+    expect(workCap).toBe(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
+  });
+
+  it("cannot be QUARTERED by a Firefox-class fence — the unlit budget floor is five times the lit target", () => {
+    // Said explicitly because the lit ladder's failure and this one's are
+    // not the same failure. Quartering needs the reading to exceed DOUBLE
+    // the budget, so the fence would have to exceed the whole budget —
+    // and shadeHitBudgetUs never returns less than PASS_TARGET's 250ms,
+    // against a measured fence of ~101ms. A 399ms dispatch is the worst
+    // this fence can misreport, and it lands in the holding band, not the
+    // quartering one.
+    const budgetMs = shadeHitBudgetUs(16_600) / 1000;
+    expect(nextShadeBatchSize(512, 399 + 101, budgetMs)).toBe(512);
   });
 });
 
