@@ -357,7 +357,8 @@ The compute `slice4` row covers 2,833 of 4,096 rays with zero exhausted
 primaries and zero invalid visibility queries.
 
 Two failures were open at that run, and neither was an appearance defect.
-One is fixed (the tiled export, below); one remains.
+Both are now fixed: the tiled export, and the authoring gate's active phase
+(below, where the recorded cause turned out to be wrong twice over).
 
 **The 4D WebGL row is blocked by a pre-existing engine disagreement about the
 off-centre w-slice, not by lighting.** At `sliceCenter` 0.12 the fragment 4D
@@ -468,12 +469,57 @@ a backdrop change retraces (1.26), cancellation catches an active render in
 mean difference 0 over 0 changed pixels, which is acceptance criterion 4's
 identity requirement proved rather than approximated.
 
-The authoring gate's DORMANT phase passes completely
-(`surface-lighting-ui.verify.mjs --phase=dormant`, eleven checks at phone
-widths, including exact rig retention through Collection, gallery restore and
-Undo). Its ACTIVE phase has never passed, in this session or the originating
-one, whose three retained run directories are all dormant; it reaches six
-passes and then blocks past 30 s on Save to collection.
+The authoring gate passes in BOTH phases on a verified real AMD adapter.
+DORMANT is 41/41 (`--phase=dormant`), including exact rig retention through
+Collection, gallery restore and Undo. ACTIVE is 57/57
+(`--phase=active --viewport=393x727,320x568 --display=:0`, 10.3 s): the same
+fourteen checks across both starters at both phone widths, plus the run-level
+no-page-errors check — starter entry, the complete paired editor, applicability
+and paired availability, 44 px targets, no horizontal overflow, authored and
+domain values fitting, the installed camera and rig, trusted touch focus, the
+exact numeric edit reaching the hash, refusal, Escape, the Arrow increment, and
+undo.
+
+THE ACTIVE PHASE'S LONG FAILURE WAS THE GATE'S OWN CLOCK, and both recorded
+explanations for it were wrong. It had never passed in any session: it reached
+six checks and then blocked past 30 s on a trusted click of Save to collection.
+The first hypothesis was that a Collection save re-traces a lit Surface
+thumbnail; that is not what the path does, because the active phase boots
+`?surfacecompute` and a compute session's thumbnail RE-PRESENTS the last traced
+frame rather than tracing. The second was that trusted pointer input stalls
+during a lit settle while synthetic clicks do not — a `page.evaluate` click was
+measured at 23 ms against a 30 s trusted timeout. THAT DOES NOT REPRODUCE ON
+THIS BRANCH, measured rather than assumed: driving the same fixture to
+`__surfaceState().settleActive === true` and then clicking for real lands in
+38/48/60 ms over three trials, with all five pointer events arriving on the
+button inside 1.1 ms, a maximum requestAnimationFrame gap of 21.3 ms and ZERO
+long tasks. Nor is it button-specific — `#undoBtn` 57 ms and `#modePointsBtn`
+40 ms mid-session. Input delivery is not starved behind the lit GPU queue.
+
+What actually lost was a fixed sleep used as a document wait. After clicking
+Undo the phase slept 200 ms, but undo arms a BARE DEBOUNCED SAVE of the
+restored document, so the hash is rewritten `SAVE_DEBOUNCE_MS` (300 ms,
+`edit-session.ts`) after the click and not with it. The measured revert
+timeline is 7.223456789 at 0 ms and at 200 ms, 7.123456789 by 400 ms: 200 < 300,
+so the check lost DETERMINISTICALLY rather than flakily, which is why no number
+of reruns ever produced a pass. It was the only fixed sleep standing in for a
+document change in the file — the dormant phase's identical undo gesture
+already waits on the hash predicate, and that asymmetry is exactly why dormant
+passed completely while active never finished. The wait now matches dormant's,
+with its timeout bounded and CAUGHT so a genuine regression reads as an
+assertion failure rather than as a checking failure, and the assertion
+strengthened from "not the stepped value" to the exact restored value, which
+holds in all four sessions with no checkpoint coalescing anywhere.
+
+TWO CAUTIONS SURVIVE THIS. The gate drives `dist/` through `vite preview` and
+never builds, so a re-measurement taken without an intervening `npm run build`
+tests the PREVIOUS bundle; the lit dispatch sizing that bounded submissions to
+50 ms landed in that window, and it is the leading unproven explanation for why
+the 30 s block was seen at all after the sizing fix. And this gate is NOT a
+standing guard against the input-stall class: its entry wait resolves when the
+mode flips, not when the lit settle completes, so it overlaps a settle only
+incidentally. The mid-settle figures above come from a separate probe that
+waited on `settleActive`, not from the gate.
 
 The Firefox lifecycle gate passes with the rig
 (`surface-teardown.verify.mjs --lens --lighting --toggleId=__modeExit
@@ -486,6 +532,6 @@ and it is not cumulative, since a 4-toggle run lost the device where an
 would have supported the opposite, wrong conclusion; the repeats are why that
 claim is not in this document.
 
-Still unrun here: the WebGL engine under `--checks=all`, the trusted
-touch/numeric-control gate, and owner acceptance of the finished look in a
-browser rather than in the CPU reference deck.
+Still unrun here: the WebGL engine under `--checks=all`, and owner
+acceptance of the finished look in a browser rather than in the CPU reference
+deck.
