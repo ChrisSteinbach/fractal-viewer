@@ -45,7 +45,14 @@ jobs:
     timeout-minutes: 2
     permissions:
       contents: read
+    outputs:
+      swept: ${{ steps.swept.outputs.swept }}
     steps:
+      # Only for scripts/gpu-ci-swept.mjs below. That script is deliberately
+      # dependency-free plain JavaScript so this job stays a bare-runner
+      # checkout + `gh` + preinstalled node — no setup-node, no `npm ci`.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       # The only quality gate before this job existed was `npm run build`
       # below — a commit that compiles but fails lint or tests could reach
       # production with zero automated objection (no branch protection
@@ -102,17 +109,53 @@ jobs:
           fi
           echo "ci.yml is green for $COMMIT_SHA (lint, build, test, smoke) — proceeding."
 
-  # Full agreement is a prerequisite at the exact dispatched commit, even
-  # when its ordinary PR/push was GPU-independent. The reusable workflow has
-  # no impact baseline on dispatch, and includes both dimensional halves.
+      # Does this exact commit ALREADY carry a green full sweep? Measured on
+      # the 2026-09-10 staging-ceiling merge: the same 36-shard sweep ran three
+      # times on one byte-identical tree — the PR, the push-to-main run, and
+      # this workflow's own reusable call — with the last two overlapping, 72
+      # shard jobs and ~33 minutes each for one tree.
+      - name: Reuse a full GPU sweep already green on this commit
+        id: swept
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: node scripts/gpu-ci-swept.mjs --sha="$COMMIT_SHA"
+
+  # Full agreement is a prerequisite at the exact dispatched commit — but it is
+  # a CONTENT gate, not a release-time liveness check on the publishing
+  # environment: this job runs on its own ubuntu-latest runner in a separate
+  # job from `deploy`, against source and CPU oracles, and never touches the
+  # built bundle or the Pages environment. Liveness ("does this content still
+  # pass on today's runner image") is the nightly 03:17 UTC full sweep's job,
+  # so a per-deploy re-run adds no signal the nightly does not already carry,
+  # and a SwiftShader/runner-image regression is a CI signal rather than a
+  # reason to block source-built bundles reaching users' real browsers.
+  #
+  # So this is SKIPPED only when the dispatched commit already carries a full
+  # sweep recorded green on ITSELF: the push-to-main run attaches its stable
+  # `gpu-agreement` aggregate to this exact SHA, and `backend-smoke` green
+  # beside it is what proves that sweep was FULL rather than an independence
+  # skip (the aggregate passes on both branches; only the full branch asserts
+  # smoke and every shard succeeded). Neither weaker result substitutes: an old
+  # PR's green GPU result is a DIFFERENT SHA, and an independent-change result
+  # skipped the GPU jobs outright. Anything else — a missing output, an API
+  # failure, a red or pending aggregate — sweeps. The reusable workflow still
+  # has no impact baseline on dispatch, and still includes both dimensional
+  # halves.
   gpu-full:
     needs: preflight
+    # != 'true', never == 'false': a missing or empty output must sweep.
+    if: needs.preflight.outputs.swept != 'true'
     permissions:
       contents: read
     uses: ./.github/workflows/gpu-agreement.yml
 
   deploy:
-    needs: gpu-full
+    needs: [preflight, gpu-full]
+    # A bare `needs: gpu-full` would skip THIS job the moment gpu-full skips,
+    # which is the trap in reusing a sweep. Admit a skipped gpu-full and
+    # nothing else; never run on cancellation or a failed preflight.
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.gpu-full.result) }}
     runs-on: ubuntu-latest
     # Load-bearing now that cancel-in-progress is false — a hung run (npm ci
     # stall, runner loss, a gh api hang in the gate step) would otherwise

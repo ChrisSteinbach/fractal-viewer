@@ -81,7 +81,9 @@ The full union runs:
 
 - on affected or uncertain PRs and main pushes;
 - nightly at **03:17 UTC**, on the default branch;
-- on **every manual deployment**, before the deploy job can publish;
+- on a **manual deployment**, before the deploy job can publish — unless that
+  exact commit already carries a full sweep recorded green on itself, which the
+  preflight reuses instead of repeating (see below);
 - on manual dispatch of **GPU agreement** for investigation.
 
 Commands:
@@ -122,15 +124,76 @@ aggregate shell against these success/failure states and inspect the existing
 required-check events and deploy dependency.
 
 Deploy first runs the existing exact-SHA lint/build/test/smoke preflight, so a
-missing or red ordinary check refuses before spending the full GPU sweep.
-Its `gpu-full` reusable call must then finish successfully before `deploy` starts.
-This lengthens a deployment or rollback by one full sweep; an old PR's green
-GPU result or an independent-change result cannot substitute. Deployment stays
-manual. Rebase merges still need main CI to finish before dispatch, and the
-live-site verification remains after publication. PR/push cancellation groups
-are separate from nightly, manual and deployment full runs.
+missing or red ordinary check refuses before spending the full GPU sweep. A
+full agreement result at that exact commit must then be in hand before `deploy`
+starts: either the `gpu-full` reusable call finishes successfully, or the
+preflight found one already recorded green on this same SHA and `gpu-full`
+skips. Reuse is the narrow third case, and only that one.
+
+Deploy's sweep is a **content gate, not an environment liveness check**, which
+is what admits the reuse. It runs on its own `ubuntu-latest` runner in a
+separate job from `deploy`, against source and CPU oracles; it never touches the
+built bundle or the publishing environment, so it cannot certify "the
+environment doing the publishing is healthy". Liveness — does this content still
+pass on today's runner image — is what the nightly 03:17 UTC full sweep on the
+default branch already measures, so a per-deploy re-run of the same matrix on
+the same content adds no liveness signal the nightly does not carry. A
+SwiftShader or runner-image regression is a CI signal; it is not a reason to
+block publishing a source-built bundle to users' real browsers.
+
+`backend-smoke` is the **full** discriminator. The stable `gpu-agreement`
+aggregate is green on both of its branches — a completed full sweep, and a
+proved-independent selection that skipped both GPU jobs — so aggregate-green
+alone would admit a commit whose kernels were never swept. On the full branch
+the aggregate has already asserted that `backend-smoke` **and** every
+`agreement` shard succeeded, while on the independent branch it asserts
+`backend-smoke` is `skipped`. Aggregate-green plus `backend-smoke`-green
+therefore proves the whole matrix ran and passed, with no shard counting.
+`scripts/gpu-ci-swept.mjs` is that predicate: it reads the commit's check runs
+(paginated, latest by id, counting the reusable call's prefixed
+`gpu-full / …` names), and any missing, pending, red or unreadable result
+resolves to "not swept" so the failure direction is always to sweep. It is
+plain dependency-free JavaScript because the preflight job has no `npm ci`.
+
+Both existing refusals stay in force: an old PR's green GPU result cannot
+substitute, because a rebase merge mints a **different SHA**; and an
+independent-change result cannot substitute, because selection **skipped** the
+GPU jobs rather than running them. "Same commit" also does not mean "same
+environment" — a reused sweep asserts that this content passed on a recent
+runner, never that it would pass now. Deployment stays manual. Rebase merges
+still need main CI to finish before dispatch, and the live-site verification
+remains after publication. PR/push cancellation groups are separate from
+nightly, manual and deployment full runs.
 
 ## Measurement record
+
+### Duplicate sweeps on one tree, 2026-09-10
+
+The staging-ceiling merge ran the same full 36-shard sweep THREE times on one
+byte-identical tree:
+
+| Run                | Event           | Shards | Note                         |
+| ------------------ | --------------- | -----: | ---------------------------- |
+| PR 391             | `pull_request`  |     36 | head `d721cc7`               |
+| main tip `616e4f3` | `push`          |     36 | 17:30 → 18:03 (33 min)       |
+| deploy 34509745795 | `workflow_call` |     36 | dispatched 17:41, overlapped |
+
+The push and deploy sweeps were in flight together — 72 shard jobs for one
+tree — and the deploy sweep produced no information the push sweep had not
+already produced on the SAME SHA. It also lengthens the ROLLBACK path, which
+`deploy.yml`'s header documents as "land a revert through a PR, then dispatch
+a fresh run": that revert pays a push sweep and then a second full sweep at
+dispatch, half an hour of it while production is wrong.
+
+`scripts/gpu-ci-swept.mjs` was exercised against these real commits before
+shipping. Both `616e4f3` and PR head `d721cc7` report swept — reading
+`gpu-full / gpu-agreement` and `gpu-full / backend-smoke` as the latest
+matches while ignoring all 72 `gpu-agreement (shard N)` runs, which
+prefix-match the aggregate's name and must not satisfy it. Intermediate main
+commits, which carry no `gpu-agreement` run of their own, report not swept.
+Pagination is load-bearing and was observed to be: the same query without
+`--paginate` reports `backend-smoke` MISSING on `616e4f3`, because the default
+30-newest-first page truncates it behind the shard runs.
 
 The old broad trigger ran the same matrix for an independent UI source edit
 as for a kernel/CPU-oracle edit. The baseline below therefore measures the
