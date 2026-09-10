@@ -385,20 +385,23 @@ export const SURFACE_COMPUTE_FENCE_GROUP_MS = 300;
  * IT IS A VOLUME, NOT A COUNT, and the earlier reading of this same
  * failure — that it counted DISPATCHES, or the two small writes each one
  * stages — is REFUTED by the app-free reproduction in
- * `scripts/webgpu-staging-ceiling.repro.mjs`. Bare submits are harmless
- * (0/5 dead at 32 a fence). The exhausted quantity is the `writeBuffer`
- * STAGING outstanding when the fence falls due, and a frame's own PREFILL
- * dominates it: `runFrame` seeds `color`, `layer` and `states` once per
- * frame, 20 B/ray plus the colour rows, MEGABYTES against the dispatches'
- * 128 KB. Firefox reclaims that staging only on a 100 ms poll
+ * `scripts/webgpu-staging-ceiling.repro.mjs`. Those two writes add
+ * nothing: 0/20 dead with them, 0/20 without. Grow them to 4 MB at the
+ * SAME dispatch count and it is 13/20, so the exhausted quantity is the
+ * `writeBuffer` STAGING outstanding when the fence falls due — and a
+ * frame's own PREFILL dominates it. `runFrame` seeds `color`, `layer` and
+ * `states` once per frame, 24 B/ray unlit and 36 B/ray lit: 5.5 and
+ * 8.3 MB at 640x360, 22 and 33 MB at 1280x720, MEGABYTES against the
+ * dispatches' 128 KB. Firefox reclaims that staging only on a 100 ms poll
  * (`WebGPUParent`'s `POLL_TIME_MS`, the same tick this repository already
- * measured as its fence round-trip), so a wider group is simply a longer
- * hold. The cap keeps a step of margin below the three that measured
- * clean because three is MARGINAL rather than safe — the faithful model
- * dies 1/5 and 3/5 there at a 640x360 frame's prefill — and losing the
- * device costs a compute-only session (fold-shaped or escape-shaped 4D)
- * its Surface renderer outright, with no way back: a killed device does
- * not come back in that tab.
+ * measured as its fence round-trip), so a wider group is a longer HOLD
+ * rather than a bigger count — the same 8 MB kills 7/20 behind a group of
+ * four and 0/20 behind a group of one. The failure is a RATE, so "clean
+ * at three" was one run of a cell and never a property of three; and
+ * losing the device costs a compute-only session (fold-shaped or
+ * escape-shaped 4D) its Surface renderer outright, with no way back — a
+ * killed device does not come back in that tab (0 of 20 recoveries, at
+ * 3 s as at 0).
  *
  * Chrome tolerates eight — the WebGL arm's own
  * `SURFACE_STRIP_FENCE_GROUP_MAX` — and gains nothing measurable from
