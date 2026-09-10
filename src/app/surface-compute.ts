@@ -1488,7 +1488,6 @@ interface ShadeSizerState {
    * where `peakCellMs`'s running max would freeze the climb after one
    * slow group. */
   lighting?: {
-    pilotRays: number;
     peakCellMs: number;
     lastCellMs: number;
     pilotComplete: boolean;
@@ -3626,7 +3625,6 @@ export class SurfaceComputeRenderer {
     };
     const lightingSizer = this.lighting
       ? (sizer.lighting ??= {
-          pilotRays: 0,
           peakCellMs: 0,
           pilotComplete: false,
           surfaceCost: initialShadeHitCost(),
