@@ -1247,6 +1247,20 @@ describe("Ui Xaos add-as-block gesture", () => {
     );
   });
 
+  it("leaves the preset menu's Lit interiors entries out of the clone", () => {
+    // They share that menu but are whole scene documents, not systems a
+    // composition can take as its source: main.ts's resolver reads
+    // `preset:`/`saved:` keys, so a cloned `preset:starter:…` would resolve
+    // to nothing and toast.
+    new Ui(document);
+    for (const id of ["xaosAddSourcePresets", "scheduleSourcePresets"]) {
+      const values = Array.from(
+        document.querySelectorAll<HTMLOptionElement>(`#${id} option`),
+      ).map((o) => o.value);
+      expect(values.some((value) => value.includes("starter:"))).toBe(false);
+    }
+  });
+
   it("setXaosAddSourceSavedScenes populates the saved-scenes optgroup", () => {
     const ui = new Ui(document);
     ui.setXaosAddSourceSavedScenes([{ id: "abc", createdAt: 0 }]);
@@ -2827,26 +2841,41 @@ describe("Ui preset menu", () => {
 });
 
 describe("Ui authored Surface lighting", () => {
-  it("offers complete scene replacements in Systems and resets after selection", () => {
+  it("offers complete scene replacements in the preset menu and resets after selection", () => {
     const handlers = { ...noopHandlers(), onSurfaceLightingStarter: vi.fn() };
     const ui = new Ui(document);
     ui.bind(handlers);
-    const select = document.getElementById(
-      "surfaceLightingStarterSelect",
-    ) as HTMLSelectElement;
+    const select = document.getElementById("presetSelect") as HTMLSelectElement;
+    const group = document.getElementById(
+      "surfaceLightingStarterGroup",
+    ) as HTMLOptGroupElement;
     expect(select.closest("details")?.id).toBe("presetSection");
-    expect(Array.from(select.options).map((option) => option.value)).toEqual([
-      "",
-      "cathedral",
-      "balloon-cavern",
-    ]);
-    select.value = "balloon-cavern";
+    expect(group.closest("select")).toBe(select);
+    expect(
+      Array.from(group.querySelectorAll("option")).map(
+        (option) => option.value,
+      ),
+    ).toEqual(["starter:cathedral", "starter:balloon-cavern"]);
+    select.value = "starter:balloon-cavern";
     select.dispatchEvent(new Event("change"));
     expect(handlers.onSurfaceLightingStarter).toHaveBeenCalledWith(
       "balloon-cavern",
     );
     expect(select.value).toBe("");
+    // A starter shares the door, not the load path.
     expect(handlers.onPreset).not.toHaveBeenCalled();
+  });
+
+  it("still routes an ordinary preset from the shared menu", () => {
+    const handlers = { ...noopHandlers(), onSurfaceLightingStarter: vi.fn() };
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const select = document.getElementById("presetSelect") as HTMLSelectElement;
+    select.value = "menger";
+    select.dispatchEvent(new Event("change"));
+
+    expect(handlers.onPreset).toHaveBeenCalledWith("menger");
+    expect(handlers.onSurfaceLightingStarter).not.toHaveBeenCalled();
   });
 
   it("routes the shared authored editor callback while preserving dormant state visibility", () => {

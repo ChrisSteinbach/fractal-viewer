@@ -470,8 +470,8 @@ async function runCase(browser, scene, engine) {
     row.memoryBefore = await memory(page);
     await uiValue(
       page,
-      "#surfaceLightingStarterSelect",
-      scene === "slice4" ? "cathedral" : scene,
+      "#presetSelect",
+      `starter:${scene === "slice4" ? "cathedral" : scene}`,
     );
     const initial = await settled(page, engine, `${label}/starter`);
     row.checks.starterAutomaticEntry = true;

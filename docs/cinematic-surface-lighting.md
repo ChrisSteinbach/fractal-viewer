@@ -214,7 +214,20 @@ reflections; their Environment tint control is dormant under the new rig.
 Systems offers two complete editable scene replacements through
 `createSurfaceLightingStarter`: Menger cathedral and Balloon cavern. Each owns
 its transforms, camera, constant stone palette, backdrop, rig and medium, with
-eight parked-view samples as its initial Renderer setting. The reference
+eight parked-view samples as its initial Renderer setting.
+
+They ride the preset menu's own "Replace with preset" select as a **Lit
+interiors** optgroup rather than a second select beside it — one replacement
+door in the section, the composition pickers' `preset:`/`saved:` convention
+applied to a third vocabulary. The `starter:` value prefix
+(`surface-lighting-starters.ts` owns it, with the id/label list) is what keeps
+the two apart: a preset key resolves to a transform system plus its side
+tables and auto-fits the camera, while a starter is a whole `SceneSnapshot`
+loaded through `loadSceneSnapshot`, so it does not morph and its authored
+camera, backdrop and palette are the composition. `#presetTimingHint`
+discloses that difference beside the menu. Both composition pickers, which
+clone the preset menu for their `preset:<key>` sources, skip the prefixed
+entries: a scene document is not a system B. The reference
 camera zooms become vertical fields of view of about 61.93° and 66.05°; these
 wider authored lenses preserve normal dolly behavior. The ordinary fitted lens
 remains 60°. Existing palette/backdrop wire quantization still applies when a

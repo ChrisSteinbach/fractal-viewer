@@ -16,6 +16,31 @@ export const SURFACE_LIGHTING_STARTERS = [
 export type SurfaceLightingStarterId =
   (typeof SURFACE_LIGHTING_STARTERS)[number]["id"];
 
+/** These entries share the preset menu's one "Replace with preset" door, but
+ * they are NOT `Preset` keys: a preset resolves to a transform system plus its
+ * side tables and auto-fits the camera, while a starter is a whole
+ * `SceneSnapshot` whose authored camera, backdrop, palette and rig ARE the
+ * composition. The value prefix is what keeps the two apart inside one
+ * `<select>` — the composition pickers' `preset:`/`saved:` sources already
+ * read that way — so the menu stays one door and the load paths stay two. */
+export const SURFACE_LIGHTING_STARTER_PREFIX = "starter:";
+
+export function surfaceLightingStarterValue(
+  id: SurfaceLightingStarterId,
+): string {
+  return `${SURFACE_LIGHTING_STARTER_PREFIX}${id}`;
+}
+
+/** The menu value back to a starter id, or `undefined` for anything else —
+ * an unprefixed preset key included, so a caller can branch on one call. */
+export function surfaceLightingStarterFromValue(
+  value: string,
+): SurfaceLightingStarterId | undefined {
+  return SURFACE_LIGHTING_STARTERS.find(
+    (entry) => surfaceLightingStarterValue(entry.id) === value,
+  )?.id;
+}
+
 function light(
   position: Vec3,
   target: Vec3,
