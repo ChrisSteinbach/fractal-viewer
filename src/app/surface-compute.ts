@@ -380,22 +380,33 @@ export const SURFACE_COMPUTE_FENCE_GROUP_MS = 300;
  * `onSubmittedWorkDone`, the settle frame's first march sweep raises
  * `Uncaptured WebGPU error: Not enough memory left`, the device is lost,
  * and the session falls back to the WebGL tracer — reproduced at 4 and at
- * 6, and clean at 1, 2 and 3. It is a COUNT and not a volume: three
- * survive at 640x360, 960x540 and 1280x720 alike, and the writes
- * outstanding when it dies are ~16 KB each. The likely quantity is
- * OUTSTANDING QUEUE WRITES rather than dispatches — each dispatch stages
- * two, the params block and its ray list — which is why the shipped cap
- * keeps a step of margin below the three that measured clean: a dispatch
- * that ever grows a THIRD write would put three dispatches back over the
- * edge, and losing the device costs a compute-only session (fold-shaped
- * or escape-shaped 4D) its Surface renderer outright.
+ * 6, and clean at 1, 2 and 3.
+ *
+ * IT IS A VOLUME, NOT A COUNT, and the earlier reading of this same
+ * failure — that it counted DISPATCHES, or the two small writes each one
+ * stages — is REFUTED by the app-free reproduction in
+ * `scripts/webgpu-staging-ceiling.repro.mjs`. Bare submits are harmless
+ * (0/5 dead at 32 a fence). The exhausted quantity is the `writeBuffer`
+ * STAGING outstanding when the fence falls due, and a frame's own PREFILL
+ * dominates it: `runFrame` seeds `color`, `layer` and `states` once per
+ * frame, 20 B/ray plus the colour rows, MEGABYTES against the dispatches'
+ * 128 KB. Firefox reclaims that staging only on a 100 ms poll
+ * (`WebGPUParent`'s `POLL_TIME_MS`, the same tick this repository already
+ * measured as its fence round-trip), so a wider group is simply a longer
+ * hold. The cap keeps a step of margin below the three that measured
+ * clean because three is MARGINAL rather than safe — the faithful model
+ * dies 1/5 and 3/5 there at a 640x360 frame's prefill — and losing the
+ * device costs a compute-only session (fold-shaped or escape-shaped 4D)
+ * its Surface renderer outright, with no way back: a killed device does
+ * not come back in that tab.
  *
  * Chrome tolerates eight — the WebGL arm's own
  * `SURFACE_STRIP_FENCE_GROUP_MAX` — and gains nothing measurable from
  * them, so the cap is the SMALLEST stack's rather than a compromise
- * between them. Lifting it is gated on the per-dispatch writes being
- * unified into one write per sweep (a base offset the kernel reads, or a
- * dynamic bind-group offset), not on picking a bigger number.
+ * between them. LIFTING IT IS GATED ON THE FRAME PREFILL, not on the
+ * per-dispatch writes and not on picking a bigger number: seed those three
+ * buffers on the device (a prefill kernel, or a clear) instead of staging
+ * them through the queue. Measured rows: `docs/surface-compute-renderer.md`.
  */
 export const SURFACE_COMPUTE_FENCE_GROUP_MAX = 2;
 

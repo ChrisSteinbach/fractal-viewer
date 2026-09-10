@@ -1899,17 +1899,18 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     against TWICE the lane's worst MEASURED per-dispatch work this frame,
     `SURFACE_COMPUTE_FENCE_GROUP_MAX` dispatches, or the next
     present/budget deadline — whichever first — each lane's first group
-    PILOTED at one. NEVER SIZE A GROUP OFF A MODEL PREDICTION: both
-    schedulers size a dispatch to hit a target, so its predicted cost IS
-    that target by construction. `SURFACE_COMPUTE_FENCE_GROUP_MAX` IS A
-    MEASURED CEILING, NOT A DIAL: Firefox loses its device at FOUR queued
-    dispatches, and raising it needs the per-dispatch queue writes
-    unified first. A GROUP MEASURES ONCE FOR N PIECES, so its
-    attribution is FIXED per lane — aggregate rate to the march EMA, a
-    joint two-term fit to `nextShadeHitCost`, the EQUAL share PER MEMBER
-    to both ladders, ZERO to a FREE batch — and no reader may invent
-    another. `?surfacefencegroup=1` is that old
-    loop exactly (the A/B lever). Gate:
+    PILOTED at one. NEVER SIZE A GROUP OFF A MODEL PREDICTION (a
+    dispatch's predicted cost IS the target by construction).
+    `SURFACE_COMPUTE_FENCE_GROUP_MAX` IS A MEASURED CEILING, NOT A DIAL:
+    Firefox dies at FOUR queued dispatches on a VOLUME of outstanding
+    `writeBuffer` staging — the FRAME PREFILL, not the per-dispatch writes
+    (refuted) — so raising it needs `color`/`layer`/`states` seeded
+    device-side; a killed device never returns, so the loss latch is
+    one-way by measurement (`scripts/webgpu-staging-ceiling.repro.mjs`). A GROUP MEASURES ONCE
+    FOR N PIECES, so its attribution is FIXED per lane (the four
+    consumers' shares are in the module doc) and no reader may invent
+    another. `?surfacefencegroup=1` is that old loop exactly (the A/B
+    lever). Gate:
     `scripts/surface-fence-cost.verify.mjs`. No submission outruns the i915 watchdog;
     presents are progressive; shading probes ride
     `SURFACE_COMPUTE_SHADE_DE_WIDTH`; colorOut prefills from the last frame
