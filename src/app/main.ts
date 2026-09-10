@@ -12250,6 +12250,8 @@ async function main(): Promise<void> {
   // priced against the width it runs at, independently of the estimate that
   // normally picks that width — the discriminating experiment the two-term
   // shade cost model's own record demands of any per-unit cost claim.
+  // `?surfacefencegroup=N` pins the fourth dial, how many dispatches one
+  // fence stands behind, where N=1 is the pre-grouping loop exactly.
   // Diagnostics only, same URL convention as ?surfacetrace above; see
   // setSurfaceComputeSchedulePins.
   {
@@ -12263,6 +12265,7 @@ async function main(): Promise<void> {
       marchChunk: pin("surfacemarchchunk"),
       marchSteps: pin("surfacemarchsteps"),
       shadeHits: pin("surfaceshadehits"),
+      fenceGroup: pin("surfacefencegroup"),
     });
   }
 

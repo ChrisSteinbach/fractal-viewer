@@ -33,7 +33,10 @@ import {
   SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   surfaceComputeDispatchWorkMs,
+  surfaceComputeFenceGroupSize,
   surfaceComputeFenceRoundTripMs,
+  surfaceComputeGroupDispatchMs,
+  SURFACE_COMPUTE_FENCE_GROUP_MAX,
   surfaceComputeLightingRayBatch,
   SurfaceComputeRenderer,
   surfaceComputeTargetMeshIds,
@@ -3000,5 +3003,134 @@ describe("SurfaceComputeRenderer authored lighting", () => {
         new Float32Array([0, 0, 0, 3 + 2 * 65536, 0, 0, 0, 7]),
       ),
     ).toEqual({ exhausted: 10, invalid: 2 });
+  });
+});
+
+describe("surfaceComputeFenceGroupSize", () => {
+  it("fences one dispatch at a time until the lane has been measured", () => {
+    // THE PILOT: no group is built on a cost this frame has not measured.
+    expect(surfaceComputeFenceGroupSize(null)).toBe(1);
+  });
+
+  it("sizes the group from twice the lane's worst measured dispatch", () => {
+    // 300 ms of group budget against 2 x 25 ms of measured work is six
+    // dispatches, which the measured browser ceiling then cuts to its own
+    // — so the formula is checked past that cap, where it still speaks.
+    expect(surfaceComputeFenceGroupSize(25, Infinity, 16)).toBe(6);
+    expect(surfaceComputeFenceGroupSize(25)).toBe(
+      SURFACE_COMPUTE_FENCE_GROUP_MAX,
+    );
+  });
+
+  it("gives an expensive lane a group of one", () => {
+    // A dispatch already worth its own round-trip closes its own group,
+    // which is what keeps the grouping off the frames that never needed
+    // it.
+    expect(surfaceComputeFenceGroupSize(250)).toBe(1);
+  });
+
+  it("caps a nearly free lane at the dispatch count", () => {
+    // The bound that actually binds on a frame of queue-limited slivers,
+    // where the measured work per dispatch is almost nothing.
+    expect(surfaceComputeFenceGroupSize(0)).toBe(
+      SURFACE_COMPUTE_FENCE_GROUP_MAX,
+    );
+    expect(surfaceComputeFenceGroupSize(0.001)).toBe(
+      SURFACE_COMPUTE_FENCE_GROUP_MAX,
+    );
+  });
+
+  it("never queues past what the caller has left to spend", () => {
+    // The time before the next progressive present falls due, or before
+    // the frame budget cuts — the screen has to keep developing and a
+    // budget cut has to be able to land.
+    expect(surfaceComputeFenceGroupSize(10, 60, 16)).toBe(3);
+    expect(surfaceComputeFenceGroupSize(10, 0)).toBe(1);
+    expect(surfaceComputeFenceGroupSize(10, -100)).toBe(1);
+  });
+
+  it("treats a nonsense measurement as unmeasured", () => {
+    expect(surfaceComputeFenceGroupSize(Number.NaN)).toBe(1);
+    expect(surfaceComputeFenceGroupSize(-5)).toBe(1);
+  });
+
+  it("honours a pinned ceiling, and 1 is the pre-grouping loop", () => {
+    // `?surfacefencegroup=1` is the before arm of this feature's own A/B.
+    expect(surfaceComputeFenceGroupSize(0, Infinity, 1)).toBe(1);
+    expect(surfaceComputeFenceGroupSize(0, Infinity, 4)).toBe(4);
+  });
+});
+
+describe("surfaceComputeGroupDispatchMs", () => {
+  it("splits a group's fence-free work equally across its dispatches", () => {
+    expect(surfaceComputeGroupDispatchMs(120, 4)).toBe(30);
+  });
+
+  it("is the identity for a group of one", () => {
+    expect(surfaceComputeGroupDispatchMs(120, 1)).toBe(120);
+  });
+
+  it("never divides by zero when a group has no priced member", () => {
+    expect(surfaceComputeGroupDispatchMs(120, 0)).toBe(120);
+  });
+});
+
+describe("nextShadeHitCost over a fence group", () => {
+  it("fits the group's whole measurement exactly", () => {
+    // d dispatches and N hits, one measurement: after the update the
+    // model reproduces it. That is the same exact-fit property the
+    // single-dispatch form has, which is what keeps nothing double
+    // counted in either direction.
+    const before = { interceptUs: 90_000, marginalUs: 40 };
+    const d = 3;
+    const hits = 1500;
+    const measuredUs = 500_000;
+    const after = nextShadeHitCost(before, hits, measuredUs, d);
+    expect(d * after.interceptUs + hits * after.marginalUs).toBeCloseTo(
+      measuredUs,
+      3,
+    );
+  });
+
+  it("preserves intercept = PIVOT x marginal at any group size", () => {
+    // The ratio invariant the single-dispatch form has, unchanged by the
+    // generalization — the weight carries the dispatch count so the
+    // algebra cancels exactly as it does at d = 1.
+    const marginalUs = 40;
+    const on = {
+      interceptUs: SURFACE_COMPUTE_SHADE_COST_PIVOT * marginalUs,
+      marginalUs,
+    };
+    for (const d of [1, 2, 8]) {
+      const after = nextShadeHitCost(on, 900 * d, 4_000_000, d);
+      expect(after.interceptUs / after.marginalUs).toBeCloseTo(
+        SURFACE_COMPUTE_SHADE_COST_PIVOT,
+        6,
+      );
+    }
+  });
+
+  it("is the same answer as folding each member at the equal share, at equal widths", () => {
+    // The identity surfaceComputeGroupDispatchMs's own comment names: a
+    // uniform group read jointly and read member by member agree by
+    // algebra, so the two attributions cannot disagree where they overlap.
+    const before = { interceptUs: 90_000, marginalUs: 40 };
+    const d = 4;
+    const n = 700;
+    const measuredUs = 800_000;
+    const joint = nextShadeHitCost(before, n * d, measuredUs, d);
+    let member = before;
+    for (let i = 0; i < d; i++) {
+      member = nextShadeHitCost(member, n, measuredUs / d);
+    }
+    expect(joint.interceptUs).toBeCloseTo(member.interceptUs, 6);
+    expect(joint.marginalUs).toBeCloseTo(member.marginalUs, 6);
+  });
+
+  it("is the original function for a group of one", () => {
+    const before = { interceptUs: 90_000, marginalUs: 40 };
+    expect(nextShadeHitCost(before, 512, 300_000, 1)).toEqual(
+      nextShadeHitCost(before, 512, 300_000),
+    );
   });
 });
