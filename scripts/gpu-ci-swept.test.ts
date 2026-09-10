@@ -5,6 +5,8 @@ import {
   latestCheckByName,
   parseCheckRuns,
   treeSweptVerdict,
+  waitDecision,
+  waitForFullSweep,
 } from "./gpu-ci-swept.mjs";
 
 type Run = {
@@ -369,5 +371,410 @@ describe("tree-identity sweep reuse", () => {
     });
     expect(verdict.sha).toBe(HEAD);
     expect(asked).toEqual([TIP, HEAD]);
+  });
+});
+
+// The wait exists because tree reuse depends on a human merging AFTER a
+// ~33-minute sweep that no rule makes them wait for: the four REQUIRED checks
+// go green in ~6 minutes and `gpu-agreement` is not one of them. Observed on
+// the first real merge after tree keying landed — the twin's sweep was still
+// running, so nothing was reused.
+describe("waiting for a twin's in-flight sweep", () => {
+  const RUNNING = "in_progress";
+  // The run doing the waiting: gpu-agreement.yml's own push run on the target.
+  const OWN_RUN = 34524486055;
+  const TWIN_RUN = 34503482517;
+  const BUDGET = 45 * 60 * 1000;
+
+  const swept = {
+    swept: true,
+    reason: "gpu-agreement and backend-smoke green",
+  };
+  const unswept = {
+    swept: false,
+    reason: "no gpu-agreement check run on this commit",
+  };
+  const matched = (sha: string, extra: Record<string, unknown> = {}) => ({
+    sha,
+    treeMatched: true,
+    verdict: unswept,
+    ...extra,
+  });
+
+  it("reuses a twin that is already swept instead of waiting for anything", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins: [
+        matched(TIP, { runs: [{ id: OWN_RUN, status: RUNNING }] }),
+        matched(HEAD, { verdict: swept }),
+      ],
+      elapsedMs: 0,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("reuse");
+    expect(decision.sha).toBe(HEAD);
+  });
+
+  // THE SELF-DEADLOCK. candidateShas puts the target commit FIRST, and the
+  // gpu-agreement run in flight on the target commit is the run asking the
+  // question. Waiting for it waits for itself to the budget and then sweeps.
+  it("never waits for an in-flight run on the target commit itself", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      // No run id known at all, so only the SHA rule can save this.
+      currentRunId: undefined,
+      twins: [matched(TIP, { runs: [{ id: OWN_RUN, status: RUNNING }] })],
+      elapsedMs: 0,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("sweep");
+  });
+
+  // ...and the second exclusion, tested where the SHA rule cannot fire: a
+  // DIFFERENT commit whose in-flight run is this one. Cheap insurance if the
+  // candidate ordering ever changes.
+  it("never waits for its own run id, whatever commit it is listed under", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins: [matched(HEAD, { runs: [{ id: OWN_RUN, status: RUNNING }] })],
+      elapsedMs: 0,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("sweep");
+  });
+
+  it("waits for an eligible twin's in-flight sweep, naming it and the time spent", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins: [
+        matched(TIP, { runs: [{ id: OWN_RUN, status: RUNNING }] }),
+        matched(HEAD, { runs: [{ id: TWIN_RUN, status: RUNNING }] }),
+      ],
+      elapsedMs: 90_000,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("wait");
+    expect(decision.until).toEqual([
+      { sha: HEAD, runId: TWIN_RUN, status: RUNNING },
+    ]);
+    expect(decision.reason).toContain(String(TWIN_RUN));
+    expect(decision.reason).toContain("90s");
+  });
+
+  it("waits for a run that is still queued, not only one in progress", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins: [matched(HEAD, { runs: [{ id: TWIN_RUN, status: "queued" }] })],
+      elapsedMs: 0,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("wait");
+  });
+
+  it("reuses the twin once its sweep finishes green", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins: [
+        matched(TIP),
+        {
+          sha: HEAD,
+          treeMatched: true,
+          verdict: swept,
+          runs: [{ id: TWIN_RUN, status: "completed", conclusion: "success" }],
+        },
+      ],
+      elapsedMs: 120_000,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("reuse");
+    expect(decision.sha).toBe(HEAD);
+  });
+
+  // `gh pr merge --delete-branch` deletes the PR branch, and deleting a branch
+  // cancels its queued and in-progress runs. Stopping on ANY completed status
+  // is what keeps the budget from being spent on a run that will never finish.
+  it("stops waiting when the twin's run ends cancelled", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins: [
+        matched(HEAD, {
+          runs: [
+            { id: TWIN_RUN, status: "completed", conclusion: "cancelled" },
+          ],
+        }),
+      ],
+      elapsedMs: 120_000,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("sweep");
+  });
+
+  it("stops waiting when the twin's run ends red", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins: [
+        matched(HEAD, {
+          runs: [{ id: TWIN_RUN, status: "completed", conclusion: "failure" }],
+        }),
+      ],
+      elapsedMs: 0,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("sweep");
+  });
+
+  // A run whose backend-smoke was SKIPPED proved independence (or reused a
+  // sweep itself). It can never satisfy fullSweepVerdict, so waiting for it is
+  // pure loss.
+  it("never waits for a run whose backend-smoke was skipped", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins: [
+        matched(HEAD, {
+          runs: [{ id: TWIN_RUN, status: RUNNING, smokeSkipped: true }],
+        }),
+      ],
+      elapsedMs: 0,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("sweep");
+  });
+
+  it("sweeps once the budget is spent, however much is still in flight", () => {
+    const twins = [
+      matched(HEAD, { runs: [{ id: TWIN_RUN, status: RUNNING }] }),
+    ];
+    expect(
+      waitDecision({
+        targetSha: TIP,
+        currentRunId: OWN_RUN,
+        twins,
+        elapsedMs: BUDGET - 1,
+        budgetMs: BUDGET,
+      }).action,
+    ).toBe("wait");
+    const expired = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins,
+      elapsedMs: BUDGET,
+      budgetMs: BUDGET,
+    });
+    expect(expired.action).toBe("sweep");
+    expect(expired.reason).toMatch(/wait budget/);
+  });
+
+  // A rebase onto a MOVED main: the association API still PROPOSES the PR
+  // head, tree equality DECIDES against it — and a sweep running on content
+  // that is not ours is not worth a second of the budget.
+  it("never waits for an in-flight run on a commit whose tree differs", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins: [
+        matched(TIP),
+        {
+          sha: HEAD,
+          treeMatched: false,
+          note: "tree ebb08c3 differs from 3c191a9",
+          runs: [{ id: TWIN_RUN, status: RUNNING }],
+        },
+      ],
+      elapsedMs: 0,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("sweep");
+    expect(decision.reason).toContain("differs");
+  });
+
+  it("sweeps when there is nothing to reuse and nothing to wait for", () => {
+    const decision = waitDecision({
+      targetSha: TIP,
+      currentRunId: OWN_RUN,
+      twins: [matched(TIP, { runs: [] })],
+      elapsedMs: 0,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("sweep");
+    expect(decision.reason).toMatch(/carries or is running/);
+  });
+
+  it("tolerates an abbreviated target sha when excluding the target's own runs", () => {
+    const decision = waitDecision({
+      targetSha: TIP.slice(0, 7),
+      twins: [matched(TIP, { runs: [{ id: OWN_RUN, status: RUNNING }] })],
+      elapsedMs: 0,
+      budgetMs: BUDGET,
+    });
+    expect(decision.action).toBe("sweep");
+  });
+});
+
+describe("the poll loop around the decision", () => {
+  const TWIN_RUN = 34503482517;
+  const inFlight = [{ id: TWIN_RUN, status: "in_progress", conclusion: null }];
+
+  // A fake clock and a fake sleep, so the loop's own behaviour is asserted
+  // without a network or a wall clock.
+  const harness = (checkRunsFor: (sha: string, poll: number) => Run[]) => {
+    let polls = 0;
+    let clock = 0;
+    const slept: number[] = [];
+    const logged: string[] = [];
+    const treeReads: string[] = [];
+    return {
+      slept,
+      logged,
+      treeReads,
+      run: (overrides: Record<string, unknown> = {}) =>
+        waitForFullSweep({
+          sha: TIP,
+          candidates: [TIP, HEAD],
+          currentRunId: 1,
+          tree: (sha: string) => {
+            treeReads.push(sha);
+            return SHARED_TREE;
+          },
+          checkRuns: (sha: string) => checkRunsFor(sha, polls),
+          workflowRuns: () => inFlight,
+          runSmokeSkipped: () => false,
+          budgetMs: 10 * 60 * 1000,
+          pollMs: 30_000,
+          now: () => clock,
+          sleep: (ms: number) => {
+            slept.push(ms);
+            polls += 1;
+            clock += ms;
+            return Promise.resolve();
+          },
+          log: (line: string) => logged.push(line),
+          ...overrides,
+        }),
+    };
+  };
+
+  it("polls until the twin's sweep completes green, then reuses it", async () => {
+    const h = harness((sha, poll) =>
+      sha === HEAD && poll >= 2
+        ? [green(10, "gpu-agreement"), green(11, "backend-smoke")]
+        : [],
+    );
+    const verdict = await h.run();
+    expect(verdict).toMatchObject({ swept: true, sha: HEAD });
+    expect(h.slept).toEqual([30_000, 30_000]);
+    // One log line per poll, saying what it waits for and how long it has.
+    expect(h.logged).toHaveLength(2);
+    expect(h.logged[0]).toContain(String(TWIN_RUN));
+    expect(h.logged[1]).toContain("30s");
+  });
+
+  it("gives up at the budget and sweeps", async () => {
+    const h = harness(() => []);
+    const verdict = await h.run({ budgetMs: 60_000 });
+    expect(verdict.swept).toBe(false);
+    expect(verdict.reason).toMatch(/wait budget/);
+    expect(h.slept).toEqual([30_000, 30_000]);
+  });
+
+  it("reads each commit's tree once for the whole wait, not once per poll", async () => {
+    const h = harness(() => []);
+    await h.run({ budgetMs: 60_000 });
+    expect(h.treeReads).toEqual([TIP, HEAD]);
+  });
+
+  it("never asks for the target commit's own workflow runs", async () => {
+    const asked: string[] = [];
+    const verdict = await waitForFullSweep({
+      sha: TIP,
+      candidates: [TIP],
+      tree: () => SHARED_TREE,
+      checkRuns: () => [],
+      workflowRuns: (sha: string) => {
+        asked.push(sha);
+        return [];
+      },
+      runSmokeSkipped: () => false,
+      budgetMs: 60_000,
+      pollMs: 1,
+      now: () => 0,
+      sleep: () => Promise.resolve(),
+      log: () => {},
+    });
+    expect(asked).toEqual([]);
+    expect(verdict.swept).toBe(false);
+  });
+
+  it("sweeps rather than waits when a twin's runs cannot be read", async () => {
+    let slept = 0;
+    const verdict = await waitForFullSweep({
+      sha: TIP,
+      candidates: [TIP, HEAD],
+      tree: () => SHARED_TREE,
+      checkRuns: () => [],
+      workflowRuns: () => {
+        throw new Error("gh: HTTP 502\nUsage: gh api ...");
+      },
+      runSmokeSkipped: () => false,
+      budgetMs: 10 * 60 * 1000,
+      pollMs: 30_000,
+      now: () => 0,
+      sleep: () => {
+        slept += 1;
+        return Promise.resolve();
+      },
+      log: () => {},
+    });
+    expect(verdict.swept).toBe(false);
+    expect(slept).toBe(0);
+  });
+
+  it("drops an in-flight run whose jobs cannot be classified rather than waiting on it", async () => {
+    let slept = 0;
+    const verdict = await waitForFullSweep({
+      sha: TIP,
+      candidates: [TIP, HEAD],
+      tree: () => SHARED_TREE,
+      checkRuns: () => [],
+      workflowRuns: () => inFlight,
+      runSmokeSkipped: () => {
+        throw new Error("gh: HTTP 404");
+      },
+      budgetMs: 10 * 60 * 1000,
+      pollMs: 30_000,
+      now: () => 0,
+      sleep: () => {
+        slept += 1;
+        return Promise.resolve();
+      },
+      log: () => {},
+    });
+    expect(verdict.swept).toBe(false);
+    expect(slept).toBe(0);
+  });
+
+  it("refuses without waiting when the target's own tree cannot be read", async () => {
+    const verdict = await waitForFullSweep({
+      sha: TIP,
+      candidates: [TIP],
+      tree: () => {
+        throw new Error("gh: HTTP 404\nUsage: gh api ...");
+      },
+      checkRuns: () => [],
+      workflowRuns: () => [],
+      runSmokeSkipped: () => false,
+      now: () => 0,
+      sleep: () => Promise.resolve(),
+      log: () => {},
+    });
+    expect(verdict.swept).toBe(false);
+    expect(verdict.reason).not.toContain("Usage:");
   });
 });

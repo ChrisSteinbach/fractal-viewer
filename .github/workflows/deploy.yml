@@ -128,6 +128,18 @@ jobs:
       # skips -> deploy skips. A rebase onto a MOVED main has a tree no run
       # has seen, so it sweeps here; nobody has to work out which case they
       # are in, the tree hashes answer it.
+      #
+      # NO --wait HERE, deliberately. gpu-agreement.yml's push run waits up to
+      # 45 minutes for a twin's IN-FLIGHT sweep rather than duplicating it,
+      # and this step refuses that trade for three reasons: a dispatch is
+      # manual and re-dispatchable, so "wait, then dispatch again" is already
+      # the user's own choice to make; this job's timeout-minutes is 2, sized
+      # for a question that is answered in seconds; and a deploy parked for
+      # half an hour holds the `pages` concurrency group, which
+      # cancel-in-progress: false already makes precious — the rollback flow
+      # (revert, then dispatch fresh) would queue behind the parked run. A
+      # dispatch whose twin sweep is still running simply sweeps, exactly as
+      # before.
       - name: Reuse a full GPU sweep already green on this tree
         id: swept
         env:

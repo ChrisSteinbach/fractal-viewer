@@ -27,7 +27,11 @@ concurrency:
 jobs:
   select:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Wide enough to hold the swept step's 45-minute wait budget (below) plus
+    # this job's own checkout/install/selection work, with headroom: expiry
+    # must be the SCRIPT's decision, reported and swept, never a killed job
+    # that reddens the aggregate over a reuse that should merely not happen.
+    timeout-minutes: 60
     outputs:
       full: ${{ steps.plan.outputs.full }}
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -61,17 +65,39 @@ jobs:
       # No `pull-requests: read` is added for the association call, and none
       # may be: a reusable workflow cannot request more than its caller job
       # grants, and deploy's `gpu-full` grants `contents: read` alone. It is
-      # not needed — all three endpoints this reads (commit, its pulls, its
-      # check runs) answer 200 on this public repo with no token at all
-      # (verified 2026-09-10), the same basis deploy.yml's preflight records
-      # for check-runs. If one ever refuses, the script reports it and sweeps.
+      # not needed — the endpoints this reads (the commit, its pulls, its
+      # check runs, the workflow's runs and a run's jobs) answer 200 on this
+      # public repo with no token at all (verified 2026-09-10), the same basis
+      # deploy.yml's preflight records for check-runs. If one ever refuses,
+      # the script reports it and sweeps.
+      #
+      # --wait, because reuse otherwise depends on a human merging AFTER a
+      # ~33-minute sweep that no rule makes them wait for: `gpu-agreement` is
+      # not a required check, so the four that are go green in ~6 minutes and
+      # the merge button is live long before the PR's sweep is. Observed on
+      # the first real merge after tree keying landed — the twin carried no
+      # COMPLETED aggregate, and this run correctly swept byte-identical
+      # content a second time. So when a tree twin's sweep is IN FLIGHT, this
+      # step waits for it: ONE idle runner for at most the budget, against 36
+      # shard jobs of ~8 minutes each (~290 runner-minutes), and roughly the
+      # same wall-clock either way, since the wait ends when the twin's sweep
+      # ends. It polls the twin's WORKFLOW RUN rather than a check run: the
+      # aggregate job `needs` the shards, so mid-sweep there is no
+      # `gpu-agreement` check run at all and "absent" cannot tell "never ran"
+      # from "running now" apart.
+      #
+      # THIS RUN'S OWN SWEEP IS NEVER WAITED FOR. The target commit is the
+      # first candidate and the run in flight on it is THIS ONE, so the script
+      # excludes both the target SHA and GITHUB_RUN_ID (set for every job by
+      # Actions, hence not declared here) — without that it waits for itself
+      # to the budget and then sweeps, strictly worse than sweeping now.
       - name: Reuse a full sweep already green on this tree
         id: swept
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           COMMIT_SHA: ${{ github.sha }}
-        run: node scripts/gpu-ci-swept.mjs --tree --sha="$COMMIT_SHA"
+        run: node scripts/gpu-ci-swept.mjs --tree --wait --sha="$COMMIT_SHA"
 
       # The reuse reaches the plan as an argument rather than a second
       # skip condition, so `full=false` stays the ONE thing the GPU jobs and
