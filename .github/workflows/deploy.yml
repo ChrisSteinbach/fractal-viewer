@@ -38,8 +38,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Refuse missing/red main CI before spending a full GPU sweep. Preserve the
-  # existing exact-commit preflight and early post-rebase refusal behavior.
+  # Refuse missing/red main CI before spending a full GPU sweep. The
+  # lint/build/test/smoke gate stays an EXACT-COMMIT question (and so keeps its
+  # early post-rebase refusal); only the GPU-sweep reuse below asks about the
+  # tree, because only that one is expensive enough to be worth reusing.
   preflight:
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -109,20 +111,32 @@ jobs:
           fi
           echo "ci.yml is green for $COMMIT_SHA (lint, build, test, smoke) — proceeding."
 
-      # Does this exact commit ALREADY carry a green full sweep? Measured on
-      # the 2026-09-10 staging-ceiling merge: the same 36-shard sweep ran three
+      # Does this CONTENT already carry a green full sweep? Measured on the
+      # 2026-09-10 staging-ceiling merge: the same 36-shard sweep ran three
       # times on one byte-identical tree — the PR, the push-to-main run, and
       # this workflow's own reusable call — with the last two overlapping, 72
       # shard jobs and ~33 minutes each for one tree.
-      - name: Reuse a full GPU sweep already green on this commit
+      #
+      # --tree, not the exact-SHA question, and that is what closes the chain
+      # to ONE sweep. gpu-agreement.yml's push run now skips its own sweep
+      # when main's new tip shares the PR head's tree, so main's tip carries a
+      # green `gpu-agreement` aggregate with `backend-smoke` SKIPPED — which
+      # the exact-SHA question correctly reads as "not swept", leaving deploy
+      # to sweep a second time. Tree mode asks the target first (the old
+      # question, unchanged and free), then the heads of its associated PRs,
+      # and finds the same twin the push run found. PR head sweeps -> push
+      # skips -> deploy skips. A rebase onto a MOVED main has a tree no run
+      # has seen, so it sweeps here; nobody has to work out which case they
+      # are in, the tree hashes answer it.
+      - name: Reuse a full GPU sweep already green on this tree
         id: swept
         env:
           GH_TOKEN: ${{ github.token }}
           COMMIT_SHA: ${{ github.sha }}
-        run: node scripts/gpu-ci-swept.mjs --sha="$COMMIT_SHA"
+        run: node scripts/gpu-ci-swept.mjs --tree --sha="$COMMIT_SHA"
 
-  # Full agreement is a prerequisite at the exact dispatched commit — but it is
-  # a CONTENT gate, not a release-time liveness check on the publishing
+  # Full agreement is a prerequisite for the dispatched commit's content — but
+  # it is a CONTENT gate, not a release-time liveness check on the publishing
   # environment: this job runs on its own ubuntu-latest runner in a separate
   # job from `deploy`, against source and CPU oracles, and never touches the
   # built bundle or the Pages environment. Liveness ("does this content still
@@ -131,17 +145,21 @@ jobs:
   # and a SwiftShader/runner-image regression is a CI signal rather than a
   # reason to block source-built bundles reaching users' real browsers.
   #
-  # So this is SKIPPED only when the dispatched commit already carries a full
-  # sweep recorded green on ITSELF: the push-to-main run attaches its stable
-  # `gpu-agreement` aggregate to this exact SHA, and `backend-smoke` green
-  # beside it is what proves that sweep was FULL rather than an independence
-  # skip (the aggregate passes on both branches; only the full branch asserts
-  # smoke and every shard succeeded). Neither weaker result substitutes: an old
-  # PR's green GPU result is a DIFFERENT SHA, and an independent-change result
-  # skipped the GPU jobs outright. Anything else — a missing output, an API
-  # failure, a red or pending aggregate — sweeps. The reusable workflow still
-  # has no impact baseline on dispatch, and still includes both dimensional
-  # halves.
+  # So this is SKIPPED only when some commit carrying this EXACT TREE already
+  # has a full sweep recorded green on it: a stable `gpu-agreement` aggregate
+  # green, with `backend-smoke` green beside it proving that sweep was FULL
+  # rather than an independence skip (the aggregate passes on both branches;
+  # only the full branch asserts smoke and every shard succeeded). The tree IS
+  # the content, so a green full sweep on a twin swept THIS content — that is
+  # what makes the old "a rebase merge mints a DIFFERENT SHA" refusal the
+  # wrong key rather than a wrong conclusion. The candidate commits are
+  # PROPOSED by GitHub's heuristic commit -> PR association and DECIDED by
+  # tree equality, so a wrong proposal is simply skipped. The
+  # independent-change refusal is untouched: such a result SKIPPED the GPU
+  # jobs, whatever tree it sat on. Anything else — a missing output, an API
+  # failure, a red or pending aggregate, a tree no run has seen — sweeps. The
+  # reusable workflow still has no impact baseline on dispatch, and still
+  # includes both dimensional halves.
   gpu-full:
     needs: preflight
     # != 'true', never == 'false': a missing or empty output must sweep.
