@@ -1890,19 +1890,31 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     fixes the RATIO of its two terms — so `K`
     (`SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST`) is a WIDTH, not a ratio.
     `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` sits outside the range
-    real scenes measure in, and that PLACEMENT is the measurement. THE LIT QUEUE IS SIZED THE SAME WAY, and was
-    not: its cost lanes shipped INERT, pinning every lit dispatch at one
-    workgroup for a measured 5.85-26x settle at identical pixels.
-    `nextLightingRayCap` paces it as `nextShadeBatchSize` paces this one;
-    an inert cost lane is a pinned width, not a safe default. AND NO
-    SIZING MODEL OR LADDER MAY READ A RAW DISPATCH TIME: `dispatchTimed`
-    fences, so it calibrates the session's own round-trip once (MINIMUM of
-    five null dispatches — over-subtracting is the unbounded direction)
-    and returns wall time for the tally beside fence-free `workMs` for
-    every model, ladder and EMA. Measured 2.4 ms Chrome against ~100 ms
-    Firefox, which put the lit ladder's 50 ms target out of reach and
-    pinned it at one workgroup (20.3x lit / 2.44x unlit Firefox settles,
-    Chrome unmoved). Gate: `scripts/surface-fence-cost.verify.mjs`. No submission outruns the i915 watchdog;
+    real scenes measure in, and that PLACEMENT is the measurement. THE LIT
+    QUEUE IS SIZED THE SAME WAY, and was not: its cost lanes shipped
+    INERT, so `nextLightingRayCap` never paced anything and every lit
+    dispatch stayed one workgroup wide; an inert cost lane is a pinned
+    width, not a safe default. AND NO SIZING MODEL OR LADDER MAY READ A
+    RAW DISPATCH TIME: the loop calibrates the session's own fence
+    round-trip once (MINIMUM of five null dispatches — over-subtracting is
+    the unbounded direction) and every model, ladder and EMA reads wall
+    MINUS that fence, the tally alone reading wall.
+    THE FENCE IS PAID PER GROUP, NOT PER DISPATCH: a dispatch is still its
+    own SUBMISSION (the preemption boundary) but several are queued behind
+    ONE `onSubmittedWorkDone`, closing at `SURFACE_COMPUTE_FENCE_GROUP_MS`
+    against TWICE the lane's worst MEASURED per-dispatch work this frame,
+    `SURFACE_COMPUTE_FENCE_GROUP_MAX` dispatches, or the next
+    present/budget deadline — whichever first — with each lane's first
+    group PILOTED at one dispatch. NEVER SIZE A GROUP OFF A MODEL
+    PREDICTION: both schedulers size a dispatch to hit a target, so its
+    predicted cost IS that target by construction and says nothing. A GROUP MEASURES ONCE FOR N PIECES and the attribution is
+    fixed: the march EMA takes the group's aggregate ray·step rate,
+    `nextShadeHitCost` fits `d·intercept + N·marginal` jointly (exact at
+    any mix of widths), the two capacity ladders take the EQUAL share once
+    per member because the watchdog sees dispatches, and a FREE batch is
+    attributed ZERO. `?surfacefencegroup=1` is the pre-grouping loop
+    exactly, which is how the A/B runs on one build. Gate:
+    `scripts/surface-fence-cost.verify.mjs`. No submission outruns the i915 watchdog;
     presents are progressive; shading probes ride
     `SURFACE_COMPUTE_SHADE_DE_WIDTH`; colorOut prefills from the last frame
     so the pane never shows backdrop mid-drag.

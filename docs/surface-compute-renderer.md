@@ -1118,7 +1118,8 @@ then `frame done passes=517 hit=1940489 miss=88951` in 25,970 ms. So 517
 fenced dispatches cost 1.69 s in Chrome — 6.5% of the frame, real but not
 the story — and 52 s in Firefox.
 
-THE AMPLIFIER WAS THIS FILE'S OWN ADAPTIVE SIZING. `dispatchTimed` returns
+THE AMPLIFIER WAS THIS FILE'S OWN ADAPTIVE SIZING. The loop's dispatch
+timing (then `dispatchTimed`, now `flushGroup`) returns
 `performance.now() - t0` measured ACROSS its own
 `await device.queue.onSubmittedWorkDone()`, so fence latency was inside the
 number `nextShadeHitCost`, `nextShadeBatchSize`, `nextLightingRayCap` and
@@ -1154,7 +1155,7 @@ bigger slice spreads the same residue over more ray·steps, so that term
 falls as the chunk grows instead of ratcheting.
 
 **THE FIX: measure the session's own round-trip and subtract it at one
-chokepoint.** `dispatchTimed` calibrates on its first call — five NULL
+chokepoint.** The loop calibrates on its first dispatch — five NULL
 dispatches (this frame's real pipeline and bind group at ZERO workgroups,
 so a genuine submit-and-fence with no GPU work, no side effect and no
 dependence on what the params buffer holds) — and thereafter returns BOTH
@@ -1201,18 +1202,194 @@ pinning's machine-independent signature (a pinned ladder carries exactly
 one workgroup per dispatch however fast the GPU is) rather than a
 stopwatch.
 
-WHAT IS STILL OWED. After the fix a Firefox settle frame is very nearly its
-fence COUNT times its fence latency — 150 fences x ~100 ms against a 13.2 s
-frame — so the remaining 8-11x against Chrome is the per-fence price
-itself, not the sizing. The lever for that is fewer fences: group N
-dispatches behind one the way `surfaceComputeLightingFenceGroup` did for
-the removed medium. That is separate work, and it trades against the
-progressive-present cadence and the watchdog bound that made every
-dispatch its own submission in the first place.
+WHAT WAS STILL OWED, and is now done. After the fix a Firefox settle frame
+was very nearly its fence COUNT times its fence latency — 150 fences x
+~100 ms against a 13.2 s frame — so the remaining 8-11x against Chrome was
+the per-fence price itself rather than the sizing. The lever for that is
+fewer fences, and it is the next section.
 
 It was ENGINE-WIDE rather than specific to any feature: every
 compute-preferred session (fold-shaped 3D, escape-time, bulb and EVERY 4D
 system) runs this loop.
+
+### Fewer fences: dispatches are grouped, the fence is paid per group
+
+**A DISPATCH IS STILL ITS OWN SUBMISSION. What changed is how many of them
+one `onSubmittedWorkDone` stands behind.** The submission is the i915
+preemption boundary and the reason this loop bounds every piece of work it
+hands the driver; the FENCE is a host round-trip that costs the same
+whatever sits behind it. Those are two different bounds, and only the
+second was being paid per dispatch for no reason. `strip-planner.ts` made
+exactly this trade once already on the WebGL arm — strips go out as
+individually flushed draw groups, fenced only per
+`SURFACE_STRIP_FENCE_GROUP_MS` of predicted work — and the work target here is
+deliberately that file's 300 ms. The DISPATCH cap is not: it is a measured
+browser ceiling, and it is the next-but-one paragraph.
+
+**A MODEL PREDICTION IS THE WRONG INPUT HERE, AND THE FIRST DRAFT OF THIS
+WORK USED ONE.** Both schedulers SIZE a dispatch to hit a target —
+`marchChunkFor` divides the pass target by the per-ray·step EMA,
+`shadeHitBatchSize` divides the hit allowance by the marginal — so a
+dispatch's model-predicted cost is that target BY CONSTRUCTION. Measured on
+Firefox at 640x360, every march slice of a settle predicted exactly
+250.0 ms while measuring 26-29 ms of fence-free work, and a group sized off
+that prediction closed at two dispatches on a lane where six were
+affordable. The prediction carries no information; only the measurement
+does.
+
+SO THREE BOUNDS CLOSE A GROUP, whichever comes first
+(`surfaceComputeFenceGroupSize`):
+
+- **twice the lane's worst MEASURED per-dispatch work this frame**, against
+  `SURFACE_COMPUTE_FENCE_GROUP_MS`. This is
+  `surfaceComputeLightingFenceGroup` from the removed medium, constant for
+  constant, and its reasoning holds unchanged: a running MAX can only be
+  raised by a later, slower dispatch, which is the safe direction for a
+  decision about how much work to queue. The maximum is per FRAME, so an
+  expensive band cannot pin the group size for a session, and a lane whose
+  dispatches really do measure at the pass target gets groups of one —
+  which is how grouping stays off the frames that never needed it;
+- **the dispatch count**, `SURFACE_COMPUTE_FENCE_GROUP_MAX`, which is a
+  MEASURED BROWSER CEILING and not a tuning constant — see below. It binds
+  in the case the work exists for, since a frame of queue-limited slivers
+  measures almost nothing per dispatch, and it also keeps one measurement
+  from being spread so thin it says nothing about any member;
+- **the caller's own deadline** — the time before the next progressive
+  present falls due, or before the frame budget cuts. Queued work is
+  present debt and cancellation debt: the screen has to keep developing
+  through a long drain, and a budget cut has to be able to land. A caller
+  with nothing left to spend gets a group of one, which is the
+  pre-grouping loop exactly.
+
+**FIREFOX LOSES ITS DEVICE AT FOUR QUEUED DISPATCHES, AND THAT IS WHAT
+SETS THE CAP.** Measured on this repository's AMD RX 7900 XTX on
+`DISPLAY=:0`, the fence gate's own fixture, production build: with four or
+more dispatches behind one `onSubmittedWorkDone`, the settle frame's FIRST
+march sweep raises `Uncaptured WebGPU error: Not enough memory left`, the
+device is lost, and the session falls back to the WebGL tracer. Reproduced
+at `--fencegroup=4` and `=6`; clean at 1, 2 and 3.
+
+| `--fencegroup` | 640x360 | 960x540 | 1280x720 |
+| -------------- | ------- | ------- | -------- |
+| 1, 2, 3        | compute | compute | compute  |
+| 4, 6           | LOST    | —       | —        |
+
+IT IS A COUNT, NOT A VOLUME, which is why a fixed cap is the right shape of
+answer: three survive at every raster tried, and the writes outstanding
+when it dies are ~16 KB each (the settle's first slices are at
+`SURFACE_COMPUTE_MARCH_CHUNK_MIN`). The likely quantity is OUTSTANDING
+QUEUE WRITES rather than dispatches — each dispatch stages two, its params
+block and its ray list — which is why the shipped cap is TWO and not the
+three that measured clean: a dispatch that ever grows a third write would
+put three back over the edge, and the cost of being wrong is a
+compute-only session (fold-shaped or escape-shaped 4D) losing its Surface
+renderer outright. Chrome tolerates eight and gains nothing measurable
+from them, so the cap is the SMALLEST stack's rather than a compromise.
+Lifting it is gated on unifying the per-dispatch writes — one write per
+sweep plus a base offset the kernel reads, or a dynamic bind-group offset
+— not on picking a bigger number.
+
+AND EACH LANE IS PILOTED. Until a lane's first group comes back measured
+there is no measurement to size from, so that lane fences one dispatch at a
+time — `surfaceComputeFenceGroupSize(null) = 1`, the shape the medium's own
+pilot had. A shade group reads the HIT lane: a free batch has no cost of its
+own to contribute, and pricing the group by the hits it also carries is the
+conservative direction.
+
+THE MEMORY QUESTION ANSWERS ITSELF, which is why there is no fourth bound
+for it. Each queued dispatch writes its ray list through
+`queue.writeBuffer`, so a group holds that many staged copies at once —
+but the march slices PARTITION the active list and the shade batches
+partition the queues, so a group's total queued rays can never exceed the
+frame's own ray count, which `maxFrameRays` already bounds. The transient
+staging is at most one frame's active list, four bytes a ray.
+
+**THE ATTRIBUTION IS THE PART TO GET RIGHT**, because a group measures ONE
+time for N pieces of work and the models below still reason per dispatch.
+The fence subtraction becomes one fence per GROUP, and then:
+
+- the march's per-ray·step EMA takes the group's AGGREGATE rate, its
+  fence-free work over its total ray·steps — which is what a single
+  dispatch of the same total rays would have given. One measurement, one
+  EMA update;
+- the hit queue's two-term model takes the group AS a group:
+  `nextShadeHitCost` gained a dispatch COUNT and fits
+  `d·intercept + N·marginal` to the one measurement. Every property the
+  single-dispatch form had survives — the fit is still EXACT, and the
+  `intercept = PIVOT · marginal` invariant is preserved identically with
+  `w = N/(N + d·PIVOT)` — and at EQUAL widths the joint fit and folding
+  each member at the equal share are the same answer by algebra, which is
+  what makes the two attributions in this list consistent where they
+  overlap. Unequal widths are where they part, and the joint fit is the
+  one that does not have to guess which member was expensive;
+- the two capacity LADDERS (`nextShadeBatchSize`, `nextLightingRayCap`)
+  judge one dispatch against a budget, so they take
+  `surfaceComputeGroupDispatchMs`'s EQUAL share, applied once per member in
+  submit order. Per member rather than per group because the watchdog sees
+  dispatches and because folding a group into one ladder step would slow
+  the doubling climb out of the cold cap by the group size. The
+  queue-limited rule is unchanged and still per member: a batch the sweep
+  could not fill may shrink a capacity and never grow it;
+- a FREE batch is attributed ZERO and feeds nothing. Not a convenience:
+  its shade-entry exit is two lines, so what a free dispatch costs really
+  is the submission and the fence rather than work — the measurement two
+  sections up, 3.2 ms per free dispatch on a stack whose fence was ~3 ms.
+  A group of nothing BUT free batches has no priced member, so its work is
+  shared over the frees for the trace's sake alone.
+
+`?surfacefencegroup=N` PINS THE GROUP COUNT outright, and `=1` is the
+pre-grouping loop value for value — which is how the rows below were taken:
+ONE build, the two arms back to back,
+`scripts/surface-fence-cost.verify.mjs --fencegroup=1` against the same
+script with no flag. Against a remembered number from another checkout they
+would not be comparable, because the thing being measured moves (the
+calibration caveat at the end of this section).
+
+MEASURED, this repository's AMD RX 7900 XTX on `DISPLAY=:0`, production
+build, that gate's fixture, one antialiasing pass, the settle frame's own
+duration off the trace. Firefox at 640x360 because it does not settle this
+fixture at 1280x720 at ANY group size, the pre-grouping loop included:
+
+| arm                    |   1 fence/dispatch |           grouped |
+| ---------------------- | -----------------: | ----------------: |
+| Firefox unlit, 640x360 | 6600 / 6820 / 7112 | 4707 /4704 / 4908 |
+| fences (whole run)     |        73 /75 / 76 |       54 /55 / 55 |
+| Firefox LIT, 640x360   |               6623 |              4644 |
+| fences                 |                 73 |                54 |
+| Chrome unlit, 1280x720 | 1319 / 1344 / 1311 | 1191 /1194 / 1235 |
+| fences                 |      138 /138 /138 |       93 /95 / 95 |
+| Chrome LIT, 640x360    |    892 / 880 / 867 |    893 /848 / 858 |
+| fences                 |        71 /73 / 71 |       53 /53 / 53 |
+
+So **Firefox settles 1.4x faster** and Chrome 1.09x unlit, flat lit — which
+is the shape the fence price predicts: Firefox's calibrated round-trip on
+those runs was 59-85 ms against Chrome's 2.4, so ~80% of a Firefox settle
+frame was fence and ~25% of a Chrome one. DISPATCH COUNTS ARE UNCHANGED in
+every arm (Chrome 37+101 both sides, Firefox 30+43 both sides): the design
+claim is that only the fence count moves, and the table is where that gets
+checked rather than asserted.
+
+THE EMA MUST FOLD PER MEMBER FOR THAT TO BE TRUE, and the first version of
+this did not. Folding a group's aggregate rate ONCE per group slows the
+per-ray·step EMA's convergence — and with it `marchChunkFor`'s climb — by
+the group size, which measured as a 141-dispatch Chrome settle becoming a
+210-dispatch one at the same wall time: more, smaller slices, each still
+paying a submission. The measurement covers `d` dispatches' worth of
+ray·steps, so it is `d` dispatches' worth of evidence, and it is folded `d`
+times.
+
+A CAVEAT ON READING ANY OF THESE ROWS, and on the gate itself: the
+session's calibrated round-trip is BIMODAL on Firefox. Eight consecutive
+runs of one fixture calibrated 77.8, 78.3, 18.6, 81.4, 37.2, 3.3, 59.0 and
+67.2 ms, and one logged `probes=71.36,100.22,100.16,99.94,100.36` — so the
+MINIMUM of five probes can be a lucky fast one against a ~100 ms typical.
+When it lands low the residue stays inside every sizing model and the same
+frame measures 11.1 s (calibrated 18.6) or 29.3 s (calibrated 3.3) against
+the 4.7 s median, on BOTH arms. The rows above are therefore matched by
+calibrated round-trip rather than averaged over runs, and the low-draw runs
+are reported here rather than dropped. Grouping MITIGATES that defect — the
+subtraction is one fence per GROUP, so the residue is divided across the
+group's dispatches — but it does not fix it, and it has its own item.
 
 ### The lit dispatch width, and what one workgroup cost
 
