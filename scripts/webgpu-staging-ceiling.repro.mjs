@@ -41,57 +41,52 @@
  * page can get a WORKING one back, at several delays.
  *
  * ── MEASURED, Firefox 153.0 (Playwright's build) and Chrome, this
- * repository's AMD RX 7900 XTX on `DISPLAY=:0`, 5 reps x 10 rounds a cell,
- * reps counted DEAD on a device loss or an uncaptured error ─────────────
+ * repository's AMD RX 7900 XTX on `DISPLAY=:0`, 10 rounds a rep, a rep
+ * counted DEAD on a device loss or an uncaptured error ──────────────────
  *
- * IT IS NOT A COUNT OF QUEUED DISPATCHES. Bare submits are harmless:
+ * TWENTY REPS A CELL, AND THAT IS THE MINIMUM THIS QUESTION TAKES. The
+ * failure is stochastic — the same cell read 0/5 in one five-rep run and
+ * 5/5 in another, and an earlier draft of this record published a table
+ * built from five-rep cells that did not survive being re-measured. Read
+ * these as RATES.
  *
- * | `--arm=burst`, submits per fence | 4   | 8   | 16  | 32  |
- * | -------------------------------- | --- | --- | --- | --- |
- * | died                             | 0/5 | 0/5 | 0/5 | 0/5 |
+ * | # | queued behind ONE fence                            | died  |
+ * | - | -------------------------------------------------- | ----- |
+ * | A | 4 bare submits                                     |  0/20 |
+ * | B | 32 bare submits                                    |  6/20 |
+ * | C | 4 dispatches, 2 x 16 KB writes each (the app's own) |  0/20 |
+ * | D | C plus a frame's 8 MB prefill                      |  7/20 |
+ * | E | 1 dispatch, the same 8 MB prefill                  |  0/20 |
+ * | F | 4 dispatches, 2 x 4 MB writes each (32 MB staged)  | 13/20 |
+ * | G | 1 dispatch, a 32 MB prefill                        | 20/20 |
+ * | H | 4 dispatches, no writes, 128 MB merely HELD        |  0/20 |
  *
- * IT IS THE `writeBuffer` STAGING OUTSTANDING WHEN THE FENCE FALLS DUE,
- * and it is a VOLUME. At a fixed group of four, with the per-dispatch
- * writes alone (no prefill), only their SIZE moves anything:
+ * WHAT EACH PAIR SETTLES. C against A: the app's own per-dispatch writes,
+ * 128 KB across a group, add NOTHING — so unifying them buys nothing, and
+ * the reading that named them was wrong. F against C: the same DISPATCH
+ * COUNT with bigger writes kills 13/20, so it is a VOLUME at fixed count.
+ * D against C: the frame's own PREFILL is where the app's volume is. E
+ * against D: the same megabytes behind a group of one are harmless, so a
+ * fence group is HOLD TIME on staging rather than a count of anything. H:
+ * memory the device merely holds is not the quantity. B against A:
+ * submissions do carry a cost of their own, but it takes EIGHT TIMES the
+ * app's cap to reach a rate that 8 MB of staging reaches at four.
  *
- * | per-dispatch write | 16 KB | 256 KB | 1 MB | 4 MB |
- * | ------------------ | ----- | ------ | ---- | ---- |
- * | died               | 0/5   | 0/5    | 1/5  | 4/5  |
+ * G IS THE ONE NO FENCE GROUP CAN FIX: at a group of ONE it dies 20/20, on
+ * the first fence, every run. `surface-compute.ts` stages 24 B/ray of
+ * prefill unlit (states 16, layer 4, colour 4) and 36 B/ray lit, so
+ * 640x360 is 5.5 MB and 8.3 MB and 1280x720 is 22 MB and 33 MB — a LIT
+ * 1280x720 frame IS row G. Not observed in the app yet, and only because a
+ * Firefox settle at that raster does not complete inside 180 s to be
+ * observed at all.
  *
- * — so the app's own two 16 KB writes are 128 KB against a frame's
- * MEGABYTES, and they are not what kills it. Restore the frame prefill
- * and the app's failure appears exactly where the app has it:
+ * CHROME IS UNAFFECTED: 0/10 at 32 and at 512 bare submits a fence, and
+ * 0/10 on cell D — the exact shape that kills Firefox 7/20.
  *
- * | `--prefillMb` \ `--groups` | 1   | 3   | 4   | 8   |
- * | -------------------------- | --- | --- | --- | --- |
- * | 4                          | 0/5 | 1/5 | 3/5 | 5/5 |
- * | 8                          | 0/5 | 3/5 | 5/5 | 5/5 |
- * | 16                         | 0/5 | 0/5 | 5/5 | 5/5 |
- * | 32                         | 5/5 | 5/5 | 5/5 | 5/5 |
- *
- * `surface-compute.ts` stages 16 B/ray of ray state, 4 B/ray of layer
- * sidecar and the colour prefill once per frame, so a 640x360 raster is
- * the 8 MB row — dead at four dispatches a fence, marginal at three,
- * clean at one, which is the app's measured behaviour to the group.
- *
- * TWO THINGS THE TABLE SAYS THAT THE FENCE GROUP CANNOT FIX. The 32 MB row
- * dies at a group of ONE: past some raster the frame's own prefill is over
- * the ceiling however finely its dispatches are fenced. And fencing
- * BETWEEN the three prefill writes does not rescue them (16 MB 3/5, 24 MB
- * 5/5, 32 MB 4/5, 48 MB 5/5 dead at a group of one) — the staging is not
- * reclaimed by a fence returning, only by the browser's own poll.
- *
- * WHAT DOES NOT MOVE IT: buffers the device merely HOLDS. 16, 32, 64 and
- * 128 MB of untouched storage buffers all died 0/5 at the group of four
- * that kills a frame's prefill.
- *
- * CHROME IS UNAFFECTED — 0/5 dead at 8, 32, 128 and 512 submits a fence,
- * with the same writes.
- *
- * A LOST DEVICE DOES NOT COME BACK IN THAT TAB. Of 6 reps that actually
- * killed the device, 0 recovered: `requestDevice()` itself rejects with
- * `Not enough memory left`, or the replacement device cannot allocate
- * 8 MB — at 0 ms, 500 ms and 3000 ms after the loss alike. So the app's
+ * A LOST DEVICE DOES NOT COME BACK IN THAT TAB. Across 20 reps that
+ * actually killed one, 0 recovered: the replacement device cannot allocate
+ * 8 MB (and `requestDevice()` itself sometimes rejects with the same
+ * error) — at 0 ms, 500 ms and 3000 ms after the loss alike. So the app's
  * one-way `"failed"` latch is CORRECT rather than merely conservative, and
  * a retry-on-loss is a measured won't-do, not an oversight.
  *
@@ -120,10 +115,15 @@ const args = Object.fromEntries(
 );
 const BROWSER = String(args.browser ?? "firefox");
 const DISPLAY = args.display ?? ":0";
-const REPS = Number(args.reps ?? 5);
+/** Twenty, because five is not enough to tell 0/5 from 5/5 on a cell whose
+ * true rate is a third — the mistake the record above was corrected from. */
+const REPS = Number(args.reps ?? 20);
 const ROUNDS = Number(args.rounds ?? 10);
 const ARM = String(args.arm ?? "all");
-const GROUPS = String(args.groups ?? "1,3,4,8")
+/** The three the table above turns on: one (harmless at any prefill the
+ * app reaches), four (the app's failure), thirty-two (where bare submits
+ * alone start to bite). */
+const GROUPS = String(args.groups ?? "1,4,32")
   .split(",")
   .map(Number);
 const WRITE_BYTES = Number(args.writeBytes ?? 16384);
@@ -211,14 +211,19 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   data[gid.x] = data[gid.x] * 1664525u + 1013904223u;
 }\` });
   const pipeline = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "main" } });
-  const target = device.createBuffer({ size: 65536, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  // ONE WORKGROUP ON PURPOSE. The question is what the QUEUE holds, and a
+  // dispatch heavy enough to take milliseconds hands the browser's 100 ms
+  // poll the time to drain between rounds — which hides the ceiling rather
+  // than measuring it. An earlier draft dispatched 256 workgroups and read
+  // 0/5 where a trivial one reads 5/5.
+  const target = device.createBuffer({ size: 256, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: target } }] });
   const dispatch = () => {
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bind);
-    pass.dispatchWorkgroups(256);
+    pass.dispatchWorkgroups(1);
     pass.end();
     device.queue.submit([enc.finish()]);
   };

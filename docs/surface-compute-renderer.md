@@ -1289,77 +1289,73 @@ have bought nothing.
 entirely: a routed one-line HTML page on an `https:` origin, a fresh
 browser per rep, no build and no server, so what it measures is the
 BROWSER. Firefox 153.0 (Playwright's build), the same RX 7900 XTX on
-`DISPLAY=:0`, 5 reps x 10 rounds a cell.
+`DISPLAY=:0`, 10 rounds a rep.
 
-**Bare submits are harmless.** No `writeBuffer` at all, one
-`onSubmittedWorkDone` per burst:
+TWENTY REPS A CELL, AND THAT IS THE MINIMUM THIS QUESTION TAKES — the
+failure is stochastic, the same cell read 0/5 in one five-rep run and 5/5
+in another, and the first draft of this section published a table of
+five-rep cells that did not survive re-measurement. These are RATES:
 
-| submits per fence | 4   | 8   | 16  | 32  |
-| ----------------- | --- | --- | --- | --- |
-| died              | 0/5 | 0/5 | 0/5 | 0/5 |
+| #   | queued behind ONE fence                             | died  |
+| --- | --------------------------------------------------- | ----- |
+| A   | 4 bare submits                                      | 0/20  |
+| B   | 32 bare submits                                     | 6/20  |
+| C   | 4 dispatches, 2 x 16 KB writes each (the app's own) | 0/20  |
+| D   | C plus a frame's 8 MB prefill                       | 7/20  |
+| E   | 1 dispatch, the same 8 MB prefill                   | 0/20  |
+| F   | 4 dispatches, 2 x 4 MB writes each (32 MB staged)   | 13/20 |
+| G   | 1 dispatch, a 32 MB prefill                         | 20/20 |
+| H   | 4 dispatches, no writes, 128 MB merely HELD         | 0/20  |
 
-**Only the staged BYTES move it.** A fixed group of four, two writes per
-dispatch and nothing else queued:
+**C against A** is the refutation: the app's own two writes per dispatch,
+128 KB across a group, add nothing, so unifying them would have bought
+nothing. **F against C** is the correction: the SAME dispatch count with
+bigger writes kills 13/20, so the quantity is a VOLUME measured at fixed
+count. **D against C** locates the app's volume — the frame's own PREFILL,
+which `runFrame` stages before any dispatch. **E against D** says what a
+fence group actually is: the same megabytes behind a group of one are
+harmless, so the group is HOLD TIME on staging rather than a count of
+anything. **H** rules out memory the device merely holds. And **B against
+A** keeps the honest remainder: submissions do carry a cost of their own,
+but it takes eight times the app's cap to reach a rate that 8 MB of
+staging reaches at four.
 
-| per-dispatch write | 16 KB | 256 KB | 1 MB | 4 MB |
-| ------------------ | ----- | ------ | ---- | ---- |
-| died               | 0/5   | 0/5    | 1/5  | 4/5  |
+WHY HOLD TIME IS THE RIGHT WORD. Firefox reclaims a submission's staging
+only when a poll observes its fence: `WebGPUParent` starts its timer at
+`POLL_TIME_MS = 100` and `MaintainDevices` calls
+`wgpu_server_poll_all_devices`, and nothing polls at submit time
+(Mozilla's bug 1870699, "Don't poll WebGPU from a timer"). That 100 ms
+tick is the same one the section above measured from the outside as
+Firefox's fence round-trip. `Not enough memory left` is wgpu's generic
+`DeviceError::OutOfMemory` text rather than a report about VRAM — 23 of
+this machine's 24 GB were free every time it fired.
 
-So the app's own two writes — 16 KB each, 128 KB across a group of four —
-are not what kills it. **Add the frame's PREFILL and the app's failure
-appears exactly where the app has it.** `runFrame` seeds `color`, `layer`
-and `states` through `queue.writeBuffer` once per frame, before any
-dispatch; the probe's `--prefillMb` is three writes of that total, its
-dispatches still staging 16 KB apiece:
+**ROW G IS THE ONE NO FENCE GROUP CAN FIX.** A frame's prefill is 24 B/ray
+unlit (states 16, layer 4, colour 4) and 36 B/ray lit, where the colour
+buffer widens to `vec4f` radiance — so 640x360 is 5.5 MB and 8.3 MB, and
+1280x720 is 22 MB and 33 MB. The fence gate's unlit 640x360 fixture is
+therefore cell D, dying at four dispatches a fence and clean at one, which
+is its measured behaviour in the app. A LIT 1280x720 frame is cell G,
+which dies 20/20 at a group of ONE, on the first fence, every run. That
+has not been observed in the app yet, and only because a Firefox settle at
+that raster does not complete inside 180 s to be observed at all.
 
-| prefill \ group | 1   | 3   | 4   | 8   |
-| --------------- | --- | --- | --- | --- |
-| 4 MB            | 0/5 | 1/5 | 3/5 | 5/5 |
-| 8 MB            | 0/5 | 3/5 | 5/5 | 5/5 |
-| 16 MB           | 0/5 | 0/5 | 5/5 | 5/5 |
-| 32 MB           | 5/5 | 5/5 | 5/5 | 5/5 |
-
-A 640x360 frame stages 16 B/ray of ray state and 4 B/ray of layer sidecar
-plus its colour rows — the 8 MB row — which dies at four, is marginal at
-three and is clean at one. That is the app's own measured behaviour, group
-for group, reproduced with no fractal in sight.
-
-WHY THE GROUP MATTERS AT ALL, then, is HOLD TIME rather than count.
-Firefox reclaims a submission's staging only when a poll observes its
-fence: `WebGPUParent` starts its timer at `POLL_TIME_MS = 100` and
-`MaintainDevices` calls `wgpu_server_poll_all_devices`, and nothing polls
-at submit time (Mozilla's bug 1870699, "Don't poll WebGPU from a timer").
-That 100 ms tick is the same one the section above measured from the
-outside as Firefox's fence round-trip. A wider group is a longer hold on
-the megabytes the frame already staged, and `Not enough memory left` is
-wgpu's generic `DeviceError::OutOfMemory` text rather than a report about
-VRAM — 23 of this machine's 24 GB were free every time it fired.
-
-TWO THINGS THE TABLE SAYS THAT NO FENCE GROUP CAN FIX. The 32 MB row dies
-at a group of ONE, so past some raster a frame's prefill is over the
-ceiling however finely its dispatches are fenced — not observed in the app
-yet, because a Firefox settle at 1280x720 does not complete inside 180 s
-to be observed. And fencing BETWEEN the three prefill writes does not
-rescue them (16 MB 3/5, 24 MB 5/5, 32 MB 4/5, 48 MB 5/5 dead at a group of
-one): a returning fence is not what releases the staging, the poll is.
-What does NOT move it is memory the device merely HOLDS — 16, 32, 64 and
-128 MB of untouched storage buffers all died 0/5 at the group of four that
-kills a prefill.
-
-A LOST DEVICE DOES NOT COME BACK IN THAT TAB. Of 6 probe reps that
-actually killed one, 0 recovered: `requestDevice()` itself rejects with
-`Not enough memory left`, or the replacement device cannot allocate 8 MB —
+A LOST DEVICE DOES NOT COME BACK IN THAT TAB. Across 20 probe reps that
+actually killed one, 0 recovered: the replacement device cannot allocate
+8 MB, and `requestDevice()` itself sometimes rejects with the same error —
 at 0 ms, 500 ms and 3000 ms after the loss alike. So main.ts's one-way
 `surfaceComputeBlock = "failed"` latch is CORRECT rather than merely
 conservative, and a retry-on-loss is a measured won't-do.
 
-CHROME IS UNAFFECTED — 0/5 dead at 8, 32, 128 and 512 submits a fence with
-the same writes — and gains nothing measurable from a wider group, so the
-cap stays the SMALLEST stack's rather than a compromise. **The shipped cap
-of TWO stands, for a better reason than the one it was given:** three is
-MARGINAL, not clean (1/5 and 3/5 dead at a 640x360 frame's prefill), and
-the cost of being wrong is a compute-only session — fold-shaped or
-escape-shaped 4D — losing its Surface renderer outright with no way back.
+CHROME IS UNAFFECTED — 0/10 at 32 and at 512 bare submits a fence, and
+0/10 on cell D, the exact shape that kills Firefox 7/20 — and it gains
+nothing measurable from a wider group, so the cap stays the SMALLEST
+stack's rather than a compromise. **The shipped cap of TWO stands, for a
+better reason than the one it was given:** the failure is a RATE rather
+than a threshold, so "clean at three" was never a property of three — it
+was one run of a cell whose neighbour at four dies a third of the time —
+and the cost of being wrong is a compute-only session, fold-shaped or
+escape-shaped 4D, losing its Surface renderer outright with no way back.
 **LIFTING IT IS GATED ON THE FRAME PREFILL**: seed `color`, `layer` and
 `states` on the device (a prefill kernel, or a clear) instead of staging
 them through the queue, and the megabytes this ceiling is about stop being
