@@ -243,6 +243,28 @@ export function setSurfaceComputeTrace(
  * {@link SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP} bounds this one pin below
  * whatever the sizer would otherwise allow.
  */
+/**
+ * `?surfacefencegroup=N` — how many dispatches one
+ * `onSubmittedWorkDone` round-trip may stand behind, in place of
+ * {@link SURFACE_COMPUTE_FENCE_GROUP_MAX} and
+ * {@link SURFACE_COMPUTE_FENCE_GROUP_MS} together.
+ *
+ * IT IS THE FOURTH PIN AND THE ONLY ONE THAT IS ALSO A BEFORE/AFTER
+ * SWITCH: `?surfacefencegroup=1` fences every dispatch, which is exactly
+ * the loop that shipped before grouping, so the grouping's own A/B runs
+ * on ONE build against ONE scene rather than against a remembered number
+ * from another checkout. The width pins above cannot do that for their
+ * features; this one can, and the measured rows in
+ * `docs/surface-compute-renderer.md` were taken through it.
+ *
+ * The bound it leaves is CANCELLATION DEBT, not the watchdog: every
+ * dispatch is still its own submission and still sized by its own model,
+ * so a large pin buys a longer queue of individually bounded work rather
+ * than one unbounded piece — a laggier Escape, not a hung compositor.
+ * Progressive presents and the frame budget still close a group early
+ * whatever the pin says.
+ */
+let surfaceComputeFenceGroupPin: number | null = null;
 let surfaceComputeMarchChunkPin: number | null = null;
 let surfaceComputeMarchStepsPin: number | null = null;
 let surfaceComputeShadeHitsPin: number | null = null;
@@ -262,7 +284,9 @@ export function setSurfaceComputeSchedulePins(pins: {
   marchChunk?: number | null;
   marchSteps?: number | null;
   shadeHits?: number | null;
+  fenceGroup?: number | null;
 }): void {
+  surfaceComputeFenceGroupPin = positivePin(pins.fenceGroup);
   surfaceComputeMarchChunkPin = positivePin(pins.marchChunk);
   surfaceComputeMarchStepsPin = positivePin(pins.marchSteps);
   surfaceComputeShadeHitsPin = positivePin(pins.shadeHits);
@@ -314,6 +338,66 @@ export const SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP =
 
 /** Default interval between progressive presents of a long frame. */
 export const SURFACE_COMPUTE_PROGRESS_MS = 500;
+
+/**
+ * How much MEASURED work one fence may stand behind — the compute arm's
+ * `SURFACE_STRIP_FENCE_GROUP_MS`, and deliberately the same number,
+ * because it is the same trade already made once on the WebGL arm: every
+ * sync point on a stack costs the same tax REGARDLESS of the work behind
+ * it, so the only lever on that tax is how much work each one carries.
+ *
+ * WHY IT IS NOT ZERO AND NOT INFINITE. A fenced null dispatch costs
+ * 100.960 ms in Firefox against 3.265 ms in Chrome (measured, one real
+ * AMD RX 7900 XTX, hardware adapters confirmed in both), and after
+ * {@link surfaceComputeDispatchWorkMs} took that constant out of every
+ * SIZING decision, what was left of Firefox's 8-11x against Chrome was
+ * the per-fence price itself: 150 fences x ~100 ms against a 13.2 s
+ * frame. Fencing every dispatch prices a queue-limited sliver — a march
+ * tail slice, a free batch that paints backdrop, a hit batch the sweep
+ * could only half fill — at a full round-trip for nearly no work.
+ * Grouping to a work target fixes exactly those and leaves an expensive
+ * dispatch alone: a lane whose dispatches MEASURE at the pass target
+ * closes its group at one ({@link surfaceComputeFenceGroupSize}).
+ *
+ * WHAT IT TRADES AGAINST is why the group is bounded by three things and
+ * not just this one. Each dispatch is still its own SUBMISSION, so the
+ * i915 preemption boundary is untouched — a group is a fence, not a wider
+ * dispatch. But the queued work is cancellation debt and it is present
+ * debt, so `runFrame` closes a group early at whichever comes first: this
+ * target, {@link SURFACE_COMPUTE_FENCE_GROUP_MAX} dispatches, or the time
+ * left before the next progressive present (or the frame budget) falls
+ * due.
+ */
+export const SURFACE_COMPUTE_FENCE_GROUP_MS = 300;
+
+/**
+ * Dispatches one fence may stand behind whatever they measure — and THIS
+ * IS NOT A TUNING CONSTANT, it is a MEASURED BROWSER CEILING.
+ *
+ * **FIREFOX LOSES ITS DEVICE AT FOUR.** Measured on this repository's AMD
+ * RX 7900 XTX on `DISPLAY=:0`, the fence gate's own fixture, production
+ * build: with four or more dispatches queued behind one
+ * `onSubmittedWorkDone`, the settle frame's first march sweep raises
+ * `Uncaptured WebGPU error: Not enough memory left`, the device is lost,
+ * and the session falls back to the WebGL tracer — reproduced at 4 and at
+ * 6, and clean at 1, 2 and 3. It is a COUNT and not a volume: three
+ * survive at 640x360, 960x540 and 1280x720 alike, and the writes
+ * outstanding when it dies are ~16 KB each. The likely quantity is
+ * OUTSTANDING QUEUE WRITES rather than dispatches — each dispatch stages
+ * two, the params block and its ray list — which is why the shipped cap
+ * keeps a step of margin below the three that measured clean: a dispatch
+ * that ever grows a THIRD write would put three dispatches back over the
+ * edge, and losing the device costs a compute-only session (fold-shaped
+ * or escape-shaped 4D) its Surface renderer outright.
+ *
+ * Chrome tolerates eight — the WebGL arm's own
+ * `SURFACE_STRIP_FENCE_GROUP_MAX` — and gains nothing measurable from
+ * them, so the cap is the SMALLEST stack's rather than a compromise
+ * between them. Lifting it is gated on the per-dispatch writes being
+ * unified into one write per sweep (a base offset the kernel reads, or a
+ * dynamic bind-group offset), not on picking a bigger number.
+ */
+export const SURFACE_COMPUTE_FENCE_GROUP_MAX = 2;
 
 /** The gamma both tracers encode their output with (surface-material.ts's
  * `pow(linBase * lit, 1/2.2)` and its WGSL mirror). Supersampling's
@@ -1328,9 +1412,10 @@ export function surfaceComputeFenceRoundTripMs(
  * out, so a per-fence constant cannot be read as the cost of the work
  * behind it.
  *
- * WHY IT EXISTS. `dispatchTimed` times across its own
+ * WHY IT EXISTS. The frame loop times its dispatches across its own
  * `device.queue.onSubmittedWorkDone()`, so the fence latency is inside
- * the number. MEASURED on one real AMD RX 7900 XTX, hardware adapters
+ * the number (one fence per GROUP of them, since grouping — see
+ * {@link surfaceComputeFenceGroupSize}). MEASURED on one real AMD RX 7900 XTX, hardware adapters
  * confirmed in both browsers: a fenced null dispatch costs 100.960 ms in
  * Firefox against 3.265 ms in Chrome — Firefox's round 100 ms suggesting
  * the promise resolves on a polling tick, so the price is per fence
@@ -1385,6 +1470,101 @@ export function surfaceComputeDispatchWorkMs(
   fenceMs: number,
 ): number {
   return Math.max(0, wallMs - fenceMs);
+}
+
+/**
+ * HOW MANY DISPATCHES ONE FENCE MAY STAND BEHIND, from the only evidence
+ * that means anything here: what a dispatch of this LANE was last MEASURED
+ * to cost, with its fence taken out.
+ *
+ * IT IS NOT A PREDICTION, and that is the correction this function's own
+ * first draft needed. Both schedulers SIZE a dispatch to hit a target —
+ * {@link marchChunkFor} divides the pass target by the per-ray·step EMA,
+ * {@link shadeHitBatchSize} divides the hit allowance by the marginal — so
+ * a dispatch's model-predicted cost is that target BY CONSTRUCTION and
+ * carries no information at all. MEASURED on Firefox at 640x360: every
+ * march slice of a settle predicted exactly 250.0 ms while measuring
+ * 26-29 ms of fence-free work, so a group sized off the prediction closed
+ * at two dispatches on a lane where eight were affordable.
+ *
+ * SO THE INPUT IS THE LANE'S RUNNING MAXIMUM per-dispatch work this frame,
+ * doubled to price the queued cancellation debt — this is
+ * `surfaceComputeLightingFenceGroup` from the removed participating
+ * medium, constant for constant, and its reasoning holds unchanged: a
+ * running MAX can only ever be raised by a later, slower dispatch, which
+ * is the safe direction for a decision about how much work to queue. The
+ * maximum is per FRAME, so an expensive band cannot pin the group size for
+ * a session.
+ *
+ * `null` — no dispatch of this lane has come back yet — returns 1: THE
+ * PILOT. No group is built on a cost this frame has not measured, so a
+ * cold or badly scaled lane misprices at most one dispatch's worth of
+ * queued work rather than {@link SURFACE_COMPUTE_FENCE_GROUP_MAX}.
+ *
+ * `remainingMs` is the CALLER's ceiling — the time before the next
+ * progressive present falls due, or before the frame budget cuts,
+ * whichever is nearer. Queued work is present debt as well as
+ * cancellation debt: the screen has to keep developing through a long
+ * drain and a budget cut has to be able to land, so a caller with nothing
+ * left to spend gets a group of one, which is the pre-grouping loop
+ * exactly. Pure so all three bounds are unit-tested.
+ */
+export function surfaceComputeFenceGroupSize(
+  peakDispatchWorkMs: number | null,
+  remainingMs = Infinity,
+  maxDispatches = SURFACE_COMPUTE_FENCE_GROUP_MAX,
+): number {
+  if (
+    peakDispatchWorkMs === null ||
+    !Number.isFinite(peakDispatchWorkMs) ||
+    peakDispatchWorkMs < 0
+  ) {
+    return 1;
+  }
+  return Math.max(
+    1,
+    Math.min(
+      maxDispatches,
+      Math.floor(
+        Math.min(SURFACE_COMPUTE_FENCE_GROUP_MS, remainingMs) /
+          Math.max(0.01, 2 * peakDispatchWorkMs),
+      ),
+    ),
+  );
+}
+
+/**
+ * THE PER-DISPATCH SHARE of one fence group's fence-free work: an EQUAL
+ * split, said out loud because a group measures ONE time for N pieces of
+ * work and every capacity ladder below still judges a single dispatch
+ * against a budget.
+ *
+ * WHY EQUAL IS THE RIGHT SPLIT FOR A LADDER. The alternative — split by
+ * each member's predicted cost — asks the model to say which member was
+ * expensive, which is precisely what the group did not measure; it would
+ * make the evidence a restatement of the prediction. An equal split
+ * claims nothing beyond the group's own average, and both ladders are
+ * coarse instruments (a doubling, or a quartering past twice budget) that
+ * an average serves honestly. The members of a group are also nearly
+ * always the same width — a drain sizes every batch from the same sizer
+ * state, a sweep slices from the same EMA — with the queue-limited tail
+ * the one exception, and the queue-limited rule already forbids THAT
+ * member from growing a capacity.
+ *
+ * WHAT DOES NOT USE THIS. The two-term cost model does not need a share
+ * at all: {@link nextShadeHitCost} takes the group's dispatch COUNT and
+ * fits `d·intercept + N·marginal` to the one measurement, which is exact
+ * at any mix of widths. And the march's per-ray·step EMA reads the
+ * group's aggregate rate (its work over its total ray·steps), which is
+ * what one dispatch of the same total rays would have given. So the equal
+ * split is the ladders' number alone — it is not a general attribution
+ * rule, and nothing here should grow into one.
+ */
+export function surfaceComputeGroupDispatchMs(
+  groupWorkMs: number,
+  dispatches: number,
+): number {
+  return groupWorkMs / Math.max(1, dispatches);
 }
 
 /**
@@ -1548,12 +1728,37 @@ export function nextShadeHitCost(
   cost: ShadeHitCost,
   hits: number,
   measuredUs: number,
+  /** How many DISPATCHES that one measurement covers — a fence group's
+   * members, since a group measures once for all of them
+   * ({@link surfaceComputeFenceGroupSize}). `hits` is then the group's
+   * TOTAL hits and the model fitted is `d·intercept + N·marginal`, which
+   * is the honest statement of what was measured: d fixed costs were
+   * paid and N hits were shaded. One dispatch — the default — is the
+   * original function character for character.
+   *
+   * EVERY PROPERTY ABOVE SURVIVES THE GENERALIZATION, which is why it is
+   * a parameter rather than a second function. The fit stays EXACT
+   * (`d·I' + N·m' = measured`, since the intercept absorbs `(1−w)s/d` on
+   * each of d dispatches and the marginal `w·s/N` on each of N hits), and
+   * the ratio invariant is untouched: with `w = N/(N + d·PIVOT)`,
+   * `I/m = PIVOT` is preserved identically, exactly as it is at d = 1
+   * (and the clamps break it in the same reachable way — see the
+   * queue-limited paragraph above, which a group does not change).
+   *
+   * AND AT EQUAL WIDTHS IT IS THE SAME ANSWER as folding each member
+   * separately at {@link surfaceComputeGroupDispatchMs}'s equal share:
+   * substituting `N = d·n` and `measured = d·(C/d)` gives `w` and both
+   * updates back unchanged, so the two readings of a uniform group agree
+   * by algebra and not by luck. Unequal widths are where they part, and
+   * the joint fit is the one that does not have to guess. */
+  dispatches = 1,
 ): ShadeHitCost {
+  const d = Math.max(1, dispatches);
   const n = Math.max(1, hits);
-  const surpriseUs = measuredUs - (cost.interceptUs + n * cost.marginalUs);
-  const w = n / (n + SURFACE_COMPUTE_SHADE_COST_PIVOT);
+  const surpriseUs = measuredUs - (d * cost.interceptUs + n * cost.marginalUs);
+  const w = n / (n + d * SURFACE_COMPUTE_SHADE_COST_PIVOT);
   return {
-    interceptUs: Math.max(0, cost.interceptUs + (1 - w) * surpriseUs),
+    interceptUs: Math.max(0, cost.interceptUs + ((1 - w) * surpriseUs) / d),
     marginalUs: Math.max(
       0,
       // The rate limit on optimism — see
@@ -4029,30 +4234,286 @@ export class SurfaceComputeRenderer {
       return true;
     };
 
-    /** One measured dispatch, in BOTH currencies. `wallMs` is the honest
-     * wall clock — what the tally reports and what the trace lines print
-     * — and `workMs` is that with the session's fence round-trip taken
-     * out, which is the ONLY number a sizing model or a capacity ladder
-     * may read ({@link surfaceComputeDispatchWorkMs}). Two fields rather
-     * than one corrected number so no later reader has to guess which it
-     * is holding. */
-    const dispatchTimed = async (
+    // balloonCostScale: the balloon spike's march-step numbers (the
+    // prior comment above `balloonCostScale`).
+    let rayStepEmaUs =
+      SURFACE_COMPUTE_INITIAL_RAY_STEP_US * lensCostScale * balloonCostScale;
+    /**
+     * THE FENCE GROUP: what has been SUBMITTED since the last fence and
+     * what each of those dispatches still owes its model.
+     *
+     * Every dispatch is still its own submission — the i915 preemption
+     * boundary, and the reason `submitDispatch` is untouched — but the
+     * `onSubmittedWorkDone` round-trip is paid once per GROUP, because
+     * that round-trip costs the same whatever stands behind it — this
+     * session's own calibration probes say how much, and the two
+     * browsers this project measures differ by more than an order of
+     * magnitude. A group is a fence, not a wider dispatch.
+     *
+     * The record is what the flush needs and nothing more: a march slice
+     * owes the per-ray·step EMA its ray·steps, a hit batch owes
+     * {@link nextShadeHitCost} its width and the two capacity ladders the
+     * budget it was sized against plus whether the queue could even fill
+     * it. A FREE batch owes nothing — it has no cost model, and its GPU
+     * time is a background write per ray.
+     */
+    type PendingDispatch =
+      | { kind: "march"; rays: number; steps: number }
+      | {
+          kind: "shade";
+          free: boolean;
+          hits: number;
+          /** What the sizer ASKED for, against which `hits` says whether
+           * this batch was queue-limited — the evidence rule the capacity
+           * ladders below turn on. */
+          wanted: number;
+          budgetMs: number;
+        };
+    let pending: PendingDispatch[] = [];
+    /** `performance.now()` at the group's FIRST submit — the group's wall
+     * clock is measured from there across the one fence, so it is the
+     * honest "time the frame spent on this group". */
+    let groupStart = 0;
+    /** Fences actually paid, the instrument this grouping exists to move
+     * (a frame's dispatch count is unchanged by design). */
+    let fences = 0;
+    /**
+     * THE EVIDENCE THE GROUP SIZE IS BUILT ON: each lane's running MAXIMUM
+     * fence-free work per dispatch, this frame
+     * ({@link surfaceComputeFenceGroupSize}). `null` until that lane's
+     * first group comes back, which is the PILOT — one dispatch, one
+     * fence, no group built on a cost nothing has measured.
+     *
+     * PER FRAME, not per session: a frame is one pose at one raster, so
+     * its dispatches are comparable to each other in a way another
+     * frame's are not, and an expensive band cannot pin the group size
+     * for the life of a session. A shade group reads the HIT lane — a
+     * free batch has no cost of its own to contribute, and pricing the
+     * group by the hits it also carries is the conservative direction.
+     */
+    let marchPeakWorkMs: number | null = null;
+    let hitPeakWorkMs: number | null = null;
+
+    /** Submit one dispatch into the current group. Returns false only
+     * when the frame was cancelled during the session's one-time fence
+     * calibration. */
+    const queueDispatch = async (
       pipeline: GPUComputePipeline,
       bindGroup: GPUBindGroup,
       count: number,
+      record: PendingDispatch,
       copyAfter?: { src: GPUBuffer; dst: GPUBuffer; dstOffset: number },
-    ): Promise<{ wallMs: number; workMs: number } | null> => {
-      if (!(await ensureFenceCalibrated(pipeline, bindGroup))) return null;
+    ): Promise<boolean> => {
+      if (!(await ensureFenceCalibrated(pipeline, bindGroup))) return false;
       const t0 = submitDispatch(pipeline, bindGroup, count, copyAfter);
+      if (pending.length === 0) groupStart = t0;
+      pending.push(record);
+      passes++;
+      return true;
+    };
+
+    /** Must the group close now? `limitMs` is what the CALLER has left to
+     * spend before the next progressive present (or the frame budget)
+     * falls due — see {@link surfaceComputeFenceGroupSize}. */
+    const groupClosed = (limitMs: number): boolean => {
+      if (pending.length === 0) return false;
+      // A pin names a COUNT outright, so it stands in for the measured
+      // sizing entirely — `=1` is one fence per dispatch, the loop
+      // exactly as it ran before grouping.
+      const pin = surfaceComputeFenceGroupPin;
+      if (pin !== null) return pending.length >= pin;
+      const lane =
+        pending[0].kind === "march" ? marchPeakWorkMs : hitPeakWorkMs;
+      return pending.length >= surfaceComputeFenceGroupSize(lane, limitMs);
+    };
+
+    /** What THIS group has left to spend: the time before the next
+     * progressive present falls due, or before the frame budget cuts,
+     * whichever is nearer. Both are debts the queued work delays — the
+     * screen has to keep developing through a long drain, and a budget
+     * cut has to be able to land — so whichever runs out first closes the
+     * group. A caller with no present to make and no budget has
+     * `Infinity` and is bounded by the work target and the count alone. */
+    const groupLimitMs = (): number =>
+      Math.min(
+        opts.onProgress
+          ? progressMs - (performance.now() - lastProgress)
+          : Infinity,
+        budgetMs - (performance.now() - wallStart),
+      );
+
+    /**
+     * Fence the group, then hand its ONE measurement to the models the
+     * dispatches behind it belong to. Returns false when the frame was
+     * cancelled (the caller returns null, exactly as a null dispatch
+     * timing used to mean).
+     *
+     * THE SUBTRACTION IS ONE FENCE PER GROUP, not one per dispatch: the
+     * group paid a single round-trip, so a single round-trip is what
+     * comes out ({@link surfaceComputeDispatchWorkMs}).
+     *
+     * THE TALLY IS WALL CLOCK — a fence the frame really waited on is
+     * time the frame really spent — while everything that SIZES anything
+     * reads the fence-free work. That split is unchanged; what changed is
+     * the unit it is measured over.
+     *
+     * THE ATTRIBUTION, spelled out because a group measures one time for
+     * N pieces of work:
+     *
+     * - the march's per-ray·step EMA takes the group's AGGREGATE rate,
+     *   its work over its total ray·steps, which is what one dispatch of
+     *   the same total rays would have given. One measurement, one EMA
+     *   update;
+     * - the hit queue's two-term model takes the group as a group —
+     *   `d` dispatches and `N` hits fitted jointly, which is exact at any
+     *   mix of widths ({@link nextShadeHitCost}'s `dispatches`);
+     * - the two capacity LADDERS judge one dispatch against a budget, so
+     *   they get {@link surfaceComputeGroupDispatchMs}'s equal share, once
+     *   per member, in submit order — the ladder paces the climb per
+     *   DISPATCH because the watchdog sees dispatches, and folding a
+     *   group into a single ladder step would slow the climb out of the
+     *   cold cap by the group size;
+     * - a FREE batch is attributed ZERO and feeds nothing. That is not a
+     *   convenience: its shade-entry exit is two lines (evaluate the
+     *   backdrop ramp at this pixel, store it), so what a free dispatch
+     *   costs really is the submission and the fence rather than work,
+     *   which is the whole reason the queues are split. A group of
+     *   nothing BUT free batches has no priced member, so its work is
+     *   shared over the frees for the trace's sake alone.
+     */
+    const flushGroup = async (): Promise<boolean> => {
+      if (pending.length === 0) return true;
       await device.queue.onSubmittedWorkDone();
       if (token !== this.frameToken || this.isLost || this.destroyed) {
-        return null;
+        return false;
       }
-      const wallMs = performance.now() - t0;
-      return {
-        wallMs,
-        workMs: surfaceComputeDispatchWorkMs(wallMs, this.fenceMs ?? 0),
-      };
+      const group = pending;
+      pending = [];
+      fences++;
+      const wallMs = performance.now() - groupStart;
+      const workMs = surfaceComputeDispatchWorkMs(wallMs, this.fenceMs ?? 0);
+      gpuMs += wallMs;
+      // A GROUP IS HOMOGENEOUS by construction, which is what lets one
+      // tally lane take its whole wall: the sweep closes its group at the
+      // end of the active list (the status readback cannot run behind
+      // unfenced work) and the drain closes its own when the queues empty
+      // or the HOLD breaks out, so a march slice and a shade batch can
+      // never share a fence. Free and hit batches DO share one — same
+      // lane, same tally — and the attribution below is what keeps them
+      // apart where it matters.
+      if (group[0].kind === "march") {
+        marchGpuMs += wallMs;
+        let raySteps = 0;
+        for (const d of group) {
+          if (d.kind === "march") raySteps += d.rays * Math.max(1, d.steps);
+        }
+        const usPerRayStep = (workMs * 1000) / Math.max(1, raySteps);
+        // BOTH currencies, per dispatch, exactly as the ungrouped line
+        // carried them: `ms` is this member's share of the group's WALL
+        // (a fence the frame really waited on is time the frame really
+        // spent) and `work` its share with that one fence taken out.
+        const marchWallShare = surfaceComputeGroupDispatchMs(
+          wallMs,
+          group.length,
+        );
+        const marchWorkShare = surfaceComputeGroupDispatchMs(
+          workMs,
+          group.length,
+        );
+        for (const d of group) {
+          if (d.kind !== "march") continue;
+          tr(
+            `march END ms=${marchWallShare.toFixed(1)} work=${marchWorkShare.toFixed(1)} len=${d.rays} steps=${d.steps}`,
+          );
+        }
+        // ONCE PER MEMBER, not once per group, at the group's aggregate
+        // rate: the measurement covers d dispatches' worth of ray·steps,
+        // so it is d dispatches' worth of evidence, and folding it in
+        // once would slow the EMA's convergence — and with it
+        // marchChunkFor's climb — by the group size. MEASURED on Chrome,
+        // where a single fold per group turned a 141-dispatch settle into
+        // a 210-dispatch one at the same wall time: more, smaller slices,
+        // each still paying a submission.
+        for (let i = 0; i < group.length; i++) {
+          rayStepEmaUs = rayStepEmaUs * 0.6 + usPerRayStep * 0.4;
+        }
+        marchPeakWorkMs = Math.max(marchPeakWorkMs ?? 0, marchWorkShare);
+        tr(
+          `fence march dispatches=${group.length} wall=${wallMs.toFixed(1)} work=${workMs.toFixed(1)} perDispatch=${marchWorkShare.toFixed(1)} peak=${marchPeakWorkMs.toFixed(1)} emaUs=${rayStepEmaUs.toFixed(3)}`,
+        );
+        return true;
+      }
+      shadeGpuMs += wallMs;
+      const shade = group.filter(
+        (d): d is Extract<PendingDispatch, { kind: "shade" }> =>
+          d.kind === "shade",
+      );
+      const hits = shade.filter((d) => !d.free);
+      const priced = hits.length > 0 ? hits : shade;
+      const shareMs = surfaceComputeGroupDispatchMs(workMs, priced.length);
+      const shareWallMs = surfaceComputeGroupDispatchMs(wallMs, priced.length);
+      for (const d of shade) {
+        const own = priced.includes(d);
+        tr(
+          `shade END ms=${(own ? shareWallMs : 0).toFixed(1)} work=${(own ? shareMs : 0).toFixed(1)} isFree=${d.free} len=${d.hits}`,
+        );
+      }
+      if (hits.length > 0) {
+        let totalHits = 0;
+        for (const d of hits) totalHits += d.hits;
+        // Hit economics only — free batches would just dilute the model
+        // toward zero and re-open the miss-inflated-capacity hole.
+        sizer.cost = nextShadeHitCost(
+          sizer.cost,
+          totalHits,
+          workMs * 1000,
+          hits.length,
+        );
+        for (const d of hits) {
+          // A QUEUE-LIMITED batch (the sweep had fewer hits than the
+          // sizer asked for) may shrink the capacity but never grow it:
+          // coming in under budget on a batch that could not be any wider
+          // is not evidence that a wider one would fit. That is the
+          // probe-width lesson — miss runs inflating a capacity a hit
+          // band then paid — in the one place it can still happen now the
+          // queues are split.
+          const grown = nextShadeBatchSize(sizer.cap, shareMs, d.budgetMs);
+          sizer.cap = d.hits < d.wanted ? Math.min(sizer.cap, grown) : grown;
+        }
+        tr(
+          `shade cost→${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us cap→${sizer.cap}`,
+        );
+        if (lightingSizer && shadeHitsPin === null) {
+          // The lit lanes, on the same evidence rule as the unlit one
+          // above: a QUEUE-LIMITED batch may shrink the capacity and
+          // never grow it, because coming in under budget on a batch
+          // that could not be wider is not evidence that a wider one
+          // fits. A pinned width is the offline lever and is left alone.
+          lightingSizer.surfaceCost = nextShadeHitCost(
+            lightingSizer.surfaceCost,
+            totalHits,
+            workMs * 1000,
+            hits.length,
+          );
+          for (const d of hits) {
+            // The watchdog sees dispatches, not groups, so the ladder is
+            // paced by this dispatch's own attributed time.
+            const litGrown = nextLightingRayCap(lightingSizer.rayCap, shareMs);
+            lightingSizer.rayCap =
+              d.hits < d.wanted
+                ? Math.min(lightingSizer.rayCap, litGrown)
+                : litGrown;
+          }
+          tr(
+            `lit cost surf→${lightingSizer.surfaceCost.interceptUs.toFixed(0)}+n*${lightingSizer.surfaceCost.marginalUs.toFixed(1)}us rayCap→${lightingSizer.rayCap}`,
+          );
+        }
+        hitPeakWorkMs = Math.max(hitPeakWorkMs ?? 0, shareMs);
+      }
+      tr(
+        `fence shade dispatches=${group.length} hitDispatches=${hits.length} wall=${wallMs.toFixed(1)} work=${workMs.toFixed(1)} perDispatch=${shareMs.toFixed(1)} peak=${(hitPeakWorkMs ?? 0).toFixed(1)}`,
+      );
+      return true;
     };
 
     // The device's own ceiling on ONE dispatch — the last clamp on both
@@ -4105,10 +4566,6 @@ export class SurfaceComputeRenderer {
       return true;
     };
 
-    // balloonCostScale: the balloon spike's march-step numbers (the
-    // prior comment above `balloonCostScale`).
-    let rayStepEmaUs =
-      SURFACE_COMPUTE_INITIAL_RAY_STEP_US * lensCostScale * balloonCostScale;
     // The frame's terminal tally, accumulated as each sweep classifies
     // its rays — the whole-states scan that used to produce it needed a
     // readback this loop no longer pays for.
@@ -4134,6 +4591,7 @@ export class SurfaceComputeRenderer {
         // rays, and stepsThisPass alone cannot bound it.
         for (let offset = 0; offset < active.length;) {
           if (performance.now() - wallStart > budgetMs) {
+            if (!(await flushGroup())) return null;
             truncated = true;
             tr("budget truncated (march)");
             break outer;
@@ -4156,38 +4614,39 @@ export class SurfaceComputeRenderer {
           tr(
             `march BEGIN offset=${offset} chunk=${chunk} len=${slice.length} steps=${stepsThisPass} emaUs=${rayStepEmaUs.toFixed(3)} active=${active.length}`,
           );
-          const marchTiming = await dispatchTimed(
-            marchPipeline,
-            buffers.marchBindGroup,
-            slice.length,
-            // This slice's statuses, staged where the sweep's rebuild
-            // expects them — the kernel writes slot-relative
-            // (`statusOut[gid]`), so slice k's answers land at k's own
-            // offset and one map at the sweep's end reads the lot.
-            {
-              src: buffers.status,
-              dst: buffers.stagingStatus,
-              dstOffset: offset * 4,
-            },
-          );
-          tr(
-            `march END ms=${marchTiming === null ? "null" : marchTiming.wallMs.toFixed(1)} work=${marchTiming === null ? "null" : marchTiming.workMs.toFixed(1)}`,
-          );
-          if (marchTiming === null) return null;
-          // The TALLY is wall clock — a fence the frame really waited on
-          // is time the frame really spent — while the per-ray·step EMA
-          // that sizes the next slice reads the fence-free work alone.
-          gpuMs += marchTiming.wallMs;
-          marchGpuMs += marchTiming.wallMs;
-          passes++;
-          const usPerRayStep =
-            (marchTiming.workMs * 1000) /
-            (slice.length * Math.max(1, stepsThisPass));
-          rayStepEmaUs = rayStepEmaUs * 0.6 + usPerRayStep * 0.4;
+          if (
+            !(await queueDispatch(
+              marchPipeline,
+              buffers.marchBindGroup,
+              slice.length,
+              { kind: "march", rays: slice.length, steps: stepsThisPass },
+              // This slice's statuses, staged where the sweep's rebuild
+              // expects them — the kernel writes slot-relative
+              // (`statusOut[gid]`), so slice k's answers land at k's own
+              // offset and one map at the sweep's end reads the lot.
+              // Queue writes and their following submissions are ordered,
+              // so a LATER slice in the same group cannot overtake this
+              // copy of the status buffer it is about to overwrite.
+              {
+                src: buffers.status,
+                dst: buffers.stagingStatus,
+                dstOffset: offset * 4,
+              },
+            ))
+          ) {
+            return null;
+          }
           offset += chunk;
           sweepSliced = offset;
-          if (!(await maybePresent())) return null;
+          // The sweep's own end closes the group whatever it holds: the
+          // status readback below cannot run behind unfenced work, and a
+          // present between sweeps is the cadence this loop promises.
+          if (offset >= active.length || groupClosed(groupLimitMs())) {
+            if (!(await flushGroup())) return null;
+            if (!(await maybePresent())) return null;
+          }
         }
+        if (!(await flushGroup())) return null;
         // 4 B per ACTIVE ray, already staged by the slices' own
         // submissions — where this used to read the WHOLE 16 B/ray states
         // buffer back every sweep, active list or not, to look at one
@@ -4256,6 +4715,7 @@ export class SurfaceComputeRenderer {
         if (performance.now() - wallStart > budgetMs) {
           // Marched-but-unshaded rays keep their seed pixels — the
           // documented truncation contract.
+          if (!(await flushGroup())) return null;
           truncated = true;
           tr("budget truncated (shade)");
           break outer;
@@ -4347,79 +4807,44 @@ export class SurfaceComputeRenderer {
         );
         writeParams(batch.length, 0);
         device.queue.writeBuffer(buffers.active, 0, batch);
-        const shadeTiming = await dispatchTimed(
-          shadePipeline,
-          buffers.shadeBindGroup,
-          batch.length,
-        );
-        tr(
-          `shade END ms=${shadeTiming === null ? "null" : shadeTiming.wallMs.toFixed(1)} work=${shadeTiming === null ? "null" : shadeTiming.workMs.toFixed(1)}`,
-        );
-        if (shadeTiming === null) return null;
-        // Wall clock to the tally, fence-free work to the model and both
-        // ladders below — see {@link surfaceComputeDispatchWorkMs}. The
-        // caps are the reason this matters: they compare a TOTAL dispatch
-        // time against a budget, so a per-fence constant inside the
-        // number pins them at their floor rather than merely biasing them.
-        gpuMs += shadeTiming.wallMs;
-        shadeGpuMs += shadeTiming.wallMs;
-        passes++;
-        if (isFree) shadeFreeQueue = shadeFreeQueue.slice(batch.length);
-        else shadeHitQueue = shadeHitQueue.slice(batch.length);
-        if (!isFree) {
-          lastHitDispatch = performance.now();
-          // Hit economics only — free batches would just dilute the model
-          // toward zero and re-open the miss-inflated-capacity hole.
-          sizer.cost = nextShadeHitCost(
-            sizer.cost,
+        if (
+          !(await queueDispatch(
+            shadePipeline,
+            buffers.shadeBindGroup,
             batch.length,
-            shadeTiming.workMs * 1000,
-          );
-          // A QUEUE-LIMITED batch (the sweep had fewer hits than the
-          // sizer asked for) may shrink the capacity but never grow it:
-          // coming in under budget on a batch that could not be any wider
-          // is not evidence that a wider one would fit. That is the
-          // probe-width lesson — miss runs inflating a capacity a hit
-          // band then paid — in the one place it can still happen now the
-          // queues are split.
-          const grown = nextShadeBatchSize(
-            sizer.cap,
-            shadeTiming.workMs,
-            hitBudgetMs,
-          );
-          sizer.cap =
-            batch.length < batchSize ? Math.min(sizer.cap, grown) : grown;
-          tr(
-            `shade cost→${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us cap→${sizer.cap}`,
-          );
-          if (lightingSizer && shadeHitsPin === null) {
-            // The lit lanes, on the same evidence rule as the unlit one
-            // above: a QUEUE-LIMITED batch may shrink the capacity and
-            // never grow it, because coming in under budget on a batch
-            // that could not be wider is not evidence that a wider one
-            // fits. A pinned width is the offline lever and is left alone.
-            lightingSizer.surfaceCost = nextShadeHitCost(
-              lightingSizer.surfaceCost,
-              batch.length,
-              shadeTiming.workMs * 1000,
-            );
-            // The watchdog sees dispatches, not batches, so the ladder is
-            // paced by this dispatch's own measured time.
-            const litGrown = nextLightingRayCap(
-              lightingSizer.rayCap,
-              shadeTiming.workMs,
-            );
-            lightingSizer.rayCap =
-              batch.length < batchSize
-                ? Math.min(lightingSizer.rayCap, litGrown)
-                : litGrown;
-            tr(
-              `lit cost surf→${lightingSizer.surfaceCost.interceptUs.toFixed(0)}+n*${lightingSizer.surfaceCost.marginalUs.toFixed(1)}us rayCap→${lightingSizer.rayCap}`,
-            );
-          }
+            {
+              kind: "shade",
+              free: isFree,
+              hits: batch.length,
+              wanted: batchSize,
+              budgetMs: hitBudgetMs,
+            },
+          ))
+        ) {
+          return null;
         }
-        if (!(await maybePresent())) return null;
+        // The queues advance at SUBMIT time — a later batch in the same
+        // group must not re-send rays this one already took — while every
+        // model and ladder waits for the group's one measurement.
+        if (isFree) shadeFreeQueue = shadeFreeQueue.slice(batch.length);
+        else {
+          shadeHitQueue = shadeHitQueue.slice(batch.length);
+          lastHitDispatch = performance.now();
+        }
+        // Draining the queues closes the group: the outer loop is about
+        // to march again (a different pipeline, a different tally lane),
+        // and nothing more is coming to fill this fence.
+        if (
+          (shadeHitQueue.length === 0 && shadeFreeQueue.length === 0) ||
+          groupClosed(groupLimitMs())
+        ) {
+          if (!(await flushGroup())) return null;
+          if (!(await maybePresent())) return null;
+        }
       }
+      // The HOLD above breaks out with hits still queued and possibly a
+      // group still open; the march is next, so close it here.
+      if (!(await flushGroup())) return null;
     }
 
     tr("final readback BEGIN");
@@ -4448,7 +4873,7 @@ export class SurfaceComputeRenderer {
     counts.active =
       rays - counts.hit - counts.miss - counts.exhausted - counts.plane;
     tr(
-      `frame done passes=${passes} truncated=${truncated} hit=${counts.hit} miss=${counts.miss} exhausted=${counts.exhausted} active=${counts.active} plane=${counts.plane}`,
+      `frame done passes=${passes} fences=${fences} truncated=${truncated} hit=${counts.hit} miss=${counts.miss} exhausted=${counts.exhausted} active=${counts.active} plane=${counts.plane}`,
     );
     return {
       pixels,
