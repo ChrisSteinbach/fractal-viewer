@@ -11,6 +11,12 @@ type Step = {
   env?: Record<string, string>;
 };
 
+// These spawn the REAL planner against this checkout, which walks the whole
+// dependency closure: ~4.6s locally, against vitest's 5s default. It is the
+// analysis actually happening that costs it -- the run it replaced bailed in
+// 0.5s on an unresolvable import and selected a full sweep every time.
+const PLANNER_TIMEOUT_MS = 60_000;
+
 function workflow(name: string) {
   return parse(
     readFileSync(
@@ -140,62 +146,77 @@ describe("GPU workflow gates", () => {
     expect(artifact?.uses).toContain("actions/upload-artifact@");
   });
 
-  it("records the reuse in the plan's reasons and skips both GPU jobs", () => {
-    // Run the real planner with the real flag against this checkout, so the
-    // artifact's shape is asserted rather than described.
-    const twin = "d721cc766028735ab7cd28f85646327d755b5ba3";
-    const out = execFileSync(
-      "node",
-      [
-        "scripts/gpu-ci-plan.mjs",
-        "--base=HEAD~1",
-        "--head=HEAD",
-        `--swept=${twin}`,
-      ],
-      { cwd: new URL("..", import.meta.url), encoding: "utf8" },
-    );
-    const plan = JSON.parse(out);
-    expect(plan.full).toBe(false);
-    expect(plan.matrix.include).toEqual([]);
-    expect(plan.reasons[0]).toContain(twin);
-    expect(plan.reasons[0]).toMatch(/tree is identical/);
-    // Structural too, so a reader need not parse a sentence to ask "reuse?".
-    expect(plan.swept).toBe(twin);
-  });
+  it(
+    "records the reuse in the plan's reasons and skips both GPU jobs",
+    () => {
+      // Run the real planner with the real flag against this checkout, so the
+      // artifact's shape is asserted rather than described.
+      const twin = "d721cc766028735ab7cd28f85646327d755b5ba3";
+      const out = execFileSync(
+        "node",
+        [
+          "scripts/gpu-ci-plan.mjs",
+          "--base=HEAD~1",
+          "--head=HEAD",
+          `--swept=${twin}`,
+        ],
+        { cwd: new URL("..", import.meta.url), encoding: "utf8" },
+      );
+      const plan = JSON.parse(out);
+      expect(plan.full).toBe(false);
+      expect(plan.matrix.include).toEqual([]);
+      expect(plan.reasons[0]).toContain(twin);
+      expect(plan.reasons[0]).toMatch(/tree is identical/);
+      // Structural too, so a reader need not parse a sentence to ask "reuse?".
+      expect(plan.swept).toBe(twin);
+    },
+    PLANNER_TIMEOUT_MS,
+  );
 
-  it("headlines a reuse as a reuse, never as proved independence", () => {
-    // Both outcomes end in no GPU jobs, and they are NOT the same claim: a
-    // reuse says this content already passed, independence says it was never
-    // touched. Borrowing independence's headline would misreport the one
-    // distinction this whole gate turns on.
-    const summary = new URL("../gpu-ci-plan-summary.test.md", import.meta.url);
-    const headline = (args: string[]) => {
-      rmSync(summary, { force: true });
-      execFileSync("node", ["scripts/gpu-ci-plan.mjs", ...args], {
-        cwd: new URL("..", import.meta.url),
-        encoding: "utf8",
-        env: { ...process.env, GITHUB_STEP_SUMMARY: fileURLToPath(summary) },
-      });
-      const first = readFileSync(summary, "utf8").split("\n")[0];
-      rmSync(summary, { force: true });
-      return first;
-    };
-    expect(
-      headline(["--base=HEAD~1", "--head=HEAD", "--swept=" + "a".repeat(40)]),
-    ).toMatch(/full sweep reused from a{40}; no GPU jobs/);
-    expect(headline(["--full"])).toMatch(/full 3D \+ 4D agreement/);
-  });
+  it(
+    "headlines a reuse as a reuse, never as proved independence",
+    () => {
+      // Both outcomes end in no GPU jobs, and they are NOT the same claim: a
+      // reuse says this content already passed, independence says it was never
+      // touched. Borrowing independence's headline would misreport the one
+      // distinction this whole gate turns on.
+      const summary = new URL(
+        "../gpu-ci-plan-summary.test.md",
+        import.meta.url,
+      );
+      const headline = (args: string[]) => {
+        rmSync(summary, { force: true });
+        execFileSync("node", ["scripts/gpu-ci-plan.mjs", ...args], {
+          cwd: new URL("..", import.meta.url),
+          encoding: "utf8",
+          env: { ...process.env, GITHUB_STEP_SUMMARY: fileURLToPath(summary) },
+        });
+        const first = readFileSync(summary, "utf8").split("\n")[0];
+        rmSync(summary, { force: true });
+        return first;
+      };
+      expect(
+        headline(["--base=HEAD~1", "--head=HEAD", "--swept=" + "a".repeat(40)]),
+      ).toMatch(/full sweep reused from a{40}; no GPU jobs/);
+      expect(headline(["--full"])).toMatch(/full 3D \+ 4D agreement/);
+    },
+    PLANNER_TIMEOUT_MS,
+  );
 
-  it("keeps the planner offline and unchanged for a local base/head run", () => {
-    const out = execFileSync(
-      "node",
-      ["scripts/gpu-ci-plan.mjs", "--base=HEAD~1", "--head=HEAD"],
-      { cwd: new URL("..", import.meta.url), encoding: "utf8" },
-    );
-    const plan = JSON.parse(out);
-    expect(plan.reasons.join(" ")).not.toMatch(/tree is identical/);
-    expect(plan.base).toBe("HEAD~1");
-  });
+  it(
+    "keeps the planner offline and unchanged for a local base/head run",
+    () => {
+      const out = execFileSync(
+        "node",
+        ["scripts/gpu-ci-plan.mjs", "--base=HEAD~1", "--head=HEAD"],
+        { cwd: new URL("..", import.meta.url), encoding: "utf8" },
+      );
+      const plan = JSON.parse(out);
+      expect(plan.reasons.join(" ")).not.toMatch(/tree is identical/);
+      expect(plan.base).toBe("HEAD~1");
+    },
+    PLANNER_TIMEOUT_MS,
+  );
 
   it("skips the deploy sweep only when this commit is already fully swept", () => {
     const deploy = workflow("deploy");

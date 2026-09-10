@@ -72,8 +72,20 @@ export function imports(file: string, source: string): string[] {
       }
     } else if (
       ts.isNewExpression(node) &&
-      node.expression.getText(parsed) === "URL"
+      node.expression.getText(parsed) === "URL" &&
+      (node.arguments?.length ?? 0) > 1
     ) {
+      // TWO arguments or it is not a module reference. The form this branch
+      // exists for is the bundler idiom `new URL("./worker.js",
+      // import.meta.url)`, where the second argument is the base. A
+      // ONE-argument `new URL(x)` cannot be a module reference at all: a
+      // relative specifier with no base is a runtime TypeError, so x is
+      // always an absolute runtime address -- and treating one as an import
+      // made a single runtime URL in scripts/gpu-flame-bench.mjs (a template
+      // literal, so not isStringLiteralLike) throw "unknown import" and fall
+      // the WHOLE selector back to a full sweep on every run, for every
+      // change, however independent. A dynamic first argument beside a base
+      // still throws: that one genuinely cannot be resolved.
       add(node.arguments?.[0]);
     } else if (
       ts.isNewExpression(node) &&

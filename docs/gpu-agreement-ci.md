@@ -304,6 +304,38 @@ the cache is the wrong store.
 
 ## Measurement record
 
+### The selector was inert until 2026-09-10
+
+Every run selected a FULL sweep whatever changed, so the impact machinery
+this document describes was delivering none of the savings measured below.
+Four hosted runs and three local replays all reported the identical reason:
+
+    analysis uncertainty: Error: unknown import in scripts/gpu-flame-bench.mjs
+
+`gpu-ci-impact.ts` treated EVERY `new URL(...)` as a possible module
+reference. `scripts/gpu-flame-bench.mjs` builds one runtime HTTP address from
+a template literal, which is a `TemplateExpression` rather than
+`isStringLiteralLike`, so analysing that file threw and the whole selection
+fell back. The file is in the closure every run analyses, so every run paid
+it.
+
+The branch exists for the bundler idiom `new URL(spec, import.meta.url)`,
+the only form the tests covered. A ONE-argument `new URL(x)` cannot be a
+module reference at all: a relative specifier with no base is a runtime
+TypeError, so the argument is always an absolute runtime address. The
+branch now requires a second argument. A dynamic first argument BESIDE a
+base still fails closed — that one genuinely cannot be resolved, and a test
+pins it so the narrowing cannot drift into unsoundness.
+
+Replayed over real commits after the fix, the selector discriminates:
+
+| Commit    | Change                       | Before | After                                     |
+| --------- | ---------------------------- | ------ | ----------------------------------------- |
+| `7ed79ce` | AGENTS.md only               | full   | independent, 0 shards                     |
+| `883c60c` | tracker sync only            | full   | independent, 0 shards                     |
+| `2c7f121` | touches `surface-compute.ts` | full   | full — `agreement dependency`             |
+| `616e4f3` | adds a repro script          | full   | full — `unclassified configuration/asset` |
+
 ### Duplicate sweeps on one tree, 2026-09-10
 
 The staging-ceiling merge ran the same full 36-shard sweep THREE times on one

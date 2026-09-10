@@ -76,6 +76,35 @@ describe("GPU impact policy", () => {
     expect(dependencyClosure(graph, roots)).toContain("src/texture.json");
     expect(dependencyClosure(graph, roots)).toContain("src/wire.ts");
   });
+  it("does not read a one-argument runtime URL as a module reference", () => {
+    // The branch above exists for the bundler idiom `new URL(spec,
+    // import.meta.url)`. A ONE-argument `new URL(x)` is an absolute runtime
+    // address -- a relative specifier with no base is a runtime TypeError --
+    // so it names no module. Reading one as an import is what made a single
+    // runtime URL in scripts/gpu-flame-bench.mjs throw "unknown import" and
+    // fall the WHOLE selector back to a full sweep on every run, for every
+    // change, however independent.
+    const graph = tree({
+      "src/bench.ts":
+        'export * from "./gpu"; const base = "https://h"; ' +
+        "new URL(`${base}/bench/index.html?x=1`); " +
+        'new URL("https://example.test/asset.json");',
+    });
+    expect(dependencyClosure(graph, roots)).toContain("src/wire.ts");
+    expect(selectImpact(graph, graph, ["src/panel.ts"], roots).full).toBe(
+      false,
+    );
+  });
+  it("still refuses a dynamic specifier that DOES sit beside a base", () => {
+    // Two arguments, so it is the module-reference form, and the first is not
+    // resolvable: that one genuinely cannot be analysed and must fail closed.
+    const graph = tree({
+      "src/bench.ts":
+        'export * from "./gpu"; const n = "a"; ' +
+        "new URL(`./${n}.json`, import.meta.url);",
+    });
+    expect(selectImpact(graph, graph, ["src/panel.ts"], roots).full).toBe(true);
+  });
   it.each<Record<string, string | null>>([
     { "src/new.ts": "export const x = 1;" },
     { "src/panel.ts": null },
