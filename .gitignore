@@ -27,3 +27,7 @@ scripts/out/
 src/app/public/THIRD-PARTY-LICENSES.txt
 
 .eslintcache
+
+# Browser diagnostic dumps (chrome://gpu saved for a session to read).
+/GPUInternals.html
+/IrisGPUInternals.html
