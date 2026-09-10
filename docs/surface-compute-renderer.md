@@ -1274,20 +1274,96 @@ at `--fencegroup=4` and `=6`; clean at 1, 2 and 3.
 | 1, 2, 3        | compute | compute | compute  |
 | 4, 6           | LOST    | —       | —        |
 
-IT IS A COUNT, NOT A VOLUME, which is why a fixed cap is the right shape of
-answer: three survive at every raster tried, and the writes outstanding
-when it dies are ~16 KB each (the settle's first slices are at
-`SURFACE_COMPUTE_MARCH_CHUNK_MIN`). The likely quantity is OUTSTANDING
-QUEUE WRITES rather than dispatches — each dispatch stages two, its params
-block and its ray list — which is why the shipped cap is TWO and not the
-three that measured clean: a dispatch that ever grows a third write would
-put three back over the edge, and the cost of being wrong is a
-compute-only session (fold-shaped or escape-shaped 4D) losing its Surface
-renderer outright. Chrome tolerates eight and gains nothing measurable
-from them, so the cap is the SMALLEST stack's rather than a compromise.
-Lifting it is gated on unifying the per-dispatch writes — one write per
-sweep plus a base offset the kernel reads, or a dynamic bind-group offset
-— not on picking a bigger number.
+#### It is a VOLUME, not a count — what the app-free reproduction settled
+
+THE FIRST READING OF THAT TABLE WAS WRONG, and it was wrong in the half
+that pointed at a fix. It read "a COUNT, not a volume: three survive at
+every raster tried, and the writes outstanding when it dies are ~16 KB
+each", named OUTSTANDING QUEUE WRITES as the likely quantity — two per
+dispatch, the params block and the ray list — and concluded that lifting
+the cap was gated on unifying those two into one write per sweep. The
+quantity was right; the writes named were not, and that unification would
+have bought nothing.
+
+`scripts/webgpu-staging-ceiling.repro.mjs` settles it away from this app
+entirely: a routed one-line HTML page on an `https:` origin, a fresh
+browser per rep, no build and no server, so what it measures is the
+BROWSER. Firefox 153.0 (Playwright's build), the same RX 7900 XTX on
+`DISPLAY=:0`, 5 reps x 10 rounds a cell.
+
+**Bare submits are harmless.** No `writeBuffer` at all, one
+`onSubmittedWorkDone` per burst:
+
+| submits per fence | 4   | 8   | 16  | 32  |
+| ----------------- | --- | --- | --- | --- |
+| died              | 0/5 | 0/5 | 0/5 | 0/5 |
+
+**Only the staged BYTES move it.** A fixed group of four, two writes per
+dispatch and nothing else queued:
+
+| per-dispatch write | 16 KB | 256 KB | 1 MB | 4 MB |
+| ------------------ | ----- | ------ | ---- | ---- |
+| died               | 0/5   | 0/5    | 1/5  | 4/5  |
+
+So the app's own two writes — 16 KB each, 128 KB across a group of four —
+are not what kills it. **Add the frame's PREFILL and the app's failure
+appears exactly where the app has it.** `runFrame` seeds `color`, `layer`
+and `states` through `queue.writeBuffer` once per frame, before any
+dispatch; the probe's `--prefillMb` is three writes of that total, its
+dispatches still staging 16 KB apiece:
+
+| prefill \ group | 1   | 3   | 4   | 8   |
+| --------------- | --- | --- | --- | --- |
+| 4 MB            | 0/5 | 1/5 | 3/5 | 5/5 |
+| 8 MB            | 0/5 | 3/5 | 5/5 | 5/5 |
+| 16 MB           | 0/5 | 0/5 | 5/5 | 5/5 |
+| 32 MB           | 5/5 | 5/5 | 5/5 | 5/5 |
+
+A 640x360 frame stages 16 B/ray of ray state and 4 B/ray of layer sidecar
+plus its colour rows — the 8 MB row — which dies at four, is marginal at
+three and is clean at one. That is the app's own measured behaviour, group
+for group, reproduced with no fractal in sight.
+
+WHY THE GROUP MATTERS AT ALL, then, is HOLD TIME rather than count.
+Firefox reclaims a submission's staging only when a poll observes its
+fence: `WebGPUParent` starts its timer at `POLL_TIME_MS = 100` and
+`MaintainDevices` calls `wgpu_server_poll_all_devices`, and nothing polls
+at submit time (Mozilla's bug 1870699, "Don't poll WebGPU from a timer").
+That 100 ms tick is the same one the section above measured from the
+outside as Firefox's fence round-trip. A wider group is a longer hold on
+the megabytes the frame already staged, and `Not enough memory left` is
+wgpu's generic `DeviceError::OutOfMemory` text rather than a report about
+VRAM — 23 of this machine's 24 GB were free every time it fired.
+
+TWO THINGS THE TABLE SAYS THAT NO FENCE GROUP CAN FIX. The 32 MB row dies
+at a group of ONE, so past some raster a frame's prefill is over the
+ceiling however finely its dispatches are fenced — not observed in the app
+yet, because a Firefox settle at 1280x720 does not complete inside 180 s
+to be observed. And fencing BETWEEN the three prefill writes does not
+rescue them (16 MB 3/5, 24 MB 5/5, 32 MB 4/5, 48 MB 5/5 dead at a group of
+one): a returning fence is not what releases the staging, the poll is.
+What does NOT move it is memory the device merely HOLDS — 16, 32, 64 and
+128 MB of untouched storage buffers all died 0/5 at the group of four that
+kills a prefill.
+
+A LOST DEVICE DOES NOT COME BACK IN THAT TAB. Of 6 probe reps that
+actually killed one, 0 recovered: `requestDevice()` itself rejects with
+`Not enough memory left`, or the replacement device cannot allocate 8 MB —
+at 0 ms, 500 ms and 3000 ms after the loss alike. So main.ts's one-way
+`surfaceComputeBlock = "failed"` latch is CORRECT rather than merely
+conservative, and a retry-on-loss is a measured won't-do.
+
+CHROME IS UNAFFECTED — 0/5 dead at 8, 32, 128 and 512 submits a fence with
+the same writes — and gains nothing measurable from a wider group, so the
+cap stays the SMALLEST stack's rather than a compromise. **The shipped cap
+of TWO stands, for a better reason than the one it was given:** three is
+MARGINAL, not clean (1/5 and 3/5 dead at a 640x360 frame's prefill), and
+the cost of being wrong is a compute-only session — fold-shaped or
+escape-shaped 4D — losing its Surface renderer outright with no way back.
+**LIFTING IT IS GATED ON THE FRAME PREFILL**: seed `color`, `layer` and
+`states` on the device (a prefill kernel, or a clear) instead of staging
+them through the queue, and the megabytes this ceiling is about stop being
+queued at all.
 
 AND EACH LANE IS PILOTED. Until a lane's first group comes back measured
 there is no measurement to size from, so that lane fences one dispatch at a
@@ -1296,13 +1372,18 @@ pilot had. A shade group reads the HIT lane: a free batch has no cost of its
 own to contribute, and pricing the group by the hits it also carries is the
 conservative direction.
 
-THE MEMORY QUESTION ANSWERS ITSELF, which is why there is no fourth bound
-for it. Each queued dispatch writes its ray list through
-`queue.writeBuffer`, so a group holds that many staged copies at once —
-but the march slices PARTITION the active list and the shade batches
-partition the queues, so a group's total queued rays can never exceed the
-frame's own ray count, which `maxFrameRays` already bounds. The transient
-staging is at most one frame's active list, four bytes a ray.
+THE MEMORY QUESTION DOES NOT ANSWER ITSELF, and the paragraph that used to
+stand here said it did. Its arithmetic is sound as far as it goes: each
+queued dispatch writes its ray list through `queue.writeBuffer`, the march
+slices PARTITION the active list and the shade batches partition the
+queues, so a group's queued rays can never exceed the frame's own ray
+count, which `maxFrameRays` bounds — at most one frame's active list, four
+bytes a ray. What it missed is that the DISPATCHES are not where a frame's
+staging is. `runFrame`'s three PREFILL writes precede them and are an
+order of magnitude larger, and they are the ones that reach the browser
+ceiling above. There is still no fourth bound in
+`surfaceComputeFenceGroupSize` for it — a cap of two is the bound — but it
+is a bound that was chosen, not one the partition argument gives for free.
 
 **THE ATTRIBUTION IS THE PART TO GET RIGHT**, because a group measures ONE
 time for N pieces of work and the models below still reason per dispatch.
