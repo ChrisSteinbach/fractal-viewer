@@ -450,11 +450,32 @@ async function active(page, fixture, width) {
     null,
   );
   await page.click("#undoBtn");
-  await page.waitForTimeout(200);
+  // Undo arms a BARE debounced save of the restored document, so the hash is
+  // rewritten SAVE_DEBOUNCE_MS (300ms) after the click, not with it. The
+  // fixed 200ms sleep this replaces therefore lost deterministically rather
+  // than flakily, which is why the active phase never reached its end while
+  // the dormant phase's identical undo gesture passed: that one already waits
+  // on the document itself. Wait the same way here, and keep the timeout
+  // INSIDE the check so a real regression reads as an assertion failure
+  // (exit 1) instead of a checking failure (exit 2).
+  const undone = await page
+    .waitForFunction(
+      (flux) =>
+        JSON.parse(
+          atob(location.hash.slice(4).replace(/-/g, "+").replace(/_/g, "/")),
+        ).surface.lighting.lights[0].intensity !== flux,
+      steppedFlux,
+      { timeout: 5_000 },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
   check(
     `${label}: lighting edit is undoable`,
-    (await hashDocument(page)).surface.lighting.lights[0].intensity !==
-      steppedFlux,
+    undone &&
+      (await hashDocument(page)).surface.lighting.lights[0].intensity ===
+        editedFlux,
     null,
   );
   await page.locator("#modePointsBtn").evaluate((el) => el.click());
