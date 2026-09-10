@@ -2,9 +2,9 @@
  * The compute renderer's FENCE-SUBTRACTION gate: does a session's adaptive
  * sizing still climb on a browser whose fence round-trip is ~100 ms?
  *
- * WHAT IT PROTECTS. `SurfaceComputeRenderer`'s `dispatchTimed` times across
- * its own `device.queue.onSubmittedWorkDone()`, so the fence round-trip is
- * inside the measured number. Fed raw to the CAPS — which compare a TOTAL
+ * WHAT IT PROTECTS. `SurfaceComputeRenderer`'s frame loop times its
+ * dispatches across its own `device.queue.onSubmittedWorkDone()`, so the
+ * fence round-trip is inside the measured number. Fed raw to the CAPS — which compare a TOTAL
  * dispatch time against a budget — a per-fence constant is fatal rather
  * than merely wasteful. MEASURED on this machine's AMD RX 7900 XTX,
  * hardware adapters confirmed in both browsers: a fenced null dispatch
@@ -19,7 +19,7 @@
  *
  * The fix measures the session's OWN fence round-trip once, at its first
  * real dispatch (the minimum of five null dispatches), and subtracts it in
- * `dispatchTimed` before `nextShadeHitCost`, `nextShadeBatchSize`,
+ * `flushGroup` before `nextShadeHitCost`, `nextShadeBatchSize`,
  * `nextLightingRayCap` and the march's per-ray-step EMA read the value.
  * This gate drives the built app in a real browser and asks the questions
  * that settle it: was the round-trip measured at all, did the ladder
@@ -52,16 +52,40 @@
  * measurement inflated), so its 2.44x is march slicing and dispatch count
  * rather than a pinned width.
  *
- * WHAT IS STILL OWED, and this gate does not test it: after the fix a
- * Firefox settle frame is very nearly its fence COUNT times its fence
- * latency (150 fences x ~100 ms against a 13.2 s frame), so the remaining
- * 8-11x against Chrome is the per-fence price itself, not the sizing. The
- * lever for that is fewer fences — grouping N dispatches behind one — and
- * it is a separate piece of work.
+ * AND FEWER FENCES, which this gate now also protects. Dispatches are
+ * grouped behind one `onSubmittedWorkDone`
+ * (`SURFACE_COMPUTE_FENCE_GROUP_MAX`), so the pass condition includes
+ * FENCES coming in strictly under DISPATCHES; `--fencegroup=1` is the
+ * pre-grouping loop exactly and is the before arm of that feature's own
+ * A/B, which is why the check is skipped whenever the pin is set. Measured
+ * on this machine, one build, arms back to back, settle frame's own
+ * duration:
  *
- * EXIT CODES. 0 = the cap climbed off its floor and the session settled —
- * the gate passes. 3 = the cap stayed pinned at the workgroup floor across
- * a real drain — the regression is back. 2 = INCONCLUSIVE: no WebGPU
+ * | arm                    |   1 fence/dispatch |           grouped |
+ * | ---------------------- | -----------------: | ----------------: |
+ * | Firefox unlit, 640x360 | 6600 / 6820 / 7112 | 4707 / 4704 /4908 |
+ * | fences                 |       73 / 75 / 76 |      54 / 55 / 55 |
+ * | Firefox LIT, 640x360   |               6623 |              4644 |
+ * | Chrome unlit, 1280x720 | 1319 / 1344 / 1311 | 1191 / 1194 /1235 |
+ * | fences                 |    138 / 138 / 138 |      93 / 95 / 95 |
+ * | Chrome LIT, 640x360    |    892 / 880 / 867 |   893 / 848 / 858 |
+ *
+ * TWO THINGS TO KNOW BEFORE RUNNING THE FIREFOX ARMS. It does not settle
+ * this fixture at the DEFAULT 1280x720 inside 300 s at any group size, the
+ * pre-grouping loop included, while 640x360 and 960x540 settle in 5-11 s —
+ * so pass `--viewport=640x360` there (that is a standing Firefox question
+ * of its own, not this gate's). And the calibrated round-trip it reports
+ * is BIMODAL: eight consecutive runs of this fixture calibrated 77.8,
+ * 78.3, 18.6, 81.4, 37.2, 3.3, 59.0 and 67.2 ms, and a LOW draw leaves the
+ * residue inside the sizing models and can pin the lit ladder outright —
+ * this gate has FAILED for that reason on code with grouping pinned off.
+ * A lit FAIL is worth re-running once and reading the calibrated number
+ * before believing it.
+ *
+ * EXIT CODES. 0 = the cap climbed off its floor, the session settled, and
+ * fences came in under dispatches — the gate passes. 3 = the cap stayed
+ * pinned at the workgroup floor across a real drain, OR every dispatch
+ * paid its own fence (grouping never engaged) — the regression is back. 2 = INCONCLUSIVE: no WebGPU
  * adapter, a software adapter, the session took the WebGL fragment arm, or
  * the settle never completed inside the timeout. A run that never exercised
  * the compute loop must not read as a pass. 1 = harness failure.
@@ -79,6 +103,8 @@
  *   node scripts/surface-fence-cost.verify.mjs --browser=chrome --lighting
  *
  * Flags: --browser=firefox|chrome, --url=, --display=:0, --viewport=WxH,
+ * --fencegroup=N (pin the fence group; 1 = one fence per dispatch, the
+ * pre-grouping loop),
  * --samples=N (antialiasing passes, default 1 — the ladder question is
  * answered by pass one and eight passes cost eight settles),
  * --timeoutMs=, --lighting, --headless, --log=<file> (dump the raw trace).
@@ -98,6 +124,18 @@ const DISPLAY = args.display ?? ":0";
 const TIMEOUT_MS = Number(args.timeoutMs ?? 900000);
 const SAMPLES = Number(args.samples ?? 1);
 const LIGHTING = Boolean(args.lighting);
+/** `--fencegroup=N` -> `?surfacefencegroup=N`, the compute loop's
+ * fence-group pin. THIS IS THE BEFORE/AFTER SWITCH: `--fencegroup=1`
+ * fences every dispatch, which is the loop exactly as it ran before
+ * dispatches were grouped, so this gate's own A/B runs on ONE build in
+ * ONE browser process on ONE machine state rather than against a
+ * remembered number from another checkout. Absent leaves the adaptive
+ * grouping alone. */
+const FENCE_GROUP = args.fencegroup ? Number(args.fencegroup) : null;
+const FENCE_GROUP_Q =
+  FENCE_GROUP && Number.isFinite(FENCE_GROUP) && FENCE_GROUP >= 1
+    ? `&surfacefencegroup=${String(Math.floor(FENCE_GROUP))}`
+    : "";
 const POLL_MS = 250;
 const [vw, vh] = String(args.viewport ?? "1280x720")
   .split("x")
@@ -219,6 +257,11 @@ function readTrace(lines) {
   const litCaps = [];
   let shadeDispatches = 0;
   let marchDispatches = 0;
+  // FENCES, the instrument the grouping work moved: dispatches are
+  // unchanged by design (each is still its own submission, the i915
+  // preemption boundary), and what falls is how many of them a single
+  // `onSubmittedWorkDone` round-trip stands behind.
+  let fences = 0;
   let firstCap = null;
   let done = null;
   for (const line of lines) {
@@ -230,6 +273,7 @@ function readTrace(lines) {
     if (lit) litCaps.push(Number(lit[1]));
     if (line.includes("shade END")) shadeDispatches++;
     if (line.includes("march END")) marchDispatches++;
+    if (/\bfence (march|shade) dispatches=/.test(line)) fences++;
     if (line.includes("frame done")) done = line;
   }
   // The trace prefix is ms since THIS frame's start, so the last
@@ -251,15 +295,16 @@ function readTrace(lines) {
     lastLitCap: litCaps.length ? litCaps[litCaps.length - 1] : null,
     shadeDispatches,
     marchDispatches,
+    fences,
     done,
   };
 }
 
 async function main() {
-  const url = `${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}${enc(scene())}`;
+  const url = `${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}${FENCE_GROUP_Q}${enc(scene())}`;
   log(`browser=${BROWSER} viewport=${VIEWPORT.width}x${VIEWPORT.height}`);
   log(
-    `url=${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}#…`,
+    `url=${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}${FENCE_GROUP_Q}#…`,
   );
   const browser = await launch();
   const ctx = await browser.newContext({
@@ -319,7 +364,9 @@ async function main() {
   if (LIGHTING) {
     log(`lit ray cap: max=${t.maxLitCap} last=${t.lastLitCap}`);
   }
-  log(`dispatches: march=${t.marchDispatches} shade=${t.shadeDispatches}`);
+  log(
+    `dispatches: march=${t.marchDispatches} shade=${t.shadeDispatches} fences=${t.fences}`,
+  );
   log(
     `first frame: ${firstFrameMs === null ? "never" : `${String(firstFrameMs)} ms`}`,
   );
@@ -375,6 +422,20 @@ async function main() {
     log(
       `FAIL: the ladder is pinned near the ${String(WORKGROUP)}-ray floor — ` +
         "fence latency is reaching the sizing models again",
+    );
+    return 3;
+  }
+  // DID GROUPING ENGAGE AT ALL? Its signature is machine-independent in
+  // the same way the pinned ladder's is: one fence per dispatch is what
+  // the loop did before dispatches were grouped, and any grouping at all
+  // puts FENCES strictly below DISPATCHES. A `--fencegroup` run is the
+  // deliberate exception — `=1` IS that old loop, which is the whole
+  // point of the flag — so the check is skipped whenever the pin is set.
+  const dispatches = t.marchDispatches + t.shadeDispatches;
+  if (FENCE_GROUP_Q === "" && dispatches >= 8 && t.fences >= dispatches) {
+    log(
+      `FAIL: ${String(t.fences)} fences for ${String(dispatches)} dispatches — ` +
+        "grouping never engaged, every dispatch is paying its own round-trip",
     );
     return 3;
   }

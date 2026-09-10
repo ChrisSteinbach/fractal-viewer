@@ -488,7 +488,26 @@ const READBACK_RE = /^(\w+) readback (BEGIN|END)\b(.*)$/;
  * about which half of the loop the rest of the time went to. Both are
  * `<kind> END ms=<n>` with a one-decimal float (or the literal `null`
  * when the frame was superseded mid-dispatch, which is not a timing). */
-const DISPATCH_END_RE = /^(march|shade) END ms=([0-9.]+)$/;
+const DISPATCH_END_RE = /^(march|shade) END ms=([0-9.]+)\b/;
+/**
+ * A FENCE GROUP BREAKS BEGIN/END ADJACENCY, which is why the END line is
+ * no longer anchored and why it now carries its own identity. Several
+ * dispatches ride one `onSubmittedWorkDone` round-trip
+ * (`SURFACE_COMPUTE_FENCE_GROUP_MS`), so the trace reads BEGIN, BEGIN,
+ * END, END and the "very next END is its own" pairing below would credit
+ * the first END with the second BEGIN's width. The END line therefore
+ * repeats `len=`/`steps=`/`isFree=` for the dispatch it is actually
+ * about, read here in preference to the pending BEGIN.
+ *
+ * AND ITS `ms=` IS AN ATTRIBUTED SHARE, not a measured dispatch time: the
+ * group measured once, and `surfaceComputeGroupDispatchMs` splits that
+ * equally over the members that carry a cost model (a FREE batch is
+ * attributed zero, which is the honest reading of a dispatch whose whole
+ * cost was the submission and the fence). So "worst SINGLE dispatch"
+ * below is now the worst attributed share, and a group of one — an
+ * expensive dispatch, or a lane's pilot — is still a real measurement.
+ */
+const END_ISFREE_RE = /\bisFree=(true|false)\b/;
 /** `march BEGIN`'s own line — carries the ray count and per-ray step
  * budget THIS dispatch marched (see the module doc's "WORST SINGLE
  * DISPATCH"), read off it by the shared {@link LEN_RE}/{@link STEPS_RE}
@@ -753,6 +772,18 @@ function summarize(rawLines) {
     if (dispatchEnd) {
       const half = dispatch[dispatchEnd[1]];
       const ms = Number(dispatchEnd[2]);
+      // The END line's own fields win over the pending BEGIN's — see
+      // DISPATCH_END_RE for why the two can disagree under a fence group.
+      const endLen = LEN_RE.exec(body);
+      const endSteps = STEPS_RE.exec(body);
+      const endFree = END_ISFREE_RE.exec(body);
+      if (dispatchEnd[1] === "march") {
+        if (endLen) pendingMarchLen = Number(endLen[1]);
+        if (endSteps) pendingMarchSteps = Number(endSteps[1]);
+      } else {
+        if (endLen) pendingShadeLen = Number(endLen[1]);
+        if (endFree) pendingShadeIsFree = endFree[1] === "true";
+      }
       half.count++;
       half.totalMs += ms;
       if (dispatchEnd[1] === "march") {
