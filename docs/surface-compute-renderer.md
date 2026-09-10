@@ -1094,6 +1094,58 @@ export of one pinned pose. It measured a mean difference of 0.002/255 with
 its own raster; it measures **0.0000/255, max 0** now — byte for byte —
 and the bar is bit-exact. See "A band is bit-exact" below.
 
+### The fence round-trip, and why Firefox is ~100x slower
+
+**MEASURED, and unfixed.** A trivial WGSL kernel (one float written per
+invocation, so the GPU work is nothing) timed three ways on the same real
+AMD RX 7900 XTX, hardware adapters confirmed in both browsers:
+
+|                                     | batched dispatch | per submit | per FENCED submit |
+| ----------------------------------- | ---------------: | ---------: | ----------------: |
+| Firefox                             |         0.150 ms |   1.010 ms |    **100.960 ms** |
+| Chrome (`--enable-features=Vulkan`) |         0.100 ms |   0.057 ms |      **3.265 ms** |
+
+Those are pure round-trips. Firefox's landing on a round 100 ms suggests
+`onSubmittedWorkDone` resolves on a polling tick — the price is per fence
+whatever sits behind it. The platform ratio is 31x.
+
+WHAT ONE FULL-PANE LIT PASS PAYS, from `?surfacetrace` on the same machine
+(cathedral, 1920x1057): `frame start rays=2029440 … shadeHitCap0=4096`,
+then `frame done passes=517 hit=1940489 miss=88951` in 25,970 ms. So 517
+fenced dispatches cost 1.69 s in Chrome — 6.5% of the frame, real but not
+the story — and 52 s in Firefox, which is still nowhere near the ~30
+MINUTES per pass observed there.
+
+THE AMPLIFIER IS THIS FILE'S OWN ADAPTIVE SIZING, and it is the actual
+defect. `dispatchTimed` returns `performance.now() - t0` measured ACROSS
+its own `await device.queue.onSubmittedWorkDone()`, so fence latency is
+inside the number `nextShadeHitCost` and `nextShadeBatchSize` read. On
+Firefox every dispatch therefore prices at >=100 ms however little work it
+did, the models conclude the GPU is desperately slow, and the batch shrinks
+toward its one-workgroup floor. Chrome's trace climbs to
+`shadeHitCap0=4096`; Firefox should stay pinned near 64 — at which width
+1.94M hits needs ~30,000 dispatches instead of 517, and 30,000 x 100 ms is
+~50 min per pass, which is what the machine shows. A 31x platform
+difference becomes ~100x because the cost model cannot separate fence
+latency from GPU work.
+
+THIS IS `strip-planner.ts`'S OWN BUG ONE ENGINE OVER. That file subtracts
+`SURFACE_STRIP_SYNC_TAX_MS` before pricing marginal trace work precisely so
+a fixed per-sync cost cannot ratchet strips into a 1px absorbing state —
+"a single ms/px number absorbs whatever fixed cost the constant
+under-states, which is a ONE-WAY RATCHET". The compute arm never got that
+treatment. A session can measure its own fence round-trip at entry (a null
+dispatch) and then subtract it before feeding the cost models, group N
+dispatches behind one fence the way `surfaceComputeLightingFenceGroup`
+did for the removed medium, or both.
+
+It is ENGINE-WIDE rather than specific to any feature: every
+compute-preferred session (fold-shaped 3D, escape-time, bulb and EVERY 4D
+system) runs this loop, so Firefox + WebGPU is effectively unusable for
+Surface until it is fixed. Fixing it also returns Chrome's 6.5%. Still to
+confirm: `?surfacetrace` in Firefox should show `shadeHitCap0` pinned near
+`SURFACE_COMPUTE_WORKGROUP_SIZE` for the life of the session.
+
 ### The lit dispatch width, and what one workgroup cost
 
 **Measured on the participating medium, which has since been REMOVED on the
