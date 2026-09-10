@@ -50,13 +50,14 @@ whole PR after every push. Main pushes compare `before` with the checked-out
 commit, covering all pushed commits — and, before that, ask whether this push's
 TREE was already swept green on another commit, which is how a rebase merge's
 new SHAs inherit their PR's sweep (see _Tree identity_ below). That question is
-asked on `push` alone. Schedule and manual dispatch force full agreement
-regardless of a baseline. Deploy reuses this workflow at the caller's exact
-commit; its dispatch also forces full agreement, and inside a called workflow
-`github.event_name` is the CALLER's event, so the tree question is never asked
-there — deploy asks it once in its own preflight and skips the whole call. A
-missing baseline is always full. `gpu-ci-plan.json` and the job summary record
-the reasons, roster and selected matrix.
+asked on `push` alone, and it WAITS up to 45 minutes for a twin whose sweep is
+still in flight rather than duplicating it. Schedule and manual dispatch force
+full agreement regardless of a baseline. Deploy reuses this workflow at the
+caller's exact commit; its dispatch also forces full agreement, and inside a
+called workflow `github.event_name` is the CALLER's event, so the tree question
+is never asked there — deploy asks it once in its own preflight and skips the
+whole call. A missing baseline is always full. `gpu-ci-plan.json` and the job
+summary record the reasons, roster and selected matrix.
 
 ## Gates and full cadence
 
@@ -255,6 +256,85 @@ endpoints used (commit, its pulls, its check runs) answer 200 on this public
 repo with no token, so no `pull-requests: read` is added — and none may be, as
 a reusable workflow cannot request more than its caller job grants and deploy's
 `gpu-full` grants `contents: read` alone.
+
+### Waiting for a twin's sweep that is still running
+
+Tree reuse only pays when the twin's sweep has **finished**, and nothing makes
+it finish first. `gpu-agreement` is not a required check, so the four that are
+— `lint`, `build`, `test`, `smoke` — go green in ~6 minutes and the merge
+button is live roughly 27 minutes before the PR's 36-shard sweep is. Observed
+on the first real merge after tree keying landed: the push-to-main run asked
+the tree question, found the twin carrying no **completed** aggregate, and
+correctly started a second full sweep of byte-identical content. The verdict
+was right; the gap was that reuse depended on a human waiting for a sweep no
+rule made them wait for.
+
+So `--wait` (push runs only) polls every 30s, up to a 45-minute budget, when a
+tree twin's sweep is **in flight**. The trade is **one idle `ubuntu-latest`
+runner for at most the budget, against 36 shard jobs of ~8 minutes each
+(~290 runner-minutes)**. Wall clock is roughly unchanged: the wait ends when
+the twin's sweep ends, which is about when a duplicate sweep started now would
+have ended anyway. What is saved is the shard fleet, not time.
+
+**Ask the workflow run, never the check run.** Measured on main's tip
+`9163d1c` mid-sweep (2026-09-10): `backend-smoke` is `completed/success` and
+there is **no `gpu-agreement` check run at all**, because that job carries
+`needs: [select, backend-smoke, agreement]` and its check run does not exist
+until the shards finish. "No aggregate check" is therefore ambiguous between
+"no sweep ever ran here" and "one is running right now", and only
+`GET /repos/{owner}/{repo}/actions/workflows/gpu-agreement.yml/runs?head_sha=…`
+separates them, through each run's `status` (`queued`/`in_progress`/
+`completed`) and `conclusion`.
+
+**The self-deadlock is the hazard.** `candidateShas` puts the target commit
+**first**, and the gpu-agreement run in flight on the target commit is _the run
+doing the waiting_. Left alone it waits for itself to the budget and then
+sweeps — strictly worse than sweeping at once. Both the target SHA and
+`GITHUB_RUN_ID` are excluded, deliberately both: the SHA is the real rule, the
+run id is insurance if candidate ordering ever changes, and each is pinned by
+its own test.
+
+Three more cases the poll handles, each a way to lose the budget:
+
+1. **A cancelled twin ends the wait.** `gh pr merge --delete-branch` deletes
+   the PR branch, and deleting a branch cancels its queued and in-progress
+   runs. The wait stops on **any** completed status, never on success alone.
+2. **An independence run is never waited for.** A run whose `backend-smoke` job
+   is `completed/skipped` proved the change independent (or reused a sweep
+   itself) and can never satisfy `fullSweepVerdict`. It is read from
+   `/actions/runs/{id}/jobs`, where a skipped job is listed the moment
+   selection decides (verified on run `34155886040`, the proved-independent
+   probe: `backend-smoke completed/skipped`).
+3. **A tree-mismatched twin is never waited for.** A sweep running on content
+   that is not ours is worth none of the budget — the propose-versus-decide
+   rule again, one poll further out.
+
+**No two runs can wait for each other.** The step is `push`-only, so a PR run
+never waits at all, and a push run's candidates — its own commit, its
+associated PR heads, the push's `before` — are all commits that already
+existed when it started. The wait graph therefore points strictly backwards in
+time and cannot close a cycle.
+
+Every failure direction stays "sweep": budget expiry, an API error, an
+unclassifiable run, a cancelled or red twin. `select`'s `timeout-minutes` rises
+to 60 to cover the budget and the job's own work, so expiry is always the
+script's reported verdict and never a killed job reddening the aggregate over a
+reuse that should merely not happen.
+
+`waitDecision` is pure over per-candidate state the caller has already fetched
+(`{sha, treeMatched, verdict, runs}`), so every rule above is tested without a
+network or a clock; `waitForFullSweep` is the thin async shell that fetches,
+decides and sleeps. Trees are read once per commit for the whole wait — a
+commit's tree cannot change — while check runs and workflow runs are re-read
+every poll, which is what turns a twin finishing green mid-wait into a reuse.
+
+**Deploy's preflight deliberately does NOT wait.** A dispatch is manual and
+re-dispatchable, so "wait, then dispatch again" is already the user's own call;
+that job's `timeout-minutes` is 2, sized for a question answered in seconds;
+and a deploy parked for half an hour holds the `pages` concurrency group that
+`cancel-in-progress: false` already makes precious — the documented rollback
+flow (revert through a PR, then dispatch fresh) would queue behind the parked
+run. A dispatch whose twin sweep is still running simply sweeps, as before.
 
 ### What tree reuse deliberately does NOT cover
 

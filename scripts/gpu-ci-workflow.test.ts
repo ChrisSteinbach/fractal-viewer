@@ -2,6 +2,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { parse } from "yaml";
+import { DEFAULT_WAIT_BUDGET_MS } from "./gpu-ci-swept.mjs";
 
 type Step = {
   name?: string;
@@ -124,6 +125,37 @@ describe("GPU workflow gates", () => {
     expect(steps.indexOf(swept!)).toBeLessThan(
       steps.findIndex((step) => step.id === "plan"),
     );
+  });
+
+  it("waits for a twin's in-flight sweep instead of duplicating it", () => {
+    // Reuse otherwise depends on a human merging AFTER a ~33-minute sweep
+    // that no rule makes them wait for — gpu-agreement is not a required
+    // check — which is why the first real merge after tree keying reused
+    // nothing. The push run now waits for an eligible in-flight twin: one
+    // idle runner against 36 shard jobs of ~8 minutes each.
+    const swept = (gpu.jobs.select.steps as Step[]).find(
+      (step) => step.id === "swept",
+    );
+    expect(swept?.run).toContain("--wait");
+    // The job must outlive the wait budget, or expiry becomes a killed job
+    // reddening the aggregate rather than the script's own reported sweep.
+    expect(gpu.jobs.select["timeout-minutes"] * 60_000).toBeGreaterThan(
+      DEFAULT_WAIT_BUDGET_MS,
+    );
+  });
+
+  it("refuses the wait in deploy's preflight, which holds the pages group", () => {
+    // A dispatch is manual and re-dispatchable, its preflight is
+    // timeout-minutes: 2, and a deploy parked for half an hour holds the
+    // `pages` concurrency group that cancel-in-progress: false already makes
+    // precious — the rollback flow would queue behind it.
+    const preflight = workflow("deploy").jobs.preflight;
+    const swept = (preflight.steps as Step[]).find(
+      (step) => step.id === "swept",
+    );
+    expect(swept?.run).toContain("--tree");
+    expect(swept?.run).not.toContain("--wait");
+    expect(preflight["timeout-minutes"]).toBe(2);
   });
 
   it("routes the reuse through the plan so full=false stays the one signal", () => {
