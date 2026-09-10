@@ -1848,36 +1848,32 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     to get right. PREFERRED whenever an adapter exists: fold-shaped 3D
     sessions (`deHasFolds(de) || foldFinal`), escape-time sessions (the
     non-contracting fold map/CHAIN the IFS gate refuses), bulb sessions,
-    and EVERY 4D session (NO ORDER SPLIT LEFT, since the shade-sizer width
-    fix) — none compiles fold GLSL, none requests a grid (gridless by
-    decision); the fragment 4D tracer is now purely the FALLBACK arm.
+    and EVERY 4D session (no order split) — none compiles fold GLSL, none requests a grid (gridless by
+    decision).
     COMPUTE-ONLY, entry REFUSED without compute and a mid-session loss
-    exiting with a toast: fold-shaped 4D sessions at any symmetry order
-    and escape-shaped 4D sessions (the fragment tracer has no fold or
-    forward-orbit GLSL). The 4D kernels' cost is superlinear in ORDER
+    exiting with a toast: fold-shaped 4D at any symmetry order and
+    escape-shaped 4D (no fold or forward-orbit GLSL exists). The 4D kernels' cost is superlinear in ORDER
     regardless of routing. `?surfacecompute`/`?surfacegl` keep this
     re-measurable (`?surfacegl` wins if both given). `create()`'s opts
     also carry the session's gated finishes (null = classic kernels,
-    non-null compiles `finish: true` + stride-3 shadeMaps, create-time;
-    the frame spec discloses the list so the force-frame memo re-traces a
+    non-null compiles `finish: true` + stride-3 shadeMaps at create time;
+    the spec discloses the list so the force-frame memo re-traces a
     finish-only leg).
     `create()` takes a `SurfaceComputeTarget` union
     (`{kind:"ifs"|"escape"|"bulb"|"escape4"|"ifs4"}`) picking the kernel
-    core (ifs4 → affine4/fold4 off `deHasFolds4`; `bulb` → `core:"bulb"`;
-    `escape4` → `core:"escape4"`), the params packer and the maps buffer's
+    core (ifs4 → affine4/fold4 off `deHasFolds4`), the params packer and the maps buffer's
     layout; the march/shade host loop, presents and failure ladder stay
     shared. `isForwardTarget` names the THREE forward kinds, `isFourDTarget`
-    the two needing `view4` (`escape4` in both) — both escape kinds carry
-    their chain on the maps binding, so `bulb` is the one bindingless kind.
+    the two needing `view4` (`escape4` in both).
     BALLOON and FLOOR ride `ifs`/`ifs4` targets with the same precedence
     (never compile together, balloon wins); NO FORWARD KIND EVER BALLOONS,
     either dimension. `ifs4`'s rotor/slice view is PER-FRAME SPEC STATE
-    (`spec.view4`, re-read from `setSurface4View` per spec assembly,
-    repacked per pass; a missing view4 THROWS), and
+    (`spec.view4`, re-read per spec assembly and repacked per pass; a
+    missing view4 THROWS), and
     `surfaceComputeForceFrameKey` includes the pose.
-    Owns the device and frame loop. The active-list rebuild reads 4 B PER
-    ACTIVE RAY off the march's status side-channel, not the whole 16 B/ray
-    states buffer. Shade batches are sized in HIT units, never ray units —
+    Owns the device and frame loop. The active-list rebuild reads the
+    march's 4 B/ray status side-channel, not the whole 16 B/ray states
+    buffer. Shade batches are sized in HIT units, never ray units —
     misses drain the FREE queue WHOLE per sweep, and hits (plus
     ground-plane PLANE terminals) are FLOORED AT ONE WORKGROUP, NEVER ONE
     HIT (within a workgroup cost is depth-dominated). The sizer carries a two-term
@@ -1891,29 +1887,29 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     (`SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST`) is a WIDTH, not a ratio.
     `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` sits outside the range
     real scenes measure in, and that PLACEMENT is the measurement. THE LIT
-    QUEUE IS SIZED THE SAME WAY, and was not: its cost lanes shipped
-    INERT, so `nextLightingRayCap` never paced anything and every lit
-    dispatch stayed one workgroup wide; an inert cost lane is a pinned
-    width, not a safe default. AND NO SIZING MODEL OR LADDER MAY READ A
-    RAW DISPATCH TIME: the loop calibrates the session's own fence
-    round-trip once (MINIMUM of five null dispatches — over-subtracting is
-    the unbounded direction) and every model, ladder and EMA reads wall
-    MINUS that fence, the tally alone reading wall.
+    QUEUE IS SIZED THE SAME WAY (`nextLightingRayCap`), and was not: an
+    inert cost lane is a pinned width, not a safe default. AND NO SIZING MODEL OR LADDER MAY READ A
+    RAW DISPATCH TIME: the session calibrates its own fence
+    round-trip once (MINIMUM of five null probes; over-subtracting is the
+    unbounded direction) and every model, ladder and EMA reads wall MINUS
+    that fence, the tally alone reading wall.
     THE FENCE IS PAID PER GROUP, NOT PER DISPATCH: a dispatch is still its
-    own SUBMISSION (the preemption boundary) but several are queued behind
-    ONE `onSubmittedWorkDone`, closing at `SURFACE_COMPUTE_FENCE_GROUP_MS`
+    own SUBMISSION (the preemption boundary) but several queue behind ONE
+    `onSubmittedWorkDone`, closing at `SURFACE_COMPUTE_FENCE_GROUP_MS`
     against TWICE the lane's worst MEASURED per-dispatch work this frame,
     `SURFACE_COMPUTE_FENCE_GROUP_MAX` dispatches, or the next
-    present/budget deadline — whichever first — with each lane's first
-    group PILOTED at one dispatch. NEVER SIZE A GROUP OFF A MODEL
-    PREDICTION: both schedulers size a dispatch to hit a target, so its
-    predicted cost IS that target by construction and says nothing. A GROUP MEASURES ONCE FOR N PIECES and the attribution is
-    fixed: the march EMA takes the group's aggregate ray·step rate,
-    `nextShadeHitCost` fits `d·intercept + N·marginal` jointly (exact at
-    any mix of widths), the two capacity ladders take the EQUAL share once
-    per member because the watchdog sees dispatches, and a FREE batch is
-    attributed ZERO. `?surfacefencegroup=1` is the pre-grouping loop
-    exactly, which is how the A/B runs on one build. Gate:
+    present/budget deadline — whichever first — each lane's first group
+    PILOTED at one. NEVER SIZE A GROUP OFF A MODEL PREDICTION: both
+    schedulers size a dispatch to hit a target, so its predicted cost IS
+    that target by construction. `SURFACE_COMPUTE_FENCE_GROUP_MAX` IS A
+    MEASURED CEILING, NOT A DIAL: Firefox loses its device at FOUR queued
+    dispatches, and raising it needs the per-dispatch queue writes
+    unified first. A GROUP MEASURES ONCE FOR N PIECES, so its
+    attribution is FIXED per lane — aggregate rate to the march EMA, a
+    joint two-term fit to `nextShadeHitCost`, the EQUAL share PER MEMBER
+    to both ladders, ZERO to a FREE batch — and no reader may invent
+    another. `?surfacefencegroup=1` is that old
+    loop exactly (the A/B lever). Gate:
     `scripts/surface-fence-cost.verify.mjs`. No submission outruns the i915 watchdog;
     presents are progressive; shading probes ride
     `SURFACE_COMPUTE_SHADE_DE_WIDTH`; colorOut prefills from the last frame
@@ -1943,8 +1939,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     means teardown REQUESTED, `deviceDestroyed` means device GONE — NEVER
     call `device.destroy()` twice. Same shape as `flame-gpu-backend.ts`
     (OPS there, frames here); pinned by `surface-compute.test.ts` over a
-    fake device, with the real-Firefox
-    `scripts/surface-teardown.verify.mjs` the authority on drivers.
+    fake device and by `scripts/surface-teardown.verify.mjs` on real
+    Firefox.
     scene.ts presents frames as a DataTexture through the shared surface
     blit; main.ts routes and choreographs. Where a fragment arm exists,
     fallback is one-way — create failure or device loss re-enters the
