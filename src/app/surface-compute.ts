@@ -1279,6 +1279,115 @@ export function shadeHitBudgetUs(interceptUs: number): number {
 }
 
 /**
+ * How many null dispatches a session times to learn its own fence
+ * round-trip. Small, because the calibration is paid at the very latency
+ * it is measuring — MEASURED at five probes: ~12 ms on Chrome and
+ * ~0.50 s on Firefox, against the minutes the subtraction saves there —
+ * and more than one because {@link surfaceComputeFenceRoundTripMs} takes
+ * the MINIMUM, which needs a few draws before a cold first fence stops
+ * being the whole sample.
+ */
+export const SURFACE_COMPUTE_FENCE_PROBES = 5;
+
+/**
+ * The session's fence round-trip from its calibration probes: the
+ * MINIMUM, not the median or the mean, because the two directions of
+ * error here are not symmetric.
+ *
+ * UNDER-stating the round-trip leaves part of a fixed cost in the number
+ * the models read, which is the bug this whole path exists to shrink and
+ * is bounded by how much was left. OVER-stating it is the dangerous
+ * direction: {@link surfaceComputeDispatchWorkMs} floors at zero, so an
+ * over-stated constant makes every dispatch read cheaper than it was, and
+ * {@link nextShadeHitCost} takes that reading DIRECTLY — once the model
+ * is calibrated the capacity ladder above it binds nothing, so on that
+ * path there is no doubling-per-dispatch pace protecting anything, only
+ * {@link SURFACE_COMPUTE_SHADE_MARGINAL_DECAY}'s halving per update.
+ *
+ * The probes are back-to-back on a COLD device on a session's first
+ * frame, so the outliers a small sample really carries are HIGH ones —
+ * exactly the ones a median admits and a minimum rejects. The floor is
+ * also the honest quantity: the round-trip is a per-fence price every
+ * dispatch pays at least once, so the smallest pure round-trip observed
+ * is the most that can be attributed to it without attributing work.
+ *
+ * An empty sample set means "not measured", which is a zero subtraction
+ * and therefore exactly today's behaviour. Pure so the choice of
+ * statistic is unit-tested.
+ */
+export function surfaceComputeFenceRoundTripMs(
+  samples: readonly number[],
+): number {
+  if (samples.length === 0) return 0;
+  return Math.max(0, Math.min(...samples));
+}
+
+/**
+ * THE ONE CHOKEPOINT between a measured dispatch and every SIZING
+ * decision: the wall time with the session's own fence round-trip taken
+ * out, so a per-fence constant cannot be read as the cost of the work
+ * behind it.
+ *
+ * WHY IT EXISTS. `dispatchTimed` times across its own
+ * `device.queue.onSubmittedWorkDone()`, so the fence latency is inside
+ * the number. MEASURED on one real AMD RX 7900 XTX, hardware adapters
+ * confirmed in both browsers: a fenced null dispatch costs 100.960 ms in
+ * Firefox against 3.265 ms in Chrome — Firefox's round 100 ms suggesting
+ * the promise resolves on a polling tick, so the price is per fence
+ * whatever sits behind it. Fed raw to the CAPS, which compare a TOTAL
+ * dispatch time against a budget, that constant is fatal rather than
+ * merely wasteful — and THE TWO LADDERS FAIL DIFFERENTLY, said here
+ * because a first draft of this comment had them failing the same way.
+ * The LIT one quarters: no Firefox dispatch comes in under
+ * {@link nextLightingRayCap}'s 50 ms target, so `Math.floor(cap / 4)`
+ * walks it down to {@link SURFACE_COMPUTE_WORKGROUP_SIZE} and pins it
+ * there for the life of the session. The UNLIT hit ladder cannot be
+ * quartered by a fence this size at all — {@link nextShadeBatchSize}
+ * quarters past `budgetMs * 2` and {@link shadeHitBudgetUs}'s own floor
+ * is {@link SURFACE_COMPUTE_PASS_TARGET_MS}, so that would take a fence
+ * over 250 ms — it STALLS instead: a dispatch that fit its budget reads
+ * over it, the capacity never doubles, and the whole drain runs at
+ * {@link SURFACE_COMPUTE_SHADE_HIT_CAP_START}. Either way one full-pane
+ * pass turns Chrome's few hundred dispatches into tens of thousands,
+ * each paying another ~100 ms.
+ *
+ * THIS IS `strip-planner.ts`'S `SURFACE_STRIP_SYNC_TAX_MS` ONE ENGINE
+ * OVER, and that file's record says a flat subtraction was not enough on
+ * its own there — a single ms/px term absorbs whatever fixed cost the
+ * constant under-states, a one-way ratchet into a 1 px absorbing state.
+ * The compute arm's answer is narrower because the shape is: the hit
+ * queue ALREADY carries the two-term model that file had to grow
+ * ({@link nextShadeHitCost}), so the residue lands in the intercept and
+ * sizing reads the marginal alone. The march's own model is single-term
+ * (µs per ray·step) and does absorb it, but shrinking dilutes nothing
+ * there — {@link SURFACE_COMPUTE_MARCH_CHUNK_MIN} floors the slice, and a
+ * bigger slice spreads the same residue over more ray·steps, so the term
+ * FALLS as the chunk grows instead of ratcheting.
+ *
+ * THE FLOOR IS ZERO, so the case to be careful of is an OVER-stated
+ * `fenceMs`, and the pacing that bounds it is weaker than it first looks:
+ * the two capacity ladders may only double per dispatch, but a calibrated
+ * {@link nextShadeHitCost} reads this number directly and the ladder
+ * above it then binds nothing, so on that path the only rate limit is
+ * {@link SURFACE_COMPUTE_SHADE_MARGINAL_DECAY}'s halving per update. That
+ * is why {@link surfaceComputeFenceRoundTripMs} takes the MINIMUM of its
+ * probes rather than their middle: the error belongs on the
+ * under-subtracting side, which costs throughput and nothing else. Under
+ * a polling-tick fence the subtraction under-states what it removes
+ * anyway (a dispatch is charged the tick it lands in, less one whole
+ * tick), so the residue is bounded by one fence quantum. The march's
+ * single-term EMA carries 0.6 of its previous value, so even a run of
+ * under-fence measurements needs ~18 slices to walk the chunk sizer out
+ * to its guard. Pure so the clamp is unit-tested.
+ */
+export function surfaceComputeDispatchWorkMs(
+  wallMs: number,
+  fenceMs: number,
+): number {
+  return Math.max(0, wallMs - fenceMs);
+}
+
+/**
  * Adaptive hit-batch CAPACITY: grow while hit batches come in under the
  * budget they were sized for, QUARTER on a big overshoot. This is the
  * slow-trust bound layered over {@link shadeHitBatchSize}'s cost
@@ -2610,6 +2719,13 @@ export class SurfaceComputeRenderer {
    * either path from calling `device.destroy()` a second time. */
   private deviceDestroyed = false;
   private frameToken = 0;
+  /** The session's own fence round-trip in ms, measured once by the first
+   * frame's calibration probes and subtracted from every later dispatch
+   * before a sizing model sees it — {@link surfaceComputeDispatchWorkMs}
+   * for what that buys and why it is measured per SESSION rather than
+   * assumed per browser. `null` means "not calibrated yet", which is a
+   * zero subtraction. */
+  private fenceMs: number | null = null;
   /** Frames between their {@link renderFrame} call and their final
    * unwind. A frame parks on LIVE submitted GPU work (`mapAsync` over a
    * submitted `copyBufferToBuffer`, `onSubmittedWorkDone` over a
@@ -3869,18 +3985,74 @@ export class SurfaceComputeRenderer {
       device.queue.submit([encoder.finish()]);
       return t0;
     };
+    /**
+     * THE SESSION'S OWN FENCE ROUND-TRIP, measured once and thereafter
+     * subtracted from every dispatch the sizers read
+     * ({@link surfaceComputeDispatchWorkMs}). A NULL dispatch — this
+     * frame's real pipeline and bind group at ZERO workgroups, so it is a
+     * genuine submit-and-fence with no GPU work, no side effect and no
+     * dependence on what the params buffer happens to hold — repeated
+     * {@link SURFACE_COMPUTE_FENCE_PROBES} times for a minimum.
+     *
+     * MEASURED rather than assumed per browser: the constant is the
+     * PLATFORM's (~2.4 ms Chrome, ~100 ms Firefox, same AMD adapter, same
+     * build, measured by this very probe) and this renderer has no
+     * business hard-coding either. It is paid INSIDE the frame's own
+     * in-flight accounting so {@link destroy} still drains it, the token
+     * is re-checked between probes so cancellation stays responsive, and
+     * it hangs off the first real dispatch rather than the top of
+     * `runFrame` so a frame that never reaches one — the params-write
+     * seam the tiling tests stop at — never pays for it either.
+     *
+     * Returns false when the frame was cancelled mid-calibration.
+     */
+    const ensureFenceCalibrated = async (
+      pipeline: GPUComputePipeline,
+      bindGroup: GPUBindGroup,
+    ): Promise<boolean> => {
+      if (this.fenceMs !== null) return true;
+      const probes: number[] = [];
+      for (let i = 0; i < SURFACE_COMPUTE_FENCE_PROBES; i++) {
+        const t0 = submitDispatch(pipeline, bindGroup, 0);
+        await device.queue.onSubmittedWorkDone();
+        if (token !== this.frameToken || this.isLost || this.destroyed) {
+          return false;
+        }
+        probes.push(performance.now() - t0);
+      }
+      this.fenceMs = surfaceComputeFenceRoundTripMs(probes);
+      tr(
+        `fence calibrated ms=${this.fenceMs.toFixed(2)} probes=${probes
+          .map((ms) => ms.toFixed(2))
+          .join(",")}`,
+      );
+      return true;
+    };
+
+    /** One measured dispatch, in BOTH currencies. `wallMs` is the honest
+     * wall clock — what the tally reports and what the trace lines print
+     * — and `workMs` is that with the session's fence round-trip taken
+     * out, which is the ONLY number a sizing model or a capacity ladder
+     * may read ({@link surfaceComputeDispatchWorkMs}). Two fields rather
+     * than one corrected number so no later reader has to guess which it
+     * is holding. */
     const dispatchTimed = async (
       pipeline: GPUComputePipeline,
       bindGroup: GPUBindGroup,
       count: number,
       copyAfter?: { src: GPUBuffer; dst: GPUBuffer; dstOffset: number },
-    ): Promise<number | null> => {
+    ): Promise<{ wallMs: number; workMs: number } | null> => {
+      if (!(await ensureFenceCalibrated(pipeline, bindGroup))) return null;
       const t0 = submitDispatch(pipeline, bindGroup, count, copyAfter);
       await device.queue.onSubmittedWorkDone();
       if (token !== this.frameToken || this.isLost || this.destroyed) {
         return null;
       }
-      return performance.now() - t0;
+      const wallMs = performance.now() - t0;
+      return {
+        wallMs,
+        workMs: surfaceComputeDispatchWorkMs(wallMs, this.fenceMs ?? 0),
+      };
     };
 
     // The device's own ceiling on ONE dispatch — the last clamp on both
@@ -3943,7 +4115,7 @@ export class SurfaceComputeRenderer {
     const counts = { hit: 0, miss: 0, exhausted: 0, active: 0, plane: 0 };
     const exhaustedIndices: number[] = [];
     tr(
-      `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} shadeCost0=${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${sizer.cap}`,
+      `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} fenceMs=${(this.fenceMs ?? 0).toFixed(2)} shadeCost0=${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${sizer.cap}`,
     );
     outer: while (
       active.length > 0 ||
@@ -3984,7 +4156,7 @@ export class SurfaceComputeRenderer {
           tr(
             `march BEGIN offset=${offset} chunk=${chunk} len=${slice.length} steps=${stepsThisPass} emaUs=${rayStepEmaUs.toFixed(3)} active=${active.length}`,
           );
-          const marchMs = await dispatchTimed(
+          const marchTiming = await dispatchTimed(
             marchPipeline,
             buffers.marchBindGroup,
             slice.length,
@@ -3998,13 +4170,19 @@ export class SurfaceComputeRenderer {
               dstOffset: offset * 4,
             },
           );
-          tr(`march END ms=${marchMs === null ? "null" : marchMs.toFixed(1)}`);
-          if (marchMs === null) return null;
-          gpuMs += marchMs;
-          marchGpuMs += marchMs;
+          tr(
+            `march END ms=${marchTiming === null ? "null" : marchTiming.wallMs.toFixed(1)} work=${marchTiming === null ? "null" : marchTiming.workMs.toFixed(1)}`,
+          );
+          if (marchTiming === null) return null;
+          // The TALLY is wall clock — a fence the frame really waited on
+          // is time the frame really spent — while the per-ray·step EMA
+          // that sizes the next slice reads the fence-free work alone.
+          gpuMs += marchTiming.wallMs;
+          marchGpuMs += marchTiming.wallMs;
           passes++;
           const usPerRayStep =
-            (marchMs * 1000) / (slice.length * Math.max(1, stepsThisPass));
+            (marchTiming.workMs * 1000) /
+            (slice.length * Math.max(1, stepsThisPass));
           rayStepEmaUs = rayStepEmaUs * 0.6 + usPerRayStep * 0.4;
           offset += chunk;
           sweepSliced = offset;
@@ -4169,15 +4347,22 @@ export class SurfaceComputeRenderer {
         );
         writeParams(batch.length, 0);
         device.queue.writeBuffer(buffers.active, 0, batch);
-        const shadeMs = await dispatchTimed(
+        const shadeTiming = await dispatchTimed(
           shadePipeline,
           buffers.shadeBindGroup,
           batch.length,
         );
-        tr(`shade END ms=${shadeMs === null ? "null" : shadeMs.toFixed(1)}`);
-        if (shadeMs === null) return null;
-        gpuMs += shadeMs;
-        shadeGpuMs += shadeMs;
+        tr(
+          `shade END ms=${shadeTiming === null ? "null" : shadeTiming.wallMs.toFixed(1)} work=${shadeTiming === null ? "null" : shadeTiming.workMs.toFixed(1)}`,
+        );
+        if (shadeTiming === null) return null;
+        // Wall clock to the tally, fence-free work to the model and both
+        // ladders below — see {@link surfaceComputeDispatchWorkMs}. The
+        // caps are the reason this matters: they compare a TOTAL dispatch
+        // time against a budget, so a per-fence constant inside the
+        // number pins them at their floor rather than merely biasing them.
+        gpuMs += shadeTiming.wallMs;
+        shadeGpuMs += shadeTiming.wallMs;
         passes++;
         if (isFree) shadeFreeQueue = shadeFreeQueue.slice(batch.length);
         else shadeHitQueue = shadeHitQueue.slice(batch.length);
@@ -4188,7 +4373,7 @@ export class SurfaceComputeRenderer {
           sizer.cost = nextShadeHitCost(
             sizer.cost,
             batch.length,
-            shadeMs * 1000,
+            shadeTiming.workMs * 1000,
           );
           // A QUEUE-LIMITED batch (the sweep had fewer hits than the
           // sizer asked for) may shrink the capacity but never grow it:
@@ -4197,7 +4382,11 @@ export class SurfaceComputeRenderer {
           // probe-width lesson — miss runs inflating a capacity a hit
           // band then paid — in the one place it can still happen now the
           // queues are split.
-          const grown = nextShadeBatchSize(sizer.cap, shadeMs, hitBudgetMs);
+          const grown = nextShadeBatchSize(
+            sizer.cap,
+            shadeTiming.workMs,
+            hitBudgetMs,
+          );
           sizer.cap =
             batch.length < batchSize ? Math.min(sizer.cap, grown) : grown;
           tr(
@@ -4212,11 +4401,14 @@ export class SurfaceComputeRenderer {
             lightingSizer.surfaceCost = nextShadeHitCost(
               lightingSizer.surfaceCost,
               batch.length,
-              shadeMs * 1000,
+              shadeTiming.workMs * 1000,
             );
             // The watchdog sees dispatches, not batches, so the ladder is
             // paced by this dispatch's own measured time.
-            const litGrown = nextLightingRayCap(lightingSizer.rayCap, shadeMs);
+            const litGrown = nextLightingRayCap(
+              lightingSizer.rayCap,
+              shadeTiming.workMs,
+            );
             lightingSizer.rayCap =
               batch.length < batchSize
                 ? Math.min(lightingSizer.rayCap, litGrown)

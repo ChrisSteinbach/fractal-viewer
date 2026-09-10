@@ -1096,9 +1096,10 @@ and the bar is bit-exact. See "A band is bit-exact" below.
 
 ### The fence round-trip, and why Firefox is ~100x slower
 
-**MEASURED, and unfixed.** A trivial WGSL kernel (one float written per
-invocation, so the GPU work is nothing) timed three ways on the same real
-AMD RX 7900 XTX, hardware adapters confirmed in both browsers:
+**MEASURED, and now SUBTRACTED — see the fix below.** A trivial WGSL kernel
+(one float written per invocation, so the GPU work is nothing) timed three
+ways on the same real AMD RX 7900 XTX, hardware adapters confirmed in both
+browsers:
 
 |                                     | batched dispatch | per submit | per FENCED submit |
 | ----------------------------------- | ---------------: | ---------: | ----------------: |
@@ -1107,44 +1108,111 @@ AMD RX 7900 XTX, hardware adapters confirmed in both browsers:
 
 Those are pure round-trips. Firefox's landing on a round 100 ms suggests
 `onSubmittedWorkDone` resolves on a polling tick — the price is per fence
-whatever sits behind it. The platform ratio is 31x.
+whatever sits behind it. The platform ratio is 31x. The renderer's own
+calibration probe re-measures both numbers every session and agrees:
+2.35-2.42 ms in Chrome, 84.3-100.0 ms in Firefox.
 
 WHAT ONE FULL-PANE LIT PASS PAYS, from `?surfacetrace` on the same machine
 (cathedral, 1920x1057): `frame start rays=2029440 … shadeHitCap0=4096`,
 then `frame done passes=517 hit=1940489 miss=88951` in 25,970 ms. So 517
 fenced dispatches cost 1.69 s in Chrome — 6.5% of the frame, real but not
-the story — and 52 s in Firefox, which is still nowhere near the ~30
-MINUTES per pass observed there.
+the story — and 52 s in Firefox.
 
-THE AMPLIFIER IS THIS FILE'S OWN ADAPTIVE SIZING, and it is the actual
-defect. `dispatchTimed` returns `performance.now() - t0` measured ACROSS
-its own `await device.queue.onSubmittedWorkDone()`, so fence latency is
-inside the number `nextShadeHitCost` and `nextShadeBatchSize` read. On
-Firefox every dispatch therefore prices at >=100 ms however little work it
-did, the models conclude the GPU is desperately slow, and the batch shrinks
-toward its one-workgroup floor. Chrome's trace climbs to
-`shadeHitCap0=4096`; Firefox should stay pinned near 64 — at which width
-1.94M hits needs ~30,000 dispatches instead of 517, and 30,000 x 100 ms is
-~50 min per pass, which is what the machine shows. A 31x platform
-difference becomes ~100x because the cost model cannot separate fence
-latency from GPU work.
+THE AMPLIFIER WAS THIS FILE'S OWN ADAPTIVE SIZING. `dispatchTimed` returns
+`performance.now() - t0` measured ACROSS its own
+`await device.queue.onSubmittedWorkDone()`, so fence latency was inside the
+number `nextShadeHitCost`, `nextShadeBatchSize`, `nextLightingRayCap` and
+the march's per-ray·step EMA read. On Firefox every dispatch therefore
+priced at >=84 ms however little work it did, and the models concluded the
+GPU was desperately slow.
+
+THE TWO LADDERS FAIL DIFFERENTLY, which the first write-up of this section
+got wrong by treating them as one. `nextLightingRayCap` compares against a
+50 ms target, which a ~100 ms fence puts permanently out of reach: the LIT
+ladder can only ever quarter, `Math.floor(cap / 4)` walks it to
+`SURFACE_COMPUTE_WORKGROUP_SIZE`, and a 640x360 lit settle measured **1102
+hit dispatches for 71.5k hits — 65 each, the one-workgroup floor**. The
+UNLIT hit ladder cannot be quartered by a fence that size at all:
+`nextShadeBatchSize` quarters past `budgetMs * 2` and `shadeHitBudgetUs`'s
+own floor is `SURFACE_COMPUTE_PASS_TARGET_MS` (250 ms), and the budget
+inflates with the very intercept the measurement inflated — so it reaches
+4096 on Firefox even unfixed, and what the fence costs there is march
+slicing and dispatch count instead.
 
 THIS IS `strip-planner.ts`'S OWN BUG ONE ENGINE OVER. That file subtracts
 `SURFACE_STRIP_SYNC_TAX_MS` before pricing marginal trace work precisely so
 a fixed per-sync cost cannot ratchet strips into a 1px absorbing state —
 "a single ms/px number absorbs whatever fixed cost the constant
-under-states, which is a ONE-WAY RATCHET". The compute arm never got that
-treatment. A session can measure its own fence round-trip at entry (a null
-dispatch) and then subtract it before feeding the cost models, group N
-dispatches behind one fence the way `surfaceComputeLightingFenceGroup`
-did for the removed medium, or both.
+under-states, which is a ONE-WAY RATCHET". Its record also says a flat
+subtraction was not enough on its own there, and the answer it grew is a
+two-term model. The compute arm's answer is narrower because it ALREADY
+has that model: the residue lands in `nextShadeHitCost`'s intercept and
+sizing reads the marginal alone. The march's own model is single-term
+(µs per ray·step) and does absorb the residue, but shrinking dilutes
+nothing there — `SURFACE_COMPUTE_MARCH_CHUNK_MIN` floors the slice and a
+bigger slice spreads the same residue over more ray·steps, so that term
+falls as the chunk grows instead of ratcheting.
 
-It is ENGINE-WIDE rather than specific to any feature: every
+**THE FIX: measure the session's own round-trip and subtract it at one
+chokepoint.** `dispatchTimed` calibrates on its first call — five NULL
+dispatches (this frame's real pipeline and bind group at ZERO workgroups,
+so a genuine submit-and-fence with no GPU work, no side effect and no
+dependence on what the params buffer holds) — and thereafter returns BOTH
+currencies: `wallMs`, the honest wall clock the tally and the trace lines
+use, and `workMs`, that minus the fence, which is the only number any
+sizing model or capacity ladder may read. The calibration hangs off the
+first real dispatch rather than the top of `runFrame` so a frame that never
+reaches one — the params-write seam the tiling tests stop at — never pays
+for it, and it sits inside the frame's own in-flight accounting so
+`destroy()` still drains it, with the frame token re-checked between probes
+so cancellation stays responsive.
+
+THE STATISTIC IS THE **MINIMUM** OF THE PROBES, not the median. The two
+errors are not symmetric: under-stating the round-trip leaves part of a
+fixed cost in the number and is bounded by how much was left, while
+over-stating it makes every dispatch read cheaper than it was — and
+`nextShadeHitCost` reads `workMs` DIRECTLY, with the capacity ladder above
+it binding nothing once the model is calibrated, so on that path the only
+rate limit is `SURFACE_COMPUTE_SHADE_MARGINAL_DECAY`'s halving per update.
+The probes are also back-to-back on a cold device, so the outliers a
+five-sample run really carries are HIGH ones, which a median admits and a
+minimum rejects. Under a polling-tick fence the subtraction under-states
+what it removes anyway (a dispatch is charged the tick it lands in, less
+one whole tick), so the residue is bounded by one fence quantum.
+
+MEASURED before/after, same machine on `DISPLAY=:0`, production build, the
+`scripts/surface-fence-cost.verify.mjs` fixture (a Sierpinski tetra under a
+pure-mandelbox fold FINAL), one antialiasing pass, settle frame's own
+duration read off the trace:
+
+| arm                        | Chrome before | Chrome after | Firefox before | Firefox after |
+| -------------------------- | ------------: | -----------: | -------------: | ------------: |
+| unlit, 1280x720            |       1271 ms |      1191 ms |      32,291 ms |     13,221 ms |
+| dispatches (march + shade) |      39 + 101 |     38 + 101 |      148 + 145 |      43 + 107 |
+| LIT, 640x360               |        801 ms |       844 ms |     138,854 ms |      6,845 ms |
+| dispatches (march + shade) |       30 + 43 |      29 + 42 |      91 + 1102 |       29 + 42 |
+| lit ray cap, final         |          4096 |         4096 |        **128** |          4096 |
+
+So Firefox's LIT settle is **20.3x** faster and its unlit one **2.44x**,
+while Chrome is unmoved — its round-trip is 2.4 ms and the calibration
+costs ~12 ms once per session. `scripts/surface-fence-cost.verify.mjs` is
+the gate; its LIT arm is the discriminating one, and its verdict is the
+pinning's machine-independent signature (a pinned ladder carries exactly
+one workgroup per dispatch however fast the GPU is) rather than a
+stopwatch.
+
+WHAT IS STILL OWED. After the fix a Firefox settle frame is very nearly its
+fence COUNT times its fence latency — 150 fences x ~100 ms against a 13.2 s
+frame — so the remaining 8-11x against Chrome is the per-fence price
+itself, not the sizing. The lever for that is fewer fences: group N
+dispatches behind one the way `surfaceComputeLightingFenceGroup` did for
+the removed medium. That is separate work, and it trades against the
+progressive-present cadence and the watchdog bound that made every
+dispatch its own submission in the first place.
+
+It was ENGINE-WIDE rather than specific to any feature: every
 compute-preferred session (fold-shaped 3D, escape-time, bulb and EVERY 4D
-system) runs this loop, so Firefox + WebGPU is effectively unusable for
-Surface until it is fixed. Fixing it also returns Chrome's 6.5%. Still to
-confirm: `?surfacetrace` in Firefox should show `shadeHitCap0` pinned near
-`SURFACE_COMPUTE_WORKGROUP_SIZE` for the life of the session.
+system) runs this loop.
 
 ### The lit dispatch width, and what one workgroup cost
 
