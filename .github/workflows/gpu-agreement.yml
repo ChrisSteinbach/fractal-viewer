@@ -40,9 +40,60 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+
+      # PUSH ONLY. A rebase merge mints new SHAs on main, so this push's own
+      # checks start empty — but the tree it carries is byte-identical to the
+      # PR head's, whose full sweep is already green. scripts/gpu-ci-swept.mjs
+      # --tree asks that CONTENT question (candidates: this commit, the heads
+      # of its associated PRs, the push's `before`; tree equality decides, so a
+      # rebase onto a MOVED main produces a new tree and sweeps).
+      #
+      # NOT pull_request: a PR's own sweep is the result being ESTABLISHED, and
+      # a PR head has no swept twin to inherit from. NOT schedule or
+      # workflow_dispatch: those force full on purpose, and they are where
+      # environment liveness — does this content still pass on today's runner
+      # image — is actually measured. NOT workflow_call either, and it needs no
+      # exclusion of its own: inside a called workflow github.event_name is the
+      # CALLER's event, so deploy's reusable call reports `workflow_dispatch`
+      # here. Deploy asks the same tree question once, in its own preflight,
+      # and skips this whole call rather than entering it to skip two jobs.
+      #
+      # No `pull-requests: read` is added for the association call, and none
+      # may be: a reusable workflow cannot request more than its caller job
+      # grants, and deploy's `gpu-full` grants `contents: read` alone. It is
+      # not needed — all three endpoints this reads (commit, its pulls, its
+      # check runs) answer 200 on this public repo with no token at all
+      # (verified 2026-09-10), the same basis deploy.yml's preflight records
+      # for check-runs. If one ever refuses, the script reports it and sweeps.
+      - name: Reuse a full sweep already green on this tree
+        id: swept
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: node scripts/gpu-ci-swept.mjs --tree --sha="$COMMIT_SHA"
+
+      # The reuse reaches the plan as an argument rather than a second
+      # skip condition, so `full=false` stays the ONE thing the GPU jobs and
+      # the stable aggregate read (the aggregate asserts both are `skipped`
+      # whenever it is false), and gpu-ci-plan.json still records why in its
+      # `reasons`. Built in shell from the step's outputs, never interpolated
+      # into the command line.
       - name: Select agreement coverage
         id: plan
-        run: node scripts/gpu-ci-plan.mjs
+        env:
+          SWEPT: ${{ steps.swept.outputs.swept }}
+          SWEPT_SHA: ${{ steps.swept.outputs.swept_sha }}
+        run: |
+          args=""
+          # Both, never just the flag: an empty sha would reach the planner as
+          # `--swept=` and be refused as an unknown argument, failing selection
+          # and reddening the aggregate over a reuse that should merely not
+          # happen.
+          if [ "$SWEPT" = true ] && [ -n "$SWEPT_SHA" ]; then
+            args="--swept=$SWEPT_SHA"
+          fi
+          node scripts/gpu-ci-plan.mjs $args
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gpu-ci-plan

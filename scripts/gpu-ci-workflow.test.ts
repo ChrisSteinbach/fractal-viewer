@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { parse } from "yaml";
 
@@ -81,6 +82,121 @@ describe("GPU workflow gates", () => {
     expect(deploy.jobs["gpu-full"].with).toBeUndefined();
     expect(deploy.jobs["verify-live"].needs).toBe("deploy");
   });
+  it("asks the TREE question in the deploy preflight, not the exact-SHA one", () => {
+    // The chain that collapses three sweeps into one: the PR head sweeps, the
+    // push-to-main run skips because the rebased tip shares its tree, and
+    // deploy skips for the same reason. The exact-SHA question would break the
+    // last link — main's tip then carries a green aggregate with a SKIPPED
+    // backend-smoke, which reads (correctly) as "not swept".
+    const swept = (workflow("deploy").jobs.preflight.steps as Step[]).find(
+      (step) => step.id === "swept",
+    );
+    expect(swept?.run).toContain("--tree");
+    // The lint/build/test/smoke gate stays exact-commit: cheap, and its
+    // early post-rebase refusal is deliberate.
+    const ci = (workflow("deploy").jobs.preflight.steps as Step[]).find(
+      (step) => step.name === "Require green CI for this commit",
+    );
+    expect(ci?.run).not.toContain("--tree");
+  });
+
+  it("lets a push to main reuse a sweep already green on the same tree", () => {
+    const select = gpu.jobs.select;
+    const steps = select.steps as Step[];
+    const swept = steps.find((step) => step.id === "swept");
+    expect(swept?.run).toContain("scripts/gpu-ci-swept.mjs");
+    expect(swept?.run).toContain("--tree");
+    // Push only. A PR's own sweep is the result being established; schedule
+    // and workflow_dispatch force full on purpose and carry the environment
+    // liveness signal; a workflow_call reports the CALLER's event name, so
+    // deploy's reusable call is excluded by the same condition.
+    expect((swept as Record<string, unknown>).if).toBe(
+      "github.event_name == 'push'",
+    );
+    expect(swept?.env?.GH_TOKEN).toBe("${{ github.token }}");
+    // Ordering: the plan step must be able to read the swept step's outputs.
+    expect(steps.indexOf(swept!)).toBeLessThan(
+      steps.findIndex((step) => step.id === "plan"),
+    );
+  });
+
+  it("routes the reuse through the plan so full=false stays the one signal", () => {
+    // The GPU jobs and the stable aggregate both key off `full`; a second
+    // skip condition beside it would let them disagree. The plan also records
+    // the reuse in gpu-ci-plan.json's reasons, which is still uploaded.
+    const plan = (gpu.jobs.select.steps as Step[]).find(
+      (step) => step.id === "plan",
+    );
+    expect(plan?.run).toContain("--swept=$SWEPT_SHA");
+    expect(plan?.env?.SWEPT).toBe("${{ steps.swept.outputs.swept }}");
+    expect(plan?.env?.SWEPT_SHA).toBe("${{ steps.swept.outputs.swept_sha }}");
+    // Built in shell from env, never interpolated into the command line.
+    expect(plan?.run).not.toContain("${{ steps.swept.outputs.swept_sha }}\n");
+    expect(gpu.jobs["backend-smoke"].if).toBe(
+      "needs.select.outputs.full == 'true'",
+    );
+    expect(gpu.jobs.agreement.if).toBe("needs.select.outputs.full == 'true'");
+    const artifact = (gpu.jobs.select.steps as Step[]).at(-1);
+    expect(artifact?.uses).toContain("actions/upload-artifact@");
+  });
+
+  it("records the reuse in the plan's reasons and skips both GPU jobs", () => {
+    // Run the real planner with the real flag against this checkout, so the
+    // artifact's shape is asserted rather than described.
+    const twin = "d721cc766028735ab7cd28f85646327d755b5ba3";
+    const out = execFileSync(
+      "node",
+      [
+        "scripts/gpu-ci-plan.mjs",
+        "--base=HEAD~1",
+        "--head=HEAD",
+        `--swept=${twin}`,
+      ],
+      { cwd: new URL("..", import.meta.url), encoding: "utf8" },
+    );
+    const plan = JSON.parse(out);
+    expect(plan.full).toBe(false);
+    expect(plan.matrix.include).toEqual([]);
+    expect(plan.reasons[0]).toContain(twin);
+    expect(plan.reasons[0]).toMatch(/tree is identical/);
+    // Structural too, so a reader need not parse a sentence to ask "reuse?".
+    expect(plan.swept).toBe(twin);
+  });
+
+  it("headlines a reuse as a reuse, never as proved independence", () => {
+    // Both outcomes end in no GPU jobs, and they are NOT the same claim: a
+    // reuse says this content already passed, independence says it was never
+    // touched. Borrowing independence's headline would misreport the one
+    // distinction this whole gate turns on.
+    const summary = new URL("../gpu-ci-plan-summary.test.md", import.meta.url);
+    const headline = (args: string[]) => {
+      rmSync(summary, { force: true });
+      execFileSync("node", ["scripts/gpu-ci-plan.mjs", ...args], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_STEP_SUMMARY: fileURLToPath(summary) },
+      });
+      const first = readFileSync(summary, "utf8").split("\n")[0];
+      rmSync(summary, { force: true });
+      return first;
+    };
+    expect(
+      headline(["--base=HEAD~1", "--head=HEAD", "--swept=" + "a".repeat(40)]),
+    ).toMatch(/full sweep reused from a{40}; no GPU jobs/);
+    expect(headline(["--full"])).toMatch(/full 3D \+ 4D agreement/);
+  });
+
+  it("keeps the planner offline and unchanged for a local base/head run", () => {
+    const out = execFileSync(
+      "node",
+      ["scripts/gpu-ci-plan.mjs", "--base=HEAD~1", "--head=HEAD"],
+      { cwd: new URL("..", import.meta.url), encoding: "utf8" },
+    );
+    const plan = JSON.parse(out);
+    expect(plan.reasons.join(" ")).not.toMatch(/tree is identical/);
+    expect(plan.base).toBe("HEAD~1");
+  });
+
   it("skips the deploy sweep only when this commit is already fully swept", () => {
     const deploy = workflow("deploy");
     // != 'true' and never == 'false': a missing/empty output must sweep.

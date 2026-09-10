@@ -47,11 +47,16 @@ tests before it can prove independence.
 
 PRs compare the event's base SHA with the checked-out merge tree, covering the
 whole PR after every push. Main pushes compare `before` with the checked-out
-commit, covering all pushed commits. Schedule and manual dispatch force full
-agreement regardless of a baseline. Deploy reuses this workflow at the caller's
-exact commit; its dispatch also forces full agreement. A missing baseline is
-always full. `gpu-ci-plan.json` and the job summary record the reasons, roster
-and selected matrix.
+commit, covering all pushed commits — and, before that, ask whether this push's
+TREE was already swept green on another commit, which is how a rebase merge's
+new SHAs inherit their PR's sweep (see _Tree identity_ below). That question is
+asked on `push` alone. Schedule and manual dispatch force full agreement
+regardless of a baseline. Deploy reuses this workflow at the caller's exact
+commit; its dispatch also forces full agreement, and inside a called workflow
+`github.event_name` is the CALLER's event, so the tree question is never asked
+there — deploy asks it once in its own preflight and skips the whole call. A
+missing baseline is always full. `gpu-ci-plan.json` and the job summary record
+the reasons, roster and selected matrix.
 
 ## Gates and full cadence
 
@@ -81,9 +86,9 @@ The full union runs:
 
 - on affected or uncertain PRs and main pushes;
 - nightly at **03:17 UTC**, on the default branch;
-- on a **manual deployment**, before the deploy job can publish — unless that
-  exact commit already carries a full sweep recorded green on itself, which the
-  preflight reuses instead of repeating (see below);
+- on a **manual deployment**, before the deploy job can publish — unless some
+  commit carrying the same tree already has a full sweep recorded green on it,
+  which the preflight reuses instead of repeating (see below);
 - on manual dispatch of **GPU agreement** for investigation.
 
 Commands:
@@ -124,11 +129,13 @@ aggregate shell against these success/failure states and inspect the existing
 required-check events and deploy dependency.
 
 Deploy first runs the existing exact-SHA lint/build/test/smoke preflight, so a
-missing or red ordinary check refuses before spending the full GPU sweep. A
-full agreement result at that exact commit must then be in hand before `deploy`
-starts: either the `gpu-full` reusable call finishes successfully, or the
-preflight found one already recorded green on this same SHA and `gpu-full`
-skips. Reuse is the narrow third case, and only that one.
+missing or red ordinary check refuses before spending the full GPU sweep. That
+gate stays an exact-commit question — it is cheap, and its early post-rebase
+refusal is deliberate. A full agreement result for that commit's **content**
+must then be in hand before `deploy` starts: either the `gpu-full` reusable
+call finishes successfully, or the preflight found one already recorded green
+on a commit carrying the same tree and `gpu-full` skips. Reuse is the narrow
+third case, and only that one.
 
 Deploy's sweep is a **content gate, not an environment liveness check**, which
 is what admits the reuse. It runs on its own `ubuntu-latest` runner in a
@@ -149,21 +156,151 @@ the aggregate has already asserted that `backend-smoke` **and** every
 `agreement` shard succeeded, while on the independent branch it asserts
 `backend-smoke` is `skipped`. Aggregate-green plus `backend-smoke`-green
 therefore proves the whole matrix ran and passed, with no shard counting.
-`scripts/gpu-ci-swept.mjs` is that predicate: it reads the commit's check runs
+`scripts/gpu-ci-swept.mjs` is that predicate: it reads a commit's check runs
 (paginated, latest by id, counting the reusable call's prefixed
 `gpu-full / …` names), and any missing, pending, red or unreadable result
 resolves to "not swept" so the failure direction is always to sweep. It is
-plain dependency-free JavaScript because the preflight job has no `npm ci`.
+plain dependency-free JavaScript because the preflight job has no `npm ci`. Its
+`--sha=X` mode asks that question of one exact commit; `--tree` asks it of the
+commit's **content**, walking a bounded candidate list and accepting only a
+commit whose tree matches byte for byte.
 
-Both existing refusals stay in force: an old PR's green GPU result cannot
-substitute, because a rebase merge mints a **different SHA**; and an
-independent-change result cannot substitute, because selection **skipped** the
-GPU jobs rather than running them. "Same commit" also does not mean "same
-environment" — a reused sweep asserts that this content passed on a recent
-runner, never that it would pass now. Deployment stays manual. Rebase merges
-still need main CI to finish before dispatch, and the live-site verification
-remains after publication. PR/push cancellation groups are separate from
-nightly, manual and deployment full runs.
+The independent-change refusal stays in force: such a result cannot substitute,
+because selection **skipped** the GPU jobs rather than running them, whatever
+tree it sat on. The "different SHA" refusal is superseded — not because the
+conclusion was wrong but because the **commit was the wrong key**; see _Tree
+identity_ below. Deployment stays manual. Rebase merges still need main CI to
+finish before dispatch, and the live-site verification remains after
+publication. PR/push cancellation groups are separate from nightly, manual and
+deployment full runs.
+
+## Tree identity: a sweep survives a rebase merge
+
+A rebase merge mints new commit SHAs, which is why a PR's green checks do not
+transfer to the merged commits. But git already records content identity
+separately from commit identity, as the **tree** object, and a rebase replays
+each patch onto the same base: only the parent and the committer date move.
+Measured on the 2026-09-10 staging-ceiling merge, PR 391's branch against main
+after `gh pr merge --rebase`:
+
+| PR branch commit | Main commit | Tree (shared) |
+| ---------------- | ----------- | ------------- |
+| `d721cc7`        | `616e4f3`   | `3c191a94…`   |
+| `e15e195`        | `2c7f121`   | `ebb08c3a…`   |
+| `cc24bf8`        | `3b3a138`   | `ed8ef5ea…`   |
+
+So `scripts/gpu-ci-swept.mjs --tree` asks the content question instead of the
+commit one: is there a commit with a **byte-identical tree** carrying a green
+full sweep? On that merge it collapses three full 36-shard sweeps into **one**.
+It also covers, for free, a commit that only changed its message, an empty
+rebase, a cherry-pick of an already-swept change, and a revert of a revert.
+
+**The chain closes to one sweep only if both halves ask the tree question.**
+The PR head sweeps; `gpu-agreement.yml`'s push-to-main run then finds the
+rebased tip's tree already swept on that head and plans `full=false`, which
+leaves main's tip carrying a green `gpu-agreement` aggregate with
+`backend-smoke` **skipped**. The exact-SHA question reads that (correctly) as
+"not swept", so a deploy still asking it would sweep a second time — net two
+sweeps, not one. Deploy's preflight therefore asks `--tree` too, finds the same
+twin, and skips: PR head sweeps → push skips → deploy skips.
+
+The reuse reaches the plan as `node scripts/gpu-ci-plan.mjs --swept=<sha>`
+rather than as a second skip condition beside `full`, so `full=false` stays the
+one signal both GPU jobs and the stable aggregate read — the aggregate's
+assertion that `full=false` implies both jobs `skipped` holds unchanged — and
+`gpu-ci-plan.json` still records the reuse, and the impact analysis's own
+reasons beneath it, in `reasons`, plus a structural `swept` field so a reader
+need not parse a sentence. The job summary headlines a reuse as a reuse: both
+outcomes end in no GPU jobs, but a reuse says this content already passed where
+independence says it was never touched, and those are not the same claim.
+
+### Propose versus decide
+
+Candidates come from `GET /repos/{owner}/{repo}/commits/{sha}/pulls`, and that
+association is a **heuristic**. It does not matter, which is the point of the
+design: **the API only PROPOSES a candidate; tree equality DECIDES.** Verified
+against this repo, all three merged commits propose the same PR head:
+
+```
+616e4f3 -> PR 391, head d721cc7
+2c7f121 -> PR 391, head d721cc7
+3b3a138 -> PR 391, head d721cc7
+```
+
+`616e4f3` and `d721cc7` share tree `3c191a94…`, so the tip's twin is found. The
+two intermediate commits propose the same head, its tree differs from theirs,
+and they sweep. A wrong proposal costs one tree comparison; it can never
+produce a wrong verdict.
+
+Trusting a twin is sound because **the tree IS the content**. If a full sweep
+passed green on a commit with this exact tree, this content was swept —
+including a fork PR's run, which executes in this repo's Actions on that
+content. The unsound version is trusting a _claim_ about the tree rather than
+the tree itself.
+
+The candidate list is bounded (`MAX_TREE_CANDIDATES`, 5) with the target
+commit itself **first**, so tree mode is a strict superset of the exact-SHA
+question at no extra API call, and a pathological association list cannot
+outrun the preflight job's `timeout-minutes: 2`. Every failure direction —
+an unreadable tree, an unreadable candidate, an API error, a mismatched tree,
+a candidate green only by an independence skip — resolves to "not swept" and
+spends the sweep.
+
+`commitTree` reads the tree from the API rather than `git rev-parse` on
+purpose: deploy's preflight checkout is shallow while `select`'s is full, so
+only one of the two callers could answer locally at all, and a candidate from
+another branch or a fork PR need not be in either checkout. The trust boundary
+is unchanged, since check runs already come from the same API. All three
+endpoints used (commit, its pulls, its check runs) answer 200 on this public
+repo with no token, so no `pull-requests: read` is added — and none may be, as
+a reusable workflow cannot request more than its caller job grants and deploy's
+`gpu-full` grants `contents: read` alone.
+
+### What tree reuse deliberately does NOT cover
+
+**A rebase onto a MOVED main.** The patches replay onto a different base, so
+every tree is genuinely new content no run has ever seen — and that is exactly
+where a semantic conflict hides: each side passed alone, the combination has
+never been tested. A new tree sweeps. Nobody has to reason about which case
+they are in; the tree hashes answer it.
+
+Three caveats bound what a tree marker asserts:
+
+1. **Same tree is not the same artifact.** `vite.config.ts` bakes the short SHA
+   and the build date into `__BUILD_ID__` deliberately, so "same tree" never
+   means "same `dist/`". Harmless here: the sweep runs against source and CPU
+   oracles and never touches the built bundle.
+2. **Same tree is not the same environment.** A reused sweep asserts that this
+   content passed on a recent runner, never that it would pass now. Liveness is
+   the nightly 03:17 UTC full sweep's job, which is why `schedule` and
+   `workflow_dispatch` never consult the marker.
+3. **The marker must record FULL**, never merely that the aggregate was green.
+   `backend-smoke` is the discriminator, and it is what makes a green
+   independence-skip result unusable as evidence — including the one this
+   change itself creates on main's tip.
+
+### Refuted alternative: an Actions cache marker
+
+The first design wrote a `gpu-agreement-full-<tree>` entry through
+`actions/cache` and had `select` consult it, on the belief that cache scoping
+made the marker safe to trust. GitHub's dependency-caching reference (fetched
+2026-09-10) refutes the mechanism:
+
+> When a cache is created by a workflow run triggered on a pull request, the
+> cache is created for the merge ref (`refs/pull/.../merge`). Because of this,
+> the cache will have a limited scope and can only be restored by re-runs of
+> the pull request.
+
+> Workflow runs cannot restore caches created for child branches or sibling
+> branches.
+
+The scoping is real, and it **defeats** the mechanism rather than securing it:
+the marker would be written by the PR run and read by the main push run, which
+is precisely the direction the scoping forbids. The only case tree keying
+exists to serve is the one the cache cannot serve. Independently, a cache key
+is a _claim_ about a tree that an untrusted run could plant, where a check run
+on a commit whose tree the API confirms is the tree itself — a second reason
+the cache is the wrong store.
 
 ## Measurement record
 

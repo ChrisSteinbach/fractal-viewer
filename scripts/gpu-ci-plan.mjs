@@ -32,9 +32,14 @@ const args = process.argv.slice(2);
 const value = (name) =>
   args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
 for (const arg of args)
-  if (!/^--(full|base=.+|head=.+)$/.test(arg))
+  if (!/^--(full|base=.+|head=.+|swept=[0-9a-f]{7,40})$/.test(arg))
     throw new Error(`Unknown argument: ${arg}`);
 const headRef = value("head") ?? "HEAD";
+// The commit whose green FULL sweep this run is reusing, if any. Supplied by
+// gpu-agreement.yml's select job from scripts/gpu-ci-swept.mjs --tree, and
+// only on a push event; a local `--base/--head` invocation never sets it and
+// so never makes a network call from here.
+const sweptSha = value("swept");
 let baseRef = value("base");
 let full = args.includes("--full");
 const event = process.env.GITHUB_EVENT_PATH
@@ -76,8 +81,27 @@ if (!full && baseRef) {
     impact.reasons = [`unavailable baseline/diff: ${String(error)}`];
   }
 }
+// A TREE ALREADY SWEPT GREEN NEEDS NO SECOND SWEEP, whatever the import-graph
+// analysis concluded: the tree IS the content, so the kernels in it are the
+// ones that passed. Explicit `--full` (and therefore the nightly and manual
+// dispatches, where environment liveness actually lives) still wins. The
+// impact analysis's own reasons are kept beneath the reuse line so the
+// gpu-ci-plan.json artifact still explains what the selection would have been.
+if (sweptSha && !full)
+  impact = {
+    full: false,
+    groups: [],
+    reasons: [
+      `reusing the full sweep already green on ${sweptSha}, whose tree is identical to this commit's`,
+      ...impact.reasons,
+    ],
+  };
+
 const plan = {
   ...impact,
+  // Recorded structurally, not only in the prose reasons: a reader asking the
+  // artifact "was this a reuse?" must not have to parse a sentence.
+  swept: sweptSha && !full ? sweptSha : null,
   head: headRef,
   base: baseRef ?? null,
   roster,
@@ -93,5 +117,8 @@ if (process.env.GITHUB_OUTPUT)
 if (process.env.GITHUB_STEP_SUMMARY)
   appendFileSync(
     process.env.GITHUB_STEP_SUMMARY,
-    `GPU selection: **${impact.full ? "full 3D + 4D agreement" : "independent change; no GPU jobs"}**\n\n${impact.reasons.map((reason) => `- ${reason}`).join("\n")}\n\nRoster: ${roster.length} scenarios; ${plan.matrix.include.length} shards.\n`,
+    // THREE outcomes, not two. A reuse is NOT an independence proof — that
+    // distinction is the whole point of the gate — so it must not borrow
+    // independence's headline just because both end in no GPU jobs.
+    `GPU selection: **${impact.full ? "full 3D + 4D agreement" : plan.swept ? `full sweep reused from ${plan.swept}; no GPU jobs` : "independent change; no GPU jobs"}**\n\n${impact.reasons.map((reason) => `- ${reason}`).join("\n")}\n\nRoster: ${roster.length} scenarios; ${plan.matrix.include.length} shards.\n`,
   );
