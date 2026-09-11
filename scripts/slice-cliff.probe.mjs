@@ -74,6 +74,7 @@
  */
 import process from "node:process";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const args = process.argv.slice(2);
 const BASE = (
@@ -90,6 +91,7 @@ const SLICES = flag("slices", "0,0.01,0.05,0.3")
   .map((s) => Number(s));
 const SCENE_FILTER = flag("scenes", "plain4,kaleido4").split(",");
 const TIMEOUT_MS = Number(flag("timeout", "180")) * 1000;
+await guardFreshDist({ url: BASE });
 /** Off by default: the full-quality settle outruns any usable window on the
  * expensive poses this probe exists to find, so the PREVIEW's completion is
  * the cost the sweep reads. `--settle=1` waits for the real thing. */

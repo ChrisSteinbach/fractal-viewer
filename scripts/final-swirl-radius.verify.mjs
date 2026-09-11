@@ -33,6 +33,7 @@ import {
   captureSettledSurface,
   launchSurfaceBrowser,
 } from "./lib/surface-browser-runner.mjs";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const options = {
   url: "https://localhost:4173",
@@ -507,6 +508,7 @@ async function authorCase(browser, fixture) {
 }
 
 async function main() {
+  await guardFreshDist({ url: options.url });
   await mkdir(options.outdir, { recursive: true });
   const browser = await launchSurfaceBrowser(
     options.display ? `x11:${options.display}` : "sw",

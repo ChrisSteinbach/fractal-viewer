@@ -18,6 +18,12 @@
  *     --prepare-control
  * Build/preview the second copy on 4176, then rerun that command without
  * --prepare-control. --records, --url, --display and --outdir override defaults.
+ * THIS GATE IS EXEMPT FROM THE STALE-BUNDLE GUARD every preview-driving
+ * gate carries (scripts/lib/dist-freshness.mjs): both origins it drives are
+ * previews of OTHER checkouts, so this repo's own dist/ says nothing about
+ * them and the guard could only ever false-refuse. The census step above
+ * runs surface-swirl.verify.mjs against one of those foreign trees, which
+ * IS guarded -- run that one leg with ALLOW_STALE_DIST=1.
  * The current XAUTHORITY must authorize the display; hardware is mandatory.
  *
  * Both runs replay the EXACT copied document, including camera and 4D pose.

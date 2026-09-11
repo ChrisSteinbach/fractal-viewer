@@ -204,6 +204,7 @@
  * acceptance command covers both dimensions.
  */
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 /** CSS viewport. Wider than `MOBILE_BREAKPOINT` (640) on purpose: below it
  * the panel becomes a closed drawer and `#modeSurfaceBtn` is not clickable,
@@ -824,6 +825,7 @@ function reportDiff(name, diff) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  await guardFreshDist({ url: args.url });
   const { env, headless, args: flags } = launchOptions(args.display);
   const browser = await chromium.launch({
     executablePath: process.env.CHROME_PATH ?? "/usr/bin/google-chrome",

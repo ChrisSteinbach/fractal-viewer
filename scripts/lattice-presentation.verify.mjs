@@ -42,6 +42,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT = path.resolve(
@@ -735,6 +736,7 @@ function printRow(result) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  await guardFreshDist({ url: args.url });
   const browser = await chromium.launch({
     executablePath: process.env.CHROME_PATH ?? "/usr/bin/google-chrome",
     headless: false,

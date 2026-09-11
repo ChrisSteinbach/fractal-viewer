@@ -46,6 +46,7 @@ import {
   RELEASE_VIEWPORT,
   SurfaceBrowserCheckingError,
 } from "./lib/surface-browser-runner.mjs";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const ENGINES = Object.freeze(["compute", "webgl"]);
 const VARIANTS = Object.freeze(["off", "on"]);
@@ -597,6 +598,7 @@ function seconds(value) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  await guardFreshDist({ url: args.url });
   let browser;
   try {
     browser = await launchSurfaceBrowser(args.mode);

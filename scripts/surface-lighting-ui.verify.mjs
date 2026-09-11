@@ -28,6 +28,7 @@ import { isDeepStrictEqual } from "node:util";
 import { build } from "esbuild";
 import { chromium } from "playwright-core";
 import { launchSurfaceBrowser } from "./lib/surface-browser-runner.mjs";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const options = {
   url: "https://localhost:4173",
@@ -488,6 +489,7 @@ async function active(page, fixture, width) {
   await page.waitForFunction(() => window.__surfaceState().mode === "points");
 }
 
+await guardFreshDist({ url: options.url });
 await mkdir(path.dirname(options.out), { recursive: true });
 await mkdir(options.out, { recursive: false });
 const generated = await fixtures();

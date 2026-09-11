@@ -35,6 +35,7 @@ import {
   launchSurfaceBrowser,
   pollSurfaceState,
 } from "./lib/surface-browser-runner.mjs";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const args = {
   url: "https://localhost:4173",
@@ -68,6 +69,8 @@ assert(
   args.samples === null ||
     (Number.isInteger(args.samples) && args.samples >= 1 && args.samples <= 64),
 );
+
+await guardFreshDist({ url: args.url });
 
 const report = {
   args,

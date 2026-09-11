@@ -43,6 +43,7 @@
  * back on others, so the engine column is reported rather than gated.
  */
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 /** Scene documents, `#v1=` payloads from `persist.ts`'s encoder. Each is a
  * MINIMAL document for one lift — no preset, no side table. */
@@ -176,6 +177,7 @@ async function coverage(page) {
 
 async function run() {
   const args = parseArgs(process.argv.slice(2));
+  await guardFreshDist({ url: args.url });
   const flags = [
     "--enable-unsafe-webgpu",
     "--enable-features=Vulkan",

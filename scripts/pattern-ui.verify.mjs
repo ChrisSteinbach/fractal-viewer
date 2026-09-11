@@ -83,6 +83,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT_DIR = path.resolve(__dirname, "..", ".playwright-mcp");
@@ -903,6 +904,7 @@ async function runReturnNoneLeg(browser, args, log) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  await guardFreshDist({ url: args.url });
   await mkdir(args.outdir, { recursive: true });
   const log = (line) => console.error(`[pattern-ui] ${line}`);
   const region = centralRegion(args.width, args.height);

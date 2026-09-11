@@ -88,6 +88,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import process from "node:process";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -335,6 +336,7 @@ async function comparePngs(page, a, b) {
 }
 
 async function main() {
+  await guardFreshDist({ url: BASE });
   const launchArgs = [
     "--enable-unsafe-webgpu",
     "--enable-features=Vulkan",

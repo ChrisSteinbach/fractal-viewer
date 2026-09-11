@@ -52,6 +52,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT_DIR = path.resolve(
@@ -606,6 +607,7 @@ function printLeg(result) {
 
 async function run() {
   const args = parseArgs(process.argv.slice(2));
+  await guardFreshDist({ url: args.url });
   // Make the authored-document claim executable before a browser is opened.
   for (const fixture of FIXTURES) {
     const decoded = decodeHash(encodeHash(fixture.document));

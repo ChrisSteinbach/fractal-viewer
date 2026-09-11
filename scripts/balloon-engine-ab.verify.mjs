@@ -253,6 +253,7 @@
  *                      producing one
  */
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 /** CSS viewport. Wider than `MOBILE_BREAKPOINT` (640) on purpose: below it
  * the panel is a closed drawer and `#modeSurfaceBtn` is not clickable, so
@@ -934,6 +935,7 @@ function reportBlock(records, args) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  await guardFreshDist({ url: args.url });
   const system = SYSTEMS[args.system];
   const legs = args.only
     ? LEGS.filter((leg) => args.only.includes(leg.id))

@@ -71,6 +71,7 @@ import {
   surfaceLaunchOptions,
   SurfaceBrowserCheckingError,
 } from "./lib/surface-browser-runner.mjs";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const ENGINES = ["compute", "webgl"];
 const DIMENSIONS = [3, 4];
@@ -933,6 +934,7 @@ async function refusal(browser, args, dimension, variant) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  await guardFreshDist({ url: args.url });
   await mkdir(args.outdir, { recursive: true });
   // Same launcher flags as the shared runner, with a BrowserServer handle so
   // a hung renderer cannot strand cleanup: process ownership and kill() are

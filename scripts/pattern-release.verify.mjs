@@ -60,6 +60,7 @@ import {
   RELEASE_VIEWPORT,
   SurfaceBrowserCheckingError,
 } from "./lib/surface-browser-runner.mjs";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const execFile = promisify(execFileCallback);
 const DEFAULT_OUT_ROOT = path.resolve("scripts/out");
@@ -1062,6 +1063,8 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const fixtureCheck = runFixtureSelfCheck();
   if (args.phase === "self-check") {
+    // Pure fixture arithmetic: no bundle is read, so the stale-bundle guard
+    // below would only ever false-refuse it.
     console.log(
       JSON.stringify(
         { fixtures: fixtureCheck, thresholds: PATTERN_EFFECT_THRESHOLDS },
@@ -1071,6 +1074,11 @@ async function main() {
     );
     return;
   }
+  // This gate SERVES the build (startOwnedPreview) but never makes it, so a
+  // direct `node scripts/pattern-release.verify.mjs` can measure the previous
+  // bundle. `npm run verify:pattern-release` builds first; the guard is what
+  // makes that the only way through.
+  await guardFreshDist({ url: args.url });
   const preview = await startOwnedPreview(args.url);
   args.url = preview.url;
   let browser;

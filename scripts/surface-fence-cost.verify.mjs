@@ -111,6 +111,7 @@
  */
 import { chromium, firefox } from "playwright-core";
 import { writeFileSync } from "node:fs";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -301,6 +302,7 @@ function readTrace(lines) {
 }
 
 async function main() {
+  await guardFreshDist({ url: BASE });
   const url = `${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}${FENCE_GROUP_Q}${enc(scene())}`;
   log(`browser=${BROWSER} viewport=${VIEWPORT.width}x${VIEWPORT.height}`);
   log(

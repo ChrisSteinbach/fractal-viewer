@@ -100,6 +100,12 @@
  * deliberately serves no COOP/COEP of its own, which is what lets the
  * service-worker isolation reload above actually exercise, per vite.config.ts.)
  *
+ * That build is no longer taken on trust: this gate REFUSES with exit 2 when
+ * dist/app is older than any source it was built from, because a rerun over
+ * the previous bundle measures the previous bundle and looks exactly like a
+ * run that measured the change (scripts/lib/dist-freshness.mjs, whose header
+ * carries the reasoning and the ALLOW_STALE_DIST=1 escape hatch).
+ *
  * Prints one grep-able summary line at the end:
  *   [capture-drain] settleMs=<n> captureMs=<n> captureOutcome=<saved|
  *     refused|cancelled|timeout> capturePct=<n|na> exportSize=<WxH|na>
@@ -119,6 +125,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.resolve(__dirname, "..", ".playwright-mcp");
@@ -439,6 +446,7 @@ async function runCapture(page, timeoutMs) {
 }
 
 async function main() {
+  await guardFreshDist({ url: BASE });
   await mkOutDir();
   const env = { ...process.env };
   delete env.DISPLAY; // offscreen SwiftShader, not X11 GLX (see webgl-smoke.mjs)

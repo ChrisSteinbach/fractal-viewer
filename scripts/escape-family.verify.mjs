@@ -59,6 +59,11 @@
  * reload a live origin performs is handled, and `npm run preview` never
  * performs it.
  *
+ * A LOCAL run refuses a stale bundle (exit 2) rather than measuring the
+ * previous build behind `npm run preview`; a REMOTE `--url` skips that check,
+ * since this checkout's dist/ says nothing about a deployed origin. Both live
+ * in scripts/lib/dist-freshness.mjs.
+ *
  * `--mode=x11:<display>` is a HEADED window on a live X display, which is the
  * only route to the real driver here and therefore the only arm on which the
  * engine question (4) has a meaningful answer — SwiftShader answers "compute,
@@ -70,6 +75,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT_DIR = path.join(HERE, "out", "escape-family");
@@ -380,6 +386,7 @@ async function differingFraction(page, aPath, bPath) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  await guardFreshDist({ url: args.url });
   fs.mkdirSync(args.outdir, { recursive: true });
   const { env, args: launchArgs, headless } = launchOptions(args.mode);
   const browser = await chromium.launch({
