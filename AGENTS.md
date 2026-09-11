@@ -1886,12 +1886,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     fixes the RATIO of its two terms — so `K`
     (`SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST`) is a WIDTH, not a ratio.
     `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` sits outside the range
-    real scenes measure in, and that PLACEMENT is the measurement. THE LIT
-    QUEUE IS SIZED THE SAME WAY (`nextLightingRayCap`), and was not: an
+    real scenes measure in; that PLACEMENT is the measurement. THE LIT
+    QUEUE IS SIZED THE SAME WAY (`nextLightingRayCap`): an
     inert cost lane is a pinned width, not a safe default. AND NO SIZING MODEL OR LADDER MAY READ A
     RAW DISPATCH TIME: the session calibrates its own fence
-    round-trip once (MINIMUM of five null probes; over-subtracting is the
-    unbounded direction) and every model, ladder and EMA reads wall MINUS
+    round-trip once (MINIMUM of five null probes behind one unmeasured
+    tick-aligning fence; over-subtracting is unbounded) and every model, ladder and EMA reads wall MINUS
     that fence, the tally alone reading wall.
     THE FENCE IS PAID PER GROUP, NOT PER DISPATCH: a dispatch is still its
     own SUBMISSION (the preemption boundary) but several queue behind ONE

@@ -18,8 +18,10 @@
  * roughly 30,000, each paying another ~100 ms.
  *
  * The fix measures the session's OWN fence round-trip once, at its first
- * real dispatch (the minimum of five null dispatches), and subtracts it in
- * `flushGroup` before `nextShadeHitCost`, `nextShadeBatchSize`,
+ * real dispatch (one leading alignment null dispatch, then the minimum of
+ * five COUNTED ones — see `surface-compute.ts`'s
+ * `SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES` for why the alignment probe
+ * exists), and subtracts it in `flushGroup` before `nextShadeHitCost`, `nextShadeBatchSize`,
  * `nextLightingRayCap` and the march's per-ray-step EMA read the value.
  * This gate drives the built app in a real browser and asks the questions
  * that settle it: was the round-trip measured at all, did the ladder
@@ -74,13 +76,20 @@
  * this fixture at the DEFAULT 1280x720 inside 300 s at any group size, the
  * pre-grouping loop included, while 640x360 and 960x540 settle in 5-11 s —
  * so pass `--viewport=640x360` there (that is a standing Firefox question
- * of its own, not this gate's). And the calibrated round-trip it reports
- * is BIMODAL: eight consecutive runs of this fixture calibrated 77.8,
- * 78.3, 18.6, 81.4, 37.2, 3.3, 59.0 and 67.2 ms, and a LOW draw leaves the
- * residue inside the sizing models and can pin the lit ladder outright —
- * this gate has FAILED for that reason on code with grouping pinned off.
- * A lit FAIL is worth re-running once and reading the calibrated number
- * before believing it.
+ * of its own, not this gate's). AND THE CALIBRATION USED TO BE BIMODAL:
+ * eight consecutive runs of this fixture calibrated 77.8, 78.3, 18.6,
+ * 81.4, 37.2, 3.3, 59.0 and 67.2 ms, because the session's very FIRST
+ * fence lands at a random phase of Firefox's ~100 ms polling tick while
+ * every later back-to-back probe waits a near-full tick — so the minimum
+ * of a run started cold was overwhelmingly that first, random-phase draw
+ * rather than a stable constant (`scripts/webgpu-fence-phase.repro.mjs`
+ * confirms the mechanism away from the app). The calibration now pays one
+ * UNMEASURED aligning fence before any counted probe
+ * (`SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES`), so every counted probe lands
+ * at the same tick-aligned phase a real dispatch does. A lit FAIL whose
+ * calibrated value reads well under one Firefox tick (~100 ms) still means
+ * the calibration regressed — read the traced `probes=` list before
+ * believing a low number.
  *
  * EXIT CODES. 0 = the cap climbed off its floor, the session settled, and
  * fences came in under dispatches — the gate passes. 3 = the cap stayed
