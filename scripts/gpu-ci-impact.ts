@@ -13,6 +13,18 @@ export const GPU_ROOTS = [
   "scripts/gpu-flame-bench.mjs",
 ];
 
+/** SELECTION'S OWN MACHINERY, which never takes the independence path.
+ * Nothing imports these from the bench, so closure membership would call a
+ * change to them independent — and a gate must not narrow itself on its own
+ * authority. The sweep does not validate them (its tests do), so this buys
+ * attention rather than proof: these files are rare, and a commit that edits
+ * what may be skipped should not also be the commit that skips. */
+export const SELECTION_MACHINERY = [
+  "scripts/gpu-ci-impact.ts",
+  "scripts/gpu-ci-plan.mjs",
+  "scripts/gpu-ci-swept.mjs",
+];
+
 const moduleFile = /\.(?:[cm]?[jt]sx?)$/;
 const inert = (file: string): boolean =>
   file.startsWith("docs/") ||
@@ -181,6 +193,24 @@ export function selectImpact(
       else if (inert(file)) continue;
       else if (!base.files.has(file) || !head.files.has(file))
         reasons.push(`new/deleted/renamed file: ${file}`);
+      else if (SELECTION_MACHINERY.includes(file))
+        reasons.push(`selection's own machinery: ${file}`);
+      // A scripts/ module OUTSIDE the bench's closure cannot reach the
+      // kernels, and CLOSURE MEMBERSHIP ALONE decides it — deliberately with
+      // no import-edge check of its own. The closure is recomputed over the
+      // HEAD tree, so a script that becomes reachable is caught as an
+      // agreement dependency there; parsing these files instead would gain
+      // nothing and lose plenty, since 32 of them legitimately call
+      // readFileSync/fetch and `imports` refuses such a loader by design —
+      // one of them would fall the WHOLE selection back to uncertainty.
+      // The bench's only runtime spawn is `npm run dev`; it loads no
+      // scripts/ file by path (verified), so imports are the whole story.
+      else if (
+        file.startsWith("scripts/") &&
+        moduleFile.test(file) &&
+        !file.endsWith(".d.ts")
+      )
+        continue;
       else if (
         !file.startsWith("src/") ||
         !moduleFile.test(file) ||

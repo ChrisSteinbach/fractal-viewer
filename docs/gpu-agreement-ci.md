@@ -384,6 +384,61 @@ the cache is the wrong store.
 
 ## Measurement record
 
+### scripts/ outside the bench's closure, 2026-09-11
+
+Every file under `scripts/` used to read as `unclassified configuration/asset`,
+so editing one browser gate cost a full 36-shard sweep. A gate cannot reach
+the kernels: nothing the bench imports imports it. `GPU_ROOTS` already carried
+`scripts/gpu-flame-bench.mjs`, so the closure was tracked; only the
+classification treated everything outside `src/` as unknown.
+
+CLOSURE MEMBERSHIP ALONE DECIDES A `scripts/` MODULE, deliberately with no
+import-edge check of its own — the check `src/` files get. Two reasons, and
+the second is the load-bearing one:
+
+1. The closure is recomputed over the HEAD tree, so a script that BECOMES
+   reachable is already caught there as an agreement dependency.
+2. Parsing them would gain nothing and lose plenty. **32 of the 137 files
+   under `scripts/` legitimately call `readFileSync`/`fetch`**, which
+   `imports` refuses as an unknown loader by design — and one such refusal
+   falls the WHOLE selection back to `analysis uncertainty`. The naive fix
+   would not even have helped the change that motivated it.
+
+The bench's only runtime spawn is `npm run dev`; it loads no `scripts/` file
+by path (both `scripts/…` strings in it are comments, verified), so imports
+are the whole story.
+
+`SELECTION_MACHINERY` — `gpu-ci-impact.ts`, `gpu-ci-plan.mjs`,
+`gpu-ci-swept.mjs` — never takes the independence path. Nothing imports them
+from the bench, so closure membership would call them independent, and a gate
+must not narrow itself on its own authority. The sweep does not validate them
+(their tests do), so this buys attention rather than proof.
+
+Measured on real commits:
+
+| Changed                    | Before          | After                            |
+| -------------------------- | --------------- | -------------------------------- |
+| one `*.verify.mjs` gate    | full, 36 shards | independent                      |
+| three gates at once        | full, 36 shards | independent                      |
+| a `*.harness.ts` sheet     | full, 36 shards | independent                      |
+| `gpu-flame-bench.mjs`      | full            | full — agreement dependency      |
+| `gpu-bench-diagnostics.ts` | full            | full — agreement dependency      |
+| `gpu-ci-impact.ts`         | full            | full — selection's own machinery |
+| `src/fractal/flame-gpu.ts` | full            | full — agreement dependency      |
+| `scripts/tsconfig.json`    | full            | full — unclassified (non-module) |
+
+WHAT IT DOES NOT DO, stated because the motivating change is the example: a
+PR that ADDS a gate still sweeps. `new/deleted/renamed file` is a separate
+and deliberate rule, untouched here. On the stale-bundle change's own 39-file
+diff this collapses 38 reasons to three — two new files and one `tsconfig.json`
+— and still plans a full sweep.
+
+NOT EXTENDED TO `.github/workflows/`. `deploy.yml` cannot affect kernel
+agreement but `gpu-agreement.yml` defines the sweep, so the answer there is a
+closure too — over YAML `uses:`/`workflow_call` edges, which this selector has
+no machinery to read. It analyses TypeScript and JavaScript imports; inventing
+a second graph for a handful of rarely-edited files is not worth the surface.
+
 ### The selector was inert until 2026-09-10
 
 Every run selected a FULL sweep whatever changed, so the impact machinery
