@@ -4890,8 +4890,8 @@ async function main(): Promise<void> {
           completing
             ? {
                 // Unbudgeted, so it discloses and paints like the settle:
-                // resolved rays shade in over the truncated frame this
-                // pass re-runs (the renderer prefills from it), and the
+                // each present replaces the pane with this pass's partial
+                // (unresolved rays read as their seeded backdrop), and the
                 // ray tallies feed "Preview · WebGPU N%" + the Skip
                 // button through syncSurfaceProgress.
                 onProgress: (pixels, layers, done, total) => {
@@ -4950,8 +4950,8 @@ async function main(): Promise<void> {
               // (measured 45s of black on Firefox's ~10-20x slower WebGPU
               // where Chrome's preview completes in 0.4s). At the dropped
               // rung the re-run usually completes inside the same wall budget
-              // and paints real content, which the settle's prefill then
-              // carries.
+              // and paints real content, which the pane holds until the
+              // settle presents over it.
               //
               // No drop means the floor rung (any truncation panics, and
               // panic saturates there), so the ladder has answered as far

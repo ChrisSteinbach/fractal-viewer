@@ -1242,8 +1242,26 @@ that prediction closed at two dispatches on a lane where six were
 affordable. The prediction carries no information; only the measurement
 does.
 
-SO THREE BOUNDS CLOSE A GROUP, whichever comes first
-(`surfaceComputeFenceGroupSize`):
+SO FOUR BOUNDS CLOSE A GROUP, whichever comes first — the first three in
+`surfaceComputeFenceGroupSize`, the fourth in
+`surfaceComputeFenceGroupStagedFull`:
+
+- **the bytes the group has staged**, `SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES`
+  (1 MiB): every `queue.writeBuffer`/`writeTexture` since the last fence —
+  params blocks, ray lists, the frame's own uniforms and textures. It is
+  asked BEFORE a dispatch stages its writes, so a raster-sized ray list never
+  joins a group already holding staging, and again once the dispatch is
+  submitted. It only ever shrinks a group: an EMPTY group never closes, so a
+  dispatch whose own writes pass the ceiling still goes out, as a group of
+  one, and no fence is skipped. The evidence is the staging repro's table
+  below — row C (four dispatches, two 16 KB writes each) 0/20, row D (the
+  same plus 8 MB) 7/20, row E (8 MB behind a group of one) 0/20, row F
+  (32 MB across four dispatches) 13/20: staged VOLUME behind one fence is
+  what kills. After the device seed the volume left is the ray lists — a
+  march slice's list, and the free queue, which drains whole (3.7 MB at
+  1280x720). The bound binds under `?surfacefencegroup` too, which is what
+  should make raising the count safe at any raster. It cannot fix row G: a
+  single dispatch whose own list is tens of megabytes;
 
 - **twice the lane's worst MEASURED per-dispatch work this frame**, against
   `SURFACE_COMPUTE_FENCE_GROUP_MS`. This is
@@ -1400,9 +1418,10 @@ ceiling above. With those writes replaced by the device seed, the partition
 bound IS the frame's raster-scaled staging now: the ray lists, at most one
 frame's worth across a group — 0.9 MB at 640x360, 3.7 MB at 1280x720. The
 free queue drains whole, so an all-miss sweep can stage that much in ONE
-write. There is still no fourth bound in `surfaceComputeFenceGroupSize` for
-it — a cap of two is the bound — but it is a bound that was chosen, not one
-the partition argument gives for free.
+write. That is what the staged-bytes bound above is for: a group closes
+before a list that would carry it to 1 MiB joins it, and a list past 1 MiB
+fences alone, so the partition argument no longer has to carry this by
+itself.
 
 **THE ATTRIBUTION IS THE PART TO GET RIGHT**, because a group measures ONE
 time for N pieces of work and the models below still reason per dispatch.
