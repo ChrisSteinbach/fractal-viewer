@@ -15,6 +15,13 @@
  * starts from the identical document with a parked camera. `--density=0`
  * zeroes the medium's density in that document (the compute loop then
  * dispatches no medium work); `--density=authored` keeps the starter's 0.42.
+ * `--scene=slice4` swaps in cinematic-lighting.verify.mjs's simpleFourD
+ * fixture (a filled 16-map 4-cube at a nonzero w slice under a nonidentity
+ * rotor, two lights, medium density 0.12) on top of that document.
+ * ATTRIBUTION CAVEAT: a settle's FIRST frame can log `frame start` before
+ * the 50 ms watcher's `[mcstate]` flips (seen on the 4D fixture), which then
+ * files that pass under previewFrames; pass boundaries/lanes must be read
+ * with the full-pane unbudgeted frame counted as the settle's.
  *
  * Timing is from the Surface button click (t=0). Everything the renderer
  * says arrives through `?surfacetrace` and is appended to `<label>.trace.txt`
@@ -44,6 +51,7 @@ const args = {
   mode: "x11::0",
   label: `run-${Date.now()}`,
   levers: "",
+  scene: "cathedral",
   density: "authored",
   cap: 600,
   stop: "settle",
@@ -193,7 +201,67 @@ try {
   report.browserVersion = browser.version();
 
   const encoded = await mintDocument(browser);
-  const document = decode(encoded);
+  let document = decode(encoded);
+  if (args.scene === "slice4") {
+    // cinematic-lighting.verify.mjs's simpleFourD fixture, verbatim: an
+    // ordinary filled 4-cube IFS (16 maps), seen at a nonzero w slice under
+    // a nonidentity rotor, with a two-light rig and a bounded medium.
+    document = structuredClone(document);
+    document.transforms = Array.from({ length: 16 }, (_, bits) => ({
+      position: [0, 1, 2].map((axis) => (bits & (1 << axis) ? 0.5 : -0.5)),
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      w: { position: bits & 8 ? 0.5 : -0.5 },
+    }));
+    delete document.finalTransform;
+    document.balloonEcho = false;
+    document.groundPlane = false;
+    document.camera = {
+      target: [0, 0, 0],
+      radius: 4,
+      theta: 0.6,
+      phi: 1.15,
+      fov: 45,
+    };
+    document.fourD = {
+      p: [Math.cos(0.15), Math.sin(0.15), 0, 0],
+      q: [Math.cos(0.15), Math.sin(0.15), 0, 0],
+      sliceOn: true,
+      sliceCenter: 0.12,
+      sliceThickness: 0,
+      sliceRelColor: false,
+    };
+    document.surface.lighting = {
+      lights: [
+        {
+          position: [2, 3, 2],
+          normal: [-2, -3, -2],
+          radius: 0.3,
+          color: [1, 0.5, 0.2],
+          intensity: 60,
+        },
+        {
+          position: [-2, 1, 1],
+          normal: [2, -1, -1],
+          radius: 0.35,
+          color: [0.15, 0.45, 1],
+          intensity: 30,
+        },
+      ],
+      ambient: [0.05, 0.05, 0.06],
+      specular: 0.15,
+      roughness: 0.45,
+      medium: {
+        center: [0, 0, 0],
+        radius: 2.5,
+        density: 0.12,
+        tint: [0.9, 0.95, 1],
+        anisotropy: 0.3,
+      },
+    };
+  } else {
+    assert.equal(args.scene, "cathedral", "--scene must be cathedral|slice4");
+  }
   if (args.density === "0") document.surface.lighting.medium.density = 0;
   report.medium = document.surface.lighting.medium;
   report.antialiasSamples = document.surface.antialiasSamples;
