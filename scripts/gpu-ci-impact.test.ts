@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import {
+  SELECTION_MACHINERY,
   dependencyClosure,
   fullMatrix,
+  imports,
   scenarioRoster,
   selectImpact,
 } from "./gpu-ci-impact";
@@ -18,6 +20,13 @@ function tree(changes: Record<string, string | null> = {}): SourceTree {
     "src/math.ts": 'import "./wire";',
     "src/wire.ts": "export interface Params { x: number }",
     "src/panel.ts": "export const label = 'hello';",
+    "scripts/driver.mjs": 'import "../src/gpu.ts";',
+    "scripts/gate.verify.mjs": "readFileSync('shot.png'); export const x = 1;",
+    "scripts/sheet.harness.ts": 'import "../src/panel.ts";',
+    "scripts/tsconfig.json": "{}",
+    "scripts/gpu-ci-impact.ts": "export const selector = 1;",
+    "scripts/gpu-ci-plan.mjs": "export const plan = 1;",
+    "scripts/gpu-ci-swept.mjs": "export const swept = 1;",
     "docs/guide.md": "Guide",
     "src/texture.json": "[]",
   };
@@ -105,6 +114,76 @@ describe("GPU impact policy", () => {
     });
     expect(selectImpact(graph, graph, ["src/panel.ts"], roots).full).toBe(true);
   });
+  it("lets a gate outside the bench's closure skip the sweep", () => {
+    // A browser gate cannot reach the kernels: nothing the bench imports
+    // imports it. Before this, every scripts/ file read as "unclassified
+    // configuration/asset" and one gate edit cost the whole 36-shard sweep.
+    const graph = tree();
+    const changed = ["scripts/gate.verify.mjs", "scripts/sheet.harness.ts"];
+    expect(selectImpact(graph, graph, changed, roots).full).toBe(false);
+  });
+
+  it("decides a scripts/ file on CLOSURE MEMBERSHIP, never on parsing it", () => {
+    // scripts/gate.verify.mjs calls readFileSync, which `imports` refuses as
+    // an unknown loader by design. Parsing it would fall the WHOLE selection
+    // back to uncertainty, which is exactly what this rule must not do.
+    expect(() =>
+      imports(
+        "scripts/gate.verify.mjs",
+        tree().read("scripts/gate.verify.mjs"),
+      ),
+    ).toThrow(/unknown loader/);
+    const graph = tree();
+    expect(
+      selectImpact(graph, graph, ["scripts/gate.verify.mjs"], roots).full,
+    ).toBe(false);
+  });
+
+  it("still sweeps for a scripts/ file the bench DOES reach", () => {
+    const graph = tree();
+    expect(
+      selectImpact(
+        graph,
+        graph,
+        ["scripts/driver.mjs"],
+        [...roots, "scripts/driver.mjs"],
+      ).full,
+    ).toBe(true);
+  });
+
+  it("sweeps when a script BECOMES reachable, caught by the head closure", () => {
+    // The head tree is what the closure is recomputed over, which is why no
+    // import-edge check of the script itself is needed.
+    const head = tree({ "src/bench.ts": 'import "./gpu"; import "./gpu4";' });
+    expect(
+      selectImpact(
+        tree(),
+        head,
+        ["scripts/sheet.harness.ts"],
+        [...roots, "scripts/sheet.harness.ts"],
+      ).full,
+    ).toBe(true);
+  });
+
+  it("never lets selection's own machinery take the independence path", () => {
+    // Nothing imports these from the bench, so closure membership alone would
+    // call them independent. A gate must not narrow itself on its own
+    // authority.
+    for (const file of SELECTION_MACHINERY) {
+      const graph = tree();
+      const result = selectImpact(graph, graph, [file], roots);
+      expect(result.full).toBe(true);
+      expect(result.reasons[0]).toMatch(/selection's own machinery/);
+    }
+  });
+
+  it("keeps a non-module scripts/ file conservative", () => {
+    const graph = tree();
+    const result = selectImpact(graph, graph, ["scripts/tsconfig.json"], roots);
+    expect(result.full).toBe(true);
+    expect(result.reasons[0]).toMatch(/unclassified configuration\/asset/);
+  });
+
   it.each<Record<string, string | null>>([
     { "src/new.ts": "export const x = 1;" },
     { "src/panel.ts": null },
