@@ -1160,10 +1160,12 @@ bigger slice spreads the same residue over more ray·steps, so that term
 falls as the chunk grows instead of ratcheting.
 
 **THE FIX: measure the session's own round-trip and subtract it at one
-chokepoint.** The loop calibrates on its first dispatch — five NULL
-dispatches (this frame's real pipeline and bind group at ZERO workgroups,
-so a genuine submit-and-fence with no GPU work, no side effect and no
-dependence on what the params buffer holds) — and thereafter returns BOTH
+chokepoint.** The loop calibrates on its first dispatch — one leading
+alignment NULL dispatch plus five COUNTED ones (this frame's real pipeline
+and bind group at ZERO workgroups, so a genuine submit-and-fence with no
+GPU work, no side effect and no dependence on what the params buffer
+holds; see "The first probe was a different population" just below for
+why there is an alignment probe at all) — and thereafter returns BOTH
 currencies: `wallMs`, the honest wall clock the tally and the trace lines
 use, and `workMs`, that minus the fence, which is the only number any
 sizing model or capacity ladder may read. The calibration hangs off the
@@ -1173,8 +1175,8 @@ for it, and it sits inside the frame's own in-flight accounting so
 `destroy()` still drains it, with the frame token re-checked between probes
 so cancellation stays responsive.
 
-THE STATISTIC IS THE **MINIMUM** OF THE PROBES, not the median. The two
-errors are not symmetric: under-stating the round-trip leaves part of a
+THE STATISTIC IS THE **MINIMUM** OF THE COUNTED PROBES, not the median. The
+two errors are not symmetric: under-stating the round-trip leaves part of a
 fixed cost in the number and is bounded by how much was left, while
 over-stating it makes every dispatch read cheaper than it was — and
 `nextShadeHitCost` reads `workMs` DIRECTLY, with the capacity ladder above
@@ -1184,7 +1186,9 @@ The probes are also back-to-back on a cold device, so the outliers a
 five-sample run really carries are HIGH ones, which a median admits and a
 minimum rejects. Under a polling-tick fence the subtraction under-states
 what it removes anyway (a dispatch is charged the tick it lands in, less
-one whole tick), so the residue is bounded by one fence quantum.
+one whole tick), so the residue is bounded by one fence quantum — a claim
+the next subsection found was not yet true of the probes actually being
+minimized, and fixed.
 
 MEASURED before/after, same machine on `DISPLAY=:0`, production build, the
 `scripts/surface-fence-cost.verify.mjs` fixture (a Sierpinski tetra under a
@@ -1206,6 +1210,94 @@ the gate; its LIT arm is the discriminating one, and its verdict is the
 pinning's machine-independent signature (a pinned ladder carries exactly
 one workgroup per dispatch however fast the GPU is) rather than a
 stopwatch.
+
+#### The first probe was a different population
+
+**A SECOND DEFECT IN THE SAME CALIBRATION, found after the fix above
+shipped and measured live.** Nine runs of `scripts/surface-fence-cost.verify.mjs`
+on this machine (real AMD RX 7900 XTX, `DISPLAY=:0`, production build)
+traced calibrated round-trips of 56.94, 70.60, 41.84, 94.40, 84.18, 91.18,
+88.46, 16.42 and 55.84 ms — scattered across most of the ~100 ms tick
+the section above measured as Firefox's true per-fence cost. The 16.42 ms run's own
+probe list read `16.42,100.56,100.26,100.12,100.16` — one low, variable
+first probe followed by four probes clustered at essentially one tick —
+and its settle ran **121,519 ms** (1011 shade dispatches at 71 hits each,
+`--display=:0`, exit 3): the under-subtracted 16.42 ms pinned the lit
+capacity ladder at the one-workgroup floor for the whole session, the
+exact regression the fix above exists to prevent. Every one of the nine
+runs shared that shape: a low first probe, then probes 2-5 within a
+fraction of a millisecond of 100 ms.
+
+THE MECHANISM: Firefox resolves `onSubmittedWorkDone` only on a ~100 ms
+polling tick (`WebGPUParent`'s `MaintainDevices` timer, Mozilla bug
+1870699), not at submit time. `ensureFenceCalibrated` had no fence to
+follow before its first probe — it hangs off the session's first real
+dispatch, so probe #1 is submitted at whatever phase of that tick the app
+happened to reach it — while every later back-to-back probe is submitted
+right after the PREVIOUS one resolved ON a tick, so it must wait a whole
+tick. Probe #1 draws from a roughly uniform (0, 100] population; probes
+2-5 draw from a population clustered near 100 ms. `Math.min()` over a
+mixed sample is therefore overwhelmingly probe #1's draw, not a stable
+platform constant — the calibration was sampling a DIFFERENT population
+from the one it gets subtracted from, since every real frame-loop
+dispatch (`flushGroup`, `drainStaging`'s `mapAsync`) is, like probes 2-5,
+submitted shortly after an awaited fence.
+
+`scripts/webgpu-fence-phase.repro.mjs` confirmed this away from the app
+entirely (fresh page per rep, one launched browser, same discipline as
+`webgpu-staging-ceiling.repro.mjs`), 20 reps on the same RX 7900 XTX:
+
+| cell                                                                     | finding                                                                                                                                                                                        |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A — cold, random 0-250ms sleep, 11 back-to-back probes                   | Firefox probe #1 min/med/max 11/54.5/99 ms; probes #2-11 99-100/100/≤112 ms. Probe #1 was the minimum of probes 1-5 in **20/20** reps. Chrome: probe #1 min in only 6/20 (chance), all ~2.5 ms |
+| B — one unmeasured alignment fence, then aligned + host-delay `δ` probes | wall ≈ 100 − δ across the whole 0-50ms range tested (δ=0/5/20/50 → medians 100/95/80/50 ms), busy-wait and `setTimeout` alike. Chrome: flat ~2.5 ms regardless of δ                            |
+| C — after `mapAsync`                                                     | `mapAsync` round-trip itself min=93 med=100 max=111 ms; the dispatch submitted immediately after reads the same — `mapAsync` resolves on the SAME timer as `onSubmittedWorkDone`               |
+| D — real GPU work, aligned (δ≈0)                                         | ~5ms work read min=99 med=100 max=104 ms of wall; ~150ms work read min=200 med=200 max=206 ms — one and two ticks exactly, confirming `wall = ceil((δ+W)/T)·T − δ` at δ≈0                      |
+
+THE FIX: one unmeasured **alignment** fence before the counted probes
+(`SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES = 1`), so `ensureFenceCalibrated`
+now times `1 + SURFACE_COMPUTE_FENCE_PROBES` dispatches and
+`surfaceComputeFenceRoundTripMs` unconditionally discards the leading one
+before taking the minimum of the rest — every counted probe now lands at
+the same tick-aligned phase a real dispatch does. THE BOUND THAT MAKES
+SUBTRACTING A ~FULL TICK SAFE: a tick-aligned probe (host delay ≈ 0) is
+the LARGEST fence a tick-aligned dispatch can ever be charged, so the
+aligned minimum cannot exceed one tick; a real dispatch landing with some
+host delay reads up to that delay cheaper, so `workMs = max(0, wallMs −
+fenceMs)` under-reads true work by less than one tick — the "residue
+bounded by one fence quantum" claim two paragraphs up, now actually true
+of the population being minimized, where a random-phase first probe could
+previously leave up to a whole extra tick unsubtracted in every reading.
+
+THIS SUPERSEDES THE BIMODAL-MINIMUM CAVEAT BELOW (under "Fewer fences").
+Of the fixes that reading invited — more probes, a median-of-modes,
+re-calibrating on near-zero work — none addresses the cause. MORE PROBES would not
+have helped: every additional back-to-back probe after a cold start joins
+the SLOW population, so the minimum still lands on probe #1 regardless of
+count. A MEDIAN would have read ~100 ms on every one of these runs, since
+only one probe is off-phase — but it OUTVOTES the wrong sample rather than
+removing it, and gives back the minimum's rejection of HIGH outliers, the
+over-subtracting direction. Re-calibrating on near-zero work would repair
+the constant only after frames had already paid for it, and a mid-session
+re-probe is aligned only because a fence happens to precede it — which is
+the alignment fence, arrived at late.
+
+AFTER THE FIX, same machine, same fixture, same gate, production build,
+every run exit 0 and every run on a hardware adapter. The discarded
+alignment probe still drew anywhere from 1.50 to 76.10 ms — run 4 of the
+unlit arm would have calibrated at 1.50 ms before — while the counted
+minimum landed within half a millisecond of one tick every time:
+
+| arm (runs)                | calibrated ms | alignment probe ms | settle ms (before, same session) | lit cap |
+| ------------------------- | ------------: | -----------------: | -------------------------------: | ------: |
+| Firefox unlit 640x360 (6) |  99.78-100.02 |         1.50-76.10 |            4106-4402 (4499-5113) |       — |
+| Firefox LIT 640x360 (6)   |  99.62-100.10 |        34.64-59.70 |  4273-4661 (4534, 5150, 121,519) |    4096 |
+| Chrome unlit 1280x720 (2) |     0.67-2.38 |                  — |                        1088-1114 |       — |
+| Chrome LIT 640x360 (2)    |     2.34-2.40 |                  — |                          744-755 |    4096 |
+
+Firefox's lit hit dispatches carried 1660-1699 hits each on all six runs,
+against the pinned floor's 71. Chrome's round-trip has no tick to align
+to, and its settles are unmoved.
 
 WHAT WAS STILL OWED, and is now done. After the fix a Firefox settle frame
 was very nearly its fence COUNT times its fence latency — 150 fences x
@@ -1497,18 +1589,22 @@ paying a submission. The measurement covers `d` dispatches' worth of
 ray·steps, so it is `d` dispatches' worth of evidence, and it is folded `d`
 times.
 
-A CAVEAT ON READING ANY OF THESE ROWS, and on the gate itself: the
-session's calibrated round-trip is BIMODAL on Firefox. Eight consecutive
-runs of one fixture calibrated 77.8, 78.3, 18.6, 81.4, 37.2, 3.3, 59.0 and
-67.2 ms, and one logged `probes=71.36,100.22,100.16,99.94,100.36` — so the
-MINIMUM of five probes can be a lucky fast one against a ~100 ms typical.
-When it lands low the residue stays inside every sizing model and the same
-frame measures 11.1 s (calibrated 18.6) or 29.3 s (calibrated 3.3) against
-the 4.7 s median, on BOTH arms. The rows above are therefore matched by
-calibrated round-trip rather than averaged over runs, and the low-draw runs
-are reported here rather than dropped. Grouping MITIGATES that defect — the
-subtraction is one fence per GROUP, so the residue is divided across the
-group's dispatches — but it does not fix it, and it has its own item.
+A CAVEAT ON READING ANY OF THESE ROWS, and on the gate itself, AS MEASURED
+AT THE TIME: the session's calibrated round-trip was BIMODAL on Firefox.
+Eight consecutive runs of one fixture calibrated 77.8, 78.3, 18.6, 81.4,
+37.2, 3.3, 59.0 and 67.2 ms, and one logged
+`probes=71.36,100.22,100.16,99.94,100.36` — so the MINIMUM of five probes
+could be a lucky fast one against a ~100 ms typical. When it landed low the
+residue stayed inside every sizing model and the same frame measured
+11.1 s (calibrated 18.6) or 29.3 s (calibrated 3.3) against the 4.7 s
+median, on BOTH arms. The rows above are therefore matched by calibrated
+round-trip rather than averaged over runs, and the low-draw runs are
+reported here rather than dropped. Grouping MITIGATED that defect — the
+subtraction is one fence per GROUP, so the residue was divided across the
+group's dispatches — but did not fix it. **DIAGNOSED AND FIXED**: "The
+first probe was a different population" under the section above names the
+mechanism (a cold first fence samples a different, faster tick phase than
+every later one) and the fix (one unmeasured alignment fence).
 
 ### The lit dispatch width, and what one workgroup cost
 

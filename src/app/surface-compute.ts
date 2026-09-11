@@ -1320,20 +1320,44 @@ export function shadeHitBudgetUs(interceptUs: number): number {
 }
 
 /**
- * How many null dispatches a session times to learn its own fence
- * round-trip. Small, because the calibration is paid at the very latency
- * it is measuring — MEASURED at five probes: ~12 ms on Chrome and
- * ~0.50 s on Firefox, against the minutes the subtraction saves there —
- * and more than one because {@link surfaceComputeFenceRoundTripMs} takes
- * the MINIMUM, which needs a few draws before a cold first fence stops
- * being the whole sample.
+ * The leading fence(s) a calibration issues and does NOT hand to
+ * {@link surfaceComputeFenceRoundTripMs} — they exist to put every COUNTED
+ * probe at the phase a real dispatch actually lands at, rather than at a
+ * cold, random phase of Firefox's polling tick.
+ *
+ * MEASURED (`scripts/webgpu-fence-phase.repro.mjs`, 20 reps, real AMD RX
+ * 7900 XTX): a session's very first-ever fence lands at a roughly uniform
+ * phase of Firefox's ~100 ms `onSubmittedWorkDone` poll (min/median/max
+ * 11/54.5/99 ms), while every fence submitted right after one that just
+ * resolved must wait a near-full tick (99/100/112 ms) — it starts right
+ * after the tick fired. So a probe run that starts timing on the very
+ * first dispatch samples a DIFFERENT, faster population than the one
+ * every real frame-loop dispatch belongs to. One throwaway fence is
+ * enough to land the session on that same tick-aligned phase, so the
+ * count stays 1: its own timing is discarded, not averaged away.
+ */
+export const SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES = 1;
+
+/**
+ * How many COUNTED null dispatches a session times, after the alignment
+ * fence(s) above, to learn its own fence round-trip. Small, because the
+ * calibration is paid at the very latency it is measuring — MEASURED at
+ * five probes: ~12 ms on Chrome and ~0.50 s on Firefox, once per session,
+ * against the minutes the subtraction saves there; the alignment fence
+ * adds one more round-trip to each. More than one, because {@link surfaceComputeFenceRoundTripMs}
+ * still takes the MINIMUM of the counted probes for jitter — the
+ * alignment fence removes the one high-variance draw (a cold fence at a
+ * random tick phase) a smaller count used to need, but does not make the
+ * counted probes identical.
  */
 export const SURFACE_COMPUTE_FENCE_PROBES = 5;
 
 /**
  * The session's fence round-trip from its calibration probes: the
- * MINIMUM, not the median or the mean, because the two directions of
- * error here are not symmetric.
+ * MINIMUM of the COUNTED probes — every sample after the leading
+ * {@link SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES} alignment fence(s),
+ * which this function discards unconditionally — not the median or the
+ * mean, because the two directions of error here are not symmetric.
  *
  * UNDER-stating the round-trip leaves part of a fixed cost in the number
  * the models read, which is the bug this whole path exists to shrink and
@@ -1345,22 +1369,59 @@ export const SURFACE_COMPUTE_FENCE_PROBES = 5;
  * path there is no doubling-per-dispatch pace protecting anything, only
  * {@link SURFACE_COMPUTE_SHADE_MARGINAL_DECAY}'s halving per update.
  *
- * The probes are back-to-back on a COLD device on a session's first
- * frame, so the outliers a small sample really carries are HIGH ones —
- * exactly the ones a median admits and a minimum rejects. The floor is
- * also the honest quantity: the round-trip is a per-fence price every
- * dispatch pays at least once, so the smallest pure round-trip observed
- * is the most that can be attributed to it without attributing work.
+ * THE LEADING PROBE USED TO BE COUNTED, AND IT WAS A DIFFERENT
+ * POPULATION. Firefox resolves `onSubmittedWorkDone` only on a ~100 ms
+ * polling tick (Mozilla bug 1870699), not at submit time. A session's
+ * very first fence is submitted at whatever random phase of that tick the
+ * app happens to reach it — MEASURED roughly uniform on (0, 100] — while
+ * every fence submitted right after one that just resolved must wait a
+ * near-full tick (~99-112 ms), because it starts right after the tick
+ * fired. Timing probes back-to-back from a cold start therefore drew
+ * probe #1 from the FAST population and every later probe from the SLOW
+ * one, and the minimum of the run was overwhelmingly probe #1's
+ * random-phase draw rather than a stable platform constant — CONFIRMED
+ * both app-free (`scripts/webgpu-fence-phase.repro.mjs`: probe #1 was the
+ * minimum of the first five probes in 20/20 reps) and in-app
+ * (`scripts/surface-fence-cost.verify.mjs`: probe #1 was the reported
+ * minimum in all 9 runs, including one calibration of
+ * 16.42 ms against four neighboring probes at 100.1-100.6 ms whose
+ * under-subtraction pinned a lit capacity ladder at the one-workgroup
+ * floor for a 121,519 ms settle). So the statistic was sampling a
+ * DIFFERENT population from the one it gets subtracted from —
+ * {@link SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES} fixes that upstream, by
+ * paying one throwaway fence before any COUNTED probe, so every counted
+ * sample lands at the same tick-aligned phase a real dispatch does.
  *
- * An empty sample set means "not measured", which is a zero subtraction
- * and therefore exactly today's behaviour. Pure so the choice of
- * statistic is unit-tested.
+ * THE BOUND THAT MAKES SUBTRACTING A ~FULL TICK SAFE: a tick-aligned probe
+ * (near-zero host delay) is the LARGEST fence a tick-aligned dispatch can
+ * ever be charged, so the aligned minimum cannot exceed one tick. A real
+ * dispatch that lands with some host delay `d` after the previous fence
+ * reads up to `d` cheaper than that minimum, so
+ * `workMs = max(0, wallMs - fenceMs)` under-reads true work by less than
+ * one tick — the residue this file has always claimed is "bounded by one
+ * fence quantum" (see {@link surfaceComputeDispatchWorkMs}), now actually
+ * true of the population being measured, where a random-phase draw could
+ * previously leave up to a whole extra tick in every reading.
+ *
+ * The probes are still back-to-back on a COLD device on a session's first
+ * frame, so the outliers a small COUNTED sample really carries are HIGH
+ * ones — exactly the ones a median admits and a minimum rejects. The
+ * floor is also the honest quantity: the round-trip is a per-fence price
+ * every dispatch pays at least once, so the smallest pure round-trip
+ * observed is the most that can be attributed to it without attributing
+ * work.
+ *
+ * An empty COUNTED sample set — no samples at all, or only the alignment
+ * probe(s) — means "not measured", which is a zero subtraction and
+ * therefore exactly today's behaviour. Pure so the choice of statistic is
+ * unit-tested.
  */
 export function surfaceComputeFenceRoundTripMs(
   samples: readonly number[],
 ): number {
-  if (samples.length === 0) return 0;
-  return Math.max(0, Math.min(...samples));
+  const counted = samples.slice(SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES);
+  if (counted.length === 0) return 0;
+  return Math.max(0, Math.min(...counted));
 }
 
 /**
@@ -4239,7 +4300,12 @@ export class SurfaceComputeRenderer {
      * frame's real pipeline and bind group at ZERO workgroups, so it is a
      * genuine submit-and-fence with no GPU work, no side effect and no
      * dependence on what the params buffer happens to hold — repeated
-     * {@link SURFACE_COMPUTE_FENCE_PROBES} times for a minimum.
+     * {@link SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES} +
+     * {@link SURFACE_COMPUTE_FENCE_PROBES} times: the leading alignment
+     * probe(s) put every later probe at the phase a real dispatch actually
+     * lands at, and only {@link surfaceComputeFenceRoundTripMs} gets to
+     * see which is which (it discards the leading one(s) itself — see its
+     * own doc for the tick-phase finding this fixes).
      *
      * MEASURED rather than assumed per browser: the constant is the
      * PLATFORM's (~2.4 ms Chrome, ~100 ms Firefox, same AMD adapter, same
@@ -4259,7 +4325,9 @@ export class SurfaceComputeRenderer {
     ): Promise<boolean> => {
       if (this.fenceMs !== null) return true;
       const probes: number[] = [];
-      for (let i = 0; i < SURFACE_COMPUTE_FENCE_PROBES; i++) {
+      const totalProbes =
+        SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES + SURFACE_COMPUTE_FENCE_PROBES;
+      for (let i = 0; i < totalProbes; i++) {
         const t0 = submitDispatch(pipeline, bindGroup, 0);
         await device.queue.onSubmittedWorkDone();
         if (token !== this.frameToken || this.isLost || this.destroyed) {
@@ -4271,6 +4339,10 @@ export class SurfaceComputeRenderer {
       // still outstanding.
       stagedBytes = 0;
       this.fenceMs = surfaceComputeFenceRoundTripMs(probes);
+      // The trace lists EVERY timed probe, the alignment one included —
+      // cheap context for reading a session's own calibration.
+      // `surfaceComputeFenceRoundTripMs` is what discards the leading
+      // one(s), not this line.
       tr(
         `fence calibrated ms=${this.fenceMs.toFixed(2)} probes=${probes
           .map((ms) => ms.toFixed(2))

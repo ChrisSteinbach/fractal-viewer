@@ -874,29 +874,56 @@ describe("nextShadeBatchSize", () => {
 });
 
 describe("surfaceComputeFenceRoundTripMs", () => {
-  it("takes the smallest probe, so a cold outlier cannot set the constant", () => {
-    // A Firefox-class probe run whose first fence landed on a cold
-    // compositor tick. The mean of these is 148.4ms — 48ms of a
-    // round-trip nothing after the warm-up ever pays again, which would
-    // be subtracted from every dispatch for the life of the session.
-    expect(surfaceComputeFenceRoundTripMs([100, 101, 100, 340, 101])).toBe(100);
+  it("takes the smallest COUNTED probe, so a cold outlier cannot set the constant", () => {
+    // A Firefox-class probe run whose first COUNTED fence landed on a
+    // cold compositor tick. The mean of the counted probes is 148.4ms —
+    // 48ms of a round-trip nothing after the warm-up ever pays again,
+    // which would be subtracted from every dispatch for the life of the
+    // session. The leading entry is the alignment fence and is never a
+    // candidate, however small it reads.
+    expect(surfaceComputeFenceRoundTripMs([1, 100, 101, 100, 340, 101])).toBe(
+      100,
+    );
   });
 
-  it("reads no samples as 'not measured' — a zero subtraction", () => {
+  it("reads no counted samples as 'not measured' — a zero subtraction", () => {
     expect(surfaceComputeFenceRoundTripMs([])).toBe(0);
   });
 
-  it("never subtracts more than the cheapest round-trip actually observed", () => {
+  it("reads only-the-alignment-probe as 'not measured' too", () => {
+    // A frame cancelled mid-calibration, or a caller that only ever timed
+    // the discarded probe: nothing counted survives, so this is the same
+    // zero subtraction as an empty run, not a crash on `Math.min()`.
+    expect(surfaceComputeFenceRoundTripMs([16.42])).toBe(0);
+  });
+
+  it("never subtracts more than the cheapest COUNTED round-trip actually observed", () => {
     // The over-subtracting direction is the unbounded one: a corrected
     // reading floors at zero, and a calibrated cost model reads it
-    // directly with no ladder pacing it.
-    expect(surfaceComputeFenceRoundTripMs([3, 5, 9, 11])).toBe(3);
+    // directly with no ladder pacing it. The alignment probe here is the
+    // smallest number in the whole array and must still be excluded.
+    expect(surfaceComputeFenceRoundTripMs([1, 3, 5, 9, 11])).toBe(3);
   });
 
   it("never returns a negative round-trip", () => {
     // A clock that went backwards must not turn the subtraction into an
     // ADDITION on every later dispatch.
-    expect(surfaceComputeFenceRoundTripMs([-5, -1, -3])).toBe(0);
+    expect(surfaceComputeFenceRoundTripMs([-100, -5, -1, -3])).toBe(0);
+  });
+
+  it("reads the aligned minimum on the measured in-app regression draw", () => {
+    // The five probes a pre-fix Firefox session traced live, plus the
+    // sixth fence the calibration now issues: probe #1 at a random phase
+    // of the ~100 ms poll, every later one a whole tick. The old
+    // min-of-five read 16.42, which pinned the lit capacity ladder at the
+    // one-workgroup floor for a 121,519 ms settle
+    // (`scripts/surface-fence-cost.verify.mjs`, exit 3) where the same
+    // build's other lit runs settled in 4,534-5,150 ms.
+    expect(
+      surfaceComputeFenceRoundTripMs([
+        16.42, 100.56, 100.26, 100.12, 100.16, 100.3,
+      ]),
+    ).toBeCloseTo(100.12, 10);
   });
 });
 
