@@ -8106,7 +8106,7 @@ fn shadeRays(
   // rasterHeight), so every one of them is the shipping expression value
   // for value — adding an exact 0.0 changes nothing.
   // The shape is deliberately NOT jittered: the backdrop has nothing to
-  // alias, it must agree with the host's own backgroundRows prefill, and
+  // alias, it must agree with the device frame seed's colour, and
   // holding it fixed keeps supersampling a no-op wherever the object is
   // absent.
 ${backdropImageUvWgsl("full")}

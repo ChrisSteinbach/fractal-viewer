@@ -1,5 +1,6 @@
 import {
   encodeSurfaceComputeHdr,
+  setSurfaceComputeSchedulePins,
   surfaceComputeLightingVisibility,
   fitSurfaceComputeRaster,
   foldSurfaceComputeLayerSample,
@@ -31,6 +32,8 @@ import {
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   surfaceComputeDispatchWorkMs,
   surfaceComputeFenceGroupSize,
+  surfaceComputeFenceGroupStagedFull,
+  SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES,
   surfaceComputeFenceRoundTripMs,
   surfaceComputeGroupDispatchMs,
   SURFACE_COMPUTE_FENCE_GROUP_MAX,
@@ -2924,6 +2927,12 @@ function frameStagingHarness() {
   const writes: { buffer: GPUBuffer; bytes: number; data: ArrayBuffer }[] = [];
   const dispatches: { pipeline: GPUComputePipeline; x: number; y: number }[] =
     [];
+  /** Every write, dispatch and fence in queue order. */
+  const events: (
+    | { kind: "write"; bytes: number }
+    | { kind: "dispatch"; pipeline: GPUComputePipeline; x: number }
+    | { kind: "fence" }
+  )[] = [];
   const seedBuf = {} as GPUBuffer;
   const marchPipeline = {} as GPUComputePipeline;
   const shadePipeline = {} as GPUComputePipeline;
@@ -2959,9 +2968,13 @@ function frameStagingHarness() {
             ).slice().buffer
           : data.slice(0);
         writes.push({ buffer, bytes: bytes.byteLength, data: bytes });
+        events.push({ kind: "write", bytes: bytes.byteLength });
       },
       submit: () => {},
-      onSubmittedWorkDone: () => Promise.resolve(),
+      onSubmittedWorkDone: () => {
+        events.push({ kind: "fence" });
+        return Promise.resolve();
+      },
     },
     createCommandEncoder: () => ({
       beginComputePass: () => {
@@ -2973,6 +2986,7 @@ function frameStagingHarness() {
           setBindGroup: () => {},
           dispatchWorkgroups: (x: number, y = 1) => {
             dispatches.push({ pipeline: selected, x, y });
+            events.push({ kind: "dispatch", pipeline: selected, x });
           },
           end: () => {},
         };
@@ -3029,6 +3043,7 @@ function frameStagingHarness() {
     descriptors,
     writes,
     dispatches,
+    events,
     seedBuf,
     seedPipeline,
     marchPipeline,
@@ -3158,6 +3173,121 @@ describe("surfaceComputeFenceGroupSize", () => {
     // `?surfacefencegroup=1` is the before arm of this feature's own A/B.
     expect(surfaceComputeFenceGroupSize(0, Infinity, 1)).toBe(1);
     expect(surfaceComputeFenceGroupSize(0, Infinity, 4)).toBe(4);
+  });
+});
+
+describe("SurfaceComputeRenderer fence group staging", () => {
+  /** Each fence's group: the bytes written and the real dispatches
+   * submitted since the previous fence (calibration probes dispatch zero
+   * workgroups and the frame seed is not a group member, so neither
+   * counts). */
+  const fenceGroups = (
+    events: ReturnType<typeof frameStagingHarness>["events"],
+    seedPipeline: GPUComputePipeline,
+  ): { bytes: number; dispatches: number }[] => {
+    const groups: { bytes: number; dispatches: number }[] = [];
+    let bytes = 0;
+    let dispatches = 0;
+    for (const event of events) {
+      if (event.kind === "write") bytes += event.bytes;
+      else if (event.kind === "dispatch") {
+        if (event.x > 0 && event.pipeline !== seedPipeline) dispatches++;
+      } else {
+        groups.push({ bytes, dispatches });
+        bytes = 0;
+        dispatches = 0;
+      }
+    }
+    return groups;
+  };
+
+  it("never stands a second dispatch behind a fence once the group's staged bytes reach the ceiling", async () => {
+    // 1024x512 in 180,000-ray slices: after the pilot slice, slices two and
+    // three (720 KB and 657 KB of ray list) would share a fence on the
+    // count cap alone.
+    setSurfaceComputeSchedulePins({ marchChunk: 180_000 });
+    try {
+      const { renderer, events, seedPipeline } = frameStagingHarness();
+      const spec = frameSpec();
+      spec.width = 1024;
+      spec.height = 512;
+
+      expect(await renderer.renderFrame(spec)).not.toBeNull();
+
+      const groups = fenceGroups(events, seedPipeline);
+      for (const group of groups.filter((g) => g.dispatches >= 2)) {
+        expect(group.bytes).toBeLessThan(
+          SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES,
+        );
+      }
+      // The oversized path really ran: a lone dispatch past the ceiling.
+      expect(
+        groups.some(
+          (g) =>
+            g.dispatches === 1 &&
+            g.bytes >= SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES,
+        ),
+      ).toBe(true);
+    } finally {
+      setSurfaceComputeSchedulePins({});
+    }
+  });
+
+  it("still stands small dispatches behind one fence", async () => {
+    setSurfaceComputeSchedulePins({ marchChunk: 256 });
+    try {
+      const { renderer, events, seedPipeline } = frameStagingHarness();
+      const spec = frameSpec();
+      spec.width = 64;
+      spec.height = 32;
+
+      expect(await renderer.renderFrame(spec)).not.toBeNull();
+
+      expect(
+        fenceGroups(events, seedPipeline).some((g) => g.dispatches === 2),
+      ).toBe(true);
+    } finally {
+      setSurfaceComputeSchedulePins({});
+    }
+  });
+});
+
+describe("surfaceComputeFenceGroupStagedFull", () => {
+  const KB16 = 16 * 1024;
+
+  it("closes a group once its staged bytes reach the ceiling", () => {
+    expect(
+      surfaceComputeFenceGroupStagedFull(
+        2,
+        SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES,
+      ),
+    ).toBe(true);
+  });
+
+  it("closes an open group before a write that would carry it to the ceiling", () => {
+    // Row D's shape: a small dispatch already queued, and a raster-sized
+    // ray list next — the list must not join it.
+    expect(
+      surfaceComputeFenceGroupStagedFull(
+        1,
+        KB16,
+        SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES,
+      ),
+    ).toBe(true);
+  });
+
+  it("still sends an oversized single dispatch out, as a group of one", () => {
+    // Row E: 8 MB behind a group of ONE is harmless. An empty group never
+    // closes, so the dispatch goes out; once it is queued the group closes.
+    const eightMb = 8 * 1024 * 1024;
+    expect(surfaceComputeFenceGroupStagedFull(0, 0, eightMb)).toBe(false);
+    expect(surfaceComputeFenceGroupStagedFull(1, eightMb)).toBe(true);
+  });
+
+  it("keeps two 16 KB dispatches grouped", () => {
+    // Row C's writes: small staging must not close a group early.
+    expect(surfaceComputeFenceGroupStagedFull(1, KB16, KB16)).toBe(false);
+    expect(surfaceComputeFenceGroupStagedFull(2, 2 * KB16)).toBe(false);
   });
 });
 

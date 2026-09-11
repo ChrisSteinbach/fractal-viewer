@@ -412,7 +412,10 @@ export const SURFACE_COMPUTE_FENCE_GROUP_MS = 300;
  * replaces the three staged uploads — so the quantity that set this cap is
  * no longer queued. THE CAP IS STILL TWO: removing the cause does not
  * measure what the cap can now be, and raising it waits on the fence gate
- * and the staging repro re-run in the app on Firefox. Measured rows:
+ * and the staging repro re-run in the app on Firefox. The ray lists that
+ * still scale with the raster are bounded per group by
+ * {@link SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES}, the second closing rule
+ * and what should make raising this safe at any raster. Measured rows:
  * `docs/surface-compute-renderer.md`.
  */
 export const SURFACE_COMPUTE_FENCE_GROUP_MAX = 2;
@@ -1485,6 +1488,51 @@ export function surfaceComputeFenceGroupSize(
       ),
     ),
   );
+}
+
+/**
+ * THE SECOND WAY A FENCE GROUP CLOSES: the bytes it has STAGED. A group
+ * closes once what it has put through `queue.writeBuffer`/`writeTexture`
+ * since its last fence — params blocks, ray lists, the frame's own uniforms
+ * and textures, anything — reaches this, whatever the dispatch count or the
+ * measured work would still allow.
+ *
+ * WHY BYTES. The app-free repro's rows, twenty reps a cell on Firefox
+ * (`docs/surface-compute-renderer.md`, "It is a VOLUME, not a count"): C,
+ * four dispatches staging two 16 KB writes each, dies 0/20; D, the same
+ * group plus 8 MB, 7/20; E, that 8 MB behind a group of ONE, 0/20; F, 32 MB
+ * across four dispatches, 13/20. Staged volume held behind one fence is
+ * the killer. The device seed removed the frame prefill but not the ray
+ * lists: a march slice's list and the shade FREE queue, which drains whole
+ * (3.7 MB at 1280x720), both still scale with the raster. This bound is
+ * what should let {@link SURFACE_COMPUTE_FENCE_GROUP_MAX} rise safely at
+ * any raster.
+ *
+ * IT ONLY EVER MAKES A GROUP SMALLER, NEVER EMPTY, AND SKIPS NO FENCE: a
+ * dispatch whose own writes pass the ceiling still goes out, as a group of
+ * one (row E). 1 MiB keeps the grouping this work was built for — two
+ * 16 KB dispatches are 3% of it — while sitting far below row D's 8 MB.
+ * What no group rule can fix is row G: one dispatch whose OWN list is tens
+ * of megabytes (4K-class rasters) stages that much behind its own fence.
+ */
+export const SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES = 1 << 20;
+
+/**
+ * Must the open fence group close before `nextBytes` more are staged —
+ * {@link SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES}'s rule. Asked twice per
+ * dispatch: BEFORE staging its writes (`nextBytes` = its params block plus
+ * ray list), so a big write never joins a group already holding staging;
+ * and AFTER submitting it (`nextBytes` = 0), so a group that has reached
+ * the ceiling closes at once. An EMPTY group never closes, which is what
+ * sends an oversized dispatch out alone. Pure so the rule is unit-tested.
+ */
+export function surfaceComputeFenceGroupStagedFull(
+  groupDispatches: number,
+  stagedBytes: number,
+  nextBytes = 0,
+  ceilingBytes = SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES,
+): boolean {
+  return groupDispatches > 0 && stagedBytes + nextBytes >= ceilingBytes;
 }
 
 /**
@@ -3490,11 +3538,13 @@ export class SurfaceComputeRenderer {
 
   /** Called only inside the serialized frame span, after all earlier GPU
    * work unwound. Replacing a texture rebuilds the two bind groups that bind
-   * it — the shade group and the frame seed's. */
+   * it — the shade group and the frame seed's. Returns the bytes it staged
+   * through `writeTexture` (0 when nothing changed), which count toward the
+   * first fence group's staged-bytes bound. */
   private prepareLightingBackground(
     image: TraceBackgroundImage | undefined,
-  ): void {
-    if (!image || !this.lighting) return;
+  ): number {
+    if (!image || !this.lighting) return 0;
     const previous = this.uploadedLightingBackground;
     if (
       previous &&
@@ -3503,7 +3553,7 @@ export class SurfaceComputeRenderer {
       previous.revision === image.revision &&
       previous.rgba === image.rgba
     )
-      return;
+      return 0;
     // Reuse the shared image validator before allocation/upload.
     sampleTraceBackgroundImage(image, 0.5, 0.5);
     if (
@@ -3551,6 +3601,7 @@ export class SurfaceComputeRenderer {
       { width: image.width, height: image.height },
     );
     this.uploadedLightingBackground = image;
+    return image.rgba.byteLength;
   }
 
   /** The frame seed's bind group, at the shade kernel's binding numbers
@@ -3676,7 +3727,18 @@ export class SurfaceComputeRenderer {
         }
       : undefined;
     const colorBytes = rays * (this.lighting ? 16 : 4);
-    this.prepareLightingBackground(spec.lightingBackground);
+    /** Bytes put through `queue.writeBuffer`/`writeTexture` since the last
+     * fence — the fence group's second closing rule
+     * ({@link surfaceComputeFenceGroupStagedFull}). Everything this frame
+     * stages goes through {@link stage} or adds itself here. */
+    let stagedBytes = this.prepareLightingBackground(spec.lightingBackground);
+    const stage = (
+      buffer: GPUBuffer,
+      data: ArrayBuffer | ArrayBufferView<ArrayBuffer>,
+    ): void => {
+      device.queue.writeBuffer(buffer, 0, data);
+      stagedBytes += data.byteLength;
+    };
     const buffers = await this.allocateFrameBuffers(rays);
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
 
@@ -3702,6 +3764,7 @@ export class SurfaceComputeRenderer {
         { width: 256, height: 1 },
       );
       this.uploadedLutVersion = spec.lutVersion;
+      stagedBytes += 256 * 4;
     }
     if (
       this.balloonLutTex &&
@@ -3715,10 +3778,10 @@ export class SurfaceComputeRenderer {
         { width: 256, height: 1 },
       );
       this.uploadedBalloonLutVersion = spec.balloonLutVersion ?? 0;
+      stagedBytes += 256 * 4;
     }
-    device.queue.writeBuffer(
+    stage(
       this.shadeBuf,
-      0,
       packSurfaceGpuShade({
         invProjView: spec.invProjView,
         lightDir: spec.lightDir,
@@ -3791,9 +3854,8 @@ export class SurfaceComputeRenderer {
       height,
       device.limits,
     )) {
-      device.queue.writeBuffer(
+      stage(
         this.seedBuf,
-        0,
         packSurfaceGpuSeed(width, height, tile.originX, tile.originY),
       );
       const encoder = device.createCommandEncoder();
@@ -4107,7 +4169,9 @@ export class SurfaceComputeRenderer {
       !slabFrame && this.shadePipelineNoSlab !== null
         ? this.shadePipelineNoSlab
         : this.shadePipeline;
-    const writeParams = (itemCount: number, steps: number): void => {
+    /** One dispatch's params block, packed but not yet staged —
+     * `stageDispatch` below decides whether a fence must come first. */
+    const packRunParams = (itemCount: number, steps: number): ArrayBuffer => {
       const run: SurfaceGpuRunParams = {
         itemCount,
         stepsThisPass: steps,
@@ -4132,7 +4196,7 @@ export class SurfaceComputeRenderer {
           pixelEps: spec.acceptPixelEps,
         },
       };
-      device.queue.writeBuffer(this.paramsBuf, 0, packParams(run));
+      return packParams(run);
     };
     const submitDispatch = (
       pipeline: GPUComputePipeline,
@@ -4203,6 +4267,9 @@ export class SurfaceComputeRenderer {
         }
         probes.push(performance.now() - t0);
       }
+      // Each probe paid a real fence, so nothing staged before them is
+      // still outstanding.
+      stagedBytes = 0;
       this.fenceMs = surfaceComputeFenceRoundTripMs(probes);
       tr(
         `fence calibrated ms=${this.fenceMs.toFixed(2)} probes=${probes
@@ -4295,6 +4362,12 @@ export class SurfaceComputeRenderer {
      * falls due — see {@link surfaceComputeFenceGroupSize}. */
     const groupClosed = (limitMs: number): boolean => {
       if (pending.length === 0) return false;
+      // The staged-bytes bound comes first and binds under a pin too: it
+      // only ever shrinks a group, and it is what makes a raised count
+      // safe at any raster (SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES).
+      if (surfaceComputeFenceGroupStagedFull(pending.length, stagedBytes)) {
+        return true;
+      }
       // A pin names a COUNT outright, so it stands in for the measured
       // sizing entirely — `=1` is one fence per dispatch, the loop
       // exactly as it ran before grouping.
@@ -4367,6 +4440,8 @@ export class SurfaceComputeRenderer {
       }
       const group = pending;
       pending = [];
+      // The fence released everything staged ahead of it.
+      stagedBytes = 0;
       fences++;
       const wallMs = performance.now() - groupStart;
       const workMs = surfaceComputeDispatchWorkMs(wallMs, this.fenceMs ?? 0);
@@ -4544,6 +4619,38 @@ export class SurfaceComputeRenderer {
       return true;
     };
 
+    /**
+     * Stage one dispatch's params block and ray list — fencing the open
+     * group FIRST when adding them would carry its staged bytes to
+     * {@link SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES}, so a raster-sized
+     * list never joins a group already holding staging (the rule's
+     * pre-check; `groupClosed` is its post-check). An empty group is never
+     * fenced here, so an oversized dispatch still goes out, alone. Returns
+     * false when the frame was cancelled during that fence or its present.
+     */
+    const stageDispatch = async (
+      itemCount: number,
+      steps: number,
+      list: Uint32Array<ArrayBuffer>,
+    ): Promise<boolean> => {
+      const params = packRunParams(itemCount, steps);
+      const nextBytes = params.byteLength + list.byteLength;
+      if (
+        surfaceComputeFenceGroupStagedFull(
+          pending.length,
+          stagedBytes,
+          nextBytes,
+        )
+      ) {
+        tr(`fence staged=${stagedBytes} next=${nextBytes}`);
+        if (!(await flushGroup())) return false;
+        if (!(await maybePresent())) return false;
+      }
+      stage(this.paramsBuf, params);
+      stage(buffers.active, list);
+      return true;
+    };
+
     // The frame's terminal tally, accumulated as each sweep classifies
     // its rays — the whole-states scan that used to produce it needed a
     // readback this loop no longer pays for.
@@ -4587,8 +4694,9 @@ export class SurfaceComputeRenderer {
             tr(`ANOMALY march chunk=${chunk} emaUs=${rayStepEmaUs}`);
           }
           const slice = active.subarray(offset, offset + chunk);
-          writeParams(slice.length, stepsThisPass);
-          device.queue.writeBuffer(buffers.active, 0, slice);
+          if (!(await stageDispatch(slice.length, stepsThisPass, slice))) {
+            return null;
+          }
           tr(
             `march BEGIN offset=${offset} chunk=${chunk} len=${slice.length} steps=${stepsThisPass} emaUs=${rayStepEmaUs.toFixed(3)} active=${active.length}`,
           );
@@ -4783,8 +4891,7 @@ export class SurfaceComputeRenderer {
         tr(
           `shade BEGIN isFree=${isFree} hitQ=${shadeHitQueue.length} freeQ=${shadeFreeQueue.length} batchSize=${batchSize} len=${batch.length} interceptUs=${sizer.cost.interceptUs.toFixed(0)} marginalUs=${sizer.cost.marginalUs.toFixed(1)} budgetMs=${hitBudgetMs.toFixed(0)} cap=${sizer.cap}`,
         );
-        writeParams(batch.length, 0);
-        device.queue.writeBuffer(buffers.active, 0, batch);
+        if (!(await stageDispatch(batch.length, 0, batch))) return null;
         if (
           !(await queueDispatch(
             shadePipeline,

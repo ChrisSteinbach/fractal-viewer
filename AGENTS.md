@@ -1904,16 +1904,15 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `SURFACE_COMPUTE_FENCE_GROUP_MAX` IS A MEASURED CEILING, NOT A DIAL:
     Firefox dies at FOUR queued dispatches on a VOLUME of outstanding
     `writeBuffer` staging — the FRAME PREFILL, not the per-dispatch writes
-    (refuted) — now seeded device-side, but raising it still needs
+    (refuted) — now seeded device-side; groups also close at
+    `SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES`; raising the count needs
     in-app measurement; a killed device never returns, so the loss latch is
     one-way by measurement (`scripts/webgpu-staging-ceiling.repro.mjs`). A GROUP MEASURES ONCE
-    FOR N PIECES, so its attribution is FIXED per lane (the four
-    consumers' shares are in the module doc) and no reader may invent
-    another. `?surfacefencegroup=1` is that old loop exactly (the A/B
-    lever). Gate:
+    FOR N PIECES, so its attribution is FIXED per lane (module doc) and no
+    reader may invent another. `?surfacefencegroup=1` is that old loop (A/B lever). Gate:
     `scripts/surface-fence-cost.verify.mjs`. No submission outruns the i915 watchdog;
     presents are progressive; shading probes ride
-    `SURFACE_COMPUTE_SHADE_DE_WIDTH`; rays unresolved at a cut keep that seed.
+    `SURFACE_COMPUTE_SHADE_DE_WIDTH`; unresolved rays keep that seed.
     SUPERSAMPLING rides the loop as `opts.samples`: N FRAMES at N sub-pixel
     offsets (`subPixelSample`), averaged in LINEAR light (averaging bytes
     is the edge-darkening bug) — N frames not N rays, so every per-ray

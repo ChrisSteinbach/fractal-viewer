@@ -7317,7 +7317,7 @@ export class FractalScene {
     // "hold" (the previews-off pref) keeps the target's own stale pixels:
     // no preview of this pose exists, and the previous settled frame is the
     // exact image the frozen pane is already showing, so the develop stays
-    // seamless — the compute path's prefill-from-last-frame discipline.
+    // seamless.
     // (A resize re-allocates the target and the hold seed degrades to
     // undefined rows — rare, and strips overwrite them progressively.)
     if (seed === "preview") {
