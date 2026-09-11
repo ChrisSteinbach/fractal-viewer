@@ -466,20 +466,32 @@ it("agrees with analytic disk/medium transport and preserves finite visibility",
           throw new Error(
             `Requested real driver but got ${renderer}; ${adapterInfo}`,
           );
-        const compile = (type: number, source: string) => {
+        // Name the failing program and quote the first offending line: a
+        // bare info log (or an empty one) says nothing about which of the
+        // fifteen programs the driver refused.
+        const compile = (type: number, source: string, name: string) => {
           const shader = gl.createShader(type)!;
           gl.shaderSource(shader, source);
           gl.compileShader(shader);
-          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
-            throw new Error(gl.getShaderInfoLog(shader)!);
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            const log = gl.getShaderInfoLog(shader) ?? "";
+            const line = Number(/:(\d+):/.exec(log)?.[1] ?? 0);
+            const quoted = source.split("\n")[line - 1] ?? "";
+            throw new Error(`${name}: ${log || "(empty log)"} | ${quoted}`);
+          }
           return shader;
         };
         const compiled = [];
         for (const row of programs) {
-          const vertex = compile(gl.VERTEX_SHADER, row.vertex);
+          const vertex = compile(
+            gl.VERTEX_SHADER,
+            row.vertex,
+            `${row.name} vertex`,
+          );
           const fragment = compile(
             gl.FRAGMENT_SHADER,
             `#version 300 es\nprecision highp int;\n#define SURFACE_FOLDS ${row.folds}\n${row.fragment}`,
+            `${row.name} fragment`,
           );
           const linked = gl.createProgram();
           gl.attachShader(linked, vertex);
@@ -499,9 +511,13 @@ it("agrees with analytic disk/medium transport and preserves finite visibility",
             gl.VERTEX_SHADER,
             `#version 300 es
 void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.0,1.0);}`,
+            "transport vertex",
           ),
         );
-        gl.attachShader(program, compile(gl.FRAGMENT_SHADER, glsl));
+        gl.attachShader(
+          program,
+          compile(gl.FRAGMENT_SHADER, glsl, "transport fragment"),
+        );
         gl.linkProgram(program);
         if (!gl.getProgramParameter(program, gl.LINK_STATUS))
           throw new Error(gl.getProgramInfoLog(program)!);
