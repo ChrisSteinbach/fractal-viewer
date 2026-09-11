@@ -115,17 +115,26 @@ remains its separate gate; this policy does not replace it.
 
 ## Required checks and deployment
 
-The active main ruleset was inspected through GitHub's API on 2026-09-07. It
-requires `lint`, `build`, `test` and `smoke`, from GitHub Actions, and a PR with
-rebase-only merge. No GPU shard was a required check. This change preserves all
-four names, their events and the ruleset; there is **no required-check
-migration** and no remote protection edit.
+The active main ruleset requires `lint`, `build`, `test`, `smoke` and
+**`gpu-agreement`**, all from GitHub Actions (integration 15368), with a PR and
+rebase-only merge. NO GPU SHARD IS REQUIRED AND NONE MAY BE: shard names carry
+the matrix index and change whenever the roster does, so requiring one would
+break the ruleset on the next scenario added. The stable aggregate is the only
+safe name.
+
+`gpu-agreement` became required on 2026-09-11, after the selector fix made it
+cheap: an independent change now reports green in about 30 seconds, so the
+requirement bites only on work that actually reaches the kernels — which is
+where the gate was wanted anyway. `strict_required_status_checks_policy` stays
+**false**, so a branch behind main can still merge; rebasing first is a choice
+made for the sweep reuse, not a rule the ruleset enforces. Bypass actors remain
+empty.
 
 The additional stable `gpu-agreement` aggregate runs with `if: always()`. It
 passes only when selection succeeded and either both GPU jobs succeeded, or a
 proved independent selection skipped both. Failure, cancellation, missing
-outputs and unexpected skips fail it. If GPU agreement is made required later,
-require this name, never the variable shard names. Tests execute the actual
+outputs and unexpected skips fail it — so requiring it is fail-closed in every
+direction, including a selector that cannot run at all. Tests execute the actual
 aggregate shell against these success/failure states and inspect the existing
 required-check events and deploy dependency.
 
@@ -259,15 +268,25 @@ a reusable workflow cannot request more than its caller job grants and deploy's
 
 ### Waiting for a twin's sweep that is still running
 
-Tree reuse only pays when the twin's sweep has **finished**, and nothing makes
-it finish first. `gpu-agreement` is not a required check, so the four that are
-— `lint`, `build`, `test`, `smoke` — go green in ~6 minutes and the merge
-button is live roughly 27 minutes before the PR's 36-shard sweep is. Observed
+Tree reuse only pays when the twin's sweep has **finished**, and at the time
+this was written nothing made it finish first: `gpu-agreement` was not a
+required check, so the four that were — `lint`, `build`, `test`, `smoke` —
+went green in ~6 minutes and the merge button was live roughly 27 minutes
+before the PR's 36-shard sweep. Observed
 on the first real merge after tree keying landed: the push-to-main run asked
 the tree question, found the twin carrying no **completed** aggregate, and
 correctly started a second full sweep of byte-identical content. The verdict
 was right; the gap was that reuse depended on a human waiting for a sweep no
 rule made them wait for.
+
+MAKING `gpu-agreement` REQUIRED (2026-09-11) REMOVES THAT CAUSE, and the wait
+STAYS as the belt to its braces. A required check means a PR cannot merge
+before its own sweep concludes, so the push run should always find a completed
+twin. The wait costs nothing when there is nothing to wait for — it returns at
+once — and it still covers what the ruleset does not: a ruleset edited or
+disabled in an emergency, a sweep whose result lands late, and any path that
+reaches main without a PR. Deleting it would trade a free safety net for
+nothing.
 
 So `--wait` (push runs only) polls every 30s, up to a 45-minute budget, when a
 tree twin's sweep is **in flight**. The trade is **one idle `ubuntu-latest`

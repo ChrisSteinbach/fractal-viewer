@@ -290,7 +290,7 @@ describe("GPU workflow gates", () => {
     expect(condition).not.toContain("||");
     expect(condition.split("&&")).toHaveLength(3);
   });
-  it("preserves the four existing required checks on every PR and main push", () => {
+  it("preserves the four ci.yml required checks on every PR and main push", () => {
     const ci = workflow("ci");
     expect(Object.keys(ci.jobs).sort()).toEqual([
       "build",
@@ -300,5 +300,26 @@ describe("GPU workflow gates", () => {
     ]);
     expect(ci.on.pull_request).toBeNull();
     expect(ci.on.push).toEqual({ branches: ["main"] });
+  });
+  it("keeps the required aggregate's NAME and its always-reports triggers", () => {
+    // main's ruleset requires this job by the literal name `gpu-agreement`
+    // (GitHub Actions, integration 15368). Renaming the job, or narrowing the
+    // triggers so it stops reporting on some PR, does not fail anything here
+    // — it blocks EVERY merge, waiting forever for a check that never
+    // arrives. Shard names must never be required: they carry the matrix
+    // index and move whenever the roster does.
+    const gpu = workflow("gpu-agreement");
+    expect(Object.keys(gpu.jobs)).toContain("gpu-agreement");
+    expect(gpu.jobs["gpu-agreement"].if).toBe("always()");
+    // Reports on EVERY pull request: no path filter, no branch filter.
+    expect(gpu.on).toHaveProperty("pull_request");
+    expect(gpu.on.pull_request).toBeNull();
+    // The 45-minute twin wait is push-only, so a PR can never stall on it.
+    const wait = (gpu.jobs.select.steps as Step[]).find(
+      (step) => step.id === "swept",
+    );
+    expect((wait as Record<string, unknown>).if).toBe(
+      "github.event_name == 'push'",
+    );
   });
 });

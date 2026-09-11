@@ -12,8 +12,9 @@ name: Deploy to GitHub Pages
 # github.sha), so it can only retry a transient failure on today's commit,
 # never substitute yesterday's.
 #
-# main is protected by a ruleset (pull_request + the four required ci.yml
-# checks + rebase-only), so "land a revert" means a revert BRANCH taken
+# main is protected by a ruleset (pull_request + the required lint/build/
+# test/smoke/gpu-agreement checks + rebase-only), so "land a revert" means a
+# revert BRANCH taken
 # through an ordinary PR — a direct push to main is refused. That adds one
 # CI wait (~2min) to a rollback, which is the trade the protection makes
 # on purpose: the same gate that slows a revert by two minutes is the one
