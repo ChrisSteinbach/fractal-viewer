@@ -1,12 +1,6 @@
-/** Complete editable compositions. These are ordinary scene documents: no
- * preset-only renderer overrides.
- *
- * BOTH LOST THEIR MIST when the participating medium was removed on its
- * measured cost (see surface-lighting.ts), so what the CPU reference review
- * accepted is NOT what these render today — the cathedral's god-rays were
- * most of what that review looked at. Their lights, camera, palette and
- * backdrop are unchanged and unretuned; treat the compositions as owing a
- * fresh aesthetic judgement, not as accepted. */
+/** Complete editable compositions accepted in the CPU reference review.
+ * These are ordinary scene documents: no preset-only renderer overrides.
+ * Production-browser appearance is qualified separately from that review. */
 import { mengerSponge } from "../fractal/presets";
 import type { SurfaceDiskLight } from "../fractal/surface-lighting";
 import type { Vec3 } from "../fractal/types";
@@ -127,6 +121,13 @@ export function createSurfaceLightingStarter(
       ambient: [0.065, 0.055, 0.05],
       specular: 0.12,
       roughness: 0.52,
+      medium: {
+        center: [0, 0, 0],
+        radius: 1.35,
+        density: 0.42,
+        tint: [0.95, 0.92, 0.85],
+        anisotropy: 0.45,
+      },
     };
   } else {
     pose = camera([1.05, -0.2, 0.95], [1.4, 0.4, -1.55], 0.65);
@@ -140,6 +141,13 @@ export function createSurfaceLightingStarter(
       ambient: [0.03, 0.07, 0.1],
       specular: 0.22,
       roughness: 0.42,
+      medium: {
+        center: [0, 0, 0],
+        radius: 5.2,
+        density: 0.18,
+        tint: [0.86, 0.94, 0.98],
+        anisotropy: 0.4,
+      },
     };
   }
   return { ...toSnapshot(state), camera: pose };

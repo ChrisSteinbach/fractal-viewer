@@ -41,7 +41,7 @@ for (const [name, create, lighting, balloon, plane] of [
       const material = create();
       const legacy = material.fragmentShader;
       lighting(material, DEFAULT_SURFACE_LIGHTING);
-      expect(material.fragmentShader).toContain("cinematicSurface");
+      expect(material.fragmentShader).toContain("cinematicMedium");
       expect(material.fragmentShader).not.toBe(legacy);
       lighting(material, undefined);
       expect(material.fragmentShader).toBe(legacy);
@@ -71,7 +71,7 @@ for (const [name, create, lighting, balloon, plane] of [
       const material = create();
       lighting(material, DEFAULT_SURFACE_LIGHTING);
       balloon(material, { center: [0, 0, 0], rho: 1, R: 1.5, far: 12 });
-      expect(material.fragmentShader).toContain("cinematicSurface");
+      expect(material.fragmentShader).toContain("cinematicMedium");
       expect(material.fragmentShader).toContain("surfaceDEBalloonHitInfo");
       balloon(material, null);
       plane(material, {

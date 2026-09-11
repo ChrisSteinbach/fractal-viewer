@@ -252,13 +252,9 @@ async function audit(page, label, active) {
   );
   report.audits.push(result);
   check(
-    // 19 sliders: two lights of eight (position xyz, azimuth, elevation,
-    // radius, intensity, plus the color input, which is not a range) and
-    // three shared material rows. It was 25 while the participating medium
-    // had its own six; the medium was removed on its measured cost.
     `${label}: complete paired editor`,
-    result.rows.length === 19 && result.unpaired.length === 0,
-    { rows: result.rows.length, unpaired: result.unpaired },
+    result.rows.length === 25 && result.unpaired.length === 0,
+    result.unpaired,
   );
   check(
     `${label}: applicability and paired availability`,
@@ -287,10 +283,8 @@ async function audit(page, label, active) {
   );
   await page.locator("#surfaceRigKeyIntensityNumber").scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(options.out, `${label}-key.png`) });
-  await page.locator("#surfaceRigRoughnessNumber").scrollIntoViewIfNeeded();
-  await page.screenshot({
-    path: path.join(options.out, `${label}-material.png`),
-  });
+  await page.locator("#surfaceRigMediumDensityNumber").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(options.out, `${label}-mist.png`) });
   return result;
 }
 

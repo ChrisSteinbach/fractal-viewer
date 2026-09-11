@@ -32,10 +32,9 @@
  * consumer — the fixed path runs textually unchanged.
  *
  * The cinematic-lighting sheet adds opt-in LINEAR hit/ray hooks. The ray
- * hook also sees misses, so a sheet can compose along a ray that hit
- * nothing. A capture region retains full-image rays and pixel coordinates.
- * These hooks do not change the encoded `shade` contract or the default
- * path.
+ * hook also sees misses, so a bounded medium can scatter against the sky.
+ * A capture region retains full-image rays and pixel coordinates. These
+ * hooks do not change the encoded `shade` contract or the default path.
  *
  * Consumers: `escape-family-preview.harness.ts`, `escape-chain.harness.ts`,
  * `chain-speckle.harness.ts`, `escape-form-sweep.harness.ts`,
@@ -158,8 +157,8 @@ export interface PreviewScene {
   shadeLinear?: (hit: PreviewLinearHit) => Vec3;
   /** Linear-light composition for EVERY camera ray, including background
    * rays. Runs after surface shading/fog and before the one output encode.
-   * Cannot be combined with encoded `shade`; a sheet composing along whole
-   * rays turns the legacy fog off. */
+   * Cannot be combined with encoded `shade`; physical-medium sheets turn
+   * the legacy fog off. */
   rayLinear?: (ray: PreviewRay) => Vec3;
 }
 
@@ -464,8 +463,8 @@ export function renderPreview(
         const spent = used >= maxSteps && t < tEnd && !hit;
         if (spent) exhausted++;
         // New linear transport cannot treat unknown geometry as a clear
-        // backdrop: an exhausted ray gets a black terminal rather than the
-        // sky. Absent hooks retain the historical byte output.
+        // backdrop. Both lighting-only and medium arms receive this same
+        // black terminal; absent hooks retain the historical byte output.
         if (linearHooks && spent) col = [0, 0, 0];
         rayStatus = hit
           ? PREVIEW_HIT

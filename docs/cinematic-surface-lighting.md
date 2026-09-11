@@ -1,54 +1,5 @@
 # Cinematic Surface lighting
 
-## THE PARTICIPATING MEDIUM WAS REMOVED — 10 September 2026
-
-**Everything below this section describes a feature that shipped with a
-bounded homogeneous medium. It no longer has one.** The medium was deleted
-outright — schema, `ShadeParams` lanes, both shader emitters, the compute
-renderer's per-cell dispatch sweep, the panel controls, the CPU reference's
-scattering half and its gates. `SURFACE_GPU_SHADE_LIGHTING_BYTES` is 384
-rather than 432, and the lane count is nine rather than twelve. The rest of
-the record is kept as written: the transport was correct, and what it cost is
-the reason it went.
-
-WHY, measured on a real AMD RX 7900 XTX, production build:
-
-| Cathedral, 1920x1057, WebGPU compute | Progress                                           |
-| ------------------------------------ | -------------------------------------------------- |
-| as authored (mist density 0.42)      | 3.4% at 10 s, 9.5% at 5 min — still in pass 1 of 8 |
-| mist density 0                       | complete 8-pass settle in 130 s                    |
-
-That is the whole feature's cost in one line: everything except the medium
-settles a full pane in a bit over two minutes, and the medium alone turns
-that into hours. It matches this file's own earlier arithmetic — 95% of GPU
-time in the medium at 64 px, ~26 h per pane settle before the dispatch-width
-fix and ~59 min after it — and it is why "Lights + mist" could never be
-judged in a browser. The owner's call was that a feature that renders only
-postage stamps is not a feature.
-
-WHAT A FUTURE MEDIUM WOULD HAVE TO DO DIFFERENTLY. The cost was never the
-transport arithmetic; it was that every shaded terminal paid a full
-32-cell x 2-light sweep of nested visibility marches before any pixel
-finished. Three things were identified and none were built: give the medium
-its own progressive dimension over already-shaded terminals (so a usable
-frame appears first and the air refines into it); render it at quarter
-resolution and upsample bilaterally, since the field is smooth and
-low-frequency; and take a few jittered cells per pass instead of 32,
-averaged across the eight antialiasing passes the renderer already runs.
-Together those are plausibly two orders of magnitude on the one term that
-costs everything. None of that is measured, and nothing here promises it
-works.
-
-WHAT SURVIVED. Authored disk lights, their soft shadows, the ambient and
-material defaults, the per-transform finishes, the HDR pipeline, both
-engines, both dimensions, and the two starting compositions — which now
-render without the mist they were composed around, and therefore owe a fresh
-aesthetic judgement (see `surface-lighting-starters.ts`). A saved scene or
-link written while the medium existed still opens: `persist.ts` ignores a
-`medium` block rather than rejecting the rig.
-
-## The reference review (historical)
-
 The owner accepted the Menger cathedral and Balloon cavern reference looks
 for production integration. The rotor-posed 4D shells composition was rejected
 and may be set aside; it is not an approved starting scene. Lighting support

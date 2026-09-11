@@ -1608,12 +1608,6 @@ every later one) and the fix (one unmeasured alignment fence).
 
 ### The lit dispatch width, and what one workgroup cost
 
-**Measured on the participating medium, which has since been REMOVED on the
-cost this section measures** (`docs/cinematic-surface-lighting.md`). The
-width lesson stands and the sizer still runs — a lit dispatch's fixed cost
-dominates a narrow one — but `mediumCost`, the per-cell sweep and the
-phase split are gone with the medium.
-
 `ShadeSizerState.lighting`'s `surfaceCost`/`mediumCost` shipped as inert
 placeholders. `surfaceComputeLightingRayBatch`'s `affordable()` therefore
 never bound, the width fell through to `rayCap` — one workgroup, never
@@ -1646,18 +1640,14 @@ The 64px frame pays most of that climb because its early sweeps are
 queue-limited and a queue-limited batch may not grow the capacity; a frame
 with rays to spare reaches the ceiling in six dispatches out of hundreds.
 
-WHAT WAS STILL OWED, from the same fit, and what happened instead. At
-1920x1057 and 8 samples the frame went from ~26 h to ~59 min, still 40%
-fixed / 60% marginal with 64 medium dispatches per shade batch to answer
-for. The naive remedy — one medium cell per pass, letting supersampling
-average — was a TRAP: every pass re-runs phase 0, ~23.7 s of surface shade
-at pane scale, so reaching the authored sample count would have cost
-~2.7 h. The medium needed its own progressive dimension over
-already-shaded terminals. Nobody built it: a later full-pane measurement
-put the authored cathedral at 9.5% of its FIRST pass after five minutes,
-against 130 s for a complete eight-pass settle with the mist off, and the
-medium was removed rather than optimized. Without it a lit frame is the
-surface half alone — which is the 130 s.
+WHAT IS STILL OWED, from the same fit. At 1920x1057 and 8 samples the
+frame goes from ~26 h to ~59 min, and is then 40% fixed / 60% marginal
+with 64 medium dispatches per shade batch still to answer for. The naive
+remedy — one medium cell per pass, letting supersampling average — is a
+TRAP: every pass re-runs phase 0, ~23.7 s of surface shade at pane scale,
+so reaching today's sample count would cost ~2.7 h. The medium needs its
+own progressive dimension over already-shaded terminals, which is what the
+`phase: 0` / `phase: 1` split already anticipates.
 
 ### A band is bit-exact
 
@@ -1671,9 +1661,9 @@ with that, and the second is what a lit export could not absorb:
   0.006% residual above, read as a thin silhouette scatter in an unlit
   frame. In a LIT frame it is not thin: the dither moves the march start,
   the march start moves the terminal distance, and the terminal distance
-  was the (since-removed) volumetric medium's whole integration length, so
-  the mist re-integrated over a slightly different segment for every pixel
-  of every band. MEASURED on the `cathedral` fixture at 64 px: 0.408/255 mean and
+  is the volumetric medium's whole integration length, so the mist
+  re-integrates over a slightly different segment for every pixel of every
+  band. MEASURED on the `cathedral` fixture at 64 px: 0.408/255 mean and
   5.9% of channels at the authored eight samples, 0.699 and 10.1% at one;
   against `scripts/cinematic-lighting.verify.mjs`'s 0.15 bar;
 - the sub-frustum's own f32 rounding, which is real but small.

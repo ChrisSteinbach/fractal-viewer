@@ -92,7 +92,7 @@
  *   --plain       no fold anywhere: bare affine tetra, native WebGL. Control.
  *   --gl          the lens system forced onto WebGL. Control — the crash is
  *                 WebGPU-only, so this arm must stay clean at any --toggles.
- *   --lighting    include the authored finite lights in the live work.
+ *   --lighting    include finite lights and bounded mist in the live work.
  *   --floor=off / --tiling=a3 / --toggleId=... / --viewport=WxH /
  *   --toggleGapMs=N
  *
@@ -229,6 +229,13 @@ function sceneFor(radii, { lens = false, foldType = "mandelbox" } = {}) {
               ambient: [0.03, 0.03, 0.03],
               specular: 0.15,
               roughness: 0.4,
+              medium: {
+                center: [0, 0, 0],
+                radius: 4,
+                density: 0.12,
+                tint: [0.9, 0.95, 1],
+                anisotropy: 0.4,
+              },
             },
           },
         }

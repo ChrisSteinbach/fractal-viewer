@@ -155,6 +155,7 @@ import {
   SURFACE_GPU_SEED_WORKGROUP_SIZE,
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_SHADE_LIGHTING_BYTES,
+  SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TILING_BYTES,
   surfaceComputeSeedWgsl,
@@ -170,6 +171,7 @@ import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import {
   cloneSurfaceLighting,
   resolveSurfaceLighting,
+  surfaceLightingLanes,
   surfaceLightingRuntime,
   type SurfaceLighting,
   type SurfaceLightingRuntime,
@@ -1842,16 +1844,28 @@ export function nextShadeHitCost(
 interface ShadeSizerState {
   cost: ShadeHitCost;
   cap: number;
-  /** A LIT hit dispatch is priced apart from an unlit one: it pays a
-   * bounded visibility march per emitter per hit, so its two-term model
-   * and its capacity ladder are its own. `surfaceCost` is LIVE — every lit
-   * hit dispatch feeds it through `nextShadeHitCost`, so
-   * `surfaceComputeLightingRayBatch` sizes on this scene rather than on a
-   * fixed conservative width. An inert cost lane is a pinned width, not a
-   * safe default: these lanes shipped inert once and pinned every lit
-   * dispatch at ONE WORKGROUP, which cost a 64 px settle 17.7x. */
+  /** Medium dispatches ride the frame loop's SHARED fence groups
+   * ({@link surfaceComputeFenceGroupSize}) on their own `medium` lane, so
+   * the group size reads that lane's per-frame running maximum and its
+   * pilot is the shared one (a lane with no measurement yet fences one
+   * dispatch at a time). No private lighting fence group survives.
+   *
+   * `surfaceCost`/`mediumCost` are LIVE: every lit hit dispatch feeds the
+   * first and every medium fence group the second, both through
+   * `nextShadeHitCost`, so `surfaceComputeLightingRayBatch` sizes on this
+   * scene rather than on a fixed conservative width. They were inert
+   * placeholders until MEASURED (real RX 7900 XTX, cathedral, 4096 rays,
+   * one sample, width forced offline): one medium dispatch costs
+   * `5.63 ms + 2.04 us/ray`, so at the one-workgroup width that shipped,
+   * 97.7% of every medium dispatch was fixed cost and the settle ran
+   * 17.7x longer than the same pixels at 4096. `lastCellMs` is the most
+   * recent medium group's PER-DISPATCH fence-free cost — the ladder's
+   * evidence, where the lane's running max would freeze the climb after
+   * one slow group. */
   lighting?: {
+    lastCellMs: number;
     surfaceCost: ShadeHitCost;
+    mediumCost: ShadeHitCost;
     rayCap: number;
   };
 }
@@ -1859,18 +1873,22 @@ interface ShadeSizerState {
 export const SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS = 4096;
 const SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS = 50;
 
-/** The lit terminal dispatch's width: what its own measured two-term model
- * can afford inside one dispatch target, under the capacity ladder's cap. */
+/** Separate terminal and complete-cell-sweep economics; the more expensive
+ * model bounds the ray width. A wider dispatch still has one cell/light per
+ * invocation, and starts a fresh individually fenced medium pilot. */
 export function surfaceComputeLightingRayBatch(
   surfaceCost: ShadeHitCost,
+  mediumCost: ShadeHitCost | null,
   cap: number,
 ): number {
+  const affordable = (cost: ShadeHitCost): number =>
+    (SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS * 1000 - cost.interceptUs) /
+    Math.max(1, cost.marginalUs);
   const width = Math.min(
     cap,
     SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
-    (SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS * 1000 -
-      surfaceCost.interceptUs) /
-      Math.max(1, surfaceCost.marginalUs),
+    affordable(surfaceCost),
+    mediumCost ? affordable(mediumCost) : Infinity,
   );
   return Math.max(
     SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -1881,7 +1899,8 @@ export function surfaceComputeLightingRayBatch(
 
 /**
  * The LIT capacity ladder: how fast the lit hit width may climb, paced by
- * the last dispatch's measured time against
+ * the worst single DISPATCH the last batch produced — its phase-0 shading
+ * or its slowest medium cell, whichever hurt more — against
  * {@link SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS}.
  *
  * It exists for the same reason {@link nextShadeBatchSize} does one queue
@@ -1891,15 +1910,22 @@ export function surfaceComputeLightingRayBatch(
  * dispatch. Doubling on evidence and quartering on a 2x overrun are that
  * file's shape deliberately, not a second set of dials.
  *
- * WHY THE CLIMB IS WORTH PACING AT ALL, measured on the participating
- * medium this renderer no longer has (real AMD RX 7900 XTX, cathedral,
- * 64x64 = 4096 rays, one sample, width forced through
- * `?surfaceshadehits=N`): the settle ran 27.22s at width 64 against 1.54s
- * at 4096, a 17.7x range for identical coverage at every width, because
- * 64 invocations do not begin to fill the machine. The medium is gone but
- * the lesson is not — a lit dispatch's fixed cost still dominates a narrow
- * one, and the image does not change with the width. Pure so the safety
- * bias is unit-tested.
+ * WHY THE CLIMB IS WORTH PACING AT ALL, measured (real AMD RX 7900 XTX,
+ * production build, cathedral, 64x64 = 4096 rays, one sample, one fresh
+ * session per width, lit width forced through `?surfaceshadehits=N`):
+ *
+ *     width               64      256     1024     4096
+ *     ms/medium disp   5.756    7.200    9.880   13.978
+ *     medium disps      4288     1088      288       96
+ *     settle          27.22s    8.76s    3.29s    1.54s
+ *
+ * The fit over that lever is `5.63 ms + 2.04 us/ray`, so at the ONE
+ * WORKGROUP this path used to be pinned to, 97.7% of every medium
+ * dispatch was fixed cost — 64 invocations do not begin to fill the
+ * machine — and a 64x width bought only 2.4x the dispatch for a 17.7x
+ * settle. Coverage was identical (3840 covered / 256 miss / 0 exhausted)
+ * at every width: this is scheduling, and the image does not change.
+ * Pure so the safety bias is unit-tested.
  */
 export function nextLightingRayCap(
   current: number,
@@ -3780,13 +3806,26 @@ export class SurfaceComputeRenderer {
     const runtime = lighting
       ? {
           ...(spec.lightingRuntime ??
-            surfaceLightingRuntime({
+            surfaceLightingRuntime(lighting, {
+              interaction: Number.isFinite(budgetMs),
               dimension: isFourDTarget(this.target) ? 4 : 3,
               boundingRadius: this.target.de.boundingRadius,
             })),
           sampleIndex: (spec.lightingRuntime?.sampleIndex ?? 0) + sampleIndex,
+          cellStart: 0,
+          cellCount: 1,
+          phase: 0 as const,
+          lightIndex: -1,
         }
       : undefined;
+    // Read the same clamped runtime lanes the shader receives; hostile or
+    // manually constructed frame specs cannot multiply host dispatch loops.
+    const lightingLanes = lighting
+      ? surfaceLightingLanes(lighting, runtime)
+      : undefined;
+    const mediumCells =
+      lighting?.medium && lighting.medium.density > 0 ? lightingLanes![41] : 0;
+    const mediumLights = mediumCells > 0 ? lighting!.lights.length : 0;
     const colorBytes = rays * (this.lighting ? 16 : 4);
     /** Bytes put through `queue.writeBuffer`/`writeTexture` since the last
      * fence — the fence group's second closing rule
@@ -3799,6 +3838,22 @@ export class SurfaceComputeRenderer {
     ): void => {
       device.queue.writeBuffer(buffer, 0, data);
       stagedBytes += data.byteLength;
+    };
+    /** Stage the participating medium's dispatch-phase lane
+     * (cell start, cell count, phase, light) ahead of the submission that
+     * reads it. */
+    const stagePhase = (
+      cell: number,
+      count: number,
+      phase: number,
+      light: number,
+    ): void => {
+      device.queue.writeBuffer(
+        this.shadeBuf,
+        SURFACE_GPU_SHADE_LIGHTING_PHASE_OFFSET,
+        new Float32Array([cell, count, phase, light]),
+      );
+      stagedBytes += 16;
     };
     const buffers = await this.allocateFrameBuffers(rays);
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
@@ -3982,6 +4037,8 @@ export class SurfaceComputeRenderer {
     const lightingSizer = this.lighting
       ? (sizer.lighting ??= {
           surfaceCost: initialShadeHitCost(),
+          mediumCost: initialShadeHitCost(),
+          lastCellMs: 0,
           // One workgroup until the frame's own dispatches say a wider one
           // fits — {@link nextLightingRayCap}. `?surfaceshadehits=N` FIXES
           // the width instead, which is the offline lever a two-term fit
@@ -4385,6 +4442,16 @@ export class SurfaceComputeRenderer {
            * ladders below turn on. */
           wanted: number;
           budgetMs: number;
+        }
+      | {
+          /** One participating-medium (cell, light) submission over a
+           * batch's terminals. Its own LANE: a medium group never shares a
+           * fence with shade or march work, so the tally, the group size
+           * and the medium cost model each read medium time alone. */
+          kind: "medium";
+          rays: number;
+          cell: number;
+          light: number;
         };
     let pending: PendingDispatch[] = [];
     /** `performance.now()` at the group's FIRST submit — the group's wall
@@ -4410,6 +4477,17 @@ export class SurfaceComputeRenderer {
      */
     let marchPeakWorkMs: number | null = null;
     let hitPeakWorkMs: number | null = null;
+    /** The medium lane's running maximum, on the same per-frame rule. */
+    let mediumPeakWorkMs: number | null = null;
+    /** The medium lane's own tally for the frame-done trace line. */
+    let mediumGpuMs = 0;
+    let mediumDispatchCount = 0;
+    let mediumFences = 0;
+    /** Lit-ladder evidence from hit groups whose batch still owes its
+     * medium sweep. The restored medium paced the lit width by the worst
+     * SINGLE submission a batch produced — phase 0 or its slowest medium
+     * cell — so the step waits until that sweep has been measured. */
+    let deferredLitLadder: { shareMs: number; limited: boolean }[] = [];
 
     /** Submit one dispatch into the current group. Returns false only
      * when the frame was cancelled during the session's one-time fence
@@ -4446,7 +4524,11 @@ export class SurfaceComputeRenderer {
       const pin = surfaceComputeFenceGroupPin;
       if (pin !== null) return pending.length >= pin;
       const lane =
-        pending[0].kind === "march" ? marchPeakWorkMs : hitPeakWorkMs;
+        pending[0].kind === "march"
+          ? marchPeakWorkMs
+          : pending[0].kind === "medium"
+            ? mediumPeakWorkMs
+            : hitPeakWorkMs;
       return pending.length >= surfaceComputeFenceGroupSize(lane, limitMs);
     };
 
@@ -4568,6 +4650,45 @@ export class SurfaceComputeRenderer {
         );
         return true;
       }
+      if (group[0].kind === "medium") {
+        // The restored medium counted its time inside the SHADE total;
+        // it still does, so `shadeMs` means what it meant when the 95%
+        // figure was taken, and the medium lane is ALSO tallied apart.
+        shadeGpuMs += wallMs;
+        mediumGpuMs += wallMs;
+        mediumDispatchCount += group.length;
+        mediumFences++;
+        let totalRays = 0;
+        for (const d of group) if (d.kind === "medium") totalRays += d.rays;
+        const mediumWorkShare = surfaceComputeGroupDispatchMs(
+          workMs,
+          group.length,
+        );
+        // The ladder's evidence: this group's per-dispatch fence-free
+        // work (the restored medium read raw wall here; the calibrated
+        // fence is main's rule for every sizer).
+        lightingSizer!.lastCellMs = mediumWorkShare;
+        // The medium's own two-term model, fitted jointly over the group's
+        // d dispatches and N rays ({@link nextShadeHitCost}'s
+        // `dispatches`) — at equal widths the same answer as folding the
+        // per-dispatch share, which is what the restored loop did.
+        lightingSizer!.mediumCost = nextShadeHitCost(
+          lightingSizer!.mediumCost,
+          totalRays,
+          workMs * 1000,
+          group.length,
+        );
+        mediumPeakWorkMs = Math.max(mediumPeakWorkMs ?? 0, mediumWorkShare);
+        // The restored gate's format first (cinematic-lighting.verify.mjs
+        // parses it), then the fence-group instruments' shape.
+        tr(
+          `medium END dispatches=${group.length} ms=${wallMs.toFixed(2)} work=${workMs.toFixed(2)} rays=${totalRays}`,
+        );
+        tr(
+          `fence medium dispatches=${group.length} wall=${wallMs.toFixed(1)} work=${workMs.toFixed(1)} perDispatch=${mediumWorkShare.toFixed(1)} peak=${mediumPeakWorkMs.toFixed(1)} rays=${totalRays}`,
+        );
+        return true;
+      }
       shadeGpuMs += wallMs;
       const shade = group.filter(
         (d): d is Extract<PendingDispatch, { kind: "shade" }> =>
@@ -4621,6 +4742,15 @@ export class SurfaceComputeRenderer {
             hits.length,
           );
           for (const d of hits) {
+            if (mediumLights > 0) {
+              // The batch's medium sweep has not run yet; its step waits
+              // for the worst single submission that sweep produces.
+              deferredLitLadder.push({
+                shareMs,
+                limited: d.hits < d.wanted,
+              });
+              continue;
+            }
             // The watchdog sees dispatches, not groups, so the ladder is
             // paced by this dispatch's own attributed time.
             const litGrown = nextLightingRayCap(lightingSizer.rayCap, shareMs);
@@ -4630,7 +4760,8 @@ export class SurfaceComputeRenderer {
                 : litGrown;
           }
           tr(
-            `lit cost surf→${lightingSizer.surfaceCost.interceptUs.toFixed(0)}+n*${lightingSizer.surfaceCost.marginalUs.toFixed(1)}us rayCap→${lightingSizer.rayCap}`,
+            `lit cost surf→${lightingSizer.surfaceCost.interceptUs.toFixed(0)}+n*${lightingSizer.surfaceCost.marginalUs.toFixed(1)}us ` +
+              `med→${lightingSizer.mediumCost.interceptUs.toFixed(0)}+n*${lightingSizer.mediumCost.marginalUs.toFixed(1)}us rayCap→${lightingSizer.rayCap}`,
           );
         }
         hitPeakWorkMs = Math.max(hitPeakWorkMs ?? 0, shareMs);
@@ -4847,7 +4978,10 @@ export class SurfaceComputeRenderer {
               counts.exhausted++;
               exhaustedIndices.push(ray);
             }
-            shadeFreeQueue.push(ray);
+            // A mist ray pays visibility marches even if its primary ray
+            // missed. Keep it under the same bounded dispatch cap as hits.
+            if (mediumLights > 0) shadeHitQueue.push(ray);
+            else shadeFreeQueue.push(ray);
           }
         }
         // Steps grow only while the WHOLE active set fits a single slice
@@ -4915,6 +5049,7 @@ export class SurfaceComputeRenderer {
                     shadeHitsPin ?? Infinity,
                     surfaceComputeLightingRayBatch(
                       lightingSizer!.surfaceCost,
+                      mediumLights > 0 ? lightingSizer!.mediumCost : null,
                       lightingSizer!.rayCap,
                     ),
                   )
@@ -4964,6 +5099,11 @@ export class SurfaceComputeRenderer {
           `shade BEGIN isFree=${isFree} hitQ=${shadeHitQueue.length} freeQ=${shadeFreeQueue.length} batchSize=${batchSize} len=${batch.length} interceptUs=${sizer.cost.interceptUs.toFixed(0)} marginalUs=${sizer.cost.marginalUs.toFixed(1)} budgetMs=${hitBudgetMs.toFixed(0)} cap=${sizer.cap}`,
         );
         if (!(await stageDispatch(batch.length, 0, batch))) return null;
+        if (this.lighting) {
+          // Phase 0 initializes each terminal's transmitted surface or
+          // background radiance; a medium sweep below adds to it in place.
+          stagePhase(0, 1, 0, -1);
+        }
         if (
           !(await queueDispatch(
             shadePipeline,
@@ -4980,23 +5120,85 @@ export class SurfaceComputeRenderer {
         ) {
           return null;
         }
-        // The queues advance at SUBMIT time — a later batch in the same
-        // group must not re-send rays this one already took — while every
-        // model and ladder waits for the group's one measurement.
-        if (isFree) shadeFreeQueue = shadeFreeQueue.slice(batch.length);
-        else {
-          shadeHitQueue = shadeHitQueue.slice(batch.length);
-          lastHitDispatch = performance.now();
-        }
-        // Draining the queues closes the group: the outer loop is about
-        // to march again (a different pipeline, a different tally lane),
-        // and nothing more is coming to fill this fence.
-        if (
-          (shadeHitQueue.length === 0 && shadeFreeQueue.length === 0) ||
-          groupClosed(groupLimitMs())
-        ) {
+        if (!(this.lighting && mediumLights > 0)) {
+          // The queues advance at SUBMIT time — a later batch in the same
+          // group must not re-send rays this one already took — while every
+          // model and ladder waits for the group's one measurement.
+          if (isFree) shadeFreeQueue = shadeFreeQueue.slice(batch.length);
+          else {
+            shadeHitQueue = shadeHitQueue.slice(batch.length);
+            lastHitDispatch = performance.now();
+          }
+          // Draining the queues closes the group: the outer loop is about
+          // to march again (a different pipeline, a different tally lane),
+          // and nothing more is coming to fill this fence.
+          if (
+            (shadeHitQueue.length === 0 && shadeFreeQueue.length === 0) ||
+            groupClosed(groupLimitMs())
+          ) {
+            if (!(await flushGroup())) return null;
+            if (!(await maybePresent())) return null;
+          }
+        } else {
+          // A GROUP IS HOMOGENEOUS: phase 0 is fenced before the medium
+          // lane opens its own group, so each lane's tally takes its own
+          // wall and the shade models read phase 0 alone — which is what
+          // the restored loop's individually timed phase-0 dispatch fed
+          // them. Each following submission adds one cell and one emitter,
+          // leaving HDR in place and a cancellation door between groups.
           if (!(await flushGroup())) return null;
-          if (!(await maybePresent())) return null;
+          const mediumDispatches = mediumCells * mediumLights;
+          for (let index = 0; index < mediumDispatches; index++) {
+            if (performance.now() - wallStart > budgetMs) {
+              if (!(await flushGroup())) return null;
+              truncated = true;
+              tr("budget truncated (medium)");
+              break outer;
+            }
+            const cell = Math.floor(index / mediumLights);
+            const light = index % mediumLights;
+            stagePhase(cell, 1, 1, light);
+            if (
+              !(await queueDispatch(
+                shadePipeline,
+                buffers.shadeBindGroup,
+                batch.length,
+                { kind: "medium", rays: batch.length, cell, light },
+              ))
+            ) {
+              return null;
+            }
+            // Queue writes and their following submissions are ordered;
+            // the sweep's end fences whatever is left, so no medium work
+            // outlives its batch into a present, a new active list or a
+            // teardown.
+            if (index === mediumDispatches - 1 || groupClosed(groupLimitMs())) {
+              if (!(await flushGroup())) return null;
+              if (!(await maybePresent())) return null;
+            }
+          }
+          if (lightingSizer && shadeHitsPin === null) {
+            // The worst SINGLE submission this batch produced — its
+            // phase-0 shading or its last medium group's per-dispatch
+            // share. The watchdog sees dispatches, not batches.
+            for (const step of deferredLitLadder) {
+              const litGrown = nextLightingRayCap(
+                lightingSizer.rayCap,
+                Math.max(step.shareMs, lightingSizer.lastCellMs),
+              );
+              lightingSizer.rayCap = step.limited
+                ? Math.min(lightingSizer.rayCap, litGrown)
+                : litGrown;
+            }
+            tr(`lit rayCap→${lightingSizer.rayCap} after medium`);
+          }
+          deferredLitLadder = [];
+          // Credit a ray's shade half only once every medium cell is done.
+          if (isFree) shadeFreeQueue = shadeFreeQueue.slice(batch.length);
+          else {
+            shadeHitQueue = shadeHitQueue.slice(batch.length);
+            lastHitDispatch = performance.now();
+          }
         }
       }
       // The HOLD above breaks out with hits still queued and possibly a
@@ -5030,7 +5232,10 @@ export class SurfaceComputeRenderer {
     counts.active =
       rays - counts.hit - counts.miss - counts.exhausted - counts.plane;
     tr(
-      `frame done passes=${passes} fences=${fences} truncated=${truncated} hit=${counts.hit} miss=${counts.miss} exhausted=${counts.exhausted} active=${counts.active} plane=${counts.plane}`,
+      `frame done passes=${passes} fences=${fences} truncated=${truncated} hit=${counts.hit} miss=${counts.miss} exhausted=${counts.exhausted} active=${counts.active} plane=${counts.plane}` +
+        (mediumLights > 0
+          ? ` mediumDispatches=${mediumDispatchCount} mediumFences=${mediumFences} mediumMs=${mediumGpuMs.toFixed(1)} marchMs=${marchGpuMs.toFixed(1)} shadeMs=${shadeGpuMs.toFixed(1)}`
+          : ""),
     );
     return {
       pixels,

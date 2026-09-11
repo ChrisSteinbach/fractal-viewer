@@ -11,7 +11,7 @@
 import { createServer } from "node:http";
 import { chromium } from "playwright-core";
 import {
-  SURFACE_LIGHTING_LANE_COUNT,
+  surfaceHenyeyGreenstein,
   surfaceLightingLanes,
   type SurfaceLighting,
 } from "../src/fractal/surface-lighting";
@@ -27,6 +27,8 @@ import {
   createSurfaceMaterial4,
   surface4FragmentFor,
 } from "../src/app/surface-material-4d";
+import { createCinematicLighting } from "./cinematic-lighting";
+import { PREVIEW_MISS } from "./de-preview";
 
 const N = 2048;
 
@@ -231,32 +233,44 @@ function sources(language: "glsl" | "wgsl") {
     );
   if (wg)
     return `
-@group(0) @binding(0) var<uniform> test: array<vec4f, ${SURFACE_LIGHTING_LANE_COUNT}>;
+@group(0) @binding(0) var<uniform> test: array<vec4f, 12>;
 @group(0) @binding(1) var<storage, read_write> output: array<vec4f>;
 ${deps}${shader}
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= ${N}u) { return; }
   let pixel = vec2f(f32(gid.x), 0.0);
-  let color = cinematicSurface(vec3f(0.0), vec3f(0.0, 0.0, 1.0), vec3f(0.0, 0.0, -1.0),
-    vec3f(1.0), vec4f(0.4, 32.0, 0.0, 0.0), vec4f(0.0, 1.0, 0.0, 0.0), vec3f(0.0), pixel, 0);
+  var color = vec3f(0.0);
+  if (i32(test[2].w) == 4 || i32(test[2].w) == 5) {
+    color = cinematicMedium(vec3f(0.0), vec3f(0.0, 0.0, 1.0), 1.0,
+      select(vec3f(0.0), vec3f(0.2, 0.3, 0.4), i32(test[2].w) == 5), pixel, 0);
+  } else {
+    color = cinematicSurface(vec3f(0.0), vec3f(0.0, 0.0, 1.0), vec3f(0.0, 0.0, -1.0),
+      vec3f(1.0), vec4f(0.4, 32.0, 0.0, 0.0), vec4f(0.0, 1.0, 0.0, 0.0), vec3f(0.0), pixel, 0);
+  }
   output[gid.x] = vec4f(color, cinematicVisibilityExhausted + 65536.0 * cinematicVisibilityInvalid);
 }`;
   return `#version 300 es
 precision highp float;
 precision highp int;
-uniform vec4 test[${SURFACE_LIGHTING_LANE_COUNT}];
+uniform vec4 test[12];
 out vec4 result;
 ${deps}${shader}
 void main() {
   vec2 pixel = gl_FragCoord.xy - vec2(0.5);
-  vec3 color = cinematicSurface(vec3(0.0), vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, -1.0),
-    vec3(1.0), vec4(0.4, 32.0, 0.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec3(0.0), pixel, 0);
+  vec3 color;
+  if (int(test[2].w) == 4 || int(test[2].w) == 5) {
+    color = cinematicMedium(vec3(0.0), vec3(0.0, 0.0, 1.0), 1.0,
+      int(test[2].w) == 5 ? vec3(0.2, 0.3, 0.4) : vec3(0.0), pixel, 0);
+  } else {
+    color = cinematicSurface(vec3(0.0), vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, -1.0),
+      vec3(1.0), vec4(0.4, 32.0, 0.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec3(0.0), pixel, 0);
+  }
   result = vec4(color, cinematicVisibilityExhausted + 65536.0 * cinematicVisibilityInvalid);
 }`;
 }
 
-it("agrees with analytic disk transport and preserves finite visibility", async () => {
+it("agrees with analytic disk/medium transport and preserves finite visibility", async () => {
   const rows = [
     { name: "disk 1 sample", kind: 0, samples: 1 },
     { name: "disk 8 samples", kind: 0, samples: 8 },
@@ -264,16 +278,29 @@ it("agrees with analytic disk transport and preserves finite visibility", async 
     { name: "open aperture", kind: 2, samples: 1 },
     { name: "wall beyond emitter", kind: 3, samples: 1 },
     { name: "finite shadow exhaustion", kind: 6, samples: 1 },
+    { name: "medium isotropic", kind: 4, samples: 1, g: 0 },
+    { name: "medium forward", kind: 4, samples: 1, g: 0.4 },
+    { name: "medium backward", kind: 4, samples: 1, g: -0.4 },
+    { name: "zero medium identity", kind: 5, samples: 1 },
   ].map((row) => {
     const authored = structuredClone(rig);
+    if (row.kind === 4 || row.kind === 5) {
+      authored.lights[0].radius = 0.001;
+      authored.medium = {
+        center: [0, 0, 0.5],
+        radius: 0.5,
+        density: row.kind === 5 ? 0 : 0.7,
+        tint: [1, 1, 1],
+        anisotropy: row.g ?? 0,
+      };
+    }
     const packed = surfaceLightingLanes(authored, {
       surfaceSamples: row.samples,
+      mediumSamples: 32,
       shadowSteps: row.kind === 6 ? 2 : 128,
       sampleIndex: 0,
       epsilon: 1e-4,
     });
-    // Lane 2's spare word carries the scenario the analytic obstacle
-    // callbacks switch on; no authored value lives there.
     packed[11] = row.kind;
     return { ...row, authored, packed: Array.from(packed) };
   });
@@ -439,32 +466,20 @@ it("agrees with analytic disk transport and preserves finite visibility", async 
           throw new Error(
             `Requested real driver but got ${renderer}; ${adapterInfo}`,
           );
-        // Name the failing program and quote the first offending line: a
-        // bare info log (or an empty one) says nothing about which of the
-        // fifteen programs the driver refused.
-        const compile = (type: number, source: string, name: string) => {
+        const compile = (type: number, source: string) => {
           const shader = gl.createShader(type)!;
           gl.shaderSource(shader, source);
           gl.compileShader(shader);
-          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            const log = gl.getShaderInfoLog(shader) ?? "";
-            const line = Number(/:(\d+):/.exec(log)?.[1] ?? 0);
-            const quoted = source.split("\n")[line - 1] ?? "";
-            throw new Error(`${name}: ${log || "(empty log)"} | ${quoted}`);
-          }
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+            throw new Error(gl.getShaderInfoLog(shader)!);
           return shader;
         };
         const compiled = [];
         for (const row of programs) {
-          const vertex = compile(
-            gl.VERTEX_SHADER,
-            row.vertex,
-            `${row.name} vertex`,
-          );
+          const vertex = compile(gl.VERTEX_SHADER, row.vertex);
           const fragment = compile(
             gl.FRAGMENT_SHADER,
             `#version 300 es\nprecision highp int;\n#define SURFACE_FOLDS ${row.folds}\n${row.fragment}`,
-            `${row.name} fragment`,
           );
           const linked = gl.createProgram();
           gl.attachShader(linked, vertex);
@@ -484,13 +499,9 @@ it("agrees with analytic disk transport and preserves finite visibility", async 
             gl.VERTEX_SHADER,
             `#version 300 es
 void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.0,1.0);}`,
-            "transport vertex",
           ),
         );
-        gl.attachShader(
-          program,
-          compile(gl.FRAGMENT_SHADER, glsl, "transport fragment"),
-        );
+        gl.attachShader(program, compile(gl.FRAGMENT_SHADER, glsl));
         gl.linkProgram(program);
         if (!gl.getProgramParameter(program, gl.LINK_STATUS))
           throw new Error(gl.getProgramInfoLog(program)!);
@@ -584,12 +595,44 @@ void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0
       const expected =
         row.kind === 1 || row.kind === 6
           ? 0
-          : 9 / (Math.PI ** 2 * (4 + 0.4 ** 2));
+          : row.kind === 5
+            ? 0.2
+            : row.kind === 4
+              ? ((0.7 * Math.exp(-0.7) * 9) / (2 * Math.PI)) *
+                surfaceHenyeyGreenstein(1, row.g ?? 0)
+              : 9 / (Math.PI ** 2 * (4 + 0.4 ** 2));
       expect(
         Math.abs(means[0][0] - expected),
         `${row.name} analytic`,
       ).toBeLessThan(Math.max(2e-6, expected * 0.004));
       expect(means[0][3], row.name).toBe(row.kind === 6 ? 1 : 0);
+      if (row.kind === 4) {
+        const cpu = createCinematicLighting({
+          de: () => 100,
+          stepScale: 1,
+          lights: row.authored.lights,
+          medium: row.authored.medium,
+          mediumSamples: 32,
+          mediumLightSamples: 1,
+        });
+        let sum = 0;
+        for (let px = 0; px < N; px++)
+          sum += cpu.rayLinear({
+            px,
+            py: 0,
+            imageWidth: N,
+            imageHeight: 1,
+            origin: [0, 0, 0],
+            rd: [0, 0, 1],
+            distance: 1,
+            status: PREVIEW_MISS,
+            linear: [0, 0, 0],
+          })[0];
+        expect(
+          Math.abs(means[0][0] - sum / N),
+          `${row.name} independent reference`,
+        ).toBeLessThan(expected * 0.004);
+      }
       console.log(
         JSON.stringify({
           name: row.name,

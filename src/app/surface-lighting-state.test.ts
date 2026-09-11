@@ -52,13 +52,15 @@ describe("authored Surface lighting state", () => {
     authored.lights[0].normal[1] = 12;
     authored.lights[0].color[2] = 12;
     authored.ambient[0] = 12;
+    authored.medium!.center[0] = 12;
+    authored.medium!.tint[0] = 12;
     expect(state.surface.lighting).toEqual(snapshot.surface.lighting);
     restored.surface.lighting!.lights[0].position[0] = 30;
-    restored.surface.lighting!.lights[0].color[0] = 0;
+    restored.surface.lighting!.medium!.tint[0] = 0;
     expect(snapshot.surface.lighting!.lights[0].position[0]).toBe(0);
-    expect(snapshot.surface.lighting!.lights[0].color[0]).toBe(1);
-    snapshot.surface.lighting!.ambient[2] = 50;
-    expect(state.surface.lighting!.ambient[2]).toBe(0.05);
+    expect(snapshot.surface.lighting!.medium!.tint[0]).toBe(0.95);
+    snapshot.surface.lighting!.medium!.center[2] = 50;
+    expect(state.surface.lighting!.medium!.center[2]).toBe(0);
   });
 
   it("restoring a legacy snapshot clears a dormant base rig", () => {
@@ -76,7 +78,7 @@ describe("authored Surface lighting state", () => {
     rig.lights[0].normal = [0, 3.141592653589793, 0];
     rig.lights[0].radius = -0.125;
     rig.lights[0].color[0] = 12.123456789;
-    rig.roughness = 1.987654321;
+    rig.medium!.anisotropy = 2;
     const decoded = decodeScene(withLighting(rig));
     expect(decoded?.surface.lighting).toEqual(rig);
     expect(decodeScene(encodeScene(decoded!))?.surface.lighting).toEqual(rig);
@@ -94,24 +96,16 @@ describe("authored Surface lighting state", () => {
     expect(decoded.surface.lighting).toEqual(state.surface.lighting);
   });
 
-  it("opens a document written with a medium, keeping its lights and dropping the mist", () => {
-    // The participating medium was removed on its measured cost, so a link
-    // or saved scene from before that must still open — with its rig
-    // intact and no medium, which is what the renderer would draw anyway.
+  it("retains a zero-density medium and absent-medium light-only scenes distinctly", () => {
     const rig = createSurfaceLightingStarter("cathedral").surface.lighting!;
-    const legacy = {
-      ...rig,
-      medium: {
-        center: [0, 0, 0],
-        radius: 1.35,
-        density: 0.42,
-        tint: [0.95, 0.92, 0.85],
-        anisotropy: 0.45,
-      },
-    };
-    const decoded = decodeScene(withLighting(legacy))?.surface.lighting;
-    expect(decoded).toEqual(rig);
-    expect(decoded).not.toHaveProperty("medium");
+    rig.medium!.density = 0;
+    expect(
+      decodeScene(withLighting(rig))?.surface.lighting?.medium?.density,
+    ).toBe(0);
+    delete rig.medium;
+    expect(decodeScene(withLighting(rig))?.surface.lighting).not.toHaveProperty(
+      "medium",
+    );
   });
 
   it.each([
@@ -130,6 +124,10 @@ describe("authored Surface lighting state", () => {
     {
       ...DEFAULT_SURFACE_LIGHTING,
       lights: [{ ...DEFAULT_SURFACE_LIGHTING.lights[0], normal: [0, null, 1] }],
+    },
+    {
+      ...DEFAULT_SURFACE_LIGHTING,
+      medium: { center: [0, 0, 0], radius: 1, density: 0.1, tint: [1, 1, 1] },
     },
   ])("rejects malformed rig structure %#", (bad) => {
     expect(decodeScene(withLighting(bad))).toBeNull();
@@ -151,7 +149,7 @@ describe("authored Surface lighting state", () => {
     new SceneCollection({ storage }).add(encoded, "", "surface");
     new TimelineStore({ storage }).add(encoded, "", "surface");
     snapshot.surface.lighting!.lights[0].intensity = 0;
-    snapshot.surface.lighting!.ambient[0] = 0;
+    snapshot.surface.lighting!.medium!.density = 0;
     const restored = [
       history.undo(encodeScene(snapshot))!.snapshot,
       new SceneCollection({ storage }).all()[0].encoded,

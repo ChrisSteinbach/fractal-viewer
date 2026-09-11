@@ -116,7 +116,7 @@ describe("shared preview linear ray hooks", () => {
     expect(exhausted).toBe(panel.exhausted);
   });
 
-  it("retains an explicit geometric far cap on a true miss for ray composition", () => {
+  it("retains an explicit geometric far cap on a true miss for medium integration", () => {
     let rays = 0;
     const panel = renderPreview(
       {
