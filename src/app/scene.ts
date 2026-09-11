@@ -325,8 +325,7 @@ function sprite(
  * remember it flips.
  *
  * `"radial"` falls to a per-pixel `backgroundColorAt` loop
- * instead, the way {@link buildSurfaceComputeBackground}'s non-linear
- * branch already does — the canvas 2D API's own `createRadialGradient` has
+ * instead — the canvas 2D API's own `createRadialGradient` has
  * no `smoothstep` easing and no per-axis scale, so it can't express this
  * shape directly. The linear fast path's Y-flip does NOT need reproducing
  * here: a radial `t` depends only on distance from a `v = 0.5`-centered

@@ -57,10 +57,18 @@ import {
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TILING_BYTES,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
+  SURFACE_GPU_SEED_PARAMS_BYTES,
+  SURFACE_GPU_SEED_WORKGROUP_SIZE,
+  packSurfaceGpuSeed,
+  surfaceComputeSeedWgsl,
   surfaceDeKernelWgsl,
   surfaceMeshSdfWgslSource,
   surfaceGpuWorkgroupBytes,
 } from "./surface-de-gpu";
+import {
+  BACKGROUND_SHAPE_WGSL,
+  backgroundShapeSource,
+} from "./background-shape";
 import {
   BALLOON_FAR_CAP_RHO,
   BALLOON_RHO_MARGIN,
@@ -295,6 +303,114 @@ function kernelOpts(
     ...overrides,
   };
 }
+
+describe("surfaceComputeSeedWgsl (the device-side frame seed)", () => {
+  /** A top-level WGSL struct or fn, from its header through its closing
+   * brace at column 0. */
+  const wgslBlock = (source: string, header: string): string => {
+    const start = source.indexOf(header);
+    expect(start, header).toBeGreaterThanOrEqual(0);
+    return source.slice(start, source.indexOf("\n}", start) + 2);
+  };
+
+  it("binds the same ShadeParams struct text the march and shade kernels declare", () => {
+    const seed = surfaceComputeSeedWgsl({ lighting: false });
+    const march = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", rays: "unproject" }),
+    );
+    expect(wgslBlock(seed, "struct ShadeParams {")).toBe(
+      wgslBlock(march, "struct ShadeParams {"),
+    );
+    expect(seed).toContain(
+      "@group(0) @binding(4) var<uniform> shade: ShadeParams;",
+    );
+  });
+
+  it("seeds every ray ACTIVE with an unstarted march", () => {
+    expect(surfaceComputeSeedWgsl({ lighting: false })).toContain(
+      `states[ray] = vec4f(-1.0, ${SURFACE_GPU_RAY_ACTIVE}.0, 0.0, 0.0);`,
+    );
+  });
+
+  it("seeds the layer sidecar with the shade entry's own uncovered-miss packing", () => {
+    const seed = surfaceComputeSeedWgsl({ lighting: false });
+    const shade = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
+    const missLayer = "layerOut[ray] = packSurfaceLayer(0.0, 0.0, 1.0);";
+    expect(seed).toContain(missLayer);
+    expect(shade).toContain(missLayer);
+    expect(wgslBlock(seed, "fn packSurfaceLayer(")).toBe(
+      wgslBlock(shade, "fn packSurfaceLayer("),
+    );
+  });
+
+  it("writes an unlit ray the shade entry's MISS colour at the same full-image pixel", () => {
+    const seed = surfaceComputeSeedWgsl({ lighting: false });
+    const shade = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
+    for (const line of [
+      "  let full = vec2f(f32(px), f32(py)) + shade.bgOffset;",
+      "  let imageUv = (full + vec2f(0.5)) / shade.bgExtent;",
+      "  let bg = mix(shade.bgBottom, shade.bgTop, backgroundShapeT(imageUv));",
+      "  colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));",
+    ]) {
+      expect(seed, line).toContain(line);
+      expect(shade, line).toContain(line);
+    }
+    expect(seed).toContain(backgroundShapeSource(BACKGROUND_SHAPE_WGSL));
+  });
+
+  it("samples a lit ray's authored image with the lit shade entry's own override, as linear radiance with a zero diagnostic lane", () => {
+    const seed = surfaceComputeSeedWgsl({ lighting: true });
+    const shade = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", lighting: true }),
+    );
+    const override = [
+      "  if ((shade.flags & 4u) != 0u) {",
+      "    bg = textureSampleLevel(cinematicBackgroundTex, lutSamp,",
+      "      vec2f(imageUv.x, 1.0 - imageUv.y), 0.0).rgb;",
+      "  }",
+    ].join("\n");
+    expect(shade).toContain(override);
+    expect(seed).toContain(override);
+    expect(seed).toContain(
+      "colorOut[ray] = vec4f(pow(clamp(bg, vec3f(0.0), vec3f(1.0)), vec3f(2.2)), 0.0);",
+    );
+  });
+
+  it("declares the lighting image, its sampler and the vec4f colour buffer only for a lit session", () => {
+    const unlit = surfaceComputeSeedWgsl({ lighting: false });
+    const lit = surfaceComputeSeedWgsl({ lighting: true });
+    expect(unlit).not.toContain("cinematicBackgroundTex");
+    expect(unlit).not.toContain("lutSamp");
+    expect(unlit).toContain(
+      "@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;",
+    );
+    expect(lit).toContain(
+      "@group(0) @binding(12) var cinematicBackgroundTex: texture_2d<f32>;",
+    );
+    expect(lit).toContain("@group(0) @binding(8) var lutSamp: sampler;");
+    expect(lit).toContain(
+      "@group(0) @binding(6) var<storage, read_write> colorOut: array<vec4f>;",
+    );
+  });
+
+  it("dispatches in spec-minimum 2D workgroups from a tile origin, bounded by the whole raster", () => {
+    const seed = surfaceComputeSeedWgsl({ lighting: false });
+    expect(SURFACE_GPU_SEED_WORKGROUP_SIZE ** 2).toBeLessThanOrEqual(256);
+    expect(seed).toContain(
+      `@compute @workgroup_size(${SURFACE_GPU_SEED_WORKGROUP_SIZE}, ${SURFACE_GPU_SEED_WORKGROUP_SIZE})`,
+    );
+    expect(seed).toContain("let px = gid.x + seed.originX;");
+    expect(seed).toContain("let py = gid.y + seed.originY;");
+    expect(seed).toContain("if (px >= seed.width || py >= seed.height) {");
+    expect(seed).toContain("let ray = py * seed.width + px;");
+  });
+
+  it("packs the raster and the tile origin as four u32 words", () => {
+    const words = new Uint32Array(packSurfaceGpuSeed(1280, 720, 16, 32));
+    expect(words.byteLength).toBe(SURFACE_GPU_SEED_PARAMS_BYTES);
+    expect(Array.from(words)).toEqual([1280, 720, 16, 32]);
+  });
+});
 
 function withSchedule3(
   de: SurfaceDE,

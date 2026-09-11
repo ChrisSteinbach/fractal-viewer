@@ -928,10 +928,11 @@ import type { Vec3 } from "./types";
  *   @binding(5) var<storage, read> shadeMaps: array<vec4f>
  *   @binding(6) var<storage, read_write> colorOut: array<u32> — one RGBA8
  *               pixel per ray via pack4x8unorm (x lands in byte 0, so a
- *               readback Uint8Array is RGBA order). The HOST MUST PRE-FILL
- *               the buffer with the background: a ray still ACTIVE at
- *               frame abort is never queued into a shade batch, writes
- *               nothing, and keeps the prefill.
+ *               readback Uint8Array is RGBA order). The HOST MUST SEED
+ *               the buffer with the background — on the device, through
+ *               {@link surfaceComputeSeedWgsl}, never a staged upload: a
+ *               ray still ACTIVE at frame abort is never queued into a
+ *               shade batch, writes nothing, and keeps the seed.
  *   @binding(7) var lutTex: texture_2d<f32> — the 256x1 rgba8unorm LUT
  *   @binding(8) var lutSamp: sampler — FILTERING, linear + clamp-to-edge,
  *               so textureSampleLevel(lutTex, lutSamp, vec2f(u, 0.5), 0.0)
@@ -3806,6 +3807,184 @@ ${choices}
 `;
 }
 
+/**
+ * The `ShadeParams` uniform struct and its binding-4 declaration — ONE text
+ * shared by march "unproject", shade and the frame seed
+ * ({@link surfaceComputeSeedWgsl}). `patternMember` appends the shade-only
+ * members after the frozen 224-byte base (the pattern calibration quartet
+ * and the lighting lanes); every other caller passes `""`.
+ */
+function shadeParamsWgsl(patternMember: string): string {
+  return `
+
+struct ShadeParams {
+  invProjView: mat4x4f,
+  lightDir: vec3f,
+  ambient: f32,
+  bgTop: vec3f,
+  colorSpeed: f32,
+  bgBottom: vec3f,
+  tracePixelEps: f32,
+  colorSource: u32,
+  shadowSteps: u32,
+  aoTaps: u32,
+  flags: u32,
+  fogTint: vec3f,
+  fogTintStrength: f32,
+  pixelJitter: vec2f,
+  envStrength: f32,
+  bgOffset: vec2f,
+  bgExtent: vec2f,
+  bgCenter: vec2f,
+  bgScale: vec2f,
+  bgShape: u32,
+  // The balloon echo's tint pair, declared UNCONDITIONALLY — a
+  // uniform struct is one layout across every kernel, and only a balloon
+  // shade entry reads it. WGSL lands the vec3f at 208 (AlignOf 16 past
+  // bgShape's 196), the f32 at 220, closing the struct at 224.
+  balloonTint: vec3f,
+  balloonTintStrength: f32,${patternMember}
+}
+
+@group(0) @binding(4) var<uniform> shade: ShadeParams;`;
+}
+
+/** The layer sidecar's packer (module doc, binding 9), shared by the shade
+ * entry and the frame seed. Reads `shade.fogTintStrength`. */
+const PACK_SURFACE_LAYER_WGSL = `fn packSurfaceLayer(coverage: f32, fog: f32, coc: f32) -> u32 {
+  let beta = 1.0 - coverage +
+    coverage * fog * (1.0 - shade.fogTintStrength);
+  return pack4x8unorm(vec4f(coverage, fog, beta, coc));
+}`;
+
+/** A pixel's FULL-IMAGE coordinate and normalized image uv —
+ * `background-shape.ts`'s coordinate contract, reading `px`/`py` and
+ * `shade.bgOffset`/`bgExtent`. `pixelName` is the local the caller keeps
+ * for its own ray derivation. */
+function backdropImageUvWgsl(pixelName: string): string {
+  return `  let ${pixelName} = vec2f(f32(px), f32(py)) + shade.bgOffset;
+  let imageUv = (${pixelName} + vec2f(0.5)) / shade.bgExtent;`;
+}
+
+/** The backdrop gradient at `imageUv` — the unlit miss colour's expression. */
+const BACKDROP_GRADIENT_WGSL =
+  "mix(shade.bgBottom, shade.bgTop, backgroundShapeT(imageUv))";
+
+/** The lit arm's authored-image override of `bg` (flags bit 2): top-origin
+ * image rows, sampled at the same full-image uv. */
+const BACKDROP_IMAGE_WGSL = `  if ((shade.flags & 4u) != 0u) {
+    bg = textureSampleLevel(cinematicBackgroundTex, lutSamp,
+      vec2f(imageUv.x, 1.0 - imageUv.y), 0.0).rgb;
+  }`;
+
+/** Workgroup edge of the frame seed's 2D dispatch: 16 x 16 = 256
+ * invocations, WebGPU's spec-minimum `maxComputeInvocationsPerWorkgroup`. */
+export const SURFACE_GPU_SEED_WORKGROUP_SIZE = 16;
+
+/** The frame seed's own uniform: `(width, height, originX, originY)`, u32. */
+export const SURFACE_GPU_SEED_PARAMS_BYTES = 16;
+
+/** Pack {@link surfaceComputeSeedWgsl}'s `SeedParams`: the whole frame's
+ * raster, and the pixel this dispatch's workgroup (0, 0) starts at. */
+export function packSurfaceGpuSeed(
+  width: number,
+  height: number,
+  originX = 0,
+  originY = 0,
+): ArrayBuffer {
+  const buf = new ArrayBuffer(SURFACE_GPU_SEED_PARAMS_BYTES);
+  new Uint32Array(buf).set([width, height, originX, originY]);
+  return buf;
+}
+
+/**
+ * THE FRAME SEED: a standalone compute module, entry `seedFrame`, that
+ * writes a compute frame's three per-ray starting values ON THE DEVICE —
+ * the ray state `(-1, ACTIVE, 0, 0)` (march not started), the layer
+ * sidecar `packSurfaceLayer(0, 0, 1)` (uncovered, unfogged, beta 1, far
+ * CoC: bytes 0,0,255,255) and the colour reference as the pixel's own
+ * backdrop.
+ *
+ * WHY IT EXISTS. The host used to stage those three buffers through
+ * `queue.writeBuffer` once per frame and supersample pass — 24 B/ray unlit,
+ * 36 B/ray lit, megabytes at any real raster — and that staging VOLUME is
+ * what exhausts Firefox's WebGPU device (`docs/surface-compute-renderer.md`,
+ * "It is a VOLUME, not a count"). A dispatch stages only its 16-byte
+ * `SeedParams`. A one-time `mappedAtCreation`/`writeBuffer` upload of a
+ * same-size seed buffer is NOT an alternative: wgpu stages that too, and a
+ * single 32 MB staging dies on its own.
+ *
+ * WHAT IT CAN CHANGE: nothing in a completed frame. The shade entry
+ * overwrites colour and layer for every TERMINAL ray, so the colour seed is
+ * only ever visible on rays still ACTIVE at a budget cut and in mid-frame
+ * progressive presents.
+ *
+ * SHARED TEXT, NOT RESTATED. The `ShadeParams` struct and binding — the
+ * seed binds the session's own shade uniform, whose base struct is enough
+ * (a struct declared shorter than its buffer is valid, and `flags` bit 2,
+ * the lighting image, lives in the base) — the full-image coordinate lines,
+ * `backgroundShapeT`, the gradient expression, `packSurfaceLayer` and, lit,
+ * the image override are the shade entry's own emitted text. Unlit colour
+ * is therefore the shade entry's MISS write exactly; lit colour is
+ * `pow(clamp(bg, 0, 1), 2.2)` with w = 0 (the visibility-diagnostic lane,
+ * not alpha), the lit miss's `bgLinear` for every in-range backdrop.
+ *
+ * Bindings reuse the shade kernel's numbers for every resource the two
+ * share — 3 states, 4 shade, 6 colorOut, 9 layerOut, and lit 8 lutSamp and
+ * 12 cinematicBackgroundTex — while 0, the params slot everywhere else,
+ * carries `SeedParams`. `originX`/`originY` let a host split a raster past
+ * `maxComputeWorkgroupsPerDimension` workgroups a side into tiles.
+ */
+export function surfaceComputeSeedWgsl({
+  lighting,
+}: {
+  lighting: boolean;
+}): string {
+  const edge = SURFACE_GPU_SEED_WORKGROUP_SIZE;
+  const colorWrite = lighting
+    ? `  var bg = ${BACKDROP_GRADIENT_WGSL};
+${BACKDROP_IMAGE_WGSL}
+  colorOut[ray] = vec4f(pow(clamp(bg, vec3f(0.0), vec3f(1.0)), vec3f(2.2)), 0.0);`
+    : `  let bg = ${BACKDROP_GRADIENT_WGSL};
+  colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));`;
+  return `
+struct SeedParams {
+  width: u32,
+  height: u32,
+  originX: u32,
+  originY: u32,
+}
+
+@group(0) @binding(0) var<uniform> seed: SeedParams;
+@group(0) @binding(3) var<storage, read_write> states: array<vec4f>;${shadeParamsWgsl("")}
+@group(0) @binding(6) var<storage, read_write> colorOut: array<${lighting ? "vec4f" : "u32"}>;
+@group(0) @binding(9) var<storage, read_write> layerOut: array<u32>;${
+    lighting
+      ? `
+@group(0) @binding(8) var lutSamp: sampler;
+@group(0) @binding(12) var cinematicBackgroundTex: texture_2d<f32>;`
+      : ""
+  }
+
+${backgroundShapeSource(BACKGROUND_SHAPE_WGSL)}
+${PACK_SURFACE_LAYER_WGSL}
+
+@compute @workgroup_size(${edge}, ${edge})
+fn seedFrame(@builtin(global_invocation_id) gid: vec3u) {
+  let px = gid.x + seed.originX;
+  let py = gid.y + seed.originY;
+  if (px >= seed.width || py >= seed.height) {
+    return;
+  }
+  let ray = py * seed.width + px;
+  states[ray] = vec4f(-1.0, ${SURFACE_GPU_RAY_ACTIVE}.0, 0.0, 0.0);
+  layerOut[ray] = packSurfaceLayer(0.0, 0.0, 1.0);
+${backdropImageUvWgsl("full")}
+${colorWrite}
+}
+`;
+}
+
 export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const {
     mode,
@@ -4617,38 +4796,6 @@ fn frontierIx(slot: u32, li: u32) -> u32 {
     ? `${pattern ? "" : "\n  cinematicPatternPad: vec4f,"}
   cinematic: array<vec4f, ${SURFACE_LIGHTING_LANE_COUNT}>,`
     : "";
-  const shadeParamsIo = (patternMember: string): string => `
-
-struct ShadeParams {
-  invProjView: mat4x4f,
-  lightDir: vec3f,
-  ambient: f32,
-  bgTop: vec3f,
-  colorSpeed: f32,
-  bgBottom: vec3f,
-  tracePixelEps: f32,
-  colorSource: u32,
-  shadowSteps: u32,
-  aoTaps: u32,
-  flags: u32,
-  fogTint: vec3f,
-  fogTintStrength: f32,
-  pixelJitter: vec2f,
-  envStrength: f32,
-  bgOffset: vec2f,
-  bgExtent: vec2f,
-  bgCenter: vec2f,
-  bgScale: vec2f,
-  bgShape: u32,
-  // The balloon echo's tint pair, declared UNCONDITIONALLY — a
-  // uniform struct is one layout across every kernel, and only a balloon
-  // shade entry reads it. WGSL lands the vec3f at 208 (AlignOf 16 past
-  // bgShape's 196), the f32 at 220, closing the struct at 224.
-  balloonTint: vec3f,
-  balloonTintStrength: f32,${patternMember}
-}
-
-@group(0) @binding(4) var<uniform> shade: ShadeParams;`;
   const balloonLutIo =
     mode === "shade" && balloon
       ? `
@@ -4668,9 +4815,9 @@ fn hash2(p: vec2f) -> f32 {
 @group(0) @binding(3) var<storage, read_write> results: array<f32>;`
       : mode === "march"
         ? unproject
-          ? `${rayIo}${shadeParamsIo("")}${statusIo}${hash2Io}`
+          ? `${rayIo}${shadeParamsWgsl("")}${statusIo}${hash2Io}`
           : `${rayIo}${statusIo}`
-        : `${rayIo}${shadeParamsIo(shadePatternCalibrationMember + shadeLightingMember)}${balloonLutIo}${lighting ? "\n@group(0) @binding(12) var cinematicBackgroundTex: texture_2d<f32>;" : ""}
+        : `${rayIo}${shadeParamsWgsl(shadePatternCalibrationMember + shadeLightingMember)}${balloonLutIo}${lighting ? "\n@group(0) @binding(12) var cinematicBackgroundTex: texture_2d<f32>;" : ""}
 @group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> colorOut: array<${lighting ? "vec4f" : "u32"}>;
 @group(0) @binding(7) var lutTex: texture_2d<f32>;
@@ -7786,11 +7933,7 @@ fn surfaceCoc(cameraDepth: f32) -> f32 {
   return (128.0 + 127.0 * signedCoc) / 255.0;
 }
 
-fn packSurfaceLayer(coverage: f32, fog: f32, coc: f32) -> u32 {
-  let beta = 1.0 - coverage +
-    coverage * fog * (1.0 - shade.fogTintStrength);
-  return pack4x8unorm(vec4f(coverage, fog, beta, coc));
-}
+${PACK_SURFACE_LAYER_WGSL}
 ${
   groundPlane
     ? `
@@ -7966,9 +8109,8 @@ fn shadeRays(
   // alias, it must agree with the host's own backgroundRows prefill, and
   // holding it fixed keeps supersampling a no-op wherever the object is
   // absent.
-  let full = vec2f(f32(px), f32(py)) + shade.bgOffset;
-  let imageUv = (full + vec2f(0.5)) / shade.bgExtent;
-  let bg = mix(shade.bgBottom, shade.bgTop, backgroundShapeT(imageUv));
+${backdropImageUvWgsl("full")}
+  let bg = ${BACKDROP_GRADIENT_WGSL};
 ${
   groundPlane
     ? `  if (st.y == ${SURFACE_GPU_RAY_PLANE}.0) {
@@ -8203,13 +8345,9 @@ fn shadeRays(
   // The FULL-IMAGE coordinate: the transport's per-pixel seed, the
   // backdrop shape AND the ray derivation below all read it, so a capture
   // BAND reproduces the image's pixel exactly rather than its own raster's.
-  let pixel = vec2f(f32(px), f32(py)) + shade.bgOffset;
-  let imageUv = (pixel + vec2f(0.5)) / shade.bgExtent;
-  var bg = mix(shade.bgBottom, shade.bgTop, backgroundShapeT(imageUv));
-  if ((shade.flags & 4u) != 0u) {
-    bg = textureSampleLevel(cinematicBackgroundTex, lutSamp,
-      vec2f(imageUv.x, 1.0 - imageUv.y), 0.0).rgb;
-  }
+${backdropImageUvWgsl("pixel")}
+  var bg = ${BACKDROP_GRADIENT_WGSL};
+${BACKDROP_IMAGE_WGSL}
   let bgLinear = pow(max(bg, vec3f(0.0)), vec3f(2.2));
   let sub = shade.pixelJitter;
   let ndcX = ((pixel.x + sub.x) / shade.bgExtent.x) * 2.0 - 1.0;

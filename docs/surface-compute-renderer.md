@@ -727,8 +727,13 @@ measurements (a batch is only as safe as the multiple by which an
 unmeasured band can exceed the measured one), not a free win to bundle
 into this one.
 
-`colorOut` is prefilled from the last frame, nearest-resampled — the strip
-settle's preview-seeded-target discipline. The floor-rung preview question —
+`colorOut` WAS prefilled from the last frame, nearest-resampled — the strip
+settle's preview-seeded-target discipline — and the record below is that
+design's. It no longer is: the background-compositing split made every
+frame's seed uncovered backdrop in BOTH the colour and layer buffers, since a
+prior frame's RGB cannot be paired with coverage zero under this frame's
+background reference, and that seed is now written on the device
+("It is a VOLUME, not a count" below). The floor-rung preview question —
 paint a 5%-resolved frame, or hold the last good one? — measured what that
 buys during MOTION on a slow adapter, where every preview is a
 budget-truncated one: the present is the PREVIOUS frame with its newly
@@ -1330,10 +1335,10 @@ Firefox's fence round-trip. `Not enough memory left` is wgpu's generic
 `DeviceError::OutOfMemory` text rather than a report about VRAM — 23 of
 this machine's 24 GB were free every time it fired.
 
-**ROW G IS THE ONE NO FENCE GROUP CAN FIX.** A frame's prefill is 24 B/ray
-unlit (states 16, layer 4, colour 4) and 36 B/ray lit, where the colour
-buffer widens to `vec4f` radiance — so 640x360 is 5.5 MB and 8.3 MB, and
-1280x720 is 22 MB and 33 MB. The fence gate's unlit 640x360 fixture is
+**ROW G IS THE ONE NO FENCE GROUP CAN FIX.** A frame's prefill, while it
+was staged, was 24 B/ray unlit (states 16, layer 4, colour 4) and 36 B/ray
+lit, where the colour buffer widens to `vec4f` radiance — so 640x360 was
+5.5 MB and 8.3 MB, and 1280x720 was 22 MB and 33 MB. The fence gate's unlit 640x360 fixture is
 therefore cell D, dying at four dispatches a fence and clean at one, which
 is its measured behaviour in the app. A LIT 1280x720 frame is cell G,
 which dies 20/20 at a group of ONE, on the first fence, every run. That
@@ -1356,10 +1361,24 @@ than a threshold, so "clean at three" was never a property of three — it
 was one run of a cell whose neighbour at four dies a third of the time —
 and the cost of being wrong is a compute-only session, fold-shaped or
 escape-shaped 4D, losing its Surface renderer outright with no way back.
-**LIFTING IT IS GATED ON THE FRAME PREFILL**: seed `color`, `layer` and
-`states` on the device (a prefill kernel, or a clear) instead of staging
-them through the queue, and the megabytes this ceiling is about stop being
-queued at all.
+**THE FRAME PREFILL IS NOW SEEDED ON THE DEVICE.** `runFrame` no longer
+stages `color`, `layer` or `states` through the queue: one `seedFrame`
+dispatch (`surface-de-gpu.ts`'s `surfaceComputeSeedWgsl`) writes all three
+per ray — state `(-1, ACTIVE, 0, 0)`, the uncovered layer, the pixel's own
+backdrop — reading the shade uniform the frame already uploads, so the
+megabytes this ceiling is about stop being queued at all. What a frame
+still stages is its 16-byte seed uniform, its params/shade uniforms and
+the dispatches' ray lists. A same-size UPLOAD would not have been
+equivalent: wgpu stages a `mappedAtCreation` or `writeBuffer` seed buffer
+too, and row G is one such staging dying on its own. The colour seed can
+change nothing in a completed frame — the shade entry overwrites every
+terminal ray — so it is visible only on rays still active at a budget cut
+and in mid-frame progressive presents.
+
+**THE CAP IS STILL TWO.** The seed removes the quantity that set it; it
+does not measure what the cap can now be. Raising
+`SURFACE_COMPUTE_FENCE_GROUP_MAX` waits on the fence gate and the staging
+repro re-run in the app on Firefox.
 
 AND EACH LANE IS PILOTED. Until a lane's first group comes back measured
 there is no measurement to size from, so that lane fences one dispatch at a
@@ -1374,12 +1393,16 @@ queued dispatch writes its ray list through `queue.writeBuffer`, the march
 slices PARTITION the active list and the shade batches partition the
 queues, so a group's queued rays can never exceed the frame's own ray
 count, which `maxFrameRays` bounds — at most one frame's active list, four
-bytes a ray. What it missed is that the DISPATCHES are not where a frame's
-staging is. `runFrame`'s three PREFILL writes precede them and are an
-order of magnitude larger, and they are the ones that reach the browser
-ceiling above. There is still no fourth bound in
-`surfaceComputeFenceGroupSize` for it — a cap of two is the bound — but it
-is a bound that was chosen, not one the partition argument gives for free.
+bytes a ray. What it missed is that the DISPATCHES were not where a frame's
+staging was. `runFrame`'s three PREFILL writes preceded them and were an
+order of magnitude larger, and they were the ones that reached the browser
+ceiling above. With those writes replaced by the device seed, the partition
+bound IS the frame's raster-scaled staging now: the ray lists, at most one
+frame's worth across a group — 0.9 MB at 640x360, 3.7 MB at 1280x720. The
+free queue drains whole, so an all-miss sweep can stage that much in ONE
+write. There is still no fourth bound in `surfaceComputeFenceGroupSize` for
+it — a cap of two is the bound — but it is a bound that was chosen, not one
+the partition argument gives for free.
 
 **THE ATTRIBUTION IS THE PART TO GET RIGHT**, because a group measures ONE
 time for N pieces of work and the models below still reason per dispatch.
@@ -1587,15 +1610,15 @@ no separate handling for this — every band already computes its own
 scale falls out of that existing plumbing for free.
 
 `runFrame` packs `bgShape`/`bgCenter`/`bgScale` into `packSurfaceGpuShade`
-exactly like `bgOffset`/`bgExtent`, and the host prefill
-(`buildSurfaceComputeBackground`) reads the same spec — so a radial
-session's ACTIVE-ray prefill (a budget cut, or a mid-frame progress
-present) already shows the vignette instead of a stale linear guess. The
-prefill row cache (`SurfaceComputeRenderer`'s private `background` field)
-keys on `bgCenter`/`bgScale` alongside the existing `shapeKind`/
-`bgOffset`/`bgExtent` keys, so a viewport resize under a live radial
-session (which moves `scale` without moving `shapeKind`) still
-invalidates the cached rows instead of serving a stale ellipse.
+exactly like `bgOffset`/`bgExtent`, and the device seed
+(`surfaceComputeSeedWgsl`) reads that same shade uniform — so a radial
+session's ACTIVE-ray seed (a budget cut, or a mid-frame progress present)
+already shows the vignette instead of a stale linear guess. There is no host
+row cache left to key: the seed re-evaluates the shape per pixel every frame
+from the uniform the shade kernel reads, so a viewport resize under a live
+radial session (which moves `scale` without moving `shapeKind`) cannot serve
+a stale ellipse. The host mirror that used to prefill these rows,
+`buildSurfaceComputeBackground`, is retired with its cache.
 
 ## Teardown
 
