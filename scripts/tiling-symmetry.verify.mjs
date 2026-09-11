@@ -45,6 +45,7 @@ import {
   launchSurfaceBrowser,
   pollSurfaceState,
 } from "./lib/surface-browser-runner.mjs";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const options = Object.fromEntries(
   process.argv.slice(2).map((arg) => {
@@ -524,6 +525,7 @@ async function runScene(browser, document, renderer, name) {
   }
 }
 
+await guardFreshDist({ url });
 await mkdir(outdir, { recursive: true });
 const browser = await launchSurfaceBrowser(mode);
 const results = [];

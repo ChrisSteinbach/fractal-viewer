@@ -33,7 +33,12 @@
     "rootDir": "..",
     "types": ["vitest/globals", "node", "vite/client", "@webgpu/types"]
   },
-  "include": ["../src", "./**/*.ts", "./gpu-ci-swept.mjs"],
+  "include": [
+    "../src",
+    "./**/*.ts",
+    "./gpu-ci-swept.mjs",
+    "./lib/dist-freshness.mjs"
+  ],
   // Same conflict the root tsconfig.json avoids (see its own comment): the
   // service worker needs the WebWorker lib, which this program doesn't set,
   // so it type-checks separately under its own src/app/sw/tsconfig.json.

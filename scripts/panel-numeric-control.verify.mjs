@@ -95,6 +95,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -511,6 +512,7 @@ async function readControl(page, numberId) {
 /* ── the run ────────────────────────────────────────────────────────────── */
 
 async function main() {
+  await guardFreshDist({ url: BASE });
   await mkdir(OUT_DIR, { recursive: true });
   const env = { ...process.env };
   delete env.DISPLAY; // offscreen SwiftShader, not X11 GLX (see webgl-smoke.mjs).

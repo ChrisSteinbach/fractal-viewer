@@ -71,6 +71,7 @@
  * Exit 0 = every assertion held. Exit 1 = a real failure.
  */
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const args = { url: "https://localhost:4173", keepOpen: false };
 for (const arg of process.argv.slice(2)) {
@@ -79,6 +80,7 @@ for (const arg of process.argv.slice(2)) {
   else if (!arg.startsWith("--")) args.url = arg;
 }
 args.url = args.url.replace(/\/+$/, "");
+await guardFreshDist({ url: args.url });
 
 const log = (s) => console.log(`[flame-export] ${s}`);
 let passed = 0;

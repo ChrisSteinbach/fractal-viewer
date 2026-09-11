@@ -16,6 +16,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((arg) => {
@@ -64,6 +65,7 @@ async function comparePngs(page, a, b) {
 }
 
 async function main() {
+  await guardFreshDist({ url: base });
   await mkdir(outDir, { recursive: true });
   const browser = await chromium.launch({
     executablePath: chromium.executablePath(),

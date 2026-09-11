@@ -95,6 +95,7 @@
 import fs from "node:fs";
 import process from "node:process";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -488,6 +489,7 @@ async function runScenario(ticks) {
 }
 
 async function main() {
+  await guardFreshDist({ url: BASE });
   log(`starting: url=${BASE} ticksList=${TICKS_LIST.join(",")}`);
   const results = [];
   for (const ticks of TICKS_LIST) {

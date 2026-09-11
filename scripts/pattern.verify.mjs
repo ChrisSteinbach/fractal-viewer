@@ -113,6 +113,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT_DIR = path.resolve(__dirname, "..", ".playwright-mcp");
@@ -756,6 +757,7 @@ function interestingConsole(lines) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  await guardFreshDist({ url: args.url });
   await mkdir(args.outdir, { recursive: true });
   const scenes = SCENES.filter(
     (s) => args.scene === "all" || s.name === args.scene,

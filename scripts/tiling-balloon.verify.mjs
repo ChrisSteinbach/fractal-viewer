@@ -68,6 +68,7 @@ import {
 } from "./lib/surface-gl-observer.mjs";
 import { captureSurfaceBrowserTrace } from "./lib/surface-browser-trace.mjs";
 import { launchNativeGLTraceBrowser } from "./lib/surface-native-gl-trace.mjs";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const options = Object.fromEntries(
   process.argv.slice(2).map((arg) => {
@@ -1228,6 +1229,7 @@ async function runLifecycleLeg(browser, dimension, name) {
   }
 }
 
+await guardFreshDist({ url });
 await mkdir(outdir, { recursive: true });
 const nativeTrace = nativegltrace
   ? await launchNativeGLTraceBrowser(mode, nativegltrace, outdir)

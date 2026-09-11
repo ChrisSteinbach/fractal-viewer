@@ -105,6 +105,7 @@
 import { stat } from "node:fs/promises";
 import process from "node:process";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const cliArgs = process.argv.slice(2);
 const BASE = (
@@ -258,6 +259,7 @@ async function waitForExactTiling(page, wanted, timeout = 15_000) {
 }
 
 async function main() {
+  await guardFreshDist({ url: BASE });
   const env = { ...process.env };
   delete env.DISPLAY; // offscreen SwiftShader, not X11 GLX (see webgl-smoke.mjs)
   const browser = await chromium.launch({

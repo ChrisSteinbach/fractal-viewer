@@ -86,6 +86,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -278,18 +279,11 @@ function listenOnEphemeralPort(server) {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  // Serves dist/app itself, so it needs the build to exist AND to be current.
+  // The shared guard answers both (exit 2, the checking-side code) where this
+  // used to answer only the first, and only with exit 1.
+  await guardFreshDist();
   const args = parseArgs(process.argv.slice(2));
-
-  const indexHtml = path.join(DIST_DIR, "index.html");
-  const distReady = await stat(indexHtml).catch(() => null);
-  if (!distReady) {
-    console.error(`[isolation-reload] fatal: ${indexHtml} does not exist.`);
-    console.error(
-      "[isolation-reload] run `npm run build` first, then re-run this script.",
-    );
-    process.exitCode = 1;
-    return;
-  }
 
   const results = [];
   function record(label, ok, detail) {

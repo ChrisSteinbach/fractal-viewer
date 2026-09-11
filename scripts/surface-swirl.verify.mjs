@@ -43,6 +43,7 @@ import {
   RELEASE_VIEWPORT,
 } from "./lib/surface-browser-runner.mjs";
 import { decodePng } from "./lib/pattern-release-artifacts.mjs";
+import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const options = {
   url: "https://localhost:4173",
@@ -460,6 +461,7 @@ function verifyBackdropMetric() {
 }
 
 async function main() {
+  await guardFreshDist({ url: options.url });
   verifyBackdropMetric();
   await mkdir(options.outdir, { recursive: true });
   const browser = await launchSurfaceBrowser(
