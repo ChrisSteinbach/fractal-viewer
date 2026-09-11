@@ -416,6 +416,40 @@ Replayed over real commits after the fix, the selector discriminates:
 | `2c7f121` | touches `surface-compute.ts` | full   | full — `agreement dependency`             |
 | `616e4f3` | adds a repro script          | full   | full — `unclassified configuration/asset` |
 
+### Verified end to end in production, 2026-09-10/11
+
+Two rebase merges, both reusing the PR's own sweep rather than repeating it:
+
+| Merged commit      | Reused from | Elapsed | Shard jobs |
+| ------------------ | ----------- | ------: | ---------: |
+| `a36a10e` (PR 393) | `7e2e56d`   |     40s |    0 of 36 |
+| `53b4aff` (PR 394) | `207347d`   |     36s |    0 of 36 |
+
+Against PR 393's own sweep, which ran 20:11:58 to 21:12:45 — **61 minutes**.
+Both plans recorded `full=false`, `swept=<twin>` and the reuse reason; both
+runs skipped `backend-smoke` and every shard, with the aggregate green.
+
+The deploy half was confirmed on the same tip without dispatching a deploy.
+On `53b4aff` the two questions disagree exactly as designed:
+
+    --sha  : gpu-agreement is green but backend-smoke is completed/skipped
+             — a proved-independent selection, not a full sweep
+    --tree : tree 2df4a66 was already fully swept on commit 207347d
+
+That is the "both halves must ask the tree question" argument observed rather
+than reasoned: main's tip carries a green aggregate with `backend-smoke`
+skipped BECAUSE its push run reused, so only the tree question can see the
+sweep that actually happened.
+
+### REBASE BEFORE MERGING, or the reuse cannot fire
+
+A branch merged from behind replays onto a moved base, so every merged tree
+is content no run has swept — correct, and it costs a full sweep. Rebased
+onto the tip first, the merge is a no-op replay, the tree survives and the
+push run reuses the PR's own sweep. PR 393 hit the good case by accident
+(its branch happened to sit on the tip); PR 394 was rebased deliberately and
+reused. The rule is in `AGENTS.md`.
+
 ### Duplicate sweeps on one tree, 2026-09-10
 
 The staging-ceiling merge ran the same full 36-shard sweep THREE times on one

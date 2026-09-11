@@ -494,7 +494,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     3D point, then applies the camera — never a 4D inversion.
   - `flame-gpu.ts` — WebGPU kernels, CPU-oracle pinned by `npm run bench:gpu`.
     CI fails closed over the 3D/4D import graph; full runs nightly and at
-    dispatch/deploy. Each scenario owns its CI deadline. Browser exits are
+    dispatch/deploy, REUSED per already-swept TREE. Each scenario owns its
+    CI deadline. Browser exits are
     not timeouts; partials never pass a gate. Policy:
     `docs/gpu-agreement-ci.md`.
     XAOS VERDICT: one draw through chi or fallback, oracle-built cumulative
@@ -2106,26 +2107,27 @@ Pages is manual only (`workflow_dispatch`) — not triggered by merges to `main`
 `--squash`. Merge commits are disabled on the repo, so the two buttons GitHub
 offers are rebase and squash and the wrong one is one word away.
 
-This is not a taste preference, and the reason is this project's own
-discipline. A commit here is a DECISION RECORD — what was measured, what was
-refuted, what a number cost — and the per-item commits a session writes are
-the unit a later reader bisects, blames and quotes. Squashing collapses them
-into one blob whose body is a wall of concatenated essays: the messages
-survive, the ADDRESSABILITY does not, and `git log --oneline` stops being a
-readable index of why the code is the way it is. The multi-item rule one
-section up ("commit per item so history stays readable") is pointless if the
-merge throws that away.
+Not taste. A commit here is a DECISION RECORD — what was measured, what was
+refuted, what a number cost — and per-item commits are the unit a later
+reader bisects, blames and quotes. Squashing collapses them into one blob:
+the messages survive, the ADDRESSABILITY does not, and `git log --oneline`
+stops being a readable index of why the code is the way it is, which makes
+the multi-item rule one section up pointless.
 
-DO NOT infer the method from what recent PRs did. As of this writing every
-merged PR on `main` landed as a single squashed commit — that is the mistake
-this note exists to stop, not the convention to copy.
+DO NOT infer the method from recent PRs: most of `main` landed squashed,
+the mistake this note exists to stop, not the convention to copy.
+
+**REBASE ONTO `main` BEFORE MERGING.** From behind, the branch replays onto a
+moved base: the merged tree is content no sweep has seen, so the push run
+pays a full GPU sweep. Rebased, it is a no-op replay, the tree survives and
+the sweep is REUSED: 36s vs 61min.
 
 **Merge, then WAIT for main's CI before dispatching a deploy.** A rebase merge
-mints NEW SHAs on main, so the PR's green checks do not transfer to the merged
-commits: deploy.yml's gate reads the dispatched commit's own check runs, and a
-dispatch fired straight after `gh pr merge --rebase` is refused (measured: at
-merge+14s). The refusal is the gate working, not a bug — watch main's
-CI finish on the new tip (`gh run watch`), then dispatch.
+mints NEW SHAs, so the PR's green checks do not transfer: deploy.yml's gate
+reads the dispatched commit's own check runs, and a dispatch fired straight
+after `gh pr merge --rebase` is refused (measured at merge+14s). That is the
+gate working — watch main's CI on the new tip (`gh run watch`), then
+dispatch. The GPU sweep is keyed by TREE and does carry across.
 
 ## Session Completion
 
