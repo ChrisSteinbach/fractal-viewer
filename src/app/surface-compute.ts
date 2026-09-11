@@ -171,6 +171,7 @@ import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import {
   cloneSurfaceLighting,
   resolveSurfaceLighting,
+  SURFACE_LIGHTING_MAX_MEDIUM_SAMPLES,
   surfaceLightingLanes,
   surfaceLightingRuntime,
   type SurfaceLighting,
@@ -1880,6 +1881,10 @@ export function surfaceComputeLightingRayBatch(
   surfaceCost: ShadeHitCost,
   mediumCost: ShadeHitCost | null,
   cap: number,
+  /** Medium rays per batch ray — 1 unless `?surfacemediumstride` filters
+   * the sweep, when the medium model's affordable width (in MEDIUM rays)
+   * converts to batch rays through it. */
+  mediumRaysPerBatchRay = 1,
 ): number {
   const affordable = (cost: ShadeHitCost): number =>
     (SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS * 1000 - cost.interceptUs) /
@@ -1888,7 +1893,9 @@ export function surfaceComputeLightingRayBatch(
     cap,
     SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
     affordable(surfaceCost),
-    mediumCost ? affordable(mediumCost) : Infinity,
+    mediumCost
+      ? affordable(mediumCost) / Math.max(1e-6, mediumRaysPerBatchRay)
+      : Infinity,
   );
   return Math.max(
     SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -1941,6 +1948,71 @@ export function nextLightingRayCap(
     return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.floor(current / 4));
   }
   return current;
+}
+
+/**
+ * MEASUREMENT-ONLY EXPERIMENT LEVERS for the participating medium's cost.
+ * Page-load URL pins in the style of `?surfaceshadehits=` and
+ * `?surfacesamples=`; nothing ships them, and both absent is the restored
+ * medium exactly.
+ *
+ * `?surfacemediumcells=N` (1..32) — medium cells per progressive pass, in
+ * place of both the motion 8 and the parked 32. The cells are DISTINCT
+ * STRATA across a job: an `S`-pass job partitions each camera segment into
+ * `N·S` equal cells, pass `k` visits cells `j·S + k` for `j < N` (so every
+ * pass spans the whole segment, interleaved with the others), and the
+ * in-scatter is weighted by `S` so the job's linear mean sums every one of
+ * the `N·S` cells exactly once. Compute engine only.
+ *
+ * `?surfacemediumstride=K` (>= 1) — the medium sweep runs only for
+ * terminals whose FULL-IMAGE pixel has `x % K == 0 && y % K == 0`. Every
+ * terminal still gets its phase-0 shading; the others get no medium
+ * contribution and nothing is upsampled, so this prices the COST side of a
+ * 1/K² medium raster only. The terminal list is filtered on the host
+ * before the sweep, so the medium dispatches' width and workgroup count
+ * are the smaller population's.
+ */
+let surfaceComputeMediumCellsPin: number | null = null;
+let surfaceComputeMediumStridePin: number | null = null;
+
+/** See {@link surfaceComputeMediumCellsPin}. Null/absent leaves the
+ * restored medium untouched. */
+export function setSurfaceComputeMediumExperimentPins(pins: {
+  cells?: number | null;
+  stride?: number | null;
+}): void {
+  const cells = positivePin(pins.cells);
+  surfaceComputeMediumCellsPin =
+    cells === null
+      ? null
+      : Math.min(cells, SURFACE_LIGHTING_MAX_MEDIUM_SAMPLES);
+  surfaceComputeMediumStridePin = positivePin(pins.stride);
+}
+
+/** The medium cell a pass visits for its `slot`-th per-pass cell under
+ * `?surfacemediumcells` — distinct strata across an `sampleCount`-pass job
+ * (see {@link surfaceComputeMediumCellsPin}). Pure so the indexing is
+ * unit-tested. */
+export function surfaceComputeMediumCellIndex(
+  slot: number,
+  sampleOrdinal: number,
+  sampleCount: number,
+): number {
+  const passes = Math.max(1, Math.floor(sampleCount));
+  return slot * passes + (((sampleOrdinal % passes) + passes) % passes);
+}
+
+/** Whether a ray's full-image pixel is on the `?surfacemediumstride`
+ * lattice. Pure so the filter is unit-tested. */
+export function surfaceComputeMediumStrideKeeps(
+  ray: number,
+  rasterWidth: number,
+  bgOffset: readonly [number, number],
+  stride: number,
+): boolean {
+  const x = (ray % rasterWidth) + bgOffset[0];
+  const y = Math.floor(ray / rasterWidth) + bgOffset[1];
+  return x % stride === 0 && y % stride === 0;
 }
 
 /** The bench host loop's adaptive pass sizing: double while the last pass
@@ -3307,6 +3379,7 @@ export class SurfaceComputeRenderer {
         subPixelSample(s),
         jobSizer,
         s,
+        samples,
       );
       if (!frame) break;
       wallMs += frame.wallMs;
@@ -3776,6 +3849,9 @@ export class SurfaceComputeRenderer {
      * Absent = a fresh model and a one-workgroup capacity. */
     jobSizer?: ShadeSizerState,
     sampleIndex = 0,
+    /** How many passes the job this frame belongs to runs — only the
+     * `?surfacemediumcells` experiment lever reads it. */
+    sampleCount = 1,
   ): Promise<SurfaceComputeSample | null> {
     const trace = surfaceComputeTrace;
     // Read once per frame beside the trace sink, so a pin can never change
@@ -3784,6 +3860,8 @@ export class SurfaceComputeRenderer {
     const marchChunkPin = surfaceComputeMarchChunkPin;
     const marchStepsPin = surfaceComputeMarchStepsPin;
     const shadeHitsPin = surfaceComputeShadeHitsPin;
+    const mediumCellsPin = surfaceComputeMediumCellsPin;
+    const mediumStridePin = surfaceComputeMediumStridePin;
     const traceT0 = performance.now();
     const tr = (line: string): void => {
       trace?.(`[${(performance.now() - traceT0).toFixed(0)}ms] ${line}`);
@@ -3824,8 +3902,24 @@ export class SurfaceComputeRenderer {
       ? surfaceLightingLanes(lighting, runtime)
       : undefined;
     const mediumCells =
-      lighting?.medium && lighting.medium.density > 0 ? lightingLanes![41] : 0;
+      lighting?.medium && lighting.medium.density > 0
+        ? (mediumCellsPin ?? lightingLanes![41])
+        : 0;
     const mediumLights = mediumCells > 0 ? lighting!.lights.length : 0;
+    // `?surfacemediumcells`: the job's pass count S, so pass k's N cells are
+    // strata k, k+S, k+2S, ... of an N·S-cell partition. Null = restored.
+    const mediumStrataPasses =
+      mediumLights > 0 && mediumCellsPin !== null
+        ? Math.max(1, Math.floor(sampleCount))
+        : null;
+    if (
+      mediumLights > 0 &&
+      (mediumCellsPin !== null || mediumStridePin !== null)
+    ) {
+      tr(
+        `medium experiment cellsPerPass=${mediumCells} strata=${mediumCells * (mediumStrataPasses ?? 1)} pass=${sampleIndex}/${mediumStrataPasses ?? 1} stride=${mediumStridePin ?? 1}`,
+      );
+    }
     const colorBytes = rays * (this.lighting ? 16 : 4);
     /** Bytes put through `queue.writeBuffer`/`writeTexture` since the last
      * fence — the fence group's second closing rule
@@ -3896,58 +3990,67 @@ export class SurfaceComputeRenderer {
       this.uploadedBalloonLutVersion = spec.balloonLutVersion ?? 0;
       stagedBytes += 256 * 4;
     }
-    stage(
-      this.shadeBuf,
-      packSurfaceGpuShade({
-        invProjView: spec.invProjView,
-        lightDir: spec.lightDir,
-        ambient: spec.ambient,
-        lighting,
-        lightingRuntime: runtime,
-        lightingBackground: this.lighting && !!spec.lightingBackground,
-        bgTop: spec.bgTop,
-        bgBottom: spec.bgBottom,
-        colorSpeed: spec.colorSpeed,
-        tracePixelEps: spec.tracePixelEps,
-        colorSource: spec.colorSource,
-        shadowSteps: spec.shadowSteps,
-        aoTaps: spec.aoTaps,
-        dither: spec.dither,
-        balloonPalette: this.balloonLutTex !== null && !!spec.balloonLut,
-        fogTint: spec.fogTint,
-        fogTintStrength: spec.fogTintStrength,
-        // Ground and balloon kernels are mutually exclusive. Reuse the
-        // balloon tint tail for the floor's shading-only appearance so the
-        // frozen ShadeParams layout does not grow: (tile, emission, pattern).
-        balloonTint: spec.groundPlane
+    const shadePack = packSurfaceGpuShade({
+      invProjView: spec.invProjView,
+      lightDir: spec.lightDir,
+      ambient: spec.ambient,
+      lighting,
+      lightingRuntime: runtime,
+      lightingBackground: this.lighting && !!spec.lightingBackground,
+      bgTop: spec.bgTop,
+      bgBottom: spec.bgBottom,
+      colorSpeed: spec.colorSpeed,
+      tracePixelEps: spec.tracePixelEps,
+      colorSource: spec.colorSource,
+      shadowSteps: spec.shadowSteps,
+      aoTaps: spec.aoTaps,
+      dither: spec.dither,
+      balloonPalette: this.balloonLutTex !== null && !!spec.balloonLut,
+      fogTint: spec.fogTint,
+      fogTintStrength: spec.fogTintStrength,
+      // Ground and balloon kernels are mutually exclusive. Reuse the
+      // balloon tint tail for the floor's shading-only appearance so the
+      // frozen ShadeParams layout does not grow: (tile, emission, pattern).
+      balloonTint: spec.groundPlane
+        ? [
+            spec.groundPlane.tileScale ?? 0.64,
+            spec.groundPlane.emission ?? 0,
+            spec.groundPlane.pattern ?? 0,
+          ]
+        : spec.balloonTint,
+      balloonTintStrength: spec.balloonTintStrength,
+      // The pattern arm's native-carrier calibration, present exactly
+      // when the session compiled the pattern gate — the shade struct's
+      // conditional member at 224 (the buffer was sized 240 above).
+      patternCalibration:
+        spec.materials?.pattern === true
           ? [
-              spec.groundPlane.tileScale ?? 0.64,
-              spec.groundPlane.emission ?? 0,
-              spec.groundPlane.pattern ?? 0,
+              spec.materials.patternCalibration.ringsLow,
+              spec.materials.patternCalibration.ringsInvSpan,
+              spec.materials.patternCalibration.sheetsLow,
+              spec.materials.patternCalibration.sheetsInvSpan,
             ]
-          : spec.balloonTint,
-        balloonTintStrength: spec.balloonTintStrength,
-        // The pattern arm's native-carrier calibration, present exactly
-        // when the session compiled the pattern gate — the shade struct's
-        // conditional member at 224 (the buffer was sized 240 above).
-        patternCalibration:
-          spec.materials?.pattern === true
-            ? [
-                spec.materials.patternCalibration.ringsLow,
-                spec.materials.patternCalibration.ringsInvSpan,
-                spec.materials.patternCalibration.sheetsLow,
-                spec.materials.patternCalibration.sheetsInvSpan,
-              ]
-            : undefined,
-        pixelJitter,
-        envStrength: spec.envLight,
-        bgOffset,
-        bgExtent,
-        bgCenter,
-        bgScale,
-        bgShape: backgroundShapeCode(bgShape.kind),
-      }),
-    );
+          : undefined,
+      pixelJitter,
+      envStrength: spec.envLight,
+      bgOffset,
+      bgExtent,
+      bgCenter,
+      bgScale,
+      bgShape: backgroundShapeCode(bgShape.kind),
+    });
+    if (mediumStrataPasses !== null) {
+      // `?surfacemediumcells`: the segment is partitioned into N·S cells
+      // (lane 10.y, deliberately past the lanes' 32 clamp — the WGSL phase-1
+      // loop has no constant bound), and the in-scatter is weighted by S
+      // through the medium tint (lane 8.xyz), which only the in-scatter term
+      // reads, so the job's linear mean sums every cell exactly once.
+      const lanes = new Float32Array(shadePack);
+      const base = SURFACE_GPU_SHADE_PATTERN_BYTES / 4;
+      lanes[base + 41] = mediumCells * mediumStrataPasses;
+      for (let c = 0; c < 3; c++) lanes[base + 32 + c] *= mediumStrataPasses;
+    }
+    stage(this.shadeBuf, shadePack);
     // Composite-layer seed contract: rays still ACTIVE at a budget cut are
     // uncovered background in BOTH buffers. A prior frame's RGB cannot be
     // paired with coverage zero under this frame's background reference:
@@ -4488,6 +4591,10 @@ export class SurfaceComputeRenderer {
      * SINGLE submission a batch produced — phase 0 or its slowest medium
      * cell — so the step waits until that sweep has been measured. */
     let deferredLitLadder: { shareMs: number; limited: boolean }[] = [];
+    /** `?surfacemediumstride`: the last batch's kept-terminal fraction,
+     * seeded at the nominal 1/K². 1 (and unread) without the lever. */
+    let mediumRayFraction =
+      mediumStridePin === null ? 1 : 1 / (mediumStridePin * mediumStridePin);
 
     /** Submit one dispatch into the current group. Returns false only
      * when the frame was cancelled during the session's one-time fence
@@ -5051,6 +5158,7 @@ export class SurfaceComputeRenderer {
                       lightingSizer!.surfaceCost,
                       mediumLights > 0 ? lightingSizer!.mediumCost : null,
                       lightingSizer!.rayCap,
+                      mediumRayFraction,
                     ),
                   )
                 : (shadeHitsPin ?? shadeHitBatchSize(sizer.cost, sizer.cap)),
@@ -5147,7 +5255,32 @@ export class SurfaceComputeRenderer {
           // them. Each following submission adds one cell and one emitter,
           // leaving HDR in place and a cancellation door between groups.
           if (!(await flushGroup())) return null;
-          const mediumDispatches = mediumCells * mediumLights;
+          // `?surfacemediumstride`: the sweep's terminal list is filtered
+          // on the HOST, before any medium submission, so its dispatches'
+          // width and workgroup count are the kept population's. Every
+          // terminal already had phase 0 above; the rest get no medium.
+          let mediumList = batch;
+          if (mediumStridePin !== null) {
+            mediumList = batch.filter((ray) =>
+              surfaceComputeMediumStrideKeeps(
+                ray,
+                width,
+                bgOffset,
+                mediumStridePin,
+              ),
+            );
+            tr(
+              `medium stride=${mediumStridePin} kept=${mediumList.length}/${batch.length}`,
+            );
+            if (mediumList.length > 0) {
+              mediumRayFraction = mediumList.length / batch.length;
+              if (!(await stageDispatch(mediumList.length, 0, mediumList))) {
+                return null;
+              }
+            }
+          }
+          const mediumDispatches =
+            mediumList.length > 0 ? mediumCells * mediumLights : 0;
           for (let index = 0; index < mediumDispatches; index++) {
             if (performance.now() - wallStart > budgetMs) {
               if (!(await flushGroup())) return null;
@@ -5155,15 +5288,23 @@ export class SurfaceComputeRenderer {
               tr("budget truncated (medium)");
               break outer;
             }
-            const cell = Math.floor(index / mediumLights);
+            const slot = Math.floor(index / mediumLights);
+            const cell =
+              mediumStrataPasses === null
+                ? slot
+                : surfaceComputeMediumCellIndex(
+                    slot,
+                    sampleIndex,
+                    mediumStrataPasses,
+                  );
             const light = index % mediumLights;
             stagePhase(cell, 1, 1, light);
             if (
               !(await queueDispatch(
                 shadePipeline,
                 buffers.shadeBindGroup,
-                batch.length,
-                { kind: "medium", rays: batch.length, cell, light },
+                mediumList.length,
+                { kind: "medium", rays: mediumList.length, cell, light },
               ))
             ) {
               return null;
@@ -5184,7 +5325,10 @@ export class SurfaceComputeRenderer {
             for (const step of deferredLitLadder) {
               const litGrown = nextLightingRayCap(
                 lightingSizer.rayCap,
-                Math.max(step.shareMs, lightingSizer.lastCellMs),
+                Math.max(
+                  step.shareMs,
+                  mediumDispatches > 0 ? lightingSizer.lastCellMs : 0,
+                ),
               );
               lightingSizer.rayCap = step.limited
                 ? Math.min(lightingSizer.rayCap, litGrown)

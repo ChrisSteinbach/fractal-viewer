@@ -57,6 +57,7 @@ import {
 import {
   isForwardTarget,
   setSurfaceComputeSchedulePins,
+  setSurfaceComputeMediumExperimentPins,
   setSurfaceComputeTrace,
   SurfaceComputeRenderer,
   SurfaceComputeUnavailableError,
@@ -12266,6 +12267,14 @@ async function main(): Promise<void> {
       marchSteps: pin("surfacemarchsteps"),
       shadeHits: pin("surfaceshadehits"),
       fenceGroup: pin("surfacefencegroup"),
+    });
+    // MEASUREMENT-ONLY experiment levers for the participating medium's
+    // cost: `?surfacemediumcells=N` cells per progressive pass (distinct
+    // strata across a job) and `?surfacemediumstride=K` (medium sweep only
+    // on the full-image K-lattice). See setSurfaceComputeMediumExperimentPins.
+    setSurfaceComputeMediumExperimentPins({
+      cells: pin("surfacemediumcells"),
+      stride: pin("surfacemediumstride"),
     });
   }
 

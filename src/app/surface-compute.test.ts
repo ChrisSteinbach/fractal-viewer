@@ -1,6 +1,9 @@
 import {
   encodeSurfaceComputeHdr,
   setSurfaceComputeSchedulePins,
+  setSurfaceComputeMediumExperimentPins,
+  surfaceComputeMediumCellIndex,
+  surfaceComputeMediumStrideKeeps,
   surfaceComputeLightingVisibility,
   fitSurfaceComputeRaster,
   foldSurfaceComputeLayerSample,
@@ -3027,6 +3030,89 @@ describe("SurfaceComputeRenderer authored lighting", () => {
     await renderer.renderFrame(spec);
     expect(phases).toHaveLength(1);
     expect(phases[0]).toMatchObject({ phase: 0, rays: 128, groups: 2 });
+  });
+
+  it("indexes experiment medium cells as distinct interleaved strata across a job", () => {
+    const visited = new Set<number>();
+    for (let pass = 0; pass < 8; pass++) {
+      for (let slot = 0; slot < 3; slot++) {
+        visited.add(surfaceComputeMediumCellIndex(slot, pass, 8));
+      }
+    }
+    expect([...visited].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 24 }, (_, i) => i),
+    );
+    expect(surfaceComputeMediumCellIndex(2, 0, 1)).toBe(2);
+    expect(surfaceComputeMediumCellIndex(1, 3, 8)).toBe(11);
+  });
+
+  it("keeps only full-image lattice pixels under the experiment stride", () => {
+    expect(surfaceComputeMediumStrideKeeps(4, 8, [0, 0], 4)).toBe(true);
+    expect(surfaceComputeMediumStrideKeeps(5, 8, [0, 0], 4)).toBe(false);
+    // Row 1 of an 8-wide band that starts at full-image row 3 is row 4.
+    expect(surfaceComputeMediumStrideKeeps(8, 8, [0, 3], 4)).toBe(true);
+    expect(surfaceComputeMediumStrideKeeps(0, 8, [0, 3], 4)).toBe(false);
+  });
+
+  it("advances experiment medium cells across passes and weights the in-scatter by the pass count", async () => {
+    setSurfaceComputeMediumExperimentPins({ cells: 1 });
+    try {
+      const { renderer, spec, phases, shadeWrites } = lightingDispatchHarness();
+      spec.width = 128;
+      spec.height = 1;
+      await renderer.renderFrame(spec, { samples: 2 });
+      expect(shadeWrites).toHaveLength(2);
+      expect(shadeWrites.map((write) => write[101])).toEqual([2, 2]);
+      expect(shadeWrites.map((write) => write[92])).toEqual([2, 2]);
+      const medium = phases.filter((phase) => phase.phase === 1);
+      expect(medium.length).toBeGreaterThan(0);
+      expect(medium.every((phase) => phase.count === 1)).toBe(true);
+      expect(new Set(medium.map((phase) => phase.cell))).toEqual(
+        new Set([0, 1]),
+      );
+      const firstPassOne = medium.findIndex((phase) => phase.cell === 1);
+      expect(medium.slice(0, firstPassOne).every((p) => p.cell === 0)).toBe(
+        true,
+      );
+      expect(medium.slice(firstPassOne).every((p) => p.cell === 1)).toBe(true);
+    } finally {
+      setSurfaceComputeMediumExperimentPins({});
+    }
+  });
+
+  it("sweeps the medium over only the stride's terminals while every terminal gets phase 0", async () => {
+    setSurfaceComputeMediumExperimentPins({ stride: 4 });
+    try {
+      const { renderer, spec, phases } = lightingDispatchHarness();
+      spec.width = 128;
+      spec.height = 1;
+      await renderer.renderFrame(spec);
+      const sum = (list: typeof phases): number =>
+        list.reduce((total, phase) => total + phase.rays, 0);
+      expect(sum(phases.filter((phase) => phase.phase === 0))).toBe(128);
+      const cellZeroLightZero = phases.filter(
+        (phase) => phase.phase === 1 && phase.cell === 0 && phase.light === 0,
+      );
+      expect(sum(cellZeroLightZero)).toBe(32);
+    } finally {
+      setSurfaceComputeMediumExperimentPins({});
+    }
+  });
+
+  it("skips the medium sweep for a batch the stride keeps nothing of", async () => {
+    setSurfaceComputeMediumExperimentPins({ stride: 256 });
+    try {
+      const { renderer, spec, phases } = lightingDispatchHarness();
+      spec.width = 128;
+      spec.height = 1;
+      const frame = await renderer.renderFrame(spec);
+      expect(frame).not.toBeNull();
+      const medium = phases.filter((phase) => phase.phase === 1);
+      expect(medium).toHaveLength(4);
+      expect(medium.every((phase) => phase.rays === 1)).toBe(true);
+    } finally {
+      setSurfaceComputeMediumExperimentPins({});
+    }
   });
 
   it("presents linear radiance at opaque alpha whatever its diagnostic lane holds", () => {
