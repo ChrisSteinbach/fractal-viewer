@@ -1,9 +1,6 @@
 import {
-  buildSurfaceComputeBackground,
-  buildSurfaceComputeLightingBackground,
   encodeSurfaceComputeHdr,
   surfaceComputeLightingVisibility,
-  buildSurfaceComputeLayerPrefill,
   fitSurfaceComputeRaster,
   foldSurfaceComputeLayerSample,
   encodeSurfaceComputeLayerMean,
@@ -43,6 +40,7 @@ import {
   surfaceComputeMaxDispatchRays,
   surfaceComputeMaxFrameRays,
   surfaceComputeProgressDone,
+  surfaceComputeSeedDispatches,
   surfaceComputeTileRows,
   subPixelSample,
 } from "./surface-compute";
@@ -50,7 +48,6 @@ import type {
   SurfaceComputeFrameSpec,
   SurfaceComputeTarget,
 } from "./surface-compute";
-import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import {
   SURFACE_GPU_CHAOS_BYTES,
   SURFACE_GPU_RAY_MISS,
@@ -369,92 +366,44 @@ describe("the two engines' 4D balloon height source (mirror pin)", () => {
   );
 });
 
-describe("buildSurfaceComputeBackground", () => {
-  it("fills each row with the kernel's own bottom-to-top gradient at pixel centers", () => {
-    // 2x4: row 0 is the BOTTOM (the kernel's py=0 is ndcY=-1), sampled at
-    // v=(py+0.5)/h — the GLSL main()'s mix(uBgBottom, uBgTop, vUv.y) with
-    // pack4x8unorm's round-half-up quantization.
-    const rows = buildSurfaceComputeBackground(
-      2,
-      4,
-      hexToRgb01(DARK_BACKDROP.top),
-      hexToRgb01(DARK_BACKDROP.bottom),
-    );
-    expect(rows.length).toBe(2 * 4 * 4);
-    const bottom = hexToRgb01(DARK_BACKDROP.bottom);
-    const top = hexToRgb01(DARK_BACKDROP.top);
-    const expected = (py: number, c: number): number =>
-      Math.round((bottom[c] + (top[c] - bottom[c]) * ((py + 0.5) / 4)) * 255);
-    for (let py = 0; py < 4; py++) {
-      for (let px = 0; px < 2; px++) {
-        const o = (py * 2 + px) * 4;
-        expect(rows[o]).toBe(expected(py, 0));
-        expect(rows[o + 1]).toBe(expected(py, 1));
-        expect(rows[o + 2]).toBe(expected(py, 2));
-        expect(rows[o + 3]).toBe(255);
-      }
-    }
-    // The gradient really runs bottom -> top (backdrop darkens upward).
-    expect(rows[2]).toBeGreaterThan(rows[3 * 2 * 4 + 2]);
+describe("surfaceComputeSeedDispatches", () => {
+  it("covers an ordinary raster with one dispatch of 16-pixel workgroups", () => {
+    expect(
+      surfaceComputeSeedDispatches(1280, 720, {
+        maxComputeWorkgroupsPerDimension: 65535,
+      }),
+    ).toEqual([{ originX: 0, originY: 0, groupsX: 80, groupsY: 45 }]);
   });
 
-  it("tracks custom top/bottom stops rather than any built-in constant", () => {
-    // Red top / blue bottom, hand-computed against the documented formula —
-    // NOT re-derived by calling the function under test — so this proves
-    // the prefill actually reads the passed stops (the Background control)
-    // instead of silently always reproducing DARK_BACKDROP.
-    const rows = buildSurfaceComputeBackground(2, 4, [1, 0, 0], [0, 0, 1]);
-
-    expect(rows.length).toBe(2 * 4 * 4);
-    // v = (py + 0.5) / 4; r = round(v * 255), g = 0, b = round((1 - v) * 255).
-    const expected = [
-      { r: 32, b: 223 }, // py=0, v=0.125
-      { r: 96, b: 159 }, // py=1, v=0.375
-      { r: 159, b: 96 }, // py=2, v=0.625
-      { r: 223, b: 32 }, // py=3, v=0.875
-    ];
-    for (let py = 0; py < 4; py++) {
-      for (let px = 0; px < 2; px++) {
-        const o = (py * 2 + px) * 4;
-        expect(rows[o]).toBe(expected[py].r);
-        expect(rows[o + 1]).toBe(0);
-        expect(rows[o + 2]).toBe(expected[py].b);
-        expect(rows[o + 3]).toBe(255);
-      }
-    }
+  it("rounds a partial workgroup up so the last row and column are seeded", () => {
+    // 17 pixels is one whole 16-pixel workgroup plus one pixel; the kernel's
+    // own bounds check discards the other fifteen invocations.
+    expect(
+      surfaceComputeSeedDispatches(17, 1, {
+        maxComputeWorkgroupsPerDimension: 65535,
+      }),
+    ).toEqual([{ originX: 0, originY: 0, groupsX: 2, groupsY: 1 }]);
   });
 
-  it("falls to the per-pixel loop and paints a centered vignette for the radial shape", () => {
-    const width = 8;
-    const height = 4;
-    const top = hexToRgb01(DARK_BACKDROP.top); // the corner color
-    const bottom = hexToRgb01(DARK_BACKDROP.bottom); // the center color
-    const rows = buildSurfaceComputeBackground(
-      width,
-      height,
-      top,
-      bottom,
-      [0, 0],
-      [width, height],
-      { kind: "radial", center: [0.5, 0.5], scale: [1, 2] },
-    );
-    expect(rows.length).toBe(width * height * 4);
-    // The center pixel row (nearest v = 0.5) reads closer to the center
-    // (bottom) stop than the corner (top, y = 0) row does, on the red
-    // channel — proof the per-pixel loop actually varies with position
-    // instead of falling through to the linear fast path.
-    const at = (px: number, py: number, c: number): number =>
-      rows[(py * width + px) * 4 + c];
-    const centerRow = at(width / 2, height / 2, 0);
-    const cornerRow = at(0, 0, 0);
-    const distToBottom = Math.abs(centerRow - Math.round(bottom[0] * 255));
-    const distToTop = Math.abs(cornerRow - Math.round(top[0] * 255));
-    expect(distToBottom).toBeLessThan(
-      Math.abs(centerRow - Math.round(top[0] * 255)),
-    );
-    expect(distToTop).toBeLessThan(
-      Math.abs(cornerRow - Math.round(bottom[0] * 255)),
-    );
+  it("tiles a side past the device's workgroup ceiling, each tile from its own origin", () => {
+    // Two workgroups a side is a 32-pixel tile, so a 40-pixel-wide raster
+    // needs a second tile starting at x = 32 with one workgroup.
+    expect(
+      surfaceComputeSeedDispatches(40, 20, {
+        maxComputeWorkgroupsPerDimension: 2,
+      }),
+    ).toEqual([
+      { originX: 0, originY: 0, groupsX: 2, groupsY: 2 },
+      { originX: 32, originY: 0, groupsX: 1, groupsY: 2 },
+    ]);
+  });
+
+  it("needs no dispatch for an empty raster", () => {
+    expect(
+      surfaceComputeSeedDispatches(0, 10, {
+        maxComputeWorkgroupsPerDimension: 65535,
+      }),
+    ).toEqual([]);
   });
 });
 
@@ -542,13 +491,6 @@ describe("surface compute composite layer storage", () => {
     // states 16 + active 4 + color/staging 8 + layer/staging 8 +
     // status/staging 8.
     expect(SURFACE_COMPUTE_RAY_BYTES).toBe(44);
-  });
-
-  it("prefills every active ray as uncovered, unfogged, full-background beta", () => {
-    expect(Array.from(buildSurfaceComputeLayerPrefill(3))).toEqual([
-      0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
-    ]);
-    expect(buildSurfaceComputeLayerPrefill(0)).toHaveLength(0);
   });
 
   it("averages coefficient lanes but keeps the nearest covered signed CoC", () => {
@@ -657,61 +599,6 @@ describe("surfaceComputeTileRows", () => {
     // A device that allocates 500k rays per frame gets 250-row bands
     // (500k / 2000 px), not the 4M-ray constant's 2000-row whole image.
     expect(surfaceComputeTileRows(2000, 2000, 500_000)).toBe(250);
-  });
-});
-
-describe("buildSurfaceComputeBackground band identity", () => {
-  it("reproduces the full image's prefill band by band from offset/extent alone", () => {
-    // The identity the tiled export depends on, restated in the shared
-    // background shape's vocabulary that retired surfaceComputeBandStops:
-    // every tracer reads the shared shape at FULL-IMAGE coordinates, so a
-    // band's own prefill — built with the band's origin/size instead of
-    // remapped stops — must reproduce the full-image trace's rows exactly,
-    // for every band height, including one that doesn't evenly divide the
-    // image.
-    const top: [number, number, number] = [1, 0, 0];
-    const bottom: [number, number, number] = [0, 0, 1];
-    const fullHeight = 12;
-    const fullWidth = 1;
-    const whole = buildSurfaceComputeBackground(
-      fullWidth,
-      fullHeight,
-      top,
-      bottom,
-    );
-    for (const rows of [12, 6, 4, 5]) {
-      const assembled = new Uint8Array(fullHeight * 4);
-      for (let bandBottom = 0; bandBottom < fullHeight; bandBottom += rows) {
-        const height = Math.min(rows, fullHeight - bandBottom);
-        assembled.set(
-          buildSurfaceComputeBackground(
-            fullWidth,
-            height,
-            top,
-            bottom,
-            [0, bandBottom],
-            [fullWidth, fullHeight],
-          ),
-          bandBottom * 4,
-        );
-      }
-      expect(Array.from(assembled)).toEqual(Array.from(whole));
-    }
-  });
-
-  it("hands a full-height band the same rows as the offset-free default", () => {
-    const top: [number, number, number] = [1, 0.5, 0];
-    const bottom: [number, number, number] = [0, 0.25, 1];
-    const withOffset = buildSurfaceComputeBackground(
-      1,
-      8,
-      top,
-      bottom,
-      [0, 0],
-      [1, 8],
-    );
-    const withDefaults = buildSurfaceComputeBackground(1, 8, top, bottom);
-    expect(Array.from(withOffset)).toEqual(Array.from(withDefaults));
   });
 });
 
@@ -1653,11 +1540,27 @@ async function createPaletteResourceHarness(
     queue: {
       writeBuffer: bufferWrites,
       writeTexture: textureWrites,
+      // The frame seed's one submission, which precedes the Params upload
+      // the capture helpers below stop at. Inert: nothing here is traced.
+      submit: () => {},
     },
+    createCommandEncoder: () => ({
+      beginComputePass: () => ({
+        setPipeline: () => {},
+        setBindGroup: () => {},
+        dispatchWorkgroups: () => {},
+        end: () => {},
+      }),
+      finish: () => ({}),
+    }),
     pushErrorScope: () => {},
     popErrorScope: async () => null,
     createShaderModule: (descriptor: GPUShaderModuleDescriptor) => {
-      shaderSources.push(descriptor.code);
+      // The frame seed compiles as its own module beside the kernel pair;
+      // `shaderSources` is the pair's codegen, which these tests pin.
+      if (!descriptor.code.includes("fn seedFrame(")) {
+        shaderSources.push(descriptor.code);
+      }
       return {
         getCompilationInfo: async () => ({ messages: [] }),
       };
@@ -1745,7 +1648,6 @@ async function captureParamsWrite(
   const opaqueBuffer = (): GPUBuffer => ({}) as GPUBuffer;
   Reflect.set(harness.renderer, "allocateFrameBuffers", async () => ({
     rays: spec.width * spec.height,
-    layerPrefill: new Uint8Array(spec.width * spec.height * 4),
     states: opaqueBuffer(),
     active: opaqueBuffer(),
     color: opaqueBuffer(),
@@ -1987,7 +1889,10 @@ describe("SurfaceComputeRenderer condensation session resources", () => {
         "@group(0) @binding(11) var shapeMeshSdfTex: texture_3d<f32>;",
       );
     }
-    for (const layout of harness.layoutDescriptors) {
+    // Layouts 0 and 1 are the march/shade pair; the frame seed's layout
+    // follows them and never samples the atlas.
+    const [marchLayout, shadeLayout, seedLayout] = harness.layoutDescriptors;
+    for (const layout of [marchLayout, shadeLayout]) {
       expect(layout.entries).toContainEqual(
         expect.objectContaining({
           binding: 11,
@@ -1998,6 +1903,9 @@ describe("SurfaceComputeRenderer condensation session resources", () => {
         }),
       );
     }
+    expect(
+      Array.from(seedLayout.entries).some((entry) => entry.binding === 11),
+    ).toBe(false);
     expect(harness.textureDescriptors).toContainEqual(
       expect.objectContaining({
         dimension: "3d",
@@ -2524,6 +2432,9 @@ function createHarness(
     shadeLayout: {} as GPUBindGroupLayout,
     marchPipelineNoSlab: null,
     shadePipelineNoSlab: null,
+    seedPipeline: {} as GPUComputePipeline,
+    seedLayout: {} as GPUBindGroupLayout,
+    seedBuf: {} as GPUBuffer,
     paramsBuf: {} as GPUBuffer,
     shadeBuf: {} as GPUBuffer,
     mapsBuf: {} as GPUBuffer,
@@ -2839,6 +2750,9 @@ function lightingDispatchHarness(parkShade: boolean | number = false) {
     shadeLayout: {} as GPUBindGroupLayout,
     marchPipelineNoSlab: null,
     shadePipelineNoSlab: null,
+    seedPipeline: {} as GPUComputePipeline,
+    seedLayout: {} as GPUBindGroupLayout,
+    seedBuf: {} as GPUBuffer,
     paramsBuf,
     shadeBuf,
     mapsBuf: {} as GPUBuffer,
@@ -2872,10 +2786,14 @@ function lightingDispatchHarness(parkShade: boolean | number = false) {
         hdr[p] = sampleIndex === 0 ? 1.6 : 0;
         hdr[p + 3] = 2 + 65536;
       }
-      return [
-        hdr.buffer,
-        buildSurfaceComputeLayerPrefill(layerBytes / 4).buffer,
-      ];
+      // Every ray reads back uncovered: coverage 0, fog 0, beta 255, far
+      // CoC 255 — the seed's own layer bytes.
+      const layer = new Uint8Array(layerBytes);
+      for (let p = 0; p < layer.length; p += 4) {
+        layer[p + 2] = 255;
+        layer[p + 3] = 255;
+      }
+      return [hdr.buffer, layer.buffer];
     },
   );
   const spec = frameSpec();
@@ -2976,33 +2894,215 @@ describe("SurfaceComputeRenderer authored lighting", () => {
     expect(deviceDestroy).toHaveBeenCalledTimes(1);
   });
 
-  it("samples an image backdrop in full-image coordinates across bands and preserves top-origin image rows", () => {
-    const spec = frameSpec();
-    spec.lightingBackground = {
-      width: 2,
-      height: 2,
-      revision: 1,
-      rgba: new Uint8Array([
-        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
-      ]),
-    };
-    const full = buildSurfaceComputeLightingBackground(spec);
-    expect(Array.from(full.slice(0, 4))).toEqual([0, 0, 1, 0]);
-    const band = buildSurfaceComputeLightingBackground({
-      ...spec,
-      height: 1,
-      bgOffset: [0, 1],
-      bgExtent: [2, 2],
-    });
-    expect(band).toEqual(full.slice(8));
+  it("presents linear radiance at opaque alpha whatever its diagnostic lane holds", () => {
+    // The w lane is the packed visibility diagnostic, not display alpha.
+    const linear = new Float32Array([0, 0, 1, 0, 1, 0, 0, 3 + 2 * 65536]);
     expect(
-      encodeSurfaceComputeHdr(full).filter((_value, index) => index % 4 === 3),
-    ).toEqual(new Uint8Array(4).fill(255));
+      encodeSurfaceComputeHdr(linear).filter(
+        (_value, index) => index % 4 === 3,
+      ),
+    ).toEqual(new Uint8Array(2).fill(255));
+  });
+
+  it("unpacks exhausted and invalid visibility counts from the diagnostic lane", () => {
     expect(
       surfaceComputeLightingVisibility(
         new Float32Array([0, 0, 0, 3 + 2 * 65536, 0, 0, 0, 7]),
       ),
     ).toEqual({ exhausted: 10, invalid: 2 });
+  });
+});
+
+/** The real unlit frame loop over a fake device that records every queue
+ * write (target, size, bytes), the descriptor of every buffer the FRAME
+ * allocates, and every dispatch. Every primary ray misses on its first
+ * sweep and readbacks return zeroed bytes, so a frame runs seed, march,
+ * shade and readback once. Session buffers are handed in directly, so
+ * `descriptors` holds only the frame's own per-ray buffers. */
+function frameStagingHarness() {
+  const descriptors = new Map<GPUBuffer, GPUBufferDescriptor>();
+  const writes: { buffer: GPUBuffer; bytes: number; data: ArrayBuffer }[] = [];
+  const dispatches: { pipeline: GPUComputePipeline; x: number; y: number }[] =
+    [];
+  const seedBuf = {} as GPUBuffer;
+  const marchPipeline = {} as GPUComputePipeline;
+  const shadePipeline = {} as GPUComputePipeline;
+  const seedPipeline = {} as GPUComputePipeline;
+  const device = {
+    lost: new Promise<GPUDeviceLostInfo>(() => {}),
+    limits: {
+      maxBufferSize: 1 << 28,
+      maxStorageBufferBindingSize: 1 << 28,
+      maxComputeWorkgroupsPerDimension: 65535,
+      maxTextureDimension2D: 8192,
+    },
+    pushErrorScope: () => {},
+    popErrorScope: async () => null,
+    createBuffer: (descriptor: GPUBufferDescriptor) => {
+      const buffer = { destroy: vi.fn() } as unknown as GPUBuffer;
+      descriptors.set(buffer, descriptor);
+      return buffer;
+    },
+    createBindGroup: () => ({}),
+    queue: {
+      writeTexture: () => {},
+      writeBuffer: (
+        buffer: GPUBuffer,
+        _offset: number,
+        data: ArrayBuffer | ArrayBufferView,
+      ) => {
+        const bytes = ArrayBuffer.isView(data)
+          ? new Uint8Array(
+              data.buffer,
+              data.byteOffset,
+              data.byteLength,
+            ).slice().buffer
+          : data.slice(0);
+        writes.push({ buffer, bytes: bytes.byteLength, data: bytes });
+      },
+      submit: () => {},
+      onSubmittedWorkDone: () => Promise.resolve(),
+    },
+    createCommandEncoder: () => ({
+      beginComputePass: () => {
+        let selected = {} as GPUComputePipeline;
+        return {
+          setPipeline: (pipeline: GPUComputePipeline) => {
+            selected = pipeline;
+          },
+          setBindGroup: () => {},
+          dispatchWorkgroups: (x: number, y = 1) => {
+            dispatches.push({ pipeline: selected, x, y });
+          },
+          end: () => {},
+        };
+      },
+      copyBufferToBuffer: () => {},
+      finish: () => ({}),
+    }),
+    destroy: vi.fn(),
+  } as unknown as GPUDevice;
+  const de = buildSurfaceDE(defaultTransforms(), null, {
+    order: 1,
+    plane: "xz",
+  });
+  const renderer = new SurfaceComputeRenderer({
+    device,
+    target: { kind: "ifs", de },
+    marchPipeline,
+    shadePipeline,
+    marchLayout: {} as GPUBindGroupLayout,
+    shadeLayout: {} as GPUBindGroupLayout,
+    marchPipelineNoSlab: null,
+    shadePipelineNoSlab: null,
+    seedPipeline,
+    seedLayout: {} as GPUBindGroupLayout,
+    seedBuf,
+    paramsBuf: {} as GPUBuffer,
+    shadeBuf: {} as GPUBuffer,
+    mapsBuf: {} as GPUBuffer,
+    shadeMapsBuf: {} as GPUBuffer,
+    lutTex: { createView: () => ({}) } as unknown as GPUTexture,
+    lutSamp: {} as GPUSampler,
+    software: false,
+  });
+  Reflect.set(
+    renderer,
+    "drainStaging",
+    async (_buffer: GPUBuffer, bytes: number) =>
+      new Uint32Array(bytes / 4).fill(SURFACE_GPU_RAY_MISS).buffer,
+  );
+  Reflect.set(
+    renderer,
+    "readbackFrame",
+    async (
+      _color: GPUBuffer,
+      _staging: GPUBuffer,
+      _layer: GPUBuffer,
+      _layerStaging: GPUBuffer,
+      layerBytes: number,
+      colorBytes: number,
+    ) => [new ArrayBuffer(colorBytes), new ArrayBuffer(layerBytes)],
+  );
+  return {
+    renderer,
+    descriptors,
+    writes,
+    dispatches,
+    seedBuf,
+    seedPipeline,
+    marchPipeline,
+  };
+}
+
+describe("SurfaceComputeRenderer frame seed", () => {
+  it("stages no colour, layer or ray-state upload: the frame's only raster-sized write target is its active ray list", async () => {
+    const { renderer, descriptors, writes } = frameStagingHarness();
+    const spec = frameSpec();
+    spec.width = 64;
+    spec.height = 32;
+
+    expect(await renderer.renderFrame(spec)).not.toBeNull();
+
+    const rays = spec.width * spec.height;
+    const frameTargets = new Set(
+      writes.map((write) => write.buffer).filter((b) => descriptors.has(b)),
+    );
+    expect(frameTargets.size).toBe(1);
+    const [onlyTarget] = frameTargets;
+    expect(descriptors.get(onlyTarget)).toEqual({
+      size: rays * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+  });
+
+  it("stages no larger a write outside the ray lists at 256x128 than at 16x8", async () => {
+    const largestSessionWrite = async (width: number, height: number) => {
+      const { renderer, descriptors, writes } = frameStagingHarness();
+      const spec = frameSpec();
+      spec.width = width;
+      spec.height = height;
+      expect(await renderer.renderFrame(spec)).not.toBeNull();
+      return Math.max(
+        ...writes
+          .filter((write) => !descriptors.has(write.buffer))
+          .map((write) => write.bytes),
+      );
+    };
+
+    expect(await largestSessionWrite(256, 128)).toBe(
+      await largestSessionWrite(16, 8),
+    );
+  });
+
+  it("seeds the whole raster with one device dispatch before the first march", async () => {
+    const {
+      renderer,
+      writes,
+      dispatches,
+      seedBuf,
+      seedPipeline,
+      marchPipeline,
+    } = frameStagingHarness();
+    const spec = frameSpec();
+    spec.width = 100;
+    spec.height = 40;
+
+    expect(await renderer.renderFrame(spec)).not.toBeNull();
+
+    const seedAt = dispatches.findIndex((d) => d.pipeline === seedPipeline);
+    const marchAt = dispatches.findIndex((d) => d.pipeline === marchPipeline);
+    expect(
+      dispatches
+        .filter((d) => d.pipeline === seedPipeline)
+        .map(({ x, y }) => [x, y]),
+    ).toEqual([[7, 3]]);
+    expect(seedAt).toBeLessThan(marchAt);
+    expect(
+      writes
+        .filter((write) => write.buffer === seedBuf)
+        .map((write) => Array.from(new Uint32Array(write.data))),
+    ).toEqual([[100, 40, 0, 0]]);
   });
 });
 

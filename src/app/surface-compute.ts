@@ -61,7 +61,7 @@
  *
  * No Three.js here, deliberately: inputs are plain arrays and numbers, so
  * the module's contract is the kernel's byte-layout contract plus a handful
- * of pure helpers (background prefill, pass sizing) that carry unit tests.
+ * of pure helpers (seed tiling, pass sizing) that carry unit tests.
  *
  * Failure taxonomy follows flame-gpu-backend.ts: a context with no usable
  * WebGPU throws {@link SurfaceComputeUnavailableError} (the session routes
@@ -73,13 +73,10 @@
  */
 
 import {
-  backgroundColorAt,
-  backgroundImageUv,
   backgroundShapeCode,
   DEFAULT_BACKGROUND_SHAPE,
   DEFAULT_BACKGROUND_SHAPE_CENTER,
   type BackgroundShapeSpec,
-  type BackgroundStops,
 } from "../fractal/background-shape";
 import type { BulbDE } from "../fractal/bulb-de";
 import type { EscapeDE } from "../fractal/escape-de";
@@ -114,6 +111,7 @@ import {
   packSurfaceGpuMaps,
   packSurfaceGpuMaps4,
   packSurfaceGpuParams,
+  packSurfaceGpuSeed,
   packSurfaceGpuShade,
   packSurfaceGpuShadeMaps,
   SURFACE_GPU_LENS4_POST_BYTES,
@@ -153,10 +151,13 @@ import {
   SURFACE_GPU_RAY_HIT,
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_RAY_PLANE,
+  SURFACE_GPU_SEED_PARAMS_BYTES,
+  SURFACE_GPU_SEED_WORKGROUP_SIZE,
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_SHADE_LIGHTING_BYTES,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TILING_BYTES,
+  surfaceComputeSeedWgsl,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
 import {
@@ -389,10 +390,10 @@ export const SURFACE_COMPUTE_FENCE_GROUP_MS = 300;
  * nothing: 0/20 dead with them, 0/20 without. Grow them to 4 MB at the
  * SAME dispatch count and it is 13/20, so the exhausted quantity is the
  * `writeBuffer` STAGING outstanding when the fence falls due — and a
- * frame's own PREFILL dominates it. `runFrame` seeds `color`, `layer` and
- * `states` once per frame, 24 B/ray unlit and 36 B/ray lit: 5.5 and
- * 8.3 MB at 640x360, 22 and 33 MB at 1280x720, MEGABYTES against the
- * dispatches' 128 KB. Firefox reclaims that staging only on a 100 ms poll
+ * frame's own PREFILL dominated it. `runFrame` used to stage `color`,
+ * `layer` and `states` once per frame, 24 B/ray unlit and 36 B/ray lit:
+ * 5.5 and 8.3 MB at 640x360, 22 and 33 MB at 1280x720, MEGABYTES against
+ * the dispatches' 128 KB. Firefox reclaims that staging only on a 100 ms poll
  * (`WebGPUParent`'s `POLL_TIME_MS`, the same tick this repository already
  * measured as its fence round-trip), so a wider group is a longer HOLD
  * rather than a bigger count — the same 8 MB kills 7/20 behind a group of
@@ -406,10 +407,13 @@ export const SURFACE_COMPUTE_FENCE_GROUP_MS = 300;
  * Chrome tolerates eight — the WebGL arm's own
  * `SURFACE_STRIP_FENCE_GROUP_MAX` — and gains nothing measurable from
  * them, so the cap is the SMALLEST stack's rather than a compromise
- * between them. LIFTING IT IS GATED ON THE FRAME PREFILL, not on the
- * per-dispatch writes and not on picking a bigger number: seed those three
- * buffers on the device (a prefill kernel, or a clear) instead of staging
- * them through the queue. Measured rows: `docs/surface-compute-renderer.md`.
+ * between them. THE FRAME PREFILL IS NOW SEEDED ON THE DEVICE — one
+ * `seedFrame` dispatch (`surface-de-gpu.ts`'s `surfaceComputeSeedWgsl`)
+ * replaces the three staged uploads — so the quantity that set this cap is
+ * no longer queued. THE CAP IS STILL TWO: removing the cause does not
+ * measure what the cap can now be, and raising it waits on the fence gate
+ * and the staging repro re-run in the app on Firefox. Measured rows:
+ * `docs/surface-compute-renderer.md`.
  */
 export const SURFACE_COMPUTE_FENCE_GROUP_MAX = 2;
 
@@ -783,14 +787,14 @@ export interface SurfaceComputeFrameSpec {
   envLight?: number;
   /** The scene backdrop's two gradient stops — the pair the GLSL tracers
    * carry as uBgTop/uBgBottom, fed to the shade kernel's miss/fog
-   * gradient AND the host prefill, re-read per spec assembly like the
-   * lighting. */
+   * gradient AND the device-side frame seed (both read ShadeParams),
+   * re-read per spec assembly like the lighting. */
   bgTop: Vec3;
   bgBottom: Vec3;
   /** The traced raster's pixel offset within, and pixel size of, the FULL
    * image — `fractal/background-shape.ts`'s coordinate contract,
-   * forwarded to the shade kernel's `bgOffset`/`bgExtent` and to
-   * {@link buildSurfaceComputeBackground}'s host prefill. OPTIONAL here,
+   * forwarded to the shade kernel's `bgOffset`/`bgExtent`, which the
+   * device-side frame seed reads too. OPTIONAL here,
    * unlike {@link packSurfaceGpuShade}'s own required fields: the
    * renderer knows the frame's own raster, so an absent pair defaults to
    * offset `(0, 0)` and extent equal to `(width, height)` above — an
@@ -800,8 +804,8 @@ export interface SurfaceComputeFrameSpec {
   bgExtent?: [number, number];
   /** The shared background shape — `fractal/background-shape.ts`'s
    * `BackgroundShapeSpec`, forwarded to the shade kernel's
-   * `bgShape`/`bgCenter`/`bgScale` and to
-   * {@link buildSurfaceComputeBackground}'s host prefill. OPTIONAL, same
+   * `bgShape`/`bgCenter`/`bgScale`, which the device-side frame seed
+   * reads too. OPTIONAL, same
    * discipline as `bgOffset`/`bgExtent`: absent defaults to `{kind:
    * "linear"}`, keeping gpu-bench's spec literals compiling unchanged. A
    * radial shape's `scale` must already be `backgroundRadialScale` of the
@@ -906,7 +910,8 @@ export interface SurfaceComputeFrameSpec {
 
 export interface SurfaceComputeFrameOptions {
   /** Wall-clock cap for the whole frame; rays still active when it runs
-   * out keep their background prefill and the frame reports `truncated`. */
+   * out keep their device-seeded backdrop and the frame reports
+   * `truncated`. */
   budgetMs?: number;
   /** This frame is an off-canvas CAPTURE (a Save-PNG tile), not the live
    * pane: it neither seeds from the last live frame nor becomes the seed
@@ -1003,110 +1008,45 @@ interface SurfaceComputeSample extends SurfaceComputeFrame {
   linearPixels?: Float32Array;
 }
 
+/** One dispatch of the frame seed: the pixel its workgroup (0, 0) starts at
+ * and its 2D workgroup counts. */
+export interface SurfaceComputeSeedDispatch {
+  originX: number;
+  originY: number;
+  groupsX: number;
+  groupsY: number;
+}
+
 /**
- * The background gradient the kernel writes for miss rays, prefilled
- * host-side so rays still ACTIVE at a budget cut present backdrop instead
- * of stale memory (the kernel's documented host contract). Byte-for-byte
- * the kernel's own `pack4x8unorm(mix(bgBottom, bgTop, backgroundShapeT(imageUv)))`:
- * pack4x8unorm rounds `floor(0.5 + 255*clamp(v))`, which is Math.round on
- * the positive domain — so a truncated frame's active pixels are
- * indistinguishable from its miss pixels.
- *
- * `offset`/`extent` are `background-shape.ts`'s coordinate contract
- * (default: an ordinary frame — offset `(0, 0)`, extent this raster's own
- * size); `shape` defaults to `"linear"`, today's only shape. Byte
- * identity at the defaults is by construction: `backgroundImageUv` at
- * zero offset reproduces `(py + 0.5) / height` exactly (adding 0.0 is
- * exact in IEEE754), and `backgroundShapeT`'s `"linear"` case is the same
- * `clamp(v, 0, 1)` this function used to inline.
+ * The frame seed's dispatches (`surface-de-gpu.ts`'s
+ * `surfaceComputeSeedWgsl`, which writes `color`, `layer` and `states` on
+ * the device) for a `width x height` raster: ONE 2D dispatch of
+ * {@link SURFACE_GPU_SEED_WORKGROUP_SIZE}-square workgroups, tiled only
+ * where a side would need more than the device's
+ * `maxComputeWorkgroupsPerDimension` — 1,048,560 pixels a side at the spec
+ * minimum, so every real raster is one tile. An empty raster needs none.
+ * Pure, so the tiling arithmetic is unit-tested.
  */
-export function buildSurfaceComputeBackground(
+export function surfaceComputeSeedDispatches(
   width: number,
   height: number,
-  bgTop: Vec3,
-  bgBottom: Vec3,
-  offset: readonly [number, number] = [0, 0],
-  extent: readonly [number, number] = [width, height],
-  shape: BackgroundShapeSpec = { kind: DEFAULT_BACKGROUND_SHAPE },
-): Uint8Array<ArrayBuffer> {
-  const out = new Uint8Array(width * height * 4);
-  const stops: BackgroundStops = { top: bgTop, bottom: bgBottom };
-  const writePixel = (o: number, u: number, v: number): void => {
-    const [rf, gf, bf] = backgroundColorAt(u, v, stops, shape);
-    out[o] = Math.round(clamp(rf, 0, 1) * 255);
-    out[o + 1] = Math.round(clamp(gf, 0, 1) * 255);
-    out[o + 2] = Math.round(clamp(bf, 0, 1) * 255);
-    out[o + 3] = 255;
-  };
-  if (shape.kind === "linear") {
-    // "linear" ignores u, so one shape evaluation covers the whole row —
-    // the original loop's cost exactly. A shape that reads u (the radial
-    // one) cannot take this path and must fall to the per-pixel loop
-    // below.
-    for (let py = 0; py < height; py++) {
-      const [, v] = backgroundImageUv(0, py, offset, extent);
-      const [rf, gf, bf] = backgroundColorAt(0, v, stops, shape);
-      const r = Math.round(clamp(rf, 0, 1) * 255);
-      const g = Math.round(clamp(gf, 0, 1) * 255);
-      const b = Math.round(clamp(bf, 0, 1) * 255);
-      for (let px = 0; px < width; px++) {
-        const o = (py * width + px) * 4;
-        out[o] = r;
-        out[o + 1] = g;
-        out[o + 2] = b;
-        out[o + 3] = 255;
-      }
-    }
-    return out;
-  }
-  for (let py = 0; py < height; py++) {
-    for (let px = 0; px < width; px++) {
-      const [u, v] = backgroundImageUv(px, py, offset, extent);
-      writePixel((py * width + px) * 4, u, v);
+  limits: { maxComputeWorkgroupsPerDimension: number },
+): SurfaceComputeSeedDispatch[] {
+  const edge = SURFACE_GPU_SEED_WORKGROUP_SIZE;
+  const tile =
+    Math.max(1, Math.floor(limits.maxComputeWorkgroupsPerDimension)) * edge;
+  const dispatches: SurfaceComputeSeedDispatch[] = [];
+  for (let originY = 0; originY < height; originY += tile) {
+    for (let originX = 0; originX < width; originX += tile) {
+      dispatches.push({
+        originX,
+        originY,
+        groupsX: Math.ceil(Math.min(tile, width - originX) / edge),
+        groupsY: Math.ceil(Math.min(tile, height - originY) / edge),
+      });
     }
   }
-  return out;
-}
-
-/** Linear prefill for unfinished authored-lighting rays. Image sampling uses
- * the same full-image UV and top-origin image convention as the shader. */
-export function buildSurfaceComputeLightingBackground(
-  spec: SurfaceComputeFrameSpec,
-): Float32Array<ArrayBuffer> {
-  const out = new Float32Array(spec.width * spec.height * 4);
-  const offset = spec.bgOffset ?? [0, 0];
-  const extent = spec.bgExtent ?? [spec.width, spec.height];
-  const stops = { top: spec.bgTop, bottom: spec.bgBottom };
-  const shape = spec.bgShape ?? { kind: DEFAULT_BACKGROUND_SHAPE };
-  for (let py = 0; py < spec.height; py++) {
-    for (let px = 0; px < spec.width; px++) {
-      const [u, v] = backgroundImageUv(px, py, offset, extent);
-      const rgb = spec.lightingBackground
-        ? sampleTraceBackgroundImage(spec.lightingBackground, u, v)
-        : backgroundColorAt(u, v, stops, shape);
-      const p = (py * spec.width + px) * 4;
-      for (let c = 0; c < 3; c++) {
-        out[p + c] = Math.pow(clamp(rgb[c], 0, 1), SURFACE_OUTPUT_GAMMA);
-      }
-      // w is the packed visibility diagnostic, not display alpha.
-    }
-  }
-  return out;
-}
-
-/** Packed sidecar seed for rays that have not reached a terminal shade yet:
- * no traced coverage, no fog, full background coefficient, far-CoC sentinel.
- * Deliberately independent of any previous frame: active pixels describe
- * their CURRENT trace state. */
-export function buildSurfaceComputeLayerPrefill(
-  rays: number,
-): Uint8Array<ArrayBuffer> {
-  const out = new Uint8Array(Math.max(0, rays) * 4);
-  for (let p = 0; p < out.length; p += 4) {
-    out[p + 2] = 255;
-    out[p + 3] = 255;
-  }
-  return out;
+  return dispatches;
 }
 
 /** Smallest march slice worth its dispatch overhead. */
@@ -2143,6 +2083,13 @@ export interface SurfaceComputeRendererInit {
    * — null for every other target kind. */
   marchPipelineNoSlab: GPUComputePipeline | null;
   shadePipelineNoSlab: GPUComputePipeline | null;
+  /** The frame seed (`surfaceComputeSeedWgsl`, lighting variant matching the
+   * session's compile gate): writes `color`/`layer`/`states` on the device
+   * so no frame stages them through the queue. */
+  seedPipeline: GPUComputePipeline;
+  seedLayout: GPUBindGroupLayout;
+  /** The seed's 16-byte `SeedParams` uniform. */
+  seedBuf: GPUBuffer;
   paramsBuf: GPUBuffer;
   shadeBuf: GPUBuffer;
   mapsBuf: GPUBuffer;
@@ -2169,8 +2116,6 @@ export interface SurfaceComputeRendererInit {
 
 interface FrameBuffers {
   rays: number;
-  /** Host-side immutable seed matching the allocated buffer capacity. */
-  layerPrefill: Uint8Array<ArrayBuffer>;
   states: GPUBuffer;
   active: GPUBuffer;
   color: GPUBuffer;
@@ -2184,6 +2129,9 @@ interface FrameBuffers {
   stagingLayer: GPUBuffer;
   marchBindGroup: GPUBindGroup;
   shadeBindGroup: GPUBindGroup;
+  /** The frame seed's bind group: rebuilt with the shade one, since both
+   * bind the lighting background texture. */
+  seedBindGroup: GPUBindGroup;
 }
 
 export class SurfaceComputeRenderer {
@@ -2605,6 +2553,50 @@ export class SurfaceComputeRenderer {
           })
         : null,
     ]);
+    // The frame seed: writes color/layer/states on the device, so no frame
+    // stages them through the queue (surfaceComputeSeedWgsl's doc). Its
+    // bindings reuse the shade kernel's numbers; the lit variant adds the
+    // backdrop image and the sampler that reads it.
+    const seedLayout = device.createBindGroupLayout({
+      entries: [
+        bufferEntry(0, "uniform"),
+        bufferEntry(3, "storage"),
+        bufferEntry(4, "uniform"),
+        bufferEntry(6, "storage"),
+        bufferEntry(9, "storage"),
+        ...(lighting
+          ? [
+              {
+                binding: 8,
+                visibility: GPUShaderStage.COMPUTE,
+                sampler: { type: "filtering" as const },
+              },
+              {
+                binding: 12,
+                visibility: GPUShaderStage.COMPUTE,
+                texture: { sampleType: "float" as const },
+              },
+            ]
+          : []),
+      ],
+    });
+    const seedModule = device.createShaderModule({
+      code: surfaceComputeSeedWgsl({ lighting }),
+    });
+    const seedErrors = (await seedModule.getCompilationInfo()).messages.filter(
+      (m) => m.type === "error",
+    );
+    if (seedErrors.length > 0) {
+      throw new Error(
+        `Surface compute: seed WGSL compile failed:\n${seedErrors
+          .map((m) => `${String(m.lineNum)}:${String(m.linePos)}: ${m.message}`)
+          .join("\n")}`,
+      );
+    }
+    const seedPipeline = await device.createComputePipelineAsync({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [seedLayout] }),
+      compute: { module: seedModule, entryPoint: "seedFrame" },
+    });
 
     const baseParamsBufferSize = isFourDTarget(target)
       ? targetHasSchedule
@@ -2827,6 +2819,11 @@ export class SurfaceComputeRenderer {
       );
     }
 
+    const seedBuf = device.createBuffer({
+      size: SURFACE_GPU_SEED_PARAMS_BYTES,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
     const validation = await device.popErrorScope();
     const oom = await device.popErrorScope();
     const scopeError = validation ?? oom;
@@ -2845,6 +2842,9 @@ export class SurfaceComputeRenderer {
       shadeLayout,
       marchPipelineNoSlab,
       shadePipelineNoSlab,
+      seedPipeline,
+      seedLayout,
+      seedBuf,
       paramsBuf,
       shadeBuf,
       mapsBuf,
@@ -2958,12 +2958,11 @@ export class SurfaceComputeRenderer {
    * loops must never interleave. */
   private chain: Promise<unknown> = Promise.resolve();
   private frame: FrameBuffers | null = null;
-  /** {@link runFrame}'s per-raster upload seeds, contents pass-invariant —
-   * states seeds one -1 per ray's distance slot, active the identity list —
-   * so they are cached at exact size and refilled only when the raster
-   * changes. Nothing writes into either array once built: the pass loop
-   * reads `active` and rebinds its local at each sweep's rebuild. */
-  private statesSeed: Float32Array<ArrayBuffer> | null = null;
+  /** {@link runFrame}'s identity active list, contents pass-invariant, so
+   * it is cached at exact size and refilled only when the raster changes.
+   * Nothing writes into it once built: the pass loop reads `active` and
+   * rebinds its local at each sweep's rebuild. (The ray STATES are seeded on
+   * the device instead — {@link SurfaceComputeRendererInit.seedPipeline}.) */
   private activeSeed: Uint32Array<ArrayBuffer> | null = null;
   /** {@link runSamples}' supersampling accumulators, zero-filled per job —
    * the sibling of scene.ts's `beginSurfaceSamples` reuse. */
@@ -2972,30 +2971,6 @@ export class SurfaceComputeRenderer {
   private sampleCoc: Uint8Array | null = null;
   private uploadedLutVersion: number | null = null;
   private uploadedBalloonLutVersion: number | null = null;
-  private background: {
-    width: number;
-    height: number;
-    /** The stops the rows were built from — a live background
-     * change/crossfade must invalidate the cache, not just a resize. */
-    bgTop: Vec3;
-    bgBottom: Vec3;
-    /** The band's own place in the full image — a capture that tiles
-     * reuses this renderer across bands, so the key must catch a
-     * band boundary moving even when width/height/stops do not. */
-    bgOffset: [number, number];
-    bgExtent: [number, number];
-    shapeKind: BackgroundShapeSpec["kind"];
-    /** The radial shape's own geometry — a centre/scale change (a
-     * viewport resize under the SAME shapeKind) must invalidate the
-     * cache too, not just a shapeKind flip. Unread while shapeKind is
-     * "linear", but still compared so a stale radial reading can never
-     * survive a later switch back to "linear" and then to "radial" again
-     * at a different aspect. */
-    bgCenter: [number, number];
-    bgScale: [number, number];
-    rows: Uint8Array<ArrayBuffer>;
-  } | null = null;
-
   private readonly device: GPUDevice;
   private readonly target: SurfaceComputeTarget;
   private readonly marchPipeline: GPUComputePipeline;
@@ -3006,6 +2981,10 @@ export class SurfaceComputeRenderer {
    * — null for every other target kind. */
   private readonly marchPipelineNoSlab: GPUComputePipeline | null;
   private readonly shadePipelineNoSlab: GPUComputePipeline | null;
+  /** See {@link SurfaceComputeRendererInit.seedPipeline}. */
+  private readonly seedPipeline: GPUComputePipeline;
+  private readonly seedLayout: GPUBindGroupLayout;
+  private readonly seedBuf: GPUBuffer;
   private readonly paramsBuf: GPUBuffer;
   private readonly shadeBuf: GPUBuffer;
   private readonly mapsBuf: GPUBuffer;
@@ -3037,6 +3016,9 @@ export class SurfaceComputeRenderer {
     this.shadeLayout = init.shadeLayout;
     this.marchPipelineNoSlab = init.marchPipelineNoSlab;
     this.shadePipelineNoSlab = init.shadePipelineNoSlab;
+    this.seedPipeline = init.seedPipeline;
+    this.seedLayout = init.seedLayout;
+    this.seedBuf = init.seedBuf;
     this.paramsBuf = init.paramsBuf;
     this.shadeBuf = init.shadeBuf;
     this.mapsBuf = init.mapsBuf;
@@ -3125,9 +3107,9 @@ export class SurfaceComputeRenderer {
    * and sample 0 alone is exactly the frame this renderer produced before
    * supersampling, so the caller can never end up with less than it used
    * to get. A TRUNCATED sample (a wall budget cut mid-pass) ends the
-   * refinement for the same reason: its unresolved pixels still carry the
-   * previous mean's prefill, so folding it in would double-count that
-   * mean.
+   * refinement too: its unresolved pixels still carry the frame seed's
+   * uncovered backdrop, so folding it in would dilute the mean with
+   * pixels that were never traced.
    */
   private async runSamples(
     token: number,
@@ -3445,9 +3427,10 @@ export class SurfaceComputeRenderer {
       color,
       layer,
     );
+    // After the march and shade groups, so their creation order is unchanged.
+    const seedBindGroup = this.createSeedBindGroup(states, color, layer);
     this.frame = {
       rays,
-      layerPrefill: buildSurfaceComputeLayerPrefill(rays),
       states,
       active,
       color,
@@ -3458,6 +3441,7 @@ export class SurfaceComputeRenderer {
       stagingLayer,
       marchBindGroup,
       shadeBindGroup,
+      seedBindGroup,
     };
     return this.frame;
   }
@@ -3505,7 +3489,8 @@ export class SurfaceComputeRenderer {
   }
 
   /** Called only inside the serialized frame span, after all earlier GPU
-   * work unwound. Replacing a texture rebuilds only its shade bind group. */
+   * work unwound. Replacing a texture rebuilds the two bind groups that bind
+   * it — the shade group and the frame seed's. */
   private prepareLightingBackground(
     image: TraceBackgroundImage | undefined,
   ): void {
@@ -3548,6 +3533,11 @@ export class SurfaceComputeRenderer {
           frame.color,
           frame.layer,
         );
+        frame.seedBindGroup = this.createSeedBindGroup(
+          frame.states,
+          frame.color,
+          frame.layer,
+        );
       }
     }
     if (!this.lightingBackgroundTex)
@@ -3563,55 +3553,34 @@ export class SurfaceComputeRenderer {
     this.uploadedLightingBackground = image;
   }
 
-  private backgroundRows(
-    width: number,
-    height: number,
-    bgTop: Vec3,
-    bgBottom: Vec3,
-    bgOffset: [number, number],
-    bgExtent: [number, number],
-    shape: BackgroundShapeSpec,
-  ): Uint8Array<ArrayBuffer> {
-    const bgCenter: [number, number] =
-      shape.center ?? DEFAULT_BACKGROUND_SHAPE_CENTER;
-    const bgScale: [number, number] = shape.scale ?? [1, 1];
-    const cached = this.background;
-    if (
-      cached &&
-      cached.width === width &&
-      cached.height === height &&
-      cached.bgTop.every((c, i) => c === bgTop[i]) &&
-      cached.bgBottom.every((c, i) => c === bgBottom[i]) &&
-      cached.bgOffset.every((c, i) => c === bgOffset[i]) &&
-      cached.bgExtent.every((c, i) => c === bgExtent[i]) &&
-      cached.shapeKind === shape.kind &&
-      cached.bgCenter.every((c, i) => c === bgCenter[i]) &&
-      cached.bgScale.every((c, i) => c === bgScale[i])
-    ) {
-      return cached.rows;
-    }
-    const rows = buildSurfaceComputeBackground(
-      width,
-      height,
-      bgTop,
-      bgBottom,
-      bgOffset,
-      bgExtent,
-      shape,
-    );
-    this.background = {
-      width,
-      height,
-      bgTop: [...bgTop],
-      bgBottom: [...bgBottom],
-      bgOffset: [...bgOffset],
-      bgExtent: [...bgExtent],
-      shapeKind: shape.kind,
-      bgCenter,
-      bgScale,
-      rows,
-    };
-    return rows;
+  /** The frame seed's bind group, at the shade kernel's binding numbers
+   * (`surfaceComputeSeedWgsl`'s doc). It binds the session's own shade
+   * uniform, and — lit — the same backdrop texture and sampler the shade
+   * group does, so {@link prepareLightingBackground} rebuilds both. */
+  private createSeedBindGroup(
+    states: GPUBuffer,
+    color: GPUBuffer,
+    layer: GPUBuffer,
+  ): GPUBindGroup {
+    return this.device.createBindGroup({
+      layout: this.seedLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.seedBuf } },
+        { binding: 3, resource: { buffer: states } },
+        { binding: 4, resource: { buffer: this.shadeBuf } },
+        { binding: 6, resource: { buffer: color } },
+        { binding: 9, resource: { buffer: layer } },
+        ...(this.lightingBackgroundTex
+          ? [
+              { binding: 8, resource: this.lutSamp },
+              {
+                binding: 12,
+                resource: this.lightingBackgroundTex.createView(),
+              },
+            ]
+          : []),
+      ],
+    });
   }
 
   /** Copy the immutable reference and its layer sidecar in one submission,
@@ -3800,46 +3769,41 @@ export class SurfaceComputeRenderer {
         bgShape: backgroundShapeCode(bgShape.kind),
       }),
     );
-    // Composite-layer prefill contract: rays still ACTIVE at a budget cut
-    // are uncovered background in BOTH buffers. A prior frame's RGB cannot
-    // be paired with coverage zero under this frame's background reference:
-    // the first edit would apply the wrong delta to stale geometry.
-    device.queue.writeBuffer(
-      buffers.color,
-      0,
-      this.lighting
-        ? buildSurfaceComputeLightingBackground(spec)
-        : this.backgroundRows(
-            width,
-            height,
-            spec.bgTop,
-            spec.bgBottom,
-            bgOffset,
-            bgExtent,
-            bgShape,
-          ),
-    );
-    // The layer describes this frame's CURRENT trace, never the legacy RGB
-    // seed above. Until a ray reaches a terminal shade it is uncovered,
-    // unfogged, and wholly background-responsive (beta 1). This deliberate
-    // asymmetry means a truncated frame's active metadata cannot masquerade
-    // as the previous frame's settled geometry.
-    device.queue.writeBuffer(
-      buffers.layer,
-      0,
-      buffers.layerPrefill,
-      0,
-      rays * 4,
-    );
-    let states: Float32Array<ArrayBuffer>;
-    if (this.statesSeed !== null && this.statesSeed.length === rays * 4) {
-      states = this.statesSeed;
-    } else {
-      states = new Float32Array(rays * 4);
-      for (let i = 0; i < rays; i++) states[i * 4] = -1;
-      this.statesSeed = states;
+    // Composite-layer seed contract: rays still ACTIVE at a budget cut are
+    // uncovered background in BOTH buffers. A prior frame's RGB cannot be
+    // paired with coverage zero under this frame's background reference:
+    // the first edit would apply the wrong delta to stale geometry. The
+    // layer describes this frame's CURRENT trace — uncovered, unfogged and
+    // wholly background-responsive (beta 1) until a ray reaches a terminal
+    // shade — so a truncated frame's active metadata cannot masquerade as
+    // the previous frame's settled geometry. Every ray starts ACTIVE and
+    // unmarched.
+    //
+    // All three are written ON THE DEVICE by the seed kernel, which reads
+    // the shade uniform staged just above. Staging them through writeBuffer
+    // (24 B/ray unlit, 36 lit) is the volume that exhausts Firefox's device
+    // ({@link SURFACE_COMPUTE_FENCE_GROUP_MAX}). The submission lands ahead
+    // of the first march in queue order, so every readback sees seeded
+    // values, and rides the first fence rather than paying its own; nothing
+    // awaits between the token check above and these submits.
+    for (const tile of surfaceComputeSeedDispatches(
+      width,
+      height,
+      device.limits,
+    )) {
+      device.queue.writeBuffer(
+        this.seedBuf,
+        0,
+        packSurfaceGpuSeed(width, height, tile.originX, tile.originY),
+      );
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(this.seedPipeline);
+      pass.setBindGroup(0, buffers.seedBindGroup);
+      pass.dispatchWorkgroups(tile.groupsX, tile.groupsY);
+      pass.end();
+      device.queue.submit([encoder.finish()]);
     }
-    device.queue.writeBuffer(buffers.states, 0, states);
 
     let active: Uint32Array<ArrayBuffer>;
     if (this.activeSeed !== null && this.activeSeed.length === rays) {
@@ -4794,9 +4758,9 @@ export class SurfaceComputeRenderer {
         // waits longer than one progressive-present interval: the screen
         // has to keep developing, which is the whole reason presents fire
         // between bounded pieces at all. Rays held over a budget cut keep
-        // their seed pixels, which for every frame after the first is the
-        // previous frame's shading of very nearly the same geometry (the
-        // last frame's prefill), not backdrop.
+        // their seed pixels — uncovered backdrop in both the colour and
+        // layer buffers, the composite-layer seed contract at the top of
+        // runFrame — never a previous frame's shading.
         if (
           !isFree &&
           active.length > 0 &&

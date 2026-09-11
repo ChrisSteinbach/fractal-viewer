@@ -9,6 +9,10 @@
  * plus `surfaceComputeBandStops` — the shape's AFFINE INVERSE, and only
  * expressible at all because a linear shape restricted to a sub-rectangle is
  * still linear. This module is the ONE definition every mirror consumes.
+ * The TS prefill mirror has since been retired as well: the compute frame's
+ * backdrop seed is written ON THE DEVICE by `surface-de-gpu.ts`'s
+ * `surfaceComputeSeedWgsl`, from the same emitted lines as the shade entry's
+ * miss write, so no host copy is left to keep byte-exact.
  *
  * `"radial"` is the second entry in {@link BACKGROUND_SHAPES}: a soft
  * vignette, `t = smoothstep` of the normalized distance from a
