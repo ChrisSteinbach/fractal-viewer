@@ -13,10 +13,10 @@ the reason it went.
 
 WHY, measured on a real AMD RX 7900 XTX, production build:
 
-| Cathedral, 1920x1057, WebGPU compute | Progress                                           |
-| ------------------------------------ | -------------------------------------------------- |
-| as authored (mist density 0.42)      | 3.4% at 10 s, 9.5% at 5 min — still in pass 1 of 8 |
-| mist density 0                       | complete 8-pass settle in 130 s                    |
+| Cathedral, 1920x1057, WebGPU compute | Progress                                                            |
+| ------------------------------------ | ------------------------------------------------------------------- |
+| as authored (mist density 0.42)      | 3.4% at 10 s, 9.5% at 5 min of the whole job — still in pass 1 of 8 |
+| mist density 0                       | complete 8-pass settle in 130 s                                     |
 
 That is the whole feature's cost in one line: everything except the medium
 settles a full pane in a bit over two minutes, and the medium alone turns
@@ -36,8 +36,8 @@ resolution and upsample bilaterally, since the field is smooth and
 low-frequency; and take a few jittered cells per pass instead of 32,
 averaged across the eight antialiasing passes the renderer already runs.
 Together those are plausibly two orders of magnitude on the one term that
-costs everything. None of that is measured, and nothing here promises it
-works.
+costs everything. That was written unmeasured; the next section measures it,
+and corrects two things the paragraphs above got wrong.
 
 WHAT SURVIVED. Authored disk lights, their soft shadows, the ambient and
 material defaults, the per-transform finishes, the HDR pipeline, both
@@ -46,6 +46,136 @@ render without the mist they were composed around, and therefore owe a fresh
 aesthetic judgement (see `surface-lighting-starters.ts`). A saved scene or
 link written while the medium existed still opens: `persist.ts` ignores a
 `medium` block rather than rejecting the rig.
+
+## The medium reconsidered on arithmetic — 11 September 2026
+
+The question: does the fence round-trip work (the calibrated-fence
+subtraction, per-group fencing) make the medium affordable, and which of the
+three techniques above actually pays? To answer it on the real thing rather
+than a prototype, the removal was reverted onto current main on an
+experiment branch, `experiment/medium-cost`, and never merged. The medium's
+dispatches ride main's shared fence groups (at most two dispatches per
+group), with a lane of their own in the `?surfacetrace` tally. Three
+measurement-only page-load levers were added:
+
+- `?surfacemediumcells=N` — N medium cells per antialiasing pass. An S-pass
+  job cuts each camera segment into N·S strata and pass k visits strata
+  `j·S + k`, so the job samples N·S distinct cells and each pass spans the
+  whole segment. In-scatter is scaled by S, so the job average stays an
+  unbiased estimate.
+- `?surfacemediumstride=K` — after phase-0 shading, the medium sweep runs only
+  for full-image pixels with `x%K == 0 && y%K == 0`. This is the COST side of
+  a 1/K² medium raster; nothing is upsampled.
+- `?surfacelitceiling=N` — replaces the lit ray ladder's 4096-ray CEILING. The
+  ladder still paces by its 50 ms time target.
+
+The driver is `scripts/medium-cost.measure.mjs` on that branch. If the branch
+is gone, the levers above are its whole delta over a plain revert of the
+removal. ALL ROWS: real AMD RX 7900 XTX (WebGPU adapter `amd rdna-3`), Chrome,
+the cathedral starter, a 1920x1057 pane = 2,029,440 rays per settle frame,
+compute engine, 8 samples, camera parked. Firefox was not measured.
+
+THE PROGRESS ROW WAS MISREAD, BY A FACTOR OF EIGHT. Its percentage spans the
+whole supersampled job (`done / total` in `main.ts`, unchanged since the
+removal), so "9.5% at 5 min" meant about three-quarters of pass 1, not a
+tenth of it. Re-measured, the authored pass 1 took 501 s. The gap that
+justified the removal was therefore ~20–25x per settle, not ~190x.
+
+At the SHIPPED lit ceiling:
+
+| Run                             | Settle (8 passes)   |
+| ------------------------------- | ------------------- |
+| mist density 0                  | 118.7 s, 118.8 s    |
+| authored (32 cells/pass)        | pass 1 alone 501 s  |
+| 1 cell/pass                     | 223.8 s             |
+| 4 cells/pass                    | pass 1 alone 78.3 s |
+| 1 cell/pass, 1/4 medium raster  | 219.8 s             |
+| 1 cell/pass, 1/16 medium raster | 209.4 s, 209.6 s    |
+
+- THE FENCE WORK DOES NOT BUY IT. The medium lane's fence share was 15% of its
+  wall authored and 13% at one cell. Fences were never the term that
+  mattered.
+- COST IS LINEAR IN CELLS: 4.1 / 4.7 / 5.0 s of medium wall per (cell, light)
+  sweep at 1 / 4 / 32 cells in pass 1.
+- COST IS NOT LINEAR IN RASTER. Populations of 16 : 4 : 1 gave 79.0 : 69.9 :
+  59.2 s of medium wall. A dispatch cost about as much as its slowest
+  invocation — 9.9 / 8.8 / 7.5 ms at 4096 / 1022 / 257 rays — and the dispatch
+  COUNT is 2 lights × cells × the phase-0 lit batches (~497 per pass),
+  whatever the stride.
+- The phase-0 batch width sat at the 4096 ceiling in 3,970 of 3,976 steps, at
+  ~15–25 ms per dispatch against its own 50 ms target. The ceiling, not the
+  time target, was binding.
+
+With the ceiling lifted (`?surfacelitceiling`):
+
+| Run                             | Settle        | vs mist off |
+| ------------------------------- | ------------- | ----------- |
+| mist density 0, ceiling 65536   | 21.52 s       | 1.00x       |
+| 1 cell/pass, ceiling 16384      | 67.60 s       | 3.14x       |
+| 1 cell/pass, ceiling 65536      | 33.45 s       | 1.55x       |
+| 1 cell/pass, 1/16 raster, 65536 | 32.57 s       | 1.51x       |
+| authored, ceiling 65536         | pass 1 99.6 s | 15.1x       |
+
+The mist-free frame is BYTE-IDENTICAL to the shipped-ceiling one (maximum
+difference 0, identical coverage census), and so is the one-cell frame.
+Width is scheduling. Raised, the ladder stops at 49.7–50.0k rays, bound by
+the 50 ms target on phase-0 cost; the worst single dispatch was 67 ms. A
+medium dispatch stayed at 9–12 ms from 257 rays up to 50k. The 4096 had no
+stated derivation: it arrived with the lighting integration as a fixed
+conservative width, copied from the unlit shade batch's number. It throttles
+every lit compute settle on this hardware, mist or not, and lifting it is
+separate work that must be verified on Iris (the i915 watchdog) and on
+Firefox (the staging-volume ceiling) first.
+
+WHAT THAT SAYS ABOUT THE THREE TECHNIQUES:
+
+1. A progressive dimension of the medium's own is the PREREQUISITE for the
+   other two, not a parallel option. Medium dispatches stay nearly flat in
+   cost out to 50k rays, while phase 0 saturates there. A medium tied to
+   phase-0 batches therefore pays per BATCH, and shrinking its population
+   shrinks only the width. Not built. The reverted frame-wide sweep's warning
+   (per-dispatch active-list re-aiming, the base offset the frozen run
+   params lack) still applies to building it.
+2. A quarter-resolution medium is REFUTED as a lever while that coupling
+   stands: 1/16 of the rays saved 3% with the ceiling lifted and 14% without
+   it.
+3. A few cells per pass, averaged over the antialiasing passes, WORKS and is
+   linear. It is the interleaved schedule `?surfacemediumcells` implements.
+
+4D, at the shipped ceiling only (`simpleFourD` fixture, same pane): mist-free
+was capped at 1200 s with 6 of 8 passes (pass 1 264 s, then ~175 s each);
+1 cell/pass with a 1/16 medium raster completed 7 of 8 (~151–162 s each, 13–24
+s of medium wall per pass). That fixture's lit batches are TIME-bound at
+~240 rays, so the ceiling never binds in 4D. There the surface itself is the
+expensive term and a one-cell medium is ~10% on top. Its faster passes are a
+batching side effect (misses pad the lit batches), not a free medium.
+
+THE LOOK is now the open question, and it is the owner's call. With the
+ceiling lifted, the interleaved schedule settled the pane in:
+
+- 33.45 s (1.55x) at 8 strata — 1 cell per pass;
+- 62.1 s (2.9x) at 32 strata — 4 cells per pass;
+- 99.9 s (4.6x) at 64 strata — 8 cells per pass.
+
+Against the 64-strata frame, 8 strata differ by 1.33/255 on average, with 4.0%
+of pixels beyond 4/255; 32 strata differ by 0.66/255, with 1.6%. The
+mist-free frame differs by 16/255 over 72% of pixels, so the mist is most of
+the composition. At 1:1 the remaining error is GRAIN, with no banding: 8
+strata is visibly speckled, 32 grainy, and 64 smoother but still grainy.
+
+The authored 256 strata (32 cells per pass) did not settle at the lifted
+ceiling. The device was LOST at 182 s, in pass 5, and the kernel logged an
+amdgpu `ring gfx_0.0.0 timeout` — AMD's counterpart of the i915 watchdog. Its
+first pass alone had completed with a worst traced dispatch of 40 ms, so the
+traced dispatch time does not bound what the driver's job timeout sees. It is
+not established whether that timeout needs the lifted ceiling, the 256-strata
+sweep, or both. Either way, lifting the ceiling has to be shown safe before a
+medium is reconsidered.
+
+A separate cost surfaced along the way. The authored pass 1 spent 151 s of
+its 501 s in 687 progressive presents, ~220 ms apiece: a full-frame readback
+roughly every 500 ms. Any compute settle slow enough to present often pays
+it, so it is not medium-specific.
 
 ## The reference review (historical)
 
