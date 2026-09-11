@@ -1654,8 +1654,8 @@ average — was a TRAP: every pass re-runs phase 0, ~23.7 s of surface shade
 at pane scale, so reaching the authored sample count would have cost
 ~2.7 h. The medium needed its own progressive dimension over
 already-shaded terminals. Nobody built it: a later full-pane measurement
-put the authored cathedral at 9.5% of its FIRST pass after five minutes,
-against 130 s for a complete eight-pass settle with the mist off, and the
+put the authored cathedral at 9.5% after five minutes, against 130 s for a
+complete eight-pass settle with the mist off, and the
 medium was removed rather than optimized. Without it a lit frame is the
 surface half alone — which is the 130 s.
 
