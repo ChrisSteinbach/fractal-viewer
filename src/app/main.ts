@@ -12253,6 +12253,10 @@ async function main(): Promise<void> {
   // shade cost model's own record demands of any per-unit cost claim.
   // `?surfacefencegroup=N` pins the fourth dial, how many dispatches one
   // fence stands behind, where N=1 is the pre-grouping loop exactly.
+  // `?surfacelitceiling=N` is a fifth, MEASUREMENT-ONLY pin: it replaces
+  // the lit hit ladder's climb ceiling (shipped 4096) without fixing the
+  // width the way `surfaceshadehits` does — the ladder still paces by its
+  // own time target.
   // Diagnostics only, same URL convention as ?surfacetrace above; see
   // setSurfaceComputeSchedulePins.
   {
@@ -12267,6 +12271,13 @@ async function main(): Promise<void> {
       marchSteps: pin("surfacemarchsteps"),
       shadeHits: pin("surfaceshadehits"),
       fenceGroup: pin("surfacefencegroup"),
+      // `?surfacelitceiling=N`: MEASUREMENT-ONLY override of the lit hit
+      // ladder's climb ceiling (SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS),
+      // in place of the shipped 4096 — the ladder still paces by its own
+      // time target, so this widens or narrows where it stops climbing
+      // rather than fixing a width the way `surfaceshadehits` does. See
+      // setSurfaceComputeSchedulePins.
+      litCeiling: pin("surfacelitceiling"),
     });
     // MEASUREMENT-ONLY experiment levers for the participating medium's
     // cost: `?surfacemediumcells=N` cells per progressive pass (distinct

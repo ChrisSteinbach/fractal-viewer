@@ -272,6 +272,19 @@ let surfaceComputeFenceGroupPin: number | null = null;
 let surfaceComputeMarchChunkPin: number | null = null;
 let surfaceComputeMarchStepsPin: number | null = null;
 let surfaceComputeShadeHitsPin: number | null = null;
+/** MEASUREMENT-ONLY: `?surfacelitceiling=N` replaces {@link
+ * SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS} — the lit hit ladder's climb
+ * CEILING — everywhere that constant gates the ladder: the width clamp in
+ * {@link surfaceComputeLightingRayBatch} and the growth ceiling in {@link
+ * nextLightingRayCap}. UNLIKE `?surfaceshadehits`, which FIXES the hit
+ * width outright and stops the ladder from pacing at all, this only moves
+ * where the ladder may stop climbing — it still paces by
+ * {@link SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS} exactly as shipped,
+ * doubling on a cheap dispatch and quartering on an overrun. Null/absent
+ * leaves the shipped 4096 ceiling untouched, byte-identical behaviour.
+ * Read through {@link surfaceComputeLightingCeiling} rather than the raw
+ * variable so every caller sees the same fallback. */
+let surfaceComputeLitCeilingPin: number | null = null;
 
 function positivePin(value: number | null | undefined): number | null {
   return value !== null &&
@@ -289,11 +302,13 @@ export function setSurfaceComputeSchedulePins(pins: {
   marchSteps?: number | null;
   shadeHits?: number | null;
   fenceGroup?: number | null;
+  litCeiling?: number | null;
 }): void {
   surfaceComputeFenceGroupPin = positivePin(pins.fenceGroup);
   surfaceComputeMarchChunkPin = positivePin(pins.marchChunk);
   surfaceComputeMarchStepsPin = positivePin(pins.marchSteps);
   surfaceComputeShadeHitsPin = positivePin(pins.shadeHits);
+  surfaceComputeLitCeilingPin = positivePin(pins.litCeiling);
 }
 
 /** Threads per workgroup — the kernel spike's measured winner (private
@@ -1874,6 +1889,18 @@ interface ShadeSizerState {
 export const SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS = 4096;
 const SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS = 50;
 
+/** The lit ladder's live ceiling: {@link surfaceComputeLitCeilingPin} when
+ * `?surfacelitceiling=N` set one, else the shipped
+ * {@link SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS}. The one read site
+ * both {@link surfaceComputeLightingRayBatch} and {@link
+ * nextLightingRayCap} share, so the pin cannot move one without the
+ * other. */
+function surfaceComputeLightingCeiling(): number {
+  return (
+    surfaceComputeLitCeilingPin ?? SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS
+  );
+}
+
 /** Separate terminal and complete-cell-sweep economics; the more expensive
  * model bounds the ray width. A wider dispatch still has one cell/light per
  * invocation, and starts a fresh individually fenced medium pilot. */
@@ -1891,7 +1918,7 @@ export function surfaceComputeLightingRayBatch(
     Math.max(1, cost.marginalUs);
   const width = Math.min(
     cap,
-    SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
+    surfaceComputeLightingCeiling(),
     affordable(surfaceCost),
     mediumCost
       ? affordable(mediumCost) / Math.max(1e-6, mediumRaysPerBatchRay)
@@ -1932,17 +1959,22 @@ export function surfaceComputeLightingRayBatch(
  * machine — and a 64x width bought only 2.4x the dispatch for a 17.7x
  * settle. Coverage was identical (3840 covered / 256 miss / 0 exhausted)
  * at every width: this is scheduling, and the image does not change.
- * Pure so the safety bias is unit-tested.
+ * Pure GIVEN the {@link surfaceComputeLightingCeiling} it reads — the
+ * ceiling itself is `?surfacelitceiling`-pinnable (measurement-only,
+ * see {@link setSurfaceComputeSchedulePins}), absent leaves it exactly
+ * {@link SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS} and the function
+ * unit-tests as pure.
  */
 export function nextLightingRayCap(
   current: number,
   worstDispatchMs: number,
 ): number {
+  const ceiling = surfaceComputeLightingCeiling();
   if (
     worstDispatchMs < SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS &&
-    current < SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS
+    current < ceiling
   ) {
-    return Math.min(current * 2, SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS);
+    return Math.min(current * 2, ceiling);
   }
   if (worstDispatchMs > SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS * 2) {
     return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.floor(current / 4));
