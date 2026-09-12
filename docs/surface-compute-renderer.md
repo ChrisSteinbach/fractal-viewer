@@ -1975,3 +1975,38 @@ allocation error-scope round trip, where a real frame parks deeper on
 span either way, but no Node process can say whether a driver survives a
 teardown under it. `scripts/surface-teardown.verify.mjs` on a real
 Firefox stays the authority on that.
+
+### The browser teardown gates
+
+Both gates are not npm scripts — they need a real Firefox build with WebGPU
+enabled on a display, and they gate renderer LIFECYCLE rather than built
+output, so the dev server hosts them: `npm run dev &`, then
+
+```
+node scripts/surface-teardown.verify.mjs --lens --toggleId=__modeExit --toggles=20
+node scripts/flame-teardown.verify.mjs --toggles=12
+```
+
+The surface gate restarts or exits a live surface session while
+`SurfaceComputeRenderer` still has a frame parked on submitted GPU work —
+the widest trigger, a mode exit, is what undo/redo, a preset load and
+clicking Points all reach — which used to take down the whole Firefox
+process rather than the tab. Exit 0 is a clean sweep, exit 3 means it
+reproduced.
+
+Its flame sibling storms the palette select — `setPalette` has no equality
+guard, so every toggle reaches `startAccumulation` and therefore
+`backend.destroy()` — against a 2B-iteration accumulation, so each teardown
+lands on an op parked on `mapAsync`/`onSubmittedWorkDone`. Same 0/3 verdicts
+plus exit 2 for INCONCLUSIVE, which is the one this gate needs and the
+surface one does not: a run that fell back to CPU (or a software adapter),
+or never caught a restart, never exercised the path and must not read as a
+pass — so it counts `Flame GPU: backend up on` lines rather than trusting
+`#flameProgress`, whose percentage stays rounded at 0% through a storm this
+fast. `--toggleId=` also takes `flameSupersampleSlider`,
+`symmetryOrderSlider`, and the sentinel `__modeExit` — that last one is
+INFORMATIONAL, not a gate on the deferred teardown: leaving flame mode never
+calls `destroy()` at all, since main.ts kills the worker with
+`worker.terminate()`, orphaning a live map a different way. MEASURED on this
+stack (RX 7900 XTX, real Firefox): a regression gate rather than a
+reproduction — the crash does not reproduce on it.

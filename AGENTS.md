@@ -158,14 +158,13 @@ export DISPLAY=:0
 glxinfo -B | grep "OpenGL renderer"   # MUST be a REAL hardware driver, never SwiftShader/llvmpipe
 ```
 
-The development machine is WHATEVER MACHINE IS AVAILABLE — it has been an Iris
-Xe (i915) and is currently an AMD RX 7900 XTX (radeonsi, navi31) — so the
-check names no vendor: the renderer line must name a real hardware driver
-(e.g. `Mesa Intel(R) Iris(R) Xe`, `AMD Radeon RX 7900 XTX (radeonsi, ...)`),
-never `SwiftShader` or `llvmpipe`. The Iris/i915 figures quoted across the
-docs are records of the machines they were MEASURED on, not expectations
-about the machine you are on; a claim those gates re-measure here gets this
-machine's number beside the old one, never silently substituted for it.
+The development machine is WHATEVER MACHINE IS AVAILABLE (an Iris Xe before,
+an AMD RX 7900 XTX now), so the check names no vendor: the renderer line must
+name a real hardware driver, never SwiftShader/llvmpipe. The Iris/i915
+figures quoted across the docs are records of the machines they were MEASURED
+on, not expectations about the machine at hand; a claim a gate re-measures
+here gets this machine's number beside the old one, never silently
+substituted for it.
 
 CHECK THAT LINE BEFORE BELIEVING A REAL-DRIVER ROW. A SwiftShader run that was
 meant to be a real-driver run is the failure mode this note exists to stop — one
@@ -174,14 +173,12 @@ session shipped its whole measurement set on software before noticing.
 AND A CONTENDED MACHINE IS NOT A MEASUREMENT. "Run it on a quiet machine" was
 unverifiable, and no owner can be asked to coordinate, so it is CHECKED:
 `scripts/lib/machine-quiet.mjs` attributes GPU busy time PER PROCESS off DRM
-fdinfo (a global percentage cannot tell whose work it is). It is WIRED IN, not
-optional: `bench:gpu`/`bench:surface` (gpu-flame-bench.mjs), the shared
-surface-browser-runner launcher, the direct-launching real-driver gates and
-probes (slice-cliff, shade-width-ab, march-readback-ab, fold-width-sweep,
-fence-cost/fence-phase, surface-post/4d/4d-lift, escape-family, ground-plane,
-balloon-*) and the browser harness sheet all take the baseline BEFORE their
-browser launches and print it — a contended run says so (UNCERTIFIED) in its
-own output rather than being believed. UNKNOWN NEVER READS AS QUIET.
+fdinfo (a global percentage cannot tell whose work it is), and EVERY gate
+that measures a real driver — the bench, the shared browser launcher, the
+direct-launching gates and probes, the browser harness sheet — takes the
+baseline BEFORE its browser launches and prints it; a contended run says so
+(UNCERTIFIED) in its own output rather than being believed. UNKNOWN NEVER
+READS AS QUIET.
 
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
 
@@ -197,9 +194,9 @@ of the `#v1=` document hash rather than the panel (the transform list hides
 outside explorer mode, so a DOM probe passes vacuously); and WHICH ENGINE each
 session takes — measured compute for all nine, which is what keeps the
 `core:"bulb"` WGSL kernel from being dead code. It also gates the empty-set
-toast, the `antialiasing pass k/8` disclosure, and that a TRUSTED CLICK ON
-THE POINTS MODE BUTTON lands mid-settle (the no-automatic-give-up line's
-standing assumption, caught off the settle latch itself). `--mode=sw` runs everything
+toast, the `antialiasing pass k/8` disclosure, and that a TRUSTED CLICK lands
+mid-settle (the no-automatic-give-up line's standing assumption, caught off
+the settle latch itself). `--mode=sw` runs everything
 but the engine question without a display.
 
 The 4D lifts' gate (chain, ground plane and balloon, same prerequisites):
@@ -281,36 +278,17 @@ controlling SW, no console errors; exit 2 is a CHECKING failure
 automatically as `verify-live`; hand-run it for another origin, or outside
 a deploy (DNS/Pages changes, diagnosing a report against production).
 
-The WebGPU compute-surface teardown gate (not an npm script — it
-needs a real Firefox build with WebGPU enabled on a display, and it gates
-renderer LIFECYCLE rather than built output, so the dev server hosts it):
-`npm run dev &` then
-`node scripts/surface-teardown.verify.mjs --lens --toggleId=__modeExit
---toggles=20`. It restarts or exits a live surface session while
-`SurfaceComputeRenderer` still has a frame parked on submitted GPU work —
-the widest trigger, a mode exit, is what undo/redo, a preset load and
-clicking Points all reach — which used to take down the whole Firefox
-process rather than the tab; exit 0 is a clean sweep, exit 3 means it
-reproduced.
-
-Its flame sibling (same prerequisites, same dev server):
-`node scripts/flame-teardown.verify.mjs --toggles=12`. It storms the
-palette select — `setPalette` has no equality guard, so every toggle
-reaches `startAccumulation` and therefore `backend.destroy()` — against a
-2B-iteration accumulation, so each teardown lands on an op parked on
-`mapAsync`/`onSubmittedWorkDone`. Same 0/3 verdicts plus exit 2 for
-INCONCLUSIVE, which is the one this gate needs and the surface one does
-not: a run that fell back to CPU (or a software adapter), or never caught
-a restart, never exercised the path and must not read as a pass — so it
-counts `Flame GPU: backend up on` lines rather than trusting
-`#flameProgress`, whose percentage stays rounded at 0% through a storm
-this fast. `--toggleId=` also takes `flameSupersampleSlider`,
-`symmetryOrderSlider`, and the sentinel `__modeExit` — that last one is
-INFORMATIONAL, not a gate on the deferred teardown: leaving flame mode never
-calls `destroy()` at all, since main.ts kills the worker with
-`worker.terminate()`, orphaning a live map a different way. MEASURED a
-regression gate rather than a reproduction: the crash does not reproduce on
-this stack.
+The WebGPU compute-surface and flame teardown gates (not npm scripts — they
+need a real Firefox build with WebGPU enabled on a display, and they gate
+renderer LIFECYCLE rather than built output, so the dev server hosts them):
+`npm run dev &` then `node scripts/surface-teardown.verify.mjs --lens
+--toggleId=__modeExit --toggles=20` and `node
+scripts/flame-teardown.verify.mjs --toggles=12` — each restarts or exits a
+live session while a frame is still parked on submitted GPU work, which used
+to take down the whole Firefox process rather than the tab. Exit codes, the
+flame gate's INCONCLUSIVE channel, and the measured verdicts (regression
+gates, not reproductions, on this stack) in
+`docs/surface-compute-renderer.md`.
 
 The flame Save-PNG gate (not an npm script — it asserts what a
 downloaded IMAGE contains, which no unit test reaches):
