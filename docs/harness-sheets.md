@@ -606,6 +606,21 @@ properly-dark recesses (1.0% -> 18.5%) and the per-transform colour transfer
 no cheaper approach reaches. Its local shading is pinned `finishShadeTs`-exact
 at the shipped constants.
 
+### finish-transmission
+
+Audits the current backdrop-only finish against straight-through surface
+layers and a rear-image slab warp, using the shared CPU renderer and the
+production Menger, Mandelbox, native posed Pentatope/Tesseract and native
+4D Mandelbox estimators. A linear-fade control isolates colour-space changes;
+removing a hidden opaque sphere proves that continuation actually reads rear
+geometry. Budget exhaustion remains unresolved, never a background miss.
+The Menger becomes a visible internal lattice, with a more glasslike warped
+variant, at substantial continuation-query cost. The sampled clearance scan
+and image-space warp are research mechanisms, not qualified production
+transport. Sources, measured rows and the optical-solid alternative are in
+[`surface-transmission.md`](surface-transmission.md). Outputs live under
+`scripts/out/transmission-*` and are regenerated rather than committed.
+
 ### finish-pattern-review-score
 
 The blinded owner-review validator's own test harness

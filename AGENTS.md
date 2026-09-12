@@ -944,16 +944,14 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     reload/export and held Points. The Flame proposal-CDF refusal's sheet is
     `scripts/flame-tiling-4d.harness.ts`. Full contract and proof:
     `docs/tiling-contract.md`.
-  - `surface-finish.ts` — the per-transform surface FINISH's meaning:
-    `resolveSurfaceFinish` is the ONE absent-means-classic definition +
-    domain (classic = the fixed formula's 0.4/32/0/0/0; shininess FLOORS
-    at 0.01, pow's domain, rather than falling back),
-    `isClassicSurfaceFinish` the compile gate's predicate,
-    `surfaceFinishLanes` the one wire-lane order both engines pack, and
-    `surfaceFinishShadeSource` emits ONE finish BRDF in both shader dialects;
-    `finishShadeTs` pins classic value identity, the compile gates byte identity.
-    `Transform.finish` persists/morphs/mutates on the fold lengths'
-    exact treatment (random-system deliberately never rolls one).
+  - `surface-finish.ts` owns the finish domain and absent-means-classic
+    (0.4/32/0/0/0; shininess floors at 0.01), the compile predicate and ONE
+    shader body for both dialects. Both engines share material lane order;
+    CPU values and classic shader bytes are pinned. Finish
+    persists/morphs/mutates like fold lengths; random-system never rolls one.
+    TRANSMISSION: backdrop fading cannot reveal rear geometry; sampled layers
+    can, in 3D/4D, but glass needs a defined optical model and the prototype's
+    exit scan is not production-ready. Evidence: `docs/surface-transmission.md`.
     Pattern-albedo remains REFUSED; the rings-wood refusal, confirmed zoom
     premise and deferred sheets banding live in `scripts/finish-pattern.harness.ts`.
     Authored rigs (`surface-lighting.ts`) share ONE shader emitter across both
