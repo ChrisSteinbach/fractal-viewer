@@ -754,6 +754,24 @@ where no mid crossing happens, i.e. on the systems that ALREADY have the
 exact slab, while every system it is FOR crosses that branch. Two named
 instruments would reopen it.
 
+### slab-adaptive
+
+Continuous subdivision of the original 4D query segment over the existing
+point DE, compared with the whole-slab ball relaxation, the shipped segment
+oracle, and an exact finite-reflection polyline prototype. Checks analytic
+distance bounds and zero-thickness identity, explicitly separates unfinished
+queries from hits/misses, and checks all six reflection groups against
+independently enumerated point orbits. The shared CPU marcher draws affine,
+boxfold-final, Mandelbox-final, A4, A4-with-Mandelbox, and recursive-spherefold
+cases.
+
+Verdict (2026-09-12): finite reflection wall splitting has a bounded exact
+query representation; generic adaptive queries preserve substantially more
+detail than the old dilation but have no small resolution-independent work
+cap. Both remain prototypes. Numerical evidence, limits and the production
+work still owed are in `surface-slice-thickness.md`; existing slab refusals
+are unchanged.
+
 ### escape-4d
 
 The 4D chain's own measure-before-building sheet, and the one that
