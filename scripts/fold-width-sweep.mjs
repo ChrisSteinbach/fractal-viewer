@@ -101,6 +101,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -661,6 +662,19 @@ function printSummary(results) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   loadOriginalSource();
+
+  // The machine's conditions, before this sweep puts its own browser on
+  // the GPU: the per-width settle times ARE its output, and a contender on
+  // the ring bounds them too — so the run carries its own conditions
+  // rather than asserting "a quiet machine" in prose.
+  const quiet = await quietBaseline(console.error);
+  const contended = contendedReason(quiet);
+  if (contended) {
+    console.error(
+      `[fold-sweep] UNCERTIFIED: another process was already on the GPU — ${contended};` +
+        " do not read this run's timing rows.",
+    );
+  }
 
   const results = [];
   try {

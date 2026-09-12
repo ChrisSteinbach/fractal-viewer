@@ -44,6 +44,7 @@
  */
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 /** Scene documents, `#v1=` payloads from `persist.ts`'s encoder. Each is a
  * MINIMAL document for one lift — no preset, no side table. */
@@ -185,6 +186,17 @@ async function run() {
   ];
   if (args.display !== undefined) flags.push("--no-sandbox");
   else flags.push("--headless=new");
+  // The machine's conditions, before this gate puts its own browser on the
+  // GPU: the engine column is a measurement, so the run carries its own
+  // conditions rather than asserting "a quiet machine" in prose.
+  const quiet = await quietBaseline(console.error);
+  const contended = contendedReason(quiet);
+  if (contended) {
+    console.error(
+      `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+        " do not read this run's engine/timing rows.",
+    );
+  }
   const browser = await chromium.launch({
     executablePath: process.env.CHROME_PATH ?? "/usr/bin/google-chrome",
     headless: false,

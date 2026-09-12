@@ -1,5 +1,6 @@
 import process from "node:process";
 import { chromium } from "playwright-core";
+import { contendedReason, quietBaseline } from "./machine-quiet.mjs";
 
 export const RELEASE_VIEWPORT = Object.freeze({ width: 960, height: 540 });
 export const RELEASE_DEVICE_SCALE_FACTOR = 1;
@@ -65,13 +66,33 @@ export function surfaceLaunchOptions(mode) {
 }
 
 export async function launchSurfaceBrowser(mode) {
+  // The machine's conditions, before this launcher puts its own browser on
+  // the GPU. Every real-driver gate that comes through here asks for "a
+  // QUIET machine" in prose; the baseline is what makes that checkable —
+  // in the run's own output, with UNKNOWN spelled out rather than reading
+  // as quiet. Report-only: a behavior gate's verdict survives contention,
+  // and each gate that measures (rather than asserts) refuses on its own —
+  // `quiet` is exposed on the browser for it.
+  const quiet = await quietBaseline((line) =>
+    console.error(`[surface-browser] ${line}`),
+  );
+  const contended = contendedReason(quiet);
+  if (contended) {
+    console.error(
+      `[surface-browser] NOTE: another process was already on the GPU — ${contended}.` +
+        " A behavior verdict still stands; a timing or settle-budget row" +
+        " from this run does not.",
+    );
+  }
   const launch = surfaceLaunchOptions(mode);
-  return chromium.launch({
+  const browser = await chromium.launch({
     executablePath: chromium.executablePath(),
     headless: false,
     env: launch.env,
     args: launch.args,
   });
+  browser.gpuQuiet = quiet;
+  return browser;
 }
 
 /**

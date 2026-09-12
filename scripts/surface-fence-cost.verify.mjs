@@ -121,6 +121,7 @@
 import { chromium, firefox } from "playwright-core";
 import { writeFileSync } from "node:fs";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -314,6 +315,18 @@ async function main() {
   await guardFreshDist({ url: BASE });
   const url = `${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}${FENCE_GROUP_Q}${enc(scene())}`;
   log(`browser=${BROWSER} viewport=${VIEWPORT.width}x${VIEWPORT.height}`);
+  // The machine's conditions, before this gate puts its own browser on the
+  // GPU: fence counts and frame times are this gate's verdict, and a
+  // contender on the ring would bound them too — so the run carries its
+  // own conditions rather than asserting "a quiet machine" in prose.
+  const quiet = await quietBaseline(log);
+  const contended = contendedReason(quiet);
+  if (contended) {
+    log(
+      `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+        " do not read this run's timing rows.",
+    );
+  }
   log(
     `url=${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}${FENCE_GROUP_Q}#…`,
   );

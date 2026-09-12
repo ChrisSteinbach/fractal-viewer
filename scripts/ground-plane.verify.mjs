@@ -16,6 +16,7 @@
  */
 import { chromium } from "playwright-core";
 import { mkdirSync } from "node:fs";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 const args = { url: "https://localhost:5174", display: ":0" };
 for (const arg of process.argv.slice(2)) {
@@ -33,6 +34,17 @@ for (const arg of process.argv.slice(2)) {
 const log = (s) => console.log(`[ground-plane.verify] ${s}`);
 mkdirSync("bench-results", { recursive: true });
 
+// The machine's conditions, before this gate puts its own browser on the
+// GPU: the settle rows below are measurements, so the run carries its own
+// conditions rather than asserting "a quiet machine" in prose.
+const quiet = await quietBaseline((line) => log(line));
+const contended = contendedReason(quiet);
+if (contended) {
+  log(
+    `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+      " do not read this run's timing rows.",
+  );
+}
 const browser = await chromium.launch({
   executablePath: chromium.executablePath(),
   headless: false,

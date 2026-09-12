@@ -127,6 +127,7 @@
  * frame-loop dispatch, instead of mixing in one random-phase draw.
  */
 import { firefox, chromium } from "playwright-core";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -146,6 +147,21 @@ const ORIGIN = "https://webgpu-fence-phase.test";
 const SOFTWARE_RE = /swiftshader|llvmpipe|software|lavapipe|microsoft basic/i;
 
 const log = (...a) => console.log("[fence-phase]", ...a);
+
+/** The once-per-process quiet baseline `launchBrowser` awaits. */
+let quietPromise = null;
+function quietOnce() {
+  quietPromise ??= quietBaseline(log).then((quiet) => {
+    const contended = contendedReason(quiet);
+    if (contended) {
+      log(
+        `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+          " do not read this run's timing rows.",
+      );
+    }
+  });
+  return quietPromise;
+}
 const round = (n) => Math.round(n * 100) / 100;
 
 function stats(nums) {
@@ -161,7 +177,12 @@ function stats(nums) {
 const fmtStats = (s) =>
   `min=${round(s.min)} med=${round(s.median)} max=${round(s.max)} n=${s.n}`;
 
-function launchBrowser(name) {
+async function launchBrowser(name) {
+  // The machine's conditions, taken ONCE before this probe puts its own
+  // work on the GPU: every number here fences real dispatches, so a
+  // contender on the ring bounds them too. Report-only — the probe's own
+  // INCONCLUSIVE channel decides what its verdict is worth.
+  await quietOnce();
   const env = { ...process.env, DISPLAY };
   if (name === "firefox") {
     return firefox.launch({

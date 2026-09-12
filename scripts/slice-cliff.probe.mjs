@@ -75,6 +75,7 @@
 import process from "node:process";
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 const args = process.argv.slice(2);
 const BASE = (
@@ -260,6 +261,18 @@ async function cell(browser, scene, hash, arm, slice) {
   return out;
 }
 
+// The machine's conditions, before this probe puts its own browser on the
+// GPU: the per-slice cost rows ARE this instrument's output, so the run
+// carries its own conditions rather than asserting "a quiet machine" in
+// prose.
+const quiet = await quietBaseline(console.error);
+const contended = contendedReason(quiet);
+if (contended) {
+  console.error(
+    `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+      " do not read this run's cost rows.",
+  );
+}
 const browser = await chromium.launch({
   executablePath: "/usr/bin/google-chrome",
   headless: false,

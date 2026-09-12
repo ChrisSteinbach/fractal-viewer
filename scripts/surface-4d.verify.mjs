@@ -97,6 +97,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.resolve(__dirname, "..", ".playwright-mcp");
@@ -318,6 +319,18 @@ function pngDiffPct(a, b) {
 async function main() {
   await mkdir(OUT_DIR, { recursive: true });
   const env = { ...process.env, DISPLAY: REAL_DISPLAY };
+  // The machine's conditions, before this gate puts its own browser on the
+  // GPU: the arm timing and IoU tables below are measurements, so the run
+  // carries its own conditions rather than asserting "a quiet machine" in
+  // prose.
+  const quiet = await quietBaseline(console.error);
+  const contended = contendedReason(quiet);
+  if (contended) {
+    console.error(
+      `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+        " do not read this run's timing rows.",
+    );
+  }
   // Real-driver launch idiom (scripts/gpu-flame-bench.mjs's --display
   // branch, copied verbatim): WebGPU reaches the real GPU through Vulkan,
   // independent of the SwiftShader/ANGLE flags a WebGL-only script needs

@@ -166,8 +166,14 @@ session shipped its whole measurement set on software before noticing.
 AND A CONTENDED MACHINE IS NOT A MEASUREMENT. "Run it on a quiet machine" was
 unverifiable, and no owner can be asked to coordinate, so it is CHECKED:
 `scripts/lib/machine-quiet.mjs` attributes GPU busy time PER PROCESS off DRM
-fdinfo (a global percentage cannot tell whose work it is). UNKNOWN NEVER READS
-AS QUIET.
+fdinfo (a global percentage cannot tell whose work it is). It is WIRED IN, not
+optional: `bench:gpu`/`bench:surface` (gpu-flame-bench.mjs), the shared
+surface-browser-runner launcher, the direct-launching real-driver gates and
+probes (slice-cliff, shade-width-ab, march-readback-ab, fold-width-sweep,
+fence-cost/fence-phase, surface-post/4d/4d-lift, escape-family, ground-plane,
+balloon-*) and the browser harness sheet all take the baseline BEFORE their
+browser launches and print it — a contended run says so (UNCERTIFIED) in its
+own output rather than being believed. UNKNOWN NEVER READS AS QUIET.
 
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
 

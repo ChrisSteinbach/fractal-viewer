@@ -276,6 +276,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { chromium } from "playwright-core";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -1973,6 +1974,18 @@ function buildJsonSummary(summary, runResult) {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  // The machine's conditions, before this A/B puts its own browser on the
+  // GPU: the march-vs-readback wall split IS the measurement, and a
+  // contender on the ring bounds it too — so the run carries its own
+  // conditions rather than asserting "a quiet machine" in prose.
+  const quiet = await quietBaseline(log);
+  const contended = contendedReason(quiet);
+  if (contended) {
+    log(
+      `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+        " do not read this run's timing rows.",
+    );
+  }
   const runResult = await driveSession();
   const summary = summarize(runResult.traceLines);
   printReport(summary, runResult);

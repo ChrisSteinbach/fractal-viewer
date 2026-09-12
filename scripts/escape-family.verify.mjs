@@ -76,6 +76,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT_DIR = path.join(HERE, "out", "escape-family");
@@ -389,6 +390,19 @@ async function main() {
   await guardFreshDist({ url: args.url });
   fs.mkdirSync(args.outdir, { recursive: true });
   const { env, args: launchArgs, headless } = launchOptions(args.mode);
+  // The machine's conditions, before this gate puts its own browser on the
+  // GPU: the engine column and settle rows are measurements, so the run
+  // carries its own conditions rather than asserting "a quiet machine" in
+  // prose. A real-driver arm with a contender is uncertified; UNKNOWN
+  // proceeds loudly (the line above spells itself out).
+  const quiet = await quietBaseline(console.error);
+  const contended = contendedReason(quiet);
+  if (contended) {
+    console.error(
+      `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+        " do not read this run's engine/timing rows.",
+    );
+  }
   const browser = await chromium.launch({
     executablePath: chromium.executablePath(),
     headless,

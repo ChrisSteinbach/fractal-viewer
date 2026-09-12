@@ -119,6 +119,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -759,6 +760,19 @@ function printSummary(sessions, args) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   mkdirSync(args.outdir, { recursive: true });
+
+  // The machine's conditions, before this A/B puts its own browser on the
+  // GPU: the settle-time deltas between the two arms are the point, and a
+  // contender on the ring bounds them too — so the run carries its own
+  // conditions rather than asserting "a quiet machine" in prose.
+  const quiet = await quietBaseline(console.error);
+  const contended = contendedReason(quiet);
+  if (contended) {
+    console.error(
+      `[shade-ab] UNCERTIFIED: another process was already on the GPU — ${contended};` +
+        " do not read this run's timing rows.",
+    );
+  }
 
   const sessions = [];
   let serverChild = null;

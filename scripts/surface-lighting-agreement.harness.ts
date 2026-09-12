@@ -10,6 +10,7 @@
  */
 import { createServer } from "node:http";
 import { chromium } from "playwright-core";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import {
   SURFACE_LIGHTING_LANE_COUNT,
   surfaceLightingLanes,
@@ -285,6 +286,20 @@ it("agrees with analytic disk transport and preserves finite visibility", async 
   if (!address || typeof address === "string")
     throw new Error("No localhost port");
   const display = process.env.SURFACE_LIGHTING_DISPLAY;
+  // The machine's conditions, before the browser puts the lit GLSL leg on
+  // the GPU: the agreement thresholds are the point, and a contender on
+  // the ring bounds the leg too — so the run carries its own conditions
+  // rather than asserting "a quiet machine" in prose. (The .mjs side of
+  // this adoption is scripts/lib/machine-quiet.mjs; this sheet is TS and
+  // reads the module directly.)
+  const quiet = await quietBaseline(console.error);
+  const contended = contendedReason(quiet);
+  if (contended) {
+    console.error(
+      `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+        " do not read this run's agreement/timing rows.",
+    );
+  }
   const browser = await chromium.launch({
     executablePath: "/usr/bin/google-chrome",
     headless: false,
