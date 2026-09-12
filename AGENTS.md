@@ -1855,7 +1855,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     regardless of routing. `?surfacecompute`/`?surfacegl` keep this
     re-measurable (`?surfacegl` wins if both given). `create()`'s opts
     also carry the session's gated finishes (null = classic kernels,
-    non-null compiles `finish: true` + stride-3 shadeMaps at create time;
+    non-null compiles `finish: true` at create time;
     the spec discloses the list so the force-frame memo re-traces a
     finish-only leg).
     `create()` takes a `SurfaceComputeTarget` union
@@ -1863,25 +1863,23 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     core (ifs4 → affine4/fold4 off `deHasFolds4`), the params packer and the maps buffer's
     layout; the march/shade host loop, presents and failure ladder stay
     shared. `isForwardTarget` names the THREE forward kinds, `isFourDTarget`
-    the two needing `view4` (`escape4` in both).
+    the two needing `view4`.
     BALLOON and FLOOR ride `ifs`/`ifs4` targets with the same precedence
     (never compile together, balloon wins); NO FORWARD KIND EVER BALLOONS,
     either dimension. `ifs4`'s rotor/slice view is PER-FRAME SPEC STATE
     (`spec.view4`, re-read per spec assembly and repacked per pass; a
     missing view4 THROWS), and
     `surfaceComputeForceFrameKey` includes the pose.
-    Owns the device and frame loop. The active-list rebuild reads the
-    march's 4 B/ray status side-channel, not the whole 16 B/ray states
-    buffer. Shade batches are sized in HIT units, never ray units —
-    misses drain the FREE queue WHOLE per sweep, and hits (plus
+    Owns the device and frame loop. Shade batches are sized in HIT units,
+    never ray units — misses drain the FREE queue WHOLE per sweep, and hits (plus
     ground-plane PLANE terminals) are FLOORED AT ONE WORKGROUP, NEVER ONE
-    HIT (within a workgroup cost is depth-dominated). The sizer carries a two-term
-    model, `cost(n) = intercept + n·marginal` (`ShadeHitCost`): sizing
+    HIT. The sizer carries a two-term model,
+    `cost(n) = intercept + n·marginal` (`ShadeHitCost`): sizing
     reads the MARGINAL alone, its FALL is rate-limited to a halving
     (`SURFACE_COMPUTE_SHADE_MARGINAL_DECAY`), ONE sizer is shared across a
     supersampling job's passes, and a partial hit batch is HELD for the
-    next sweep rather than pay the intercept for a sliver. NO SIZING RULE
-    HERE MAY BE WRITTEN IN TERMS OF `intercept` ALONE — the model only ever
+    next sweep. NO SIZING RULE HERE MAY BE WRITTEN IN TERMS OF `intercept`
+    ALONE — the model only ever
     fixes the RATIO of its two terms — so `K`
     (`SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST`) is a WIDTH, not a ratio.
     `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` sits outside the range
@@ -1890,7 +1888,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     inert cost lane is a pinned width, not a safe default. AND NO SIZING MODEL OR LADDER MAY READ A
     RAW DISPATCH TIME: the session calibrates its own fence
     round-trip once (MINIMUM of five null probes behind one unmeasured
-    tick-aligning fence; over-subtracting is unbounded) and every model, ladder and EMA reads wall MINUS
+    tick-aligning fence) and every model, ladder and EMA reads wall MINUS
     that fence, the tally alone reading wall.
     THE FENCE IS PAID PER GROUP, NOT PER DISPATCH: a dispatch is still its
     own SUBMISSION (the preemption boundary) but several queue behind ONE
@@ -1901,16 +1899,23 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     PILOTED at one. NEVER SIZE A GROUP OFF A MODEL PREDICTION (a
     dispatch's predicted cost IS the target by construction).
     `SURFACE_COMPUTE_FENCE_GROUP_MAX` IS A MEASURED CEILING, NOT A DIAL:
-    Firefox dies at FOUR queued dispatches on a VOLUME of outstanding
-    `writeBuffer` staging — the FRAME PREFILL, not the per-dispatch writes
-    (refuted) — now seeded device-side; groups also close at
+    Firefox dies at FOUR queued dispatches on outstanding `writeBuffer`
+    staging volume; groups also close at
     `SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES`; raising the count needs
     in-app measurement; a killed device never returns, so the loss latch is
-    one-way by measurement (`scripts/webgpu-staging-ceiling.repro.mjs`). A GROUP MEASURES ONCE
-    FOR N PIECES, so its attribution is FIXED per lane (module doc) and no
-    reader may invent another. `?surfacefencegroup=1` is that old loop (A/B lever). Gate:
-    `scripts/surface-fence-cost.verify.mjs`. No submission outruns the i915 watchdog;
-    presents are progressive; shading probes ride
+    one-way by measurement (`scripts/webgpu-staging-ceiling.repro.mjs`).
+    THE WATCHDOG'S UNIT IS THE FENCE INTERVAL: submissions ARE separate
+    driver JOBS (a backlog is not one — REFUTED), but ONE job is cut at
+    ~2.0 s on the AMD box (not its nominal 10 s), an unfenced interval dies
+    near 3 s logging NOTHING, and K command buffers in ONE `submit()` ARE
+    one job. NO SUBMISSION MAY OUTRUN A WATCHDOG, and what that bounds is
+    a group's MEASURED work, not its per-dispatch share; an instrument
+    read at the FENCE cannot see the dispatch that killed the device
+    (`scripts/webgpu-job-watchdog.repro.mjs`). A GROUP MEASURES ONCE
+    FOR N PIECES, so its attribution is FIXED per lane and no reader may
+    invent another. `?surfacefencegroup=1` is that old loop.
+    Gate: `scripts/surface-fence-cost.verify.mjs`. Presents are
+    progressive; shading probes ride
     `SURFACE_COMPUTE_SHADE_DE_WIDTH`; unresolved rays keep that seed.
     SUPERSAMPLING rides the loop as `opts.samples`: N FRAMES at N sub-pixel
     offsets (`subPixelSample`), averaged in LINEAR light (averaging bytes
@@ -1932,8 +1937,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `?surfacemaxrays=N` pretends a device ceiling;
     `scripts/surface-export-tile.verify.mjs` is the gate.
     `destroy()` defers the real `device.destroy()` until every in-flight
-    frame unwinds (tearing it down under a parked frame took down the
-    WHOLE Firefox process) — the fence calibration included. `destroyed`
+    frame unwinds — the fence calibration included. `destroyed`
     means teardown REQUESTED, `deviceDestroyed` means device GONE — NEVER
     call `device.destroy()` twice. Same shape as `flame-gpu-backend.ts`
     (OPS there, frames here); pinned by `surface-compute.test.ts` over a

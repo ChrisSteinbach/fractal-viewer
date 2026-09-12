@@ -167,10 +167,15 @@ The authored 256 strata (32 cells per pass) did not settle at the lifted
 ceiling. The device was LOST at 182 s, in pass 5, and the kernel logged an
 amdgpu `ring gfx_0.0.0 timeout` — AMD's counterpart of the i915 watchdog. Its
 first pass alone had completed with a worst traced dispatch of 40 ms, so the
-traced dispatch time does not bound what the driver's job timeout sees. It is
-not established whether that timeout needs the lifted ceiling, the 256-strata
-sweep, or both. Either way, lifting the ceiling has to be shown safe before a
-medium is reconsidered.
+traced dispatch time does not bound what the driver's job timeout sees. THAT
+GAP IS NOW EXPLAINED: an instrument built on fences records only the
+submissions that RESOLVE, so 40 ms was a statement about the survivors, and a
+single driver job on this machine is cut at ~2.0 s. "What the driver's job
+timeout actually bounds" in `docs/surface-compute-renderer.md` carries the
+measurement and `scripts/webgpu-job-watchdog.repro.mjs` reproduces it. What
+remains unknown is WHICH dispatch in that settle was the long one — the
+renderer had no submit-time instrument to name it. Either way, lifting the
+ceiling has to be shown safe before a medium is reconsidered.
 
 A separate cost surfaced along the way. The authored pass 1 spent 151 s of
 its 501 s in 687 progressive presents, ~220 ms apiece: a full-frame readback
