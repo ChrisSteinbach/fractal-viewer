@@ -1,12 +1,22 @@
 /**
- * The compute renderer's FENCE-SUBTRACTION gate: does a session's adaptive
- * sizing still climb on a browser whose fence round-trip is ~100 ms?
+ * The compute renderer's MEASUREMENT-CURRENCY gate: does a session's
+ * adaptive sizing still climb, and on a browser whose fence round-trip is
+ * ~100 ms, does the fence round-trip stay out of the number the sizers
+ * read?
  *
- * WHAT IT PROTECTS. `SurfaceComputeRenderer`'s frame loop times its
- * dispatches across its own `device.queue.onSubmittedWorkDone()`, so the
- * fence round-trip is inside the measured number. Fed raw to the CAPS — which compare a TOTAL
- * dispatch time against a budget — a per-fence constant is fatal rather
- * than merely wasteful. MEASURED on this machine's AMD RX 7900 XTX,
+ * WHAT IT PROTECTS. `SurfaceComputeRenderer`'s frame loop sizes every
+ * dispatch from a measured duration. Since the pass-duration instrument
+ * shipped, the currency is the GPU-side kind whenever the device exposes
+ * `timestamp-query` (a `timestampWrites` pair per compute pass, resolved
+ * and read back through the passes' own submissions): the pass's own
+ * begin-to-end ON THE DEVICE, which is the currency the driver's job
+ * deadline is denominated in. Where the feature is absent (and wherever
+ * `--ts=0` pins it off) the fallback currency is the fence-subtracted
+ * wall share, which this gate was originally written for:
+ *
+ * the frame loop times its dispatches across its own
+ * `device.queue.onSubmittedWorkDone()`, so the fence round-trip is inside
+ * the measured number. MEASURED on this machine's AMD RX 7900 XTX,
  * hardware adapters confirmed in both browsers: a fenced null dispatch
  * costs 100.960 ms in Firefox against 3.265 ms in Chrome. Firefox's round
  * 100 ms suggests the promise resolves on a polling tick, so the price is
@@ -17,18 +27,25 @@
  * the session — one full-pane lit pass turning Chrome's 517 dispatches into
  * roughly 30,000, each paying another ~100 ms.
  *
- * The fix measures the session's OWN fence round-trip once, at its first
- * real dispatch (one leading alignment null dispatch, then the minimum of
- * five COUNTED ones — see `surface-compute.ts`'s
+ * The fallback fixes that by measuring the session's OWN fence round-trip
+ * once, at its first real dispatch (one leading alignment null dispatch,
+ * then the minimum of five COUNTED ones — see `surface-compute.ts`'s
  * `SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES` for why the alignment probe
- * exists), and subtracts it in `flushGroup` before `nextShadeHitCost`, `nextShadeBatchSize`,
- * `nextLightingRayCap` and the march's per-ray-step EMA read the value.
+ * exists), and subtracting it in `flushGroup` before `nextShadeHitCost`,
+ * `nextShadeBatchSize`, `nextLightingRayCap` and the march's per-ray-step
+ * EMA read the value. The GPU currency needs no subtraction — there is no
+ * fence inside a pass's own duration — but the calibration still runs in
+ * both currencies, so the traced figure stays the gate's regression signal.
+ *
  * This gate drives the built app in a real browser and asks the questions
  * that settle it: was the round-trip measured at all, did the ladder
  * climb, and HOW MANY HITS did an average hit dispatch carry — that last
  * one because it is the pinning's own signature (a pinned ladder carries
  * exactly one workgroup) and it does not depend on how fast the machine
- * is.
+ * is. It also reports WHICH currency each group was priced in (`src=gpu`
+ * vs `src=wall` off the trace's fence lines) — the instrument is the
+ * thing that changed, so its engagement is part of the record — and a
+ * `--ts=0` arm that still shows `src=gpu` is a pin regression.
  *
  * MEASURED, this repository's AMD RX 7900 XTX on DISPLAY=:0, production
  * build, the fixture below, one antialiasing pass, settle frame's own
@@ -113,7 +130,8 @@
  *
  * Flags: --browser=firefox|chrome, --url=, --display=:0, --viewport=WxH,
  * --fencegroup=N (pin the fence group; 1 = one fence per dispatch, the
- * pre-grouping loop),
+ * pre-grouping loop), --ts=0 (pin the measurement currency to the
+ * fence-subtracted wall share — the instrument's own A/B arm),
  * --samples=N (antialiasing passes, default 1 — the ladder question is
  * answered by pass one and eight passes cost eight settles),
  * --timeoutMs=, --lighting, --headless, --log=<file> (dump the raw trace).
@@ -147,6 +165,16 @@ const FENCE_GROUP_Q =
   FENCE_GROUP && Number.isFinite(FENCE_GROUP) && FENCE_GROUP >= 1
     ? `&surfacefencegroup=${String(Math.floor(FENCE_GROUP))}`
     : "";
+/** `--ts=0` -> `?surfacets=0`, pinning the sizers to the fence-subtracted
+ * wall share; `--ts=1` -> `?surfacets=1`, forcing the GPU currency past
+ * the fence-cost ceiling. THE INSTRUMENT'S OWN A/B ARMS: on a device that
+ * carries timestamp-query, the currencies are measurable back to back on
+ * this one build, and the flags are their levers. Absent leaves the
+ * measured rule (GPU currency where the session's own fence round-trip
+ * is cheap, wall otherwise). */
+const TS_PARAM = args.ts === undefined ? null : String(args.ts);
+const TS_OFF = TS_PARAM === "0";
+const TS_Q = TS_PARAM === null ? "" : `&surfacets=${TS_PARAM}`;
 const POLL_MS = 250;
 const [vw, vh] = String(args.viewport ?? "1280x720")
   .split("x")
@@ -256,6 +284,10 @@ async function launch() {
         "--enable-features=Vulkan",
         "--enable-unsafe-webgpu",
         "--ignore-gpu-blocklist",
+        // The GPU-side pass-duration currency this gate now reports.
+        // Without it Chrome exposes no `timestamp-query` feature and every
+        // group prices from the wall fallback.
+        "--enable-dawn-features=allow_unsafe_apis",
       ],
     });
   }
@@ -276,18 +308,31 @@ function readTrace(lines) {
   // preemption boundary), and what falls is how many of them a single
   // `onSubmittedWorkDone` round-trip stands behind.
   let fences = 0;
+  // THE MEASUREMENT CURRENCY, per group: the trace's fence lines say
+  // `src=gpu` when the group was priced from its timestamp pairs and
+  // `src=wall` from the fence-subtracted share. The start line's `ts=`
+  // says whether the instrument was armed at all for that frame.
+  let gpuGroups = 0;
+  let wallGroups = 0;
+  let tsArmed = null;
   let firstCap = null;
   let done = null;
   for (const line of lines) {
     const start = /shadeHitCap0=(\d+)/.exec(line);
     if (start && firstCap === null) firstCap = Number(start[1]);
+    const tsFlag = /\bts=(on|off)\b/.exec(line);
+    if (tsFlag) tsArmed = tsFlag[1];
     const cap = /cap→(\d+)/.exec(line);
     if (cap) caps.push(Number(cap[1]));
     const lit = /rayCap→(\d+)/.exec(line);
     if (lit) litCaps.push(Number(lit[1]));
     if (line.includes("shade END")) shadeDispatches++;
     if (line.includes("march END")) marchDispatches++;
-    if (/\bfence (march|shade) dispatches=/.test(line)) fences++;
+    if (/\bfence (march|shade) dispatches=/.test(line)) {
+      fences++;
+      if (/\bsrc=gpu\b/.test(line)) gpuGroups++;
+      else if (/\bsrc=wall\b/.test(line)) wallGroups++;
+    }
     if (line.includes("frame done")) done = line;
   }
   // The trace prefix is ms since THIS frame's start, so the last
@@ -310,13 +355,16 @@ function readTrace(lines) {
     shadeDispatches,
     marchDispatches,
     fences,
+    gpuGroups,
+    wallGroups,
+    tsArmed,
     done,
   };
 }
 
 async function main() {
   await guardFreshDist({ url: BASE });
-  const url = `${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}${FENCE_GROUP_Q}${enc(scene())}`;
+  const url = `${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}${FENCE_GROUP_Q}${TS_Q}${enc(scene())}`;
   log(`browser=${BROWSER} viewport=${VIEWPORT.width}x${VIEWPORT.height}`);
   // The machine's conditions, before this gate puts its own browser on the
   // GPU: fence counts and frame times are this gate's verdict, and a
@@ -331,7 +379,7 @@ async function main() {
     );
   }
   log(
-    `url=${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}${FENCE_GROUP_Q}#…`,
+    `url=${BASE}/?surfacestate&surfacetrace&surfacesamples=${String(SAMPLES)}${FENCE_GROUP_Q}${TS_Q}#…`,
   );
   const browser = await launch();
   const ctx = await browser.newContext({
@@ -384,6 +432,9 @@ async function main() {
 
   log(`engine=${probe?.engine ?? "?"} backend=${probe?.backend?.label ?? "?"}`);
   log(`software=${String(probe?.backend?.software ?? "?")}`);
+  log(
+    `instrument: ts=${t.tsArmed ?? "?"} gpuGroups=${t.gpuGroups} wallGroups=${t.wallGroups}`,
+  );
   log(
     `fence round-trip: ${t.fenceMs === null ? "NOT CALIBRATED" : `${t.fenceMs.toFixed(2)} ms`}`,
   );
@@ -465,6 +516,29 @@ async function main() {
     log(
       `FAIL: ${String(t.fences)} fences for ${String(dispatches)} dispatches — ` +
         "grouping never engaged, every dispatch is paying its own round-trip",
+    );
+    return 3;
+  }
+  // A --ts=0 arm must price EVERY group from the wall share: the pin is
+  // the instrument's own A/B switch, and a gpu-priced group under it is
+  // the pin failing to bite.
+  if (TS_OFF && t.gpuGroups > 0) {
+    log(
+      `FAIL: ${String(t.gpuGroups)} gpu-priced groups under ?surfacets=0 — ` +
+        "the measurement-currency pin did not bite",
+    );
+    return 3;
+  }
+  // ON CHROME (no pin) the instrument must actually ENGAGE: the session's
+  // fence round-trip is measured ~2.4 ms there, far under the 25 ms
+  // engagement ceiling, so a settle that prices every group from the wall
+  // share means the pass-duration instrument broke — the exact regression
+  // this work shipped. On Firefox the wall currency IS the expected
+  // default (its ~100 ms fence exceeds the ceiling), so the currency mix
+  // there is informational only.
+  if (TS_Q === "" && !TS_OFF && t.gpuGroups === 0) {
+    log(
+      "FAIL: no gpu-priced groups — the pass-duration instrument never engaged on a cheap-fence stack",
     );
     return 3;
   }

@@ -35,12 +35,15 @@ import {
   surfaceComputeFenceGroupStagedFull,
   SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES,
   surfaceComputeFenceRoundTripMs,
+  surfaceComputeGpuGroupMs,
   surfaceComputeGroupDispatchMs,
   SURFACE_COMPUTE_FENCE_GROUP_MAX,
   SURFACE_COMPUTE_FENCE_GROUP_MS,
   SURFACE_COMPUTE_JOB_WATCHDOG_MARGIN,
   SURFACE_COMPUTE_JOB_WATCHDOG_MS,
   surfaceComputeLightingRayBatch,
+  surfaceComputePassDurationsMs,
+  SURFACE_COMPUTE_TS_QUERY_CAPACITY,
   SurfaceComputeRenderer,
   surfaceComputeTargetMeshIds,
   surfaceComputeMaxDispatchRays,
@@ -959,6 +962,86 @@ describe("surfaceComputeDispatchWorkMs", () => {
   });
 });
 
+describe("surfaceComputePassDurationsMs", () => {
+  it("converts nanosecond begin/end pairs to ms, in submission order", () => {
+    const raw = [1_000_000n, 41_000_000n, 41_000_000n, 41_050_000n];
+    expect(surfaceComputePassDurationsMs(raw, 2)).toEqual([40, 0.05]);
+  });
+
+  it("reads a zero difference as a legal zero-duration pass, not an error", () => {
+    // A trivial pass on a coarse-timer stack can report begin == end; the
+    // conversion is not where the broken-instrument verdict lives.
+    const raw = [5n, 5n, 5n, 5n];
+    expect(surfaceComputePassDurationsMs(raw, 2)).toEqual([0, 0]);
+  });
+
+  it("reads exactly `pairs` pairs out of a longer buffer", () => {
+    const raw = [0n, 1_000_000n, 0n, 2_000_000n, 9n, 9n];
+    expect(surfaceComputePassDurationsMs(raw, 2)).toEqual([1, 2]);
+  });
+});
+
+describe("surfaceComputeGpuGroupMs", () => {
+  it("sums the group's own pass durations — the sizers' GPU-side input", () => {
+    expect(surfaceComputeGpuGroupMs([18.4, 21.2])).toBeCloseTo(39.6, 10);
+  });
+
+  it("reads no readings as the wall currency's cue", () => {
+    expect(surfaceComputeGpuGroupMs(null)).toBe(null);
+  });
+
+  it("reads an empty group as the wall currency's cue", () => {
+    expect(surfaceComputeGpuGroupMs([])).toBe(null);
+  });
+
+  it("rejects a non-finite reading — the group was not measured, not cheap", () => {
+    expect(surfaceComputeGpuGroupMs([18.4, NaN])).toBe(null);
+    expect(surfaceComputeGpuGroupMs([Infinity])).toBe(null);
+  });
+
+  it("rejects an all-zero set — a broken instrument is not free work", () => {
+    // The capacity ladders GROW on under-budget readings and the two-term
+    // model would converge to zero: an all-zero set must fall back to the
+    // wall currency, never be read as "every dispatch cost nothing".
+    expect(surfaceComputeGpuGroupMs([0, 0])).toBe(null);
+  });
+
+  it("keeps a mix of zeros with real durations — a trivial pass is legal", () => {
+    expect(surfaceComputeGpuGroupMs([0, 21.5])).toBeCloseTo(21.5, 10);
+  });
+});
+
+describe("the pass-duration instrument's creation", () => {
+  it("allocates the query set and its resolve/read staging only when the device exposes timestamp-query", async () => {
+    const withFeature = await createPaletteResourceHarness(
+      false,
+      undefined,
+      false,
+      ["timestamp-query"],
+    );
+    const tsBuffers = withFeature.bufferDescriptors.filter((d) =>
+      Boolean(d.usage & GPUBufferUsage.QUERY_RESOLVE),
+    );
+    expect(tsBuffers).toHaveLength(1);
+    expect(tsBuffers[0].size).toBe(SURFACE_COMPUTE_TS_QUERY_CAPACITY * 8);
+    expect(tsBuffers[0].usage & GPUBufferUsage.COPY_SRC).toBeTruthy();
+    const tsRead = withFeature.bufferDescriptors.filter(
+      (d) =>
+        Boolean(d.usage & GPUBufferUsage.MAP_READ) &&
+        Boolean(d.usage & GPUBufferUsage.COPY_DST),
+    );
+    expect(tsRead).toHaveLength(1);
+    expect(tsRead[0].size).toBe(SURFACE_COMPUTE_TS_QUERY_CAPACITY * 8);
+
+    const withoutFeature = await createPaletteResourceHarness(false);
+    expect(
+      withoutFeature.bufferDescriptors.filter((d) =>
+        Boolean(d.usage & GPUBufferUsage.QUERY_RESOLVE),
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("the lit capacity ladder under a Firefox-class fence", () => {
   it("walks the lit cap to the one-workgroup floor and pins it there on RAW wall time", () => {
     // A ~5ms lit dispatch measured across Firefox's ~101ms fence reads
@@ -1562,6 +1645,7 @@ async function createPaletteResourceHarness(
   balloon: boolean,
   targetOverride?: SurfaceComputeTarget,
   lighting = false,
+  deviceFeatures: string[] = [],
 ): Promise<PaletteResourceHarness> {
   const layoutDescriptors: GPUBindGroupLayoutDescriptor[] = [];
   const bufferDescriptors: GPUBufferDescriptor[] = [];
@@ -1575,6 +1659,12 @@ async function createPaletteResourceHarness(
   const neverLost = new Promise<GPUDeviceLostInfo>(() => {});
   const device = {
     lost: neverLost,
+    // The pass-duration instrument gates on the device's own feature set
+    // (defensively, this fake predates the check); a harness that names
+    // "timestamp-query" gets the query set allocated and its two staging
+    // buffers captured beside the session's own.
+    features: new Set<string>(deviceFeatures),
+    createQuerySet: () => ({}),
     limits: {
       maxBufferSize: 1 << 28,
       maxStorageBufferBindingSize: 1 << 28,

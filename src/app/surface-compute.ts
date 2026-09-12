@@ -196,12 +196,14 @@ export function setSurfaceComputeTrace(
 }
 
 /**
- * Debug-only pins on the frame loop's three sizing dials, read once per
+ * Debug-only pins on the frame loop's sizing dials, read once per
  * frame exactly like the trace sink above: `?surfacemarchchunk=N` forces
  * every march slice to N rays, `?surfacemarchsteps=S` forces the per-ray
  * step budget to S, and `?surfaceshadehits=H` forces every HIT shade
  * batch to H hits — each in place of the measured estimate that normally
- * picks it.
+ * picks it. `?surfacefencegroup=N` pins the fence group's dispatch count
+ * and `?surfacets` pins the MEASUREMENT CURRENCY (see
+ * {@link surfaceComputeTimestampsPin}).
  *
  * THEY EXIST BECAUSE A SIZER CANNOT OTHERWISE BE ASKED ITS OWN QUESTION.
  * Both sizers price a dispatch per unit of work, and a per-unit cost is
@@ -265,6 +267,20 @@ export function setSurfaceComputeTrace(
  * Progressive presents and the frame budget still close a group early
  * whatever the pin says.
  */
+/**
+ * `?surfacets=0|1` — the measurement-currency pin. `=0` forces the
+ * pass-duration instrument OFF, sizing every dispatch from the
+ * fence-subtracted wall share exactly as the loop did before it; `=1`
+ * forces the GPU currency ON past the fence-cost ceiling
+ * ({@link SURFACE_COMPUTE_TS_FENCE_COST_MS}) even on a polled fence — its
+ * in-app price is measured in that constant's doc. Together they are the
+ * instrument's A/B arms the way `?surfacefencegroup=1` is the grouping
+ * A/B: on ONE build the two currencies are measurable back to back.
+ * Absent leaves the rule the code measures: the instrument engages where
+ * the device exposes the feature AND the session's own fence round-trip
+ * is cheap enough for its after-fence resolve to be free.
+ */
+let surfaceComputeTimestampsPin: boolean | null = null;
 let surfaceComputeFenceGroupPin: number | null = null;
 let surfaceComputeMarchChunkPin: number | null = null;
 let surfaceComputeMarchStepsPin: number | null = null;
@@ -286,7 +302,9 @@ export function setSurfaceComputeSchedulePins(pins: {
   marchSteps?: number | null;
   shadeHits?: number | null;
   fenceGroup?: number | null;
+  timestamps?: boolean | null;
 }): void {
+  surfaceComputeTimestampsPin = pins.timestamps ?? null;
   surfaceComputeFenceGroupPin = positivePin(pins.fenceGroup);
   surfaceComputeMarchChunkPin = positivePin(pins.marchChunk);
   surfaceComputeMarchStepsPin = positivePin(pins.marchSteps);
@@ -1483,10 +1501,15 @@ export function surfaceComputeFenceRoundTripMs(
 }
 
 /**
- * THE ONE CHOKEPOINT between a measured dispatch and every SIZING
+ * THE ONE CHOKEPOINT between a measured WALL dispatch and every SIZING
  * decision: the wall time with the session's own fence round-trip taken
  * out, so a per-fence constant cannot be read as the cost of the work
- * behind it.
+ * behind it. On the GPU currency (the pass-duration instrument, engaged
+ * where {@link SURFACE_COMPUTE_TS_FENCE_COST_MS} allows) this function is
+ * not consulted at all — the sizers read the passes' own device
+ * durations, which contain no fence to subtract; the wall fallback below
+ * is for the instrument's absence, and everything in this doc is that
+ * path's record.
  *
  * WHY IT EXISTS. The frame loop times its dispatches across its own
  * `device.queue.onSubmittedWorkDone()`, so the fence latency is inside
@@ -1723,12 +1746,116 @@ export function surfaceComputeFenceGroupStagedFull(
  * what one dispatch of the same total rays would have given. So the equal
  * split is the ladders' number alone — it is not a general attribution
  * rule, and nothing here should grow into one.
+ *
+ * AND THE EQUAL SPLIT IS THE WALL CURRENCY'S TOOL ALONE. When the
+ * pass-duration instrument is live every member carries its OWN measured
+ * begin-to-end on the device — the group no longer measures one time for N
+ * pieces — so the ladders judge each member's own duration and this split
+ * is used only for the wall column of the trace (a fence the frame really
+ * waited on is still time the frame really spent) and as the fallback
+ * currency where the instrument is absent. Equal remains the WALL
+ * attribution; it is no longer a stand-in for evidence.
  */
 export function surfaceComputeGroupDispatchMs(
   groupWorkMs: number,
   dispatches: number,
 ): number {
   return groupWorkMs / Math.max(1, dispatches);
+}
+
+/**
+ * How many timestamp slots one fence group may stand behind — two per
+ * instrumented pass, reset after every {@link flushGroup} read. It bounds
+ * the query set and its staging pair, so it must cover any group the
+ * sizing rules can build: the shipped cap is two members, the
+ * {@link SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES} rule closes a group
+ * around ~64 march slices at the smallest useful slice, and a `?surfacefencegroup=N`
+ * pin could ask for more. A group whose members do not all fit is not
+ * instrumented at all — the wall currency prices it exactly as before
+ * ({@link surfaceComputeGpuGroupMs}) — rather than partially priced.
+ */
+export const SURFACE_COMPUTE_TS_QUERY_CAPACITY = 512;
+
+/**
+ * THE FENCE COST the pass-duration instrument must stay under to engage —
+ * the session's own calibrated round-trip
+ * ({@link surfaceComputeFenceRoundTripMs}) is compared against
+ * `SURFACE_COMPUTE_FENCE_GROUP_MS / 12` (25 ms shipped).
+ *
+ * WHY A CEILING AT ALL. The instrument's resolve is its own submission
+ * AFTER the group's fence (`flushGroup`; the same-submission alternative
+ * is measured-broken), and its map waits on that submission. On a stack
+ * where a fence resolves on a poll, that adds ONE MORE POLL to every
+ * group — MEASURED on Firefox (this machine's RX 7900 XTX, wgpu): fence
+ * 100 ms + map wait 101 ms = 201 ms per group against the 100 ms the
+ * group already pays, a ~2x settle cost the GPU currency's accuracy
+ * cannot buy back. Firefox DOES expose `timestamp-query`, so a feature
+ * check alone would tax the very browser the fence-tax battle was fought
+ * on — the ceiling takes the decision from the session's own measured
+ * fence price instead: where a fence is cheap (Chrome's ~2.4 ms, or
+ * 0.35 ms on the round-trip this file now measures) the instrument is
+ * free and engages; where a fence is a poll (~100 ms) the wall currency
+ * stays exactly as shipped. The two known platforms are 40x apart and
+ * the threshold sits an order of magnitude from each. The
+ * `?surfacets` pins override in both directions.
+ */
+export const SURFACE_COMPUTE_TS_FENCE_COST_MS =
+  SURFACE_COMPUTE_FENCE_GROUP_MS / 12;
+
+/**
+ * Milliseconds of GPU time per recorded pass, straight out of the mapped
+ * timestamp read buffer: the pass's own begin-to-end ON THE DEVICE, in
+ * submission order, nothing on the host subtracted or split. This is the
+ * currency the driver's job deadline is denominated in
+ * (`SURFACE_COMPUTE_JOB_WATCHDOG_MS`), which the wall share could only
+ * approximate by subtracting a calibrated fence from a whole-group wall
+ * and dividing it equally.
+ *
+ * Raw values are nanoseconds (`BigUint64` differences); a zero difference
+ * is a legal reading for a trivial pass and is NOT itself the broken-
+ * instrument signal — {@link surfaceComputeGpuGroupMs} owns that verdict
+ * over the whole group. Pure so the conversion is unit-tested.
+ */
+export function surfaceComputePassDurationsMs(
+  raw: ArrayLike<bigint>,
+  pairs: number,
+): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < pairs; i++) {
+    out.push(Number(raw[2 * i + 1] - raw[2 * i]) / 1e6);
+  }
+  return out;
+}
+
+/**
+ * THE GROUP'S GPU-SIDE CURRENCY, or `null` when the instrument's reading
+ * must not be believed. `null` is the wall currency's cue:
+ * `flushGroup` then sizes from the fence-subtracted wall share exactly as
+ * it always has, and every consumer below (`nextShadeHitCost`, the two
+ * capacity ladders, the march EMA, the group-size peaks) is written to
+ * take either number without knowing which currency produced it.
+ *
+ * Null in three cases: no readings (the group's members were not all
+ * instrumented — slot exhaustion under a group-size pin, or the feature
+ * absent), a non-finite reading, and a TOTAL of zero. The first two are
+ * self-evident; the third is the broken-instrument guard: a group of
+ * priced members whose passes all report zero device time means the
+ * timestamps are not a clock on this stack, and reading that as "free
+ * work" would explode every sizer — the capacity ladders grow on
+ * under-budget readings and the two-term model would converge to zero.
+ * A genuinely trivial pass reads nonzero (nanosecond units), so zero is
+ * reserved for the broken case.
+ */
+export function surfaceComputeGpuGroupMs(
+  memberMs: readonly number[] | null,
+): number | null {
+  if (memberMs === null || memberMs.length === 0) return null;
+  let total = 0;
+  for (const ms of memberMs) {
+    if (!Number.isFinite(ms)) return null;
+    total += ms;
+  }
+  return total > 0 ? total : null;
 }
 
 /**
@@ -2331,6 +2458,11 @@ export interface SurfaceComputeRendererInit {
   /** Session compile gate and color-buffer ABI; absent retains RGBA8. */
   lighting?: boolean;
   lutSamp: GPUSampler;
+  /** The GPU-side pass-duration instrument, or null when the device
+   * exposes no `timestamp-query` — the wall currency then prices every
+   * dispatch exactly as shipped. Null also on a broken instrument mid-
+   * session (see {@link tsBroken}). */
+  timestamps?: SurfaceComputeTimestampInstrument | null;
   /** Adapter label from create()'s requestAdapter — surfaced in the UI's
    * backend disclosure; undefined when the adapter offered no
    * vendor/architecture. */
@@ -2339,6 +2471,23 @@ export interface SurfaceComputeRendererInit {
    * SwiftShader-class string tell — see render-backend.ts): the UI's cue to
    * warn rather than let a CPU-rasterized settle pass as the GPU. */
   software: boolean;
+}
+
+/**
+ * The GPU-side pass-duration instrument: one `timestamp-query` query set
+ * plus its resolve/read staging pair, created only when the device exposes
+ * the feature (see {@link surfaceComputeGpuGroupMs} for the currency rule
+ * and the `?surfacets` pins for the override). Each instrumented compute
+ * pass writes a begin/end pair into two consecutive slots;
+ * {@link flushGroup} resolves the group's pairs in ONE submission after
+ * the group's fence and maps the read buffer — never inside a dispatch's
+ * own submission (measured-broken on Chrome/Dawn, see `submitDispatch`).
+ */
+export interface SurfaceComputeTimestampInstrument {
+  querySet: GPUQuerySet;
+  resolveBuf: GPUBuffer;
+  /** MAP_READ staging the resolved pairs, one mapped range per group. */
+  readBuf: GPUBuffer;
 }
 
 interface FrameBuffers {
@@ -2445,12 +2594,20 @@ export class SurfaceComputeRenderer {
     // A full-resolution settle's state buffer (16 bytes/ray) fits the
     // 128MiB default comfortably, but pass the adapter's real ceiling
     // anyway so a hi-res export never trips a limit the hardware doesn't
-    // have.
+    // have. The pass-duration instrument rides along when the adapter
+    // exposes it ({@link SurfaceComputeTimestampInstrument}): its GPU-side
+    // currency is the one the driver's deadline is denominated in, and it
+    // is opt-in per browser flag (Chrome gates the feature behind
+    // `--enable-dawn-features=allow_unsafe_apis`), so absence is the
+    // normal path and the wall currency stays exactly as shipped.
     const device = await adapter.requestDevice({
       requiredLimits: {
         maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
         maxBufferSize: adapter.limits.maxBufferSize,
       },
+      ...(adapter.features.has("timestamp-query")
+        ? { requiredFeatures: ["timestamp-query"] as GPUFeatureName[] }
+        : {}),
     });
     // Capture the adapter's identity before the reference is dropped —
     // the renderer discloses label + software verdict to the UI (the
@@ -3051,6 +3208,35 @@ export class SurfaceComputeRenderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
+    // The GPU-side pass-duration instrument, when the device exposes the
+    // feature create() requested. Guarded through the same error scopes as
+    // every other resource, so a createQuerySet failure surfaces as the
+    // honest "resource creation failed" and the caller falls back to the
+    // WebGL tracer — an instrument that cannot be created is a refusal,
+    // never a silently degraded session. The fake-device seam in the
+    // tests predates the feature check, so `features` is read defensively
+    // rather than assumed.
+    let timestamps: SurfaceComputeTimestampInstrument | null = null;
+    if (
+      (device as { features?: GPUSupportedFeatures }).features?.has(
+        "timestamp-query",
+      ) === true
+    ) {
+      const querySet = device.createQuerySet({
+        type: "timestamp",
+        count: SURFACE_COMPUTE_TS_QUERY_CAPACITY,
+      });
+      const resolveBuf = device.createBuffer({
+        size: SURFACE_COMPUTE_TS_QUERY_CAPACITY * 8,
+        usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+      });
+      const readBuf = device.createBuffer({
+        size: SURFACE_COMPUTE_TS_QUERY_CAPACITY * 8,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      timestamps = { querySet, resolveBuf, readBuf };
+    }
+
     const validation = await device.popErrorScope();
     const oom = await device.popErrorScope();
     const scopeError = validation ?? oom;
@@ -3082,6 +3268,7 @@ export class SurfaceComputeRenderer {
       lightingBackgroundTex,
       lighting,
       lutSamp,
+      timestamps,
       adapterLabel: adapterStatus.label,
       software: adapterStatus.software,
     });
@@ -3170,8 +3357,24 @@ export class SurfaceComputeRenderer {
    * before a sizing model sees it — {@link surfaceComputeDispatchWorkMs}
    * for what that buys and why it is measured per SESSION rather than
    * assumed per browser. `null` means "not calibrated yet", which is a
-   * zero subtraction. */
+   * zero subtraction. On the pass-duration instrument's GPU currency
+   * ({@link SURFACE_COMPUTE_TS_FENCE_COST_MS}) the sizers do not read
+   * fence-subtracted wall, but the calibration still runs: the fallback
+   * groups (slot exhaustion under a group pin, a broken instrument) need
+   * it, and `scripts/surface-fence-cost.verify.mjs` reads the calibrated
+   * figure as its regression signal in both currencies. It is also the
+   * instrument's ENGAGEMENT gate — a fence expensive enough that the
+   * resolve's own submission+map would cost a second poll keeps the wall
+   * currency. */
   private fenceMs: number | null = null;
+  /** The GPU-side pass-duration instrument when the device exposes the
+   * feature (see {@link SurfaceComputeTimestampInstrument}); null sizes
+   * everything from the fence-subtracted wall share exactly as shipped. */
+  private readonly timestamps: SurfaceComputeTimestampInstrument | null;
+  /** Latched by one failed timestamp readback: the instrument stops
+   * answering for the rest of the session and every group reverts to the
+   * wall currency, rather than paying a failed map per group. */
+  private tsBroken = false;
   /** Frames between their {@link renderFrame} call and their final
    * unwind. A frame parks on LIVE submitted GPU work (`mapAsync` over a
    * submitted `copyBufferToBuffer`, `onSubmittedWorkDone` over a
@@ -3256,6 +3459,7 @@ export class SurfaceComputeRenderer {
     this.lightingBackgroundTex = init.lightingBackgroundTex ?? null;
     this.lighting = init.lighting ?? false;
     this.lutSamp = init.lutSamp;
+    this.timestamps = init.timestamps ?? null;
     this.adapterLabel = init.adapterLabel;
     this.software = init.software;
     void this.device.lost.then(() => {
@@ -3836,23 +4040,66 @@ export class SurfaceComputeRenderer {
 
   /** Map, copy out and unmap a staging buffer whose bytes are ALREADY on
    * the queue — the march statuses arrive that way, one copy per slice
-   * riding the slice's own submission, so the sweep pays one `mapAsync`
-   * round trip rather than one per slice. `mapAsync` queues behind
-   * everything already submitted, which is the same ordering
+   * riding the slice's own submission, and the resolved timestamp pairs
+   * the same way, one resolve+copy per group riding
+   * {@link resolvePassTimestamps}'s own submission — so the caller pays
+   * one `mapAsync` round trip rather than one per piece. `mapAsync` queues
+   * behind everything already submitted, which is the same ordering
    * guarantee {@link readbackFrame} leans on. */
   private async drainStaging(
     staging: GPUBuffer,
     bytes: number,
+    offset = 0,
   ): Promise<ArrayBuffer> {
-    await staging.mapAsync(GPUMapMode.READ, 0, bytes);
+    await staging.mapAsync(GPUMapMode.READ, offset, bytes);
     // Copy out BEFORE unmap(): unmap() detaches the range getMappedRange()
     // views, and a throw between map and unmap would leave the buffer
     // wedged mapped for every later mapAsync.
     try {
-      return staging.getMappedRange(0, bytes).slice(0);
+      return staging.getMappedRange(offset, bytes).slice(0);
     } finally {
       staging.unmap();
     }
+  }
+
+  /** Resolve one fence group's recorded begin/end pairs — `pairs` passes
+   * starting at query slot `tsFrom` — and read them off the MAP_READ
+   * staging. The resolve+copy is its OWN submission, submitted here AFTER
+   * the group's fence has resolved: MEASURED on Chrome/Dawn (see
+   * `submitDispatch`), a resolve riding the pass's own submission zeroes
+   * every later pass's readings, while this shape reads every pair. The
+   * `mapAsync` is requested right after the resolve submission, so the
+   * group pays the fence it already waited on plus one tiny submission;
+   * on a polled backend both deliver on the next poll — which is what
+   * {@link SURFACE_COMPUTE_TS_FENCE_COST_MS} gates. Returns the passes'
+   * device durations in ms, in submission order. */
+  private async resolvePassTimestamps(
+    tsFrom: number,
+    pairs: number,
+  ): Promise<number[]> {
+    const timestamps = this.timestamps;
+    if (timestamps === null || pairs <= 0) return [];
+    const bytes = pairs * 2 * 8;
+    const encoder = this.device.createCommandEncoder();
+    encoder.resolveQuerySet(
+      timestamps.querySet,
+      tsFrom,
+      pairs * 2,
+      timestamps.resolveBuf,
+      0,
+    );
+    encoder.copyBufferToBuffer(
+      timestamps.resolveBuf,
+      0,
+      timestamps.readBuf,
+      0,
+      bytes,
+    );
+    this.device.queue.submit([encoder.finish()]);
+    const raw = new BigUint64Array(
+      await this.drainStaging(timestamps.readBuf, bytes),
+    );
+    return surfaceComputePassDurationsMs(raw, pairs);
   }
 
   private async runFrame(
@@ -3876,6 +4123,25 @@ export class SurfaceComputeRenderer {
     const marchChunkPin = surfaceComputeMarchChunkPin;
     const marchStepsPin = surfaceComputeMarchStepsPin;
     const shadeHitsPin = surfaceComputeShadeHitsPin;
+    // The measurement-currency pin, read per frame like the rest: false
+    // forces the fence-subtracted wall share for this whole frame, even on
+    // a device carrying the instrument; true forces the GPU currency past
+    // the fence-cost ceiling (its own A/B lever, priced in
+    // SURFACE_COMPUTE_TS_FENCE_COST_MS's doc); null leaves the measured
+    // rule.
+    const tsPin = surfaceComputeTimestampsPin;
+    const tsPinOff = tsPin === false;
+    // The instrument's per-frame verdict: present, unbroken, unpinned.
+    // (`tsBroken` is additionally checked live per dispatch, since it can
+    // latch mid-frame, and the fence-cost gate is checked per group in
+    // flushGroup — the calibration can complete mid-frame.)
+    const tsInstrumentLive =
+      this.timestamps !== null && !this.tsBroken && !tsPinOff;
+    // The pass-duration instrument's slot cursor and the open group's
+    // first slot — two per instrumented pass, reset after each group's
+    // read ({@link SURFACE_COMPUTE_TS_QUERY_CAPACITY} bounds them).
+    let tsNext = 0;
+    let tsGroupStartSlot = -1;
     const traceT0 = performance.now();
     const tr = (line: string): void => {
       trace?.(`[${(performance.now() - traceT0).toFixed(0)}ms] ${line}`);
@@ -4389,9 +4655,38 @@ export class SurfaceComputeRenderer {
        * copy
        * against a `count`×`stepsThisPass` DE march). */
       copyAfter?: { src: GPUBuffer; dst: GPUBuffer; dstOffset: number },
-    ): number => {
+    ): { t0: number; tsSlot: number } => {
       const encoder = device.createCommandEncoder();
-      const pass = encoder.beginComputePass();
+      // The pass-duration instrument: a begin/end timestamp pair for THIS
+      // pass in the next two free slots of the session's query set. The
+      // pairs are RESOLVED LATER — one `resolveQuerySet` per fence group,
+      // in its own submission after the group's fence resolves
+      // (`flushGroup`), never inside this one. MEASURED (Chrome/Dawn on
+      // this machine's RX 7900 XTX): a resolve riding the pass's OWN
+      // submission zeroes every later pass's readings — even within one
+      // fence group — while one resolve after the fence reads every pair
+      // correctly; `docs/surface-compute-renderer.md` carries the
+      // isolation matrix. A pass that does not fit the capacity (a
+      // pin-built group past {@link SURFACE_COMPUTE_TS_QUERY_CAPACITY})
+      // gets -1 and prices its group from the wall currency instead.
+      const tsActive =
+        this.timestamps !== null &&
+        !this.tsBroken &&
+        !tsPinOff &&
+        tsNext + 2 <= SURFACE_COMPUTE_TS_QUERY_CAPACITY;
+      const tsSlot = tsActive ? tsNext : -1;
+      if (tsActive) tsNext += 2;
+      const pass = encoder.beginComputePass(
+        tsActive && this.timestamps !== null
+          ? {
+              timestampWrites: {
+                querySet: this.timestamps.querySet,
+                beginningOfPassWriteIndex: tsSlot,
+                endOfPassWriteIndex: tsSlot + 1,
+              },
+            }
+          : undefined,
+      );
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, bindGroup);
       pass.dispatchWorkgroups(
@@ -4409,7 +4704,7 @@ export class SurfaceComputeRenderer {
       }
       const t0 = performance.now();
       device.queue.submit([encoder.finish()]);
-      return t0;
+      return { t0, tsSlot };
     };
     /**
      * THE SESSION'S OWN FENCE ROUND-TRIP, measured once and thereafter
@@ -4435,6 +4730,14 @@ export class SurfaceComputeRenderer {
      * `runFrame` so a frame that never reaches one — the params-write
      * seam the tiling tests stop at — never pays for it either.
      *
+     * IT STAYS UNCONDITIONAL, instrument or not. With the pass-duration
+     * instrument live the sizers no longer read fence-subtracted wall —
+     * but the calibration is once per session, it keeps the fallback
+     * currency calibrated for the groups that must still use it (slot
+     * exhaustion under a group pin, a mid-session instrument failure),
+     * and `scripts/surface-fence-cost.verify.mjs` reads the calibrated
+     * figure as its own regression signal in both currencies.
+     *
      * Returns false when the frame was cancelled mid-calibration.
      */
     const ensureFenceCalibrated = async (
@@ -4446,7 +4749,7 @@ export class SurfaceComputeRenderer {
       const totalProbes =
         SURFACE_COMPUTE_FENCE_ALIGNMENT_PROBES + SURFACE_COMPUTE_FENCE_PROBES;
       for (let i = 0; i < totalProbes; i++) {
-        const t0 = submitDispatch(pipeline, bindGroup, 0);
+        const { t0 } = submitDispatch(pipeline, bindGroup, 0);
         await device.queue.onSubmittedWorkDone();
         if (token !== this.frameToken || this.isLost || this.destroyed) {
           return false;
@@ -4491,8 +4794,13 @@ export class SurfaceComputeRenderer {
      * budget it was sized against plus whether the queue could even fill
      * it. A FREE batch owes nothing — it has no cost model, and its GPU
      * time is a background write per ray.
+     *
+     * `ts` is the pass's timestamp-pair slot (-1 when uninstrumented),
+     * recorded at submit so `flushGroup` knows whether the group's pairs
+     * are all present and where they start — the base record omits it,
+     * because only the submit knows the slot.
      */
-    type PendingDispatch =
+    type PendingDispatchBase =
       | { kind: "march"; rays: number; steps: number }
       | {
           kind: "shade";
@@ -4504,6 +4812,7 @@ export class SurfaceComputeRenderer {
           wanted: number;
           budgetMs: number;
         };
+    type PendingDispatch = PendingDispatchBase & { ts: number };
     let pending: PendingDispatch[] = [];
     /** `performance.now()` at the group's FIRST submit — the group's wall
      * clock is measured from there across the one fence, so it is the
@@ -4569,13 +4878,21 @@ export class SurfaceComputeRenderer {
       pipeline: GPUComputePipeline,
       bindGroup: GPUBindGroup,
       count: number,
-      record: PendingDispatch,
+      record: PendingDispatchBase,
       copyAfter?: { src: GPUBuffer; dst: GPUBuffer; dstOffset: number },
     ): Promise<boolean> => {
       if (!(await ensureFenceCalibrated(pipeline, bindGroup))) return false;
-      const t0 = submitDispatch(pipeline, bindGroup, count, copyAfter);
-      if (pending.length === 0) groupStart = t0;
-      pending.push(record);
+      const { t0, tsSlot } = submitDispatch(
+        pipeline,
+        bindGroup,
+        count,
+        copyAfter,
+      );
+      if (pending.length === 0) {
+        groupStart = t0;
+        tsGroupStartSlot = tsSlot;
+      }
+      pending.push({ ...record, ts: tsSlot });
       passes++;
       // WRITTEN AT SUBMIT, NOT AT THE FENCE, and that is the whole of why
       // it exists. Every other number a frame records is taken in
@@ -4669,33 +4986,96 @@ export class SurfaceComputeRenderer {
      * - the hit queue's two-term model takes the group as a group —
      *   `d` dispatches and `N` hits fitted jointly, which is exact at any
      *   mix of widths ({@link nextShadeHitCost}'s `dispatches`);
-     * - the two capacity LADDERS judge one dispatch against a budget, so
-     *   they get {@link surfaceComputeGroupDispatchMs}'s equal share, once
-     *   per member, in submit order — the ladder paces the climb per
-     *   DISPATCH because the watchdog sees dispatches, and folding a
-     *   group into a single ladder step would slow the climb out of the
-     *   cold cap by the group size;
-     * - a FREE batch is attributed ZERO and feeds nothing. That is not a
-     *   convenience: its shade-entry exit is two lines (evaluate the
-     *   backdrop ramp at this pixel, store it), so what a free dispatch
-     *   costs really is the submission and the fence rather than work,
-     *   which is the whole reason the queues are split. A group of
-     *   nothing BUT free batches has no priced member, so its work is
-     *   shared over the frees for the trace's sake alone.
+     * - the two capacity LADDERS judge one dispatch against a budget. On the
+     *   wall currency they get {@link surfaceComputeGroupDispatchMs}'s equal
+     *   share, once per member, in submit order — the ladder paces the climb
+     *   per DISPATCH because the watchdog sees dispatches, and folding a
+     *   group into a single ladder step would slow the climb out of the cold
+     *   cap by the group size. On the GPU currency each member carries its
+     *   OWN measured begin-to-end on the device and the ladder judges that;
+     * - a FREE batch is attributed ZERO on the wall currency and feeds
+     *   nothing. That is not a convenience: its shade-entry exit is two
+     *   lines (evaluate the backdrop ramp at this pixel, store it), so what
+     *   a free dispatch costs really is the submission and the fence rather
+     *   than work, which is the whole reason the queues are split. On the
+     *   GPU currency it carries its own measured duration — which is the
+     *   same point seen through the instrument: its device time really is
+     *   the ~0 a background write costs, and its ladder shares stay zero
+     *   because the ladders judge PRICED members only. A group of nothing
+     *   BUT free batches has no priced member, so its work is shared over
+     *   the frees for the trace's sake alone.
+     *
+     * THE CURRENCY RULE, one sentence: the sizers read the group's GPU-side
+     * pass durations whenever every member was instrumented and the readings
+     * form a believable clock ({@link surfaceComputeGpuGroupMs}), and the
+     * fence-subtracted wall share otherwise.
+     *
+     * THE RESOLVE IS ITS OWN SUBMISSION, AFTER THE FENCE, and the same
+     * matrix that forced that shape also prices it. MEASURED (Chrome/Dawn,
+     * RX 7900 XTX): resolving inside the pass's own submission zeroes every
+     * later pass's readings, so the resolve cannot ride the dispatches; it
+     * costs one tiny resolve+copy submission after the fence instead, and
+     * the map waits on it. On a polled backend (Firefox resolves fences and
+     * delivers maps on one ~100 ms poll) that submission+map adds one more
+     * poll to every group — MEASURED 201 ms per group against the 100 ms
+     * the group already pays — so THE INSTRUMENT ENGAGES ONLY WHERE A FENCE
+     * IS CHEAP: the session's own calibrated round-trip
+     * ({@link SURFACE_COMPUTE_TS_FENCE_COST_MS}) decides, the same measured
+     * per-session constant the wall currency subtracts, and a polled
+     * backend keeps the wall currency exactly as shipped. The
+     * `?surfacets` pins override either way.
      */
     const flushGroup = async (): Promise<boolean> => {
       if (pending.length === 0) return true;
+      const instrumented =
+        tsInstrumentLive &&
+        (tsPin === true ||
+          (this.fenceMs !== null &&
+            this.fenceMs <= SURFACE_COMPUTE_TS_FENCE_COST_MS)) &&
+        pending.every((d) => d.ts >= 0) &&
+        tsGroupStartSlot >= 0;
       await device.queue.onSubmittedWorkDone();
       if (token !== this.frameToken || this.isLost || this.destroyed) {
         return false;
       }
+      let memberGpuMs: number[] | null = null;
+      if (instrumented && this.timestamps !== null) {
+        try {
+          // One resolve+copy submission for the group's pairs, then the
+          // map. AFTER the fence by measurement (the same-submission
+          // resolve zeroes later readings); the map's completion is
+          // event-driven where the fence is, so the group pays one fence
+          // plus a sub-ms resolve on this class of stack.
+          memberGpuMs = await this.resolvePassTimestamps(
+            tsGroupStartSlot,
+            pending.length,
+          );
+        } catch {
+          // One failed readback ends the instrument for the session; a
+          // rejected `mapAsync` always leaves the buffer unmapped, so no
+          // wedge is left behind.
+          this.tsBroken = true;
+          memberGpuMs = null;
+          tr("ts readback failed; wall currency for the rest of the session");
+        }
+      }
+      tsNext = 0;
+      tsGroupStartSlot = -1;
       const group = pending;
       pending = [];
       // The fence released everything staged ahead of it.
       stagedBytes = 0;
       fences++;
       const wallMs = performance.now() - groupStart;
-      const workMs = surfaceComputeDispatchWorkMs(wallMs, this.fenceMs ?? 0);
+      const gpuTotalMs = surfaceComputeGpuGroupMs(memberGpuMs);
+      const useGpu = gpuTotalMs !== null;
+      const src = useGpu ? "gpu" : "wall";
+      // On the wall currency this is the fence-subtracted share, exactly
+      // as shipped; on the GPU currency it is the group's pass durations
+      // summed — no fence inside it to subtract.
+      const workMs = useGpu
+        ? gpuTotalMs
+        : surfaceComputeDispatchWorkMs(wallMs, this.fenceMs ?? 0);
       gpuMs += wallMs;
       // A GROUP IS HOMOGENEOUS by construction, which is what lets one
       // tally lane take its whole wall: the sweep closes its group at the
@@ -4712,10 +5092,11 @@ export class SurfaceComputeRenderer {
           if (d.kind === "march") raySteps += d.rays * Math.max(1, d.steps);
         }
         const usPerRayStep = (workMs * 1000) / Math.max(1, raySteps);
-        // BOTH currencies, per dispatch, exactly as the ungrouped line
-        // carried them: `ms` is this member's share of the group's WALL
-        // (a fence the frame really waited on is time the frame really
-        // spent) and `work` its share with that one fence taken out.
+        // BOTH currencies, per dispatch: `ms` is this member's share of
+        // the group's WALL (a fence the frame really waited on is time the
+        // frame really spent — that attribution is unchanged), and `work`
+        // is the member's OWN measured pass duration on the GPU currency
+        // or its equal share of the fence-free wall on the fallback.
         const marchWallShare = surfaceComputeGroupDispatchMs(
           wallMs,
           group.length,
@@ -4724,26 +5105,31 @@ export class SurfaceComputeRenderer {
           workMs,
           group.length,
         );
+        let peak = marchPeakWorkMs ?? 0;
+        let member = 0;
         for (const d of group) {
           if (d.kind !== "march") continue;
+          const ownWork = useGpu
+            ? (memberGpuMs as number[])[member]
+            : marchWorkShare;
+          member++;
           tr(
-            `march END ms=${marchWallShare.toFixed(1)} work=${marchWorkShare.toFixed(1)} len=${d.rays} steps=${d.steps}`,
+            `march END ms=${marchWallShare.toFixed(1)} work=${ownWork.toFixed(1)} len=${d.rays} steps=${d.steps}`,
           );
-        }
-        // ONCE PER MEMBER, not once per group, at the group's aggregate
-        // rate: the measurement covers d dispatches' worth of ray·steps,
-        // so it is d dispatches' worth of evidence, and folding it in
-        // once would slow the EMA's convergence — and with it
-        // marchChunkFor's climb — by the group size. MEASURED on Chrome,
-        // where a single fold per group turned a 141-dispatch settle into
-        // a 210-dispatch one at the same wall time: more, smaller slices,
-        // each still paying a submission.
-        for (let i = 0; i < group.length; i++) {
+          // ONCE PER MEMBER, not once per group, at the group's aggregate
+          // rate: the measurement covers d dispatches' worth of ray·steps,
+          // so it is d dispatches' worth of evidence, and folding it in
+          // once would slow the EMA's convergence — and with it
+          // marchChunkFor's climb — by the group size. MEASURED on Chrome,
+          // where a single fold per group turned a 141-dispatch settle
+          // into a 210-dispatch one at the same wall time: more, smaller
+          // slices, each still paying a submission.
           rayStepEmaUs = rayStepEmaUs * 0.6 + usPerRayStep * 0.4;
+          peak = Math.max(peak, ownWork);
         }
-        marchPeakWorkMs = Math.max(marchPeakWorkMs ?? 0, marchWorkShare);
+        marchPeakWorkMs = peak;
         tr(
-          `fence march dispatches=${group.length} wall=${wallMs.toFixed(1)} work=${workMs.toFixed(1)} perDispatch=${marchWorkShare.toFixed(1)} peak=${marchPeakWorkMs.toFixed(1)} emaUs=${rayStepEmaUs.toFixed(3)}`,
+          `fence march dispatches=${group.length} wall=${wallMs.toFixed(1)} work=${workMs.toFixed(1)} src=${src} perDispatch=${marchWorkShare.toFixed(1)} peak=${marchPeakWorkMs.toFixed(1)} emaUs=${rayStepEmaUs.toFixed(3)}`,
         );
         return true;
       }
@@ -4756,10 +5142,20 @@ export class SurfaceComputeRenderer {
       const priced = hits.length > 0 ? hits : shade;
       const shareMs = surfaceComputeGroupDispatchMs(workMs, priced.length);
       const shareWallMs = surfaceComputeGroupDispatchMs(wallMs, priced.length);
+      // Each member's own measured device time on the GPU currency — the
+      // group no longer measures once for N pieces, so the ladders below
+      // judge each member's own duration — or the wall currency's equal
+      // share, unchanged.
+      const ownWorkMs = (d: Extract<PendingDispatch, { kind: "shade" }>) =>
+        useGpu
+          ? (memberGpuMs as number[])[shade.indexOf(d)]
+          : priced.includes(d)
+            ? shareMs
+            : 0;
       for (const d of shade) {
         const own = priced.includes(d);
         tr(
-          `shade END ms=${(own ? shareWallMs : 0).toFixed(1)} work=${(own ? shareMs : 0).toFixed(1)} isFree=${d.free} len=${d.hits}`,
+          `shade END ms=${(own ? shareWallMs : 0).toFixed(1)} work=${ownWorkMs(d).toFixed(1)} isFree=${d.free} len=${d.hits}`,
         );
       }
       if (hits.length > 0) {
@@ -4781,7 +5177,7 @@ export class SurfaceComputeRenderer {
           // probe-width lesson — miss runs inflating a capacity a hit
           // band then paid — in the one place it can still happen now the
           // queues are split.
-          const grown = nextShadeBatchSize(sizer.cap, shareMs, d.budgetMs);
+          const grown = nextShadeBatchSize(sizer.cap, ownWorkMs(d), d.budgetMs);
           sizer.cap = d.hits < d.wanted ? Math.min(sizer.cap, grown) : grown;
         }
         tr(
@@ -4801,11 +5197,12 @@ export class SurfaceComputeRenderer {
           );
           for (const d of hits) {
             // The watchdog sees dispatches, not groups, so the ladder is
-            // paced by this dispatch's own attributed time, and its climb
-            // stops at the device's own dispatch ceiling.
+            // paced by this dispatch's OWN measured time (GPU currency) or
+            // its equal share (wall currency), and its climb stops at the
+            // device's own dispatch ceiling.
             const litGrown = nextLightingRayCap(
               lightingSizer.rayCap,
-              shareMs,
+              ownWorkMs(d),
               maxDispatchRays,
             );
             lightingSizer.rayCap =
@@ -4817,10 +5214,13 @@ export class SurfaceComputeRenderer {
             `lit cost surf→${lightingSizer.surfaceCost.interceptUs.toFixed(0)}+n*${lightingSizer.surfaceCost.marginalUs.toFixed(1)}us rayCap→${lightingSizer.rayCap}`,
           );
         }
-        hitPeakWorkMs = Math.max(hitPeakWorkMs ?? 0, shareMs);
+        hitPeakWorkMs = Math.max(
+          hitPeakWorkMs ?? 0,
+          ...priced.map((d) => ownWorkMs(d)),
+        );
       }
       tr(
-        `fence shade dispatches=${group.length} hitDispatches=${hits.length} wall=${wallMs.toFixed(1)} work=${workMs.toFixed(1)} perDispatch=${shareMs.toFixed(1)} peak=${(hitPeakWorkMs ?? 0).toFixed(1)}`,
+        `fence shade dispatches=${group.length} hitDispatches=${hits.length} wall=${wallMs.toFixed(1)} work=${workMs.toFixed(1)} src=${src} perDispatch=${shareMs.toFixed(1)} peak=${(hitPeakWorkMs ?? 0).toFixed(1)}`,
       );
       return true;
     };
@@ -4908,7 +5308,7 @@ export class SurfaceComputeRenderer {
     const counts = { hit: 0, miss: 0, exhausted: 0, active: 0, plane: 0 };
     const exhaustedIndices: number[] = [];
     tr(
-      `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} fenceMs=${(this.fenceMs ?? 0).toFixed(2)} shadeCost0=${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${sizer.cap}`,
+      `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} fenceMs=${(this.fenceMs ?? 0).toFixed(2)} ts=${tsInstrumentLive ? "on" : "off"} shadeCost0=${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${sizer.cap}`,
     );
     outer: while (
       active.length > 0 ||

@@ -1209,7 +1209,9 @@ costs ~12 ms once per session. `scripts/surface-fence-cost.verify.mjs` is
 the gate; its LIT arm is the discriminating one, and its verdict is the
 pinning's machine-independent signature (a pinned ladder carries exactly
 one workgroup per dispatch however fast the GPU is) rather than a
-stopwatch.
+stopwatch. These rows predate the pass-duration instrument and were taken
+under the wall currency throughout — which on Chrome is now the `--ts=0`
+arm, and on Firefox is still the default.
 
 #### The first probe was a different population
 
@@ -1517,7 +1519,9 @@ itself.
 
 **THE ATTRIBUTION IS THE PART TO GET RIGHT**, because a group measures ONE
 time for N pieces of work and the models below still reason per dispatch.
-The fence subtraction becomes one fence per GROUP, and then:
+The fence subtraction becomes one fence per GROUP, and then — on the wall
+currency, the currency this section was written under and the one polled
+backends still take:
 
 - the march's per-ray·step EMA takes the group's AGGREGATE rate, its
   fence-free work over its total ray·steps — which is what a single
@@ -1547,6 +1551,17 @@ The fence subtraction becomes one fence per GROUP, and then:
   sections up, 3.2 ms per free dispatch on a stack whose fence was ~3 ms.
   A group of nothing BUT free batches has no priced member, so its work is
   shared over the frees for the trace's sake alone.
+
+ON THE GPU CURRENCY every one of these reads the group's pass durations
+instead of a wall share, and the attributions stop being estimates: the EMA
+still takes the aggregate rate, but of the summed pass durations; the
+two-term fit is unchanged, its measurement now the group's GPU sum; the
+ladders judge each member's OWN duration, so the equal share's one guess —
+which member was expensive — is answered by the instrument instead; and a
+free batch carries its own measured duration, which is the same two-lines
+point seen through the instrument (its device time really is ~0). The
+attribution rule per lane is fixed either way: wall shares stay equal,
+GPU durations stay their own.
 
 `?surfacefencegroup=N` PINS THE GROUP COUNT outright, and `=1` is the
 pre-grouping loop value for value — which is how the rows below were taken:
@@ -1745,9 +1760,9 @@ carries that run's figures and the one difference it did find, which is that
 the run that died was 1.6x slower per pass than the three that did not.
 
 **"THE WATCHDOG SEES DISPATCHES, NOT GROUPS" IS HALF RIGHT, AND THE HALF IT
-MISSES IS THE DEADLINE.** The ladders pace on `groupWorkMs / members` — a
-group's wall divided by how many dispatches shared it — on exactly that stated
-ground. The dispatches really ARE separate jobs, so the reading survives
+MISSES IS THE DEADLINE.** The ladders used to pace on `groupWorkMs / members`
+— a group's wall divided by how many dispatches shared it — on exactly that
+stated ground. The dispatches really ARE separate jobs, so the reading survives
 verdict 3 and only verdict 3. But the quantity the deadline is denominated in
 is the INTERVAL's work, so the per-dispatch share understates it by the group
 size, and the frame's seed submits — which ride the first fence untracked —
@@ -1761,6 +1776,13 @@ throughput grounds, which is what raising it looks like, past the measured
 ceiling without something refusing it. The group's MEASURED `workMs` is still
 read by nothing.
 
+**THE PASS-DURATION INSTRUMENT CLOSED THE CURRENCY HALF OF THIS.** Where it
+engages (below), every ladder step judges the member's OWN measured
+begin-to-end on the device — no split, no fence inside the number — and the
+group's total GPU work is the sum of its members' own durations. The wall
+currency (polled fences, `?surfacets=0`) still reads the equal share and
+still carries this paragraph's gaps, bounded as the section below records.
+
 **AND AN INSTRUMENT BUILT ON FENCES CANNOT SEE ITS OWN FATAL DISPATCH.** Every
 number this renderer records is taken when a fence resolves. The submission
 that kills the device never resolves, so it is never recorded, and "the worst
@@ -1771,14 +1793,83 @@ the existing number more accurate.
 `timestamp-query` IS AVAILABLE ON THIS STACK — the probe reads it, and its
 GPU-side figures track the host's fence wall to within 7 ms — and it is the
 right instrument: a pass's own begin-to-end ON THE DEVICE, in the currency the
-deadline is denominated in, with nothing split or subtracted. The renderer has
-none of it today. A trace line written at SUBMIT rather than at the fence is
-the cheaper half of the same fix, and it is now there: under `?surfacetrace`
+deadline is denominated in, with nothing split or subtracted. THE RENDERER NOW
+CARRIES IT: `SurfaceComputeRenderer.create()` requests the feature where the
+adapter exposes it, every compute pass writes a `timestampWrites` begin/end
+pair, and the group's pairs are resolved and read back in `flushGroup` to feed
+`nextShadeHitCost`, the two capacity ladders, the march per-ray·step EMA and
+the group-size peaks IN PLACE OF the fence-subtracted wall share. The wall
+tally stays the wall tally (`gpuMs`/`marchMs`/`shadeMs` keep summing what the
+frame really waited on); only the SIZING input moved. `?surfacets=0` pins the
+wall currency back on, `?surfacets=1` forces the GPU currency past the fence
+cost below; the trace's fence lines say `src=gpu` or `src=wall` per group so
+every measured row names its currency.
+
+The work: a trace line written at SUBMIT rather than at the fence is the
+cheaper half of the same fix, and it is now there: under `?surfacetrace`
 each dispatch writes a `<lane> SUBMIT len=… ahead=… predicted=…` line as it is
 handed to the queue, so a lost device names its last submission instead of
 taking the answer with it. The `predicted=` figure is NOT evidence and nothing
 sizes anything from it — a dispatch's predicted cost is its sizer's target by
 construction — it is simply the only number that exists before the work runs.
+
+#### The instrument's own measurements — where it engages, and what it cost
+
+Both capability and cost were measured on this machine (RX 7900 XTX,
+`DISPLAY=:0`), 12 September 2026:
+
+- **Chrome/Dawn exposes the feature only behind
+  `--enable-dawn-features=allow_unsafe_apis`; Firefox/wgpu exposes and grants
+  it outright.** So a feature check alone would turn the instrument on in the
+  browser where it is most expensive (below), and the engagement rule is the
+  session's own measured fence round-trip instead.
+- **A `resolveQuerySet` must NOT ride the pass's own submission.** An
+  isolation matrix (`scripts/webgpu-ts-resolve.repro.mjs`, one encoder per
+  pass, the app's calibration-probe flow) measured three arms: per-pass
+  resolve with zero-workgroup probes — the first submission's copy read
+  9 µs, every later copy read 0, including a 17.4 ms spin pass; three
+  back-to-back passes in one fence group each resolving its own pair —
+  NONDETERMINISTIC (all 0 in one rep, `[0, 0, 1.18]` in another, so a
+  correct-looking value can surface and cannot be told from a real one
+  from the reading alone); ONE resolve of all slots in its own submission
+  after the fence — every pair correct, zero-workgroup passes included
+  (3.2 µs each) and the spin pass at 17.4 ms. So the flush resolves the
+  group's pairs in one tiny submission AFTER `onSubmittedWorkDone` and
+  maps the read buffer — never inside a dispatch's encoder.
+- **The resolve's price, per group, measured**: fence 2.5 ms + resolve
+  submit 0.1 ms + map wait 2.6 ms = ~5.3 ms on Chrome, against the 2.5 ms
+  the group pays without the instrument; on Firefox the same shape measured
+  fence 100 ms + map wait 101 ms = 201 ms — the map delivers on the NEXT
+  poll tick, so the GPU currency would double every polled-backend group.
+- **The engagement rule is therefore `fenceMs <= 25 ms`**
+  (`SURFACE_COMPUTE_TS_FENCE_COST_MS` = `SURFACE_COMPUTE_FENCE_GROUP_MS/12`),
+  the session's own calibration deciding: Chrome engages (2.4 ms), Firefox
+  stays on the wall currency exactly as shipped (99.9 ms). In-app, the
+  forced-GPU arm on Firefox confirmed the price the ceiling avoids: the same
+  fixture settled 4228 ms on the wall currency and 7817 ms forced onto the
+  GPU currency, with the ladder climbing in both.
+- **The GPU currency's in-app cost on Chrome is the per-group resolve+map**,
+  since the sizers converge to identical widths either way (identical ladder
+  outcomes, identical hit widths — ~2626 hits/dispatch on both currencies):
+  unlit 1280×720 settle frame 955-1009 ms on the wall currency vs 1107-1266
+  ms instrumented (~15-20%), lit 640×360 904 vs 978 ms — ~2.8 ms per group
+  on ~65-95 groups. On the full-resolution settles the instrument exists
+  for, the overhead is the same few hundred ms against minutes. The wall
+  tally and the tallies' meaning are unchanged; what the models read is
+  exact.
+
+AND WHAT THE CURRENCY BUYS, on the same trace: a hit group of two
+dispatches measured wall 13.8 ms and GPU 10.5 ms — the split had been
+charging both members for the fence and the submission overhead, and the
+equal share (6.9 ms each) differed from the members' own device times
+(5.3/5.9 ms) by enough to matter at the ladder's quartering threshold. The
+seed submits no longer contaminate the first group: its `work` figure is the
+march passes' own durations, not wall-minus-fence over the seed's work too.
+And the group's total GPU work — the quantity the watchdog's deadline is
+actually denominated in — is now measured rather than approximated by a
+split. What the instrument still cannot see is the fatal dispatch: a pass
+that never completes writes no readable pair, so the submit-time trace line
+remains the only thing that names it.
 
 #### Running the probe
 
