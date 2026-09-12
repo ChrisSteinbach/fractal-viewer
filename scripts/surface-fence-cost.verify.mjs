@@ -155,8 +155,11 @@ const VIEWPORT = { width: vw || 1280, height: vh || 720 };
 /** src/app/surface-compute.ts's SURFACE_COMPUTE_WORKGROUP_SIZE — the floor
  * the pinned ladder walks to, transcribed (plain Node, no TS loader). */
 const WORKGROUP = 64;
-/** src/app/surface-compute.ts's SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS
- * — the ceiling the lit ladder must actually REACH, transcribed. */
+/** src/app/surface-compute.ts's SHIPPED-BEFORE lit ladder ceiling, kept as
+ * the climb's PROOF FLOOR: the ceiling is now the device's own
+ * (surfaceComputeMaxDispatchRays), so the gate asserts the ladder reaches
+ * AT LEAST the old fixed 4096 — the lift's own signature — rather than
+ * stopping where the old constant did. */
 const LIGHTING_MAX_DISPATCH_RAYS = 4096;
 
 const log = (...a) => console.log("[surface-fence]", ...a);
@@ -433,9 +436,11 @@ async function main() {
   const perDispatch =
     t.hits === null ? null : t.hits / Math.max(1, t.shadeDispatches);
   const wideEnough = perDispatch === null || perDispatch >= WORKGROUP * 4;
-  // The lit ladder must reach its own ceiling, not merely leave the
-  // floor: a raw-wall-time Firefox run does briefly climb to 1024 and
-  // then quarters back to 128, so "ever grew" is not the question.
+  // The lit ladder must climb AT LEAST to the shipped-before 4096 ceiling,
+  // not merely leave the floor: a raw-wall-time Firefox run does briefly
+  // climb to 1024 and then quarters back to 128, so "ever grew" is not the
+  // question. The live ceiling is the device's own, so reaching exactly
+  // 4096 and stopping is not expected any more — passing it is.
   const litClimbed =
     !LIGHTING ||
     (t.lastLitCap !== null && t.lastLitCap >= LIGHTING_MAX_DISPATCH_RAYS);

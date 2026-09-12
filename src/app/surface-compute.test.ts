@@ -23,7 +23,6 @@ import {
   SURFACE_COMPUTE_RAY_STATE_BYTES,
   SURFACE_COMPUTE_RAY_BYTES,
   SURFACE_COMPUTE_LIGHTING_RAY_BYTES,
-  SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
   SURFACE_COMPUTE_SHADE_COST_PIVOT,
   SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS,
   SURFACE_COMPUTE_SHADE_MARGINAL_DECAY,
@@ -783,29 +782,39 @@ describe("shadeHitAllowanceUs", () => {
 });
 
 describe("nextLightingRayCap", () => {
-  it("doubles while the worst dispatch fits the lit target, and saturates at the cap", () => {
-    expect(nextLightingRayCap(64, 49)).toBe(128);
-    expect(nextLightingRayCap(2048, 49)).toBe(4096);
-    // SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS is the ceiling; nothing
-    // above it, however cheap the dispatch measured.
-    expect(nextLightingRayCap(4096, 1)).toBe(4096);
+  // The ladder's ceiling is the caller's DEVICE cap —
+  // surfaceComputeMaxDispatchRays of a real adapter — never a fixed
+  // constant: the shipped 4096 was one fixed width too many and throttled
+  // every lit settle 5.5x (nextLightingRayCap's own doc). 4096 here is a
+  // stand-in device ceiling, the smallest round number that still shows
+  // every rung of the climb.
+  const CEILING = 4096;
+
+  it("doubles while the worst dispatch fits the lit target, and saturates at the ceiling", () => {
+    expect(nextLightingRayCap(64, 49, CEILING)).toBe(128);
+    expect(nextLightingRayCap(2048, 49, CEILING)).toBe(4096);
+    // The ceiling is the ceiling; nothing above it, however cheap the
+    // dispatch measured.
+    expect(nextLightingRayCap(4096, 1, CEILING)).toBe(4096);
   });
 
   it("holds between the target and double it", () => {
-    expect(nextLightingRayCap(512, 50)).toBe(512);
-    expect(nextLightingRayCap(512, 100)).toBe(512);
+    expect(nextLightingRayCap(512, 50, CEILING)).toBe(512);
+    expect(nextLightingRayCap(512, 100, CEILING)).toBe(512);
   });
 
   it("quarters on a 2x overrun and floors at one workgroup", () => {
-    expect(nextLightingRayCap(1024, 101)).toBe(256);
-    expect(nextLightingRayCap(64, 500)).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
+    expect(nextLightingRayCap(1024, 101, CEILING)).toBe(256);
+    expect(nextLightingRayCap(64, 500, CEILING)).toBe(
+      SURFACE_COMPUTE_WORKGROUP_SIZE,
+    );
   });
 
   it("climbs one workgroup to the cap in six steps — the ladder paces, it does not leap", () => {
     let cap = SURFACE_COMPUTE_WORKGROUP_SIZE;
     const seen = [cap];
     for (let i = 0; i < 6; i++) {
-      cap = nextLightingRayCap(cap, 1);
+      cap = nextLightingRayCap(cap, 1, CEILING);
       seen.push(cap);
     }
     expect(seen).toEqual([64, 128, 256, 512, 1024, 2048, 4096]);
@@ -815,8 +824,8 @@ describe("nextLightingRayCap", () => {
 describe("surfaceComputeLightingRayBatch on measured costs", () => {
   it("widens once the lane carries a measured cost, where an inert lane pinned it to the cap", () => {
     // MEASURED on this project's own cathedral fixture. The model affords
-    // far more than the 4096-ray ceiling here, so the capacity ladder is
-    // what paces the width — the division of labour the unlit queue has.
+    // far more than the cap passed here, so the capacity ladder is what
+    // paces the width — the division of labour the unlit queue has.
     const surface = { interceptUs: 16600, marginalUs: 7.59 };
     expect(surfaceComputeLightingRayBatch(surface, 4096)).toBe(4096);
     // The ladder still binds while it is climbing.
@@ -958,10 +967,10 @@ describe("the lit capacity ladder under a Firefox-class fence", () => {
     // few hundred dispatches into tens of thousands, each paying another
     // fence.
     const rawMs = 106;
-    let cap = SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS;
+    let cap = 4096;
     const seen = [cap];
     for (let i = 0; i < 6; i++) {
-      cap = nextLightingRayCap(cap, rawMs);
+      cap = nextLightingRayCap(cap, rawMs, 4096);
       seen.push(cap);
     }
     expect(seen).toEqual([4096, 1024, 256, 64, 64, 64, 64]);
@@ -975,7 +984,7 @@ describe("the lit capacity ladder under a Firefox-class fence", () => {
     let cap = SURFACE_COMPUTE_WORKGROUP_SIZE;
     const seen = [cap];
     for (let i = 0; i < 6; i++) {
-      cap = nextLightingRayCap(cap, workMs);
+      cap = nextLightingRayCap(cap, workMs, 4096);
       seen.push(cap);
     }
     expect(seen).toEqual([64, 128, 256, 512, 1024, 2048, 4096]);

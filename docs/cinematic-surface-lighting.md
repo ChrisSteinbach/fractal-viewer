@@ -123,9 +123,38 @@ the 50 ms target on phase-0 cost; the worst single dispatch was 67 ms. A
 medium dispatch stayed at 9–12 ms from 257 rays up to 50k. The 4096 had no
 stated derivation: it arrived with the lighting integration as a fixed
 conservative width, copied from the unlit shade batch's number. It throttles
-every lit compute settle on this hardware, mist or not, and lifting it is
-separate work that must be verified on Iris (the i915 watchdog) and on
-Firefox (the staging-volume ceiling) first.
+every lit compute settle on this hardware, mist or not.
+
+SHIPPED 12 September 2026: the fixed 4096 ceiling is gone, and the ladder's
+climb now stops at the DEVICE'S OWN dispatch ceiling
+(`surfaceComputeMaxDispatchRays`, `maxComputeWorkgroupsPerDimension × 64` —
+4,194,240 rays on this box), with the 50 ms time target as the sizing bound
+it always was; `nextLightingRayCap` takes the ceiling from its caller. The
+`?surfacelitceiling` lever above was this change's measurement pin and is
+superseded by it. The CAP and the WIDTH now bind in different places, and
+the shipped run shows both: on this machine the cap climbed all the way to
+4,194,240 (the device's own ceiling — dispatches stayed cheap, so the
+ladder kept doubling) while the WIDTH stayed bound by the 50 ms time
+target at 49,984 rays, worst attributed per-dispatch share 60.2 ms.
+VERIFIED 12 September 2026, real AMD RX 7900 XTX, cathedral from the
+cached minted document (its `medium` block decodes as IGNORED on main —
+exactly the mist density 0 row), 1920x1057 pane, 8 samples, compute
+engine: settled 22.25 s from the Surface click against the 118.7 s the
+fixed ceiling measured on this same document, with the settle census
+EXACTLY the W0 run's (covered 1,940,449 / miss 88,991 / exhausted 0).
+That run's timing row is uncertified — the desktop Firefox held ~95 ms/s
+of GPU busy during it (the launcher's per-process attribution said so) —
+so the certified figure remains the branch's 21.52 s, which the shipped
+run is consistent with. The Iris check this section once demanded cannot
+happen: the Iris Xe box is gone, and its ~7.5 s i915 figure remains a
+record of the machine it was measured on, not an expectation — the
+shipped widths are sized against this machine's measured ~2.0 s
+single-job ceiling (docs/surface-compute-renderer.md, "What the driver's
+job timeout actually bounds"), 30x above the worst dispatch this ladder
+prices. The Firefox staging-volume note stands: a 50k-ray lit dispatch
+stages a 200 KB active-list write, under the 1 MiB
+`SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES` group close, whose own rule
+sends any dispatch whose write passes the ceiling out alone.
 
 WHAT THAT SAYS ABOUT THE THREE TECHNIQUES:
 
