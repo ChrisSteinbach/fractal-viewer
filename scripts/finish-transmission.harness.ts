@@ -2,532 +2,186 @@
  * Surface transmission research, NOT a production transport implementation.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
- *   scripts/finish-transmission.harness.ts
- * Optional TRANSMISSION_SIZE (default 192) controls the comparison panels.
+ *   scripts/finish-transmission.harness.ts --disableConsoleIntercept
+ * TRANSMISSION_SIZE (default 192) retains the original comparison raster;
+ * TRANSMISSION_WORLD_SIZE (default 64) controls the bounded world study.
  *
- * Every layer uses de-preview.ts's existing renderer. Its march hook advances
- * through the previous hit's acceptance band in small sampled steps, then
- * re-arms ordinary sphere tracing after finding clearance. This deliberately
- * makes NO claim that a small/negative DE is membership or interior distance.
- * It composites one sheet per separated run of accepted samples. Gaps smaller
- * than the scan spacing can be missed; adjacent runs merge at the clearance
- * threshold. Both the scan spacing and the layer budget are measured below.
+ * Every ray trace uses de-preview.ts. The legacy pixel prototype is retained
+ * unchanged through renderTransmission's default arguments. The candidate
+ * world rule is an explicitly sampled, hysteretic clearance band: R is the
+ * fixture's full raw scene ball, entry is DE <= .002R, re-arm is an observed
+ * DE > .003R, and the ray grid is .001R. These samples do not define signed
+ * membership or exact material volume. Thin gaps may be missed and adjacent
+ * runs falsely merged. Escape-family clearance is especially heuristic;
+ * unlike the inverse-IFS estimator, it is not a certified geometric bound.
  *
- * Straight-through alpha composition and an image-space slab warp are the
- * subjects. No traced refraction, interior absorption, multiple scattering,
- * transparent shadows or GPU timing claim.
- * Primary and continuation exhaustion retain a dark unresolved remainder,
- * never a fabricated background miss. All DE calls, including normals, count.
- * Full analysis and the source audit: docs/surface-transmission.md.
+ * One alpha event is composited per sampled run. Fresnel attenuation uses a
+ * fixed .03R optical normal even though the visible shading normal remains
+ * pixel-scale. The domain ends exactly at the existing scene-ball cap. That
+ * means the sampled optical domain is complete, not that unknown geometry
+ * outside the cap is a certified physical miss. Opaque hits, a named residual
+ * bound (zero by default), and unresolved budget exits remain distinct.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
+import { encodePng, writeLabeledContactSheet } from "./de-preview";
+import type { PanelStats, Vec3 } from "./de-preview";
 import {
-  buildSurfaceDE,
-  estimateDistanceRefined,
-} from "../src/fractal/surface-de";
-import {
-  buildSurfaceDE4,
-  estimateDistance4Refined,
-} from "../src/fractal/surface-de-4d";
-import {
-  buildEscapeDE,
-  ESCAPE_STEP_SCALE,
-  estimateEscapeDistance,
-} from "../src/fractal/escape-de";
-import {
-  buildEscapeDE4,
-  estimateEscapeDistance4,
-} from "../src/fractal/escape-de-4d";
-import {
-  mandelboxClassic,
-  mengerSponge,
-  pentatope,
-  tesseract,
-} from "../src/fractal/presets";
-import {
-  finishShadeTs,
-  resolveSurfaceFinish,
-} from "../src/fractal/surface-finish";
-import type { Transform, Vec4 } from "../src/fractal/types";
-import {
-  PREVIEW_EXHAUSTED,
-  PREVIEW_MISS,
-  encodePng,
-  renderPreview,
-  writeLabeledContactSheet,
-} from "./de-preview";
-import type { PanelStats, PreviewScene, Vec3 } from "./de-preview";
+  delta,
+  fixtures,
+  pair,
+  renderTransmission,
+  WORLD_BAND_DEFAULTS,
+} from "./transmission-study";
+import type {
+  Fixture,
+  TransmissionPanel,
+  WorldBandSettings,
+} from "./transmission-study";
 
 const SIZE = Number(process.env.TRANSMISSION_SIZE ?? 192);
-const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const norm = (a: Vec3): Vec3 => {
-  const length = Math.hypot(...a);
-  return length > 1e-15 ? (a.map((v) => v / length) as Vec3) : [0, 0, 1];
+const WORLD_SIZE = Number(process.env.TRANSMISSION_WORLD_SIZE ?? 64);
+const WORLD: Partial<WorldBandSettings> = {
+  ...WORLD_BAND_DEFAULTS,
 };
-const cross = (a: Vec3, b: Vec3): Vec3 => [
-  a[1] * b[2] - a[2] * b[1],
-  a[2] * b[0] - a[0] * b[2],
-  a[0] * b[1] - a[1] * b[0],
-];
-const linear = (c: Vec3): Vec3 => c.map((v) => Math.max(0, v) ** 2.2) as Vec3;
-const BLACK: Vec3 = [0, 0, 0];
-const SKY: Vec3 = [0.1, 0.14, 0.2];
-const BOTTOM: Vec3 = [0.025, 0.035, 0.055];
-const FINISH = resolveSurfaceFinish({
-  specular: 1,
-  shininess: 128,
-  reflect: 0.5,
-});
 
-interface Fixture {
-  name: string;
-  scene: PreviewScene;
-  color: (p: Vec3) => Vec3;
-  /** Optional opaque rear material for the independent occlusion control. */
-  opaque?: (p: Vec3) => boolean;
+function withoutRich4d(): Fixture[] {
+  return fixtures().filter((fixture) => fixture.name !== "16-CELL FLAKE 4D");
 }
 
-interface RayState {
-  t: number;
-  end: number;
-  active: boolean;
-  layers: number;
-  weight: number;
-  color: Vec3;
-  unresolved: boolean;
-  first?: { p: Vec3; rd: Vec3; t: number; local: Vec3; tau: number };
-  secondT: number;
-}
-
-interface TransmissionPanel {
-  stats: PanelStats;
-  linearFade: PanelStats;
-  warped: PanelStats;
-  warpCalls: number;
-  warpFallbacks: number;
-  calls: number;
-  scanCalls: number;
-  unresolved: number;
-  multiHit: number;
-  maxLayers: number;
-}
-
-/** The infinite gradient has no image texture; every comparison shares it. */
-function background(py: number, size: number): Vec3 {
-  const t = (py + 0.5) / size;
-  const top = linear(SKY);
-  const bottom = linear(BOTTOM);
-  return top.map((v, i) => v + (bottom[i] - v) * t) as Vec3;
-}
-
-function renderTransmission(
+function world(
   fixture: Fixture,
-  transmit: number,
-  layers: boolean,
   size: number,
+  overrides: Partial<WorldBandSettings> = {},
   maxLayers = 32,
-  scanFraction = 0.5,
-  maxSteps = 1200,
 ): TransmissionPanel {
-  const states = new Map<string, RayState>();
-  const pixels: RayState[] = [];
-  let current: RayState;
-  let clearing = false;
-  let calls = 0;
-  let scanCalls = 0;
-  let totalSteps = 0;
-  let totalEvals = 0;
-  let primaryHits = 0;
-  let totalMs = 0;
-  let panel: PanelStats | undefined;
-  const de = (p: Vec3) => {
-    calls++;
-    return fixture.scene.de(p);
-  };
-  const center = fixture.scene.boundingCenter ?? fixture.scene.target ?? BLACK;
-  const R = fixture.scene.boundingRadius;
-  const passes = layers ? maxLayers : 1;
+  return renderTransmission(fixture, 0.9, true, size, maxLayers, 0.5, 1200, {
+    strategy: "world",
+    worldBand: { ...WORLD, ...overrides },
+  });
+}
 
-  for (let layer = 0; layer < passes; layer++) {
-    panel = renderPreview(
-      {
-        ...fixture.scene,
-        de,
-        maxSteps,
-        minimumStepFraction: 0,
-        fog: false,
-        shadow: false,
-        ao: false,
-        background: { top: linear(SKY), bottom: linear(BOTTOM) },
-        marchInterval(origin, rd) {
-          // Exactly the same camera rays are used for every layer. A key on
-          // their components avoids depending on the renderer's visit order.
-          const key = rd.join(",");
-          if (layer === 0) {
-            const o = origin.map((v, i) => v - center[i]) as Vec3;
-            const b = dot(o, rd);
-            const disc = b * b - dot(o, o) + R * R;
-            const end = disc >= 0 ? -b + Math.sqrt(disc) : -1;
-            current = {
-              t: disc >= 0 ? Math.max(0, -b - Math.sqrt(disc)) : 0,
-              end,
-              active: end >= 0,
-              layers: 0,
-              weight: 1,
-              color: [0, 0, 0],
-              unresolved: false,
-              secondT: Infinity,
-            };
-            states.set(key, current);
-          } else {
-            current = states.get(key)!;
-          }
-          clearing = layer > 0;
-          return current.active ? [current.t, current.end] : null;
-        },
-        march(p, epsilon) {
-          const d = de(p);
-          if (!Number.isFinite(d)) throw new Error("Nonfinite transmission DE");
-          if (clearing) {
-            if (d <= 1.5 * epsilon) {
-              scanCalls++;
-              // The shared marcher owns the budget and damping. A finite
-              // rejected acceptance value with a separate fixed stride keeps
-              // scanning; abs(d) is NEVER interpreted as interior clearance.
-              return {
-                d: 1e20,
-                stride: (epsilon * scanFraction) / fixture.scene.stepScale,
-              };
-            }
-            clearing = false;
-          }
-          return { d, stride: d };
-        },
-        shadeLinear(hit) {
-          const local = finishShadeTs(
-            fixture.color(hit.p),
-            hit.n,
-            hit.rd,
-            1,
-            1,
-            hit.bg,
-            FINISH,
-            {
-              lightDir: hit.light,
-              ambient: 0.25,
-              envStrength: 0,
-              bgTop: SKY,
-              bgBottom: BOTTOM,
-            },
-          );
-          const f =
-            0.04 +
-            0.96 * (1 - Math.max(0, Math.min(1, -dot(hit.n, hit.rd)))) ** 5;
-          const tau = fixture.opaque?.(hit.p) ? 0 : transmit * (1 - f);
-          current.layers++;
-          current.t = hit.t;
-          if (current.layers === 2) current.secondT = hit.t;
-          const lit = linear(local);
-          if (current.layers === 1)
-            current.first = {
-              p: hit.p,
-              rd: hit.rd,
-              t: hit.t,
-              local: lit.map((v) => (1 - tau) * v) as Vec3,
-              tau,
-            };
-          if (layers) {
-            for (let c = 0; c < 3; c++)
-              current.color[c] += current.weight * (1 - tau) * lit[c];
-            current.weight *= tau;
-            if (current.weight === 0) current.active = false;
-          } else {
-            // The ACTUAL shipped composition, including its gamma-space mix.
-            current.color = linear(
-              local.map((v, c) => v * (1 - tau) + hit.bg[c] * tau) as Vec3,
-            );
-            current.active = false;
-            current.weight = 0;
-          }
-          return current.color;
-        },
-        rayLinear(ray) {
-          pixels[ray.py * size + ray.px] = current;
-          if (current.active && ray.status === PREVIEW_EXHAUSTED) {
-            current.unresolved = true;
-            current.active = false;
-          } else if (current.active && ray.status === PREVIEW_MISS) {
-            const bg = background(ray.py, size);
-            for (let c = 0; c < 3; c++)
-              current.color[c] += current.weight * bg[c];
-            current.weight = 0;
-            current.active = false;
-          } else if (layer === 0 && current.end < 0) {
-            current.color = background(ray.py, size);
-            current.weight = 0;
-          }
-          return current.color;
-        },
-      },
-      size,
-    );
-    if (layer === 0) primaryHits = panel.hits;
-    totalSteps += panel.steps;
-    totalEvals += panel.evals;
-    totalMs += panel.ms;
-    if (![...states.values()].some((s) => s.active)) break;
+function downsample2(stats: PanelStats): PanelStats {
+  if (stats.width !== stats.height || stats.width % 2 !== 0)
+    throw new Error("Transmission downsample expects an even square raster");
+  const width = stats.width / 2;
+  const rgb = new Uint8Array(width * width * 3);
+  for (let y = 0; y < width; y++)
+    for (let x = 0; x < width; x++)
+      for (let channel = 0; channel < 3; channel++) {
+        let sum = 0;
+        for (let yy = 0; yy < 2; yy++)
+          for (let xx = 0; xx < 2; xx++)
+            sum +=
+              (stats.rgb[
+                ((2 * y + yy) * stats.width + 2 * x + xx) * 3 + channel
+              ] /
+                255) **
+              2.2;
+        rgb[(y * width + x) * 3 + channel] = Math.round(
+          255 * (sum / 4) ** (1 / 2.2),
+        );
+      }
+  return { ...stats, width, height: width, rgb };
+}
+
+function nearestSquare(stats: PanelStats, size: number): PanelStats {
+  if (stats.width !== stats.height || size < stats.width)
+    throw new Error("Contact-sheet enlargement requires a smaller square");
+  const rgb = new Uint8Array(size * size * 3);
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++) {
+      const source =
+        (Math.floor((y * stats.height) / size) * stats.width +
+          Math.floor((x * stats.width) / size)) *
+        3;
+      const target = (y * size + x) * 3;
+      rgb[target] = stats.rgb[source];
+      rgb[target + 1] = stats.rgb[source + 1];
+      rgb[target + 2] = stats.rgb[source + 2];
+    }
+  return { ...stats, width: size, height: size, rgb };
+}
+
+function changedPixels(a: PanelStats, b: PanelStats, threshold = 2): number {
+  if (a.rgb.length !== b.rgb.length)
+    throw new Error("Matched rasters required");
+  let changed = 0;
+  for (let pixel = 0; pixel < a.width * a.height; pixel++) {
+    const at = pixel * 3;
+    if (
+      Math.max(
+        Math.abs(a.rgb[at] - b.rgb[at]),
+        Math.abs(a.rgb[at + 1] - b.rgb[at + 1]),
+        Math.abs(a.rgb[at + 2] - b.rgb[at + 2]),
+      ) > threshold
+    )
+      changed++;
   }
-  const rows = [...states.values()];
-  const unresolved = rows.filter((s) => s.unresolved || s.active).length;
-  const stats: PanelStats = {
-    ...panel!,
-    hits: primaryHits,
-    exhausted: unresolved,
-    steps: totalSteps,
-    evals: totalEvals,
-    ms: totalMs,
+  return changed;
+}
+
+function summary(
+  fixture: Fixture,
+  mode: string,
+  size: number,
+  result: TransmissionPanel,
+): object {
+  return {
+    fixture: fixture.name,
+    mode,
+    size,
+    sceneParameters: {
+      boundingRadius: fixture.scene.boundingRadius,
+      target: fixture.scene.target ?? [0, 0, 0],
+      eye: fixture.scene.eye,
+      eyeOffset: fixture.scene.eyeOffset,
+      zoom: fixture.scene.zoom,
+      stepScale: fixture.scene.stepScale,
+    },
+    hits: result.stats.hits,
+    coverage: result.stats.hits / (size * size),
+    ms: result.stats.ms,
+    calls: result.calls,
+    work: result.work,
+    termination: result.termination,
+    unresolved: result.unresolved,
+    multiHit: result.multiHit,
+    maxLayers: result.maxLayers,
+    layerHits: result.layerHits,
+    layerMeanThroughput: result.layerMeanThroughput,
+    chunks: result.chunks,
+    worldBand: result.worldBand,
   };
-  const layeredCalls = calls;
-  // Same first hit and same weights as the current finish, blended in linear
-  // light. This isolates revealing rear geometry from changing colour space.
-  const linearFadeRgb = stats.rgb.slice();
-  if (!layers)
-    for (let i = 0; i < pixels.length; i++) {
-      const hit = pixels[i].first;
-      if (!hit) continue;
-      const bg = background(Math.floor(i / size), size);
-      for (let c = 0; c < 3; c++)
-        linearFadeRgb[i * 3 + c] = Math.min(
-          255,
-          Math.round(255 * (hit.local[c] + hit.tau * bg[c]) ** (1 / 2.2)),
-        );
-    }
-  let warpFallbacks = 0;
-  const warpedRgb = stats.rgb.slice();
-  // A separate, intentionally approximate optical treatment: refract into
-  // a virtual parallel slab, then exit parallel to the original camera ray.
-  // Its lateral offset samples the already rendered rear layers. The front
-  // hit and silhouette never move. This is image-space distortion, not a
-  // discovered back surface or an actual refracted geometry query.
-  const target = fixture.scene.target ?? BLACK;
-  const off = fixture.scene.eyeOffset ?? [1.55, 1.1, 1.8];
-  const eye =
-    fixture.scene.eye ?? (target.map((v, i) => v + off[i] * R) as Vec3);
-  const forward = norm(target.map((v, i) => v - eye[i]) as Vec3);
-  const right = norm(cross(forward, [0, 1, 0]));
-  const up = cross(right, forward);
-  const zoom = fixture.scene.zoom ?? 0.55;
-  const rear = (x: number, y: number, depth: number): Vec3 | null => {
-    if (x < 0 || y < 0 || x >= size || y >= size) return null;
-    const r = pixels[y * size + x];
-    if (r.unresolved || r.active || r.secondT < depth) return null;
-    if (!r.first) return r.color;
-    if (r.first.tau < 1e-8) return null;
-    return r.color.map((v, c) =>
-      Math.max(0, (v - r.first!.local[c]) / r.first!.tau),
-    ) as Vec3;
-  };
-  if (layers)
-    for (let i = 0; i < pixels.length; i++) {
-      const r = pixels[i];
-      const hit = r.first;
-      if (!hit || hit.tau < 1e-8 || r.unresolved || r.active) continue;
-      const h = R * 0.04;
-      let n = norm(
-        [0, 1, 2].map((axis) => {
-          const a = [...hit.p] as Vec3,
-            b = [...hit.p] as Vec3;
-          a[axis] += h;
-          b[axis] -= h;
-          return de(a) - de(b);
-        }) as Vec3,
+}
+
+function matchedEventGrid(low: TransmissionPanel, high: TransmissionPanel) {
+  if (high.stats.width !== low.stats.width * 2)
+    throw new Error("Event-grid comparison requires a matched 2x raster");
+  let centerChanges = 0;
+  let blocksWithHighVariation = 0;
+  let largestDifference = 0;
+  for (let y = 0; y < low.stats.height; y++)
+    for (let x = 0; x < low.stats.width; x++) {
+      const lowCount = low.eventCounts[y * low.stats.width + x];
+      const highCounts = [
+        high.eventCounts[2 * y * high.stats.width + 2 * x],
+        high.eventCounts[2 * y * high.stats.width + 2 * x + 1],
+        high.eventCounts[(2 * y + 1) * high.stats.width + 2 * x],
+        high.eventCounts[(2 * y + 1) * high.stats.width + 2 * x + 1],
+      ];
+      if (lowCount !== highCounts[3]) centerChanges++;
+      if (Math.min(...highCounts) !== Math.max(...highCounts))
+        blocksWithHighVariation++;
+      largestDifference = Math.max(
+        largestDifference,
+        ...highCounts.map((value) => Math.abs(value - lowCount)),
       );
-      if (dot(n, hit.rd) > 0) n = n.map((v) => -v) as Vec3;
-      const cosI = Math.max(0, Math.min(1, -dot(n, hit.rd)));
-      const eta = 1 / 1.45;
-      const cosT = Math.sqrt(1 - eta * eta * (1 - cosI * cosI));
-      const refracted = hit.rd.map(
-        (v, c) => eta * v + (eta * cosI - cosT) * n[c],
-      ) as Vec3;
-      const offset = refracted.map(
-        (v, c) => R * 0.08 * (v / cosT - hit.rd[c] / Math.max(0.15, cosI)),
-      ) as Vec3;
-      const depth = hit.t * dot(hit.rd, forward);
-      const scale = size / (2 * zoom * depth);
-      const sx =
-        (i % size) +
-        Math.max(
-          -size * 0.04,
-          Math.min(size * 0.04, dot(offset, right) * scale),
-        );
-      const sy =
-        Math.floor(i / size) -
-        Math.max(-size * 0.04, Math.min(size * 0.04, dot(offset, up) * scale));
-      const x = Math.floor(sx),
-        y = Math.floor(sy),
-        fx = sx - x,
-        fy = sy - y;
-      const taps = [
-        rear(x, y, hit.t),
-        rear(x + 1, y, hit.t),
-        rear(x, y + 1, hit.t),
-        rear(x + 1, y + 1, hit.t),
-      ];
-      if (taps.some((t) => t === null)) {
-        warpFallbacks++;
-        continue;
-      }
-      const weights = [
-        (1 - fx) * (1 - fy),
-        fx * (1 - fy),
-        (1 - fx) * fy,
-        fx * fy,
-      ];
-      for (let c = 0; c < 3; c++) {
-        const transmitted = taps.reduce(
-          (sum, tap, t) => sum + tap![c] * weights[t],
-          0,
-        );
-        const color = hit.local[c] + hit.tau * transmitted;
-        warpedRgb[i * 3 + c] = Math.max(
-          0,
-          Math.min(255, Math.round(255 * color ** (1 / 2.2))),
-        );
-      }
     }
   return {
-    stats,
-    linearFade: { ...stats, rgb: linearFadeRgb },
-    warped: { ...stats, rgb: warpedRgb },
-    warpCalls: calls - layeredCalls,
-    warpFallbacks,
-    calls: layeredCalls,
-    scanCalls,
-    unresolved,
-    multiHit: rows.filter((s) => s.layers > 1).length,
-    maxLayers: rows.reduce((most, s) => Math.max(most, s.layers), 0),
+    coarseVsHighCornerChanges: centerChanges,
+    blocksWithHighVariation,
+    largestDifference,
   };
-}
-
-function spatialColor(R: number): (p: Vec3) => Vec3 {
-  return (p) => {
-    const t = Math.max(0, Math.min(1, p[2] / (1.3 * R) + 0.5));
-    return [
-      0.95 * (1 - t) + 0.12 * t,
-      0.26 * (1 - t) + 0.8 * t,
-      0.12 * (1 - t) + 0.96 * t,
-    ];
-  };
-}
-
-function fixtures(): Fixture[] {
-  const sponge = buildSurfaceDE(mengerSponge(), null);
-  const escape = buildEscapeDE(mandelboxClassic());
-  const escape4 = buildEscapeDE4(
-    mandelboxClassic().map((t) => ({ ...t, w: { scale: 2, position: 0.12 } })),
-  );
-  const pose4 = (
-    name: string,
-    transforms: Transform[],
-    angle: number,
-    w0: number,
-  ): Fixture => {
-    const core = buildSurfaceDE4(transforms);
-    const R = core.visibleBoundingRadius;
-    const c = Math.cos(angle),
-      s = Math.sin(angle);
-    // Inverse XW rotor applied to the displayed 3D slice. Both the off-centre
-    // slice and the XW mixing are nonzero, so this cannot be a flat lift.
-    const query = (p: Vec3): Vec4 => [
-      c * p[0] - s * w0,
-      p[1],
-      p[2],
-      s * p[0] + c * w0,
-    ];
-    return {
-      name,
-      scene: {
-        de: (p) => estimateDistance4Refined(core, query(p)),
-        boundingRadius: R,
-        stepScale: 1,
-        eyeOffset: [0.55, 0.35, 2.4],
-        zoom: 0.36,
-      },
-      color: spatialColor(R),
-    };
-  };
-  return [
-    {
-      name: "MENGER 3D",
-      scene: {
-        de: (p) => estimateDistanceRefined(sponge, p),
-        boundingRadius: sponge.visibleBoundingRadius,
-        target: sponge.boundCenter,
-        stepScale: sponge.stepScale,
-        eyeOffset: [1.05, 0.65, 2.2],
-        zoom: 0.36,
-      },
-      color: spatialColor(sponge.visibleBoundingRadius),
-    },
-    {
-      name: "MANDELBOX 3D",
-      scene: {
-        de: (p) => estimateEscapeDistance(escape, p),
-        boundingRadius: escape.boundingRadius,
-        stepScale: ESCAPE_STEP_SCALE,
-        eyeOffset: [0.8, 0.5, 2.5],
-        zoom: 0.36,
-      },
-      color: spatialColor(escape.boundingRadius),
-    },
-    pose4("PENTATOPE 4D", pentatope(), 0.48, -0.1),
-    pose4("TESSERACT 4D", tesseract(), 0.35, 0.2),
-    {
-      name: "MANDELBOX 4D",
-      scene: {
-        de: (p) =>
-          estimateEscapeDistance4(escape4, [
-            Math.cos(0.35) * p[0] - Math.sin(0.35) * 0.3,
-            p[1],
-            p[2],
-            Math.sin(0.35) * p[0] + Math.cos(0.35) * 0.3,
-          ]),
-        boundingRadius: escape4.boundingRadius,
-        stepScale: ESCAPE_STEP_SCALE,
-        eyeOffset: [0.8, 0.5, 2.5],
-        zoom: 0.36,
-      },
-      color: spatialColor(escape4.boundingRadius),
-    },
-  ];
-}
-
-function pair(rear: boolean): Fixture {
-  return {
-    name: "UNSIGNED SPHERES",
-    scene: {
-      de: (p) =>
-        Math.max(
-          0,
-          Math.min(
-            Math.hypot(p[0], p[1], p[2] - 0.6) - 0.43,
-            rear ? Math.hypot(p[0], p[1], p[2] + 0.6) - 0.43 : Infinity,
-          ),
-        ),
-      boundingRadius: 1.4,
-      stepScale: 1,
-      eye: [0, 0, 4],
-      zoom: 0.3,
-    },
-    color: (p) => (p[2] > 0 ? [0.12, 0.8, 0.96] : [1, 0.18, 0.04]),
-    opaque: (p) => p[2] < 0,
-  };
-}
-
-function delta(a: PanelStats, b: PanelStats): number {
-  return (
-    a.rgb.reduce((sum, v, i) => sum + Math.abs(v - b.rgb[i]), 0) / a.rgb.length
-  );
 }
 
 describe("Surface transmission research", () => {
@@ -576,59 +230,46 @@ describe("Surface transmission research", () => {
     expect(exhausted.unresolved).toBeGreaterThan(0);
   });
 
-  it("renders current and layered finishes on the real 3D and posed 4D estimators", () => {
+  it("keeps the original current/layered controls and reports old convergence", () => {
     const panels: { stats: PanelStats; lines: [string, string] }[] = [];
     const report: object[] = [];
-    for (const fixture of fixtures()) {
-      const modes = [
+    for (const fixture of withoutRich4d()) {
+      for (const mode of [
         { label: "OPAQUE", t: 0, layers: false },
         { label: "CURRENT 0.35", t: 0.35, layers: false },
         { label: "CURRENT 0.90", t: 0.9, layers: false },
         { label: "LAYERS 0.90", t: 0.9, layers: true },
-      ];
-      for (const mode of modes) {
+      ]) {
         const result = renderTransmission(fixture, mode.t, mode.layers, SIZE);
-        const { stats, warped, linearFade, ...counters } = result;
-        const row = {
-          fixture: fixture.name,
-          mode: mode.label,
-          size: SIZE,
-          hits: stats.hits,
-          ms: stats.ms,
-          ...counters,
-        };
-        console.log(JSON.stringify(row));
-        report.push(row);
-        panels.push({ stats, lines: [fixture.name, mode.label] });
+        report.push(summary(fixture, mode.label, SIZE, result));
+        panels.push({ stats: result.stats, lines: [fixture.name, mode.label] });
         if (!mode.layers && mode.t === 0.9) {
           panels.push({
-            stats: linearFade,
+            stats: result.linearFade,
             lines: [fixture.name, "LINEAR FADE 0.90"],
           });
           report.push({
             fixture: fixture.name,
-            linearFadeDelta: delta(stats, linearFade),
+            linearFadeDelta: delta(result.stats, result.linearFade),
           });
         }
         if (mode.layers) {
           panels.push({
-            stats: warped,
+            stats: result.warped,
             lines: [fixture.name, "LAYERS + SLAB WARP"],
           });
           report.push({
             fixture: fixture.name,
-            warpDelta: delta(stats, warped),
+            warpDelta: delta(result.stats, result.warped),
             warpCalls: result.warpCalls,
             warpFallbacks: result.warpFallbacks,
           });
         }
       }
-      // A smaller cost/convergence instrument, separately labelled. This
-      // checks the scan, not visual approval or the truth of DE membership.
       const coarse = renderTransmission(fixture, 0.9, true, 80, 32, 0.5);
       const fine = renderTransmission(fixture, 0.9, true, 80, 64, 0.25, 2400);
       const short = renderTransmission(fixture, 0.9, true, 80, 8, 0.5);
-      const row = {
+      report.push({
         fixture: fixture.name,
         convergenceSize: 80,
         halfScanDelta: delta(coarse.stats, fine.stats),
@@ -636,9 +277,7 @@ describe("Surface transmission research", () => {
         unresolved32: coarse.unresolved,
         unresolved64: fine.unresolved,
         unresolved8: short.unresolved,
-      };
-      console.log(JSON.stringify(row));
-      report.push(row);
+      });
       expect(fine.unresolved).toBe(0);
     }
     const path = writeLabeledContactSheet(
@@ -651,14 +290,231 @@ describe("Surface transmission research", () => {
       "scripts/out/transmission-report.json",
       JSON.stringify(report, null, 2),
     );
-    // Individual panels are convenient for inspection at native resolution.
-    for (let i = 0; i < panels.length; i++) {
-      const p = panels[i].stats;
+    panels.forEach((panel, i) =>
       writeFileSync(
         `scripts/out/transmission-${i}.png`,
-        encodePng(p.width, p.height, p.rgb),
-      );
-    }
+        encodePng(panel.stats.width, panel.stats.height, panel.stats.rgb),
+      ),
+    );
     console.log(path);
+  });
+
+  it("makes world events independent of odd raster size and work chunks", () => {
+    const eventRows: object[] = [];
+    const centerThroughputs: number[] = [];
+    for (const size of [63, 95]) {
+      for (const scanPhase of [0, 0.5]) {
+        const result = world(pair(true), size, { scanPhase, chunkSteps: 37 });
+        const frontOnly = world(pair(false), size, {
+          scanPhase,
+          chunkSteps: 37,
+        });
+        const center = Math.floor(size / 2) * size + Math.floor(size / 2);
+        expect(result.eventCounts[center]).toBe(2);
+        expect(result.finalThroughput[center]).toBe(0);
+        expect(frontOnly.eventCounts[center]).toBe(1);
+        expect(frontOnly.finalThroughput[center]).toBeCloseTo(0.864, 10);
+        centerThroughputs.push(frontOnly.finalThroughput[center]);
+        expect(result.termination.opaque).toBeGreaterThan(0);
+        expect(result.unresolved).toBe(0);
+        eventRows.push({
+          size,
+          centerEvents: result.eventCounts[center],
+          centerThroughput: result.finalThroughput[center],
+          frontOnlyThroughput: frontOnly.finalThroughput[center],
+          scanPhase,
+          chunks: result.chunks,
+        });
+      }
+    }
+    expect(
+      Math.max(...centerThroughputs) - Math.min(...centerThroughputs),
+    ).toBeLessThan(1e-12);
+    const chunkRows: object[] = [];
+    const escape4 = fixtures().find(
+      (fixture) => fixture.name === "MANDELBOX 4D",
+    )!;
+    for (const fixture of [pair(true), escape4]) {
+      const results = [1, 7, 1200].map((chunkSteps) => ({
+        chunkSteps,
+        result: world(fixture, 9, { chunkSteps }, 64),
+      }));
+      const reference = results[2].result;
+      for (const { chunkSteps, result } of results) {
+        expect(result.eventCounts).toEqual(reference.eventCounts);
+        expect(result.finalThroughput).toEqual(reference.finalThroughput);
+        expect(result.termination).toEqual(reference.termination);
+        // Only the preview's pixel normal/shading may see iterative-t rounding.
+        expect(delta(result.stats, reference.stats)).toBeLessThan(0.05);
+        chunkRows.push({
+          fixture: fixture.name,
+          chunkSteps,
+          chunks: result.chunks,
+          eventArrayExact: true,
+          throughputArrayExact: true,
+          displayDelta: delta(result.stats, reference.stats),
+          termination: result.termination,
+        });
+      }
+    }
+    console.log(JSON.stringify({ worldEventRows: eventRows, chunkRows }));
+  });
+
+  it("renders the world-band matrix, scale controls and a short posed 4D strip", () => {
+    mkdirSync("scripts/out", { recursive: true });
+    const panels: { stats: PanelStats; lines: [string, string] }[] = [];
+    const report: object[] = [];
+    for (const fixture of fixtures()) {
+      const pixel = renderTransmission(
+        fixture,
+        0.9,
+        true,
+        WORLD_SIZE,
+        32,
+        0.5,
+        1200,
+        { warp: false },
+      );
+      const capped32 = world(fixture, WORLD_SIZE, {}, 32);
+      const fixed = world(fixture, WORLD_SIZE, {}, 64);
+      panels.push(
+        { stats: pixel.stats, lines: [fixture.name, "PIXEL BANDS"] },
+        { stats: fixed.stats, lines: [fixture.name, "WORLD BANDS"] },
+        { stats: fixed.warped, lines: [fixture.name, "WORLD + SLAB WARP"] },
+      );
+      const row = {
+        ...summary(fixture, "WORLD BANDS", WORLD_SIZE, fixed),
+        pixelWorldDelta: delta(pixel.stats, fixed.stats),
+        pixelMaxLayers: pixel.maxLayers,
+        unresolvedAt32: capped32.unresolved,
+        maxLayersAt32: capped32.maxLayers,
+        warpDelta: delta(fixed.stats, fixed.warped),
+        warpCalls: fixed.warpCalls,
+        warpFallbacks: fixed.warpFallbacks,
+      };
+      report.push(row);
+      const slug = fixture.name.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-");
+      writeFileSync(
+        `scripts/out/transmission-world-${slug}-straight.png`,
+        encodePng(fixed.stats.width, fixed.stats.height, fixed.stats.rgb),
+      );
+      writeFileSync(
+        `scripts/out/transmission-world-${slug}-warped.png`,
+        encodePng(fixed.warped.width, fixed.warped.height, fixed.warped.rgb),
+      );
+      console.log(JSON.stringify(row));
+    }
+
+    const menger = fixtures().find((fixture) => fixture.name === "MENGER 3D")!;
+    const low = world(menger, 48, {}, 64);
+    const high = world(menger, 96, {}, 64);
+    const highDownsampled = downsample2(high.stats);
+    const phase = world(menger, 48, { scanPhase: 0.5 }, 64);
+    const normal02 = world(menger, 48, { opticalNormalFraction: 0.02 }, 64);
+    const normal04 = world(menger, 48, { opticalNormalFraction: 0.04 }, 64);
+    const zoomedFixture: Fixture = {
+      ...menger,
+      name: "MENGER 3D ZOOM",
+      scene: { ...menger.scene, zoom: 0.27 },
+    };
+    const zoomed = world(zoomedFixture, 48, {}, 64);
+    panels.push(
+      { stats: low.stats, lines: ["MENGER 48", "WORLD NATIVE"] },
+      { stats: highDownsampled, lines: ["MENGER 96 > 48", "2X DOWNSAMPLE"] },
+      { stats: phase.stats, lines: ["MENGER 48", "GRID PHASE 0.5"] },
+      { stats: normal02.stats, lines: ["MENGER 48", "NORMAL 0.02R"] },
+      { stats: normal04.stats, lines: ["MENGER 48", "NORMAL 0.04R"] },
+      { stats: zoomed.stats, lines: ["MENGER ZOOM .27", "WORLD BANDS"] },
+    );
+    report.push({
+      fixture: menger.name,
+      matchedResolution: {
+        low: 48,
+        high: 96,
+        downsampleDelta: delta(low.stats, highDownsampled),
+        changedPixels: changedPixels(low.stats, highDownsampled),
+        eventGrid: matchedEventGrid(low, high),
+      },
+      scanPhase: {
+        fraction: 0.5,
+        delta: delta(low.stats, phase.stats),
+        changedPixels: changedPixels(low.stats, phase.stats),
+        eventCountChanges: low.eventCounts.reduce(
+          (count, value, i) => count + Number(value !== phase.eventCounts[i]),
+          0,
+        ),
+      },
+      opticalNormal: {
+        fractions: [0.02, 0.04],
+        delta: delta(normal02.stats, normal04.stats),
+        changedPixels: changedPixels(normal02.stats, normal04.stats),
+      },
+      zoom: { from: 0.36, to: 0.27 },
+    });
+
+    const poses = [
+      { angle: 0.27, w0: 0.18, eyeOffset: [0.5, 0.3, 2.25] as Vec3 },
+      { angle: 0.35, w0: 0.3, eyeOffset: [0.55, 0.35, 2.2] as Vec3 },
+      { angle: 0.46, w0: 0.42, eyeOffset: [0.62, 0.4, 2.15] as Vec3 },
+    ];
+    const motion: {
+      file: string;
+      warpedFile: string;
+      parameters: (typeof poses)[number];
+    }[] = [];
+    poses.forEach((parameters, frame) => {
+      const fixture = fixtures({ ...parameters, zoom: 0.22 }).find(
+        (candidate) => candidate.name === "MANDELBOX 4D",
+      )!;
+      const result = world(fixture, 48, {}, 64);
+      const file = `transmission-motion-${frame}.png`;
+      const warpedFile = `transmission-motion-${frame}-warped.png`;
+      writeFileSync(
+        `scripts/out/${file}`,
+        encodePng(result.stats.width, result.stats.height, result.stats.rgb),
+      );
+      writeFileSync(
+        `scripts/out/${warpedFile}`,
+        encodePng(result.warped.width, result.warped.height, result.warped.rgb),
+      );
+      motion.push({ file, warpedFile, parameters });
+      panels.push(
+        {
+          stats: result.stats,
+          lines: ["MANDELBOX 4D CLOSE", `POSE ${frame}`],
+        },
+        {
+          stats: result.warped,
+          lines: ["MANDELBOX 4D CLOSE", `POSE ${frame} + WARP`],
+        },
+      );
+      report.push({
+        ...summary(fixture, `POSE ${frame}`, result.stats.width, result),
+        warpDelta: delta(result.stats, result.warped),
+        warpCalls: result.warpCalls,
+        warpFallbacks: result.warpFallbacks,
+      });
+    });
+    const exact = JSON.stringify(
+      { model: WORLD, opticalDomain: "existing full raw scene ball R", motion },
+      null,
+      2,
+    );
+    const html = `<!doctype html><meta charset="utf-8"><title>Transmission motion strip</title><style>body{background:#111;color:#ddd;font:14px system-ui}main{display:grid;grid-template-columns:repeat(3,auto);gap:12px}img{width:256px}pre{white-space:pre-wrap}</style><main>${motion.map(({ file, warpedFile }, frame) => `<figure><img src="${file}"><figcaption>frame ${frame} straight</figcaption><img src="${warpedFile}"><figcaption>frame ${frame} warped</figcaption></figure>`).join("")}</main><pre>${exact}</pre>`;
+    writeFileSync("scripts/out/transmission-motion.html", html);
+    writeFileSync(
+      "scripts/out/transmission-world-report.json",
+      JSON.stringify(report, null, 2),
+    );
+    console.log(
+      writeLabeledContactSheet(
+        panels.map(({ stats, lines }) => ({
+          stats: nearestSquare(stats, 192),
+          lines,
+        })),
+        4,
+        "transmission-world-comparison.png",
+      ),
+    );
   });
 });
