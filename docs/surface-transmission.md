@@ -307,3 +307,70 @@ The controls cover overlapping components, a 0.00001-wide gap, a ray
 starting inside, a filled rotated 4D slice, and direct membership checks
 along rays through both finite constructions. These checks establish the
 comparison geometry; they are not an appearance or performance decision.
+
+## World bands: the candidate definition
+
+The **World bands** experiment gives optical events their own scale. The
+definition is shared by `transmission-study.ts` and the GPU pilot through
+`transmission-gpu-contract.ts`; it is deliberately an appearance rule, not
+a reconstructed glass volume.
+
+`R` is the full scene ball used by the public estimator. For native 4D it
+is the full unsliced radius, held fixed while the rotor and slice change.
+The displayed 3D ray is evaluated after the same inverse rotor/slice lift
+as the visible object. The optical domain is the half-open interval within
+that ball, sampled from its analytic entry at spacing `delta = 0.001R`.
+Integer sample indices survive scheduling changes. Neither viewport size,
+zoom, the preview's display tolerance, nor the work chunk chooses this grid.
+
+An accepted event occurs at the first sample with `DE <= 0.002R`. It
+contributes once; subsequent samples do not add optical density until a
+sample with `DE > 0.003R` re-arms event detection. The next accepted run can
+then contribute. These are clearance thresholds, **not a physical thickness
+or a generic inside/outside test**. A loose inverse bound can enlarge the
+accepted band, and the escape estimator remains heuristic. Even a very
+small or negative estimate does not authorize a jump through an interior.
+
+Each appearance event has throughput `transmit * (1 - Fresnel)`, using
+a six-query normal at radius `0.03R`, independent of the preview's visible
+normal. At normal incidence with transmit 0.9 this is 0.864. Layers compose
+in linear light. The GPU work pilot uses the simpler fixed 0.9 throughput
+per event and reports normal/shading work separately as unimplemented;
+that number is not a second proposed material default.
+
+Completed sampling of the declared ball, an opaque stop, a separately
+declared residual cutoff, and unfinished work are distinct outcomes. The
+default residual cutoff is zero. Exhausted chunks resume; an exhausted
+total budget or layer cap retains a dark unresolved remainder. Completing
+the clipped sampled domain does not establish an unknown solid's physical
+exit outside that domain. The original pixel-tolerance prototype and old
+0.35/0.90 backdrop fades remain executable controls.
+
+### A gap adversary that world scale does not solve
+
+```bash
+npx vitest run --config scripts/vitest.harness.config.ts scripts/transmission-gap.harness.ts --disableConsoleIntercept
+```
+
+Two finite boxes have two exact analytic intervals for every positive gap.
+The sampled appearance intentionally merges sufficiently small gaps: with
+the stated thresholds, an exact-distance gap must exceed `0.006R` to have
+any point farther than the re-arm threshold from both faces. Sampling adds
+an ambiguity region above that threshold. The native 4D version uses posed
+hypercubes and an off-centre slice, with the same result.
+
+| Gap        | Grid phase | Exact solid intervals | Appearance events | Remaining optical throughput |
+| ---------- | ---------: | --------------------: | ----------------: | ---------------------------: |
+| `0.004R`   |   0 or 0.5 |                     2 |                 1 |                        0.864 |
+| `0.00625R` |          0 |                     2 |                 2 |                     0.746496 |
+| `0.00625R` |        0.5 |                     2 |                 1 |                        0.864 |
+| `0.008R`   |   0 or 0.5 |                     2 |                 2 |                     0.746496 |
+
+These results are measured identically in 3D and posed 4D. The phase change
+is half one scan step. It demonstrates an optical change during small
+relative motion even though resolution no longer defines the layer scale.
+The boundary case must remain visible in the recommendation; a fixed world
+scale alone is not evidence of stable glass. A constant low-field control
+also confirms one contribution throughout a plateau, exact completed
+results with work chunks of 7 and 503 samples, and a distinct unresolved
+result when the total work is deliberately cut short.

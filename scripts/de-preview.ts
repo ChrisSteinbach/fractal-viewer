@@ -80,7 +80,11 @@ export interface PreviewScene {
   eye?: Vec3;
   /** An estimator-specific bounded interval, e.g. the balloon's far cap.
    * Absent uses the historical target-centred sphere gate. */
-  marchInterval?: (origin: Vec3, direction: Vec3) => [number, number] | null;
+  marchInterval?: (
+    origin: Vec3,
+    direction: Vec3,
+    pixel: { px: number; py: number; imageWidth: number; imageHeight: number },
+  ) => [number, number] | null;
   /** Linear backdrop stops; absent preserves the historical gradient. */
   background?: { top: Vec3; bottom: Vec3 };
   /**
@@ -415,7 +419,12 @@ export function renderPreview(
       const disc = b * b - cc;
       const sq = Math.sqrt(Math.max(0, disc));
       const interval = scene.marchInterval
-        ? scene.marchInterval(eye, dir)
+        ? scene.marchInterval(eye, dir, {
+            px,
+            py,
+            imageWidth: size,
+            imageHeight: size,
+          })
         : disc >= 0
           ? [Math.max(0, -b - sq), -b + sq]
           : null;
