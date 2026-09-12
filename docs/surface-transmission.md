@@ -5,6 +5,16 @@ Investigation, 12 September 2026. Application baseline:
 [`finish-transmission.harness.ts`](../scripts/finish-transmission.harness.ts).
 This work changes no production renderer, finish bundle or scene document.
 
+**Qualification update, 13 September 2026** (application base `3b5deaa`):
+the [World bands study](#world-bands-the-candidate-definition)
+now separates optical scale from display tolerance and compares an exact
+finite solid in both dimensions. It still merges phase-sensitive gaps. The
+[quiet real-GPU pilot](surface-transmission-feasibility.md) records a no-go
+for direct generic integration: Menger exceeds the proposed preview budget,
+and both native 4D rows fail strict boundary predicates. The [review outcome](#candidate-comparison-and-review-status)
+is **unreviewed**; there is no owner-selected appearance or approved envelope.
+The original investigation below remains the baseline evidence.
+
 **Verdict:** the present finish fades toward the backdrop and cannot show
 occluded geometry. Continuing through separated surface layers does reveal
 it, in 3D and in posed 4D slices, without an image background. A distortion
@@ -374,3 +384,171 @@ scale alone is not evidence of stable glass. A constant low-field control
 also confirms one contribution throughout a plateau, exact completed
 results with work chunks of 7 and 503 samples, and a distinct unresolved
 result when the total work is deliberately cut short.
+
+## World-scale stills, resolution and motion
+
+The completed comparison uses 48px square world panels, the original 192px
+controls, an 80px finite-solid comparison, and separate 48px camera / 64px
+native 4D motion. Contact-sheet enlargement adds no detail. These are
+bounded appearance studies, not production-resolution quality certificates.
+Default native 4D `(XW angle, slice)` pairs are Pentatope `(0.48, -0.1)`,
+Tesseract `(0.35, 0.2)`, 16-cell `(0.43, 0.14)` and Mandelbox `(0.35, 0.3)`.
+The escape4 fixture has a genuinely non-flat map (`w` scale 2, translation 0.12).
+
+At 48px, the same-raster pixel and world comparisons give:
+
+| Fixture          | World coverage | Maximum events, pixel / world | World calls per covered ray | Worst ray work | Unresolved at 32 / 64 events |
+| ---------------- | -------------: | ----------------------------: | --------------------------: | -------------: | ---------------------------: |
+| Menger 3D        |         61.98% |                        5 / 19 |                       2,236 |          2,125 |                        0 / 0 |
+| Mandelbox 3D     |         57.47% |                        8 / 43 |                       2,265 |          2,412 |                       21 / 0 |
+| Pentatope 4D     |          3.78% |                         3 / 2 |                      36,322 |          2,011 |                        0 / 0 |
+| Tesseract 4D     |          2.52% |                         4 / 4 |                      54,483 |          2,000 |                        0 / 0 |
+| 16-cell flake 4D |          2.95% |                         3 / 3 |                      46,468 |          2,028 |                        0 / 0 |
+| Mandelbox 4D     |         33.25% |                        5 / 11 |                       3,743 |          2,094 |                        0 / 0 |
+
+The call denominator includes all sampled rays, divided by those with an
+event. It exposes the cost of sparse coverage; it does not mean each covered
+ray individually made that many queries. The call column includes both
+normal estimators but excludes attribution operations and the optional warp.
+Worst-ray work counts those operations too; the warp adds six queries per
+covered ray.
+CPU wall times were not measured in an exclusive machine window and are not
+release-performance evidence.
+
+For Menger, the 3,192,994 counted calls divide into 1,489,348 first-trace,
+455,638 run-clearance, 1,155,098 later-trace, 37,164 display-normal and
+55,746 optical-normal calls. Another 9,291 event-attribution operations and
+8,568 optional warp queries are reported separately. The fixed lattice supplies
+all three trace phases. It deliberately makes no supposedly safe DE jump
+through a run. The finite-solid control instead jumps to independently
+computed interval boundaries; its different object is disclosed below.
+
+The scale controls retain adverse results. Linear-light downsampling of the
+96px Menger to 48px differs from native 48px by 14.249/255 mean byte value;
+1,445 of 2,304 pixels differ by more than two in some channel. These rasters
+sample different rays, so this is spatial aliasing evidence, not a test of
+identical-ray event invariance. On the **same** 48px rays, shifting the grid
+by `0.0005R` changes 138 event counts and the image by 3.422/255. Changing
+the optical-normal radius from `0.02R` to `0.04R` changes it by 8.622/255.
+The zoom control changes 0.36 to 0.27 with all optical scales fixed.
+
+Independent controls do compare identical rays: odd 63/95px centre rays
+retain two events through a transparent front and an opaque rear, versus
+one event and throughput 0.864 with the rear absent. Chunk sizes 1, 7 and
+1,200 preserve event and throughput arrays on the hidden-object/native
+escape4 controls. The invariant sheet also covers native affine 4D and
+power-of-two scene scaling, with throughput agreement within `1e-12`.
+Exact-cap and tangent controls exclude a sample at the ball's far endpoint.
+An earlier inclusive count was corrected; an interval-count audit of all
+37 published visual grids (169,216 rays, phases 0 and 0.5) found zero
+changed sample counts, so that correction leaves the cited images unchanged.
+
+The close native Mandelbox is the useful higher-coverage 4D composition;
+the three sparse affine views remain counterexamples. Its motion camera is
+`R * (0.55, 0.35, 2.2)`, zoom 0.22. One sequence varies only XW angle
+0.27–0.43 at slice 0.30; another varies only slice 0.18–0.42 at angle 0.35.
+The 3D sequence varies the Menger camera, with exact five-frame poses in
+`transmission-motion.harness.ts` and its JSON report.
+
+| Sequence                  | Coverage across frames | Warp fallback among covered rays | Unresolved rays |
+| ------------------------- | ---------------------: | -------------------------------: | --------------: |
+| Menger camera             |           59.68–62.89% |                     31.85–46.72% |               0 |
+| Native Mandelbox XW rotor |           54.71–69.34% |                     27.37–32.66% |               0 |
+| Native Mandelbox slice    |           62.04–65.14% |                     27.18–32.74% |               0 |
+
+Straight layers expose internal/rear structure, while the warp visibly
+softens and shifts it. However, the warp only reuses existing screen-space
+rear samples. It cannot supply newly disoccluded geometry; its rejection
+guard returns the straight result at the rates above. The small grid-phase
+adversary separately proves opacity instability. Raw adjacent-frame image
+deltas also contain intended object motion, so they are not a measured
+motion-compensated boiling score. These sequences support rejecting the
+current warp as a required production feature, not a claim of artifact-free
+glass. Halos and front-surface weight remain visible review concerns.
+
+## Finite-solid appearance and its cost
+
+The finite comparison uses one finish contribution at each exact union
+interval's entry and straight Beer attenuation
+`exp(-0.8 * intervalLength / R)`. A zero-absorption control separates path
+length from interface weighting. This is **not a complete dielectric**:
+it has no exit-interface Fresnel/shading or refracted ray. Its actual
+inside/exit oracle permits bounded work without inventing generic DE
+membership, but filling the terminal cells visibly changes the object.
+
+| Finite object, 80px      | Terminal cell side | Maximum intervals | Mean path length / R | Box intersections per frame | Opaque public/proxy image difference |
+| ------------------------ | -----------------: | ----------------: | -------------------: | --------------------------: | -----------------------------------: |
+| 400-cell Menger          |           0.166667 |                 8 |              0.42526 |                   2,560,000 |                            8.182/255 |
+| 256-cell posed Tesseract |           0.144444 |                 4 |              0.14495 |                   1,638,400 |                            2.141/255 |
+
+Every ray intersects every finite box once; this is a bounded brute-force
+comparison, not a claimed production accelerator. Both rows complete with
+zero unresolved intervals. Their finite/full-public radii are
+1.29904/1.34174 and 1.30000/1.34942, respectively. Absorption changes the
+two images by 6.437/255 and 0.187/255. The small Tesseract whole-frame
+difference reflects its sparse composition and does not establish a small
+shape error where geometry is present.
+
+The procedural checker floor lies at `y = -1.05R`, below the entire scene
+ball, with quarter-radius squares and fixed illumination. For rays visiting
+the ball it is behind the optical domain. The companion uniform sky uses
+no image texture. Independent 3D and posed 4D finite-box centre-ray tests
+show floor/sky changes through transmission and exact equality in the
+opaque limit. Whole-frame floor differences include the exposed background
+and are not used as evidence of rear visibility by themselves.
+
+## Candidate comparison and review status
+
+| Named candidate                   | What it supplies                                   | Qualification outcome                                                                                         |
+| --------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Current fade / linear fade        | Front surface blended with backdrop                | Retained controls; cannot reveal hidden geometry.                                                             |
+| Pixel bands                       | Rear geometry from pixel-scale accepted runs       | Rejected as an optical definition: raster tolerance changes material.                                         |
+| World bands, straight             | Rear geometry at declared world clearance scale    | Executable research candidate; gap phase and real-GPU cost/agreement prevent generic integration.             |
+| World bands + virtual slab warp   | Distorted already-rendered rear samples            | Optional experiment only; frequent fallback and missing disocclusions prevent requiring it.                   |
+| Finite cells with path absorption | Exact closed-cell intervals and actual path length | Valid bounded alternative with visibly coarser geometry; neither full refraction nor a qualified replacement. |
+
+The recommendation is **no-go for direct generic World bands production
+integration**. Retain the straight variant as the reference for further
+model work. The tested optical tuple is entry `0.002R`, re-arm `0.003R`,
+spacing `0.001R`, transmit 0.9, normal radius `0.03R`; the explored normal
+range is `0.02–0.04R`. Grid phase 0–0.5 is an adversary, not an authoring
+control. The optional warp uses experimental IOR 1.45, slab `0.08R` and
+image offset cap 0.04. There is **no qualified production parameter range**
+from these measurements. Larger bands or strides would change the object
+and require another appearance study; they are not exit optimizations.
+
+The [feasibility record](surface-transmission-feasibility.md) supplies the
+named device/browser, actual raster and proposed latency/memory limits.
+It is an intentionally failed qualification: Menger's kernel alone takes
+1.214 seconds at 256 × 144, and native affine4/escape4 each have a strict
+near-boundary predicate flip. No production capability is unlocked.
+
+**Owner outcome: UNREVIEWED.** No owner, approval date, named selection,
+distortion decision or accepted envelope is recorded. The review builder
+records source/artifact hashes in a companion manifest so a later decision
+can identify the evidence it actually reviewed. Work authorization does
+not supply the separate aesthetic/product choice. Production integration
+therefore remains blocked; the finite-solid direction is a possible next
+study, not an approved substitution. There is no missing 4D implementation
+hidden behind this result: both dimensions are scoped as research only.
+
+## Reproduce the qualification package
+
+Run CPU artifacts separately from the real-driver timing window:
+
+```bash
+TRANSMISSION_WORLD_SIZE=48 TRANSMISSION_PROXY_SIZE=80 \
+npx vitest run --config scripts/vitest.harness.config.ts \
+  scripts/finish-transmission.harness.ts scripts/transmission-proxy-visual.harness.ts \
+  scripts/transmission-motion.harness.ts --disableConsoleIntercept
+npx vitest run --config scripts/vitest.harness.config.ts \
+  scripts/transmission-proxy.harness.ts scripts/transmission-gap.harness.ts \
+  scripts/transmission-invariant.harness.ts scripts/transmission-gpu-contract.harness.ts
+```
+
+After the two GPU commands in the feasibility record, build the offline
+review with `node scripts/transmission-review.mjs`. Open
+`scripts/out/transmission-review.html`; it links the original control sheet,
+same-size straight/warped pairs, scale controls, finite comparison, reports
+and the camera/rotor/slice player. The images, reports and manifest remain
+under ignored `scripts/out/`; all generating sources are versioned.
