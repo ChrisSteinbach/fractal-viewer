@@ -12,7 +12,8 @@ finite solid in both dimensions. It still merges phase-sensitive gaps. The
 [quiet real-GPU pilot](surface-transmission-feasibility.md) records a no-go
 for direct generic integration: Menger exceeds the proposed preview budget,
 and both native 4D rows fail strict boundary predicates. The [review outcome](#candidate-comparison-and-review-status)
-is **unreviewed**; there is no owner-selected appearance or approved envelope.
+now records an owner-selected research direction; production qualification
+still requires rework under those targets.
 The original investigation below remains the baseline evidence.
 
 **Verdict:** the present finish fades toward the backdrop and cannot show
@@ -523,14 +524,38 @@ It is an intentionally failed qualification: Menger's kernel alone takes
 1.214 seconds at 256 × 144, and native affine4/escape4 each have a strict
 near-boundary predicate flip. No production capability is unlocked.
 
-**Owner outcome: UNREVIEWED.** No owner, approval date, named selection,
-distortion decision or accepted envelope is recorded. The review builder
-records source/artifact hashes in a companion manifest so a later decision
-can identify the evidence it actually reviewed. Work authorization does
-not supply the separate aesthetic/product choice. Production integration
-therefore remains blocked; the finite-solid direction is a possible next
-study, not an approved substitution. There is no missing 4D implementation
-hidden behind this result: both dimensions are scoped as research only.
+**Owner outcome, 13 September 2026: research direction selected;
+production qualification requires rework.** Chris Steinbach explicitly chose
+layered transparency that preserves fractal detail and reveals internal/rear
+geometry in both 3D and 4D. Visible bending is **essential**, rather than an
+optional enhancement. The finite-cell glass direction was not selected.
+
+For the next desktop feasibility study on the measured RX 7900 XTX/Chromium
+setup, the selected waiting-time targets are:
+
+| Stage                   |                                  Selected research target |
+| ----------------------- | --------------------------------------------------------: |
+| 256 × 144 preview       |                                                    <= 1 s |
+| 512 × 288 settled image |                                                   <= 10 s |
+| 1920 × 1080 export      |                                                  <= 120 s |
+| Additional state        |                                                <= 128 MiB |
+| Completion              | Correct completion; no exhaustion presented as background |
+
+These answers select the next experiment, not the current failed prototype
+for production. The original measured rows above retain their original
+250ms/2s/30s comparison in the feasibility record; accepting slower targets
+does not repair the gap-phase or 4D agreement failures. The research inputs
+offered for this choice were the review package at repository revision
+`f59d978d3030148cf46a8469313ba716759c00f5`, with its source/artifact manifest.
+The conversation records the three explicit answers; it does not establish
+that every image in that package was inspected.
+
+The next study will compare a smooth, fractional layer-opacity rule and
+actual world-space displaced-ray queries against the existing hard bands
+and screen-space warp. It must retain the fine object, reveal newly visible
+rear geometry, carry both dimensions, and price real continuation work.
+Production integration remains blocked until that revised evidence qualifies
+and the resulting appearance is selected for release.
 
 ## Reproduce the qualification package
 
