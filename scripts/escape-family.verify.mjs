@@ -24,10 +24,14 @@
  *      forward gates refuse a final transform). The reverse leak — a preset
  *      that carries a lens failing to install it — renders juliaSnowflake as
  *      a plain juliaIsland, silently.
- *   4. WHICH ENGINE each session takes. The bulb was wired into the
+ *  4. WHICH ENGINE each session takes. The bulb was wired into the
  *      compute renderer; if bulb sessions in fact fall to the WebGL
  *      SURFACE_BULB arm, the bench-verified `core:"bulb"` WGSL kernel is dead
  *      code and nobody would know from a green test suite.
+ *  5. TRUSTED INPUT LANDS DURING A SETTLE: the way out — a trusted click on
+ *      the Points mode button — lands while settleActive is true. The
+ *      no-automatic-give-up line assumes taps land while a render grinds;
+ *      this leg makes the assumption standing instead of remembered.
  *
  * It also covers the two fixes that landed beside it: a chain's trap now
  * reaching its palette is why the fold-chain shots are compared for colour
@@ -817,6 +821,84 @@ async function main() {
             console.error(
               `[escape-family] supersampling disclosed OK: "${label.trim()}"`,
             );
+          }
+        }
+      } finally {
+        await context.close();
+      }
+    }
+    // --- trusted input lands during a settle: the way out is always clickable
+    // The no-automatic-give-up line ("the settle always ARMS however
+    // expensive the frame ... the user decides") assumes taps land while a
+    // render grinds. Closing the active-lighting-gate bug measured that on a
+    // throwaway probe (trusted clicks landed in 38/48/60 ms with settleActive
+    // true, all pointer events inside 1.1 ms, zero long tasks) — and nothing
+    // guarded it going forward. This leg makes the property STANDING: catch
+    // the settle in flight on the app's own latch, then take the way out —
+    // a trusted click on the Points mode button — and require it to land.
+    // If input were ever starved mid-settle there would be no way out at
+    // all, which is why the property is load-bearing and not advisory.
+    if (wanted.length > 0) {
+      const { context, page } = await openApp(browser, args);
+      try {
+        await loadPreset(page, "mandelboxClassic");
+        const entry = await enterSurface(page);
+        if (!entry.entered) {
+          failures.push(
+            `settle-input check: Surface disabled — ${entry.reason}`,
+          );
+        } else {
+          // Catch the settle IN FLIGHT — not after it resolved — polling
+          // faster than the cheapest preset's settle can complete.
+          const caught = await page
+            .waitForFunction(
+              () => {
+                const s = window.__surfaceState?.();
+                return (
+                  s &&
+                  s.mode === "surface" &&
+                  s.firstFrame === true &&
+                  s.settleActive === true
+                );
+              },
+              undefined,
+              { timeout: args.settle, polling: 50 },
+            )
+            .then(() => true)
+            .catch(() => false);
+          if (!caught) {
+            failures.push(
+              "settle-input check: never caught settleActive=true — the leg could not observe the settle it is meant to click inside",
+            );
+          } else {
+            const stillActive = await page.evaluate(
+              () => window.__surfaceState()?.settleActive === true,
+            );
+            const clickedAt = Date.now();
+            await page.click("#modePointsBtn");
+            const landed = await page
+              .waitForFunction(
+                () => window.__surfaceState?.()?.mode === "points",
+                undefined,
+                { timeout: 10_000, polling: 50 },
+              )
+              .then(() => true)
+              .catch(() => false);
+            if (!landed) {
+              failures.push(
+                "settle-input check: a trusted click on the Points mode button mid-settle never landed — trusted input is starved during a settle, and the way out is gone",
+              );
+            } else {
+              console.error(
+                `[escape-family] settle-input OK: the way out landed in ${Date.now() - clickedAt}ms` +
+                  ` (settleActive at click: ${stillActive ? "true" : "SETTLE FINISHED FIRST"})`,
+              );
+              if (!stillActive) {
+                failures.push(
+                  "settle-input check: the settle completed between catching it and clicking — the leg did not click mid-settle and asserted nothing",
+                );
+              }
+            }
           }
         }
       } finally {
