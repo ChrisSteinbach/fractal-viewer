@@ -145,9 +145,8 @@ npm run verify:pattern-release-review # Scores a frozen blinded owner review; on
 ```
 
 **`--display=:0` NEEDS AN X COOKIE, and without it every gate that offers it
-falls back to SwiftShader SILENTLY.** This machine has the real Iris — the
-driver this file keeps calling the authority — but an agent/SSH shell arrives
-with a forwarded `DISPLAY` (`localhost:10.0`) and no authorization for `:0`, so
+falls back to SwiftShader SILENTLY.** An agent/SSH shell arrives with a
+forwarded `DISPLAY` (`localhost:10.0`) and no authorization for `:0`, so
 `--display=:0` gets "Authorization required" and the run quietly measures a CPU
 rasterizer instead. Nothing fails; the numbers are just not the ones you asked
 for. The credential is Xwayland's, and its suffix changes every login, so glob
@@ -156,11 +155,20 @@ it rather than pasting a path:
 ```bash
 export XAUTHORITY=$(ls -t /run/user/$(id -u)/.mutter-Xwaylandauth.* | head -1)
 export DISPLAY=:0
-glxinfo -B | grep "OpenGL renderer"   # MUST say Mesa Intel(R) Iris(R) Xe, not SwiftShader
+glxinfo -B | grep "OpenGL renderer"   # MUST be a REAL hardware driver, never SwiftShader/llvmpipe
 ```
 
+The development machine is WHATEVER MACHINE IS AVAILABLE — it has been an Iris
+Xe (i915) and is currently an AMD RX 7900 XTX (radeonsi, navi31) — so the
+check names no vendor: the renderer line must name a real hardware driver
+(e.g. `Mesa Intel(R) Iris(R) Xe`, `AMD Radeon RX 7900 XTX (radeonsi, ...)`),
+never `SwiftShader` or `llvmpipe`. The Iris/i915 figures quoted across the
+docs are records of the machines they were MEASURED on, not expectations
+about the machine you are on; a claim those gates re-measure here gets this
+machine's number beside the old one, never silently substituted for it.
+
 CHECK THAT LINE BEFORE BELIEVING A REAL-DRIVER ROW. A SwiftShader run that was
-meant to be an Iris run is the failure mode this note exists to stop — one
+meant to be a real-driver run is the failure mode this note exists to stop — one
 session shipped its whole measurement set on software before noticing.
 
 AND A CONTENDED MACHINE IS NOT A MEASUREMENT. "Run it on a quiet machine" was
