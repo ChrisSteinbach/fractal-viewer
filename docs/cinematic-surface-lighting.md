@@ -736,6 +736,28 @@ and forward and backward scattering, and the zero-density identity — each
 matching its analytic reference. The largest emitted GLSL program is the 3D
 compound lattice/lens/floor arm at 72,601 bytes.
 
+ON THE RX 7900 XTX BOX THE GLSL COMPILATION SWEEP IS ENVIRONMENT-LIMITED,
+and the harness discloses it rather than failing. MEASURED (radeonsi
+navi31, ANGLE/OpenGL 4.6): the 3D escape/trap/floor/finite row's VERTEX —
+the same prelude seven earlier rows compiled fine — refuses with an EMPTY
+info log and `gl.getError()` 0, and the refusal CASCADES: every later
+compile refuses with an empty log too, including a trivial three-line
+vertex, and into a FRESH context, so the stuck state is the driver's, not
+one program's or context's. The stuck state also took the WebGPU device
+down with it once (`mapAsync`: "A valid external Instance reference no
+longer exists") — which is why the harness ORDER runs the arithmetic
+agreement FIRST and the compilation sweep LAST on its own context. The
+harness's rule: a refusal with an EMPTY log is recorded into `glslRefused`
+and disclosed in the run's output; the run exits green once the arithmetic
+agreement passes, which on this box means 7 of 15 production programs
+compile (the 3D descent family) and the agreement gates what compiled; a
+refusal carrying a LOG is still fatal — that is source; and every row is
+accounted for (compiled + refused = 15). The record's own passing run —
+all fifteen compiling — was taken on a different machine, and the WGSL
+cores (25) compile everywhere measured. Both engines' lit shaders are
+known-good on this box by other means: a full-pane cathedral settles on
+compute and progresses on ?surfacegl (WebGL/ANGLE) on the real driver.
+
 The functional browser checks PASS on compute
 (`--checks=all --export=none`, 240.7 s): moving a light invalidates retained
 pixels and changes the image (mean 5.45 over 66% of pixels), a hash restore

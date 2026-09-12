@@ -92,6 +92,26 @@ No production UI, document wire, GPU performance or browser qualification is
 claimed. The model, measured record, review status and both-engine/both-dimension
 integration audit live in `docs/cinematic-surface-lighting.md`.
 
+### surface-lighting-agreement
+
+The lighting transport's arithmetic gate: analytic disk irradiance,
+scattering, finite occlusion, gaps, exhaustion and zero density run through
+the EMITTED WGSL cores (25) and representative production GLSL programs (15)
+against independent reference results — no primary marcher, no timing, no
+aesthetic claim. The WGSL/GLSL agreement rows gate to 0.0003 per channel;
+every production program is accounted for, compiled or refused.
+
+The AMD RX 7900 XTX box's GLSL compilation sweep is ENVIRONMENT-LIMITED and
+the harness discloses it: empty-log compile refusals (a real GLSL error
+carries a log) are recorded into `glslRefused` and the run exits green once
+the arithmetic passes — 7 of 15 compile there (the 3D descent family); the
+refusal starts at the 3D escape row's vertex and cascades across every later
+compile, into a fresh context, so the stuck state is the driver's. The ORDER
+is the fix: the agreement runs FIRST, the sweep LAST on its own context —
+the stuck state once took the WebGPU device down with it. A log-bearing
+refusal is still fatal (source). Full record:
+`docs/cinematic-surface-lighting.md`, "Remaining gates run".
+
 ### surface-beam
 
 The beam-width sheet, and the one that decided a shipped default. Width-1
