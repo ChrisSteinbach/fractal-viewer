@@ -1606,6 +1606,175 @@ first probe was a different population" under the section above names the
 mechanism (a cold first fence samples a different, faster tick phase than
 every later one) and the fix (one unmeasured alignment fence).
 
+### What the driver's job timeout actually bounds
+
+**A SINGLE DRIVER JOB IS CUT AT ~2.0 s ON THIS MACHINE, AND THE FENCE GROUP
+IS NOT THE UNIT THE WATCHDOG COUNTS.** Both halves are measured, and the
+second refutes the reading this loop was built on.
+
+The question was forced by a loss the instruments could not explain. A
+1920x1057 cathedral settle on the RX 7900 XTX lost its device at 182 s with
+`amdgpu: ring gfx_0.0.0 timeout ... Process chrome`, while the renderer's own
+`?surfacetrace` reported a worst per-dispatch time of 40 ms against a 50 ms
+target. Something the driver timed was three orders of magnitude off what the
+instrument reported, and until that is explained every dispatch-width bound in
+this file is set against a number that does not bound the thing that kills the
+device.
+
+`scripts/webgpu-job-watchdog.repro.mjs` asks it away from this app entirely, in
+`scripts/webgpu-staging-ceiling.repro.mjs`'s shape: a routed one-line HTML
+document on an `https:` origin Playwright fulfils itself, no build, no server
+and none of this app, a fresh browser per rep. Its arms all spend the SAME
+total GPU time and differ only in how that total is handed to the queue —
+`single` (one submit carrying the whole total), `serial` (K submits, EACH
+awaited on its own fence), `group` (K submits behind ONE fence — the app's
+fence group), and `multicb` (ONE `queue.submit([cb1..cbK])` of K command
+buffers, which separates "several submit calls" from "several command
+buffers").
+
+MEASURED 12 September 2026, RX 7900 XTX, Chrome on `:0`, WebGPU adapter
+`amd rdna-3`, kernel 7.0.0-29. `ring` is what `journalctl -k` recorded during
+that row:
+
+| arm     | shape       | total   | outcome               | ring      |
+| ------- | ----------- | ------- | --------------------- | --------- |
+| single  | 1 x 2000 ms | 2000 ms | survived (fence 2004) | clean     |
+| single  | 1 x 3000 ms | 3000 ms | DIED                  | gfx reset |
+| single  | 1 x 6000 ms | 6000 ms | DIED                  | gfx reset |
+| serial  | 6 x 500 ms  | 3000 ms | survived              | clean     |
+| serial  | 6 x 667 ms  | 4002 ms | survived              | clean     |
+| serial  | 6 x 1000 ms | 6000 ms | survived              | clean     |
+| group   | 3 x 500 ms  | 1500 ms | survived              | clean     |
+| group   | 6 x 250 ms  | 1500 ms | survived              | clean     |
+| group   | 2 x 900 ms  | 1800 ms | survived              | clean     |
+| group   | 2 x 1000 ms | 2000 ms | survived              | clean     |
+| group   | 2 x 1200 ms | 2400 ms | survived              | clean     |
+| group   | 2 x 1400 ms | 2800 ms | survived              | clean     |
+| group   | 2 x 1500 ms | 3000 ms | DIED 4 of 5 runs      | clean     |
+| group   | 6 x 500 ms  | 3000 ms | DIED 1 of 2 runs      | clean     |
+| group   | 12 x 250 ms | 3000 ms | DIED                  | clean     |
+| group   | 6 x 667 ms  | 4002 ms | survived              | clean     |
+| group   | 6 x 1000 ms | 6000 ms | DIED                  | clean     |
+| group   | 12 x 500 ms | 6000 ms | DIED                  | clean     |
+| multicb | 6 x 500 ms  | 3000 ms | DIED at 2042 ms       | gfx reset |
+| multicb | 6 x 667 ms  | 4002 ms | DIED at 2033 ms       | gfx reset |
+| multicb | 6 x 1000 ms | 6000 ms | DIED at 2063 ms       | gfx reset |
+
+#### Four verdicts — two sharp, one refutation, one open
+
+**1. ONE DRIVER JOB GETS ~2.0 s, not the 10 s amdgpu nominally gives its gfx
+ring.** `single` survives 2000 ms (fence 2004 ms) and dies at 3000 ms;
+`multicb` dies 2033, 2042 and 2063 ms into payloads of 4002, 3000 and 6000 ms —
+the SAME instant regardless of how much work was behind it, which is what a
+fixed deadline looks like. This is the reproducible, sharp number, and it is a
+MACHINE's number: read it off the device in front of you, never off the
+driver's documented default.
+
+**2. K COMMAND BUFFERS IN ONE `submit()` ARE ONE DRIVER JOB.** That is the
+whole of why `multicb` dies where `group` — the same K dispatches, the same
+total, K separate `submit()` calls — does not. `surface-compute.ts` submits one
+command buffer per submit, so it is clear of this; a caller that ever batched
+command buffers to "save submissions" would be walking straight into it.
+
+**3. THE FENCE GROUP IS NOT THE WATCHDOG'S UNIT, and the backlog reading is
+REFUTED.** K separate submissions behind one `onSubmittedWorkDone` are K jobs
+with K deadlines: 4002 ms of it survives, and 6000 ms survives when each second
+is fenced. The prior reading — that a queued backlog accumulates into one
+job — was already refuted by the kernel line that prompted this work:
+`signaled seq=17130178, emitted seq=17130179` is a gap of ONE. Exactly one job
+was emitted and unsignaled when the watchdog fired, not a backlog of as many
+jobs as were queued.
+
+**4. BUT AN UNFENCED INTERVAL STILL DIES NEAR 3 s, AND NOT CLEANLY. This one
+is INTERMITTENT AND UNEXPLAINED.** Every `group` death in the table is at a
+total of 3000 ms or more, leaves NOTHING in the kernel log, and lands at the
+moment the interval's work would have COMPLETED (2987, 2997, 2999, 3002, 3006,
+5927, 5930 ms) rather than at a deadline part-way through it. It is a rate
+rather than a threshold — 2x1500 ms died on four runs of five, 6x500 ms on one
+of two, and 6x667 ms not at all. THE LIKELIEST READING IS THAT THE APP DOES NOT
+CONTROL HOW MUCH OF ITS BACKLOG REACHES THE RING AT ONCE: submissions the host
+issues together may be batched into one busy period against verdict 1's
+deadline, or spread out, and which of those happens is not the caller's to
+decide. That is an open question, NOT a mechanism, and nothing here proves it.
+
+**TWO FAILURE SIGNATURES, AND ONLY ONE REACHES THE JOURNAL.** An over-long
+single job takes the logged `ring gfx_0.0.0 timeout ... Ring reset succeeded`
+path. An over-long interval loses the device with `A valid external Instance
+reference no longer exists.` and writes NOTHING to the kernel log — so a
+session that reads the journal to decide whether the driver was involved will
+conclude it was not. Do not read the quiet one as a different bug, and do not
+read a clean journal as a clean run.
+
+#### What it bounds here, and what the existing reading got half right
+
+THE DERIVED BOUND IS VERDICT 1'S, APPLIED TO THE WHOLE INTERVAL: hold the GPU
+work queued between two fences to the ~2 s a single job gets, because the
+driver may treat it as one. At this project's usual 4x watchdog margin that is
+~500 ms per fence interval, which the shipped
+`SURFACE_COMPUTE_FENCE_GROUP_MS` of 300 ms already respects — PROVIDED the
+prediction it sizes against is right, which is precisely what failed at 182 s.
+
+THE CEILING IS ~2.0 s AND THE LADDERS AIM AT 50 ms, so the shipped widths are
+nowhere near it and this measurement does not, by itself, ask for one of them
+to move. What it moves is what the numbers MEAN.
+
+**"THE WATCHDOG SEES DISPATCHES, NOT GROUPS" IS HALF RIGHT, AND THE HALF IT
+MISSES IS THE DEADLINE.** The ladders pace on `groupWorkMs / members` — a
+group's wall divided by how many dispatches shared it — on exactly that stated
+ground. The dispatches really ARE separate jobs, so the reading survives
+verdict 3 and only verdict 3. But the quantity the deadline is denominated in
+is the INTERVAL's work, so the per-dispatch share understates it by the group
+size, and the frame's seed submits — which ride the first fence untracked —
+are not in the divisor at all. A ladder may keep stepping per member; what must
+be held against ~2 s is the group's own work.
+`surfaceComputeFenceGroupAllowanceMs` now holds its PREDICTED work there —
+`min(SURFACE_COMPUTE_FENCE_GROUP_MS, 2000/4)`, which picks the shipped 300 ms
+and so binds nothing today, and exists so that target cannot be raised on
+throughput grounds, which is what raising it looks like, past the measured
+ceiling without something refusing it. The group's MEASURED `workMs` is still
+read by nothing.
+
+**AND AN INSTRUMENT BUILT ON FENCES CANNOT SEE ITS OWN FATAL DISPATCH.** Every
+number this renderer records is taken when a fence resolves. The submission
+that kills the device never resolves, so it is never recorded, and "the worst
+dispatch we measured was 40 ms" is a statement about the SURVIVORS alone. That
+is the gap the probe was written to explain, and it does not close by making
+the existing number more accurate.
+
+`timestamp-query` IS AVAILABLE ON THIS STACK — the probe reads it, and its
+GPU-side figures track the host's fence wall to within 7 ms — and it is the
+right instrument: a pass's own begin-to-end ON THE DEVICE, in the currency the
+deadline is denominated in, with nothing split or subtracted. The renderer has
+none of it today. A trace line written at SUBMIT rather than at the fence is
+the cheaper half of the same fix, and it is now there: under `?surfacetrace`
+each dispatch writes a `<lane> SUBMIT len=… ahead=… predicted=…` line as it is
+handed to the queue, so a lost device names its last submission instead of
+taking the answer with it. The `predicted=` figure is NOT evidence and nothing
+sizes anything from it — a dispatch's predicted cost is its sizer's target by
+construction — it is simply the only number that exists before the work runs.
+
+#### Running the probe
+
+HEADED ONLY — Chrome exposes no WebGPU adapter headless on this box, which is
+also how the app failed:
+
+```bash
+export XAUTHORITY=$(ls -t /run/user/$(id -u)/.mutter-Xwaylandauth.* | head -1)
+node scripts/webgpu-job-watchdog.repro.mjs --display=:0
+node scripts/webgpu-job-watchdog.repro.mjs --display=:0 --arm=group --totalMs=3000 --groups=6
+```
+
+`--arm=calibrate` fits GPU time against the spin kernel's iteration count so
+every other arm asks for a duration rather than a magic number, and never hangs
+anything. Exit 3 is REPRODUCED (an interval over the ceiling killed the device
+while the same work serially fenced did not — the expected verdict, and the
+rows above still stand); 0 is CLEAN, meaning the browser, the driver or the
+machine changed and the ceiling above is due a re-measurement; 2 is
+INCONCLUSIVE (no adapter, or a software one); 1 is harness failure. RUN IT ON A
+QUIET MACHINE, and expect ring resets: hanging the GPU is the point. Every
+reset on this box has recovered, but a wedged GPU can still take a desktop
+session with it.
+
 ### The lit dispatch width, and what one workgroup cost
 
 **Measured on the participating medium, which has since been REMOVED on the
