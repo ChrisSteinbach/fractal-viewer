@@ -1957,18 +1957,23 @@ interface ShadeSizerState {
   };
 }
 
-export const SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS = 4096;
 const SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS = 50;
 
 /** The lit terminal dispatch's width: what its own measured two-term model
- * can afford inside one dispatch target, under the capacity ladder's cap. */
+ * can afford inside one dispatch target, under the capacity ladder's cap.
+ * NO FIXED RAY CEILING of its own — the ladder's cap is the device's own
+ * per-dispatch ray ceiling, and the batch site clamps at it again
+ * (MEASURED: the fixed 4096 this used to share with the unlit batch
+ * constant sat at the ceiling in 3,970 of 3,976 steps at ~15-25 ms each
+ * against its own 50 ms target; lifting it to the device cap cut a lit
+ * cathedral settle 118.75 s -> 21.52 s, 5.5x, the settled frame
+ * byte-identical — docs/cinematic-surface-lighting.md). */
 export function surfaceComputeLightingRayBatch(
   surfaceCost: ShadeHitCost,
   cap: number,
 ): number {
   const width = Math.min(
     cap,
-    SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS,
     (SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS * 1000 -
       surfaceCost.interceptUs) /
       Math.max(1, surfaceCost.marginalUs),
@@ -1987,10 +1992,21 @@ export function surfaceComputeLightingRayBatch(
  *
  * It exists for the same reason {@link nextShadeBatchSize} does one queue
  * over: the two-term model sizes, the ladder paces the climb, so a scene
- * nobody has measured cannot go from one workgroup to
- * {@link SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS} on a single cheap
- * dispatch. Doubling on evidence and quartering on a 2x overrun are that
- * file's shape deliberately, not a second set of dials.
+ * nobody has measured cannot go from one workgroup to the device's own
+ * dispatch ceiling on a single cheap dispatch. Doubling on evidence and
+ * quartering on a 2x overrun are that file's shape deliberately, not a
+ * second set of dials.
+ *
+ * THE CEILING IS THE DEVICE'S, not a fixed constant: the shipped 4096
+ * arrived with the authored-lighting integration as "one fixed
+ * conservative width" copying the unlit batch number, with no derivation,
+ * and sat at the ceiling in 3,970 of 3,976 steps at ~15-25 ms per
+ * dispatch against its own 50 ms target on a lit cathedral (1920x1057,
+ * 8 samples) — the settle ran 118.75 s against 21.52 s with the ceiling
+ * lifted to 65536, the settled frame byte-identical
+ * (docs/cinematic-surface-lighting.md). The caller passes {@link
+ * surfaceComputeMaxDispatchRays}, so the climb stops only where the
+ * device itself stops.
  *
  * WHY THE CLIMB IS WORTH PACING AT ALL, measured on the participating
  * medium this renderer no longer has (real AMD RX 7900 XTX, cathedral,
@@ -2005,12 +2021,13 @@ export function surfaceComputeLightingRayBatch(
 export function nextLightingRayCap(
   current: number,
   worstDispatchMs: number,
+  ceiling: number,
 ): number {
   if (
     worstDispatchMs < SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS &&
-    current < SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS
+    current < ceiling
   ) {
-    return Math.min(current * 2, SURFACE_COMPUTE_LIGHTING_MAX_DISPATCH_RAYS);
+    return Math.min(current * 2, ceiling);
   }
   if (worstDispatchMs > SURFACE_COMPUTE_LIGHTING_DISPATCH_TARGET_MS * 2) {
     return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.floor(current / 4));
@@ -4622,6 +4639,11 @@ export class SurfaceComputeRenderer {
         budgetMs - (performance.now() - wallStart),
       );
 
+    // The device's own ceiling on ONE dispatch — the last clamp on every
+    // sizing path below (the hit sizers, the march slice, and the LIT
+    // ladder's climb ceiling). See {@link surfaceComputeMaxDispatchRays}.
+    const maxDispatchRays = surfaceComputeMaxDispatchRays(device.limits);
+
     /**
      * Fence the group, then hand its ONE measurement to the models the
      * dispatches behind it belong to. Returns false when the frame was
@@ -4779,8 +4801,13 @@ export class SurfaceComputeRenderer {
           );
           for (const d of hits) {
             // The watchdog sees dispatches, not groups, so the ladder is
-            // paced by this dispatch's own attributed time.
-            const litGrown = nextLightingRayCap(lightingSizer.rayCap, shareMs);
+            // paced by this dispatch's own attributed time, and its climb
+            // stops at the device's own dispatch ceiling.
+            const litGrown = nextLightingRayCap(
+              lightingSizer.rayCap,
+              shareMs,
+              maxDispatchRays,
+            );
             lightingSizer.rayCap =
               d.hits < d.wanted
                 ? Math.min(lightingSizer.rayCap, litGrown)
@@ -4797,11 +4824,6 @@ export class SurfaceComputeRenderer {
       );
       return true;
     };
-
-    // The device's own ceiling on ONE dispatch — the last clamp on both
-    // sizing paths below, above whatever their cost model asked for. See
-    // {@link surfaceComputeMaxDispatchRays}.
-    const maxDispatchRays = surfaceComputeMaxDispatchRays(device.limits);
 
     // Progress presents fire BETWEEN bounded pieces of work — march
     // slices and shade batches alike — never only at iteration ends: a
@@ -5060,10 +5082,10 @@ export class SurfaceComputeRenderer {
         // sizer aimed at, not a fixed constant.
         const hitBudgetMs = shadeHitBudgetUs(sizer.cost.interceptUs) / 1000;
         // shadeHitsPin is unclamped at parse too, but it names a HIT
-        // COUNT, not per-ray work, so maxDispatchRays below already
-        // bounds it exactly like the free queue's batch size — no
-        // separate cap needed, unlike marchStepsPin
-        // ({@link SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP}).
+        // COUNT, not per-ray work, so the device's own maxDispatchRays
+        // clamp on this batch already bounds it exactly like the free
+        // queue's batch size — no separate cap needed, unlike
+        // marchStepsPin ({@link SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP}).
         const batchSize = isFree
           ? Math.min(shadeFreeQueue.length, maxDispatchRays)
           : Math.min(

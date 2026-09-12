@@ -1855,6 +1855,31 @@ complete eight-pass settle with the mist off, and the
 medium was removed rather than optimized. Without it a lit frame is the
 surface half alone — which is the 130 s.
 
+THE FIXED 4096 LIT CEILING IS GONE. After the medium's removal, the same
+cathedral at pane scale (1920x1057, 8 samples, mist density 0 — the SHIPPED
+lit path) measured 118.75 s at the 4096 ceiling against 21.52 s lifted to
+65536 — 5.5x, settled frame byte-identical, identical census
+(docs/cinematic-surface-lighting.md carries the full table). The 4096 was
+never derived: it arrived with the lighting integration copying the unlit
+`SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` number. The ladder's climb ceiling is
+now the DEVICE'S OWN dispatch ceiling — the caller passes
+`surfaceComputeMaxDispatchRays` to `nextLightingRayCap`, which takes the
+ceiling as a parameter — and `surfaceComputeLightingRayBatch` carries no
+width constant of its own: the 50 ms time target sizes, the device caps,
+the ladder paces the climb. SHIPPED-RUN FIGURES on this machine (same
+cached cathedral document, 1920x1057, 8 samples): the CAP climbed to
+4,194,240 — the device ceiling itself — while the WIDTH stayed bound by
+the 50 ms time target at 49,984 rays, worst attributed share 60.2 ms,
+settled 22.25 s (timing uncertified: the desktop Firefox held ~95 ms/s of
+GPU during the run; the certified 21.52 s is the branch's W0 row, which
+this run's exact census match — covered 1,940,449 / miss 88,991 /
+exhausted 0 — is consistent with). The fence gate's own fixture binds
+earlier: its per-ray lit cost is high enough that the 50 ms target prices
+~4.4k rays, so its lit ladder holds at 4096 — by TIME now, not by a wire.
+The Firefox staging note: a 50k-ray dispatch stages a 200 KB active-list
+write, under the 1 MiB group close, whose own rule sends a dispatch whose
+write passes the ceiling out alone.
+
 ### A band is bit-exact
 
 The band used to be a `camera.setViewOffset` SUB-FRUSTUM, and its rays
