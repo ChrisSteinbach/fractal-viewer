@@ -368,10 +368,10 @@ export type SurfaceFloorPattern = (typeof SURFACE_FLOOR_PATTERNS)[number];
  */
 export interface SurfaceParams {
   /**
-   * Authored finite lights and optional bounded scattering medium, in displayed
-   * world space for both dimensional paths. Absence preserves legacy lighting.
-   * Edits are live and restart the Surface settle; other render modes retain
-   * the block without consuming it. Sampling quality remains renderer state.
+   * Authored finite lights in displayed world space for both dimensional paths.
+   * Absence preserves legacy lighting. Points authors the next Surface entry
+   * with live placement guides; Surface edits restart its settle. Flame/Solid
+   * retain the block. Sampling quality remains renderer state.
    */
   lighting?: SurfaceLighting;
   /** Samples per pixel used by the parked Surface settle and Save-PNG. */

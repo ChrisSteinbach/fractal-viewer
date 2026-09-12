@@ -669,7 +669,16 @@ morphs into place instead of snapping (see **Presets** below).
   included — see **Scene color**) that appears for the orbit-trap,
   rings, sheets, and Shape trap sources, plus a **Color speed** slider — orbit-trap
   source only, fading how quickly deeper descent levels blend into the trap
-  color. **Lighting** holds **Light Angle**, **Light Height**, **Ambient**, and
+  color. The shared **Surface lighting** section lets you enable **Authored
+  lights** and place the Key and Rim lights in **Points**. While that section
+  is open, labeled disks show each light's position and radius, and arrows
+  show its emitting direction. Adjust the position and aim controls while
+  orbiting the cloud, or inspect the rig in the four Points views. This works
+  for 3D and 4D scenes; 4D lights stay in displayed 3D space as the fractal
+  rotates or slices. Points remains unlit, and edits take effect on the next
+  Surface render. Editing in Surface restarts convergence. Closing the section
+  hides the guides; saved PNGs and Collection thumbnails omit them.
+  The contextual **Lighting** section holds **Light Angle**, **Light Height**, **Ambient**, and
   **Environment**. Surface's separate **Depth** section owns a **Depth of
   Field** checkbox (off by default). It automatically focuses on the active
   Surface framing centre, leaving that region crisp while applying a bounded,

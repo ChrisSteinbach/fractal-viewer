@@ -6806,10 +6806,18 @@ async function main(): Promise<void> {
     scene.setGuidesVisible(visible);
   }
 
+  function refreshSurfaceLightGuides(): void {
+    scene.setSurfaceLightGuides(
+      state.surface.lighting,
+      state.renderMode === "points" && ui.surfaceLightingEditorOpen(),
+    );
+  }
+
   function refreshUi(): void {
     ui.setPointsViewLayout(pointsViewLayout);
     ui.setPointsAxisProjection(pointsAxisProjection);
     ui.updateLabels(state);
+    refreshSurfaceLightGuides();
     scene.setPointsAxisProjection(pointsAxisProjection);
     scene.setPointsViewLayout(
       state.renderMode === "points" ? pointsViewLayout : "single",
@@ -11037,8 +11045,10 @@ async function main(): Promise<void> {
     onAutoOrbitSpeedInput: (value) => {
       autoOrbitSpeed = value;
     },
-    // Every authored rig edit owns a fresh convergence. Presence also changes
-    // the compiled program and its HDR output resources.
+    onSurfaceLightingGuides: refreshSurfaceLightGuides,
+    // Points authors the next Surface entry and updates its placement guides.
+    // An active Surface rig edit owns a fresh convergence; presence also
+    // changes the compiled program and its HDR output resources.
     onSurfaceLighting: (lighting, phase) => {
       stopShows({ notify: true });
       editSession.beginEdit("tweak");
@@ -11062,6 +11072,7 @@ async function main(): Promise<void> {
       }
       if (phase === "commit") editSession.flush();
       ui.updateLabels(state);
+      refreshSurfaceLightGuides();
     },
     onSurfaceLightingStarter: (id) => {
       void loadSceneSnapshot(

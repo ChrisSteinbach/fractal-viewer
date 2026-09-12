@@ -3,6 +3,7 @@ import { SurfaceLightingControls } from "./surface-lighting-controls";
 import { fromSnapshot } from "./persist";
 import { initialState, setSurfaceLighting } from "./state";
 import { createSurfaceLightingStarter } from "./surface-lighting-starters";
+import { pentatope } from "../fractal/presets";
 
 afterEach(async () => {
   document.body.replaceChildren();
@@ -44,8 +45,8 @@ describe("Surface lighting authoring controls", () => {
       expect(number.getAttribute("aria-label")).toContain("exact value");
       expect(number.getAttribute("aria-describedby")).toContain(note.id);
     }
-    controls.sync({ ...state, renderMode: "points" });
-    expect(note.textContent).toContain("Enter Surface");
+    controls.sync({ ...state, renderMode: "solid" });
+    expect(note.textContent).toContain("Switch to Points");
     for (const control of host.querySelectorAll<
       HTMLInputElement | HTMLSelectElement
     >("input, select")) {
@@ -56,6 +57,48 @@ describe("Surface lighting authoring controls", () => {
     // medium's 8-vs-32 cells were the whole of that claim.
     expect(note.textContent).toContain("restart Surface convergence");
     expect(note.textContent).not.toContain("reduced sampling");
+  });
+
+  it.each([3, 4])(
+    "authors exact light placement in %iD Points for the next Surface entry",
+    (dimension) => {
+      const { controls, state, note, onEdit, input } = mount();
+      state.renderMode = "points";
+      if (dimension === 4) state.transforms = pentatope();
+      controls.sync(state);
+      expect(input("surfaceRigEnabled").disabled).toBe(false);
+      expect(input("surfaceRigKeyPositionXNumber").disabled).toBe(false);
+      expect(note.textContent).toContain("next Surface render");
+      expect(note.textContent).toContain("Points stays unlit");
+      const before = structuredClone(state.surface.lighting);
+      input("surfaceRigKeyPositionXNumber").value = "1.23456789";
+      input("surfaceRigKeyPositionXNumber").dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      expect(onEdit).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          lights: expect.arrayContaining([
+            expect.objectContaining({ position: [1.23456789, 0.2, -1.05] }),
+          ]),
+        }),
+        "commit",
+      );
+      expect(state.surface.lighting).toEqual(before);
+    },
+  );
+
+  it("enables a new rig from a legacy Points scene", () => {
+    const { controls, onEdit, input } = mount();
+    controls.sync(initialState(false));
+    input("surfaceRigEnabled").checked = true;
+    input("surfaceRigEnabled").dispatchEvent(
+      new Event("change", { bubbles: true }),
+    );
+    expect(onEdit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lights: expect.any(Array) }),
+      "commit",
+    );
+    expect(input("surfaceRigRimPositionYNumber").disabled).toBe(false);
   });
 
   it("commits exact numeric values in fresh rigs without mutating the source", () => {

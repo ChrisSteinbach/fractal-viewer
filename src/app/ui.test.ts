@@ -2878,25 +2878,53 @@ describe("Ui authored Surface lighting", () => {
     expect(handlers.onSurfaceLightingStarter).not.toHaveBeenCalled();
   });
 
-  it("routes the shared authored editor callback while preserving dormant state visibility", () => {
+  it("routes Points lighting edits while preserving dormant state visibility in Solid", () => {
     const handlers = { ...noopHandlers(), onSurfaceLighting: vi.fn() };
     const ui = new Ui(document);
     ui.bind(handlers);
     const state = initialState(false);
-    ui.updateLabels(state);
+    ui.updateLabels({ ...state, renderMode: "solid" });
     const enable = document.getElementById(
       "surfaceRigEnabled",
     ) as HTMLInputElement;
     const section = document.getElementById("surfaceAuthoredLightingSection")!;
     expect(section.classList.contains("hidden")).toBe(false);
     expect(enable.disabled).toBe(true);
-    ui.updateLabels({ ...state, renderMode: "surface" });
+    ui.updateLabels(state);
+    expect(enable.disabled).toBe(false);
     enable.checked = true;
     enable.dispatchEvent(new Event("change"));
     expect(handlers.onSurfaceLighting).toHaveBeenCalledWith(
       expect.objectContaining({ lights: expect.any(Array) }),
       "commit",
     );
+  });
+
+  it("reports editor visibility without changing the rig and keeps it open across renderer switches", async () => {
+    const handlers = {
+      ...noopHandlers(),
+      onSurfaceLighting: vi.fn(),
+      onSurfaceLightingGuides: vi.fn(),
+    };
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const state = initialState(false);
+    ui.updateLabels(state);
+    const section = document.getElementById(
+      "surfaceAuthoredLightingSection",
+    ) as HTMLDetailsElement;
+    section.open = true;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(ui.surfaceLightingEditorOpen()).toBe(true);
+    expect(handlers.onSurfaceLightingGuides).toHaveBeenCalled();
+    ui.updateLabels({ ...state, renderMode: "surface" });
+    expect(ui.surfaceLightingEditorOpen()).toBe(true);
+    ui.updateLabels(state);
+    expect(ui.surfaceLightingEditorOpen()).toBe(true);
+    section.open = false;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(ui.surfaceLightingEditorOpen()).toBe(false);
+    expect(handlers.onSurfaceLighting).not.toHaveBeenCalled();
   });
 });
 

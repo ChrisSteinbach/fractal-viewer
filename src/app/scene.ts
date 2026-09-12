@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import {
+  resolveSurfaceLighting,
   surfaceLightingRuntime,
+  type SurfaceDiskLight,
+  type SurfaceLighting,
   type SurfaceLightingRuntime,
 } from "../fractal/surface-lighting";
 import { installSurfaceLightingUniforms } from "./surface-lighting-material";
@@ -1013,6 +1016,13 @@ export class FractalScene {
   private balloonTint: [number, number, number] = [0, 0, 0];
   private balloonTintStrength = 0;
   private guideCubes: THREE.Object3D[] = [];
+  /** Displayed-world aids shared by flat and non-flat Points. Kept out of
+   * the cloud scene so bloom, fog and EDL cannot obscure the rig labels. */
+  private readonly surfaceLightGuideScene = new THREE.Scene();
+  private readonly surfaceLightGuides: ReturnType<typeof surfaceLightGuide>[] =
+    [];
+  private surfaceLightGuidesVisible = false;
+  private surfaceLightGuideKey = "";
   // The shear currently baked into each guide cube's geometry, parallel to
   // guideCubes. Lets setGuideGeometry skip rebuilding the cell unless the shear
   // actually changed (position/rotation/scale ride the Object3D's TRS instead).
@@ -2444,6 +2454,68 @@ export class FractalScene {
       cube.visible = showGuides;
     }
     if (this.fourDScaffold) this.fourDScaffold.visible = showGuides;
+  }
+
+  /** View / Device, this session: the open lighting editor in Points owns
+   * visibility, independently of the flat-only transform guides. The rig
+   * already lives AFTER 4D reduction, so rotor/slice changes never move it.
+   * Resolve exactly as Surface does, without rewriting imported documents. */
+  setSurfaceLightGuides(
+    lighting: SurfaceLighting | undefined,
+    visible: boolean,
+  ): void {
+    const show =
+      visible && lighting !== undefined && lighting.lights.length > 0;
+    if (show !== this.surfaceLightGuidesVisible) this.renderNeeded = true;
+    this.surfaceLightGuidesVisible = show;
+    if (!show || !lighting) return;
+    const lights = resolveSurfaceLighting(lighting).lights;
+    const key = JSON.stringify(lights);
+    if (key === this.surfaceLightGuideKey) return;
+    this.surfaceLightGuideKey = key;
+    lights.forEach((light, index) => {
+      let guide = this.surfaceLightGuides[index];
+      if (!guide) {
+        guide = surfaceLightGuide(index);
+        this.surfaceLightGuides.push(guide);
+        this.surfaceLightGuideScene.add(guide.root);
+      }
+      guide.update(light);
+    });
+    this.surfaceLightGuides.forEach((guide, index) => {
+      guide.root.visible = index < lights.length;
+    });
+    this.renderNeeded = true;
+  }
+
+  private renderSurfaceLightGuides(
+    camera: THREE.Camera,
+    cssHeight: number,
+  ): void {
+    if (!this.surfaceLightGuidesVisible) return;
+    // Labels keep a readable CSS-pixel size in perspective and parallel panes.
+    // The disk and arrow retain world size: neither changes the authored light.
+    const position = new THREE.Vector3();
+    for (const { root, label } of this.surfaceLightGuides) {
+      if (!root.visible) continue;
+      position.copy(root.position).applyMatrix4(camera.matrixWorldInverse);
+      const depth =
+        camera instanceof THREE.OrthographicCamera ? 1 : -position.z;
+      label.visible = depth > 0;
+      const unitsPerPixel =
+        (2 * Math.max(0, depth)) /
+        (camera.projectionMatrix.elements[5] * Math.max(cssHeight, 1));
+      label.scale.set(72 * unitsPerPixel, 28 * unitsPerPixel, 1);
+    }
+    const autoClear = this.renderer.autoClear;
+    this.renderer.autoClear = false;
+    try {
+      // Editing aids are visible through the cloud, including interior lights.
+      this.renderer.clearDepth();
+      this.renderer.render(this.surfaceLightGuideScene, camera);
+    } finally {
+      this.renderer.autoClear = autoClear;
+    }
   }
 
   /**
@@ -3930,6 +4002,7 @@ export class FractalScene {
         if (this.renderStyle === "dof") this.focusDof(true);
         this.renderer.render(this.scene, this.camera);
       }
+      this.renderSurfaceLightGuides(this.camera, this.viewportHeight);
       return;
     }
     switch (this.renderStyle) {
@@ -3946,6 +4019,7 @@ export class FractalScene {
       default:
         this.renderer.render(this.scene, this.camera);
     }
+    this.renderSurfaceLightGuides(this.camera, this.viewportHeight);
   }
 
   /**
@@ -4001,6 +4075,7 @@ export class FractalScene {
         });
         this.preparePointsCamera(camera, view.height);
         renderer.render(this.scene, camera);
+        this.renderSurfaceLightGuides(camera, view.height);
       }
     } finally {
       nativePointMaterials.forEach((material, index) => {
@@ -4070,18 +4145,21 @@ export class FractalScene {
   private withCenteredProjection<T>(readback: () => T, invalidate = true): T {
     const inset = this.rightInsetPx;
     const layout = this.pointsViewLayout;
-    if (inset === 0 && layout === "single") return readback();
+    const lightGuides = this.surfaceLightGuidesVisible;
+    if (inset === 0 && layout === "single" && !lightGuides) return readback();
     this.rightInsetPx = 0;
     // Four-up is editing workspace chrome. Captures/thumbnails keep their
     // established contract: the authored Current camera as one labeled-free
     // image, never an HTML-label-free mosaic.
     this.pointsViewLayout = "single";
+    this.surfaceLightGuidesVisible = false;
     this.syncProjection();
     try {
       return readback();
     } finally {
       this.rightInsetPx = inset;
       this.pointsViewLayout = layout;
+      this.surfaceLightGuidesVisible = lightGuides;
       this.syncProjection();
       if (invalidate) this.renderNeeded = true;
     }
@@ -9293,6 +9371,130 @@ function sizeTarget(
   if (target.width !== width || target.height !== height) {
     target.setSize(width, height);
   }
+}
+
+/** A true-size disk and emitting-normal arrow in displayed world space.
+ * The label marks even a very small or edge-on disk. These are editor aids,
+ * not emitting geometry or an approximation of a beam's spread. At most two
+ * live for the page lifetime; slider edits only update their pose/materials,
+ * avoiding geometry uploads, texture churn and shader re-links per input. */
+function surfaceLightGuide(index: number): {
+  root: THREE.Group;
+  label: THREE.Sprite;
+  update: (light: SurfaceDiskLight) => void;
+} {
+  const guide = new THREE.Group();
+  const face = new THREE.Group();
+  const disk = new THREE.Group();
+  const arrow = new THREE.Group();
+  face.add(disk, arrow);
+  guide.add(face);
+  const fillMaterial = new THREE.MeshBasicMaterial({
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    fog: false,
+  });
+  const lineMaterial = new THREE.LineBasicMaterial({ transparent: true });
+  const headMaterial = new THREE.MeshBasicMaterial({ transparent: true });
+  disk.add(new THREE.Mesh(new THREE.CircleGeometry(1, 64), fillMaterial));
+  const ring = Array.from({ length: 64 }, (_, i) => {
+    const angle = (i * Math.PI) / 32;
+    return new THREE.Vector3(Math.cos(angle), Math.sin(angle), 0);
+  });
+  disk.add(
+    new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints(ring),
+      lineMaterial,
+    ),
+    new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-1, 0, 0),
+        new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(0, -1, 0),
+        new THREE.Vector3(0, 1, 0),
+      ]),
+      lineMaterial,
+    ),
+  );
+  arrow.add(
+    new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, 0, 1),
+      ]),
+      lineMaterial,
+    ),
+  );
+  const head = new THREE.Mesh(
+    new THREE.ConeGeometry(0.065, 0.2, 12),
+    headMaterial,
+  );
+  head.rotation.x = Math.PI / 2;
+  head.position.z = 0.9;
+  arrow.add(head);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 216;
+  canvas.height = 84;
+  const ctx = canvas.getContext("2d");
+  const texture = new THREE.CanvasTexture(canvas);
+  const label = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: texture,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  label.center.set(0.5, -0.35);
+  label.renderOrder = 1;
+  guide.add(label);
+  const zAxis = new THREE.Vector3(0, 0, 1);
+  const normal = new THREE.Vector3();
+  let labelKey = "";
+  return {
+    root: guide,
+    label,
+    update(light) {
+      guide.position.fromArray(light.position);
+      face.quaternion.setFromUnitVectors(zAxis, normal.fromArray(light.normal));
+      disk.scale.setScalar(light.radius);
+      arrow.scale.setScalar(Math.max(0.35, light.radius * 2.5));
+      const peak = Math.max(1, ...light.color);
+      const tint = color(
+        light.color.map((channel) =>
+          Math.max(0.2, Math.pow(channel / peak, 1 / 2.2)),
+        ) as Vec3,
+      );
+      const opacity = light.intensity > 0 ? 0.95 : 0.4;
+      for (const material of [fillMaterial, lineMaterial, headMaterial]) {
+        material.color.copy(tint);
+        material.opacity = material === fillMaterial ? opacity * 0.16 : opacity;
+      }
+      const hex = tint.getHexString();
+      const key = `${hex}:${light.intensity === 0}`;
+      if (key === labelKey || !ctx) return;
+      labelKey = key;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(10, 14, 25, 0.92)";
+      ctx.beginPath();
+      ctx.roundRect(3, 3, 210, 78, 15);
+      ctx.fill();
+      ctx.strokeStyle = `#${hex}`;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "600 36px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(
+        `${index === 0 ? "Key" : "Rim"}${light.intensity === 0 ? " · off" : ""}`,
+        108,
+        43,
+      );
+      texture.needsUpdate = true;
+    },
+  };
 }
 
 /**

@@ -1,4 +1,9 @@
 /** Scene / Look authoring for the shared displayed-space lighting rig.
+ * Document lifetime; Surface consumes it in 3D/4D (all session kinds).
+ * Points edits update placement guides live and apply on next Surface entry;
+ * Surface edits restart convergence; Flame/Solid refuse edits. See
+ * docs/panel-ia.md. Guides are session-only View / Device aids, shown while
+ * this editor is open in Points, independently of transform guide visibility.
  * Convenience ranges expand around imported values; only an explicit edit
  * changes the document. Every range uses the panel's exact-number companion. */
 import { hexToRgb, rgbToHex } from "../fractal/palette";
@@ -216,14 +221,18 @@ export class SurfaceLightingControls {
   }
 
   sync(state: AppState): void {
-    this.active = state.renderMode === "surface";
+    this.active =
+      state.renderMode === "surface" || state.renderMode === "points";
     this.enabled = state.surface.lighting !== undefined;
     if (state.surface.lighting) {
       this.draft = cloneSurfaceLighting(state.surface.lighting);
     }
-    this.note.textContent = this.active
-      ? "Lights update live and restart Surface convergence. Renderer controls the parked-view samples."
-      : "Surface lighting is retained in this render mode. Enter Surface to edit the lights.";
+    this.note.textContent =
+      state.renderMode === "surface"
+        ? "Lights update live and restart Surface convergence. Switch to Points to see placement guides."
+        : state.renderMode === "points"
+          ? "Place lights with the controls below. Disks show their size and arrows show their aim. Edits are saved for the next Surface render; Points stays unlit."
+          : "Surface lighting is retained in this render mode. Switch to Points to place lights or Surface to edit the lighting live.";
     this.refresh();
   }
 
