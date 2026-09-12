@@ -31,7 +31,14 @@ const inert = (file: string): boolean =>
   file.endsWith(".md") ||
   file.startsWith(".beads/");
 
-/** Type imports and re-exports count too. Unknown loaders never prove safety. */
+/** Type imports and re-exports count too. A loader that can EXECUTE what it
+ * takes — require beyond the literal-import case, import.meta.glob/resolve,
+ * direct eval, new Function, Worker, the vm executors — never proves safety
+ * and is refused: its specifier names a dependency this walker cannot
+ * resolve. readFile/readFileSync/fetch return DATA; they name no module,
+ * cannot put one in this graph, and their output can only run through a
+ * refused executor, so a file read inside the closure is an ordinary call.
+ * (Measured record: the readFile uncertainty, docs/gpu-agreement-ci.md.) */
 export function imports(file: string, source: string): string[] {
   const parsed = ts.createSourceFile(
     file,
@@ -76,7 +83,12 @@ export function imports(file: string, source: string): string[] {
       ) {
         add(node.arguments[0]);
       } else if (
-        /import\.meta\.(glob|resolve)|\brequire\b|(?:^|\.)(?:fetch|readFile|readFileSync)$|^eval$/.test(
+        // Module-executing loaders only — readFile/readFileSync/fetch are
+        // data readers, per imports()'s header comment. eval stays anchored:
+        // a looser word match would hit the WORD eval anywhere in an
+        // expression's source text, and the bench's main.ts is full of IIFEs
+        // whose bodies legitimately contain mode:"eval" strings.
+        /import\.meta\.(glob|resolve)|\brequire\b|^eval$|(?:^|\.)runIn(?:New)?Context$|(?:^|\.)compileFunction$/.test(
           expression,
         )
       ) {
@@ -101,9 +113,10 @@ export function imports(file: string, source: string): string[] {
       add(node.arguments?.[0]);
     } else if (
       ts.isNewExpression(node) &&
-      ["Worker", "SharedWorker", "Function"].includes(
+      (["Worker", "SharedWorker", "Function"].includes(
         node.expression.getText(parsed),
-      )
+      ) ||
+        /(?:^|\.)SourceTextModule$/.test(node.expression.getText(parsed)))
     ) {
       throw new Error(`unsupported runtime loader in ${file}`);
     }
@@ -199,11 +212,13 @@ export function selectImpact(
       // kernels, and CLOSURE MEMBERSHIP ALONE decides it — deliberately with
       // no import-edge check of its own. The closure is recomputed over the
       // HEAD tree, so a script that becomes reachable is caught as an
-      // agreement dependency there; parsing these files instead would gain
-      // nothing and lose plenty, since 32 of them legitimately call
-      // readFileSync/fetch and `imports` refuses such a loader by design —
-      // one of them would fall the WHOLE selection back to uncertainty.
-      // The bench's only runtime spawn is `npm run dev`; it loads no
+      // agreement dependency there. Parsing them instead would gain nothing —
+      // membership is the whole decision — and buys a new uncertainty surface:
+      // one refused loader in any of the 137, however unreachable, would fall
+      // the WHOLE selection back to "analysis uncertainty". That is exactly
+      // what one readFile in the bench's own closure did while file readers
+      // were refused; see the doc's measurement record. The bench's only
+      // runtime spawn is `npm run dev`; it loads no
       // scripts/ file by path (verified), so imports are the whole story.
       else if (
         file.startsWith("scripts/") &&

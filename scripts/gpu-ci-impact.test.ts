@@ -21,7 +21,7 @@ function tree(changes: Record<string, string | null> = {}): SourceTree {
     "src/wire.ts": "export interface Params { x: number }",
     "src/panel.ts": "export const label = 'hello';",
     "scripts/driver.mjs": 'import "../src/gpu.ts";',
-    "scripts/gate.verify.mjs": "readFileSync('shot.png'); export const x = 1;",
+    "scripts/gate.verify.mjs": "eval('shot.png'); export const x = 1;",
     "scripts/sheet.harness.ts": 'import "../src/panel.ts";',
     "scripts/tsconfig.json": "{}",
     "scripts/gpu-ci-impact.ts": "export const selector = 1;",
@@ -124,9 +124,10 @@ describe("GPU impact policy", () => {
   });
 
   it("decides a scripts/ file on CLOSURE MEMBERSHIP, never on parsing it", () => {
-    // scripts/gate.verify.mjs calls readFileSync, which `imports` refuses as
-    // an unknown loader by design. Parsing it would fall the WHOLE selection
-    // back to uncertainty, which is exactly what this rule must not do.
+    // gate.verify.mjs calls eval, which `imports` refuses as a loader it
+    // cannot resolve. The point survives whatever the file's loaders are: a
+    // file OUTSIDE the bench's closure is never parsed, so nothing in it —
+    // refused loader or not — can fall the selection back to uncertainty.
     expect(() =>
       imports(
         "scripts/gate.verify.mjs",
@@ -205,11 +206,33 @@ describe("GPU impact policy", () => {
       ).full,
     ).toBe(true);
   });
+  it("reads a file read inside the closure as data, never as an edge or an unknown loader", () => {
+    // machine-quiet.mjs reads /proc fdinfo from inside the bench's closure;
+    // while `imports` refused file readers, that single readFile fell the
+    // WHOLE selection back to "analysis uncertainty" and every diff planned a
+    // full sweep — including diffs with nothing changed at all. A readFile /
+    // readFileSync / fetch returns bytes: it cannot put a module in this
+    // graph (the closure must not grow), and its result can only execute
+    // through a refused loader, which stays refused wherever it appears.
+    const graph = tree({
+      "src/gpu.ts":
+        'import "./math"; readFileSync("./panel.ts", "utf8");' +
+        ' void fs.readFile("./panel.ts", "utf8"); void fetch("./panel.ts");',
+    });
+    expect(imports("src/gpu.ts", graph.read("src/gpu.ts"))).toEqual(["./math"]);
+    expect(dependencyClosure(graph, roots)).not.toContain("src/panel.ts");
+    expect(selectImpact(graph, graph, ["src/panel.ts"], roots).full).toBe(
+      false,
+    );
+  });
   it.each([
     "import(name)",
     'import.meta.glob("./*.ts")',
-    'fetch("./wire.ts")',
-    'readFileSync("./wire.ts")',
+    "eval(source)",
+    "require.resolve('./wire.ts')",
+    "vm.runInContext(source, ctx)",
+    "vm.compileFunction(source)",
+    "new vm.SourceTextModule(source)",
     'new Worker("./wire.ts")',
     'new Function("return import(path)")',
     'import "./missing"',
