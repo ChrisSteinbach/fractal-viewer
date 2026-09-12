@@ -250,6 +250,29 @@ describe("GPU workflow gates", () => {
     PLANNER_TIMEOUT_MS,
   );
 
+  it(
+    "proves independence against the real checkout, never falls back to uncertainty",
+    () => {
+      // machine-quiet.mjs — a fs.readFile caller — sits inside the bench's
+      // closure, and while `imports` refused file readers that ONE readFile
+      // fell every selection back to "analysis uncertainty": the planner
+      // planned a full 36-shard sweep for every diff, including one with
+      // zero changed files. Whatever this diff selects on its own merits,
+      // uncertainty must not be the reason — a selector that cannot prove
+      // independence for anything is the failure mode this gate exists
+      // against, so the fallback failing here fails loudly rather than
+      // quietly costing 36 shards per PR forever.
+      const out = execFileSync(
+        "node",
+        ["scripts/gpu-ci-plan.mjs", "--base=HEAD~1", "--head=HEAD"],
+        { cwd: new URL("..", import.meta.url), encoding: "utf8" },
+      );
+      const plan = JSON.parse(out);
+      expect(plan.reasons.join(" ")).not.toMatch(/analysis uncertainty/);
+    },
+    PLANNER_TIMEOUT_MS,
+  );
+
   it("skips the deploy sweep only when this commit is already fully swept", () => {
     const deploy = workflow("deploy");
     // != 'true' and never == 'false': a missing/empty output must sweep.

@@ -39,8 +39,12 @@ For each changed path, in order:
 
 An unresolved or ambiguous import, unknown package or alias, computed import, glob loader,
 unsupported import assignment, parse failure, missing root or unavailable git
-history selects full agreement. Symlink/submodule source and runtime fetch/file-read,
-worker or generated-function loaders are also uncertain. Selector execution failure makes the aggregate
+history selects full agreement. Symlink/submodule source, worker and
+generated-function loaders, and the vm executors are also uncertain. Runtime
+file reads and fetches are DATA, not module edges: they name no module this
+walker can resolve, and their output can only execute through one of the
+executors it refuses, so `readFile`/`readFileSync`/`fetch` create no edge and
+refuse nothing (see _The readFile uncertainty_ below). Selector execution failure makes the aggregate
 red. Unsupported scenario-roster structure also makes it red because the union
 cannot then be established. New dependency syntax must earn support through
 tests before it can prove independence.
@@ -417,11 +421,14 @@ the second is the load-bearing one:
 
 1. The closure is recomputed over the HEAD tree, so a script that BECOMES
    reachable is already caught there as an agreement dependency.
-2. Parsing them would gain nothing and lose plenty. **32 of the 137 files
-   under `scripts/` legitimately call `readFileSync`/`fetch`**, which
-   `imports` refuses as an unknown loader by design — and one such refusal
-   falls the WHOLE selection back to `analysis uncertainty`. The naive fix
-   would not even have helped the change that motivated it.
+2. Parsing them would gain nothing — membership is the whole decision — and
+   parsing buys an uncertainty surface instead: one refused loader in any of
+   the 137 files, however unreachable from the bench, falls the WHOLE
+   selection back to `analysis uncertainty`. (The original text here argued
+   from `readFileSync`/`fetch` being refused; since 2026-09-12 those are
+   classified as data readers, not loaders — see _The readFile uncertainty_
+   below — and the argument now rests on the refused loaders that remain,
+   which `scripts/` files also use.)
 
 The bench's only runtime spawn is `npm run dev`; it loads no `scripts/` file
 by path (both `scripts/…` strings in it are comments, verified), so imports
@@ -457,6 +464,50 @@ agreement but `gpu-agreement.yml` defines the sweep, so the answer there is a
 closure too — over YAML `uses:`/`workflow_call` edges, which this selector has
 no machinery to read. It analyses TypeScript and JavaScript imports; inventing
 a second graph for a handful of rarely-edited files is not worth the surface.
+
+### The readFile uncertainty, 2026-09-12
+
+The machine-quiet work moved per-process GPU-busy attribution into
+`scripts/lib/machine-quiet.mjs` and imported it from the bench — putting a
+`fs.readFile` caller INSIDE the closure the selector parses. `imports` refused
+file readers (`fetch`/`readFile`/`readFileSync`) as unknown loaders by design,
+so every selection from then on fell back to the same reason and planned the
+full sweep for EVERY diff — the same shape as the `new URL` failure below: one
+refusal in a file the every-run closure parses disables the selector entirely.
+Measured at the worst, a diff with ZERO changed files planned `full=true`,
+36 shards; PR 404's select log carried the reason verbatim while its diff
+touched no kernel:
+
+    analysis uncertainty: Error: unknown loader in scripts/lib/machine-quiet.mjs
+
+The refusal was the wrong CLASSIFICATION for these three loaders, not a
+missing exception. A readFile/fetch returns bytes: it names no module, cannot
+put one in the graph, and its result can only execute through one of the
+executors the walker refuses — direct eval, `new Function`, `Worker`, a
+`require` member, `import.meta.glob` — each on its own, wherever it appears.
+The reclassification closes the composition gap it would otherwise open by
+refusing the `vm` executors (`runInContext`/`runInNewContext`/
+`compileFunction`, `SourceTextModule`), which until then the readFile refusal
+had been standing in front of. Re-anchoring `eval` past its exact form was
+tried and REVERTED within the same session: a word-level match hits the word
+`eval` anywhere in an expression's source text, and the bench's `main.ts`
+carries IIFEs whose bodies legitimately contain `mode: "eval"` strings — the
+real-checkout pin caught it before commit.
+
+Replayed over real commits after the fix:
+
+| Range                                 | Before                                 | After                                     |
+| ------------------------------------- | -------------------------------------- | ----------------------------------------- |
+| zero diff (`--base=HEAD --head=HEAD`) | full, 36 shards — the uncertainty      | independent, 0 shards                     |
+| tracker sync only                     | full, 36 shards — the same uncertainty | independent, 0 shards                     |
+| the `deploy.yml` admission edit       | full, 36 shards — the same uncertainty | full — `unclassified configuration/asset` |
+
+The last row is the designed behavior, not the regression: a workflow edit is
+the class the selector deliberately cannot classify (see the NOT EXTENDED note
+above), so it sweeps — but now for a REASON, rather than because the selector
+cannot reason at all. The closure-only reader that motivated the change still
+sweeps as an agreement dependency when it itself changes: it is bench runtime
+code.
 
 ### The selector was inert until 2026-09-10
 
