@@ -1882,10 +1882,14 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     real scenes measure in; that PLACEMENT is the measurement. THE LIT
     QUEUE IS SIZED THE SAME WAY (`nextLightingRayCap`): an
     inert cost lane is a pinned width, not a safe default. AND NO SIZING MODEL OR LADDER MAY READ A
-    RAW DISPATCH TIME: the session calibrates its own fence
-    round-trip once (MINIMUM of five null probes behind one unmeasured
-    tick-aligning fence) and every model, ladder and EMA reads wall MINUS
-    that fence, the tally alone reading wall.
+    RAW DISPATCH TIME: the session calibrates its own fence round-trip once
+    (minimum of five probes) and every model, ladder and EMA reads the
+    GPU-side pass-duration instrument wherever the session's own fence is
+    cheap enough for its after-fence resolve to be free
+    (`SURFACE_COMPUTE_TS_FENCE_COST_MS`; Chrome engages, Firefox's ~100 ms
+    poll keeps the wall currency) and wall MINUS that fence otherwise; the
+    tally alone always reads wall. The resolve rides its own submission
+    after the fence — same-submission is measured-broken on Chrome/Dawn.
     THE FENCE IS PAID PER GROUP, NOT PER DISPATCH: a dispatch is still its
     own SUBMISSION (the preemption boundary) but several queue behind ONE
     `onSubmittedWorkDone`, closing at `SURFACE_COMPUTE_FENCE_GROUP_MS`
