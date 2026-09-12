@@ -212,6 +212,15 @@
  * ceiling. An UNMEASURABLE machine proceeds and says so loudly, because
  * refusing on an unreadable /proc would make the probe unrunnable
  * somewhere it would otherwise work — but silence is never read as quiet.
+ *
+ * `ALLOW_CONTENDED=1` TAKES THE ROW ANYWAY, AND STAMPS IT. A desktop with
+ * a browser open is the ordinary state of the machine this was written on,
+ * and a gate nobody can ever satisfy is a gate somebody deletes rather
+ * than obeys — `dist-freshness.mjs`'s `ALLOW_STALE_DIST` is the same
+ * bargain. What the override does not do is make the row clean: every
+ * verdict it reaches is printed as UNCERTIFIED, with what was on the GPU
+ * named in the line, so it cannot be quoted later as a quiet-machine
+ * measurement.
  * The check runs AGAIN after the arms, so a machine that went busy
  * part-way through is visible to whoever reads the log afterwards.
  *
@@ -249,12 +258,29 @@ const DISPLAY = args.display === undefined ? null : String(args.display);
 const TOTAL_MS = Number(args.totalMs ?? 3000);
 const GROUPS = Number(args.groups ?? 6);
 const SETTLE_MS = Number(args.settleMs ?? 1500);
+/** `ALLOW_CONTENDED=1` takes a row on a machine the contention check has
+ * already refused. It is `dist-freshness.mjs`'s `ALLOW_STALE_DIST` for the
+ * same reason: the refusal is right, and a refusal that can never be
+ * satisfied gets deleted rather than obeyed. What it does NOT do is make
+ * the row clean — see {@link uncertified}. */
+const ALLOW_CONTENDED = process.env.ALLOW_CONTENDED === "1";
+/** Non-null once anything has made this run's conditions unreliable. Every
+ * verdict line checks it, so an overridden run cannot be quoted later as
+ * though it had been taken on a quiet machine. */
+let uncertified = null;
 /** Any origin will do — nothing is served from it. It only has to be
  * `https:` so the page is a secure context and `navigator.gpu` exists. */
 const ORIGIN = "https://webgpu-job-watchdog.test";
 const SOFTWARE_RE = /swiftshader|llvmpipe|software|lavapipe|microsoft basic/i;
 
 const log = (...a) => console.log("[job-watchdog]", ...a);
+
+/** Every terminal verdict goes through here, so the taint cannot be
+ * forgotten at one exit out of five. */
+function verdict(line, code) {
+  log(uncertified === null ? line : `UNCERTIFIED (${uncertified}) — ${line}`);
+  process.exit(code);
+}
 
 /** Fixed invocation count for every spin dispatch, so the ONLY thing that
  * moves a dispatch's duration is the iteration count the arms solve for.
@@ -616,16 +642,27 @@ async function main() {
 
   const quietBefore = await requireQuiet("baseline");
   if (quietBefore.contended === true) {
-    log(
-      "INCONCLUSIVE: another process was already on the GPU — " +
-        quietBefore.competing
-          .map((c) => `${c.comm}[${c.pid}] ${c.busyMsPerSecond.toFixed(0)}ms/s`)
-          .join(", ") +
-        ". A ceiling measured against someone else's workload is not a" +
-        " ceiling, and a device lost beside one is not this bug. Quiesce" +
-        " those processes and re-run.",
-    );
-    process.exit(2);
+    const who = quietBefore.competing
+      .map((c) => `${c.comm}[${c.pid}] ${c.busyMsPerSecond.toFixed(0)}ms/s`)
+      .join(", ");
+    if (!ALLOW_CONTENDED) {
+      log(
+        `INCONCLUSIVE: another process was already on the GPU — ${who}.` +
+          " A ceiling measured against someone else's workload is not a" +
+          " ceiling, and a device lost beside one is not this bug. Quiesce" +
+          " those processes and re-run, or set ALLOW_CONTENDED=1 to take an" +
+          " UNCERTIFIED row anyway.",
+      );
+      process.exit(2);
+    }
+    // THE ESCAPE HATCH TAINTS THE RUN, IT DOES NOT SILENCE THE CHECK.
+    // A desktop with a browser open is the ordinary state of the machine
+    // this was written on, and a gate nobody can ever satisfy is a gate
+    // somebody deletes. So the override exists — and every verdict it
+    // produces is stamped, because the reason for refusing has not gone
+    // away just because someone chose to proceed.
+    uncertified = `contended at baseline: ${who}`;
+    log(`  ALLOW_CONTENDED=1: proceeding UNCERTIFIED — ${who} is on the GPU.`);
   }
 
   // Every arm needs the calibration, so it always runs first.
@@ -711,27 +748,28 @@ async function main() {
     `multicb carried its whole ${TOTAL_MS}ms as ONE job: ${dead(multicb) ? "DIED" : "survived"}`,
   );
   if (dead(serial)) {
-    log(
+    verdict(
       "INCONCLUSIVE: the SERIAL control died too, so this run bounded" +
         " sustained occupancy rather than the fence interval — lower --totalMs",
+      2,
     );
-    process.exit(2);
   }
   if (!dead(group)) {
-    log(
+    verdict(
       `CLEAN: ${TOTAL_MS}ms behind one fence killed nothing this run. AT THE` +
-        " DEFAULT TOTAL THAT IS NOT NEWS BY ITSELF — the ceiling is" +
-        " intermittent within a few hundred ms of it. Raise --totalMs to" +
-        " 4000+ and re-run before reading it as a changed device.",
+        " DEFAULT TOTAL THAT IS NOT NEWS BY ITSELF — the interval rows this" +
+        " probe once reported are WITHDRAWN and intermittent. Raise --totalMs" +
+        " to 4000+ and re-run before reading it as a changed device.",
+      0,
     );
-    process.exit(0);
   }
-  log(
-    `REPRODUCED: ${TOTAL_MS}ms behind ONE fence loses the device while the same` +
-      " work serially fenced does not — the governed quantity is the FENCE" +
-      " INTERVAL, not the dispatch",
+  verdict(
+    `REPRODUCED: ${TOTAL_MS}ms behind ONE fence lost the device while the same` +
+      " work serially fenced did not. THIS IS VERDICT 4'S CONDITION, WHICH IS" +
+      " WITHDRAWN — a row to re-take on a certified-quiet machine, not a" +
+      " finding.",
+    3,
   );
-  process.exit(3);
 }
 
 main().catch((error) => {
