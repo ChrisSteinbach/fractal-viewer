@@ -197,7 +197,9 @@ of the `#v1=` document hash rather than the panel (the transform list hides
 outside explorer mode, so a DOM probe passes vacuously); and WHICH ENGINE each
 session takes — measured compute for all nine, which is what keeps the
 `core:"bulb"` WGSL kernel from being dead code. It also gates the empty-set
-toast and the `antialiasing pass k/8` disclosure. `--mode=sw` runs everything
+toast, the `antialiasing pass k/8` disclosure, and that a TRUSTED CLICK ON
+THE POINTS MODE BUTTON lands mid-settle (the no-automatic-give-up line's
+standing assumption, caught off the settle latch itself). `--mode=sw` runs everything
 but the engine question without a display.
 
 The 4D lifts' gate (chain, ground plane and balloon, same prerequisites):
