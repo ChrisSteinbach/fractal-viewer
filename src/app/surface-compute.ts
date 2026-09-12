@@ -399,20 +399,21 @@ export const SURFACE_COMPUTE_FENCE_GROUP_MS = 300;
  * behind one `onSubmittedWorkDone` are K jobs with K deadlines — 4002 ms
  * of that survives, and 6000 ms survives when each second is fenced — so
  * the earlier reading, that a queued backlog accumulates into one job, is
- * REFUTED. BUT an unfenced INTERVAL still loses the device intermittently
- * from about 3 s of total queued work, writing NOTHING to the kernel log
- * and dying at the moment the interval's work would have COMPLETED rather
- * than part-way through it. How much of a backlog reaches the ring as one
- * busy period is not the caller's to decide, so the prudent bound is
- * verdict one's applied to the WHOLE interval: hold the work queued
- * between two fences to the ~2 s a single job gets, because the driver
- * may treat it as one. That is what
- * {@link surfaceComputeFenceGroupAllowanceMs} does with this number.
+ * REFUTED. So the unit is the SUBMISSION, and each of this loop's
+ * dispatches is one.
  *
- * DO NOT READ A CLEAN JOURNAL AS A CLEAN RUN: only the over-long SINGLE
- * job takes the logged `ring gfx_0.0.0 timeout` path. The over-long
- * interval loses the device with `A valid external Instance reference no
- * longer exists.` and leaves the kernel log empty.
+ * WHAT THIS NUMBER IS NOT. The same probe saw unfenced INTERVALS lose the
+ * device intermittently near 3 s of total queued work with nothing in the
+ * kernel log, and an earlier draft of this comment built the bound on
+ * that. It is WITHDRAWN: those rows were taken on a machine whose other
+ * workloads nobody was tracking, and an intermittent death at a threshold
+ * nothing else in the probe shows is what a second process competing for
+ * the GPU looks like. The ~2.0 s above survives it — a deadline landing at
+ * 2033, 2042 and 2063 ms under three different payloads is not something
+ * contention manufactures — but nothing here may lean on the 3 s.
+ * `docs/surface-compute-renderer.md` carries the withdrawal, and
+ * `scripts/lib/machine-quiet.mjs` is what stops the next such row being
+ * believed.
  */
 export const SURFACE_COMPUTE_JOB_WATCHDOG_MS = 2000;
 
@@ -422,10 +423,9 @@ export const SURFACE_COMPUTE_JOB_WATCHDOG_MS = 2000;
  * cap already stands on (`docs/surface-compute-renderer.md` records it as
  * "4.3x under the ~7.5 s i915 watchdog"). Nothing about a GPU deadline is
  * measured precisely enough to spend a factor of two on, and the
- * intermittent interval death above is a RATE rather than a threshold:
- * one shape of it died on four runs of five and another on one of two, so
- * the honest reading of ~3 s is "this is where deaths start", not "this
- * is where the safe region ends".
+ * ceiling itself is one machine's, read once, and a device deadline is
+ * not the kind of quantity anyone should spend a factor of two of
+ * confidence on.
  */
 export const SURFACE_COMPUTE_JOB_WATCHDOG_MARGIN = 4;
 
@@ -1568,14 +1568,15 @@ export function surfaceComputeDispatchWorkMs(
  * silently, and the failure is not a slow frame but a Surface renderer a
  * compute-only session cannot get back.
  *
- * WHY THE INTERVAL AND NOT THE DISPATCH. The measurement says the
- * watchdog's unit is the SUBMISSION, and each of this frame's dispatches
- * is its own submission — so on verdict three alone a group of any size
- * is safe. It is the second, quieter finding that this bound answers: an
- * unfenced interval still dies near 3 s, the host does not control how
- * much of its backlog reaches the ring as one busy period, and the
- * quantity the deadline is denominated in is therefore the INTERVAL's
- * rather than the per-dispatch share every ladder here paces on. Pure so
+ * WHY THE INTERVAL AND NOT THE DISPATCH, now that the interval's own
+ * death is withdrawn. The measurement says the watchdog's unit is the
+ * SUBMISSION, and each of this frame's dispatches is its own submission,
+ * so a group of any size is safe on the measurement alone. Bounding the
+ * GROUP is CONSERVATISM, not a second finding: the host cannot see how
+ * much of its queued backlog the driver takes as one busy period, and a
+ * group is at most {@link SURFACE_COMPUTE_FENCE_GROUP_MAX} dispatches, so
+ * holding the group holds every member well under the deadline whichever
+ * way that goes. It costs nothing to be wrong in this direction. Pure so
  * the clamp is unit-tested at a raised target the module does not ship.
  */
 export function surfaceComputeFenceGroupAllowanceMs(

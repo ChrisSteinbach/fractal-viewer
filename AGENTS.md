@@ -138,7 +138,7 @@ npm run build         # Production build → dist/app/
 npm run preview       # Preview the production build locally
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
 npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
-npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores; eval/march baselines + the app path's march-unproject/shade) to its CPU oracles; add --display=:0 for real-driver timing. Run it on a QUIET machine, never beside the test suite: a contended software device corrupts mid-run readbacks, which the contended-device canary reports as verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido carries a known SwiftShader-only false failure and the flip cap must NOT be raised to make it green. Fixtures, caps and measured rows: docs/gpu-bench-surface.md
+npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores; eval/march baselines + the app path's march-unproject/shade) to its CPU oracles; add --display=:0 for real-driver timing. Run it QUIET (below), never beside the test suite: a contended software device corrupts mid-run readbacks; the canary reports verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido carries a known SwiftShader-only false failure and the flip cap must NOT be raised to make it green. Fixtures, caps and measured rows: docs/gpu-bench-surface.md
 npm run bench:mesh-sdf # 64³ trefoil cold-bake vs its 2s budget, BVH-vs-exact agreement
 npm run verify:pattern-release # Production-browser owner gate: drives the built app (preflight calibration, 128-cell machine matrix) -> blinded owner deck
 npm run verify:pattern-release-review # Scores a frozen blinded owner review; only an explicit "approve" passes
@@ -161,9 +161,13 @@ glxinfo -B | grep "OpenGL renderer"   # MUST say Mesa Intel(R) Iris(R) Xe, not S
 
 CHECK THAT LINE BEFORE BELIEVING A REAL-DRIVER ROW. A SwiftShader run that was
 meant to be an Iris run is the failure mode this note exists to stop — one
-session shipped its whole measurement set on software before noticing, and the
-gates it could not complete at all (`bench:surface`) were the ones the
-software adapter is too slow for rather than the ones that were broken.
+session shipped its whole measurement set on software before noticing.
+
+AND A CONTENDED MACHINE IS NOT A MEASUREMENT. "Run it on a quiet machine" was
+unverifiable, and no owner can be asked to coordinate, so it is CHECKED:
+`scripts/lib/machine-quiet.mjs` attributes GPU busy time PER PROCESS off DRM
+fdinfo (a global percentage cannot tell whose work it is). UNKNOWN NEVER READS
+AS QUIET.
 
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
 
@@ -1904,14 +1908,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES`; raising the count needs
     in-app measurement; a killed device never returns, so the loss latch is
     one-way by measurement (`scripts/webgpu-staging-ceiling.repro.mjs`).
-    THE WATCHDOG'S UNIT IS THE FENCE INTERVAL: submissions ARE separate
-    driver JOBS (a backlog is not one — REFUTED), but ONE job is cut at
-    ~2.0 s on the AMD box (not its nominal 10 s), an unfenced interval dies
-    near 3 s logging NOTHING, and K command buffers in ONE `submit()` ARE
-    one job. NO SUBMISSION MAY OUTRUN A WATCHDOG, and what that bounds is
-    a group's MEASURED work, not its per-dispatch share; an instrument
-    read at the FENCE cannot see the dispatch that killed the device
-    (`scripts/webgpu-job-watchdog.repro.mjs`). A GROUP MEASURES ONCE
+    THE WATCHDOG'S UNIT IS THE SUBMISSION: submissions ARE separate driver
+    JOBS (a backlog is not one — REFUTED), ONE job is cut at ~2.0 s on the
+    AMD box (not its nominal 10 s), and K command buffers in ONE
+    `submit()` ARE one job. NO SUBMISSION MAY OUTRUN A WATCHDOG, and an
+    instrument read at the FENCE cannot see the dispatch that killed the
+    device (`scripts/webgpu-job-watchdog.repro.mjs`). A GROUP MEASURES ONCE
     FOR N PIECES, so its attribution is FIXED per lane and no reader may
     invent another. `?surfacefencegroup=1` is that old loop.
     Gate: `scripts/surface-fence-cost.verify.mjs`. Presents are
