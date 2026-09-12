@@ -290,6 +290,23 @@ describe("GPU workflow gates", () => {
     expect(condition).not.toContain("||");
     expect(condition.split("&&")).toHaveLength(3);
   });
+  it("admits verify-live explicitly, so a reused sweep cannot skip the gate", () => {
+    // MEASURED (2026-09-11/12, runs 34591897711 and 34693402711): when the
+    // sweep-reuse gate skips gpu-full, deploy runs on its explicit admission
+    // but verify-live — then with no `if` of its own — was SKIPPED with zero
+    // steps anyway, GitHub's transitive skip propagation reaching through
+    // the succeeded deploy. The reuse path is the common deploy path under
+    // the rebase-merge rule, so an implicit condition here hides the
+    // post-deploy live-site gate exactly on it. An explicit admission opts
+    // out (proven by deploy in the same runs), so pin it the way deploy's
+    // own admission is pinned above: deploy's success required, never on
+    // cancellation, and no alternative branch around either.
+    const condition = String(workflow("deploy").jobs["verify-live"].if);
+    expect(condition).toContain("!cancelled()");
+    expect(condition).toContain("needs.deploy.result == 'success'");
+    expect(condition).not.toContain("||");
+    expect(condition.split("&&")).toHaveLength(2);
+  });
   it("preserves the four ci.yml required checks on every PR and main push", () => {
     const ci = workflow("ci");
     expect(Object.keys(ci.jobs).sort()).toEqual([
