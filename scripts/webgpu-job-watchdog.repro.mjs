@@ -80,7 +80,7 @@
  *   multicb  6 x  667ms     4002ms   DIED at 2033ms        gfx reset
  *   multicb  6 x 1000ms     6000ms   DIED at 2063ms        gfx reset
  *
- * FOUR VERDICTS.
+ * FOUR VERDICTS — THREE STANDING, ONE WITHDRAWN.
  *
  * 1. A SINGLE DRIVER JOB IS CUT AT ~2.0 s, not the 10 s amdgpu nominally
  *    gives its gfx ring. `single` survives 2000 ms (fence 2004 ms) and
@@ -106,34 +106,47 @@
  *    this work: `signaled seq=17130178, emitted seq=17130179` is a gap of
  *    ONE, one job outstanding, not a backlog of them.
  *
- * 4. BUT AN UNFENCED INTERVAL STILL DIES NEAR 3 s, AND NOT CLEANLY. Every
- *    `group` death above is at a total of 3000 ms or more, leaves NOTHING
- *    in the kernel log, and lands at the moment the interval's work would
- *    have COMPLETED (2987, 2997, 2999, 3002, 3006, 5927, 5930 ms) rather
- *    than at a deadline part-way through it. It is intermittent — 2x1500ms
- *    died on four runs of five, 6x500ms on one of two, and 6x667ms not at
- *    all. THE LIKELIEST READING IS THAT THE APP DOES NOT CONTROL HOW MUCH
- *    OF ITS BACKLOG REACHES THE RING AT ONCE: submissions the host issues
- *    together may be batched into one busy period against verdict 1's
- *    deadline, or spread out, and which of those happens is not the
- *    caller's to decide. That is not proven here and is named as an open
- *    question, not a mechanism.
+ * 4. AN UNFENCED INTERVAL ALSO DIED NEAR 3 s — WITHDRAWN AS A FINDING.
+ *    Every `group` death above is at a total of 3000 ms or more, leaves
+ *    NOTHING in the kernel log, and lands at the moment the interval's
+ *    work would have COMPLETED (2987, 2997, 2999, 3002, 3006, 5927,
+ *    5930 ms) rather than at a deadline part-way through it. It is
+ *    intermittent — 2x1500ms died on four runs of five, 6x500ms on one of
+ *    two, and 6x667ms not at all. It was first written up as an open
+ *    question about how much of a backlog reaches the ring as one busy
+ *    period.
  *
- *    SO THE PRUDENT BOUND IS VERDICT 1'S, APPLIED TO THE WHOLE INTERVAL:
- *    hold the GPU work queued between two fences to the ~2 s a single job
- *    gets, because the driver may treat it as one. At the project's usual
- *    4x watchdog margin that is ~500 ms per fence interval, which the
- *    shipped `SURFACE_COMPUTE_FENCE_GROUP_MS` of 300 ms already respects —
- *    PROVIDED the prediction it sizes against is right, which is precisely
- *    what failed.
+ *    THAT DOES NOT SURVIVE THE OBVIOUS ALTERNATIVE. These rows were taken
+ *    before this probe checked quietness, on a machine whose other
+ *    workloads nobody was tracking, and an intermittent death at a
+ *    threshold nothing else here shows is what a second process competing
+ *    for the ring produces. The check below now reports `quiet=NO` on this
+ *    machine routinely — a second browser on the GPU is ordinary here — so
+ *    these rows cannot be certified after the fact. THE GROUP ROWS ABOVE
+ *    ARE KEPT AS TAKEN, NOT DELETED, because re-running them under the
+ *    check is how the question gets settled; they are simply not evidence
+ *    of anything yet. Verdicts 1 to 3 are unaffected: a fixed deadline
+ *    landing at 2033, 2042 and 2063 ms under three different payloads is
+ *    not something contention manufactures, and verdict 3 rests partly on
+ *    a kernel sequence gap, which is not a timing measurement at all.
  *
- * TWO FAILURE SIGNATURES, AND ONLY ONE REACHES THE JOURNAL. An over-long
- * single job takes the logged `ring gfx_0.0.0 timeout ... Ring reset
- * succeeded` path. An over-long interval loses the device with `A valid
- * external Instance reference no longer exists.` and writes NOTHING to the
- * kernel log — so a session that reads the journal to decide whether the
- * driver was involved will conclude it was not. Do not read the quiet one
- * as a different bug, and do not read a clean journal as a clean run.
+ *    THE BOUND THE RENDERER TOOK FROM THIS is verdict 1's applied to the
+ *    whole interval — hold the GPU work queued between two fences to the
+ *    ~2 s a single job gets — and it survives the withdrawal as plain
+ *    CONSERVATISM rather than as a measured interval death: the host
+ *    cannot see how much of its backlog the driver takes as one busy
+ *    period, and a fence group is at most two dispatches, so bounding the
+ *    group bounds each member well under the deadline either way. At the
+ *    project's usual 4x margin that is ~500 ms, which the shipped
+ *    `SURFACE_COMPUTE_FENCE_GROUP_MS` of 300 ms already respects.
+ *
+ * A CLEAN JOURNAL IS NOT A CLEAN RUN. Only the over-long single job takes
+ * the logged `ring gfx_0.0.0 timeout ... Ring reset succeeded` path. The
+ * withdrawn interval deaths lost the device with `A valid external
+ * Instance reference no longer exists.` and wrote nothing to the kernel
+ * log at all — and whatever caused them, that much is worth keeping: a
+ * session that reads the journal to decide whether the driver was
+ * involved can be told nothing and conclude it was not.
  *
  * ── WHAT THIS SAYS ABOUT THE RENDERER ───────────────────────────────────
  *
@@ -171,24 +184,55 @@
  * ── EXIT CODES ──────────────────────────────────────────────────────────
  *
  * 3 = REPRODUCED: an interval over the ceiling killed the device while the
- *     same work serially fenced did not. The expected verdict, and the
- *     rows above still stand.
+ *     same work serially fenced did not. NOTE this is verdict 4's
+ *     condition, which is WITHDRAWN pending a re-run under the quietness
+ *     check — so a 3 today is a row to re-take, not a finding.
  * 0 = CLEAN: no arm could kill a device. The browser, the driver or the
  *     machine changed, and the ceiling above is due a re-measurement.
- * 2 = INCONCLUSIVE: no adapter, or a software one. Chrome exposes no
+ * 2 = INCONCLUSIVE: no adapter, or a software one (Chrome exposes no
  *     WebGPU adapter headless on this box, so this probe is HEADED ONLY —
- *     which is also how the app failed.
+ *     which is also how the app failed); OR another process was already on
+ *     the GPU when the run began, which is the condition described below.
  * 1 = harness failure.
  *
- * RUN IT ON A QUIET MACHINE, and expect ring resets: hanging the GPU is
- * the point. Every reset on this box has recovered ("device wedged, but
- * recovered through reset"), but a wedged GPU can still take a desktop
- * session with it, so do not run it over work you have not saved.
+ * ── QUIETNESS IS CHECKED, NOT ASSERTED ──────────────────────────────────
+ *
+ * This header used to say "RUN IT ON A QUIET MACHINE" and stop there,
+ * which is an instruction the run could not verify and its reader could
+ * not be expected to coordinate: nobody polls the machine's owner before a
+ * measurement. So a ceiling measured while something else held the ring
+ * was indistinguishable from a ceiling, and a device lost while something
+ * else held the ring was indistinguishable from this bug.
+ *
+ * `scripts/lib/machine-quiet.mjs` now attributes GPU engine time PER
+ * PROCESS out of DRM fdinfo, and this probe takes that baseline BEFORE it
+ * launches any browser — the one moment at which nothing of its own is on
+ * the device, which is what makes the baseline clean. A contended machine
+ * exits 2: a ceiling measured against someone else's workload is not a
+ * ceiling. An UNMEASURABLE machine proceeds and says so loudly, because
+ * refusing on an unreadable /proc would make the probe unrunnable
+ * somewhere it would otherwise work — but silence is never read as quiet.
+ * The check runs AGAIN after the arms, so a machine that went busy
+ * part-way through is visible to whoever reads the log afterwards.
+ *
+ * The compositor is reported and NOT counted: a headed run needs one, so
+ * `gnome-shell` on the GPU is a condition of the measurement rather than a
+ * competitor for it.
+ *
+ * EXPECT RING RESETS: hanging the GPU is the point. Every reset on this
+ * box has recovered ("device wedged, but recovered through reset"), but a
+ * wedged GPU can still take a desktop session with it, so do not run it
+ * over work you have not saved.
  */
 
 import { chromium } from "playwright-core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import {
+  formatQuietLine,
+  measureGpuContention,
+  pidTree,
+} from "./lib/machine-quiet.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -539,8 +583,50 @@ function note(o) {
   if (o.label && !adapterLabel) adapterLabel = o.label;
 }
 
+/**
+ * Who else is on the GPU. Taken BEFORE the first browser launches, which
+ * is the only moment this probe has nothing of its own on the device — a
+ * baseline taken later would be measuring the thing under test.
+ *
+ * A CONTENDED MACHINE IS INCONCLUSIVE, NOT A FAILURE: the arms would still
+ * run and would still produce numbers, and those numbers would bound
+ * someone else's workload plus this one. An UNMEASURABLE machine proceeds
+ * — refusing on an unreadable /proc would make the probe unrunnable
+ * somewhere it works fine — but it is announced, because a run whose
+ * conditions could not be checked must not read like a run whose
+ * conditions were fine.
+ */
+async function requireQuiet(phase) {
+  const quiet = await measureGpuContention({
+    ignorePids: [...(await pidTree(process.pid))],
+  });
+  log(`${phase}: ${formatQuietLine(quiet)}`);
+  if (quiet.contended === null) {
+    log(
+      `  NOTE: GPU contention could not be measured (${quiet.unknownReason}).` +
+        " This run's conditions are UNKNOWN — do not read its verdict as a" +
+        " measurement of a quiet machine.",
+    );
+  }
+  return quiet;
+}
+
 async function main() {
   log(`arm=${ARM} totalMs=${TOTAL_MS} groups=${GROUPS}`);
+
+  const quietBefore = await requireQuiet("baseline");
+  if (quietBefore.contended === true) {
+    log(
+      "INCONCLUSIVE: another process was already on the GPU — " +
+        quietBefore.competing
+          .map((c) => `${c.comm}[${c.pid}] ${c.busyMsPerSecond.toFixed(0)}ms/s`)
+          .join(", ") +
+        ". A ceiling measured against someone else's workload is not a" +
+        " ceiling, and a device lost beside one is not this bug. Quiesce" +
+        " those processes and re-run.",
+    );
+    process.exit(2);
+  }
 
   // Every arm needs the calibration, so it always runs first.
   const cal = await rep(calibrateBody, { probeMs: 400 });
@@ -564,7 +650,10 @@ async function main() {
   log(
     `  slope: ${(cal.msPerIter * 1000).toFixed(3)} us/iteration at ${SPIN_WORKGROUPS} workgroups`,
   );
-  if (ARM === "calibrate") process.exit(0);
+  if (ARM === "calibrate") {
+    await requireQuiet("after");
+    process.exit(0);
+  }
 
   /** One arm at `--totalMs`, split `pieces` ways. */
   const arm = async (mode, pieces) => {
@@ -588,6 +677,7 @@ async function main() {
   // so it is never part of `all`.
   if (ARM !== "all") {
     await arm(ARM, ARM === "single" ? 1 : GROUPS);
+    await requireQuiet("after");
     process.exit(0);
   }
 
@@ -596,6 +686,19 @@ async function main() {
   const serial = await arm("serial", GROUPS);
   const group = await arm("group", GROUPS);
   const multicb = await arm("multicb", GROUPS);
+
+  // A machine that went busy part-way through is a run whose deaths have a
+  // second candidate explanation. It is REPORTED rather than made to
+  // overturn the verdict: the arms are already spent, and which of them
+  // overlapped the interloper is not recoverable from one after-sample.
+  const quietAfter = await requireQuiet("after");
+  if (quietAfter.contended === true && quietBefore.contended === false) {
+    log(
+      "  WARNING: the machine was quiet at the baseline and is NOT quiet now." +
+        " Something arrived on the GPU during the arms, so treat every" +
+        " outcome above as suspect and re-run.",
+    );
+  }
 
   if (inconclusive) {
     log(`INCONCLUSIVE: ${inconclusive}`);

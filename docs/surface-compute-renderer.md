@@ -1660,7 +1660,7 @@ that row:
 | multicb | 6 x 667 ms  | 4002 ms | DIED at 2033 ms       | gfx reset |
 | multicb | 6 x 1000 ms | 6000 ms | DIED at 2063 ms       | gfx reset |
 
-#### Four verdicts — two sharp, one refutation, one open
+#### Four verdicts — two sharp, one refutation, one withdrawn
 
 **1. ONE DRIVER JOB GETS ~2.0 s, not the 10 s amdgpu nominally gives its gfx
 ring.** `single` survives 2000 ms (fence 2004 ms) and dies at 3000 ms;
@@ -1685,31 +1685,45 @@ job — was already refuted by the kernel line that prompted this work:
 was emitted and unsignaled when the watchdog fired, not a backlog of as many
 jobs as were queued.
 
-**4. BUT AN UNFENCED INTERVAL STILL DIES NEAR 3 s, AND NOT CLEANLY. This one
-is INTERMITTENT AND UNEXPLAINED.** Every `group` death in the table is at a
-total of 3000 ms or more, leaves NOTHING in the kernel log, and lands at the
-moment the interval's work would have COMPLETED (2987, 2997, 2999, 3002, 3006,
-5927, 5930 ms) rather than at a deadline part-way through it. It is a rate
-rather than a threshold — 2x1500 ms died on four runs of five, 6x500 ms on one
-of two, and 6x667 ms not at all. THE LIKELIEST READING IS THAT THE APP DOES NOT
-CONTROL HOW MUCH OF ITS BACKLOG REACHES THE RING AT ONCE: submissions the host
-issues together may be batched into one busy period against verdict 1's
-deadline, or spread out, and which of those happens is not the caller's to
-decide. That is an open question, NOT a mechanism, and nothing here proves it.
+**4. AN UNFENCED INTERVAL ALSO DIED NEAR 3 s — AND THIS ONE IS WITHDRAWN AS A
+FINDING.** Every `group` death in the table is at a total of 3000 ms or more,
+leaves NOTHING in the kernel log, and lands at the moment the interval's work
+would have COMPLETED (2987, 2997, 2999, 3002, 3006, 5927, 5930 ms) rather than
+at a deadline part-way through it. It was a rate rather than a threshold —
+2x1500 ms died on four runs of five, 6x500 ms on one of two, and 6x667 ms not
+at all — and it was first written up here as an open question about how much of
+a backlog reaches the ring as one busy period.
 
-**TWO FAILURE SIGNATURES, AND ONLY ONE REACHES THE JOURNAL.** An over-long
-single job takes the logged `ring gfx_0.0.0 timeout ... Ring reset succeeded`
-path. An over-long interval loses the device with `A valid external Instance
-reference no longer exists.` and writes NOTHING to the kernel log — so a
-session that reads the journal to decide whether the driver was involved will
-conclude it was not. Do not read the quiet one as a different bug, and do not
-read a clean journal as a clean run.
+THAT READING DOES NOT SURVIVE THE OBVIOUS ALTERNATIVE. These rows were taken on
+a machine whose other workloads nobody was tracking, and an intermittent death
+at a threshold nothing else in the probe shows is exactly what a second process
+competing for the GPU produces. The machine's owner raised it, and there is no
+record that can settle it: `sar` shows both windows equally quiet on CPU (4-8%
+user, loadavg ~1 on 16 cores) but records NO GPU utilisation at all, which is
+the only kind that would have mattered. VERDICTS 1 TO 3 ARE UNAFFECTED — a
+fixed deadline landing at 2033, 2042 and 2063 ms under three different payloads
+is not something contention manufactures, and verdict 3 rests partly on a
+kernel sequence gap that is not a timing measurement at all. This one is not
+load-bearing anywhere and should not be treated as measured until it is re-run
+under `scripts/lib/machine-quiet.mjs`, which now attributes GPU busy time per
+process so a contended run reports itself instead of being believed.
+
+**A CLEAN JOURNAL IS NOT A CLEAN RUN.** Only the over-long single job takes
+the logged `ring gfx_0.0.0 timeout ... Ring reset succeeded` path. The
+withdrawn interval deaths lost the device with `A valid external Instance
+reference no longer exists.` and wrote NOTHING to the kernel log, and whatever
+caused them, that much is worth keeping: a session that reads the journal to
+decide whether the driver was involved can be told nothing at all and conclude
+it was not.
 
 #### What it bounds here, and what the existing reading got half right
 
 THE DERIVED BOUND IS VERDICT 1'S, APPLIED TO THE WHOLE INTERVAL: hold the GPU
-work queued between two fences to the ~2 s a single job gets, because the
-driver may treat it as one. At this project's usual 4x watchdog margin that is
+work queued between two fences to the ~2 s a single job gets. With verdict 4
+withdrawn the justification is no longer a measured interval death but simple
+conservatism — the host cannot see how much of its queued backlog the driver
+takes as one busy period, and a fence group is at most two dispatches, so
+bounding the group bounds each member well under the deadline either way. At this project's usual 4x watchdog margin that is
 ~500 ms per fence interval, which the shipped
 `SURFACE_COMPUTE_FENCE_GROUP_MS` of 300 ms already respects — PROVIDED the
 prediction it sizes against is right, which is precisely what failed at 182 s.
@@ -1737,8 +1751,9 @@ ground. The dispatches really ARE separate jobs, so the reading survives
 verdict 3 and only verdict 3. But the quantity the deadline is denominated in
 is the INTERVAL's work, so the per-dispatch share understates it by the group
 size, and the frame's seed submits — which ride the first fence untracked —
-are not in the divisor at all. A ladder may keep stepping per member; what must
-be held against ~2 s is the group's own work.
+are not in the divisor at all. A ladder may keep stepping per member; the group's own
+work is what is held against ~2 s, conservatively rather than because an
+interval was measured dying.
 `surfaceComputeFenceGroupAllowanceMs` now holds its PREDICTED work there —
 `min(SURFACE_COMPUTE_FENCE_GROUP_MS, 2000/4)`, which picks the shipped 300 ms
 and so binds nothing today, and exists so that target cannot be raised on

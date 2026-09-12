@@ -200,7 +200,27 @@ same work on the same hardware. A 1.6x difference the configuration does
 not explain points at what else the machine was doing, and this file's own
 standing instruction — run it on a QUIET machine — is the obvious suspect.
 That is a correlation between one run and three, NOT a mechanism, and it is
-recorded as one. Either way, lifting the ceiling has to be shown safe before
+recorded as one.
+
+THE RECORD CANNOT SETTLE IT, WHICH IS THE REAL FINDING. `sar` has both
+windows and they are equally quiet on CPU — 4-8% user, loadavg around 1 on
+16 cores, in the half hour around the loss and in the half hour around the
+three settles — but it records NO GPU utilisation at all, and a competing
+browser doing WebGPU would add roughly one busy thread and vanish into a
+ten-minute CPU average. The one kind of contention that would have mattered
+is the one kind nothing recorded. So "it was a quiet machine" was never
+evidence here; it was an assumption, and the machine's owner cannot be asked
+to coordinate with every agent that runs a gate. `scripts/lib/machine-quiet.mjs`
+exists so the next such run answers the question itself, attributing GPU busy
+time per process rather than asserting quiet.
+
+AND QUIET IS NOT THIS MACHINE'S DEFAULT STATE. The first thing that check
+reported, run while this section was being written, was
+`quiet=NO contenders: firefox[4635] 92ms/s  desktop: gnome-shell[3692] 29ms/s`.
+A second browser on the GPU is ordinary here. So neither the loss nor the
+three settles can be certified after the fact, and the three settles are
+evidence that the configuration CAN complete rather than evidence about what
+it does on a quiet machine — which nobody has yet measured. Either way, lifting the ceiling has to be shown safe before
 a medium is reconsidered — but the case against it is now weaker than the
 loss alone made it look.
 
