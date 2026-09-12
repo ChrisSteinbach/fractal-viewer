@@ -4748,9 +4748,17 @@ export class SurfaceComputeRenderer {
       let us = 0;
       let hitDispatches = 0;
       let hits = 0;
+      let mediumDispatches = 0;
+      let mediumRays = 0;
       for (const d of pending) {
         if (d.kind === "march") {
           us += d.rays * Math.max(1, d.steps) * rayStepEmaUs;
+        } else if (d.kind === "medium") {
+          // The medium lane fits its own `intercept + n*marginal`, and on
+          // this branch that fit is where nearly all of a lit dispatch's
+          // cost lives — 97.7% fixed at one workgroup.
+          mediumDispatches++;
+          mediumRays += d.rays;
         } else if (!d.free) {
           hitDispatches++;
           hits += d.hits;
@@ -4758,6 +4766,11 @@ export class SurfaceComputeRenderer {
       }
       us +=
         hitDispatches * sizer.cost.interceptUs + hits * sizer.cost.marginalUs;
+      if (mediumDispatches > 0 && lightingSizer) {
+        us +=
+          mediumDispatches * lightingSizer.mediumCost.interceptUs +
+          mediumRays * lightingSizer.mediumCost.marginalUs;
+      }
       return us / 1000;
     };
 
@@ -4794,7 +4807,9 @@ export class SurfaceComputeRenderer {
         const detail =
           record.kind === "march"
             ? `steps=${record.steps}`
-            : `isFree=${record.free}`;
+            : record.kind === "medium"
+              ? `cell=${record.cell} light=${record.light}`
+              : `isFree=${record.free}`;
         tr(
           `${record.kind} SUBMIT len=${count} ${detail} ahead=${pending.length - 1} predicted=${groupPredictedWorkMs().toFixed(1)}`,
         );
