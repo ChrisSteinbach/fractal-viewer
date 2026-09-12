@@ -554,6 +554,8 @@ The next study will compare a smooth, fractional layer-opacity rule and
 actual world-space displaced-ray queries against the existing hard bands
 and screen-space warp. It must retain the fine object, reveal newly visible
 rear geometry, carry both dimensions, and price real continuation work.
+The [revision record](surface-transmission-revision.md) carries its exact
+gap/noise controls and subsequent evidence.
 Production integration remains blocked until that revised evidence qualifies
 and the resulting appearance is selected for release.
 
