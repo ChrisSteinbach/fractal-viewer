@@ -456,10 +456,9 @@ budget or performance promise is established by this reference experiment.
 ## Authoring integration
 
 `SurfaceParams.lighting` is optional: absence selects legacy lighting. Its
-finite disk lights, ambient fill, Classic material defaults and optional
-spherical medium use displayed-world coordinates in both dimensional paths.
-Light colors and fill are linear RGB, disk intensity is total flux, and mist
-tint is scattering albedo. The renderer resolves physical domains; the document
+finite disk lights, ambient fill and Classic material defaults use
+displayed-world coordinates in both dimensional paths. Light colors and fill
+are linear RGB, and disk intensity is total flux. The renderer resolves physical domains; the document
 codec retains finite authored values and exact nested lighting precision.
 
 State installation, snapshots and restored state own their nested rig arrays.
@@ -467,16 +466,53 @@ Undo, Collection and Timeline carry the same encoded scene block. Evolution
 keeps the primary parent's complete rig as presentation state and validates
 its structure without changing authored values.
 
-The Surface lighting section is Scene / Look. Its controls remain visible but
-disabled with an adjacent reason outside Surface. Edits apply live and restart
-convergence; reduced sampling during motion is disclosed beside the controls.
+The Surface lighting section is Scene / Look. Points accepts edits for the
+next Surface entry; Surface edits apply live and restart convergence. Flame
+and Solid retain the rig with disabled controls and an adjacent reason.
 Every numeric range has the shared exact-number companion. The older light
 angle, height and ambient controls retain their role in authored finish
 reflections; their Environment tint control is dormant under the new rig.
 
+### Placement in Points
+
+Opening Surface lighting in Points shows labeled Key and Rim disks with
+emitting-normal arrows. Position, aim, radius, color and source-count edits
+update the guides immediately through the ordinary undoable document edit.
+Points itself remains unlit; the visible note says when the lighting applies.
+Closing the section hides the guides, as do renderer changes, disabling the
+rig and selecting Ambient only. Transform-guide visibility is independent.
+
+These are View / Device aids with session lifetime, driven by the open editor
+rather than a second authored setting. They use `resolveSurfaceLighting`, just
+like Surface, so imported non-unit/zero normals and out-of-domain radii display
+the renderer's interpretation without rewriting the document. Both 3D and 4D
+Points use the same displayed-world rig: a rotor or slice changes the fractal,
+not the lights. Single view and all four perspective/parallel panes render the
+same world-size disks and arrows with legible screen-size labels. The arrows
+indicate the emitting face, not a spotlight cone or a simulated beam.
+
+`scene.ts` draws the aids after the point-cloud pass so fog, bloom and EDL do
+not obscure them. At most two guides live for the page lifetime; edits reuse
+their geometry and materials, and labels redraw only for color/off changes.
+The centered capture wrapper temporarily hides them and
+restores their visibility with invalidation afterwards; PNG and Collection
+thumbnails remain free of editor aids even when the lighting section is open.
+The production-browser gate is `scripts/surface-light-guides.verify.mjs`;
+`scripts/surface-lighting-ui.verify.mjs --phase=points` also checks trusted touch,
+exact-number fields, mobile layout, document restoration and undo.
+
+Measured 12 September 2026 on Chromium/SwiftShader: the guide gate passed
+51/51 checks in 3D and non-flat Pentatope, including independent projections of
+both light positions, 4D rotor edits, all four perspective/parallel panes,
+supported depth styles, Surface entry/return, exact placement undo/reload and
+byte-identical PNG/thumbnail output with guides open versus closed. The Points
+authoring gate passed 53/53 checks over both lighting starters at 393×727 and
+320×568, including trusted touch and 44px targets. These are behavior checks,
+not real-driver timing claims.
+
 Systems offers two complete editable scene replacements through
 `createSurfaceLightingStarter`: Menger cathedral and Balloon cavern. Each owns
-its transforms, camera, constant stone palette, backdrop, rig and medium, with
+its transforms, camera, constant stone palette, backdrop and rig, with
 eight parked-view samples as its initial Renderer setting.
 
 They ride the preset menu's own "Replace with preset" select as a **Lit

@@ -260,6 +260,8 @@ export interface UiHandlers {
     lighting: SurfaceLighting | undefined,
     phase: "input" | "commit",
   ) => void;
+  /** Opening/closing the authored editor changes Points placement aids only. */
+  onSurfaceLightingGuides?: () => void;
   /** Replace with a complete saved camera/look composition and enter Surface. */
   onSurfaceLightingStarter?: (id: SurfaceLightingStarterId) => void;
   /**
@@ -2940,6 +2942,9 @@ export class Ui {
       this.byId("surfaceAuthoredLightingNote"),
       (lighting, phase) => this.handlers?.onSurfaceLighting?.(lighting, phase),
     );
+    this.byId("surfaceAuthoredLightingSection").addEventListener("toggle", () =>
+      this.handlers?.onSurfaceLightingGuides?.(),
+    );
     this.surfaceLightingDisclosure = this.byId("surfaceLightingDisclosure");
     this.surpriseBtn = this.byId("surpriseBtn");
     this.driftBtn = this.byId("driftBtn");
@@ -3718,6 +3723,10 @@ export class Ui {
     const bottom = hexToRgb(this.backgroundInputs.bottom.value);
     if (!top || !bottom) return null;
     return { top, bottom };
+  }
+
+  surfaceLightingEditorOpen(): boolean {
+    return this.byId<HTMLDetailsElement>("surfaceAuthoredLightingSection").open;
   }
 
   bind(handlers: UiHandlers): void {

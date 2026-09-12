@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /** Focused production-browser authoring gate for Surface lighting.
  *
- * Build and preview first. Default --phase=dormant never enters Surface:
- * it opens the real persisted rigs in Points, measures the disabled editor at
+ * Build and preview first. Default --phase=points never enters Surface:
+ * it opens the real persisted rigs in Points, measures the editable controls at
  * phone widths, and restores complete documents through Collection and Undo.
  * This phase may run beside a separate Surface GPU gate. --phase=active adds
  * real starter-menu entry and trusted touch/exact numeric edits; reserve the
  * GPU before running it. Reduced-motion parks both phases.
  *
- *   node scripts/surface-lighting-ui.verify.mjs --phase=dormant
+ *   node scripts/surface-lighting-ui.verify.mjs --phase=points
  *   node scripts/surface-lighting-ui.verify.mjs --phase=active --viewport=393x727
  *
  * Fixtures are built with the application starter helper and codec, then
@@ -32,7 +32,7 @@ import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
 const options = {
   url: "https://localhost:4173",
-  phase: "dormant",
+  phase: "points",
   display: "",
   viewport: "393x727,320x568",
   out: `scripts/out/cinematic-lighting/ui-${new Date().toISOString().replaceAll(":", "-")}`,
@@ -43,7 +43,7 @@ for (const arg of process.argv.slice(2)) {
     throw new Error(`Unknown option ${arg}`);
   options[parsed[1]] = parsed[2];
 }
-assert(["dormant", "active"].includes(options.phase));
+assert(["points", "dormant", "active"].includes(options.phase));
 const viewports = options.viewport.split(",").map((value) => {
   const [width, height] = value.split("x").map(Number);
   assert(
@@ -263,9 +263,9 @@ async function audit(page, label, active) {
   check(
     `${label}: applicability and paired availability`,
     result.availability.length === 0 &&
-      (active
+      (result.mode === "surface"
         ? /restart Surface convergence/.test(result.note)
-        : /Enter Surface/.test(result.note)),
+        : /next Surface render/.test(result.note)),
     result.availability,
   );
   check(
@@ -294,8 +294,8 @@ async function audit(page, label, active) {
   return result;
 }
 
-async function dormant(page, fixture, next, width) {
-  const label = `${fixture.id}-${width}-dormant`;
+async function points(page, fixture, next, width) {
+  const label = `${fixture.id}-${width}-points`;
   await boot(page, fixture);
   check(
     `${label}: hash retains exact rig`,
@@ -305,7 +305,7 @@ async function dormant(page, fixture, next, width) {
     ),
     null,
   );
-  await audit(page, label, false);
+  await audit(page, label, true);
   const saved = await saveDocument(page);
   check(
     `${label}: Collection captures exact rig and camera`,
@@ -363,6 +363,48 @@ async function dormant(page, fixture, next, width) {
   check(
     `${label}: stayed in Points`,
     (await page.evaluate(() => window.__surfaceState().mode)) === "points",
+    null,
+  );
+  await open(page, "surfaceAuthoredLightingSection");
+  const position = page.locator("#surfaceRigKeyPositionXNumber");
+  await position.scrollIntoViewIfNeeded();
+  await position.tap();
+  check(
+    `${label}: trusted touch focuses placement`,
+    await position.evaluate((el) => document.activeElement === el),
+    null,
+  );
+  const original = fixture.document.surface.lighting.lights[0].position[0];
+  const edited = original + 0.123456789;
+  await position.fill(String(edited));
+  await position.press("Enter");
+  await page.waitForFunction(
+    (expected) =>
+      JSON.parse(
+        atob(location.hash.slice(4).replace(/-/g, "+").replace(/_/g, "/")),
+      ).surface.lighting.lights[0].position[0] === expected,
+    edited,
+  );
+  check(
+    `${label}: Points placement reaches the document`,
+    (await hashDocument(page)).surface.lighting.lights[0].position[0] ===
+      edited,
+    null,
+  );
+  await page.click("#undoBtn");
+  await page.waitForFunction(
+    (expected) =>
+      JSON.parse(
+        atob(location.hash.slice(4).replace(/-/g, "+").replace(/_/g, "/")),
+      ).surface.lighting.lights[0].position[0] === expected,
+    original,
+  );
+  check(
+    `${label}: Points placement is undoable`,
+    same(
+      (await hashDocument(page)).surface.lighting,
+      fixture.document.surface.lighting,
+    ),
     null,
   );
 }
@@ -529,8 +571,8 @@ try {
       log(
         `${options.phase}: ${fixture.id} at ${viewport.width}x${viewport.height}`,
       );
-      if (options.phase === "dormant")
-        await dormant(page, fixture, generated[1 - index], viewport.width);
+      if (options.phase !== "active")
+        await points(page, fixture, generated[1 - index], viewport.width);
       else await active(page, fixture, viewport.width);
     }
     await context.close();

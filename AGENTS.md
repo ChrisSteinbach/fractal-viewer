@@ -957,10 +957,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Authored rigs (`surface-lighting.ts`) share ONE shader emitter across both
     dimensions/engines: absent state is legacy, visibility uses the displayed DE,
     unresolved rays stay dark, HDR averages before clipping. NO PARTICIPATING
-    MEDIUM — REMOVED on measured cost; re-measured, fence work does not buy it
-    back, cells per pass are its linear lever, a coarser raster is not one
-    while it rides phase-0 batches, and its return is a look call. A rig
-    lights surfaces only; a decoded `medium` block is IGNORED, never rejected.
+    MEDIUM — REMOVED on measured cost; fence work does not buy it back.
+    Its return is a look call; decoded `medium` is IGNORED, never rejected.
+    Points authors the rig in both dimensions with transient displayed-space
+    disk/aim guides, excluded from PNGs and Collection thumbnails.
     Record: `docs/cinematic-surface-lighting.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
