@@ -638,8 +638,10 @@ every ship fixture (the explicit enumerator is the test oracle of
 cost; visual distinctness; and the pre-tiling resolved/emitted GLSL lengths
 for the largest 3D and 4D combinations against `SURFACE_GLSL_STRIP_BYTES`
 and the real Mesa link cliff — MEASURE BEFORE ADDING THE PARAGRAPH.
-`npm run bench:surface` on a verified Iris display pins the kernels
-(glxinfo must say `Mesa Intel(R) Iris(R) Xe`, never SwiftShader). The
+`npm run bench:surface` on a verified real-driver display pins the kernels
+(glxinfo must name a REAL hardware driver — whatever machine the gate runs
+on, e.g. an Iris Xe's `Mesa Intel(R) Iris(R) Xe` or an AMD's
+`AMD Radeon RX 7900 XTX (radeonsi, ...)` — never SwiftShader/llvmpipe). The
 fixtures ship at least one 3D and two genuinely 4D groups from the table
 above, entering Surface unaided, settling, drawing distinct tiled geometry
 and taking the expected engine.
