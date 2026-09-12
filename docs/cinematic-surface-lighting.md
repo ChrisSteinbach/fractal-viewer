@@ -174,8 +174,38 @@ single driver job on this machine is cut at ~2.0 s. "What the driver's job
 timeout actually bounds" in `docs/surface-compute-renderer.md` carries the
 measurement and `scripts/webgpu-job-watchdog.repro.mjs` reproduces it. What
 remains unknown is WHICH dispatch in that settle was the long one — the
-renderer had no submit-time instrument to name it. Either way, lifting the
-ceiling has to be shown safe before a medium is reconsidered.
+renderer had no submit-time instrument to name it. It has one now, and the
+attempt to use it did not find the culprit, because THE LOSS DID NOT
+REPRODUCE.
+
+MEASURED 12 September 2026, same machine, same levers, same cathedral at
+1920x1057, with the submit-time line added on top of the experiment branch:
+THREE runs out of THREE SETTLED — 327.7 s, 329.2 s and 328.0 s, all eight
+passes, ~22,200 medium dispatches apiece, and NOT ONE amdgpu ring reset. So
+the authored 32 cells per pass at the lifted ceiling is not, by itself, a
+configuration that loses the device.
+
+AND NOTHING IN THOSE SETTLES COMES NEAR THE DEADLINE. Across a whole
+settle's 11,475 fence groups the widest MEASURED interval was 76.6 ms and
+the widest single submission of any kind was a 245 ms present readback —
+26x and 8x under the ~2.0 s a single driver job gets. The submit-time
+predictions agree: 92.7 ms is the worst any medium group ever predicted for
+itself, and the march lane's worst, 500 ms, is its cold-start EMA before a
+single measurement has landed. The renderer is not asking for anything the
+watchdog could object to.
+
+WHAT DIFFERS IS SPEED, AND IT IS THE WRONG WAY ROUND. The run that died
+recorded a pass 1 of 99.6 s; these three took 60.7, 60.9 and 61.0 s for the
+same work on the same hardware. A 1.6x difference the configuration does
+not explain points at what else the machine was doing, and this file's own
+standing instruction — run it on a QUIET machine — is the obvious suspect.
+That is a correlation between one run and three, NOT a mechanism, and it is
+recorded as one. Either way, lifting the ceiling has to be shown safe before
+a medium is reconsidered — but the case against it is now weaker than the
+loss alone made it look.
+
+The measurement branch is `measure/name-fatal-dispatch`: the medium-cost
+experiment with the submit-time line taught about the medium lane.
 
 A separate cost surfaced along the way. The authored pass 1 spent 151 s of
 its 501 s in 687 progressive presents, ~220 ms apiece: a full-frame readback

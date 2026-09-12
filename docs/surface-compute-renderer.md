@@ -1718,6 +1718,18 @@ THE CEILING IS ~2.0 s AND THE LADDERS AIM AT 50 ms, so the shipped widths are
 nowhere near it and this measurement does not, by itself, ask for one of them
 to move. What it moves is what the numbers MEAN.
 
+AND THE HEADROOM IS NOT THEORETICAL. Instrumented with the submit-time line,
+the worst configuration anyone has lost a device on — the cathedral at
+1920x1057, authored 32-cell medium, lit ceiling lifted to 65536 — settled all
+eight passes three times out of three (327.7, 329.2, 328.0 s, no ring reset).
+Across one of those settles' 11,475 fence groups the widest MEASURED interval
+was 76.6 ms, and the widest single submission of ANY kind was a 245 ms present
+readback: 26x and 8x under the deadline. Worth noting which of those is which —
+the readback is the biggest thing this renderer hands the queue, it is not a
+dispatch, and no ladder here sizes it. `docs/cinematic-surface-lighting.md`
+carries that run's figures and the one difference it did find, which is that
+the run that died was 1.6x slower per pass than the three that did not.
+
 **"THE WATCHDOG SEES DISPATCHES, NOT GROUPS" IS HALF RIGHT, AND THE HALF IT
 MISSES IS THE DEADLINE.** The ladders pace on `groupWorkMs / members` — a
 group's wall divided by how many dispatches shared it — on exactly that stated
