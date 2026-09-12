@@ -276,3 +276,34 @@ agreement, capture-band seams for any image-space warp, cancellation and
 real-driver cost in both dimensions. This experiment qualifies none of
 those production paths. In particular, the sampled alpha bands and the
 material's optical behaviour cannot silently change with export resolution.
+
+## Finite-solid comparison oracle
+
+`scripts/transmission-proxy.ts` supplies an explicitly different optical
+object for the next comparison: the depth-2 Menger construction is a union
+of 400 closed cubes, and the depth-2 native Tesseract construction is a
+union of 256 closed hypercubes. The starting half-sides are 0.75 and 0.65,
+respectively, and each construction step applies the real preset's maps
+at scale 1/3. Filling those terminal cells removes all finer fractal gaps.
+This is a bounded research control, not a new application solid mode.
+
+The 4D control inverse-rotates the displayed ray through XW by 0.35 radians
+at the off-centre slice `w = 0.2`. Intersecting the ray with all four box
+inequalities supplies actual entry/exit intervals of the sliced solid.
+Their sorted union merges overlapping or touching intervals and retains
+positive gaps without a material epsilon. Direct box membership is checked
+independently of the interval oracle. The signed box-distance union is only
+a shading/trace bound; its 4D restriction is not claimed to be the exact
+Euclidean distance within the 3D slice. Neither oracle infers membership
+from the production estimators.
+
+Reproduce the initial oracle controls with:
+
+```bash
+npx vitest run --config scripts/vitest.harness.config.ts scripts/transmission-proxy.harness.ts
+```
+
+The controls cover overlapping components, a 0.00001-wide gap, a ray
+starting inside, a filled rotated 4D slice, and direct membership checks
+along rays through both finite constructions. These checks establish the
+comparison geometry; they are not an appearance or performance decision.
