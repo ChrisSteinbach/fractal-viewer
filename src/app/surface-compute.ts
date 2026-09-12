@@ -372,6 +372,64 @@ export const SURFACE_COMPUTE_PROGRESS_MS = 500;
 export const SURFACE_COMPUTE_FENCE_GROUP_MS = 300;
 
 /**
+ * HOW LONG ONE DRIVER JOB MAY RUN BEFORE THE GPU IS RESET — a MEASURED
+ * ceiling, read off the device in front of us and never off the driver's
+ * documented default.
+ *
+ * MEASURED on one real AMD RX 7900 XTX (RDNA 3, kernel 7.0.0-29) under
+ * Chrome on `DISPLAY=:0`, by an app-free probe on a routed one-line page
+ * so the number belongs to the browser and the driver rather than to this
+ * renderer (`scripts/webgpu-job-watchdog.repro.mjs`): ONE
+ * `queue.submit()` carrying 2000 ms of GPU spin survives — its fence
+ * resolves at 2004 ms — and one carrying 3000 ms dies with `amdgpu: ring
+ * gfx_0.0.0 timeout`. amdgpu nominally gives its gfx ring TEN seconds;
+ * this stack cuts a job at TWO, so the documented default is five times
+ * too generous to reason with.
+ *
+ * WHAT A JOB IS, since the constant is worthless without it. K command
+ * buffers in ONE `submit()` are ONE job: the same probe's `multicb` arm
+ * dies 2033, 2042 and 2063 ms into payloads of 4002, 3000 and 6000 ms —
+ * the same instant whatever stood behind it, which is what a fixed
+ * deadline looks like. This renderer submits one command buffer per
+ * submission ({@link SurfaceComputeRenderer}'s `submitDispatch`) and is
+ * clear of that; a caller that ever batched command buffers to "save
+ * submissions" would walk straight into it.
+ *
+ * AND THE FENCE GROUP IS NOT THE WATCHDOG'S UNIT. K separate submissions
+ * behind one `onSubmittedWorkDone` are K jobs with K deadlines — 4002 ms
+ * of that survives, and 6000 ms survives when each second is fenced — so
+ * the earlier reading, that a queued backlog accumulates into one job, is
+ * REFUTED. BUT an unfenced INTERVAL still loses the device intermittently
+ * from about 3 s of total queued work, writing NOTHING to the kernel log
+ * and dying at the moment the interval's work would have COMPLETED rather
+ * than part-way through it. How much of a backlog reaches the ring as one
+ * busy period is not the caller's to decide, so the prudent bound is
+ * verdict one's applied to the WHOLE interval: hold the work queued
+ * between two fences to the ~2 s a single job gets, because the driver
+ * may treat it as one. That is what
+ * {@link surfaceComputeFenceGroupAllowanceMs} does with this number.
+ *
+ * DO NOT READ A CLEAN JOURNAL AS A CLEAN RUN: only the over-long SINGLE
+ * job takes the logged `ring gfx_0.0.0 timeout` path. The over-long
+ * interval loses the device with `A valid external Instance reference no
+ * longer exists.` and leaves the kernel log empty.
+ */
+export const SURFACE_COMPUTE_JOB_WATCHDOG_MS = 2000;
+
+/**
+ * The margin held under {@link SURFACE_COMPUTE_JOB_WATCHDOG_MS} — 4x,
+ * this project's usual watchdog margin, the figure the WebGL arm's strip
+ * cap already stands on (`docs/surface-compute-renderer.md` records it as
+ * "4.3x under the ~7.5 s i915 watchdog"). Nothing about a GPU deadline is
+ * measured precisely enough to spend a factor of two on, and the
+ * intermittent interval death above is a RATE rather than a threshold:
+ * one shape of it died on four runs of five and another on one of two, so
+ * the honest reading of ~3 s is "this is where deaths start", not "this
+ * is where the safe region ends".
+ */
+export const SURFACE_COMPUTE_JOB_WATCHDOG_MARGIN = 4;
+
+/**
  * Dispatches one fence may stand behind whatever they measure — and THIS
  * IS NOT A TUNING CONSTANT, it is a MEASURED BROWSER CEILING.
  *
@@ -1491,6 +1549,45 @@ export function surfaceComputeDispatchWorkMs(
 }
 
 /**
+ * HOW MUCH WORK ONE FENCE INTERVAL MAY STAND BEHIND: the smaller of what
+ * the fence-tax trade ASKS for ({@link SURFACE_COMPUTE_FENCE_GROUP_MS})
+ * and what the driver's job deadline ALLOWS
+ * ({@link SURFACE_COMPUTE_JOB_WATCHDOG_MS} at
+ * {@link SURFACE_COMPUTE_JOB_WATCHDOG_MARGIN}).
+ *
+ * IT CHANGES NOTHING TODAY, AND THAT IS DELIBERATE. The allowance is
+ * 2000/4 = 500 ms and the shipped target is 300 ms, so the `Math.min`
+ * picks the target and every group this renderer sizes is the group it
+ * sized before the bound existed. A constant that binds nothing is still
+ * worth writing down when the thing it bounds is a device reset: the
+ * point is that {@link SURFACE_COMPUTE_FENCE_GROUP_MS} can no longer be
+ * RAISED — by a session tuning the fence tax, which is a throughput
+ * decision and looks like one — past the measured ceiling without
+ * something refusing it. The trade that sets the target has no term for
+ * the watchdog in it at all, so left alone it would cross that ceiling
+ * silently, and the failure is not a slow frame but a Surface renderer a
+ * compute-only session cannot get back.
+ *
+ * WHY THE INTERVAL AND NOT THE DISPATCH. The measurement says the
+ * watchdog's unit is the SUBMISSION, and each of this frame's dispatches
+ * is its own submission — so on verdict three alone a group of any size
+ * is safe. It is the second, quieter finding that this bound answers: an
+ * unfenced interval still dies near 3 s, the host does not control how
+ * much of its backlog reaches the ring as one busy period, and the
+ * quantity the deadline is denominated in is therefore the INTERVAL's
+ * rather than the per-dispatch share every ladder here paces on. Pure so
+ * the clamp is unit-tested at a raised target the module does not ship.
+ */
+export function surfaceComputeFenceGroupAllowanceMs(
+  groupMs = SURFACE_COMPUTE_FENCE_GROUP_MS,
+): number {
+  return Math.min(
+    groupMs,
+    SURFACE_COMPUTE_JOB_WATCHDOG_MS / SURFACE_COMPUTE_JOB_WATCHDOG_MARGIN,
+  );
+}
+
+/**
  * HOW MANY DISPATCHES ONE FENCE MAY STAND BEHIND, from the only evidence
  * that means anything here: what a dispatch of this LANE was last MEASURED
  * to cost, with its fence taken out.
@@ -1544,7 +1641,10 @@ export function surfaceComputeFenceGroupSize(
     Math.min(
       maxDispatches,
       Math.floor(
-        Math.min(SURFACE_COMPUTE_FENCE_GROUP_MS, remainingMs) /
+        // The work target, already held under the driver's own job
+        // deadline (surfaceComputeFenceGroupAllowanceMs), against
+        // whatever the CALLER has left to spend.
+        Math.min(surfaceComputeFenceGroupAllowanceMs(), remainingMs) /
           Math.max(0.01, 2 * peakDispatchWorkMs),
       ),
     ),
@@ -4411,6 +4511,39 @@ export class SurfaceComputeRenderer {
     let marchPeakWorkMs: number | null = null;
     let hitPeakWorkMs: number | null = null;
 
+    /**
+     * WHAT THE OPEN GROUP HAS PREDICTED FOR ITSELF, in ms — read from the
+     * same two models that SIZED its members, so the figure and the
+     * sizing cannot disagree: the march's per-ray·step EMA, and the hit
+     * queue's `intercept + n·marginal` in the exact shape
+     * {@link nextShadeHitCost} subtracts its surprise from. A FREE batch
+     * contributes nothing, exactly as it is attributed nothing at the
+     * fence.
+     *
+     * IT IS NOT EVIDENCE AND NOTHING SIZES ANYTHING FROM IT. A dispatch's
+     * predicted cost is its sizer's target BY CONSTRUCTION —
+     * {@link surfaceComputeFenceGroupSize}'s own doc is the record of what
+     * reading it as evidence cost. It is here because it is the only
+     * figure that EXISTS before the work runs, and a submit-time line has
+     * nothing else to carry.
+     */
+    const groupPredictedWorkMs = (): number => {
+      let us = 0;
+      let hitDispatches = 0;
+      let hits = 0;
+      for (const d of pending) {
+        if (d.kind === "march") {
+          us += d.rays * Math.max(1, d.steps) * rayStepEmaUs;
+        } else if (!d.free) {
+          hitDispatches++;
+          hits += d.hits;
+        }
+      }
+      us +=
+        hitDispatches * sizer.cost.interceptUs + hits * sizer.cost.marginalUs;
+      return us / 1000;
+    };
+
     /** Submit one dispatch into the current group. Returns false only
      * when the frame was cancelled during the session's one-time fence
      * calibration. */
@@ -4426,6 +4559,29 @@ export class SurfaceComputeRenderer {
       if (pending.length === 0) groupStart = t0;
       pending.push(record);
       passes++;
+      // WRITTEN AT SUBMIT, NOT AT THE FENCE, and that is the whole of why
+      // it exists. Every other number a frame records is taken in
+      // `flushGroup` when `onSubmittedWorkDone` RESOLVES, so a submission
+      // that never resolves — the one that lost the device — is never
+      // recorded at all, and "the worst dispatch we measured was 40 ms"
+      // is a statement about the survivors alone. A session that dies
+      // mid-frame now leaves its last line naming the dispatch it died
+      // on: the lane, what was handed to the queue, and how much work the
+      // host believed was already outstanding behind this fence — the
+      // interval quantity {@link surfaceComputeFenceGroupAllowanceMs}
+      // bounds, which nothing else here prints. Diagnostic only, and it
+      // costs nothing when it is not wanted: the sink is null unless
+      // `?surfacetrace` installed one, and the prediction is not walked
+      // at all in that case.
+      if (trace) {
+        const detail =
+          record.kind === "march"
+            ? `steps=${record.steps}`
+            : `isFree=${record.free}`;
+        tr(
+          `${record.kind} SUBMIT len=${count} ${detail} ahead=${pending.length - 1} predicted=${groupPredictedWorkMs().toFixed(1)}`,
+        );
+      }
       return true;
     };
 

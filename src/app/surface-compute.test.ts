@@ -31,12 +31,16 @@ import {
   SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   surfaceComputeDispatchWorkMs,
+  surfaceComputeFenceGroupAllowanceMs,
   surfaceComputeFenceGroupSize,
   surfaceComputeFenceGroupStagedFull,
   SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES,
   surfaceComputeFenceRoundTripMs,
   surfaceComputeGroupDispatchMs,
   SURFACE_COMPUTE_FENCE_GROUP_MAX,
+  SURFACE_COMPUTE_FENCE_GROUP_MS,
+  SURFACE_COMPUTE_JOB_WATCHDOG_MARGIN,
+  SURFACE_COMPUTE_JOB_WATCHDOG_MS,
   surfaceComputeLightingRayBatch,
   SurfaceComputeRenderer,
   surfaceComputeTargetMeshIds,
@@ -3200,6 +3204,39 @@ describe("surfaceComputeFenceGroupSize", () => {
     // `?surfacefencegroup=1` is the before arm of this feature's own A/B.
     expect(surfaceComputeFenceGroupSize(0, Infinity, 1)).toBe(1);
     expect(surfaceComputeFenceGroupSize(0, Infinity, 4)).toBe(4);
+  });
+});
+
+describe("surfaceComputeFenceGroupAllowanceMs", () => {
+  it("holds a fence interval to a quarter of the measured job deadline, which binds nothing today", () => {
+    // The measured single-job ceiling is 2000 ms on this repository's AMD
+    // RX 7900 XTX under Chrome, and the project's usual watchdog margin is
+    // 4x, so an interval may stand behind 500 ms of work. The shipped work
+    // target is 300, so the min picks the target and nothing this renderer
+    // sizes moves — the no-op claim pinned rather than left in prose.
+    expect(
+      SURFACE_COMPUTE_JOB_WATCHDOG_MS / SURFACE_COMPUTE_JOB_WATCHDOG_MARGIN,
+    ).toBe(500);
+    expect(SURFACE_COMPUTE_FENCE_GROUP_MS).toBe(300);
+    expect(surfaceComputeFenceGroupAllowanceMs()).toBe(
+      SURFACE_COMPUTE_FENCE_GROUP_MS,
+    );
+    // 300 ms against 2 x 25 ms of measured work is still six dispatches,
+    // exactly as it was before the bound existed.
+    expect(surfaceComputeFenceGroupSize(25, Infinity, 16)).toBe(6);
+  });
+
+  it("clamps a raised work target at the driver's job deadline", () => {
+    // The reason the bound is written down at all: a session tuning the
+    // fence tax raises the work target on throughput grounds, where that
+    // trade has no term for the watchdog in it. Tested through the
+    // parameter rather than by mutating the module's constant.
+    expect(surfaceComputeFenceGroupAllowanceMs(400)).toBe(400);
+    expect(surfaceComputeFenceGroupAllowanceMs(500)).toBe(500);
+    expect(surfaceComputeFenceGroupAllowanceMs(1200)).toBe(500);
+    expect(
+      surfaceComputeFenceGroupAllowanceMs(SURFACE_COMPUTE_JOB_WATCHDOG_MS),
+    ).toBe(500);
   });
 });
 
