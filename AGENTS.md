@@ -947,9 +947,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     shader body for both dialects. Both engines share material lane order;
     CPU values and classic shader bytes are pinned. Finish
     persists/morphs/mutates like fold lengths; random-system never rolls one.
-    TRANSMISSION: backdrop fading cannot reveal rear geometry; sampled layers
-    can, in 3D/4D, but glass needs a defined optical model and the prototype's
-    exit scan is not production-ready. Evidence: `docs/surface-transmission.md`.
+    TRANSMISSION: fixed world bands reveal rear geometry in 3D/4D but retain
+    phase-sensitive gap merging; both layer prototypes remain research-only.
+    Model, controls and cost: `docs/surface-transmission.md`.
     Pattern-albedo remains REFUSED; the rings-wood refusal, confirmed zoom
     premise and deferred sheets banding live in `scripts/finish-pattern.harness.ts`.
     Authored rigs (`surface-lighting.ts`) share ONE shader emitter across both

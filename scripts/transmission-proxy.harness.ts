@@ -27,6 +27,31 @@ describe("Finite optical solid oracles", () => {
     expect(solid.contains([0, 0, 0.66])).toBe(false);
   });
 
+  it("keeps closed face contacts and resolves nearly parallel 4D slab rays", () => {
+    expect(
+      boxUnionIntervals(
+        [
+          { center: [0, 0, 0.5], half: 0.5 },
+          { center: [0, 0, -0.5], half: 0.5 },
+        ],
+        [0, 0, 4],
+        [0, 0, -1],
+      ),
+    ).toEqual([{ enter: 3, exit: 5 }]);
+    const hyperbox = [{ center: [0, 0, 0, 0], half: 0.5 }];
+    for (const dw of [0, -1e-15]) {
+      expect(
+        boxUnionIntervals(hyperbox, [0, 0, 2, 0.5], [1e-14, 0, -1, dw]),
+      ).toEqual([{ enter: 1.5, exit: 2.5 }]);
+    }
+    expect(
+      boxUnionIntervals(hyperbox, [0, 0, 2, 0.5], [0, 0, -1, 1e-15]),
+    ).toEqual([]);
+    expect(finiteOpticalSolid(4, 2, 0.6, -0.3).radius).toBe(
+      finiteOpticalSolid(4, 2, 0.1, 0.4).radius,
+    );
+  });
+
   it.each([3, 4] as const)(
     "matches independent membership samples for finite %iD construction",
     (dimension) => {
