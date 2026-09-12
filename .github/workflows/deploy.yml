@@ -237,8 +237,27 @@ jobs:
   # compensation completing, a controlling worker, no console errors.
   # Exit 0 is PASS, 1 is a FAIL verdict on the deploy, 2 is INCONCLUSIVE
   # (the CHECKING side failed: browser or network) — only 2 retries.
+  #
+  # The explicit if below is LOAD-BEARING, and its absence was a measured
+  # defect (2026-09-11/12, runs 34591897711 and 34693402711): when the
+  # sweep-reuse gate SKIPS gpu-full, deploy still runs on its own explicit
+  # admission — but this job came out SKIPPED with zero steps although its
+  # needs list touches only deploy and deploy succeeded. A job with no
+  # `if` of its own inherits GitHub's transitive skip propagation through
+  # the needs DAG: a skipped gpu-full upstream skips every dependent that
+  # does not declare its own admission, even through a job that itself ran
+  # on one. Five recorded deploys show both arms — gpu-full ran and
+  # verify-live ran (34334699452 et al.); gpu-full skipped and verify-live
+  # skipped behind a succeeded deploy. The reuse path is the COMMON deploy
+  # path under the rebase-merge rule, so the gate AGENTS.md calls
+  # automatic was silently absent exactly there. Declaring the admission
+  # explicitly, exactly as deploy does, opts this job out — the opt-out
+  # mechanism is proven by deploy itself in the same runs, and the shape
+  # is pinned by scripts/gpu-ci-workflow.test.ts so a regression fails
+  # the `test` check on the PR that reintroduces it.
   verify-live:
     needs: deploy
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The top-level block grants pages/id-token for the deploy job; this
