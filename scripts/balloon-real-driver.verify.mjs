@@ -13,6 +13,7 @@
 //
 // Usage: node scripts/balloon-real-driver.verify.mjs --url=https://localhost:5174 [--display=:0]
 import { chromium } from "playwright-core";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -188,6 +189,17 @@ async function onOffProtocol(page, name, hash) {
 }
 
 async function run() {
+  // The machine's conditions, before this gate puts its own browser on the
+  // GPU: the settle ratios below are measurements, so the run carries its
+  // own conditions rather than asserting "a quiet machine" in prose.
+  const quiet = await quietBaseline(log);
+  const contended = contendedReason(quiet);
+  if (contended) {
+    log(
+      `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+        " do not read this run's timing rows.",
+    );
+  }
   const browser = await chromium.launch({
     executablePath: args.chrome ?? "/usr/bin/google-chrome",
     // HEADED is load-bearing: playwright defaults to headless, and headless

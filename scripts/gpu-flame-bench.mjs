@@ -86,6 +86,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { startBenchDiagnostics } from "./gpu-bench-diagnostics.ts";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import {
   shouldResetWaitOnScenarioCompletion,
   waitForBenchCompletion,
@@ -612,7 +613,26 @@ async function main() {
   let browserServer = null;
   let diagnostics = null;
   let exitCode = 0;
+  let quiet = null;
   try {
+    // The machine's conditions, taken BEFORE this runner puts anything on
+    // the GPU — the only moment the baseline measures the machine and not
+    // the benchmark. Every verdict this script publishes is a measurement,
+    // so the run carries its own conditions instead of asserting "a quiet
+    // machine" in prose: a contended run says so in its output and its
+    // results.json, and an unmeasurable machine says UNKNOWN rather than
+    // reading as quiet.
+    quiet = await quietBaseline((line) =>
+      console.error(`[gpu-flame-bench] ${line}`),
+    );
+    const contended = contendedReason(quiet);
+    if (contended) {
+      console.error(
+        `[gpu-flame-bench] UNCERTIFIED: another process was already on the GPU — ${contended}.` +
+          " Numbers measured beside one are bounded by that workload too;" +
+          " quiesce it and re-run for a certified row.",
+      );
+    }
     // `--chrome=bundled` resolves to the Playwright-bundled Chromium — same
     // hermetic-browser convention as scripts/webgl-smoke.mjs (see this
     // script's usage doc for when that matters).
@@ -783,6 +803,18 @@ async function main() {
 
     const results = await page.evaluate(() => window.__BENCH_RESULTS__ ?? null);
     const pageError = await page.evaluate(() => window.__BENCH_ERROR__ ?? null);
+    // The run's own conditions ride the persisted record, so a row read
+    // later (or by CI) carries the machine it was measured on — the
+    // baseline's UNKNOWN spells itself out rather than reading as quiet.
+    if (results && quiet) {
+      results.quiet = {
+        contended: quiet.contended,
+        competing: quiet.competing,
+        unknownReason: quiet.unknownReason,
+        gpuBusyPercent: quiet.gpuBusyPercent,
+        loadavg1: quiet.loadavg1,
+      };
+    }
 
     // Persist numeric evidence before screenshots: image capture can fail
     // independently after the benchmark has already completed.
@@ -867,6 +899,11 @@ async function main() {
     if (surfaceRequested) {
       const surfaceDe = results ? results.surfaceDe : undefined;
       printSurfaceSummary(surfaceDe);
+      if (contendedReason(quiet)) {
+        console.error(
+          "[gpu-flame-bench] surface timing rows are UNCERTIFIED — the baseline found another process on the GPU; do not read budgets off them",
+        );
+      }
       if (surfaceDe && surfaceDe.verdict === "fail") {
         console.error(
           "[gpu-flame-bench] surface DE check FAILED — see results.surfaceDe in results.json",

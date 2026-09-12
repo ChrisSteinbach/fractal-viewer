@@ -391,6 +391,52 @@ const rate = (row) =>
   `${row.comm}[${row.pid}] ${row.busyMsPerSecond.toFixed(0)}ms/s`;
 
 /**
+ * The one baseline every real-driver gate takes BEFORE it launches a
+ * browser — the only moment the run has nothing of its own on the device —
+ * logged in the run's own output and returned so a caller can treat a
+ * contended run as uncertified rather than believed.
+ *
+ * A contended run is INCONCLUSIVE, not a failure: the arms would still run
+ * and still produce numbers, and those numbers would bound someone else's
+ * workload plus this one. Callers that gate a verdict on their numbers
+ * should refuse (or stamp, behind ALLOW_CONTENDED=1, the watchdog's
+ * precedent) on `contended === true`; one that only asserts behavior may
+ * proceed with the line in its output. UNKNOWN never reads as quiet —
+ * `formatQuietLine` spells it out, and the caller's log carries the note.
+ */
+export async function quietBaseline(log, options = {}) {
+  const quiet = await measureGpuContention({
+    ignorePids: [...(await pidTree(process.pid))],
+    ...options,
+  });
+  log(`quiet-baseline: ${formatQuietLine(quiet)}`);
+  if (quiet.contended === null) {
+    log(
+      `  NOTE: GPU contention could not be measured (${
+        quiet.unknownReason ?? "unmeasured"
+      }).` +
+        " This run's conditions are UNKNOWN — do not read its verdict as a" +
+        " measurement of a quiet machine.",
+    );
+  }
+  return quiet;
+}
+
+/**
+ * The shared refusal for a contended baseline, so every gate phrases the
+ * reason identically: a ceiling measured beside another workload is not a
+ * ceiling, and a loss recorded beside one is not this bug. Returns the
+ * stamped reason to carry into the run's own record, or `null` when the
+ * machine was quiet or the verdict is UNKNOWN (which proceeds, loudly).
+ */
+export function contendedReason(quiet) {
+  if (quiet.contended !== true) return null;
+  return quiet.competing
+    .map((c) => `${c.comm}[${c.pid}] ${c.busyMsPerSecond.toFixed(0)}ms/s`)
+    .join(", ");
+}
+
+/**
  * One compact line for a script's log. The VERDICT WORD IS FIRST because
  * that is the part a reader scans for, and UNKNOWN is spelled out rather
  * than elided — a run whose conditions were not measurable must not look

@@ -31,3 +31,5 @@ src/app/public/THIRD-PARTY-LICENSES.txt
 # Browser diagnostic dumps (chrome://gpu saved for a session to read).
 /GPUInternals.html
 /IrisGPUInternals.html
+
+.claude/worktrees/

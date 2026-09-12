@@ -254,6 +254,7 @@
  */
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
+import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 
 /** CSS viewport. Wider than `MOBILE_BREAKPOINT` (640) on purpose: below it
  * the panel is a closed drawer and `#modeSurfaceBtn` is not clickable, so
@@ -946,6 +947,19 @@ async function main() {
       `legTimeout=${(args.legTimeoutMs / 1000).toFixed(0)}s repeat=${args.repeat} ` +
       `display=${args.display ?? "(headless SwiftShader — TIMES ARE NOT A VERDICT)"}`,
   );
+  // The machine's conditions, before this gate puts its own browser on the
+  // GPU: the settle times and ratios below are measurements, so the run
+  // carries its own conditions rather than asserting "a quiet machine" in
+  // prose. Headless SwiftShader arms keep their own "TIMES ARE NOT A
+  // VERDICT" disclosure above.
+  const quiet = await quietBaseline(log);
+  const contended = contendedReason(quiet);
+  if (contended) {
+    log(
+      `UNCERTIFIED: another process was already on the GPU — ${contended};` +
+        " do not read this run's timing rows.",
+    );
+  }
   const browser = await chromium.launch({
     executablePath: process.env.CHROME_PATH ?? "/usr/bin/google-chrome",
     headless,
