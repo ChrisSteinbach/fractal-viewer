@@ -51,8 +51,8 @@ middle third at each level:
 
 | Scene                   | Main depth | Children per level | Root half extent |
 | ----------------------- | ---------: | -----------------: | ---------------: |
-| Finite Menger, 3D       |          3 |                 20 |             0.75 |
-| Finite hyper-Menger, 4D |          3 |                 48 |             0.75 |
+| Finite Menger, 3D       |          2 |                 20 |             0.75 |
+| Finite hyper-Menger, 4D |          2 |                 48 |             0.75 |
 
 The 3D normalization matches maps of scale 1/3 with offsets of 0 or ±0.5:
 `H = H/3 + 0.5`, hence `H = 0.75`. Adjacent children touch. The hyper-Menger
@@ -60,7 +60,12 @@ uses the same normalization in four dimensions and is a new construction,
 not the existing Mandelbox or Tesseract scene. Its displayed object is the
 intersection of that 4D solid with a nonzero slice after rotations mixing
 `xw` and `yw`. A connected 4D object need not have a connected 3D slice.
-Depth-zero boxes and depth-two versions provide simpler controls.
+The initial depth-three full-tree candidate was too costly in the bounded
+work study below. The next comparison explicitly uses coarser depth-two
+geometry: 400 terminal cells in 3D and 2,304 in 4D, with nine cells across
+each intrinsic axis. The image raster remains 1024×1024. Depth-zero boxes
+provide simple controls; depth-three definitions remain available for the
+detail and work studies.
 
 Boundary queries traverse the finite ternary grid and report only transitions
 between occupied and empty cells. Shared internal cell faces are suppressed.
@@ -110,7 +115,7 @@ precision, approximation and performance limits must accompany the images.
 ## Scalar controls
 
 `transmission-dielectric-solid.harness.ts` passes six tests. They check the
-terminal-cell counts, the actual 3D Menger preset's depth-zero and depth-two
+terminal-cell counts, the actual 3D Menger preset's depth-zero, two and three
 construction, exhaustive depth-two ray intervals in both dimensions, touching
 cells and positive gaps, inside rays, projected slice normals and corner
 policy. The continuation controls preserve the authoritative intrinsic anchor
@@ -119,7 +124,7 @@ ULP. Invalid anchor state, tangent ambiguity and traversal exhaustion refuse
 explicitly. Independent Snell, total-internal-reflection, identity and Beer
 controls cover the optical arithmetic.
 
-The main depth-three solids contain 8,000 and 110,592 terminal cells, but the
+The depth-three solids contain 8,000 and 110,592 terminal cells, but the
 renderer does not allocate a leaf list. A straight segment visits at most 79
 finest-grid cells in 3D and 105 in 4D. These are boundary-query bounds, not
 bounds on the number of reflected or refracted paths.
@@ -138,3 +143,60 @@ npx vitest run --config scripts/vitest.harness.config.ts scripts/transmission-di
 Reports are written under `scripts/out/transmission-dielectric-solid-*.json`.
 These checks establish the finite scalar construction; actual GPU agreement,
 image completion, appearance and performance require their own evidence.
+
+## Initial GPU and tree-cost result
+
+The initial GPU baseline at `c23439f` passed all eleven current-source
+physics/boundary controls on verified quiet RX 7900 XTX hardware. Its
+64×64 Menger depth-three glass diagnostic correctly refused: 1,574 of 4,096
+pixels contained unresolved work; 6,096 of 16,384 samples were unresolved.
+The maximum recorded omitted-radiance bound was 3.99916744, against
+0.0009765625. The initial failure counter combined traversal refusals and
+path/interface/stack limits; it does not identify the cause of each failure.
+
+The diagnostic's tile encode/submit/map wall time was 32.7 ms and its shader
+pipeline setup was 225.8 ms. Its known cross-process allocation plan was
+4,768,898 bytes. This is a capped diagnostic, not a complete image timing or
+an achieved performance target. Its source hashes and full report are in
+`scripts/out/transmission-dielectric-gpu/diagnostic-64x64-menger-glass.json`.
+
+The scalar tree study found that ordinary depth-three rays required thousands
+of reflected/refracted paths even before their summed discarded contribution
+met the error limit. Raising the initial work guards alone could not qualify
+them: the completed, uncapped samples still exceeded the residual limit.
+Extrapolating that work from the capped GPU diagnostic suggests the finer
+candidate is unlikely to meet the selected waiting target with this method;
+no full-size depth-three performance result was measured.
+
+The next experiment uses **depth-two residual replay**. Each sample first
+traces with a radiance cutoff of `1 / (1024 * 64)`, sums the max-channel bound
+of every discarded branch, and accepts only a finite, cap-free result whose
+sum is at most `1/1024`. Otherwise it halves the cutoff and repeats. The
+environment bound appears once in each branch bound. Fixed replay, path,
+interface and live-stack guards remain unresolved outcomes.
+
+The limit is on the **omitted contribution per pixel, in the largest linear
+RGB channel**, after averaging the four sample bounds. It does not sum image
+pixels together or change with raster dimensions. It also does not certify
+floating-point intersection error, all antialiasing error, or appearance.
+Image-wide totals are instruments, not additional error gates.
+
+The executable scalar work record is
+[`transmission-dielectric-tree.harness.ts`](../scripts/transmission-dielectric-tree.harness.ts).
+Its four depth-two representative rays accept on replay indices 1, 2, 0
+and 0 (Menger centre/lower, hyper-Menger centre/lower; index zero is the
+initial cutoff). Three of the four depth-three representatives refuse under
+the same replay guards; the fourth accepts at index three. This samples work
+and residual accounting, not every pixel of either fixture.
+
+```bash
+npx vitest run --config scripts/vitest.harness.config.ts scripts/transmission-dielectric-tree.harness.ts
+```
+
+A subsequent 64×64 GPU diagnostic separated the initial refusal reasons.
+It found no DDA traversal refusals, one sample with an unexpected inside
+miss, 544 samples hitting the stack guard, 183 the interface guard and 6,095
+the processed-path guard (categories overlap). The processed-path guard
+dominates, but the inside miss remains a separate geometry investigation.
+The report is
+`scripts/out/transmission-dielectric-gpu/diagnostic-64x64-menger-glass-reasons.json`.
