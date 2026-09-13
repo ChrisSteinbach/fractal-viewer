@@ -46,7 +46,11 @@
  * an exception. Every `encoded` string it returns has been round-tripped
  * through `decodeScene` and found loadable. Unsupported flam3 features
  * (xaos, post on a nonlinear xform, variations we don't implement) degrade
- * with human-readable warnings rather than rejecting the file.
+ * with human-readable warnings rather than rejecting the file, and a
+ * concatenated multi-flame file — several complete `<flame>` roots back to
+ * back, the shape Electric Sheep's genome servers served — is repaired by
+ * wrapping the text in `<flames>`, so every flame in it imports instead of
+ * the file being rejected for having more than one root.
  *
  * Export (`encodeFlameFile`) writes the system's XY shadow: exact for z-flat
  * systems — including anything imported from a `.flame` in the first place —
@@ -899,6 +903,37 @@ function flameToScene(
 }
 
 /**
+ * Parse `.flame` text into an XML document, repairing the concatenated
+ * multi-flame variant Electric Sheep's genome servers served: several
+ * complete `<flame>` roots back to back with no enclosing element. XML
+ * permits one root, so those files fail a direct parse ("documents may
+ * contain only one root") even though every flame in them is well-formed;
+ * the repair wraps the whole text in the `<flames>` element the app already
+ * accepts for Apophysis batches, where those same flames parse unchanged.
+ * A leading XML declaration is dropped for the repair — legal only at the
+ * very top of a document, the wrapper would put it inside one. `null` when
+ * neither parse yields a flame document (a single malformed root stays
+ * rejected: the repair is attempted only when the text really does carry at
+ * least two `<flame>` roots).
+ */
+function parseFlameDocument(text: string): Document | null {
+  const parser = new DOMParser();
+  const direct = parser.parseFromString(text, "text/xml");
+  if (direct.getElementsByTagName("parsererror").length === 0) return direct;
+
+  const roots = text.match(/<flame(?:\s|>|\/)/g);
+  if (roots === null || roots.length < 2) return null;
+  const stripped = text.replace(/^\uFEFF?\s*<\?xml[\s\S]*?\?>\s*/, "");
+  const repaired = parser.parseFromString(
+    `<flames>${stripped}</flames>`,
+    "text/xml",
+  );
+  return repaired.getElementsByTagName("parsererror").length === 0
+    ? repaired
+    : null;
+}
+
+/**
  * Parse `.flame` file text into loadable scenes — the never-throwing trust
  * boundary for untrusted flame files, mirroring `scene-file.ts`'s
  * `decodeImportFile` contract. Returns `null` when the text is not a flame
@@ -912,8 +947,8 @@ export function decodeFlameFile(text: string): DecodedFlameFile | null {
   try {
     // Cheap sniff before invoking a whole XML parse on arbitrary text.
     if (!/<flames?[\s>]/.test(text)) return null;
-    const doc = new DOMParser().parseFromString(text, "text/xml");
-    if (doc.getElementsByTagName("parsererror").length > 0) return null;
+    const doc = parseFlameDocument(text);
+    if (doc === null) return null;
 
     const flameEls = Array.from(doc.getElementsByTagName("flame"));
     if (flameEls.length === 0) return null;

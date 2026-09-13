@@ -114,6 +114,49 @@ describe("decodeFlameFile", () => {
     expect(decodeScene(file!.scenes[1].encoded)).not.toBeNull();
   });
 
+  it("repairs concatenated <flame> roots with no enclosing <flames> element", () => {
+    // The shape Electric Sheep's genome servers served: two complete flame
+    // documents back to back, which XML rejects for having two roots.
+    const xml =
+      `<flame name="first"><xform weight="1" coefs="0.5 0 0 0.5 0 0"/></flame>\n` +
+      `<flame name="second"><xform weight="1" coefs="0.4 0 0 0.4 0.1 0.1"/></flame>`;
+    const file = decodeFlameFile(xml);
+    expect(file).not.toBeNull();
+    expect(file!.scenes.map((s) => s.name)).toEqual(["first", "second"]);
+    expect(decodeScene(file!.scenes[0].encoded)).not.toBeNull();
+    expect(decodeScene(file!.scenes[1].encoded)).not.toBeNull();
+  });
+
+  it("repairs concatenated roots despite a leading XML declaration", () => {
+    // An XML declaration is legal only at the top of a document, so the
+    // wrapper repair must drop it before wrapping or the retry cannot parse.
+    const xml =
+      `<?xml version="1.0" encoding="UTF-8"?>\n` +
+      `<flame name="first"><xform weight="1" coefs="0.5 0 0 0.5 0 0"/></flame>` +
+      `<flame name="second"><xform weight="1" coefs="0.4 0 0 0.4 0.1 0.1"/></flame>`;
+    const file = decodeFlameFile(xml);
+    expect(file).not.toBeNull();
+    expect(file!.scenes.map((s) => s.name)).toEqual(["first", "second"]);
+  });
+
+  it("returns null when concatenated roots are themselves malformed", () => {
+    // Two flame roots is not a licence to accept broken XML: the wrapper
+    // retry still has to parse.
+    expect(
+      decodeFlameFile(
+        "<flame><xform coefs='1 0 0 1 0 0'<flame><xform coefs='1 0 0 1 0 0'",
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for leading junk before a lone flame root", () => {
+    // The repair is for the real concatenation shape, not a blanket second
+    // parse: one malformed root with stray text stays rejected.
+    expect(
+      decodeFlameFile("garbage text <flame><xform coefs='1 0 0 1 0 0'</flame>"),
+    ).toBeNull();
+  });
+
   it("skips xforms with non-positive weight but keeps a valid sibling", () => {
     const xml = `<flame><xform weight="0" coefs="1 0 0 1 0 0"/><xform weight="-1" coefs="1 0 0 1 0 0"/><xform weight="1" coefs="0.5 0 0 0.5 0.2 0.3"/></flame>`;
     const file = decodeFlameFile(xml);
