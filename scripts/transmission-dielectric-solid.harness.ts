@@ -5,10 +5,12 @@ import type { Vec3 } from "./de-preview";
 import { boxUnionIntervals, type OpticalInterval } from "./transmission-proxy";
 import {
   DIELECTRIC_HYPER_ROTATION,
+  DIELECTRIC_CORNER_CONTROL_CASES,
   DIELECTRIC_GEOMETRY_CONTROL_RAYS,
   DIELECTRIC_SOLID_FIXTURES,
   DIELECTRIC_TRANSPORT_CONTROL_INPUTS,
   dielectricBeerThroughput,
+  dielectricBoundaryNormal,
   dielectricContains,
   dielectricDisplayedRootYBounds,
   dielectricIntrinsicDirection,
@@ -324,8 +326,8 @@ describe("connected finite dielectric solids", () => {
     if (corner.kind === "boundary") {
       expect(corner.intrinsicAxis).toBe(0);
       expect(corner.face.planeIndex).toBe(0);
-      expect(corner.outwardNormal[0]).toBe(-1);
-      expect(Math.abs(corner.outwardNormal[1])).toBe(0);
+      expect(corner.outwardNormal[0]).toBeCloseTo(-Math.SQRT1_2, 12);
+      expect(corner.outwardNormal[1]).toBeCloseTo(-Math.SQRT1_2, 12);
       expect(Math.abs(corner.outwardNormal[2])).toBe(0);
     }
 
@@ -533,6 +535,41 @@ describe("connected finite dielectric solids", () => {
     }
   });
 
+  it("uses the tied-face span normal for medium-consistent corner transport", () => {
+    for (const control of DIELECTRIC_CORNER_CONTROL_CASES) {
+      const fixture = DIELECTRIC_SOLID_FIXTURES[control.fixtureKey];
+      const { anchor, incident } = control;
+      const normal = dielectricBoundaryNormal(
+        fixture,
+        incident,
+        anchor.planeMask,
+        false,
+      );
+      expect(normal).not.toBeNull();
+      if (!normal) continue;
+      expect(normal).toEqual(control.expectedNormal);
+      const reflected = control.reflected.direction;
+      const incidentQd = dielectricIntrinsicDirection(fixture, incident);
+      const reflectedQd = dielectricIntrinsicDirection(fixture, reflected);
+      for (let axis = 0; axis < fixture.dimension; axis++)
+        if ((anchor.planeMask & (1 << axis)) !== 0)
+          expect(reflectedQd[axis]).toBeCloseTo(-incidentQd[axis], 12);
+      expect(
+        dielectricNextBoundaryFromAnchor(fixture, reflected, {
+          inside: control.reflected.inside,
+          anchor,
+        }).kind,
+      ).toBe("boundary");
+
+      expect(
+        dielectricNextBoundaryFromAnchor(fixture, control.refracted.direction, {
+          inside: control.refracted.inside,
+          anchor,
+        }).kind,
+      ).not.toBe("refused");
+    }
+  });
+
   it("pins independent Snell, TIR, identity, and Beer controls", () => {
     const angle30 = Math.PI / 6;
     const incidentAir: Vec3 = [Math.sin(angle30), 0, -Math.cos(angle30)];
@@ -605,7 +642,9 @@ describe("connected finite dielectric solids", () => {
             occupancy: "integer terminal-cell digits",
             ties: "exact numeric crossing equality; advance all tied axes",
             cornerNormal:
-              "largest absolute intrinsic ray component, then lowest axis",
+              "single-face fast path; exact multi-face ties use the incident direction projected onto the displayed crossed-face span, oriented outward",
+            faceAttribution:
+              "largest absolute intrinsic ray component, then lowest axis; attribution does not select the tie normal",
             continuation:
               "canonical intrinsic anchor with crossed-axis mask and integer planes",
             tangentAnchor: "explicit ambiguous-anchor refusal",
@@ -618,6 +657,7 @@ describe("connected finite dielectric solids", () => {
             "CPU f64 and GPU f32 can order near-corner crossings differently; no proximity tie or gap merge is used. The exhaustive box oracle needs report-only ULP coalescing because center +/- half reconstructs non-binary shared planes independently.",
           controls: {
             geometryRays: DIELECTRIC_GEOMETRY_CONTROL_RAYS,
+            cornerWitnesses: DIELECTRIC_CORNER_CONTROL_CASES,
             transportInputs: DIELECTRIC_TRANSPORT_CONTROL_INPUTS,
             exhaustiveDepth: 2,
             anchoredWorldHitPerturbations: "f32 and +/-1 ULP in xyz",
