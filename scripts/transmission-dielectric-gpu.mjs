@@ -41,6 +41,33 @@ function positive(value, name) {
   return parsed;
 }
 
+function dimensions(value, name) {
+  const match = /^(\d+)x(\d+)$/.exec(String(value));
+  if (!match) throw new Error(`${name} must be WIDTHxHEIGHT`);
+  return {
+    width: positive(match[1], `${name} width`),
+    height: positive(match[2], `${name} height`),
+  };
+}
+
+function pixelRegion(value, name) {
+  const fields = String(value).split(",");
+  if (fields.length !== 4) throw new Error(`${name} must be X,Y,WIDTH,HEIGHT`);
+  const [x, y, width, height] = fields.map(Number);
+  if (
+    !Number.isInteger(x) ||
+    !Number.isInteger(y) ||
+    x < 0 ||
+    y < 0 ||
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width <= 0 ||
+    height <= 0
+  )
+    throw new Error(`${name} must contain non-negative X/Y and positive sizes`);
+  return { x, y, width, height };
+}
+
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -118,12 +145,17 @@ async function serve() {
   return { server, url: `http://127.0.0.1:${address.port}/` };
 }
 
-function outputPng(base64, width, height) {
-  const decodeStarted = performance.now();
+function rgbaBytes(base64, width, height) {
   const rgba = Buffer.from(base64, "base64");
-  const base64DecodeMs = performance.now() - decodeStarted;
   if (rgba.length !== width * height * 4)
     throw new Error("page image has unexpected byte size");
+  return rgba;
+}
+
+function outputPng(base64, width, height) {
+  const decodeStarted = performance.now();
+  const rgba = rgbaBytes(base64, width, height);
+  const base64DecodeMs = performance.now() - decodeStarted;
   const rgbConversionStarted = performance.now();
   const rgb = new Uint8Array(width * height * 3);
   for (
@@ -139,6 +171,43 @@ function outputPng(base64, width, height) {
   return {
     png,
     timing: { base64DecodeMs, rgbaToRgbMs, pngEncodeMs },
+  };
+}
+
+function cropRgba(rgba, fullWidth, region) {
+  const cropped = Buffer.alloc(region.width * region.height * 4);
+  const rowBytes = region.width * 4;
+  for (let y = 0; y < region.height; y++) {
+    const source = ((region.y + y) * fullWidth + region.x) * 4;
+    rgba.copy(cropped, y * rowBytes, source, source + rowBytes);
+  }
+  return cropped;
+}
+
+function completedRow(item, row) {
+  return (
+    item.controls?.passed === true &&
+    item.runtime?.uncaptured?.length === 0 &&
+    item.runtime?.lost === null &&
+    row.completion.complete === row.completion.total &&
+    row.completion.unresolved === 0 &&
+    row.completion.invalid === 0 &&
+    Number.isFinite(row.residual.radianceBound) &&
+    row.residual.radianceBound <= row.residual.errorBudget
+  );
+}
+
+function compactInvariantRun(item, row, rgba, tile) {
+  return {
+    tile,
+    tiles: item.schedule.totalTiles,
+    rgbaBytes: rgba.byteLength,
+    rgbaSha256: hash(rgba),
+    complete: completedRow(item, row),
+    completion: row.completion,
+    radianceBound: row.residual.radianceBound,
+    errorBudget: row.residual.errorBudget,
+    runtime: item.runtime,
   };
 }
 
@@ -211,7 +280,7 @@ async function within(promise, timeoutMs, label) {
 async function main() {
   if (args.help) {
     console.log(
-      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass --cancelProbe --diagnostic --output=report.json]",
+      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass --cancelProbe | --tileCheck=100x55,73x47 --window=37,29,121,67 --diagnostic --output=report.json]",
     );
     return;
   }
@@ -231,6 +300,7 @@ async function main() {
   if (!modeNames.every((value) => ["opaque", "glass"].includes(value)))
     throw new Error("--mode must be opaque or glass");
   const cancelProbeRequested = args.cancelProbe === true;
+  const tileCheckRequested = args.tileCheck !== undefined;
   if (
     cancelProbeRequested &&
     (!args.fixture ||
@@ -239,6 +309,51 @@ async function main() {
       modeNames.length !== 1)
   )
     throw new Error("--cancelProbe requires one explicit --fixture and --mode");
+  if (cancelProbeRequested && tileCheckRequested)
+    throw new Error(
+      "--cancelProbe and --tileCheck are separate qualification runs",
+    );
+  if (tileCheckRequested && options.diagnostic)
+    throw new Error("--tileCheck does not accept --diagnostic");
+  if (tileCheckRequested && modeNames.some((mode) => mode !== "glass"))
+    throw new Error("--tileCheck requires --mode=glass");
+  if (args.window !== undefined && !tileCheckRequested)
+    throw new Error("--window is only used with --tileCheck");
+  const tileCheck = tileCheckRequested
+    ? String(args.tileCheck)
+        .split(",")
+        .map((value, index) => dimensions(value, `tileCheck case ${index + 1}`))
+    : [];
+  if (tileCheckRequested && tileCheck.length !== 2)
+    throw new Error("--tileCheck requires exactly two WIDTHxHEIGHT cases");
+  if (
+    tileCheckRequested &&
+    tileCheck[0].width === tileCheck[1].width &&
+    tileCheck[0].height === tileCheck[1].height
+  )
+    throw new Error("--tileCheck cases must be distinct");
+  const checkWindow = tileCheckRequested
+    ? pixelRegion(args.window ?? "37,29,121,67", "window")
+    : null;
+  if (
+    checkWindow !== null &&
+    (checkWindow.x + checkWindow.width > options.width ||
+      checkWindow.y + checkWindow.height > options.height)
+  )
+    throw new Error("--window must remain inside the full image");
+  if (
+    tileCheckRequested &&
+    tileCheck.some(
+      (tile) =>
+        tile.width >= options.width ||
+        tile.height >= options.height ||
+        options.width % tile.width === 0 ||
+        options.height % tile.height === 0,
+    )
+  )
+    throw new Error(
+      "every --tileCheck case must leave partial right and bottom edges",
+    );
   await mkdir(outDir, { recursive: true });
   await rm(bundle, { force: true });
   const built = await build({
@@ -427,6 +542,105 @@ async function main() {
         followup: null,
       };
     }
+    let tileInvariant = null;
+    if (tileCheckRequested) {
+      const cases = [];
+      for (const fixture of fixtureNames) {
+        const fullRuns = [];
+        for (const tile of tileCheck) {
+          const item = await execute({
+            ...options,
+            fixture,
+            mode: "glass",
+            tileWidth: tile.width,
+            tileHeight: tile.height,
+          });
+          if (!Array.isArray(item.rows) || item.rows.length !== 1)
+            throw new Error(
+              `${fixture} tile invariant did not produce one full-image row`,
+            );
+          const [row] = item.rows;
+          const rgba = rgbaBytes(row.imageBase64, row.width, row.height);
+          fullRuns.push({
+            item,
+            row,
+            rgba,
+            record: compactInvariantRun(item, row, rgba, tile),
+          });
+        }
+        const cropTile = tileCheck[1];
+        const cropItem = await execute({
+          ...options,
+          fixture,
+          mode: "glass",
+          tileWidth: cropTile.width,
+          tileHeight: cropTile.height,
+          window: checkWindow,
+        });
+        if (!Array.isArray(cropItem.rows) || cropItem.rows.length !== 1)
+          throw new Error(
+            `${fixture} tile invariant did not produce one window row`,
+          );
+        const [cropRow] = cropItem.rows;
+        const actualCrop = rgbaBytes(
+          cropRow.imageBase64,
+          cropRow.width,
+          cropRow.height,
+        );
+        const expectedCrop = cropRgba(
+          fullRuns[0].rgba,
+          options.width,
+          checkWindow,
+        );
+        const fullImageExact =
+          Buffer.compare(fullRuns[0].rgba, fullRuns[1].rgba) === 0;
+        const fullStatsExact =
+          JSON.stringify(fullRuns[0].row.completion) ===
+            JSON.stringify(fullRuns[1].row.completion) &&
+          fullRuns[0].row.residual.radianceBound ===
+            fullRuns[1].row.residual.radianceBound;
+        const windowExact = Buffer.compare(expectedCrop, actualCrop) === 0;
+        const rasterMetadataExact =
+          cropRow.raster?.fullWidth === options.width &&
+          cropRow.raster?.fullHeight === options.height &&
+          JSON.stringify(cropRow.raster?.window) ===
+            JSON.stringify(checkWindow);
+        const windowRecord = {
+          window: checkWindow,
+          sourceTile: tileCheck[0],
+          cropTile,
+          expectedRgbaSha256: hash(expectedCrop),
+          actualRgbaSha256: hash(actualCrop),
+          exactRgbaEqual: windowExact,
+          rasterMetadataExact,
+          run: compactInvariantRun(cropItem, cropRow, actualCrop, cropTile),
+        };
+        const passed =
+          fullRuns.every((run) => run.record.complete) &&
+          fullImageExact &&
+          fullStatsExact &&
+          windowRecord.run.complete &&
+          windowExact &&
+          rasterMetadataExact;
+        cases.push({
+          fixture,
+          mode: "glass",
+          passed,
+          fullImage: { width: options.width, height: options.height },
+          decompositions: fullRuns.map((run) => run.record),
+          exactRgbaEqual: fullImageExact,
+          completionAndResidualExact: fullStatsExact,
+          window: windowRecord,
+        });
+      }
+      tileInvariant = {
+        requested: true,
+        passed: cases.every((item) => item.passed),
+        cases,
+        basis:
+          "Two irregular full-image tile decompositions must produce exactly equal RGBA bytes and completion/residual totals. A separately rendered unaligned window must equal the corresponding full-image RGBA rectangle while retaining full-image ray coordinates.",
+      };
+    }
     const rows = [];
     const runtime = { uncaptured: [], lost: null };
     let browserAdapter = null;
@@ -485,6 +699,7 @@ async function main() {
           sourceProvenance,
           options,
           cancellationProbe,
+          tileInvariant,
           report: item,
           memory: {
             processTreeRss: unmeasuredProcessTreeRss(
@@ -612,6 +827,7 @@ async function main() {
                 options,
                 rows,
                 cancellationProbe,
+                tileInvariant,
                 runtime,
                 controls,
                 executionScope:
@@ -666,6 +882,7 @@ async function main() {
       options,
       rows,
       cancellationProbe,
+      tileInvariant,
       runtime,
       controls,
       executionScope:
@@ -683,6 +900,7 @@ async function main() {
     };
     const refused =
       (cancellationProbe !== null && !cancellationProbe.passed) ||
+      (tileInvariant !== null && !tileInvariant.passed) ||
       report.controls?.passed !== true ||
       report.rows.some(
         (row) => row.completion.unresolved || row.completion.invalid,

@@ -12,11 +12,18 @@ import { runDielectricGpuControls } from "./transmission-dielectric-gpu-controls
 
 type FixtureKey = "menger3" | "hyper4";
 type Mode = "opaque" | "glass";
+type PixelRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 type Options = {
   width?: number;
   height?: number;
   tileWidth?: number;
   tileHeight?: number;
+  window?: PixelRegion;
   diagnostic?: boolean;
   fixture?: FixtureKey;
   mode?: Mode;
@@ -691,8 +698,14 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
   const height = input.diagnostic
     ? Math.min(32, requestedHeight)
     : requestedHeight;
-  const tileWidth = Math.min(input.tileWidth ?? 128, width);
-  const tileHeight = Math.min(input.tileHeight ?? 64, height);
+  const imageWindow = input.window ?? {
+    x: 0,
+    y: 0,
+    width,
+    height,
+  };
+  const tileWidth = Math.min(input.tileWidth ?? 128, imageWindow.width);
+  const tileHeight = Math.min(input.tileHeight ?? 64, imageWindow.height);
   if (
     ![width, height, tileWidth, tileHeight].every(
       (value) => Number.isInteger(value) && value > 0,
@@ -700,6 +713,24 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
   )
     return {
       inconclusive: "image and tile dimensions must be positive integers",
+    };
+  if (
+    ![
+      imageWindow.x,
+      imageWindow.y,
+      imageWindow.width,
+      imageWindow.height,
+    ].every((value) => Number.isInteger(value)) ||
+    imageWindow.x < 0 ||
+    imageWindow.y < 0 ||
+    imageWindow.width <= 0 ||
+    imageWindow.height <= 0 ||
+    imageWindow.x + imageWindow.width > width ||
+    imageWindow.y + imageWindow.height > height
+  )
+    return {
+      inconclusive:
+        "window must be a positive integer rectangle inside the full raster",
     };
   const selectedFixtures = fixtures().filter(
     (fixture) => input.fixture === undefined || fixture.id === input.fixture,
@@ -712,7 +743,12 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       inconclusive:
         "one known fixture and one known mode are required per page invocation",
     };
-  const plannedMemory = memoryPlan(width, height, tileWidth, tileHeight);
+  const plannedMemory = memoryPlan(
+    imageWindow.width,
+    imageWindow.height,
+    tileWidth,
+    tileHeight,
+  );
   if (plannedMemory.knownAdditionalBytes > plannedMemory.limitBytes)
     return {
       preflightRefusal: {
@@ -773,11 +809,13 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     fixture: selectedFixtures[0].id,
     mode: selectedModes[0],
     completedTiles: 0,
-    totalTiles: Math.ceil(width / tileWidth) * Math.ceil(height / tileHeight),
+    totalTiles:
+      Math.ceil(imageWindow.width / tileWidth) *
+      Math.ceil(imageWindow.height / tileHeight),
     submissions: 0,
     totalSubmissions:
-      Math.ceil(width / tileWidth) *
-      Math.ceil(height / tileHeight) *
+      Math.ceil(imageWindow.width / tileWidth) *
+      Math.ceil(imageWindow.height / tileHeight) *
       REPLAY_PASSES,
     replayPass: null,
     submissionInFlight: false,
@@ -918,6 +956,11 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       width: number;
       height: number;
       imageBase64: string;
+      raster: {
+        fullWidth: number;
+        fullHeight: number;
+        window: PixelRegion;
+      };
       completion: {
         complete: number;
         residual: number;
@@ -992,18 +1035,18 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       device.queue.writeBuffer(solid, 0, fixture.packed);
       for (const mode of selectedModes) {
         runProgress.stage = "render";
-        const rgba = new Uint8Array(width * height * 4);
+        const rgba = new Uint8Array(imageWindow.width * imageWindow.height * 4);
         const completion = {
           complete: 0,
           residual: 0,
           unresolved: 0,
           invalid: 0,
           capEvents: 0,
-          sampleTotal: width * height * SPP,
+          sampleTotal: imageWindow.width * imageWindow.height * SPP,
           sampleComplete: 0,
           sampleUnresolved: 0,
           sampleInvalid: 0,
-          total: width * height,
+          total: imageWindow.width * imageWindow.height,
         };
         let radianceBound = 0;
         let totalRadianceBound = 0;
@@ -1038,10 +1081,24 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         let tileHostAssemblyWallMs = 0;
         let tiles = 0;
         const replayPassFenceWallMs = Array<number>(REPLAY_PASSES).fill(0);
-        for (let y = 0; y < height; y += tileHeight) {
-          for (let x = 0; x < width; x += tileWidth) {
-            const currentWidth = Math.min(tileWidth, width - x);
-            const currentHeight = Math.min(tileHeight, height - y);
+        for (
+          let y = imageWindow.y;
+          y < imageWindow.y + imageWindow.height;
+          y += tileHeight
+        ) {
+          for (
+            let x = imageWindow.x;
+            x < imageWindow.x + imageWindow.width;
+            x += tileWidth
+          ) {
+            const currentWidth = Math.min(
+              tileWidth,
+              imageWindow.x + imageWindow.width - x,
+            );
+            const currentHeight = Math.min(
+              tileHeight,
+              imageWindow.y + imageWindow.height - y,
+            );
             const control = new ArrayBuffer(96);
             const floats = new Float32Array(control);
             const uints = new Uint32Array(control);
@@ -1137,8 +1194,10 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
             const residualValues = new Float32Array(mapped);
             for (let local = 0; local < currentWidth * currentHeight; local++) {
               const target =
-                (y + Math.floor(local / currentWidth)) * width +
-                x +
+                (y + Math.floor(local / currentWidth) - imageWindow.y) *
+                  imageWindow.width +
+                x -
+                imageWindow.x +
                 (local % currentWidth);
               const offset = local * (OUTPUT_PIXEL_BYTES / 4);
               const packed = values[offset];
@@ -1255,9 +1314,14 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
           mode,
           scene: fixture.scene,
           samplesPerPixel: SPP,
-          width,
-          height,
+          width: imageWindow.width,
+          height: imageWindow.height,
           imageBase64,
+          raster: {
+            fullWidth: width,
+            fullHeight: height,
+            window: imageWindow,
+          },
           completion,
           residual: {
             radianceBound,
@@ -1332,6 +1396,11 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         height,
         tileWidth,
         tileHeight,
+        raster: {
+          fullWidth: width,
+          fullHeight: height,
+          window: imageWindow,
+        },
         fixture: input.fixture,
         mode: input.mode,
         diagnostic: !!input.diagnostic,
