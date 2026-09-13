@@ -1,5 +1,6 @@
 import {
   accumulateFlame,
+  adaptiveDownsampleFlame,
   clampSupersampleToBudget,
   createFlameHistogram,
   tonemapFlame,
@@ -32,6 +33,7 @@ import {
 import {
   FLAME_FILTER_RADIUS,
   flameAccumBudgetBuckets,
+  FlameGpuAdaptiveAbortError,
   FlameGpuSizeError,
   FlameGpuUnavailableError,
   FlameWorkerSession,
@@ -3261,6 +3263,171 @@ describe("FlameWorkerSession GPU progressive display", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// GPU adaptive density-estimate pass: the optional
+// FlameAccumBackend.adaptiveDisplay seam. The session prefers it whenever
+// the backend implements it, reports whole-number band progress on the
+// existing estimateProgress cadence, falls back to the CPU job in the SAME
+// slot on any non-abort failure, and drops an aborted pass silently.
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession GPU adaptive display", () => {
+  const ESTIMATOR = {
+    estimatorRadius: 4,
+    estimatorMinimumRadius: 0,
+    estimatorCurve: 0.4,
+  };
+
+  /** A snapshot histogram whose CPU adaptive pass carries RED color, so a
+   * GPU pass filling GREEN is distinguishable in the final image. */
+  function snapshotHistogram(width = 8, height = 8): FlameHistogram {
+    const hist = createFlameHistogram(width, height);
+    hist.hits.fill(4);
+    for (let i = 0; i < hist.sumRGB.length; i += 3) hist.sumRGB[i] = 4;
+    hist.maxHits = 4;
+    hist.hitMass = 4 * width * height;
+    return hist;
+  }
+
+  /** Fill the display slot with a uniform GREEN image distinct from the
+   * snapshot's red. */
+  function fillGreen(out: FlameHistogram): void {
+    out.hits.fill(9);
+    for (let i = 0; i < out.sumRGB.length; i += 3) out.sumRGB[i + 1] = 9;
+    out.maxHits = 9;
+    out.hitMass = 9 * out.width * out.height;
+  }
+
+  it("prefers the backend's adaptiveDisplay over the CPU job and adopts its frame", async () => {
+    let adaptiveCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async (n) => n,
+      snapshot: async () => snapshotHistogram(),
+      adaptiveDisplay: async (_hist, _params, out, onBand) => {
+        adaptiveCalls++;
+        // One yield, like the real backend's first fence: a pass that ran
+        // entirely inside the starting chunk would see `running` still true
+        // (the chunk has not unwound) — the exempt-first-band rule covers
+        // only the real inline first band.
+        await Promise.resolve();
+        expect(onBand?.(30, 100)).toBe(true);
+        expect(onBand?.(100, 100)).toBe(true);
+        fillGreen(out);
+        return out;
+      },
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 50 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(adaptiveCalls).toBe(1);
+    const estimate = estimateProgressEvents(events);
+    expect(estimate.length).toBeGreaterThan(0);
+    expect(estimate.at(-1)).toEqual({
+      type: "estimateProgress",
+      done: 100,
+      total: 100,
+    });
+    // The final image is the GPU pass's green, not the snapshot's red — the
+    // adaptive-display result was adopted, and the CPU job never ran.
+    const image = progressEvents(events).at(-1)!.image;
+    expect(image[0]).toBe(0);
+    expect(image[1]).toBeGreaterThan(0);
+  });
+
+  it("falls back to the CPU job in the same slot when adaptiveDisplay rejects, re-announcing nothing", async () => {
+    let adaptiveCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async (n) => n,
+      snapshot: async () => snapshotHistogram(),
+      adaptiveDisplay: async () => {
+        adaptiveCalls++;
+        throw new Error("device lost during adaptive display");
+      },
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 50 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(adaptiveCalls).toBe(1);
+    // One pulse for the one pass attempt, even though two engines ran it.
+    expect(estimatingEvents(events)).toHaveLength(1);
+    expect(events.filter((e) => e.type === "error")).toHaveLength(0);
+    // The frame is the ORACLE's own output, pixel for pixel.
+    const expected = tonemapFlame(
+      adaptiveDownsampleFlame(snapshotHistogram(), 8, 8, ESTIMATOR),
+      {
+        exposure: 1,
+        gamma: 1,
+        gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+        vibrancy: 1,
+      },
+    );
+    expect(Array.from(progressEvents(events).at(-1)!.image)).toEqual(
+      Array.from(expected),
+    );
+  });
+
+  it("reports the aborted pass's supersession to the backend and drops it without falling back", async () => {
+    let calls = 0;
+    let firstOnBand: ((done: number, total: number) => boolean) | undefined;
+    let rejectFirst: ((e: unknown) => void) | undefined;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async (n) => n,
+      snapshot: async () => snapshotHistogram(),
+      adaptiveDisplay: (_hist, _params, out, onBand) => {
+        calls++;
+        if (calls === 1) {
+          firstOnBand = onBand;
+          return new Promise<FlameHistogram>((_resolve, reject) => {
+            rejectFirst = reject;
+          });
+        }
+        expect(onBand?.(1, 1)).toBe(true);
+        fillGreen(out);
+        return Promise.resolve(out);
+      },
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 50 }),
+    );
+    await drainAsync(scheduler);
+    expect(calls).toBe(1);
+    expect(firstOnBand).toBeDefined();
+
+    // A live estimator edit queues its deferred re-estimate; stepping the
+    // scheduler starts pass #2 while pass #1 is still parked mid-pass.
+    session.handle({ type: "setEstimatorRadius", estimatorRadius: 5 });
+    scheduler.drain();
+    await flushMicrotasks();
+    expect(calls).toBe(2);
+
+    // Pass #1's next band now reports superseded; the backend turns that
+    // into an abort, which the session must drop without a CPU fallback.
+    expect(firstOnBand!(1, 1)).toBe(false);
+    rejectFirst!(new FlameGpuAdaptiveAbortError("superseded"));
+    await flushMicrotasks();
+    expect(events.filter((e) => e.type === "error")).toHaveLength(0);
+    // Pass #2's own frame is what landed (green, one band).
+    const image = progressEvents(events).at(-1)!.image;
+    expect(image[0]).toBe(0);
+    expect(image[1]).toBeGreaterThan(0);
+  });
+});
 // ---------------------------------------------------------------------------
 // 4D flame render: the `fourD` start-command block drives a
 // 4D session through the SAME unified runChunk/FlameAccumBackend seam as a 3D

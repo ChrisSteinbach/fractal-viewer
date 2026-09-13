@@ -8,7 +8,9 @@
  * machine whose real inputs are a GPU driver's timing.
  */
 import { GpuFlameBackend, type GpuFlameBackendInit } from "./flame-gpu-backend";
+import { FlameGpuAdaptiveAbortError } from "./flame-worker-core";
 import { createFlameHistogram } from "../fractal/flame";
+import type { FlameHistogram } from "../fractal/flame";
 
 // `GPUMapMode` is a real runtime global in a browser/WebGPU context, not just
 // the compile-time ambient type `@webgpu/types` declares — `snapshot()`/
@@ -18,6 +20,19 @@ import { createFlameHistogram } from "../fractal/flame";
 // spec's own flag bits; nothing here reads them besides passing them through
 // to this file's fake `mapAsync`, which ignores its arguments entirely).
 globalThis.GPUMapMode = { READ: 0x0001, WRITE: 0x0002 };
+// Same stand-in rationale, for the adaptive resources' buffer creation.
+globalThis.GPUBufferUsage = {
+  MAP_READ: 0x0001,
+  MAP_WRITE: 0x0002,
+  COPY_SRC: 0x0004,
+  COPY_DST: 0x0008,
+  INDEX: 0x0010,
+  VERTEX: 0x0020,
+  UNIFORM: 0x0040,
+  STORAGE: 0x0080,
+  INDIRECT: 0x0100,
+  QUERY_RESOLVE: 0x0200,
+};
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -89,7 +104,9 @@ interface Harness {
    * staging, display, displayStaging) — see `GpuFlameBackendInit`'s doc for
    * why it's exactly these five. */
   bufferDestroys: ReturnType<typeof vi.fn>[];
-  /** Settles `accumulate()`'s parked `queue.onSubmittedWorkDone()`. */
+  /** Settles `accumulate()`'s parked `queue.onSubmittedWorkDone()`. With a
+   * multi-fence op (the adaptive pass) each call settles the OLDEST pending
+   * fence, so the pass can be stepped await by await. */
   resolveWork: () => void;
   rejectWork: (reason: unknown) => void;
   /** Settles `snapshot()`'s parked `stagingBuffer.mapAsync()`. */
@@ -98,10 +115,21 @@ interface Harness {
   /** Settles `snapshotDisplay()`'s parked `displayStagingBuffer.mapAsync()`. */
   resolveDisplayMap: () => void;
   rejectDisplayMap: (reason: unknown) => void;
+  /** Settles `adaptiveDisplay()`'s parked own-staging `mapAsync()`. */
+  resolveAdaptiveMap: () => void;
+  rejectAdaptiveMap: (reason: unknown) => void;
   /** The two staging buffers' `unmap` spies — pin that a snapshot's mapped
    * section unmaps even when its converter throws. */
   stagingUnmap: ReturnType<typeof vi.fn>;
   displayStagingUnmap: ReturnType<typeof vi.fn>;
+  /** The adaptive pass's own staging `unmap` spy. */
+  adaptiveStagingUnmap: ReturnType<typeof vi.fn>;
+  /** Number of `device.createBuffer` calls so far — lets a serialization
+   * test prove the queued second pass built nothing until the first
+   * unwound. */
+  createBufferCalls: ReturnType<typeof vi.fn>;
+  /** Number of fences the CURRENT test can settle. */
+  pendingFenceCount: () => number;
 }
 
 /**
@@ -122,26 +150,45 @@ function createHarness(
     convertSnapshot?: GpuFlameBackendInit["convertSnapshot"];
   } = {},
 ): Harness {
-  const work = deferred();
   const snapshotMap = deferred();
   const displayMap = deferred();
+  const adaptiveMap = deferred();
 
   const params = createFakeBuffer();
   const hist = createFakeBuffer();
   const staging = createFakeBuffer(() => snapshotMap.promise);
   const display = createFakeBuffer();
   const displayStaging = createFakeBuffer(() => displayMap.promise);
+  const adaptiveStaging = createFakeBuffer(() => adaptiveMap.promise);
 
   const deviceDestroy = vi.fn();
   const submit = vi.fn();
+  /** Every `queue.onSubmittedWorkDone()` returns a FRESH deferred, so a
+   * multi-fence op (the adaptive pass: occupancy, then one fence per band)
+   * can be stepped one await at a time — a single shared promise would make
+   * every await after the first resolve immediately. */
+  const pendingWork: ReturnType<typeof deferred>[] = [];
+  const queueWork = (): Promise<undefined> => {
+    const next = deferred();
+    pendingWork.push(next);
+    return next.promise;
+  };
+  const createBuffer = vi.fn((descriptor?: { label?: string }) => {
+    if (descriptor?.label === "flame-gpu adaptive display staging") {
+      return adaptiveStaging.buffer;
+    }
+    return createFakeBuffer().buffer;
+  });
   const device = {
     lost: overrides.lost ?? new Promise<never>(() => {}),
     onuncapturederror: null,
     queue: {
       writeBuffer: () => {},
       submit,
-      onSubmittedWorkDone: () => work.promise,
+      onSubmittedWorkDone: queueWork,
     },
+    createBuffer,
+    createBindGroup: () => ({}),
     createCommandEncoder: () => ({
       beginComputePass: () => ({
         setPipeline: () => {},
@@ -176,6 +223,11 @@ function createHarness(
     displayStagingBuffer: displayStaging.buffer,
     displayWidth: 2,
     displayHeight: 2,
+    adaptiveMarkTilesPipeline: {} as GPUComputePipeline,
+    adaptiveScanTilesXPipeline: {} as GPUComputePipeline,
+    adaptiveScanTilesYPipeline: {} as GPUComputePipeline,
+    adaptiveGatherPipeline: {} as GPUComputePipeline,
+    adaptiveBindGroupLayout: {} as GPUBindGroupLayout,
   });
 
   return {
@@ -189,14 +241,23 @@ function createHarness(
       display.destroy,
       displayStaging.destroy,
     ],
-    resolveWork: work.resolve,
-    rejectWork: work.reject,
+    resolveWork: () => {
+      pendingWork.shift()?.resolve();
+    },
+    rejectWork: (reason: unknown) => {
+      pendingWork.shift()?.reject(reason);
+    },
     resolveSnapshotMap: snapshotMap.resolve,
     rejectSnapshotMap: snapshotMap.reject,
     resolveDisplayMap: displayMap.resolve,
     rejectDisplayMap: displayMap.reject,
+    resolveAdaptiveMap: adaptiveMap.resolve,
+    rejectAdaptiveMap: adaptiveMap.reject,
     stagingUnmap: staging.unmap,
     displayStagingUnmap: displayStaging.unmap,
+    adaptiveStagingUnmap: adaptiveStaging.unmap,
+    createBufferCalls: createBuffer,
+    pendingFenceCount: () => pendingWork.length,
   };
 }
 
@@ -371,5 +432,138 @@ describe("GpuFlameBackend teardown", () => {
     await expect(
       backend.snapshotDisplay(createFlameHistogram(2, 2)),
     ).rejects.toThrow("device is lost, cannot snapshot display");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The adaptive density-estimate pass: an op shaped differently from the other
+// three — it submits several fences (occupancy prepass, one per band,
+// readback) and reads back through its OWN staging buffer. These tests drive
+// that sequence one fence at a time and pin the band progress, the abort
+// channel and the pass serialization.
+// ---------------------------------------------------------------------------
+
+describe("GpuFlameBackend adaptiveDisplay", () => {
+  const ESTIMATOR = {
+    estimatorRadius: 1,
+    estimatorMinimumRadius: 0,
+    estimatorCurve: 0.4,
+  };
+
+  function sourceHistogram(): FlameHistogram {
+    const hist = createFlameHistogram(2, 2);
+    hist.hits.fill(1);
+    hist.hitMass = 4;
+    hist.maxHits = 1;
+    return hist;
+  }
+
+  it("runs the occupancy prepass, then the gather band, then reads back into out", async () => {
+    const { backend, submit, resolveWork, resolveAdaptiveMap } =
+      createHarness();
+    const out = createFlameHistogram(2, 2);
+    const bands: [number, number][] = [];
+    const pending = backend.adaptiveDisplay(
+      sourceHistogram(),
+      ESTIMATOR,
+      out,
+      (done, total) => {
+        bands.push([done, total]);
+        return true;
+      },
+    );
+
+    // Occupancy prepass submitted, parked on its fence.
+    await flushMicrotasks();
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(bands).toEqual([]);
+    resolveWork();
+
+    // Gather band submitted, parked on its fence.
+    await flushMicrotasks();
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(bands).toEqual([]);
+    resolveWork();
+
+    // Band fence done: progress charged, readback submitted, map parked.
+    await flushMicrotasks();
+    expect(submit).toHaveBeenCalledTimes(3);
+    expect(bands).toHaveLength(1);
+    expect(bands[0][0]).toBe(bands[0][1]);
+    expect(bands[0][0]).toBeGreaterThan(0);
+
+    resolveAdaptiveMap();
+    await flushMicrotasks();
+    await expect(pending).resolves.toBe(out);
+  });
+
+  it("throws the abort error and leaves out untouched when onBand answers false", async () => {
+    const { backend, resolveWork } = createHarness();
+    const out = createFlameHistogram(2, 2);
+    out.hits.fill(123);
+    const pending = backend.adaptiveDisplay(
+      sourceHistogram(),
+      ESTIMATOR,
+      out,
+      () => false,
+    );
+
+    await flushMicrotasks();
+    resolveWork(); // occupancy fence
+    await flushMicrotasks();
+    resolveWork(); // band fence -> onBand says superseded
+    await flushMicrotasks();
+
+    await expect(pending).rejects.toBeInstanceOf(FlameGpuAdaptiveAbortError);
+    expect(Array.from(out.hits)).toEqual([123, 123, 123, 123]);
+  });
+
+  it("serializes overlapping passes: the second builds nothing until the first unwinds", async () => {
+    const {
+      backend,
+      submit,
+      createBufferCalls,
+      resolveWork,
+      resolveAdaptiveMap,
+    } = createHarness();
+    const first = backend.adaptiveDisplay(
+      sourceHistogram(),
+      ESTIMATOR,
+      createFlameHistogram(2, 2),
+      () => true,
+    );
+    await flushMicrotasks(); // first pass: resources built, occupancy submitted.
+    const buffersAfterFirstStart = createBufferCalls.mock.calls.length;
+    expect(buffersAfterFirstStart).toBeGreaterThan(0);
+
+    const second = backend.adaptiveDisplay(
+      sourceHistogram(),
+      ESTIMATOR,
+      createFlameHistogram(2, 2),
+      () => true,
+    );
+    await flushMicrotasks();
+    // The queued pass has not touched the device at all.
+    expect(createBufferCalls.mock.calls.length).toBe(buffersAfterFirstStart);
+    expect(submit).toHaveBeenCalledTimes(1);
+
+    // Wind the first pass down (occupancy, band, readback map); only then
+    // does the second's occupancy prepass reach the queue.
+    resolveWork();
+    await flushMicrotasks();
+    resolveWork();
+    await flushMicrotasks();
+    resolveAdaptiveMap();
+    await flushMicrotasks();
+    await first;
+    await flushMicrotasks();
+    expect(submit).toHaveBeenCalledTimes(4); // first's 3 + second's occupancy.
+    // Finish the second too, so no op is left parked.
+    resolveWork();
+    await flushMicrotasks();
+    resolveWork();
+    await flushMicrotasks();
+    resolveAdaptiveMap();
+    await second;
   });
 });
