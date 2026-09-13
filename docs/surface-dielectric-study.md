@@ -148,6 +148,37 @@ records are the ignored
 preserves the prior end-to-end scope rather than subtracting research work from
 the headline.
 
+## Private path-state compaction
+
+Source `985cb512a9c098b9e870862323e07bfd3ab35955f5bb53ca23acc692cd238bc4`
+removes two root-only previous-face fields from every secondary WGSL path and
+stores each child's already-computed maximum radiance bound in the recovered
+scalar slots. Root traversal supplies the same literal no-previous-face values;
+all child traversals still use their canonical anchors. The tree order,
+reflection, refraction, Beer attenuation, thresholds, caps and output record are
+unchanged.
+
+The WGSL `PathState` stride falls from 144 to 112 bytes. At the unchanged 128×64
+tile and 24-entry stack, the declared logical private state falls by exactly
+6,291,456 bytes, and the page's known additional-state plan falls from 34,357,440
+to 28,065,984 bytes. Quiet warm RX 7900 XTX / Chromium previews retained the
+exact PNG/RGBA hashes, completion counters and residual maxima. Relative to the
+depth-two lookup checkpoint, 3D tile work fell from 4.1585 to 3.7186 seconds and
+practical delivery from 4.4936 to 4.1656 seconds; 4D tile work fell from 2.5856
+to 2.3223 seconds and practical delivery from 2.9629 to 2.7453 seconds. This is
+another 7–11% reduction, while both dimensions still miss one second.
+
+The irregular tile/window gate also remains byte-exact on this source. Its
+record is `tile-window-path112.json`; the individual warm records are
+`preview-path112-{menger-warm,hyper4}.json`. Process-tree RSS varied far more
+than the declared state reduction, including a cold 3D compilation sample above
+128 MiB, so these observations do not convert the source-level plan into a total
+peak-memory certification. The in-flight cancellation probe also passes on the
+compacted source: host request through cleanup takes 203.725 ms in 3D and
+224.740 ms in 4D, while the longest completed-run checkpoints are 290.600 and
+224.400 ms. The pre/post RGBA buffers remain byte-exact; records are
+`preview-path112-cancel-{menger,hyper4}.json`.
+
 ## Preview scheduling, cancellation and observed RSS
 
 Source `f157a46c94c52afe3707feebb49de04701e8921845b0cb6191aa1b9ee0c3359e`

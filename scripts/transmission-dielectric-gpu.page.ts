@@ -65,7 +65,7 @@ const MAX_PATHS = 24;
 // equal the whole-tree work ceiling without increasing worst work or state.
 const MAX_PROCESSED_PATHS = 16384;
 const MAX_INTERFACES = MAX_PROCESSED_PATHS;
-const PATH_STATE_BYTES = 144;
+const PATH_STATE_BYTES = 112;
 const OUTPUT_PIXEL_BYTES = 192;
 const REPLAY_PASSES = 6;
 const ADDITIONAL_STATE_LIMIT_BYTES = 128 * 1024 * 1024;
@@ -302,14 +302,13 @@ struct PathState {
   direction: vec3f,
   energy: vec3f,
   inside: u32,
-  previousAxis: i32,
-  previousPlane: i32,
   interfaces: u32,
-  anchorPoint: vec4f,
   anchorPlaneMask: u32,
+  hasAnchor: u32,
+  energyBound: f32,
+  anchorPoint: vec4f,
   anchorPlaneIndices: vec4<i32>,
   anchorCellIndices: vec4<i32>,
-  hasAnchor: u32,
 }
 @group(0) @binding(0) var<uniform> solid: DielectricSolidFixture;
 @group(0) @binding(1) var<uniform> camera: CameraControl;
@@ -383,8 +382,8 @@ fn packColor(linear: vec3f) -> u32 {
 fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
   var paths: array<PathState, ${MAX_PATHS}>;
   paths[0] = PathState(
-    origin, direction, vec3f(1.0), 0u, -1, -1, 0u,
-    vec4f(0.0), 0u, vec4<i32>(-1), vec4<i32>(-1), 0u,
+    origin, direction, vec3f(1.0), 0u, 0u, 0u, 0u, ${ENVIRONMENT_BOUND},
+    vec4f(0.0), vec4<i32>(-1), vec4<i32>(-1),
   );
   var pending = 1u;
   var processed = 0u;
@@ -408,13 +407,13 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
     if (pending == 0u) { break; }
     pending--;
     var path = paths[pending];
-    if (maxChannel(path.energy) * ${ENVIRONMENT_BOUND} <= theta) {
-      residual += maxChannel(path.energy) * ${ENVIRONMENT_BOUND};
+    if (path.energyBound <= theta) {
+      residual += path.energyBound;
       continue;
     }
     processed++;
     if (processed > ${MAX_PROCESSED_PATHS}u) {
-      residual += max(max(path.energy.x, path.energy.y), path.energy.z) * ${ENVIRONMENT_BOUND};
+      residual += path.energyBound;
       status = ${STATUS_UNRESOLVED}u;
       capEvents++;
       failureMask |= FAILURE_PROCESSED_LIMIT;
@@ -427,12 +426,12 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
         witnessAnchorPoint = path.anchorPoint;
         witnessAnchorCellIndices = path.anchorCellIndices;
         witnessThroughput = path.energy;
-        witnessBound = maxChannel(path.energy) * ${ENVIRONMENT_BOUND};
+        witnessBound = path.energyBound;
       }
       continue;
     }
     if (path.interfaces >= ${MAX_INTERFACES}u) {
-      residual += max(max(path.energy.x, path.energy.y), path.energy.z) * ${ENVIRONMENT_BOUND};
+      residual += path.energyBound;
       status = ${STATUS_UNRESOLVED}u;
       capEvents++;
       failureMask |= FAILURE_INTERFACE_LIMIT;
@@ -445,7 +444,7 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
         witnessAnchorPoint = path.anchorPoint;
         witnessAnchorCellIndices = path.anchorCellIndices;
         witnessThroughput = path.energy;
-        witnessBound = maxChannel(path.energy) * ${ENVIRONMENT_BOUND};
+        witnessBound = path.energyBound;
       }
       continue;
     }
@@ -458,13 +457,12 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
     } else {
       boundary = dielectricNextBoundary(
         solid, path.origin, path.direction, path.inside, 0.0,
-        path.previousAxis, path.previousPlane,
-        select(0u, 1u, path.previousAxis >= 0),
+        -1, -1, 0u,
       );
     }
     if (boundary.kind == DIELECTRIC_RESULT_REFUSED) {
       status = ${STATUS_UNRESOLVED}u;
-      residual += max(max(path.energy.x, path.energy.y), path.energy.z) * ${ENVIRONMENT_BOUND};
+      residual += path.energyBound;
       capEvents++;
       failureMask |= FAILURE_TRAVERSAL;
       traversalReasonMask |= 1u << min(boundary.reason, 31u);
@@ -478,14 +476,14 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
         witnessAnchorPoint = path.anchorPoint;
         witnessAnchorCellIndices = path.anchorCellIndices;
         witnessThroughput = path.energy;
-        witnessBound = maxChannel(path.energy) * ${ENVIRONMENT_BOUND};
+        witnessBound = path.energyBound;
       }
       continue;
     }
     if (boundary.kind == DIELECTRIC_RESULT_MISS) {
       if (path.inside != 0u) {
         status = ${STATUS_UNRESOLVED}u;
-        residual += max(max(path.energy.x, path.energy.y), path.energy.z) * ${ENVIRONMENT_BOUND};
+        residual += path.energyBound;
         capEvents++;
         failureMask |= FAILURE_INSIDE_MISS;
         if (witnessReason == 0u) {
@@ -497,7 +495,7 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
           witnessAnchorPoint = path.anchorPoint;
           witnessAnchorCellIndices = path.anchorCellIndices;
           witnessThroughput = path.energy;
-          witnessBound = maxChannel(path.energy) * ${ENVIRONMENT_BOUND};
+          witnessBound = path.energyBound;
         }
       } else {
         radiance += path.energy * rearScene(path.origin, path.direction);
@@ -510,7 +508,11 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
       return TraceResult(vec3f(0.54, 0.58, 0.60) * (0.20 + 0.80 * key), ${STATUS_COMPLETE}u, 0.0, 0u, 0u, 0u, 0u, 0u, 0u, vec3f(0.0), 0u, vec3f(0.0), 0u, vec4f(0.0), vec4<i32>(-1), vec3f(0.0), 0.0);
     }
     var energy = path.energy;
-    if (path.inside != 0u) { energy *= beer(boundary.t); }
+    var energyBound = path.energyBound;
+    if (path.inside != 0u) {
+      energy *= beer(boundary.t);
+      energyBound = maxChannel(energy) * ${ENVIRONMENT_BOUND};
+    }
     let fromIor = select(1.0, ${IOR}, path.inside != 0u);
     let toIor = select(${IOR}, 1.0, path.inside != 0u);
     let cosI = abs(dot(path.direction, boundary.outwardNormal));
@@ -518,16 +520,17 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
     let reflectedEnergy = energy * f;
     let refracted = refractOrReflect(path.direction, boundary.outwardNormal, fromIor, toIor);
     if (refracted.w > 0.5) {
-      if (maxChannel(energy) * ${ENVIRONMENT_BOUND} <= theta) {
-        residual += maxChannel(energy) * ${ENVIRONMENT_BOUND};
+      if (energyBound <= theta) {
+        residual += energyBound;
       } else if (pending < ${MAX_PATHS}u) {
         paths[pending] = PathState(
-          hit, refracted.xyz, energy, path.inside, i32(boundary.axis), boundary.planeIndex, path.interfaces + 1u,
-          boundary.intrinsicPoint, boundary.planeMask, boundary.planeIndices, boundary.cellIndices, 1u,
+          hit, refracted.xyz, energy, path.inside, path.interfaces + 1u,
+          boundary.planeMask, 1u, energyBound, boundary.intrinsicPoint,
+          boundary.planeIndices, boundary.cellIndices,
         );
         pending++;
       } else {
-        residual += max(max(energy.x, energy.y), energy.z) * ${ENVIRONMENT_BOUND};
+        residual += energyBound;
         status = ${STATUS_UNRESOLVED}u;
         capEvents++;
         failureMask |= FAILURE_STACK_LIMIT;
@@ -540,43 +543,53 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
           witnessAnchorPoint = boundary.intrinsicPoint;
           witnessAnchorCellIndices = boundary.cellIndices;
           witnessThroughput = energy;
-          witnessBound = maxChannel(energy) * ${ENVIRONMENT_BOUND};
+          witnessBound = energyBound;
         }
       }
       continue;
     }
     let transmittedEnergy = energy * (1.0 - f);
     let reflectedDirection = normalize(reflect(path.direction, boundary.outwardNormal));
+    let reflectedMaxChannel = maxChannel(reflectedEnergy);
+    let transmittedMaxChannel = maxChannel(transmittedEnergy);
+    let reflectedBound = reflectedMaxChannel * ${ENVIRONMENT_BOUND};
+    let transmittedBound = transmittedMaxChannel * ${ENVIRONMENT_BOUND};
     // Push the stronger child first, leaving the weaker actual-throughput
     // child at the top of the LIFO stack. Fresnel is not assumed below 0.5.
     var firstEnergy = transmittedEnergy;
+    var firstBound = transmittedBound;
     var firstDirection = refracted.xyz;
     var firstInside = 1u - path.inside;
     var secondEnergy = reflectedEnergy;
+    var secondBound = reflectedBound;
     var secondDirection = reflectedDirection;
     var secondInside = path.inside;
-    if (maxChannel(reflectedEnergy) > maxChannel(transmittedEnergy)) {
+    if (reflectedMaxChannel > transmittedMaxChannel) {
       firstEnergy = reflectedEnergy;
+      firstBound = reflectedBound;
       firstDirection = reflectedDirection;
       firstInside = path.inside;
       secondEnergy = transmittedEnergy;
+      secondBound = transmittedBound;
       secondDirection = refracted.xyz;
       secondInside = 1u - path.inside;
     }
     for (var child = 0u; child < 2u; child++) {
       let childEnergy = select(secondEnergy, firstEnergy, child == 0u);
+      let childBound = select(secondBound, firstBound, child == 0u);
       let childDirection = select(secondDirection, firstDirection, child == 0u);
       let childInside = select(secondInside, firstInside, child == 0u);
-      if (maxChannel(childEnergy) * ${ENVIRONMENT_BOUND} <= theta) {
-        residual += maxChannel(childEnergy) * ${ENVIRONMENT_BOUND};
+      if (childBound <= theta) {
+        residual += childBound;
       } else if (pending < ${MAX_PATHS}u) {
         paths[pending] = PathState(
-          hit, childDirection, childEnergy, childInside, i32(boundary.axis), boundary.planeIndex, path.interfaces + 1u,
-          boundary.intrinsicPoint, boundary.planeMask, boundary.planeIndices, boundary.cellIndices, 1u,
+          hit, childDirection, childEnergy, childInside, path.interfaces + 1u,
+          boundary.planeMask, 1u, childBound, boundary.intrinsicPoint,
+          boundary.planeIndices, boundary.cellIndices,
         );
         pending++;
       } else {
-        residual += maxChannel(childEnergy) * ${ENVIRONMENT_BOUND};
+        residual += childBound;
         status = ${STATUS_UNRESOLVED}u;
         capEvents++;
         failureMask |= FAILURE_STACK_LIMIT;
@@ -589,7 +602,7 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
           witnessAnchorPoint = boundary.intrinsicPoint;
           witnessAnchorCellIndices = boundary.cellIndices;
           witnessThroughput = childEnergy;
-          witnessBound = maxChannel(childEnergy) * ${ENVIRONMENT_BOUND};
+          witnessBound = childBound;
         }
       }
     }
