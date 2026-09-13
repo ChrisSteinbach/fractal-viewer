@@ -49,6 +49,45 @@ finite solids. The lighting remains simple, and appearance has not been
 approved. General fractal coverage, interactive scheduling, full application
 integration and production qualification remain outstanding.
 
+## Selected desktop waiting targets
+
+All six final-source stage measurements complete every sample with zero
+unresolved rays, invalid samples or resource caps; all twenty-two GPU
+controls pass. The practical time includes the browser render call, its
+research controls, readback, return and PNG encoding/write. Browser startup
+and later report serialization are excluded.
+
+| Image size            | Selected target |         3D Menger |   Posed 4D slice |
+| --------------------- | --------------: | ----------------: | ---------------: |
+| 256×144 preview       |             1 s |  5.203 s — misses | 3.435 s — misses |
+| 512×288 settled image |            10 s | 10.239 s — misses |  6.229 s — meets |
+| 1920×1080 export      |           120 s | 101.601 s — meets | 68.406 s — meets |
+
+The full-HD originals are available for
+[3D](../scripts/out/transmission-dielectric-gpu/menger3-glass-1920x1080.png)
+and [4D](../scripts/out/transmission-dielectric-gpu/hyper4-glass-1920x1080.png).
+Their known allocation plans are 122,735,074 and 122,788,343 bytes, below
+134,217,728 bytes. Driver-private, browser and JS overhead remain unmeasured;
+this is not a certification of total peak process memory. Maximum omitted
+per-pixel contributions are 0.000972737 and 0.000968995 respectively.
+
+The renderer therefore meets the selected **export-time target for these
+finite scenes**, while it fails the preview target in both dimensions and
+the settled-image target in 3D. This is a no-go for claiming the complete
+selected experience. Interactive responsiveness, total-state measurement,
+window/export invariants and general fractal coverage still require separate
+qualification. Maximum measured tile submission/readback spans reach
+2.865 seconds in the full-HD 3D run; a completed image does not prove a
+responsive application.
+
+Individual records are
+`scripts/out/transmission-dielectric-gpu/target-{256x144,512x288,1920x1080}-{menger,hyper4}-glass.json`.
+They retain source hash
+`81e436ecd7d0167048decf6de23ced1244e28bb2f76e64a473d50823223328a6`.
+Reproduce with the same launcher, `--mode=glass`, the stated width/height and
+`--fixture=menger3` or `--fixture=hyper4`; give each run its own `--output`
+name to preserve the main comparison report.
+
 ## Why the previous model was insufficient
 
 The previous bending model displaced the world-space ray origin sideways
@@ -412,3 +451,19 @@ residual accounting, GPU controls, quiet hardware and the known allocation
 plan. It rejects diagnostic/calibration files as the main review and displays
 1024-pixel originals in separate rows. Generated artifacts remain under
 `scripts/out/`; regenerate them from the pushed branch.
+
+## Validation and review status
+
+The application suite passed 191 files / 7,611 tests and the production build
+passed. The final scalar geometry/tree run passes 9/9 tests; current-source
+emitted GPU controls pass 22/22. Scripts TypeScript, ESLint, formatting and
+launcher syntax checks pass. Full repository lint also passes after the final
+source changes. Browser QA of the completed review at 1440px
+desktop width and 390px mobile width confirms natural 1024px main images on
+desktop, working original-image links, bounded-completion labels, visible
+UNREVIEWED status, no console errors and no horizontal overflow even with
+details expanded.
+
+The comparison study is delivered. Appearance approval and production
+qualification remain open; the previous owner rejection is not superseded by
+an automatic claim that this new look is approved.
