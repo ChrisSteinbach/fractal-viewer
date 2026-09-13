@@ -2,6 +2,7 @@ import {
   DEFAULT_GAMMA_THRESHOLD,
   FLAME_DENSITY_SATURATION,
   accumulateFlame,
+  adaptiveClassMap,
   adaptiveDownsampleFlame,
   clampSupersampleToBudget,
   createAdaptiveDownsampleJob,
@@ -2904,6 +2905,137 @@ describe("clampSupersampleToBudget", () => {
   it("treats a non-positive width or height as unconstrained (nothing to divide by)", () => {
     expect(clampSupersampleToBudget(0, 100, 3, 10)).toBe(3);
     expect(clampSupersampleToBudget(100, 0, 3, 10)).toBe(3);
+  });
+});
+
+describe("adaptiveClassMap", () => {
+  const PARAMS: DensityEstimatorParams = {
+    estimatorRadius: 4,
+    estimatorMinimumRadius: 0,
+    estimatorCurve: 0.4,
+  };
+
+  /** Independent restatement of the job's radius formula and kernel
+   * derivation (the docs' ALGORITHM steps 1-3), so this suite can't
+   * coincidentally agree with a matching mistake in the shared function. */
+  function expectedClass(
+    localCount: number,
+    scale: number,
+    params: DensityEstimatorParams = PARAMS,
+  ): { quantized: number; sigma: number; radius: number; kernel: number[] } {
+    const estimatorRadius = Math.max(0, params.estimatorRadius);
+    const minimum = Math.min(
+      estimatorRadius,
+      Math.max(0, params.estimatorMinimumRadius),
+    );
+    const radius = Math.min(
+      estimatorRadius,
+      Math.max(
+        minimum,
+        estimatorRadius / Math.max(1, localCount) ** params.estimatorCurve,
+      ),
+    );
+    const quantized = Math.round(radius / 0.5) * 0.5;
+    const phase = 0.5 * (scale - 1);
+    const sigma = Math.max(quantized, 0.3) * scale;
+    const kernelRadius = Math.max(1, Math.ceil(sigma * 3));
+    const kernel: number[] = [];
+    for (let k = -kernelRadius; k <= kernelRadius; k++) {
+      const d = k - phase;
+      kernel.push(Math.exp(-(d * d) / (2 * sigma * sigma)));
+    }
+    return { quantized, sigma, radius: kernelRadius, kernel };
+  }
+
+  function sourceWithHomeCounts(
+    counts: Map<number, number>,
+    srcWidth = 8,
+    srcHeight = 8,
+    scale = 2,
+  ): FlameHistogram {
+    const hist = createFlameHistogram(srcWidth, srcHeight);
+    const outWidth = srcWidth / scale;
+    for (const [cell, count] of counts) {
+      const ox = cell % outWidth;
+      const oy = (cell / outWidth) | 0;
+      const base = oy * scale * srcWidth + ox * scale;
+      hist.hits[base] = count;
+      hist.hitMass += count;
+    }
+    return hist;
+  }
+
+  it("maps a cell's home-block count to the quantized radius class the curve asks for", () => {
+    const hist = sourceWithHomeCounts(new Map([[0, 1]])); // cell (0,0): count 1.
+    const map = adaptiveClassMap(hist, 4, 4, PARAMS);
+    const expected = expectedClass(1, 2);
+    const klass = map.classes[map.classOf[0]];
+    expect(klass.radius).toBe(expected.quantized);
+    expect(klass.radiusX).toBe(expected.radius);
+    expect(klass.radiusY).toBe(expected.radius);
+    expect(Array.from(klass.kernelX)).toEqual(expected.kernel);
+  });
+
+  it("sums the whole home block, not just its first source cell", () => {
+    // Count 4 spread over four source cells of the same 2x2 home block must
+    // read as the same class as count 4 in one cell (9 vs 10 below is the
+    // control for distinct counts landing on DIFFERENT quantized classes).
+    const spread = createFlameHistogram(8, 8);
+    spread.hits[0] = 1;
+    spread.hits[1] = 1;
+    spread.hits[8] = 1;
+    spread.hits[9] = 1;
+    const single = sourceWithHomeCounts(new Map([[0, 4]]));
+    const spreadMap = adaptiveClassMap(spread, 4, 4, PARAMS);
+    const singleMap = adaptiveClassMap(single, 4, 4, PARAMS);
+    expect(spreadMap.classes[spreadMap.classOf[0]].radius).toBe(
+      singleMap.classes[singleMap.classOf[0]].radius,
+    );
+  });
+
+  it("shares one class across cells whose counts quantize to the same radius", () => {
+    const hist = sourceWithHomeCounts(
+      new Map([
+        [0, 9],
+        [1, 10],
+      ]),
+    );
+    const map = adaptiveClassMap(hist, 4, 4, PARAMS);
+    // Both counts 9 and 10 land on the same quantized radius (1.5), so the
+    // two cells must reference one class instance.
+    expect(map.classOf[0]).toBe(map.classOf[1]);
+    expect(map.classes[map.classOf[0]].radius).toBe(
+      expectedClass(9, 2).quantized,
+    );
+    expect(expectedClass(10, 2).quantized).toBe(expectedClass(9, 2).quantized);
+  });
+
+  it("gives an empty home block the widest radius and flags it homeEmpty", () => {
+    const hist = sourceWithHomeCounts(new Map([[0, 2]]));
+    const map = adaptiveClassMap(hist, 4, 4, PARAMS);
+    expect(Array.from(map.homeEmpty)).toEqual([
+      0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    ]);
+    expect(map.classes[map.classOf[1]].radius).toBe(PARAMS.estimatorRadius);
+  });
+
+  it("clamps minimum above maximum to the maximum, matching the job's own clamp", () => {
+    const hist = sourceWithHomeCounts(new Map(), 8, 8);
+    const map = adaptiveClassMap(hist, 4, 4, {
+      estimatorRadius: 4,
+      estimatorMinimumRadius: 10,
+      estimatorCurve: 0.4,
+    });
+    expect(map.classes[map.classOf[0]].radius).toBe(4);
+  });
+
+  it("quantizes every class radius to a RADIUS_QUANTUM (0.5) multiple", () => {
+    const counts = new Map<number, number>();
+    for (let cell = 0; cell < 16; cell++) counts.set(cell, cell * 3 + 1);
+    const map = adaptiveClassMap(sourceWithHomeCounts(counts), 4, 4, PARAMS);
+    for (const klass of map.classes) {
+      expect(klass.radius / 0.5).toBe(Math.round(klass.radius / 0.5));
+    }
   });
 });
 
