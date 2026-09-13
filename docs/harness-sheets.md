@@ -630,6 +630,12 @@ transport traces, including the posed native 4D scene. This allows
 workers and resumable outputs. `transmission-primary-review.mjs` reproduces
 the current four 512px CPU reference stills. The full 256px CPU motion/control
 batch was stopped; the 17px orchestration smoke is not appearance evidence.
+`transmission-bend-gpu.mjs` subsequently renders full 512px 3D/4D pairs
+and measures the rectangular preview/settled targets on verified hardware.
+Its separate `transmission-gpu-review.mjs` page preserves numerical
+refusals alongside completed full-size images. Timing scope, allocation
+preflight and the remaining qualification limits are recorded in
+[`transmission-gpu-images.md`](transmission-gpu-images.md).
 
 ### finish-pattern-review-score
 
