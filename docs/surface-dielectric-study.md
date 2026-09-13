@@ -275,6 +275,27 @@ never treated as VRAM. The records are
 `--rssTrace`); both keep the byte-exact residuals and complete completion
 metadata.
 
+## Provisional-stage cancellation
+
+The cancellation probe gained `--provisionalCancel`: baseline, mid-run
+cancel and fresh-device follow-up all run at the staged preview's
+one-sample shape (`--cancelProbe --provisionalCancel --mode=glass`). Both
+dimensions pass at 256×144, quiet RX 7900 XTX / Chromium:
+
+| Provisional cancel checkpoint    |             3D |             4D | Target |
+| -------------------------------- | -------------: | -------------: | -----: |
+| Host request → acknowledgement   |        61.9 ms |        74.0 ms | 500 ms |
+| Page acknowledgement latency     |        39.0 ms |        48.7 ms | 500 ms |
+| Completed-run maximum checkpoint |       108.3 ms |       100.2 ms | 500 ms |
+| Follow-up RGBA vs baseline       | byte-identical | byte-identical |      — |
+
+Triggered mid-raster (submission 18 of 36, stage render), acknowledged
+between bounded submissions, cleaned up without errors. The provisional
+stage's worst checkpoint (~108 ms) sits well under the 4-SPP canonical's
+297.5 ms at the same raster, so the staged preview's cancellation story is
+qualified in both dimensions. Records:
+`cancel-provisional-256x144-{menger,hyper4}.json`.
+
 ## Owner-selected full-size result
 
 The [1024×1024 comparison](../scripts/out/transmission-dielectric-review.html)
