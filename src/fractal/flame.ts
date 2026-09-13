@@ -1340,8 +1340,11 @@ const RADIUS_QUANTUM = 0.5;
  * histogram's cell count). Chosen by measurement: on the imported Electric
  * Sheep corpus at 960x540 output the clipped scan is 20-40% smaller at 4
  * than at 16, and a 4-bit-per-axis corner is a generous pad around any
- * radius class the app can configure. */
-const OCCUPANCY_TILE = 4;
+ * radius class the app can configure. EXPORTED because the GPU adaptive
+ * port's occupancy reduction must tile the same way for its clip to select
+ * the same cells — the mappings are one definition here, restated only in
+ * the generated WGSL's `TILE` constant. */
+export const OCCUPANCY_TILE = 4;
 
 /**
  * Floor for {@link adaptiveDownsampleFlame}'s kernel sigma — DELIBERATELY
@@ -1420,9 +1423,11 @@ export function adaptiveGatherWork(
  * cell pays before it can gather. Keeping it nonzero also keeps
  * {@link AdaptiveDownsampleJob.total} positive for an all-empty frame (so
  * progress is always a real fraction) and makes a pass across far-field
- * skip rows advance instead of freezing at 0%.
+ * skip rows advance instead of freezing at 0%. EXPORTED because the GPU
+ * port's progress charges the same base unit in its own per-cell work sum —
+ * one definition, not two.
  */
-const ADAPTIVE_CELL_BASE_WORK = 1;
+export const ADAPTIVE_CELL_BASE_WORK = 1;
 
 /**
  * Footprint size (source cells) below which the plan skips the occupied-box
@@ -1472,14 +1477,180 @@ export interface AdaptiveDownsampleJob {
   result(): FlameHistogram;
 }
 
-/** One quantized-radius class's precomputed separable Gaussian pair — see
- * {@link createAdaptiveDownsampleJob}'s ALGORITHM step 3. Held by INDEX on
- * the plan so the gather never repeats quantization or `Math.exp`. */
-interface AdaptiveKernel {
-  kernelX: Float64Array;
-  kernelY: Float64Array;
+/**
+ * One distinct quantized kernel radius in {@link adaptiveClassMap}: the
+ * separable Gaussian pair every output cell in that class gathers. Built in
+ * SOURCE-cell units per axis, from the same `phase`/`sigma`/`Math.exp`
+ * expressions {@link adaptiveDownsampleFlame}'s ALGORITHM step 3 has always
+ * used, so a class's kernels are exactly what a per-cell `kernelIndexFor`
+ * cache would have built for the same quantized radius.
+ *
+ * This is the shape BOTH consumers share: the CPU planner wraps each class
+ * with its own exact-weight memo (see `planAdaptiveDownsample`), while the
+ * GPU adaptive-display seam narrows `kernelX`/`kernelY` to f32 and uploads
+ * them — so the two engines can never pick a different kernel for a cell.
+ */
+export interface AdaptiveRadiusClass {
+  /** The quantized radius this class was created for, in output pixels — a
+   * multiple of `RADIUS_QUANTUM`. */
+  radius: number;
+  /** Gaussian sigma in source cells, per axis (phase-corrected by the
+   * supersample scale). */
+  sigmaX: number;
+  sigmaY: number;
+  /** Kernel half-extents in source cells: `max(1, ceil(3 * sigma))`. */
   radiusX: number;
   radiusY: number;
+  /** Weight of source offset `k` at `[k + radiusX]` / `[k + radiusY]`. */
+  kernelX: Float64Array;
+  kernelY: Float64Array;
+}
+
+/**
+ * {@link adaptiveClassMap}'s result: the per-cell kernel-CLASS assignment
+ * that is the first step of {@link createAdaptiveDownsampleJob}'s plan, in
+ * the one shape both engines consume.
+ *
+ * Extracted so the class mapping cannot drift between the CPU planner and
+ * the GPU adaptive-display seam, and — the load-bearing half — so it stays
+ * CPU-side: a quantized radius-class boundary is a DISCONTINUITY in the
+ * output (one cell's normalization jumps by a percent, not an ULP, when its
+ * radius class flips), so the class must be chosen from f64 counts, never
+ * picked by f32 GPU arithmetic. Uploading the map means only the per-cell
+ * GATHER arithmetic below it is f32.
+ */
+export interface AdaptiveClassMap {
+  /**
+   * Kernel class index per output cell, row-major (`row * outWidth + col`),
+   * indexing {@link classes}. Every cell gets a class — an empty home block
+   * maps to the widest radius, exactly as the unclipped gather would compute
+   * it; the empty-footprint SKIP is the planner's own `-1` on its private
+   * `plan` array, not a value here. The GPU seam has no `-1` either: it
+   * derives its skip from its own occupancy table, exactly as the CPU gather
+   * does.
+   */
+  classOf: Int32Array<ArrayBuffer>;
+  /** Distinct classes in first-use order (row-major cell order, the order
+   * the old per-class kernel cache created them in). */
+  classes: AdaptiveRadiusClass[];
+  /** `1` for an output cell whose `scaleX x scaleY` home block holds no
+   * hits — the planner's own empty-footprint probe condition
+   * (`localCount <= 0`), shared so the class mapping and the planner cannot
+   * disagree about which cells are empty. */
+  homeEmpty: Uint8Array<ArrayBuffer>;
+}
+
+/**
+ * Resolve one output cell's local count to its kernel class — the local-
+ * count -> radius -> quantized-class first step of
+ * {@link createAdaptiveDownsampleJob}'s ALGORITHM (steps 1-3), extracted as
+ * THE definition both the CPU planner and the GPU adaptive-display seam
+ * consume. Params are clamped here exactly as the job always clamped them
+ * (`estimatorRadius >= 0`, `estimatorMinimumRadius` in
+ * `[0, estimatorRadius]`), so no caller can re-derive a different radius
+ * rule.
+ *
+ * The walk is row-major and classes are minted on first use, which is what
+ * keeps a class's index stable across both consumers and byte-identical to
+ * the kernel cache this replaced.
+ */
+export function adaptiveClassMap(
+  hist: FlameHistogram,
+  outWidth: number,
+  outHeight: number,
+  params: DensityEstimatorParams,
+): AdaptiveClassMap {
+  const { width: srcWidth, height: srcHeight, hits: srcHits } = hist;
+  const scaleX = srcWidth / outWidth;
+  const scaleY = srcHeight / outHeight;
+  // The same constant per-axis phase the cached kernels below (and
+  // downsampleFlame before them) rely on: every output cell's footprint
+  // center sits at this fixed fractional offset from its nearest source-cell
+  // grid line, regardless of which cell, so it is baked into every kernel
+  // once.
+  const phaseX = 0.5 * (scaleX - 1);
+  const phaseY = 0.5 * (scaleY - 1);
+  const estimatorRadius = Math.max(0, params.estimatorRadius);
+  const estimatorMinimumRadius = Math.min(
+    estimatorRadius,
+    Math.max(0, params.estimatorMinimumRadius),
+  );
+
+  const classes: AdaptiveRadiusClass[] = [];
+  const classIndices = new Map<number, number>();
+  const outCells = outWidth * outHeight;
+  const classOf = new Int32Array(outCells);
+  const homeEmpty = new Uint8Array(outCells);
+
+  for (let oy = 0; oy < outHeight; oy++) {
+    const baseY = oy * scaleY; // exact integer: the output cell's home row.
+    for (let ox = 0; ox < outWidth; ox++) {
+      const baseX = ox * scaleX; // exact integer: the cell's home column.
+
+      // Step 1: local density from this cell's home block, not a single
+      // (noisy) source cell.
+      let localCount = 0;
+      for (let j = 0; j < scaleY; j++) {
+        const rowBase = (baseY + j) * srcWidth;
+        for (let i = 0; i < scaleX; i++) {
+          localCount += srcHits[rowBase + baseX + i];
+        }
+      }
+      const cell = oy * outWidth + ox;
+      if (localCount <= 0) homeEmpty[cell] = 1;
+
+      // Step 2: map the cell's own absolute count to a radius (see the
+      // job's ALGORITHM section for why absolute, not relative-to-peak).
+      // max(1, count) keeps an empty cell at exactly the widest radius
+      // instead of dividing by 0 ** curve.
+      const radius = Math.min(
+        estimatorRadius,
+        Math.max(
+          estimatorMinimumRadius,
+          estimatorRadius / Math.max(1, localCount) ** params.estimatorCurve,
+        ),
+      );
+
+      // Step 3: resolve the (cached-by-quantized-radius) class.
+      const quantized = Math.round(radius / RADIUS_QUANTUM) * RADIUS_QUANTUM;
+      let classIndex = classIndices.get(quantized);
+      if (classIndex === undefined) {
+        const sigmaX = Math.max(quantized, MIN_ADAPTIVE_FILTER_SIGMA) * scaleX;
+        const sigmaY = Math.max(quantized, MIN_ADAPTIVE_FILTER_SIGMA) * scaleY;
+        const radiusX = Math.max(1, Math.ceil(sigmaX * 3));
+        const radiusY = Math.max(1, Math.ceil(sigmaY * 3));
+        const kernelX = new Float64Array(2 * radiusX + 1);
+        for (let k = -radiusX; k <= radiusX; k++) {
+          const d = k - phaseX;
+          kernelX[k + radiusX] = Math.exp(-(d * d) / (2 * sigmaX * sigmaX));
+        }
+        const kernelY = new Float64Array(2 * radiusY + 1);
+        for (let k = -radiusY; k <= radiusY; k++) {
+          const d = k - phaseY;
+          kernelY[k + radiusY] = Math.exp(-(d * d) / (2 * sigmaY * sigmaY));
+        }
+        classIndex = classes.length;
+        classes.push({
+          radius: quantized,
+          sigmaX,
+          sigmaY,
+          radiusX,
+          radiusY,
+          kernelX,
+          kernelY,
+        });
+        classIndices.set(quantized, classIndex);
+      }
+      classOf[cell] = classIndex;
+    }
+  }
+  return { classOf, classes, homeEmpty };
+}
+
+/** One quantized-radius class's precomputed kernels plus the planner-only
+ * exact-weight memo — see {@link exactAdaptiveWeightSum}. Held by INDEX on
+ * the plan so the gather never repeats quantization or `Math.exp`. */
+interface AdaptiveKernel extends AdaptiveRadiusClass {
   /**
    * Exact flat-order weight normalization for each (in-bounds x range,
    * in-bounds y range) pair this class has been asked for, keyed by
@@ -1660,58 +1831,20 @@ function planAdaptiveDownsample(
   srcHeight: number,
   outWidth: number,
   outHeight: number,
-  estimatorRadius: number,
-  estimatorMinimumRadius: number,
-  estimatorCurve: number,
+  classMap: AdaptiveClassMap,
 ): AdaptivePlan {
   const scaleX = srcWidth / outWidth;
   const scaleY = srcHeight / outHeight;
 
-  // The same constant per-axis phase downsampleFlame relies on (see its
-  // doc) — every output cell's footprint center sits at this fixed
-  // fractional offset from its nearest source-cell grid line, regardless of
-  // which cell, so it can be baked into every cached kernel below once.
-  const phaseX = 0.5 * (scaleX - 1);
-  const phaseY = 0.5 * (scaleY - 1);
-
-  // Kernels are built once per distinct QUANTIZED radius and referenced by
-  // INDEX from the plan: the plan resolves each cell's kernel index while it
-  // already has the radius in hand, and the gather reads it back, so the
-  // quantize-and-cache step happens once per cell rather than twice. `Math.exp`
-  // still runs once per radius class, not per cell (see the doc's ALGORITHM
-  // step 3).
-  const kernels: AdaptiveKernel[] = [];
-  const kernelIndices = new Map<number, number>();
-  function kernelIndexFor(radius: number): number {
-    const quantized = Math.round(radius / RADIUS_QUANTUM) * RADIUS_QUANTUM;
-    const cached = kernelIndices.get(quantized);
-    if (cached !== undefined) return cached;
-    const sigmaX = Math.max(quantized, MIN_ADAPTIVE_FILTER_SIGMA) * scaleX;
-    const sigmaY = Math.max(quantized, MIN_ADAPTIVE_FILTER_SIGMA) * scaleY;
-    const radiusX = Math.max(1, Math.ceil(sigmaX * 3));
-    const radiusY = Math.max(1, Math.ceil(sigmaY * 3));
-    const kernelX = new Float64Array(2 * radiusX + 1);
-    for (let k = -radiusX; k <= radiusX; k++) {
-      const d = k - phaseX;
-      kernelX[k + radiusX] = Math.exp(-(d * d) / (2 * sigmaX * sigmaX));
-    }
-    const kernelY = new Float64Array(2 * radiusY + 1);
-    for (let k = -radiusY; k <= radiusY; k++) {
-      const d = k - phaseY;
-      kernelY[k + radiusY] = Math.exp(-(d * d) / (2 * sigmaY * sigmaY));
-    }
-    const index = kernels.length;
-    kernels.push({
-      kernelX,
-      kernelY,
-      radiusX,
-      radiusY,
-      weightMemo: new Map(),
-      yRangeCount: 2 * radiusY + 1,
-    });
-    kernelIndices.set(quantized, index);
-    return index;
-  }
+  // Wrap each shared class with the planner-only exact-weight memo — the
+  // kernel arithmetic itself is {@link adaptiveClassMap}'s, so the CPU plan
+  // and the GPU seam cannot pick different kernels. `Math.exp` still runs
+  // once per class, not per cell (see the job's ALGORITHM step 3).
+  const kernels: AdaptiveKernel[] = classMap.classes.map((klass) => ({
+    ...klass,
+    weightMemo: new Map<number, number>(),
+    yRangeCount: 2 * klass.radiusY + 1,
+  }));
 
   // Occupancy summed-area table (see the doc's clipping paragraph): occ[(ty
   // + 1) * satStride + (tx + 1)] holds the number of occupied (any-hits)
@@ -1774,32 +1907,14 @@ function planAdaptiveDownsample(
     for (let ox = 0; ox < outWidth; ox++) {
       const baseX = ox * scaleX; // exact integer: the output cell's home column.
 
-      // Step 1: local density from this cell's home block, not a single
-      // (noisy) source cell.
-      let localCount = 0;
-      for (let j = 0; j < scaleY; j++) {
-        const rowBase = (baseY + j) * srcWidth;
-        for (let i = 0; i < scaleX; i++) {
-          localCount += srcHits[rowBase + baseX + i];
-        }
-      }
-      // Step 2: map the cell's own absolute count to a radius (see the doc's
-      // ALGORITHM section for why absolute, not relative-to-peak).
-      // max(1, count) keeps an empty cell at exactly the widest radius
-      // instead of dividing by 0 ** curve.
-      const radius = Math.min(
-        estimatorRadius,
-        Math.max(
-          estimatorMinimumRadius,
-          estimatorRadius / Math.max(1, localCount) ** estimatorCurve,
-        ),
-      );
-
-      // Step 3: resolve the (cached-by-quantized-radius) kernel.
-      const kernelIndex = kernelIndexFor(radius);
+      // Steps 1-3 are resolved once for the whole pass by
+      // {@link adaptiveClassMap}: this loop reads the cell's class back
+      // rather than recomputing its local count or radius, so the CPU plan
+      // and the GPU seam share one class mapping.
+      const cell = oy * outWidth + ox;
+      const kernelIndex = classMap.classOf[cell];
       const kernel = kernels[kernelIndex];
       const { radiusX, radiusY } = kernel;
-      const cell = oy * outWidth + ox;
 
       // The cell's kernel footprint clipped only to the source bounds — the
       // full region if no occupancy clip applies.
@@ -1825,7 +1940,10 @@ function planAdaptiveDownsample(
       let cx1 = x1;
       let cy1 = y1;
       let emptyFootprint = false;
-      if (localCount <= 0 || fullCells >= ADAPTIVE_CLIP_MIN_CELLS) {
+      if (
+        classMap.homeEmpty[cell] === 1 ||
+        fullCells >= ADAPTIVE_CLIP_MIN_CELLS
+      ) {
         const txLo = (x0 / OCCUPANCY_TILE) | 0;
         const tyLo = (y0 / OCCUPANCY_TILE) | 0;
         const txHi = (x1 / OCCUPANCY_TILE) | 0;
@@ -2273,22 +2391,18 @@ export function createAdaptiveDownsampleJob(
   const target = out ?? createFlameHistogram(outWidth, outHeight);
   const { hits: dstHits, sumRGB: dstRGB } = target;
 
-  const estimatorRadius = Math.max(0, params.estimatorRadius);
-  // Never let "minimum" exceed "maximum", regardless of how the caller's
-  // sliders happen to be set relative to each other.
-  const estimatorMinimumRadius = Math.min(
-    estimatorRadius,
-    Math.max(0, params.estimatorMinimumRadius),
-  );
+  // The class mapping is resolved by the shared, CPU-side
+  // {@link adaptiveClassMap} — the same call the GPU adaptive-display seam
+  // makes — so the CPU plan below and the GPU port can never pick different
+  // kernels for a cell (a class boundary is a discontinuity: see that
+  // function's doc).
   const plan = planAdaptiveDownsample(
     srcHits,
     srcWidth,
     srcHeight,
     outWidth,
     outHeight,
-    estimatorRadius,
-    estimatorMinimumRadius,
-    params.estimatorCurve,
+    adaptiveClassMap(oversized, outWidth, outHeight, params),
   );
 
   const state: AdaptiveGatherState = {
