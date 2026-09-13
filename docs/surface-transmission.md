@@ -31,6 +31,11 @@ prototype does not establish a convincing general glass material or a cheap
 production implementation. True refraction needs an explicitly defined
 optical solid; it is not universally impossible for fractals.
 
+The replacement [closed-solid dielectric study](surface-dielectric-study.md)
+now has completed 1024×1024 3D/4D images with entry/exit refraction and
+reflections. It remains a new, unreviewed experiment with explicit finite
+geometry and precision limits.
+
 ## What the current finish does
 
 `surface-finish.ts` emits the same finish body for both GLSL tracers and

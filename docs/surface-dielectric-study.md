@@ -12,6 +12,43 @@ geometry as well as transport, so matching opaque views must accompany the
 glass images. It does not interpret the public distance estimators as signed
 interior distances or silently change an existing scene's geometry.
 
+## Current full-size result
+
+The new [1024×1024 comparison](../scripts/out/transmission-dielectric-review.html)
+contains one glass image per dimension and matching opaque controls. Every
+row completes all 1,048,576 pixels and 4,194,304 samples without unresolved
+or non-finite samples, traversal failures or resource caps. All twenty-two
+current-source GPU controls pass on quiet RX 7900 XTX / Chromium hardware.
+
+| Glass scene                 | Produce and save PNG | Tile submission/readback | Maximum omitted contribution per pixel | Known allocation plan |
+| --------------------------- | -------------------: | -----------------------: | -------------------------------------: | --------------------: |
+| 3D finite Menger            |             86.486 s |                 85.668 s |                         0.000973849907 |          78,603,932 B |
+| Posed 4D hyper-Menger slice |             59.348 s |                 58.469 s |                         0.000970051391 |          78,651,190 B |
+
+Both omitted-contribution maxima are below 1/1024 in the largest linear RGB
+channel. This bounds discarded optical branches, not all floating-point or
+antialiasing error. The practical timing starts immediately before the browser
+render call and ends after return, decoding, PNG encoding and file write; it
+excludes browser startup and later JSON checkpoint serialization. Each row
+also runs the research controls. The allocation plan fits 128 MiB; browser,
+driver-private and JS overhead are not measured as a total peak.
+
+The source hash is
+`81e436ecd7d0167048decf6de23ced1244e28bb2f76e64a473d50823223328a6`.
+The complete report is
+`scripts/out/transmission-dielectric-gpu/actual-1024x1024-all.json`.
+The main PNG hashes are
+`780aa05ecb45648659c3afb6768cc5c14454ea35df46752124082a3366906e62`
+(3D) and
+`c67a7cab367e6985c35010e30a3f24ae60d118f6476d158a2b7cd376aee8bc0c`
+(4D). The opaque images complete with zero residual in 4.651 and 3.482
+seconds respectively.
+
+This delivers readable images and actual dielectric transport on these two
+finite solids. The lighting remains simple, and appearance has not been
+approved. General fractal coverage, interactive scheduling, full application
+integration and production qualification remain outstanding.
+
 ## Why the previous model was insufficient
 
 The previous bending model displaced the world-space ray origin sideways
@@ -357,3 +394,21 @@ pending boundary without consuming the next cell transition. This is an
 explicit numerical reconstruction allowance, not a bound on all accumulated
 floating-point or optical error. It can affect events at the precision limit;
 it does not authorize merging larger intervals or hiding a traversal failure.
+
+## Reproduce the full-size comparison
+
+The launcher establishes the X cookie, checks the real driver and records the
+per-process quiet baseline before launching Chromium. Run without other local
+test or rendering workloads:
+
+```bash
+node scripts/transmission-dielectric-gpu.mjs --display=:0 --width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --output=actual-1024x1024-all.json
+node scripts/transmission-dielectric-review.mjs
+```
+
+Each row writes its PNG and report checkpoint before the next row. The builder
+checks source and PNG hashes, actual dimensions, every sample's completion,
+residual accounting, GPU controls, quiet hardware and the known allocation
+plan. It rejects diagnostic/calibration files as the main review and displays
+1024-pixel originals in separate rows. Generated artifacts remain under
+`scripts/out/`; regenerate them from the pushed branch.
