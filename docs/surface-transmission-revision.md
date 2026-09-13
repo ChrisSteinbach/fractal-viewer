@@ -325,7 +325,8 @@ images are smoke-test inputs and never useful appearance evidence.
 All 1,048,576 rays in the four images complete. The larger images still
 show grain and weak separation of the layers; increasing pixel count does
 not qualify the appearance. CPU elapsed time is not a GPU performance
-estimate. The GPU scalar pilot above still excludes the image work.
+estimate. The scalar GPU pilot above excludes the image work; the subsequent
+[GPU image experiment](transmission-gpu-images.md) measures that work directly.
 
 Both renderers import the same scenes, poses, floor and optical settings
 from `scripts/transmission-bend-fixtures.ts`. Node workers divide each image
