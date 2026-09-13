@@ -8,6 +8,7 @@
  */
 import {
   DIELECTRIC_GEOMETRY_CONTROL_RAYS,
+  DIELECTRIC_CORNER_CONTROL_CASES,
   DIELECTRIC_SOLID_FIXTURES,
   DIELECTRIC_TRANSPORT_CONTROL_INPUTS,
   dielectricBeerThroughput,
@@ -34,6 +35,7 @@ const OP_ANCHORED_BOUNDARY = 2;
 const OP_REFRACTION = 3;
 const OP_FRESNEL = 4;
 const OP_BEER = 5;
+const OP_CORNER_NORMAL = 6;
 const TOLERANCE = 3e-4;
 
 type ControlInput = {
@@ -48,7 +50,10 @@ type ControlInput = {
   toIor?: number;
   distance?: number;
   params?: [number, number, number, number];
+  entering?: boolean;
   anchor?: DielectricBoundary["anchor"];
+  /** Rebuild tied plane coordinates in the shader's f32 grid arithmetic. */
+  rebuildMaskedAnchor?: boolean;
   anchorFrom?: ControlInput;
   expected: ExpectedControl;
 };
@@ -57,7 +62,8 @@ type ExpectedControl =
   | { kind: "boundary"; result: DielectricBoundaryResult }
   | { kind: "refract"; direction: Vec3; tir: boolean }
   | { kind: "fresnel"; value: number }
-  | { kind: "beer"; value: Vec3 };
+  | { kind: "beer"; value: Vec3 }
+  | { kind: "corner"; normal: Vec3 };
 
 type RawControlResult = {
   scalar: [number, number, number, number];
@@ -104,6 +110,8 @@ struct DielectricControlInput {
   anchorPlaneIndices: vec4<i32>,
   anchorCellIndices: vec4<i32>,
   planeMask: u32,
+  entering: u32,
+  rebuildMaskedAnchor: u32,
 };
 
 struct DielectricControlResult {
@@ -123,6 +131,21 @@ const DIELECTRIC_CONTROL_INVALID_INPUT: u32 = 6u;
 @group(1) @binding(0) var<uniform> controlSolid: DielectricSolidFixture;
 @group(1) @binding(1) var<uniform> controlInput: DielectricControlInput;
 @group(1) @binding(2) var<storage, read_write> controlOutput: DielectricControlResult;
+
+fn dielectricControlAnchor() -> vec4f {
+  var anchor = controlInput.anchorPoint;
+  if (controlInput.rebuildMaskedAnchor != 0u) {
+    for (var axis = 0u; axis < controlSolid.counts.x; axis++) {
+      if ((controlInput.planeMask & (1u << axis)) != 0u) {
+        anchor[axis] = dielectricGridPlane(
+          controlInput.anchorPlaneIndices[axis], controlSolid.shape.x,
+          i32(controlSolid.counts.z),
+        );
+      }
+    }
+  }
+  return anchor;
+}
 
 @compute @workgroup_size(1)
 fn runDielectricControl() {
@@ -146,7 +169,7 @@ fn runDielectricControl() {
   } else if (controlInput.operation == ${OP_ANCHORED_BOUNDARY}u) {
     let boundary = dielectricNextBoundaryFromAnchor(
       controlSolid, controlInput.direction.xyz, controlInput.inside,
-      controlInput.anchorPoint, controlInput.planeMask,
+      dielectricControlAnchor(), controlInput.planeMask,
       controlInput.anchorPlaneIndices, controlInput.anchorCellIndices,
     );
     result.scalar = vec4f(boundary.t, f32(boundary.entering), f32(boundary.visits), 0.0);
@@ -171,6 +194,12 @@ fn runDielectricControl() {
     );
   } else if (controlInput.operation == ${OP_BEER}u) {
     result.normal = vec4f(beer(controlInput.params.x), 0.0);
+  } else if (controlInput.operation == ${OP_CORNER_NORMAL}u) {
+    result.normal = dielectricCornerNormal(
+      controlSolid, controlInput.direction.xyz, controlInput.planeMask,
+      controlInput.entering != 0u,
+    );
+    result.scalar.x = result.normal.w;
   } else {
     result.kind = DIELECTRIC_RESULT_REFUSED;
     result.reason = DIELECTRIC_CONTROL_INVALID_INPUT;
@@ -361,6 +390,75 @@ function makeCases(): ControlInput[] {
           : hyperEntry,
     },
   });
+  for (const corner of DIELECTRIC_CORNER_CONTROL_CASES) {
+    const fixture = fixtureFor(corner.fixtureKey);
+    const gpuAnchor = {
+      intrinsicPoint: [...corner.anchorSource.unmaskedIntrinsicPoint] as [
+        number,
+        number,
+        number,
+        number,
+      ],
+      planeMask: corner.anchorSource.planeMask,
+      planeIndices: [...corner.anchorSource.planeIndices] as [
+        number,
+        number,
+        number,
+        number,
+      ],
+      cellIndices: [...corner.anchorSource.cellIndices] as [
+        number,
+        number,
+        number,
+        number,
+      ],
+    };
+    cases.push(
+      {
+        name: `${corner.name} corner normal`,
+        fixture,
+        operation: OP_CORNER_NORMAL,
+        direction: corner.incident,
+        entering: corner.entering,
+        anchor: gpuAnchor,
+        expected: { kind: "corner", normal: corner.expectedNormal },
+      },
+      {
+        name: `${corner.name} reflected medium continuation`,
+        fixture,
+        operation: OP_ANCHORED_BOUNDARY,
+        direction: corner.reflected.direction,
+        inside: corner.reflected.inside,
+        anchor: gpuAnchor,
+        rebuildMaskedAnchor: true,
+        expected: {
+          kind: "boundary",
+          result: dielectricNextBoundaryFromAnchor(
+            fixture,
+            corner.reflected.direction,
+            { inside: corner.reflected.inside, anchor: corner.anchor },
+          ),
+        },
+      },
+      {
+        name: `${corner.name} refracted medium continuation`,
+        fixture,
+        operation: OP_ANCHORED_BOUNDARY,
+        direction: corner.refracted.direction,
+        inside: corner.refracted.inside,
+        anchor: gpuAnchor,
+        rebuildMaskedAnchor: true,
+        expected: {
+          kind: "boundary",
+          result: dielectricNextBoundaryFromAnchor(
+            fixture,
+            corner.refracted.direction,
+            { inside: corner.refracted.inside, anchor: corner.anchor },
+          ),
+        },
+      },
+    );
+  }
   const normalEntryInput = cases.find(
     (entry) => entry.name === "D0 normal entry",
   );
@@ -476,6 +574,8 @@ function writeInput(buffer: ArrayBuffer, input: ControlInput) {
     ints[28 + axis] = anchor?.cellIndices[axis] ?? -1;
   }
   uints[32] = anchor?.planeMask ?? 0;
+  uints[33] = input.entering ? 1 : 0;
+  uints[34] = input.rebuildMaskedAnchor ? 1 : 0;
 }
 
 function readResult(bytes: ArrayBuffer): RawControlResult {
@@ -535,10 +635,20 @@ function compareCase(
     if (!passed)
       failure = "GPU Fresnel value differs from the normal-incidence oracle";
   } else {
-    passed =
-      actual.kind === 0 && closeVec(actual.normal.slice(0, 3), expected.value);
-    if (!passed)
-      failure = "GPU Beer throughput differs from the CPU attenuation oracle";
+    if (expected.kind === "beer") {
+      passed =
+        actual.kind === 0 &&
+        closeVec(actual.normal.slice(0, 3), expected.value);
+      if (!passed)
+        failure = "GPU Beer throughput differs from the CPU attenuation oracle";
+    } else {
+      passed =
+        actual.kind === 0 &&
+        actual.scalar[0] > 0 &&
+        closeVec(actual.normal.slice(0, 3), expected.normal);
+      if (!passed)
+        failure = "GPU tied-corner normal differs from the CPU span projection";
+    }
   }
   return {
     name: input.name,
@@ -550,6 +660,7 @@ function compareCase(
       "refraction",
       "fresnel",
       "beer",
+      "corner-normal",
     ][input.operation],
     expected:
       expected.kind === "boundary"

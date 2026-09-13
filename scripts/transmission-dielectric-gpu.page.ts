@@ -42,6 +42,7 @@ const INITIAL_BRANCH_THETA = ERROR_BUDGET / 64;
 const STATUS_COMPLETE = 1;
 const STATUS_RESIDUAL = 2;
 const STATUS_UNRESOLVED = 3;
+const STATUS_INVALID = 4;
 
 type Fixture = {
   id: FixtureKey;
@@ -204,7 +205,7 @@ struct OutputPixel {
   acceptedResidual: f32,
   replayPasses: u32,
   acceptedMask: u32,
-  _padReplay: u32,
+  invalidMask: u32,
 }
 struct TraceResult {
   radiance: vec3f,
@@ -583,8 +584,15 @@ fn renderDielectric(@builtin(global_invocation_id) gid: vec3u) {
     }
     let residualFinite = traced.residual == traced.residual &&
       abs(traced.residual) < 3.402823466e+38;
+    let radianceFinite = all(traced.radiance == traced.radiance) &&
+      all(abs(traced.radiance) < vec3f(3.402823466e+38));
+    if (!radianceFinite) {
+      state.invalidMask |= sampleBit;
+      state.pendingMask &= ~sampleBit;
+      continue;
+    }
     let accepted = traced.status != ${STATUS_UNRESOLVED}u && residualFinite &&
-      traced.residual <= ${ERROR_BUDGET};
+      radianceFinite && traced.residual <= ${ERROR_BUDGET};
     if (accepted) {
       state.accumulatedRadiance += traced.radiance / f32(${SPP});
       state.acceptedResidual += traced.residual / f32(${SPP});
@@ -597,8 +605,10 @@ fn renderDielectric(@builtin(global_invocation_id) gid: vec3u) {
   state.residual = state.acceptedResidual * f32(${SPP});
   state.sampleComplete = countOneBits(state.acceptedMask);
   state.sampleUnresolved = countOneBits(state.pendingMask);
-  state.sampleInvalid = 0u;
-  if (state.pendingMask == 0u) {
+  state.sampleInvalid = countOneBits(state.invalidMask);
+  if (state.invalidMask != 0u) {
+    state.status = ${STATUS_INVALID}u;
+  } else if (state.pendingMask == 0u) {
     state.status = select(${STATUS_COMPLETE}u, ${STATUS_RESIDUAL}u, state.acceptedResidual > 0.0);
   } else if (passIndex + 1u >= ${REPLAY_PASSES}u) {
     state.status = ${STATUS_UNRESOLVED}u;
