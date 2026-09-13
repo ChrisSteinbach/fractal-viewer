@@ -391,6 +391,8 @@ if (
   body.tileInvariant.passed !== true
 )
   throw new Error("GPU report requested tile/window qualification but failed");
+if (body.poseCheck?.requested === true && body.poseCheck.passed !== true)
+  throw new Error("GPU report requested pose qualification but failed");
 const environment = validateRunEnvironment(envelope, body);
 const gpuControls = envelope.controls ?? body.controls;
 if (
