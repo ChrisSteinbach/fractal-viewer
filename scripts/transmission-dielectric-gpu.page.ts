@@ -27,10 +27,11 @@ const SPP = 4;
 // With B=4 initial radiance and theta_min=epsilon/(64*2^5)=2^-21,
 // weaker-first DFS needs ceil(log2(B/theta_min))+1 = 24 live entries.
 const MAX_PATHS = 24;
-// CPU replay witnesses need at most 110 interfaces and 5,714 processed paths.
-// These measured guards leave headroom without changing the optical cutoff.
-const MAX_INTERFACES = 256;
+// CPU replay witnesses need at most 5,714 processed paths. Every interface
+// consumes one processed path, so this redundant interface sanity guard may
+// equal the whole-tree work ceiling without increasing worst work or state.
 const MAX_PROCESSED_PATHS = 16384;
+const MAX_INTERFACES = MAX_PROCESSED_PATHS;
 const PATH_STATE_BYTES = 144;
 const OUTPUT_PIXEL_BYTES = 192;
 const REPLAY_PASSES = 6;

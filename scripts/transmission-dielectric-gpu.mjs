@@ -219,6 +219,7 @@ async function main() {
     let controls = null;
     for (const fixture of fixtureNames)
       for (const mode of modeNames) {
+        const pageReturnEncodeWriteStarted = performance.now();
         const item = await execute({ ...options, fixture, mode });
         const partialRecord = {
           generatedAt: new Date().toISOString(),
@@ -277,6 +278,8 @@ async function main() {
         const png = outputPng(row.imageBase64, row.width, row.height);
         const filename = `${row.fixture}-${row.mode}-${row.width}x${row.height}.png`;
         await writeFile(path.join(outDir, filename), png);
+        const pageReturnEncodeWriteWallMs =
+          performance.now() - pageReturnEncodeWriteStarted;
         const launcherBase64DecodeBytes = row.width * row.height * 4;
         const launcherRgbEncodeBytes = row.width * row.height * 3;
         const knownCrossProcessBytes =
@@ -297,6 +300,12 @@ async function main() {
           path: path.relative(root, path.join(outDir, filename)),
           sha256: hash(png),
           naturalSize: { width: row.width, height: row.height },
+        };
+        row.timing = {
+          ...row.timing,
+          pageReturnEncodeWriteWallMs,
+          pageReturnEncodeWriteScope:
+            "Node wall from immediately before page.evaluate through page return, RGBA base64 decode, PNG encode and PNG file write; excludes browser launch/startup and later checkpoint JSON serialization.",
         };
         delete row.imageBase64;
         rows.push(row);

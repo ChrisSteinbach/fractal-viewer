@@ -9,6 +9,7 @@
 import {
   DIELECTRIC_GEOMETRY_CONTROL_RAYS,
   DIELECTRIC_CORNER_CONTROL_CASES,
+  DIELECTRIC_ANCHOR_CANONICALIZATION_CONTROLS,
   DIELECTRIC_SOLID_FIXTURES,
   DIELECTRIC_TRANSPORT_CONTROL_INPUTS,
   dielectricBeerThroughput,
@@ -54,6 +55,8 @@ type ControlInput = {
   anchor?: DielectricBoundary["anchor"];
   /** Rebuild tied plane coordinates in the shader's f32 grid arithmetic. */
   rebuildMaskedAnchor?: boolean;
+  /** Preserve recorded anchor coordinates for the function-under-test. */
+  rawAnchor?: boolean;
   anchorFrom?: ControlInput;
   expected: ExpectedControl;
 };
@@ -459,6 +462,62 @@ function makeCases(): ControlInput[] {
       },
     );
   }
+  for (const canonicalization of DIELECTRIC_ANCHOR_CANONICALIZATION_CONTROLS) {
+    const fixture = fixtureFor(canonicalization.fixtureKey);
+    cases.push({
+      name: `${canonicalization.name} anchored continuation`,
+      fixture,
+      operation: OP_ANCHORED_BOUNDARY,
+      direction: canonicalization.direction,
+      inside: canonicalization.inside,
+      anchor: canonicalization.anchor,
+      // Feed the recorded masked and unmasked values directly. The shared
+      // query, rather than this control entry point, owns canonicalization.
+      rawAnchor: true,
+      expected: {
+        kind: "boundary",
+        result: dielectricNextBoundaryFromAnchor(
+          fixture,
+          canonicalization.direction,
+          {
+            inside: canonicalization.inside,
+            anchor: canonicalization.anchor,
+          },
+        ),
+      },
+    });
+  }
+  const maskedCorruption = DIELECTRIC_ANCHOR_CANONICALIZATION_CONTROLS.find(
+    (candidate) => candidate.fixtureKey === "mengerD2",
+  );
+  if (!maskedCorruption)
+    throw new Error("missing Menger masked-anchor corruption control");
+  const maskedFixture = fixtureFor(maskedCorruption.fixtureKey);
+  const maskedAnchor = {
+    ...maskedCorruption.anchor,
+    intrinsicPoint: [...maskedCorruption.anchor.intrinsicPoint] as [
+      number,
+      number,
+      number,
+      number,
+    ],
+  };
+  // The shared envelope is H * 2 * 2^-23. Move a masked coordinate by twice
+  // that allowance, independently of the table's unmasked corruption case.
+  maskedAnchor.intrinsicPoint[0] += maskedFixture.halfExtent * 4 * 2 ** -23;
+  cases.push({
+    name: "menger masked coordinate beyond roundoff envelope",
+    fixture: maskedFixture,
+    operation: OP_ANCHORED_BOUNDARY,
+    direction: maskedCorruption.direction,
+    inside: maskedCorruption.inside,
+    anchor: maskedAnchor,
+    rawAnchor: true,
+    expected: {
+      kind: "boundary",
+      result: { kind: "refused", reason: "invalid-input", visits: 0 },
+    },
+  });
   const normalEntryInput = cases.find(
     (entry) => entry.name === "D0 normal entry",
   );
@@ -575,7 +634,9 @@ function writeInput(buffer: ArrayBuffer, input: ControlInput) {
   }
   uints[32] = anchor?.planeMask ?? 0;
   uints[33] = input.entering ? 1 : 0;
-  uints[34] = input.rebuildMaskedAnchor ? 1 : 0;
+  if (input.rawAnchor && input.rebuildMaskedAnchor)
+    throw new Error("raw anchor controls cannot pre-reconstruct masked planes");
+  uints[34] = input.rebuildMaskedAnchor && !input.rawAnchor ? 1 : 0;
 }
 
 function readResult(bytes: ArrayBuffer): RawControlResult {
@@ -618,9 +679,18 @@ function compareCase(
         actual.cellIndices.every(
           (value, axis) => value === result.anchor.cellIndices[axis],
         );
+    } else if (result.kind === "miss") {
+      passed = actual.kind === KIND_MISS;
     } else {
-      passed =
-        actual.kind === (result.kind === "miss" ? KIND_MISS : KIND_REFUSED);
+      const expectedReason = {
+        "visit-cap": 1,
+        "state-mismatch": 2,
+        "nonmonotone-crossing": 3,
+        "degenerate-projected-normal": 4,
+        "ambiguous-anchor": 5,
+        "invalid-input": 6,
+      }[result.reason];
+      passed = actual.kind === KIND_REFUSED && actual.reason === expectedReason;
     }
     if (!passed) failure = "GPU boundary result differs from CPU solid oracle";
   } else if (expected.kind === "refract") {
