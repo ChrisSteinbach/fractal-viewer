@@ -11,7 +11,12 @@ import {
   resolveSurfaceFinish,
 } from "../src/fractal/surface-finish";
 import { PREVIEW_EXHAUSTED, PREVIEW_MISS, renderPreview } from "./de-preview";
-import type { PanelStats, PreviewScene, Vec3 } from "./de-preview";
+import type {
+  PanelStats,
+  PreviewRegion,
+  PreviewScene,
+  Vec3,
+} from "./de-preview";
 import { CLEARANCE_BAND_CONTRACT } from "./transmission-gpu-contract";
 import {
   clearanceLayerSignal,
@@ -218,6 +223,7 @@ interface State {
   samples: number;
   work: number;
   unresolved: boolean;
+  terminalApplied: boolean;
   termination?: Termination;
   pending?: { point: Vec3; normal: Vec3; material: BendMaterial; tau: number };
 }
@@ -260,6 +266,7 @@ export function renderBentTransmission(
   fixture: BendFixture,
   size: number,
   options: BendOptions = {},
+  region?: PreviewRegion,
 ): BendPanel {
   const transmit = options.transmit ?? 0.9;
   const ior = options.ior ?? 1.45;
@@ -315,8 +322,19 @@ export function renderBentTransmission(
   const center = fixture.scene.boundingCenter ??
     fixture.scene.target ?? [0, 0, 0];
   const delta = R * CLEARANCE_BAND_CONTRACT.sampleRadiusFraction;
+  const outputRegion = region ?? { x: 0, y: 0, width: size, height: size };
+  if (
+    !Object.values(outputRegion).every(Number.isInteger) ||
+    outputRegion.x < 0 ||
+    outputRegion.y < 0 ||
+    outputRegion.width < 1 ||
+    outputRegion.height < 1 ||
+    outputRegion.x + outputRegion.width > size ||
+    outputRegion.y + outputRegion.height > size
+  )
+    throw new Error("Bend-study region must lie inside the full image");
   const states = new Map<string, State>();
-  const pixels: State[] = [];
+  const pixels = new Array<State>(outputRegion.width * outputRegion.height);
   let current: State;
   let panel: PanelStats | undefined;
   let calls = 0;
@@ -416,6 +434,7 @@ export function renderBentTransmission(
               samples: 0,
               work: 0,
               unresolved: false,
+              terminalApplied: false,
             };
             if (!interval) mark(current, "noIntersection");
             states.set(key, current);
@@ -599,7 +618,11 @@ export function renderBentTransmission(
           return current.color;
         },
         rayLinear(ray) {
-          pixels[ray.py * size + ray.px] = current;
+          const outputPixel =
+            (ray.py - outputRegion.y) * outputRegion.width +
+            ray.px -
+            outputRegion.x;
+          pixels[outputPixel] = current;
           if (
             current.active &&
             !current.eventDone &&
@@ -612,6 +635,7 @@ export function renderBentTransmission(
                 current.color[channel] +=
                   current.throughput * radiance[channel];
               current.active = false;
+              current.terminalApplied = true;
               mark(current, "domainComplete");
             }
           }
@@ -624,12 +648,19 @@ export function renderBentTransmission(
           ) {
             // Deliberately empty.
           }
-          if (!current.active && current.termination === "noIntersection")
+          if (
+            !current.active &&
+            current.termination === "noIntersection" &&
+            !current.terminalApplied
+          ) {
             current.color = terminal(current, ray.py);
+            current.terminalApplied = true;
+          }
           return current.color;
         },
       },
       size,
+      outputRegion,
     );
     totalSteps += panel.steps;
     totalEvals += panel.evals;
