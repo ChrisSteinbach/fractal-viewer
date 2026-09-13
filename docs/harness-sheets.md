@@ -643,6 +643,15 @@ the old Brick ray and localizes its disagreement upstream of optical
 transport. Both records remain separate from the displayed material, with
 their limits in the revision study.
 
+The owner rejected the full-size layered/bent appearance. The replacement
+`transmission-dielectric-solid.harness.ts` checks explicitly closed finite
+Menger and native hyper-Menger solids, anchored boundary continuation and
+dielectric physics. All six scalar tests and eleven initial GPU controls
+pass; the initial depth-three full-tree GPU diagnostic refuses completion.
+The coarser depth-two comparison and its residual-replay contract are recorded
+in [`surface-dielectric-study.md`](surface-dielectric-study.md). This remains
+an unreviewed experiment with an explicit geometry change.
+
 ### finish-pattern-review-score
 
 The blinded owner-review validator's own test harness
