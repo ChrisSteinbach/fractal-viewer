@@ -46,13 +46,61 @@ reproduction commands and limitations are below. Remaining implementation
 work is tracked in the project's issue tracker, rather than in a second
 handoff task list.
 
-## Current full-size result
+## Consolidated final qualification evidence
 
-The new [1024×1024 comparison](../scripts/out/transmission-dielectric-review.html)
-contains one glass image per dimension and matching opaque controls. Every
-row completes all 1,048,576 pixels and 4,194,304 samples without unresolved
-or non-finite samples, traversal failures or resource caps. All twenty-two
-current-source GPU controls pass on quiet RX 7900 XTX / Chromium hardware.
+The final-source evidence snapshot has source hash
+`ab6836637fa0f98c5be47c6a35b42d867e33b38fcab8c58fd7b4de7820935c90`. It keeps
+the owner-selected appearance wording above, but it does not qualify production
+integration.
+
+| Gate                            | 3D finite Menger | 4D posed hyper-Menger | Result                     |
+| ------------------------------- | ---------------: | --------------------: | -------------------------- |
+| 256×144 canonical preview       |         4.0499 s |              2.5221 s | Both miss the 1 s target   |
+| 512×288 canonical settled image |         8.0101 s |              4.8882 s | Both meet the 10 s target  |
+| 1920×1080 canonical image       |        77.9248 s |             51.9857 s | Both meet the 120 s target |
+
+The known additional-state plans are 116,443,618 B (3D) and 116,496,887 B
+(4D), so both fit the 128 MiB plan. Observed process-tree RSS increases were
+202,113,024 B in the 3D run and 61,939,712 B in the 4D full-HD cancellation
+row. The sampler excludes VRAM and driver-private allocations, but the 3D
+observation exceeds 128 MiB; total additional state is therefore not
+certified.
+
+The 256×144 cancellation probes pass with host request-through-cleanup times
+of 168.949 ms (3D) and 44.632 ms (4D), and longest completed-run checkpoints
+of 297.5 ms and 222.5 ms. The full-HD 4D cancellation also passes at 179.155
+ms host acknowledgement, 445.7 ms maximum checkpoint and byte-exact follow-up
+image. The 3D 64×64 cancellation is clean and byte-exact at 173.093 ms, but
+its 127.445 s run and 556.9 ms checkpoint miss their targets. The 3D 64×32
+case takes 209.428 s and 573 ms; its cancellation trigger is not reached
+before the 130 s deadline and the case is rejected. The default full-HD 3D
+image's maximum checkpoint is 547 ms.
+
+The fixed eight-row pose matrix passes with distinct images, zero caps and
+residuals at or below 1/1024. It supports only the listed finite D2 cameras
+and rotors: canonical, grazing and corner-adjacent cameras in 3D; those three
+cameras with canonical 4D geometry; and `rotorA`/grazing plus
+`rotorB`/corner-adjacent in 4D. The final tile and unaligned-window checks are
+byte-exact in both dimensions. These results leave a no-go for the complete
+envelope because preview speed, total-state certification and 3D export
+responsiveness remain open. Production integration remains blocked.
+
+The ignored final records are
+`pose-qualification-256x144.json`,
+`final-512x288-{menger,hyper4}.json`,
+`final-1920x1080-menger.json`,
+`final-cancel-1920x1080-hyper4-128x64.json`,
+`final-cancel-256x144-{menger,hyper4}.json`, and `final-tile-window.json`.
+The rejected 3D cancellation records are
+`final-cancel-1920x1080-menger-{64x64,64x32}.json`.
+
+## Owner-selected full-size result
+
+The [1024×1024 comparison](../scripts/out/transmission-dielectric-review.html)
+contains one glass image per dimension and matching opaque controls. Every row
+completes all 1,048,576 pixels and 4,194,304 samples without unresolved or
+non-finite samples, traversal failures or resource caps. All twenty-two
+source-matched GPU controls pass on quiet RX 7900 XTX / Chromium hardware.
 
 | Glass scene                 | Produce and save PNG | Tile submission/readback | Maximum omitted contribution per pixel | Known allocation plan |
 | --------------------------- | -------------------: | -----------------------: | -------------------------------------: | --------------------: |
@@ -63,24 +111,17 @@ Both omitted-contribution maxima are below 1/1024 in the largest linear RGB
 channel. This bounds discarded optical branches, not all floating-point or
 antialiasing error. The practical timing starts immediately before the browser
 render call and ends after return, decoding, PNG encoding and file write; it
-excludes browser startup and later JSON checkpoint serialization. Each row
-also runs the research controls. The allocation plan fits 128 MiB; browser,
-driver-private and JS overhead are not measured as a total peak.
+excludes browser startup and later JSON checkpoint serialization.
 
-The source hash is
+The selected source hash is
 `81e436ecd7d0167048decf6de23ced1244e28bb2f76e64a473d50823223328a6`.
 The complete report is
-`scripts/out/transmission-dielectric-gpu/actual-1024x1024-all.json`.
-The main PNG hashes are
+`scripts/out/transmission-dielectric-gpu/actual-1024x1024-all.json`. The main
+PNG hashes are
 `780aa05ecb45648659c3afb6768cc5c14454ea35df46752124082a3366906e62`
 (3D) and
 `c67a7cab367e6985c35010e30a3f24ae60d118f6476d158a2b7cd376aee8bc0c`
-(4D). The opaque images complete with zero residual in 4.651 and 3.482
-seconds respectively.
-
-This delivers the owner-selected appearance and actual dielectric transport
-on these two finite solids. General fractal coverage, interactive scheduling,
-full application integration and production qualification remain outstanding.
+(4D). Future measurements do not replace this appearance record.
 
 ## Selected desktop waiting targets
 
@@ -90,33 +131,33 @@ controls pass. The practical time includes the browser render call, its
 research controls, readback, return and PNG encoding/write. Browser startup
 and later report serialization are excluded.
 
-| Image size            | Selected target |         3D Menger |   Posed 4D slice |
-| --------------------- | --------------: | ----------------: | ---------------: |
-| 256×144 preview       |             1 s |  5.203 s — misses | 3.435 s — misses |
-| 512×288 settled image |            10 s | 10.239 s — misses |  6.229 s — meets |
-| 1920×1080 export      |           120 s | 101.601 s — meets | 68.406 s — meets |
+| Image size            | Selected target |         3D Menger |    Posed 4D slice |
+| --------------------- | --------------: | ----------------: | ----------------: |
+| 256×144 preview       |             1 s | 4.0499 s — misses | 2.5221 s — misses |
+| 512×288 settled image |            10 s |  8.0101 s — meets |  4.8882 s — meets |
+| 1920×1080 export      |           120 s | 77.9248 s — meets | 51.9857 s — meets |
 
-The full-HD originals are available for
+The final full-HD records are
+`final-1920x1080-menger.json` and
+`final-cancel-1920x1080-hyper4-128x64.json`. Their known allocation plans are
+116,443,618 and 116,496,887 bytes, below 134,217,728 bytes. Driver-private,
+browser and JS overhead remain outside the plan; observed process-tree RSS
+still prevents a total peak-memory certification. Maximum omitted per-pixel
+contributions are 0.000972737 and 0.000968995 respectively. The regenerated
+full-HD PNGs are available for
 [3D](../scripts/out/transmission-dielectric-gpu/menger3-glass-1920x1080.png)
 and [4D](../scripts/out/transmission-dielectric-gpu/hyper4-glass-1920x1080.png).
-Their known allocation plans are 122,735,074 and 122,788,343 bytes, below
-134,217,728 bytes. Driver-private, browser and JS overhead remain unmeasured;
-this is not a certification of total peak process memory. Maximum omitted
-per-pixel contributions are 0.000972737 and 0.000968995 respectively.
 
-The renderer therefore meets the selected **export-time target for these
-finite scenes**, while it fails the preview target in both dimensions and
-the settled-image target in 3D. This is a no-go for claiming the complete
-selected experience. Interactive responsiveness, total-state measurement,
-window/export invariants and general fractal coverage still require separate
-qualification. Maximum measured tile submission/readback spans reach
-2.865 seconds in the full-HD 3D run; a completed image does not prove a
-responsive application.
+The renderer therefore meets the selected **canonical export-time target for
+these finite scenes**, while it fails the preview target in both dimensions.
+The complete selected experience remains a no-go because total-state
+measurement and 3D export responsiveness are not qualified. A completed image
+does not prove a responsive application.
 
-Individual records are
-`scripts/out/transmission-dielectric-gpu/target-{256x144,512x288,1920x1080}-{menger,hyper4}-glass.json`.
-They retain source hash
-`81e436ecd7d0167048decf6de23ced1244e28bb2f76e64a473d50823223328a6`.
+Individual final records are the ignored
+`final-512x288-{menger,hyper4}.json`, `final-1920x1080-menger.json` and the
+corresponding final 4D full-HD record. They retain source hash
+`ab6836637fa0f98c5be47c6a35b42d867e33b38fcab8c58fd7b4de7820935c90`.
 Reproduce with the same launcher, `--mode=glass`, the stated width/height and
 `--fixture=menger3` or `--fixture=hyper4`; give each run its own `--output`
 name to preserve the main comparison report.
@@ -194,31 +235,34 @@ The harness uses a 500 ms response target for this human-visible cancel
 operation. On quiet verified RX 7900 XTX / Chromium hardware, the existing
 128×64 preview schedule passed in both dimensions:
 
-| 256×144 scene | Host request through cleanup | Longest full-run cancellation checkpoint | Post-cancel image | Observed process-tree RSS increase |
-| ------------- | ---------------------------: | ---------------------------------------: | ----------------: | ---------------------------------: |
-| 3D Menger     |                   235.790 ms |                               336.000 ms |        byte-exact |                       30,101,504 B |
-| Posed 4D      |                   265.763 ms |                               252.900 ms |        byte-exact |                       26,238,976 B |
+| 256×144 scene | Host request through cleanup | Longest full-run cancellation checkpoint | Post-cancel image |
+| ------------- | ---------------------------: | ---------------------------------------: | ----------------: |
+| 3D Menger     |                   168.949 ms |                                 297.5 ms |        byte-exact |
+| Posed 4D      |                    44.632 ms |                                 222.5 ms |        byte-exact |
 
 The checkpoint maximum covers each GPU submission/fence, readback map, one
 tile's synchronous host assembly and whole-image base64 encoding. Both cancelled
 runs returned no image, completed cleanup without a device loss or uncaptured
 error, and the following images completed every sample with their prior PNG
-hashes and omitted-radiance bounds unchanged. Practical delivery measured
-4.4184 seconds in 3D and 2.7880 seconds in 4D, so this demonstrates bounded
-harness cancellation without meeting the one-second preview target.
+hashes and omitted-radiance bounds unchanged. Practical canonical preview
+delivery measured 4.0499 seconds in 3D and 2.5221 seconds in 4D, so this
+demonstrates bounded harness cancellation without meeting the one-second
+preview target.
 
 The Linux RSS sampler walks only the launcher process and the browser descendants
 listed by `/proc`, from immediately before the normal page call through PNG
 write. The table reports the exact observed increase over that run's baseline,
 not the roughly 1.2 GB process-tree total. It excludes driver-private memory,
 VRAM and allocations outside the process tree, and therefore does not certify
-the 128 MiB total-state limit. The ignored records are
-`preview-scheduling-{menger,hyper4}-final.json`. Export-size cancellation,
-full-HD observed peak state and production-app integration remain unqualified.
+the 128 MiB total-state limit. The final records are
+`final-cancel-256x144-{menger,hyper4}.json`. Full-HD 4D cancellation passes;
+the 3D 64×64 and 64×32 stress records are rejected as described in the
+consolidated evidence. Production-app integration remains blocked.
 
 ## Exact tile and window invariants
 
-Source `90a7fa0565c4176c69acb4009242924cc4d948b9f8c9e3c5f28bdbfeb8572104`
+The final-source tile/window record uses source hash
+`ab6836637fa0f98c5be47c6a35b42d867e33b38fcab8c58fd7b4de7820935c90` and
 keeps the shader's ray coordinates tied to the full raster while allowing the
 harness to return an explicit sub-rectangle. Window dimensions size the returned
 RGBA payload and its allocation plan; they never replace the full width, height
@@ -236,11 +280,11 @@ dimensions. The crop hashes are
 `873195c1d442e1be6f8d040c026a0a073095f032c106fe8dcc61655d480cb29f`
 and `4a727ad4cd00d912cbfd006d4c1b8050ed26e07d59002601b14b59b1aa31cd4d`.
 
-The ignored record is `tile-window-invariant-final.json`. Reproduce both
+The ignored final record is `final-tile-window.json`. Reproduce both
 dimensions with:
 
 ```bash
-node scripts/transmission-dielectric-gpu.mjs --display=:0 --width=256 --height=144 --mode=glass --tileCheck=100x55,73x47 --window=37,29,121,67 --output=tile-window-invariant-final.json
+node scripts/transmission-dielectric-gpu.mjs --display=:0 --width=256 --height=144 --mode=glass --tileCheck=100x55,73x47 --window=37,29,121,67 --output=final-tile-window.json
 ```
 
 This establishes the harness's full-image coordinate and assembly contract for
