@@ -54,10 +54,11 @@ test("includes a live child and reports a peak around an async operation", async
     assert.deepEqual(childOnly.sampledPids, [child.pid]);
     assert.ok(childOnly.knownRssBytes !== null && childOnly.knownRssBytes > 0);
 
+    const baseline = await sampleProcessTreeRss(process.pid);
     const observed = await sampleProcessTreeRssPeak(
       process.pid,
       () => new Promise((resolve) => setTimeout(resolve, 35)),
-      { intervalMs: 5 },
+      { intervalMs: 5, initialSample: baseline },
     );
     assert.equal(observed.value, undefined);
     assert.ok(observed.peak.sampleCount >= 2);

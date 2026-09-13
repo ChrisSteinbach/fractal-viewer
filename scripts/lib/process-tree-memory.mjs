@@ -229,10 +229,10 @@ export async function sampleProcessTreeRssPeak(
   let exactPeakRssBytes = null;
   const issues = [];
 
-  const capture = async () => {
+  const capture = async (initialSample) => {
     let sample;
     try {
-      sample = await sampleProcessTreeRss(rootPid);
+      sample = initialSample ?? (await sampleProcessTreeRss(rootPid));
     } catch (error) {
       // The public sampler already handles normal procfs failures. This guard
       // protects a monitor from an unexpected implementation failure as well.
@@ -259,7 +259,11 @@ export async function sampleProcessTreeRssPeak(
     }
   };
 
-  await capture();
+  // A caller which needs its timing scope to begin at the operation can take
+  // this baseline just before entering here. Reusing it avoids charging a
+  // duplicate /proc walk to the operation while still making it the peak
+  // monitor's first observation.
+  await capture(options.initialSample);
   let stopped = false;
   const monitor = (async () => {
     while (!stopped) {

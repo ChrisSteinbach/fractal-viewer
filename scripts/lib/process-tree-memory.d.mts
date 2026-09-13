@@ -51,5 +51,5 @@ export declare function sampleProcessTreeRss(
 export declare function sampleProcessTreeRssPeak<T>(
   rootPid: number,
   operation: () => Promise<T> | T,
-  options?: { intervalMs?: number },
+  options?: { intervalMs?: number; initialSample?: ProcessTreeRssSample },
 ): Promise<{ value: T; peak: ProcessTreeRssPeak }>;

@@ -10,6 +10,10 @@ import { build } from "esbuild";
 import { chromium } from "playwright-core";
 import { encodePng } from "./de-preview.ts";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
+import {
+  sampleProcessTreeRss,
+  sampleProcessTreeRssPeak,
+} from "./lib/process-tree-memory.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, "scripts/out/transmission-dielectric-gpu");
@@ -45,6 +49,8 @@ async function provenance(metafile) {
   const explicit = [
     "scripts/transmission-dielectric-gpu.mjs",
     "scripts/transmission-dielectric-gpu.page.ts",
+    "scripts/lib/process-tree-memory.mjs",
+    "scripts/lib/process-tree-memory.d.mts",
   ].map((file) => path.join(root, file));
   const inputs = Object.keys(metafile.inputs ?? {}).map((input) =>
     path.isAbsolute(input) ? input : path.resolve(root, input),
@@ -133,6 +139,55 @@ function outputPng(base64, width, height) {
   return {
     png,
     timing: { base64DecodeMs, rgbaToRgbMs, pngEncodeMs },
+  };
+}
+
+const PROCESS_TREE_RSS_SCOPE =
+  "Linux /proc resident-set snapshot for this Node launcher and recursively listed browser descendants, from immediately before page.evaluate through RGBA conversion, PNG encoding and PNG file write. It excludes GPU driver-private allocations, VRAM, browser-wide allocations outside that tree, and non-RSS memory; it is not total-memory certification.";
+
+function unmeasuredProcessTreeRss(reason) {
+  return {
+    status: "unmeasured",
+    scope: PROCESS_TREE_RSS_SCOPE,
+    reason,
+    baseline: null,
+    peak: null,
+    additionalRssBytes: null,
+  };
+}
+
+function processTreeRssRecord(baseline, peak) {
+  const complete = baseline.status === "ok" && peak.status === "ok";
+  const status = complete
+    ? "ok"
+    : baseline.status === "unknown" || peak.status === "unknown"
+      ? "unknown"
+      : "partial";
+  return {
+    status,
+    scope: PROCESS_TREE_RSS_SCOPE,
+    baseline: {
+      status: baseline.status,
+      rssBytes: baseline.rssBytes,
+      knownRssBytes: baseline.knownRssBytes,
+      sampledPids: baseline.sampledPids,
+      unavailableProcessCount: baseline.unavailableProcessCount,
+      issues: baseline.issues,
+    },
+    peak: {
+      status: peak.status,
+      rssBytes: peak.peakRssBytes,
+      knownRssBytes: peak.knownPeakRssBytes,
+      sampleCount: peak.sampleCount,
+      completeSampleCount: peak.completeSampleCount,
+      partialSampleCount: peak.partialSampleCount,
+      unknownSampleCount: peak.unknownSampleCount,
+      intervalMs: peak.intervalMs,
+      startedAtMs: peak.startedAtMs,
+      endedAtMs: peak.endedAtMs,
+      issues: peak.issues,
+    },
+    additionalRssBytes: complete ? peak.peakRssBytes - baseline.rssBytes : null,
   };
 }
 
@@ -229,8 +284,48 @@ async function main() {
     let controls = null;
     for (const fixture of fixtureNames)
       for (const mode of modeNames) {
-        const pageReturnEncodeWriteStarted = performance.now();
-        const item = await execute({ ...options, fixture, mode });
+        // Keep the existing end-to-end timing inside the observed operation:
+        // this baseline is deliberately before its timer starts.
+        const processTreeRssBaseline = await sampleProcessTreeRss(process.pid);
+        const observed = await sampleProcessTreeRssPeak(
+          process.pid,
+          async () => {
+            const pageReturnEncodeWriteStarted = performance.now();
+            const item = await execute({ ...options, fixture, mode });
+            if (
+              "inconclusive" in item ||
+              "preflightRefusal" in item ||
+              "controlRefusal" in item
+            )
+              return { item };
+            const [row] = item.rows;
+            const pageEvaluateWallMs =
+              performance.now() - pageReturnEncodeWriteStarted;
+            const { png, timing: launcherImageTiming } = outputPng(
+              row.imageBase64,
+              row.width,
+              row.height,
+            );
+            const filename = `${row.fixture}-${row.mode}-${row.width}x${row.height}.png`;
+            const pngWriteStarted = performance.now();
+            await writeFile(path.join(outDir, filename), png);
+            const pngWriteMs = performance.now() - pngWriteStarted;
+            const pageReturnEncodeWriteWallMs =
+              performance.now() - pageReturnEncodeWriteStarted;
+            return {
+              item,
+              row,
+              png,
+              filename,
+              launcherImageTiming,
+              pageEvaluateWallMs,
+              pngWriteMs,
+              pageReturnEncodeWriteWallMs,
+            };
+          },
+          { intervalMs: 25, initialSample: processTreeRssBaseline },
+        );
+        const { item } = observed.value;
         const partialRecord = {
           generatedAt: new Date().toISOString(),
           display,
@@ -240,6 +335,11 @@ async function main() {
           sourceProvenance,
           options,
           report: item,
+          memory: {
+            processTreeRss: unmeasuredProcessTreeRss(
+              "The page returned before a normal image row, so RSS is not reported as a row measurement.",
+            ),
+          },
         };
         if ("inconclusive" in item) {
           partialRecord.verdict = {
@@ -284,20 +384,15 @@ async function main() {
         controls ??= item.controls;
         runtime.uncaptured.push(...item.runtime.uncaptured);
         runtime.lost ??= item.runtime.lost;
-        const [row] = item.rows;
-        const pageEvaluateWallMs =
-          performance.now() - pageReturnEncodeWriteStarted;
-        const { png, timing: launcherImageTiming } = outputPng(
-          row.imageBase64,
-          row.width,
-          row.height,
-        );
-        const filename = `${row.fixture}-${row.mode}-${row.width}x${row.height}.png`;
-        const pngWriteStarted = performance.now();
-        await writeFile(path.join(outDir, filename), png);
-        const pngWriteMs = performance.now() - pngWriteStarted;
-        const pageReturnEncodeWriteWallMs =
-          performance.now() - pageReturnEncodeWriteStarted;
+        const {
+          row,
+          png,
+          filename,
+          launcherImageTiming,
+          pageEvaluateWallMs,
+          pngWriteMs,
+          pageReturnEncodeWriteWallMs,
+        } = observed.value;
         const launcherBase64DecodeBytes = row.width * row.height * 4;
         const launcherRgbEncodeBytes = row.width * row.height * 3;
         const knownCrossProcessBytes =
@@ -313,6 +408,10 @@ async function main() {
           knownCrossProcessBytes,
           crossProcessLimitCheck:
             knownCrossProcessBytes <= row.memory.limitBytes,
+          processTreeRss: processTreeRssRecord(
+            processTreeRssBaseline,
+            observed.peak,
+          ),
         };
         row.image = {
           path: path.relative(root, path.join(outDir, filename)),
