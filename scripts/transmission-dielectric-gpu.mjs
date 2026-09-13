@@ -726,7 +726,8 @@ async function main() {
         finished = true;
       });
       const progressSamples = [];
-      const deadline = Date.now() + 30_000;
+      const triggerWaitLimitMs = 130_000;
+      const deadline = Date.now() + triggerWaitLimitMs;
       let trigger = null;
       while (!finished && Date.now() < deadline) {
         const progress = await readProgress();
@@ -788,6 +789,7 @@ async function main() {
         cancelledCleanly,
         responsiveness: {
           targetMs: cancellationTargetMs,
+          triggerWaitLimitMs,
           hostAcknowledgementWallMs,
           acknowledgementLatencyMs,
           acknowledgementWithinTarget,
