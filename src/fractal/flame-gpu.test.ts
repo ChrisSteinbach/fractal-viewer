@@ -1,8 +1,12 @@
 import {
+  ADAPTIVE_CLASS_U32S,
+  ADAPTIVE_PARAMS_BAND_OFFSET_BYTES,
+  ADAPTIVE_PARAMS_BYTES,
   CHAIN_STRIDE_BYTES,
   COLOR_FIXED_POINT_SCALE,
   DOWNSAMPLE_PARAMS_BYTES,
   EMITTER_OVERLAP_ATTEMPTS,
+  FLAME_GPU_ADAPTIVE_WGSL,
   FLAME_GPU_KERNEL_WGSL,
   HIST_U32_PER_BUCKET,
   KERNEL_VARIATION_INDEX,
@@ -17,6 +21,7 @@ import {
   buildMeshTriangleTable,
   createGearTableBuilder,
   packChaosRowsTable,
+  packGpuAdaptive,
   packGpuChains,
   packGpuColorLUT,
   packGpuDownsample,
@@ -36,8 +41,12 @@ import {
   prepareChaosGame,
 } from "./chaos-game";
 import { transformColors } from "./color";
-import { createFlameHistogram } from "./flame";
-import type { Mat4 } from "./flame";
+import {
+  OCCUPANCY_TILE,
+  adaptiveClassMap,
+  createFlameHistogram,
+} from "./flame";
+import type { FlameHistogram, Mat4 } from "./flame";
 import { lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
 import { buildPaletteLUT } from "./palette";
@@ -2373,6 +2382,192 @@ describe("packGpuDownsample", () => {
   });
 });
 
+describe("packGpuAdaptive", () => {
+  // Params element offsets (4-byte units), restated directly from
+  // flame-gpu.ts's ADAPTIVE_PARAMS_BYTES doc comment — same independent-
+  // restatement discipline as packGpuDownsample's tests above.
+  const A_SRC_W = 0;
+  const A_SRC_H = 1;
+  const A_OUT_W = 2;
+  const A_OUT_H = 3;
+  const A_SCALE_X = 4;
+  const A_SCALE_Y = 5;
+  const A_SRC_WORDS = 6;
+  const A_TILE_STRIDE = 7;
+  const A_TILES_X = 8;
+  const A_TILES_Y = 9;
+  const A_CLASS_COUNT = 10;
+  const A_BAND_ROW_START = 11;
+  const A_BAND_ROWS = 12;
+
+  const PARAMS = {
+    estimatorRadius: 4,
+    estimatorMinimumRadius: 0,
+    estimatorCurve: 0.4,
+  };
+
+  /** A deterministic sparse-to-dense source so several radius classes exist:
+   * counts climb per home block with a seeded jitter. */
+  function source(width = 16, height = 16, scale = 2): FlameHistogram {
+    const hist = createFlameHistogram(width, height);
+    const rng = mulberry32(7);
+    const outWidth = width / scale;
+    for (let oy = 0; oy < height / scale; oy++) {
+      for (let ox = 0; ox < outWidth; ox++) {
+        const roll = rng();
+        const count =
+          roll < 0.3 ? 0 : roll < 0.7 ? 1 : 1 + Math.floor(rng() * 200);
+        if (count === 0) continue;
+        hist.hits[oy * scale * width + ox * scale] = count;
+        hist.hitMass += count;
+      }
+    }
+    return hist;
+  }
+
+  it("writes src/out dims, scales, bitmap geometry and class count at their documented offsets", () => {
+    const packed = packGpuAdaptive(source(16, 16), 8, 8, PARAMS);
+    expect(packed.params.byteLength).toBe(ADAPTIVE_PARAMS_BYTES);
+    const u32 = new Uint32Array(packed.params);
+    expect(u32[A_SRC_W]).toBe(16);
+    expect(u32[A_SRC_H]).toBe(16);
+    expect(u32[A_OUT_W]).toBe(8);
+    expect(u32[A_OUT_H]).toBe(8);
+    expect(u32[A_SCALE_X]).toBe(2);
+    expect(u32[A_SCALE_Y]).toBe(2);
+    expect(u32[A_SRC_WORDS]).toBe(1);
+    expect(u32[A_TILES_X]).toBe(4);
+    expect(u32[A_TILES_Y]).toBe(4);
+    expect(u32[A_TILE_STRIDE]).toBe(5);
+    expect(u32[A_CLASS_COUNT]).toBe(packed.classCount);
+    expect(u32[A_BAND_ROW_START]).toBe(0);
+    expect(u32[A_BAND_ROWS]).toBe(8);
+    // The band pair is adjacent, so the driver's per-band rewrite is one
+    // 8-byte writeBuffer at the exported offset.
+    expect(ADAPTIVE_PARAMS_BAND_OFFSET_BYTES).toBe(A_BAND_ROW_START * 4);
+  });
+
+  it("carries the shared CPU class map verbatim as classOf", () => {
+    const hist = source(16, 16);
+    const packed = packGpuAdaptive(hist, 8, 8, PARAMS);
+    const map = adaptiveClassMap(hist, 8, 8, PARAMS);
+    expect(Array.from(packed.classOf)).toEqual(Array.from(map.classOf));
+    expect(packed.classCount).toBe(map.classes.length);
+  });
+
+  it("packs the class table's radius fields and kernel offsets against the reduced kernels array", () => {
+    const hist = source(16, 16);
+    const packed = packGpuAdaptive(hist, 8, 8, PARAMS);
+    const map = adaptiveClassMap(hist, 8, 8, PARAMS);
+    for (let c = 0; c < packed.classCount; c++) {
+      const klass = map.classes[c];
+      const entry = c * ADAPTIVE_CLASS_U32S;
+      expect(packed.classTable[entry]).toBe(klass.radiusX);
+      expect(packed.classTable[entry + 1]).toBe(klass.radiusY);
+      const kxOff = packed.classTable[entry + 2];
+      const kyOff = packed.classTable[entry + 3];
+      expect(
+        Array.from(
+          packed.kernels.subarray(kxOff, kxOff + klass.kernelX.length),
+        ),
+      ).toEqual(Array.from(klass.kernelX, Math.fround));
+      expect(
+        Array.from(
+          packed.kernels.subarray(kyOff, kyOff + klass.kernelY.length),
+        ),
+      ).toEqual(Array.from(klass.kernelY, Math.fround));
+    }
+  });
+
+  it("stores the separable in-bounds per-axis weight reciprocals the gather normalizes by", () => {
+    const hist = source(16, 16);
+    const packed = packGpuAdaptive(hist, 8, 8, PARAMS);
+    const map = adaptiveClassMap(hist, 8, 8, PARAMS);
+    for (let c = 0; c < packed.classCount; c++) {
+      const klass = map.classes[c];
+      const entry = c * ADAPTIVE_CLASS_U32S;
+      const xRecipOffset = packed.classTable[entry + 4];
+      const yRecipOffset = packed.classTable[entry + 5];
+      for (let ox = 0; ox < 8; ox++) {
+        const baseX = ox * 2;
+        let sum = 0;
+        for (let i = -klass.radiusX; i <= klass.radiusX; i++) {
+          const sx = baseX + i;
+          if (sx < 0 || sx >= 16) continue;
+          sum += klass.kernelX[i + klass.radiusX];
+        }
+        expect(packed.kernels[xRecipOffset + ox]).toBeCloseTo(1 / sum, 5);
+      }
+      for (let oy = 0; oy < 8; oy++) {
+        const baseY = oy * 2;
+        let sum = 0;
+        for (let j = -klass.radiusY; j <= klass.radiusY; j++) {
+          const sy = baseY + j;
+          if (sy < 0 || sy >= 16) continue;
+          sum += klass.kernelY[j + klass.radiusY];
+        }
+        expect(packed.kernels[yRecipOffset + oy]).toBeCloseTo(1 / sum, 5);
+      }
+    }
+  });
+
+  it("sets the occupancy bitmap exactly for source cells with hits", () => {
+    const hist = createFlameHistogram(64, 2);
+    hist.hits[0] = 1; // word 0, bit 0
+    hist.hits[31] = 2; // word 0, bit 31
+    hist.hits[32] = 3; // word 1, bit 0
+    hist.hits[64 + 5] = 4; // second row, bit 5
+    const packed = packGpuAdaptive(hist, 64, 1, PARAMS);
+    expect(packed.occBits.length).toBe(2 * 2);
+    expect(packed.occBits[0]).toBe(((1 << 0) | (1 << 31)) >>> 0);
+    expect(packed.occBits[1]).toBe(1 << 0);
+    expect(packed.occBits[2]).toBe(1 << 5);
+    expect(packed.occBits[3]).toBe(0);
+  });
+
+  it("charges each cell the base work plus its full in-bounds footprint, and totals them", () => {
+    const hist = source(16, 16);
+    const packed = packGpuAdaptive(hist, 8, 8, PARAMS);
+    const map = adaptiveClassMap(hist, 8, 8, PARAMS);
+    let expectedTotal = 0;
+    for (let oy = 0; oy < 8; oy++) {
+      for (let ox = 0; ox < 8; ox++) {
+        const klass = map.classes[map.classOf[oy * 8 + ox]];
+        const baseX = ox * 2;
+        const baseY = oy * 2;
+        const x0 = Math.max(0, baseX - klass.radiusX);
+        const x1 = Math.min(15, baseX + klass.radiusX);
+        const y0 = Math.max(0, baseY - klass.radiusY);
+        const y1 = Math.min(15, baseY + klass.radiusY);
+        const expected = 1 + (x1 - x0 + 1) * (y1 - y0 + 1);
+        expect(packed.cellWork[oy * 8 + ox]).toBe(expected);
+        expectedTotal += expected;
+      }
+    }
+    expect(packed.totalWork).toBe(expectedTotal);
+  });
+
+  it("rejects a source whose dimensions aren't an exact multiple of the target", () => {
+    const hist = createFlameHistogram(10, 8);
+    expect(() => packGpuAdaptive(hist, 3, 8, PARAMS)).toThrow(RangeError);
+    expect(() => packGpuAdaptive(hist, 10, 3, PARAMS)).toThrow(RangeError);
+  });
+});
+
+describe("FLAME_GPU_ADAPTIVE_WGSL", () => {
+  it("declares the four entry points over one 8-binding group, with the CPU tile size interpolated", () => {
+    expect(FLAME_GPU_ADAPTIVE_WGSL).toContain("fn adaptiveMarkTiles");
+    expect(FLAME_GPU_ADAPTIVE_WGSL).toContain("fn adaptiveScanTilesX");
+    expect(FLAME_GPU_ADAPTIVE_WGSL).toContain("fn adaptiveScanTilesY");
+    expect(FLAME_GPU_ADAPTIVE_WGSL).toContain("fn adaptiveGather");
+    expect(FLAME_GPU_ADAPTIVE_WGSL).toContain(
+      `const TILE: u32 = ${OCCUPANCY_TILE};`,
+    );
+    for (let binding = 0; binding < 8; binding++) {
+      expect(FLAME_GPU_ADAPTIVE_WGSL).toContain(`@binding(${binding})`);
+    }
+  });
+});
 describe("convertGpuDisplayHistogram", () => {
   it("copies and removes the shared hit-weight scale from display data", () => {
     const out = createFlameHistogram(2, 1);
