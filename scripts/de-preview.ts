@@ -143,9 +143,10 @@ export interface PreviewScene {
   fog?: boolean;
   /**
    * Per-hit SHADING HOOK (default absent). When set, the marcher still
-   * does everything it did — march, tetrahedron normal, cone-traced
-   * shadow, step-count AO — and then hands that {@link PreviewHit} to the
-   * hook instead of running its own fixed lighting, so a sheet can light
+   * does everything it did — march, the default tetrahedron normal (or the
+   * explicit {@link PreviewScene.normal}), cone-traced shadow, step-count AO —
+   * and then hands that {@link PreviewHit} to the hook instead of running its
+   * own fixed lighting, so a sheet can light
    * every hit with a REAL composition (`surface-finish.ts`'s
    * `finishShadeTs` over a patterned albedo, say) rather than a ninth
    * approximation of one. The hook returns the pixel's pre-fog color in the
@@ -157,6 +158,11 @@ export interface PreviewScene {
    * drawn before the hook existed reproduces byte for byte.
    */
   shade?: (hit: PreviewHit) => Vec3;
+  /** Optional normal for a custom-shaded hit. Absent preserves the historical
+   * tetrahedron DE taps. Harnesses that force an exact sampled hit can provide
+   * its matching optical normal instead of querying an unrelated display
+   * point. */
+  normal?: (p: Vec3, radius: number) => Vec3;
   /** Linear-light surface shading, followed by the existing linear fog.
    * Mutually exclusive with the encoded `shade` hook. */
   shadeLinear?: (hit: PreviewLinearHit) => Vec3;
@@ -500,7 +506,7 @@ export function renderPreview(
             hitPos[at + 2] = p[2];
           }
           const h = eps * Math.max(t, 1);
-          const n = normalAt(scene.de, p, h);
+          const n = scene.normal?.(p, h) ?? normalAt(scene.de, p, h);
           if (linearHooks && !n.every(Number.isFinite)) {
             throw new Error("Nonfinite normal DE cannot shade a linear ray");
           }
