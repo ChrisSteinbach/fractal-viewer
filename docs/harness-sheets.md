@@ -621,6 +621,16 @@ transport. Sources, measured rows and the optical-solid alternative are in
 [`surface-transmission.md`](surface-transmission.md). Outputs live under
 `scripts/out/transmission-*` and are regenerated rather than committed.
 
+The layered/world-bending revision adds `transmission-layer-field.harness.ts`
+and `transmission-bend.harness.ts`, with contracts and negative qualification
+results in [`surface-transmission-revision.md`](surface-transmission-revision.md).
+`transmission-bend-tiles.harness.ts` pins irregular crops to untiled RGB and
+transport traces, including the posed native 4D scene. This allows
+`transmission-readable.mjs` to schedule the same renderer through parallel
+workers and resumable outputs. `transmission-primary-review.mjs` reproduces
+the current four 512px CPU reference stills. The full 256px CPU motion/control
+batch was stopped; the 17px orchestration smoke is not appearance evidence.
+
 ### finish-pattern-review-score
 
 The blinded owner-review validator's own test harness

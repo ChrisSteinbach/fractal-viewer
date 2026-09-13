@@ -303,6 +303,47 @@ procedural floor. They do not establish fine-detail appearance or temporal
 stability at a viewing resolution. In particular, completion and a changed
 pixel count are not a visual approval of the bending model.
 
+### Rendering the comparison at a useful size
+
+The diagnostic thumbnails were too small for the owner to judge the look.
+The current review contains four new 512 × 512 fractal stills: straight and
+weighted bending in Menger 3D and native posed 4D. Each output pixel has its
+own traced ray. These are offline reference resolutions, independent of the
+rectangular desktop timing targets.
+
+The full CPU motion/control batch was stopped after the owner challenged
+the long waits and asked for GPU image generation. Only the four primary
+512px references completed; the 256px motion/control package was not
+produced. A 34-job run at 17px verified the worker orchestration, but its
+images are smoke-test inputs and never useful appearance evidence.
+
+| 512 × 512 reference |  Covered pixels | Straight / weighted RGB difference | Weighted positive-increment events | Weighted DE calls | Unresolved |
+| ------------------- | --------------: | ---------------------------------: | ---------------------------------: | ----------------: | ---------: |
+| Menger 3D           | 136478 / 262144 |                          7.623/255 |                            3190061 |         325754733 |          0 |
+| Native Mandelbox 4D | 168477 / 262144 |                         13.538/255 |                            2819316 |         500599913 |          0 |
+
+All 1,048,576 rays in the four images complete. The larger images still
+show grain and weak separation of the layers; increasing pixel count does
+not qualify the appearance. CPU elapsed time is not a GPU performance
+estimate. The GPU scalar pilot above still excludes the image work.
+
+Both renderers import the same scenes, poses, floor and optical settings
+from `scripts/transmission-bend-fixtures.ts`. Node workers divide each image
+into regions passed through `renderBentTransmission` to the existing
+`renderPreview` marcher. Camera rays, floor coordinates and the world sample
+lattice use the full image coordinates. Region scheduling changes neither
+the layer field nor the bending model. The independent tile harness checks
+RGB, saved transport traces and completion against untiled rendering.
+
+The readable reference raises the positive-increment event work cap from
+128 to 4096 and its derived chunk allowance; the sample cap remains 4096,
+with no residual-throughput termination. A cap is an unresolved result,
+never background. Completed
+images and their summaries are saved individually, with source and PNG
+hashes, so an interrupted run can reuse finished images. The sum of tile
+renderer elapsed milliseconds overlaps across workers; it is neither the
+image's elapsed render time nor a measurement of GPU rendering speed.
+
 ## Reproduce the revision
 
 Run the scalar and image experiments separately from GPU measurement:
@@ -318,6 +359,28 @@ The image harness defaults to the diagnostic sizes above. Its
 `TRANSMISSION_BEND_4D_SIZE`, `TRANSMISSION_BEND_MOTION3_SIZE`, and
 `TRANSMISSION_BEND_MOTION4_SIZE` variables are raster controls; they do not
 change the world-space optical parameters.
+
+Verify the region adapter and reproduce just the four primary CPU
+references with:
+
+```bash
+npx vitest run --config scripts/vitest.harness.config.ts \
+  scripts/transmission-bend-tiles.harness.ts
+node scripts/transmission-primary-review.mjs --workers=2
+```
+
+The orchestrator reuses valid completed images or renders missing ones,
+writes the four-image `report.json` under `scripts/out/transmission-readable/`,
+and builds the review with `--stills-only`. A fresh render is an expensive
+offline CPU reference; keep it separate from real-driver timing runs.
+
+The underlying `transmission-readable.mjs` also supports the larger
+34-image still/motion/control study; that full-size run remains unfinished.
+Its per-image cache records source and PNG hashes. Diagnostic review
+generation with `--allow-thumbnail-main` always writes
+`transmission-revision-smoke.html` and its own manifest, so it cannot replace
+the current owner page. The normal page requires actual 512px stills and,
+when the full package is requested, 256px motion/control frames.
 
 With the current Xwayland cookie and `DISPLAY=:0` set as described in the
 project commands, run these on a quiet machine:
@@ -355,8 +418,10 @@ fields for alternate K/window comparisons; their invariant results and
 primary timing fields remain recorded. Newly generated reports include those
 additional fields and hashes of the bundled source inputs.
 
-Run `node scripts/transmission-revision-review.mjs` after generating the
-artifacts. It writes the offline review and source/artifact manifest under
+Run `node scripts/transmission-revision-review.mjs --stills-only` for the
+current four-reference package. Omit `--stills-only` only after generating
+the complete 34-image package. The builder writes the offline review and
+source/artifact manifest under
 `scripts/out/transmission-revision-review.html` and
 `scripts/out/transmission-revision-review-manifest.json`, including the
 failed calibration alongside the larger selected-ray pass. The original
