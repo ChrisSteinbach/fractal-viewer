@@ -100,6 +100,55 @@ function validateSourceProvenance(provenance, label) {
   return provenance;
 }
 
+function validateRunEnvironment(envelope, body) {
+  const quiet = envelope.quiet ?? body.quiet;
+  if (!quiet || quiet.contended !== false || quiet.unknownReason !== null)
+    throw new Error(
+      "GPU report must certify a quiet run with contended=false and unknownReason=null",
+    );
+  const renderer = envelope.renderer;
+  if (
+    typeof renderer !== "string" ||
+    renderer.length === 0 ||
+    /swiftshader|llvmpipe|software/i.test(renderer)
+  )
+    throw new Error("GPU report must identify a real non-software renderer");
+  const adapter = body.browserAdapter ?? envelope.browserAdapter;
+  if (!adapter || adapter.isFallbackAdapter !== false)
+    throw new Error(
+      "GPU report must certify browserAdapter.isFallbackAdapter=false",
+    );
+  const adapterText = [
+    adapter.vendor,
+    adapter.architecture,
+    adapter.device,
+    adapter.description,
+  ]
+    .filter((value) => typeof value === "string")
+    .join(" ");
+  if (/swiftshader|llvmpipe|software/i.test(adapterText))
+    throw new Error("GPU report browser adapter is software or fallback");
+  return { quiet, renderer, adapter };
+}
+
+function validateMemory(row, key) {
+  const memory = row.memory;
+  if (!memory || typeof memory !== "object")
+    throw new Error(`${key} is missing memory accounting`);
+  if (
+    !finite(memory.limitBytes) ||
+    memory.limitBytes !== 128 * 1024 * 1024 ||
+    !finite(memory.knownCrossProcessBytes) ||
+    memory.knownCrossProcessBytes < 0 ||
+    memory.knownCrossProcessBytes > memory.limitBytes ||
+    memory.crossProcessLimitCheck !== true
+  )
+    throw new Error(
+      `${key} must certify knownCrossProcessBytes <= 128 MiB with crossProcessLimitCheck=true`,
+    );
+  return memory;
+}
+
 function scanCaps(value, pathName = "completion", found = []) {
   if (!value || typeof value !== "object") return found;
   for (const [key, child] of Object.entries(value)) {
@@ -190,6 +239,26 @@ function validateCompletion(row, total, key) {
     throw new Error(
       `${key} residual.replay must certify allSamplesComplete=true and capFree=true`,
     );
+  for (const [field, expected] of [
+    ["sampleTotal", sampleTotal],
+    ["sampleComplete", sampleComplete],
+    ["sampleUnresolved", sampleUnresolved],
+    ["sampleInvalid", sampleInvalid],
+    ["unresolvedPixels", completion.unresolved],
+    ["invalidPixels", completion.invalid],
+    ["capEvents", completion.capEvents ?? 0],
+  ]) {
+    if (replay[field] !== expected)
+      throw new Error(
+        `${key} residual.replay.${field} disagrees with completion`,
+      );
+  }
+  if (residual.radianceBound !== replay.maxPerPixelMaxChannelLinearRgbBound)
+    throw new Error(
+      `${key} residual.radianceBound disagrees with the replay per-pixel bound`,
+    );
+  if (residual.errorBudget !== RESIDUAL_BOUND_BUDGET)
+    throw new Error(`${key} residual.errorBudget must equal 1/1024`);
   const bounded =
     finite(residual.radianceBound) &&
     residual.radianceBound >= 0 &&
@@ -197,7 +266,7 @@ function validateCompletion(row, total, key) {
     residual.errorBudget >= 0 &&
     residual.radianceBound <= residual.errorBudget;
   return {
-    exact: true,
+    exact: replay.maxPerPixelMaxChannelLinearRgbBound === 0,
     bounded,
     samplesPerPixel,
     sampleTotal,
@@ -272,6 +341,7 @@ const provenance = validateSourceProvenance(
 );
 if (envelope.verdict?.status === "INCONCLUSIVE")
   throw new Error("GPU report is INCONCLUSIVE");
+const environment = validateRunEnvironment(envelope, body);
 const gpuControls = envelope.controls ?? body.controls;
 if (
   !gpuControls ||
@@ -306,6 +376,7 @@ for (const row of mainRows) {
   if (!Number.isInteger(width) || !Number.isInteger(height))
     throw new Error(`${key} is missing integer render dimensions`);
   const total = width * height;
+  validateMemory(row, key);
   const completion = validateCompletion(row, total, key);
   const image = validateImage(row.image, key, 1024);
   if (image.size.width !== width || image.size.height !== height)
@@ -334,6 +405,7 @@ const controls = rows
       throw new Error(`${key} control image dimensions disagree with row`);
     if (row.sourceHash && row.sourceHash !== provenance.sourceHash)
       throw new Error(`${key} sourceHash differs from the report sourceHash`);
+    validateMemory(row, key);
     const completion = validateCompletion(row, width * height, key);
     return { key, row, metadata, kind, image, completion };
   });
@@ -400,14 +472,14 @@ const html = `<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Finite dielectric experiment — unreviewed</title>
 <style>
-body{margin:24px auto;max-width:1160px;padding:0 18px;background:#101216;color:#e7eaf0;font:15px system-ui,sans-serif;line-height:1.45}h1,h2{color:#fff}.status{padding:16px;border:2px solid #d79a3c;background:#2b2112}.warning{padding:12px;border:1px solid #b95656;background:#30181c}.scenes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.scene{min-width:0;padding:16px;border:1px solid #555d69;background:#171a20}.main-image{display:block;min-width:0}.main-image img{display:block;width:100%;height:auto;max-width:1024px;background:#050608}.tag,.caption,.small{color:#b8bec8;font-size:13px}.tag{color:#f0c276}.controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.controls details{min-width:0;padding:10px;border:1px solid #454b55;background:#171a20}.controls img{display:block;width:100%;height:auto;max-width:1024px}a{color:#9dccff}code,pre{overflow-wrap:anywhere;word-break:break-word}dl{display:grid;grid-template-columns:120px minmax(0,1fr);gap:6px 12px}dt{font-weight:700}dd{margin:0;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:800px){body{margin:14px auto;padding:0 12px}.scenes,.controls{grid-template-columns:1fr}dl{grid-template-columns:1fr;gap:2px}dd{margin-bottom:8px}}
+body{margin:24px auto;max-width:1160px;padding:0 18px;background:#101216;color:#e7eaf0;font:15px system-ui,sans-serif;line-height:1.45}h1,h2{color:#fff}.status{padding:16px;border:2px solid #d79a3c;background:#2b2112}.warning{padding:12px;border:1px solid #b95656;background:#30181c}.scenes{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}.scene{min-width:0;padding:16px;border:1px solid #555d69;background:#171a20}.main-image{display:block;min-width:0}.main-image img{display:block;width:100%;height:auto;max-width:1024px;background:#050608}.tag,.caption,.small{color:#b8bec8;font-size:13px}.tag{color:#f0c276}.controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.controls details{min-width:0;padding:10px;border:1px solid #454b55;background:#171a20}.controls img{display:block;width:100%;height:auto;max-width:1024px}a{color:#9dccff}code,pre{overflow-wrap:anywhere;word-break:break-word}dl{display:grid;grid-template-columns:120px minmax(0,1fr);gap:6px 12px}dt{font-weight:700}dd{margin:0;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:800px){body{margin:14px auto;padding:0 12px}.scenes,.controls{grid-template-columns:1fr}dl{grid-template-columns:1fr;gap:2px}dd{margin-bottom:8px}}
 </style>
 <h1>Finite-cell dielectric experiment</h1>
 <p class="status"><strong>UNREVIEWED NEW EXPERIMENT.</strong> This page contains one full-size dielectric image for each scene. It is visual evidence only and makes no production, performance or aesthetic approval claim.</p>
 <p class="warning"><strong>Geometry scope:</strong> this candidate uses coarse finite depth-2 solids: the 3D Menger has terminal grid 1/9 with 400 filled cells, and the new posed 4D hyper-Menger has terminal grid 1/9 with 2304 filled cells. Finer depth-3 full-tree geometry remains unqualified here and was not timed as an actual full raster. The 4D scene is not the public Mandelbox or Tesseract fixture. The previous layered transmission candidate was rejected for being indistinct/noisy; <a href="${oldReviewHref || "#"}">open the earlier rejected review</a>.</p>
 <section class="scenes">${mainCards}</section>
 ${controlHtml}
-<details><summary>Report and provenance</summary><p>Input report: <code>${esc(relative(root, reportPath))}</code><br>Recorded verdict: <code>${esc(jsonText(reportVerdict))}</code><br>Source tree dirty in the review scope: <strong>${sourceStatus !== ""}</strong>. Source files, PNG SHA-256 hashes, and the page-emitted GPU controls were checked before writing this page.</p><pre class="small">${esc(jsonText({ sourceHash: provenance.sourceHash, sourceFiles: Object.keys(provenance.files).sort(), report: relative(root, reportPath), gpuControls: { passed: gpuControls.passed, count: gpuControls.cases.length, failures: gpuControls.failures ?? [] }, mainRows: validated.map((item) => ({ key: item.key, kind: item.kind, image: item.row.image, completion: item.row.completion, residual: item.row.residual ?? null })), controls: controls.map((item) => item.key) }))}</pre></details>
+<details><summary>Report and provenance</summary><p>Input report: <code>${esc(relative(root, reportPath))}</code><br>Recorded verdict: <code>${esc(jsonText(reportVerdict))}</code><br>Renderer: <code>${esc(environment.renderer)}</code><br>Quiet certified: <strong>yes</strong><br>Source tree dirty in the review scope: <strong>${sourceStatus !== ""}</strong>. Source files, PNG SHA-256 hashes, memory bounds, and the page-emitted GPU controls were checked before writing this page.</p><pre class="small">${esc(jsonText({ sourceHash: provenance.sourceHash, sourceFiles: Object.keys(provenance.files).sort(), report: relative(root, reportPath), environment, gpuControls: { passed: gpuControls.passed, count: gpuControls.cases.length, failures: gpuControls.failures ?? [] }, mainRows: validated.map((item) => ({ key: item.key, kind: item.kind, image: item.row.image, completion: item.row.completion, residual: item.row.residual ?? null, memory: item.row.memory })), controls: controls.map((item) => item.key) }))}</pre></details>
 <p class="small">Generated offline by <code>transmission-dielectric-review.mjs</code>; no renderer or browser run was started by this builder.</p>`;
 
 mkdirSync(outputDir, { recursive: true });
@@ -435,6 +507,7 @@ writeFileSync(
       sourceTreeClean: sourceStatus === "",
       scopedSourceStatus: sourceStatus,
       sourceProvenance: provenance,
+      environment,
       gpuControls,
       requiredMainKinds: ["menger2", "hyperMenger2"],
       mainRows: validated.map((item) => ({
