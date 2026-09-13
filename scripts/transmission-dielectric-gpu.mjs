@@ -191,10 +191,27 @@ function processTreeRssRecord(baseline, peak) {
   };
 }
 
+async function within(promise, timeoutMs, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} exceeded ${timeoutMs} ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function main() {
   if (args.help) {
     console.log(
-      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass --diagnostic --output=report.json]",
+      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass --cancelProbe --diagnostic --output=report.json]",
     );
     return;
   }
@@ -213,6 +230,15 @@ async function main() {
     throw new Error("--fixture must be menger3 or hyper4");
   if (!modeNames.every((value) => ["opaque", "glass"].includes(value)))
     throw new Error("--mode must be opaque or glass");
+  const cancelProbeRequested = args.cancelProbe === true;
+  if (
+    cancelProbeRequested &&
+    (!args.fixture ||
+      !args.mode ||
+      fixtureNames.length !== 1 ||
+      modeNames.length !== 1)
+  )
+    throw new Error("--cancelProbe requires one explicit --fixture and --mode");
   await mkdir(outDir, { recursive: true });
   await rm(bundle, { force: true });
   const built = await build({
@@ -278,6 +304,129 @@ async function main() {
           throw new Error("dielectric page did not expose its runner");
         return harness.runTransmissionDielectricGpu(pageOptions);
       }, runOptions);
+    const readProgress = () =>
+      page.evaluate(() => {
+        const harness = globalThis.TransmissionDielectricGpu;
+        return harness?.transmissionDielectricGpuProgress?.() ?? null;
+      });
+    const requestCancel = () =>
+      page.evaluate(() => {
+        const harness = globalThis.TransmissionDielectricGpu;
+        return (
+          harness?.cancelTransmissionDielectricGpu?.() ?? {
+            requested: false,
+            reason: "dielectric page did not expose cancellation",
+          }
+        );
+      });
+    let cancellationProbe = null;
+    if (cancelProbeRequested) {
+      const baselineItem = await execute({
+        ...options,
+        fixture: fixtureNames[0],
+        mode: modeNames[0],
+      });
+      if (!Array.isArray(baselineItem.rows) || baselineItem.rows.length !== 1)
+        throw new Error(
+          "cancellation baseline did not produce exactly one image row",
+        );
+      const [baselineRow] = baselineItem.rows;
+      const baseline = {
+        rgbaSha256: hash(Buffer.from(baselineRow.imageBase64, "base64")),
+        completion: baselineRow.completion,
+        residual: baselineRow.residual,
+        schedule: baselineItem.schedule,
+        runtime: baselineItem.runtime,
+      };
+      const probeStarted = performance.now();
+      let finished = false;
+      const runPromise = execute({
+        ...options,
+        fixture: fixtureNames[0],
+        mode: modeNames[0],
+      }).finally(() => {
+        finished = true;
+      });
+      const progressSamples = [];
+      const deadline = Date.now() + 30_000;
+      let trigger = null;
+      while (!finished && Date.now() < deadline) {
+        const progress = await readProgress();
+        const previous = progressSamples.at(-1);
+        if (
+          progress !== null &&
+          (previous === undefined ||
+            previous.stage !== progress.stage ||
+            previous.submissions !== progress.submissions ||
+            previous.submissionInFlight !== progress.submissionInFlight ||
+            previous.activeSubmission !== progress.activeSubmission)
+        )
+          progressSamples.push({
+            ...progress,
+            observedAtMs: performance.now() - probeStarted,
+          });
+        if (
+          progress?.stage === "render" &&
+          progress.submissionInFlight === true &&
+          progress.activeSubmission >=
+            Math.ceil(progress.totalSubmissions / 2) &&
+          !progress.cancelRequested
+        ) {
+          trigger = progress;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const cancelCallStarted = performance.now();
+      const request = await requestCancel();
+      const item = await within(
+        runPromise,
+        30_000,
+        "dielectric cancellation completion",
+      );
+      const hostAcknowledgementWallMs = performance.now() - cancelCallStarted;
+      const cancellation = "cancelled" in item ? item.cancelled : null;
+      const acknowledgementLatencyMs =
+        cancellation?.acknowledgementLatencyMs ?? null;
+      const cancellationTargetMs = 500;
+      const acknowledgementWithinTarget =
+        hostAcknowledgementWallMs <= cancellationTargetMs;
+      const matchingTriggeredRun =
+        trigger !== null &&
+        trigger.stage === "render" &&
+        request.runId === trigger.runId &&
+        cancellation?.progress.runId === trigger.runId;
+      const cancelledCleanly =
+        matchingTriggeredRun &&
+        request.requested === true &&
+        cancellation !== null &&
+        cancellation.progress.cleanupCompleted === true &&
+        cancellation.progress.cleanupError === null &&
+        item.runtime.uncaptured.length === 0 &&
+        item.runtime.lost === null;
+      cancellationProbe = {
+        requested: true,
+        passed: cancelledCleanly && acknowledgementWithinTarget,
+        cancelledCleanly,
+        responsiveness: {
+          targetMs: cancellationTargetMs,
+          hostAcknowledgementWallMs,
+          acknowledgementLatencyMs,
+          acknowledgementWithinTarget,
+          completedRunMaxCheckpointWallMs: null,
+          completedRunWithinTarget: null,
+          basis:
+            "The 500 ms harness target bounds a human-visible cancel operation. Cancellation is requested by a separate browser task while a submission in the second half of the raster is in flight, measured from the host before that request until the run acknowledges and cleans up. The subsequent full run must keep every measured submission, map, tile assembly and base64 checkpoint within the same limit.",
+        },
+        trigger,
+        request,
+        result: cancellation,
+        baseline,
+        progressSamples,
+        totalWallMs: performance.now() - probeStarted,
+        followup: null,
+      };
+    }
     const rows = [];
     const runtime = { uncaptured: [], lost: null };
     let browserAdapter = null;
@@ -295,7 +444,8 @@ async function main() {
             if (
               "inconclusive" in item ||
               "preflightRefusal" in item ||
-              "controlRefusal" in item
+              "controlRefusal" in item ||
+              "cancelled" in item
             )
               return { item };
             const [row] = item.rows;
@@ -334,6 +484,7 @@ async function main() {
           quiet,
           sourceProvenance,
           options,
+          cancellationProbe,
           report: item,
           memory: {
             processTreeRss: unmeasuredProcessTreeRss(
@@ -380,6 +531,18 @@ async function main() {
           process.exitCode = 3;
           return;
         }
+        if ("cancelled" in item) {
+          partialRecord.verdict = {
+            status: "REFUSED",
+            reason: "normal image row was cancelled unexpectedly",
+          };
+          await writeFile(
+            reportFile,
+            `${JSON.stringify(partialRecord, null, 2)}\n`,
+          );
+          process.exitCode = 3;
+          return;
+        }
         browserAdapter ??= item.browserAdapter;
         controls ??= item.controls;
         runtime.uncaptured.push(...item.runtime.uncaptured);
@@ -416,8 +579,10 @@ async function main() {
         row.image = {
           path: path.relative(root, path.join(outDir, filename)),
           sha256: hash(png),
+          rgbaSha256: hash(Buffer.from(row.imageBase64, "base64")),
           naturalSize: { width: row.width, height: row.height },
         };
+        row.scheduling = item.schedule;
         row.timing = {
           ...row.timing,
           pageEvaluateWallMs,
@@ -446,6 +611,7 @@ async function main() {
                 browserAdapter,
                 options,
                 rows,
+                cancellationProbe,
                 runtime,
                 controls,
                 executionScope:
@@ -462,10 +628,44 @@ async function main() {
           )}\n`,
         );
       }
+    if (cancellationProbe !== null) {
+      const completedRunMaxCheckpointWallMs = Math.max(
+        ...rows.map((row) => row.timing.maxCancellationCheckpointWallMs),
+      );
+      const completedRunWithinTarget =
+        completedRunMaxCheckpointWallMs <=
+        cancellationProbe.responsiveness.targetMs;
+      cancellationProbe.responsiveness.completedRunMaxCheckpointWallMs =
+        completedRunMaxCheckpointWallMs;
+      cancellationProbe.responsiveness.completedRunWithinTarget =
+        completedRunWithinTarget;
+      cancellationProbe.passed =
+        cancellationProbe.passed && completedRunWithinTarget;
+      const [postCancelRow] = rows;
+      const imageIdentical =
+        postCancelRow.image.rgbaSha256 ===
+        cancellationProbe.baseline.rgbaSha256;
+      const postCancelComplete =
+        postCancelRow.completion.complete === postCancelRow.completion.total &&
+        postCancelRow.completion.unresolved === 0 &&
+        postCancelRow.completion.invalid === 0;
+      cancellationProbe.followup = {
+        passed: imageIdentical && postCancelComplete,
+        imageIdentical,
+        postCancelComplete,
+        baselineRgbaSha256: cancellationProbe.baseline.rgbaSha256,
+        postCancelRgbaSha256: postCancelRow.image.rgbaSha256,
+        basis:
+          "A complete baseline runs first. The cancelled invocation returns no image row, cleans up, and a fresh-device run must reproduce the baseline RGBA bytes exactly.",
+      };
+      cancellationProbe.passed =
+        cancellationProbe.passed && cancellationProbe.followup.passed;
+    }
     const report = {
       browserAdapter,
       options,
       rows,
+      cancellationProbe,
       runtime,
       controls,
       executionScope:
@@ -482,6 +682,7 @@ async function main() {
       report,
     };
     const refused =
+      (cancellationProbe !== null && !cancellationProbe.passed) ||
       report.controls?.passed !== true ||
       report.rows.some(
         (row) => row.completion.unresolved || row.completion.invalid,

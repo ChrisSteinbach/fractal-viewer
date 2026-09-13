@@ -38,11 +38,10 @@ and broader scene/pose coverage still need qualification before production
 integration. Physical-realism comparisons and another aesthetic selection of
 these same images are not prerequisites for that work.
 
-This research checkpoint is in
-[PR #412](https://github.com/ChrisSteinbach/fractal-viewer/pull/412), on
-`research/surface-transmission-qualification`. It changes harnesses and
-evidence, with no production renderer, panel or scene-document changes. The
-comparison and all six target-size measurements are complete; their
+This research checkpoint was merged in
+[PR #412](https://github.com/ChrisSteinbach/fractal-viewer/pull/412). It changes
+harnesses and evidence, with no production renderer, panel or scene-document
+changes. The comparison and all six target-size measurements are complete; their
 reproduction commands and limitations are below. Remaining implementation
 work is tracked in the project's issue tracker, rather than in a second
 handoff task list.
@@ -148,6 +147,43 @@ records are the ignored
 `preview-d2-lookup-{menger-warm,hyper4}.json` reports; the timing instrumentation
 preserves the prior end-to-end scope rather than subtracting research work from
 the headline.
+
+## Preview scheduling, cancellation and observed RSS
+
+Source `f157a46c94c52afe3707feebb49de04701e8921845b0cb6191aa1b9ee0c3359e`
+adds browser-task yields and cancellation checks between the six bounded replay
+submissions and after readback, tile assembly and base64 encoding. A run holds a
+single reservation before creating a WebGPU device; cleanup clears it even when
+the device drain fails. The probe first renders a complete baseline, requests
+cancellation from a separate browser task while a second-half submission is in
+flight, requires acknowledgement plus cleanup, then starts a fresh-device run
+and compares its RGBA bytes with the baseline.
+
+The harness uses a 500 ms response target for this human-visible cancel
+operation. On quiet verified RX 7900 XTX / Chromium hardware, the existing
+128×64 preview schedule passed in both dimensions:
+
+| 256×144 scene | Host request through cleanup | Longest full-run cancellation checkpoint | Post-cancel image | Observed process-tree RSS increase |
+| ------------- | ---------------------------: | ---------------------------------------: | ----------------: | ---------------------------------: |
+| 3D Menger     |                   235.790 ms |                               336.000 ms |        byte-exact |                       30,101,504 B |
+| Posed 4D      |                   265.763 ms |                               252.900 ms |        byte-exact |                       26,238,976 B |
+
+The checkpoint maximum covers each GPU submission/fence, readback map, one
+tile's synchronous host assembly and whole-image base64 encoding. Both cancelled
+runs returned no image, completed cleanup without a device loss or uncaptured
+error, and the following images completed every sample with their prior PNG
+hashes and omitted-radiance bounds unchanged. Practical delivery measured
+4.4184 seconds in 3D and 2.7880 seconds in 4D, so this demonstrates bounded
+harness cancellation without meeting the one-second preview target.
+
+The Linux RSS sampler walks only the launcher process and the browser descendants
+listed by `/proc`, from immediately before the normal page call through PNG
+write. The table reports the exact observed increase over that run's baseline,
+not the roughly 1.2 GB process-tree total. It excludes driver-private memory,
+VRAM and allocations outside the process tree, and therefore does not certify
+the 128 MiB total-state limit. The ignored records are
+`preview-scheduling-{menger,hyper4}-final.json`. Export-size cancellation,
+full-HD observed peak state and production-app integration remain unqualified.
 
 ## Why the previous model was insufficient
 

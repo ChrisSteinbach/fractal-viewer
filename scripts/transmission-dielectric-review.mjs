@@ -376,8 +376,16 @@ const provenance = validateSourceProvenance(
   envelope.sourceProvenance ?? body.sourceProvenance,
   "GPU report",
 );
-if (envelope.verdict?.status === "INCONCLUSIVE")
-  throw new Error("GPU report is INCONCLUSIVE");
+if (
+  envelope.verdict?.status !== undefined &&
+  envelope.verdict.status !== "RECORDED"
+)
+  throw new Error(`GPU report is ${envelope.verdict.status}`);
+if (
+  body.cancellationProbe?.requested === true &&
+  body.cancellationProbe.passed !== true
+)
+  throw new Error("GPU report requested cancellation qualification but failed");
 const environment = validateRunEnvironment(envelope, body);
 const gpuControls = envelope.controls ?? body.controls;
 if (
