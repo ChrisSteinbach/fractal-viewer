@@ -11,6 +11,7 @@ import { chromium } from "playwright-core";
 import { encodePng } from "./de-preview.ts";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import {
+  attributeProcessTreeRssTimeline,
   sampleProcessTreeRss,
   sampleProcessTreeRssPeak,
 } from "./lib/process-tree-memory.mjs";
@@ -522,7 +523,7 @@ async function within(promise, timeoutMs, label) {
 async function main() {
   if (args.help) {
     console.log(
-      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass [--camera=canonical|grazing|cornerAdjacent] [--hyperPose=canonical|rotorA|rotorB] [--submissionProbe] --cancelProbe | --tileCheck=100x55,73x47 --window=37,29,121,67 | --poseCheck | --staged --fixture=menger3 --mode=glass --output=report.json]",
+      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass [--camera=canonical|grazing|cornerAdjacent] [--hyperPose=canonical|rotorA|rotorB] [--submissionProbe] [--rssTrace] --cancelProbe | --tileCheck=100x55,73x47 --window=37,29,121,67 | --poseCheck | --staged --fixture=menger3 --mode=glass --output=report.json]",
     );
     return;
   }
@@ -617,6 +618,18 @@ async function main() {
   if (options.submissionProbe && (cancelProbeRequested || tileCheckRequested))
     throw new Error(
       "--submissionProbe decomposes uninterrupted submissions on the plain default path and cannot be combined with --cancelProbe or --tileCheck",
+    );
+  const rssTraceRequested = args.rssTrace === true;
+  if (
+    rssTraceRequested &&
+    (cancelProbeRequested ||
+      tileCheckRequested ||
+      poseCheckRequested ||
+      stagedRequested ||
+      options.submissionProbe)
+  )
+    throw new Error(
+      "--rssTrace attributes the process-tree RSS timeline on the plain default path and cannot be combined with --cancelProbe, --tileCheck, --poseCheck, --staged or --submissionProbe",
     );
   if (
     stagedRequested &&
@@ -746,47 +759,91 @@ async function main() {
           }
         );
       });
-    const executeImage = async (runOptions, filename) => {
+    const executeImage = async (runOptions, filename, traceRss = false) => {
       const processTreeRssBaseline = await sampleProcessTreeRss(process.pid);
       const observed = await sampleProcessTreeRssPeak(
         process.pid,
         async () => {
           const pageReturnEncodeWriteStarted = performance.now();
-          const item = await execute(runOptions);
-          if (
-            "inconclusive" in item ||
-            "preflightRefusal" in item ||
-            "controlRefusal" in item ||
-            "cancelled" in item
-          )
-            return { item };
-          if (!Array.isArray(item.rows) || item.rows.length !== 1)
-            throw new Error("image invocation did not produce one row");
-          const [row] = item.rows;
-          const pageEvaluateWallMs =
-            performance.now() - pageReturnEncodeWriteStarted;
-          const {
-            png,
-            rgba,
-            timing: launcherImageTiming,
-          } = outputPng(row.imageBase64, row.width, row.height);
-          const outputFilename =
-            typeof filename === "function" ? filename(row) : filename;
-          const pngWriteStarted = performance.now();
-          await writeFile(path.join(outDir, outputFilename), png);
-          const pngWriteMs = performance.now() - pngWriteStarted;
-          return {
-            item,
-            row,
-            png,
-            rgba,
-            outputFilename,
-            launcherImageTiming,
-            pageEvaluateWallMs,
-            pngWriteMs,
-            pageReturnEncodeWriteWallMs:
-              performance.now() - pageReturnEncodeWriteStarted,
-          };
+          let rssTimeline = null;
+          let stopRssMonitor = async () => {};
+          if (traceRss) {
+            // Sample the process tree beside the page's own progress so each
+            // RSS observation carries the run stage it was taken in. The
+            // page-run scope only: the launcher's own decode/encode/write
+            // work is accounted analytically in row.memory.
+            const RSS_TRACE_INTERVAL_MS = 100;
+            const samples = [];
+            const traceStarted = performance.now();
+            let tracing = true;
+            const monitor = (async () => {
+              while (tracing) {
+                const progress = await readProgress();
+                const rss = await sampleProcessTreeRss(process.pid);
+                samples.push({
+                  atMs: Math.round(performance.now() - traceStarted),
+                  stage: progress?.stage ?? "before-run",
+                  completedTiles: progress?.completedTiles ?? null,
+                  replayPass: progress?.replayPass ?? null,
+                  submissions: progress?.submissions ?? null,
+                  rssStatus: rss.status,
+                  ...(rss.status === "ok"
+                    ? { rssBytes: rss.rssBytes }
+                    : rss.status === "partial"
+                      ? { knownRssBytes: rss.knownRssBytes }
+                      : {}),
+                });
+                await new Promise((resolve) =>
+                  setTimeout(resolve, RSS_TRACE_INTERVAL_MS),
+                );
+              }
+            })();
+            stopRssMonitor = async () => {
+              tracing = false;
+              await monitor;
+            };
+            rssTimeline = samples;
+          }
+          try {
+            const item = await execute(runOptions);
+            if (
+              "inconclusive" in item ||
+              "preflightRefusal" in item ||
+              "controlRefusal" in item ||
+              "cancelled" in item
+            )
+              return { item };
+            if (!Array.isArray(item.rows) || item.rows.length !== 1)
+              throw new Error("image invocation did not produce one row");
+            const [row] = item.rows;
+            const pageEvaluateWallMs =
+              performance.now() - pageReturnEncodeWriteStarted;
+            const {
+              png,
+              rgba,
+              timing: launcherImageTiming,
+            } = outputPng(row.imageBase64, row.width, row.height);
+            const outputFilename =
+              typeof filename === "function" ? filename(row) : filename;
+            const pngWriteStarted = performance.now();
+            await writeFile(path.join(outDir, outputFilename), png);
+            const pngWriteMs = performance.now() - pngWriteStarted;
+            return {
+              item,
+              row,
+              png,
+              rgba,
+              outputFilename,
+              launcherImageTiming,
+              pageEvaluateWallMs,
+              pngWriteMs,
+              pageReturnEncodeWriteWallMs:
+                performance.now() - pageReturnEncodeWriteStarted,
+              rssTimeline,
+            };
+          } finally {
+            await stopRssMonitor();
+          }
         },
         { intervalMs: 25, initialSample: processTreeRssBaseline },
       );
@@ -807,6 +864,7 @@ async function main() {
         pageEvaluateWallMs,
         pngWriteMs,
         pageReturnEncodeWriteWallMs,
+        rssTimeline,
       } = observed.value;
       const launcherBase64DecodeBytes = row.width * row.height * 4;
       const launcherRgbEncodeBytes = row.width * row.height * 3;
@@ -826,6 +884,15 @@ async function main() {
           processTreeRssBaseline,
           observed.peak,
         ),
+        ...(rssTimeline !== null
+          ? {
+              processTreeRssTimeline: {
+                ...attributeProcessTreeRssTimeline(rssTimeline),
+                scope:
+                  "Process-tree RSS sampled beside the page run's own progress (stage, completedTiles) at a fixed interval; per-phase and render-tile-band attribution follows the sampler's complete/partial contract. This observes retained host RSS of the launcher and its browser descendants only — never VRAM, driver-private or browser-wide allocations.",
+              },
+            }
+          : {}),
       };
       row.image = {
         path: path.relative(root, path.join(outDir, outputFilename)),
@@ -1512,6 +1579,7 @@ async function main() {
           itemOptions,
           (row) =>
             `${fixture}-${mode}${poseSuffix}-${row.width}x${row.height}.png`,
+          rssTraceRequested,
         );
         const { item } = observed;
         const partialRecord = {
