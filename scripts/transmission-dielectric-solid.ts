@@ -260,6 +260,10 @@ export function dielectricIntrinsicDirection(
   ) as Vec4;
 }
 
+/** Bit positions for the middle third at each level of a depth-two grid. */
+export const DIELECTRIC_D2_OUTER_MIDDLE_MASK = 0x38;
+export const DIELECTRIC_D2_INNER_MIDDLE_MASK = 0x92;
+
 /** Occupancy of one finest-grid cell. Indices outside the root are empty. */
 export function dielectricCellOccupied(
   fixture: DielectricSolidFixture,
@@ -1249,7 +1253,7 @@ fn dielectricDirection(f: DielectricSolidFixture, d: vec3<f32>) -> vec4<f32> {
   return vec4<f32>(dot(f.row0, v), dot(f.row1, v), dot(f.row2, v), dot(f.row3, v));
 }
 
-fn dielectricCellOccupied(f: DielectricSolidFixture, cell: vec4<i32>) -> bool {
+fn dielectricCellOccupiedGeneric(f: DielectricSolidFixture, cell: vec4<i32>) -> bool {
   let dimension = f.counts.x;
   let gridSize = i32(f.counts.z);
   for (var axis = 0u; axis < dimension; axis++) {
@@ -1265,6 +1269,26 @@ fn dielectricCellOccupied(f: DielectricSolidFixture, cell: vec4<i32>) -> bool {
     divisor /= 3;
   }
   return true;
+}
+
+fn dielectricCellOccupiedD2(f: DielectricSolidFixture, cell: vec4<i32>) -> bool {
+  let dimension = f.counts.x;
+  var outerMiddles = 0u;
+  var innerMiddles = 0u;
+  for (var axis = 0u; axis < dimension; axis++) {
+    if (cell[axis] < 0 || cell[axis] >= 9) { return false; }
+    let bit = u32(cell[axis]);
+    outerMiddles += (${DIELECTRIC_D2_OUTER_MIDDLE_MASK}u >> bit) & 1u;
+    innerMiddles += (${DIELECTRIC_D2_INNER_MIDDLE_MASK}u >> bit) & 1u;
+  }
+  return outerMiddles <= 1u && innerMiddles <= 1u;
+}
+
+fn dielectricCellOccupied(f: DielectricSolidFixture, cell: vec4<i32>) -> bool {
+  if (f.counts.y == 2u && f.counts.z == 9u) {
+    return dielectricCellOccupiedD2(f, cell);
+  }
+  return dielectricCellOccupiedGeneric(f, cell);
 }
 
 fn dielectricGridPlane(
