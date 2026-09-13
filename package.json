@@ -57,7 +57,7 @@
     "yaml": "^2.9.0"
   },
   "dependencies": {
-    "three": "^0.185.1",
+    "three": "^0.186.0",
     "workbox-precaching": "^7.4.1"
   }
 }
