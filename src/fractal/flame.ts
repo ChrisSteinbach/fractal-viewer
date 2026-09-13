@@ -1333,11 +1333,15 @@ export interface DensityEstimatorParams {
 const RADIUS_QUANTUM = 0.5;
 
 /** Side length (source cells) of one occupancy tile in
- * {@link adaptiveDownsampleFlame}'s empty-footprint skip — see the
+ * {@link adaptiveDownsampleFlame}'s occupied-footprint clipping — see the
  * summed-area-table paragraph in its doc. Small enough that a tile is a
- * fine-grained emptiness probe, large enough that the table stays tiny
- * (~1/256th of the histogram's cell count). */
-const OCCUPANCY_TILE = 16;
+ * fine-grained emptiness probe and the retrieved occupied bounding box hugs
+ * the content, large enough that the table stays small (~1/16th of the
+ * histogram's cell count). Chosen by measurement: on the imported Electric
+ * Sheep corpus at 960x540 output the clipped scan is 20-40% smaller at 4
+ * than at 16, and a 4-bit-per-axis corner is a generous pad around any
+ * radius class the app can configure. */
+const OCCUPANCY_TILE = 4;
 
 /**
  * Floor for {@link adaptiveDownsampleFlame}'s kernel sigma — DELIBERATELY
@@ -1368,19 +1372,28 @@ const OCCUPANCY_TILE = 16;
 const MIN_ADAPTIVE_FILTER_SIGMA = 0.3;
 
 /**
- * The number of source taps one output cell's Gaussian gather covers: the
+ * The number of source taps one output cell's clipped gather may scan: the
  * kernel's `(2 * radiusX + 1) x (2 * radiusY + 1)` footprint clipped to the
- * source histogram's bounds. This is the adaptive pass's WORK unit, and it is
- * deliberately ONE exported definition shared by the planner (which sums it
- * into {@link AdaptiveDownsampleJob.total}) and the gather (which charges the
- * same value per cell as it runs) — the two can never drift, so a job's
- * `done` reaches exactly `total`. A later change to what a cell actually
- * gathers (e.g. clipping the kernel to the occupied sub-footprint) updates
- * this function and the loop together, in one place.
+ * source histogram's bounds and to the occupied bounding box the planner
+ * found (`clipX0`..`clipY1`, inclusive source coordinates; pass the full
+ * in-bounds rect for a cell that isn't clipped). This is the adaptive pass's
+ * WORK unit, and it is deliberately ONE exported definition shared by the
+ * planner (which sums it into {@link AdaptiveDownsampleJob.total}) and the
+ * gather (which charges the same value per cell as it runs) — the two can
+ * never drift, so a job's `done` reaches exactly `total`. A later change to
+ * what a cell actually gathers updates this function and the loop together,
+ * in one place.
+ *
+ * The clip box is the occupied-tile bounding box already intersected with
+ * the kernel's in-bounds rectangle, so this is the area the gather's bitmap
+ * scan covers — an upper bound on the bits it visits (empty regions inside
+ * the box are skipped at word resolution), chosen because the planner can
+ * evaluate it in O(1) and the alternative — counting the set bits — cost a
+ * multi-second synchronous pre-pass on the measured corpus.
  *
  * `baseX`/`baseY` are the cell's home source coordinate and `radiusX`/
  * `radiusY` the (already quantized) kernel half-extents — the same numbers
- * the gather's own `for` bounds use.
+ * the gather's own bounds use.
  */
 export function adaptiveGatherWork(
   baseX: number,
@@ -1389,11 +1402,15 @@ export function adaptiveGatherWork(
   radiusY: number,
   srcWidth: number,
   srcHeight: number,
+  clipX0: number,
+  clipY0: number,
+  clipX1: number,
+  clipY1: number,
 ): number {
-  const x0 = Math.max(0, baseX - radiusX);
-  const x1 = Math.min(srcWidth - 1, baseX + radiusX);
-  const y0 = Math.max(0, baseY - radiusY);
-  const y1 = Math.min(srcHeight - 1, baseY + radiusY);
+  const x0 = Math.max(0, baseX - radiusX, clipX0);
+  const x1 = Math.min(srcWidth - 1, baseX + radiusX, clipX1);
+  const y0 = Math.max(0, baseY - radiusY, clipY0);
+  const y1 = Math.min(srcHeight - 1, baseY + radiusY, clipY1);
   return (x1 - x0 + 1) * (y1 - y0 + 1);
 }
 
@@ -1408,6 +1425,16 @@ export function adaptiveGatherWork(
 const ADAPTIVE_CELL_BASE_WORK = 1;
 
 /**
+ * Footprint size (source cells) below which the plan skips the occupied-box
+ * search entirely: a kernel this small is already cheap, and the SAT probes
+ * that bound a clip would cost more than the gather they prune. Above it the
+ * search runs whenever the footprint isn't tile-saturated — the measured
+ * imported-genome kernels are 199x199 source cells, three orders of
+ * magnitude past this bar.
+ */
+const ADAPTIVE_CLIP_MIN_CELLS = 64;
+
+/**
  * A resumable {@link adaptiveDownsampleFlame} pass: the same per-cell gather,
  * split into bounded {@link run} steps that report work done against a total
  * fixed before the first tap is gathered. The flame worker drives one of
@@ -1419,9 +1446,9 @@ const ADAPTIVE_CELL_BASE_WORK = 1;
  * The split is safe for the output because every cell is computed from the
  * same inputs in the same row-major order regardless of where a step
  * boundary falls, and `maxHits`/`hitMass` are accumulated in that same
- * order. Work units are whole numbers of taps (plus the per-cell base), so
- * summing them in bands versus one pass is exact in Float64 — `done` reaches
- * `total` exactly, not approximately.
+ * order. Work units are whole numbers (the per-cell base plus the clipped
+ * footprint's cell count), so summing them in bands versus one pass is exact
+ * in Float64 — `done` reaches `total` exactly, not approximately.
  */
 export interface AdaptiveDownsampleJob {
   /** Predicted total work, fixed when the job is created. Always positive. */
@@ -1453,16 +1480,165 @@ interface AdaptiveKernel {
   kernelY: Float64Array;
   radiusX: number;
   radiusY: number;
+  /**
+   * Exact flat-order weight normalization for each (in-bounds x range,
+   * in-bounds y range) pair this class has been asked for, keyed by
+   * `xRangeId * yRangeCount + yRangeId`. The fill reproduces the gather's
+   * own term order (`sum += wy * kx`, j ascending, i ascending within a
+   * row), so a clipped cell's normalization is bit-identical to the flat
+   * loop's — unlike the separable product, which is mathematically equal
+   * but moves the Float64 result at ULP level. Bounded by the distinct
+   * range pairs actually encountered (one entry for the common interior
+   * case) and filled lazily at plan time.
+   */
+  weightMemo: Map<number, number>;
+  /** Memo key stride: the number of distinct y ranges, `2 * radiusY + 1`. */
+  yRangeCount: number;
 }
 
 /** The plan phase's output: one kernel choice per output cell (`-1` is the
- * empty-footprint skip) plus the pass's fixed work total. */
+ * empty-footprint skip), the occupied source-space bounding box each gathered
+ * cell is clipped to, the exact full-footprint weight normalization for
+ * clipped cells, the cell-resolution occupied bitmap the clipped gather
+ * walks, plus the pass's fixed work total. */
 interface AdaptivePlan {
   plan: Int32Array;
   kernels: AdaptiveKernel[];
+  bounds: Int32Array;
+  weights: Float64Array;
+  rowBits: Uint32Array;
   total: number;
   scaleX: number;
   scaleY: number;
+}
+
+/**
+ * Resolve a clipped cell's FULL-footprint weight sum — the sum over every
+ * in-bounds tap, empty cells included, in the exact order the flat gather
+ * loop would accumulate it. `xRangeId`/`yRangeId` identify the clipped
+ * in-bounds ranges (see `planAdaptiveDownsample`'s id scheme); the sum is
+ * memoized per class so each distinct range pair pays the flat loop once and
+ * every cell after it is an O(1) lookup.
+ *
+ * The alternative — the separable factorization (sum of in-bounds kernelX)
+ * x (sum of in-bounds kernelY), proven in `flame-gpu.ts` — is exact in real
+ * arithmetic but changes the Float64 summation order, and this pass's
+ * contract is that a rendered look never changes silently: a summation-order
+ * change would have to be measured and disclosed. Memoizing the flat order
+ * instead keeps the rendered output bit-identical to the unclipped pass, so
+ * the delta question never arises: the harness sheet reports zero histogram
+ * difference by construction.
+ */
+function exactAdaptiveWeightSum(
+  kernel: AdaptiveKernel,
+  xRangeId: number,
+  yRangeId: number,
+  iLo: number,
+  iHi: number,
+  jLo: number,
+  jHi: number,
+): number {
+  const key = xRangeId * kernel.yRangeCount + yRangeId;
+  const cached = kernel.weightMemo.get(key);
+  if (cached !== undefined) return cached;
+  const { kernelX, kernelY, radiusX, radiusY } = kernel;
+  let sum = 0;
+  for (let j = jLo; j <= jHi; j++) {
+    const wy = kernelY[j + radiusY];
+    for (let i = iLo; i <= iHi; i++) {
+      sum += wy * kernelX[i + radiusX];
+    }
+  }
+  kernel.weightMemo.set(key, sum);
+  return sum;
+}
+
+/** Occupied-tile count of the inclusive tile rectangle, from the summed-area
+ * table in O(1) — the same query the empty-footprint skip uses, sharing its
+ * zero-border convention. */
+function satCount(
+  occupancy: Int32Array,
+  satStride: number,
+  tx0: number,
+  ty0: number,
+  tx1: number,
+  ty1: number,
+): number {
+  return (
+    occupancy[(ty1 + 1) * satStride + tx1 + 1] -
+    occupancy[ty0 * satStride + tx1 + 1] -
+    occupancy[(ty1 + 1) * satStride + tx0] +
+    occupancy[ty0 * satStride + tx0]
+  );
+}
+
+/**
+ * Bounding box (inclusive tile coordinates, written to `out` as
+ * `[tx0, ty0, tx1, ty1]`) of the occupied tiles inside an already-known
+ * non-empty tile rectangle, found by four binary searches over SAT counts.
+ * Every probe is O(1), so the whole box costs a handful of table reads even
+ * at the widest kernel instead of walking the rectangle; the box then bounds
+ * the gather's cell-bitmap scan to the tiles that actually hold hits.
+ *
+ * Each search rides a monotone prefix/suffix predicate: "does
+ * `[txLo..tx]` hold anything" turns true at the leftmost occupied column and
+ * stays true, and "does `[tx..txHi]` hold anything" is true up to the
+ * rightmost one. Searching with the wrong one converges to an EDGE of the
+ * rectangle instead of the content — which reads as an inverted, empty box.
+ */
+function occupiedTileBounds(
+  occupancy: Int32Array,
+  satStride: number,
+  txLo: number,
+  tyLo: number,
+  txHi: number,
+  tyHi: number,
+  out: Int32Array,
+): void {
+  let lo = txLo;
+  let hi = txHi;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (satCount(occupancy, satStride, txLo, tyLo, mid, tyHi) > 0) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  out[0] = lo;
+  lo = txLo;
+  hi = txHi;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (satCount(occupancy, satStride, mid, tyLo, txHi, tyHi) > 0) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  out[2] = lo;
+  lo = tyLo;
+  hi = tyHi;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (satCount(occupancy, satStride, txLo, tyLo, txHi, mid) > 0) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  out[1] = lo;
+  lo = tyLo;
+  hi = tyHi;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (satCount(occupancy, satStride, txLo, mid, txHi, tyHi) > 0) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  out[3] = lo;
 }
 
 /**
@@ -1525,27 +1701,42 @@ function planAdaptiveDownsample(
       kernelY[k + radiusY] = Math.exp(-(d * d) / (2 * sigmaY * sigmaY));
     }
     const index = kernels.length;
-    kernels.push({ kernelX, kernelY, radiusX, radiusY });
+    kernels.push({
+      kernelX,
+      kernelY,
+      radiusX,
+      radiusY,
+      weightMemo: new Map(),
+      yRangeCount: 2 * radiusY + 1,
+    });
     kernelIndices.set(quantized, index);
     return index;
   }
 
-  // Occupancy summed-area table (see the doc's skip paragraph): occ[(ty + 1)
-  // * satStride + (tx + 1)] holds the number of occupied (any-hits) tiles in
-  // the rectangle of tiles from (0, 0) through (tx, ty) inclusive, with a
-  // zero border row/column so queries never need edge special cases. Built
-  // in one O(srcWidth * srcHeight) scan + one O(tiles) prefix pass — trivial
-  // next to even a single widest-kernel gather row.
+  // Occupancy summed-area table (see the doc's clipping paragraph): occ[(ty
+  // + 1) * satStride + (tx + 1)] holds the number of occupied (any-hits)
+  // tiles in the rectangle of tiles from (0, 0) through (tx, ty) inclusive,
+  // with a zero border row/column so queries never need edge special cases.
+  // Built in one O(srcWidth * srcHeight) scan + one O(tiles) prefix pass —
+  // trivial next to even a single widest-kernel gather row. The SAME scan
+  // also sets `rowBits`, the cell-resolution occupied bitmap the gather
+  // reads: one bit per source cell, one word per 32 columns per row, so a
+  // clipped gather can walk occupied cells word by word in row-major order
+  // instead of checking every empty cell.
   const tilesX = Math.ceil(srcWidth / OCCUPANCY_TILE);
   const tilesY = Math.ceil(srcHeight / OCCUPANCY_TILE);
   const satStride = tilesX + 1;
   const occupancy = new Int32Array(satStride * (tilesY + 1));
+  const srcWords = (srcWidth + 31) >>> 5;
+  const rowBits = new Uint32Array(srcHeight * srcWords);
   for (let sy = 0; sy < srcHeight; sy++) {
     const rowBase = sy * srcWidth;
     const tileRow = (((sy / OCCUPANCY_TILE) | 0) + 1) * satStride;
+    const wordBase = sy * srcWords;
     for (let sx = 0; sx < srcWidth; sx++) {
       if (srcHits[rowBase + sx] > 0) {
         occupancy[tileRow + ((sx / OCCUPANCY_TILE) | 0) + 1] = 1;
+        rowBits[wordBase + (sx >>> 5)] |= 1 << (sx & 31);
       }
     }
   }
@@ -1568,6 +1759,15 @@ function planAdaptiveDownsample(
   const outCells = outWidth * outHeight;
   /** `-1` = empty-footprint skip; otherwise an index into `kernels`. */
   const plan = new Int32Array(outCells);
+  /** Per gathered cell: the occupied source-space bounding box it is clipped
+   * to, `[cx0, cy0, cx1, cy1]`, inclusive. Cells without a clip store their
+   * full in-bounds rect; skip cells leave zeros. */
+  const bounds = new Int32Array(outCells * 4);
+  /** Per gathered cell: its exact full-footprint weight sum, resolved at
+   * plan time through {@link exactAdaptiveWeightSum}. */
+  const weights = new Float64Array(outCells);
+  /** Reused fill target for {@link occupiedTileBounds}. */
+  const tileBox = new Int32Array(4);
   let total = 0;
   for (let oy = 0; oy < outHeight; oy++) {
     const baseY = oy * scaleY; // exact integer: the output cell's home row.
@@ -1597,49 +1797,119 @@ function planAdaptiveDownsample(
 
       // Step 3: resolve the (cached-by-quantized-radius) kernel.
       const kernelIndex = kernelIndexFor(radius);
-      const { radiusX, radiusY } = kernels[kernelIndex];
+      const kernel = kernels[kernelIndex];
+      const { radiusX, radiusY } = kernel;
       const cell = oy * outWidth + ox;
 
-      // Empty-footprint skip: if no occupancy tile overlapping the kernel's
-      // bounding box holds any hits, gathering would sum zeros — the gather
-      // writes the zeros directly (a reused `out` may be dirty; see
-      // downsampleFlame). Decided here so the denominator already excludes
-      // the taps the gather won't pay; a nonempty home block skips the table
-      // query entirely, exactly as the old inline loop did.
+      // The cell's kernel footprint clipped only to the source bounds — the
+      // full region if no occupancy clip applies.
+      const iLo = Math.max(-radiusX, -baseX);
+      const iHi = Math.min(radiusX, srcWidth - 1 - baseX);
+      const jLo = Math.max(-radiusY, -baseY);
+      const jHi = Math.min(radiusY, srcHeight - 1 - baseY);
+      const x0 = baseX + iLo;
+      const x1 = baseX + iHi;
+      const y0 = baseY + jLo;
+      const y1 = baseY + jHi;
+      const fullCells = (x1 - x0 + 1) * (y1 - y0 + 1);
+
+      // Empty-footprint skip + occupied clip, both off the same summed-area
+      // table. A cell whose home block is nonempty has an occupied home tile
+      // inside its own footprint, so the table answer is known — the old
+      // inline loop skipped the query there, and so does this one unless the
+      // footprint is large enough that clipping is worth probing for. When
+      // every tile in the footprint is occupied the box is already maximal;
+      // otherwise four O(log tiles) SAT searches bound it.
+      let cx0 = x0;
+      let cy0 = y0;
+      let cx1 = x1;
+      let cy1 = y1;
       let emptyFootprint = false;
-      if (localCount <= 0) {
-        const txLo = (Math.max(0, baseX - radiusX) / OCCUPANCY_TILE) | 0;
-        const tyLo = (Math.max(0, baseY - radiusY) / OCCUPANCY_TILE) | 0;
-        const txHi =
-          ((Math.min(srcWidth - 1, baseX + radiusX) / OCCUPANCY_TILE) | 0) + 1;
-        const tyHi =
-          ((Math.min(srcHeight - 1, baseY + radiusY) / OCCUPANCY_TILE) | 0) + 1;
-        const occupied =
-          occupancy[tyHi * satStride + txHi] -
-          occupancy[tyLo * satStride + txHi] -
-          occupancy[tyHi * satStride + txLo] +
-          occupancy[tyLo * satStride + txLo];
-        emptyFootprint = occupied === 0;
+      if (localCount <= 0 || fullCells >= ADAPTIVE_CLIP_MIN_CELLS) {
+        const txLo = (x0 / OCCUPANCY_TILE) | 0;
+        const tyLo = (y0 / OCCUPANCY_TILE) | 0;
+        const txHi = (x1 / OCCUPANCY_TILE) | 0;
+        const tyHi = (y1 / OCCUPANCY_TILE) | 0;
+        const occupied = satCount(occupancy, satStride, txLo, tyLo, txHi, tyHi);
+        if (occupied === 0) {
+          emptyFootprint = true;
+        } else if (
+          fullCells >= ADAPTIVE_CLIP_MIN_CELLS &&
+          occupied < (txHi - txLo + 1) * (tyHi - tyLo + 1)
+        ) {
+          occupiedTileBounds(
+            occupancy,
+            satStride,
+            txLo,
+            tyLo,
+            txHi,
+            tyHi,
+            tileBox,
+          );
+          cx0 = Math.max(x0, tileBox[0] * OCCUPANCY_TILE);
+          cy0 = Math.max(y0, tileBox[1] * OCCUPANCY_TILE);
+          cx1 = Math.min(x1, (tileBox[2] + 1) * OCCUPANCY_TILE - 1);
+          cy1 = Math.min(y1, (tileBox[3] + 1) * OCCUPANCY_TILE - 1);
+        }
       }
+      const b = cell << 2;
       if (emptyFootprint) {
         plan[cell] = -1;
         total += ADAPTIVE_CELL_BASE_WORK;
-      } else {
-        plan[cell] = kernelIndex;
-        total +=
-          ADAPTIVE_CELL_BASE_WORK +
-          adaptiveGatherWork(
-            baseX,
-            baseY,
-            radiusX,
-            radiusY,
-            srcWidth,
-            srcHeight,
-          );
+        continue;
       }
+      plan[cell] = kernelIndex;
+      bounds[b] = cx0;
+      bounds[b + 1] = cy0;
+      bounds[b + 2] = cx1;
+      bounds[b + 3] = cy1;
+      total +=
+        ADAPTIVE_CELL_BASE_WORK +
+        adaptiveGatherWork(
+          baseX,
+          baseY,
+          radiusX,
+          radiusY,
+          srcWidth,
+          srcHeight,
+          cx0,
+          cy0,
+          cx1,
+          cy1,
+        );
+      // The clip dropped empty regions from the CONTRIBUTION sums, which is
+      // exact (they add zero); normalization must still cover every
+      // in-bounds cell, so resolve the exact flat-order weight sum for this
+      // (x range, y range) pair. Range ids: 0 is the full range, 1..radiusX
+      // the left-clipped ranges, radiusX+1..2*radiusX the right-clipped
+      // ones, and likewise for y. This runs for EVERY gathered cell — the
+      // gather no longer carries a full-box loop, so the memo is the only
+      // weight normalization there is, and the interior range pair is one
+      // cache entry per radius class.
+      let xRangeId: number;
+      if (iLo === -radiusX) {
+        xRangeId = iHi === radiusX ? 0 : radiusX + 1 + (radiusX - 1 - iHi);
+      } else {
+        xRangeId = -iLo + 1;
+      }
+      let yRangeId: number;
+      if (jLo === -radiusY) {
+        yRangeId = jHi === radiusY ? 0 : radiusY + 1 + (radiusY - 1 - jHi);
+      } else {
+        yRangeId = -jLo + 1;
+      }
+      weights[cell] = exactAdaptiveWeightSum(
+        kernel,
+        xRangeId,
+        yRangeId,
+        iLo,
+        iHi,
+        jLo,
+        jHi,
+      );
     }
   }
-  return { plan, kernels, total, scaleX, scaleY };
+  return { plan, kernels, bounds, weights, rowBits, total, scaleX, scaleY };
 }
 
 /** Mutable resume state for one banded gather — see
@@ -1649,6 +1919,10 @@ function planAdaptiveDownsample(
 interface AdaptiveGatherState {
   plan: Int32Array;
   kernels: AdaptiveKernel[];
+  bounds: Int32Array;
+  weights: Float64Array;
+  rowBits: Uint32Array;
+  srcWords: number;
   srcHits: Float64Array;
   srcRGB: Float64Array;
   dstHits: Float64Array;
@@ -1682,6 +1956,10 @@ function runAdaptiveGather(
   const {
     plan,
     kernels,
+    bounds,
+    weights,
+    rowBits,
+    srcWords,
     srcHits,
     srcRGB,
     dstHits,
@@ -1722,6 +2000,11 @@ function runAdaptiveGather(
       } else {
         // Step 3 continued: gather the plan's kernel.
         const { kernelX, kernelY, radiusX, radiusY } = kernels[kernelIndex];
+        const b = cell << 2;
+        const cx0 = bounds[b];
+        const cy0 = bounds[b + 1];
+        const cx1 = bounds[b + 2];
+        const cy1 = bounds[b + 3];
         ran +=
           ADAPTIVE_CELL_BASE_WORK +
           adaptiveGatherWork(
@@ -1731,29 +2014,72 @@ function runAdaptiveGather(
             radiusY,
             srcWidth,
             srcHeight,
+            cx0,
+            cy0,
+            cx1,
+            cy1,
           );
 
-        let weightSum = 0;
+        // Clipped path: walk the cell-resolution occupied bitmap across the
+        // plan's box, row-major, one word per 32 columns. Skipping empty
+        // cells is exact for the contribution sums (they add zero), and
+        // `weightSum` is the plan's exact flat-order memo, so the result is
+        // the flat loop's bit for bit. A word whose covered segment is FULLY
+        // occupied runs the direct loop instead of the bit twiddling — the
+        // measured dense-frame regression (~15% without it) is exactly this
+        // case, and the direct loop's ascending-sx order is the bit loop's
+        // order, so the fast path is byte-neutral.
+        const weightSum = weights[cell];
         let hitSum = 0;
         let rSum = 0;
         let gSum = 0;
         let bSum = 0;
-        for (let j = -radiusY; j <= radiusY; j++) {
-          const sy = baseY + j;
-          if (sy < 0 || sy >= srcHeight) continue;
-          const wy = kernelY[j + radiusY];
-          const rowBase = sy * srcWidth;
-          for (let i = -radiusX; i <= radiusX; i++) {
-            const sx = baseX + i;
-            if (sx < 0 || sx >= srcWidth) continue;
-            const weight = wy * kernelX[i + radiusX];
-            const bucket = rowBase + sx;
-            weightSum += weight;
-            hitSum += weight * srcHits[bucket];
-            const so = bucket * 3;
-            rSum += weight * srcRGB[so];
-            gSum += weight * srcRGB[so + 1];
-            bSum += weight * srcRGB[so + 2];
+        {
+          const wx0 = cx0 >>> 5;
+          const wx1 = cx1 >>> 5;
+          const loMask = 0xffffffff << (cx0 & 31);
+          const hiMask = (2 << (cx1 & 31)) - 1;
+          for (let sy = cy0; sy <= cy1; sy++) {
+            const wy = kernelY[sy - baseY + radiusY];
+            const rowBase = sy * srcWidth;
+            const wordBase = sy * srcWords;
+            for (let wx = wx0; wx <= wx1; wx++) {
+              let bits = rowBits[wordBase + wx];
+              if (wx === wx0) bits &= loMask;
+              if (wx === wx1) bits &= hiMask;
+              if (bits === 0) continue;
+              const segLo = wx === wx0 ? cx0 & 31 : 0;
+              const segHi = wx === wx1 ? cx1 & 31 : 31;
+              const segMask = ((2 << segHi) - 1) & (0xffffffff << segLo);
+              if (bits === segMask) {
+                for (
+                  let sx = (wx << 5) + segLo, end = (wx << 5) + segHi;
+                  sx <= end;
+                  sx++
+                ) {
+                  const weight = wy * kernelX[sx - baseX + radiusX];
+                  const bucket = rowBase + sx;
+                  hitSum += weight * srcHits[bucket];
+                  const so = bucket * 3;
+                  rSum += weight * srcRGB[so];
+                  gSum += weight * srcRGB[so + 1];
+                  bSum += weight * srcRGB[so + 2];
+                }
+                continue;
+              }
+              while (bits !== 0) {
+                const bit = bits & -bits;
+                const sx = (wx << 5) + (31 - Math.clz32(bit));
+                bits ^= bit;
+                const weight = wy * kernelX[sx - baseX + radiusX];
+                const bucket = rowBase + sx;
+                hitSum += weight * srcHits[bucket];
+                const so = bucket * 3;
+                rSum += weight * srcRGB[so];
+                gSum += weight * srcRGB[so + 1];
+                bSum += weight * srcRGB[so + 2];
+              }
+            }
           }
         }
 
@@ -1861,6 +2187,24 @@ function runAdaptiveGather(
  * background — often most of a flame's frame, and always requesting the
  * widest kernel — costs a table lookup instead of a widest-kernel gather.
  *
+ * A nonempty footprint is not gathered whole, either. The same summed-area
+ * table locates the occupied-tile bounding box inside the kernel rectangle
+ * (four binary searches over O(1) counts), and the gather then walks only
+ * the cells that box contains, driven by a cell-resolution occupied bitmap
+ * built in the occupancy scan. Contribution sums stay EXACT under the clip —
+ * an empty cell adds exactly `weight * 0`, so omitting it cannot change the
+ * Float64 accumulator — while normalization is NOT clipped: empty cells
+ * still carry weight, so the full-footprint weight sum is resolved
+ * separately. That sum is memoized per kernel class and per distinct clipped
+ * range pair in the exact term order the flat loop would use. The separable
+ * factorization the GPU display path proves (sum of in-bounds kernelX times
+ * sum of in-bounds kernelY — `flame-gpu.ts`) is mathematically equivalent
+ * but moves the Float64 result at ULP level, which this function refuses to
+ * do silently: the memoized flat order keeps the clipped pass bit-identical
+ * to the unclipped one, and costs one flat weights-only loop per distinct
+ * edge range pair (at most `(2 * radiusX + 1) * (2 * radiusY + 1)` per
+ * class, in practice a few thousand) rather than per cell.
+ *
  * Deliberately NOT separable (two 1-D passes): a spatially-varying-width
  * Gaussian isn't exactly separable in the first place (a true two-pass
  * filter assumes the same width at every intermediate position), and the
@@ -1870,14 +2214,19 @@ function runAdaptiveGather(
  * progressive frame, so the exact non-separable 2-D gather (reusing
  * `downsampleFlame`'s own proven loop shape) is worth its extra cost here.
  *
- * COST: still O(width * height * radius^2) in the worst case (a maximally
- * sparse image with hits scattered everywhere, every cell requesting the
- * widest kernel and no footprint empty enough to skip) — expensive enough
- * that it belongs on a finished/paused render, not every progressive frame;
- * see the worker's `runChunk` for how the two functions divide that work.
- * In practice the absolute-count radius mapping keeps converged structure on
- * small kernels and the occupancy skip makes empty background ~free, so a
- * typical finished frame costs a small multiple of a fixed-radius pass.
+ * COST: the worst case is unchanged — O(width * height * radius^2) when a
+ * footprint's occupied box spans the whole kernel (hits in every tile, so
+ * nothing clips; a fully occupied test frame runs within ~5% of the old
+ * pass) — but that is the pathological end, not the norm. On the measured
+ * imported Electric Sheep genomes at 960x540 output, supersample 3 and 20M
+ * iterations, ~96% of cells request the widest 199x199-source-cell kernel,
+ * and the clipped gather visits 0.1-15% of the old taps (the per-genome
+ * spread tracks how spread-out the attractor is), turning 11-70s passes
+ * into 0.2-11s; the app-default params land in the same range. Numbers, the
+ * pre-change comparison and the corpus are in
+ * `scripts/flame-density-estimate.harness.ts`. The pass still belongs on a
+ * finished/paused render, not every progressive frame; see the worker's
+ * `runChunk` for how the two functions divide that work.
  *
  * `oversized`'s dimensions must be an exact positive-integer multiple of
  * `outWidth` / `outHeight`, exactly like `downsampleFlame`. Throws
@@ -1945,6 +2294,10 @@ export function createAdaptiveDownsampleJob(
   const state: AdaptiveGatherState = {
     plan: plan.plan,
     kernels: plan.kernels,
+    bounds: plan.bounds,
+    weights: plan.weights,
+    rowBits: plan.rowBits,
+    srcWords: (srcWidth + 31) >>> 5,
     srcHits,
     srcRGB,
     dstHits,

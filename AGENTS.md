@@ -477,17 +477,17 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `tonemapFlame` (exposure/gamma/vibrancy). CPU oracle for `flame-gpu.ts`.
     The tone-map anchor is the MEAN deposited density (`hitMass`/buckets,
     `log1p(h/mean)/log1p(32)`), never the hottest bucket — a ratio, so
-    exposure is invariant under budget, supersample pooling and deposit
-    weights; `maxHits` is an instrument only. `flame-differential.harness.ts`
-    is the fidelity sheet; the finished-frame adaptive pass is the banded
-    `createAdaptiveDownsampleJob` (plan fixes the work total, bands yield
-    through the worker's scheduler, `estimateProgress` drives the UI's
-    determinate bar; quick passes emit none; evidence in
-    `docs/architecture.md`).
-    Its optional balloon echo deposits one full-weight, tint-only second
-    splat into that SAME histogram; there is deliberately no separate
-    compositing, conformal magnification, or radial fade. The executable
-    weight decision is `scripts/flame-balloon.harness.ts`.
+    exposure is invariant under budget, pooling and deposit weights;
+    `maxHits` is an instrument. `flame-differential.harness.ts` is the
+    fidelity sheet; the finished adaptive pass is the banded
+    `createAdaptiveDownsampleJob` (plan fixes the total; bands yield through
+    the scheduler, `estimateProgress` drives the determinate bar, quick
+    passes emit none), gather clipped to the occupied footprint —
+    bit-identical, 4-55x measured imports, +4% dense
+    (`flame-density-estimate.harness.ts`).
+    Its optional balloon echo deposits one full-weight, tint-only splat into
+    that SAME histogram — no separate compositing, conformal magnification
+    or radial fade (`scripts/flame-balloon.harness.ts`).
   - `flame-4d.ts` — 4D twin (`accumulateFlame4`), CPU oracle for
     `flame-gpu-4d.ts`; slices with `0.06` ghost floor (not solid's `0`). Its
     balloon path reduces through the worker's current settled rotor first,
