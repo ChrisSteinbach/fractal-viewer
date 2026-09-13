@@ -919,16 +919,47 @@ empty-footprint skip rarely fires — through `createAdaptiveDownsampleJob`.
 It gates byte-identity between banded and one-shot output at band budgets
 from one cell to unbounded, plus strict monotonic `done` ending exactly at
 `total`, and prints the plan share and throughput for the imported params
-(11/0.6/0) and the app defaults (6/0.4/2).
+(11/0.6/0) and the app defaults (6/0.4/0).
 
-MEASURED VERDICT (2026-09-13, Node 22.23.2, i7-1165G7): the plan costs ~8ms
-against a 2.19s / 6.68s pass (0.36% / 0.12%), 206-212M taps/s, and `done`
-reaches `total` exactly on every run. The same sheet's development produced
+MEASURED VERDICT (2026-09-13, Node 22.23.2, i7-1165G7): with the
+occupied-footprint clip in place the pass is 660ms imported / 225ms defaults,
+the plan 104ms / 28ms (15.81% / 12.40% of the total, 2540M / 2276M charged
+work units per second in the gather), and `done` reaches `total` exactly on
+every run. The clip cut the gather ~10x on this fixture (the pre-clip numbers
+were 2.19s / 6.68s with an ~8ms plan — 0.36% / 0.12%, 206-212M taps/s — and
+the plan is now material, which is why the clipping sheet re-measures it at
+app size). The same sheet's development produced
 the code's implementation note: a closure-slot read per tap measured ~13% slower and a
 flat indexed loop ~5% slower than top-level functions binding their arrays to
 locals, which is why `planAdaptiveDownsample`/`runAdaptiveGather` are split
 out; at parity (interleaved A/B against a `main` worktree, 6 rounds x 2 param
 sets) the min delta was -1.5% to +1.0%.
+
+### flame-density-estimate
+
+The occupied-footprint clipping sheet — the measurement behind
+`adaptiveDownsampleFlame`'s clipped gather and the app-realistic decision
+about the residual pass's home. Per real Electric Sheep genome (four genomes
+under `FLAME_ESTIMATE_CORPUS`, decoded through `decodeFlameFile` -> the app's
+scene decode -> `prepareChaosGame` -> `accumulateFlame`) it reports the
+radius-class histogram, predicted vs charged vs paid taps, plan/gather/pass
+times, and output agreement against a frozen pre-change implementation
+(`FLAME_ESTIMATE_PRE=1`, the default), plus a dense fully-occupied control.
+`PRE=0` skips the frozen arm (minutes per genome at app size) for a cheap
+residual-only re-measurement.
+
+MEASURED VERDICT (2026-09-13, Node 22.23.2, i7-1165G7, 960x540/ss3/20M with
+the app defaults 6/0.4/0): the clip is exact (0 bucket and tone-byte deltas)
+and cuts pass times 4.4-53x (11.7-68.9s -> 0.2-10.0s imported; 1.8-21.3s ->
+0.1-3.6s defaults); the bitmap visits 0.10-14.4% of the full rectangle's
+taps; the dense control pays +18.5% (505ms vs 426ms). At the app-realistic
+1920x950/ss3/20M raster the residual pass is still the longest phase on two
+of four genomes (35.11s and 25.67s against 20.32s and 3.79s accumulation;
+31-32x the 0.73-1.20s progressive redisplay tick), so the decision moved the
+pass off the CPU worker: the GPU compute gather at the `FlameAccumBackend`
+seam, with the worker-pool split (caps at this machine's 4 physical cores)
+and CPU-only refusal (still dominant) rejected on those numbers. The
+narrative lives in `docs/architecture.md`'s flame section.
 
 ### spherefold-radius-sweep
 

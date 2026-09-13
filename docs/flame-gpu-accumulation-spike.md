@@ -142,9 +142,14 @@ Reading the numbers:
   worker's 150 ms cadence on desktop) or — better, and the issue's "cheap
   wins" item — GPU-side downsample + tonemap so the histogram never leaves
   the GPU except as pixels. Not risky, just work.
-- **Adaptive density estimation** (`adaptiveDownsampleFlame`) stays CPU-side
+- **Adaptive density estimation** (`adaptiveDownsampleFlame`) stayed CPU-side
   initially (it runs once, on the finished frame, on a display-resolution
-  derivative) — port later if profiling says so.
+  derivative). The profiling is done and says port: at the app-realistic
+  1920x950 raster the clipped pass is still the longest phase on imported
+  genomes (35.1s and 25.7s against 20.3s and 3.8s accumulation), so the
+  residual pass moves to a GPU compute gather at the `FlameAccumBackend` seam
+  — the decision and the port's shape are in `docs/architecture.md`'s flame
+  section, the measurement in `scripts/flame-density-estimate.harness.ts`.
 - **Phones.** WebGPU ships broadly on Android Chrome and iOS 26 Safari, but
   no phone numbers were taken. Expect the CPU-vs-GPU gap to be smaller but
   material; the capability check + fallback make this shippable-then-measure.

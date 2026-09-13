@@ -40,32 +40,63 @@
  *   FLAME_ESTIMATE_SS       supersample, default 3 (the app's imported clamp)
  *   FLAME_ESTIMATE_ITER     accumulation iterations, default 20,000,000
  *   FLAME_ESTIMATE_OUT_DIR  report directory, default scripts/out
+ *   FLAME_ESTIMATE_PRE      "0" skips the frozen pre-change arm and reports
+ *                           the residual pass alone (default "1" runs the
+ *                           exactness comparison). The app-realistic full run
+ *                           takes minutes per genome in the pre-change arm;
+ *                           residual-only exists so the post-clip question
+ *                           ("what does the pass cost now?") is cheap to
+ *                           re-measure.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/flame-density-estimate.harness.ts
  *
  * MEASURED VERDICT (2026-09-13, Node 22.23.2, i7-1165G7, 960x540 output,
- * supersample 3, 20M iterations, the four genomes under the corpus path):
- * the clip is exact and decisive. Every row is bucket-for-bucket and
- * byte-for-byte identical to the pre-change pass (0 hits/sumRGB/maxHits/
- * hitMass deltas, 0 tone-byte differences). Pass times, pre-change ->
- * clipped (imported params | app defaults): 12.8s -> 0.23s | 2.0s -> 0.14s
- * (242); 47.2s -> 11.4s | 15.0s -> 3.7s (243); 65.2s -> 3.9s | 16.7s ->
- * 1.3s (244); 70.3s -> 8.9s | 21.7s -> 3.6s (247) — 4.0x to 55x. PAID taps
- * fall to 0.10-15% of the full rectangle (242: 0.10%/0.20%; 243: 12.5%/
- * 15.1%; 244: 2.0%/2.4%; 247: 6.3%/8.7%), which is the real gather win; the
- * pass's charged denominator (occupied-box area) falls less, because the
- * bitmap skips empty regions inside a box the planner can bound only at
- * OCCUPANCY_TILE granularity. Plan cost is 100-270ms against gathers of
- * 0.1-11s. The dense 2880x1620 fully-occupied control — every word on the
- * fast path, no clip anywhere — regresses ~4% (3.4-4.6% across runs: 3451ms
- * -> 3619ms, 3758ms -> 3888ms, all of it the added plan scan) with identical
- * output, the disclosed small overhead.
+ * supersample 3, 20M iterations, the four genomes under the corpus path; the
+ * "defaults" legs use the app's REAL default 6/0.4/0 — an earlier revision
+ * of this sheet ran 6/0.4/2, which is not `state.ts`'s default, and those
+ * numbers are superseded): the clip is exact and decisive. Every row is
+ * bucket-for-bucket and byte-for-byte identical to the pre-change pass
+ * (0 hits/sumRGB/maxHits/hitMass deltas, 0 tone-byte differences). Pass
+ * times, pre-change -> clipped (imported | defaults): 11.7s -> 0.22s |
+ * 1.80s -> 0.12s (242); 44.3s -> 10.0s | 13.0s -> 3.6s (243); 65.7s ->
+ * 3.65s | 15.4s -> 1.21s (244); 68.9s -> 8.4s | 21.3s -> 3.3s (247) — 4.4x
+ * to 53x imported, 3.6x to 15x defaults. PAID taps fall to 0.10-14.4% of the
+ * full rectangle (242: 0.10%/0.20%; 243: 12.5%/14.4%; 244: 2.0%/2.4%; 247:
+ * 6.3%/8.0%). Plan cost is 83-250ms against gathers of 37ms-9.8s. The dense
+ * 2880x1620 fully-occupied control — every word on the fast path, no clip
+ * anywhere — costs 505ms against the pre-change 426ms (+18.5%: 174ms plan +
+ * 332ms gather) with identical output; under the corrected default its
+ * kernels are narrower, so the plan scan reads as a larger share than the
+ * ~4% the earlier min-2 revision measured.
  *
- * App-realistic rerun (FLAME_ESTIMATE_OUT=1920x950, one genome, 244):
- * 185.5s -> 7.4s at the imported params (24.9x; 1.3% of the taps) and
- * 41.5s -> 2.5s at the defaults (16.7x; 1.6%); the 5760x2850 dense control
- * is at parity (15303ms -> 15210ms). Agreement stays exact at this size.
+ * THE DECISION MEASUREMENT (app-realistic): FLAME_ESTIMATE_OUT=1920x950
+ * (viewport x min(DPR, 2) = 1 on the dev machine's 1080p panel),
+ * supersample 3, 20M iterations, all four genomes, FLAME_ESTIMATE_PRE=0 so
+ * the pre-change arm — minutes per genome at this raster — is skipped;
+ * exactness at this size is pinned by the one-genome prior run (244:
+ * 185.5s -> 7.4s at the imported params, exact) and the 960x540 full run
+ * above. Imported params, seconds:
+ *   genome   accumulate   pass   plan   progressive tick
+ *   242        5.68        0.55   0.34       1.20
+ *   243       20.32       35.11   0.62       1.14
+ *   244        5.98        6.36   0.41       0.73
+ *   247        3.79       25.67   0.57       0.79
+ * (progressive tick = `downsampleFlame` at the app's FLAME_FILTER_RADIUS,
+ * the redisplay the user already watches). At the app defaults the same
+ * rows are 0.36s / 12.13s / 2.14s / 9.09s. The post-clip pass is STILL the
+ * longest phase on 243 and 247 (1.7x and 6.8x their accumulations; 31x and
+ * 32x the progressive tick) and 3x over the bar on 244.
+ *
+ * VERDICT: the residual pass moves to the GPU compute gather at the
+ * FlameAccumBackend seam. Interactive bar stated by the decision: <= ~2s at
+ * this window, i.e. twice the measured progressive tick; the worst rows miss
+ * it by 13-18x, so CPU-only refusal is refused. A worker pool was rejected
+ * too: it caps at this machine's 4 physical / 8 logical cores (~4.4-8.8s on
+ * the worst row, still over the bar) and would need the 525MB full-resolution
+ * histogram shared through SAB. Shape, oracles and gates live in the
+ * implementation brief; the narrative is in docs/architecture.md's flame
+ * section.
  */
 import {
   existsSync,
@@ -89,6 +120,7 @@ import {
   accumulateFlame,
   createAdaptiveDownsampleJob,
   createFlameHistogram,
+  downsampleFlame,
   tonemapFlame,
 } from "../src/fractal/flame";
 import type {
@@ -98,6 +130,7 @@ import type {
 } from "../src/fractal/flame";
 import { mulberry32 } from "../src/fractal/rng";
 import { decodeFlameFile } from "../src/app/flame-file";
+import { FLAME_FILTER_RADIUS } from "../src/app/flame-worker-core";
 import { decodeScene } from "../src/app/persist";
 
 const envStr = (key: string, fallback: string): string => {
@@ -127,6 +160,15 @@ const ITERATIONS = (() => {
   const parsed = Number.parseInt(envStr("FLAME_ESTIMATE_ITER", "20000000"), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 20_000_000;
 })();
+/**
+ * Run the frozen pre-change arm (the exactness comparison) — default on. Set
+ * `FLAME_ESTIMATE_PRE=0` for a residual-only measurement: the pre-change
+ * pass is O(full rectangle) and its app-realistic-size cost is minutes per
+ * genome, while the post-clip question ("what does the pass cost now, against
+ * accumulation?") needs none of it. Exactness is still gated by the default
+ * run at any size; residual-only rows report the comparison fields as null.
+ */
+const PRE = envStr("FLAME_ESTIMATE_PRE", "1") !== "0";
 
 const PROBE_POINTS = 4096;
 const PROBE_TRIM = 0.02;
@@ -134,9 +176,14 @@ const PROBE_SEED = 0x5eed;
 const FRAME_FILL = 0.8;
 const DENSE_SEED = 2654435761;
 
+/** The app's own defaults (`state.ts`'s `DEFAULT_ESTIMATOR_*`): 6/0.4/0.
+ * The minimum is DELIBERATELY 0, not the 2 an earlier revision of this sheet
+ * (and the docs quoting it) said — "pin-sharp at full density" is the
+ * shipped default and a lower floor makes cells with many hits cheaper, so
+ * the correction moves this leg's numbers down, never up. */
 const DEFAULT_PARAMS: DensityEstimatorParams = {
   estimatorRadius: 6,
-  estimatorMinimumRadius: 2,
+  estimatorMinimumRadius: 0,
   estimatorCurve: 0.4,
 };
 
@@ -558,19 +605,25 @@ interface EstimateRow {
   params: string;
   xforms: number;
   accumulationMs: number;
-  preChangePassMs: number;
+  /** The progressive-tick baseline: `downsampleFlame` at the app's fixed
+   * `FLAME_FILTER_RADIUS`, i.e. what one cheap redisplay costs at this
+   * raster. The decision threshold is stated as a multiple of it. */
+  fixedFilterMs: number;
+  preChangePassMs: number | null;
   clippedPlanMs: number;
   clippedGatherMs: number;
   clippedPassMs: number;
-  predictedTaps: number;
+  predictedTaps: number | null;
   chargedWork: number;
-  paidTaps: number;
-  radiusHistogram: [number, number][];
-  agreement: HistogramAgreement;
+  paidTaps: number | null;
+  radiusHistogram: [number, number][] | null;
+  agreement: HistogramAgreement | null;
 }
 
-/** Run the pre-change and clipped passes at one parameter set and compare
- * them; asserts the exactness claim so a silent drift fails the sheet. */
+/** Run the pre-change (when `PRE`) and clipped passes at one parameter set
+ * and compare them; asserts the exactness claim so a silent drift fails the
+ * sheet. In residual-only mode the clipped pass is measured on its own and
+ * the comparison fields are null. */
 function measureParams(
   file: string,
   xforms: number,
@@ -581,15 +634,33 @@ function measureParams(
   tone: { exposure: number; gamma: number; vibrancy: number },
   prefix: { sat: Int32Array; stride: number },
 ): EstimateRow {
-  const t0 = performance.now();
-  const preChange = preChangeAdaptiveDownsample(
-    hist,
-    OUT_W,
-    OUT_H,
-    params,
-    prefix,
-  );
-  const preChangePassMs = performance.now() - t0;
+  const fixedStart = performance.now();
+  downsampleFlame(hist, OUT_W, OUT_H, FLAME_FILTER_RADIUS);
+  const fixedFilterMs = performance.now() - fixedStart;
+
+  let preChangePassMs: number | null = null;
+  let predictedTaps: number | null = null;
+  let paidTaps: number | null = null;
+  let radiusHistogram: [number, number][] | null = null;
+  let agreement: HistogramAgreement | null = null;
+  let preChangeTarget: FlameHistogram | null = null;
+  if (PRE) {
+    const t0 = performance.now();
+    const preChange = preChangeAdaptiveDownsample(
+      hist,
+      OUT_W,
+      OUT_H,
+      params,
+      prefix,
+    );
+    preChangePassMs = performance.now() - t0;
+    predictedTaps = preChange.predictedTaps;
+    paidTaps = preChange.occupiedTaps;
+    radiusHistogram = [...preChange.radiusCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+    preChangeTarget = preChange.target;
+  }
 
   const t1 = performance.now();
   const job = createAdaptiveDownsampleJob(hist, OUT_W, OUT_H, params);
@@ -600,34 +671,40 @@ function measureParams(
   const totalMs = performance.now() - t1;
   const display = job.result();
 
-  const agreement = compareHistograms(preChange.target, display);
-  const toneBytes = toneBytesMismatch(preChange.target, display, tone);
+  if (preChangeTarget !== null) {
+    const comparison = compareHistograms(preChangeTarget, display);
+    const toneBytes = toneBytesMismatch(preChangeTarget, display, tone);
+    agreement = { ...comparison, toneByteMismatch: toneBytes };
+    expect(comparison.hitsMismatch).toBe(0);
+    expect(comparison.rgbMismatch).toBe(0);
+    expect(toneBytes).toBe(0);
+  }
+
   const chargedWork = job.total - OUT_W * OUT_H;
-  expect(agreement.hitsMismatch).toBe(0);
-  expect(agreement.rgbMismatch).toBe(0);
-  expect(toneBytes).toBe(0);
-  expect(chargedWork).toBeLessThanOrEqual(preChange.predictedTaps);
-  // The charged box area is an upper bound on the bits actually visited,
-  // and the bitmap can only ever visit occupied cells.
-  expect(preChange.occupiedTaps).toBeLessThanOrEqual(chargedWork);
-  expect(preChange.occupiedTaps).toBeLessThanOrEqual(preChange.predictedTaps);
+  if (predictedTaps !== null && paidTaps !== null) {
+    expect(chargedWork).toBeLessThanOrEqual(predictedTaps);
+    // The charged box area is an upper bound on the bits actually visited,
+    // and the bitmap can only ever visit occupied cells.
+    expect(paidTaps).toBeLessThanOrEqual(chargedWork);
+    expect(paidTaps).toBeLessThanOrEqual(predictedTaps);
+  }
 
   return {
     file,
     params: paramsLabel,
     xforms,
     accumulationMs: Math.round(accumulationMs),
-    preChangePassMs: Math.round(preChangePassMs),
+    fixedFilterMs: Math.round(fixedFilterMs),
+    preChangePassMs:
+      preChangePassMs === null ? null : Math.round(preChangePassMs),
     clippedPlanMs: Number(planMs.toFixed(1)),
     clippedGatherMs: Number((totalMs - planMs).toFixed(0)),
     clippedPassMs: Math.round(totalMs),
-    predictedTaps: preChange.predictedTaps,
+    predictedTaps,
     chargedWork,
-    paidTaps: preChange.occupiedTaps,
-    radiusHistogram: [...preChange.radiusCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6),
-    agreement: { ...agreement, toneByteMismatch: toneBytes },
+    paidTaps,
+    radiusHistogram,
+    agreement,
   };
 }
 
@@ -707,7 +784,7 @@ describe("flame density-estimate clipping sheet", () => {
             snapshot.transforms.length,
             hist,
             DEFAULT_PARAMS,
-            "defaults 6/0.4/2",
+            "defaults 6/0.4/0",
             accumulationMs,
             tone,
             prefix,
@@ -720,15 +797,19 @@ describe("flame density-estimate clipping sheet", () => {
     // takes the bitmap gather's full-word fast path everywhere.
     const dense = denseFrame(OUT_W * SUPERSAMPLE, OUT_H * SUPERSAMPLE);
     const densePrefix = occupiedPrefix(dense);
-    const densePreStart = performance.now();
-    const densePre = preChangeAdaptiveDownsample(
-      dense,
-      OUT_W,
-      OUT_H,
-      DEFAULT_PARAMS,
-      densePrefix,
-    );
-    const densePreMs = performance.now() - densePreStart;
+    let densePreMs: number | null = null;
+    let densePre: ReturnType<typeof preChangeAdaptiveDownsample> | null = null;
+    if (PRE) {
+      const densePreStart = performance.now();
+      densePre = preChangeAdaptiveDownsample(
+        dense,
+        OUT_W,
+        OUT_H,
+        DEFAULT_PARAMS,
+        densePrefix,
+      );
+      densePreMs = performance.now() - densePreStart;
+    }
     const denseJobStart = performance.now();
     const denseJob = createAdaptiveDownsampleJob(
       dense,
@@ -741,21 +822,22 @@ describe("flame density-estimate clipping sheet", () => {
       /* banded */
     }
     const denseTotalMs = performance.now() - denseJobStart;
-    const denseAgreement = compareHistograms(
-      densePre.target,
-      denseJob.result(),
-    );
-    expect(denseAgreement.hitsMismatch).toBe(0);
-    expect(denseAgreement.rgbMismatch).toBe(0);
+    let denseAgreement: HistogramAgreement | null = null;
+    if (densePre !== null) {
+      const comparison = compareHistograms(densePre.target, denseJob.result());
+      denseAgreement = { ...comparison, toneByteMismatch: 0 };
+      expect(comparison.hitsMismatch).toBe(0);
+      expect(comparison.rgbMismatch).toBe(0);
+    }
     denseRuns.push({
       frame: `${OUT_W * SUPERSAMPLE}x${OUT_H * SUPERSAMPLE} fully occupied`,
-      preChangePassMs: Math.round(densePreMs),
+      preChangePassMs: densePreMs === null ? null : Math.round(densePreMs),
       clippedPlanMs: Number(densePlanMs.toFixed(1)),
       clippedGatherMs: Number((denseTotalMs - densePlanMs).toFixed(0)),
       clippedPassMs: Math.round(denseTotalMs),
-      predictedTaps: densePre.predictedTaps,
+      predictedTaps: densePre === null ? null : densePre.predictedTaps,
       chargedWork: denseJob.total - OUT_W * OUT_H,
-      paidTaps: densePre.occupiedTaps,
+      paidTaps: densePre === null ? null : densePre.occupiedTaps,
       agreement: denseAgreement,
     });
 
@@ -765,6 +847,7 @@ describe("flame density-estimate clipping sheet", () => {
       out: `${OUT_W}x${OUT_H}`,
       supersample: SUPERSAMPLE,
       iterations: ITERATIONS,
+      preChangeArm: PRE,
       rows,
       dense: denseRuns,
     };
@@ -778,16 +861,16 @@ describe("flame density-estimate clipping sheet", () => {
     // a small fraction of the taps the full rectangle would, both as the
     // pass charges them (box area) and as the bitmap actually visits them.
     // (The dense frame is not required to clip — it is the regression
-    // control.)
-    if (rows.length > 0) {
+    // control. This gate needs the pre-change arm's tap instrument.)
+    if (PRE && rows.length > 0) {
       const bestPaid = Math.min(
-        ...rows.map((r) => r.paidTaps / Math.max(1, r.predictedTaps)),
+        ...rows.map((r) => r.paidTaps! / Math.max(1, r.predictedTaps!)),
       );
       expect(bestPaid).toBeLessThan(0.5);
       const bestCharged = Math.min(
-        ...rows.map((r) => r.chargedWork / Math.max(1, r.predictedTaps)),
+        ...rows.map((r) => r.chargedWork / Math.max(1, r.predictedTaps!)),
       );
       expect(bestCharged).toBeLessThan(0.5);
     }
-  }, 900_000);
+  }, 1_800_000);
 });
