@@ -5,6 +5,13 @@ Investigation, 12 September 2026. Application baseline:
 [`finish-transmission.harness.ts`](../scripts/finish-transmission.harness.ts).
 This work changes no production renderer, finish bundle or scene document.
 
+**Owner outcome, 13 September 2026: REJECTED.** The subsequent full-size
+layered/bent CPU and GPU images were judged indistinct, noisy and
+unconvincing as glass compared with other fractal engines. The owner-selected
+research direction did not achieve the intended appearance. The measured
+[GPU result](transmission-gpu-images.md) is retained as a rejected candidate;
+production work remains gated while a different optical model is tested.
+
 **Qualification update, 13 September 2026** (application base `3b5deaa`):
 the [World bands study](#world-bands-the-candidate-definition)
 now separates optical scale from display tolerance and compares an exact

@@ -416,12 +416,12 @@ const refusalCount = validatedRows.filter(
 ).length;
 const html = `<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GPU transmission 512px visual review — UNREVIEWED</title>
+<title>GPU transmission 512px visual review — REJECTED</title>
 <style>
 body{margin:24px auto;max-width:1128px;padding:0 18px;background:#101216;color:#e6e9ef;font:15px system-ui,sans-serif;line-height:1.45}h1,h2,h3{color:#fff}.status{padding:14px;border:2px solid #e7ad45;background:#2b2212}.limits{padding:14px;border:2px solid #c95b5b;background:#30191d}.scene{min-width:0;padding:14px;border:1px solid #59616e;background:#171a20;margin:18px 0}.pair{display:grid;grid-template-columns:1fr 1fr;gap:22px;min-width:0}.row{min-width:0;padding:12px;border:1px solid #454b55;background:#12151a}.row img{display:block;width:100%;height:auto;background:#050608}.caption,.small{color:#b8bec8;font-size:13px}.cpu{padding:8px;border-left:4px solid #65b78b;background:#13251c}.cpu.refused{border-color:#e7ad45;background:#2b2212}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{padding:6px 8px;border:1px solid #4b515a;text-align:left;vertical-align:top}th{background:#252a32}a{color:#9dccff}code,pre{overflow-wrap:anywhere;word-break:break-word}code{background:#222831;padding:2px 4px}pre{white-space:pre-wrap}@media(max-width:760px){.pair{grid-template-columns:1fr}}
 </style>
 <h1>GPU transmission 512px visual review</h1>
-<p class="status"><strong>UNREVIEWED EXPERIMENT.</strong> These four GPU images are appearance evidence for the sampled transmission candidate. They do not approve production integration, establish a performance target, or remove the visible phase/noise limits.</p>
+<p class="status"><strong>OWNER REJECTED · 13 SEPTEMBER 2026.</strong> The full-size result was judged indistinct, noisy and unconvincing as glass compared with other fractal engines. These images preserve the rejected experiment. Faster rendering has not satisfied the intended appearance.</p>
 <p class="limits"><strong>Scope:</strong> device timestamps cover only bend-step and encode passes. Wall time includes host scheduling and other harness work. CPU agreement is a separate bounded comparison and may be refused; GPU rendering here does not prove the CPU model, bending quality, temporal stability, memory target, or production frame-loop behavior.</p>
 <h2>512px straight/weighted comparison</h2>
 <p>Exactly four complete rows are required: Menger 3D and native posed 4D, each straight and weighted. Every image is shown at its natural aspect ratio and links to the recorded original PNG.</p>
@@ -451,7 +451,12 @@ writeFileSync(
   manifestPath,
   `${JSON.stringify(
     {
-      status: "UNREVIEWED",
+      status: "REJECTED",
+      ownerOutcome: {
+        date: "2026-09-13",
+        reason:
+          "Indistinct, noisy and unconvincing glass compared with other fractal engines.",
+      },
       verdict:
         "visual evidence only; no production approval or performance-target claim",
       generatedAt: new Date().toISOString(),

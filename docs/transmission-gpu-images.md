@@ -1,5 +1,11 @@
 # GPU images for layered transmission
 
+**Owner outcome, September 13, 2026: REJECTED.** After reviewing the actual
+512px images, the owner found the result indistinct, noisy and unconvincing
+as glass compared with other fractal renderers. GPU speed does not qualify
+this appearance. These images and their measurements remain evidence of
+the rejected candidate; the next experiment must change the optical model.
+
 The expensive 512px reference batch was a CPU render. The owner challenged
 the wait and asked for GPU image generation. `scripts/transmission-bend-gpu.mjs`
 and its browser page now evaluate the selected layered field, weighted

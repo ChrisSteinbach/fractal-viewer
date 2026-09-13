@@ -618,12 +618,12 @@ const readableReportText = JSON.stringify(readableReport, null, 2);
 const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Transmission revision review — UNREVIEWED</title>
+<title>Transmission revision review — REJECTED</title>
 <style>
 body{margin:24px auto;max-width:1500px;padding:0 18px;background:#101216;color:#e6e9ef;font:15px system-ui,sans-serif;line-height:1.45}h1,h2{color:#fff}.status{padding:14px;border:2px solid #e7ad45;background:#2b2212}.limits{padding:14px;border:2px solid #c95b5b;background:#30191d}.hero-grid{display:grid;grid-template-columns:1fr;gap:20px;max-width:1082px}.hero-card{padding:14px;border:1px solid #59616e;background:#171a20}.hero-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.hero-figure,.secondary-figure{margin:0}.hero-figure img,.secondary-figure img{display:block;width:auto;max-width:100%;height:auto;background:#050608}.hero-figure figcaption,.secondary-figure figcaption{margin-top:7px;color:#cbd1da}.hero-card details{margin-top:14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}.triple{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.grid img,.pair img,.triple img{width:auto;max-width:100%;height:auto;background:#050608}.control{max-width:700px}.control img{display:block;width:auto;max-width:100%;height:auto}.card{padding:12px;border:1px solid #454b55;background:#171a20;margin:12px 0}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{padding:6px 9px;border:1px solid #4b515a;text-align:left;vertical-align:top}th{background:#252a32}code{background:#222831;padding:2px 4px}a{color:#9dccff}.scrub{border:1px solid #454b55;padding:12px;margin:14px 0}.scrub-controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.scrub img{display:block;width:auto;max-width:100%;height:auto;background:#050608}.scrub-views{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}.scrub-views figure{margin:0}.small{color:#b8bec8;font-size:13px}.metric{font-variant-numeric:tabular-nums}@media(max-width:800px){.hero-grid{grid-template-columns:1fr}.hero-pair,.scrub-views,.grid{grid-template-columns:1fr}.hero-figure img,.secondary-figure img{width:100%}}
 </style>
 <h1>Layered transparency and bending</h1>
-<p class="status"><strong>RESEARCH DIRECTION SELECTED · PRODUCTION UNQUALIFIED.</strong> Layered transparency, required bending and the targets below are selected. These revised images have not been approved for release.</p>
+<p class="status"><strong>OWNER REJECTED · 13 SEPTEMBER 2026.</strong> The full-size layered/bent appearance was judged indistinct, noisy and unconvincing as glass. The earlier direction and waiting-time choices authorized the experiment; this result did not satisfy them.</p>
 <h2>Primary appearance comparison</h2>
 <p class="status">${esc(visualStatus)} Click a still to open the original PNG. Both views use the same geometry and experimental optical settings.</p>
 <div class="hero-grid">
@@ -744,7 +744,12 @@ writeFileSync(
   manifestPath,
   JSON.stringify(
     {
-      status: "UNREVIEWED",
+      status: "REJECTED",
+      ownerOutcome: {
+        date: "2026-09-13",
+        reason:
+          "Indistinct, noisy and unconvincing glass compared with other fractal engines.",
+      },
       verdict: "evidence assembly only; no production qualification",
       generatedAt: new Date().toISOString(),
       repositoryRevision: revision,
