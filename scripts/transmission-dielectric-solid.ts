@@ -13,6 +13,7 @@
  * a crossing lies within their respective rounding resolution of a corner.
  */
 import { rotationMatrix4 } from "../src/fractal/affine4";
+import type { Rotation4 } from "../src/fractal/types";
 import type { Vec3 } from "./de-preview";
 
 export type DielectricDimension = 3 | 4;
@@ -120,6 +121,14 @@ export const DIELECTRIC_HYPER_ROTATION = Object.freeze({
 });
 export const DIELECTRIC_HYPER_SLICE = 0.18;
 
+export type DielectricHyperPoseId = "canonical" | "rotorA" | "rotorB";
+
+export type DielectricHyperPoseSpec = {
+  id: DielectricHyperPoseId;
+  rotation: Readonly<Rotation4>;
+  slice: number;
+};
+
 function rowsFromFlat(flat: readonly number[]): RotorRows {
   return [0, 1, 2, 3].map((row) =>
     [0, 1, 2, 3].map((column) => Math.fround(flat[row * 4 + column])),
@@ -131,6 +140,36 @@ export const DIELECTRIC_HYPER_ROTOR_ROWS = rowsFromFlat(
   rotationMatrix4(DIELECTRIC_HYPER_ROTATION),
 );
 
+/** Bounded image-qualification poses; the canonical entry preserves the old wire. */
+export const DIELECTRIC_HYPER_POSES: Readonly<
+  Record<DielectricHyperPoseId, DielectricHyperPoseSpec>
+> = Object.freeze({
+  canonical: Object.freeze({
+    id: "canonical" as const,
+    rotation: DIELECTRIC_HYPER_ROTATION,
+    slice: DIELECTRIC_HYPER_SLICE,
+  }),
+  rotorA: Object.freeze({
+    id: "rotorA" as const,
+    rotation: Object.freeze({ xw: 0.82, yw: -0.41, zw: 0.18 }),
+    slice: 0.34,
+  }),
+  rotorB: Object.freeze({
+    id: "rotorB" as const,
+    rotation: Object.freeze({ xw: -0.37, yw: 0.74, zw: -0.29, xy: 0.21 }),
+    slice: -0.28,
+  }),
+});
+
+function cloneRotorRows(rows: RotorRows): RotorRows {
+  return rows.map((row) => [...row]) as RotorRows;
+}
+
+function rotorRowsForHyperPose(pose: DielectricHyperPoseId): RotorRows {
+  if (pose === "canonical") return cloneRotorRows(DIELECTRIC_HYPER_ROTOR_ROWS);
+  return rowsFromFlat(rotationMatrix4(DIELECTRIC_HYPER_POSES[pose].rotation));
+}
+
 function maximumCellVisits(dimension: DielectricDimension, depth: number) {
   const gridSize = 3 ** depth;
   return dimension * (gridSize - 1) + 1;
@@ -139,21 +178,99 @@ function maximumCellVisits(dimension: DielectricDimension, depth: number) {
 export function makeDielectricSolidFixture(
   dimension: DielectricDimension,
   depth: DielectricDepth,
+  hyperPose: DielectricHyperPoseId = "canonical",
 ): DielectricSolidFixture {
+  const pose = DIELECTRIC_HYPER_POSES[hyperPose];
+  if (pose === undefined)
+    throw new Error(`Unknown dielectric hyper pose: ${hyperPose}`);
+  if (dimension === 3 && hyperPose !== "canonical")
+    throw new Error("3D dielectric fixtures only support the canonical pose");
   return {
     name:
       dimension === 3
         ? `CONNECTED FINITE MENGER D${depth}`
-        : `CONNECTED FINITE HYPER-MENGER D${depth}`,
+        : hyperPose === "canonical"
+          ? `CONNECTED FINITE HYPER-MENGER D${depth}`
+          : `CONNECTED FINITE HYPER-MENGER D${depth} ${hyperPose}`,
     dimension,
     depth,
     halfExtent: DIELECTRIC_HALF_EXTENT,
     rotorRows:
       dimension === 3
-        ? (IDENTITY_ROWS.map((row) => [...row]) as RotorRows)
-        : (DIELECTRIC_HYPER_ROTOR_ROWS.map((row) => [...row]) as RotorRows),
-    slice: dimension === 3 ? 0 : DIELECTRIC_HYPER_SLICE,
+        ? cloneRotorRows(IDENTITY_ROWS)
+        : rotorRowsForHyperPose(hyperPose),
+    slice: dimension === 3 ? 0 : pose.slice,
     visitCap: maximumCellVisits(dimension, depth),
+  };
+}
+
+export type DielectricFixturePreflight = {
+  valid: boolean;
+  finiteF32Rows: boolean;
+  orthonormalRows: boolean;
+  displayedRootSliceNonempty: boolean;
+  displayedRootSliceSupport: number;
+  reason: string | null;
+};
+
+/**
+ * Allocation-free guard for image fixtures. The slice support is exact for the
+ * displayed plane through the rotated root cube: p.w = R^T q.w, q in [-H,H]^4.
+ */
+export function preflightDielectricSolidFixture(
+  fixture: DielectricSolidFixture,
+): DielectricFixturePreflight {
+  const finiteF32Rows =
+    fixture.rotorRows.length === 4 &&
+    fixture.rotorRows.every(
+      (row) =>
+        row.length === 4 &&
+        row.every(
+          (value) => Number.isFinite(value) && Math.fround(value) === value,
+        ),
+    );
+  let orthonormalRows = false;
+  if (finiteF32Rows) {
+    const tolerance = 2e-5;
+    orthonormalRows = fixture.rotorRows.every((row, left) => {
+      const norm = row.reduce((sum, value) => sum + value * value, 0);
+      if (Math.abs(norm - 1) > tolerance) return false;
+      return fixture.rotorRows.every((other, right) => {
+        if (left >= right) return true;
+        const dot = row.reduce(
+          (sum, value, axis) => sum + value * other[axis],
+          0,
+        );
+        return Math.abs(dot) <= tolerance;
+      });
+    });
+  }
+  const displayedRootSliceSupport = finiteF32Rows
+    ? fixture.halfExtent *
+      fixture.rotorRows.reduce((sum, row) => sum + Math.abs(row[3]), 0)
+    : 0;
+  const displayedRootSliceNonempty =
+    Number.isFinite(fixture.slice) &&
+    Number.isFinite(displayedRootSliceSupport) &&
+    Math.abs(fixture.slice) <= displayedRootSliceSupport + 2e-7;
+  const valid =
+    validFixture(fixture) &&
+    finiteF32Rows &&
+    orthonormalRows &&
+    displayedRootSliceNonempty;
+  let reason: string | null = null;
+  if (!validFixture(fixture)) reason = "invalid fixture fields";
+  else if (!finiteF32Rows) reason = "rotor rows are not finite f32 values";
+  else if (!orthonormalRows) reason = "rotor rows are not orthonormal";
+  else if (!displayedRootSliceNonempty)
+    reason = "displayed root slice is empty";
+  return {
+    valid,
+    finiteF32Rows,
+    orthonormalRows,
+    displayedRootSliceNonempty,
+    displayedRootSliceSupport,
+    reason,
   };
 }
 

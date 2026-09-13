@@ -7,9 +7,11 @@ import {
   DIELECTRIC_ANCHOR_CANONICALIZATION_CONTROLS,
   DIELECTRIC_D2_INNER_MIDDLE_MASK,
   DIELECTRIC_D2_OUTER_MIDDLE_MASK,
+  DIELECTRIC_HYPER_POSES,
   DIELECTRIC_HYPER_ROTATION,
   DIELECTRIC_CORNER_CONTROL_CASES,
   DIELECTRIC_GEOMETRY_CONTROL_RAYS,
+  DIELECTRIC_SOLID_PACKED_BYTES,
   DIELECTRIC_SOLID_FIXTURES,
   DIELECTRIC_TRANSPORT_CONTROL_INPUTS,
   dielectricBeerThroughput,
@@ -24,7 +26,9 @@ import {
   dielectricRaySideOccupancy,
   dielectricRefract,
   dielectricTerminalCells,
+  makeDielectricSolidFixture,
   packDielectricSolidFixture,
+  preflightDielectricSolidFixture,
   type DielectricBoundaryAnchor,
   type DielectricFace,
   type DielectricSolidFixture,
@@ -215,6 +219,40 @@ describe("connected finite dielectric solids", () => {
     const packed = packDielectricSolidFixture(fixture4);
     expect(packed.byteLength).toBe(96);
     expect([...new Uint32Array(packed).slice(0, 4)]).toEqual([4, 3, 27, 105]);
+  });
+
+  it("keeps every registered hyper pose packable and refuses invalid pose slices", () => {
+    expect(DIELECTRIC_SOLID_PACKED_BYTES).toBe(96);
+    for (const { id } of Object.values(DIELECTRIC_HYPER_POSES)) {
+      const fixture = makeDielectricSolidFixture(4, 2, id);
+      expect(preflightDielectricSolidFixture(fixture)).toMatchObject({
+        valid: true,
+        reason: null,
+      });
+      expect(packDielectricSolidFixture(fixture).byteLength).toBe(
+        DIELECTRIC_SOLID_PACKED_BYTES,
+      );
+    }
+
+    for (const { id } of Object.values(DIELECTRIC_HYPER_POSES))
+      if (id !== "canonical")
+        expect(() => makeDielectricSolidFixture(3, 2, id)).toThrow(
+          "3D dielectric fixtures only support the canonical pose",
+        );
+
+    const canonical = makeDielectricSolidFixture(4, 2, "canonical");
+    const canonicalPreflight = preflightDielectricSolidFixture(canonical);
+    const emptySlicePreflight = preflightDielectricSolidFixture({
+      ...canonical,
+      slice: canonicalPreflight.displayedRootSliceSupport + 0.001,
+    });
+    expect(emptySlicePreflight).toMatchObject({
+      valid: false,
+      finiteF32Rows: true,
+      orthonormalRows: true,
+      displayedRootSliceNonempty: false,
+      reason: "displayed root slice is empty",
+    });
   });
 
   it("matches the depth-two occupancy shortcut exhaustively in 3D and 4D", () => {

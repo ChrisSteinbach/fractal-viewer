@@ -6,12 +6,18 @@ import {
   DIELECTRIC_SOLID_FIXTURES,
   DIELECTRIC_SOLID_PACKED_BYTES,
   DIELECTRIC_SOLID_WGSL,
+  DIELECTRIC_HYPER_POSES,
+  makeDielectricSolidFixture,
+  preflightDielectricSolidFixture,
   packDielectricSolidFixture,
+  type DielectricHyperPoseId,
+  type DielectricFixturePreflight,
 } from "./transmission-dielectric-solid";
 import { runDielectricGpuControls } from "./transmission-dielectric-gpu-controls";
 
 type FixtureKey = "menger3" | "hyper4";
 type Mode = "opaque" | "glass";
+type CameraPoseId = "canonical" | "grazing" | "cornerAdjacent";
 type PixelRegion = {
   x: number;
   y: number;
@@ -27,7 +33,47 @@ type Options = {
   diagnostic?: boolean;
   fixture?: FixtureKey;
   mode?: Mode;
+  camera?: CameraPoseId;
+  hyperPose?: DielectricHyperPoseId;
 };
+
+type CameraPose = {
+  id: CameraPoseId;
+  eye: [number, number, number];
+  target: [number, number, number];
+  tanHalf: number;
+};
+
+const CAMERA_POSES: Readonly<Record<CameraPoseId, CameraPose>> = Object.freeze({
+  canonical: Object.freeze({
+    id: "canonical" as const,
+    eye: [2.1, 1.4, 3.2] as [number, number, number],
+    target: [0, 0, 0] as [number, number, number],
+    tanHalf: 0.39,
+  }),
+  grazing: Object.freeze({
+    id: "grazing" as const,
+    eye: [3.85, 0.28, 0.95] as [number, number, number],
+    target: [0.05, -0.06, 0] as [number, number, number],
+    tanHalf: 0.39,
+  }),
+  cornerAdjacent: Object.freeze({
+    id: "cornerAdjacent" as const,
+    eye: [2.35, 2.25, 2.15] as [number, number, number],
+    target: [-0.08, 0.07, 0.03] as [number, number, number],
+    tanHalf: 0.39,
+  }),
+});
+
+function isCameraPoseId(value: unknown): value is CameraPoseId {
+  return (
+    value === "canonical" || value === "grazing" || value === "cornerAdjacent"
+  );
+}
+
+function isHyperPoseId(value: unknown): value is DielectricHyperPoseId {
+  return value === "canonical" || value === "rotorA" || value === "rotorB";
+}
 
 type DielectricRunStage =
   "controls" | "pipeline" | "render" | "assemble" | "base64" | "cleanup";
@@ -119,10 +165,26 @@ type Fixture = {
   id: FixtureKey;
   label: string;
   packed: ArrayBuffer;
-  scene: { dimension: 3 | 4; depth: 2; construction: string };
+  scene: {
+    dimension: 3 | 4;
+    depth: 2;
+    construction: string;
+    geometryPose: {
+      id: DielectricHyperPoseId;
+      rotation: Readonly<Record<string, number>>;
+      slice: number;
+      rotorRows: typeof DIELECTRIC_SOLID_FIXTURES.hyperMengerD2.rotorRows;
+      preflight: DielectricFixturePreflight;
+    };
+  };
 };
 
-function fixtures(): Fixture[] {
+function fixtures(hyperPose: DielectricHyperPoseId): Fixture[] {
+  const hyperFixture =
+    hyperPose === "canonical"
+      ? DIELECTRIC_SOLID_FIXTURES.hyperMengerD2
+      : makeDielectricSolidFixture(4, 2, hyperPose);
+  const hyperPreflight = preflightDielectricSolidFixture(hyperFixture);
   return [
     {
       id: "menger3",
@@ -132,18 +194,35 @@ function fixtures(): Fixture[] {
         dimension: 3,
         depth: 2,
         construction: "finite Menger ternary-cell union",
+        geometryPose: {
+          id: "canonical",
+          rotation: {},
+          slice: 0,
+          rotorRows: DIELECTRIC_SOLID_FIXTURES.mengerD2.rotorRows,
+          preflight: preflightDielectricSolidFixture(
+            DIELECTRIC_SOLID_FIXTURES.mengerD2,
+          ),
+        },
       },
     },
     {
       id: "hyper4",
-      label: "POSED CONNECTED FINITE HYPER-MENGER D2",
-      packed: packDielectricSolidFixture(
-        DIELECTRIC_SOLID_FIXTURES.hyperMengerD2,
-      ),
+      label:
+        hyperPose === "canonical"
+          ? "POSED CONNECTED FINITE HYPER-MENGER D2"
+          : `POSED CONNECTED FINITE HYPER-MENGER D2 ${hyperPose}`,
+      packed: packDielectricSolidFixture(hyperFixture),
       scene: {
         dimension: 4,
         depth: 2,
         construction: "finite posed hyper-Menger ternary-cell union",
+        geometryPose: {
+          id: hyperPose,
+          rotation: DIELECTRIC_HYPER_POSES[hyperPose].rotation,
+          slice: hyperFixture.slice,
+          rotorRows: hyperFixture.rotorRows,
+          preflight: hyperPreflight,
+        },
       },
     },
   ];
@@ -206,9 +285,10 @@ function memoryPlan(
   };
 }
 
-function cameraBasis() {
-  const eye: [number, number, number] = [2.1, 1.4, 3.2];
-  const target: [number, number, number] = [0, 0, 0];
+function cameraBasis(poseId: CameraPoseId = "canonical") {
+  const pose = CAMERA_POSES[poseId];
+  const eye = pose.eye;
+  const target = pose.target;
   const normalize = (value: readonly number[]) => {
     const length = Math.hypot(...value);
     return value.map((component) => component / length) as [
@@ -227,7 +307,14 @@ function cameraBasis() {
     target.map((component, axis) => component - eye[axis]),
   );
   const right = normalize(cross(forward, [0, 1, 0]));
-  return { eye, forward, right, up: cross(right, forward), tanHalf: 0.39 };
+  return {
+    ...pose,
+    forward,
+    right,
+    up: cross(right, forward),
+    fovYRadians: 2 * Math.atan(pose.tanHalf),
+    fovYDegrees: (2 * Math.atan(pose.tanHalf) * 180) / Math.PI,
+  };
 }
 
 export function dielectricWgsl() {
@@ -717,6 +804,18 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     width,
     height,
   };
+  if (!isCameraPoseId(input.camera ?? "canonical"))
+    return {
+      inconclusive: "camera must be canonical, grazing, or cornerAdjacent",
+    };
+  if (!isHyperPoseId(input.hyperPose ?? "canonical"))
+    return {
+      inconclusive: "hyperPose must be canonical, rotorA, or rotorB",
+    };
+  if (input.hyperPose !== undefined && input.fixture !== "hyper4")
+    return {
+      inconclusive: "hyperPose requires --fixture=hyper4",
+    };
   const tileWidth = Math.min(input.tileWidth ?? 128, imageWindow.width);
   const tileHeight = Math.min(input.tileHeight ?? 64, imageWindow.height);
   if (
@@ -745,7 +844,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       inconclusive:
         "window must be a positive integer rectangle inside the full raster",
     };
-  const selectedFixtures = fixtures().filter(
+  const selectedFixtures = fixtures(input.hyperPose ?? "canonical").filter(
     (fixture) => input.fixture === undefined || fixture.id === input.fixture,
   );
   const selectedModes = (["opaque", "glass"] as Mode[]).filter(
@@ -755,6 +854,16 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     return {
       inconclusive:
         "one known fixture and one known mode are required per page invocation",
+    };
+  const fixturePreflight = selectedFixtures[0].scene.geometryPose.preflight;
+  if (!fixturePreflight.valid)
+    return {
+      preflightRefusal: {
+        reason: fixturePreflight.reason ?? "fixture preflight failed",
+        fixture: selectedFixtures[0].id,
+        hyperPose: input.hyperPose ?? "canonical",
+        preflight: fixturePreflight,
+      },
     };
   const plannedMemory = memoryPlan(
     imageWindow.width,
@@ -965,6 +1074,14 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       fixture: string;
       mode: Mode;
       scene: Fixture["scene"];
+      camera: {
+        id: CameraPoseId;
+        eye: [number, number, number];
+        target: [number, number, number];
+        tanHalf: number;
+        fovYRadians: number;
+        fovYDegrees: number;
+      };
       samplesPerPixel: number;
       width: number;
       height: number;
@@ -1043,7 +1160,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         }[];
       };
     }[] = [];
-    const view = cameraBasis();
+    const view = cameraBasis(input.camera ?? "canonical");
     for (const fixture of selectedFixtures) {
       device.queue.writeBuffer(solid, 0, fixture.packed);
       for (const mode of selectedModes) {
@@ -1326,6 +1443,14 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
           fixture: fixture.id,
           mode,
           scene: fixture.scene,
+          camera: {
+            id: view.id,
+            eye: view.eye,
+            target: view.target,
+            tanHalf: view.tanHalf,
+            fovYRadians: view.fovYRadians,
+            fovYDegrees: view.fovYDegrees,
+          },
           samplesPerPixel: SPP,
           width: imageWindow.width,
           height: imageWindow.height,
@@ -1416,6 +1541,8 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         },
         fixture: input.fixture,
         mode: input.mode,
+        camera: input.camera ?? "canonical",
+        hyperPose: input.hyperPose ?? "canonical",
         diagnostic: !!input.diagnostic,
         spp: SPP,
         maxPaths: MAX_PATHS,
