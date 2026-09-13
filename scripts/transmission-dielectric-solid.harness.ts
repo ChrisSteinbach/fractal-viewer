@@ -485,6 +485,54 @@ describe("connected finite dielectric solids", () => {
     }
   });
 
+  it("retains unmasked cell topology and exact declared root endpoints", () => {
+    const fixture = DIELECTRIC_SOLID_FIXTURES.mengerD2;
+    const gridSize = 3 ** fixture.depth;
+    const width = (2 * fixture.halfExtent) / gridSize;
+    const anchor: DielectricBoundaryAnchor = {
+      intrinsicPoint: [
+        -fixture.halfExtent + 8 * width,
+        0.455658555,
+        fixture.halfExtent,
+        0,
+      ],
+      planeMask: 1 << 2,
+      planeIndices: [-1, -1, gridSize, -1],
+      // x-cell 8 is the incident traversal's topology even though the
+      // reconstructed x coordinate is exactly its lower plane.
+      cellIndices: [8, 7, gridSize, -1],
+    };
+    const continuation = dielectricNextBoundaryFromAnchor(
+      fixture,
+      [-0.4127580225, -0.7735493183, -0.4808869064],
+      { inside: true, anchor },
+    );
+    expect(continuation).toMatchObject({
+      kind: "boundary",
+      entering: false,
+      intrinsicAxis: 0,
+    });
+    if (continuation.kind === "boundary") {
+      expect(Math.abs(continuation.t)).toBe(0);
+      expect(continuation.anchor.intrinsicPoint[0]).toBe(
+        -fixture.halfExtent + 8 * width,
+      );
+      expect(continuation.anchor.cellIndices).toEqual([7, 7, 8, -1]);
+    }
+
+    const rootEntry = dielectricNextBoundary(
+      fixture,
+      [0.6, 0.6, 2],
+      [0, 0, -1],
+      { inside: false },
+    );
+    expect(rootEntry.kind).toBe("boundary");
+    if (rootEntry.kind === "boundary") {
+      expect(rootEntry.anchor.intrinsicPoint[2]).toBe(fixture.halfExtent);
+      expect(rootEntry.anchor.planeIndices[2]).toBe(gridSize);
+    }
+  });
+
   it("pins independent Snell, TIR, identity, and Beer controls", () => {
     const angle30 = Math.PI / 6;
     const incidentAir: Vec3 = [Math.sin(angle30), 0, -Math.cos(angle30)];

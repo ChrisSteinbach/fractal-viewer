@@ -22,6 +22,7 @@ const manifestPath = join(
 const builderPath = resolve(root, "scripts/transmission-dielectric-review.mjs");
 const defaultReport =
   "scripts/out/transmission-dielectric-gpu/actual-1024x1024-all.json";
+const RESIDUAL_BOUND_BUDGET = 1 / 1024;
 const reportArgument = process.argv.find((arg) => arg.startsWith("--report="));
 const reportPath = reportArgument
   ? resolve(root, reportArgument.slice("--report=".length))
@@ -156,43 +157,53 @@ function validateCompletion(row, total, key) {
   if (caps.length)
     throw new Error(`${key} has unresolved caps: ${caps.join(", ")}`);
 
-  const exact = true;
   const residual = row.residual;
-  if (residual !== undefined && residual !== null) {
-    if (typeof residual !== "object")
-      throw new Error(`${key} residual must be an object`);
-    for (const field of ["radianceBound", "errorBudget"]) {
-      if (!finite(residual[field]) || residual[field] < 0)
-        throw new Error(
-          `${key} residual.${field} is missing, negative or non-finite`,
-        );
-    }
-    if (
-      "totalRadianceBound" in residual &&
-      (!finite(residual.totalRadianceBound) || residual.totalRadianceBound < 0)
-    )
+  if (!residual || typeof residual !== "object")
+    throw new Error(`${key} residual metadata is missing`);
+  for (const field of ["radianceBound", "errorBudget"]) {
+    if (!finite(residual[field]) || residual[field] < 0)
       throw new Error(
-        `${key} residual.totalRadianceBound is negative or non-finite`,
+        `${key} residual.${field} is missing, negative or non-finite`,
       );
   }
+  if (
+    "totalRadianceBound" in residual &&
+    (!finite(residual.totalRadianceBound) || residual.totalRadianceBound < 0)
+  )
+    throw new Error(
+      `${key} residual.totalRadianceBound is negative or non-finite`,
+    );
+  const replay = residual.replay;
+  if (!replay || typeof replay !== "object")
+    throw new Error(
+      `${key} residual.replay must declare the per-pixel linearRGB replay bound`,
+    );
+  if (
+    !finite(replay.maxPerPixelMaxChannelLinearRgbBound) ||
+    replay.maxPerPixelMaxChannelLinearRgbBound < 0 ||
+    replay.maxPerPixelMaxChannelLinearRgbBound > RESIDUAL_BOUND_BUDGET
+  )
+    throw new Error(
+      `${key} residual.replay.maxPerPixelMaxChannelLinearRgbBound must be finite and <= 1/1024`,
+    );
+  if (replay.allSamplesComplete !== true || replay.capFree !== true)
+    throw new Error(
+      `${key} residual.replay must certify allSamplesComplete=true and capFree=true`,
+    );
   const bounded =
-    residual &&
     finite(residual.radianceBound) &&
     residual.radianceBound >= 0 &&
     finite(residual.errorBudget) &&
     residual.errorBudget >= 0 &&
     residual.radianceBound <= residual.errorBudget;
-  if (!exact && !bounded)
-    throw new Error(
-      `${key} proves neither exact ray/sample completion nor bounded residual radiance`,
-    );
   return {
-    exact,
+    exact: true,
     bounded,
     samplesPerPixel,
     sampleTotal,
     sampleComplete,
     residual: residual ?? null,
+    replay,
   };
 }
 
@@ -236,18 +247,18 @@ function sceneKind(metadata, key) {
   const construction = metadata.construction.toLowerCase();
   if (
     metadata.dimension === 3 &&
-    metadata.depth === 3 &&
+    metadata.depth === 2 &&
     /menger/.test(construction)
   )
-    return "menger3";
+    return "menger2";
   if (
     metadata.dimension === 4 &&
-    metadata.depth === 3 &&
+    metadata.depth === 2 &&
     /hyper.?menger/.test(construction)
   )
-    return "hyperMenger4";
+    return "hyperMenger2";
   throw new Error(
-    `${key} is not one of the required finite depth-3 Menger or new 4D hyper-Menger scenes`,
+    `${key} is not one of the required finite depth-2 Menger or new 4D hyper-Menger scenes; finer depth-3 full-tree renders remain unqualified and are not actual full-raster timings`,
   );
 }
 
@@ -303,10 +314,10 @@ for (const row of mainRows) {
     throw new Error(`${key} sourceHash differs from the report sourceHash`);
   validated.push({ key, row, metadata, kind, completion, image });
 }
-if (!validated.some((item) => item.kind === "menger3"))
-  throw new Error("missing finite depth-3 Menger 3D main row");
-if (!validated.some((item) => item.kind === "hyperMenger4"))
-  throw new Error("missing finite depth-3 posed hyper-Menger 4D main row");
+if (!validated.some((item) => item.kind === "menger2"))
+  throw new Error("missing finite depth-2 Menger 3D main row");
+if (!validated.some((item) => item.kind === "hyperMenger2"))
+  throw new Error("missing finite depth-2 posed hyper-Menger 4D main row");
 
 const controls = rows
   .filter((row) => row.role === "opaque-control")
@@ -347,9 +358,9 @@ for (const control of controls) {
 const oldReview = join(outputDir, "transmission-revision-review.html");
 const oldReviewHref = existsSync(oldReview) ? hrefFor(oldReview) : "";
 const sceneTitle = {
-  menger3: "Menger 3D — finite depth 3",
-  hyperMenger4:
-    "Posed hyper-Menger 4D — new construction, finite depth 3 (not public Mandelbox or Tesseract)",
+  menger2: "Menger 3D — finite depth 2 · terminal grid 1/9 · 400 filled cells",
+  hyperMenger2:
+    "Posed hyper-Menger 4D — new construction, finite depth 2 · terminal grid 1/9 · 2304 filled cells (not public Mandelbox or Tesseract)",
 };
 const details = (item) => {
   const row = item.row;
@@ -393,7 +404,7 @@ body{margin:24px auto;max-width:1160px;padding:0 18px;background:#101216;color:#
 </style>
 <h1>Finite-cell dielectric experiment</h1>
 <p class="status"><strong>UNREVIEWED NEW EXPERIMENT.</strong> This page contains one full-size dielectric image for each scene. It is visual evidence only and makes no production, performance or aesthetic approval claim.</p>
-<p class="warning"><strong>Geometry scope:</strong> the 3D scene is a finite depth-3 Menger construction. The 4D scene is a new posed hyper-Menger construction at finite depth 3; it is not the public Mandelbox or Tesseract fixture. The previous layered transmission candidate was rejected for being indistinct/noisy; <a href="${oldReviewHref || "#"}">open the earlier rejected review</a>.</p>
+<p class="warning"><strong>Geometry scope:</strong> this candidate uses coarse finite depth-2 solids: the 3D Menger has terminal grid 1/9 with 400 filled cells, and the new posed 4D hyper-Menger has terminal grid 1/9 with 2304 filled cells. Finer depth-3 full-tree geometry remains unqualified here and was not timed as an actual full raster. The 4D scene is not the public Mandelbox or Tesseract fixture. The previous layered transmission candidate was rejected for being indistinct/noisy; <a href="${oldReviewHref || "#"}">open the earlier rejected review</a>.</p>
 <section class="scenes">${mainCards}</section>
 ${controlHtml}
 <details><summary>Report and provenance</summary><p>Input report: <code>${esc(relative(root, reportPath))}</code><br>Recorded verdict: <code>${esc(jsonText(reportVerdict))}</code><br>Source tree dirty in the review scope: <strong>${sourceStatus !== ""}</strong>. Source files, PNG SHA-256 hashes, and the page-emitted GPU controls were checked before writing this page.</p><pre class="small">${esc(jsonText({ sourceHash: provenance.sourceHash, sourceFiles: Object.keys(provenance.files).sort(), report: relative(root, reportPath), gpuControls: { passed: gpuControls.passed, count: gpuControls.cases.length, failures: gpuControls.failures ?? [] }, mainRows: validated.map((item) => ({ key: item.key, kind: item.kind, image: item.row.image, completion: item.row.completion, residual: item.row.residual ?? null })), controls: controls.map((item) => item.key) }))}</pre></details>
@@ -425,7 +436,7 @@ writeFileSync(
       scopedSourceStatus: sourceStatus,
       sourceProvenance: provenance,
       gpuControls,
-      requiredMainKinds: ["menger3", "hyperMenger4"],
+      requiredMainKinds: ["menger2", "hyperMenger2"],
       mainRows: validated.map((item) => ({
         key: item.key,
         kind: item.kind,

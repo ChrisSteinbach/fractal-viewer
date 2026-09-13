@@ -22,8 +22,10 @@ import {
 } from "./transmission-dielectric-solid";
 import type { Vec3 } from "./de-preview";
 
-const CONTROL_BUFFER_BYTES = 128;
-const RESULT_BUFFER_BYTES = 80;
+const CONTROL_BUFFER_BYTES = 144;
+const RESULT_BUFFER_BYTES = 96;
+// The inactive page group-0 binding still has to satisfy the page-emitted
+// OutputPixel storage layout during pipeline validation.
 const KIND_BOUNDARY = 1;
 const KIND_MISS = 2;
 const KIND_REFUSED = 3;
@@ -66,6 +68,7 @@ type RawControlResult = {
   planeMask: number;
   planeIndices: [number, number, number, number];
   intrinsicPoint: [number, number, number, number];
+  cellIndices: [number, number, number, number];
 };
 
 export interface DielectricGpuControlCase {
@@ -99,6 +102,7 @@ struct DielectricControlInput {
   params: vec4f,
   anchorPoint: vec4f,
   anchorPlaneIndices: vec4<i32>,
+  anchorCellIndices: vec4<i32>,
   planeMask: u32,
 };
 
@@ -111,6 +115,7 @@ struct DielectricControlResult {
   planeMask: u32,
   planeIndices: vec4<i32>,
   intrinsicPoint: vec4f,
+  cellIndices: vec4<i32>,
 };
 
 const DIELECTRIC_CONTROL_INVALID_INPUT: u32 = 6u;
@@ -122,7 +127,7 @@ const DIELECTRIC_CONTROL_INVALID_INPUT: u32 = 6u;
 @compute @workgroup_size(1)
 fn runDielectricControl() {
   var result = DielectricControlResult(
-    vec4f(0.0), vec4f(0.0), 0u, 0u, 0u, 0u, vec4<i32>(-1), vec4f(0.0),
+    vec4f(0.0), vec4f(0.0), 0u, 0u, 0u, 0u, vec4<i32>(-1), vec4f(0.0), vec4<i32>(-1),
   );
   if (controlInput.operation == ${OP_BOUNDARY}u) {
     let boundary = dielectricNextBoundary(
@@ -137,11 +142,12 @@ fn runDielectricControl() {
     result.planeMask = boundary.planeMask;
     result.planeIndices = boundary.planeIndices;
     result.intrinsicPoint = boundary.intrinsicPoint;
+    result.cellIndices = boundary.cellIndices;
   } else if (controlInput.operation == ${OP_ANCHORED_BOUNDARY}u) {
     let boundary = dielectricNextBoundaryFromAnchor(
       controlSolid, controlInput.direction.xyz, controlInput.inside,
       controlInput.anchorPoint, controlInput.planeMask,
-      controlInput.anchorPlaneIndices,
+      controlInput.anchorPlaneIndices, controlInput.anchorCellIndices,
     );
     result.scalar = vec4f(boundary.t, f32(boundary.entering), f32(boundary.visits), 0.0);
     result.normal = vec4f(boundary.outwardNormal, 0.0);
@@ -151,6 +157,7 @@ fn runDielectricControl() {
     result.planeMask = boundary.planeMask;
     result.planeIndices = boundary.planeIndices;
     result.intrinsicPoint = boundary.intrinsicPoint;
+    result.cellIndices = boundary.cellIndices;
   } else if (controlInput.operation == ${OP_REFRACTION}u) {
     let refracted = refractOrReflect(
       controlInput.direction.xyz, controlInput.outwardNormal.xyz,
@@ -211,6 +218,7 @@ function boundarySummary(result: DielectricBoundaryResult) {
     axis: result.intrinsicAxis,
     planeMask: result.anchor.planeMask,
     planeIndices: result.anchor.planeIndices,
+    cellIndices: result.anchor.cellIndices,
     visits: result.visits,
   };
 }
@@ -465,8 +473,9 @@ function writeInput(buffer: ArrayBuffer, input: ControlInput) {
   for (let axis = 0; axis < 4; axis++) {
     floats[20 + axis] = anchor?.intrinsicPoint[axis] ?? 0;
     ints[24 + axis] = anchor?.planeIndices[axis] ?? -1;
+    ints[28 + axis] = anchor?.cellIndices[axis] ?? -1;
   }
-  uints[28] = anchor?.planeMask ?? 0;
+  uints[32] = anchor?.planeMask ?? 0;
 }
 
 function readResult(bytes: ArrayBuffer): RawControlResult {
@@ -482,6 +491,7 @@ function readResult(bytes: ArrayBuffer): RawControlResult {
     planeMask: uints[11],
     planeIndices: [ints[12], ints[13], ints[14], ints[15]],
     intrinsicPoint: [floats[16], floats[17], floats[18], floats[19]],
+    cellIndices: [ints[20], ints[21], ints[22], ints[23]],
   };
 }
 
@@ -504,6 +514,9 @@ function compareCase(
         actual.planeMask === result.anchor.planeMask &&
         actual.planeIndices.every(
           (value, axis) => value === result.anchor.planeIndices[axis],
+        ) &&
+        actual.cellIndices.every(
+          (value, axis) => value === result.anchor.cellIndices[axis],
         );
     } else {
       passed =
@@ -552,6 +565,7 @@ function compareCase(
 export async function runDielectricGpuControls(
   device: GPUDevice,
   shaderSource: string,
+  pageOutputPixelBytes: number,
 ): Promise<DielectricGpuControlReport> {
   const failures: string[] = [];
   const cases: DielectricGpuControlCase[] = [];
@@ -646,7 +660,7 @@ export async function runDielectricGpuControls(
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const dummyOutput = device.createBuffer({
-      size: 32,
+      size: pageOutputPixelBytes,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
     });
     const bind0 = device.createBindGroup({
@@ -719,6 +733,7 @@ export async function runDielectricGpuControls(
           intrinsicPoint: sourceActual.intrinsicPoint,
           planeMask: sourceActual.planeMask,
           planeIndices: sourceActual.planeIndices,
+          cellIndices: sourceActual.cellIndices,
         });
       } else {
         actual = await runOne(input);
