@@ -619,6 +619,7 @@ fn renderDielectric(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 export async function runTransmissionDielectricGpu(input: Options = {}) {
+  const pageRunStarted = performance.now();
   const requestedWidth = input.width ?? 1024;
   const requestedHeight = input.height ?? 1024;
   const width = input.diagnostic
@@ -646,6 +647,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         memory: plannedMemory,
       },
     };
+  const adapterDeviceSetupStarted = performance.now();
   const adapter = await navigator.gpu?.requestAdapter({
     powerPreference: "high-performance",
   });
@@ -664,6 +666,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       browserAdapter: info,
     };
   const device = await adapter.requestDevice();
+  const adapterDeviceSetupMs = performance.now() - adapterDeviceSetupStarted;
   const uncaptured: string[] = [];
   let lost: string | null = null;
   device.addEventListener("uncapturederror", (event) =>
@@ -673,11 +676,13 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     lost = `${detail.reason}: ${detail.message}`;
   });
   try {
+    const controlsStarted = performance.now();
     const controls = await runDielectricGpuControls(
       device,
       dielectricWgsl(),
       OUTPUT_PIXEL_BYTES,
     );
+    const controlsMs = performance.now() - controlsStarted;
     if (!controls.passed)
       return {
         controlRefusal: {
@@ -790,11 +795,17 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       };
       memory: typeof plannedMemory;
       timing: {
+        adapterDeviceSetupMs: number;
+        controlsMs: number;
         pipelineSetupMs: number;
         tileEncodeSubmitMapWallMs: number;
         maxTileEncodeSubmitMapWallMs: number;
         tiles: number;
         replayPassFenceWallMs: number[];
+        tileHostAssemblyWallMs: number;
+        base64EncodeMs: number;
+        pageWorkWallMs: number;
+        pageWorkWallScope: string;
       };
       refusal: {
         failurePixels: Record<string, number>;
@@ -872,6 +883,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         }[] = [];
         let tileEncodeSubmitMapWallMs = 0;
         let maxTileEncodeSubmitMapWallMs = 0;
+        let tileHostAssemblyWallMs = 0;
         let tiles = 0;
         const replayPassFenceWallMs = Array<number>(REPLAY_PASSES).fill(0);
         for (let y = 0; y < height; y += tileHeight) {
@@ -944,6 +956,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
               tileElapsed,
             );
             tiles++;
+            const assemblyStarted = performance.now();
             const values = new Uint32Array(mapped);
             const residualValues = new Float32Array(mapped);
             for (let local = 0; local < currentWidth * currentHeight; local++) {
@@ -1042,8 +1055,12 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
               totalRadianceBound += perPixelAverage;
               totalSampleMaxChannelRadianceBound += residualValues[offset + 2];
             }
+            tileHostAssemblyWallMs += performance.now() - assemblyStarted;
           }
         }
+        const base64Started = performance.now();
+        const imageBase64 = base64(rgba);
+        const base64EncodeMs = performance.now() - base64Started;
         rows.push({
           key: fixture.id,
           role: mode === "glass" ? "main" : "opaque-control",
@@ -1053,7 +1070,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
           samplesPerPixel: SPP,
           width,
           height,
-          imageBase64: base64(rgba),
+          imageBase64,
           completion,
           residual: {
             radianceBound,
@@ -1083,11 +1100,18 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
           },
           memory: plannedMemory,
           timing: {
+            adapterDeviceSetupMs,
+            controlsMs,
             pipelineSetupMs,
             tileEncodeSubmitMapWallMs,
             maxTileEncodeSubmitMapWallMs,
             tiles,
             replayPassFenceWallMs,
+            tileHostAssemblyWallMs,
+            base64EncodeMs,
+            pageWorkWallMs: performance.now() - pageRunStarted,
+            pageWorkWallScope:
+              "Browser wall from runner entry through adapter/device setup, current-source controls, pipeline setup, complete tile work, host assembly and base64 encoding; excludes final device drain/destruction and launcher work.",
           },
           refusal: {
             failurePixels,

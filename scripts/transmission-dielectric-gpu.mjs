@@ -113,9 +113,12 @@ async function serve() {
 }
 
 function outputPng(base64, width, height) {
+  const decodeStarted = performance.now();
   const rgba = Buffer.from(base64, "base64");
+  const base64DecodeMs = performance.now() - decodeStarted;
   if (rgba.length !== width * height * 4)
     throw new Error("page image has unexpected byte size");
+  const rgbConversionStarted = performance.now();
   const rgb = new Uint8Array(width * height * 3);
   for (
     let source = 0, target = 0;
@@ -123,7 +126,14 @@ function outputPng(base64, width, height) {
     source += 4, target += 3
   )
     rgb.set(rgba.subarray(source, source + 3), target);
-  return encodePng(width, height, rgb);
+  const rgbaToRgbMs = performance.now() - rgbConversionStarted;
+  const pngEncodeStarted = performance.now();
+  const png = encodePng(width, height, rgb);
+  const pngEncodeMs = performance.now() - pngEncodeStarted;
+  return {
+    png,
+    timing: { base64DecodeMs, rgbaToRgbMs, pngEncodeMs },
+  };
 }
 
 async function main() {
@@ -275,9 +285,17 @@ async function main() {
         runtime.uncaptured.push(...item.runtime.uncaptured);
         runtime.lost ??= item.runtime.lost;
         const [row] = item.rows;
-        const png = outputPng(row.imageBase64, row.width, row.height);
+        const pageEvaluateWallMs =
+          performance.now() - pageReturnEncodeWriteStarted;
+        const { png, timing: launcherImageTiming } = outputPng(
+          row.imageBase64,
+          row.width,
+          row.height,
+        );
         const filename = `${row.fixture}-${row.mode}-${row.width}x${row.height}.png`;
+        const pngWriteStarted = performance.now();
         await writeFile(path.join(outDir, filename), png);
+        const pngWriteMs = performance.now() - pngWriteStarted;
         const pageReturnEncodeWriteWallMs =
           performance.now() - pageReturnEncodeWriteStarted;
         const launcherBase64DecodeBytes = row.width * row.height * 4;
@@ -303,6 +321,11 @@ async function main() {
         };
         row.timing = {
           ...row.timing,
+          pageEvaluateWallMs,
+          launcherBase64DecodeMs: launcherImageTiming.base64DecodeMs,
+          launcherRgbaToRgbMs: launcherImageTiming.rgbaToRgbMs,
+          launcherPngEncodeMs: launcherImageTiming.pngEncodeMs,
+          launcherPngWriteMs: pngWriteMs,
           pageReturnEncodeWriteWallMs,
           pageReturnEncodeWriteScope:
             "Node wall from immediately before page.evaluate through page return, RGBA base64 decode, PNG encode and PNG file write; excludes browser launch/startup and later checkpoint JSON serialization.",
