@@ -34,6 +34,118 @@ if (!reportFile.startsWith(`${outDir}${path.sep}`))
 const log = (...values) =>
   console.error("[transmission-dielectric-gpu]", ...values);
 
+// The staged authoritative arm must reproduce the canonical 256x144 glass
+// RGBA, completion, residual and refusal metadata measured at the final
+// qualified source (the consolidated evidence snapshot in
+// docs/surface-dielectric-study.md). These pins make that identity gate
+// executable even though the final records themselves are regenerable and
+// gitignored; they are image/metadata hashes, not appearance approval, and
+// the provisional staged rows never inherit them.
+const STAGED_AUTHORITATIVE_BASELINES = {
+  menger3: {
+    pngSha256:
+      "7d65815c8d33b2547caec36b906533eb2017e6f079de999d4978866066e453fb",
+    rgbaSha256:
+      "d9227ff34d479c7ca1dc198ada558f21f7820bb3267aa7c87550b60764d6120c",
+    completion: {
+      complete: 36864,
+      residual: 7852,
+      unresolved: 0,
+      invalid: 0,
+      capEvents: 0,
+      sampleTotal: 147456,
+      sampleComplete: 147456,
+      sampleUnresolved: 0,
+      sampleInvalid: 0,
+      total: 36864,
+    },
+    radianceBound: 0.0009469667566008866,
+    totalRadianceBound: 4.6180398175579285,
+    totalSampleMaxChannelRadianceBound: 18.472159270231714,
+    replay: {
+      maxPerPixelMaxChannelLinearRgbBound: 0.0009469667566008866,
+      allSamplesComplete: true,
+      capFree: true,
+      sampleComplete: 147456,
+      sampleTotal: 147456,
+      sampleUnresolved: 0,
+      sampleInvalid: 0,
+      unresolvedPixels: 0,
+      invalidPixels: 0,
+      capEvents: 0,
+    },
+    refusal: {
+      failurePixels: {
+        traversal: 0,
+        insideMiss: 0,
+        stackLimit: 0,
+        interfaceLimit: 0,
+        processedLimit: 0,
+      },
+      failureSamples: {
+        traversal: 0,
+        insideMiss: 0,
+        stackLimit: 0,
+        interfaceLimit: 0,
+        processedLimit: 0,
+      },
+      traversalReasonPixels: {},
+      witnesses: [],
+    },
+  },
+  hyper4: {
+    pngSha256:
+      "0445ca389a81a1028a0f8c9bdf25287e36bb119e9d253eb3b39e7ed5aa521dcb",
+    rgbaSha256:
+      "c6356f978b07bd8af024e0959cbdeaeebf3100e2bca54430e1f3ff637fc0dce9",
+    completion: {
+      complete: 36864,
+      residual: 7820,
+      unresolved: 0,
+      invalid: 0,
+      capEvents: 0,
+      sampleTotal: 147456,
+      sampleComplete: 147456,
+      sampleUnresolved: 0,
+      sampleInvalid: 0,
+      total: 36864,
+    },
+    radianceBound: 0.0009206709219142795,
+    totalRadianceBound: 3.0286833386353464,
+    totalSampleMaxChannelRadianceBound: 12.114733354541386,
+    replay: {
+      maxPerPixelMaxChannelLinearRgbBound: 0.0009206709219142795,
+      allSamplesComplete: true,
+      capFree: true,
+      sampleComplete: 147456,
+      sampleTotal: 147456,
+      sampleUnresolved: 0,
+      sampleInvalid: 0,
+      unresolvedPixels: 0,
+      invalidPixels: 0,
+      capEvents: 0,
+    },
+    refusal: {
+      failurePixels: {
+        traversal: 0,
+        insideMiss: 0,
+        stackLimit: 0,
+        interfaceLimit: 0,
+        processedLimit: 0,
+      },
+      failureSamples: {
+        traversal: 0,
+        insideMiss: 0,
+        stackLimit: 0,
+        interfaceLimit: 0,
+        processedLimit: 0,
+      },
+      traversalReasonPixels: {},
+      witnesses: [],
+    },
+  },
+};
+
 function positive(value, name) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0)
@@ -410,7 +522,7 @@ async function within(promise, timeoutMs, label) {
 async function main() {
   if (args.help) {
     console.log(
-      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass [--camera=canonical|grazing|cornerAdjacent] [--hyperPose=canonical|rotorA|rotorB] --cancelProbe | --tileCheck=100x55,73x47 --window=37,29,121,67 | --poseCheck --output=report.json]",
+      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass [--camera=canonical|grazing|cornerAdjacent] [--hyperPose=canonical|rotorA|rotorB] --cancelProbe | --tileCheck=100x55,73x47 --window=37,29,121,67 | --poseCheck | --staged --fixture=menger3 --mode=glass --output=report.json]",
     );
     return;
   }
@@ -448,6 +560,7 @@ async function main() {
   const cancelProbeRequested = args.cancelProbe === true;
   const tileCheckRequested = args.tileCheck !== undefined;
   const poseCheckRequested = args.poseCheck === true;
+  const stagedRequested = args.staged === true;
   if (
     poseCheckRequested &&
     (args.fixture !== undefined ||
@@ -457,10 +570,11 @@ async function main() {
       args.cancelProbe === true ||
       args.tileCheck !== undefined ||
       args.window !== undefined ||
+      args.staged === true ||
       options.diagnostic)
   )
     throw new Error(
-      "--poseCheck is a fixed glass matrix and cannot be combined with fixture, mode, camera, hyperPose, cancelProbe, tileCheck, window or diagnostic",
+      "--poseCheck is a fixed glass matrix and cannot be combined with fixture, mode, camera, hyperPose, cancelProbe, tileCheck, window, staged or diagnostic",
     );
   if (
     cancelProbeRequested &&
@@ -473,6 +587,36 @@ async function main() {
   if (cancelProbeRequested && tileCheckRequested)
     throw new Error(
       "--cancelProbe and --tileCheck are separate qualification runs",
+    );
+  if (
+    stagedRequested &&
+    (!args.fixture ||
+      !args.mode ||
+      fixtureNames.length !== 1 ||
+      modeNames.length !== 1 ||
+      modeNames[0] !== "glass")
+  )
+    throw new Error(
+      "--staged requires one explicit --fixture and --mode=glass",
+    );
+  if (
+    stagedRequested &&
+    (args.cancelProbe === true ||
+      args.tileCheck !== undefined ||
+      args.window !== undefined ||
+      args.camera !== undefined ||
+      args.hyperPose !== undefined ||
+      options.diagnostic)
+  )
+    throw new Error(
+      "--staged pins the canonical poses and refuses cancelProbe, tileCheck, window, camera, hyperPose and diagnostic",
+    );
+  if (
+    stagedRequested &&
+    !Object.hasOwn(STAGED_AUTHORITATIVE_BASELINES, fixtureNames[0])
+  )
+    throw new Error(
+      "--staged has no pinned authoritative baseline for this fixture",
     );
   if (tileCheckRequested && options.diagnostic)
     throw new Error("--tileCheck does not accept --diagnostic");
@@ -1070,6 +1214,263 @@ async function main() {
           `pose/${item.id}: complete=${item.completion.complete}/${item.completion.total} residual=${item.residual.radianceBound}`,
         );
       process.exitCode = 0;
+      return;
+    }
+    if (stagedRequested) {
+      const fixture = fixtureNames[0];
+      const stagedRows = [];
+      const arms = [];
+      const runtime = { uncaptured: [], lost: null };
+      let browserAdapter = null;
+      let controls = null;
+      const stagedFailure = async (item, scope) => {
+        await writeFile(
+          reportFile,
+          `${JSON.stringify(
+            {
+              generatedAt: new Date().toISOString(),
+              display,
+              renderer,
+              browserVersion: browser.version(),
+              quiet,
+              sourceProvenance,
+              options,
+              report: { options, arms, rows: stagedRows },
+              verdict: {
+                status: "INCONCLUSIVE",
+                reason: item.inconclusive ?? scope,
+              },
+            },
+            null,
+            2,
+          )}\n`,
+        );
+        process.exitCode = "inconclusive" in item ? 2 : 3;
+      };
+      const runArm = async (name, armOptions, filename) => {
+        const armStarted = performance.now();
+        const observed = await executeImage(armOptions, filename);
+        const { item } = observed;
+        if (
+          "inconclusive" in item ||
+          "preflightRefusal" in item ||
+          "controlRefusal" in item ||
+          "cancelled" in item
+        ) {
+          await stagedFailure(
+            item,
+            "preflightRefusal" in item
+              ? item.preflightRefusal.reason
+              : "controlRefusal" in item
+                ? item.controlRefusal.reason
+                : "cancelled" in item
+                  ? "staged arm was cancelled unexpectedly"
+                  : undefined,
+          );
+          return true;
+        }
+        browserAdapter ??= item.browserAdapter;
+        controls ??= item.controls;
+        runtime.uncaptured.push(...item.runtime.uncaptured);
+        runtime.lost ??= item.runtime.lost;
+        const { row } = observed;
+        stagedRows.push(row);
+        const t = row.timing;
+        arms.push({
+          name,
+          fixture,
+          mode: "glass",
+          samplesPerPixel: row.samplesPerPixel,
+          provisional: row.provisional,
+          outputFilename: observed.outputFilename,
+          adapterDeviceSetupMs: t.adapterDeviceSetupMs,
+          controlsMs: t.controlsMs,
+          pipelineSetupMs: t.pipelineSetupMs,
+          tileEncodeSubmitMapWallMs: t.tileEncodeSubmitMapWallMs,
+          replayPassFenceWallMs: t.replayPassFenceWallMs,
+          replayPassFenceWallSumMs: t.replayPassFenceWallMs.reduce(
+            (sum, value) => sum + value,
+            0,
+          ),
+          pageWorkWallMs: t.pageWorkWallMs,
+          pageEvaluateWallMs: t.pageEvaluateWallMs,
+          pageReturnEncodeWriteWallMs: t.pageReturnEncodeWriteWallMs,
+          launcherDecodeEncodeWriteWallMs:
+            t.pageReturnEncodeWriteWallMs - t.pageEvaluateWallMs,
+          armWallMs: performance.now() - armStarted,
+        });
+        return false;
+      };
+      const stopped = await (async () => {
+        if (
+          await runArm(
+            "provisional-cold",
+            {
+              ...options,
+              fixture,
+              mode: "glass",
+              samplesPerPixel: 1,
+              provisional: true,
+            },
+            (row) =>
+              `staged-provisional-cold-${fixture}-${row.width}x${row.height}.png`,
+          )
+        )
+          return true;
+        if (
+          await runArm(
+            "authoritative",
+            { ...options, fixture, mode: "glass", samplesPerPixel: 4 },
+            (row) =>
+              `staged-authoritative-${fixture}-${row.width}x${row.height}.png`,
+          )
+        )
+          return true;
+        if (
+          await runArm(
+            "provisional-warm",
+            {
+              ...options,
+              fixture,
+              mode: "glass",
+              samplesPerPixel: 1,
+              provisional: true,
+            },
+            (row) =>
+              `staged-provisional-warm-${fixture}-${row.width}x${row.height}.png`,
+          )
+        )
+          return true;
+        return false;
+      })();
+      if (stopped) return;
+      const baseline = STAGED_AUTHORITATIVE_BASELINES[fixture];
+      const [coldRow, authoritativeRow, warmRow] = stagedRows;
+      const previewTargetMs = 1000;
+      const identity = {
+        basis:
+          "The authoritative arm is a separate independent four-sample render with fresh device state, never a continuation of the provisional aggregate. Its RGBA bytes, completion, residual and refusal metadata must equal the final qualified source's canonical 256x144 glass measurement, pinned above.",
+        samplesPerPixelMatches: authoritativeRow.samplesPerPixel === 4,
+        notProvisional: authoritativeRow.provisional === false,
+        imageIdentical:
+          authoritativeRow.image.rgbaSha256 === baseline.rgbaSha256 &&
+          authoritativeRow.image.sha256 === baseline.pngSha256,
+        completionIdentical:
+          JSON.stringify(authoritativeRow.completion) ===
+          JSON.stringify(baseline.completion),
+        residualIdentical:
+          authoritativeRow.residual.radianceBound === baseline.radianceBound &&
+          authoritativeRow.residual.totalRadianceBound ===
+            baseline.totalRadianceBound &&
+          authoritativeRow.residual.totalSampleMaxChannelRadianceBound ===
+            baseline.totalSampleMaxChannelRadianceBound &&
+          JSON.stringify(authoritativeRow.residual.replay) ===
+            JSON.stringify(baseline.replay),
+        refusalIdentical:
+          JSON.stringify(authoritativeRow.refusal) ===
+          JSON.stringify(baseline.refusal),
+      };
+      identity.passed = Object.entries(identity)
+        .filter(([key]) => key !== "basis" && key !== "passed")
+        .every(([, value]) => value === true);
+      const provisionalRows = [coldRow, warmRow];
+      const provisionalDeclared = provisionalRows.every(
+        (row) =>
+          row.provisional === true &&
+          row.samplesPerPixel === 1 &&
+          row.completion.sampleTotal === row.width * row.height * 1,
+      );
+      const provisionalGate = {
+        declaredSamplesPerPixel: 1,
+        previewTargetMs,
+        labelledProvisional: provisionalDeclared,
+        arms: arms
+          .filter((arm) => arm.provisional === true)
+          .map((arm) => ({
+            name: arm.name,
+            pageReturnEncodeWriteWallMs: arm.pageReturnEncodeWriteWallMs,
+            pageWorkWallMs: arm.pageWorkWallMs,
+            replayPassFenceWallSumMs: arm.replayPassFenceWallSumMs,
+            withinTarget: arm.pageReturnEncodeWriteWallMs <= previewTargetMs,
+          })),
+        scope:
+          "Provisional preview delivery wall is Node time from immediately before the page call through PNG write, matching the consolidated preview rows' practical-time scope. A provisional row is complete only at its declared one-sample count with the same six replay attempts, transport, cutoff and residual bound per rendered sample; it never inherits the owner approval of the four-sample 1024 images and is not appearance evidence.",
+      };
+      provisionalGate.passed =
+        provisionalGate.labelledProvisional &&
+        provisionalRows.every(
+          (row) =>
+            row.completion.complete === row.completion.total &&
+            row.completion.unresolved === 0 &&
+            row.completion.invalid === 0 &&
+            row.completion.capEvents === 0 &&
+            row.completion.sampleComplete === row.completion.sampleTotal &&
+            row.residual.radianceBound <= row.residual.errorBudget &&
+            row.residual.replay.allSamplesComplete === true &&
+            row.residual.replay.capFree === true,
+        );
+      const staged = {
+        mode: "staged-preview",
+        fixture,
+        width: options.width,
+        height: options.height,
+        provisionalGate,
+        authoritativeIdentity: identity,
+        passed: provisionalGate.passed && identity.passed,
+      };
+      const rows = stagedRows;
+      if (runtime.uncaptured.length > 0 || runtime.lost !== null) {
+        staged.passed = false;
+      }
+      const report = {
+        browserAdapter,
+        options,
+        rows,
+        staged,
+        cancellationProbe: null,
+        tileInvariant: null,
+        runtime,
+        controls,
+        executionScope:
+          "Each staged arm runs in a separate page invocation with fresh device state; only one full image base64 payload crosses the browser boundary at a time.",
+      };
+      const refused =
+        !staged.passed ||
+        report.controls?.passed !== true ||
+        report.rows.some((row) => !completedRow(report, row)) ||
+        report.rows.some(
+          (row) =>
+            !Number.isFinite(row.residual.radianceBound) ||
+            !Number.isFinite(row.residual.totalRadianceBound) ||
+            row.residual.radianceBound > row.residual.errorBudget,
+        ) ||
+        report.rows.some((row) => !row.memory.crossProcessLimitCheck) ||
+        report.runtime.uncaptured.length > 0 ||
+        report.runtime.lost !== null;
+      const record = {
+        generatedAt: new Date().toISOString(),
+        display,
+        renderer,
+        browserVersion: browser.version(),
+        quiet,
+        sourceProvenance,
+        options,
+        report,
+      };
+      record.verdict = {
+        status: refused ? "REFUSED" : "RECORDED",
+        scope:
+          "Harness-only staged finite-cell images. The provisional preview is not appearance evidence; the authoritative arm must reproduce the pinned final-source identity.",
+      };
+      await writeFile(reportFile, `${JSON.stringify(record, null, 2)}\n`);
+      for (const arm of arms)
+        log(
+          `staged/${arm.name}: spp=${arm.samplesPerPixel} provisional=${arm.provisional} page=${arm.pageWorkWallMs.toFixed(1)}ms fullWall=${arm.pageReturnEncodeWriteWallMs.toFixed(1)}ms replaySum=${arm.replayPassFenceWallSumMs.toFixed(1)}ms`,
+        );
+      log(
+        `staged identity passed=${identity.passed} provisionalGate passed=${provisionalGate.passed}`,
+      );
+      if (refused) process.exitCode = 3;
       return;
     }
     const rows = [];

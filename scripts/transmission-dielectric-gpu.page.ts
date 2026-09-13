@@ -35,6 +35,8 @@ type Options = {
   mode?: Mode;
   camera?: CameraPoseId;
   hyperPose?: DielectricHyperPoseId;
+  samplesPerPixel?: number;
+  provisional?: boolean;
 };
 
 type CameraPose = {
@@ -317,7 +319,11 @@ function cameraBasis(poseId: CameraPoseId = "canonical") {
   };
 }
 
-export function dielectricWgsl() {
+export function dielectricWgsl(spp: number = SPP) {
+  if (!Number.isInteger(spp) || spp < 1 || spp > 4)
+    throw new Error(
+      "dielectric WGSL samples-per-pixel must be an integer 1..4",
+    );
   return /* wgsl */ `
 ${DIELECTRIC_SOLID_WGSL}
 
@@ -714,12 +720,12 @@ fn renderDielectric(@builtin(global_invocation_id) gid: vec3u) {
       0u, ${STATUS_UNRESOLVED}u, 0.0, 0u, 0u, 0u, 0u, 0u,
       0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
       0u, 0u, 0u, 0u, vec3f(0.0), 0u, vec3f(0.0), 0u, vec4f(0.0), vec4<i32>(-1),
-      vec3f(0.0), 0.0, vec3f(0.0), (1u << ${SPP}u) - 1u, 0.0, 0u, 0u, 0u,
+      vec3f(0.0), 0.0, vec3f(0.0), (1u << ${spp}u) - 1u, 0.0, 0u, 0u, 0u,
     );
   }
   var state = output[local];
   let theta = ${INITIAL_BRANCH_THETA} * exp2(-f32(passIndex));
-  for (var sample = 0u; sample < ${SPP}u; sample++) {
+  for (var sample = 0u; sample < ${spp}u; sample++) {
     let sampleBit = 1u << sample;
     if ((state.pendingMask & sampleBit) == 0u) { continue; }
     let jitter = vec2f(f32(sample & 1u) * 0.5 - 0.25, f32(sample >> 1u) * 0.5 - 0.25);
@@ -765,15 +771,15 @@ fn renderDielectric(@builtin(global_invocation_id) gid: vec3u) {
     let accepted = traced.status != ${STATUS_UNRESOLVED}u && residualFinite &&
       radianceFinite && traced.residual <= ${ERROR_BUDGET};
     if (accepted) {
-      state.accumulatedRadiance += traced.radiance / f32(${SPP});
-      state.acceptedResidual += traced.residual / f32(${SPP});
+      state.accumulatedRadiance += traced.radiance / f32(${spp});
+      state.acceptedResidual += traced.residual / f32(${spp});
       state.acceptedMask |= sampleBit;
       state.pendingMask &= ~sampleBit;
     }
   }
   state.replayPasses = passIndex + 1u;
   state.packed = packColor(state.accumulatedRadiance);
-  state.residual = state.acceptedResidual * f32(${SPP});
+  state.residual = state.acceptedResidual * f32(${spp});
   state.sampleComplete = countOneBits(state.acceptedMask);
   state.sampleUnresolved = countOneBits(state.pendingMask);
   state.sampleInvalid = countOneBits(state.invalidMask);
@@ -816,6 +822,12 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     return {
       inconclusive: "hyperPose requires --fixture=hyper4",
     };
+  const spp = input.samplesPerPixel ?? SPP;
+  if (!Number.isInteger(spp) || spp < 1 || spp > 4)
+    return {
+      inconclusive: "samplesPerPixel must be an integer between 1 and 4",
+    };
+  const provisional = input.provisional === true;
   const tileWidth = Math.min(input.tileWidth ?? 128, imageWindow.width);
   const tileHeight = Math.min(input.tileHeight ?? 64, imageWindow.height);
   if (
@@ -965,7 +977,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     const controlsStarted = performance.now();
     const controls = await runDielectricGpuControls(
       device,
-      dielectricWgsl(),
+      dielectricWgsl(spp),
       OUTPUT_PIXEL_BYTES,
     );
     const controlsMs = performance.now() - controlsStarted;
@@ -986,7 +998,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       };
     runProgress.stage = "pipeline";
     const pipelineSetupStarted = performance.now();
-    const module = device.createShaderModule({ code: dielectricWgsl() });
+    const module = device.createShaderModule({ code: dielectricWgsl(spp) });
     const messages = await module.getCompilationInfo();
     const errors = messages.messages.filter(
       (message) => message.type === "error",
@@ -1070,7 +1082,8 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     if (runProgress.cancelRequested) return cancelledResult();
     const rows: {
       key: FixtureKey;
-      role: "main" | "opaque-control";
+      role: "main" | "opaque-control" | "provisional-preview";
+      provisional: boolean;
       fixture: string;
       mode: Mode;
       scene: Fixture["scene"];
@@ -1172,7 +1185,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
           unresolved: 0,
           invalid: 0,
           capEvents: 0,
-          sampleTotal: imageWindow.width * imageWindow.height * SPP,
+          sampleTotal: imageWindow.width * imageWindow.height * spp,
           sampleComplete: 0,
           sampleUnresolved: 0,
           sampleInvalid: 0,
@@ -1415,7 +1428,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
                   if (witnesses.length > 4) witnesses.pop();
                 } else if (witnesses.length < 4) witnesses.push(witness);
               }
-              const perPixelAverage = residualValues[offset + 2] / SPP;
+              const perPixelAverage = residualValues[offset + 2] / spp;
               radianceBound = Math.max(radianceBound, perPixelAverage);
               totalRadianceBound += perPixelAverage;
               totalSampleMaxChannelRadianceBound += residualValues[offset + 2];
@@ -1439,7 +1452,13 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         if (runProgress.cancelRequested) return cancelledResult();
         rows.push({
           key: fixture.id,
-          role: mode === "glass" ? "main" : "opaque-control",
+          role:
+            mode === "glass"
+              ? provisional
+                ? "provisional-preview"
+                : "main"
+              : "opaque-control",
+          provisional,
           fixture: fixture.id,
           mode,
           scene: fixture.scene,
@@ -1451,7 +1470,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
             fovYRadians: view.fovYRadians,
             fovYDegrees: view.fovYDegrees,
           },
-          samplesPerPixel: SPP,
+          samplesPerPixel: spp,
           width: imageWindow.width,
           height: imageWindow.height,
           imageBase64,
@@ -1484,8 +1503,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
               invalidPixels: completion.invalid,
               capEvents: completion.capEvents,
             },
-            scope:
-              "radianceBound is the gate: maximum per-pixel, four-sample-average, max-channel discarded-branch bound. totalRadianceBound sums pixel averages across the image and totalSampleMaxChannelRadianceBound sums raw samples; both are instruments only and are not compared with the per-pixel error budget.",
+            scope: `radianceBound is the gate: maximum per-pixel, ${spp === 4 ? "four-sample" : `${spp}-sample`}-average, max-channel discarded-branch bound. totalRadianceBound sums pixel averages across the image and totalSampleMaxChannelRadianceBound sums raw samples; both are instruments only and are not compared with the per-pixel error budget.`,
           },
           memory: plannedMemory,
           timing: {
@@ -1544,7 +1562,11 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         camera: input.camera ?? "canonical",
         hyperPose: input.hyperPose ?? "canonical",
         diagnostic: !!input.diagnostic,
-        spp: SPP,
+        spp,
+        provisional,
+        provisionalLabel: provisional
+          ? "provisional staged preview at its declared sample count; not appearance evidence and not owner-approved"
+          : null,
         maxPaths: MAX_PATHS,
         maxPathsDerivation:
           "weaker-first DFS: ceil(log2(4 / (epsilon / (64 * 2^5)))) + 1 = 24 live entries; assumes 4 maximum initial radiance and absorption only decreases branch throughput",
@@ -1556,7 +1578,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
           thetaRule: "theta(attempt) = initialBranchTheta * exp2(-attempt)",
           errorBudget: ERROR_BUDGET,
           environmentRadianceBound: ENVIRONMENT_BOUND,
-          samplesPerPixel: SPP,
+          samplesPerPixel: spp,
         },
         imageCoordinates: {
           outputRowZero: "PNG top row",
