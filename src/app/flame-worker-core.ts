@@ -41,8 +41,8 @@
  */
 import {
   accumulateFlame,
-  adaptiveDownsampleFlame,
   clampSupersampleToBudget,
+  createAdaptiveDownsampleJob,
   createFlameHistogram,
   downsampleFlame,
   tonemapFlame,
@@ -532,14 +532,35 @@ export type FlameWorkerEvent =
     }
   | {
       /**
-       * Emitted right before the synchronous, unchunked adaptive
-       * density-estimation pass — on the finished frame, and again
-       * on every live estimator-param/budget change that re-runs it once
-       * done. `postMessage` queues immediately, so this reaches the
-       * main thread while the worker is still crunching that pass; the next
-       * `progress`/`sharedFrame` event clears whatever busy state it set.
+       * Emitted right before the adaptive density-estimation pass — on the
+       * finished frame, and again on every live estimator-param/budget
+       * change that re-runs it once done. `postMessage` queues immediately,
+       * so this reaches the main thread while the worker is still planning
+       * that pass; it is the busy PULSE, shown only until the first
+       * {@link estimateProgress} number arrives (a quick pass sends none —
+       * its completion `progress`/`sharedFrame` follows directly). Either
+       * way, the next frame event clears whatever busy state it set.
        */
       type: "estimating";
+    }
+  | {
+      /**
+       * Determinate progress for an in-flight adaptive density-estimation
+       * pass, in the pass's own WORK units (see `flame.ts`'s
+       * `AdaptiveDownsampleJob`): `done` is monotonic within one pass and
+       * reaches exactly `total`, which is fixed before the first tap is
+       * gathered. Emitted at most once per
+       * {@link FLAME_REDISPLAY_INTERVAL_MS} of measured wall time — the same
+       * cadence the accumulation's own redisplays use — plus one final
+       * `done === total` event; a pass that finishes in its first band emits
+       * NONE (its frame event follows the pulse directly), so the common
+       * quick pass never flashes a bar that would just rewind. Not to be
+       * confused with accumulation progress: `progress`/`sharedFrame` carry
+       * the iteration counters, which stay untouched while this phase runs.
+       */
+      type: "estimateProgress";
+      done: number;
+      total: number;
     };
 
 /**
@@ -570,6 +591,11 @@ export interface FlameWorkerDeps {
    * command mid-accumulation) with a tiny iteration budget instead of
    * needing millions of real iterations to span more than one chunk. */
   initialChunkSize?: number;
+  /** Defaults to {@link FLAME_ESTIMATE_BAND_WORK}; overridable so a test can
+   * force a multi-band finished-frame density estimate (and thus progress
+   * events, throttling and mid-pass supersession) with a tiny fixture
+   * instead of needing a real multi-second pass. */
+  estimateBandWork?: number;
   /**
    * Async factory for the WebGPU accumulation backend, tried when
    * a `start`/restart's `gpuPreference` is `"auto"`. Absent
@@ -648,8 +674,24 @@ const FLAME_GPU_FRAME_BUDGET_MS = 24;
 export const FLAME_FILTER_RADIUS = 0.4;
 /** Minimum time between downsample + tone-map + transfer refreshes while
  * actively accumulating. Accumulation itself still runs every scheduled
- * chunk; only the pricier, unchunked downsample pass is throttled. */
+ * chunk; only the pricier, unchunked progressive downsample pass is
+ * throttled. The finished-frame adaptive pass (banded, see
+ * {@link FLAME_ESTIMATE_BAND_WORK}) reuses this same interval as its
+ * `estimateProgress` event cadence. */
 const FLAME_REDISPLAY_INTERVAL_MS = 150;
+
+/**
+ * Work budget per scheduled band of the finished-frame adaptive
+ * density-estimation pass — `AdaptiveDownsampleJob.run`'s `workBudget`, in
+ * the pass's own tap units. Sized so one band is roughly a tenth of a second
+ * at the pass's measured throughput (~2-3e8 taps/s; figures in
+ * `docs/architecture.md`'s flame section): long enough that the scheduler's
+ * per-yield overhead stays a small tax, short enough that a live estimator
+ * edit or a restart is picked up within a band. Overridable per session via
+ * `FlameWorkerDeps.estimateBandWork` so tests can force multi-band passes
+ * cheaply.
+ */
+const FLAME_ESTIMATE_BAND_WORK = 30_000_000;
 
 /** Bytes per accumulation bucket: one Float64 `hits` + three Float64 `sumRGB`. */
 const BYTES_PER_ACCUM_BUCKET = 32;
@@ -1303,8 +1345,12 @@ export class FlameWorkerSession {
   private histogram: FlameHistogram | null = null;
   /** Display-resolution derivative, refreshed on the cadence `runChunk`
    * decides — never fed back into `accumulateFlame` (see `downsampleFlame`).
-   * Always points at whichever of {@link displaySlots} was written last;
-   * `null` only while nothing has been downsampled yet this accumulation. */
+   * Always points at whichever of {@link displaySlots} was written last to
+   * COMPLETION: an in-flight banded adaptive pass writes its target slot
+   * across several ticks but does not move this pointer (or
+   * {@link lastDisplaySlot}) until it finishes, so a live tone-map re-send
+   * mid-pass can never name a half-written frame. `null` only while nothing
+   * has been downsampled yet this accumulation. */
   private displayHistogram: FlameHistogram | null = null;
   /** The display-resolution histogram(s) `rebuildDisplay` cycles through as
    * `downsampleFlame`/`adaptiveDownsampleFlame` `out` targets. Shared mode:
@@ -1316,8 +1362,11 @@ export class FlameWorkerSession {
   private displaySlots: FlameHistogram[] = [];
   /** Cursor into {@link displaySlots}: which slot the NEXT rebuild writes. */
   private nextDisplaySlot = 0;
-  /** Index of the slot written LAST — what a `sharedFrame` notification
-   * names, including a re-notification for an already-built frame. */
+  /** Index of the slot written to completion LAST — what a `sharedFrame`
+   * notification names, including a re-notification for an already-built
+   * frame. Recorded by whoever finishes a slot write, never by
+   * {@link takeDisplaySlot} itself: an in-flight banded pass must not name
+   * its target until the last band has landed in it. */
   private lastDisplaySlot = 0;
   /** True when `start` carried `sharedFrames` — selects which event shape
    * {@link sendProgress} emits. */
@@ -1366,7 +1415,9 @@ export class FlameWorkerSession {
   private lastDownsampleAt: number | undefined;
   /**
    * "The finished-frame adaptive display for the CURRENT accumulation +
-   * budget has already been sent". Exists because a
+   * budget has been sent, or is being produced by the one in-flight banded
+   * adaptive pass" (latched at pass START — see `beginAdaptiveRebuild`).
+   * Exists because a
    * `snapshotDisplay`-capable (GPU) backend's progressive due ticks
    * deliberately never refresh `this.histogram` (see that method's doc) —
    * so `setIterationsBudget`'s lowered-mid-render branch can no longer
@@ -1393,6 +1444,18 @@ export class FlameWorkerSession {
    * stale/superseded/still-running bail still means nothing is pending
    * anymore, so the next live change should queue a fresh one. */
   private estimatorRedisplayPending = false;
+  /** Id of the newest banded adaptive density-estimation pass; bumped every
+   * time one starts, so an older pass's next scheduled band sees it has been
+   * superseded (by a live estimator edit, or by an accumulation-restarting
+   * command) and stops without writing or emitting anything further. 0 means
+   * no pass has run yet in this session. */
+  private estimateRunId = 0;
+  /** {@link FlameWorkerDeps.now} stamp of the last `estimateProgress`
+   * emission — the throttled cadence, reset (`undefined`) at every pass
+   * start so the pass's first band always gets a number out promptly. */
+  private lastEstimateProgressAt: number | undefined;
+  /** Work budget per banded step — see {@link FLAME_ESTIMATE_BAND_WORK}. */
+  private readonly estimateBandWork: number;
   constructor(deps: FlameWorkerDeps) {
     this.now = deps.now;
     this.schedule = deps.schedule;
@@ -1405,6 +1468,7 @@ export class FlameWorkerSession {
       deps.maxAccumBuckets ?? FLAME_ACCUM_FLOOR_BUCKETS;
     this.maxAccumBuckets = this.defaultMaxAccumBuckets;
     this.initialChunkSize = deps.initialChunkSize ?? FLAME_CHUNK_INITIAL;
+    this.estimateBandWork = deps.estimateBandWork ?? FLAME_ESTIMATE_BAND_WORK;
     this.chunkSize = this.initialChunkSize;
   }
 
@@ -2661,9 +2725,9 @@ export class FlameWorkerSession {
           return;
         }
         this.histogram = snap;
+        // Starts the banded adaptive pass, which latches `finalFrameDisplayed`
+        // and sends the frame when it completes — see beginAdaptiveRebuild.
         this.rebuildDisplay(true);
-        this.sendProgress();
-        this.finalFrameDisplayed = true;
       }
       // backend === null here means the budget was lowered before any chunk
       // ever ran this accumulation — nothing has been accumulated yet, so
@@ -2834,10 +2898,10 @@ export class FlameWorkerSession {
         // below (which this `!finished` guard always routes away from while
         // a GPU backend is still mid-render) and the budget-met entry bail
         // above ever populate it.
-        const out = this.takeDisplaySlot();
+        const { slot, index } = this.takeDisplaySlot();
         let result: FlameHistogram;
         try {
-          const resultOrPromise = backend.snapshotDisplay(out);
+          const resultOrPromise = backend.snapshotDisplay(slot);
           result = isPromiseLike(resultOrPromise)
             ? await resultOrPromise
             : resultOrPromise;
@@ -2865,6 +2929,7 @@ export class FlameWorkerSession {
           return;
         }
         this.displayHistogram = result;
+        this.lastDisplaySlot = index;
         this.lastDownsampleAt = t1;
         this.sendProgress();
       } else {
@@ -2908,16 +2973,11 @@ export class FlameWorkerSession {
         this.histogram = snap;
         this.rebuildDisplay(finished);
         this.lastDownsampleAt = t1;
-        this.sendProgress();
-        // This branch IS the finished-frame adaptive display for the current
-        // accumulation + budget whenever `finished` (a CPU backend's own
-        // ordinary, not-yet-finished progressive due tick also runs this
-        // same branch — CPU never has `snapshotDisplay` — but that case
-        // isn't the finished frame, hence the guard) — see
-        // `finalFrameDisplayed`'s doc.
-        if (finished) {
-          this.finalFrameDisplayed = true;
-        }
+        // A progressive redisplay (CPU backend, not finished) is synchronous
+        // and is sent right here, as always. The FINISHED adaptive pass is
+        // banded: it owns the send and the `finalFrameDisplayed` latch, and
+        // completes on a later scheduled band — see beginAdaptiveRebuild.
+        if (!finished) this.sendProgress();
       }
     }
 
@@ -2970,56 +3030,155 @@ export class FlameWorkerSession {
 
   /**
    * Advance the display-slot cursor and return the slot the caller should
-   * write into next — the slot-cycling dance `rebuildDisplay` (the CPU/
-   * finished-frame downsample path) and the GPU progressive display path
-   * (`runChunk`'s due branch) both need identically: cycles
+   * write into next, plus its index — the slot-cycling dance `rebuildDisplay`
+   * (the CPU/finished-frame downsample path) and the GPU progressive display
+   * path (`runChunk`'s due branch) both need identically: cycles
    * {@link displaySlots} (the SAB-backed double buffer in shared mode, or the
-   * one locally-owned reused histogram in transfer mode), recording which
-   * slot was written last for {@link sendProgress}'s `sharedFrame` notice.
+   * one locally-owned reused histogram in transfer mode). The caller records
+   * the index into {@link lastDisplaySlot} only once its write is COMPLETE —
+   * the banded adaptive pass does so on its final band — so a `sharedFrame`
+   * notice can never name a slot still being written.
    */
-  private takeDisplaySlot(): FlameHistogram {
-    this.lastDisplaySlot = this.nextDisplaySlot;
-    const out = this.displaySlots[this.nextDisplaySlot];
-    this.nextDisplaySlot =
-      (this.nextDisplaySlot + 1) % this.displaySlots.length;
-    return out;
+  private takeDisplaySlot(): { slot: FlameHistogram; index: number } {
+    const index = this.nextDisplaySlot;
+    this.nextDisplaySlot = (index + 1) % this.displaySlots.length;
+    return { slot: this.displaySlots[index], index };
   }
 
   /**
    * Rebuild `displayHistogram` from the current (full-resolution)
-   * `histogram` into the next {@link displaySlots} target (via
-   * {@link takeDisplaySlot}). `adaptive` picks the filter: the full
-   * density-estimation pass is O(width * height * radius^2) and not
-   * chunked — cheap enough to pay ONCE on the finished frame, but not on
-   * every throttled progressive redisplay while still accumulating (that
-   * loop's whole reason to be throttled at all). The cheap fixed-radius
-   * filter covers every preview tick instead; see `downsampleFlame`'s and
+   * `histogram`. `adaptive` picks the filter and the shape of the work: the
+   * full density-estimation pass is O(width * height * radius^2) and runs as
+   * a banded, scheduler-yielding job ({@link beginAdaptiveRebuild}) so it can
+   * report determinate progress and let live commands supersede it — cheap
+   * enough to pay ONCE on the finished frame, but not on every throttled
+   * progressive redisplay while still accumulating (that loop's whole reason
+   * to be throttled at all). The cheap fixed-radius filter covers every
+   * preview tick instead, synchronously; see `downsampleFlame`'s and
    * `adaptiveDownsampleFlame`'s docs for why the two coexist rather than one
    * replacing the other.
    */
   private rebuildDisplay(adaptive: boolean): void {
     if (!this.histogram) return;
-    // Queued ahead of the synchronous pass below so the main thread
-    // sees it while the worker is still crunching, not after — see the
-    // FlameWorkerEvent variant's doc. Progressive redisplays (adaptive ===
-    // false) never take long enough to need this.
-    if (adaptive) this.emit({ type: "estimating" });
-    const out = this.takeDisplaySlot();
-    this.displayHistogram = adaptive
-      ? adaptiveDownsampleFlame(
-          this.histogram,
-          this.width,
-          this.height,
-          this.estimatorParams,
-          out,
-        )
-      : downsampleFlame(
-          this.histogram,
-          this.width,
-          this.height,
-          FLAME_FILTER_RADIUS,
-          out,
-        );
+    if (adaptive) {
+      this.beginAdaptiveRebuild();
+      return;
+    }
+    const { slot, index } = this.takeDisplaySlot();
+    this.displayHistogram = downsampleFlame(
+      this.histogram,
+      this.width,
+      this.height,
+      FLAME_FILTER_RADIUS,
+      slot,
+    );
+    this.lastDisplaySlot = index;
+  }
+
+  /**
+   * Start the finished-frame adaptive density-estimation pass as a banded
+   * job (see `flame.ts`'s `createAdaptiveDownsampleJob`): plan synchronously
+   * (fixing the work total), announce the busy pulse, run the FIRST band
+   * inline (so a quick pass still finishes in the caller's own tick, exactly
+   * as the pre-banding synchronous pass did), then one band per scheduled
+   * task, emitting throttled `estimateProgress` events and finishing with
+   * the frame itself.
+   *
+   * SUPERSESSION, in three layers, all checked at the top of every band
+   * before any work or emission — so nothing from a stale pass can reach the
+   * display or the UI:
+   * - `estimateRunId`: a newer pass exists (a live estimator edit, or the
+   *   deferred re-estimate it queued), so this one stops; the newer pass has
+   *   already taken its own display slot and emits its own pulse/total.
+   * - `generation`: an accumulation restart (palette/supersample/symmetry/
+   *   fourD view/backend fallback) owns the session now; its own finished
+   *   frame will refresh the display when it converges.
+   * - `running`: accumulation resumed under the SAME generation (a raised
+   *   budget — see `setIterationsBudget`), so this pass is estimating a
+   *   histogram about to be extended; that command cleared
+   *   `finalFrameDisplayed`, and the resumed render's own finished pass will
+   *   follow. Checked on SCHEDULED bands only — the inline first band runs
+   *   while a chunk is legitimately executing, or queued behind a lowered
+   *   budget.
+   *
+   * `finalFrameDisplayed` is latched HERE, at pass start, not at completion:
+   * it means "the finished-frame adaptive display for this
+   * accumulation+budget is owned", which keeps `runChunk`'s budget-met entry
+   * bail from fetching a snapshot and starting a second pass while this one
+   * is still running. `lastDisplaySlot`/`displayHistogram` are only moved on
+   * completion (see {@link takeDisplaySlot}), so no reader can observe the
+   * half-written slot.
+   */
+  private beginAdaptiveRebuild(): void {
+    if (!this.histogram) return;
+    const { slot, index } = this.takeDisplaySlot();
+    const runId = ++this.estimateRunId;
+    const gen = this.generation;
+    // The pulse goes out BEFORE the plan below so the UI is busy across it;
+    // the plan is synchronous by design — it must fix `total` before the
+    // first number can be reported — and costs no more than the old inline
+    // per-cell work did (see the job's doc).
+    this.emit({ type: "estimating" });
+    const job = createAdaptiveDownsampleJob(
+      this.histogram,
+      this.width,
+      this.height,
+      this.estimatorParams,
+      slot,
+    );
+    this.finalFrameDisplayed = true;
+    this.lastEstimateProgressAt = undefined;
+    const runBand = (inline: boolean): void => {
+      if (
+        runId !== this.estimateRunId ||
+        gen !== this.generation ||
+        // The inline first band runs inside the caller's own tick, where
+        // `running` is legitimately true (a chunk is executing, or a
+        // chunk is already queued behind a lowered budget). Only a
+        // SCHEDULED band treats a raised `running` as "accumulation
+        // resumed after this pass started" and stops.
+        (!inline && this.running)
+      ) {
+        return;
+      }
+      const finished = job.run(this.estimateBandWork);
+      if (finished) {
+        this.displayHistogram = job.result();
+        this.lastDisplaySlot = index;
+        // Close a determinate sequence, but only one that actually started:
+        // a pass quick enough to finish in the first band emits no
+        // `estimateProgress` at all (the frame event follows directly), so a
+        // common quick pass looks exactly as it did before banding.
+        if (this.lastEstimateProgressAt !== undefined) {
+          this.emit({
+            type: "estimateProgress",
+            done: job.done,
+            total: job.total,
+          });
+        }
+        this.sendProgress();
+        return;
+      }
+      const now = this.now();
+      if (
+        this.lastEstimateProgressAt === undefined ||
+        now - this.lastEstimateProgressAt >= FLAME_REDISPLAY_INTERVAL_MS
+      ) {
+        this.lastEstimateProgressAt = now;
+        this.emit({
+          type: "estimateProgress",
+          done: job.done,
+          total: job.total,
+        });
+      }
+      this.schedule(() => runBand(false));
+    };
+    // The first band runs INLINE: a quick pass therefore finishes and sends
+    // its frame in the caller's own tick (the pre-banding timing, and what
+    // keeps the pulse-only path above event-identical), while a long pass
+    // yields from here on. The pulse was posted before the plan, so the main
+    // thread paints it while this band crunches.
+    runBand(true);
   }
 
   private sendProgress(): void {
@@ -3055,8 +3214,8 @@ export class FlameWorkerSession {
   }
 
   /** Re-runs the adaptive pass over the frame already in hand with the
-   * latest `estimatorParams` (into the next display slot), and sends it —
-   * the finished-frame counterpart to `redisplayNow`'s "just re-send what's
+   * latest `estimatorParams` (into the next display slot) — the
+   * finished-frame counterpart to `redisplayNow`'s "just re-send what's
    * already there", used when the thing that changed affects the downsample
    * itself, not just the tone-map applied after it. Only ever called once
    * accumulation is finished (see call sites — `setEstimatorParam`'s
@@ -3064,11 +3223,10 @@ export class FlameWorkerSession {
    * calling this, precisely so that stays true even though the command
    * that queued it may have arrived mid-accumulation), so this IS the
    * finished-frame adaptive display for the current accumulation + budget —
-   * set `finalFrameDisplayed` accordingly. */
+   * the banded pass owns the frame send and the `finalFrameDisplayed` latch
+   * on completion (see {@link beginAdaptiveRebuild}). */
   private redisplayWithFreshEstimate(): void {
     if (!this.histogram) return;
     this.rebuildDisplay(true);
-    this.sendProgress();
-    this.finalFrameDisplayed = true;
   }
 }

@@ -8042,6 +8042,53 @@ describe("Ui.setFlameEstimating", () => {
   });
 });
 
+describe("Ui.setFlameEstimateProgress", () => {
+  it("renders the determinate percentage, moves the bar, and ends the pulse", () => {
+    const ui = new Ui(document);
+    ui.setFlameEstimating();
+    ui.setFlameEstimateProgress(42, 100);
+
+    const progress = document.getElementById("flameProgress");
+    expect(progress?.textContent).toBe("applying density estimate… 42%");
+    expect(progress?.style.getPropertyValue("--progress")).toBe("42%");
+    expect(progress?.classList.contains("flame-progress-estimating")).toBe(
+      false,
+    );
+  });
+
+  it("floors the percentage, never rounding a nearly-done pass up to 100%", () => {
+    const ui = new Ui(document);
+    ui.setFlameEstimateProgress(997, 1000);
+    expect(document.getElementById("flameProgress")?.textContent).toBe(
+      "applying density estimate… 99%",
+    );
+    expect(
+      document
+        .getElementById("flameProgress")
+        ?.style.getPropertyValue("--progress"),
+    ).toBe("99%");
+  });
+
+  it("holds the iteration readout until the frame event replaces it", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(20_000_000, 20_000_000);
+    ui.setFlameEstimateProgress(500, 1000);
+    expect(document.getElementById("flameProgress")?.textContent).toBe(
+      "applying density estimate… 50%",
+    );
+
+    ui.setFlameProgress(20_000_000, 20_000_000);
+    expect(document.getElementById("flameProgress")?.textContent).toBe(
+      "20.0M / 20.0M iterations (100%)",
+    );
+    expect(
+      document
+        .getElementById("flameProgress")
+        ?.style.getPropertyValue("--progress"),
+    ).toBe("100%");
+  });
+});
+
 describe("Ui.setFlameSupersampleNote", () => {
   function note(): HTMLElement | null {
     return document.getElementById("flameSupersampleNote");
@@ -15976,6 +16023,38 @@ describe("Ui render-progress announcer", () => {
     expect(announcer()?.textContent).toBe("Surface render, using WebGL");
     ui.setSurfaceProgress({ label: "Full detail · WebGL", pct: 30 });
     expect(announcer()?.textContent).toBe("Surface render, 25 percent");
+  });
+
+  it("the density estimate speaks on its own ladder and wording, re-armed once per pass by the pulse", () => {
+    const ui = new Ui(document);
+    // The iterations have already spoken their 100% ladder...
+    ui.setFlameProgress(100, 100);
+    expect(announcer()?.textContent).toBe("Flame render, 100 percent");
+
+    // ...then the estimate pulse re-arms a SEPARATE ladder: the estimate's
+    // 0..100 does not have to step backwards through the render's wording.
+    ui.setFlameEstimating();
+    ui.setFlameEstimateProgress(30, 100);
+    expect(announcer()?.textContent).toBe("Density estimate, 25 percent");
+    ui.setFlameEstimateProgress(80, 100);
+    expect(announcer()?.textContent).toBe("Density estimate, 75 percent");
+    ui.setFlameEstimateProgress(100, 100);
+    expect(announcer()?.textContent).toBe("Density estimate, 100 percent");
+
+    // A second pass (a live estimator edit) re-arms via its own pulse.
+    ui.setFlameEstimating();
+    ui.setFlameEstimateProgress(50, 100);
+    expect(announcer()?.textContent).toBe("Density estimate, 50 percent");
+  });
+
+  it("a quick estimate pass that never reports a number leaves the iteration announcement standing", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(100, 100);
+    ui.setFlameEstimating(); // the pulse
+    // No setFlameEstimateProgress at all: the frame event follows the pulse
+    // directly, and the iteration ladder was already at 100.
+    ui.setFlameProgress(100, 100);
+    expect(announcer()?.textContent).toBe("Flame render, 100 percent");
   });
 
   it("a hidden row (null) re-arms Surface's quartile WITHOUT wiping the last utterance — the settle's own completion must survive the null that follows it a frame later", () => {

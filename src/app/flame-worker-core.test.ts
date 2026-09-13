@@ -287,6 +287,7 @@ function harness(
     accumulate: overrides.accumulate,
     maxAccumBuckets: overrides.maxAccumBuckets,
     initialChunkSize: overrides.initialChunkSize,
+    estimateBandWork: overrides.estimateBandWork,
     createGpuBackend: overrides.createGpuBackend,
     createGpuBackend4: overrides.createGpuBackend4,
     log: overrides.log,
@@ -330,6 +331,12 @@ function estimatingEvents(
   events: FlameWorkerEvent[],
 ): Extract<FlameWorkerEvent, { type: "estimating" }>[] {
   return events.filter((e) => e.type === "estimating");
+}
+
+function estimateProgressEvents(
+  events: FlameWorkerEvent[],
+): Extract<FlameWorkerEvent, { type: "estimateProgress" }>[] {
+  return events.filter((e) => e.type === "estimateProgress");
 }
 
 function backendEvents(
@@ -1757,6 +1764,152 @@ describe("FlameWorkerSession estimating event", () => {
     expect(progressEvents(events).length).toBeGreaterThan(1);
     expect(progressEvents(events).at(-1)!.iterationsDone).toBeLessThan(250_000);
     expect(estimatingEvents(events)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Determinate progress for the banded adaptive pass: the pulse event is
+// followed by estimateProgress events in the pass's own work units,
+// monotonic within a pass and ending exactly at its total, with the frame
+// event after them. Overridden estimateBandWork forces multi-band passes on
+// tiny fixtures; the default band work means every fixture here would finish
+// in the inline first band (which is itself pinned below as the quick-pass
+// behavior).
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession estimate progress", () => {
+  it("reports monotonic work ending at the total, between the pulse and the frame", () => {
+    const { session, events, scheduler } = harness({
+      estimateBandWork: 1, // one cell per band.
+      now: fakeClock(200), // every band is outside the throttle window.
+    });
+    session.handle(startCommand({ iterationsBudget: 50 }));
+    scheduler.drain();
+
+    expect(estimatingEvents(events)).toHaveLength(1);
+    const progress = estimateProgressEvents(events);
+    expect(progress.length).toBeGreaterThan(1);
+    const total = progress[0].total;
+    expect(total).toBeGreaterThan(0);
+
+    let previous = 0;
+    for (const event of progress) {
+      expect(event.total).toBe(total);
+      expect(event.done).toBeGreaterThan(previous);
+      expect(event.done).toBeLessThanOrEqual(total);
+      previous = event.done;
+    }
+    expect(progress.at(-1)!.done).toBe(total);
+
+    const pulseIndex = events.findIndex((e) => e.type === "estimating");
+    const firstEstimateIndex = events.findIndex(
+      (e) => e.type === "estimateProgress",
+    );
+    const frameIndex = events.findIndex((e) => e.type === "progress");
+    expect(pulseIndex).toBeLessThan(firstEstimateIndex);
+    expect(firstEstimateIndex).toBeLessThan(frameIndex);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(50);
+  });
+
+  it("throttles intermediate events to the redisplay interval and still ends at the total", () => {
+    const { session, events, scheduler } = harness({ estimateBandWork: 1 });
+    session.handle(startCommand({ iterationsBudget: 50 }));
+    scheduler.drain();
+
+    // The clock never advances: the inline first band reports (no prior
+    // stamp), every scheduled band falls inside the window, and completion
+    // closes the sequence with exactly one more event.
+    const progress = estimateProgressEvents(events);
+    expect(progress).toHaveLength(2);
+    expect(progress[0].total).toBe(progress[1].total);
+    expect(progress[0].done).toBeLessThan(progress[0].total);
+    expect(progress[1].done).toBe(progress[1].total);
+  });
+
+  it("emits no estimateProgress at all when the pass finishes in its inline first band", () => {
+    const { session, events, scheduler } = harness(); // default band work: this fixture is one band.
+    session.handle(startCommand({ iterationsBudget: 50 }));
+    scheduler.drain();
+
+    expect(estimateProgressEvents(events)).toHaveLength(0);
+    const last2 = events.slice(-2);
+    expect(last2[0]).toEqual({ type: "estimating" });
+    expect(last2[1].type).toBe("progress");
+  });
+
+  it("reports the same determinate progress for a 4D session", () => {
+    // The histogram and the estimate are dimension-agnostic; the session
+    // path must not special-case either half.
+    const { session, events, scheduler } = harness({
+      estimateBandWork: 1,
+      now: fakeClock(200),
+    });
+    session.handle(
+      startCommand({ fourD: defaultFourD(), iterationsBudget: 50 }),
+    );
+    scheduler.drain();
+
+    const progress = estimateProgressEvents(events);
+    expect(progress.length).toBeGreaterThan(1);
+    expect(progress.at(-1)!.done).toBe(progress.at(-1)!.total);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(50);
+  });
+
+  it("a restart mid-pass leaves no stale estimate progress or frame", () => {
+    const { session, events, scheduler } = harness({
+      estimateBandWork: 1,
+      now: fakeClock(200),
+    });
+    session.handle(startCommand({ iterationsBudget: 50 }));
+    scheduler.step(); // whole render + the inline first band of its estimate.
+    const staleTotal = estimateProgressEvents(events).at(-1)!.total;
+    expect(estimateProgressEvents(events).length).toBeGreaterThan(0);
+    expect(estimateProgressEvents(events).at(-1)!.done).toBeLessThan(
+      staleTotal,
+    );
+
+    const restartAt = events.length;
+    session.handle(startCommand({ iterationsBudget: 50, width: 9, height: 9 }));
+    scheduler.drain();
+
+    const afterRestart = events.slice(restartAt);
+    // No event from the superseded pass can survive: its queued bands abort
+    // on the generation check, and only the new (9x9, different total) pass
+    // reports.
+    expect(
+      afterRestart.some(
+        (e) => e.type === "estimateProgress" && e.total === staleTotal,
+      ),
+    ).toBe(false);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(50);
+  });
+
+  it("a live estimator edit mid-pass supersedes the running pass and completes a fresh one", () => {
+    const { session, events, scheduler } = harness({
+      estimateBandWork: 1,
+      now: fakeClock(200),
+    });
+    session.handle(startCommand({ iterationsBudget: 50, estimatorRadius: 4 }));
+    for (let i = 0; i < 10; i++) scheduler.step(); // render + several estimate bands.
+    const before = estimateProgressEvents(events).at(-1)!;
+    expect(before.done).toBeLessThan(before.total);
+
+    session.handle({ type: "setEstimatorRadius", estimatorRadius: 9 });
+    scheduler.drain();
+
+    // The superseded pass stops where it was; exactly one fresh pass starts
+    // (its own pulse), restarts its sequence from the beginning, and ends at
+    // its own total.
+    expect(estimatingEvents(events)).toHaveLength(2);
+    const series = estimateProgressEvents(events).map((e) => e.done);
+    let resets = 0;
+    for (let i = 1; i < series.length; i++) {
+      if (series[i] < series[i - 1]) resets++;
+    }
+    expect(resets).toBe(1);
+    const last = estimateProgressEvents(events).at(-1)!;
+    expect(last.done).toBe(last.total);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(50);
   });
 });
 

@@ -252,8 +252,11 @@ morphs into place instead of snapping (see **Presets** below).
   samples accumulated into a histogram, then tone-mapped into a soft, glowing
   image. The camera _freezes_ on entry — the render converges through the view
   you left — so switch back to **∴ Points** to keep exploring. A status block
-  above the sections counts progress ("12.4M / 20.0M iterations (62%)"), says
-  **applying density estimate…** while the blur pass re-runs, and names the
+  above the sections counts progress ("12.4M / 20.0M iterations (62%)"), shows
+  the finished frame's density-estimate pass as a determinate percentage on
+  the same bar ("applying density estimate… 42%") once that pass reports its
+  first work number — a quick pass finishes before one arrives and keeps the
+  pulse only — and names the
   engine doing the accumulating: the GPU (with the adapter's name where the
   browser reports one) or the CPU, saying which way it fell back when the GPU
   was tried and refused.

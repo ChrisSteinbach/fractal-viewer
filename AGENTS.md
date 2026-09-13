@@ -478,9 +478,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     The tone-map anchor is the MEAN deposited density (`hitMass`/buckets,
     `log1p(h/mean)/log1p(32)`), never the hottest bucket — a ratio, so
     exposure is invariant under budget, supersample pooling and deposit
-    weights; `maxHits` is an instrument only. flam3's own `rect.c` curve is
-    the precedent; the differential harness is
-    `scripts/flame-differential.harness.ts`.
+    weights; `maxHits` is an instrument only. `flame-differential.harness.ts`
+    is the fidelity sheet; the finished-frame adaptive pass is the banded
+    `createAdaptiveDownsampleJob` (plan fixes the work total, bands yield
+    through the worker's scheduler, `estimateProgress` drives the UI's
+    determinate bar; quick passes emit none; evidence in
+    `docs/architecture.md`).
     Its optional balloon echo deposits one full-weight, tint-only second
     splat into that SAME histogram; there is deliberately no separate
     compositing, conformal magnification, or radial fade. The executable
