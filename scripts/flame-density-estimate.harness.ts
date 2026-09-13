@@ -89,14 +89,23 @@
  * 32x the progressive tick) and 3x over the bar on 244.
  *
  * VERDICT: the residual pass moves to the GPU compute gather at the
- * FlameAccumBackend seam. Interactive bar stated by the decision: <= ~2s at
- * this window, i.e. twice the measured progressive tick; the worst rows miss
- * it by 13-18x, so CPU-only refusal is refused. A worker pool was rejected
- * too: it caps at this machine's 4 physical / 8 logical cores (~4.4-8.8s on
- * the worst row, still over the bar) and would need the 525MB full-resolution
- * histogram shared through SAB. Shape, oracles and gates live in the
- * implementation brief; the narrative is in docs/architecture.md's flame
- * section.
+ * FlameAccumBackend seam, and that port SHIPPED: `adaptiveDisplay` on the
+ * backend seam (shared by 3D and 4D through one `GpuFlameBackend`), the
+ * class map resolved CPU-side by `flame.ts`'s `adaptiveClassMap`, the
+ * occupied-footprint clip and bitmap walk mirrored in WGSL, and the CPU job
+ * kept as oracle and fallback. Interactive bar stated by the decision: <=
+ * ~2s at this window, i.e. twice the measured progressive tick; the worst
+ * rows miss it by 13-18x, so CPU-only refusal is refused. A worker pool was
+ * rejected too: it caps at this machine's 4 physical / 8 logical cores
+ * (~4.4-8.8s on the worst row, still over the bar) and would need the 525MB
+ * full-resolution histogram shared through SAB. Measured after the port, on
+ * this sheet's own worst genome class: the built app's GPU arm settles with
+ * a 1431ms estimate phase inside the 2000ms bar against the CPU arm's
+ * 15868ms (i7-1165G7 / Iris Xe, 1920x950/ss3/20M; the app-level
+ * reproducing instrument is `scripts/flame-adaptive.verify.mjs`, and the
+ * exactness gate is the bench's adaptive-display agreement leg). This sheet
+ * remains the CPU cost record; the narrative is in docs/architecture.md's
+ * flame section.
  */
 import {
   existsSync,

@@ -690,13 +690,41 @@ histogram is already resident for the app's preferred (GPU) sessions, the
 progressive display downsample proves the resident-buffer readback pattern on
 this hardware (the bench's `redisplayCost` leg measures the GPU downsample
 well under the CPU full-readback path), and the CPU job stays the oracle and
-the fallback for machines without WebGPU. The port's shape — an optional
-`adaptiveDisplay` on the backend seam, the WGSL kernel and packers serving
-both dimensions from the shared `GpuFlameBackend`, the per-call
-params/kernel-table wire, the bench agreement leg against
-`adaptiveDownsampleFlame`, and the browser verification — is written into the
-implementation brief. The measurement record is
+the fallback for machines without WebGPU. The measurement record is
 `scripts/flame-density-estimate.harness.ts`.
+
+THE PORT SHIPPED. `FlameAccumBackend.adaptiveDisplay` is the optional seam
+(CPU backends do not implement it; `beginAdaptiveRebuild` prefers it whenever
+it exists and falls back to the CPU job — in the SAME display slot, under the
+same pass id — on any non-abort failure, so a GPU failure can never leave a
+half-written display). The class mapping is CPU-side: `flame.ts`'s
+`adaptiveClassMap`, the first step of `createAdaptiveDownsampleJob`'s plan
+extracted for both engines, because a quantized radius-class boundary is a
+DISCONTINUITY — one cell crossing it moves its normalization by a percent,
+not an ULP — so f32 GPU counts must never pick a class. The device runs an
+occupancy prepass (tile mark + two serial SAT scans) and a row-banded gather
+over the same resident emulated-u64 histogram the display downsample reads,
+with the CPU clip's own occupied-tile bounding box, bitmap walk and direct
+fully-occupied-word loop, normalized by the separable in-bounds per-axis
+weight sums (the display kernel's O(1) pattern; the CPU's flat-order memo
+exists for CPU bit-identity and stays oracle-side). One kernel and packer
+pair serve 3D and 4D through the shared `GpuFlameBackend`; bands are sized
+from measured wall time toward a ~100ms target, charged through the CPU job's
+own whole-number `adaptiveGatherWork` unit (over each cell's full in-bounds
+footprint — the clipped total would need the gather's own occupancy search,
+and a determinate bar needs a total before the first band), and re-checked
+for supersession between bands via the seam's `onBand` callback. The bench's
+adaptive-display agreement leg (`src/app/gpu-bench/main.ts`) pins the GPU
+output to `adaptiveDownsampleFlame` on the same histogram and params, 3D and
+4D, at a measured f32 tolerance (1e-4 relative / 1e-2 absolute per bucket,
+1e-4 on `maxHits`/`hitMass`; measured worst-case relative errors 4.9e-6 hits
+and 5.3e-6 color on i7-1165G7 / Iris Xe). The app-level gate is
+`scripts/flame-adaptive.verify.mjs`: on imported genome
+electricsheep.243.02595.flam3 at 1920x950/ss3/20M, the built app's GPU arm
+settles with a 1431ms estimate phase inside the 2000ms bar (4 determinate
+progress events), against the CPU arm's 15868ms — the port is ~11x faster on
+the machine and the genome the decision called the worst row, on both engines
+reaching a completed settle with disclosed progress.
 
 **Saved scenes re-render at a different brightness — deliberately, with no
 decoder migration.** The anchor change above is a look fix, and a

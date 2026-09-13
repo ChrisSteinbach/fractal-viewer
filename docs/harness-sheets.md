@@ -958,8 +958,13 @@ of four genomes (35.11s and 25.67s against 20.32s and 3.79s accumulation;
 31-32x the 0.73-1.20s progressive redisplay tick), so the decision moved the
 pass off the CPU worker: the GPU compute gather at the `FlameAccumBackend`
 seam, with the worker-pool split (caps at this machine's 4 physical cores)
-and CPU-only refusal (still dominant) rejected on those numbers. The
-narrative lives in `docs/architecture.md`'s flame section.
+and CPU-only refusal (still dominant) rejected on those numbers. The port
+then SHIPPED (see `docs/architecture.md`'s flame section): the app-level
+gate is `scripts/flame-adaptive.verify.mjs`, whose GPU arm settles an
+imported genome with a 1431ms estimate phase inside the decision's 2000ms
+bar against the CPU arm's 15868ms, and the exactness gate is the gpu-bench
+adaptive-display agreement leg. The narrative lives in `docs/architecture.md`'s
+flame section.
 
 ### spherefold-radius-sweep
 
