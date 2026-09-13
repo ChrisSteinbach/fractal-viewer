@@ -791,6 +791,16 @@ export class FlameGpuSizeError extends Error {}
 export class FlameGpuUnavailableError extends Error {}
 
 /**
+ * A GPU backend's adaptive-display pass stopped because its `onBand`
+ * callback answered "superseded" — the session must DROP it silently,
+ * never fall back to the CPU job: a newer pass (or a resumed accumulation)
+ * already owns the display slot and the frame, and re-running the CPU job
+ * here would fight it. Defined next to the seam that documents the
+ * contract, like the two GPU error classes above.
+ */
+export class FlameGpuAdaptiveAbortError extends Error {}
+
+/**
  * One accumulation run's engine — the seam a WebGPU accumulator
  * (`flame-gpu.ts`) plugs into alongside the CPU implementation below. The
  * session (`runChunk`) drives whichever backend is current in chunks and
@@ -853,6 +863,39 @@ export interface FlameAccumBackend {
    */
   snapshotDisplay?(
     out: FlameHistogram,
+  ): FlameHistogram | Promise<FlameHistogram>;
+  /**
+   * OPTIONAL: the finished-frame adaptive density-estimate pass, run on the
+   * device over the RESIDENT accumulation histogram instead of the CPU
+   * job `createAdaptiveDownsampleJob`. A GPU backend implements this (the
+   * CPU backend does NOT — its live accumulator is already display-cheap to
+   * process locally, and `flame.ts`'s banded job is both the oracle and the
+   * fallback); `beginAdaptiveRebuild` prefers it whenever it exists and
+   * falls back to the CPU job — into the SAME `out` slot — on any non-abort
+   * throw or rejection, so a GPU failure can never leave a half-written
+   * display.
+   *
+   * `out` is a display-slot histogram at the backend's own
+   * `displayWidth`/`displayHeight`, unconditionally overwritten exactly like
+   * `snapshotDisplay`'s; `hist` is the full-resolution snapshot the caller
+   * already holds (the class mapping is resolved from it CPU-side — see
+   * `flame-gpu.ts`'s adaptive section). `params` are the LIVE estimator
+   * params, re-read per call: this is the pass a finished-frame estimator
+   * edit re-runs.
+   *
+   * `onBand(done, total)` is called after every completed row band with
+   * cumulative whole-number work units (`adaptiveGatherWork` over each
+   * cell's full in-bounds footprint) and the pass's fixed total; returning
+   * `false` makes the backend throw {@link FlameGpuAdaptiveAbortError} and
+   * leave `out` untouched — the session's supersession check between bands,
+   * which is what lets a live edit or an accumulation restart abandon an
+   * in-flight pass cleanly.
+   */
+  adaptiveDisplay?(
+    hist: FlameHistogram,
+    params: DensityEstimatorParams,
+    out: FlameHistogram,
+    onBand?: (done: number, total: number) => boolean,
   ): FlameHistogram | Promise<FlameHistogram>;
   /** Release any resources this backend holds (GPU buffers/pipelines). A
    * no-op for the CPU backend. Idempotent — safe to call more than once
@@ -3076,17 +3119,24 @@ export class FlameWorkerSession {
   }
 
   /**
-   * Start the finished-frame adaptive density-estimation pass as a banded
-   * job (see `flame.ts`'s `createAdaptiveDownsampleJob`): plan synchronously
-   * (fixing the work total), announce the busy pulse, run the FIRST band
-   * inline (so a quick pass still finishes in the caller's own tick, exactly
-   * as the pre-banding synchronous pass did), then one band per scheduled
-   * task, emitting throttled `estimateProgress` events and finishing with
-   * the frame itself.
+   * Start the finished-frame adaptive density-estimation pass. Two engines
+   * can own it, chosen here:
    *
-   * SUPERSESSION, in three layers, all checked at the top of every band
-   * before any work or emission — so nothing from a stale pass can reach the
-   * display or the UI:
+   * - A backend with {@link FlameAccumBackend.adaptiveDisplay} (GPU
+   *   accumulation) runs the pass on the device, in row bands that report
+   *   the same whole-number work units and are re-checked for supersession
+   *   between bands; any non-abort failure falls back to the CPU job below,
+   *   into the SAME slot, under the same pass id.
+   * - Otherwise (CPU accumulation, or a fallback) the banded CPU job of
+   *   `flame.ts`'s `createAdaptiveDownsampleJob` runs exactly as before:
+   *   plan synchronously (fixing the work total), run the FIRST band inline
+   *   (so a quick pass still finishes in the caller's own tick, exactly as
+   *   the pre-banding synchronous pass did), then one band per scheduled
+   *   task, emitting throttled `estimateProgress` events and finishing with
+   *   the frame itself.
+   *
+   * SUPERSESSION, in three layers, all checked before any work or emission —
+   * so nothing from a stale pass can reach the display or the UI:
    * - `estimateRunId`: a newer pass exists (a live estimator edit, or the
    *   deferred re-estimate it queued), so this one stops; the newer pass has
    *   already taken its own display slot and emits its own pulse/total.
@@ -3097,7 +3147,7 @@ export class FlameWorkerSession {
    *   budget — see `setIterationsBudget`), so this pass is estimating a
    *   histogram about to be extended; that command cleared
    *   `finalFrameDisplayed`, and the resumed render's own finished pass will
-   *   follow. Checked on SCHEDULED bands only — the inline first band runs
+   *   follow. Checked on every band but the first — the first band runs
    *   while a chunk is legitimately executing, or queued behind a lowered
    *   budget.
    *
@@ -3114,20 +3164,40 @@ export class FlameWorkerSession {
     const { slot, index } = this.takeDisplaySlot();
     const runId = ++this.estimateRunId;
     const gen = this.generation;
-    // The pulse goes out BEFORE the plan below so the UI is busy across it;
-    // the plan is synchronous by design — it must fix `total` before the
-    // first number can be reported — and costs no more than the old inline
-    // per-cell work did (see the job's doc).
+    this.finalFrameDisplayed = true;
+    this.lastEstimateProgressAt = undefined;
+    // The pulse goes out BEFORE the plan/upload below so the UI is busy
+    // across it; the plan is synchronous by design — it must fix `total`
+    // before the first number can be reported — and costs no more than the
+    // old inline per-cell work did (see the job's doc).
     this.emit({ type: "estimating" });
+    const backend = this.backend;
+    if (backend?.adaptiveDisplay !== undefined) {
+      this.beginGpuAdaptiveRebuild(backend, slot, index, runId, gen);
+      return;
+    }
+    this.beginCpuAdaptiveRebuild(slot, index, runId, gen);
+  }
+
+  /** {@link beginAdaptiveRebuild}'s CPU arm — the banded oracle job. Also
+   * the fallback a failed GPU pass lands in (see
+   * {@link handleGpuAdaptiveFailure}), which is why the `estimating` pulse
+   * is the CALLER's: a fallback must not re-announce. */
+  private beginCpuAdaptiveRebuild(
+    slot: FlameHistogram,
+    index: number,
+    runId: number,
+    gen: number,
+  ): void {
+    const histogram = this.histogram;
+    if (!histogram) return;
     const job = createAdaptiveDownsampleJob(
-      this.histogram,
+      histogram,
       this.width,
       this.height,
       this.estimatorParams,
       slot,
     );
-    this.finalFrameDisplayed = true;
-    this.lastEstimateProgressAt = undefined;
     const runBand = (inline: boolean): void => {
       if (
         runId !== this.estimateRunId ||
@@ -3179,6 +3249,136 @@ export class FlameWorkerSession {
     // yields from here on. The pulse was posted before the plan, so the main
     // thread paints it while this band crunches.
     runBand(true);
+  }
+
+  /**
+   * {@link beginAdaptiveRebuild}'s GPU arm: hand the pass to the backend,
+   * which drives it in row bands and calls `onBand` after each one. The
+   * callback is the between-band supersession check — the GPU counterpart
+   * of `runBand`'s guard — and returns `false` to abort (the backend then
+   * throws {@link FlameGpuAdaptiveAbortError}, which
+   * {@link handleGpuAdaptiveFailure} drops silently).
+   */
+  private beginGpuAdaptiveRebuild(
+    backend: FlameAccumBackend,
+    slot: FlameHistogram,
+    index: number,
+    runId: number,
+    gen: number,
+  ): void {
+    const histogram = this.histogram;
+    if (!histogram) return;
+    let firstBand = true;
+    let sawProgress = false;
+    let lastDone = 0;
+    let lastTotal = 0;
+    const onBand = (done: number, total: number): boolean => {
+      if (runId !== this.estimateRunId || gen !== this.generation) return false;
+      if (!firstBand && this.running) return false;
+      firstBand = false;
+      lastDone = done;
+      lastTotal = total;
+      const now = this.now();
+      if (
+        this.lastEstimateProgressAt === undefined ||
+        now - this.lastEstimateProgressAt >= FLAME_REDISPLAY_INTERVAL_MS
+      ) {
+        this.lastEstimateProgressAt = now;
+        sawProgress = true;
+        this.emit({ type: "estimateProgress", done, total });
+      }
+      return true;
+    };
+    let result: FlameHistogram | Promise<FlameHistogram>;
+    try {
+      result = backend.adaptiveDisplay!(
+        histogram,
+        this.estimatorParams,
+        slot,
+        onBand,
+      );
+    } catch (e) {
+      this.handleGpuAdaptiveFailure(e, runId, gen, slot, index);
+      return;
+    }
+    if (isPromiseLike(result)) {
+      result.then(
+        (hist) =>
+          this.completeGpuAdaptive(
+            hist,
+            runId,
+            gen,
+            index,
+            sawProgress,
+            lastDone,
+            lastTotal,
+          ),
+        (e: unknown) =>
+          this.handleGpuAdaptiveFailure(e, runId, gen, slot, index),
+      );
+    } else {
+      this.completeGpuAdaptive(
+        result,
+        runId,
+        gen,
+        index,
+        sawProgress,
+        lastDone,
+        lastTotal,
+      );
+    }
+  }
+
+  /** The GPU pass finished: adopt its display histogram exactly as the CPU
+   * job's final band would, under the same supersession re-check (a
+   * superseded pass must not move `displayHistogram`/`lastDisplaySlot` or
+   * send a frame). `running` is re-checked here too: a budget raise between
+   * the last band and this completion resumed accumulation, so the frame
+   * would be estimating a histogram that is already being extended. */
+  private completeGpuAdaptive(
+    hist: FlameHistogram,
+    runId: number,
+    gen: number,
+    index: number,
+    sawProgress: boolean,
+    done: number,
+    total: number,
+  ): void {
+    if (runId !== this.estimateRunId || gen !== this.generation) return;
+    if (this.running) return;
+    this.displayHistogram = hist;
+    this.lastDisplaySlot = index;
+    if (sawProgress) {
+      this.emit({ type: "estimateProgress", done, total });
+    }
+    this.sendProgress();
+  }
+
+  /**
+   * A GPU adaptive pass failed. Four cases:
+   * - Superseded (runId/generation moved): drop, the newer owner has the
+   *   slot.
+   * - {@link FlameGpuAdaptiveAbortError}: the between-band callback said
+   *   superseded (including "accumulation resumed" without a generation
+   *   bump) — drop; falling back to the CPU job here would fight the
+   *   resumed render.
+   * - `running` became true without a newer pass (a budget raise): the
+   *   histogram is about to be extended — drop for the same reason.
+   * - Anything else: a genuine GPU failure. The CPU job is the oracle AND
+   *   the fallback (the standing requirement), so re-run the pass in the
+   *   SAME slot under the SAME pass id — its own guards then apply.
+   */
+  private handleGpuAdaptiveFailure(
+    e: unknown,
+    runId: number,
+    gen: number,
+    slot: FlameHistogram,
+    index: number,
+  ): void {
+    if (runId !== this.estimateRunId || gen !== this.generation) return;
+    if (e instanceof FlameGpuAdaptiveAbortError) return;
+    if (this.running) return;
+    this.beginCpuAdaptiveRebuild(slot, index, runId, gen);
   }
 
   private sendProgress(): void {

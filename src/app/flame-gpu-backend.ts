@@ -45,9 +45,14 @@
  * throws.
  */
 import {
+  ADAPTIVE_PARAMS_BAND_OFFSET_BYTES,
+  ADAPTIVE_PARAMS_BYTES,
+  ADAPTIVE_SCAN_WORKGROUP_SIZE,
+  ADAPTIVE_WORKGROUP_SIZE,
   BYTES_PER_GPU_BUCKET,
   DOWNSAMPLE_PARAMS_BYTES,
   DOWNSAMPLE_WORKGROUP_SIZE,
+  FLAME_GPU_ADAPTIVE_WGSL,
   FLAME_GPU_DOWNSAMPLE_WGSL,
   FLAME_GPU_KERNEL_WGSL,
   PARAMS_ITERS_OFFSET_BYTES,
@@ -56,6 +61,7 @@ import {
   buildFlameGpuPointTilingKernel,
   convertGpuDisplayHistogram,
   convertGpuHistogram,
+  packGpuAdaptive,
   packGpuChains,
   packGpuColorLUT,
   packGpuDownsample,
@@ -63,6 +69,7 @@ import {
   packGpuSystem,
   planGpuDispatches,
 } from "../fractal/flame-gpu";
+import type { PackedGpuAdaptive } from "../fractal/flame-gpu";
 import {
   assertGpuPointTilingCompatibility,
   packGpuPointTiling,
@@ -79,8 +86,9 @@ import {
   packGpuSystem4,
 } from "../fractal/flame-gpu-4d";
 import { createFlameHistogram } from "../fractal/flame";
-import type { FlameHistogram } from "../fractal/flame";
+import type { DensityEstimatorParams, FlameHistogram } from "../fractal/flame";
 import {
+  FlameGpuAdaptiveAbortError,
   FlameGpuSizeError,
   FlameGpuUnavailableError,
 } from "./flame-worker-core";
@@ -94,6 +102,22 @@ import type {
 /** Bytes per display-resolution downsample bucket: interleaved f32 [hits, r,
  * g, b] — see flame-gpu.ts's FLAME_GPU_DOWNSAMPLE_WGSL doc. */
 const DISPLAY_BUCKET_BYTES = 16;
+
+/** Target wall time per adaptive-gather band — the retargeting aim for the
+ * band after the pilot, so progress reports and supersession checks (one GPU
+ * fence + one callback per band) stay a small fraction of each band's work
+ * without flooding the session's schedule. */
+const ADAPTIVE_BAND_TARGET_MS = 100;
+
+/** Rows in the FIRST gather band, before any measured band exists — the
+ * strip planner's pilot: deliberately small, and retargeted from its own
+ * measurement. */
+const ADAPTIVE_BAND_PILOT_ROWS = 16;
+
+/** Bounds on the retargeted band size: never so small that fence/callback
+ * overhead dominates, never so large that a pass is slow to abort. */
+const ADAPTIVE_BAND_MIN_ROWS = 4;
+const ADAPTIVE_BAND_MAX_ROWS = 512;
 
 /** Smallest workgroup count covering `total` invocations at `size` per
  * workgroup — used to size both downsample passes' 2D dispatches. */
@@ -248,6 +272,41 @@ export interface GpuFlameBackendInit {
    * already be sized to (baked in at backend-creation time). */
   displayWidth: number;
   displayHeight: number;
+  /** The adaptive density-estimate gather's pipelines and bind-group layout
+   * — see `GpuFlameBackend.adaptiveDisplay`'s doc. Its buffers are NOT
+   * created here: they are allocated lazily on the first pass (the
+   * outHistogram reasoning — a render that never reaches a finished frame
+   * should not pay for them), so the class owns their lifecycle. */
+  adaptiveMarkTilesPipeline: GPUComputePipeline;
+  adaptiveScanTilesXPipeline: GPUComputePipeline;
+  adaptiveScanTilesYPipeline: GPUComputePipeline;
+  adaptiveGatherPipeline: GPUComputePipeline;
+  adaptiveBindGroupLayout: GPUBindGroupLayout;
+}
+
+/** The lazily allocated adaptive-pass resources (see
+ * {@link GpuFlameBackend.ensureAdaptiveResources}): the per-call upload
+ * buffers, the occupancy tables, the phase-specific staging buffer, plus the
+ * bind group that references them and the sizes needed to grow the two
+ * class-dependent buffers in place. */
+interface AdaptiveResources {
+  params: GPUBuffer;
+  classOf: GPUBuffer;
+  classTable: GPUBuffer;
+  kernels: GPUBuffer;
+  occBits: GPUBuffer;
+  tileOcc: GPUBuffer;
+  /** Dedicated to this pass, NOT the progressive display's staging buffer:
+   * the two can legitimately overlap (an estimator pass still winding down
+   * when a budget raise resumes accumulation), and a second `mapAsync` on
+   * the same buffer rejects — which the session would read as a device
+   * failure. The WRITE target reuses `displayBuffer`, which is safe: no
+   * progressive tick can be submitted while an adaptive pass will still
+   * read back (see `runAdaptiveDisplay`'s doc). */
+  staging: GPUBuffer;
+  bindGroup: GPUBindGroup;
+  classTableBytes: number;
+  kernelsBytes: number;
 }
 
 /**
@@ -307,6 +366,24 @@ export class GpuFlameBackend implements FlameAccumBackend {
   private readonly displayWidth: number;
   private readonly displayHeight: number;
   private readonly displayBytes: number;
+  /** The adaptive density-estimate gather's pipelines + bind-group layout —
+   * built eagerly by the factory (see {@link GpuFlameBackendInit}), with
+   * the buffers behind {@link adaptiveResources} allocated lazily. */
+  private readonly adaptiveMarkTilesPipeline: GPUComputePipeline;
+  private readonly adaptiveScanTilesXPipeline: GPUComputePipeline;
+  private readonly adaptiveScanTilesYPipeline: GPUComputePipeline;
+  private readonly adaptiveGatherPipeline: GPUComputePipeline;
+  private readonly adaptiveBindGroupLayout: GPUBindGroupLayout;
+  /** Lazily created adaptive buffers/bind group — see
+   * {@link ensureAdaptiveResources}. */
+  private adaptiveResources: AdaptiveResources | null = null;
+  /** Serializes adaptive passes: a live estimator edit can arrive while the
+   * previous pass is still winding down (the worker's `estimatorRedisplay`
+   * coalescing spans passes, not calls), and the two would then share the
+   * pass's write target and — worse — could race `mapAsync` on one staging
+   * buffer. Chaining the runs makes the second wait out the first, which
+   * the first's between-band abort check keeps to at most one band. */
+  private adaptiveChain: Promise<unknown> = Promise.resolve();
   /** Dispatch geometry for the two downsample passes, precomputed once (both
    * are fixed for the backend's whole lifetime): downsampleX covers (display
    * width, accumulation height), downsampleY covers (display width, display
@@ -375,6 +452,11 @@ export class GpuFlameBackend implements FlameAccumBackend {
     this.displayHeight = init.displayHeight;
     this.displayBytes =
       init.displayWidth * init.displayHeight * DISPLAY_BUCKET_BYTES;
+    this.adaptiveMarkTilesPipeline = init.adaptiveMarkTilesPipeline;
+    this.adaptiveScanTilesXPipeline = init.adaptiveScanTilesXPipeline;
+    this.adaptiveScanTilesYPipeline = init.adaptiveScanTilesYPipeline;
+    this.adaptiveGatherPipeline = init.adaptiveGatherPipeline;
+    this.adaptiveBindGroupLayout = init.adaptiveBindGroupLayout;
     this.downsampleXWorkgroups = [
       ceilDiv(init.displayWidth, DOWNSAMPLE_WORKGROUP_SIZE),
       ceilDiv(init.height, DOWNSAMPLE_WORKGROUP_SIZE),
@@ -532,6 +614,281 @@ export class GpuFlameBackend implements FlameAccumBackend {
     } finally {
       this.releaseOp();
     }
+  }
+
+  /**
+   * The finished-frame adaptive density-estimate gather — the GPU port of
+   * `flame.ts`'s `adaptiveDownsampleFlame`, run over the RESIDENT `hist`
+   * buffer (the display downsample's own source) and read back into a
+   * `displayWidth x displayHeight` f32 histogram in `out`, exactly like
+   * {@link snapshotDisplay}. The class mapping is resolved CPU-side from
+   * `hist` and uploaded; the occupancy prepass and the row-banded gather run
+   * on the device; `convertDisplay` gives the readback the dimension's own
+   * scale — see `flame-gpu.ts`'s adaptive section for the full contract.
+   *
+   * `onBand(done, total)` is the caller's between-band supersession check
+   * (see {@link FlameAccumBackend.adaptiveDisplay}): it reports cumulative
+   * `adaptiveGatherWork` units over each band and answers `false` to abort,
+   * which throws {@link FlameGpuAdaptiveAbortError} with `out` untouched.
+   * Band width starts at {@link ADAPTIVE_BAND_PILOT_ROWS} and is retargeted
+   * from each band's measured wall time toward
+   * {@link ADAPTIVE_BAND_TARGET_MS} — the strip planner's measured-cost
+   * discipline, and specifically NOT the CPU job's work-unit budget.
+   *
+   * Passes are serialized on {@link adaptiveChain}; a queued pass still
+   * builds its class map only when it reaches the front, so a superseded
+   * call's work is bounded by one band of the pass ahead of it.
+   */
+  adaptiveDisplay(
+    hist: FlameHistogram,
+    params: DensityEstimatorParams,
+    out: FlameHistogram,
+    onBand?: (done: number, total: number) => boolean,
+  ): Promise<FlameHistogram> {
+    const run = (): Promise<FlameHistogram> =>
+      this.runAdaptiveDisplay(hist, params, out, onBand);
+    const next = this.adaptiveChain.then(run, run);
+    this.adaptiveChain = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  private async runAdaptiveDisplay(
+    hist: FlameHistogram,
+    params: DensityEstimatorParams,
+    out: FlameHistogram,
+    onBand?: (done: number, total: number) => boolean,
+  ): Promise<FlameHistogram> {
+    this.beginOp("adaptive display");
+    try {
+      const packed = packGpuAdaptive(
+        hist,
+        this.displayWidth,
+        this.displayHeight,
+        params,
+      );
+      const resources = this.ensureAdaptiveResources(packed);
+      const queue = this.device.queue;
+      queue.writeBuffer(resources.params, 0, packed.params);
+      queue.writeBuffer(resources.classOf, 0, packed.classOf);
+      queue.writeBuffer(resources.occBits, 0, packed.occBits);
+      queue.writeBuffer(resources.classTable, 0, packed.classTable);
+      queue.writeBuffer(resources.kernels, 0, packed.kernels);
+
+      // Occupancy prepass: mark tiles from the bitmap, then the two serial
+      // scans into the SAT — three dispatches in ONE pass, issued in order,
+      // so each sees the previous one's writes (the display downsample's
+      // X/Y pair relies on the same guarantee).
+      const occupancy = this.device.createCommandEncoder({
+        label: "flame-gpu adaptive occupancy",
+      });
+      const occupancyPass = occupancy.beginComputePass({
+        label: "flame-gpu adaptive occupancy pass",
+      });
+      occupancyPass.setBindGroup(0, resources.bindGroup);
+      occupancyPass.setPipeline(this.adaptiveMarkTilesPipeline);
+      occupancyPass.dispatchWorkgroups(
+        ceilDiv(packed.tilesX, ADAPTIVE_WORKGROUP_SIZE),
+        ceilDiv(packed.tilesY, ADAPTIVE_WORKGROUP_SIZE),
+      );
+      occupancyPass.setPipeline(this.adaptiveScanTilesXPipeline);
+      occupancyPass.dispatchWorkgroups(
+        ceilDiv(packed.tilesY, ADAPTIVE_SCAN_WORKGROUP_SIZE),
+      );
+      occupancyPass.setPipeline(this.adaptiveScanTilesYPipeline);
+      occupancyPass.dispatchWorkgroups(
+        ceilDiv(packed.tilesX, ADAPTIVE_SCAN_WORKGROUP_SIZE),
+      );
+      occupancyPass.end();
+      queue.submit([occupancy.finish()]);
+      await queue.onSubmittedWorkDone();
+
+      // The banded gather: one compute pass per band, with the band's row
+      // range rewritten into the params uniform and the work charged from
+      // the packer's per-cell units. A band ends with an
+      // `onSubmittedWorkDone` fence so `onBand` can run against completed
+      // work and a supersession can be caught before the next band is
+      // submitted.
+      const outWidth = this.displayWidth;
+      const outHeight = this.displayHeight;
+      const bandParams = new Uint32Array(2);
+      let rowStart = 0;
+      let bandRows = Math.min(outHeight, ADAPTIVE_BAND_PILOT_ROWS);
+      let done = 0;
+      while (rowStart < outHeight) {
+        const rows = Math.min(bandRows, outHeight - rowStart);
+        bandParams[0] = rowStart;
+        bandParams[1] = rows;
+        queue.writeBuffer(
+          resources.params,
+          ADAPTIVE_PARAMS_BAND_OFFSET_BYTES,
+          bandParams,
+        );
+        const bandStart = performance.now();
+        const encoder = this.device.createCommandEncoder({
+          label: "flame-gpu adaptive gather",
+        });
+        const pass = encoder.beginComputePass({
+          label: "flame-gpu adaptive gather pass",
+        });
+        pass.setBindGroup(0, resources.bindGroup);
+        pass.setPipeline(this.adaptiveGatherPipeline);
+        pass.dispatchWorkgroups(
+          ceilDiv(outWidth, ADAPTIVE_WORKGROUP_SIZE),
+          ceilDiv(rows, ADAPTIVE_WORKGROUP_SIZE),
+        );
+        pass.end();
+        queue.submit([encoder.finish()]);
+        await queue.onSubmittedWorkDone();
+        const elapsed = performance.now() - bandStart;
+
+        let bandWork = 0;
+        const bandStartCell = rowStart * outWidth;
+        const bandEndCell = bandStartCell + rows * outWidth;
+        for (let i = bandStartCell; i < bandEndCell; i++) {
+          bandWork += packed.cellWork[i];
+        }
+        done += bandWork;
+        if (onBand !== undefined && !onBand(done, packed.totalWork)) {
+          throw new FlameGpuAdaptiveAbortError(
+            "Flame GPU: adaptive display superseded",
+          );
+        }
+        if (elapsed > 0) {
+          const scaled = Math.round((rows * ADAPTIVE_BAND_TARGET_MS) / elapsed);
+          bandRows = Math.max(
+            ADAPTIVE_BAND_MIN_ROWS,
+            Math.min(ADAPTIVE_BAND_MAX_ROWS, scaled),
+          );
+        }
+        rowStart += rows;
+      }
+
+      // Read back only the display-resolution histogram, through this
+      // pass's own staging buffer (see AdaptiveResources.staging).
+      const readback = this.device.createCommandEncoder({
+        label: "flame-gpu adaptive readback",
+      });
+      readback.copyBufferToBuffer(
+        this.displayBuffer,
+        0,
+        resources.staging,
+        0,
+        this.displayBytes,
+      );
+      queue.submit([readback.finish()]);
+      await resources.staging.mapAsync(GPUMapMode.READ);
+      // Convert BEFORE unmap() — same reason as snapshot()'s own readback.
+      try {
+        const data = new Float32Array(resources.staging.getMappedRange());
+        this.convertDisplay(data, this.displayWidth, this.displayHeight, out);
+      } finally {
+        resources.staging.unmap();
+      }
+      return out;
+    } finally {
+      this.releaseOp();
+    }
+  }
+
+  /**
+   * Allocate (once) or grow the adaptive pass's buffers. Dimensions are
+   * fixed for the backend's lifetime, so classOf/occBits/tileOcc/params are
+   * created once; only the class table and kernel table depend on the live
+   * estimator params and can grow when a later pass has more classes or
+   * wider kernels. Grown buffers are replaced, not explicitly destroyed —
+   * the device reclaims them at teardown, and passes are serialized on
+   * {@link adaptiveChain}, so no in-flight pass can still reference one.
+   */
+  private ensureAdaptiveResources(
+    packed: PackedGpuAdaptive,
+  ): AdaptiveResources {
+    const existing = this.adaptiveResources;
+    const params =
+      existing?.params ??
+      this.device.createBuffer({
+        label: "flame-gpu adaptive params",
+        size: ADAPTIVE_PARAMS_BYTES,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+    const classOf =
+      existing?.classOf ??
+      this.device.createBuffer({
+        label: "flame-gpu adaptive class map",
+        size: packed.classOf.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+    const occBits =
+      existing?.occBits ??
+      this.device.createBuffer({
+        label: "flame-gpu adaptive occupancy bitmap",
+        size: packed.occBits.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+    const tileOcc =
+      existing?.tileOcc ??
+      this.device.createBuffer({
+        label: "flame-gpu adaptive tile SAT",
+        size: (packed.tilesX + 1) * (packed.tilesY + 1) * 4,
+        usage: GPUBufferUsage.STORAGE,
+      });
+    const staging =
+      existing?.staging ??
+      this.device.createBuffer({
+        label: "flame-gpu adaptive display staging",
+        size: this.displayBytes,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      });
+    let classTable = existing?.classTable;
+    let classTableBytes = existing?.classTableBytes ?? 0;
+    if (!classTable || classTableBytes < packed.classTable.byteLength) {
+      classTable = this.device.createBuffer({
+        label: "flame-gpu adaptive class table",
+        size: packed.classTable.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+      classTableBytes = packed.classTable.byteLength;
+    }
+    let kernels = existing?.kernels;
+    let kernelsBytes = existing?.kernelsBytes ?? 0;
+    if (!kernels || kernelsBytes < packed.kernels.byteLength) {
+      kernels = this.device.createBuffer({
+        label: "flame-gpu adaptive kernels",
+        size: packed.kernels.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+      kernelsBytes = packed.kernels.byteLength;
+    }
+    const bindGroup = this.device.createBindGroup({
+      label: "flame-gpu adaptive bind group",
+      layout: this.adaptiveBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: params } },
+        { binding: 1, resource: { buffer: this.histBuffer } },
+        { binding: 2, resource: { buffer: classOf } },
+        { binding: 3, resource: { buffer: classTable } },
+        { binding: 4, resource: { buffer: kernels } },
+        { binding: 5, resource: { buffer: occBits } },
+        { binding: 6, resource: { buffer: tileOcc } },
+        { binding: 7, resource: { buffer: this.displayBuffer } },
+      ],
+    });
+    const resources: AdaptiveResources = {
+      params,
+      classOf,
+      classTable,
+      kernels,
+      occBits,
+      tileOcc,
+      staging,
+      bindGroup,
+      classTableBytes,
+      kernelsBytes,
+    };
+    this.adaptiveResources = resources;
+    return resources;
   }
 
   /**
@@ -1095,6 +1452,86 @@ async function buildBackendOnDevice(
     ],
   });
 
+  // The adaptive density-estimate gather — one WGSL module, four pipelines
+  // (mark, two serial SAT scans, band gather) over one explicit layout, all
+  // created here so a compile error fails compile-time-classified inside the
+  // error scopes rather than mid-render. Dimension-agnostic: both kernel
+  // programs share this code (the histogram is 2D and the readback
+  // converters already split per dimension). No buffers are bound here — the
+  // backend allocates those lazily on its first pass (see
+  // GpuFlameBackendInit's doc), so the layout alone is handed over.
+  const adaptiveBindGroupLayout = device.createBindGroupLayout({
+    label: "flame-gpu adaptive bind group layout",
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "uniform" },
+      },
+      ...[1, 2, 3, 4, 5].map((binding) => ({
+        binding,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" as const },
+      })),
+      {
+        binding: 6,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "storage" },
+      },
+      {
+        binding: 7,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "storage" },
+      },
+    ],
+  });
+  const adaptivePipelineLayout = device.createPipelineLayout({
+    label: "flame-gpu adaptive pipeline layout",
+    bindGroupLayouts: [adaptiveBindGroupLayout],
+  });
+  const adaptiveShaderModule = device.createShaderModule({
+    label: "flame-gpu adaptive kernel",
+    code: FLAME_GPU_ADAPTIVE_WGSL,
+  });
+  const adaptiveCompilationInfo =
+    await adaptiveShaderModule.getCompilationInfo();
+  const adaptiveErrors = adaptiveCompilationInfo.messages.filter(
+    (m) => m.type === "error",
+  );
+  if (adaptiveErrors.length > 0) {
+    throw new Error(
+      `Flame GPU: adaptive WGSL compilation failed:\n${adaptiveErrors
+        .map((m) => `  ${m.lineNum}:${m.linePos}: ${m.message}`)
+        .join("\n")}`,
+    );
+  }
+  const adaptiveMarkTilesPipeline = device.createComputePipeline({
+    label: "flame-gpu adaptive mark tiles pipeline",
+    layout: adaptivePipelineLayout,
+    compute: { module: adaptiveShaderModule, entryPoint: "adaptiveMarkTiles" },
+  });
+  const adaptiveScanTilesXPipeline = device.createComputePipeline({
+    label: "flame-gpu adaptive scan tiles X pipeline",
+    layout: adaptivePipelineLayout,
+    compute: {
+      module: adaptiveShaderModule,
+      entryPoint: "adaptiveScanTilesX",
+    },
+  });
+  const adaptiveScanTilesYPipeline = device.createComputePipeline({
+    label: "flame-gpu adaptive scan tiles Y pipeline",
+    layout: adaptivePipelineLayout,
+    compute: {
+      module: adaptiveShaderModule,
+      entryPoint: "adaptiveScanTilesY",
+    },
+  });
+  const adaptiveGatherPipeline = device.createComputePipeline({
+    label: "flame-gpu adaptive gather pipeline",
+    layout: adaptivePipelineLayout,
+    compute: { module: adaptiveShaderModule, entryPoint: "adaptiveGather" },
+  });
+
   // Run every chain forward WARMUP_ITERATIONS steps without recording (the
   // PLOT=0 pipeline), BEFORE this factory resolves — the GPU counterpart of
   // the CPU accumulators' fresh-start warmup loop, so the session's very
@@ -1186,6 +1623,11 @@ async function buildBackendOnDevice(
     displayStagingBuffer,
     displayWidth: program.displayWidth,
     displayHeight: program.displayHeight,
+    adaptiveMarkTilesPipeline,
+    adaptiveScanTilesXPipeline,
+    adaptiveScanTilesYPipeline,
+    adaptiveGatherPipeline,
+    adaptiveBindGroupLayout,
   });
 }
 
