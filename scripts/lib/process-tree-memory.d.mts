@@ -53,3 +53,46 @@ export declare function sampleProcessTreeRssPeak<T>(
   operation: () => Promise<T> | T,
   options?: { intervalMs?: number; initialSample?: ProcessTreeRssSample },
 ): Promise<{ value: T; peak: ProcessTreeRssPeak }>;
+
+/** One timeline observation: an RSS snapshot beside the run's own progress. */
+export interface ProcessTreeRssTimelineSample {
+  atMs: number;
+  stage: string | null;
+  completedTiles?: number | null;
+  [key: string]: unknown;
+}
+
+export interface ProcessTreeRssPhase {
+  stage: string;
+  samples: number;
+  firstAtMs: number | null;
+  lastAtMs: number | null;
+  status: ProcessTreeMemoryStatus;
+  /** Exact only when every sample in the phase was complete. */
+  rssStartBytes: number | null;
+  rssEndBytes: number | null;
+  rssMaxBytes: number | null;
+  /** Largest readable-tree totals, lower bounds when status is partial. */
+  knownRssStartBytes: number | null;
+  knownRssEndBytes: number | null;
+  knownRssMaxBytes: number | null;
+}
+
+export interface ProcessTreeRssTimelineAttribution {
+  sampleCount: number;
+  completeSampleCount: number;
+  status: ProcessTreeMemoryStatus;
+  baselineRssBytes: number | null;
+  peakRssBytes: number | null;
+  knownBaselineRssBytes: number | null;
+  knownPeakRssBytes: number | null;
+  phases: ProcessTreeRssPhase[];
+  renderTileBands: ProcessTreeRssPhase[] | null;
+}
+
+export declare const DEFAULT_TIMELINE_BANDS: number;
+
+export declare function attributeProcessTreeRssTimeline(
+  samples: ProcessTreeRssTimelineSample[],
+  options?: { renderTileBands?: number },
+): ProcessTreeRssTimelineAttribution;

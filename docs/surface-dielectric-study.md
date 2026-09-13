@@ -232,6 +232,49 @@ The probe records are `probe-1920x1080-menger.json` and
 `--submissionProbe`). Both rows keep the byte-exact residual
 (0.0009727366268634796) and complete completion metadata.
 
+## Phase-attributed process-tree RSS
+
+The same harness gained `--rssTrace` (plain default path only): the launcher
+samples the process tree beside the page run's own progress every 100 ms,
+and a pure attribution helper in `scripts/lib/process-tree-memory.mjs`
+groups the timeline into phases and render-tile bands under the sampler's
+existing complete/partial contract. Measured on the plain default full-HD
+rows (both PNG-producing, quiet RX 7900 XTX / Chromium):
+
+| Observation                                |           3D |          4D |
+| ------------------------------------------ | -----------: | ----------: |
+| Additional process-tree RSS (peak sampler) |  198,430,720 | 190,001,152 |
+| Known additional-state plan                |  101,388,480 | 101,388,480 |
+| Timeline baseline → controls/pipeline      |  +51,380,224 | +53,592,064 |
+| Render phase retained (start → end)        |  +13,299,712 | +13,676,544 |
+| Render phase transient max (above start)   |  +65,568,768 | +70,451,200 |
+| Render end → run peak (launcher PNG path)  | +109,387,776 | +99,073,280 |
+
+Both dimensions tell the same story. The tile bands are RSS-FLAT across the
+whole render — retained growth over 76 s (3D) / 51 s (4D) of tile work is
+~13 MB, with GC saws briefly peaking ~65–70 MB above the render start and
+being reclaimed in place. The observed delta over the known plan therefore
+does NOT come from retained render state: it decomposes into roughly 51–54
+MB of browser/page boot, adapter/device and WGSL compile work before the
+first render sample, ~100–109 MB of launcher-side base64-decode → RGBA →
+PNG-encode transients at the run peak (the recorded 4D +61.9 MB row was a
+CANCELLATION row that never reaches the PNG path, which is why it sat far
+below these plain-row figures), and the small retained render growth.
+Against a certification scoped to additional RETAINED render state
+(render max − controls ≈ 81.5 MB 3D / 86.2 MB 4D), the 128 MiB line is met;
+against the boot-inclusive whole-tree observation it is not, in both
+dimensions. Which scope the go/no-go should use is an owner decision — the
+attribution either way is now measured rather than inferred.
+
+Caveats: the monitor's progress reads starve during the page's synchronous
+base64 phase (the browser main thread is busy), so that phase is evidenced
+by the post-run sample rather than samples inside it; the sampler's
+exclusions (VRAM, driver-private, browser-wide) are unchanged and RSS is
+never treated as VRAM. The records are
+`rsstrace-1920x1080-{menger,hyper4}.json` (gitignored, regenerable with
+`--rssTrace`); both keep the byte-exact residuals and complete completion
+metadata.
+
 ## Owner-selected full-size result
 
 The [1024×1024 comparison](../scripts/out/transmission-dielectric-review.html)

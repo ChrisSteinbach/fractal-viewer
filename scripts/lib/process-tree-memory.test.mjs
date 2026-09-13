@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 
 import {
+  attributeProcessTreeRssTimeline,
   parseProcStatus,
   sampleProcessTreeRss,
   sampleProcessTreeRssPeak,
@@ -85,4 +86,92 @@ test("stops sampling and preserves an operation failure", async () => {
     }),
     expected,
   );
+});
+
+test("attributes a timeline to phases with exact bytes when every sample is complete", () => {
+  const attribution = attributeProcessTreeRssTimeline([
+    { atMs: 0, stage: "before-run", rssBytes: 1_000 },
+    { atMs: 100, stage: "controls", rssBytes: 2_000 },
+    { atMs: 200, stage: "controls", rssBytes: 2_500 },
+    { atMs: 300, stage: "render", completedTiles: 0, rssBytes: 3_000 },
+    { atMs: 400, stage: "render", completedTiles: 3, rssBytes: 5_000 },
+    { atMs: 500, stage: "render", completedTiles: 7, rssBytes: 4_000 },
+    { atMs: 600, stage: "base64", rssBytes: 6_000 },
+  ]);
+  assert.equal(attribution.status, "ok");
+  assert.equal(attribution.sampleCount, 7);
+  assert.equal(attribution.baselineRssBytes, 1_000);
+  assert.equal(attribution.peakRssBytes, 6_000);
+  assert.deepEqual(
+    attribution.phases.map((phase) => phase.stage),
+    ["before-run", "controls", "render", "base64"],
+  );
+  const render = attribution.phases.find((phase) => phase.stage === "render");
+  assert.equal(render.rssStartBytes, 3_000);
+  assert.equal(render.rssMaxBytes, 5_000);
+  assert.equal(render.rssEndBytes, 4_000);
+  assert.deepEqual(
+    attribution.renderTileBands.map((band) => band.tilesFrom),
+    [0, 3, 7],
+  );
+  assert.equal(attribution.renderTileBands[0].rssMaxBytes, 3_000);
+});
+
+test("buckets the render phase into equal completed-tile bands", () => {
+  const samples = [];
+  for (let tile = 0; tile < 8; tile++)
+    samples.push({
+      atMs: tile * 100,
+      stage: "render",
+      completedTiles: tile,
+      rssBytes: 1_000 + tile * 100,
+    });
+  const attribution = attributeProcessTreeRssTimeline(samples, {
+    renderTileBands: 4,
+  });
+  assert.equal(attribution.renderTileBands.length, 4);
+  assert.deepEqual(
+    attribution.renderTileBands.map((band) => [band.tilesFrom, band.tilesTo]),
+    [
+      [0, 1],
+      [2, 3],
+      [4, 5],
+      [6, 7],
+    ],
+  );
+  assert.equal(attribution.renderTileBands[0].rssMaxBytes, 1_100);
+  assert.equal(attribution.renderTileBands[3].rssMaxBytes, 1_700);
+});
+
+test("degrades to known lower bounds when a sample is partial", () => {
+  const attribution = attributeProcessTreeRssTimeline([
+    { atMs: 0, stage: "render", completedTiles: 0, rssBytes: 1_000 },
+    { atMs: 100, stage: "render", completedTiles: 1, knownRssBytes: 1_500 },
+  ]);
+  assert.equal(attribution.status, "partial");
+  assert.equal(attribution.peakRssBytes, null);
+  assert.equal(attribution.knownPeakRssBytes, 1_500);
+  assert.equal(attribution.phases[0].status, "partial");
+  assert.equal(attribution.phases[0].rssMaxBytes, null);
+  assert.equal(attribution.phases[0].knownRssMaxBytes, 1_500);
+  // Band [0,0] holds only the complete sample; band [1,1] the partial one.
+  assert.equal(attribution.renderTileBands[0].status, "ok");
+  assert.equal(attribution.renderTileBands[1].status, "partial");
+});
+
+test("merges a re-entered stage and reports an empty timeline as unknown", () => {
+  const merged = attributeProcessTreeRssTimeline([
+    { atMs: 0, stage: "render", completedTiles: 0, rssBytes: 1_000 },
+    { atMs: 50, stage: "assemble", rssBytes: 2_000 },
+    { atMs: 100, stage: "render", completedTiles: 1, rssBytes: 3_000 },
+  ]);
+  assert.deepEqual(
+    merged.phases.map((phase) => phase.stage),
+    ["render", "assemble"],
+  );
+  assert.equal(merged.phases[0].samples, 2);
+  const empty = attributeProcessTreeRssTimeline([]);
+  assert.equal(empty.status, "unknown");
+  assert.equal(empty.phases.length, 0);
+  assert.equal(empty.renderTileBands, null);
 });

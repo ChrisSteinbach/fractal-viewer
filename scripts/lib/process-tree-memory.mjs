@@ -311,3 +311,131 @@ export async function sampleProcessTreeRssPeak(
     },
   };
 }
+
+/** Default band count for the render stage's tile-band attribution. */
+export const DEFAULT_TIMELINE_BANDS = 8;
+
+function knownBytes(sample) {
+  return sample.rssBytes ?? sample.knownRssBytes ?? null;
+}
+
+function present(value) {
+  return value !== null && value !== undefined;
+}
+
+function phaseSummary(stage, samples) {
+  const values = samples.map(knownBytes);
+  const allComplete = samples.every((sample) => present(sample.rssBytes));
+  const anyKnown = values.some(present);
+  return {
+    stage,
+    samples: samples.length,
+    firstAtMs: samples[0]?.atMs ?? null,
+    lastAtMs: samples[samples.length - 1]?.atMs ?? null,
+    status: allComplete ? "ok" : anyKnown ? "partial" : "unknown",
+    // Exact only when every sample in the phase was complete; otherwise the
+    // known lower bounds, per the sampler's own contract.
+    rssStartBytes: allComplete ? values[0] : null,
+    rssEndBytes: allComplete ? values[values.length - 1] : null,
+    rssMaxBytes: allComplete ? Math.max(...values) : null,
+    knownRssStartBytes: anyKnown ? values[0] : null,
+    knownRssEndBytes: anyKnown ? values[values.length - 1] : null,
+    knownRssMaxBytes: anyKnown
+      ? Math.max(...values.filter((v) => v !== null))
+      : null,
+  };
+}
+
+/**
+ * Attribute a sampled RSS timeline to run phases. The input is the ordered
+ * output of a monitor that snapshots the process tree alongside the observed
+ * run's own progress (stage, completedTiles). Consecutive samples sharing a
+ * stage form that phase's evidence; the render phase is additionally bucketed
+ * into equal completed-tile bands so growth inside the render can be located.
+ *
+ * The same complete/partial contract as one sample applies per phase: exact
+ * byte fields only when every sample in the group was complete, known lower
+ * bounds otherwise.
+ */
+export function attributeProcessTreeRssTimeline(samples, options = {}) {
+  const bandCount = Number.isInteger(options.renderTileBands)
+    ? Math.max(1, options.renderTileBands)
+    : DEFAULT_TIMELINE_BANDS;
+  const usable = (samples ?? []).filter(
+    (sample) => sample !== null && typeof sample === "object",
+  );
+  const phases = [];
+  for (const sample of usable) {
+    const last = phases[phases.length - 1];
+    if (last !== undefined && last.stage === sample.stage)
+      last.samples.push(sample);
+    else phases.push({ stage: sample.stage, samples: [sample] });
+  }
+  // A stage can reappear only if the observed run restarts one; merging keeps
+  // the report one row per phase name while preserving first/last ordering.
+  const merged = new Map();
+  for (const phase of phases) {
+    const existing = merged.get(phase.stage);
+    if (existing === undefined) merged.set(phase.stage, phase);
+    else existing.samples.push(...phase.samples);
+  }
+  const phaseReports = [...merged.values()].map((phase) => ({
+    ...phaseSummary(phase.stage, phase.samples),
+    samples: phase.samples.length,
+  }));
+
+  const renderSamples = usable.filter(
+    (sample) =>
+      sample.stage === "render" &&
+      sample.completedTiles !== null &&
+      sample.completedTiles !== undefined,
+  );
+  let renderTileBands = null;
+  if (renderSamples.length > 0) {
+    const maxTiles = Math.max(
+      ...renderSamples.map((sample) => sample.completedTiles),
+    );
+    const bandWidth = Math.max(1, Math.ceil((maxTiles + 1) / bandCount));
+    renderTileBands = [];
+    for (let start = 0; start <= maxTiles; start += bandWidth) {
+      const end = Math.min(maxTiles, start + bandWidth - 1);
+      const bandSamples = renderSamples.filter(
+        (sample) =>
+          sample.completedTiles >= start && sample.completedTiles <= end,
+      );
+      if (bandSamples.length === 0) continue;
+      renderTileBands.push({
+        tilesFrom: start,
+        tilesTo: end,
+        ...phaseSummary(`render tiles ${start}-${end}`, bandSamples),
+      });
+    }
+  }
+
+  const completeValues = usable
+    .filter((sample) => present(sample.rssBytes))
+    .map((sample) => sample.rssBytes);
+  const knownValues = usable.map(knownBytes).filter(present);
+  return {
+    sampleCount: usable.length,
+    completeSampleCount: completeValues.length,
+    status:
+      completeValues.length === usable.length && usable.length > 0
+        ? "ok"
+        : completeValues.length === 0
+          ? "unknown"
+          : "partial",
+    baselineRssBytes:
+      completeValues.length === usable.length && usable.length > 0
+        ? completeValues[0]
+        : null,
+    peakRssBytes:
+      completeValues.length === usable.length && usable.length > 0
+        ? Math.max(...completeValues)
+        : null,
+    knownBaselineRssBytes: knownValues.length > 0 ? knownValues[0] : null,
+    knownPeakRssBytes: knownValues.length > 0 ? Math.max(...knownValues) : null,
+    phases: phaseReports,
+    renderTileBands,
+  };
+}
