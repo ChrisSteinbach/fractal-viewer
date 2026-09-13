@@ -947,8 +947,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     shader body for both dialects. Both engines share material lane order;
     CPU values and classic shader bytes are pinned. Finish
     persists/morphs/mutates like fold lengths; random-system never rolls one.
-    TRANSMISSION: fixed world bands reveal rear geometry in 3D/4D but retain
-    phase-sensitive gap merging; both layer prototypes remain research-only.
+    TRANSMISSION: layered/bent rays reveal rear geometry in 3D/4D; sampling
+    sensitivity and native-4D agreement still refuse production integration.
     Model, controls and cost: `docs/surface-transmission.md`.
     Pattern-albedo remains REFUSED; the rings-wood refusal, confirmed zoom
     premise and deferred sheets banding live in `scripts/finish-pattern.harness.ts`.
