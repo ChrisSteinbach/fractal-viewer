@@ -22,6 +22,32 @@ type Options = {
   mode?: Mode;
 };
 
+type DielectricRunStage =
+  "controls" | "pipeline" | "render" | "assemble" | "base64" | "cleanup";
+
+type DielectricRunProgress = {
+  runId: number;
+  stage: DielectricRunStage;
+  fixture: FixtureKey | null;
+  mode: Mode | null;
+  completedTiles: number;
+  totalTiles: number;
+  submissions: number;
+  totalSubmissions: number;
+  replayPass: number | null;
+  submissionInFlight: boolean;
+  activeSubmission: number | null;
+  activeSubmissionStartedAtMs: number | null;
+  lastSubmissionWallMs: number | null;
+  maxSubmissionWallMs: number;
+  cancelRequested: boolean;
+  cancelRequestedAtMs: number | null;
+  cancelAcknowledgedAtMs: number | null;
+  cleanupCompleted: boolean;
+  cleanupWallMs: number | null;
+  cleanupError: string | null;
+};
+
 const WORKGROUP = 64;
 const SPP = 4;
 // With B=4 initial radiance and theta_min=epsilon/(64*2^5)=2^-21,
@@ -44,6 +70,43 @@ const STATUS_COMPLETE = 1;
 const STATUS_RESIDUAL = 2;
 const STATUS_UNRESOLVED = 3;
 const STATUS_INVALID = 4;
+
+let nextRunId = 1;
+let activeRun: DielectricRunProgress | null = null;
+let runReserved = false;
+
+async function yieldToBrowserTasks() {
+  const taskScheduler = (
+    globalThis as typeof globalThis & {
+      scheduler?: { yield?: () => Promise<void> };
+    }
+  ).scheduler;
+  if (typeof taskScheduler?.yield === "function") {
+    await taskScheduler.yield();
+    return;
+  }
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+export function transmissionDielectricGpuProgress() {
+  return activeRun === null ? null : { ...activeRun };
+}
+
+export function cancelTransmissionDielectricGpu() {
+  if (activeRun === null)
+    return { requested: false, reason: "no active dielectric run" };
+  if (!activeRun.cancelRequested) {
+    activeRun.cancelRequested = true;
+    activeRun.cancelRequestedAtMs = performance.now();
+  }
+  return {
+    requested: true,
+    runId: activeRun.runId,
+    stage: activeRun.stage,
+    submissions: activeRun.submissions,
+    requestedAtMs: activeRun.cancelRequestedAtMs,
+  };
+}
 
 type Fixture = {
   id: FixtureKey;
@@ -638,6 +701,17 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     return {
       inconclusive: "image and tile dimensions must be positive integers",
     };
+  const selectedFixtures = fixtures().filter(
+    (fixture) => input.fixture === undefined || fixture.id === input.fixture,
+  );
+  const selectedModes = (["opaque", "glass"] as Mode[]).filter(
+    (mode) => input.mode === undefined || mode === input.mode,
+  );
+  if (selectedFixtures.length !== 1 || selectedModes.length !== 1)
+    return {
+      inconclusive:
+        "one known fixture and one known mode are required per page invocation",
+    };
   const plannedMemory = memoryPlan(width, height, tileWidth, tileHeight);
   if (plannedMemory.knownAdditionalBytes > plannedMemory.limitBytes)
     return {
@@ -647,11 +721,24 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         memory: plannedMemory,
       },
     };
+  if (runReserved)
+    return { inconclusive: "another dielectric run is already active" };
+  runReserved = true;
   const adapterDeviceSetupStarted = performance.now();
-  const adapter = await navigator.gpu?.requestAdapter({
-    powerPreference: "high-performance",
-  });
-  if (!adapter) return { inconclusive: "no WebGPU adapter" };
+  let adapter: GPUAdapter | null;
+  try {
+    adapter =
+      (await navigator.gpu?.requestAdapter({
+        powerPreference: "high-performance",
+      })) ?? null;
+  } catch (error) {
+    runReserved = false;
+    throw error;
+  }
+  if (!adapter) {
+    runReserved = false;
+    return { inconclusive: "no WebGPU adapter" };
+  }
   const info = adapter.info as GPUAdapterInfo & { isFallbackAdapter?: boolean };
   if (
     (adapter as GPUAdapter & { isFallbackAdapter?: boolean })
@@ -660,13 +747,52 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     [info.vendor, info.architecture, info.device, info.description].some(
       (value) => /swiftshader|llvmpipe|software/i.test(value),
     )
-  )
+  ) {
+    runReserved = false;
     return {
       inconclusive: "browser adapter is fallback or software",
       browserAdapter: info,
     };
-  const device = await adapter.requestDevice();
+  }
+  let device: GPUDevice;
+  try {
+    device = await adapter.requestDevice();
+  } catch (error) {
+    runReserved = false;
+    throw error;
+  }
   const adapterDeviceSetupMs = performance.now() - adapterDeviceSetupStarted;
+  if (activeRun !== null) {
+    device.destroy();
+    runReserved = false;
+    return { inconclusive: "another dielectric run is already active" };
+  }
+  const runProgress: DielectricRunProgress = {
+    runId: nextRunId++,
+    stage: "controls",
+    fixture: selectedFixtures[0].id,
+    mode: selectedModes[0],
+    completedTiles: 0,
+    totalTiles: Math.ceil(width / tileWidth) * Math.ceil(height / tileHeight),
+    submissions: 0,
+    totalSubmissions:
+      Math.ceil(width / tileWidth) *
+      Math.ceil(height / tileHeight) *
+      REPLAY_PASSES,
+    replayPass: null,
+    submissionInFlight: false,
+    activeSubmission: null,
+    activeSubmissionStartedAtMs: null,
+    lastSubmissionWallMs: null,
+    maxSubmissionWallMs: 0,
+    cancelRequested: false,
+    cancelRequestedAtMs: null,
+    cancelAcknowledgedAtMs: null,
+    cleanupCompleted: false,
+    cleanupWallMs: null,
+    cleanupError: null,
+  };
+  activeRun = runProgress;
   const uncaptured: string[] = [];
   let lost: string | null = null;
   device.addEventListener("uncapturederror", (event) =>
@@ -698,6 +824,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         },
         runtime: { uncaptured, lost },
       };
+    runProgress.stage = "pipeline";
     const pipelineSetupStarted = performance.now();
     const module = device.createShaderModule({ code: dielectricWgsl() });
     const messages = await module.getCompilationInfo();
@@ -751,6 +878,36 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     );
     const pipelineSetupMs = performance.now() - pipelineSetupStarted;
+    const cancelledResult = () => {
+      runProgress.cancelAcknowledgedAtMs ??= performance.now();
+      return {
+        cancelled: {
+          reason: "dielectric run cancelled between bounded submissions",
+          acknowledgementLatencyMs:
+            runProgress.cancelRequestedAtMs === null
+              ? null
+              : runProgress.cancelAcknowledgedAtMs -
+                runProgress.cancelRequestedAtMs,
+          progress: runProgress,
+        },
+        browserAdapter: {
+          vendor: info.vendor,
+          architecture: info.architecture,
+          device: info.device,
+          description: info.description,
+          isFallbackAdapter: !!info.isFallbackAdapter,
+        },
+        controls,
+        timing: {
+          adapterDeviceSetupMs,
+          controlsMs,
+          pipelineSetupMs,
+          pageWorkWallMs: performance.now() - pageRunStarted,
+        },
+        runtime: { uncaptured, lost },
+      };
+    };
+    if (runProgress.cancelRequested) return cancelledResult();
     const rows: {
       key: FixtureKey;
       role: "main" | "opaque-control";
@@ -800,6 +957,9 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         pipelineSetupMs: number;
         tileEncodeSubmitMapWallMs: number;
         maxTileEncodeSubmitMapWallMs: number;
+        maxReadbackMapWallMs: number;
+        maxTileHostAssemblyWallMs: number;
+        maxCancellationCheckpointWallMs: number;
         tiles: number;
         replayPassFenceWallMs: number[];
         tileHostAssemblyWallMs: number;
@@ -828,20 +988,10 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       };
     }[] = [];
     const view = cameraBasis();
-    const selectedFixtures = fixtures().filter(
-      (fixture) => input.fixture === undefined || fixture.id === input.fixture,
-    );
-    const selectedModes = (["opaque", "glass"] as Mode[]).filter(
-      (mode) => input.mode === undefined || mode === input.mode,
-    );
-    if (selectedFixtures.length !== 1 || selectedModes.length !== 1)
-      return {
-        inconclusive:
-          "one known fixture and one known mode are required per page invocation",
-      };
     for (const fixture of selectedFixtures) {
       device.queue.writeBuffer(solid, 0, fixture.packed);
       for (const mode of selectedModes) {
+        runProgress.stage = "render";
         const rgba = new Uint8Array(width * height * 4);
         const completion = {
           complete: 0,
@@ -883,6 +1033,8 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         }[] = [];
         let tileEncodeSubmitMapWallMs = 0;
         let maxTileEncodeSubmitMapWallMs = 0;
+        let maxReadbackMapWallMs = 0;
+        let maxTileHostAssemblyWallMs = 0;
         let tileHostAssemblyWallMs = 0;
         let tiles = 0;
         const replayPassFenceWallMs = Array<number>(REPLAY_PASSES).fill(0);
@@ -921,6 +1073,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
             const tileStarted = performance.now();
             for (let replayPass = 0; replayPass < REPLAY_PASSES; replayPass++) {
               const replayPassStarted = performance.now();
+              runProgress.replayPass = replayPass;
               uints[23] = replayPass;
               device.queue.writeBuffer(camera, 0, control);
               const encoder = device.createCommandEncoder();
@@ -939,16 +1092,37 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
                   0,
                   currentWidth * currentHeight * OUTPUT_PIXEL_BYTES,
                 );
+              runProgress.submissionInFlight = true;
+              runProgress.activeSubmission = runProgress.submissions + 1;
+              runProgress.activeSubmissionStartedAtMs = performance.now();
               device.queue.submit([encoder.finish()]);
               await device.queue.onSubmittedWorkDone();
-              replayPassFenceWallMs[replayPass] +=
-                performance.now() - replayPassStarted;
+              const submissionWallMs = performance.now() - replayPassStarted;
+              replayPassFenceWallMs[replayPass] += submissionWallMs;
+              runProgress.submissions++;
+              runProgress.submissionInFlight = false;
+              runProgress.activeSubmission = null;
+              runProgress.activeSubmissionStartedAtMs = null;
+              runProgress.lastSubmissionWallMs = submissionWallMs;
+              runProgress.maxSubmissionWallMs = Math.max(
+                runProgress.maxSubmissionWallMs,
+                submissionWallMs,
+              );
+              await yieldToBrowserTasks();
+              if (runProgress.cancelRequested) return cancelledResult();
             }
+            const readbackStarted = performance.now();
             await readback.mapAsync(GPUMapMode.READ);
             const mapped = readback
               .getMappedRange()
               .slice(0, currentWidth * currentHeight * OUTPUT_PIXEL_BYTES);
             readback.unmap();
+            maxReadbackMapWallMs = Math.max(
+              maxReadbackMapWallMs,
+              performance.now() - readbackStarted,
+            );
+            await yieldToBrowserTasks();
+            if (runProgress.cancelRequested) return cancelledResult();
             const tileElapsed = performance.now() - tileStarted;
             tileEncodeSubmitMapWallMs += tileElapsed;
             maxTileEncodeSubmitMapWallMs = Math.max(
@@ -956,6 +1130,8 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
               tileElapsed,
             );
             tiles++;
+            runProgress.completedTiles = tiles;
+            runProgress.stage = "assemble";
             const assemblyStarted = performance.now();
             const values = new Uint32Array(mapped);
             const residualValues = new Float32Array(mapped);
@@ -1055,12 +1231,23 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
               totalRadianceBound += perPixelAverage;
               totalSampleMaxChannelRadianceBound += residualValues[offset + 2];
             }
-            tileHostAssemblyWallMs += performance.now() - assemblyStarted;
+            const assemblyWallMs = performance.now() - assemblyStarted;
+            tileHostAssemblyWallMs += assemblyWallMs;
+            maxTileHostAssemblyWallMs = Math.max(
+              maxTileHostAssemblyWallMs,
+              assemblyWallMs,
+            );
+            runProgress.stage = "render";
+            await yieldToBrowserTasks();
+            if (runProgress.cancelRequested) return cancelledResult();
           }
         }
+        runProgress.stage = "base64";
         const base64Started = performance.now();
         const imageBase64 = base64(rgba);
         const base64EncodeMs = performance.now() - base64Started;
+        await yieldToBrowserTasks();
+        if (runProgress.cancelRequested) return cancelledResult();
         rows.push({
           key: fixture.id,
           role: mode === "glass" ? "main" : "opaque-control",
@@ -1105,6 +1292,14 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
             pipelineSetupMs,
             tileEncodeSubmitMapWallMs,
             maxTileEncodeSubmitMapWallMs,
+            maxReadbackMapWallMs,
+            maxTileHostAssemblyWallMs,
+            maxCancellationCheckpointWallMs: Math.max(
+              runProgress.maxSubmissionWallMs,
+              maxReadbackMapWallMs,
+              maxTileHostAssemblyWallMs,
+              base64EncodeMs,
+            ),
             tiles,
             replayPassFenceWallMs,
             tileHostAssemblyWallMs,
@@ -1161,11 +1356,29 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         },
       },
       rows,
+      schedule: runProgress,
       runtime: { uncaptured, lost },
     };
   } finally {
-    await device.queue.onSubmittedWorkDone();
-    device.destroy();
+    const cleanupStarted = performance.now();
+    runProgress.stage = "cleanup";
+    try {
+      await device.queue.onSubmittedWorkDone();
+      device.destroy();
+      runProgress.cleanupCompleted = true;
+    } catch (error) {
+      runProgress.cleanupError =
+        error instanceof Error ? error.message : String(error);
+      try {
+        device.destroy();
+      } catch {
+        // The first cleanup failure remains the useful diagnosis.
+      }
+    } finally {
+      runProgress.cleanupWallMs = performance.now() - cleanupStarted;
+      if (activeRun === runProgress) activeRun = null;
+      runReserved = false;
+    }
   }
 }
 
@@ -1173,9 +1386,15 @@ declare global {
   interface Window {
     TransmissionDielectricGpu?: {
       runTransmissionDielectricGpu: typeof runTransmissionDielectricGpu;
+      transmissionDielectricGpuProgress: typeof transmissionDielectricGpuProgress;
+      cancelTransmissionDielectricGpu: typeof cancelTransmissionDielectricGpu;
     };
   }
 }
 Object.assign(globalThis, {
-  TransmissionDielectricGpu: { runTransmissionDielectricGpu },
+  TransmissionDielectricGpu: {
+    runTransmissionDielectricGpu,
+    transmissionDielectricGpuProgress,
+    cancelTransmissionDielectricGpu,
+  },
 });
