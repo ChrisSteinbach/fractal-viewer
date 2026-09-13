@@ -5,12 +5,12 @@ Investigation, 12 September 2026. Application baseline:
 [`finish-transmission.harness.ts`](../scripts/finish-transmission.harness.ts).
 This work changes no production renderer, finish bundle or scene document.
 
-**Owner outcome, 13 September 2026: REJECTED.** The subsequent full-size
+**Layered candidate outcome, 13 September 2026: REJECTED.** The subsequent full-size
 layered/bent CPU and GPU images were judged indistinct, noisy and
 unconvincing as glass compared with other fractal engines. The owner-selected
 research direction did not achieve the intended appearance. The measured
 [GPU result](transmission-gpu-images.md) is retained as a rejected candidate;
-production work remains gated while a different optical model is tested.
+production work remains gated by the replacement model's qualification.
 
 **Qualification update, 13 September 2026** (application base `3b5deaa`):
 the [World bands study](#world-bands-the-candidate-definition)
@@ -33,8 +33,10 @@ optical solid; it is not universally impossible for fractals.
 
 The replacement [closed-solid dielectric study](surface-dielectric-study.md)
 now has completed 1024×1024 3D/4D images with entry/exit refraction and
-reflections. It remains a new, unreviewed experiment with explicit finite
-geometry and precision limits.
+reflections. The owner selected that appearance and explicitly removed
+physical realism as a requirement. Its [recorded decision](surface-dielectric-study.md#owner-decision-and-continuation)
+supersedes the earlier layered direction below. Finite geometry, precision,
+performance and production limits remain explicit.
 
 ## What the current finish does
 
@@ -536,11 +538,12 @@ It is an intentionally failed qualification: Menger's kernel alone takes
 1.214 seconds at 256 × 144, and native affine4/escape4 each have a strict
 near-boundary predicate flip. No production capability is unlocked.
 
-**Owner outcome, 13 September 2026: research direction selected;
-production qualification requires rework.** Chris Steinbach explicitly chose
+**Earlier owner choice, 13 September 2026: layered research direction selected,
+subsequently superseded by the closed-solid comparison.** Chris Steinbach chose
 layered transparency that preserves fractal detail and reveals internal/rear
 geometry in both 3D and 4D. Visible bending is **essential**, rather than an
-optional enhancement. The finite-cell glass direction was not selected.
+optional enhancement. The finite-cell glass direction was not selected at
+that point; its later completed comparison is now the selected appearance.
 
 For the next desktop feasibility study on the measured RX 7900 XTX/Chromium
 setup, the selected waiting-time targets are:
@@ -562,14 +565,14 @@ offered for this choice were the review package at repository revision
 The conversation records the three explicit answers; it does not establish
 that every image in that package was inspected.
 
-The next study will compare a smooth, fractional layer-opacity rule and
+The ensuing study compared a smooth, fractional layer-opacity rule and
 actual world-space displaced-ray queries against the existing hard bands
 and screen-space warp. It must retain the fine object, reveal newly visible
 rear geometry, carry both dimensions, and price real continuation work.
 The [revision record](surface-transmission-revision.md) carries its exact
 gap/noise controls and subsequent evidence.
-Production integration remains blocked until that revised evidence qualifies
-and the resulting appearance is selected for release.
+That result was rejected. Production integration now depends on qualification
+of the owner-selected [closed-solid appearance](surface-dielectric-study.md).
 
 ## Reproduce the qualification package
 

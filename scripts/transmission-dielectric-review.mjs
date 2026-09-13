@@ -22,6 +22,10 @@ const manifestPath = join(
 const builderPath = resolve(root, "scripts/transmission-dielectric-review.mjs");
 const defaultReport =
   "scripts/out/transmission-dielectric-gpu/actual-1024x1024-all.json";
+const ownerRecordPath = resolve(
+  root,
+  "scripts/transmission-dielectric-appearance-review.json",
+);
 const RESIDUAL_BOUND_BUDGET = 1 / 1024;
 const reportArgument = process.argv.find((arg) => arg.startsWith("--report="));
 const reportPath = reportArgument
@@ -36,6 +40,39 @@ if (forbiddenReportName.test(reportPath))
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
+const ownerRecord = readJson(ownerRecordPath);
+if (
+  ownerRecord?.status !== "OWNER_SELECTED_RESEARCH_APPEARANCE" ||
+  typeof ownerRecord.owner !== "string" ||
+  ownerRecord.owner.length === 0 ||
+  !/^\d{4}-\d{2}-\d{2}$/.test(ownerRecord.date ?? "") ||
+  typeof ownerRecord.quote !== "string" ||
+  ownerRecord.quote.length === 0 ||
+  ownerRecord.physicalRealismRequired !== false ||
+  ownerRecord.productionApproved !== false ||
+  !Array.isArray(ownerRecord.appearanceScope) ||
+  ownerRecord.appearanceScope.length < 2 ||
+  !ownerRecord.appearanceScope.some(
+    (value) => typeof value === "string" && /finite.*3D.*Menger/i.test(value),
+  ) ||
+  !ownerRecord.appearanceScope.some(
+    (value) =>
+      typeof value === "string" &&
+      /posed.*native.*4D.*hyper.?Menger/i.test(value),
+  ) ||
+  !/^[0-9a-f]{64}$/i.test(ownerRecord.sourceHash ?? "") ||
+  !ownerRecord.mainPngSha256 ||
+  Object.keys(ownerRecord.mainPngSha256).sort().join(",") !==
+    "hyperMenger2,menger2" ||
+  !Object.values(ownerRecord.mainPngSha256).every((value) =>
+    /^[0-9a-f]{64}$/i.test(value),
+  )
+)
+  throw new Error(
+    `${ownerRecordPath} has an invalid owner-selection record schema`,
+  );
+const ownerSourceHash = ownerRecord.sourceHash;
+const ownerMainPngHashes = Object.freeze(ownerRecord.mainPngSha256);
 const esc = (value) =>
   String(value)
     .replaceAll("&", "&amp;")
@@ -390,6 +427,16 @@ if (!validated.some((item) => item.kind === "menger2"))
 if (!validated.some((item) => item.kind === "hyperMenger2"))
   throw new Error("missing finite depth-2 posed hyper-Menger 4D main row");
 
+function matchesOwnerSelection() {
+  if (ownerRecord.sourceHash !== provenance.sourceHash) return false;
+  for (const item of validated) {
+    if (item.row.image.sha256 !== ownerMainPngHashes[item.kind]) return false;
+  }
+  return validated.length === Object.keys(ownerMainPngHashes).length;
+}
+
+const ownerSelectionApproved = matchesOwnerSelection();
+
 const controls = rows
   .filter((row) => row.role === "opaque-control")
   .map((row) => {
@@ -468,18 +515,31 @@ const sourceStatus = execFileSync(
   { cwd: root, encoding: "utf8" },
 ).trim();
 const reportVerdict = envelope.verdict ?? body.verdict ?? "not recorded";
+const pageTitle = ownerSelectionApproved
+  ? "Finite dielectric experiment — owner-selected, unqualified"
+  : "Finite dielectric experiment — unreviewed";
+const pageStatus = ownerSelectionApproved
+  ? "OWNER-SELECTED RESEARCH APPEARANCE — UNQUALIFIED"
+  : "UNREVIEWED NEW EXPERIMENT";
+const statusDescription = ownerSelectionApproved
+  ? "It records an owner appearance selection only and makes no production, performance or feasibility approval claim."
+  : "It is visual evidence only and makes no production, performance or aesthetic approval claim.";
+const ownerDecisionHtml = ownerSelectionApproved
+  ? `<p class="decision"><strong>Owner appearance decision:</strong> ${esc(ownerRecord.owner)} selected this finite 3D and posed native 4D appearance on ${esc(ownerRecord.date)}: “${esc(ownerRecord.quote)}” Physical realism is not required for this selection; production approval remains absent.</p>`
+  : "";
 const html = `<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Finite dielectric experiment — unreviewed</title>
+<title>${pageTitle}</title>
 <style>
 body{margin:24px auto;max-width:1160px;padding:0 18px;background:#101216;color:#e7eaf0;font:15px system-ui,sans-serif;line-height:1.45}h1,h2{color:#fff}.status{padding:16px;border:2px solid #d79a3c;background:#2b2112}.warning{padding:12px;border:1px solid #b95656;background:#30181c}.scenes{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}.scene{min-width:0;padding:16px;border:1px solid #555d69;background:#171a20}.main-image{display:block;min-width:0}.main-image img{display:block;width:100%;height:auto;max-width:1024px;background:#050608}.tag,.caption,.small{color:#b8bec8;font-size:13px}.tag{color:#f0c276}.controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.controls details{min-width:0;padding:10px;border:1px solid #454b55;background:#171a20}.controls img{display:block;width:100%;height:auto;max-width:1024px}a{color:#9dccff}code,pre{overflow-wrap:anywhere;word-break:break-word}pre{white-space:pre-wrap;max-width:100%;box-sizing:border-box;overflow-x:hidden}dl{display:grid;grid-template-columns:120px minmax(0,1fr);gap:6px 12px}dt{font-weight:700}dd{margin:0;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:800px){body{margin:14px auto;padding:0 12px}.scenes,.controls{grid-template-columns:1fr}dl{grid-template-columns:1fr;gap:2px}dd{margin-bottom:8px}}
 </style>
 <h1>Finite-cell dielectric experiment</h1>
-<p class="status"><strong>UNREVIEWED NEW EXPERIMENT.</strong> This page contains one full-size dielectric image for each scene. It is visual evidence only and makes no production, performance or aesthetic approval claim.</p>
+<p class="status"><strong>${pageStatus}.</strong> This page contains one full-size dielectric image for each scene. ${statusDescription}</p>
+${ownerDecisionHtml}
 <p class="warning"><strong>Geometry scope:</strong> this candidate uses coarse finite depth-2 solids: the 3D Menger has terminal grid 1/9 with 400 filled cells, and the new posed 4D hyper-Menger has terminal grid 1/9 with 2304 filled cells. Finer depth-3 full-tree geometry remains unqualified here and was not timed as an actual full raster. The 4D scene is not the public Mandelbox or Tesseract fixture. See the <a href="../../docs/surface-dielectric-study.md">numeric and finite-geometry limits</a>. The previous layered transmission candidate was rejected for being indistinct/noisy; <a href="${oldReviewHref || "#"}">open the earlier rejected review</a>.</p>
 <section class="scenes">${mainCards}</section>
 ${controlHtml}
-<details><summary>Report and provenance</summary><p>Input report: <code>${esc(relative(root, reportPath))}</code><br>Recorded verdict: <code>${esc(jsonText(reportVerdict))}</code><br>Renderer: <code>${esc(environment.renderer)}</code><br>Quiet certified: <strong>yes</strong><br>Source tree dirty in the review scope: <strong>${sourceStatus !== ""}</strong>. Source files, PNG SHA-256 hashes, memory allocation plans, and the page-emitted GPU controls were checked before writing this page.</p><pre class="small">${esc(jsonText({ sourceHash: provenance.sourceHash, sourceFiles: Object.keys(provenance.files).sort(), report: relative(root, reportPath), environment, gpuControls: { passed: gpuControls.passed, count: gpuControls.cases.length, failures: gpuControls.failures ?? [] }, mainRows: validated.map((item) => ({ key: item.key, kind: item.kind, image: item.row.image, completion: item.row.completion, residual: item.row.residual ?? null, memory: item.row.memory })), controls: controls.map((item) => item.key) }))}</pre></details>
+<details><summary>Report and provenance</summary><p>Input report: <code>${esc(relative(root, reportPath))}</code><br>Recorded verdict: <code>${esc(jsonText(reportVerdict))}</code><br>Renderer: <code>${esc(environment.renderer)}</code><br>Quiet certified: <strong>yes</strong><br>Source tree dirty in the review scope: <strong>${sourceStatus !== ""}</strong>. Source files, PNG SHA-256 hashes, memory allocation plans, and the page-emitted GPU controls were checked before writing this page.</p><pre class="small">${esc(jsonText({ sourceHash: provenance.sourceHash, sourceFiles: Object.keys(provenance.files).sort(), report: relative(root, reportPath), environment, ownerSelection: { approved: ownerSelectionApproved, record: relative(root, ownerRecordPath), sourceHash: ownerRecord.sourceHash, mainPngSha256: ownerRecord.mainPngSha256 }, gpuControls: { passed: gpuControls.passed, count: gpuControls.cases.length, failures: gpuControls.failures ?? [] }, mainRows: validated.map((item) => ({ key: item.key, kind: item.kind, image: item.row.image, completion: item.row.completion, residual: item.row.residual ?? null, memory: item.row.memory })), controls: controls.map((item) => item.key) }))}</pre></details>
 <p class="small">Generated offline by <code>transmission-dielectric-review.mjs</code>; no renderer or browser run was started by this builder.</p>`;
 
 mkdirSync(outputDir, { recursive: true });
@@ -497,9 +557,12 @@ writeFileSync(
   manifestPath,
   `${jsonText(
     {
-      status: "UNREVIEWED",
-      verdict:
-        "visual experiment only; no production approval or performance-target claim",
+      status: ownerSelectionApproved
+        ? "OWNER_SELECTED_RESEARCH_APPEARANCE_UNQUALIFIED"
+        : "UNREVIEWED",
+      verdict: ownerSelectionApproved
+        ? "owner-selected appearance; no production, feasibility or performance-target approval"
+        : "visual experiment only; no production approval or performance-target claim",
       generatedAt: new Date().toISOString(),
       repositoryRevision: revision,
       builder: artifactEntry(builderPath),
@@ -508,6 +571,13 @@ writeFileSync(
       scopedSourceStatus: sourceStatus,
       sourceProvenance: provenance,
       environment,
+      ownerSelection: {
+        approved: ownerSelectionApproved,
+        record: artifactEntry(ownerRecordPath),
+        recordData: ownerRecord,
+        expectedSourceHash: ownerSourceHash,
+        expectedMainPngSha256: ownerMainPngHashes,
+      },
       gpuControls,
       requiredMainKinds: ["menger2", "hyperMenger2"],
       mainRows: validated.map((item) => ({

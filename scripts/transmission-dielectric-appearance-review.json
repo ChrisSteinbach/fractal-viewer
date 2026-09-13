@@ -1,0 +1,17 @@
+{
+  "status": "OWNER_SELECTED_RESEARCH_APPEARANCE",
+  "owner": "Chris Steinbach",
+  "date": "2026-09-13",
+  "quote": "Finally something interesting! Whether this comes close to real glass or not is immaterial. It looks good!",
+  "appearanceScope": [
+    "finite 3D Menger depth-2 solid",
+    "posed native 4D hyper-Menger depth-2 slice"
+  ],
+  "physicalRealismRequired": false,
+  "productionApproved": false,
+  "sourceHash": "81e436ecd7d0167048decf6de23ced1244e28bb2f76e64a473d50823223328a6",
+  "mainPngSha256": {
+    "menger2": "780aa05ecb45648659c3afb6768cc5c14454ea35df46752124082a3366906e62",
+    "hyperMenger2": "c67a7cab367e6985c35010e30a3f24ae60d118f6476d158a2b7cd376aee8bc0c"
+  }
+}
