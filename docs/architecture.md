@@ -628,9 +628,10 @@ rather than restarting.
 That finished-frame pass is a banded JOB, not a synchronous call
 (`createAdaptiveDownsampleJob`): a synchronous PLAN builds the occupancy table
 and walks every output cell once, fixing its kernel and its gather cost in
-whole-number WORK units (the cell's clipped tap count plus one base unit), so
-the pass's denominator is exact before the first tap; the GATHER then executes
-planned cells in bounded bands across scheduler ticks. The worker posts
+whole-number WORK units (the clipped footprint's cell count plus one base
+unit), so the pass's denominator is exact before the first tap; the GATHER
+then executes planned cells in bounded bands across scheduler ticks. The
+worker posts
 `estimateProgress` events at most once per the accumulation's own 150ms
 redisplay interval, and the readout renders the percentage on the same
 `--progress` fill the iteration bar uses ("applying density estimate… 42%")
@@ -649,6 +650,28 @@ keeps the pulse-only timing it always had. Banded output is byte-identical to
 the one-shot pass at every work budget, and `done` reaches `total` exactly
 (whole-number units). The measurement record is
 `scripts/flame-estimate-progress.harness.ts`.
+
+The gather CLIPS each cell to its occupied footprint. The plan's occupancy
+summed-area table locates the occupied-tile bounding box inside the kernel
+rectangle (four binary searches over O(1) counts), and a cell-resolution
+occupied bitmap — one bit per source cell, built in the same scan — drives
+the gather across only the bits in that box, with a direct loop for any word
+whose covered segment is fully occupied. Contribution sums are exact under
+the clip (an empty cell adds `weight * 0`); the normalization is NOT clipped,
+so the full-footprint weight sum is memoized per radius class and per
+distinct clipped range pair in the exact flat term order the old loop used,
+which keeps the clipped pass bit-identical to the unclipped one rather than
+merely equal in real arithmetic. Measured on four imported Electric Sheep
+genomes at 960x540 output, supersample 3 and 20M iterations: pass times fall
+4.0-55x (11-70s -> 0.2-11s at the imported params, 2.0-21.7s -> 0.1-3.6s at
+the app defaults), the bitmap visits 0.1-15% of the full rectangle's taps,
+and a fully occupied 2880x1620 control frame costs ~4% more (3.4-4.6%
+across runs; the added plan scan) with identical output. At the dev machine's app-realistic 1920x950
+output (viewport x min(DPR, 2)) the effect grows with the raster: the same
+sheet, one genome at 1920x950, measures 185.5s -> 7.4s at the imported params
+(24.9x; 1.3% of the taps) and 41.5s -> 2.5s at the app defaults (16.7x; 1.6%),
+with the fully occupied control at parity (15.30s vs 15.21s). The measurement
+record is `scripts/flame-density-estimate.harness.ts`.
 
 **Saved scenes re-render at a different brightness — deliberately, with no
 decoder migration.** The anchor change above is a look fix, and a
