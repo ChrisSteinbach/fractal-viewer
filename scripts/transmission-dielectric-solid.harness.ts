@@ -5,6 +5,8 @@ import type { Vec3 } from "./de-preview";
 import { boxUnionIntervals, type OpticalInterval } from "./transmission-proxy";
 import {
   DIELECTRIC_ANCHOR_CANONICALIZATION_CONTROLS,
+  DIELECTRIC_D2_INNER_MIDDLE_MASK,
+  DIELECTRIC_D2_OUTER_MIDDLE_MASK,
   DIELECTRIC_HYPER_ROTATION,
   DIELECTRIC_CORNER_CONTROL_CASES,
   DIELECTRIC_GEOMETRY_CONTROL_RAYS,
@@ -12,6 +14,7 @@ import {
   DIELECTRIC_TRANSPORT_CONTROL_INPUTS,
   dielectricBeerThroughput,
   dielectricBoundaryNormal,
+  dielectricCellOccupied,
   dielectricContains,
   dielectricDisplayedRootYBounds,
   dielectricIntrinsicDirection,
@@ -212,6 +215,29 @@ describe("connected finite dielectric solids", () => {
     const packed = packDielectricSolidFixture(fixture4);
     expect(packed.byteLength).toBe(96);
     expect([...new Uint32Array(packed).slice(0, 4)]).toEqual([4, 3, 27, 105]);
+  });
+
+  it("matches the depth-two occupancy shortcut exhaustively in 3D and 4D", () => {
+    for (const fixture of [
+      DIELECTRIC_SOLID_FIXTURES.mengerD2,
+      DIELECTRIC_SOLID_FIXTURES.hyperMengerD2,
+    ]) {
+      const cell = Array<number>(fixture.dimension).fill(0);
+      for (let flat = 0; flat < 9 ** fixture.dimension; flat++) {
+        let remaining = flat;
+        let outerMiddles = 0;
+        let innerMiddles = 0;
+        for (let axis = 0; axis < fixture.dimension; axis++) {
+          cell[axis] = remaining % 9;
+          remaining = Math.floor(remaining / 9);
+          outerMiddles += (DIELECTRIC_D2_OUTER_MIDDLE_MASK >> cell[axis]) & 1;
+          innerMiddles += (DIELECTRIC_D2_INNER_MIDDLE_MASK >> cell[axis]) & 1;
+        }
+        expect(outerMiddles <= 1 && innerMiddles <= 1).toBe(
+          dielectricCellOccupied(fixture, cell),
+        );
+      }
+    }
   });
 
   it("agrees with exhaustive D2 box unions in both dimensions", () => {

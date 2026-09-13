@@ -122,6 +122,33 @@ Reproduce with the same launcher, `--mode=glass`, the stated width/height and
 `--fixture=menger3` or `--fixture=hyper4`; give each run its own `--output`
 name to preserve the main comparison report.
 
+## Depth-two occupancy hot path
+
+The selected finite solids have nine finest cells per intrinsic axis. Their
+occupancy test originally re-ran two levels of integer division and modulo for
+every cell visited by every optical path. Source
+`d9ead74f95037888afce8b5e2ec1a51165e089ab41300206f4349b60007c6580`
+replaces only that depth-two GPU predicate with two exact nine-bit masks; the
+depth-zero and depth-three paths retain the generic loop. An exhaustive scalar
+control checks all 729 3D and 6,561 4D depth-two cells against the original
+definition.
+
+Quiet verified RX 7900 XTX / Chromium 256×144 measurements kept all 22 GPU
+controls, completion counters, residual maxima and both PNG hashes unchanged.
+The warm 3D tile phase fell from 4.8311 to 4.1585 seconds and practical delivery
+from 5.2034 to 4.4936 seconds. The 4D tile phase fell from 3.0479 to 2.5856
+seconds and practical delivery from 3.4353 to 2.9629 seconds. This is a useful
+13–15% frame-work reduction, but both rows still miss the one-second preview
+target and maximum tile spans remain 1.1848 and 0.7913 seconds.
+
+These runs also split the previously aggregate practical timer. Warm adapter
+and device setup took 19–20 ms, current-source controls 102–105 ms, and image
+pipeline setup 39–41 ms. GPU tile work remains the dominant cost. The complete
+records are the ignored
+`preview-d2-lookup-{menger-warm,hyper4}.json` reports; the timing instrumentation
+preserves the prior end-to-end scope rather than subtracting research work from
+the headline.
+
 ## Why the previous model was insufficient
 
 The previous bending model displaced the world-space ray origin sideways
