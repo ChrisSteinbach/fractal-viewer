@@ -238,3 +238,19 @@ The two 64×32 tiles took 1.7412 seconds for Menger and 1.5931 seconds for the
 small, incomplete diagnostics. They neither demonstrate useful full-size
 performance nor constitute an owner comparison. Reports are preserved as
 `scripts/out/transmission-dielectric-gpu/diagnostic-64x64-d2-{menger,hyper4}-glass-anchor-cells-fixed.json`.
+
+The scalar tree harness subsequently replayed the eight primary samples named
+by those archived refusal witnesses. Raising the work guards to 16,384 paths
+and 256 interfaces qualified all eight without a cap: the four Menger samples
+needed 4,136–5,714 processed paths, and the four 4D samples needed at most
+110 interfaces. This is evidence for the next guard setting, not a claim
+that all full-image pixels complete.
+
+The same harness tests a possible conservative tail certificate: omitted
+radiance plus the full bound of every pending path must fit the error budget
+before a resource-limited sample can be called bounded completion. At the
+old guards, the four Menger witnesses retain far too much untraced energy;
+three of four 4D interface witnesses can be bounded. The GPU experiment does
+not use that certificate yet. Its work guards remain hard refusals; the
+next calibration changes only their measured limits, keeping the error
+budget and 24-entry stack.
