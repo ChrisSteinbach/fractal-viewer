@@ -182,6 +182,10 @@ Everything else about the imported scene (point count, render style, color
 mode, …) takes the app's defaults. A file with several `<flame>` elements
 imports every one (capped at the collection size); the UI loads a single
 flame as the current scene and merges a multi-flame file into the collection.
+Electric Sheep's genome servers served several complete `<flame>` roots back
+to back with no enclosing `<flames>` element, which XML rejects for having
+more than one root; the parser repairs that shape by wrapping the text in
+`<flames>` before reading it, so those files import too.
 
 ### The palette is preserved whole
 
