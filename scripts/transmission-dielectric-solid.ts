@@ -390,9 +390,67 @@ function chooseAxis(axes: readonly number[], qd: Vec4): number {
   return chosen;
 }
 
+/**
+ * Nonsmooth-corner convention: reflect/refract against the incident ray's
+ * projection onto the span of every exactly tied displayed face normal.
+ */
+export function dielectricBoundaryNormal(
+  fixture: DielectricSolidFixture,
+  direction: Vec3,
+  planeMask: number,
+  entering: boolean,
+): Vec3 | null {
+  if (planeMask > 0 && (planeMask & (planeMask - 1)) === 0) {
+    const axis = Math.log2(planeMask);
+    if (axis >= fixture.dimension) return null;
+    const row = fixture.rotorRows[axis];
+    const magnitude = Math.hypot(row[0], row[1], row[2]);
+    if (!(magnitude > 0) || !Number.isFinite(magnitude)) return null;
+    const intrinsicDirection =
+      row[0] * direction[0] + row[1] * direction[1] + row[2] * direction[2];
+    const directionSign = intrinsicDirection > 0 ? 1 : -1;
+    const faceSign = entering ? -directionSign : directionSign;
+    return [
+      (faceSign * row[0]) / magnitude,
+      (faceSign * row[1]) / magnitude,
+      (faceSign * row[2]) / magnitude,
+    ];
+  }
+  const basis: Vec3[] = [];
+  for (let axis = 0; axis < fixture.dimension && basis.length < 3; axis++) {
+    if ((planeMask & (1 << axis)) === 0) continue;
+    const vector = fixture.rotorRows[axis].slice(0, 3) as Vec3;
+    for (const unit of basis) {
+      const projection = vector.reduce(
+        (sum, value, component) => sum + value * unit[component],
+        0,
+      );
+      for (let component = 0; component < 3; component++)
+        vector[component] -= projection * unit[component];
+    }
+    const magnitude = Math.hypot(...vector);
+    if (!(magnitude > 0) || !Number.isFinite(magnitude)) continue;
+    basis.push(vector.map((value) => value / magnitude) as Vec3);
+  }
+  const projected: Vec3 = [0, 0, 0];
+  for (const unit of basis) {
+    const amount = direction.reduce(
+      (sum, value, component) => sum + value * unit[component],
+      0,
+    );
+    for (let component = 0; component < 3; component++)
+      projected[component] += amount * unit[component];
+  }
+  const magnitude = Math.hypot(...projected);
+  if (!(magnitude > 0) || !Number.isFinite(magnitude)) return null;
+  const sign = entering ? -1 : 1;
+  return projected.map((value) => (sign * value) / magnitude) as Vec3;
+}
+
 function boundaryFor(
   fixture: DielectricSolidFixture,
   qOrigin: Vec4,
+  direction: Vec3,
   t: number,
   entering: boolean,
   axis: number,
@@ -405,9 +463,13 @@ function boundaryFor(
   const planeIndex = planeIndices[axis];
   const directionSign = qd[axis] > 0 ? 1 : -1;
   const faceSign = (entering ? -directionSign : directionSign) as -1 | 1;
-  const row = fixture.rotorRows[axis];
-  const magnitude = Math.hypot(row[0], row[1], row[2]);
-  if (!(magnitude > 0) || !Number.isFinite(magnitude))
+  const outwardNormal = dielectricBoundaryNormal(
+    fixture,
+    direction,
+    crossedAxes.reduce((mask, crossedAxis) => mask | (1 << crossedAxis), 0),
+    entering,
+  );
+  if (!outwardNormal)
     return {
       kind: "refused",
       reason: "degenerate-projected-normal",
@@ -440,11 +502,7 @@ function boundaryFor(
     kind: "boundary",
     t,
     entering,
-    outwardNormal: [
-      (faceSign * row[0]) / magnitude,
-      (faceSign * row[1]) / magnitude,
-      (faceSign * row[2]) / magnitude,
-    ],
+    outwardNormal,
     intrinsicAxis: axis,
     faceSign,
     face: { axis, planeIndex, depth: fixture.depth },
@@ -658,6 +716,7 @@ function dielectricNextBoundaryInternal(
     const event = boundaryFor(
       fixture,
       q,
+      direction,
       start,
       sideInside,
       axis,
@@ -710,6 +769,7 @@ function dielectricNextBoundaryInternal(
       const event = boundaryFor(
         fixture,
         q,
+        direction,
         nextT,
         nextInside,
         axis,
@@ -847,6 +907,111 @@ export function dielectricRefract(
     direction: direction.map((value) => value / length) as Vec3,
   };
 }
+
+export interface DielectricCornerControlCase {
+  name: string;
+  fixtureKey: "mengerD2" | "hyperMengerD2";
+  entering: boolean;
+  incident: Vec3;
+  anchorSource: {
+    /** Masked components are rebuilt from planeIndices in each precision. */
+    unmaskedIntrinsicPoint: Vec4;
+    planeMask: number;
+    planeIndices: [number, number, number, number];
+    cellIndices: [number, number, number, number];
+  };
+  anchor: DielectricBoundaryAnchor;
+  expectedNormal: Vec3;
+  reflected: { direction: Vec3; inside: boolean };
+  refracted: { direction: Vec3; inside: boolean };
+}
+
+const CORNER_CONTROL_SOURCES = [
+  {
+    name: "menger-d2-256-tied-yz",
+    fixtureKey: "mengerD2" as const,
+    entering: false,
+    incident: [
+      0.38021767139434814, 0.8139407634735107, 0.43924349546432495,
+    ] as Vec3,
+    unmaskedIntrinsicPoint: [-0.22513975203037262, 0, 0, 0] as Vec4,
+    planeMask: 6,
+    planeIndices: [-1, 8, 9, -1] as [number, number, number, number],
+    cellIndices: [3, 8, 9, -1] as [number, number, number, number],
+  },
+  {
+    name: "hyper-menger-d2-256-tied-yz",
+    fixtureKey: "hyperMengerD2" as const,
+    entering: false,
+    incident: [
+      0.6341724991798401, 0.660832941532135, 0.4014038145542145,
+    ] as Vec3,
+    unmaskedIntrinsicPoint: [
+      0.3642390966415405, 0, 0, 0.17260809242725372,
+    ] as Vec4,
+    planeMask: 6,
+    planeIndices: [-1, 9, 3, -1] as [number, number, number, number],
+    cellIndices: [6, 9, 3, 5] as [number, number, number, number],
+  },
+];
+
+export const DIELECTRIC_CORNER_CONTROL_CASES: readonly DielectricCornerControlCase[] =
+  Object.freeze(
+    CORNER_CONTROL_SOURCES.map((source) => {
+      const fixture = DIELECTRIC_SOLID_FIXTURES[source.fixtureKey];
+      const intrinsicPoint = [...source.unmaskedIntrinsicPoint] as Vec4;
+      for (let axis = 0; axis < fixture.dimension; axis++)
+        if ((source.planeMask & (1 << axis)) !== 0)
+          intrinsicPoint[axis] = gridPlane(
+            source.planeIndices[axis],
+            fixture.halfExtent,
+            3 ** fixture.depth,
+          );
+      const anchor: DielectricBoundaryAnchor = {
+        intrinsicPoint,
+        planeMask: source.planeMask,
+        planeIndices: [...source.planeIndices],
+        cellIndices: [...source.cellIndices],
+      };
+      const expectedNormal = dielectricBoundaryNormal(
+        fixture,
+        source.incident,
+        source.planeMask,
+        source.entering,
+      );
+      if (!expectedNormal) throw new Error("Invalid corner control normal");
+      const projection = source.incident.reduce(
+        (sum, value, axis) => sum + value * expectedNormal[axis],
+        0,
+      );
+      const reflected = source.incident.map(
+        (value, axis) => value - 2 * projection * expectedNormal[axis],
+      ) as Vec3;
+      const refracted = dielectricRefract(
+        source.incident,
+        expectedNormal,
+        1.45,
+        1,
+      );
+      if (refracted.tir) throw new Error("Corner control unexpectedly has TIR");
+      return {
+        name: source.name,
+        fixtureKey: source.fixtureKey,
+        entering: source.entering,
+        incident: source.incident,
+        anchorSource: {
+          unmaskedIntrinsicPoint: source.unmaskedIntrinsicPoint,
+          planeMask: source.planeMask,
+          planeIndices: source.planeIndices,
+          cellIndices: source.cellIndices,
+        },
+        anchor,
+        expectedNormal,
+        reflected: { direction: reflected, inside: true },
+        refracted: { direction: refracted.direction, inside: false },
+      };
+    }),
+  );
 
 export function dielectricBeerThroughput(
   absorptionPerRadius: number,
@@ -1003,9 +1168,49 @@ fn dielectricChooseAxis(mask: u32, qd: vec4<f32>, dimension: u32) -> u32 {
   return chosen;
 }
 
+fn dielectricCornerNormal(
+  f: DielectricSolidFixture,
+  direction: vec3<f32>,
+  planeMask: u32,
+  entering: bool,
+) -> vec4<f32> {
+  if (planeMask != 0u && (planeMask & (planeMask - 1u)) == 0u) {
+    let axis = firstTrailingBit(planeMask);
+    if (axis >= f.counts.x) { return vec4<f32>(0.0); }
+    let projected = dielectricRow(f, axis).xyz;
+    let magnitude = length(projected);
+    if (!(magnitude > 0.0)) { return vec4<f32>(0.0); }
+    let directionSign = select(-1.0, 1.0, dot(projected, direction) > 0.0);
+    let faceSign = select(directionSign, -directionSign, entering);
+    return vec4<f32>(faceSign * projected / magnitude, 1.0);
+  }
+  var basis: array<vec3<f32>, 3>;
+  var count = 0u;
+  for (var axis = 0u; axis < f.counts.x && count < 3u; axis++) {
+    if ((planeMask & (1u << axis)) == 0u) { continue; }
+    var vector = dielectricRow(f, axis).xyz;
+    for (var previous = 0u; previous < count; previous++) {
+      vector -= dot(vector, basis[previous]) * basis[previous];
+    }
+    let magnitude = length(vector);
+    if (!(magnitude > 0.0)) { continue; }
+    basis[count] = vector / magnitude;
+    count++;
+  }
+  var projected = vec3<f32>(0.0);
+  for (var axis = 0u; axis < count; axis++) {
+    projected += dot(direction, basis[axis]) * basis[axis];
+  }
+  let magnitude = length(projected);
+  if (!(magnitude > 0.0)) { return vec4<f32>(0.0); }
+  let sign = select(1.0, -1.0, entering);
+  return vec4<f32>(sign * projected / magnitude, 1.0);
+}
+
 fn dielectricBoundary(
   f: DielectricSolidFixture,
   qOrigin: vec4<f32>,
+  direction: vec3<f32>,
   t: f32,
   entering: bool,
   axis: u32,
@@ -1018,9 +1223,8 @@ fn dielectricBoundary(
   let planeIndex = planeIndices[axis];
   let directionSign = select(-1.0, 1.0, qd[axis] > 0.0);
   let faceSign = select(directionSign, -directionSign, entering);
-  let projected = dielectricRow(f, axis).xyz;
-  let magnitude = length(projected);
-  if (!(magnitude > 0.0)) {
+  let cornerNormal = dielectricCornerNormal(f, direction, planeMask, entering);
+  if (!(cornerNormal.w > 0.0)) {
     return dielectricResult(
       DIELECTRIC_RESULT_REFUSED,
       DIELECTRIC_REFUSAL_DEGENERATE_NORMAL,
@@ -1044,7 +1248,7 @@ fn dielectricBoundary(
     axis,
     planeIndex,
     faceSign,
-    faceSign * projected / magnitude,
+    cornerNormal.xyz,
     planeMask,
     planeIndices,
     intrinsicPoint,
@@ -1232,7 +1436,7 @@ fn dielectricNextBoundaryRaw(
       );
     }
     return dielectricBoundary(
-      f, q, start, sideInside, axis, mask, planeIndices, cell, qd, visits,
+      f, q, direction, start, sideInside, axis, mask, planeIndices, cell, qd, visits,
     );
   }
 
@@ -1309,7 +1513,7 @@ fn dielectricNextBoundaryRaw(
         );
       }
       return dielectricBoundary(
-        f, q, nextT, nextInside, axis, crossingMask, planeIndices, cell, qd, visits,
+        f, q, direction, nextT, nextInside, axis, crossingMask, planeIndices, cell, qd, visits,
       );
     }
     sideInside = nextInside;

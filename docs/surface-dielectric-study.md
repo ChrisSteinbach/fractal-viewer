@@ -118,7 +118,7 @@ precision, approximation and performance limits must accompany the images.
 
 ## Scalar controls
 
-`transmission-dielectric-solid.harness.ts` passes seven tests. They check the
+`transmission-dielectric-solid.harness.ts` passes eight tests. They check the
 terminal-cell counts, the actual 3D Menger preset's depth-zero, two and three
 construction, exhaustive depth-two ray intervals in both dimensions, touching
 cells and positive gaps, inside rays, projected slice normals and corner
@@ -126,7 +126,8 @@ policy. The continuation controls preserve the authoritative intrinsic anchor
 when the accompanying displayed hit is rounded to f32 or perturbed by one
 ULP. Invalid anchor state, tangent ambiguity and traversal exhaustion refuse
 explicitly. Independent Snell, total-internal-reflection, identity and Beer
-controls cover the optical arithmetic.
+controls cover the optical arithmetic. Exact tied-edge controls check the
+reflected and transmitted medium ownership in both dimensions.
 
 The depth-three solids contain 8,000 and 110,592 terminal cells, but the
 renderer does not allocate a leaf list. A straight segment visits at most 79
@@ -261,7 +262,7 @@ refusal at an exactly tied pair of faces. There were no path, interface or
 stack failures. Accepted-pixel bounds were 0.000958101 (3D) and 0.000948801
 (4D). The tile encode/submit/map totals were 7.6888 and 3.9127 seconds, with
 about 35.90 MB of known cross-process state. These are incomplete calibration
-results from source `f6b884d2…`, not full-image qualifications. The reports
+results from source `f6b884d22d8615e3b3ed6bbe3e02a8776d92a0f3e95b65f7042ec5b2cf9b258f`, not full-image qualifications. The reports
 are `scripts/out/transmission-dielectric-gpu/calibration-256x256-d2-{menger,hyper4}-glass-guards16384-256.json`.
 
 That calibration also exposed an image-export convention error: row zero of
@@ -272,3 +273,27 @@ The launcher and page now default to 128×64 tiles; the former 256×144 default
 exceeded the additional-state preflight at 1024×1024 with the enlarged path
 state. The report declares the replay settings and derives its completion
 and cap-free flags from actual counters.
+
+## Exact corner convention
+
+At a nonsmooth edge, choosing one of several exactly crossed facets can send
+a reflected ray outside through another crossed facet while its medium state
+still says inside. The 256×256 calibration caught this in both dimensions.
+An edge has no unique physical surface normal, so the experiment defines its
+convention explicitly.
+
+For an exact tie, let S be the span of the crossed facets' displayed normals.
+The effective normal is the normalized projection of the incident direction
+onto S, oriented outward from the incident medium. Reflection reverses that
+projection and preserves the tangent component orthogonal to S. Consequently
+it reverses the direction across every tied facet. Snell transmission
+preserves the crossing sign of every tied facet. This keeps both resulting
+rays consistent with their declared media. Gram-Schmidt constructs the span
+in ascending intrinsic-axis order; the original single chosen face remains
+an attribution convention. Rank-zero or otherwise invalid geometry refuses.
+
+This rule concerns exact arithmetic ties in the current numeric mirror. It
+neither merges nearby crossings nor certifies that f32 and f64 classify every
+near-corner event identically. It is a declared rendering convention for the
+finite solid's singular edges, not a claim that those edges have a smooth
+physical normal.
