@@ -254,3 +254,21 @@ three of four 4D interface witnesses can be bounded. The GPU experiment does
 not use that certificate yet. Its work guards remain hard refusals; the
 next calibration changes only their measured limits, keeping the error
 budget and 24-entry stack.
+
+The next 256×256 GPU calibration used those larger guards with 128×64 tiles.
+Both scenes completed 65,535 of 65,536 pixels; each had one state-mismatch
+refusal at an exactly tied pair of faces. There were no path, interface or
+stack failures. Accepted-pixel bounds were 0.000958101 (3D) and 0.000948801
+(4D). The tile encode/submit/map totals were 7.6888 and 3.9127 seconds, with
+about 35.90 MB of known cross-process state. These are incomplete calibration
+results from source `f6b884d2…`, not full-image qualifications. The reports
+are `scripts/out/transmission-dielectric-gpu/calibration-256x256-d2-{menger,hyper4}-glass-guards16384-256.json`.
+
+That calibration also exposed an image-export convention error: row zero of
+a directly encoded PNG is the top, but the camera had mapped it to the bottom
+of its image plane. Subsequent output uses positive camera-up at PNG row zero.
+The archived witness studies preserve their original coordinate convention.
+The launcher and page now default to 128×64 tiles; the former 256×144 default
+exceeded the additional-state preflight at 1024×1024 with the enlarged path
+state. The report declares the replay settings and derives its completion
+and cap-free flags from actual counters.
