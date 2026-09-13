@@ -947,9 +947,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     shader body for both dialects. Both engines share material lane order;
     CPU values and classic shader bytes are pinned. Finish
     persists/morphs/mutates like fold lengths; random-system never rolls one.
-    TRANSMISSION: owner rejected the layered/bent look; a convincing 3D/4D
-    glass model and production qualification remain outstanding.
-    Model, controls and cost: `docs/surface-transmission.md`.
+    TRANSMISSION: owner selected finite-solid 3D/4D glass; realism is not required,
+    production qualification open. Evidence: `docs/surface-dielectric-study.md`.
     Pattern-albedo remains REFUSED; the rings-wood refusal, confirmed zoom
     premise and deferred sheets banding live in `scripts/finish-pattern.harness.ts`.
     Authored rigs (`surface-lighting.ts`) share ONE shader emitter across both

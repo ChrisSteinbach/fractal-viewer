@@ -650,8 +650,9 @@ dielectric physics. The scalar and emitted-GPU controls pin the boundary
 continuation and optical arithmetic; the initial depth-three full-tree GPU
 diagnostic refuses completion.
 The coarser depth-two comparison and its residual-replay contract are recorded
-in [`surface-dielectric-study.md`](surface-dielectric-study.md). This remains
-an unreviewed experiment with an explicit geometry change.
+in [`surface-dielectric-study.md`](surface-dielectric-study.md). The owner
+selected its 3D/4D appearance; the explicit geometry change and production
+qualification limits remain.
 
 ### finish-pattern-review-score
 

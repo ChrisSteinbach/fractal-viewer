@@ -12,6 +12,41 @@ geometry as well as transport, so matching opaque views must accompany the
 glass images. It does not interpret the public distance estimators as signed
 interior distances or silently change an existing scene's geometry.
 
+## Owner decision and continuation
+
+On 13 September 2026, Chris Steinbach selected the completed finite-solid
+3D/4D comparison below as the appearance to keep:
+
+> Finally something interesting! Whether this comes close to real glass or not
+> is immaterial. It looks good!
+
+The selected model uses intrinsic dielectric refraction and reflection on the
+finite Menger and posed hyper-Menger slice. Visible bending remains essential;
+physical realism is no longer an acceptance requirement. This supersedes the
+earlier layered-transparency selection, whose rendered result was rejected.
+
+The [appearance record](../scripts/transmission-dielectric-appearance-review.json)
+pins the source and both main PNG hashes listed below. The offline review only
+shows this owner selection when those hashes match; future changed images do
+not inherit it automatically. The existing images establish the visual target
+for further performance work in both dimensions.
+
+Appearance selection does not waive the previously chosen waiting-time,
+128 MiB additional-state or correct-completion requirements. Preview speed,
+responsive scheduling, peak allocation accounting, window/export invariants
+and broader scene/pose coverage still need qualification before production
+integration. Physical-realism comparisons and another aesthetic selection of
+these same images are not prerequisites for that work.
+
+This research checkpoint is in
+[PR #412](https://github.com/ChrisSteinbach/fractal-viewer/pull/412), on
+`research/surface-transmission-qualification`. It changes harnesses and
+evidence, with no production renderer, panel or scene-document changes. The
+comparison and all six target-size measurements are complete; their
+reproduction commands and limitations are below. Remaining implementation
+work is tracked in the project's issue tracker, rather than in a second
+handoff task list.
+
 ## Current full-size result
 
 The new [1024×1024 comparison](../scripts/out/transmission-dielectric-review.html)
@@ -44,10 +79,9 @@ The main PNG hashes are
 (4D). The opaque images complete with zero residual in 4.651 and 3.482
 seconds respectively.
 
-This delivers readable images and actual dielectric transport on these two
-finite solids. The lighting remains simple, and appearance has not been
-approved. General fractal coverage, interactive scheduling, full application
-integration and production qualification remain outstanding.
+This delivers the owner-selected appearance and actual dielectric transport
+on these two finite solids. General fractal coverage, interactive scheduling,
+full application integration and production qualification remain outstanding.
 
 ## Selected desktop waiting targets
 
@@ -188,9 +222,10 @@ overwrite the main review. GPU and host allocation categories must be
 reported against the selected 128 MiB additional-state limit; driver-private
 storage must not be labelled measured from a source-level allocation count.
 
-This experiment is unreviewed. It cannot authorize production material,
-document, panel or renderer integration. Its finite depth, altered geometry,
-precision, approximation and performance limits must accompany the images.
+The owner selected this experiment's appearance. Production material,
+document, panel and renderer integration remain unqualified. Its finite depth,
+altered geometry, precision, approximation and performance limits accompany
+the images.
 
 ## Scalar controls
 
@@ -460,10 +495,10 @@ emitted GPU controls pass 22/22. Scripts TypeScript, ESLint, formatting and
 launcher syntax checks pass. Full repository lint also passes after the final
 source changes. Browser QA of the completed review at 1440px
 desktop width and 390px mobile width confirms natural 1024px main images on
-desktop, working original-image links, bounded-completion labels, visible
-UNREVIEWED status, no console errors and no horizontal overflow even with
-details expanded.
+desktop, working original-image links, bounded-completion labels, no console
+errors and no horizontal overflow even with details expanded. That initial
+QA preceded the owner decision; the review now records the selection only
+for the matching source and main PNG hashes.
 
-The comparison study is delivered. Appearance approval and production
-qualification remain open; the previous owner rejection is not superseded by
-an automatic claim that this new look is approved.
+The comparison study is delivered and its appearance is selected by the
+owner. Production qualification remains open under the measured limits above.

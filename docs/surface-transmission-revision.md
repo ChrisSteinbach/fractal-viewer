@@ -5,9 +5,11 @@ full-size CPU/GPU result and found it indistinct, noisy and unconvincing as
 glass. The earlier choice selected this research direction, not its final
 appearance. The following controls and timings remain the record of that
 failed candidate; further tuning of its clearance opacity is not the next
-glass experiment.
+glass experiment. The owner subsequently selected the
+[closed-solid 3D/4D appearance](surface-dielectric-study.md#owner-decision-and-continuation);
+its production feasibility remains open.
 
-This is the next experiment selected in the
+This was the next experiment selected in the
 [transmission review](surface-transmission.md#candidate-comparison-and-review-status):
 preserve fractal detail and reveal internal/rear geometry in both dimensions,
 with visible bending required. The desktop research targets are 1 second for

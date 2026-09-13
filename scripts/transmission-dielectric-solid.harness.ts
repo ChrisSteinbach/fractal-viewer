@@ -659,7 +659,8 @@ describe("connected finite dielectric solids", () => {
       "scripts/out/transmission-dielectric-solid-report.json",
       JSON.stringify(
         {
-          status: "SCALAR ORACLE QUALIFIED; IMAGE UNREVIEWED",
+          status:
+            "SCALAR ORACLE QUALIFIED; IMAGE SELECTION RECORDED SEPARATELY",
           geometry: {
             menger3d: {
               rule: "at most one middle ternary digit per level",
