@@ -636,6 +636,12 @@ Its separate `transmission-gpu-review.mjs` page preserves numerical
 refusals alongside completed full-size images. Timing scope, allocation
 preflight and the remaining qualification limits are recorded in
 [`transmission-gpu-images.md`](transmission-gpu-images.md).
+The isolated `transmission-prominence-field.harness.ts` candidate bounds
+the demonstrated small noise but loses a closely spaced opaque rear under
+nearest-distance ownership. `transmission-gpu-divergence.mjs` reproduces
+the old Brick ray and localizes its disagreement upstream of optical
+transport. Both records remain separate from the displayed material, with
+their limits in the revision study.
 
 ### finish-pattern-review-score
 
