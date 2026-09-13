@@ -13106,6 +13106,7 @@ describe("Ui file import/export", () => {
       document.getElementById("importFileInput")?.getAttribute("accept") ?? "";
     expect(accept).toContain(".json");
     expect(accept).toContain(".flame");
+    expect(accept).toContain(".flam3");
   });
 
   it("fires onExportCollection when ⬇ Back up collection is clicked", () => {
