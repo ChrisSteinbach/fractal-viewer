@@ -386,6 +386,11 @@ if (
   body.cancellationProbe.passed !== true
 )
   throw new Error("GPU report requested cancellation qualification but failed");
+if (
+  body.tileInvariant?.requested === true &&
+  body.tileInvariant.passed !== true
+)
+  throw new Error("GPU report requested tile/window qualification but failed");
 const environment = validateRunEnvironment(envelope, body);
 const gpuControls = envelope.controls ?? body.controls;
 if (

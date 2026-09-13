@@ -185,6 +185,37 @@ the 128 MiB total-state limit. The ignored records are
 `preview-scheduling-{menger,hyper4}-final.json`. Export-size cancellation,
 full-HD observed peak state and production-app integration remain unqualified.
 
+## Exact tile and window invariants
+
+Source `90a7fa0565c4176c69acb4009242924cc4d948b9f8c9e3c5f28bdbfeb8572104`
+keeps the shader's ray coordinates tied to the full raster while allowing the
+harness to return an explicit sub-rectangle. Window dimensions size the returned
+RGBA payload and its allocation plan; they never replace the full width, height
+or absolute pixel origin used for NDC. The launcher compares decoded RGBA buffers
+directly and records hashes only as reproducible evidence.
+
+The quiet verified RX 7900 XTX / Chromium gate rendered each selected 256×144
+glass scene with 100×55 and 73×47 tiles. Both decompositions have partial right
+and bottom edges, yet all 147,456 RGBA bytes, completion counters and maximum
+residual matched exactly in 3D and 4D. It then rendered the unaligned window
+`x=37, y=29, width=121, height=67` with 73×47 tiles. All 8,107 pixels and 32,428
+samples completed without invalid, unresolved or capped work, and the returned
+RGBA bytes exactly matched the same rectangle copied from the full image in both
+dimensions. The crop hashes are
+`873195c1d442e1be6f8d040c026a0a073095f032c106fe8dcc61655d480cb29f`
+and `4a727ad4cd00d912cbfd006d4c1b8050ed26e07d59002601b14b59b1aa31cd4d`.
+
+The ignored record is `tile-window-invariant-final.json`. Reproduce both
+dimensions with:
+
+```bash
+node scripts/transmission-dielectric-gpu.mjs --display=:0 --width=256 --height=144 --mode=glass --tileCheck=100x55,73x47 --window=37,29,121,67 --output=tile-window-invariant-final.json
+```
+
+This establishes the harness's full-image coordinate and assembly contract for
+the selected scenes. It does not substitute for the production capture path or
+for a target-size export cancellation run.
+
 ## Why the previous model was insufficient
 
 The previous bending model displaced the world-space ray origin sideways
