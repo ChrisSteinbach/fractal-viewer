@@ -105,12 +105,14 @@ import {
 import type { EscapeDE4 } from "../../fractal/escape-de-4d";
 import {
   accumulateFlame,
+  adaptiveDownsampleFlame,
   createFlameHistogram,
   downsampleFlame,
   tonemapFlame,
   DEFAULT_GAMMA_THRESHOLD,
 } from "../../fractal/flame";
 import type {
+  DensityEstimatorParams,
   FlameBalloonEcho,
   FlameHistogram,
   Mat4,
@@ -336,12 +338,45 @@ interface ComparisonMetrics {
 }
 
 /**
+ * The adaptive density-estimate agreement leg's metrics — the GPU
+ * `adaptiveDisplay` gather against `adaptiveDownsampleFlame` fed the exact
+ * SAME resident histogram and params (see `runAdaptiveDisplayCheck`'s doc).
+ * An EXACTNESS check modulo f32 rounding like {@link
+ * DisplayDownsampleMetrics}, but over a GATHER whose footprint is thousands
+ * of taps wide rather than a short fixed kernel, so its tolerance is looser
+ * and MEASURED (see the constants below).
+ */
+interface AdaptiveDisplayMetrics {
+  /** Largest |gpu - cpu| observed over every `hits` bucket. */
+  maxAbsHitsError: number;
+  /** Largest |gpu - cpu| observed over every `sumRGB` channel. */
+  maxAbsColorError: number;
+  /** Largest per-bucket hits error relative to `max(|cpu|, floor)`. */
+  maxRelHitsError: number;
+  /** Largest per-channel color error relative to `max(|cpu|, floor)`. */
+  maxRelColorError: number;
+  /** |gpu.maxHits - cpu.maxHits| / cpu.maxHits (or |gpu.maxHits| at 0). */
+  maxHitsRelError: number;
+  /** |gpu.hitMass - cpu.hitMass| / cpu.hitMass (or |gpu.hitMass| at 0). */
+  massRelError: number;
+  /** Summed wall ms of the CPU oracle over this arm's param sets. */
+  cpuMs: number;
+  /** Summed wall ms of `adaptiveDisplay` (readback + convert included). */
+  gpuMs: number;
+  /** Bands the GPU pass reported progress for (summed; always >= 1). */
+  bands: number;
+  /** Every error within its measured tolerance AND progress reaching its
+   * total exactly. */
+  pass: boolean;
+}
+
+/**
  * The display-downsample agreement leg's metrics — comparing the GPU
  * `snapshotDisplay` kernel's output against `downsampleFlame` fed the exact
  * SAME resident histogram (see `compareDisplayDownsample`'s doc). An
  * EXACTNESS check modulo f32 rounding, not a statistical one like
- * {@link ComparisonMetrics} — hence the much tighter tolerances `pass` above
- * applies.
+ * {@link ComparisonMetrics} — hence the much tighter tolerances `pass`
+ * above applies.
  */
 interface DisplayDownsampleMetrics {
   /** Largest |gpu - cpu| observed over every `hits` bucket. */
@@ -412,12 +447,21 @@ interface BenchResults {
    * see `runSs1DisplayDownsampleCheck`'s doc.
    */
   ss1DisplayDownsample: DisplayDownsampleMetrics | SkippedResult;
+  /** The standalone adaptive density-estimate agreement check — one arm per
+   * dimension (`runAdaptiveDisplayCheck`'s doc). "skipped" until a full
+   * sweep runs; a single arm can be skipped independently (e.g. a 4D
+   * backend failure's `describeError`), which the agreement rollup treats
+   * as "not certified" rather than "passed". */
+  adaptiveDisplay: {
+    d3: AdaptiveDisplayMetrics | SkippedResult;
+    d4: AdaptiveDisplayMetrics | SkippedResult;
+  };
   /** "fail" iff any scenario's `comparison.pass`/`displayDownsample.pass`, or
-   * the standalone `ss1DisplayDownsample.pass`, is `false`; "pass" only once
-   * every one of those has actually run and all passed — including
-   * vacuously "skipped" before any scenario has run, or when every GPU leg
-   * was skipped (no WebGPU in this browser: see `computeAgreement`'s doc for
-   * why that is deliberately NOT a failure). */
+   * the standalone `ss1DisplayDownsample.pass`, or either adaptive-display
+   * arm, is `false`; "pass" only once every one of those has actually run
+   * and all passed — including vacuously "skipped" before any scenario has
+   * run, or when every GPU leg was skipped (no WebGPU in this browser: see
+   * `computeAgreement`'s doc for why that is deliberately NOT a failure). */
   agreement: "pass" | "fail" | "skipped";
   /** The surface-DE WGSL kernel section (`runSurfaceDeSection`) —
    * present only once that section has run (`?surface=1|only` or its
@@ -2056,6 +2100,10 @@ function buildProjection(
 function toGpuBackendRequest(
   def: ScenarioDef3D,
   projection: Mat4,
+  width = ACCUM_WIDTH,
+  height = ACCUM_HEIGHT,
+  displayWidth = DISPLAY_WIDTH,
+  displayHeight = DISPLAY_HEIGHT,
 ): GpuBackendRequest {
   const echoColorLUT =
     def.balloonEcho && def.balloonPaletteId
@@ -2069,11 +2117,11 @@ function toGpuBackendRequest(
     palette: def.paletteId,
     schedule: def.schedule ?? null,
     projection,
-    width: ACCUM_WIDTH,
-    height: ACCUM_HEIGHT,
+    width,
+    height,
     seed: SEED,
-    displayWidth: DISPLAY_WIDTH,
-    displayHeight: DISPLAY_HEIGHT,
+    displayWidth,
+    displayHeight,
     progressiveFilterRadius: FLAME_FILTER_RADIUS,
     echo: def.balloonEcho,
     echoColorLUT,
@@ -2139,8 +2187,16 @@ interface ScenarioEngines {
 }
 
 /** Build a 3D scenario's engines: `prepareChaosGame` + `accumulateFlame`
- * on the oracle side, `createGpuFlameBackend` on the production side. */
-function prepare3D(def: ScenarioDef3D): ScenarioEngines {
+ * on the oracle side, `createGpuFlameBackend` on the production side. The
+ * raster defaults to the bench's own; the standalone adaptive check passes
+ * a small one. */
+function prepare3D(
+  def: ScenarioDef3D,
+  width = ACCUM_WIDTH,
+  height = ACCUM_HEIGHT,
+  displayWidth = DISPLAY_WIDTH,
+  displayHeight = DISPLAY_HEIGHT,
+): ScenarioEngines {
   const prepared: PreparedChaosGame = prepareChaosGame(
     def.transforms,
     def.finalTransform,
@@ -2156,19 +2212,14 @@ function prepare3D(def: ScenarioDef3D): ScenarioEngines {
     def.balloonEcho && def.balloonPaletteId
       ? (buildPaletteLUT(def.balloonPaletteId) ?? undefined)
       : undefined;
-  const projection = buildProjection(
-    ACCUM_WIDTH,
-    ACCUM_HEIGHT,
-    def.cameraPos,
-    def.lookAt,
-  );
+  const projection = buildProjection(width, height, def.cameraPos, def.lookAt);
   return {
     cpuChunk: (n, histogram, rng) =>
       accumulateFlame(
         prepared,
         projection,
-        ACCUM_WIDTH,
-        ACCUM_HEIGHT,
+        width,
+        height,
         n,
         rng,
         palette,
@@ -2179,7 +2230,16 @@ function prepare3D(def: ScenarioDef3D): ScenarioEngines {
         def.pointTilingPlan,
       ),
     createBackend: () =>
-      createGpuFlameBackend(toGpuBackendRequest(def, projection)),
+      createGpuFlameBackend(
+        toGpuBackendRequest(
+          def,
+          projection,
+          width,
+          height,
+          displayWidth,
+          displayHeight,
+        ),
+      ),
   };
 }
 
@@ -2206,7 +2266,13 @@ const EXPLORER_CLOUD_POINTS = 100_000;
  * enough to frame any of these systems at any tumble angle under the shared
  * 50° FOV.
  */
-function prepare4D(def: ScenarioDef4D): ScenarioEngines {
+function prepare4D(
+  def: ScenarioDef4D,
+  width = ACCUM_WIDTH,
+  height = ACCUM_HEIGHT,
+  displayWidth = DISPLAY_WIDTH,
+  displayHeight = DISPLAY_HEIGHT,
+): ScenarioEngines {
   const transforms4 = def.system().map(toTransform4);
   const final4 =
     def.finalTransform === null ? null : toTransform4(def.finalTransform);
@@ -2288,7 +2354,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
     viewCenter[1] + dir.y * dist,
     viewCenter[2] + dir.z * dist,
   ];
-  const camera = buildProjection(ACCUM_WIDTH, ACCUM_HEIGHT, cameraPos, [
+  const camera = buildProjection(width, height, cameraPos, [
     viewCenter[0],
     viewCenter[1],
     viewCenter[2],
@@ -2324,8 +2390,8 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
         prepared4,
         projection,
         view,
-        ACCUM_WIDTH,
-        ACCUM_HEIGHT,
+        width,
+        height,
         n,
         rng,
         color,
@@ -2346,11 +2412,11 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
         projection,
         view,
         color,
-        width: ACCUM_WIDTH,
-        height: ACCUM_HEIGHT,
+        width,
+        height,
         seed: SEED,
-        displayWidth: DISPLAY_WIDTH,
-        displayHeight: DISPLAY_HEIGHT,
+        displayWidth,
+        displayHeight,
         progressiveFilterRadius: FLAME_FILTER_RADIUS,
         echo: balloonEcho,
         echoColorLUT,
@@ -2847,6 +2913,86 @@ function compareDisplayDownsample(
   };
 }
 
+/** Per-bucket floor for the adaptive leg's relative errors: below this
+ * magnitude a bucket's own denominator is noise-level, so the leg gates on
+ * the ABSOLUTE error there instead. */
+const ADAPTIVE_REL_FLOOR = 1;
+
+/**
+ * Per-bucket adaptive-gather tolerance — looser than the display leg's
+ * `max(1e-6, 1e-4 * max(|cpu|, 1))` because the adaptive gather sums
+ * THOUSANDS of f32 taps per cell (radius 11 x supersample 2 is a 133x133
+ * source footprint) where the display filter sums a handful, and its
+ * normalization is the separable product rather than the CPU's flat-order
+ * memo. MEASURED over both arms and both param sets on i7-1165G7 / Iris Xe
+ * (real driver: worst relative hits error 4.9e-6, worst relative color error
+ * 5.3e-6, maxHits 6.6e-7, hitMass 5.9e-8; SwiftShader agrees to the same
+ * order, within ~1.5x on each), so 1e-4 is ~20x the measured worst case
+ * while still far below anything a class-boundary or clip mismatch would
+ * produce (those move a cell by a percent). The absolute floor of 1e-2
+ * covers buckets whose own value is below {@link ADAPTIVE_REL_FLOOR}: a
+ * bucket at the floor with a full-footprint sum is still hundreds of taps,
+ * so one f32 ULP of the summed magnitude sits far under it.
+ */
+function adaptiveDisplayTolerance(cpuValue: number): number {
+  return Math.max(
+    1e-2,
+    1e-4 * Math.max(Math.abs(cpuValue), ADAPTIVE_REL_FLOOR),
+  );
+}
+
+/**
+ * The adaptive-density-estimate agreement leg: compares the GPU
+ * `adaptiveDisplay` gather's output against `adaptiveDownsampleFlame` fed
+ * the exact SAME resident histogram and params (both sides consume the same
+ * `backend.snapshot()` readback — the GPU side re-reads its own resident
+ * buffer, which that snapshot converted). Exact modulo the disclosed
+ * f32-vs-f64 tolerances above — NOT a statistical comparison.
+ */
+function compareAdaptiveDisplay(
+  gpu: FlameHistogram,
+  cpu: FlameHistogram,
+): Omit<AdaptiveDisplayMetrics, "cpuMs" | "gpuMs" | "bands"> {
+  let maxAbsHitsError = 0;
+  let maxRelHitsError = 0;
+  let withinTolerance = true;
+  for (let i = 0; i < cpu.hits.length; i++) {
+    const err = Math.abs(gpu.hits[i] - cpu.hits[i]);
+    if (err > maxAbsHitsError) maxAbsHitsError = err;
+    const rel = err / Math.max(Math.abs(cpu.hits[i]), ADAPTIVE_REL_FLOOR);
+    if (rel > maxRelHitsError) maxRelHitsError = rel;
+    if (err > adaptiveDisplayTolerance(cpu.hits[i])) withinTolerance = false;
+  }
+  let maxAbsColorError = 0;
+  let maxRelColorError = 0;
+  for (let i = 0; i < cpu.sumRGB.length; i++) {
+    const err = Math.abs(gpu.sumRGB[i] - cpu.sumRGB[i]);
+    if (err > maxAbsColorError) maxAbsColorError = err;
+    const rel = err / Math.max(Math.abs(cpu.sumRGB[i]), ADAPTIVE_REL_FLOOR);
+    if (rel > maxRelColorError) maxRelColorError = rel;
+    if (err > adaptiveDisplayTolerance(cpu.sumRGB[i])) {
+      withinTolerance = false;
+    }
+  }
+  const maxHitsRelError =
+    cpu.maxHits !== 0
+      ? Math.abs(gpu.maxHits - cpu.maxHits) / cpu.maxHits
+      : Math.abs(gpu.maxHits);
+  const massRelError =
+    cpu.hitMass !== 0
+      ? Math.abs(gpu.hitMass - cpu.hitMass) / cpu.hitMass
+      : Math.abs(gpu.hitMass);
+  return {
+    maxAbsHitsError,
+    maxAbsColorError,
+    maxRelHitsError,
+    maxRelColorError,
+    maxHitsRelError,
+    massRelError,
+    pass: withinTolerance && maxHitsRelError <= 1e-4 && massRelError <= 1e-4,
+  };
+}
+
 /** Reps averaged by {@link measureRedisplayCost} — enough to smooth out a
  * stray GC pause or driver hiccup without materially lengthening the bench. */
 const REDISPLAY_COST_REPS = 5;
@@ -2901,17 +3047,18 @@ async function measureRedisplayCost(
 
 /**
  * Roll every scenario's `comparison`/`displayDownsample`, plus the standalone
- * `ss1DisplayDownsample` check, up into one verdict:
+ * `ss1DisplayDownsample` check and the two adaptive-display arms, up into one
+ * verdict:
  *
  * - `"fail"`: at least one of those actually RAN and did not clear its
  *   thresholds — the kernel and its CPU oracle disagree.
  * - `"pass"`: at least one scenario's `comparison` ran, at least one
- *   scenario's `displayDownsample` ran, AND `ss1DisplayDownsample` ran —
- *   and every one of those that ran passed.
+ *   scenario's `displayDownsample` ran, `ss1DisplayDownsample` ran, AND both
+ *   adaptive arms ran — and every one of those that ran passed.
  * - `"skipped"`: nothing to fail, but not everything above ran either (no
  *   WebGPU in this browser, every GPU run failed, or the full sweep — every
- *   scenario plus the ss=1 check — hasn't finished yet). Deliberately its
- *   own state rather than a vacuous "pass": an agreement check that
+ *   scenario plus the standalone checks — hasn't finished yet). Deliberately
+ *   its own state rather than a vacuous "pass": an agreement check that
  *   silently checked nothing must never read as green — a CI box that loses
  *   WebGPU (a flag change, a busted SwiftShader) would otherwise keep
  *   reporting success while pinning nothing. `scripts/gpu-flame-bench.mjs`
@@ -2922,10 +3069,13 @@ async function measureRedisplayCost(
 function computeAgreement(
   scenarios: ScenarioResultRecord[],
   ss1: DisplayDownsampleMetrics | SkippedResult,
+  adaptive: BenchResults["adaptiveDisplay"],
 ): "pass" | "fail" | "skipped" {
   const ranImage = scenarios.filter((s) => "pass" in s.comparison);
   const ranDisplay = scenarios.filter((s) => "pass" in s.displayDownsample);
   const ss1Ran = "pass" in ss1;
+  const adaptiveArms = [adaptive.d3, adaptive.d4];
+  const adaptiveRan = adaptiveArms.every((arm) => "pass" in arm);
   const anyImageFail = ranImage.some(
     (s) => "pass" in s.comparison && !s.comparison.pass,
   );
@@ -2933,10 +3083,11 @@ function computeAgreement(
     (s) => "pass" in s.displayDownsample && !s.displayDownsample.pass,
   );
   const ss1Fail = ss1Ran && !ss1.pass;
-  if (anyImageFail || anyDisplayFail || ss1Fail) {
+  const adaptiveFail = adaptiveArms.some((arm) => "pass" in arm && !arm.pass);
+  if (anyImageFail || anyDisplayFail || ss1Fail || adaptiveFail) {
     return "fail";
   }
-  return ranImage.length > 0 && ranDisplay.length > 0 && ss1Ran
+  return ranImage.length > 0 && ranDisplay.length > 0 && ss1Ran && adaptiveRan
     ? "pass"
     : "skipped";
 }
@@ -3251,6 +3402,150 @@ async function runSs1DisplayDownsampleCheck(): Promise<
   } finally {
     backend.destroy();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Standalone adaptive density-estimate agreement check
+// ---------------------------------------------------------------------------
+
+/** The check's raster: 192x108 display is small enough that the CPU ORACLE
+ * (`adaptiveDownsampleFlame`) runs in tens of milliseconds per arm — at the
+ * bench's own 960x540 the oracle itself would become the sweep's longest
+ * phase — while still spanning several radius classes. Accumulation is 2x,
+ * so the phase-corrected even-supersample kernels are exercised. */
+const ADAPT_DISPLAY_WIDTH = 192;
+const ADAPT_DISPLAY_HEIGHT = 108;
+const ADAPT_ACCUM_SCALE = 2;
+const ADAPT_ITERATIONS = 8_000_000;
+
+/** The app's default params and the imported-genome classic — both inside
+ * the panel's slider ranges, so the leg certifies what the UI can author:
+ * the default (6/0.4/0) leaves well-sampled cells pin-sharp while empty
+ * ones take the widest radius, and the imported classic (11/0.6/2) keeps a
+ * nonzero minimum floor and narrows much faster with count. */
+const ADAPT_PARAM_SETS: DensityEstimatorParams[] = [
+  { estimatorRadius: 6, estimatorMinimumRadius: 0, estimatorCurve: 0.4 },
+  { estimatorRadius: 11, estimatorMinimumRadius: 2, estimatorCurve: 0.6 },
+];
+
+/**
+ * One dimension's adaptive-display agreement arm: prepare the same engines
+ * a full scenario run uses (first of each kind), at the small raster above,
+ * accumulate a fixed budget, then compare `adaptiveDisplay` against
+ * `adaptiveDownsampleFlame` for each param set — same histogram, same
+ * params, both engines fed the identical snapshot readback.
+ *
+ * The GPU side consumes the resident emulated-u64 histogram; the CPU side
+ * consumes `backend.snapshot()`'s conversion of that same buffer, so this
+ * compares GATHER arithmetic only, exactly like the display-downsample leg
+ * compares `snapshotDisplay` against `downsampleFlame`. Progress is also
+ * checked: the band callback must be called at least once and must reach
+ * the pass's total exactly.
+ */
+async function runAdaptiveDisplayArm(
+  kind: "3d" | "4d",
+): Promise<AdaptiveDisplayMetrics | SkippedResult> {
+  const def = SCENARIOS.find(
+    (s): s is ScenarioDef3D | ScenarioDef4D => s.kind === kind,
+  );
+  if (!def) {
+    return { skipped: `no ${kind} scenario to build the adaptive check from` };
+  }
+  const width = ADAPT_DISPLAY_WIDTH * ADAPT_ACCUM_SCALE;
+  const height = ADAPT_DISPLAY_HEIGHT * ADAPT_ACCUM_SCALE;
+  const engines =
+    def.kind === "3d"
+      ? prepare3D(def, width, height, ADAPT_DISPLAY_WIDTH, ADAPT_DISPLAY_HEIGHT)
+      : prepare4D(
+          def,
+          width,
+          height,
+          ADAPT_DISPLAY_WIDTH,
+          ADAPT_DISPLAY_HEIGHT,
+        );
+  let backend: FlameAccumBackend;
+  try {
+    backend = await engines.createBackend();
+  } catch (e) {
+    return { skipped: describeError(e) };
+  }
+  try {
+    if (!backend.adaptiveDisplay) {
+      return { skipped: "backend has no adaptiveDisplay" };
+    }
+    const adaptiveDisplay = backend.adaptiveDisplay.bind(backend);
+    const retired = await backend.accumulate(ADAPT_ITERATIONS);
+    if (retired < ADAPT_ITERATIONS) {
+      throw new Error(
+        `[gpu-bench] adaptive check: backend.accumulate(${ADAPT_ITERATIONS}) ` +
+          `retired only ${retired} iterations`,
+      );
+    }
+    const full = await backend.snapshot();
+
+    let worst: AdaptiveDisplayMetrics | null = null;
+    for (const params of ADAPT_PARAM_SETS) {
+      const out = createFlameHistogram(
+        ADAPT_DISPLAY_WIDTH,
+        ADAPT_DISPLAY_HEIGHT,
+      );
+      let bands = 0;
+      let finalDone = -1;
+      let finalTotal = -1;
+      const cpuStart = performance.now();
+      const expected = adaptiveDownsampleFlame(
+        full,
+        ADAPT_DISPLAY_WIDTH,
+        ADAPT_DISPLAY_HEIGHT,
+        params,
+      );
+      const cpuMs = performance.now() - cpuStart;
+      const gpuStart = performance.now();
+      const gpu = await adaptiveDisplay(full, params, out, (done, total) => {
+        bands++;
+        finalDone = done;
+        finalTotal = total;
+        return true;
+      });
+      const gpuMs = performance.now() - gpuStart;
+      const comparison = compareAdaptiveDisplay(gpu, expected);
+      const metrics: AdaptiveDisplayMetrics = {
+        ...comparison,
+        cpuMs,
+        gpuMs,
+        bands,
+        pass:
+          comparison.pass &&
+          bands >= 1 &&
+          finalDone === finalTotal &&
+          finalTotal > 0,
+      };
+      if (
+        worst === null ||
+        (worst.pass && !metrics.pass) ||
+        (worst.pass === metrics.pass &&
+          (metrics.maxRelHitsError > worst.maxRelHitsError ||
+            (metrics.maxRelHitsError === worst.maxRelHitsError &&
+              metrics.maxRelColorError > worst.maxRelColorError)))
+      ) {
+        worst = metrics;
+      }
+    }
+    return worst ?? { skipped: "no adaptive param sets ran" };
+  } finally {
+    backend.destroy();
+  }
+}
+
+/** Both dimensions' arms — the result shape `BenchResults` carries. */
+async function runAdaptiveDisplayCheck(): Promise<{
+  d3: AdaptiveDisplayMetrics | SkippedResult;
+  d4: AdaptiveDisplayMetrics | SkippedResult;
+}> {
+  return {
+    d3: await runAdaptiveDisplayArm("3d"),
+    d4: await runAdaptiveDisplayArm("4d"),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -18452,8 +18747,13 @@ async function main(): Promise<void> {
     // "skipped" (not yet run) until runAll's own ss=1 check completes — see
     // computeAgreement.
     ss1DisplayDownsample: { skipped: "not yet run" },
+    // Same "not yet run" state for the adaptive arms.
+    adaptiveDisplay: {
+      d3: { skipped: "not yet run" },
+      d4: { skipped: "not yet run" },
+    },
     // "skipped" until every leg (every scenario's comparison/displayDownsample
-    // plus ss1DisplayDownsample) actually runs — see computeAgreement.
+    // plus the ss=1 and adaptive checks) actually runs — see computeAgreement.
     agreement: "skipped",
   };
   window.__BENCH_RESULTS__ = benchResults;
@@ -18466,6 +18766,7 @@ async function main(): Promise<void> {
     benchResults.agreement = computeAgreement(
       benchResults.scenarios,
       benchResults.ss1DisplayDownsample,
+      benchResults.adaptiveDisplay,
     );
   }
 
@@ -18553,6 +18854,12 @@ async function main(): Promise<void> {
         activity.setState("gpu", "GPU ss=1 check…");
         benchResults.ss1DisplayDownsample =
           await runSs1DisplayDownsampleCheck();
+        // The adaptive density-estimate agreement legs — one per dimension,
+        // both running the production backend against the CPU oracle. Same
+        // standalone, always-on rationale as the ss=1 check above.
+        window.__BENCH_ACTIVE__ = "adaptive-display";
+        activity.setState("gpu", "GPU adaptive check…");
+        benchResults.adaptiveDisplay = await runAdaptiveDisplayCheck();
         activity.setState("idle", "Done");
         recomputeAgreement();
         renderResults();
