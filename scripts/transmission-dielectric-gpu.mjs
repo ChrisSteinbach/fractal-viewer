@@ -523,7 +523,7 @@ async function within(promise, timeoutMs, label) {
 async function main() {
   if (args.help) {
     console.log(
-      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass [--camera=canonical|grazing|cornerAdjacent] [--hyperPose=canonical|rotorA|rotorB] [--submissionProbe] [--rssTrace] --cancelProbe | --tileCheck=100x55,73x47 --window=37,29,121,67 | --poseCheck | --staged --fixture=menger3 --mode=glass --output=report.json]",
+      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass [--camera=canonical|grazing|cornerAdjacent] [--hyperPose=canonical|rotorA|rotorB] [--submissionProbe] [--rssTrace] --cancelProbe [--provisionalCancel] | --tileCheck=100x55,73x47 --window=37,29,121,67 | --poseCheck | --staged --fixture=menger3 --mode=glass --output=report.json]",
     );
     return;
   }
@@ -631,6 +631,16 @@ async function main() {
     throw new Error(
       "--rssTrace attributes the process-tree RSS timeline on the plain default path and cannot be combined with --cancelProbe, --tileCheck, --poseCheck, --staged or --submissionProbe",
     );
+  const provisionalCancelRequested = args.provisionalCancel === true;
+  if (provisionalCancelRequested && !cancelProbeRequested)
+    throw new Error("--provisionalCancel extends --cancelProbe");
+  if (provisionalCancelRequested && modeNames[0] !== "glass")
+    throw new Error("--provisionalCancel requires --mode=glass");
+  // The provisional cancel probe runs every stage — baseline, cancelled run
+  // and byte-identity follow-up — at the staged preview's one-sample shape.
+  const provisionalCancelOptions = provisionalCancelRequested
+    ? { samplesPerPixel: 1, provisional: true, replayPassDiagnostic: true }
+    : {};
   if (
     stagedRequested &&
     !Object.hasOwn(STAGED_AUTHORITATIVE_BASELINES, fixtureNames[0])
@@ -919,6 +929,7 @@ async function main() {
     if (cancelProbeRequested) {
       const baselineItem = await execute({
         ...options,
+        ...provisionalCancelOptions,
         fixture: fixtureNames[0],
         mode: modeNames[0],
       });
@@ -938,6 +949,7 @@ async function main() {
       let finished = false;
       const runPromise = execute({
         ...options,
+        ...provisionalCancelOptions,
         fixture: fixtureNames[0],
         mode: modeNames[0],
       }).finally(() => {
@@ -1003,6 +1015,7 @@ async function main() {
         item.runtime.lost === null;
       cancellationProbe = {
         requested: true,
+        provisional: provisionalCancelRequested,
         passed: cancelledCleanly && acknowledgementWithinTarget,
         cancelledCleanly,
         responsiveness: {
@@ -1574,11 +1587,18 @@ async function main() {
           options.camera !== undefined || options.hyperPose !== undefined
             ? `-${options.camera ?? "canonical"}-${options.hyperPose ?? "canonical"}`
             : "";
-        const itemOptions = { ...options, fixture, mode };
+        const itemOptions = {
+          ...options,
+          ...provisionalCancelOptions,
+          fixture,
+          mode,
+        };
         const observed = await executeImage(
           itemOptions,
           (row) =>
-            `${fixture}-${mode}${poseSuffix}-${row.width}x${row.height}.png`,
+            `${fixture}-${mode}${poseSuffix}${
+              provisionalCancelRequested ? "-provisional1spp" : ""
+            }-${row.width}x${row.height}.png`,
           rssTraceRequested,
         );
         const { item } = observed;
