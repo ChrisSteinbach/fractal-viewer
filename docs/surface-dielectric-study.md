@@ -296,6 +296,81 @@ stage's worst checkpoint (~108 ms) sits well under the 4-SPP canonical's
 qualified in both dimensions. Records:
 `cancel-provisional-256x144-{menger,hyper4}.json`.
 
+## Decided feasibility envelope (delegated authority)
+
+On 13 September 2026 Chris Steinbach delegated the numeric envelope
+decisions to the working session ("I want you to decide these things… This
+is a hobby project. If you decide something that it turns out I don't like
+we can just drop it or change it later."), inverting the earlier
+no-unilateral-verdict guardrail for these lines only. The appearance
+selection remains his and is untouched. The decisions below are therefore
+recorded as delegated, reasoned, and reversible — the evidence above is
+unchanged; only the acceptance lines move.
+
+**1. Cancellation checkpoint line: 600 ms (was 500 ms).** The 3D full-HD
+worst submission is 545–560 ms of real GPU transport work (timestamp-proven;
+tile shape, pacing, grid isolation and dispatch chunking all measured
+ineffective because the floor is one dense pixel's own light path, which no
+schedule can interrupt). The 50–100 ms gap to the old line is imperceptible
+on a 78-second export; re-qualifying the optics to chase it would risk the
+selected look for nothing. Every measured row passes 600 ms in both
+dimensions (4D full-HD 445.7 ms; 256×144 rows ≤ 297.5 ms; host
+acknowledgements ≤ 179.2 ms everywhere).
+
+**2. Additional-state certification scope: retained render state (whole-tree
+observation stays recorded).** The 128 MiB line exists to catch unbounded
+retained growth. Measured retention during render is +13 MB with GC saws
+reclaimed in place; render-phase max minus controls is 81.5 MB (3D) / 86.2 MB
+(4D) — both pass with headroom. The boot-inclusive whole-tree delta
+(198.4/190.0 MB) decomposes into one-time browser/device/WGSL-compile warm-up
+(~51–54 MB) and the launcher's one-shot base64→RGBA→PNG encode burst
+(~100–109 MB, reclaimed when the save ends); it stays in the records as a
+watch metric, and the render tile bands would expose any future genuine leak.
+
+**3. Provisional-preview line: 1.5 s in both dimensions (was 1 s).** The
+staged design's quick first picture is the user-facing preview; the refined
+four-sample image completes behind it and the settled/export targets are
+unchanged. 3D's glass is denser (more resolved bounces per pixel — the
+replay-attempt diagnostic shows 3D needs five of six replay passes where 4D
+needs three), and every setup/submission lever is measured; ~1.0 s is not
+physically reachable in 3D. 1.3 s versus 1.0 s is not a perceivable
+difference; 4 s was, and the staged design already removed it. Judged on the
+production-realistic shape — see below.
+
+**4. Production-realistic reuse (the staged task's last acceptance item).**
+`--staged --stagedReuse` holds the device, bind-group layout, compiled
+pipelines and one controls run across the three arms — the way a production
+app holds its GPU setup. Measured (quiet RX 7900 XTX / Chromium, 256×144):
+
+| Staged arm (full delivery wall)   | 3D default | 3D reuse | 4D default | 4D reuse |
+| --------------------------------- | ---------: | -------: | ---------: | -------: |
+| Provisional cold (creates cache)  |     2157.9 |   1590.3 |     1090.0 |   1145.5 |
+| Authoritative 4-SPP               |     3874.6 |   3686.5 |     2416.4 |   2305.7 |
+| Provisional warm (full cache hit) |     1260.6 |   1165.3 |      828.0 |    753.9 |
+
+Setup per arm under reuse: cold pays device+controls+pipeline once
+(17.6/105.6/44.6 ms 3D); the authoritative arm pays only its new 4-SPP module
+compile (39.5 ms, device and controls 0.0); the warm arm is a full cache hit
+(0.0 ms setup). Determinism holds on a held device: the authoritative arm
+still reproduces the pinned RGBA/completion/residual/refusal bytes exactly,
+and the warm provisional stays byte-identical to cold — the identity gates
+pass in full in both dimensions. Under the decided lines the warm
+provisional gates at 1165.3 ms (3D) / 753.9 ms (4D) against 1.5 s.
+
+**5. Envelope verdict.** Under the decided lines every gate passes in both
+dimensions: staged provisional preview (1.5 s), settled 512×288 (10 s),
+export 1920×1080 (120 s), cancellation checkpoints (600 ms), retained
+additional state (128 MiB), tile/window byte-identity, pose matrix and
+refusal cleanliness. The earlier no-go statements in this document were
+measured under the previous working lines and are superseded by this
+section; the numbers themselves stand. The release gate is closed on this
+basis and the production-integration tasks are unblocked. If Chris
+disagrees with any line, reopening the decision is a one-line change here
+and in the harness constants — the evidence does not move.
+
+The reuse records are `staged-reuse-256x144-{menger,hyper4}.json` and the
+sanity default `staged-256x144-menger.json` (gitignored, regenerable).
+
 ## Owner-selected full-size result
 
 The [1024×1024 comparison](../scripts/out/transmission-dielectric-review.html)

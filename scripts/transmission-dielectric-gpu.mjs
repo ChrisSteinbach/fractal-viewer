@@ -523,7 +523,7 @@ async function within(promise, timeoutMs, label) {
 async function main() {
   if (args.help) {
     console.log(
-      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass [--camera=canonical|grazing|cornerAdjacent] [--hyperPose=canonical|rotorA|rotorB] [--submissionProbe] [--rssTrace] --cancelProbe [--provisionalCancel] | --tileCheck=100x55,73x47 --window=37,29,121,67 | --poseCheck | --staged --fixture=menger3 --mode=glass --output=report.json]",
+      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass [--camera=canonical|grazing|cornerAdjacent] [--hyperPose=canonical|rotorA|rotorB] [--submissionProbe] [--rssTrace] --cancelProbe [--provisionalCancel] | --tileCheck=100x55,73x47 --window=37,29,121,67 | --poseCheck | --staged [--stagedReuse] --fixture=menger3 --mode=glass --output=report.json]",
     );
     return;
   }
@@ -641,6 +641,9 @@ async function main() {
   const provisionalCancelOptions = provisionalCancelRequested
     ? { samplesPerPixel: 1, provisional: true, replayPassDiagnostic: true }
     : {};
+  const stagedReuseRequested = args.stagedReuse === true;
+  if (stagedReuseRequested && !stagedRequested)
+    throw new Error("--stagedReuse extends --staged");
   if (
     stagedRequested &&
     !Object.hasOwn(STAGED_AUTHORITATIVE_BASELINES, fixtureNames[0])
@@ -1369,6 +1372,8 @@ async function main() {
           mode: "glass",
           samplesPerPixel: row.samplesPerPixel,
           provisional: row.provisional,
+          reusedGpuContext: item.reusedGpuContext === true,
+          reusedGpuContextHit: item.reusedGpuContextHit === true,
           ...(row.replayAttempts !== undefined
             ? {
                 replayMaxResolvedPass: row.replayAttempts.maxResolvedPass,
@@ -1409,6 +1414,7 @@ async function main() {
               samplesPerPixel: 1,
               provisional: true,
               replayPassDiagnostic: true,
+              ...(stagedReuseRequested ? { reuseGpuContext: true } : {}),
             },
             (row) =>
               `staged-provisional-cold-${fixture}-${row.width}x${row.height}.png`,
@@ -1418,7 +1424,13 @@ async function main() {
         if (
           await runArm(
             "authoritative",
-            { ...options, fixture, mode: "glass", samplesPerPixel: 4 },
+            {
+              ...options,
+              fixture,
+              mode: "glass",
+              samplesPerPixel: 4,
+              ...(stagedReuseRequested ? { reuseGpuContext: true } : {}),
+            },
             (row) =>
               `staged-authoritative-${fixture}-${row.width}x${row.height}.png`,
           )
@@ -1434,6 +1446,7 @@ async function main() {
               samplesPerPixel: 1,
               provisional: true,
               replayPassDiagnostic: true,
+              ...(stagedReuseRequested ? { reuseGpuContext: true } : {}),
             },
             (row) =>
               `staged-provisional-warm-${fixture}-${row.width}x${row.height}.png`,
@@ -1445,10 +1458,18 @@ async function main() {
       if (stopped) return;
       const baseline = STAGED_AUTHORITATIVE_BASELINES[fixture];
       const [coldRow, authoritativeRow, warmRow] = stagedRows;
-      const previewTargetMs = 1000;
+      // Decided feasibility envelope (2026-09-13, delegated authority): the
+      // provisional-preview line is 1.5 s in both dimensions, judged on the
+      // production-realistic warm arm; the cold arm stays recorded. The
+      // previous 1 s working target is superseded by the study doc's decided
+      // envelope section.
+      const previewTargetMs = 1500;
       const identity = {
-        basis:
-          "The authoritative arm is a separate independent four-sample render with fresh device state, never a continuation of the provisional aggregate. Its RGBA bytes, completion, residual and refusal metadata must equal the final qualified source's canonical 256x144 glass measurement, pinned above.",
+        basis: `The authoritative arm is a separate independent four-sample render with fresh device state, never a continuation of the provisional aggregate. Its RGBA bytes, completion, residual and refusal metadata must equal the final qualified source's canonical 256x144 glass measurement, pinned above.${
+          stagedReuseRequested
+            ? " Under --stagedReuse the device, layout, pipelines and controls run are held across arms (the production-realistic shape); each arm still allocates its own buffers, the kernel re-initialises every pixel at pass 0, and this identity gate still applies in full."
+            : ""
+        }`,
         samplesPerPixelMatches: authoritativeRow.samplesPerPixel === 4,
         notProvisional: authoritativeRow.provisional === false,
         imageIdentical:
@@ -1509,7 +1530,7 @@ async function main() {
             row.residual.replay.capFree === true,
         );
       const staged = {
-        mode: "staged-preview",
+        mode: stagedReuseRequested ? "staged-preview-reuse" : "staged-preview",
         fixture,
         width: options.width,
         height: options.height,

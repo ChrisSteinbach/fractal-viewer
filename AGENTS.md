@@ -950,15 +950,18 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     shader body for both dialects. Both engines share material lane order;
     CPU values and classic shader bytes are pinned. Finish
     persists/morphs/mutates like fold lengths; random-system never rolls one.
-    TRANSMISSION: owner selected finite-solid 3D/4D glass; realism is not required,
-    production qualification open. Evidence: `docs/surface-dielectric-study.md`.
-    Pattern-albedo remains REFUSED; the rings-wood refusal, confirmed zoom
-    premise and deferred sheets banding live in `scripts/finish-pattern.harness.ts`.
+    TRANSMISSION: owner selected finite-solid 3D/4D glass; realism not required.
+    The feasibility envelope was DECIDED 2026-09-13 on delegated authority
+    (preview 1.5s both dimensions, cancel checkpoints 600ms, additional state
+    certified on retained-render scope) — production integration UNBLOCKED.
+    Evidence: `docs/surface-dielectric-study.md`.
+    Pattern-albedo remains REFUSED; refusals and deferred banding live in
+    `scripts/finish-pattern.harness.ts`.
     Authored rigs (`surface-lighting.ts`) share ONE shader emitter across both
     dimensions/engines: absent state is legacy, visibility uses the displayed DE,
     unresolved rays stay dark, HDR averages before clipping. NO PARTICIPATING
-    MEDIUM — REMOVED on measured cost; fence work does not buy it back.
-    Its return is a look call; decoded `medium` is IGNORED, never rejected.
+    MEDIUM — REMOVED on measured cost. Its return is a look call; decoded
+    `medium` is IGNORED, never rejected.
     Points authors the rig in both dimensions with transient displayed-space
     disk/aim guides, excluded from PNGs and Collection thumbnails.
     Record: `docs/cinematic-surface-lighting.md`.

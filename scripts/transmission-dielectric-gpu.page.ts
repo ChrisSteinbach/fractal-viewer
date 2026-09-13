@@ -39,6 +39,7 @@ type Options = {
   provisional?: boolean;
   replayPassDiagnostic?: boolean;
   submissionProbe?: boolean;
+  reuseGpuContext?: boolean;
 };
 
 type CameraPose = {
@@ -242,6 +243,26 @@ function gpuBuffer(
     usage,
   });
 }
+
+// Opt-in production-realistic reuse (--stagedReuse): a held device, bind-group
+// layout, compiled pipelines and one controls run live across page
+// invocations, the way a production app holds its GPU setup. The cached
+// controls validate the shared transport body, whose entry point the SPP
+// parameter does not touch, so one run per device covers every arm. Render
+// outputs are never carried across arms: the kernel re-initialises every
+// pixel at pass 0 and each arm allocates its own buffers, so determinism is
+// still verified per arm against the pinned baselines.
+type ReusedGpuContext = {
+  device: GPUDevice;
+  adapterInfo: GPUAdapterInfo & { isFallbackAdapter?: boolean };
+  layout: GPUBindGroupLayout;
+  pipelines: Map<
+    string,
+    { module: GPUShaderModule; pipeline: GPUComputePipeline }
+  >;
+  controls: Awaited<ReturnType<typeof runDielectricGpuControls>>;
+};
+let reusedGpuContext: ReusedGpuContext | null = null;
 
 function base64(bytes: Uint8Array) {
   let text = "";
@@ -976,48 +997,57 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
   if (runReserved)
     return { inconclusive: "another dielectric run is already active" };
   runReserved = true;
+  const reuseGpuContext = input.reuseGpuContext === true;
+  const cachedContext = reuseGpuContext ? reusedGpuContext : null;
   const adapterDeviceSetupStarted = performance.now();
-  let adapter: GPUAdapter | null;
-  try {
-    adapter =
-      (await navigator.gpu?.requestAdapter({
-        powerPreference: "high-performance",
-      })) ?? null;
-  } catch (error) {
-    runReserved = false;
-    throw error;
-  }
-  if (!adapter) {
-    runReserved = false;
-    return { inconclusive: "no WebGPU adapter" };
-  }
-  const info = adapter.info as GPUAdapterInfo & { isFallbackAdapter?: boolean };
-  if (
-    (adapter as GPUAdapter & { isFallbackAdapter?: boolean })
-      .isFallbackAdapter ||
-    info.isFallbackAdapter ||
-    [info.vendor, info.architecture, info.device, info.description].some(
-      (value) => /swiftshader|llvmpipe|software/i.test(value),
-    )
-  ) {
-    runReserved = false;
-    return {
-      inconclusive: "browser adapter is fallback or software",
-      browserAdapter: info,
-    };
-  }
+  let info: GPUAdapterInfo & { isFallbackAdapter?: boolean };
   let device: GPUDevice;
-  // Timestamp queries need the explicit feature; when the probe is off (or the
-  // adapter lacks it) the device request is identical to every recorded run.
-  const timestampQuery =
-    submissionProbe && adapter.features.has("timestamp-query");
-  try {
-    device = await adapter.requestDevice(
-      timestampQuery ? { requiredFeatures: ["timestamp-query"] } : undefined,
-    );
-  } catch (error) {
-    runReserved = false;
-    throw error;
+  // Timestamp queries need the explicit feature; when the probe is off (or
+  // the adapter lacks it) the device request is identical to every recorded
+  // run.
+  let timestampQuery = false;
+  if (cachedContext !== null) {
+    info = cachedContext.adapterInfo;
+    device = cachedContext.device;
+  } else {
+    let adapter: GPUAdapter | null;
+    try {
+      adapter =
+        (await navigator.gpu?.requestAdapter({
+          powerPreference: "high-performance",
+        })) ?? null;
+    } catch (error) {
+      runReserved = false;
+      throw error;
+    }
+    if (!adapter) {
+      runReserved = false;
+      return { inconclusive: "no WebGPU adapter" };
+    }
+    info = adapter.info;
+    if (
+      (adapter as GPUAdapter & { isFallbackAdapter?: boolean })
+        .isFallbackAdapter ||
+      info.isFallbackAdapter ||
+      [info.vendor, info.architecture, info.device, info.description].some(
+        (value) => /swiftshader|llvmpipe|software/i.test(value),
+      )
+    ) {
+      runReserved = false;
+      return {
+        inconclusive: "browser adapter is fallback or software",
+        browserAdapter: info,
+      };
+    }
+    timestampQuery = submissionProbe && adapter.features.has("timestamp-query");
+    try {
+      device = await adapter.requestDevice(
+        timestampQuery ? { requiredFeatures: ["timestamp-query"] } : undefined,
+      );
+    } catch (error) {
+      runReserved = false;
+      throw error;
+    }
   }
   const adapterDeviceSetupMs = performance.now() - adapterDeviceSetupStarted;
   if (activeRun !== null) {
@@ -1063,11 +1093,14 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
   });
   try {
     const controlsStarted = performance.now();
-    const controls = await runDielectricGpuControls(
-      device,
-      dielectricWgsl(spp, { pendingPassDiagnostic }),
-      OUTPUT_PIXEL_BYTES,
-    );
+    const controls =
+      cachedContext !== null
+        ? cachedContext.controls
+        : await runDielectricGpuControls(
+            device,
+            dielectricWgsl(spp, { pendingPassDiagnostic }),
+            OUTPUT_PIXEL_BYTES,
+          );
     const controlsMs = performance.now() - controlsStarted;
     if (!controls.passed)
       return {
@@ -1086,38 +1119,67 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       };
     runProgress.stage = "pipeline";
     const pipelineSetupStarted = performance.now();
-    const module = device.createShaderModule({
-      code: dielectricWgsl(spp, { pendingPassDiagnostic }),
-    });
-    const messages = await module.getCompilationInfo();
-    const errors = messages.messages.filter(
-      (message) => message.type === "error",
-    );
-    if (errors.length)
-      throw new Error(errors.map((message) => message.message).join("\n"));
-    const layout = device.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "uniform" },
-        },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "uniform" },
-        },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "storage" },
-        },
-      ],
-    });
-    const pipeline = await device.createComputePipelineAsync({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-      compute: { module, entryPoint: "renderDielectric" },
-    });
+    const pipelineKey = `${spp}|${pendingPassDiagnostic ? "diag" : "plain"}`;
+    let module: GPUShaderModule;
+    let pipeline: GPUComputePipeline;
+    let layout: GPUBindGroupLayout;
+    if (cachedContext !== null && cachedContext.pipelines.has(pipelineKey)) {
+      module = cachedContext.pipelines.get(pipelineKey)!.module;
+      pipeline = cachedContext.pipelines.get(pipelineKey)!.pipeline;
+      layout = cachedContext.layout;
+    } else {
+      module = device.createShaderModule({
+        code: dielectricWgsl(spp, { pendingPassDiagnostic }),
+      });
+      const messages = await module.getCompilationInfo();
+      const errors = messages.messages.filter(
+        (message) => message.type === "error",
+      );
+      if (errors.length)
+        throw new Error(errors.map((message) => message.message).join("\n"));
+      layout =
+        cachedContext !== null
+          ? cachedContext.layout
+          : device.createBindGroupLayout({
+              entries: [
+                {
+                  binding: 0,
+                  visibility: GPUShaderStage.COMPUTE,
+                  buffer: { type: "uniform" },
+                },
+                {
+                  binding: 1,
+                  visibility: GPUShaderStage.COMPUTE,
+                  buffer: { type: "uniform" },
+                },
+                {
+                  binding: 2,
+                  visibility: GPUShaderStage.COMPUTE,
+                  buffer: { type: "storage" },
+                },
+              ],
+            });
+      pipeline = await device.createComputePipelineAsync({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        compute: { module, entryPoint: "renderDielectric" },
+      });
+      if (reuseGpuContext) {
+        if (cachedContext !== null) {
+          cachedContext.pipelines.set(pipelineKey, { module, pipeline });
+        } else {
+          reusedGpuContext = {
+            device,
+            adapterInfo: info,
+            layout,
+            pipelines: new Map([[pipelineKey, { module, pipeline }]]),
+            controls,
+          };
+          void device.lost.then(() => {
+            if (reusedGpuContext?.device === device) reusedGpuContext = null;
+          });
+        }
+      }
+    }
     const solid = gpuBuffer(
       device,
       DIELECTRIC_SOLID_PACKED_BYTES,
@@ -1799,6 +1861,8 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         isFallbackAdapter: !!info.isFallbackAdapter,
       },
       controls,
+      reusedGpuContext: reuseGpuContext,
+      reusedGpuContextHit: cachedContext !== null,
       options: {
         width,
         height,
@@ -1847,13 +1911,15 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     runProgress.stage = "cleanup";
     try {
       await device.queue.onSubmittedWorkDone();
-      device.destroy();
+      // A held (--stagedReuse) device outlives the arm; the page's own
+      // lifetime ends with the browser.
+      if (!reuseGpuContext) device.destroy();
       runProgress.cleanupCompleted = true;
     } catch (error) {
       runProgress.cleanupError =
         error instanceof Error ? error.message : String(error);
       try {
-        device.destroy();
+        if (!reuseGpuContext) device.destroy();
       } catch {
         // The first cleanup failure remains the useful diagnosis.
       }
