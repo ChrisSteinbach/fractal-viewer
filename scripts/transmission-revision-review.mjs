@@ -13,8 +13,14 @@ const root = process.cwd();
 const out = join(root, "scripts/out");
 const reviewPath = join(out, "transmission-revision-review.html");
 const manifestPath = join(out, "transmission-revision-review-manifest.json");
+const allowThumbnailMain = process.argv.includes("--allow-thumbnail-main");
+const MIN_MAIN_STILL_DIMENSION = 512;
+const MIN_MOTION_STILL_DIMENSION = 256;
+const MIN_CONTROL_STILL_DIMENSION = 256;
+const readableDir = "scripts/out/transmission-readable";
+const readableReportPath = `${readableDir}/report.json`;
 
-const sourceFiles = [
+const baseSourceFiles = [
   "docs/surface-transmission.md",
   "docs/surface-transmission-revision.md",
   "scripts/de-preview.ts",
@@ -87,8 +93,16 @@ const readJson = (path) => {
     );
   }
 };
+const reportBodyOf = (envelope) => envelope?.report ?? envelope;
 const dataUri = (path) =>
   `data:image/png;base64,${readFileSync(reportPath(path)).toString("base64")}`;
+const pngDimensions = (path) => {
+  const bytes = readFileSync(reportPath(path));
+  const signature = "89504e470d0a1a0a";
+  if (bytes.subarray(0, 8).toString("hex") !== signature)
+    throw new Error(`Expected PNG input: ${path}`);
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+};
 const link = (path, label = basename(path)) =>
   `<a href="${esc(relative(out, reportPath(path)))}">${esc(label)}</a>`;
 const value = (object, key, fallback = "—") =>
@@ -107,7 +121,7 @@ const bytes = (item) => {
 };
 
 const baseMissing = [
-  ...sourceFiles,
+  ...baseSourceFiles,
   ...reports,
   ...Object.values(gpuReports),
   ...Object.values(native4AnalyticControl),
@@ -118,6 +132,136 @@ if (baseMissing.length) {
     `Missing required transmission revision-review inputs:\n${baseMissing.join("\n")}`,
   );
 }
+
+if (!existsSync(reportPath(readableReportPath)))
+  throw new Error(
+    `Missing required readable transmission package report: ${readableReportPath}`,
+  );
+const readableReportEnvelope = readJson(readableReportPath);
+const readableReport = reportBodyOf(readableReportEnvelope);
+const readableJobs = readableReport.jobs;
+if (!Array.isArray(readableJobs))
+  throw new Error(`${readableReportPath} must contain a jobs array`);
+const expectedReadableJobKeys = [
+  ...["menger3", "native4"].flatMap((scene) =>
+    ["none", "weighted", "hard", "opaque"].map(
+      (mode) => `${scene}-still-${mode}`,
+    ),
+  ),
+  ...["analytic3", "analytic4"].flatMap((scene) =>
+    ["none", "weighted", "opaque", "rear-absent"].map(
+      (mode) => `${scene}-control-${mode}`,
+    ),
+  ),
+  ...["menger-camera", "native4-rotor", "native4-slice"].flatMap((key) =>
+    [0, 1, 2].flatMap((frame) =>
+      ["none", "weighted"].map((mode) => `motion-${key}-${frame}-${mode}`),
+    ),
+  ),
+];
+const jobsByKey = new Map(readableJobs.map((job) => [job.key, job]));
+if (
+  readableJobs.length !== expectedReadableJobKeys.length ||
+  jobsByKey.size !== expectedReadableJobKeys.length ||
+  expectedReadableJobKeys.some((key) => !jobsByKey.has(key))
+)
+  throw new Error(
+    "Readable package must contain exactly the 34 expected still, control and motion jobs",
+  );
+const readableJobReports = [];
+for (const key of expectedReadableJobKeys) {
+  const job = jobsByKey.get(key);
+  if (job.image?.path !== `${readableDir}/${key}.png`)
+    throw new Error(`Readable job ${key} has an unexpected PNG path`);
+  const summaryPath = `${readableDir}/${key}.json`;
+  if (JSON.stringify(readJson(summaryPath)) !== JSON.stringify(job))
+    throw new Error(`Readable job ${key} differs from its saved image summary`);
+  readableJobReports.push(summaryPath);
+  const counts = job.counts;
+  const termination = counts?.termination;
+  if (
+    !Number.isInteger(job.size) ||
+    job.size < 1 ||
+    counts?.terminationTotal !== job.size * job.size ||
+    termination?.domainComplete +
+      termination?.opaque +
+      termination?.noIntersection !==
+      job.size * job.size ||
+    counts?.unresolved !== 0 ||
+    counts?.stats?.exhausted !== 0 ||
+    ["unresolved", "residual", "layerCap", "sampleCap", "chunkCap"].some(
+      (reason) => termination?.[reason] !== 0,
+    )
+  )
+    throw new Error(`Readable job ${key} does not complete every ray`);
+}
+const jobOutputPath = (job) => job.image.path;
+const jobAsset = (key) => jobOutputPath(jobsByKey.get(key));
+const readableProvenanceFiles = readableReportEnvelope.sourceProvenance?.files;
+if (!readableProvenanceFiles || typeof readableProvenanceFiles !== "object")
+  throw new Error(`${readableReportPath} is missing sourceProvenance.files`);
+const readableSourceFiles = Object.keys(readableProvenanceFiles);
+for (const source of [
+  "scripts/transmission-bend-fixtures.ts",
+  "scripts/transmission-readable.worker.ts",
+  "scripts/transmission-readable.mjs",
+  "scripts/transmission-bend-tiles.harness.ts",
+])
+  if (!readableSourceFiles.includes(source))
+    throw new Error(`Readable source provenance is missing ${source}`);
+for (const [source, declaredHash] of Object.entries(readableProvenanceFiles)) {
+  const actualHash = createHash("sha256")
+    .update(readFileSync(reportPath(source)))
+    .digest("hex");
+  if (actualHash !== declaredHash)
+    throw new Error(`Readable package source provenance is stale: ${source}`);
+}
+const sourceHash = createHash("sha256")
+  .update(JSON.stringify(readableProvenanceFiles))
+  .digest("hex");
+if (sourceHash !== readableReportEnvelope.sourceProvenance.sourceHash)
+  throw new Error(
+    "Readable source hash does not match the declared file hashes",
+  );
+const sourceFiles = [...new Set([...baseSourceFiles, ...readableSourceFiles])];
+const readableMain = Object.fromEntries(
+  ["menger3", "native4"].map((scene) => [
+    scene,
+    Object.fromEntries(
+      ["none", "weighted", "hard", "opaque"].map((mode) => [
+        mode,
+        jobAsset(`${scene}-still-${mode}`),
+      ]),
+    ),
+  ]),
+);
+const readableAnalytic = Object.fromEntries(
+  ["analytic3", "analytic4"].map((scene) => [
+    scene,
+    Object.fromEntries(
+      ["none", "weighted", "opaque", "rearAbsent"].map((mode) => [
+        mode,
+        jobAsset(
+          `${scene}-control-${mode === "rearAbsent" ? "rear-absent" : mode}`,
+        ),
+      ]),
+    ),
+  ]),
+);
+const readableMotion = Object.fromEntries(
+  ["menger-camera", "native4-rotor", "native4-slice"].map((key) => [
+    key,
+    [0, 1, 2].map((frame) =>
+      Object.fromEntries(
+        ["none", "weighted"].map((mode) => [
+          mode,
+          jobAsset(`motion-${key}-${frame}-${mode}`),
+        ]),
+      ),
+    ),
+  ]),
+);
+const readableRequiredPngs = expectedReadableJobKeys.map(jobAsset);
 
 const layerReport = readJson(reports[0]);
 const noiseReport = readJson(reports[1]);
@@ -163,15 +307,101 @@ if (missingMotion.length)
     `Missing required motion stills:\n${missingMotion.join("\n")}`,
   );
 
+const readableMissing = readableRequiredPngs.filter(
+  (path, index, all) =>
+    !existsSync(reportPath(path)) || all.indexOf(path) !== index,
+);
+if (readableMissing.length)
+  throw new Error(
+    `Readable package is missing required PNG inputs or contains duplicate paths:\n${readableMissing.join("\n")}`,
+  );
+const readableMotionPaths = Object.values(readableMotion).flatMap((frames) =>
+  frames.flatMap((modes) => Object.values(modes)),
+);
+
+const mainStillPaths = Object.values(readableMain).flatMap((modes) =>
+  Object.values(modes),
+);
+const controlStillPaths = Object.values(readableAnalytic).flatMap((modes) =>
+  Object.values(modes),
+);
+const allStaticPngs = [
+  ...stills,
+  native4AnalyticControl.image,
+  ...readableRequiredPngs,
+];
+const stillDimensions = Object.fromEntries(
+  allStaticPngs.map((path) => [path, pngDimensions(path)]),
+);
+const motionDimensions = Object.fromEntries(
+  [...dynamicMotionStills, ...readableMotionPaths].map((path) => [
+    path,
+    pngDimensions(path),
+  ]),
+);
+for (const key of expectedReadableJobKeys) {
+  const job = jobsByKey.get(key);
+  const actual = pngDimensions(job.image.path);
+  if (
+    actual.width !== job.size ||
+    actual.height !== job.size ||
+    actual.width !== job.image.naturalSize?.width ||
+    actual.height !== job.image.naturalSize?.height
+  )
+    throw new Error(`Readable PNG dimensions disagree with job ${key}`);
+  const actualHash = createHash("sha256")
+    .update(readFileSync(reportPath(job.image.path)))
+    .digest("hex");
+  if (actualHash !== job.image.sha256)
+    throw new Error(`Readable PNG hash disagrees with job ${key}`);
+}
+const undersizedMainStills = mainStillPaths.filter((path) => {
+  const size = stillDimensions[path];
+  return Math.min(size.width, size.height) < MIN_MAIN_STILL_DIMENSION;
+});
+const undersizedMotionStills = readableMotionPaths.filter((path) => {
+  const size = motionDimensions[path];
+  return Math.min(size.width, size.height) < MIN_MOTION_STILL_DIMENSION;
+});
+const undersizedControlStills = controlStillPaths.filter((path) => {
+  const size = stillDimensions[path];
+  return Math.min(size.width, size.height) < MIN_CONTROL_STILL_DIMENSION;
+});
+if (undersizedMainStills.length && !allowThumbnailMain) {
+  throw new Error(
+    `Readable main comparison stills must be at least ${MIN_MAIN_STILL_DIMENSION}px (got: ${undersizedMainStills.join(", ")}). Regenerate high-resolution evidence or pass --allow-thumbnail-main for an explicitly diagnostic-only review.`,
+  );
+}
+if (
+  (undersizedMotionStills.length || undersizedControlStills.length) &&
+  !allowThumbnailMain
+)
+  throw new Error(
+    `Readable motion/control stills are below required viewing dimensions (motion ${MIN_MOTION_STILL_DIMENSION}px, controls ${MIN_CONTROL_STILL_DIMENSION}px): ${[...undersizedMotionStills, ...undersizedControlStills].join(", ")}. Pass --allow-thumbnail-main only for diagnostic review.`,
+  );
+
 const artifactFiles = [
   ...reports,
   ...Object.values(gpuReports),
   ...Object.values(native4AnalyticControl),
   ...stills,
   ...dynamicMotionStills,
+  readableReportPath,
+  ...readableJobReports,
+  ...readableRequiredPngs,
 ];
 const image = (path, alt) =>
   `<img src="${dataUri(path)}" alt="${esc(alt)}" loading="lazy">`;
+const imageHref = (path) => esc(relative(out, reportPath(path)));
+const sizeLabel = (path) => {
+  const size = stillDimensions[path];
+  return `${size.width}×${size.height}`;
+};
+const linkedImage = (path, alt) =>
+  `<a href="${imageHref(path)}" target="_blank" rel="noreferrer">${image(path, alt)}</a>`;
+const visualStatus = undersizedMainStills.length
+  ? `Diagnostic thumbnail override enabled for ${undersizedMainStills.length} main stills; these images are not a viewing-resolution comparison.`
+  : `Main comparison stills meet the ${MIN_MAIN_STILL_DIMENSION}px minimum dimension.`;
 
 const layerRows = Array.isArray(layerReport) ? layerReport : [];
 const noiseRows = Array.isArray(noiseReport) ? noiseReport : [];
@@ -348,16 +578,17 @@ const motionData = motionGroups.map((group) => ({
   isolated: group.isolated,
   frames: group.frames.map((frame, index) => {
     const frameName = String(frame.frame ?? index);
+    const readableFrames = readableMotion[group.key];
+    const readableFrame = readableFrames[index];
     return {
       frame: frameName,
-      pose: frame.pose,
-      straight: dataUri(
-        `scripts/out/transmission-bend-motion-${group.key}-${frameName}-none.png`,
-      ),
-      weighted: dataUri(
-        `scripts/out/transmission-bend-motion-${group.key}-${frameName}-weighted.png`,
-      ),
-      delta: frame.straightWeightedDelta,
+      pose: jobsByKey.get(`motion-${group.key}-${index}-none`).pose,
+      straight: dataUri(readableFrame.none),
+      weighted: dataUri(readableFrame.weighted),
+      straightSize: motionDimensions[readableFrame.none],
+      weightedSize: motionDimensions[readableFrame.weighted],
+      straightPath: relative(out, reportPath(readableFrame.none)),
+      weightedPath: relative(out, reportPath(readableFrame.weighted)),
     };
   }),
 }));
@@ -374,21 +605,35 @@ const diagnosticWitnessText = diagnosticWitness
   : "worst transport witness unavailable";
 const native4AnalyticText = JSON.stringify(native4AnalyticReport, null, 2);
 const archiveProvenanceText = `primary/control/calibration: ${archiveProvenance(gpuEnvelope)}; diagnostic: ${archiveProvenance(gpuDiagnostic64Envelope)}`;
+const readableReportText = JSON.stringify(readableReport, null, 2);
 
 const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Transmission revision review — UNREVIEWED</title>
 <style>
-body{margin:24px auto;max-width:1500px;padding:0 18px;background:#101216;color:#e6e9ef;font:15px system-ui,sans-serif;line-height:1.45}h1,h2{color:#fff}.status{padding:14px;border:2px solid #e7ad45;background:#2b2212}.limits{padding:14px;border:2px solid #c95b5b;background:#30191d}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}.triple{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.grid img,.pair img,.triple img{width:100%;height:auto;background:#050608}.control{max-width:700px}.control img{width:100%;image-rendering:pixelated}.triple img,.scrub img{image-rendering:pixelated}.card{padding:12px;border:1px solid #454b55;background:#171a20;margin:12px 0}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{padding:6px 9px;border:1px solid #4b515a;text-align:left;vertical-align:top}th{background:#252a32}code{background:#222831;padding:2px 4px}a{color:#9dccff}.scrub{border:1px solid #454b55;padding:12px;margin:14px 0}.scrub-controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.scrub img{max-width:48%;width:48%;background:#050608}.scrub-views{display:flex;gap:12px}.small{color:#b8bec8;font-size:13px}.metric{font-variant-numeric:tabular-nums}
+body{margin:24px auto;max-width:1500px;padding:0 18px;background:#101216;color:#e6e9ef;font:15px system-ui,sans-serif;line-height:1.45}h1,h2{color:#fff}.status{padding:14px;border:2px solid #e7ad45;background:#2b2212}.limits{padding:14px;border:2px solid #c95b5b;background:#30191d}.hero-grid{display:grid;grid-template-columns:1fr;gap:20px;max-width:1082px}.hero-card{padding:14px;border:1px solid #59616e;background:#171a20}.hero-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.hero-figure,.secondary-figure{margin:0}.hero-figure img,.secondary-figure img{display:block;width:auto;max-width:100%;height:auto;background:#050608}.hero-figure figcaption,.secondary-figure figcaption{margin-top:7px;color:#cbd1da}.hero-card details{margin-top:14px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}.triple{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.grid img,.pair img,.triple img{width:auto;max-width:100%;height:auto;background:#050608}.control{max-width:700px}.control img{display:block;width:auto;max-width:100%;height:auto}.card{padding:12px;border:1px solid #454b55;background:#171a20;margin:12px 0}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{padding:6px 9px;border:1px solid #4b515a;text-align:left;vertical-align:top}th{background:#252a32}code{background:#222831;padding:2px 4px}a{color:#9dccff}.scrub{border:1px solid #454b55;padding:12px;margin:14px 0}.scrub-controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.scrub img{display:block;width:auto;max-width:100%;height:auto;background:#050608}.scrub-views{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}.scrub-views figure{margin:0}.small{color:#b8bec8;font-size:13px}.metric{font-variant-numeric:tabular-nums}@media(max-width:800px){.hero-grid{grid-template-columns:1fr}.hero-pair,.scrub-views{grid-template-columns:1fr}.hero-figure img,.secondary-figure img{width:100%}}
 </style>
-<h1>Transmission revision evidence</h1>
+<h1>Layered transparency and bending</h1>
 <p class="status"><strong>RESEARCH DIRECTION SELECTED · PRODUCTION UNQUALIFIED.</strong> Layered transparency, required bending and the targets below are selected. These revised images have not been approved for release.</p>
-<div class="limits"><strong>Measured limits and scope:</strong> phase sensitivity remains in the sampled field; estimator noise adds positive variation; the bend is an artistic zero-thickness world-ray mapping; no production qualification is claimed; the GPU pilot measures continuation and scalar transport only and excludes bending, normals, Fresnel, shading and compositing.</div>
+<h2>Primary appearance comparison</h2>
+<p class="status">${esc(visualStatus)} Click a still to open the original PNG. Both views use the same geometry and experimental optical settings.</p>
+<div class="hero-grid">
+<article class="hero-card"><h3>Menger 3D</h3><div class="hero-pair"><figure class="hero-figure">${linkedImage(readableMain.menger3.none, "Menger 3D straight")}<figcaption>Straight layers · ${sizeLabel(readableMain.menger3.none)}</figcaption></figure><figure class="hero-figure">${linkedImage(readableMain.menger3.weighted, "Menger 3D weighted bend")}<figcaption>Weighted world bend · ${sizeLabel(readableMain.menger3.weighted)}</figcaption></figure></div></article>
+<article class="hero-card"><h3>Native posed 4D</h3><div class="hero-pair"><figure class="hero-figure">${linkedImage(readableMain.native4.none, "native 4D straight")}<figcaption>Straight layers · ${sizeLabel(readableMain.native4.none)}</figcaption></figure><figure class="hero-figure">${linkedImage(readableMain.native4.weighted, "native 4D weighted bend")}<figcaption>Weighted world bend · ${sizeLabel(readableMain.native4.weighted)}</figcaption></figure></div></article>
+</div>
 
-<h2>Owner target envelope</h2>
-<p>Targets carried into this review are <strong>1 s at 256×144</strong>, <strong>10 s at 512×288</strong>, <strong>120 s at 1920×1080</strong>, and <strong>128 MiB additional state</strong>. They are target constraints, not measurements. GPU rows below report only fields present in the resumable pilot.</p>
+<h2>Secondary onset controls</h2>
+<p>Hard onset applies the full shift at the first layer. The opaque view shows the geometry without transmission.</p>
+<div class="grid"><figure class="secondary-figure">${linkedImage(readableMain.menger3.hard, "Menger 3D hard onset")}<figcaption>Menger 3D hard onset · ${sizeLabel(readableMain.menger3.hard)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableMain.menger3.opaque, "Menger 3D opaque control")}<figcaption>Menger 3D opaque control · ${sizeLabel(readableMain.menger3.opaque)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableMain.native4.hard, "native 4D hard onset")}<figcaption>Native 4D hard onset · ${sizeLabel(readableMain.native4.hard)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableMain.native4.opaque, "native 4D opaque control")}<figcaption>Native 4D opaque control · ${sizeLabel(readableMain.native4.opaque)}</figcaption></figure></div>
+<details><summary>Independent analytic controls</summary><p>The red rear object makes changes in visibility easier to see. Compare straight and bent views, then check the opaque front and removed rear object.</p><div class="grid"><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic3.none, "analytic 3D no bend")}<figcaption>Analytic 3D · straight · ${sizeLabel(readableAnalytic.analytic3.none)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic3.weighted, "analytic 3D weighted")}<figcaption>Analytic 3D · weighted · ${sizeLabel(readableAnalytic.analytic3.weighted)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic3.opaque, "analytic 3D opaque")}<figcaption>Analytic 3D · opaque · ${sizeLabel(readableAnalytic.analytic3.opaque)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic3.rearAbsent, "analytic 3D rear absent")}<figcaption>Analytic 3D · rear absent · ${sizeLabel(readableAnalytic.analytic3.rearAbsent)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic4.none, "analytic 4D no bend")}<figcaption>Analytic 4D · straight · ${sizeLabel(readableAnalytic.analytic4.none)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic4.weighted, "analytic 4D weighted")}<figcaption>Analytic 4D · weighted · ${sizeLabel(readableAnalytic.analytic4.weighted)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic4.opaque, "analytic 4D opaque")}<figcaption>Analytic 4D · opaque · ${sizeLabel(readableAnalytic.analytic4.opaque)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic4.rearAbsent, "analytic 4D rear absent")}<figcaption>Analytic 4D · rear absent · ${sizeLabel(readableAnalytic.analytic4.rearAbsent)}</figcaption></figure></div></details>
+<details><summary>Readable package metadata and raw report</summary><p class="small">Primary stills, motion pairs and analytic controls are loaded from <code>${esc(readableReportPath)}</code>. The report is embedded verbatim below; generated dimensions are checked before this page is written.</p><pre class="small">${esc(readableReportText)}</pre></details>
 
+<h2>Three-frame motion scrubber</h2>
+<p>Drag a slider or use the arrow keys to compare three nearby views. Each sequence changes only the camera, 4D rotation or 4D slice. Click a frame to open its original PNG.</p>
+<div id="scrubbers"></div>
+
+<details class="numeric"><summary>Earlier diagnostic images and numerical controls</summary>
 <h2>Scalar clearance field</h2>
 <p>The report records the smooth clearance signal and positive variation. The largest recorded phase-throughput range is <span class="metric">${fmt(layerRange)}</span>; this is evidence of sampling dependence, not a quality score.</p>
 <details><summary>Exact gap, phase and noise measurements</summary>
@@ -405,16 +650,15 @@ body{margin:24px auto;max-width:1500px;padding:0 18px;background:#101216;color:#
 <table><thead><tr><th>row</th><th>size</th><th>unresolved</th><th>total variation</th><th>domain complete</th><th>opaque</th></tr></thead><tbody>${bendTable}</tbody></table>
 <p class="small">${link(reports[2], "bend control report")} · ${link(native4AnalyticControl.report, "native 4D analytic control report")}</p>
 
-<h2>Menger 3D and posed 4D pilot stills</h2>
-<p>The three columns are straight, weighted bend and hard onset. These are enlarged diagnostic rasters (32×32 and 48×48), not viewing-resolution appearance or motion qualification. Contact sheets are retained beside their individual stills so the raw artifact remains inspectable.</p>
-<div class="card"><h3>Menger 3D</h3><div class="triple">${image("scripts/out/transmission-bend-menger3-none.png", "Menger 3D none")}${image("scripts/out/transmission-bend-menger3-weighted.png", "Menger 3D weighted")}${image("scripts/out/transmission-bend-menger3-hard.png", "Menger 3D hard")}</div><p>${image("scripts/out/transmission-bend-menger3.png", "Menger 3D contact sheet")}</p></div>
-<div class="card"><h3>Native posed 4D</h3><div class="triple">${image("scripts/out/transmission-bend-native4-none.png", "native 4D none")}${image("scripts/out/transmission-bend-native4-weighted.png", "native 4D weighted")}${image("scripts/out/transmission-bend-native4-hard.png", "native 4D hard")}</div><p>${image("scripts/out/transmission-bend-native4.png", "native 4D contact sheet")}</p></div>
 <table><thead><tr><th>fixture</th><th>size</th><th>straight/weighted delta</th><th>weighted/hard delta</th></tr></thead><tbody>${pilotTable}</tbody></table>
 <p class="small">${link(reports[3], "bend pilot report")}</p>
+</details>
+<details class="numeric"><summary>Performance targets, GPU evidence and remaining limitations</summary>
+<div class="limits"><strong>Measured limits and scope:</strong> phase sensitivity remains in the sampled field; estimator noise adds positive variation; the bend is an artistic zero-thickness world-ray mapping; no production qualification is claimed; the GPU pilot measures continuation and scalar transport only and excludes bending, normals, Fresnel, shading and compositing.</div>
 
-<h2>Three-frame motion scrubber</h2>
-<p>Each group changes the named camera, rotor or slice control while holding the reported optics fixed. The page embeds the paired stills; the raw report and PNGs remain hash-pinned in the manifest.</p>
-<div id="scrubbers"></div>
+<h2>Owner target envelope</h2>
+<p>Targets carried into this review are <strong>1 s at 256×144</strong>, <strong>10 s at 512×288</strong>, <strong>120 s at 1920×1080</strong>, and <strong>128 MiB additional state</strong>. They are target constraints, not measurements. GPU rows below report only fields present in the resumable pilot.</p>
+
 
 <h2>Resumable GPU scalar pilot</h2>
 <p>${esc(primaryPreviewNote)}</p>
@@ -433,6 +677,7 @@ body{margin:24px auto;max-width:1500px;padding:0 18px;background:#101216;color:#
 <p class="small">${link(gpuReports.diagnostic64Brick, "64×36 Brick diagnostic archive")} · embedded archive provenance: ${esc(archiveProvenanceText)}</p>
 <div class="card"><strong>Inherited run provenance:</strong><br>adapter <code>${esc(gpuAdapterText)}</code><br>browser <code>${esc(gpuBrowserText)}</code><br>renderer <code>${esc(gpuRendererText)}</code><br>quiet baseline <code>${esc(gpuQuietText)}</code></div>
 <p class="small">${link(gpuReports.primary, "primary full-raster archive")} · mutable <code>report.json</code> is intentionally not used as primary evidence.</p>
+</details>
 
 <h2>Provenance</h2>
 <p>Revision, scoped source-tree status, source hashes and artifact hashes are in ${link("scripts/out/transmission-revision-review-manifest.json", "the review manifest")}. The previous review remains available as ${link("scripts/out/transmission-review.html", "the prior review")}; this revision preserves it rather than replacing its verdict.</p>
@@ -442,9 +687,9 @@ const motion=${scriptJson(motionData)};
 const host=document.querySelector('#scrubbers');
 for(const group of motion){
   const section=document.createElement('section'); section.className='scrub card';
-  section.innerHTML='<h3>'+group.key+'</h3><p class="small">isolated control: '+String(group.isolated??'—')+'</p><div class="scrub-controls"><label>frame <input type="range" min="0" max="'+(group.frames.length-1)+'" value="0"></label><output></output></div><div class="scrub-views"><figure><img alt="straight frame"><figcaption>straight</figcaption></figure><figure><img alt="weighted frame"><figcaption>weighted</figcaption></figure></div><pre class="small"></pre>';
-  const range=section.querySelector('input'), output=section.querySelector('output'), imgs=section.querySelectorAll('img'), pre=section.querySelector('pre');
-  const draw=()=>{const frame=group.frames[Number(range.value)]; output.textContent=String(frame.frame); imgs[0].src=frame.straight; imgs[1].src=frame.weighted; pre.textContent=JSON.stringify({pose:frame.pose,straightWeightedDelta:frame.delta},null,2)};
+  section.innerHTML='<h3>'+group.key+'</h3><p class="small">isolated control: '+String(group.isolated??'—')+'</p><div class="scrub-controls"><label>frame <input type="range" min="0" max="'+(group.frames.length-1)+'" value="0"></label><output></output></div><div class="scrub-views"><figure><a target="_blank" rel="noreferrer"><img alt="straight frame"></a><figcaption></figcaption></figure><figure><a target="_blank" rel="noreferrer"><img alt="weighted frame"></a><figcaption></figcaption></figure></div><pre class="small"></pre>';
+  const range=section.querySelector('input'), output=section.querySelector('output'), imgs=section.querySelectorAll('img'), links=section.querySelectorAll('.scrub-views a'), captions=section.querySelectorAll('figcaption'), pre=section.querySelector('pre');
+  const draw=()=>{const frame=group.frames[Number(range.value)]; output.textContent=String(frame.frame); imgs[0].src=frame.straight; imgs[1].src=frame.weighted; links[0].href=frame.straightPath; links[1].href=frame.weightedPath; captions[0].textContent='Straight layers · '+frame.straightSize.width+'×'+frame.straightSize.height; captions[1].textContent='Weighted world bend · '+frame.weightedSize.width+'×'+frame.weightedSize.height; pre.textContent=JSON.stringify({pose:frame.pose},null,2)};
   range.addEventListener('input',draw); draw(); host.append(section);
 }
 </script>`;
@@ -493,6 +738,19 @@ writeFileSync(
         exportSeconds: 120,
         continuationStateMiB: 128,
         measuredHere: false,
+      },
+      visualReview: {
+        minimumMainStillDimension: MIN_MAIN_STILL_DIMENSION,
+        minimumMotionStillDimension: MIN_MOTION_STILL_DIMENSION,
+        minimumControlStillDimension: MIN_CONTROL_STILL_DIMENSION,
+        undersizedMainStills,
+        undersizedMotionStills,
+        undersizedControlStills,
+        thumbnailOverride: allowThumbnailMain,
+        primaryPackage: readableReportPath,
+        primaryScenes: ["menger3", "native4"],
+        primaryModes: ["none", "weighted", "hard", "opaque"],
+        analyticControls: ["analytic3", "analytic4"],
       },
       review: hashEntry(relative(root, reviewPath)),
       sources: sourceFiles.map((path) => hashEntry(path)),
