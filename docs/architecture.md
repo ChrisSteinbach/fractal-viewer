@@ -639,8 +639,12 @@ until the frame event restores the iteration counters. Both phases are
 top-level functions binding their arrays to locals: the same tap loop read from
 a job closure measured ~13% slower and a flat indexed loop ~5% slower, and at
 parity (interleaved A/B against the pre-banding implementation, min delta
--1.5% to +1.0%) the plan costs ~8ms against a 2.19s defaults / 6.68s imported-
-params pass on a thin 800x450 fixture (0.36% / 0.12%, 206-212M taps/s).
+-1.5% to +1.0%). With the occupied-footprint clip in place the same 800x450
+fixture runs 660ms imported / 225ms defaults, the plan now 104ms / 28ms
+(15.81% / 12.40% of the total, 2540M / 2276M charged work units per second in
+the gather) — the clip cut the gather ~10x, which is why the plan's share is
+material rather than noise and is re-measured at app size by the clipping
+sheet (0.3-0.6s at 1920x950).
 The pass is dimension-agnostic — the histogram is 2D and 3D and 4D Flame
 sessions share the same worker path — and every band boundary preserves the
 generation/run-id guards: a restart or a live estimator edit abandons the
@@ -663,15 +667,36 @@ distinct clipped range pair in the exact flat term order the old loop used,
 which keeps the clipped pass bit-identical to the unclipped one rather than
 merely equal in real arithmetic. Measured on four imported Electric Sheep
 genomes at 960x540 output, supersample 3 and 20M iterations: pass times fall
-4.0-55x (11-70s -> 0.2-11s at the imported params, 2.0-21.7s -> 0.1-3.6s at
-the app defaults), the bitmap visits 0.1-15% of the full rectangle's taps,
-and a fully occupied 2880x1620 control frame costs ~4% more (3.4-4.6%
-across runs; the added plan scan) with identical output. At the dev machine's app-realistic 1920x950
-output (viewport x min(DPR, 2)) the effect grows with the raster: the same
-sheet, one genome at 1920x950, measures 185.5s -> 7.4s at the imported params
-(24.9x; 1.3% of the taps) and 41.5s -> 2.5s at the app defaults (16.7x; 1.6%),
-with the fully occupied control at parity (15.30s vs 15.21s). The measurement
-record is `scripts/flame-density-estimate.harness.ts`.
+4.4-53x (11.7-68.9s -> 0.2-10.0s at the imported params, 1.8-21.3s -> 0.1-3.6s
+at the app defaults 6/0.4/0), and the bitmap visits 0.10-14.4% of the full
+rectangle's taps. The dense 2880x1620 fully-occupied control costs +18.5%
+over the pre-change pass (505ms against 426ms, the added plan scan) with
+identical output.
+
+THE RESIDUAL PASS'S HOME was then decided on the app-realistic raster
+(1920x950 = viewport x min(DPR, 2) at DPR 1 on the dev machine's 1080p panel,
+supersample 3, 20M iterations, all four genomes): accumulation is
+5.7/20.3/6.0/3.8s and the clipped pass 0.55/35.11/6.36/25.67s at the imported
+params (0.36/12.13/2.14/9.09s at the app defaults), against a 0.73-1.20s
+progressive redisplay tick. The interactive bar the decision states is ~2s at
+this window — twice the progressive tick — and 243 and 247 miss it by 13-18x
+(they are also still the longest phase, 1.7x and 6.8x their accumulations),
+so CPU-only refusal is refused. A worker pool was rejected on the same
+measurement: it caps at this machine's 4 physical / 8 logical cores (the
+35.1s worst row lands at ~4.4-8.8s, still over the bar) and would need the
+525MB full-resolution histogram shared through SAB. The chosen home is the
+GPU compute gather at the `FlameAccumBackend` seam: the accumulation
+histogram is already resident for the app's preferred (GPU) sessions, the
+progressive display downsample proves the resident-buffer readback pattern on
+this hardware (the bench's `redisplayCost` leg measures the GPU downsample
+well under the CPU full-readback path), and the CPU job stays the oracle and
+the fallback for machines without WebGPU. The port's shape — an optional
+`adaptiveDisplay` on the backend seam, the WGSL kernel and packers serving
+both dimensions from the shared `GpuFlameBackend`, the per-call
+params/kernel-table wire, the bench agreement leg against
+`adaptiveDownsampleFlame`, and the browser verification — is written into the
+implementation brief. The measurement record is
+`scripts/flame-density-estimate.harness.ts`.
 
 **Saved scenes re-render at a different brightness — deliberately, with no
 decoder migration.** The anchor change above is a look fix, and a

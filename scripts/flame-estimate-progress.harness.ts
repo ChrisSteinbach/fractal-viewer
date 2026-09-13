@@ -16,10 +16,14 @@
  * skip rarely fires):
  *   - Banded and one-shot output are byte-identical at every budget tried,
  *     and `done` reaches `total` exactly (whole-number work units).
- *   - The plan costs ~8ms against a 2.19s (defaults) / 6.68s (imported
- *     params) pass: 0.36% / 0.12% of the total, i.e. the pre-pass that buys
- *     determinate progress is free at frame scale. Throughput is 206-212M
- *     taps/s.
+ *   - With the occupied-footprint clip in place the pass is 660ms imported /
+ *     225ms defaults, of which the PLAN is 104ms / 28ms: 15.81% / 12.40% of
+ *     the total, 2540M / 2276M charged work units per second in the gather.
+ *     The clip cut the gather ~10x on this fixture (the sheet's pre-clip
+ *     numbers were 2.19s / 6.68s with an ~8ms plan, 0.36% / 0.12%,
+ *     206-212M taps/s), which is why the plan's share is now MATERIAL
+ *     rather than noise and is re-measured at app size by
+ *     `flame-density-estimate.harness.ts` (0.3-0.6s at 1920x950).
  *
  * The plan/gather split also produced the implementation note the code
  * carries: a closure-slot read per tap (the gather as a job-closure method)
@@ -72,7 +76,8 @@ function thinFrame(): FlameHistogram {
 }
 
 /** The imported genomes' authored estimator params (r=11, c=0.6, min=0) and
- * the app's defaults (6/0.4/2). */
+ * the app's defaults (6/0.4/0 — `state.ts`'s `DEFAULT_ESTIMATOR_MINIMUM_RADIUS`
+ * is 0, not the 2 an earlier revision of this sheet said). */
 const PARAM_SETS: { label: string; params: DensityEstimatorParams }[] = [
   {
     label: "imported 11/0.6/0",
@@ -83,10 +88,10 @@ const PARAM_SETS: { label: string; params: DensityEstimatorParams }[] = [
     },
   },
   {
-    label: "defaults 6/0.4/2",
+    label: "defaults 6/0.4/0",
     params: {
       estimatorRadius: 6,
-      estimatorMinimumRadius: 2,
+      estimatorMinimumRadius: 0,
       estimatorCurve: 0.4,
     },
   },
