@@ -27,8 +27,10 @@ const SPP = 4;
 // With B=4 initial radiance and theta_min=epsilon/(64*2^5)=2^-21,
 // weaker-first DFS needs ceil(log2(B/theta_min))+1 = 24 live entries.
 const MAX_PATHS = 24;
-const MAX_INTERFACES = 96;
-const MAX_PROCESSED_PATHS = 4096;
+// CPU replay witnesses need at most 110 interfaces and 5,714 processed paths.
+// These measured guards leave headroom without changing the optical cutoff.
+const MAX_INTERFACES = 256;
+const MAX_PROCESSED_PATHS = 16384;
 const PATH_STATE_BYTES = 144;
 const OUTPUT_PIXEL_BYTES = 192;
 const REPLAY_PASSES = 6;
@@ -304,8 +306,8 @@ fn packColor(linear: vec3f) -> u32 {
   let b = vec3u(round(255.0 * clamp(encoded, vec3f(0.0), vec3f(1.0))));
   return b.x | (b.y << 8u) | (b.z << 16u) | 0xff000000u;
 }
-// dielectricNextBoundary is supplied by DIELECTRIC_SOLID_WGSL. Its shared
-// contract accepts the current medium, exact tMin and previous face only.
+// DIELECTRIC_SOLID_WGSL supplies ordinary and canonical-anchor boundary
+// queries. Secondary paths carry the shared post-incident intrinsic anchor.
 fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
   var paths: array<PathState, ${MAX_PATHS}>;
   paths[0] = PathState(
@@ -418,11 +420,11 @@ fn traceGlass(origin: vec3f, direction: vec3f, theta: f32) -> TraceResult {
           witnessReason = FAILURE_INSIDE_MISS;
           witnessMedium = path.inside;
           witnessOrigin = path.origin;
-        witnessDirection = path.direction;
-        witnessAnchorMask = path.anchorPlaneMask;
-        witnessAnchorPoint = path.anchorPoint;
-        witnessAnchorCellIndices = path.anchorCellIndices;
-        witnessThroughput = path.energy;
+          witnessDirection = path.direction;
+          witnessAnchorMask = path.anchorPlaneMask;
+          witnessAnchorPoint = path.anchorPoint;
+          witnessAnchorCellIndices = path.anchorCellIndices;
+          witnessThroughput = path.energy;
           witnessBound = maxChannel(path.energy) * ${ENVIRONMENT_BOUND};
         }
       } else {
@@ -549,7 +551,13 @@ fn renderDielectric(@builtin(global_invocation_id) gid: vec3u) {
     let sampleBit = 1u << sample;
     if ((state.pendingMask & sampleBit) == 0u) { continue; }
     let jitter = vec2f(f32(sample & 1u) * 0.5 - 0.25, f32(sample >> 1u) * 0.5 - 0.25);
-    let ndc = (2.0 * (vec2f(pixel) + vec2f(0.5) + jitter) / vec2f(camera.extent.xy) - vec2f(1.0, 1.0));
+    let raster = vec2f(pixel) + vec2f(0.5) + jitter;
+    // Output RGBA row zero is the PNG top row, so its ray points toward
+    // positive camera-up. X retains the usual left-to-right NDC mapping.
+    let ndc = vec2f(
+      2.0 * raster.x / f32(camera.extent.x) - 1.0,
+      1.0 - 2.0 * raster.y / f32(camera.extent.y),
+    );
     let ray = normalize(camera.forward.xyz + ndc.x * camera.right.xyz + ndc.y * camera.up.xyz);
     let traced = traceGlass(camera.eye.xyz, ray, theta);
     state.capEvents += traced.capEvents;
@@ -608,8 +616,8 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
   const height = input.diagnostic
     ? Math.min(32, requestedHeight)
     : requestedHeight;
-  const tileWidth = Math.min(input.tileWidth ?? 256, width);
-  const tileHeight = Math.min(input.tileHeight ?? 144, height);
+  const tileWidth = Math.min(input.tileWidth ?? 128, width);
+  const tileHeight = Math.min(input.tileHeight ?? 64, height);
   if (
     ![width, height, tileWidth, tileHeight].every(
       (value) => Number.isInteger(value) && value > 0,
@@ -755,6 +763,18 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         totalSampleMaxChannelRadianceBound: number;
         errorBudget: number;
         environmentRadianceBound: number;
+        replay: {
+          maxPerPixelMaxChannelLinearRgbBound: number;
+          allSamplesComplete: boolean;
+          capFree: boolean;
+          sampleComplete: number;
+          sampleTotal: number;
+          sampleUnresolved: number;
+          sampleInvalid: number;
+          unresolvedPixels: number;
+          invalidPixels: number;
+          capEvents: number;
+        };
         scope: string;
       };
       memory: typeof plannedMemory;
@@ -1030,6 +1050,23 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
             totalSampleMaxChannelRadianceBound,
             errorBudget: ERROR_BUDGET,
             environmentRadianceBound: ENVIRONMENT_BOUND,
+            replay: {
+              maxPerPixelMaxChannelLinearRgbBound: radianceBound,
+              allSamplesComplete:
+                completion.sampleComplete === completion.sampleTotal &&
+                completion.sampleUnresolved === 0 &&
+                completion.sampleInvalid === 0 &&
+                completion.unresolved === 0 &&
+                completion.invalid === 0,
+              capFree: completion.capEvents === 0,
+              sampleComplete: completion.sampleComplete,
+              sampleTotal: completion.sampleTotal,
+              sampleUnresolved: completion.sampleUnresolved,
+              sampleInvalid: completion.sampleInvalid,
+              unresolvedPixels: completion.unresolved,
+              invalidPixels: completion.invalid,
+              capEvents: completion.capEvents,
+            },
             scope:
               "radianceBound is the gate: maximum per-pixel, four-sample-average, max-channel discarded-branch bound. totalRadianceBound sums pixel averages across the image and totalSampleMaxChannelRadianceBound sums raw samples; both are instruments only and are not compared with the per-pixel error budget.",
           },
@@ -1074,6 +1111,19 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
           "weaker-first DFS: ceil(log2(4 / (epsilon / (64 * 2^5)))) + 1 = 24 live entries; assumes 4 maximum initial radiance and absorption only decreases branch throughput",
         maxInterfaces: MAX_INTERFACES,
         maxProcessedPaths: MAX_PROCESSED_PATHS,
+        replay: {
+          attempts: REPLAY_PASSES,
+          initialBranchTheta: INITIAL_BRANCH_THETA,
+          thetaRule: "theta(attempt) = initialBranchTheta * exp2(-attempt)",
+          errorBudget: ERROR_BUDGET,
+          environmentRadianceBound: ENVIRONMENT_BOUND,
+          samplesPerPixel: SPP,
+        },
+        imageCoordinates: {
+          outputRowZero: "PNG top row",
+          ndc: "x = 2*rasterX/width-1; y = 1-2*rasterY/height",
+          note: "Archived pre-flip diagnostics retain their original ray convention.",
+        },
       },
       rows,
       runtime: { uncaptured, lost },

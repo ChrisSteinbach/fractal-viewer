@@ -129,15 +129,15 @@ function outputPng(base64, width, height) {
 async function main() {
   if (args.help) {
     console.log(
-      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=256 --tileHeight=144 --fixture=menger3 --mode=glass --diagnostic --output=report.json]",
+      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass --diagnostic --output=report.json]",
     );
     return;
   }
   const options = {
     width: positive(args.width ?? 1024, "width"),
     height: positive(args.height ?? 1024, "height"),
-    tileWidth: positive(args.tileWidth ?? 256, "tileWidth"),
-    tileHeight: positive(args.tileHeight ?? 144, "tileHeight"),
+    tileWidth: positive(args.tileWidth ?? 128, "tileWidth"),
+    tileHeight: positive(args.tileHeight ?? 64, "tileHeight"),
     diagnostic: args.diagnostic === true,
   };
   const fixtureNames = args.fixture
