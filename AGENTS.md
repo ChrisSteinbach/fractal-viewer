@@ -950,11 +950,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     shader body for both dialects. Both engines share material lane order;
     CPU values and classic shader bytes are pinned. Finish
     persists/morphs/mutates like fold lengths; random-system never rolls one.
-    TRANSMISSION: owner selected finite-solid 3D/4D glass; realism not required.
-    The envelope was DECIDED 2026-09-13 on delegated authority (preview 1.5s
-    both dimensions, cancel checkpoints 600ms, additional state certified on
-    retained-render scope); production integration UNBLOCKED. Evidence:
-    `docs/surface-dielectric-study.md`.
+    TRANSMISSION: owner selected finite-solid 3D/4D glass; envelope DECIDED,
+    integration UNBLOCKED. `surface-dielectric.ts` is the ONE dimension-free
+    transport/event oracle; contract: `docs/surface-dielectric-transport.md`.
     Pattern-albedo remains REFUSED (`scripts/finish-pattern.harness.ts`).
     Authored rigs (`surface-lighting.ts`) share ONE shader emitter across both
     dimensions/engines: absent state is legacy, visibility uses the displayed DE,
