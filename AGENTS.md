@@ -951,12 +951,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     CPU values and classic shader bytes are pinned. Finish
     persists/morphs/mutates like fold lengths; random-system never rolls one.
     TRANSMISSION: owner selected finite-solid 3D/4D glass; realism not required.
-    The feasibility envelope was DECIDED 2026-09-13 on delegated authority
-    (preview 1.5s both dimensions, cancel checkpoints 600ms, additional state
-    certified on retained-render scope) — production integration UNBLOCKED.
-    Evidence: `docs/surface-dielectric-study.md`.
-    Pattern-albedo remains REFUSED; refusals and deferred banding live in
-    `scripts/finish-pattern.harness.ts`.
+    The envelope was DECIDED 2026-09-13 on delegated authority (preview 1.5s
+    both dimensions, cancel checkpoints 600ms, additional state certified on
+    retained-render scope); production integration UNBLOCKED. Evidence:
+    `docs/surface-dielectric-study.md`.
+    Pattern-albedo remains REFUSED (`scripts/finish-pattern.harness.ts`).
     Authored rigs (`surface-lighting.ts`) share ONE shader emitter across both
     dimensions/engines: absent state is legacy, visibility uses the displayed DE,
     unresolved rays stay dark, HDR averages before clipping. NO PARTICIPATING
