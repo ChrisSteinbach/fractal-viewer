@@ -81,7 +81,11 @@ Boundary state and repeated-face handling must survive secondary rays; a
 query failure is unresolved work and must not become a background hit.
 Secondary rays carry the boundary's intrinsic intersection and the integer
 planes of every exactly tied crossing. The next query uses that recorded
-intersection to choose its starting cell. Re-transforming a rounded displayed
+intersection and post-incident integer cell indices to choose its starting
+cell. Uncrossed axes preserve their cell ownership when a secondary ray turns;
+crossed axes choose ownership from the new direction. The outermost grid planes
+are exactly the declared root endpoints in both arithmetic mirrors.
+Re-transforming a rounded displayed
 hit would lose the boundary identity and can immediately hit the same face
 again. Tangent or otherwise ambiguous medium ownership must remain explicit.
 
@@ -114,7 +118,7 @@ precision, approximation and performance limits must accompany the images.
 
 ## Scalar controls
 
-`transmission-dielectric-solid.harness.ts` passes six tests. They check the
+`transmission-dielectric-solid.harness.ts` passes seven tests. They check the
 terminal-cell counts, the actual 3D Menger preset's depth-zero, two and three
 construction, exhaustive depth-two ray intervals in both dimensions, touching
 cells and positive gaps, inside rays, projected slice normals and corner
@@ -200,3 +204,37 @@ the processed-path guard (categories overlap). The processed-path guard
 dominates, but the inside miss remains a separate geometry investigation.
 The report is
 `scripts/out/transmission-dielectric-gpu/diagnostic-64x64-menger-glass-reasons.json`.
+
+## Corrected depth-two diagnostic
+
+The first depth-two replay exposed a concrete f32 boundary-state defect: an
+uncrossed coordinate rounded onto a neighbouring cell's plane, and an outer
+grid endpoint rounded beyond the root clipping extent. Preserving the recorded
+cell indices and using the declared root endpoints removes those failures in
+the repeated diagnostic. The scalar harness carries the reproduced witness;
+the emitted GPU controls also check the otherwise inactive fourth cell lane
+in 3D anchors.
+
+The replay's live stack now has 24 entries. With maximum scene radiance 4,
+the last cutoff is 2^-21. Processing the weaker child first permits at most
+22 strict weak-child descents above that cutoff, requiring 23 live entries;
+the allocation has one spare. Beer attenuation only reduces energy, and total
+internal reflection produces one child. The scalar tree harness checks this
+calculation.
+
+On 13 September 2026, source hash
+`6a5fddde72f233d9cd1582302c0ece31989b93d4e289e4b7738fdd9560584b1c`
+passed all eleven GPU controls on quiet RX 7900 XTX hardware. Both corrected
+64×64 diagnostics had zero traversal, unexpected inside-miss or stack
+failures. Menger completed 4,092 of 4,096 pixels; four reached the 4,096-path
+work guard. The posed 4D slice completed 4,070 pixels; 26 reached the
+96-interface guard and five reached the path guard (categories overlap).
+Accepted pixels had maximum omitted-contribution bounds of 0.000929913 and
+0.000874657 respectively, below 1/1024. Those accepted-pixel bounds do not
+qualify the incomplete images.
+
+The two 64×32 tiles took 1.7412 seconds for Menger and 1.5931 seconds for the
+4D slice, including all six replay submissions and readback. These remain
+small, incomplete diagnostics. They neither demonstrate useful full-size
+performance nor constitute an owner comparison. Reports are preserved as
+`scripts/out/transmission-dielectric-gpu/diagnostic-64x64-d2-{menger,hyper4}-glass-anchor-cells-fixed.json`.

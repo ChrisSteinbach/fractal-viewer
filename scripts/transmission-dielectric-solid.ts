@@ -47,6 +47,8 @@ export interface DielectricBoundaryAnchor {
   planeMask: number;
   /** Finest-grid plane per masked axis; -1 for an unmasked axis. */
   planeIndices: [number, number, number, number];
+  /** Post-incident DDA cells; unmasked axes remain authoritative on turns. */
+  cellIndices: [number, number, number, number];
 }
 
 export interface DielectricBoundary {
@@ -341,6 +343,16 @@ function raySideCellIndex(
   return lower;
 }
 
+function gridPlane(
+  planeIndex: number,
+  halfExtent: number,
+  gridSize: number,
+): number {
+  if (planeIndex === 0) return -halfExtent;
+  if (planeIndex === gridSize) return halfExtent;
+  return -halfExtent + planeIndex * ((2 * halfExtent) / gridSize);
+}
+
 /** Occupancy an infinitesimal positive distance along direction from point. */
 export function dielectricRaySideOccupancy(
   fixture: DielectricSolidFixture,
@@ -386,6 +398,7 @@ function boundaryFor(
   axis: number,
   crossedAxes: readonly number[],
   planeIndices: readonly number[],
+  cellIndices: readonly number[],
   qd: Vec4,
   visits: number,
 ): DielectricBoundary | DielectricRefusal {
@@ -405,13 +418,24 @@ function boundaryFor(
   ) as Vec4;
   let planeMask = 0;
   const anchorPlanes: [number, number, number, number] = [-1, -1, -1, -1];
-  const width = (2 * fixture.halfExtent) / 3 ** fixture.depth;
+  const gridSize = 3 ** fixture.depth;
   for (const crossedAxis of crossedAxes) {
     const crossedPlane = planeIndices[crossedAxis];
     planeMask |= 1 << crossedAxis;
     anchorPlanes[crossedAxis] = crossedPlane;
-    intrinsicPoint[crossedAxis] = -fixture.halfExtent + crossedPlane * width;
+    intrinsicPoint[crossedAxis] = gridPlane(
+      crossedPlane,
+      fixture.halfExtent,
+      gridSize,
+    );
   }
+  const anchorCells: [number, number, number, number] = [-1, -1, -1, -1];
+  for (
+    let intrinsicAxis = 0;
+    intrinsicAxis < fixture.dimension;
+    intrinsicAxis++
+  )
+    anchorCells[intrinsicAxis] = cellIndices[intrinsicAxis];
   return {
     kind: "boundary",
     t,
@@ -424,7 +448,12 @@ function boundaryFor(
     intrinsicAxis: axis,
     faceSign,
     face: { axis, planeIndex, depth: fixture.depth },
-    anchor: { intrinsicPoint, planeMask, planeIndices: anchorPlanes },
+    anchor: {
+      intrinsicPoint,
+      planeMask,
+      planeIndices: anchorPlanes,
+      cellIndices: anchorCells,
+    },
     visits,
   };
 }
@@ -515,6 +544,7 @@ function dielectricNextBoundaryInternal(
         anchor.planeMask <= 0 ||
         (anchor.planeMask & ~((1 << fixture.dimension) - 1)) !== 0 ||
         anchor.planeIndices.length !== 4 ||
+        anchor.cellIndices.length !== 4 ||
         anchor.planeIndices.some((value, axis) =>
           (anchor.planeMask & (1 << axis)) !== 0
             ? !Number.isInteger(value) ||
@@ -522,13 +552,32 @@ function dielectricNextBoundaryInternal(
               value > 3 ** fixture.depth
             : value !== -1,
         ) ||
+        anchor.cellIndices.some((value, axis) => {
+          if (axis >= fixture.dimension) return value !== -1;
+          if (!Number.isInteger(value)) return true;
+          if ((anchor.planeMask & (1 << axis)) !== 0) {
+            const planeIndex = anchor.planeIndices[axis];
+            return value !== planeIndex - 1 && value !== planeIndex;
+          }
+          const gridSize = 3 ** fixture.depth;
+          return (
+            value < 0 ||
+            value >= gridSize ||
+            anchor.intrinsicPoint[axis] <
+              gridPlane(value, fixture.halfExtent, gridSize) ||
+            anchor.intrinsicPoint[axis] >
+              gridPlane(value + 1, fixture.halfExtent, gridSize)
+          );
+        }) ||
         anchor.intrinsicPoint.some((value, axis) => {
           const masked = (anchor.planeMask & (1 << axis)) !== 0;
           return masked
             ? value !==
-                -fixture.halfExtent +
-                  anchor.planeIndices[axis] *
-                    ((2 * fixture.halfExtent) / 3 ** fixture.depth)
+                gridPlane(
+                  anchor.planeIndices[axis],
+                  fixture.halfExtent,
+                  3 ** fixture.depth,
+                )
             : axis < fixture.dimension &&
                 (value < -fixture.halfExtent || value > fixture.halfExtent);
         })))
@@ -541,7 +590,8 @@ function dielectricNextBoundaryInternal(
   const clip = clipRoot(fixture, q, qd);
   if (!clip) return { kind: "miss", visits: 0 };
   const start = Math.max(tMin, clip.enter);
-  if (!(clip.exit > start)) return { kind: "miss", visits: 0 };
+  if (clip.exit < start || (!anchor && clip.exit === start))
+    return { kind: "miss", visits: 0 };
   const gridSize = 3 ** fixture.depth;
   const width = (2 * fixture.halfExtent) / gridSize;
   const qStart = q.map((value, axis) => value + start * qd[axis]) as Vec4;
@@ -550,6 +600,7 @@ function dielectricNextBoundaryInternal(
   );
   if (anchor) {
     for (let axis = 0; axis < fixture.dimension; axis++) {
+      index[axis] = anchor.cellIndices[axis];
       if ((anchor.planeMask & (1 << axis)) === 0) continue;
       if (qd[axis] === 0)
         return { kind: "refused", reason: "ambiguous-anchor", visits: 0 };
@@ -565,7 +616,11 @@ function dielectricNextBoundaryInternal(
     qd[options.previousFace.axis] !== 0
   ) {
     const axis = options.previousFace.axis;
-    const plane = -fixture.halfExtent + options.previousFace.planeIndex * width;
+    const plane = gridPlane(
+      options.previousFace.planeIndex,
+      fixture.halfExtent,
+      gridSize,
+    );
     const faceT = (plane - q[axis]) / qd[axis];
     // Face identity affects the side only when its analytic crossing is
     // exactly tMin. This repairs reconstruction of a non-binary grid point
@@ -608,6 +663,7 @@ function dielectricNextBoundaryInternal(
       axis,
       axes,
       planeIndices,
+      index,
       qd,
       visits,
     );
@@ -623,7 +679,7 @@ function dielectricNextBoundaryInternal(
     for (let axis = 0; axis < fixture.dimension; axis++) {
       if (qd[axis] === 0) continue;
       const planeIndex = qd[axis] > 0 ? index[axis] + 1 : index[axis];
-      const plane = -fixture.halfExtent + planeIndex * width;
+      const plane = gridPlane(planeIndex, fixture.halfExtent, gridSize);
       crossingT[axis] = (plane - q[axis]) / qd[axis];
       nextT = Math.min(nextT, crossingT[axis]);
     }
@@ -659,6 +715,7 @@ function dielectricNextBoundaryInternal(
         axis,
         axes,
         planeIndices,
+        index,
         qd,
         visits,
       );
@@ -869,6 +926,7 @@ struct DielectricBoundaryResult {
   planeMask: u32,
   planeIndices: vec4<i32>,
   intrinsicPoint: vec4<f32>,
+  cellIndices: vec4<i32>,
 };
 
 fn dielectricRow(f: DielectricSolidFixture, axis: u32) -> vec4<f32> {
@@ -906,10 +964,20 @@ fn dielectricCellOccupied(f: DielectricSolidFixture, cell: vec4<i32>) -> bool {
   return true;
 }
 
+fn dielectricGridPlane(
+  planeIndex: i32,
+  halfExtent: f32,
+  gridSize: i32,
+) -> f32 {
+  if (planeIndex == 0) { return -halfExtent; }
+  if (planeIndex == gridSize) { return halfExtent; }
+  return -halfExtent + f32(planeIndex) * (2.0 * halfExtent / f32(gridSize));
+}
+
 fn dielectricResult(kind: u32, reason: u32, visits: u32) -> DielectricBoundaryResult {
   return DielectricBoundaryResult(
     kind, reason, visits, 0u, 0.0, 0u, 0, 0.0, vec3<f32>(0.0),
-    0u, vec4<i32>(-1), vec4<f32>(0.0),
+    0u, vec4<i32>(-1), vec4<f32>(0.0), vec4<i32>(-1),
   );
 }
 
@@ -943,6 +1011,7 @@ fn dielectricBoundary(
   axis: u32,
   planeMask: u32,
   planeIndices: vec4<i32>,
+  cellIndices: vec4<i32>,
   qd: vec4<f32>,
   visits: u32,
 ) -> DielectricBoundaryResult {
@@ -961,9 +1030,9 @@ fn dielectricBoundary(
   var intrinsicPoint = qOrigin + t * qd;
   for (var crossedAxis = 0u; crossedAxis < f.counts.x; crossedAxis++) {
     if ((planeMask & (1u << crossedAxis)) != 0u) {
-      intrinsicPoint[crossedAxis] =
-        -f.shape.x + f32(planeIndices[crossedAxis]) *
-        (2.0 * f.shape.x / f32(f.counts.z));
+      intrinsicPoint[crossedAxis] = dielectricGridPlane(
+        planeIndices[crossedAxis], f.shape.x, i32(f.counts.z),
+      );
     }
   }
   return DielectricBoundaryResult(
@@ -979,6 +1048,7 @@ fn dielectricBoundary(
     planeMask,
     planeIndices,
     intrinsicPoint,
+    cellIndices,
   );
 }
 
@@ -999,6 +1069,7 @@ fn dielectricNextBoundaryRaw(
   anchorPoint: vec4<f32>,
   anchorPlaneMask: u32,
   anchorPlaneIndices: vec4<i32>,
+  anchorCellIndices: vec4<i32>,
   hasAnchor: u32,
 ) -> DielectricBoundaryResult {
   let dimension = f.counts.x;
@@ -1018,7 +1089,11 @@ fn dielectricNextBoundaryRaw(
       let masked = (anchorPlaneMask & (1u << axis)) != 0u;
       if (masked) {
         if (anchorPlaneIndices[axis] < 0 || anchorPlaneIndices[axis] > gridSize ||
-            anchorPoint[axis] != -halfExtent + f32(anchorPlaneIndices[axis]) * width) {
+            anchorPoint[axis] != dielectricGridPlane(
+              anchorPlaneIndices[axis], halfExtent, gridSize,
+            ) ||
+            (anchorCellIndices[axis] != anchorPlaneIndices[axis] - 1 &&
+             anchorCellIndices[axis] != anchorPlaneIndices[axis])) {
           return dielectricResult(
             DIELECTRIC_RESULT_REFUSED,
             DIELECTRIC_REFUSAL_INVALID_INPUT,
@@ -1027,7 +1102,14 @@ fn dielectricNextBoundaryRaw(
         }
       } else if (anchorPlaneIndices[axis] != -1 ||
                  (axis < dimension &&
-                  (anchorPoint[axis] < -halfExtent || anchorPoint[axis] > halfExtent))) {
+                  (anchorCellIndices[axis] < 0 || anchorCellIndices[axis] >= gridSize ||
+                   anchorPoint[axis] < dielectricGridPlane(
+                     anchorCellIndices[axis], halfExtent, gridSize,
+                   ) ||
+                   anchorPoint[axis] > dielectricGridPlane(
+                     anchorCellIndices[axis] + 1, halfExtent, gridSize,
+                   ))) ||
+                 (axis >= dimension && anchorCellIndices[axis] != -1)) {
         return dielectricResult(
           DIELECTRIC_RESULT_REFUSED,
           DIELECTRIC_REFUSAL_INVALID_INPUT,
@@ -1065,16 +1147,17 @@ fn dielectricNextBoundaryRaw(
   }
   let effectiveTMin = select(tMin, 0.0, hasAnchor != 0u);
   let start = max(effectiveTMin, enter);
-  if (!(exit > start)) {
+  if (exit < start || (hasAnchor == 0u && exit == start)) {
     return dielectricResult(DIELECTRIC_RESULT_MISS, 0u, 0u);
   }
   let qStart = q + start * qd;
-  var cell = vec4<i32>(0);
+  var cell = vec4<i32>(-1);
   for (var axis = 0u; axis < dimension; axis++) {
     cell[axis] = dielectricSideIndex(qStart[axis], qd[axis], halfExtent, gridSize);
   }
   if (hasAnchor != 0u) {
     for (var axis = 0u; axis < dimension; axis++) {
+      cell[axis] = anchorCellIndices[axis];
       if ((anchorPlaneMask & (1u << axis)) == 0u) { continue; }
       if (qd[axis] == 0.0) {
         return dielectricResult(
@@ -1092,7 +1175,7 @@ fn dielectricNextBoundaryRaw(
   }
   if (hasAnchor == 0u && hasPrevious != 0u && previousAxis >= 0 && qd[u32(previousAxis)] != 0.0) {
     let axis = u32(previousAxis);
-    let plane = -halfExtent + f32(previousPlane) * width;
+    let plane = dielectricGridPlane(previousPlane, halfExtent, gridSize);
     let faceT = (plane - q[axis]) / qd[axis];
     if (faceT == effectiveTMin) {
       cell[axis] = select(previousPlane - 1, previousPlane, qd[axis] > 0.0);
@@ -1149,7 +1232,7 @@ fn dielectricNextBoundaryRaw(
       );
     }
     return dielectricBoundary(
-      f, q, start, sideInside, axis, mask, planeIndices, qd, visits,
+      f, q, start, sideInside, axis, mask, planeIndices, cell, qd, visits,
     );
   }
 
@@ -1159,7 +1242,7 @@ fn dielectricNextBoundaryRaw(
     for (var axis = 0u; axis < dimension; axis++) {
       if (qd[axis] == 0.0) { continue; }
       let planeIndex = select(cell[axis], cell[axis] + 1, qd[axis] > 0.0);
-      let plane = -halfExtent + f32(planeIndex) * width;
+      let plane = dielectricGridPlane(planeIndex, halfExtent, gridSize);
       crossings[axis] = (plane - q[axis]) / qd[axis];
       nextT = min(nextT, crossings[axis]);
     }
@@ -1226,7 +1309,7 @@ fn dielectricNextBoundaryRaw(
         );
       }
       return dielectricBoundary(
-        f, q, nextT, nextInside, axis, crossingMask, planeIndices, qd, visits,
+        f, q, nextT, nextInside, axis, crossingMask, planeIndices, cell, qd, visits,
       );
     }
     sideInside = nextInside;
@@ -1248,7 +1331,7 @@ fn dielectricNextBoundary(
   return dielectricNextBoundaryRaw(
     f, origin, direction, mediumInside, tMin,
     previousAxis, previousPlane, hasPrevious,
-    vec4<f32>(0.0), 0u, vec4<i32>(-1), 0u,
+    vec4<f32>(0.0), 0u, vec4<i32>(-1), vec4<i32>(-1), 0u,
   );
 }
 
@@ -1259,11 +1342,12 @@ fn dielectricNextBoundaryFromAnchor(
   anchorPoint: vec4<f32>,
   anchorPlaneMask: u32,
   anchorPlaneIndices: vec4<i32>,
+  anchorCellIndices: vec4<i32>,
 ) -> DielectricBoundaryResult {
   return dielectricNextBoundaryRaw(
     f, vec3<f32>(0.0), direction, mediumInside, 0.0,
     -1, -1, 0u,
-    anchorPoint, anchorPlaneMask, anchorPlaneIndices, 1u,
+    anchorPoint, anchorPlaneMask, anchorPlaneIndices, anchorCellIndices, 1u,
   );
 }
 `;
