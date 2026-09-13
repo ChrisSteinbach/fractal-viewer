@@ -80,7 +80,11 @@ export interface PreviewScene {
   eye?: Vec3;
   /** An estimator-specific bounded interval, e.g. the balloon's far cap.
    * Absent uses the historical target-centred sphere gate. */
-  marchInterval?: (origin: Vec3, direction: Vec3) => [number, number] | null;
+  marchInterval?: (
+    origin: Vec3,
+    direction: Vec3,
+    pixel: { px: number; py: number; imageWidth: number; imageHeight: number },
+  ) => [number, number] | null;
   /** Linear backdrop stops; absent preserves the historical gradient. */
   background?: { top: Vec3; bottom: Vec3 };
   /**
@@ -139,9 +143,10 @@ export interface PreviewScene {
   fog?: boolean;
   /**
    * Per-hit SHADING HOOK (default absent). When set, the marcher still
-   * does everything it did — march, tetrahedron normal, cone-traced
-   * shadow, step-count AO — and then hands that {@link PreviewHit} to the
-   * hook instead of running its own fixed lighting, so a sheet can light
+   * does everything it did — march, the default tetrahedron normal (or the
+   * explicit {@link PreviewScene.normal}), cone-traced shadow, step-count AO —
+   * and then hands that {@link PreviewHit} to the hook instead of running its
+   * own fixed lighting, so a sheet can light
    * every hit with a REAL composition (`surface-finish.ts`'s
    * `finishShadeTs` over a patterned albedo, say) rather than a ninth
    * approximation of one. The hook returns the pixel's pre-fog color in the
@@ -153,6 +158,11 @@ export interface PreviewScene {
    * drawn before the hook existed reproduces byte for byte.
    */
   shade?: (hit: PreviewHit) => Vec3;
+  /** Optional normal for a custom-shaded hit. Absent preserves the historical
+   * tetrahedron DE taps. Harnesses that force an exact sampled hit can provide
+   * its matching optical normal instead of querying an unrelated display
+   * point. */
+  normal?: (p: Vec3, radius: number) => Vec3;
   /** Linear-light surface shading, followed by the existing linear fog.
    * Mutually exclusive with the encoded `shade` hook. */
   shadeLinear?: (hit: PreviewLinearHit) => Vec3;
@@ -415,7 +425,12 @@ export function renderPreview(
       const disc = b * b - cc;
       const sq = Math.sqrt(Math.max(0, disc));
       const interval = scene.marchInterval
-        ? scene.marchInterval(eye, dir)
+        ? scene.marchInterval(eye, dir, {
+            px,
+            py,
+            imageWidth: size,
+            imageHeight: size,
+          })
         : disc >= 0
           ? [Math.max(0, -b - sq), -b + sq]
           : null;
@@ -491,7 +506,7 @@ export function renderPreview(
             hitPos[at + 2] = p[2];
           }
           const h = eps * Math.max(t, 1);
-          const n = normalAt(scene.de, p, h);
+          const n = scene.normal?.(p, h) ?? normalAt(scene.de, p, h);
           if (linearHooks && !n.every(Number.isFinite)) {
             throw new Error("Nonfinite normal DE cannot shade a linear ray");
           }
