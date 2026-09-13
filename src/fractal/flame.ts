@@ -1368,6 +1368,438 @@ const OCCUPANCY_TILE = 16;
 const MIN_ADAPTIVE_FILTER_SIGMA = 0.3;
 
 /**
+ * The number of source taps one output cell's Gaussian gather covers: the
+ * kernel's `(2 * radiusX + 1) x (2 * radiusY + 1)` footprint clipped to the
+ * source histogram's bounds. This is the adaptive pass's WORK unit, and it is
+ * deliberately ONE exported definition shared by the planner (which sums it
+ * into {@link AdaptiveDownsampleJob.total}) and the gather (which charges the
+ * same value per cell as it runs) — the two can never drift, so a job's
+ * `done` reaches exactly `total`. A later change to what a cell actually
+ * gathers (e.g. clipping the kernel to the occupied sub-footprint) updates
+ * this function and the loop together, in one place.
+ *
+ * `baseX`/`baseY` are the cell's home source coordinate and `radiusX`/
+ * `radiusY` the (already quantized) kernel half-extents — the same numbers
+ * the gather's own `for` bounds use.
+ */
+export function adaptiveGatherWork(
+  baseX: number,
+  baseY: number,
+  radiusX: number,
+  radiusY: number,
+  srcWidth: number,
+  srcHeight: number,
+): number {
+  const x0 = Math.max(0, baseX - radiusX);
+  const x1 = Math.min(srcWidth - 1, baseX + radiusX);
+  const y0 = Math.max(0, baseY - radiusY);
+  const y1 = Math.min(srcHeight - 1, baseY + radiusY);
+  return (x1 - x0 + 1) * (y1 - y0 + 1);
+}
+
+/**
+ * Work charged to every output cell on top of its gather taps — the
+ * local-count home-block sum, radius mapping and occupancy-table query each
+ * cell pays before it can gather. Keeping it nonzero also keeps
+ * {@link AdaptiveDownsampleJob.total} positive for an all-empty frame (so
+ * progress is always a real fraction) and makes a pass across far-field
+ * skip rows advance instead of freezing at 0%.
+ */
+const ADAPTIVE_CELL_BASE_WORK = 1;
+
+/**
+ * A resumable {@link adaptiveDownsampleFlame} pass: the same per-cell gather,
+ * split into bounded {@link run} steps that report work done against a total
+ * fixed before the first tap is gathered. The flame worker drives one of
+ * these across scheduler ticks so the finished-frame density estimate can
+ * report determinate progress and yield to live commands; the one-shot
+ * wrapper below is the same job run to completion in a single step, so the
+ * two can never render different frames.
+ *
+ * The split is safe for the output because every cell is computed from the
+ * same inputs in the same row-major order regardless of where a step
+ * boundary falls, and `maxHits`/`hitMass` are accumulated in that same
+ * order. Work units are whole numbers of taps (plus the per-cell base), so
+ * summing them in bands versus one pass is exact in Float64 — `done` reaches
+ * `total` exactly, not approximately.
+ */
+export interface AdaptiveDownsampleJob {
+  /** Predicted total work, fixed when the job is created. Always positive. */
+  readonly total: number;
+  /** Work completed so far. Reaches exactly {@link total} when
+   * {@link run} first returns true. */
+  readonly done: number;
+  /**
+   * Run output cells in row-major order until at least `workBudget` more work
+   * units have been charged, or the pass completes. Returns true once the
+   * pass is complete (subsequent calls are no-ops returning true). At least
+   * one cell always runs, so any budget makes progress — the caller's band
+   * can therefore never wedge.
+   */
+  run(workBudget: number): boolean;
+  /**
+   * The completed output histogram (the `out` the job was created with, or a
+   * freshly allocated one). Throws if the pass hasn't finished — a partial
+   * frame must never be mistaken for a result.
+   */
+  result(): FlameHistogram;
+}
+
+/** One quantized-radius class's precomputed separable Gaussian pair — see
+ * {@link createAdaptiveDownsampleJob}'s ALGORITHM step 3. Held by INDEX on
+ * the plan so the gather never repeats quantization or `Math.exp`. */
+interface AdaptiveKernel {
+  kernelX: Float64Array;
+  kernelY: Float64Array;
+  radiusX: number;
+  radiusY: number;
+}
+
+/** The plan phase's output: one kernel choice per output cell (`-1` is the
+ * empty-footprint skip) plus the pass's fixed work total. */
+interface AdaptivePlan {
+  plan: Int32Array;
+  kernels: AdaptiveKernel[];
+  total: number;
+  scaleX: number;
+  scaleY: number;
+}
+
+/**
+ * PLAN phase of {@link createAdaptiveDownsampleJob}: build the occupancy
+ * table, then walk every output cell once to fix its kernel and its gather
+ * cost, summing the pass's total work (see that function's doc for the
+ * algorithm and the work unit).
+ *
+ * A TOP-LEVEL function, not inline code in the job closure, for a measured
+ * reason: the gather's tap loop must read its source/output arrays from
+ * locals rather than closure slots. A closure-slot read per tap measured
+ * ~13% slower than the old single-function pass (which held them as locals)
+ * on a thin 400x225 fixture; splitting the phases into top-level functions
+ * restores that, and the plan phase gets the same treatment for symmetry.
+ */
+function planAdaptiveDownsample(
+  srcHits: Float64Array,
+  srcWidth: number,
+  srcHeight: number,
+  outWidth: number,
+  outHeight: number,
+  estimatorRadius: number,
+  estimatorMinimumRadius: number,
+  estimatorCurve: number,
+): AdaptivePlan {
+  const scaleX = srcWidth / outWidth;
+  const scaleY = srcHeight / outHeight;
+
+  // The same constant per-axis phase downsampleFlame relies on (see its
+  // doc) — every output cell's footprint center sits at this fixed
+  // fractional offset from its nearest source-cell grid line, regardless of
+  // which cell, so it can be baked into every cached kernel below once.
+  const phaseX = 0.5 * (scaleX - 1);
+  const phaseY = 0.5 * (scaleY - 1);
+
+  // Kernels are built once per distinct QUANTIZED radius and referenced by
+  // INDEX from the plan: the plan resolves each cell's kernel index while it
+  // already has the radius in hand, and the gather reads it back, so the
+  // quantize-and-cache step happens once per cell rather than twice. `Math.exp`
+  // still runs once per radius class, not per cell (see the doc's ALGORITHM
+  // step 3).
+  const kernels: AdaptiveKernel[] = [];
+  const kernelIndices = new Map<number, number>();
+  function kernelIndexFor(radius: number): number {
+    const quantized = Math.round(radius / RADIUS_QUANTUM) * RADIUS_QUANTUM;
+    const cached = kernelIndices.get(quantized);
+    if (cached !== undefined) return cached;
+    const sigmaX = Math.max(quantized, MIN_ADAPTIVE_FILTER_SIGMA) * scaleX;
+    const sigmaY = Math.max(quantized, MIN_ADAPTIVE_FILTER_SIGMA) * scaleY;
+    const radiusX = Math.max(1, Math.ceil(sigmaX * 3));
+    const radiusY = Math.max(1, Math.ceil(sigmaY * 3));
+    const kernelX = new Float64Array(2 * radiusX + 1);
+    for (let k = -radiusX; k <= radiusX; k++) {
+      const d = k - phaseX;
+      kernelX[k + radiusX] = Math.exp(-(d * d) / (2 * sigmaX * sigmaX));
+    }
+    const kernelY = new Float64Array(2 * radiusY + 1);
+    for (let k = -radiusY; k <= radiusY; k++) {
+      const d = k - phaseY;
+      kernelY[k + radiusY] = Math.exp(-(d * d) / (2 * sigmaY * sigmaY));
+    }
+    const index = kernels.length;
+    kernels.push({ kernelX, kernelY, radiusX, radiusY });
+    kernelIndices.set(quantized, index);
+    return index;
+  }
+
+  // Occupancy summed-area table (see the doc's skip paragraph): occ[(ty + 1)
+  // * satStride + (tx + 1)] holds the number of occupied (any-hits) tiles in
+  // the rectangle of tiles from (0, 0) through (tx, ty) inclusive, with a
+  // zero border row/column so queries never need edge special cases. Built
+  // in one O(srcWidth * srcHeight) scan + one O(tiles) prefix pass — trivial
+  // next to even a single widest-kernel gather row.
+  const tilesX = Math.ceil(srcWidth / OCCUPANCY_TILE);
+  const tilesY = Math.ceil(srcHeight / OCCUPANCY_TILE);
+  const satStride = tilesX + 1;
+  const occupancy = new Int32Array(satStride * (tilesY + 1));
+  for (let sy = 0; sy < srcHeight; sy++) {
+    const rowBase = sy * srcWidth;
+    const tileRow = (((sy / OCCUPANCY_TILE) | 0) + 1) * satStride;
+    for (let sx = 0; sx < srcWidth; sx++) {
+      if (srcHits[rowBase + sx] > 0) {
+        occupancy[tileRow + ((sx / OCCUPANCY_TILE) | 0) + 1] = 1;
+      }
+    }
+  }
+  for (let ty = 1; ty <= tilesY; ty++) {
+    for (let tx = 1; tx <= tilesX; tx++) {
+      const i = ty * satStride + tx;
+      occupancy[i] +=
+        occupancy[i - 1] +
+        occupancy[i - satStride] -
+        occupancy[i - satStride - 1];
+    }
+  }
+
+  // Walk every output cell once, fixing its gather cost (and the pass's
+  // total) before any tap is gathered. The per-cell local count and radius
+  // are computed here once and only the kernel reference is stored (an
+  // index, not a per-cell object), so the gather reads them back instead of
+  // recomputing — no work is duplicated between the two phases, and no
+  // second cost predictor can drift from what the gather actually does.
+  const outCells = outWidth * outHeight;
+  /** `-1` = empty-footprint skip; otherwise an index into `kernels`. */
+  const plan = new Int32Array(outCells);
+  let total = 0;
+  for (let oy = 0; oy < outHeight; oy++) {
+    const baseY = oy * scaleY; // exact integer: the output cell's home row.
+    for (let ox = 0; ox < outWidth; ox++) {
+      const baseX = ox * scaleX; // exact integer: the output cell's home column.
+
+      // Step 1: local density from this cell's home block, not a single
+      // (noisy) source cell.
+      let localCount = 0;
+      for (let j = 0; j < scaleY; j++) {
+        const rowBase = (baseY + j) * srcWidth;
+        for (let i = 0; i < scaleX; i++) {
+          localCount += srcHits[rowBase + baseX + i];
+        }
+      }
+      // Step 2: map the cell's own absolute count to a radius (see the doc's
+      // ALGORITHM section for why absolute, not relative-to-peak).
+      // max(1, count) keeps an empty cell at exactly the widest radius
+      // instead of dividing by 0 ** curve.
+      const radius = Math.min(
+        estimatorRadius,
+        Math.max(
+          estimatorMinimumRadius,
+          estimatorRadius / Math.max(1, localCount) ** estimatorCurve,
+        ),
+      );
+
+      // Step 3: resolve the (cached-by-quantized-radius) kernel.
+      const kernelIndex = kernelIndexFor(radius);
+      const { radiusX, radiusY } = kernels[kernelIndex];
+      const cell = oy * outWidth + ox;
+
+      // Empty-footprint skip: if no occupancy tile overlapping the kernel's
+      // bounding box holds any hits, gathering would sum zeros — the gather
+      // writes the zeros directly (a reused `out` may be dirty; see
+      // downsampleFlame). Decided here so the denominator already excludes
+      // the taps the gather won't pay; a nonempty home block skips the table
+      // query entirely, exactly as the old inline loop did.
+      let emptyFootprint = false;
+      if (localCount <= 0) {
+        const txLo = (Math.max(0, baseX - radiusX) / OCCUPANCY_TILE) | 0;
+        const tyLo = (Math.max(0, baseY - radiusY) / OCCUPANCY_TILE) | 0;
+        const txHi =
+          ((Math.min(srcWidth - 1, baseX + radiusX) / OCCUPANCY_TILE) | 0) + 1;
+        const tyHi =
+          ((Math.min(srcHeight - 1, baseY + radiusY) / OCCUPANCY_TILE) | 0) + 1;
+        const occupied =
+          occupancy[tyHi * satStride + txHi] -
+          occupancy[tyLo * satStride + txHi] -
+          occupancy[tyHi * satStride + txLo] +
+          occupancy[tyLo * satStride + txLo];
+        emptyFootprint = occupied === 0;
+      }
+      if (emptyFootprint) {
+        plan[cell] = -1;
+        total += ADAPTIVE_CELL_BASE_WORK;
+      } else {
+        plan[cell] = kernelIndex;
+        total +=
+          ADAPTIVE_CELL_BASE_WORK +
+          adaptiveGatherWork(
+            baseX,
+            baseY,
+            radiusX,
+            radiusY,
+            srcWidth,
+            srcHeight,
+          );
+      }
+    }
+  }
+  return { plan, kernels, total, scaleX, scaleY };
+}
+
+/** Mutable resume state for one banded gather — see
+ * {@link runAdaptiveGather}. Kept as one object so a run can be a top-level
+ * function with local (not closure-slot) array reads, the measured reason
+ * the whole job is split this way (see `planAdaptiveDownsample`'s note). */
+interface AdaptiveGatherState {
+  plan: Int32Array;
+  kernels: AdaptiveKernel[];
+  srcHits: Float64Array;
+  srcRGB: Float64Array;
+  dstHits: Float64Array;
+  dstRGB: Float64Array;
+  srcWidth: number;
+  srcHeight: number;
+  outWidth: number;
+  outHeight: number;
+  outCells: number;
+  scaleX: number;
+  scaleY: number;
+  target: FlameHistogram;
+  nextCell: number;
+  done: number;
+  finished: boolean;
+  maxHits: number;
+  hitMass: number;
+}
+
+/**
+ * GATHER phase of {@link createAdaptiveDownsampleJob}: execute the plan in
+ * the same row-major order, charging the same work the plan predicted and
+ * stopping at the band boundary. Binds every array and dimension to locals
+ * for the duration of the band, so the tap loop below never pays a closure
+ * read (see `planAdaptiveDownsample`'s note).
+ */
+function runAdaptiveGather(
+  state: AdaptiveGatherState,
+  workBudget: number,
+): boolean {
+  const {
+    plan,
+    kernels,
+    srcHits,
+    srcRGB,
+    dstHits,
+    dstRGB,
+    srcWidth,
+    srcHeight,
+    outWidth,
+    outHeight,
+    outCells,
+    scaleX,
+    scaleY,
+  } = state;
+  let { nextCell, done, finished, maxHits, hitMass } = state;
+  if (finished) return true;
+  let ran = 0;
+  // Nested loops rather than a flat index: integer row/column locals keep
+  // the tap loop below measurably faster (the flat `while` plus a per-cell
+  // division measured ~5% slower on the same fixture). `nextCell` still
+  // names the resume point, so a band can break mid-row and the next `run`
+  // rejoins it exactly.
+  outer: for (let oy = (nextCell / outWidth) | 0; oy < outHeight; oy++) {
+    const baseY = oy * scaleY;
+    for (let ox = (nextCell % outWidth) | 0; ox < outWidth; ox++) {
+      const baseX = ox * scaleX;
+      const cell = oy * outWidth + ox;
+      nextCell = cell + 1;
+      const dOff = cell * 3;
+      const kernelIndex = plan[cell];
+      if (kernelIndex < 0) {
+        // Empty-footprint skip, precomputed by the plan: gathering would sum
+        // zeros anyway, but the zeros must still be WRITTEN (a reused `out`
+        // may be dirty) — see downsampleFlame.
+        dstHits[cell] = 0;
+        dstRGB[dOff] = 0;
+        dstRGB[dOff + 1] = 0;
+        dstRGB[dOff + 2] = 0;
+        ran += ADAPTIVE_CELL_BASE_WORK;
+      } else {
+        // Step 3 continued: gather the plan's kernel.
+        const { kernelX, kernelY, radiusX, radiusY } = kernels[kernelIndex];
+        ran +=
+          ADAPTIVE_CELL_BASE_WORK +
+          adaptiveGatherWork(
+            baseX,
+            baseY,
+            radiusX,
+            radiusY,
+            srcWidth,
+            srcHeight,
+          );
+
+        let weightSum = 0;
+        let hitSum = 0;
+        let rSum = 0;
+        let gSum = 0;
+        let bSum = 0;
+        for (let j = -radiusY; j <= radiusY; j++) {
+          const sy = baseY + j;
+          if (sy < 0 || sy >= srcHeight) continue;
+          const wy = kernelY[j + radiusY];
+          const rowBase = sy * srcWidth;
+          for (let i = -radiusX; i <= radiusX; i++) {
+            const sx = baseX + i;
+            if (sx < 0 || sx >= srcWidth) continue;
+            const weight = wy * kernelX[i + radiusX];
+            const bucket = rowBase + sx;
+            weightSum += weight;
+            hitSum += weight * srcHits[bucket];
+            const so = bucket * 3;
+            rSum += weight * srcRGB[so];
+            gSum += weight * srcRGB[so + 1];
+            bSum += weight * srcRGB[so + 2];
+          }
+        }
+
+        // weightSum is always > 0 in practice (the center tap, j = i = 0, is
+        // always in-bounds since baseX/baseY are themselves in-bounds source
+        // coordinates) — guarded anyway, matching downsampleFlame and this
+        // codebase's general habit of guarding "essentially impossible" cases
+        // rather than assuming them away.
+        if (weightSum > 0) {
+          const norm = 1 / weightSum;
+          const hVal = hitSum * norm;
+          dstHits[cell] = hVal;
+          dstRGB[dOff] = rSum * norm;
+          dstRGB[dOff + 1] = gSum * norm;
+          dstRGB[dOff + 2] = bSum * norm;
+          if (hVal > maxHits) maxHits = hVal;
+          hitMass += hVal;
+        } else {
+          // Written, not skipped, for reused-out parity — see downsampleFlame.
+          dstHits[cell] = 0;
+          dstRGB[dOff] = 0;
+          dstRGB[dOff + 1] = 0;
+          dstRGB[dOff + 2] = 0;
+        }
+      }
+      if (ran >= workBudget) break outer;
+    }
+  }
+  // Every unit is a whole number of taps (or the per-cell base), so the band
+  // sums and the plan's running sum are exact in Float64 regardless of where
+  // the boundaries fall — `done` reaches `total` exactly.
+  done += ran;
+  if (nextCell >= outCells) {
+    finished = true;
+    state.target.maxHits = maxHits;
+    state.target.hitMass = hitMass;
+  }
+  state.nextCell = nextCell;
+  state.done = done;
+  state.finished = finished;
+  state.maxHits = maxHits;
+  state.hitMass = hitMass;
+  return finished;
+}
+
+/**
  * Per-cell-adaptive generalization of {@link downsampleFlame}: instead of one
  * FIXED radius for every output cell, each cell's radius is driven by its
  * OWN local sample density — sparse, noisy regions blur wide (filling gaps,
@@ -1376,6 +1808,16 @@ const MIN_ADAPTIVE_FILTER_SIGMA = 0.3;
  * fractal-flame algorithm's signature denoising step, and the reason a
  * converging render visibly sharpens as it accumulates instead of just
  * getting less grainy in place.
+ *
+ * This is the JOB constructor. The pass is split into a PLAN phase (build the
+ * occupancy table, then walk every output cell once to fix its kernel and
+ * gather cost, summing the pass's total work in {@link adaptiveGatherWork}
+ * units) and a GATHER phase ({@link AdaptiveDownsampleJob.run}) that executes
+ * planned cells in bounded steps. The plan costs no more than the old inline
+ * per-cell work — it computes each cell's local count and radius exactly once
+ * and hands the gather a kernel index — and it is what makes determinate
+ * progress possible: the denominator is fixed before the first tap. The
+ * one-shot {@link adaptiveDownsampleFlame} is this job run in a single step.
  *
  * Same slot in the pipeline as `downsampleFlame` (the linear accumulation
  * domain, before {@link tonemapFlame} — see that function's doc for why),
@@ -1451,13 +1893,13 @@ const MIN_ADAPTIVE_FILTER_SIGMA = 0.3;
  * and border renormalization makes a scaled-copy mass second-order, so the
  * mass is summed from the written values in the same pass.
  */
-export function adaptiveDownsampleFlame(
+export function createAdaptiveDownsampleJob(
   oversized: FlameHistogram,
   outWidth: number,
   outHeight: number,
   params: DensityEstimatorParams,
   out?: FlameHistogram,
-): FlameHistogram {
+): AdaptiveDownsampleJob {
   const {
     width: srcWidth,
     height: srcHeight,
@@ -1479,8 +1921,6 @@ export function adaptiveDownsampleFlame(
       `adaptiveDownsampleFlame: out histogram is ${out.width}x${out.height}, but ${outWidth}x${outHeight} was requested`,
     );
   }
-  const scaleX = srcWidth / outWidth;
-  const scaleY = srcHeight / outHeight;
   const target = out ?? createFlameHistogram(outWidth, outHeight);
   const { hits: dstHits, sumRGB: dstRGB } = target;
 
@@ -1491,188 +1931,83 @@ export function adaptiveDownsampleFlame(
     estimatorRadius,
     Math.max(0, params.estimatorMinimumRadius),
   );
-  const estimatorCurve = params.estimatorCurve;
+  const plan = planAdaptiveDownsample(
+    srcHits,
+    srcWidth,
+    srcHeight,
+    outWidth,
+    outHeight,
+    estimatorRadius,
+    estimatorMinimumRadius,
+    params.estimatorCurve,
+  );
 
-  // The same constant per-axis phase downsampleFlame relies on (see its
-  // doc) — every output cell's footprint center sits at this fixed
-  // fractional offset from its nearest source-cell grid line, regardless of
-  // which cell, so it can be baked into every cached kernel below once.
-  const phaseX = 0.5 * (scaleX - 1);
-  const phaseY = 0.5 * (scaleY - 1);
+  const state: AdaptiveGatherState = {
+    plan: plan.plan,
+    kernels: plan.kernels,
+    srcHits,
+    srcRGB,
+    dstHits,
+    dstRGB,
+    srcWidth,
+    srcHeight,
+    outWidth,
+    outHeight,
+    outCells: outWidth * outHeight,
+    scaleX: plan.scaleX,
+    scaleY: plan.scaleY,
+    target,
+    nextCell: 0,
+    done: 0,
+    finished: false,
+    maxHits: 0,
+    hitMass: 0,
+  };
 
-  const kernelCache = new Map<
-    number,
-    {
-      kernelX: Float64Array;
-      kernelY: Float64Array;
-      radiusX: number;
-      radiusY: number;
-    }
-  >();
-  function kernelFor(radius: number): {
-    kernelX: Float64Array;
-    kernelY: Float64Array;
-    radiusX: number;
-    radiusY: number;
-  } {
-    const quantized = Math.round(radius / RADIUS_QUANTUM) * RADIUS_QUANTUM;
-    const cached = kernelCache.get(quantized);
-    if (cached) return cached;
-    const sigmaX = Math.max(quantized, MIN_ADAPTIVE_FILTER_SIGMA) * scaleX;
-    const sigmaY = Math.max(quantized, MIN_ADAPTIVE_FILTER_SIGMA) * scaleY;
-    const radiusX = Math.max(1, Math.ceil(sigmaX * 3));
-    const radiusY = Math.max(1, Math.ceil(sigmaY * 3));
-    const kernelX = new Float64Array(2 * radiusX + 1);
-    for (let k = -radiusX; k <= radiusX; k++) {
-      const d = k - phaseX;
-      kernelX[k + radiusX] = Math.exp(-(d * d) / (2 * sigmaX * sigmaX));
-    }
-    const kernelY = new Float64Array(2 * radiusY + 1);
-    for (let k = -radiusY; k <= radiusY; k++) {
-      const d = k - phaseY;
-      kernelY[k + radiusY] = Math.exp(-(d * d) / (2 * sigmaY * sigmaY));
-    }
-    const built = { kernelX, kernelY, radiusX, radiusY };
-    kernelCache.set(quantized, built);
-    return built;
-  }
-
-  // Occupancy summed-area table (see the doc's skip paragraph): occ[(ty + 1)
-  // * satStride + (tx + 1)] holds the number of occupied (any-hits) tiles in
-  // the rectangle of tiles from (0, 0) through (tx, ty) inclusive, with a
-  // zero border row/column so queries never need edge special cases. Built
-  // in one O(srcWidth * srcHeight) scan + one O(tiles) prefix pass — trivial
-  // next to even a single widest-kernel gather row.
-  const tilesX = Math.ceil(srcWidth / OCCUPANCY_TILE);
-  const tilesY = Math.ceil(srcHeight / OCCUPANCY_TILE);
-  const satStride = tilesX + 1;
-  const occupancy = new Int32Array(satStride * (tilesY + 1));
-  for (let sy = 0; sy < srcHeight; sy++) {
-    const rowBase = sy * srcWidth;
-    const tileRow = (((sy / OCCUPANCY_TILE) | 0) + 1) * satStride;
-    for (let sx = 0; sx < srcWidth; sx++) {
-      if (srcHits[rowBase + sx] > 0) {
-        occupancy[tileRow + ((sx / OCCUPANCY_TILE) | 0) + 1] = 1;
+  return {
+    get total(): number {
+      return plan.total;
+    },
+    get done(): number {
+      return state.done;
+    },
+    run(workBudget: number): boolean {
+      return runAdaptiveGather(state, workBudget);
+    },
+    result(): FlameHistogram {
+      if (!state.finished) {
+        throw new Error(
+          "createAdaptiveDownsampleJob: result requested before the pass finished",
+        );
       }
-    }
-  }
-  for (let ty = 1; ty <= tilesY; ty++) {
-    for (let tx = 1; tx <= tilesX; tx++) {
-      const i = ty * satStride + tx;
-      occupancy[i] +=
-        occupancy[i - 1] +
-        occupancy[i - satStride] -
-        occupancy[i - satStride - 1];
-    }
-  }
+      // Same non-answer as downsampleFlame's — see its doc — this is a
+      // display-only derivative, never fed back into accumulateFlame.
+      return target;
+    },
+  };
+}
 
-  let maxHits = 0;
-  let hitMass = 0;
-  for (let oy = 0; oy < outHeight; oy++) {
-    const baseY = oy * scaleY; // exact integer: the output cell's home row.
-    for (let ox = 0; ox < outWidth; ox++) {
-      const baseX = ox * scaleX; // exact integer: the output cell's home column.
-
-      // Step 1: local density from this cell's home block, not a single
-      // (noisy) source cell.
-      let localCount = 0;
-      for (let j = 0; j < scaleY; j++) {
-        const rowBase = (baseY + j) * srcWidth;
-        for (let i = 0; i < scaleX; i++) {
-          localCount += srcHits[rowBase + baseX + i];
-        }
-      }
-      // Step 2: map the cell's own absolute count to a radius (see the doc's
-      // ALGORITHM section for why absolute, not relative-to-peak).
-      // max(1, count) keeps an empty cell at exactly the widest radius
-      // instead of dividing by 0 ** curve.
-      const radius = Math.min(
-        estimatorRadius,
-        Math.max(
-          estimatorMinimumRadius,
-          estimatorRadius / Math.max(1, localCount) ** estimatorCurve,
-        ),
-      );
-
-      // Step 3: gather the (cached-by-quantized-radius) kernel.
-      const { kernelX, kernelY, radiusX, radiusY } = kernelFor(radius);
-
-      // Empty-footprint skip: if no occupancy tile overlapping the kernel's
-      // bounding box holds any hits, gathering would sum zeros — write the
-      // zeros directly (a reused `out` may be dirty; see downsampleFlame).
-      const dstBucket = oy * outWidth + ox;
-      const dOff = dstBucket * 3;
-      if (localCount <= 0) {
-        const txLo = (Math.max(0, baseX - radiusX) / OCCUPANCY_TILE) | 0;
-        const tyLo = (Math.max(0, baseY - radiusY) / OCCUPANCY_TILE) | 0;
-        const txHi =
-          ((Math.min(srcWidth - 1, baseX + radiusX) / OCCUPANCY_TILE) | 0) + 1;
-        const tyHi =
-          ((Math.min(srcHeight - 1, baseY + radiusY) / OCCUPANCY_TILE) | 0) + 1;
-        const occupied =
-          occupancy[tyHi * satStride + txHi] -
-          occupancy[tyLo * satStride + txHi] -
-          occupancy[tyHi * satStride + txLo] +
-          occupancy[tyLo * satStride + txLo];
-        if (occupied === 0) {
-          dstHits[dstBucket] = 0;
-          dstRGB[dOff] = 0;
-          dstRGB[dOff + 1] = 0;
-          dstRGB[dOff + 2] = 0;
-          continue;
-        }
-      }
-
-      let weightSum = 0;
-      let hitSum = 0;
-      let rSum = 0;
-      let gSum = 0;
-      let bSum = 0;
-      for (let j = -radiusY; j <= radiusY; j++) {
-        const sy = baseY + j;
-        if (sy < 0 || sy >= srcHeight) continue;
-        const wy = kernelY[j + radiusY];
-        const rowBase = sy * srcWidth;
-        for (let i = -radiusX; i <= radiusX; i++) {
-          const sx = baseX + i;
-          if (sx < 0 || sx >= srcWidth) continue;
-          const weight = wy * kernelX[i + radiusX];
-          const bucket = rowBase + sx;
-          weightSum += weight;
-          hitSum += weight * srcHits[bucket];
-          const so = bucket * 3;
-          rSum += weight * srcRGB[so];
-          gSum += weight * srcRGB[so + 1];
-          bSum += weight * srcRGB[so + 2];
-        }
-      }
-
-      // weightSum is always > 0 in practice (the center tap, j = i = 0, is
-      // always in-bounds since baseX/baseY are themselves in-bounds source
-      // coordinates) — guarded anyway, matching downsampleFlame and this
-      // codebase's general habit of guarding "essentially impossible" cases.
-      if (weightSum > 0) {
-        const norm = 1 / weightSum;
-        const hVal = hitSum * norm;
-        dstHits[dstBucket] = hVal;
-        dstRGB[dOff] = rSum * norm;
-        dstRGB[dOff + 1] = gSum * norm;
-        dstRGB[dOff + 2] = bSum * norm;
-        if (hVal > maxHits) maxHits = hVal;
-        hitMass += hVal;
-      } else {
-        // Written, not skipped, for reused-out parity — see downsampleFlame.
-        dstHits[dstBucket] = 0;
-        dstRGB[dOff] = 0;
-        dstRGB[dOff + 1] = 0;
-        dstRGB[dOff + 2] = 0;
-      }
-    }
-  }
-
-  target.maxHits = maxHits;
-  target.hitMass = hitMass;
-  // Same non-answer as downsampleFlame's — see its doc — this is a
-  // display-only derivative, never fed back into accumulateFlame.
-  return target;
+/**
+ * One-shot {@link createAdaptiveDownsampleJob}: run the whole adaptive pass
+ * in a single step and return the completed histogram. Every caller that
+ * doesn't need progress (tests, harnesses, offline renders) uses this, and
+ * the worker's banded pass runs the identical cells in the identical order
+ * through the same job, so a banded result is byte-identical to this one.
+ */
+export function adaptiveDownsampleFlame(
+  oversized: FlameHistogram,
+  outWidth: number,
+  outHeight: number,
+  params: DensityEstimatorParams,
+  out?: FlameHistogram,
+): FlameHistogram {
+  const job = createAdaptiveDownsampleJob(
+    oversized,
+    outWidth,
+    outHeight,
+    params,
+    out,
+  );
+  job.run(Infinity);
+  return job.result();
 }

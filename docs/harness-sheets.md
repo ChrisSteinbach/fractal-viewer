@@ -910,6 +910,26 @@ winner. The five families therefore ship as one measured batch; rerun the
 sheet to regenerate its gitignored manifest rather than committing corpus
 output.
 
+### flame-estimate-progress
+
+The banded adaptive density-estimate pass's executable record: a seeded thin
+800x450 source (2% occupancy, 400x225 output) exercises the shape imported
+genomes have — nearly every cell asks the widest kernel and the
+empty-footprint skip rarely fires — through `createAdaptiveDownsampleJob`.
+It gates byte-identity between banded and one-shot output at band budgets
+from one cell to unbounded, plus strict monotonic `done` ending exactly at
+`total`, and prints the plan share and throughput for the imported params
+(11/0.6/0) and the app defaults (6/0.4/2).
+
+MEASURED VERDICT (2026-09-13, Node 22.23.2, i7-1165G7): the plan costs ~8ms
+against a 2.19s / 6.68s pass (0.36% / 0.12%), 206-212M taps/s, and `done`
+reaches `total` exactly on every run. The same sheet's development produced
+the code's implementation note: a closure-slot read per tap measured ~13% slower and a
+flat indexed loop ~5% slower than top-level functions binding their arrays to
+locals, which is why `planAdaptiveDownsample`/`runAdaptiveGather` are split
+out; at parity (interleaved A/B against a `main` worktree, 6 rounds x 2 param
+sets) the min delta was -1.5% to +1.0%.
+
 ### spherefold-radius-sweep
 
 The ratio sweep: the sphere fold's frozen `mR`/`fR` and the box wall, swept

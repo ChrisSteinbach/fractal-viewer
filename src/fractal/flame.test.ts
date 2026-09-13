@@ -4,6 +4,7 @@ import {
   accumulateFlame,
   adaptiveDownsampleFlame,
   clampSupersampleToBudget,
+  createAdaptiveDownsampleJob,
   createFlameHistogram,
   downsampleFlame,
   tonemapFlame,
@@ -3362,6 +3363,157 @@ describe("adaptiveDownsampleFlame into a reused out histogram", () => {
     expect(dirty.hits[farCorner]).toBe(0);
     expect(Array.from(dirty.hits)).toEqual(Array.from(fresh.hits));
     expect(Array.from(dirty.sumRGB)).toEqual(Array.from(fresh.sumRGB));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The resumable adaptive job: the banded form the flame worker drives for
+// determinate progress. The contract under test: whatever boundaries the
+// caller's work budgets fall on, the output is byte-identical to the
+// one-shot pass, the reported work is monotonic and ends exactly at the
+// planned total, and a partial result is never handed out.
+// ---------------------------------------------------------------------------
+
+describe("createAdaptiveDownsampleJob", () => {
+  /** A 24x24 sparse source: enough cells (64 output at 8x8) and enough
+   * density spread that bands land on skips, mid radii and widest kernels,
+   * not just one uniform case. */
+  function adaptiveSource(): FlameHistogram {
+    const size = 24;
+    const hist = createFlameHistogram(size, size);
+    const hot = [
+      { x: 1, y: 1, hits: 1 },
+      { x: 5, y: 3, hits: 40 },
+      { x: 11, y: 11, hits: 1000 },
+      { x: 18, y: 4, hits: 7 },
+      { x: 22, y: 22, hits: 250_000 },
+      { x: 9, y: 20, hits: 3 },
+    ];
+    let maxHits = 0;
+    for (const { x, y, hits } of hot) {
+      const bucket = y * size + x;
+      hist.hits[bucket] = hits;
+      hist.sumRGB[bucket * 3] = hits * 0.25;
+      hist.sumRGB[bucket * 3 + 1] = hits * 0.5;
+      hist.sumRGB[bucket * 3 + 2] = hits * 0.75;
+      maxHits = Math.max(maxHits, hits);
+    }
+    hist.maxHits = maxHits;
+    return hist;
+  }
+
+  const paramSets: DensityEstimatorParams[] = [
+    { estimatorRadius: 3, estimatorMinimumRadius: 0, estimatorCurve: 0.4 },
+    { estimatorRadius: 0.5, estimatorMinimumRadius: 0.5, estimatorCurve: 1 },
+    { estimatorRadius: 12, estimatorMinimumRadius: 2, estimatorCurve: 0.2 },
+  ];
+
+  it.each(paramSets)(
+    "a banded run is byte-identical to the one-shot pass (params %#)",
+    (params) => {
+      const source = adaptiveSource();
+      const oneShot = adaptiveDownsampleFlame(source, 8, 8, params);
+      for (const budget of [1, 5, 64, Infinity]) {
+        const job = createAdaptiveDownsampleJob(source, 8, 8, params);
+        while (!job.run(budget)) {
+          /* keep stepping at this band budget */
+        }
+        const out = job.result();
+        expect(Array.from(out.hits)).toEqual(Array.from(oneShot.hits));
+        expect(Array.from(out.sumRGB)).toEqual(Array.from(oneShot.sumRGB));
+        expect(out.maxHits).toBe(oneShot.maxHits);
+        expect(out.hitMass).toBe(oneShot.hitMass);
+        expect(job.done).toBe(job.total);
+      }
+    },
+  );
+
+  it("reports strictly monotonic work ending exactly at the total", () => {
+    const job = createAdaptiveDownsampleJob(adaptiveSource(), 8, 8, {
+      estimatorRadius: 3,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 0.4,
+    });
+    expect(job.done).toBe(0);
+    expect(job.total).toBeGreaterThan(0);
+
+    let previous = 0;
+    let calls = 0;
+    while (!job.run(3)) {
+      expect(job.done).toBeGreaterThan(previous);
+      expect(job.done).toBeLessThanOrEqual(job.total);
+      previous = job.done;
+      calls++;
+    }
+    expect(calls).toBeGreaterThan(0);
+    expect(job.done).toBe(job.total);
+  });
+
+  it("writes into a reused out target and returns it, byte-identical to fresh", () => {
+    const source = adaptiveSource();
+    const fresh = adaptiveDownsampleFlame(source, 8, 8, {
+      estimatorRadius: 3,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 0.4,
+    });
+
+    const target = createFlameHistogram(8, 8);
+    target.hits.fill(123);
+    target.sumRGB.fill(-7);
+    target.maxHits = 999_999;
+    const job = createAdaptiveDownsampleJob(
+      source,
+      8,
+      8,
+      { estimatorRadius: 3, estimatorMinimumRadius: 0, estimatorCurve: 0.4 },
+      target,
+    );
+    while (!job.run(4)) {
+      /* keep stepping */
+    }
+
+    expect(job.result()).toBe(target);
+    expect(Array.from(target.hits)).toEqual(Array.from(fresh.hits));
+    expect(Array.from(target.sumRGB)).toEqual(Array.from(fresh.sumRGB));
+    expect(target.maxHits).toBe(fresh.maxHits);
+    expect(target.hitMass).toBe(fresh.hitMass);
+  });
+
+  it("refuses a partial result and treats run-after-finish as a no-op", () => {
+    const job = createAdaptiveDownsampleJob(adaptiveSource(), 8, 8, {
+      estimatorRadius: 3,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 0.4,
+    });
+    expect(() => job.result()).toThrow(/before the pass finished/);
+
+    while (!job.run(4)) {
+      /* keep stepping */
+    }
+    const finishedAt = job.done;
+    expect(job.run(4)).toBe(true);
+    expect(job.run(1_000_000)).toBe(true);
+    expect(job.done).toBe(finishedAt);
+  });
+
+  it("keeps the wrapper's dimension validation", () => {
+    const source = adaptiveSource();
+    expect(() =>
+      createAdaptiveDownsampleJob(source, 5, 5, {
+        estimatorRadius: 3,
+        estimatorMinimumRadius: 0,
+        estimatorCurve: 0.4,
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      createAdaptiveDownsampleJob(
+        source,
+        8,
+        8,
+        { estimatorRadius: 3, estimatorMinimumRadius: 0, estimatorCurve: 0.4 },
+        createFlameHistogram(8, 7),
+      ),
+    ).toThrow(RangeError);
   });
 });
 

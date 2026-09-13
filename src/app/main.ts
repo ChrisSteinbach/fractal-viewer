@@ -3417,6 +3417,12 @@ async function main(): Promise<void> {
       case "estimating":
         ui.setFlameEstimating();
         break;
+      case "estimateProgress":
+        // Determinate work through the same readout/bar the iterations use;
+        // the following progress/sharedFrame event restores the iteration
+        // text (now at 100%) — see ui.setFlameEstimateProgress.
+        ui.setFlameEstimateProgress(event.done, event.total);
+        break;
       case "error":
         console.error(
           "Flame render failed to accumulate; returning to explorer.",

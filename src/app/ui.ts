@@ -1976,23 +1976,26 @@ function highestProgressQuartile(pct: number): number {
 
 /**
  * Shared quartile-announce decision for {@link Ui.setFlameProgress}/
- * {@link Ui.setSolidProgress}/{@link Ui.setSurfaceProgress}: `armed` is the
- * highest quartile already announced this render (0 = none), kept on the
- * caller's own per-mode field. Returns `armed` unchanged and a null `text`
- * for the common case — a repaint that hasn't crossed a new boundary — or
- * the boundary just crossed plus its speech text. A pct that skips a
+ * {@link Ui.setSolidProgress}/{@link Ui.setSurfaceProgress}/
+ * {@link Ui.setFlameEstimateProgress}: `armed` is the highest quartile
+ * already announced this phase (0 = none), kept on the caller's own field.
+ * Returns `armed` unchanged and a null `text` for the common case — a
+ * repaint that hasn't crossed a new boundary — or the boundary just crossed
+ * plus its speech text, `"<spokenPrefix>, N percent"`. A pct that skips a
  * boundary (20% -> 60%) reports only the HIGHEST one newly crossed (50, not
  * 25 then 50), since `highestProgressQuartile` always returns the top of
- * the ladder at or below `pct`.
+ * the ladder at or below `pct`. `spokenPrefix` is the whole spoken clause
+ * before the number (e.g. "Flame render", "Density estimate"), so a phase
+ * with its own ladder can't accidentally inherit another's wording.
  */
 function crossedProgressQuartile(
-  modeLabel: string,
+  spokenPrefix: string,
   pct: number,
   armed: number,
 ): { armed: number; text: string | null } {
   const reached = highestProgressQuartile(pct);
   if (reached <= armed) return { armed, text: null };
-  return { armed: reached, text: `${modeLabel} render, ${reached} percent` };
+  return { armed: reached, text: `${spokenPrefix}, ${reached} percent` };
 }
 
 /**
@@ -2476,6 +2479,17 @@ export class Ui {
   private flameAnnouncedQuartile = 0;
   private solidAnnouncedQuartile = 0;
   private surfaceAnnouncedQuartile = 0;
+  /**
+   * The highest quartile already announced for the CURRENT flame
+   * density-estimate pass (0 = none). A SEPARATE ladder from
+   * {@link flameAnnouncedQuartile} on purpose: the estimate runs after the
+   * iterations have already announced "Flame render, 100 percent", so
+   * feeding its 0..100 into that same ladder would either stay silent
+   * forever (already armed at 100) or speak a nonsensical step backwards.
+   * Re-armed by {@link setFlameEstimating} — one pulse per pass — so each
+   * long estimate speaks its own "Density estimate, N percent" quartiles.
+   */
+  private flameEstimateAnnouncedQuartile = 0;
   /**
    * Surface-only one-shots, on a DIFFERENT cadence from the quartile fields
    * above: a cheap system's preview/settle job can complete within a single
@@ -7203,7 +7217,7 @@ export class Ui {
       return;
     }
     const { armed, text } = crossedProgressQuartile(
-      "Flame",
+      "Flame render",
       pct,
       this.flameAnnouncedQuartile,
     );
@@ -7212,15 +7226,56 @@ export class Ui {
   }
 
   /**
-   * Busy indicator for the worker's synchronous adaptive density-estimation
-   * pass: shown right when the worker posts `estimating`, i.e. while it is
-   * still crunching that multi-second pass with no other feedback otherwise on
-   * screen. Cleared by the next {@link setFlameProgress} call, which the
-   * following `progress`/`sharedFrame` event always triggers.
+   * Busy pulse for the worker's adaptive density-estimation pass: shown right
+   * when the worker posts `estimating` (it has just begun planning the pass).
+   * The worker's banded pass follows with `estimateProgress` events carrying
+   * done/total — {@link setFlameEstimateProgress} replaces this with a
+   * determinate percentage — and a pass quick enough to finish in its first
+   * band sends no determinate event at all, so on a common quick pass this
+   * pulse simply lasts until the frame event replaces it. Cleared by the next
+   * {@link setFlameProgress} call, which the following
+   * `progress`/`sharedFrame` event always triggers.
    */
   setFlameEstimating(): void {
+    // One pulse per pass: re-arm the estimate's own quartile ladder so a
+    // re-estimate (after the iterations already spoke their 100%) still gets
+    // its "Density estimate, N percent" announcements.
+    this.flameEstimateAnnouncedQuartile = 0;
     this.flameProgress.textContent = "applying density estimate…";
     this.flameProgress.classList.add("flame-progress-estimating");
+  }
+
+  /**
+   * Determinate half of {@link setFlameEstimating}: the worker's banded
+   * density-estimate pass reporting work done against its fixed total (see
+   * the worker's `estimateProgress` event). Renders the same `--progress`
+   * fill the iteration bar uses, with the phase named in the text, and ends
+   * the busy pulse. Deliberately a separate setter from
+   * {@link setFlameProgress} so the estimate phase can never touch the
+   * iteration counters or their text.
+   *
+   * The live-region announcer COVERS this phase, on its own ladder and
+   * wording ("Density estimate, 50 percent"): the estimate is often the
+   * longest single wait in a Flame render, and silence there is exactly the
+   * accessibility gap the announcer exists to close. The ladder is re-armed
+   * once per pass by {@link setFlameEstimating}; a pass that finishes in its
+   * first band never reaches this setter at all, so the common quick pass
+   * keeps the iteration announcement standing.
+   */
+  setFlameEstimateProgress(done: number, total: number): void {
+    // floor, not round, mirroring setFlameProgress: 99.7% must not read 100.
+    const pct =
+      total > 0 ? Math.min(100, Math.floor((done / total) * 100)) : 100;
+    this.flameProgress.textContent = `applying density estimate… ${pct}%`;
+    this.flameProgress.style.setProperty("--progress", `${pct}%`);
+    this.flameProgress.classList.remove("flame-progress-estimating");
+    const { armed, text } = crossedProgressQuartile(
+      "Density estimate",
+      pct,
+      this.flameEstimateAnnouncedQuartile,
+    );
+    this.flameEstimateAnnouncedQuartile = armed;
+    if (text !== null) this.renderProgressAnnouncer.textContent = text;
   }
 
   /**
@@ -7349,7 +7404,7 @@ export class Ui {
       return;
     }
     const { armed, text } = crossedProgressQuartile(
-      "Sampled Solid",
+      "Sampled Solid render",
       pct,
       this.solidAnnouncedQuartile,
     );
@@ -7554,7 +7609,7 @@ export class Ui {
     // wait for, and it only runs on a parked view.
     if (progress.label.startsWith("Full detail")) {
       const { armed, text } = crossedProgressQuartile(
-        "Surface",
+        "Surface render",
         progress.pct,
         this.surfaceAnnouncedQuartile,
       );

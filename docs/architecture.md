@@ -625,6 +625,31 @@ per-cell blur radius widens where samples are sparse. Handing a previous
 histogram back resumes the orbit exactly, so a render refines progressively
 rather than restarting.
 
+That finished-frame pass is a banded JOB, not a synchronous call
+(`createAdaptiveDownsampleJob`): a synchronous PLAN builds the occupancy table
+and walks every output cell once, fixing its kernel and its gather cost in
+whole-number WORK units (the cell's clipped tap count plus one base unit), so
+the pass's denominator is exact before the first tap; the GATHER then executes
+planned cells in bounded bands across scheduler ticks. The worker posts
+`estimateProgress` events at most once per the accumulation's own 150ms
+redisplay interval, and the readout renders the percentage on the same
+`--progress` fill the iteration bar uses ("applying density estimate… 42%")
+until the frame event restores the iteration counters. Both phases are
+top-level functions binding their arrays to locals: the same tap loop read from
+a job closure measured ~13% slower and a flat indexed loop ~5% slower, and at
+parity (interleaved A/B against the pre-banding implementation, min delta
+-1.5% to +1.0%) the plan costs ~8ms against a 2.19s defaults / 6.68s imported-
+params pass on a thin 800x450 fixture (0.36% / 0.12%, 206-212M taps/s).
+The pass is dimension-agnostic — the histogram is 2D and 3D and 4D Flame
+sessions share the same worker path — and every band boundary preserves the
+generation/run-id guards: a restart or a live estimator edit abandons the
+superseded pass before it writes or emits, while a pass that finishes in its
+first (inline) band emits no progress events at all, so a common quick pass
+keeps the pulse-only timing it always had. Banded output is byte-identical to
+the one-shot pass at every work budget, and `done` reaches `total` exactly
+(whole-number units). The measurement record is
+`scripts/flame-estimate-progress.harness.ts`.
+
 **Saved scenes re-render at a different brightness — deliberately, with no
 decoder migration.** The anchor change above is a look fix, and a
 decoder-side exposure compensation would need the old render's `maxHits`,
