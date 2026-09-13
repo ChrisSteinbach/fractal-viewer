@@ -350,7 +350,13 @@ function gridPlane(
 ): number {
   if (planeIndex === 0) return -halfExtent;
   if (planeIndex === gridSize) return halfExtent;
-  return -halfExtent + planeIndex * ((2 * halfExtent) / gridSize);
+  // This integer-centred rational form has no multiply-add for a backend to
+  // contract differently between boundary emission and anchor validation.
+  return (halfExtent * (2 * planeIndex - gridSize)) / gridSize;
+}
+
+function coordinateRoundoffEnvelope(halfExtent: number): number {
+  return halfExtent * 2 * 2 ** -23;
 }
 
 /** Occupancy an infinitesimal positive distance along direction from point. */
@@ -498,6 +504,29 @@ function boundaryFor(
     intrinsicAxis++
   )
     anchorCells[intrinsicAxis] = cellIndices[intrinsicAxis];
+  // The integer DDA cell is authoritative. If evaluation of qOrigin+t*qd
+  // rounded an unmasked coordinate across that cell's exact boundary,
+  // retain the pending zero-distance crossing at the canonical plane.
+  for (
+    let intrinsicAxis = 0;
+    intrinsicAxis < fixture.dimension;
+    intrinsicAxis++
+  ) {
+    if ((planeMask & (1 << intrinsicAxis)) !== 0) continue;
+    const cell = anchorCells[intrinsicAxis];
+    const lower = gridPlane(cell, fixture.halfExtent, gridSize);
+    const upper = gridPlane(cell + 1, fixture.halfExtent, gridSize);
+    const envelope = coordinateRoundoffEnvelope(fixture.halfExtent);
+    if (intrinsicPoint[intrinsicAxis] < lower) {
+      if (lower - intrinsicPoint[intrinsicAxis] > envelope)
+        return { kind: "refused", reason: "invalid-input", visits };
+      intrinsicPoint[intrinsicAxis] = lower;
+    } else if (intrinsicPoint[intrinsicAxis] > upper) {
+      if (intrinsicPoint[intrinsicAxis] - upper > envelope)
+        return { kind: "refused", reason: "invalid-input", visits };
+      intrinsicPoint[intrinsicAxis] = upper;
+    }
+  }
   return {
     kind: "boundary",
     t,
@@ -622,28 +651,55 @@ function dielectricNextBoundaryInternal(
             value < 0 ||
             value >= gridSize ||
             anchor.intrinsicPoint[axis] <
-              gridPlane(value, fixture.halfExtent, gridSize) ||
+              gridPlane(value, fixture.halfExtent, gridSize) -
+                coordinateRoundoffEnvelope(fixture.halfExtent) ||
             anchor.intrinsicPoint[axis] >
-              gridPlane(value + 1, fixture.halfExtent, gridSize)
+              gridPlane(value + 1, fixture.halfExtent, gridSize) +
+                coordinateRoundoffEnvelope(fixture.halfExtent)
           );
         }) ||
         anchor.intrinsicPoint.some((value, axis) => {
           const masked = (anchor.planeMask & (1 << axis)) !== 0;
           return masked
-            ? value !==
-                gridPlane(
-                  anchor.planeIndices[axis],
-                  fixture.halfExtent,
-                  3 ** fixture.depth,
-                )
+            ? Math.abs(
+                value -
+                  gridPlane(
+                    anchor.planeIndices[axis],
+                    fixture.halfExtent,
+                    3 ** fixture.depth,
+                  ),
+              ) > coordinateRoundoffEnvelope(fixture.halfExtent)
             : axis < fixture.dimension &&
-                (value < -fixture.halfExtent || value > fixture.halfExtent);
+                (value <
+                  -fixture.halfExtent -
+                    coordinateRoundoffEnvelope(fixture.halfExtent) ||
+                  value >
+                    fixture.halfExtent +
+                      coordinateRoundoffEnvelope(fixture.halfExtent));
         })))
   )
     return { kind: "refused", reason: "invalid-input", visits: 0 };
   const q = anchor
     ? ([...anchor.intrinsicPoint] as Vec4)
     : dielectricIntrinsicPoint(fixture, origin);
+  if (anchor) {
+    const gridSize = 3 ** fixture.depth;
+    for (let axis = 0; axis < fixture.dimension; axis++) {
+      if ((anchor.planeMask & (1 << axis)) !== 0)
+        q[axis] = gridPlane(
+          anchor.planeIndices[axis],
+          fixture.halfExtent,
+          gridSize,
+        );
+      else {
+        const cell = anchor.cellIndices[axis];
+        const lower = gridPlane(cell, fixture.halfExtent, gridSize);
+        const upper = gridPlane(cell + 1, fixture.halfExtent, gridSize);
+        if (q[axis] < lower) q[axis] = lower;
+        else if (q[axis] > upper) q[axis] = upper;
+      }
+    }
+  }
   const qd = dielectricIntrinsicDirection(fixture, direction);
   const clip = clipRoot(fixture, q, qd);
   if (!clip) return { kind: "miss", visits: 0 };
@@ -1013,6 +1069,88 @@ export const DIELECTRIC_CORNER_CONTROL_CASES: readonly DielectricCornerControlCa
     }),
   );
 
+export interface DielectricAnchorCanonicalizationControl {
+  name: string;
+  fixtureKey: "mengerD2" | "hyperMengerD2";
+  anchor: DielectricBoundaryAnchor;
+  direction: Vec3;
+  inside: boolean;
+  expected: "accepted-input" | "invalid-input";
+}
+
+const ANCHOR_ROUNDOFF_ENVELOPE = coordinateRoundoffEnvelope(
+  DIELECTRIC_HALF_EXTENT,
+);
+export const DIELECTRIC_ANCHOR_CANONICALIZATION_CONTROLS: readonly DielectricAnchorCanonicalizationControl[] =
+  Object.freeze([
+    {
+      name: "menger-1024-masked-plane3-and-unmasked-plane5-roundoff",
+      fixtureKey: "mengerD2",
+      anchor: {
+        intrinsicPoint: [
+          -0.2499999850988388, 0.6055799126625061, 0.08333336561918259, 0,
+        ],
+        planeMask: 1,
+        planeIndices: [3, -1, -1, -1],
+        cellIndices: [3, 8, 4, -1],
+      },
+      direction: [-0.4963323771953583, 0.18604183197021484, -0.847963809967041],
+      inside: true,
+      expected: "accepted-input",
+    },
+    {
+      name: "menger-1024-unmasked-plane5-roundoff",
+      fixtureKey: "mengerD2",
+      anchor: {
+        intrinsicPoint: [
+          0.08333336561918259, -0.6554025411605835, -0.4166666567325592, 0,
+        ],
+        planeMask: 4,
+        planeIndices: [-1, -1, 2, -1],
+        cellIndices: [4, 0, 1, -1],
+      },
+      direction: [-0.805361270904541, 0.2869277894496918, 0.5187154412269592],
+      inside: true,
+      expected: "accepted-input",
+    },
+    {
+      name: "hyper-1024-masked-plane7-roundoff",
+      fixtureKey: "hyperMengerD2",
+      anchor: {
+        intrinsicPoint: [
+          0.4166666865348816, -0.5528293251991272, -0.25, 0.7019144296646118,
+        ],
+        planeMask: 1,
+        planeIndices: [7, -1, -1, -1],
+        cellIndices: [6, 1, 3, 8],
+      },
+      direction: [
+        0.39379459619522095, -0.18851341307163239, 0.8996601700782776,
+      ],
+      inside: false,
+      expected: "accepted-input",
+    },
+    {
+      name: "menger-unmasked-coordinate-beyond-roundoff-envelope",
+      fixtureKey: "mengerD2",
+      anchor: {
+        intrinsicPoint: [
+          -0.2499999850988388,
+          0.6055799126625061,
+          (DIELECTRIC_HALF_EXTENT * (2 * 5 - 9)) / 9 +
+            2 * ANCHOR_ROUNDOFF_ENVELOPE,
+          0,
+        ],
+        planeMask: 1,
+        planeIndices: [3, -1, -1, -1],
+        cellIndices: [3, 8, 4, -1],
+      },
+      direction: [-0.4963323771953583, 0.18604183197021484, -0.847963809967041],
+      inside: true,
+      expected: "invalid-input",
+    },
+  ]);
+
 export function dielectricBeerThroughput(
   absorptionPerRadius: number,
   distance: number,
@@ -1136,7 +1274,8 @@ fn dielectricGridPlane(
 ) -> f32 {
   if (planeIndex == 0) { return -halfExtent; }
   if (planeIndex == gridSize) { return halfExtent; }
-  return -halfExtent + f32(planeIndex) * (2.0 * halfExtent / f32(gridSize));
+  let numerator = 2 * planeIndex - gridSize;
+  return halfExtent * f32(numerator) / f32(gridSize);
 }
 
 fn dielectricResult(kind: u32, reason: u32, visits: u32) -> DielectricBoundaryResult {
@@ -1239,6 +1378,28 @@ fn dielectricBoundary(
       );
     }
   }
+  for (var unmaskedAxis = 0u; unmaskedAxis < f.counts.x; unmaskedAxis++) {
+    if ((planeMask & (1u << unmaskedAxis)) != 0u) { continue; }
+    let cell = cellIndices[unmaskedAxis];
+    let lower = dielectricGridPlane(cell, f.shape.x, i32(f.counts.z));
+    let upper = dielectricGridPlane(cell + 1, f.shape.x, i32(f.counts.z));
+    let envelope = f.shape.x * 0.0000002384185791015625;
+    if (intrinsicPoint[unmaskedAxis] < lower) {
+      if (lower - intrinsicPoint[unmaskedAxis] > envelope) {
+        return dielectricResult(
+          DIELECTRIC_RESULT_REFUSED, DIELECTRIC_REFUSAL_INVALID_INPUT, visits,
+        );
+      }
+      intrinsicPoint[unmaskedAxis] = lower;
+    } else if (intrinsicPoint[unmaskedAxis] > upper) {
+      if (intrinsicPoint[unmaskedAxis] - upper > envelope) {
+        return dielectricResult(
+          DIELECTRIC_RESULT_REFUSED, DIELECTRIC_REFUSAL_INVALID_INPUT, visits,
+        );
+      }
+      intrinsicPoint[unmaskedAxis] = upper;
+    }
+  }
   return DielectricBoundaryResult(
     DIELECTRIC_RESULT_BOUNDARY,
     0u,
@@ -1280,6 +1441,7 @@ fn dielectricNextBoundaryRaw(
   let gridSize = i32(f.counts.z);
   let halfExtent = f.shape.x;
   let width = 2.0 * halfExtent / f32(gridSize);
+  let coordinateEnvelope = halfExtent * 0.0000002384185791015625;
   if (hasAnchor != 0u) {
     let validMask = (1u << dimension) - 1u;
     if (anchorPlaneMask == 0u || (anchorPlaneMask & ~validMask) != 0u) {
@@ -1293,9 +1455,9 @@ fn dielectricNextBoundaryRaw(
       let masked = (anchorPlaneMask & (1u << axis)) != 0u;
       if (masked) {
         if (anchorPlaneIndices[axis] < 0 || anchorPlaneIndices[axis] > gridSize ||
-            anchorPoint[axis] != dielectricGridPlane(
+            abs(anchorPoint[axis] - dielectricGridPlane(
               anchorPlaneIndices[axis], halfExtent, gridSize,
-            ) ||
+            )) > coordinateEnvelope ||
             (anchorCellIndices[axis] != anchorPlaneIndices[axis] - 1 &&
              anchorCellIndices[axis] != anchorPlaneIndices[axis])) {
           return dielectricResult(
@@ -1309,10 +1471,10 @@ fn dielectricNextBoundaryRaw(
                   (anchorCellIndices[axis] < 0 || anchorCellIndices[axis] >= gridSize ||
                    anchorPoint[axis] < dielectricGridPlane(
                      anchorCellIndices[axis], halfExtent, gridSize,
-                   ) ||
+                   ) - coordinateEnvelope ||
                    anchorPoint[axis] > dielectricGridPlane(
                      anchorCellIndices[axis] + 1, halfExtent, gridSize,
-                   ))) ||
+                   ) + coordinateEnvelope)) ||
                  (axis >= dimension && anchorCellIndices[axis] != -1)) {
         return dielectricResult(
           DIELECTRIC_RESULT_REFUSED,
@@ -1322,7 +1484,25 @@ fn dielectricNextBoundaryRaw(
       }
     }
   }
-  let q = select(dielectricPoint(f, origin), anchorPoint, hasAnchor != 0u);
+  var q = select(dielectricPoint(f, origin), anchorPoint, hasAnchor != 0u);
+  if (hasAnchor != 0u) {
+    for (var axis = 0u; axis < dimension; axis++) {
+      if ((anchorPlaneMask & (1u << axis)) != 0u) {
+        q[axis] = dielectricGridPlane(
+          anchorPlaneIndices[axis], halfExtent, gridSize,
+        );
+      } else {
+        let lower = dielectricGridPlane(
+          anchorCellIndices[axis], halfExtent, gridSize,
+        );
+        let upper = dielectricGridPlane(
+          anchorCellIndices[axis] + 1, halfExtent, gridSize,
+        );
+        if (q[axis] < lower) { q[axis] = lower; }
+        else if (q[axis] > upper) { q[axis] = upper; }
+      }
+    }
+  }
   let qd = dielectricDirection(f, direction);
   var enter = -3.402823466e+38;
   var exit = 3.402823466e+38;

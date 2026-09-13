@@ -4,6 +4,7 @@ import { mengerSponge } from "../src/fractal/presets";
 import type { Vec3 } from "./de-preview";
 import { boxUnionIntervals, type OpticalInterval } from "./transmission-proxy";
 import {
+  DIELECTRIC_ANCHOR_CANONICALIZATION_CONTROLS,
   DIELECTRIC_HYPER_ROTATION,
   DIELECTRIC_CORNER_CONTROL_CASES,
   DIELECTRIC_GEOMETRY_CONTROL_RAYS,
@@ -490,14 +491,9 @@ describe("connected finite dielectric solids", () => {
   it("retains unmasked cell topology and exact declared root endpoints", () => {
     const fixture = DIELECTRIC_SOLID_FIXTURES.mengerD2;
     const gridSize = 3 ** fixture.depth;
-    const width = (2 * fixture.halfExtent) / gridSize;
+    const plane8 = (fixture.halfExtent * (2 * 8 - gridSize)) / gridSize;
     const anchor: DielectricBoundaryAnchor = {
-      intrinsicPoint: [
-        -fixture.halfExtent + 8 * width,
-        0.455658555,
-        fixture.halfExtent,
-        0,
-      ],
+      intrinsicPoint: [plane8, 0.455658555, fixture.halfExtent, 0],
       planeMask: 1 << 2,
       planeIndices: [-1, -1, gridSize, -1],
       // x-cell 8 is the incident traversal's topology even though the
@@ -516,9 +512,7 @@ describe("connected finite dielectric solids", () => {
     });
     if (continuation.kind === "boundary") {
       expect(Math.abs(continuation.t)).toBe(0);
-      expect(continuation.anchor.intrinsicPoint[0]).toBe(
-        -fixture.halfExtent + 8 * width,
-      );
+      expect(continuation.anchor.intrinsicPoint[0]).toBe(plane8);
       expect(continuation.anchor.cellIndices).toEqual([7, 7, 8, -1]);
     }
 
@@ -532,6 +526,57 @@ describe("connected finite dielectric solids", () => {
     if (rootEntry.kind === "boundary") {
       expect(rootEntry.anchor.intrinsicPoint[2]).toBe(fixture.halfExtent);
       expect(rootEntry.anchor.planeIndices[2]).toBe(gridSize);
+    }
+
+    const f32Half = Math.fround(fixture.halfExtent);
+    const oldWidth = Math.fround(
+      Math.fround(2 * f32Half) / Math.fround(gridSize),
+    );
+    const oldSeparate = Math.fround(
+      Math.fround(-f32Half) + Math.fround(3 * oldWidth),
+    );
+    const oldContracted = Math.fround(-f32Half + 3 * oldWidth);
+    expect(oldSeparate).toBe(-0.25);
+    expect(oldContracted).toBe(-0.2499999850988388);
+    expect(oldSeparate).not.toBe(oldContracted);
+    const rationalPlane = (planeIndex: number) =>
+      Math.fround(
+        Math.fround(f32Half * Math.fround(2 * planeIndex - gridSize)) /
+          Math.fround(gridSize),
+      );
+    expect(rationalPlane(3)).toBe(-0.25);
+    expect(rationalPlane(3)).toBe(rationalPlane(3));
+
+    const interiorPlane = dielectricNextBoundary(
+      fixture,
+      [0, 0.5, 0.6],
+      [1, 0, 0],
+      { inside: false },
+    );
+    expect(interiorPlane.kind).toBe("boundary");
+    if (interiorPlane.kind === "boundary") {
+      expect(interiorPlane.anchor.planeIndices[0]).toBe(5);
+      expect(Math.fround(interiorPlane.anchor.intrinsicPoint[0])).toBe(
+        rationalPlane(5),
+      );
+    }
+
+    for (const control of DIELECTRIC_ANCHOR_CANONICALIZATION_CONTROLS) {
+      const result = dielectricNextBoundaryFromAnchor(
+        DIELECTRIC_SOLID_FIXTURES[control.fixtureKey],
+        control.direction,
+        { inside: control.inside, anchor: control.anchor },
+      );
+      if (control.expected === "invalid-input")
+        expect(result).toMatchObject({
+          kind: "refused",
+          reason: "invalid-input",
+        });
+      else
+        expect(result).not.toMatchObject({
+          kind: "refused",
+          reason: "invalid-input",
+        });
     }
   });
 
@@ -647,6 +692,8 @@ describe("connected finite dielectric solids", () => {
               "largest absolute intrinsic ray component, then lowest axis; attribution does not select the tie normal",
             continuation:
               "canonical intrinsic anchor with crossed-axis mask and integer planes",
+            coordinateRoundoff:
+              "masked planes reconstruct from integer indices; unmasked DDA-cell overshoot repairs only within 2*2^-23*halfExtent, otherwise invalid-input",
             tangentAnchor: "explicit ambiguous-anchor refusal",
             visitCap: "explicit visit-cap refusal",
             closedMembership:
@@ -654,10 +701,11 @@ describe("connected finite dielectric solids", () => {
             rayMembership: "direction-selected half-open cell",
           },
           precisionLimit:
-            "CPU f64 and GPU f32 can order near-corner crossings differently; no proximity tie or gap merge is used. The exhaustive box oracle needs report-only ULP coalescing because center +/- half reconstructs non-binary shared planes independently.",
+            "CPU f64 and GPU f32 can order near-corner crossings differently; no proximity tie or gap merge is used. Integer-centred plane arithmetic removes the observed multiply-add contraction site but WGSL reassociation prevents a universal bitwise claim. The bounded anchor repair is an explicit f32 numerical policy, not an exact physical interval claim. The exhaustive box oracle needs report-only ULP coalescing because center +/- half reconstructs non-binary shared planes independently.",
           controls: {
             geometryRays: DIELECTRIC_GEOMETRY_CONTROL_RAYS,
             cornerWitnesses: DIELECTRIC_CORNER_CONTROL_CASES,
+            anchorCanonicalization: DIELECTRIC_ANCHOR_CANONICALIZATION_CONTROLS,
             transportInputs: DIELECTRIC_TRANSPORT_CONTROL_INPUTS,
             exhaustiveDepth: 2,
             anchoredWorldHitPerturbations: "f32 and +/-1 ULP in xyz",
