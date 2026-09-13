@@ -37,6 +37,8 @@ type Options = {
   hyperPose?: DielectricHyperPoseId;
   samplesPerPixel?: number;
   provisional?: boolean;
+  replayPassDiagnostic?: boolean;
+  submissionProbe?: boolean;
 };
 
 type CameraPose = {
@@ -248,6 +250,81 @@ function base64(bytes: Uint8Array) {
   return btoa(text);
 }
 
+function percentileMs(sorted: number[], quantile: number) {
+  if (sorted.length === 0) return 0;
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.floor(quantile * (sorted.length - 1))),
+  );
+  return Math.round(sorted[index] * 1000) / 1000;
+}
+
+function summarizeSubmissionProbe(
+  records: {
+    tile: [number, number];
+    pass: number;
+    wallMs: number;
+    gpuMs: number | null;
+  }[],
+  timestampQuery: boolean,
+) {
+  const walls = records.map((record) => record.wallMs).sort((a, b) => a - b);
+  const gpus =
+    timestampQuery && records.every((record) => record.gpuMs !== null)
+      ? records.map((record) => record.gpuMs as number).sort((a, b) => a - b)
+      : null;
+  const perPassMaxWallMs = Array<number>(REPLAY_PASSES).fill(0);
+  const perPassMaxGpuMs: (number | null)[] = Array<number | null>(
+    REPLAY_PASSES,
+  ).fill(timestampQuery ? 0 : null);
+  for (const record of records) {
+    perPassMaxWallMs[record.pass] = Math.max(
+      perPassMaxWallMs[record.pass],
+      record.wallMs,
+    );
+    if (record.gpuMs !== null)
+      perPassMaxGpuMs[record.pass] = Math.max(
+        perPassMaxGpuMs[record.pass] ?? 0,
+        Math.round(record.gpuMs * 1000) / 1000,
+      );
+  }
+  return {
+    timestampQuery,
+    submissions: records.length,
+    perPassMaxWallMs: perPassMaxWallMs.map(
+      (value) => Math.round(value * 1000) / 1000,
+    ),
+    perPassMaxGpuMs,
+    wallPercentilesMs: {
+      p50: percentileMs(walls, 0.5),
+      p90: percentileMs(walls, 0.9),
+      p99: percentileMs(walls, 0.99),
+      p999: percentileMs(walls, 0.999),
+    },
+    gpuPercentilesMs:
+      gpus === null
+        ? null
+        : {
+            p50: percentileMs(gpus, 0.5),
+            p90: percentileMs(gpus, 0.9),
+            p99: percentileMs(gpus, 0.99),
+            p999: percentileMs(gpus, 0.999),
+          },
+    worst: [...records]
+      .sort((a, b) => b.wallMs - a.wallMs)
+      .slice(0, 16)
+      .map((record) => ({
+        tile: record.tile,
+        pass: record.pass,
+        wallMs: Math.round(record.wallMs * 1000) / 1000,
+        gpuMs:
+          record.gpuMs === null ? null : Math.round(record.gpuMs * 1000) / 1000,
+      })),
+    scope:
+      "Per-submission wall around one fenced tile-pass submission (writeBuffer + encode + submit + onSubmittedWorkDone). GPU ms comes from two timestamps bracketing the tile-pass compute pass, reported by Dawn in nanoseconds; when the adapter lacks the feature the records carry wall only. The maxSubmissionWallMs checkpoint is the worst wall; GPU ms separates dense-tile execution from queue/host latency.",
+  };
+}
+
 function memoryPlan(
   width: number,
   height: number,
@@ -319,7 +396,10 @@ function cameraBasis(poseId: CameraPoseId = "canonical") {
   };
 }
 
-export function dielectricWgsl(spp: number = SPP) {
+export function dielectricWgsl(
+  spp: number = SPP,
+  options: { pendingPassDiagnostic?: boolean } = {},
+) {
   if (!Number.isInteger(spp) || spp < 1 || spp > 4)
     throw new Error(
       "dielectric WGSL samples-per-pixel must be an integer 1..4",
@@ -777,7 +857,7 @@ fn renderDielectric(@builtin(global_invocation_id) gid: vec3u) {
       state.pendingMask &= ~sampleBit;
     }
   }
-  state.replayPasses = passIndex + 1u;
+  ${options.pendingPassDiagnostic === true ? "if (state.pendingMask != 0u) { state.replayPasses = passIndex + 1u; }" : "state.replayPasses = passIndex + 1u;"}
   state.packed = packColor(state.accumulatedRadiance);
   state.residual = state.acceptedResidual * f32(${spp});
   state.sampleComplete = countOneBits(state.acceptedMask);
@@ -828,6 +908,8 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       inconclusive: "samplesPerPixel must be an integer between 1 and 4",
     };
   const provisional = input.provisional === true;
+  const pendingPassDiagnostic = input.replayPassDiagnostic === true;
+  const submissionProbe = input.submissionProbe === true;
   const tileWidth = Math.min(input.tileWidth ?? 128, imageWindow.width);
   const tileHeight = Math.min(input.tileHeight ?? 64, imageWindow.height);
   if (
@@ -925,8 +1007,14 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     };
   }
   let device: GPUDevice;
+  // Timestamp queries need the explicit feature; when the probe is off (or the
+  // adapter lacks it) the device request is identical to every recorded run.
+  const timestampQuery =
+    submissionProbe && adapter.features.has("timestamp-query");
   try {
-    device = await adapter.requestDevice();
+    device = await adapter.requestDevice(
+      timestampQuery ? { requiredFeatures: ["timestamp-query"] } : undefined,
+    );
   } catch (error) {
     runReserved = false;
     throw error;
@@ -977,7 +1065,7 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
     const controlsStarted = performance.now();
     const controls = await runDielectricGpuControls(
       device,
-      dielectricWgsl(spp),
+      dielectricWgsl(spp, { pendingPassDiagnostic }),
       OUTPUT_PIXEL_BYTES,
     );
     const controlsMs = performance.now() - controlsStarted;
@@ -998,7 +1086,9 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       };
     runProgress.stage = "pipeline";
     const pipelineSetupStarted = performance.now();
-    const module = device.createShaderModule({ code: dielectricWgsl(spp) });
+    const module = device.createShaderModule({
+      code: dielectricWgsl(spp, { pendingPassDiagnostic }),
+    });
     const messages = await module.getCompilationInfo();
     const errors = messages.messages.filter(
       (message) => message.type === "error",
@@ -1049,6 +1139,36 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
       maxTilePixels * OUTPUT_PIXEL_BYTES,
       GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     );
+    // Submission-probe instruments: two timestamps bracket every tile-pass
+    // compute pass; per-pass results resolve into REPLAY_PASSES 256-byte
+    // slots (the resolve destination offset must be 256-byte aligned) and
+    // copy into one mappable buffer read once per tile.
+    const probeQuerySet =
+      timestampQuery === true
+        ? device.createQuerySet({ type: "timestamp", count: 2 })
+        : null;
+    const probeResolve =
+      probeQuerySet !== null
+        ? gpuBuffer(
+            device,
+            REPLAY_PASSES * 256,
+            GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+          )
+        : null;
+    const probeReadback =
+      probeResolve !== null
+        ? gpuBuffer(
+            device,
+            REPLAY_PASSES * 16,
+            GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+          )
+        : null;
+    const probeRecords: {
+      tile: [number, number];
+      pass: number;
+      wallMs: number;
+      gpuMs: number | null;
+    }[] = [];
     const pipelineSetupMs = performance.now() - pipelineSetupStarted;
     const cancelledResult = () => {
       runProgress.cancelAcknowledgedAtMs ??= performance.now();
@@ -1172,6 +1292,37 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
           radianceBound: number;
         }[];
       };
+      replayAttempts?: {
+        maxResolvedPass: number;
+        minPassesForCompletion: number | null;
+        pixelsResolvedAtPass: number[];
+        scope: string;
+      };
+      submissionProbe?: {
+        timestampQuery: boolean;
+        submissions: number;
+        perPassMaxWallMs: number[];
+        perPassMaxGpuMs: (number | null)[];
+        wallPercentilesMs: {
+          p50: number;
+          p90: number;
+          p99: number;
+          p999: number;
+        };
+        gpuPercentilesMs: {
+          p50: number;
+          p90: number;
+          p99: number;
+          p999: number;
+        } | null;
+        worst: {
+          tile: [number, number];
+          pass: number;
+          wallMs: number;
+          gpuMs: number | null;
+        }[];
+        scope: string;
+      };
     }[] = [];
     const view = cameraBasis(input.camera ?? "canonical");
     for (const fixture of selectedFixtures) {
@@ -1224,6 +1375,8 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
         let tileHostAssemblyWallMs = 0;
         let tiles = 0;
         const replayPassFenceWallMs = Array<number>(REPLAY_PASSES).fill(0);
+        const pixelsResolvedAtPass = Array<number>(REPLAY_PASSES + 1).fill(0);
+        let maxResolvedPass = 0;
         for (
           let y = imageWindow.y;
           y < imageWindow.y + imageWindow.height;
@@ -1271,13 +1424,24 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
               ],
             });
             const tileStarted = performance.now();
+            const tileProbeStart = probeRecords.length;
             for (let replayPass = 0; replayPass < REPLAY_PASSES; replayPass++) {
               const replayPassStarted = performance.now();
               runProgress.replayPass = replayPass;
               uints[23] = replayPass;
               device.queue.writeBuffer(camera, 0, control);
               const encoder = device.createCommandEncoder();
-              const pass = encoder.beginComputePass();
+              const pass = encoder.beginComputePass(
+                probeQuerySet === null
+                  ? undefined
+                  : {
+                      timestampWrites: {
+                        querySet: probeQuerySet,
+                        beginningOfPassWriteIndex: 0,
+                        endOfPassWriteIndex: 1,
+                      },
+                    },
+              );
               pass.setPipeline(pipeline);
               pass.setBindGroup(0, bind);
               pass.dispatchWorkgroups(
@@ -1292,6 +1456,26 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
                   0,
                   currentWidth * currentHeight * OUTPUT_PIXEL_BYTES,
                 );
+              if (
+                probeQuerySet !== null &&
+                probeResolve !== null &&
+                probeReadback !== null
+              ) {
+                encoder.resolveQuerySet(
+                  probeQuerySet,
+                  0,
+                  2,
+                  probeResolve,
+                  replayPass * 256,
+                );
+                encoder.copyBufferToBuffer(
+                  probeResolve,
+                  replayPass * 256,
+                  probeReadback,
+                  replayPass * 16,
+                  16,
+                );
+              }
               runProgress.submissionInFlight = true;
               runProgress.activeSubmission = runProgress.submissions + 1;
               runProgress.activeSubmissionStartedAtMs = performance.now();
@@ -1308,8 +1492,35 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
                 runProgress.maxSubmissionWallMs,
                 submissionWallMs,
               );
+              if (submissionProbe)
+                probeRecords.push({
+                  tile: [x, y],
+                  pass: replayPass,
+                  wallMs: submissionWallMs,
+                  gpuMs: null,
+                });
               await yieldToBrowserTasks();
               if (runProgress.cancelRequested) return cancelledResult();
+            }
+            if (probeReadback !== null && probeQuerySet !== null) {
+              await probeReadback.mapAsync(GPUMapMode.READ);
+              const stamps = new BigUint64Array(probeReadback.getMappedRange());
+              // Dawn reports timestamp counts in nanoseconds; the pass-5
+              // empty submissions (wall ~= fixed submission cost, GPU delta
+              // orders of magnitude smaller) cross-check that assumption.
+              for (
+                let replayPass = 0;
+                replayPass < REPLAY_PASSES;
+                replayPass++
+              ) {
+                const delta = Number(
+                  stamps[replayPass * 2 + 1] - stamps[replayPass * 2],
+                );
+                if (probeRecords[tileProbeStart + replayPass] !== undefined)
+                  probeRecords[tileProbeStart + replayPass].gpuMs =
+                    delta * 1e-6;
+              }
+              probeReadback.unmap();
             }
             const readbackStarted = performance.now();
             await readback.mapAsync(GPUMapMode.READ);
@@ -1428,6 +1639,22 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
                   if (witnesses.length > 4) witnesses.pop();
                 } else if (witnesses.length < 4) witnesses.push(witness);
               }
+              if (pendingPassDiagnostic) {
+                // Diagnostic emission records, per pixel, the replay pass
+                // during which its LAST pending sample resolved (written as
+                // passIndex+1 while still pending, so 0 = resolved at pass 0
+                // and REPLAY_PASSES = never resolved at the cap). A schedule
+                // of N passes keeps every sample resolving iff
+                // maxResolvedPass <= N-1, i.e. N >= maxResolvedPass + 1.
+                const resolvedPass = Math.min(
+                  values[offset + 45],
+                  REPLAY_PASSES,
+                );
+                pixelsResolvedAtPass[resolvedPass] += 1;
+                if (resolvedPass > maxResolvedPass) {
+                  maxResolvedPass = resolvedPass;
+                }
+              }
               const perPixelAverage = residualValues[offset + 2] / spp;
               radianceBound = Math.max(radianceBound, perPixelAverage);
               totalRadianceBound += perPixelAverage;
@@ -1534,10 +1761,35 @@ export async function runTransmissionDielectricGpu(input: Options = {}) {
             traversalReasonPixels,
             witnesses,
           },
+          ...(pendingPassDiagnostic
+            ? {
+                replayAttempts: {
+                  maxResolvedPass: maxResolvedPass,
+                  minPassesForCompletion:
+                    maxResolvedPass >= REPLAY_PASSES
+                      ? null
+                      : maxResolvedPass + 1,
+                  pixelsResolvedAtPass: pixelsResolvedAtPass,
+                  scope:
+                    "The diagnostic kernel emission records, per pixel, the replay pass during which its last pending sample resolved (written passIndex+1 while still pending; 0 = resolved at pass 0, REPLAY_PASSES = never resolved at the cap). maxResolvedPass is the highest pass doing real work; a schedule of N passes keeps every sample resolving iff N >= maxResolvedPass + 1. The four-sample emission is byte-identical to the pre-change module.",
+                },
+              }
+            : {}),
+          ...(submissionProbe
+            ? {
+                submissionProbe: summarizeSubmissionProbe(
+                  probeRecords,
+                  timestampQuery === true,
+                ),
+              }
+            : {}),
         });
       }
     }
     [solid, camera, output, readback].forEach((item) => item.destroy());
+    if (probeQuerySet !== null) probeQuerySet.destroy();
+    if (probeResolve !== null) probeResolve.destroy();
+    if (probeReadback !== null) probeReadback.destroy();
     return {
       browserAdapter: {
         vendor: info.vendor,

@@ -522,7 +522,7 @@ async function within(promise, timeoutMs, label) {
 async function main() {
   if (args.help) {
     console.log(
-      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass [--camera=canonical|grazing|cornerAdjacent] [--hyperPose=canonical|rotorA|rotorB] --cancelProbe | --tileCheck=100x55,73x47 --window=37,29,121,67 | --poseCheck | --staged --fixture=menger3 --mode=glass --output=report.json]",
+      "node scripts/transmission-dielectric-gpu.mjs --display=:0 [--width=1024 --height=1024 --tileWidth=128 --tileHeight=64 --fixture=menger3 --mode=glass [--camera=canonical|grazing|cornerAdjacent] [--hyperPose=canonical|rotorA|rotorB] [--submissionProbe] --cancelProbe | --tileCheck=100x55,73x47 --window=37,29,121,67 | --poseCheck | --staged --fixture=menger3 --mode=glass --output=report.json]",
     );
     return;
   }
@@ -532,6 +532,7 @@ async function main() {
     tileWidth: positive(args.tileWidth ?? 128, "tileWidth"),
     tileHeight: positive(args.tileHeight ?? 64, "tileHeight"),
     diagnostic: args.diagnostic === true,
+    submissionProbe: args.submissionProbe === true,
     ...(args.camera !== undefined ? { camera: String(args.camera) } : {}),
     ...(args.hyperPose !== undefined
       ? { hyperPose: String(args.hyperPose) }
@@ -571,10 +572,11 @@ async function main() {
       args.tileCheck !== undefined ||
       args.window !== undefined ||
       args.staged === true ||
-      options.diagnostic)
+      options.diagnostic ||
+      options.submissionProbe)
   )
     throw new Error(
-      "--poseCheck is a fixed glass matrix and cannot be combined with fixture, mode, camera, hyperPose, cancelProbe, tileCheck, window, staged or diagnostic",
+      "--poseCheck is a fixed glass matrix and cannot be combined with fixture, mode, camera, hyperPose, cancelProbe, tileCheck, window, staged, diagnostic or submissionProbe",
     );
   if (
     cancelProbeRequested &&
@@ -606,10 +608,15 @@ async function main() {
       args.window !== undefined ||
       args.camera !== undefined ||
       args.hyperPose !== undefined ||
-      options.diagnostic)
+      options.diagnostic ||
+      options.submissionProbe)
   )
     throw new Error(
-      "--staged pins the canonical poses and refuses cancelProbe, tileCheck, window, camera, hyperPose and diagnostic",
+      "--staged pins the canonical poses and refuses cancelProbe, tileCheck, window, camera, hyperPose, diagnostic and submissionProbe",
+    );
+  if (options.submissionProbe && (cancelProbeRequested || tileCheckRequested))
+    throw new Error(
+      "--submissionProbe decomposes uninterrupted submissions on the plain default path and cannot be combined with --cancelProbe or --tileCheck",
     );
   if (
     stagedRequested &&
@@ -1282,6 +1289,16 @@ async function main() {
           mode: "glass",
           samplesPerPixel: row.samplesPerPixel,
           provisional: row.provisional,
+          ...(row.replayAttempts !== undefined
+            ? {
+                replayMaxResolvedPass: row.replayAttempts.maxResolvedPass,
+                replayMinPassesForCompletion:
+                  row.replayAttempts.minPassesForCompletion,
+                replayPixelsResolvedAtPass: [
+                  ...row.replayAttempts.pixelsResolvedAtPass,
+                ],
+              }
+            : {}),
           outputFilename: observed.outputFilename,
           adapterDeviceSetupMs: t.adapterDeviceSetupMs,
           controlsMs: t.controlsMs,
@@ -1311,6 +1328,7 @@ async function main() {
               mode: "glass",
               samplesPerPixel: 1,
               provisional: true,
+              replayPassDiagnostic: true,
             },
             (row) =>
               `staged-provisional-cold-${fixture}-${row.width}x${row.height}.png`,
@@ -1335,6 +1353,7 @@ async function main() {
               mode: "glass",
               samplesPerPixel: 1,
               provisional: true,
+              replayPassDiagnostic: true,
             },
             (row) =>
               `staged-provisional-warm-${fixture}-${row.width}x${row.height}.png`,
@@ -1467,6 +1486,11 @@ async function main() {
         log(
           `staged/${arm.name}: spp=${arm.samplesPerPixel} provisional=${arm.provisional} page=${arm.pageWorkWallMs.toFixed(1)}ms fullWall=${arm.pageReturnEncodeWriteWallMs.toFixed(1)}ms replaySum=${arm.replayPassFenceWallSumMs.toFixed(1)}ms`,
         );
+      for (const arm of arms)
+        if (arm.replayMaxResolvedPass !== undefined)
+          log(
+            `staged/${arm.name}: replay resolutions resolvedAtPass=[${arm.replayPixelsResolvedAtPass.join(", ")}] maxResolvedPass=${arm.replayMaxResolvedPass} minPassesForCompletion=${arm.replayMinPassesForCompletion}`,
+          );
       log(
         `staged identity passed=${identity.passed} provisionalGate passed=${provisionalGate.passed}`,
       );
