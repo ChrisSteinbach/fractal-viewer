@@ -297,3 +297,63 @@ neither merges nearby crossings nor certifies that f32 and f64 classify every
 near-corner event identically. It is a declared rendering convention for the
 finite solid's singular edges, not a claim that those edges have a smooth
 physical normal.
+
+## Completed GPU calibration
+
+Source `608266cf2ef2394ede22d9d5574eea3977be0cde6b38cf1ba4cb61c17b6dac02`
+passes all seventeen current-source GPU controls, including both reproduced
+corner normals and reflected/transmitted anchored continuations. With the
+corrected corner rule and PNG orientation, both 256×256 calibrations complete
+all 65,536 pixels and 262,144 samples without invalid samples, unresolved
+rays, traversal failures or resource caps. The maximum per-pixel omitted
+contribution is 0.000958100893 in 3D and 0.000948801287 in 4D, both below
+1/1024. Known cross-process state is approximately 35.90 MB.
+
+The 3D tile encode/submit/map total is 7.7985 seconds; the 4D total is
+3.8933 seconds. Each uses eight 128×64 tiles and four samples per pixel.
+Quiet per-process baselines and the non-fallback RX 7900 XTX adapter are
+recorded in both reports:
+`scripts/out/transmission-dielectric-gpu/calibration-256x256-d2-{menger,hyper4}-glass-corner-controls.json`.
+These successful calibrations authorize attempting useful full-size images;
+image appearance and full-size performance require those images themselves.
+
+## First full-size attempt and remaining numerical cases
+
+The same source produced actual 1024×1024 opaque and glass images in both
+dimensions. Both opaque controls complete with zero residual. The first glass
+attempt remains refused: Menger has three incomplete pixels (two anchor-input
+failures and one interface limit), and the 4D slice has five (one anchor-input
+failure and four interface limits). All other pixels meet the per-pixel bound;
+there are no non-finite samples. The measured tile encode/submit/map totals
+are 65.2538 seconds for 3D glass and 45.2327 seconds for 4D glass, with known
+cross-process state approximately 78.60 and 78.65 MB. These figures describe
+an incomplete full-size attempt, not completed performance targets.
+
+Its report and all four PNGs are preserved in the source-hash snapshot under
+`scripts/out/transmission-dielectric-gpu/snapshots/`. The full-size images
+show crisp internal facets and reflected features, but the studio lighting
+remains plain. No owner approval is inferred from that inspection.
+
+The separate 256-interface guard can terminate weak reflected paths before
+the total work budget is exhausted. Every interface already consumes a
+processed path, so the next run uses the existing 16,384 processed-path limit
+as the interface ceiling too. This does not increase the maximum whole-tree
+work or the size of the path stack.
+
+The anchor failures expose sensitivity to rounded plane and hit-point
+reconstruction. The old `-H + i * (2H/N)` plane expression can produce
+different rounded values when operations are fused; the observed coordinates
+match that mechanism. WGSL explicitly permits
+[reassociation and fusion](https://www.w3.org/TR/2026/CRD-WGSL-20260817/#reassociation-and-fusion).
+The centred rational form `H * (2i - N) / N` removes that observed cancellation
+site; it is not a portable proof of bitwise equality between evaluations.
+
+The finite-precision continuation policy therefore treats integer plane and
+cell identities as authoritative. Reconstruction is allowed only within
+`2 * 2^-23 * H` of those identities, and greater inconsistencies refuse.
+Masked coordinates are reconstructed from their integer planes. An unmasked
+coordinate rounded beyond its cell within that allowance is placed on the
+pending boundary without consuming the next cell transition. This is an
+explicit numerical reconstruction allowance, not a bound on all accumulated
+floating-point or optical error. It can affect events at the precision limit;
+it does not authorize merging larger intervals or hiding a traversal failure.
