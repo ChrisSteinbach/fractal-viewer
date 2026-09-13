@@ -126,7 +126,10 @@ Termination aggregates and per-ray completed status agree in all four
 controls. Every K=1/K=8 diagnostic comparison is exact. The launcher still
 records `REFUSED` for each CPU comparison above; neither a visually close
 image nor exact scheduling removes the numerical or event disagreement.
-The old Brick witness remains a separate unresolved diagnostic.
+The separate Brick first-disagreement replay now reproduces the old totals
+and localizes its large gap upstream of optical transport, as recorded in
+the [revision study](surface-transmission-revision.md#first-disagreement-replay-of-the-brick-witness).
+It does not repair or qualify the estimator's CPU/GPU agreement.
 
 The whole-raster diagnostic state and readback design does not qualify a
 1920x1080 export within 128 MiB of additional state. GPU buffer counts,

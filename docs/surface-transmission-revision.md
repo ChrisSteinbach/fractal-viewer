@@ -93,6 +93,64 @@ under ignored `scripts/out/`; the harness and this interpretation are
 versioned. World-space bending and device continuation need their own
 image, correctness, and measured cost evidence before qualification.
 
+### A separate prominence-conditioned candidate
+
+`scripts/transmission-prominence-field.ts` tests a named alternative to
+unconditioned positive variation, with signal prominence `P = .20`.
+It credits only new record rises until the signal falls at least `P`
+below its crest. It then tracks the trough and credits the next rise from
+that trough. Crest, trough and phase survive work chunks. The candidate
+changes the optical appearance rule; it does not change public geometry,
+infer membership, add estimator queries or permit sample skipping.
+
+The scalar harness bounds the demonstrated noise successfully: 1, 16 and
+64 cycles of the `.00005R` disturbance all produce variation `.57475` and
+throughput `.919414`, where the original 64-cycle result was variation
+`9.99325` and throughput `.232042`. An indefinitely repeated signal whose
+range is less than `P` cannot keep rearming the rule. The `.19`-wide signal
+control confirms that bound; the exact-`.20` and `.21` controls retain
+rearming and accumulation, so this is a prominence threshold, not general
+noise removal.
+
+A monotone approach still has weight 1, with no extra weight from a plateau
+or exit. Homothetic scaling and serialized chunks of 1/37/1200 samples
+are invariant. Exact 3D and posed 4D interval controls agree. The continuous
+gap boundary is about `.00457428145R`, but raster-independent spacing does
+not remove lattice phase: even a `.00462428R` gap remains one approach on
+all four `.001R` phases, while only one of four `.00025R` phases rearms.
+The old `.004R` and `.006/.00625/.008R` gap classifications survive at the
+default spacing, with their sampled-trough throughput variation retained.
+
+The candidate is **refused for generic mixed materials**. Under the same
+nearest-distance material attribution as `fromSurfaces`, opaque fronts and
+well-separated opaque rears stop correctly in both dimensions. A genuine
+opaque rear beyond a `.0044R` gap does not: the observed signal fall is
+only `.104 < P`, so the rear owns no new optical weight and cannot stop the
+ray. Suppressing this small signal excursion also suppresses real geometry
+at that separation. On the same shallow-rear sequence, the unconditioned
+baseline stops with throughput 0 while prominence remains at `.864` in
+both dimensions, isolating the filter as the cause. No analytic stop
+override or unconditional opaque
+exception was added to conceal the failure.
+
+A separate control assigns material only inside the exact solids. Both
+the original and conditioned rules fail that control because their
+outside clearance rises and the material's support do not overlap. That
+is a mismatched material-support contract, not an additional failure of
+prominence under the existing nearest-distance ownership rule.
+
+Reproduce the isolated scalar study with:
+
+```bash
+npx vitest run --config scripts/vitest.harness.config.ts \
+  scripts/transmission-prominence-field.harness.ts
+```
+
+The report is `scripts/out/transmission-prominence-field-report.json`.
+This failed candidate has not replaced the original CPU/GPU images or
+been ported into their renderer. It does not yet provide a qualified way
+to improve the grain while preserving opaque rear geometry.
+
 ## World-space displacement contract
 
 `scripts/transmission-bend-study.ts` uses the shared `renderPreview` marcher
@@ -192,6 +250,54 @@ is zero. The failure therefore survives a different work schedule and is
 not repaired by a matching final signal. The diagnostic report records 37
 source input hashes; it does not attribute the divergence to a particular
 internal estimator branch.
+
+### First-disagreement replay of the Brick witness
+
+`scripts/transmission-gpu-divergence.mjs` and its page isolate that one ray
+without changing the original pilot. They generate its 1635 canonical f32
+FMA sample positions on the GPU, capture public `escape4` distance and
+clearance-signal values, and replay transport independently. The same
+public maps, posed-4D packer, iteration budget and optical rule are used.
+The expected historical totals are source-hashed literals transcribed from
+the archived report; this is disclosed instead of claiming that the
+ignored JSON archive is a runtime input.
+
+On the verified quiet RX 7900 XTX, the replay exactly reproduces the old
+CPU/GPU throughput and variation totals above. Local and captured-device
+coordinate hashes are both `2541141446`. The first returned-distance
+difference is only one f32 ULP at sample 2 and has no signal effect.
+Signal first differs at sample 627, on a fall that adds no optical weight.
+At sample 628 the next rise first differs: CPU/GPU increments are
+`.133124177956`/`.133148014545`, and throughput becomes
+`.524038970470`/`.524037659168`.
+
+Feeding the captured GPU signal sequence into the CPU transport produces
+throughput `.112295649946`, only `2.98e-8` from the device's
+`.112295620143`; its variation matches exactly. This localizes the large
+disagreement upstream of optical transport, to the posed estimator path.
+It does not distinguish rotor/pose arithmetic from an internal escape
+iteration or branch, and it does not qualify either estimator at that point.
+
+A separate influence check replaces a growing prefix of CPU signals with
+captured GPU signals while keeping the remaining CPU suffix. Its first
+hybrid final-throughput error above `1/1024` occurs when sample 1400 is
+included. There, at
+`(-2.4469563961, -1.3175920248, -1.7367005348)`, the CPU/GPU distances are
+`.009389535647`/`.011746077798`, with signals
+`.721814765094`/`.011577725410`. This is an ordered replacement-prefix
+result, not chronological accumulated error or proof that one sample
+alone caused the final discrepancy. Contributions need not be monotone.
+
+Reproduce separately from CPU tests and other GPU work:
+
+```bash
+node scripts/transmission-gpu-divergence.mjs --display=:0
+```
+
+The report, bounded trace and source/artifact manifest are written under
+`scripts/out/transmission-gpu-divergence/`. A recorded reproduction exits
+successfully as a diagnosis, with the original transport qualification
+failure retained. It is not a renderer or new scheduling/performance gate.
 
 ### Actual raster and scheduling cost
 
