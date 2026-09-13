@@ -11,9 +11,13 @@ import { basename, join, relative } from "node:path";
 
 const root = process.cwd();
 const out = join(root, "scripts/out");
-const reviewPath = join(out, "transmission-revision-review.html");
-const manifestPath = join(out, "transmission-revision-review-manifest.json");
 const allowThumbnailMain = process.argv.includes("--allow-thumbnail-main");
+const stillsOnly = process.argv.includes("--stills-only");
+const reviewStem = allowThumbnailMain
+  ? "transmission-revision-smoke"
+  : "transmission-revision-review";
+const reviewPath = join(out, `${reviewStem}.html`);
+const manifestPath = join(out, `${reviewStem}-manifest.json`);
 const MIN_MAIN_STILL_DIMENSION = 512;
 const MIN_MOTION_STILL_DIMENSION = 256;
 const MIN_CONTROL_STILL_DIMENSION = 256;
@@ -29,6 +33,7 @@ const baseSourceFiles = [
   "scripts/transmission-layer-field.harness.ts",
   "scripts/transmission-bend-study.ts",
   "scripts/transmission-bend.harness.ts",
+  "scripts/transmission-primary-review.mjs",
   "scripts/transmission-gpu-contract.ts",
   "scripts/transmission-gpu-resumable.page.ts",
   "scripts/transmission-gpu-resumable.mjs",
@@ -142,18 +147,22 @@ const readableReport = reportBodyOf(readableReportEnvelope);
 const readableJobs = readableReport.jobs;
 if (!Array.isArray(readableJobs))
   throw new Error(`${readableReportPath} must contain a jobs array`);
+const primaryModes = stillsOnly
+  ? ["none", "weighted"]
+  : ["none", "weighted", "hard", "opaque"];
 const expectedReadableJobKeys = [
   ...["menger3", "native4"].flatMap((scene) =>
-    ["none", "weighted", "hard", "opaque"].map(
-      (mode) => `${scene}-still-${mode}`,
-    ),
+    primaryModes.map((mode) => `${scene}-still-${mode}`),
   ),
-  ...["analytic3", "analytic4"].flatMap((scene) =>
+  ...(stillsOnly ? [] : ["analytic3", "analytic4"]).flatMap((scene) =>
     ["none", "weighted", "opaque", "rear-absent"].map(
       (mode) => `${scene}-control-${mode}`,
     ),
   ),
-  ...["menger-camera", "native4-rotor", "native4-slice"].flatMap((key) =>
+  ...(stillsOnly
+    ? []
+    : ["menger-camera", "native4-rotor", "native4-slice"]
+  ).flatMap((key) =>
     [0, 1, 2].flatMap((frame) =>
       ["none", "weighted"].map((mode) => `motion-${key}-${frame}-${mode}`),
     ),
@@ -166,7 +175,7 @@ if (
   expectedReadableJobKeys.some((key) => !jobsByKey.has(key))
 )
   throw new Error(
-    "Readable package must contain exactly the 34 expected still, control and motion jobs",
+    `Readable package must contain exactly the ${expectedReadableJobKeys.length} expected jobs`,
   );
 const readableJobReports = [];
 for (const key of expectedReadableJobKeys) {
@@ -228,15 +237,12 @@ const readableMain = Object.fromEntries(
   ["menger3", "native4"].map((scene) => [
     scene,
     Object.fromEntries(
-      ["none", "weighted", "hard", "opaque"].map((mode) => [
-        mode,
-        jobAsset(`${scene}-still-${mode}`),
-      ]),
+      primaryModes.map((mode) => [mode, jobAsset(`${scene}-still-${mode}`)]),
     ),
   ]),
 );
 const readableAnalytic = Object.fromEntries(
-  ["analytic3", "analytic4"].map((scene) => [
+  (stillsOnly ? [] : ["analytic3", "analytic4"]).map((scene) => [
     scene,
     Object.fromEntries(
       ["none", "weighted", "opaque", "rearAbsent"].map((mode) => [
@@ -249,17 +255,19 @@ const readableAnalytic = Object.fromEntries(
   ]),
 );
 const readableMotion = Object.fromEntries(
-  ["menger-camera", "native4-rotor", "native4-slice"].map((key) => [
-    key,
-    [0, 1, 2].map((frame) =>
-      Object.fromEntries(
-        ["none", "weighted"].map((mode) => [
-          mode,
-          jobAsset(`motion-${key}-${frame}-${mode}`),
-        ]),
+  (stillsOnly ? [] : ["menger-camera", "native4-rotor", "native4-slice"]).map(
+    (key) => [
+      key,
+      [0, 1, 2].map((frame) =>
+        Object.fromEntries(
+          ["none", "weighted"].map((mode) => [
+            mode,
+            jobAsset(`motion-${key}-${frame}-${mode}`),
+          ]),
+        ),
       ),
-    ),
-  ]),
+    ],
+  ),
 );
 const readableRequiredPngs = expectedReadableJobKeys.map(jobAsset);
 
@@ -573,7 +581,7 @@ const primaryPreviewNote =
     ? `The primary 256×144 Menger scalar run already spends ${fmt(primaryMengerEncode)} ms in encode/submit/terminal-map wall, exceeding the 1 s preview target before bending or shading.`
     : "The primary full-raster record does not establish the 1 s preview target before bending or shading.";
 
-const motionData = motionGroups.map((group) => ({
+const motionData = (stillsOnly ? [] : motionGroups).map((group) => ({
   key: group.key,
   isolated: group.isolated,
   frames: group.frames.map((frame, index) => {
@@ -612,7 +620,7 @@ const html = `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Transmission revision review — UNREVIEWED</title>
 <style>
-body{margin:24px auto;max-width:1500px;padding:0 18px;background:#101216;color:#e6e9ef;font:15px system-ui,sans-serif;line-height:1.45}h1,h2{color:#fff}.status{padding:14px;border:2px solid #e7ad45;background:#2b2212}.limits{padding:14px;border:2px solid #c95b5b;background:#30191d}.hero-grid{display:grid;grid-template-columns:1fr;gap:20px;max-width:1082px}.hero-card{padding:14px;border:1px solid #59616e;background:#171a20}.hero-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.hero-figure,.secondary-figure{margin:0}.hero-figure img,.secondary-figure img{display:block;width:auto;max-width:100%;height:auto;background:#050608}.hero-figure figcaption,.secondary-figure figcaption{margin-top:7px;color:#cbd1da}.hero-card details{margin-top:14px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}.triple{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.grid img,.pair img,.triple img{width:auto;max-width:100%;height:auto;background:#050608}.control{max-width:700px}.control img{display:block;width:auto;max-width:100%;height:auto}.card{padding:12px;border:1px solid #454b55;background:#171a20;margin:12px 0}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{padding:6px 9px;border:1px solid #4b515a;text-align:left;vertical-align:top}th{background:#252a32}code{background:#222831;padding:2px 4px}a{color:#9dccff}.scrub{border:1px solid #454b55;padding:12px;margin:14px 0}.scrub-controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.scrub img{display:block;width:auto;max-width:100%;height:auto;background:#050608}.scrub-views{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}.scrub-views figure{margin:0}.small{color:#b8bec8;font-size:13px}.metric{font-variant-numeric:tabular-nums}@media(max-width:800px){.hero-grid{grid-template-columns:1fr}.hero-pair,.scrub-views{grid-template-columns:1fr}.hero-figure img,.secondary-figure img{width:100%}}
+body{margin:24px auto;max-width:1500px;padding:0 18px;background:#101216;color:#e6e9ef;font:15px system-ui,sans-serif;line-height:1.45}h1,h2{color:#fff}.status{padding:14px;border:2px solid #e7ad45;background:#2b2212}.limits{padding:14px;border:2px solid #c95b5b;background:#30191d}.hero-grid{display:grid;grid-template-columns:1fr;gap:20px;max-width:1082px}.hero-card{padding:14px;border:1px solid #59616e;background:#171a20}.hero-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.hero-figure,.secondary-figure{margin:0}.hero-figure img,.secondary-figure img{display:block;width:auto;max-width:100%;height:auto;background:#050608}.hero-figure figcaption,.secondary-figure figcaption{margin-top:7px;color:#cbd1da}.hero-card details{margin-top:14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}.triple{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.grid img,.pair img,.triple img{width:auto;max-width:100%;height:auto;background:#050608}.control{max-width:700px}.control img{display:block;width:auto;max-width:100%;height:auto}.card{padding:12px;border:1px solid #454b55;background:#171a20;margin:12px 0}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{padding:6px 9px;border:1px solid #4b515a;text-align:left;vertical-align:top}th{background:#252a32}code{background:#222831;padding:2px 4px}a{color:#9dccff}.scrub{border:1px solid #454b55;padding:12px;margin:14px 0}.scrub-controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.scrub img{display:block;width:auto;max-width:100%;height:auto;background:#050608}.scrub-views{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}.scrub-views figure{margin:0}.small{color:#b8bec8;font-size:13px}.metric{font-variant-numeric:tabular-nums}@media(max-width:800px){.hero-grid{grid-template-columns:1fr}.hero-pair,.scrub-views,.grid{grid-template-columns:1fr}.hero-figure img,.secondary-figure img{width:100%}}
 </style>
 <h1>Layered transparency and bending</h1>
 <p class="status"><strong>RESEARCH DIRECTION SELECTED · PRODUCTION UNQUALIFIED.</strong> Layered transparency, required bending and the targets below are selected. These revised images have not been approved for release.</p>
@@ -623,16 +631,26 @@ body{margin:24px auto;max-width:1500px;padding:0 18px;background:#101216;color:#
 <article class="hero-card"><h3>Native posed 4D</h3><div class="hero-pair"><figure class="hero-figure">${linkedImage(readableMain.native4.none, "native 4D straight")}<figcaption>Straight layers · ${sizeLabel(readableMain.native4.none)}</figcaption></figure><figure class="hero-figure">${linkedImage(readableMain.native4.weighted, "native 4D weighted bend")}<figcaption>Weighted world bend · ${sizeLabel(readableMain.native4.weighted)}</figcaption></figure></div></article>
 </div>
 
-<h2>Secondary onset controls</h2>
+${
+  stillsOnly
+    ? ""
+    : `<h2>Secondary onset controls</h2>
 <p>Hard onset applies the full shift at the first layer. The opaque view shows the geometry without transmission.</p>
 <div class="grid"><figure class="secondary-figure">${linkedImage(readableMain.menger3.hard, "Menger 3D hard onset")}<figcaption>Menger 3D hard onset · ${sizeLabel(readableMain.menger3.hard)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableMain.menger3.opaque, "Menger 3D opaque control")}<figcaption>Menger 3D opaque control · ${sizeLabel(readableMain.menger3.opaque)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableMain.native4.hard, "native 4D hard onset")}<figcaption>Native 4D hard onset · ${sizeLabel(readableMain.native4.hard)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableMain.native4.opaque, "native 4D opaque control")}<figcaption>Native 4D opaque control · ${sizeLabel(readableMain.native4.opaque)}</figcaption></figure></div>
 <details><summary>Independent analytic controls</summary><p>The red rear object makes changes in visibility easier to see. Compare straight and bent views, then check the opaque front and removed rear object.</p><div class="grid"><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic3.none, "analytic 3D no bend")}<figcaption>Analytic 3D · straight · ${sizeLabel(readableAnalytic.analytic3.none)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic3.weighted, "analytic 3D weighted")}<figcaption>Analytic 3D · weighted · ${sizeLabel(readableAnalytic.analytic3.weighted)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic3.opaque, "analytic 3D opaque")}<figcaption>Analytic 3D · opaque · ${sizeLabel(readableAnalytic.analytic3.opaque)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic3.rearAbsent, "analytic 3D rear absent")}<figcaption>Analytic 3D · rear absent · ${sizeLabel(readableAnalytic.analytic3.rearAbsent)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic4.none, "analytic 4D no bend")}<figcaption>Analytic 4D · straight · ${sizeLabel(readableAnalytic.analytic4.none)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic4.weighted, "analytic 4D weighted")}<figcaption>Analytic 4D · weighted · ${sizeLabel(readableAnalytic.analytic4.weighted)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic4.opaque, "analytic 4D opaque")}<figcaption>Analytic 4D · opaque · ${sizeLabel(readableAnalytic.analytic4.opaque)}</figcaption></figure><figure class="secondary-figure">${linkedImage(readableAnalytic.analytic4.rearAbsent, "analytic 4D rear absent")}<figcaption>Analytic 4D · rear absent · ${sizeLabel(readableAnalytic.analytic4.rearAbsent)}</figcaption></figure></div></details>
+`
+}
 <details><summary>Readable package metadata and raw report</summary><p class="small">Primary stills, motion pairs and analytic controls are loaded from <code>${esc(readableReportPath)}</code>. The report is embedded verbatim below; generated dimensions are checked before this page is written.</p><pre class="small">${esc(readableReportText)}</pre></details>
 
-<h2>Three-frame motion scrubber</h2>
+${
+  stillsOnly
+    ? '<p>The larger motion and secondary CPU batch was stopped. These four full-size reference stills are the current appearance comparison; GPU image generation is being investigated separately.</p><div id="scrubbers"></div>'
+    : `<h2>Three-frame motion scrubber</h2>
 <p>Drag a slider or use the arrow keys to compare three nearby views. Each sequence changes only the camera, 4D rotation or 4D slice. Click a frame to open its original PNG.</p>
 <div id="scrubbers"></div>
 
+`
+}
 <details class="numeric"><summary>Earlier diagnostic images and numerical controls</summary>
 <h2>Scalar clearance field</h2>
 <p>The report records the smooth clearance signal and positive variation. The largest recorded phase-throughput range is <span class="metric">${fmt(layerRange)}</span>; this is evidence of sampling dependence, not a quality score.</p>
@@ -680,7 +698,7 @@ body{margin:24px auto;max-width:1500px;padding:0 18px;background:#101216;color:#
 </details>
 
 <h2>Provenance</h2>
-<p>Revision, scoped source-tree status, source hashes and artifact hashes are in ${link("scripts/out/transmission-revision-review-manifest.json", "the review manifest")}. The previous review remains available as ${link("scripts/out/transmission-review.html", "the prior review")}; this revision preserves it rather than replacing its verdict.</p>
+<p>Revision, scoped source-tree status, source hashes and artifact hashes are in ${link(relative(root, manifestPath), "the review manifest")}. The previous review remains available as ${link("scripts/out/transmission-review.html", "the prior review")}; this revision preserves it rather than replacing its verdict.</p>
 <p class="small">Generated offline from existing JSON and PNG artifacts. No browser, GPU or renderer was run by this review script.</p>
 <script>
 const motion=${scriptJson(motionData)};
@@ -749,8 +767,9 @@ writeFileSync(
         thumbnailOverride: allowThumbnailMain,
         primaryPackage: readableReportPath,
         primaryScenes: ["menger3", "native4"],
-        primaryModes: ["none", "weighted", "hard", "opaque"],
-        analyticControls: ["analytic3", "analytic4"],
+        primaryModes,
+        stillsOnly,
+        analyticControls: stillsOnly ? [] : ["analytic3", "analytic4"],
       },
       review: hashEntry(relative(root, reviewPath)),
       sources: sourceFiles.map((path) => hashEntry(path)),
