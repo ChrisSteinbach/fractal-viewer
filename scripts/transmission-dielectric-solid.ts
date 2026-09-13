@@ -14,7 +14,21 @@
  */
 import { rotationMatrix4 } from "../src/fractal/affine4";
 import type { Rotation4 } from "../src/fractal/types";
+import {
+  dielectricBeerThroughput,
+  dielectricRefract,
+  type DielectricRefraction,
+} from "../src/fractal/surface-dielectric";
 import type { Vec3 } from "./de-preview";
+
+// The optics are the production oracle's ONE definition
+// (src/fractal/surface-dielectric.ts); re-exported here so every harness
+// consumer pins the GPU against the same f64 arithmetic.
+export {
+  dielectricBeerThroughput,
+  dielectricRefract,
+  type DielectricRefraction,
+};
 
 export type DielectricDimension = 3 | 4;
 export type DielectricDepth = 0 | 2 | 3;
@@ -1034,57 +1048,6 @@ export function dielectricDisplayedRootYBounds(
   return { minimum, maximum };
 }
 
-export interface DielectricRefraction {
-  tir: boolean;
-  direction: Vec3;
-}
-
-/** Independent unit-vector Snell/TIR oracle; normal points material -> air. */
-export function dielectricRefract(
-  incident: Vec3,
-  outwardNormal: Vec3,
-  fromIor: number,
-  toIor: number,
-): DielectricRefraction {
-  const incidentLength = Math.hypot(...incident);
-  const normalLength = Math.hypot(...outwardNormal);
-  if (
-    !(incidentLength > 0) ||
-    !(normalLength > 0) ||
-    ![...incident, ...outwardNormal, fromIor, toIor].every(Number.isFinite) ||
-    !(fromIor > 0) ||
-    !(toIor > 0)
-  )
-    throw new Error(
-      "Refraction inputs must be finite with positive lengths/IORs",
-    );
-  const i = incident.map((value) => value / incidentLength) as Vec3;
-  const outward = outwardNormal.map((value) => value / normalLength) as Vec3;
-  const against =
-    i[0] * outward[0] + i[1] * outward[1] + i[2] * outward[2] < 0
-      ? outward
-      : (outward.map((value) => -value) as Vec3);
-  const cosI = -(i[0] * against[0] + i[1] * against[1] + i[2] * against[2]);
-  const eta = fromIor / toIor;
-  const sinT2 = eta * eta * Math.max(0, 1 - cosI * cosI);
-  let direction: Vec3;
-  if (sinT2 > 1) {
-    direction = i.map(
-      (value, axis) => value + 2 * cosI * against[axis],
-    ) as Vec3;
-    return { tir: true, direction };
-  }
-  const cosT = Math.sqrt(Math.max(0, 1 - sinT2));
-  direction = i.map(
-    (value, axis) => eta * value + (eta * cosI - cosT) * against[axis],
-  ) as Vec3;
-  const length = Math.hypot(...direction);
-  return {
-    tir: false,
-    direction: direction.map((value) => value / length) as Vec3,
-  };
-}
-
 export interface DielectricCornerControlCase {
   name: string;
   fixtureKey: "mengerD2" | "hyperMengerD2";
@@ -1271,23 +1234,6 @@ export const DIELECTRIC_ANCHOR_CANONICALIZATION_CONTROLS: readonly DielectricAnc
       expected: "invalid-input",
     },
   ]);
-
-export function dielectricBeerThroughput(
-  absorptionPerRadius: number,
-  distance: number,
-  radius: number,
-): number {
-  if (
-    ![absorptionPerRadius, distance, radius].every(Number.isFinite) ||
-    absorptionPerRadius < 0 ||
-    distance < 0 ||
-    !(radius > 0)
-  )
-    throw new Error(
-      "Beer inputs must be finite and non-negative with radius > 0",
-    );
-  return Math.exp((-absorptionPerRadius * distance) / radius);
-}
 
 /** 96-byte uniform layout shared with the GPU experiment. */
 export const DIELECTRIC_SOLID_PACKED_BYTES = 96;
