@@ -84,8 +84,14 @@ import type {
   Vec3,
 } from "./types";
 import type { Balloon } from "./balloon-de";
-import { createFlameHistogram } from "./flame";
-import type { FlameHistogram, Mat4 } from "./flame";
+import {
+  ADAPTIVE_CELL_BASE_WORK,
+  OCCUPANCY_TILE,
+  adaptiveClassMap,
+  adaptiveGatherWork,
+  createFlameHistogram,
+} from "./flame";
+import type { DensityEstimatorParams, FlameHistogram, Mat4 } from "./flame";
 import type { PaletteSpec } from "./palette";
 // The packing functions appended below the kernel need these value imports,
 // which the byte-layout/kernel section above did not — kept as separate
@@ -3495,4 +3501,606 @@ export function convertGpuDisplayHistogram(
   out.maxHits = maxHits;
   out.hitMass = hitMass;
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Finished-frame adaptive density-estimate gather
+// ---------------------------------------------------------------------------
+//
+// The GPU port of `flame.ts`'s `adaptiveDownsampleFlame` /
+// `createAdaptiveDownsampleJob`'s GATHER, run over the resident emulated-u64
+// histogram exactly as the progressive display downsample above is. The CPU
+// job remains the oracle and the fallback (see `flame-worker-core.ts`'s
+// `FlameAccumBackend.adaptiveDisplay`); this kernel mirrors it in f32.
+//
+// The division of labor is deliberate and is the whole port's shape:
+//
+// - The per-cell CLASS MAPPING is `flame.ts`'s `adaptiveClassMap`, run on the
+//   CPU and uploaded (`classOf`). A quantized radius-class boundary is a
+//   DISCONTINUITY — one cell crossing it moves its normalization by a
+//   percent, not an ULP — so it must never be picked from f32 GPU counts.
+//   With the map uploaded, only the gather arithmetic below is f32.
+// - The OCCUPIED-FOOTPRINT CLIP is NOT optional (the measured full-rectangle
+//   charged work is 27.0-34.0B taps at the 1920x950 raster while the bitmap
+//   visits ~6-14% of it), so the gather walks the same cell-resolution
+//   occupied bitmap the CPU gather walks, inside the occupied-tile bounding
+//   box the CPU's summed-area table finds — here reduced on the device from
+//   the uploaded bitmap by {@link FLAME_GPU_ADAPTIVE_WGSL}'s occupancy
+//   prepass (the first three entry points).
+// - NORMALIZATION uses the separable in-bounds per-axis weight sums (the
+//   display kernel's O(1) pattern), not the CPU's flat-order weight memo:
+//   that memo exists to keep the CPU path bit-identical to its unclipped
+//   predecessor, a claim that has no meaning on the GPU side, where every
+//   sum is f32 anyway. The agreement harness measures the resulting ULP-level
+//   divergence.
+//
+// The resident source is the same `array<u32>` emulated-u64 x256 histogram
+// the display downsample reads, and the output is the same interleaved f32
+// `[hits, r, g, b]` display bucket the display staging readback converts —
+// so ONE kernel and ONE packer pair serve 3D and 4D, whose dimension-named
+// converters (`convertGpuDisplayHistogram` / `convertGpuDisplayHistogram4`)
+// already divide the weight factor out of that layout.
+
+/** Workgroup size (both dimensions) for the adaptive gather and the tile
+ * occupancy mark pass — the display downsample's 16x16 rationale verbatim:
+ * a 1-D dispatch's workgroup count can overflow
+ * `maxComputeWorkgroupsPerDimension` at 4K accumulation sizes. */
+export const ADAPTIVE_WORKGROUP_SIZE = 16;
+
+/** Workgroup size for the two serial tile-SAT scan passes (1-D, one
+ * invocation per tile row/column) — wide enough to cover the tallest tile
+ * grid in one dispatch. */
+export const ADAPTIVE_SCAN_WORKGROUP_SIZE = 256;
+
+/**
+ * Byte layout of the adaptive uniform (AdaptiveParams, {@link
+ * ADAPTIVE_PARAMS_BYTES} = 64) — all plain u32s, so no vec4 alignment
+ * padding:
+ *   0 srcW | 4 srcH | 8 outW | 12 outH | 16 scaleX | 20 scaleY
+ *   24 srcWords | 28 tileStride | 32 tilesX | 36 tilesY | 40 classCount
+ *   44 bandRowStart | 48 bandRows | 52..63 pad
+ *
+ * `bandRowStart`/`bandRows` are the ONLY live words: the driver rewrites
+ * them per band (they are adjacent, so one 8-byte `writeBuffer` covers
+ * both) while everything else stays as packed. `srcWords` is the occupancy
+ * bitmap's u32s per source row, `tileStride` the SAT's u32s per tile row
+ * (tilesX + 1, the zero-border convention).
+ */
+export const ADAPTIVE_PARAMS_BYTES = 64;
+
+const AP_SRC_W = 0;
+const AP_SRC_H = 1;
+const AP_OUT_W = 2;
+const AP_OUT_H = 3;
+const AP_SCALE_X = 4;
+const AP_SCALE_Y = 5;
+const AP_SRC_WORDS = 6;
+const AP_TILE_STRIDE = 7;
+const AP_TILES_X = 8;
+const AP_TILES_Y = 9;
+const AP_CLASS_COUNT = 10;
+const AP_BAND_ROW_START = 11;
+const AP_BAND_ROWS = 12;
+
+/** Byte offset of the adjacent `bandRowStart`/`bandRows` pair — one
+ * `writeBuffer(new Uint32Array([start, rows]), offset)` per band. */
+export const ADAPTIVE_PARAMS_BAND_OFFSET_BYTES = AP_BAND_ROW_START * 4;
+
+/** u32 words per class-table entry (radiusX, radiusY, kernelX/kernelY/
+ * xRecip/yRecip element offsets). */
+export const ADAPTIVE_CLASS_U32S = 6;
+
+/**
+ * The adaptive kernel source — THREE entry points over one bind group:
+ * `adaptiveMarkTiles` marks tile occupancy from the uploaded bitmap,
+ * `adaptiveScanTilesX`/`adaptiveScanTilesY` turn that into the inclusive
+ * summed-area table the per-cell bounding-box search reads (issue order
+ * within one compute pass makes each dispatch observe the previous one's
+ * writes — the display downsample's X/Y pair relies on the same
+ * guarantee), and `adaptiveGather` runs the banded row gather.
+ *
+ * `TILE` is `flame.ts`'s {@link OCCUPANCY_TILE} interpolated, so the device
+ * reduction and the CPU planner tile identically; the f32 weight sums and
+ * the bitmap walk below are `flame.ts`'s `planAdaptiveDownsample` /
+ * `runAdaptiveGather` term for term.
+ */
+export const FLAME_GPU_ADAPTIVE_WGSL = /* wgsl */ `
+const TILE: u32 = ${OCCUPANCY_TILE};
+
+struct AdaptiveParams {
+  srcW: u32,
+  srcH: u32,
+  outW: u32,
+  outH: u32,
+  scaleX: u32,
+  scaleY: u32,
+  srcWords: u32,
+  tileStride: u32,
+  tilesX: u32,
+  tilesY: u32,
+  classCount: u32,
+  bandRowStart: u32,
+  bandRows: u32,
+}
+
+struct AdaptiveClass {
+  radiusX: u32,
+  radiusY: u32,
+  kernelXOffset: u32,
+  kernelYOffset: u32,
+  xRecipOffset: u32,
+  yRecipOffset: u32,
+}
+
+struct TileBox {
+  x0: i32,
+  y0: i32,
+  x1: i32,
+  y1: i32,
+}
+
+@group(0) @binding(0) var<uniform> aparams: AdaptiveParams;
+@group(0) @binding(1) var<storage, read> srcHist: array<u32>;
+@group(0) @binding(2) var<storage, read> classOf: array<u32>;
+@group(0) @binding(3) var<storage, read> aclasses: array<AdaptiveClass>;
+@group(0) @binding(4) var<storage, read> kernels: array<f32>;
+@group(0) @binding(5) var<storage, read> occBits: array<u32>;
+@group(0) @binding(6) var<storage, read_write> tileOcc: array<u32>;
+@group(0) @binding(7) var<storage, read_write> displayHist: array<f32>;
+
+// Same u64 (lo, hi) -> f32 combination the display downsample does; color
+// channels additionally scale by COLOR_FIXED_POINT_SCALE's reciprocal (see
+// that kernel's note), and the readback converter removes the remaining
+// weight factor from all four channels.
+fn u64ToF32(lo: u32, hi: u32) -> f32 {
+  return f32(hi) * 4294967296.0 + f32(lo);
+}
+
+// Tile occupancy mark: OR the cell bitmap's bits covering each 4x4 tile
+// into the SAT's interior region (one offset for the zero border). A tile
+// never spans more than two bitmap words per row.
+@compute @workgroup_size(${ADAPTIVE_WORKGROUP_SIZE}, ${ADAPTIVE_WORKGROUP_SIZE})
+fn adaptiveMarkTiles(@builtin(global_invocation_id) gid: vec3u) {
+  let tx = gid.x;
+  let ty = gid.y;
+  if (tx >= aparams.tilesX || ty >= aparams.tilesY) {
+    return;
+  }
+  var occupied = 0u;
+  for (var j = 0u; j < TILE; j++) {
+    let sy = ty * TILE + j;
+    if (sy >= aparams.srcH) {
+      break;
+    }
+    let rowBase = sy * aparams.srcWords;
+    for (var i = 0u; i < TILE; i++) {
+      let sx = tx * TILE + i;
+      if (sx >= aparams.srcW) {
+        break;
+      }
+      if ((occBits[rowBase + (sx >> 5u)] & (1u << (sx & 31u))) != 0u) {
+        occupied = 1u;
+      }
+    }
+  }
+  tileOcc[(ty + 1u) * aparams.tileStride + (tx + 1u)] = occupied;
+}
+
+// Horizontal scan of the tile occupancy into row-local prefix sums — one
+// invocation per tile row, each thread walking its own row serially (no
+// cross-thread races, no workgroup scan machinery for a table this small).
+@compute @workgroup_size(${ADAPTIVE_SCAN_WORKGROUP_SIZE})
+fn adaptiveScanTilesX(@builtin(global_invocation_id) gid: vec3u) {
+  let ty = gid.x + 1u;
+  if (ty > aparams.tilesY) {
+    return;
+  }
+  let row = ty * aparams.tileStride;
+  var acc = 0u;
+  for (var tx = 1u; tx <= aparams.tilesX; tx++) {
+    acc += tileOcc[row + tx];
+    tileOcc[row + tx] = acc;
+  }
+}
+
+// Vertical scan: add the row-local prefixes above into the full inclusive
+// SAT. One invocation per tile column, same serial discipline.
+@compute @workgroup_size(${ADAPTIVE_SCAN_WORKGROUP_SIZE})
+fn adaptiveScanTilesY(@builtin(global_invocation_id) gid: vec3u) {
+  let tx = gid.x + 1u;
+  if (tx > aparams.tilesX) {
+    return;
+  }
+  var acc = 0u;
+  for (var ty = 1u; ty <= aparams.tilesY; ty++) {
+    let i = ty * aparams.tileStride + tx;
+    acc += tileOcc[i];
+    tileOcc[i] = acc;
+  }
+}
+
+// O(1) inclusive count over the zero-bordered tile SAT — the CPU's satCount.
+fn satCount(tx0: i32, ty0: i32, tx1: i32, ty1: i32) -> i32 {
+  let stride = i32(aparams.tileStride);
+  return i32(tileOcc[(ty1 + 1) * stride + (tx1 + 1)]) -
+    i32(tileOcc[ty0 * stride + (tx1 + 1)]) -
+    i32(tileOcc[(ty1 + 1) * stride + tx0]) +
+    i32(tileOcc[ty0 * stride + tx0]);
+}
+
+// The CPU's occupiedTileBounds: four binary searches over the monotone
+// prefix/suffix predicates, bounded to the already-known non-empty tile
+// rectangle.
+fn occupiedTileBounds(txLo: i32, tyLo: i32, txHi: i32, tyHi: i32) -> TileBox {
+  var box: TileBox;
+  var lo = txLo;
+  var hi = txHi;
+  while (lo < hi) {
+    let mid = (lo + hi) >> 1;
+    if (satCount(txLo, tyLo, mid, tyHi) > 0) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  box.x0 = lo;
+  lo = txLo;
+  hi = txHi;
+  while (lo < hi) {
+    let mid = (lo + hi + 1) >> 1;
+    if (satCount(mid, tyLo, txHi, tyHi) > 0) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  box.x1 = lo;
+  lo = tyLo;
+  hi = tyHi;
+  while (lo < hi) {
+    let mid = (lo + hi) >> 1;
+    if (satCount(txLo, tyLo, txHi, mid) > 0) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  box.y0 = lo;
+  lo = tyLo;
+  hi = tyHi;
+  while (lo < hi) {
+    let mid = (lo + hi + 1) >> 1;
+    if (satCount(txLo, mid, txHi, tyHi) > 0) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  box.y1 = lo;
+  return box;
+}
+
+// One output cell of one row band: class lookup -> in-bounds kernel
+// footprint -> occupied-tile bbox -> row-major walk of the cell bitmap
+// inside that box (the direct loop for fully occupied words) -> f32
+// weighted hits/RGB sums -> separable in-bounds per-axis normalization.
+@compute @workgroup_size(${ADAPTIVE_WORKGROUP_SIZE}, ${ADAPTIVE_WORKGROUP_SIZE})
+fn adaptiveGather(@builtin(global_invocation_id) gid: vec3u) {
+  let ox = gid.x;
+  if (ox >= aparams.outW || gid.y >= aparams.bandRows) {
+    return;
+  }
+  let oy = aparams.bandRowStart + gid.y;
+  let cell = oy * aparams.outW + ox;
+  let klass = aclasses[classOf[cell]];
+  let radiusX = i32(klass.radiusX);
+  let radiusY = i32(klass.radiusY);
+  let baseX = i32(ox * aparams.scaleX);
+  let baseY = i32(oy * aparams.scaleY);
+
+  let iLo = max(-radiusX, -baseX);
+  let iHi = min(radiusX, i32(aparams.srcW) - 1 - baseX);
+  let jLo = max(-radiusY, -baseY);
+  let jHi = min(radiusY, i32(aparams.srcH) - 1 - baseY);
+  let x0 = baseX + iLo;
+  let x1 = baseX + iHi;
+  let y0 = baseY + jLo;
+  let y1 = baseY + jHi;
+
+  let txLo = x0 / i32(TILE);
+  let tyLo = y0 / i32(TILE);
+  let txHi = x1 / i32(TILE);
+  let tyHi = y1 / i32(TILE);
+  let occupied = satCount(txLo, tyLo, txHi, tyHi);
+  if (occupied == 0) {
+    let zero = cell * 4u;
+    displayHist[zero] = 0.0;
+    displayHist[zero + 1u] = 0.0;
+    displayHist[zero + 2u] = 0.0;
+    displayHist[zero + 3u] = 0.0;
+    return;
+  }
+  var cx0 = x0;
+  var cy0 = y0;
+  var cx1 = x1;
+  var cy1 = y1;
+  if (occupied < (txHi - txLo + 1) * (tyHi - tyLo + 1)) {
+    let box = occupiedTileBounds(txLo, tyLo, txHi, tyHi);
+    cx0 = max(x0, box.x0 * i32(TILE));
+    cy0 = max(y0, box.y0 * i32(TILE));
+    cx1 = min(x1, (box.x1 + 1) * i32(TILE) - 1);
+    cy1 = min(y1, (box.y1 + 1) * i32(TILE) - 1);
+  }
+
+  var hitSum = 0.0;
+  var rSum = 0.0;
+  var gSum = 0.0;
+  var bSum = 0.0;
+  let wx0 = u32(cx0) >> 5u;
+  let wx1 = u32(cx1) >> 5u;
+  let loMask = 0xffffffffu << (u32(cx0) & 31u);
+  let hiMask = (2u << (u32(cx1) & 31u)) - 1u;
+  for (var sy = cy0; sy <= cy1; sy++) {
+    let wy = kernels[klass.kernelYOffset + u32(sy - baseY + radiusY)];
+    let bitRow = u32(sy) * aparams.srcWords;
+    let histRow = u32(sy) * aparams.srcW;
+    for (var wx = wx0; wx <= wx1; wx++) {
+      var bits = occBits[bitRow + wx];
+      if (wx == wx0) {
+        bits &= loMask;
+      }
+      if (wx == wx1) {
+        bits &= hiMask;
+      }
+      if (bits == 0u) {
+        continue;
+      }
+      let segLo = select(0u, u32(cx0) & 31u, wx == wx0);
+      let segHi = select(31u, u32(cx1) & 31u, wx == wx1);
+      let segMask = ((2u << segHi) - 1u) & (0xffffffffu << segLo);
+      if (bits == segMask) {
+        for (var sx = (wx << 5u) + segLo; sx <= (wx << 5u) + segHi; sx++) {
+          let weight = wy * kernels[klass.kernelXOffset + u32(i32(sx) - baseX + radiusX)];
+          let bucket = (histRow + sx) * 8u;
+          hitSum += weight * u64ToF32(srcHist[bucket], srcHist[bucket + 1u]);
+          rSum += weight * u64ToF32(srcHist[bucket + 2u], srcHist[bucket + 3u]) * (1.0 / ${COLOR_FIXED_POINT_SCALE}.0);
+          gSum += weight * u64ToF32(srcHist[bucket + 4u], srcHist[bucket + 5u]) * (1.0 / ${COLOR_FIXED_POINT_SCALE}.0);
+          bSum += weight * u64ToF32(srcHist[bucket + 6u], srcHist[bucket + 7u]) * (1.0 / ${COLOR_FIXED_POINT_SCALE}.0);
+        }
+        continue;
+      }
+      var rest = bits;
+      while (rest != 0u) {
+        let bit = rest & (0u - rest);
+        let sx = (wx << 5u) + firstLeadingBit(bit);
+        rest ^= bit;
+        let weight = wy * kernels[klass.kernelXOffset + u32(i32(sx) - baseX + radiusX)];
+        let bucket = (histRow + sx) * 8u;
+        hitSum += weight * u64ToF32(srcHist[bucket], srcHist[bucket + 1u]);
+        rSum += weight * u64ToF32(srcHist[bucket + 2u], srcHist[bucket + 3u]) * (1.0 / ${COLOR_FIXED_POINT_SCALE}.0);
+        gSum += weight * u64ToF32(srcHist[bucket + 4u], srcHist[bucket + 5u]) * (1.0 / ${COLOR_FIXED_POINT_SCALE}.0);
+        bSum += weight * u64ToF32(srcHist[bucket + 6u], srcHist[bucket + 7u]) * (1.0 / ${COLOR_FIXED_POINT_SCALE}.0);
+      }
+    }
+  }
+
+  let norm = kernels[klass.xRecipOffset + ox] * kernels[klass.yRecipOffset + oy];
+  let out = cell * 4u;
+  displayHist[out] = hitSum * norm;
+  displayHist[out + 1u] = rSum * norm;
+  displayHist[out + 2u] = gSum * norm;
+  displayHist[out + 3u] = bSum * norm;
+}
+`;
+
+/**
+ * {@link packGpuAdaptive}'s result: every buffer/byte-layout piece the
+ * adaptive compute pass binds, plus the CPU-side per-cell work the driver
+ * charges progress against.
+ */
+export interface PackedGpuAdaptive {
+  /** {@link ADAPTIVE_PARAMS_BYTES}-byte uniform contents (band fields
+   * zeroed; the driver rewrites them per band — see
+   * {@link ADAPTIVE_PARAMS_BAND_OFFSET_BYTES}). */
+  params: ArrayBuffer;
+  /** Kernel class per output cell, row-major — `adaptiveClassMap`'s own
+   * `classOf`, uploaded verbatim. */
+  classOf: Int32Array<ArrayBuffer>;
+  /** {@link ADAPTIVE_CLASS_U32S} words per class: radiusX, radiusY, then
+   * element offsets into {@link kernels}. */
+  classTable: Uint32Array<ArrayBuffer>;
+  /** Per class, back to back: kernelX, kernelY, xRecip[outW], yRecip[outH]
+   * — f32, narrowed from `adaptiveClassMap`'s f64 kernels. */
+  kernels: Float32Array<ArrayBuffer>;
+  /** Cell-resolution occupied bitmap, `srcWords` u32s per source row. */
+  occBits: Uint32Array<ArrayBuffer>;
+  /** Number of distinct classes. */
+  classCount: number;
+  /** Tiles per axis (the SAT's interior size; stride is `tilesX + 1`). */
+  tilesX: number;
+  tilesY: number;
+  /** Work charged for one output cell, in {@link adaptiveGatherWork} units
+   * over the cell's FULL in-bounds footprint, row-major. The port's
+   * progress denominator: the CLIPPED footprint would need the occupancy
+   * search the gather itself runs, and a determinate bar needs a total
+   * before the first band — so the harness-value denominator is the
+   * unclipped one, charged through the same whole-number unit the CPU job
+   * uses. */
+  cellWork: Uint32Array<ArrayBuffer>;
+  /** Sum of {@link cellWork} — the pass's progress total. */
+  totalWork: number;
+}
+
+/**
+ * Pack everything the adaptive gather binds from the SAME resident
+ * histogram and params the CPU oracle consumes. The class mapping is
+ * `flame.ts`'s `adaptiveClassMap` (CPU, f64 — see the section doc for why);
+ * this function only narrows its kernels to f32, derives the per-class
+ * separable in-bounds weight reciprocals the gather normalizes by, and
+ * scans the bitmap and work units.
+ *
+ * The weight reciprocals are computed in f64 (the same `sum` the display
+ * packer computes) and stored as f32, so the GPU's normalization is the
+ * exact separable factorization of the CPU's full-footprint sum, modulo
+ * f32 rounding — the measured tolerance the agreement harness pins.
+ *
+ * `hist`'s dimensions must be an exact positive-integer multiple of
+ * `outWidth`/`outHeight` (the CPU job's own contract; throws `RangeError`
+ * otherwise, naming the sizes).
+ */
+export function packGpuAdaptive(
+  hist: FlameHistogram,
+  outWidth: number,
+  outHeight: number,
+  params: DensityEstimatorParams,
+): PackedGpuAdaptive {
+  const srcWidth = hist.width;
+  const srcHeight = hist.height;
+  if (
+    outWidth <= 0 ||
+    outHeight <= 0 ||
+    srcWidth % outWidth !== 0 ||
+    srcHeight % outHeight !== 0
+  ) {
+    throw new RangeError(
+      `packGpuAdaptive: source ${srcWidth}x${srcHeight} is not a positive-integer multiple of target ${outWidth}x${outHeight}`,
+    );
+  }
+  const scaleX = srcWidth / outWidth;
+  const scaleY = srcHeight / outHeight;
+  const classMap = adaptiveClassMap(hist, outWidth, outHeight, params);
+  const classCount = classMap.classes.length;
+
+  // Occupancy bitmap: one bit per source cell (the CPU planner's own
+  // `rowBits` scan).
+  const srcWords = (srcWidth + 31) >>> 5;
+  const occBits = new Uint32Array(srcHeight * srcWords);
+  for (let sy = 0; sy < srcHeight; sy++) {
+    const rowBase = sy * srcWidth;
+    const wordBase = sy * srcWords;
+    for (let sx = 0; sx < srcWidth; sx++) {
+      if (hist.hits[rowBase + sx] > 0) {
+        occBits[wordBase + (sx >>> 5)] |= 1 << (sx & 31);
+      }
+    }
+  }
+
+  // Per-class table + flat kernels, and the per-cell progress work.
+  const classTable = new Uint32Array(classCount * ADAPTIVE_CLASS_U32S);
+  let kernelFloats = 0;
+  for (const klass of classMap.classes) {
+    kernelFloats +=
+      2 * klass.radiusX + 1 + (2 * klass.radiusY + 1) + outWidth + outHeight;
+  }
+  const kernels = new Float32Array(kernelFloats);
+  const outCells = outWidth * outHeight;
+  const cellWork = new Uint32Array(outCells);
+  const classRadiusX = new Int32Array(classCount);
+  const classRadiusY = new Int32Array(classCount);
+  let cursor = 0;
+  for (let c = 0; c < classCount; c++) {
+    const klass = classMap.classes[c];
+    const { radiusX, radiusY, kernelX, kernelY } = klass;
+    classRadiusX[c] = radiusX;
+    classRadiusY[c] = radiusY;
+    const kernelXOffset = cursor;
+    for (let i = 0; i < kernelX.length; i++) kernels[cursor++] = kernelX[i];
+    const kernelYOffset = cursor;
+    for (let i = 0; i < kernelY.length; i++) kernels[cursor++] = kernelY[i];
+    const xRecipOffset = cursor;
+    for (let ox = 0; ox < outWidth; ox++) {
+      const baseX = ox * scaleX;
+      let sum = 0;
+      for (let i = -radiusX; i <= radiusX; i++) {
+        const sx = baseX + i;
+        if (sx < 0 || sx >= srcWidth) continue;
+        sum += kernelX[i + radiusX];
+      }
+      kernels[cursor++] = 1 / sum;
+    }
+    const yRecipOffset = cursor;
+    for (let oy = 0; oy < outHeight; oy++) {
+      const baseY = oy * scaleY;
+      let sum = 0;
+      for (let j = -radiusY; j <= radiusY; j++) {
+        const sy = baseY + j;
+        if (sy < 0 || sy >= srcHeight) continue;
+        sum += kernelY[j + radiusY];
+      }
+      kernels[cursor++] = 1 / sum;
+    }
+    const entry = c * ADAPTIVE_CLASS_U32S;
+    classTable[entry] = radiusX;
+    classTable[entry + 1] = radiusY;
+    classTable[entry + 2] = kernelXOffset;
+    classTable[entry + 3] = kernelYOffset;
+    classTable[entry + 4] = xRecipOffset;
+    classTable[entry + 5] = yRecipOffset;
+  }
+
+  // The progress charge: `adaptiveGatherWork` over each cell's full
+  // in-bounds footprint, charged through the same whole-number unit the CPU
+  // job's own total uses (see `PackedGpuAdaptive.cellWork`).
+  let totalWork = 0;
+  for (let oy = 0; oy < outHeight; oy++) {
+    const baseY = oy * scaleY;
+    for (let ox = 0; ox < outWidth; ox++) {
+      const cell = oy * outWidth + ox;
+      const c = classMap.classOf[cell];
+      const radiusX = classRadiusX[c];
+      const radiusY = classRadiusY[c];
+      const baseX = ox * scaleX;
+      const iLo = Math.max(-radiusX, -baseX);
+      const iHi = Math.min(radiusX, srcWidth - 1 - baseX);
+      const jLo = Math.max(-radiusY, -baseY);
+      const jHi = Math.min(radiusY, srcHeight - 1 - baseY);
+      const work =
+        ADAPTIVE_CELL_BASE_WORK +
+        adaptiveGatherWork(
+          baseX,
+          baseY,
+          radiusX,
+          radiusY,
+          srcWidth,
+          srcHeight,
+          baseX + iLo,
+          baseY + jLo,
+          baseX + iHi,
+          baseY + jHi,
+        );
+      cellWork[cell] = work;
+      totalWork += work;
+    }
+  }
+
+  const tilesX = Math.ceil(srcWidth / OCCUPANCY_TILE);
+  const tilesY = Math.ceil(srcHeight / OCCUPANCY_TILE);
+  const paramsBuffer = new ArrayBuffer(ADAPTIVE_PARAMS_BYTES);
+  const u32 = new Uint32Array(paramsBuffer);
+  u32[AP_SRC_W] = srcWidth;
+  u32[AP_SRC_H] = srcHeight;
+  u32[AP_OUT_W] = outWidth;
+  u32[AP_OUT_H] = outHeight;
+  u32[AP_SCALE_X] = scaleX;
+  u32[AP_SCALE_Y] = scaleY;
+  u32[AP_SRC_WORDS] = srcWords;
+  u32[AP_TILE_STRIDE] = tilesX + 1;
+  u32[AP_TILES_X] = tilesX;
+  u32[AP_TILES_Y] = tilesY;
+  u32[AP_CLASS_COUNT] = classCount;
+  u32[AP_BAND_ROW_START] = 0;
+  u32[AP_BAND_ROWS] = outHeight;
+
+  return {
+    params: paramsBuffer,
+    classOf: classMap.classOf,
+    classTable,
+    kernels,
+    occBits,
+    classCount,
+    tilesX,
+    tilesY,
+    cellWork,
+    totalWork,
+  };
 }
