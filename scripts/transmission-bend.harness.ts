@@ -15,11 +15,22 @@ import {
 } from "./transmission-bend-study";
 import type {
   BendFixture,
-  BendMaterial,
   BendOptions,
   BendPanel,
 } from "./transmission-bend-study";
-import { fixtures } from "./transmission-study";
+import {
+  BEND_REFERENCE_OPTIONS as BASE,
+  BEND_STILL_POSES,
+  BEND_MOTION_GROUPS,
+  analyticFixture,
+  native4HypersphereFixture,
+  fromSurfaces,
+  proceduralFloor,
+  fractalFixture,
+  dot,
+  normalized,
+} from "./transmission-bend-fixtures";
+import type { Surface } from "./transmission-bend-fixtures";
 
 const OUT = "scripts/out";
 const CONTROL_SIZE = Number(process.env.TRANSMISSION_BEND_CONTROL_SIZE ?? 33);
@@ -27,128 +38,6 @@ const MENGER_SIZE = Number(process.env.TRANSMISSION_BEND_MENGER_SIZE ?? 32);
 const NATIVE4_SIZE = Number(process.env.TRANSMISSION_BEND_4D_SIZE ?? 48);
 const MOTION3_SIZE = Number(process.env.TRANSMISSION_BEND_MOTION3_SIZE ?? 20);
 const MOTION4_SIZE = Number(process.env.TRANSMISSION_BEND_MOTION4_SIZE ?? 24);
-const BASE: BendOptions = {
-  transmit: 0.9,
-  ior: 1.45,
-  slabFraction: 0.08,
-  maxOffsetFraction: 0.08,
-  opticalNormalFraction: 0.04,
-  maxLayers: 128,
-  chunkSteps: 1200,
-  maxSamples: 4096,
-  residualTolerance: 0,
-};
-
-interface Surface {
-  label: string;
-  color: Vec3;
-  distance: (p: Vec3) => number;
-  opaque?: boolean;
-}
-
-const dot = (a: readonly number[], b: readonly number[]) =>
-  a.reduce((sum, value, i) => sum + value * b[i], 0);
-const normalized = (v: Vec3): Vec3 => {
-  const length = Math.hypot(...v);
-  return v.map((x) => x / length) as Vec3;
-};
-const sphere = (center: Vec3, radius: number) => (p: Vec3) =>
-  Math.abs(Math.hypot(...p.map((v, i) => v - center[i])) - radius);
-
-function fromSurfaces(
-  name: string,
-  surfaces: Surface[],
-  radius = 1.25,
-): BendFixture {
-  const nearest = (p: Vec3): [Surface, number] => {
-    let selected = surfaces[0];
-    let distance = selected.distance(p);
-    for (const candidate of surfaces.slice(1)) {
-      const d = candidate.distance(p);
-      if (d < distance) [selected, distance] = [candidate, d];
-    }
-    return [selected, distance];
-  };
-  return {
-    name,
-    scene: {
-      de: (p) => nearest(p)[1],
-      boundingRadius: radius,
-      stepScale: 1,
-      eye: [0, 0, 3],
-      target: [0, 0, 0],
-      zoom: 0.3,
-    },
-    material(p): BendMaterial {
-      const selected = nearest(p)[0];
-      return {
-        label: selected.label,
-        color: selected.color,
-        opaque: selected.opaque,
-      };
-    },
-  };
-}
-
-function analyticFixture(rear: boolean): BendFixture {
-  const surfaces: Surface[] = [
-    {
-      label: "front",
-      color: [0.1, 0.78, 0.96],
-      distance: sphere([-0.08, 0, 0.42], 0.48),
-    },
-  ];
-  if (rear)
-    surfaces.push({
-      label: "rear",
-      color: [1, 0.12, 0.035],
-      distance: sphere([0.26, 0, -0.42], 0.17),
-      opaque: true,
-    });
-  return fromSurfaces(`ANALYTIC REAR ${rear}`, surfaces);
-}
-
-function native4HypersphereFixture(rear: boolean): BendFixture {
-  const angle = 0.37;
-  const w0 = 0.23;
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  const sliceNormal = [-s, 0, 0, c] as const;
-  const q4 = (p: Vec3): [number, number, number, number] => [
-    c * p[0] - s * w0,
-    p[1],
-    p[2],
-    s * p[0] + c * w0,
-  ];
-  const hypersphere = (center3: Vec3, radius3: number, offset4: number) => {
-    const displayedCenter = q4(center3);
-    const center4 = displayedCenter.map(
-      (value, axis) => value + offset4 * sliceNormal[axis],
-    );
-    const radius4 = Math.hypot(radius3, offset4);
-    return (p: Vec3) =>
-      Math.abs(
-        Math.hypot(...q4(p).map((value, axis) => value - center4[axis])) -
-          radius4,
-      );
-  };
-  const surfaces: Surface[] = [
-    {
-      label: "front",
-      color: [0.1, 0.78, 0.96],
-      distance: hypersphere([-0.08, 0, 0.42], 0.48, 0.2),
-    },
-  ];
-  if (rear)
-    surfaces.push({
-      label: "rear",
-      color: [1, 0.12, 0.035],
-      distance: hypersphere([0.26, 0, -0.42], 0.17, 0.05),
-      opaque: true,
-    });
-  return fromSurfaces(`POSED 4D HYPERSPHERE REAR ${rear}`, surfaces);
-}
-
 /** A .005R downstream guard lies inside the virtual .08R slab thickness. */
 function closeGuardFixture(
   native4 = false,
@@ -232,23 +121,6 @@ function nearBoundaryFixture(): BendFixture {
   );
 }
 
-function proceduralFloor(R: number) {
-  const floorY = -1.05 * R;
-  return (origin: Vec3, rd: Vec3): Vec3 => {
-    if (rd[1] < -1e-8) {
-      const t = (floorY - origin[1]) / rd[1];
-      if (t > 0) {
-        const x = origin[0] + rd[0] * t;
-        const z = origin[2] + rd[2] * t;
-        const checker =
-          (Math.floor(x / (0.18 * R)) + Math.floor(z / (0.18 * R))) & 1;
-        return checker ? [0.7, 0.17, 0.05] : [0.035, 0.32, 0.7];
-      }
-    }
-    return [0.025, 0.035, 0.055];
-  };
-}
-
 function run(
   fixture: BendFixture,
   size: number,
@@ -307,18 +179,6 @@ function exactTrace(result: BendPanel) {
     samples: [...result.sampleCounts],
     attribution: result.attributionCounts,
     termination: result.termination,
-  };
-}
-
-function fractalFixture(
-  name: "MENGER 3D" | "MANDELBOX 4D",
-  pose: Parameters<typeof fixtures>[0],
-): BendFixture {
-  const source = fixtures(pose).find((fixture) => fixture.name === name)!;
-  return {
-    name,
-    scene: source.scene,
-    material: (p) => ({ label: "fractal", color: source.color(p) }),
   };
 }
 
@@ -507,15 +367,7 @@ describe("world-space virtual-slab continuation", () => {
 
   it("renders paired Menger 3D and posed native 4D pilot views", () => {
     mkdirSync(OUT, { recursive: true });
-    const poses = {
-      menger: { angle: 0.2, eyeOffset: [1.4, 0.9, 1.7] as Vec3, zoom: 0.43 },
-      native4: {
-        angle: 0.35,
-        w0: 0.3,
-        eyeOffset: [0.55, 0.35, 2.2] as Vec3,
-        zoom: 0.22,
-      },
-    };
+    const poses = BEND_STILL_POSES;
     const specs = [
       [fractalFixture("MENGER 3D", poses.menger), MENGER_SIZE, "menger3"],
       [fractalFixture("MANDELBOX 4D", poses.native4), NATIVE4_SIZE, "native4"],
@@ -620,43 +472,11 @@ describe("world-space virtual-slab continuation", () => {
 
   it("isolates short camera, rotor, and slice changes with fixed optics", () => {
     mkdirSync(OUT, { recursive: true });
-    const groups = [
-      {
-        key: "menger-camera",
-        size: MOTION3_SIZE,
-        fixture: "MENGER 3D" as const,
-        poses: [
-          { eyeOffset: [1.32, 0.9, 1.7] as Vec3, zoom: 0.43 },
-          { eyeOffset: [1.4, 0.9, 1.7] as Vec3, zoom: 0.43 },
-          { eyeOffset: [1.48, 0.9, 1.7] as Vec3, zoom: 0.43 },
-        ],
-        isolated: "camera x",
-      },
-      {
-        key: "native4-rotor",
-        size: MOTION4_SIZE,
-        fixture: "MANDELBOX 4D" as const,
-        poses: [0.31, 0.35, 0.39].map((angle) => ({
-          angle,
-          w0: 0.3,
-          eyeOffset: [0.55, 0.35, 2.2] as Vec3,
-          zoom: 0.22,
-        })),
-        isolated: "XW rotor angle",
-      },
-      {
-        key: "native4-slice",
-        size: MOTION4_SIZE,
-        fixture: "MANDELBOX 4D" as const,
-        poses: [0.26, 0.3, 0.34].map((w0) => ({
-          angle: 0.35,
-          w0,
-          eyeOffset: [0.55, 0.35, 2.2] as Vec3,
-          zoom: 0.22,
-        })),
-        isolated: "slice w0",
-      },
-    ];
+    const groups = BEND_MOTION_GROUPS.map((group) => ({
+      ...group,
+      fixture: group.fixtureName,
+      size: group.key === "menger-camera" ? MOTION3_SIZE : MOTION4_SIZE,
+    }));
     const reportGroups = groups.map((group) => {
       const frames = group.poses.map((pose, frame) => {
         const fixture = fractalFixture(group.fixture, pose);
