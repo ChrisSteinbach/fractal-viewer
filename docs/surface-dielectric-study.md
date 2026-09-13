@@ -153,6 +153,85 @@ frame into the production app, and does not change the no-go: the 3D
 provisional misses 1 s, the authoritative 3D preview remains 4.05 s, and the
 total-state certification and 3D export responsiveness are unchanged.
 
+## Replay-attempt and submission-probe instruments
+
+Source
+`09a4173d741b470f96ee27f0176f7bbf5e9f7544ff95dc26604db7ef2619fe87`
+(the staged-experiment successor) adds two opt-in
+instruments to the GPU harness. Both are page-side: the four-sample kernel
+emission stays byte-identical to the pre-change module (verified by bundling
+old and new `dielectricWgsl()` at samples-per-pixel 1–4 and comparing the
+strings), and the default run path is unchanged.
+
+The **replay-attempt diagnostic** (`--staged` provisional arms, opt-in
+`replayPassDiagnostic`) emits a pending-gated `replayPasses` write — per
+pixel, the replay pass during which its last pending sample resolved (0 =
+resolved at pass 0, REPLAY_PASSES = never resolved at the cap) — and reports
+`maxResolvedPass` with the per-pass resolution histogram from the existing
+readback. Measured at 256×144, 1 SPP, quiet RX 7900 XTX / Chromium, both
+arms byte-identical cold vs warm and both staged identity gates passing:
+
+| Arm            | Resolutions per pass (0…5) | maxResolvedPass | Min passes for completion |
+| -------------- | -------------------------- | --------------: | ------------------------: |
+| 3D provisional | 34471, 1700, 617, 75, 1, 0 |               4 |                **5** of 6 |
+| 4D provisional | 36200, 595, 69, 0, 0, 0    |               2 |                **3** of 6 |
+
+So the six-attempt theta schedule's tail is one pure-overhead pass in 3D
+(~16 ms of a 1133 ms warm replay sum, 1.4%) and three in 4D (~45 ms of
+675 ms, 6.7%). A shorter 3D provisional schedule cannot go below five
+passes without refusing the run — one sample needs pass 4 — and the saving
+is one empty submission per tile. Combined with the measured reuse ceiling
+(0.22–0.33 s), controls-once (~0.07–0.10 s) and submission-structure fixed
+costs (~0.08 s at 256×144), the reachable 3D provisional floor is roughly
+1.10–1.21 s: the 1 s line is not reachable by these levers, and the gap is
+report-back material rather than a fresh no-go verdict.
+
+The **submission probe** (`--submissionProbe`, plain default path only)
+records every fenced tile-pass submission — tile, replay pass, wall ms, and
+GPU execution ms from two `timestamp-query` timestamps bracketing the
+compute pass (Dawn reports nanoseconds; the pass-5 empty submissions' 0.015–0.026
+ms GPU against ~4 ms wall cross-check the assumption) — plus per-pass maxima,
+percentiles and the 16 worst submissions with their tiles.
+
+Measured on the default 3D full-HD row (128×64, 1530 submissions):
+
+| Instrument                         |                128×64 tiles |                 64×64 tiles |
+| ---------------------------------- | --------------------------: | --------------------------: |
+| Worst checkpoint (wall)            |                    548.1 ms |                    561.9 ms |
+| Worst submission GPU execution     |                    545.5 ms |                    559.6 ms |
+| Worst submission tile, pass        |               [1152,256], 4 |               [1216,256], 4 |
+| Per-pass maxima (wall, 0…4)        |         277→350→451→517→548 |         279→356→467→540→562 |
+| Fence/host share of the worst wall |                     ~2.6 ms |                     ~2.3 ms |
+| p50 / p90 / p99 / p999 wall        | 2.7 / 221.8 / 427.1 / 514.9 | 2.6 / 193.3 / 405.6 / 506.7 |
+| Pass-5 maximum (wall / GPU)        |              3.9 / 0.026 ms |              4.1 / 0.015 ms |
+
+The verdict is decisive: the 3D full-HD cancellation checkpoint is **real GPU
+execution, not driver-queue tail latency** — the worst submission is 545–560
+ms of genuine transport work with a ~2.5 ms fence share — and **halving the
+tile pixel count does not halve it** (561.9 ms at 64×64 against 548.1 ms at
+128×64; the earlier 64×64/64×32 cancellation records showed the same
+non-shrinking). The duration of a tile-pass is its slowest pixel-thread's
+resolve, not its pixel sum: all threads of a dispatch run resident and
+concurrently. The heavy tail is broad (about 1% of submissions exceed
+400 ms GPU at both grids, spread over the dense glass region's tiles), so
+finer dispatch chunking inherits the same floor — any chunk containing dense
+pixels still waits on its slowest pixel. The worst pixels resolve WITHOUT
+hitting the processed-path or stack caps (the pinned baselines are cap-free),
+so their ~0.5 s late-pass cost is the genuine price of resolving them at
+4 SPP, not a budget artifact that a tighter cap would trim. Scheduling
+levers — tile shape, submission pacing, grid isolation, per-pass dispatch
+chunking — are therefore exhausted for the 500 ms 3D checkpoint: the
+reachable floor is the densest pixel's own ~0.55 s transport cost, and the
+remaining levers (tighter per-pass work bounds, a different theta schedule)
+change which samples resolve and are appearance-semantics decisions that
+belong to the owner, not scheduling fixes. The 4D row passes the 500 ms
+checkpoint (445.7 ms) and is untouched.
+
+The probe records are `probe-1920x1080-menger.json` and
+`probe-1920x1080-menger-64x64.json` (gitignored, regenerable with
+`--submissionProbe`). Both rows keep the byte-exact residual
+(0.0009727366268634796) and complete completion metadata.
+
 ## Owner-selected full-size result
 
 The [1024×1024 comparison](../scripts/out/transmission-dielectric-review.html)
