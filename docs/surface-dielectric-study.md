@@ -94,6 +94,65 @@ The ignored final records are
 The rejected 3D cancellation records are
 `final-cancel-1920x1080-menger-{64x64,64x32}.json`.
 
+## Staged deterministic preview experiment
+
+Source
+`42dcbf03197ecb21cf101d8b3e3ffc822b9124c4864591582c3fc0ff0fe37f28` adds an
+opt-in staged mode to the GPU harness
+(`--staged --fixture=... --mode=glass`). The provisional arm renders the full
+256×144 raster at ONE sample per pixel through the same six replay attempts,
+branch cutoff, transport, completion and refusal rules, and the per-sample
+1/1024 residual bound — every rendered sample independently retained. The
+pixel state layout, jitter and acceptance predicate are unchanged, so the
+provisional frame is a true one-sample instance of the authoritative kernel,
+visibly labelled (`role: "provisional-preview"`, `provisional: true`), and it
+never inherits the owner-selected appearance approval. The authoritative arm
+then renders a separate, independent four-sample image with fresh device
+state — never a continuation of the provisional aggregate, whose
+accumulation order could change bytes — and the launcher compares its RGBA,
+completion, residual and refusal metadata against the final qualified
+source's canonical measurements, pinned as constants in the launcher (the
+final records themselves are regenerable and gitignored). Emitting the
+kernel at four samples is byte-identical to the pre-change module, so the
+default run path is unchanged.
+
+Quiet RX 7900 XTX / Chromium, 256×144, 128×64 tiles; both runs uncontended
+and recorded with every identity component passing:
+
+| Arm                                 |      3D Menger | Posed 4D slice |
+| ----------------------------------- | -------------: | -------------: |
+| Provisional 1-SPP, cold page        |       1.5247 s |       1.0667 s |
+| Provisional 1-SPP, warm page        |       1.3078 s |       0.7996 s |
+| Authoritative 4-SPP (identity gate) |       3.8862 s |       2.3985 s |
+| Provisional replay fence sum, warm  |       1.1488 s |       0.6685 s |
+| Provisional maximum residual        | 0.000976364128 | 0.000976557028 |
+
+Walls are Node time from immediately before the page call through PNG write,
+matching the consolidated preview rows' practical-time scope. Verdicts: the
+4D warm provisional meets the 1 s target and the cold arm misses narrowly;
+the 3D provisional misses at every arm — its six-pass replay fence work
+alone is 1.15 s, so no setup reuse can close it. Reducing the sample count
+fourfold reduced the replay fence sum only to about 30% (3D 3.686 s →
+1.149 s; 4D 2.281 s → 0.669 s): the six bounded submissions' fixed costs and
+the theta replay schedule do not scale with sample count. The cold→warm
+delta is 0.22–0.33 s of adapter/device, controls and pipeline setup — the
+measurable reuse ceiling. Both provisional arms are byte-identical to each
+other across cold and warm pages, and their maximum residuals sit just under
+the per-sample error budget, as the acceptance rule requires.
+
+The staged records are `staged-256x144-{menger,hyper4}.json`. Reproduce with:
+
+```bash
+node scripts/transmission-dielectric-gpu.mjs --display=:0 --width=256 --height=144 --tileWidth=128 --tileHeight=64 --staged --fixture=menger3 --mode=glass --output=staged-256x144-menger.json
+node scripts/transmission-dielectric-gpu.mjs --display=:0 --width=256 --height=144 --tileWidth=128 --tileHeight=64 --staged --fixture=hyper4 --mode=glass --output=staged-256x144-hyper4.json
+```
+
+This measures the staged preview schedule only. It does not re-measure
+cancellation on the provisional stage, does not integrate a provisional
+frame into the production app, and does not change the no-go: the 3D
+provisional misses 1 s, the authoritative 3D preview remains 4.05 s, and the
+total-state certification and 3D export responsiveness are unchanged.
+
 ## Owner-selected full-size result
 
 The [1024×1024 comparison](../scripts/out/transmission-dielectric-review.html)
