@@ -259,7 +259,9 @@ morphs into place instead of snapping (see **Presets** below).
   pulse only — and names the
   engine doing the accumulating: the GPU (with the adapter's name where the
   browser reports one) or the CPU, saying which way it fell back when the GPU
-  was tried and refused.
+  was tried and refused. The finished-frame density estimate runs on that
+  same engine where it can — the GPU gather over the resident histogram, the
+  CPU job otherwise — and the percentage above is the one bar for both.
   - **Scene color** — **Exposure** (0.2×–4×), **Gamma** (1–6, default 2.4) and
     **Vibrancy** (0–100%) all re-map the histogram that is already
     accumulated, so each applies instantly and none costs a restart. Gamma
