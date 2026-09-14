@@ -388,6 +388,7 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
     })),
     finish: true,
     pattern: false,
+    optics: false,
   });
 
   it("keys a finish change — a timeline leg re-authoring one slot under a parked camera must re-trace", () => {
@@ -454,6 +455,50 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
     );
     expect(a).not.toBe(b);
   });
+
+  it("keys the optics block — a scale edit under a parked camera re-traces, and the block never collides with finish or pattern", () => {
+    const opticsSlot = (scale: number | undefined): SurfaceMaterialSlots => ({
+      slots: [
+        {
+          finish: { ...CLASSIC_SURFACE_FINISH },
+          pattern: { kind: "none", axis: "y", scale: 1, strength: 0 },
+          ...(scale === undefined
+            ? {}
+            : {
+                optics: {
+                  ior: 1.45,
+                  absorption: [0.17, 0.055, 0.025] as [number, number, number],
+                  radius: scale,
+                },
+              }),
+        },
+      ],
+      finish: false,
+      pattern: false,
+      optics: true,
+    });
+    const a = surfaceComputeForceFrameKey(
+      baseSpec({ materials: opticsSlot(3) }),
+    );
+    const b = surfaceComputeForceFrameKey(
+      baseSpec({ materials: opticsSlot(4) }),
+    );
+    expect(a).not.toBe(b);
+    // Same key when the resolved five numbers are identical — the
+    // resolution's own total-ness, not the authored field's identity.
+    expect(a).toBe(
+      surfaceComputeForceFrameKey(baseSpec({ materials: opticsSlot(3) })),
+    );
+  });
+
+  it("keeps the legacy key byte-identical when no session carries optics — absent gate, absent block", () => {
+    const legacy = surfaceComputeForceFrameKey(
+      baseSpec({ materials: finishMaterials([chrome]) }),
+    );
+    // A spec predating the field has no optics member anywhere; the key
+    // never grew a third material block for it.
+    expect(legacy).not.toContain("|optics|");
+  });
 });
 
 describe("surfaceComputeForceFrameKey pattern blocks", () => {
@@ -476,6 +521,7 @@ describe("surfaceComputeForceFrameKey pattern blocks", () => {
     slots: [{ finish: { ...CLASSIC_SURFACE_FINISH }, pattern: { ...value } }],
     finish: false,
     pattern: true,
+    optics: false,
     patternCalibration: { ...native },
   });
 

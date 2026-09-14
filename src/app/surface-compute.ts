@@ -3115,12 +3115,19 @@ export class SurfaceComputeRenderer {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     device.queue.writeBuffer(mapsBuf, 0, mapsData);
+    // The shadeMaps stride contract: the packer's `materials` argument is
+    // present exactly when the kernel was generated with finish OR pattern
+    // true (the two gates just above), so an optics-only wire must NOT reach
+    // it — its slots would mint stride-3 bytes for a stride-1 kernel. The
+    // optical model is dormant here anyway (no kernel consumes it); the
+    // optics transport rides its own buffer when the resumable-transport
+    // work wires it in.
+    const shadeMaterialSlots =
+      materials && (materials.finish || materials.pattern)
+        ? materials.slots
+        : undefined;
     const shadeMapsData = new Float32Array(
-      packSurfaceGpuShadeMaps(
-        colors,
-        trapIndices,
-        materials?.slots ?? undefined,
-      ),
+      packSurfaceGpuShadeMaps(colors, trapIndices, shadeMaterialSlots),
     );
     const shadeMapsBuf = device.createBuffer({
       size: shadeMapsData.byteLength,
