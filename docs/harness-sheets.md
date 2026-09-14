@@ -1058,6 +1058,44 @@ descriptive timing; its recorded 192³ SwiftShader run changed four channels by
 one byte and measured 137.20 ms accelerated versus 326.22 ms fallback median
 capture latency.
 
+## The sphere-inversion family's sheet
+
+### sphere-inversion
+
+The pre-gate evidence for a Surface family built from iterated sphere
+inversions, with its prototype math in `scripts/sphere-inversion-orbit.ts`. It
+renders the DEPTH-D SEED ORBIT `O_D` (never the limit set) through
+`de-preview.ts` in 3D and native 4D, with Mandelbox cube, B3 tiling and Balloon
+comparison panels. The distance is a transported empty-ball bound, marched at
+step scale 1.0.
+
+MEASURED VERDICT: a dedicated estimator is required, the 3D half is striking,
+and the native 4D half is genuine but less striking.
+
+- **Estimator.** Against the exact explicit orbit (937–3,201 copies, about
+  6,000 off-set queries per arrangement, kissing included), the transported
+  bound had 0 violations, with p05/p50 of 0.37–0.48 / 0.94–0.96 of the true
+  distance. The Bridges 2016 form overshoots on 82–87% of queries by up to
+  2.9x at factor 1. At factor 0.08 it costs 33.7 against 13.2 steps/ray and
+  fattens every pearl.
+- **Exhaustion.** 0.0% of rays on every panel of every sheet.
+- **Existing vocabulary.** A spherefold conjugated by its affine and post is
+  exactly one fold step. The contractive IFS gate refuses it with or without a
+  seed emitter, and the escape chain admits it but draws a tripod spike (reach
+  0.029).
+- **Exact 4D reductions.**
+  - The flat 4D embedding reproduces the 3D object bit for bit (75,937
+    queries, byte-identical panel).
+  - An identity slice is exactly its in-plane sub-arrangement's 3D orbit (IoU
+    1.000).
+- **Genuine and passive 4D fixtures**, separated by copy containment, not
+  IoU. Genuinely new arrangement comes from the cell24 perforated shell (0.51,
+  0.24, 0.00) and tangent tess16 (0.47–0.81). The eight-hypersphere cross8
+  mostly erodes its octahedral lace (0.84–1.00).
+
+Full record and the author's assessment for the owner:
+`docs/sphere-inversion-family.md`.
+
 ## The space-tiling sheet
 
 ### tiling
