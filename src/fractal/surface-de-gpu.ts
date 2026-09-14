@@ -84,6 +84,17 @@ import {
   surfaceMaterialOpticsLanes,
   type ResolvedSurfaceMaterial,
 } from "./surface-material-wire";
+import {
+  DIELECTRIC_ANCHOR_ENVELOPE_REL,
+  DIELECTRIC_CROSSING_EPS_REL,
+  DIELECTRIC_ENVIRONMENT_BOUND,
+  DIELECTRIC_ERROR_BUDGET,
+  DIELECTRIC_INITIAL_BRANCH_THETA,
+  DIELECTRIC_MAX_STACK,
+  DIELECTRIC_QUERY_MAX_STEPS,
+  DIELECTRIC_REPLAY_PASSES,
+  dielectricOpticsSource,
+} from "./surface-dielectric";
 import type { Vec3 } from "./types";
 
 /**
@@ -1540,6 +1551,61 @@ export const SURFACE_GPU_SHADE_PATTERN_BYTES = 240;
 export const SURFACE_GPU_SHADE_LIGHTING_BYTES =
   SURFACE_GPU_SHADE_PATTERN_BYTES + SURFACE_LIGHTING_LANE_COUNT * 16;
 
+/**
+ * The optical transport's ShadeParams member: ONE vec4f — `(replayPass, 0,
+ * 0, 0)`, the current replay-pass index the transport dispatch was built
+ * with — appended after the pattern quartet (at 240) when both gates are
+ * live, at 224 when pattern is absent, and never with the lighting tail
+ * (the transport and the cinematic entry both own the hit path, so a
+ * kernel that declares one refuses the other at codegen). The member
+ * exists only under shade + the optics gate; every kernel predating it
+ * packs byte for byte. A shade kernel generated with optics and no
+ * pattern is {@link SURFACE_GPU_SHADE_PATTERN_BYTES} (240) bytes — the
+ * transport member lands exactly where the calibration quartet would —
+ * and with pattern it is this constant (256).
+ */
+export const SURFACE_GPU_SHADE_OPTICS_BYTES =
+  SURFACE_GPU_SHADE_PATTERN_BYTES + 16;
+
+/** Transport-lane runtime work caps (the contract keeps work budgets OUT
+ * of material identity — these are the runtime's, not the document's).
+ * The distance-estimator boundary query costs an order of magnitude more
+ * per path than the qualified fixture's DDA, so the production path caps
+ * the per-sample path/interface budget below the oracle's own defaults;
+ * a capped sample is unresolved and replays at the next pass's halved
+ * theta, and the bench legs measure the real distribution. Never raised
+ * to make a failing row green. */
+export const SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS = 2048;
+export const SURFACE_GPU_TRANSPORT_MAX_INTERFACES = 2048;
+
+/** Per-ray transport record status codes (transportState[ray*2+1].x, as
+ * f32 values of these). PENDING re-traces from scratch at the next
+ * replay pass; COMPLETE/RESIDUAL are accepted outcomes (the residual
+ * gate is checked host-side per sample); UNRESOLVED and INVALID are
+ * final for the frame — an invalid sample is never retried and neither
+ * is ever presented as background (the pixel goes black and the frame's
+ * counts disclose it). */
+export const SURFACE_GPU_TRANSPORT_PENDING = 0;
+export const SURFACE_GPU_TRANSPORT_COMPLETE = 1;
+export const SURFACE_GPU_TRANSPORT_RESIDUAL = 2;
+export const SURFACE_GPU_TRANSPORT_UNRESOLVED = 3;
+export const SURFACE_GPU_TRANSPORT_INVALID = 4;
+
+/** Failure kinds riding the record's second word (the oracle's
+ * `DielectricTraceFailureKind`, enumerated for the f32 wire). */
+export const SURFACE_GPU_TRANSPORT_FAILURE_NONE = 0;
+export const SURFACE_GPU_TRANSPORT_FAILURE_PROCESSED = 1;
+export const SURFACE_GPU_TRANSPORT_FAILURE_INTERFACES = 2;
+export const SURFACE_GPU_TRANSPORT_FAILURE_STACK = 3;
+export const SURFACE_GPU_TRANSPORT_FAILURE_TRAVERSAL = 4;
+export const SURFACE_GPU_TRANSPORT_FAILURE_INSIDE_MISS = 5;
+
+/** Boundary-query refusal reasons riding the record's third word (the
+ * oracle's refusal vocabulary, enumerated). */
+export const SURFACE_GPU_TRANSPORT_REASON_NONE = 0;
+export const SURFACE_GPU_TRANSPORT_REASON_VISIT_CAP = 1;
+export const SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT = 2;
+
 /** Ray-state status codes (the `y` component of a march state vec4).
  * PLANE exists only in `groundPlane: true` kernels: a MISS
  * whose ray crosses the ground plane inside the fade band — the host
@@ -1747,6 +1813,41 @@ export interface SurfaceGpuKernelOptions {
    * (`shade.patternCalibration`); march/eval kernels stay byte-identical,
    * and so does every pattern-absent shade kernel. */
   pattern?: boolean;
+  /** The optical transport gate (`docs/surface-dielectric-transport.md`):
+   * under SHADE mode it splices `dielectricOpticsSource("wgsl")` — the ONE
+   * shared optics body, verbatim — plus the production boundary query (a
+   * bounded march of the composed public estimator at
+   * `DIELECTRIC_CROSSING_EPS_REL` of the slot's optical radius, anchored
+   * same-boundary suppression per `DIELECTRIC_ANCHOR_ENVELOPE_REL`, the
+   * march's own domain gates) and a second entry `transportRays` beside
+   * `shadeRays`. The transport reads TWO new bindings: 13
+   * `opticsMaps` (the frozen `packSurfaceGpuOpticsMaps` lane pair per
+   * slot) and 14 `transportState` (two vec4f per ray: radiance.rgb +
+   * residual, then status/failure/reason/generation), and ONE
+   * `ShadeParams` member — `transport: vec4f`, the replay-pass word
+   * (`SURFACE_GPU_SHADE_OPTICS_BYTES` / the pattern-absent 240).
+   * Absent or false reproduces today's source BYTE FOR BYTE across every
+   * mode/core/variant — the finish gate's compile-gate mechanism is the
+   * whole feature's identity discipline: a document without authored
+   * transmission compiles literally today's program text, constructs no
+   * trace, and the classic finish path (including a legacy
+   * `finish.transmit`) is untouched. The transport entry routes per ray:
+   * a HIT whose slot resolves optics runs the replay-pass dielectric
+   * trace (medium state caller-carried; a crossing's medium flip is
+   * definitional, never a distance-sign inference), while a HIT on a
+   * classic slot returns after one hit-info evaluation — shadeRays owns
+   * that pixel exactly as before. Refusals, guards and inside misses are
+   * unresolved work, never background; an invalid or schedule-exhausted
+   * sample goes black with the frame's counts disclosing it. Composes
+   * with every core and with lens/tiling/balloon/groundPlane (the
+   * boundary query rides the same composed estimator the primary march
+   * does); REFUSES the lighting gate — both entries own the hit path's
+   * output. Rear radiance is the ENVIRONMENT ONLY in this emission
+   * (backdrop + the ground-plane terminal, linearized by the file's 2.2
+   * convention); rear fractal geometry is the rear-scene task's seam
+   * (`transportRearRadiance`, one function). The GLSL twins arrive
+   * separately. */
+  optics?: boolean;
   /** The escape family's SHAPE-TRAP color channel (`types.ts`'s ShapeTrap;
    * the formula is `escape-de.ts`'s, defined once): bake this spec's SDF
    * into the kernel (`shapeSdfSource`, the create-time-geometry decision —
@@ -3570,6 +3671,17 @@ export interface SurfaceGpuShadeParams {
    * every caller predating the pattern bead — keeps the 224-byte buffer
    * byte for byte. */
   patternCalibration?: [number, number, number, number];
+  /**
+   * The optical transport's replay-pass word, packed as a vec4f at the
+   * offset the calibration quartet would take — 240 under pattern+optics,
+   * 224 under optics alone (`SURFACE_GPU_SHADE_OPTICS_BYTES` doc). Present
+   * EXACTLY when the shade kernel was generated with the optics gate.
+   * `[0]` is the replay-pass index; `[1..3]` are reserved and packed 0.
+   * Refuses to combine with the lighting tail (the codegen refuses that
+   * pair too — both own the hit path's output). Absent — every caller
+   * predating the transport — keeps the buffer byte for byte.
+   */
+  transport?: [number, number];
 }
 
 /** Pack the ShadeParams uniform (march "unproject" + mode "shade";
@@ -3580,12 +3692,16 @@ export interface SurfaceGpuShadeParams {
  * absent, the 224-byte buffer is byte for byte what it was. */
 export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   const calibration = shade.patternCalibration;
+  const transport = shade.transport;
+  if (transport && shade.lighting) {
+    throw new Error(
+      "packSurfaceGpuShade: the optical transport member cannot combine with the lighting tail",
+    );
+  }
   const buf = new ArrayBuffer(
     shade.lighting
       ? SURFACE_GPU_SHADE_LIGHTING_BYTES
-      : calibration
-        ? SURFACE_GPU_SHADE_PATTERN_BYTES
-        : SURFACE_GPU_SHADE_BYTES,
+      : 224 + (calibration ? 16 : 0) + (transport ? 16 : 0),
   );
   const view = new DataView(buf);
   for (let k = 0; k < 16; k++) {
@@ -3636,6 +3752,16 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
     view.setFloat32(228, calibration[1], true);
     view.setFloat32(232, calibration[2], true);
     view.setFloat32(236, calibration[3], true);
+  }
+  // The optical transport's replay-pass word, at the next 16-aligned
+  // offset after whatever conditional members precede it (240 under
+  // pattern, 224 without) — the struct's own conditional order.
+  if (transport) {
+    const transportOffset = 224 + (calibration ? 16 : 0);
+    view.setFloat32(transportOffset, transport[0], true);
+    view.setFloat32(transportOffset + 4, transport[1], true);
+    view.setFloat32(transportOffset + 8, 0, true);
+    view.setFloat32(transportOffset + 12, 0, true);
   }
   if (shade.lighting) {
     new Float32Array(buf, SURFACE_GPU_SHADE_PATTERN_BYTES).set(
@@ -4016,8 +4142,15 @@ export function packSurfaceGpuSeed(
  */
 export function surfaceComputeSeedWgsl({
   lighting,
+  optics = false,
 }: {
   lighting: boolean;
+  /** The optical transport's per-frame reset: the seed zeroes BOTH record
+   * words per ray (binding 14, the shade kernel's own number), so a fresh
+   * frame starts every pixel pending with no stale radiance from the
+   * previous frame. Absent — every caller predating the transport —
+   * leaves the module byte for byte. */
+  optics?: boolean;
 }): string {
   const edge = SURFACE_GPU_SEED_WORKGROUP_SIZE;
   const colorWrite = lighting
@@ -4038,6 +4171,11 @@ struct SeedParams {
 @group(0) @binding(3) var<storage, read_write> states: array<vec4f>;${shadeParamsWgsl("")}
 @group(0) @binding(6) var<storage, read_write> colorOut: array<${lighting ? "vec4f" : "u32"}>;
 @group(0) @binding(9) var<storage, read_write> layerOut: array<u32>;${
+    optics
+      ? `
+@group(0) @binding(14) var<storage, read_write> transportState: array<vec4f>;`
+      : ""
+  }${
     lighting
       ? `
 @group(0) @binding(8) var lutSamp: sampler;
@@ -4059,7 +4197,12 @@ fn seedFrame(@builtin(global_invocation_id) gid: vec3u) {
   states[ray] = vec4f(-1.0, ${SURFACE_GPU_RAY_ACTIVE}.0, 0.0, 0.0);
   layerOut[ray] = packSurfaceLayer(0.0, 0.0, 1.0);
 ${backdropImageUvWgsl("full")}
-${colorWrite}
+${colorWrite}${
+    optics
+      ? `  transportState[ray * 2u] = vec4f(0.0);
+  transportState[ray * 2u + 1u] = vec4f(0.0);`
+      : ""
+  }
 }
 `;
 }
@@ -4420,6 +4563,15 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // ShadeParams member all key on this flag alone.
   const pattern = opts.pattern ?? false;
   const lighting = mode === "shade" && (opts.lighting ?? false);
+  // The optical transport gate (option doc): shade-mode only, structurally
+  // inert elsewhere — and structurally EXCLUSIVE with the cinematic
+  // lighting entry, which owns the same hit path's output.
+  const optics = mode === "shade" && (opts.optics ?? false);
+  if (optics && lighting) {
+    throw new Error(
+      "surface-de-gpu: the optical transport replaces the hit path and cannot compose with the cinematic lighting entry",
+    );
+  }
   const material = finish || pattern;
   // The hit-info constructor's pattern member: WGSL value constructors
   // are all-or-none, so under the pattern gate every core's full-member
@@ -4923,6 +5075,17 @@ fn frontierIx(slot: u32, li: u32) -> u32 {
     ? `${pattern ? "" : "\n  cinematicPatternPad: vec4f,"}
   cinematic: array<vec4f, ${SURFACE_LIGHTING_LANE_COUNT}>,`
     : "";
+  // The optical transport's per-pass word. Sits at 240 when the pattern
+  // quartet is also declared, at 224 when it is not — the packer mirrors
+  // the same conditional offset (SURFACE_GPU_SHADE_OPTICS_BYTES doc).
+  // Never co-exists with the lighting tail (the codegen throw above).
+  const shadeOpticsMember = optics
+    ? `
+  // The optical transport's replay-pass word (pass, 0, 0, 0) — one vec4f
+  // at the offset the calibration quartet would take (240 under pattern,
+  // 224 without it). The host re-packs per replay dispatch.
+  transport: vec4f,`
+    : "";
   const balloonLutIo =
     mode === "shade" && balloon
       ? `
@@ -4944,12 +5107,18 @@ fn hash2(p: vec2f) -> f32 {
         ? unproject
           ? `${rayIo}${shadeParamsWgsl("")}${statusIo}${hash2Io}`
           : `${rayIo}${statusIo}`
-        : `${rayIo}${shadeParamsWgsl(shadePatternCalibrationMember + shadeLightingMember)}${balloonLutIo}${lighting ? "\n@group(0) @binding(12) var cinematicBackgroundTex: texture_2d<f32>;" : ""}
+        : `${rayIo}${shadeParamsWgsl(shadePatternCalibrationMember + shadeLightingMember + shadeOpticsMember)}${balloonLutIo}${lighting ? "\n@group(0) @binding(12) var cinematicBackgroundTex: texture_2d<f32>;" : ""}
 @group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> colorOut: array<${lighting ? "vec4f" : "u32"}>;
 @group(0) @binding(7) var lutTex: texture_2d<f32>;
 @group(0) @binding(8) var lutSamp: sampler;
-@group(0) @binding(9) var<storage, read_write> layerOut: array<u32>;`;
+@group(0) @binding(9) var<storage, read_write> layerOut: array<u32>;${
+            optics
+              ? `
+@group(0) @binding(13) var<storage, read> opticsMaps: array<vec4f>;
+@group(0) @binding(14) var<storage, read_write> transportState: array<vec4f>;`
+              : ""
+          }`;
 
   // March-arm interpolation points, so the "pose" bench baseline stays
   // byte-identical while "unproject" swaps in the GLSL tracer's ray.
@@ -8007,6 +8176,561 @@ ${surfacePatternShadeSourceWgsl()}`
   let linBase = pow(base, vec3f(2.2));
   var col = pow(linBase * lit + vec3f(specular * shadow), vec3f(1.0 / 2.2));`;
 
+  // The optical transport block (option doc): the ONE shared optics body,
+  // the production boundary query, the replay-pass trace and the
+  // transportRays entry — emitted after the classic entries so it can
+  // reuse packSurfaceLayer/surfaceCoc/shadeGroundPlane, and only under
+  // the optics gate (every other kernel byte-identical).
+  const opticsBlock = optics
+    ? `
+// ---- dielectric optical transport (docs/surface-dielectric-transport.md)
+// ---- surface-dielectric.ts's emitted WGSL optics body, verbatim — the
+// ONE shared math text the backends splice; no restated constants.
+${dielectricOpticsSource("wgsl")}
+struct TransportPath {
+  origin: vec3f,
+  dir: vec3f,
+  energy: vec3f,
+  inside: u32,
+  interfaces: u32,
+  bound: f32,
+  anchorPresent: u32,
+  anchorPad: u32,
+  anchorPoint: vec3f,
+  anchorPad2: u32,
+}
+
+struct TransportBoundary {
+  // 1 boundary, 2 miss, 3 refused
+  kind: u32,
+  reason: u32,
+  t: f32,
+  normal: vec3f,
+}
+
+struct TransportTrace {
+  radiance: vec3f,
+  residual: f32,
+  status: u32,
+  failure: u32,
+  reason: u32,
+}
+
+const TRANSPORT_STATUS_PENDING = ${SURFACE_GPU_TRANSPORT_PENDING}u;
+const TRANSPORT_STATUS_COMPLETE = ${SURFACE_GPU_TRANSPORT_COMPLETE}u;
+const TRANSPORT_STATUS_RESIDUAL = ${SURFACE_GPU_TRANSPORT_RESIDUAL}u;
+const TRANSPORT_STATUS_UNRESOLVED = ${SURFACE_GPU_TRANSPORT_UNRESOLVED}u;
+const TRANSPORT_STATUS_INVALID = ${SURFACE_GPU_TRANSPORT_INVALID}u;
+const TRANSPORT_FAILURE_PROCESSED = ${SURFACE_GPU_TRANSPORT_FAILURE_PROCESSED}u;
+const TRANSPORT_FAILURE_INTERFACES = ${SURFACE_GPU_TRANSPORT_FAILURE_INTERFACES}u;
+const TRANSPORT_FAILURE_STACK = ${SURFACE_GPU_TRANSPORT_FAILURE_STACK}u;
+const TRANSPORT_FAILURE_TRAVERSAL = ${SURFACE_GPU_TRANSPORT_FAILURE_TRAVERSAL}u;
+const TRANSPORT_FAILURE_INSIDE_MISS = ${SURFACE_GPU_TRANSPORT_FAILURE_INSIDE_MISS}u;
+const TRANSPORT_REASON_VISIT_CAP = ${SURFACE_GPU_TRANSPORT_REASON_VISIT_CAP}u;
+const TRANSPORT_REASON_INVALID_INPUT = ${SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT}u;
+const TRANSPORT_RADIANCE_BOUND = ${DIELECTRIC_ENVIRONMENT_BOUND}.0;
+const TRANSPORT_ERROR_BUDGET = ${DIELECTRIC_ERROR_BUDGET};
+const TRANSPORT_INITIAL_THETA = ${DIELECTRIC_INITIAL_BRANCH_THETA};
+const TRANSPORT_REPLAY_PASSES = ${DIELECTRIC_REPLAY_PASSES}u;
+const TRANSPORT_MAX_STACK = ${DIELECTRIC_MAX_STACK}u;
+const TRANSPORT_MAX_PROCESSED = ${SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS}u;
+const TRANSPORT_MAX_INTERFACES = ${SURFACE_GPU_TRANSPORT_MAX_INTERFACES}u;
+const TRANSPORT_CROSSING_EPS_REL = ${DIELECTRIC_CROSSING_EPS_REL};
+const TRANSPORT_ANCHOR_ENVELOPE_REL = ${DIELECTRIC_ANCHOR_ENVELOPE_REL}.0;
+const TRANSPORT_QUERY_MAX_STEPS = ${DIELECTRIC_QUERY_MAX_STEPS}u;
+
+// The query's declared domain: exactly the primary march's own gates,
+// evaluated from the query's own origin/direction. -1.0 means "no
+// domain ahead" — an immediate miss.
+fn transportDomainExit(origin: vec3f, dir: vec3f) -> f32 {
+${
+  balloon
+    ? `  return length(origin - params.balloonCenter) + params.balloonFar;`
+    : latticeTiling
+      ? `  let carrier = latticePresentationInterval(origin, dir${
+          core4 ? ", params.w0, params.rotorInvR1" : ""
+        }, ${latticeRadiusExpr}, params.tilingPresentationR);
+  if (!carrier.ok || params.tilingGroup != ${LATTICE_TILING_CODE}u${
+    core4 ? " || params.sliceHalfW > 0.0" : ""
+  }) {
+    return -1.0;
+  }
+  return carrier.tFar;`
+      : `  let radius = params.visibleRadius * 1.02;
+  let bq = dot(origin, dir);
+  let cq = dot(origin, origin) - radius * radius;
+  let disc = bq * bq - cq;
+  if (disc < 0.0) {
+    return -1.0;
+  }
+  return -bq + sqrt(disc);`
+}
+}
+
+// The optical normal: the DE gradient's tetrahedron taps at the optical
+// crossing scale — the same estimator the crossing marched, tapped at the
+// scale that defines the optical surface (never a display tolerance).
+// A vanishing gradient faces the incident ray, the shade entry's own
+// fallback discipline; the transport's refraction/reflection math is
+// sign-agnostic in the normal (the reflector mirrors across the tangent
+// plane, the refractor self-corrects its facing), so no outward-sign
+// inference is needed or made.
+fn transportOpticalNormal(p: vec3f, dir: vec3f, eps: f32, li: u32) -> vec3f {
+  let e = vec2f(1.0, -1.0) * 0.5773;
+  let grad = e.xyy * surfaceDE(p + e.xyy * eps, 0.0, li) +
+    e.yyx * surfaceDE(p + e.yyx * eps, 0.0, li) +
+    e.yxy * surfaceDE(p + e.yxy * eps, 0.0, li) +
+    e.xxx * surfaceDE(p + e.xxx * eps, 0.0, li);
+  return select(-dir, normalize(grad), dot(grad, grad) > 1.0e-12);
+}
+
+// The production boundary query (module doc): a bounded march of the
+// composed PUBLIC estimator from the query origin, crossing at the
+// optical scale, with the anchored same-boundary suppression. The medium
+// state is the caller's and stays the caller's — the query never infers
+// it from a distance sign; the crossing's medium flip is definitional
+// (entering = !inside, taken by the trace, not here).
+fn transportNextBoundary(
+  origin: vec3f,
+  dir: vec3f,
+  anchorPresent: u32,
+  anchorPoint: vec3f,
+  eps: f32,
+  li: u32,
+) -> TransportBoundary {
+  var result: TransportBoundary;
+  result.kind = 3u;
+  result.reason = TRANSPORT_REASON_VISIT_CAP;
+  result.t = 0.0;
+  result.normal = vec3f(0.0);
+  var p = origin;
+  var t = 0.0;
+  if (anchorPresent == 1u) {
+    // Same-boundary suppression, part 1: a child restarts AT its
+    // boundary, so step past it before marching (the distance-field
+    // analog of the qualified fixture's exact same-face rule).
+    let skip = 2.0 * eps;
+    p = p + dir * skip;
+    t = t + skip;
+  }
+  let tFar = transportDomainExit(origin, dir);
+  for (var i = 0u; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
+    if (tFar < 0.0 || t >= tFar) {
+      result.kind = 2u;
+      result.reason = 0u;
+      result.t = t;
+      return result;
+    }
+    let d = surfaceDE(p, 0.0, li);
+    if (!(d > -1.0e30)) {
+      result.kind = 3u;
+      result.reason = TRANSPORT_REASON_INVALID_INPUT;
+      return result;
+    }
+    let dd = max(d, 0.0);
+    if (dd < eps) {
+      let hitP = p + dir * dd;
+      let tc = t + dd;
+      if (anchorPresent == 1u &&
+          distance(hitP, anchorPoint) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
+        // Same-boundary suppression, part 2: a crossing inside the
+        // anchor's envelope is the anchored boundary itself — step past
+        // it and keep marching. Gaps narrower than the envelope merge
+        // optically; the interface guard bounds what a long grazing
+        // stretch costs.
+        let skip = 2.0 * eps;
+        p = hitP + dir * skip;
+        t = tc + skip;
+        continue;
+      }
+      result.kind = 1u;
+      result.reason = 0u;
+      result.t = tc;
+      result.normal = transportOpticalNormal(hitP, dir, eps, li);
+      return result;
+    }
+    let step = d * params.stepScale;
+    p = p + dir * step;
+    t = t + step;
+  }
+  return result;
+}
+
+// The rear scene's radiance behind an escaped ray, in LINEAR light —
+// the environment only in this emission: the pixel's backdrop, plus the
+// ground-plane terminal when the session has one (the shade entry's own
+// floor shade, linearized by the file's 2.2 convention). Rear fractal
+// geometry is the rear-scene task's seam: this function is the one
+// place that grows.
+fn transportRearRadiance(origin: vec3f, dir: vec3f, bg: vec3f, li: u32) -> vec3f {
+${
+  groundPlane
+    ? `  if (origin.y > params.groundY && dir.y < -1.0e-6) {
+    return pow(max(shadeGroundPlane(origin, dir, bg, li).color, vec3f(0.0)), vec3f(2.2));
+  }
+`
+    : ""
+}  return pow(max(bg, vec3f(0.0)), vec3f(2.2));
+}
+
+fn transportPushCut(child: TransportPath, theta: f32) -> bool {
+  return child.bound <= theta;
+}
+
+fn transportChildBound(energy: vec3f) -> f32 {
+  return dielectricBranchBound(energy[0], energy[1], energy[2], TRANSPORT_RADIANCE_BOUND);
+}
+
+// The replay-pass trace (the contract's GPU resumption shape): one
+// sample, re-traced FROM SCRATCH each pass at the halved theta. The
+// primary boundary is the march's own hit — split exactly as the oracle
+// splits a boundary event (entering a denser medium cannot TIR) — then
+// the oracle's work-list loop, term for term, over the emitted optics
+// body. Guards, cuts and compositing are the oracle's own lines; the
+// caps are the runtime's (SURFACE_GPU_TRANSPORT_*).
+fn transportTrace(
+  origin: vec3f,
+  dir: vec3f,
+  theta: f32,
+  ior: f32,
+  radius: f32,
+  absorb: vec3f,
+  bg: vec3f,
+  li: u32,
+) -> TransportTrace {
+  var out: TransportTrace;
+  out.radiance = vec3f(0.0);
+  out.residual = 0.0;
+  out.status = TRANSPORT_STATUS_PENDING;
+  out.failure = 0u;
+  out.reason = 0u;
+  var stack: array<TransportPath, TRANSPORT_MAX_STACK>;
+  var sp = 0u;
+  var processed = 0u;
+  var radiance = vec3f(0.0);
+  var residual = 0.0;
+  let eps = TRANSPORT_CROSSING_EPS_REL * radius;
+  // --- the primary split (the march's own hit, entering from outside) ---
+  let n0 = transportOpticalNormal(origin, dir, eps, li);
+  let cosI0 = abs(dot(dir, n0));
+  let f0 = dielectricFresnel(cosI0, 1.0, ior);
+  let bend0 = dielectricRefract(dir[0], dir[1], dir[2], n0[0], n0[1], n0[2], 1.0, ior);
+  let reflDir0 = dir - 2.0 * dot(dir, n0) * n0;
+  var refl0: TransportPath;
+  refl0.origin = origin;
+  refl0.dir = reflDir0;
+  refl0.energy = vec3f(f0);
+  refl0.inside = 0u;
+  refl0.interfaces = 1u;
+  refl0.anchorPresent = 1u;
+  refl0.anchorPad = 0u;
+  refl0.anchorPoint = origin;
+  refl0.anchorPad2 = 0u;
+  refl0.bound = transportChildBound(refl0.energy);
+  var refr0: TransportPath;
+  refr0.origin = origin;
+  refr0.dir = bend0.xyz;
+  refr0.energy = vec3f(1.0 - f0);
+  refr0.inside = 1u;
+  refr0.interfaces = 1u;
+  refr0.anchorPresent = 1u;
+  refr0.anchorPad = 0u;
+  refr0.anchorPoint = origin;
+  refr0.anchorPad2 = 0u;
+  refr0.bound = transportChildBound(refr0.energy);
+  // Push the stronger child first (the oracle's order) so the weaker
+  // actual-throughput child is processed first — with the oracle's cut
+  // at the push (a grazing entry's weak child can fall below theta).
+  if (refl0.bound >= refr0.bound) {
+    if (refl0.bound <= theta) {
+      residual = residual + refl0.bound;
+    } else {
+      stack[sp] = refl0;
+      sp = sp + 1u;
+    }
+    if (refr0.bound <= theta) {
+      residual = residual + refr0.bound;
+    } else {
+      stack[sp] = refr0;
+      sp = sp + 1u;
+    }
+  } else {
+    if (refr0.bound <= theta) {
+      residual = residual + refr0.bound;
+    } else {
+      stack[sp] = refr0;
+      sp = sp + 1u;
+    }
+    if (refl0.bound <= theta) {
+      residual = residual + refl0.bound;
+    } else {
+      stack[sp] = refl0;
+      sp = sp + 1u;
+    }
+  }
+  // --- the oracle's work-list loop ---
+  loop {
+    if (sp == 0u) {
+      out.status = select(TRANSPORT_STATUS_COMPLETE, TRANSPORT_STATUS_RESIDUAL, residual > 0.0);
+      break;
+    }
+    let path = stack[sp - 1u];
+    sp = sp - 1u;
+    if (transportPushCut(path, theta)) {
+      residual = residual + path.bound;
+      continue;
+    }
+    if (processed >= TRANSPORT_MAX_PROCESSED) {
+      residual = residual + path.bound;
+      out.status = TRANSPORT_STATUS_UNRESOLVED;
+      out.failure = TRANSPORT_FAILURE_PROCESSED;
+      break;
+    }
+    if (path.interfaces >= TRANSPORT_MAX_INTERFACES) {
+      residual = residual + path.bound;
+      out.status = TRANSPORT_STATUS_UNRESOLVED;
+      out.failure = TRANSPORT_FAILURE_INTERFACES;
+      break;
+    }
+    processed = processed + 1u;
+    let hit = transportNextBoundary(path.origin, path.dir, path.anchorPresent, path.anchorPoint, eps, li);
+    if (hit.kind == 3u) {
+      residual = residual + path.bound;
+      out.status = TRANSPORT_STATUS_UNRESOLVED;
+      out.failure = TRANSPORT_FAILURE_TRAVERSAL;
+      out.reason = hit.reason;
+      break;
+    }
+    if (hit.kind == 2u) {
+      if (path.inside == 1u) {
+        // An inside miss is unresolved, never a background hit.
+        residual = residual + path.bound;
+        out.status = TRANSPORT_STATUS_UNRESOLVED;
+        out.failure = TRANSPORT_FAILURE_INSIDE_MISS;
+        break;
+      }
+      let rear = transportRearRadiance(path.origin, path.dir, bg, li);
+      radiance = radiance + rear * path.energy;
+      if (any(radiance != radiance) || any(abs(radiance) > vec3f(3.0e38))) {
+        out.status = TRANSPORT_STATUS_INVALID;
+        break;
+      }
+      continue;
+    }
+    // Boundary event: Beer over the traversed interior segment, then the
+    // Fresnel split — the oracle's lines, the emitted optics body's fns.
+    var energy = path.energy;
+    if (path.inside == 1u) {
+      energy = vec3f(
+        path.energy[0] * dielectricBeerThroughput(absorb[0], hit.t, radius),
+        path.energy[1] * dielectricBeerThroughput(absorb[1], hit.t, radius),
+        path.energy[2] * dielectricBeerThroughput(absorb[2], hit.t, radius),
+      );
+    }
+    let n = hit.normal;
+    let dotDN = dot(path.dir, n);
+    let childOrigin = path.origin + path.dir * hit.t;
+    let fromIor = select(1.0, ior, path.inside == 1u);
+    let toIor = select(ior, 1.0, path.inside == 1u);
+    let bend = dielectricRefract(path.dir[0], path.dir[1], path.dir[2], n[0], n[1], n[2], fromIor, toIor);
+    var abort = false;
+    if (bend[3] > 0.5) {
+      // Total internal reflection: one child, full (Beer-damped) energy,
+      // the reflected direction, the incident medium.
+      var child: TransportPath;
+      child.origin = childOrigin;
+      child.dir = bend.xyz;
+      child.energy = energy;
+      child.inside = path.inside;
+      child.interfaces = path.interfaces + 1u;
+      child.anchorPresent = 1u;
+      child.anchorPad = 0u;
+      child.anchorPoint = childOrigin;
+      child.anchorPad2 = 0u;
+      child.bound = transportChildBound(energy);
+      if (transportPushCut(child, theta)) {
+        residual = residual + child.bound;
+      } else if (sp >= TRANSPORT_MAX_STACK) {
+        residual = residual + child.bound;
+        out.status = TRANSPORT_STATUS_UNRESOLVED;
+        out.failure = TRANSPORT_FAILURE_STACK;
+        abort = true;
+      } else {
+        stack[sp] = child;
+        sp = sp + 1u;
+      }
+    } else {
+      let f = dielectricFresnel(abs(dotDN), fromIor, toIor);
+      var trans: TransportPath;
+      trans.origin = childOrigin;
+      trans.dir = bend.xyz;
+      trans.energy = energy * (1.0 - f);
+      trans.inside = select(1u, 0u, path.inside == 1u);
+      trans.interfaces = path.interfaces + 1u;
+      trans.anchorPresent = 1u;
+      trans.anchorPad = 0u;
+      trans.anchorPoint = childOrigin;
+      trans.anchorPad2 = 0u;
+      trans.bound = transportChildBound(trans.energy);
+      var refl: TransportPath;
+      refl.origin = childOrigin;
+      refl.dir = path.dir - 2.0 * dotDN * n;
+      refl.energy = energy * f;
+      refl.inside = path.inside;
+      refl.interfaces = path.interfaces + 1u;
+      refl.anchorPresent = 1u;
+      refl.anchorPad = 0u;
+      refl.anchorPoint = childOrigin;
+      refl.anchorPad2 = 0u;
+      refl.bound = transportChildBound(refl.energy);
+      // Push the stronger child first, so the weaker actual-throughput
+      // child is processed first; Fresnel is not assumed below 0.5.
+      var first: TransportPath;
+      var second: TransportPath;
+      if (refl.bound >= trans.bound) {
+        first = refl;
+        second = trans;
+      } else {
+        first = trans;
+        second = refl;
+      }
+      if (transportPushCut(first, theta)) {
+        residual = residual + first.bound;
+      } else if (sp >= TRANSPORT_MAX_STACK) {
+        residual = residual + first.bound;
+        out.status = TRANSPORT_STATUS_UNRESOLVED;
+        out.failure = TRANSPORT_FAILURE_STACK;
+        abort = true;
+      } else {
+        stack[sp] = first;
+        sp = sp + 1u;
+      }
+      if (!abort) {
+        if (transportPushCut(second, theta)) {
+          residual = residual + second.bound;
+        } else if (sp >= TRANSPORT_MAX_STACK) {
+          residual = residual + second.bound;
+          out.status = TRANSPORT_STATUS_UNRESOLVED;
+          out.failure = TRANSPORT_FAILURE_STACK;
+          abort = true;
+        } else {
+          stack[sp] = second;
+          sp = sp + 1u;
+        }
+      }
+    }
+    if (abort) {
+      break;
+    }
+  }
+  out.radiance = radiance;
+  out.residual = residual;
+  return out;
+}
+
+// The transport pass: one ray per invocation, replay-pass resumable. The
+// pixel's record (binding 14) carries pending identity across passes;
+// accepted samples overwrite the seed's pixel with the composed linear
+// radiance (encoded and fogged by the hit path's own output lines);
+// invalid and schedule-exhausted samples go black — never background —
+// with the frame's counts disclosing them.
+@compute @workgroup_size(${workgroupSize})
+fn transportRays(
+  @builtin(global_invocation_id) gid: vec3u,
+  @builtin(local_invocation_index) li: u32,
+) {
+  let slotI = gid.x;
+  if (slotI >= params.itemCount) {
+    return;
+  }
+  let ray = activeList[slotI];
+  let prevStatus = u32(transportState[ray * 2u + 1u][0]);
+  if (prevStatus == TRANSPORT_STATUS_COMPLETE ||
+      prevStatus == TRANSPORT_STATUS_RESIDUAL ||
+      prevStatus == TRANSPORT_STATUS_INVALID) {
+    return;
+  }
+  let st = states[ray];
+  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
+    return;
+  }
+  let px = ray % params.rasterWidth;
+  let py = ray / params.rasterWidth;
+  let sub = shade.pixelJitter;
+  ${backdropImageUvWgsl("full")}
+  let bg = ${BACKDROP_GRADIENT_WGSL};
+  let ndcX = ((full.x + sub.x) / shade.bgExtent.x) * 2.0 - 1.0;
+  let ndcY = ((full.y + sub.y) / shade.bgExtent.y) * 2.0 - 1.0;
+  let nearP = shade.invProjView * vec4f(ndcX, ndcY, -1.0, 1.0);
+  let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
+  let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
+  let ro = params.ro;
+  let t = st.x;
+  let pos = ro + rd * t;
+  let hi = surfaceDEHitInfo(pos, li);
+  let fSlot = clamp(hi.firstChoice, 0, i32(${shadeSlotCount}) - 1);
+  let lane0 = opticsMaps[u32(fSlot) * 2u];
+  let lane1 = opticsMaps[u32(fSlot) * 2u + 1u];
+  if (lane0[0] <= 0.0) {
+    // A classic slot: shadeRays owns this pixel exactly as before.
+    return;
+  }
+  let ior = lane0[0];
+  let radius = lane0[1];
+  let absorb = vec3f(lane0[2], lane0[3], lane1[0]);
+  let pass = u32(shade.transport[0]);
+  let theta = dielectricReplayTheta(f32(pass), TRANSPORT_INITIAL_THETA);
+  let traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li);
+  if (traced.status == TRANSPORT_STATUS_INVALID) {
+    // Never retried, never presented as background: black, disclosed by
+    // the frame's invalid count.
+    transportState[ray * 2u] = vec4f(0.0, 0.0, 0.0, traced.residual);
+    transportState[ray * 2u + 1u] = vec4f(
+      f32(TRANSPORT_STATUS_INVALID), f32(traced.failure), f32(traced.reason), f32(pass));
+    colorOut[ray] = pack4x8unorm(vec4f(0.0, 0.0, 0.0, 1.0));
+    layerOut[ray] = packSurfaceLayer(1.0, 0.0, surfaceCoc(dot(pos - ro, params.fwd)));
+    return;
+  }
+  let accepted = (traced.status == TRANSPORT_STATUS_COMPLETE ||
+      traced.status == TRANSPORT_STATUS_RESIDUAL) &&
+    traced.residual <= TRANSPORT_ERROR_BUDGET;
+  if (accepted) {
+    transportState[ray * 2u] = vec4f(traced.radiance, traced.residual);
+    transportState[ray * 2u + 1u] = vec4f(
+      f32(traced.status), 0.0, 0.0, f32(pass));
+    // The hit path's own output lines: linear radiance encoded by the
+    // file's 2.2 convention, then the depth fog at the primary hit.
+    let display = pow(max(traced.radiance, vec3f(0.0)), vec3f(1.0 / 2.2));
+    let radiusG = params.visibleRadius * 1.02;
+    let bq = dot(ro, rd);
+    let cq = dot(ro, ro) - radiusG * radiusG;
+    let sq = sqrt(max(bq * bq - cq, 0.0));
+    let visR = params.visibleRadius;
+    let tEnter = min(max(-bq - sq, 0.0), t);
+    let fog = 1.0 - exp(-0.12 * pow((t - tEnter) * params.fogDensity / max(visR, 1.0e-6), 2.0));
+    let col = mix(display, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));
+    colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));
+    layerOut[ray] = packSurfaceLayer(1.0, clamp(fog, 0.0, 1.0), surfaceCoc(dot(pos - ro, params.fwd)));
+    return;
+  }
+  if (pass + 1u >= TRANSPORT_REPLAY_PASSES) {
+    // The replay schedule is exhausted: final unresolved work. Never
+    // background — black, disclosed by the frame's unresolved count.
+    transportState[ray * 2u] = vec4f(traced.radiance, traced.residual);
+    transportState[ray * 2u + 1u] = vec4f(
+      f32(TRANSPORT_STATUS_UNRESOLVED), f32(traced.failure), f32(traced.reason), f32(pass));
+    colorOut[ray] = pack4x8unorm(vec4f(0.0, 0.0, 0.0, 1.0));
+    layerOut[ray] = packSurfaceLayer(1.0, 0.0, surfaceCoc(dot(pos - ro, params.fwd)));
+    return;
+  }
+  // Still pending: keep the pending identity; the next pass re-traces
+  // this sample from scratch at the halved theta.
+  transportState[ray * 2u + 1u] = vec4f(
+    f32(TRANSPORT_STATUS_PENDING), f32(traced.failure), f32(traced.reason), f32(pass));
+}
+`
+    : "";
+
   let entry =
     mode === "eval"
       ? `
@@ -8386,7 +9110,18 @@ ${
 ${shadeGate}
   let R = params.boundingRadius;
   let visR = params.visibleRadius;
-  let hi = surfaceDEHitInfo(pos, li);${finishLanesFetch}
+  let hi = surfaceDEHitInfo(pos, li);${finishLanesFetch}${
+    optics
+      ? `
+  // The optical transport owns this pixel: the hit slot resolves optics,
+  // so the classic shading below must not run (the transport entry
+  // overwrites the seed's pixel when its sample accepts). The hit-info
+  // above already paid the slot attribution; the skip is one lane read.
+  if (opticsMaps[u32(clamp(hi.firstChoice, 0, i32(${shadeSlotCount}) - 1)) * 2u][0] > 0.0) {
+    return;
+  }`
+      : ""
+  }
   // Base color by source; sources 1-5 sample the CPU-built LUT.
   var base: vec3f;
   if (shade.colorSource == 0u) {
@@ -12912,5 +13647,5 @@ ${tilingProbeWrapText}`
 
 ${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}${marchSample ? `\n${balloon ? inversionDistanceShaderSource("wgsl") : ""}\n${sampleLensText}\n${sampleOuterText}` : ""}
 ${entry}
-`;
+${opticsBlock}`;
 }

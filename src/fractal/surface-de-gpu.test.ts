@@ -55,6 +55,7 @@ import {
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_SHADE_OPTICS_BYTES,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TILING_BYTES,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
@@ -70,6 +71,7 @@ import {
   BACKGROUND_SHAPE_WGSL,
   backgroundShapeSource,
 } from "./background-shape";
+import { dielectricOpticsSource } from "./surface-dielectric";
 import {
   BALLOON_FAR_CAP_RHO,
   BALLOON_RHO_MARGIN,
@@ -4434,6 +4436,152 @@ fn bulbPow8(y: vec3f, r2: f32) -> vec3f {
   let v8 = 2.0 * u4 * v4;
   return vec3f(rho * s * u8, rho * s * v8, vz);
 }`;
+
+describe("surfaceDeKernelWgsl optical transport gate (optics)", () => {
+  const cores = [
+    "fold",
+    "affine",
+    "escape",
+    "bulb",
+    "affine4",
+    "fold4",
+    "escape4",
+  ] as const;
+
+  it("keeps omitted and explicit optics:false byte-identical across every core and mode", () => {
+    for (const core of cores) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const omitted = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, width: 4 }),
+        );
+        const explicit = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, width: 4, optics: false }),
+        );
+        expect(explicit).toBe(omitted);
+      }
+    }
+  });
+
+  it("is structurally inert in march/eval — the flag changes shade-mode emission alone", () => {
+    for (const core of cores) {
+      for (const mode of ["eval", "march"] as const) {
+        const off = surfaceDeKernelWgsl(kernelOpts({ mode, core, width: 4 }));
+        const on = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, width: 4, optics: true }),
+        );
+        expect(on).toBe(off);
+      }
+    }
+  });
+
+  it("splices the shared optics body VERBATIM and the production machinery under shade", () => {
+    const shade = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold", width: 4, optics: true }),
+    );
+    expect(shade).toContain(dielectricOpticsSource("wgsl"));
+    expect(shade).toContain("fn transportRays(");
+    expect(shade).toContain("fn transportNextBoundary(");
+    expect(shade).toContain("fn transportTrace(");
+    expect(shade).toContain("fn transportRearRadiance(");
+    expect(shade).toContain("fn transportDomainExit(");
+    expect(shade).toContain(
+      "@group(0) @binding(13) var<storage, read> opticsMaps: array<vec4f>;",
+    );
+    expect(shade).toContain(
+      "@group(0) @binding(14) var<storage, read_write> transportState: array<vec4f>;",
+    );
+    expect(shade).toContain("transport: vec4f,");
+    // The replay schedule and acceptance constants come from the shared
+    // module — no restated constants anywhere in the emitted text; the
+    // pass word rides the ShadeParams member the packer writes.
+    expect(shade).toContain(
+      "dielectricReplayTheta(f32(pass), TRANSPORT_INITIAL_THETA)",
+    );
+    expect(shade).toContain("let pass = u32(shade.transport[0]);");
+  });
+
+  it("routes per ray: shadeRays skips optics slots after the hit-info, transportRays skips classic slots and non-HIT rays", () => {
+    const shade = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold", width: 4, optics: true }),
+    );
+    expect(shade).toContain(
+      "if (opticsMaps[u32(clamp(hi.firstChoice, 0, i32(params.mapCount) - 1)) * 2u][0] > 0.0) {",
+    );
+    expect(shade).toContain("if (lane0[0] <= 0.0) {");
+    expect(shade).toContain(`if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {`);
+  });
+
+  it("emits the same transport text for every core — one boundary query, one trace, shared entries", () => {
+    const fold = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold", width: 4, optics: true }),
+    );
+    for (const core of cores) {
+      const shade = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 4, optics: true }),
+      );
+      expect(shade).toContain("fn transportNextBoundary(");
+      expect(shade).toContain("fn transportTrace(");
+      // The shared body texts are identical across cores — the cores differ
+      // only in what surfaceDE/surfaceDEHitInfo compile to.
+      const traceBody = shade.slice(shade.indexOf("fn transportTrace("));
+      const foldTraceBody = fold.slice(fold.indexOf("fn transportTrace("));
+      expect(traceBody).toBe(foldTraceBody);
+    }
+  });
+
+  it("refuses the cinematic lighting pair — both entries own the hit path's output", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          mode: "shade",
+          width: 4,
+          optics: true,
+          lighting: true,
+        }),
+      ),
+    ).toThrow(/cinematic lighting/);
+  });
+
+  it("packSurfaceGpuShade: absent keeps 224 bytes byte for byte; the transport word lands at 224 (optics alone) or 240 (with pattern)", () => {
+    const base = packSurfaceGpuShade(shadeParams());
+    expect(base.byteLength).toBe(SURFACE_GPU_SHADE_BYTES);
+    const withTransport = packSurfaceGpuShade(
+      shadeParams({ transport: [2, 6] }),
+    );
+    expect(withTransport.byteLength).toBe(SURFACE_GPU_SHADE_PATTERN_BYTES);
+    const view = new DataView(withTransport);
+    expect(view.getFloat32(224, true)).toBe(2);
+    expect(view.getFloat32(228, true)).toBe(6);
+    expect(view.getFloat32(232, true)).toBe(0);
+    const withBoth = packSurfaceGpuShade(
+      shadeParams({ patternCalibration: [1, 2, 3, 4], transport: [3, 6] }),
+    );
+    expect(withBoth.byteLength).toBe(SURFACE_GPU_SHADE_OPTICS_BYTES);
+    const both = new DataView(withBoth);
+    expect(both.getFloat32(224, true)).toBe(1);
+    expect(both.getFloat32(240, true)).toBe(3);
+    expect(both.getFloat32(244, true)).toBe(6);
+    expect(() =>
+      packSurfaceGpuShade(
+        shadeParams({
+          lighting: {},
+          transport: [0, 6],
+        } as unknown as SurfaceGpuShadeParams),
+      ),
+    ).toThrow();
+  });
+
+  it("surfaceComputeSeedWgsl: optics zeroes both record words per ray; absent stays byte-identical", () => {
+    const off = surfaceComputeSeedWgsl({ lighting: false });
+    const on = surfaceComputeSeedWgsl({ lighting: false, optics: true });
+    expect(off).not.toContain("transportState");
+    expect(on).toContain(
+      "@group(0) @binding(14) var<storage, read_write> transportState: array<vec4f>;",
+    );
+    expect(on).toContain("transportState[ray * 2u] = vec4f(0.0);");
+    expect(on).toContain("transportState[ray * 2u + 1u] = vec4f(0.0);");
+  });
+});
 
 describe("bulbPow8 emission and declaration order", () => {
   it("declares it before every call site in both FORWARD cores — WGSL has no forward declarations, so a body emitted in the wrong order is a compile error a GPU run would be the first to find", () => {
