@@ -324,3 +324,36 @@ has something concrete to agree or disagree with.
 
 Cost and exhaustion on the shipped tracers are unmeasured and belong to the
 verified-hardware step.
+
+## Gate verdict (2026-09-14, delegated)
+
+The owner was unavailable and delegated this call to the agent running the
+program; it was made from the sheets above, not the owner's own review, and
+stands until the owner ratifies or overturns it.
+
+- **PASS — production integration proceeds.** The 3D near-kissing pearls and
+  the interior vaults are striking and share nothing with the comparison row
+  (Mandelbox texture on a solid, discrete tiling flakes, Balloon's square
+  windows). They are the family's primary subjects. Lace shells and the cap are
+  admitted as secondary subjects. The exterior dome is not a preset subject.
+- **Representation: the dedicated seed-orbit estimator.** The existing
+  vocabulary's closest expressions are refused by the contractive gate or draw
+  a different object (the escape-chain tripod), so a new 3D/4D core is
+  required and must be disclosed as one.
+- **Estimator: the transported bound, marched at step scale 1.0.** The
+  Bridges 2016 damping factor is rejected as a geometry change, not just a
+  cost; neither it nor a local derivative is advertised as a certificate.
+- **Object: the depth-D seed orbit.** No limit-set preset is admitted.
+- **4D: feasible and genuine, NOT yet striking — a CONDITION, not a
+  deferral.** The cell24 shell and tess16 fixtures change under rotor and
+  offset slice, and the flat embedding reduces bit for bit, so parity is
+  achievable; but their slices read as sparse pearls and dust. A native 4D
+  beauty search (arrangements not reducible to 3D sub-arrangements under
+  axis slices, w-offset generator centres, seeds that cross hyperspheres) must
+  find at least one striking native 4D subject before presets are authored.
+  It does not block the CPU core, the persistence or the shaders. If it fails,
+  the family stays unfinished; it does not ship 3D-first.
+- **Candidate domains** are the table above, subject to the verified-hardware
+  cost measurement. Known weaknesses the controls must address: the central
+  seed dominating (seed size), and lace dissolving into sub-pixel dust
+  (depth/refinement).
