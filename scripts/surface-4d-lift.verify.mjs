@@ -40,10 +40,11 @@
  *
  * A `thickness` scene re-asks 2 and 3 after the slider move, and asserts the
  * row was not disabled — the panel's availability answer, not the routing's.
- * `expectSlowSettle: true` marks a cover scene whose full-detail settle is
- * too expensive to wait for (measured; docs/surface-slice-thickness.md):
- * there the check requires the preview that follows the edit to complete
- * and draw, and reports the settle state instead of gating it.
+ * The cover scenes pin `surfacesamples=1` for the page (the gate's own wall
+ * clock; production spends the persisted preference, default 8) and then
+ * wait for a COMPLETED settle at the thicker view, which the cover's
+ * one-piece shading probe made feasible (measured ~60 s/sample at
+ * 1024x640 on Iris Xe; docs/surface-slice-thickness.md).
  *
  * The scene documents are built into this file as `#v1=` hashes (produced
  * by `persist.ts`'s own encoder), so the gate needs no preset to exist and
@@ -115,18 +116,20 @@ const SCENES = [
   },
   {
     name: "coverSpherePair4",
-    what: "a recursive spherefold pair — the bounded midpoint cover's fold4 case; thickness set after the first settle (full 8-sample cover settle, minutes-scale: measured 2-5 min on Iris Xe)",
+    what: "a recursive spherefold pair — the bounded midpoint cover's fold4 case; thickness set after the first settle, then a completed cover settle is required",
     engine: "compute",
     thickness: 0.2,
+    samples: 1,
     settleMs: 600000,
     hash: "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMywwLjEsMF0sInJvdGF0aW9uIjpbMC4zLDAuMiwwXSwic2NhbGUiOlswLjEyLDAuMTIsMC4xMl0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJzcGhlcmVmb2xkIiwid2VpZ2h0IjowLjl9XSwidyI6eyJyb3RhdGlvbiI6eyJ4dyI6MC40NX19fSx7InBvc2l0aW9uIjpbLTAuMjUsLTAuMiwwLjJdLCJyb3RhdGlvbiI6WzAsMC41LDAuMV0sInNjYWxlIjpbMC4xMSwwLjExLDAuMTFdLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoic3BoZXJlZm9sZCIsIndlaWdodCI6MS4xfV0sInciOnsicm90YXRpb24iOnsieXciOjAuNH19fV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImVudkxpZ2h0IjowLCJmbG9vckVuYWJsZWQiOmZhbHNlLCJmbG9vclBhdHRlcm4iOiJzb2xpZCIsImZsb29yVGlsZVNjYWxlIjowLjY0LCJmbG9vckVtaXNzaW9uIjowLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjUsImVudkxpZ2h0IjowLjM1LCJmbG9vclBhdHRlcm4iOiJzb2xpZCIsImZsb29yVGlsZVNjYWxlIjowLjY0LCJmbG9vckVtaXNzaW9uIjowfSwic3ltbWV0cnkiOnsib3JkZXIiOjEsInBsYW5lIjoieHoifSwiZ2xvd0JyaWdodG5lc3MiOjEsImJhbGxvb25FY2hvIjpmYWxzZSwiYmFsbG9vblJhZGl1cyI6MS42LCJiYWxsb29uVGludCI6IiMwMDAwMDAiLCJiYWxsb29uVGludFN0cmVuZ3RoIjowLCJmb2dEZW5zaXR5IjoxLCJmb2dUaW50IjoiI2ZmZmZmZiIsImZvZ1RpbnRTdHJlbmd0aCI6MCwiZ3JvdW5kUGxhbmUiOmZhbHNlfQ",
   },
   {
     name: "coverMandelFinal4",
-    what: "a mandelbox FINAL over a pentatope base — the cover's affine4+lens case; thickness set after the first settle. SLOW-SETTLE CLASS (see docs/surface-slice-thickness.md): the preview completes and is checked, but a full-detail frame was still ~30 min/sample on the Iris Xe the day this shipped, so the completed settle is not waited for here",
+    what: "a mandelbox FINAL over a pentatope base — the cover's affine4+lens case, the class the one-piece shading probe rescued (hours -> ~60 s/sample at 1024x640 on Iris Xe); thickness set after the first settle, then a completed cover settle is required",
     engine: "compute",
     thickness: 0.2,
-    expectSlowSettle: true,
+    samples: 1,
+    settleMs: 600000,
     hash: "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMjc5NSwwLjI3OTUsMC4yNzk1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjotMC4xMjV9fSx7InBvc2l0aW9uIjpbMC4yNzk1LC0wLjI3OTUsLTAuMjc5NV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6LTAuMTI1fX0seyJwb3NpdGlvbiI6Wy0wLjI3OTUsMC4yNzk1LC0wLjI3OTVdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOi0wLjEyNX19LHsicG9zaXRpb24iOlstMC4yNzk1LC0wLjI3OTUsMC4yNzk1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjotMC4xMjV9fSx7InBvc2l0aW9uIjpbMCwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNX19XSwibnVtUG9pbnRzIjoxMDAwMDAsInBvaW50U2l6ZSI6MSwiY29sb3JNb2RlIjoidHJhbnNmb3JtIiwiY29sb3JHYW1tYSI6MSwicmFtcFBhbGV0dGVJZCI6ImxlZ2FjeSIsImZvdXJEQ29sb3IiOiJ3Qmx1ZU9yYW5nZSIsImZvdXJERGVwdGhGYWRlIjpmYWxzZSwicmVuZGVyU3R5bGUiOiJkZXB0aEZhZGUiLCJzaG93R3VpZGVzIjp0cnVlLCJmbGFtZSI6eyJleHBvc3VyZSI6MSwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsImdhbW1hIjoyLjQsInZpYnJhbmN5IjoxLCJzdXBlcnNhbXBsZSI6MiwiZXN0aW1hdG9yUmFkaXVzIjo2LCJlc3RpbWF0b3JNaW5pbXVtUmFkaXVzIjowLCJlc3RpbWF0b3JDdXJ2ZSI6MC40LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzb2xpZCI6eyJyZXNvbHV0aW9uIjoxOTIsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJ0aHJlc2hvbGQiOjAuMywibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiZW52TGlnaHQiOjAsImZsb29yRW5hYmxlZCI6ZmFsc2UsImZsb29yUGF0dGVybiI6InNvbGlkIiwiZmxvb3JUaWxlU2NhbGUiOjAuNjQsImZsb29yRW1pc3Npb24iOjAsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNSwiZW52TGlnaHQiOjAuMzUsImZsb29yUGF0dGVybiI6InNvbGlkIiwiZmxvb3JUaWxlU2NhbGUiOjAuNjQsImZsb29yRW1pc3Npb24iOjB9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MSwiYmFsbG9vbkVjaG8iOmZhbHNlLCJiYWxsb29uUmFkaXVzIjoxLjYsImJhbGxvb25UaW50IjoiIzAwMDAwMCIsImJhbGxvb25UaW50U3RyZW5ndGgiOjAsImZvZ0RlbnNpdHkiOjEsImZvZ1RpbnQiOiIjZmZmZmZmIiwiZm9nVGludFN0cmVuZ3RoIjowLCJnbG93QnJpZ2h0bmVzcyI6MSwiZ3JvdW5kUGxhbmUiOmZhbHNlLCJmaW5hbFRyYW5zZm9ybSI6eyJwb3NpdGlvbiI6WzAuMSwwLjA1LC0wLjFdLCJyb3RhdGlvbiI6WzAuMTUsLTAuMiwwLjI1XSwic2NhbGUiOlswLjg1LDAuODUsMC44NV0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJtYW5kZWxib3giLCJ3ZWlnaHQiOjEuMX1dLCJ3Ijp7InBvc2l0aW9uIjotMC4wOCwicm90YXRpb24iOnsieXciOi0wLjJ9fX19",
   },
 ];
@@ -252,7 +255,10 @@ async function run() {
       // scene hash exactly once, at boot. Without it every scene after the
       // first renders the first one (measured: three different documents,
       // three identical hit counts).
-      const url = `${args.url}/?surfacestate&scene=${scene.name}#${scene.hash}`;
+      const url =
+        `${args.url}/?surfacestate&scene=${scene.name}` +
+        `${scene.samples !== undefined ? `&surfacesamples=${scene.samples}` : ""}` +
+        `#${scene.hash}`;
       await page.goto(url, { waitUntil: "load" });
       // Mutter only sends frame callbacks to VISIBLE surfaces, and the
       // settle latch this loop polls is present-gated — an occluded window
@@ -326,54 +332,28 @@ async function run() {
           if (!invalidated) await page.waitForTimeout(100);
         }
         let thickState = null;
-        const readProgressLabel = () =>
-          page.evaluate(() => {
-            const el = document.querySelector("#surfaceProgress");
-            return el && !el.classList.contains("hidden")
-              ? el.textContent
-              : null;
-          });
         const thickDeadline = Date.now() + (scene.settleMs ?? args.settleMs);
-        let previewDone = false;
         while (Date.now() < thickDeadline) {
           thickState = await page.evaluate(
             () => window.__surfaceState?.() ?? null,
           );
-          if (thickState && thickState.settled) {
-            previewDone = true;
-            break;
-          }
-          // The slow-settle class gets the same visual check one stage
-          // earlier: the preview that follows the edit IS a cover frame,
-          // so waiting for the row to announce the full-detail stage
-          // proves the edit reached the tracer and drew.
-          if (scene.expectSlowSettle === true) {
-            const label = await readProgressLabel();
-            if (typeof label === "string" && label.startsWith("Full detail")) {
-              previewDone = true;
-              break;
-            }
-          }
+          if (thickState && thickState.settled) break;
           await page.waitForTimeout(250);
         }
         const thickSettled = Boolean(thickState && thickState.settled);
         const thickDrawn = thicknessOk ? await coverage(page) : null;
-        const settleOk =
-          scene.expectSlowSettle === true ? previewDone : thickSettled;
         thicknessOk =
           rowEnabled &&
           invalidated &&
-          settleOk &&
+          thickSettled &&
           thickDrawn !== null &&
           thickDrawn > 0.005;
         thicknessNote =
-          `  thickness=${scene.thickness} rowEnabled=${String(rowEnabled).padEnd(5)} ` +
+          `  thickness=${scene.thickness} samples=${scene.samples ?? "default"} ` +
+          `rowEnabled=${String(rowEnabled).padEnd(5)} ` +
           `invalidated=${String(invalidated).padEnd(5)} ` +
           `reSettled=${String(thickSettled).padEnd(5)} ` +
-          `reDrawn=${thickDrawn === null ? "n/a" : (thickDrawn * 100).toFixed(1) + "%"}` +
-          (scene.expectSlowSettle === true
-            ? " (slow-settle: preview checked; completed settle not waited for)"
-            : "");
+          `reDrawn=${thickDrawn === null ? "n/a" : (thickDrawn * 100).toFixed(1) + "%"}`;
       }
       const ok =
         entered &&

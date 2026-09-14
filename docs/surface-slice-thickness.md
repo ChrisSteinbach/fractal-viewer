@@ -146,6 +146,19 @@ point kernel. The cutoff contract survives: each sample receives
 entries refuse (`slabSupported4`: swirl final or condensation), and the
 app's `canSlab`/`slabCover` derivation comes from the same predicate.
 
+**THE SHADING TAPS RIDE A ONE-PIECE COVER PROBE.** The first app-path
+measurement (below) showed the 16-piece cover on every normal/AO/shadow tap
+was the cost, not the march: shade mode under `slabCover` therefore emits a
+dedicated `surfaceDEProbe` whose cover is a SINGLE piece,
+`max(0, DE(mid) - |e|)`. That is still a sound lower bound over the whole
+segment by the triangle inequality — deliberately loose — and it is the
+same "never decides geometry" trade the measured width-1 frontier probe
+already makes (`SURFACE_COMPUTE_SHADE_DE_WIDTH`). A frontier cover probes
+its existing width-1 point body; the affine ladder probes the refined one.
+This is the fix that took the fold-final class from unusable to shippable
+(below); it changes lighting taps only, so the value/agreement rows above
+are untouched.
+
 `npm run bench:surface`'s M5b leg pins the mirror against the CPU oracle on
 two fixture families at h = 0, 0.10R and 0.25R under two pose rotors: the
 recursive spherefold pair (`fold4` core, plain oracle) and a mandelbox
@@ -176,29 +189,25 @@ baseline), so the crash is this machine's, not a cover result. The cover
 rows above are recorded before the loss and the leg itself reported
 `fail=0`/`excluded=0` in every run.
 
-The per-ray cost is 16 point descents wherever the slab is live (the shade
-pass's hit-info wrapper adds 16 value descents plus one hit-info descent per
-terminal ray). The compute renderer already sizes shade batches in hit units
-and closes fence groups on measured work. MEASURED IN THE APP on the same
-Iris Xe, 1024x640, through `scripts/surface-4d-lift.verify.mjs`'s thickness
-phase: the recursive spherefold pair enters, enables the row, completes a
-full 8-sample settle after the slider move and draws (its cover kernel is
-the fold4 frontier). The mandelbox-final-over-pentatope case enables the row
-and draws the preview, but a single full-detail sample had not completed
-after 30 minutes (`?surfacesamples=1`, progress 92%) — so the default
-8-sample settle is hours. The mechanism is visible in the routing: for the
-affine4 core there is no narrower probe descent, so every normal/AO/shadow
-tap and the hit-info attribution ride the full cover, and the deepest lens
-sweep is 243 branches per level — a shaded hit costs roughly a hundred lens
-descents. This is a COST gap, not a soundness one: the kernels agree with
-the CPU (table above) and the work is bounded. The policy is owed and
-tracked: `scripts/surface-fence-cost.verify.mjs` and
-`scripts/surface-teardown.verify.mjs` on a cover-live session, and then, if
-the measurement still says so, a per-class decision among fewer pieces
-(measured IoU 0.84-0.90 at 16, 0.67-0.84 at 8), a cheaper cover probe for
-shading taps, or the per-system thickness cap the earlier study discussed.
-The browser gate keeps the fold-final scene at the preview level (the
-`expectSlowSettle` flag) until that decision lands.
+The per-ray cost is 16 point descents wherever the slab is live, plus the
+hit-info attribution's 16-sample argmin per shaded hit. MEASURED IN THE APP
+on the Iris Xe, 1024x640, through `scripts/surface-4d-lift.verify.mjs`'s
+thickness phase, before and after the one-piece shading probe: with every
+tap paying the full cover, a mandelbox FINAL over pentatope was still on its
+first full-detail sample after 30 minutes (`?surfacesamples=1`, progress
+92%) — hours for the default settle. With the probe, the same scene's point
+entry settles in 6.5 s, ONE cover sample completes in 60.0 s, and the
+default 8-sample settle completes (one run measured 1915 s, including a
+~25-minute driver stall between passes 5 and 6; the samples that ran clean
+were ~60 s each). The recursive spherefold pair settles comfortably either
+way. The browser gate now loads both cover scenes with `surfacesamples=1`
+(its own wall clock, disclosed in its header) and requires a COMPLETED
+settle at the thicker view, so the fold-final class is gated end to end
+rather than at preview level. The remaining cost item is the fence-group
+and teardown behaviour under the 16x march work —
+`scripts/surface-fence-cost.verify.mjs` and
+`scripts/surface-teardown.verify.mjs` have not yet been re-run on a
+cover-live session.
 
 ## Exact finite reflection pieces
 
@@ -327,22 +336,24 @@ lenses) on both engines, bit-exact zero thickness on both, the cutoff
 contract through the cover, and routing/UI that admits the combination.
 What remains:
 
-- **Cost qualification.** Re-run `scripts/surface-fence-cost.verify.mjs`,
-  `scripts/surface-teardown.verify.mjs` and the browser matrix on a
-  cover-live session (thickness > 0, nonlinear system) to confirm the
-  compute renderer's fence groups, watchdog submissions and interactive
-  behaviour under the 16x per-query work. If the cost is unacceptable, the
-  options are quality/cost decisions, not soundness ones: fewer pieces
-  (measured IoU 0.67-0.84 at 8), scale pieces with thickness, or the
-  per-system thickness cap the earlier study discussed.
+- **Cost qualification.** The shading-tap fix shipped (one-piece cover
+  probe, measured above), so the interaction is usable; what remains is the
+  fence-group and teardown behaviour under the 16x march work:
+  `scripts/surface-fence-cost.verify.mjs` and
+  `scripts/surface-teardown.verify.mjs` on a cover-live session (thickness
+  > 0, nonlinear system). If that measurement still objects, the remaining
+  > levers are quality/cost decisions, not soundness ones: fewer pieces
+  > (measured IoU 0.67-0.84 at 8), scale pieces with thickness, or the
+  > per-system thickness cap the earlier study discussed.
 - **Tiling composition.** Tiled 4D sessions still clamp thickness to zero;
   finite pieces need the split/cover composition and lattice walls need
   crossing enumeration (the tiling child's work).
-- **Browser matrix.** Enter/settle/draw at several thicknesses and rotor
-  poses, zero-thickness identity, authored radii/posts, reloads and
-  captures on the engines, including the Mandelbox-plus-tiling acceptance
-  case the epic names, plus panel-gate coverage for the new availability
-  set.
+- **Browser matrix.** The lift gate now gates both cover classes end to
+  end (enter, row enabled, invalidation, completed settle, draw) at
+  `surfacesamples=1`. Still owed: several thicknesses and rotor poses,
+  zero-thickness identity, authored radii/posts, reloads and captures on
+  the engines, including the Mandelbox-plus-tiling acceptance case the
+  epic names, plus panel-gate coverage for the new availability set.
 
-CPU agreement is done; cost bounds and the full browser matrix are the
-halves still missing.
+CPU agreement and the heavy-class cost fix are done; the fence/teardown
+gates and the full browser matrix are the halves still missing.
