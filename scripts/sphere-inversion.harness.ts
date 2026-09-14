@@ -78,6 +78,7 @@ import {
   estimateInversionDistance,
   estimateInversionDistancePaper,
   explicitOrbitDistance,
+  foldQuery,
   icosahedral12,
   inversionOrbitContains,
   makeFoldScratch,
@@ -738,6 +739,7 @@ describe("sphere-inversion seed orbits", () => {
           `    ${g.poses[i].name.padEnd(18)} ${statLine(r.stats, SIZE).padEnd(26)} ` +
             `slice reach ${r.reach.toFixed(3)} fill ${r.fill.toFixed(3)}% ` +
             `IoU ${res.iou[i].toFixed(3)} contain ${res.contain[i].toFixed(3)} ` +
+            `copies ${res.copyContain[i].toFixed(3)} ` +
             `px ${res.pxDiff[i].toFixed(1)}%`,
         );
       });
@@ -750,6 +752,7 @@ describe("sphere-inversion seed orbits", () => {
     const cuboct = CELL24_GROUP.spec.gens
       .filter((g) => g.c[3] === 0)
       .map((g) => ({ c: g.c.slice(0, 3), r: g.r }));
+    expect(cuboct).toHaveLength(12);
     const twin3 = (
       label: string,
       spec: InversionSceneSpec,
@@ -786,7 +789,7 @@ describe("sphere-inversion seed orbits", () => {
       {
         dim: 3,
         gens: cuboct,
-        seed: ballSeed(0.5, 3),
+        seed: shellSeed(1, 0.03, 3),
         depth: CELL24_GROUP.spec.depth,
       },
       cell,
@@ -795,7 +798,7 @@ describe("sphere-inversion seed orbits", () => {
       "3D TWIN: OCT6 OF CROSS8",
       {
         dim: 3,
-        gens: octahedral6(1, 0.7),
+        gens: octahedral6(1, Math.SQRT1_2),
         seed: ballSeed(0.28, 3),
         depth: CROSS8_GROUP.spec.depth,
       },
@@ -816,7 +819,8 @@ describe("sphere-inversion seed orbits", () => {
         stats: row.stats,
         lines: [
           `${g.short} ${g.poses[i].name}`,
-          `${statLine(row.stats, SIZE)} I${res.iou[i].toFixed(2)}`,
+          `${statLine(row.stats, SIZE)} I${res.iou[i].toFixed(2)} ` +
+            `C${res.contain[i].toFixed(2)} K${res.copyContain[i].toFixed(2)}`,
         ] as [string, string],
       };
     };
@@ -832,10 +836,6 @@ describe("sphere-inversion seed orbits", () => {
         label(FLAT_GROUP, 0),
         label(FLAT_GROUP, 1),
         label(FLAT_GROUP, 2),
-        label(CELL24_GROUP, 0),
-        label(CELL24_GROUP, 1),
-        label(CELL24_GROUP, 2),
-        label(CELL24_GROUP, 3),
         label(TESS16_GROUP, 0),
         label(CROSS8_GROUP, 0),
         label(CROSS8_GROUP, 1),
@@ -845,19 +845,43 @@ describe("sphere-inversion seed orbits", () => {
         label(CROSS8_GROUP, 5),
         label(TESS16_GROUP, 1),
         label(TESS16_GROUP, 2),
+        label(CELL24_GROUP, 0),
+        label(CELL24_GROUP, 1),
+        label(CELL24_GROUP, 2),
+        label(CELL24_GROUP, 3),
+        label(TESS16_GROUP, 3),
       ],
       4,
       "sphere-inversion-4d.png",
     );
     console.log(`  wrote ${file}`);
     // The non-flat fixtures must actually change under the rotor and the
-    // slice (the epic's parity criterion), measured on membership.
-    for (const g of [CELL24_GROUP, CROSS8_GROUP]) {
+    // slice (the epic's parity criterion), measured on membership: every
+    // off-reference pose of the genuine groups must differ from its
+    // reference (IoU) AND hold copies the reference lacks (copy containment)
+    // — the second is what separates them from the passive offset.
+    for (const g of [CELL24_GROUP, TESS16_GROUP]) {
       const res = results.get(g.title)!;
       for (let i = 1; i < g.poses.length; i++) {
-        expect(res.iou[i], `${g.title} ${g.poses[i].name}`).toBeLessThan(0.95);
+        const what = `${g.title} ${g.poses[i].name}`;
+        expect(res.iou[i], what).toBeLessThan(0.95);
+        expect(res.copyContain[i], what).toBeLessThan(0.95);
       }
     }
+    // The eight-hypersphere candidate is the MEASURED EXCEPTION, pinned as
+    // one: its poses change membership (IoU) but its pearls stay 84-100%
+    // contained in the identity slice's — erosion of the octahedral lace,
+    // the flat embedding's behaviour, not new arrangement. A fixture change
+    // that lifts it into genuine territory should fail here and be re-read.
+    for (let i = 1; i < CROSS8_GROUP.poses.length; i++) {
+      const what = `${CROSS8_GROUP.title} ${CROSS8_GROUP.poses[i].name}`;
+      expect(cross.iou[i], what).toBeLessThan(0.95);
+      expect(cross.copyContain[i], what).toBeGreaterThan(0.8);
+    }
+    const flat = results.get(FLAT_GROUP.title)!;
+    expect(flat.contain[1], "the passive offset only erodes").toBeGreaterThan(
+      0.99,
+    );
   });
 });
 
@@ -912,6 +936,11 @@ interface Group4Result {
    * hard as new structure does — but erosion is CONTAINED (reads ~1) and
    * new arrangement is not. */
   contain: number[];
+  /** {@link contain} over COPIES only — members whose fold spent at least
+   * one inversion. A ball seed's own slice is rotation-invariant and holds
+   * most of the volume, so plain containment reads ~1 however much the
+   * pearls around it change; this column asks about the pearls. */
+  copyContain: number[];
   pxDiff: number[];
 }
 
@@ -978,6 +1007,25 @@ function renderGroup4(g: Group4, size: number): Group4Result {
   const R = Math.max(0.2, Math.max(...extents.map((e) => e.reachAbs)) * 1.06);
   const cloud = ballCloud(R);
   const masks = g.poses.map((_, i) => memberMask(member(i), cloud));
+  const copyMasks = g.poses.map((_, i) => {
+    const mask = new Uint8Array(masks[i].length);
+    for (let k = 0; k < mask.length; k++) {
+      if (!masks[i][k]) continue;
+      const q = lifts[i]([cloud[k * 3], cloud[k * 3 + 1], cloud[k * 3 + 2]]);
+      mask[k] = foldQuery(scene, q, scratch).k > 0 ? 1 : 0;
+    }
+    return mask;
+  });
+  const containIn = (m: Uint8Array): number => {
+    let inRef = 0;
+    let count = 0;
+    for (let i = 0; i < m.length; i++) {
+      if (!m[i]) continue;
+      count++;
+      if (masks[0][i]) inRef++;
+    }
+    return count > 0 ? inRef / count : 1;
+  };
   const rows: Row[] = g.poses.map((pose, i) => ({
     label: `${g.short} ${pose.name}`,
     stats: renderPreview(
@@ -1000,16 +1048,8 @@ function renderGroup4(g: Group4, size: number): Group4Result {
     cloud,
     masks,
     iou: masks.map((m) => iou(m, masks[0])),
-    contain: masks.map((m) => {
-      let inRef = 0;
-      let count = 0;
-      for (let i = 0; i < m.length; i++) {
-        if (!m[i]) continue;
-        count++;
-        if (masks[0][i]) inRef++;
-      }
-      return count > 0 ? inRef / count : 1;
-    }),
+    contain: masks.map(containIn),
+    copyContain: copyMasks.map(containIn),
     pxDiff: rows.map((r) => statusDiffPct(r.stats, rows[0].stats)),
   };
 }
@@ -1034,28 +1074,22 @@ const FLAT_GROUP: Group4 = {
   ],
 };
 
-/** 24-cell: twelve centres at w = 0, twelve at w = ±0.707. */
-const CELL24_GROUP: Group4 = {
-  title: "CELL24 r.45 ball.50 D5",
-  short: "CELL24",
-  spec: { dim: 4, gens: cell24(1, 0.45), seed: ballSeed(0.5, 4), depth: 5 },
-  poses: [
-    { name: "ID W0 0", planes: [], w0: 0 },
-    { name: "XW .50", planes: [["xw", 0.5]], w0: 0 },
-    { name: "ZW .79", planes: [["zw", Math.PI / 4]], w0: 0 },
-    { name: "ID W0 .30", planes: [], w0: 0.3 },
-  ],
-};
-
-/** The eight-hypersphere candidate: the 16-cell's vertices. */
+/** The eight-hypersphere candidate: the 16-cell's vertices, KISSING (the
+ * near-tangent version the coarse 4D exploration found keeps its lace arches
+ * under small `w` rotations, where `r = 0.70` scattered into dust). */
 const CROSS8_GROUP: Group4 = {
-  title: "CROSS8 r.70 ball.28 D8",
-  short: "CROSS8",
-  spec: { dim: 4, gens: cross8(1, 0.7), seed: ballSeed(0.28, 4), depth: 8 },
+  title: "CROSS8 KISS ball.28 D10",
+  short: "X8K",
+  spec: {
+    dim: 4,
+    gens: cross8(1, Math.SQRT1_2),
+    seed: ballSeed(0.28, 4),
+    depth: 10,
+  },
   poses: [
     { name: "ID W0 0", planes: [], w0: 0 },
-    { name: "XW .40", planes: [["xw", 0.4]], w0: 0 },
-    { name: "XW .79", planes: [["xw", Math.PI / 4]], w0: 0 },
+    { name: "XW .15", planes: [["xw", 0.15]], w0: 0 },
+    { name: "XW .30", planes: [["xw", 0.3]], w0: 0 },
     {
       name: "YW.6 ZW.3",
       planes: [
@@ -1064,32 +1098,54 @@ const CROSS8_GROUP: Group4 = {
       ],
       w0: 0,
     },
-    { name: "ID W0 .20", planes: [], w0: 0.2 },
-    { name: "XW.4 W0 .30", planes: [["xw", 0.4]], w0: 0.3 },
+    { name: "ID W0 .10", planes: [], w0: 0.1 },
+    { name: "XW.3 W0 .15", planes: [["xw", 0.3]], w0: 0.15 },
   ],
 };
 
-/** Tesseract: no centre lies in w = 0, so the identity slice is the bare
- * seed ball; every pose here is off it. */
-const TESS16_GROUP: Group4 = {
-  title: "TESS16 r.45 ball.50 D5",
-  short: "TESS16",
+/** A perforated 3-sphere SHELL through the 24-cell's hyperspheres: twelve
+ * centres at w = 0, twelve at w = ±0.707, the clearest NEW-membership slices
+ * the exploration measured. */
+const CELL24_GROUP: Group4 = {
+  title: "CELL24 r.49 SHELL s1 t.03 D5",
+  short: "C24SH",
   spec: {
     dim: 4,
-    gens: tesseract16(1, 0.45),
-    seed: ballSeed(0.5, 4),
+    gens: cell24(1, 0.49),
+    seed: shellSeed(1, 0.03, 4),
     depth: 5,
   },
   poses: [
-    { name: "ID W0 .35", planes: [], w0: 0.35 },
-    { name: "XW .60", planes: [["xw", 0.6]], w0: 0 },
+    { name: "ID W0 0", planes: [], w0: 0 },
+    { name: "XW .30", planes: [["xw", 0.3]], w0: 0 },
+    { name: "ID W0 .30", planes: [], w0: 0.3 },
+    { name: "ID W0 .60", planes: [], w0: 0.6 },
+  ],
+};
+
+/** Tesseract, TANGENT: no centre lies in w = 0 and the balls just miss it,
+ * so the identity slice would be the bare seed; every pose is off it. */
+const TESS16_GROUP: Group4 = {
+  title: "TESS16 KISS ball.50 D7",
+  short: "T16K",
+  spec: {
+    dim: 4,
+    gens: tesseract16(1, 0.5),
+    seed: ballSeed(0.5, 4),
+    depth: 7,
+  },
+  poses: [
+    { name: "ID W0 .30", planes: [], w0: 0.3 },
+    { name: "ID W0 .45", planes: [], w0: 0.45 },
+    { name: "XW.5 W0 .10", planes: [["xw", 0.5]], w0: 0.1 },
     {
-      name: "XW.6 ZW.4 W0.2",
+      name: "XW.5 YW.4 ZW.3",
       planes: [
-        ["xw", 0.6],
-        ["zw", 0.4],
+        ["xw", 0.5],
+        ["yw", 0.4],
+        ["zw", 0.3],
       ],
-      w0: 0.2,
+      w0: 0,
     },
   ],
 };
