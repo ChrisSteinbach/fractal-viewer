@@ -685,13 +685,13 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     (`scripts/slice-cost.harness.ts`), and the 20-40x off-centre cost cliff
     they were for does not reproduce on either engine
     (`scripts/slice-cliff.probe.mjs`, the app-level pose-cost instrument).
-    Both estimators take `halfExtent`: the slab `p ± halfExtent` retains
-    the conservative bound and exact zero set; each inverse map's LINEAR
-    part transports its extent. `segmentRadius` replaces `|q|`, with
-    `chainScale · |e| <= h`; null/zero stays point-exact. Unclipped finite
-    reflection slabs have an exact polyline prototype. Adaptive nonlinear
-    slabs need bounded continuation or a better representation; refusals
-    remain. Proof and scope: `docs/surface-slice-thickness.md`.
+    Slab queries (`halfExtent`) route three ways — exact segment arithmetic
+    for boxfold/affine systems, the BOUNDED MIDPOINT COVER
+    (`SLAB_COVER_PIECES` 16, complete-partition sound at any count) for
+    nonlinear folds and final lenses, refusal only for swirl/condensation —
+    mirrored by `surface-de-gpu.ts`'s `slabCover`, routed by the app; tiling
+    composition and the cover-live cost gates remain owed. Proof, measured
+    CPU/GPU rows and scope: `docs/surface-slice-thickness.md`.
   - `surface-de-gpu.ts` — WGSL fold-DE compute kernel (a spike, gated in by
     the beam-width occupancy verdict; integrated as the app's compute
     surface path): mirrors `estimateDistance`'s refine=false fold path term

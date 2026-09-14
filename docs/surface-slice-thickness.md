@@ -2,14 +2,16 @@
 
 ## Current behavior
 
-The CPU oracle now answers slab queries for spherefold and Mandelbox systems
-(recursive maps and final lenses alike) with the **bounded midpoint cover**
-below. The production routing has **not** switched yet: `main.ts`, the GPU
-packers, and the panel still gate on `slabExact4`, so the user-visible
-control keeps its refusal for those systems until the WGSL mirror and the
-routing change land. The remaining refusals are swirl finals, condensation,
-forward escape-time systems, and both Space tiling arms; the CPU entries,
-the GPU packers, and the UI enforce each independently.
+The CPU oracle and the WebGPU compute kernels both answer slab queries for
+spherefold and Mandelbox systems (recursive maps and final lenses alike)
+with the **bounded midpoint cover** below, and the app routes the
+combination: `main.ts` sets the panel's thickness availability from
+`slabSupported4`, and an untiled nonlinear 4D session compiles the cover
+kernel (`slabCover: true` in `surface-de-gpu.ts`) beside its h=0 point
+kernel. The remaining refusals are swirl finals, condensation, forward
+escape-time systems, and both Space tiling arms; the CPU entries, the GPU
+packers, and the UI enforce each independently, and the panel names the
+refusing branch.
 
 The initial report was reproduced on 12 September 2026 with a fresh production
 build and a verified hardware Intel Iris Xe WebGPU adapter. A Mandelbox final,
@@ -112,6 +114,92 @@ That is the whole-slab dilation back again: 97-100% of the ball arm's hit
 mask. The executed record of the attempt lived in the same commit range and
 was dropped from production when the cover shipped.
 
+## The WGSL cover
+
+`surface-de-gpu.ts` mirrors the cover for the two 4D descent cores
+(`affine4`, `fold4`) under the codegen option `slabCover`, which requires
+`slabExt` and refuses the tiling composition (tiled 4D slabs are refused at
+pack, so no legal pipeline could be fed one). The composed descent — the
+core alone, or the core under its `descendLens4` fold-final wrapper — is
+generated as the POINT estimator behind an external view lift and renamed
+`surfaceDECovered`; an appended `surfaceDE` wrapper owns the public name,
+seeds `q0 = rotorInv(pIn, w0)` and `e = rotorInvWCol4() * sliceHalfW`, and
+returns
+
+```text
+max(0, min_i DE_point(q0 + s_i e) - |e| / SLAB_COVER_PIECES)
+```
+
+with `s_i` the same equally spaced midpoints the CPU uses. Sampling in the
+view frame and lifting per sample is exactly the CPU's attractor-frame
+sampling (`rotorInv` is linear), and under a fold final the min over the
+wrapper's branches commutes with the min over pieces, so the two engines
+evaluate the same object. The hit-info twin runs the point VALUE descent at
+each sample to find the argmin, then asks the covered hit-info once at the
+winning sample, overwriting `sStar` with that piece's parameter so radius
+and pattern coloring ride the slab location that actually won (the no-lens
+pattern source is recomputed at the winning sample; a fold final keeps its
+own resolved branch tuple). Zero thickness takes the point body, and the
+`sliceHalfW == 0` rows are pinned BIT-EXACT against the `slabExt: false`
+point kernel. The cutoff contract survives: each sample receives
+`cutoff + halfPiece`. `packSurface4GpuParams` now throws only where the CPU
+entries refuse (`slabSupported4`: swirl final or condensation), and the
+app's `canSlab`/`slabCover` derivation comes from the same predicate.
+
+`npm run bench:surface`'s M5b leg pins the mirror against the CPU oracle on
+two fixture families at h = 0, 0.10R and 0.25R under two pose rotors: the
+recursive spherefold pair (`fold4` core, plain oracle) and a mandelbox
+FINAL over `pentatope` (`affine4` core under the lens, refined oracle, the
+lens post included). Measured on real hardware (Intel Iris Xe, bundled
+Chrome 151, 14 September 2026), 700 queries per row:
+
+| Fixture           | h      | Core    | fail | maxAbsErr | p99AbsErr | excluded |
+| ----------------- | ------ | ------- | ---: | --------: | --------: | -------: |
+| cover4SpherePair  | 0      | fold4   |    0 |    3.5e-7 |    2.7e-7 |        0 |
+| cover4SpherePair  | 0.10 R | fold4   |    0 |    3.8e-7 |    2.9e-7 |        0 |
+| cover4SpherePair  | 0.25 R | fold4   |    0 |    3.4e-7 |    2.8e-7 |        0 |
+| cover4MandelFinal | 0      | affine4 |    0 |    4.4e-7 |    3.1e-7 |        0 |
+| cover4MandelFinal | 0.10 R | affine4 |    0 |    4.4e-7 |    3.4e-7 |        0 |
+| cover4MandelFinal | 0.25 R | affine4 |    0 |    3.7e-7 |    2.6e-7 |        0 |
+
+The per-row tolerance floor is `2e-4 R`, so the measured error sits about
+three orders below it. The h=0 identity cross-checks report
+`mismatches=0, maxDelta=0` for both families. The same run also exercised
+the app's compute path end to end on ifs4/fold4 sessions (the cover pair
+compiles; the h=0 frame picks the point kernel), and those compute-frame
+rows passed. One negative result to disclose: every full bench run on this
+machine ended in a `device-unreliable` verdict — three real-driver runs
+lost the device at `compute frame swirl lens4SwirlPostOverFold`, an
+untouched leg whose session compiles exactly as it did before this work,
+and SwiftShader runs lost it earlier still (including a stashed, unmodified
+baseline), so the crash is this machine's, not a cover result. The cover
+rows above are recorded before the loss and the leg itself reported
+`fail=0`/`excluded=0` in every run.
+
+The per-ray cost is 16 point descents wherever the slab is live (the shade
+pass's hit-info wrapper adds 16 value descents plus one hit-info descent per
+terminal ray). The compute renderer already sizes shade batches in hit units
+and closes fence groups on measured work. MEASURED IN THE APP on the same
+Iris Xe, 1024x640, through `scripts/surface-4d-lift.verify.mjs`'s thickness
+phase: the recursive spherefold pair enters, enables the row, completes a
+full 8-sample settle after the slider move and draws (its cover kernel is
+the fold4 frontier). The mandelbox-final-over-pentatope case enables the row
+and draws the preview, but a single full-detail sample had not completed
+after 30 minutes (`?surfacesamples=1`, progress 92%) — so the default
+8-sample settle is hours. The mechanism is visible in the routing: for the
+affine4 core there is no narrower probe descent, so every normal/AO/shadow
+tap and the hit-info attribution ride the full cover, and the deepest lens
+sweep is 243 branches per level — a shaded hit costs roughly a hundred lens
+descents. This is a COST gap, not a soundness one: the kernels agree with
+the CPU (table above) and the work is bounded. The policy is owed and
+tracked: `scripts/surface-fence-cost.verify.mjs` and
+`scripts/surface-teardown.verify.mjs` on a cover-live session, and then, if
+the measurement still says so, a per-class decision among fewer pieces
+(measured IoU 0.84-0.90 at 16, 0.67-0.84 at 8), a cheaper cover probe for
+shading taps, or the per-system thickness cap the earlier study discussed.
+The browser gate keeps the fold-final scene at the preview level (the
+`expectSlowSettle` flag) until that decision lands.
+
 ## Exact finite reflection pieces
 
 All reflection hyperplanes are represented by the group orbits of the simple
@@ -209,8 +297,9 @@ descents per query: 68,816 core calls for the Mandelbox-final panel and
 63,792 for the spherefold panel, against the adaptive reference's 211,863
 and 232,003. The 16-piece count retains most of the reference's structure
 (IoU 0.84-0.90) at a third of its cost; 8 pieces is 0.67-0.84 and 32 is
-0.91-0.96. These are CPU card counts at one pose and thickness, and the GPU
-mirror's own occupancy, dispatch and watchdog limits are still unmeasured.
+0.91-0.96. These are CPU card counts at one pose and thickness; the GPU
+mirror's own agreement rows are in the next section, and its interactive
+dispatch/watchdog behaviour on a cover-live session is still to be gated.
 
 The A4 exact split used a median/p99/max of **3/7/10** core queries and 42,215
 core calls for the panel, versus 411,527 point-core calls for adaptive sampling.
@@ -231,36 +320,29 @@ as "sound, bounded, and retaining the measured IoU at the shipped count".
 
 ## Remaining implementation
 
-The CPU oracle is complete and tested for the nonlinear systems: exact
-segment arithmetic for affine/boxfold, the bounded midpoint cover for
-spherefold and Mandelbox (recursive maps AND final lenses), bit-exact zero
-thickness, and the cutoff contract through the cover. What remains is
-production plumbing, and it is deliberately not started until the mirror's
-cost is measurable:
+The CPU oracle and the WGSL mirror are complete and tested for the
+nonlinear systems: exact segment arithmetic for affine/boxfold, the bounded
+midpoint cover for spherefold and Mandelbox (recursive maps AND final
+lenses) on both engines, bit-exact zero thickness on both, the cutoff
+contract through the cover, and routing/UI that admits the combination.
+What remains:
 
-- **WGSL 4D cores.** `surface-de-gpu.ts`'s `ifs4` kernels (`affine4`,
-  `fold4`, and the `lens4` wrapper) must answer a nonzero `sliceHalfW` for a
-  non-`slabExact4` system with the same 16-piece cover: sample the entry
-  point along the stored half-extent, run the point core per sample, take
-  the min of `d - |e|/16`, and keep the exact segment path for
-  `slabExact4` systems unchanged. The packer's `slabExact4` throw and the
-  zero-filled params seat are the seams. The per-ray cost is 16x the point
-  descent wherever the slab is live, so the compute renderer's dispatch
-  sizing, fence groups and the watchdog budgets all need re-measurement on
-  a real driver before the UI admits the combination.
-- **Routing and controls.** `main.ts`'s `surface4SlabExact`, the panel's
-  `setFourDSlabAvailable` reason set, and the compute spec must switch from
-  `slabExact4` to `slabSupported4`, with the coverage wording replaced by an
-  honest cost/quality note; the GLSL 4D fallback may keep refusing (fold
-  sessions are compute-only by construction).
+- **Cost qualification.** Re-run `scripts/surface-fence-cost.verify.mjs`,
+  `scripts/surface-teardown.verify.mjs` and the browser matrix on a
+  cover-live session (thickness > 0, nonlinear system) to confirm the
+  compute renderer's fence groups, watchdog submissions and interactive
+  behaviour under the 16x per-query work. If the cost is unacceptable, the
+  options are quality/cost decisions, not soundness ones: fewer pieces
+  (measured IoU 0.67-0.84 at 8), scale pieces with thickness, or the
+  per-system thickness cap the earlier study discussed.
 - **Tiling composition.** Tiled 4D sessions still clamp thickness to zero;
   finite pieces need the split/cover composition and lattice walls need
   crossing enumeration (the tiling child's work).
 - **Browser matrix.** Enter/settle/draw at several thicknesses and rotor
   poses, zero-thickness identity, authored radii/posts, reloads and
-  captures on both engines, including the Mandelbox-plus-tiling acceptance
-  case the epic names.
+  captures on the engines, including the Mandelbox-plus-tiling acceptance
+  case the epic names, plus panel-gate coverage for the new availability
+  set.
 
-CPU agreement and renderer work bounds are therefore the halves still
-missing; the shipping guards stay in place until they land, but the CPU
-mechanism itself is no longer a refusal and no longer an experiment.
+CPU agreement is done; cost bounds and the full browser matrix are the
+halves still missing.
