@@ -55,6 +55,7 @@ the subsystem records below or its owning harness header:
   `docs/controls.md` — standing briefs.
 - `docs/panel-ia.md` — the accepted control-family, applicability and edit-
   behavior contract for placing panel controls.
+- `docs/sphere-inversion-family.md` — pre-gate sphere-inversion seed-orbit study.
 
 ## Dimensional Parity — the 4D half is not a follow-up
 
