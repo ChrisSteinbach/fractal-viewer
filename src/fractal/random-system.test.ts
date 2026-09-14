@@ -267,6 +267,20 @@ describe("randomSystem fold radii", () => {
   });
 });
 
+describe("randomSystem optics", () => {
+  it("never authors an optical-model selection onto any map", () => {
+    for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
+      const { transforms, finalTransform } = RANDOM_SYSTEM_CORPUS[seed];
+      for (const t of [
+        ...transforms,
+        ...(finalTransform ? [finalTransform] : []),
+      ]) {
+        expect("optics" in t, `seed ${seed}`).toBe(false);
+      }
+    }
+  });
+});
+
 // Every sweep below reads RANDOM_SYSTEM_CORPUS (built once, above) instead
 // of rolling its own FOUR_D_SEED_SAMPLE_SIZE (200) batch, so the
 // describe-level 30s timeout this block used to carry -- the sweep, itself

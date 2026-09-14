@@ -2062,6 +2062,7 @@ describe("the 4D tracer's finish arm", () => {
     })),
     finish: true,
     pattern: false,
+    optics: false,
   });
   const calibration = {
     ringsLow: 0.1,
@@ -2081,6 +2082,7 @@ describe("the 4D tracer's finish arm", () => {
     finish,
     pattern: true,
     patternCalibration: calibration,
+    optics: false,
   });
 
   it("declares the finish lanes as the block's two trailing members UNCONDITIONALLY, read only under the arm", () => {
@@ -2371,6 +2373,7 @@ describe("the 4D tracer's pattern arm", () => {
     finish,
     pattern: true,
     patternCalibration: calibration,
+    optics: false,
   });
   const authored = (): ReturnType<typeof resolveSurfaceFinish> =>
     resolveSurfaceFinish({
@@ -2712,6 +2715,7 @@ describe("qualified 4D swirl final lens fragment mirror", () => {
       slots: [CLASSIC_SURFACE_MATERIAL],
       finish: true,
       pattern: false,
+      optics: false,
     });
     live();
     setSurface4Balloon(material, balloonSpec());

@@ -3950,6 +3950,7 @@ describe("SURFACE_FINISH variant", () => {
     })),
     finish: true,
     pattern: false,
+    optics: false,
   });
   const calibration = {
     ringsLow: 0.1,
@@ -3968,6 +3969,7 @@ describe("SURFACE_FINISH variant", () => {
     finish,
     pattern: true,
     patternCalibration: calibration,
+    optics: false,
   });
 
   it("strips every finish token from every variant while the flag is off — the byte-identity mechanism", () => {
@@ -4339,6 +4341,7 @@ describe("SURFACE_PATTERN variant", () => {
     finish,
     pattern: true,
     patternCalibration: calibration,
+    optics: false,
   });
 
   /** A finish with every field away from classic, shared with the finish
