@@ -32,7 +32,11 @@
  * processes), SI4_ONLY (comma-separated candidate keys).
  */
 import { mulberry32 } from "../src/fractal/rng";
-import { renderPreview, writeLabeledContactSheet } from "./de-preview";
+import {
+  PREVIEW_HIT,
+  renderPreview,
+  writeLabeledContactSheet,
+} from "./de-preview";
 import type { PanelStats, PreviewScene, Vec3 } from "./de-preview";
 import { sampleSetExtent } from "./set-extent";
 import {
@@ -228,11 +232,47 @@ const POSES_R1: Pose4[] = [
   },
 ];
 
+/** An interior camera: absolute eye and target, the marching ball on the
+ * origin at the scene's bound radius, as the 3D gate sheet's vaults. */
+interface InteriorView {
+  eye: Vec3;
+  target: Vec3;
+  zoom: number;
+}
+
 interface Candidate {
   key: string;
   spec: InversionSceneSpec;
   poses: Pose4[];
+  view?: InteriorView;
+  /** Exterior camera overrides. */
+  eyeOffset?: Vec3;
+  zoom?: number;
 }
+
+/** A 3-sphere shell cut open by the complement of a large ball whose sphere
+ * passes `dist − cut` from the origin along `dir` (a 4D direction in the
+ * xyz hyperplane) — still an intersection of generalized balls. */
+function cutShellSeed4(
+  rho: number,
+  tau: number,
+  dir: Vec3,
+  dist: number,
+  cut: number,
+): GBall[] {
+  const l = Math.hypot(...dir);
+  return [
+    ...shellSeed(rho, tau, 4),
+    { c: [...dir.map((v) => (v / l) * dist), 0], r: cut, sign: -1 },
+  ];
+}
+
+const VAULT_DIR: Vec3 = [0.35, 1, 0.55];
+const VAULT_VIEW: InteriorView = {
+  eye: [0.15, 0.3, 0.1],
+  target: [-0.6, -1, 0.1],
+  zoom: 0.85,
+};
 
 const cell600 = cell600Centres();
 
@@ -372,6 +412,272 @@ const ROUND1: Candidate[] = [
   },
 ];
 
+/** The 600-cell's kiss slice: its equatorial icosidodecahedron (30 centres
+ * at `w = 0`) kisses the twelve centres at `w = 1/(2φ)` at height `1/(4φ)`,
+ * where both layers' caps are equal and touch inside the slice. */
+const W_KISS_600 = 1 / (4 * PHI);
+
+const POSES_R2: Pose4[] = [
+  { name: "ID", planes: [], w0: 0 },
+  { name: "W.08", planes: [], w0: 0.08 },
+  { name: "WKISS", planes: [], w0: W_KISS_600 },
+  { name: "W.25", planes: [], w0: 0.25 },
+  { name: "XW.2", planes: [["xw", 0.2]], w0: 0 },
+  {
+    name: "XW.4YW.3ZW.2",
+    planes: [
+      ["xw", 0.4],
+      ["yw", 0.3],
+      ["zw", 0.2],
+    ],
+    w0: 0,
+  },
+  { name: "XW.3W.1", planes: [["xw", 0.3]], w0: 0.1 },
+];
+
+/** The snub 24-cell: the 600-cell minus the 24-cell (axis units and
+ * `(±½)⁴`), 96 centres with 24 icosahedral holes. */
+const snub24 = cell600.slice(24);
+
+const ROUND2: Candidate[] = [
+  {
+    key: "C600K B.45 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: ballSeed(0.45, 4),
+      depth: 5,
+    },
+    poses: POSES_R2,
+  },
+  {
+    key: "C600K B.30 D6",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: ballSeed(0.3, 4),
+      depth: 6,
+    },
+    poses: POSES_R2,
+  },
+  {
+    key: "C600 SH1T.03 K.99 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: shellSeed(1, 0.03, 4),
+      depth: 5,
+    },
+    poses: POSES_R2,
+  },
+  {
+    key: "C600 SH.9T.03 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: shellSeed(0.9, 0.03, 4),
+      depth: 5,
+    },
+    poses: POSES_R2,
+  },
+  {
+    key: "C600 SH1.1T.03 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: shellSeed(1.1, 0.03, 4),
+      depth: 5,
+    },
+    poses: POSES_R2,
+  },
+  {
+    key: "VAULT C600 SH1T.04 D4",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.97),
+      seed: cutShellSeed4(1, 0.04, VAULT_DIR, 10.25, 10),
+      depth: 4,
+    },
+    poses: POSES_R2,
+    view: VAULT_VIEW,
+  },
+  {
+    key: "VAULT C600K SH1T.04 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.995),
+      seed: cutShellSeed4(1, 0.04, VAULT_DIR, 10.25, 10),
+      depth: 5,
+    },
+    poses: POSES_R2,
+    view: VAULT_VIEW,
+  },
+  {
+    key: "VAULT C24 SH1T.05 D5",
+    spec: {
+      dim: 4,
+      gens: cell24(1, 0.49),
+      seed: cutShellSeed4(1, 0.05, VAULT_DIR, 10.25, 10),
+      depth: 5,
+    },
+    poses: POSES_R1,
+    view: VAULT_VIEW,
+  },
+  {
+    key: "SNUB24 B.45 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(snub24, 0.99),
+      seed: ballSeed(0.45, 4),
+      depth: 5,
+    },
+    poses: POSES_R2,
+  },
+  {
+    key: "SNUB24 SH1T.03 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(snub24, 0.99),
+      seed: shellSeed(1, 0.03, 4),
+      depth: 5,
+    },
+    poses: POSES_R2,
+  },
+];
+
+/** Near-identity poses: the 600-cell's equatorial slice is a passive
+ * icosidodecahedral lace cage, and its nearest off-slice layer is TANGENT to
+ * it, so the first genuinely 4D copies appear at the smallest offsets. */
+const POSES_LACE: Pose4[] = [
+  { name: "ID", planes: [], w0: 0 },
+  { name: "W.03", planes: [], w0: 0.03 },
+  { name: "W.06", planes: [], w0: 0.06 },
+  { name: "W.10", planes: [], w0: 0.1 },
+  { name: "XW.08", planes: [["xw", 0.08]], w0: 0 },
+  { name: "XW.15", planes: [["xw", 0.15]], w0: 0 },
+  {
+    name: "XW.1YW.07ZW.05",
+    planes: [
+      ["xw", 0.1],
+      ["yw", 0.07],
+      ["zw", 0.05],
+    ],
+    w0: 0,
+  },
+  { name: "XW.1W.04", planes: [["xw", 0.1]], w0: 0.04 },
+];
+
+const POSES_SHELL: Pose4[] = [
+  { name: "ID", planes: [], w0: 0 },
+  { name: "W.08", planes: [], w0: 0.08 },
+  { name: "WKISS", planes: [], w0: W_KISS_600 },
+  { name: "XW.2", planes: [["xw", 0.2]], w0: 0 },
+  {
+    name: "XW.4YW.3ZW.2",
+    planes: [
+      ["xw", 0.4],
+      ["yw", 0.3],
+      ["zw", 0.2],
+    ],
+    w0: 0,
+  },
+  { name: "XW.3W.1", planes: [["xw", 0.3]], w0: 0.1 },
+];
+
+/** Interior views lit at a grazing angle. The gate's vault target faced the
+ * light head-on (inward normal · light ≈ 0.9) and washed the 600-cell's
+ * small windows out; these look at wall points whose inward normal meets the
+ * fixed light at ~0.5 (A, from near the centre) and ~0.7 (B, close to the
+ * wall), away from the cut. */
+const VAULT_A: InteriorView = {
+  eye: [0.35, -0.05, 0.06],
+  target: [-0.99, 0.15, -0.18],
+  zoom: 0.8,
+};
+const VAULT_B: InteriorView = {
+  eye: [-0.21, -0.41, 0.19],
+  target: [-0.42, -0.82, 0.38],
+  zoom: 0.85,
+};
+
+const ROUND3: Candidate[] = [
+  {
+    key: "LACE600 B.20 D7",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.995),
+      seed: ballSeed(0.2, 4),
+      depth: 7,
+    },
+    poses: POSES_LACE,
+  },
+  {
+    key: "LACE600 B.30 D6",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.995),
+      seed: ballSeed(0.3, 4),
+      depth: 6,
+    },
+    poses: POSES_LACE,
+  },
+  {
+    key: "SHIN600 SH.9T.03 D6",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: shellSeed(0.9, 0.03, 4),
+      depth: 6,
+    },
+    poses: POSES_SHELL,
+    eyeOffset: [0.8, 0.6, 0.95],
+  },
+  {
+    key: "SHOUT600 SH1.1T.03 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: shellSeed(1.1, 0.03, 4),
+      depth: 5,
+    },
+    poses: POSES_SHELL,
+    eyeOffset: [0.8, 0.6, 0.95],
+  },
+  {
+    key: "VA600 SH1T.04 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: cutShellSeed4(1, 0.04, VAULT_DIR, 10.25, 10),
+      depth: 5,
+    },
+    poses: POSES_SHELL,
+    view: VAULT_A,
+  },
+  {
+    key: "VB600 SH1T.04 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: cutShellSeed4(1, 0.04, VAULT_DIR, 10.25, 10),
+      depth: 5,
+    },
+    poses: POSES_SHELL,
+    view: VAULT_B,
+  },
+  {
+    key: "VB600 SH.9T.04 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: cutShellSeed4(0.9, 0.04, VAULT_DIR, 10.25, 10),
+      depth: 5,
+    },
+    poses: POSES_SHELL,
+    view: VAULT_B,
+  },
+];
+
 // ------------------------------------------------------------ measurement
 
 interface PoseResult {
@@ -383,6 +689,16 @@ interface PoseResult {
   sub: number;
   iou0: number;
   contain0: number;
+  /** Share of HIT pixels whose surface point folds through >= 1 inversion.
+   * The cloud columns are volume-weighted and read ~0 for lace, which is
+   * all surface and no volume; these are the image-weighted twins. */
+  copyPx: number;
+  /** Of those copy pixels, the share whose fold word uses an off-slice
+   * centre — the pixels no 3D sub-arrangement can have drawn. */
+  offPx: number;
+  /** Percent of pixels whose colour differs (any channel > 24/255) from the
+   * explicit 3D sub-arrangement rendered through the same camera. */
+  subDiff: number;
 }
 
 function cloud3(R: number): Float64Array {
@@ -440,14 +756,17 @@ function measureCandidate(cand: Candidate, size: number) {
   const scene = buildInversionScene(cand.spec);
   const scratch = makeFoldScratch(scene);
   const lifts = cand.poses.map((p) => lift4(p.planes, p.w0));
-  const reaches = cand.poses.map(
-    (_, i) =>
-      sampleSetExtent(
-        (p) => inversionOrbitContains(scene, lifts[i](p), scratch),
-        { fillRadius: scene.boundRadius, points: FRAME_POINTS },
-      ).reachAbs,
+  const reaches = cand.poses.map((_, i) =>
+    cand.view
+      ? 0
+      : sampleSetExtent(
+          (p) => inversionOrbitContains(scene, lifts[i](p), scratch),
+          { fillRadius: scene.boundRadius, points: FRAME_POINTS },
+        ).reachAbs,
   );
-  const R = Math.max(0.2, Math.max(...reaches) * 1.06);
+  const R = cand.view
+    ? scene.boundRadius
+    : Math.max(0.2, Math.max(...reaches) * 1.06);
   const cloud = cloud3(R);
   const masks: Uint8Array[] = [];
   const copyMasks: Uint8Array[] = [];
@@ -501,16 +820,83 @@ function measureCandidate(cand: Candidate, size: number) {
     } catch {
       // A sliced seed through an in-plane centre: no 3D twin to compare.
     }
-    const preview: PreviewScene = {
-      de: (p) => estimateInversionDistance(scene, lifts[i](p), scratch),
-      boundingRadius: R,
-      stepScale: 1,
-      eyeOffset: EYE_OFFSET,
-      zoom: ZOOM,
+    const camera = (
+      de: (p: Vec3) => number,
+      collect: boolean,
+    ): PreviewScene => {
+      const preview: PreviewScene = {
+        de,
+        boundingRadius: R,
+        stepScale: 1,
+        eyeOffset: cand.eyeOffset ?? EYE_OFFSET,
+        zoom: cand.zoom ?? ZOOM,
+        collect,
+      };
+      if (cand.view) {
+        preview.eye = cand.view.eye;
+        preview.target = cand.view.target;
+        preview.boundingCenter = [0, 0, 0];
+        preview.zoom = cand.view.zoom;
+        preview.shadow = false;
+        preview.fog = false;
+      }
+      return preview;
     };
+    const stats = renderPreview(
+      camera(
+        (p) => estimateInversionDistance(scene, lifts[i](p), scratch),
+        true,
+      ),
+      size,
+    );
+    let hitPx = 0;
+    let copyPx = 0;
+    let offPx = 0;
+    for (let px = 0; px < size * size; px++) {
+      if (stats.status![px] !== PREVIEW_HIT) continue;
+      hitPx++;
+      p3[0] = stats.hitPos![px * 3];
+      p3[1] = stats.hitPos![px * 3 + 1];
+      p3[2] = stats.hitPos![px * 3 + 2];
+      const f = foldQuery(scene, lifts[i](p3), scratch);
+      if (f.k === 0) continue;
+      copyPx++;
+      for (let t = 0; t < f.k; t++) {
+        if (offPlane[f.word[t]]) {
+          offPx++;
+          break;
+        }
+      }
+    }
+    let subDiff = NaN;
+    try {
+      if (subSpec) {
+        const s3 = buildInversionScene(subSpec);
+        const sc3 = makeFoldScratch(s3);
+        const twin = renderPreview(
+          camera((p) => estimateInversionDistance(s3, p, sc3), false),
+          size,
+        );
+        let differ = 0;
+        for (let px = 0; px < size * size; px++) {
+          for (let c = 0; c < 3; c++) {
+            if (Math.abs(twin.rgb[px * 3 + c] - stats.rgb[px * 3 + c]) > 24) {
+              differ++;
+              break;
+            }
+          }
+        }
+        subDiff = (100 * differ) / (size * size);
+      }
+    } catch {
+      // No 3D twin (sliced seed through an in-plane centre).
+    }
     return {
       pose,
-      stats: renderPreview(preview, size),
+      stats,
+      copyPx: hitPx > 0 ? copyPx / hitPx : 0,
+      offPx: copyPx > 0 ? offPx / copyPx : 0,
+      subDiff,
       fill: (100 * members) / CLOUD_POINTS,
       copyShare: members > 0 ? copies / members : 0,
       off: copies > 0 ? offCopies / copies : 0,
@@ -577,14 +963,16 @@ function runRound(round: string, candidates: Candidate[]): void {
           `S${(r.stats.steps / px).toFixed(1)} ${r.stats.ms}ms  ` +
           `fill ${r.fill.toFixed(2)}% copies ${r.copyShare.toFixed(2)} ` +
           `off ${r.off.toFixed(2)} sub ${r.sub.toFixed(3)} ` +
-          `I0 ${r.iou0.toFixed(2)} K0 ${r.contain0.toFixed(2)}`,
+          `I0 ${r.iou0.toFixed(2)} K0 ${r.contain0.toFixed(2)}  ` +
+          `px: copies ${r.copyPx.toFixed(2)} off ${r.offPx.toFixed(2)} ` +
+          `vs3D ${r.subDiff.toFixed(1)}%`,
       );
       panels.push({
         stats: r.stats,
         lines: [
           `${cand.key.split(" ")[0]} ${r.pose.name}`,
-          `H${pct(r.stats.hits, SIZE)} O${r.off.toFixed(2).slice(1)} ` +
-            `S${Number.isNaN(r.sub) ? "-" : r.sub.toFixed(2).replace(/^0/, "")} ` +
+          `H${pct(r.stats.hits, SIZE)} O${r.offPx.toFixed(2).replace(/^0/, "")} ` +
+            `D${Number.isNaN(r.subDiff) ? "-" : r.subDiff.toFixed(0)} ` +
             `K${r.contain0.toFixed(2).replace(/^0/, "")}`,
         ],
       });
@@ -603,8 +991,25 @@ function runRound(round: string, candidates: Candidate[]): void {
   );
 }
 
+const ROUND = process.env.SI4_ROUND;
+
 describe("native 4D sphere-inversion beauty search", () => {
-  it("round 1: arrangement families under one pose sequence", () => {
-    runRound("r1", ROUND1);
-  });
+  it.runIf(!ROUND || ROUND === "r1")(
+    "round 1: arrangement families under one pose sequence",
+    () => {
+      runRound("r1", ROUND1);
+    },
+  );
+  it.runIf(!ROUND || ROUND === "r2")(
+    "round 2: the 600-cell's seeds, kiss slices and interior vaults",
+    () => {
+      runRound("r2", ROUND2);
+    },
+  );
+  it.runIf(!ROUND || ROUND === "r3")(
+    "round 3: 600-cell lace near the equatorial slice, close shells, lit vaults",
+    () => {
+      runRound("r3", ROUND3);
+    },
+  );
 });
