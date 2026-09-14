@@ -73,14 +73,14 @@ definition, stopping rule and remainder argument before it could be proposed.
 
 ### Defined outcomes
 
-| Situation                                           | Outcome                                                                                                                                       |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fold reaches `F` within `D` inversions              | Member iff the folded point is in `K ∩ F`; distance is the transported bound below.                                                           |
-| Budget spent while still inside a ball `B_i`        | NOT a member of `O_D`; the bound drops `B_i`'s terms (nothing of `O_D` lies there) and stays positive.                                        |
-| Query within `1e-12·r` of a generator centre (pole) | Distance 0, non-member. The bound also decays toward centres (about `                                                                         | x − c | /2`), so a ray aimed exactly at one creeps. No panel showed a pole artefact. |
-| Tangent generators                                  | Valid. The depth-2 gap terms vanish at the tangency points only (cusps); measured 0% exhaustion at cube8 kissing, depth 16.                   |
-| Seed sphere through a generator centre              | Refused at build (plane image).                                                                                                               |
-| Numerical limits                                    | f64 throughout. `inversionDistanceLowerBound` carries its `1 + 2^-20` margin. No f32 argument exists yet; that belongs to the shader scoping. |
+| Situation                                           | Outcome                                                                                                                                                                                    |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Fold reaches `F` within `D` inversions              | Member iff the folded point is in `K ∩ F`; distance is the transported bound below.                                                                                                        |
+| Budget spent while still inside a ball `B_i`        | NOT a member of `O_D`; the bound drops `B_i`'s terms (nothing of `O_D` lies there) and stays positive.                                                                                     |
+| Query within `1e-12·r` of a generator centre (pole) | Distance 0, non-member. The bound also decays toward centres (to about half the query's distance from that centre), so a ray aimed exactly at one creeps. No panel showed a pole artefact. |
+| Tangent generators                                  | Valid. The depth-2 gap terms vanish at the tangency points only (cusps); measured 0% exhaustion at cube8 kissing, depth 16.                                                                |
+| Seed sphere through a generator centre              | Refused at build (plane image).                                                                                                                                                            |
+| Numerical limits                                    | f64 throughout. `inversionDistanceLowerBound` carries its `1 + 2^-20` margin. No f32 argument exists yet; that belongs to the shader scoping.                                              |
 
 ## Representation verdict: a dedicated estimator is required
 
