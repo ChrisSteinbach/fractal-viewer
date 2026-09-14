@@ -15,10 +15,17 @@
  * This inherits the point estimator's approximation; it does not certify its
  * hit predicate or make a finite chaos cloud a membership oracle.
  *
- * Work-limit exhaustion is a separate result and NEVER a hit or a miss. A
- * production port would need bounded continuation for primary and shading
- * queries, or evidence that an admitted domain cannot reach that limit.
- * No existing slab refusal is changed by this sheet.
+ * Work-limit exhaustion is a separate result and NEVER a hit or a miss.
+ * The SHIPPED nonlinear answer is this certificate with the subdivision
+ * FIXED (`SLAB_COVER_PIECES` pieces): a complete cover of any finite count
+ * is sound, so a fixed count trades accuracy for bounded, suspension-free
+ * work — it cannot overstate the distance, it can only miss detail the
+ * adaptive tolerance would have resolved. The COVER arm measures the
+ * public entry itself; FIXEDk arms measure the count curve that chose 16.
+ * Tiled sessions still refuse a slab (the tiling child's own work), and
+ * the single-query chord enclosure this sheet helped refute is recorded in
+ * `docs/surface-slice-thickness.md` — hit masks at 97-100% of the BALL
+ * arm's with adaptive IoU 0.33-0.69, i.e. the whole-slab dilation again.
  *
  * Run:
  * npx vitest run --config scripts/vitest.harness.config.ts scripts/slab-adaptive.harness.ts
@@ -37,6 +44,7 @@ import {
   estimateDistance4Refined,
   deHasFolds4,
   slabExact4,
+  SLAB_COVER_PIECES,
 } from "../src/fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../src/fractal/surface-de-4d";
 import { estimateDistance4RefinedTiled } from "../src/fractal/tiling-de";
@@ -478,15 +486,48 @@ describe("adaptive continuous slab experiment", () => {
           throw new Error(`${fixture.name}: incomplete slab query`);
         return result.lower;
       };
-      const arms = ["POINT", "BALL", "ADAPTIVE"];
+      // COVER is the SHIPPED nonlinear path (the public entry's bounded
+      // midpoint cover) and has no tiled counterpart yet: the tiling + slab
+      // refusal still stands, so tiled fixtures get POINT/BALL/ADAPTIVE
+      // plus SPLIT when exact. FIXEDk is the same certificate at a chosen
+      // piece count — a COMPLETE cover, so it is valid for every k (a cap
+      // is an accuracy, not a correctness, limitation).
+      const arms = fixture.tiled
+        ? ["POINT", "BALL", "ADAPTIVE"]
+        : [
+            "POINT",
+            "BALL",
+            "ADAPTIVE",
+            "COVER",
+            "FIXED4",
+            "FIXED8",
+            "FIXED16",
+            "FIXED32",
+          ];
       if (slabExact4(de)) arms.push(fixture.tiled ? "SPLIT" : "SEGMENT");
       const local = new Map<string, PanelStats>();
       for (const arm of arms) {
         const started = counts.length;
         const distance = (p: Vec3) => {
           const q = lift(p, w0);
-          if (arm === "SEGMENT") {
-            counts.push(1);
+          if (arm.startsWith("FIXED")) {
+            const k = Number(arm.slice(5));
+            const halfPiece = halfW / k;
+            let bound = Infinity;
+            for (let i = 0; i < k; i++) {
+              const s = -1 + (2 * i + 1) / k;
+              const d = Math.max(0, point(lift(p, w0 + s * halfW)) - halfPiece);
+              if (d < bound) bound = d;
+            }
+            counts.push(k);
+            return bound;
+          }
+          if (arm === "SEGMENT" || arm === "COVER") {
+            // For a slabExact4 system the two spell the same call (COVER
+            // must land bit-identically on SEGMENT there); for a nonlinear
+            // one COVER is the public entry's midpoint cover, and its cost
+            // is the piece count of point descents.
+            counts.push(slabExact4(de) ? 1 : SLAB_COVER_PIECES);
             return estimateDistance4Refined(de, q, 0, extent);
           }
           if (arm === "SPLIT") {
@@ -575,27 +616,61 @@ describe("adaptive continuous slab experiment", () => {
           ],
         });
       }
+      const iou = (a: PanelStats, b: PanelStats): number => {
+        let intersection = 0;
+        let union = 0;
+        for (let i = 0; i < size * size; i++) {
+          const hitA = a.status![i] === PREVIEW_HIT;
+          const hitB = b.status![i] === PREVIEW_HIT;
+          if (hitA && hitB) intersection++;
+          if (hitA || hitB) union++;
+        }
+        return intersection / Math.max(1, union);
+      };
       const reference = local.get("SEGMENT") ?? local.get("SPLIT");
       if (reference) {
-        for (const arm of ["POINT", "BALL", "ADAPTIVE"]) {
-          const comparison = local.get(arm)!;
-          let intersection = 0;
-          let union = 0;
-          for (let i = 0; i < size * size; i++) {
-            const a = reference.status![i] === PREVIEW_HIT;
-            const b = comparison.status![i] === PREVIEW_HIT;
-            if (a && b) intersection++;
-            if (a || b) union++;
-          }
+        for (const arm of ["POINT", "BALL", "ADAPTIVE", "COVER"]) {
+          const comparison = local.get(arm);
+          if (!comparison) continue;
           const comparisonRow = {
             name: fixture.name,
             arm,
-            segmentIoU: intersection / Math.max(1, union),
+            segmentIoU: iou(reference, comparison),
           };
           rows.push(comparisonRow);
           console.log(JSON.stringify(comparisonRow));
           if (arm === "ADAPTIVE")
             expect(comparisonRow.segmentIoU).toBeGreaterThan(0.7);
+        }
+      } else {
+        // The nonlinear rows' reference is the adaptive interval solver —
+        // the only accurate slab calculation available for them. This is
+        // the measurement every candidate lift exists to pass: how much
+        // structure survives, not merely that the panel draws.
+        for (const arm of [
+          "POINT",
+          "BALL",
+          "COVER",
+          "FIXED4",
+          "FIXED8",
+          "FIXED16",
+          "FIXED32",
+        ]) {
+          const comparison = local.get(arm);
+          if (!comparison) continue;
+          const comparisonRow = {
+            name: fixture.name,
+            arm,
+            adaptiveIoU: iou(local.get("ADAPTIVE")!, comparison),
+          };
+          rows.push(comparisonRow);
+          console.log(JSON.stringify(comparisonRow));
+          // The shipped cover's regression gate: a nonlinear slab must keep
+          // most of the adaptive reference's structure, not merely draw.
+          // Measured 0.837 (recursive spherefold) / 0.901 (mandelbox final)
+          // at 16 pieces; the floor leaves the thinner margin.
+          if (arm === "COVER")
+            expect(comparisonRow.adaptiveIoU).toBeGreaterThan(0.8);
         }
       }
     }
@@ -608,7 +683,7 @@ describe("adaptive continuous slab experiment", () => {
       JSON.stringify(rows, null, 2),
     );
     console.log(
-      writeLabeledContactSheet(panels, 4, `slab-adaptive/contact-${size}.png`),
+      writeLabeledContactSheet(panels, 5, `slab-adaptive/contact-${size}.png`),
     );
   });
 });
