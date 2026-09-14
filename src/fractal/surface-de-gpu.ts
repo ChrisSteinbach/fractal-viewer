@@ -50,7 +50,8 @@ import {
 } from "./swirl-lens";
 import {
   radiusBandInvRange,
-  slabExact4,
+  SLAB_COVER_PIECES,
+  slabSupported4,
   type SurfaceDE4,
 } from "./surface-de-4d";
 import {
@@ -1888,6 +1889,31 @@ export interface SurfaceGpuKernelOptions {
    * silently render the h=0 slice; the packer cannot see kernel
    * options, so keeping the two in sync is the caller's obligation. */
   slabExt?: boolean;
+  /** The bounded midpoint cover for systems {@link slabExt} cannot answer
+   * exactly (module doc, THE SLAB COVER): meaningful ONLY under the 4D
+   * DESCENT cores `"affine4"`/`"fold4"`, with `slabExt` on, and with no
+   * tiling (tiled 4D slabs are refused at pack, so the composition is
+   * refused here loudly rather than generated unsound). When set the
+   * composed descent (core, or core under its fold-final lens) is renamed
+   * `surfaceDECovered`/`surfaceDEProbeCovered` and generated as the POINT
+   * estimator behind an external view lift — the `slabExt: false` body
+   * verbatim — and an appended `surfaceDE` wrapper owns the public name:
+   * it seeds the lifted query and its half-extent, then evaluates
+   * {@link SLAB_COVER_PIECES} equally spaced midpoints of the segment and
+   * returns `max(0, min_i(DE(mid_i) - halfPiece))` — the CPU oracle's
+   * bound, whose complete-partition argument needs no Lipschitz field.
+   * The hit-info wrapper carries the same cover and attributes the hit to
+   * the value-argmin sample (`sStar = s_i`; the pattern `source4` from
+   * that sample's own hit info), so radius/pattern coloring rides the
+   * slab location that actually won. `sliceHalfW == 0` takes the point
+   * body — value-for-value the no-cover kernel. Absent or `false`
+   * reproduces today's source byte for byte. HOST CONTRACT: a
+   * `slabCover: true` pipeline must never be fed a slab for a system
+   * `slabExact4` accepts (use the exact `slabExt` kernel there), and a
+   * `slabExt: false` pipeline must never be fed `sliceHalfW > 0` — the
+   * packer cannot see kernel options, so keeping the two in sync is the
+   * caller's obligation. */
+  slabCover?: boolean;
   /** The 4D maps-load probe: move the per-map data from the
    * runtime-sized STORAGE buffer to a fixed-size UNIFORM array —
    * `var<uniform> maps: array<GpuMap4, `{@link
@@ -2692,11 +2718,15 @@ export interface SurfaceGpu4View {
  * renders without the lens (the struct ends at 432 and never reads it).
  * `src/app/gpu-bench/` already sizes off `byteLength`.
  *
- * A slab query (`sliceHalfW > 0`) THROWS for a system whose fold set
- * breaks segment exactness ({@link slabExact4}) — the kernel-side belt
- * for the CPU entries' own refusal (a spherefold branch takes a segment
- * to an ARC, so the certificate is unsound, not merely loose). The app
- * clamps `sliceHalfW` to 0 for such sessions.
+ * A slab query (`sliceHalfW > 0`) THROWS only where the CPU entries
+ * refuse one too ({@link slabSupported4}: a swirl final lens or a
+ * condensation shape — neither has a point cover in this coordinate
+ * frame). Spherefold/mandelbox systems are supported and passed: their
+ * slab is answered by the bounded midpoint cover, which the kernel for
+ * those systems must be generated with (`slabCover: true`; the exact
+ * `slabExt` kernel is for systems {@link slabExact4} accepts, and the
+ * callers' pairing is the host contract). The app clamps `sliceHalfW` to
+ * 0 for refused sessions.
  */
 export function packSurface4GpuParams(
   de: SurfaceDE4,
@@ -2737,11 +2767,11 @@ export function packSurface4GpuParams(
         "(the 4D oracle takes no footprint argument; hosts pass 0)",
     );
   }
-  if (view4.sliceHalfW > 0 && !slabExact4(de)) {
+  if (view4.sliceHalfW > 0 && !slabSupported4(de)) {
     throw new Error(
-      "surface-de-gpu: slab queries are unsound under spherefold/mandelbox " +
-        "branches (segment -> arc under inversion) — clamp sliceHalfW to 0 " +
-        "for this system (slabExact4)",
+      "surface-de-gpu: slab queries are refused for a swirl final lens or " +
+        "condensation shape — clamp sliceHalfW to 0 for this system " +
+        "(slabSupported4)",
     );
   }
   const lens4 = de.foldFinal;
@@ -4050,10 +4080,7 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // lens (hit-info bodies + probe composition) landed with the
   // fold-lens port's stage C.
   const lens = opts.lens ?? false;
-  const marchSample =
-    lens &&
-    ((mode === "march" && !!opts.balloon) ||
-      (mode === "eval" && !!opts.evalStride));
+  // Defined after the slabCover derivation below (the cover disables it).
   const lensPost = opts.lensPost ?? false;
   if (lensPost && !lens) {
     throw new Error(
@@ -4716,10 +4743,48 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // escape4 core is 4D and takes no slab at all (a forward orbit cannot
   // thread a segment), so it sits with the 3D cores here.
   const slabExt = core4 && !forward ? (opts.slabExt ?? true) : true;
+  // The nonlinear slab cover (option doc). Structurally inert outside the
+  // 4D descent cores, exactly like slabExt — but a 4D request must be
+  // coherent: the cover IS the slab answer, so it requires slabExt on and
+  // composes with the lens (the cover wraps the lens wrapper); 4D tiling
+  // refuses slabs at pack, so generating the composition would emit a
+  // kernel no packer can legally feed — loud beats silent.
+  const slabCover = core4 && !forward ? (opts.slabCover ?? false) : false;
+  if (slabCover && !slabExt) {
+    throw new Error(
+      "surface-de-gpu: slabCover requires slabExt — the cover is the slab " +
+        "answer under the 4D descent cores",
+    );
+  }
+  if (slabCover && tiling !== null) {
+    throw new Error(
+      "surface-de-gpu: slabCover+tiling is excluded — the fold of a " +
+        "segment is a bent polyline, tiled 4D sessions run slice 0",
+    );
+  }
+  // The covered descent/lens/hit-info bodies are generated as the POINT
+  // estimator (the slabExt:false text) behind an external lift the cover
+  // wrapper owns, so every sample is one point query on the lifted
+  // segment. The public wrapper keeps the slab-facing machinery.
+  const bodySlabExt = slabExt && !slabCover;
   // A 4D fold/lens wrapper must run before the core's affine-final prologue.
   // Both the lens and finite tiling therefore hoist the view lift and hand an
-  // already-lifted vec4 into the otherwise shared core body.
-  const core4ExternalLift = core4 && (lens || tiling !== null);
+  // already-lifted vec4 into the otherwise shared core body; the cover does
+  // the same (its wrapper seeds the lifted query and its half-extent once,
+  // then samples).
+  const core4ExternalLift = core4 && (lens || tiling !== null || slabCover);
+  // The march-sample path (the balloon's certified stride pair) is
+  // DISABLED under the cover: the sample twin is derived from the lens
+  // wrapper's own text, and the covered lens wrapper takes an
+  // already-lifted point — while the only stride/d-value divergence the
+  // pair exists for is the SWIRL lens, which the cover refuses
+  // (`slabSupported4`). A non-swirl lens's pair is `vec2f(surfaceDE(...))`
+  // in both lanes, so the cover loses nothing by marching its value.
+  const marchSample =
+    lens &&
+    !slabCover &&
+    ((mode === "march" && !!opts.balloon) ||
+      (mode === "eval" && !!opts.evalStride));
   // The maps-load probe (option doc). Same structural inertness
   // as slabExt — only the 4D descent cores ever consult it.
   const mapsUniform = core4 && !forward ? (opts.mapsUniform ?? false) : false;
@@ -5558,13 +5623,19 @@ ${pattern ? `  info.source4 = vec4f(q, 0.0);` : ""}
     arg: string,
     comment: string,
     slabExt: boolean,
-    lens: boolean,
+    externalLift: boolean,
   ): string =>
-    lens
-      ? `  // The lens wrapper lifted this query into the attractor frame and
+    externalLift
+      ? `${
+          slabCover && !lens
+            ? `  // The cover wrapper owns the view lift and hands this point body
+  // already-lifted attractor-frame samples (THE SLAB COVER): every call is
+  // a POINT query, so no half-extent is threaded here.`
+            : `  // The lens wrapper lifted this query into the attractor frame and
   // transported it through ONE inverse fold branch (its half-extent too,
   // under a slab), so the core opens on the 4D point it would
-  // otherwise derive. The affine final lens below is the packer's
+  // otherwise derive.`
+        } The affine final lens below is the packer's
   // IDENTITY under a foldFinal, left in place so the rest of this body
   // stays the no-lens body's own text.
   var q = qIn;
@@ -6132,7 +6203,7 @@ ${
 }  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
 ${emitterOnlyTrap}  info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
-${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));` : ""}
+${pattern && !lens && !slabCover ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));` : ""}
   return info;
 }`;
 
@@ -6512,7 +6583,7 @@ ${condensationHitFold("chQ", "chScale", "params.maxDepth", "condensationBest", "
 }  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
-${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));` : ""}
+${pattern && !lens && !slabCover ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));` : ""}
   return info;
 }`;
 
@@ -6923,21 +6994,26 @@ ${lensPost ? "  let pq = lensUnpost(p);\n" : ""}  let kind = u32(params.lensPara
   // skipping, and an identity-branch fallback so a fully pruned loop
   // still hands the core hit call a sane point.
   const lens4HitParams = tiling
-    ? slabExt
+    ? bodySlabExt
       ? "pFolded: vec4f, pFoldedExt: vec4f"
       : "pFolded: vec4f"
-    : "p: vec3f";
+    : slabCover
+      ? "qIn: vec4f"
+      : "p: vec3f";
   const lens4HitLiftText = tiling
-    ? slabExt
+    ? bodySlabExt
       ? `  let pq = pFolded;
   let segment = params.sliceHalfW > 0.0;
   var pExt = pFoldedExt;
 `
       : `  let pq = pFolded;
 `
-    : `  let pq = rotorInvApply4(vec4f(p, params.w0));
+    : slabCover
+      ? `  let pq = qIn;
+`
+      : `  let pq = rotorInvApply4(vec4f(p, params.w0));
 ${
-  slabExt
+  bodySlabExt
     ? `  let segment = params.sliceHalfW > 0.0;
   var pExt = vec4f(0.0);
   if (segment) {
@@ -6960,15 +7036,15 @@ ${lens4HitLiftText}${lensPost ? "  let pUnpost = lensUnpost4(pq);\n" : ""}  let 
     ) + params.lens4T;
 ${
   pattern
-    ? `    var hi = surfaceDEHitInfoCore(q, ${slabExt ? "vec4f(0.0), " : ""}li);
+    ? `    var hi = surfaceDEHitInfoCore(q, ${bodySlabExt ? "vec4f(0.0), " : ""}li);
     hi.source4 = q;
     return hi;`
-    : `    return surfaceDEHitInfoCore(q, ${slabExt ? "vec4f(0.0), " : ""}li);`
+    : `    return surfaceDEHitInfoCore(q, ${bodySlabExt ? "vec4f(0.0), " : ""}li);`
 }
   }
   let fr = foldRadiiOf(params.lens4Fold);
 ${
-  slabExt
+  bodySlabExt
     ? `  var eu = vec4f(0.0);
   if (segment) {
     eu = ${lensPost ? "lensUnpostLinear4(pExt)" : "pExt"} * params.lens4Params.y;
@@ -6992,7 +7068,7 @@ ${
     dot(params.lens4MR3, u),
   ) + params.lens4T;
 ${
-  slabExt
+  bodySlabExt
     ? `  var bestExt = vec4f(0.0);
   if (segment) {
     bestExt = vec4f(
@@ -7011,7 +7087,7 @@ ${
     dUp = max(u - fr.wall, vec4f(0.0));
     dDn = max(-fr.wall - u, vec4f(0.0));
 ${
-  slabExt
+  bodySlabExt
     ? `    if (segment) {
       let ae = abs(eu);
       dUp = max(dUp - ae, vec4f(0.0));
@@ -7064,7 +7140,7 @@ ${
     }
     var pre: vec4f;
 ${
-  slabExt
+  bodySlabExt
     ? `    var preExt = vec4f(0.0);
 `
     : ``
@@ -7088,7 +7164,7 @@ ${
         select(select(pre2.w, pre1.w, selW == 1u), pre0.w, selW == 0u),
       );
 ${
-  slabExt
+  bodySlabExt
     ? `      if (segment) {
         preExt = vec4f(
           select(-eu.x, eu.x, selX == 0u),
@@ -7139,7 +7215,7 @@ ${
       dot(params.lens4MR3, pre),
     ) + params.lens4T;
 ${
-  slabExt
+  bodySlabExt
     ? `    var qExt = vec4f(0.0);
     if (segment) {
       qExt = vec4f(
@@ -7153,7 +7229,7 @@ ${
     : ``
 }    let factor = absW * sfSigma * params.lens4Params.w;
 ${
-  slabExt
+  bodySlabExt
     ? `    let rq = segmentRadius4(q, qExt);
 `
     : `    let rq = length(q);
@@ -7161,13 +7237,13 @@ ${
 }    if (factor * (rq - params.boundingRadius) >= best) {
       continue;
     }
-    var term = factor * surfaceDECore(q, ${slabExt ? "qExt, " : ""}0.0, li);
+    var term = factor * surfaceDECore(q, ${bodySlabExt ? "qExt, " : ""}0.0, li);
     term = max(term, flr);
     if (term < best) {
       best = term;
       bestQ = q;
 ${
-  slabExt
+  bodySlabExt
     ? `      bestExt = qExt;
 `
     : ``
@@ -7175,7 +7251,7 @@ ${
   }
 ${
   pattern
-    ? slabExt
+    ? bodySlabExt
       ? `  // Pattern only: the fold-final source is the WINNING BRANCH TUPLE
   // (the frame oracle's bestQ + sStar * bestExt — the branch centre plus
   // the hit's place along the transported segment; inverse maps preserve
@@ -7188,7 +7264,7 @@ ${
       : `  var hi = surfaceDEHitInfoCore(bestQ, li);
   hi.source4 = bestQ;
   return hi;`
-    : `  return surfaceDEHitInfoCore(bestQ, ${slabExt ? "bestExt, " : ""}li);`
+    : `  return surfaceDEHitInfoCore(bestQ, ${bodySlabExt ? "bestExt, " : ""}li);`
 }
 }`;
 
@@ -7299,6 +7375,86 @@ ${
     return out;
   };
 
+  // THE SLAB COVER (option doc, THE SLAB COVER in the module doc): the
+  // value wrapper the nonlinear 4D slab query runs. The composed descent
+  // above it is the POINT estimator (renamed `surfaceDECovered`), so each
+  // sample is one point descent on the attractor-frame segment — the CPU
+  // oracle's `estimateDistance4SlabCover` term for term: N equally spaced
+  // midpoints, each certified `DE(mid) - halfPiece` by the triangle
+  // inequality over the point estimator's own distance-bound contract.
+  // A COMPLETE partition makes the bound sound at any N; the count is the
+  // measured accuracy/cost point (`SLAB_COVER_PIECES`). The public
+  // signature stays `(pIn, cutoff, li)` — the wrapper owns the view lift
+  // the covered body no longer does — so every outer composition
+  // (balloon) and the mode entries are untouched. Zero thickness takes
+  // the point body, value for value.
+  const coverFraction = 1 / SLAB_COVER_PIECES;
+  const coverValueWrapText = /* wgsl */ `// The nonlinear slab query's bounded midpoint cover
+// (surface-de-4d.ts's estimateDistance4SlabCover): ${SLAB_COVER_PIECES}
+// equally spaced piece midpoints on the lifted segment, each a POINT
+// descent into the body above certified by the triangle inequality
+// (\`DE(mid) - halfPiece\`) — sound for any piece count, since the cover
+// is a complete partition; ${SLAB_COVER_PIECES} is the measured working
+// point. \`cutoff > 0\` adds the piece radius to each inner query, so a
+// sample clearing \`cutoff + halfPiece\` proves the cover clears \`cutoff\`.
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  let q0 = rotorInvApply4(vec4f(pIn, params.w0));
+  if (params.sliceHalfW <= 0.0) {
+    return surfaceDECovered(q0, cutoff, li);
+  }
+  let e = rotorInvWCol4() * params.sliceHalfW;
+  let halfPiece = length(e) * ${coverFraction};
+  let innerCutoff = select(0.0, cutoff + halfPiece, cutoff > 0.0);
+  var bound = 1e30;
+  for (var i = 0u; i < ${SLAB_COVER_PIECES}u; i++) {
+    let s = -1.0 + (2.0 * f32(i) + 1.0) * ${coverFraction};
+    bound = min(bound, surfaceDECovered(q0 + s * e, innerCutoff, li) - halfPiece);
+  }
+  return max(bound, 0.0);
+}`;
+  const coverProbeWrapText = coverValueWrapText
+    .replace("fn surfaceDE(", "fn surfaceDEProbe(")
+    .replaceAll("surfaceDECovered(", "surfaceDEProbeCovered(");
+  // The cover's hit-info twin: the shading attribution has no distance to
+  // argmin on (SurfaceHitInfo is colors), so the winning sample is found
+  // with the POINT VALUE descent — the same min the value wrapper returns
+  // — and only that sample's hit info is built. sStar becomes the winning
+  // piece's parameter (the exact path's own read is the segment parameter
+  // it descended to), and the no-lens pattern source is the winning
+  // sample's final-applied attractor point, matching the exact body's
+  // `finalApply4(rotorInvApply4(…w0 + sStar*h))` line with s_i in place
+  // of its inner parameter. Under a fold-final lens the covered lens
+  // hit-info already resolved the winning branch tuple into source4; only
+  // sStar is overwritten then.
+  const coverHitInfoWrapText = /* wgsl */ `// The covered hit-info twin: attribute the hit to the VALUE-argmin
+// sample, so radius/pattern coloring rides the piece that actually won.
+fn surfaceDEHitInfo(pIn: vec3f, li: u32) -> SurfaceHitInfo {
+  let q0 = rotorInvApply4(vec4f(pIn, params.w0));
+  if (params.sliceHalfW <= 0.0) {
+    return surfaceDEHitInfoCovered(q0, li);
+  }
+  let e = rotorInvWCol4() * params.sliceHalfW;
+  var bestD = 1e30;
+  var bestI = 0u;
+  for (var i = 0u; i < ${SLAB_COVER_PIECES}u; i++) {
+    let s = -1.0 + (2.0 * f32(i) + 1.0) * ${coverFraction};
+    let d = surfaceDECovered(q0 + s * e, 0.0, li);
+    if (d < bestD) {
+      bestD = d;
+      bestI = i;
+    }
+  }
+  let sBest = -1.0 + (2.0 * f32(bestI) + 1.0) * ${coverFraction};
+  var hi = surfaceDEHitInfoCovered(q0 + sBest * e, li);
+  hi.sStar = sBest;${
+    pattern && !lens
+      ? `
+  hi.source4 = finalApply4(rotorInvApply4(vec4f(pIn, params.w0 + sBest * params.sliceHalfW)));`
+      : ""
+  }
+  return hi;
+}`;
+
   const rawCoreHitInfoText =
     core === "affine"
       ? affineHitInfoText
@@ -7309,9 +7465,9 @@ ${
           : core === "bulb"
             ? bulbHitInfoText
             : core === "affine4"
-              ? affine4HitInfoText(slabExt, core4ExternalLift)
+              ? affine4HitInfoText(bodySlabExt, core4ExternalLift)
               : core === "fold4"
-                ? fold4HitInfoText(slabExt, core4ExternalLift)
+                ? fold4HitInfoText(bodySlabExt, core4ExternalLift)
                 : foldHitInfoText;
   const coreHitInfoText = scheduleCoreSource(rawCoreHitInfoText, true);
   const lensedHitInfoText = lens
@@ -7324,6 +7480,14 @@ ${
 // core hit-info, like the value pair below.
 ${core4 ? lens4HitWrapText : lensHitWrapText}`
     : coreHitInfoText;
+  const coveredHitInfoText = slabCover
+    ? `${lensedHitInfoText.replace(
+        "fn surfaceDEHitInfo(",
+        "fn surfaceDEHitInfoCovered(",
+      )}
+
+${coverHitInfoWrapText}`
+    : lensedHitInfoText;
 
   // THE BALLOON WRAPPER (module doc): rename exactly one
   // PUBLIC definition one level out — under a lens the public names are
@@ -7453,7 +7617,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
       ? latticeTiling
         ? latticeTiledHitInfoText
         : finiteTiledHitInfoText
-      : lensedHitInfoText,
+      : coveredHitInfoText,
   );
 
   // The two LUT color sources whose NORMALIZER is dimension-specific
@@ -11408,7 +11572,7 @@ ${
 // shadow and AO light a hit the full-width march already certified, so
 // they ride a width-${probeWidth} frontier (width 1 = the greedy
 // descent). Same body as surfaceDE, renamed.
-${renameToProbe4(fold4DescentFnText(probeWidth, slabExt, core4ExternalLift))}`;
+${renameToProbe4(fold4DescentFnText(probeWidth, bodySlabExt, core4ExternalLift))}`;
 
   // The ESCAPE core: escape-de.ts's estimateEscapeDistance —
   // the forward fold orbit with the Buddhi/Rrrola scalar derivative,
@@ -11849,11 +12013,11 @@ ${bulbDescentText}`
               ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
 // the estimator the 4D GLSL tracer marches (surface-material-4d.ts), in
 // that mirror's f32 formulation. Fixed width 4.
-${affine4DescentText(slabExt, core4ExternalLift)}`
+${affine4DescentText(bodySlabExt, core4ExternalLift)}`
               : core === "fold4"
                 ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
 // view lift — the 4D fold-branch frontier, f32.
-${fold4DescentFnText(width, slabExt, core4ExternalLift)}${probe4DeFns}`
+${fold4DescentFnText(width, bodySlabExt, core4ExternalLift)}${probe4DeFns}`
                 : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
@@ -12104,16 +12268,18 @@ ${lensPost ? "  let p = lensUnpost(pIn);\n" : ""}  let kind = u32(params.lensPar
   // cutoff is never even computed. Swapping them would silently mirror a
   // different estimator than the oracle the bench pins against.
   const lens4Refined = core === "affine4";
-  const lens4CoreCall = `surfaceDECore(q, ${slabExt ? "qExt, " : ""}${
+  const lens4CoreCall = `surfaceDECore(q, ${bodySlabExt ? "qExt, " : ""}${
     lens4Refined ? "innerCutoff" : "0.0"
   }, li)`;
   const lens4WrapParams = tiling
-    ? slabExt
+    ? bodySlabExt
       ? "pFolded: vec4f, pFoldedExt: vec4f"
       : "pFolded: vec4f"
-    : "pIn: vec3f";
+    : slabCover
+      ? "qIn: vec4f"
+      : "pIn: vec3f";
   const lens4LiftText = tiling
-    ? slabExt
+    ? bodySlabExt
       ? `  // The tiling wrapper already lifted and folded the point before
   // this plot-time lens. Tiled 4D sessions pin sliceHalfW to zero, so the
   // transported extent is the explicit zero passed by that wrapper.
@@ -12125,12 +12291,18 @@ ${lensPost ? "  let p = lensUnpost(pIn);\n" : ""}  let kind = u32(params.lensPar
   // this plot-time lens.
   let p = pFolded;
 `
-    : `  // The cores' view lift, hoisted: ONE rotor apply for the whole sweep
+    : slabCover
+      ? `  // The cover wrapper owns the view lift and hands this point body
+  // already-lifted attractor-frame samples (THE SLAB COVER): every call is
+  // a POINT query, so the sweep carries no half-extent at all.
+  let p = qIn;
+`
+      : `  // The cores' view lift, hoisted: ONE rotor apply for the whole sweep
   // (and one half-extent seed under a slab), where the no-lens bodies do
   // it per call.
   let p = rotorInvApply4(vec4f(pIn, params.w0));
 ${
-  slabExt
+  bodySlabExt
     ? `  let segment = params.sliceHalfW > 0.0;
   var pExt = vec4f(0.0);
   if (segment) {
@@ -12141,7 +12313,7 @@ ${
 }`;
   const lens4WrapText = /* wgsl */ `fn surfaceDE(${lens4WrapParams}, cutoff: f32, li: u32) -> f32 {
 ${lens4LiftText}${
-    slabExt
+    bodySlabExt
       ? `  let visBound = segmentRadius4(p, pExt) - params.visRadius4;
 `
       : `  let visBound = length(p) - params.visRadius4;
@@ -12158,11 +12330,11 @@ ${lens4LiftText}${
       dot(params.lens4MR3, pre),
     ) + params.lens4T;
     let factor = absW * params.lens4Params.w / params.lens4Fold.y;
-${lens4Refined ? "    let innerCutoff = cutoff / factor;\n" : ""}    return max(factor * surfaceDECore(q, ${slabExt ? "vec4f(0.0), " : ""}${lens4Refined ? "innerCutoff" : "0.0"}, li), visBound);
+${lens4Refined ? "    let innerCutoff = cutoff / factor;\n" : ""}    return max(factor * surfaceDECore(q, ${bodySlabExt ? "vec4f(0.0), " : ""}${lens4Refined ? "innerCutoff" : "0.0"}, li), visBound);
   }
   let fr = foldRadiiOf(params.lens4Fold);
 ${
-  slabExt
+  bodySlabExt
     ? `  // u-space is a SCALAR multiple of world space, so the half-extent
   // scales with the point and stays a segment.
   var eu = vec4f(0.0);
@@ -12188,7 +12360,7 @@ ${
     dUp = max(u - fr.wall, vec4f(0.0));
     dDn = max(-fr.wall - u, vec4f(0.0));
 ${
-  slabExt
+  bodySlabExt
     ? `    // Per-axis segment relaxation, applied BEFORE any selector reads
     // them (the frontier body's argument verbatim): each per-axis
     // distance is 1-Lipschitz in its own axis, so relaxing it by |e_a|
@@ -12261,7 +12433,7 @@ ${
     }
     var pre: vec4f;
 ${
-  slabExt
+  bodySlabExt
     ? `    var preExt = vec4f(0.0);
 `
     : ``
@@ -12287,7 +12459,7 @@ ${
         select(select(pre2.w, pre1.w, selW == 1u), pre0.w, selW == 0u),
       );
 ${
-  slabExt
+  bodySlabExt
     ? `      // The branch's own derivative is diag(+-1): the in-box preimage
       // is u (+1), both folded ones are +-2 - u (-1). A reflection takes
       // a segment to a segment, so the half-extent picks up those signs.
@@ -12341,7 +12513,7 @@ ${
       dot(params.lens4MR3, pre),
     ) + params.lens4T;
 ${
-  slabExt
+  bodySlabExt
     ? `    // The lens's AFFINE part carries the branch half-extent by its
     // LINEAR part alone (a translation slides a segment's centre, never
     // its extent).
@@ -12358,7 +12530,7 @@ ${
     : ``
 }    let factor = absW * sfSigma * params.lens4Params.w;
 ${
-  slabExt
+  bodySlabExt
     ? `    let rq = segmentRadius4(q, qExt);
 `
     : `    let rq = length(q);
@@ -12428,6 +12600,26 @@ ${core4 ? lens4WrapText : lensWrapText}${
 ${core4 ? probeLens4WrapText : probeLensWrapText}`
       }`
     : descentBlock;
+  // THE SLAB COVER's outer composition: the composed point body (core,
+  // or core under its lens) renames one level out and the cover wrapper
+  // owns the public `surfaceDE`/`surfaceDEProbe`. Tiling is refused with
+  // the cover at codegen, so this is the LAST wrapper before the balloon's
+  // union — which is the CPU's order (the balloon oracle composes over the
+  // public cover entry).
+  const coveredBodyBlock = slabCover
+    ? `${lensedBodyBlock
+        .replace("fn surfaceDE(", "fn surfaceDECovered(")
+        .replace("fn surfaceDEProbe(", "fn surfaceDEProbeCovered(")}
+
+${coverValueWrapText}${
+        probeWidth === null
+          ? ""
+          : `
+
+// The probe taps' own covered twin — same text, renamed.
+${coverProbeWrapText}`
+      }`
+    : lensedBodyBlock;
 
   // THE BALLOON WRAPPER (module doc): the union DE over the
   // composed variant's public value descent, derived by .replace from
@@ -12601,7 +12793,7 @@ ${tilingProbeWrapText}`
       ? latticeTiling
         ? latticeTiledBodyBlock
         : finiteTiledBodyBlock
-      : lensedBodyBlock,
+      : coveredBodyBlock,
   );
 
   // A march sample carries (certified stride, legacy acceptance distance).

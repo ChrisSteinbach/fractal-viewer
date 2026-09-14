@@ -105,7 +105,11 @@ import {
   SURFACE_LENS_SWIRL,
 } from "./surface-de";
 import type { SurfaceDE } from "./surface-de";
-import { buildSurfaceDE4, radiusBandInvRange } from "./surface-de-4d";
+import {
+  buildSurfaceDE4,
+  radiusBandInvRange,
+  SLAB_COVER_PIECES,
+} from "./surface-de-4d";
 import type { SurfaceDE4 } from "./surface-de-4d";
 import {
   CLASSIC_SURFACE_FINISH,
@@ -4796,6 +4800,206 @@ describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, the register-pr
   });
 });
 
+describe("surfaceDeKernelWgsl nonlinear slab cover (slabCover)", () => {
+  it("defaults off: omitted and explicit false produce identical source for every core and mode", () => {
+    for (const core of [
+      "fold",
+      "affine",
+      "escape",
+      "affine4",
+      "fold4",
+      "bulb",
+      "escape4",
+    ] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const omitted = surfaceDeKernelWgsl(kernelOpts({ core, mode }));
+        const explicit = surfaceDeKernelWgsl(
+          kernelOpts({ core, mode, slabCover: false }),
+        );
+        expect(explicit).toBe(omitted);
+      }
+    }
+  });
+
+  it("is structurally inert outside the 4D descent cores, but changes both of them", () => {
+    for (const core of [
+      "fold",
+      "affine",
+      "escape",
+      "bulb",
+      "escape4",
+    ] as const) {
+      const base = surfaceDeKernelWgsl(kernelOpts({ core }));
+      const withCover = surfaceDeKernelWgsl(
+        kernelOpts({ core, slabCover: true }),
+      );
+      expect(withCover).toBe(base);
+    }
+    for (const core of ["affine4", "fold4"] as const) {
+      const base = surfaceDeKernelWgsl(kernelOpts({ core }));
+      const withCover = surfaceDeKernelWgsl(
+        kernelOpts({ core, slabCover: true }),
+      );
+      expect(withCover).not.toBe(base);
+    }
+  });
+
+  it("requires slabExt — a cover kernel with the ext machinery off is a contradiction, not a configuration", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      expect(() =>
+        surfaceDeKernelWgsl(
+          kernelOpts({ core, slabExt: false, slabCover: true }),
+        ),
+      ).toThrow(/slabCover requires slabExt/);
+    }
+  });
+
+  it("refuses the tiling composition loudly — tiled 4D slabs are refused at pack, so no legal pipeline could be fed one", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          core: "affine4",
+          slabCover: true,
+          tiling: resolveTiling({ group: "a4" }),
+        }),
+      ),
+    ).toThrow(/slabCover\+tiling/);
+  });
+
+  it("renames the composed body and owns the public name with a complete midpoint cover", () => {
+    expect(SLAB_COVER_PIECES).toBe(16);
+    for (const core of ["affine4", "fold4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const source = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, slabCover: true }),
+        );
+        // The composed body is the POINT estimator, behind an external
+        // lift the wrapper owns.
+        expect(source).toContain(
+          "fn surfaceDECovered(qIn: vec4f, cutoff: f32, li: u32) -> f32 {",
+        );
+        expect(source).toContain(
+          "fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {",
+        );
+        expect(source).toContain(
+          "let q0 = rotorInvApply4(vec4f(pIn, params.w0));",
+        );
+        expect(source).toContain("return surfaceDECovered(q0, cutoff, li);");
+        expect(source).toContain(
+          "let e = rotorInvWCol4() * params.sliceHalfW;",
+        );
+        expect(source).toContain("let halfPiece = length(e) * 0.0625;");
+        expect(source).toContain(
+          "let innerCutoff = select(0.0, cutoff + halfPiece, cutoff > 0.0);",
+        );
+        expect(source).toContain("for (var i = 0u; i < 16u; i++) {");
+        expect(source).toContain(
+          "bound = min(bound, surfaceDECovered(q0 + s * e, innerCutoff, li) - halfPiece);",
+        );
+        expect(source).toContain("return max(bound, 0.0);");
+      }
+    }
+  });
+
+  it("keeps the covered descent free of the half-extent registers — every sample is a point query", () => {
+    const covered = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", slabCover: true }),
+    );
+    const noslab = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", slabExt: false }),
+    );
+    expect(covered).not.toContain("aExt");
+    expect(covered).not.toContain("imgExt");
+    expect(covered).not.toContain("qExt");
+    // The covered body IS the noslab body behind a renamed declaration
+    // plus the external lift, so the slab helpers survive declared-only.
+    expect(covered).toContain("fn segmentRadius4(");
+    expect(noslab).toContain("fn segmentRadius4(");
+  });
+
+  it("attributes the hit at the VALUE-argmin sample: sStar becomes s_i, and the no-lens pattern source is recomputed there", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      const source = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, slabCover: true, pattern: true }),
+      );
+      expect(source).toContain(
+        "fn surfaceDEHitInfoCovered(qIn: vec4f, li: u32) -> SurfaceHitInfo {",
+      );
+      // The wrapper's argmin runs the POINT VALUE descent, then asks the
+      // covered hit-info exactly once at the winning sample.
+      expect(source).toContain(
+        "let d = surfaceDECovered(q0 + s * e, 0.0, li);",
+      );
+      expect(source).toContain("hi.sStar = sBest;");
+      expect(source).toContain(
+        "hi.source4 = finalApply4(rotorInvApply4(vec4f(pIn, params.w0 + sBest * params.sliceHalfW)));",
+      );
+    }
+  });
+
+  it("overwrites sStar with the piece parameter under a fold-final lens too, keeping the covered lens's own branch source", () => {
+    const source = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold4",
+        width: 12,
+        slabCover: true,
+        lens: true,
+        pattern: true,
+      }),
+    );
+    expect(source).toContain(
+      "fn surfaceDECovered(qIn: vec4f, cutoff: f32, li: u32) -> f32 {",
+    );
+    expect(source).toContain("let p = qIn;");
+    expect(source).not.toContain("pExt");
+    expect(source).toContain("hi.sStar = sBest;");
+    // The covered lens hit wrapper resolved the winning branch tuple into
+    // source4; the cover wrapper must NOT clobber it with a world point.
+    expect(source).not.toContain(
+      "hi.source4 = finalApply4(rotorInvApply4(vec4f(pIn,",
+    );
+    expect(source).toContain("hi.source4 = bestQ;");
+  });
+
+  it("gives the fold4 shade probe its own covered twin — one text, renamed", () => {
+    const source = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold4",
+        width: 12,
+        shadeDeWidth: 1,
+        slabCover: true,
+      }),
+    );
+    expect(source).toContain("fn surfaceDEProbeCovered(");
+    expect(source).toContain(
+      "fn surfaceDEProbe(pIn: vec3f, cutoff: f32, li: u32) -> f32 {",
+    );
+    expect(source).toContain(
+      "surfaceDEProbeCovered(q0 + s * e, innerCutoff, li)",
+    );
+    expect(source).toContain("return surfaceDEProbeCovered(q0, cutoff, li);");
+  });
+
+  it("balances every brace under every cover composition, lens included", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        for (const lens of [false, true]) {
+          for (const pattern of [false, true]) {
+            const source = surfaceDeKernelWgsl(
+              kernelOpts({ mode, core, slabCover: true, lens, pattern }),
+            );
+            const opens = [...source.matchAll(/\{/g)].length;
+            const closes = [...source.matchAll(/\}/g)].length;
+            expect(closes).toBe(opens);
+          }
+        }
+      }
+    }
+  });
+});
+
 describe("surfaceDeKernelWgsl 4D maps address space (mapsUniform, the maps-load probe)", () => {
   const STORAGE_LINE =
     "@group(0) @binding(1) var<storage, read> maps: array<GpuMap4>;";
@@ -6064,16 +6268,19 @@ describe("packSurface4GpuParams fold-final lens block", () => {
     expect(view.getFloat32(424, true)).toBe(1);
   });
 
-  it("refuses a slab query for a system slabExact4 rejects, and allows one for a boxfold-only system", () => {
-    // A spherefold branch takes a segment to an ARC, so the segment
-    // certificate is unsound (not merely loose) — the CPU entries throw
-    // and the app clamps sliceHalfW; this is the kernel-side belt.
+  it("packs a slab query for every slabSupported4 system — spherefold/mandelbox are the cover's, boxfold-only the exact segment's — and refuses only swirl/condensation", () => {
+    // A spherefold branch takes a segment to an ARC, so the exact segment
+    // certificate is unsound (not merely loose); those systems are
+    // answered by the bounded midpoint cover and pack freely (the kernel
+    // for them is generated with `slabCover: true`). Only a swirl final
+    // lens (its inverse bends the segment with no point cover in this
+    // frame) and condensation refuse, exactly as the CPU entries do.
     const spherefold = buildSurfaceDE4(fourDSpherefoldSystemTransforms());
     expect(() =>
       packSurface4GpuParams(spherefold, view4({ sliceHalfW: 0.05 }), {
         itemCount: 1,
       }),
-    ).toThrow(/slabExact4/);
+    ).not.toThrow();
     // Zero thickness is the point query, admissible for any system.
     expect(() =>
       packSurface4GpuParams(spherefold, view4({ sliceHalfW: 0 }), {
@@ -6093,6 +6300,26 @@ describe("packSurface4GpuParams fold-final lens block", () => {
     );
     expect(() =>
       packSurface4GpuParams(boxfoldLens, view4({ sliceHalfW: 0.05 }), {
+        itemCount: 1,
+      }),
+    ).not.toThrow();
+
+    const swirlFinal: Transform = {
+      id: 99,
+      position: [0.02, -0.03, 0.01],
+      rotation: [0.1, -0.2, 0.3],
+      scale: [0.1, 0.1, 0.1],
+      variations: [{ type: "swirl", weight: -2 }],
+      w: { position: 0.025, scale: 0.1, rotation: { xw: 0.2 } },
+    };
+    const swirlLens = buildSurfaceDE4(fourDSystemTransforms(), swirlFinal);
+    expect(() =>
+      packSurface4GpuParams(swirlLens, view4({ sliceHalfW: 0.05 }), {
+        itemCount: 1,
+      }),
+    ).toThrow(/slabSupported4/);
+    expect(() =>
+      packSurface4GpuParams(swirlLens, view4({ sliceHalfW: 0 }), {
         itemCount: 1,
       }),
     ).not.toThrow();
