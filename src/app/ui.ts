@@ -2671,7 +2671,7 @@ export class Ui {
    * Session-scoped, set by main.ts's routing; true outside such
    * sessions. */
   private fourDSlabAvailable = true;
-  private fourDSlabRefusal: "swirl" | "tiling" | null = null;
+  private fourDSlabRefusal: "swirl" | "tiling" | "condensation" | null = null;
   /**
    * The ACTIVE surface session's shape: `"escape"` for the escape-time fold
    * render and `"bulb"` for the Mandelbulb — the two FORWARD-ORBIT objects,
@@ -4326,33 +4326,36 @@ export class Ui {
       this.fourDSliceThicknessNumeric.setValue(0, { force: true });
       this.fourDSliceThicknessLabel.textContent = "0.00";
     }
-    // TWO SESSIONS REFUSE THE SLAB AND THEY OWE DIFFERENT REASONS. The IFS
-    // descent refuses it per FOLD FAMILY — a spherefold's inversion branch
-    // bends a segment into an arc — so a box-fold-only system keeps it, which
-    // is a knob the user can act on. A 4D escape-time session refuses it at
-    // every fold family, because a forward orbit has no branch enumeration at
-    // all: the box fold that rescues the descent is exactly the one that turns
-    // a segment into a bent polyline here. Handing the descent's reason to an
-    // escape session would tell a box-fold-only chain to do the thing it is
-    // already doing.
+    // TWO SESSIONS REFUSE THE SLAB AND THEY OWE DIFFERENT REASONS, each
+    // named by the branch that refused it: a swirl final (its inverse
+    // curves the segment with no point cover), a condensation shape (the
+    // carried solid's set distance needs its own segment evaluator), and
+    // Space tiling (a fold bends the segment across cell walls). A 4D
+    // escape-time session refuses it at every fold family, because a
+    // forward orbit has no branch enumeration at all: the box fold that
+    // the IFS descent's cover handles is exactly the one that turns a
+    // segment into a bent polyline here. Spherefold/mandelbox IFS
+    // sessions no longer appear here at all — their slab is answered by
+    // the bounded midpoint cover.
     this.fourDSliceThicknessRow.title = !slabRefused
       ? ""
       : this.fourDSlabRefusal === "swirl"
         ? "A swirl final transform curves a thick slice. Surface currently " +
           "supports its zero-thickness slices."
-        : this.fourDSlabRefusal === "tiling"
-          ? "Slab thickness is unavailable with Space tiling: folding a " +
-            "segment bends it across cell walls. A zero-thickness slice " +
-            "remains available."
-          : this.surfaceSessionKind === "escape"
-            ? "Slab thickness is unavailable in the escape-time render: its " +
-              "orbit runs the maps FORWARD, with no branches to thread a " +
-              "segment through, so a slab has no certificate at any fold " +
-              "family. The IFS surface render keeps it."
-            : "Slab thickness is unavailable with sphere folds: the slab's " +
-              "segment certificates are unsound under the spherefold's " +
-              "inversion branch (mandelbox includes it). Box-fold-only systems " +
-              "keep the slab.";
+        : this.fourDSlabRefusal === "condensation"
+          ? "Slab thickness is unavailable with a condensation shape: its " +
+            "carried solid needs its own set-distance evaluator for a " +
+            "segment. A zero-thickness slice remains available."
+          : this.fourDSlabRefusal === "tiling"
+            ? "Slab thickness is unavailable with Space tiling: folding a " +
+              "segment bends it across cell walls. A zero-thickness slice " +
+              "remains available."
+            : this.surfaceSessionKind === "escape"
+              ? "Slab thickness is unavailable in the escape-time render: its " +
+                "orbit runs the maps FORWARD, with no branches to thread a " +
+                "segment through, so a slab has no certificate at any fold " +
+                "family. The IFS surface render keeps it."
+              : "";
     this.fourDSliceThicknessUnavailableNote.textContent =
       this.fourDSliceThicknessRow.title;
     this.fourDSliceThicknessUnavailableNote.classList.toggle(
@@ -4395,11 +4398,13 @@ export class Ui {
   }
 
   /** Whether the live 4D surface session can take a slab at all (see
-   * {@link fourDSlabAvailable}) — main.ts sets it from `slabExact4` at
-   * session routing and resets it true on session end. */
+   * {@link fourDSlabAvailable}) — main.ts derives it from the system's
+   * `slabSupported4` (a nonlinear fold set is answered by the bounded
+   * midpoint cover; only swirl/condensation/tiling refuse) at session
+   * routing and resets it true on session end. */
   setFourDSlabAvailable(
     available: boolean,
-    reason: "swirl" | "tiling" | null = null,
+    reason: "swirl" | "tiling" | "condensation" | null = null,
   ): void {
     if (
       this.fourDSlabAvailable === available &&
