@@ -312,6 +312,31 @@ describe("surfaceSlotMaterials", () => {
     });
   });
 
+  it("admitOptics:false strips the gate for the unadmitted forward arms — an optics-only session derives the classic null wire, no radius required", () => {
+    const transforms = [
+      transform({ id: 0, optics: { model: "dielectric", scale: 2 } }),
+      transform({ id: 1 }),
+    ];
+    const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 1 }];
+    // No opticsRadius: the unadmitted arm never needs it, and must not
+    // throw for its absence. With the optics gate stripped, every slot
+    // resolves classic — the whole wire is the classic+none route, so the
+    // resolver returns null and the session compiles literally today's
+    // programs. That IS the unadmitted forward family's disclosure-free
+    // classic render.
+    const wire = surfaceSlotMaterials(
+      transforms,
+      slots,
+      calibration,
+      undefined,
+      false,
+    );
+    expect(wire).toBeNull();
+    // The admitted arm on the same document still derives the optics wire.
+    const admitted = surfaceSlotMaterials(transforms, slots, calibration, 4);
+    expect(admitted && admitted.optics).toBe(true);
+  });
+
   it("composes optics with finish and pattern gates on one slot and reports all three", () => {
     const transforms = [
       transform({

@@ -4606,14 +4606,23 @@ async function main(): Promise<void> {
   }
 
   /** A FORWARD-ORBIT session's one material slot, gated: the first
-   * positive-weight transform's resolved finish+pattern+optics —
+   * positive-weight transform's resolved finish+pattern —
    * {@link escapeSlotColor}'s exact pick, because it must match the same
    * `firstChoice = 0` wire — or null when it resolves classic+none, so an
    * unauthored chain compiles literally today's programs on both engines.
+   * Authored OPTICS deliberately does NOT ride this wire: the forward
+   * families' transport admission is the capability matrix's measured
+   * question (their estimators are heuristics, not certified lower
+   * bounds, and the agreement legs pin the kernel's arithmetic, not the
+   * material's optical soundness), so an optics-authored forward session
+   * renders classic until that evidence exists. The document state is
+   * untouched — the authored block round-trips and survives the mode, the
+   * routing simply does not admit it yet.
+   *
    * `opticsRadius` is the forward session's own bounding ball — the forward
    * DE has no probe-fit visible radius, and the bounding ball is what the
    * tiling resolver already uses for this family — the optical model's
-   * scene-derived base. */
+   * scene-derived base, kept here for the day the admission lands. */
   function escapeSlotMaterials(
     patternCalibration: SurfaceNativeCalibration,
     opticsRadius: number,
@@ -4623,6 +4632,7 @@ async function main(): Promise<void> {
       [surfaceForwardSlot(state.transforms)],
       patternCalibration,
       opticsRadius,
+      false,
     );
   }
 

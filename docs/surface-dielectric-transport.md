@@ -289,7 +289,7 @@ Every capability claim above carries both dimensions. The panel task owns
 the UI later; the recorded placement is beside Finish/Pattern in the shared
 Transforms editor (Scene / Look), per `docs/panel-ia.md`.
 
-## The compute backend (shipped, dormant → live with the routing task)
+## The compute backend (shipped)
 
 `surface-de-gpu.ts`'s `optics: true` (shade mode) emits the transport beside
 the classic entries, and `surface-compute.ts` drives it as its own lane when
@@ -385,16 +385,16 @@ which bounds this rear scene with margin.
 
 ### Capability matrix, updated
 
-| Core / wrapper                                | Transport status now                                                                                                                               |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| compute `affine`, `fold`, `affine4`, `fold4`  | Emitted + compiled under the optics gate; production routing admits the descent families (the routing task)                                        |
-| compute `escape`, `bulb`, `escape4` (forward) | Emitted (shared text); the estimator is a heuristic, so ADMISSION is the bench's measured question — unadmitted sessions render classic, disclosed |
-| GLSL tracers (`surface-material*.ts`)         | Dormant; the GLSL twins arrive after the compute backend                                                                                           |
-| `lens` wrapper, both dimensions               | Composes — the boundary query rides the wrapped estimator                                                                                          |
-| `balloon` (3D/4D)                             | Composes over the union estimator, disclosed envelope; the shell inherits the argmin slot's material                                               |
-| `ground plane`                                | Composes — the floor is a rear-scene terminal                                                                                                      |
-| Cinematic lighting                            | EXCLUSIVE (throw)                                                                                                                                  |
-| Surface applicability gates                   | Unchanged — authored optics adds NO new admission                                                                                                  |
+| Core / wrapper                                | Transport status now                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| compute `affine`, `fold`, `affine4`, `fold4`  | LIVE on the compute path: the session-materials flow admits the descent families — an optics-authored session compiles the transport, the lane and the buffers                                                                                                                                                                                                |
+| compute `escape`, `bulb`, `escape4` (forward) | Kernel emitted and bench-pinned (the agreement legs); ROUTING does not admit the families — the slot resolver's `admitOptics: false` strips the gate, so an optics-authored forward session renders classic, disclosed. The estimators are heuristics, not certified lower bounds: the legs pin the kernel's arithmetic, not the material's optical soundness |
+| GLSL tracers (`surface-material*.ts`)         | Dormant; the GLSL twins arrive after the compute backend (a no-compute device's fallback renders classic, disclosed)                                                                                                                                                                                                                                          |
+| `lens` wrapper, both dimensions               | Composes — the boundary query rides the wrapped estimator                                                                                                                                                                                                                                                                                                     |
+| `balloon` (3D/4D)                             | Composes over the union estimator, disclosed envelope; the shell inherits the argmin slot's material                                                                                                                                                                                                                                                          |
+| `ground plane`                                | Composes — the floor is a rear-scene terminal                                                                                                                                                                                                                                                                                                                 |
+| Cinematic lighting                            | EXCLUSIVE (throw)                                                                                                                                                                                                                                                                                                                                             |
+| Surface applicability gates                   | Unchanged — authored optics adds NO new admission                                                                                                                                                                                                                                                                                                             |
 
 ## What is not yet qualified
 

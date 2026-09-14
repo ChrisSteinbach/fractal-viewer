@@ -136,12 +136,22 @@ export function surfaceTrapIndices(
  * moment some slotted transform authors an admitted model and unused
  * otherwise; passing none for an optics-authored session is a caller bug and
  * throws, exactly like a missing pattern calibration.
+ *
+ * `admitOptics` (default true) is the ROUTING admission, not a resolver
+ * rule: the compute transport's forward-family admission is a measured
+ * question (the capability matrix's own row — the forward estimators are
+ * heuristics, not certified lower bounds, so their optical behavior is
+ * unqualified), so the forward arms derive their wire with it false and
+ * an optics-authored forward session renders classic, disclosed. False
+ * also makes `opticsRadius` genuinely unused — an optics-authored slot
+ * resolves classic without the radius and never throws for it.
  */
 export function surfaceSlotMaterials(
   transforms: readonly Transform[],
   maps: readonly SurfaceSlot[],
   patternCalibration?: SurfaceNativeCalibration,
   opticsRadius?: number,
+  admitOptics = true,
 ): SurfaceMaterialSlots | null {
   let finish = false;
   let pattern = false;
@@ -151,7 +161,7 @@ export function surfaceSlotMaterials(
     const material = resolveSurfaceMaterial(
       transform.finish,
       transform.surfacePattern,
-      transform.optics,
+      admitOptics ? transform.optics : undefined,
       opticsRadius,
     );
     finish ||= surfaceMaterialUsesFinish(material);
