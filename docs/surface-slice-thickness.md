@@ -429,5 +429,7 @@ What remains:
   Mandelbox-plus-tiling acceptance case the epic names (the tiling child's),
   plus panel-gate coverage for the new availability set.
 
-CPU agreement and the heavy-class cost fix are done; the fence/teardown
-gates and the full browser matrix are the halves still missing.
+CPU agreement, the heavy-class cost fix, the fence/teardown gates and the
+browser matrix (three cover classes with the zero-thickness identity, one
+posed rotor/slice view, authored radii/posts, reload and capture rows) are
+all done; what remains here is tiling composition, the sibling track.
