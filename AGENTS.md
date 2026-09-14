@@ -949,18 +949,21 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     (0.4/32/0/0/0; shininess floors at 0.01), the compile predicate and ONE
     shader body for both dialects. Both engines share material lane order;
     CPU values and classic shader bytes are pinned. Finish
-    persists/morphs/mutates like fold lengths; random-system never rolls one.
-    TRANSMISSION: owner selected finite-solid 3D/4D glass; envelope DECIDED,
-    integration UNBLOCKED. `surface-dielectric.ts` is the ONE dimension-free
-    transport/event oracle; contract: `docs/surface-dielectric-transport.md`.
+    persists/morphs/mutates like fold lengths; random-system never rolls
+    it (optics likewise). TRANSMISSION: owner selected finite-solid 3D/4D
+    glass; envelope DECIDED, integration UNBLOCKED. `surface-dielectric.ts`
+    is the ONE dimension-free transport/event oracle; contract:
+    `docs/surface-dielectric-transport.md`. The optical vocabulary
+    (`surface-optics.ts`: `Transform.optics` selector + scale, per-slot,
+    scene-derived radius) ships DORMANT — `opticsMaps` frozen, no core
+    reads it yet.
     Pattern-albedo remains REFUSED (`scripts/finish-pattern.harness.ts`).
-    Authored rigs (`surface-lighting.ts`) share ONE shader emitter across both
+    Authored rigs (`surface-lighting.ts`) share ONE shader emitter in both
     dimensions/engines: absent state is legacy, visibility uses the displayed DE,
     unresolved rays stay dark, HDR averages before clipping. NO PARTICIPATING
-    MEDIUM — REMOVED on measured cost. Its return is a look call; decoded
-    `medium` is IGNORED, never rejected.
+    MEDIUM — REMOVED on measured cost; its return is a look call.
     Points authors the rig in both dimensions with transient displayed-space
-    disk/aim guides, excluded from PNGs and Collection thumbnails.
+    disk/aim guides, excluded from PNGs and thumbnails.
     Record: `docs/cinematic-surface-lighting.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its

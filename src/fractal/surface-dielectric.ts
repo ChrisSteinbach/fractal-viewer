@@ -40,8 +40,9 @@ import type { Vec3, Vec4 } from "./types";
  *
  * ZERO TRANSMISSION STAYS CLASSIC. A document without authored transmission
  * never constructs a scene or a trace; the classic finish path is untouched
- * (`surface-finish.ts`'s compile-gate discipline applies when the document
- * vocabulary arrives).
+ * (`surface-optics.ts` owns the authored selector — an absent field is the
+ * classic state, and `surface-finish.ts`'s compile-gate discipline keeps an
+ * unopticked document on today's program text).
  */
 
 /**
