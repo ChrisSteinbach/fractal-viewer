@@ -1,4 +1,8 @@
-import { inversionBallScale, inversionDistanceLowerBound } from "./inversion";
+import {
+  inversionBallScale,
+  inversionDistanceLowerBound,
+  signedInversionBallScale,
+} from "./inversion";
 import { mulberry32 } from "./rng";
 
 /**
@@ -150,5 +154,59 @@ describe("inversionBallScale", () => {
     const r2 = r1 * s2;
     for (let i = 0; i < c.length; i++) expect(c2[i]).toBeCloseTo(c[i], 10);
     expect(r2).toBeCloseTo(r, 10);
+  });
+});
+
+describe("signedInversionBallScale", () => {
+  it("agrees with the unsigned scale for a ball that misses the centre", () => {
+    expect(signedInversionBallScale(2, 0.5, 1.3)).toBe(
+      inversionBallScale(2, 0.5, 1.3),
+    );
+  });
+
+  it("maps a ball that HOLDS the centre to the complement of the predicted ball, in 3D and in 4D", () => {
+    const rng = mulberry32(0xc0ffee);
+    for (const dim of [3, 4]) {
+      for (let trial = 0; trial < 40; trial++) {
+        const sphereR2 = 0.25 + 3 * rng();
+        const c = Array.from({ length: dim }, () => 2 * rng() - 1);
+        const dist = norm(c);
+        const r = dist * (1.1 + 2 * rng());
+        const scale = signedInversionBallScale(dist, r, sphereR2);
+        expect(scale).toBeLessThan(0);
+        const imgC = c.map((x) => x * scale);
+        const imgR = -scale * r;
+        for (let k = 0; k < 40; k++) {
+          const p = ballPoint(rng, c, r);
+          if (norm(p) < 1e-6) continue;
+          // Interior (the centre's side) lands OUTSIDE the image ball.
+          expect(
+            norm(invert(p, sphereR2).map((x, i) => x - imgC[i])),
+          ).toBeGreaterThanOrEqual(imgR * (1 - 1e-9));
+        }
+      }
+    }
+  });
+
+  it("puts the boundary sphere of a centre-holding ball exactly on the image sphere", () => {
+    const sphereR2 = 1;
+    const c = [0.3, 0, 0];
+    const r = 1;
+    const scale = signedInversionBallScale(norm(c), r, sphereR2);
+    const imgC = c.map((x) => x * scale);
+    const imgR = Math.abs(scale) * r;
+    for (const onSphere of [
+      [1.3, 0, 0],
+      [-0.7, 0, 0],
+      [0.3, 1, 0],
+    ]) {
+      const q = invert(onSphere, sphereR2);
+      expect(norm(q.map((x, i) => x - imgC[i]))).toBeCloseTo(imgR, 12);
+    }
+  });
+
+  it("returns 0 only for a sphere through the centre, whose image is a plane", () => {
+    expect(signedInversionBallScale(1, 1, 1)).toBe(0);
+    expect(signedInversionBallScale(0, 0.25, 1)).toBe(-16);
   });
 });
