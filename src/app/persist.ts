@@ -41,6 +41,7 @@ import type {
 import {
   COLOR_MODES,
   FOUR_D_COLOR_MODES,
+  SURFACE_OPTICS_MODELS,
   SYMMETRY_PLANES,
   VARIATION_TYPES,
 } from "../fractal/types";
@@ -54,6 +55,8 @@ import type {
   HybridSchedule,
   ShapeTrap,
   SurfaceFinish,
+  SurfaceOptics,
+  SurfaceOpticsModel,
   SurfacePattern,
   SymmetryParams,
   SymmetryPlane,
@@ -1414,6 +1417,38 @@ function decodeFinish(raw: unknown): SurfaceFinish | undefined {
 }
 
 /**
+ * Decode one transform's untrusted `optics` field (see `types.ts`'s
+ * {@link SurfaceOptics}). QUIET fallback like {@link decodeFinish}: a
+ * non-object, an array, or `null` drops the whole field rather than
+ * rejecting the scene. The `model` selector is REQUIRED and validated
+ * against `SURFACE_OPTICS_MODELS` — an unknown model id (a future document
+ * on an old binary, or garbage) drops the WHOLE block, because the scale
+ * alone has no meaning without the model that interprets it and absence is
+ * the classic state the zero-transmission rule keys on; `scale` decodes
+ * via {@link decodeFinishField} — finite only, no coercion, no clamp (the
+ * domain is `surface-optics.ts`'s resolver, not persistence's). A block
+ * whose model survives but whose scale does not decodes as
+ * `{model}` — the resolver's default scale is 1, so nothing is lost.
+ */
+function decodeSurfaceOptics(raw: unknown): SurfaceOptics | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const o = raw as Record<string, unknown>;
+  const model = o.model;
+  if (
+    typeof model !== "string" ||
+    !SURFACE_OPTICS_MODELS.some((m) => m === model)
+  ) {
+    return undefined;
+  }
+  const optics: SurfaceOptics = { model: model as SurfaceOpticsModel };
+  const scale = decodeFinishField(o.scale);
+  if (scale !== undefined) optics.scale = scale;
+  return optics;
+}
+
+/**
  * Decode cosmetic patterned-albedo state without coercion or clamping.
  * `kind` and `axis` are required stable discriminators; malformed structure
  * quietly drops this block, while malformed optional numeric leaves alone are
@@ -1700,6 +1735,14 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
   if (tf.surfacePattern !== undefined) {
     const pattern = decodeSurfacePattern(tf.surfacePattern);
     if (pattern !== undefined) decoded.surfacePattern = pattern;
+  }
+  // optics: optional per-transform optical-model selection (see
+  // SurfaceOptics). QUIET fallback exactly like finish above — a malformed
+  // value never rejects the whole scene, it just leaves the field absent
+  // (see decodeSurfaceOptics).
+  if (tf.optics !== undefined) {
+    const optics = decodeSurfaceOptics(tf.optics);
+    if (optics !== undefined) decoded.optics = optics;
   }
   return decoded;
 }
@@ -2544,6 +2587,7 @@ interface EncodedTransform {
   w?: WExtension;
   finish?: SurfaceFinish;
   surfacePattern?: SurfacePattern;
+  optics?: SurfaceOptics;
   emitter?: EncodedShapeSpec;
 }
 
@@ -2623,6 +2667,27 @@ function encodeFinish(
   const reflectionTint = encodeFinishField(finish.reflectionTint);
   if (reflectionTint !== undefined) e.reflectionTint = reflectionTint;
   return Object.keys(e).length > 0 ? e : undefined;
+}
+
+/**
+ * Encode a transform's optional `optics` (see `types.ts`'s
+ * {@link SurfaceOptics}): the model selector always written when the block
+ * is present at all, `scale` written only when present and finite — the
+ * identical per-field omission as {@link encodeFinish}, and `scale` rides
+ * the same round4 precision the finish fields do. An absent field writes
+ * nothing, so a document that never authored one encodes byte-identically
+ * to one that predates it. There is deliberately no "is classic" early
+ * return: the model selector has no classic VALUE to compare — its absence
+ * IS the classic state, and it is the field's own presence that encodes.
+ */
+function encodeSurfaceOptics(
+  optics: SurfaceOptics | undefined,
+): SurfaceOptics | undefined {
+  if (optics === undefined) return undefined;
+  const e: SurfaceOptics = { model: optics.model };
+  const scale = encodeFinishField(optics.scale);
+  if (scale !== undefined) e.scale = scale;
+  return e;
 }
 
 /** {@link encodeEmitter}'s pose leg: each field written only when present,
@@ -3061,6 +3126,8 @@ function encodeTransform(
   if (finish !== undefined) e.finish = finish;
   const surfacePattern = encodeSurfacePattern(t.surfacePattern);
   if (surfacePattern !== undefined) e.surfacePattern = surfacePattern;
+  const optics = encodeSurfaceOptics(t.optics);
+  if (optics !== undefined) e.optics = optics;
   const emitter = encodeEmitter(t.emitter, geometryNumber);
   if (emitter !== undefined) e.emitter = emitter;
   return e;

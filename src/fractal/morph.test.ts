@@ -1133,6 +1133,88 @@ describe("lerpSystem surface pattern", () => {
   });
 });
 
+describe("lerpSystem optics", () => {
+  it("returns authored endpoints by reference and preserves total absence", () => {
+    const a = system({
+      transforms: [transform({ optics: { model: "dielectric", scale: 2 } })],
+    });
+    const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    expect(lerpSystem(a, b, 0)).toBe(a);
+    expect(lerpSystem(a, b, 1)).toBe(b);
+    const plain = system({ transforms: [transform()] });
+    for (const t of [0.1, 0.5, 0.9]) {
+      expect(lerpSystem(plain, b, t).transforms[0].optics).toBeUndefined();
+    }
+  });
+
+  it("holds a one-sided block until the midpoint, then drops it — the model change's own pop", () => {
+    const a = system({
+      transforms: [transform({ optics: { model: "dielectric", scale: 2 } })],
+    });
+    const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    expect(lerpSystem(a, b, 0.25).transforms[0].optics).toEqual({
+      model: "dielectric",
+      scale: 2,
+    });
+    expect(lerpSystem(a, b, 0.75).transforms[0].optics).toBeUndefined();
+  });
+
+  it("lerps scale through the default 1 when only one side authors it, and keeps a shared sparsity", () => {
+    const a = system({
+      transforms: [transform({ optics: { model: "dielectric", scale: 4 } })],
+    });
+    const b = system({
+      transforms: [
+        transform({ position: [1, 1, 1], optics: { model: "dielectric" } }),
+      ],
+    });
+    expect(lerpSystem(a, b, 0.5).transforms[0].optics).toEqual({
+      model: "dielectric",
+      scale: 2.5,
+    });
+    // Both sides omit scale: the result omits it too, never a synthesized 1.
+    const sparseA = system({
+      transforms: [transform({ optics: { model: "dielectric" } })],
+    });
+    const sparseB = system({
+      transforms: [transform({ optics: { model: "dielectric" } })],
+    });
+    expect(lerpSystem(sparseA, sparseB, 0.5).transforms[0].optics).toEqual({
+      model: "dielectric",
+    });
+  });
+
+  it("pops the whole block at the midpoint when the model changes in either direction", () => {
+    const glass = system({
+      transforms: [transform({ optics: { model: "dielectric", scale: 3 } })],
+    });
+    const plain = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    expect(lerpSystem(glass, plain, 0.49).transforms[0].optics).toEqual({
+      model: "dielectric",
+      scale: 3,
+    });
+    expect(lerpSystem(glass, plain, 0.5).transforms[0].optics).toBeUndefined();
+    expect(lerpSystem(plain, glass, 0.49).transforms[0].optics).toBeUndefined();
+    expect(lerpSystem(plain, glass, 0.5).transforms[0].optics).toEqual({
+      model: "dielectric",
+      scale: 3,
+    });
+  });
+
+  it("rides the final transform's optics by the same rule", () => {
+    const a = system({
+      finalTransform: transform({ optics: { model: "dielectric", scale: 2 } }),
+    });
+    const b = system({
+      finalTransform: transform({ optics: { model: "dielectric" } }),
+    });
+    expect(lerpSystem(a, b, 0.5).finalTransform!.optics).toEqual({
+      model: "dielectric",
+      scale: 1.5,
+    });
+  });
+});
+
 describe("chaos row morphing", () => {
   it("lerps rows entrywise, padding the shorter (or absent) side with 1s", () => {
     const a = system({

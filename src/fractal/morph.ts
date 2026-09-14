@@ -110,6 +110,7 @@ import {
 import type {
   ShapeTrap,
   SurfaceFinish,
+  SurfaceOptics,
   SurfacePattern,
   SymmetryParams,
   Transform,
@@ -800,6 +801,34 @@ function lerpSurfacePattern(
 }
 
 /**
+ * The optical model's morph ({@link SurfaceOptics} — `lerpSurfacePattern`'s
+ * rule without the strength fade, because the transport has no per-slot
+ * weight to fade): the model is DISCRETE, so its boundary must be defined —
+ * same model on both sides (including both absent) lerps `scale`
+ * continuously through the default-1 fallback (absent on one side morphs
+ * 1 <-> authored, endpoint-exact, sparse when both sides omit it); a model
+ * CHANGE is a different optical object with no meaningful midpoint, so the
+ * whole block pops at t = 0.5 — the pattern's own family-change rule, minus
+ * the strength ramp it has and optics has no use for. Both sides absent
+ * stays absent (never a synthesized block); endpoints are exact by
+ * {@link lerpSystem}'s by-reference returns.
+ */
+function lerpSurfaceOptics(
+  a: SurfaceOptics | undefined,
+  b: SurfaceOptics | undefined,
+  t: number,
+): SurfaceOptics | undefined {
+  if (a === b) return a;
+  if (a === undefined && b === undefined) return undefined;
+  if (a?.model !== b?.model) return t < 0.5 ? a : b;
+
+  const result: SurfaceOptics = { model: a!.model };
+  const scale = lerpOptional(a?.scale, b?.scale, 1, t);
+  if (scale !== undefined) result.scale = scale;
+  return result;
+}
+
+/**
  * The per-transform POST-AFFINE's morph: each of the nine matrix entries
  * and three translation components lerps with the IDENTITY as the absent
  * side's fallback — the fold lengths' rule (the classic value, never a
@@ -903,6 +932,9 @@ function lerpTransformPair(
     t,
   );
   if (surfacePattern !== undefined) result.surfacePattern = surfacePattern;
+
+  const optics = lerpSurfaceOptics(a.optics, b.optics, t);
+  if (optics !== undefined) result.optics = optics;
 
   return result;
 }

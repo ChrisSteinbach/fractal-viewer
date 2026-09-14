@@ -1650,6 +1650,186 @@ describe("decodeScene transform finish", () => {
   });
 });
 
+describe("decodeScene transform optics", () => {
+  it("round-trips a transform with the model selector and a scale", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          optics: { model: "dielectric", scale: 2.5 },
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].optics).toEqual({
+      model: "dielectric",
+      scale: 2.5,
+    });
+  });
+
+  it("round-trips a selector with no scale, leaving the scale to its default", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          optics: { model: "dielectric" },
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].optics).toEqual({ model: "dielectric" });
+  });
+
+  it("round-trips the optical selector in a NON-FLAT document, beside its w extension", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { scale: 2, rotation: { xw: 0.35 } },
+          optics: { model: "dielectric", scale: 0.75 },
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].optics).toEqual({
+      model: "dielectric",
+      scale: 0.75,
+    });
+    expect(result!.transforms[0].w?.rotation).toEqual({ xw: 0.35 });
+  });
+
+  it("encodes with no optics key at all when the transform carries none", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+    };
+    const payload = decodePayload(encodeScene(s));
+    const transforms = payload.transforms as Record<string, unknown>[];
+    expect("optics" in transforms[0]).toBe(false);
+  });
+
+  it("a legacy document with an explicit transmit still encodes byte-identically after the field existed", () => {
+    const legacy: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: { transmit: 0.9 },
+        },
+      ],
+    };
+    // The same document with the optics field PRESENT-but-absent cannot be
+    // built in TS; instead pin the legacy encoding against a re-encode of
+    // its own decode — no silent migration on open/save.
+    const decoded = decodeScene(encodeScene(legacy))!;
+    expect(encodeScene(decoded)).toBe(encodeScene(legacy));
+    expect(decoded.transforms[0].optics).toBeUndefined();
+    expect(decoded.transforms[0].finish).toEqual({ transmit: 0.9 });
+  });
+
+  it("drops the whole optics block for an unknown model id, the future-document-on-old-binary case", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          optics: { model: "layered", scale: 2 },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].optics).toBeUndefined();
+  });
+
+  it("keeps the selector and drops only a malformed scale", () => {
+    for (const scale of ["wide", null, true, Number.NaN]) {
+      const raw = {
+        ...baseSnapshot(),
+        transforms: [
+          {
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [0.5, 0.5, 0.5],
+            optics: { model: "dielectric", scale },
+          },
+        ],
+      };
+      const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+      expect(result, `scale = ${JSON.stringify(scale)}`).not.toBeNull();
+      expect(
+        result!.transforms[0].optics,
+        `scale = ${JSON.stringify(scale)}`,
+      ).toEqual({ model: "dielectric" });
+    }
+  });
+
+  it("drops the whole optics block for a missing or non-string model", () => {
+    for (const model of [undefined, 1, null, "DIELECTRIC"]) {
+      const raw = {
+        ...baseSnapshot(),
+        transforms: [
+          {
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [0.5, 0.5, 0.5],
+            optics: { model, scale: 2 },
+          },
+        ],
+      };
+      const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+      expect(result, `model = ${JSON.stringify(model)}`).not.toBeNull();
+      expect(
+        result!.transforms[0].optics,
+        `model = ${JSON.stringify(model)}`,
+      ).toBeUndefined();
+    }
+  });
+
+  it("keeps an out-of-band but finite scale through decode untouched, without clamping", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          optics: { model: "dielectric", scale: 1e-6 },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].optics).toEqual({
+      model: "dielectric",
+      scale: 1e-6,
+    });
+  });
+});
+
 describe("decodeScene transform surface pattern", () => {
   it("round-trips every stable family/axis and sparse numeric leaves", () => {
     for (const kind of ["wood", "marble", "strata"] as const) {

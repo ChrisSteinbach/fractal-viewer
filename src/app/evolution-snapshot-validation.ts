@@ -35,6 +35,8 @@ import {
   SURFACE_PATTERN_KINDS,
   type SurfacePattern,
 } from "../fractal/surface-pattern";
+import { SURFACE_OPTICS_MODELS } from "../fractal/types";
+import type { SurfaceOptics } from "../fractal/types";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
 import {
   SURFACE_LIGHTING_MAX_LIGHTS,
@@ -133,6 +135,10 @@ const PATTERN_FIELDS = {
   scale: true,
   strength: true,
 } satisfies Fields<SurfacePattern>;
+const OPTICS_FIELDS = {
+  model: true,
+  scale: true,
+} satisfies Fields<SurfaceOptics>;
 const W_FIELDS = {
   position: true,
   scale: true,
@@ -163,6 +169,7 @@ const TRANSFORM_FIELDS = {
   chaos: true,
   finish: true,
   surfacePattern: true,
+  optics: true,
   emitter: true,
 } satisfies Fields<Transform>;
 const SCHEDULE_FIELDS = {
@@ -586,6 +593,16 @@ function pattern(value: unknown, path: string): void {
   finiteOptional(entry, "strength", path);
 }
 
+function optics(value: unknown, path: string): void {
+  const entry = object(value, path, OPTICS_FIELDS);
+  enumeration(
+    required(entry, "model", path),
+    SURFACE_OPTICS_MODELS,
+    `${path}.model`,
+  );
+  finiteOptional(entry, "scale", path);
+}
+
 function wPlanes(value: unknown, path: string, min: number, max: number): void {
   const planes = object(value, path, W_PLANE_FIELDS);
   for (const key of Object.keys(W_PLANE_FIELDS)) {
@@ -776,6 +793,7 @@ function transform(
   if (entry.finish !== undefined) finish(entry.finish, `${path}.finish`);
   if (entry.surfacePattern !== undefined)
     pattern(entry.surfacePattern, `${path}.surfacePattern`);
+  if (entry.optics !== undefined) optics(entry.optics, `${path}.optics`);
   if (entry.emitter !== undefined) shape(entry.emitter, `${path}.emitter`);
   return value as Transform;
 }

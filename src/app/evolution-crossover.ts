@@ -133,6 +133,7 @@ const TRANSFORM_FIELDS = {
   chaos: "chaosMatrix",
   finish: "appearance",
   surfacePattern: "appearance",
+  optics: "appearance",
   emitter: "emitter",
 } satisfies Record<keyof Transform, string>;
 
@@ -724,6 +725,7 @@ function buildBaseTransform(
   copyOptionalTransformField(result, appearance, "colorSpeed");
   copyOptionalTransformField(result, appearance, "finish");
   copyOptionalTransformField(result, appearance, "surfacePattern");
+  copyOptionalTransformField(result, appearance, "optics");
   const emitter = donor(prepared, coordinates, "emitter", index);
   copyOptionalTransformField(result, emitter, "emitter");
   return result;

@@ -28,12 +28,17 @@ import { mulberry32 } from "./rng";
 import type { Rng } from "./rng";
 import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
 import {
+  SURFACE_OPTICS_SCALE_CEILING,
+  SURFACE_OPTICS_SCALE_FLOOR,
+} from "./surface-optics";
+import {
   SURFACE_PATTERN_SCALE_MAX,
   SURFACE_PATTERN_SCALE_MIN,
 } from "./surface-pattern";
 import { VARIATION_TYPES } from "./types";
 import type {
   SurfaceFinish,
+  SurfaceOptics,
   SurfacePattern,
   SymmetryParams,
   Transform,
@@ -369,6 +374,17 @@ const FINISH_UNIT_CLAMP_MIN = 0;
 const FINISH_UNIT_CLAMP_MAX = 1;
 const SURFACE_PATTERN_SCALE_JITTER_HALF_RANGE = 0.08;
 const SURFACE_PATTERN_STRENGTH_JITTER = 0.05;
+
+/**
+ * Multiplicative jitter half-range for a present `optics.scale`:
+ * `U(0.92, 1.08)` — the {@link FINISH_SPECULAR_JITTER_HALF_RANGE} shape for
+ * a strictly positive multiplier (an optical scale has no sign to preserve
+ * and lives on the map's own rough scale). Clamped into
+ * `surface-optics.ts`'s own resolver band — imported, not re-typed, the
+ * shininess floor's rule — so a mutant never lands outside what the resolver
+ * itself would accept.
+ */
+const SURFACE_OPTICS_SCALE_JITTER_HALF_RANGE = 0.08;
 
 /**
  * How much wider every jitter half-range above gets on the grid's one
@@ -947,6 +963,32 @@ function jitterSurfacePattern(
   return pattern;
 }
 
+/** Jitter a present `optics`: only its present fields move (absent stays
+ * absent — an optics block never materializes on a map that lacks one, the
+ * mutation-grid rule), and the model field — a discrete selection, not a
+ * continuous knob — rides through untouched. `scale` jitters
+ * multiplicatively into the resolver's own band. */
+function jitterSurfaceOptics(
+  rng: Rng,
+  base: SurfaceOptics,
+  spread: number,
+): SurfaceOptics {
+  const optics: SurfaceOptics = { ...base };
+  if (base.scale !== undefined) {
+    optics.scale = clamp(
+      base.scale *
+        uniform(
+          rng,
+          1 - SURFACE_OPTICS_SCALE_JITTER_HALF_RANGE * spread,
+          1 + SURFACE_OPTICS_SCALE_JITTER_HALF_RANGE * spread,
+        ),
+      SURFACE_OPTICS_SCALE_FLOOR,
+      SURFACE_OPTICS_SCALE_CEILING,
+    );
+  }
+  return optics;
+}
+
 /**
  * Jitter one base map: every field nudged per this module's documented
  * ranges, scaled by `spread` (`1` for a plain cell, {@link WILDCARD_SPREAD}
@@ -1084,6 +1126,12 @@ function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
     );
   }
 
+  // Optics comes last of the material siblings and consumes no draws when
+  // absent, preserving every pre-optics fixed-seed mutation exactly.
+  if (base.optics) {
+    result.optics = jitterSurfaceOptics(rng, base.optics, spread);
+  }
+
   // Chaos rows: a PRESENT row is perturbed entrywise (multiplicative, so an
   // exact 0 — a block boundary — stays exactly 0; see
   // CHAOS_JITTER_HALF_RANGE), an absent one is NEVER materialized —
@@ -1200,6 +1248,7 @@ function jitterFinalTransform(
 ): Transform {
   const result: Transform = { ...base };
   if (base.surfacePattern) result.surfacePattern = { ...base.surfacePattern };
+  if (base.optics) result.optics = { ...base.optics };
   if (base.variations) {
     result.variations = base.variations.map((v) =>
       jitterVariationEntry(rng, v, spread),
@@ -1402,6 +1451,7 @@ function cloneTransformForMutation(base: Transform): Transform {
   if (base.surfacePattern !== undefined) {
     result.surfacePattern = { ...base.surfacePattern };
   }
+  if (base.optics !== undefined) result.optics = { ...base.optics };
   return result;
 }
 
@@ -1589,6 +1639,11 @@ function mutateAppearance(
       base.surfacePattern,
       spread,
     );
+  }
+  // Optics after pattern, the same draws-when-present-only sequencing: an
+  // absent block consumes no RNG, so pre-optics seeds are untouched.
+  if (base.optics !== undefined) {
+    result.optics = jitterSurfaceOptics(rng, base.optics, spread);
   }
 }
 
