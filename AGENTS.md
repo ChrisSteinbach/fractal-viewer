@@ -199,19 +199,15 @@ mid-settle (the no-automatic-give-up line's standing assumption, caught off
 the settle latch itself). `--mode=sw` runs everything
 but the engine question without a display.
 
-The 4D lifts' gate (chain, ground plane and balloon, same setup):
-`node scripts/surface-4d-lift.verify.mjs --display=:0`. It drives eleven
-minimal `#v1=` scenes — no preset table, so it survives one changing —
-and the three shipped 4D presets FROM THE UI. It asks what no test reaches:
-does each session ENTER, settle COMPLETELY, DRAW, and pick the expected
-ENGINE, keeping `core:"escape4"` and the 4D plane/balloon blocks live; three
-cover-class scenes add thickness phases that must re-settle, draw and
-reproduce zero thickness BYTE FOR BYTE. DRAW is the non-backdrop share of a
-real screenshot; a canvas READBACK outside rAF reads empty and is not used.
-The kaleidoscope fixture is deliberately LIGHT (2 maps at order 3): the DE's
-superlinear order cost keeps a four-map order-5 system unsettled past 200s.
-Without `--display` the engine column is reported rather than gated. Figures
-and history: `docs/4d-exploration.md`.
+The 4D lifts' gate and the nonlinear slab's reload/capture gate:
+`node scripts/surface-4d-lift.verify.mjs --display=:0` and
+`node scripts/surface-slab-4d.verify.mjs --display=:0`. Both drive real
+builds in real browsers, enter Surface FROM THE UI, and gate the session
+latch, DRAW and the compute engine; the lift gate's three cover-class
+thickness phases must reproduce zero thickness BYTE FOR BYTE, and the slab
+gate pins the share link's carried thickness, a real reload's byte-exact
+frame and the thick export. Fixtures, measured rows and history:
+`docs/4d-exploration.md`, `docs/surface-slice-thickness.md`.
 
 The 4D explorer balloon gate is self-contained:
 `node scripts/explorer-balloon-4d.verify.mjs`. It drives Pentatope through
