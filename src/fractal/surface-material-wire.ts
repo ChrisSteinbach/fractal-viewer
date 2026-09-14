@@ -5,6 +5,10 @@ import {
   type ResolvedSurfaceFinish,
 } from "./surface-finish";
 import {
+  resolveSurfaceOptics,
+  type ResolvedSurfaceOptics,
+} from "./surface-optics";
+import {
   SURFACE_PATTERN_AXIS_WIRE_ID,
   SURFACE_PATTERN_KIND_WIRE_ID,
   resolveSurfacePattern,
@@ -14,21 +18,37 @@ import {
   type SurfaceNativeCalibration,
   type SurfacePattern,
 } from "./surface-pattern";
-import type { SurfaceFinish } from "./types";
+import type { SurfaceFinish, SurfaceOptics } from "./types";
 
 /** One resolved per-transform material. Finish controls lighting response;
- * pattern controls albedo. Keeping the siblings together here makes this
- * module the sole authority for their shared A/B GPU lanes. */
+ * pattern controls albedo; optics selects the transport contract's dielectric
+ * model for this slot (absent = classic, the zero-transmission rule).
+ * Keeping the siblings together here makes this module the sole authority for
+ * their shared A/B GPU lanes — and, below, for the optical transport lanes
+ * appended beside them. */
 export interface ResolvedSurfaceMaterial {
   readonly finish: ResolvedSurfaceFinish;
   readonly pattern: ResolvedSurfacePattern;
+  /** Present exactly when this slot's transform authors an admitted optical
+   * model and the session supplied a usable derived radius; the resolved
+   * value is the oracle's own material shape. Absent = classic shading for
+   * this slot, byte-identically. */
+  readonly optics?: ResolvedSurfaceOptics;
 }
 
 /** A session's material wire. `slots` exists only when at least one of the
- * two independent gates is live; callers use `null` for the exact classic,
- * unpatterned stride-1 route. */
+ * three independent gates is live; callers use `null` for the exact classic,
+ * unpatterned, unopticked stride-1 route. */
 interface SurfaceMaterialSlotsBase {
   readonly slots: readonly ResolvedSurfaceMaterial[];
+  /** The optical-model compile gate: true exactly when some slot resolved an
+   * admitted optical model. Dormant until a transport backend consumes it —
+   * every current core routes and renders an optics-authored session exactly
+   * as before (the capability matrix in
+   * `docs/surface-dielectric-transport.md`) — but the gate is real state
+   * already, so the renderers' existing finish/pattern keying cannot be
+   * fooled into treating an optics-only wire as classic. */
+  readonly optics: boolean;
 }
 
 /** Finish-only sessions retain the legacy memo/packing shape and carry no
@@ -48,8 +68,20 @@ export interface SurfacePatternMaterialSlots extends SurfaceMaterialSlotsBase {
   readonly patternCalibration: SurfaceNativeCalibration;
 }
 
+/** An optics-only session: no finish or pattern gate is live, but the slots
+ * must still reach the spec and the force-frame key. No calibration exists
+ * (optics has no per-DE quartet — its base radius is the session's derived
+ * optical radius, passed at resolution). */
+export interface SurfaceOpticsMaterialSlots extends SurfaceMaterialSlotsBase {
+  readonly finish: false;
+  readonly pattern: false;
+  readonly optics: true;
+}
+
 export type SurfaceMaterialSlots =
-  SurfaceFinishMaterialSlots | SurfacePatternMaterialSlots;
+  | SurfaceFinishMaterialSlots
+  | SurfacePatternMaterialSlots
+  | SurfaceOpticsMaterialSlots;
 
 export interface SurfaceMaterialLanes {
   readonly a: [number, number, number, number];
@@ -85,13 +117,35 @@ export const CLASSIC_SURFACE_MATERIAL: ResolvedSurfaceMaterial = {
   pattern: { kind: "none", axis: "y", scale: 1, strength: 0 },
 };
 
+/**
+ * Resolve one slot's full material. `optics` is passed through
+ * `resolveSurfaceOptics` against the CALLER's derived radius — the session's
+ * `visibleBoundingRadius` (full, unsliced in 4D), never re-derived here, so
+ * every slot of a session normalizes against the same base. `undefined`
+ * optics, or optics whose model is not admitted, resolves to no optics at
+ * all; a non-finite/non-positive derived radius throws only when some slot
+ * actually authors an admitted model.
+ */
 export function resolveSurfaceMaterial(
   finish: SurfaceFinish | undefined,
   pattern: SurfacePattern | undefined,
+  optics?: SurfaceOptics,
+  derivedRadius?: number,
 ): ResolvedSurfaceMaterial {
+  const resolvedOptics =
+    optics === undefined
+      ? undefined
+      : resolveSurfaceOptics(optics, derivedRadius as number);
+  if (resolvedOptics === undefined) {
+    return {
+      finish: resolveSurfaceFinish(finish),
+      pattern: resolveSurfacePattern(pattern),
+    };
+  }
   return {
     finish: resolveSurfaceFinish(finish),
     pattern: resolveSurfacePattern(pattern),
+    optics: resolvedOptics,
   };
 }
 
@@ -105,6 +159,15 @@ export function surfaceMaterialUsesPattern(
   material: ResolvedSurfaceMaterial,
 ): boolean {
   return material.pattern.kind !== "none";
+}
+
+/** The optical-model gate: this slot's transform authors an admitted optical
+ * model. The zero-transmission rule's document-side predicate — no slot
+ * resolves optics, no session constructs a transport scene. */
+export function surfaceMaterialUsesOptics(
+  material: ResolvedSurfaceMaterial,
+): boolean {
+  return material.optics !== undefined;
 }
 
 /**
@@ -222,4 +285,33 @@ export function surfaceMaterialLanes(
       patterned ? pattern.scale : 0,
     ],
   };
+}
+
+/**
+ * The OPTICAL transport lanes for one slot — the packed form of the slot's
+ * resolved dielectric material, the data the transport backends read per
+ * boundary event's `materialSlot` attribution. Frozen NOW (the persistence
+ * task) so both backends adopt one layout and no offset ever moves: the
+ * lanes ride a dedicated append-only storage buffer (`opticsMaps`, TWO vec4s
+ * per slot, laid out exactly as here) that arrives with the first backend —
+ * NOT inside `shadeMaps`, whose stride stays keyed on finish|pattern and
+ * whose bytes this feature never touches.
+ *
+ * Lane 0 = (ior, radius, absorption.r, absorption.g); lane 1 =
+ * (absorption.b, reserved, reserved, reserved). The three reserved words
+ * belong to the restrained distortion task (one authored word there) and
+ * future approved fields — appends inside the frozen stride, never a
+ * relayout. `null` when the slot resolves no optics: the whole buffer is
+ * then absent (zero-stride pad, like the maps packers), the classic
+ * route's exact bytes.
+ */
+export function surfaceMaterialOpticsLanes(
+  material: ResolvedSurfaceMaterial,
+): [[number, number, number, number], [number, number, number, number]] | null {
+  const optics = material.optics;
+  if (!optics) return null;
+  return [
+    [optics.ior, optics.radius, optics.absorption[0], optics.absorption[1]],
+    [optics.absorption[2], 0, 0, 0],
+  ];
 }
