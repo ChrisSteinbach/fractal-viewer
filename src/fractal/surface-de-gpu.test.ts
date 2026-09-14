@@ -4962,7 +4962,7 @@ describe("surfaceDeKernelWgsl nonlinear slab cover (slabCover)", () => {
     expect(source).toContain("hi.source4 = bestQ;");
   });
 
-  it("gives the fold4 shade probe its own covered twin — one text, renamed", () => {
+  it("gives the fold4 shade probe its own covered wrapper — ONE piece over the width-1 point body", () => {
     const source = surfaceDeKernelWgsl(
       kernelOpts({
         mode: "shade",
@@ -4976,10 +4976,37 @@ describe("surfaceDeKernelWgsl nonlinear slab cover (slabCover)", () => {
     expect(source).toContain(
       "fn surfaceDEProbe(pIn: vec3f, cutoff: f32, li: u32) -> f32 {",
     );
+    // One piece: the mid certificate `DE(mid) - |e|`, not the 16-piece
+    // loop (the taps' 16x was the measured app cost).
     expect(source).toContain(
-      "surfaceDEProbeCovered(q0 + s * e, innerCutoff, li)",
+      "return max(surfaceDEProbeCovered(q0, innerCutoff, li) - halfPiece, 0.0);",
     );
+    expect(source).not.toContain("surfaceDEProbeCovered(q0 + s * e");
     expect(source).toContain("return surfaceDEProbeCovered(q0, cutoff, li);");
+    // The taps actually route there.
+    expect(source).toContain("surfaceDEProbe(sp, 0.0, li)");
+  });
+
+  it("gives the affine4 cover a probe of its own too — the ladder has no width-1 body, so it probes the refined one once", () => {
+    const source = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine4", slabCover: true }),
+    );
+    expect(source).toContain(
+      "fn surfaceDEProbe(pIn: vec3f, cutoff: f32, li: u32) -> f32 {",
+    );
+    expect(source).toContain(
+      "return max(surfaceDECovered(q0, innerCutoff, li) - halfPiece, 0.0);",
+    );
+    expect(source).toContain("surfaceDEProbe(sp, 0.0, li)");
+  });
+
+  it("emits no covered probe outside shade mode — eval/march taps never exist", () => {
+    for (const mode of ["eval", "march"] as const) {
+      const source = surfaceDeKernelWgsl(
+        kernelOpts({ mode, core: "affine4", slabCover: true }),
+      );
+      expect(source).not.toContain("fn surfaceDEProbe(");
+    }
   });
 
   it("balances every brace under every cover composition, lens included", () => {

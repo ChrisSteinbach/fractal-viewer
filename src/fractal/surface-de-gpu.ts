@@ -4816,7 +4816,20 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
     opts.shadeDeWidth !== width
       ? opts.shadeDeWidth
       : null;
-  const probeDe = probeWidth === null ? "surfaceDE" : "surfaceDEProbe";
+  // The slab cover's own probe: a cover session's taps must NOT pay the
+  // full 16-piece cover (measured in the app: a fold-final cover frame was
+  // hours-dominated by shading), so under `slabCover` shade mode emits a
+  // dedicated `surfaceDEProbe` whose cover is a SINGLE piece —
+  // `max(0, DE(mid) - |e|)` is still a sound whole-segment certificate
+  // (every point of the segment lies within |e| of its midpoint), just a
+  // loose one, and the tap convention already accepts a coarser estimator
+  // there (never decides geometry; the width-1 probe's own overshoot is
+  // documented). A frontier cover core's probe calls its existing width-1
+  // point body; the affine ladder has no narrower body, so it calls the
+  // refined point body.
+  const coveredProbe = slabCover && mode === "shade";
+  const probeDe =
+    coveredProbe || probeWidth !== null ? "surfaceDEProbe" : "surfaceDE";
   const W = `${width}u`;
   const arrays = [
     "fcX",
@@ -7412,9 +7425,23 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   }
   return max(bound, 0.0);
 }`;
-  const coverProbeWrapText = coverValueWrapText
-    .replace("fn surfaceDE(", "fn surfaceDEProbe(")
-    .replaceAll("surfaceDECovered(", "surfaceDEProbeCovered(");
+  const coverProbeTarget =
+    probeWidth === null ? "surfaceDECovered" : "surfaceDEProbeCovered";
+  const coverProbeWrapText = /* wgsl */ `// The covered shading probe (\`coveredProbe\`): ONE piece of the slab cover,
+// for the normal/AO/shadow taps only (\`surfaceDEProbe\` never decides
+// geometry). \`DE(mid) - |e|\` is still a valid lower bound over the whole
+// segment by the triangle inequality — deliberately loose, the same trade
+// the width-1 probe makes, against 16x the taps' cost.
+fn surfaceDEProbe(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  let q0 = rotorInvApply4(vec4f(pIn, params.w0));
+  if (params.sliceHalfW <= 0.0) {
+    return ${coverProbeTarget}(q0, cutoff, li);
+  }
+  let e = rotorInvWCol4() * params.sliceHalfW;
+  let halfPiece = length(e);
+  let innerCutoff = select(0.0, cutoff + halfPiece, cutoff > 0.0);
+  return max(${coverProbeTarget}(q0, innerCutoff, li) - halfPiece, 0.0);
+}`;
   // The cover's hit-info twin: the shading attribution has no distance to
   // argmin on (SurfaceHitInfo is colors), so the winning sample is found
   // with the POINT VALUE descent — the same min the value wrapper returns
@@ -12612,12 +12639,12 @@ ${core4 ? probeLens4WrapText : probeLensWrapText}`
         .replace("fn surfaceDEProbe(", "fn surfaceDEProbeCovered(")}
 
 ${coverValueWrapText}${
-        probeWidth === null
-          ? ""
-          : `
+        coveredProbe
+          ? `
 
-// The probe taps' own covered twin — same text, renamed.
+// The probe taps' own covered wrapper — one piece, taps only.
 ${coverProbeWrapText}`
+          : ""
       }`
     : lensedBodyBlock;
 
