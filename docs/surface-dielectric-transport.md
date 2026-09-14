@@ -418,10 +418,25 @@ npx vitest run src/fractal/surface-dielectric.test.ts
 npx vitest run --config scripts/vitest.harness.config.ts \
   scripts/transmission-dielectric-solid.harness.ts \
   scripts/transmission-dielectric-tree.harness.ts
+
+# The compute backend's agreement legs (quiet real driver, X cookie):
+export XAUTHORITY=$(ls -t /run/user/$(id -u)/.mutter-Xwaylandauth.* | head -1)
+export DISPLAY=:0
+glxinfo -B | grep "OpenGL renderer"   # must NOT be SwiftShader/llvmpipe
+npm run bench:surface -- --display=:0
 ```
 
 The unit suite pins the optics (including the emitted `js` dialect executing
 bit-identically to the f64 oracle), the transport oracle over analytic
 interval/shell/posed-4D scenes, chunked bit-identity, the replay schedule and
 the emission canon. The harness runs re-verify the qualified scalar pins
-against the re-exported optics.
+against the re-exported optics. The bench's `transportAgreement` rows are
+the compute backend's per-core record: the kernel's own
+`transportNextBoundary`/`transportTrace` against `surface-transport-fixture.ts`'s
+f64 twin, fail-closed, with the forward cores' chaos exclusions disclosed
+per row (the ULP-ensemble classifier, escape legs' treatment) and the fold
+core's measured device-loss skip recorded in the run's notes. Measured
+2026-09-14 on the RX 7900 XTX / radeonsi: six of seven cores agree
+(radiance ≤ 1.1e-4, residual ≤ 3.2e-4, normals ≤ 6.6e-3); pristine main
+reproduces the SwiftShader device-loss at an unrelated early leg, so that
+finding is environmental.
