@@ -212,6 +212,38 @@ ladder/fence shape. What remains on the cost front is the Firefox arm and
 the teardown gate on a cover session: the Playwright Firefox build is not
 installed on this machine, so those wait for a box that has it.
 
+The browser matrix's own gate now pins the zero-thickness identity per
+cover class, measured as PIXELS rather than argued from the CPU oracle.
+`scripts/surface-4d-lift.verify.mjs` drives three nonlinear slab scenes at
+`?surfacesamples=1`; each sets the panel's slice-thickness slider to 0.2,
+waits for a completed settle, then returns the slider to ZERO and requires
+a fresh settle to reproduce the pre-thickness canvas frame BYTE FOR BYTE
+(`maxDelta === 0` over the whole canvas, not the coverage helper's 128px
+downscale). MEASURED on the Iris Xe, bundled Chrome, production build,
+14 September 2026:
+
+| Cover scene                     | entry | thick @ 0.2 | back to 0 | identity             |
+| ------------------------------- | ----: | ----------: | --------: | -------------------- |
+| Recursive spherefold pair       |  2.2s |       21.8s |      1.0s | max0, 0.000% changed |
+| Posed pair, authored radii+post |  1.9s |       15.7s |      1.0s | max0, 0.000% changed |
+| Mandelbox FINAL over pentatope  |  6.8s |       59.2s |      4.5s | max0, 0.000% changed |
+
+The posed scene is a NEW fixture: two spherefold maps under a pinned camera
+and a non-identity rotor/slice, with AUTHORED fold radii (`0.8/1.2`) and a
+map post. It is deliberately LENS-FREE, on a measurement: the first version
+mixed a nonlinear base with the mandelbox final lens and its entry settle
+had still not completed ~6 minutes in at `?surfacesamples=1` (the run was
+stopped there), where the same maps and pose without the lens settle in
+1.9s — and the lens class is gated separately by the mandelbox-final scene.
+The gate now gives every scene its own settle budget (`scene.settleMs`),
+entry included, rather than applying the global `--settle` to entry and the
+per-scene value only to the thickness phase.
+
+There is no WebGL arm to add for a nonlinear 4D slab: fold-shaped 4D
+sessions are compute-only and `surface-material-4d.ts` keeps refusing the
+combination (`slabSupported4` false is never routed to it), which is why
+the gate's engine column requires compute on all three.
+
 ## Exact finite reflection pieces
 
 All reflection hyperplanes are represented by the group orbits of the simple
@@ -351,12 +383,14 @@ What remains:
 - **Tiling composition.** Tiled 4D sessions still clamp thickness to zero;
   finite pieces need the split/cover composition and lattice walls need
   crossing enumeration (the tiling child's work).
-- **Browser matrix.** The lift gate now gates both cover classes end to
-  end (enter, row enabled, invalidation, completed settle, draw) at
-  `surfacesamples=1`. Still owed: several thicknesses and rotor poses,
-  zero-thickness identity, authored radii/posts, reloads and captures on
-  the engines, including the Mandelbox-plus-tiling acceptance case the
-  epic names, plus panel-gate coverage for the new availability set.
+- **Browser matrix.** The lift gate now gates all THREE cover classes end
+  to end (enter, row enabled, invalidation, completed settle, draw) at
+  `surfacesamples=1`, including the zero-thickness identity on real pixels
+  (byte-exact on all three), one posed rotor/slice view, and authored fold
+  radii + a map post. Still owed: more thicknesses and rotor poses,
+  reloads and captures on the engines, including the Mandelbox-plus-tiling
+  acceptance case the epic names (the tiling child's), plus panel-gate
+  coverage for the new availability set.
 
 CPU agreement and the heavy-class cost fix are done; the fence/teardown
 gates and the full browser matrix are the halves still missing.

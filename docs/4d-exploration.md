@@ -298,6 +298,11 @@ kaleidoscope fixture deliberately uses two maps at order 3: a four-map order-5
 system settled neither with nor without the floor inside 200 seconds on this
 hardware, the DE's own superlinear order cost rather than a lift regression.
 
+The cover-class thickness phase this gate later grew — three nonlinear slab
+scenes that set the panel's thickness, re-settle, and must reproduce the
+zero-thickness canvas frame byte for byte — is recorded with its measured
+rows in `docs/surface-slice-thickness.md`.
+
 ## References
 
 - A. Hanson, _Visualizing Quaternions_ — and his 4D visualization work, the
