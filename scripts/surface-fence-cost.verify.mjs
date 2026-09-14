@@ -547,18 +547,33 @@ async function main() {
     );
     return 3;
   }
-  // ON CHROME (no pin) the instrument must actually ENGAGE: the session's
-  // fence round-trip is measured ~2.4 ms there, far under the 25 ms
-  // engagement ceiling, so a settle that prices every group from the wall
-  // share means the pass-duration instrument broke — the exact regression
-  // this work shipped. On Firefox the wall currency IS the expected
-  // default (its ~100 ms fence exceeds the ceiling), so the currency mix
-  // there is informational only.
-  if (TS_Q === "" && !TS_OFF && t.gpuGroups === 0) {
-    log(
-      "FAIL: no gpu-priced groups — the pass-duration instrument never engaged on a cheap-fence stack",
-    );
-    return 3;
+  // THE INSTRUMENT'S ENGAGEMENT IS A MEASURED RULE, NOT A BROWSER'S NAME:
+  // the session prices from the GPU instrument wherever its own calibrated
+  // fence round-trip is cheap enough for the after-fence resolve to be free
+  // (`SURFACE_COMPUTE_TS_FENCE_COST_MS`, transcribed below), and from the
+  // wall share otherwise. So the gate asserts the RULE in both directions
+  // on whatever browser it runs: under the ceiling with no gpu-priced group
+  // is the shipped regression (Chrome is the one that would catch it), over
+  // the ceiling with gpu-priced groups is the expensive-fence waste the
+  // rule exists to avoid (where Firefox would be). A run pinned with
+  // --ts=0/--ts=1 is the instrument's own A/B and skips both. THE FIRST
+  // VERSION OF THIS CHECK WAS NOT BROWSER-SCOPED despite its own comment,
+  // so Firefox's correct wall pricing failed every cover run (measured:
+  // ts=on, 47/47 groups wall-priced, fence 99.86 ms > 25 ms).
+  const TS_FENCE_COST_MS = 25; // SURFACE_COMPUTE_FENCE_GROUP_MS / 12
+  if (TS_Q === "" && !TS_OFF && t.fenceMs !== null) {
+    if (t.fenceMs <= TS_FENCE_COST_MS && t.gpuGroups === 0) {
+      log(
+        `FAIL: fence ${t.fenceMs.toFixed(2)} ms is under the ${String(TS_FENCE_COST_MS)} ms ceiling but no group priced from the GPU instrument — the pass-duration instrument never engaged`,
+      );
+      return 3;
+    }
+    if (t.fenceMs > TS_FENCE_COST_MS && t.gpuGroups > 0) {
+      log(
+        `FAIL: fence ${t.fenceMs.toFixed(2)} ms is over the ${String(TS_FENCE_COST_MS)} ms ceiling but ${String(t.gpuGroups)} groups priced from the GPU instrument — the engagement rule did not bite`,
+      );
+      return 3;
+    }
   }
   log("PASS: the ladder climbed off its floor and the frame settled");
   return 0;

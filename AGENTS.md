@@ -689,9 +689,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     for boxfold/affine systems, the BOUNDED MIDPOINT COVER
     (`SLAB_COVER_PIECES` 16, complete-partition sound at any count) for
     nonlinear folds and final lenses, refusal only for swirl/condensation —
-    mirrored by `surface-de-gpu.ts`'s `slabCover`, routed by the app; tiling
-    composition and the cover-live cost gates remain owed. Proof, measured
-    CPU/GPU rows and scope: `docs/surface-slice-thickness.md`.
+    mirrored by `surface-de-gpu.ts`'s `slabCover`, routed by the app, both
+    gates green in both browsers; tiling composition remains
+    owed. Proof, measured rows and scope: `docs/surface-slice-thickness.md`.
   - `surface-de-gpu.ts` — WGSL fold-DE compute kernel (a spike, gated in by
     the beam-width occupancy verdict; integrated as the app's compute
     surface path): mirrors `estimateDistance`'s refine=false fold path term
