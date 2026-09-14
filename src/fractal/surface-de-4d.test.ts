@@ -9,6 +9,8 @@ import {
   setFoldFrontierTap4,
   singularValues4,
   slabExact4,
+  slabSupported4,
+  SLAB_COVER_PIECES,
   surfaceNativeCarriers4,
   transformSeparatedSigmas4,
   transformSigmas4,
@@ -338,6 +340,18 @@ function mandelboxFinal4(): Transform {
     rotation: [0.3, 0, 0.2],
     scale: [0.85, 0.85, 0.85],
     variations: [{ type: "mandelbox", weight: 0.6 }],
+  });
+}
+
+/** A spherefold FINAL lens — the pure inversion crossing one level up. */
+function spherefoldFinal4(): Transform {
+  return map4({
+    id: 99,
+    position: [0.05, -0.08, 0.03],
+    rotation: [0.2, 0.1, 0.3],
+    scale: [0.8, 0.8, 0.8],
+    w: { position: 0.05, rotation: { yw: 0.2 } },
+    variations: [{ type: "spherefold", weight: 0.7 }],
   });
 }
 
@@ -3228,6 +3242,47 @@ describe("slabExact4 truth table", () => {
   });
 });
 
+describe("slabSupported4 truth table", () => {
+  // The public entries' gate, one step wider than slabExact4: every fold
+  // family is admitted (the bounded midpoint cover answers the nonlinear
+  // ones), and only the systems with no cover refuse.
+  it("admits affine, boxfold, spherefold and mandelbox base maps", () => {
+    expect(slabSupported4(buildSurfaceDE4(pentatope()))).toBe(true);
+    expect(slabSupported4(buildSurfaceDE4(pureBoxfoldPair4()))).toBe(true);
+    expect(slabSupported4(buildSurfaceDE4(pureSpherefoldPair4()))).toBe(true);
+    expect(slabSupported4(buildSurfaceDE4(pureMandelboxPair4()))).toBe(true);
+  });
+
+  it("admits affine bases under boxfold, spherefold and mandelbox FINAL lenses", () => {
+    expect(slabSupported4(buildSurfaceDE4([map4()], boxfoldFinal4()))).toBe(
+      true,
+    );
+    expect(slabSupported4(buildSurfaceDE4([map4()], spherefoldFinal4()))).toBe(
+      true,
+    );
+    expect(slabSupported4(buildSurfaceDE4([map4()], mandelboxFinal4()))).toBe(
+      true,
+    );
+  });
+
+  it("refuses a condensation shape", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.5 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const withEmitter = pentatope().map((t, i) =>
+      i === 1 ? { ...t, emitter } : t,
+    );
+    const de = buildSurfaceDE4(withEmitter);
+    expect(slabExact4(de)).toBe(false);
+    expect(slabSupported4(de)).toBe(false);
+  });
+});
+
 describe("estimateDistance4 / estimateDistance4Refined validity on a pure-boxfold-4D system", () => {
   it("keeps both estimators below the brute-force nearest cloud distance, jittered and uniform probes alike", () => {
     const transforms = pureBoxfoldPair4();
@@ -4122,27 +4177,189 @@ describe("slab queries through the fold frontier", () => {
     }
   });
 
-  it("throws on a nonzero half-extent for a spherefold system", () => {
-    const de = buildSurfaceDE4(pureSpherefoldPair4());
-    const halfExtent: Vec4 = [0, 0, 0, 0.05];
-    expect(() => estimateDistance4(de, [0.2, 0, 0, 0], halfExtent)).toThrow(
-      /slab queries are unsound/,
+  it("keeps both estimators sound against the segment-sampled nearest through a spherefold pair", () => {
+    const transforms = pureSpherefoldPair4();
+    const de = buildSurfaceDE4(transforms);
+    expect(slabExact4(de)).toBe(false);
+    expect(slabSupported4(de)).toBe(true);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
     );
-    expect(() =>
-      estimateDistance4Refined(de, [0.2, 0, 0, 0], 0, halfExtent),
-    ).toThrow(/slab queries are unsound/);
+    const R = de.boundingRadius;
+    const halfExtent: Vec4 = [0, 0, 0, 0.1 * R];
+    for (const q of jitteredQueries(cloud, 40)) {
+      const truth = nearestSegmentDistance4(
+        cloud.positions,
+        cloud.w,
+        cloud.count,
+        q,
+        halfExtent,
+      );
+      expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+        truth + 1e-9,
+      );
+      expect(
+        estimateDistance4Refined(de, q, 0, halfExtent),
+      ).toBeLessThanOrEqual(truth + 1e-9);
+    }
+  }, 30000);
+
+  it("keeps both estimators sound against the segment-sampled nearest through a mandelbox pair", () => {
+    const transforms = pureMandelboxPair4();
+    const de = buildSurfaceDE4(transforms);
+    expect(slabExact4(de)).toBe(false);
+    expect(slabSupported4(de)).toBe(true);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
+    );
+    const R = de.boundingRadius;
+    const halfExtent: Vec4 = [0, 0, 0, 0.1 * R];
+    for (const q of jitteredQueries(cloud, 40)) {
+      const truth = nearestSegmentDistance4(
+        cloud.positions,
+        cloud.w,
+        cloud.count,
+        q,
+        halfExtent,
+      );
+      expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+        truth + 1e-9,
+      );
+      expect(
+        estimateDistance4Refined(de, q, 0, halfExtent),
+      ).toBeLessThanOrEqual(truth + 1e-9);
+    }
+  }, 30000);
+
+  it("answers a nonlinear slab with the complete midpoint cover, piece for piece", () => {
+    const de = buildSurfaceDE4(pureSpherefoldPair4());
+    const R = de.boundingRadius;
+    const halfExtent: Vec4 = [0, 0, 0, 0.1 * R];
+    const halfPiece =
+      Math.hypot(halfExtent[0], halfExtent[1], halfExtent[2], halfExtent[3]) /
+      SLAB_COVER_PIECES;
+    const rng = mulberry32(0x5f61);
+    for (let i = 0; i < 20; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2 * R,
+        (rng() - 0.5) * 2 * R,
+        (rng() - 0.5) * 2 * R,
+        (rng() - 0.5) * 2 * R,
+      ];
+      // The cover's own definition, recomputed here from the public point
+      // estimator: every piece's certificate, then the minimum.
+      let expected = Infinity;
+      for (let piece = 0; piece < SLAB_COVER_PIECES; piece++) {
+        const s = -1 + (2 * piece + 1) / SLAB_COVER_PIECES;
+        const q: Vec4 = [
+          p[0] + s * halfExtent[0],
+          p[1] + s * halfExtent[1],
+          p[2] + s * halfExtent[2],
+          p[3] + s * halfExtent[3],
+        ];
+        const d = estimateDistance4Refined(de, q);
+        if (d - halfPiece < expected) expected = d - halfPiece;
+      }
+      if (expected < 0) expected = 0;
+      expect(estimateDistance4Refined(de, p, 0, halfExtent)).toBeCloseTo(
+        expected,
+        12,
+      );
+      // The base estimator runs the same cover with the base point core.
+      let expectedBase = Infinity;
+      for (let piece = 0; piece < SLAB_COVER_PIECES; piece++) {
+        const s = -1 + (2 * piece + 1) / SLAB_COVER_PIECES;
+        const q: Vec4 = [
+          p[0] + s * halfExtent[0],
+          p[1] + s * halfExtent[1],
+          p[2] + s * halfExtent[2],
+          p[3] + s * halfExtent[3],
+        ];
+        const d = estimateDistance4(de, q);
+        if (d - halfPiece < expectedBase) expectedBase = d - halfPiece;
+      }
+      if (expectedBase < 0) expectedBase = 0;
+      expect(estimateDistance4(de, p, halfExtent)).toBeCloseTo(
+        expectedBase,
+        12,
+      );
+    }
   });
 
-  it("throws on a nonzero half-extent for a mandelbox system", () => {
-    const de = buildSurfaceDE4(pureMandelboxPair4());
-    const halfExtent: Vec4 = [0, 0, 0, 0.05];
-    expect(() => estimateDistance4(de, [0.2, 0, 0, 0], halfExtent)).toThrow(
-      /slab queries are unsound/,
-    );
-    expect(() =>
-      estimateDistance4Refined(de, [0.2, 0, 0, 0], 0, halfExtent),
-    ).toThrow(/slab queries are unsound/);
+  it("honors the cutoff contract through the cover: clearing it matches the full cover, dipping under it implies the full cover does too", () => {
+    const de = buildSurfaceDE4(pureSpherefoldPair4());
+    const R = de.boundingRadius;
+    const halfExtent: Vec4 = [0, 0, 0, 0.1 * R];
+    const cutoff = 0.05 * R;
+    const rng = mulberry32(0x5f62);
+    let cleared = 0;
+    let dipped = 0;
+    for (let i = 0; i < 40; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2 * R,
+        (rng() - 0.5) * 2 * R,
+        (rng() - 0.5) * 2 * R,
+        (rng() - 0.5) * 2 * R,
+      ];
+      const full = estimateDistance4Refined(de, p, 0, halfExtent);
+      const cut = estimateDistance4Refined(de, p, cutoff, halfExtent);
+      if (cut >= cutoff) {
+        cleared++;
+        expect(cut).toBe(full);
+      } else {
+        dipped++;
+        expect(full).toBeLessThan(cutoff);
+      }
+    }
+    expect(cleared).toBeGreaterThan(0);
+    expect(dipped).toBeGreaterThan(0);
   }, 20000);
+
+  it("keeps both estimators sound through spherefold and mandelbox FINAL lenses", () => {
+    for (const [final, seed] of [
+      [spherefoldFinal4(), 0x5f51],
+      [mandelboxFinal4(), 0x5f52],
+    ] as [Transform, number][]) {
+      const transforms = pentatope();
+      const de = buildSurfaceDE4(transforms, final);
+      expect(slabExact4(de)).toBe(false);
+      expect(slabSupported4(de)).toBe(true);
+      const cloud = runChaosGame4(
+        transforms.map(toTransform4),
+        40000,
+        mulberry32(seed),
+        toTransform4(final),
+      );
+      const rng = mulberry32(seed + 1);
+      const halfExtent: Vec4 = [0, 0, 0, 0.08];
+      for (let i = 0; i < 30; i++) {
+        const idx = Math.floor(rng() * cloud.count);
+        const q: Vec4 = [
+          cloud.positions[idx * 3] + (rng() - 0.5) * 0.3,
+          cloud.positions[idx * 3 + 1] + (rng() - 0.5) * 0.3,
+          cloud.positions[idx * 3 + 2] + (rng() - 0.5) * 0.3,
+          cloud.w[idx] + (rng() - 0.5) * 0.3,
+        ];
+        const truth = nearestSegmentDistance4(
+          cloud.positions,
+          cloud.w,
+          cloud.count,
+          q,
+          halfExtent,
+        );
+        expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+          truth + 1e-9,
+        );
+        expect(
+          estimateDistance4Refined(de, q, 0, halfExtent),
+        ).toBeLessThanOrEqual(truth + 1e-9);
+      }
+    }
+  }, 30000);
 
   it("keeps both estimators sound against the segment-sampled nearest through a boxfold FINAL lens", () => {
     const transforms = pentatope();
