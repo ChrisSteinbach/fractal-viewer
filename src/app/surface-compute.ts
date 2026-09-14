@@ -100,6 +100,7 @@ import type {
   SurfaceGpu4View,
   SurfaceGpuGroundPlane,
   SurfaceGpuRunParams,
+  SurfaceGpuShadeParams,
 } from "../fractal/surface-de-gpu";
 import {
   packBulbGpuParams,
@@ -110,6 +111,7 @@ import {
   packSurface4GpuParams,
   packSurfaceGpuMaps,
   packSurfaceGpuMaps4,
+  packSurfaceGpuOpticsMaps,
   packSurfaceGpuParams,
   packSurfaceGpuSeed,
   packSurfaceGpuShade,
@@ -156,10 +158,16 @@ import {
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_SHADE_LIGHTING_BYTES,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
+  SURFACE_GPU_TRANSPORT_COMPLETE,
+  SURFACE_GPU_TRANSPORT_INVALID,
+  SURFACE_GPU_TRANSPORT_PENDING,
+  SURFACE_GPU_TRANSPORT_RESIDUAL,
+  SURFACE_GPU_TRANSPORT_UNRESOLVED,
   SURFACE_GPU_TILING_BYTES,
   surfaceComputeSeedWgsl,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
+import { DIELECTRIC_REPLAY_PASSES } from "../fractal/surface-dielectric";
 import {
   deHasFolds,
   SURFACE_FOLD_BEAM_WIDTH,
@@ -1083,6 +1091,14 @@ export interface SurfaceComputeFrame {
   /** Conservative visibility refusals over completed lighting samples.
    * Recorded by the lit shader without another per-ray storage buffer. */
   lightingVisibility?: { exhausted: number; invalid: number };
+  /** The optical transport's terminal tallies, present only when the
+   * session's optics gate is live. `resolved` counts accepted samples;
+   * `unresolved` counts the replay schedule's refusals and guards (and a
+   * budget truncation's never-resolved remainder is disclosed by
+   * `truncated`, not relabeled here); `invalid` counts non-finite
+   * outcomes. Unresolved and invalid pixels render BLACK — never
+   * background — and these counts are the disclosure. */
+  transport?: { resolved: number; unresolved: number; invalid: number };
 }
 
 /** Internal sample payload: retained until runSamples has added its raw
@@ -2232,6 +2248,11 @@ export const SURFACE_COMPUTE_RAY_BYTES = 44;
  * all six other per-ray buffers keep their frozen layout. */
 export const SURFACE_COMPUTE_LIGHTING_RAY_BYTES = 68;
 
+/** The optical transport's per-ray record: TWO vec4f — radiance.rgb +
+ * residual, then status/failure/reason/generation. Allocated only under
+ * the session's optics gate; the seed zeroes it per frame. */
+export const SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES = 32;
+
 /** Byte count as MiB, for the size errors' messages. */
 function mib(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
@@ -2441,6 +2462,15 @@ export interface SurfaceComputeRendererInit {
    * — null for every other target kind. */
   marchPipelineNoSlab: GPUComputePipeline | null;
   shadePipelineNoSlab: GPUComputePipeline | null;
+  /** The optical transport pass — compiled from the shade module's
+   * `transportRays` entry under the session's optics gate; null for every
+   * classic session. The NoSlab twin mirrors the shade pipeline's ifs4
+   * pair. */
+  transportPipeline: GPUComputePipeline | null;
+  transportPipelineNoSlab: GPUComputePipeline | null;
+  /** The frozen `opticsMaps` lane buffer (packSurfaceGpuOpticsMaps) —
+   * null when no slot resolves optics. */
+  opticsMapsBuf: GPUBuffer | null;
   /** The frame seed (`surfaceComputeSeedWgsl`, lighting variant matching the
    * session's compile gate): writes `color`/`layer`/`states` on the device
    * so no frame stages them through the queue. */
@@ -2507,6 +2537,15 @@ interface FrameBuffers {
   stagingStatus: GPUBuffer;
   stagingColor: GPUBuffer;
   stagingLayer: GPUBuffer;
+  /** The optical transport's per-ray records (two vec4f each) — present
+   * only when the session's optics gate is live; the seed zeroes them per
+   * frame and the transport lane reads the status side-channel beside it,
+   * never these 32 B/ray records. */
+  transportState?: GPUBuffer;
+  /** The transport's status side-channel: one `u32` per RAY, written at
+   * every transport pass exit (SKIPPED for classic slots). */
+  transportStatus?: GPUBuffer;
+  stagingTransportStatus?: GPUBuffer;
   marchBindGroup: GPUBindGroup;
   shadeBindGroup: GPUBindGroup;
   /** The frame seed's bind group: rebuilt with the shade one, since both
@@ -2575,7 +2614,14 @@ export class SurfaceComputeRenderer {
        * first-positive-weight rule (their kernels' `firstChoice` is 0).
        * CREATE-TIME state, like the
        * colors beside it: a material edit reaches a live session through
-       * the same session re-enter a color edit takes. */
+       * the same session re-enter a color edit takes. `optics: true`
+       * (the wire's third gate) compiles the optical transport beside
+       * the shade entry, allocates the frozen `opticsMaps` lane buffer
+       * and the per-frame transport records, and routes HIT rays through
+       * the replay-pass lane — the capability matrix in
+       * `docs/surface-dielectric-transport.md` records per core/wrapper
+       * what that admits. Refuses to combine with `lighting` (both own
+       * the hit path's output — the codegen throws). */
       materials?: SurfaceMaterialSlots | null;
       lighting?: boolean;
     } = {},
@@ -2800,6 +2846,11 @@ export class SurfaceComputeRenderer {
           finish: materials?.finish ?? false,
           lighting,
           pattern: materials?.pattern ?? false,
+          // The optical transport gate (create()'s opts doc): the wire's
+          // own `optics` flag, frozen with the materials it derives from.
+          // Structurally inert in march mode — one flag serves both
+          // kernels of the pair.
+          optics: materials?.optics ?? false,
         }),
       });
       const info = await module.getCompilationInfo();
@@ -2896,6 +2947,13 @@ export class SurfaceComputeRenderer {
               },
             ]
           : []),
+        ...(materials?.optics
+          ? [
+              bufferEntry(13, "read-only-storage"),
+              bufferEntry(14, "storage"),
+              bufferEntry(15, "storage"),
+            ]
+          : []),
         ...(targetHasMesh ? [meshTextureLayoutEntry] : []),
       ],
     });
@@ -2934,6 +2992,8 @@ export class SurfaceComputeRenderer {
       shadePipeline,
       marchPipelineNoSlab,
       shadePipelineNoSlab,
+      transportPipeline,
+      transportPipelineNoSlab,
     ] = await Promise.all([
       device.createComputePipelineAsync({
         layout: marchPipelineLayout,
@@ -2955,6 +3015,21 @@ export class SurfaceComputeRenderer {
             compute: { module: shadeModuleNoSlab, entryPoint: "shadeRays" },
           })
         : null,
+      materials?.optics
+        ? device.createComputePipelineAsync({
+            layout: shadePipelineLayout,
+            compute: { module: shadeModule, entryPoint: "transportRays" },
+          })
+        : null,
+      materials?.optics && shadeModuleNoSlab
+        ? device.createComputePipelineAsync({
+            layout: shadePipelineLayout,
+            compute: {
+              module: shadeModuleNoSlab,
+              entryPoint: "transportRays",
+            },
+          })
+        : null,
     ]);
     // The frame seed: writes color/layer/states on the device, so no frame
     // stages them through the queue (surfaceComputeSeedWgsl's doc). Its
@@ -2967,6 +3042,7 @@ export class SurfaceComputeRenderer {
         bufferEntry(4, "uniform"),
         bufferEntry(6, "storage"),
         bufferEntry(9, "storage"),
+        ...(materials?.optics ? [bufferEntry(14, "storage")] : []),
         ...(lighting
           ? [
               {
@@ -2984,7 +3060,10 @@ export class SurfaceComputeRenderer {
       ],
     });
     const seedModule = device.createShaderModule({
-      code: surfaceComputeSeedWgsl({ lighting }),
+      code: surfaceComputeSeedWgsl({
+        lighting,
+        optics: materials?.optics ?? false,
+      }),
     });
     const seedErrors = (await seedModule.getCompilationInfo()).messages.filter(
       (m) => m.type === "error",
@@ -3138,9 +3217,7 @@ export class SurfaceComputeRenderer {
     // present exactly when the kernel was generated with finish OR pattern
     // true (the two gates just above), so an optics-only wire must NOT reach
     // it — its slots would mint stride-3 bytes for a stride-1 kernel. The
-    // optical model is dormant here anyway (no kernel consumes it); the
-    // optics transport rides its own buffer when the resumable-transport
-    // work wires it in.
+    // optical model rides its OWN frozen buffer below.
     const shadeMaterialSlots =
       materials && (materials.finish || materials.pattern)
         ? materials.slots
@@ -3153,6 +3230,23 @@ export class SurfaceComputeRenderer {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     device.queue.writeBuffer(shadeMapsBuf, 0, shadeMapsData);
+    // The optical transport's lane buffer: the frozen opticsMaps layout,
+    // adopted now that the kernel declares binding 13. Created only under
+    // the wire's optics gate — a classic session allocates nothing and
+    // binds nothing at 13/14/15 (the invariant "packer presence == codegen
+    // gates", the shadeMaps gate's own rule one buffer over).
+    const opticsMapsData = materials?.optics
+      ? new Float32Array(packSurfaceGpuOpticsMaps(materials.slots))
+      : null;
+    const opticsMapsBuf = opticsMapsData
+      ? device.createBuffer({
+          size: opticsMapsData.byteLength,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        })
+      : null;
+    if (opticsMapsBuf && opticsMapsData) {
+      device.queue.writeBuffer(opticsMapsBuf, 0, opticsMapsData);
+    }
     const lutTex = device.createTexture({
       size: { width: 256, height: 1 },
       format: "rgba8unorm",
@@ -3281,6 +3375,9 @@ export class SurfaceComputeRenderer {
       shadeLayout,
       marchPipelineNoSlab,
       shadePipelineNoSlab,
+      transportPipeline,
+      transportPipelineNoSlab,
+      opticsMapsBuf,
       seedPipeline,
       seedLayout,
       seedBuf,
@@ -3437,6 +3534,15 @@ export class SurfaceComputeRenderer {
    * — null for every other target kind. */
   private readonly marchPipelineNoSlab: GPUComputePipeline | null;
   private readonly shadePipelineNoSlab: GPUComputePipeline | null;
+  /** The optical transport pass, under the session's optics gate; null
+   * for every classic session. */
+  private readonly transportPipeline: GPUComputePipeline | null;
+  private readonly transportPipelineNoSlab: GPUComputePipeline | null;
+  /** The frozen opticsMaps lane buffer; null when no slot resolves optics. */
+  private readonly opticsMapsBuf: GPUBuffer | null;
+  /** The session's optics gate — the wire's own state, frozen at create
+   * like the materials it derives from. */
+  private readonly optics: boolean;
   /** See {@link SurfaceComputeRendererInit.seedPipeline}. */
   private readonly seedPipeline: GPUComputePipeline;
   private readonly seedLayout: GPUBindGroupLayout;
@@ -3472,6 +3578,10 @@ export class SurfaceComputeRenderer {
     this.shadeLayout = init.shadeLayout;
     this.marchPipelineNoSlab = init.marchPipelineNoSlab;
     this.shadePipelineNoSlab = init.shadePipelineNoSlab;
+    this.transportPipeline = init.transportPipeline;
+    this.transportPipelineNoSlab = init.transportPipelineNoSlab;
+    this.opticsMapsBuf = init.opticsMapsBuf;
+    this.optics = init.transportPipeline !== null;
     this.seedPipeline = init.seedPipeline;
     this.seedLayout = init.seedLayout;
     this.seedBuf = init.seedBuf;
@@ -3808,8 +3918,11 @@ export class SurfaceComputeRenderer {
       this.frame.stagingStatus,
       this.frame.stagingColor,
       this.frame.stagingLayer,
+      this.frame.transportState,
+      this.frame.transportStatus,
+      this.frame.stagingTransportStatus,
     ]) {
-      b.destroy();
+      b?.destroy();
     }
     this.frame = null;
   }
@@ -3859,6 +3972,27 @@ export class SurfaceComputeRenderer {
       size: rays * 4,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
+    // The optical transport's per-frame state: the per-ray record pair
+    // (seed-zeroed on device) and its 4 B/ray status side-channel. Both
+    // exist exactly when the session's optics gate is live — a classic
+    // session allocates none of it.
+    let transportState: GPUBuffer | undefined;
+    let transportStatus: GPUBuffer | undefined;
+    let stagingTransportStatus: GPUBuffer | undefined;
+    if (this.optics) {
+      transportState = device.createBuffer({
+        size: rays * SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+      transportStatus = device.createBuffer({
+        size: rays * 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      stagingTransportStatus = device.createBuffer({
+        size: rays * 4,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      });
+    }
     const marchBindGroup = device.createBindGroup({
       layout: this.marchLayout,
       entries: [
@@ -3883,9 +4017,16 @@ export class SurfaceComputeRenderer {
       states,
       color,
       layer,
+      transportState,
+      transportStatus,
     );
     // After the march and shade groups, so their creation order is unchanged.
-    const seedBindGroup = this.createSeedBindGroup(states, color, layer);
+    const seedBindGroup = this.createSeedBindGroup(
+      states,
+      color,
+      layer,
+      transportState,
+    );
     this.frame = {
       rays,
       states,
@@ -3896,6 +4037,9 @@ export class SurfaceComputeRenderer {
       stagingStatus,
       stagingColor,
       stagingLayer,
+      transportState,
+      transportStatus,
+      stagingTransportStatus,
       marchBindGroup,
       shadeBindGroup,
       seedBindGroup,
@@ -3908,6 +4052,8 @@ export class SurfaceComputeRenderer {
     states: GPUBuffer,
     color: GPUBuffer,
     layer: GPUBuffer,
+    transportState?: GPUBuffer,
+    transportStatus?: GPUBuffer,
   ): GPUBindGroup {
     return this.device.createBindGroup({
       layout: this.shadeLayout,
@@ -3939,6 +4085,16 @@ export class SurfaceComputeRenderer {
                 binding: 11,
                 resource: this.meshSdfTex.createView({ dimension: "3d" }),
               },
+            ]
+          : []),
+        ...(transportState && transportStatus && this.opticsMapsBuf
+          ? [
+              {
+                binding: 13,
+                resource: { buffer: this.opticsMapsBuf },
+              },
+              { binding: 14, resource: { buffer: transportState } },
+              { binding: 15, resource: { buffer: transportStatus } },
             ]
           : []),
       ],
@@ -4021,6 +4177,7 @@ export class SurfaceComputeRenderer {
     states: GPUBuffer,
     color: GPUBuffer,
     layer: GPUBuffer,
+    transportState?: GPUBuffer,
   ): GPUBindGroup {
     return this.device.createBindGroup({
       layout: this.seedLayout,
@@ -4030,6 +4187,9 @@ export class SurfaceComputeRenderer {
         { binding: 4, resource: { buffer: this.shadeBuf } },
         { binding: 6, resource: { buffer: color } },
         { binding: 9, resource: { buffer: layer } },
+        ...(transportState
+          ? [{ binding: 14, resource: { buffer: transportState } }]
+          : []),
         ...(this.lightingBackgroundTex
           ? [
               { binding: 8, resource: this.lutSamp },
@@ -4251,57 +4411,69 @@ export class SurfaceComputeRenderer {
       this.uploadedBalloonLutVersion = spec.balloonLutVersion ?? 0;
       stagedBytes += 256 * 4;
     }
+    // The shade uniform's fields, hoisted so the optical transport's
+    // replay lane can re-pack the SAME uniform with a new replay-pass word
+    // per pass — the transport word is the one per-pass quantity, and the
+    // write is 240/256 B against the dispatch it schedules.
+    const shadeParamsBase: SurfaceGpuShadeParams = {
+      invProjView: spec.invProjView,
+      lightDir: spec.lightDir,
+      ambient: spec.ambient,
+      lighting,
+      lightingRuntime: runtime,
+      lightingBackground: this.lighting && !!spec.lightingBackground,
+      bgTop: spec.bgTop,
+      bgBottom: spec.bgBottom,
+      colorSpeed: spec.colorSpeed,
+      tracePixelEps: spec.tracePixelEps,
+      colorSource: spec.colorSource,
+      shadowSteps: spec.shadowSteps,
+      aoTaps: spec.aoTaps,
+      dither: spec.dither,
+      balloonPalette: this.balloonLutTex !== null && !!spec.balloonLut,
+      fogTint: spec.fogTint,
+      fogTintStrength: spec.fogTintStrength,
+      // Ground and balloon kernels are mutually exclusive. Reuse the
+      // balloon tint tail for the floor's shading-only appearance so the
+      // frozen ShadeParams layout does not grow: (tile, emission, pattern).
+      balloonTint: spec.groundPlane
+        ? [
+            spec.groundPlane.tileScale ?? 0.64,
+            spec.groundPlane.emission ?? 0,
+            spec.groundPlane.pattern ?? 0,
+          ]
+        : spec.balloonTint,
+      balloonTintStrength: spec.balloonTintStrength,
+      // The pattern arm's native-carrier calibration, present exactly
+      // when the session compiled the pattern gate — the shade struct's
+      // conditional member at 224 (the buffer was sized 240 above).
+      patternCalibration:
+        spec.materials?.pattern === true
+          ? [
+              spec.materials.patternCalibration.ringsLow,
+              spec.materials.patternCalibration.ringsInvSpan,
+              spec.materials.patternCalibration.sheetsLow,
+              spec.materials.patternCalibration.sheetsInvSpan,
+            ]
+          : undefined,
+      pixelJitter,
+      envStrength: spec.envLight,
+      bgOffset,
+      bgExtent,
+      bgCenter,
+      bgScale,
+      bgShape: backgroundShapeCode(bgShape.kind),
+    };
     stage(
       this.shadeBuf,
-      packSurfaceGpuShade({
-        invProjView: spec.invProjView,
-        lightDir: spec.lightDir,
-        ambient: spec.ambient,
-        lighting,
-        lightingRuntime: runtime,
-        lightingBackground: this.lighting && !!spec.lightingBackground,
-        bgTop: spec.bgTop,
-        bgBottom: spec.bgBottom,
-        colorSpeed: spec.colorSpeed,
-        tracePixelEps: spec.tracePixelEps,
-        colorSource: spec.colorSource,
-        shadowSteps: spec.shadowSteps,
-        aoTaps: spec.aoTaps,
-        dither: spec.dither,
-        balloonPalette: this.balloonLutTex !== null && !!spec.balloonLut,
-        fogTint: spec.fogTint,
-        fogTintStrength: spec.fogTintStrength,
-        // Ground and balloon kernels are mutually exclusive. Reuse the
-        // balloon tint tail for the floor's shading-only appearance so the
-        // frozen ShadeParams layout does not grow: (tile, emission, pattern).
-        balloonTint: spec.groundPlane
-          ? [
-              spec.groundPlane.tileScale ?? 0.64,
-              spec.groundPlane.emission ?? 0,
-              spec.groundPlane.pattern ?? 0,
-            ]
-          : spec.balloonTint,
-        balloonTintStrength: spec.balloonTintStrength,
-        // The pattern arm's native-carrier calibration, present exactly
-        // when the session compiled the pattern gate — the shade struct's
-        // conditional member at 224 (the buffer was sized 240 above).
-        patternCalibration:
-          spec.materials?.pattern === true
-            ? [
-                spec.materials.patternCalibration.ringsLow,
-                spec.materials.patternCalibration.ringsInvSpan,
-                spec.materials.patternCalibration.sheetsLow,
-                spec.materials.patternCalibration.sheetsInvSpan,
-              ]
-            : undefined,
-        pixelJitter,
-        envStrength: spec.envLight,
-        bgOffset,
-        bgExtent,
-        bgCenter,
-        bgScale,
-        bgShape: backgroundShapeCode(bgShape.kind),
-      }),
+      packSurfaceGpuShade(
+        this.optics
+          ? {
+              ...shadeParamsBase,
+              transport: [0, DIELECTRIC_REPLAY_PASSES] as [number, number],
+            }
+          : shadeParamsBase,
+      ),
     );
     // Composite-layer seed contract: rays still ACTIVE at a budget cut are
     // uncovered background in BOTH buffers. A prior frame's RGB cannot be
@@ -4361,6 +4533,11 @@ export class SurfaceComputeRenderer {
     // costs.
     let shadeHitQueue: number[] = [];
     let shadeFreeQueue: number[] = [];
+    // The optical transport's work list: every HIT ray when the session's
+    // optics gate is live — the transport entry routes per ray (optics
+    // slot → dielectric trace; classic slot → SKIPPED, shadeRays's
+    // business), and the host keeps no per-slot knowledge to filter by.
+    const transportQueue: number[] = [];
     // Empty mist regions cannot authorize wider geometry batches.
     const lightingCovered = this.lighting ? new Uint8Array(rays) : null;
     // The one pin with no downstream Math.min (see the chunk and hit
@@ -4640,6 +4817,10 @@ export class SurfaceComputeRenderer {
       !slabFrame && this.shadePipelineNoSlab !== null
         ? this.shadePipelineNoSlab
         : this.shadePipeline;
+    const transportPipeline =
+      !slabFrame && this.transportPipelineNoSlab !== null
+        ? this.transportPipelineNoSlab
+        : this.transportPipeline;
     /** One dispatch's params block, packed but not yet staged —
      * `stageDispatch` below decides whether a fence must come first. */
     const packRunParams = (itemCount: number, steps: number): ArrayBuffer => {
@@ -5255,7 +5436,11 @@ export class SurfaceComputeRenderer {
     // slices and shade batches alike — never only at iteration ends: a
     // full-depth shade drain can grind for minutes, and the whole point
     // of progressive presents is that the screen develops through it.
-    const maybePresent = async (): Promise<boolean> => {
+    // `doneOverride` — the optical transport lane's own tally: the march
+    // and shade queues are empty there, so the formula would read
+    // complete while the replay passes still have pending rays; the
+    // lane reports rays-minus-pending instead.
+    const maybePresent = async (doneOverride?: number): Promise<boolean> => {
       if (!opts.onProgress) return true;
       if (performance.now() - lastProgress < progressMs) return true;
       tr("present readback BEGIN");
@@ -5282,15 +5467,16 @@ export class SurfaceComputeRenderer {
       opts.onProgress(
         partial,
         partialLayers,
-        surfaceComputeProgressDone({
-          rays,
-          active: active.length,
-          shadeQueued: shadeHitQueue.length + shadeFreeQueue.length,
-          sweepSteps,
-          sliced: sweepSliced,
-          stepsThisPass,
-          marchSteps: spec.marchSteps,
-        }),
+        doneOverride ??
+          surfaceComputeProgressDone({
+            rays,
+            active: active.length,
+            shadeQueued: shadeHitQueue.length + shadeFreeQueue.length,
+            sweepSteps,
+            sliced: sweepSliced,
+            stepsThisPass,
+            marchSteps: spec.marchSteps,
+          }),
         rays,
       );
       return true;
@@ -5446,6 +5632,12 @@ export class SurfaceComputeRenderer {
             // original 100-1000x miss/hit bimodality that forced the
             // queue split never recurs.
             shadeHitQueue.push(ray);
+            // The transport takes HIT rays only — a floor terminal is
+            // shadeRays's, and it is also a rear-scene terminal the
+            // dielectric never re-enters.
+            if (this.optics && rayStatus === SURFACE_GPU_RAY_HIT) {
+              transportQueue.push(ray);
+            }
           } else {
             if (rayStatus === SURFACE_GPU_RAY_MISS) counts.miss++;
             else if (rayStatus === SURFACE_GPU_RAY_EXHAUSTED) {
@@ -5609,6 +5801,153 @@ export class SurfaceComputeRenderer {
       if (!(await flushGroup())) return null;
     }
 
+    // ---- The optical transport's replay lane (docs/surface-dielectric-
+    // transport.md, "Resumption, scheduling and truthfulness") ----
+    // The contract's GPU resumption shape: each pass dispatches the
+    // still-pending rays and every pending sample re-traces FROM SCRATCH
+    // at the halved theta; an accepted sample never reprocesses. Six
+    // passes and a still-pending sample is final UNRESOLVED — the kernel
+    // writes that itself on the last pass — and the frame's counts
+    // disclose every terminal kind. One dispatch is one submission (the
+    // watchdog's unit), fenced per batch — the qualified tile-pass shape,
+    // where the pass boundary IS the cancellation boundary — not a
+    // fence-group lane: the group machinery's measurement attribution is
+    // keyed to the march/shade lanes, and a transport pass has no
+    // sibling work to share a fence with.
+    let transportResolved = 0;
+    let transportUnresolved = 0;
+    let transportInvalid = 0;
+    if (
+      this.optics &&
+      transportPipeline !== null &&
+      transportQueue.length > 0 &&
+      buffers.transportStatus !== undefined &&
+      buffers.stagingTransportStatus !== undefined
+    ) {
+      const transportBuffers = {
+        status: buffers.transportStatus,
+        stagingStatus: buffers.stagingTransportStatus,
+      };
+      // Its OWN two-term model: a transport ray's cost is nothing like a
+      // shade hit's, and sharing a sizer would let the two lanes' shapes
+      // fight. Starts zeroed like the shade sizer does — the first batch
+      // is the model's pilot.
+      const transportSizer: ShadeSizerState = {
+        cost: initialShadeHitCost(),
+        cap: SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
+      };
+      let pending = transportQueue;
+      let transportPass = 0;
+      transportLane: while (
+        pending.length > 0 &&
+        transportPass < DIELECTRIC_REPLAY_PASSES
+      ) {
+        if (token !== this.frameToken || this.isLost || this.destroyed) {
+          return null;
+        }
+        if (performance.now() - wallStart > budgetMs) {
+          truncated = true;
+          tr("budget truncated (transport)");
+          break;
+        }
+        // The pass word is the one per-pass quantity: re-pack the SAME
+        // uniform the frame staged (240/256 B against a full pass of
+        // traces).
+        stage(
+          this.shadeBuf,
+          packSurfaceGpuShade({
+            ...shadeParamsBase,
+            transport: [transportPass, DIELECTRIC_REPLAY_PASSES],
+          }),
+        );
+        const nextPending: number[] = [];
+        for (let offset = 0; offset < pending.length;) {
+          if (token !== this.frameToken || this.isLost || this.destroyed) {
+            return null;
+          }
+          if (performance.now() - wallStart > budgetMs) {
+            truncated = true;
+            tr("budget truncated (transport batch)");
+            break transportLane;
+          }
+          const batch = Math.min(
+            shadeHitBatchSize(transportSizer.cost, transportSizer.cap),
+            pending.length - offset,
+            maxDispatchRays,
+          );
+          const slice = Uint32Array.from(pending.slice(offset, offset + batch));
+          if (!(await stageDispatch(slice.length, 0, slice))) return null;
+          const { t0 } = submitDispatch(
+            transportPipeline,
+            buffers.shadeBindGroup,
+            slice.length,
+            {
+              src: transportBuffers.status,
+              dst: transportBuffers.stagingStatus,
+              dstOffset: offset * 4,
+            },
+          );
+          // The pass boundary is the fence: the statuses this batch
+          // wrote are the pass's whole answer, and the next batch's
+          // shade re-pack must not overtake them.
+          await device.queue.onSubmittedWorkDone();
+          if (token !== this.frameToken || this.isLost || this.destroyed) {
+            return null;
+          }
+          // The fence cleared everything staged; the group accounting
+          // starts fresh.
+          stagedBytes = 0;
+          const wallMs = performance.now() - t0;
+          const workMs = Math.max(0, wallMs - (this.fenceMs ?? 0));
+          transportSizer.cost = nextShadeHitCost(
+            transportSizer.cost,
+            slice.length,
+            workMs * 1000,
+          );
+          tr(
+            `transport pass=${transportPass} batch=${slice.length} wallMs=${wallMs.toFixed(1)} workMs=${workMs.toFixed(1)} cost=${transportSizer.cost.interceptUs.toFixed(0)}+n*${transportSizer.cost.marginalUs.toFixed(1)}us`,
+          );
+          offset += batch;
+        }
+        // One readback per PASS (not per batch): every batch's copy
+        // landed at its own slot window.
+        const statusCopy = new Uint32Array(
+          await this.drainStaging(
+            transportBuffers.stagingStatus,
+            pending.length * 4,
+          ),
+        );
+        if (token !== this.frameToken || this.isLost || this.destroyed) {
+          return null;
+        }
+        for (let slot = 0; slot < pending.length; slot++) {
+          const s = statusCopy[slot];
+          if (s === SURFACE_GPU_TRANSPORT_PENDING) {
+            nextPending.push(pending[slot]);
+          } else if (
+            s === SURFACE_GPU_TRANSPORT_COMPLETE ||
+            s === SURFACE_GPU_TRANSPORT_RESIDUAL
+          ) {
+            transportResolved++;
+          } else if (s === SURFACE_GPU_TRANSPORT_UNRESOLVED) {
+            transportUnresolved++;
+          } else if (s === SURFACE_GPU_TRANSPORT_INVALID) {
+            transportInvalid++;
+          }
+          // SKIPPED: a classic slot — shadeRays owns the pixel; not
+          // transport work to count or re-dispatch.
+        }
+        if (!(await maybePresent(rays - pending.length))) return null;
+        pending = nextPending;
+        transportPass++;
+      }
+      // Rays still PENDING here were truncated mid-schedule: they keep
+      // their seed pixels under the documented truncation contract, and
+      // `truncated` above discloses the incompleteness. The full
+      // schedule's own exit classifies every ray — the kernel's last-pass
+      // write leaves no PENDING status behind.
+    }
+
     tr("final readback BEGIN");
     const [pixelBytes, layerBytes] = await this.readbackFrame(
       buffers.color,
@@ -5656,6 +5995,15 @@ export class SurfaceComputeRenderer {
       truncated,
       counts,
       exhaustedIndices,
+      ...(this.optics
+        ? {
+            transport: {
+              resolved: transportResolved,
+              unresolved: transportUnresolved,
+              invalid: transportInvalid,
+            },
+          }
+        : {}),
     };
   }
 }
