@@ -167,6 +167,8 @@ import {
   estimateDistance4Refined,
   estimateDistance4Sample,
   estimateDistance4RefinedSample,
+  slabExact4,
+  slabSupported4,
 } from "../../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../../fractal/surface-de-4d";
 import { surfaceSwirlAcceptanceScale } from "../../fractal/swirl-lens";
@@ -3751,8 +3753,16 @@ interface SurfaceCrossCheckRow {
    * check ({@link SURFACE_AFF4_SWEEP_TOL_FACTOR}), not `shared-vs-private`'s
    * exact-equality rule — mismatches past tolerance fail the verdict
    * through the section's own `fold4SlabExtFailed` flag, not the generic
-   * any-mismatch cross-check gate. */
-  kind: "shared-vs-private" | "stage2-on-vs-off" | "slabext-on-vs-off";
+   * any-mismatch cross-check gate. "cover-on-vs-noslab": the M5b cover
+   * leg's analog on its own `sliceHalfW` 0 rows — the cover wrapper's
+   * `params.sliceHalfW <= 0.0` branch IS the point body, so the covered
+   * kernel and the `slabExt: false` kernel must agree within the same
+   * tolerance; mismatches past it fail through `cover4IdentityFailed`. */
+  kind:
+    | "shared-vs-private"
+    | "stage2-on-vs-off"
+    | "slabext-on-vs-off"
+    | "cover-on-vs-noslab";
   system: string;
   width: number;
   n: number;
@@ -4438,6 +4448,30 @@ const SURFACE_LENS4_EXCLUDED_CAP_OVERRIDES: Record<string, number> = {};
 function lens4ExcludedCap(system: string): number {
   return (
     SURFACE_LENS4_EXCLUDED_CAP_OVERRIDES[system] ?? SURFACE_LENS4_EXCLUDED_CAP
+  );
+}
+
+/** The M5b COVER agreement leg's own exclusion cap — the same 3% starting
+ * point as the other 4D caps, one query class further over: every cover
+ * query evaluates {@link SLAB_COVER_PIECES} point descents and returns
+ * their min, so the f32/f64 divergence the classifier tests for sits on a
+ * min over 16 chaotic samples rather than one trajectory. That can only
+ * ever DENSIFY an exclusion census, never widen what the row proves — but
+ * a system whose measured census clears this gets an entry in
+ * {@link SURFACE_COVER4_EXCLUDED_CAP_OVERRIDES}, with the measured number,
+ * exactly like the fold4/lens4 caps' own rule. */
+const SURFACE_COVER4_EXCLUDED_CAP = 21;
+
+/** Per-system overrides for {@link SURFACE_COVER4_EXCLUDED_CAP} — same
+ * `ceil(measured * 1.5) / 700` widening rule, filled in only after a real
+ * SwiftShader run measured that system's exclusion census past the 3%
+ * starting point. Empty until measurement says otherwise. */
+const SURFACE_COVER4_EXCLUDED_CAP_OVERRIDES: Record<string, number> = {};
+
+/** {@link SURFACE_COVER4_EXCLUDED_CAP}'s per-system lookup, overrides first. */
+function cover4ExcludedCap(system: string): number {
+  return (
+    SURFACE_COVER4_EXCLUDED_CAP_OVERRIDES[system] ?? SURFACE_COVER4_EXCLUDED_CAP
   );
 }
 
@@ -5130,6 +5164,34 @@ function surfaceFold4Mandelbox(): Transform[] {
       scale: [0.13, 0.13, 0.13],
       w: { position: -0.15, rotation: { xw: 0.25 } },
       variations: [{ type: "mandelbox", weight: 1.2 }],
+    },
+  ];
+}
+
+/** M5b's RECURSIVE spherefold pair — `scripts/slab-adaptive.harness.ts`'s
+ * own "SPHERE MAPS" fixture verbatim (the panel whose adaptive IoU the
+ * cover's 16 pieces read 0.837 on), so the bench and the sheet that chose
+ * {@link SLAB_COVER_PIECES} pin the identical system. Two spherefold maps
+ * with live w blocks: every fold branch this fixture can take includes the
+ * mid INVERSION, which is exactly the family `slabExact4` refuses and the
+ * bounded midpoint cover exists for. */
+function surfaceCover4SpherefoldPair(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.3, 0.1, 0],
+      rotation: [0.3, 0.2, 0],
+      scale: [0.12, 0.12, 0.12],
+      w: { rotation: { xw: 0.45 } },
+      variations: [{ type: "spherefold", weight: 0.9 }],
+    },
+    {
+      id: 1,
+      position: [-0.25, -0.2, 0.2],
+      rotation: [0, 0.5, 0.1],
+      scale: [0.11, 0.11, 0.11],
+      w: { rotation: { yw: 0.4 } },
+      variations: [{ type: "spherefold", weight: 1.1 }],
     },
   ];
 }
@@ -14756,10 +14818,18 @@ async function runSurfaceDeSection(
   // fold4-cored row only at its production width, mirroring M4).
   let lens4GateFail = false;
   // The pack-guard pin (CPU-only, no GPU dispatch) —
-  // `packSurface4GpuParams` must THROW for a spherefold-final DE queried
-  // through a nonzero sliceHalfW (the slabExact4 refusal, surface-de-gpu.ts).
-  // Set when it does NOT throw, or throws for an unrelated reason.
+  // `packSurface4GpuParams` must THROW for a swirl-final DE queried
+  // through a nonzero sliceHalfW (the slabSupported4 refusal,
+  // surface-de-gpu.ts). Set when it does NOT throw, or throws for an
+  // unrelated reason.
   let lens4PackGuardFailed = false;
+  // M5b: the cover leg's analog of lens4GateFail — per-system cap
+  // (cover4ExcludedCap), checked on every gating cover row.
+  let cover4GateFail = false;
+  // M5b: the cover h=0 identity A/B — set when the covered kernel's
+  // `sliceHalfW <= 0` branch disagrees with the `slabExt: false` point
+  // kernel beyond SURFACE_FOLD4_SLABEXT_TOL_FACTOR.
+  let cover4IdentityFailed = false;
 
   const configLabel = (cfg: SurfaceKernelConfig): string =>
     cfg.core === "affine"
@@ -16251,17 +16321,15 @@ async function runSurfaceDeSection(
       }
     }
 
-    // The pack-guard pin (CPU-only, no GPU dispatch): a
-    // spherefold-final DE queried through a nonzero sliceHalfW must be
-    // REFUSED by `packSurface4GpuParams` (`slabExact4` — a spherefold
-    // branch takes a segment to an ARC under inversion, so a segment
-    // certificate there is unsound, not merely loose) — the kernel-side
-    // belt for the CPU entries' own `slabExact4` throw
-    // (`estimateDistance4`/`estimateDistance4Refined`). This system never
-    // touches the GPU (the pack alone is under test), so it runs once here
-    // rather than joining either fixture array above. Checks the CAUGHT
-    // message too, not just "did it throw": a throw for the WRONG reason
-    // (e.g. the footprint guard, which this call deliberately avoids by
+    // The pack-guard pin (CPU-only, no GPU dispatch): a SWIRL-final DE
+    // queried through a nonzero sliceHalfW must be REFUSED by
+    // `packSurface4GpuParams` (`slabSupported4` — the swirl inverse bends
+    // the segment with no point cover in this frame), while a
+    // spherefold-final DE must PACK: the bounded midpoint cover is that
+    // system's slab answer. Neither system touches the GPU (the pack alone
+    // is under test), so both run once here. Checks the CAUGHT message
+    // too, not just "did it throw": a throw for the WRONG reason (e.g.
+    // the footprint guard, which these calls deliberately avoid by
     // omitting `footprint`) would false-pass a regressed slab guard.
     {
       const guardFinal: Transform = {
@@ -16273,39 +16341,407 @@ async function runSurfaceDeSection(
         variations: [{ type: "spherefold", weight: 0.6 }],
       };
       const guardDe = buildSurfaceDE4(pentatope(), guardFinal);
-      let threw = false;
-      let message = "";
+      const guardView = {
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0.1 * guardDe.boundingRadius,
+      };
+      let spherefoldRefused = false;
+      let spherefoldMessage = "";
+      try {
+        packSurface4GpuParams(guardDe, guardView, { itemCount: 1, cutoff: 0 });
+      } catch (e) {
+        spherefoldRefused = true;
+        spherefoldMessage = describeError(e);
+      }
+      if (spherefoldRefused) {
+        lens4PackGuardFailed = true;
+        results.notes.push(
+          "pack-guard: packSurface4GpuParams refused a spherefold-final DE " +
+            `under sliceHalfW > 0 — "${spherefoldMessage}" — the bounded ` +
+            "midpoint cover makes that system supported (slabSupported4)",
+        );
+      } else {
+        results.notes.push(
+          "pack-guard: spherefold-final slab packs (the cover's system)",
+        );
+      }
+      const guardSwirlDe = buildSurfaceDE4(
+        pentatope(),
+        surfaceLensSwirlFinal(true),
+      );
+      let swirlRefused = false;
+      let swirlMessage = "";
       try {
         packSurface4GpuParams(
-          guardDe,
+          guardSwirlDe,
           {
             rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
             w0: 0,
-            sliceHalfW: 0.1 * guardDe.boundingRadius,
+            sliceHalfW: 0.1 * guardSwirlDe.boundingRadius,
           },
           { itemCount: 1, cutoff: 0 },
         );
       } catch (e) {
-        threw = true;
-        message = describeError(e);
+        swirlRefused = true;
+        swirlMessage = describeError(e);
       }
-      if (!threw || !message.includes("slabExact4")) {
+      if (!swirlRefused || !swirlMessage.includes("slabSupported4")) {
         lens4PackGuardFailed = true;
         results.notes.push(
-          threw
-            ? `pack-guard: packSurface4GpuParams threw for the WRONG reason — "${message}" — expected the slabExact4 slab refusal`
+          swirlRefused
+            ? `pack-guard: packSurface4GpuParams threw for the WRONG reason — "${swirlMessage}" — expected the slabSupported4 slab refusal`
             : "pack-guard: packSurface4GpuParams did NOT throw for a " +
-                "spherefold-final DE under sliceHalfW > 0 — the slabExact4 " +
+                "swirl-final DE under sliceHalfW > 0 — the slabSupported4 " +
                 "refusal regressed (surface-de-gpu.ts)",
         );
       } else {
         results.notes.push(
-          `pack-guard: spherefold-final slab refusal confirmed — ${message}`,
+          `pack-guard: swirl-final slab refusal confirmed — ${swirlMessage}`,
         );
       }
     }
 
     await canaryCheck("the M5 lens4 agreement leg");
+
+    // ----- M5b: the nonlinear slab COVER's agreement leg — GATING -----
+    // The bounded midpoint cover (surface-de-4d.ts's
+    // estimateDistance4SlabCover) as BOTH 4D descent cores answer it:
+    // `estimateSurface4Composed` routes a supported nonlinear slab through
+    // the public cover automatically, so the fixture loops below already
+    // built the CPU side; this leg only adds the GPU side. Two fixture
+    // families, each at h = 0 (the bit-identity row), h = 0.10 R and
+    // h = 0.25 R under two different pose rotors — the shipped samples per
+    // slab query, 16 for the production count, so this leg's whole point
+    // is that CPU f64 and GPU f32 agree WHILE the work multiplies:
+    //   · `cover4SpherePair` — the recursive spherefold pair, a FOLD base
+    //     (`deHasFolds4`), so the cover wraps the fold4 frontier and the
+    //     oracle is the PLAIN estimator (`refined = false`, M4's arm);
+    //   · `cover4MandelFinal` — the mandelbox FINAL lens over `pentatope`
+    //     (fold-free base), so the cover wraps the affine4 ladder UNDER
+    //     the lens and the oracle is the REFINED estimator (M5's affine
+    //     arm) — the "final lens" half the cover exists for.
+    // Every row GATES: the fold row at the CPU's fixed frontier width
+    // (M4's gating rule), the affine row always (M3's). The h=0 rows also
+    // get the identity A/B: the cover wrapper's `sliceHalfW <= 0.0` branch
+    // IS the point body, so the covered kernel must agree with the
+    // `slabExt: false` point kernel within the M4 slabExt tolerance.
+    {
+      const cover4Defs: {
+        name: string;
+        seed: number;
+        transforms: Transform[];
+        finalTransform: Transform | null;
+        view4: (de: SurfaceDE4) => SurfaceGpu4View;
+      }[] = [];
+      const coverRotorA = symmetryRotation4("yw", 0.55);
+      const coverRotorB = symmetryRotation4("xw", 0.62);
+      const addCoverFixture = (
+        prefix: string,
+        seed: number,
+        transforms: Transform[],
+        finalTransform: Transform | null,
+      ): void => {
+        cover4Defs.push(
+          {
+            name: `${prefix}H0`,
+            seed,
+            transforms,
+            finalTransform,
+            view4: (de) => ({
+              rotor: coverRotorA,
+              w0: 0.15 * de.boundingRadius,
+              sliceHalfW: 0,
+            }),
+          },
+          {
+            name: `${prefix}H10`,
+            seed: seed + 1,
+            transforms,
+            finalTransform,
+            view4: (de) => ({
+              rotor: coverRotorA,
+              w0: 0.15 * de.boundingRadius,
+              sliceHalfW: 0.1 * de.boundingRadius,
+            }),
+          },
+          {
+            name: `${prefix}H25`,
+            seed: seed + 2,
+            transforms,
+            finalTransform,
+            view4: (de) => ({
+              rotor: coverRotorB,
+              w0: 0.08 * de.boundingRadius,
+              sliceHalfW: 0.25 * de.boundingRadius,
+            }),
+          },
+        );
+      };
+      addCoverFixture(
+        "cover4SpherePair",
+        561,
+        surfaceCover4SpherefoldPair(),
+        null,
+      );
+      addCoverFixture(
+        "cover4MandelFinal",
+        571,
+        pentatope(),
+        surfaceLens4MandelboxFinal(),
+      );
+      const cover4Systems: Surface4SystemState[] = [];
+      for (const def of cover4Defs) {
+        status(`cpu oracle: ${def.name}…`);
+        activity.setState("cpu", `Surface cover CPU oracle — ${def.name}`);
+        await new Promise<void>((resolve) => setTimeout(resolve));
+        const eligibility = analyzeSurfaceSystem4(
+          def.transforms,
+          def.finalTransform,
+        );
+        if (eligibility.status === "ineligible") {
+          throw new Error(
+            `cover4 bench fixture ${def.name} is ineligible: ` +
+              eligibility.reasons.join("; "),
+          );
+        }
+        const de = buildSurfaceDE4(def.transforms, def.finalTransform);
+        // The fixtures must actually NEED the cover: one that regressed to
+        // slabExact4 would pass this leg through the exact segment path
+        // and pin nothing about the cover.
+        if (slabExact4(de)) {
+          throw new Error(
+            `cover4 bench fixture ${def.name} is slabExact4 — the cover is ` +
+              "not what this row would exercise",
+          );
+        }
+        if (!slabSupported4(de)) {
+          throw new Error(
+            `cover4 bench fixture ${def.name} is not slabSupported4 — the ` +
+              "public entry (and the packer) would refuse its slab",
+          );
+        }
+        // The core the app routes: a fold base takes the PLAIN fold4
+        // frontier, a fold-free base the REFINED affine4 ladder — the
+        // same `deHasFolds4` split M4/M5 use, and the same `refined` the
+        // CPU oracle must be asked for.
+        const refined = !deHasFolds4(de);
+        const view4 = def.view4(de);
+        const queries = affine4Queries(de, view4, def.seed, refined);
+        const cpu = queries.map((q) =>
+          estimateSurface4Composed(de, view4, q, refined),
+        );
+        const R = surface4ToleranceR(de);
+        const stable = cpu.map((c, i) =>
+          surface4QueryStable(
+            de,
+            view4,
+            queries[i],
+            c,
+            surfaceEvalTol(c, R),
+            refined,
+          ),
+        );
+        cover4Systems.push({
+          name: def.name,
+          de,
+          view4,
+          transforms: def.transforms,
+          queries,
+          cpu,
+          stable,
+        });
+        render();
+      }
+      const cover4Gpu = new Map<string, Float32Array>();
+      const cover4Groups = [
+        {
+          name: "cover4-fold",
+          core: "fold4" as const,
+          lens: false,
+          lensPost: false,
+          width: SURFACE_FOLD_BEAM_WIDTH,
+          systems: cover4Systems.filter((sys) => deHasFolds4(sys.de)),
+          compare: compareSurfaceFold4Agreement,
+        },
+        {
+          name: "cover4-affine",
+          core: "affine4" as const,
+          lens: true,
+          // The bench lens fixtures all carry a post (`SURFACE_BENCH_POST`),
+          // so the kernel must compile the post inverse the CPU oracle's
+          // `descendLens4` applies — M5's own `lensPost: true`. Without it
+          // the cover samples a DIFFERENT lensed object (measured: 686/700
+          // rows at ~0.6 absolute error before this flag was added).
+          lensPost: true,
+          width: SURFACE_AFFINE_LADDER_WIDTH,
+          systems: cover4Systems.filter((sys) => !deHasFolds4(sys.de)),
+          compare: compareSurface4Agreement,
+        },
+      ];
+      for (const group of cover4Groups) {
+        if (group.systems.length === 0) continue;
+        const cfg: SurfaceKernelConfig = {
+          core: group.core,
+          variant: "private",
+          width: group.width,
+          stage2: false,
+          wg: surfaceWgFor(config, "private"),
+        };
+        const label = `cover4 ${configLabel(cfg)}${group.lens ? " lens" : ""}`;
+        status(`agreement: compiling ${label}…`);
+        activity.setState("gpu", `Surface DE agreement — ${label}`);
+        let pipeline: GPUComputePipeline | null = null;
+        try {
+          const code = surfaceDeKernelWgsl({
+            mode: "eval",
+            core: group.core,
+            lens: group.lens,
+            lensPost: group.lensPost,
+            slabExt: true,
+            slabCover: true,
+            width: cfg.width,
+            workgroupSize: cfg.wg,
+            sharedFrontier: false,
+            bnbStage2: false,
+          });
+          ({ pipeline } = await buildSurfacePipeline(
+            device,
+            pipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          ));
+        } catch (e) {
+          compileFailed = true;
+          results.notes.push(`agreement ${label}: ${describeError(e)}`);
+        }
+        if (pipeline !== null) {
+          for (const sys of group.systems) {
+            status(`agreement: ${label} × ${sys.name}…`);
+            await ensureSurface4EvalBuffers(device, bindGroupLayout, sys);
+            const gpu = await runSurfaceEvalDispatch(
+              device,
+              pipeline,
+              sys,
+              cfg.wg,
+            );
+            cover4Gpu.set(sys.name, gpu);
+            const row = group.compare(sys, cfg, gpu);
+            results.agreement.push(row);
+            const excluded = row.excluded ?? 0;
+            const cap = cover4ExcludedCap(sys.name);
+            if (excluded > cap) {
+              cover4GateFail = true;
+              results.notes.push(
+                `cover4 agreement ${sys.name}: excluded ${String(excluded)}/${String(
+                  row.n,
+                )} queries (> ${String(cap)}) from the oracle-continuity gate — ` +
+                  "see surface4QueryStable's doc",
+              );
+            }
+            render();
+            await new Promise<void>((resolve) => setTimeout(resolve));
+          }
+        }
+        render();
+
+        // The h=0 identity pin: the cover wrapper's `sliceHalfW <= 0.0`
+        // branch is the point body verbatim, so the covered kernel must
+        // agree with the `slabExt: false` point kernel elementwise on the
+        // same queries — the M4 slabExt A/B's shape, one wrapper over.
+        const h0Systems = group.systems.filter(
+          (sys) => sys.view4.sliceHalfW === 0,
+        );
+        if (h0Systems.length > 0) {
+          status(`${group.name} cover identity A/B: compiling…`);
+          activity.setState(
+            "gpu",
+            `Surface DE ${group.name} cover identity A/B`,
+          );
+          try {
+            const code = surfaceDeKernelWgsl({
+              mode: "eval",
+              core: group.core,
+              lens: group.lens,
+              lensPost: group.lensPost,
+              slabExt: false,
+              width: group.width,
+              workgroupSize: cfg.wg,
+              sharedFrontier: false,
+              bnbStage2: false,
+            });
+            const { pipeline: noslabPipeline } = await buildSurfacePipeline(
+              device,
+              pipelineLayout,
+              code,
+              "evalQueries",
+              `surface-de eval ${group.name} noslab`,
+            );
+            for (const sys of h0Systems) {
+              const gpuCover = cover4Gpu.get(sys.name);
+              await ensureSurface4EvalBuffers(device, bindGroupLayout, sys);
+              const gpuNoslab = await runSurfaceEvalDispatch(
+                device,
+                noslabPipeline,
+                sys,
+                cfg.wg,
+              );
+              let mismatches = 0;
+              let maxAbs = 0;
+              if (gpuCover !== undefined) {
+                for (let i = 0; i < gpuCover.length; i++) {
+                  if (gpuCover[i] !== gpuNoslab[i]) {
+                    mismatches++;
+                    maxAbs = Math.max(
+                      maxAbs,
+                      Math.abs(gpuCover[i] - gpuNoslab[i]),
+                    );
+                  }
+                }
+              }
+              const tol =
+                SURFACE_FOLD4_SLABEXT_TOL_FACTOR * sys.de.boundingRadius;
+              const withinTolerance = gpuCover !== undefined && maxAbs <= tol;
+              results.crossChecks.push({
+                kind: "cover-on-vs-noslab",
+                system: sys.name,
+                width: group.width,
+                n: gpuNoslab.length,
+                mismatches,
+                maxDelta: maxAbs,
+                note:
+                  gpuCover === undefined
+                    ? "MISSING cover row — the h=0 cover dispatch did not run"
+                    : mismatches === 0
+                      ? "exact — the cover's h=0 branch is the point body bit for bit"
+                      : withinTolerance
+                        ? "sub-tolerance mismatches (fma/contraction noise)"
+                        : "MISMATCH — the cover's h=0 branch must be the point body (surface-de-gpu.ts's slabCover doc)",
+              });
+              if (!withinTolerance) {
+                cover4IdentityFailed = true;
+                results.notes.push(
+                  `${group.name} cover identity A/B ${sys.name}: ` +
+                    `${String(mismatches)} mismatches, maxAbs ` +
+                    `${maxAbs.toExponential(2)} exceeds tolerance ` +
+                    `${tol.toExponential(2)} — the cover's h=0 branch does ` +
+                    "NOT reproduce the point kernel",
+                );
+              }
+            }
+          } catch (e) {
+            cover4IdentityFailed = true;
+            results.notes.push(
+              `${group.name} cover identity A/B: ${describeError(e)}`,
+            );
+          }
+          render();
+        }
+      }
+    }
+
+    await canaryCheck("the M5b cover agreement leg");
 
     // ----- M7: the ESCAPE4 core's agreement leg — GATING -----
     // The forward escape-time orbit ONE DIMENSION UP, behind the 4D cores'
@@ -18546,6 +18982,8 @@ async function runSurfaceDeSection(
       fold4SlabExtFailed ||
       lens4GateFail ||
       lens4PackGuardFailed ||
+      cover4GateFail ||
+      cover4IdentityFailed ||
       aff4SweepFailed ||
       emitterOnlyFailed ||
       tilingAbiFailed ||
@@ -18578,16 +19016,20 @@ async function runSurfaceDeSection(
                             : lens4GateFail
                               ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
                               : lens4PackGuardFailed
-                                ? "lens4 pack-guard: packSurface4GpuParams did not refuse a spherefold-final slab query — see notes"
-                                : emitterOnlyFailed
-                                  ? "emitter-only eval/hit-info/shade agreement failure — see notes"
-                                  : tilingAbiFailed
-                                    ? "finite-tiling compile/bind/numeric ABI agreement failure — see notes"
-                                    : latticeTilingAbiFailed
-                                      ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
-                                      : latticeFrameFailed
-                                        ? "lattice carrier frame failure — see notes"
-                                        : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                                ? "lens4 pack-guard: packSurface4GpuParams did not refuse a swirl-final slab query — see notes"
+                                : cover4GateFail
+                                  ? "cover4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                                  : cover4IdentityFailed
+                                    ? "cover4 identity A/B: the cover's h=0 branch disagrees with the point kernel beyond tolerance — see notes"
+                                    : emitterOnlyFailed
+                                      ? "emitter-only eval/hit-info/shade agreement failure — see notes"
+                                      : tilingAbiFailed
+                                        ? "finite-tiling compile/bind/numeric ABI agreement failure — see notes"
+                                        : latticeTilingAbiFailed
+                                          ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
+                                          : latticeFrameFailed
+                                            ? "lattice carrier frame failure — see notes"
+                                            : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
