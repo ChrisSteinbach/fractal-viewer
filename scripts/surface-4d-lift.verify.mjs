@@ -65,8 +65,10 @@
  * close to the point kernel fails.
  *
  * The scene documents are built into this file as `#v1=` hashes (produced
- * by `persist.ts`'s own encoder), so the gate needs no preset to exist and
- * survives a preset table that changes under it.
+ * by `persist.ts`'s own encoder; the posed cover scene is shared with the
+ * slab gate through `scripts/lib/surface-cover-scene.mjs`), so the gate
+ * needs no preset to exist and survives a preset table that changes under
+ * it.
  *
  * Exit 0 = every scene entered, settled, drew and took the expected engine.
  * Exit 1 = a harness/setup failure. Exit 3 = a scene FAILED one of the
@@ -80,6 +82,7 @@
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
+import { COVER4_POSED_HASH } from "./lib/surface-cover-scene.mjs";
 
 /** Scene documents, `#v1=` payloads from `persist.ts`'s encoder. Each is a
  * MINIMAL document for one lift — no preset, no side table. */
@@ -148,7 +151,7 @@ const SCENES = [
     thickness: 0.2,
     samples: 1,
     settleMs: 600000,
-    hash: "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMywwLjEsMF0sInJvdGF0aW9uIjpbMC4zLDAuMiwwXSwic2NhbGUiOlswLjEyLDAuMTIsMC4xMl0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJzcGhlcmVmb2xkIiwid2VpZ2h0IjowLjksIm1pblJhZGl1cyI6MC44LCJmaXhlZFJhZGl1cyI6MS4yfV0sInciOnsicm90YXRpb24iOnsieHciOjAuNDV9fX0seyJwb3NpdGlvbiI6Wy0wLjI1LC0wLjIsMC4yXSwicm90YXRpb24iOlswLDAuNSwwLjFdLCJzY2FsZSI6WzAuMTEsMC4xMSwwLjExXSwicG9zdCI6WzEsMCwwLDAsMSwwLDAsMCwxLDAuMDEsLTAuMDIsMC4wMDVdLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoic3BoZXJlZm9sZCIsIndlaWdodCI6MS4xfV0sInciOnsicm90YXRpb24iOnsieXciOjAuNH19fV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImVudkxpZ2h0IjowLCJmbG9vckVuYWJsZWQiOmZhbHNlLCJmbG9vclBhdHRlcm4iOiJzb2xpZCIsImZsb29yVGlsZVNjYWxlIjowLjY0LCJmbG9vckVtaXNzaW9uIjowLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjUsImVudkxpZ2h0IjowLjM1LCJmbG9vclBhdHRlcm4iOiJzb2xpZCIsImZsb29yVGlsZVNjYWxlIjowLjY0LCJmbG9vckVtaXNzaW9uIjowfSwic3ltbWV0cnkiOnsib3JkZXIiOjEsInBsYW5lIjoieHoifSwiZ2xvd0JyaWdodG5lc3MiOjEsImJhbGxvb25FY2hvIjpmYWxzZSwiYmFsbG9vblJhZGl1cyI6MS42LCJiYWxsb29uVGludCI6IiMwMDAwMDAiLCJiYWxsb29uVGludFN0cmVuZ3RoIjowLCJmb2dEZW5zaXR5IjoxLCJmb2dUaW50IjoiI2ZmZmZmZiIsImZvZ1RpbnRTdHJlbmd0aCI6MCwiZ3JvdW5kUGxhbmUiOmZhbHNlLCJjYW1lcmEiOnsidGFyZ2V0IjpbMCwwLDBdLCJyYWRpdXMiOjIuNiwidGhldGEiOjAuOSwicGhpIjoxLjE1fSwiZm91ckQiOnsicCI6WzAuOTk3MiwtMC4wNzQ5LDAsMF0sInEiOlswLjk2MjQsMC4yNzE1LDAsMF0sInNsaWNlT24iOnRydWUsInNsaWNlQ2VudGVyIjowLjE1LCJzbGljZVRoaWNrbmVzcyI6MCwic2xpY2VSZWxDb2xvciI6ZmFsc2V9fQ",
+    hash: COVER4_POSED_HASH,
   },
   {
     name: "coverMandelFinal4",

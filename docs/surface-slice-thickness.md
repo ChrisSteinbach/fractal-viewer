@@ -244,6 +244,32 @@ sessions are compute-only and `surface-material-4d.ts` keeps refusing the
 combination (`slabSupported4` false is never routed to it), which is why
 the gate's engine column requires compute on all three.
 
+The slab's reload and capture rows are their own gate,
+`scripts/surface-slab-4d.verify.mjs` — the shared posed fixture re-framed at
+camera radius 1.6, since the lift gate's 2.6 measures 151 covered rays at
+h = 0, too sparse for a downscaled capture comparison (1.6 measures 9005 at
+h = 0.2). MEASURED on the Iris Xe, headed Chrome, 14 September 2026:
+
+- **Reload restores the pose, thickness included.** The app's own share
+  link carries `fourD.sliceThickness = 0.2`; a real reload — forced through
+  a unique query key, because a fragment-only navigation never reloads and
+  the app reads the scene hash once at boot — comes back with the slider at
+  0.2, takes compute, settles the thick view (census 9005 covered rays
+  against 151 at h = 0) and reproduces the pre-reload canvas BYTE FOR BYTE
+  in the scene region (0.0000% changed, max 0). This CORRECTS the note the
+  thickness work was parked with ("thickness is session view state and is
+  NOT in the document; a reload keeps the scene/pose but not thickness"):
+  pose-less documents do reset it on 4D entry (`resetFourDView`), but a
+  shared scene's pose carries it, which is the path a reload takes. Non-
+  vacuity: `FourDView.pose()` forced to report 0, rebuilt — the row fails
+  at `carriedThickness=0`, slider 0, and 1.9542% changed / max 145.
+- **Capture carries the thick render.** Three Save-PNGs through one export
+  pipeline — exports are NOT comparable to canvas screenshots (the export
+  enables depth of field after settle and never carries the panel; measured
+  2.2-2.4/255 between the same render's export and its canvas). The thick
+  export differs from the h = 0 export (0.1047) and sits 4.9x closer to it
+  than to the explorer's capture (0.5149), against a 2x gate.
+
 ## Exact finite reflection pieces
 
 All reflection hyperplanes are represented by the group orbits of the simple
@@ -392,14 +418,16 @@ What remains:
 - **Tiling composition.** Tiled 4D sessions still clamp thickness to zero;
   finite pieces need the split/cover composition and lattice walls need
   crossing enumeration (the tiling child's work).
-- **Browser matrix.** The lift gate now gates all THREE cover classes end
-  to end (enter, row enabled, invalidation, completed settle, draw) at
+- **Browser matrix.** The lift gate gates all THREE cover classes end to
+  end (enter, row enabled, invalidation, completed settle, draw) at
   `surfacesamples=1`, including the zero-thickness identity on real pixels
   (byte-exact on all three), one posed rotor/slice view, and authored fold
-  radii + a map post. Still owed: more thicknesses and rotor poses,
-  reloads and captures on the engines, including the Mandelbox-plus-tiling
-  acceptance case the epic names (the tiling child's), plus panel-gate
-  coverage for the new availability set.
+  radii + a map post; the slab gate adds the reload and capture rows (pose-
+  carried thickness restored byte-exactly, thick export separated from the
+  h = 0 and explorer exports). Still owed: more thicknesses and rotor poses
+  (one thickness — 0.2 — and one pose per cover class so far), the
+  Mandelbox-plus-tiling acceptance case the epic names (the tiling child's),
+  plus panel-gate coverage for the new availability set.
 
 CPU agreement and the heavy-class cost fix are done; the fence/teardown
 gates and the full browser matrix are the halves still missing.

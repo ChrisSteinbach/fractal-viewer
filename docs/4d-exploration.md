@@ -303,6 +303,17 @@ scenes that set the panel's thickness, re-settle, and must reproduce the
 zero-thickness canvas frame byte for byte — is recorded with its measured
 rows in `docs/surface-slice-thickness.md`.
 
+The gate's full shape: eleven `#v1=` scenes — no preset table, so it
+survives one changing — and the three shipped 4D presets loaded FROM THE UI.
+It asks what no unit test reaches: does each session ENTER, settle
+COMPLETELY (the settle latch, not "pixels stopped moving"), DRAW, and pick
+the expected engine, keeping `core:"escape4"` and the 4D plane/balloon
+blocks live. DRAW is the non-backdrop share of a real screenshot; a canvas
+READBACK outside rAF reads empty and is not used. Without `--display` the
+engine column is reported, not gated. The slab's reload/capture rows are a
+second gate, `scripts/surface-slab-4d.verify.mjs`, whose fixtures and
+measured rows are in `docs/surface-slice-thickness.md`.
+
 ## References
 
 - A. Hanson, _Visualizing Quaternions_ — and his 4D visualization work, the
