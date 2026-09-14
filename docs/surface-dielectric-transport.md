@@ -383,11 +383,76 @@ which bounds this rear scene with margin.
   slot's authored finish is dormant for that slot — the dielectric
   replaces the hit shading; classic slots keep their finish and pattern.
 
+### The renderer envelope, and what it found
+
+The kernel agreement legs pin arithmetic; they never drove an optics-authored
+frame through the production renderer. The bench's renderer-envelope leg
+(`runSurfaceTransportEnvelopeLeg`, real adapters only) does: an optics-authored
+fixture document (`optics: { model: "dielectric" }` on every transform) through
+`SurfaceComputeRenderer`'s own march → classify → shade-skip → replay-pass
+lane → present loop, at the delegated rasters — preview 256×144 1-SPP at the
+app's own 2 s budget, settle 512×288 at the qualified 4-SPP convention,
+unbudgeted — one arm per admitted descent core (`affineTetra` 3D, `aff4Tetra`
+4D at its identity-rotor canonical pose), plus a mid-flight cancel probe
+through the public `cancel()` and a byte-identity repeat of the preview.
+Gates: the decided envelope's lines (preview ≤ 1.5 s, cancellation
+checkpoints ≤ 600 ms — the per-dispatch fence IS the checkpoint, so the
+frame's max transport batch wall is the bound —, retained ≤ 128 MiB, settle
+≤ 10 s).
+
+Measured 2026-09-14, quiet RX 7900 XTX / radeonsi (adapter `amd rdna-3`,
+launcher quiet=YES), every delegated line met in both dimensions:
+
+| Arm     | Preview wall | Settle wall | Max checkpoint | Cancel | Retained |
+| ------- | -----------: | ----------: | -------------: | -----: | -------: |
+| affine  |       397 ms |     2511 ms |        56.1 ms |  18 ms |  5.6 MiB |
+| affine4 |       170 ms |      745 ms |        23.1 ms | 0.1 ms |  5.6 MiB |
+
+Six replay passes ran in every frame; the preview repeat is byte-identical;
+the settle sits at 2.5 s / 0.7 s against the 10 s line; the transport lane's
+own two-term sizer learned per dispatch (~25-30 µs per ray·pass measured on
+the production lane). Two create-path defects were found and fixed by this
+leg's first runs — both invisible to the agreement legs, which compile the
+emitted module directly instead of through `create()`:
+
+- **The per-stage storage-buffer ceiling.** The transport lane's three
+  buffers (13/14/15) take the shade stage's storage-buffer count to 9, past
+  the spec-default 8 — the shade bind group layout failed validation and
+  poisoned every derived layout ("[Invalid PipelineLayout] is invalid due to
+  a previous error"). `create()` now requests the adapter's
+  `maxStorageBuffersPerShaderStage` ceiling when the optics gate is live
+  (this adapter: 10).
+- **The shade uniform buffer's size.** The per-frame pack grows by the
+  transport member (240 optics-alone / 256 with pattern) but the create-time
+  `shadeBuf` still allocated the classic 224 — the `writeBuffer` failed, the
+  uniform stayed un-staged, and EVERY dispatch binding it was silently
+  invalidated: all rays stayed ACTIVE, the budget exhausted them, the frame
+  rendered its seed backdrop. The buffer now allocates the optics top.
+
+And the leg's structural finding, which qualifies every "LIVE" in the matrix
+below to "live as compiled and routed":
+
+- **Every transport sample resolves UNRESOLVED on hits.** The production
+  boundary query marches the COMPOSED PUBLIC estimator — an unsigned
+  estimate with no signed interior — and can find a boundary only from
+  OUTSIDE. A refracted child (inside) either escapes the domain without
+  ever sampling a crossing (inside-miss — the contract's own terminal for
+  it) or, on a signed SDF, crawls its anchor suppression into the step
+  cap. The CPU twin reproduces both failure codes exactly, which means the
+  agreement legs' agreement on IFS fixtures was VACUOUS on this axis (both
+  sides refused identically). Glass IS refraction IS an inside path, so the
+  optical model has no resolving geometry on the production path yet: the
+  qualified object was the finite-grid closed solid (exact DDA), and the
+  closed-solid boundary backend is the recorded path to optical
+  resolution. The envelope rows remain the standing TIMING gate — the lane
+  pays its marches, fences and readbacks whatever the samples resolve —
+  and the note marks a vacuous arm optically.
+
 ### Capability matrix, updated
 
 | Core / wrapper                                | Transport status now                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| compute `affine`, `affine4`, `fold4`          | LIVE on the compute path: the session-materials flow admits them — an optics-authored session compiles the transport, the lane and the buffers (bench rows: radiance ≤ 1.1e-4, residual ≤ 3.2e-4, normals ≤ 6.6e-3 against the f64 twin)                                                                                                                                                                                                                                                                                                                                                                  |
+| compute `affine`, `affine4`, `fold4`          | LIVE as compiled and routed: the session-materials flow admits them — an optics-authored session compiles the transport, the lane and the buffers (agreement rows: radiance ≤ 1.1e-4, residual ≤ 3.2e-4, normals ≤ 6.6e-3 against the f64 twin). NOT yet optically resolving on IFS geometry: every transport sample is unresolved on hits (the renderer envelope's finding — the estimator-march boundary query has no inside traversal)                                                                                                                                                                 |
 | compute `fold` (3D frontier)                  | MEASURED REFUSAL on real hardware: a fold transport invocation exceeds the kernel driver's GPU-job timeout at every budget that exercises the work-list (`ring gfx_0.0.0 timeout`, GPU reset, every attempt — the width-12 frontier's dynamic indexing spills to scratch inside the transport's deep call nesting, the kernel module's own frontier-spill precedent, and the spilled per-eval cost puts any full trace past ~10 s on the RX 7900 XTX). Routing strips the gate (`admitOptics: false`) so a fold session renders classic, disclosed. Reopens on a spill fix or a per-invocation time bound |
 | compute `escape`, `bulb`, `escape4` (forward) | Kernel emitted and bench-pinned (the agreement legs); ROUTING does not admit the families — the slot resolver's `admitOptics: false` strips the gate, so an optics-authored forward session renders classic, disclosed. The estimators are heuristics, not certified lower bounds: the legs pin the kernel's arithmetic, not the material's optical soundness                                                                                                                                                                                                                                             |
 | GLSL tracers (`surface-material*.ts`)         | Dormant; the GLSL twins arrive after the compute backend (a no-compute device's fallback renders classic, disclosed)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -400,10 +465,15 @@ which bounds this rear scene with margin.
 ## What is not yet qualified
 
 The compute kernel emission and the host buffer contracts are real state;
-the capability matrix above records exactly how far each consumer has
-come. Remaining work, in order — production routing for the descent
-families and the forward families' measured admission decision (the
-compute backend's bench legs); the GLSL twins; rear-scene radiance and
+the capability matrix above records exactly how far each consumer has come.
+The renderer-envelope leg's structural finding is now the first blocker:
+the boundary query has no INSIDE traversal, so no production geometry
+resolves a transport sample — the closed-solid backend (the transport
+contract's own finite-grid reference, made production) is what turns the
+lane on optically; until then every optics-authored session compiles, pays
+the lane, and renders its glass slots black. Remaining work, in order —
+the closed-solid boundary backend; the fold core's transport (the measured
+timeout, three recorded paths); the GLSL twins; rear-scene radiance and
 transparent visibility; distortion and capture integration; panel material
 and starter scenes; built-app qualification. Shader changes require the
 corresponding CPU/GPU agreement gate even before production routing is
@@ -439,4 +509,8 @@ core's measured device-loss skip recorded in the run's notes. Measured
 2026-09-14 on the RX 7900 XTX / radeonsi: six of seven cores agree
 (radiance ≤ 1.1e-4, residual ≤ 3.2e-4, normals ≤ 6.6e-3); pristine main
 reproduces the SwiftShader device-loss at an unrelated early leg, so that
-finding is environmental.
+finding is environmental. The `transportEnvelope` rows are the renderer
+lane's record (the section above): the production renderer at the
+delegated preview/settle rasters against the decided envelope's lines,
+plus the mid-flight cancel probe and the byte-identity repeat — skipped
+on software adapters, gating on real ones.
