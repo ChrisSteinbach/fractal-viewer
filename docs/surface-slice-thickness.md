@@ -203,11 +203,14 @@ were ~60 s each). The recursive spherefold pair settles comfortably either
 way. The browser gate now loads both cover scenes with `surfacesamples=1`
 (its own wall clock, disclosed in its header) and requires a COMPLETED
 settle at the thicker view, so the fold-final class is gated end to end
-rather than at preview level. The remaining cost item is the fence-group
-and teardown behaviour under the 16x march work —
-`scripts/surface-fence-cost.verify.mjs` and
-`scripts/surface-teardown.verify.mjs` have not yet been re-run on a
-cover-live session.
+rather than at preview level. The fence-cost gate now has a `--cover4` arm
+and PASSED on a cover-live session (Iris Xe, Chrome, production build):
+all 101 fence groups priced from the GPU instrument (`ts=on`, 0 wall), a
+2.36 ms round-trip, the hit cap climbed 64 → 4096, 372 hits per hit
+dispatch, settle frame 6450 ms — the 16x work changed constants, not the
+ladder/fence shape. What remains on the cost front is the Firefox arm and
+the teardown gate on a cover session: the Playwright Firefox build is not
+installed on this machine, so those wait for a box that has it.
 
 ## Exact finite reflection pieces
 
@@ -337,14 +340,14 @@ contract through the cover, and routing/UI that admits the combination.
 What remains:
 
 - **Cost qualification.** The shading-tap fix shipped (one-piece cover
-  probe, measured above), so the interaction is usable; what remains is the
-  fence-group and teardown behaviour under the 16x march work:
-  `scripts/surface-fence-cost.verify.mjs` and
-  `scripts/surface-teardown.verify.mjs` on a cover-live session (thickness
-  > 0, nonlinear system). If that measurement still objects, the remaining
-  > levers are quality/cost decisions, not soundness ones: fewer pieces
-  > (measured IoU 0.67-0.84 at 8), scale pieces with thickness, or the
-  > per-system thickness cap the earlier study discussed.
+  probe, measured above), and the fence-cost gate's `--cover4` arm PASSED
+  on Chrome — ladder and grouping intact under the 16x work. Still owed:
+  the same arm on Firefox and `scripts/surface-teardown.verify.mjs` on a
+  cover session — both need a machine with the Playwright Firefox build.
+  If those object, the remaining levers are quality/cost decisions, not
+  soundness ones: fewer pieces (measured IoU 0.67-0.84 at 8), scale pieces
+  with thickness, or the per-system thickness cap the earlier study
+  discussed.
 - **Tiling composition.** Tiled 4D sessions still clamp thickness to zero;
   finite pieces need the split/cover composition and lattice walls need
   crossing enumeration (the tiling child's work).
