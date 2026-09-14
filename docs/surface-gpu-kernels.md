@@ -486,7 +486,11 @@ POINT body behind an external lift, then appends a public `surfaceDE`
 wrapper that seeds the lifted query and its half-extent and returns
 `max(0, min_i(DE_point(mid_i) - |e|/SLAB_COVER_PIECES))` — the CPU
 oracle's bounded midpoint cover, complete-partition sound at any piece
-count. The hit-info twin argmins the same samples with the point VALUE
+count. Shade mode additionally emits a ONE-PIECE `surfaceDEProbe` for the
+normal/AO/shadow taps (taps only — they never decide geometry), because the
+16-piece cover on every tap was the measured app cost: `DE(mid) - |e|` is
+still a sound whole-segment lower bound, just loose. The hit-info twin
+argmins the same samples with the point VALUE
 descent, then asks the covered hit-info once at the winner and overwrites
 `sStar` with the winning piece parameter so radius/pattern coloring rides
 the actual winning slab location; a fold final keeps its own resolved
