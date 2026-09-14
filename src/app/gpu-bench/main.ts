@@ -81,6 +81,7 @@ import {
   analyzeBulbSystem,
   buildBulbDE,
   BULB_ITERATIONS,
+  BULB_STEP_SCALE,
   estimateBulbDistance,
 } from "../../fractal/bulb-de";
 import type { BulbDE } from "../../fractal/bulb-de";
@@ -210,6 +211,11 @@ import {
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_TRANSPORT_COMPLETE,
+  SURFACE_GPU_TRANSPORT_INVALID,
+  SURFACE_GPU_TRANSPORT_PENDING,
+  SURFACE_GPU_TRANSPORT_RESIDUAL,
+  SURFACE_GPU_TRANSPORT_UNRESOLVED,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   packBulbGpuParams,
   packEscape4GpuMaps,
@@ -227,9 +233,25 @@ import {
 import type {
   SurfaceGpu4View,
   SurfaceGpuGroundPlane,
+  SurfaceGpuKernelOptions,
   SurfaceGpuPose,
   SurfaceGpuRunParams,
 } from "../../fractal/surface-de-gpu";
+import {
+  DIELECTRIC_ABSORPTION,
+  DIELECTRIC_CROSSING_EPS_REL,
+  DIELECTRIC_IOR,
+  DIELECTRIC_INITIAL_BRANCH_THETA,
+} from "../../fractal/surface-dielectric";
+import {
+  transportBoundaryQueryCPU,
+  transportTraceCPU,
+} from "./surface-transport-fixture";
+import type {
+  TransportBoundaryKind,
+  TransportFixtureSystem,
+  TransportTraceStatus,
+} from "./surface-transport-fixture";
 import type {
   HybridSchedule,
   FourDColorMode,
@@ -4120,6 +4142,31 @@ interface SurfaceDeviceSanityResult {
   detail?: string;
 }
 
+/** One transport agreement leg's row (`runSurfaceTransportAgreementLegs`):
+ * the emitted optics body's boundary query and replay trace pinned per
+ * kernel core against `surface-transport-fixture.ts`'s CPU twin over the
+ * deterministic probe set. A mismatch THROWS (the leg fails closed), so a
+ * row only ever lands with both agreement flags true — they record what
+ * was compared, not a tolerance outcome. */
+interface SurfaceTransportAgreementRow {
+  core: SurfaceKernelConfig["core"];
+  /** The DE the leg drove (the section's own fixture system name). */
+  system: string;
+  compileMs: number;
+  /** Total control queries dispatched: one trace + two boundary probes
+   * per hit ray (padded to the workgroup multiple for dispatch). */
+  queries: number;
+  boundaryAgree: boolean;
+  traceAgree: boolean;
+  /** Max per-channel |gpu − cpu| over the trace probes' radiance. */
+  maxRadianceDelta: number;
+  /** Max |gpu − cpu| over the trace probes' residual. */
+  maxResidualDelta: number;
+  /** Max per-channel |gpu − cpu| over the boundary probes' optical
+   * normals (f32 taps at a fractal surface — the loosest of the three). */
+  maxNormalDelta: number;
+}
+
 interface SurfaceDeResults {
   /** `"device-unreliable"` means the device-sanity canary tripped mid-run:
    * numeric rows in this result are NOT evidence of a kernel defect —
@@ -4294,6 +4341,16 @@ interface SurfaceDeResults {
   /** Device-sanity tripwire state — absent only when the canary
    * could not arm (setup failure, disclosed in notes). */
   deviceSanity?: SurfaceDeviceSanityResult;
+  /** The optical-transport agreement legs (`runSurfaceTransportAgreementLegs`):
+   * one row per kernel core whose fixture system built, each pinning the
+   * emitted optics body (`mode: "shade"` + `optics: true`) against
+   * `surface-transport-fixture.ts`'s CPU twin — the boundary query on
+   * unanchored/anchored probes, the replay trace on the primary-hit
+   * rays. Fail-closed: a mismatch throws, the gate flag turns the
+   * verdict to fail. Absent when no fixture system was available (noted).
+   * NOTE: the runner's stdout printer predates this field, so each row
+   * also lands in `notes` (the computeFrame4 dual-reporting convention). */
+  transportAgreement?: SurfaceTransportAgreementRow[];
   /** Skipped configs/systems, WGSL compile errors (verbatim), and other
    * per-run context — never silent. */
   notes: string[];
@@ -7349,6 +7406,66 @@ async function acquireSurfaceDevice(
 }
 
 /**
+ * The transport agreement legs' control entry, appended to an optics
+ * shade-mode module (`surfaceDeKernelWgsl({ mode: "shade", optics: true, … })`)
+ * — one dispatchable probe per control query against the kernel's OWN
+ * emitted transport: mode 1 runs `transportNextBoundary`, mode 0 runs
+ * `transportTrace` against the fixed backdrop the CPU twin's `bgLinear`
+ * mirrors (`SURFACE_TRANSPORT_CONTROL_BG`). Read through `layout: "auto"`:
+ * the pipeline is created for this entry alone, so its derived bind-group
+ * layout carries only the bindings the control transitively uses — 0
+ * params, 1 maps (absent on the bulb core, which declares none), and the
+ * two control buffers at 16/17; the shade entry's texture/shadeMaps/
+ * transport tail bindings stay out of the derived layout and are never
+ * created. The bounds discipline is the caller's: queries are padded to a
+ * workgroup multiple so `gid.x` never indexes past the array.
+ */
+const SURFACE_TRANSPORT_CONTROL_WGSL = `
+struct ControlQuery {
+  origin: vec3f,
+  dir: vec3f,
+  anchorPoint: vec3f,
+  eps: f32,
+  ior: f32,
+  radius: f32,
+  absorb: vec3f,
+  theta: f32,
+  anchorPresent: u32,
+  mode: u32,
+}
+struct ControlResult {
+  a: vec4f,
+  b: vec4f,
+  c: vec4f,
+  d: vec4f,
+}
+@group(0) @binding(16) var<storage, read> controlQueries: array<ControlQuery>;
+@group(0) @binding(17) var<storage, read_write> controlResults: array<ControlResult>;
+@compute @workgroup_size(64)
+fn controlTransport(
+  @builtin(global_invocation_id) gid: vec3u,
+  @builtin(local_invocation_index) li: u32,
+) {
+  let q = controlQueries[gid.x];
+  var r: ControlResult;
+  if (q.mode == 1u) {
+    let hit = transportNextBoundary(q.origin, q.dir, q.anchorPresent, q.anchorPoint, q.eps, li);
+    r.a = vec4f(f32(hit.kind), f32(hit.reason), hit.t, 0.0);
+    r.b = vec4f(hit.normal, 0.0);
+    r.c = vec4f(0.0);
+    r.d = vec4f(0.0);
+  } else {
+    let traced = transportTrace(q.origin, q.dir, q.theta, q.ior, q.radius, q.absorb, vec3f(0.25, 0.35, 0.45), li);
+    r.a = vec4f(f32(traced.status), f32(traced.failure), f32(traced.reason), traced.residual);
+    r.b = vec4f(traced.radiance, 0.0);
+    r.c = vec4f(0.0);
+    r.d = vec4f(0.0);
+  }
+  controlResults[gid.x] = r;
+}
+`;
+
+/**
  * Shader module + compute pipeline for one kernel config, under the
  * out-of-memory + validation error-scope pair (flame-gpu-backend.ts's
  * resource-creation discipline). WGSL diagnostics surface as
@@ -7371,7 +7488,8 @@ async function buildSurfacePipeline(
   device: GPUDevice,
   layout: GPUPipelineLayout | "auto",
   code: string,
-  entryPoint: "evalQueries" | "marchRays",
+  entryPoint:
+    "evalQueries" | "marchRays" | "transportRays" | "controlTransport",
   label: string,
 ): Promise<{ pipeline: GPUComputePipeline; compileMs: number }> {
   const t0 = performance.now();
@@ -7818,6 +7936,729 @@ async function runSurfaceSwirlBalloonEvalLeg(
     if ("view4" in querySys) destroySurface4EvalBuffers(querySys);
     else destroySurfaceEvalBuffers(querySys);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Optical-transport agreement legs (surface-transport-fixture.ts)
+// ---------------------------------------------------------------------------
+
+/** Control-entry workgroup size — also the control entry's own
+ * `@workgroup_size` and the dispatch granularity the query padding
+ * rounds to, so `gid.x` never indexes past the padded array. */
+const SURFACE_TRANSPORT_WG = 64;
+/** One `ControlQuery`'s wire stride: three vec3f at their 16-byte
+ * alignment, then eps/ior/radius at 44/48/52, absorb at its aligned 64,
+ * theta/anchorPresent/mode at 76/80/84, rounded up to the struct's
+ * 16-byte alignment. */
+const SURFACE_TRANSPORT_QUERY_STRIDE_BYTES = 96;
+/** One `ControlResult`: four vec4f. */
+const SURFACE_TRANSPORT_RESULT_STRIDE_BYTES = 64;
+/** The trace probe's fixed backdrop, DISPLAY space — MUST stay equal to
+ * the control WGSL's literal `vec3f(0.25, 0.35, 0.45)` byte for byte: the
+ * kernel's `transportRearRadiance` linearizes it internally (pow 2.2) and
+ * the CPU twin's `bgLinear` is derived from THIS definition, so the host
+ * side has one place the two agree from. */
+const SURFACE_TRANSPORT_CONTROL_BG: Vec3 = [0.25, 0.35, 0.45];
+/** {@link SURFACE_TRANSPORT_CONTROL_BG} linearized per channel (the file's
+ * 2.2 convention) — the fixture trace's `bgLinear`. */
+const SURFACE_TRANSPORT_CONTROL_BG_LINEAR: Vec3 = [
+  Math.pow(SURFACE_TRANSPORT_CONTROL_BG[0], 2.2),
+  Math.pow(SURFACE_TRANSPORT_CONTROL_BG[1], 2.2),
+  Math.pow(SURFACE_TRANSPORT_CONTROL_BG[2], 2.2),
+];
+/** The probe camera's ndc grid — spanning the object disc, which
+ * subtends roughly ±0.6 of tangent from the canonical 2·R camera. */
+const SURFACE_TRANSPORT_PROBE_NDC = [-0.6, -0.2, 0.2, 0.6];
+/** Cap on kept hit rays (each becomes one trace + two boundary probes). */
+const SURFACE_TRANSPORT_PROBE_RAYS = 8;
+/** The CPU probe-selection march's step budget — a grazing ray takes many
+ * shrinking steps; past it the ray simply counts as a miss (never a
+ * hang). Pure probe selection: both engines trace from the SAME CPU
+ * hit point, so the cap only ever trims the probe list. */
+const SURFACE_TRANSPORT_HIT_MARCH_STEPS = 4096;
+/** The trace status codes read off the control result's `.a.x`, mapped
+ * from the fixture's own status vocabulary — the runtime's exported
+ * SURFACE_GPU_TRANSPORT_* constants, never restated literals. */
+const TRANSPORT_TRACE_STATUS_CODES: Record<TransportTraceStatus, number> = {
+  pending: SURFACE_GPU_TRANSPORT_PENDING,
+  complete: SURFACE_GPU_TRANSPORT_COMPLETE,
+  residual: SURFACE_GPU_TRANSPORT_RESIDUAL,
+  unresolved: SURFACE_GPU_TRANSPORT_UNRESOLVED,
+  invalid: SURFACE_GPU_TRANSPORT_INVALID,
+};
+/** The emitted `TransportBoundary` struct's kind codes (1 boundary, 2
+ * miss, 3 refused — surface-de-gpu.ts's optics-block comment), mapped
+ * from the fixture's kind vocabulary. */
+const TRANSPORT_BOUNDARY_KIND_CODES: Record<TransportBoundaryKind, number> = {
+  boundary: 1,
+  miss: 2,
+  refused: 3,
+};
+
+/** One leg's resolved fixture system + the kernel options and packers it
+ * drives, assembled per core before any GPU work. */
+interface SurfaceTransportLegSpec {
+  core: SurfaceKernelConfig["core"];
+  systemName: string;
+  options: SurfaceGpuKernelOptions;
+  /** The kind's own params packer — the run params' `visibleRadius`/
+   * `stepScale` come from the real DE (the packer's offsets 20/24), so the
+   * control's domain gate and march scale are exactly the fixture's. */
+  packParams: (itemCount: number) => ArrayBuffer;
+  /** The kind's maps packer, or null for the one bindingless core (bulb —
+   * the control's auto layout then declares no binding 1 at all). */
+  packMaps: (() => Float32Array) | null;
+  fixture: TransportFixtureSystem;
+}
+
+/**
+ * The transport legs' deterministic probe set (no RNG — the fixture
+ * vocabulary's own discipline): a canonical camera at
+ * `visibleRadius·(0.9, 0.55, 1.7)` looking at the origin, a 4x4 ndc grid
+ * over the object, each direction CPU-marched by the fixture system's own
+ * estimator to its first primary hit (`estimate < visibleRadius·1e-3` —
+ * the transport's own eps scale) or out past `3·visibleRadius`. Returns
+ * the first {@link SURFACE_TRANSPORT_PROBE_RAYS} hit rays in grid order.
+ */
+function surfaceTransportProbes(
+  fixture: TransportFixtureSystem,
+): { hitPos: Vec3; dir: Vec3 }[] {
+  const visR = fixture.visibleRadius;
+  const ro: Vec3 = [0.9 * visR, 0.55 * visR, 1.7 * visR];
+  const roLen = Math.hypot(ro[0], ro[1], ro[2]);
+  const fwd: Vec3 = [-ro[0] / roLen, -ro[1] / roLen, -ro[2] / roLen];
+  // right = normalize(cross(fwd, worldUp)), up = cross(right, fwd) — a
+  // right-handed look-at basis; fwd is never parallel to worldUp here.
+  const rightLen = Math.hypot(-fwd[2], 0, fwd[0]);
+  const right: Vec3 = [-fwd[2] / rightLen, 0, fwd[0] / rightLen];
+  const up: Vec3 = [
+    right[1] * fwd[2] - right[2] * fwd[1],
+    right[2] * fwd[0] - right[0] * fwd[2],
+    right[0] * fwd[1] - right[1] * fwd[0],
+  ];
+  const probes: { hitPos: Vec3; dir: Vec3 }[] = [];
+  for (const ny of SURFACE_TRANSPORT_PROBE_NDC) {
+    for (const nx of SURFACE_TRANSPORT_PROBE_NDC) {
+      if (probes.length >= SURFACE_TRANSPORT_PROBE_RAYS) return probes;
+      const spread: Vec3 = [
+        fwd[0] + right[0] * nx + up[0] * ny,
+        fwd[1] + right[1] * nx + up[1] * ny,
+        fwd[2] + right[2] * nx + up[2] * ny,
+      ];
+      const dLen = Math.hypot(spread[0], spread[1], spread[2]);
+      const dir: Vec3 = [spread[0] / dLen, spread[1] / dLen, spread[2] / dLen];
+      let t = 0;
+      let hitPos: Vec3 | null = null;
+      for (let step = 0; step < SURFACE_TRANSPORT_HIT_MARCH_STEPS; step++) {
+        const p: Vec3 = [
+          ro[0] + dir[0] * t,
+          ro[1] + dir[1] * t,
+          ro[2] + dir[2] * t,
+        ];
+        const d = fixture.estimate(p);
+        if (d < visR * 1e-3) {
+          hitPos = p;
+          break;
+        }
+        t += d * fixture.stepScale;
+        if (t > 3 * visR) break;
+      }
+      if (hitPos) probes.push({ hitPos, dir });
+    }
+  }
+  return probes;
+}
+
+/**
+ * The surface transport agreement legs — one per kernel core, each pinning
+ * the emitted optics body (`surfaceDeKernelWgsl({ mode: "shade", optics:
+ * true })`) against `surface-transport-fixture.ts`'s CPU twin, per core:
+ *
+ *   fold    mandelboxKifs (the fold-protocol leg's system)
+ *   affine  affineTetra (the M0 affine leg's system)
+ *   escape  the M2 leg's first escape system
+ *   bulb    the M6 leg's first bulb system
+ *   affine4 the M3 leg's aff4Tetra SurfaceDE4
+ *   fold4   the M4 leg's fold4Boxfold SurfaceDE4
+ *   escape4 the M7 leg's first escape4 system
+ *
+ * Each leg compiles the optics shade module plus
+ * {@link SURFACE_TRANSPORT_CONTROL_WGSL} under `layout: "auto"` (the bind
+ * group derives from the control entry's own transitively-used bindings —
+ * 0 params, 1 maps unless the bindingless bulb, 16/17), packs the kind's
+ * OWN params/maps wire exactly as the eval legs do (the run params'
+ * `visibleRadius`/`stepScale` come from the real DE, so the control's
+ * domain gate matches the fixture's), and compares a deterministic probe
+ * set: one replay-trace probe per CPU-marched primary hit, plus two
+ * boundary queries per hit ray (unanchored from just past the hit along
+ * the reverse ray; anchored AT the hit, which must clear its own anchor).
+ *
+ * The 4D legs pack the IDENTITY-rotor canonical pose (`w0` 0, no slab) —
+ * the packer's slice-adjusted `visibleRadius` equals the full
+ * `visibleBoundingRadius` there, and the kernel's prologue lift is the
+ * identity the CPU adapter applies by evaluating the 4D estimator at
+ * frozen `w = 0`. The estimator each adapter composes is the one the
+ * CORE marches (fold/fold4 the plain frontier descents at their fixed
+ * SURFACE_FOLD_BEAM_WIDTH scratch, affine/affine4 the refined ladders,
+ * escape/bulb/escape4 their forward orbits).
+ *
+ * Fail closed: any mismatch — status, kind, reason, tolerance — THROWS
+ * with the core, probe index and both sides' values; the caller's catch
+ * turns it into the leg's gate flag. A core whose fixture system did not
+ * build skips with a note instead (the mandelboxKifs exclusion's own
+ * convention), and a probe camera that finds no primary hit throws —
+ * an agreement leg never certifies vacuously.
+ */
+async function runSurfaceTransportAgreementLegs(
+  device: GPUDevice,
+  systems: {
+    descent: SurfaceSystemState[];
+    escape: SurfaceEscapeSystemState[];
+    bulb: SurfaceBulbSystemState[];
+    affine4: Surface4SystemState[];
+    fold4: Surface4SystemState[];
+    escape4: SurfaceEscape4SystemState[];
+  },
+  status: (text: string) => void,
+  activity: ActivityBadge,
+): Promise<{
+  rows: SurfaceTransportAgreementRow[];
+  notes: string[];
+}> {
+  const notes: string[] = [];
+  const legs: SurfaceTransportLegSpec[] = [];
+  // The canonical identity pose every 4D leg packs and evaluates through
+  // (surface-transport-fixture.ts's frozen pose).
+  const canonicalView4: SurfaceGpu4View = {
+    rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    w0: 0,
+    sliceHalfW: 0,
+  };
+
+  const pushDescentLeg = (name: string, core: "fold" | "affine"): void => {
+    const sys = systems.descent.find((s) => s.name === name);
+    if (!sys) {
+      notes.push(
+        `transport ${core}: skipped — ${name} did not build or was excluded ` +
+          "(surfaceSystems=synthetic)",
+      );
+      return;
+    }
+    const de = sys.de;
+    legs.push({
+      core,
+      systemName: sys.name,
+      options: {
+        mode: "shade",
+        core,
+        width:
+          core === "fold"
+            ? SURFACE_FOLD_BEAM_WIDTH
+            : SURFACE_AFFINE_LADDER_WIDTH,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+      },
+      packParams: (n) => packSurfaceGpuParams(de, { itemCount: n, cutoff: 0 }),
+      packMaps: () => new Float32Array(packSurfaceGpuMaps(de)),
+      fixture: {
+        // The DE's own routing split (the section's): fold base maps march
+        // the plain frontier descent the fold kernel mirrors; fold-free
+        // ones the refined width-4 ladder.
+        estimate: (p) =>
+          core === "fold"
+            ? estimateDistance(de, p, 0)
+            : estimateDistanceRefined(de, p, 0),
+        stepScale: de.stepScale,
+        visibleRadius: de.visibleBoundingRadius,
+      },
+    });
+  };
+
+  const pushSurface4Leg = (name: string, core: "affine4" | "fold4"): void => {
+    const list = core === "affine4" ? systems.affine4 : systems.fold4;
+    const sys = list.find((s) => s.name === name);
+    if (!sys) {
+      notes.push(
+        `transport ${core}: skipped — ${name} did not build (see notes)`,
+      );
+      return;
+    }
+    const de = sys.de;
+    legs.push({
+      core,
+      systemName: sys.name,
+      options: {
+        mode: "shade",
+        core,
+        width:
+          core === "fold4"
+            ? SURFACE_FOLD_BEAM_WIDTH
+            : SURFACE_AFFINE_LADDER_WIDTH,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+      },
+      packParams: (n) =>
+        packSurface4GpuParams(de, canonicalView4, { itemCount: n, cutoff: 0 }),
+      packMaps: () => new Float32Array(packSurfaceGpuMaps4(de)),
+      fixture: {
+        // The core picks the estimator the body marches — affine4 the
+        // refined ladder (M3's oracle), fold4 the plain frontier at
+        // refine=false (M4's) — evaluated at the canonical pose's frozen
+        // w = 0 under the identity lift.
+        estimate: (p) =>
+          core === "affine4"
+            ? estimateDistance4Refined(de, [p[0], p[1], p[2], 0], 0)
+            : estimateDistance4(de, [p[0], p[1], p[2], 0]),
+        stepScale: de.stepScale,
+        visibleRadius: de.visibleBoundingRadius,
+      },
+    });
+  };
+
+  pushDescentLeg("mandelboxKifs", "fold");
+  pushDescentLeg("affineTetra", "affine");
+
+  const escapeSys = systems.escape[0];
+  if (escapeSys) {
+    const de = escapeSys.de;
+    legs.push({
+      core: "escape",
+      systemName: escapeSys.name,
+      options: {
+        mode: "shade",
+        core: "escape",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+      },
+      packParams: (n) => packEscapeGpuParams(de, { itemCount: n, cutoff: 0 }),
+      packMaps: () => new Float32Array(packEscapeGpuMaps(de)),
+      fixture: {
+        estimate: (p) => estimateEscapeDistance(de, p),
+        stepScale: ESCAPE_STEP_SCALE,
+        // The bailout ball packs as BOTH the bounding and the visible
+        // sphere (packEscapeGpuParams's offsets 12/24) — the fixture's
+        // domain gate must read the same number.
+        visibleRadius: de.boundingRadius,
+      },
+    });
+  } else {
+    notes.push(
+      "transport escape: skipped — no escape system built (see notes)",
+    );
+  }
+
+  const bulbSys = systems.bulb[0];
+  if (bulbSys) {
+    const de = bulbSys.de;
+    legs.push({
+      core: "bulb",
+      systemName: bulbSys.name,
+      options: {
+        mode: "shade",
+        core: "bulb",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+      },
+      // The bulb core declares no maps binding — its single map rides the
+      // params variant block (the M6 leg's own wire).
+      packParams: (n) => packBulbGpuParams(de, { itemCount: n, cutoff: 0 }),
+      packMaps: null,
+      fixture: {
+        estimate: (p) => estimateBulbDistance(de, p),
+        stepScale: BULB_STEP_SCALE,
+        visibleRadius: de.boundingRadius,
+      },
+    });
+  } else {
+    notes.push("transport bulb: skipped — no bulb system built (see notes)");
+  }
+
+  pushSurface4Leg("aff4Tetra", "affine4");
+  pushSurface4Leg("fold4Boxfold", "fold4");
+
+  const escape4Sys = systems.escape4[0];
+  if (escape4Sys) {
+    const de = escape4Sys.de;
+    legs.push({
+      core: "escape4",
+      systemName: escape4Sys.name,
+      options: {
+        mode: "shade",
+        core: "escape4",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+      },
+      packParams: (n) =>
+        packEscape4GpuParams(de, canonicalView4, { itemCount: n, cutoff: 0 }),
+      packMaps: () => new Float32Array(packEscape4GpuMaps(de)),
+      fixture: {
+        estimate: (p) => estimateEscapeDistance4(de, [p[0], p[1], p[2], 0]),
+        stepScale: ESCAPE_STEP_SCALE,
+        // esc4ChainWRot's own view IS the canonical identity pose; at
+        // w0 0 the packer's slice-adjusted marching ball is the full
+        // bounding radius (packEscape4GpuParams's offset-24 line).
+        visibleRadius: de.boundingRadius,
+      },
+    });
+  } else {
+    notes.push(
+      "transport escape4: skipped — no escape4 system built (see notes)",
+    );
+  }
+
+  const rows: SurfaceTransportAgreementRow[] = [];
+  for (const leg of legs) {
+    status(`transport agreement: compiling ${leg.core} × ${leg.systemName}…`);
+    activity.setState("gpu", `Surface transport agreement — ${leg.core}`);
+    const { pipeline, compileMs } = await buildSurfacePipeline(
+      device,
+      "auto",
+      `${surfaceDeKernelWgsl(leg.options)}\n${SURFACE_TRANSPORT_CONTROL_WGSL}`,
+      "controlTransport",
+      `surface-de transport ${leg.core}`,
+    );
+    const visR = leg.fixture.visibleRadius;
+    const probes = surfaceTransportProbes(leg.fixture);
+    if (probes.length === 0) {
+      throw new Error(
+        `transport ${leg.core} (${leg.systemName}): the probe camera found ` +
+          "no primary hit — refusing to certify vacuously",
+      );
+    }
+    // The control wire: [trace, boundary-unanchored, boundary-anchored]
+    // per probe, then zero-estimator padding lanes (mode 1, origin far
+    // outside the domain sphere — the boundary query's own tFar check
+    // misses them on the first loop test) so the padded dispatch reads
+    // no lane past the array.
+    const queries: {
+      origin: Vec3;
+      dir: Vec3;
+      anchorPoint: Vec3;
+      eps: number;
+      ior: number;
+      radius: number;
+      absorb: Vec3;
+      theta: number;
+      anchorPresent: number;
+      mode: number;
+    }[] = [];
+    for (const probe of probes) {
+      queries.push({
+        origin: probe.hitPos,
+        dir: probe.dir,
+        anchorPoint: [0, 0, 0],
+        eps: 0,
+        ior: DIELECTRIC_IOR,
+        radius: visR,
+        absorb: DIELECTRIC_ABSORPTION,
+        theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+        anchorPresent: 0,
+        mode: 0,
+      });
+      queries.push({
+        origin: [
+          probe.hitPos[0] + probe.dir[0] * visR * 0.01,
+          probe.hitPos[1] + probe.dir[1] * visR * 0.01,
+          probe.hitPos[2] + probe.dir[2] * visR * 0.01,
+        ],
+        dir: [-probe.dir[0], -probe.dir[1], -probe.dir[2]],
+        anchorPoint: [0, 0, 0],
+        eps: DIELECTRIC_CROSSING_EPS_REL * visR,
+        ior: DIELECTRIC_IOR,
+        radius: visR,
+        absorb: DIELECTRIC_ABSORPTION,
+        theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+        anchorPresent: 0,
+        mode: 1,
+      });
+      queries.push({
+        origin: probe.hitPos,
+        dir: [-probe.dir[0], -probe.dir[1], -probe.dir[2]],
+        anchorPoint: probe.hitPos,
+        eps: DIELECTRIC_CROSSING_EPS_REL * visR,
+        ior: DIELECTRIC_IOR,
+        radius: visR,
+        absorb: DIELECTRIC_ABSORPTION,
+        theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+        anchorPresent: 1,
+        mode: 1,
+      });
+    }
+    const count = queries.length;
+    const padded =
+      Math.ceil(count / SURFACE_TRANSPORT_WG) * SURFACE_TRANSPORT_WG;
+    const queryData = new ArrayBuffer(
+      padded * SURFACE_TRANSPORT_QUERY_STRIDE_BYTES,
+    );
+    const qView = new DataView(queryData);
+    queries.forEach((q, i) => {
+      const base = i * SURFACE_TRANSPORT_QUERY_STRIDE_BYTES;
+      qView.setFloat32(base, q.origin[0], true);
+      qView.setFloat32(base + 4, q.origin[1], true);
+      qView.setFloat32(base + 8, q.origin[2], true);
+      qView.setFloat32(base + 16, q.dir[0], true);
+      qView.setFloat32(base + 20, q.dir[1], true);
+      qView.setFloat32(base + 24, q.dir[2], true);
+      qView.setFloat32(base + 32, q.anchorPoint[0], true);
+      qView.setFloat32(base + 36, q.anchorPoint[1], true);
+      qView.setFloat32(base + 40, q.anchorPoint[2], true);
+      qView.setFloat32(base + 44, q.eps, true);
+      qView.setFloat32(base + 48, q.ior, true);
+      qView.setFloat32(base + 52, q.radius, true);
+      qView.setFloat32(base + 64, q.absorb[0], true);
+      qView.setFloat32(base + 68, q.absorb[1], true);
+      qView.setFloat32(base + 72, q.absorb[2], true);
+      qView.setFloat32(base + 76, q.theta, true);
+      qView.setUint32(base + 80, q.anchorPresent, true);
+      qView.setUint32(base + 84, q.mode, true);
+    });
+    // Padding lanes: mode 1 (boundary), origin well outside the domain
+    // sphere along +x — the control's boundary branch exits on the first
+    // domain test without a single estimator evaluation.
+    for (let i = count; i < padded; i++) {
+      const base = i * SURFACE_TRANSPORT_QUERY_STRIDE_BYTES;
+      qView.setFloat32(base, visR * 10, true);
+      qView.setFloat32(base + 16, 1, true);
+      qView.setFloat32(base + 52, visR, true);
+      qView.setUint32(base + 84, 1, true);
+    }
+
+    const paramsData = leg.packParams(padded);
+    // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
+    const mapsData = leg.packMaps?.() ?? null;
+    const params = await createSurfaceBuffer(
+      device,
+      `surface-de transport params ${leg.core}`,
+      paramsData.byteLength,
+      GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    );
+    device.queue.writeBuffer(params, 0, paramsData);
+    let maps: GPUBuffer | null = null;
+    if (mapsData) {
+      maps = await createSurfaceBuffer(
+        device,
+        `surface-de transport maps ${leg.core}`,
+        mapsData.byteLength,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      );
+      // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
+      device.queue.writeBuffer(maps, 0, new Float32Array(mapsData));
+    }
+    const queriesBuf = await createSurfaceBuffer(
+      device,
+      `surface-de transport queries ${leg.core}`,
+      queryData.byteLength,
+      GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    );
+    device.queue.writeBuffer(queriesBuf, 0, queryData);
+    const resultsBuf = await createSurfaceBuffer(
+      device,
+      `surface-de transport results ${leg.core}`,
+      padded * SURFACE_TRANSPORT_RESULT_STRIDE_BYTES,
+      GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    );
+    const staging = await createSurfaceBuffer(
+      device,
+      `surface-de transport staging ${leg.core}`,
+      padded * SURFACE_TRANSPORT_RESULT_STRIDE_BYTES,
+      GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    );
+    // layout "auto": the bind group derives from the control entry's own
+    // transitively-used bindings — never the section's shared layouts.
+    const bindGroup = device.createBindGroup({
+      label: `surface-de transport bind group ${leg.core}`,
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: params } },
+        ...(maps ? [{ binding: 1, resource: { buffer: maps } }] : []),
+        { binding: 16, resource: { buffer: queriesBuf } },
+        { binding: 17, resource: { buffer: resultsBuf } },
+      ],
+    });
+    let out: Float32Array;
+    try {
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.dispatchWorkgroups(padded / SURFACE_TRANSPORT_WG);
+      pass.end();
+      encoder.copyBufferToBuffer(
+        resultsBuf,
+        0,
+        staging,
+        0,
+        padded * SURFACE_TRANSPORT_RESULT_STRIDE_BYTES,
+      );
+      device.queue.submit([encoder.finish()]);
+      await device.queue.onSubmittedWorkDone();
+      await staging.mapAsync(GPUMapMode.READ);
+      out = new Float32Array(staging.getMappedRange().slice(0));
+      staging.unmap();
+    } finally {
+      params.destroy();
+      maps?.destroy();
+      queriesBuf.destroy();
+      resultsBuf.destroy();
+      staging.destroy();
+    }
+
+    let maxRadianceDelta = 0;
+    let maxResidualDelta = 0;
+    let maxNormalDelta = 0;
+    const fail = (probe: number, kind: string, detail: string): never => {
+      throw new Error(
+        `transport ${leg.core} (${leg.systemName}) probe ${probe} ${kind}: ${detail}`,
+      );
+    };
+    probes.forEach((probe, pi) => {
+      // --- the TRACE probe (mode 0): the replay trace from the hit ---
+      const cpuTrace = transportTraceCPU(
+        leg.fixture,
+        probe.hitPos,
+        probe.dir,
+        DIELECTRIC_INITIAL_BRANCH_THETA,
+        {
+          ior: DIELECTRIC_IOR,
+          absorption: DIELECTRIC_ABSORPTION,
+          radius: visR,
+        },
+        SURFACE_TRANSPORT_CONTROL_BG_LINEAR,
+      );
+      const traceBase = pi * 3 * 16;
+      const gpuStatus = out[traceBase];
+      if (gpuStatus !== TRANSPORT_TRACE_STATUS_CODES[cpuTrace.status]) {
+        fail(
+          pi,
+          "trace",
+          `status — gpu ${String(gpuStatus)} vs cpu "${cpuTrace.status}"`,
+        );
+      }
+      for (let c = 0; c < 3; c++) {
+        const gpu = out[traceBase + 4 + c];
+        const cpu = cpuTrace.radiance[c];
+        const delta = Math.abs(gpu - cpu);
+        maxRadianceDelta = Math.max(maxRadianceDelta, delta);
+        if (!(delta <= 3e-3 || delta <= 1e-2 * Math.abs(cpu))) {
+          fail(
+            pi,
+            "trace",
+            `radiance[${String(c)}] — gpu ${String(gpu)} vs cpu ${String(cpu)}`,
+          );
+        }
+      }
+      const residualDelta = Math.abs(out[traceBase + 3] - cpuTrace.residual);
+      maxResidualDelta = Math.max(maxResidualDelta, residualDelta);
+      if (residualDelta > 5e-3) {
+        fail(
+          pi,
+          "trace",
+          `residual — gpu ${String(out[traceBase + 3])} vs cpu ${String(cpuTrace.residual)}`,
+        );
+      }
+      // --- the BOUNDARY probes (mode 1), unanchored then anchored ---
+      for (let b = 0; b < 2; b++) {
+        const query = queries[pi * 3 + 1 + b];
+        const cpuHit = transportBoundaryQueryCPU(
+          leg.fixture,
+          query.origin,
+          query.dir,
+          query.anchorPresent === 1,
+          query.anchorPoint,
+          query.eps,
+        );
+        const base = (pi * 3 + 1 + b) * 16;
+        const gpuKind = out[base];
+        // The UNANCHORED arm expects a boundary: it starts 1% of the
+        // visible radius past the hit and marches back through the same
+        // sheet. The ANCHORED arm starts ON the boundary it names — the
+        // anchor's same-boundary suppression exists precisely so it does
+        // NOT re-report that boundary — and past its 2·eps skip it
+        // usually marches away through the ray's empty approach corridor,
+        // so its legitimate outcome is mostly `miss` (measured: 11 of 12
+        // CPU arms across the three 3D fixtures). Its pin is therefore
+        // the GPU/CPU AGREEMENT below, plus t > 0: a kernel that dropped
+        // the anchor reports kind 1 at t ≈ 2·eps where the twin reports
+        // miss, and the pair fails here.
+        if (b === 0 && gpuKind !== TRANSPORT_BOUNDARY_KIND_CODES.boundary) {
+          fail(
+            pi,
+            "boundary-unanchored",
+            `expected kind 1 (boundary), gpu ${String(gpuKind)} — cpu "${cpuHit.kind}"`,
+          );
+        }
+        if (gpuKind !== TRANSPORT_BOUNDARY_KIND_CODES[cpuHit.kind]) {
+          fail(
+            pi,
+            b === 0 ? "boundary-unanchored" : "boundary-anchored",
+            `kind — gpu ${String(gpuKind)} vs cpu "${cpuHit.kind}"`,
+          );
+        }
+        const gpuReason = out[base + 1];
+        if (gpuReason !== cpuHit.reason) {
+          fail(
+            pi,
+            b === 0 ? "boundary-unanchored" : "boundary-anchored",
+            `reason — gpu ${String(gpuReason)} vs cpu ${String(cpuHit.reason)}`,
+          );
+        }
+        const gpuT = out[base + 2];
+        if (b === 1 && !(gpuT > 0)) {
+          fail(
+            pi,
+            "boundary-anchored",
+            `t ${String(gpuT)} — the anchored query must clear its own anchor`,
+          );
+        }
+        const tDelta = Math.abs(gpuT - cpuHit.t);
+        if (tDelta > 1e-3 * visR) {
+          fail(
+            pi,
+            b === 0 ? "boundary-unanchored" : "boundary-anchored",
+            `t — gpu ${String(gpuT)} vs cpu ${String(cpuHit.t)} ` +
+              `(delta ${String(tDelta)} > ${String(1e-3 * visR)})`,
+          );
+        }
+        for (let c = 0; c < 3; c++) {
+          const delta = Math.abs(out[base + 4 + c] - cpuHit.normal[c]);
+          maxNormalDelta = Math.max(maxNormalDelta, delta);
+          if (delta > 3e-2) {
+            fail(
+              pi,
+              b === 0 ? "boundary-unanchored" : "boundary-anchored",
+              `normal[${String(c)}] — gpu ${String(out[base + 4 + c])} vs cpu ${String(cpuHit.normal[c])}`,
+            );
+          }
+        }
+      }
+    });
+    rows.push({
+      core: leg.core,
+      system: leg.systemName,
+      compileMs,
+      queries: count,
+      boundaryAgree: true,
+      traceAgree: true,
+      maxRadianceDelta,
+      maxResidualDelta,
+      maxNormalDelta,
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve));
+  }
+  return { rows, notes };
 }
 
 /** The section's fixed 4-binding interface (surface-de-gpu.ts's contract):
@@ -14830,6 +15671,10 @@ async function runSurfaceDeSection(
   // `sliceHalfW <= 0` branch disagrees with the `slabExt: false` point
   // kernel beyond SURFACE_FOLD4_SLABEXT_TOL_FACTOR.
   let cover4IdentityFailed = false;
+  // The optical-transport agreement legs' gate — set when any core's
+  // boundary/trace comparison throws (the leg fails closed; its throw
+  // message carries the core, probe index and both sides' values).
+  let transportGateFail = false;
 
   const configLabel = (cfg: SurfaceKernelConfig): string =>
     cfg.core === "affine"
@@ -18953,6 +19798,57 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the shade A/B leg");
 
+    // ----- Optical-transport agreement legs (per core) — GATING -----
+    // The emitted optics body (mode "shade" + optics) pinned per kernel
+    // core against surface-transport-fixture.ts's CPU twin — the boundary
+    // query on unanchored/anchored probes, the replay trace on the
+    // primary-hit rays, over a deterministic probe set. Fail closed: any
+    // comparison mismatch throws out of the leg, and the catch turns it
+    // into the gate flag below; a missing fixture system skips with a
+    // note instead.
+    try {
+      const { rows, notes: transportNotes } =
+        await runSurfaceTransportAgreementLegs(
+          device,
+          {
+            descent: systems,
+            escape: escapeSystems,
+            bulb: bulbSystems,
+            affine4: affine4Systems,
+            fold4: fold4Systems,
+            escape4: escape4Systems,
+          },
+          status,
+          activity,
+        );
+      results.transportAgreement = rows;
+      for (const n of transportNotes) results.notes.push(n);
+      for (const row of rows) {
+        // The computeFrame4 dual-reporting convention: the headless
+        // runner's stdout printer predates this field, so the row also
+        // lands in `notes` and the run's summary discloses it.
+        results.notes.push(
+          `transport agreement ${row.core} × ${row.system}: queries=${String(row.queries)} ` +
+            `boundaryAgree=${String(row.boundaryAgree)} traceAgree=${String(row.traceAgree)} ` +
+            `maxRadianceDelta=${row.maxRadianceDelta.toExponential(2)} ` +
+            `maxResidualDelta=${row.maxResidualDelta.toExponential(2)} ` +
+            `maxNormalDelta=${row.maxNormalDelta.toExponential(2)} ` +
+            `compileMs=${String(Math.round(row.compileMs))}`,
+        );
+      }
+      if (rows.length === 0) {
+        results.notes.push(
+          "transport agreement: no core ran — every fixture system was unavailable (see notes)",
+        );
+      }
+    } catch (e) {
+      transportGateFail = true;
+      results.notes.push(`transport agreement: ${describeError(e)}`);
+    }
+    render();
+
+    await canaryCheck("the transport agreement legs");
+
     // ----- Verdict -----
     // Only production-width rows gate: the CPU oracle's fold frontier is
     // the fixed SURFACE_FOLD_BEAM_WIDTH scratch, so narrower-width rows
@@ -18988,7 +19884,8 @@ async function runSurfaceDeSection(
       emitterOnlyFailed ||
       tilingAbiFailed ||
       latticeTilingAbiFailed ||
-      latticeFrameFailed
+      latticeFrameFailed ||
+      transportGateFail
     ) {
       results.verdict = "fail";
       results.reason = compileFailed
@@ -19029,7 +19926,9 @@ async function runSurfaceDeSection(
                                           ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
                                           : latticeFrameFailed
                                             ? "lattice carrier frame failure — see notes"
-                                            : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                                            : transportGateFail
+                                              ? "transport agreement failure — see notes"
+                                              : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
