@@ -1213,6 +1213,22 @@ stopwatch. These rows predate the pass-duration instrument and were taken
 under the wall currency throughout — which on Chrome is now the `--ts=0`
 arm, and on Firefox is still the default.
 
+`--cover4` runs the same ladder questions against a 4D nonlinear IFS (a
+pentatope base under a mandelbox FINAL — the slab the bounded midpoint
+cover answers, the session whose per-DE work is 16x and whose shading taps
+ride the one-piece cover probe: `docs/surface-slice-thickness.md`).
+MEASURED on the developer Iris Xe, Chrome, `--display=:0`, production
+build, one antialiasing pass, 1280x720, with the 3D fold-lens fixture as
+the same-machine control (different documents, so read the machinery, not
+the frame times): the cover session priced all 101 fence groups from the
+GPU instrument (`ts=on`, 0 wall), calibrated a 2.36 ms round-trip, climbed
+its hit cap 64 → 4096, carried 372 hits per hit dispatch and settled in
+8871 ms (settle frame 6450 ms); the control read 2.28 ms, cap 64 → 4096,
+2225 hits/dispatch, settle 46,185 ms (frame 32,455 ms). The 16x work
+changes the constants, not the shape — the ladders did not pin and the
+grouping still engaged. The Firefox arm was not run: the Playwright
+Firefox build is not installed on this machine.
+
 #### The first probe was a different population
 
 **A SECOND DEFECT IN THE SAME CALIBRATION, found after the fix above
