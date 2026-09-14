@@ -75,6 +75,35 @@ export function inversionBallScale(
   return denom > 0 ? sphereR2 / denom : 0;
 }
 
+/**
+ * The SIGNED form of {@link inversionBallScale}, for callers that map a
+ * GENERALIZED ball (a ball or the complement of one) rather than bound a
+ * region: `R² / (|c|² − r²)` with its sign kept.
+ *
+ * - Positive (`|c| > r`): the ball misses the centre and its image is the
+ *   ball `B(scale·c, scale·r)` — the unsigned helper's case exactly.
+ * - Negative (`|c| < r`): the ball holds the centre, which goes to infinity,
+ *   so its image is the COMPLEMENT of the open ball with centre `scale·c`
+ *   and radius `|scale|·r`, and the complement of the source maps to that
+ *   closed ball. The same midpoint/half-difference algebra as the module
+ *   doc's, evaluated on the two points where the line through the centre
+ *   meets the sphere, gives both expressions.
+ * - Zero exactly when `|c| = r`: the sphere passes through the centre and
+ *   its image is a plane, which no ball describes. A caller for which that
+ *   matters (the sphere-inversion family refuses such a seed at build) must
+ *   also refuse the NEAR-zero denominators, whose huge image radii lose f64
+ *   precision long before the division overflows; this helper does not
+ *   pick that threshold for it.
+ */
+export function signedInversionBallScale(
+  dist: number,
+  radius: number,
+  sphereR2: number,
+): number {
+  const denom = dist * dist - radius * radius;
+  return denom !== 0 ? sphereR2 / denom : 0;
+}
+
 /** Transport an EMPTY distance ball through inversion. If a=I(p),
  * r=|p-c|, s=|a-c|=R²/r and d<=dist(a,S), then for every y in S:
  * |p-I(y)|=r|a-y|/|y-c| >= r|a-y|/(s+|a-y|) >= r*d/(s+d).
