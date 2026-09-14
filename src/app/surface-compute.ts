@@ -157,6 +157,7 @@ import {
   SURFACE_GPU_SEED_WORKGROUP_SIZE,
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_SHADE_LIGHTING_BYTES,
+  SURFACE_GPU_SHADE_OPTICS_BYTES,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TRANSPORT_COMPLETE,
   SURFACE_GPU_TRANSPORT_INVALID,
@@ -1097,8 +1098,18 @@ export interface SurfaceComputeFrame {
    * budget truncation's never-resolved remainder is disclosed by
    * `truncated`, not relabeled here); `invalid` counts non-finite
    * outcomes. Unresolved and invalid pixels render BLACK — never
-   * background — and these counts are the disclosure. */
-  transport?: { resolved: number; unresolved: number; invalid: number };
+   * background — and these counts are the disclosure. `passes` counts
+   * replay passes that dispatched work (≤ `DIELECTRIC_REPLAY_PASSES`);
+   * `batchMs` is each batch's own fence round-trip in dispatch order —
+   * one entry per submission, and since the pass boundary IS the
+   * cancellation boundary, the frame's max is its checkpoint bound. */
+  transport?: {
+    resolved: number;
+    unresolved: number;
+    invalid: number;
+    passes: number;
+    batchMs: number[];
+  };
 }
 
 /** Internal sample payload: retained until runSamples has added its raw
@@ -2650,10 +2661,27 @@ export class SurfaceComputeRenderer {
     // is opt-in per browser flag (Chrome gates the feature behind
     // `--enable-dawn-features=allow_unsafe_apis`), so absence is the
     // normal path and the wall currency stays exactly as shipped.
+    //
+    // The OPTICS sessions need one more ceiling: the transport lane's
+    // three buffers (13/14/15) take the shade stage's storage-buffer count
+    // to 9, past the spec-default per-stage limit of 8 — a default device
+    // fails the shade bind group layout's validation and poisons every
+    // layout and pipeline derived from it ("[Invalid PipelineLayout] is
+    // invalid due to a previous error"; the renderer-envelope leg's
+    // finding, which is what made the merged transport reachable). The
+    // adapter's real ceiling rides the same way the buffer-size ceilings
+    // do; an adapter that cannot grant it fails create into the classic
+    // fallback, disclosed.
     const device = await adapter.requestDevice({
       requiredLimits: {
         maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
         maxBufferSize: adapter.limits.maxBufferSize,
+        ...(opts.materials?.optics
+          ? {
+              maxStorageBuffersPerShaderStage:
+                adapter.limits.maxStorageBuffersPerShaderStage,
+            }
+          : {}),
       },
       ...(adapter.features.has("timestamp-query")
         ? { requiredFeatures: ["timestamp-query"] as GPUFeatureName[] }
@@ -3177,11 +3205,23 @@ export class SurfaceComputeRenderer {
       // ends at 224, and one buffer serves both pipelines of the pair — a
       // struct never reads past its own size, so binding the larger buffer
       // to the march pipeline is valid.
+      //
+      // An OPTICS session's per-frame pack carries the transport member
+      // the same way: at 224 when optics is alone (240 — the size the
+      // pattern quartet would take), after the quartet at 240 when both
+      // gates are live (SURFACE_GPU_SHADE_OPTICS_BYTES). Allocate the
+      // optics top either way — the renderer-envelope leg caught the
+      // missing growth as a failed queue.writeBuffer that left the
+      // uniform un-staged, silently invalidating EVERY dispatch that
+      // binds it (all rays stay ACTIVE, the budget exhausts them, the
+      // frame renders its seed backdrop).
       size: lighting
         ? SURFACE_GPU_SHADE_LIGHTING_BYTES
-        : materials?.pattern
-          ? SURFACE_GPU_SHADE_PATTERN_BYTES
-          : SURFACE_GPU_SHADE_BYTES,
+        : materials?.optics
+          ? SURFACE_GPU_SHADE_OPTICS_BYTES
+          : materials?.pattern
+            ? SURFACE_GPU_SHADE_PATTERN_BYTES
+            : SURFACE_GPU_SHADE_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     // Re-wrapped copies: the kernel packers' bare Float32Array types
@@ -5817,6 +5857,8 @@ export class SurfaceComputeRenderer {
     let transportResolved = 0;
     let transportUnresolved = 0;
     let transportInvalid = 0;
+    const transportBatchMs: number[] = [];
+    let transportPassesStarted = 0;
     if (
       this.optics &&
       transportPipeline !== null &&
@@ -5850,6 +5892,7 @@ export class SurfaceComputeRenderer {
           tr("budget truncated (transport)");
           break;
         }
+        transportPassesStarted++;
         // The pass word is the one per-pass quantity: re-pack the SAME
         // uniform the frame staged (240/256 B against a full pass of
         // traces).
@@ -5898,6 +5941,7 @@ export class SurfaceComputeRenderer {
           // starts fresh.
           stagedBytes = 0;
           const wallMs = performance.now() - t0;
+          transportBatchMs.push(wallMs);
           const workMs = Math.max(0, wallMs - (this.fenceMs ?? 0));
           transportSizer.cost = nextShadeHitCost(
             transportSizer.cost,
@@ -6001,6 +6045,8 @@ export class SurfaceComputeRenderer {
               resolved: transportResolved,
               unresolved: transportUnresolved,
               invalid: transportInvalid,
+              passes: transportPassesStarted,
+              batchMs: transportBatchMs,
             },
           }
         : {}),
