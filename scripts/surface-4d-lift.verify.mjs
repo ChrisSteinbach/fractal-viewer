@@ -6,23 +6,38 @@
  * the three no unit test reaches.
  *
  *   npm run build && npm run preview &
- *   node scripts/surface-4d-lift.verify.mjs [--display=:0] [--url=…]
+ *   node scripts/surface-4d-lift.verify.mjs [--display=:0] [--url=…] [--settle=ms]
  *
- * TWO PHASES: eight hash-borne SCENES (minimal documents, no preset table
+ * TWO PHASES: the hash-borne SCENES (minimal documents, no preset table
  * involved, so the gate survives one changing under it), then the three
  * shipped 4D escape-time PRESETS loaded FROM THE MENU — the only place
  * that checks what a user's first contact with them does, since
  * `escape-family.verify.mjs` reads the Escape-time group and these live in
  * the 4D one.
  *
- * TWO KINDS OF SCENE. The eight lift scenes ask the questions below. Two
- * further scenes carry a `thickness` value: after the first settle they set
- * the panel's slice-thickness slider (asserting the row is ENABLED — the
- * nonlinear-fold availability this phase exists for) and wait for a SECOND
- * completed settle at that thickness, then re-ask DRAW and ENGINE. Both are
- * nonlinear 4D IFS documents (a recursive spherefold pair and a mandelbox
- * FINAL over a pentatope base) that the bounded midpoint cover now answers,
- * so a regression in routing, the cover kernel or the panel gate fails here.
+ * TWO KINDS OF SCENE. The lift scenes ask the questions below. THREE further
+ * scenes carry a `thickness` value: after the first settle they set the
+ * panel's slice-thickness slider (asserting the row is ENABLED — the
+ * nonlinear-fold availability this phase exists for), wait for a SECOND
+ * completed settle at that thickness, then re-ask DRAW and ENGINE; finally
+ * they set the slider back to ZERO and require the fresh settle to reproduce
+ * the pre-thickness frame byte for byte — the cover's zero-thickness
+ * identity, which is a point query by construction and measured here as
+ * PIXELS rather than argued from the CPU oracle. All three are nonlinear 4D
+ * IFS documents (a recursive spherefold pair, a mandelbox FINAL over a
+ * pentatope base, and a POSED pair with AUTHORED fold radii and a map post
+ * under a pinned camera) that the bounded midpoint cover answers, so a
+ * regression in routing, the cover kernel or the panel gate fails here. The
+ * posed fixture is deliberately LENS-FREE BY MEASURED COST: mixing its
+ * nonlinear base with a fold lens left the entry settle unfinished ~6
+ * minutes in at `surfacesamples=1` (the run was stopped there), where the
+ * same maps and pose without the lens settle in 1.9 s — and the lens class
+ * is already gated by `coverMandelFinal4` above.
+ *
+ * EVERY SCENE'S SETTLE BUDGET IS ITS OWN where it carries `settleMs` —
+ * entry included, as well as both thickness phases. A heavier fixture can
+ * then carry a longer budget without slowing the gate for every other
+ * scene.
  *
  * WHAT IT ASKS, per scene, of a session it drives FROM THE UI:
  *
@@ -44,7 +59,10 @@
  * clock; production spends the persisted preference, default 8) and then
  * wait for a COMPLETED settle at the thicker view, which the cover's
  * one-piece shading probe made feasible (measured ~60 s/sample at
- * 1024x640 on Iris Xe; docs/surface-slice-thickness.md).
+ * 1024x640 on Iris Xe; docs/surface-slice-thickness.md). The zero-thickness
+ * identity gate is `maxDelta === 0` over the WHOLE canvas (not the
+ * coverage helper's 128px downscale), so a cover whose h=0 path is merely
+ * close to the point kernel fails.
  *
  * The scene documents are built into this file as `#v1=` hashes (produced
  * by `persist.ts`'s own encoder), so the gate needs no preset to exist and
@@ -124,6 +142,15 @@ const SCENES = [
     hash: "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMywwLjEsMF0sInJvdGF0aW9uIjpbMC4zLDAuMiwwXSwic2NhbGUiOlswLjEyLDAuMTIsMC4xMl0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJzcGhlcmVmb2xkIiwid2VpZ2h0IjowLjl9XSwidyI6eyJyb3RhdGlvbiI6eyJ4dyI6MC40NX19fSx7InBvc2l0aW9uIjpbLTAuMjUsLTAuMiwwLjJdLCJyb3RhdGlvbiI6WzAsMC41LDAuMV0sInNjYWxlIjpbMC4xMSwwLjExLDAuMTFdLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoic3BoZXJlZm9sZCIsIndlaWdodCI6MS4xfV0sInciOnsicm90YXRpb24iOnsieXciOjAuNH19fV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImVudkxpZ2h0IjowLCJmbG9vckVuYWJsZWQiOmZhbHNlLCJmbG9vclBhdHRlcm4iOiJzb2xpZCIsImZsb29yVGlsZVNjYWxlIjowLjY0LCJmbG9vckVtaXNzaW9uIjowLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjUsImVudkxpZ2h0IjowLjM1LCJmbG9vclBhdHRlcm4iOiJzb2xpZCIsImZsb29yVGlsZVNjYWxlIjowLjY0LCJmbG9vckVtaXNzaW9uIjowfSwic3ltbWV0cnkiOnsib3JkZXIiOjEsInBsYW5lIjoieHoifSwiZ2xvd0JyaWdodG5lc3MiOjEsImJhbGxvb25FY2hvIjpmYWxzZSwiYmFsbG9vblJhZGl1cyI6MS42LCJiYWxsb29uVGludCI6IiMwMDAwMDAiLCJiYWxsb29uVGludFN0cmVuZ3RoIjowLCJmb2dEZW5zaXR5IjoxLCJmb2dUaW50IjoiI2ZmZmZmZiIsImZvZ1RpbnRTdHJlbmd0aCI6MCwiZ3JvdW5kUGxhbmUiOmZhbHNlfQ",
   },
   {
+    name: "coverPosedAuthored4",
+    what: "a POSED recursive spherefold pair with AUTHORED fold radii and a map POST, under a pinned camera and a non-identity rotor/slice — thickness set after the first settle, then a completed cover settle and the zero-thickness identity are required. Lens-free BY MEASURED COST: mixing a nonlinear base with the fold lens could not complete one cover sample in any practical budget, and the lens class is gated by coverMandelFinal4",
+    engine: "compute",
+    thickness: 0.2,
+    samples: 1,
+    settleMs: 600000,
+    hash: "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMywwLjEsMF0sInJvdGF0aW9uIjpbMC4zLDAuMiwwXSwic2NhbGUiOlswLjEyLDAuMTIsMC4xMl0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJzcGhlcmVmb2xkIiwid2VpZ2h0IjowLjksIm1pblJhZGl1cyI6MC44LCJmaXhlZFJhZGl1cyI6MS4yfV0sInciOnsicm90YXRpb24iOnsieHciOjAuNDV9fX0seyJwb3NpdGlvbiI6Wy0wLjI1LC0wLjIsMC4yXSwicm90YXRpb24iOlswLDAuNSwwLjFdLCJzY2FsZSI6WzAuMTEsMC4xMSwwLjExXSwicG9zdCI6WzEsMCwwLDAsMSwwLDAsMCwxLDAuMDEsLTAuMDIsMC4wMDVdLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoic3BoZXJlZm9sZCIsIndlaWdodCI6MS4xfV0sInciOnsicm90YXRpb24iOnsieXciOjAuNH19fV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImVudkxpZ2h0IjowLCJmbG9vckVuYWJsZWQiOmZhbHNlLCJmbG9vclBhdHRlcm4iOiJzb2xpZCIsImZsb29yVGlsZVNjYWxlIjowLjY0LCJmbG9vckVtaXNzaW9uIjowLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjUsImVudkxpZ2h0IjowLjM1LCJmbG9vclBhdHRlcm4iOiJzb2xpZCIsImZsb29yVGlsZVNjYWxlIjowLjY0LCJmbG9vckVtaXNzaW9uIjowfSwic3ltbWV0cnkiOnsib3JkZXIiOjEsInBsYW5lIjoieHoifSwiZ2xvd0JyaWdodG5lc3MiOjEsImJhbGxvb25FY2hvIjpmYWxzZSwiYmFsbG9vblJhZGl1cyI6MS42LCJiYWxsb29uVGludCI6IiMwMDAwMDAiLCJiYWxsb29uVGludFN0cmVuZ3RoIjowLCJmb2dEZW5zaXR5IjoxLCJmb2dUaW50IjoiI2ZmZmZmZiIsImZvZ1RpbnRTdHJlbmd0aCI6MCwiZ3JvdW5kUGxhbmUiOmZhbHNlLCJjYW1lcmEiOnsidGFyZ2V0IjpbMCwwLDBdLCJyYWRpdXMiOjIuNiwidGhldGEiOjAuOSwicGhpIjoxLjE1fSwiZm91ckQiOnsicCI6WzAuOTk3MiwtMC4wNzQ5LDAsMF0sInEiOlswLjk2MjQsMC4yNzE1LDAsMF0sInNsaWNlT24iOnRydWUsInNsaWNlQ2VudGVyIjowLjE1LCJzbGljZVRoaWNrbmVzcyI6MCwic2xpY2VSZWxDb2xvciI6ZmFsc2V9fQ",
+  },
+  {
     name: "coverMandelFinal4",
     what: "a mandelbox FINAL over a pentatope base — the cover's affine4+lens case, the class the one-piece shading probe rescued (hours -> ~60 s/sample at 1024x640 on Iris Xe); thickness set after the first settle, then a completed cover settle is required",
     engine: "compute",
@@ -169,11 +196,18 @@ const PRESETS_4D = [
 
 const NON_BACKDROP_TOL = 10;
 
-/** Share of canvas pixels that differ from the frame's own corners. */
-async function coverage(page) {
+/** The canvas's own pixels, as a PNG. One canvas exists (`scene.ts` injects
+ * it into `#container`), and the panel is not part of it — unlike the
+ * container screenshot the balloon gate compares, this selection cannot
+ * pick up a panel relayout. */
+async function canvasShot(page) {
   const canvas = await page.$("canvas");
   if (!canvas) return null;
-  const shot = await canvas.screenshot({ type: "png" });
+  return canvas.screenshot({ type: "png" });
+}
+
+/** Share of canvas pixels that differ from the frame's own corners. */
+async function frameCoverage(page, shot) {
   return page.evaluate(
     async ({ bytes, tol }) => {
       const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
@@ -208,6 +242,66 @@ async function coverage(page) {
       return n / (w * h);
     },
     { bytes: Array.from(shot), tol: NON_BACKDROP_TOL },
+  );
+}
+
+/** FULL-RESOLUTION difference between two canvas screenshots — the
+ * zero-thickness identity check's instrument. `changedFraction` counts
+ * pixels with ANY channel difference, so 0 is exactly "byte-identical" and
+ * there is no threshold to argue about; `maxDelta` is the strongest single
+ * channel move, which is the number the identity claim is stated in. Same
+ * arithmetic as `explorer-balloon-4d.verify.mjs`'s `imageDiff`, minus its
+ * panel-region slicing — there is no panel in a canvas screenshot. */
+async function imageDiff(page, aPng, bPng) {
+  return page.evaluate(
+    async ({ a64, b64 }) => {
+      const bitmap = async (encoded) => {
+        const raw = atob(encoded);
+        const bytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+        return createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      };
+      const [a, b] = await Promise.all([bitmap(a64), bitmap(b64)]);
+      if (a.width !== b.width || a.height !== b.height) {
+        return {
+          changedFraction: 1,
+          meanAbs: 255,
+          maxDelta: 255,
+          width: 0,
+          height: 0,
+        };
+      }
+      const pixels = (image) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(image, 0, 0);
+        return ctx.getImageData(0, 0, image.width, image.height).data;
+      };
+      const pa = pixels(a);
+      const pb = pixels(b);
+      let changed = 0;
+      let sum = 0;
+      let maxDelta = 0;
+      for (let i = 0; i < pa.length; i += 4) {
+        const dr = Math.abs(pa[i] - pb[i]);
+        const dg = Math.abs(pa[i + 1] - pb[i + 1]);
+        const db = Math.abs(pa[i + 2] - pb[i + 2]);
+        const delta = Math.max(dr, dg, db);
+        if (delta > 0) changed++;
+        sum += dr + dg + db;
+        maxDelta = Math.max(maxDelta, delta);
+      }
+      const count = pa.length / 4;
+      return {
+        changedFraction: changed / count,
+        meanAbs: sum / (count * 3),
+        maxDelta,
+        width: a.width,
+        height: a.height,
+      };
+    },
+    { a64: aPng.toString("base64"), b64: bPng.toString("base64") },
   );
 }
 
@@ -274,9 +368,13 @@ async function run() {
       );
       // Enter surface mode FROM THE UI, exactly as a user would — the
       // routing under test is the session start's, not a direct call.
+      const enterStart = Date.now();
       await page.click("#modeSurfaceBtn");
       let state = null;
-      const deadline = Date.now() + args.settleMs;
+      // The scene's own budget, entry included — see the header's note on
+      // the posed authored scene.
+      const settleBudget = scene.settleMs ?? args.settleMs;
+      const deadline = Date.now() + settleBudget;
       let entered = false;
       while (Date.now() < deadline) {
         state = await page.evaluate(() => window.__surfaceState?.() ?? null);
@@ -287,6 +385,7 @@ async function run() {
       }
       const settled = Boolean(state && state.settled);
       const engine = state ? state.engine : null;
+      const entrySettleMs = Date.now() - enterStart;
       // Coverage: the share of pixels that differ from the frame's own
       // corner backdrop. Engine-agnostic, and the same question the
       // blank-frame notice asks of its hit counts.
@@ -296,7 +395,8 @@ async function run() {
       // there. The share of pixels differing from the frame's own corner
       // backdrop is the same question the blank-frame notice asks of
       // its hit counts, and it is engine-agnostic.
-      const drawn = await coverage(page);
+      const entryShot = await canvasShot(page);
+      const drawn = entryShot ? await frameCoverage(page, entryShot) : null;
       let thicknessOk = true;
       let thicknessNote = "";
       if (scene.thickness !== undefined) {
@@ -307,53 +407,96 @@ async function run() {
           const el = document.getElementById("fourDSliceThicknessSlider");
           return el instanceof HTMLInputElement && !el.disabled;
         });
-        await page.evaluate((value) => {
-          const el = document.getElementById("fourDSliceThicknessSlider");
-          if (!(el instanceof HTMLInputElement)) return;
-          el.value = String(value);
-          // The panel's own live-edit pair: `input` stores the value (no
-          // cloud meaning, so it deliberately skips the slice push), and
-          // `change` is the commit-on-release that re-arms the tracer.
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-        }, scene.thickness);
-        // The slider stores the value synchronously, but the tracer reads
-        // it in the animation loop's per-frame `setSurface4View` push, so
-        // the settle latch clears a frame or two later. Poll for that
-        // clear — a latch that never clears means nothing new was asked
-        // for (a vacuous pass).
-        let invalidated = false;
-        const invalidateDeadline = Date.now() + 10000;
-        while (!invalidated && Date.now() < invalidateDeadline) {
-          invalidated = await page.evaluate(() => {
-            const state = window.__surfaceState?.();
-            return Boolean(state && state.mode === "surface" && !state.settled);
-          });
-          if (!invalidated) await page.waitForTimeout(100);
-        }
-        let thickState = null;
-        const thickDeadline = Date.now() + (scene.settleMs ?? args.settleMs);
-        while (Date.now() < thickDeadline) {
-          thickState = await page.evaluate(
-            () => window.__surfaceState?.() ?? null,
-          );
-          if (thickState && thickState.settled) break;
-          await page.waitForTimeout(250);
-        }
-        const thickSettled = Boolean(thickState && thickState.settled);
-        const thickDrawn = thicknessOk ? await coverage(page) : null;
+        // Drive the panel's own live-edit pair to a value and wait for the
+        // latch to clear and then complete. One helper for both directions:
+        // the thickened view and the return to zero are the same controls,
+        // the same listener pair and the same question.
+        const driveThickness = async (value) => {
+          const landed = await page.evaluate((value) => {
+            const el = document.getElementById("fourDSliceThicknessSlider");
+            if (!(el instanceof HTMLInputElement)) return false;
+            el.value = String(value);
+            // `input` stores the value (no cloud meaning, so it
+            // deliberately skips the slice push), and `change` is the
+            // commit-on-release that re-arms the tracer.
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            return true;
+          }, value);
+          // The slider stores the value synchronously, but the tracer reads
+          // it in the animation loop's per-frame `setSurface4View` push, so
+          // the settle latch clears a frame or two later. Poll for that
+          // clear — a latch that never clears means nothing new was asked
+          // for (a vacuous pass).
+          let invalidated = false;
+          const invalidateDeadline = Date.now() + 10000;
+          while (!invalidated && Date.now() < invalidateDeadline) {
+            invalidated = await page.evaluate(() => {
+              const state = window.__surfaceState?.();
+              return Boolean(
+                state && state.mode === "surface" && !state.settled,
+              );
+            });
+            if (!invalidated) await page.waitForTimeout(100);
+          }
+          let next = null;
+          const deadline = Date.now() + settleBudget;
+          const settleStart = Date.now();
+          while (Date.now() < deadline) {
+            next = await page.evaluate(() => window.__surfaceState?.() ?? null);
+            if (next && next.settled) break;
+            await page.waitForTimeout(250);
+          }
+          return {
+            landed,
+            invalidated,
+            settled: Boolean(next && next.settled),
+            settleMs: Date.now() - settleStart,
+          };
+        };
+        const thick = await driveThickness(scene.thickness);
+        const thickShot = thick.settled ? await canvasShot(page) : null;
+        const thickDrawn = thickShot
+          ? await frameCoverage(page, thickShot)
+          : null;
+        // ZERO THICKNESS IS THE IDENTITY, measured as PIXELS: back to 0 on
+        // the same slider, then a full-resolution diff of the fresh settle
+        // against the pre-thickness frame. The compute renderer is
+        // bit-reproducible once settled and the h=0 path is the point
+        // kernel by construction, so the bar is exact equality — the one
+        // form of this claim a shading difference cannot sneak past.
+        const reset = await driveThickness(0);
+        const resetShot =
+          reset.invalidated && reset.settled ? await canvasShot(page) : null;
+        const identity =
+          entryShot && resetShot
+            ? await imageDiff(page, entryShot, resetShot)
+            : null;
         thicknessOk =
           rowEnabled &&
-          invalidated &&
-          thickSettled &&
+          thick.landed &&
+          thick.invalidated &&
+          thick.settled &&
           thickDrawn !== null &&
-          thickDrawn > 0.005;
+          thickDrawn > 0.005 &&
+          reset.invalidated &&
+          reset.settled &&
+          identity !== null &&
+          identity.maxDelta === 0;
         thicknessNote =
           `  thickness=${scene.thickness} samples=${scene.samples ?? "default"} ` +
           `rowEnabled=${String(rowEnabled).padEnd(5)} ` +
-          `invalidated=${String(invalidated).padEnd(5)} ` +
-          `reSettled=${String(thickSettled).padEnd(5)} ` +
-          `reDrawn=${thickDrawn === null ? "n/a" : (thickDrawn * 100).toFixed(1) + "%"}`;
+          `invalidated=${String(thick.invalidated).padEnd(5)} ` +
+          `reSettled=${String(thick.settled).padEnd(5)} ` +
+          `thick=${(thick.settleMs / 1000).toFixed(1)}s ` +
+          `reDrawn=${thickDrawn === null ? "n/a" : (thickDrawn * 100).toFixed(1) + "%"} ` +
+          `zeroReset=${String(reset.settled).padEnd(5)} ` +
+          `reset=${(reset.settleMs / 1000).toFixed(1)}s ` +
+          `identity=${
+            identity === null
+              ? "n/a"
+              : `max${identity.maxDelta} changed ${(identity.changedFraction * 100).toFixed(3)}%`
+          }`;
       }
       const ok =
         entered &&
@@ -370,6 +513,7 @@ async function run() {
       process.stdout.write(
         `${ok ? "PASS" : "FAIL"}  ${scene.name.padEnd(20)} ` +
           `entered=${String(entered).padEnd(5)} settled=${String(settled).padEnd(5)} ` +
+          `settle=${(entrySettleMs / 1000).toFixed(1)}s ` +
           `engine=${String(engine).padEnd(8)} (want ${scene.engine}) ` +
           `drawn=${drawn === null ? "n/a" : (drawn * 100).toFixed(1) + "%"}` +
           `${enginePass}${thicknessNote}\n  ${scene.what}\n`,
@@ -409,7 +553,8 @@ async function run() {
       }
       const settled = Boolean(state && state.settled);
       const engine = state ? state.engine : null;
-      const drawn = await coverage(page);
+      const presetShot = await canvasShot(page);
+      const drawn = presetShot ? await frameCoverage(page, presetShot) : null;
       const ok =
         entered &&
         settled &&
