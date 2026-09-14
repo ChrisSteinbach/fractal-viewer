@@ -81,18 +81,15 @@ import {
   foldQuery,
   icosahedral12,
   inversionOrbitContains,
+  lift4,
   makeFoldScratch,
   octahedral6,
   shellSeed,
   tesseract16,
 } from "./sphere-inversion-orbit";
-import {
-  identityRotorPair,
-  rotateInPlane,
-  rotorMatrix,
-} from "../src/app/rotor4";
 import type {
   GBall,
+  RotorPlane,
   InversionScene,
   InversionSceneSpec,
 } from "./sphere-inversion-orbit";
@@ -887,29 +884,7 @@ describe("sphere-inversion seed orbits", () => {
 
 // ------------------------------------------------------- native 4D support
 
-type Plane = Parameters<typeof rotateInPlane>[1];
-
-/**
- * The rotor-posed slice, `q = rotorInv · (p, w0)` — `escape-4d.harness.ts`'s
- * lift: `rotorMatrix` is the world rotor, row-major, so the inverse is read
- * column-major. Writes into one reused tuple; every consumer copies it
- * before the next call.
- */
-function lift4(
-  planes: [Plane, number][],
-  w0: number,
-): (p: Vec3) => Float64Array {
-  let pair = identityRotorPair();
-  for (const [plane, angle] of planes) pair = rotateInPlane(pair, plane, angle);
-  const m = rotorMatrix(pair);
-  const out = new Float64Array(4);
-  return (p) => {
-    for (let i = 0; i < 4; i++) {
-      out[i] = m[i] * p[0] + m[4 + i] * p[1] + m[8 + i] * p[2] + m[12 + i] * w0;
-    }
-    return out;
-  };
-}
+type Plane = RotorPlane;
 
 interface Pose4 {
   name: string;

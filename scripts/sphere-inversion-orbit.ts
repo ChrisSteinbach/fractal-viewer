@@ -42,6 +42,11 @@
  * sit strictly inside their parent ball) and degenerates at tangency
  * points and toward generator centres.
  */
+import {
+  identityRotorPair,
+  rotateInPlane,
+  rotorMatrix,
+} from "../src/app/rotor4";
 import { inversionDistanceLowerBound } from "../src/fractal/inversion";
 
 export type Dim = 3 | 4;
@@ -217,6 +222,9 @@ export interface FoldResult {
   r2s: Float64Array;
   /** Accumulated conformal factor of the fold, `Π R²/|x − c|²` (>= 1). */
   lambda: number;
+  /** Generator index of inversion `i` — the fold's reduced word, innermost
+   * first. A native 4D slice asks which generators a member's word used. */
+  word: Int32Array;
 }
 
 /** Relative floor under which a query counts as AT a generator centre. */
@@ -231,6 +239,7 @@ export function makeFoldScratch(scene: InversionScene): FoldResult {
     radii: new Float64Array(scene.depth + 1),
     r2s: new Float64Array(scene.depth + 1),
     lambda: 1,
+    word: new Int32Array(scene.depth + 1),
   };
 }
 
@@ -279,6 +288,7 @@ export function foldQuery(
     for (let a = 0; a < dim; a++) x[a] = gc[o + a] + s * (x[a] - gc[o + a]);
     out.radii[k] = Math.sqrt(foundD2);
     out.r2s[k] = R2;
+    out.word[k] = found;
     lambda *= s;
     k++;
     parent = found;
@@ -541,3 +551,40 @@ export function shellSeed(rho: number, tau: number, dim: Dim): GBall[] {
   ];
 }
 export const capSeed = ballSeed;
+
+// ------------------------------------------------------------ native 4D view
+
+export type RotorPlane = Parameters<typeof rotateInPlane>[1];
+
+/** The rotor-posed slice frame: `q = Σ_a p_a·basis[a] + w0·basis[3]`.
+ * `basis[3]` is the slice hyperplane's unit normal in attractor space, so a
+ * 4D point `c` sits at height `basis[3]·c − w0` off the slice and at in-slice
+ * coordinates `basis[a]·c`. */
+export function sliceBasis4(planes: [RotorPlane, number][]): number[][] {
+  let pair = identityRotorPair();
+  for (const [plane, angle] of planes) pair = rotateInPlane(pair, plane, angle);
+  const m = rotorMatrix(pair);
+  return [0, 1, 2, 3].map((r) => [0, 1, 2, 3].map((i) => m[r * 4 + i]));
+}
+
+/**
+ * The rotor-posed slice, `q = rotorInv · (p, w0)` — `escape-4d.harness.ts`'s
+ * lift: `rotorMatrix` is the world rotor, row-major, so the inverse is read
+ * column-major. Writes into one reused tuple; every consumer copies it
+ * before the next call.
+ */
+export function lift4(
+  planes: [RotorPlane, number][],
+  w0: number,
+): (p: ArrayLike<number>) => Float64Array {
+  let pair = identityRotorPair();
+  for (const [plane, angle] of planes) pair = rotateInPlane(pair, plane, angle);
+  const m = rotorMatrix(pair);
+  const out = new Float64Array(4);
+  return (p) => {
+    for (let i = 0; i < 4; i++) {
+      out[i] = m[i] * p[0] + m[4 + i] * p[1] + m[8 + i] * p[2] + m[12 + i] * w0;
+    }
+    return out;
+  };
+}
