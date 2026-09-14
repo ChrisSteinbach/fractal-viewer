@@ -947,12 +947,16 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     CPU values and classic shader bytes are pinned. Finish
     persists/morphs/mutates like fold lengths; random-system never rolls
     it (optics likewise). TRANSMISSION: owner selected finite-solid 3D/4D
-    glass; envelope DECIDED, integration UNBLOCKED. `surface-dielectric.ts`
-    is the ONE dimension-free transport/event oracle; contract:
+    glass; envelope DECIDED. `surface-dielectric.ts` is the ONE
+    dimension-free transport/event oracle; contract:
     `docs/surface-dielectric-transport.md`. The optical vocabulary
     (`surface-optics.ts`: `Transform.optics` selector + scale, per-slot,
-    scene-derived radius) ships DORMANT — `opticsMaps` frozen, no core
-    reads it yet.
+    scene-derived radius) is LIVE on compute for affine/affine4/fold4 (WGSL
+    gate + replay lane; fold REFUSED on a measured GPU-job timeout; forward
+    unadmitted). The renderer envelope leg MEETS the delegated timing
+    lines; its scope wall: every transport sample resolves UNRESOLVED on
+    IFS hits — the estimator-march boundary query cannot traverse an
+    interior; the closed-solid backend is the recorded blocker.
     Pattern-albedo remains REFUSED (`scripts/finish-pattern.harness.ts`).
     Authored rigs (`surface-lighting.ts`) share ONE shader emitter in both
     dimensions/engines: absent state is legacy, visibility uses the displayed DE,
