@@ -1590,6 +1590,11 @@ export const SURFACE_GPU_TRANSPORT_COMPLETE = 1;
 export const SURFACE_GPU_TRANSPORT_RESIDUAL = 2;
 export const SURFACE_GPU_TRANSPORT_UNRESOLVED = 3;
 export const SURFACE_GPU_TRANSPORT_INVALID = 4;
+/** The status side-channel's "this ray is not the transport's" code: a
+ * HIT whose slot resolves no optics — shadeRays owns the pixel. The host
+ * reads it to keep later replay passes from re-paying the skip's
+ * hit-info. */
+export const SURFACE_GPU_TRANSPORT_SKIPPED = 5;
 
 /** Failure kinds riding the record's second word (the oracle's
  * `DielectricTraceFailureKind`, enumerated for the f32 wire). */
@@ -5116,7 +5121,12 @@ fn hash2(p: vec2f) -> f32 {
             optics
               ? `
 @group(0) @binding(13) var<storage, read> opticsMaps: array<vec4f>;
-@group(0) @binding(14) var<storage, read_write> transportState: array<vec4f>;`
+@group(0) @binding(14) var<storage, read_write> transportState: array<vec4f>;
+// The transport's status side-channel, ONE u32 per RAY (not per slot —
+// the host's replay lists are ray ids): the exit status this pass left,
+// or SKIPPED for a classic slot. 4 B per hit ray replaces any readback of
+// the 32 B records, exactly the march's own statusOut discipline.
+@group(0) @binding(15) var<storage, read_write> transportStatusOut: array<u32>;`
               : ""
           }`;
 
@@ -8673,6 +8683,7 @@ fn transportRays(
   let lane1 = opticsMaps[u32(fSlot) * 2u + 1u];
   if (lane0[0] <= 0.0) {
     // A classic slot: shadeRays owns this pixel exactly as before.
+    transportStatusOut[slotI] = ${SURFACE_GPU_TRANSPORT_SKIPPED}u;
     return;
   }
   let ior = lane0[0];
@@ -8689,6 +8700,7 @@ fn transportRays(
       f32(TRANSPORT_STATUS_INVALID), f32(traced.failure), f32(traced.reason), f32(pass));
     colorOut[ray] = pack4x8unorm(vec4f(0.0, 0.0, 0.0, 1.0));
     layerOut[ray] = packSurfaceLayer(1.0, 0.0, surfaceCoc(dot(pos - ro, params.fwd)));
+    transportStatusOut[slotI] = TRANSPORT_STATUS_INVALID;
     return;
   }
   let accepted = (traced.status == TRANSPORT_STATUS_COMPLETE ||
@@ -8711,6 +8723,7 @@ fn transportRays(
     let col = mix(display, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));
     colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));
     layerOut[ray] = packSurfaceLayer(1.0, clamp(fog, 0.0, 1.0), surfaceCoc(dot(pos - ro, params.fwd)));
+    transportStatusOut[slotI] = traced.status;
     return;
   }
   if (pass + 1u >= TRANSPORT_REPLAY_PASSES) {
@@ -8721,12 +8734,14 @@ fn transportRays(
       f32(TRANSPORT_STATUS_UNRESOLVED), f32(traced.failure), f32(traced.reason), f32(pass));
     colorOut[ray] = pack4x8unorm(vec4f(0.0, 0.0, 0.0, 1.0));
     layerOut[ray] = packSurfaceLayer(1.0, 0.0, surfaceCoc(dot(pos - ro, params.fwd)));
+    transportStatusOut[slotI] = TRANSPORT_STATUS_UNRESOLVED;
     return;
   }
   // Still pending: keep the pending identity; the next pass re-traces
   // this sample from scratch at the halved theta.
   transportState[ray * 2u + 1u] = vec4f(
     f32(TRANSPORT_STATUS_PENDING), f32(traced.failure), f32(traced.reason), f32(pass));
+  transportStatusOut[slotI] = TRANSPORT_STATUS_PENDING;
 }
 `
     : "";
