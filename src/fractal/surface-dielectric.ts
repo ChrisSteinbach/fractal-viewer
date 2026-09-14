@@ -96,6 +96,40 @@ export const DIELECTRIC_MAX_INTERFACES = DIELECTRIC_MAX_PROCESSED_PATHS;
 export const DIELECTRIC_MAX_STACK = 24;
 
 /**
+ * The production boundary query's crossing scale, as a fraction of the
+ * optical material's radius. The qualified harness's boundary query is
+ * EXACT (integer cell planes, no epsilon); a backend that queries a
+ * distance estimator crosses where its estimate falls below this
+ * world-defined scale, which is therefore the optical solid's declared
+ * resolution: features and gaps narrower than it merge optically. It is a
+ * fraction of the AUTHORED optical radius — never of a pixel, a raster or
+ * a display tolerance — so the surface the transport sees is stable under
+ * zoom, resolution and motion. Recorded with the backend contract; the
+ * value is a delegated working line and reversible.
+ */
+export const DIELECTRIC_CROSSING_EPS_REL = 1 / 512;
+
+/**
+ * The production boundary query's march step budget, in estimator
+ * evaluations per query. A query that has not crossed or left the domain
+ * within it refuses (`visit-cap`) — unresolved work, never a background
+ * hit. Bounds one query's work exactly as the qualified fixture's
+ * `visitCap` bounds one DDA.
+ */
+export const DIELECTRIC_QUERY_MAX_STEPS = 192;
+
+/**
+ * The production anchor's same-boundary suppression envelope, in crossing
+ * eps. A child query restarts at its boundary and steps past it; a
+ * crossing whose hit point lies within this envelope of the anchored
+ * point is treated as the same boundary and suppressed (the distance-field
+ * analog of the qualified fixture's exact same-face rule). Gaps narrower
+ * than the envelope merge optically — the same declared resolution the
+ * crossing scale names.
+ */
+export const DIELECTRIC_ANCHOR_ENVELOPE_REL = 4;
+
+/**
  * Snell refraction with total internal reflection; `outwardNormal` points
  * from the incident medium toward the other one. Returns the unit refracted
  * direction, or — when `sinT2 > 1` — the reflected direction with `tir` set.

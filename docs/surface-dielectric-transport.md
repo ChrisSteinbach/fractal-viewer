@@ -289,18 +289,124 @@ Every capability claim above carries both dimensions. The panel task owns
 the UI later; the recorded placement is beside Finish/Pattern in the shared
 Transforms editor (Scene / Look), per `docs/panel-ia.md`.
 
+## The compute backend (shipped, dormant → live with the routing task)
+
+`surface-de-gpu.ts`'s `optics: true` (shade mode) emits the transport beside
+the classic entries, and `surface-compute.ts` drives it as its own lane when
+the session's wire gate is live. The decisions recorded here are the
+delegated numeric working lines — each reversible with its evidence; the
+appearance selection stays the owner's and is untouched.
+
+### The production boundary query
+
+The qualified fixture's boundary query is EXACT (integer cell planes). The
+production backend's is a bounded march of the COMPOSED PUBLIC estimator —
+the same `surfaceDE` the primary hit path marches, so lens, tiling, balloon,
+ground plane and the rotor/slice lift compose exactly as they do for the
+primary hit — with these rules, each owned by one definition:
+
+- **Crossing scale** (`DIELECTRIC_CROSSING_EPS_REL`, 1/512 of the slot's
+  optical radius): the query crosses where the estimator falls below this
+  WORLD-defined scale — never a pixel, raster or display tolerance. It is
+  the optical solid's declared resolution: features and gaps narrower than
+  it merge optically.
+- **Medium state is caller-carried; the flip is definitional.** The query
+  never infers inside/outside from a distance sign — these estimators have
+  no signed interior contract, and the gradient of an unsigned distance to
+  the surface carries no reliable outward orientation. A crossing's
+  `entering` is `!inside` BY DEFINITION (the geometric flip the caller's
+  state implies); the refraction/reflection math is deliberately
+  sign-agnostic in the normal (the reflector mirrors across the tangent
+  plane, the refractor self-corrects its facing), so no orientation
+  inference exists to get wrong. The fixture's exact-occupancy cross-check
+  has no unsigned-distance analog; its DISCIPLINE survives as the checks
+  the query CAN make: the crossing must lie ahead (non-negative, monotone),
+  the normal must be finite and non-degenerate (a vanishing gradient falls
+  back to the incident-facing normal, the shade entry's own fallback), and
+  the march must stay within its step budget.
+- **The anchor.** A child query restarts AT its boundary (the rounded f32
+  hit point is the anchor — the transport never re-derives it). The query
+  suppresses the anchored boundary by stepping `2·eps` past it before
+  marching, and treats any crossing whose hit point lies within
+  `DIELECTRIC_ANCHOR_ENVELOPE_REL` (4·eps) of the anchored point as the
+  same boundary, stepping past it — the distance-field analog of the
+  fixture's exact same-face rule. Gaps narrower than the envelope merge
+  optically; a long grazing stretch burns the step budget and refuses.
+- **Domain and caps.** Leaving the primary march's own gates (the visible
+  sphere, the balloon far horizon, the lattice carrier — the same
+  arithmetic, evaluated from the query's origin) is a miss; exceeding
+  `DIELECTRIC_QUERY_MAX_STEPS` (192) estimator evaluations refuses
+  `visit-cap`; a non-finite estimator answer refuses `invalid-input`.
+  Every refusal is unresolved work, never a background hit.
+- **The normal** is the DE gradient's tetrahedron taps at the crossing
+  scale — the same estimator tapped at the scale that defines the optical
+  surface. The visible surface's display-tolerance normal is untouched.
+
+### Rear radiance, and what this backend does not yet trace
+
+`transportRearRadiance(origin, direction)` is the rear scene's ONE seam.
+This backend's rear scene is the ENVIRONMENT ONLY: the pixel's backdrop in
+linear light, plus the ground-plane terminal when the session has one (the
+shade entry's own floor shade, linearized by the file's 2.2 convention).
+Rear FRACTAL geometry — escaped rays re-marching the displayed object, the
+study's "reflections of other lobes" — arrives with the rear-scene task and
+grows this one function; the contract's compositing law, bounds and
+residual accounting are unchanged by that growth. The per-sample
+environment bound stays the qualified 4 (`DIELECTRIC_ENVIRONMENT_BOUND`),
+which bounds this rear scene with margin.
+
+### Resumption, scheduling and truthfulness
+
+- **The replay-pass shape is the resumption.** Per pixel the record is two
+  vec4f (radiance.rgb + residual; status/failure/reason/generation); the
+  seed zeroes it per frame. A pass dispatches a batch of rays; each still-
+  pending sample re-traces FROM SCRATCH at the halved theta; accepted
+  samples (per-sample residual ≤ `DIELECTRIC_ERROR_BUDGET`) overwrite the
+  pixel and never reprocess. Six passes and a still-pending sample is
+  final UNRESOLVED; a non-finite outcome is final INVALID; both go BLACK —
+  never background — and the frame's counts disclose them. Cancellation
+  generations are pass indices; the frame token's invalidation rules are
+  the renderer's own.
+- **The lane is the dispatch discipline.** HIT rays take BOTH the classic
+  shade queue (which skips optics slots after the one hit-info the slot
+  attribution needs) and the transport queue (which skips classic slots
+  after the same check) — the optical work is its own submissions, never
+  buried inside a shade or march dispatch, priced by its own measured
+  sizer. Runtime caps (`SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS`
+  2048 / `MAX_INTERFACES` 2048) sit BELOW the oracle's defaults: the
+  estimator boundary query costs an order of magnitude more per path than
+  the qualified DDA, and a capped sample replays rather than lying. The
+  caps are the runtime's, not the document's; never raised to make a
+  failing row green.
+- **Optics and cinematic lighting are exclusive** (codegen and packer
+  throw): both entries own the hit path's output. An optics-authored
+  slot's authored finish is dormant for that slot — the dielectric
+  replaces the hit shading; classic slots keep their finish and pattern.
+
+### Capability matrix, updated
+
+| Core / wrapper                                | Transport status now                                                                                                                               |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| compute `affine`, `fold`, `affine4`, `fold4`  | Emitted + compiled under the optics gate; production routing admits the descent families (the routing task)                                        |
+| compute `escape`, `bulb`, `escape4` (forward) | Emitted (shared text); the estimator is a heuristic, so ADMISSION is the bench's measured question — unadmitted sessions render classic, disclosed |
+| GLSL tracers (`surface-material*.ts`)         | Dormant; the GLSL twins arrive after the compute backend                                                                                           |
+| `lens` wrapper, both dimensions               | Composes — the boundary query rides the wrapped estimator                                                                                          |
+| `balloon` (3D/4D)                             | Composes over the union estimator, disclosed envelope; the shell inherits the argmin slot's material                                               |
+| `ground plane`                                | Composes — the floor is a rear-scene terminal                                                                                                      |
+| Cinematic lighting                            | EXCLUSIVE (throw)                                                                                                                                  |
+| Surface applicability gates                   | Unchanged — authored optics adds NO new admission                                                                                                  |
+
 ## What is not yet qualified
 
-This contract is the model's definition, not a production capability: no
-renderer reads the oracle yet. The document vocabulary, persistence, slot
-resolution and force-frame keying have now shipped (dormant — see above).
-Remaining work, in order — the resumable WebGPU compute path across the
-admitted cores (adopting `dielectricOpticsSource` and the frozen
-`opticsMaps` buffer); the GLSL twins; rear-scene radiance and transparent
-visibility; distortion and capture integration; panel material and starter
-scenes; built-app qualification. Shader changes require the corresponding
-CPU/GPU agreement gate even before production routing is enabled; the 22
-GPU controls are the pattern. Applicability refusals
+The compute kernel emission and the host buffer contracts are real state;
+the capability matrix above records exactly how far each consumer has
+come. Remaining work, in order — production routing for the descent
+families and the forward families' measured admission decision (the
+compute backend's bench legs); the GLSL twins; rear-scene radiance and
+transparent visibility; distortion and capture integration; panel material
+and starter scenes; built-app qualification. Shader changes require the
+corresponding CPU/GPU agreement gate even before production routing is
+enabled; the 22 GPU controls are the pattern. Applicability refusals
 (slab/forward/balloon/engine admissions) are preserved unchanged by this
 work.
 
