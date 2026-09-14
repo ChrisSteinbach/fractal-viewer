@@ -2,17 +2,14 @@
 
 ## Current behavior
 
-Surface keeps **W position** live but disables **Slice thickness** when the
-4D estimator cannot carry its query segment. This includes spherefold or
-Mandelbox in a recursive map or final transform, swirl finals, condensation,
-forward escape-time systems, and either Space tiling arm. The corresponding
-CPU entries and GPU packers enforce the restriction independently of the UI.
-
-These are missing combinations, not a reason to remove thickness from the
-product. This investigation does **not** enable them. The finite reflection
-prototype below establishes a bounded route toward one lift; the nonlinear
-prototype establishes a more accurate reference and exposes the work that a
-renderer integration must accommodate.
+The CPU oracle now answers slab queries for spherefold and Mandelbox systems
+(recursive maps and final lenses alike) with the **bounded midpoint cover**
+below. The production routing has **not** switched yet: `main.ts`, the GPU
+packers, and the panel still gate on `slabExact4`, so the user-visible
+control keeps its refusal for those systems until the WGSL mirror and the
+routing change land. The remaining refusals are swirl finals, condensation,
+forward escape-time systems, and both Space tiling arms; the CPU entries,
+the GPU packers, and the UI enforce each independently.
 
 The initial report was reproduced on 12 September 2026 with a fresh production
 build and a verified hardware Intel Iris Xe WebGPU adapter. A Mandelbox final,
@@ -76,6 +73,45 @@ Work exhaustion is a distinct `complete: false` result. It is never accepted
 as a surface hit or a background miss. The rendering study throws if that
 result appears instead of drawing a partial calculation.
 
+## The shipped bounded midpoint cover
+
+`src/fractal/surface-de-4d.ts` answers a nonlinear slab query by splitting
+the segment into `SLAB_COVER_PIECES` (16) equal pieces, running the POINT
+estimator at each piece's midpoint, and returning
+
+```text
+min_i max(0, DE(mid_i) - |e| / pieces)
+```
+
+Every term is the triangle-inequality certificate above, evaluated over a
+COMPLETE partition, so the result is a valid lower bound for **any** piece
+count: the count is an accuracy and cost knob, never a soundness one. No
+interval can be left unresolved because none is ever dropped — the work is
+exactly `pieces` point descents, which is suspension-free and bounded, so
+the flat-plane adversary's need for 131071 evaluations at 1e-5 tolerance
+becomes a disclosed accuracy limit rather than an unbounded loop. Zero
+thickness bypasses the cover entirely (one point query, bit-exact), and
+boxfold/affine systems keep the exact segment path. The public entry's
+cutoff contract survives: each piece receives `cutoff + pieceHalfLength`, so
+a cover that clears the cutoff matches the full cover and a dip implies the
+full cover dips.
+
+The single-query alternative — carry a chord plus a controlled error bound
+through the inversion (`inversion.ts`'s ball identity plus a sagitta) — was
+written, independently pinned, and refuted by measurement. It keeps
+direction at each crossing, but the slack compounds across a recursive
+fold's many crossings and the certificate collapses to zero over a large
+part of the bounding ball:
+
+| Nonlinear fixture         | BALL hits | Adaptive hits | Chord-enclosure hits | Chord-enclosure adaptive IoU |
+| ------------------------- | --------: | ------------: | -------------------: | ---------------------------: |
+| Recursive spherefold pair |       460 |           149 |                  450 |                        0.331 |
+| Mandelbox final           |       460 |           292 |                  448 |                        0.692 |
+
+That is the whole-slab dilation back again: 97-100% of the ball arm's hit
+mask. The executed record of the attempt lived in the same commit range and
+was dropped from production when the cover shipped.
+
 ## Exact finite reflection pieces
 
 All reflection hyperplanes are represented by the group orbits of the simple
@@ -121,8 +157,9 @@ SLAB_SIZE=64 npx vitest run --config scripts/vitest.harness.config.ts scripts/sl
 The shared `de-preview.ts` marcher produces the contact sheet and records
 primary-ray exhaustion. Output lives under the ignored `scripts/out/slab-adaptive/`.
 Columns are centre slice, whole-slab ball relaxation, adaptive interval
-reference, and the existing segment or exact finite split when available.
-Black fourth panels explicitly mean that there is no such reference.
+reference, the shipped cover (`COVER`, which IS the public entry), the
+piece-count curve (`FIXED4/8/16/32`), and the existing segment or exact
+finite split when available.
 
 The 64×64 study uses one fixed W-mixing rotation, `w0 = 0.08R`, and world
 half-thickness `h = 0.25R`. These are fractions of the DE's full visible
@@ -147,6 +184,34 @@ are small-raster comparisons at one pose and thickness, not a release matrix.
 The adaptive nonlinear rows retain internal structure where the ball arm
 fills the marching ball, but have no exact slab reference in this study.
 
+The cover's own 32×32 study on the same machine (Node 22.23.2, 13 September
+2026), with `h = 0.25R` and the same pose. Hit counts first, then hit-mask
+IoU against the adaptive reference:
+
+| Fixture                   | POINT | BALL | ADAPTIVE | COVER | COVER IoU | FIXED8 IoU | FIXED16 IoU | FIXED32 IoU |
+| ------------------------- | ----: | ---: | -------: | ----: | --------: | ---------: | ----------: | ----------: |
+| Affine 16-cell flake      |   201 |  460 |       50 |    50 |    1.0000 |          ¹ |           ¹ |           ¹ |
+| Boxfold final             |    21 |  399 |       40 |    50 |    1.0000 |          ¹ |           ¹ |           ¹ |
+| Mandelbox final           |   173 |  460 |      292 |   324 |    0.9012 |     0.8391 |      0.9012 |      0.9574 |
+| A4 tiling (segments)      |    68 |  390 |      153 |     ² |         ² |          ² |           ² |           ² |
+| A4 + Mandelbox final      |    75 |  460 |      160 |     ² |         ² |          ² |           ² |           ² |
+| Recursive spherefold pair |    77 |  460 |      149 |   178 |    0.8371 |     0.6742 |      0.8371 |      0.9141 |
+
+¹ Affine and boxfold systems run the exact segment path, so `COVER` and
+`SEGMENT` are the same call; the IoU-1 row is the cross-check that the
+cover did not disturb exactness, and the FIXED arms are the alternative
+mechanism's curve, not something those systems would use.
+² Tiled sessions still refuse a slab; the tiling child owns that lift.
+
+`COVER` equals `FIXED16` on the nonlinear rows by construction — the public
+entry uses `SLAB_COVER_PIECES = 16`. Cost is the piece count in point
+descents per query: 68,816 core calls for the Mandelbox-final panel and
+63,792 for the spherefold panel, against the adaptive reference's 211,863
+and 232,003. The 16-piece count retains most of the reference's structure
+(IoU 0.84-0.90) at a third of its cost; 8 pieces is 0.67-0.84 and 32 is
+0.91-0.96. These are CPU card counts at one pose and thickness, and the GPU
+mirror's own occupancy, dispatch and watchdog limits are still unmeasured.
+
 The A4 exact split used a median/p99/max of **3/7/10** core queries and 42,215
 core calls for the panel, versus 411,527 point-core calls for adaptive sampling.
 Illustrative serial CPU times were 0.52s and 4.90s. The Mandelbox-final adaptive
@@ -157,30 +222,45 @@ shader-link, or watchdog conclusion follows from them.
 There is also a deterministic cost adversary: a segment parallel to an exact
 flat surface at distance 0.01, with half-length 0.5. Absolute tolerances of
 `1e-3`, `1e-4`, and `1e-5` require 1,023, 16,383, and 131,071 point calls.
-A 255-call cap fails all three honestly. Accurate generic subdivision thus
-has no small, resolution-independent call cap. Dropping the unfinished
-intervals or accepting their loose lower bounds would undo the accuracy
-argument.
+A 255-call cap fails all three honestly. The shipped cover reads this as a
+disclosed accuracy limit, not a refusal: sixteen pieces return a valid but
+coarse bound in sixteen calls, and a scene whose detail sits at the
+1e-5-tolerance scale will render softer than the adaptive reference would.
+The cover may never be read as "as accurate as the adaptive solve" — only
+as "sound, bounded, and retaining the measured IoU at the shipped count".
 
 ## Remaining implementation
 
-Finite wall splitting is a qualified CPU prototype for **unclipped,
-segment-capable** content. Production work still needs the shared finite and
-lattice segment vocabulary, clip intersections, CPU tiled scalar/refined/march
-entries, both WGSL 4D descent cores, the supported GLSL 4D arm, and hit
-attribution that remaps the winning piece's `sStar` into the original slab.
-Then the routing and controls can admit the qualified combinations. The
-existing tiling wire need not move merely to bake finite mirror constants.
+The CPU oracle is complete and tested for the nonlinear systems: exact
+segment arithmetic for affine/boxfold, the bounded midpoint cover for
+spherefold and Mandelbox (recursive maps AND final lenses), bit-exact zero
+thickness, and the cutoff contract through the cover. What remains is
+production plumbing, and it is deliberately not started until the mirror's
+cost is measurable:
 
-Nonlinear support needs a separately qualified query representation or
-bounded continuation for generic subdivision. A direction-preserving curve
-enclosure through inversion is a candidate; the old whole-ball relaxation
-is not its accuracy evidence. Recursive folds and final lenses must both be
-covered, including authored radii/posts and composition with tiling. A generic
-fallback must suspend unfinished work through normal, AO and lighting probes
-as well as primary rays; a work cap must never fabricate a hit or a miss.
+- **WGSL 4D cores.** `surface-de-gpu.ts`'s `ifs4` kernels (`affine4`,
+  `fold4`, and the `lens4` wrapper) must answer a nonzero `sliceHalfW` for a
+  non-`slabExact4` system with the same 16-piece cover: sample the entry
+  point along the stored half-extent, run the point core per sample, take
+  the min of `d - |e|/16`, and keep the exact segment path for
+  `slabExact4` systems unchanged. The packer's `slabExact4` throw and the
+  zero-filled params seat are the seams. The per-ray cost is 16x the point
+  descent wherever the slab is live, so the compute renderer's dispatch
+  sizing, fence groups and the watchdog budgets all need re-measurement on
+  a real driver before the UI admits the combination.
+- **Routing and controls.** `main.ts`'s `surface4SlabExact`, the panel's
+  `setFourDSlabAvailable` reason set, and the compute spec must switch from
+  `slabExact4` to `slabSupported4`, with the coverage wording replaced by an
+  honest cost/quality note; the GLSL 4D fallback may keep refusing (fold
+  sessions are compute-only by construction).
+- **Tiling composition.** Tiled 4D sessions still clamp thickness to zero;
+  finite pieces need the split/cover composition and lattice walls need
+  crossing enumeration (the tiling child's work).
+- **Browser matrix.** Enter/settle/draw at several thicknesses and rotor
+  poses, zero-thickness identity, authored radii/posts, reloads and
+  captures on both engines, including the Mandelbox-plus-tiling acceptance
+  case the epic names.
 
-CPU agreement, renderer work bounds, slice-dependent colors, live edits,
-reloads and exports remain unqualified for either lift. The shipping guards
-therefore remain in place. The investigation establishes concrete next work,
-not a new permanent refusal and not restored user-visible thickness.
+CPU agreement and renderer work bounds are therefore the halves still
+missing; the shipping guards stay in place until they land, but the CPU
+mechanism itself is no longer a refusal and no longer an experiment.
