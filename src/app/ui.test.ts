@@ -10132,14 +10132,11 @@ describe("Ui 4D surface session controls", () => {
     );
   });
 
-  // Two sessions refuse the slab and they owe DIFFERENT reasons. The
-  // descent refuses it per fold family (a spherefold bends a segment into
-  // an arc), so a box-fold-only system keeps it — a knob the user can act
-  // on. A 4D escape-time session refuses it at every fold family, because
-  // its forward orbit has no branches to thread a segment through, and
-  // handing it the descent's wording would tell a box-fold-only chain to
-  // do what it is already doing.
-  it("gives an escape-time session its own slab reason, not the sphere-fold one", () => {
+  // A 4D IFS session's nonlinear fold set no longer refuses the slab (the
+  // bounded midpoint cover answers it), so the only unnamed-for-a-shape
+  // refusals are named by the branch that refused them: swirl,
+  // condensation, tiling. The escape-time session keeps its own wording.
+  it("gives an escape-time session its own slab reason, not a shape one", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
     ui.setSurfaceSessionKind("escape");
@@ -10149,18 +10146,18 @@ describe("Ui 4D surface session controls", () => {
     const title = el("fourDSliceThicknessRow").title;
     expect(title).toContain("escape-time render");
     expect(title).toContain("FORWARD");
-    expect(title).not.toContain("sphere folds");
+    expect(title).not.toContain("condensation");
   });
 
-  it("keeps the sphere-fold slab reason for an IFS session", () => {
+  it("names a condensation shape as its own slab reason", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
     ui.setSurfaceSessionKind("ifs");
-    ui.setFourDSlabAvailable(false);
+    ui.setFourDSlabAvailable(false, "condensation");
     ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
 
     const title = el("fourDSliceThicknessRow").title;
-    expect(title).toContain("sphere folds");
+    expect(title).toContain("condensation");
     expect(title).not.toContain("escape-time render");
   });
 
@@ -10183,8 +10180,8 @@ describe("Ui 4D surface session controls", () => {
       true,
     );
 
-    ui.setFourDSlabAvailable(false);
-    expect(el("fourDSliceThicknessRow").title).toContain("sphere folds");
+    ui.setFourDSlabAvailable(false, "condensation");
+    expect(el("fourDSliceThicknessRow").title).toContain("condensation");
   });
 
   it("clears the slab reason once a session can take one", () => {

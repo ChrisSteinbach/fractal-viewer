@@ -178,7 +178,11 @@ import {
   sampleTraceBackgroundImage,
   type TraceBackgroundImage,
 } from "../fractal/surface-background-layer";
-import { deHasFolds4, slabExact4 } from "../fractal/surface-de-4d";
+import {
+  deHasFolds4,
+  slabExact4,
+  slabSupported4,
+} from "../fractal/surface-de-4d";
 import { SURFACE_LENS_SWIRL } from "../fractal/swirl-lens";
 import type { ShapeTrap, Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
@@ -2665,6 +2669,11 @@ export class SurfaceComputeRenderer {
     const compileEntry = async (
       mode: "march" | "shade",
       slabExt: boolean,
+      /** The nonlinear slab cover (surface-de-gpu.ts, THE SLAB COVER):
+       * meaningful only under a 4D descent pair with `slabExt` on — the
+       * pair for a system `slabExact4` refuses. The slab-free twin is
+       * generated with it off (the h=0 point kernel is the same body). */
+      slabCover: boolean,
     ): Promise<GPUShaderModule> => {
       const module = device.createShaderModule({
         code: surfaceDeKernelWgsl({
@@ -2778,8 +2787,12 @@ export class SurfaceComputeRenderer {
           // measured 2.2-2.4x at EVERY kaleidoscope order on Iris
           // (occupancy — they are live whether or not the slab is on), so
           // an ifs4 session compiles BOTH variants and runFrame picks per
-          // frame by the live sliceHalfW. Inert for every other core.
+          // frame by the live sliceHalfW. Inert for every other core. A
+          // system `slabExact4` refuses takes the cover in the slab
+          // variant instead of the exact ext transport; its slab-free
+          // twin stays the shipped point kernel.
           slabExt,
+          slabCover,
           // Independent per-slot material gates made real on this engine
           // (create()'s opts doc). Structurally inert in march mode
           // — the march never reads shadeMaps — so one flag serves both
@@ -2891,18 +2904,24 @@ export class SurfaceComputeRenderer {
     // slab pair's ext registers are pure occupancy tax. Both pairs share
     // the explicit bind group layouts below, so bind groups stay
     // variant-agnostic and runFrame's pick is a pipeline handle. A
-    // !slabExact4 system (spherefold/mandelbox folds) can NEVER take a
-    // slab query — the packer throws on sliceHalfW > 0 and the app clamps
-    // the thickness slider — so its ONE pair compiles slab-free outright
-    // and the A/B pair is skipped.
-    const canSlab = target.kind !== "ifs4" || slabExact4(target.de);
+    // tiled 4D system can NEVER take a slab query (the packer throws on
+    // sliceHalfW > 0 and the app clamps the thickness slider), so it sits
+    // with the non-ifs4 kinds and its ONE pair compiles slab-free; a
+    // nonlinear untiled system takes the full pair generated with
+    // `slabCover` (the bounded midpoint cover IS its slab answer), and
+    // its slab-free twin is the shipped h=0 kernel.
+    const canSlab =
+      target.kind !== "ifs4" ||
+      (slabSupported4(target.de) && (target.tiling ?? null) === null);
+    const slabCover =
+      target.kind === "ifs4" && canSlab && !slabExact4(target.de);
     const wantNoSlab = target.kind === "ifs4" && canSlab;
     const [marchModule, shadeModule, marchModuleNoSlab, shadeModuleNoSlab] =
       await Promise.all([
-        compileEntry("march", canSlab),
-        compileEntry("shade", canSlab),
-        wantNoSlab ? compileEntry("march", false) : null,
-        wantNoSlab ? compileEntry("shade", false) : null,
+        compileEntry("march", canSlab, slabCover),
+        compileEntry("shade", canSlab, slabCover),
+        wantNoSlab ? compileEntry("march", false, false) : null,
+        wantNoSlab ? compileEntry("shade", false, false) : null,
       ]);
     const marchPipelineLayout = device.createPipelineLayout({
       bindGroupLayouts: [marchLayout],

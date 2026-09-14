@@ -79,7 +79,7 @@ import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
   deHasFolds4,
-  slabExact4,
+  slabSupported4,
   type SurfaceDE4,
 } from "../fractal/surface-de-4d";
 import { SURFACE_LENS_SWIRL } from "../fractal/swirl-lens";
@@ -4335,11 +4335,13 @@ async function main(): Promise<void> {
   // tickRender's per-frame rotor/slice push.
   let surfaceSessionIs4D = false;
   let surfaceLatticePresentation: ResolvedLatticePresentation | null = null;
-  // False while the live 4D surface session's fold set breaks segment
-  // exactness (spherefold/mandelbox — slabExact4), where every view push
-  // clamps the slice thickness to 0 and the panel hides the row.
-  // Session-scoped like the flag above.
-  let surface4SlabExact = true;
+  // False while the live 4D surface session cannot take a slab at all
+  // (swirl final / condensation / Space tiling — `slabSupported4`), where
+  // the view pushes clamp the slice thickness to 0 and the panel disables
+  // the row with its reason. Spherefold/mandelbox fold sets ARE supported
+  // through the bounded midpoint cover. Session-scoped like the flag
+  // above.
+  let surface4SlabAvailable = true;
 
   // Monotonic token guarding the async shader-compile gate: each
   // start() takes a fresh one, and a compile promise resolving for a
@@ -5912,11 +5914,12 @@ async function main(): Promise<void> {
             ui.setSurfaceSessionKind("escape");
             // A forward orbit cannot thread a segment, so there is no
             // slab at any thickness (escape-de-4d.ts's NO SLAB
-            // paragraph) — the same row a !slabExact4 system disables,
-            // with its own reason on the tooltip: the fold family that
-            // rescues the descent (box folds only) is exactly the one
-            // that fails here, so the descent's wording would be wrong.
-            surface4SlabExact = false;
+            // paragraph) — the panel row disables with its own reason on
+            // the tooltip (the session kind routes it): the cover that
+            // answers the IFS descent's nonlinear folds cannot reach
+            // here, because a forward orbit has no branch enumeration to
+            // sample the segment through.
+            surface4SlabAvailable = false;
             ui.setFourDSlabAvailable(false);
             surfaceBlankNotice = () => {
               ui.flashToast(
@@ -6006,23 +6009,26 @@ async function main(): Promise<void> {
             // An IFS-shaped 4D session — the balloon's live shape one
             // dimension up, so its rows stay reachable.
             ui.setSurfaceSessionKind("ifs");
-            // The slice-thickness slider is live only where the slab is
-            // SOUND: spherefold/mandelbox branches take segments to arcs, so
-            // those sessions clamp sliceHalfW to 0 at every view push below
-            // (the packer's own guard would throw) and the panel hides the
-            // thickness row.
-            // A finite chamber fold maps a 4D slab segment to a bent
-            // polyline, so its exact segment certificate no longer applies.
-            // Tiled 4D sessions therefore render the centre slice only on
-            // both engines; the params packers keep this as a loud backstop.
-            surface4SlabExact = surfaceTiling ? false : slabExact4(de);
+            // The slice-thickness slider is live wherever the slab is
+            // SOUND: boxfold/affine systems take the exact segment path,
+            // and nonlinear fold sets (spherefold/mandelbox, recursive or
+            // in the final lens) are answered by the bounded midpoint
+            // cover the compute kernels and the CPU oracle share. Only a
+            // swirl final (its inverse curves the segment with no point
+            // cover in this frame), a condensation shape (a carried
+            // solid needs its own segment evaluator) and Space tiling (a
+            // fold bends the segment across cell walls) refuse, and each
+            // names itself in the panel's reason.
+            surface4SlabAvailable = surfaceTiling ? false : slabSupported4(de);
             ui.setFourDSlabAvailable(
-              surface4SlabExact,
+              surface4SlabAvailable,
               surfaceTiling
                 ? "tiling"
                 : de.foldFinal?.foldKind === SURFACE_LENS_SWIRL
                   ? "swirl"
-                  : null,
+                  : de.condensation !== undefined
+                    ? "condensation"
+                    : null,
             );
             // Routing by MEASURED verdict: PLAIN 4D prefers compute, EVERY 4D
             // SESSION PREFERS COMPUTE, kaleidoscope included. The fragment 4D
@@ -6136,7 +6142,7 @@ async function main(): Promise<void> {
             scene.setSurface4View(
               fourDView.matrix(),
               fourDView.sliceCenter,
-              surface4SlabExact ? fourDView.sliceThickness : 0,
+              surface4SlabAvailable ? fourDView.sliceThickness : 0,
             );
             // No grid for the 4D surface (the live rotor/slice would
             // invalidate one per frame) — and a still-building 3D grid from
@@ -6675,7 +6681,7 @@ async function main(): Promise<void> {
       // balloon's own gridless rule exists to keep away from the shell.
       pendingSurfaceGrid = null;
       surfaceSessionIs4D = false;
-      surface4SlabExact = true;
+      surface4SlabAvailable = true;
       ui.setFourDSlabAvailable(true);
       // A dead session's shape must not greet the next one — the same
       // "session-scoped progress/detail, not document state" reset every
@@ -11833,7 +11839,7 @@ async function main(): Promise<void> {
             fourDView.sliceCenter,
             // Sessions whose fold set breaks segment exactness clamp
             // the slab thickness to 0 (the row is hidden too).
-            surface4SlabExact ? fourDView.sliceThickness : 0,
+            surface4SlabAvailable ? fourDView.sliceThickness : 0,
           );
         }
       }
