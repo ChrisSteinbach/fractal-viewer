@@ -2,6 +2,7 @@ import { transformColors } from "../fractal/color";
 import {
   resolveSurfaceMaterial,
   surfaceMaterialUsesFinish,
+  surfaceMaterialUsesOptics,
   surfaceMaterialUsesPattern,
   type SurfaceMaterialSlots,
 } from "../fractal/surface-material-wire";
@@ -115,33 +116,47 @@ export function surfaceTrapIndices(
 }
 
 /**
- * Resolve one material per DE slot and both independent compile gates in one
- * pass. This is the sole transform-to-material derivation: finish and pattern
- * can no longer be routed or packed by setters that overwrite each other's
- * shared B lane.
+ * Resolve one material per DE slot and the three independent compile gates in
+ * one pass. This is the sole transform-to-material derivation: finish,
+ * pattern and optics can no longer be routed or packed by setters that
+ * overwrite each other's shared lanes.
  *
  * `baseIndex`-keyed exactly like colors/traps above, so weight-zero transforms
- * do not force either gate and kaleidoscope copies inherit their base map's
- * material. `null` is the exact classic+none route: GLSL keeps its old source
- * and WGSL keeps its old stride-1 shadeMaps bytes. A non-null wire is present
- * when EITHER gate is authored; pattern-only therefore gets stride 3 while
- * `finish` remains false and the fixed classic lighting formula stays live.
+ * do not force any gate and kaleidoscope copies inherit their base map's
+ * material. `null` is the exact classic+none+no-optics route: GLSL keeps its
+ * old source and WGSL keeps its old stride-1 shadeMaps bytes. A non-null wire
+ * is present when ANY gate is authored; pattern-only therefore gets stride 3
+ * while `finish` remains false, and optics-only keeps both shader gates off —
+ * the optical model is dormant authored state until a transport backend
+ * consumes it (the capability matrix in
+ * `docs/surface-dielectric-transport.md`).
+ *
+ * `opticsRadius` is the session's derived optical radius — the DE's
+ * `visibleBoundingRadius`, the FULL unsliced value in 4D — required the
+ * moment some slotted transform authors an admitted model and unused
+ * otherwise; passing none for an optics-authored session is a caller bug and
+ * throws, exactly like a missing pattern calibration.
  */
 export function surfaceSlotMaterials(
   transforms: readonly Transform[],
   maps: readonly SurfaceSlot[],
   patternCalibration?: SurfaceNativeCalibration,
+  opticsRadius?: number,
 ): SurfaceMaterialSlots | null {
   let finish = false;
   let pattern = false;
+  let optics = false;
   const slots = maps.map((m) => {
     const transform = transforms[m.baseIndex];
     const material = resolveSurfaceMaterial(
       transform.finish,
       transform.surfacePattern,
+      transform.optics,
+      opticsRadius,
     );
     finish ||= surfaceMaterialUsesFinish(material);
     pattern ||= surfaceMaterialUsesPattern(material);
+    optics ||= surfaceMaterialUsesOptics(material);
     return material;
   });
   if (pattern) {
@@ -150,7 +165,13 @@ export function surfaceSlotMaterials(
         "patterned surface slots require their built DE's native calibration",
       );
     }
-    return { slots, finish, pattern: true, patternCalibration };
+    return { slots, finish, pattern: true, optics, patternCalibration };
   }
-  return finish ? { slots, finish: true, pattern: false } : null;
+  if (finish) {
+    return { slots, finish: true, pattern: false, optics };
+  }
+  if (optics) {
+    return { slots, finish: false, pattern: false, optics: true };
+  }
+  return null;
 }

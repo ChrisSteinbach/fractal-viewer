@@ -7,7 +7,9 @@ import {
   encodeSurfacePatternConfig,
   resolveSurfaceMaterial,
   surfaceMaterialLanes,
+  surfaceMaterialOpticsLanes,
   surfaceMaterialUsesFinish,
+  surfaceMaterialUsesOptics,
   surfaceMaterialUsesPattern,
   surfaceMaterialsNeedAo,
   surfaceMaterialsNeedShadow,
@@ -51,6 +53,7 @@ describe("unified surface material wire", () => {
       slots,
       finish: true as const,
       pattern: true as const,
+      optics: false,
       patternCalibration: {
         ringsLow: 0.1,
         ringsInvSpan: 2,
@@ -109,6 +112,54 @@ describe("unified surface material wire", () => {
     expect(
       surfaceMaterialLanes(resolveSurfaceMaterial({ reflect: 1 }, undefined)).b,
     ).toEqual([0, 1, 0, 0]);
+  });
+
+  it("resolves the optics sibling against the caller's derived radius and keeps the classic route free of it", () => {
+    const classic = resolveSurfaceMaterial(undefined, undefined);
+    expect(surfaceMaterialUsesOptics(classic)).toBe(false);
+    expect(classic.optics).toBeUndefined();
+    // Optics authored but no radius supplied: a caller bug, the pattern
+    // calibration's refusal shape.
+    expect(() =>
+      resolveSurfaceMaterial(undefined, undefined, { model: "dielectric" }),
+    ).toThrow(TypeError);
+    const optics = resolveSurfaceMaterial(
+      undefined,
+      undefined,
+      { model: "dielectric", scale: 0.5 },
+      2,
+    );
+    expect(surfaceMaterialUsesOptics(optics)).toBe(true);
+    expect(optics.optics).toEqual({
+      ior: 1.45,
+      absorption: [0.17, 0.055, 0.025],
+      radius: 1,
+    });
+    // A finish/pattern session is untouched by the third gate's arithmetic.
+    expect(
+      surfaceMaterialLanes(
+        resolveSurfaceMaterial(
+          undefined,
+          undefined,
+          { model: "dielectric", scale: 3 },
+          2,
+        ),
+      ),
+    ).toEqual(surfaceMaterialLanes(CLASSIC_SURFACE_MATERIAL));
+  });
+
+  it("packs the frozen optical transport lanes with three reserved words", () => {
+    const optics = resolveSurfaceMaterial(
+      undefined,
+      undefined,
+      { model: "dielectric", scale: 2 },
+      1.5,
+    );
+    expect(surfaceMaterialOpticsLanes(optics)).toEqual([
+      [1.45, 3, 0.17, 0.055],
+      [0.025, 0, 0, 0],
+    ]);
+    expect(surfaceMaterialOpticsLanes(CLASSIC_SURFACE_MATERIAL)).toBeNull();
   });
 
   it("round-trips every family, axis and canonical strength quantum through exact float32 arithmetic", () => {

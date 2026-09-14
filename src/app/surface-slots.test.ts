@@ -204,6 +204,7 @@ describe("surfaceSlotMaterials", () => {
     expect(surfaceSlotMaterials(transforms, slots, calibration)).toEqual({
       finish: true,
       pattern: true,
+      optics: false,
       patternCalibration: calibration,
       slots: [
         {
@@ -284,5 +285,87 @@ describe("surfaceSlotMaterials", () => {
     ];
     const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 2 }];
     expect(surfaceSlotMaterials(transforms, slots)).toBeNull();
+  });
+
+  it("returns the optics-only wire when just the model selector is authored, with both shader gates off", () => {
+    const transforms = [
+      transform({ id: 0, optics: { model: "dielectric", scale: 2 } }),
+      transform({ id: 1 }),
+    ];
+    const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 1 }];
+    const wire = surfaceSlotMaterials(transforms, slots, calibration, 4);
+    expect(wire).toEqual({
+      finish: false,
+      pattern: false,
+      optics: true,
+      slots: [
+        {
+          finish: CLASSIC_SURFACE_FINISH,
+          pattern: CLASSIC_SURFACE_MATERIAL.pattern,
+          optics: { ior: 1.45, absorption: [0.17, 0.055, 0.025], radius: 8 },
+        },
+        {
+          finish: CLASSIC_SURFACE_FINISH,
+          pattern: CLASSIC_SURFACE_MATERIAL.pattern,
+        },
+      ],
+    });
+  });
+
+  it("composes optics with finish and pattern gates on one slot and reports all three", () => {
+    const transforms = [
+      transform({
+        id: 0,
+        finish: { metalness: 1 },
+        surfacePattern: { kind: "wood", axis: "y" },
+        optics: { model: "dielectric" },
+      }),
+    ];
+    const wire = surfaceSlotMaterials(
+      transforms,
+      [{ baseIndex: 0 }],
+      calibration,
+      2,
+    );
+    expect(wire).toMatchObject({
+      finish: true,
+      pattern: true,
+      optics: true,
+    });
+  });
+
+  it("requires the derived optical radius the moment a slotted transform authors an admitted model", () => {
+    const transforms = [transform({ id: 0, optics: { model: "dielectric" } })];
+    expect(() => surfaceSlotMaterials(transforms, [{ baseIndex: 0 }])).toThrow(
+      TypeError,
+    );
+    // The same session without optics needs no radius at all.
+    expect(
+      surfaceSlotMaterials([transform({ id: 0 })], [{ baseIndex: 0 }]),
+    ).toBeNull();
+  });
+
+  it("ignores optics on transforms that contribute no slot, like finish and pattern", () => {
+    const transforms = [
+      transform({ id: 0 }),
+      transform({
+        id: 1,
+        weight: 0,
+        optics: { model: "dielectric" },
+      }),
+    ];
+    const slots: SurfaceSlot[] = [{ baseIndex: 0 }];
+    expect(surfaceSlotMaterials(transforms, slots, undefined, 2)).toBeNull();
+  });
+
+  it("keeps the optics-only wire off the forward head slot when the head transform authors nothing", () => {
+    const transforms = [
+      transform({ id: 0, weight: 0 }),
+      transform({ id: 1, optics: { model: "dielectric" } }),
+      transform({ id: 2 }),
+    ];
+    const slots: SurfaceSlot[] = [{ baseIndex: 1 }, { baseIndex: 2 }];
+    const wire = surfaceSlotMaterials(transforms, slots, undefined, 2);
+    expect(wire).toMatchObject({ finish: false, pattern: false, optics: true });
   });
 });

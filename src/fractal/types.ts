@@ -308,6 +308,43 @@ export interface SurfaceFinish {
 }
 
 /**
+ * The admitted optical models, in wire order — the single source of truth
+ * for the {@link SurfaceOpticsModel} type and the persistence validator
+ * (`SURFACE_OPTICS_MODELS.some` in `persist.ts`), so adding a model is one
+ * edit and the runtime guard can never silently drift from the type, the
+ * {@link COLOR_MODES} pattern.
+ */
+export const SURFACE_OPTICS_MODELS = ["dielectric"] as const;
+
+export type SurfaceOpticsModel = (typeof SURFACE_OPTICS_MODELS)[number];
+
+/**
+ * Optional per-transform OPTICAL-MODEL selection: the transport contract's
+ * dielectric glass (`docs/surface-dielectric-transport.md`), authored per
+ * slot like finish and pattern. Read through
+ * `surface-optics.ts`'s `resolveSurfaceOptics` — the ONE place the
+ * absent/unknown-means-classic rule and the scale domain are written down.
+ * ABSENT MEANS THE CLASSIC STATE byte-identically: a legacy
+ * `finish.transmit` keeps rendering the thin-shell backdrop blend and is
+ * never reinterpreted as refraction merely because its number is stored —
+ * opting in is THIS field's presence, never a stored numeric value.
+ */
+export interface SurfaceOptics {
+  /** The optical model this slot's surface uses. Required — the selector IS
+   * the field; persistence drops a block whose model is missing or unknown. */
+  model: SurfaceOpticsModel;
+  /**
+   * Optical scale: the Beer normalization radius as a dimensionless
+   * MULTIPLIER of the session's derived optical radius (the DE's
+   * `visibleBoundingRadius` — world-defined, stable under zoom, raster and
+   * rotor/slice motion). Absent ⇒ 1, exactly the qualified appearance.
+   * Clamped into `surface-optics.ts`'s floor/ceiling band at resolve time;
+   * persistence never clamps.
+   */
+  scale?: number;
+}
+
+/**
  * One affine map in the iterated function system. Position, rotation (Euler
  * angles in radians, applied in XYZ order), and per-axis scale together define
  * a 4x4 transform — see {@link composeAffine}.
@@ -484,6 +521,18 @@ export interface Transform {
    * sibling of {@link finish}, never a field inside the lighting response.
    */
   surfacePattern?: SurfacePattern;
+  /**
+   * Optional per-transform optical-model selection (see {@link SurfaceOptics}
+   * and `surface-optics.ts`, the sole resolver): the transport contract's
+   * dielectric glass, selected per slot like finish and pattern — a THIRD
+   * sibling, never a field inside either. Omitted means classic,
+   * byte-identically: a legacy `finish.transmit` keeps rendering the
+   * thin-shell backdrop blend and is never reinterpreted as refraction merely
+   * because its number is stored. Read by the dielectric transport backends;
+   * no renderer consumes it yet (dormant authored state — see the capability
+   * matrix in `docs/surface-dielectric-transport.md`).
+   */
+  optics?: SurfaceOptics;
   /**
    * Optional shape EMITTER — Barnsley's IFS-with-condensation as a
    * transform kind: `H(S) = C₀ ∪ ⋃ f_j(S)`, with this shape as the fixed
