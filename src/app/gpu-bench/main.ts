@@ -283,6 +283,7 @@ import type {
 import { wSupport } from "../rotor4";
 import {
   SURFACE_COMPUTE_INITIAL_RAY_STEP_US,
+  SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   SurfaceComputeRenderer,
 } from "../surface-compute";
@@ -4354,6 +4355,13 @@ interface SurfaceDeResults {
    * NOTE: the runner's stdout printer predates this field, so each row
    * also lands in `notes` (the computeFrame4 dual-reporting convention). */
   transportAgreement?: SurfaceTransportAgreementRow[];
+  /** The optical-transport RENDERER envelope (`runSurfaceTransportEnvelopeLeg`):
+   * one row per dimension — an optics-authored fixture document driven
+   * through the production `SurfaceComputeRenderer` at the delegated
+   * preview/settle rasters, gated on the decided envelope's lines (real
+   * adapters only; software adapters skip with a note). Failures surface
+   * through `surfaceTransportEnvelopeRowFailures` and gate the verdict. */
+  transportEnvelope?: SurfaceTransportEnvelopeRow[];
   /** Skipped configs/systems, WGSL compile errors (verbatim), and other
    * per-run context — never silent. */
   notes: string[];
@@ -8997,6 +9005,482 @@ async function runSurfaceTransportAgreementLegs(
     await new Promise<void>((resolve) => setTimeout(resolve));
   }
   return { rows, notes };
+}
+
+// ---------------------------------------------------------------------------
+// Optical-transport renderer envelope (production renderer, preview/settle)
+// ---------------------------------------------------------------------------
+
+/** The envelope leg's preview wall budget — the app's preview loop's own
+ * `SURFACE_COMPUTE_PREVIEW_BUDGET_MS` (main.ts), restated here because
+ * main.ts cannot be imported into the bench page. The DELEGATED line the
+ * row is judged on is the tighter 1.5 s
+ * ({@link SURFACE_TRANSPORT_ENVELOPE_PREVIEW_LINE_MS}). */
+const SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS = 2000;
+
+/** The delegated feasibility lines (docs/surface-dielectric-study.md,
+ * "Decided feasibility envelope") this leg gates on a real adapter:
+ * preview ≤ 1.5 s in both dimensions, cancellation checkpoints ≤ 600 ms
+ * (the transport lane's per-dispatch fence IS the checkpoint), retained
+ * additional render state ≤ 128 MiB, and the settled 512×288 image ≤ 10 s
+ * at the qualified 4-SPP convention. */
+const SURFACE_TRANSPORT_ENVELOPE_PREVIEW_LINE_MS = 1500;
+const SURFACE_TRANSPORT_ENVELOPE_CHECKPOINT_LINE_MS = 600;
+const SURFACE_TRANSPORT_ENVELOPE_SETTLE_LINE_MS = 10_000;
+const SURFACE_TRANSPORT_ENVELOPE_RETAINED_LINE_BYTES = 128 * 1024 * 1024;
+
+/** The settle's sample count — the study's qualified settled-image
+ * convention (4 SPP, the deterministic 2×2 grid), which is what the 10 s
+ * settled line was measured against. The app's persisted settle default is
+ * 8; the doc row records the scaling. */
+const SURFACE_TRANSPORT_ENVELOPE_SETTLE_SAMPLES = 4;
+
+/** The envelope leg's rasters: the delegated preview 256×144 (1 sample,
+ * the app preview's own shape) and settle 512×288 (4 samples). */
+const SURFACE_TRANSPORT_ENVELOPE_PREVIEW_WIDTH = 256;
+const SURFACE_TRANSPORT_ENVELOPE_PREVIEW_HEIGHT = 144;
+const SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH = 512;
+const SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT = 288;
+
+/** One envelope arm's measured frame — the production renderer's own
+ * tallies plus the per-submission record the checkpoint line is judged
+ * on. `maxBatchMs` is max(frame.transport.batchMs) — one dispatch's fence
+ * round-trip, i.e. one cancellation checkpoint. */
+interface SurfaceTransportEnvelopeFrame {
+  width: number;
+  height: number;
+  wallMs: number;
+  gpuMs: number;
+  truncated: boolean;
+  counts: SurfaceComputeFrame["counts"];
+  transport: NonNullable<SurfaceComputeFrame["transport"]>;
+  maxBatchMs: number;
+}
+
+/** One envelope arm's full record: an admitted core (affine 3D / affine4
+ * 4D), an optics-authored fixture document driven through the PRODUCTION
+ * `SurfaceComputeRenderer` at the delegated rasters. */
+interface SurfaceTransportEnvelopeRow {
+  core: "affine" | "affine4";
+  system: string;
+  adapterLabel: string | undefined;
+  preview: SurfaceTransportEnvelopeFrame;
+  /** The preview rendered twice — production-realistic reuse (the app
+   * re-previews a parked pose continuously, and the steady raster reuses
+   * the frame buffers) plus the determinism discipline the envelope's
+   * retained-state certification rode. `byteIdentical` is null when
+   * either frame truncated (a truncation point is wall-clock, not
+   * arithmetic) — the check is defined only on completed frames. */
+  previewRepeat: { wallMs: number; byteIdentical: boolean | null };
+  settle: SurfaceTransportEnvelopeFrame & { samples: number };
+  /** Mid-flight cancel through the public API — the user-visible
+   * cancellation checkpoint: time from `renderer.cancel()` to the frame
+   * resolving null. Retried at halved delays when the frame completed
+   * before the cancel landed. */
+  cancelProbe: {
+    attempts: number;
+    delayMs: number;
+    latencyMs: number;
+    cancelledToNull: boolean;
+  };
+  /** The transport lane's ADDITIONAL retained allocation, computed from
+   * the shipped constants: 32 B/ray records + 4 B/ray status + 4 B/ray
+   * staging at the settle raster, plus the create-time opticsMaps lane
+   * pair (32 B/slot). The frame buffers are reused at a steady raster
+   * (`allocateFrameBuffers`' rays check), so this is the steady-state
+   * retained cost, not a per-frame accrual. */
+  retainedBytes: number;
+  heapWatch?: { beforeBytes: number; afterBytes: number };
+}
+
+/** The envelope leg's own byte-equality (the determinism pair). */
+function surfaceTransportBytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/** Which delegated lines an envelope row fails — the gate list and the
+ * note builder share this one answer. */
+function surfaceTransportEnvelopeRowFailures(
+  row: SurfaceTransportEnvelopeRow,
+): string[] {
+  const failures: string[] = [];
+  if (
+    row.preview.truncated ||
+    row.preview.wallMs > SURFACE_TRANSPORT_ENVELOPE_PREVIEW_LINE_MS
+  ) {
+    failures.push(
+      `preview wall ${row.preview.wallMs.toFixed(0)}ms > ${SURFACE_TRANSPORT_ENVELOPE_PREVIEW_LINE_MS}ms line` +
+        (row.preview.truncated ? " (truncated)" : ""),
+    );
+  }
+  const checkpoint = Math.max(row.preview.maxBatchMs, row.settle.maxBatchMs);
+  if (checkpoint > SURFACE_TRANSPORT_ENVELOPE_CHECKPOINT_LINE_MS) {
+    failures.push(
+      `max transport submission ${checkpoint.toFixed(1)}ms > ${SURFACE_TRANSPORT_ENVELOPE_CHECKPOINT_LINE_MS}ms checkpoint line`,
+    );
+  }
+  if (
+    row.settle.truncated ||
+    row.settle.wallMs > SURFACE_TRANSPORT_ENVELOPE_SETTLE_LINE_MS
+  ) {
+    failures.push(
+      `settle wall ${row.settle.wallMs.toFixed(0)}ms > ${SURFACE_TRANSPORT_ENVELOPE_SETTLE_LINE_MS}ms line` +
+        (row.settle.truncated ? " (truncated)" : ""),
+    );
+  }
+  if (
+    row.cancelProbe.cancelledToNull &&
+    row.cancelProbe.latencyMs > SURFACE_TRANSPORT_ENVELOPE_CHECKPOINT_LINE_MS
+  ) {
+    failures.push(
+      `cancel latency ${row.cancelProbe.latencyMs.toFixed(1)}ms > ${SURFACE_TRANSPORT_ENVELOPE_CHECKPOINT_LINE_MS}ms checkpoint line`,
+    );
+  }
+  if (!row.cancelProbe.cancelledToNull) {
+    failures.push(
+      "cancel probe never landed mid-frame (frame completed first)",
+    );
+  }
+  if (row.previewRepeat.byteIdentical === false) {
+    failures.push("preview repeat not byte-identical");
+  }
+  if (row.retainedBytes > SURFACE_TRANSPORT_ENVELOPE_RETAINED_LINE_BYTES) {
+    failures.push(
+      `retained ${(row.retainedBytes / (1024 * 1024)).toFixed(1)}MiB > 128MiB line`,
+    );
+  }
+  return failures;
+}
+
+function surfaceTransportEnvelopeNote(
+  row: SurfaceTransportEnvelopeRow,
+): string {
+  const checkpoint = Math.max(row.preview.maxBatchMs, row.settle.maxBatchMs);
+  // The vacuous disclosure: a frame whose transport lane ran but resolved
+  // NOTHING while hits existed is a timing row, not an optical
+  // qualification — the boundary query's inside-traversal gap (the
+  // envelope leg's structural finding, the transport doc's record).
+  const vacuous =
+    row.preview.transport.resolved === 0 && row.preview.counts.hit > 0;
+  return (
+    `transport envelope ${row.core} × ${row.system}: ` +
+    `preview ${row.preview.wallMs.toFixed(0)}ms (batch max ${row.preview.maxBatchMs.toFixed(1)}ms, ` +
+    `passes ${String(row.preview.transport.passes)}, resolved ${String(row.preview.transport.resolved)} ` +
+    `unresolved ${String(row.preview.transport.unresolved)} invalid ${String(row.preview.transport.invalid)}), ` +
+    `repeat ${row.previewRepeat.wallMs.toFixed(0)}ms byteIdentical=${String(row.previewRepeat.byteIdentical)}, ` +
+    `settle ${row.settle.wallMs.toFixed(0)}ms @${String(row.settle.samples)}spp ` +
+    `(batch max ${row.settle.maxBatchMs.toFixed(1)}ms, passes ${String(row.settle.transport.passes)}, ` +
+    `resolved ${String(row.settle.transport.resolved)} unresolved ${String(row.settle.transport.unresolved)} ` +
+    `invalid ${String(row.settle.transport.invalid)}), ` +
+    `cancel ${row.cancelProbe.cancelledToNull ? `${row.cancelProbe.latencyMs.toFixed(1)}ms` : "not landed"} ` +
+    `after ${String(row.cancelProbe.delayMs)}ms (attempt ${String(row.cancelProbe.attempts)}), ` +
+    `retained ${(row.retainedBytes / (1024 * 1024)).toFixed(1)}MiB, ` +
+    `checkpoint max ${checkpoint.toFixed(1)}ms` +
+    (vacuous
+      ? " — VACUOUS OPTICALLY: every transport sample unresolved on hits (the estimator-march boundary query cannot traverse an interior; the closed-solid backend is the recorded path)"
+      : "") +
+    (row.heapWatch
+      ? `, heap ${((row.heapWatch.afterBytes - row.heapWatch.beforeBytes) / (1024 * 1024)).toFixed(1)}MiB over the arm`
+      : "")
+  );
+}
+
+/**
+ * The optical-transport RENDERER envelope leg — the open criterion the
+ * kernel agreement legs could not reach: an optics-authored fixture
+ * document (every transform `optics: { model: "dielectric" }`) driven
+ * through the PRODUCTION `SurfaceComputeRenderer` — its own device, the
+ * app's march → classify → shade-skip → transport replay-pass lane →
+ * present loop — at the delegated rasters, per dimension:
+ *
+ *   preview 256×144, 1 sample, the app preview's own budget
+ *   settle  512×288, 4 samples (the qualified convention), unbudgeted
+ *
+ * against the decided envelope's lines (see the constants above). One arm
+ * per admitted descent core: `affineTetra` (affine, 3D) and `aff4Tetra`
+ * (affine4, 4D at its identity-rotor canonical pose) — the same fixture
+ * systems the agreement legs pin, so the envelope's geometry is exactly
+ * the arithmetic that was certified. The fold core's transport stays
+ * refused on its own measured record (the capability matrix); the forward
+ * families are unadmitted. Skipped on software adapters by the caller —
+ * the lines are real-driver measurements, and SwiftShader timing certifies
+ * nothing (the agreement legs already cover the kernel's reachability).
+ *
+ * Fail closed: a missing fixture system, a null frame, a missing transport
+ * tally, or any delegated-line failure surfaces in
+ * {@link surfaceTransportEnvelopeRowFailures} and gates the section.
+ *
+ * MEASURED FINDING (2026-09-14, the leg's first real-driver run): the
+ * timing/checkpoint/retained lines are the renderer lane's to meet and it
+ * meets them, but every transport SAMPLE resolves UNRESOLVED on hits —
+ * the estimator-march boundary query can find a primary boundary from
+ * outside and cannot traverse an interior (an unsigned IFS estimator
+ * lets an inside ray escape without a crossing = inside-miss; a signed
+ * SDF crawls its anchor suppression into the visit cap). The CPU twin
+ * reproduces both f-codes exactly, so the agreement legs' all-refused
+ * agreement was vacuous on this axis. Glass IS refraction IS an inside
+ * path, so the optical model has no resolving geometry on the production
+ * path until the closed-solid boundary backend (the transport contract's
+ * finite-grid reference) lands. The rows stay the standing TIMING gate;
+ * the note marks a vacuous arm optically.
+ */
+async function runSurfaceTransportEnvelopeLeg(
+  descent: SurfaceSystemState[],
+  affine4: Surface4SystemState[],
+  dom: SurfaceSectionDom,
+  status: (text: string) => void,
+  activity: ActivityBadge,
+): Promise<SurfaceTransportEnvelopeRow[]> {
+  const rows: SurfaceTransportEnvelopeRow[] = [];
+  const arms: {
+    core: "affine" | "affine4";
+    sys: SurfaceSystemState | Surface4SystemState;
+    view4: SurfaceGpu4View | null;
+  }[] = [];
+  const affine3d = descent.find((s) => s.name === "affineTetra");
+  const aff4 = affine4.find((s) => s.name === "aff4Tetra");
+  if (!affine3d)
+    throw new Error("transport envelope: affineTetra did not build");
+  if (!aff4) throw new Error("transport envelope: aff4Tetra did not build");
+  arms.push({ core: "affine", sys: affine3d, view4: null });
+  arms.push({ core: "affine4", sys: aff4, view4: aff4.view4 });
+
+  const heapNow = (): number | undefined =>
+    (performance as { memory?: { usedJSHeapSize?: number } }).memory
+      ?.usedJSHeapSize;
+
+  for (const arm of arms) {
+    const { core, sys, view4 } = arm;
+    const de = sys.de;
+    // The optics-authored DOCUMENT: every slotted transform dielectric —
+    // the whole solid glass, the appearance's own shape and the lane's
+    // worst case. The fixture's transforms are copied so the shared
+    // objects the other legs read are untouched.
+    const transforms = sys.transforms.map((transform): Transform => ({
+      ...transform,
+      optics: { model: "dielectric" },
+    }));
+    const materials = surfaceSlotMaterials(
+      transforms,
+      de.maps,
+      undefined,
+      de.visibleBoundingRadius,
+      true,
+    );
+    if (!materials || !materials.optics) {
+      throw new Error(
+        `transport envelope ${core}: the optics-authored wire resolved ${materials === null ? "null" : "no optics"} — the fixture must compile the transport`,
+      );
+    }
+    const colors = surfaceSlotColors(sys.transforms, de.maps);
+    const trapIndices = surfaceTrapIndices(sys.transforms, de.maps);
+    const retainedBytes =
+      SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH *
+        SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT *
+        (SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES + 8) +
+      materials.slots.length * 32;
+
+    activity.setState("gpu", `Surface transport envelope — ${core}`);
+    status(`transport envelope ${core}: creating SurfaceComputeRenderer…`);
+    const renderer = await SurfaceComputeRenderer.create(
+      view4
+        ? { kind: "ifs4", de: de as SurfaceDE4 }
+        : { kind: "ifs", de: de as SurfaceDE },
+      colors,
+      trapIndices,
+      { materials },
+    );
+    try {
+      const specFor = (
+        width: number,
+        height: number,
+      ): SurfaceComputeFrameSpec => {
+        const pose = buildSurfacePose(de, width, height);
+        return {
+          width,
+          height,
+          invProjView: surfaceInvProjView(de, pose),
+          camPos: pose.ro,
+          camForward: pose.fwd,
+          focusDepth: surfaceCameraDepth(
+            pose,
+            view4 ? [0, 0, 0] : balloonBall(de as SurfaceDE).center,
+          ),
+          acceptPixelEps: SURFACE_PIXEL_EPS,
+          tracePixelEps:
+            (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
+          maxDepth: de.maxDepth,
+          marchSteps: SURFACE_MARCH_STEPS,
+          shadowSteps: SURFACE_FRAME_SHADOW_STEPS,
+          aoTaps: SURFACE_FRAME_AO_TAPS,
+          hitFloor: SURFACE_GPU_HIT_FLOOR,
+          lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
+          ambient: 0.25,
+          // Harness convention: black backdrop (the frame legs').
+          bgTop: [0, 0, 0],
+          bgBottom: [0, 0, 0],
+          colorSource: view4 ? 3 : 0,
+          colorSpeed: 0.5,
+          lut: null,
+          lutVersion: 0,
+          dither: true,
+          ...(materials ? { materials } : {}),
+          ...(view4 ? { view4 } : {}),
+        };
+      };
+
+      const runFrame = async (
+        label: string,
+        spec: SurfaceComputeFrameSpec,
+        opts: { budgetMs?: number; samples?: number },
+      ): Promise<SurfaceComputeFrame> => {
+        const canvas = surfaceLabeledCanvas(
+          dom,
+          `transport-envelope-${core}-${label}`,
+          `transport envelope ${core} — ${sys.name} (${label})`,
+          spec.width,
+          spec.height,
+        );
+        status(
+          `transport envelope ${core}: rendering ${label} ${String(spec.width)}x${String(spec.height)}…`,
+        );
+        const frame = await renderer.renderFrame(spec, {
+          ...opts,
+          onProgress: (pixels) => {
+            drawSurfaceComputeFrame(canvas, pixels, spec.width, spec.height);
+          },
+        });
+        if (!frame) {
+          throw new Error(
+            `transport envelope ${core}: ${label} resolved null — the production path produced no frame`,
+          );
+        }
+        drawSurfaceComputeFrame(canvas, frame.pixels, spec.width, spec.height);
+        if (!frame.transport) {
+          throw new Error(
+            `transport envelope ${core}: ${label} carried no transport tally — the optics gate did not reach the lane`,
+          );
+        }
+        return frame;
+      };
+
+      const toRowFrame = (
+        frame: SurfaceComputeFrame,
+      ): SurfaceTransportEnvelopeFrame => {
+        const transport = frame.transport;
+        if (!transport) {
+          throw new Error(
+            `transport envelope ${core}: frame lost its transport tally`,
+          );
+        }
+        return {
+          width: frame.width,
+          height: frame.height,
+          wallMs: frame.wallMs,
+          gpuMs: frame.gpuMs,
+          truncated: frame.truncated,
+          counts: frame.counts,
+          transport,
+          maxBatchMs: Math.max(0, ...transport.batchMs),
+        };
+      };
+
+      const heapBefore = heapNow();
+      // 1. The preview: the app's shape (1 sample) at the app's budget.
+      const preview = await runFrame(
+        "preview",
+        specFor(
+          SURFACE_TRANSPORT_ENVELOPE_PREVIEW_WIDTH,
+          SURFACE_TRANSPORT_ENVELOPE_PREVIEW_HEIGHT,
+        ),
+        { budgetMs: SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS },
+      );
+      // 2. The preview repeat: determinism on completed frames, the
+      // production-realistic reuse shape (steady raster, reused buffers).
+      const repeat = await runFrame(
+        "preview-repeat",
+        specFor(
+          SURFACE_TRANSPORT_ENVELOPE_PREVIEW_WIDTH,
+          SURFACE_TRANSPORT_ENVELOPE_PREVIEW_HEIGHT,
+        ),
+        { budgetMs: SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS },
+      );
+      const byteIdentical =
+        preview.truncated || repeat.truncated
+          ? null
+          : surfaceTransportBytesEqual(preview.pixels, repeat.pixels);
+      // 3. The settle: the qualified 4-SPP convention, unbudgeted — the
+      // app settle's own shape (the schedule is bounded by construction).
+      const settle = await runFrame(
+        "settle",
+        specFor(
+          SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH,
+          SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT,
+        ),
+        { samples: SURFACE_TRANSPORT_ENVELOPE_SETTLE_SAMPLES },
+      );
+      // 4. The cancel probe: a 1-sample settle-size frame cancelled
+      // mid-flight; latency from cancel() to the null resolution is the
+      // user-visible checkpoint. Retried at halved delays when the frame
+      // completes before the cancel lands.
+      let cancelProbe: SurfaceTransportEnvelopeRow["cancelProbe"] = {
+        attempts: 0,
+        delayMs: 0,
+        latencyMs: 0,
+        cancelledToNull: false,
+      };
+      const probeBase = Math.max(150, Math.round(preview.wallMs * 2));
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const delayMs = Math.round(probeBase / 2 ** attempt);
+        const done = renderer.renderFrame(
+          specFor(
+            SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH,
+            SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT,
+          ),
+          {},
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        const t0 = performance.now();
+        renderer.cancel();
+        const cancelled = (await done) === null;
+        if (cancelled) {
+          cancelProbe = {
+            attempts: attempt + 1,
+            delayMs,
+            latencyMs: performance.now() - t0,
+            cancelledToNull: true,
+          };
+          break;
+        }
+      }
+      const heapAfter = heapNow();
+      const row: SurfaceTransportEnvelopeRow = {
+        core,
+        system: sys.name,
+        adapterLabel: renderer.adapterLabel,
+        preview: toRowFrame(preview),
+        previewRepeat: { wallMs: repeat.wallMs, byteIdentical },
+        settle: {
+          ...toRowFrame(settle),
+          samples: SURFACE_TRANSPORT_ENVELOPE_SETTLE_SAMPLES,
+        },
+        cancelProbe,
+        retainedBytes,
+        ...(heapBefore !== undefined && heapAfter !== undefined
+          ? { heapWatch: { beforeBytes: heapBefore, afterBytes: heapAfter } }
+          : {}),
+      };
+      rows.push(row);
+    } finally {
+      renderer.destroy();
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve));
+  }
+  return rows;
 }
 
 /** The section's fixed 4-binding interface (surface-de-gpu.ts's contract):
@@ -20188,6 +20672,49 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the transport agreement legs");
 
+    // ----- Optical-transport renderer envelope (GATING on real adapters) -----
+    // The open criterion the kernel agreement legs cannot reach: an
+    // optics-authored fixture document through the PRODUCTION renderer at
+    // the delegated preview/settle rasters, gated on the decided envelope's
+    // lines. A software adapter skips — the lines are real-driver
+    // measurements, and SwiftShader timing certifies nothing (the
+    // agreement legs above already cover the kernels' reachability).
+    let transportEnvelopeGateFail = false;
+    if (acquired.software) {
+      results.notes.push(
+        "transport envelope: skipped on a software adapter — the feasibility lines are real-driver measurements",
+      );
+    } else {
+      try {
+        const rows = await runSurfaceTransportEnvelopeLeg(
+          systems,
+          affine4Systems,
+          dom,
+          status,
+          activity,
+        );
+        results.transportEnvelope = rows;
+        for (const row of rows) {
+          results.notes.push(surfaceTransportEnvelopeNote(row));
+          if (surfaceTransportEnvelopeRowFailures(row).length > 0) {
+            transportEnvelopeGateFail = true;
+          }
+        }
+        if (rows.length < 2) {
+          transportEnvelopeGateFail = true;
+          results.notes.push(
+            "transport envelope: fewer than two dimensional arms ran (see notes)",
+          );
+        }
+      } catch (e) {
+        transportEnvelopeGateFail = true;
+        results.notes.push(`transport envelope: ${describeError(e)}`);
+      }
+      render();
+
+      await canaryCheck("the transport envelope leg");
+    }
+
     // ----- Verdict -----
     // Only production-width rows gate: the CPU oracle's fold frontier is
     // the fixed SURFACE_FOLD_BEAM_WIDTH scratch, so narrower-width rows
@@ -20224,7 +20751,8 @@ async function runSurfaceDeSection(
       tilingAbiFailed ||
       latticeTilingAbiFailed ||
       latticeFrameFailed ||
-      transportGateFail
+      transportGateFail ||
+      transportEnvelopeGateFail
     ) {
       results.verdict = "fail";
       results.reason = compileFailed
@@ -20267,7 +20795,9 @@ async function runSurfaceDeSection(
                                             ? "lattice carrier frame failure — see notes"
                                             : transportGateFail
                                               ? "transport agreement failure — see notes"
-                                              : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                                              : transportEnvelopeGateFail
+                                                ? "transport envelope failure — see transportEnvelope/notes"
+                                                : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
