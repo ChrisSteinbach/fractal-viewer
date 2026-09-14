@@ -208,9 +208,9 @@ and PASSED on a cover-live session (Iris Xe, Chrome, production build):
 all 101 fence groups priced from the GPU instrument (`ts=on`, 0 wall), a
 2.36 ms round-trip, the hit cap climbed 64 → 4096, 372 hits per hit
 dispatch, settle frame 6450 ms — the 16x work changed constants, not the
-ladder/fence shape. What remains on the cost front is the Firefox arm and
-the teardown gate on a cover session: the Playwright Firefox build is not
-installed on this machine, so those wait for a box that has it.
+ladder/fence shape. The Firefox arm and the teardown gate on a cover
+session have since both PASSED; figures are in the Cost qualification
+bullet below.
 
 The browser matrix's own gate now pins the zero-thickness identity per
 cover class, measured as PIXELS rather than argued from the CPU oracle.
@@ -373,13 +373,22 @@ What remains:
 
 - **Cost qualification.** The shading-tap fix shipped (one-piece cover
   probe, measured above), and the fence-cost gate's `--cover4` arm PASSED
-  on Chrome — ladder and grouping intact under the 16x work. Still owed:
-  the same arm on Firefox and `scripts/surface-teardown.verify.mjs` on a
-  cover session — both need a machine with the Playwright Firefox build.
-  If those object, the remaining levers are quality/cost decisions, not
-  soundness ones: fewer pieces (measured IoU 0.67-0.84 at 8), scale pieces
-  with thickness, or the per-system thickness cap the earlier study
-  discussed.
+  on Chrome — ladder and grouping intact under the 16x work — and now on
+  Firefox at 640x360 (fence round-trip 100.00 ms, all 48 groups priced from
+  the designed WALL currency, cap 64 → 4096, 48 fences for 60 dispatches,
+  292 hits/hit dispatch, settle 8577 ms). Running the Firefox arm found and
+  fixed a gate defect: the "instrument must engage" assertion ignored the
+  session's own calibrated fence, so Firefox's correct wall pricing failed
+  every cover run; it now asserts the app's measured rule in both
+  directions (GPU currency required under the 25 ms ceiling, wall above
+  it), so Chrome's engagement and Firefox's wall default are pinned by one
+  predicate. `scripts/surface-teardown.verify.mjs`
+  gained its own `--cover4` arm and PASSED 20/20 mode-exit toggles with
+  thickness 0.2 live on the compute engine; a launch whose one-way adapter
+  probe latched WebGL exits 2 INCONCLUSIVE instead of 3. If cost ever
+  objects, the levers are quality/cost decisions, not soundness ones: fewer
+  pieces (measured IoU 0.67-0.84 at 8), scale pieces with thickness, or the
+  per-system thickness cap the earlier study discussed.
 - **Tiling composition.** Tiled 4D sessions still clamp thickness to zero;
   finite pieces need the split/cover composition and lattice walls need
   crossing enumeration (the tiling child's work).

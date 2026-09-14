@@ -5,7 +5,10 @@
  * no longer hunts for a cause, it PINS the fix against ever regressing.
  *
  * EXIT CODES: 0 = swept clean, no crash — the gate passes. 3 = reproduced,
- * the browser died mid-sweep — the regression is back. 1 = harness failure
+ * the browser died mid-sweep — the regression is back. 2 = INCONCLUSIVE: a
+ * --cover4/--tiling qualification run never saw a working WebGPU adapter
+ * this launch (the app's one-way fallback took WebGL before Surface was
+ * asked), so no cover work was ever torn down; rerun. 1 = harness failure
  * (a Playwright/launch problem unrelated to the invariant under test).
  *
  * INVARIANT PROTECTED: tearing down or restarting `SurfaceComputeRenderer`
@@ -93,6 +96,15 @@
  *   --gl          the lens system forced onto WebGL. Control — the crash is
  *                 WebGPU-only, so this arm must stay clean at any --toggles.
  *   --lighting    include the authored finite lights in the live work.
+ *   --cover4      the cover-live 4D fixture (a pentatope base under a pure-
+ *                 mandelbox FINAL, the class the fence-cost gate's --cover4
+ *                 arm and the lift gate's coverMandelFinal4 scene embed) with
+ *                 the slab thickness driven to 0.2 after Surface is entered,
+ *                 so every toggle lands against the 16x cover work. The
+ *                 thickness is session VIEW state and survives mode exits
+ *                 (only a whole-system replacement resets the 4D view), so
+ *                 every re-entered session in the sweep stays cover-live.
+ *                 Requires --toggles=N.
  *   --floor=off / --tiling=a3 / --toggleId=... / --viewport=WxH /
  *   --toggleGapMs=N
  *
@@ -101,6 +113,9 @@
  *
  *   node scripts/surface-teardown.verify.mjs --url=https://localhost:5174 \
  *        --lens --toggleId=__modeExit --toggles=20 --toggleGapMs=900
+ *
+ *   node scripts/surface-teardown.verify.mjs --cover4 \
+ *        --toggleId=__modeExit --toggles=20 --toggleGapMs=900
  */
 import { firefox } from "playwright-core";
 
@@ -122,6 +137,11 @@ const LENS = Boolean(args.lens);
 const FOLD_TYPE = args.fold ?? "mandelbox";
 const PLAIN = Boolean(args.plain);
 const LIGHTING = Boolean(args.lighting);
+/** `--cover4` runs the lifecycle sweep against a cover-live 4D nonlinear
+ * session (see the arm's header entry). Requires --toggles: the cover only
+ * exists mid-session, and a no-toggle run would be the exploratory arm with
+ * nothing live to tear down. */
+const COVER4 = Boolean(args.cover4);
 const TOGGLE_ID = args.toggleId ?? "surfaceGroundPlaneCheckbox";
 const TOGGLES = Number(args.toggles ?? 0);
 const TOGGLE_GAP_MS = Number(args.toggleGapMs ?? 1200);
@@ -131,6 +151,9 @@ if (TILING !== null && TILING !== "a3") {
 }
 if (TILING !== null && TOGGLES <= 0) {
   throw new Error("--tiling qualification requires --toggles=N");
+}
+if (COVER4 && TOGGLES <= 0) {
+  throw new Error("--cover4 qualification requires --toggles=N");
 }
 const EXPECTED_TILING = TILING === "a3" ? { group: "a3" } : null;
 const POLL_MS = 500;
@@ -253,6 +276,51 @@ function sceneFor(radii, { lens = false, foldType = "mandelbox" } = {}) {
   return scene;
 }
 
+/** The cover-live 4D fixture: a pentatope base (five half-scale maps, four
+ * lifted off w = 0, the fifth at +0.5) under a pure-mandelbox FINAL with its
+ * own w block. The same class the fence-cost gate's `--cover4` arm and the
+ * lift gate's `coverMandelFinal4` scene drive; transcribed as a plain
+ * document (the tetra() precedent above) because this arm needs the cover's
+ * 16x work, not its exact bytes. */
+function cover4Scene() {
+  const map = (position, w) => ({
+    position,
+    rotation: [0, 0, 0],
+    scale: [HALF, HALF, HALF],
+    w,
+  });
+  return {
+    transforms: [
+      map([0.2795, 0.2795, 0.2795], { position: -0.125 }),
+      map([0.2795, -0.2795, -0.2795], { position: -0.125 }),
+      map([-0.2795, 0.2795, -0.2795], { position: -0.125 }),
+      map([-0.2795, -0.2795, 0.2795], { position: -0.125 }),
+      map([0, 0, 0], { position: 0.5 }),
+    ],
+    numPoints: 100000,
+    pointSize: 1,
+    colorMode: "transform",
+    renderStyle: "depthFade",
+    showGuides: false,
+    groundPlane: FLOOR,
+    finalTransform: {
+      position: [0.1, 0.05, -0.1],
+      rotation: [0.15, -0.2, 0.25],
+      scale: [0.85, 0.85, 0.85],
+      variations: [{ type: "mandelbox", weight: 1.1 }],
+      w: { position: -0.08, rotation: { yw: -0.2 } },
+    },
+  };
+}
+
+/** The document a run drives: the cover fixture under --cover4, the radii
+ * scene otherwise. */
+function sceneDocument(c) {
+  return COVER4
+    ? cover4Scene()
+    : sceneFor(c.radii, { lens: LENS, foldType: FOLD_TYPE });
+}
+
 const enc = (s) =>
   "#v1=" + Buffer.from(JSON.stringify(s)).toString("base64url");
 
@@ -315,7 +383,7 @@ async function launch() {
 /** Run ONE case on a fresh page. Resolves a result record; a thrown/browser-
  * gone condition is reported, never rethrown, so the sweep can continue. */
 async function runCase(browser, c) {
-  const hash = enc(sceneFor(c.radii, { lens: LENS, foldType: FOLD_TYPE }));
+  const hash = enc(sceneDocument(c));
   const url = `${BASE}/?surfacestate${FORCE_GL ? "&surfacegl" : ""}${hash}`;
   const lines = [];
   const result = {
@@ -435,14 +503,14 @@ async function runCase(browser, c) {
  * lands mid-flight, against a renderer with GPU work still queued.
  */
 async function runToggleArm(browser, c, toggles, gapMs) {
-  const hash = enc(sceneFor(c.radii, { lens: LENS, foldType: FOLD_TYPE }));
+  const hash = enc(sceneDocument(c));
   const url = `${BASE}/?surfacestate${FORCE_GL ? "&surfacegl" : ""}${hash}`;
   const lines = [];
   const result = {
     // Name the trigger, not "floor" — the arm is whichever restart/exit door
     // --toggleId selected, and mislabelling every run as a Floor toggle is how
     // the original diagnosis went wrong in the first place.
-    label: `${c.label} [${toggles}x ${
+    label: `${COVER4 ? "cover4 mandelbox FINAL" : c.label} [${toggles}x ${
       TOGGLE_ID === "__modeExit" ? "mode exit" : TOGGLE_ID
     } @${gapMs}ms]`,
     outcome: "ok",
@@ -501,6 +569,24 @@ async function runToggleArm(browser, c, toggles, gapMs) {
       document.getElementById("modeSurfaceBtn").click();
     }, TOGGLE_ID);
     await sleep(1500);
+
+    // Put the slab cover to work before the storm starts (--cover4): the
+    // slider's own live-edit pair, then a beat for the re-armed settle to
+    // submit its first cover dispatches — the point is that every toggle
+    // lands on live cover work, not on an idle renderer.
+    let coverThickness = null;
+    if (COVER4) {
+      coverThickness = await page.evaluate(() => {
+        const el = document.getElementById("fourDSliceThicknessSlider");
+        if (!(el instanceof HTMLInputElement)) return { landed: false };
+        el.value = "0.2";
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return { landed: true, disabled: el.disabled, value: el.value };
+      });
+      await sleep(1500);
+    }
+    result.coverThickness = coverThickness;
 
     for (let i = 0; i < toggles; i++) {
       await sleep(gapMs);
@@ -568,6 +654,18 @@ async function runToggleArm(browser, c, toggles, gapMs) {
       result.probe = after.probe;
       result.engine = after.probe.engine ?? result.engine;
     }
+    // Did THIS launch ever carry the compute engine? The app's bootstrap
+    // adapter probe is one-way: when it transiently finds no adapter, every
+    // session is WebGL for the life of the page and a cover/tiling
+    // qualification cannot run. The console breadcrumbs are the record —
+    // "compute tracer active" for engagement, "device lost" for the genuine
+    // lifecycle signal underneath the storm.
+    result.computeSeen = lines.some((l) =>
+      l.includes("Surface render: WebGPU compute tracer active"),
+    );
+    result.deviceLost = lines.some((l) =>
+      l.includes("Surface compute device lost"),
+    );
     if (TILING !== null) {
       const qualificationFailures = [];
       if (
@@ -607,6 +705,45 @@ async function runToggleArm(browser, c, toggles, gapMs) {
         result.detail = qualificationFailures.join("; ");
       }
     }
+    if (COVER4) {
+      // The cover qualification asks that the sweep really ran against live
+      // cover work and that the engine stayed the compute one: a session
+      // that fell back to WebGL (or to a software adapter) never carried the
+      // cover at all, and a thickness drive that never landed means the
+      // toggles were tearing down a point-kernel session.
+      const qualificationFailures = [];
+      if (
+        coverThickness?.landed !== true ||
+        coverThickness.disabled === true ||
+        Number(coverThickness.value) !== 0.2
+      ) {
+        qualificationFailures.push(
+          `thickness=${JSON.stringify(coverThickness)}`,
+        );
+      }
+      if (result.togglesCompleted !== toggles) {
+        qualificationFailures.push(
+          `toggles=${result.togglesCompleted}/${toggles}`,
+        );
+      }
+      if (
+        result.probe?.engine !== "compute" ||
+        result.probe?.backend?.software !== false
+      ) {
+        qualificationFailures.push(
+          `backend=${JSON.stringify(result.probe?.backend)} engine=${result.probe?.engine ?? "none"}`,
+        );
+      }
+      if (result.pageErrors.length > 0) {
+        qualificationFailures.push(
+          `pageErrors=${result.pageErrors.join(" | ")}`,
+        );
+      }
+      if (qualificationFailures.length > 0) {
+        result.outcome = "QUALIFICATION FAILED";
+        result.detail = qualificationFailures.join("; ");
+      }
+    }
     await ctx.close();
     return result;
   } catch (e) {
@@ -625,13 +762,14 @@ async function main() {
   log(
     `url=${BASE} shape=${LENS ? "fold FINAL lens" : "fold base map"} fold=${FOLD_TYPE} floor=${
       FLOOR ? "ON" : "off"
-    } tiling=${TILING ?? "off"} engine=${
+    } tiling=${TILING ?? "off"} cover4=${COVER4 ? "on" : "off"} engine=${
       FORCE_GL ? "forced WebGL" : "default (WebGPU if available)"
     } watchMs=${WATCH_MS}`,
   );
   let browser = await launch();
   const results = [];
   let reproduced = false;
+  let inconclusive = false;
 
   // The toggle arm's subject is the TEARDOWN, and the fold radii are exactly
   // what this investigation exonerated — so sweeping all of CASES there would
@@ -660,15 +798,28 @@ async function main() {
     if (!browserAlive) {
       r.outcome = "BROWSER DIED";
       reproduced = true;
+    } else if (r.outcome === "CRASH/ERROR") {
+      // A harness error with the browser alive is still this gate's failure
+      // to report honestly, never the no-adapter case below.
+      reproduced = true;
+    } else if ((TILING !== null || COVER4) && !r.computeSeen && !r.deviceLost) {
+      // NO ADAPTER THIS LAUNCH is apparatus, not a reproduction: the app's
+      // one-way bootstrap probe latched WebGL before Surface was even
+      // asked, so the qualification failed for want of a cover to tear down.
+      // Exit 2 (the fence gate's INCONCLUSIVE channel) and say so.
+      r.outcome = "INCONCLUSIVE";
+      inconclusive = true;
+      log(
+        "    INCONCLUSIVE: this launch never took the compute engine — no cover work was ever live",
+      );
     } else if (
-      r.outcome === "CRASH/ERROR" ||
       r.outcome === "QUALIFICATION FAILED" ||
-      (TILING !== null && r.outcome === "refused")
+      ((TILING !== null || COVER4) && r.outcome === "refused")
     ) {
       reproduced = true;
     }
     log(
-      `    ${r.outcome} | ${r.eligibility} | engine=${r.engine || "?"} | ink=${r.ink ?? "?"} | settled=${r.probe?.settled ?? "?"} | row="${r.lastRow}" ${r.detail ? "| " + r.detail : ""}`,
+      `    ${r.outcome} | ${r.eligibility} | engine=${r.engine || "?"} | ink=${r.ink ?? "?"} | settled=${r.probe?.settled ?? "?"}${COVER4 ? ` | thickness=${JSON.stringify(r.coverThickness)}` : ""} | row="${r.lastRow}" ${r.detail ? "| " + r.detail : ""}`,
     );
     if (TILING !== null) {
       log(
@@ -687,10 +838,10 @@ async function main() {
   console.log("\n=== summary ===");
   for (const r of results) {
     console.log(
-      `${r.label.padEnd(38)} ${r.outcome.padEnd(14)} ${r.eligibility.padEnd(20)} ${r.engine.padEnd(8)} ink=${String(r.ink ?? "?").padEnd(5)} settled=${String(r.probe?.settled ?? "?").padEnd(6)} ${r.lastRow}`,
+      `${r.label.padEnd(38)} ${r.outcome.padEnd(14)} ${r.eligibility.padEnd(20)} ${r.engine.padEnd(8)} ink=${String(r.ink ?? "?").padEnd(5)} settled=${String(r.probe?.settled ?? "?").padEnd(6)} ${COVER4 ? `thickness=${r.coverThickness?.value ?? "?"} ` : ""}${r.lastRow}`,
     );
   }
-  process.exit(reproduced ? 3 : 0);
+  process.exit(reproduced ? 3 : inconclusive ? 2 : 0);
 }
 
 main().catch((e) => {

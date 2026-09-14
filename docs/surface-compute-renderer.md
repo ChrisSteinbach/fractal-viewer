@@ -1226,8 +1226,26 @@ its hit cap 64 → 4096, carried 372 hits per hit dispatch and settled in
 8871 ms (settle frame 6450 ms); the control read 2.28 ms, cap 64 → 4096,
 2225 hits/dispatch, settle 46,185 ms (frame 32,455 ms). The 16x work
 changes the constants, not the shape — the ladders did not pin and the
-grouping still engaged. The Firefox arm was not run: the Playwright
-Firefox build is not installed on this machine.
+grouping still engaged.
+
+The Firefox arm is now MEASURED (Playwright Firefox 153.0, build 1538,
+same machine, `--display=:0`, production build, one antialiasing pass,
+`--viewport=640x360` per the header's standing note): the cover session ran
+compute on the real adapter, priced 48/48 groups from the WALL share
+(`ts=on`, fence round-trip 100.00 ms — over the 25 ms engagement ceiling,
+so wall is the designed currency there), grouped 48 fences behind 60
+dispatches, climbed its hit cap 64 → 4096, carried 292 hits per hit
+dispatch and settled in 8577 ms (settle frame 4304 ms; a cold-cache run
+took 43.9 s to its first frame, the next 253 ms). The Chrome arm was
+re-run under the fixed predicate the same day: fence 2.34 ms, 102/102
+groups gpu-priced, PASS. THE ARM FOUND AND FIXED A
+GATE DEFECT: the no-pin "instrument must engage" assertion ignored the
+session's own calibrated fence, so Firefox's correct wall pricing failed
+every cover run; the check now asserts the app's measured rule in BOTH
+directions — gpu-priced groups required at or under the 25 ms
+`SURFACE_COMPUTE_TS_FENCE_COST_MS` ceiling, wall pricing required above it
+— so Chrome's engagement and Firefox's wall default are pinned by the same
+predicate instead of by a browser's name.
 
 #### The first probe was a different population
 
@@ -2116,6 +2134,7 @@ output, so the dev server hosts them: `npm run dev &`, then
 
 ```
 node scripts/surface-teardown.verify.mjs --lens --toggleId=__modeExit --toggles=20
+node scripts/surface-teardown.verify.mjs --cover4 --toggleId=__modeExit --toggles=20
 node scripts/flame-teardown.verify.mjs --toggles=12
 ```
 
@@ -2126,12 +2145,26 @@ clicking Points all reach — which used to take down the whole Firefox
 process rather than the tab. Exit 0 is a clean sweep, exit 3 means it
 reproduced.
 
+`--cover4` runs that same sweep against a cover-live 4D session (the
+fence-cost gate's pentatope + mandelbox-FINAL class) with the slab
+thickness driven to 0.2 after Surface is entered. Thickness is session
+VIEW state and survives mode exits — only a whole-system replacement resets
+the 4D view — so every re-entered session in the sweep stays cover-live.
+MEASURED on the same stack (Iris Xe, Playwright Firefox 153.0, dev server):
+20/20 mode-exit toggles, engine compute throughout, thickness 0.2 live,
+exit 0. A launch whose one-way bootstrap probe latched WebGL before
+Surface was asked can never run the qualification at all, so it exits 2
+INCONCLUSIVE instead of 3: no cover work existed to tear down, and a rerun
+is the measurement. The channel was exercised for real once (a cold launch
+that never logged `compute tracer active`; the immediate rerun passed).
+
 Its flame sibling storms the palette select — `setPalette` has no equality
 guard, so every toggle reaches `startAccumulation` and therefore
 `backend.destroy()` — against a 2B-iteration accumulation, so each teardown
 lands on an op parked on `mapAsync`/`onSubmittedWorkDone`. Same 0/3 verdicts
-plus exit 2 for INCONCLUSIVE, which is the one this gate needs and the
-surface one does not: a run that fell back to CPU (or a software adapter),
+plus exit 2 for INCONCLUSIVE, which this gate needs for a CPU fallback and
+the surface gate now needs for a cover/tiling launch that never got a
+WebGPU adapter: a run that fell back to CPU (or a software adapter),
 or never caught a restart, never exercised the path and must not read as a
 pass — so it counts `Flame GPU: backend up on` lines rather than trusting
 `#flameProgress`, whose percentage stays rounded at 0% through a storm this
