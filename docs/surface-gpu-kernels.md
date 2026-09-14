@@ -476,6 +476,32 @@ no tail, and every older offset remains unchanged.
 Bench legs `fold4Boxfold`/`Mandelbox`/`Kaleido`/`Slab` + a fold4
 compute-frame leg pin it.
 
+### The nonlinear slab cover (`slabCover`)
+
+The 4D descent cores' answer for a system `slabExact4` refuses (a spherefold
+or mandelbox branch takes a segment to an arc): the codegen option
+`slabCover` renames the composed descent — core alone, or core under its
+`descendLens4` wrapper — to `surfaceDECovered` and generates it as the
+POINT body behind an external lift, then appends a public `surfaceDE`
+wrapper that seeds the lifted query and its half-extent and returns
+`max(0, min_i(DE_point(mid_i) - |e|/SLAB_COVER_PIECES))` — the CPU
+oracle's bounded midpoint cover, complete-partition sound at any piece
+count. The hit-info twin argmins the same samples with the point VALUE
+descent, then asks the covered hit-info once at the winner and overwrites
+`sStar` with the winning piece parameter so radius/pattern coloring rides
+the actual winning slab location; a fold final keeps its own resolved
+branch source. `sliceHalfW == 0` takes the point body, pinned bit-exact
+against the `slabExt: false` kernel. The option requires `slabExt` and
+refuses `tiling` (tiled 4D slabs are refused at pack); `lens` composes
+(cover outside the lens wrapper). `packSurface4GpuParams` now throws only
+where the CPU entries refuse (`slabSupported4` — swirl final or
+condensation), and `surface-compute.ts` derives `canSlab`/`slabCover` from
+`slabSupported4`/`slabExact4` for untiled ifs4 targets. Bench leg M5b
+(`cover4SpherePair` and `cover4MandelFinal` at h = 0/0.10R/0.25R) gates
+fail=0 against the composed CPU oracle; measured rows, the identity
+cross-checks and the cost note are in
+[surface-slice-thickness.md](surface-slice-thickness.md).
+
 A `mapsUniform` codegen option (a 4D kernel-cost probe) moves the 4D cores'
 maps binding to a fixed 24-slot uniform array. REFUTED for production —
 0.99-1.02x at every kaleidoscope order on Iris, values bit-identical — and
