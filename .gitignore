@@ -33,3 +33,6 @@ src/app/public/THIRD-PARTY-LICENSES.txt
 /IrisGPUInternals.html
 
 .claude/worktrees/
+bench-results/
+bench-results-main/
+bench-results-sw/

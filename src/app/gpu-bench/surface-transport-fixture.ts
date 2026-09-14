@@ -193,7 +193,10 @@ interface FixturePath {
 }
 
 /** The kernel's `transportTrace`, f64: the primary split at the march's
- * own hit, then the oracle's work-list loop over the twin boundary query. */
+ * own hit, then the oracle's work-list loop over the twin boundary query.
+ * `caps` mirrors the kernel's `transportMaxPaths` option — both engines
+ * must run the SAME budget, so the leg passes the value it compiled the
+ * kernel with; omitted, the shipped runtime caps. */
 export function transportTraceCPU(
   system: TransportFixtureSystem,
   origin: Vec3,
@@ -201,7 +204,12 @@ export function transportTraceCPU(
   theta: number,
   material: DielectricMaterial,
   bgLinear: Vec3,
+  caps?: { maxProcessedPaths: number; maxInterfaces: number },
 ): TransportTraceResult {
+  const maxProcessed =
+    caps?.maxProcessedPaths ?? SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS;
+  const maxInterfaces =
+    caps?.maxInterfaces ?? SURFACE_GPU_TRANSPORT_MAX_INTERFACES;
   const eps = DIELECTRIC_CROSSING_EPS_REL * material.radius;
   const stack: FixturePath[] = [];
   let radiance: Vec3 = [0, 0, 0];
@@ -267,13 +275,13 @@ export function transportTraceCPU(
       residual += path.bound;
       continue;
     }
-    if (processed >= SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS) {
+    if (processed >= maxProcessed) {
       residual += path.bound;
       status = "unresolved";
       failure = 1;
       break;
     }
-    if (path.interfaces >= SURFACE_GPU_TRANSPORT_MAX_INTERFACES) {
+    if (path.interfaces >= maxInterfaces) {
       residual += path.bound;
       status = "unresolved";
       failure = 2;
