@@ -11,6 +11,10 @@ import { doubleRotation, sierpinskiTetrahedron, swirlFlame } from "./presets";
 import { MIN_OCCUPIED_CELLS, scoreSystem } from "./random-system";
 import { mulberry32 } from "./rng";
 import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
+import {
+  SURFACE_OPTICS_SCALE_CEILING,
+  SURFACE_OPTICS_SCALE_FLOOR,
+} from "./surface-optics";
 import { VARIATION_TYPES } from "./types";
 import type { Transform } from "./types";
 
@@ -942,6 +946,80 @@ describe("mutateSystem surface pattern", () => {
     );
     expect(mutant.finalTransform!.surfacePattern).toEqual(finalPattern);
     expect(mutant.finalTransform!.surfacePattern).not.toBe(finalPattern);
+  });
+});
+
+describe("mutateSystem optics", () => {
+  const optickedMap: Transform = {
+    id: 0,
+    position: [0, 0.8, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+    optics: { model: "dielectric", scale: 1.5 },
+  };
+
+  it("keeps the model discrete and jitters a present scale within the resolver's band", () => {
+    const base = system({
+      transforms: [optickedMap, ...sierpinskiTetrahedron().slice(1)],
+    });
+    let sawChange = false;
+    for (let seed = 0; seed < 10; seed++) {
+      for (const wildcard of [false, true]) {
+        const optics = mutateSystem(base, mulberry32(seed), { wildcard })
+          .transforms[0].optics!;
+        expect(optics.model, `seed ${seed} wildcard=${wildcard}`).toBe(
+          "dielectric",
+        );
+        expect(
+          optics.scale,
+          `seed ${seed} wildcard=${wildcard}`,
+        ).toBeGreaterThanOrEqual(SURFACE_OPTICS_SCALE_FLOOR);
+        expect(
+          optics.scale,
+          `seed ${seed} wildcard=${wildcard}`,
+        ).toBeLessThanOrEqual(SURFACE_OPTICS_SCALE_CEILING);
+        if (optics.scale !== 1.5) sawChange = true;
+      }
+    }
+    expect(sawChange).toBe(true);
+  });
+
+  it("never materializes an absent optics block, wildcard included, and preserves sparsity", () => {
+    const plain = system();
+    const sparse = system({
+      transforms: [
+        { ...optickedMap, optics: { model: "dielectric" } },
+        ...sierpinskiTetrahedron().slice(1),
+      ],
+    });
+    for (const wildcard of [false, true]) {
+      const plainMutant = mutateSystem(plain, mulberry32(4), { wildcard });
+      for (const transform of plainMutant.transforms) {
+        expect("optics" in transform).toBe(false);
+      }
+      const optics = mutateSystem(sparse, mulberry32(4), { wildcard })
+        .transforms[0].optics!;
+      expect(optics).toEqual({ model: "dielectric" });
+      expect("scale" in optics).toBe(false);
+    }
+  });
+
+  it("clones the optics object without aliasing, final transform included", () => {
+    const finalOptics = { model: "dielectric" as const, scale: 2 };
+    const base = system({
+      transforms: [optickedMap, ...sierpinskiTetrahedron().slice(1)],
+      finalTransform: {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        optics: finalOptics,
+      },
+    });
+    const mutant = mutateSystem(base, mulberry32(8));
+    expect(mutant.transforms[0].optics).not.toBe(optickedMap.optics);
+    expect(mutant.finalTransform!.optics).toEqual(finalOptics);
+    expect(mutant.finalTransform!.optics).not.toBe(finalOptics);
   });
 });
 
