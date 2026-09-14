@@ -80,6 +80,7 @@ import {
 import { latticePresentationCarrierSource } from "./lattice-march";
 import {
   surfaceMaterialLanes,
+  surfaceMaterialOpticsLanes,
   type ResolvedSurfaceMaterial,
 } from "./surface-material-wire";
 import type { Vec3 } from "./types";
@@ -3660,6 +3661,54 @@ export function packSurfaceGpuShadeMaps(
     const lanes = surfaceMaterialLanes(materials[j]);
     out.set(lanes.a, j * 12 + 4);
     out.set(lanes.b, j * 12 + 8);
+  });
+  return out;
+}
+
+/**
+ * The optical transport storage for mode "shade": ONE vec4f pair per map
+ * slot, laid out by `surface-material-wire.ts`'s
+ * `surfaceMaterialOpticsLanes` — `[i*2]` = (ior, radius, absorption.r,
+ * absorption.g), `[i*2+1]` = (absorption.b, reserved, reserved, reserved).
+ * Pads to one zero stride when no slot resolves optics (the classic route's
+ * exact bytes — one 8-float zero stride, like packSurfaceGpuMaps), and
+ * throws `RangeError` when a materials list is present but does not cover
+ * every slot, or when the optics gate disagrees with the lanes (a slot list
+ * whose `optics` member is false may not carry a resolved optics — the
+ * wire's own consistency rule).
+ *
+ * SHIPPED DORMANT: no kernel declares the `opticsMaps` binding yet — this
+ * packer is the FROZEN layout both transport backends adopt (the compute
+ * backend first, the GLSL twins' uniform re-pack second), pinned by tests so
+ * the offsets cannot move. Consumed by the compute surface path when the
+ * resumable-transport work wires the buffer in.
+ */
+export function packSurfaceGpuOpticsMaps(
+  materials: readonly ResolvedSurfaceMaterial[],
+): Float32Array {
+  if (materials.length === 0) {
+    return new Float32Array(8);
+  }
+  const opticsCount = materials.filter((m) => m.optics !== undefined).length;
+  if (opticsCount === 0) {
+    return new Float32Array(8);
+  }
+  if (opticsCount !== materials.length) {
+    throw new RangeError(
+      `surface-de-gpu: ${opticsCount} of ${materials.length} slots resolve ` +
+        "optics — an optics buffer must cover every slot uniformly",
+    );
+  }
+  const out = new Float32Array(materials.length * 8);
+  materials.forEach((material, j) => {
+    const lanes = surfaceMaterialOpticsLanes(material);
+    if (!lanes) {
+      throw new RangeError(
+        `surface-de-gpu: slot ${j} lost its optics between gate and pack`,
+      );
+    }
+    out.set(lanes[0], j * 8);
+    out.set(lanes[1], j * 8 + 4);
   });
   return out;
 }

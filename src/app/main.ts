@@ -4604,30 +4604,45 @@ async function main(): Promise<void> {
   }
 
   /** A FORWARD-ORBIT session's one material slot, gated: the first
-   * positive-weight transform's resolved finish+pattern —
+   * positive-weight transform's resolved finish+pattern+optics —
    * {@link escapeSlotColor}'s exact pick, because it must match the same
    * `firstChoice = 0` wire — or null when it resolves classic+none, so an
-   * unauthored chain compiles literally today's programs on both engines. */
+   * unauthored chain compiles literally today's programs on both engines.
+   * `opticsRadius` is the forward session's own bounding ball — the forward
+   * DE has no probe-fit visible radius, and the bounding ball is what the
+   * tiling resolver already uses for this family — the optical model's
+   * scene-derived base. */
   function escapeSlotMaterials(
     patternCalibration: SurfaceNativeCalibration,
+    opticsRadius: number,
   ): SurfaceMaterialSlots | null {
     return surfaceSlotMaterials(
       state.transforms,
       [surfaceForwardSlot(state.transforms)],
       patternCalibration,
+      opticsRadius,
     );
   }
 
   /** An IFS session's per-slot materials, gated by
    * `surface-slots.ts`'s unified resolver: a wire when some SLOTTED
-   * transform authors a non-classic finish or pattern, null otherwise —
-   * the epic's byte-identity compile gate, one answer for both engines and both
-   * dimensions (the slot's `baseIndex` is all either derivation reads). */
+   * transform authors a non-classic finish, a pattern, or an optical model,
+   * null otherwise — the epic's byte-identity compile gate, one answer for
+   * both engines and both dimensions (the slot's `baseIndex` is all either
+   * derivation reads). `opticsRadius` is the DE's visible bounding radius —
+   * the FULL unsliced value in 4D — the optical model's scene-derived
+   * base. */
   function gatedSlotMaterials(
     maps: readonly { baseIndex: number }[],
     patternCalibration: SurfaceNativeCalibration,
+    opticsRadius: number,
   ): SurfaceMaterialSlots | null {
-    return surfaceSlotMaterials(state.transforms, maps, patternCalibration);
+    return surfaceSlotMaterials(
+      state.transforms,
+      maps,
+      patternCalibration,
+      opticsRadius,
+    );
   }
 
   /** IFS shade slots in the estimator's wire order: recursive maps first,
@@ -5890,7 +5905,10 @@ async function main(): Promise<void> {
             // so slot 0 is the whole wire one dimension up. This arm
             // shipped without the assignment for one review round — an
             // authored head finish rendered classic on a 4D chain alone.
-            sessionMaterials = escapeSlotMaterials(de.patternCalibration);
+            sessionMaterials = escapeSlotMaterials(
+              de.patternCalibration,
+              de.boundingRadius,
+            );
             ui.setSurfaceSessionKind("escape");
             // A forward orbit cannot thread a segment, so there is no
             // slab at any thickness (escape-de-4d.ts's NO SLAB
@@ -5983,6 +6001,7 @@ async function main(): Promise<void> {
             sessionMaterials = gatedSlotMaterials(
               ifsShadeSlots(de),
               de.patternCalibration,
+              de.visibleBoundingRadius,
             );
             // An IFS-shaped 4D session — the balloon's live shape one
             // dimension up, so its rows stay reachable.
@@ -6195,7 +6214,10 @@ async function main(): Promise<void> {
               fitLatticeCamera(surfaceTiling, false);
             }
             R = de.boundingRadius;
-            sessionMaterials = escapeSlotMaterials(de.patternCalibration);
+            sessionMaterials = escapeSlotMaterials(
+              de.patternCalibration,
+              de.boundingRadius,
+            );
             // The gate admits shapes whose non-escaping set is EMPTY, and
             // this mode then draws a background gradient with a live
             // progress row and nothing anywhere saying why — the same
@@ -6274,7 +6296,10 @@ async function main(): Promise<void> {
             if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
               fitLatticeCamera(surfaceTiling, false);
             }
-            sessionMaterials = escapeSlotMaterials(de.patternCalibration);
+            sessionMaterials = escapeSlotMaterials(
+              de.patternCalibration,
+              de.boundingRadius,
+            );
             // NOT the orbit bailout: the bulb's marching ball is its own
             // query-space bound, the one number every radius here wants.
             R = de.boundingRadius;
@@ -6359,6 +6384,7 @@ async function main(): Promise<void> {
           sessionMaterials = gatedSlotMaterials(
             ifsShadeSlots(de),
             de.patternCalibration,
+            de.visibleBoundingRadius,
           );
           if (surfaceComputeEligible(de)) {
             // The WebGPU compute path: no GLSL system upload — the fold
