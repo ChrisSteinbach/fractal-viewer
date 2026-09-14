@@ -188,18 +188,121 @@ persistence task; this module takes IOR/absorption as parameters so the
 qualified numbers can ride in as defaults
 (`DIELECTRIC_IOR`, `DIELECTRIC_ABSORPTION`).
 
+## The document vocabulary (shipped, dormant)
+
+The authored state is `surface-optics.ts`'s, on `Transform.optics` — the
+THIRD material sibling beside `finish` and `surfacePattern`, keyed on the
+same `baseIndex` slot list. The rules, each owned by one definition:
+
+- **The selector is the field.** `optics.model` — `"dielectric"` is the only
+  admitted model (`types.ts`'s `SURFACE_OPTICS_MODELS`, the single source of
+  truth persist validates against). Absence of the whole field is the
+  classic state byte-identically: a legacy `finish.transmit` of .35 or .90
+  keeps rendering the thin-shell backdrop blend and is NEVER reinterpreted
+  as refraction merely because its number is stored. Opting in is the
+  selector's own presence, never a stored numeric value — no silent
+  migration on open/save, and a future "Glass"-style panel bundle, when one
+  is authored, will SET this field through the per-field write rule and
+  never store the bundle's name.
+- **Scope.** The optical material is PER-SLOT; the optical normalization
+  radius BASE is scene-derived — the session DE's `visibleBoundingRadius`,
+  the FULL unsliced value in 4D (the balloon ball's own rule, so the tint
+  does not pulse as the slice scrubs). There is no scene-wide authored
+  optical state. Weight-zero transforms and the final (plot-time) transform
+  contribute no slot, so their authored optics resolve nowhere — the
+  material's own invisibility rule, not a special case.
+- **Units and defaults.** `scale` (the only authored numeric) is the Beer
+  normalization radius as a DIMENSIONLESS MULTIPLIER of the derived radius —
+  world-defined, stable under zoom, raster and rotor/slice motion. Absent ⇒
+  1, exactly the qualified appearance; the resolver clamps into
+  `[0.01, 100]` (`SURFACE_OPTICS_SCALE_FLOOR`/`_CEILING`), where the floor
+  is tint saturation inside 1% of the ball and the ceiling is clear across
+  the whole ball — both indistinguishable beyond, and the clamp keeps the
+  oracle's `radius > 0` assertion satisfied. The resolved slot material IS
+  the oracle's `DielectricMaterial` (`surface-optics.ts`'s
+  `ResolvedSurfaceOptics` alias), so a backend hands it to the transport
+  with no adapter.
+- **Not authored.** IOR and the per-channel absorption ride the qualified
+  constants as defaults; the restrained optical distortion is NOT in the
+  vocabulary yet — its model is unqualified until the distortion task owns
+  it ("do not promote the prototype's IOR/thickness constants to product
+  defaults without review"), and the transport lane below leaves a reserved
+  word so that decision appends rather than relayouts. Work and chunk
+  budgets (processed paths, interfaces, stack) stay OUT of material
+  identity: they are the runtime's, not the document's.
+- **Persistence** (`persist.ts`) mirrors the finish codec: fidelity only —
+  finite values survive the wire untouched (round4 on `scale`), no clamp;
+  an unknown model id drops the WHOLE block (the scale alone has no meaning
+  without the model that interprets it); a non-finite scale drops only the
+  scale; an all-garbage block decodes to no optics. A legacy document
+  re-encodes byte-identically. The evolution crossover treats optics as an
+  appearance field; its snapshot validator enumerates `model` against the
+  vocabulary.
+- **Morph** (`morph.ts`'s `lerpSurfaceOptics`): same model on both sides —
+  including both absent — lerps `scale` continuously through the default-1
+  fallback (endpoint-exact, sparse when both sides omit it); a model CHANGE
+  pops the whole block at t = 0.5 (the surface pattern's own family-change
+  rule, minus the strength ramp it has and optics has no use for — the
+  transport has no per-slot weight to fade). **Mutation** perturbs a PRESENT
+  `scale` multiplicatively (`U(0.92, 1.08)`), clamped into the resolver's
+  band, and never materializes the block; the model field is discrete and
+  rides through untouched. **Random generation** never authors the field
+  (pinned).
+- **Material transport** (`surface-material-wire.ts`). The A/B lanes are
+  UNTOUCHED — B.x stays `transmit`, B.y `reflectionTint`, B.z/w the pattern
+  config/scale, and a slot resolving optics with no authored finish/pattern
+  packs classic A/B values. The optical data rides a DEDICATED append-only
+  storage buffer (`opticsMaps`): ONE vec4 pair per slot, laid out by
+  `surfaceMaterialOpticsLanes` — lane 0 `(ior, radius, absorption.r,
+absorption.g)`, lane 1 `(absorption.b, reserved, reserved, reserved)` —
+  zero-stride padded when no slot resolves optics, and thrown on a list
+  that resolves optics non-uniformly. `surface-de-gpu.ts`'s
+  `packSurfaceGpuOpticsMaps` pins the layout; the three reserved words
+  belong to the distortion task (one authored word) and future approved
+  fields — appends inside the frozen stride, never a relayout. The
+  dimension-free layout is THE 4D half: one buffer, one lane order, both
+  cores' backends.
+
+### Capability and routing matrix (all current cores and wrappers)
+
+Authored optics is DORMANT everywhere today: no kernel or fragment program
+consumes the model, so every session — whatever it authors — routes and
+renders exactly its pre-optics program, and an optics-only session compiles
+the classic kernels with classic shadeMaps bytes (the shadeMaps packer's
+materials argument stays keyed on finish|pattern). The gate is real state
+already (`SurfaceMaterialSlots.optics`, the slots' resolved materials, the
+force-frame key's `optics` block), so the backends that arrive next consume
+it without redefining any of it:
+
+| Core / wrapper                                | Transport status now                                   | Reason                                                                                  |
+| --------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| compute `affine`, `fold` (3D)                 | Dormant; classic bytes unchanged                       | The resumable WebGPU transport is the next epic item                                    |
+| compute `affine4`, `fold4` (4D)               | Dormant; same layout, same reason                      | The lane pair is dimension-free; the 4D backend adopts it in the same epic              |
+| compute `escape`, `bulb`, `escape4` (forward) | Dormant                                                | Forward-orbit admission is a measured question for the backend work, not a free default |
+| GLSL tracers (`surface-material*.ts`)         | Dormant; lanes ride classic values, defines unchanged  | The GLSL twins arrive after the compute backend (`dielectricOpticsSource` spliced then) |
+| `lens` wrapper, both dimensions               | Dormant; zero transmission stays classic through it    | The wrapper composes whatever the wrapped core admits — nothing new to refuse yet       |
+| `balloon` (3D/4D)                             | Dormant; the shell inherits the argmin slot's material | The forward-orbit echo stays plain until the backend's material attribution lands       |
+| `ground plane`, `shape trap`, condensation    | Dormant; no change                                     | Scene furniture and attribution are the backend's business, already contract vocabulary |
+| Surface applicability gates                   | Unchanged                                              | Authored optics adds NO new admission: eligibility is geometry, as before               |
+
+Every capability claim above carries both dimensions. The panel task owns
+the UI later; the recorded placement is beside Finish/Pattern in the shared
+Transforms editor (Scene / Look), per `docs/panel-ia.md`.
+
 ## What is not yet qualified
 
 This contract is the model's definition, not a production capability: no
-renderer reads the oracle yet. Remaining work, in order — persistence of the
-optical document state without changing legacy finishes; the resumable WebGPU
-compute path across the admitted cores (adopting `dielectricOpticsSource`);
-the GLSL twins; rear-scene radiance and transparent visibility; distortion
-and capture integration; panel material and starter scenes; built-app
-qualification. Shader changes require the corresponding CPU/GPU agreement
-gate even before production routing is enabled; the 22 GPU controls are the
-pattern. Applicability refusals (slab/forward/balloon/engine admissions)
-are preserved unchanged by this work.
+renderer reads the oracle yet. The document vocabulary, persistence, slot
+resolution and force-frame keying have now shipped (dormant — see above).
+Remaining work, in order — the resumable WebGPU compute path across the
+admitted cores (adopting `dielectricOpticsSource` and the frozen
+`opticsMaps` buffer); the GLSL twins; rear-scene radiance and transparent
+visibility; distortion and capture integration; panel material and starter
+scenes; built-app qualification. Shader changes require the corresponding
+CPU/GPU agreement gate even before production routing is enabled; the 22
+GPU controls are the pattern. Applicability refusals
+(slab/forward/balloon/engine admissions) are preserved unchanged by this
+work.
 
 ## Reproduce
 
