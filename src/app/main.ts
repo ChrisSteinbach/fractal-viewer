@@ -4648,12 +4648,14 @@ async function main(): Promise<void> {
     maps: readonly { baseIndex: number }[],
     patternCalibration: SurfaceNativeCalibration,
     opticsRadius: number,
+    admitOptics = true,
   ): SurfaceMaterialSlots | null {
     return surfaceSlotMaterials(
       state.transforms,
       maps,
       patternCalibration,
       opticsRadius,
+      admitOptics,
     );
   }
 
@@ -6397,10 +6399,22 @@ async function main(): Promise<void> {
           if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
             fitLatticeCamera(surfaceTiling, false);
           }
+          // The 3D FOLD core's transport is a MEASURED refusal on real
+          // hardware: a fold transport invocation exceeds the kernel
+          // driver's GPU-job timeout at every budget that exercises the
+          // work-list (the width-12 frontier's dynamic indexing spills to
+          // scratch inside the transport's deep call nesting — the
+          // kernel-confirmed GPU-job reset, every attempt, `ring gfx
+          // timeout`), so a fold session renders classic, disclosed,
+          // until the spill is fixed or a per-invocation time bound
+          // exists. The affine ladder carries no frontier and is
+          // measured OK, as is the 4D pair (fold4 included — its
+          // frontier does not spill under the transport's nesting).
           sessionMaterials = gatedSlotMaterials(
             ifsShadeSlots(de),
             de.patternCalibration,
             de.visibleBoundingRadius,
+            !deHasFolds(de),
           );
           if (surfaceComputeEligible(de)) {
             // The WebGPU compute path: no GLSL system upload — the fold

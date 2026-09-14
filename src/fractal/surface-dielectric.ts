@@ -897,19 +897,19 @@ export function dielectricOpticsSource(
   lines.push(
     fn(
       "dielectricBeerThroughput",
-      ["absorption", "distance", "radius"],
+      ["absorption", "traversed", "radius"],
       js ? "" : wgsl ? "f32" : "float",
     ),
-    `  return ${exp("(-absorption * distance) / radius")};`,
+    `  return ${exp("(-absorption * traversed) / radius")};`,
     "}",
   );
   lines.push(
     fn(
       "dielectricReplayTheta",
-      ["pass", "initialTheta"],
+      ["attempt", "initialTheta"],
       js ? "" : wgsl ? "f32" : "float",
     ),
-    `  return initialTheta * ${exp2("-pass")};`,
+    `  return initialTheta * ${exp2("-attempt")};`,
     "}",
   );
   lines.push(

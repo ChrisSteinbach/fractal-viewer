@@ -1853,6 +1853,15 @@ export interface SurfaceGpuKernelOptions {
    * (`transportRearRadiance`, one function). The GLSL twins arrive
    * separately. */
   optics?: boolean;
+  /** The optical transport's per-sample path budget — the runtime's, not
+   * the document's (the contract keeps work budgets out of material
+   * identity), exposed so a caller can bound one dispatch's worst case:
+   * the production lane sizes batches from measurements, and the
+   * agreement legs bound their control dispatch under the job-watchdog/
+   * kernel-driver submission ceilings. Both caps (processed paths and
+   * interfaces — the oracle couples them) emit from this one number.
+   * Absent emits the shipped cap byte-identically. */
+  transportMaxPaths?: number;
   /** The escape family's SHAPE-TRAP color channel (`types.ts`'s ShapeTrap;
    * the formula is `escape-de.ts`'s, defined once): bake this spec's SDF
    * into the kernel (`shapeSdfSource`, the create-time-geometry decision —
@@ -4575,6 +4584,13 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   if (optics && lighting) {
     throw new Error(
       "surface-de-gpu: the optical transport replaces the hit path and cannot compose with the cinematic lighting entry",
+    );
+  }
+  const transportMaxPaths =
+    opts.transportMaxPaths ?? SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS;
+  if (!Number.isInteger(transportMaxPaths) || transportMaxPaths < 1) {
+    throw new RangeError(
+      "surface-de-gpu: transportMaxPaths must be a positive integer",
     );
   }
   const material = finish || pattern;
@@ -8243,8 +8259,8 @@ const TRANSPORT_ERROR_BUDGET = ${DIELECTRIC_ERROR_BUDGET};
 const TRANSPORT_INITIAL_THETA = ${DIELECTRIC_INITIAL_BRANCH_THETA};
 const TRANSPORT_REPLAY_PASSES = ${DIELECTRIC_REPLAY_PASSES}u;
 const TRANSPORT_MAX_STACK = ${DIELECTRIC_MAX_STACK}u;
-const TRANSPORT_MAX_PROCESSED = ${SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS}u;
-const TRANSPORT_MAX_INTERFACES = ${SURFACE_GPU_TRANSPORT_MAX_INTERFACES}u;
+const TRANSPORT_MAX_PROCESSED = ${transportMaxPaths}u;
+const TRANSPORT_MAX_INTERFACES = ${transportMaxPaths}u;
 const TRANSPORT_CROSSING_EPS_REL = ${DIELECTRIC_CROSSING_EPS_REL};
 const TRANSPORT_ANCHOR_ENVELOPE_REL = ${DIELECTRIC_ANCHOR_ENVELOPE_REL}.0;
 const TRANSPORT_QUERY_MAX_STEPS = ${DIELECTRIC_QUERY_MAX_STEPS}u;
@@ -8359,9 +8375,9 @@ fn transportNextBoundary(
       result.normal = transportOpticalNormal(hitP, dir, eps, li);
       return result;
     }
-    let step = d * params.stepScale;
-    p = p + dir * step;
-    t = t + step;
+    let stride = d * params.stepScale;
+    p = p + dir * stride;
+    t = t + stride;
   }
   return result;
 }
@@ -8689,15 +8705,15 @@ fn transportRays(
   let ior = lane0[0];
   let radius = lane0[1];
   let absorb = vec3f(lane0[2], lane0[3], lane1[0]);
-  let pass = u32(shade.transport[0]);
-  let theta = dielectricReplayTheta(f32(pass), TRANSPORT_INITIAL_THETA);
+  let replayPass = u32(shade.transport[0]);
+  let theta = dielectricReplayTheta(f32(replayPass), TRANSPORT_INITIAL_THETA);
   let traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li);
   if (traced.status == TRANSPORT_STATUS_INVALID) {
     // Never retried, never presented as background: black, disclosed by
     // the frame's invalid count.
     transportState[ray * 2u] = vec4f(0.0, 0.0, 0.0, traced.residual);
     transportState[ray * 2u + 1u] = vec4f(
-      f32(TRANSPORT_STATUS_INVALID), f32(traced.failure), f32(traced.reason), f32(pass));
+      f32(TRANSPORT_STATUS_INVALID), f32(traced.failure), f32(traced.reason), f32(replayPass));
     colorOut[ray] = pack4x8unorm(vec4f(0.0, 0.0, 0.0, 1.0));
     layerOut[ray] = packSurfaceLayer(1.0, 0.0, surfaceCoc(dot(pos - ro, params.fwd)));
     transportStatusOut[slotI] = TRANSPORT_STATUS_INVALID;
@@ -8709,7 +8725,7 @@ fn transportRays(
   if (accepted) {
     transportState[ray * 2u] = vec4f(traced.radiance, traced.residual);
     transportState[ray * 2u + 1u] = vec4f(
-      f32(traced.status), 0.0, 0.0, f32(pass));
+      f32(traced.status), 0.0, 0.0, f32(replayPass));
     // The hit path's own output lines: linear radiance encoded by the
     // file's 2.2 convention, then the depth fog at the primary hit.
     let display = pow(max(traced.radiance, vec3f(0.0)), vec3f(1.0 / 2.2));
@@ -8726,12 +8742,12 @@ fn transportRays(
     transportStatusOut[slotI] = traced.status;
     return;
   }
-  if (pass + 1u >= TRANSPORT_REPLAY_PASSES) {
+  if (replayPass + 1u >= TRANSPORT_REPLAY_PASSES) {
     // The replay schedule is exhausted: final unresolved work. Never
     // background — black, disclosed by the frame's unresolved count.
     transportState[ray * 2u] = vec4f(traced.radiance, traced.residual);
     transportState[ray * 2u + 1u] = vec4f(
-      f32(TRANSPORT_STATUS_UNRESOLVED), f32(traced.failure), f32(traced.reason), f32(pass));
+      f32(TRANSPORT_STATUS_UNRESOLVED), f32(traced.failure), f32(traced.reason), f32(replayPass));
     colorOut[ray] = pack4x8unorm(vec4f(0.0, 0.0, 0.0, 1.0));
     layerOut[ray] = packSurfaceLayer(1.0, 0.0, surfaceCoc(dot(pos - ro, params.fwd)));
     transportStatusOut[slotI] = TRANSPORT_STATUS_UNRESOLVED;
@@ -8740,7 +8756,7 @@ fn transportRays(
   // Still pending: keep the pending identity; the next pass re-traces
   // this sample from scratch at the halved theta.
   transportState[ray * 2u + 1u] = vec4f(
-    f32(TRANSPORT_STATUS_PENDING), f32(traced.failure), f32(traced.reason), f32(pass));
+    f32(TRANSPORT_STATUS_PENDING), f32(traced.failure), f32(traced.reason), f32(replayPass));
   transportStatusOut[slotI] = TRANSPORT_STATUS_PENDING;
 }
 `

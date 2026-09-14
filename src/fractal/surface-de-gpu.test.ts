@@ -4495,9 +4495,9 @@ describe("surfaceDeKernelWgsl optical transport gate (optics)", () => {
     // module — no restated constants anywhere in the emitted text; the
     // pass word rides the ShadeParams member the packer writes.
     expect(shade).toContain(
-      "dielectricReplayTheta(f32(pass), TRANSPORT_INITIAL_THETA)",
+      "dielectricReplayTheta(f32(replayPass), TRANSPORT_INITIAL_THETA)",
     );
-    expect(shade).toContain("let pass = u32(shade.transport[0]);");
+    expect(shade).toContain("let replayPass = u32(shade.transport[0]);");
   });
 
   it("routes per ray: shadeRays skips optics slots after the hit-info, transportRays skips classic slots and non-HIT rays", () => {
