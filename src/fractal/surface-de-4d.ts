@@ -726,10 +726,9 @@ export function systemFoldShaped4(
  * ± translation). The spherefold MID branch is an inversion, which takes a
  * segment to a circular ARC: min-radius-over-chord and min-radius-over-arc
  * differ in BOTH directions, so a segment certificate there is unsound —
- * not merely loose — and slab queries are REFUSED for any system whose
- * fold set includes spherefold or mandelbox ({@link estimateDistance4} /
- * {@link estimateDistance4Refined} throw; the app clamps sliceHalfW to 0
- * for such sessions instead of degrading into a silently wrong image).
+ * not merely loose — and a system whose fold set includes spherefold or
+ * mandelbox routes to the bounded midpoint cover instead
+ * ({@link slabSupported4} / {@link SLAB_COVER_PIECES}).
  * Condensation also refuses a nonzero segment: the 4D C0 term is defined for
  * the point query as a transformed 3D solid at local w=0; minimizing that
  * shaped term over a carried segment needs a separate exact set-distance
@@ -767,13 +766,28 @@ export function systemFoldShaped4(
  * crosses the mid branch, and each crossing drops it toward the ball
  * form.
  *
- * WHAT WOULD REOPEN IT, both cheap next to the frontier register the lift
- * would cost: an instrument reporting the DEPTH of the first mid crossing
- * per query (`FoldFrontierTap4` reports candidates but not branch
- * indices), which decides where inside the bracket a real system falls;
- * or a per-system thickness CAP, since the ball form tracks the exact slab
- * wherever `h / DE` stays small and that ratio is knowable from a cheap
- * CPU probe before any render. */
+ * THE ENCLOSURE LIFT WAS WRITTEN AND MEASURED, and it does not ship: a
+ * chord-plus-slack state carried through the crossing keeps direction on
+ * paper, but the slack compounds across a recursive fold's many crossings
+ * and the certificate collapses to zero over a large share of the bounding
+ * ball — hit masks land at 97-100% of the BALL arm's and adaptive IoU
+ * reads 0.33 (recursive spherefold) to 0.69 (mandelbox final). Numbers in
+ * `docs/surface-slice-thickness.md`.
+ *
+ * WHAT SHIPS FOR THOSE SYSTEMS is a BOUNDED MIDPOINT COVER: the segment is
+ * split into {@link SLAB_COVER_PIECES} equal pieces, the POINT estimator
+ * runs at each piece's midpoint, and the answer is
+ * `min_i max(0, DE(mid_i) − pieceHalfLength)`. Every piece's certificate is
+ * the triangle-inequality bound the adaptive reference uses, so a complete
+ * cover is a valid lower bound for ANY piece count without assuming a
+ * Lipschitz field; the count is an accuracy/cost knob, never a soundness
+ * one. Zero thickness bypasses the cover entirely, and boxfold/affine
+ * systems keep the exact segment path (this predicate).
+ *
+ * The refusals that remain have no cover either: condensation (the C0 term
+ * is a shaped solid whose set distance needs its own evaluator) and a swirl
+ * final lens (its inverse bends the segment with no point cover in this
+ * coordinate frame). */
 export function slabExact4(de: SurfaceDE4): boolean {
   return (
     de.condensation === undefined &&
@@ -783,6 +797,67 @@ export function slabExact4(de: SurfaceDE4): boolean {
     ) &&
     (de.foldFinal === null || de.foldFinal.foldKind === SURFACE_FOLD_BOXFOLD)
   );
+}
+
+/** True when a slab query may be ASKED of `de` — the public entries' gate,
+ * one step wider than {@link slabExact4}. Spherefold and mandelbox branches
+ * (in base maps or in the final lens) are answered by the bounded midpoint
+ * cover ({@link SLAB_COVER_PIECES}); boxfold/affine systems stay on their
+ * exact segment arithmetic. Only condensation and a swirl final lens
+ * refuse, and a forward escape-time chain refuses separately at its own
+ * entry (a forward orbit has no branch enumeration to thread a segment
+ * through). */
+export function slabSupported4(de: SurfaceDE4): boolean {
+  return (
+    de.condensation === undefined &&
+    (de.foldFinal === null || de.foldFinal.foldKind !== SURFACE_LENS_SWIRL)
+  );
+}
+
+/** Pieces in a nonlinear slab query's bounded midpoint cover. Sixteen is a
+ * measured working point, not a correctness constant: the cover is a
+ * complete partition, so any count returns a valid lower bound, and this
+ * one reads adaptive-reference IoU 0.84-0.90 on the harness fixtures at
+ * 16 point evaluations per query (`docs/surface-slice-thickness.md`).
+ * The GPU mirrors share this number so both engines answer one document
+ * with one object. */
+export const SLAB_COVER_PIECES = 16;
+
+/** The bounded midpoint cover's certificate for one nonlinear slab query:
+ * `min_i max(0, DE(mid_i) − halfPiece)`, each piece covered at its
+ * midpoint. Sound by the triangle inequality over the point estimator's
+ * own distance-bound contract — the SAME argument
+ * `scripts/slab-adaptive.harness.ts`'s adaptive reference uses, with the
+ * subdivision fixed instead of tolerance-driven, so the work is bounded
+ * and suspension-free. */
+function estimateDistance4SlabCover(
+  de: SurfaceDE4,
+  p: Vec4,
+  halfExtent: Vec4,
+  refine: boolean,
+  cutoff: number,
+): number {
+  const halfPiece =
+    Math.hypot(halfExtent[0], halfExtent[1], halfExtent[2], halfExtent[3]) /
+    SLAB_COVER_PIECES;
+  // Each piece's own early-out: clearing `cutoff + halfPiece` implies the
+  // piece's certificate clears `cutoff`, and a dip implies the full cover
+  // dips too — so the public cutoff contract survives the cover exactly.
+  const innerCutoff = cutoff > 0 ? cutoff + halfPiece : 0;
+  const query: Vec4 = [0, 0, 0, 0];
+  let bound = Infinity;
+  for (let i = 0; i < SLAB_COVER_PIECES; i++) {
+    const s = -1 + (2 * i + 1) / SLAB_COVER_PIECES;
+    query[0] = p[0] + s * halfExtent[0];
+    query[1] = p[1] + s * halfExtent[1];
+    query[2] = p[2] + s * halfExtent[2];
+    query[3] = p[3] + s * halfExtent[3];
+    const d = refine
+      ? estimateDistance4Refined(de, query, innerCutoff)
+      : estimateDistance4(de, query);
+    if (d - halfPiece < bound) bound = d - halfPiece;
+  }
+  return bound > 0 ? bound : 0;
 }
 
 /** `prepareChaosGame4`'s no-symmetry default, duplicated here because it is
@@ -2789,21 +2864,29 @@ function isSegment(halfExtent: Vec4 | null): halfExtent is Vec4 {
  * Routing (mirroring 3D's `estimateDistance`): a fold or supported swirl FINAL
  * wraps the cores in `descendLens4`, fold base maps descend
  * `descendFold4`'s frontier, and the plain affine ladder below serves the
- * rest. Slab queries (`halfExtent`) are refused — thrown, not degraded —
- * when the system's folds or nonlinear final break segment exactness
- * ({@link slabExact4}; swirl qualification: `docs/swirl-surface-lens.md`).
+ * rest. Slab queries (`halfExtent`) route three ways: exact segment
+ * arithmetic for the boxfold/affine systems ({@link slabExact4}), the
+ * bounded midpoint cover for the nonlinear folds and lenses
+ * ({@link SLAB_COVER_PIECES}), and a thrown refusal only where neither
+ * exists — condensation or a swirl final lens ({@link slabSupported4};
+ * swirl qualification: `docs/swirl-surface-lens.md`).
  */
 export function estimateDistance4(
   de: SurfaceDE4,
   p: Vec4,
   halfExtent: Vec4 | null = null,
 ): number {
-  if (halfExtent && isSegment(halfExtent) && !slabExact4(de)) {
-    throw new Error(
-      "surface-de-4d: slab queries are unsound for this system's nonlinear final lens, folds " +
-        "or condensation shape — clamp sliceHalfW to 0 " +
-        "for this system (slabExact4)",
-    );
+  if (halfExtent && isSegment(halfExtent)) {
+    if (!slabSupported4(de)) {
+      throw new Error(
+        "surface-de-4d: slab queries are unsound for this system's nonlinear " +
+          "final lens (swirl) or condensation shape — clamp sliceHalfW to 0 " +
+          "for this system (slabSupported4)",
+      );
+    }
+    if (!slabExact4(de)) {
+      return estimateDistance4SlabCover(de, p, halfExtent, false, 0);
+    }
   }
   if (de.foldFinal) return descendLens4(de, p, false, 0, halfExtent);
   if (deHasFolds4(de)) return descendFold4(de, p, false, 0, halfExtent);
@@ -3649,7 +3732,8 @@ function descentValue(
  *
  * Routing: same three-way split as `estimateDistance4` — lens
  * sweep, fold frontier, affine ladder — with `refine: true` and the cutoff
- * threaded through. Slab refusal identical ({@link slabExact4}).
+ * threaded through. Slab routing identical
+ * ({@link slabExact4} / {@link SLAB_COVER_PIECES} / {@link slabSupported4}).
  */
 export function estimateDistance4Refined(
   de: SurfaceDE4,
@@ -3657,12 +3741,17 @@ export function estimateDistance4Refined(
   cutoff = 0,
   halfExtent: Vec4 | null = null,
 ): number {
-  if (halfExtent && isSegment(halfExtent) && !slabExact4(de)) {
-    throw new Error(
-      "surface-de-4d: slab queries are unsound for this system's nonlinear final lens, folds " +
-        "or condensation shape — clamp sliceHalfW to 0 " +
-        "for this system (slabExact4)",
-    );
+  if (halfExtent && isSegment(halfExtent)) {
+    if (!slabSupported4(de)) {
+      throw new Error(
+        "surface-de-4d: slab queries are unsound for this system's nonlinear " +
+          "final lens (swirl) or condensation shape — clamp sliceHalfW to 0 " +
+          "for this system (slabSupported4)",
+      );
+    }
+    if (!slabExact4(de)) {
+      return estimateDistance4SlabCover(de, p, halfExtent, true, cutoff);
+    }
   }
   if (de.foldFinal) return descendLens4(de, p, true, cutoff, halfExtent);
   if (deHasFolds4(de)) return descendFold4(de, p, true, cutoff, halfExtent);
