@@ -42,10 +42,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import {
-  SI_PRESETS,
   differingFraction,
+  loadSiPresets,
   loadPreset,
   openApp,
+  sameJson,
   waitDocument,
   waitSettled,
 } from "./lib/sphere-inversion-gate.mjs";
@@ -53,8 +54,8 @@ import { launchSurfaceBrowser } from "./lib/surface-browser-runner.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** The menu group, in menu order (the shared gate vocabulary's table). */
-const PRESETS = SI_PRESETS;
+/** The menu group, in table order, read from `presets.ts`. */
+const PRESETS = await loadSiPresets();
 
 /** A settled showcase must cover at least this share of the pane. A frame
  * framed on its subject covers far more; this catches a camera pointed at
@@ -118,12 +119,9 @@ async function main() {
         const st = settled.state;
         // (2) The document carries the block and the framing.
         const doc = await waitDocument(page, (d) => !!d.sphereInversion);
-        const dim = { oct6: 3, cube8: 3, ico12: 3, cell600: 4 }[
-          doc?.sphereInversion?.arrangement
-        ];
-        if (dim !== preset.dim) {
+        if (!sameJson(doc?.sphereInversion, preset.block)) {
           fail(
-            `${preset.key}: document block ${JSON.stringify(doc?.sphereInversion)} is not a ${preset.dim}D arrangement`,
+            `${preset.key}: document block ${JSON.stringify(doc?.sphereInversion)} is not the table's ${JSON.stringify(preset.block)}`,
           );
         }
         // The view lands with the cloud, AFTER the load's own debounced save,
