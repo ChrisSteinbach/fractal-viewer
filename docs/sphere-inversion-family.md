@@ -357,3 +357,191 @@ stands until the owner ratifies or overturns it.
   cost measurement. Known weaknesses the controls must address: the central
   seed dominating (seed size), and lace dissolving into sub-pixel dust
   (depth/refinement).
+
+## Native 4D beauty search (2026-09-15)
+
+The search the gate verdict made a condition of preset authoring. It keeps
+the construction unchanged: disjoint (tangent-allowed) generator
+hyperspheres, generalized-ball seeds, the depth-D seed orbit, the certified
+transported bound at step scale 1.0 and the app's rotor/slice lift. It
+searches only arrangements, seeds, poses and cameras.
+
+Run (panels at 128 px unless stated; `SI4_SHARD`/`SI4_SHARDS` split a round
+across processes):
+
+```bash
+SI4_ROUND=r1 npx vitest run --config scripts/vitest.harness.config.ts scripts/sphere-inversion-4d-search.harness.ts
+SI4_ROUND=r2 ...   SI4_ROUND=r3 ...   SI4_ROUND=r4 ...
+for p in ref 0 1 2; do SI4_ROUND=win SI4_SIZE=320 SI4_WIN_PART=$p npx vitest run ... & done; wait
+SI4_ROUND=win SI4_SIZE=320 SI4_WIN_PART=combine npx vitest run ...
+```
+
+It writes `scripts/out/sphere-inversion-4d-search-r{1,2,3,4}-s*.png` and
+`scripts/out/sphere-inversion-4d-winners.png`.
+
+### Why slices dust
+
+- **Caps shrink.** A slice at height `h` off a hypersphere's centre is a
+  sphere of radius `√(r² − h²)`. The copies of an orbit spread through all
+  four dimensions, so most copies that meet a given slice meet it as small
+  caps.
+- **Lace is a curve, and a hyperplane meets a curve in points.** The 3D lace
+  arches are where deep copies accumulate on circles through the tangency
+  points of mutually tangent generator triples. Each circle lies in the
+  2-plane of its three centres. A generic hyperplane meets it in at most two
+  points, which is dust. An arch survives whole only in a slice that contains
+  all three centres, and there the slice is locally the passive in-plane
+  sub-arrangement.
+- **Symmetric axis slices are passive.** This was already pinned by the gate
+  sheet.
+- **A ball seed's own slice dominates.** The central 4-ball slices to a large
+  ball at every pose, while its copies are small 4-balls that mostly miss the
+  slice. Every exterior ball-seed panel of round 1 read as one big sphere with
+  pearls and dust around it.
+
+What survives is DENSITY plus SURFACE SEEDS. The 600-cell's 120 hyperspheres
+put many generators across every slice at a spread of heights. A 3-sphere
+shell's slice is a 2-sphere shell, and every generator that meets it cuts a
+window whose size records that generator's height off the slice.
+
+### Instruments
+
+Each pose is measured beside the gate sheet's cloud columns (IoU `I0` and copy
+containment `K0` against the candidate's first pose):
+
+- **off**: the share of copies, over a membership cloud and over HIT PIXELS,
+  whose fold word uses a generator centred off the slice.
+- **sub**: IoU against the EXPLICIT 3D sub-arrangement, meaning the in-plane
+  generators acting on the seed's own slice.
+- **vs3D**: the percentage of pixels whose colour differs from that
+  sub-arrangement rendered through the same camera. Its floor on passive
+  identity slices is 0.2–9.6%, because the step-count AO and the shading taps
+  read the 4D bound rather than membership.
+- **word0**: the share of copy pixels whose fold word at the same in-slice
+  point is IDENTICAL under the first pose. Erosion keeps every word. It was
+  added because the other columns cannot judge lace: lace has no volume, so
+  its cloud copy share reads 0.00 and `K0` is vacuous, and a pure offset puts
+  every centre off the slice, so `off` is 1 by construction. Calibrated on the
+  gate's flat embedding (oct6 r .70 at `w = 0`): its passive `w0` .15 reads
+  word0 **1.00**, its `xw` .40 reads 0.95, and its identity reads vs3D 0.0%.
+
+Every panel of every round was **0.0% exhausted** (600-step budget).
+
+### What was tried
+
+| Round | Candidates                                                                                                                                                                                                                                                                                                                                                                                                              | Reading                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Twelve families under one seven-pose sequence: cell24 kissing (ball .45; ball offset to `w` .25); the dual 24-cell `cross8 ∪ tess16` kissing and with mixed radii .6/.4; the 600-cell with a ball and with a shell; Hopf-linked 6+6 necklaces; 6×6 and 5×5 Clifford-torus duoprisms; the oct6 kissing clique in `w = 0` plus eight alternating cutters at `w = ±.3`; 20 random S³ centres; ico12 in `w = 0` plus tess16 | Every ball-seed exterior was one dominant seed sphere with sparse pearls and dust. The in-plane-clique design keeps its 3D lace only where it is passive and erodes to nothing by `w0` .15 (H 6%). Duoprisms, Hopf rings and random arrangements read as a bare seed ball with a few pearls. Only the 600-cell kept structure: lace fragments around the ball, and a rich medallion sphere as the shell (sub IoU 0.66–0.77, `K0` 0.22–0.66). |
+| 2     | The 600-cell with balls .45/.30, shells .9/1.0/1.1, its kiss slice `w0 = 1/(4φ)` (where the equatorial icosidodecahedron's caps kiss the next layer's), the snub 24-cell (96 centres), and interior vaults at the gate's camera                                                                                                                                                                                         | The .30 ball's identity is a striking icosidodecahedral lace CAGE, but it is passive. The shells read as medallion or lace-embossed spheres and are genuine. The snub 24-cell reads the same, with less. The gate's vault camera faced the light head-on (inward normal · light ≈ 0.9) and washed the small windows to white.                                                                                                                |
+| 3     | Near-identity lace poses for 600-cell balls .20/.30; close shell cameras; two grazing-lit vault cameras                                                                                                                                                                                                                                                                                                                 | The lace cage breaks into snowflake lace at `w0` .03–.10 (vs3D 22–36% against a 10% floor). The close camera B on the .9 cut shell is a pearl-window vault (24–44%). The 1.1 shell is a medallion sphere (37–49%).                                                                                                                                                                                                                           |
+| 4     | word0 on the three winners and the flat control                                                                                                                                                                                                                                                                                                                                                                         | See the subjects below.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+
+### The three native 4D subjects (`sphere-inversion-4d-winners.png`)
+
+All three use the 600-cell's 120 vertices at unit distance as centres, with a
+uniform radius as a fraction of the kissing radius `1/(2φ) ≈ 0.309`. Each
+sheet row is the pose/slice sequence the preset's rotor and slice sliders
+reveal. The first column is the identity, which is PASSIVE: the equatorial
+slice holds the 30 icosidodecahedral centres, and the nearest off-slice layer
+is exactly tangent at the kissing radius and misses at these fractions. The
+genuine slices are the other columns. The first row is the 3D bar at the same
+320 px: kissing oct6 pearls (axis view), kissing cube8 pearls (top view), the
+oct6 interior vault and the ico12 lace shell.
+
+`WKISS` is `w0 = 1/(4φ) ≈ 0.1545`. Rotor angles are radians, composed in the
+order listed. Cost is one CPU core at 320 px, four processes in parallel.
+
+1. **Pearl-window vault** — radius 0.99 × kissing; seed a shell
+   `0.9 ± 0.04` cut by the complement of `B(10.25·û, 10)`, with
+   `û = (0.35, 1, 0.55, 0)/|·|`; depth 5. Interior camera: eye
+   `(−0.21, −0.41, 0.19)`, target `(−0.42, −0.82, 0.38)`, zoom 0.85, shadow
+   and fog off, marching ball = bound radius 1.306. Sequence: ID → `w0` .08 →
+   WKISS → `xw` .3 with `w0` .1.
+
+   | Pose        | H     | S   | ms    | off px | word0 | vs3D  | sub IoU | K0   |
+   | ----------- | ----- | --- | ----- | ------ | ----- | ----- | ------- | ---- |
+   | ID          | 99.7  | 5.3 | 5,900 | 0.00   | 1.00  | 2.5%  | 1.000   | 1.00 |
+   | `w0` .08    | 100.0 | 5.2 | 8,300 | 1.00   | 0.35  | 39.0% | 0.608   | 0.75 |
+   | WKISS       | 100.0 | 5.3 | 7,500 | 1.00   | 0.44  | 43.5% | 0.685   | 0.50 |
+   | xw .3 w0 .1 | 100.0 | 5.2 | 7,300 | 1.00   | 0.39  | 37.5% | 0.669   | 0.64 |
+
+2. **Medallion sphere** — radius 0.99 × kissing; seed a shell `1.1 ± 0.03`;
+   depth 5. Exterior gate camera (eye offset `(1.1, 0.8, 1.3)`, zoom 0.6),
+   framed at membership reach, R 1.198. Sequence: ID → WKISS →
+   `xw .4, yw .3, zw .2` → `xw` .3 with `w0` .1.
+
+   | Pose              | H    | S   | ms     | off px | word0 | vs3D  | sub IoU | K0   |
+   | ----------------- | ---- | --- | ------ | ------ | ----- | ----- | ------- | ---- |
+   | ID                | 72.8 | 7.0 | 9,100  | 0.00   | 1.00  | 0.2%  | 1.000   | 1.00 |
+   | WKISS             | 71.6 | 7.2 | 11,600 | 1.00   | 0.68  | 26.5% | 0.469   | 0.24 |
+   | xw .4 yw .3 zw .2 | 73.9 | 7.3 | 11,200 | 1.00   | 0.03  | 32.0% | 0.519   | 0.32 |
+   | xw .3 w0 .1       | 72.9 | 7.3 | 10,500 | 1.00   | 0.67  | 29.9% | 0.508   | 0.37 |
+
+3. **Lace snowflakes** — radius 0.995 × kissing; seed the ball `B(0, 0.20)`;
+   depth 7. Exterior gate camera, framed R 0.998. Sequence: ID (the passive
+   icosidodecahedral lace cage) → `w0` .03 → `w0` .06 → `xw` .1 with
+   `w0` .04. `K0` and the cloud columns are vacuous here (no volume); word0
+   is the evidence.
+
+   | Pose         | H    | S    | ms     | off px | word0 | vs3D  |
+   | ------------ | ---- | ---- | ------ | ------ | ----- | ----- |
+   | ID           | 33.8 | 17.2 | 41,500 | 0.00   | 1.00  | 9.5%  |
+   | `w0` .03     | 24.3 | 18.9 | 28,100 | 1.00   | 0.25  | 34.4% |
+   | `w0` .06     | 18.8 | 18.2 | 24,300 | 1.00   | 0.13  | 25.3% |
+   | xw .1 w0 .04 | 24.3 | 18.2 | 26,200 | 1.00   | 0.36  | 33.1% |
+
+   The word0/vs3D figures in the lace and the other tables are the 128 px
+   round-4 measurements; H/S/ms are the 320 px sheet's.
+
+**Genuineness, stated once for all three.** A genuine column has an
+off-slice copy-pixel share of 1.00. Its fold words match the identity pose at
+only 3–68% of copy pixels, where erosion reads 95–100% on the calibrated flat
+control. It differs from its explicit 3D sub-arrangement on 25–44% of pixels,
+against a 0.2–9.6% passive floor, and its membership IoU against that
+sub-arrangement is 0.47–0.69 wherever volume exists to measure.
+
+### Verdict
+
+- **Pearl-window vault: meets the 3D bar.** Nested circular windows hold
+  pearl rosettes, and further windows open inside those rosettes. Window
+  sizes and pearl counts change with the slice, which the 3D vault cannot do,
+  because in 4D a window's size is its generator's height off the slice. It
+  has fewer lace arches than the oct6 vault: its deep structure is pearls
+  rather than lace tetrahedra. Recommended as the family's primary native 4D
+  subject.
+- **Medallion sphere: comparable to the 3D lace shell.** It is a secondary
+  subject, and the stronger of the two: dozens of medallions over a round body
+  instead of the ico12 shell's dice. The double rotation makes the medallions
+  asymmetric, holding 2, 3, 4 or 5 pearls.
+- **Lace snowflakes: genuine, NOT at the bar in its genuine poses.** The
+  identity cage is the most striking 600-cell image, but it is 3D-reducible.
+  Offsets of 0.03–0.06 break it into lace stars and fragments with dust
+  between them, which is exactly the "lace is a curve" argument above. It is
+  worth a preset whose DEFAULT is the passive cage, with the slice slider
+  revealing the snowflakes, disclosed as such. Depth 7 over 120 generators is
+  also the costliest panel measured (24–42 s CPU at 320 px, S 17–19).
+
+The gate condition is therefore met by the vault, and supported by the
+medallion sphere. What is still owed: shipped-tracer cost for 120 generators,
+which is a production kernel question (the GLSL tracers' 24-slot per-map uniform arrays could not hold them), and the owner's ratification.
+
+### Failures worth recording
+
+- **Clifford-torus duoprisms (6×6, 5×5) and Hopf-linked necklaces.** Their
+  symmetric slices are passive, and every genuine slice left the seed ball
+  alone with 1–5% copy volume.
+- **In-plane kissing clique plus off-plane cutters** (oct6 kissing at `w = 0`,
+  eight cutters at `(±.75)³` with `w = ±.3`, r .42). The lace is in-plane and
+  so passive, and it vanishes by `w0` .15. Designing lace INTO a slice
+  reproduces a 3D arrangement by the argument above.
+- **Random S³ arrangements** (20 centres, 0.98 × kissing). Genuine by every
+  column and visually the dullest: a bare ball with a handful of pearls.
+- **The 24-cell in both orientations, mixed radii and a w-offset seed.**
+  Genuine at most poses, still sparse pearls and dust. Too few generators per
+  slice.
+- **Ball seeds generally.** The seed's own slice dominates the frame, which is
+  the gate's "central seed dominating" weakness in 4D form. Shrinking the seed
+  helps only where the passive lace remains.
+- **The gate's vault camera on the 600-cell.** Head-on light washes out the
+  small windows. A camera lit at grazing incidence and close to the wall is
+  required.
