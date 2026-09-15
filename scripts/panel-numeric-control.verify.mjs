@@ -71,12 +71,15 @@
  *    `#v1=` document hash rather than the panel, because the panel is the
  *    half that was lying.
  *
- * MEASURED on a real production build, 393x727 and 320x568, reduced-motion
+ * MEASURED on a real production build, 393x727 and 390x844, reduced-motion
  * (so the camera parks and the document hash moves only when an edit moves
- * it): 80 states, 86 distinct paired ranges, 0 unpaired. Smallest companion
- * 61x44 px — a mandelbox fold-length row at 320px, the deepest-nested row
- * the panel has — no horizontal overflow anywhere, and no domain-widest
- * value clipped at either width.
+ * it): 95 states, 125 distinct paired ranges, 0 unpaired — the sphere-
+ * inversion rows included, disabled as whole pairs beside their reason under
+ * a block and re-enabled once it is removed. Smallest companion 86x44 px, a
+ * mandelbox fold-length row, the deepest-nested row the panel has; no
+ * horizontal overflow anywhere, and no domain-widest value clipped at either
+ * width. An earlier build measured 80 states / 86 ranges, smallest 61x44 px
+ * at 320x568, before the sphere-inversion walk existed.
  *
  * Usage (build + `npm run preview` first — this measures a real build):
  *   npm run build && npm run preview &
@@ -724,6 +727,45 @@ async function main() {
           );
         }),
       );
+      // The replaced system's sections are DISABLED under the block (panel
+      // IA): every pair inside them must be off as one control, and each
+      // control described by its section's reason.
+      const dormant = await page.evaluate(() => {
+        const ids = [
+          "transformsSection",
+          "xaosSection",
+          "symmetrySection",
+          "scheduleSection",
+        ];
+        const pairs = ids.flatMap((id) => [
+          ...document.querySelectorAll(`#${id} .range-number-pair`),
+        ]);
+        const off = pairs.filter(
+          (p) =>
+            p.querySelector('input[type="range"]')?.disabled &&
+            p.querySelector(".range-number-input")?.disabled,
+        );
+        const undescribed = pairs.filter(
+          (p) =>
+            !/DormantNote/.test(
+              p
+                .querySelector(".range-number-input")
+                ?.getAttribute("aria-describedby") ?? "",
+            ),
+        );
+        return {
+          total: pairs.length,
+          off: off.length,
+          undescribed: undescribed.length,
+        };
+      });
+      check(
+        "availability: the replaced system's sliders are disabled under the block, both halves, beside the reason",
+        dormant.total > 0 &&
+          dormant.off === dormant.total &&
+          dormant.undescribed === 0,
+        `${String(dormant.off)}/${String(dormant.total)} pairs off, ${String(dormant.undescribed)} without the reason`,
+      );
       check(
         "completeness: every sphere-inversion slider is paired and reachable",
         inversionRows.length === 6,
@@ -731,6 +773,18 @@ async function main() {
       );
       await toggledInversion(false);
       await sleep(1500);
+      const released = await page.evaluate(() => ({
+        marked: document.querySelectorAll("[data-sphere-inversion-dormant]")
+          .length,
+        described: [...document.querySelectorAll("[aria-describedby]")].filter(
+          (e) => /DormantNote/.test(e.getAttribute("aria-describedby") ?? ""),
+        ).length,
+      }));
+      check(
+        "availability: removing the block re-enables the replaced system's sections",
+        released.marked === 0 && released.described === 0,
+        `${String(released.marked)} still disabled by the block, ${String(released.described)} still described by its reason`,
+      );
     }
 
     const unpaired = audits.flatMap((a) =>
