@@ -4934,24 +4934,45 @@ describe("saveScene", () => {
 // ---------------------------------------------------------------------------
 
 describe("decodeScene camera", () => {
-  it("round-trips a camera pose, rounding each field to 4 decimal places", () => {
+  it("restores a camera pose exactly, so a link carrying one is a fixed point", () => {
+    // Rounding here was worth ~4e-11 on an authored lens and 5e-5 without
+    // one, and both moved the f32 view matrix a reloaded frame is traced
+    // with: a menu-loaded 4D preset and its own link rendered different
+    // pixels from the same document.
     const s: SceneSnapshot = {
       ...baseSnapshot(),
       camera: {
-        target: [1.23456, -2, 0.5],
-        radius: 6.24619,
-        theta: 0.30671,
-        phi: 1.05599,
+        target: [1.234567890123, -2, 0.5],
+        radius: 6.246190123456,
+        theta: 0.306710123456,
+        phi: 1.055990123456,
       },
     };
-    const result = decodeScene(encodeScene(s));
-    expect(result!.camera).not.toBeUndefined();
-    expect(result!.camera!.target[0]).toBeCloseTo(1.2346, 4);
-    expect(result!.camera!.target[1]).toBeCloseTo(-2, 4);
-    expect(result!.camera!.target[2]).toBeCloseTo(0.5, 4);
-    expect(result!.camera!.radius).toBeCloseTo(6.2462, 4);
-    expect(result!.camera!.theta).toBeCloseTo(0.3067, 4);
-    expect(result!.camera!.phi).toBeCloseTo(1.056, 4);
+    const encoded = encodeScene(s);
+
+    const result = decodeScene(encoded)!;
+
+    expect(result.camera).toEqual(s.camera);
+    expect(encodeScene(result)).toBe(encoded);
+  });
+
+  it("still decodes a link whose camera was written at 4 decimals", () => {
+    const raw = {
+      ...baseSnapshot(),
+      camera: {
+        target: [1.2346, -2, 0.5],
+        radius: 6.2462,
+        theta: 0.3067,
+        phi: 1.056,
+      },
+    };
+
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+
+    expect(result!.camera!.target).toEqual([1.2346, -2, 0.5]);
+    expect(result!.camera!.radius).toBe(6.2462);
+    expect(result!.camera!.theta).toBe(0.3067);
+    expect(result!.camera!.phi).toBe(1.056);
   });
 
   it("round-trips continuous zoom with high-precision focus coordinates", () => {
@@ -4968,11 +4989,13 @@ describe("decodeScene camera", () => {
     };
     const result = decodeScene(encodeScene(s));
 
-    expect(result!.camera!.target[0]).toBeCloseTo(1.2345678901, 10);
-    expect(result!.camera!.target[1]).toBeCloseTo(-0.0000123457, 10);
-    expect(result!.camera!.theta).toBeCloseTo(0.3067101235, 10);
-    expect(result!.camera!.phi).toBeCloseTo(1.0559901235, 10);
-    expect(result!.camera!.fov).toBeCloseTo(0.023456789, 10);
+    // Exactly, not to ten decimals: the wire carries the authored digits.
+    expect(result!.camera!.target).toEqual([
+      1.23456789012, -0.00001234567, 0.5,
+    ]);
+    expect(result!.camera!.theta).toBe(0.30671012345);
+    expect(result!.camera!.phi).toBe(1.05599012345);
+    expect(result!.camera!.fov).toBe(0.02345678901);
     expect(result!.camera!.infiniteZoom).toBe(true);
   });
 
