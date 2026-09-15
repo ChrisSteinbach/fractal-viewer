@@ -6025,22 +6025,13 @@ async function main(): Promise<void> {
               "sphere-inversion fragment arm is admitted but not installed",
             );
           }
+          // No camera refit: the forward families glide out to their
+          // bailout ball because their explorer cloud is escape-reset
+          // debris inside the solid, but a sphere-inversion Points cloud is
+          // an exact boundary sample of this same set, so the explorer's
+          // framing already fits the object. Fitting the enclosing ball
+          // instead opened the oct6 pearls at a quarter of the pane.
           surfaceGrid.cancel();
-          if (!preserveCamera) {
-            cameraTween.fitToBounds(
-              {
-                minX: -R,
-                maxX: R,
-                minY: -R,
-                maxY: R,
-                minZ: -R,
-                maxZ: R,
-                minR: 0,
-                maxR: R,
-              },
-              { fov: scene.camera.fov, aspect: scene.camera.aspect },
-            );
-          }
         } else if (
           // The SCENE's dimension (scene-dimension.ts), which a
           // sphere-inversion block decides — the arm above takes every
