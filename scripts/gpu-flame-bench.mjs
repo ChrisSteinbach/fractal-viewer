@@ -499,7 +499,7 @@ function printSurfaceSummary(surfaceDe) {
     }
     for (const t of si.timing ?? []) {
       console.log(
-        `    si-time ${t.name} ${t.core}: ${t.usPerQuery.toFixed(3)}us/query over ${t.queries}`,
+        `    si-time ${t.name} ${t.core}: ${t.usPerQuery.toFixed(3)}us/query over ${t.queries} (submissions of ${t.submission})`,
       );
     }
   }
