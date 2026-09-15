@@ -58,7 +58,7 @@
  * Usage (production build served first):
  *   npm run build && npm run preview &
  *   node scripts/sphere-inversion-cost.probe.mjs [url] --display=:0
- *     [--plans=3d-depth,3d-rf,4d-depth,4d-rf,4d-pose,gl,supp,supp-raster]
+ *     [--plans=3d-depth,3d-rf,4d-depth,4d-rf,4d-pose,gl,supp,supp-raster,seed]
  *     [--viewport=1920x1080]
  *     [--timeout-s=90] [--prune-s=60] [--out=scripts/out/sphere-inversion-cost.json]
  *     [--only=<substring of a cell key>] [--lock=/tmp/claude-1000/si-bench.lock]
@@ -197,10 +197,36 @@ const SEEDS3 = {
   shell: { kind: "shell", size: 1, thickness: 0.03 },
   cutShell: { kind: "cutShell", size: 1, thickness: 0.06 },
 };
+/** Seed-geometry variants for the `seed` plan: one length moved at a time
+ * off the representative seed above. */
+const SEED_VARIANTS3 = {
+  "ball.15": { kind: "ball", size: 0.15 },
+  "ball.5": { kind: "ball", size: 0.5 },
+  "ball.8": { kind: "ball", size: 0.8 },
+  "shell.7": { kind: "shell", size: 0.7, thickness: 0.03 },
+  "shell1.3": { kind: "shell", size: 1.3, thickness: 0.03 },
+  "shellT.01": { kind: "shell", size: 1, thickness: 0.01 },
+  "shellT.1": { kind: "shell", size: 1, thickness: 0.1 },
+  cutR2: { kind: "cutShell", size: 1, thickness: 0.06, cutRadius: 2 },
+  cutR50: { kind: "cutShell", size: 1, thickness: 0.06, cutRadius: 50 },
+  "cutO-.5": { kind: "cutShell", size: 1, thickness: 0.06, cutOffset: -0.5 },
+  "cutO.8": { kind: "cutShell", size: 1, thickness: 0.06, cutOffset: 0.8 },
+};
 const SEEDS4 = {
   ball: { kind: "ball", size: 0.28 },
   shell: { kind: "shell", size: 1.1, thickness: 0.03 },
   cutShell: { kind: "cutShell", size: 0.9, thickness: 0.04 },
+};
+const SEED_VARIANTS4 = {
+  "ball.15": { kind: "ball", size: 0.15 },
+  "ball.5": { kind: "ball", size: 0.5 },
+  "ball.8": { kind: "ball", size: 0.8 },
+  "shellT.01": { kind: "shell", size: 1.1, thickness: 0.01 },
+  "shellT.1": { kind: "shell", size: 1.1, thickness: 0.1 },
+  cutR2: { kind: "cutShell", size: 0.9, thickness: 0.04, cutRadius: 2 },
+  cutR50: { kind: "cutShell", size: 0.9, thickness: 0.04, cutRadius: 50 },
+  "cutO-.4": { kind: "cutShell", size: 0.9, thickness: 0.04, cutOffset: -0.4 },
+  "cutO.8": { kind: "cutShell", size: 0.9, thickness: 0.04, cutOffset: 0.8 },
 };
 const ARR3 = ["oct6", "cube8", "ico12"];
 const ARR4 = ["tess16", "cross8", "cell24", "cell600"];
@@ -253,6 +279,14 @@ function plannedRows() {
     }
     // Ray scaling on the costliest arrangement; run with its own --out and
     // --viewport, since a cell key does not name the raster.
+    if (plan === "seed") {
+      for (const a of ["oct6", "ico12"])
+        for (const v of Object.keys(SEED_VARIANTS3))
+          row(plan, "compute", 3, a, 0.99, v, "id", [8]);
+      for (const a of ["cell24", "cell600"])
+        for (const v of Object.keys(SEED_VARIANTS4))
+          row(plan, "compute", 4, a, 0.99, v, "id", [5]);
+    }
     if (plan === "supp-raster")
       for (const s of Object.keys(SEEDS4))
         row(plan, "compute", 4, "cell600", 0.99, s, "id", [5]);
@@ -268,7 +302,10 @@ function mintHash(r, depth) {
   doc.sphereInversion = {
     arrangement: r.arrangement,
     radiusFraction: r.rf,
-    seed: (r.dim === 3 ? SEEDS3 : SEEDS4)[r.seed],
+    seed:
+      r.dim === 3
+        ? (SEEDS3[r.seed] ?? SEED_VARIANTS3[r.seed])
+        : (SEEDS4[r.seed] ?? SEED_VARIANTS4[r.seed]),
     depth,
   };
   if (r.dim === 4) {
