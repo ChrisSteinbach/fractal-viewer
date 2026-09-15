@@ -901,3 +901,116 @@ wired into a session yet, because no session exists.
 - **Presets and Surprise Me** clear the block (absent means clear), because
   each names a new transform-system subject that a leftover block would
   replace in Surface.
+
+## Points, Flame and Solid (2026-09-15, delegated)
+
+The decision owed by the persistence work's interim seam: which of the
+IFS-shaped renderers can draw a sphere-inversion scene, in both dimensions.
+Delegated to the lead agent and recorded as such; it stands until the owner
+ratifies or overturns it.
+
+### Per-mode verdict
+
+| Mode          | 3D                                        | Native 4D                                                         |
+| ------------- | ----------------------------------------- | ----------------------------------------------------------------- |
+| Points        | SHIPS: exact boundary sample of `O_D`     | SHIPS: exact boundary sample on `xyzw`, then the live rotor/slice |
+| Flame         | REFUSED, disclosed beside the mode switch | REFUSED, same note                                                |
+| Sampled Solid | REFUSED, disclosed beside the mode switch | REFUSED, same note                                                |
+
+**Points.** `src/fractal/sphere-inversion-sample.ts` draws points ON the
+boundary of the depth-D seed orbit: uniform patch samples of `∂(K ∩ F)`
+carried through random reduced words of length `<= D`. Every point lies on the
+same set the Surface estimator certifies; only the density over it is a choice
+(area-proportional through depth 1, geometrically lighter below). A generator
+wall is emitted only where it is EXPOSED — at word length `D` with a first
+letter other than its own generator — because every other wall point is an
+internal membrane across a window whose points are all members, which no
+distance test can see. The cloud worker (`cloud-worker-core.ts`) runs the
+sampler instead of the chaos game whenever the document carries a block; a
+refused block draws an empty cloud (the Surface note says why), an authored
+tiling block is disclosed as refused, and Points follows the block's
+dimension (`state.ts`'s `displayedIsNonFlat` now reads the scene in Points as
+in Surface). "By Transform" colours by GENERATION over
+`sphereInversionGenerationSlots(D) = D + 3` slots, the count the Surface route
+will pack, so one generation wears one hue in both modes.
+
+**Flame and Sampled Solid.** Neither has a representation that draws `O_D`.
+The chaos game over the preserved transforms draws a different object, and a
+density accumulation of the boundary sample would make its brightness a
+property of the sampler's chosen density rather than of the scene. Both are
+refused by `surface-eligibility.ts`'s `sphereInversionRenderModeRefusal` for
+any present block, resolvable or not (a refused block is still the subject):
+the buttons disable and name the note beside the mode switch
+(`#sphereInversionModeNote`), `switchRenderMode` refuses every door with the
+same text, and a block that arrives under a live Flame or Solid session exits
+to Points with a toast. The lift's shape, if one is ever wanted: a Flame
+histogram of the boundary sample needs an area-uniform density across
+generations (an importance weight per sample from the walk's own
+probabilities), and Solid a membership voxelization from
+`sphereInversionContains`/`-4`, which is exact but priced per voxel at the
+estimator's scan cost.
+
+### Other point consumers
+
+- **Morph.** Intermediates sample the block at the morph budget; the request
+  reads the LIVE document, so a replace-load's target block pops at the first
+  push (the schedule's rule).
+- **Watch it build** refuses with a toast: a boundary sample has no generation
+  order to replay.
+- **Evolution Lab** refuses with a toast (it mutates the replaced transform
+  system), and a lineage node carrying a block gets a blank thumbnail rather
+  than its transforms' attractor.
+- **Balloon.** The Points echo stays hidden over a landed sample (keyed on the
+  landed cloud, like the lattice gate); the checkbox stays enabled with a note,
+  because Surface's session refusal asks the user to turn Balloon off.
+- **Guides.** Transform boxes, grid and axes rest, and canvas hit-testing
+  selects nothing, while a block replaces the transforms.
+- **Flame backdrop.** It draws the preserved transforms, so a flame backdrop
+  holds its gradient placeholder while a block is present.
+
+### Set-identity evidence (`sphere-inversion-sample.test.ts`)
+
+- **On the orbit.** The oracle's true distance is `<= 1e-9` for every sample at
+  D1–2: oct6 pearls, cube8 lace shell, ico12 vault, tess16 kissing ball, cell24
+  shell and cell600 vault D1.
+- **At production depth** the certified estimator reads every sample within
+  1e-9 (f64) and 1e-6 (the f32 cloud): oct6 D8, ico12 shell D6, cell24 D5, and
+  the cell600 vault and medallion at D5.
+- **Boundary, not membrane.** Offsets of 1e-6 either side of each sample's
+  patch, carried through its own word, are members on exactly one side (cube8
+  D3, ico12 vault D4, cell24 D3, cell600 medallion D3; walls included, samples
+  within 1e-4 of a patch edge skipped). Negative control: depth-0 wall samples
+  are members on BOTH sides of the depth-1 orbit. A deliberate mutation letting
+  walls expose below depth `D` fails all four membrane rows.
+- **Coverage.** Every oracle-nearest boundary point of the depth-1 orbit has a
+  sample within 0.05 (oct6, cube8 shell; 20k samples) or 0.12 (tess16; 40k).
+- The 4D cell600 vault's samples spread across `w` (range > 1), and a fixed
+  caller seed reproduces the cloud exactly; the patch weights depend only on
+  the construction.
+
+### Cost and budget
+
+`scripts/sphere-inversion-sample.harness.ts` (figures in
+`docs/harness-sheets.md`): 0.31 us per sample for the 3D pearls up to 4.2 us
+for the cell600 vault at D5, against 0.10 us per chaos-game iteration, with no
+point skipped on any row and depth barely moving the cost. Policy:
+`SPHERE_INVERSION_POINTS_MAX` = 500,000 samples per cloud (about 2.1 s of
+worker time at the worst subject on this machine), disclosed in the mode note,
+and one cached sampler per block so colour and count edits skip the ~100 ms
+pilot.
+
+### Browser check
+
+The built app under headless SwiftShader, loaded from injected `#v1=`
+documents:
+
+- **oct6 pearls D8 (3D).** 100,000 points; a red seed pearl, orange
+  generation-1 pearls and yellow-to-blue deeper generations, no transform
+  guides; Flame and Sampled Solid disabled with the note visible and named by
+  `aria-describedby`; panel titled 3D; no error.
+- **cell600 vault D5 (native 4D).** Panel titled 4D, 100,000 points, the w
+  legend and 4D projection help, the same refusal, and the Surface note's slab
+  disclosure. The full projection is a w-coloured ball of dust: the vault's
+  pearl windows are a SLICE phenomenon (this document's native 4D search), so a
+  projected Points cloud of the same set shows its extent and not its windows.
+  That is a presentation limit of projection, not a different set.
