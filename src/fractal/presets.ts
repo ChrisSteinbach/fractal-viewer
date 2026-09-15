@@ -2913,7 +2913,7 @@ export const PRESET_SPHERE_INVERSIONS: Partial<
     arrangement: "cube8",
     radiusFraction: 0.99,
     seed: { kind: "ball", size: 0.42 },
-    depth: 10,
+    depth: 8,
   }),
   // The octahedral interior vault: a unit shell cut open toward the light,
   // seen from inside, its six generator windows holding nested pearls.
@@ -3011,23 +3011,20 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
     camera: { eye: [1.2, 0.87, 1.42], target: [0, 0, 0], fov: 62 },
   },
   inversionVault4: {
+    // From near the centre, grazing along the wall away from the cut: the
+    // cut rim and its horizon above, rows of pearl-window rosettes below.
     camera: {
-      eye: [-0.21, -0.41, 0.19],
-      target: [-0.42, -0.82, 0.38],
-      fov: 81,
+      eye: [0.35, -0.05, 0.06],
+      target: [-0.99, 0.15, -0.18],
+      fov: 77,
     },
     fourD: { rotation: [], w0: CELL600_KISS_SLICE_W },
   },
   inversionMedallions4: {
     camera: { eye: [1.32, 0.96, 1.56], target: [0, 0, 0], fov: 62 },
-    fourD: {
-      rotation: [
-        ["xw", 0.4],
-        ["yw", 0.3],
-        ["zw", 0.2],
-      ],
-      w0: CELL600_KISS_SLICE_W,
-    },
+    // A single xw turn off the kiss slice: fuller medallions (pearl rings
+    // round a central rosette) than the double rotation at the kiss slice.
+    fourD: { rotation: [["xw", 0.3]], w0: 0.1 },
   },
 };
 
