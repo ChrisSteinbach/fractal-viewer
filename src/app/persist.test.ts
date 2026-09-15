@@ -7977,3 +7977,86 @@ describe("tiling codec (the space-tiling block)", () => {
     expect(encodeScene(toSnapshot(cleared))).toBe(encodeScene(baseSnapshot()));
   });
 });
+
+describe("sphere-inversion codec (the scene's sphere-inversion block)", () => {
+  it("encodes a scene without the block byte-identically to one predating the field", () => {
+    const s = baseSnapshot();
+    const withUndefined = { ...s, sphereInversion: undefined };
+    expect(encodeScene(withUndefined)).toBe(encodeScene(s));
+    expect(decodeScene(encodeScene(s))!.sphereInversion).toBeUndefined();
+  });
+
+  it("round-trips an eligible block without rounding its lengths", () => {
+    const block = {
+      arrangement: "cell600",
+      radiusFraction: 0.98765432,
+      seed: { kind: "cutShell", size: 0.9, thickness: 0.04 },
+      depth: 5,
+    };
+    expect(
+      decodeScene(encodeScene({ ...baseSnapshot(), sphereInversion: block }))!
+        .sphereInversion,
+    ).toEqual(block);
+  });
+
+  it("preserves a refused block verbatim through decode then encode: unknown arrangement, out-of-domain value and a future field", () => {
+    const block = {
+      arrangement: "dodeca20",
+      depth: 99,
+      radiusFraction: "0.9",
+      seed: { kind: "torus", size: -1, future: [1, { nested: null }] },
+      generators: [{ center: [1, 0, 0], radius: 0.4 }],
+    } as unknown as SceneSnapshot["sphereInversion"];
+    const hash = encodeScene({ ...baseSnapshot(), sphereInversion: block });
+    const decoded = decodeScene(hash)!;
+    expect(decoded.sphereInversion).toEqual(block);
+    expect(encodeScene(decoded)).toBe(hash);
+  });
+
+  it("keeps the authored key order, so a re-encoded hash is byte-identical", () => {
+    const hash = encodeScene({
+      ...baseSnapshot(),
+      sphereInversion: { depth: 5, seed: { size: 0.2 }, arrangement: "oct6" },
+    });
+    expect(encodeScene(decodeScene(hash)!)).toBe(hash);
+    expect(Object.keys(decodeScene(hash)!.sphereInversion!)).toEqual([
+      "depth",
+      "seed",
+      "arrangement",
+    ]);
+  });
+
+  it("drops a value that cannot be a block (array, scalar, null) to absent without rejecting the scene", () => {
+    for (const raw of [[1, 2], 5, "oct6", null]) {
+      const body = encodeScene(baseSnapshot())
+        .slice(3)
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+      const json = JSON.parse(
+        atob(body + "=".repeat((4 - (body.length % 4)) % 4)),
+      ) as Record<string, unknown>;
+      json.sphereInversion = raw;
+      const hash =
+        "v1=" +
+        btoa(JSON.stringify(json))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+      const decoded = decodeScene(hash);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.sphereInversion).toBeUndefined();
+    }
+  });
+
+  it("carries the block through toSnapshot and fromSnapshot, and a block-less snapshot clears a base session's block", () => {
+    const block = { arrangement: "tess16", seed: { kind: "shell" } };
+    const state = fromSnapshot(
+      { ...baseSnapshot(), sphereInversion: block },
+      initialState(true),
+    );
+    expect(state.sphereInversion).toEqual(block);
+    expect(toSnapshot(state).sphereInversion).toEqual(block);
+    const cleared = fromSnapshot(baseSnapshot(), state);
+    expect(cleared.sphereInversion).toBeUndefined();
+  });
+});

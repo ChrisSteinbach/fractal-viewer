@@ -352,6 +352,7 @@ const SCENE_FIELDS = {
   condensationDepthBand: true,
   shapeTrap: true,
   tiling: true,
+  sphereInversion: true,
   numPoints: true,
   pointSize: true,
   colorMode: true,
@@ -865,6 +866,51 @@ function trap(value: unknown, path: string): void {
   }
 }
 
+/**
+ * The sphere-inversion block is preserved VERBATIM, refused or not
+ * (`persist.ts`'s `decodeSphereInversion`), so its only structural contract
+ * is that it is a plain object of JSON values; field domains belong to
+ * `resolveSphereInversion`, which refuses rather than throws.
+ */
+function sphereInversionBlock(value: unknown, path: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${path} must be an object`);
+  }
+  jsonValue(value, path, 0);
+}
+
+function jsonValue(value: unknown, path: string, depth: number): void {
+  if (depth > 32) throw new RangeError(`${path} nests too deeply`);
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "string" ||
+    (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      throw new TypeError(`${path} must be a plain array`);
+    }
+    value.forEach((item, index) => {
+      jsonValue(item, `${path}[${index}]`, depth + 1);
+    });
+    return;
+  }
+  if (typeof value === "object") {
+    const prototype: unknown = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError(`${path} must be a plain object`);
+    }
+    for (const [key, item] of Object.entries(value)) {
+      jsonValue(item, `${path}.${key}`, depth + 1);
+    }
+    return;
+  }
+  throw new TypeError(`${path} must hold only JSON values`);
+}
+
 function tiling(value: unknown, path: string): void {
   const entry = object(value, path, TILING_FIELDS);
   if (entry.kind === undefined) {
@@ -1294,6 +1340,9 @@ export function assertValidEvolutionSceneSnapshot(
   if (scene.shapeTrap !== undefined)
     trap(scene.shapeTrap, "snapshot.shapeTrap");
   if (scene.tiling !== undefined) tiling(scene.tiling, "snapshot.tiling");
+  if (scene.sphereInversion !== undefined) {
+    sphereInversionBlock(scene.sphereInversion, "snapshot.sphereInversion");
+  }
 
   param(
     required(scene, "numPoints", "snapshot"),
